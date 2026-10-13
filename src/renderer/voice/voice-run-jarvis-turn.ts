@@ -424,6 +424,10 @@ export function routeDictation(
 // estados de propósito: texto lido, clipboard vazio, e não sei.
 readClipboard: () =>
       navigator.clipboard.readText().catch(() => null),
+    // M6 (F-1419): o ditado que ficou sem painel E sem cópia vai para o
+    // refúgio do HUD — é o texto do operador, então só no store, nunca no log.
+    onUndelivered: (undelivered) =>
+      useVoiceStore.getState().setLastUndeliveredDictation(undelivered),
     log: logVoiceEvent,
   });
 }

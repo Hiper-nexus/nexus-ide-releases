@@ -469,10 +469,13 @@ export async function finishAndProcess(
         // C-2: o novo ditado cuida do HUD; o substituído não fala nada.
         if (settled.errorCode === 'pending-replaced') return;
         if (settled.errorCode === 'pending-cancelled') {
+          // M6 (F-1419): sem cópia (o clipboard do operador foi respeitado), o
+          // texto não está mais em nenhum lugar — o HUD mostra a ação de
+          // recuperar. Com cópia, a instrução antiga (⌘V) basta.
           hud.setNote(
             settled.preserved
               ? 'Ditado cancelado: texto copiado, cole com ⌘V.'
-              : 'Ditado cancelado: você usou o painel.',
+              : 'Ditado cancelado: você usou o painel. O texto ficou aqui para copiar ou reenviar.',
           );
           return;
         }
@@ -509,6 +512,11 @@ export async function finishAndProcess(
         store.setNote('O agente está trabalhando. O ditado entrou na fila e ele lê quando terminar a tarefa atual.');
       } else if (useVoiceStore.getState().dictationDelivery === 'queued') {
         store.setDictationDelivery(null);
+      }
+      if (routed.ok) {
+        // M6 (F-1419): um ditado novo que ENTROU no painel resolve o refúgio
+        // anterior — o operador não precisa mais resgatá-lo.
+        store.setLastUndeliveredDictation(null);
       }
       if (!routed.ok) {
         store.setDictationPending(null);

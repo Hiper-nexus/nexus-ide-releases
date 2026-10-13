@@ -75,7 +75,8 @@ vi.mock('./voice-live-ipc', () => ({
 }));
 
 import { routeDictation } from './voice-run-jarvis-turn';
-import { resetPendingDictationsForTests } from './dictation-delivery';
+import { cancelPendingDictation, hasPendingDictation, resetPendingDictationsForTests } from './dictation-delivery';
+import { useVoiceStore } from './voice-store';
 
 describe('M6 — o port real de leitura da área de transferência', () => {
   afterEach(() => {
@@ -175,5 +176,38 @@ describe('M6 — o port real de leitura da área de transferência', () => {
     expect(onSettled).toHaveBeenCalledWith(
       expect.objectContaining({ result: 'error', preserved: false }),
     );
+  });
+
+  it('o refúgio CHEGA no voice-store: o texto continua recuperável pelo HUD', async () => {
+    // O cenário exato da revisão, ponta a ponta pelo port real: o operador
+    // dita, o painel tem um diálogo, ele copia algo no editor e responde o
+    // diálogo. O clipboard dele é respeitado e o texto falado ia embora.
+    readText.mockResolvedValueOnce('conteúdo qualquer').mockResolvedValue('código copiado pelo operador');
+    useVoiceStore.setState({ lastUndeliveredDictation: null });
+    // O painel recusa (diálogo aberto) → o ditado vira PENDENTE.
+    probePromptState.mockResolvedValue({ turnStartSequence: 5, state: 'idle', awaitingInput: true });
+    deliverConfirmed.mockReset().mockResolvedValue('wait');
+
+    await routeDictation('o texto ditado que o operador falou');
+    await vi.waitFor(() => expect(probePromptState).toHaveBeenCalled(), {
+      timeout: 5_000,
+      interval: 100,
+    });
+    expect(hasPendingDictation()).toBe(true);
+
+    // Ele responde o diálogo com "y": cancelPendingDictation.
+    cancelPendingDictation('p1');
+
+    await vi.waitFor(
+      () => expect(useVoiceStore.getState().lastUndeliveredDictation).not.toBeNull(),
+      { timeout: 5_000, interval: 100 },
+    );
+    expect(useVoiceStore.getState().lastUndeliveredDictation).toMatchObject({
+      text: 'o texto ditado que o operador falou',
+      paneId: 'p1',
+      reason: 'pending-cancelled',
+    });
+    // O clipboard do operador segue intacto — o refúgio NÃO sobrescreveu nada.
+    expect(writeText).not.toHaveBeenCalled();
   });
 });

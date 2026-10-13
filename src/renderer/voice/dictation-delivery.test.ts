@@ -664,6 +664,57 @@ describe('F-1393 — ditado ao pane ocupado: fila ou pendente até o pane ficar 
     // E o teclado do operador volta a poder cancelar (não há entrega em voo).
     expect(cancelPendingDictation('pane-focused')).toBe(false);
   });
+
+  it('M6: ditado cancelado com o clipboard do operador preservado NÃO some', async () => {
+    // O cenário exato da revisão: o operador dita, o painel tem um diálogo,
+    // ele COPIA algo no editor e RESPONDE o diálogo. O clipboard dele é
+    // respeitado (a cópia não acontece) e o texto ditado... ia embora: nem
+    // no painel, nem na área de transferência, nem no HUD, nem no log.
+    vi.useFakeTimers();
+    let clipboard = 'conteúdo qualquer';
+    const readClipboard = vi.fn(async () => clipboard);
+    const preserveUndelivered = vi.fn(async (text: string) => {
+      clipboard = text;
+      return true;
+    });
+    const onUndelivered = vi.fn();
+    const pane = claudePane();
+    pane.ports.readClipboard = readClipboard;
+    pane.ports.preserveUndelivered = preserveUndelivered;
+    pane.ports.onUndelivered = onUndelivered;
+
+    pane.prompt.value = { turnStartSequence: 5, state: 'idle', awaitingInput: true, queuesInputWhileBusy: true };
+    await Promise.all([deliverDictation('o texto ditado que o operador falou', pane.ports), vi.advanceTimersByTimeAsync(3_000)]);
+    expect(hasPendingDictation()).toBe(true);
+
+    // O operador copia algo no editor e responde o diálogo com "y".
+    clipboard = 'código que o operador copiou';
+    cancelPendingDictation('pane-focused');
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    // O clipboard do operador continua intacto...
+    expect(preserveUndelivered).not.toHaveBeenCalled();
+    expect(clipboard).toBe('código que o operador copiou');
+    // ...e o texto falado NÃO foi jogado fora: fica recuperável, com o painel
+    // de destino e o motivo, para o HUD oferecer copiar/reenviar.
+    expect(onUndelivered).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: 'o texto ditado que o operador falou',
+        paneId: 'pane-focused',
+        reason: 'pending-cancelled',
+      }),
+    );
+  });
+
+  it('M6: um ditado ENTREGUE não vira resgatável', async () => {
+    const onUndelivered = vi.fn();
+    const { ports } = makePorts({ onUndelivered });
+
+    // Nada foi perdido: o texto entrou no painel, não há o que resgatar.
+    await deliverDictation('ditado que entrou', ports);
+
+    expect(onUndelivered).not.toHaveBeenCalled();
+  });
 });
 
 

@@ -518,3 +518,22 @@
   background: var(--accent);
   color: var(--bg);
 }
+
+/* F-1419: refúgio do ditado não entregue. O texto falado é o que o operador
+   precisa ler de volta, então fica com o mesmo peso do resto do HUD — só a
+   moldura o separa do ruído. Sem cor nova: as tokens que já existem. */
+.voice-hud__refuge {
+  display: block;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  padding: var(--space-1) var(--space-1-5);
+  margin-top: var(--space-1);
+}
+
+.voice-hud__refuge-text {
+  display: block;
+  margin: var(--space-1) 0;
+  color: var(--text-main);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

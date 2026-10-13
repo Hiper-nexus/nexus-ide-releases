@@ -43,6 +43,18 @@ export interface DictationPendingSettled {
   readonly preserved?: boolean;
 }
 
+/**
+ * M6 (F-1419): o último ditado que NENHUM pane aceitou e que também não foi
+ * copiado — o clipboard do operador foi preservado, então o texto ficava sem
+ * lugar nenhum (nem painel, nem área de transferência, nem HUD, nem log).
+ * O log continua sem o texto por privacidade; este é o refúgio do HUD.
+ */
+export interface DictationUndelivered {
+  readonly text: string;
+  readonly paneId: string;
+  readonly reason: DictationPendingErrorCode | 'no-live-pane' | 'delivery-failed' | 'delivery-lost';
+}
+
 /** C-7 (F-1393): recusas SEM escrita toleradas no pane livre antes de desistir. */
 export const DICTATION_PENDING_FAILED_RETRIES = 3;
 
@@ -97,6 +109,13 @@ export interface DictationDeliveryPorts {
    * conseguiu; ausente, o comportamento antigo segue.
    */
   preserveUndelivered?(text: string): Promise<boolean>;
+  /**
+   * M6 (F-1419): o ditado ficou sem destino E sem cópia — porque o clipboard
+   * do operador foi preservado, ou porque a cópia falhou. É o único caminho em
+   * que o texto falado não está em lugar nenhum; o chamador guarda para o HUD
+   * oferecer copiar/reenviar. Ausente, o texto se perde como antes.
+   */
+  onUndelivered?(undelivered: DictationUndelivered): void;
   /**
    * M6 (F-1393): leitura da área de transferência para conferir se o operador
    * copiou algo novo enquanto o ditado estava pendente.
@@ -157,6 +176,9 @@ export async function deliverDictation(
   // vezes. A cópia fica só para falha real.
   if (routed.ok || routed.reason === 'pending' || !ports.preserveUndelivered) return routed;
   const preserved = await ports.preserveUndelivered(text).catch(() => false);
+  // M6 (F-1419): nem o painel aceitou nem a área de transferência salvou —
+  // o texto só pode ser resgatado pelo HUD.
+  if (!preserved) ports.onUndelivered?.({ text, paneId: '', reason: routed.reason });
   ports.log(
     preserved ? 'info' : 'error',
     'dictation.preserved',
@@ -266,7 +288,9 @@ function deferUntilFree(
     // cópia o prompt falado sumia) — o pendente já saiu do mapa, então colar
     // não duplica. Só o substituído por um ditado novo não copia.
     // M6 (F-1393): só copia se o operador não copiou nada novo no meio do caminho.
-    if (errorCode && errorCode !== 'pending-replaced' && ports.preserveUndelivered) {
+    const preserve = ports.preserveUndelivered;
+    const rescue = ports.onUndelivered;
+    if (errorCode && errorCode !== 'pending-replaced' && preserve) {
       void (async () => {
         if (ports.readClipboard && initialClipboardPromise) {
           const [initialClipboard, currentClipboard] = await Promise.all([
@@ -277,15 +301,23 @@ function deferUntilFree(
             ports.log('info', 'dictation.clipboardKept', 'operador copiou novo conteúdo — área de transferência preservada', {
               targetPaneId: paneId,
             });
+            // M6 (F-1419): respeitar o clipboard do operador é o certo, mas
+            // deixava o texto falado sem lugar NENHUM. Ele vai para o refúgio
+            // (HUD oferece copiar/reenviar); o log segue sem o texto.
+            rescue?.({ text, paneId, reason: errorCode });
             ports.onSettled?.({ ...outcome, preserved: false });
             return;
           }
         }
-        const preserved = await ports.preserveUndelivered(text).catch(() => false);
+        const preserved = await preserve(text).catch(() => false);
+        // A cópia falhou: o texto não está no clipboard nem no painel.
+        if (!preserved) rescue?.({ text, paneId, reason: errorCode });
         ports.onSettled?.({ ...outcome, preserved });
       })();
       return;
     }
+    // Sem porta de cópia não há para onde ir — o texto só pode ser resgatado.
+    if (errorCode) rescue?.({ text, paneId, reason: errorCode });
     ports.onSettled?.(outcome);
   };
   let failedAttempts = 0;

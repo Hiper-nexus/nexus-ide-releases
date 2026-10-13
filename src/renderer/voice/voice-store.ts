@@ -19,6 +19,7 @@ import type {
 } from '../../shared/voice-ipc';
 import type { MicHealth } from './wake-health';
 import type { DictationOutputMode } from './dictation-output-mode';
+import type { DictationUndelivered } from './dictation-delivery';
 
 const RESPONSE_MUTED_KEY = 'nexus.voice.responseMuted';
 
@@ -112,6 +113,13 @@ interface VoiceStore {
    * O HUD fica visível e troca o título enquanto houver um dos dois.
    */
   dictationDelivery: 'pending' | 'queued' | null;
+  /**
+   * M6 (F-1419): o ÚLTIMO ditado que nenhum painel aceitou e que também não
+   * foi copiado — respeitamos o clipboard do operador, então o texto falado
+   * ficava sem lugar nenhum. Fica aqui (e só aqui) para o HUD oferecer
+   * "copiar ditado" / "reenviar". É texto do operador: nunca vai para o log.
+   */
+  lastUndeliveredDictation: DictationUndelivered | null;
 
   setStatus: (status: VoiceUiStatus) => void;
   setInfo: (info: VoiceRuntimeInfo) => void;
@@ -135,6 +143,7 @@ interface VoiceStore {
   ) => void;
   setDictationFailed: (failed: boolean) => void;
   setDictationDelivery: (delivery: 'pending' | 'queued' | null) => void;
+  setLastUndeliveredDictation: (dictation: DictationUndelivered | null) => void;
   openSettings: () => void;
   closeSettings: () => void;
 }
@@ -168,6 +177,7 @@ export const useVoiceStore = create<VoiceStore>((set) => ({
   dictationPending: null,
   dictationFailed: false,
   dictationDelivery: null,
+  lastUndeliveredDictation: null,
 
   setStatus: (status) => set({ status, ...(status !== 'error' ? { error: null } : {}) }),
   setInfo: (info) => set({ info }),
@@ -227,6 +237,8 @@ export const useVoiceStore = create<VoiceStore>((set) => ({
     }
     set({ dictationDelivery });
   },
+  setLastUndeliveredDictation: (lastUndeliveredDictation) =>
+    set({ lastUndeliveredDictation }),
   openSettings: () => set({ settingsOpen: true }),
   closeSettings: () => set({ settingsOpen: false }),
 }));

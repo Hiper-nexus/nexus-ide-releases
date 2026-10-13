@@ -10,6 +10,7 @@ import {
   publishFloatingSafeArea,
 } from '../voice/hud-prefs';
 import { requestJarvisWake } from '../voice/manual-wake';
+import { routeDictation } from '../voice/voice-run-jarvis-turn';
 import { canAttemptRealtime } from '../voice/voice-realtime-gates';
 import { realtimeMissingCredentialMessage } from './voice-settings-helpers';
 import {
@@ -72,6 +73,11 @@ export function VoiceHud() {
   const transcript = useVoiceStore((s) => s.lastTranscript);
   const note = useVoiceStore((s) => s.note);
   const dictationDelivery = useVoiceStore((s) => s.dictationDelivery);
+  const lastUndeliveredDictation = useVoiceStore((s) => s.lastUndeliveredDictation);
+  const setLastUndeliveredDictation = useVoiceStore(
+    (s) => s.setLastUndeliveredDictation,
+  );
+  const setNote = useVoiceStore((s) => s.setNote);
   const error = useVoiceStore((s) => s.error);
   const micHealth = useVoiceStore((s) => s.micHealth);
   const info = useVoiceStore((s) => s.info);
@@ -93,6 +99,35 @@ export function VoiceHud() {
   );
 
   const liveStatus = liveState?.status ?? 'dormant';
+
+  /**
+   * M6 (F-1419): o ditado que nenhum painel aceitou e que também não foi
+   * copiado. A cópia é o caminho mais curto (o operador cola), o reenvio
+   * passa pelo mesmo `routeDictation` do ditado original. Nos dois casos o
+   * refúgio é resolvido e some do HUD.
+   */
+  const copyUndeliveredDictation = (): void => {
+    const pending = lastUndeliveredDictation;
+    if (!pending) return;
+    void navigator.clipboard
+      .writeText(pending.text)
+      .then(() => setNote('Ditado copiado: cole com ⌘V.'))
+      .catch(() => setNote('Não consegui copiar o ditado — use "Reenviar".'));
+    setLastUndeliveredDictation(null);
+  };
+
+  const resendUndeliveredDictation = (): void => {
+    const pending = lastUndeliveredDictation;
+    if (!pending) return;
+    setLastUndeliveredDictation(null);
+    void routeDictation(pending.text).then((routed) => {
+      setNote(
+        routed.ok
+          ? 'Ditado reenviado ao painel.'
+          : 'O reenvio não entrou — o painel recusou de novo.',
+      );
+    });
+  };
   // Chip CODE/CHAT no titlebar (paridade Bridge): mesmo controle do chip da
   // barra superior — useDictationMode centraliza estado + persistência.
   const {
@@ -531,6 +566,28 @@ export function VoiceHud() {
                 <span className="voice-hud__detail voice-hud__detail--note">
                   {'-> '}
                   {note}
+                </span>
+              )}
+              {lastUndeliveredDictation && (
+                <span className="voice-hud__detail voice-hud__detail--note voice-hud__refuge">
+                  Ditado não entregue — o texto falado ficou aqui:
+                  <span className="voice-hud__refuge-text">
+                    {lastUndeliveredDictation.text}
+                  </span>
+                  <button
+                    type="button"
+                    className="voice-hud__action"
+                    onClick={copyUndeliveredDictation}
+                  >
+                    Copiar ditado
+                  </button>
+                  <button
+                    type="button"
+                    className="voice-hud__action"
+                    onClick={resendUndeliveredDictation}
+                  >
+                    Reenviar
+                  </button>
                 </span>
               )}
               {micHealth === 'needsPermission' && (
