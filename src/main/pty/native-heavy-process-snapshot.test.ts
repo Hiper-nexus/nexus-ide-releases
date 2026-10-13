@@ -18,3 +18,15 @@ it.each([
 ])('rejects incomplete/ambiguous Windows process inventory %s', (raw) => {
  expect(() => parseWindowsCommandProcesses(raw)).toThrow();
 });
+it('F-1435: processo nascido antes do pai registrado é órfão de um PID reciclado, nunca descendente', () => {
+ // Windows nunca reescreve ParentProcessId quando o pai morre e recicla o PID:
+ // o 20 de hoje é filho do 10, mas o 50 (e o 51) nasceram de um 20 antigo.
+ const rows = parseWindowsCommandProcesses(JSON.stringify([
+   { pid: 10, ppid: 1, startedAt: '2026-10-13T19:00:00.0000000Z' },
+   { pid: 20, ppid: 10, startedAt: '2026-10-13T19:00:01.0000000Z' },
+   { pid: 30, ppid: 20, startedAt: '2026-10-13T19:00:01.0000000Z' },
+   { pid: 50, ppid: 20, startedAt: '2026-10-13T12:34:56.7000000Z' },
+   { pid: 51, ppid: 50, startedAt: '2026-10-13T12:35:00.0000000Z' },
+ ]));
+ expect(collectDescendantRows(10, rows, Date.parse('2026-10-13T19:00:05Z')).descendants.map((row) => row.pid)).toEqual([20, 30]);
+});
