@@ -254,6 +254,26 @@ describe('lane de julgamento (F-233: só modelos de ponta julgam)', () => {
       expect(`${decision!.adapterId}:${decision!.model}`).toBe('agy:gemini-4-argon');
       expect(decision!.judgeUnavailable).toBeUndefined();
     });
+
+    // 13/10: o AGY 1.3.4 lista o Argon só com sufixo de esforço
+    // (gemini-4-argon-medium/-high/-low). A variante anunciada é a prova.
+    it('AGY que lista só as variantes com sufixo: a variante anunciada assume o assento', () => {
+      const argon = ['gemini-4-argon-medium', 'gemini-4-argon-high', 'gemini-4-argon-low'];
+      expect(judgeSeatNeedsAccessProof({ adapterId: 'agy', model: 'gemini-4-argon-high' })).toBe(true);
+      const decision = routeTask(
+        REVIEW_TEXT,
+        reviewPool({
+          models: [...argon, 'gemini-3.8-flash-high'],
+          liveModels: [...argon, 'gemini-3.8-flash-high'],
+        }),
+        DEFAULT_ROUTING_TABLE,
+        undefined,
+        false,
+        undefined,
+        claudeCodexUsed,
+      );
+      expect(`${decision!.adapterId}:${decision!.model}`).toBe('agy:gemini-4-argon-medium');
+    });
   });
 
   describe('auditoria de segurança crítica (F-817)', () => {
@@ -309,6 +329,8 @@ describe('lane de julgamento (F-233: só modelos de ponta julgam)', () => {
   // para a ROTA; o revisor que de fato rodou (modelo da sessão) segue aceito.
   it('portão F-234 aceita os carros-chefe novos e continua recusando GLM/MiMo', () => {
     expect(isFrontierReviewer('agy', 'gemini-4-argon')).toBe(true);
+    expect(isFrontierReviewer('agy', 'gemini-4-argon-high')).toBe(true);
+    expect(isFrontierReviewer('agy', 'gemini-4-argon-low')).toBe(true);
     expect(isFrontierReviewer('grok', 'grok-4.7')).toBe(true);
     expect(isFrontierReviewer('glm', 'glm-5.3')).toBe(false);
     expect(isFrontierReviewer('mimo-code', 'xiaomi/mimo-v2.6-pro')).toBe(false);

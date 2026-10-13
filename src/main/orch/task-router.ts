@@ -863,21 +863,29 @@ export const JUDGE_FRONTIER_LANE: ReadonlyArray<{
  * `isFrontierReviewer` (F-234) NÃO muda: a identidade do revisor é o modelo
  * da sessão, medida pelo Main — quem rodou, rodou com acesso.
  */
-const JUDGE_LANE_ACCESS_PROOF_REQUIRED: ReadonlySet<string> = new Set([
-  'agy:gemini-4-argon',
-]);
+const JUDGE_LANE_ACCESS_PROOF_REQUIRED: readonly { adapterId: string; model: string }[] = [
+  { adapterId: 'agy', model: 'gemini-4-argon' },
+];
 
 const JUDGE_SECURITY_CRITICAL_ADAPTERS: ReadonlySet<string> = new Set([
   'claude',
   'codex',
 ]);
 
-/** O assento só entra quando a CLI anunciou o modelo (sonda viva). */
+/**
+ * O assento só entra quando a CLI anunciou o modelo (sonda viva). Vale também
+ * para a variante da família (o AGY 1.3.4 lista `gemini-4-argon-high`, não o
+ * id sem sufixo): a variante roteada tem que ser a anunciada.
+ */
 export function judgeSeatNeedsAccessProof(seat: {
   adapterId: string;
   model: string;
 }): boolean {
-  return JUDGE_LANE_ACCESS_PROOF_REQUIRED.has(`${seat.adapterId}:${seat.model}`);
+  return JUDGE_LANE_ACCESS_PROOF_REQUIRED.some(
+    (required) =>
+      required.adapterId === seat.adapterId &&
+      isRoutableModelResolution(required.model, seat.model),
+  );
 }
 
 /**
@@ -910,7 +918,9 @@ export function isFrontierReviewer(
   if (model === undefined) return false;
   return JUDGE_FRONTIER_LANE.some(
     (seat) =>
-      seat.adapterId === adapterId && isSameLineAtLeast(model, seat.model),
+      seat.adapterId === adapterId &&
+      (isSameLineAtLeast(model, seat.model) ||
+        isRoutableModelResolution(seat.model, model)),
   );
 }
 
@@ -1378,6 +1388,12 @@ const ROUTABLE_MODEL_FAMILY_VARIANTS: ReadonlyMap<
   ReadonlySet<string>
 > = new Map([
   ['gpt-5.6', new Set(['gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6-terra'])],
+  // AGY 1.3.4 (13/10): `agy models` lista o Argon só com sufixo de esforço.
+  // O pty-manager troca a variante pelo esforço pedido (agyModelForEffort).
+  [
+    'gemini-4-argon',
+    new Set(['gemini-4-argon-high', 'gemini-4-argon-medium', 'gemini-4-argon-low']),
+  ],
 ]);
 
 /**

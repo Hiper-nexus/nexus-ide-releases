@@ -1177,6 +1177,20 @@ describe('F-217 — o mais novo da linha vence mesmo sem catálogo', () => {
       const decision = route({ liveModels: ['gemini-4-argon', ...announced] });
       expect(decision?.model).toBe('gemini-4-argon');
     });
+
+    it('AGY 1.3.4 anuncia só gemini-4-argon-medium/-high/-low: o hard vai para a variante listada', () => {
+      // 13/10: a conta tinha acesso, mas a prova procurava o id sem sufixo e
+      // a rota dizia "sem acesso ao Argon nesta conta".
+      const argon = ['gemini-4-argon-medium', 'gemini-4-argon-high', 'gemini-4-argon-low'];
+      const decision = route({
+        models: [...argon, ...announced],
+        liveModels: [...argon, ...announced],
+        liveModelsAuthoritative: true,
+      });
+      expect(decision?.model).toBe('gemini-4-argon-medium');
+      expect(decision?.effort).toBe('high');
+      expect(decision?.reason).not.toMatch(/sem acesso ao Argon/);
+    });
   });
 
   it('modelo pedido no texto sobe para o mais novo da linha e continua vencendo (F-218)', () => {

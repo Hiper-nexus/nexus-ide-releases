@@ -227,6 +227,10 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
         // o `agy models` do AGY 1.3.1 não o lista, e o catálogo nunca
         // acrescenta id a CLI que lista. Volta à oferta quando a CLI o listar.
         { id: 'gemini-4-argon', availability: 'paid', costTier: 'high', source: 'bundled' },
+        // AGY 1.3.4 (13/10) lista o Argon assim, com sufixo de esforço.
+        { id: 'gemini-4-argon-high', availability: 'paid', costTier: 'high', source: 'bundled' },
+        { id: 'gemini-4-argon-medium', availability: 'paid', costTier: 'high', source: 'bundled' },
+        { id: 'gemini-4-argon-low', availability: 'paid', costTier: 'high', source: 'bundled' },
       ],
     },
     kimi: {
