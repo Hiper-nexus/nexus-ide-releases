@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { app } from 'electron';
+import { enqueuePostBootIdleTask } from '../observability/post-boot-idle-queue';
 import { migrateSchema, planSchemaMigration } from './schema-migrations';
 import {
   confirmDbMigrationBoot,
@@ -287,13 +288,10 @@ export function getDb(): Db | null {
     db.exec(`INSERT OR IGNORE INTO provider_session_accounts
       SELECT installation_id, project_id, checkout_id, adapter_id, session_id, account_id
       FROM provider_pane_sessions WHERE adapter_id = 'mimo-code' AND session_key = 'session_id'`);
-    try {
-      db.prepare('DELETE FROM provider_conversation_edits WHERE edited_at < ?')
-        .run(Date.now() - CONVERSATION_EDITS_RETENTION_MS);
-    } catch (err) {
-      // A poda é manutenção: falhar aqui nunca degrada o banco.
-      console.warn('[nexus] poda da proveniência de edição falhou:', err);
-    }
+    const openedDb = db;
+    enqueuePostBootIdleTask('db-prune-conversation-edits', () => {
+      if (db === openedDb) pruneConversationEdits(openedDb);
+    });
     if (snapshot) {
       // Dentro do try de propósito: se nem o estado `migrated` grava, o
       // `migrating` no disco faria o próximo boot desfazer esta sessão inteira;
@@ -360,6 +358,22 @@ export function confirmDbBoot(): void {
 /** True quando o better-sqlite3 falhou no load e a persistência está degradada. */
 export function isDbDegraded(): boolean {
   return degraded;
+}
+
+/** Poda da proveniência de edição (> 30 dias); executada na fila idle pós-boot. */
+export function pruneConversationEdits(
+  targetDb: Db | null = db,
+  now = Date.now(),
+): void {
+  if (!targetDb) return;
+  try {
+    targetDb
+      .prepare('DELETE FROM provider_conversation_edits WHERE edited_at < ?')
+      .run(now - CONVERSATION_EDITS_RETENTION_MS);
+  } catch (err) {
+    // A poda é manutenção: falhar aqui nunca degrada o banco.
+    console.warn('[nexus] poda da proveniência de edição falhou:', err);
+  }
 }
 
 export function closeDb(): void {

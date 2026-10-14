@@ -63,7 +63,7 @@ describe('retenção e teto (F-1243, nexus.db real)', () => {
   const DAY = 24 * 3_600_000;
   const H = (c: string) => c.repeat(64);
 
-  it('no boot, depois do SCHEMA, apaga a proveniência com mais de 30 dias', async () => {
+  it('no boot, depois do SCHEMA, adia a poda da proveniência com mais de 30 dias para a fila idle pós-boot', async () => {
     const { recordConversationEdits } = await import('./conversation-edit-store');
     const old = { ...key, conversationId: 'conv-retencao' };
     const now = Date.now();
@@ -73,6 +73,10 @@ describe('retenção e teto (F-1243, nexus.db real)', () => {
 
     vi.resetModules(); // novo boot do Main, mesmo nexus.db
     const fresh = await import('./conversation-edit-store');
+    const { pruneConversationEdits } = await import('./db');
+    // Antes da fila idle pós-boot rodar, getDb() não faz DELETE síncrono no boot:
+    expect(fresh.listConversationEdits(old)).toEqual(new Map([['src/velho.ts', H('1')], ['src/novo.ts', H('2')]]));
+    pruneConversationEdits();
     expect(fresh.listConversationEdits(old)).toEqual(new Map([['src/novo.ts', H('2')]]));
   });
 
