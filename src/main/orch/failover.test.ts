@@ -1570,6 +1570,67 @@ describe('espera-pela-irmã + cooldown escopado (C1, derivado do oh-my-pi)', () 
     }
   });
 
+  it('F-1512: sinal refutado não derruba a espera restaurada — o timer dispara na hora e a linha fica até lá', async () => {
+    const Database = (await import('better-sqlite3')).default;
+    const db = new Database(':memory:');
+    initFailoverWaits(db as never);
+    try {
+      storeMocks.missionStatus = 'running';
+      vi.mocked(getAccount).mockImplementation((id: string) =>
+        id === 'account-a' ? { ...accountMocks.current, cooldownUntil: 160_000 } as Account
+          : id === 'account-b' ? accountMocks.next : null);
+      const owner = armPane(870);
+      vi.mocked(pickAvailableForFailover).mockImplementationOnce(() => ({
+        account: null, probe: false, nextUnblockAtMs: 130_000,
+      }));
+      ptyMocks.dataTaps[0]!('sess-870', 'LIMIT');
+      await settleFailover();
+      expect(listFailoverWaits()).toEqual([expect.objectContaining({ paneId: 'pane-870', retryAt: 131_000 })]);
+
+      // Reinício: a espera volta armada para 131 000.
+      shutdownFailover();
+      storeMocks.scopes.push(testProjectScope());
+      initFailover();
+      registerFailoverListener(owner);
+
+      // t=110 000: texto de limite citado, refutado por leitura fresca e sadia.
+      await vi.advanceTimersByTimeAsync(110_000 - Date.now());
+      const { detectLimit } = await import('./limit-detector');
+      vi.mocked(detectLimit).mockImplementationOnce((buffer: string) =>
+        buffer.includes('LIMIT') ? { kind: 'rate-limit', reason: 'rate limit', cooldownMs: 60_000 } : null);
+      const { requireQuotaService } = await import('../quota/quota-service');
+      vi.mocked(requireQuotaService).mockReturnValueOnce({
+        lastSnapshot: () => ({
+          updatedAt: 110_000, worstUsedRatio: 0.07, highUsageCount: 0, unknownCount: 0,
+          entries: [{ id: 'claude:account-a', adapterId: 'claude', accountId: 'account-a', label: 'Account A',
+            installed: true, onCooldown: false, updatedAt: 110_000,
+            windows: [{ kind: 'hours' as const, label: '5 Horas', usedRatio: 0.07, source: 'provider-api' as const,
+              confidence: 'high' as const }] }],
+        }),
+      } as unknown as ReturnType<typeof requireQuotaService>);
+      const picks = vi.mocked(pickAvailableForFailover).mock.calls.length;
+      ptyMocks.dataTaps[0]!('sess-870', 'LIMIT');
+      await settleFailover();
+      expect(vi.mocked(pickAvailableForFailover).mock.calls.length).toBe(picks);
+
+      // A linha segue em disco até a hora dela…
+      await vi.advanceTimersByTimeAsync(130_000 - Date.now());
+      expect(listFailoverWaits()).toEqual([expect.objectContaining({ paneId: 'pane-870', retryAt: 131_000 })]);
+      // …e em t=132 000 a espera restaurada disparou (o pick aconteceu).
+      await vi.advanceTimersByTimeAsync(132_000 - Date.now());
+      await settleFailover();
+      expect(vi.mocked(pickAvailableForFailover).mock.calls.length).toBeGreaterThan(picks);
+    } finally {
+      vi.mocked(getAccount).mockImplementation((id: string) => {
+        if (id === accountMocks.current.id) return accountMocks.current as Account;
+        if (accountMocks.next && id === accountMocks.next.id) return accountMocks.next;
+        return null;
+      });
+      initFailoverWaits(null);
+      db.close();
+    }
+  });
+
   it('F-1483: depois do reinício, missão que não está mais rodando não remonta sozinha — o fato vai ao Maestro', async () => {
     const Database = (await import('better-sqlite3')).default;
     const db = new Database(':memory:');

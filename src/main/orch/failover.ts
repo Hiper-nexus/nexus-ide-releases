@@ -3707,6 +3707,7 @@ async function confirmLimitByProbe(
     // F-1484: esta troca também comita o limite do episódio (a confirmação do
     // provedor que chegar depois só estende) e não encurta cooldown maior.
     noteLimitCommit(key, now, authority.sessionId);
+    cancelRestoredWait(authority.paneId);
     setCooldown(
       current.id,
       hit.scope
@@ -3835,6 +3836,8 @@ function commitLimitHit(
   options: { readonly unconfirmed?: boolean } = {},
 ): void {
   noteLimitCommit(key, now, authority.sessionId);
+  // F-1489/F-1512: limite novo aceito assume o pane — a espera restaurada dele sai.
+  cancelRestoredWait(authority.paneId);
   if (current) accountLimitCommits.set(current.id, Math.max(accountLimitCommits.get(current.id) ?? -Infinity, now));
   // Feed fleet quota UI (session/5h/weekly bars) from the same limit signal.
   noteQuotaLimitHit(adapterId, hit, current?.id);
@@ -4012,8 +4015,8 @@ function beginLimitHandling(key: string, watch: SessionWatch, now: number, confi
   watch.buffer = '';
   cancelScheduledRetry(key);
   cancelScheduledRetry(transientKey(key));
-  // F-1489: limite novo assume o pane — a espera restaurada dele sai.
-  cancelRestoredWait(watch.authority.paneId);
+  // F-1512: a espera restaurada do pane só cai quando o limite novo é ACEITO
+  // (commitLimitHit ou espera nova agendada): sinal refutado a deixa intacta.
   endTransientEpisode(watch);
 }
 
