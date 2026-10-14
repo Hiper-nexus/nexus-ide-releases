@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { nestedPtySupervisorEvidence, parseProcessTable } from './nested-pty-supervisor';
+import { hostDenied, nestedPtySupervisorEvidence, parseProcessTable, supervisorLaunchRejected } from './nested-pty-supervisor';
 
 const SUPERVISOR = '/Applications/NexusIDE.app/Contents/Resources/nexus-pty-supervisor';
 // Árvore real de um pane (ps -axo pid=,ppid=,comm=), com o vitest admitido pela fila heavy.
@@ -43,5 +43,16 @@ describe('F-1217 — suíte sob um nexus-pty-supervisor', () => {
     expect(nestedPtySupervisorEvidence({ platform: 'darwin', pid: 60002, env: {}, processes: launchdTable })).toBeUndefined();
     expect(nestedPtySupervisorEvidence({ platform: 'darwin', pid: 60002, env: { NEXUS_PANE_KEY: ' ' }, processes: launchdTable })).toBeUndefined();
     expect(nestedPtySupervisorEvidence({ platform: 'linux', pid: 50002, env: { NEXUS_PANE_KEY: 'pty-1' }, processes: paneTable })).toBeUndefined();
+  });
+
+  it('reconhece a recusa de lançamento do supervisor e o EPERM do portão', () => {
+    expect(supervisorLaunchRejected(76, 'nexus-pty-supervisor: launch authorization rejected before responsibility disclaim')).toBe(true);
+    expect(supervisorLaunchRejected(76, 'nexus-heavy: gave up')).toBe(false);
+    expect(supervisorLaunchRejected(1, 'launch authorization rejected')).toBe(false);
+    expect(supervisorLaunchRejected(null, 'launch authorization rejected')).toBe(false);
+    expect(hostDenied(Object.assign(new Error('denied'), { code: 'EPERM' }))).toBe(true);
+    expect(hostDenied(Object.assign(new Error('denied'), { code: 'EACCES' }))).toBe(true);
+    expect(hostDenied(Object.assign(new Error('missing'), { code: 'ENOENT' }))).toBe(false);
+    expect(hostDenied(new Error('plain'))).toBe(false);
   });
 });

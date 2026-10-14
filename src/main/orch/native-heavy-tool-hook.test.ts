@@ -7,7 +7,7 @@ import { expect, it } from 'vitest';
 import { claudeNativeHeavyHookCommand } from './native-heavy-tool-hook';
 import { NativeHeavyCommands } from './native-heavy-command';
 import { DARWIN_PTY_STAGE_ZERO_SOURCE, nestedHeavyJobBaseCommand, supervisedPtyCommand } from '../pty/darwin-pty-supervisor';
-import { skipUnderNexusPtySupervisor } from '../../test/nested-pty-supervisor';
+import { hostDenied, skipIfSupervisorLaunchRejected, skipUnderNexusPtySupervisor } from '../../test/nested-pty-supervisor';
 import { watchDarwinHeavyCommand } from '../pty/darwin-heavy-command';
 import { OwnedCommandProcesses } from '../pty/owned-command-process';
 import { HeavyCommandPermitPool } from './heavy-command-permit';
@@ -36,7 +36,8 @@ it.runIf(runNative).for(NATIVE_HEAVY_CASES)('real Claude native Bash receives sc
  skipUnderNexusPtySupervisor(testContext);
  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-heavy-real-claude-'));
  fs.writeFileSync(path.join(root, 'Makefile'), 'all:\n\t@printf done > command-ran\n');
- const outside = path.join(os.homedir(), `.nexus-inner-sandbox-fixture-${path.basename(root)}`); fs.writeFileSync(outside, 'protected');
+ const outside = path.join(os.homedir(), `.nexus-inner-sandbox-fixture-${path.basename(root)}`);
+ try { fs.writeFileSync(outside, 'protected'); } catch (error) { if (!hostDenied(error)) throw error; testContext.skip(`AMBIENTE-SANDBOX (F-1217): fixture fora do HOME privado recusada (${(error as { code?: string }).code}).`); }
  const helper = path.join(root, 'resources/native/darwin/nexus-pty-supervisor');
  execFileSync(process.execPath, [path.join(process.cwd(), 'scripts/build-darwin-pty-supervisor.mjs'), '--output', helper], { stdio: 'ignore' });
  const runtime = { platform: 'darwin' as const, packaged: false, cwd: root, moduleDir: root };
@@ -85,7 +86,7 @@ it.runIf(runNative).for(NATIVE_HEAVY_CASES)('real Claude native Bash receives sc
  const exit = new Promise<number | null>((resolve) => child.once('close', (code) => { cliAlive = false; resolve(code); }));
  const timer = setTimeout(() => child.kill('SIGTERM'), 25_000);
  try {
-  const code = await exit; expect(code, (stderr || stdout).slice(0, 2048)).toBe(0); expect(modelCalls).toBe(2);
+  const code = await exit; skipIfSupervisorLaunchRejected(testContext, code, stderr || stdout); expect(code, (stderr || stdout).slice(0, 2048)).toBe(0); expect(modelCalls).toBe(2);
   if (tracedLauncher) {
    expect(JSON.stringify(toolResult)).toContain('fixture PT_TRACE_ME errno=1');
    expect(fs.existsSync(path.join(root, 'command-ran'))).toBe(false); expect(admissions).toEqual([]);
