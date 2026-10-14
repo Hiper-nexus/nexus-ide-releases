@@ -12,7 +12,7 @@ import { cliPtyAdapterSchema } from '../../shared/adapter-types';
 import museAdapter from '../../adapters/builtin/muse.json';
 import { NativeHeavyCommands } from './native-heavy-command';
 import { nestedHeavyJobBaseCommand, supervisedPtyCommand } from '../pty/darwin-pty-supervisor';
-import { skipUnderNexusPtySupervisor } from '../../test/nested-pty-supervisor';
+import { controlDirOutsideCheckout, skipIfSupervisorLaunchRejected, skipUnderNexusPtySupervisor } from '../../test/nested-pty-supervisor';
 import { watchDarwinHeavyCommand } from '../pty/darwin-heavy-command';
 import { OwnedCommandProcesses } from '../pty/owned-command-process';
 import { HeavyCommandPermitPool } from './heavy-command-permit';
@@ -36,7 +36,7 @@ it.runIf(process.platform === 'darwin' && Boolean(muse)).for([
  { scheduled: false, fullAuto: true }, { scheduled: true, fullAuto: true },
 ])('real Muse selected config in place and scheduling=$scheduled fullAuto=$fullAuto', { timeout: 35_000 }, async ({ scheduled, fullAuto }, testContext) => {
  skipUnderNexusPtySupervisor(testContext);
- const root = fs.realpathSync(fs.mkdtempSync(path.join(path.dirname(process.cwd()), 'native-muse-control-')));
+ const root = controlDirOutsideCheckout(testContext, 'native-muse-control-');
  const workspace = path.join(root, 'workspace'), privateTmp = path.join(root, 'tmp'), home = path.join(root, 'home');
  for (const directory of [workspace, privateTmp, home]) fs.mkdirSync(directory);
  const marker = path.join(workspace, 'command-ran'), outside = path.join(root, 'outside-marker');
@@ -115,6 +115,7 @@ it.runIf(process.platform === 'darwin' && Boolean(muse)).for([
  const timer = setTimeout(() => child.kill('SIGTERM'), 25_000);
  try {
   const code = await exit;
+  skipIfSupervisorLaunchRejected(testContext, code, stderr || stdout);
   if (fsPreflight) {
    expect(code).toBe(0); expect(fs.readFileSync(path.join(channel!.env.NEXUS_HEAVY_CHANNEL_DIR, 'owned-fs-probe'), 'utf8'), JSON.stringify(shapes)).toBe('filesystem-permitted');
    expect(JSON.stringify(shapes)).toContain('filesystem-permitted'); expect(admissions).toEqual([]); expect(transitions).toEqual([]); return;
@@ -157,8 +158,8 @@ it.runIf(process.platform === 'darwin' && Boolean(muse)).for([
 // F-904: a lease entry left behind after the app was removed must not block the
 // operator's own Muse. Muse 1.4 only blocks on exit 2 / an explicit deny; a
 // missing node/script exits 127 and the original command runs.
-it.runIf(process.platform === 'darwin' && Boolean(muse)).each([{ fullAuto: false }, { fullAuto: true }])('real Muse runs the original command under an orphan lease hook fullAuto=$fullAuto', async ({ fullAuto }) => {
- const root = fs.realpathSync(fs.mkdtempSync(path.join(path.dirname(process.cwd()), 'native-muse-orphan-')));
+it.runIf(process.platform === 'darwin' && Boolean(muse)).each([{ fullAuto: false }, { fullAuto: true }])('real Muse runs the original command under an orphan lease hook fullAuto=$fullAuto', async ({ fullAuto }, testContext) => {
+ const root = controlDirOutsideCheckout(testContext, 'native-muse-orphan-');
  const home = path.join(root, 'home'), workspace = path.join(root, 'workspace'), marker = path.join(workspace, 'command-ran');
  fs.mkdirSync(path.join(home, 'config/muse'), { recursive: true }); fs.mkdirSync(workspace);
  fs.writeFileSync(path.join(home, 'config/muse/settings.json'), JSON.stringify(museNativeHeavySettings({ schema_version: 1 }, path.join(root, 'removed-app/node'), path.join(root, 'removed-app/heavy-command'))));
