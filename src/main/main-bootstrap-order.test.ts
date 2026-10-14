@@ -79,12 +79,28 @@ describe("main bootstrap settings migration order", () => {
   it('awaits the early PATH flight immediately before adapter discovery and automatically rescans after revalidation', () => {
     expect(bootstrapSource).toMatch(/await userPathReady;\s*initAdapterRegistry\(\);/u);
     expect(appReadySource).toContain('cachePath: path.join(app.getPath("userData"), "login-path.json")');
+    expect(appReadySource).toContain('void userPathReady.catch(() => undefined);');
     expect(appReadySource).toMatch(/retryLoginShellPathIfMissed\(\)\s*\.then\(\(changed\) => \(changed \? rescanAdapterBinaries\(\) : undefined\)\)/u);
   });
 
   it('starts the native heavy-job proof without holding bootstrap', () => {
     expect(bootstrapSource).toContain("void bootStepAsync('nativeHeavyJobEnvironment'");
     expect(bootstrapSource).not.toContain("await bootStepAsync('nativeHeavyJobEnvironment'");
+  });
+
+  it('overlaps an asynchronous orphan supervisor sweep with window creation, but finishes before any host can spawn', () => {
+    const startSweep = appReadySource.indexOf("const orphanSupervisorSweep = bootStepAsync(");
+    const createWindow = appReadySource.indexOf('createMainWindow({ deferRendererLoad: true })');
+    const awaitSweep = appReadySource.indexOf('await orphanSupervisorSweep;');
+    const bootstrap = appReadySource.indexOf('await bootstrap(userPathReady);');
+    expect([startSweep, createWindow, awaitSweep, bootstrap]).not.toContain(-1);
+    expect(startSweep).toBeLessThan(createWindow);
+    expect(createWindow).toBeLessThan(awaitSweep);
+    expect(awaitSweep).toBeLessThan(bootstrap);
+    const sweep = appReadySource.slice(startSweep, createWindow);
+    expect(sweep).toContain('execFile("/bin/ps"');
+    expect(sweep).toContain('listProcesses: () => processes');
+    expect(sweep).not.toContain('execFileSync');
   });
 });
 

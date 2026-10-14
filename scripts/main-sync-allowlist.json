@@ -196,14 +196,6 @@
       "reason": "Linux desktop database registration during portable-app setup; fixed argv and five-second timeout, never per terminal chunk."
     },
     {
-      "file": "src/main/main.ts",
-      "method": "execFileSync",
-      "kind": "call",
-      "fingerprint": "515cafd7bfc78a23a954c31378f323be6c3ea4fa09b532364e9b0f5a6e5e0482",
-      "count": 1,
-      "reason": "Quit-time emergency process inventory used by the final teardown authority after services stop; fixed ps argv and output cap."
-    },
-    {
       "file": "src/main/ops/ops-ipc.ts",
       "method": "execFileSync",
       "kind": "call",

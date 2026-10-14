@@ -1044,28 +1044,36 @@ if (squirrelStartupEvent || !wireDeepLinks()) {
     const userPathReady = resolveUserPath({
       cachePath: path.join(app.getPath("userData"), "login-path.json"),
     }).then(() => { markBootPhase('path-resolved'); });
+    // Observe early failures while the native window/sweep are still starting;
+    // bootstrap awaits the original promise and retains the normal error path.
+    void userPathReady.catch(() => undefined);
     // Varredura de órfãos do PRÓPRIO install: supervisores rodam disclaimed
     // (ppid 1 mesmo saudáveis), então parentesco não distingue vivo de órfão —
     // mas no boot, com o lock de instância única, NENHUM supervisor deste
     // install pode ter dono. Zumbis acumulados (04/08) faziam toda tentativa
     // de sair falhar a prova física; aqui eles morrem antes de existir sessão.
-    if (process.platform === "darwin") {
-      try {
-        const { execFileSync } = await import("node:child_process");
-        sweepOrphanPtySupervisors({
-          resourcesPath: process.resourcesPath,
-          listProcesses: () =>
-            execFileSync("/bin/ps", ["-axo", "pid=,ppid=,command="], {
+    const orphanSupervisorSweep = bootStepAsync('orphanPtySupervisors', async () => {
+      if (process.platform === "darwin") {
+        try {
+          const { execFile } = await import("node:child_process");
+          const processes = await new Promise<string>((resolve, reject) => {
+            execFile("/bin/ps", ["-axo", "pid=,ppid=,command="], {
               encoding: "utf8",
               maxBuffer: 8 * 1024 * 1024,
-            }),
-          kill: (pid, signal) => process.kill(pid, signal),
-          record: recordQuitIncident,
-        });
-      } catch (error) {
-        console.warn("[main] varredura de supervisores órfãos falhou:", error);
+              timeout: 4_000,
+            }, (error, stdout) => { if (error) reject(error); else resolve(stdout); });
+          });
+          sweepOrphanPtySupervisors({
+            resourcesPath: process.resourcesPath,
+            listProcesses: () => processes,
+            kill: (pid, signal) => process.kill(pid, signal),
+            record: recordQuitIncident,
+          });
+        } catch (error) {
+          console.warn("[main] varredura de supervisores órfãos falhou:", error);
+        }
       }
-    }
+    });
     // `protocol.handle` requires app.ready, but must exist before the first
     // BrowserWindow starts navigating. Installing it later in bootstrap made
     // every packaged launch fail its first nexus-app:// request and recover
@@ -1125,6 +1133,9 @@ if (squirrelStartupEvent || !wireDeepLinks()) {
     // Finder/dmg launches inherit a minimal PATH. The early shell probe (or
     // last good cache) is awaited only at adapter discovery inside bootstrap.
     try {
+      // Finish the sweep before bootstrap can fork a host/supervisor. A scan
+      // racing a new session could otherwise classify our live helper as orphan.
+      await orphanSupervisorSweep;
       await bootstrap(userPathReady);
       markBootPhase('bootstrap-ready');
       // Shell de login lento (oh-my-zsh + nvm num login frio) estoura o prazo
