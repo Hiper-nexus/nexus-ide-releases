@@ -23,6 +23,9 @@ export interface AgentSpecWriteCandidate {
 // No path separators, no leading dot, no traversal — the name maps 1:1 to a
 // filename inside ~/.claude/agents.
 const SAFE_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,95}$/;
+// F-1511: nome de dispositivo do Windows (antes do primeiro ponto) não vira
+// arquivo comum no Windows 10 nem em várias ferramentas (git, OneDrive).
+const WINDOWS_DEVICE_NAME_RE = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i;
 // Frontmatter scalar values live on a single line; a comma-list token must not
 // smuggle a list separator either.
 const SCALAR_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.\- ]{0,127}$/;
@@ -30,14 +33,43 @@ const LIST_TOKEN_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.\-]{0,127}$/;
 const EFFORT_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$/;
 
 function assertName(name: string): string {
-  if (!SAFE_NAME_RE.test(name) || name.includes('..')) {
+  if (
+    !SAFE_NAME_RE.test(name) ||
+    name.includes('..') ||
+    WINDOWS_DEVICE_NAME_RE.test(name)
+  ) {
     throw new Error('invalid agent spec name');
   }
   return name;
 }
 
+/**
+ * F-1511: no NTFS (e no APFS padrão) `Reviewer.md` e `reviewer.md` são o
+ * MESMO arquivo; escrever um patch para o outro nome mesclava em silêncio no
+ * agente existente. Recusa em todo SO para o nome valer igual em qualquer um.
+ */
+function assertNoCaseCollision(file: string): void {
+  const base = path.basename(file);
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(path.dirname(file));
+  } catch {
+    return;
+  }
+  const clash = entries.find(
+    (entry) => entry !== base && entry.toLowerCase() === base.toLowerCase(),
+  );
+  if (clash) {
+    throw new Error(
+      `agent spec name differs only in letter case from existing ${clash}; use that exact name`,
+    );
+  }
+}
+
 function targetPath(name: string): string {
-  return path.join(os.homedir(), '.claude', 'agents', `${assertName(name)}.md`);
+  const file = path.join(os.homedir(), '.claude', 'agents', `${assertName(name)}.md`);
+  assertNoCaseCollision(file);
+  return file;
 }
 
 function sameFile(left: fs.Stats, right: fs.Stats): boolean {
@@ -99,7 +131,11 @@ function assertList(field: string, values: string[]): string[] {
   });
 }
 
-function parseFrontmatter(raw: string): { data: Record<string, string>; body: string } {
+function parseFrontmatter(input: string): { data: Record<string, string>; body: string } {
+  // F-1511: arquivo salvo com CRLF (editor/git do Windows) não tinha
+  // `---\n`: o cabeçalho inteiro ia parar no corpo e os campos se perdiam.
+  // A reescrita sai sempre em LF.
+  const raw = input.replace(/\r\n/g, '\n');
   if (!raw.startsWith('---\n')) return { data: {}, body: raw };
   const end = raw.indexOf('\n---', 4);
   if (end < 0) return { data: {}, body: raw };

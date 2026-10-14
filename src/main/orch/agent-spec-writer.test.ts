@@ -144,3 +144,47 @@ describe('writeAgentSpec — writing', () => {
     expect(md).toContain('BODY TEXT');
   });
 });
+
+// F-1511: miúdos de caminho e de texto do Windows.
+describe('writeAgentSpec — Windows (F-1511)', () => {
+  it('lê frontmatter CRLF: mescla os campos e não duplica o cabeçalho no corpo', () => {
+    const dir = path.join(home, '.claude', 'agents');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'reviewer.md'),
+      '---\r\nname: reviewer\r\ndescription: Revisa o diff\r\nmodel: opus\r\n---\r\n\r\nCorpo original\r\n',
+      'utf8',
+    );
+    expect(writeAgentSpec({ name: 'reviewer', model: 'sonnet' }).ok).toBe(true);
+    const md = read('reviewer');
+    expect(md).toContain('name: reviewer');
+    expect(md).toContain('description: Revisa o diff');
+    expect(md).toContain('model: sonnet');
+    expect(md).not.toContain('model: opus');
+    expect(md.match(/^---$/gmu)).toHaveLength(2);
+    expect(md.trimEnd().endsWith('Corpo original')).toBe(true);
+  });
+
+  it('recusa nome de dispositivo do Windows (CON, NUL, AUX, PRN, COM1-9, LPT1-9)', () => {
+    for (const name of ['CON', 'nul', 'Aux', 'prn', 'COM1', 'lpt9', 'con.backup']) {
+      // A recusa é do Nexus e vem antes da confirmação nativa (o prepare é o
+      // que monta o diálogo), não do Windows ao abrir o arquivo.
+      expect(() => prepareAgentSpecWrite({ name }), name).toThrow(/^invalid agent spec name$/);
+      expect(writeAgentSpec({ name }), name).toEqual({ ok: false, error: 'invalid agent spec name' });
+    }
+    expect(fs.existsSync(path.join(home, '.claude', 'agents'))).toBe(false);
+    for (const name of ['console', 'com10', 'auxiliar', 'nullable']) {
+      expect(writeAgentSpec({ name }).ok, name).toBe(true);
+    }
+  });
+
+  it('recusa nome que só difere na caixa de um agente existente (mesmo arquivo no NTFS)', () => {
+    expect(writeAgentSpec({ name: 'reviewer', model: 'opus', systemPrompt: 'Original' }).ok).toBe(true);
+    const clash = writeAgentSpec({ name: 'Reviewer', model: 'sonnet' });
+    expect(clash.ok).toBe(false);
+    expect(clash.error).toMatch(/letter case/i);
+    expect(() => prepareAgentSpecWrite({ name: 'REVIEWER' })).toThrow(/letter case/i);
+    expect(read('reviewer')).toContain('model: opus');
+    expect(fs.readdirSync(path.join(home, '.claude', 'agents'))).toEqual(['reviewer.md']);
+  });
+});
