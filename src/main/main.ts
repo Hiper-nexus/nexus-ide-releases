@@ -720,11 +720,11 @@ async function bootstrap(userPathReady: Promise<void>): Promise<void> {
   }));
   bootStep('setPaneTerminalIdentity', () => setPaneTerminalIdentity({ name: "NexusIDE", version: app.getVersion() }));
   bootStep('registerPtyIpc', () => registerPtyIpc());
-  // Authenticate the native job base in the utility host before any agent
-  // receives its synchronous spawn environment. A slow PTY host must not stop
-  // the app from opening: until the base is proved, agents' heavy commands are
-  // refused; the proof retries in the background and before each agent spawn.
-  await bootStepAsync('nativeHeavyJobEnvironment', () => proveNativeHeavyJobBaseAtBoot());
+  // Start the proof without holding renderer boot. The preload module owns the
+  // flight; every agent spawn awaits it before fixing its environment, and a
+  // failed proof refuses the spawn until background/on-demand recovery.
+  void bootStepAsync('nativeHeavyJobEnvironment', () => proveNativeHeavyJobBaseAtBoot())
+    .catch((error: unknown) => { console.warn('[native-heavy] boot proof failed:', error); });
   // Semantic CommandBlock layer (OSC 133). Fail-closed behind feature flag;
   // never mutates the PTY byte stream — lateral tap only.
   // Persist finished blocks into project runtime SQLite when flag + scope ok.

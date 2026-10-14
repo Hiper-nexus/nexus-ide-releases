@@ -22,7 +22,12 @@ const deps = vi.hoisted(() => ({
   continuationBind: vi.fn(),
   continuationAssert: vi.fn(),
   continuationAccount: vi.fn(),
+  proveHeavyBase: vi.fn<() => Promise<void> | undefined>(),
 }));
+
+// This spawn fixture models an already proved host; proof concurrency has its
+// own tests, and these cases must never fork a real host.
+vi.mock('./native-heavy-preload', () => ({ ensureNativeHeavyJobBase: deps.proveHeavyBase }));
 
 vi.mock('../adapters/adapter-registry', () => ({
   getAdapter: () => ({
@@ -261,6 +266,16 @@ describe('exact headless mission resume', () => {
 });
 
 describe('F-790: spawn do Codex aguarda a sonda de versão (teto curto)', () => {
+  it('holds physical spawn behind the native heavy-job proof and refuses a failed proof', async () => {
+    let fail!: (error: Error) => void;
+    deps.proveHeavyBase.mockReturnValueOnce(new Promise<void>((_resolve, reject) => { fail = reject; }));
+    const pending = spawnMainOwnedMissionPaneAsync(options, hooks);
+    await vi.waitFor(() => expect(deps.proveHeavyBase).toHaveBeenCalledOnce());
+    expect(deps.spawn).not.toHaveBeenCalled();
+    fail(new Error('native_heavy_job_authority_unavailable'));
+    await expect(pending).rejects.toThrow('native_heavy_job_authority_unavailable');
+    expect(deps.spawn).not.toHaveBeenCalled();
+  });
   it('Codex com a sonda em voo: nada é preparado nem spawnado até ela concluir', async () => {
     let finish!: () => void;
     deps.settle.mockReturnValueOnce(new Promise<void>((resolve) => { finish = resolve; }));

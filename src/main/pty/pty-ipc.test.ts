@@ -11,7 +11,9 @@ const tabDeps = vi.hoisted(() => ({ prepare: vi.fn(), requireLive: vi.fn() }));
 // F-790: a espera do Codex pela sonda de versão (o helper real tem testes próprios).
 const settleDeps = vi.hoisted(() => ({
   settle: vi.fn((_adapter: unknown): Promise<void> | null => null),
+  proveHeavyBase: vi.fn<() => Promise<void> | undefined>(),
 }));
+vi.mock('../orch/native-heavy-preload', () => ({ ensureNativeHeavyJobBase: settleDeps.proveHeavyBase }));
 vi.mock('../orch/codex-cli-version', () => ({ settleCodexCliVersionForSpawn: settleDeps.settle }));
 vi.mock('./pane-space-worktree', () => ({ preparePaneSpaceWorktree: tabDeps.prepare }));
 
@@ -387,6 +389,7 @@ afterEach(() => {
 describe("registerPtyIpc account fail-fast", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    settleDeps.proveHeavyBase.mockReset();
     tabDeps.prepare.mockReset();
     tabDeps.requireLive.mockReset();
     authGateDeps.wait.mockReset().mockResolvedValue("fresh");
@@ -454,6 +457,22 @@ describe("registerPtyIpc account fail-fast", () => {
       accountId: "acct-selected",
       isolatedHome: expect.any(Boolean),
     });
+    expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
+  });
+
+  it('holds renderer agent spawn behind the native job proof and refuses a failed proof', async () => {
+    providerDeps.prepareProviderSpawn.mockReturnValueOnce({
+      ok: true, overrides: { binPath: '/usr/local/bin/claude', defaultModel: null, extraArgs: [], keyEnv: {}, suppressEnv: [] },
+    });
+    let fail!: (error: Error) => void;
+    settleDeps.proveHeavyBase.mockReturnValueOnce(new Promise<void>((_resolve, reject) => { fail = reject; }));
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn)!;
+    const pending = handler({ sender: { id: 7 } }, { kind: 'cli-agent', adapterId: 'claude', cols: 80, rows: 24 });
+    await vi.waitFor(() => expect(settleDeps.proveHeavyBase).toHaveBeenCalledOnce());
+    expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
+    const rejected = expect(pending).rejects.toThrow('native_heavy_job_authority_unavailable');
+    fail(new Error('native_heavy_job_authority_unavailable'));
+    await rejected;
     expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
   });
 

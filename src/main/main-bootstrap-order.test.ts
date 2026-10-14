@@ -81,6 +81,11 @@ describe("main bootstrap settings migration order", () => {
     expect(appReadySource).toContain('cachePath: path.join(app.getPath("userData"), "login-path.json")');
     expect(appReadySource).toMatch(/retryLoginShellPathIfMissed\(\)\s*\.then\(\(changed\) => \(changed \? rescanAdapterBinaries\(\) : undefined\)\)/u);
   });
+
+  it('starts the native heavy-job proof without holding bootstrap', () => {
+    expect(bootstrapSource).toContain("void bootStepAsync('nativeHeavyJobEnvironment'");
+    expect(bootstrapSource).not.toContain("await bootStepAsync('nativeHeavyJobEnvironment'");
+  });
 });
 
 describe("main Squirrel install/update events", () => {

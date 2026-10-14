@@ -61,11 +61,11 @@ describe.runIf(process.platform === 'darwin')('native heavy-job base at boot', (
     expect(prepare).toHaveBeenCalledTimes(1);
   });
 
-  it('does nothing at spawn time while the boot proof never failed', async () => {
+  it('proves on demand if a spawn arrives before boot started the proof', async () => {
     const { ensureNativeHeavyJobBase } = await freshPreload();
-    // Sem promise: o spawn normal não ganha um await a mais.
-    expect(ensureNativeHeavyJobBase()).toBeUndefined();
-    expect(prepare).not.toHaveBeenCalled();
+    prepare.mockResolvedValue(validJobBase());
+    await ensureNativeHeavyJobBase();
+    expect(prepare).toHaveBeenCalledTimes(1);
   });
 
   it('after a failed boot, a spawn proves the base first and a fresh failure is not retried by every spawn', async () => {
@@ -75,10 +75,10 @@ describe.runIf(process.platform === 'darwin')('native heavy-job base at boot', (
     prepare.mockResolvedValueOnce(null).mockResolvedValueOnce(null).mockResolvedValue(validJobBase());
     await expect(proveNativeHeavyJobBaseAtBoot([60_000])).resolves.toBe(false);
 
-    await ensureNativeHeavyJobBase();
+    await expect(ensureNativeHeavyJobBase()).rejects.toThrow('native_heavy_job_authority_unavailable');
     expect(prepare).toHaveBeenCalledTimes(2);
     // Falhou agora há pouco: o próximo spawn não espera o host de novo.
-    await ensureNativeHeavyJobBase();
+    await expect(ensureNativeHeavyJobBase()).rejects.toThrow('native_heavy_job_authority_unavailable');
     expect(prepare).toHaveBeenCalledTimes(2);
 
     vi.setSystemTime(new Date('2026-10-07T12:00:11Z'));
@@ -87,5 +87,38 @@ describe.runIf(process.platform === 'darwin')('native heavy-job base at boot', (
     // Base provada: spawns seguintes não consultam o host.
     await ensureNativeHeavyJobBase();
     expect(prepare).toHaveBeenCalledTimes(3);
+  });
+
+  it('holds concurrent agent spawns behind the boot proof without a second host request', async () => {
+    const { proveNativeHeavyJobBaseAtBoot, ensureNativeHeavyJobBase } = await freshPreload();
+    let prove!: (value: ReturnType<typeof validJobBase>) => void;
+    prepare.mockReturnValue(new Promise((resolve) => { prove = resolve; }));
+    const boot = proveNativeHeavyJobBaseAtBoot();
+    const spawn = vi.fn();
+    const first = (async () => { await ensureNativeHeavyJobBase(); spawn(); })();
+    const second = (async () => { await ensureNativeHeavyJobBase(); spawn(); })();
+    await Promise.resolve();
+    expect(spawn).not.toHaveBeenCalled();
+    prove(validJobBase());
+    await Promise.all([boot, first, second]);
+    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(prepare).toHaveBeenCalledTimes(1);
+    expect(ensureNativeHeavyJobBase()).toBeUndefined();
+  });
+
+  it('refuses a waiting agent when the boot proof fails instead of fixing an unproved env for its lifetime', async () => {
+    vi.useFakeTimers();
+    const { proveNativeHeavyJobBaseAtBoot, ensureNativeHeavyJobBase } = await freshPreload();
+    let prove!: (value: null) => void;
+    prepare.mockReturnValue(new Promise((resolve) => { prove = resolve; }));
+    const boot = proveNativeHeavyJobBaseAtBoot([60_000]);
+    const spawn = vi.fn();
+    const pending = (async () => { await ensureNativeHeavyJobBase(); spawn(); })();
+    const rejected = expect(pending).rejects.toThrow('native_heavy_job_authority_unavailable');
+    prove(null);
+    await expect(boot).resolves.toBe(false);
+    await rejected;
+    expect(spawn).not.toHaveBeenCalled();
+    expect(prepare).toHaveBeenCalledTimes(1);
   });
 });
