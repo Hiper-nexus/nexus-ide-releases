@@ -33,7 +33,6 @@ function entry(branchRef: string, baseSha: string = SHA): PooledWorktreeEntry {
 function record(entryRef: PooledWorktreeEntry): WorktreeRecord {
   return {
     ownerKind: 'pane',
-    pooled: true,
     id: 'worktree-test',
     scopeKey: 'scope-key',
     projectId: SCOPE.projectId,

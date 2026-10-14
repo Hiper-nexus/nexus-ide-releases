@@ -1172,12 +1172,16 @@ export class WorktreeManager {
   }
 
   /**
-   * A1: adota uma worktree PRÉ-ALOCADA do pool como writer de pane. Prova o
-   * MESMO que `create()` — raiz canônica, branch, HEAD, diretório comum do
-   * Git, config local segura e árvore limpa (`assertTaskWorktreeAsync`) — e
-   * registra `ready` via CAS com a pasta/branch do pool (marca `pooled`).
-   * Falha fechada: qualquer prova falha → lança; o chamador descarta a
-   * worktree e segue pelo caminho atual de alocação.
+   * A1: adota uma worktree PRÉ-ALOCADA do pool como writer de pane,
+   * convertendo-a para a identidade CANÔNICA do writer antes de gravar o
+   * registro: `git branch -m <nexus-pool/x> <branch derivada>` +
+   * `git worktree move <pool/x> <caminho derivado>`. O writer adotado fica
+   * indistinguível de um criado por `create()` — passa pelo salvage
+   * (`ISOLATED_WRITER_BRANCH_PREFIX`), pelo `tools-git` e pela identidade do
+   * workflow-state. Prova o MESMO que `create()` (raiz, branch, HEAD,
+   * common-dir, config, árvore limpa) antes E depois da conversão. Falha
+   * fechada: prova/rename/move falha → lança; o chamador descarta e cai no
+   * caminho atual de alocação.
    */
   async claimPooledPaneWriter(
     scope: ProjectExecutionScope,
@@ -1213,10 +1217,25 @@ export class WorktreeManager {
     }
     const taskId = `pane-${assertIdentifier(input.workerId, "workerId")}`;
     const taskKey = worktreeTaskKey(missionId, taskId);
-    const now = this.#timestamp();
-    const candidate = cloneRecord({
+    const baseSha = assertSha(input.baseSha, "pooled base SHA");
+    // Identidade canônica do writer: a MESMA derivada por create().
+    const derivedBranchRef = worktreeBranchRef({
       ownerKind: "pane",
-      pooled: true,
+      projectId: scope.projectId,
+      missionId,
+      taskId,
+      workerId: input.workerId,
+    });
+    const derivedPath = path.join(
+      this.worktreesRoot,
+      managedWorktreeRelativePath(scope.projectId, scope.checkoutId, taskKey),
+    );
+    // O `git worktree move` não cria os diretórios-pai do destino; espelha o
+    // `create()`, que garante o diretório do caminho derivado antes.
+    ensureDirectory(path.dirname(derivedPath), this.worktreesRoot);
+    const now = this.#timestamp();
+    const pooledCandidate = cloneRecord({
+      ownerKind: "pane",
       reservationGeneration: randomUUID(),
       id: `worktree-${taskKey}`,
       scopeKey: this.scopeKey(scope),
@@ -1230,33 +1249,74 @@ export class WorktreeManager {
       worktreePath: realWorktree,
       branchRef: input.branchRef,
       integrationRef: repository.integrationRef,
-      baseSha: assertSha(input.baseSha, "pooled base SHA"),
+      baseSha,
       ownership: { files: [], symbols: [], domains: [taskId] },
       dependencies: [],
       status: "ready",
       createdAt: now,
       updatedAt: now,
     });
-    // Prova de identidade: branch + HEAD + common-dir + config + árvore limpa.
-    const headSha = await assertTaskWorktreeAsync(this.#asyncGit, candidate);
-    if (headSha !== candidate.baseSha) {
+    // Prova ANTES da conversão: uma worktree suja/driftada fica no pool e é
+    // descartada limpa (branch ainda de pool).
+    const pooledHead = await assertTaskWorktreeAsync(this.#asyncGit, pooledCandidate);
+    if (pooledHead !== baseSha) {
       throw new WorktreeStateConflictError(
         "pooled worktree HEAD diverged from the pre-allocated base",
+      );
+    }
+    // Conversão. Rename da branch é instantâneo; o move do worktree é um
+    // rename no mesmo volume e leva o node_modules clonado junto.
+    const poolBranchName = input.branchRef.slice("refs/heads/".length);
+    const derivedBranchName = derivedBranchRef.slice("refs/heads/".length);
+    const rename = await this.#asyncGit.run(
+      repository.rootRealPath,
+      ["branch", "-m", poolBranchName, derivedBranchName],
+      { allowFailure: true },
+    );
+    if (rename.status !== 0) {
+      throw new WorktreeStateConflictError("pooled worktree branch rename failed");
+    }
+    const move = await this.#asyncGit.run(
+      repository.rootRealPath,
+      ["worktree", "move", realWorktree, derivedPath],
+      { allowFailure: true },
+    );
+    if (move.status !== 0) {
+      // Parcial: branch já renomeada, caminho ainda no pool. Reverte o rename
+      // para o chamador descartar via removePooledWorktree (branch de pool).
+      await this.#asyncGit.run(
+        repository.rootRealPath,
+        ["branch", "-m", derivedBranchName, poolBranchName],
+        { allowFailure: true },
+      );
+      throw new WorktreeStateConflictError("pooled worktree move failed");
+    }
+    // Prova da identidade FINAL (igual ao create()): branch derivada, caminho
+    // derivado, ainda limpo e na base congelada.
+    const finalCandidate = cloneRecord({
+      ...pooledCandidate,
+      worktreePath: derivedPath,
+      branchRef: derivedBranchRef,
+    });
+    const finalHead = await assertTaskWorktreeAsync(this.#asyncGit, finalCandidate);
+    if (finalHead !== baseSha) {
+      throw new WorktreeStateConflictError(
+        "adopted worktree HEAD diverged from the pre-allocated base",
       );
     }
     return this.#mutate(this.scopeKey(scope), (records) => {
       const conflict = records.some(
         (record) =>
-          record.worktreePath === realWorktree ||
-          record.branchRef === input.branchRef ||
+          record.worktreePath === derivedPath ||
+          record.branchRef === derivedBranchRef ||
           (record.taskKey === taskKey && ACTIVE_STATUSES.has(record.status)),
       );
       if (conflict) {
         throw new WorktreeStateConflictError(
-          "pooled worktree path, branch or task is already registered",
+          "adopted worktree path, branch or task is already registered",
         );
       }
-      return { records: [...records, candidate], result: candidate };
+      return { records: [...records, finalCandidate], result: finalCandidate };
     });
   }
 

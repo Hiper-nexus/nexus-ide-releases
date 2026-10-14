@@ -9,10 +9,14 @@ import {
   WorktreeManager,
   WorktreeStateConflictError,
   materializeGitWorktree,
+  worktreeBranchRef,
+  worktreeTaskKey,
   type WorktreeRecord,
   type WorktreeStateSnapshot,
   type WorktreeStateStore,
 } from './worktree-manager';
+import { managedWorktreeRelativePath } from './managed-worktree-layout';
+import { ISOLATED_WRITER_BRANCH_PREFIX } from '../orch/isolated-writer-policy';
 
 const PROJECT_ID = '11111111-1111-4111-8111-111111111111';
 
@@ -77,6 +81,26 @@ async function materializePooled(name: string, atSha?: string) {
   return { worktreePath: fs.realpathSync(worktreePath), branchRef };
 }
 
+/** Identidade CANÔNICA que create() derivaria para este worker (branch + caminho). */
+function derivedIdentity(missionId: string, workerId: string) {
+  const taskId = `pane-${workerId}`;
+  const taskKey = worktreeTaskKey(missionId, taskId);
+  const branchRef = worktreeBranchRef({
+    ownerKind: 'pane',
+    projectId: PROJECT_ID,
+    missionId,
+    taskId,
+    workerId,
+  });
+  const worktreePath = path.join(
+    // O manager resolve o caminho real (macOS: /var → /private/var); derive da
+    // MESMA raiz que o claim usa.
+    manager.worktreesRoot,
+    managedWorktreeRelativePath(PROJECT_ID, 'checkout-pool-test', taskKey),
+  );
+  return { taskId, taskKey, branchRef, worktreePath };
+}
+
 beforeEach(() => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-pool-adoption-'));
   root = path.join(tempDir, 'repo');
@@ -106,34 +130,82 @@ afterEach(() => {
 });
 
 describe('WorktreeManager pooled worktree adoption (A1)', () => {
-  it('claims a valid pooled worktree as a ready pane writer', async () => {
+  it('claims a valid pooled worktree, converting it to the canonical writer identity', async () => {
     const base = headSha();
-    const { worktreePath, branchRef } = await materializePooled('valid');
+    const { worktreePath: poolPath, branchRef: poolBranch } = await materializePooled('valid');
+    const derived = derivedIdentity('operator-hand', 'worker-1');
 
+    const record = await manager.claimPooledPaneWriter(scope(), 'operator-hand', {
+      workerId: 'worker-1',
+      worktreePath: poolPath,
+      branchRef: poolBranch,
+      baseSha: base,
+    });
+
+    // Registro NORMAL: identidade derivada, sem marca de pool.
+    expect(record.status).toBe('ready');
+    expect(record.ownerKind).toBe('pane');
+    expect(record.worktreePath).toBe(derived.worktreePath);
+    expect(record.branchRef).toBe(derived.branchRef);
+    expect(record.baseSha).toBe(base);
+    expect(record.taskId).toMatch(/^pane-worker-1$/);
+    expect('pooled' in record).toBe(false);
+
+    // Registro durável aponta para a identidade derivada.
+    const durable = manager.get(scope(), 'operator-hand', record.taskId);
+    expect(durable?.worktreePath).toBe(derived.worktreePath);
+    expect(durable?.branchRef).toBe(derived.branchRef);
+
+    // A worktree física MOVEU para o caminho derivado e trocou de branch.
+    expect(fs.existsSync(path.join(derived.worktreePath, 'README.md'))).toBe(true);
+    expect(fs.existsSync(poolPath)).toBe(false);
+    expect(git(derived.worktreePath, 'symbolic-ref', '--quiet', 'HEAD')).toBe(derived.branchRef);
+    // A branch de pool foi renomeada (não sobra).
+    expect(git(root, 'branch', '--list', 'nexus-pool/valid')).toBe('');
+  });
+
+  it('adopts with a branch in the isolated-writer namespace (salvage/tools-git identity)', async () => {
+    const base = headSha();
+    const { worktreePath, branchRef } = await materializePooled('namespace');
     const record = await manager.claimPooledPaneWriter(scope(), 'operator-hand', {
       workerId: 'worker-1',
       worktreePath,
       branchRef,
       baseSha: base,
     });
+    // F-794/ferramentas git: a branch precisa estar no namespace derivado `nexus/…`.
+    expect(record.branchRef.startsWith(ISOLATED_WRITER_BRANCH_PREFIX)).toBe(true);
+    expect(record.branchRef).toBe(worktreeBranchRef({
+      ownerKind: 'pane', projectId: PROJECT_ID, missionId: 'operator-hand',
+      taskId: record.taskId, workerId: record.workerId,
+    }));
+  });
 
-    expect(record.status).toBe('ready');
-    expect(record.pooled).toBe(true);
-    expect(record.ownerKind).toBe('pane');
-    expect(record.worktreePath).toBe(worktreePath);
-    expect(record.branchRef).toBe(branchRef);
-    expect(record.baseSha).toBe(base);
-    expect(record.taskId).toMatch(/^pane-worker-1$/);
+  it('reverts the rename and throws when the worktree move fails (fail-closed)', async () => {
+    const base = headSha();
+    const { worktreePath: poolPath, branchRef: poolBranch } = await materializePooled('move-fail');
+    const derived = derivedIdentity('operator-hand', 'worker-1');
+    // Trava a worktree: o `git worktree move` recusa (exit 128).
+    git(root, 'worktree', 'lock', poolPath);
 
-    // Registro durável: a mesma worktree é encontrável depois.
-    const durable = manager.get(scope(), 'operator-hand', record.taskId);
-    expect(durable).toBeDefined();
-    expect(durable?.pooled).toBe(true);
-    expect(durable?.worktreePath).toBe(worktreePath);
+    await expect(
+      manager.claimPooledPaneWriter(scope(), 'operator-hand', {
+        workerId: 'worker-1',
+        worktreePath: poolPath,
+        branchRef: poolBranch,
+        baseSha: base,
+      }),
+    ).rejects.toBeInstanceOf(WorktreeStateConflictError);
 
-    // A worktree física permanece intacta e na branch do pool.
-    expect(fs.existsSync(path.join(worktreePath, 'README.md'))).toBe(true);
-    expect(git(worktreePath, 'symbolic-ref', '--quiet', 'HEAD')).toBe(branchRef);
+    // Rename revertido: a worktree segue no pool, na branch de pool, sem registro.
+    expect(git(poolPath, 'symbolic-ref', '--quiet', 'HEAD')).toBe(poolBranch);
+    expect(git(root, 'branch', '--list', 'nexus-pool/move-fail')).toContain('nexus-pool/move-fail');
+    expect(manager.get(scope(), 'operator-hand', derived.taskId)).toBeNull();
+
+    // Depois de destravar, o descarte limpo continua funcionando.
+    git(root, 'worktree', 'unlock', poolPath);
+    await manager.removePooledWorktree(scope(), { worktreePath: poolPath, branchRef: poolBranch });
+    expect(fs.existsSync(poolPath)).toBe(false);
   });
 
   it('rejects a pooled worktree whose HEAD diverged from the claimed base', async () => {

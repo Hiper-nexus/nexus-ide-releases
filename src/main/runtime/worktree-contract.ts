@@ -69,15 +69,6 @@ export interface WorktreeRecord {
    * Ausente = worktree criada pelo próprio Nexus.
    */
   readonly adopted?: true;
-  /**
-   * F-980/A1: worktree nascida do POOL de worktrees pré-alocadas (A1). A pasta
-   * mora sob `worktreesRoot/pool/` e a branch usa `refs/heads/nexus-pool/…`
-   * (nenhuma derivada de task), mas é um writer de pane normal: GC/limpeza,
-   * retomada e remoção seguem exatamente o caminho dos writers criados pelo
-   * Nexus. Diferente de `adopted` (pasta/branch do operador, nunca removidas),
-   * a worktree do pool É do Nexus e sai pela GC quando liberada.
-   */
-  readonly pooled?: true;
   readonly id: string;
   readonly scopeKey: string;
   readonly projectId: string;
@@ -576,8 +567,6 @@ export function cloneWorktreeRecord(record: WorktreeRecord): WorktreeRecord {
     ...(record.sessionIds ? { sessionIds: Object.freeze([...record.sessionIds]) } : {}),
     // F-1429 parte 2: a marca de adoção atravessa toda transição de estado.
     ...(record.adopted === true ? { adopted: true as const } : {}),
-    // A1: a marca de pool atravessa toda transição de estado (GC/retomada).
-    ...(record.pooled === true ? { pooled: true as const } : {}),
   });
 }
 
