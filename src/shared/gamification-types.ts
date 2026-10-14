@@ -50,11 +50,17 @@ export interface StoredXpEvent extends XpEventInput {
   ruleVersion: number;
 }
 
-/** Últimas batidas de XP para o feed do perfil (endorfina legível). */
+/**
+ * Últimas batidas de XP para o feed do perfil (endorfina legível). Rajadas
+ * consecutivas do mesmo tipo chegam agrupadas: `points` soma o grupo,
+ * `createdAt` é a batida mais recente e `count` quantas entraram.
+ */
 export interface GamificationRecentEvent {
   kind: XpEventKind;
   points: number;
   createdAt: number;
+  /** Ausente em builds antigos do main = 1. */
+  count?: number;
 }
 
 export interface GamificationSnapshot {
@@ -78,6 +84,8 @@ export interface GamificationSnapshot {
   counters: Record<string, number>;
   /** Mais recentes primeiro; vazio no empty state do renderer. */
   recent: GamificationRecentEvent[];
+  /** XP ganho desde a meia-noite local (ausente em builds antigos do main). */
+  todayXp?: number;
   ruleVersion: number;
 }
 

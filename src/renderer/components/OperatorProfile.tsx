@@ -6,6 +6,8 @@ import {
 import {
   activeOperatorQuests,
   listAchievementProgress,
+  nextTierPlan,
+  recentAchievements,
   tierProgress,
   xpKindLabel,
 } from '../../shared/gamification-progress';
@@ -125,6 +127,18 @@ export function OperatorProfile() {
   const stars = '★'.repeat(Math.min(snapshot.prestige, 5));
   const efficient = snapshot.counters.efficient_mission ?? 0;
   const recent = snapshot.recent ?? [];
+  const todayXp = snapshot.todayXp ?? 0;
+  const recentUnlocks = recentAchievements(snapshot.achievements);
+  const plan = nextTierPlan(progress.remaining);
+  const nextTierName = progress.nextTier
+    ? GAMIFICATION_COPY.tiers[progress.nextTier]
+    : null;
+  const nextLine =
+    progress.remaining === null
+      ? snapshot.prestigeReady
+        ? 'jornada no topo — pronta para transcender'
+        : 'jornada no topo'
+      : `faltam ${fmt(progress.remaining)} XP para ${nextTierName ?? 'transcender'}`;
 
   if (!open) return null;
 
@@ -238,11 +252,19 @@ export function OperatorProfile() {
               />
             </span>
             <span id={descriptionId} className="operator-profile__next">
-              {progress.remaining === null
-                ? snapshot.prestigeReady
-                  ? 'jornada no topo — pronta para transcender'
-                  : 'jornada no topo'
-                : `faltam ${fmt(progress.remaining)} para o próximo marco (${fmt(snapshot.nextTierAt ?? 0)})`}
+              {nextLine}
+            </span>
+            {plan && <span className="operator-profile__plan">{plan}</span>}
+            <span
+              className={
+                todayXp > 0
+                  ? 'operator-profile__today operator-profile__today--live'
+                  : 'operator-profile__today'
+              }
+            >
+              {todayXp > 0
+                ? `+${fmt(todayXp)} XP hoje`
+                : 'nenhuma entrega hoje ainda'}
             </span>
           </div>
           <button
@@ -381,8 +403,8 @@ export function OperatorProfile() {
             </strong>
             <p>
               O XP sobe com <em>entrega real</em> — turno de agente com saída,
-              missão concluída, handoff verificado, task done, mídia gerada ou
-              ação da Jarvis. O consumo acima já é seu: a assinatura cobre o
+              handoff aceito pelo orquestrador, missão concluída, task done,
+              mídia gerada ou ação da Jarvis. O consumo acima já é seu: a assinatura cobre o
               que a API cobraria.
             </p>
           </div>
@@ -396,6 +418,26 @@ export function OperatorProfile() {
             <span aria-hidden="true">·</span>
             <span>{snapshot.shieldsLeft} escudos</span>
           </div>
+        )}
+
+        {recentUnlocks.length > 0 && (
+          <section
+            className="operator-profile__section"
+            aria-label="Conquistas recentes"
+          >
+            <h3>Desbloqueadas por último</h3>
+            <ul className="operator-profile__recent-unlocks">
+              {recentUnlocks.map((item) => (
+                <li
+                  key={item.id}
+                  className="operator-profile__recent-unlock"
+                  title={item.description}
+                >
+                  {item.title}
+                </li>
+              ))}
+            </ul>
+          </section>
         )}
 
         {quests.length > 0 && (
@@ -447,6 +489,7 @@ export function OperatorProfile() {
                   </span>
                   <span className="operator-profile__feed-kind">
                     {xpKindLabel(event.kind)}
+                    {(event.count ?? 1) > 1 ? ` ×${event.count}` : ''}
                   </span>
                   <span className="operator-profile__feed-time">
                     {formatRelativeTime(event.createdAt, now)}

@@ -288,6 +288,97 @@ describe('ProjectGamificationService on scoped runtimes', () => {
     );
   });
 
+  it('awards handoffs the orchestrator accepted, never rework or unacknowledged ones', () => {
+    const { runtimeManager, registry, service } = boot();
+    const executionScope = scope();
+    const suite = registry.forScope(executionScope);
+    const mission = suite.missions.create({ title: 'Entregas aceitas' });
+    const accepted = suite.handoffs.submit({
+      status: 'success',
+      summary: 'entrega aceita pelo orquestrador',
+      missionId: mission.id,
+    });
+    const reworked = suite.handoffs.submit({
+      status: 'success',
+      summary: 'entrega devolvida para retrabalho',
+      missionId: mission.id,
+    });
+    const pending = suite.handoffs.submit({
+      status: 'success',
+      summary: 'entrega ainda sem ACK',
+      missionId: mission.id,
+    });
+    expect(xpEvents(runtimeManager, executionScope)).toEqual([]);
+
+    // Recibo main-owned do ACK físico: consumed + veredito na mesma escrita.
+    const ack = runtimeManager.open(executionScope).db.prepare(
+      `UPDATE handoffs SET delivery_state = 'consumed', consumed_at = ?,
+              ack_verdict = ? WHERE id = ?`,
+    );
+    ack.run(Date.now(), 'accepted', accepted.id);
+    ack.run(Date.now(), 'rework', reworked.id);
+    suite.handoffs.submit({
+      status: 'partial',
+      summary: 'mudança que força nova varredura',
+    });
+
+    const events = xpEvents(runtimeManager, executionScope);
+    expect(events).toEqual([
+      expect.objectContaining({
+        kind: 'handoff_success',
+        entityKey: `handoff:${accepted.id}`,
+        points: 3_000,
+        evidence: null,
+      }),
+    ]);
+    expect(events.some((event) => event.entityKey === `handoff:${reworked.id}`))
+      .toBe(false);
+    expect(events.some((event) => event.entityKey === `handoff:${pending.id}`))
+      .toBe(false);
+    const snapshot = service.snapshot(executionScope);
+    expect(snapshot.counters.handoff_success).toBe(1);
+    expect(snapshot.streakDays).toBe(1);
+  });
+
+  it('reports today XP and groups bursts of the same kind in the feed', () => {
+    const day = new Date(2026, 9, 14, 15, 0, 0).getTime();
+    let clock = day - 86_400_000;
+    const runtimeManager = createManager();
+    const registry = createRegistry(runtimeManager);
+    const service = new ProjectGamificationService({
+      runtimeManager,
+      domainStores: registry,
+      broadcast: vi.fn(),
+      now: () => clock,
+    });
+    services.push(service);
+    service.start();
+    const executionScope = scope();
+
+    service.recordJarvisAction(executionScope, 'open_terminal', true);
+    clock = day;
+    service.recordAgentTurn(executionScope, 'claude');
+    clock = day + 1_000;
+    service.recordAgentTurn(executionScope, 'codex');
+    clock = day + 2_000;
+    service.recordAgentTurn(executionScope, 'mimo-code');
+    clock = day + 3_000;
+    service.recordMediaGenerated(executionScope, 'image', null);
+
+    const snapshot = service.snapshot(executionScope);
+    expect(snapshot.todayXp).toBe(300 * 3 + 1_000);
+    expect(snapshot.recent).toEqual([
+      expect.objectContaining({ kind: 'media_generated', count: 1, points: 1_000 }),
+      expect.objectContaining({
+        kind: 'agent_turn',
+        count: 3,
+        points: 900,
+        createdAt: day + 2_000,
+      }),
+      expect.objectContaining({ kind: 'jarvis_action', count: 1, points: 1_500 }),
+    ]);
+  });
+
   it('awards the existing mission green efficiency score from local usage', () => {
     const { runtimeManager, registry, service } = boot();
     const executionScope = scope();

@@ -9,7 +9,7 @@ import {
   focusHost,
   setHostVisibility,
 } from '../terminal/terminal-host';
-import { CoffeeSpillCorner } from '../pet/CoffeeCup';
+import { PaneEnergyCan } from '../pet/PaneEnergyCan';
 import { BrowserPane } from './BrowserPane';
 import { PaneActivityStrip } from './PaneActivityStrip';
 import { PaneApprovalCard } from './PaneApprovalCard';
@@ -65,9 +65,9 @@ function AcpPaneLeaf({ pane }: Props) {
       {isOrchestrator && <div className="pane__crown-beam" aria-hidden="true" />}
       <PaneToolbar pane={pane} isFocused={isFocused} />
       <AcpPaneView missionId={pane.missionId ?? ''} />
-      {/* Derrame no canto superior direito — uma vez por foco,
-          fade-out em ~3.8s. pointer-events: none, compositor-only. */}
-      {isFocused && <CoffeeSpillCorner className="spill-corner--live" />}
+      {/* Lata viva no canto: abre com estalo a cada foco e dá um gole quando
+          o XP sobe. pointer-events: none, compositor-only, cena finita. */}
+      {isFocused && <PaneEnergyCan />}
     </PaneInteractionSurface>
   );
 }
@@ -163,10 +163,11 @@ function TerminalPaneLeaf({ pane }: Props) {
         ref={slotRef}
         style={isVisible ? undefined : { visibility: 'hidden' }}
       />
-      {/* Derrame no canto superior direito — uma vez por foco,
-          fade-out em ~3.8s. pointer-events: none, compositor-only (opacity/transform).
-          Não intercepta input do xterm; montado/desmontado com isFocused. */}
-      {isFocused && <CoffeeSpillCorner className="spill-corner--live" />}
+      {/* Lata viva no canto: abre com estalo a cada foco (~4s) e dá um gole
+          quando o XP sobe — só com o pane visível. pointer-events: none,
+          compositor-only (opacity/transform), cena finita que sai do DOM;
+          o estado mora na lata, nunca re-renderiza o pane. */}
+      {isFocused && <PaneEnergyCan visible={isVisible} />}
     </PaneInteractionSurface>
   );
 }

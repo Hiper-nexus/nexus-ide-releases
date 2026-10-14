@@ -160,3 +160,38 @@ describe('OperatorProfile modal behavior', () => {
     expect(document.activeElement).toBe(invoker);
   });
 });
+
+describe('OperatorProfile progress readout', () => {
+  it('names the next tier, what is left, today XP, recent unlocks and grouped feed', () => {
+    const now = Date.now();
+    useGamificationStore.setState({
+      snapshot: {
+        ...EMPTY_GAMIFICATION_SNAPSHOT,
+        powerLevel: 631_975,
+        tier: 'VETERANO',
+        tierFloor: 'VETERANO',
+        nextTierAt: 1_500_000,
+        streakDays: 2,
+        todayXp: 17_225,
+        achievements: ['primeiro-comando', 'primeira-missao', 'primeira-agentica'],
+        counters: { agent_turn: 6_581, handoff_success: 8 },
+        recent: [
+          { kind: 'handoff_success', points: 3_000, createdAt: now, count: 1 },
+          { kind: 'agent_turn', points: 900, createdAt: now - 60_000, count: 12 },
+        ],
+      },
+    });
+    const dialog = openFrom(renderHarness());
+    const text = dialog.textContent ?? '';
+
+    expect(text).toContain('faltam 868K XP para ELITE');
+    expect(text).toContain('≈ 290 handoffs aceitos ou 87 missões');
+    expect(text).toContain('+17.2K XP hoje');
+    const recent = dialog.querySelector('[aria-label="Conquistas recentes"]');
+    expect(recent?.textContent).toContain('Arquiteto de Times');
+    expect(recent?.textContent).toContain('Primeiro Deploy');
+    const feed = dialog.querySelector('[aria-label="Feed de XP"]');
+    expect(feed?.textContent).toContain('Handoff entregue');
+    expect(feed?.textContent).toContain('Turno de agente ×12');
+  });
+});

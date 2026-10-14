@@ -1,7 +1,9 @@
 import type Database from 'better-sqlite3';
 import { z } from 'zod';
 import type {
+  GamificationRecentEvent,
   GamificationTier,
+  StoredXpEvent,
   XpEventKind,
 } from '../../shared/gamification-types';
 import type { Handoff } from '../../shared/orch-types';
@@ -166,6 +168,25 @@ export function handoffEffort(
   return panes.find((pane) => pane.role === 'worker')?.effort ?? null;
 }
 
+/**
+ * Handoffs `success` que o orquestrador ACEITOU pelo ACK físico. O veredito só
+ * é gravado por `consumeHandoffRow`, na mesma transação do recibo
+ * `handoff_ack_receipts` — sinal main-owned, nunca o `status` do reporter.
+ * Rework e entregas sem ACK ficam de fora.
+ */
+export function acceptedHandoffIds(db: Database.Database): ReadonlySet<string> {
+  const rows = db
+    .prepare(
+      `SELECT id FROM handoffs
+       WHERE status = 'success' AND delivery_state = 'consumed'
+         AND ack_verdict = 'accepted'`,
+    )
+    .all() as Array<{ id?: unknown }>;
+  return new Set(
+    rows.flatMap((row) => (typeof row.id === 'string' ? [row.id] : [])),
+  );
+}
+
 /** Reads project-local usage contracts; missing measurements mean no bonus. */
 export function missionCost(
   db: Database.Database,
@@ -198,6 +219,42 @@ export function missionCost(
   } catch {
     return null;
   }
+}
+
+/** Grupos no feed do perfil e janela de eventos varrida para montá-los. */
+const FEED_GROUPS = 8;
+const FEED_WINDOW = 400;
+
+/**
+ * Feed do perfil, mais recente primeiro. Rajadas consecutivas do mesmo tipo
+ * viram uma linha (centenas de turnos de agente não enterram o handoff aceito
+ * de cinco minutos atrás).
+ */
+export function groupRecentEvents(
+  events: readonly StoredXpEvent[],
+): GamificationRecentEvent[] {
+  const groups: GamificationRecentEvent[] = [];
+  const stop = Math.max(0, events.length - FEED_WINDOW);
+  for (let index = events.length - 1; index >= stop; index -= 1) {
+    const event = events[index]!;
+    const last = groups[groups.length - 1];
+    if (last && last.kind === event.kind) {
+      groups[groups.length - 1] = {
+        ...last,
+        points: last.points + event.points,
+        count: (last.count ?? 1) + 1,
+      };
+      continue;
+    }
+    if (groups.length === FEED_GROUPS) break;
+    groups.push({
+      kind: event.kind,
+      points: event.points,
+      createdAt: event.createdAt,
+      count: 1,
+    });
+  }
+  return groups;
 }
 
 export function bumpExtra(extra: Record<string, number>, key: string): void {

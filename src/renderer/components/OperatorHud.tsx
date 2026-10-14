@@ -1,130 +1,111 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { GAMIFICATION_COPY } from '../../shared/gamification-types';
-import { useGamificationStore } from '../state/gamification-store';
-import { ChosenPetPortrait } from './ChosenPetPortrait';
-import type { OperatorMood } from './OperatorSprite';
+import { tierProgress } from '../../shared/gamification-progress';
+import { useGamificationStore, xpGain } from '../state/gamification-store';
 import { fmt } from './operator-sprite-data';
 
 /**
- * HUD do Operador (rail de missões + footer do Settings): pet escolhido +
- * power/level. Compacto, clica para o perfil. Em modo sóbrio o XP some mas o
- * pet permanece — presença do companion, sem gamificação barulhenta.
+ * HUD do Operador no rail: nível, poder, barra DENTRO do tier, XP de hoje e
+ * o que falta para o próximo tier. Clica para o perfil. Some antes do primeiro
+ * snapshot do main e em modo sóbrio (o XP continua contando).
+ *
+ * Barato de propósito — fica na tela o dia todo: sem sprite do pet (roda
+ * setInterval), sem contagem por rAF. O ganho aparece como um "+N" que sobe
+ * e se apaga em CSS, uma vez por broadcast do main.
  */
-
-const CELEBRATE_MS = 3_000;
-const COUNT_MS = 600;
 
 const TIER_ORDER = Object.keys(GAMIFICATION_COPY.tiers);
 
-function reducedMotion(): boolean {
-  return (
-    typeof window.matchMedia === 'function' &&
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  );
+interface Gain {
+  readonly key: number;
+  readonly amount: number;
 }
 
-/** Conta do valor anterior ao novo em ~600ms (direto com reduced-motion). */
-function useCountUp(target: number): number {
-  const [shown, setShown] = useState(target);
-  const fromRef = useRef(target);
-  useEffect(() => {
-    const from = fromRef.current;
-    fromRef.current = target;
-    if (from === target || reducedMotion()) {
-      setShown(target);
-      return;
-    }
-    const start = performance.now();
-    let raf = 0;
-    const tick = (now: number) => {
-      const t = Math.min(1, (now - start) / COUNT_MS);
-      const eased = 1 - (1 - t) ** 3;
-      setShown(Math.round(from + (target - from) * eased));
-      if (t < 1) raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [target]);
-  return shown;
-}
-
-export function OperatorHud({
-  compact = false,
-}: {
-  /** Variante mais densa (footer do Settings). */
-  compact?: boolean;
-}) {
+export function OperatorHud() {
   const snapshot = useGamificationStore((s) => s.snapshot);
   const sober = useGamificationStore((s) => s.sober);
   const openProfile = useGamificationStore((s) => s.openProfile);
+  const [gain, setGain] = useState<Gain | null>(null);
 
-  const [mood, setMood] = useState<OperatorMood>('idle');
-  const prevPower = useRef(snapshot.powerLevel);
-  useEffect(() => {
-    if (sober) return;
-    if (snapshot.powerLevel > prevPower.current) {
-      prevPower.current = snapshot.powerLevel;
-      setMood('celebrating');
-      const id = setTimeout(() => setMood('idle'), CELEBRATE_MS);
-      return () => clearTimeout(id);
-    }
-    prevPower.current = snapshot.powerLevel;
-    return undefined;
-  }, [snapshot.powerLevel, sober]);
+  useEffect(
+    () =>
+      useGamificationStore.subscribe((state, previous) => {
+        if (state.snapshot === previous.snapshot) return;
+        const delta = xpGain(previous.snapshot, state.snapshot);
+        if (delta === null) {
+          setGain(null);
+          return;
+        }
+        if (delta <= 0) return;
+        setGain((current) => ({ key: (current?.key ?? 0) + 1, amount: delta }));
+      }),
+    [],
+  );
 
-  const shownPower = useCountUp(snapshot.powerLevel);
+  if (sober || !snapshot.projectId) return null;
+
   const level = TIER_ORDER.indexOf(snapshot.tier) + 1;
-  const progress = snapshot.nextTierAt
-    ? Math.min(1, snapshot.powerLevel / snapshot.nextTierAt)
-    : 1;
-  const stars =
-    snapshot.prestige > 0 ? '★'.repeat(Math.min(snapshot.prestige, 5)) : '';
-  const petSize = compact ? 28 : 32;
+  const tierName = GAMIFICATION_COPY.tiers[snapshot.tier];
+  const progress = tierProgress(snapshot);
+  const todayXp = snapshot.todayXp ?? 0;
+  const nextName = progress.nextTier
+    ? GAMIFICATION_COPY.tiers[progress.nextTier]
+    : 'transcender';
+  const left =
+    progress.remaining === null
+      ? 'topo da jornada'
+      : `${fmt(progress.remaining)} p/ ${nextName}`;
+  const today = todayXp > 0 ? `+${fmt(todayXp)} hoje` : 'sem XP hoje';
 
   return (
     <button
       type="button"
-      className={`operator-hud ${compact ? 'operator-hud--compact' : ''} ${sober ? 'operator-hud--sober' : ''}`}
+      className="operator-hud operator-hud--rail"
       onClick={openProfile}
-      title={
-        sober
-          ? 'Pet e perfil (modo sóbrio — XP oculto)'
-          : 'Perfil de Operador'
-      }
-      aria-label={
-        sober
-          ? 'Abrir perfil do pet'
-          : `Perfil de Operador — nível ${level}, ${GAMIFICATION_COPY.tiers[snapshot.tier]}, poder ${snapshot.powerLevel}`
-      }
+      title="Perfil de Operador"
+      aria-label={`Perfil de Operador — nível ${level}, ${tierName}, poder ${snapshot.powerLevel}, ${today}, ${
+        progress.remaining === null ? left : `faltam ${left}`
+      }`}
     >
-      <ChosenPetPortrait
-        size={petSize}
-        mood={mood}
-        fallbackTier={snapshot.tier}
-        fallbackBranch={snapshot.branch}
-        fallbackSkin={snapshot.selectedSkin}
-        className="operator-hud__pet"
-      />
-      {sober ? (
-        <span className="operator-hud__sober-label">Pet</span>
-      ) : (
-        <>
-          <span className="operator-hud__level" aria-hidden="true">
-            Lv {level}
+      <span className="operator-hud__head">
+        <span className="operator-hud__level" aria-hidden="true">
+          Lv {level}
+        </span>
+        <span className="operator-hud__tier">{tierName}</span>
+        <span
+          key={`power-${gain?.key ?? 0}`}
+          className={
+            gain
+              ? 'operator-hud__power operator-hud__power--bump'
+              : 'operator-hud__power'
+          }
+        >
+          {fmt(snapshot.powerLevel)}
+        </span>
+        {gain && (
+          <span key={gain.key} className="operator-hud__gain" aria-hidden="true">
+            +{fmt(gain.amount)}
           </span>
-          <span className="operator-hud__power">{fmt(shownPower)}</span>
-          <span className="operator-hud__detail">
-            {GAMIFICATION_COPY.tiers[snapshot.tier]}
-            {stars && <span className="operator-hud__stars">{stars}</span>}
-          </span>
-          <span className="operator-hud__bar" aria-hidden="true">
-            <span
-              className="operator-hud__bar-fill"
-              style={{ transform: `scaleX(${progress})` }}
-            />
-          </span>
-        </>
-      )}
+        )}
+      </span>
+      <span className="operator-hud__bar" aria-hidden="true">
+        <span
+          className="operator-hud__bar-fill"
+          style={{ transform: `scaleX(${progress.ratio})` }}
+        />
+      </span>
+      <span className="operator-hud__meta">
+        <span
+          className={
+            todayXp > 0
+              ? 'operator-hud__today operator-hud__today--live'
+              : 'operator-hud__today'
+          }
+        >
+          {today}
+        </span>
+        <span className="operator-hud__left">{left}</span>
+      </span>
     </button>
   );
 }

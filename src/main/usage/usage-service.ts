@@ -696,11 +696,15 @@ export class UsageTelemetryService {
   #onMimoEvent(binding: MimoSessionBinding, event: UsageRecord): void {
     if (this.#stopped || !isMimoUsageBindingProved(binding)) return;
     const state = this.#ensureScope(binding.scope);
-    state.stores.usage.record('mimo-code', {
+    const isNew = state.stores.usage.record('mimo-code', {
       ...event, paneId: binding.historicalUnowned ? null : binding.paneId, accountId: binding.accountId ?? null,
       missionId: binding.missionId ?? null,
     }, binding.historicalUnowned ? {} : { exactNativeAttribution: true });
-    if (!binding.historicalUnowned) this.#feedTokenSpeed('mimo-code', event, binding.paneId);
+    if (!binding.historicalUnowned) {
+      // Histórico sem dono não pontua: só turno de pane vivo vira XP.
+      if (isNew) this.#awardAgentTurn(state, 'mimo-code', event);
+      this.#feedTokenSpeed('mimo-code', event, binding.paneId);
+    }
     this.#scheduleBroadcast(state);
   }
 
@@ -816,7 +820,7 @@ export class UsageTelemetryService {
    */
   #awardAgentTurn(
     state: ScopeTelemetryState,
-    provider: 'claude' | 'codex',
+    provider: 'claude' | 'codex' | 'mimo-code',
     event: UsageEvent,
   ): void {
     if (!(event.outputTokens > 0)) return;

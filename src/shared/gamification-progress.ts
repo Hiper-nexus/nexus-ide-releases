@@ -59,6 +59,20 @@ function ratio(current: number, target: number): number {
   return Math.max(0, Math.min(1, current / target));
 }
 
+/** KEEP IN SYNC with main xp-rules BASE_POINTS (handoff_success/mission_done). */
+const HANDOFF_XP = 3_000;
+const MISSION_XP = 10_000;
+/** Degraus visíveis rumo ao Centurião (100 handoffs). */
+const HANDOFF_MILESTONES = [1, 10, 25, 50, 100] as const;
+/** Meta diária de exibição: ~3 handoffs ou um dia normal de turnos. */
+export const DAILY_XP_GOAL = 10_000;
+
+function formatXpShort(value: number): string {
+  return value >= 1_000 && value % 1_000 === 0
+    ? `${value / 1_000}K`
+    : value.toLocaleString('pt-BR');
+}
+
 type ProgressCtx = {
   counters: Record<string, number>;
   streakDays: number;
@@ -147,11 +161,15 @@ export function listAchievementProgress(
 export function activeOperatorQuests(
   snapshot: Pick<
     GamificationSnapshot,
-    'counters' | 'streakDays' | 'powerLevel' | 'achievements' | 'branch'
+    | 'counters'
+    | 'streakDays'
+    | 'powerLevel'
+    | 'achievements'
+    | 'branch'
+    | 'todayXp'
   >,
 ): OperatorQuest[] {
   const c = (key: string) => count(snapshot.counters, key);
-  const unlocked = new Set(snapshot.achievements);
   const quests: OperatorQuest[] = [];
 
   const push = (quest: OperatorQuest) => {
@@ -159,10 +177,21 @@ export function activeOperatorQuests(
     quests.push(quest);
   };
 
+  const today = snapshot.todayXp ?? 0;
+  push({
+    id: 'quest-daily',
+    title: 'Meta do dia',
+    hint: 'Entregas de hoje: turnos de agente, handoffs aceitos, tasks e missões.',
+    current: today,
+    target: DAILY_XP_GOAL,
+    ratio: ratio(today, DAILY_XP_GOAL),
+    rewardHint: `${formatXpShort(DAILY_XP_GOAL)} XP até a meia-noite`,
+  });
+
   push({
     id: 'quest-agent-turn',
     title: 'Primeira entrega de agente',
-    hint: 'Rode Claude ou Codex num pane até ele responder com saída real.',
+    hint: 'Rode um agente (Claude, Codex ou MiMo) num pane até ele responder com saída real.',
     current: c('agent_turn'),
     target: 1,
     ratio: ratio(c('agent_turn'), 1),
@@ -189,17 +218,19 @@ export function activeOperatorQuests(
     rewardHint: '10K–25K XP + Primeiro Deploy',
   });
 
-  if (!unlocked.has('primeira-missao-verde')) {
-    push({
-      id: 'quest-green',
-      title: 'Missão com luz verde',
-      hint: 'Entregue com evidência nexus-trusted (handoff verificado).',
-      current: c('mission_green'),
-      target: 1,
-      ratio: ratio(c('mission_green'), 1),
-      rewardHint: 'Conquista “Luz Verde”',
-    });
-  }
+  const handoffs = c('handoff_success') + c('handoff_green');
+  const handoffTarget =
+    HANDOFF_MILESTONES.find((milestone) => milestone > handoffs) ??
+    HANDOFF_MILESTONES[HANDOFF_MILESTONES.length - 1];
+  push({
+    id: 'quest-handoffs',
+    title: 'Handoffs aceitos',
+    hint: 'Cada entrega de agente que o orquestrador aceita vale XP.',
+    current: handoffs,
+    target: handoffTarget,
+    ratio: ratio(handoffs, handoffTarget),
+    rewardHint: `+${formatXpShort(HANDOFF_XP)} XP cada · Centurião em 100`,
+  });
 
   if (snapshot.streakDays < 5) {
     push({
@@ -229,6 +260,8 @@ const TIER_FLOOR: Record<GamificationTier, number> = {
   LENDA: 25_000_000,
 };
 
+const TIER_ORDER = Object.keys(TIER_FLOOR) as GamificationTier[];
+
 export function tierProgress(snapshot: {
   powerLevel: number;
   nextTierAt: number | null;
@@ -236,19 +269,54 @@ export function tierProgress(snapshot: {
 }): {
   ratio: number;
   remaining: number | null;
+  /** Tier seguinte; null em LENDA (o próximo marco é a transcendência). */
+  nextTier: GamificationTier | null;
   label: string;
 } {
+  const nextTier = TIER_ORDER[TIER_ORDER.indexOf(snapshot.tier) + 1] ?? null;
+  const tierName = GAMIFICATION_COPY.tiers[snapshot.tier];
+  const label = nextTier
+    ? `${tierName} → ${GAMIFICATION_COPY.tiers[nextTier]}`
+    : `${tierName} → transcendência`;
   if (snapshot.nextTierAt === null) {
-    return { ratio: 1, remaining: null, label: 'Topo da jornada' };
+    return { ratio: 1, remaining: null, nextTier, label: 'Topo da jornada' };
   }
   const floor = TIER_FLOOR[snapshot.tier] ?? 0;
   const span = Math.max(1, snapshot.nextTierAt - floor);
   const within = Math.max(0, snapshot.powerLevel - floor);
   const remaining = Math.max(0, snapshot.nextTierAt - snapshot.powerLevel);
   const ratio = Math.min(1, within / span);
-  return {
-    ratio,
-    remaining,
-    label: `${GAMIFICATION_COPY.tiers[snapshot.tier]} → próximo marco`,
-  };
+  return { ratio, remaining, nextTier, label };
+}
+
+/**
+ * O que falta em entregas concretas — não em "XP abstrato". Base sem escala
+ * de esforço: estimativa honesta, nunca promessa.
+ */
+export function nextTierPlan(remaining: number | null): string | null {
+  if (remaining === null || remaining <= 0) return null;
+  const handoffs = Math.ceil(remaining / HANDOFF_XP);
+  const missions = Math.ceil(remaining / MISSION_XP);
+  return `≈ ${handoffs} ${handoffs === 1 ? 'handoff aceito' : 'handoffs aceitos'} ou ${missions} ${missions === 1 ? 'missão' : 'missões'}`;
+}
+
+export type RecentAchievement = {
+  id: string;
+  title: string;
+  description: string;
+};
+
+/** Últimas conquistas desbloqueadas (a lista do main cresce por append). */
+export function recentAchievements(
+  unlockedIds: readonly string[],
+  limit = 3,
+): RecentAchievement[] {
+  const recent: RecentAchievement[] = [];
+  for (let index = unlockedIds.length - 1; index >= 0; index -= 1) {
+    if (recent.length === limit) break;
+    const id = unlockedIds[index]!;
+    const copy = GAMIFICATION_COPY.achievements[id];
+    if (copy) recent.push({ id, ...copy });
+  }
+  return recent;
 }
