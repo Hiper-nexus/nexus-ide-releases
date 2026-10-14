@@ -54,7 +54,10 @@ async function main() {
     relay.bind(job);
     let failed = false;
     job.once('error', () => { failed = true; });
-    job.once('close', (code, signal) => relay.finish(failed ? 127 : code, signal));
+    // Exit of the direct child, not stdio close: a grandchild holding an
+    // inherited pipe must not keep this process (and its root slot) alive.
+    job.once('exit', (code, signal) => relay.finish(failed ? 127 : code, signal));
+    job.once('close', () => { if (job.exitCode === null && job.signalCode === null) relay.finish(127, null); });
   } catch { relay.finish(78, null); }
 }
 void main();

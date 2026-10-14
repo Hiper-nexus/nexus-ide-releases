@@ -179,6 +179,31 @@ describe('F-1229: o cwd chega ao Main pelo próprio pedido', () => {
     expect(await run('npm test')).toBe('unset');
   });
 
+  it('job-launch exits with the direct child while a grandchild still holds stdout', async () => {
+    const marker = path.join(temp, 'grandchild.pid');
+    const script = path.join(temp, 'grandchild.pl');
+    fs.writeFileSync(script, `if (fork()) { exit 9 } else { open my $f, '>', ${JSON.stringify(marker)}; print $f $$; close $f; sleep 30; exit 0 }\n`);
+    const started = Date.now();
+    const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+      const child = spawn(process.execPath, [path.join(resources, 'job-launch.cjs'), 'build', '/usr/bin/perl', script], {
+        cwd: temp, stdio: ['ignore', 'pipe', 'pipe'],
+        env: { PATH: '/usr/bin:/bin', NEXUS_HEAVY_JOB_BASE: JSON.stringify({ file: '/usr/bin/perl', args: ['-e', 'while (@ARGV && $ARGV[0] ne "--") { shift @ARGV } shift @ARGV; exec @ARGV or die $!', 'heavy-job'] }) },
+      });
+      child.stdout!.resume(); child.stderr!.resume();
+      const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('job-launch still alive after the direct child exited')); }, 2_000);
+      child.once('error', (error) => { clearTimeout(timer); reject(error); });
+      child.once('exit', (code, signal) => { clearTimeout(timer); resolve({ code, signal }); });
+    });
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(result).toEqual({ code: 9, signal: null });
+    const deadline = Date.now() + 500;
+    let pid = 0;
+    while (Date.now() < deadline && !pid) {
+      try { pid = Number(fs.readFileSync(marker, 'utf8')); } catch { await new Promise((resolve) => setTimeout(resolve, 20)); }
+    }
+    if (pid > 1) { try { process.kill(pid, 'SIGKILL'); } catch { /* already reaped */ } }
+  });
+
   it('request.cjs envia o cwd do job (ou a dica do darwin-job) e imprime o motivo do Main', async () => {
     const bodies: Array<Record<string, unknown>> = [];
     const message = 'nexus-heavy: gave up after 300 s in the admission queue of /repo: 1 job(s) running there, 5 more waiting';

@@ -90,7 +90,7 @@ it.runIf(process.platform === 'darwin' && Boolean(grok))('real Grok native Bash 
   const childName = name === 'grok-transport.cjs' ? 'child' : 'job';
   const failureCode = name === 'grok-transport.cjs' ? 78 : 127;
   contents = replaceOnce(contents, `${childName}.once('error', () => { failed = true; });`, `${childName}.once('error', () => { finiteDiagnostic('child-error'); failed = true; });`);
-  contents = replaceOnce(contents, `${childName}.once('close', (code, signal) => relay.finish(failed ? ${failureCode} : code, signal));`, `${childName}.once('close', (code, signal) => { if (code === 78) finiteDiagnostic('child-exit-78'); relay.finish(failed ? ${failureCode} : code, signal); });`);
+  contents = replaceOnce(contents, `${childName}.once('exit', (code, signal) => relay.finish(failed ? ${failureCode} : code, signal));`, `${childName}.once('exit', (code, signal) => { if (code === 78) finiteDiagnostic('child-exit-78'); relay.finish(failed ? ${failureCode} : code, signal); });`);
   if (name === 'grok-transport.cjs') {
    contents = replaceOnce(contents, "child.stdio[5].once('error', () => { failed = true; try { child.kill('SIGTERM'); } catch {} });", "child.stdio[5].once('error', () => { finiteDiagnostic('frame-write-error'); failed = true; try { child.kill('SIGTERM'); } catch {} });");
    contents = replaceOnce(contents, "'use strict';", "'use strict';\n" + logger);

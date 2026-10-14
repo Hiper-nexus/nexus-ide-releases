@@ -25,4 +25,4 @@ try {
 const child = cp.spawn(file, args, { env: process.env, shell, stdio: 'inherit' });
 for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(signal, () => { try { child.kill(signal); } catch {} });
 child.on('error', () => process.exit(127));
-child.on('close', (code, signal) => { if (signal) { try { process.kill(process.pid, signal); } catch { process.exit(1); } } else process.exit(code ?? 1); });
+child.on('exit', (code, signal) => { if (signal) { try { process.kill(process.pid, signal); } catch { process.exit(1); } } else process.exit(code ?? 1); });

@@ -4,7 +4,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { expect, it } from 'vitest';
-import { NativeHeavyCommands } from './native-heavy-command';
+import { heavyExecutorIsLive, NativeHeavyCommands } from './native-heavy-command';
 import { HeavyCommandPermitPool } from './heavy-command-permit';
 import { OwnedCommandProcesses } from '../pty/owned-command-process';
 import type { AgentGateContext } from './gate';
@@ -68,6 +68,36 @@ it('F-983/F-997: writers isolados do MESMO checkout testam ao mesmo tempo — a 
  // Mesma worktree continua serializada (saídas e caches compartilhados).
  expect(await native.admit({ ...writer('w1'), token: 'w1b', sessionId: 'w1b' }, { pid: 103, kind: 'tests' })).toMatchObject({ allow: false, reason: 'heavy_command_wait_timeout' });
  state = 'gone'; await native.drain(); expect(pool.snapshot().active).toBe(0); pool.close();
+});
+
+it('treats ESRCH as a dead executor and EPERM as still alive', async () => {
+ expect(heavyExecutorIsLive(process.pid)).toBe(true);
+ const child = spawn(process.execPath, ['-e', 'process.exit(0)'], { stdio: 'ignore' });
+ const pid = child.pid!;
+ await new Promise<void>((resolve) => child.once('exit', () => resolve()));
+ expect(heavyExecutorIsLive(pid)).toBe(false);
+});
+
+it('frees the root slot when the admitted executor exits while its authority cohort is still live', async () => {
+ const scope = { version: 1 as const, installationId: 'finite', projectId: 'cohort', checkoutId: 'main', rootRealPath: '/repo', identitySource: 'manifest' as const };
+ const ctx = { token: 'finite', sessionId: 'finite', missionId: 'finite', role: 'worker', scope } as AgentGateContext;
+ const other = { ...ctx, token: 'other', sessionId: 'other' } as AgentGateContext;
+ const pool = new HeavyCommandPermitPool({ memory: () => ({ freeMB: 16_384, swapUsedMB: 0 }), limits: () => ({ minFreeMB: 512, maxSwapUsedMB: 0 }), refreshMemory: async () => {}, pollMs: 10, waitMs: 2_000, maxActive: 4 });
+ const alive = new Set([50]);
+ let authority: 'live' | 'gone' = 'live';
+ const native = new NativeHeavyCommands({ current: () => true, claim: async () => 'authority', probe: async () => authority,
+  executorLive: (pid) => alive.has(pid), acquire: (request) => pool.acquire(request) });
+ const held = await native.admit(ctx, { pid: 50, kind: 'build' });
+ expect(held.allow).toBe(true);
+ expect(pool.snapshot().active).toBe(1);
+ const next = native.admit(other, { pid: 51, kind: 'tests' });
+ await new Promise((resolve) => setTimeout(resolve, 40));
+ expect(pool.snapshot()).toMatchObject({ active: 1, waiting: 1 });
+ alive.delete(50); alive.add(51);
+ const admitted = await next;
+ expect(admitted.allow).toBe(true);
+ expect(pool.snapshot().active).toBe(1);
+ authority = 'gone'; await native.drain(); pool.close();
 });
 
 it('refuses unknown PID ownership and outside-mission callers before taking any RAM reservation', async () => {

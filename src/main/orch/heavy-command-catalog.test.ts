@@ -52,6 +52,22 @@ describe('commandKind still meters programs that do heavy work', () => {
     expect(catalog.commandKind(command)).toBe(kind);
   });
 
+  // The shell hook classified `NEXUS_HEAVY_HELPER=1 node …/job-launch.cjs tests`
+  // as `build` and wrapped it again. The outer build held the root slot after
+  // the inner tests had finished. The helper flag alone still meters real work.
+  it.each([
+    'NODE_OPTIONS= NEXUS_HEAVY_HELPER=1 node /Applications/NexusIDE.app/Contents/Resources/heavy-command/job-launch.cjs tests /bin/zsh -c "npx vitest run a.test.ts"',
+    'env NODE_OPTIONS= NEXUS_HEAVY_HELPER=1 node /opt/node/job-launch.cjs tests /bin/bash -c "npm test"',
+    'NEXUS_HEAVY_HELPER=1 /usr/local/bin/node ./resources/heavy-command/job-launch.cjs build /bin/sh -c "make"',
+  ])('%s is already admitted', (command) => {
+    expect(catalog.commandKind(command)).toBeNull();
+  });
+
+  it('does not treat the helper flag as a general exemption', () => {
+    expect(catalog.commandKind('NEXUS_HEAVY_HELPER=1 npx vitest run src/a.test.ts')).toBe('tests');
+    expect(catalog.commandKind('node /tmp/job-launch.cjs tests /bin/sh -c "npm test"')).toBe('build');
+  });
+
   it('keeps dev servers persistent and unmetered', () => {
     expect(catalog.commandKind('vite')).toBeNull();
     expect(catalog.commandKind('npx vite --port 5173')).toBeNull();
