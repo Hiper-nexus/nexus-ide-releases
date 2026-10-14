@@ -47,12 +47,6 @@ vi.mock('../../renderer/terminal/terminal-host', () => ({
 }));
 vi.mock('../../renderer/components/settings/AccountSection', () => ({ AccountSection: () => <button className="settings-btn--primary">Minha conta</button> }));
 vi.mock('../../renderer/components/UpdateModal', () => ({ UpdateNotifier: () => null }));
-// No darwin o warm pool só nasce com a base heavy provada (F-955); aqui o assunto é a licença.
-vi.mock('../orch/native-heavy-preload', async importOriginal => ({
-  ...await importOriginal<typeof import('../orch/native-heavy-preload')>(),
-  ensureNativeHeavyJobBase: () => undefined,
-  nativeHeavyJobBaseMissing: () => false,
-}));
 
 import { createLicenseAccess } from '../license-access';
 import { licensedAgentCount } from '../license-enforcement';
