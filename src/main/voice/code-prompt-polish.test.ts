@@ -3,6 +3,8 @@ import {
   CODE_PROMPT_POLISH_INSTRUCTIONS,
   parsePolishedPrompt,
   polishCodePrompt,
+  polishLooksInvented,
+  polishLooksLikeEcho,
 } from './code-prompt-polish';
 
 vi.mock('./jarvis-brain', () => ({
@@ -68,10 +70,89 @@ describe('polishCodePrompt — ditado CODE vira prompt em inglês', () => {
     });
   });
 
+  it('F-1435: rejeita reescrita que ecoa o português sem traduzir', async () => {
+    // Modelo devolveu o mesmo texto em português dentro de JSON válido —
+    // a maior parte das palavras é idêntica, overlap bem acima de 60%.
+    const chat = vi.fn(async () =>
+      JSON.stringify({ prompt: 'faz o commit e abre pull request' }),
+    );
+    await expect(
+      polishCodePrompt('faz o commit e abre o pull request', { chat }),
+    ).resolves.toMatchObject({
+      text: 'faz o commit e abre o pull request',
+      polished: false,
+      reason: 'untranslated',
+    });
+  });
+
+  it('F-1435: reescrita real em inglês tem baixa sobreposição com a fonte', async () => {
+    const chat = vi.fn(async () =>
+      JSON.stringify({ prompt: 'Commit the changes and open a pull request.' }),
+    );
+    await expect(
+      polishCodePrompt('faz o commit e abre o pull request', { chat }),
+    ).resolves.toMatchObject({
+      text: 'Commit the changes and open a pull request.',
+      polished: true,
+    });
+  });
+
   it('texto vazio não chama o modelo', async () => {
     const chat = vi.fn();
     await polishCodePrompt('   ', { chat });
     expect(chat).not.toHaveBeenCalled();
+  });
+});
+
+describe('polishLooksLikeEcho', () => {
+  it('textos idênticos são echo', () => {
+    expect(polishLooksLikeEcho('faz commit', 'faz commit')).toBe(true);
+    // Case-insensitive
+    expect(polishLooksLikeEcho('Faz Commit', 'faz commit')).toBe(true);
+  });
+
+  it('alta sobreposição de palavras (>60%) é echo', () => {
+    // 8 palavras, 7 em comum → 87.5% → echo
+    expect(
+      polishLooksLikeEcho(
+        'faz o commit e abre o pull request agora',
+        'faz o commit e abre o pull request',
+      ),
+    ).toBe(true);
+  });
+
+  it('tradução real tem baixa sobreposição', () => {
+    // "faz o commit e abre o pull request" vs "Commit the changes and open a pull request"
+    // source words: faz, o, commit, e, abre, o, pull, request
+    // polished words: commit, the, changes, and, open, a, pull, request
+    // overlap: commit, pull, request → 3/8 = 37.5% → not echo
+    expect(
+      polishLooksLikeEcho(
+        'faz o commit e abre o pull request',
+        'Commit the changes and open a pull request.',
+      ),
+    ).toBe(false);
+  });
+
+  it('texto curto não gera falso positivo', () => {
+    expect(polishLooksLikeEcho('sim', 'yes')).toBe(false);
+    expect(polishLooksLikeEcho('ok', 'ok')).toBe(false);
+    expect(polishLooksLikeEcho('não', 'no')).toBe(false);
+  });
+
+  it('texto vazio não quebra', () => {
+    expect(polishLooksLikeEcho('', 'commit')).toBe(false);
+    expect(polishLooksLikeEcho('faz commit', '')).toBe(false);
+  });
+});
+
+describe('polishLooksInvented', () => {
+  it('texto muito maior que a fonte é inventado', () => {
+    expect(polishLooksInvented('sim', 'x'.repeat(300))).toBe(true);
+  });
+
+  it('texto proporcional é aceito', () => {
+    expect(polishLooksInvented('faz commit', 'Commit the changes.')).toBe(false);
   });
 });
 

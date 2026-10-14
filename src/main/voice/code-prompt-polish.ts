@@ -148,6 +148,30 @@ export function polishLooksInvented(source: string, polished: string): boolean {
   return polished.length > source.length * 3 + 240;
 }
 
+/**
+ * When the model echoes the input without translating, most words stay the
+ * same across source (Portuguese) and polished. A proper English translation
+ * replaces functional words (prepositions, articles, conjunctions) and
+ * rephrases the sentence, pushing the overlap well below 60%.
+ *
+ * Technical terms (file names, identifiers, commands) stay identical in both
+ * languages, so a dictation heavy on code terms can still reach ~40-50%
+ * overlap naturally. The 60% threshold only catches the echo case.
+ */
+export function polishLooksLikeEcho(source: string, polished: string): boolean {
+  const sourceNorm = source.toLowerCase().replace(/\s+/g, ' ').trim();
+  const polishedNorm = polished.toLowerCase().replace(/\s+/g, ' ').trim();
+  if (!polishedNorm || !sourceNorm) return false;
+  if (sourceNorm === polishedNorm) return true;
+
+  const sourceWords = new Set(sourceNorm.split(' ').filter((w) => w.length > 0));
+  const polishedWords = polishedNorm.split(' ').filter((w) => w.length > 0);
+  if (polishedWords.length < 3) return false;
+
+  const overlap = polishedWords.filter((w) => sourceWords.has(w)).length;
+  return overlap / polishedWords.length > 0.6;
+}
+
 export async function polishCodePrompt(
   transcript: string,
   options: {
@@ -176,6 +200,9 @@ export async function polishCodePrompt(
     if (!polished) return { text: transcript, polished: false, reason: 'unparseable' };
     if (polishLooksInvented(source, polished)) {
       return { text: transcript, polished: false, reason: 'too-long' };
+    }
+    if (polishLooksLikeEcho(source, polished)) {
+      return { text: transcript, polished: false, reason: 'untranslated' };
     }
     return { text: polished, polished: true };
   } catch (error) {

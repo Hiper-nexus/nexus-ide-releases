@@ -44,18 +44,20 @@ export async function finalizeCodeDictation(
     // é chave saudável (expirada, timeout, saída suspeita). Sem a reescrita o
     // CODE entregaria português: a STT transcreve o MESMO áudio pedindo
     // tradução. Só o caminho de falha paga esse tempo.
-    if (request.translate === false) {
-      const translated = await ports.transcribe({
-        ...request,
-        translate: true,
-        prompt: DICTATION_CODE_PRIMING_PROMPT,
-      });
-      fallback = {
-        ok: translated.ok,
-        provider: translated.ok ? translated.provider : null,
-      };
-      if (translated.ok) delivered = translated;
-    }
+    // F-1435: mesmo quando o request já pedia translate, tenta de novo —
+    // a primeira STT pode ter usado um provider transcription-only (xAI Grok)
+    // que ignorou o translate. Uma segunda tentativa pode cair num provider
+    // diferente da cadeia que de fato traduz.
+    const translated = await ports.transcribe({
+      ...request,
+      translate: true,
+      prompt: DICTATION_CODE_PRIMING_PROMPT,
+    });
+    fallback = {
+      ok: translated.ok,
+      provider: translated.ok ? translated.provider : null,
+    };
+    if (translated.ok) delivered = translated;
   }
 
   // F-1392: o log de uso (dictation-session) mede o que a reescrita fez —
