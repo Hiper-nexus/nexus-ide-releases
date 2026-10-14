@@ -1,0 +1,172 @@
+[
+  {
+    "theme": "startup",
+    "expected": "dark",
+    "pass": true,
+    "actual": [
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark"
+    ]
+  },
+  {
+    "theme": "nexus-pink-city",
+    "expected": "dark",
+    "pass": true,
+    "actual": [
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark"
+    ]
+  },
+  {
+    "theme": "nexus-dark",
+    "expected": "dark",
+    "pass": true,
+    "actual": [
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark"
+    ]
+  },
+  {
+    "theme": "nexus-gray",
+    "expected": "dark",
+    "pass": true,
+    "actual": [
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark"
+    ]
+  },
+  {
+    "theme": "nexus-red",
+    "expected": "dark",
+    "pass": true,
+    "actual": [
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark"
+    ]
+  },
+  {
+    "theme": "nexus-light",
+    "expected": "light",
+    "pass": true,
+    "actual": [
+      "light",
+      "light",
+      "light",
+      "light",
+      "light",
+      "light",
+      "light",
+      "light",
+      "light",
+      "light"
+    ]
+  },
+  {
+    "theme": "dracula",
+    "expected": "dark",
+    "pass": true,
+    "actual": [
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark"
+    ]
+  },
+  {
+    "theme": "solarized-dark",
+    "expected": "dark",
+    "pass": true,
+    "actual": [
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark"
+    ]
+  },
+  {
+    "theme": "nexus-light",
+    "expected": "light",
+    "pass": true,
+    "actual": [
+      "light",
+      "light",
+      "light",
+      "light",
+      "light",
+      "light",
+      "light",
+      "light",
+      "light",
+      "light"
+    ]
+  },
+  {
+    "theme": "nexus-pink-city",
+    "expected": "dark",
+    "pass": true,
+    "actual": [
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark",
+      "dark"
+    ]
+  }
+]

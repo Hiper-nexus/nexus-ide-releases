@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.258 — Menus nativos do Windows com o tema do app
+
+Corrige o fundo branco com texto claro nos menus nativos dos seletores (modelo, esforço e demais) no Windows.
+
+- **Menus nativos com o tema do app (F-380).** O popup nativo do select seguia o tema do sistema e abria com fundo claro, herdando o texto quase branco dos controles. `:root` declara `color-scheme: dark` e o tema claro declara `color-scheme: light`.
+
 ## 0.76.257 — Linux em dia com o orquestrador, o teclado e a voz
 
 A 0.76.254 foi a última com pacote Linux. A 0.76.255 saiu só para macOS (modal do Chaveiro do Muse, sem efeito no Linux) e a 0.76.256 ainda não tinha pacote. Esta versão é o mesmo produto da 0.76.256, empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35).

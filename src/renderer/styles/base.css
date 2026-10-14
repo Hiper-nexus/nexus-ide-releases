@@ -35,6 +35,9 @@
 }
 
 :root {
+  /* Native select popups on Windows must match the app, not the OS theme:
+     otherwise their light canvas can inherit our near-white control text. */
+  color-scheme: dark;
   /* Pink City default: near-black neutral layers, quiet dividers and a pink
      operational signal reserved for live, selected and focused state. Color
      never becomes wallpaper; hierarchy comes from space and contrast. */
@@ -295,6 +298,7 @@
 /* Ajustes de sinal para o tema claro (ui-theme.ts seta data-theme no <html>):
    verdes/âmbares de dark não seguram contraste sobre branco. */
 [data-theme='nexus-light'] {
+  color-scheme: light;
   /* ≥5.4:1 sobre branco: estes tokens aparecem como texto de status pequeno,
      não apenas como pontos/LEDs. */
   --ok: #0b7a43;

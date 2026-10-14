@@ -3,7 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { TerminalThemeId } from "../../shared/settings-types";
-import { applyUiTheme, LEGACY_NEXUS_CYAN_PALETTE } from "./ui-theme";
+import { applyUiTheme, LEGACY_NEXUS_CYAN_PALETTE, PALETTES } from "./ui-theme";
+import { parseVsCodeThemeFile } from "./vscode-theme-import";
 
 // jsdom rewrites import.meta.url to an http URL, so the stylesheets are read
 // from the vitest root (the repo) instead of relative to this module.
@@ -64,6 +65,51 @@ function contrast(foreground: string, background: string): number {
   const darker = Math.min(luminance(foreground), luminance(background));
   return (lighter + 0.05) / (darker + 0.05);
 }
+
+describe("Native form control theme", () => {
+  let styles: HTMLStyleElement;
+
+  beforeEach(() => {
+    styles = document.createElement("style");
+    styles.textContent = baseCss;
+    document.head.append(styles);
+  });
+
+  afterEach(() => {
+    styles.remove();
+    document.documentElement.removeAttribute("style");
+    delete document.documentElement.dataset.theme;
+    delete document.documentElement.dataset.platform;
+  });
+
+  it("uses dark native menus before settings load", () => {
+    expect(getComputedStyle(document.documentElement).colorScheme).toBe("dark");
+  });
+
+  it("keeps native menus on the same side as every built-in theme", () => {
+    for (const theme of Object.keys(PALETTES) as TerminalThemeId[]) {
+      applyUiTheme(theme);
+      expect(getComputedStyle(document.documentElement).colorScheme, theme).toBe(
+        theme === "nexus-light" ? "light" : "dark",
+      );
+    }
+  });
+
+  it("switches native menus with imported light/dark themes and back", () => {
+    for (const [background, expected] of [["#ffffff", "light"], ["#101010", "dark"]]) {
+      const imported = parseVsCodeThemeFile({
+        name: "Native controls",
+        colors: { "editor.background": background },
+      });
+      applyUiTheme("nexus-dark", imported);
+      expect(getComputedStyle(document.documentElement).colorScheme).toBe(expected);
+    }
+    applyUiTheme("nexus-light");
+    expect(getComputedStyle(document.documentElement).colorScheme).toBe("light");
+    applyUiTheme("nexus-pink-city");
+    expect(getComputedStyle(document.documentElement).colorScheme).toBe("dark");
+  });
+});
 
 describe("Nexus Light UI palette", () => {
   afterEach(() => {

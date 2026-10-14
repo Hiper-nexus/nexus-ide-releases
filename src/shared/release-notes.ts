@@ -10622,7 +10622,7 @@ export const RELEASE_076256: AppRelease = {
     { title: 'stt-needs-key e tempo limite da STT', detail: 'needsKey exige provedor sem chave e nenhuma tentativa real; tempo limite de nuvem proporcional ao tamanho do áudio; evento stt.failed no voice.log.' },
   ],
 };
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076257: AppRelease = {
   version: '0.76.257',
   date: '2026-10-14',
   codename: 'Linux em dia com o orquestrador, o teclado e a voz',
@@ -10635,5 +10635,17 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: [
     { title: 'Retomada e teclado', detail: 'A tela «No conversation found with session ID» esquece o vínculo na 1ª ocorrência. O receptor antigo de teclado é descartado antes de registrar o novo.' },
     { title: 'Atualização do Linux', detail: 'A 0.76.255 só tinha pacote de macOS e a 0.76.256 ainda não tinha Linux. O Omarchy consultava o espelho e ficava na 0.76.254. O modal do Chaveiro do Muse não muda o Linux.' },
+  ],
+};
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.258',
+  date: '2026-10-14',
+  codename: 'Menus nativos do Windows com o tema do app',
+  summary: 'Corrige o fundo branco com texto claro nos menus nativos dos seletores no Windows: o popup agora segue o tema escuro ou claro do app.',
+  highlights: [
+    { title: 'Menus nativos legíveis', detail: 'Os seletores de modelo, esforço e demais abrem o menu nativo com o mesmo tema do app, sem fundo branco e texto claro.' },
+  ],
+  fixes: [
+    { title: 'color-scheme nos temas (F-380)', detail: ':root declara color-scheme dark e o tema nexus-light declara light, para o popup nativo do select não herdar o canvas claro do sistema.' },
   ],
 };
