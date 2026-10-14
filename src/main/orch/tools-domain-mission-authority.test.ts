@@ -807,6 +807,76 @@ describe('mission creation authority', () => {
       expect(input.squadId).toBe('nexus-fullstack');
       expect(input).not.toHaveProperty('intentContract');
     });
+
+    describe('F-1504: squadId é conferido na criação', () => {
+      const runtimeId = 'mission-runtime-123e4567-e89b-42d3-a456-426614174000';
+      beforeEach(() => {
+        mocks.getOrchSettings.mockReturnValue({ squadCliPolicy: 'operator-choice' });
+        vi.mocked(listSquads).mockReturnValue([
+          { id: 'nexus-fullstack', name: 'Nexus Fullstack', agents: [] },
+          { id: 'squad-a1', name: 'Equipe Web', agents: [] },
+          { id: 'squad-b2', name: 'Revisão', agents: [] },
+          { id: 'squad-b3', name: 'Revisão', agents: [] },
+          { id: runtimeId, name: 'Equipe Web', agents: [] },
+          { id: PET_STUDIO_SQUAD_ID, name: 'Pet Studio', agents: [] },
+        ] as never);
+      });
+
+      it('recusa id inexistente antes de qualquer efeito, listando id e nome dos squads', async () => {
+        const { create } = missionStores();
+        const capture = vi.spyOn(codeBaseline, 'captureMissionCodeBaseline');
+
+        const refusal = await missionCreateTool()
+          .handler({ title: 'Missão', squadId: 'squad-inexistente' }, operatorHand())
+          .catch((error: unknown) => error);
+
+        expect(refusal).toBeInstanceOf(PreEffectRefusalError);
+        expect((refusal as Error).message).toBe(
+          'squadId desconhecido: squad-inexistente. Squads disponíveis (id e nome): ' +
+            'nexus-fullstack ("Nexus Fullstack"), squad-a1 ("Equipe Web"), ' +
+            'squad-b2 ("Revisão"), squad-b3 ("Revisão")',
+        );
+        expect(create).not.toHaveBeenCalled();
+        expect(capture).not.toHaveBeenCalled();
+      });
+
+      it('o NOME exato de um único squad salvo resolve para o id dele', async () => {
+        const { create } = missionStores();
+
+        await missionCreateTool().handler(
+          { title: 'Missão', squadId: 'Equipe Web' },
+          operatorHand(),
+        );
+
+        expect(create.mock.calls[0]![0].squadId).toBe('squad-a1');
+      });
+
+      it('nome repetido recusa e pede o id, listando só os candidatos', async () => {
+        const { create } = missionStores();
+
+        await expect(
+          missionCreateTool().handler(
+            { title: 'Missão', squadId: 'Revisão' },
+            operatorHand(),
+          ),
+        ).rejects.toThrow(
+          'squadId ambíguo: mais de um squad se chama "Revisão"; passe o id: ' +
+            'squad-b2 ("Revisão"), squad-b3 ("Revisão")',
+        );
+        expect(create).not.toHaveBeenCalled();
+      });
+
+      it.each(['squad-b2', runtimeId])(
+        'id existente passa como antes, inclusive a cópia runtime selada (%s)',
+        async (squadId) => {
+          const { create } = missionStores();
+
+          await missionCreateTool().handler({ title: 'Missão', squadId }, operatorHand());
+
+          expect(create.mock.calls[0]![0].squadId).toBe(squadId);
+        },
+      );
+    });
   });
 
   it('queues verification without completing when immutable PREVC receipts are incomplete', async () => {

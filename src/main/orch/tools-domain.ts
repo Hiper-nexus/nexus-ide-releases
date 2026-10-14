@@ -21,6 +21,7 @@ import {
   assertCurrentMissionOrchestratorSession,
   assertOrchestratorMission,
   executionScopeFor,
+  PreEffectRefusalError,
   refuseBeforeEffect,
   returnOperatorHandFromEndedMission,
 } from './gate';
@@ -332,6 +333,33 @@ const agentInvokeTool: McpToolDef = {
   },
 };
 
+/**
+ * F-1504: `squadId` é a identidade que a missão inteira usa depois (agente
+ * nomeado, roster, selo). Id que existe passa como antes, inclusive a cópia
+ * runtime selada. O nome exato de um único squad salvo resolve para o id
+ * dele — a mesma regra de `requireCatalogAgent` para agentes; nome repetido
+ * ou valor desconhecido recusa antes de qualquer efeito, listando as opções.
+ */
+function resolveMissionCreateSquadId(ref: string): string {
+  const squads = listSquads();
+  if (squads.some((squad) => squad.id === ref)) return ref;
+  const catalog = squads.filter(
+    (squad) => !isMissionRuntimeSquadId(squad.id) && squad.id !== PET_STUDIO_SQUAD_ID,
+  );
+  const named = catalog.filter((squad) => squad.name === ref);
+  if (named.length === 1) return named[0]!.id;
+  const options = (named.length > 1 ? named : catalog)
+    .map((squad) => `${squad.id} (${JSON.stringify(squad.name)})`)
+    .join(', ');
+  const message = named.length > 1
+    ? `squadId ambíguo: mais de um squad se chama ${JSON.stringify(ref)}; passe o id: ${options}`
+    : `squadId desconhecido: ${ref}. Squads disponíveis (id e nome): ${options || 'nenhum'}`;
+  throw new PreEffectRefusalError(
+    message,
+    'Repita nexus_mission_create com o id de um squad da lista, ou sem squadId.',
+  );
+}
+
 const missionCreateTool: McpToolDef = {
   name: 'nexus_mission_create',
   description:
@@ -350,7 +378,10 @@ const missionCreateTool: McpToolDef = {
     properties: {
       title: { type: 'string' },
       description: { type: 'string' },
-      squadId: { type: 'string' },
+      squadId: {
+        type: 'string',
+        description: 'id of a saved squad (the exact name of a single saved squad also resolves)',
+      },
       milestones: { type: 'array', items: { type: 'string' } },
     },
     required: ['title'],
@@ -366,7 +397,8 @@ const missionCreateTool: McpToolDef = {
     const title = requireStr(args, 'title');
     const description = str(args, 'description');
     const milestones = strArray(args, 'milestones');
-    const rawSquadId = str(args, 'squadId');
+    const requestedSquadId = str(args, 'squadId');
+    const rawSquadId = requestedSquadId && resolveMissionCreateSquadId(requestedSquadId);
     const baseline = await captureMissionCodeBaseline(executionScopeFor(ctx).rootRealPath);
     assertMcpInvocationCurrent(invocation);
     if (ctx.role !== 'user') throw new Error('not authorized: the mission creator changed during baseline capture');
