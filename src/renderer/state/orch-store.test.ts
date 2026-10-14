@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MissionSummarySnapshot } from '../../shared/mission-engine-contract';
 import { setActiveWorkspacePath } from './active-workspace';
 import { useOrchStore } from './orch-store';
@@ -98,5 +98,54 @@ describe('orch-store canonical mission summaries', () => {
     expect(useOrchStore.getState().missionSummariesHydrated).toBe(true);
     useOrchStore.getState().resetProjectState();
     expect(useOrchStore.getState().missionSummariesHydrated).toBe(false);
+  });
+
+  it('broadcast idêntico, inclusive chaves reordenadas, não notifica assinantes', () => {
+    const mission = {
+      id: 'm-unchanged', title: 'A', description: '', status: 'running' as const,
+      milestones: [], learnings: '', createdAt: 1, updatedAt: 2,
+    };
+    useOrchStore.getState().setMissions([mission]);
+    useOrchStore.getState().setMissionSummaries([summary]);
+    const before = useOrchStore.getState();
+    const notify = vi.fn();
+    const unsubscribe = useOrchStore.subscribe(notify);
+    try {
+      useOrchStore.getState().setMissions([structuredClone(mission)]);
+      useOrchStore.getState().setMissionSummaries([
+        Object.fromEntries(Object.entries(structuredClone(summary)).reverse()) as MissionSummarySnapshot,
+      ]);
+      expect(notify).not.toHaveBeenCalled();
+      expect(useOrchStore.getState()).toBe(before);
+    } finally { unsubscribe(); }
+  });
+
+  it('estado, motivo, progresso e título novos passam mesmo com updatedAt igual', () => {
+    useOrchStore.getState().setMissionSummaries([summary]);
+    for (const patch of [
+      { state: 'completed' as const },
+      { stateReason: { code: 'awaiting-instruction', label: 'Aguardando' } },
+      { progress: { completed: 1, total: 1 } },
+      { title: 'Renamed' },
+      { updatedAt: 3 },
+    ]) {
+      const next = { ...summary, ...patch };
+      useOrchStore.getState().setMissionSummaries([next]);
+      expect(useOrchStore.getState().missionSummaries).toEqual([next]);
+    }
+  });
+
+  it('lista de missões mantém ordem, status e identidade da liderança atualizados', () => {
+    const mission = {
+      id: 'm-a', title: 'A', description: '', status: 'running' as const,
+      milestones: [], learnings: '', createdAt: 1, updatedAt: 2,
+    };
+    const sibling = { ...mission, id: 'm-b' };
+    useOrchStore.getState().setMissions([mission, sibling]);
+    useOrchStore.getState().setMissions([sibling, mission]);
+    expect(useOrchStore.getState().missions[0]!.id).toBe('m-b');
+    const changed = { ...mission, orchestratorSessionId: 'new-session', status: 'blocked' as const };
+    useOrchStore.getState().setMissions([changed]);
+    expect(useOrchStore.getState().missions).toEqual([changed]);
   });
 });

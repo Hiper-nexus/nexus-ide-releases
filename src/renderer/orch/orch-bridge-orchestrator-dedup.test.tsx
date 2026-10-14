@@ -574,6 +574,21 @@ describe('F-1475 — Maestros mortos saem quando o Main confirma o sucessor', ()
     useOrchStore.setState({ boundWorkspacePath: '/tmp/nexus-workspace' });
   }
 
+  it('broadcast idêntico não repete o loop de reflexão de panes', () => {
+    useLayoutStore.setState({ root: buildGridTree([
+      { id: 'pane-identical', kind: 'cli-agent', title: 'Maestro', missionId: 'mission-a', role: 'orchestrator' },
+    ]) });
+    terminal.getPaneSessionId.mockReturnValue('session-identical');
+    const bridge = mountWithMissions();
+    bindWorkspace();
+    const mission = missionA('session-identical');
+    bridge.emit([mission]);
+    terminal.getPaneSessionId.mockClear();
+    bridge.emit([structuredClone(mission)]);
+    expect(terminal.getPaneSessionId).not.toHaveBeenCalled();
+    act(() => bridge.root.unmount());
+  });
+
   /** Morte física provada: o exit do PTY chegou a este renderer. */
   function markExited(...paneIds: string[]): void {
     for (const paneId of paneIds) {

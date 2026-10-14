@@ -15,7 +15,7 @@ import {
 } from '../state/layout-store';
 import { getActiveWorkspacePath } from '../state/active-workspace';
 import { paneScopeResolver } from '../lib/pane-spaces';
-import { useOrchStore } from '../state/orch-store';
+import { sameMissionSnapshots, useOrchStore } from '../state/orch-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { useWorkspaceStore } from '../state/workspace-store';
 import {
@@ -929,6 +929,7 @@ export function useOrchBridge(): void {
 
       window.nexus.orch.onMissionsChanged((missions) => {
         const prev = useOrchStore.getState().missions;
+        if (sameMissionSnapshots(prev, missions)) return;
         const prevLanes = new Map(
           prev.map((m) => [m.id, m.intentContract?.lane] as const),
         );

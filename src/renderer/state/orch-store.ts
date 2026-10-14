@@ -74,6 +74,30 @@ function acceptsWorkspacePayload(path: string | null): boolean {
   return boundWorkspacePath === path;
 }
 
+/** IPC snapshots are acyclic JSON. Compare values without allocating strings
+ * or treating reordered object keys as a change. Array order is meaningful. */
+function snapshotEqual(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  if (Array.isArray(a) && Array.isArray(b) && a.length !== b.length) return false;
+  const left = a as Record<string, unknown>;
+  const right = b as Record<string, unknown>;
+  const keys = Object.keys(left);
+  return keys.length === Object.keys(right).length && keys.every((key) =>
+    Object.prototype.hasOwnProperty.call(right, key) && snapshotEqual(left[key], right[key]),
+  );
+}
+
+export function sameMissionSnapshots(
+  a: readonly (Mission | MissionSummarySnapshot)[],
+  b: readonly (Mission | MissionSummarySnapshot)[],
+): boolean {
+  return a.length === b.length && a.every((item, index) =>
+    item.id === b[index]!.id && item.updatedAt === b[index]!.updatedAt && snapshotEqual(item, b[index]),
+  );
+}
+
 export const useOrchStore = create<OrchState>((set, get) => ({
   missions: [],
   missionSummaries: [],
@@ -285,12 +309,13 @@ export const useOrchStore = create<OrchState>((set, get) => ({
   setMissionSummaries: (missionSummaries) => {
     const path = getActiveWorkspacePath();
     if (!acceptsWorkspacePayload(path)) return;
-    set({ missionSummaries, missionSummariesHydrated: true });
+    set((s) => s.missionSummariesHydrated && sameMissionSnapshots(s.missionSummaries, missionSummaries)
+      ? s : { missionSummaries, missionSummariesHydrated: true });
   },
   setMissions: (missions) => {
     const path = getActiveWorkspacePath();
     if (!acceptsWorkspacePayload(path)) return;
-    set({ missions });
+    set((s) => sameMissionSnapshots(s.missions, missions) ? s : { missions });
   },
   setHandoffs: (handoffs) => {
     const path = getActiveWorkspacePath();
