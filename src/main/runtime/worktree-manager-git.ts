@@ -34,17 +34,20 @@ export type RepositorySnapshot = IntegrationCheckoutInspection;
  * F-1509: a raiz do workspace é gravada com `fs.realpathSync`, que mantém a
  * caixa digitada e o nome 8.3 (`c:\users\…`, `ADMINI~1`); o Git devolve a
  * grafia do disco. No Windows compara a forma canônica do sistema (nome longo,
- * caixa do disco) pelo comparador de worktree; no POSIX a igualdade é exata.
+ * caixa do disco) pelo comparador de worktree; no darwin o APFS case-
+ * insensitive tem o mesmo sintoma (deep-link/atalho com outra caixa), e as
+ * formas native já vêm na caixa do disco, então a comparação dele é igualdade
+ * exata (com o desvio /tmp ↔ /private/tmp); Linux continua exato.
  * Continua exigindo o MESMO diretório: subpasta ou outro repositório não passa.
  */
 function isGitTopLevel(topLevel: string, root: string): boolean {
   if (topLevel === root) return true;
-  if (process.platform !== "win32") return false;
+  if (process.platform !== "win32" && process.platform !== "darwin") return false;
   try {
     return areWorktreePathsEqual(
       fs.realpathSync.native(topLevel),
       fs.realpathSync.native(root),
-      "win32",
+      process.platform,
     );
   } catch {
     return false;
