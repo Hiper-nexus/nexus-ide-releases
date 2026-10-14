@@ -612,7 +612,7 @@ if (process.platform === "win32") {
   }
 }
 
-async function bootstrap(): Promise<void> {
+async function bootstrap(userPathReady: Promise<void>): Promise<void> {
   // Persisted overrides live under userData; must be configured before the
   // first getFeatureFlagRegistry() call anywhere in bootstrap.
   bootStep('configureFeatureFlagRegistry', () => configureFeatureFlagRegistry({
@@ -628,6 +628,7 @@ async function bootstrap(): Promise<void> {
   }
   // Loads ~/.nexus/settings.json before any runtime reads orchestration flags.
   registerSettingsIpc();
+  await userPathReady;
   initAdapterRegistry();
   initializeProviderConfigStore();
   try {
@@ -1040,6 +1041,9 @@ if (squirrelStartupEvent || !wireDeepLinks()) {
   app.whenReady().then(async () => {
     beginBootPhases();
     markBootPhase('whenReady');
+    const userPathReady = resolveUserPath({
+      cachePath: path.join(app.getPath("userData"), "login-path.json"),
+    }).then(() => { markBootPhase('path-resolved'); });
     // Varredura de órfãos do PRÓPRIO install: supervisores rodam disclaimed
     // (ppid 1 mesmo saudáveis), então parentesco não distingue vivo de órfão —
     // mas no boot, com o lock de instância única, NENHUM supervisor deste
@@ -1118,14 +1122,10 @@ if (squirrelStartupEvent || !wireDeepLinks()) {
     // is ready. Do not move it into bootstrap(): synchronous adapter, settings,
     // database, or keychain setup can otherwise classify the process as a
     // background UIElement before macOS has a window/Dock item to display.
-    // Finder/dmg launches inherit a minimal PATH. Resolve the login-shell PATH
-    // asynchronously after the native window is visible, then initialize the
-    // adapter registry with the completed value. Slow shell profiles no longer
-    // freeze Electron's main event loop.
+    // Finder/dmg launches inherit a minimal PATH. The early shell probe (or
+    // last good cache) is awaited only at adapter discovery inside bootstrap.
     try {
-      await resolveUserPath();
-      markBootPhase('path-resolved');
-      await bootstrap();
+      await bootstrap(userPathReady);
       markBootPhase('bootstrap-ready');
       // Shell de login lento (oh-my-zsh + nvm num login frio) estoura o prazo
       // curto do boot e CLIs via nvm/fnm pareciam "não instaladas" a sessão
