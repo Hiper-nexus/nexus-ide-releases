@@ -529,10 +529,65 @@ describe('path-resolver CLI binary resolution', () => {
       tmp,
     );
 
-    // Windows has no POSIX login shell to probe; the resolver deliberately
-    // keeps the inherited PATH unchanged there.
-    if (process.platform === 'win32') expect(value).toBe(process.env.PATH ?? '');
-    else expect(value).toBe('/custom/async/bin');
+    // F-1508: no Windows a mesma sonda lê o PATH do usuário/sistema (registro).
+    expect(value).toBe('/custom/async/bin');
+  });
+
+  // F-1508: o processo do app nunca relia o PATH no Windows. Uma CLI instalada
+  // com o app aberto (winget, instalador do agy, Node) ficava "não instalada"
+  // e "Reexaminar CLIs" não resolvia: a sonda devolvia o próprio PATH herdado.
+  describe.runIf(process.platform === 'win32')('Windows: PATH relido do registro (F-1508)', () => {
+    it('a sonda pergunta ao PowerShell o PATH de máquina + usuário, sem %VAR% sem valor', async () => {
+      const calls: Array<{ file: string; args: readonly string[] }> = [];
+      const value = await probeLoginShellPath(async (file, args) => {
+        calls.push({ file, args });
+        return '__NEXUS_PATH_START__C:\\Windows\\system32;;%NEXUS_UNSET_F1508%\\bin;"C:\\Program Files\\New Tool";C:\\Users\\x\\AppData\\Local\\agy\\bin__NEXUS_PATH_END__';
+      }, tmp);
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0].file).toMatch(/\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe$/iu);
+      expect(calls[0].args.join(' ')).toContain("GetEnvironmentVariable('Path', $_)");
+      expect(value.split(path.delimiter)).toEqual([
+        'C:\\Windows\\system32',
+        'C:\\Program Files\\New Tool',
+        'C:\\Users\\x\\AppData\\Local\\agy\\bin',
+      ]);
+    });
+
+    it('lê o registro de verdade (System32 do PATH de máquina, já expandido)', async () => {
+      const value = await probeLoginShellPath();
+      expect(value.toLowerCase()).toContain('\\system32');
+      expect(value).not.toContain('%');
+    });
+
+    it('depois do boot, relê em segundo plano e avisa quando o PATH mudou', async () => {
+      const originalPath = process.env.PATH;
+      const fresh = path.join(tmp, 'winget-links');
+      try {
+        const changed = await retryLoginShellPathIfMissed(
+          async () => `__NEXUS_PATH_START__${fresh}__NEXUS_PATH_END__`,
+          { home: tmp, bootProbe: '' },
+        );
+        expect(changed).toBe(true);
+        expect(process.env.PATH?.split(path.delimiter)).toContain(fresh);
+        const again = await retryLoginShellPathIfMissed(
+          async () => `__NEXUS_PATH_START__${fresh}__NEXUS_PATH_END__`,
+          { home: tmp, bootProbe: '' },
+        );
+        expect(again).toBe(false);
+      } finally {
+        process.env.PATH = originalPath;
+      }
+    });
+
+    it('inclui agy, WinGet\\Links e Program Files\\nodejs entre as pastas conhecidas', () => {
+      const localAppData = process.env.LOCALAPPDATA ?? path.join(tmp, 'AppData', 'Local');
+      const programFiles = process.env.ProgramFiles ?? 'C:\\Program Files';
+      const dirs = commonCliBinDirs(tmp);
+      expect(dirs).toContain(path.join(localAppData, 'agy', 'bin'));
+      expect(dirs).toContain(path.join(localAppData, 'Microsoft', 'WinGet', 'Links'));
+      expect(dirs).toContain(path.join(programFiles, 'nodejs'));
+    });
   });
 
   it('absolute path resolution accepts ~/ expansion', () => {

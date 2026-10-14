@@ -113,11 +113,16 @@ function windowsUserBinDirs(home: string): string[] {
   if (process.platform !== 'win32') return [];
   const appData = process.env.APPDATA ?? path.join(home, 'AppData', 'Roaming');
   const localAppData = process.env.LOCALAPPDATA ?? path.join(home, 'AppData', 'Local');
+  const programFiles = process.env.ProgramFiles ?? 'C:\\Program Files';
   return [
     path.join(appData, 'npm'),
     path.join(localAppData, 'pnpm'),
     path.join(localAppData, 'Volta', 'bin'),
     path.join(home, 'scoop', 'shims'),
+    // F-1508: instalador do agy, atalhos do winget e o Node do instalador MSI.
+    path.join(localAppData, 'agy', 'bin'),
+    path.join(localAppData, 'Microsoft', 'WinGet', 'Links'),
+    path.join(programFiles, 'nodejs'),
   ];
 }
 
@@ -182,7 +187,8 @@ function executeLoginShellForOutput(
   options: LoginShellExecOptions,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile(file, [...args], options, (error, stdout) => {
+    // windowsHide: o PowerShell da sonda do Windows (F-1508) não pisca console.
+    execFile(file, [...args], { ...options, windowsHide: true }, (error, stdout) => {
       if (error) {
         reject(error);
         return;
@@ -190,6 +196,44 @@ function executeLoginShellForOutput(
       resolve(stdout);
     });
   });
+}
+
+/**
+ * F-1508: o PATH que um processo NOVO receberia no Windows — o de máquina e o
+ * do usuário, do registro, já expandidos —, lido pelo PowerShell do System32
+ * com saída UTF-8 (o reg.exe sai na página OEM e estragaria `C:\Users\João`).
+ * O processo do app herda o PATH do momento em que abriu (o reinício do
+ * auto-update herda o da versão anterior): sem esta leitura, uma CLI
+ * instalada com o app aberto nunca aparecia. `''` em qualquer falha; entrada
+ * com `%VAR%` sem valor não vira pasta.
+ */
+const WINDOWS_PATH_QUERY =
+  "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.Encoding]::UTF8; " +
+  "$p=@('Machine','User' | ForEach-Object { [Environment]::GetEnvironmentVariable('Path', $_) } | Where-Object { $_ }) -join ';'; " +
+  `[Console]::Out.Write('${START}' + $p + '${END}')`;
+
+async function probeWindowsEnvironmentPath(
+  exec: LoginShellPathExecutor,
+  timeoutMs: number,
+): Promise<string> {
+  const systemRoot = process.env.SystemRoot ?? 'C:\\Windows';
+  const powershell = path.win32.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  try {
+    const out = await exec(
+      powershell,
+      ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', WINDOWS_PATH_QUERY],
+      { encoding: 'utf8', timeout: timeoutMs, env: process.env },
+    );
+    if (!out.includes(START) || !out.includes(END)) return '';
+    return out
+      .slice(out.indexOf(START) + START.length, out.indexOf(END))
+      .split(';')
+      .map((dir) => dir.trim().replace(/^"(.*)"$/u, '$1'))
+      .filter((dir) => dir.length > 0 && !dir.includes('%'))
+      .join(path.delimiter);
+  } catch {
+    return '';
+  }
 }
 
 /**
@@ -204,7 +248,7 @@ export async function probeLoginShellPath(
   home = realUserHome(),
   timeoutMs = RESOLVE_TIMEOUT_MS,
 ): Promise<string> {
-  if (process.platform === 'win32') return process.env.PATH ?? '';
+  if (process.platform === 'win32') return probeWindowsEnvironmentPath(exec, timeoutMs);
   const shell = process.env.SHELL || '/bin/zsh';
   try {
     // Force the real account home so isolated $HOME (E2E/smoke) still sources
@@ -286,7 +330,11 @@ let memoizedEffectivePath: string | null = null;
 export async function resolveUserPath(): Promise<void> {
   if (folded) return;
   const home = realUserHome();
-  bootLoginProbe = await probeLoginShellPath(undefined, home);
+  // F-1508: no Windows o boot não espera o PowerShell; o PATH do registro
+  // entra pela releitura em segundo plano (`retryLoginShellPathIfMissed`).
+  bootLoginProbe = process.platform === 'win32'
+    ? ''
+    : await probeLoginShellPath(undefined, home);
   const effective = buildEffectivePath({ home, loginPath: bootLoginProbe });
   process.env.PATH = effective;
   memoizedEffectivePath = effective;
@@ -309,18 +357,20 @@ export async function retryLoginShellPathIfMissed(
   exec: LoginShellPathExecutor = executeLoginShellForOutput,
   options: { home?: string; bootProbe?: string | null } = {},
 ): Promise<boolean> {
-  if (process.platform === 'win32') return false;
   const bootProbe = options.bootProbe !== undefined ? options.bootProbe : bootLoginProbe;
   if (bootProbe === null || bootProbe !== '') return false;
   const home = options.home ?? realUserHome();
   const loginPath = await probeLoginShellPath(exec, home, LATE_RESOLVE_TIMEOUT_MS);
   if (!loginPath) return false;
   const effective = buildEffectivePath({ home, loginPath });
+  // No Windows o PATH do registro costuma ser o mesmo herdado: sem mudança,
+  // sem reexame de CLIs.
+  const changed = effective !== process.env.PATH;
   process.env.PATH = effective;
   memoizedEffectivePath = effective;
   bootLoginProbe = loginPath;
   folded = true;
-  return true;
+  return changed;
 }
 
 /**
