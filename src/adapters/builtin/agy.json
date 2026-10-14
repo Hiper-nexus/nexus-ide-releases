@@ -31,10 +31,8 @@
       "--conversation"
     ],
     "extraArgs": [],
-    "initialPrompt": "oneshot",
-    "initialPromptArgs": [
-      "--print"
-    ]
+    "initialPrompt": "interactive-flag",
+    "initialPromptFlag": "--prompt-interactive"
   },
   "env": {
     "static": {},

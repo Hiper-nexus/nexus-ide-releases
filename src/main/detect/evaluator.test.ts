@@ -313,3 +313,42 @@ describe('minimax-code (F-699): o mcode sem hooks é visto trabalhando pela tela
     expect(evaluateManifest(minimax, input(screen)).state).not.toBe('working');
   });
 });
+
+describe('agy (F-1476): a TUI do --prompt-interactive tem ocioso/ocupado pela tela', () => {
+  // Com o brief no `--prompt-interactive` o worker AGY vive na TUI (como o
+  // Maestro AGY sempre viveu). O manifesto bundled precisa distinguir o turno
+  // rodando do composer parado — sem isso o pane vivo pareceria ocioso.
+  const agy = compiledFor('agy');
+
+  it('spinner de turno ("⠋ Thinking…") é working', () => {
+    const screen = ['> mapeie o repositório', '', '⠋ Thinking… (esc to cancel)'].join('\n');
+    const explain = evaluateManifest(agy, input(screen));
+    expect(explain.state).toBe('working');
+    expect(explain.matchedRule?.id).toBe('spinner_working');
+  });
+
+  it('tarefa em segundo plano no rodapé também é working', () => {
+    const screen = ['Done reading files.', '', '> ', 'gemini-3.8-flash-high · 2 tasks running'].join('\n');
+    const explain = evaluateManifest(agy, input(screen));
+    expect(explain.state).toBe('working');
+    expect(explain.matchedRule?.id).toBe('background_tasks_working');
+  });
+
+  it('pedido de permissão é blocked', () => {
+    const screen = [
+      'Agent is requesting permission for: run_command',
+      '  npm test',
+      'Do you want to proceed?',
+    ].join('\n');
+    const explain = evaluateManifest(agy, input(screen));
+    expect(explain.state).toBe('blocked');
+    expect(explain.matchedRule?.id).toBe('permission_prompt');
+  });
+
+  it('composer parado depois do turno cai no ocioso do agente conhecido', () => {
+    const screen = ['Pronto: handoff enviado.', '', '> ', 'gemini-3.8-flash-high'].join('\n');
+    const explain = evaluateManifest(agy, input(screen));
+    expect(explain.state).toBe('idle');
+    expect(explain.fallbackReason).toBe(DEFAULT_KNOWN_AGENT_IDLE_FALLBACK);
+  });
+});

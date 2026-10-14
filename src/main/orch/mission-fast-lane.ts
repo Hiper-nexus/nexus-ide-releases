@@ -32,6 +32,7 @@ import { resolveOpenMissionQuestion } from './mission-open-question';
 import { wasUpdatedBeforeThisProcess } from '../../shared/session-restore-liveness';
 import {
   initialPromptChannel,
+  nativeInitialPromptForRole,
   type InitialPromptChannel,
 } from '../../shared/cli-initial-prompt';
 import {
@@ -214,8 +215,9 @@ const ORCHESTRATOR_BOOT_TIMEOUT_MS = 120_000;
  * Canal de entrega do briefing do Maestro na Via Rápida.
  *
  * `pty-manager` só coloca `initialPrompt` no argv para orquestrador
- * **posicional**. One-shot (AGY `--print`, OpenCode `run`) mata o pane —
- * só worker. Paste não tem argv. Sem colagem pós-boot o Maestro sobe mudo,
+ * **posicional** (`nativeInitialPromptForRole`). One-shot (OpenCode `run`)
+ * mata o pane e a flag interativa (AGY, Qwen, MiMo) é só do worker (F-1476).
+ * Paste não tem argv. Sem colagem pós-boot o Maestro sobe mudo,
  * o kickoff é marcado aceito e a missão fica "running" sem nunca chamar
  * `nexus_pane_spawn`.
  */
@@ -440,8 +442,9 @@ function tryAcceptIdleOrchestratorKickoff(
   });
 }
 
-function resolveOrchestratorBriefDelivery(
+function resolveBriefDelivery(
   adapterId: string,
+  role: 'orchestrator' | 'worker',
 ): 'argv' | 'paste' {
   // F-1316: PTY puts large briefs in a private file before building argv.
   const adapter = getAdapter(adapterId);
@@ -449,13 +452,16 @@ function resolveOrchestratorBriefDelivery(
     // Fail-closed: sem contrato de argv confiável, cola.
     return 'paste';
   }
-  return orchestratorBriefDelivery(
-    initialPromptChannel({
-      declared: adapter.spawn.initialPrompt,
-      oneshotArgs: adapter.spawn.initialPromptArgs,
-      interactive: adapter.spawn.interactive,
-    }),
-  );
+  const channel = initialPromptChannel({
+    declared: adapter.spawn.initialPrompt,
+    oneshotArgs: adapter.spawn.initialPromptArgs,
+    interactive: adapter.spawn.interactive,
+  });
+  // F-1476: a mesma regra do pty-manager — o worker com flag interativa (AGY)
+  // ou one-shot já recebeu o brief no argv; colar de novo abria outro turno.
+  return role === 'worker'
+    ? (nativeInitialPromptForRole(channel, role) ? 'argv' : 'paste')
+    : orchestratorBriefDelivery(channel);
 }
 
 /**
@@ -1416,9 +1422,11 @@ async function spawnAgentPane(
   // um CLI sem prompt posicional (ex.: Kimi Code 2.1.1 — `kimi --help` não
   // tem `[prompt]`) sempre resolve 'paste' e dependia de alguém colar depois
   // do boot. Só o Maestro tinha esse fallback — o worker abria mudo e o
-  // operador digitava o briefing à mão (achado 2026-09-27).
+  // operador digitava o briefing à mão (achado 2026-09-27). F-1476: a regra é
+  // a do pty-manager (worker com argv não é colado de novo); retomada nunca
+  // leva brief no argv, então cola (F-721), como no Maestro abaixo.
   if (role === 'worker' && initialPrompt) {
-    const delivery = resolveOrchestratorBriefDelivery(agent.cli);
+    const delivery = resumeFromPaneId ? 'paste' : resolveBriefDelivery(agent.cli, 'worker');
     if (delivery === 'paste') {
       const failure = await pasteBriefAfterBoot(spawn.sessionId, initialPrompt, agent.cli, spawnOpts?.invocation);
       if (failure) return { error: `${agent.agentName} (${agent.cli}): ${failure}` };
@@ -1437,7 +1445,7 @@ async function spawnAgentPane(
     // depois do boot, com prova de aceite.
     const delivery = resumeFromPaneId
       ? 'paste'
-      : resolveOrchestratorBriefDelivery(agent.cli);
+      : resolveBriefDelivery(agent.cli, 'orchestrator');
     if (delivery === 'paste') {
       const failure = await pasteBriefAfterBoot(spawn.sessionId, initialPrompt, agent.cli, spawnOpts?.invocation, !spawnOpts?.ownFailureCleanup);
       if (failure) return { error: `${agent.agentName} (${agent.cli}): ${failure}` };

@@ -27,6 +27,7 @@ import {
 import {
   applyInitialPromptToArgv,
   initialPromptChannel,
+  nativeInitialPromptForRole,
 } from "../../shared/cli-initial-prompt";
 import { ensureUtf8Locale } from "./pty-env-locale";
 import { applyProjectNodeToWorkerPath } from "./node-version-path";
@@ -317,9 +318,9 @@ export interface OwnedAgentSessionInfo {
    */
   operatorOpened?: true;
   /**
-   * F-662: o briefing nasceu no argv one-shot (AGY `--print`, OpenCode
-   * `run`). A CLI não lê o terminal e só imprime ao terminar: pergunta ou
-   * mensagem digitada nesse pane nunca é respondida.
+   * F-662: o briefing nasceu no argv one-shot (OpenCode `run`; o AGY saiu do
+   * `--print` no F-1476). A CLI não lê o terminal e só imprime ao terminar:
+   * pergunta ou mensagem digitada nesse pane nunca é respondida.
    */
   oneShot?: true;
 }
@@ -2122,15 +2123,14 @@ export function spawnAgentSession(
     interactive: adapter.spawn.interactive,
   });
   // Canal do BINÁRIO, não allowlist de ids: glm/longcat/deepseek herdam o
-  // `claude` posicional; sakana herda o `codex`. One-shot (AGY `--print`,
-  // OpenCode `run`) mata o pane — só worker. Orquestrador one-shot cola.
+  // `claude` posicional; sakana herda o `codex`. One-shot (OpenCode `run`)
+  // mata o pane — só worker. F-1476: a flag interativa (AGY, Qwen, MiMo) também
+  // é só do worker — o tool-util e a Via Rápida colam o brief do orquestrador,
+  // e argv + colagem abriam dois turnos com o mesmo brief.
   const nativeInitialPrompt =
     authority.source === "pending" &&
     !req.resume &&
-    promptChannel.kind !== "paste" &&
-    (authority.context?.role === "worker" ||
-      promptChannel.kind === "positional" ||
-      promptChannel.kind === "interactive-flag")
+    nativeInitialPromptForRole(promptChannel, authority.context?.role)
       ? authority.context?.initialPrompt
       : undefined;
   let safeNativeInitialPrompt: string | undefined;

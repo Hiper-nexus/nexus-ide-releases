@@ -158,6 +158,22 @@ export function applyInitialPromptToArgv(
 }
 
 /**
+ * F-1476: o pty-manager põe o primeiro prompt no argv deste papel? Uma regra
+ * só para o pty-manager, o tool-util e a Via Rápida — quem não recebe no argv
+ * recebe por colagem, nunca pelos dois (argv + colagem = dois turnos com o
+ * mesmo brief). Worker: todo canal de argv. Orquestrador: só o posicional —
+ * one-shot mataria o pane, e a flag interativa (AGY, Qwen, MiMo) fica com a
+ * colagem que o tool-util e a Via Rápida já fazem para ele.
+ */
+export function nativeInitialPromptForRole(
+  channel: InitialPromptChannel,
+  role: string | undefined,
+): boolean {
+  if (channel.kind === 'paste') return false;
+  return role === 'worker' || channel.kind === 'positional';
+}
+
+/**
  * F-668: teto do brief no argv no Windows. O CreateProcess aceita 32.767
  * caracteres na linha de comando INTEIRA (flags, config de hooks, caminhos);
  * o teto geral de 64 KB passava disso e o helper morria com "Linha de comando

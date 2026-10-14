@@ -62,6 +62,12 @@ import {
   registerPaneTaskReroute,
 } from './pane-task-reroute';
 import { carryInFlightRequests, inFlightRequestOf } from './in-flight-request';
+import { getAdapter } from '../adapters/adapter-registry';
+import { getAcpDriverSession } from '../acp/acp-harness-driver';
+import {
+  initialPromptChannel,
+  nativeInitialPromptForRole,
+} from '../../shared/cli-initial-prompt';
 import { parseGitPorcelain } from './worker-files-modified';
 import {
   AsyncProcessGitRunner,
@@ -481,6 +487,53 @@ function withHandoffContext(currentRequest: string, context: string): string {
   );
 }
 
+/** F-1476: cola o pacote no pane novo depois do boot, com prova de aceite. */
+export type RespawnBriefDelivery = (
+  sessionId: string,
+  prompt: string,
+  adapterId: string,
+) => Promise<boolean>;
+
+/**
+ * F-1476: o pacote de continuidade NÃO viaja no argv desta CLI para este
+ * papel (mesma regra do pty-manager, `nativeInitialPromptForRole`): canal de
+ * colagem (Kimi, Devin), one-shot ou flag interativa num orquestrador (AGY,
+ * Qwen, MiMo). Retomada (F-1473) nunca leva prompt no argv (o pty-manager só
+ * põe prompt nativo em spawn fresco), então a nota da retomada também é
+ * colada. Adapter desconhecido: o pty-manager nem sobe — nada a colar.
+ */
+export function respawnBriefNeedsPaste(
+  adapterId: string,
+  role: 'orchestrator' | 'worker',
+  resume = false,
+): boolean {
+  const adapter = getAdapter(adapterId);
+  if (!adapter || adapter.kind !== 'cli-pty') return false;
+  if (resume) return true;
+  return !nativeInitialPromptForRole(
+    initialPromptChannel({
+      declared: adapter.spawn.initialPrompt,
+      interactiveFlag: adapter.spawn.initialPromptFlag,
+      oneshotArgs: adapter.spawn.initialPromptArgs,
+      interactive: adapter.spawn.interactive,
+    }),
+    role,
+  );
+}
+
+/** Boot do pane novo antes da colagem (paridade com a Via Rápida). */
+const RESPAWN_BOOT_TIMEOUT_MS = 120_000;
+
+const pasteRespawnBrief: RespawnBriefDelivery = async (sessionId, prompt, adapterId) => {
+  if (!prompt.trim()) return false;
+  // Import tardio: tool-util e pane-registry fecham ciclo com o failover.
+  const { waitForIdle } = await import('./pane-registry');
+  const boot = await waitForIdle(sessionId, RESPAWN_BOOT_TIMEOUT_MS);
+  if (boot === 'exited') return false;
+  const { deliverAgentPrompt } = await import('./tool-util');
+  return deliverAgentPrompt(sessionId, prompt, undefined, { adapterId });
+};
+
 /**
  * Executor: respawna o agente main-owned com a nova conta e aposenta a sessão
  * exausta. Worker nasce ANTES de a velha sair (F-1480); orquestrador e worker
@@ -519,6 +572,8 @@ export async function respawnMainOwnedPaneWithAccount(input: {
   readonly git?: AsyncGitRunner;
   readonly rebindSession?: typeof rebindProviderPaneSessionAccount;
   readonly observeResumeBoot?: () => ResumeBootObserver;
+  /** F-1476: colagem do pacote com prova de aceite (dublê nos testes). */
+  readonly deliverBrief?: RespawnBriefDelivery;
 } = {}): Promise<boolean> {
   const entry = getMainOwnedPane(input.paneId);
   if (!entry || input.sessionId && entry.entry.sessionId !== input.sessionId) return false;
@@ -614,6 +669,8 @@ export async function respawnMainOwnedPaneWithAccount(input: {
   };
   const scope = entry.meta?.scope;
   let nativeResumed = false;
+  // F-1476: o Nexus encerrou a retomada na janela — nada a colar nela.
+  let resumeClosed = false;
   /**
    * F-1473: a conversa vai junto para a conta nova e o pane retomado só vale
    * com prova de boot. Sem prova, o substituto sai e o pacote entra no lugar;
@@ -643,6 +700,7 @@ export async function respawnMainOwnedPaneWithAccount(input: {
             target.sessionId || target.paneId ? await boot.confirm(target) : 'failed';
           if (verdict !== 'failed') {
             nativeResumed = verdict === 'proved';
+            resumeClosed = verdict === 'closed';
             return resumed;
           }
           console.warn(
@@ -705,6 +763,34 @@ export async function respawnMainOwnedPaneWithAccount(input: {
           `${spawned.error}`,
       );
       return false;
+    }
+    // F-1476: o pty-manager só põe o pacote no argv numa sessão NOVA cujo canal
+    // o leva para este papel (orquestrador: só posicional) — nunca numa
+    // retomada. Sem argv, cola com prova de aceite DEPOIS da prova de boot do
+    // F-1473 e ANTES de declarar a recuperação; sem aceite, o pane novo sai e
+    // a tarefa segue onde estava. Sessão que o próprio Nexus fechou na janela
+    // (`closed`) não recebe nada.
+    if (
+      spawned.sessionId &&
+      spawnedOptions &&
+      !resumeClosed &&
+      (spawnedOptions.role === 'orchestrator' || spawnedOptions.role === 'worker') &&
+      respawnBriefNeedsPaste(spawnedOptions.adapterId, spawnedOptions.role, Boolean(spawnedOptions.resume)) &&
+      !getAcpDriverSession(spawned.sessionId)
+    ) {
+      const delivered = await (deps.deliverBrief ?? pasteRespawnBrief)(
+        spawned.sessionId,
+        spawnedOptions.initialPrompt ?? '',
+        spawnedOptions.adapterId,
+      ).catch(() => false);
+      if (!delivered) {
+        console.warn(
+          `[failover-mission-respawn] pacote não aceito pelo pane novo de ${input.paneId}; ` +
+            'recuperação não confirmada',
+        );
+        if (spawned.paneId) await retireUnprovedReplacement(spawned.paneId);
+        return false;
+      }
     }
     replaced = true;
     // F-1482: o pane novo herda os pedidos em voo (troca em cadeia A → B → C).

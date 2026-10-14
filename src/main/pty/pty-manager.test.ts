@@ -2191,13 +2191,14 @@ describe("AGY advisory native profile", () => {
         const expectedHome = fs.realpathSync.native(nativeHome);
         expect(spec.file).toBe("/mock/bin/agy");
         expect(spec.args).toContain("--dangerously-skip-permissions");
-        expect(spec.args.filter((arg) => arg === "--print")).toHaveLength(1);
-        expect(spec.args[spec.args.indexOf("--print") + 1]).toBe(initialPrompt);
+        // F-1476: o brief vai pela TUI ao vivo, nunca pelo --print bufferizado.
+        expect(spec.args.filter((arg) => arg === "--prompt-interactive")).toHaveLength(1);
+        expect(spec.args[spec.args.indexOf("--prompt-interactive") + 1]).toBe(initialPrompt);
         expect(spec.args.filter((arg) => arg === "--add-dir")).toHaveLength(1);
         expect(spec.args[spec.args.indexOf("--add-dir") + 1]).toBe(
           fs.realpathSync.native(worktree),
         );
-        expect(spec.args).not.toContain("--prompt-interactive");
+        expect(spec.args).not.toContain("--print");
         expect(spec.args).not.toContain("/usr/bin/sandbox-exec");
         expect(spec.env.HOME).not.toBe(expectedHome);
         expect(spec.env.USERPROFILE).toBe(spec.env.HOME);
@@ -2897,8 +2898,11 @@ describe("AGY advisory native profile", () => {
 
       const spec = host.specFor(sessionId);
       expect(spec.args).not.toContain("--prompt-interactive");
+      expect(spec.args).not.toContain("--print");
       expect(spec.args).not.toContain("must not reach argv");
-      // Orquestrador AGY cola o briefing: continua lendo o terminal.
+      // Orquestrador AGY cola o briefing: continua lendo o terminal. F-1476:
+      // a flag interativa do AGY é só do worker — a Via Rápida e o tool-util
+      // colam o brief do Maestro, e argv + colagem seriam dois briefs.
       expect(getAgentSessionInfo(sessionId)?.oneShot).toBeUndefined();
     } finally {
       if (sessionId) await orchTerminateSession(sessionId);
@@ -2906,11 +2910,13 @@ describe("AGY advisory native profile", () => {
     }
   });
 
-  it("marca o worker AGY no --print como one-shot (F-662)", async () => {
-    // O pane_ask/pane_write leem esta marca: pergunta a um one-shot nunca é
-    // respondida e esperar o prazo inteiro parecia infraestrutura quebrada.
+  it("F-1476: worker AGY nasce com --prompt-interactive <brief>, sem --print, e não é one-shot", async () => {
+    // O `agy --print` bufferiza a resposta: o pane ficava preto (só o cursor)
+    // até o fim da tarefa. `--prompt-interactive` roda o mesmo primeiro turno
+    // na TUI, ao vivo. Sem `--print` não há one-shot (F-662/F-1272 seguem
+    // valendo para quem ainda é, como o OpenCode `run`).
     setSquadCliPolicyLookupForTests(() => "operator-choice");
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-agy-oneshot-"));
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-agy-live-"));
     const worktree = path.join(root, "worktree");
     fs.mkdirSync(worktree);
     const baseAuthority = revisionBoundWorker(fs.realpathSync.native(worktree));
@@ -2923,13 +2929,19 @@ describe("AGY advisory native profile", () => {
     let sessionId: string | null = null;
     try {
       ({ sessionId } = spawnMainOwnedAgentSession(
-        { kind: "cli-agent", paneId: "agy-oneshot-worker", cols: 100, rows: 30 },
+        { kind: "cli-agent", paneId: "agy-live-worker", cols: 100, rows: 30 },
         builtinCliPtyAdapter("agy"),
         {},
         authority,
       ));
-      expect(host.specFor(sessionId).args).toContain("--print");
-      expect(getAgentSessionInfo(sessionId)).toMatchObject({ adapterId: "agy", oneShot: true });
+      const args = host.specFor(sessionId).args;
+      expect(args.filter((arg) => arg === "--prompt-interactive")).toHaveLength(1);
+      expect(args[args.indexOf("--prompt-interactive") + 1]).toBe("Revise e entregue.");
+      // `--prompt` é ALIAS de `--print` no agy 1.3.4 — nenhum dos dois.
+      expect(args).not.toContain("--print");
+      expect(args).not.toContain("--prompt");
+      expect(getAgentSessionInfo(sessionId)).toMatchObject({ adapterId: "agy" });
+      expect(getAgentSessionInfo(sessionId)?.oneShot).toBeUndefined();
     } finally {
       if (sessionId) await orchTerminateSession(sessionId);
       fs.rmSync(root, { recursive: true, force: true });

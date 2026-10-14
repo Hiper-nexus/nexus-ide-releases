@@ -134,7 +134,7 @@ afterEach(() => {
   terminateMock.mockClear();
 });
 
-function prepare(scope = testProjectScope()) {
+function prepare(scope = testProjectScope(), worker = { name: 'Kimi', cli: 'kimi' }) {
   const squad: Squad = {
     id: 'team',
     name: 'Team',
@@ -142,7 +142,7 @@ function prepare(scope = testProjectScope()) {
     builtin: false,
     orchestratorInstructions: '',
     agents: [
-      { id: 'agent-Kimi', agentName: 'Kimi', category: 'executor', cli: 'kimi', instructions: '' },
+      { id: `agent-${worker.name}`, agentName: worker.name, category: 'executor', cli: worker.cli, instructions: '' },
     ],
   } as Squad;
   state.squad = squad;
@@ -220,6 +220,18 @@ describe('Via Rápida first-wave — entrega do briefing por colagem para o work
     expect(terminateMock).toHaveBeenCalledWith('session-Kimi', {
       origin: 'fast-lane:briefing-undelivered',
     });
+  });
+
+  it('F-1476: worker AGY (--prompt-interactive) leva o brief só no argv — sem segunda colagem', async () => {
+    // O AGY deixou o `--print` (pane preto até o fim) pela flag interativa. O
+    // pty-manager põe o brief no argv do worker; colar de novo depois do boot
+    // abriria um segundo turno com o mesmo briefing.
+    const agy = BUILTIN_ADAPTERS.find((adapter) => (adapter as { id?: unknown }).id === 'agy');
+    state.adapters.set('agy', adapterSchema.parse(agy));
+    const { scope, mission } = prepare(undefined, { name: 'Antigravity', cli: 'agy' });
+    expect(await dispatchFastLaneFirstWave(scope, mission.id)).toBe(1);
+    expect(state.spawnPrompts[0] ?? '').toContain('2 + 2');
+    expect(deliverAgentPromptMock).not.toHaveBeenCalled();
   });
 
   it('Fable P1-5: colagem que lança também encerra o pane', async () => {

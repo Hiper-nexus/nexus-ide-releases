@@ -3,6 +3,7 @@ import {
   acceptsInteractiveInitialPrompt,
   applyInitialPromptToArgv,
   initialPromptChannel,
+  nativeInitialPromptForRole,
   spawnBinaryName,
   nativeArgvPromptFits,
   WINDOWS_NATIVE_PROMPT_MAX_CHARS,
@@ -197,7 +198,7 @@ describe('F-984 — brief real de ~3,5 KB chega íntegro a cada adapter afetado'
   });
 
   it.each([
-    ['agy', ['agy', '--model', 'gemini-3.8-flash-high'], ['--print']],
+    ['agy', ['agy', '--model', 'gemini-3.8-flash-high'], ['--prompt-interactive']],
     ['mimo-code', ['mimo', '--trust', '--model', 'xiaomi/mimo-v2.6-pro'], ['--prompt']],
   ])('%s recebe o brief como UM argumento, depois da flag do canal', (id, base, flag) => {
     const argv = applyInitialPromptToArgv(base, channelFor(id), F984_BRIEF);
@@ -210,5 +211,33 @@ describe('F-984 — brief real de ~3,5 KB chega íntegro a cada adapter afetado'
   it('kimi não tem canal de argv: o brief vai por colagem depois do composer', () => {
     expect(channelFor('kimi')).toEqual({ kind: 'paste' });
     expect(applyInitialPromptToArgv(['kimi'], channelFor('kimi'), F984_BRIEF)).toEqual(['kimi']);
+  });
+
+  // F-1476: `agy --print` bufferiza a resposta e o pane ficava preto até o fim.
+  // `agy 1.3.4 --help`: `--prompt-interactive  Run an initial prompt
+  // interactively and continue the session`; `--prompt` é alias de `--print`.
+  it('F-1476: o AGY recebe o brief pela flag interativa, nunca pelo --print bufferizado', () => {
+    expect(channelFor('agy')).toEqual({ kind: 'interactive-flag', flag: '--prompt-interactive' });
+    const argv = applyInitialPromptToArgv(['agy'], channelFor('agy'), 'mapeie');
+    expect(argv).toEqual(['agy', '--prompt-interactive', 'mapeie']);
+    expect(argv).not.toContain('--print');
+    expect(argv).not.toContain('--prompt');
+    expect(argv).not.toContain('-p');
+  });
+});
+
+describe('nativeInitialPromptForRole (F-1476: um canal por spawn)', () => {
+  it('worker leva o brief no argv em todo canal que o aceita', () => {
+    expect(nativeInitialPromptForRole({ kind: 'positional' }, 'worker')).toBe(true);
+    expect(nativeInitialPromptForRole({ kind: 'interactive-flag', flag: '--prompt-interactive' }, 'worker')).toBe(true);
+    expect(nativeInitialPromptForRole({ kind: 'oneshot', args: ['run'] }, 'worker')).toBe(true);
+    expect(nativeInitialPromptForRole({ kind: 'paste' }, 'worker')).toBe(false);
+  });
+
+  it('orquestrador só no posicional: flag interativa e one-shot ficam com a colagem', () => {
+    expect(nativeInitialPromptForRole({ kind: 'positional' }, 'orchestrator')).toBe(true);
+    expect(nativeInitialPromptForRole({ kind: 'interactive-flag', flag: '--prompt-interactive' }, 'orchestrator')).toBe(false);
+    expect(nativeInitialPromptForRole({ kind: 'oneshot', args: ['--print'] }, 'orchestrator')).toBe(false);
+    expect(nativeInitialPromptForRole({ kind: 'paste' }, undefined)).toBe(false);
   });
 });

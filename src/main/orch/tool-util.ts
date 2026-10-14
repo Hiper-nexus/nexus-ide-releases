@@ -109,6 +109,7 @@ import { isOperatorChoicePolicy } from '../../shared/squad-cli-policy';
 import { issueAgentIdentityBestEffort } from './agent-identity-spawn';
 import {
   initialPromptChannel,
+  nativeInitialPromptForRole,
   spawnBinaryName,
 } from '../../shared/cli-initial-prompt';
 import { ORCH_SPAWN_GRANT_TTL_MS } from './orch-spawn-grant-recovery';
@@ -1968,8 +1969,7 @@ export async function spawnPaneAndMaybePrompt(
   });
   const shouldUseNativeInitialPrompt = Boolean(
     finalPrompt &&
-      promptChannel.kind !== 'paste' &&
-      (options.role === 'worker' || promptChannel.kind === 'positional') &&
+      nativeInitialPromptForRole(promptChannel, options.role) &&
       // F-1316: PTY materializes large native prompts as private brief files.
       // F-721: spawn que retoma conversa não leva prompt no argv (regra do
       // pty-manager); o brief vai por colagem depois do boot.

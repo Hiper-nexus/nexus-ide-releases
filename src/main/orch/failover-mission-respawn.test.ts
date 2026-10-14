@@ -64,6 +64,18 @@ vi.mock('./project-domain-store-registry', () => ({ getProjectDomainStores: deps
 vi.mock('../runtime/worktree-runtime-registry', () => ({
   requireWorktreeRuntimeRegistry: deps.worktrees,
 }));
+// F-1476: o canal do argv de cada CLI vem do manifesto builtin real.
+vi.mock('../adapters/adapter-registry', async (importOriginal) => {
+  const { BUILTIN_ADAPTERS } = await import('../../adapters/builtin');
+  const { adapterSchema } = await import('../../shared/adapter-types');
+  return {
+    ...(await importOriginal<typeof import('../adapters/adapter-registry')>()),
+    getAdapter: (id: string) => {
+      const raw = BUILTIN_ADAPTERS.find((entry) => (entry as { id?: unknown }).id === id);
+      return raw ? adapterSchema.parse(raw) : null;
+    },
+  };
+});
 vi.mock('node:child_process', async (importOriginal) => ({
   ...(await importOriginal<typeof import('node:child_process')>()),
   execFileSync: deps.execFileSync,
@@ -104,6 +116,7 @@ import {
   GIT_STATE_TIMEOUT_MS,
   collectGitTaskState,
   planMainOwnedFailoverRespawn,
+  respawnBriefNeedsPaste,
   respawnMainOwnedPaneWithAccount,
   observeResumeBoot,
   type ResumeBootObserver,
@@ -889,10 +902,13 @@ describe('F-1473: troca de conta Claude continua a MESMA conversa no worker main
   it('conta A → B: religa a conversa, sobe UM pane com --resume e a nota, e só depois reporta a troca', async () => {
     const rebindSession = vi.fn(() => true);
     const boot = fakeBoot('proved');
+    const deliverResumeNote = vi.fn(async () => true);
     deps.sessionCwd.mockReturnValueOnce('/project/packages/web');
     deps.spawnAsync.mockResolvedValueOnce({ requestId: 'r', ok: true, paneId: 'new-pane', sessionId: 'new-session' });
     await expect(respawnMainOwnedPaneWithAccount({ ...switchInput, nativeResume: true },
-      { rebindSession, observeResumeBoot: boot.observe })).resolves.toBe(true);
+      { rebindSession, observeResumeBoot: boot.observe, deliverBrief: deliverResumeNote })).resolves.toBe(true);
+    // F-1476: a retomada não leva prompt no argv — a nota é colada com prova.
+    expect(deliverResumeNote).toHaveBeenCalledWith('new-session', expect.stringContaining('resumed THIS SAME conversation'), 'claude');
     expect(rebindSession).toHaveBeenCalledWith(scopedMeta.scope, 'old-pane', 'claude', 'acct-a', 'acct-b');
     expect(deps.terminate).toHaveBeenCalledWith('old-session', expect.objectContaining({ origin: 'failover-respawn' }));
     expect(deps.spawnAsync).toHaveBeenCalledTimes(1);
@@ -1010,7 +1026,7 @@ describe('F-1482: o pedido em voo do worker atravessa a troca de conta', () => {
     await expect(respawnMainOwnedPaneWithAccount({
       paneId: 'old-pane', sessionId: 'old-session', adapterId: 'claude', toAccountId: 'acct-b', fromAccountId: 'acct-a',
       fromAccountLabel: 'x', reason: 'quota', touchedFiles: [], diffStat: undefined, nativeResume: true,
-    }, { rebindSession: vi.fn(() => true), observeResumeBoot: fakeBoot('proved').observe })).resolves.toBe(true);
+    }, { rebindSession: vi.fn(() => true), observeResumeBoot: fakeBoot('proved').observe, deliverBrief: vi.fn(async () => true) })).resolves.toBe(true);
     const options = deps.spawnAsync.mock.calls[0]![0] as { initialPrompt: string; resumeFromPaneId?: string };
     expect(options.resumeFromPaneId).toBe('old-pane');
     expect(options.initialPrompt).toContain('Request in flight: Ajuste do Maestro: usar a fila nova');
@@ -1158,4 +1174,128 @@ describe('F-822: estado da tarefa só da worktree do pane, git seguro e curto', 
     expect(deps.execFileSync).not.toHaveBeenCalled();
     expect(deps.spawnSyncChild).not.toHaveBeenCalled();
   });
+});
+
+/**
+ * F-1476 (revisão Codex): o pty-manager põe o pacote no argv do orquestrador
+ * só no canal posicional, e nunca numa retomada. O respawn Main-owned de um
+ * Maestro Qwen/MiMo/AGY (flag interativa) ou Kimi (colagem) nascia mudo, e a
+ * nota da retomada do F-1473 nunca chegava. Agora cola com prova de aceite
+ * depois da prova de boot e antes de confirmar a recuperação.
+ */
+describe('F-1476: failover Main-owned entrega o pacote a quem não o recebe no argv', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    deps.spawnAsync.mockReset();
+    deps.terminate.mockReset().mockResolvedValue(true);
+    deps.spawnAsync.mockResolvedValue({ requestId: 'r', ok: true, paneId: 'new-pane', sessionId: 'new-session' });
+  });
+  afterEach(() => pty.sessions.clear());
+  const respawn = (
+    adapterId: string,
+    role: 'orchestrator' | 'worker',
+    deliverBrief: (...args: [string, string, string]) => Promise<boolean>,
+  ) => {
+    deps.getPane.mockReturnValue({ entry: { paneId: 'old-pane', sessionId: 'old-session' }, meta: { ...meta, role } });
+    return respawnMainOwnedPaneWithAccount({
+      paneId: 'old-pane', sessionId: 'old-session', adapterId, toModel: 'fixture-model',
+      fromAccountLabel: 'fixture', reason: 'model rejected',
+    }, { deliverBrief });
+  };
+
+  it.each(['qwen', 'mimo-code', 'agy', 'kimi'])('Maestro %s recebe o pacote por colagem com prova antes do sucesso', async (adapterId) => {
+    const deliverBrief = vi.fn(async () => true);
+    expect(await respawn(adapterId, 'orchestrator', deliverBrief)).toBe(true);
+    expect(deliverBrief).toHaveBeenCalledTimes(1);
+    expect(deliverBrief).toHaveBeenCalledWith('new-session', expect.stringContaining('religado automaticamente'), adapterId);
+    // Orquestrador: a sessão exausta sai antes (um Maestro por missão, F-1480).
+    expect(deps.terminate.mock.invocationCallOrder[0]).toBeLessThan(deliverBrief.mock.invocationCallOrder[0]!);
+  });
+
+  it('colagem não aceita: o pane novo sai (sem pane morto) e a recuperação não é confirmada', async () => {
+    pty.sessions.set('new-session', { paneId: 'new-pane', spawnedAt: Date.now(), resumed: false });
+    deps.terminate.mockImplementation(async (...args: unknown[]) => { pty.sessions.delete(String(args[0])); return true; });
+    const deliverBrief = vi.fn(async () => false);
+    expect(await respawn('qwen', 'orchestrator', deliverBrief)).toBe(false);
+    expect(deps.terminate).toHaveBeenCalledWith('new-session', expect.objectContaining({ origin: 'failover-respawn' }));
+    expect(deps.deletePane).toHaveBeenCalledWith('new-pane');
+  });
+
+  it('worker com colagem que lança: o pane novo sai e a tarefa segue no pane de antes', async () => {
+    const deliverBrief = vi.fn(async () => { throw new Error('pty fechado'); });
+    expect(await respawn('kimi', 'worker', deliverBrief)).toBe(false);
+    // F-1480: o worker nasce antes; sem aceite, a sessão exausta nem é tocada.
+    expect(deps.terminate).not.toHaveBeenCalledWith('old-session', expect.anything());
+    expect(deps.deletePane).toHaveBeenCalledWith('new-pane');
+  });
+
+  it('worker Kimi (canal de colagem) também recebe o pacote colado', async () => {
+    const deliverBrief = vi.fn(async () => true);
+    expect(await respawn('kimi', 'worker', deliverBrief)).toBe(true);
+    expect(deliverBrief).toHaveBeenCalledWith('new-session', expect.any(String), 'kimi');
+  });
+
+  it.each([
+    ['qwen', 'worker'],
+    ['agy', 'worker'],
+    ['claude', 'orchestrator'],
+    ['codex', 'worker'],
+  ] as const)('%s como %s recebe o pacote no argv: nada a colar', async (adapterId, role) => {
+    const deliverBrief = vi.fn(async () => true);
+    expect(await respawn(adapterId, role, deliverBrief)).toBe(true);
+    expect(deliverBrief).not.toHaveBeenCalled();
+  });
+
+  describe('retomada nativa do F-1473', () => {
+    const scopedMeta = {
+      ...meta,
+      scope: { version: 1 as const, installationId: 'i', projectId: 'p', checkoutId: 'c', rootRealPath: '/project', identitySource: 'manifest' as const },
+    };
+    const resumeInput = {
+      paneId: 'old-pane', sessionId: 'old-session', adapterId: 'claude', toAccountId: 'acct-b', fromAccountId: 'acct-a',
+      toAccountLabel: 'ana.ops@example.org', fromAccountLabel: 'x', reason: 'quota', touchedFiles: [] as string[],
+      diffStat: undefined, nativeResume: true,
+    };
+    beforeEach(() => {
+      deps.getPane.mockReturnValue({ entry: { paneId: 'old-pane', sessionId: 'old-session' }, meta: scopedMeta });
+    });
+
+    it('retomada com prova de boot: a nota é colada DEPOIS da prova, mesmo no Claude posicional', async () => {
+      const boot = fakeBoot('proved');
+      const deliverBrief = vi.fn(async () => true);
+      await expect(respawnMainOwnedPaneWithAccount(resumeInput,
+        { rebindSession: vi.fn(() => true), observeResumeBoot: boot.observe, deliverBrief })).resolves.toBe(true);
+      expect(deliverBrief).toHaveBeenCalledWith('new-session', expect.stringContaining('resumed THIS SAME conversation'), 'claude');
+      // Uma vez só: o pty-manager não entrega prompt numa retomada (nada em dobro).
+      expect(deliverBrief).toHaveBeenCalledTimes(1);
+      expect(boot.confirm.mock.invocationCallOrder[0]).toBeLessThan(deliverBrief.mock.invocationCallOrder[0]!);
+    });
+
+    it('retomada encerrada pelo próprio Nexus na janela (closed): nada é colado', async () => {
+      const deliverBrief = vi.fn(async () => true);
+      await expect(respawnMainOwnedPaneWithAccount(resumeInput,
+        { rebindSession: vi.fn(() => true), observeResumeBoot: fakeBoot('closed').observe, deliverBrief })).resolves.toBe(true);
+      expect(deliverBrief).not.toHaveBeenCalled();
+    });
+
+    it('retomada sem prova cai no pacote em sessão nova do Claude: argv, nada a colar', async () => {
+      deps.spawnAsync
+        .mockResolvedValueOnce({ requestId: 'r', ok: true, paneId: 'resumed-pane', sessionId: 'resumed-session' })
+        .mockResolvedValueOnce({ requestId: 'r2', ok: true, paneId: 'pack-pane', sessionId: 'pack-session' });
+      const deliverBrief = vi.fn(async () => true);
+      await expect(respawnMainOwnedPaneWithAccount(resumeInput,
+        { rebindSession: vi.fn(() => true), observeResumeBoot: fakeBoot('failed').observe, deliverBrief })).resolves.toBe(true);
+      expect(deliverBrief).not.toHaveBeenCalled();
+    });
+  });
+});
+
+it('F-1476: respawnBriefNeedsPaste — retomada sempre cola (uma vez); sem retomada vale a regra do canal', () => {
+  expect(respawnBriefNeedsPaste('claude', 'orchestrator', true)).toBe(true);
+  expect(respawnBriefNeedsPaste('claude', 'orchestrator', false)).toBe(false);
+  expect(respawnBriefNeedsPaste('qwen', 'orchestrator', true)).toBe(true);
+  expect(respawnBriefNeedsPaste('qwen', 'orchestrator')).toBe(true);
+  expect(respawnBriefNeedsPaste('qwen', 'worker')).toBe(false);
+  expect(respawnBriefNeedsPaste('kimi', 'worker')).toBe(true);
+  expect(respawnBriefNeedsPaste('cli-desconhecida', 'orchestrator', true)).toBe(false);
 });
