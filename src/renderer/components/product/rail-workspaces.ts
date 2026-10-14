@@ -11,6 +11,10 @@ import type { WorkspaceRailWorkspace } from './WorkspaceRail';
  * - Vizinhos (recentes ≠ corrente) entram em "Em andamento" apenas com
  *   missões ATIVAS (running/blocked/recovering) — concluídas não poluem.
  * - "Recentes" segue como lista de workspaces sem missões no chip.
+ * - Um workspace em "Em andamento" NUNCA reaparece em "Recentes".
+ * - O corrente com panes vivos (mesmo sem missão) carrega `livePaneCount`
+ *   para a linha mostrar o andamento; vizinhos só são conhecidos pelas
+ *   missões ativas (o renderer não tem os panes de outro workspace).
  */
 
 const ACTIVE_NEIGHBOR_MISSION_STATES: ReadonlySet<
@@ -31,6 +35,8 @@ export interface ProjectRailWorkspacesInput {
   readonly current: RailWorkspaceInput | null;
   readonly recents: readonly RailWorkspaceInput[];
   readonly currentSummaries: readonly MissionSummarySnapshot[];
+  /** Panes vivos do workspace corrente (layout do renderer). */
+  readonly currentLivePaneCount?: number;
   /** Missões do workspace corrente cujo motor concluiu e o humano ainda não. */
   readonly currentAwaitingReviewIds?: readonly string[];
   /**
@@ -78,6 +84,9 @@ export function projectRailWorkspaces(
       missions: input.currentSummaries.map((summary) =>
         toRailMission(summary, awaitingReviewIds),
       ),
+      ...(input.currentLivePaneCount
+        ? { livePaneCount: input.currentLivePaneCount }
+        : {}),
     });
   }
 
@@ -97,8 +106,12 @@ export function projectRailWorkspaces(
     }
   }
 
+  const activePaths = new Set(activeWorkspaces.map((w) => w.path));
   const recentWorkspaces: WorkspaceRailWorkspace[] = input.recents
-    .filter((workspace) => workspace.path !== currentPath)
+    .filter(
+      (workspace) =>
+        workspace.path !== currentPath && !activePaths.has(workspace.path),
+    )
     .map((workspace) => ({
       id: workspace.path,
       name: workspace.name,

@@ -1386,6 +1386,7 @@ export function App() {
         name: workspace.name,
       })),
       currentSummaries: missionSummaries,
+      currentLivePaneCount: listPanes(layoutRoot).length,
       currentAwaitingReviewIds: orchMissions
         .filter((mission) => missionAwaitsOperatorReview(mission))
         .map((mission) => mission.id),

@@ -17,6 +17,13 @@ describe('shortenWorkspacePath', () => {
     expect(shortenWorkspacePath('')).toBe('');
   });
 
+  it('trata caminho Windows com barra invertida como segmentos', () => {
+    expect(
+      shortenWorkspacePath('C:\\Users\\ana\\dev\\nexus-ide'),
+    ).toBe('…/dev/nexus-ide');
+    expect(shortenWorkspacePath('C:\\srv\\app')).toBe('…/srv/app');
+  });
+
   it('normalizes trailing separators instead of spending a segment on them', () => {
     expect(shortenWorkspacePath('/Users/ana/dev/nexus-ide/')).toBe(
       '…/dev/nexus-ide',

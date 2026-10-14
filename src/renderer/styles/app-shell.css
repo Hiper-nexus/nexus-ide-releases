@@ -966,7 +966,7 @@
 
 .workspace-rail__mission-list {
   margin: 4px 0 6px 0;
-  padding: 0;
+  padding: 0 0 0 var(--space-4);
   list-style: none;
   display: flex;
   flex-direction: column;
@@ -1153,8 +1153,27 @@
   color: var(--text);
   line-height: 1.4;
   overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+
+/* Nome do projeto é o título da hierarquia; caminho e andamento são apoio. */
+.workspace-rail__workspace .workspace-rail__row-label {
+  color: var(--text);
+}
+
+.workspace-rail__workspace-activity {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--text-dim);
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  line-height: 1.35;
 }
 
 .workspace-rail__mission-copy {

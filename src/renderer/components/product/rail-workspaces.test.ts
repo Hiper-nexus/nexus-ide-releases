@@ -91,6 +91,37 @@ describe('projectRailWorkspaces', () => {
     ]);
   });
 
+  it('repositório em andamento NÃO aparece também em Recentes', () => {
+    const result = projectRailWorkspaces({
+      current,
+      recents,
+      currentSummaries: [summary('a', 'running')],
+      crossWorkspaceSummaries: {
+        '/ws/alpha': [summary('x1', 'running')],
+      },
+    });
+    expect(result.activeWorkspaces.map((w) => w.id)).toEqual([
+      '/ws/atual',
+      '/ws/alpha',
+    ]);
+    expect(result.recentWorkspaces.map((w) => w.id)).toEqual(['/ws/beta']);
+    const activeIds = new Set(result.activeWorkspaces.map((w) => w.id));
+    expect(
+      result.recentWorkspaces.some((w) => activeIds.has(w.id)),
+    ).toBe(false);
+  });
+
+  it('corrente com panes vivos mas sem missão carrega a contagem de panes', () => {
+    const result = projectRailWorkspaces({
+      current,
+      recents,
+      currentSummaries: [],
+      currentLivePaneCount: 3,
+      crossWorkspaceSummaries: {},
+    });
+    expect(result.activeWorkspaces[0]).toMatchObject({ livePaneCount: 3 });
+  });
+
   it('leva worktrees e updatedAt da missão até o rail', () => {
     const result = projectRailWorkspaces({
       current,

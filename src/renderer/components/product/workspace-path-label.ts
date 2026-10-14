@@ -21,13 +21,19 @@ export interface WorkspacePathEntry {
 
 function segmentsOf(workspacePath: string): readonly string[] {
   return workspacePath
-    .replace(/\/+$/, '')
-    .split('/')
+    .replace(/[/\\]+$/, '')
+    .split(/[/\\]/)
     .filter((segment) => segment !== '');
 }
 
 function tail(segments: readonly string[], depth: number): string {
-  if (depth >= segments.length) return `/${segments.join('/')}`;
+  if (depth >= segments.length) {
+    // Caminho curto sai inteiro: raiz POSIX ganha a barra; drive (`C:`) nao,
+    // senao o rotulo inventa uma raiz que nao existe.
+    return /^[A-Za-z]:$/.test(segments[0] ?? '')
+      ? segments.join('/')
+      : `/${segments.join('/')}`;
+  }
   return `${ELLIPSIS}/${segments.slice(-depth).join('/')}`;
 }
 

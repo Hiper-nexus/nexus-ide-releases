@@ -1162,6 +1162,53 @@ describe('WorkspaceRail', () => {
     ).toBe('3');
   });
 
+  it('contador de Em andamento bate com os repositórios listados, não com as missões', () => {
+    const { host } = renderRail({
+      activeWorkspaces: [
+        {
+          id: '/hipergo',
+          path: '/hipergo',
+          name: 'hipergo',
+          livePaneCount: 2,
+          missions: [],
+        },
+        {
+          id: '/nexus-ide',
+          path: '/nexus-ide',
+          name: 'nexus-ide',
+          missions: [
+            {
+              id: 'm1',
+              title: 'bug visual windows analisando layout da barra lateral',
+              status: 'running',
+              needsAttention: false,
+              updatedAt: Date.now() - 9 * 60_000,
+            },
+          ],
+        },
+      ],
+      recentWorkspaces: [
+        { id: '/saas', path: '/saas', name: 'saasbarbearia', missions: [] },
+      ],
+    });
+    const active = host.querySelector('[data-rail-group="active"]');
+    expect(
+      active?.querySelector('.workspace-rail__group-pill')?.textContent,
+    ).toBe('2');
+    // A missão fica agrupada sob o repositório dela, com estado e panes.
+    const nexusRow = host.querySelector('[data-workspace-id="/nexus-ide"]');
+    expect(nexusRow?.closest('li')?.textContent).toContain('1 missão');
+    expect(nexusRow?.closest('li')?.textContent).toContain(
+      'bug visual windows analisando layout da barra lateral',
+    );
+    const hiperRow = host.querySelector('[data-workspace-id="/hipergo"]');
+    expect(hiperRow?.closest('li')?.textContent).toContain('2 panes abertos');
+    // Nenhum repositório listado em Em andamento reaparece em Recentes.
+    const recent = host.querySelector('[data-rail-group="recent"]');
+    expect(recent?.textContent).toContain('saasbarbearia');
+    expect(recent?.textContent).not.toContain('nexus-ide');
+  });
+
   it('separa as utilidades encolhíveis da linha de Configurações, que fica sempre visível', () => {
     const { host } = renderRail();
     const utilities = host.querySelector('.workspace-rail__utilities');

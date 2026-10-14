@@ -66,6 +66,8 @@ export interface WorkspaceRailWorkspace {
    */
   path?: string;
   missions: readonly WorkspaceRailMission[];
+  /** Panes vivos conhecidos deste workspace (só o corrente tem esse dado). */
+  livePaneCount?: number;
 }
 
 export type WorkspaceRailSelection =
@@ -276,9 +278,9 @@ function WorkspaceGroup({
   onRemoveMission,
 }: WorkspaceGroupProps) {
   const labelId = `workspace-rail-${group}-label`;
-  const missionCount = workspaces.reduce((count, workspace) => count + workspace.missions.length, 0);
-  // "Recentes" nunca tem missão para contar: lá o número útil é de pastas.
-  const groupCount = group === 'recent' ? workspaces.length : missionCount;
+  // O contador é de repositórios listados na seção, nos dois grupos: contar
+  // missões em "Em andamento" fazia a pill dizer 1 com 2 projetos na tela.
+  const groupCount = workspaces.length;
 
   const paneMissions = useOrchStore((s) => s.paneMissions);
   const root = useLayoutStore((s) => s.root);
@@ -458,8 +460,23 @@ function WorkspaceGroup({
                       ) : null}
                     </span>
                     {workspace.path ? (
-                      <span className="workspace-rail__workspace-path">
+                      <span
+                        className="workspace-rail__workspace-path"
+                        title={workspace.path}
+                      >
                         {pathLabels.get(workspace.id) ?? workspace.path}
+                      </span>
+                    ) : null}
+                    {group === 'active' &&
+                    (workspace.missions.length > 0 ||
+                      (workspace.livePaneCount ?? 0) > 0) ? (
+                      <span className="workspace-rail__workspace-activity">
+                        {workspace.missions.length > 0
+                          ? `${workspace.missions.length} ${workspace.missions.length === 1 ? 'missão' : 'missões'}`
+                          : 'sem missão'}
+                        {(workspace.livePaneCount ?? 0) > 0
+                          ? ` · ${workspace.livePaneCount} ${workspace.livePaneCount === 1 ? 'pane aberto' : 'panes abertos'}`
+                          : ''}
                       </span>
                     ) : null}
                   </span>
@@ -555,7 +572,9 @@ function WorkspaceGroup({
                     const missionSelected =
                       selection?.kind === 'mission' &&
                       selection.missionId === mission.id;
-                    const chromeTitle = missionChromeTitle(mission.title);
+                    // O rail mostra o titulo em ate 2 linhas: o corte de chrome (48) partia
+                    // o titulo no meio da palavra; o tooltip guarda o titulo inteiro.
+                    const chromeTitle = missionChromeTitle(mission.title, 96);
                     const missionPanes = allPanes.filter(
                       (p) => (p.missionId ?? paneMissions[p.id]) === mission.id,
                     );
@@ -982,7 +1001,7 @@ export function WorkspaceRail({
 
       <div className="workspace-rail__scroll">
         <WorkspaceGroup
-          label={activeWorkspaces.some((workspace) => workspace.missions.length > 0) ? 'Em andamento' : 'Projeto atual'}
+          label={activeWorkspaces.some((workspace) => workspace.missions.length > 0 || (workspace.livePaneCount ?? 0) > 0) ? 'Em andamento' : 'Projeto atual'}
           group="active"
           workspaces={activeWorkspaces}
           pathLabels={pathLabels}
