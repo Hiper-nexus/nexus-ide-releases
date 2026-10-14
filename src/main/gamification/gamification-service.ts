@@ -30,11 +30,13 @@ import {
   setMeta,
 } from './gamification-store';
 import {
+  acceptedHandoffIds,
   bumpExtra,
   countersSchema,
   dayStartOf,
   DELIVERY_KINDS,
   EMPTY_STREAK,
+  groupRecentEvents,
   handoffEffort,
   maxTier,
   metaJson,
@@ -487,12 +489,15 @@ export class ProjectGamificationService {
       else handoffsByMission.set(handoff.missionId, [handoff]);
     }
 
+    // Evidência nexus-trusted quase nunca existe no fluxo real (operador
+    // trabalha com panes): sem o ACK do orquestrador, handoff nenhum pontuava.
+    const accepted = acceptedHandoffIds(db);
     for (const handoff of allHandoffs) {
-      if (
-        handoff.status !== 'success' ||
-        handoff.evidenceTrust !== 'nexus-trusted'
-      ) continue;
-      const evidence = retro ? null : handoff.evidenceIds.join(', ');
+      if (handoff.status !== 'success') continue;
+      const trusted = handoff.evidenceTrust === 'nexus-trusted';
+      if (!trusted && !accepted.has(handoff.id)) continue;
+      const evidence =
+        retro || !trusted ? null : handoff.evidenceIds.join(', ');
       const input: XpEventInput = {
         kind: evidence ? 'handoff_green' : 'handoff_success',
         entityKey: handoffKey(handoff.id),
@@ -699,15 +704,11 @@ export class ProjectGamificationService {
       selectedSkinRaw === null || selectedSkinRaw === ''
         ? null
         : z.string().min(1).max(64).parse(selectedSkinRaw);
-    // Mais recentes primeiro — feed do perfil (últimas 12 batidas).
-    const recent = events
-      .slice(-12)
-      .reverse()
-      .map((event) => ({
-        kind: event.kind,
-        points: event.points,
-        createdAt: event.createdAt,
-      }));
+    const todayStart = dayStartOf(this.#now());
+    let todayXp = 0;
+    for (const event of events) {
+      if (event.createdAt >= todayStart) todayXp += event.points;
+    }
     return {
       powerLevel: power,
       tier,
@@ -722,7 +723,8 @@ export class ProjectGamificationService {
       skins: metaJson(db, 'skins', stringListSchema, []),
       selectedSkin,
       counters,
-      recent,
+      recent: groupRecentEvents(events),
+      todayXp,
       ruleVersion: RULE_VERSION,
       projectId: scope.projectId,
       checkoutId: scope.checkoutId,

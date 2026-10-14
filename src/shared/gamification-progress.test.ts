@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   achievementMeter,
   activeOperatorQuests,
+  DAILY_XP_GOAL,
   listAchievementProgress,
+  nextTierPlan,
+  recentAchievements,
   tierProgress,
   xpKindLabel,
 } from './gamification-progress';
@@ -71,5 +74,73 @@ describe('gamification progress', () => {
     });
     expect(veteran.ratio).toBeCloseTo(0);
     expect(veteran.remaining).toBe(1_100_000);
+  });
+
+  it('names the next tier instead of a vague milestone', () => {
+    const veteran = tierProgress({
+      powerLevel: 631_975,
+      nextTierAt: 1_500_000,
+      tier: 'VETERANO',
+    });
+    expect(veteran.nextTier).toBe('ELITE');
+    expect(veteran.label).toBe('VETERANO → ELITE');
+    const legend = tierProgress({
+      powerLevel: 30_000_000,
+      nextTierAt: 100_000_000,
+      tier: 'LENDA',
+    });
+    expect(legend.nextTier).toBeNull();
+  });
+
+  it('translates the remaining XP into concrete deliveries', () => {
+    expect(nextTierPlan(868_025)).toBe('≈ 290 handoffs aceitos ou 87 missões');
+    expect(nextTierPlan(2_000)).toBe('≈ 1 handoff aceito ou 1 missão');
+    expect(nextTierPlan(0)).toBeNull();
+  });
+
+  it('turns accepted handoffs into a visible milestone quest', () => {
+    const quests = activeOperatorQuests({
+      ...baseSnapshot,
+      counters: {
+        agent_turn: 6_581,
+        jarvis_action: 4,
+        mission_done: 8,
+        handoff_success: 8,
+      },
+      streakDays: 2,
+      todayXp: 17_225,
+    });
+    const handoffs = quests.find((quest) => quest.id === 'quest-handoffs');
+    expect(handoffs).toEqual(
+      expect.objectContaining({ current: 8, target: 10 }),
+    );
+    expect(handoffs?.hint).not.toMatch(/nexus-trusted/);
+    expect(quests.some((quest) => quest.id === 'quest-green')).toBe(false);
+    expect(quests.some((quest) => quest.id === 'quest-daily')).toBe(false);
+  });
+
+  it('offers the daily goal while today is below it', () => {
+    const quests = activeOperatorQuests({
+      ...baseSnapshot,
+      counters: { agent_turn: 3 },
+      todayXp: 900,
+    });
+    expect(quests[0]).toEqual(
+      expect.objectContaining({
+        id: 'quest-daily',
+        current: 900,
+        target: DAILY_XP_GOAL,
+      }),
+    );
+  });
+
+  it('lists the most recently unlocked achievements first', () => {
+    expect(
+      recentAchievements(
+        ['primeiro-comando', 'primeira-missao', 'primeira-agentica'],
+        2,
+      ).map((item) => item.title),
+    ).toEqual(['Arquiteto de Times', 'Primeiro Deploy']);
+    expect(recentAchievements(['desconhecida'])).toEqual([]);
   });
 });

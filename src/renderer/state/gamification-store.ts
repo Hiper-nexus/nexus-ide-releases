@@ -51,6 +51,25 @@ export function sameWorkspaceRoot(
   return norm(left) === norm(right);
 }
 
+/**
+ * XP ganho entre dois snapshots do MESMO perfil (projeto + checkout). `null`
+ * quando o perfil mudou ou ainda não chegou do main — troca de workspace e
+ * hidrate inicial nunca são "ganho".
+ */
+export function xpGain(
+  previous: GamificationSnapshot,
+  next: GamificationSnapshot,
+): number | null {
+  if (
+    !next.projectId ||
+    next.projectId !== previous.projectId ||
+    next.checkoutId !== previous.checkoutId
+  ) {
+    return null;
+  }
+  return Math.max(0, next.powerLevel - previous.powerLevel);
+}
+
 interface GamificationStore {
   snapshot: GamificationSnapshot;
   sober: boolean;

@@ -5,7 +5,8 @@ import Database from 'better-sqlite3';
 import { afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { prepareMimoWorker } from './__tests__/mimo-worker-fixture';
 import type { MimoSessionBinding } from './mimo-scanner';
-const deps = vi.hoisted(() => ({ listener: null as null | ((id: string, binding: MimoSessionBinding | null) => void), speed: vi.fn() }));
+const deps = vi.hoisted(() => ({ listener: null as null | ((id: string, binding: MimoSessionBinding | null) => void), speed: vi.fn(), recordAgentTurn: vi.fn() }));
+vi.mock('../gamification/gamification-service', () => ({ requireGamificationService: () => ({ recordAgentTurn: deps.recordAgentTurn }) }));
 vi.mock('../agent-hooks/mimo-session-registry', () => ({ isMimoUsageBindingProved: () => true,
   resolveMimoUsageBinding: (binding: MimoSessionBinding) => binding,
   releaseMimoUsageBinding: () => {},
@@ -66,4 +67,9 @@ it('ingests measured MiMo tokens into exact checkout/account totals with idempot
   expect(service.snapshot(a.binding.scope)?.global).toMatchObject({ outputTokens: 10, costUsd: 0.008, turns: 1 });
   expect(service.snapshot(b.binding.scope)?.global.outputTokens).toBe(22);
   expect(deps.speed).toHaveBeenCalledWith('pane-a', expect.objectContaining({ key: 'mimo-code:ses_same:msg_same', outputTokens: 10 }));
+  // Um turno MiMo com saída vale XP uma vez por mensagem: a correção de
+  // streaming (mesmo id, mais tokens) não pontua de novo.
+  expect(deps.recordAgentTurn).toHaveBeenCalledTimes(2);
+  expect(deps.recordAgentTurn).toHaveBeenCalledWith(a.binding.scope, 'mimo-code');
+  expect(deps.recordAgentTurn).toHaveBeenCalledWith(b.binding.scope, 'mimo-code');
 });

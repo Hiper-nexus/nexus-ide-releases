@@ -7,6 +7,7 @@ import {
   EMPTY_GAMIFICATION_SNAPSHOT,
   sameWorkspaceRoot,
   useGamificationStore,
+  xpGain,
 } from './gamification-store';
 
 function snapshot(
@@ -116,5 +117,18 @@ describe('renderer gamification project isolation', () => {
     expect(useGamificationStore.getState().snapshot).toBe(
       EMPTY_GAMIFICATION_SNAPSHOT,
     );
+  });
+});
+
+describe('xpGain between two snapshots', () => {
+  it('reports growth only inside the same project profile', () => {
+    expect(xpGain(snapshot('/workspace/a', 8_000), snapshot('/workspace/a', 8_300)))
+      .toBe(300);
+    expect(xpGain(snapshot('/workspace/a', 8_300), snapshot('/workspace/a', 8_300)))
+      .toBe(0);
+    expect(xpGain(snapshot('/workspace/a', 8_000), snapshot('/workspace/b', 90_000)))
+      .toBeNull();
+    expect(xpGain(EMPTY_GAMIFICATION_SNAPSHOT, snapshot('/workspace/a', 8_000)))
+      .toBeNull();
   });
 });

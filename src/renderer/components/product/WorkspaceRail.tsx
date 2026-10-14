@@ -30,6 +30,7 @@ import { RailMemoryPressure } from './RailMemoryPressure';
 import { ReportProblemButton } from '../bug-report/ReportProblemButton';
 import { NexusMark } from '../NexusMark';
 import { TrialNoticeCard } from './TrialNoticeCard';
+import { OperatorHud } from '../OperatorHud';
 import { PixelIcon, type PixelIconName } from '../PixelIcon';
 import { workspacePathLabels } from './workspace-path-label';
 import { relativeAgeLabel } from '../../../shared/mission-kanban';
@@ -1039,6 +1040,8 @@ export function WorkspaceRail({
             onOpenUsage={onOpenUsageQuota ?? onOpenSettings}
           />
         ) : null}
+
+        <OperatorHud />
         </div>
 
         <div className="workspace-rail__cockpit-status">
