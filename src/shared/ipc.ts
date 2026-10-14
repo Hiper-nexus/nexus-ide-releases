@@ -105,6 +105,8 @@ const paneModelSchema = z.object({
   model: z.string().min(1).max(128).optional(),
   accountId: z.string().min(1).max(128).optional(),
   role: z.enum(['orchestrator', 'worker']).optional(),
+  /** F-1475: mesma razão do `paneNumber` — sem a entrada o assento some no restart. */
+  seatedOrchestrator: z.literal(true).optional(),
   agentName: z.string().min(1).max(256).optional(),
   effort: z.string().min(1).max(32).optional(),
   titlePinned: z.boolean().optional(),

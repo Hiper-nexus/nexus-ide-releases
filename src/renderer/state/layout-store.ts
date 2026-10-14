@@ -766,6 +766,25 @@ function bindMissionSpaces(root: LayoutNode): LayoutNode {
   return next;
 }
 
+/**
+ * F-1475: `missionHost` tem dois carimbos. A adoção (`reflectMissionLeader`)
+ * marca o pane do OPERADOR que passou a liderar a missão; `bindMissionSpaces`
+ * marca TODO pane de missão com aba própria (`workspaceBinding.spaceId`) para
+ * a missão morar na aba isolada. Só o primeiro é a mão do operador — volta
+ * para ele quando a coroa muda e nunca é cadáver de Maestro. Na missão com
+ * aba própria quem diz qual pane foi adotado é o Main (`adoptedPaneId`);
+ * missão desconhecida mantém a leitura antiga (anfitrião).
+ */
+export function isOperatorMissionHost(pane: PaneModel): boolean {
+  if (!pane.missionHost) return false;
+  const { missions, paneMissions } = useOrchStore.getState();
+  const missionId = pane.missionId ?? paneMissions[pane.id];
+  const binding = missions.find((mission) => mission.id === missionId)
+    ?.intentContract?.workspaceBinding;
+  if (!binding?.spaceId) return true;
+  return binding.adoptedPaneId === pane.id;
+}
+
 export function enforceLayoutInvariants(
   previous: Pick<LayoutState, 'root' | 'focusedPaneId' | 'maximizedPaneId'> & {
     readonly stagePaneId?: string | null;
@@ -997,6 +1016,8 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
       transient: req.transient,
       agentName: req.agentName,
       role: req.role,
+      // F-1475: o grant de spawn é do Main — o assento sobrevive ao rebaixamento.
+      ...(req.role === 'orchestrator' ? { seatedOrchestrator: true as const } : {}),
       ...inheritedSpace,
       ...(req.spawnRoute ? { spawnRoute: req.spawnRoute } : {}),
     };
@@ -1477,30 +1498,46 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
       if (!isLeader && !belongsToMission(pane)) continue;
       // Coroa foi para outro pane: o anfitrião adotado volta a ser a mão do
       // operador (o Main já o devolveu a `user`), não um worker da missão.
-      if (!isLeader && leaderPaneId !== null && pane.missionHost) {
+      // F-1475: só o adotado — o carimbo da aba isolada é de todo pane da
+      // missão e "devolvia" Maestro morto e workers, imunes para sempre.
+      if (!isLeader && leaderPaneId !== null && isOperatorMissionHost(pane)) {
         root = updatePane(root, pane.id, {
           role: undefined,
           missionId: undefined,
           missionHost: undefined,
+          seatedOrchestrator: undefined,
         });
         released.push(pane.id);
         changed = true;
         continue;
       }
+      // F-1475: o líder confirmado ganha o assento durável (backfill de layout
+      // antigo incluído); o rebaixamento troca o papel e nunca tira o assento.
       const needsWrite = isLeader
-        ? pane.role !== 'orchestrator' || pane.missionId === undefined
+        ? pane.role !== 'orchestrator' ||
+          pane.missionId === undefined ||
+          pane.seatedOrchestrator !== true
         : pane.role !== 'worker';
       if (!needsWrite) continue;
       root = isLeader
         ? updatePane(root, pane.id, {
             role: 'orchestrator',
+            seatedOrchestrator: true,
             missionId: pane.missionId ?? missionId,
             // Adoção de um pane que não era de missão nenhuma: a missão passa a
             // morar na aba DELE (a aba é a feature). O pane que o motor abriu
             // para a missão já nasce com missionId e não hospeda nada.
             ...(pane.missionId === undefined ? { missionHost: true as const } : {}),
           })
-        : updatePane(root, pane.id, { role: 'worker' });
+        : updatePane(root, pane.id, {
+            role: 'worker',
+            // A coroa que o pane carregava vira assento: sem isto o Maestro
+            // morto rebaixado escapava da aposentadoria do sucessor. A mão do
+            // operador não ganha assento: nunca é cópia de Maestro.
+            ...(pane.role === 'orchestrator' && !isOperatorMissionHost(pane)
+              ? { seatedOrchestrator: true as const }
+              : {}),
+          });
       changed = true;
     }
     // Replay do mesmo snapshot: nada mudou, nada é escrito.
@@ -1561,6 +1598,8 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
       model: undefined,
       role: undefined,
       missionId: undefined,
+      missionHost: undefined,
+      seatedOrchestrator: undefined,
       orchRequestId: undefined,
       agentName: undefined,
       title: 'shell',

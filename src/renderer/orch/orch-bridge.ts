@@ -9,6 +9,7 @@ import type {
 } from '../../shared/orch-types';
 import type { PaneModel } from '../../shared/types';
 import {
+  isOperatorMissionHost,
   useLayoutStore,
   whenWorkspaceLayoutSettled,
 } from '../state/layout-store';
@@ -28,6 +29,7 @@ import {
   getPaneSessionId,
   holdSpawnUntilApproved,
   isPaneSessionHealthy,
+  isSpawnHeld,
   markPaneClosingDeliberately,
   markPaneParked,
   markPersistedAuthorityOnSpawn,
@@ -39,7 +41,12 @@ import {
 } from '../terminal/terminal-host';
 import { waitForBrowserPaneCreated } from '../browser/browser-host';
 import { initAgentNotificationBridge } from './agent-notification-bridge';
-import { reflectLeadershipFromMissions } from './leadership-reflect';
+import {
+  confirmedLeaderPaneId,
+  reflectLeadershipFromMissions,
+  snapshotLeadershipPanes,
+  type LeadershipMissionSnapshot,
+} from './leadership-reflect';
 import type { Handoff } from '../../shared/orch-types';
 import {
   newlyDispatchedPlanMissionIds,
@@ -131,6 +138,14 @@ function cleanupFailedOrchPane(
  * de sessão morta ou sobra de revival. Sem esta aposentadoria o boot deixa
  * DOIS panes de orquestrador na tela e o morto trava com mensagens de erro
  * que o operador lê como pane vivo (teclado não responde).
+ *
+ * F-1475: o cinto roda só com o sucessor CONFIRMADO pelo Main — a apresentação
+ * Main-owned anexada na sessão selada e o broadcast/attach que casa a sessão
+ * durável com um pane. Antes só o grant de spawn chamava, antes do spawn e do
+ * bind (falha deixava a missão sem Maestro), e os outros caminhos acumulavam
+ * um Maestro morto por troca. A identidade é o assento selado pelo Main
+ * (`seatedOrchestrator`), não só o `role`: o espelho de liderança rebaixa o
+ * morto a worker sem mudar o título, e ele escapava. E só sai morte provada.
  */
 function retireStaleMissionOrchestratorPanes(req: {
   readonly missionId?: string;
@@ -139,6 +154,7 @@ function retireStaleMissionOrchestratorPanes(req: {
 }): void {
   if (req.role !== 'orchestrator' || !req.missionId) return;
   const paneMissions = useOrchStore.getState().paneMissions;
+  const paneStates = useSessionStateStore.getState().paneStates;
   const stale = listPanes(useLayoutStore.getState().root).filter((pane) => {
     if (pane.kind !== 'cli-agent') return false;
     if (pane.id === req.keepPaneId) return false;
@@ -146,9 +162,21 @@ function retireStaleMissionOrchestratorPanes(req: {
     // par (missão, sessão durável) só casa com um pane que carrega a sessão de
     // A, exatamente o que este cinto protege. Não há eleição aqui para corrigir.
     if (getPaneSessionId(pane.id)) return false;
-    if ((pane.role ?? 'worker') !== 'orchestrator') return false;
+    // ACP não tem PTY: sem sessão no host não prova morte nenhuma.
+    if (pane.agentTransport === 'acp') return false;
+    // Pane do operador que hospedou a missão volta para a mão dele (o espelho
+    // o devolve); nunca é cadáver desta substituição. O carimbo de casa da aba
+    // isolada (todo pane da missão) não conta: ver isOperatorMissionHost.
+    if (isOperatorMissionHost(pane)) return false;
+    if (pane.role !== 'orchestrator' && pane.seatedOrchestrator !== true) {
+      return false;
+    }
     const missionId = pane.missionId ?? paneMissions[pane.id];
-    return missionId === req.missionId;
+    if (missionId !== req.missionId) return false;
+    // "Sem sessão" sozinho não é morte: o PTY pode estar em cold start ou no
+    // meio de um respawn (a sessão zera antes do processo novo nascer). Só
+    // sai o que o exit provou ou o que o gate de restore segurou inerte.
+    return paneStates.get(pane.id) === 'exited' || isSpawnHeld(pane.id);
   });
   for (const pane of stale) {
     useLayoutStore.getState().close(pane.id, 'orchestrator-replaced');
@@ -158,6 +186,58 @@ function retireStaleMissionOrchestratorPanes(req: {
     // novo nasce — senão nexus_pane_list mostra dois orquestradores.
     syncPanesNow();
   }
+}
+
+/**
+ * F-1475: espelho de liderança precedido da aposentadoria. Só missão com
+ * líder CONFIRMADO pelo Main (sessão durável casada com um pane vivo) aposenta
+ * as cópias mortas — e antes do espelho, que as rebaixaria a worker. Sem
+ * sucessor provado (boot, PTY ainda anexando) nada sai: o restore mantém as
+ * cópias retidas com o scrollback até a prova.
+ */
+function mirrorConfirmedLeadership(
+  missions: readonly LeadershipMissionSnapshot[],
+): void {
+  const panes = snapshotLeadershipPanes();
+  for (const mission of missions) {
+    const leaderPaneId = confirmedLeaderPaneId(mission, panes);
+    if (leaderPaneId === null) continue;
+    retireStaleMissionOrchestratorPanes({
+      missionId: mission.id,
+      role: 'orchestrator',
+      keepPaneId: leaderPaneId,
+    });
+  }
+  reflectLeadershipFromMissions(missions);
+}
+
+const SPAWN_BINDING_FAILED_ORIGIN = 'fast-lane:spawn-binding-failed';
+
+/**
+ * F-1475: o Main recusou o bind DEPOIS do spawn confirmado — encerra a sessão
+ * da tentativa com origem rotulada e devolve erro, mas a folha ficava na tela
+ * como mais um "processo caiu". A morte física (exit com essa origem) é a
+ * prova: só então o pane da tentativa sai, e só se ainda for dela (selo do
+ * requestId; um pane reaproveitado com sessão nova fica).
+ */
+function closeAttemptPaneOnBindRefusal(
+  request: { readonly requestId: string; readonly paneId: string },
+  paneId: string,
+  sessionId: string,
+): void {
+  const onExit = window.nexus.pty?.onExit;
+  if (!onExit) return;
+  let unsubscribe: (() => void) | undefined;
+  let exited = false;
+  unsubscribe = onExit(sessionId, ({ terminationOrigin }) => {
+    exited = true;
+    unsubscribe?.();
+    if (terminationOrigin !== SPAWN_BINDING_FAILED_ORIGIN) return;
+    const current = getPaneSessionId(paneId);
+    if (current !== null && current !== sessionId) return;
+    cleanupFailedOrchPane(request, paneId);
+  });
+  if (exited) unsubscribe();
 }
 
 /**
@@ -239,6 +319,7 @@ function paneFromRecovery(req: MissionPaneRecoveryRequest): PaneModel {
     missionId: req.missionId,
     agentName: req.pane.agentName,
     role: req.role,
+    ...(req.role === 'orchestrator' ? { seatedOrchestrator: true as const } : {}),
     orchRequestId: req.requestId,
   };
 }
@@ -330,6 +411,7 @@ function paneFromPresentation(
     missionId: req.missionId,
     agentName: req.pane.agentName,
     role: req.role,
+    ...(req.role === 'orchestrator' ? { seatedOrchestrator: true as const } : {}),
     agentTransport: req.transport ?? 'cli-pty',
   };
 }
@@ -459,6 +541,8 @@ async function presentLiveMainOwnedPane(
     if (next !== existing) useLayoutStore.getState().setPanes(next);
     focusFreshlyPresentedPane(req.paneId, current !== undefined, req.role);
     assertPresentedPaneMounted(req.paneId);
+    // F-1475: a sessão ACP já é a prova do Main; o PTY morto da mesma missão sai.
+    retireStaleMissionOrchestratorPanes({ ...req, keepPaneId: req.paneId });
     return;
   }
 
@@ -488,6 +572,9 @@ async function presentLiveMainOwnedPane(
         : 'main-owned pane presentation did not attach in time',
     );
   }
+  // F-1475: só com o sucessor anexado na sessão que o Main selou. Antes esta
+  // apresentação só ACRESCENTAVA o pane novo ao lado dos Maestros mortos.
+  retireStaleMissionOrchestratorPanes({ ...req, keepPaneId: req.paneId });
 }
 
 function requestLiveMainOwnedPanePresentation(
@@ -497,6 +584,8 @@ function requestLiveMainOwnedPanePresentation(
   if (!isPresentationScopeCurrent(scope)) return;
   if (isExactHealthyPresentation(req)) {
     normalizeExactHealthyPresentation(req);
+    // Replay de um Maestro já vivo: cópias restauradas depois dele também saem.
+    retireStaleMissionOrchestratorPanes({ ...req, keepPaneId: req.paneId });
     return;
   }
   const key = presentationKey(req, scope);
@@ -659,12 +748,10 @@ export function useOrchBridge(): void {
                 `Spawn retry pane id mismatch: ${existing.id} != ${req.paneId}`,
               );
             }
-            if (!existing) {
-              retireStaleMissionOrchestratorPanes({
-                ...req,
-                keepPaneId: req.paneId,
-              });
-            }
+            // F-1475: o grant NÃO aposenta o Maestro antigo — spawn, attach e o
+            // bind no Main ainda podem falhar e a missão ficaria sem nenhum
+            // Maestro na tela. O espelho do broadcast aposenta quando o Main
+            // publicar a sessão durável do pane novo (mirrorConfirmedLeadership).
             paneId = existing?.id ??
               useLayoutStore.getState().spawnOrchPane({
                 paneId: req.paneId,
@@ -724,6 +811,8 @@ export function useOrchBridge(): void {
               );
               return;
             }
+            // Antes do resultado: o bind do Main só acontece depois dele.
+            closeAttemptPaneOnBindRefusal(req, paneId, sessionId);
             syncPanesNow(); // Critical: main needs state before result
             window.nexus.orch.sendPaneSpawnResult({
               requestId: req.requestId,
@@ -892,7 +981,7 @@ export function useOrchBridge(): void {
         // E o espelho: o Main é a autoridade, o layout é consequência. O
         // orquestrador que NÃO bate com a sessão durável dele é rebaixado, e o
         // que bate ganha a estrela. Reaplicar o mesmo broadcast não escreve.
-        reflectLeadershipFromMissions(missions);
+        mirrorConfirmedLeadership(missions);
       }),
       window.nexus.orch.onHandoffsChanged((handoffs: Handoff[]) =>
         useOrchStore.getState().setHandoffs(handoffs),
@@ -931,8 +1020,9 @@ export function useOrchBridge(): void {
       // A estrela depende do par (missão, sessão durável). No boot o broadcast
       // de missões chega ANTES do PTY anexar, então sem esta segunda passada o
       // espelho nunca convergia: o líder confirmado ficava sem estrela até o
-      // próximo broadcast — que pode nunca vir.
-      reflectLeadershipFromMissions(useOrchStore.getState().missions);
+      // próximo broadcast — que pode nunca vir. É também o instante em que o
+      // sucessor anexa e as cópias mortas do Maestro podem sair (F-1475).
+      mirrorConfirmedLeadership(useOrchStore.getState().missions);
       scheduleSyncPanes();
     });
     const unsubState = useSessionStateStore.subscribe(() => {

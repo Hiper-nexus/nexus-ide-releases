@@ -482,6 +482,13 @@ export interface PaneModel {
   accountId?: string;
   /** Papel na missão (orquestração) — vira o badge de identidade do pane. */
   role?: 'orchestrator' | 'worker';
+  /**
+   * F-1475: o MAIN sentou este pane como Maestro da missão (grant de spawn,
+   * apresentação, recuperação ou liderança confirmada). Diferente de `role`,
+   * o espelho de liderança nunca apaga: um Maestro morto rebaixado a worker
+   * continua reconhecível como cópia quando o Main confirma o sucessor.
+   */
+  seatedOrchestrator?: true;
   /** Agente do squad operando este pane (ex.: "Frontend"). */
   agentName?: string;
   /**

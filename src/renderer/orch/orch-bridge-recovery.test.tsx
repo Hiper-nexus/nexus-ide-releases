@@ -14,12 +14,14 @@ import { setActiveWorkspacePath } from '../state/active-workspace';
 import { useAccessStore } from '../state/access-store';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
+import { useSessionStateStore } from '../state/session-state-store';
 import { useOrchBridge } from './orch-bridge';
 
 const terminal = vi.hoisted(() => ({
   cancelPaneRecovery: vi.fn(),
   getPaneSessionId: vi.fn((_paneId: string) => null as string | null),
   isPaneSessionHealthy: vi.fn(() => true),
+  isSpawnHeld: vi.fn((_paneId: string) => false),
   markPaneClosingDeliberately: vi.fn(),
   markPersistedAuthorityOnSpawn: vi.fn(),
   onPaneSessionChange: vi.fn(() => vi.fn()),
@@ -1699,6 +1701,272 @@ describe('orchestration bridge pane recovery', () => {
     act(() => closeHandler?.({ paneId: pane.id, closingSessionId: 'session-closing' }));
     expect(terminal.markPaneClosingDeliberately).toHaveBeenCalledWith(pane.id, 'session-closing');
     expect(listPanes(useLayoutStore.getState().root).some((candidate) => candidate.id === pane.id)).toBe(true);
+    act(() => mounted.root.unmount());
+  });
+});
+
+// ── F-1475: a missão mostra um Maestro só, sem panes mortos acumulados ──────
+
+describe('F-1475 — um Maestro por missão na tela', () => {
+  beforeEach(() => {
+    useLayoutStore.setState({ hydrated: true });
+    useAccessStore.setState({ canUseApp: true, loading: false, maxAgents: null, cloudSync: true, blockedReason: null });
+    useSessionStateStore.setState({ paneStates: new Map() });
+  });
+
+  afterEach(() => {
+    setActiveWorkspacePath(null);
+    useSessionStateStore.setState({ paneStates: new Map() });
+    Reflect.deleteProperty(window, 'nexus');
+    document.body.innerHTML = '';
+    vi.clearAllMocks();
+    terminal.getPaneSessionId.mockReset().mockReturnValue(null);
+    terminal.isPaneSessionHealthy.mockReset().mockReturnValue(true);
+    terminal.isSpawnHeld.mockReset().mockReturnValue(false);
+    terminal.waitForSession.mockReset().mockResolvedValue('session-new');
+  });
+
+  /** Morte física provada: o exit do PTY chegou a este renderer. */
+  function markExited(...ids: string[]): void {
+    for (const id of ids) useSessionStateStore.getState().setPaneState(id, 'exited');
+  }
+
+  function paneIds(): string[] {
+    return listPanes(useLayoutStore.getState().root).map((pane) => pane.id);
+  }
+
+  /** O que o operador lê como Maestro: o papel atual OU o assento selado pelo Main. */
+  function maestrosOf(missionId: string): string[] {
+    return listPanes(useLayoutStore.getState().root)
+      .filter(
+        (pane) =>
+          pane.missionId === missionId &&
+          (pane.role === 'orchestrator' || pane.seatedOrchestrator === true),
+      )
+      .map((pane) => pane.id);
+  }
+
+  /**
+   * O print do cliente (0.76.250): três "Claude · Coordenar e revisar" mortos
+   * da mesma missão ao lado do que estava subindo. Um deles já foi rebaixado
+   * a worker pelo espelho de liderança — o papel mente, o assento selado não.
+   */
+  function seedDeadMaestros(): void {
+    useLayoutStore.getState().setPanes([
+      { id: 'pane-dead-1', kind: 'cli-agent', title: 'Claude · Coordenar e revisar', adapterId: 'claude', missionId: 'mission-a', role: 'orchestrator' },
+      { id: 'pane-dead-2', kind: 'cli-agent', title: 'Claude · Coordenar e revisar', adapterId: 'claude', missionId: 'mission-a', role: 'orchestrator', seatedOrchestrator: true },
+      { id: 'pane-dead-3', kind: 'cli-agent', title: 'Claude · Coordenar e revisar', adapterId: 'claude', missionId: 'mission-a', role: 'worker', seatedOrchestrator: true },
+      { id: 'pane-worker', kind: 'cli-agent', title: 'Worker', adapterId: 'codex', missionId: 'mission-a', role: 'worker' },
+      { id: 'pane-neighbour', kind: 'cli-agent', title: 'Outra missão', adapterId: 'claude', missionId: 'mission-b', role: 'orchestrator' },
+    ]);
+    markExited('pane-dead-1', 'pane-dead-2', 'pane-dead-3', 'pane-worker', 'pane-neighbour');
+  }
+
+  function maestroPresentation(): MissionPanePresentationRequest {
+    return {
+      missionId: 'mission-a',
+      paneId: 'pane-a',
+      sessionId: 'session-a',
+      role: 'orchestrator',
+      pane: {
+        adapterId: 'claude',
+        cwd: '/workspace/a',
+        title: 'Claude · Coordenar e revisar',
+        role: 'orchestrator',
+      },
+    };
+  }
+
+  it('a apresentação Main-owned do Maestro aposenta os Maestros mortos da mesma missão', async () => {
+    terminal.waitForSession.mockResolvedValueOnce('session-a');
+    terminal.getPaneSessionId.mockImplementation((paneId: string) =>
+      paneId === 'pane-a' && paneIds().includes(paneId) ? 'session-a' : null,
+    );
+    const present = installPresentationHarness();
+    seedDeadMaestros();
+    const mounted = mount();
+
+    await act(async () => {
+      present(maestroPresentation());
+      await vi.waitFor(() => {
+        expect(terminal.waitForSession).toHaveBeenCalledWith('pane-a', 75_000);
+      });
+    });
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(maestrosOf('mission-a')).toEqual(['pane-a']);
+      });
+    });
+
+    // Worker da missão e Maestro de OUTRA missão não são cadáveres desta troca.
+    expect(paneIds().sort()).toEqual(['pane-a', 'pane-neighbour', 'pane-worker']);
+    // O pane apresentado carrega o assento: um rebaixamento futuro não o esconde.
+    expect(
+      listPanes(useLayoutStore.getState().root).find((pane) => pane.id === 'pane-a')
+        ?.seatedOrchestrator,
+    ).toBe(true);
+    act(() => mounted.root.unmount());
+  });
+
+  it('sem o sucessor anexado, nenhum Maestro morto sai (nada se perde sem prova)', async () => {
+    terminal.waitForSession.mockResolvedValueOnce(null);
+    const present = installPresentationHarness();
+    seedDeadMaestros();
+    const mounted = mount();
+
+    await act(async () => {
+      present(maestroPresentation());
+      await vi.waitFor(() => {
+        expect(terminal.waitForSession).toHaveBeenCalledWith('pane-a', 75_000);
+      });
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    expect(paneIds()).toEqual(
+      expect.arrayContaining(['pane-dead-1', 'pane-dead-2', 'pane-dead-3', 'pane-worker', 'pane-neighbour']),
+    );
+    act(() => mounted.root.unmount());
+  });
+
+  function installSpawnHarness(): {
+    readonly spawn: (request: OrchPaneSpawnRequest) => void;
+    readonly exit: (
+      sessionId: string,
+      event: { exitCode: number; terminationOrigin?: string },
+    ) => void;
+    readonly sendPaneSpawnResult: ReturnType<typeof vi.fn>;
+  } {
+    let spawnHandler: ((request: OrchPaneSpawnRequest) => void) | null = null;
+    const exitHandlers = new Map<
+      string,
+      (event: { exitCode: number; terminationOrigin?: string }) => void
+    >();
+    const sendPaneSpawnResult = vi.fn();
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        mission: missionBridge(),
+        orch: {
+          onPaneSpawnRequest: vi.fn((cb: (request: OrchPaneSpawnRequest) => void) => {
+            spawnHandler = cb;
+            return vi.fn();
+          }),
+          onPanePresentationRequest: listener(),
+          onPaneRecoveryRequest: listener(),
+          onBrowserOpenRequest: listener(),
+          onPaneCloseRequest: listener(),
+          onPaneParkRequest: listener(),
+          onMissionsChanged: listener(),
+          onHandoffsChanged: listener(),
+          onTodosChanged: listener(),
+          onSquadsChanged: listener(),
+          syncPanes: vi.fn(),
+          sendPaneSpawnResult,
+          sendPaneRecoveryResult: vi.fn(),
+          sendBrowserOpenResult: vi.fn(),
+        },
+        pty: {
+          onExit: vi.fn(
+            (
+              sessionId: string,
+              cb: (event: { exitCode: number; terminationOrigin?: string }) => void,
+            ) => {
+              exitHandlers.set(sessionId, cb);
+              return vi.fn(() => exitHandlers.delete(sessionId));
+            },
+          ),
+        },
+      },
+    });
+    return {
+      spawn: (request) => spawnHandler?.(request),
+      exit: (sessionId, event) => exitHandlers.get(sessionId)?.(event),
+      sendPaneSpawnResult,
+    };
+  }
+
+  function attemptRequest(): OrchPaneSpawnRequest {
+    return {
+      requestId: 'orchspawn-attempt',
+      paneId: 'pane-attempt',
+      adapterId: 'claude',
+      missionId: 'mission-a',
+      role: 'orchestrator',
+      title: 'Claude · Coordenar e revisar',
+      resume: false,
+      resumeLatestOnly: false,
+      restorePersistedAuthority: false,
+    };
+  }
+
+  it('bind recusado pelo Main: o pane da tentativa sai e o Maestro antigo fica com o histórico', async () => {
+    terminal.waitForSession.mockResolvedValueOnce('session-attempt');
+    const harness = installSpawnHarness();
+    useLayoutStore.getState().setPanes([
+      { id: 'pane-shell', kind: 'shell', title: 'Shell' },
+      {
+        id: 'pane-old',
+        kind: 'cli-agent',
+        title: 'Claude · Coordenar e revisar',
+        adapterId: 'claude',
+        missionId: 'mission-a',
+        role: 'orchestrator',
+        seatedOrchestrator: true,
+        terminalScrollback: 'última tela do Maestro',
+        terminalScrollbackCols: 80,
+      },
+    ]);
+    markExited('pane-old');
+    const mounted = mount();
+
+    act(() => harness.spawn(attemptRequest()));
+    await vi.waitFor(() => {
+      expect(harness.sendPaneSpawnResult).toHaveBeenCalledWith(
+        expect.objectContaining({ ok: true, paneId: 'pane-attempt', sessionId: 'session-attempt' }),
+      );
+    });
+    expect(paneIds()).toContain('pane-attempt');
+    // O grant não é sucessor provado: o Maestro antigo não sai antes do bind.
+    expect(paneIds()).toContain('pane-old');
+
+    // O fast-lane encerra a sessão com a origem rotulada e só depois devolve o
+    // erro: a folha da tentativa não pode virar o próximo "processo caiu".
+    act(() =>
+      harness.exit('session-attempt', {
+        exitCode: 1,
+        terminationOrigin: 'fast-lane:spawn-binding-failed',
+      }),
+    );
+
+    // A missão nunca fica sem Maestro na tela nem perde o scrollback dele.
+    expect(paneIds()).toEqual(['pane-shell', 'pane-old']);
+    expect(
+      listPanes(useLayoutStore.getState().root).find((pane) => pane.id === 'pane-old')
+        ?.terminalScrollback,
+    ).toBe('última tela do Maestro');
+    act(() => mounted.root.unmount());
+  });
+
+  it('queda sem origem rotulada não fecha o pane da tentativa (o histórico fica)', async () => {
+    terminal.waitForSession.mockResolvedValueOnce('session-attempt');
+    const harness = installSpawnHarness();
+    useLayoutStore.setState({
+      root: { kind: 'leaf', id: 'leaf-shell', pane: { id: 'pane-shell', kind: 'shell', title: 'Shell' } },
+      focusedPaneId: 'pane-shell',
+    });
+    const mounted = mount();
+
+    act(() => harness.spawn(attemptRequest()));
+    await vi.waitFor(() => {
+      expect(harness.sendPaneSpawnResult).toHaveBeenCalledWith(
+        expect.objectContaining({ ok: true, paneId: 'pane-attempt' }),
+      );
+    });
+    act(() => harness.exit('session-attempt', { exitCode: 129 }));
+
+    expect(paneIds()).toEqual(['pane-shell', 'pane-attempt']);
     act(() => mounted.root.unmount());
   });
 });
