@@ -846,6 +846,16 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
             },
           );
         }
+        // Falha: o voice.log só tinha o código ("stt-needs-key"); a causa real
+        // (timeout vs chave) ficava invisível. Só provedor + motivo, sem áudio/texto.
+        if (!res.ok && parsed.data.purpose !== "passive-wake") {
+          logVoice("warn", "stt.failed", "cadeia STT sem sucesso", {
+            needsKey: res.needsKey,
+            sttMs,
+            audioChars: parsed.data.audioBase64.length,
+            attempts: res.attempts.map((a) => `${a.provider}: ${a.reason}`),
+          });
+        }
         // Terceira camada anti-eco (após o AEC do mic e antes do filtro de
         // fantasmas do renderer): transcrição que é o próprio TTS recente
         // vazando do alto-falante volta marcada para descarte silencioso.
