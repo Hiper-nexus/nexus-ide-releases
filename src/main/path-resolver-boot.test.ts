@@ -91,4 +91,21 @@ describe.skipIf(process.platform === 'win32')('cached boot PATH', () => {
     expect(fs.readFileSync(cachePath, 'utf8')).toBe(before);
     expect(exec).toHaveBeenCalledTimes(2);
   });
+
+  it('removes cached directories before rescanning so stale executables cannot shadow the fresh login PATH', async () => {
+    const cached = path.join(root, 'old-bin');
+    const live = path.join(root, 'new-bin');
+    for (const dir of [cached, live]) {
+      fs.mkdirSync(dir);
+      fs.writeFileSync(path.join(dir, 'path-choice-cli'), '#!/bin/sh\n', { mode: 0o755 });
+    }
+    writeCache(cachePath, root, cached);
+    const exec = vi.fn().mockResolvedValue(wrap(live));
+    await resolveUserPath({ cachePath, home: root, exec });
+    expect(lookupInPath('path-choice-cli', process.env.PATH!)).toBe(path.join(cached, 'path-choice-cli'));
+    expect(await retryLoginShellPathIfMissed(exec, { home: root })).toBe(true);
+    expect(lookupInPath('path-choice-cli', process.env.PATH!)).toBe(path.join(live, 'path-choice-cli'));
+    expect(process.env.PATH?.split(path.delimiter)).not.toContain(cached);
+    expect(process.env.PATH?.split(path.delimiter)).toContain('/usr/bin');
+  });
 });

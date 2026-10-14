@@ -324,6 +324,7 @@ let folded = false;
 let memoizedEffectivePath: string | null = null;
 let bootPathRevalidation: Promise<string> | undefined;
 let bootPathCache: { file: string; home: string } | undefined;
+let bootPathInheritedPath: string | undefined;
 
 function validLoginPath(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= 65_536 &&
@@ -360,6 +361,7 @@ export async function resolveUserPath(options: {
 } = {}): Promise<void> {
   if (folded) return;
   const home = options.home ?? realUserHome();
+  const processPath = process.env.PATH ?? '';
   // F-1508: no Windows o boot não espera o PowerShell; o PATH do registro
   // entra pela releitura em segundo plano (`retryLoginShellPathIfMissed`).
   const probe = process.platform === 'win32'
@@ -370,8 +372,9 @@ export async function resolveUserPath(options: {
   // A cache hit releases discovery immediately. The already-running shell is
   // consumed by the existing background retry/rescan after bootstrap.
   bootPathRevalidation = cached ? probe : undefined;
+  bootPathInheritedPath = cached ? processPath : undefined;
   bootLoginProbe = cached ? '' : await probe;
-  const effective = buildEffectivePath({ home, loginPath: cached || bootLoginProbe });
+  const effective = buildEffectivePath({ home, processPath, loginPath: cached || bootLoginProbe });
   process.env.PATH = effective;
   memoizedEffectivePath = effective;
   folded = true;
@@ -404,7 +407,11 @@ export async function retryLoginShellPathIfMissed(
   bootPathRevalidation = undefined;
   const loginPath = (await flight) || await probeLoginShellPath(exec, home, LATE_RESOLVE_TIMEOUT_MS);
   if (!loginPath) return false;
-  const effective = buildEffectivePath({ home, loginPath });
+  // Drop the cached login dirs before rescan; otherwise a stale executable
+  // can keep shadowing the freshly discovered login-shell installation.
+  const processPath = options.bootProbe === undefined ? bootPathInheritedPath : undefined;
+  const effective = buildEffectivePath({ home, processPath, loginPath });
+  bootPathInheritedPath = undefined;
   // No Windows o PATH do registro costuma ser o mesmo herdado: sem mudança,
   // sem reexame de CLIs.
   const changed = effective !== process.env.PATH;
@@ -946,6 +953,7 @@ export function __resetPathResolverForTests(): void {
   bootLoginProbe = null;
   bootPathRevalidation = undefined;
   bootPathCache = undefined;
+  bootPathInheritedPath = undefined;
   cliVersionCache.clear();
   cliVersionProbes.clear();
   cliVersionGeneration += 1;
