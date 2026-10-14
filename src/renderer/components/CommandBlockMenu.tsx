@@ -16,7 +16,7 @@ import {
   importCliHistoryForPane,
 } from '../lib/cli-history-import';
 import { useToastStore } from '../state/toast-store';
-import { getPaneSessionId } from '../terminal/terminal-host';
+import { getPaneSessionId, writeToPane } from '../terminal/terminal-host';
 import { PixelIcon } from './PixelIcon';
 
 export interface CommandBlockMenuProps {
@@ -249,11 +249,14 @@ export function CommandBlockMenu({
   /** Cola no prompt do pane sem Enter: o operador revisa antes de rodar. */
   function insertHistoryCommand(entry: CommandHistoryEntry) {
     const sessionId = getPaneSessionId(paneId);
-    if (!sessionId || !window.nexus?.pty?.write) {
+    if (!sessionId || !window.nexus?.pty) {
       pushToast('warn', 'Comando', 'Sessão indisponível');
       return;
     }
-    window.nexus.pty.write(sessionId, entry.command);
+    // Mesma rota do teclado (`writeToPane`): escrita crua fire-and-forget é
+    // recusada pelo main em pane governado e o comando sumia em silêncio
+    // com o toast dizendo "Inserido no terminal".
+    writeToPane(paneId, entry.command);
     pushToast('success', 'Inserido no terminal', entry.command.slice(0, 80));
     setOpen(false);
   }

@@ -176,6 +176,8 @@ const pane: PaneModel = { id: 'hidden-spawn-test', kind: 'shell', title: 'Termin
 const spawn = vi.fn();
 const kill = vi.fn();
 const ptyWrite = vi.fn();
+/** A lane crua do teclado é confirmada (`writeConfirmed`), não fire-and-forget. */
+const ptyWriteConfirmed = vi.fn(async (_sessionId: string, _data: string) => true);
 const ptyExitListeners = new Map<string, (event: { exitCode: number; terminationOrigin?: string }) => void>();
 /** `meta.replayed` imita o preload: chunk entregue pelo pull de pty.replay(). */
 const ptyDataListeners = new Map<
@@ -223,6 +225,7 @@ beforeEach(() => {
   spawn.mockReset().mockResolvedValue({ ok: true, sessionId: 'pty-hidden' });
   kill.mockReset();
   ptyWrite.mockReset();
+  ptyWriteConfirmed.mockReset().mockResolvedValue(true);
   ptyExitListeners.clear();
   ptyDataListeners.clear();
   resizeCalls.length = 0;
@@ -232,7 +235,7 @@ beforeEach(() => {
   Object.defineProperty(window, 'nexus', {
     configurable: true,
     value: { voice: { logVoice: vi.fn().mockResolvedValue(undefined) }, pty: {
-      spawn, kill, resize: vi.fn(), write: ptyWrite,
+      spawn, kill, resize: vi.fn(), write: ptyWrite, writeConfirmed: ptyWriteConfirmed,
       replay: vi.fn(async () => {}),
       onStateChange: () => () => {},
       onData: (sessionId: string, listener: (data: string) => void) => {
@@ -939,10 +942,161 @@ describe('reabertura de pane encerrado', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(await waitForSession(pane.id, 1_000)).toBe('pty-new');
 
-    ptyWrite.mockClear();
+    ptyWriteConfirmed.mockClear();
     for (const listener of [...xtermEvents.onData]) listener('c');
 
-    expect(ptyWrite).toHaveBeenCalledExactlyOnceWith('pty-new', 'c');
+    expect(ptyWriteConfirmed).toHaveBeenCalledExactlyOnceWith('pty-new', 'c');
+  });
+});
+
+describe('lane do teclado segue o estado ATUAL do pane (14/10)', () => {
+  const operatorPane: PaneModel = {
+    id: 'codex-promoted',
+    kind: 'cli-agent',
+    adapterId: 'codex',
+    title: 'Codex',
+  };
+  const sendPaneOperatorInput = vi.fn(async () => true);
+
+  /** Abre o pane do operador SEM papel nem missão — nasce na lane crua. */
+  async function openOperatorPane(): Promise<void> {
+    useLayoutStore.setState({
+      root: buildGridTree([operatorPane]),
+      focusedPaneId: operatorPane.id,
+    });
+    const host = getOrCreateHost(operatorPane);
+    setHostSize(host.element, 1200, 800);
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(operatorPane, slot);
+    expect(await waitForSession(operatorPane.id, 1000)).toBe('pty-hidden');
+    Object.assign(window.nexus, { orch: { sendPaneOperatorInput } });
+    sendPaneOperatorInput.mockClear();
+    ptyWriteConfirmed.mockClear();
+  }
+
+  it('pane promovido a orquestrador DEPOIS do spawn digita pela lane do operador', async () => {
+    // "Tornar orquestrador"/adoção da missão da aba muda o papel no main SEM
+    // respawn: o snapshot do spawn não pode decidir a lane da tecla. O bug
+    // real: o listener capturava o pane do spawn e mandava a tecla crua
+    // fire-and-forget, o main recusava e nada aparecia no Codex.
+    await openOperatorPane();
+    useLayoutStore.setState({
+      root: buildGridTree([{ ...operatorPane, role: 'orchestrator' }]),
+      focusedPaneId: operatorPane.id,
+    });
+    for (const listener of [...xtermEvents.onData]) listener('y');
+    expect(sendPaneOperatorInput).toHaveBeenCalledExactlyOnceWith({
+      sessionId: 'pty-hidden',
+      data: 'y',
+    });
+    expect(ptyWriteConfirmed).not.toHaveBeenCalledWith('pty-hidden', 'y');
+  });
+
+  it('vínculo que só existe no índice paneMissions também governa a tecla', async () => {
+    await openOperatorPane();
+    useOrchStore.setState({
+      paneMissions: { [operatorPane.id]: 'mission-live' },
+      missions: [],
+    });
+    for (const listener of [...xtermEvents.onData]) listener('n');
+    expect(sendPaneOperatorInput).toHaveBeenCalledExactlyOnceWith({
+      sessionId: 'pty-hidden',
+      data: 'n',
+    });
+    expect(ptyWriteConfirmed).not.toHaveBeenCalledWith('pty-hidden', 'n');
+  });
+
+  it('pane SEM papel nem missão continua na lane crua', async () => {
+    await openOperatorPane();
+    for (const listener of [...xtermEvents.onData]) listener('k');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ptyWriteConfirmed).toHaveBeenCalledExactlyOnceWith(
+      'pty-hidden',
+      'k',
+    );
+    expect(sendPaneOperatorInput).not.toHaveBeenCalled();
+  });
+
+  it('lane crua recusada (pane governado além do layout) cai na lane do operador', async () => {
+    await openOperatorPane();
+    ptyWriteConfirmed.mockResolvedValueOnce(false);
+    const host = getOrCreateHost(operatorPane);
+    const writeln = vi.spyOn(host.term, 'writeln');
+    for (const listener of [...xtermEvents.onData]) listener('r');
+    await vi.advanceTimersByTimeAsync(0);
+    // Primeira tentativa: crua confirmada; recusada → lane do operador.
+    expect(ptyWriteConfirmed).toHaveBeenCalledWith('pty-hidden', 'r');
+    expect(sendPaneOperatorInput).toHaveBeenCalledExactlyOnceWith({
+      sessionId: 'pty-hidden',
+      data: 'r',
+    });
+    // A lane do operador aceitou — sem aviso amarelo no terminal.
+    expect(writeln).not.toHaveBeenCalled();
+  });
+
+  it('recusa nas DUAS lanes avisa no terminal em vez de engolir a tecla', async () => {
+    await openOperatorPane();
+    ptyWriteConfirmed.mockResolvedValue(false);
+    sendPaneOperatorInput.mockResolvedValue(false);
+    const host = getOrCreateHost(operatorPane);
+    const writeln = vi.spyOn(host.term, 'writeln');
+    for (const listener of [...xtermEvents.onData]) listener('r');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(writeln).toHaveBeenCalledWith(
+      expect.stringContaining('o main recusou a digitação'),
+    );
+  });
+});
+
+describe('reidratação religa o teclado do pane (hibernação, 14/10)', () => {
+  const agent: PaneModel = {
+    id: 'agent-rehydrate-keys',
+    kind: 'cli-agent',
+    adapterId: 'codex',
+    title: 'Codex',
+  };
+
+  it('pane hibernado e reidratado continua digitando (a tecla não some)', async () => {
+    useLayoutStore.setState({
+      root: buildGridTree([agent]),
+      focusedPaneId: agent.id,
+    });
+    const host = getOrCreateHost(agent);
+    setHostSize(host.element, 1200, 800);
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(agent, slot);
+    expect(await waitForSession(agent.id, 1000)).toBe('pty-hidden');
+
+    ptyWriteConfirmed.mockClear();
+    for (const listener of [...xtermEvents.onData]) listener('a');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ptyWriteConfirmed).toHaveBeenCalledExactlyOnceWith(
+      'pty-hidden',
+      'a',
+    );
+
+    // Hiberna (24 panes vivos): o xterm é descartado e o onData morre com
+    // ele — como no xterm real, cujo dispose invalida os listeners.
+    for (let i = 0; i < 24; i++) {
+      getOrCreateHost({ id: `filler-keys-${i}`, kind: 'shell', title: `t${i}` });
+    }
+    setHostVisibility(agent.id, false);
+    expect(host.virtualized).not.toBeNull();
+    xtermEvents.onData.clear();
+    ptyWriteConfirmed.mockClear();
+
+    // De volta à tela: sem religar o teclado na reidratação, o pane aceita
+    // foco e engole TODA tecla em silêncio (o bug original do Windows).
+    setHostVisibility(agent.id, true);
+    await vi.advanceTimersByTimeAsync(60);
+    for (const listener of [...xtermEvents.onData]) listener('b');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ptyWriteConfirmed).toHaveBeenCalledExactlyOnceWith(
+      'pty-hidden',
+      'b',
+    );
   });
 
   it('acordar após o exit não soma um segundo receptor de teclado (letras duplicadas)', async () => {
@@ -1173,7 +1327,7 @@ describe('drop sem File — text/uri-list vira anexo digitado no PTY', () => {
       configurable: true,
       value: {
         pty: {
-          spawn, kill, resize: vi.fn(), write,
+          spawn, kill, resize: vi.fn(), write, writeConfirmed: write,
           onStateChange: () => () => {}, onData: () => () => {}, onExit: () => () => {},
         },
         files: { importDroppedUri, pathForFile: () => '', importMissionAttachment: vi.fn() },
@@ -1534,7 +1688,7 @@ describe('paste de mídia no pane (F-582)', () => {
       configurable: true,
       value: {
         pty: {
-          spawn, kill, resize: vi.fn(), write,
+          spawn, kill, resize: vi.fn(), write, writeConfirmed: write,
           onStateChange: () => () => {}, onData: () => () => {},
           onExit: (sessionId: string, listener: (event: { exitCode: number }) => void) => {
             localExitListeners.set(sessionId, listener);
@@ -2978,7 +3132,7 @@ describe('anexo solto/colado resolve contra a RAIZ do projeto, não a pasta do p
       configurable: true,
       value: {
         pty: {
-          spawn, kill, resize: vi.fn(), write,
+          spawn, kill, resize: vi.fn(), write, writeConfirmed: write,
           onStateChange: () => () => {}, onData: () => () => {}, onExit: () => () => {},
         },
         files: {

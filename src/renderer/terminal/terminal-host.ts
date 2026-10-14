@@ -1176,6 +1176,142 @@ function waitForSpawnAccess(host: Host, generation: number): Promise<boolean> {
   });
 }
 
+/**
+ * O handler de teclado de um pane — registrado a cada spawn E a cada
+ * reidratação: a hibernação (virtualizeHost) descarta o xterm e o onData
+ * morre com ele, então rehydrateHost religa por aqui.
+ *
+ * O pane consultado é o ATUAL do layout (fallback: o snapshot do spawn).
+ * O closure do spawn envelhece: promoção "Tornar orquestrador"/adoção da
+ * missão da aba muda o papel da sessão no main SEM respawn — o xterm e o
+ * onData continuam os mesmos — e o snapshot velho mandava a tecla para a
+ * lane crua, onde o main recusa escrita em pane governado POR DESIGN. Pane
+ * vivo perguntando algo ao operador (Folder access, aprovação) e nenhuma
+ * tecla entrava, sem aviso (Windows, 14/10).
+ */
+function handlePaneKeyboardInput(
+  host: Host,
+  fallbackPane: PaneModel,
+  data: string,
+): void {
+  const pane =
+    listPanes(useLayoutStore.getState().root).find(
+      (candidate) => candidate.id === fallbackPane.id,
+    ) ?? fallbackPane;
+  // B1 (F-1393): o operador assumiu o pane — o ditado pendente dele cai
+  // (relatórios automáticos do terminal, como foco e mouse, não contam).
+  if (!isTerminalReport(data)) cancelPendingDictation(pane.id);
+  // xterm does not locally echo: the PTY/TUI sends the visible composer
+  // back. Return to live output before the key leaves the renderer.
+  host.inputVisibility.onUserInput();
+  if (host.opened) webglPool.touch(pane.id);
+  flushTerminalOutput(host.term);
+
+  // Terminal ghost assist: accept completion on Right Arrow or Tab, dismiss on Escape
+  if (host.ghostAssist) {
+    if (data === '\x1b[C' || data === '\t') {
+      if (host.ghostAssist.tryAcceptGhost()) {
+        return;
+      }
+    } else if (data === '\x1b[1;3C' || data === '\x1bf') {
+      if (host.ghostAssist.tryAcceptGhostWord()) {
+        return;
+      }
+    } else if (data === '\x1b') {
+      if (host.ghostAssist.state.visibleTail()) {
+        host.ghostAssist.dismiss('escape_key');
+        return;
+      }
+    }
+    host.ghostAssist.ingestUserInput(data);
+  }
+
+  if (!host.sessionId) {
+    if (host.awaitingDeliberateClose) return;
+    // Unlock/revive em voo: a tecla seguinte não paga outro IPC nem
+    // repete aviso — engolida em silêncio até a ação atual terminar
+    // (ou até o teto de 20 s estourar num IPC pendurado — R1).
+    if (deadPaneKeyWorkActive(host)) return;
+    // Pós-missão (ou pane sem vínculo): estado preso nunca silencia a
+    // tecla. Missão viva ou desconhecida segue pela rota antiga, com
+    // todas as proteções.
+    //
+    // Duas guardas da rota antiga valem aqui também, e F-347 é o que
+    // acontece quando elas faltam:
+    //
+    //   1. `missionStillOwnsPane` — done SEM carimbo do humano ainda é
+    //      revisão, então o coordenador continua dono do pane (F-108).
+    //      `terminalMissionLinkOf` responde 'done' para os dois casos,
+    //      aprovado e aguardando revisão, e os dois predicados discordam
+    //      exatamente onde importa. Sem esta guarda, uma tecla num pane de
+    //      worker de missão concluída-não-aprovada apagava
+    //      `paneMissions[pane.id]` de forma irreversível pela UI, antes de
+    //      o humano revisar.
+    //   2. `paneState !== 'hibernated'` — um pane hibernado tem botão de
+    //      acordar ("Use ☀ para acordar") e não é estado preso; virar
+    //      shell nu na primeira tecla destrói o snapshot sem necessidade.
+    //
+    // O que sobra é o caso que esta rota existe para cobrir: missão
+    // terminal que já não é dona do pane, com estado que a rota antiga
+    // silenciaria. O predicado é puro e testado em
+    // mission-owned-pane-policy.test.ts.
+    const terminalLink = terminalMissionLinkOf(pane);
+    if (
+      terminalDeadPaneFastPathApplies({
+        link: terminalLink,
+        paneState: paneState(pane.id),
+        missionOwns: missionStillOwnsPane(pane.id, pane),
+      })
+    ) {
+      const terminalAction = decideTerminalMissionDeadPaneKey({
+        spawnStarted: host.spawnStarted,
+        keepReviewChannel:
+          terminalLink === 'done' && pane.role === 'orchestrator',
+      });
+      if (terminalAction === 'resume-keyboard') {
+        beginDeadPaneKeyWork(host);
+        void unlockRetiredMissionPane(pane, host, {
+          operatorInitiated: true,
+        }).finally(() => endDeadPaneKeyWork(host));
+      } else if (terminalAction === 'reclaim-shell') {
+        beginDeadPaneKeyWork(host);
+        void reclaimExitedPaneAsShell(pane, host, {
+          ignoreMissionOwnership: terminalLink !== 'none',
+        }).finally(() => endDeadPaneKeyWork(host));
+      }
+      return;
+    }
+    const keyAction = decideExitedPaneKey({
+      hasSession: false,
+      spawnStarted: host.spawnStarted,
+      paneState: paneState(pane.id),
+      missionOwns: missionStillOwnsPane(pane.id, pane),
+      spawnHeld: heldSpawnPanes.has(pane.id),
+      doneOrchestrator:
+        pane.role === 'orchestrator' && missionOfPaneIsDone(pane.id, pane),
+    });
+    if (keyAction === 'resume-keyboard') {
+      beginDeadPaneKeyWork(host);
+      void unlockRetiredMissionPane(pane, host, {
+        operatorInitiated: true,
+      }).finally(() => endDeadPaneKeyWork(host));
+    } else if (keyAction === 'reclaim-shell') {
+      beginDeadPaneKeyWork(host);
+      void reclaimExitedPaneAsShell(pane, host).finally(() =>
+        endDeadPaneKeyWork(host),
+      );
+    }
+    return;
+  }
+  // Pane governado (missão OU papel de orquestração sem missão) não aceita
+  // escrita crua do renderer — a posse é do main. O teclado do operador
+  // entra pedindo, não escrevendo: sem esse desvio a tecla era descartada
+  // em silêncio e o terminal parecia morto. `deliverPaneUserInput` decide
+  // a lane com o estado ATUAL (resolvido acima) e CONFIRMA a entrega da
+  // lane crua — o fire-and-forget morria sem recuso nem aviso.
+  deliverPaneUserInput(pane.id, host.sessionId, data);
+}
+
 function startSpawn(
   pane: PaneModel,
   host: Host,
@@ -1795,122 +1931,7 @@ function startSpawn(
       // chegaria duas vezes ao PTY ("bbuugg").
       host.inputListener?.dispose();
       const input = host.term.onData((data) => {
-        // B1 (F-1393): o operador assumiu o pane — o ditado pendente dele cai
-        // (relatórios automáticos do terminal, como foco e mouse, não contam).
-        if (!isTerminalReport(data)) cancelPendingDictation(pane.id);
-        // xterm does not locally echo: the PTY/TUI sends the visible composer
-        // back. Return to live output before the key leaves the renderer.
-        host.inputVisibility.onUserInput();
-        if (host.opened) webglPool.touch(pane.id);
-        flushTerminalOutput(host.term);
-
-        // Terminal ghost assist: accept completion on Right Arrow or Tab, dismiss on Escape
-        if (host.ghostAssist) {
-          if (data === '\x1b[C' || data === '\t') {
-            if (host.ghostAssist.tryAcceptGhost()) {
-              return;
-            }
-          } else if (data === '\x1b[1;3C' || data === '\x1bf') {
-            if (host.ghostAssist.tryAcceptGhostWord()) {
-              return;
-            }
-          } else if (data === '\x1b') {
-            if (host.ghostAssist.state.visibleTail()) {
-              host.ghostAssist.dismiss('escape_key');
-              return;
-            }
-          }
-          host.ghostAssist.ingestUserInput(data);
-        }
-
-        if (!host.sessionId) {
-          if (host.awaitingDeliberateClose) return;
-          // Unlock/revive em voo: a tecla seguinte não paga outro IPC nem
-          // repete aviso — engolida em silêncio até a ação atual terminar
-          // (ou até o teto de 20 s estourar num IPC pendurado — R1).
-          if (deadPaneKeyWorkActive(host)) return;
-          // Pós-missão (ou pane sem vínculo): estado preso nunca silencia a
-          // tecla. Missão viva ou desconhecida segue pela rota antiga, com
-          // todas as proteções.
-          //
-          // Duas guardas da rota antiga valem aqui também, e F-347 é o que
-          // acontece quando elas faltam:
-          //
-          //   1. `missionStillOwnsPane` — done SEM carimbo do humano ainda é
-          //      revisão, então o coordenador continua dono do pane (F-108).
-          //      `terminalMissionLinkOf` responde 'done' para os dois casos,
-          //      aprovado e aguardando revisão, e os dois predicados discordam
-          //      exatamente onde importa. Sem esta guarda, uma tecla num pane de
-          //      worker de missão concluída-não-aprovada apagava
-          //      `paneMissions[pane.id]` de forma irreversível pela UI, antes de
-          //      o humano revisar.
-          //   2. `paneState !== 'hibernated'` — um pane hibernado tem botão de
-          //      acordar ("Use ☀ para acordar") e não é estado preso; virar
-          //      shell nu na primeira tecla destrói o snapshot sem necessidade.
-          //
-          // O que sobra é o caso que esta rota existe para cobrir: missão
-          // terminal que já não é dona do pane, com estado que a rota antiga
-          // silenciaria. O predicado é puro e testado em
-          // mission-owned-pane-policy.test.ts.
-          const terminalLink = terminalMissionLinkOf(pane);
-          if (
-            terminalDeadPaneFastPathApplies({
-              link: terminalLink,
-              paneState: paneState(pane.id),
-              missionOwns: missionStillOwnsPane(pane.id, pane),
-            })
-          ) {
-            const terminalAction = decideTerminalMissionDeadPaneKey({
-              spawnStarted: host.spawnStarted,
-              keepReviewChannel:
-                terminalLink === 'done' && pane.role === 'orchestrator',
-            });
-            if (terminalAction === 'resume-keyboard') {
-              beginDeadPaneKeyWork(host);
-              void unlockRetiredMissionPane(pane, host, {
-                operatorInitiated: true,
-              }).finally(() => endDeadPaneKeyWork(host));
-            } else if (terminalAction === 'reclaim-shell') {
-              beginDeadPaneKeyWork(host);
-              void reclaimExitedPaneAsShell(pane, host, {
-                ignoreMissionOwnership: terminalLink !== 'none',
-              }).finally(() => endDeadPaneKeyWork(host));
-            }
-            return;
-          }
-          const keyAction = decideExitedPaneKey({
-            hasSession: false,
-            spawnStarted: host.spawnStarted,
-            paneState: paneState(pane.id),
-            missionOwns: missionStillOwnsPane(pane.id, pane),
-            spawnHeld: heldSpawnPanes.has(pane.id),
-            doneOrchestrator:
-              pane.role === 'orchestrator' &&
-              missionOfPaneIsDone(pane.id, pane),
-          });
-          if (keyAction === 'resume-keyboard') {
-            beginDeadPaneKeyWork(host);
-            void unlockRetiredMissionPane(pane, host, {
-              operatorInitiated: true,
-            }).finally(() => endDeadPaneKeyWork(host));
-          } else if (keyAction === 'reclaim-shell') {
-            beginDeadPaneKeyWork(host);
-            void reclaimExitedPaneAsShell(pane, host).finally(() =>
-              endDeadPaneKeyWork(host),
-            );
-          }
-          return;
-        }
-        // Pane governado (missão OU papel de orquestração sem missão) não
-        // aceita escrita crua do renderer — a posse é do main. O teclado do
-        // operador entra pedindo, não escrevendo: sem esse desvio a tecla era
-        // descartada em silêncio e o terminal parecia morto. O vínculo vem do
-        // orchStore quando o pane restaurado chega sem ele.
-        if (paneInputLane(pane, missionId) === 'operator') {
-          sendOperatorInputOrNotify(pane.id, host.sessionId, data);
-          return;
-        }
-        window.nexus.pty.write(host.sessionId, data);
+        handlePaneKeyboardInput(host, pane, data);
       });
       host.inputListener = input;
       host.cleanups.push(() => {
@@ -2502,6 +2523,18 @@ function rehydrateHost(host: Host): void {
   host.opened = true;
   registerWebglLease(host.paneId, host);
   wireHostTerminalListeners(host);
+  // O TECLADO morre com o xterm descartado na hibernação: o onData é
+  // registrado por spawn e `host.spawnStarted` continua true, então sem
+  // religar aqui o pane voltava vivo e mudo — foco aceito, nenhuma tecla
+  // (nem paste) chegava ao PTY, sem aviso (pane Codex perguntando algo ao
+  // operador e o terminal não aceitava tecla nenhuma, Windows 14/10).
+  const pane = listPanes(useLayoutStore.getState().root).find(
+    (candidate) => candidate.id === host.paneId,
+  );
+  if (pane) {
+    host.term.onData((data) => handlePaneKeyboardInput(host, pane, data));
+  }
+  wireTermInteractions(host, host.kind === 'cli-agent');
   if (host.kind === 'shell') {
     setupGhostAssist(host);
   } else if (host.kind === 'cli-agent') {
@@ -2718,7 +2751,7 @@ function hostBaseDir(host: Host): string | null {
 function injectStagedPath(host: Host, stagedPath: string): void {
   if (!host.sessionId) return;
   const fullPath = toAbsoluteContextPath(hostBaseDir(host), stagedPath);
-  window.nexus.pty.write(host.sessionId, `${shellQuote(fullPath)} `);
+  deliverPaneUserInput(host.paneId, host.sessionId, `${shellQuote(fullPath)} `);
 }
 
 /**
@@ -2741,7 +2774,7 @@ function injectMainStagedPath(
           getActiveWorkspacePath() || hostBaseDir(host),
           staged.path,
         );
-  window.nexus.pty.write(host.sessionId, `${shellQuote(fullPath)} `);
+  deliverPaneUserInput(host.paneId, host.sessionId, `${shellQuote(fullPath)} `);
 }
 
 /**
@@ -2921,13 +2954,12 @@ async function injectDroppedUri(host: Host, dropped: DroppedUri): Promise<void> 
 }
 
 /**
- * Make a terminal fully operable: copy the selection (⌘/Ctrl+C when text is
- * selected), paste text (native xterm) or an image (saved to disk, path
- * injected), and accept drag-and-dropped files (real path injected as if
- * typed). Nothing here can break the terminal — every branch is guarded.
+ * Wiring que morre com o xterm (onData do estacionado, atalhos de teclado) —
+ * religado a cada reidratação. Os listeners de ELEMENT (roda, paste)
+ * sobrevivem à hibernação porque o elemento é o mesmo; estes não.
  */
-function wireInteractions(host: Host, sendJumpKeyOnScroll = false): void {
-  const { element, term } = host;
+function wireTermInteractions(host: Host, sendJumpKeyOnScroll = false): void {
+  const { term } = host;
 
   // 0.76.45: digitar num pane estacionado acorda — mesmo gesto do botão
   // "Acordar". Listener persistente e independente do onData por-spawn (que
@@ -2941,32 +2973,6 @@ function wireInteractions(host: Host, sendJumpKeyOnScroll = false): void {
     if (pane) wakeHost(pane);
   });
 
-  // TUI (alternate screen, Grok/Claude/Codex): wheel → PageUp/PageDown no PTY.
-  // Shell/log (normal buffer): xterm continua rolando o viewport.
-  element.addEventListener(
-    'wheel',
-    (event: WheelEvent) => {
-      const page = tuiWheelPageSequence({
-        bufferType: term.buffer.active.type,
-        deltaY: event.deltaY,
-      });
-      if (page && host.sessionId) {
-        event.preventDefault();
-        event.stopPropagation();
-        window.nexus.pty.write(host.sessionId, page);
-        return;
-      }
-      requestAnimationFrame(() => {
-        if (host.disposed) return;
-        host.inputVisibility.onScroll(
-          term.buffer.active.viewportY,
-          term.buffer.active.baseY,
-        );
-      });
-    },
-    { passive: false },
-  );
-
   term.attachCustomKeyEventHandler((e) => {
     if (e.type !== 'keydown') return true;
     const mod = e.metaKey || e.ctrlKey;
@@ -2979,12 +2985,49 @@ function wireInteractions(host: Host, sendJumpKeyOnScroll = false): void {
     if (e.metaKey && (e.key === 'End' || e.key === 'ArrowDown')) {
       term.scrollToBottom();
       if (sendJumpKeyOnScroll && host.sessionId) {
-        window.nexus.pty.write(host.sessionId, '\x1b[1;5F');
+        deliverPaneUserInput(host.paneId, host.sessionId, '\x1b[1;5F');
       }
       return false;
     }
     return true;
   });
+}
+
+/**
+ * Make a terminal fully operable: copy the selection (⌘/Ctrl+C when text is
+ * selected), paste text (native xterm) or an image (saved to disk, path
+ * injected), and accept drag-and-dropped files (real path injected as if
+ * typed). Nothing here can break the terminal — every branch is guarded.
+ */
+function wireInteractions(host: Host, sendJumpKeyOnScroll = false): void {
+  const { element, term } = host;
+  wireTermInteractions(host, sendJumpKeyOnScroll);
+
+  // TUI (alternate screen, Grok/Claude/Codex): wheel → PageUp/PageDown no PTY.
+  // Shell/log (normal buffer): xterm continua rolando o viewport.
+  element.addEventListener(
+    'wheel',
+    (event: WheelEvent) => {
+      const page = tuiWheelPageSequence({
+        bufferType: term.buffer.active.type,
+        deltaY: event.deltaY,
+      });
+      if (page && host.sessionId) {
+        event.preventDefault();
+        event.stopPropagation();
+        deliverPaneUserInput(host.paneId, host.sessionId, page);
+        return;
+      }
+      requestAnimationFrame(() => {
+        if (host.disposed) return;
+        host.inputVisibility.onScroll(
+          term.buffer.active.viewportY,
+          term.buffer.active.baseY,
+        );
+      });
+    },
+    { passive: false },
+  );
 
   // F-582: o paste espelha o drop — qualquer tipo de arquivo, depois
   // text/uri-list/DownloadURL, imagem embutida no HTML e por fim o pasteboard
@@ -3661,7 +3704,7 @@ export function scrollPaneToBottom(paneId: string, sendJumpKey = false): void {
   host.inputVisibility.follow();
   host.term.scrollToBottom();
   if (sendJumpKey && host.sessionId) {
-    window.nexus.pty.write(host.sessionId, '\x1b[1;5F');
+    deliverPaneUserInput(paneId, host.sessionId, '\x1b[1;5F');
   }
   host.term.focus();
 }
@@ -4675,6 +4718,44 @@ function sendOperatorInputOrNotify(
 }
 
 /**
+ * Entrega de input humano (tecla, roda da TUI, salto ctrl+End, caminho de
+ * anexo colado, comando de histórico) ao PTY — pela lane do estado ATUAL do
+ * pane e SEMPRE com recibo. A lane crua fire-and-forget (`pty.write`,
+ * `ipcRenderer.send`) devolvia `undefined`: a recusa do main (pane que virou
+ * governado DEPOIS do spawn, voo de término F-659) morria em silêncio e o
+ * terminal parecia morto. Confirmada a recusa, a lane do operador é o
+ * caminho certo — e é ela quem tem o aviso throttled.
+ */
+function deliverPaneUserInput(
+  paneId: string,
+  sessionId: string,
+  data: string,
+): void {
+  const pane = listPanes(useLayoutStore.getState().root).find(
+    (candidate) => candidate.id === paneId,
+  );
+  if (
+    paneInputLane(pane, useOrchStore.getState().paneMissions[paneId]) ===
+    'operator'
+  ) {
+    sendOperatorInputOrNotify(paneId, sessionId, data);
+    return;
+  }
+  void window.nexus.pty
+    .writeConfirmed(sessionId, data)
+    .then((accepted) => {
+      // Recusa sem governança visível no renderer: promoção em voo cujo
+      // vínculo ainda não chegou ao layout/orchStore. A lane do operador
+      // resolve a posse no main (`getOwnedAgentSessionInfo`) e avisa se
+      // nem ela conseguir.
+      if (!accepted) sendOperatorInputOrNotify(paneId, sessionId, data);
+    })
+    .catch(() => {
+      // PTY encerrado fisicamente no meio — o onExit do host cuida do estado.
+    });
+}
+
+/**
  * B1 (F-1393): o que o xterm emite sozinho em `onData` — foco (CSI I/O),
  * posição do cursor, atributos do terminal e relatórios de mouse (rolar a
  * saída do agente). Não é o operador digitando. C-4: inclui as respostas do
@@ -4718,21 +4799,11 @@ export function writeToPane(paneId: string, data: string): boolean {
   }
   const sessionId = typingSessionId(paneId);
   if (!sessionId) return false;
-  // Mesma lane do teclado (BUG 1, 06/08): pane governado recusa escrita crua
+  // Mesma rota do teclado (BUG 1, 06/08): pane governado recusa escrita crua
   // do renderer por design — o espaço retido do hold-to-talk morria em
-  // silêncio aqui. Roteia como o xterm onData: missão → lane do operador.
-  const pane = listPanes(useLayoutStore.getState().root).find(
-    (candidate) => candidate.id === paneId,
-  );
-  const lane = paneInputLane(
-    pane,
-    useOrchStore.getState().paneMissions[paneId],
-  );
-  if (lane === 'operator') {
-    sendOperatorInputOrNotify(paneId, sessionId, data);
-    return true;
-  }
-  window.nexus.pty.write(sessionId, data);
+  // silêncio aqui. `deliverPaneUserInput` decide a lane com o estado atual
+  // e confirma a entrega.
+  deliverPaneUserInput(paneId, sessionId, data);
   return true;
 }
 
@@ -4774,7 +4845,7 @@ export async function submitPromptToPane(paneId: string, text: string): Promise<
   }
   return submitPanePrompt(paneId, text, {
     getSessionId: typingSessionId,
-    write: (sessionId, data) => window.nexus.pty.write(sessionId, data),
+    write: (sessionId, data) => deliverPaneUserInput(paneId, sessionId, data),
     writeConfirmed: (sessionId, data) =>
       window.nexus.pty.writeConfirmed(sessionId, data),
     schedule: (callback, delayMs) => setTimeout(callback, delayMs),
