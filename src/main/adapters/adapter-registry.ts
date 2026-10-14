@@ -19,6 +19,7 @@ import type {
 import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import { ADAPTER_CHANNELS } from '../../shared/channels';
 import {
+  invalidateLookupInPathCache,
   onCliVersionLearned,
   resolveCliBinary,
   revalidateExecutable,
@@ -32,10 +33,8 @@ import {
   applyDiscoveredEffortsToAdapter,
   applyDiscoveredModelsToAdapter,
   cliModelCacheDirectories,
-  discoverCliEfforts,
-  discoverCliEffortsAsync,
-  discoverCliModels,
-  discoverCliModelsAsync,
+  discoverCliModelsAndEfforts,
+  discoverCliModelsAndEffortsAsync,
 } from './cli-model-discovery';
 import {
   MODEL_DISCOVERY_POLL_MS,
@@ -340,6 +339,7 @@ export interface AdapterBinResolution {
   installed: boolean;
   /** Absolute path when installed; null when missing or api-provider. */
   binPath: string | null;
+  installationWarning?: string;
 }
 
 /**
@@ -356,7 +356,7 @@ export function authMethodForAdapter(adapter: Adapter): string {
 }
 
 /** Build a trimmed AdapterInfo safe to send to the renderer. */
-function toAdapterInfo(
+export function toAdapterInfo(
   adapter: Adapter,
   resolution: AdapterBinResolution,
   origin: AdapterOrigin,
@@ -367,7 +367,7 @@ function toAdapterInfo(
         compatibleManualInstallCommand(adapter.install.command)
       : null;
   const cliInstallationWarning = adapter.kind === 'cli-pty'
-    ? resolveCliBinary(adapter.bin)?.installationWarning : undefined;
+    ? resolution.installationWarning : undefined;
   const loginHint =
     adapter.kind !== 'api-provider' ? adapter.auth.loginHint : undefined;
   // F-990: a oferta sai do resolvedor (listagem viva autoritativa + custom do
@@ -448,6 +448,7 @@ function resolveAdapterBin(adapter: Adapter): AdapterBinResolution {
   return {
     installed: hit !== null,
     binPath: hit?.binPath ?? null,
+    ...(hit?.installationWarning ? { installationWarning: hit.installationWarning } : {}),
   };
 }
 
@@ -514,8 +515,7 @@ function composeAdapterModels(
 
 function reload(): void {
   const catalog = loadModelCatalog();
-  const discovered = discoverCliModels();
-  const discoveredEfforts = discoverCliEfforts();
+  const { models: discovered, efforts: discoveredEfforts } = discoverCliModelsAndEfforts();
   const builtins = loadBuiltins();
   const userAdapters = loadUserAdapters();
   const baseAdapters = mergeAdapters(builtins, userAdapters);
@@ -540,8 +540,7 @@ async function reloadBudgeted(context: PeriodicTaskContext): Promise<void> {
   const epoch = registryEpoch;
   const previousRegistry = registry;
   const catalog = await context.wait(loadModelCatalogAsync());
-  const discovered = await context.wait(discoverCliModelsAsync(undefined, context));
-  const efforts = await context.wait(discoverCliEffortsAsync(undefined, context));
+  const { models: discovered, efforts } = await context.wait(discoverCliModelsAndEffortsAsync(undefined, context));
   const users: Adapter[] = [];
   let directory: Awaited<ReturnType<typeof fsp.opendir>> | null = null;
   try { directory = await fsp.opendir(USER_ADAPTER_DIR, { bufferSize: 32 }); } catch { /* No user definitions. */ }
@@ -819,7 +818,11 @@ export function resolveAdapterBinary(id: string): string | null {
   if (!adapter || adapter.kind === 'api-provider') return null;
   const hit = resolveBin(adapter.bin);
   if (hit) {
-    installedCache.set(canonicalId, { installed: true, binPath: hit.binPath });
+    installedCache.set(canonicalId, {
+      installed: true,
+      binPath: hit.binPath,
+      ...(hit.installationWarning ? { installationWarning: hit.installationWarning } : {}),
+    });
   } else {
     installedCache.set(canonicalId, { installed: false, binPath: null });
   }
@@ -831,6 +834,7 @@ export function resolveAdapterBinary(id: string): string | null {
  * CLI installs (brew/npm/kimi installer) without restarting the app.
  */
 export async function rescanAdapterBinaries(): Promise<AdapterInfo[]> {
+  invalidateLookupInPathCache();
   await refreshUserPath();
   // Reexame é pedido explícito (ou pós-atualização): espera as sondas, que
   // rodam fora do Main, e já devolve a instalação mais nova.

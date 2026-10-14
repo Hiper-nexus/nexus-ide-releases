@@ -21,6 +21,7 @@ import {
   orchestrationEvidenceForAdapter,
   missionControlCapabilityForAdapter,
   taskHandoffCapabilityForAdapter,
+  toAdapterInfo,
 } from './adapter-registry';
 import { applyDiscoveredModelsToAdapter } from './cli-model-discovery';
 import { parseAgyModelsOutput } from './model-discovery';
@@ -1023,6 +1024,36 @@ describe('F-1411: bracketedPaste chega ao renderer pela declaração do adapter'
     for (const adapter of adapters) {
       const declared = adapter.kind === 'cli-pty' ? adapter.promptInjection?.bracketedPaste : undefined;
       expect(bracketedPasteForAdapter(adapter)).toBe(declared);
+    }
+  });
+});
+
+describe('toAdapterInfo uses installedCache without re-resolving PATH', () => {
+  it('projects installationWarning from cached resolution without touching the filesystem', () => {
+    const adapter = cliPtyAdapterSchema.parse({ ...MINIMAL_CLI_PTY, id: 'codex', bin: 'codex' });
+    // Warm model catalog once before spying on fs
+    toAdapterInfo(adapter, { installed: false, binPath: null }, 'builtin');
+
+    const statSpy = vi.spyOn(fs, 'statSync');
+    const realpathSpy = vi.spyOn(fs, 'realpathSync');
+    try {
+      const info = toAdapterInfo(
+        adapter,
+        {
+          installed: true,
+          binPath: '/usr/local/bin/codex',
+          installationWarning: '2 instalações: 0.146.0 e 0.160.0; usando 0.160.0',
+        },
+        'builtin',
+      );
+      expect(info.installed).toBe(true);
+      expect(info.resolvedBinPath).toBe('/usr/local/bin/codex');
+      expect(info.cliInstallationWarning).toBe('2 instalações: 0.146.0 e 0.160.0; usando 0.160.0');
+      expect(statSpy).not.toHaveBeenCalled();
+      expect(realpathSpy).not.toHaveBeenCalled();
+    } finally {
+      statSpy.mockRestore();
+      realpathSpy.mockRestore();
     }
   });
 });

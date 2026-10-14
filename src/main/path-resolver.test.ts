@@ -8,9 +8,11 @@ import {
   buildEffectivePath,
   cachedCliBinaryVersion,
   commonCliBinDirs,
+  invalidateLookupInPathCache,
   lookupInPath,
   onCliVersionLearned,
   probeLoginShellPath,
+  refreshUserPath,
   retryLoginShellPathIfMissed,
   revalidateExecutable,
   resolveCliBinary,
@@ -623,6 +625,52 @@ describe('path-resolver CLI binary resolution', () => {
     } else {
       expect(lookupInPath('not-a-cli', binDir)).toBeNull();
       expect(revalidateExecutable(plain)).toBe(false);
+    }
+  });
+
+  it('memoizes lookupInPath by (command, PATH) and invalidates on refreshUserPath or invalidateLookupInPathCache', async () => {
+    const combinedPath = [binDir, kimiDir].join(path.delimiter);
+    const statSpy = vi.spyOn(fs, 'statSync');
+    try {
+      expect(lookupInPath('kimi', combinedPath)).toBe(kimiBin);
+      const firstStatCount = statSpy.mock.calls.length;
+      expect(firstStatCount).toBeGreaterThan(0);
+
+      expect(lookupInPath('kimi', combinedPath)).toBe(kimiBin);
+      expect(lookupInPath('kimi', binDir)).toBeNull();
+      expect(lookupInPath('kimi', kimiDir)).toBe(kimiBin);
+      expect(statSpy.mock.calls.length).toBe(firstStatCount);
+
+      const extension = process.platform === 'win32' ? '.cmd' : '';
+      const freshBin = path.join(binDir, `fresh-cli${extension}`);
+      expect(lookupInPath('fresh-cli', binDir)).toBeNull();
+      fs.writeFileSync(
+        freshBin,
+        process.platform === 'win32' ? '@echo off\r\necho ok\r\n' : '#!/bin/sh\necho ok\n',
+        { mode: 0o755 },
+      );
+      expect(lookupInPath('fresh-cli', binDir)).toBeNull();
+
+      invalidateLookupInPathCache();
+      expect(lookupInPath('fresh-cli', binDir)).toBe(freshBin);
+
+      const secondFreshBin = path.join(binDir, `fresh-cli-2${extension}`);
+      expect(lookupInPath('fresh-cli-2', binDir)).toBeNull();
+      fs.writeFileSync(
+        secondFreshBin,
+        process.platform === 'win32' ? '@echo off\r\necho ok\r\n' : '#!/bin/sh\necho ok\n',
+        { mode: 0o755 },
+      );
+      expect(lookupInPath('fresh-cli-2', binDir)).toBeNull();
+      const origPath = process.env.PATH;
+      try {
+        await refreshUserPath();
+      } finally {
+        process.env.PATH = origPath;
+      }
+      expect(lookupInPath('fresh-cli-2', binDir)).toBe(secondFreshBin);
+    } finally {
+      statSpy.mockRestore();
     }
   });
 });

@@ -380,9 +380,11 @@ export async function retryLoginShellPathIfMissed(
 export async function refreshUserPath(): Promise<string> {
   // Clear memo so buildEffectivePath re-probes the login shell.
   memoizedEffectivePath = null;
+  invalidateLookupInPathCache();
   const effective = await resolveEffectivePath();
   process.env.PATH = effective;
   memoizedEffectivePath = effective;
+  invalidateLookupInPathCache();
   folded = true;
   return effective;
 }
@@ -424,6 +426,45 @@ function isExecutableFile(candidate: string): boolean {
   }
 }
 
+const lookupInPathCache = new Map<string, string | null>();
+
+export function invalidateLookupInPathCache(): void {
+  lookupInPathCache.clear();
+}
+
+function lookupInSingleDir(
+  command: string,
+  dir: string,
+  pathext: string,
+): string | null {
+  const candidate = path.join(dir, command);
+  if (process.platform === 'win32') {
+    // A caller may already name a native launcher (for example `npm.cmd` or
+    // an explicitly configured `codex.cmd`). Keep that exact candidate, but
+    // never treat an extensionless POSIX npm shim as executable through
+    // ConPTY.
+    if (
+      WINDOWS_PTY_EXECUTABLE_EXTENSIONS.has(
+        path.extname(command).toLowerCase(),
+      ) &&
+      isExecutableFile(candidate)
+    ) {
+      return candidate;
+    }
+    for (const ext of pathext.split(';')) {
+      if (!ext) continue;
+      const normalizedExt = ext.toLowerCase();
+      if (!WINDOWS_PTY_EXECUTABLE_EXTENSIONS.has(normalizedExt)) continue;
+      // Use the normalized spelling. NTFS lookup remains case-insensitive,
+      // while callers get a stable path for persistence and tests.
+      const withExt = candidate + normalizedExt;
+      if (isExecutableFile(withExt)) return withExt;
+    }
+    return null;
+  }
+  return isExecutableFile(candidate) ? candidate : null;
+}
+
 /**
  * Walk a PATH string for `command`. Returns absolute path or null.
  * Pure enough for unit tests (injectable via path string).
@@ -436,36 +477,29 @@ export function lookupInPath(
   if (!command || command.includes('/') || command.includes('\\')) {
     return null;
   }
+  const pathext = process.platform === 'win32'
+    ? (process.env.PATHEXT ?? '.EXE;.CMD;.BAT;.COM')
+    : '';
+  const cacheKey = `${command}\0${pathSep}\0${pathext}\0${pathString}`;
+  if (lookupInPathCache.has(cacheKey)) {
+    return lookupInPathCache.get(cacheKey) ?? null;
+  }
   for (const dir of pathString.split(pathSep)) {
     if (!dir) continue;
-    const candidate = path.join(dir, command);
-    if (process.platform === 'win32') {
-      // A caller may already name a native launcher (for example `npm.cmd` or
-      // an explicitly configured `codex.cmd`). Keep that exact candidate, but
-      // never treat an extensionless POSIX npm shim as executable through
-      // ConPTY.
-      if (
-        WINDOWS_PTY_EXECUTABLE_EXTENSIONS.has(
-          path.extname(command).toLowerCase(),
-        ) &&
-        isExecutableFile(candidate)
-      ) {
-        return candidate;
-      }
-      const pathext = process.env.PATHEXT ?? '.EXE;.CMD;.BAT;.COM';
-      for (const ext of pathext.split(';')) {
-        if (!ext) continue;
-        const normalizedExt = ext.toLowerCase();
-        if (!WINDOWS_PTY_EXECUTABLE_EXTENSIONS.has(normalizedExt)) continue;
-        // Use the normalized spelling. NTFS lookup remains case-insensitive,
-        // while callers get a stable path for persistence and tests.
-        const withExt = candidate + normalizedExt;
-        if (isExecutableFile(withExt)) return withExt;
-      }
-      continue;
+    const dirKey = `${command}\0${pathSep}\0${pathext}\0${dir}`;
+    let hit: string | null;
+    if (lookupInPathCache.has(dirKey)) {
+      hit = lookupInPathCache.get(dirKey) ?? null;
+    } else {
+      hit = lookupInSingleDir(command, dir, pathext);
+      lookupInPathCache.set(dirKey, hit);
     }
-    if (isExecutableFile(candidate)) return candidate;
+    if (hit !== null) {
+      lookupInPathCache.set(cacheKey, hit);
+      return hit;
+    }
   }
+  lookupInPathCache.set(cacheKey, null);
   return null;
 }
 
@@ -794,7 +828,7 @@ export function resolveCliBinary(
   return {
     binPath: resolved,
     effectivePath: effective,
-    source: lookupInPath(trimmed, processPath) === resolved ? 'process-path' : classifySource(resolved, processPath, home),
+    source: fromProcess === resolved ? 'process-path' : classifySource(resolved, processPath, home),
     ...(installationWarning ? { installationWarning } : {}),
   };
 }
@@ -901,6 +935,7 @@ export function __resetPathResolverForTests(): void {
   folded = false;
   memoizedEffectivePath = null;
   bootLoginProbe = null;
+  invalidateLookupInPathCache();
   cliVersionCache.clear();
   cliVersionProbes.clear();
   cliVersionGeneration += 1;
