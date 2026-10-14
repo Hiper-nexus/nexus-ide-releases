@@ -602,22 +602,36 @@ export interface BuildCacheResult {
   readonly skipped: { readonly rel: string; readonly reason: string }[];
 }
 
+/** Cache de módulos do vitest 5 (`fsModuleCachePath`): vive FORA do node_modules
+ * (por worktree, sem thrash no node_modules linkado) e é chaveado por hash de
+ * conteúdo — semear de uma árvore irmã é seguro, o que não bate dá miss. */
+const VITEST_FS_CACHE_REL = '.nexus-cache/vitest';
+
 /**
- * Caches de build portáteis da origem → worktree. Só `*.tsbuildinfo` (TS ≥5
- * grava caminhos relativos); `.vite`/`.cache` vivem DENTRO do node_modules e
- * já vêm junto no clone CoW — copiá-los de novo seria redundante.
+ * Caches de build portáteis da origem → worktree: `*.tsbuildinfo` (TS ≥5
+ * grava caminhos relativos, arquivo único limitado por MAX_BUILD_CACHE_BYTES)
+ * e o cache fs do vitest (chaveado por hash). `.vite`/`.cache` vivem DENTRO
+ * do node_modules e já vêm junto no clone CoW — copiá-los de novo seria
+ * redundante. A cópia do DIRETÓRIO é assíncrona (threadpool do libuv): isto
+ * roda no processo Main durante a materialização e um `cpSync` recursivo do
+ * cache do vitest (dezenas de MB, centenas de arquivos) bloquearia o event
+ * loop a cada worktree nova.
  */
-export function copyBuildCaches(
+export async function copyBuildCaches(
   repositoryRoot: string,
   worktreeRoot: string,
   deps?: {
     readonly copyFile?: (source: string, dest: string) => void;
+    readonly copyDir?: (source: string, dest: string) => Promise<void>;
     readonly statSize?: (filePath: string) => number | null;
   },
-): BuildCacheResult {
+): Promise<BuildCacheResult> {
   const copyFile = deps?.copyFile ?? ((src, dest) => {
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     fs.copyFileSync(src, dest);
+  });
+  const copyDir = deps?.copyDir ?? (async (src, dest) => {
+    await fs.promises.cp(src, dest, { recursive: true, mode: fs.constants.COPYFILE_FICLONE });
   });
   const statSize = deps?.statSize ?? ((filePath) => {
     try {
@@ -646,6 +660,16 @@ export function copyBuildCaches(
       copied.push(rel);
     } catch {
       skipped.push({ rel, reason: 'copy-failed' });
+    }
+  }
+  const vitestCacheSource = path.join(repositoryRoot, VITEST_FS_CACHE_REL);
+  const vitestCacheDest = path.join(worktreeRoot, VITEST_FS_CACHE_REL);
+  if (fs.existsSync(vitestCacheSource) && !fs.existsSync(vitestCacheDest)) {
+    try {
+      await copyDir(vitestCacheSource, vitestCacheDest);
+      copied.push(VITEST_FS_CACHE_REL);
+    } catch {
+      skipped.push({ rel: VITEST_FS_CACHE_REL, reason: 'copy-failed' });
     }
   }
   return { copied, skipped };
@@ -717,7 +741,7 @@ export async function materializeGitWorktree(
   const cowMs = Date.now() - cowStart;
 
   // F-1386: caches de build portáteis — melhor esforço, nunca bloqueia o spawn.
-  const buildCaches = copyBuildCaches(input.repositoryRoot, input.worktreePath);
+  const buildCaches = await copyBuildCaches(input.repositoryRoot, input.worktreePath);
   if (buildCaches.copied.length > 0) {
     console.info(
       `[worktree-cow] caches de build copiados: ${buildCaches.copied.join(', ')}`,
