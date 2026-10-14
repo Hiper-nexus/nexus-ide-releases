@@ -58,16 +58,6 @@ function ensureRealDirectory(directory: string): void {
   fs.mkdirSync(directory, { mode: DIRECTORY_MODE });
 }
 
-function fsyncDirectory(directory: string): void {
-  if (process.platform === "win32") return;
-  const descriptor = fs.openSync(directory, fs.constants.O_RDONLY);
-  try {
-    fs.fsyncSync(descriptor);
-  } finally {
-    fs.closeSync(descriptor);
-  }
-}
-
 function removeStaleProjectionTemps(directory: string, now: number): void {
   for (const name of fs.readdirSync(directory)) {
     if (!PROJECTION_TEMP_PATTERN.test(name)) continue;
@@ -82,29 +72,50 @@ function removeStaleProjectionTemps(directory: string, now: number): void {
   }
 }
 
-function writeFileAtomicSecure(filePath: string, content: string): void {
+/**
+ * Last published fingerprint per file. A projection is rewritten on every
+ * journal append, but most rewrites only move `generatedAt`; the fingerprint
+ * lets those cost one lstat instead of a temp file and a rename.
+ */
+const publishedFingerprints = new Map<string, string>();
+const MAX_PUBLISHED_FINGERPRINTS = 512;
+
+/**
+ * Atomic publish (temp + rename) of a diagnostic mirror. Deliberately no
+ * fsync: SQLite is the source of truth and nothing reads these files back, so
+ * a power loss only costs a stale mirror that the next refresh rebuilds. On
+ * macOS `fsync` is F_FULLFSYNC (10-100 ms each, six per projection) and this
+ * runs on the Main thread.
+ */
+function writeFileAtomicSecure(
+  filePath: string,
+  content: string,
+  fingerprint: string = content,
+): void {
   const existing = fs.lstatSync(filePath, { throwIfNoEntry: false });
   if (existing?.isSymbolicLink()) {
     throw new Error(`mission projection refuses symlink target: ${filePath}`);
   }
+  if (
+    existing &&
+    (existing.mode & 0o777) === FILE_MODE &&
+    publishedFingerprints.get(filePath) === fingerprint
+  ) {
+    return;
+  }
   const temporaryPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
-  let descriptor: number | null = null;
   try {
-    descriptor = fs.openSync(temporaryPath, "wx", FILE_MODE);
-    fs.writeFileSync(descriptor, content, "utf8");
-    fs.fsyncSync(descriptor);
-    fs.closeSync(descriptor);
-    descriptor = null;
+    fs.writeFileSync(temporaryPath, content, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: FILE_MODE,
+    });
     fs.renameSync(temporaryPath, filePath);
-    fsyncDirectory(path.dirname(filePath));
-  } catch (error) {
-    if (descriptor !== null) {
-      try {
-        fs.closeSync(descriptor);
-      } catch {
-        // Preserve the original write error.
-      }
+    if (publishedFingerprints.size >= MAX_PUBLISHED_FINGERPRINTS) {
+      publishedFingerprints.clear();
     }
+    publishedFingerprints.set(filePath, fingerprint);
+  } catch (error) {
     try {
       fs.rmSync(temporaryPath, { force: true });
     } catch {
@@ -416,26 +427,23 @@ export function projectMissionToDisk(
       events,
     }),
   );
+  const status = {
+    missionId,
+    title: singleLine(mission.title, 120),
+    status: mission.status,
+    intentState: mission.intentState ?? null,
+    squadId: mission.squadId ? safeIdentifier(mission.squadId, 128) : null,
+    createdAt: mission.createdAt,
+    updatedAt: mission.updatedAt,
+    paneCount: panes.length,
+    handoffCount: handoffs.length,
+    lastEventSequence: lastEvent?.sequence ?? 0,
+    lastEventAt: lastEvent?.occurredAt ?? null,
+  };
   writeFileAtomicSecure(
     statusPath,
-    `${JSON.stringify(
-      {
-        generatedAt,
-        missionId,
-        title: singleLine(mission.title, 120),
-        status: mission.status,
-        intentState: mission.intentState ?? null,
-        squadId: mission.squadId ? safeIdentifier(mission.squadId, 128) : null,
-        createdAt: mission.createdAt,
-        updatedAt: mission.updatedAt,
-        paneCount: panes.length,
-        handoffCount: handoffs.length,
-        lastEventSequence: lastEvent?.sequence ?? 0,
-        lastEventAt: lastEvent?.occurredAt ?? null,
-      },
-      null,
-      2,
-    )}\n`,
+    `${JSON.stringify({ generatedAt, ...status }, null, 2)}\n`,
+    JSON.stringify(status),
   );
   writeFileAtomicSecure(
     eventsPath,
@@ -522,6 +530,7 @@ export function uninstallMissionDiskProjection(): void {
   unsubscribeScopes = null;
   for (const timer of pendingRefreshes.values()) clearTimeout(timer);
   pendingRefreshes.clear();
+  publishedFingerprints.clear();
   setMissionEventAppendTap(null);
   installed = false;
 }
