@@ -1990,6 +1990,43 @@ function routeLogSinkFor(scope: ProjectExecutionScope): RouteLogSink | null {
 }
 
 /**
+ * A12 (perf spawn): os contadores de diversidade (7d/14d) eram recomputados
+ * no SQLite a cada rota. Memo de 30s por escopo — dois spawns em sequência
+ * reaproveitam a leitura. Sem hook de spawn registrado, a invalidação é o
+ * TTL; quando um hook existir, basta limpar o Map.
+ */
+const DIVERSITY_MEMO_TTL_MS = 30_000;
+const diversityMemo = new Map<
+  string,
+  {
+    at: number;
+    globalUseCounts: Map<string, number> | undefined;
+    routeOutcomes: RouteSuccessIndex | undefined;
+  }
+>();
+
+/** Test hook / invalidação quando um spawn novo for registrado. */
+export function __resetDiversityMemoForTests(): void {
+  diversityMemo.clear();
+}
+
+function memoizedDiversityCounters(
+  scopeKey: string,
+  compute: () => {
+    globalUseCounts: Map<string, number> | undefined;
+    routeOutcomes: RouteSuccessIndex | undefined;
+  },
+): { globalUseCounts: Map<string, number> | undefined; routeOutcomes: RouteSuccessIndex | undefined } {
+  const now = Date.now();
+  const hit = diversityMemo.get(scopeKey);
+  if (hit && now - hit.at < DIVERSITY_MEMO_TTL_MS) return hit;
+  const fresh = compute();
+  diversityMemo.delete(scopeKey);
+  diversityMemo.set(scopeKey, { at: now, ...fresh });
+  return fresh;
+}
+
+/**
  * F-802: CLIs que o pane da mão do operador e os filhos vivos dele já usam. O
  * spawn já entrega a contagem pronta; `nexus_route_task` chamado direto pelo
  * pane do operador a calcula aqui, pelo mesmo critério.
@@ -2289,10 +2326,10 @@ export async function routeTaskForCaller(
   quotaFallbackNote += readOnlyPool.note;
   let missionAdapterIds: string[] | undefined;
   let reservedAdapterIds: string[] | undefined;
-  let globalUseCounts: Map<string, number> | undefined;
-  if (!missionId) {
-    // F-802: o fair-share de 7 dias (F-232) vale também para o "+ Pane" — as
-    // reservas consumidas no checkout independem de quem está pedindo a rota.
+  // A12: contadores de diversidade memoizados por 30s por escopo.
+  const diversityScopeKey = ctx.scope.rootRealPath;
+  const memoized = memoizedDiversityCounters(diversityScopeKey, () => {
+    let globalUseCounts: Map<string, number> | undefined;
     try {
       globalUseCounts = getProjectDomainStores(ctx.scope)
         .missions.consumedRouteCountsByAdapterSince(
@@ -2301,27 +2338,42 @@ export async function routeTaskForCaller(
     } catch {
       globalUseCounts = undefined;
     }
-    // F-1291: sem missão não há reserva (só nasce com missionId), então o
-    // store acima volta sempre zerado e o fair-share era no-op. Soma a
-    // memória de decisões sem missão — fail-open isolado: sem ela, a rota
-    // segue exatamente como antes. F-1400 (parte 2): a mesma memória carrega
-    // `visual:adapter:model` e o marcador `visual:`, mesclados aqui para o
-    // revezamento de front por modelo valer fora de missão.
-    try {
-      const missionless = missionlessRouteCountsByAdapterSince(
-        Date.now() - GLOBAL_USE_WINDOW_MS,
-      );
-      if (missionless.size > 0) {
-        const merged = new Map(globalUseCounts);
-        for (const [adapterId, n] of missionless) {
-          merged.set(adapterId, (merged.get(adapterId) ?? 0) + n);
+    if (!missionId) {
+      // F-1291: sem missão não há reserva (só nasce com missionId), então o
+      // store acima volta sempre zerado e o fair-share era no-op. Soma a
+      // memória de decisões sem missão — fail-open isolado: sem ela, a rota
+      // segue exatamente como antes.
+      try {
+        const missionless = missionlessRouteCountsByAdapterSince(
+          Date.now() - GLOBAL_USE_WINDOW_MS,
+        );
+        if (missionless.size > 0) {
+          const merged = new Map(globalUseCounts);
+          for (const [adapterId, n] of missionless) {
+            merged.set(adapterId, (merged.get(adapterId) ?? 0) + n);
+          }
+          globalUseCounts = merged;
         }
-        globalUseCounts = merged;
+      } catch {
+        // Sem memória, a rota segue como antes.
       }
-    } catch {
-      // Sem memória, a rota segue como antes.
     }
-  }
+    let routeOutcomes: RouteSuccessIndex | undefined;
+    try {
+      const since = Date.now() - ROUTE_OUTCOME_WINDOW_MS;
+      routeOutcomes = buildRouteSuccessIndex([
+        ...getProjectDomainStores(ctx.scope).handoffs.routeOutcomeCountsSince(since),
+        // F-1427: falha sem handoff (pane fechado, reaberto, erro do provedor)
+        // também é desfecho da rota — amostra `failed` da memória do processo.
+        ...routeFailureOutcomeRows(since),
+      ]);
+    } catch {
+      routeOutcomes = undefined;
+    }
+    return { globalUseCounts, routeOutcomes };
+  });
+  const globalUseCounts = memoized.globalUseCounts;
+  const routeOutcomes = memoized.routeOutcomes;
   if (missionId) {
     try {
       const stores = getProjectDomainStores(ctx.scope);
@@ -2346,34 +2398,6 @@ export async function routeTaskForCaller(
       missionAdapterIds = undefined;
       reservedAdapterIds = undefined;
     }
-    // F-232: uso GLOBAL de rota neste checkout (7 dias, todas as missões) —
-    // alimenta o fair-share para os providers nunca escolhidos entrarem.
-    // Fail-open isolado: se o store de reservas não puder ler, a diversidade
-    // da missão coletada acima NÃO pode morrer junto.
-    try {
-      globalUseCounts = getProjectDomainStores(ctx.scope)
-        .missions.consumedRouteCountsByAdapterSince(
-          Date.now() - GLOBAL_USE_WINDOW_MS,
-        );
-    } catch {
-      globalUseCounts = undefined;
-    }
-  }
-  // F-773 (G4): laço de resultado — o que cada (CLI, modelo) entregou de
-  // verdade nos últimos 14 dias neste checkout (status do worker + veredito
-  // do Maestro no ACK). Vale também para o fan-out sem missão. Fail-open
-  // isolado: sem leitura, a rota segue exatamente como antes.
-  let routeOutcomes: RouteSuccessIndex | undefined;
-  try {
-    const since = Date.now() - ROUTE_OUTCOME_WINDOW_MS;
-    routeOutcomes = buildRouteSuccessIndex([
-      ...getProjectDomainStores(ctx.scope).handoffs.routeOutcomeCountsSince(since),
-      // F-1427: falha sem handoff (pane fechado, reaberto, erro do provedor)
-      // também é desfecho da rota — amostra `failed` da memória do processo.
-      ...routeFailureOutcomeRows(since),
-    ]);
-  } catch {
-    routeOutcomes = undefined;
   }
   // Preferência interna (pin de adapterId que virou preferência suave no
   // spawn) vale tanto quanto a do caller; nunca vira exclusão.
