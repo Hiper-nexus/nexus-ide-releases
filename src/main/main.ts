@@ -560,6 +560,7 @@ import {
 } from "./observability/event-loop-monitor";
 import { registerMainHeartbeatIpc } from "./observability/main-heartbeat-ipc";
 import { bootStep, bootStepAsync, describeBootFailure } from './runtime/git-boot-guard';
+import { beginBootPhases, markBootPhase } from './observability/boot-phases';
 
 let projectRuntimeManager: ProjectRuntimeManager | null = null;
 let hookDropBoxWatcher: AgentHookDropBoxWatcher | null = null;
@@ -1037,6 +1038,8 @@ if (squirrelStartupEvent || !wireDeepLinks()) {
   app.quit();
 } else {
   app.whenReady().then(async () => {
+    beginBootPhases();
+    markBootPhase('whenReady');
     // Varredura de órfãos do PRÓPRIO install: supervisores rodam disclaimed
     // (ppid 1 mesmo saudáveis), então parentesco não distingue vivo de órfão —
     // mas no boot, com o lock de instância única, NENHUM supervisor deste
@@ -1085,6 +1088,7 @@ if (squirrelStartupEvent || !wireDeepLinks()) {
     // (notably Keychain-backed providers) can block the Electron main thread;
     // the native window/Dock item must already exist before touching them.
     const mainWindow = createMainWindow({ deferRendererLoad: true });
+    markBootPhase('window-created');
     if (!mainWindow) {
       // createMainWindow reports the native error. Do not continue bootstrap:
       // it can create auxiliary renderer windows, which must never load after
@@ -1120,7 +1124,9 @@ if (squirrelStartupEvent || !wireDeepLinks()) {
     // freeze Electron's main event loop.
     try {
       await resolveUserPath();
+      markBootPhase('path-resolved');
       await bootstrap();
+      markBootPhase('bootstrap-ready');
       // Shell de login lento (oh-my-zsh + nvm num login frio) estoura o prazo
       // curto do boot e CLIs via nvm/fnm pareciam "não instaladas" a sessão
       // toda. Uma segunda sondagem, longa e em background, corrige sozinha.
