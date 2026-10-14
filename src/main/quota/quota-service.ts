@@ -922,6 +922,11 @@ export class QuotaService {
     this.#broadcastTimer.unref?.();
   }
 
+  /** Rebuild honoring the API/plan caches + broadcast (post-boot first read). */
+  async publishSnapshot(): Promise<QuotaFleetSnapshot> {
+    return this.#refreshAndPublish(await this.snapshot());
+  }
+
   /** Force rebuild + live API re-probe + broadcast (UI refresh button). */
   async refresh(): Promise<QuotaFleetSnapshot> {
     return this.#refreshAndPublish(await this.snapshot(Date.now(), { forceApi: true }));
@@ -948,28 +953,93 @@ export class QuotaService {
   }
 }
 
-let configured: QuotaService | null = null;
+import {
+  enqueuePostBootIdleTask,
+  isPostBootIdleReady,
+} from '../observability/post-boot-idle-queue';
 
-export function initQuotaService(deps: QuotaServiceDeps): QuotaService {
-  configured?.stop();
-  configured = new QuotaService(deps);
+const EMPTY_LAZY_QUOTA_SNAPSHOT: QuotaFleetSnapshot = Object.freeze({
+  updatedAt: 0,
+  entries: [],
+  worstUsedRatio: null,
+  highUsageCount: 0,
+  unknownCount: 0,
+});
+
+let configured: QuotaService | null = null;
+let lazyDepsFactory: (() => QuotaServiceDeps) | null = null;
+
+function ensureQuotaService(): QuotaService | null {
+  if (!configured && lazyDepsFactory) {
+    const factory = lazyDepsFactory;
+    lazyDepsFactory = null;
+    configured = new QuotaService(factory());
+  }
+  return configured;
+}
+
+/**
+ * First quota read off the boot path: a cache-honoring snapshot (no forced
+ * fleet re-probe), then the broadcast the renderer waits for after it got
+ * the empty lazy snapshot.
+ */
+function enqueueLazyQuotaInit(): void {
+  enqueuePostBootIdleTask('initQuotaService', async () => {
+    await ensureQuotaService()?.publishSnapshot();
+  });
+}
+
+function registerQuotaIpcHandlers(): void {
   ipcMain.removeHandler(QUOTA_CHANNELS.snapshot);
   ipcMain.removeHandler(QUOTA_CHANNELS.refresh);
   ipcMain.removeHandler(QUOTA_CHANNELS.connectMimo);
   handleTrusted(QUOTA_CHANNELS.connectMimo, async (_event, input) => {
     const accountId = z.string().min(1).max(256).optional().parse(input);
     const result = await connectMimoQuota(accountId);
-    await configured?.refresh();
+    await ensureQuotaService()?.refresh();
     return result;
   });
-  ipcMain.handle(QUOTA_CHANNELS.snapshot, async () => configured!.snapshot());
-  ipcMain.handle(QUOTA_CHANNELS.refresh, async () => configured!.refresh());
+  ipcMain.handle(QUOTA_CHANNELS.snapshot, async () => {
+    if (!configured && lazyDepsFactory && !isPostBootIdleReady()) {
+      enqueueLazyQuotaInit();
+      return EMPTY_LAZY_QUOTA_SNAPSHOT;
+    }
+    return requireQuotaService().snapshot();
+  });
+  ipcMain.handle(QUOTA_CHANNELS.refresh, async () => {
+    if (!configured && lazyDepsFactory && !isPostBootIdleReady()) {
+      enqueueLazyQuotaInit();
+      return EMPTY_LAZY_QUOTA_SNAPSHOT;
+    }
+    return requireQuotaService().refresh();
+  });
+}
+
+/**
+ * Registra os canais IPC de quota no bootstrap e adia a instância de
+ * `QuotaService` para o 1º uso (`requireQuotaService` / IPC pós-idle) ou para
+ * a fila idle pós-boot.
+ */
+export function registerQuotaServiceLazy(depsFactory: () => QuotaServiceDeps): void {
+  configured?.stop();
+  configured = null;
+  lazyDepsFactory = depsFactory;
+  registerQuotaIpcHandlers();
+  enqueueLazyQuotaInit();
+}
+
+export function initQuotaService(deps: QuotaServiceDeps): QuotaService {
+  lazyDepsFactory = null;
+  configured?.stop();
+  configured = new QuotaService(deps);
+  registerQuotaIpcHandlers();
   return configured;
 }
 
 export function requireQuotaService(): QuotaService {
-  if (!configured) throw new Error('quota service not initialized');
-  return configured;
+  const service = ensureQuotaService();
+  if (!service) throw new Error('quota service not initialized');
+  return service;
 }
 
 export function noteQuotaLimitHit(
@@ -977,12 +1047,13 @@ export function noteQuotaLimitHit(
   hit: LimitHit,
   accountId?: string,
 ): void {
-  configured?.noteLimitHit(adapterId, hit, accountId);
+  ensureQuotaService()?.noteLimitHit(adapterId, hit, accountId);
 }
 
 export function shutdownQuotaService(): void {
   // F-1483: o poll das contas na missão para junto com o serviço.
   stopMissionQuotaPoll();
+  lazyDepsFactory = null;
   ipcMain.removeHandler(QUOTA_CHANNELS.connectMimo);
   closeMimoQuotaConnections();
   ipcMain.removeHandler(QUOTA_CHANNELS.snapshot);

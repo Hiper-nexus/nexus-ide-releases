@@ -29,7 +29,14 @@ export interface WarmPoolOptions {
 }
 
 const DEFAULT_MAX_AGE_MS = 10 * 60_000; // 10 minutes
-const DEFAULT_MIN_CPU_HEADROOM = 0.25; // 25% CPU headroom required
+export const MIN_CPU_HEADROOM = 0.25; // 25% CPU headroom required
+
+/** CPU headroom in [0, 1] (1 = idle) from the 1-min load average; no metrics, no logs. */
+export function readCpuHeadroom(): number {
+  const cpus = os.cpus()?.length || 1;
+  const load1m = os.loadavg()?.[0] ?? 0;
+  return Math.max(0, 1 - load1m / cpus);
+}
 
 export class WarmPool {
   private readonly queues = new Map<string, WarmSession[]>();
@@ -53,7 +60,7 @@ export class WarmPool {
 
   constructor(options: WarmPoolOptions = {}) {
     this.maxAgeMs = options.maxAgeMs ?? DEFAULT_MAX_AGE_MS;
-    this.minCpuHeadroom = options.minCpuHeadroom ?? DEFAULT_MIN_CPU_HEADROOM;
+    this.minCpuHeadroom = options.minCpuHeadroom ?? MIN_CPU_HEADROOM;
     this.spawnFn = options.spawnFn;
     this.destroyFn = options.destroyFn;
     this.isAliveFn = options.isAliveFn;
@@ -96,9 +103,7 @@ export class WarmPool {
    * Headroom is in range [0, 1] where 1 means 100% idle.
    */
   measureCpuHeadroom(): number {
-    const cpus = os.cpus()?.length || 1;
-    const load1m = os.loadavg()?.[0] ?? 0;
-    const headroom = Math.max(0, 1 - load1m / cpus);
+    const headroom = readCpuHeadroom();
     if (headroom < this.metrics.minHeadroom) {
       this.metrics.minHeadroom = headroom;
     }

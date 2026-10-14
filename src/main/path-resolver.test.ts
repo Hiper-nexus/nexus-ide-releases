@@ -16,6 +16,7 @@ import {
   resolveCliBinary,
   resolveSpawnBinary,
   warmCliBinaryVersions,
+  withLookupInPathPass,
 } from './path-resolver';
 
 // Espiões de passagem: a sonda real roda, e o teste prova qual API ela usou.
@@ -623,6 +624,87 @@ describe('path-resolver CLI binary resolution', () => {
     } else {
       expect(lookupInPath('not-a-cli', binDir)).toBeNull();
       expect(revalidateExecutable(plain)).toBe(false);
+    }
+  });
+
+  it('sees an install and a removal immediately with a constant PATH (live resolve, C3)', () => {
+    const extension = process.platform === 'win32' ? '.cmd' : '';
+    const script = process.platform === 'win32' ? '@echo off\r\necho ok\r\n' : '#!/bin/sh\necho ok\n';
+    const freshBin = path.join(binDir, `fresh-cli${extension}`);
+    const options = { processPath: binDir, effectivePath: binDir };
+
+    expect(resolveCliBinary('fresh-cli', options)).toBeNull();
+    fs.writeFileSync(freshBin, script, { mode: 0o755 });
+    expect(resolveCliBinary('fresh-cli', options)?.binPath).toBe(freshBin);
+    expect(lookupInPath('fresh-cli', binDir)).toBe(freshBin);
+
+    fs.rmSync(freshBin);
+    expect(resolveCliBinary('fresh-cli', options)).toBeNull();
+    expect(lookupInPath('fresh-cli', binDir)).toBeNull();
+  });
+
+  it('sees a CLI installed into a directory already on the PATH right after the background PATH retry (F-1508)', async () => {
+    const originalPath = process.env.PATH;
+    const extension = process.platform === 'win32' ? '.cmd' : '';
+    const lateBin = path.join(binDir, `late-cli${extension}`);
+    const lateLoginDir = path.join(tmp, 'late-login-bin');
+    fs.mkdirSync(lateLoginDir, { recursive: true });
+    try {
+      process.env.PATH = binDir;
+      // Boot: binDir is already on the PATH, the CLI is not installed yet.
+      expect(lookupInPath('late-cli', process.env.PATH)).toBeNull();
+      expect(resolveCliBinary('late-cli')).toBeNull();
+      fs.writeFileSync(
+        lateBin,
+        process.platform === 'win32' ? '@echo off\r\necho ok\r\n' : '#!/bin/sh\necho ok\n',
+        { mode: 0o755 },
+      );
+      // The background retry (login shell / Windows registry) rewrites the PATH.
+      const changed = await retryLoginShellPathIfMissed(
+        async () => `__NEXUS_PATH_START__${lateLoginDir}__NEXUS_PATH_END__`,
+        { home: tmp, bootProbe: '' },
+      );
+      expect(changed).toBe(true);
+      expect(process.env.PATH?.split(path.delimiter)).toEqual(expect.arrayContaining([binDir, lateLoginDir]));
+      // No "Reexaminar CLIs": the next lookup already finds it.
+      expect(lookupInPath('late-cli', process.env.PATH!)).toBe(lateBin);
+      expect(resolveCliBinary('late-cli')?.binPath).toBe(lateBin);
+    } finally {
+      process.env.PATH = originalPath;
+    }
+  });
+
+  it('memoizes lookupInPath only for the duration of one discovery pass', () => {
+    const combinedPath = [binDir, kimiDir].join(path.delimiter);
+    const statSpy = vi.spyOn(fs, 'statSync');
+    try {
+      const extension = process.platform === 'win32' ? '.cmd' : '';
+      const freshBin = path.join(binDir, `fresh-cli${extension}`);
+      withLookupInPathPass(() => {
+        expect(lookupInPath('kimi', combinedPath)).toBe(kimiBin);
+        const firstStatCount = statSpy.mock.calls.length;
+        expect(firstStatCount).toBeGreaterThan(0);
+        expect(lookupInPath('kimi', combinedPath)).toBe(kimiBin);
+        expect(lookupInPath('kimi', kimiDir)).toBe(kimiBin);
+        expect(lookupInPath('kimi', binDir)).toBeNull();
+        expect(statSpy.mock.calls.length).toBe(firstStatCount);
+
+        expect(lookupInPath('fresh-cli', binDir)).toBeNull();
+        fs.writeFileSync(
+          freshBin,
+          process.platform === 'win32' ? '@echo off\r\necho ok\r\n' : '#!/bin/sh\necho ok\n',
+          { mode: 0o755 },
+        );
+        // Same pass: one consistent snapshot of the PATH.
+        expect(lookupInPath('fresh-cli', binDir)).toBeNull();
+      });
+      // The pass ended: the next lookup walks the PATH again.
+      expect(lookupInPath('fresh-cli', binDir)).toBe(freshBin);
+      expect(() => withLookupInPathPass(() => { throw new Error('boom'); })).toThrow('boom');
+      fs.rmSync(freshBin);
+      expect(lookupInPath('fresh-cli', binDir)).toBeNull();
+    } finally {
+      statSpy.mockRestore();
     }
   });
 });

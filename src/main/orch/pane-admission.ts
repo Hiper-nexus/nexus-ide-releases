@@ -509,6 +509,69 @@ interface AgentMemoryCensus {
 }
 const agentMemoryCensuses = new Map<string, () => AgentMemoryCensus>();
 let heavyCommandMemoryReservation: (() => number) | null = null;
+let lastPaneSpawnAdmittedAt = 0;
+let paneSpawnEntriesInFlight = 0;
+const paneSpawnActivityListeners = new Set<(at: number) => void>();
+
+function notePaneSpawnAdmitted(now: number): void {
+  lastPaneSpawnAdmittedAt = Math.max(lastPaneSpawnAdmittedAt, now);
+  for (const listener of paneSpawnActivityListeners) {
+    try {
+      listener(now);
+    } catch {
+      // Activity listeners must never interfere with pane admission.
+    }
+  }
+}
+
+/**
+ * Counts a `pty:spawn` call from entry until its result settles. Permit,
+ * Codex-version and native-proof waits happen before any transport marks the
+ * pane as spawning, so the census alone cannot see them.
+ */
+export function trackPaneSpawnEntry<T>(run: () => T): T {
+  paneSpawnEntriesInFlight += 1;
+  const settle = () => {
+    paneSpawnEntriesInFlight = Math.max(0, paneSpawnEntriesInFlight - 1);
+    notePaneSpawnAdmitted(Date.now());
+  };
+  let result: T;
+  try {
+    result = run();
+  } catch (error) {
+    settle();
+    throw error;
+  }
+  if (result instanceof Promise) {
+    void result.then(settle, settle);
+    return result;
+  }
+  settle();
+  return result;
+}
+
+/** True while a pty:spawn call or any agent transport (PTY or ACP) is still starting a pane. */
+export function hasPendingPaneSpawns(): boolean {
+  if (paneSpawnEntriesInFlight > 0) return true;
+  const census = readAgentMemoryCensus();
+  return census !== null && census.pending > 0;
+}
+
+export function getLastPaneSpawnAdmittedAt(): number {
+  return lastPaneSpawnAdmittedAt;
+}
+
+export function onPaneSpawnActivity(listener: (at: number) => void): () => void {
+  paneSpawnActivityListeners.add(listener);
+  return () => {
+    paneSpawnActivityListeners.delete(listener);
+  };
+}
+
+export function resetPaneSpawnActivityForTest(): void {
+  lastPaneSpawnAdmittedAt = 0;
+  paneSpawnEntriesInFlight = 0;
+}
 
 /** Main's heavy-command pool owns this counter; keeps admission acyclic. */
 export function registerHeavyCommandMemoryReservation(read: () => number): void {
@@ -621,7 +684,10 @@ export function admitAgentSpawnSync(
 ): PaneAdmissionVerdict {
   try {
     const limits = readPaneAdmissionLimits(env);
-    if (!limits.enabled) return { ok: true };
+    if (!limits.enabled) {
+      notePaneSpawnAdmitted(now);
+      return { ok: true };
+    }
     // Only trusted automatic mission workers consume the delegation budget.
     // Human panes and workspace helpers retain the existing warning policy.
     let idleCandidates: readonly IdlePaneCandidate[] = [];
@@ -637,14 +703,19 @@ export function admitAgentSpawnSync(
       // admission applies this additional reservation.
       memory = { ...memory, freeMB: memory.freeMB - (heavyCommandMemoryReservation?.() ?? 0) };
     }
-    return evaluatePaneAdmission({
+    const verdict = evaluatePaneAdmission({
       liveAgentPanes,
       limits,
       memory,
       idleCandidates,
       automaticWorker: request.automaticWorker,
     });
+    if (verdict.ok) {
+      notePaneSpawnAdmitted(now);
+    }
+    return verdict;
   } catch (error) {
+    notePaneSpawnAdmitted(now);
     return {
       ok: true,
       warning: `gate de admissão indisponível, admitindo: ${

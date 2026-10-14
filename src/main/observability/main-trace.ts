@@ -102,10 +102,28 @@ export function mainTraceStatus() {
 }
 export async function flushMainTrace(): Promise<void> { await Promise.all([...sinks.values()].map(sink => sink.flush())); }
 
+const bootCompleteListeners = new Set<(at: number) => void>();
+
+export function onBootCompleteTrace(listener: (at: number) => void): () => void {
+  bootCompleteListeners.add(listener);
+  return () => {
+    bootCompleteListeners.delete(listener);
+  };
+}
+
 const LIFECYCLE_KIND = /^(?:(?:pty|pane|worker|agent|agent-pty|mission)-(?:spawn|exit|close|terminate|died|start|stop|created|ended|failed|removed)|main-thread-hang|app-shutdown|exact-resume-forgotten|cli-update|dictation-session$)/;
 export function trace(event: Record<string, unknown>): void {
   try {
     const at = Date.now();
+    if (event.kind === 'boot-complete') {
+      for (const listener of bootCompleteListeners) {
+        try {
+          listener(at);
+        } catch {
+          // Diagnostics never throw into product work.
+        }
+      }
+    }
     const context = traceContextEvent(event, at);
     recent.push(context);
     if (recent.length > 128) recent.shift();

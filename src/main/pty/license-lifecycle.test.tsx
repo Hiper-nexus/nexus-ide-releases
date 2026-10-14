@@ -22,6 +22,13 @@ vi.mock('../license-access', async importOriginal => {
   };
 });
 vi.mock('electron', () => ({ app: { getPath: () => os.tmpdir() } }));
+// F-955 (4a94db4e3): on darwin the warm pool is born only after the native job
+// base is proved. Licensing is the subject here, so the base counts as proved.
+vi.mock('../orch/native-heavy-preload', async importOriginal => ({
+  ...(await importOriginal<typeof import('../orch/native-heavy-preload')>()),
+  ensureNativeHeavyJobBase: () => undefined,
+  nativeHeavyJobBaseMissing: () => false,
+}));
 vi.mock('../path-resolver', () => ({
   resolveSpawnBinary: () => ({ binPath: '/mock/license-cli', effectivePath: '/mock', source: 'absolute' }),
   revalidateExecutable: () => true,

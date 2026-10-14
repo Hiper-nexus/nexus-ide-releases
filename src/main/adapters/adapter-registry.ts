@@ -1,5 +1,6 @@
 import fsp from 'node:fs/promises';
 import { runPeriodicTask, stopPeriodicTask, type PeriodicTaskContext } from '../observability/periodic-task';
+import { enqueuePostBootIdleTask, isPostBootIdleReady } from '../observability/post-boot-idle-queue';
 import { readRegularFileCappedAsync } from '../redline/redline-safe-read';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -25,6 +26,7 @@ import {
   refreshUserPath,
   getEffectivePath,
   warmCliBinaryVersions,
+  withLookupInPathPass,
   type CliBinaryResolution,
 } from '../path-resolver';
 import { CLI_COMPATIBILITY_POLICIES } from './cli-compatibility';
@@ -32,10 +34,8 @@ import {
   applyDiscoveredEffortsToAdapter,
   applyDiscoveredModelsToAdapter,
   cliModelCacheDirectories,
-  discoverCliEfforts,
-  discoverCliEffortsAsync,
-  discoverCliModels,
-  discoverCliModelsAsync,
+  discoverCliModelsAndEfforts,
+  discoverCliModelsAndEffortsAsync,
 } from './cli-model-discovery';
 import {
   MODEL_DISCOVERY_POLL_MS,
@@ -340,6 +340,7 @@ export interface AdapterBinResolution {
   installed: boolean;
   /** Absolute path when installed; null when missing or api-provider. */
   binPath: string | null;
+  installationWarning?: string;
 }
 
 /**
@@ -356,7 +357,7 @@ export function authMethodForAdapter(adapter: Adapter): string {
 }
 
 /** Build a trimmed AdapterInfo safe to send to the renderer. */
-function toAdapterInfo(
+export function toAdapterInfo(
   adapter: Adapter,
   resolution: AdapterBinResolution,
   origin: AdapterOrigin,
@@ -367,7 +368,7 @@ function toAdapterInfo(
         compatibleManualInstallCommand(adapter.install.command)
       : null;
   const cliInstallationWarning = adapter.kind === 'cli-pty'
-    ? resolveCliBinary(adapter.bin)?.installationWarning : undefined;
+    ? resolution.installationWarning : undefined;
   const loginHint =
     adapter.kind !== 'api-provider' ? adapter.auth.loginHint : undefined;
   // F-990: a oferta sai do resolvedor (listagem viva autoritativa + custom do
@@ -448,14 +449,18 @@ function resolveAdapterBin(adapter: Adapter): AdapterBinResolution {
   return {
     installed: hit !== null,
     binPath: hit?.binPath ?? null,
+    ...(hit?.installationWarning ? { installationWarning: hit.installationWarning } : {}),
   };
 }
 
 function refreshInstalledCache(): void {
   const next = new Map<string, AdapterBinResolution>();
-  for (const [id, adapter] of registry) {
-    next.set(id, resolveAdapterBin(adapter));
-  }
+  // One discovery pass: every adapter resolves against the same PATH snapshot.
+  withLookupInPathPass(() => {
+    for (const [id, adapter] of registry) {
+      next.set(id, resolveAdapterBin(adapter));
+    }
+  });
   installedCache = next;
 }
 
@@ -514,8 +519,7 @@ function composeAdapterModels(
 
 function reload(): void {
   const catalog = loadModelCatalog();
-  const discovered = discoverCliModels();
-  const discoveredEfforts = discoverCliEfforts();
+  const { models: discovered, efforts: discoveredEfforts } = discoverCliModelsAndEfforts();
   const builtins = loadBuiltins();
   const userAdapters = loadUserAdapters();
   const baseAdapters = mergeAdapters(builtins, userAdapters);
@@ -540,8 +544,7 @@ async function reloadBudgeted(context: PeriodicTaskContext): Promise<void> {
   const epoch = registryEpoch;
   const previousRegistry = registry;
   const catalog = await context.wait(loadModelCatalogAsync());
-  const discovered = await context.wait(discoverCliModelsAsync(undefined, context));
-  const efforts = await context.wait(discoverCliEffortsAsync(undefined, context));
+  const { models: discovered, efforts } = await context.wait(discoverCliModelsAndEffortsAsync(undefined, context));
   const users: Adapter[] = [];
   let directory: Awaited<ReturnType<typeof fsp.opendir>> | null = null;
   try { directory = await fsp.opendir(USER_ADAPTER_DIR, { bufferSize: 32 }); } catch { /* No user definitions. */ }
@@ -622,15 +625,24 @@ export function notifyAdaptersChanged(): void {
   broadcast();
 }
 
+function runAdapterRegistryReload(): Promise<void> {
+  if (registryController.signal.aborted) return Promise.resolve();
+  invalidateModelCatalogCache();
+  return runPeriodicTask('adapter-registry-reload', reloadBudgeted, { signal: registryController.signal }).catch((error) => {
+    if (!registryController.signal.aborted) console.warn('[adapter-registry] refresh failed:', error);
+  });
+}
+
 function scheduleReloadAndBroadcast(): void {
   registryEpoch++;
   if (reloadTimer) clearTimeout(reloadTimer);
   reloadTimer = setTimeout(() => {
     reloadTimer = null;
-    invalidateModelCatalogCache();
-    void runPeriodicTask('adapter-registry-reload', reloadBudgeted, { signal: registryController.signal }).catch((error) => {
-      if (!registryController.signal.aborted) console.warn('[adapter-registry] refresh failed:', error);
-    });
+    if (!isPostBootIdleReady()) {
+      enqueuePostBootIdleTask('adapter-registry-reload', () => runAdapterRegistryReload());
+      return;
+    }
+    void runAdapterRegistryReload();
   }, WATCH_DEBOUNCE_MS);
 }
 
@@ -669,7 +681,8 @@ export function initAdapterRegistry(): void {
   if (seedLocalModelCatalogFromPublished()) {
     invalidateModelCatalogCache();
   }
-  reload();
+  // CLI cache discovery and the binary inventory share one PATH pass.
+  withLookupInPathPass(reload);
   // F-764: o inventário acima só lê versões já em cache (instalação duplicada
   // sem versão conhecida fica na ordem do PATH). As sondas rodam fora do Main;
   // quando voltam, o cache de binários é refeito e o renderer avisado.
@@ -677,6 +690,9 @@ export function initAdapterRegistry(): void {
   // F-990: a listagem viva mudou (ou falhou e caiu na última boa) → o
   // registro recompõe a oferta para spawn, squad e failover.
   stopDiscoveryListener ??= onDiscoveredModelsChanged(scheduleReloadAndBroadcast);
+  // Child processes, no Main cost: restored Codex panes need the version
+  // (--dangerously-bypass-hook-trust) within settleCodexCliVersionForSpawn's
+  // 2 s wait, long before the post-boot idle queue drains.
   void warmAdapterCliVersions();
 
   try {
@@ -719,34 +735,46 @@ export function initAdapterRegistry(): void {
     }
   }
 
-  void runPeriodicTask('adapter-model-refresh', async (context) => {
-    await Promise.all([
-      context.wait(refreshRemoteModelCatalog()),
-      context.wait(refreshAllDiscoveredModels([...registry.keys()], undefined, context)),
-    ]);
-    invalidateModelCatalogCache();
-    await reloadBudgeted(context);
-  }, { signal: registryController.signal, cadenceMs: MODEL_DISCOVERY_POLL_MS }).catch((error) => {
-    if (!registryController.signal.aborted) console.warn('[adapter-registry] initial model refresh failed:', error);
-  });
-
-  // Remote metadata is eventually consistent; CLI cache watchers provide the
-  // immediate path (Claude/Codex/Grok). Polling covers providers that atomically
-  // replace caches in directories the platform watcher cannot observe, and
-  // re-asks CLIs that expose a live models command (see MODEL_DISCOVERY_INVENTORY).
-  // Grok is cache-only: the poll re-reads ~/.grok/models_cache.json and never
-  // spawns `grok models` (that CLI rotates the refresh token on every run).
-  periodicRefresh ??= setInterval(() => {
+  // Out of the idle queue's series: the queue only picks the start; the
+  // network/CLI listings run in their own budgeted periodic task.
+  enqueuePostBootIdleTask('adapter-model-refresh', () => {
+    if (registryController.signal.aborted) return;
     void runPeriodicTask('adapter-model-refresh', async (context) => {
-      await context.wait(refreshAllDiscoveredModels([...registry.keys()], undefined, context));
-      await context.wait(refreshRemoteModelCatalog());
+      await Promise.all([
+        context.wait(refreshRemoteModelCatalog()),
+        context.wait(refreshAllDiscoveredModels([...registry.keys()], undefined, context)),
+      ]);
+      if (reloadTimer) {
+        clearTimeout(reloadTimer);
+        reloadTimer = null;
+      }
       invalidateModelCatalogCache();
       await reloadBudgeted(context);
     }, { signal: registryController.signal, cadenceMs: MODEL_DISCOVERY_POLL_MS }).catch((error) => {
-      if (!registryController.signal.aborted) console.warn('[adapter-registry] model refresh failed:', error);
+      if (!registryController.signal.aborted) console.warn('[adapter-registry] initial model refresh failed:', error);
     });
-  }, MODEL_DISCOVERY_POLL_MS);
-  periodicRefresh.unref?.();
+    // Remote metadata is eventually consistent; CLI cache watchers provide the
+    // immediate path (Claude/Codex/Grok). Polling covers providers that atomically
+    // replace caches in directories the platform watcher cannot observe, and
+    // re-asks CLIs that expose a live models command (see MODEL_DISCOVERY_INVENTORY).
+    // Grok is cache-only: the poll re-reads ~/.grok/models_cache.json and never
+    // spawns `grok models` (that CLI rotates the refresh token on every run).
+    periodicRefresh ??= setInterval(() => {
+      void runPeriodicTask('adapter-model-refresh', async (context) => {
+        await context.wait(refreshAllDiscoveredModels([...registry.keys()], undefined, context));
+        await context.wait(refreshRemoteModelCatalog());
+        if (reloadTimer) {
+          clearTimeout(reloadTimer);
+          reloadTimer = null;
+        }
+        invalidateModelCatalogCache();
+        await reloadBudgeted(context);
+      }, { signal: registryController.signal, cadenceMs: MODEL_DISCOVERY_POLL_MS }).catch((error) => {
+        if (!registryController.signal.aborted) console.warn('[adapter-registry] model refresh failed:', error);
+      });
+    }, MODEL_DISCOVERY_POLL_MS);
+    periodicRefresh.unref?.();
+  });
 }
 
 export function registerAdapterListener(wc: WebContents): void {
@@ -819,7 +847,11 @@ export function resolveAdapterBinary(id: string): string | null {
   if (!adapter || adapter.kind === 'api-provider') return null;
   const hit = resolveBin(adapter.bin);
   if (hit) {
-    installedCache.set(canonicalId, { installed: true, binPath: hit.binPath });
+    installedCache.set(canonicalId, {
+      installed: true,
+      binPath: hit.binPath,
+      ...(hit.installationWarning ? { installationWarning: hit.installationWarning } : {}),
+    });
   } else {
     installedCache.set(canonicalId, { installed: false, binPath: null });
   }

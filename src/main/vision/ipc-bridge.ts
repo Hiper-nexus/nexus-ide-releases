@@ -373,42 +373,52 @@ function installScopeCleanup(): void {
 }
 
 export function registerVisionIpc(overrides: Partial<VisionIpcDeps> = {}): void {
-  const deps = defaultDeps(overrides);
-  installScopeCleanup();
+  let deps: VisionIpcDeps | null = null;
+  const getDeps = (): VisionIpcDeps => {
+    if (!deps) {
+      deps = defaultDeps(overrides);
+      installScopeCleanup();
+    }
+    return deps;
+  };
 
   ipcMain.handle(VISION_CHANNELS.capture, async (event) => {
+    const currentDeps = getDeps();
     const authority = requireAuthority(event);
-    const metadata = toMetadata(await captureForOwner(deps, authority));
+    const metadata = toMetadata(await captureForOwner(currentDeps, authority));
     assertAuthority(authority);
     return metadata;
   });
 
   ipcMain.handle(VISION_CHANNELS.getImage, async (event, raw: unknown) => {
+    const currentDeps = getDeps();
     const authority = requireAuthority(event);
-    return getImage(authority, raw, deps);
+    return getImage(authority, raw, currentDeps);
   });
 
   ipcMain.handle(
     VISION_CHANNELS.setImageConsent,
     async (event, raw: unknown) => {
+      const currentDeps = getDeps();
       const authority = requireAuthority(event);
-      return setImageConsent(authority, raw, deps);
+      return setImageConsent(authority, raw, currentDeps);
     },
   );
 
   ipcMain.handle(VISION_CHANNELS.context, async (event, raw: unknown) => {
+    const currentDeps = getDeps();
     const authority = requireAuthority(event);
     const context = await collectVisionContext(parseVisionContextOptions(raw), {
-      capture: () => captureForOwner(deps, authority),
+      capture: () => captureForOwner(currentDeps, authority),
       readAxTree: async () => {
         assertAuthority(authority);
-        const tree = await deps.readAxTree(authority.owner);
+        const tree = await currentDeps.readAxTree(authority.owner);
         assertAuthority(authority);
         return tree;
       },
       ocr: async (buffer) => {
         assertAuthority(authority);
-        const result = await deps.ocr(buffer);
+        const result = await currentDeps.ocr(buffer);
         assertAuthority(authority);
         return result;
       },
@@ -418,26 +428,28 @@ export function registerVisionIpc(overrides: Partial<VisionIpcDeps> = {}): void 
   });
 
   ipcMain.handle(VISION_CHANNELS.axTree, async (event) => {
+    const currentDeps = getDeps();
     const authority = requireAuthority(event);
-    const tree = await deps.readAxTree(authority.owner);
+    const tree = await currentDeps.readAxTree(authority.owner);
     assertAuthority(authority);
     return tree;
   });
 
   ipcMain.handle(VISION_CHANNELS.ocr, async (event, raw: unknown) => {
+    const currentDeps = getDeps();
     const authority = requireAuthority(event);
     const buffer = decodeOwnedOcrInput(authority, raw);
-    if (!deps.ocrRateLimiter.tryAcquire()) {
+    if (!currentDeps.ocrRateLimiter.tryAcquire()) {
       throw new Error('Rate limit: aguarde antes de executar OCR novamente.');
     }
-    const result = await deps.ocr(buffer);
+    const result = await currentDeps.ocr(buffer);
     assertAuthority(authority);
     return result;
   });
 
   ipcMain.handle(VISION_CHANNELS.permission, async (event) => {
     requireLiveRenderer(event);
-    return deps.getScreenPermissionStatus();
+    return getDeps().getScreenPermissionStatus();
   });
 
   ipcMain.handle(VISION_CHANNELS.requestPermission, async (event) => {

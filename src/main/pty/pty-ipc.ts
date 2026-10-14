@@ -1,7 +1,7 @@
 import { readOwnedPromptState, submitOwnedPromptEnter } from './pty-prompt-state';
 import { licenseFailure } from '../../shared/license-errors';
 import { ipcMain } from "electron";
-import type { WebContents } from "electron";
+import type { IpcMainInvokeEvent, WebContents } from "electron";
 import { workerContinuationPhysicalProof, bindWorkerContinuationSession, authorizeWorkerContinuationBirth, assertWorkerContinuationAccount } from '../orch/mission-pane-resume-ownership';
 import { PTY_CHANNELS } from "../../shared/channels";
 import {
@@ -104,6 +104,7 @@ import {
   type PhaseTimer,
 } from "../observability/phase-timer";
 import { onIpcGuarded } from '../runtime/git-ipc-guard';
+import { trackPaneSpawnEntry } from "../orch/pane-admission";
 
 let projectRuntimeManager: ProjectRuntimeManager | null = null;
 const RESTARTED_WORKER_LEASE_MS = 10 * 60_000;
@@ -656,7 +657,12 @@ export function registerPtyIpc(): void {
   startSessionMortalityReconciler();
 
   // Sync for every legacy path; the renderer's invoke still receives a promise.
-  ipcMain.handle(PTY_CHANNELS.spawn, (event, raw): SpawnResult | Promise<SpawnResult> => {
+  // The entry counter keeps background work (post-boot idle queue) off the
+  // Main thread for the whole spawn, including permit/version/proof waits.
+  ipcMain.handle(PTY_CHANNELS.spawn, (event, raw): SpawnResult | Promise<SpawnResult> =>
+    trackPaneSpawnEntry(() => handlePtySpawn(event, raw)));
+
+  function handlePtySpawn(event: IpcMainInvokeEvent, raw: unknown): SpawnResult | Promise<SpawnResult> {
     const parsed = spawnRequestSchema.safeParse(raw);
     if (!parsed.success) {
       // Mensagem acionável: o opaco "invalid spawn request" escondia qual
@@ -847,7 +853,7 @@ export function registerPtyIpc(): void {
       }
       return licenseFailure(err) ?? { ok: false, error: message };
     }
-  });
+  }
 
   onIpcGuarded(PTY_CHANNELS.write, (event, raw) => {
     const parsed = writeSchema.safeParse(raw);

@@ -11,6 +11,8 @@ import {
   discoverCliEfforts,
   discoverCliEffortsAsync,
   discoverCliModels,
+  discoverCliModelsAndEfforts,
+  discoverCliModelsAndEffortsAsync,
   discoverCliModelsAsync,
   museModelCatalogSource,
   readMuseContributorConsent,
@@ -174,6 +176,73 @@ describe('CLI model discovery', () => {
     );
     expect(next.kind === 'cli-pty' && next.control?.effort?.levels)
       .toEqual(['high', 'ultra']);
+  });
+
+  it('reads each CLI cache file once to extract both models and efforts in the same pass', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-cli-single-pass-'));
+    const codexFile = path.join(dir, 'models_cache.json');
+    const kimiFile = path.join(dir, 'config.toml');
+    const museDir = path.join(dir, 'muse');
+    const museSettings = path.join(dir, 'muse-settings.json');
+    fs.mkdirSync(museDir, { recursive: true });
+    try {
+      fs.writeFileSync(codexFile, JSON.stringify({
+        client_version: '0.160.0',
+        models: [
+          { slug: 'gpt-5.6-sol', supported_reasoning_levels: [{ effort: 'low' }, { effort: 'xhigh' }] },
+          { id: 'gpt-hidden', visibility: 'hidden', supported_reasoning_levels: ['max'] },
+        ],
+      }));
+      fs.writeFileSync(kimiFile, '[models."kimi-code/k3"]\nmodel = "k3"\n');
+      fs.writeFileSync(path.join(museDir, 'cat.json'), JSON.stringify({
+        rows: [museRow('muse-spark-1.3', 'visible', ['low', 'high'])],
+      }));
+      fs.writeFileSync(museSettings, JSON.stringify({}));
+
+      let versionChecks = 0;
+      const sources = [
+        {
+          adapterId: 'codex',
+          files: [codexFile],
+          clientVersion: () => {
+            versionChecks += 1;
+            return '0.160.0';
+          },
+        },
+        { adapterId: 'kimi', files: [kimiFile] },
+        museModelCatalogSource(museDir, museSettings),
+      ];
+
+      const openSpy = vi.spyOn(fs, 'openSync');
+      try {
+        const syncResult = discoverCliModelsAndEfforts(sources);
+        expect(syncResult.models.get('codex')).toEqual(['gpt-5.6-sol']);
+        expect(syncResult.efforts.get('codex')).toEqual(['low', 'xhigh', 'max']);
+        expect(syncResult.models.get('kimi')).toEqual(['kimi-code/k3']);
+        expect(syncResult.efforts.has('kimi')).toBe(false);
+        expect(syncResult.models.get('muse')).toEqual(['muse-spark-1.3']);
+        expect(syncResult.efforts.get('muse')).toContain('high');
+        expect(versionChecks).toBe(1);
+        const openedFiles = openSpy.mock.calls.map((call) => String(call[0]));
+        expect(openedFiles.filter((f) => f === codexFile)).toHaveLength(1);
+        expect(openedFiles.filter((f) => f === kimiFile)).toHaveLength(1);
+        expect(openedFiles.filter((f) => f === museSettings)).toHaveLength(1);
+        expect(openedFiles.filter((f) => f === path.join(museDir, 'cat.json'))).toHaveLength(1);
+      } finally {
+        openSpy.mockRestore();
+      }
+
+      versionChecks = 0;
+      const asyncResult = await discoverCliModelsAndEffortsAsync(sources);
+      expect(asyncResult.models.get('codex')).toEqual(['gpt-5.6-sol']);
+      expect(asyncResult.efforts.get('codex')).toEqual(['low', 'xhigh', 'max']);
+      expect(asyncResult.models.get('kimi')).toEqual(['kimi-code/k3']);
+      expect(asyncResult.models.get('muse')).toEqual(['muse-spark-1.3']);
+      expect(asyncResult.efforts.get('muse')).toContain('high');
+      expect(versionChecks).toBe(1);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

@@ -26,6 +26,9 @@ export interface CliModelCacheSource {
   /** Custom effort reader for the same non-`models`-shaped files. */
   readEfforts?(file: string): string[];
   readEffortsAsync?(file: string): Promise<string[]>;
+  /** Single-pass custom reader for both models and efforts. */
+  readBoth?(file: string): { models: string[]; efforts: string[] };
+  readBothAsync?(file: string): Promise<{ models: string[]; efforts: string[] }>;
   clientVersion?: () => string | null | undefined;
 }
 
@@ -105,11 +108,22 @@ export const CLI_MODEL_CACHE_SOURCES: CliModelCacheSource[] = [
     read: (file) =>
       readQwenSettingsSummary(path.dirname(path.dirname(file))).modelIds as string[],
     readAsync: async (file) => [...(await readQwenSettingsSummaryAsync(path.dirname(path.dirname(file)))).modelIds],
+    readEfforts: () => [],
+    readEffortsAsync: async () => [],
+    readBoth: (file) => ({
+      models: readQwenSettingsSummary(path.dirname(path.dirname(file))).modelIds as string[],
+      efforts: [],
+    }),
+    readBothAsync: async (file) => ({
+      models: [...(await readQwenSettingsSummaryAsync(path.dirname(path.dirname(file)))).modelIds],
+      efforts: [],
+    }),
   },
   museModelCatalogSource(path.join(home, '.local', 'share', 'muse', 'model-catalog')),
 ];
 
 const MODEL_ID = MODEL_ID_PATTERN;
+const EFFORT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/;
 
 function modelId(value: unknown): string | null {
   if (!value || typeof value !== 'object') return null;
@@ -125,6 +139,74 @@ function modelId(value: unknown): string | null {
   return null;
 }
 
+function extractModelsFromRawCache(raw: unknown): string[] {
+  const models = raw && typeof raw === 'object'
+    ? (raw as { models?: unknown }).models
+    : undefined;
+  const rows = Array.isArray(raw)
+    ? raw
+    : Array.isArray(models)
+      ? models
+      : models && typeof models === 'object'
+        ? Object.entries(models as Record<string, unknown>).map(([id, value]) =>
+            value && typeof value === 'object' ? { id, ...(value as object) } : { id },
+          )
+        : [];
+  return [...new Set(rows.map(modelId).filter((id): id is string => id !== null))];
+}
+
+function extractEffortsFromRawCache(raw: unknown): string[] {
+  const models = raw && typeof raw === 'object'
+    ? (raw as { models?: unknown }).models
+    : undefined;
+  const rows = Array.isArray(raw)
+    ? raw
+    : Array.isArray(models)
+      ? models
+      : models && typeof models === 'object'
+        ? Object.values(models as Record<string, unknown>)
+        : [];
+  const levels = new Set<string>();
+  for (const value of rows) {
+    if (!value || typeof value !== 'object') continue;
+    const row = value as Record<string, unknown>;
+    const advertised = row.supported_reasoning_levels ?? row.reasoning_levels;
+    if (!Array.isArray(advertised)) continue;
+    for (const entry of advertised) {
+      const effort = typeof entry === 'string'
+        ? entry.trim()
+        : entry && typeof entry === 'object' && typeof (entry as { effort?: unknown }).effort === 'string'
+          ? (entry as { effort: string }).effort.trim()
+          : '';
+      if (EFFORT_ID.test(effort)) levels.add(effort);
+    }
+  }
+  return [...levels];
+}
+
+function parseCliModelAndEffortsCacheText(
+  file: string,
+  text: string,
+  options: CliModelCacheReadOptions,
+): { models: string[]; efforts: string[] } {
+  try {
+    if (file.endsWith('.toml')) {
+      return {
+        models: parseKimiConfigModelAliases(text).filter((alias) => MODEL_ID.test(alias)),
+        efforts: [],
+      };
+    }
+    const raw = JSON.parse(text) as unknown;
+    if (!cacheMatchesConsumer(raw, options)) return { models: [], efforts: [] };
+    return {
+      models: extractModelsFromRawCache(raw),
+      efforts: extractEffortsFromRawCache(raw),
+    };
+  } catch {
+    return { models: [], efforts: [] };
+  }
+}
+
 export function readCliModelCache(file: string, options: CliModelCacheReadOptions = {}): string[] {
   try { return parseCliModelCacheText(file, readCacheText(file), options); } catch { return []; }
 }
@@ -135,32 +217,8 @@ export async function readCliModelCacheAsync(file: string, options: CliModelCach
 }
 
 function parseCliModelCacheText(file: string, text: string, options: CliModelCacheReadOptions): string[] {
-  try {
-    if (file.endsWith('.toml')) {
-      return parseKimiConfigModelAliases(text)
-        .filter((alias) => MODEL_ID.test(alias));
-    }
-    const raw = JSON.parse(text) as unknown;
-    if (!cacheMatchesConsumer(raw, options)) return [];
-    const models = raw && typeof raw === 'object'
-      ? (raw as { models?: unknown }).models
-      : undefined;
-    const rows = Array.isArray(raw)
-      ? raw
-      : Array.isArray(models)
-        ? models
-        : models && typeof models === 'object'
-          ? Object.entries(models as Record<string, unknown>).map(([id, value]) =>
-              value && typeof value === 'object' ? { id, ...(value as object) } : { id },
-            )
-          : [];
-    return [...new Set(rows.map(modelId).filter((id): id is string => id !== null))];
-  } catch {
-    return [];
-  }
+  return parseCliModelAndEffortsCacheText(file, text, options).models;
 }
-
-const EFFORT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/;
 
 /**
  * Read reasoning levels advertised by the CLI's own model cache. Codex, for
@@ -180,32 +238,7 @@ function parseCliEffortsText(text: string, options: CliModelCacheReadOptions): s
   try {
     const raw = JSON.parse(text) as unknown;
     if (!cacheMatchesConsumer(raw, options)) return [];
-    const models = raw && typeof raw === 'object'
-      ? (raw as { models?: unknown }).models
-      : undefined;
-    const rows = Array.isArray(raw)
-      ? raw
-      : Array.isArray(models)
-        ? models
-        : models && typeof models === 'object'
-          ? Object.values(models as Record<string, unknown>)
-          : [];
-    const levels = new Set<string>();
-    for (const value of rows) {
-      if (!value || typeof value !== 'object') continue;
-      const row = value as Record<string, unknown>;
-      const advertised = row.supported_reasoning_levels ?? row.reasoning_levels;
-      if (!Array.isArray(advertised)) continue;
-      for (const entry of advertised) {
-        const effort = typeof entry === 'string'
-          ? entry.trim()
-          : entry && typeof entry === 'object' && typeof (entry as { effort?: unknown }).effort === 'string'
-            ? (entry as { effort: string }).effort.trim()
-            : '';
-        if (EFFORT_ID.test(effort)) levels.add(effort);
-      }
-    }
-    return [...levels];
+    return extractEffortsFromRawCache(raw);
   } catch {
     return [];
   }
@@ -313,7 +346,114 @@ export function museModelCatalogSource(dir: string, settingsFile = museSettingsF
     readAsync: async (file) => museIds(await readMuseCatalogRowsAsync(file, await readMuseContributorConsentAsync(settingsFile))),
     readEfforts: (file) => museCatalogEfforts(readMuseCatalogRows(file, readMuseContributorConsent(settingsFile))),
     readEffortsAsync: async (file) => museCatalogEfforts(await readMuseCatalogRowsAsync(file, await readMuseContributorConsentAsync(settingsFile))),
+    readBoth: (file) => {
+      const rows = readMuseCatalogRows(file, readMuseContributorConsent(settingsFile));
+      return { models: museIds(rows), efforts: museCatalogEfforts(rows) };
+    },
+    readBothAsync: async (file) => {
+      const rows = await readMuseCatalogRowsAsync(file, await readMuseContributorConsentAsync(settingsFile));
+      return { models: museIds(rows), efforts: museCatalogEfforts(rows) };
+    },
   };
+}
+
+export interface DiscoveredCliModelsAndEfforts {
+  models: Map<string, string[]>;
+  efforts: Map<string, string[]>;
+}
+
+function readCliModelAndEffortsCache(
+  file: string,
+  options: CliModelCacheReadOptions = {},
+): { models: string[]; efforts: string[] } {
+  try {
+    return parseCliModelAndEffortsCacheText(file, readCacheText(file), options);
+  } catch {
+    return { models: [], efforts: [] };
+  }
+}
+
+async function readCliModelAndEffortsCacheAsync(
+  file: string,
+  options: CliModelCacheReadOptions = {},
+): Promise<{ models: string[]; efforts: string[] }> {
+  const result = await readRegularFileCappedAsync(file, 1024 * 1024);
+  return result.kind === 'text'
+    ? parseCliModelAndEffortsCacheText(file, result.text, options)
+    : { models: [], efforts: [] };
+}
+
+export function discoverCliModelsAndEfforts(
+  sources: readonly CliModelCacheSource[] = CLI_MODEL_CACHE_SOURCES,
+): DiscoveredCliModelsAndEfforts {
+  const models = new Map<string, string[]>();
+  const efforts = new Map<string, string[]>();
+  for (const source of sources) {
+    const ids = new Set<string>();
+    const levels = new Set<string>();
+    const clientVersion = source.clientVersion ?? (() => cliCacheConsumerVersion(source.adapterId));
+    for (const file of source.files) {
+      let pair: { models: string[]; efforts: string[] };
+      if (source.readBoth) {
+        pair = source.readBoth(file);
+      } else if (source.read || source.readEfforts) {
+        pair = {
+          models: source.read ? source.read(file) : readCliModelCache(file, { clientVersion }),
+          efforts: source.readEfforts ? source.readEfforts(file) : readCliEfforts(file, { clientVersion }),
+        };
+      } else {
+        pair = readCliModelAndEffortsCache(file, { clientVersion });
+      }
+      for (const id of pair.models) ids.add(id);
+      for (const effort of pair.efforts) levels.add(effort);
+    }
+    if (ids.size > 0) models.set(source.adapterId, [...ids]);
+    if (levels.size > 0) efforts.set(source.adapterId, [...levels]);
+  }
+  return { models, efforts };
+}
+
+export async function discoverCliModelsAndEffortsAsync(
+  sources: readonly CliModelCacheSource[] = CLI_MODEL_CACHE_SOURCES,
+  context?: PeriodicTaskContext,
+): Promise<DiscoveredCliModelsAndEfforts> {
+  const models = new Map<string, string[]>();
+  const efforts = new Map<string, string[]>();
+  for (const source of sources) {
+    await context?.checkpoint();
+    const ids = new Set<string>();
+    const levels = new Set<string>();
+    const clientVersion = source.clientVersion ?? (() => cliCacheConsumerVersion(source.adapterId));
+    for (const file of source.files) {
+      await context?.checkpoint();
+      let pair: { models: string[]; efforts: string[] };
+      if (source.readBothAsync) {
+        pair = await source.readBothAsync(file);
+      } else if (source.readBoth) {
+        pair = source.readBoth(file);
+      } else if (source.readAsync || source.read || source.readEffortsAsync || source.readEfforts) {
+        const fileModels = source.readAsync
+          ? await source.readAsync(file)
+          : source.read
+            ? source.read(file)
+            : await readCliModelCacheAsync(file, { clientVersion });
+        const fileEfforts = source.readEffortsAsync
+          ? await source.readEffortsAsync(file)
+          : source.readEfforts
+            ? source.readEfforts(file)
+            : await readCliEffortsAsync(file, { clientVersion });
+        pair = { models: fileModels, efforts: fileEfforts };
+      } else {
+        pair = await readCliModelAndEffortsCacheAsync(file, { clientVersion });
+      }
+      context?.assertCurrent();
+      for (const id of pair.models) ids.add(id);
+      for (const effort of pair.efforts) levels.add(effort);
+    }
+    if (ids.size > 0) models.set(source.adapterId, [...ids]);
+    if (levels.size > 0) efforts.set(source.adapterId, [...levels]);
+  }
+  return { models, efforts };
 }
 
 export function discoverCliModels(
