@@ -643,6 +643,37 @@ describe('path-resolver CLI binary resolution', () => {
     expect(lookupInPath('fresh-cli', binDir)).toBeNull();
   });
 
+  it('sees a CLI installed into a directory already on the PATH right after the background PATH retry (F-1508)', async () => {
+    const originalPath = process.env.PATH;
+    const extension = process.platform === 'win32' ? '.cmd' : '';
+    const lateBin = path.join(binDir, `late-cli${extension}`);
+    const lateLoginDir = path.join(tmp, 'late-login-bin');
+    fs.mkdirSync(lateLoginDir, { recursive: true });
+    try {
+      process.env.PATH = binDir;
+      // Boot: binDir is already on the PATH, the CLI is not installed yet.
+      expect(lookupInPath('late-cli', process.env.PATH)).toBeNull();
+      expect(resolveCliBinary('late-cli')).toBeNull();
+      fs.writeFileSync(
+        lateBin,
+        process.platform === 'win32' ? '@echo off\r\necho ok\r\n' : '#!/bin/sh\necho ok\n',
+        { mode: 0o755 },
+      );
+      // The background retry (login shell / Windows registry) rewrites the PATH.
+      const changed = await retryLoginShellPathIfMissed(
+        async () => `__NEXUS_PATH_START__${lateLoginDir}__NEXUS_PATH_END__`,
+        { home: tmp, bootProbe: '' },
+      );
+      expect(changed).toBe(true);
+      expect(process.env.PATH?.split(path.delimiter)).toEqual(expect.arrayContaining([binDir, lateLoginDir]));
+      // No "Reexaminar CLIs": the next lookup already finds it.
+      expect(lookupInPath('late-cli', process.env.PATH!)).toBe(lateBin);
+      expect(resolveCliBinary('late-cli')?.binPath).toBe(lateBin);
+    } finally {
+      process.env.PATH = originalPath;
+    }
+  });
+
   it('memoizes lookupInPath only for the duration of one discovery pass', () => {
     const combinedPath = [binDir, kimiDir].join(path.delimiter);
     const statSpy = vi.spyOn(fs, 'statSync');
