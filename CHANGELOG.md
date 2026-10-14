@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.76.257 — Linux em dia com o orquestrador, o teclado e a voz
+
+A 0.76.254 foi a última com pacote Linux. A 0.76.255 saiu só para macOS (modal do Chaveiro do Muse, sem efeito no Linux) e a 0.76.256 ainda não tinha pacote. Esta versão é o mesmo produto da 0.76.256, empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35).
+
+No desktop Linux, em relação à 0.76.254:
+
+- **Orquestrador da aba volta quando a CLI diz «No conversation found».** O id ditado era gravado antes de existir transcrito; se o orquestrador morria antes da 1ª mensagem, todo `--resume` falhava e a retomada exata recusava a missão com `resume_context_unavailable` em loop. A prova na tela da CLI esquece o vínculo na 1ª ocorrência e a retomada reabre o orquestrador numa conversa nova, sob o contrato selado, com a nota para reler `nexus_handoff_list`.
+- **Letras duplicadas no pane.** Cada sessão nova registrava um receptor de teclado no mesmo xterm e o da sessão anterior só era descartado por `cleanups`; respawns que não passam por ele (acordar depois do exit) deixavam dois receptores escrevendo no PTY. Agora há um único dono da entrada por host.
+- **Ditado sem falso «falta chave».** `stt-needs-key` só vale quando nenhum provedor chegou a tentar; falha por tempo limite, rede ou resposta vazia não é mais rotulada como chave ausente. O tempo limite de nuvem cresce com o tamanho do áudio (12 s + 2 s por MB acima de 1 MB, teto de 60 s) e `stt.failed` registra o motivo por provedor no `voice.log`, sem texto nem chave.
+
+No mesmo binário, sem mudar o comportamento do Linux: no macOS o modal do Chaveiro do Muse na tela de Início deixa de aparecer (0.76.255).
+
 ## 0.76.256 — Orquestrador volta, teclado sem letras duplicadas e voz sem falso "falta chave"
 
 Três correções de campo: a missão que perdia o orquestrador volta a reabri-lo, o teclado deixa de enviar cada letra duas vezes depois de religar um pane, e o ditado deixa de acusar falta de chave quando o problema foi tempo limite.

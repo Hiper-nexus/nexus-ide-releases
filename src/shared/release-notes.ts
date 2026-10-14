@@ -10606,7 +10606,7 @@ export const RELEASE_076255: AppRelease = {
     { title: 'Espera e retomada da troca de conta (F-1470..F-1512)', detail: 'Inclui todas as correções de encadeamento de contas, StopFailure rate_limit do Claude, reentrega de pedido aceito durante a troca, comandos pesados no horário de verão e validação de squads.' },
   ],
 };
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076256: AppRelease = {
   version: '0.76.256',
   date: '2026-10-14',
   codename: 'Orquestrador volta, teclado sem letras duplicadas e voz sem falso "falta chave"',
@@ -10620,5 +10620,20 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Retomada exata de conversa inexistente', detail: 'A tela da CLI com «No conversation found with session ID» esquece o vínculo na 1ª ocorrência; a retomada da aba troca a linha do orquestrador e leva a nota de conversa perdida.' },
     { title: 'Receptor de teclado duplicado no terminal', detail: 'startSpawn descarta o receptor anterior antes de registrar o novo, inclusive em respawns que não passam por cleanups.' },
     { title: 'stt-needs-key e tempo limite da STT', detail: 'needsKey exige provedor sem chave e nenhuma tentativa real; tempo limite de nuvem proporcional ao tamanho do áudio; evento stt.failed no voice.log.' },
+  ],
+};
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.257',
+  date: '2026-10-14',
+  codename: 'Linux em dia com o orquestrador, o teclado e a voz',
+  summary: 'O app no Linux deixa a 0.76.254 e passa a incluir a 0.76.256: o orquestrador da aba volta quando a conversa não existe, o teclado não duplica letras depois de religar o pane, e o ditado deixa de dizer que falta chave quando o problema foi tempo.',
+  highlights: [
+    { title: 'Orquestrador volta sozinho', detail: 'Quando a CLI responde «No conversation found», o Nexus esquece a conversa inexistente e reabre o orquestrador numa conversa nova, sob o mesmo contrato, em vez de recusar a retomada para sempre.' },
+    { title: 'Teclado sem letras duplicadas', detail: 'Cada pane tem um único receptor de teclado; religar ou acordar o pane depois de uma saída não envia mais cada tecla duas vezes.' },
+    { title: 'Voz com diagnóstico honesto', detail: 'O ditado só diz «falta chave» quando nenhum provedor tentou. Tempo limite cresce com o tamanho do áudio e o log registra o motivo de cada provedor.' },
+  ],
+  fixes: [
+    { title: 'Retomada e teclado', detail: 'A tela «No conversation found with session ID» esquece o vínculo na 1ª ocorrência. O receptor antigo de teclado é descartado antes de registrar o novo.' },
+    { title: 'Atualização do Linux', detail: 'A 0.76.255 só tinha pacote de macOS e a 0.76.256 ainda não tinha Linux. O Omarchy consultava o espelho e ficava na 0.76.254. O modal do Chaveiro do Muse não muda o Linux.' },
   ],
 };
