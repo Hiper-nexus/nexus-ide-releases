@@ -134,6 +134,7 @@ import { TERMINAL_THEMES } from '../styles/terminal-theme';
 import {
   applyTerminalSettings,
   attachHost,
+  focusHost,
   cancelPaneRecovery,
   consumeFirstSpawnIntent,
   discardPaneSpawnState,
@@ -261,6 +262,34 @@ function fireTitle(title: string): void {
 }
 
 describe('spawn adiado sem ninguém esperando a sessão', () => {
+  it('split e close no mesmo frame preservam a lease WebGL do pane pivô', async () => {
+    const host = getOrCreateHost(pane);
+    setHostSize(host.element, 1200, 800);
+    const oldSlot = document.body.appendChild(document.createElement('div'));
+    attachHost(pane, oldSlot);
+    expect(await waitForSession(pane.id, 1000)).toBe('pty-hidden');
+    const originalRenderer = host.webgl;
+    expect(originalRenderer).toBeDefined();
+    const sibling: PaneModel = { id: 'lease-sibling', kind: 'shell', title: 'Sibling' };
+    const split = splitPane(useLayoutStore.getState().root!, pane.id, 'row', sibling);
+    for (const root of [split, closePane(split, sibling.id)!]) {
+      setHostVisibility(pane.id, false); // cleanup da apresentação anterior
+      useLayoutStore.setState({ root });
+      attachHost(pane, document.body.appendChild(document.createElement('div')));
+      focusHost(pane.id);
+      expect(host.webgl).toBe(originalRenderer);
+      await vi.advanceTimersByTimeAsync(20);
+      expect(host.webgl).toBe(originalRenderer);
+      expect(host.isVisible).toBe(true);
+      expect(terminalRendererPerformanceSnapshot().activeWebglLeases).toBe(1);
+    }
+    expect(webglContexts).toHaveLength(1);
+    setHostVisibility(pane.id, false);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(host.isVisible).toBe(false);
+    expect(terminalRendererPerformanceSnapshot().activeWebglLeases).toBe(0);
+  });
+
   it('adoção reafirma grade medida mesmo quando o xterm não mudou durante o RPC', async () => {
     spawn.mockResolvedValueOnce({ ok: true, sessionId: 'pty-adopt-grid', adopted: true });
     const host = getOrCreateHost(pane);
@@ -592,6 +621,19 @@ describe('F-248 — grade do PTY segue a grade do pane', () => {
 });
 
 describe('F-603 — pane não some ao voltar dos Ajustes', () => {
+  it('reveal cancela hide pendente antes do rAF, sem perder visibilidade ou WebGL', async () => {
+    const host = getOrCreateHost(pane);
+    setHostSize(host.element, 1200, 800);
+    attachHost(pane, document.body.appendChild(document.createElement('div')));
+    expect(await waitForSession(pane.id, 1000)).toBe('pty-hidden');
+    const renderer = host.webgl;
+    setHostVisibility(pane.id, false);
+    revealTerminalHostsAfterWorkspaceShow();
+    await vi.advanceTimersByTimeAsync(20);
+    expect(host.isVisible).toBe(true);
+    expect(host.webgl).toBe(renderer);
+    expect(terminalRendererPerformanceSnapshot().activeWebglLeases).toBe(1);
+  });
   it('reveal recoloca host que o IO marcou invisível', () => {
     const slot = document.createElement('div');
     document.body.appendChild(slot);
@@ -599,6 +641,7 @@ describe('F-603 — pane não some ao voltar dos Ajustes', () => {
     attachHost(pane, slot);
     const host = getOrCreateHost(pane);
     setHostVisibility(pane.id, false);
+    vi.advanceTimersByTime(20);
     expect(host.isVisible).toBe(false);
 
     revealTerminalHostsAfterWorkspaceShow();
@@ -2227,6 +2270,7 @@ describe('F-369 — TUI repinta depois de saída perdida', () => {
   it('backlog >2 MiB dropado oculto → reveal → exatamente um bounce', async () => {
     const host = await openVisibleAgent();
     setHostVisibility(agent.id, false);
+    await vi.advanceTimersByTimeAsync(20);
     expect(host.isVisible).toBe(false);
     ptyResize().mockClear();
 
@@ -2252,6 +2296,7 @@ describe('F-369 — TUI repinta depois de saída perdida', () => {
       getOrCreateHost({ id: `filler-${i}`, kind: 'shell', title: `t${i}` });
     }
     setHostVisibility(agent.id, false);
+    await vi.advanceTimersByTimeAsync(20);
     expect(host.virtualized).not.toBeNull();
     ptyResize().mockClear();
 
@@ -2274,6 +2319,7 @@ describe('F-369 — TUI repinta depois de saída perdida', () => {
       getOrCreateHost({ id: `filler-${i}`, kind: 'shell', title: `t${i}` });
     }
     setHostVisibility(agent.id, false);
+    await vi.advanceTimersByTimeAsync(20);
     expect(host.virtualized).not.toBeNull();
     // De volta à tela mas SEM o foco — o bounce não pode depender de
     // resumeVisibleHost (que só roda no caminho focado).
@@ -2355,6 +2401,7 @@ describe('DSK-01 — saída antiga regravada não responde queries de terminal',
       getOrCreateHost({ id: `filler-${i}`, kind: 'shell', title: `t${i}` });
     }
     setHostVisibility(agent.id, false);
+    await vi.advanceTimersByTimeAsync(20);
     expect(host.virtualized).not.toBeNull();
 
     const emit = ptyDataListeners.get('pty-hidden')!;

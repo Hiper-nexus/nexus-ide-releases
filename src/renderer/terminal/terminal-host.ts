@@ -459,6 +459,7 @@ function resumeVisibleHost(paneId: string, host: Host): boolean {
 }
 
 const hosts = new Map<string, Host>();
+const pendingVisibilityHides = new Map<string, number>();
 const accessDeferredSpawns = new Map<string, () => void>();
 useAccessStore.subscribe((state, previous) => {
   if (!state.canUseApp || previous.canUseApp) return;
@@ -3326,7 +3327,7 @@ export function revealTerminalHostsAfterWorkspaceShow(): void {
   notifyPaneWorkspaceReveal();
   for (const [paneId, host] of hosts) {
     if (host.disposed) continue;
-    if (!host.isVisible) {
+    if (!host.isVisible || pendingVisibilityHides.has(paneId)) {
       setHostVisibility(paneId, true);
       continue;
     }
@@ -3345,10 +3346,33 @@ export function revealTerminalHostsAfterWorkspaceShow(): void {
 
 export function setHostVisibility(paneId: string, isVisible: boolean): void {
   const host = hosts.get(paneId);
-  if (!host || host.disposed || host.isVisible === isVisible) return;
+  if (!host || host.disposed) return;
+  const pending = pendingVisibilityHides.get(paneId);
+  if (isVisible) {
+    if (pending !== undefined) {
+      cancelAnimationFrame(pending);
+      pendingVisibilityHides.delete(paneId);
+    }
+    applyHostVisibility(paneId, host, true, pending !== undefined);
+    return;
+  }
+  if (!host.isVisible || pending !== undefined) return;
+  // A split re-parents the same xterm in this commit. Do not dispose its GPU
+  // renderer until the next frame proves there was no replacement attach.
+  host.gridReady = false;
+  const frame = requestAnimationFrame(() => {
+    pendingVisibilityHides.delete(paneId);
+    if (host.disposed || hosts.get(paneId) !== host) return;
+    applyHostVisibility(paneId, host, false);
+  });
+  pendingVisibilityHides.set(paneId, frame);
+}
+
+function applyHostVisibility(paneId: string, host: Host, isVisible: boolean, forceReveal = false): void {
+  if (host.isVisible === isVisible && !forceReveal) return;
   host.isVisible = isVisible;
   if (!isVisible) {
-    if (currentSettings.performanceMode === 'adaptive') {
+    if (currentSettings.performanceMode === 'adaptive' && !host.parked) {
       pauseTerminalOutput(host.term);
       webglPool.suspend(paneId);
     }
@@ -4802,6 +4826,11 @@ export function disposeWorkspaceHosts(workspacePath: string): number {
 }
 
 function disposeHost(host: Host, paneId: string): void {
+  const pendingHide = pendingVisibilityHides.get(paneId);
+  if (pendingHide !== undefined) {
+    cancelAnimationFrame(pendingHide);
+    pendingVisibilityHides.delete(paneId);
+  }
   accessDeferredSpawns.delete(paneId);
   host.disposed = true;
   clearDeferredSpawnRetry(host);
