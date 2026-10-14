@@ -1685,7 +1685,6 @@ function squadlessMissionPaneRoster(
   return agents;
 }
 
-/** Rótulo de pane/CLI cabe no `agentName` do roster (128, sem controle). */
 /**
  * Tarefa corrente do agente no visor do mapa, quando ele não tem unidade do
  * plano. "Trabalhando" com "Sem tarefa do plano" lia como terminal ocioso
@@ -1724,6 +1723,7 @@ export function missionAgentTaskDetail(input: {
   return useful(spawned) ? spawned : undefined;
 }
 
+/** Rótulo de pane/CLI cabe no `agentName` do roster (128, sem controle). */
 function helperLabel(value: string | undefined, max = 128): string {
   return (value ?? "")
     .replace(/[\0-\x1f\x7f‪-‮⁦-⁩]/gu, "")
