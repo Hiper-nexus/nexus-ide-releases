@@ -9,6 +9,12 @@ const deps = vi.hoisted(() => ({
   spawnSync: vi.fn(() => ({ requestId: 'sync', ok: true, paneId: 'sync-pane', sessionId: 'sync-session' })),
   spawnAsync: vi.fn<(...args: unknown[]) => Promise<OrchPaneSpawnResult>>(),
   terminate: vi.fn(async () => true),
+  sessionCwd: vi.fn((_sessionId: string): string | null => null),
+  sessionInfo: vi.fn((_sessionId: string): Record<string, unknown> | null => null),
+  trace: vi.fn(),
+  markClosed: vi.fn(),
+  stores: vi.fn(),
+  worktrees: vi.fn(),
   /** F-822: nada de processo síncrono no caminho do failover. */
   execFileSync: vi.fn(() => { throw new Error('execFileSync no caminho do failover'); }),
   spawnSyncChild: vi.fn(() => { throw new Error('spawnSync no caminho do failover'); }),
@@ -23,7 +29,20 @@ vi.mock('./pane-registry', () => ({
   spawnMainOwnedMissionPane: deps.spawnSync,
   spawnMainOwnedMissionPaneAsync: deps.spawnAsync,
 }));
-vi.mock('../pty/pty-manager', () => ({ orchTerminateSession: deps.terminate }));
+vi.mock('../pty/pty-manager', () => ({
+  orchTerminateSession: deps.terminate,
+  getSessionCwd: deps.sessionCwd,
+  getAgentSessionInfo: deps.sessionInfo,
+}));
+vi.mock('../observability/main-trace', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../observability/main-trace')>()),
+  trace: deps.trace,
+}));
+vi.mock('./pane-session-output', () => ({ markPaneDeliberatelyClosed: deps.markClosed }));
+vi.mock('./project-domain-store-registry', () => ({ getProjectDomainStores: deps.stores }));
+vi.mock('../runtime/worktree-runtime-registry', () => ({
+  requireWorktreeRuntimeRegistry: deps.worktrees,
+}));
 vi.mock('node:child_process', async (importOriginal) => ({
   ...(await importOriginal<typeof import('node:child_process')>()),
   execFileSync: deps.execFileSync,
@@ -74,7 +93,9 @@ import { maskAccountLabel } from '../../shared/account-choice';
 import { detectLimit } from './limit-detector';
 import { createVisualTaskRequirement, visualTaskAtSpawn } from './visual-handoff-gate';
 import { CONTEXT_HANDOFF_BUDGET_ERROR } from './context-handoff-budget';
-import { forgetPaneTaskReroute, registerPaneTaskReroute } from './pane-task-reroute';
+import { forgetPaneTaskReroute, getPaneTaskReroute, registerPaneTaskReroute } from './pane-task-reroute';
+import { onFailoverRetirementVerdict } from './failover-retirement';
+import { quarantineRejectedModel, resetModelAccessQuarantineForTests } from './model-access-quarantine';
 import { FailoverTextReducer, type FailoverTextProposal } from './failover-text-core';
 import { inkWrap } from '../../shared/__tests__/synthetic-secrets';
 
@@ -358,7 +379,8 @@ describe('respawnMainOwnedPaneWithAccount', () => {
     expect(advisor.scheduleRecoveryAdvice).not.toHaveBeenCalled();
   });
 
-  it.each(['unproved', 'rejected'])('F-890 keeps the worker without replacement when termination is %s', async (mode) => {
+  it.each(['unproved', 'rejected'])('F-890 keeps the orchestrator without replacement when termination is %s', async (mode) => {
+    deps.getPane.mockReturnValue({ entry: { paneId: 'old-pane', sessionId: 'old-session' }, meta: { ...meta, role: 'orchestrator' } });
     deps.spawnAsync.mockResolvedValue({ requestId: 'unexpected', ok: true, paneId: 'unexpected', sessionId: 'unexpected' });
     if (mode === 'unproved') deps.terminate.mockResolvedValueOnce(false);
     else deps.terminate.mockRejectedValueOnce(new Error('fixture physical proof unavailable'));
@@ -366,6 +388,15 @@ describe('respawnMainOwnedPaneWithAccount', () => {
       adapterId: 'claude', toModel: 'fixture-model', fromAccountLabel: 'fixture', reason: 'model rejected' });
     expect(result).toBe(false);
     expect(deps.spawnAsync).not.toHaveBeenCalled();
+  });
+  it.each(['unproved', 'rejected'])('F-890 keeps the worker at the pane cap without replacement when termination is %s', async (mode) => {
+    deps.spawnAsync.mockResolvedValueOnce({ requestId: 'cap', ok: false, error: 'pane_admission_cap: Teto de 4 panes de agente atingido' });
+    if (mode === 'unproved') deps.terminate.mockResolvedValueOnce(false);
+    else deps.terminate.mockRejectedValueOnce(new Error('fixture physical proof unavailable'));
+    const result = await respawnMainOwnedPaneWithAccount({ paneId: 'old-pane', sessionId: 'old-session',
+      adapterId: 'claude', toAccountId: 'account-b', fromAccountLabel: 'fixture', reason: 'quota' });
+    expect(result).toBe(false);
+    expect(deps.spawnAsync).toHaveBeenCalledTimes(1);
   });
   it.each(['removed', 'replaced', 'new-session'])('F-886 refuses %s owner after awaited Git facts', async (change) => {
     deps.spawnAsync.mockResolvedValue({ requestId: 'unexpected', ok: true, paneId: 'unexpected', sessionId: 'unexpected' });
@@ -394,12 +425,29 @@ describe('respawnMainOwnedPaneWithAccount', () => {
   });
 
   it('F-886 refuses manual closure during physical termination before creating a replacement', async () => {
+    deps.getPane.mockReturnValue({ entry: { paneId: 'old-pane', sessionId: 'old-session' }, meta: { ...meta, role: 'orchestrator' } });
     deps.spawnAsync.mockResolvedValue({ requestId: 'unexpected', ok: true, paneId: 'unexpected', sessionId: 'unexpected' });
     deps.terminate.mockImplementationOnce(async () => { deps.getPane.mockReturnValue(undefined); return true; });
     const flight = respawnMainOwnedPaneWithAccount({ paneId: 'old-pane', sessionId: 'old-session',
       adapterId: 'claude', toModel: 'fixture-model', fromAccountLabel: 'fixture', reason: 'model rejected' });
     expect(await flight).toBe(false);
     expect(deps.spawnAsync).not.toHaveBeenCalled();
+  });
+  it('F-886/F-1480: manual closure while the worker replacement spawns refuses it and kills nothing', async () => {
+    deps.spawnAsync.mockImplementationOnce(async (options) => {
+      deps.getPane.mockReturnValue(undefined);
+      try {
+        (options as { assertOriginCurrent: () => void }).assertOriginCurrent();
+      } catch (error) {
+        return { requestId: 'stale', ok: false, error: (error as Error).message };
+      }
+      return { requestId: 'unexpected', ok: true, paneId: 'unexpected', sessionId: 'unexpected' };
+    });
+    const flight = respawnMainOwnedPaneWithAccount({ paneId: 'old-pane', sessionId: 'old-session',
+      adapterId: 'claude', toAccountId: 'account-b', fromAccountLabel: 'fixture', reason: 'quota' });
+    expect(await flight).toBe(false);
+    expect(deps.terminate).not.toHaveBeenCalled();
+    expect(deps.markClosed).not.toHaveBeenCalled();
   });
   beforeEach(() => {
     vi.clearAllMocks();
@@ -520,13 +568,243 @@ describe('respawnMainOwnedPaneWithAccount', () => {
     expect(git.calls.map((call) => call.cwd)).toEqual([worktree, worktree, worktree]);
     expect(deps.execFileSync).not.toHaveBeenCalled();
     expect(deps.spawnSyncChild).not.toHaveBeenCalled();
-    // Termina a sessão exausta ANTES do spawn novo.
+    // F-1480: o worker ganha o pane novo ANTES de a sessão exausta sair.
     expect(deps.terminate).toHaveBeenCalledWith(
       'old-session',
       expect.objectContaining({ origin: 'failover-respawn' }),
     );
+    expect(deps.spawnAsync.mock.invocationCallOrder[0])
+      .toBeLessThan(deps.terminate.mock.invocationCallOrder[0]!);
   });
 
+});
+
+describe('F-1480: troca de conta do worker headless não destrói estado', () => {
+  const verdicts: Array<[string, boolean]> = [];
+  let stopVerdicts: () => void = () => {};
+  const recorded: unknown[] = [];
+  const bound: unknown[] = [];
+  const rebind = vi.fn();
+  let worktree = '';
+  let shared = '';
+  const previousRow = {
+    id: 'mpane-old', missionId: 'mission-1', adapterId: 'claude', model: 'claude-opus-x',
+    accountId: 'account-a', cwd: undefined as string | undefined, title: 'Implementar motor',
+    agentName: 'Implementar motor', workerIncarnationId: 'workerinc-old', role: 'worker' as const,
+    paneId: 'old-pane', allowedTools: ['nexus_handoff_submit'], allowedSkills: [], readOnly: false,
+    executionScope: {} as Record<string, unknown>, visualTask: undefined, operatorOpened: undefined,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    deps.spawnAsync.mockReset();
+    verdicts.length = 0;
+    recorded.length = 0;
+    bound.length = 0;
+    stopVerdicts = onFailoverRetirementVerdict((sessionId, replaced) => { verdicts.push([sessionId, replaced]); });
+    worktree = tempDir('nexus-f1480-worktree-');
+    shared = tempDir('nexus-f1480-shared-');
+    previousRow.executionScope = { rootRealPath: worktree };
+    const oldEntry = {
+      entry: { paneId: 'old-pane', sessionId: 'old-session', adapterId: 'claude', accountId: 'account-a' },
+      meta: { ...meta, workerIncarnationId: 'workerinc-old', scope: { rootRealPath: shared },
+        executionScope: { rootRealPath: worktree } },
+    };
+    deps.getPane.mockImplementation((paneId: string) => paneId === 'old-pane' ? oldEntry
+      : paneId === 'new-pane' ? {
+        entry: { paneId: 'new-pane', sessionId: 'new-session', adapterId: 'claude', accountId: 'account-b' },
+        meta: { ...meta, workerIncarnationId: 'workerinc-new', authoritySeal: undefined },
+      } : undefined);
+    deps.sessionCwd.mockImplementation((sessionId: string) =>
+      sessionId === 'old-session' ? path.join(worktree, 'packages', 'app') : null);
+    rebind.mockReset();
+    deps.stores.mockReturnValue({ missionPanes: {
+      findByPaneId: (paneId: string) => paneId === 'old-pane' ? previousRow : null,
+      record: (row: unknown) => { recorded.push(row); return row; },
+    }, taskDispatches: {
+      list: () => [
+        { taskId: 'task-other', revision: 1, state: 'running', paneId: 'other-pane', sessionId: 'other-session', workerIncarnationId: 'workerinc-other' },
+        { taskId: 'task-1', revision: 4, state: 'running', paneId: 'old-pane', sessionId: 'old-session', workerIncarnationId: 'workerinc-old' },
+      ],
+      rebindRestartedWorker: rebind,
+    } });
+    deps.worktrees.mockReturnValue({
+      findPaneWriter: (_scope: unknown, by: { paneId?: string }) =>
+        by.paneId === 'old-pane' ? { missionId: 'mission-1', taskId: 'pane-writer-1' } : null,
+      bindPaneWriter: (...args: unknown[]) => { bound.push(args); },
+    });
+    registerPaneTaskReroute({
+      paneId: 'old-pane', adapterId: 'claude', missionId: 'mission-1', role: 'worker',
+      callerSessionId: 'maestro', routeTask: 'Implementar o motor', lineageId: 'lineage-original',
+      operatorOpened: false, pinnedRuntime: false, generation: 1,
+      reroute: async () => ({ ok: false, error: 'unused' }) as never, hasAlternative: () => false,
+    });
+  });
+  afterEach(() => {
+    stopVerdicts();
+    forgetPaneTaskReroute('old-pane');
+    forgetPaneTaskReroute('new-pane');
+    deps.getPane.mockReset();
+    deps.sessionCwd.mockReset();
+    deps.sessionInfo.mockReset();
+    deps.stores.mockReset();
+    deps.worktrees.mockReset();
+    resetModelAccessQuarantineForTests();
+  });
+
+  const switchAccount = (git = fakeGit()) => respawnMainOwnedPaneWithAccount({
+    paneId: 'old-pane', sessionId: 'old-session', adapterId: 'claude', toAccountId: 'account-b',
+    fromAccountLabel: 'fixture-a', reason: 'usage limit', limitKind: 'rate-limit',
+  }, { git: git.runner });
+
+  it('troca não gera morte nem handoff failed; cwd, worktree e linhagem seguem no pane novo', async () => {
+    deps.spawnAsync.mockResolvedValueOnce({ requestId: 'async', ok: true, paneId: 'new-pane', sessionId: 'new-session' });
+    const git = fakeGit();
+    await expect(switchAccount(git)).resolves.toBe(true);
+    const options = deps.spawnAsync.mock.calls[0]![0] as { cwd?: string; accountId?: string; workerIncarnationId?: string };
+    // A subpasta real (e a pasta `projects/<cwd>` do Claude) segue no pane novo.
+    expect(options.cwd).toBe(path.join(worktree, 'packages', 'app'));
+    expect(options.accountId).toBe('account-b');
+    expect(options.workerIncarnationId).toMatch(/^workerinc-/);
+    expect(options.workerIncarnationId).not.toBe('workerinc-old');
+    // Pane novo antes; a velha sai marcada como fechamento pedido (fora do breaker).
+    expect(deps.spawnAsync.mock.invocationCallOrder[0]).toBeLessThan(deps.markClosed.mock.invocationCallOrder[0]!);
+    expect(deps.markClosed).toHaveBeenCalledWith('old-pane');
+    expect(deps.markClosed.mock.invocationCallOrder[0]).toBeLessThan(deps.terminate.mock.invocationCallOrder[0]!);
+    expect(deps.terminate).toHaveBeenCalledWith('old-session', expect.objectContaining({ origin: 'failover-respawn' }));
+    // Veredito para a cobrança de handoff: houve pane novo, nada de `failed`.
+    expect(verdicts).toEqual([['old-session', true]]);
+    // Nenhum git que muda a worktree: só config/status/diff de leitura.
+    expect(git.calls.map((call) => call.args[0]).sort()).toEqual(['config', 'diff', 'status']);
+    // O pane novo entra na composição com a seleção física do Main.
+    expect(recorded).toEqual([expect.objectContaining({
+      missionId: 'mission-1', paneId: 'new-pane', adapterId: 'claude', accountId: 'account-b',
+      workerIncarnationId: 'workerinc-new', title: 'Implementar motor', role: 'worker',
+      executionScope: { rootRealPath: worktree }, allowedTools: ['nexus_handoff_submit'],
+    })]);
+    // Supervisor e retomadas acham o pane novo: mesma linhagem, mesma geração.
+    expect(getPaneTaskReroute('old-pane')).toBeNull();
+    expect(getPaneTaskReroute('new-pane')).toMatchObject({
+      paneId: 'new-pane', lineageId: 'lineage-original', generation: 1, routeTask: 'Implementar o motor',
+    });
+    expect(bound).toEqual([[{ rootRealPath: shared }, 'mission-1', 'pane-writer-1',
+      { paneId: 'new-pane', sessionId: 'new-session' }]]);
+  });
+
+  it('spawn novo falha → a sessão de antes segue viva com a tarefa', async () => {
+    deps.spawnAsync.mockResolvedValueOnce({ requestId: 'async', ok: false, error: 'auth refresh timeout' });
+    await expect(switchAccount()).resolves.toBe(false);
+    expect(deps.terminate).not.toHaveBeenCalled();
+    expect(deps.markClosed).not.toHaveBeenCalled();
+    expect(verdicts).toEqual([]);
+    expect(recorded).toEqual([]);
+    expect(getPaneTaskReroute('old-pane')).toMatchObject({ paneId: 'old-pane' });
+  });
+
+  it('terminação sem prova não desfaz a troca: o pane novo segue e a saída tardia é desculpada', async () => {
+    deps.spawnAsync.mockResolvedValueOnce({ requestId: 'async', ok: true, paneId: 'new-pane', sessionId: 'new-session' });
+    deps.terminate.mockResolvedValueOnce(false);
+    await expect(switchAccount()).resolves.toBe(true);
+    expect(verdicts).toEqual([['old-session', true]]);
+    expect(recorded).toHaveLength(1);
+  });
+
+  it.each([
+    ['teto de panes', 'pane_admission_cap: Teto de 4 panes de agente atingido'],
+    ['licença', 'license_agent_limit: Você já está usando os 2 agentes do teste. Feche um para abrir outro ou assine o Pro.'],
+  ])('no %s a troca é uma por uma: a velha sai com prova e o pane novo nasce na vaga', async (_label, error) => {
+    deps.spawnAsync
+      .mockResolvedValueOnce({ requestId: 'seat', ok: false, error })
+      .mockResolvedValueOnce({ requestId: 'async', ok: true, paneId: 'new-pane', sessionId: 'new-session' });
+    await expect(switchAccount()).resolves.toBe(true);
+    expect(deps.spawnAsync).toHaveBeenCalledTimes(2);
+    expect(deps.terminate.mock.invocationCallOrder[0]).toBeGreaterThan(deps.spawnAsync.mock.invocationCallOrder[0]!);
+    expect(deps.terminate.mock.invocationCallOrder[0]).toBeLessThan(deps.spawnAsync.mock.invocationCallOrder[1]!);
+    expect(deps.terminate).toHaveBeenCalledTimes(1);
+    expect(verdicts).toEqual([['old-session', true]]);
+  });
+
+  it('no teto, se o pane novo não nascer, a saída da velha volta a ser cobrada', async () => {
+    deps.spawnAsync
+      .mockResolvedValueOnce({ requestId: 'seat', ok: false, error: 'pane_admission_memory: Memória sem folga' })
+      .mockResolvedValueOnce({ requestId: 'async', ok: false, error: 'auth refresh timeout' });
+    await expect(switchAccount()).resolves.toBe(false);
+    expect(verdicts).toEqual([['old-session', false]]);
+    expect(recorded).toEqual([]);
+    expect(rebind).not.toHaveBeenCalled();
+  });
+
+  it('o pane novo nasce no MESMO modelo e esforço da sessão física anterior, não no padrão', async () => {
+    deps.sessionInfo.mockImplementation((sessionId: string) =>
+      sessionId === 'old-session' ? { requestedModel: 'claude-sonnet-x', model: 'claude-sonnet-x-20260101', effort: 'high' } : null);
+    deps.spawnAsync.mockResolvedValueOnce({ requestId: 'async', ok: true, paneId: 'new-pane', sessionId: 'new-session' });
+    await expect(switchAccount()).resolves.toBe(true);
+    expect(deps.spawnAsync.mock.calls[0]![0]).toMatchObject({
+      accountId: 'account-b', model: 'claude-sonnet-x', effort: 'high',
+    });
+    expect(recorded).toEqual([expect.objectContaining({ model: 'claude-sonnet-x', effort: 'high' })]);
+    expect(deps.trace).not.toHaveBeenCalledWith(expect.objectContaining({ outcome: 'model-unavailable-on-account' }));
+  });
+
+  it('sem sessão física, modelo e esforço vêm da linha da composição', async () => {
+    Object.assign(previousRow, { effort: 'medium' });
+    try {
+      deps.spawnAsync.mockResolvedValueOnce({ requestId: 'async', ok: true, paneId: 'new-pane', sessionId: 'new-session' });
+      await expect(switchAccount()).resolves.toBe(true);
+      expect(deps.spawnAsync.mock.calls[0]![0]).toMatchObject({ model: 'claude-opus-x', effort: 'medium' });
+    } finally {
+      Object.assign(previousRow, { effort: undefined });
+    }
+  });
+
+  it('modelo que a conta nova já recusou cai no padrão do adapter, com trace', async () => {
+    deps.sessionInfo.mockReturnValue({ requestedModel: 'claude-opus-x', effort: 'high' });
+    quarantineRejectedModel('claude', 'claude-opus-x', 'model access disabled', Date.now(), undefined,
+      { accountId: 'account-b' });
+    deps.spawnAsync.mockResolvedValueOnce({ requestId: 'async', ok: true, paneId: 'new-pane', sessionId: 'new-session' });
+    await expect(switchAccount()).resolves.toBe(true);
+    const options = deps.spawnAsync.mock.calls[0]![0] as { model?: string; effort?: string };
+    expect(options.model).toBeUndefined();
+    expect(options.effort).toBe('high');
+    expect(deps.trace).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'account-failover', outcome: 'model-unavailable-on-account', paneId: 'old-pane',
+      adapterId: 'claude', toAccountId: 'account-b', fromModel: 'claude-opus-x', toModel: null,
+    }));
+  });
+
+  it('troca de CLI não herda modelo nem esforço da CLI anterior', async () => {
+    deps.sessionInfo.mockReturnValue({ requestedModel: 'claude-opus-x', effort: 'high' });
+    deps.spawnAsync.mockResolvedValueOnce({ requestId: 'async', ok: true, paneId: 'new-pane', sessionId: 'new-session' });
+    await expect(respawnMainOwnedPaneWithAccount({
+      paneId: 'old-pane', sessionId: 'old-session', adapterId: 'codex', fromAccountLabel: 'fixture',
+      reason: 'quota', continuityPack: `${FAILOVER_HANDOFF_HEADER}\npack\n${FAILOVER_HANDOFF_FOOTER}`,
+    })).resolves.toBe(true);
+    const options = deps.spawnAsync.mock.calls[0]![0] as { adapterId: string; model?: string; effort?: string };
+    expect(options).toMatchObject({ adapterId: 'codex' });
+    expect(options.model).toBeUndefined();
+    expect(options.effort).toBeUndefined();
+  });
+
+  it('a tarefa despachada passa ao pane novo depois de a sessão exausta sair (lease e heartbeat)', async () => {
+    deps.spawnAsync.mockResolvedValueOnce({ requestId: 'async', ok: true, paneId: 'new-pane', sessionId: 'new-session' });
+    await expect(switchAccount()).resolves.toBe(true);
+    const minted = (deps.spawnAsync.mock.calls[0]![0] as { workerIncarnationId: string }).workerIncarnationId;
+    expect(rebind).toHaveBeenCalledTimes(1);
+    expect(rebind).toHaveBeenCalledWith({
+      missionId: 'mission-1', paneId: 'old-pane', expectedSessionId: 'old-session',
+      workerIncarnationId: 'workerinc-old', expectedTaskId: 'task-1', expectedRevision: 4,
+      replacementSessionId: 'new-session', replacementPaneId: 'new-pane',
+      replacementWorkerIncarnationId: minted, leaseMs: expect.any(Number),
+    });
+    expect(rebind.mock.invocationCallOrder[0]).toBeGreaterThan(deps.terminate.mock.invocationCallOrder[0]!);
+  });
+
+  it('rebind recusado (CAS) não desfaz a troca: o pane novo segue', async () => {
+    rebind.mockImplementationOnce(() => { throw new Error('rebind do worker perdeu CAS do dispatch'); });
+    deps.spawnAsync.mockResolvedValueOnce({ requestId: 'async', ok: true, paneId: 'new-pane', sessionId: 'new-session' });
+    await expect(switchAccount()).resolves.toBe(true);
+    expect(verdicts).toEqual([['old-session', true]]);
+  });
 });
 
 describe('F-822: estado da tarefa só da worktree do pane, git seguro e curto', () => {

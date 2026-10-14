@@ -1,11 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   WORKER_MORTALITY_CIRCUIT_BREAK,
+  isSpontaneousWorkerDeath,
   recordAdapterProofOfLife,
   recordWorkerDeathWithoutDelivery,
   resetMissionWorkerMortality,
   workerMortalityCount,
 } from './worker-mortality';
+import {
+  __resetDeliberatelyClosedPanesForTests,
+  markPaneDeliberatelyClosed,
+  paneSessionExitObservedAt,
+  recordPaneSessionExit,
+  wasPaneDeliberatelyClosed,
+  wasPaneSessionExitObserved,
+} from './pane-session-output';
 
 /**
  * Campanha 0.50 (A1/A2): integração do circuit breaker de mortalidade.
@@ -101,5 +110,42 @@ describe('circuit breaker de mortalidade no spawn de worker', () => {
     }
     const result = await spawnRequest({ missionId: 'mission-vizinha' });
     expect(result.error).not.toMatch(/circuit breaker/);
+  });
+
+  /**
+   * F-1480: a régua do watcher (mission-fast-lane) sobre a saída de cada pane
+   * — a mesma entrada de `isSpontaneousWorkerDeath` que ele monta.
+   */
+  function watcherCountsDeath(paneId: string, sessionId: string): boolean {
+    recordPaneSessionExit(sessionId);
+    const dead = isSpontaneousWorkerDeath({
+      state: 'exited',
+      exitObserved: wasPaneSessionExitObserved(sessionId),
+      deliberatelyClosed: wasPaneDeliberatelyClosed(paneId, paneSessionExitObservedAt(sessionId)),
+    });
+    if (dead) recordWorkerDeathWithoutDelivery('mission-breaker', 'glm');
+    return dead;
+  }
+
+  it('F-1480: N trocas de conta seguidas não alimentam o breaker', async () => {
+    __resetDeliberatelyClosedPanesForTests();
+    for (let i = 0; i < WORKER_MORTALITY_CIRCUIT_BREAK + 1; i += 1) {
+      // O respawn marca o pane exausto ANTES de pedir a terminação.
+      markPaneDeliberatelyClosed(`f1480-old-${i}`);
+      expect(watcherCountsDeath(`f1480-old-${i}`, `f1480-session-${i}`)).toBe(false);
+    }
+    expect(workerMortalityCount('mission-breaker', 'glm')).toBe(0);
+    const result = await spawnRequest();
+    expect(result.error ?? '').not.toMatch(/circuit breaker/);
+  });
+
+  it('F-1480 (controle): sem a marca do respawn, as mesmas saídas abrem o breaker', async () => {
+    __resetDeliberatelyClosedPanesForTests();
+    for (let i = 0; i < WORKER_MORTALITY_CIRCUIT_BREAK; i += 1) {
+      expect(watcherCountsDeath(`f1480-crash-${i}`, `f1480-crash-session-${i}`)).toBe(true);
+    }
+    const result = await spawnRequest();
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/circuit breaker de mortalidade/);
   });
 });

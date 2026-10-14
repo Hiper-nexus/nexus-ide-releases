@@ -46,6 +46,8 @@
  *     handoff `blocked` com o motivo e o último estado do pane (tail), pela
  *     mesma via durável dos handoffs reais — o orquestrador SEMPRE recebe algo;
  *  4. sessão morta sem handoff → não há quem cutucar: handoff `failed` na hora.
+ *     F-1480: a sessão que o failover de conta aposentou espera o veredito do
+ *     respawn — com o pane novo vivo não há falha nenhuma a cobrar.
  *
  * Qualquer trabalho novo (status não-idle) desarma a escada: silêncio legítimo
  * de quem voltou a produzir nunca é cobrado.
@@ -55,11 +57,17 @@ import type { Handoff } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
   getLastSessionInputOrigin,
+  getRequestedTerminationOrigin,
   getSessionState,
   orchWriteSession,
   tapSessionExit,
+  tapSessionTermination,
   type SessionInputOrigin,
 } from '../pty/pty-manager';
+import {
+  FAILOVER_RESPAWN_TERMINATION_ORIGIN,
+  onFailoverRetirementVerdict,
+} from './failover-retirement';
 import {
   getPaneRuntimeAuthorityBySession,
   readSessionOutput,
@@ -159,6 +167,11 @@ export interface WorkerHandoffEnforcementDeps {
   readonly lastInputOrigin: (
     sessionId: string,
   ) => SessionInputOrigin | undefined;
+  /**
+   * F-1480: quem pediu a terminação desta sessão (`null` = saiu sozinha).
+   * Ausente = nenhuma terminação é reconhecida como troca de conta.
+   */
+  readonly terminationOrigin?: (sessionId: string) => string | null;
   readonly quietGraceMs: number;
   readonly enforceGraceMs: number;
   readonly log: (message: string) => void;
@@ -227,6 +240,7 @@ function productionDeps(): WorkerHandoffEnforcementDeps {
       return promoted > 0;
     },
     lastInputOrigin: (sessionId) => getLastSessionInputOrigin(sessionId),
+    terminationOrigin: (sessionId) => getRequestedTerminationOrigin(sessionId),
     quietGraceMs: WORKER_QUIET_GRACE_MS,
     enforceGraceMs: WORKER_ENFORCE_GRACE_MS,
     log: (message) => console.warn(`[handoff-enforcement] ${message}`),
@@ -268,8 +282,21 @@ interface EnforcementWatch {
 
 const watches = new Map<string, EnforcementWatch>();
 const nudgeSubmitTimers = new Map<string, Set<ReturnType<typeof setTimeout>>>();
+/**
+ * F-1480: sessões cuja terminação o failover de conta pediu. Trocar de conta
+ * não é morte nem falha: a saída só vira handoff `failed` se o respawn disser
+ * que o pane novo NÃO nasceu. `replaced` null = veredito pendente;
+ * `exitDeferred` = a saída já chegou e espera esse veredito.
+ */
+interface FailoverRetirement {
+  replaced: boolean | null;
+  exitDeferred: boolean;
+}
+const failoverRetirements = new Map<string, FailoverRetirement>();
 let untapStatus: (() => void) | null = null;
 let untapExit: (() => void) | null = null;
+let untapTermination: (() => void) | null = null;
+let untapRetirementVerdict: (() => void) | null = null;
 let activeDeps: WorkerHandoffEnforcementDeps | null = null;
 
 function watchFor(sessionId: string): EnforcementWatch {
@@ -398,6 +425,9 @@ function evaluate(
   sessionId: string,
   exited: boolean,
 ): void {
+  // F-1480: sessão aposentada pela troca de conta não é cobrada por
+  // inatividade nem pela saída enquanto o respawn não der o veredito.
+  if (failoverRetirements.has(sessionId)) return;
   const watch = watchFor(sessionId);
   const authority = deps.getAuthority(sessionId);
   if (
@@ -597,19 +627,93 @@ export function initWorkerHandoffEnforcement(
     watch.nudged = false;
     clearNudgeSubmitTimers(entry.sessionId);
   });
+  untapTermination = tapSessionTermination((sessionId) => {
+    if (deps.terminationOrigin?.(sessionId) !== FAILOVER_RESPAWN_TERMINATION_ORIGIN) return;
+    if (!failoverRetirements.has(sessionId)) {
+      failoverRetirements.set(sessionId, { replaced: null, exitDeferred: false });
+    }
+    const watch = watches.get(sessionId);
+    if (watch) clearTimer(watch);
+    clearNudgeSubmitTimers(sessionId);
+  });
   untapExit = tapSessionExit((sessionId) => {
     const watch = watches.get(sessionId);
     if (watch) clearTimer(watch);
     clearNudgeSubmitTimers(sessionId);
+    if (deferFailoverRetiredExit(deps, sessionId)) return;
     evaluate(deps, sessionId, true);
-    // H3: only drop the watch after durable inbox write (enforced). If
-    // submit failed, the re-armed inactivity timer still owns this entry.
-    const after = watches.get(sessionId);
-    if (after?.enforced || !after?.timer) {
-      if (after) clearTimer(after);
-      watches.delete(sessionId);
-    }
+    dropExitedWatch(sessionId);
   });
+  untapRetirementVerdict = onFailoverRetirementVerdict((sessionId, replaced) =>
+    settleRetirement(deps, sessionId, replaced),
+  );
+}
+
+function dropExitedWatch(sessionId: string): void {
+  // H3: only drop the watch after durable inbox write (enforced). If
+  // submit failed, the re-armed inactivity timer still owns this entry.
+  const after = watches.get(sessionId);
+  if (after?.enforced || !after?.timer) {
+    if (after) clearTimer(after);
+    watches.delete(sessionId);
+  }
+}
+
+function dropWatch(sessionId: string): void {
+  const watch = watches.get(sessionId);
+  if (watch) clearTimer(watch);
+  watches.delete(sessionId);
+}
+
+/**
+ * F-1480: a saída de uma sessão que o failover aposentou. Pane novo já vivo =
+ * a troca terminou e não há o que cobrar; veredito pendente = a saída espera
+ * o respawn (no teto de panes a velha sai ANTES de o pane novo nascer), com
+ * uma rede de segurança: sem veredito em `enforceGraceMs`, cobra como sempre.
+ */
+function deferFailoverRetiredExit(
+  deps: WorkerHandoffEnforcementDeps,
+  sessionId: string,
+): boolean {
+  const retirement = failoverRetirements.get(sessionId);
+  if (!retirement) return false;
+  if (retirement.replaced === true) {
+    failoverRetirements.delete(sessionId);
+    dropWatch(sessionId);
+    deps.log(`troca de conta: a sessão aposentada não é cobrada (session=${sessionId})`);
+    return true;
+  }
+  retirement.exitDeferred = true;
+  armTimer(watchFor(sessionId), deps.enforceGraceMs, () =>
+    settleRetirement(deps, sessionId, false),
+  );
+  return true;
+}
+
+function settleRetirement(
+  deps: WorkerHandoffEnforcementDeps,
+  sessionId: string,
+  replaced: boolean,
+): void {
+  const retirement = failoverRetirements.get(sessionId);
+  if (!retirement) return;
+  if (!retirement.exitDeferred) {
+    // A saída ainda não chegou (terminação sem prova): o veredito fica para ela.
+    if (replaced) retirement.replaced = true;
+    else failoverRetirements.delete(sessionId);
+    return;
+  }
+  failoverRetirements.delete(sessionId);
+  if (replaced) {
+    dropWatch(sessionId);
+    deps.log(`troca de conta: a sessão aposentada não é cobrada (session=${sessionId})`);
+    return;
+  }
+  // Sem pane novo: o worker saiu mudo e o orquestrador precisa saber.
+  const watch = watches.get(sessionId);
+  if (watch) clearTimer(watch);
+  evaluate(deps, sessionId, true);
+  dropExitedWatch(sessionId);
 }
 
 export function shutdownWorkerHandoffEnforcement(): void {
@@ -617,9 +721,14 @@ export function shutdownWorkerHandoffEnforcement(): void {
   untapStatus = null;
   untapExit?.();
   untapExit = null;
+  untapTermination?.();
+  untapTermination = null;
+  untapRetirementVerdict?.();
+  untapRetirementVerdict = null;
   clearNudgeSubmitTimers();
   for (const watch of watches.values()) clearTimer(watch);
   watches.clear();
+  failoverRetirements.clear();
   activeDeps = null;
 }
 

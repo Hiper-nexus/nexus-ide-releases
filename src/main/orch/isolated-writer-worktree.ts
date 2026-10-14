@@ -3,7 +3,16 @@ import type { ProjectExecutionScope } from '../../shared/types';
 import type { CreateWorktreeInput, WorktreeRecord } from '../runtime/worktree-contract';
 import type { MaterializeWorktreeResult } from '../runtime/worktree-cow';
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
-import { tapSessionExit } from '../pty/pty-manager';
+import {
+  getRequestedTerminationOrigin,
+  tapSessionExit,
+  tapSessionTermination,
+  type OwnedAgentSessionInfo,
+} from '../pty/pty-manager';
+import {
+  FAILOVER_RESPAWN_TERMINATION_ORIGIN,
+  onFailoverRetirementVerdict,
+} from './failover-retirement';
 import { getPaneRuntimeAuthorityBySession, isPaneSpawnPending, listPaneSnapshots } from './pane-registry';
 import { claimSameCheckoutWriter, hasPendingWriterClaim } from './delegated-writer-gate';
 import { getProjectDomainStores } from './project-domain-store-registry';
@@ -96,16 +105,17 @@ function trackAllocation(
       'pane writer closed or spawn failed; worktree and branch retained for integration');
     released = true;
     untap();
+    untapSwitchTermination();
+    untapSwitchVerdict();
     schedulePaneWriterGc(scope, registryKey);
   };
-  // PTY taps run only after physical process-tree exit is proven. This covers
-  // user close, natural exit and the existing mission termination/teardown.
-  // Register before spawning, including the renderer's pending-ACK lane.
-  const untap = tapSessionExit((sessionId, agent) => {
+  const writesHere = (sessionId: string, agent: OwnedAgentSessionInfo | null): boolean => {
     const authority = agent ? null : getPaneRuntimeAuthorityBySession(sessionId);
     const executionRoot = agent?.scope.rootRealPath ?? authority?.executionScope?.rootRealPath;
-    if ((agent?.missionId ?? authority?.missionId) !== missionId ||
-      executionRoot !== record.worktreePath) return;
+    return (agent?.missionId ?? authority?.missionId) === missionId &&
+      executionRoot === record.worktreePath;
+  };
+  const releaseAfterExit = (sessionId: string): void => {
     // ACK pendente não tinha sessão no spawn: grava-a aqui, para `resume` por
     // id de task (h-N → sessão do handoff) achar esta worktree.
     if (!released) bind({ sessionId });
@@ -121,6 +131,43 @@ function trackAllocation(
       reason: 'pane-exit',
       sessionId,
     }, { scope, notify: missionId !== undefined });
+  };
+  // F-1480: sessão que o failover de conta aposentou. Com o pane novo vivo na
+  // MESMA worktree, a saída dela não solta o writer: o registro segue pronto e
+  // a saída do pane novo é que libera e ganha a salvaguarda. Veredito pendente
+  // (no teto de panes a velha sai antes de o pane novo nascer) espera o respawn.
+  const switching = new Map<string, { replaced: boolean | null; exited: boolean }>();
+  const untapSwitchTermination = tapSessionTermination((sessionId, agent) => {
+    if (released || switching.has(sessionId) ||
+      getRequestedTerminationOrigin(sessionId) !== FAILOVER_RESPAWN_TERMINATION_ORIGIN ||
+      !writesHere(sessionId, agent)) return;
+    switching.set(sessionId, { replaced: null, exited: false });
+  });
+  const untapSwitchVerdict = onFailoverRetirementVerdict((sessionId, replaced) => {
+    const pending = switching.get(sessionId);
+    if (!pending) return;
+    if (!pending.exited) {
+      pending.replaced = replaced;
+      return;
+    }
+    switching.delete(sessionId);
+    if (!replaced) releaseAfterExit(sessionId);
+  });
+  // PTY taps run only after physical process-tree exit is proven. This covers
+  // user close, natural exit and the existing mission termination/teardown.
+  // Register before spawning, including the renderer's pending-ACK lane.
+  const untap = tapSessionExit((sessionId, agent) => {
+    if (!writesHere(sessionId, agent)) return;
+    const pending = switching.get(sessionId);
+    if (pending) {
+      if (pending.replaced === null) {
+        pending.exited = true;
+        return;
+      }
+      switching.delete(sessionId);
+      if (pending.replaced) return;
+    }
+    releaseAfterExit(sessionId);
   });
   return {
     worktreePath: record.worktreePath,

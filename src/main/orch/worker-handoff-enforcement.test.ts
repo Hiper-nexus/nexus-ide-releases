@@ -13,6 +13,7 @@ type ExitTap = (sessionId: string) => void;
 
 const statusTaps = new Set<StatusTap>();
 const exitTaps = new Set<ExitTap>();
+const terminationTaps = new Set<ExitTap>();
 
 vi.mock('./agent-status', () => ({
   tapAgentSemanticStatus: (cb: StatusTap) => {
@@ -26,6 +27,10 @@ vi.mock('../pty/pty-manager', () => ({
   tapSessionExit: (cb: ExitTap) => {
     exitTaps.add(cb);
     return () => exitTaps.delete(cb);
+  },
+  tapSessionTermination: (cb: ExitTap) => {
+    terminationTaps.add(cb);
+    return () => terminationTaps.delete(cb);
   },
   orchWriteSession: vi.fn(() => true),
 }));
@@ -44,6 +49,10 @@ import {
   type QuietWorkerState,
   type WorkerHandoffEnforcementDeps,
 } from './worker-handoff-enforcement';
+import {
+  FAILOVER_RESPAWN_TERMINATION_ORIGIN,
+  settleFailoverRetirement,
+} from './failover-retirement';
 
 const scope: ProjectExecutionScope = {
   installationId: 'inst-1',
@@ -95,6 +104,11 @@ function emitStatus(sessionId: string, status: string): void {
 
 function emitExit(sessionId: string): void {
   for (const tap of [...exitTaps]) tap(sessionId);
+}
+
+/** Terminação pedida: no pty-manager real o tap vem antes da saída. */
+function emitTermination(sessionId: string): void {
+  for (const tap of [...terminationTaps]) tap(sessionId);
 }
 
 function baseState(overrides: Partial<QuietWorkerState> = {}): QuietWorkerState {
@@ -209,6 +223,7 @@ describe('worker-handoff-enforcement runtime', () => {
     vi.useRealTimers();
     statusTaps.clear();
     exitTaps.clear();
+    terminationTaps.clear();
   });
 
   it('cutuca o worker que ficou idle sem entregar handoff', () => {
@@ -462,5 +477,85 @@ describe('worker-handoff-enforcement runtime', () => {
     emitStatus('s1', 'idle');
     vi.advanceTimersByTime(WORKER_QUIET_GRACE_MS);
     expect(harness.nudges).toHaveLength(1);
+  });
+});
+
+describe('F-1480: troca de conta não é falha do worker', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    shutdownWorkerHandoffEnforcement();
+    vi.useRealTimers();
+    statusTaps.clear();
+    exitTaps.clear();
+    terminationTaps.clear();
+  });
+
+  function switchHarness(origin: string | null = FAILOVER_RESPAWN_TERMINATION_ORIGIN): Harness {
+    const harness = makeHarness({ terminationOrigin: () => origin });
+    initWorkerHandoffEnforcement(harness.deps);
+    return harness;
+  }
+
+  it('pane novo vivo: a saída da sessão aposentada não vira handoff failed', () => {
+    const harness = switchHarness();
+    emitStatus('s1', 'idle');
+    emitTermination('s1');
+    emitExit('s1');
+    settleFailoverRetirement('s1', true);
+    vi.advanceTimersByTime(WORKER_QUIET_GRACE_MS + 2 * WORKER_ENFORCE_GRACE_MS);
+    expect(harness.nudges).toHaveLength(0);
+    expect(harness.submitted).toHaveLength(0);
+  });
+
+  it('respawn sem pane novo: a saída volta a ser cobrada como failed', () => {
+    const harness = switchHarness();
+    emitTermination('s1');
+    emitExit('s1');
+    expect(harness.submitted).toHaveLength(0);
+    settleFailoverRetirement('s1', false);
+    expect(harness.submitted).toHaveLength(1);
+    expect(harness.submitted[0]!.status).toBe('failed');
+  });
+
+  it('sem veredito do respawn, a rede de segurança cobra depois da carência', () => {
+    const harness = switchHarness();
+    emitTermination('s1');
+    emitExit('s1');
+    vi.advanceTimersByTime(WORKER_ENFORCE_GRACE_MS - 1);
+    expect(harness.submitted).toHaveLength(0);
+    vi.advanceTimersByTime(1);
+    expect(harness.submitted).toHaveLength(1);
+    expect(harness.submitted[0]!.status).toBe('failed');
+  });
+
+  it('veredito antes da saída (terminação sem prova) desculpa a saída que chegar depois', () => {
+    const harness = switchHarness();
+    emitTermination('s1');
+    settleFailoverRetirement('s1', true);
+    emitExit('s1');
+    vi.advanceTimersByTime(2 * WORKER_ENFORCE_GRACE_MS);
+    expect(harness.submitted).toHaveLength(0);
+  });
+
+  it('sessão aposentada não é cutucada nem cobrada por inatividade', () => {
+    const harness = switchHarness();
+    emitStatus('s1', 'idle');
+    emitTermination('s1');
+    vi.advanceTimersByTime(WORKER_QUIET_GRACE_MS + WORKER_ENFORCE_GRACE_MS);
+    expect(harness.nudges).toHaveLength(0);
+    expect(harness.submitted).toHaveLength(0);
+  });
+
+  it('outra origem de terminação (pane-close) segue cobrando a saída muda', () => {
+    const harness = switchHarness('pane-close');
+    emitTermination('s1');
+    emitExit('s1');
+    expect(harness.submitted).toHaveLength(1);
+    expect(harness.submitted[0]!.status).toBe('failed');
+    settleFailoverRetirement('s1', true);
+    expect(harness.submitted).toHaveLength(1);
   });
 });
