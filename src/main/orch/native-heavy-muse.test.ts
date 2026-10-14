@@ -158,7 +158,7 @@ it.runIf(process.platform === 'darwin' && Boolean(muse)).for([
 // F-904: a lease entry left behind after the app was removed must not block the
 // operator's own Muse. Muse 1.4 only blocks on exit 2 / an explicit deny; a
 // missing node/script exits 127 and the original command runs.
-it.runIf(process.platform === 'darwin' && Boolean(muse)).each([{ fullAuto: false }, { fullAuto: true }])('real Muse runs the original command under an orphan lease hook fullAuto=$fullAuto', async ({ fullAuto }, testContext) => {
+it.runIf(process.platform === 'darwin' && Boolean(muse)).for([{ fullAuto: false }, { fullAuto: true }])('real Muse runs the original command under an orphan lease hook fullAuto=$fullAuto', async ({ fullAuto }, testContext) => {
  const root = controlDirOutsideCheckout(testContext, 'native-muse-orphan-');
  const home = path.join(root, 'home'), workspace = path.join(root, 'workspace'), marker = path.join(workspace, 'command-ran');
  fs.mkdirSync(path.join(home, 'config/muse'), { recursive: true }); fs.mkdirSync(workspace);
