@@ -97,22 +97,23 @@ export function MissionAgentCard({
   const toolLabel = rackToolLabel(agent);
   const currentUnitId = currentUnit?.id;
   const currentUnitTitle = currentUnit?.title;
-  // "do plano", não "vinculada": o helper da missão da aba trabalha no brief
-  // que recebeu, só não tem unidade no plano. "Trabalhando" + "Sem tarefa
-  // vinculada" lia como contradição (campo 14/10).
-  const idleLabel = agent.terminalLive === false
+  // Sem unidade do plano, o detalhe é a tarefa real do pane (o título que a
+  // CLI escreve, ver missionAgentTaskDetail no Main). "Sem tarefa do plano"
+  // só quando não há nada: ao lado de "Trabalhando" a frase fazia o terminal
+  // parecer ocioso (campo 14/10).
+  const presence = agent.terminalLive === false
     ? 'Sem terminal ativo'
-    : agent.terminalLive === true
-      ? 'Terminal ativo · Sem tarefa do plano'
-      : 'Sem tarefa do plano';
+    : agent.terminalLive === true ? 'Terminal ativo' : null;
+  const noTask = currentUnitId || agent.detail ? null : 'Sem tarefa do plano';
+  const idleLabel = [presence, noTask].filter(Boolean).join(' · ');
+  const showIdle = Boolean(idleLabel) && (agent.terminalLive === false || !currentUnitId);
   const accessibleText = [
     agent.agentName,
     agent.operatorOpened === true ? 'Aberto por você' : null,
     `Papel: ${categoryLabel}`,
     `Ferramenta: ${toolLabel}`,
     `Estado: ${stateLabel}`,
-    agent.terminalLive === false || !currentUnitId ? idleLabel : null,
-    agent.terminalLive === false && !currentUnitId ? 'Sem tarefa do plano' : null,
+    showIdle ? idleLabel : null,
     currentUnitId
       ? currentUnitTitle
         ? `Unidade atual: ${currentUnitTitle} (${currentUnitId})`
@@ -192,10 +193,9 @@ export function MissionAgentCard({
       )}
 
       <span className="mission-agent-card__display">
-        {(agent.terminalLive === false || !currentUnitId) && (
+        {showIdle && (
           <span className="mission-agent-card__idle" aria-hidden="true">
             {idleLabel}
-            {agent.terminalLive === false && !currentUnitId ? ' · Sem tarefa do plano' : null}
           </span>
         )}
         {(currentUnitId || agent.detail) && (

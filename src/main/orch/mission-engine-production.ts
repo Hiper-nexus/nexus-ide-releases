@@ -1346,6 +1346,9 @@ export function projectMissionEngineSnapshotView(
       taskFallbackByAgent.set(agent.id, "queued");
     }
   }
+  const liveTitleByPaneId = new Map(
+    livePaneSnapshots.map((snapshot) => [snapshot.paneId, snapshot.title] as const),
+  );
   const sessionByPaneId = new Map<string, string>();
   for (const snapshot of livePaneSnapshots) {
     if (snapshot.sessionId) {
@@ -1496,12 +1499,23 @@ export function projectMissionEngineSnapshotView(
           : (taskFallbackByAgent.get(agentId) ?? "queued"),
     });
     const currentUnitId = currentUnitByAgent.get(agentId);
+    const terminalLive = liveSessionState === "busy" || liveSessionState === "spawning" || liveSessionState === "idle";
+    const taskDetail = terminalLive && !currentUnitId
+      ? missionAgentTaskDetail({
+          liveTitle: liveTitleByPaneId.get(pane.paneId),
+          recordTitle: pane.title,
+          agentName: rosterById.get(agentId)?.agentName ?? "",
+          adapterId: pane.adapterId,
+          workspaceRoot: scope.rootRealPath,
+        })
+      : undefined;
     panes.push({
       paneId: pane.paneId,
       agentId,
       state,
-      terminalLive: liveSessionState === "busy" || liveSessionState === "spawning" || liveSessionState === "idle",
+      terminalLive,
       ...(currentUnitId ? { currentUnitId } : {}),
+      ...(taskDetail ? { detail: taskDetail } : {}),
       // F-231: o quadro rotula "aberto por você" e o close do Maestro é recusado.
       ...(pane.operatorOpened === true ? { operatorOpened: true } : {}),
     });
@@ -1672,6 +1686,44 @@ function squadlessMissionPaneRoster(
 }
 
 /** Rótulo de pane/CLI cabe no `agentName` do roster (128, sem controle). */
+/**
+ * Tarefa corrente do agente no visor do mapa, quando ele não tem unidade do
+ * plano. "Trabalhando" com "Sem tarefa do plano" lia como terminal ocioso
+ * (campo 14/10). O título vivo do pane é o resumo que a própria CLI escreve no
+ * OSC. O renderer prefixa a família ("Claude · …") e algumas CLIs põem o
+ * próprio prefixo ("devin: …", "MC | …"). Codex escreve o nome da pasta
+ * (task-<sha>, nexus-ide), e isso não é tarefa. Sem título vivo útil, vale o
+ * título do spawn. Nada que só repita o nome do card.
+ */
+export function missionAgentTaskDetail(input: {
+  readonly liveTitle?: string;
+  readonly recordTitle?: string;
+  readonly agentName: string;
+  readonly adapterId: string;
+  readonly workspaceRoot: string;
+}): string | undefined {
+  const folder = path.basename(input.workspaceRoot).toLowerCase();
+  const useful = (value: string): boolean => {
+    const text = value.replace(/(?:\.\.\.|…)$/u, "").trim().toLowerCase();
+    return (
+      text.length >= 3 &&
+      text !== input.adapterId.toLowerCase() &&
+      text !== input.agentName.trim().toLowerCase() &&
+      !/^task-[0-9a-f]{8}/u.test(text) &&
+      !folder.startsWith(text)
+    );
+  };
+  // ponytail: um prefixo de uma palavra antes de " · ", ":" ou " |" é tratado
+  // como rótulo da CLI. Um título que comece com "Bug: …" perde o "Bug:".
+  const live = helperLabel(input.liveTitle, 512).replace(
+    /^[^\s·:|]{1,16}(?: ·|:| \|)\s+/u,
+    "",
+  );
+  if (useful(live)) return live;
+  const spawned = helperLabel(input.recordTitle, 512);
+  return useful(spawned) ? spawned : undefined;
+}
+
 function helperLabel(value: string | undefined, max = 128): string {
   return (value ?? "")
     .replace(/[\0-\x1f\x7f‪-‮⁦-⁩]/gu, "")
