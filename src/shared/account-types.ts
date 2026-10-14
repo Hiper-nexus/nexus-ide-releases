@@ -125,6 +125,8 @@ export interface FailoverEvent {
     limitCooldownMs?: number | null;
     touchedFiles?: string[];
     diffStat?: string;
+    /** F-1482: último(s) pedido(s) entregue(s) ao pane, reentregue(s) no pack. */
+    inFlightRequest?: string;
   };
   /** Exhausted account id (when known). */
   fromAccountId?: string;

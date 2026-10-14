@@ -13,6 +13,7 @@ import type { ProjectExecutionScope } from '../../shared/types';
 import { ACCOUNT_CHANNELS, type FailoverEvent } from '../../shared/account-types';
 import { FAILOVER_HANDOFF_HEADER } from '../../shared/failover-handoff';
 import { testProjectScope } from './__tests__/scope-fixture';
+import { inFlightRequestOf, noteInFlightRequest, resetInFlightRequestsForTests } from './in-flight-request';
 import { dotenvDump, expectNoSecretFragment, hardWrap } from '../../shared/__tests__/synthetic-secrets';
 
 const h = vi.hoisted(() => ({
@@ -340,6 +341,21 @@ describe('F-775: pane do operador ("+ Pane") troca de CLI no lugar, com aviso', 
     await settle();
     expect(events()[1]).toMatchObject({ cliSwitchPhase: 'applied', switched: true, toAdapterId: 'codex' });
     expect(h.trace).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'cli-switched', toAdapterId: 'codex' }));
+  });
+
+  it('F-1482: o pedido em voo do pane vai no pacote da troca de CLI', async () => {
+    noteInFlightRequest('pane-op', 'Trocar o login para OAuth');
+    try {
+      rendererPane({ paneId: 'pane-op', sessionId: 'session-op' });
+      h.dataTaps[0]('session-op', 'QUOTA');
+      await settle();
+      const pack = events()[0]?.continuityPack ?? '';
+      expect(pack).toContain(
+        'Request in flight (last delivered to this pane; finish it if it is not done): Trocar o login para OAuth',
+      );
+    } finally {
+      resetInFlightRequestsForTests();
+    }
   });
 
   it('o religamento que não acontece não vira troca', async () => {
@@ -730,6 +746,28 @@ describe('F-1471: worker de missão troca de conta no MESMO provedor e segue a t
     const receipt = events().find((event) => event.switched);
     expect(receipt).toMatchObject({ toPaneId: 'pane-claude-resumed' });
     expect(receipt?.nativeResume).toBeUndefined();
+  });
+
+  it.each([false, true])('F-1482: troca na conta irmã reentrega o pedido em voo e o pane novo o herda (retomada nativa=%s)', async (resume) => {
+    worker();
+    h.rebind.mockReturnValue(resume);
+    noteInFlightRequest('pane-claude', 'Ajuste do Maestro: usar a fila nova');
+    try {
+      const task = handle({ reroute: vi.fn(async () => ({ paneId: 'pane-claude-2', adapterId: 'claude', model: 'claude-opus-5-5' })) });
+      registerPaneTaskReroute(task);
+      h.dataTaps[0]('session-claude', 'QUOTA');
+      await settle();
+      await settle();
+      const request = vi.mocked(task.reroute).mock.calls[0]![0];
+      expect(request.appendPrompt).toContain(
+        'Request in flight (last delivered to this pane; finish it if it is not done): Ajuste do Maestro: usar a fila nova',
+      );
+      if (resume) expect(request.nativeResume?.note).toContain('Request in flight: Ajuste do Maestro: usar a fila nova');
+      else expect(request.nativeResume).toBeUndefined();
+      expect(inFlightRequestOf('pane-claude-2')).toBe('Ajuste do Maestro: usar a fila nova');
+    } finally {
+      resetInFlightRequestsForTests();
+    }
   });
 
   it('a rota sem o modelo anterior: segue no modelo dela e o recibo registra a troca de modelo', async () => {

@@ -117,6 +117,7 @@ import {
 } from './model-access-quarantine';
 import { trace } from '../observability/main-trace';
 import { noteCliLimit } from './cli-limit-registry';
+import { carryInFlightRequests, inFlightRequestOf } from './in-flight-request';
 
 /**
  * Automatic account failover. Watches each pane's output for a limit signature
@@ -893,6 +894,7 @@ function cliSwitchPack(
     limitCooldownMs: facts.limitCooldownMs ?? null,
     touchedFiles: facts.touchedFiles,
     diffStat: facts.diffStat,
+    inFlightRequest: facts.inFlightRequest,
     ...(options.withExcerpt === false
       ? {}
       : { scrollbackExcerpt: readSessionOutput(authority.sessionId, CLI_SWITCH_EXCERPT_LINES) }),
@@ -1134,12 +1136,15 @@ async function continuityFacts(
   const git = await collectGitTaskState(runtime?.executionScope?.rootRealPath, {
     sharedRootPath: (runtime?.scope ?? authority.scope).rootRealPath,
   });
+  // F-1482: o pedido em voo do pane segue no pack (memória do Main).
+  const inFlightRequest = inFlightRequestOf(authority.paneId);
   return {
     limitWindow: window?.label ?? null,
     limitResetsAt: window?.resetsAt ?? nextUnblockAtMs ?? null,
     limitCooldownMs: hit.cooldownMs,
     touchedFiles: git.touchedFiles.slice(0, 50),
     ...(git.diffStat ? { diffStat: git.diffStat.slice(0, 4_000) } : {}),
+    ...(inFlightRequest ? { inFlightRequest } : {}),
   };
 }
 
@@ -1285,6 +1290,7 @@ async function reopenTaskOnSiblingAccount(
         limitCooldownMs: facts.limitCooldownMs ?? null,
         touchedFiles: facts.touchedFiles,
         diffStat: facts.diffStat,
+        inFlightRequest: facts.inFlightRequest,
         scrollbackExcerpt: readSessionOutput(authority.sessionId, CLI_SWITCH_EXCERPT_LINES),
         nextStep: previousModel
           ? `${CLI_SWITCH_NEXT_STEP} The previous session ran model ${previousModel}; this one keeps it when the CLI offers it.`
@@ -1297,7 +1303,11 @@ async function reopenTaskOnSiblingAccount(
     const resumeNote =
       flags.nativeResume &&
       rebindProviderPaneSessionAccount(authority.scope, paneId, adapterId, current?.id, next.id)
-        ? buildCrossAccountResumeNote({ toAccountLabel: next.label, role: 'worker' })
+        ? buildCrossAccountResumeNote({
+            toAccountLabel: next.label,
+            role: 'worker',
+            inFlightRequest: facts.inFlightRequest,
+          })
         : undefined;
     let resumedOutcome: TaskReopenOutcome | undefined;
     if (resumeNote) {
@@ -1811,6 +1821,7 @@ async function performSwitch(req: SwitchRequest): Promise<void> {
         limitCooldownMs: facts.limitCooldownMs,
         ...(facts.touchedFiles ? { touchedFiles: facts.touchedFiles } : {}),
         ...(facts.diffStat ? { diffStat: facts.diffStat } : {}),
+        inFlightRequest: facts.inFlightRequest,
         scrollbackExcerpt: readSessionOutput(
           authority.sessionId,
           CLI_SWITCH_EXCERPT_LINES,
@@ -1822,6 +1833,7 @@ async function performSwitch(req: SwitchRequest): Promise<void> {
             buildResumeNote: () => buildCrossAccountResumeNote({
               toAccountLabel: next.label,
               role: 'orchestrator',
+              inFlightRequest: facts.inFlightRequest,
             }),
           }
         : {}),
@@ -2753,6 +2765,8 @@ async function reopenTaskElsewhere(
     unproved = true;
   }
   forgetPaneTaskReroute(pane.paneId);
+  // F-1482: o pane novo herda os pedidos em voo (troca em cadeia A → B → C).
+  carryInFlightRequests(pane.paneId, next.paneId);
   const staleOpen = options.spawnFirst === true &&
     !(await closeStoppedPane(pane.paneId, authority.sessionId));
   return {

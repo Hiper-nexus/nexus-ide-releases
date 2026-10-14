@@ -299,6 +299,7 @@ import { getPaneAuthzInfo, pendingSpawnAttemptSession } from './pane-registry';
 import { onWorkerSpawnFailed } from './spawn-fail-events';
 import { adapterCircuitBreakers } from './circuit-breaker';
 import { ORCH_SPAWN_GRANT_TTL_MS } from './orch-spawn-grant-recovery';
+import { inFlightRequestOf, resetInFlightRequestsForTests } from './in-flight-request';
 import {
   getPaneStartWatch,
   resetPaneStartWatchdogForTests,
@@ -2588,6 +2589,47 @@ describe('agent prompt injection', () => {
       expect(stubs.dataTaps).toHaveLength(0);
       expect(stubs.exitTaps).toHaveLength(0);
     } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('F-1482: brief aceito fica lembrado como pedido em voo do pane', async () => {
+    vi.useFakeTimers();
+    try {
+      stubs.physicalSessionInfo.mockReturnValue({ paneId: 'pane-brief' });
+      stubs.sessionState.mockReturnValue('idle');
+      const pending = deliverAgentPrompt('session-1', 'quick task');
+      await vi.advanceTimersByTimeAsync(500);
+      expect(inFlightRequestOf('pane-brief')).toBeUndefined();
+      for (const tap of [...stubs.stateTaps]) tap('session-1', 'busy');
+      for (const tap of [...stubs.dataTaps]) tap('session-1', 'accepted output');
+      stubs.sessionState.mockReturnValue('idle');
+      for (const tap of [...stubs.stateTaps]) tap('session-1', 'idle');
+      await vi.advanceTimersByTimeAsync(400);
+      await expect(pending).resolves.toBe(true);
+      expect(inFlightRequestOf('pane-brief')).toBe('quick task');
+    } finally {
+      stubs.physicalSessionInfo.mockReset().mockReturnValue(null);
+      resetInFlightRequestsForTests();
+      vi.useRealTimers();
+    }
+  });
+
+  it('F-1482: nexus_pane_write/handoff injetado fica lembrado; o "continue" do failover não', async () => {
+    vi.useFakeTimers();
+    try {
+      stubs.physicalSessionInfo.mockReturnValue({ adapterId: 'codex', paneId: 'pane-write' });
+      const pending = injectPrompt('session-1', 'ajuste: use a API v2', undefined, 'maestro');
+      await vi.advanceTimersByTimeAsync(900);
+      await pending;
+      expect(inFlightRequestOf('pane-write')).toBe('ajuste: use a API v2');
+      const nudge = injectPrompt('session-1', 'continue', undefined, 'failover');
+      await vi.advanceTimersByTimeAsync(900);
+      await nudge;
+      expect(inFlightRequestOf('pane-write')).toBe('ajuste: use a API v2');
+    } finally {
+      stubs.physicalSessionInfo.mockReset().mockReturnValue(null);
+      resetInFlightRequestsForTests();
       vi.useRealTimers();
     }
   });

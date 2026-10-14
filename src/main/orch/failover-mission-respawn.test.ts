@@ -120,6 +120,7 @@ import { CONTEXT_HANDOFF_BUDGET_ERROR } from './context-handoff-budget';
 import { forgetPaneTaskReroute, getPaneTaskReroute, registerPaneTaskReroute } from './pane-task-reroute';
 import { onFailoverRetirementVerdict } from './failover-retirement';
 import { quarantineRejectedModel, resetModelAccessQuarantineForTests } from './model-access-quarantine';
+import { inFlightRequestOf, noteInFlightRequest, resetInFlightRequestsForTests } from './in-flight-request';
 import { FailoverTextReducer, type FailoverTextProposal } from './failover-text-core';
 import { inkWrap } from '../../shared/__tests__/synthetic-secrets';
 
@@ -975,6 +976,48 @@ function fakeBoot(verdict: ResumeBootVerdict) {
   const observe = vi.fn((): ResumeBootObserver => ({ confirm, dispose }));
   return { observe, confirm, dispose };
 }
+
+describe('F-1482: o pedido em voo do worker atravessa a troca de conta', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    deps.spawnAsync.mockReset();
+    deps.terminate.mockResolvedValue(true);
+    deps.getPane.mockReturnValue({ entry: { paneId: 'old-pane', sessionId: 'old-session' }, meta });
+  });
+  afterEach(() => resetInFlightRequestsForTests());
+
+  it('sessão nova: o pack reentrega o último pedido do Maestro e o pane novo o herda', async () => {
+    noteInFlightRequest('old-pane', 'Implementar o motor');
+    noteInFlightRequest('old-pane', 'Ajuste do Maestro: usar a fila nova');
+    deps.spawnAsync.mockResolvedValueOnce({ requestId: 'r', ok: true, paneId: 'new-pane', sessionId: 'new-session' });
+    await expect(respawnMainOwnedPaneWithAccount({
+      paneId: 'old-pane', sessionId: 'old-session', adapterId: 'codex', toAccountId: 'acct-b',
+      fromAccountLabel: 'x', reason: 'quota', touchedFiles: [], diffStat: undefined,
+    })).resolves.toBe(true);
+    const options = deps.spawnAsync.mock.calls[0]![0] as { initialPrompt: string };
+    expect(options.initialPrompt).toContain('Request in flight (last delivered to this pane; finish it if it is not done)');
+    expect(options.initialPrompt).toContain('Ajuste do Maestro: usar a fila nova');
+    expect(detectLimit(options.initialPrompt)).toBeNull();
+    // Troca em cadeia: a próxima troca deste pane novo ainda sabe o pedido.
+    expect(inFlightRequestOf('new-pane')).toBe(inFlightRequestOf('old-pane'));
+  });
+
+  it('retomada nativa: a nota curta leva o pedido em voo', async () => {
+    noteInFlightRequest('old-pane', 'Ajuste do Maestro: usar a fila nova');
+    deps.getPane.mockReturnValue({ entry: { paneId: 'old-pane', sessionId: 'old-session' },
+      meta: { ...meta, scope: { installationId: 'i', projectId: 'p' } } });
+    deps.spawnAsync.mockResolvedValueOnce({ requestId: 'r', ok: true, paneId: 'new-pane', sessionId: 'new-session' });
+    await expect(respawnMainOwnedPaneWithAccount({
+      paneId: 'old-pane', sessionId: 'old-session', adapterId: 'claude', toAccountId: 'acct-b', fromAccountId: 'acct-a',
+      fromAccountLabel: 'x', reason: 'quota', touchedFiles: [], diffStat: undefined, nativeResume: true,
+    }, { rebindSession: vi.fn(() => true), observeResumeBoot: fakeBoot('proved').observe })).resolves.toBe(true);
+    const options = deps.spawnAsync.mock.calls[0]![0] as { initialPrompt: string; resumeFromPaneId?: string };
+    expect(options.resumeFromPaneId).toBe('old-pane');
+    expect(options.initialPrompt).toContain('Request in flight: Ajuste do Maestro: usar a fila nova');
+    expect(inFlightRequestOf('new-pane')).toBe('Ajuste do Maestro: usar a fila nova');
+  });
+});
+
 
 describe('F-1473: observeResumeBoot (a retomada pegou, com prova?)', () => {
   beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(1_000_000); });

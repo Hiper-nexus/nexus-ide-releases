@@ -112,6 +112,7 @@ import {
   spawnBinaryName,
 } from '../../shared/cli-initial-prompt';
 import { ORCH_SPAWN_GRANT_TTL_MS } from './orch-spawn-grant-recovery';
+import { noteInFlightRequest } from './in-flight-request';
 import {
   PASTE_INGEST_GRACE_MS,
   pasteIngestPlanForSession,
@@ -485,6 +486,12 @@ function armPasteIngest(sessionId: string, pasted: string): PasteIngestWatch | n
   return plan ? watchPasteIngest(sessionId, plan) : null;
 }
 
+/** F-1482: o pedido aceito fica lembrado para a troca de conta/CLI reentregá-lo. */
+function rememberInFlightRequest(sessionId: string, prompt: string): true {
+  noteInFlightRequest(getAgentSessionInfo(sessionId)?.paneId, prompt);
+  return true;
+}
+
 /** Type text into a pane's PTY, then press Enter (as a user would). */
 export async function injectPrompt(
   sessionId: string,
@@ -502,6 +509,8 @@ export async function injectPrompt(
     throw new Error('session is gone');
   }
   await submitEnter(sessionId, invocation, undefined, false, ingest, inputWriter);
+  // O "continue" do próprio failover não é pedido do trabalho.
+  if (inputWriter !== 'failover') rememberInFlightRequest(sessionId, safePrompt);
 }
 
 const adaptiveEnterTimers = new Map<string, Set<ReturnType<typeof setTimeout>>>();
@@ -797,6 +806,8 @@ export async function injectPastedPrompt(
     throw new Error('session is gone');
   }
   await submitEnter(sessionId, invocation, undefined, false, ingest, inputWriter);
+  // O "continue" do próprio failover não é pedido do trabalho.
+  if (inputWriter !== 'failover') rememberInFlightRequest(sessionId, safePrompt);
 }
 
 async function assertAcceptedPromptAuthority(
@@ -1152,7 +1163,7 @@ export async function deliverAgentPrompt(
         invocation,
         requiresClaudeFamilyTurnProof(options.adapterId),
       );
-      if (outcome === 'accepted') return true;
+      if (outcome === 'accepted') return rememberInFlightRequest(sessionId, prompt);
       if (outcome === 'written-unconfirmed') {
         // F-1426: o texto saiu da caixa e está no composer sem aceite — o
         // Devin frio engoliu o Enter e a tentativa 2 re-colava o brief inteiro
@@ -1168,7 +1179,7 @@ export async function deliverAgentPrompt(
             invocation,
             requiresClaudeFamilyTurnProof(options.adapterId),
           );
-          if (resubmitted === 'accepted') return true;
+          if (resubmitted === 'accepted') return rememberInFlightRequest(sessionId, prompt);
           lastError = new Error(
             'agent pane did not start: the brief reached the composer but no Enter was accepted',
           );

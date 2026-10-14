@@ -223,6 +223,7 @@ export function useFailoverController(): void {
           limitCooldownMs: facts?.limitCooldownMs ?? null,
           ...(facts?.touchedFiles ? { touchedFiles: facts.touchedFiles } : {}),
           ...(facts?.diffStat ? { diffStat: facts.diffStat } : {}),
+          ...(facts?.inFlightRequest ? { inFlightRequest: facts.inFlightRequest } : {}),
           nextStep: CONTINUITY_NEXT_STEP,
         });
         respawnWithResume(
@@ -237,6 +238,7 @@ export function useFailoverController(): void {
                 resumeNote: buildCrossAccountResumeNote({
                   toAccountLabel: event.toAccountLabel,
                   role: updated.role,
+                  inFlightRequest: facts?.inFlightRequest,
                 }),
               }
             : {

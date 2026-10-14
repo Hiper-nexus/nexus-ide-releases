@@ -126,6 +126,11 @@ export interface ContinuityPackInput {
   limitCooldownMs?: number | null;
   /** Objective/task of the pane. */
   taskBrief?: string;
+  /**
+   * F-1482: last request(s) delivered to the pane (brief, pane write, operator
+   * direction, handoff) — re-delivered so the switch never drops the ask.
+   */
+  inFlightRequest?: string;
   /** Files touched in the pane cwd (git status porcelain). */
   touchedFiles?: readonly string[];
   /** Summarized `git diff --stat` in the pane cwd. */
@@ -142,6 +147,13 @@ export interface ContinuityPackInput {
 const MAX_EXCERPT = 2_400;
 const MAX_HINT = 600;
 const MAX_TASK_BRIEF = 400;
+/**
+ * F-1482: teto do pedido em voo no pack e na nota. Quem monta o texto
+ * (`inFlightRequestOf`) põe o MAIS RECENTE primeiro, então o corte do fim
+ * (`quoted`) só tira os anteriores.
+ */
+export const MAX_IN_FLIGHT_REQUEST_CHARS = 1_500;
+const MAX_IN_FLIGHT = MAX_IN_FLIGHT_REQUEST_CHARS;
 const MAX_NEXT_STEP = 400;
 const MAX_DIFF_STAT = 1_200;
 const MAX_FILES_LISTED = 20;
@@ -249,6 +261,11 @@ export function buildContinuityPack(input: ContinuityPackInput): string {
   if (input.openWorkHint) {
     lines.push(`Open work: ${quoted(input.openWorkHint, MAX_HINT)}`);
   }
+  if (input.inFlightRequest?.trim()) {
+    lines.push(
+      `Request in flight (last delivered to this pane; finish it if it is not done): ${quoted(input.inFlightRequest, MAX_IN_FLIGHT)}`,
+    );
+  }
   if (input.touchedFiles && input.touchedFiles.length > 0) {
     const files = input.touchedFiles.slice(0, MAX_FILES_LISTED).map((f) => `- ${quoted(f, 120)}`);
     const more =
@@ -302,7 +319,7 @@ export function buildCrossAccountResumeNote(input: CrossAccountResumeNoteInput):
     `Continue as the ${role} exactly where you stopped. Do not re-do completed work.`,
   ];
   if (input.inFlightRequest?.trim()) {
-    lines.push(`Request in flight: ${quoted(input.inFlightRequest, MAX_HINT)}`);
+    lines.push(`Request in flight: ${quoted(input.inFlightRequest, MAX_IN_FLIGHT)}`);
   }
   lines.push(FAILOVER_HANDOFF_FOOTER);
   return lines.join('\n');

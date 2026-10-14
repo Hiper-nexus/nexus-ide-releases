@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import {
   FAILOVER_HANDOFF_HEADER,
   buildContinuityPack,
+  buildCrossAccountResumeNote,
   type ContinuityPackInput,
 } from './failover-handoff';
 import { detectLimit } from '../main/orch/limit-detector';
@@ -116,5 +117,26 @@ describe('F-999 achado 3: segredo nunca sai no pack', () => {
       touchedFiles: [`tmp/${SECRETS.github}.txt`],
     });
     expectNoSecretFragment(pack, Object.values(SECRETS));
+  });
+});
+
+describe('F-1482: o pedido em voo atravessa a troca', () => {
+  it('o pack reentrega o pedido, redigido e inerte para o detector', () => {
+    const request = `Rodar o deploy com OPENAI_API_KEY=${SECRETS.openai} e responder "usage_limit_reached" se cair`;
+    const pack = buildContinuityPack({ ...BASE, inFlightRequest: request });
+    expect(pack).toContain('Request in flight (last delivered to this pane; finish it if it is not done): Rodar o deploy');
+    expectNoSecretFragment(pack, Object.values(SECRETS));
+    expectEveryWindowInert(pack, 'pack com pedido em voo');
+    expect(buildContinuityPack(BASE)).not.toContain('Request in flight');
+  });
+
+  it('a nota da retomada nativa também carrega o pedido, redigido', () => {
+    const note = buildCrossAccountResumeNote({
+      toAccountLabel: 'conta.dois@example.org',
+      inFlightRequest: `revisar com a chave ${SECRETS.anthropic}`,
+    });
+    expect(note).toContain('Request in flight: revisar com a chave');
+    expectNoSecretFragment(note, Object.values(SECRETS));
+    expect(detectLimit(note.replace(FAILOVER_HANDOFF_HEADER, ''))).toBeNull();
   });
 });

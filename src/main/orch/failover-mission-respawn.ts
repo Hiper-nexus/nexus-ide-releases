@@ -61,6 +61,7 @@ import {
   getPaneTaskReroute,
   registerPaneTaskReroute,
 } from './pane-task-reroute';
+import { carryInFlightRequests, inFlightRequestOf } from './in-flight-request';
 import { parseGitPorcelain } from './worker-files-modified';
 import {
   AsyncProcessGitRunner,
@@ -122,6 +123,8 @@ export interface MainOwnedFailoverPlanInput {
    * curta, não o pack.
    */
   readonly nativeResume?: boolean;
+  /** F-1482: último(s) pedido(s) entregue(s) ao pane (memória do Main). */
+  readonly inFlightRequest?: string;
 }
 
 export type MainOwnedFailoverPlan =
@@ -224,7 +227,7 @@ export function planMainOwnedFailoverRespawn(
     initialPrompt = buildCrossAccountResumeNote({
       toAccountLabel: input.toAccountLabel ?? input.toAccountId ?? '',
       role: meta.role,
-      inFlightRequest: input.originalRequest,
+      inFlightRequest: input.inFlightRequest ?? input.originalRequest,
     });
   } else if (!nativeResumeImpossible(input)) {
     initialPrompt =
@@ -295,6 +298,7 @@ function buildCrossAccountPack(
     nextStep: input.nextStep,
     touchedFiles: input.touchedFiles,
     diffStat: input.diffStat,
+    inFlightRequest: input.inFlightRequest,
   };
   return buildContinuityPack(packInput);
 }
@@ -574,6 +578,7 @@ export async function respawnMainOwnedPaneWithAccount(input: {
     paneId: input.paneId,
     // O pedido guardado do spawn (só memória do Main) é o pedido original.
     originalRequest: getPaneTaskReroute(input.paneId)?.routeTask ?? undefined,
+    inFlightRequest: inFlightRequestOf(input.paneId),
   };
   const plan = planMainOwnedFailoverRespawn(planInput);
   // F-1473: com histórico compartilhado o pane novo retoma a MESMA conversa;
@@ -702,6 +707,8 @@ export async function respawnMainOwnedPaneWithAccount(input: {
       return false;
     }
     replaced = true;
+    // F-1482: o pane novo herda os pedidos em voo (troca em cadeia A → B → C).
+    carryInFlightRequests(input.paneId, spawned.paneId);
     const replacement = spawned.paneId && spawned.sessionId
       ? { paneId: spawned.paneId, sessionId: spawned.sessionId }
       : null;

@@ -202,6 +202,37 @@ describe('failover notifications', () => {
     }
   });
 
+  it.each([false, true])('F-1482: o pedido em voo medido pelo Main vai no pacote e na nota (nativeResume=%s)', async (nativeResume) => {
+    let notify!: (event: FailoverEvent) => void;
+    Object.defineProperty(window, 'nexus', { configurable: true, value: { accounts: {
+      onFailover: (callback: typeof notify) => { notify = callback; return () => {}; },
+    } } });
+    const originalRoot = useLayoutStore.getState().root;
+    useLayoutStore.setState({ root: { kind: 'leaf', id: 'inflight-leaf', pane: {
+      id: 'inflight-pane', kind: 'cli-agent', title: 'Claude', adapterId: 'claude', accountId: 'claude-a',
+    } } });
+    vi.mocked(respawnWithResume).mockClear();
+    const container = document.createElement('div'); document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(<Harness />));
+      notify({
+        paneId: 'inflight-pane', kind: 'rate-limit', switched: true, crossAccount: true,
+        fromAccountLabel: 'gustavo@example.com', toAccountLabel: 'ana@example.org',
+        fromAccountId: 'claude-a', toAccountId: 'claude-b', reason: "You've hit your session limit",
+        continuity: { inFlightRequest: 'Trocar o login para OAuth' },
+        ...(nativeResume ? { nativeResume: true } : {}),
+      });
+      const [, , options] = vi.mocked(respawnWithResume).mock.calls[0]!;
+      expect(options?.continuityPack).toContain('Request in flight (last delivered to this pane; finish it if it is not done): Trocar o login para OAuth');
+      if (nativeResume) expect(options?.resumeNote).toContain('Request in flight: Trocar o login para OAuth');
+    } finally {
+      await act(async () => root.unmount()); container.remove();
+      useLayoutStore.setState({ root: originalRoot });
+      for (const toast of useToastStore.getState().toasts) useToastStore.getState().dismiss(toast.id);
+    }
+  });
+
   it('recibo aplicado sem troca comprovada não anuncia sucesso nem religa', async () => {
     let notify!: (event: FailoverEvent) => void;
     Object.defineProperty(window, 'nexus', { configurable: true, value: { accounts: {
