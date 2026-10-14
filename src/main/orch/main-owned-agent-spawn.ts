@@ -184,8 +184,12 @@ function canonicalizePendingSpawnRequest(
     ["paneId", request.paneId, sealed.paneId],
     ["adapterId", request.adapterId, sealed.adapterId],
     ["model", request.model, sealed.model],
-    ["accountId", request.accountId, sealed.accountId],
-    ["effort", request.effort, sealed.effort],
+    // O renderer deixa de carimbar conta/esforço de pane de missão: o pedido
+    // canonizado abaixo usa `sealed.*` incondicionalmente, então um campo
+    // omitido nunca amplia autoridade nem troca a conta — ele defere ao selo.
+    // Só um VALOR divergente é recusado.
+    ["accountId", request.accountId ?? sealed.accountId, sealed.accountId],
+    ["effort", request.effort ?? sealed.effort, sealed.effort],
     ["cwd", request.cwd, sealed.cwd],
     ["missionId", request.missionId, sealed.missionId],
     ["resume", request.resume === true, false],
@@ -302,8 +306,14 @@ function canonicalizePersistedSpawnRequest(
     ["paneId", request.paneId, persisted.paneId],
     ["adapterId", request.adapterId, persisted.adapterId],
     ["model", request.model, persisted.model],
-    ["accountId", request.accountId, persisted.accountId],
-    ["effort", request.effort, persisted.effort],
+    // O modelo do pane no renderer não espelha conta/esforço de missão: quem
+    // vincula é a spec selada do Main (`recordSpawnedMissionPane`,
+    // `fillOperatorPaneSealedRuntime` F-1002), que grava a conta física que o
+    // Main escolheu. O pedido canonizado abaixo usa `persisted.*`
+    // incondicionalmente, então `undefined` aqui defere ao selo — omissão não
+    // amplia autoridade nem troca a conta. Só um VALOR divergente é recusado.
+    ["accountId", request.accountId ?? persisted.accountId, persisted.accountId],
+    ["effort", request.effort ?? persisted.effort, persisted.effort],
     ["cwd", request.cwd, expectedCwd],
     ["missionId", request.missionId, persisted.missionId],
     ["resumeLatestOnly", request.resumeLatestOnly === true, false],
