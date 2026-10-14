@@ -204,7 +204,7 @@ describe('F-1229: o cwd chega ao Main pelo próprio pedido', () => {
     if (pid > 1) { try { process.kill(pid, 'SIGKILL'); } catch { /* already reaped */ } }
   });
 
-  // PRIO_DARWIN_PROCESS (4) is 0 normally and 1 under taskpolicy -b. Nice stays 0.
+  // pthread_get_qos_class_np: QOS_CLASS_UTILITY is 0x11 under taskpolicy -c utility.
   const darwinPriority = (args: string[], env: NodeJS.ProcessEnv) => new Promise<string>((resolve, reject) => {
     const child = spawn(process.execPath, args, { cwd: temp, stdio: ['ignore', 'pipe', 'pipe'], env });
     let output = '', err = '';
@@ -220,18 +220,30 @@ describe('F-1229: o cwd chega ao Main pelo próprio pedido', () => {
   });
   const priorityJob = JSON.stringify({ file: '/usr/bin/perl', args: ['-e', 'while (@ARGV && $ARGV[0] ne "--") { shift @ARGV } shift @ARGV; exec @ARGV or die $!', 'heavy-job'] });
 
-  it('job-launch runs the job at darwin background priority, unless NEXUS_HEAVY_QOS=0', async () => {
+  it('job-launch runs the job at darwin utility QoS, unless NEXUS_HEAVY_QOS=0', async () => {
     if (process.platform !== 'darwin') return;
-    const probe = ['import os', 'print(os.getpriority(4, 0))'].join('; ');
+    const probe = [
+      'import ctypes',
+      'libc=ctypes.CDLL("/usr/lib/libSystem.B.dylib")',
+      'fn=libc.pthread_get_qos_class_np',
+      'fn.restype=ctypes.c_int',
+      'fn.argtypes=[ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint), ctypes.POINTER(ctypes.c_int)]',
+      'self=libc.pthread_self',
+      'self.restype=ctypes.c_void_p',
+      'self.argtypes=[]',
+      'qos=ctypes.c_uint(); rel=ctypes.c_int()',
+      'fn(self(), ctypes.byref(qos), ctypes.byref(rel))',
+      'print(hex(qos.value))',
+    ].join('; ');
     const launch = (qos?: string) => darwinPriority(
       [path.join(resources, 'job-launch.cjs'), 'build', '/usr/bin/python3', '-c', probe],
       { PATH: '/usr/bin:/bin', ...(qos ? { NEXUS_HEAVY_QOS: qos } : {}), NEXUS_HEAVY_JOB_BASE: priorityJob },
     );
-    expect(await launch()).toBe('1');
-    expect(await launch('0')).toBe('0');
+    expect(await launch()).toBe('0x11');
+    expect(await launch('0')).not.toBe('0x11');
   });
 
-  it('dispatch runs the admitted job at darwin background priority', async () => {
+  it('dispatch runs the admitted job at darwin utility QoS', async () => {
     if (process.platform !== 'darwin') return;
     const server = http.createServer((_req, res) => {
       res.writeHead(200, { 'content-type': 'application/json' });
@@ -240,12 +252,24 @@ describe('F-1229: o cwd chega ao Main pelo próprio pedido', () => {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const port = (server.address() as { port: number }).port;
     try {
-      const probe = ['import os', 'print(os.getpriority(4, 0))'].join('; ');
+      const probe = [
+        'import ctypes',
+        'libc=ctypes.CDLL("/usr/lib/libSystem.B.dylib")',
+        'fn=libc.pthread_get_qos_class_np',
+        'fn.restype=ctypes.c_int',
+        'fn.argtypes=[ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint), ctypes.POINTER(ctypes.c_int)]',
+        'self=libc.pthread_self',
+        'self.restype=ctypes.c_void_p',
+        'self.argtypes=[]',
+        'qos=ctypes.c_uint(); rel=ctypes.c_int()',
+        'fn(self(), ctypes.byref(qos), ctypes.byref(rel))',
+        'print(hex(qos.value))',
+      ].join('; ');
       const priority = await darwinPriority(
         [path.join(resources, 'dispatch.cjs'), 'build', '/usr/bin/python3', JSON.stringify(['-c', probe]), 'false'],
         { PATH: '/usr/bin:/bin', NEXUS_GATE_TOKEN: 'finite-qos', NEXUS_HEAVY_COMMAND_URL: `http://127.0.0.1:${port}/hook/heavy-command` },
       );
-      expect(priority).toBe('1');
+      expect(priority).toBe('0x11');
     } finally { server.close(); }
   }, 10_000);
 
