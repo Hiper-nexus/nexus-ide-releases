@@ -485,6 +485,21 @@ describe('MissionInspector', () => {
     expect(onOpenTerminals).toHaveBeenCalledTimes(1);
   });
 
+  it('Estado usa a mesma palavra do card: terminal vivo sem trabalho é Em espera', () => {
+    const snapshot = {
+      ...SNAPSHOT,
+      agents: SNAPSHOT.agents.map((agent) =>
+        agent.id === 'agent-reviewer' ? { ...agent, terminalLive: true } : agent,
+      ),
+    };
+    useMissionInspectorStore.getState().bindSnapshot(snapshot);
+    useMissionInspectorStore.getState().selectAgent('agent-reviewer');
+
+    const panel = selectTab(mount({ snapshot }), 'Agente');
+
+    expect(panel.textContent).toContain('Em espera (queued)');
+  });
+
   it('projects every canonical field for the selected agent without invented metrics', () => {
     useMissionInspectorStore.getState().bindSnapshot(SNAPSHOT);
     useMissionInspectorStore.getState().selectAgent('agent-builder');

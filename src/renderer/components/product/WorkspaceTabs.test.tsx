@@ -257,6 +257,40 @@ describe('WorkspaceTabs', () => {
     // Sem aba ativa não há o que dividir.
     expect(host.querySelector('[aria-label="Ver outra aba ao lado"]')).toBeNull();
   });
+
+  it('aba com equipe mostra "Mapa da equipe" na barra e abre o mapa da missão', () => {
+    const onOpenTeamMap = vi.fn();
+    const { host } = render({
+      activeScopeKey: 'mission:m',
+      teamMap: {
+        missionId: 'm',
+        title: 'Fechar o Epic 22',
+        members: [{ paneId: 'orq', coordinator: true }],
+      },
+      onOpenTeamMap,
+    });
+
+    const button = host.querySelector<HTMLButtonElement>('.workspace-tabs__actions .workspace-tabs__team');
+    expect(button?.textContent).toContain('Mapa da equipe');
+    act(() => button!.click());
+
+    expect(onOpenTeamMap).toHaveBeenCalledWith('m');
+  });
+
+  it('sem equipe na aba, ou na visão geral, a barra não oferece o mapa', () => {
+    const teamMap = {
+      missionId: 'm',
+      title: 'Fechar o Epic 22',
+      members: [{ paneId: 'orq', coordinator: true }],
+    };
+
+    expect(render().host.querySelector('.workspace-tabs__team')).toBeNull();
+    act(() => mounted!.root.unmount());
+    expect(
+      render({ overview: true, activeScopeKey: null, teamMap, onOpenTeamMap: vi.fn() })
+        .host.querySelector('.workspace-tabs__team'),
+    ).toBeNull();
+  });
 });
 
 describe('WorkspaceTabs — estado com motivo (F-198/F-373)', () => {

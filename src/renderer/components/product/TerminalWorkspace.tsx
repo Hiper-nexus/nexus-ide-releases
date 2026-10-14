@@ -31,6 +31,7 @@ import {
 } from '../../lib/pane-mission-promote';
 import { askConfirm, useConfirmStore } from '../../state/confirm-store';
 import { WorkspaceTabs, workspaceTabIsClosable } from './WorkspaceTabs';
+import { missionTeamOfScope } from './MissionTeamMapButton';
 import { missionLifecycleLabel } from '../../lib/mission-lifecycle-copy';
 import { missionAwaitsOperatorReview } from '../../../shared/mission-recovery-policy';
 import { PixelIcon } from '../PixelIcon';
@@ -387,7 +388,7 @@ export function TerminalWorkspace({
       paneTitle: leader.title,
     });
     if (!missionId) return;
-    toastPromoted(useOrchStore.getState().missions.find((m) => m.id === missionId)?.title);
+    toastPromoted(useOrchStore.getState().missions.find((m) => m.id === missionId)?.title, missionId);
   }, []);
 
   const closeTab = useCallback(
@@ -626,6 +627,8 @@ export function TerminalWorkspace({
           onNewMission={() => useProductNavigationStore.getState().openNewMission()}
           onStartTabMission={(scope) => void startTabMission(scope)}
           onMoveTab={moveTab}
+          teamMap={activeScope ? missionTeamOfScope(activeScope, panes, paneMissions) : null}
+          onOpenTeamMap={(id) => useProductNavigationStore.getState().openMission(id)}
         />
       )}
 

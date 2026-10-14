@@ -620,13 +620,25 @@ export function requestPaneAdoptionForNextMission(
   );
 }
 
-/** Toast padrão de sucesso usado pelos três pontos de entrada. */
-export function toastPromoted(missionTitle: string | undefined): void {
+/**
+ * Toast padrão de sucesso usado pelos pontos de entrada. Com a missão, ganha o
+ * atalho para o mapa da equipe: é o momento em que ele passa a existir.
+ */
+export function toastPromoted(missionTitle: string | undefined, missionId?: string): void {
+  const detail = missionTitle
+    ? `Este painel agora lidera “${missionTitle}”.`
+    : 'Este painel agora é o orquestrador líder.';
   useToastStore.getState().push(
     'success',
     'Orquestrador definido',
-    missionTitle
-      ? `Este painel agora lidera “${missionTitle}”.`
-      : 'Este painel agora é o orquestrador líder.',
+    missionId
+      ? {
+          detail,
+          action: {
+            label: 'Ver mapa da equipe',
+            onClick: () => useProductNavigationStore.getState().openMission(missionId),
+          },
+        }
+      : detail,
   );
 }

@@ -1146,3 +1146,31 @@ describe('título de missão criada pelo renderer nunca se repete', () => {
     expect(sent!.title).toBe(`${base120.slice(0, 118)} 2`);
   });
 });
+
+describe('toastPromoted — atalho para o mapa da equipe (14/10)', () => {
+  it('com a missão, o toast leva ao mapa dela; sem missão, só informa', async () => {
+    const { useToastStore } = await import('../state/toast-store');
+    const { useProductNavigationStore } = await import('../state/product-navigation-store');
+    const { toastPromoted } = await import('./pane-mission-promote');
+    useToastStore.setState({ toasts: [] });
+
+    toastPromoted('Fechar o Epic 22', 'mission-epic');
+    const [withMission] = useToastStore.getState().toasts;
+    expect(withMission).toMatchObject({
+      title: 'Orquestrador definido',
+      detail: 'Este painel agora lidera “Fechar o Epic 22”.',
+      action: { label: 'Ver mapa da equipe' },
+    });
+    await withMission!.action!.onClick();
+    expect(useProductNavigationStore.getState().destination).toEqual({
+      kind: 'mission',
+      missionId: 'mission-epic',
+      surface: 'board',
+    });
+
+    useToastStore.setState({ toasts: [] });
+    toastPromoted(undefined);
+    expect(useToastStore.getState().toasts[0]?.action).toBeUndefined();
+    useToastStore.setState({ toasts: [] });
+  });
+});

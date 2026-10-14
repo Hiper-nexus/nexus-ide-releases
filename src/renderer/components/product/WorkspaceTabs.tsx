@@ -18,6 +18,7 @@ import { missionLifecycleLabel } from '../../lib/mission-lifecycle-copy';
 import type { PaneScopeEntry } from '../../lib/pane-spaces';
 import { PanePicker } from '../PanePicker';
 import { PixelIcon, type PixelIconName } from '../PixelIcon';
+import { MissionTeamMapButton, type MissionTeamMap } from './MissionTeamMapButton';
 
 /**
  * Barra de abas do workspace — cada aba é uma FEATURE: os panes que o operador
@@ -62,6 +63,10 @@ export interface WorkspaceTabsProps {
    * Ausente, a barra não arrasta nem oferece "Mover".
    */
   readonly onMoveTab?: (scopeKey: string, toIndex: number) => void;
+  /** Equipe da missão que mora na aba ativa; `null` quando não há. */
+  readonly teamMap?: MissionTeamMap | null;
+  /** Abre o mapa da equipe (o grafo do Quadro) daquela missão. */
+  readonly onOpenTeamMap?: (missionId: string) => void;
 }
 
 const LIFECYCLE_STATES: ReadonlySet<string> = new Set<MissionLifecycleState>([
@@ -244,6 +249,8 @@ export function WorkspaceTabs({
   onNewMission,
   onStartTabMission,
   onMoveTab,
+  teamMap,
+  onOpenTeamMap,
 }: WorkspaceTabsProps) {
   const railRef = useRef<HTMLDivElement>(null);
   const menuReturnFocusRef = useRef<HTMLButtonElement>(null);
@@ -522,6 +529,9 @@ export function WorkspaceTabs({
         }}
       />
       <div className="workspace-tabs__actions">
+        {!overview && teamMap && onOpenTeamMap ? (
+          <MissionTeamMapButton team={teamMap} onOpen={onOpenTeamMap} />
+        ) : null}
         {canSplit ? (
           <button
             type="button"
