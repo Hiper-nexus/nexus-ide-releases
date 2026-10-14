@@ -129,7 +129,7 @@ function isStrandedPane(
   pane: StrandedPane,
   paneMissions: Readonly<Record<string, string>>,
   paneStates: Readonly<Record<string, string | undefined>>,
-  recentOutputByPane: Readonly<Record<string, string>>,
+  recentOutputByPane: RecentPaneOutput,
   missions: ReadonlyArray<{ id: string; status: string }>,
 ): boolean {
   if (pane.kind !== 'cli-agent') return false;
@@ -137,8 +137,15 @@ function isStrandedPane(
   if (!missionId || !isOpenMission(missionId, missions)) return false;
   const state = paneStates[pane.id];
   if (state === 'exited' || state === 'hibernated') return true;
-  const output = recentOutputByPane[pane.id] ?? '';
+  const output = readRecentPaneOutput(recentOutputByPane, pane.id);
   return output.length > 0 && !cliAcceptsContinuityPrompt(output);
+}
+
+/** A live terminal excerpt is expensive: read it only when recovery needs it. */
+type RecentPaneOutput = Readonly<Record<string, string>> | ((paneId: string) => string);
+
+function readRecentPaneOutput(source: RecentPaneOutput, paneId: string): string {
+  return typeof source === 'function' ? source(paneId) : source[paneId] ?? '';
 }
 
 export function resolveStrandedMissionHandoff(input: {
@@ -146,7 +153,7 @@ export function resolveStrandedMissionHandoff(input: {
   readonly panes: readonly StrandedPane[];
   readonly paneMissions: Readonly<Record<string, string>>;
   readonly paneStates: Readonly<Record<string, string | undefined>>;
-  readonly recentOutputByPane: Readonly<Record<string, string>>;
+  readonly recentOutputByPane: RecentPaneOutput;
   readonly missions: LeaderAwareMissions;
 }): StrandedMissionHandoff | null {
   const focused = input.panes.find((pane) => pane.id === input.focusedPaneId);
@@ -203,7 +210,7 @@ export function planOperatorAgentSpawn(input: {
   readonly panes: readonly StrandedPane[];
   readonly paneMissions: Readonly<Record<string, string>>;
   readonly paneStates: Readonly<Record<string, string | undefined>>;
-  readonly recentOutputByPane: Readonly<Record<string, string>>;
+  readonly recentOutputByPane: RecentPaneOutput;
   readonly missions: ReadonlyArray<{
     id: string;
     title?: string;
@@ -227,7 +234,7 @@ export function planOperatorAgentSpawn(input: {
     openWorkHint: mission
       ? `${mission.id}${mission.title ? `: ${mission.title}` : ''}`
       : handoff.missionId,
-    scrollbackExcerpt: input.recentOutputByPane[handoff.fromPaneId],
+    scrollbackExcerpt: readRecentPaneOutput(input.recentOutputByPane, handoff.fromPaneId),
   });
   return options;
 }

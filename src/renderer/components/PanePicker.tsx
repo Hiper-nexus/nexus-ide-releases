@@ -699,10 +699,13 @@ export function runPanePickerIntent(intent: PanePickerIntent): string | undefine
   }
   const orch = useOrchStore.getState();
   const panes = listPanes(layout.root);
-  const recentOutputByPane: Record<string, string> = {};
-  for (const pane of panes) {
-    recentOutputByPane[pane.id] = recentExcerpt(pane.id);
-  }
+  // Serialize only recovery candidates, once per click. Ordinary panes never
+  // need a transcript; a healthy focused mission also skips its siblings.
+  const excerpts = new Map<string, string>();
+  const recentOutputByPane = (paneId: string): string => {
+    if (!excerpts.has(paneId)) excerpts.set(paneId, recentExcerpt(paneId));
+    return excerpts.get(paneId)!;
+  };
   const focused = panes.find((pane) => pane.id === layout.focusedPaneId);
   const planned = planOperatorAgentSpawn({
     accountId: intent.accountId,

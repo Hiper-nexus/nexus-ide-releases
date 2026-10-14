@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AccountInfo } from '../../shared/account-types';
 import type { ProviderSettingsInfo } from '../../shared/provider-settings-types';
 import { FAILOVER_HANDOFF_HEADER } from '../../shared/failover-handoff';
-import { createLeaf, listPanes } from '../lib/split-tree';
+import { buildGridTree, createLeaf, listPanes } from '../lib/split-tree';
 import { useAccountStore } from '../state/account-store';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
@@ -1088,6 +1088,61 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
       ?.continuityPack;
     expect(pack).toContain('m-radar');
     expect(pack).toContain('Radar BI');
+  });
+
+  it('abrir agente com 24 panes soltos não serializa histórico nenhum', () => {
+    mount();
+    const panes = Array.from({ length: 24 }, (_, index) => ({
+      id: `loose-${index}`, kind: 'cli-agent' as const, title: 'Claude', adapterId: 'claude',
+    }));
+    useLayoutStore.setState({ root: buildGridTree(panes), focusedPaneId: panes[0]!.id });
+    const excerpt = vi.fn(() => 'conversa longa');
+    window.__nexusGetScrollbackExcerpt = excerpt;
+
+    runPanePickerIntent({ kind: 'agent', adapterId: 'codex', model: 'x' });
+
+    expect(excerpt).not.toHaveBeenCalled();
+    expect(spawnAgent).toHaveBeenCalledWith('codex', 'x');
+    console.info('[perf-budget] + Pane loose: excerpt reads', excerpt.mock.calls.length);
+  });
+
+  it('missão saudável em foco lê só o pane focado e não os 23 irmãos', () => {
+    mount();
+    const panes = Array.from({ length: 24 }, (_, index) => ({
+      id: `mission-${index}`, kind: 'cli-agent' as const, title: 'Claude', missionId: 'm-live',
+    }));
+    useLayoutStore.setState({ root: buildGridTree(panes), focusedPaneId: panes[0]!.id });
+    useOrchStore.setState({ missions: [{ id: 'm-live', status: 'running' }] as never });
+    const excerpt = vi.fn(() => 'working on the dashboard…');
+    window.__nexusGetScrollbackExcerpt = excerpt;
+
+    runPanePickerIntent({ kind: 'agent', adapterId: 'codex', model: 'x' });
+
+    expect(excerpt.mock.calls).toEqual([['mission-0']]);
+    expect(spawnAgent).toHaveBeenCalledWith('codex', 'x');
+    console.info('[perf-budget] + Pane healthy mission: excerpt reads', excerpt.mock.calls.length);
+  });
+
+  it('recuperação lê uma vez o histórico selecionado e ignora missão encerrada', () => {
+    mount();
+    useLayoutStore.setState({
+      root: buildGridTree([
+        { id: 'done', kind: 'cli-agent', title: 'Done', missionId: 'm-done' },
+        { id: 'dead', kind: 'cli-agent', title: 'Dead', missionId: 'm-live' },
+      ]), focusedPaneId: 'dead',
+    });
+    useOrchStore.setState({ missions: [
+      { id: 'm-done', status: 'done' }, { id: 'm-live', status: 'running' },
+    ] as never });
+    const excerpt = vi.fn(() => 'Please run /login — trabalho a continuar');
+    window.__nexusGetScrollbackExcerpt = excerpt;
+
+    runPanePickerIntent({ kind: 'agent', adapterId: 'codex', model: 'x' });
+
+    expect(excerpt.mock.calls).toEqual([['dead']]);
+    expect(spawnAgent).toHaveBeenCalledWith('codex', 'x', {
+      continuityPack: expect.stringContaining('trabalho a continuar'),
+    });
   });
 
   describe('roteamento por especialidade de CLI e modelo', () => {
