@@ -62,6 +62,13 @@ const harness = vi.hoisted(() => ({
   /** F-1470: contas que o store do Main conhece (id → provider, cooldown). */
   accounts: new Map<string, { adapterId: string; blocked?: boolean }>(),
   probe: vi.fn(async (..._args: unknown[]) => undefined),
+  /** A conversa gravada do pane de origem ainda existe (false = a CLI disse "No conversation found"). */
+  conversationRecorded: true,
+}));
+
+vi.mock('../persistence/provider-session-store', async importOriginal => ({
+  ...(await importOriginal<typeof import('../persistence/provider-session-store')>()),
+  getProviderPaneSession: () => (harness.conversationRecorded ? { key: 'session_id' as const, id: 'conversa-gravada' } : null),
 }));
 
 vi.mock('../persistence/account-store', async importOriginal => {
@@ -1316,7 +1323,10 @@ describe('F-1470: o Maestro volta numa conta do provider aprovado e a recusa diz
       { adapterId: 'claude', accountId: 'acct-b', resume: false }],
     ['com cota: a conversa é retomada na própria conta', false,
       { adapterId: 'claude', accountId: 'acct-operador', resume: true, resumeFromPaneId: 'pane-operador' }],
-  ])('A3: retomada da aba com a conta da conversa %s', async (_name, exhausted, expected) => {
+    ['com cota, mas a CLI esqueceu a conversa ("No conversation found"): o orquestrador reabre em conversa nova em vez de recusar', false,
+      { adapterId: 'claude', accountId: 'acct-operador', resume: false }, true],
+  ])('A3: retomada da aba com a conta da conversa %s', async (_name, exhausted, expected, conversationLost = false) => {
+    harness.conversationRecorded = !conversationLost;
     harness.accounts.set('acct-operador', { adapterId: 'claude', blocked: exhausted });
     harness.accounts.set('acct-b', { adapterId: 'claude' });
     const { ProjectRuntimeManager } = await import('../runtime/project-runtime-manager');
@@ -1350,6 +1360,11 @@ describe('F-1470: o Maestro volta numa conta do provider aprovado e a recusa diz
         expect(String(spawn.initialPrompt)).toContain('Esta conversa foi retomada');
         expect(String(spawn.initialPrompt)).toContain('outra conta do mesmo provedor');
       }
-    } finally { harness.realPaneStore = null; manager.closeAll(); fs.rmSync(root, { recursive: true, force: true }); }
+      if (conversationLost) {
+        expect(spawn.resumeFromPaneId).toBeUndefined();
+        expect(String(spawn.initialPrompt)).toContain('não existe mais na CLI');
+        expect(String(spawn.initialPrompt)).toContain('nexus_handoff_list');
+      }
+    } finally { harness.conversationRecorded = true; harness.realPaneStore = null; manager.closeAll(); fs.rmSync(root, { recursive: true, force: true }); }
   });
 });

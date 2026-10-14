@@ -6,7 +6,7 @@ import {
 } from '../../shared/voice-config';
 import type { TranscribeRequest } from '../../shared/voice-ipc';
 import type { ProviderProbes } from './provider-select';
-import { transcribe, describeHttpFailure, resolveEndpoint, type SttDeps } from './stt-service';
+import { transcribe, cloudTimeoutForPayload, describeHttpFailure, resolveEndpoint, type SttDeps } from './stt-service';
 
 const REQ: TranscribeRequest = {
   audioBase64: Buffer.from('fake-wav').toString('base64'),
@@ -80,6 +80,34 @@ describe('resolveEndpoint', () => {
         false,
       ),
     ).toBe('https://x/openai/v1/audio/transcriptions');
+  });
+});
+
+describe('transcribe — needsKey e timeout por payload', () => {
+  it('Groq sem chave + OpenAI com timeout NÃO é "precisa de chave"', async () => {
+    const fetchImpl = vi.fn(async () => {
+      const e = new Error('t');
+      e.name = 'TimeoutError';
+      throw e;
+    }) as unknown as typeof fetch;
+    const getEnv = vi.fn((n: string) =>
+      n === 'GROQ_API_KEY' || n === 'GEMINI_API_KEY' || n === 'XAI_API_KEY' ? undefined : 'k',
+    );
+    const r = await transcribe(REQ, config(), PROBES, deps({ fetchImpl, getEnv }));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.needsKey).toBe(false);
+  });
+
+  it('todos sem chave continua needsKey', async () => {
+    const r = await transcribe(REQ, config(), PROBES, deps({ getEnv: () => undefined }));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.needsKey).toBe(true);
+  });
+
+  it('timeout cresce com o payload (12 s curto, teto 60 s)', () => {
+    expect(cloudTimeoutForPayload(100_000)).toBe(12_000);
+    expect(cloudTimeoutForPayload(11 * 1_048_576)).toBe(32_000);
+    expect(cloudTimeoutForPayload(500 * 1_048_576)).toBe(60_000);
   });
 });
 

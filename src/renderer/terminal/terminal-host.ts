@@ -250,6 +250,8 @@ interface Host {
   inputVisibility: TerminalInputVisibilityController;
   ghostAssist?: TerminalGhostAssist;
   cleanups: Array<() => void>;
+  /** Único receptor de teclado do xterm deste host (um dono por sessão). */
+  inputListener?: { dispose(): void };
   /** Live WebGL addon while this host holds a lease from the pool. */
   webgl?: WebglAddon;
   /**
@@ -1733,6 +1735,11 @@ function startSpawn(
           clearTimeout(continuationTimer);
         });
       }
+      // Um único dono da entrada: respawn que não passou por `cleanups`
+      // (acordar após exit, spawn adiado) deixaria o listener da sessão
+      // anterior vivo — ele escreve em `host.sessionId` (a NOVA) e cada tecla
+      // chegaria duas vezes ao PTY ("bbuugg").
+      host.inputListener?.dispose();
       const input = host.term.onData((data) => {
         // B1 (F-1393): o operador assumiu o pane — o ditado pendente dele cai
         // (relatórios automáticos do terminal, como foco e mouse, não contam).
@@ -1851,7 +1858,11 @@ function startSpawn(
         }
         window.nexus.pty.write(host.sessionId, data);
       });
-      host.cleanups.push(() => input.dispose());
+      host.inputListener = input;
+      host.cleanups.push(() => {
+        input.dispose();
+        if (host.inputListener === input) host.inputListener = undefined;
+      });
       return res.sessionId;
     } catch (err) {
       if (host.disposed || host.spawnGeneration !== generation) return null;

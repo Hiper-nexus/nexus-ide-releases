@@ -63,9 +63,12 @@ import {
   NEXUS_BROWSER_BRIEF_RULE,
   hasNexusBrowserAlternative,
 } from './nexus-browser-policy';
+import { getProviderPaneSession } from '../persistence/provider-session-store';
 import {
+  OPERATOR_TAB_RESUME_LOST_NOTE,
   OPERATOR_TAB_RESUME_NOTE,
   beginOperatorTabResumeTransfer,
+  planOperatorTabResume,
   operatorTabMissionLeader,
   operatorTabMissionResumeSpec,
   operatorTabResumeAgent,
@@ -2286,6 +2289,7 @@ async function respawnFastLaneOrchestrator(
   // entre contas). Conta da linha sem cota → irmã do mesmo provider, numa
   // conversa nova com o aviso; sem irmã utilizável, segue a conta da linha.
   let resumeAccountId = operatorResume?.accountId;
+  let resumePlan: ReturnType<typeof planOperatorTabResume> | undefined;
   if (operatorResume) {
     orchestrator = operatorTabResumeAgent(
       operatorResume,
@@ -2298,10 +2302,26 @@ async function respawnFastLaneOrchestrator(
     const accountNote = resumeAccountId !== operatorResume.accountId
       ? 'A conta da conversa anterior ficou sem cota; esta conversa é nova, em outra conta do mesmo provedor.'
       : undefined;
+    // O vínculo da conversa pode ter sido esquecido (a CLI disse "No
+    // conversation found"): sem linha, o spawn recusava a retomada para sempre.
+    let conversationRecorded = true;
+    try {
+      conversationRecorded = Boolean(
+        operatorResume.paneId &&
+          getProviderPaneSession(scope, operatorResume.paneId, orchestrator.cli, resumeAccountId),
+      );
+    } catch {
+      conversationRecorded = true; // na dúvida mantém o caminho de retomada exata
+    }
+    resumePlan = planOperatorTabResume({
+      sameAccount: resumeAccountId === operatorResume.accountId,
+      conversationRecorded,
+    });
     prompt = buildRespawnPrompt({
       basePrompt: OPERATOR_TAB_RESUME_NOTE,
       awaitingAdjustment: operatorTabResumeAwaitsAdjustment(live),
-      note: [options.note, accountNote].filter(Boolean).join(' ') || undefined,
+      note: [options.note, accountNote, resumePlan.conversationLost ? OPERATOR_TAB_RESUME_LOST_NOTE : undefined]
+        .filter(Boolean).join(' ') || undefined,
     });
   } else {
     const squad = resolveFastLaneSquad(mission.squadId);
@@ -2450,7 +2470,7 @@ async function respawnFastLaneOrchestrator(
     const result = operatorResume
       ? await spawnAgentPane(scope, live, orchestrator, prompt, operatorResume.title, {
           invocation, onBootstrapRuntime: captureRuntime, ownFailureCleanup: true,
-          ...(resumeAccountId === operatorResume.accountId
+          ...(resumePlan?.resumeFromPane
             ? { resumeFromPaneId: operatorResume.paneId }
             : { replaceOrchestratorRow: composition.find(row => row.id === operatorResume.id) }),
           ...(resumeAccountId ? { accountId: resumeAccountId } : {}),

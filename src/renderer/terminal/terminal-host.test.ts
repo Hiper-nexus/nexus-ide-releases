@@ -145,6 +145,7 @@ import {
   getOrCreateHost,
   getPaneSessionId,
   hibernateHost,
+  wakeHost,
   holdSpawnUntilApproved,
   markPaneClosingDeliberately,
   orchAutoReliveGate,
@@ -938,6 +939,27 @@ describe('reabertura de pane encerrado', () => {
     for (const listener of [...xtermEvents.onData]) listener('c');
 
     expect(ptyWrite).toHaveBeenCalledExactlyOnceWith('pty-new', 'c');
+  });
+
+  it('acordar após o exit não soma um segundo receptor de teclado (letras duplicadas)', async () => {
+    spawn
+      .mockResolvedValueOnce({ ok: true, sessionId: 'pty-a' })
+      .mockResolvedValueOnce({ ok: true, sessionId: 'pty-b' });
+    const host = getOrCreateHost(pane);
+    setHostSize(host.element, 1200, 800);
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(pane, slot);
+    expect(await waitForSession(pane.id, 1_000)).toBe('pty-a');
+
+    ptyExitListeners.get('pty-a')?.({ exitCode: 0 });
+    expect(wakeHost(pane)).toBe(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await waitForSession(pane.id, 1_000)).toBe('pty-b');
+
+    ptyWrite.mockClear();
+    for (const listener of [...xtermEvents.onData]) listener('b');
+    expect(ptyWrite).toHaveBeenCalledExactlyOnceWith('pty-b', 'b');
   });
 });
 

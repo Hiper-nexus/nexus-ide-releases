@@ -50,6 +50,17 @@ export interface SttDeps {
 export const STT_CLOUD_TIMEOUT_MS = 12_000;
 export const STT_LOCAL_TIMEOUT_MS = 30_000;
 /**
+ * O deadline de 12 s cobria upload + decodificação: ditado de 4–10 min (7–20 MB
+ * de WAV) estourava antes de a resposta chegar. Soma 2 s por MB de base64
+ * acima de 1 MB, teto de 60 s; clipes curtos mantêm os 12 s.
+ */
+const LIVE_FAILURE_RE = /timeout|network error|\(\d{3}|throttl|empty transcript|failed/i;
+
+export function cloudTimeoutForPayload(base64Chars: number): number {
+  const mb = Math.max(0, base64Chars / 1_048_576 - 1);
+  return Math.min(60_000, Math.round(STT_CLOUD_TIMEOUT_MS + mb * 2_000));
+}
+/**
  * ITEM 7 (STT stall bound on the WAKE path): 12s/cloud is too long for a
  * conversational wake turn — a hung Whisper cloud held the turn ~16s and the HUD
  * lapsed. On the wake path we tighten the per-cloud deadline AND cap the total
@@ -820,6 +831,7 @@ export async function transcribe(
     : flattenChain(config.stt);
   const attempts: SttAttempt[] = [];
   let anyNeedsKey = false;
+  let liveFailure = false;
 
   // ITEM 7: wake-path budget. When set, the cloud chain is bounded — one cloud
   // attempt on a tight deadline, then straight to keyless local whisper.cpp.
@@ -869,6 +881,8 @@ export async function transcribe(
       }
     } else if (passiveWake && isCloud) {
       cloudTimeoutMs = STT_PASSIVE_WAKE_CLOUD_TIMEOUT_MS;
+    } else if (isCloud) {
+      cloudTimeoutMs = cloudTimeoutForPayload(req.audioBase64.length);
     }
 
     const outcome = await attemptProvider(plugin, req, deps, cloudTimeoutMs);
@@ -888,6 +902,9 @@ export async function transcribe(
       };
     }
     anyNeedsKey = anyNeedsKey || outcome.needsKey;
+    // Falha de provedor que TENTOU (timeout, rede, HTTP, vazio) — ausência de
+    // chave/binário não conta.
+    if (!outcome.needsKey && LIVE_FAILURE_RE.test(outcome.reason)) liveFailure = true;
     attempts.push({ provider: plugin.provider, reason: outcome.reason });
   }
 
@@ -897,7 +914,9 @@ export async function transcribe(
     : 'Set XAI_API_KEY, GROQ_API_KEY or OPENAI_API_KEY, or install whisper.cpp for a keyless local fallback.';
   return {
     ok: false,
-    needsKey: anyNeedsKey,
+    // Um Groq sem chave não pode rotular como falta de chave o timeout/erro de
+    // quem de fato tentou (voice.log 14/10: 3× stt-needs-key após ~30 s).
+    needsKey: anyNeedsKey && !liveFailure,
     attempts,
     ...(stalled ? { stalled: true } : {}),
     error:

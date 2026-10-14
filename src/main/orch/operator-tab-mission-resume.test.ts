@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Mission, MissionPaneSpec } from '../../shared/orch-types';
 import {
+  OPERATOR_TAB_RESUME_LOST_NOTE,
   OPERATOR_TAB_RESUME_NOTE,
+  planOperatorTabResume,
   beginOperatorTabResumeTransfer,
   isOperatorTabResumeTransferSource,
   operatorTabMissionResumeSpec,
@@ -95,5 +97,23 @@ describe('transferência da conversa da aba (F-721)', () => {
     first!();
     expect(isOperatorTabResumeTransferSource('mission-a', 'pane-antigo')).toBe(true);
     second!();
+  });
+});
+
+describe('planOperatorTabResume (conversa esquecida não trava a retomada)', () => {
+  it('conversa gravada na mesma conta: retoma exato', () => {
+    expect(planOperatorTabResume({ sameAccount: true, conversationRecorded: true }))
+      .toEqual({ resumeFromPane: true, replaceRow: false, conversationLost: false });
+  });
+
+  it('vínculo esquecido (CLI disse "No conversation found"): nasce nova em vez de recusar para sempre', () => {
+    const plan = planOperatorTabResume({ sameAccount: true, conversationRecorded: false });
+    expect(plan).toEqual({ resumeFromPane: false, replaceRow: true, conversationLost: true });
+    expect(OPERATOR_TAB_RESUME_LOST_NOTE).toContain('nexus_handoff_list');
+  });
+
+  it('troca de conta segue o caminho já existente (conversa nova, linha substituída)', () => {
+    expect(planOperatorTabResume({ sameAccount: false, conversationRecorded: true }))
+      .toEqual({ resumeFromPane: false, replaceRow: true, conversationLost: false });
   });
 });
