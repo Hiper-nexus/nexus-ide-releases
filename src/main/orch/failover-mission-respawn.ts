@@ -47,8 +47,11 @@ import { makeId } from './store-util';
 import type { OrchPaneSpawnResult } from '../../shared/orch-types';
 import {
   FAILOVER_HANDOFF_FOOTER,
+  FAILOVER_HANDOFF_HEADER,
   buildContinuityPack,
   buildCrossAccountResumeNote,
+  sanitizeHandoffExcerptForDetector,
+  sanitizeHandoffHistoryText,
   type ContinuityPackInput,
 } from '../../shared/failover-handoff';
 import {
@@ -818,7 +821,7 @@ export async function respawnMainOwnedPaneWithAccount(input: {
     if (delta.length && spawned.sessionId && spawnedOptions && !resumeClosed && !getAcpDriverSession(spawned.sessionId)) {
       const forwarded = await (deps.deliverBrief ?? pasteRespawnBrief)(
         spawned.sessionId,
-        `${RESPAWN_DELTA_PREAMBLE}\n${delta.join('\n---\n')}`,
+        respawnDeltaPrompt(delta),
         spawnedOptions.adapterId,
       ).catch(() => false);
       if (!forwarded) {
@@ -1010,6 +1013,19 @@ function transferTaskDispatch(
 const RESPAWN_DELTA_PREAMBLE =
   'Request accepted by your previous pane while Nexus was switching the account ' +
   '(forwarded once; follow it together with the current task):';
+
+/**
+ * F-1512: o delta vai na faixa header→footer do pacote (o detector a ignora
+ * e a memória de pedidos não a grava de novo — `noteInFlightRequest` exclui o
+ * header) e cada pedido como texto citado do pacote: segredo redigido com as
+ * linhas inteiras, achatado e só então neutralizado — um limite citado pelo
+ * Maestro não vira sinal vivo no pane novo.
+ */
+function respawnDeltaPrompt(delta: readonly string[]): string {
+  const requests = delta.map((request) =>
+    `- ${sanitizeHandoffExcerptForDetector(sanitizeHandoffHistoryText(request).replace(/\s+/g, ' ').trim())}`);
+  return [FAILOVER_HANDOFF_HEADER, RESPAWN_DELTA_PREAMBLE, ...requests, FAILOVER_HANDOFF_FOOTER].join('\n');
+}
 
 /** Lease inicial da tarefa no pane novo: o heartbeat dele renova (≤ 4 min). */
 const TRANSFERRED_DISPATCH_LEASE_MS = 10 * 60_000;

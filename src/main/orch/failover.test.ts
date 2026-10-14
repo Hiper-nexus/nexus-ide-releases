@@ -1528,6 +1528,48 @@ describe('espera-pela-irmã + cooldown escopado (C1, derivado do oh-my-pi)', () 
     }
   });
 
+  it('F-1512: a espera restaurada cancelada por um limite novo sai do disco — não ressuscita no próximo boot', async () => {
+    const Database = (await import('better-sqlite3')).default;
+    const db = new Database(':memory:');
+    initFailoverWaits(db as never);
+    try {
+      storeMocks.missionStatus = 'running';
+      vi.mocked(getAccount).mockImplementation((id: string) =>
+        id === 'account-a' ? { ...accountMocks.current, cooldownUntil: 160_000 } as Account
+          : id === 'account-b' ? accountMocks.next : null);
+      const owner = armPane(860);
+      vi.mocked(pickAvailableForFailover).mockImplementationOnce(() => ({
+        account: null, probe: false, nextUnblockAtMs: 130_000,
+      }));
+      ptyMocks.dataTaps[0]!('sess-860', 'LIMIT');
+      await settleFailover();
+      expect(listFailoverWaits()).toEqual([expect.objectContaining({ paneId: 'pane-860', retryAt: 131_000 })]);
+
+      // Reinício: a espera volta armada; depois um limite novo no mesmo pane troca na hora.
+      shutdownFailover();
+      storeMocks.scopes.push(testProjectScope());
+      initFailover();
+      registerFailoverListener(owner);
+      await vi.advanceTimersByTimeAsync(10_000);
+      const reroute = vi.fn<PaneTaskRerouteHandle['reroute']>(async () => ({ paneId: 'pane-860-b', adapterId: 'claude' }));
+      registerPaneTaskReroute(taskHandle('pane-860', reroute));
+      ptyMocks.dataTaps[0]!('sess-860', 'LIMIT');
+      await settleFailover();
+      await settleFailover();
+      expect(reroute).toHaveBeenCalledTimes(1);
+      expect(listFailoverWaits()).toEqual([]);
+    } finally {
+      vi.mocked(getAccount).mockImplementation((id: string) => {
+        if (id === accountMocks.current.id) return accountMocks.current as Account;
+        if (accountMocks.next && id === accountMocks.next.id) return accountMocks.next;
+        return null;
+      });
+      resetPaneTaskReroutesForTests();
+      initFailoverWaits(null);
+      db.close();
+    }
+  });
+
   it('F-1483: depois do reinício, missão que não está mais rodando não remonta sozinha — o fato vai ao Maestro', async () => {
     const Database = (await import('better-sqlite3')).default;
     const db = new Database(':memory:');

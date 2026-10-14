@@ -4036,18 +4036,20 @@ function handleObserverFrame(frame: ObserverFrame): void {
  * o reinício (o pedido de spawn é só memória): o Maestro recebe como reabrir.
  * ------------------------------------------------------------------------ */
 
-const restoredWaits = new Map<string, ReturnType<typeof setTimeout>>();
+const restoredWaits = new Map<string, { readonly timer: ReturnType<typeof setTimeout>; readonly row: FailoverWaitRow }>();
 let unsubscribeWaitScopes: (() => void) | null = null;
 
 /**
  * F-1489: um limite novo ou outra espera do mesmo pane substitui a espera
  * restaurada — dois timers não sobrevivem juntos, e a linha gravada é da nova.
+ * F-1512: a linha restaurada sai junto (só ela), senão ressuscitava no boot.
  */
 function cancelRestoredWait(paneId: string): void {
-  const timer = restoredWaits.get(paneId);
-  if (!timer) return;
-  clearTimeout(timer);
+  const restored = restoredWaits.get(paneId);
+  if (!restored) return;
+  clearTimeout(restored.timer);
   restoredWaits.delete(paneId);
+  deleteFailoverWait(paneId, restored.row);
 }
 
 function rearmFailoverWaits(scope: ProjectExecutionScope, suite: ProjectDomainStoreSuite): void {
@@ -4085,7 +4087,7 @@ function rearmFailoverWaits(scope: ProjectExecutionScope, suite: ProjectDomainSt
       }
     }, target - now);
     timer.unref?.();
-    restoredWaits.set(row.paneId, timer);
+    restoredWaits.set(row.paneId, { timer, row });
   }
 }
 
@@ -4221,7 +4223,7 @@ export function shutdownFailover(): void {
   accountLimitCommits.clear();
   // F-1483: as esperas gravadas ficam para o próximo boot.
   for (const key of [...pendingRetries.keys()]) cancelScheduledRetry(key, { keepPersisted: true });
-  for (const timer of restoredWaits.values()) clearTimeout(timer);
+  for (const restored of restoredWaits.values()) clearTimeout(restored.timer);
   restoredWaits.clear();
   unsubscribeWaitScopes?.();
   unsubscribeWaitScopes = null;

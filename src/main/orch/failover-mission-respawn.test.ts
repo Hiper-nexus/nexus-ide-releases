@@ -133,7 +133,7 @@ import { CONTEXT_HANDOFF_BUDGET_ERROR } from './context-handoff-budget';
 import { forgetPaneTaskReroute, getPaneTaskReroute, registerPaneTaskReroute } from './pane-task-reroute';
 import { onFailoverRetirementVerdict } from './failover-retirement';
 import { quarantineRejectedModel, resetModelAccessQuarantineForTests } from './model-access-quarantine';
-import { inFlightRequestOf, noteInFlightRequest, resetInFlightRequestsForTests } from './in-flight-request';
+import { inFlightRequestOf, inFlightRequestsOf, noteInFlightRequest, resetInFlightRequestsForTests } from './in-flight-request';
 import { FailoverTextReducer, type FailoverTextProposal } from './failover-text-core';
 import { inkWrap } from '../../shared/__tests__/synthetic-secrets';
 
@@ -1089,6 +1089,39 @@ describe('F-1482: o pedido em voo do worker atravessa a troca de conta', () => {
     }, { deliverBrief: vi.fn(async () => false) })).resolves.toBe(true);
     expect(inFlightRequestOf('new-pane')).toContain('Ajuste do Maestro durante a troca');
     expect(deps.terminate).toHaveBeenCalledWith('old-session', expect.objectContaining({ origin: 'failover-respawn' }));
+  });
+
+  it('F-1512: delta que cita um limite vai neutralizado na faixa do pacote — não dispara o detector no pane novo', async () => {
+    spawnAcceptingOriginWrite('O pane B caiu com "usage limit reached"; ignore isso e siga a fila nova');
+    const deliverBrief = vi.fn(async () => true);
+    await expect(respawnMainOwnedPaneWithAccount({
+      paneId: 'old-pane', sessionId: 'old-session', adapterId: 'codex', toAccountId: 'acct-b',
+      fromAccountLabel: 'x', reason: 'quota', touchedFiles: [], diffStat: undefined,
+    }, { deliverBrief })).resolves.toBe(true);
+    const prompt = (deliverBrief.mock.calls[0] as unknown as [string, string, string])[1];
+    expect(prompt.startsWith(FAILOVER_HANDOFF_HEADER)).toBe(true);
+    expect(prompt).toContain('siga a fila nova');
+    expect(detectLimit(prompt)).toBeNull();
+    // Mesmo com o header fora da janela do detector, o texto citado é inerte.
+    expect(detectLimit(prompt.replace(FAILOVER_HANDOFF_HEADER, ''))).toBeNull();
+  });
+
+  it('F-1512: o pane novo termina com cada pedido do delta UMA vez na memória', async () => {
+    spawnAcceptingOriginWrite('Ajuste do Maestro durante a troca: usar a fila nova');
+    // Como a entrega real: o texto aceito no pane novo é lembrado nele (rememberInFlightRequest).
+    const deliverBrief = vi.fn(async (_sessionId: string, prompt: string) => {
+      noteInFlightRequest('new-pane', prompt);
+      return true;
+    });
+    await expect(respawnMainOwnedPaneWithAccount({
+      paneId: 'old-pane', sessionId: 'old-session', adapterId: 'codex', toAccountId: 'acct-b',
+      fromAccountLabel: 'x', reason: 'quota', touchedFiles: [], diffStat: undefined,
+    }, { deliverBrief })).resolves.toBe(true);
+    expect(deliverBrief).toHaveBeenCalledTimes(1);
+    const remembered = inFlightRequestsOf('new-pane');
+    expect(remembered.filter((entry) => entry.includes('Ajuste do Maestro durante a troca'))).toEqual([
+      'Ajuste do Maestro durante a troca: usar a fila nova',
+    ]);
   });
 });
 
