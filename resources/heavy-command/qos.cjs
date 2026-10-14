@@ -1,0 +1,24 @@
+// Darwin utility QoS for an already-admitted heavy job. taskpolicy -c utility
+// clamps the process to QOS_CLASS_UTILITY (0x11). -b (PRIO_DARWIN_BG) pins
+// Apple Silicon efficiency cores: warm tsc 29.92s → 129.05s, and the heavy
+// native command file 26.00s → 43.22s. Fail-open: non-darwin, NEXUS_HEAVY_QOS=0,
+// or no taskpolicy keeps a direct spawn.
+const fs = require('node:fs');
+const TASKPOLICY = '/usr/sbin/taskpolicy';
+
+function spawnBackground(cp, file, args, options) {
+  if (process.platform !== 'darwin' || process.env.NEXUS_HEAVY_QOS === '0' || file === TASKPOLICY) {
+    return cp.spawn(file, args, options);
+  }
+  try { fs.accessSync(TASKPOLICY, fs.constants.X_OK); } catch { return cp.spawn(file, args, options); }
+  // Node's unix shell mode is `[file, ...args].join(' ')` under /bin/sh -c.
+  // taskpolicy must exec that shell; shell:true would wrap taskpolicy itself.
+  const shell = options && options.shell;
+  if (shell) {
+    const bin = typeof shell === 'string' ? shell : '/bin/sh';
+    return cp.spawn(TASKPOLICY, ['-c', 'utility', bin, '-c', [file, ...args].join(' ')], { ...options, shell: false });
+  }
+  return cp.spawn(TASKPOLICY, ['-c', 'utility', file, ...args], options);
+}
+
+module.exports = { spawnBackground };

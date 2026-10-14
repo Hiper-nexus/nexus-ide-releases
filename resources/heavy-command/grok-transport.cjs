@@ -102,7 +102,10 @@ async function main() {
     child.once('error', () => { failed = true; });
     child.stdio[5].once('error', () => { failed = true; try { child.kill('SIGTERM'); } catch {} });
     child.stdio[5].end(Buffer.concat([input, Buffer.from([0])]));
-    child.once('close', (code, signal) => relay.finish(failed ? 78 : code, signal));
+    // FD 5 is a real pipe. 'close' waits for every holder; the direct child
+    // exiting is the job. Spawn that never starts still emits 'close' only.
+    child.once('exit', (code, signal) => relay.finish(failed ? 78 : code, signal));
+    child.once('close', () => { if (child.exitCode === null && child.signalCode === null) relay.finish(78, null); });
   } catch { relay.finish(78, null); }
 }
 if (require.main === module) void main();

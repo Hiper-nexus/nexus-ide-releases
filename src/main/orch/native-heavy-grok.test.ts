@@ -9,7 +9,7 @@ import { expect, it } from 'vitest';
 import { NativeHeavyCommands } from './native-heavy-command';
 import { selectGrokHeavyShell } from './native-heavy-preload';
 import { nestedHeavyJobBaseCommand, supervisedPtyCommand } from '../pty/darwin-pty-supervisor';
-import { skipUnderNexusPtySupervisor } from '../../test/nested-pty-supervisor';
+import { realpathOrSkip, skipUnderNexusPtySupervisor } from '../../test/nested-pty-supervisor';
 import { watchDarwinHeavyCommand } from '../pty/darwin-heavy-command';
 import { OwnedCommandProcesses } from '../pty/owned-command-process';
 import { HeavyCommandPermitPool } from './heavy-command-permit';
@@ -33,7 +33,7 @@ function streamMessage(res: http.ServerResponse, model: string, content: { type:
 
 it.runIf(process.platform === 'darwin' && Boolean(grok))('real Grok native Bash is admitted by inherited scoped shell env before absolute sh/make', async (testContext) => {
  skipUnderNexusPtySupervisor(testContext);
- const actualGrok = fs.realpathSync(grok!), binarySha256 = createHash('sha256').update(fs.readFileSync(actualGrok)).digest('hex');
+ const actualGrok = realpathOrSkip(testContext, grok!, 'grok'), binarySha256 = createHash('sha256').update(fs.readFileSync(actualGrok)).digest('hex');
  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-heavy-real-grok-'));
  fs.writeFileSync(path.join(root, 'Makefile'), 'all:\n\t@printf done > command-ran\n\t@printf x >> command-count\n');
  fs.writeFileSync(path.join(root, '.bashrc'), `finite_snapshot() { printf x >> snapshot-count; printf preserved > ${JSON.stringify(path.join(root, 'snapshot-preserved'))}; }\n`);
@@ -90,7 +90,7 @@ it.runIf(process.platform === 'darwin' && Boolean(grok))('real Grok native Bash 
   const childName = name === 'grok-transport.cjs' ? 'child' : 'job';
   const failureCode = name === 'grok-transport.cjs' ? 78 : 127;
   contents = replaceOnce(contents, `${childName}.once('error', () => { failed = true; });`, `${childName}.once('error', () => { finiteDiagnostic('child-error'); failed = true; });`);
-  contents = replaceOnce(contents, `${childName}.once('close', (code, signal) => relay.finish(failed ? ${failureCode} : code, signal));`, `${childName}.once('close', (code, signal) => { if (code === 78) finiteDiagnostic('child-exit-78'); relay.finish(failed ? ${failureCode} : code, signal); });`);
+  contents = replaceOnce(contents, `${childName}.once('exit', (code, signal) => relay.finish(failed ? ${failureCode} : code, signal));`, `${childName}.once('exit', (code, signal) => { if (code === 78) finiteDiagnostic('child-exit-78'); relay.finish(failed ? ${failureCode} : code, signal); });`);
   if (name === 'grok-transport.cjs') {
    contents = replaceOnce(contents, "child.stdio[5].once('error', () => { failed = true; try { child.kill('SIGTERM'); } catch {} });", "child.stdio[5].once('error', () => { finiteDiagnostic('frame-write-error'); failed = true; try { child.kill('SIGTERM'); } catch {} });");
    contents = replaceOnce(contents, "'use strict';", "'use strict';\n" + logger);

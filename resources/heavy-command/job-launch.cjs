@@ -50,11 +50,14 @@ async function main() {
     }
     delete env.NEXUS_HEAVY_INHERITED_FD3;
     if (relay.signal.aborted) throw new Error('job cancelled');
-    const job = cp.spawn(target, targetArgs, { env, stdio });
+    const job = require('./qos.cjs').spawnBackground(cp, target, targetArgs, { env, stdio });
     relay.bind(job);
     let failed = false;
     job.once('error', () => { failed = true; });
-    job.once('close', (code, signal) => relay.finish(failed ? 127 : code, signal));
+    // Exit of the direct child, not stdio close: a grandchild holding an
+    // inherited pipe must not keep this process (and its root slot) alive.
+    job.once('exit', (code, signal) => relay.finish(failed ? 127 : code, signal));
+    job.once('close', () => { if (job.exitCode === null && job.signalCode === null) relay.finish(127, null); });
   } catch { relay.finish(78, null); }
 }
 void main();

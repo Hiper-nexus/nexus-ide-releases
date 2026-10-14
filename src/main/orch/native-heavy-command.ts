@@ -20,20 +20,33 @@ export interface NativeHeavyCommandPorts {
   acquire(request: HeavyCommandRequest): Promise<HeavyCommandPermit>;
   /** F-1229: the job's real root when it is this repository's checkout/worktree. */
   executionRoot?(scope: Readonly<ProjectExecutionScope>, cwd: string): Promise<Readonly<ProjectExecutionScope> | undefined>;
+  /** Admitted executor still alive. Absent: fake pids keep the slot until the authority probe is gone. */
+  executorLive?(pid: number): boolean;
   afterDrain?(): Promise<void>;
+}
+/** kill(pid, 0). ESRCH is gone; EPERM is alive. Any other error keeps the slot.
+ * A pid reused inside the 250 ms poll stays live until the authority exits. */
+export function heavyExecutorIsLive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; }
+  catch (error) { return (error as NodeJS.ErrnoException).code !== 'ESRCH'; }
 }
 /** F-1229: the 74 says it was a queue wait, for how long and behind what. */
 function queueWaitMessage(wait: HeavyCommandQueueWait): string {
   const root = wait.root.length > 160 ? `…${wait.root.slice(-159)}` : wait.root;
   // F-1434: RAM is named only when free RAM was really below the reserve.
   const gb = (mb: number) => (mb / 1024).toFixed(1);
+  const effective = wait.effectiveMaxActive ?? wait.maxActive;
+  // Same-root serialization still wins when the shrunk cap has room.
+  const pressureBlocked = effective < wait.maxActive && wait.running === 0 && wait.machineActive >= effective;
   const cause = wait.running > 0 ? 'one job per root at a time'
+    : pressureBlocked ? 'esperando: pressão de memória'
     : wait.machineActive >= wait.maxActive ? `machine limit of ${wait.maxActive} parallel heavy jobs`
     : wait.memory?.swapBound ? 'swap use above the configured limit'
     : wait.memory && wait.memory.freeMB !== null && wait.memory.freeMB < wait.memory.neededMB ? `free RAM ${gb(wait.memory.freeMB)} GB below the ${gb(wait.memory.neededMB)} GB reserve`
     : 'machine capacity, not this root';
+  const shown = pressureBlocked ? effective : wait.maxActive;
   return `nexus-heavy: gave up after ${Math.round(wait.waitedMs / 1000)} s in the admission queue of ${root}: ` +
-    `${wait.running} job(s) running there, ${wait.waiting} more waiting (${cause}); machine ${wait.machineActive}/${wait.maxActive} heavy jobs running.`;
+    `${wait.running} job(s) running there, ${wait.waiting} more waiting (${cause}); machine ${wait.machineActive}/${shown} heavy jobs running.`;
 }
 /** F-1434: every refusal carries the line the shell prints; none blames CPU/RAM. */
 function denied(reason: string, detail: string): Admission {
@@ -45,7 +58,7 @@ const POOL_REFUSALS: Readonly<Record<string, string>> = {
   heavy_command_queue_full: 'too many heavy commands are already waiting for admission',
   heavy_command_authority_revoked: 'this terminal lost its Nexus authority while waiting for a slot',
 };
-interface Flight { ctx: AgentGateContext; claim: string; permit: HeavyCommandPermit; done: Promise<void> }
+interface Flight { ctx: AgentGateContext; claim: string; permit: HeavyCommandPermit; pid: number; slotReleased: boolean; done: Promise<void> }
 /** No remote release endpoint. Kernel identity disappearance or physical PTY
  * proof alone releases RAM/CPU; PostToolUse never does. */
 export class NativeHeavyCommands {
@@ -97,7 +110,7 @@ export class NativeHeavyCommands {
       const code = failure instanceof Error ? failure.message : '';
       return denied('heavy_command_admission_denied', POOL_REFUSALS[code] ?? `admission failed (${code || 'unknown'})`);
     }
-    const flight: Flight = { ctx, claim, permit, done: Promise.resolve() }; this.#flights.add(flight);
+    const flight: Flight = { ctx, claim, permit, pid: body.data.pid, slotReleased: false, done: Promise.resolve() }; this.#flights.add(flight);
     flight.done = this.#observe(flight); void flight.done.catch(() => {});
     let state: CommandProcessState = 'unknown';
     try { state = await this.ports.probe(ctx.sessionId, claim); } catch { /* unknown is not permission */ }
@@ -131,6 +144,14 @@ export class NativeHeavyCommands {
       let state: CommandProcessState = 'unknown';
       try { state = await this.ports.probe(flight.ctx.sessionId!, flight.claim); } catch { /* unknown is not exit */ }
       if (state === 'gone') { flight.permit.release(); this.#flights.delete(flight); return; }
+      // B's admit pid dies when the direct job exits. A (the probe) stays up
+      // while the responsibility cohort drains. The root slot follows B;
+      // this flight stays so drain/stop can still signal A.
+      if (!flight.slotReleased && this.ports.executorLive) {
+        let live = true;
+        try { live = this.ports.executorLive(flight.pid); } catch { live = true; }
+        if (!live) { flight.slotReleased = true; flight.permit.release(); }
+      }
       await new Promise<void>((resolve) => { const timer = setTimeout(resolve, 250); timer.unref?.(); });
     }
   }
@@ -149,6 +170,7 @@ export class NativeHeavyCommands {
 }
 export const nativeHeavyCommands = new NativeHeavyCommands({ current: isCurrentGateContext, claim: claimSessionCommandProcess,
   probe: probeSessionCommandProcess, stop: stopSessionCommandProcess, borrow: borrowSessionCommandProcess, acquire: acquireHeavyCommandPermit,
+  executorLive: heavyExecutorIsLive,
   executionRoot: (scope, cwd) => sameRepositoryExecutionRoot(scope, cwd),
   afterDrain: async () => { const { drainNativeHeavyLocalChannels } = await import('./native-heavy-local-channel'); await drainNativeHeavyLocalChannels(); } });
 export async function handleNativeHeavyCommandHttp(req: http.IncomingMessage, res: http.ServerResponse, ctx: AgentGateContext | null): Promise<void> {

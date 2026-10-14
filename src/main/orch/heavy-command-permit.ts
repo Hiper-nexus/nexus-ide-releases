@@ -1,3 +1,4 @@
+import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 import type { ProjectExecutionScope } from '../../shared/types';
@@ -22,7 +23,10 @@ export interface HeavyCommandQueueWait {
   readonly running: number;
   readonly waiting: number;
   readonly machineActive: number;
+  /** Configured machine cap, before memory pressure shrinks it. */
   readonly maxActive: number;
+  /** Cap actually applied. Lower than maxActive only while pressure is warn (2) or critical (4). */
+  readonly effectiveMaxActive?: number;
   /** F-1434: the RAM budget at give-up time; freeMB null = no telemetry. */
   readonly memory?: { readonly freeMB: number | null; readonly neededMB: number; readonly swapBound: boolean };
 }
@@ -44,6 +48,8 @@ interface PermitPoolOptions {
   readonly waitMs?: number;
   readonly pollMs?: number;
   readonly maxActive?: number;
+  /** Cached dispatch level from kern.memorystatus_vm_pressure_level, or null. */
+  pressure?(): number | null;
 }
 const error = (code: string) => new Error(`heavy_command_${code}`);
 
@@ -65,6 +71,64 @@ const machineActiveLimit = (): number => {
   // runners starve the UI and the PTYs of the agents themselves.
   return Math.max(2, Math.floor(cpus / 2));
 };
+
+/**
+ * `sysctl kern.memorystatus_vm_pressure_level` returns the dispatch level:
+ * 1 normal, 2 warn, 4 critical. xnu doc/vm/memorystatus_notify.md describes
+ * the internal enum (0 normal, 1 warning, 2 urgent, 3 critical, 4 jetsam),
+ * which is not the value this sysctl exposes.
+ * Fail-open: null or any other value keeps the configured cap.
+ * Never stops a job already running.
+ */
+export function heavyCommandEffectiveCap(configured: number, level: number | null): number {
+  if (level === 2) return Math.min(configured, 2);
+  if (level === 4) return Math.min(configured, 1);
+  return configured;
+}
+
+const PRESSURE_INTERVAL_MS = 3_000;
+
+export function parseHeavyCommandPressureOutput(raw: string): number | null {
+  const level = Number(String(raw).trim());
+  return Number.isInteger(level) ? level : null;
+}
+
+export interface HeavyCommandPressureProbe { (callback: (level: number | null) => void): void }
+
+/** Pump reads the last sample. A refresh is async and at most one is in flight. */
+export function createHeavyCommandPressureCache(options?: {
+  now?: () => number;
+  intervalMs?: number;
+  platform?: NodeJS.Platform;
+  probe?: HeavyCommandPressureProbe;
+}): () => number | null {
+  const now = options?.now ?? Date.now;
+  const intervalMs = options?.intervalMs ?? PRESSURE_INTERVAL_MS;
+  const platform = options?.platform ?? process.platform;
+  const probe = options?.probe ?? defaultHeavyCommandPressureProbe;
+  let level: number | null = null;
+  let startedAt = Number.NEGATIVE_INFINITY;
+  let inflight = false;
+  return () => {
+    if (platform !== 'darwin') return null;
+    const current = now();
+    if (!inflight && current - startedAt >= intervalMs) {
+      inflight = true;
+      startedAt = current;
+      try { probe((next) => { inflight = false; level = next; }); }
+      catch { inflight = false; level = null; }
+    }
+    return level;
+  };
+}
+
+function defaultHeavyCommandPressureProbe(callback: (level: number | null) => void): void {
+  execFile('/usr/sbin/sysctl', ['-n', 'kern.memorystatus_vm_pressure_level'],
+    { timeout: 1000, encoding: 'utf8' },
+    (error, stdout) => { callback(error ? null : parseHeavyCommandPressureOutput(String(stdout ?? ''))); });
+}
+
+export const readHeavyCommandMemoryPressure = createHeavyCommandPressureCache();
 
 export class HeavyCommandPermitPool {
   readonly #options: PermitPoolOptions;
@@ -118,11 +182,20 @@ export class HeavyCommandPermitPool {
     waiter.request.signal?.removeEventListener('abort', waiter.aborted);
   }
 
-  #queueWait(waiter: Waiter, maxActive: number): HeavyCommandQueueWait {
+  #pressureLevel(): number | null {
+    const read = this.#options.pressure;
+    if (!read) return null;
+    try {
+      const level = read();
+      return typeof level === 'number' && Number.isInteger(level) ? level : null;
+    } catch { return null; }
+  }
+
+  #queueWait(waiter: Waiter, maxActive: number, effectiveMaxActive: number): HeavyCommandQueueWait {
     return { waitedMs: Date.now() - waiter.since, root: waiter.request.scope.rootRealPath,
       running: [...this.#active.values()].filter(entry => entry.lane === waiter.lane).length,
       waiting: this.#waiters.filter(other => other !== waiter && other.lane === waiter.lane).length,
-      machineActive: this.#active.size, maxActive, memory: this.#memoryBudget() };
+      machineActive: this.#active.size, maxActive, effectiveMaxActive, memory: this.#memoryBudget() };
   }
 
   #memoryBudget(): { freeMB: number | null; neededMB: number; swapBound: boolean } {
@@ -148,18 +221,19 @@ export class HeavyCommandPermitPool {
     if (this.#closed) return;
     const blockedLanes = new Set<string>();
     const maxActive = this.#options.maxActive ?? machineActiveLimit();
+    const effective = heavyCommandEffectiveCap(maxActive, this.#pressureLevel());
     for (const waiter of [...this.#waiters]) {
       let current = false;
       try { current = !waiter.request.signal?.aborted && (waiter.request.isCurrent?.() ?? true); } catch { /* revoked */ }
       if (!this.#waiters.includes(waiter)) continue;
       current &&= !waiter.request.signal?.aborted;
       if (!current || Date.now() >= waiter.deadline) {
-        const failure = current ? Object.assign(error('wait_timeout'), { queue: this.#queueWait(waiter, maxActive) }) : error('authority_revoked');
+        const failure = current ? Object.assign(error('wait_timeout'), { queue: this.#queueWait(waiter, maxActive, effective) }) : error('authority_revoked');
         this.#remove(waiter); waiter.reject(failure); continue;
       }
       if (blockedLanes.has(waiter.lane)) continue;
       const activeLane = [...this.#active.values()].some(entry => entry.lane === waiter.lane);
-      if (activeLane || this.#active.size >= maxActive || !this.#hasRam()) { blockedLanes.add(waiter.lane); continue; }
+      if (activeLane || this.#active.size >= effective || !this.#hasRam()) { blockedLanes.add(waiter.lane); continue; }
       this.#remove(waiter);
       const id = `heavy-${randomUUID()}`;
       this.#active.set(id, { lane: waiter.lane, kind: waiter.request.kind });
@@ -186,7 +260,7 @@ export class HeavyCommandPermitPool {
 }
 
 const permits = new HeavyCommandPermitPool({ memory: getMemoryAfterAgentReservations, limits: readPaneAdmissionLimits,
-  refreshMemory: refreshSystemMemorySample });
+  refreshMemory: refreshSystemMemorySample, pressure: readHeavyCommandMemoryPressure });
 registerHeavyCommandMemoryReservation(() => permits.snapshot().reservedMB);
 export function acquireHeavyCommandPermit(request: HeavyCommandRequest): Promise<HeavyCommandPermit> { return permits.acquire(request); }
 export function heavyCommandPermitSnapshot(): ReturnType<HeavyCommandPermitPool['snapshot']> { return permits.snapshot(); }

@@ -221,8 +221,10 @@ it('a Node eval requiring Vite with stripped NODE_OPTIONS is finite work before 
  const program = `require(${JSON.stringify(path.join(process.cwd(), 'node_modules/vite'))});require('node:fs').writeFileSync(${JSON.stringify(marker)},'started')`;
  const env = { ...process.env, BASH_ENV: path.join(resources, 'shell.bash'), NEXUS_HEAVY_NODE: process.execPath, NEXUS_HEAVY_DIR: resources,
   NEXUS_GATE_TOKEN: 'finite-eval', NEXUS_HEAVY_COMMAND_URL: 'http://127.0.0.1:1/hook/heavy-command' };
- try { const result = spawnSync('/bin/bash', ['-c', `NODE_OPTIONS= ${JSON.stringify(process.execPath)} -e ${JSON.stringify(program)}`], { env, encoding: 'utf8' });
-  expect(result.status).toBe(78); expect(fs.existsSync(marker)).toBe(false); }
+ // /bin/bash skips BASH_ENV when stdin is a pipe (spawnSync's default), so the
+ // hook never installs and node runs the eval. Ignore stdin and the hook runs.
+ try { const result = spawnSync('/bin/bash', ['-c', `NODE_OPTIONS= ${JSON.stringify(process.execPath)} -e ${JSON.stringify(program)}`], { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  expect(result.status, result.stderr).toBe(78); expect(fs.existsSync(marker)).toBe(false); }
  finally { fs.rmSync(root, { recursive: true, force: true }); }
 }, 10_000);
 

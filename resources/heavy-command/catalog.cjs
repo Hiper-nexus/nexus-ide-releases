@@ -507,11 +507,29 @@ function scriptKind(script) {
   if (/^(?:build|check|verify|lint|publish)(?::|$)/.test(name)) return 'build';
   return null;
 }
+function isNodeJobLaunch(words) {
+  if (toolName(words[0]) !== 'node') return false;
+  // ponytail: first positional is the script. `node -r ./hook.js job-launch.cjs`
+  // keeps the preload value and stays metered; that is not the nested wrap.
+  const script = words.slice(1).find((arg) => arg !== '--' && !arg.startsWith('-'));
+  if (!script || path.basename(String(script).replace(/\\/g, '/')) !== 'job-launch.cjs') return false;
+  const dir = process.env.NEXUS_HEAVY_DIR;
+  if (!dir) return true;
+  // ponytail: path text, not realpath. Another path that links here stays metered.
+  return path.resolve(String(script)) === path.resolve(dir, 'job-launch.cjs');
+}
 function wordsKind(words, seg, depth) {
   if (depth > MAX_DEPTH) return 'build';
-  let at = 0;
-  while (at < words.length && (ENV_ASSIGNMENT.test(words[at]) || KEYWORDS.has(words[at]))) at++;
-  return at < words.length ? programKind(at ? words.slice(at) : words, seg, depth) : null;
+  let at = 0, helper = false;
+  while (at < words.length && (ENV_ASSIGNMENT.test(words[at]) || KEYWORDS.has(words[at]))) {
+    if (words[at] === 'NEXUS_HEAVY_HELPER=1') helper = true;
+    at++;
+  }
+  const rest = at ? words.slice(at) : words;
+  // job-launch deletes this env, then the inner shell classifies the text.
+  // A line that already is that helper must not take a second root slot.
+  if (helper && isNodeJobLaunch(rest)) return null;
+  return rest.length ? programKind(rest, seg, depth) : null;
 }
 // words[0] is the program; the rest are its arguments, one word each.
 function programKind(words, seg, depth) {

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { runInNewContext } from 'node:vm';
 import { afterEach, expect, it, vi } from 'vitest';
-import { HeavyCommandPermitPool } from './heavy-command-permit';
+import { HeavyCommandPermitPool, createHeavyCommandPressureCache, heavyCommandEffectiveCap, parseHeavyCommandPressureOutput } from './heavy-command-permit';
 import { testProjectScope } from './__tests__/scope-fixture';
 
 const pools: HeavyCommandPermitPool[] = [];
@@ -149,6 +149,118 @@ it('uses one machine slot when RAM is unknown', async () => {
   const value = pool(() => null); const first = await value.acquire(request()); let admitted = false;
   const second = value.acquire(request('another')).then(p => { admitted = true; return p; });
   await Promise.resolve(); expect(admitted).toBe(false); first.release(); (await second).release();
+});
+
+it('maps dispatch vm pressure onto the configured machine cap', () => {
+  expect(heavyCommandEffectiveCap(5, 1)).toBe(5);
+  expect(heavyCommandEffectiveCap(5, 2)).toBe(2);
+  expect(heavyCommandEffectiveCap(5, 4)).toBe(1);
+  expect(heavyCommandEffectiveCap(1, 2)).toBe(1);
+  expect(heavyCommandEffectiveCap(1, 4)).toBe(1);
+  for (const level of [null, 0, 3, 9, -1]) expect(heavyCommandEffectiveCap(5, level)).toBe(5);
+});
+
+it('shrinks new admissions under darwin memory pressure and leaves running jobs alone', async () => {
+  let level: number | null = 1;
+  const value = new HeavyCommandPermitPool({ memory: () => ({ freeMB: 100_000, swapUsedMB: 0 }),
+    limits: () => ({ minFreeMB: 1000, maxSwapUsedMB: 0 }), refreshMemory: async () => {},
+    pollMs: 10, waitMs: 500, reserveMB: 1000, maxActive: 5, pressure: () => level });
+  pools.push(value);
+  const lane = (root: string) => ({ ...request(), scope: { ...scope, rootRealPath: root } });
+  const normal = await Promise.all(['/n1', '/n2', '/n3'].map((root) => value.acquire(lane(root))));
+  expect(value.snapshot().active).toBe(3);
+  level = 2;
+  let warned = false;
+  const warnWait = value.acquire(lane('/warn')).then((permit) => { warned = true; return permit; });
+  await Promise.resolve();
+  expect(warned).toBe(false);
+  expect(value.snapshot().active).toBe(3);
+  normal[0].release();
+  await Promise.resolve();
+  expect(warned).toBe(false);
+  expect(value.snapshot().active).toBe(2);
+  normal[1].release();
+  const warnedPermit = await warnWait;
+  expect(warned).toBe(true);
+  expect(value.snapshot().active).toBe(2);
+  warnedPermit.release(); normal[2].release();
+  level = null;
+  const running = await Promise.all(['/live-a', '/live-b'].map((root) => value.acquire(lane(root))));
+  expect(value.snapshot().active).toBe(2);
+  level = 4;
+  let extra = false;
+  const criticalWait = value.acquire(lane('/critical')).then((permit) => { extra = true; return permit; });
+  await Promise.resolve();
+  expect(extra).toBe(false);
+  running[0].release();
+  await Promise.resolve();
+  expect(extra).toBe(false);
+  expect(value.snapshot().active).toBe(1);
+  level = 3;
+  const opened = value.acquire(lane('/opened')).then((permit) => permit);
+  await Promise.resolve();
+  expect(extra).toBe(true);
+  expect(value.snapshot().active).toBe(3);
+  (await criticalWait).release();
+  (await opened).release();
+  running[1].release();
+  expect(value.snapshot().active).toBe(0);
+});
+
+it('parses a sysctl pressure line and rejects anything that is not an integer', () => {
+  expect(parseHeavyCommandPressureOutput('1\n')).toBe(1);
+  expect(parseHeavyCommandPressureOutput(' 4 ')).toBe(4);
+  expect(parseHeavyCommandPressureOutput('1.5')).toBeNull();
+  expect(parseHeavyCommandPressureOutput('nope')).toBeNull();
+});
+
+it('refreshes the pressure sample asynchronously, at most once every 3s', () => {
+  let now = 0;
+  const pending: Array<(level: number | null) => void> = [];
+  let calls = 0;
+  const read = createHeavyCommandPressureCache({
+    now: () => now, intervalMs: 3_000, platform: 'darwin',
+    probe: (callback) => { calls += 1; pending.push(callback); },
+  });
+  expect(read()).toBeNull();
+  expect(read()).toBeNull();
+  expect(calls).toBe(1);
+  pending[0](1);
+  expect(read()).toBe(1);
+  now = 2_999;
+  expect(read()).toBe(1);
+  expect(calls).toBe(1);
+  now = 3_000;
+  expect(read()).toBe(1);
+  expect(calls).toBe(2);
+  now = 9_000;
+  expect(read()).toBe(1);
+  expect(calls).toBe(2);
+  pending[1](null);
+  expect(read()).toBeNull();
+  expect(calls).toBe(3);
+  expect(read()).toBeNull();
+  expect(calls).toBe(3);
+  let linuxCalls = 0;
+  const linux = createHeavyCommandPressureCache({
+    platform: 'linux', probe: () => { linuxCalls += 1; },
+  });
+  expect(linux()).toBeNull();
+  expect(linuxCalls).toBe(0);
+});
+
+it('keeps the configured cap when memory pressure cannot be read', async () => {
+  const readers = [() => null, () => 0, () => 1.5, () => 9, () => { throw new Error('sysctl'); }];
+  for (const pressure of readers) {
+    const value = new HeavyCommandPermitPool({ memory: () => ({ freeMB: 100_000, swapUsedMB: 0 }),
+      limits: () => ({ minFreeMB: 1000, maxSwapUsedMB: 0 }), refreshMemory: async () => {},
+      pollMs: 10, waitMs: 200, reserveMB: 1000, maxActive: 5, pressure });
+    pools.push(value);
+    const lane = (root: string) => ({ ...request(), scope: { ...scope, rootRealPath: root } });
+    const held = await Promise.all(['/p1', '/p2', '/p3'].map((root) => value.acquire(lane(root))));
+    expect(value.snapshot().active).toBe(3);
+    for (const permit of held) permit.release();
+  }
 });
 
 it('queues Main-owned loose helpers without a mission, including direct assistant tools', async () => {

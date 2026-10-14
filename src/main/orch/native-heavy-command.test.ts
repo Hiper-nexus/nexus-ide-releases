@@ -4,11 +4,22 @@ import path from 'node:path';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { expect, it } from 'vitest';
-import { NativeHeavyCommands } from './native-heavy-command';
+import { heavyExecutorIsLive, NativeHeavyCommands } from './native-heavy-command';
 import { HeavyCommandPermitPool } from './heavy-command-permit';
 import { OwnedCommandProcesses } from '../pty/owned-command-process';
 import type { AgentGateContext } from './gate';
 import { appendHeavyCommandPreload } from './native-heavy-preload';
+
+/** Exit 0, and the lane did not refuse. Seatbelt or npm noise is not a refusal.
+ * The expect message keeps a short preview: the gate stores only the first line.
+ */
+function expectAdmittedQuiet(result: Array<{ code: number | null; stderr: string }>): void {
+  const preview = result.map((row) => JSON.stringify(row.stderr.slice(0, 160))).join(' ');
+  expect(result.map((row) => row.code), preview).toEqual([0, 0]);
+  for (const row of result) {
+    expect(row.stderr, JSON.stringify(row.stderr.slice(0, 220))).not.toMatch(/nexus-heavy|\[Nexus\]|taskpolicy/i);
+  }
+}
 
 it('two actual native Node tsc descendants from the AI operator hand serialize without a mission', async () => {
  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-native-tsc-'));
@@ -37,7 +48,7 @@ it('two actual native Node tsc descendants from the AI operator hand serialize w
   let stderr = ''; child.stderr.on('data', (data) => { stderr += data; }); child.once('close', (code) => resolve({ code, stderr }));
  });
  try {
-  const result = await Promise.all([run(), run()]); expect(result.map((r) => r.stderr)).toEqual(['', '']); expect(result.map((r) => r.code)).toEqual([0, 0]);
+  const result = await Promise.all([run(), run()]); expectAdmittedQuiet(result);
   await native.drain(); expect(transitions.map((v) => v.kind)).toEqual(['grant', 'release', 'grant', 'release']); expect(pool.snapshot().active).toBe(0);
  } finally { pool.close(); await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true }); }
 }, 30_000);
@@ -68,6 +79,36 @@ it('F-983/F-997: writers isolados do MESMO checkout testam ao mesmo tempo — a 
  // Mesma worktree continua serializada (saídas e caches compartilhados).
  expect(await native.admit({ ...writer('w1'), token: 'w1b', sessionId: 'w1b' }, { pid: 103, kind: 'tests' })).toMatchObject({ allow: false, reason: 'heavy_command_wait_timeout' });
  state = 'gone'; await native.drain(); expect(pool.snapshot().active).toBe(0); pool.close();
+});
+
+it('treats ESRCH as a dead executor and EPERM as still alive', async () => {
+ expect(heavyExecutorIsLive(process.pid)).toBe(true);
+ const child = spawn(process.execPath, ['-e', 'process.exit(0)'], { stdio: 'ignore' });
+ const pid = child.pid!;
+ await new Promise<void>((resolve) => child.once('exit', () => resolve()));
+ expect(heavyExecutorIsLive(pid)).toBe(false);
+});
+
+it('frees the root slot when the admitted executor exits while its authority cohort is still live', async () => {
+ const scope = { version: 1 as const, installationId: 'finite', projectId: 'cohort', checkoutId: 'main', rootRealPath: '/repo', identitySource: 'manifest' as const };
+ const ctx = { token: 'finite', sessionId: 'finite', missionId: 'finite', role: 'worker', scope } as AgentGateContext;
+ const other = { ...ctx, token: 'other', sessionId: 'other' } as AgentGateContext;
+ const pool = new HeavyCommandPermitPool({ memory: () => ({ freeMB: 16_384, swapUsedMB: 0 }), limits: () => ({ minFreeMB: 512, maxSwapUsedMB: 0 }), refreshMemory: async () => {}, pollMs: 10, waitMs: 2_000, maxActive: 4 });
+ const alive = new Set([50]);
+ let authority: 'live' | 'gone' = 'live';
+ const native = new NativeHeavyCommands({ current: () => true, claim: async () => 'authority', probe: async () => authority,
+  executorLive: (pid) => alive.has(pid), acquire: (request) => pool.acquire(request) });
+ const held = await native.admit(ctx, { pid: 50, kind: 'build' });
+ expect(held.allow).toBe(true);
+ expect(pool.snapshot().active).toBe(1);
+ const next = native.admit(other, { pid: 51, kind: 'tests' });
+ await new Promise((resolve) => setTimeout(resolve, 40));
+ expect(pool.snapshot()).toMatchObject({ active: 1, waiting: 1 });
+ alive.delete(50); alive.add(51);
+ const admitted = await next;
+ expect(admitted.allow).toBe(true);
+ expect(pool.snapshot().active).toBe(1);
+ authority = 'gone'; await native.drain(); pool.close();
 });
 
 it('refuses unknown PID ownership and outside-mission callers before taking any RAM reservation', async () => {
@@ -127,7 +168,7 @@ it('two actual npm script parents borrow their child TypeScript lease without se
   let stderr = ''; child.stderr.on('data', (data) => { stderr += data; }); child.once('close', (code) => resolve({ code, stderr }));
  });
  try {
-  const result = await Promise.all([run(), run()]); expect(result.map((r) => r.stderr)).toEqual(['', '']); expect(result.map((r) => r.code)).toEqual([0, 0]);
+  const result = await Promise.all([run(), run()]); expectAdmittedQuiet(result);
   await native.drain(); expect(transitions.map((v) => v.kind)).toEqual(['grant', 'release', 'grant', 'release']); expect(pool.snapshot().active).toBe(0);
  } finally { pool.close(); await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true }); }
 }, 30_000);
@@ -159,7 +200,7 @@ it('absolute Bash execution with stripped NODE_OPTIONS is admitted before actual
   let stderr = ''; child.stderr.on('data', (data) => { stderr += data; }); child.once('close', (code) => resolve({ code, stderr }));
  });
  try {
-  const result = await Promise.all([run(), run()]); expect(result.map((r) => r.stderr)).toEqual(['', '']); expect(result.map((r) => r.code)).toEqual([0, 0]);
+  const result = await Promise.all([run(), run()]); expectAdmittedQuiet(result);
   await native.drain(); expect(transitions.map((v) => v.kind)).toEqual(['grant', 'release', 'grant', 'release']); expect(pool.snapshot().active).toBe(0);
  } finally { pool.close(); await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true }); }
 }, 30_000);
@@ -191,7 +232,7 @@ it('absolute zsh execution with stripped NODE_OPTIONS is admitted before actual 
   let stderr = ''; child.stderr.on('data', (data) => { stderr += data; }); child.once('close', (code) => resolve({ code, stderr }));
  });
  try {
-  const result = await Promise.all([run(), run()]); expect(result.map((r) => r.stderr)).toEqual(['', '']); expect(result.map((r) => r.code)).toEqual([0, 0]);
+  const result = await Promise.all([run(), run()]); expectAdmittedQuiet(result);
   await native.drain(); expect(transitions.map((v) => v.kind)).toEqual(['grant', 'release', 'grant', 'release']); expect(pool.snapshot().active).toBe(0);
  } finally { pool.close(); await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true }); }
 }, 30_000);
@@ -222,7 +263,7 @@ it('actual absolute make commands serialize through non-Node shell preexec', asy
   let stderr = ''; child.stderr.on('data', (data) => { stderr += data; }); child.once('close', (code) => resolve({ code, stderr }));
  });
  try {
-  const result = await Promise.all([run(), run()]); expect(result.map((r) => r.stderr)).toEqual(['', '']); expect(result.map((r) => r.code)).toEqual([0, 0]);
+  const result = await Promise.all([run(), run()]); expectAdmittedQuiet(result);
   await native.drain(); expect(transitions.map((v) => v.kind)).toEqual(['grant', 'release', 'grant', 'release']); expect(pool.snapshot().active).toBe(0);
  } finally { pool.close(); await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true }); }
 }, 30_000);
@@ -253,7 +294,7 @@ it.runIf(process.platform === 'darwin')('two actual native Node tsc descendants 
   let stderr = ''; child.stderr.on('data', (data) => { stderr += data; }); child.once('close', (code) => resolve({ code, stderr }));
  });
  try {
-  const result = await Promise.all([run(), run()]); expect(result.map((r) => r.stderr)).toEqual(['', '']); expect(result.map((r) => r.code)).toEqual([0, 0]);
+  const result = await Promise.all([run(), run()]); expectAdmittedQuiet(result);
   await native.drain(); expect(transitions.map((v) => v.kind)).toEqual(['grant', 'release', 'grant', 'release']); expect(pool.snapshot().active).toBe(0);
  } finally { pool.close(); await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true }); }
 }, 30_000);
@@ -345,4 +386,23 @@ it('F-1434: toda recusa traz a frase do motivo, e só culpa a RAM quando a RAM f
  expect(machine.message).toContain('(machine limit of 1 parallel heavy jobs)');
  for (const result of [ownership, machine]) expect(result.message).not.toMatch(/RAM/);
  held.release(); lowRam.close(); busy.close();
+});
+
+it('says it is waiting on memory pressure only when the shrunk cap is what blocks the job', async () => {
+ const scope = { version: 1 as const, installationId: 'finite', projectId: 'pressure', checkoutId: 'main', rootRealPath: '/pressure', identitySource: 'manifest' as const };
+ const ctx = { token: 'pressure', sessionId: 'pressure', role: 'user', scope } as AgentGateContext;
+ const limits = () => ({ minFreeMB: 512, maxSwapUsedMB: 0 });
+ const pool = new HeavyCommandPermitPool({ memory: () => ({ freeMB: 65_536, swapUsedMB: 0 }), limits, refreshMemory: async () => {},
+  pollMs: 5, waitMs: 40, maxActive: 5, pressure: () => 2 });
+ const native = new NativeHeavyCommands({ current: () => true, claim: async () => 'owned', probe: async () => 'gone', acquire: (request) => pool.acquire(request) });
+ const held = await Promise.all(['/other-a', '/other-b'].map((root) => pool.acquire({ scope: { ...scope, rootRealPath: root }, kind: 'tests' })));
+ const blocked = await native.admit(ctx, { pid: 4246, kind: 'tests' });
+ expect(blocked.message).toContain('esperando: pressão de memória');
+ expect(blocked.message).not.toContain('machine 2/5');
+ for (const permit of held) permit.release();
+ const sameRoot = await pool.acquire({ scope, kind: 'tests' });
+ const queued = await native.admit(ctx, { pid: 4247, kind: 'tests' });
+ expect(queued.message).toContain('one job per root at a time');
+ expect(queued.message).not.toContain('esperando: pressão de memória');
+ sameRoot.release(); pool.close();
 });

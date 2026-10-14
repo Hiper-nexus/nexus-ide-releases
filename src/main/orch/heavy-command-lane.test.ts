@@ -179,6 +179,100 @@ describe('F-1229: o cwd chega ao Main pelo próprio pedido', () => {
     expect(await run('npm test')).toBe('unset');
   });
 
+  it('job-launch exits with the direct child while a grandchild still holds stdout', async () => {
+    const marker = path.join(temp, 'grandchild.pid');
+    const script = path.join(temp, 'grandchild.pl');
+    fs.writeFileSync(script, `if (fork()) { exit 9 } else { open my $f, '>', ${JSON.stringify(marker)}; print $f $$; close $f; sleep 30; exit 0 }\n`);
+    const started = Date.now();
+    const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+      const child = spawn(process.execPath, [path.join(resources, 'job-launch.cjs'), 'build', '/usr/bin/perl', script], {
+        cwd: temp, stdio: ['ignore', 'pipe', 'pipe'],
+        env: { PATH: '/usr/bin:/bin', NEXUS_HEAVY_JOB_BASE: JSON.stringify({ file: '/usr/bin/perl', args: ['-e', 'while (@ARGV && $ARGV[0] ne "--") { shift @ARGV } shift @ARGV; exec @ARGV or die $!', 'heavy-job'] }) },
+      });
+      child.stdout!.resume(); child.stderr!.resume();
+      const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('job-launch still alive after the direct child exited')); }, 2_000);
+      child.once('error', (error) => { clearTimeout(timer); reject(error); });
+      child.once('exit', (code, signal) => { clearTimeout(timer); resolve({ code, signal }); });
+    });
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(result).toEqual({ code: 9, signal: null });
+    const deadline = Date.now() + 500;
+    let pid = 0;
+    while (Date.now() < deadline && !pid) {
+      try { pid = Number(fs.readFileSync(marker, 'utf8')); } catch { await new Promise((resolve) => setTimeout(resolve, 20)); }
+    }
+    if (pid > 1) { try { process.kill(pid, 'SIGKILL'); } catch { /* already reaped */ } }
+  });
+
+  // pthread_get_qos_class_np: QOS_CLASS_UTILITY is 0x11 under taskpolicy -c utility.
+  const darwinPriority = (args: string[], env: NodeJS.ProcessEnv) => new Promise<string>((resolve, reject) => {
+    const child = spawn(process.execPath, args, { cwd: temp, stdio: ['ignore', 'pipe', 'pipe'], env });
+    let output = '', err = '';
+    child.stdout!.on('data', (data) => { output += data; });
+    child.stderr!.on('data', (data) => { err += data; });
+    const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error(`priority probe hung: ${err}`)); }, 8_000);
+    child.once('error', (error) => { clearTimeout(timer); reject(error); });
+    child.once('exit', (code) => {
+      clearTimeout(timer);
+      if (code !== 0) reject(new Error(`exit ${code}: ${err || output}`));
+      else resolve(output.trim());
+    });
+  });
+  const priorityJob = JSON.stringify({ file: '/usr/bin/perl', args: ['-e', 'while (@ARGV && $ARGV[0] ne "--") { shift @ARGV } shift @ARGV; exec @ARGV or die $!', 'heavy-job'] });
+
+  it('job-launch runs the job at darwin utility QoS, unless NEXUS_HEAVY_QOS=0', async () => {
+    if (process.platform !== 'darwin') return;
+    const probe = [
+      'import ctypes',
+      'libc=ctypes.CDLL("/usr/lib/libSystem.B.dylib")',
+      'fn=libc.pthread_get_qos_class_np',
+      'fn.restype=ctypes.c_int',
+      'fn.argtypes=[ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint), ctypes.POINTER(ctypes.c_int)]',
+      'self=libc.pthread_self',
+      'self.restype=ctypes.c_void_p',
+      'self.argtypes=[]',
+      'qos=ctypes.c_uint(); rel=ctypes.c_int()',
+      'fn(self(), ctypes.byref(qos), ctypes.byref(rel))',
+      'print(hex(qos.value))',
+    ].join('; ');
+    const launch = (qos?: string) => darwinPriority(
+      [path.join(resources, 'job-launch.cjs'), 'build', '/usr/bin/python3', '-c', probe],
+      { PATH: '/usr/bin:/bin', ...(qos ? { NEXUS_HEAVY_QOS: qos } : {}), NEXUS_HEAVY_JOB_BASE: priorityJob },
+    );
+    expect(await launch()).toBe('0x11');
+    expect(await launch('0')).not.toBe('0x11');
+  });
+
+  it('dispatch runs the admitted job at darwin utility QoS', async () => {
+    if (process.platform !== 'darwin') return;
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ allow: true, leaseId: 'qos-lease' }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as { port: number }).port;
+    try {
+      const probe = [
+        'import ctypes',
+        'libc=ctypes.CDLL("/usr/lib/libSystem.B.dylib")',
+        'fn=libc.pthread_get_qos_class_np',
+        'fn.restype=ctypes.c_int',
+        'fn.argtypes=[ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint), ctypes.POINTER(ctypes.c_int)]',
+        'self=libc.pthread_self',
+        'self.restype=ctypes.c_void_p',
+        'self.argtypes=[]',
+        'qos=ctypes.c_uint(); rel=ctypes.c_int()',
+        'fn(self(), ctypes.byref(qos), ctypes.byref(rel))',
+        'print(hex(qos.value))',
+      ].join('; ');
+      const priority = await darwinPriority(
+        [path.join(resources, 'dispatch.cjs'), 'build', '/usr/bin/python3', JSON.stringify(['-c', probe]), 'false'],
+        { PATH: '/usr/bin:/bin', NEXUS_GATE_TOKEN: 'finite-qos', NEXUS_HEAVY_COMMAND_URL: `http://127.0.0.1:${port}/hook/heavy-command` },
+      );
+      expect(priority).toBe('0x11');
+    } finally { server.close(); }
+  }, 10_000);
+
   it('request.cjs envia o cwd do job (ou a dica do darwin-job) e imprime o motivo do Main', async () => {
     const bodies: Array<Record<string, unknown>> = [];
     const message = 'nexus-heavy: gave up after 300 s in the admission queue of /repo: 1 job(s) running there, 5 more waiting';

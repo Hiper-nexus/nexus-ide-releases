@@ -52,6 +52,35 @@ describe('commandKind still meters programs that do heavy work', () => {
     expect(catalog.commandKind(command)).toBe(kind);
   });
 
+  // The shell hook classified `NEXUS_HEAVY_HELPER=1 node …/job-launch.cjs tests`
+  // as `build` and wrapped it again. The outer build held the root slot after
+  // the inner tests had finished. The helper flag alone still meters real work.
+  it.each([
+    'NODE_OPTIONS= NEXUS_HEAVY_HELPER=1 node /Applications/NexusIDE.app/Contents/Resources/heavy-command/job-launch.cjs tests /bin/zsh -c "npx vitest run a.test.ts"',
+    'env NODE_OPTIONS= NEXUS_HEAVY_HELPER=1 node /opt/node/job-launch.cjs tests /bin/bash -c "npm test"',
+    'NEXUS_HEAVY_HELPER=1 /usr/local/bin/node ./resources/heavy-command/job-launch.cjs build /bin/sh -c "make"',
+  ])('%s is already admitted', (command) => {
+    const previous = process.env.NEXUS_HEAVY_DIR;
+    delete process.env.NEXUS_HEAVY_DIR;
+    try { expect(catalog.commandKind(command)).toBeNull(); }
+    finally { if (previous === undefined) delete process.env.NEXUS_HEAVY_DIR; else process.env.NEXUS_HEAVY_DIR = previous; }
+  });
+
+  it('does not treat the helper flag as a general exemption', () => {
+    expect(catalog.commandKind('NEXUS_HEAVY_HELPER=1 npx vitest run src/a.test.ts')).toBe('tests');
+    expect(catalog.commandKind('node /tmp/job-launch.cjs tests /bin/sh -c "npm test"')).toBe('build');
+  });
+
+  it('exempts only the job-launch inside NEXUS_HEAVY_DIR when that env is set', () => {
+    const previous = process.env.NEXUS_HEAVY_DIR;
+    process.env.NEXUS_HEAVY_DIR = '/Applications/NexusIDE.app/Contents/Resources/heavy-command';
+    try {
+      expect(catalog.commandKind('NEXUS_HEAVY_HELPER=1 node /tmp/job-launch.cjs tests /bin/sh -c "npm test"')).toBe('build');
+      expect(catalog.commandKind('NEXUS_HEAVY_HELPER=1 node /Applications/NexusIDE.app/Contents/Resources/heavy-command/job-launch.cjs tests /bin/sh -c "npm test"')).toBeNull();
+      expect(catalog.commandKind('NEXUS_HEAVY_HELPER=1 node /Applications/NexusIDE.app/Contents/Resources/heavy-command/job-launch.cjs tests /bin/sh -c "npm test" && npm run build')).toBe('build');
+    } finally { if (previous === undefined) delete process.env.NEXUS_HEAVY_DIR; else process.env.NEXUS_HEAVY_DIR = previous; }
+  });
+
   it('keeps dev servers persistent and unmetered', () => {
     expect(catalog.commandKind('vite')).toBeNull();
     expect(catalog.commandKind('npx vite --port 5173')).toBeNull();
