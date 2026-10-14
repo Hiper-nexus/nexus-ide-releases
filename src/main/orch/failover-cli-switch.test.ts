@@ -1028,6 +1028,124 @@ describe('F-1471: worker de missão troca de conta no MESMO provedor e segue a t
     expect(hasPendingFailoverRecovery('pane-claude', 'session-claude')).toBe(false);
   });
 
+  it('F-1489: troca de CLI em curso reivindica a tarefa — outro pane da mesma linhagem não abre um segundo reroute', async () => {
+    vi.mocked(pickAvailableForFailover).mockImplementation(() => ({ account: null, probe: false }));
+    let finish!: (next: Reopened) => void;
+    const reroute = vi.fn<PaneTaskRerouteHandle['reroute']>(() => new Promise<Reopened>((resolve) => { finish = resolve; }));
+    for (const n of [1, 2]) {
+      rendererPane({ paneId: `pane-${n}`, sessionId: `session-${n}`, missionId: 'mission-1' });
+      registerPaneTaskReroute(handle({ paneId: `pane-${n}`, lineageId: 'pane-1', reroute }));
+    }
+    h.dataTaps[0]('session-1', 'QUOTA');
+    await settle();
+    await settle();
+    h.dataTaps[0]('session-2', 'QUOTA');
+    await settle();
+    await settle();
+    expect(reroute).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(reroute).mock.calls[0]![0].excludeAdapterIds).toEqual(['claude']);
+    finish({ paneId: 'pane-codex', adapterId: 'codex' });
+    await settle();
+    expect(reroute).toHaveBeenCalledTimes(1);
+  });
+
+  it('F-1489: worker headless com o religamento em curso — outro sinal depois do rearme não abre outro substituto', async () => {
+    h.runtime.set('session-headless', {
+      owner: null, paneId: 'pane-headless', sessionId: 'session-headless', kind: 'cli-agent',
+      adapterId: 'claude', accountId: 'claude-a', missionId: 'mission-1', scope: SCOPE,
+    });
+    h.sessions.set('session-headless', {
+      sessionId: 'session-headless', paneId: 'pane-headless', adapterId: 'claude',
+      accountId: 'claude-a', missionId: 'mission-1', role: 'worker', agentName: 'Revisor',
+    });
+    h.states.set('session-headless', 'idle');
+    let respawned!: (ok: boolean) => void;
+    h.respawnMainOwned.mockImplementationOnce(() => new Promise<boolean>((resolve) => { respawned = resolve; }));
+    h.dataTaps[0]('session-headless', 'QUOTA');
+    await settle();
+    await settle();
+    expect(h.respawnMainOwned).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(31_000);
+    h.dataTaps[0]('session-headless', 'QUOTA');
+    await settle();
+    await settle();
+    expect(h.respawnMainOwned).toHaveBeenCalledTimes(1);
+    respawned(true);
+    await settle();
+    expect(events().filter((event) => event.switched)).toHaveLength(1);
+  });
+
+  it('F-1489: no retry da tarefa sem pane, o teto de trocas segue a reabertura da tarefa (nunca retry de conta da sessão morta)', async () => {
+    const stage = (n: number, reroute: PaneTaskRerouteHandle['reroute'], extra: Partial<PaneTaskRerouteHandle> = {}) => {
+      rendererPane({ paneId: `pane-${n}`, sessionId: `session-${n}`, missionId: 'mission-1' });
+      registerPaneTaskReroute(handle({ paneId: `pane-${n}`, lineageId: 'pane-1', reroute, ...extra }));
+    };
+    const ok = (paneId: string) => vi.fn(async () => ({ paneId, adapterId: 'claude' }));
+    for (const n of [1, 2]) {
+      stage(n, ok(`pane-${n}-b`));
+      h.dataTaps[0](`session-${n}`, 'QUOTA');
+      await settle();
+      await settle();
+    }
+    // Writer: sai e a conta irmã recusa — a tarefa fica sem pane, com nova tentativa.
+    let alternative = false;
+    const writer = vi.fn<PaneTaskRerouteHandle['reroute']>(async (request) => {
+      if (request.sameAdapter) throw new Error('spawn recusado pela admissão de panes');
+      return { paneId: 'pane-codex', adapterId: 'codex' };
+    });
+    h.requestPaneClose.mockImplementation(async (_paneId: string, sessionId?: string) => {
+      if (sessionId) h.sessions.delete(sessionId);
+      return true;
+    });
+    stage(4, writer, { hasAlternative: vi.fn(() => alternative) });
+    h.dataTaps[0]('session-4', 'QUOTA');
+    await settle();
+    await settle();
+    // A 3ª troca da linhagem vale e o teto enche antes da nova tentativa.
+    stage(3, ok('pane-3-b'));
+    h.dataTaps[0]('session-3', 'QUOTA');
+    await settle();
+    await settle();
+    expect(events().filter((event) => event.switched)).toHaveLength(3);
+
+    await vi.advanceTimersByTimeAsync(31_000);
+    await settle();
+    await settle();
+    expect(writer.mock.calls.every(([request]) => request.sameAdapter !== undefined)).toBe(true);
+    // Outra CLI fica disponível: a próxima tentativa da TAREFA a leva para lá.
+    alternative = true;
+    await vi.advanceTimersByTimeAsync(2 * 60_000);
+    await settle();
+    await settle();
+    const last = writer.mock.calls.at(-1)![0];
+    expect(last.sameAdapter).toBeUndefined();
+    expect(last.excludeAdapterIds).toEqual(['claude']);
+    expect(events().filter((event) => event.switched).at(-1)).toMatchObject({ toPaneId: 'pane-codex', toAdapterId: 'codex' });
+  });
+
+  it('F-1489: troca não confirmada vai para a conta que a leitura comprovou, não para outra sem leitura', async () => {
+    // O pick sozinho escolheria B (sem leitura); só C foi medida agora com folga.
+    vi.mocked(pickAvailableForFailover).mockImplementation((_adapterId, excludeId) => ({
+      account: (excludeId === 'claude-b' ? null : ACCOUNTS['claude-b']) as never,
+      probe: false,
+    }));
+    worker();
+    const task = handle({ reroute: vi.fn(async () => ({ paneId: 'pane-claude-2', adapterId: 'claude' })) });
+    registerPaneTaskReroute(task);
+    h.realQuota = true;
+    h.probeEntry = {
+      id: 'claude:claude-c', adapterId: 'claude', accountId: 'claude-c', label: 'C', installed: true,
+      onCooldown: false, updatedAt: Date.now(),
+      windows: [{ kind: 'hours', label: '5 Horas', usedRatio: 0.3, source: 'provider-api', confidence: 'high' }],
+    };
+    h.dataTaps[0]('session-claude', 'LONG');
+    await settle();
+    await settle();
+    expect(task.reroute).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(task.reroute).mock.calls[0]![0].sameAdapter).toMatchObject({ accountId: 'claude-c' });
+    expect(events().find((event) => event.switched)).toMatchObject({ toAccountId: 'claude-c' });
+  });
+
   it('F-1486: com o prepare da conta irmã pendente, o supervisor já espera (marca antes do heal/prepare)', async () => {
     worker();
     registerPaneTaskReroute(handle());

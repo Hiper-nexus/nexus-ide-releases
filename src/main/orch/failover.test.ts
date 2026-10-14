@@ -1415,6 +1415,119 @@ describe('espera-pela-irmã + cooldown escopado (C1, derivado do oh-my-pi)', () 
     }
   });
 
+  /** F-1489: leitura nova da frota com a conta B medida em 100% (reset em 2 h). */
+  function fleetWithFullB() {
+    const snapshot = {
+      updatedAt: 100_000, worstUsedRatio: 1, highUsageCount: 1, unknownCount: 0,
+      entries: [{
+        id: 'claude:account-b', adapterId: 'claude', accountId: 'account-b', label: 'Account B',
+        installed: true, onCooldown: false, updatedAt: 100_000,
+        windows: [{
+          kind: 'hours' as const, label: '5 Horas', usedRatio: 1, resetsAt: 100_000 + 2 * 60 * 60_000,
+          source: 'provider-api' as const, confidence: 'high' as const,
+        }],
+      }],
+    };
+    return { lastSnapshot: () => snapshot, refreshForLimitHit: async () => snapshot };
+  }
+
+  it('F-1489: a adoção da sessão nativa não devolve a conta medida em 100% — espera em vez de trocar para ela', async () => {
+    const { adoptNativeAccountForFailover } = await import('../persistence/account-store');
+    const { requireQuotaService } = await import('../quota/quota-service');
+    try {
+      vi.mocked(requireQuotaService).mockImplementation(() => fleetWithFullB() as unknown as ReturnType<typeof requireQuotaService>);
+      const owner = armPane(860);
+      vi.mocked(pickAvailableForFailover).mockImplementationOnce(() => ({
+        account: null, probe: false, nextUnblockAtMs: 100_000 + 2 * 60 * 60_000,
+      }));
+      vi.mocked(adoptNativeAccountForFailover).mockReturnValueOnce(accountMocks.next as Account);
+      ptyMocks.dataTaps[0]!('sess-860', 'LIMIT');
+      await settleFailover();
+      expect(owner.send).not.toHaveBeenCalledWith(
+        ACCOUNT_CHANNELS.failover, expect.objectContaining({ switched: true }),
+      );
+      expect(owner.send).toHaveBeenCalledWith(
+        ACCOUNT_CHANNELS.failover, expect.objectContaining({ paneId: 'pane-860', switched: false }),
+      );
+    } finally {
+      vi.mocked(requireQuotaService).mockImplementation(() => { throw new Error('quota optional in test'); });
+    }
+  });
+
+  it('F-1489: o coalesce não reaproveita a conta que a leitura nova mostra em 100%', async () => {
+    const { requireQuotaService } = await import('../quota/quota-service');
+    try {
+      const first = armPane(861);
+      ptyMocks.dataTaps[0]!('sess-861', 'LIMIT');
+      await settleFailover();
+      expect(first.send).toHaveBeenCalledWith(
+        ACCOUNT_CHANNELS.failover, expect.objectContaining({ paneId: 'pane-861', switched: true, toAccountId: 'account-b' }),
+      );
+      // Leitura nova: B esgotou. O pick com rejectExhausted a recusaria.
+      vi.mocked(requireQuotaService).mockImplementation(() => fleetWithFullB() as unknown as ReturnType<typeof requireQuotaService>);
+      vi.mocked(pickAvailableForFailover).mockImplementationOnce(() => ({
+        account: null, probe: false, nextUnblockAtMs: 100_000 + 2 * 60 * 60_000,
+      }));
+      const second = armPane(862);
+      ptyMocks.dataTaps[0]!('sess-862', 'LIMIT');
+      await settleFailover();
+      expect(second.send).not.toHaveBeenCalledWith(
+        ACCOUNT_CHANNELS.failover, expect.objectContaining({ paneId: 'pane-862', switched: true }),
+      );
+    } finally {
+      vi.mocked(requireQuotaService).mockImplementation(() => { throw new Error('quota optional in test'); });
+    }
+  });
+
+  it('F-1489: novo limite cancela a espera restaurada do mesmo pane — o timer velho não dispara nem apaga a linha nova', async () => {
+    const Database = (await import('better-sqlite3')).default;
+    const db = new Database(':memory:');
+    initFailoverWaits(db as never);
+    try {
+      storeMocks.missionStatus = 'running';
+      vi.mocked(getAccount).mockImplementation((id: string) =>
+        id === 'account-a' ? { ...accountMocks.current, cooldownUntil: 160_000 } as Account
+          : id === 'account-b' ? accountMocks.next : null);
+      const owner = armPane(850);
+      vi.mocked(pickAvailableForFailover).mockImplementationOnce(() => ({
+        account: null, probe: false, nextUnblockAtMs: 130_000,
+      }));
+      ptyMocks.dataTaps[0]!('sess-850', 'LIMIT');
+      await settleFailover();
+      expect(listFailoverWaits()).toEqual([expect.objectContaining({ paneId: 'pane-850', retryAt: 131_000 })]);
+
+      // Reinício: a espera volta armada para 131 000.
+      shutdownFailover();
+      storeMocks.scopes.push(testProjectScope());
+      initFailover();
+      registerFailoverListener(owner);
+
+      // Um limite novo no mesmo pane, antes de a restaurada disparar.
+      await vi.advanceTimersByTimeAsync(10_000);
+      vi.mocked(pickAvailableForFailover).mockImplementationOnce(() => ({
+        account: null, probe: false, nextUnblockAtMs: 300_000,
+      }));
+      ptyMocks.dataTaps[0]!('sess-850', 'LIMIT');
+      await settleFailover();
+      const fresh = listFailoverWaits();
+      expect(fresh).toEqual([expect.objectContaining({ paneId: 'pane-850', retryAt: 171_000 })]);
+      const picks = vi.mocked(pickAvailableForFailover).mock.calls.length;
+
+      await vi.advanceTimersByTimeAsync(132_000 - Date.now());
+      await settleFailover();
+      expect(vi.mocked(pickAvailableForFailover).mock.calls.length).toBe(picks);
+      expect(listFailoverWaits()).toEqual(fresh);
+    } finally {
+      vi.mocked(getAccount).mockImplementation((id: string) => {
+        if (id === accountMocks.current.id) return accountMocks.current as Account;
+        if (accountMocks.next && id === accountMocks.next.id) return accountMocks.next;
+        return null;
+      });
+      initFailoverWaits(null);
+      db.close();
+    }
+  });
+
   it('F-1483: depois do reinício, missão que não está mais rodando não remonta sozinha — o fato vai ao Maestro', async () => {
     const Database = (await import('better-sqlite3')).default;
     const db = new Database(':memory:');

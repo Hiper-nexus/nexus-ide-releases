@@ -102,10 +102,23 @@ export function saveFailoverWait(row: FailoverWaitRow): void {
   }
 }
 
-export function deleteFailoverWait(paneId: string): void {
+/**
+ * Apaga a espera do pane. F-1489: com `only`, só a linha que ainda é aquela
+ * (mesma sessão e mesmo horário) — quem leu uma linha antiga nunca apaga a
+ * espera mais nova gravada depois.
+ */
+export function deleteFailoverWait(
+  paneId: string,
+  only?: Pick<FailoverWaitRow, 'sessionId' | 'retryAt'>,
+): void {
   if (!db) return;
   try {
-    db.prepare('DELETE FROM failover_waits WHERE pane_id = ?').run(paneId);
+    if (only) {
+      db.prepare('DELETE FROM failover_waits WHERE pane_id = ? AND session_id = ? AND retry_at = ?')
+        .run(paneId, only.sessionId, Math.round(only.retryAt));
+    } else {
+      db.prepare('DELETE FROM failover_waits WHERE pane_id = ?').run(paneId);
+    }
   } catch (error) {
     warn('apagar a espera', error);
   }

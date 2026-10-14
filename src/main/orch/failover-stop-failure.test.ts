@@ -34,6 +34,10 @@ const accountMocks = vi.hoisted(() => {
   setCooldown: vi.fn((id: string, until: number, _reason: string, scope?: string) => {
     if (!scope) cooldowns.set(id, until);
   }),
+  /** F-1489: a sonda velha nunca pode apagar o cooldown confirmado. */
+  clearCooldown: vi.fn((id: string) => {
+    cooldowns.delete(id);
+  }),
   current: {
     id: 'account-a', adapterId: 'claude', label: 'Account A', mode: 'subscription' as const,
     upstream: 'anthropic', createdAt: 0,
@@ -104,6 +108,7 @@ vi.mock('../persistence/account-store', () => ({
   ensureFreshClaudeSubscription: vi.fn(async () => false),
   isAccountBlockedForScope: vi.fn(() => false),
   setCooldown: accountMocks.setCooldown,
+  clearCooldown: accountMocks.clearCooldown,
   prepareAccountForSpawn: vi.fn((_adapterId: string, id: string) => ({
     ok: true as const,
     account: id === accountMocks.next.id ? accountMocks.next : accountMocks.current,
@@ -199,6 +204,7 @@ beforeEach(() => {
   paneMocks.authorities.clear();
   paneMocks.panes.clear();
   accountMocks.setCooldown.mockClear();
+  accountMocks.clearCooldown.mockClear();
   accountMocks.cooldowns.clear();
   accountMocks.siblingFree = true;
   traceMocks.trace.mockClear();
@@ -442,5 +448,45 @@ describe('F-1484: StopFailure rate_limit troca de conta na hora', () => {
     expect(paneAEvents()).toHaveLength(1);
     expect(cooldownReasons().join(' ')).not.toContain('não confirmado');
     expect(accountMocks.cooldowns.get('account-a')).toBeGreaterThanOrEqual(cooldownAfterSwitch);
+  });
+  it.each([
+    ['a sonda volta sadia: não apaga o cooldown confirmado', 'healthy'],
+    ['a sonda volta sem dados: não troca de novo', 'empty'],
+  ] as const)('F-1489: retry da pausa em voo quando o StopFailure assume — %s', async (_label, outcome) => {
+    ptyLimitText();
+    await settleFailover();
+    expect(failoverEvents()).toEqual([expect.objectContaining({ switched: false })]);
+
+    // Fim da pausa de 15 min: o retry re-sonda, e a sonda fica em voo.
+    let release!: (snap: QuotaFleetSnapshot) => void;
+    let latest: QuotaFleetSnapshot | null = null;
+    const probe = new Promise<QuotaFleetSnapshot>((resolve) => { release = resolve; }).then((snap) => {
+      latest = snap;
+      return snap;
+    });
+    quotaMocks.service = { lastSnapshot: () => latest, refreshForLimitHit: () => probe };
+    await vi.advanceTimersByTimeAsync(15 * 60_000 + 1_000);
+    await settleFailover();
+
+    // O provedor confirma o limite enquanto a sonda velha não volta.
+    stopFailure();
+    await settleFailover();
+    const switched = () => failoverEvents().filter((event) => event.switched === true);
+    expect(switched()).toEqual([expect.objectContaining({ paneId: 'pane-a', toAccountId: 'account-b' })]);
+    const confirmedUntil = accountMocks.cooldowns.get('account-a')!;
+    expect(confirmedUntil).toBeGreaterThan(Date.now());
+
+    release(outcome === 'healthy'
+      ? snapshot(Date.now() + 1, [
+          { kind: 'session', label: 'Sessão', usedRatio: 0.1, source: 'provider-api', confidence: 'high' },
+          { kind: 'hours', label: '5 Horas', usedRatio: 0.1, source: 'provider-api', confidence: 'high' },
+          { kind: 'weekly', label: 'Semanal', usedRatio: 0.1, source: 'provider-api', confidence: 'high' },
+        ])
+      : snapshot(Date.now() + 1, []));
+    await settleFailover();
+    await vi.advanceTimersByTimeAsync(20 * 60_000);
+    expect(switched()).toHaveLength(1);
+    expect(accountMocks.clearCooldown).not.toHaveBeenCalled();
+    expect(accountMocks.cooldowns.get('account-a')).toBeGreaterThanOrEqual(confirmedUntil);
   });
 });

@@ -120,6 +120,7 @@ import {
 } from '../quota/quota-service';
 import { quotaAvailabilityScore } from '../quota/quota-policy';
 import {
+  fullWindowsReopenAt,
   headroomInputsByAccount,
   type HeadroomInput,
 } from '../quota/account-headroom';
@@ -703,6 +704,15 @@ function quotaHeadroomFor(
   }
 }
 
+/** F-1489: conta com janela MEDIDA em 100% que ainda não reabriu (a mesma regra do pick). */
+function measuredExhausted(
+  quotaByAccountId: ReadonlyMap<string, HeadroomInput> | undefined,
+  accountId: string,
+  now: number,
+): boolean {
+  return fullWindowsReopenAt(quotaByAccountId?.get(accountId), now, 0) !== undefined;
+}
+
 interface SwitchRequest {
   /** watchKey — chave do retry agendado deste pane. */
   key: string;
@@ -735,6 +745,8 @@ interface SwitchRequest {
   siblingOnly?: boolean;
   /** F-1483: fim da espera automática, fixado no primeiro agendamento. */
   retryDeadlineAtMs?: number;
+  /** F-1489: a conta cuja folga a leitura comprovou — único destino da troca. */
+  targetAccountId?: string;
 }
 
 /**
@@ -962,6 +974,24 @@ async function continueOnAnotherCli(
   retryTargetMs: number | undefined,
   nextUnblockAtMs: number | undefined,
   /** F-1471: a conta irmã com folga não recebeu a tarefa (rótulos mascarados). */
+  cause?: string,
+): Promise<CliSwitchResult> {
+  // F-1489: a troca de CLI reivindica a tarefa até terminar — a mesma
+  // exclusão da reabertura na irmã e do religamento do headless.
+  const release = claimTaskRecovery(req.paneId, plan.lineageId);
+  if (!release) return { handled: true };
+  try {
+    return await switchTaskCli(req, plan, retryTargetMs, nextUnblockAtMs, cause);
+  } finally {
+    release();
+  }
+}
+
+async function switchTaskCli(
+  req: SwitchRequest,
+  plan: Extract<CliSwitchPlan, { kind: 'go' }>,
+  retryTargetMs: number | undefined,
+  nextUnblockAtMs: number | undefined,
   cause?: string,
 ): Promise<CliSwitchResult> {
   const { authority, paneId, adapterId, hit, current, now } = req;
@@ -1224,6 +1254,25 @@ interface PendingTaskReopen {
  */
 const pendingTaskReopens = new Map<string, PendingTaskReopen>();
 
+/**
+ * F-1489: uma recuperação por tarefa/origem de cada vez — reabertura na
+ * irmã, troca de CLI e religamento do headless reivindicam a MESMA exclusão
+ * (pane e linhagem) até terminar. null = outra recuperação já cuida dela.
+ * A liberação vale uma vez só: nunca solta a reivindicação de outra.
+ */
+function claimTaskRecovery(paneId: string, lineageId: string = paneId): (() => void) | null {
+  if (reopenInFlight.has(paneId) || lineageReopens.has(lineageId)) return null;
+  reopenInFlight.add(paneId);
+  lineageReopens.add(lineageId);
+  let held = true;
+  return () => {
+    if (!held) return;
+    held = false;
+    reopenInFlight.delete(paneId);
+    lineageReopens.delete(lineageId);
+  };
+}
+
 function markSwitchInFlight(paneId: string): void {
   switchesInFlight.set(paneId, (switchesInFlight.get(paneId) ?? 0) + 1);
 }
@@ -1351,6 +1400,7 @@ async function reopenTaskOnSiblingAccount(
   }
   // Uma troca por pane: outra notícia do mesmo limite não abre um segundo pane.
   // F-1486: nem por tarefa — dois panes da mesma linhagem não a reabrem juntos.
+  // F-1489: a troca de CLI e o headless da mesma tarefa também contam.
   if (reopenInFlight.has(paneId) || lineageReopens.has(handle.lineageId)) return { handled: true };
   const fromLabel = current?.label ?? adapterId;
   const toMasked = maskAccountLabel(next.label);
@@ -1362,13 +1412,17 @@ async function reopenTaskOnSiblingAccount(
         cause:
           `a tarefa já trocou de conta ${MAX_ACCOUNT_SWITCHES_PER_TASK} vezes na última hora; ` +
           `o Nexus não a troca para a conta "${toMasked}" de novo sozinho`,
-        paneGone: false,
+        // F-1489: no retry da tarefa sem pane, o teto segue a reabertura da
+        // TAREFA (outra CLI ou nova tentativa) — nunca um retry de conta da
+        // sessão que já saiu.
+        paneGone: req.taskReopen === true,
+        handle,
       },
     });
     return { handled: true };
   }
-  reopenInFlight.add(paneId);
-  lineageReopens.add(handle.lineageId);
+  const release = claimTaskRecovery(paneId, handle.lineageId);
+  if (!release) return { handled: true };
   // A rede do supervisor não reabre a mesma tarefa noutra CLI enquanto esta
   // troca corre (antes do primeiro await: rota + spawn podem passar de 60 s).
   forgetConfirmedPaneLimit(paneId);
@@ -1459,6 +1513,9 @@ async function reopenTaskOnSiblingAccount(
       });
     if (!outcome.ok) {
       traceOutcome('switch-respawn-failed', { paneGone: outcome.closed });
+      // F-1489: o recurso (outra CLI ou espera) reivindica a tarefa por conta
+      // própria — sem await entre a liberação e a reivindicação dele.
+      release();
       await continueWithoutSibling(req, {
         fallback: {
           cause: `a conta "${toMasked}" com folga não recebeu a tarefa (${outcome.error})`,
@@ -1510,8 +1567,7 @@ async function reopenTaskOnSiblingAccount(
     );
     return { handled: true };
   } finally {
-    reopenInFlight.delete(paneId);
-    lineageReopens.delete(handle.lineageId);
+    release();
   }
 }
 
@@ -1586,7 +1642,9 @@ async function continueWithoutSibling(
     cliSwitchNote = switched.note;
     cliPaneGone = switched.paneGone === true;
   }
-  const paneGone = fallback?.paneGone === true || cliPaneGone;
+  // F-1489: a nova tentativa de uma tarefa sem pane nunca vira retry de conta
+  // (a sessão dela já saiu e o retry morreria sem reabrir nada).
+  const paneGone = fallback?.paneGone === true || cliPaneGone || req.taskReopen === true;
   // F-1483: a espera vale até o prazo fixado no primeiro agendamento.
   const deadlineAtMs = req.retryDeadlineAtMs ?? Date.now() + MAX_RETRY_WAIT_MS;
   let scheduledRetryAtMs: number | undefined;
@@ -1695,13 +1753,20 @@ async function switchAccount(req: SwitchRequest): Promise<void> {
   let probe = false;
   let next: Account | null = null;
   let nextUnblockAtMs: number | undefined;
-  const recent = coalesceByFrom.get(coalesceKey);
+  const quotaScores = quotaScoresFor(adapterId);
+  const quotaByAccountId = quotaHeadroomFor(adapterId);
+  // F-1489: a troca não confirmada vai só para a conta que a leitura
+  // comprovou — nem coalesce, nem pick, nem alternativa sem leitura.
+  const target = req.targetAccountId ? getAccount(req.targetAccountId) : null;
+  const recent = req.targetAccountId ? undefined : coalesceByFrom.get(coalesceKey);
   if (recent && recent.expiresAt > now) {
     const reused = getAccount(recent.toAccountId);
     if (
       reused &&
       reused.adapterId === adapterId &&
-      !isAccountBlockedForScope(reused.id, now, selectionScope)
+      !isAccountBlockedForScope(reused.id, now, selectionScope) &&
+      // F-1489: leitura nova em 100% desfaz a decisão da rajada.
+      !measuredExhausted(quotaByAccountId, reused.id, now)
     ) {
       next = reused;
       coalesced = true;
@@ -1711,10 +1776,16 @@ async function switchAccount(req: SwitchRequest): Promise<void> {
     }
   }
 
-  const quotaScores = quotaScoresFor(adapterId);
-  const quotaByAccountId = quotaHeadroomFor(adapterId);
-
-  if (!next) {
+  if (req.targetAccountId) {
+    next =
+      target &&
+      target.adapterId === adapterId &&
+      target.id !== req.excludeId &&
+      !isAccountBlockedForScope(target.id, now, selectionScope) &&
+      !measuredExhausted(quotaByAccountId, target.id, now)
+        ? target
+        : null;
+  } else if (!next) {
     const selection = pickAvailableForFailover(
       adapterId,
       req.excludeId,
@@ -1781,7 +1852,7 @@ async function switchAccount(req: SwitchRequest): Promise<void> {
           selectionScope,
         );
       }
-      if (failedIds.size >= MAX_PREPARE_ATTEMPTS) {
+      if (failedIds.size >= MAX_PREPARE_ATTEMPTS || req.targetAccountId) {
         next = null;
         break;
       }
@@ -1812,9 +1883,10 @@ async function switchAccount(req: SwitchRequest): Promise<void> {
     if (next && prepared.ok) prepareError = undefined;
   }
 
-  if (!next) {
+  if (!next && !req.targetAccountId) {
     const adopted = adoptNativeAccountForFailover(adapterId, req.excludeId);
-    if (adopted) {
+    // F-1489: a sessão nativa adotada pode ser a mesma conta medida em 100%.
+    if (adopted && !measuredExhausted(quotaByAccountId, adopted.id, now)) {
       const prepared = await prepareFailoverAccount(adapterId, adopted.id, now);
       if (prepared.ok) {
         next = adopted;
@@ -1889,73 +1961,95 @@ async function switchAccount(req: SwitchRequest): Promise<void> {
   // consumiria o evento — o Main respawna ANTES de emitir, e emite o desfecho
   // real (skip/recusa do respawn virava toast de sucesso mentiroso).
   if (!authority.owner) {
-    let respawned = false;
-    try {
-      // F-775: o pack de continuidade leva a janela/reset medidos da conta
-      // exausta (quando o snapshot tem) para o agente novo saber o horário.
-      const limitWindowInfo = measuredLimitWindow(adapterId, fromAccountId);
-      respawned = await respawnMainOwnedPaneWithAccount({
+    // F-1489: o religamento do headless reivindica a tarefa até o recibo —
+    // outro sinal (depois do rearme de 30 s) não abre outro substituto da
+    // mesma origem enquanto este não termina.
+    const release = claimTaskRecovery(paneId, getPaneTaskReroute(paneId)?.lineageId);
+    if (!release) {
+      trace({
+        kind: 'account-failover',
+        outcome: 'suppressed',
+        suppressed: 'recovery-in-flight',
         paneId,
-        sessionId: authority.sessionId,
         adapterId,
-        toAccountId: next.id,
-        toAccountLabel: next.label,
-        fromAccountLabel: fromLabel,
-        reason: hit.reason,
+        fromAccountId: fromAccountId ?? null,
         limitKind: hit.kind,
-        limitWindow: limitWindowInfo?.label ?? null,
-        limitResetsAt: limitWindowInfo?.resetsAt ?? nextUnblockAtMs ?? null,
-        limitCooldownMs: hit.cooldownMs,
-        // O trecho final do PTY (memória do Main) — o builder poda e mascara.
-        scrollbackExcerpt: readSessionOutput(authority.sessionId, CLI_SWITCH_EXCERPT_LINES),
-        fromAccountId,
-        nativeResume,
+        reason: hit.reason,
+        missionId: authority.missionId ?? null,
       });
-    } catch (error) {
-      console.warn(
-        '[failover] main-owned respawn falhou:',
-        error instanceof Error ? error.message : error,
-      );
-    }
-    trace({
-      kind: 'account-failover',
-      outcome: respawned ? 'switched' : 'switch-respawn-failed',
-      paneId,
-      adapterId,
-      fromAccountId: fromAccountId ?? null,
-      toAccountId: next.id,
-      limitKind: hit.kind,
-      reason: `${hit.reason}${req.reasonSuffix}`,
-      crossAccount,
-      coalesced,
-      missionId: authority.missionId ?? null,
-    });
-    if (!respawned) {
-      emitNoSwitch(
-        authority,
-        { paneId, adapterId, model: req.paneModel, accountId: fromAccountId ?? undefined },
-        current,
-        hit,
-        `${hit.reason} — a troca para "${next.label}" não se aplicou ` +
-          '(o pane não pôde ser religado); a conta original segue em cooldown',
-      );
       return;
     }
-    emitFailover(authority, {
-      paneId,
-      fromAccountLabel: fromLabel,
-      toAccountLabel: next.label,
-      reason: `${hit.reason}${req.reasonSuffix}`,
-      kind: hit.kind,
-      switched: true,
-      toAccountId: next.id,
-      fromAccountId,
-      crossAccount,
-      coalesced,
-      missionId: authority.missionId,
-      ...(probe ? { probe } : {}),
-    });
-    return;
+    try {
+      let respawned = false;
+      try {
+        // F-775: o pack de continuidade leva a janela/reset medidos da conta
+        // exausta (quando o snapshot tem) para o agente novo saber o horário.
+        const limitWindowInfo = measuredLimitWindow(adapterId, fromAccountId);
+        respawned = await respawnMainOwnedPaneWithAccount({
+          paneId,
+          sessionId: authority.sessionId,
+          adapterId,
+          toAccountId: next.id,
+          toAccountLabel: next.label,
+          fromAccountLabel: fromLabel,
+          reason: hit.reason,
+          limitKind: hit.kind,
+          limitWindow: limitWindowInfo?.label ?? null,
+          limitResetsAt: limitWindowInfo?.resetsAt ?? nextUnblockAtMs ?? null,
+          limitCooldownMs: hit.cooldownMs,
+          // O trecho final do PTY (memória do Main) — o builder poda e mascara.
+          scrollbackExcerpt: readSessionOutput(authority.sessionId, CLI_SWITCH_EXCERPT_LINES),
+          fromAccountId,
+          nativeResume,
+        });
+      } catch (error) {
+        console.warn(
+          '[failover] main-owned respawn falhou:',
+          error instanceof Error ? error.message : error,
+        );
+      }
+      trace({
+        kind: 'account-failover',
+        outcome: respawned ? 'switched' : 'switch-respawn-failed',
+        paneId,
+        adapterId,
+        fromAccountId: fromAccountId ?? null,
+        toAccountId: next.id,
+        limitKind: hit.kind,
+        reason: `${hit.reason}${req.reasonSuffix}`,
+        crossAccount,
+        coalesced,
+        missionId: authority.missionId ?? null,
+      });
+      if (!respawned) {
+        emitNoSwitch(
+          authority,
+          { paneId, adapterId, model: req.paneModel, accountId: fromAccountId ?? undefined },
+          current,
+          hit,
+          `${hit.reason} — a troca para "${next.label}" não se aplicou ` +
+            '(o pane não pôde ser religado); a conta original segue em cooldown',
+        );
+        return;
+      }
+      emitFailover(authority, {
+        paneId,
+        fromAccountLabel: fromLabel,
+        toAccountLabel: next.label,
+        reason: `${hit.reason}${req.reasonSuffix}`,
+        kind: hit.kind,
+        switched: true,
+        toAccountId: next.id,
+        fromAccountId,
+        crossAccount,
+        coalesced,
+        missionId: authority.missionId,
+        ...(probe ? { probe } : {}),
+      });
+      return;
+    } finally {
+      release();
+    }
   }
 
   // F-995: orquestrador de missão num pane do renderer (inclusive o pane do
@@ -2149,6 +2243,7 @@ function scheduleFailoverRetry(
   const { key, authority, hit } = req;
   const attempt = req.attempt + 1;
   cancelScheduledRetry(key);
+  cancelRestoredWait(authority.paneId);
   const scheduledAt = Date.now();
   if (scheduledAt >= deadlineAtMs) return undefined;
   const wait = retryAtMs - scheduledAt;
@@ -2254,6 +2349,7 @@ function scheduleTaskReopen(
   deadlineAtMs: number,
 ): number | undefined {
   cancelTaskReopen(req.paneId);
+  cancelRestoredWait(req.paneId);
   const attempt = req.attempt + 1;
   const now = Date.now();
   if (now >= deadlineAtMs) return undefined;
@@ -2379,14 +2475,17 @@ function scheduleUnconfirmedLimitRetry(
   authority: FailoverAuthority,
   hit: LimitHit,
   retryAtMs: number,
+  /** F-1489: o episódio (instante do hit) a que esta pausa pertence. */
+  episodeAt: number,
 ): number {
   cancelScheduledRetry(key);
+  cancelRestoredWait(authority.paneId);
   const scheduledAt = Date.now();
   const delay = Math.max(retryAtMs - scheduledAt, RETRY_BUFFER_MS);
   const timer = setTimeout(() => {
     pendingRetries.delete(key);
     try {
-      void fireUnconfirmedLimitRetry(key, authority, hit);
+      void fireUnconfirmedLimitRetry(key, authority, hit, episodeAt);
     } catch (err) {
       console.warn('[failover] unconfirmed-limit retry error:', err);
     }
@@ -2396,12 +2495,24 @@ function scheduleUnconfirmedLimitRetry(
   return scheduledAt + delay;
 }
 
+/**
+ * F-1489: a pausa de um limite não confirmado ainda decide — sessão viva,
+ * mesmo episódio (nenhum limite novo reiniciou o watch) e nada comitado
+ * desde o hit dela (o StopFailure que chega durante a sonda assume o pane).
+ */
+function unconfirmedEpisodeLive(key: string, authority: FailoverAuthority, episodeAt: number): boolean {
+  return watches.get(key)?.firedAt === episodeAt &&
+    isCurrentAuthority(authority) &&
+    !limitCommittedSince(key, episodeAt);
+}
+
 async function fireUnconfirmedLimitRetry(
   key: string,
   authority: FailoverAuthority,
   hit: LimitHit,
+  episodeAt: number,
 ): Promise<void> {
-  if (!isCurrentAuthority(authority)) return;
+  if (!unconfirmedEpisodeLive(key, authority, episodeAt)) return;
   const pane = resolvePaneDetails(authority);
   if (!pane) return;
   const adapterId = pane.adapterId;
@@ -2415,8 +2526,17 @@ async function fireUnconfirmedLimitRetry(
     fresh = undefined;
   }
   const probedAt = Date.now();
+  // F-1489: a sonda voltou depois de um StopFailure/limite novo? A decisão é
+  // dele — a sonda velha não troca de novo nem desfaz o cooldown confirmado.
+  if (!unconfirmedEpisodeLive(key, authority, episodeAt)) return;
   if (providerApiRefutesLimit(fresh, hit, probedAt)) {
-    if (current) {
+    // F-1489: só a pausa curta DESTE episódio sai; cooldown de limite
+    // comitado depois dele (outro pane da conta) ou maior que ela fica.
+    if (
+      current &&
+      !accountLimitCommittedSince(current.id, episodeAt) &&
+      (getAccount(current.id)?.cooldownUntil ?? 0) <= episodeAt + CAPPED_COOLDOWN_WITHOUT_PROVIDER_API_MS
+    ) {
       clearCooldown(current.id, 'limite não confirmado pela API do provider — sonda saudável no retry');
     }
     logSuppressedFailover(pane, current, hit, 'unconfirmed-limit-refuted-at-retry', 'transient-watch');
@@ -3450,16 +3570,18 @@ function limitEndedTurn(authority: FailoverAuthority, hitAt: number): boolean {
 /**
  * F-1483: irmã do mesmo provedor com folga MEDIDA e fresca — leitura de até
  * 10 min, toda janela lida desta credencial (sem `confidence: 'low'`) e
- * abaixo de 80%, fora de cooldown.
+ * abaixo de 80%, fora de cooldown. F-1489: devolve a conta comprovada (a de
+ * mais folga) — ela é o destino da troca, nunca outra sem leitura.
  */
 function freshSiblingWithHeadroom(
   adapterId: string,
   currentId: string,
   probedAt: number,
   scope: string | undefined,
-): boolean {
+): string | null {
   const byAccount = quotaHeadroomFor(adapterId);
-  if (!byAccount) return false;
+  if (!byAccount) return null;
+  let proven: { readonly accountId: string; readonly worst: number } | null = null;
   for (const [accountId, input] of byAccount) {
     if (accountId === currentId || input.onCooldown) continue;
     if (isAccountBlockedForScope(accountId, probedAt, scope)) continue;
@@ -3472,10 +3594,11 @@ function freshSiblingWithHeadroom(
         Number.isFinite(window.usedRatio) &&
         window.usedRatio < REFUTE_HEALTHY_RATIO)
     ) {
-      return true;
+      const worst = Math.max(...input.windows.map((window) => window.usedRatio as number));
+      if (!proven || worst < proven.worst) proven = { accountId, worst };
     }
   }
-  return false;
+  return proven?.accountId ?? null;
 }
 
 async function confirmLimitByProbe(
@@ -3567,6 +3690,7 @@ async function confirmLimitByProbe(
       authority,
       hit,
       now + CAPPED_COOLDOWN_WITHOUT_PROVIDER_API_MS + RETRY_BUFFER_MS,
+      now,
     );
     return;
   }
@@ -3576,11 +3700,10 @@ async function confirmLimitByProbe(
   // irmã já — 15 min parada na conta que quase certamente esgotou paravam a
   // missão. Texto citado em turno ativo (F-249) não passa, auth também não
   // (incidente agy), e nunca troca de CLI (`unconfirmed`).
-  if (
-    hit.kind !== 'auth' &&
-    limitEndedTurn(authority, now) &&
-    freshSiblingWithHeadroom(adapterId, current.id, probedAt, hit.scope)
-  ) {
+  const provenSibling = hit.kind !== 'auth' && limitEndedTurn(authority, now)
+    ? freshSiblingWithHeadroom(adapterId, current.id, probedAt, hit.scope)
+    : null;
+  if (provenSibling) {
     // F-1484: esta troca também comita o limite do episódio (a confirmação do
     // provedor que chegar depois só estende) e não encurta cooldown maior.
     noteLimitCommit(key, now, authority.sessionId);
@@ -3618,6 +3741,8 @@ async function confirmLimitByProbe(
       reasonSuffix: ' — a conta irmã tem folga medida agora',
       unconfirmed: true,
       siblingOnly: true,
+      // F-1489: o destino é a conta que a leitura comprovou.
+      targetAccountId: provenSibling,
     });
     return;
   }
@@ -3636,6 +3761,7 @@ async function confirmLimitByProbe(
     authority,
     hit,
     now + CAPPED_COOLDOWN_WITHOUT_PROVIDER_API_MS + RETRY_BUFFER_MS,
+    now,
   );
   emitNoSwitch(
     authority,
@@ -3662,6 +3788,15 @@ async function confirmLimitByProbe(
  */
 const limitCommits = new Map<string, { readonly at: number; readonly turn: number }>();
 const probesInFlight = new Map<string, number>();
+/**
+ * F-1489: último limite comitado por CONTA (qualquer pane). A sonda velha de
+ * uma pausa não confirmada nunca apaga o cooldown que um commit posterior pôs.
+ */
+const accountLimitCommits = new Map<string, number>();
+
+function accountLimitCommittedSince(accountId: string, since: number): boolean {
+  return (accountLimitCommits.get(accountId) ?? -Infinity) >= since;
+}
 
 function noteLimitCommit(key: string, at: number, sessionId: string): void {
   const previous = limitCommits.get(key);
@@ -3700,6 +3835,7 @@ function commitLimitHit(
   options: { readonly unconfirmed?: boolean } = {},
 ): void {
   noteLimitCommit(key, now, authority.sessionId);
+  if (current) accountLimitCommits.set(current.id, Math.max(accountLimitCommits.get(current.id) ?? -Infinity, now));
   // Feed fleet quota UI (session/5h/weekly bars) from the same limit signal.
   noteQuotaLimitHit(adapterId, hit, current?.id);
   // F-1414: limite CONFIRMADO (sonda/API ou repetido depois da pausa) vai à
@@ -3876,6 +4012,8 @@ function beginLimitHandling(key: string, watch: SessionWatch, now: number, confi
   watch.buffer = '';
   cancelScheduledRetry(key);
   cancelScheduledRetry(transientKey(key));
+  // F-1489: limite novo assume o pane — a espera restaurada dele sai.
+  cancelRestoredWait(watch.authority.paneId);
   endTransientEpisode(watch);
 }
 
@@ -3900,6 +4038,17 @@ function handleObserverFrame(frame: ObserverFrame): void {
 
 const restoredWaits = new Map<string, ReturnType<typeof setTimeout>>();
 let unsubscribeWaitScopes: (() => void) | null = null;
+
+/**
+ * F-1489: um limite novo ou outra espera do mesmo pane substitui a espera
+ * restaurada — dois timers não sobrevivem juntos, e a linha gravada é da nova.
+ */
+function cancelRestoredWait(paneId: string): void {
+  const timer = restoredWaits.get(paneId);
+  if (!timer) return;
+  clearTimeout(timer);
+  restoredWaits.delete(paneId);
+}
 
 function rearmFailoverWaits(scope: ProjectExecutionScope, suite: ProjectDomainStoreSuite): void {
   const now = Date.now();
@@ -3957,7 +4106,7 @@ function fireRestoredWait(row: FailoverWaitRow): void {
     deliverWaitFact(row, 'o pane não voltou depois do reinício');
     return;
   }
-  deleteFailoverWait(row.paneId);
+  deleteFailoverWait(row.paneId, row);
   const hit = { kind: row.limitKind, reason: row.reason, cooldownMs: row.cooldownMs } as LimitHit;
   fireScheduledRetry(watchKey(authority), authority, hit, row.attempt, row.deadlineAt);
 }
@@ -3981,7 +4130,7 @@ function restoredAuthority(row: FailoverWaitRow): FailoverAuthority | null {
 
 /** O fato da espera vai ao Maestro (handoff da missão) e a linha sai. */
 function deliverWaitFact(row: FailoverWaitRow, why: string): void {
-  deleteFailoverWait(row.paneId);
+  deleteFailoverWait(row.paneId, row);
   const now = Date.now();
   const account = row.accountId ? getAccount(row.accountId) : null;
   const freesAt = account?.cooldownUntil && account.cooldownUntil > now ? account.cooldownUntil : row.retryAt;
@@ -4069,6 +4218,7 @@ export function shutdownFailover(): void {
   instantAuthDeaths.clear();
   limitCommits.clear();
   probesInFlight.clear();
+  accountLimitCommits.clear();
   // F-1483: as esperas gravadas ficam para o próximo boot.
   for (const key of [...pendingRetries.keys()]) cancelScheduledRetry(key, { keepPersisted: true });
   for (const timer of restoredWaits.values()) clearTimeout(timer);
