@@ -345,7 +345,9 @@ function migrateFromDiskIfEmpty(): void {
   if (squads.size > 0) return;
   for (const candidate of MIGRATION_CANDIDATES) {
     try {
-      const json = fs.readFileSync(candidate, 'utf8');
+      // F-1505: lido como bytes — `'utf8'` mantinha o BOM e o JSON.parse
+      // falhava em silêncio aqui.
+      const json = decodeSquadsFile(fs.readFileSync(candidate));
       const count = importLegacySquadsJson(json);
       if (count > 0) {
         console.log(`[orch] migrated ${count} squad(s) from ${candidate}`);
@@ -880,6 +882,42 @@ export function exportSquadsJson(): string {
 }
 
 /**
+ * F-1505: arquivo de squads vindo do Windows. O `Out-File` do PowerShell 5.1
+ * grava UTF-16 LE com BOM e editores antigos põem BOM no UTF-8. Aceita UTF-8
+ * (com ou sem BOM) e UTF-16 LE/BE com BOM — o TextDecoder consome o BOM — e
+ * recusa o resto dizendo o que fazer, em vez do erro cru do decoder.
+ */
+function decodeSquadsFile(bytes: Uint8Array): string {
+  const encoding =
+    bytes[0] === 0xff && bytes[1] === 0xfe
+      ? 'utf-16le'
+      : bytes[0] === 0xfe && bytes[1] === 0xff
+        ? 'utf-16be'
+        : 'utf-8';
+  try {
+    return new TextDecoder(encoding, { fatal: true }).decode(bytes);
+  } catch {
+    throw new Error(
+      'O arquivo de squads não está em UTF-8 nem em UTF-16 com BOM; ' +
+        'salve-o como UTF-8 e importe de novo.',
+    );
+  }
+}
+
+/** JSON do arquivo de squads; um BOM que sobrou no texto não o invalida. */
+function parseSquadsFileText(text: string): unknown {
+  const body = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+  try {
+    return JSON.parse(body);
+  } catch (error) {
+    throw new Error(
+      'O arquivo de squads não é um JSON válido ' +
+        `(${error instanceof Error ? error.message : String(error)}).`,
+    );
+  }
+}
+
+/**
  * Parse and normalize an import without mutating SQLite or the read cache.
  * Raw and canonical hashes let the IPC boundary bind both the selected bytes
  * and the exact executable definitions shown to the operator.
@@ -899,11 +937,8 @@ function prepareSquadsImportCandidate(
   if (byteLength > MAX_SQUADS_IMPORT_BYTES) {
     throw new Error('squads import exceeds the 1 MiB limit');
   }
-  const rawText =
-    typeof raw === 'string'
-      ? raw
-      : new TextDecoder('utf-8', { fatal: true }).decode(raw);
-  const parsed = squadsFileSchema.parse(JSON.parse(rawText));
+  const rawText = typeof raw === 'string' ? raw : decodeSquadsFile(raw);
+  const parsed = squadsFileSchema.parse(parseSquadsFileText(rawText));
   // F-1502: arquivos de versões anteriores trazem os internos (e cópias de
   // missão). Esses ids continuam reservados — nunca sobrescrevem o app —, mas
   // são ignorados com aviso em vez de recusar os squads do usuário junto.
@@ -1010,7 +1045,7 @@ export function importLegacySquadsJson(json: string): number {
   if (Buffer.byteLength(json, 'utf8') > MAX_SQUADS_IMPORT_BYTES) {
     throw new Error('legacy squads import exceeds the 1 MiB limit');
   }
-  const parsed = squadsFileSchema.parse(JSON.parse(json));
+  const parsed = squadsFileSchema.parse(parseSquadsFileText(json));
   const customs = parsed.squads.filter(
     (squad) => !MANAGED_SQUAD_IDS.has(squad.id),
   );

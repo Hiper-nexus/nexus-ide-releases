@@ -1,4 +1,7 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import type { Db } from '../persistence/db';
 import type { Squad, SquadAgent } from '../../shared/orch-types';
@@ -1669,5 +1672,85 @@ describe('F-1503: salvar recusa o squad que nenhuma missão consegue usar', () =
     // A migração de primeiro boot recupera o que o usuário tinha; o editor corrige.
     expect(importLegacySquadsJson(file)).toBe(2);
     expect(getSquad('f1503-import-dup')?.agents.map((agent) => agent.agentName)).toEqual(['Maestro', 'Dev', 'Dev ']);
+  });
+});
+
+describe('F-1505: arquivo de squads gravado no Windows (BOM e UTF-16)', () => {
+  const fileSquad = {
+    id: 'f1505-windows',
+    name: 'Equipe do Windows — ação',
+    createdAt: '1',
+    builtin: false,
+    agents: [{ id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude' }],
+  };
+  const json = JSON.stringify({ squads: [fileSquad] }, null, 2);
+  const utf16be = (text: string) =>
+    Buffer.from(text, 'utf16le').swap16();
+
+  it.each([
+    ['UTF-8 sem BOM', Buffer.from(json, 'utf8')],
+    ['UTF-8 com BOM', Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(json, 'utf8')])],
+    ['UTF-16 LE com BOM (Out-File do PowerShell 5.1)', Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(json, 'utf16le')])],
+    ['UTF-16 BE com BOM', Buffer.concat([Buffer.from([0xfe, 0xff]), utf16be(json)])],
+  ])('importa %s', (_label, bytes) => {
+    const db = makeDb();
+    openDb = db;
+    initSquadStore(db);
+
+    const candidate = prepareSquadsImport(bytes);
+
+    expect(candidate.targetIds).toEqual([fileSquad.id]);
+    expect(candidate.squads[0]?.name).toBe(fileSquad.name);
+  });
+
+  it('texto com BOM (caminho interno) também importa', () => {
+    const db = makeDb();
+    openDb = db;
+    initSquadStore(db);
+
+    expect(importSquadsJson(`\uFEFF${json}`)).toBe(1);
+    expect(getSquad(fileSquad.id)?.name).toBe(fileSquad.name);
+  });
+
+  it.each([
+    ['Latin-1 sem BOM', Buffer.from(json.replace('\u2014', '\u00e9'), 'latin1'), /não está em UTF-8 nem em UTF-16 com BOM/],
+    ['UTF-16 LE sem BOM', Buffer.from(json, 'utf16le'), /não está em UTF-8 nem em UTF-16 com BOM/],
+    ['UTF-16 LE sem BOM só com ASCII', Buffer.from('{"squads": []}', 'utf16le'), /não é um JSON válido/],
+    ['texto que não é JSON', Buffer.from('squads: nenhum', 'utf8'), /não é um JSON válido/],
+    ['UTF-16 LE com BOM e byte sobrando', Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(json, 'utf16le'), Buffer.from([0x7b])]), /não está em UTF-8 nem em UTF-16 com BOM/],
+  ])('recusa %s com mensagem clara, sem gravar', (_label, bytes, expected) => {
+    const db = makeDb();
+    openDb = db;
+    initSquadStore(db);
+
+    expect(() => prepareSquadsImport(bytes)).toThrow(expected);
+    expect(getSquad(fileSquad.id)).toBeNull();
+  });
+
+  it('a migração de ~/.nexus/squads.json com BOM UTF-8 recupera os squads', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-f1505-home-'));
+    fs.mkdirSync(path.join(home, '.nexus'));
+    fs.writeFileSync(
+      path.join(home, '.nexus', 'squads.json'),
+      Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(json, 'utf8')]),
+    );
+    const previous = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+    process.env.HOME = home;
+    process.env.USERPROFILE = home;
+    vi.resetModules();
+    try {
+      const fresh = await import('./squad-store');
+      const db = makeDb();
+      openDb = db;
+      fresh.initSquadStore(db);
+
+      expect(fresh.getSquad(fileSquad.id)?.name).toBe(fileSquad.name);
+    } finally {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 });
