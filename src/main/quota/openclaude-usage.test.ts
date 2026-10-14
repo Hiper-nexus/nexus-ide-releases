@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -26,6 +26,26 @@ vi.mock('../path-resolver', async (importOriginal) => {
   };
 });
 
+/**
+ * Keychain falso: com HOME temporário o serviço continua sendo o padrão
+ * `OpenClaude-credentials`, o mesmo do login real da máquina. Sem este mock o
+ * fallback do macOS lia (e a falha ecoava) o token do operador.
+ */
+const keychain = vi.hoisted(() => ({ read: vi.fn(async (_service: string): Promise<string | null> => null) }));
+vi.mock('../adapters/native-oauth-keychain', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../adapters/native-oauth-keychain')>()),
+  readNativeOAuthCredential: keychain.read,
+}));
+
+beforeEach(() => {
+  // Config dir herdado do shell redirecionaria a leitura para a credencial real.
+  vi.stubEnv('OPENCLAUDE_CONFIG_DIR', undefined);
+  keychain.read.mockClear();
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
 describe('openclaude-usage', () => {
   it('reads the native token from ~/.openclaude/.credentials.json', async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-openclaude-'));
@@ -41,8 +61,12 @@ describe('openclaude-usage', () => {
 
   it('returns null when there is no usable credential', async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-openclaude-'));
-    expect(await resolveOpenClaudeToken(home)).toBeNull();
+    const token = await resolveOpenClaudeToken(home);
+    // Só o tipo: se o isolamento quebrar, a falha não imprime o segredo.
+    expect(token === null ? null : typeof token).toBeNull();
     expect(openclaudeSignedIn(home)).toBe(false);
+    // Sem arquivo, o macOS cai no Keychain — o falso, nunca o da máquina.
+    expect(keychain.read).toHaveBeenCalledTimes(process.platform === 'darwin' ? 1 : 0);
   });
 
   it('prefers OAuth usage and reports auth-expired on 401', async () => {
@@ -112,8 +136,6 @@ describe('openclaude-usage', () => {
 describe('credencial do OpenClaude sem readFileSync sem teto (F-1417)', () => {
   it.skipIf(process.platform === 'win32')('FIFO ou arquivo gigante não é lido nem pendura', async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-oc-'));
-    const prev = process.env.OPENCLAUDE_CONFIG_DIR;
-    delete process.env.OPENCLAUDE_CONFIG_DIR;
     try {
       const dir = path.join(home, '.openclaude');
       fs.mkdirSync(dir, { recursive: true });
@@ -129,7 +151,6 @@ describe('credencial do OpenClaude sem readFileSync sem teto (F-1417)', () => {
       expect(openclaudeSignedIn(home)).toBe(true);
       expect(await resolveOpenClaudeToken(home)).toBe('sk-ant-oat01-ok');
     } finally {
-      if (prev === undefined) delete process.env.OPENCLAUDE_CONFIG_DIR; else process.env.OPENCLAUDE_CONFIG_DIR = prev;
       fs.rmSync(home, { recursive: true, force: true });
     }
   });
