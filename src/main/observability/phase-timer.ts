@@ -17,6 +17,8 @@ export interface PhaseTimingResult {
 export interface PhaseTimer {
   mark(name: string): void;
   finish(): PhaseTimingResult;
+  /** Most recent `mark`, even when its name was visited before. */
+  lastPhase(): string | null;
 }
 
 export function startPhaseTimer(
@@ -25,9 +27,12 @@ export function startPhaseTimer(
   const startedAt = now();
   let lastAt = startedAt;
   const phases: Record<string, number> = {};
+  let lastPhase: string | null = null;
   return {
+    lastPhase: () => lastPhase,
     mark(name: string): void {
       const at = now();
+      lastPhase = name;
       // Relógio de parede pode andar para trás; um delta negativo destruiria
       // a soma das fases — telemetria nunca reporta tempo negativo.
       phases[name] = (phases[name] ?? 0) + Math.max(0, at - lastAt);
@@ -37,4 +42,26 @@ export function startPhaseTimer(
       return { totalMs: Math.max(0, now() - startedAt), phases };
     },
   };
+}
+
+export interface PhaseTimerStall extends PhaseTimingResult {
+  /** Last finished phase: the spawn is stuck in whatever awaits after it. */
+  readonly afterPhase: string | null;
+}
+
+/**
+ * `pane-spawn-timing` is emitted when a spawn settles, so a spawn that never
+ * settles leaves no trace at all. Fires `report` once if the timer is still
+ * unfinished after `stallMs`; the returned function disarms it.
+ */
+export function watchPhaseTimerStall(
+  timer: PhaseTimer,
+  stallMs: number,
+  report: (stall: PhaseTimerStall) => void,
+): () => void {
+  const handle = setTimeout(() => {
+    report({ ...timer.finish(), afterPhase: timer.lastPhase() });
+  }, stallMs);
+  handle.unref?.();
+  return () => clearTimeout(handle);
 }

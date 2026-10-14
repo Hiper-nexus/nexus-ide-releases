@@ -100,6 +100,7 @@ import { selectPersistedWorkerRestartDispatch } from "./persisted-worker-restart
 import { trace } from "../observability/main-trace";
 import {
   startPhaseTimer,
+  watchPhaseTimerStall,
   type PhaseTimer,
 } from "../observability/phase-timer";
 import { onIpcGuarded } from '../runtime/git-ipc-guard';
@@ -213,6 +214,9 @@ function bindCommandTracking(
 // F-213: um evento `pane-spawn-timing` por tentativa de spawn válida —
 // sucesso, falha de provider/auth/permissão/PTY ou erro interno. A recusa
 // de schema acontece ANTES do timer nascer (pedido inválido não é spawn).
+/** A spawn still unsettled after this long emits `pane-spawn-stalled` (a healthy spawn's p90 is ~5 s). */
+const PANE_SPAWN_STALL_MS = 15_000;
+
 function reportPaneSpawnTiming(
   timer: PhaseTimer,
   request: {
@@ -671,12 +675,25 @@ export function registerPtyIpc(): void {
       // trabalho main-side do spawn; `reportTiming` emite UMA vez no retorno
       // (sucesso, recusa de adapter/autoridade ou exceção).
       const spawnTiming = startPhaseTimer();
+      // A spawn that never settles never reaches `pane-spawn-timing`.
+      const stopStallWatch = watchPhaseTimerStall(spawnTiming, PANE_SPAWN_STALL_MS, (stall) => {
+        trace({
+          kind: "pane-spawn-stalled",
+          adapterId: req.adapterId ?? null,
+          paneId: req.paneId ?? null,
+          missionId: req.missionId ?? null,
+          totalMs: stall.totalMs,
+          afterPhase: stall.afterPhase,
+          phases: stall.phases,
+        });
+      });
       let timingSpawn: ResolvedMainOwnedAgentSpawn | undefined;
       // F-723: grant pendente que ESTA chamada reivindicou. Se o PTY dele não
       // subir, o Main liquida a tentativa agora (não em 30 min) e o watchdog
       // de início avisa quem pediu e reroteia.
       let claimedPendingRequestId: string | undefined;
       const reportTiming = (ok: boolean, error?: string): void => {
+        stopStallWatch();
         reportPaneSpawnTiming(spawnTiming, req, timingSpawn, ok);
         if (!ok && claimedPendingRequestId) {
           reportPendingSpawnStartFailure(
