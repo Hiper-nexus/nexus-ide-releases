@@ -13,11 +13,12 @@ import {
 } from '../../shared/orch-types';
 import { PET_STUDIO_SQUAD } from '../../shared/pet-studio';
 import { MISSION_PREPARE_TITLE_MAX_CHARS } from '../../shared/mission-engine-contract';
+import { MISSION_ROSTER_MAX_AGENTS } from '../../shared/squad-roster-rules';
 import { getActiveWorkspacePath } from './active-workspace';
 
 export const MISSION_SETUP_DRAFT_VERSION = 1 as const;
-/** Teto de integrantes de uma missão montada pelo rascunho. */
-export const MISSION_SETUP_MAX_ROSTER = 12;
+/** Teto de integrantes de uma missão montada pelo rascunho (o mesmo do Main). */
+export const MISSION_SETUP_MAX_ROSTER = MISSION_ROSTER_MAX_AGENTS;
 const MISSION_SETUP_STORAGE_PREFIX = 'nexus:mission-setup:draft:v1:';
 
 export type MissionSetupStep = 'mission' | 'express' | 'team' | 'review';

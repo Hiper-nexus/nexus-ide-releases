@@ -31,7 +31,8 @@ import {
   applyGuidedSquadSkillPolicy,
   withGuidedSkillDefaults,
 } from './guided-squad-skills';
-import { assertUniqueAgentNames } from './squad-agent-names';
+import { assertUniqueAgentNames, duplicateAgentName } from './squad-agent-names';
+import { squadRosterUsabilityIssue } from '../../shared/squad-roster-rules';
 
 /**
  * Squad store. SQLite is authoritative. The in-memory map is a read cache that
@@ -547,6 +548,13 @@ export function getSquad(id: string): Squad | null {
 export function prepareSquadSave(raw: unknown): PreparedSquadSave {
   const parsed = squadSchema.parse(raw);
   const squad = assertManagedSavePolicy(parsed);
+  const issue = squadRosterUsabilityIssue(squad.agents);
+  if (issue) {
+    throw new Error(
+      `O squad "${squad.name}" ${issue}. Nenhuma missão consegue usá-lo ` +
+        'assim; nada foi salvo.',
+    );
+  }
   const canonicalJson = canonicalSquadJson(squad);
   const candidate = Object.freeze({
     squad,
@@ -879,6 +887,13 @@ export function exportSquadsJson(): string {
 export function prepareSquadsImport(
   raw: string | Buffer,
 ): PreparedSquadsImport {
+  return prepareSquadsImportCandidate(raw, true);
+}
+
+function prepareSquadsImportCandidate(
+  raw: string | Buffer,
+  requireUsableRoster: boolean,
+): PreparedSquadsImport {
   const byteLength =
     typeof raw === 'string' ? Buffer.byteLength(raw, 'utf8') : raw.byteLength;
   if (byteLength > MAX_SQUADS_IMPORT_BYTES) {
@@ -898,6 +913,30 @@ export function prepareSquadsImport(
   const importedSquads = parsed.squads
     .filter((squad) => !isAppOwnedSquadId(squad.id))
     .map(normalizeUserSquad);
+  // F-1503: a mesma regra do salvar e do prepare (coordenador, teto e nome de
+  // integrante único, F-1500) — o arquivo é atômico, então um squad que
+  // nenhuma missão usa recusa a importação inteira, nomeando cada um.
+  const unusable = requireUsableRoster
+    ? importedSquads.flatMap((squad) => {
+        const duplicate = duplicateAgentName(squad.agents);
+        const issues = [
+          squadRosterUsabilityIssue(squad.agents),
+          duplicate === null
+            ? null
+            : `tem mais de um integrante chamado \`${duplicate}\``,
+        ].filter((issue): issue is string => issue !== null);
+        return issues.length > 0
+          ? [`O squad "${squad.name}" (${squad.id}) ${issues.join('; ')}.`]
+          : [];
+      })
+    : [];
+  if (unusable.length > 0) {
+    throw new Error(
+      `${unusable.join(' ')} Nenhuma missão consegue ` +
+        `${unusable.length === 1 ? 'usá-lo' : 'usá-los'} assim; nada foi ` +
+        'importado. Corrija o arquivo e importe de novo.',
+    );
+  }
   const canonicalJson = JSON.stringify({ squads: importedSquads }, null, 2);
   const candidate = Object.freeze({
     rawSha256: sha256(
@@ -963,7 +1002,9 @@ export function importSquadsJson(json: string): number {
 /**
  * Trusted first-run migration only. Old exports commonly contain copies of
  * Nexus managed squads; ignore those rows and recover the remaining custom
- * definitions through the same normalized, atomic public apply path.
+ * definitions through the same normalized, atomic public apply path. The
+ * F-1503 roster rule is not applied: recovery keeps what the user had, and
+ * the editor is where an unusable roster gets fixed.
  */
 export function importLegacySquadsJson(json: string): number {
   if (Buffer.byteLength(json, 'utf8') > MAX_SQUADS_IMPORT_BYTES) {
@@ -974,6 +1015,6 @@ export function importLegacySquadsJson(json: string): number {
     (squad) => !MANAGED_SQUAD_IDS.has(squad.id),
   );
   return applyPreparedSquadsImport(
-    prepareSquadsImport(JSON.stringify({ squads: customs })),
+    prepareSquadsImportCandidate(JSON.stringify({ squads: customs }), false),
   );
 }

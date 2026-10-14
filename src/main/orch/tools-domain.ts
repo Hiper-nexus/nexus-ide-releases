@@ -110,7 +110,8 @@ import {
 } from '../adapters/seat-auth-readiness';
 import { writerCircuitBlocksSeat } from './writer-circuit-break';
 import { withAgentStatusVerdict } from '../../shared/mission-block-cause';
-import { isMissionRuntimeSquadId, missionStatusSchema, type SquadAgent } from '../../shared/orch-types';
+import { agentCategorySchema, isMissionRuntimeSquadId, missionStatusSchema, type SquadAgent } from '../../shared/orch-types';
+import { MISSION_ROSTER_MAX_AGENTS } from '../../shared/squad-roster-rules';
 import { missionResultSchema } from '../../shared/mission-engine-contract';
 import { buildClarify } from '../../shared/clarify';
 import { emitClarifyQuestion } from './clarify-flow';
@@ -1229,9 +1230,11 @@ const missionSpawnPaneTool: McpToolDef = {
 const squadSaveTool: McpToolDef = {
   name: 'nexus_squad_save',
   description:
-    'Save a squad definition (JSON schema: {id, name, ' +
-    'createdAt, builtin, orchestratorInstructions, agents[]}). Pass ' +
-    'describe:true to get the full argument schema and stop (schema-on-demand).',
+    'Save a squad definition (JSON schema: {id, name, createdAt, ' +
+    'orchestratorInstructions, agents[]}; exactly one agent with category ' +
+    `"orchestrator" and at most ${MISSION_ROSTER_MAX_AGENTS} agents, or no ` +
+    'mission can use it). Pass describe:true to get the full argument schema ' +
+    'and stop (schema-on-demand).',
   inputSchema: {
     type: 'object',
     properties: {
@@ -1241,39 +1244,51 @@ const squadSaveTool: McpToolDef = {
   },
   handler: async (args, ctx) => {
     if (args.describe === true) {
+      // F-1503: espelha `squadSchema`/`squadAgentObjectSchema` (o teste
+      // compara as chaves). Campos que o save descartava em silêncio saíram;
+      // linhagem de runtime e `ownsPlanDocs` são do Main e não se anunciam.
+      const authorityList = {
+        type: ['array', 'null'],
+        items: { type: 'string', maxLength: 128 },
+        maxItems: 128,
+      };
       return describeEnvelope(true, 'save', {
         type: 'object',
         properties: {
           squad: {
             type: 'object',
             properties: {
-              id: { type: 'string' },
-              name: { type: 'string' },
-              createdAt: { type: 'number' },
-              builtin: { type: 'boolean' },
-              orchestratorInstructions: { type: 'string' },
-              nativeInstructions: { type: 'string' },
+              id: { type: 'string', minLength: 1, maxLength: 128 },
+              name: { type: 'string', minLength: 1, maxLength: 256 },
+              createdAt: { type: ['string', 'number'] },
+              builtin: { type: 'boolean', description: 'always saved as false' },
+              orchestratorInstructions: { type: 'string', maxLength: 65_536 },
+              nativeInstructions: { type: 'string', maxLength: 65_536 },
               agents: {
                 type: 'array',
+                minItems: 1,
+                maxItems: MISSION_ROSTER_MAX_AGENTS,
+                description: 'exactly one agent with category "orchestrator"',
                 items: {
                   type: 'object',
                   properties: {
-                    id: { type: 'string' },
-                    agentName: { type: 'string' },
-                    category: { type: 'string' },
-                    cli: { type: 'string' },
-                    model: { type: 'string' },
-                    effort: { type: 'string' },
-                    allowedSkills: { type: 'array', items: { type: 'string' } },
-                    delegateOnly: { type: 'boolean' },
-                    leaf: { type: 'boolean' },
-                    invocable: { type: 'boolean' },
+                    id: { type: 'string', minLength: 1, maxLength: 128 },
+                    agentName: { type: 'string', minLength: 1, maxLength: 128 },
+                    category: { type: 'string', enum: agentCategorySchema.options },
+                    cli: { type: 'string', description: 'adapter id; default claude' },
+                    providerId: { type: 'string', maxLength: 128 },
+                    model: { type: 'string', maxLength: 128 },
+                    effort: { type: 'string', pattern: '^[A-Za-z0-9_-]+$', maxLength: 32 },
+                    instructions: { type: 'string' },
+                    allowedSkills: authorityList,
+                    allowedTools: authorityList,
+                    persona: { type: 'string', maxLength: 128 },
                   },
-                  required: ['agentName'],
+                  required: ['id', 'agentName', 'category'],
                 },
               },
             },
-            required: ['name', 'agents'],
+            required: ['id', 'name', 'createdAt', 'agents'],
           },
         },
         required: ['squad'],
@@ -3067,7 +3082,9 @@ const recipeSaveTool: McpToolDef = {
   name: 'nexus_recipe_save',
   description:
     'Persist a user-composed recipe so it appears in nexus_recipe_list alongside baked-in recipes. ' +
-    'Upserts by id — resaving with the same id overwrites.',
+    'Upserts by id — resaving with the same id overwrites. A new recipe needs agents: exactly one ' +
+    `with category "orchestrator", at most ${MISSION_ROSTER_MAX_AGENTS}, unique names (F-1503); ` +
+    'resaving an existing id without agents keeps its roster.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -3076,7 +3093,14 @@ const recipeSaveTool: McpToolDef = {
       deliverable: { type: 'string', description: 'One-line description of the recipe output' },
       orchestratorInstructions: { type: 'string' },
       nativeInstructions: { type: 'string' },
-      agents: { type: 'array', items: { type: 'object' } },
+      agents: {
+        type: 'array',
+        items: { type: 'object' },
+        maxItems: MISSION_ROSTER_MAX_AGENTS,
+        description:
+          'Required for a new recipe (same shape as nexus_squad_save agents): exactly one ' +
+          'agent with category "orchestrator" and unique agentName values.',
+      },
     },
     required: ['id', 'name'],
     additionalProperties: false,

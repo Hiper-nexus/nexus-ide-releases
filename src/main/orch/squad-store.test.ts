@@ -132,6 +132,11 @@ const CLONE_CUSTOM_RAW = {
   ],
 };
 
+/** F-1503: o menor roster que uma missão aceita (um coordenador). */
+const MAESTRO_ONLY = [
+  { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude' },
+];
+
 let openDb: Db | null = null;
 
 afterEach(() => {
@@ -963,7 +968,7 @@ describe('squad-store save path', () => {
       createdAt: '1',
       builtin: false,
       orchestratorInstructions: '',
-      agents: [],
+      agents: MAESTRO_ONLY,
     });
     const candidate = prepareSquadSave({
       id: 'save-cas',
@@ -971,7 +976,7 @@ describe('squad-store save path', () => {
       createdAt: '1',
       builtin: false,
       orchestratorInstructions: '',
-      agents: [],
+      agents: MAESTRO_ONLY,
     });
     saveSquad({
       id: 'save-cas',
@@ -979,7 +984,7 @@ describe('squad-store save path', () => {
       createdAt: '1',
       builtin: false,
       orchestratorInstructions: '',
-      agents: [],
+      agents: MAESTRO_ONLY,
     });
 
     expect(() => applyPreparedSquadSave(candidate)).toThrow(/CAS|changed/i);
@@ -1053,7 +1058,7 @@ describe('squad-store save path', () => {
         createdAt: '1704067200000',
         builtin: false,
         orchestratorInstructions: '',
-        agents: [],
+        agents: MAESTRO_ONLY,
       }),
     ).toThrow(/read-only.*SQLite.*unavailable/i);
 
@@ -1071,7 +1076,7 @@ describe('squad-store save path', () => {
       createdAt: '1704067200000',
       builtin: false,
       orchestratorInstructions: '',
-      agents: [],
+      agents: MAESTRO_ONLY,
     });
     db.close();
     openDb = null;
@@ -1083,7 +1088,7 @@ describe('squad-store save path', () => {
         createdAt: '1704067200000',
         builtin: false,
         orchestratorInstructions: '',
-        agents: [],
+        agents: MAESTRO_ONLY,
       }),
     ).toThrow(/failed to persist/i);
 
@@ -1101,7 +1106,7 @@ describe('squad-store save path', () => {
       createdAt: '1704067200000',
       builtin: false,
       orchestratorInstructions: '',
-      agents: [],
+      agents: MAESTRO_ONLY,
     });
     db.close();
     openDb = null;
@@ -1135,7 +1140,7 @@ describe('squad-store save path', () => {
               createdAt: '1704067200000',
               builtin: false,
               orchestratorInstructions: '',
-              agents: [],
+              agents: MAESTRO_ONLY,
             },
             {
               id: 'import-2',
@@ -1143,7 +1148,7 @@ describe('squad-store save path', () => {
               createdAt: '1704067200000',
               builtin: false,
               orchestratorInstructions: '',
-              agents: [],
+              agents: MAESTRO_ONLY,
             },
           ],
         }),
@@ -1434,7 +1439,7 @@ describe('squad-store save path', () => {
       createdAt: '1',
       builtin: false,
       orchestratorInstructions: '',
-      agents: [],
+      agents: MAESTRO_ONLY,
     });
     const candidate = prepareSquadsImport(
       JSON.stringify({
@@ -1444,14 +1449,14 @@ describe('squad-store save path', () => {
             name: 'Reviewed A',
             createdAt: '1',
             builtin: false,
-            agents: [],
+            agents: MAESTRO_ONLY,
           },
           {
             id: 'import-cas-b',
             name: 'Reviewed B',
             createdAt: '1',
             builtin: false,
-            agents: [],
+            agents: MAESTRO_ONLY,
           },
         ],
       }),
@@ -1462,7 +1467,7 @@ describe('squad-store save path', () => {
       createdAt: '1',
       builtin: false,
       orchestratorInstructions: '',
-      agents: [],
+      agents: MAESTRO_ONLY,
     });
 
     expect(() => applyPreparedSquadsImport(candidate)).toThrow(/CAS|changed/i);
@@ -1580,5 +1585,89 @@ describe('F-1502: levar os squads para outro PC pelo exportar/importar do app', 
     expect(getSquad(managed.id)).toEqual(managed);
     expect(getSquad(PET_STUDIO_SQUAD_ID)).toEqual(PET_STUDIO_SQUAD);
     expect(getSquad(runtimeId)).toBeNull();
+  });
+});
+
+describe('F-1503: salvar recusa o squad que nenhuma missão consegue usar', () => {
+  const maestro = { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude' };
+  function workers(count: number) {
+    return Array.from({ length: count }, (_, index) => ({
+      id: `dev-${index}`,
+      agentName: `Dev ${index}`,
+      category: 'executor',
+      cli: 'codex',
+    }));
+  }
+  function squadWith(id: string, agents: unknown[]) {
+    return { id, name: `Squad ${id}`, createdAt: '1', builtin: false, agents };
+  }
+
+  it.each([
+    ['sem coordenador', [...workers(2)], /precisa de exatamente um coordenador.*e tem 0/],
+    ['com dois coordenadores', [maestro, { ...maestro, id: 'orch-2', agentName: 'Maestro 2' }], /precisa de exatamente um coordenador.*e tem 2/],
+    ['com 13 integrantes', [maestro, ...workers(12)], /tem 13 integrantes e uma missão aceita no máximo 12; remova 1/],
+  ])('save (MCP/IPC) recusa o squad %s sem gravar nada', (_label, agents, expected) => {
+    const db = makeDb();
+    openDb = db;
+    initSquadStore(db);
+    const id = `f1503-${agents.length}`;
+
+    expect(() => saveSquad(squadWith(id, agents))).toThrow(expected);
+    expect(() => prepareSquadSave(squadWith(id, agents))).toThrow(/O squad "Squad f1503-\d+"/);
+    expect(getSquad(id)).toBeNull();
+    expect(db.prepare('SELECT COUNT(*) AS count FROM squads WHERE id = ?').get(id)).toEqual({ count: 0 });
+  });
+
+  it('save aceita um coordenador com até 12 integrantes', () => {
+    const db = makeDb();
+    openDb = db;
+    initSquadStore(db);
+
+    expect(saveSquad(squadWith('f1503-ok', [maestro, ...workers(11)])).agents).toHaveLength(12);
+  });
+
+  it('importar recusa o arquivo com squad inutilizável, nomeando o squad, sem gravar nenhum', () => {
+    const db = makeDb();
+    openDb = db;
+    initSquadStore(db);
+
+    expect(() =>
+      prepareSquadsImport(
+        JSON.stringify({
+          squads: [
+            squadWith('f1503-import-ok', [maestro, ...workers(1)]),
+            squadWith('f1503-import-two', [maestro, { ...maestro, id: 'orch-2' }]),
+          ],
+        }),
+      ),
+    ).toThrow(/O squad "Squad f1503-import-two" \(f1503-import-two\) precisa de exatamente um coordenador/);
+    expect(getSquad('f1503-import-ok')).toBeNull();
+    expect(getSquad('f1503-import-two')).toBeNull();
+  });
+
+  it('importar recusa o arquivo com nome de integrante repetido, nomeando squad e nome, sem gravar nenhum', () => {
+    const db = makeDb();
+    openDb = db;
+    initSquadStore(db);
+    const dev = { id: 'dev-a', agentName: 'Dev', category: 'executor', cli: 'codex' };
+    const file = JSON.stringify({
+      squads: [
+        squadWith('f1503-import-fine', [maestro, ...workers(1)]),
+        squadWith('f1503-import-dup', [maestro, dev, { ...dev, id: 'dev-b', agentName: 'Dev ', cli: 'grok' }]),
+      ],
+    });
+
+    // Mesma regra do salvar e do prepare (F-1500): o arquivo é atômico.
+    expect(() => prepareSquadsImport(file)).toThrow(
+      /O squad "Squad f1503-import-dup" \(f1503-import-dup\) tem mais de um integrante chamado `Dev`.*nada foi importado/,
+    );
+    expect(() => importSquadsJson(file)).toThrow(/mais de um integrante chamado `Dev`/);
+    expect(getSquad('f1503-import-fine')).toBeNull();
+    expect(getSquad('f1503-import-dup')).toBeNull();
+    expect(db.prepare("SELECT COUNT(*) AS count FROM squads WHERE id LIKE 'f1503-import-%'").get()).toEqual({ count: 0 });
+
+    // A migração de primeiro boot recupera o que o usuário tinha; o editor corrige.
+    expect(importLegacySquadsJson(file)).toBe(2);
+    expect(getSquad('f1503-import-dup')?.agents.map((agent) => agent.agentName)).toEqual(['Maestro', 'Dev', 'Dev ']);
   });
 });

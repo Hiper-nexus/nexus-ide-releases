@@ -11,13 +11,15 @@ import { classifyWorkKind, type WorkKind } from '../../shared/mission-work-kind'
 import type { SquadAgent } from '../../shared/orch-types';
 import type { ProviderSettingsInfo } from '../../shared/provider-settings-types';
 import type { AdapterInfo } from '../../shared/types';
+import { MISSION_ROSTER_MAX_AGENTS } from '../../shared/squad-roster-rules';
 
 export type CustomizableWorkerCategory = Extract<
   SquadAgent['category'],
   'executor' | 'reviewer' | 'scout'
 >;
 
-export const MISSION_ROSTER_MAX_AGENTS = 12;
+// Uma fonte só com o Main (F-1503): o salvar e a Equipe usam o mesmo teto.
+export { MISSION_ROSTER_MAX_AGENTS };
 export interface RecommendedMissionRole {
   readonly id: string;
   readonly agentName: string;

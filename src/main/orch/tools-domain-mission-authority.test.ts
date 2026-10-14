@@ -117,7 +117,12 @@ import {
   hasCurrentDispatchAuthority,
   type MissionIntentContract,
 } from '../../shared/mission-intent';
-import type { Mission } from '../../shared/orch-types';
+import {
+  agentCategorySchema,
+  squadAgentObjectSchema,
+  squadSchema,
+  type Mission,
+} from '../../shared/orch-types';
 
 const scope = testProjectScope();
 const realGitRun = ProcessGitRunner.prototype.run;
@@ -371,6 +376,29 @@ describe('mission creation authority', () => {
     expect(
       mocks.gitRun.mock.calls.some((call) => call[1]?.[0] === 'push'),
     ).toBe(false);
+  });
+
+  it('F-1503: o describe do nexus_squad_save bate com o schema que o save aceita', async () => {
+    const envelope = (await squadSaveTool().handler(
+      { describe: true },
+      context('worker'),
+    )) as {
+      inputSchema: {
+        properties: { squad: Record<string, any> };
+      };
+    };
+    const squad = envelope.inputSchema.properties.squad;
+    const agent = squad.properties.agents.items;
+
+    expect(squad.required).toEqual(['id', 'name', 'createdAt', 'agents']);
+    expect(Object.keys(squad.properties).filter((key) => !(key in squadSchema.shape))).toEqual([]);
+    expect(squad.properties.agents.maxItems).toBe(12);
+    expect(agent.required).toEqual(['id', 'agentName', 'category']);
+    expect(Object.keys(agent.properties).filter((key) => !(key in squadAgentObjectSchema.shape))).toEqual([]);
+    expect(agent.properties.category.enum).toEqual(agentCategorySchema.options);
+    expect(agent.properties).toHaveProperty('allowedTools');
+    expect(agent.properties).toHaveProperty('allowedSkills');
+    expect(mocks.saveSquad).not.toHaveBeenCalled();
   });
 
   it.each(['worker', 'orchestrator'] as const)(
