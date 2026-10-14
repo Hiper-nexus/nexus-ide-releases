@@ -75,6 +75,26 @@ describe("mission shim filesystem transport", () => {
     vi.useRealTimers();
   });
 
+  it('wakes on a filesystem event instead of polling every few milliseconds', async () => {
+    await runtime.dispose();
+    const polled = vi.spyOn(globalThis, 'setInterval');
+    runtime = createMissionShimRuntime({ ctx, baseDir, pollIntervalMs: 60_000,
+      invoke: async (invocation) => { invocations.push(invocation); return { ok: true, tool: invocation.toolName, result: {} }; },
+    });
+    runtime.bindSession(SESSION_ID);
+    // The only interval is the slow fallback, never the old 40 ms busy poll.
+    expect(polled.mock.calls.map((call) => call[1])).toEqual([60_000]);
+    polled.mockRestore();
+    const request = runtime.createRequestForTests({ requestId: '00000000-0000-4000-8000-000000000077',
+      sequence: 1, issuedAt: Date.now(), command: 'notify', operation: 'heartbeat', args: {} });
+    fs.writeFileSync(path.join(runtime.requestsDir, `0000000000000001-${request.requestId}.json`), JSON.stringify(request));
+    const response = path.join(runtime.responsesDir, `${request.requestId}.json`);
+    const deadline = Date.now() + 5_000;
+    while (!fs.existsSync(response) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(fs.existsSync(response)).toBe(true);
+    expect(invocations).toHaveLength(1);
+  });
+
   it('settles a pending handler before removing its runtime and never publishes after disposal', async () => {
     await runtime.dispose();
     let finish!: () => void;

@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { periodicTaskSnapshot, runPeriodicTask, stopPeriodicTask } from './periodic-task';
+import {
+  configurePeriodicTaskSlowSink, periodicTaskSnapshot, runPeriodicTask, SLOW_REPORT_MIN_INTERVAL_MS, stopPeriodicTask,
+} from './periodic-task';
 
 afterEach(() => vi.useRealTimers());
 
@@ -98,6 +100,58 @@ describe('periodic task physical flights', () => {
     } finally {
       clearInterval(timer);
       await stopPeriodicTask('test-process');
+    }
+  });
+});
+
+describe('periodic task slow report', () => {
+  const busy = (ms: number) => { const end = performance.now() + ms; while (performance.now() < end) { /* spin */ } };
+
+  it('emits one report per task name per window and counts the suppressed runs', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const reports: Array<{ name: string; suppressed: number; suppressedMaxSliceMs: number }> = [];
+    configurePeriodicTaskSlowSink((diagnostic) => { reports.push(diagnostic); });
+    try {
+      // Seven instances of one name started in the same tick (one per worker shim).
+      await Promise.all(Array.from({ length: 7 }, (_, i) =>
+        runPeriodicTask(`slow-dedupe:${i}`, () => busy(3), { sliceMs: 1 })));
+      expect(reports.map((r) => r.name)).toEqual(['slow-dedupe']);
+      expect(reports[0]).toMatchObject({ suppressed: 0 });
+
+      await runPeriodicTask('slow-dedupe:next', () => busy(3), { sliceMs: 1 });
+      expect(reports).toHaveLength(1);
+
+      vi.setSystemTime(Date.now() + SLOW_REPORT_MIN_INTERVAL_MS + 1);
+      await runPeriodicTask('slow-dedupe:later', () => busy(3), { sliceMs: 1 });
+      expect(reports).toHaveLength(2);
+      // 6 siblings + 1 follow-up were folded into the second report, with their worst slice.
+      expect(reports[1].suppressed).toBe(7);
+      expect(reports[1].suppressedMaxSliceMs).toBeGreaterThan(1);
+    } finally {
+      configurePeriodicTaskSlowSink(null);
+    }
+  });
+
+  it('keeps reporting distinct task names independently', async () => {
+    const names: string[] = [];
+    configurePeriodicTaskSlowSink((diagnostic) => { names.push(diagnostic.name); });
+    try {
+      await runPeriodicTask('slow-name-a', () => busy(3), { sliceMs: 1 });
+      await runPeriodicTask('slow-name-b', () => busy(3), { sliceMs: 1 });
+      expect(names).toEqual(['slow-name-a', 'slow-name-b']);
+    } finally {
+      configurePeriodicTaskSlowSink(null);
+    }
+  });
+
+  it('does not report a run that stayed inside its CPU slice', async () => {
+    const names: string[] = [];
+    configurePeriodicTaskSlowSink((diagnostic) => { names.push(diagnostic.name); });
+    try {
+      await runPeriodicTask('slow-quiet', () => undefined, { sliceMs: 50 });
+      expect(names).toEqual([]);
+    } finally {
+      configurePeriodicTaskSlowSink(null);
     }
   });
 });

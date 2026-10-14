@@ -51,13 +51,46 @@ interface TaskState {
   diagnostic: PeriodicTaskDiagnostic;
 }
 
+/** A slow report plus the same-name runs folded into it since the previous report. */
+export interface PeriodicTaskSlowReport extends PeriodicTaskDiagnostic {
+  readonly suppressed: number;
+  readonly suppressedMaxSliceMs: number;
+}
+
 const states = new Map<string, TaskState>();
 const MAX_IDLE_HISTORY = 64;
-let slowSink: ((diagnostic: PeriodicTaskDiagnostic) => void) | null = null;
+/**
+ * A slice is wall-clock between checkpoints, so every task that starts in the
+ * same tick measures the same event-loop stall (one worker shim per agent made
+ * 7 identical rows per tick). One report per task name per window; the rest is
+ * only counted. The event-loop monitor already carries the loop-level truth.
+ */
+export const SLOW_REPORT_MIN_INTERVAL_MS = 5_000;
+const slowReportWindows = new Map<string, { lastAt: number; suppressed: number; suppressedMaxSliceMs: number }>();
+let slowSink: ((report: PeriodicTaskSlowReport) => void) | null = null;
 
 /** Sink must be nonrecursive and nonblocking. No error text or instance IDs. */
 export function configurePeriodicTaskSlowSink(sink: typeof slowSink): void {
   slowSink = sink;
+  slowReportWindows.clear();
+}
+
+function reportSlowRun(diagnostic: PeriodicTaskDiagnostic): void {
+  const now = Date.now();
+  const window = slowReportWindows.get(diagnostic.name);
+  if (window && now - window.lastAt < SLOW_REPORT_MIN_INTERVAL_MS) {
+    window.suppressed += 1;
+    window.suppressedMaxSliceMs = Math.max(window.suppressedMaxSliceMs, diagnostic.sliceMsMax);
+    return;
+  }
+  slowReportWindows.set(diagnostic.name, { lastAt: now, suppressed: 0, suppressedMaxSliceMs: 0 });
+  try {
+    slowSink?.(Object.freeze({
+      ...diagnostic,
+      suppressed: window?.suppressed ?? 0,
+      suppressedMaxSliceMs: window?.suppressedMaxSliceMs ?? 0,
+    }));
+  } catch { /* Diagnostics are isolated. */ }
 }
 
 function publicName(id: string): string {
@@ -174,9 +207,7 @@ export function runPeriodicTask(
     options.signal?.removeEventListener('abort', abort);
     state.flight = null;
     state.diagnostic = { ...state.diagnostic, running: 0, lastCompletedAt: Date.now() };
-    if (state.diagnostic.sliceMsMax > sliceMs) {
-      try { slowSink?.(Object.freeze({ ...state.diagnostic })); } catch { /* Diagnostics are isolated. */ }
-    }
+    if (state.diagnostic.sliceMsMax > sliceMs && slowSink) reportSlowRun(state.diagnostic);
     trimIdleHistory();
     if (failed) reject(error); else resolve();
   };

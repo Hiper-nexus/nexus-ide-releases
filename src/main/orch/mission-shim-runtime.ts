@@ -21,7 +21,17 @@ import type { ToolDispatchResult } from "./mcp-dispatch-contract";
 const REQUEST_SCHEMA = "nexus.mission-shim-request/v1";
 const MAX_REQUEST_BYTES = 64 * 1024;
 const MAX_CLOCK_SKEW_MS = 30_000;
-const DEFAULT_POLL_INTERVAL_MS = 40;
+/**
+ * Fallback only: requests wake the scan through fs.watch (below). One shim per
+ * live agent used to scan every 40 ms (7 agents = ~175 opendir/s on the 4-thread
+ * libuv pool that every other async fs call shares).
+ */
+const DEFAULT_POLL_INTERVAL_MS = 1_500;
+/** Poll rate when the platform refuses to watch the requests directory. */
+const WATCHLESS_POLL_INTERVAL_MS = 100;
+/** Coalesces the burst of events one request file produces (create, rename). */
+const WATCH_WAKE_DEBOUNCE_MS = 25;
+const MAX_SCAN_BATCH = 100;
 const REQUEST_FILE_RE =
   /^(\d{16})-([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\.json$/iu;
 const REQUEST_TEMP_FILE_RE =
@@ -386,6 +396,9 @@ export function createMissionShimRuntime(
   const bindingCurrent = () => !disposed && !!sessionId && options.ctx.sessionId === sessionId &&
     getContextBySession(sessionId) === options.ctx && isCurrentGateContext(options.ctx);
   let timer: NodeJS.Timeout | null = null;
+  let watcher: fs.FSWatcher | null = null;
+  let wakeTimer: NodeJS.Timeout | null = null;
+  let rescanRequested = false;
 
   const createSignedRequest = (
     input: Omit<MissionShimRequest, "schema" | "capabilityId" | "mac">,
@@ -550,11 +563,13 @@ export function createMissionShimRuntime(
             await context.wait(discardDirectoryEntry(requestsDir, entry.name));
           } else {
             names.push(entry.name);
-            names.sort();
-            if (names.length > 100) names.pop();
+            // Bound memory under a flood without sorting per entry.
+            if (names.length >= MAX_SCAN_BATCH * 2) names.sort().length = MAX_SCAN_BATCH;
           }
         }
       } finally { await directory.close(); }
+      names.sort();
+      if (names.length > MAX_SCAN_BATCH) names.length = MAX_SCAN_BATCH;
       for (const name of names) {
         await context.checkpoint();
         if (!bindingCurrent()) return;
@@ -576,8 +591,34 @@ export function createMissionShimRuntime(
       }
     }, { signal: controller.signal, cadenceMs: pollIntervalMs }).catch((error) => {
       if (!disposed) console.warn('[mission-shim] request processing failed', error);
-    }).finally(() => { scanning = null; });
+    }).finally(() => {
+      scanning = null;
+      // An event that arrived mid-scan may name a file this pass already skipped.
+      if (rescanRequested) { rescanRequested = false; scheduleWake(); }
+    });
     return scanning;
+  };
+
+  const scheduleWake = (): void => {
+    if (disposed) return;
+    if (scanning) { rescanRequested = true; return; }
+    if (wakeTimer) return;
+    wakeTimer = setTimeout(() => { wakeTimer = null; void scan(); }, WATCH_WAKE_DEBOUNCE_MS);
+    wakeTimer.unref();
+  };
+
+  const watchRequests = (): boolean => {
+    try {
+      watcher = fs.watch(requestsDir, scheduleWake);
+      // Kernel subscription is not instant: a request written between bind and
+      // the watcher arming raises no event.
+      watcher.on('error', () => { watcher?.close(); watcher = null; });
+      scheduleWake();
+      return true;
+    } catch {
+      watcher = null;
+      return false;
+    }
   };
 
   return {
@@ -610,7 +651,11 @@ export function createMissionShimRuntime(
         // F-997: o bind acontece no spawn, muitas vezes DENTRO da chamada MCP
         // do orquestrador que abriu este worker; o timer não pode herdar a
         // fronteira de transporte dele (handoff do worker seria "nested").
-        timer = outsideAgentTransport(() => setInterval(() => void scan(), pollIntervalMs));
+        const watching = outsideAgentTransport(watchRequests);
+        timer = outsideAgentTransport(() => setInterval(
+          () => void scan(),
+          watching ? pollIntervalMs : Math.min(pollIntervalMs, WATCHLESS_POLL_INTERVAL_MS),
+        ));
         timer.unref();
       }
     },
@@ -619,6 +664,10 @@ export function createMissionShimRuntime(
       disposed = true;
       if (timer) clearInterval(timer);
       timer = null;
+      if (wakeTimer) clearTimeout(wakeTimer);
+      wakeTimer = null;
+      watcher?.close();
+      watcher = null;
       controller.abort(new Error('mission shim disposed'));
       sessionId = null;
       disposal = (async () => {

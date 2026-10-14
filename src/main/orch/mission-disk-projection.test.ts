@@ -530,32 +530,62 @@ describe("mission disk projection", () => {
     },
   );
 
-  it.skipIf(process.platform === "win32")(
-    "fsyncs the mission directory after atomically publishing files",
-    () => {
-      const runtimeManager = manager();
-      const scope = testProjectScope({ checkoutId: "disk-directory-fsync" });
-      const store = createScopedMissionStore(runtimeManager, scope, {
-        idFactory: () => "mission-directory-fsync",
-      });
-      const mission = store.create({ title: "Directory fsync" });
-      const syncedKinds: string[] = [];
-      const originalFsync = fs.fsyncSync.bind(fs);
-      const fsync = vi.spyOn(fs, "fsyncSync").mockImplementation((fd) => {
-        syncedKinds.push(fs.fstatSync(fd).isDirectory() ? "directory" : "file");
-        originalFsync(fd);
+  it("publishes atomically without fsync: the mirror is diagnostic and must not stall Main", () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope({ checkoutId: "disk-no-fsync" });
+    const store = createScopedMissionStore(runtimeManager, scope, {
+      idFactory: () => "mission-no-fsync",
+    });
+    const mission = store.create({ title: "No fsync" });
+    const fsync = vi.spyOn(fs, "fsyncSync");
+    const rename = vi.spyOn(fs, "renameSync");
+
+    try {
+      const written = projectMissionToDisk(runtimeManager, scope, mission.id);
+      expect(fsync).not.toHaveBeenCalled();
+      expect(rename).toHaveBeenCalledTimes(3);
+      expect(fs.readFileSync(written!.boardPath, "utf8")).toContain("No fsync");
+      expect(
+        fs.readdirSync(written!.directory).filter((name) => name.endsWith(".tmp")),
+      ).toEqual([]);
+    } finally {
+      fsync.mockRestore();
+      rename.mockRestore();
+    }
+  });
+
+  it("skips the rewrite when nothing but generatedAt changed, and repairs a deleted file", () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope({ checkoutId: "disk-unchanged" });
+    const store = createScopedMissionStore(runtimeManager, scope, {
+      idFactory: () => "mission-unchanged",
+    });
+    const mission = store.create({ title: "Unchanged" });
+    const first = projectMissionToDisk(runtimeManager, scope, mission.id, { now: () => 1_000 })!;
+    const firstStatus = fs.readFileSync(first.statusPath, "utf8");
+    const rename = vi.spyOn(fs, "renameSync");
+
+    try {
+      projectMissionToDisk(runtimeManager, scope, mission.id, { now: () => 2_000 });
+      expect(rename).not.toHaveBeenCalled();
+      expect(fs.readFileSync(first.statusPath, "utf8")).toBe(firstStatus);
+
+      store.setStatus(mission.id, "running");
+      projectMissionToDisk(runtimeManager, scope, mission.id, { now: () => 3_000 });
+      expect(JSON.parse(fs.readFileSync(first.statusPath, "utf8"))).toMatchObject({
+        generatedAt: 3_000,
+        status: "running",
       });
 
-      try {
-        projectMissionToDisk(runtimeManager, scope, mission.id);
-      } finally {
-        fsync.mockRestore();
-      }
-
-      expect(syncedKinds).toContain("file");
-      expect(syncedKinds).toContain("directory");
-    },
-  );
+      rename.mockClear();
+      fs.rmSync(first.boardPath);
+      projectMissionToDisk(runtimeManager, scope, mission.id, { now: () => 4_000 });
+      expect(rename).toHaveBeenCalledTimes(1);
+      expect(fs.existsSync(first.boardPath)).toBe(true);
+    } finally {
+      rename.mockRestore();
+    }
+  });
 
   it("removes only stale projection temp files left by a crashed writer", () => {
     const runtimeManager = manager();

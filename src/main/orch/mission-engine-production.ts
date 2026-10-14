@@ -1889,11 +1889,12 @@ function missionWorktreeViews(
   }
 }
 
+/** True only when it wrote: the caller must then re-project the view. */
 function persistLeftoverIsolationFromSnapshotView(
   stores: ProjectDomainStoreSuite,
   mission: Mission,
   view: ProjectMissionSnapshotView,
-): void {
+): boolean {
   const stale = wasUpdatedBeforeThisProcess(view.mission.updatedAt);
   const hasLive = missionViewHasLiveWorkingRuntime(view);
   const hasFiles = missionViewHasFiles(view);
@@ -1918,13 +1919,13 @@ function persistLeftoverIsolationFromSnapshotView(
     isFreshPending: freshPending,
   });
   if (mission.status !== "running" && mission.status !== "pending") {
-    return;
+    return false;
   }
   if (
     !leftoverPainted &&
     !(stale && !hasLive)
   ) {
-    return;
+    return false;
   }
   if (
     !shouldPersistLeftoverIsolation({
@@ -1936,9 +1937,10 @@ function persistLeftoverIsolationFromSnapshotView(
       isFreshPending: freshPending,
     })
   ) {
-    return;
+    return false;
   }
   persistLeftoverIsolation(stores.missions, mission.id, "leftover");
+  return true;
 }
 
 interface MissionEngineLifecyclePatch {
@@ -2414,8 +2416,10 @@ const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
     listSnapshotViews: async () =>
       stores.missions.list().map((mission) => {
         const view = projectMissionEngineSnapshotView(scope, stores, mission.id);
-        persistLeftoverIsolationFromSnapshotView(stores, mission, view);
-        return projectMissionEngineSnapshotView(scope, stores, mission.id);
+        // ~12 queries per projection: only redo it when the isolation write changed the mission.
+        return persistLeftoverIsolationFromSnapshotView(stores, mission, view)
+          ? projectMissionEngineSnapshotView(scope, stores, mission.id)
+          : view;
       }),
   }),
 );

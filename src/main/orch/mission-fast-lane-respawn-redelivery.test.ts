@@ -21,6 +21,7 @@ import { testProjectScope } from './__tests__/scope-fixture';
  */
 
 const harness = vi.hoisted(() => ({
+  collectFiles: vi.fn(),
   sessionStates: new Map<string, PaneSessionState | null>(),
   snapshots: [] as Array<{
     missionId: string;
@@ -355,6 +356,14 @@ vi.mock('./worker-file-walk', async importOriginal => {
     args[0] === '/workspace' ? Promise.resolve([]) : actual.listChangedMtimeFiles(...args) };
 });
 
+vi.mock('./worker-files-modified', async importOriginal => {
+  const actual = await importOriginal<typeof import('./worker-files-modified')>();
+  return { ...actual, collectFilesModified: (...args: Parameters<typeof actual.collectFilesModified>) => {
+    harness.collectFiles(...args);
+    return actual.collectFilesModified(...args);
+  } };
+});
+
 type FastLaneModule = typeof import('./mission-fast-lane');
 
 let fastLane: FastLaneModule;
@@ -370,6 +379,7 @@ beforeEach(async () => {
   harness.operatorDismissed = false;
   harness.spawnOptions.length = 0;
   harness.redeliver.mockClear();
+  harness.collectFiles.mockClear();
   harness.deliver.mockClear();
   harness.handoffsOfSession = undefined;
   harness.missionPaneSpecs = [];
@@ -875,6 +885,27 @@ describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
     expect(harness.spawnCount).toBe(1);
     expect(harness.redeliver).toHaveBeenCalledTimes(1);
     expect(harness.redeliver).toHaveBeenCalledWith(scope, 'mission-1');
+  });
+
+  it('does not scan the worker worktree with git while the worker is busy; scans once it is idle', async () => {
+    await fastLane.fastLaneBootstrap(scope, 'mission-1');
+    harness.collectFiles.mockClear();
+    harness.snapshots.push({
+      missionId: 'mission-1',
+      paneId: 'pane-worker-ocupado',
+      sessionId: 'session-worker-ocupado',
+      role: 'worker',
+      agentName: 'Implementar motor',
+      adapterId: 'glm',
+    });
+    harness.sessionStates.set('session-worker-ocupado', 'busy');
+
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(harness.collectFiles).not.toHaveBeenCalled();
+
+    harness.sessionStates.set('session-worker-ocupado', 'idle');
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(harness.collectFiles).toHaveBeenCalled();
   });
 
   it('worker morto sem entrega conta mortalidade e jorna o evento (A1)', async () => {

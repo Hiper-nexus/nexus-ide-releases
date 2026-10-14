@@ -1635,7 +1635,7 @@ export class ScopedHandoffStore {
          ORDER BY created_at ASC, id ASC`,
       )
       .all(...params);
-    return rows.map((row) => this.#fromRow(row, db));
+    return this.#fromRows(rows, db);
   }
 
   /**
@@ -1683,7 +1683,7 @@ export class ScopedHandoffStore {
         ...(page.after ? [page.after.createdAt, page.after.createdAt, page.after.id] : []),
         page.limit,
       );
-    return rows.map((row) => this.#fromRow(row, db));
+    return this.#fromRows(rows, db);
   }
 
   /** Ids das N linhas mais novas, sem artifacts. A recência da trilha inteira. */
@@ -1797,7 +1797,7 @@ export class ScopedHandoffStore {
          ORDER BY created_at ASC, id ASC`,
       )
       .all();
-    return rows.map((row) => this.#fromRow(row, db));
+    return this.#fromRows(rows, db);
   }
 
   get(rawId: string): ScopedHandoff | null {
@@ -2609,8 +2609,9 @@ export class ScopedHandoffStore {
          ORDER BY created_at DESC, id DESC`,
       )
       .all(sessionId);
+    const chains = new Map<string, ReceiptChainVerification>();
     return rows.some((row) => {
-      const handoff = this.#fromRow(row, db);
+      const handoff = this.#fromRow(row, db, chains);
       return (
         handoff.evidenceTrust === "nexus-trusted" &&
         (workerIncarnationId === undefined ||
@@ -2759,7 +2760,21 @@ export class ScopedHandoffStore {
     };
   }
 
-  #fromRow(rawRow: unknown, db: Database.Database): ScopedHandoff {
+  /**
+   * Rows of one read share a single synchronous snapshot, so a mission's
+   * receipt chain verified for the first row stays valid for the rest. The memo
+   * lives only for that read; the next read re-verifies from storage.
+   */
+  #fromRows(rows: readonly unknown[], db: Database.Database): ScopedHandoff[] {
+    const chains = new Map<string, ReceiptChainVerification>();
+    return rows.map((row) => this.#fromRow(row, db, chains));
+  }
+
+  #fromRow(
+    rawRow: unknown,
+    db: Database.Database,
+    chains?: Map<string, ReceiptChainVerification>,
+  ): ScopedHandoff {
     let row: z.infer<typeof handoffRowSchema>;
     try {
       row = handoffRowSchema.parse(rawRow);
@@ -2832,7 +2847,7 @@ export class ScopedHandoffStore {
         isCurrent = false;
       }
     }
-    const mcpProvenance = this.#mcpProvenanceFromDatabase(db, row.id);
+    const mcpProvenance = this.#mcpProvenanceFromDatabase(db, row.id, chains);
     if (
       mcpProvenance &&
       (mcpProvenance.missionId !== row.mission_id ||
@@ -2888,6 +2903,7 @@ export class ScopedHandoffStore {
   #mcpProvenanceFromDatabase(
     db: Database.Database,
     handoffId: string,
+    chains?: Map<string, ReceiptChainVerification>,
   ): HandoffMcpProvenance | undefined {
     const raw = db
       .prepare(
@@ -2908,10 +2924,11 @@ export class ScopedHandoffStore {
         cause: error,
       });
     }
-    const chainVerification = this.#verifyReceiptChainForMission(
-      db,
-      row.mission_id,
-    );
+    let chainVerification = chains?.get(row.mission_id);
+    if (!chainVerification) {
+      chainVerification = this.#verifyReceiptChainForMission(db, row.mission_id);
+      chains?.set(row.mission_id, chainVerification);
+    }
     if (
       chainVerification.status !== "valid" &&
       chainVerification.status !== "empty"

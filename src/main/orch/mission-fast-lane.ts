@@ -2045,6 +2045,14 @@ async function recordWorkerMortalityTick(
       recordAdapterProofOfLife(missionId, adapterId);
       continue;
     }
+    const idleOrDead =
+      pane.state === 'idle' ||
+      pane.state === 'exited' ||
+      pane.state === 'hibernated';
+    const exitedOrHibernated = pane.state === 'exited' || pane.state === 'hibernated';
+    // Nothing below acts on a busy worker, nor on an idle one already settled:
+    // the git scan (a spawned process per worker, every tick) would be discarded.
+    if (!exitedOrHibernated && (!idleOrDead || filesModifiedSettledPanes.has(pane.paneId))) continue;
     const cwd =
       (pane.sessionId ? getSessionCwd(pane.sessionId) : null) ??
       missionExecutionScope(scope, mission).rootRealPath;
@@ -2053,10 +2061,6 @@ async function recordWorkerMortalityTick(
     const livePane = listPaneSnapshots().find((live) => live.paneId === pane.paneId);
     if (!livePane || livePane.sessionId !== pane.sessionId || livePane.missionId !== missionId ||
       livePane.state !== pane.state || livePane.role !== 'worker') continue;
-    const idleOrDead =
-      pane.state === 'idle' ||
-      pane.state === 'exited' ||
-      pane.state === 'hibernated';
     // worker_done --files-modified: a live idle writer that actually wrote
     // files must advance the sealed board. Death-only settlement left
     // 20stories-e at 0/20 with files on disk.
