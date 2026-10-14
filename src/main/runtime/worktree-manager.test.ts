@@ -181,6 +181,67 @@ describe("WorktreeManager", () => {
     },
   );
 
+  // F-1509 (macOS): o APFS é case-insensitive por padrão. Um deep-link, o argv
+  // ou o atalho abrem o workspace com outra caixa; `fs.realpathSync` (JS)
+  // preserva a caixa digitada, enquanto `realpathSync.native` e o
+  // `git rev-parse --show-toplevel` devolvem a do disco — toda missão morria
+  // em "scope root must equal the canonical Git top-level".
+  it.runIf(process.platform === "darwin")(
+    "F-1509: raiz com outra caixa no darwin ainda é o top-level do Git",
+    async () => {
+      const realTemp = fs.realpathSync(tempDir);
+      const caseRepo = path.join(realTemp, "CaseRepo");
+      fs.mkdirSync(caseRepo);
+      git(caseRepo, "init", "-b", "main");
+      git(caseRepo, "config", "user.name", "Nexus Test");
+      git(caseRepo, "config", "user.email", "nexus@example.test");
+      write("README.md", "# Case\n", caseRepo);
+      git(caseRepo, "add", ".");
+      git(caseRepo, "commit", "-m", "initial");
+
+      const diskRoot = fs.realpathSync(caseRepo);
+      const typedRoot = path.join(realTemp, "caserepo");
+      expect(diskRoot).not.toBe(typedRoot);
+      // JS realpathSync preserva a caixa digitada; o native devolve a do disco.
+      expect(fs.realpathSync(typedRoot)).toBe(typedRoot);
+      expect(fs.realpathSync.native(typedRoot)).toBe(diskRoot);
+
+      // (a) raiz com outra caixa é aceita como top-level nas duas provas.
+      const lowerScope = projectScope(typedRoot);
+      const record = await manager.create({
+        scope: lowerScope, missionId: "f1509", taskId: "darwin-case", workerId: "worker",
+        ownership: { files: ["src/case.ts"], symbols: [], domains: [] },
+      });
+      expect(record.status).toBe("ready");
+      expect(manager.inspectIntegration(record).rootRealPath).toBe(typedRoot);
+
+      // (b) subpasta com outra caixa continua recusada.
+      fs.mkdirSync(path.join(caseRepo, "SubDir"));
+      await expect(new WorktreeManager({
+        runtimeRoot, stateStore: new MemoryWorktreeStateStore(), gitRunner,
+      }).create({
+        scope: projectScope(path.join(realTemp, "caserepo", "subdir")),
+        missionId: "f1509", taskId: "darwin-sub", workerId: "worker",
+        ownership: { files: ["src/sub.ts"], symbols: [], domains: [] },
+      })).rejects.toThrow(/canonical Git top-level/);
+
+      // (c) subpasta de outro repositório continua recusada.
+      const other = path.join(realTemp, "OtherRepo");
+      fs.mkdirSync(path.join(other, "src"), { recursive: true });
+      git(other, "init", "-b", "main");
+      git(other, "config", "user.name", "Nexus Test");
+      git(other, "config", "user.email", "nexus@example.test");
+      git(other, "commit", "-q", "--allow-empty", "-m", "x");
+      await expect(new WorktreeManager({
+        runtimeRoot, stateStore: new MemoryWorktreeStateStore(), gitRunner,
+      }).create({
+        scope: projectScope(fs.realpathSync(path.join(other, "src"))),
+        missionId: "f1509", taskId: "other-repo", workerId: "worker",
+        ownership: { files: ["src/other.ts"], symbols: [], domains: [] },
+      })).rejects.toThrow(/canonical Git top-level/);
+    },
+  );
+
   // F-1510: o `git worktree list` do Windows imprime `C:/…`; o registro guarda
   // `C:\…`. O conjunto de conhecidos nunca casava e o prune nunca rodava.
   it("F-1510: prune reconhece a worktree do Nexus na grafia do Git", async () => {
