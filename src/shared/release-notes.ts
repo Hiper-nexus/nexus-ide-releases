@@ -10538,7 +10538,7 @@ export const RELEASE_076251: AppRelease = {
     { title: 'Muse sem falsa expiração', detail: 'O pane do Muse com login nativo mostrava «Sessão expirada» por causa de um erro de autenticação que só aparecia no texto do terminal, mesmo com a credencial funcionando. O Nexus agora confirma com a sonda de cota antes de avisar: sem confirmação, nada de toast e o pane segue trabalhando.' },
   ],
 };
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076252: AppRelease = {
   version: '0.76.252',
   date: '2026-10-13',
   codename: 'Linux em dia com o campo',
@@ -10551,5 +10551,28 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: [
     { title: 'Muse e a segunda conta', detail: 'O pane do Muse com login nativo não avisa mais «sessão expirada» sem a sonda confirmar, e a segunda conta do Antigravity espera a sessão em vez de falhar na hora.' },
     { title: 'Atualização do Linux', detail: 'A 0.76.250 e a 0.76.251 só tinham pacote de Mac ou Windows. O Omarchy consultava o espelho e ficava na 0.76.249.' },
+  ],
+};
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.253',
+  date: '2026-10-14',
+  codename: 'Troca de conta sem perder nada',
+  summary: 'Quando uma conta atinge o limite, o Maestro e os workers trocam para outra conta do mesmo provedor sem parar a missão e sem perder a conversa, o pedido em andamento, a pasta nem a tarefa. O coordenador volta sempre, o Grok não pede login a cada pane no Windows, o AGY aparece ao vivo e o celular volta a conectar.',
+  highlights: [
+    { title: 'A missão não para quando a conta acaba', detail: 'Quando uma conta atinge o limite de uso, o pane troca para outra conta do mesmo provedor e segue a tarefa, na mesma pasta. A troca encadeia entre várias contas, espera até 24 horas se todas esgotarem e retoma sozinha depois de reiniciar o app.' },
+    { title: 'A mesma conversa na conta nova', detail: 'No Claude, a troca de conta continua a mesma conversa (só depois de provar que retomou; senão, sessão nova com resumo), e o último pedido em andamento vai junto, o mais recente sempre inteiro.' },
+    { title: 'Coordenador sempre volta', detail: 'O Maestro não é mais recusado com «orchestrator physical spawn authority is missing or mismatched» quando a conta escolhida muda: ele volta na conta com folga do mesmo provedor e, se houver recusa, ela diz o motivo em português.' },
+  ],
+  fixes: [
+    { title: 'Limite avisado pelo Claude troca na hora', detail: 'Quando o próprio Claude avisa que a conta bateu o limite, a troca acontece uma vez só, sem a pausa de 15 minutos, e o bloqueio da conta vai até a cota voltar de verdade.' },
+    { title: 'Um Maestro só na tela', detail: 'A missão não acumula mais panes mortos do coordenador depois de religar ou atualizar o app.' },
+    { title: 'AGY ao vivo', detail: 'O pane do Antigravity mostra o trabalho enquanto acontece, em vez de ficar preto até terminar.' },
+    { title: 'Mais modelos nas revisões', detail: 'Revisões somente leitura usam todos os modelos de ponta prontos; o portão de integração continua com Claude/Codex. CLI parada na tela de login sai da rota até você logar.' },
+    { title: 'Grok sem login a cada pane', detail: 'No Windows o Grok não pede login a cada pane: a renovação volta para o perfil, e sem login válido aparece «Entrar no Grok» em vez de panes mudos.' },
+    { title: 'Celular pelo QR', detail: 'O QR de controle volta a dar controle, o celular diz por que não conectou, os links copiam o endereço https certo e o QR velho dá lugar a «Gerar novo QR». O servidor de conexão do celular foi para a Cloudflare.' },
+    { title: 'Celular na rede local', detail: 'A porta não muda a cada início, há o botão «Parar», «Iniciar neste computador» volta a ser só local e a tela diz o que fazer quando ninguém conecta.' },
+    { title: 'Sem erro vermelho no Windows', detail: 'O hook do Nexus no Claude não estoura mais o tempo no Windows nem despeja o comando em base64 na tela.' },
+    { title: 'Comandos pesados no horário de verão', detail: 'No macOS e no Linux, a vaga de comando pesado não é liberada com processo ainda rodando na volta do horário de verão.' },
+    { title: 'Squads mais firmes', detail: 'Editor e importação de squads recusam nome repetido com o nome, aceitam arquivo UTF-16 e com BOM do Windows, leem frontmatter CRLF, recusam CON/NUL e aceitam pastas em 8.3 e com outra caixa.' },
   ],
 };

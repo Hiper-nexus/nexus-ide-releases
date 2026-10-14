@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.76.253 — Troca de conta sem perder nada
+
+A troca de conta por cota não para mais a missão. Quando uma conta atinge o limite, o pane troca para a próxima conta do mesmo provedor e segue, no Claude na mesma conversa, levando o último pedido em andamento (F-1470, F-1471, F-1473, F-1480, F-1482, F-1483, F-1484, F-1486, F-1488).
+
+- **Coordenador.** O Maestro volta na conta com folga em vez de ser recusado com «orchestrator physical spawn authority is missing or mismatched», a recusa diz o motivo em português (F-1470) e a missão mostra um Maestro só, sem panes mortos acumulados (F-1475).
+- **CLIs.** O pane do AGY mostra o trabalho ao vivo (F-1476); revisões somente leitura usam todos os modelos de ponta e CLI presa no login sai da rota (F-1477); o Grok no Windows não pede login a cada pane (F-1485).
+- **Celular.** O QR de controle volta a dar controle e o celular diz por que não conectou (F-1472, F-1487); na rede local a porta é fixa, há «Parar» e a tela orienta o que fazer (F-1478).
+- **Windows.** O hook do Nexus não estoura mais o tempo do Claude nem mostra base64 em vermelho (F-1474).
+- **macOS/Linux.** A vaga de comando pesado não é liberada com processo vivo na volta do horário de verão (F-1479).
+- **Squads.** Editor, importação e preparo de squads mais firmes no Windows e com rosters antigos (F-1490..F-1511).
+
 ## 0.76.252 — Linux em dia com o campo
 
 A 0.76.249 foi a última com pacote Linux. A 0.76.250 (comandos pesados no Windows) e a 0.76.251 (Campo em dia) saíram só para Mac e Windows, e o atualizador do Linux só avança quando a release traz os três pacotes. Esta versão é o mesmo produto da 0.76.251, empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35).
