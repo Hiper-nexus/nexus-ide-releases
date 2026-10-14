@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.76.254 — Linux em dia com a troca de conta
+
+A 0.76.252 foi a última com pacote Linux. A 0.76.253 (Troca de conta sem perder nada) saiu só para Windows, e o atualizador do Linux só avança quando a release traz os três pacotes. Esta versão é o mesmo produto da 0.76.253, empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35).
+
+No desktop Linux, em relação à 0.76.252:
+
+- **Contas.** Quando uma conta atinge o limite, o Maestro e os workers trocam para outra conta do mesmo provedor sem parar a missão e sem perder a conversa, o pedido em andamento, a pasta nem a tarefa. A troca encadeia, espera se todas esgotarem e retoma depois de reiniciar (F-1470, F-1471, F-1473, F-1480, F-1482, F-1483, F-1484, F-1486, F-1488, F-1512).
+- **Coordenador.** O Maestro volta na conta com folga em vez de ser recusado com «orchestrator physical spawn authority is missing or mismatched», e a missão mostra um Maestro só (F-1470, F-1475).
+- **CLIs.** O pane do AGY mostra o trabalho ao vivo (F-1476). Revisões somente leitura usam todos os modelos de ponta, e CLI presa no login sai da rota (F-1477).
+- **Celular.** O QR de controle volta a dar controle e o celular diz por que não conectou (F-1472, F-1487). Na rede local a porta é fixa, há «Parar» e a tela orienta o que fazer (F-1478).
+- **Comandos pesados.** A vaga não é liberada com processo ainda vivo na volta do horário de verão (F-1479).
+- **Squads.** Editor, importação e preparo recusam nome repetido, aceitam UTF-16 e BOM, e leem pastas com outra caixa (F-1490..F-1511).
+
+No mesmo binário, sem mudar o comportamento do Linux: no Windows o Grok não pede login a cada pane e o hook do Nexus não estoura o tempo do Claude (0.76.253, F-1485, F-1474).
+
 ## 0.76.253 — Troca de conta sem perder nada
 
 A troca de conta por cota não para mais a missão. Quando uma conta atinge o limite, o pane troca para a próxima conta do mesmo provedor e segue, no Claude na mesma conversa, levando o último pedido em andamento (F-1470, F-1471, F-1473, F-1480, F-1482, F-1483, F-1484, F-1486, F-1488).

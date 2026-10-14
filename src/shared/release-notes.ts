@@ -10553,7 +10553,7 @@ export const RELEASE_076252: AppRelease = {
     { title: 'Atualização do Linux', detail: 'A 0.76.250 e a 0.76.251 só tinham pacote de Mac ou Windows. O Omarchy consultava o espelho e ficava na 0.76.249.' },
   ],
 };
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076253: AppRelease = {
   version: '0.76.253',
   date: '2026-10-14',
   codename: 'Troca de conta sem perder nada',
@@ -10574,5 +10574,20 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Sem erro vermelho no Windows', detail: 'O hook do Nexus no Claude não estoura mais o tempo no Windows nem despeja o comando em base64 na tela.' },
     { title: 'Comandos pesados no horário de verão', detail: 'No macOS e no Linux, a vaga de comando pesado não é liberada com processo ainda rodando na volta do horário de verão.' },
     { title: 'Squads mais firmes', detail: 'Editor e importação de squads recusam nome repetido com o nome, aceitam arquivo UTF-16 e com BOM do Windows, leem frontmatter CRLF, recusam CON/NUL e aceitam pastas em 8.3 e com outra caixa.' },
+  ],
+};
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.254',
+  date: '2026-10-14',
+  codename: 'Linux em dia com a troca de conta',
+  summary: 'O app no Linux deixa a 0.76.252 e passa a incluir a 0.76.253: quando a conta atinge o limite, a missão troca de conta sem parar e sem perder a conversa, o pedido, a pasta nem a tarefa.',
+  highlights: [
+    { title: 'A missão não para quando a conta acaba', detail: 'O Maestro e os workers trocam para outra conta do mesmo provedor e seguem a tarefa. No Claude a conversa continua, e o último pedido em andamento vai junto.' },
+    { title: 'Coordenador sempre volta', detail: 'O Maestro volta na conta com folga em vez de ser recusado, e a missão mostra um Maestro só, sem panes mortos acumulados.' },
+    { title: 'AGY ao vivo e celular de volta', detail: 'O pane do Antigravity mostra o trabalho enquanto acontece. O QR de controle volta a dar controle, e na rede local a porta não muda a cada início.' },
+  ],
+  fixes: [
+    { title: 'Revisão, squads e comando pesado', detail: 'Revisões somente leitura usam todos os modelos de ponta. Squads salvos importam de novo, inclusive arquivo do Windows. A vaga de comando pesado não some na volta do horário de verão.' },
+    { title: 'Atualização do Linux', detail: 'A 0.76.253 só tinha pacote de Windows. O Omarchy consultava o espelho e ficava na 0.76.252.' },
   ],
 };
