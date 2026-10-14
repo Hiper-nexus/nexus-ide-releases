@@ -852,7 +852,7 @@ describe('F-1386 — lockfile gating e caches de build', () => {
     expect(found).toEqual(['build/cache.tsbuildinfo', 'tsconfig.tsbuildinfo']);
   });
 
-  it('copyBuildCaches copia o que existe e pula dest presente', () => {
+  it('copyBuildCaches copia o que existe e pula dest presente', async () => {
     const source = tmpRoot();
     const wt = tmpRoot();
     makeTree(source, {
@@ -864,7 +864,7 @@ describe('F-1386 — lockfile gating e caches de build', () => {
     });
     // dest já presente não é recopiado.
     makeTree(wt, { 'tsconfig.tsbuildinfo': 'antigo' });
-    const result = copyBuildCaches(source, wt);
+    const result = await copyBuildCaches(source, wt);
     expect(result.copied).toEqual(['build/cache.tsbuildinfo']);
     expect(fs.readFileSync(path.join(wt, 'build/cache.tsbuildinfo'), 'utf8'))
       .toBe('version 5.0');
@@ -873,13 +873,13 @@ describe('F-1386 — lockfile gating e caches de build', () => {
       .toBe('antigo');
   });
 
-  it('copyBuildCaches semeia o cache fs do vitest; dest presente não é recopiado', () => {
+  it('copyBuildCaches semeia o cache fs do vitest; dest presente não é recopiado', async () => {
     const source = tmpRoot();
     const wt = tmpRoot();
     makeTree(source, {
       '.nexus-cache/vitest/mod/deadbeef.js': 'transformado',
     });
-    const result = copyBuildCaches(source, wt);
+    const result = await copyBuildCaches(source, wt);
     expect(result.copied).toEqual(['.nexus-cache/vitest']);
     expect(fs.readFileSync(
       path.join(wt, '.nexus-cache/vitest/mod/deadbeef.js'), 'utf8',
@@ -887,19 +887,40 @@ describe('F-1386 — lockfile gating e caches de build', () => {
 
     const wtWarm = tmpRoot();
     makeTree(wtWarm, { '.nexus-cache/vitest/mod/local.js': 'da worktree' });
-    const second = copyBuildCaches(source, wtWarm);
+    const second = await copyBuildCaches(source, wtWarm);
     expect(second.copied).toEqual([]);
     expect(fs.readFileSync(
       path.join(wtWarm, '.nexus-cache/vitest/mod/local.js'), 'utf8',
     )).toBe('da worktree');
   });
 
-  it('copyBuildCaches: falha na cópia do cache do vitest é fail-open', () => {
+  it('copyBuildCaches: cópia do diretório é assíncrona — nada é copiado antes do await', async () => {
     const source = tmpRoot();
     const wt = tmpRoot();
     makeTree(source, { '.nexus-cache/vitest/mod/a.js': 'x' });
-    const result = copyBuildCaches(source, wt, {
-      copyDir: () => {
+    let copied = false;
+    const pending = copyBuildCaches(source, wt, {
+      copyDir: async (src, dest) => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        fs.cpSync(src, dest, { recursive: true });
+        copied = true;
+      },
+    });
+    // Se a cópia fosse síncrona (bloqueando o Main), `copied` já seria true.
+    expect(copied).toBe(false);
+    const result = await pending;
+    expect(copied).toBe(true);
+    expect(result.copied).toEqual(['.nexus-cache/vitest']);
+    expect(fs.readFileSync(path.join(wt, '.nexus-cache/vitest/mod/a.js'), 'utf8'))
+      .toBe('x');
+  });
+
+  it('copyBuildCaches: falha na cópia do cache do vitest é fail-open', async () => {
+    const source = tmpRoot();
+    const wt = tmpRoot();
+    makeTree(source, { '.nexus-cache/vitest/mod/a.js': 'x' });
+    const result = await copyBuildCaches(source, wt, {
+      copyDir: async () => {
         throw new Error('sem espaço');
       },
     });
@@ -909,11 +930,11 @@ describe('F-1386 — lockfile gating e caches de build', () => {
     ]);
   });
 
-  it('copyBuildCaches pula arquivo acima do teto', () => {
+  it('copyBuildCaches pula arquivo acima do teto', async () => {
     const source = tmpRoot();
     const wt = tmpRoot();
     makeTree(source, { 'tsconfig.tsbuildinfo': '{}' });
-    const result = copyBuildCaches(source, wt, {
+    const result = await copyBuildCaches(source, wt, {
       statSize: () => 300 * 1024 * 1024, // acima de MAX_BUILD_CACHE_BYTES
     });
     expect(result.copied).toEqual([]);
