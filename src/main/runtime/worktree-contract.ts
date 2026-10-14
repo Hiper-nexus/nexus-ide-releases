@@ -8,6 +8,25 @@ import type { MaterializeWorktreeResult } from "./worktree-cow";
 export const SHA_PATTERN = /^[a-f0-9]{40,64}$/;
 export const DIGEST_PATTERN = /^[a-f0-9]{64}$/;
 
+/**
+ * Prefixo de branch das worktrees PRÉ-ALOCADAS do pool (A1). Nunca colide com
+ * as branches derivadas de writer (`refs/heads/nexus/...`), então uma branch de
+ * pool é reconhecível por nome em qualquer listagem (`git worktree list`,
+ * `git for-each-ref`) para a limpeza de boot/shutdown.
+ */
+export const POOL_BRANCH_REF_PREFIX = "refs/heads/nexus-pool/";
+/** Subdiretório, sob a raiz gerenciada, das worktrees do pool. */
+export const POOL_WORKTREES_SUBDIR = "pool";
+
+export function isPooledBranchRef(branchRef: string): boolean {
+  return branchRef.startsWith(POOL_BRANCH_REF_PREFIX) &&
+    branchRef.length > POOL_BRANCH_REF_PREFIX.length &&
+    !branchRef.includes("..") &&
+    !branchRef.includes("//") &&
+    !branchRef.endsWith("/") &&
+    !branchRef.endsWith(".lock");
+}
+
 export interface WorktreeOwnership {
   readonly files: readonly string[];
   readonly symbols: readonly string[];

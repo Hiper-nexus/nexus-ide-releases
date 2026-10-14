@@ -18,6 +18,7 @@ import { claimSameCheckoutWriter, hasPendingWriterClaim } from './delegated-writ
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { scheduleWorktreeSalvage } from './isolated-writer-salvage';
 import { KeyedCoalescingWorker } from '../util/keyed-coalescing-worker';
+import { requireIsolatedWriterPool } from './isolated-writer-pool';
 import { AsyncProcessGitRunner, type AsyncGitRunner } from '../runtime/git-command';
 
 /**
@@ -236,6 +237,30 @@ export async function allocateIsolatedWriterWorktree(
   const workerId = randomUUID();
   const registryKey = missionId ?? OPERATOR_HAND_WORKTREE_KEY;
   schedulePaneWriterGc(scope, registryKey);
+  const poolRequest = {
+    baseRootRealPath: authority.baseRootRealPath,
+    baseRef: authority.baseRef,
+  };
+
+  // A1: adota do pool de worktrees pré-alocadas, se houver. Qualquer falha
+  // (prova de identidade, HEAD/baseRef obsoleto, pool desligado) cai no
+  // caminho atual de alocação — fail-closed.
+  try {
+    const pooled = await requireIsolatedWriterPool().tryAdopt(scope, registryKey, poolRequest);
+    if (pooled) {
+      const tracked = trackAllocation(scope, missionId, registryKey, pooled.record);
+      const allocation = authority.baseRootRealPath && authority.baseRootRealPath !== scope.rootRealPath
+        ? { ...tracked, baseRootRealPath: authority.baseRootRealPath }
+        : tracked;
+      sweepReleasedPaneWriterWorktrees(scope);
+      requireIsolatedWriterPool().scheduleReplenish(scope, poolRequest);
+      return allocation;
+    }
+  } catch (error) {
+    // Base indisponível ou prova falhou: o caminho atual reporta o erro real.
+    console.warn('[isolated-writer] adoção do pool ignorada, seguindo pela alocação', error);
+  }
+
   let materialize: MaterializeWorktreeResult | undefined;
   const record = await requireWorktreeRuntimeRegistry().create({
     ...authority,
@@ -255,6 +280,7 @@ export async function allocateIsolatedWriterWorktree(
     ? { ...tracked, baseRootRealPath: authority.baseRootRealPath }
     : tracked;
   sweepReleasedPaneWriterWorktrees(scope);
+  requireIsolatedWriterPool().scheduleReplenish(scope, poolRequest);
   return materialize ? { ...allocation, materialize } : allocation;
 }
 
