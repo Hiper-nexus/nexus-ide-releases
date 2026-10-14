@@ -1,0 +1,10 @@
+{
+  // PWA de pareamento do celular (https://app.nexuside.app). Mesmo nome e rota do Worker publicado à mão em 16/07.
+  "name": "nexus-companion",
+  "account_id": "53446ce31f241717e814d3766cb43305",
+  "main": "worker.js",
+  "compatibility_date": "2026-09-30",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "app.nexuside.app/*", "zone_id": "8e4c8f181ef7eb560356469f349cea09" }]
+}
