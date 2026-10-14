@@ -2346,10 +2346,15 @@ async function fireTaskReopen(req: SwitchRequest, handle: PaneTaskRerouteHandle)
       return;
     }
     const facts = await continuityFacts(authority, adapterId, current?.id, hit, pick.nextUnblockAtMs);
+    const crossAccount = current ? current.id !== next.id : true;
     const reopened = await reopenTaskOnSiblingAccount(retry, next, facts, {
-      crossAccount: current ? current.id !== next.id : true,
+      crossAccount,
       coalesced: false,
       probe: false,
+      // F-1488: a mesma regra da troca (F-1473) — com histórico compartilhado,
+      // a tarefa reaberta retoma a conversa, com a prova de boot e o pacote
+      // como recurso.
+      nativeResume: crossAccount && nativeResumeAcrossAccounts(adapterId, { from: current, to: next }),
     });
     if (!reopened.handled) await refuseMissionPaneSwitch(retry, next, reopened.why);
   } finally {

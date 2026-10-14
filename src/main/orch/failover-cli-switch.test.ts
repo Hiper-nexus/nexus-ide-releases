@@ -978,6 +978,56 @@ describe('F-1471: worker de missão troca de conta no MESMO provedor e segue a t
     expect(events().some((event) => event.paneId === 'pane-claude-2' && event.scheduledRetryAtMs !== undefined)).toBe(false);
   });
 
+  it.each([
+    ['com a prova de boot, retoma a MESMA conversa', 'proved'],
+    ['sem a prova de boot, segue com o pacote', 'failed'],
+  ] as const)('F-1488: writer sem pane reaberto pelo timer na conta irmã Claude — %s', async (_label, verdict) => {
+    worker();
+    const reroute = vi.fn<PaneTaskRerouteHandle['reroute']>();
+    reroute.mockRejectedValueOnce(new Error('quem pediu o pane não tem mais sessão viva'));
+    reroute.mockResolvedValueOnce({ paneId: 'pane-claude-resumed', adapterId: 'claude', model: 'claude-opus-5-5' });
+    reroute.mockResolvedValueOnce({ paneId: 'pane-claude-pack', adapterId: 'claude', model: 'claude-opus-5-5' });
+    registerPaneTaskReroute(handle({ reroute, hasAlternative: vi.fn(() => false) }));
+    h.requestPaneClose.mockImplementation(async (_paneId: string, sessionId?: string) => {
+      if (sessionId) h.sessions.delete(sessionId);
+      return true;
+    });
+    h.dataTaps[0]('session-claude', 'QUOTA');
+    await settle();
+    await settle();
+    const waiting = events().at(-1)!;
+    expect(waiting).toMatchObject({ paneId: 'pane-claude', switched: false });
+    expect(reroute).toHaveBeenCalledTimes(1);
+
+    // Na nova tentativa a conversa do pane já pode ir para a irmã.
+    h.rebind.mockReturnValue(true);
+    if (verdict === 'failed') h.resumeBootOk.mockResolvedValueOnce('failed');
+    await vi.advanceTimersByTimeAsync(waiting.scheduledRetryAtMs! - Date.now());
+    await settle();
+    await settle();
+    await settle();
+
+    expect(h.rebind).toHaveBeenCalledWith(SCOPE, 'pane-claude', 'claude', 'claude-a', 'claude-b');
+    const resumedRequest = reroute.mock.calls[1]![0];
+    expect(resumedRequest.sameAdapter).toMatchObject({ adapterId: 'claude', accountId: 'claude-b' });
+    expect(resumedRequest.nativeResume?.fromPaneId).toBe('pane-claude');
+    expect(h.resumeBootOk).toHaveBeenCalledWith({ paneId: 'pane-claude-resumed' });
+    const receipt = events().find((event) => event.switched);
+    if (verdict === 'proved') {
+      expect(reroute).toHaveBeenCalledTimes(2);
+      expect(receipt).toMatchObject({ toPaneId: 'pane-claude-resumed', toAccountId: 'claude-b', nativeResume: true });
+    } else {
+      expect(reroute).toHaveBeenCalledTimes(3);
+      const fallback = reroute.mock.calls[2]![0];
+      expect(fallback.nativeResume).toBeUndefined();
+      expect(fallback.appendPrompt).toContain('You are now running on account');
+      expect(h.requestPaneClose).toHaveBeenCalledWith('pane-claude-resumed');
+      expect(receipt).toMatchObject({ toPaneId: 'pane-claude-pack', toAccountId: 'claude-b' });
+      expect(receipt?.nativeResume).toBeUndefined();
+    }
+    expect(hasPendingFailoverRecovery('pane-claude', 'session-claude')).toBe(false);
+  });
+
   it('F-1486: com o prepare da conta irmã pendente, o supervisor já espera (marca antes do heal/prepare)', async () => {
     worker();
     registerPaneTaskReroute(handle());
