@@ -103,3 +103,18 @@ describe('Main Shot destination wiring (F-1054)', () => {
     expect(shot).toContain('app.getPath("videos")');
   });
 });
+
+describe('Post-boot idle queue deferral', () => {
+  it('defers heavy post-boot work to enqueuePostBootIdleTask and registers quota lazily', () => {
+    expect(bootstrapSource).toContain("enqueuePostBootIdleTask('startCliAutoUpdate'");
+    expect(bootstrapSource).toContain("enqueuePostBootIdleTask('startClaudeSubscriptionFreshness'");
+    expect(bootstrapSource).toContain("enqueuePostBootIdleTask('maybeOfferFirstRunProvisioning'");
+    expect(bootstrapSource).toContain("enqueuePostBootIdleTask('createRedlineSink'");
+    expect(bootstrapSource).toContain("enqueuePostBootIdleTask('syncInstalledRedline'");
+    expect(bootstrapSource).toContain("registerQuotaServiceLazy(() => ({");
+    expect(bootstrapSource).toContain("enqueuePostBootIdleTask('startMissionQuotaPoll'");
+    expect(bootstrapSource).not.toContain("bootStep('getSearchMixer', () => getSearchMixer())");
+    expect(appReadySource).toContain("enqueuePostBootIdleTask('post-boot-hooks-and-shot-bridge'");
+  });
+});
+

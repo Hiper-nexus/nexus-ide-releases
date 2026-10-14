@@ -1,5 +1,6 @@
 import fsp from 'node:fs/promises';
 import { runPeriodicTask, stopPeriodicTask, type PeriodicTaskContext } from '../observability/periodic-task';
+import { enqueuePostBootIdleTask, isPostBootIdleReady } from '../observability/post-boot-idle-queue';
 import { readRegularFileCappedAsync } from '../redline/redline-safe-read';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -621,15 +622,24 @@ export function notifyAdaptersChanged(): void {
   broadcast();
 }
 
+function runAdapterRegistryReload(): Promise<void> {
+  if (registryController.signal.aborted) return Promise.resolve();
+  invalidateModelCatalogCache();
+  return runPeriodicTask('adapter-registry-reload', reloadBudgeted, { signal: registryController.signal }).catch((error) => {
+    if (!registryController.signal.aborted) console.warn('[adapter-registry] refresh failed:', error);
+  });
+}
+
 function scheduleReloadAndBroadcast(): void {
   registryEpoch++;
   if (reloadTimer) clearTimeout(reloadTimer);
   reloadTimer = setTimeout(() => {
     reloadTimer = null;
-    invalidateModelCatalogCache();
-    void runPeriodicTask('adapter-registry-reload', reloadBudgeted, { signal: registryController.signal }).catch((error) => {
-      if (!registryController.signal.aborted) console.warn('[adapter-registry] refresh failed:', error);
-    });
+    if (!isPostBootIdleReady()) {
+      enqueuePostBootIdleTask('adapter-registry-reload', () => runAdapterRegistryReload());
+      return;
+    }
+    void runAdapterRegistryReload();
   }, WATCH_DEBOUNCE_MS);
 }
 
@@ -676,7 +686,6 @@ export function initAdapterRegistry(): void {
   // F-990: a listagem viva mudou (ou falhou e caiu na última boa) → o
   // registro recompõe a oferta para spawn, squad e failover.
   stopDiscoveryListener ??= onDiscoveredModelsChanged(scheduleReloadAndBroadcast);
-  void warmAdapterCliVersions();
 
   try {
     watcher = fs.watch(USER_ADAPTER_DIR, { persistent: false }, () => {
@@ -718,34 +727,46 @@ export function initAdapterRegistry(): void {
     }
   }
 
-  void runPeriodicTask('adapter-model-refresh', async (context) => {
-    await Promise.all([
-      context.wait(refreshRemoteModelCatalog()),
-      context.wait(refreshAllDiscoveredModels([...registry.keys()], undefined, context)),
-    ]);
-    invalidateModelCatalogCache();
-    await reloadBudgeted(context);
-  }, { signal: registryController.signal, cadenceMs: MODEL_DISCOVERY_POLL_MS }).catch((error) => {
-    if (!registryController.signal.aborted) console.warn('[adapter-registry] initial model refresh failed:', error);
-  });
-
-  // Remote metadata is eventually consistent; CLI cache watchers provide the
-  // immediate path (Claude/Codex/Grok). Polling covers providers that atomically
-  // replace caches in directories the platform watcher cannot observe, and
-  // re-asks CLIs that expose a live models command (see MODEL_DISCOVERY_INVENTORY).
-  // Grok is cache-only: the poll re-reads ~/.grok/models_cache.json and never
-  // spawns `grok models` (that CLI rotates the refresh token on every run).
-  periodicRefresh ??= setInterval(() => {
-    void runPeriodicTask('adapter-model-refresh', async (context) => {
-      await context.wait(refreshAllDiscoveredModels([...registry.keys()], undefined, context));
-      await context.wait(refreshRemoteModelCatalog());
+  enqueuePostBootIdleTask('adapter-model-refresh', async () => {
+    if (registryController.signal.aborted) return;
+    void warmAdapterCliVersions();
+    await runPeriodicTask('adapter-model-refresh', async (context) => {
+      await Promise.all([
+        context.wait(refreshRemoteModelCatalog()),
+        context.wait(refreshAllDiscoveredModels([...registry.keys()], undefined, context)),
+      ]);
+      if (reloadTimer) {
+        clearTimeout(reloadTimer);
+        reloadTimer = null;
+      }
       invalidateModelCatalogCache();
       await reloadBudgeted(context);
     }, { signal: registryController.signal, cadenceMs: MODEL_DISCOVERY_POLL_MS }).catch((error) => {
-      if (!registryController.signal.aborted) console.warn('[adapter-registry] model refresh failed:', error);
+      if (!registryController.signal.aborted) console.warn('[adapter-registry] initial model refresh failed:', error);
     });
-  }, MODEL_DISCOVERY_POLL_MS);
-  periodicRefresh.unref?.();
+    if (registryController.signal.aborted) return;
+    // Remote metadata is eventually consistent; CLI cache watchers provide the
+    // immediate path (Claude/Codex/Grok). Polling covers providers that atomically
+    // replace caches in directories the platform watcher cannot observe, and
+    // re-asks CLIs that expose a live models command (see MODEL_DISCOVERY_INVENTORY).
+    // Grok is cache-only: the poll re-reads ~/.grok/models_cache.json and never
+    // spawns `grok models` (that CLI rotates the refresh token on every run).
+    periodicRefresh ??= setInterval(() => {
+      void runPeriodicTask('adapter-model-refresh', async (context) => {
+        await context.wait(refreshAllDiscoveredModels([...registry.keys()], undefined, context));
+        await context.wait(refreshRemoteModelCatalog());
+        if (reloadTimer) {
+          clearTimeout(reloadTimer);
+          reloadTimer = null;
+        }
+        invalidateModelCatalogCache();
+        await reloadBudgeted(context);
+      }, { signal: registryController.signal, cadenceMs: MODEL_DISCOVERY_POLL_MS }).catch((error) => {
+        if (!registryController.signal.aborted) console.warn('[adapter-registry] model refresh failed:', error);
+      });
+    }, MODEL_DISCOVERY_POLL_MS);
+    periodicRefresh.unref?.();
+  });
 }
 
 export function registerAdapterListener(wc: WebContents): void {

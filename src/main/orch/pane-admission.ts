@@ -509,6 +509,48 @@ interface AgentMemoryCensus {
 }
 const agentMemoryCensuses = new Map<string, () => AgentMemoryCensus>();
 let heavyCommandMemoryReservation: (() => number) | null = null;
+let lastPaneSpawnAdmittedAt = 0;
+const paneSpawnActivityListeners = new Set<(at: number) => void>();
+
+function notePaneSpawnAdmitted(now: number): void {
+  lastPaneSpawnAdmittedAt = Math.max(lastPaneSpawnAdmittedAt, now);
+  for (const listener of paneSpawnActivityListeners) {
+    try {
+      listener(now);
+    } catch {
+      // Activity listeners must never interfere with pane admission.
+    }
+  }
+}
+
+/** True while any registered agent transport (PTY or ACP) has a pane in spawning state. */
+export function hasPendingPaneSpawns(): boolean {
+  const census = readAgentMemoryCensus();
+  return census !== null && census.pending > 0;
+}
+
+export function getLastPaneSpawnAdmittedAt(): number {
+  return lastPaneSpawnAdmittedAt;
+}
+
+export function onPaneSpawnActivity(listener: (at: number) => void): () => void {
+  paneSpawnActivityListeners.add(listener);
+  return () => {
+    paneSpawnActivityListeners.delete(listener);
+  };
+}
+
+export function isPaneAdmissionBusy(now = Date.now(), settleMs = 0): boolean {
+  if (hasPendingPaneSpawns()) return true;
+  if (settleMs > 0 && lastPaneSpawnAdmittedAt > 0 && now - lastPaneSpawnAdmittedAt < settleMs) {
+    return true;
+  }
+  return false;
+}
+
+export function resetPaneSpawnActivityForTest(): void {
+  lastPaneSpawnAdmittedAt = 0;
+}
 
 /** Main's heavy-command pool owns this counter; keeps admission acyclic. */
 export function registerHeavyCommandMemoryReservation(read: () => number): void {
@@ -621,7 +663,10 @@ export function admitAgentSpawnSync(
 ): PaneAdmissionVerdict {
   try {
     const limits = readPaneAdmissionLimits(env);
-    if (!limits.enabled) return { ok: true };
+    if (!limits.enabled) {
+      notePaneSpawnAdmitted(now);
+      return { ok: true };
+    }
     // Only trusted automatic mission workers consume the delegation budget.
     // Human panes and workspace helpers retain the existing warning policy.
     let idleCandidates: readonly IdlePaneCandidate[] = [];
@@ -637,14 +682,19 @@ export function admitAgentSpawnSync(
       // admission applies this additional reservation.
       memory = { ...memory, freeMB: memory.freeMB - (heavyCommandMemoryReservation?.() ?? 0) };
     }
-    return evaluatePaneAdmission({
+    const verdict = evaluatePaneAdmission({
       liveAgentPanes,
       limits,
       memory,
       idleCandidates,
       automaticWorker: request.automaticWorker,
     });
+    if (verdict.ok) {
+      notePaneSpawnAdmitted(now);
+    }
+    return verdict;
   } catch (error) {
+    notePaneSpawnAdmitted(now);
     return {
       ok: true,
       warning: `gate de admissão indisponível, admitindo: ${

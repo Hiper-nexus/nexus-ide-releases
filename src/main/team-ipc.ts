@@ -1,11 +1,11 @@
 import { LicenseError, licenseFailure } from '../shared/license-errors';
 import { TEAM_CHANNELS } from '../shared/channels';
-import { apiFetch } from './api-client';
 import { handleTrusted } from './security/trusted-ipc';
 
 type Envelope = { ok?: boolean; data?: unknown; error?: string } | null;
 
 async function call(path: string, method = 'GET', body?: unknown) {
+  const { apiFetch } = await import('./api-client');
   const result = await apiFetch(path, {
     method,
     ...(body !== undefined ? { body } : {}),
