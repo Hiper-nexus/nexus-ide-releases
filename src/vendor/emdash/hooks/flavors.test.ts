@@ -81,8 +81,14 @@ describe('parseClaudeHookEvent', () => {
       type: 'stop',
       stopFailure: 'invalid_request',
     });
-    // Limite de uso, transitório e valor desconhecido: categoria `other`.
-    for (const error of ['rate_limit', 'server_error', 'unknown', providerText, undefined]) {
+    // F-1484: limite de uso tem categoria própria (prova do provedor).
+    expect(parseClaudeHookEvent('stop-failure', { error: 'rate_limit' })).toEqual({
+      kind: 'status',
+      type: 'stop',
+      stopFailure: 'rate_limit',
+    });
+    // Transitório e valor desconhecido: categoria `other`.
+    for (const error of ['server_error', 'unknown', providerText, undefined]) {
       expect(parseClaudeHookEvent('stop-failure', { error })).toEqual({
         kind: 'status',
         type: 'stop',

@@ -32,6 +32,8 @@ export class FailoverTextReducer {
   #buffer = ''; #pending = 0; #lastScan = 0; #firedAt = -Infinity;
   slowUntil = 0; #held: Array<{ text: string; at: number }> = []; #heldChars = 0; #unavailable = false;
   #episode = 0; #transient = false; #progress = 0; #packAt = -Infinity; #heldModelAt = -Infinity;
+  /** F-1484: o último limite disparado tinha prova estruturada do provedor. */
+  #firedConfirmed = false;
   #seen = new Set<string>(); #errors = new Set<string>();
   #remember(line: string) { if (this.#seen.size >= 2_000) this.#seen.clear(); this.#seen.add(line); }
   control(value: { firedAt?: number; endTransient?: boolean; rejectTransient?: boolean }) {
@@ -78,7 +80,11 @@ export class FailoverTextReducer {
     this.#noteProgress(text); return [{ episode: this.#episode, progressChars: this.#progress, freshError: false, scanned: true, ...(scanMs > 25 ? { slowScanMs: scanMs } : {}), at }];
   }
   #hit(hit: LimitHit, detected: string, text: string, at: number, observed = false): FailoverTextProposal[] {
-    if (at - this.#firedAt < 30_000) return [];
+    // F-1484: o texto do limite chega pelo PTY antes do hook do provedor. A
+    // confirmação estruturada (StopFailure) que chega no rearme de um hit SEM
+    // confirmação o promove — nunca é descartada.
+    const promotes = observed && hit.confirmed === true && !this.#firedConfirmed;
+    if (at - this.#firedAt < 30_000 && !promotes) return [];
     if (hit.kind === 'model' && !observed && at - this.#packAt < CONTINUITY_ECHO_CONFIRM_MS && at - this.#heldModelAt >= CONTINUITY_ECHO_CONFIRM_MS) {
       // Sem rearm: a varredura segue, e o buffer já foi zerado — só texto NOVO confirma.
       this.#heldModelAt = at;
@@ -99,7 +105,7 @@ export class FailoverTextReducer {
       }
       if (freshError) this.#progress = 0;
       this.#noteProgress(text);
-    } else { this.control({ firedAt: at }); }
+    } else { this.control({ firedAt: at }); this.#firedConfirmed = hit.confirmed === true; }
     return [{ hit, scanned: true, episode: this.#episode, progressChars: this.#progress, freshError, at }];
   }
   #noteProgress(text: string) {

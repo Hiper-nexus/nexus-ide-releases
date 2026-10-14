@@ -817,11 +817,14 @@ export class QuotaService {
       input.accountId,
       input.now,
     );
+    // F-1484: motivo sem frase de detector (StopFailure) — o tipo vem do hit
+    // registrado, para a janela sintética e o peso de failover não sumirem.
+    const cooldownKind = input.cooldownKind ?? recorded?.hit.kind;
     let windows = probeProviderWindows({
       adapterId: input.adapterId,
       accountId: input.accountId,
       onCooldown: input.onCooldown,
-      cooldownKind: input.cooldownKind,
+      cooldownKind,
       cooldownUntil: input.cooldownUntil,
       localTokens: input.tokens,
       lastLimitHit: recorded?.hit ?? null,
@@ -845,12 +848,16 @@ export class QuotaService {
       input.onCooldown &&
       (input.cooldownUntil === undefined || input.cooldownUntil > input.now);
     let cooldownUntil = onCooldown ? input.cooldownUntil : undefined;
+    // F-1484: cooldown posto por limite que o provedor confirmou (StopFailure)
+    // não é apagado por leitura de antes da confirmação (cache de até 60 s).
+    const confirmedAt = recorded?.hit.confirmedAt;
     if (
       onCooldown &&
       allowCooldownRefutation &&
       input.accountId &&
       this.#deps.clearRefutedCooldown &&
       api !== undefined &&
+      (confirmedAt === undefined || api.at > confirmedAt) &&
       providerApiRefutesCooldown(api.windows, api.at, input.now)
     ) {
       this.#deps.clearRefutedCooldown(input.accountId, input.adapterId);
@@ -884,8 +891,8 @@ export class QuotaService {
       ...(planEligible ? { planEligible: true } : {}),
       installed: input.installed,
       onCooldown,
-      ...(onCooldown && input.cooldownKind
-        ? { cooldownKind: input.cooldownKind }
+      ...(onCooldown && cooldownKind
+        ? { cooldownKind }
         : {}),
       cooldownUntil,
       windows: mergeWindows(defaultUnknownWindows(input.adapterId), windows),

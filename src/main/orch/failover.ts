@@ -91,6 +91,7 @@ import {
   REFUTE_FRESH_MS,
   REFUTE_HEALTHY_RATIO,
 } from './limit-refutation';
+import { extendConfirmedLimitCooldown, raiseConfirmedLimitCooldown } from './confirmed-limit-cooldown';
 import type { ProviderQuotaEntry } from '../../shared/quota-types';
 import {
   adoptNativeAccountForFailover,
@@ -123,6 +124,7 @@ import {
   type HeadroomInput,
 } from '../quota/account-headroom';
 import { tapObserverFrames } from './observer-bus';
+import { getAgentTurnStartSequence } from './agent-status';
 import type { ObserverFrame } from '../../shared/observer-frame';
 import {
   MODEL_ACCESS_QUARANTINE_MS,
@@ -203,6 +205,8 @@ interface SessionWatch {
   readonly startedAt: number;
   buffer: string;
   firedAt: number;
+  /** F-1484: o limite que disparou em `firedAt` tinha prova do provedor. */
+  firedConfirmed?: boolean;
   /** Última varredura de detectLimit na janela (0 = nunca). */
   lastDetectAt: number;
   /** Texto chegado desde a última varredura. */
@@ -3422,6 +3426,11 @@ function handleLimitHit(
     return;
   }
   commitLimitHit(authority, pane, key, hit, now, source, current, adapterId);
+  // F-1484: limite confirmado pelo provedor troca já com o teto curto; uma
+  // leitura feita DEPOIS do hit estende o cooldown até o reset real.
+  if (current && hit.confirmedAt !== undefined) {
+    void extendConfirmedLimitCooldown({ adapterId, accountId: current.id, hit });
+  }
 }
 
 /**
@@ -3481,6 +3490,8 @@ async function confirmLimitByProbe(
 ): Promise<void> {
   let fresh: ProviderQuotaEntry | undefined;
   let probeUnavailable = false;
+  // F-1484: com sonda em voo, o marcador de commit desta chave não é podado.
+  probesInFlight.set(key, (probesInFlight.get(key) ?? 0) + 1);
   try {
     await requireQuotaService().refreshForLimitHit(now);
     fresh = quotaEntryForPane(adapterId, current);
@@ -3491,8 +3502,16 @@ async function confirmLimitByProbe(
     );
     fresh = undefined;
     probeUnavailable = true;
+  } finally {
+    const left = (probesInFlight.get(key) ?? 1) - 1;
+    if (left > 0) probesInFlight.set(key, left);
+    else probesInFlight.delete(key);
   }
   const probedAt = Date.now();
+  // F-1484: a sonda só decide se a sessão segue viva, no mesmo episódio
+  // (watch da mesma geração) e sem limite já comitado a partir do hit dela.
+  const live = watches.get(key);
+  if (!live || live.firedAt !== now || !isCurrentAuthority(authority) || limitCommittedSince(key, now)) return;
   if (providerApiRefutesLimit(fresh, hit, probedAt)) {
     logSuppressedFailover(pane, current, hit, 'provider-api-healthy-after-probe', source);
     return;
@@ -3562,9 +3581,14 @@ async function confirmLimitByProbe(
     limitEndedTurn(authority, now) &&
     freshSiblingWithHeadroom(adapterId, current.id, probedAt, hit.scope)
   ) {
+    // F-1484: esta troca também comita o limite do episódio (a confirmação do
+    // provedor que chegar depois só estende) e não encurta cooldown maior.
+    noteLimitCommit(key, now, authority.sessionId);
     setCooldown(
       current.id,
-      now + CAPPED_COOLDOWN_WITHOUT_PROVIDER_API_MS,
+      hit.scope
+        ? now + CAPPED_COOLDOWN_WITHOUT_PROVIDER_API_MS
+        : Math.max(now + CAPPED_COOLDOWN_WITHOUT_PROVIDER_API_MS, getAccount(current.id)?.cooldownUntil ?? 0),
       `${hit.reason} (limite não confirmado pela API do provider)`,
       hit.scope,
     );
@@ -3599,7 +3623,10 @@ async function confirmLimitByProbe(
   }
   setCooldown(
     current.id,
-    now + CAPPED_COOLDOWN_WITHOUT_PROVIDER_API_MS,
+    // F-1484: a pausa não confirmada nunca encurta um cooldown maior vigente.
+    hit.scope
+      ? now + CAPPED_COOLDOWN_WITHOUT_PROVIDER_API_MS
+      : Math.max(now + CAPPED_COOLDOWN_WITHOUT_PROVIDER_API_MS, getAccount(current.id)?.cooldownUntil ?? 0),
     `${hit.reason} (limite não confirmado pela API do provider)`,
     hit.scope,
   );
@@ -3627,6 +3654,39 @@ async function confirmLimitByProbe(
   );
 }
 
+/**
+ * F-1484: o último limite COMITADO por watch (texto, sonda ou confirmação do
+ * provedor): instante do hit e turno da sessão. Sobrevive ao fim da sessão
+ * para a sonda lenta saber que a troca já aconteceu. Poda o que passou de
+ * 10 min, nunca uma chave com sonda em voo.
+ */
+const limitCommits = new Map<string, { readonly at: number; readonly turn: number }>();
+const probesInFlight = new Map<string, number>();
+
+function noteLimitCommit(key: string, at: number, sessionId: string): void {
+  const previous = limitCommits.get(key);
+  limitCommits.set(key, { at: Math.max(previous?.at ?? -Infinity, at), turn: getAgentTurnStartSequence(sessionId) });
+  for (const [other, commit] of limitCommits) {
+    if (at - commit.at > 10 * 60_000 && !probesInFlight.has(other)) limitCommits.delete(other);
+  }
+}
+
+/** O limite que disparou em `since` (ou depois) já foi comitado neste watch. */
+function limitCommittedSince(key: string, since: number): boolean {
+  return (limitCommits.get(key)?.at ?? -Infinity) >= since;
+}
+
+/**
+ * O limite deste EPISÓDIO já virou troca: commit há menos de REARM_MS, sem
+ * turno novo da sessão no meio e sem espera agendada (sem conta livre, a
+ * confirmação nova ainda pode trocar).
+ */
+function limitSwitchedInEpisode(key: string, sessionId: string, at: number): boolean {
+  const commit = limitCommits.get(key);
+  return Boolean(commit && at - commit.at < REARM_MS &&
+    getAgentTurnStartSequence(sessionId) === commit.turn && !pendingRetries.has(key));
+}
+
 /** Cooldown na conta esgotada, disjuntor de auth e troca para a próxima. */
 function commitLimitHit(
   authority: FailoverAuthority,
@@ -3639,6 +3699,7 @@ function commitLimitHit(
   adapterId: string,
   options: { readonly unconfirmed?: boolean } = {},
 ): void {
+  noteLimitCommit(key, now, authority.sessionId);
   // Feed fleet quota UI (session/5h/weekly bars) from the same limit signal.
   noteQuotaLimitHit(adapterId, hit, current?.id);
   // F-1414: limite CONFIRMADO (sonda/API ou repetido depois da pausa) vai à
@@ -3688,7 +3749,11 @@ function commitLimitHit(
   // Com escopo (erro cita um tier anthropic): a conta segue no pool para os
   // demais modelos; sem escopo o cooldown é global (comportamento legado).
   if (current) {
-    setCooldown(current.id, now + hit.cooldownMs, hit.reason, hit.scope);
+    // F-1484: limite confirmado pelo provedor nunca encurta um cooldown maior
+    // que já vale (account-store é last-write-wins).
+    const confirmedFloor = hit.confirmedAt !== undefined && !hit.scope
+      ? getAccount(current.id)?.cooldownUntil ?? 0 : 0;
+    setCooldown(current.id, Math.max(now + hit.cooldownMs, confirmedFloor), hit.reason, hit.scope);
     if (
       hit.kind === 'auth' &&
       current.adapterId === 'claude' &&
@@ -3776,11 +3841,22 @@ function acceptAnalysisProposal(sessionId: string, proposal: FailoverTextProposa
   // F-999: sinal de modelo citado logo depois do pack de continuidade, à espera da 2ª ocorrência.
   if (proposal.held) logSuppressedFailover(pane, paneAccount(pane), proposal.held, 'model-signal-after-continuity-pack-unconfirmed', 'scrollback');
   if (proposal.hit) {
-    if (proposal.at - watch.firedAt < REARM_MS) return;
+    // F-1484: a confirmação do provedor que chega no rearme de um hit SEM
+    // confirmação (o texto do PTY vem antes do hook) promove o limite.
+    const providerConfirmed = proposal.hit.confirmedAt !== undefined;
+    const inRearm = proposal.at - watch.firedAt < REARM_MS;
+    const promotes = inRearm && providerConfirmed && watch.firedConfirmed !== true;
+    if (inRearm && !promotes) return;
     if (proposal.hit.kind === 'transient') {
       handleTransientHit(authority, pane, key, watch, proposal.hit, proposal.at, 'scrollback');
+    } else if (providerConfirmed && limitSwitchedInEpisode(key, authority.sessionId, proposal.at)) {
+      // O texto (ou a sonda) já comitou a troca deste limite nesta sessão: a
+      // confirmação só pode estender o cooldown — nunca trocar de novo nem encurtar.
+      watch.firedConfirmed = true;
+      const current = paneAccount(pane);
+      if (current) raiseConfirmedLimitCooldown({ adapterId: pane.adapterId, accountId: current.id, hit: proposal.hit });
     } else {
-      beginLimitHandling(key, watch, proposal.at);
+      beginLimitHandling(key, watch, proposal.at, proposal.hit.confirmed === true);
       handleLimitHit(authority, pane, key, proposal.hit, proposal.at, 'scrollback');
     }
   }
@@ -3793,8 +3869,9 @@ function acceptAnalysisProposal(sessionId: string, proposal: FailoverTextProposa
  * Erro do provider NÃO passa por aqui: ele não pode cancelar a nova tentativa
  * já agendada para um limite real, senão o pane fica parado esperando nada.
  */
-function beginLimitHandling(key: string, watch: SessionWatch, now: number): void {
+function beginLimitHandling(key: string, watch: SessionWatch, now: number, confirmed = false): void {
   watch.firedAt = now;
+  watch.firedConfirmed = confirmed;
   analysisClient.control(watch.authority.sessionId, 'failover', { firedAt: now });
   watch.buffer = '';
   cancelScheduledRetry(key);
@@ -3805,7 +3882,10 @@ function beginLimitHandling(key: string, watch: SessionWatch, now: number): void
 function handleObserverFrame(frame: ObserverFrame): void {
   if (frame.kind !== 'provider_error' || !resolveAuthority(frame.sessionId)) return;
   const hit: LimitHit = { kind: frame.payload.kind, reason: frame.payload.reason, cooldownMs: frame.payload.cooldownMs,
-    ...(frame.payload.scope ? { scope: frame.payload.scope } : {}) };
+    ...(frame.payload.scope ? { scope: frame.payload.scope } : {}),
+    // F-1484: prova estruturada do provedor (StopFailure) — confirmada no instante do frame.
+    ...(frame.payload.confirmed ? { confirmed: true, confirmedAt: frame.at,
+      ...(frame.payload.adapterId ? { adapterId: frame.payload.adapterId } : {}) } : {}) };
   analysisClient.control(frame.sessionId, 'failover', { observer: { hit, at: frame.at } });
 }
 
@@ -3987,6 +4067,8 @@ export function shutdownFailover(): void {
   // failover: sem isto, mortes de testes/sessões anteriores vazam para as
   // próximas e o trip dispara cedo demais.
   instantAuthDeaths.clear();
+  limitCommits.clear();
+  probesInFlight.clear();
   // F-1483: as esperas gravadas ficam para o próximo boot.
   for (const key of [...pendingRetries.keys()]) cancelScheduledRetry(key, { keepPersisted: true });
   for (const timer of restoredWaits.values()) clearTimeout(timer);

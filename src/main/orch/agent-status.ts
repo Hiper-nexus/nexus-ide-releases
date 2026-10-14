@@ -43,6 +43,7 @@ import { publishObserverFrame } from './observer-bus';
 import type { ObserverToolKind } from './observer-tool-kind';
 import { detectLimit } from './limit-detector';
 import { recentSessionInputAttribution } from './operator-input-receipts';
+import { trace } from '../observability/main-trace';
 
 export const AGENT_SEMANTIC_STATUSES = [
   'working',
@@ -427,6 +428,22 @@ function takeObserverToolCall(
 }
 
 /**
+ * F-1484: cooldown do limite que o StopFailure `rate_limit` confirma. Fica
+ * abaixo do piso que exige leitura fresca da API do provedor
+ * (`LONG_COOLDOWN_MIN_MS`, limit-refutation): o failover troca na hora, sem a
+ * sonda nem a pausa de 15 min de "limite não confirmado". O payload não traz o
+ * horário de reset (o texto do provedor nunca é lido), então a conta exausta
+ * sai do pool pelo mesmo teto curto da pausa F-249 — anticascata: se ainda
+ * estiver no limite, o próximo StopFailure a tira de novo.
+ */
+export const STOP_FAILURE_RATE_LIMIT_COOLDOWN_MS = 15 * 60_000;
+/**
+ * Motivo fixo, nunca o texto do provedor (F-734), e inerte: ecoado no pack ou
+ * no toast não casa no detector (o literal `rate_limit` casaria).
+ */
+export const STOP_FAILURE_RATE_LIMIT_REASON = 'Claude StopFailure (limite de uso)';
+
+/**
  * Publish the frames one applied hook event implies. Frame order within the
  * event: turn_started (turn opens) → tool_call/tool_result (the action) →
  * status_changed (always) → turn_ended (turn closes). Total function.
@@ -505,6 +522,43 @@ function publishHookObserverFrames(args: {
           },
         });
       }
+    }
+
+    // F-1484: StopFailure `rate_limit` é a própria CLI dizendo, estruturado,
+    // que o limite de uso encerrou o turno — prova do provedor, não prosa
+    // (F-249 segue valendo para o texto). Vai ao failover como limite
+    // CONFIRMADO pela mesma entrada dos erros de hook acima. O StopFailure não
+    // traz modelo nem tier (só a categoria atravessa, F-734): o cooldown é da
+    // conta inteira, e isso fica registrado no trace.
+    if (event.type === 'stop' && event.stopFailure === 'rate_limit') {
+      let adapterId: string | undefined;
+      try {
+        adapterId = getAgentSessionInfo(sessionId)?.adapterId;
+      } catch {
+        adapterId = undefined;
+      }
+      publishObserverFrame({
+        ...observerFrameScope(sessionId, paneId),
+        at,
+        kind: 'provider_error',
+        payload: {
+          source: 'provider-hook',
+          kind: 'rate-limit',
+          reason: STOP_FAILURE_RATE_LIMIT_REASON,
+          cooldownMs: STOP_FAILURE_RATE_LIMIT_COOLDOWN_MS,
+          confirmed: true,
+          ...(adapterId ? { adapterId } : {}),
+        },
+      });
+      trace({
+        kind: 'provider-stop-failure-limit',
+        sessionId,
+        paneId,
+        adapterId: adapterId ?? null,
+        category: 'rate_limit',
+        // Sem modelo/tier no StopFailure: bloqueio da conta inteira.
+        scope: 'account',
+      });
     }
 
     publishObserverFrame({

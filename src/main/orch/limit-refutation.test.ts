@@ -42,6 +42,24 @@ function entry(partial: Partial<ProviderQuotaEntry>): ProviderQuotaEntry {
 }
 
 describe('providerApiRefutesLimit', () => {
+  it('F-1484: limite confirmado pelo provedor não é refutado por leitura em cache de antes da confirmação', () => {
+    // Sessão a 20% e semanal a 95% lidas 5 min antes; o turno estourou agora.
+    const cached = entry({
+      updatedAt: NOW - 5 * 60_000,
+      windows: [win({ kind: 'session', usedRatio: 0.2 }), win({ kind: 'weekly', label: 'Semanal', usedRatio: 0.95 })],
+    });
+    const confirmed = { kind: 'rate-limit' as const, confirmedAt: NOW };
+    expect(providerApiRefutesLimit(cached, { kind: 'rate-limit' }, NOW)).toBe(true);
+    expect(providerApiRefutesLimit(cached, confirmed, NOW)).toBe(false);
+    // Leitura do mesmo instante da confirmação também não é "depois".
+    expect(providerApiRefutesLimit({ ...cached, updatedAt: NOW }, confirmed, NOW)).toBe(false);
+  });
+
+  it('F-1484: leitura feita DEPOIS da confirmação, sadia, ainda refuta', () => {
+    const after = entry({ updatedAt: NOW + 2_000, windows: [win({ kind: 'hours', usedRatio: 0.07 })] });
+    expect(providerApiRefutesLimit(after, { kind: 'rate-limit', confirmedAt: NOW }, NOW + 3_000)).toBe(true);
+  });
+
   it('refutes a rate-limit hit when the 5h provider-api reading is clearly healthy', () => {
     const e = entry({ windows: [win({ kind: 'hours', usedRatio: 0.07 })] });
     expect(providerApiRefutesLimit(e, { kind: 'rate-limit' }, NOW)).toBe(true);

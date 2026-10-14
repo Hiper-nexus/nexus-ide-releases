@@ -16,15 +16,19 @@
  * max_output_tokens, cloud_credential_error.
  *
  * Allowlist: só os valores que repetir não cura ganham categoria própria.
- * Limite de uso (rate_limit) é do failover de conta (F-249/F-718); erro
- * transitório (overloaded, server_error, cloud_credential_error, que a CLI
- * marca como transitório), corte de saída e valor desconhecido viram 'other'.
+ * F-1484: limite de uso (`rate_limit`) é a CLI dizendo, de forma estruturada,
+ * que a conta bateu no limite — prova do provedor, não prosa do terminal. Ele
+ * ganha categoria própria e o Main o leva ao failover de conta como limite
+ * confirmado (agent-status). Erro transitório (overloaded, server_error,
+ * cloud_credential_error, que a CLI marca como transitório), corte de saída e
+ * valor desconhecido viram 'other'.
  */
 
 export const AGENT_STOP_FAILURE_CATEGORIES = [
   'auth',
   'billing',
   'invalid_request',
+  'rate_limit',
   'other',
 ] as const;
 
@@ -41,6 +45,8 @@ const CATEGORY_BY_PROVIDER_ERROR = new Map<string, AgentStopFailureCategory>([
   // Pedido recusado: modelo que o endpoint não serve, parâmetro inválido.
   ['invalid_request', 'invalid_request'],
   ['model_not_found', 'invalid_request'],
+  // F-1484: limite de uso da conta — do failover, como limite confirmado.
+  ['rate_limit', 'rate_limit'],
 ]);
 
 /** Valor do campo `error` do StopFailure → categoria. Nunca devolve o valor recebido. */

@@ -26,7 +26,11 @@ import {
   __resetAgentStatusForTests,
   applyCanonicalHookEvent,
   resetAgentStatusOnExit,
+  STOP_FAILURE_RATE_LIMIT_COOLDOWN_MS,
+  STOP_FAILURE_RATE_LIMIT_REASON,
 } from './agent-status';
+import { LONG_COOLDOWN_MIN_MS, longCooldownNeedsFreshProviderApi } from './limit-refutation';
+import { detectLimit } from './limit-detector';
 import {
   __resetObserverBusForTests,
   snapshotObserverFrames,
@@ -215,6 +219,64 @@ describe('turn lifecycle emission', () => {
         cooldownMs: 12 * 60 * 1000,
       },
     });
+  });
+
+  it('F-1484: StopFailure rate_limit vira provider_error confirmado, sem passar pela sonda', () => {
+    applyCanonicalHookEvent({ sessionId: 'pty-1', event: userSubmit, now: 800 });
+    applyCanonicalHookEvent({
+      sessionId: 'pty-1',
+      event: { kind: 'status', type: 'stop', stopFailure: 'rate_limit' },
+      now: 900,
+    });
+
+    const frames = snapshotObserverFrames('pty-1').filter((f) => f.at === 900);
+    expect(frames.map((f) => f.kind)).toEqual(['provider_error', 'status_changed', 'turn_ended']);
+    const [frame] = frames;
+    expect(frame).toMatchObject({
+      kind: 'provider_error',
+      payload: {
+        source: 'provider-hook',
+        kind: 'rate-limit',
+        reason: STOP_FAILURE_RATE_LIMIT_REASON,
+        cooldownMs: STOP_FAILURE_RATE_LIMIT_COOLDOWN_MS,
+        confirmed: true,
+      },
+    });
+    if (frame?.kind !== 'provider_error') throw new Error('unreachable');
+    // Sem modelo/tier no StopFailure (F-734): bloqueio da conta inteira.
+    expect(frame.payload.scope).toBeUndefined();
+    // A regra do failover (handleLimitHit): abaixo do piso longo não há sonda
+    // nem a pausa de 15 min de "limite não confirmado" — a troca sai na hora.
+    expect(longCooldownNeedsFreshProviderApi(frame.payload)).toBe(false);
+    expect(frame.payload.cooldownMs).toBeLessThan(LONG_COOLDOWN_MIN_MS);
+    // O motivo é inerte: ecoado no pane novo não re-arma o detector.
+    expect(detectLimit(frame.payload.reason)).toBeNull();
+  });
+
+  it('F-1484: outra StopFailure ou Stop normal nunca viram provider_error', () => {
+    for (const stopFailure of ['auth', 'billing', 'invalid_request', 'other'] as const) {
+      applyCanonicalHookEvent({
+        sessionId: 'pty-1',
+        event: { kind: 'status', type: 'stop', stopFailure },
+      });
+    }
+    applyCanonicalHookEvent({ sessionId: 'pty-1', event: stop });
+    expect(snapshotObserverFrames('pty-1').some((f) => f.kind === 'provider_error')).toBe(false);
+  });
+
+  it('F-1484/F-249: limite citado em turno ativo não vira provider_error', () => {
+    const quoted = "o log do worker diz: You've hit your session limit · resets 8pm (rate_limit)";
+    applyCanonicalHookEvent({ sessionId: 'pty-1', event: userSubmit });
+    applyCanonicalHookEvent({ sessionId: 'pty-1', event: { kind: 'status', type: 'start', message: quoted } });
+    applyCanonicalHookEvent({
+      sessionId: 'pty-1',
+      event: { kind: 'status', type: 'notification', notificationType: 'idle_prompt', message: quoted },
+    });
+    applyCanonicalHookEvent({
+      sessionId: 'pty-1',
+      event: { kind: 'status', type: 'stop', lastAssistantMessage: quoted },
+    });
+    expect(snapshotObserverFrames('pty-1').some((f) => f.kind === 'provider_error')).toBe(false);
   });
 
   it('turn sequences are monotonic across submissions', () => {

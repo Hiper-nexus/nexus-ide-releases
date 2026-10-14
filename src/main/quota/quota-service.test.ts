@@ -885,3 +885,49 @@ describe('sonda do Muse é uma inferência real: TTL de sucesso ≥ 5 min (F-141
     svc.stop();
   });
 });
+
+describe('F-1484: cooldown de limite confirmado pelo provedor (StopFailure)', () => {
+  const CONFIRMED_REASON = 'Claude StopFailure (limite de uso)';
+  function confirmedService(cleared: string[]) {
+    const account: AccountInfo = { id: 'grok-a', adapterId: 'grok', label: 'Grok', mode: 'subscription',
+      hasCredential: true, onCooldown: false } as AccountInfo;
+    const svc = new QuotaService({
+      listProviders: () => [provider('grok')],
+      listAccounts: () => [{ ...account }],
+      resolveGrokTokenCandidates: () => ['fresh-access'],
+      // Leitura sadia (6%): sozinha, ela refutaria qualquer cooldown.
+      fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ config: { creditUsagePercent: 6 } }), text: async () => '' }),
+      clearRefutedCooldown: (id) => { cleared.push(id); Object.assign(account, { onCooldown: false, cooldownUntil: undefined }); },
+    });
+    const confirm = (at: number) => {
+      // commitLimitHit: cooldown na conta + hit registrado no serviço.
+      Object.assign(account, { onCooldown: true, cooldownUntil: at + 900_000, lastError: CONFIRMED_REASON });
+      svc.noteLimitHit('grok', { kind: 'rate-limit', reason: CONFIRMED_REASON, cooldownMs: 900_000,
+        confirmed: true, confirmedAt: at }, 'grok-a', at);
+    };
+    return { svc, confirm };
+  }
+
+  it('leitura em cache de ANTES da confirmação não apaga o cooldown (broadcast de 750 ms)', async () => {
+    const cleared: string[] = [];
+    const { svc, confirm } = confirmedService(cleared);
+    await svc.snapshot(HIT_AT - 5_000);
+    confirm(HIT_AT);
+    const during = await svc.snapshot(HIT_AT + 750);
+    expect(cleared).toEqual([]);
+    // O tipo vem do hit registrado: a janela sintética e o peso de failover ficam.
+    expect(during.entries.find((e) => e.accountId === 'grok-a')).toMatchObject({
+      onCooldown: true, cooldownKind: 'rate-limit',
+    });
+    svc.stop();
+  });
+
+  it('leitura feita DEPOIS da confirmação, sadia, ainda refuta o cooldown', async () => {
+    const cleared: string[] = [];
+    const { svc, confirm } = confirmedService(cleared);
+    confirm(HIT_AT);
+    await svc.snapshot(HIT_AT + 2_000, { forceApi: true });
+    expect(cleared).toEqual(['grok-a']);
+    svc.stop();
+  });
+});

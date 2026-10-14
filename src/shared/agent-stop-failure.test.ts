@@ -19,8 +19,9 @@ describe('agentStopFailureCategory (F-734)', () => {
       verification_required: 'billing',
       invalid_request: 'invalid_request',
       model_not_found: 'invalid_request',
-      // Limite de uso e transitórios ficam fora (F-249/F-718, retry da CLI).
-      rate_limit: 'other',
+      // F-1484: limite de uso é prova estruturada do provedor — categoria própria.
+      rate_limit: 'rate_limit',
+      // Transitórios ficam fora (F-718, retry da CLI).
       overloaded: 'other',
       server_error: 'other',
       max_output_tokens: 'other',
@@ -48,7 +49,17 @@ describe('agentStopFailureCategory (F-734)', () => {
       expect(isAgentStopFailureCategory(category)).toBe(true);
     }
     expect(isAgentStopFailureCategory('authentication_failed')).toBe(false);
-    expect(isAgentStopFailureCategory('rate_limit')).toBe(false);
+    expect(isAgentStopFailureCategory('rate-limit')).toBe(false);
+    expect(isAgentStopFailureCategory('overloaded')).toBe(false);
     expect(isAgentStopFailureCategory(undefined)).toBe(false);
+  });
+
+  it('F-1484: rate_limit atravessa a normalização como categoria própria', () => {
+    expect(agentStopFailureCategory('rate_limit')).toBe('rate_limit');
+    expect(isAgentStopFailureCategory('rate_limit')).toBe(true);
+    // Só o valor exato do enum: prosa de limite nunca vira a categoria.
+    expect(agentStopFailureCategory('Rate limit reached')).toBe('other');
+    expect(agentStopFailureCategory('rate_limit_exceeded')).toBe('other');
+    expect(agentStopFailureCategory('RATE_LIMIT')).toBe('other');
   });
 });

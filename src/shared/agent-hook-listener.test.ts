@@ -652,8 +652,29 @@ describe('shared agent-hook-listener', () => {
     expect(serialized).not.toContain('API Error')
   })
 
+  it('F-1484: StopFailure rate_limit carries its own category (structured provider proof)', () => {
+    const event = normalizeHookPayload(
+      state,
+      'claude',
+      {
+        paneKey: PANE_KEY,
+        payload: {
+          hook_event_name: 'StopFailure',
+          error: 'rate_limit',
+          error_details: 'API Error: 429 ****WXYZ',
+          last_assistant_message: "You've hit your session limit · resets 8pm"
+        }
+      },
+      'production'
+    )
+    expect(event?.payload).toMatchObject({ state: 'done', stopFailure: 'rate_limit' })
+    const serialized = JSON.stringify(event)
+    expect(serialized).not.toContain('WXYZ')
+    expect(serialized).not.toContain('session limit')
+  })
+
   it('F-734: a StopFailure category outside the allowlist becomes other, never the raw value', () => {
-    for (const error of ['rate_limit', 'server_error', 'unknown', 'API Error: 401 ****WXYZ', 7]) {
+    for (const error of ['rate_limit_exceeded', 'server_error', 'unknown', 'API Error: 401 ****WXYZ', 7]) {
       const event = normalizeHookPayload(
         state,
         'claude',

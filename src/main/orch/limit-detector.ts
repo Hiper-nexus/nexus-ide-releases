@@ -59,8 +59,15 @@ export interface LimitHit {
    * TUI de `adapterId` desenha (padrão marcado na tabela compartilhada), não a
    * frase solta. O failover só o usa com `hit.adapterId === pane.adapterId`,
    * e só então marca a CLI sem conta gerenciada como limitada.
+   * F-1484: também o limite que o PRÓPRIO provedor declarou estruturado
+   * (StopFailure `rate_limit`), com `confirmedAt` = instante da declaração.
    */
   confirmed?: boolean;
+  /**
+   * F-1484: quando o provedor confirmou o limite (epoch ms). Só uma leitura de
+   * cota feita DEPOIS disto pode refutá-lo; cache anterior nunca.
+   */
+  confirmedAt?: number;
 }
 
 // Derived from can1357/oh-my-pi@03c48d073 auth-storage cooldown machine (MIT):
@@ -95,13 +102,22 @@ function extractAnthropicTierScope(
 ): string | undefined {
   const start = Math.max(0, matchIndex - TIER_NEAR_WINDOW);
   const end = Math.min(text.length, matchIndex + matchLength + TIER_NEAR_WINDOW);
-  const near = text.slice(start, end);
-  const fullId = CLAUDE_MODEL_ID.exec(near);
+  return anthropicTierScope(text.slice(start, end));
+}
+
+/**
+ * `tier:<família>` de um trecho que cita um modelo Claude (id completo ou
+ * família solta: Opus, Sonnet, Haiku, Fable, Mythos). Fonte única da
+ * taxonomia de tier — também usada no rótulo de janela por modelo
+ * ("Semanal (Fable)", F-1484).
+ */
+export function anthropicTierScope(text: string): string | undefined {
+  const fullId = CLAUDE_MODEL_ID.exec(text);
   if (fullId) {
     const scoped = tierScopeFromModelId(fullId[0]);
     if (scoped) return scoped;
   }
-  const bare = BARE_ANTHROPIC_FAMILY.exec(near);
+  const bare = BARE_ANTHROPIC_FAMILY.exec(text);
   return bare ? `tier:${bare[1].toLowerCase()}` : undefined;
 }
 

@@ -198,6 +198,13 @@ export interface ObserverProviderErrorPayload {
   reason: string;
   cooldownMs: number;
   scope?: string;
+  /**
+   * F-1484: o provedor declarou o limite de forma estruturada (StopFailure
+   * `rate_limit`), não prosa: o failover o trata como confirmado.
+   */
+  confirmed?: true;
+  /** Adapter da sessão que declarou (o failover só confia no do próprio pane). */
+  adapterId?: string;
 }
 
 /**

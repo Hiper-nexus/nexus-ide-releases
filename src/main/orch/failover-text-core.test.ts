@@ -57,3 +57,18 @@ it('F-999: passada a janela de confirmação, o sinal de modelo vale na hora', (
   reducer.feed(PACK_ECHO, 1_000);
   expect(hits(reducer.feed('Error: model_not_found\n', 1_000 + 121_000))[0]?.hit?.kind).toBe('model');
 });
+
+it('F-1484: confirmação do provedor no rearme de um hit textual o promove, uma vez', () => {
+  const reducer = new FailoverTextReducer();
+  const confirmed = { kind: 'rate-limit' as const, reason: 'Claude StopFailure (limite de uso)', cooldownMs: 900_000,
+    confirmed: true, confirmedAt: 1_200 };
+  // O texto do PTY chega antes do hook e dispara sem confirmação.
+  expect(hits(reducer.feed('usage limit reached\n', 1_000))[0]?.hit?.confirmed).toBeUndefined();
+  // Erro de hook SEM confirmação no rearme continua descartado.
+  expect(hits(reducer.observer({ kind: 'rate-limit', reason: 'usage limit reached', cooldownMs: 60_000 }, 1_100))).toEqual([]);
+  // A confirmação estruturada promove o limite em vez de sumir.
+  expect(hits(reducer.observer(confirmed, 1_200))[0]?.hit).toMatchObject({ confirmed: true, confirmedAt: 1_200 });
+  // Já confirmado: nem outra confirmação nem texto disparam de novo no rearme.
+  expect(hits(reducer.observer({ ...confirmed, confirmedAt: 1_300 }, 1_300))).toEqual([]);
+  expect(hits(reducer.feed('usage limit reached\n', 1_400))).toEqual([]);
+});

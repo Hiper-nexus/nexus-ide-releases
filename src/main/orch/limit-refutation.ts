@@ -194,12 +194,16 @@ export function providerApiConfirmsAuth(
 
 export function providerApiRefutesLimit(
   entry: ProviderQuotaEntry | undefined,
-  hit: Pick<LimitHit, 'kind' | 'scope'>,
+  hit: Pick<LimitHit, 'kind' | 'scope' | 'confirmedAt'>,
   now: number,
 ): boolean {
   if (!entry) return false;
   // A per-tier claim is not cleared by an account-wide reading.
   if (hit.scope) return false;
+  // F-1484: o provedor confirmou o limite (StopFailure). Leitura em cache de
+  // antes da confirmação não sabe o que estourou no turno — só uma leitura
+  // feita DEPOIS refuta.
+  if (hit.confirmedAt !== undefined && !(entry.updatedAt > hit.confirmedAt)) return false;
   // The reading must be recent to be trusted over a live terminal signal.
   if (!Number.isFinite(entry.updatedAt) || now - entry.updatedAt > REFUTE_FRESH_MS) {
     return false;
