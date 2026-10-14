@@ -31,7 +31,7 @@ import {
 } from "../../shared/cli-initial-prompt";
 import { ensureUtf8Locale } from "./pty-env-locale";
 import { applyProjectNodeToWorkerPath } from "./node-version-path";
-import { createExactResumeHealth, type ExactResumeAttempt } from "./exact-resume-health";
+import { createExactResumeHealth, exactResumeScreenSaysConversationMissing, type ExactResumeAttempt } from "./exact-resume-health";
 import { materializeProviderState, providerStateEnvFor } from "./provider-state-env";
 import { applyPaneTerminalIdentity } from "./pane-terminal-identity";
 import { assertManagedClaudeAuthSupported, CLAUDE_MANAGED_AUTH_ENV } from "../adapters/managed-claude-auth";
@@ -1531,6 +1531,7 @@ function judgeExactResumeExit(s: Session, exitCode: number, deliberate: boolean)
       exitCode,
       uptimeMs: Math.max(0, Date.now() - s.spawnedAtMs),
       deliberate,
+      conversationMissing: exactResumeScreenSaysConversationMissing(s.replay),
     });
     if (verdict !== "forget") return;
     const forgottenRows = resumeSessionForget?.(attempt.scope, attempt.adapterId, attempt.sessionId) ?? 0;

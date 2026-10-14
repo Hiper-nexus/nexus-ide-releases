@@ -44,6 +44,31 @@ export interface ExactResumeExit {
   readonly uptimeMs: number;
   /** O próprio Nexus pediu o encerramento (respawn, fechamento): não diz nada sobre o id. */
   readonly deliberate: boolean;
+  /**
+   * A própria CLI disse na tela que a conversa não existe ("No conversation
+   * found with session ID"). É prova explícita, não palpite: um golpe basta.
+   */
+  readonly conversationMissing?: boolean;
+}
+
+/**
+ * A CLI Claude diz, na tela, que o `--resume` apontou para conversa sem
+ * transcrito ("No conversation found with session ID: <uuid>"). Lê só a janela
+ * de saída em memória; o texto nunca sai daqui nem vai ao trace.
+ */
+const CONVERSATION_MISSING_PATTERN = /no conversation found with session id/i;
+// eslint-disable-next-line no-control-regex
+const ANSI_SEQUENCE_PATTERN = /\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g;
+
+export function exactResumeScreenSaysConversationMissing(
+  replay: ReadonlyArray<{ readonly data: string }>,
+): boolean {
+  let text = "";
+  for (const chunk of replay) {
+    text += chunk.data;
+    if (text.length > 64_000) text = text.slice(-64_000);
+  }
+  return CONVERSATION_MISSING_PATTERN.test(text.replace(ANSI_SEQUENCE_PATTERN, ""));
 }
 
 export type ExactResumeVerdict = 'ok' | 'strike' | 'forget' | 'ignored';
@@ -66,6 +91,10 @@ export function createExactResumeHealth() {
       }
       // Morte rápida pedida pelo Nexus, ou falha que não é o erro da CLI: não diz nada sobre o id.
       if (exit.deliberate || exit.exitCode !== CLI_ERROR_EXIT_CODE) return 'ignored';
+      if (exit.conversationMissing === true) {
+        strikes.delete(key);
+        return 'forget';
+      }
       const count = (strikes.get(key) ?? 0) + 1;
       if (count >= EXACT_RESUME_STRIKES_TO_FORGET) {
         strikes.delete(key);

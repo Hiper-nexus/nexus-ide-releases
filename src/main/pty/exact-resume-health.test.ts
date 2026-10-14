@@ -3,6 +3,7 @@ import {
   EXACT_RESUME_FAST_EXIT_MS,
   EXACT_RESUME_STRIKES_TO_FORGET,
   createExactResumeHealth,
+  exactResumeScreenSaysConversationMissing,
   type ExactResumeAttempt,
 } from './exact-resume-health';
 
@@ -78,5 +79,26 @@ describe('exact-resume-health (F-721: id de retomada que nunca virou transcrito)
       health.judge({ ...attempt, sessionId: `id-${index}` }, fail);
     }
     expect(health.size()).toBeLessThanOrEqual(1_024);
+  });
+});
+
+describe('"No conversation found" na tela da CLI (orquestrador que não reinicia)', () => {
+  const screen = [{ data: '\u001b[31mNo conversation found with session ID: b3df56cb-0000-4000-8000-000000000001\u001b[0m\r\n' }];
+
+  it('reconhece o erro da CLI mesmo partido em chunks e colorido', () => {
+    expect(exactResumeScreenSaysConversationMissing(screen)).toBe(true);
+    expect(exactResumeScreenSaysConversationMissing([{ data: 'No conversation fo' }, { data: 'und with session ID: x' }])).toBe(true);
+    expect(exactResumeScreenSaysConversationMissing([{ data: 'tudo certo, conversa retomada' }])).toBe(false);
+  });
+
+  it('com a prova na tela o id é esquecido no PRIMEIRO golpe, não no segundo', () => {
+    const health = createExactResumeHealth();
+    expect(health.judge(attempt, { ...fail, conversationMissing: true })).toBe('forget');
+  });
+
+  it('encerramento pedido pelo Nexus ou falha de ambiente continuam sem apagar vínculo', () => {
+    const health = createExactResumeHealth();
+    expect(health.judge(attempt, { ...fail, deliberate: true, conversationMissing: true })).toBe('ignored');
+    expect(health.judge(attempt, { exitCode: 127, uptimeMs: 100, deliberate: false, conversationMissing: true })).toBe('ignored');
   });
 });

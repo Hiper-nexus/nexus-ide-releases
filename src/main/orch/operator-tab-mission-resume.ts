@@ -34,6 +34,37 @@ export const OPERATOR_TAB_RESUME_NOTE =
   'se alguma restrição impedir delegar, explique qual em vez de ficar parado. ' + TAB_COMPLETION_INSTRUCTION;
 
 /**
+ * A conversa gravada do orquestrador foi esquecida (a CLI respondeu "No
+ * conversation found": o id ditado nunca virou transcrito). Sem este desvio o
+ * `copyProviderPaneSession` do spawn recusava com `resume_context_unavailable`
+ * em TODA retomada e a missão nunca reabria o orquestrador. O contrato selado
+ * continua o dono; a nota manda reler os handoffs em vez de inventar contexto.
+ */
+export const OPERATOR_TAB_RESUME_LOST_NOTE =
+  'A conversa anterior deste orquestrador não existe mais na CLI (a retomada exata foi descartada); ' +
+  'esta conversa é nova, sem histórico. Leia nexus_handoff_list({full:true}) antes de agir.';
+
+export interface OperatorTabResumePlan {
+  /** Retoma a conversa gravada do pane (`--resume`) — só com ela viva e na mesma conta. */
+  readonly resumeFromPane: boolean;
+  /** A linha do orquestrador vai para o pane novo sem copiar conversa. */
+  readonly replaceRow: boolean;
+  readonly conversationLost: boolean;
+}
+
+export function planOperatorTabResume(input: {
+  readonly sameAccount: boolean;
+  readonly conversationRecorded: boolean;
+}): OperatorTabResumePlan {
+  const conversationLost = input.sameAccount && !input.conversationRecorded;
+  return {
+    resumeFromPane: input.sameAccount && input.conversationRecorded,
+    replaceRow: !input.sameAccount || conversationLost,
+    conversationLost,
+  };
+}
+
+/**
  * F-665: "Pedir um ajuste" deixa na missão um marcador que só sai quando ela
  * pede conclusão. Na retomada da CONVERSA da aba, a ordem de esperar o
  * operador só vale para o ajuste que acabou de ser pedido (o respawn do
