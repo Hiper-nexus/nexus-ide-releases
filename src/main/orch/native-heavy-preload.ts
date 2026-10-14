@@ -90,8 +90,8 @@ let jobBaseRetryAfter = 0;
 
 /**
  * Boot não pode morrer porque o host de PTY demorou (Mac frio ou carregado):
- * o prazo de 15 s virava "NexusIDE não conseguiu inicializar". Sem a base, o
- * macOS recusa novos agentes (falta a prova darwin-job para o env fixo);
+ * o prazo de 15 s virava "NexusIDE não conseguiu inicializar". Sem a base,
+ * o agente nasce degradado, sem comandos pesados (falta a prova darwin-job);
  * a prova é refeita em background até dar certo, com o último intervalo
  * repetido, e cada spawn de agente tenta antes (ensureNativeHeavyJobBase).
  */
@@ -106,7 +106,7 @@ export async function proveNativeHeavyJobBaseAtBoot(
     await jobBaseFlight;
     return true;
   } catch (error) {
-    console.warn('[native-heavy] base do job nativo indisponível no boot; novos agentes bloqueados até a nova prova', error);
+    console.warn('[native-heavy] base do job nativo indisponível no boot; comandos pesados dos agentes bloqueados até a nova prova', error);
     void (async () => {
       for (let attempt = 0; !mainOwnedJobBase; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, retryDelaysMs[Math.min(attempt, retryDelaysMs.length - 1)]));
@@ -120,7 +120,7 @@ export async function proveNativeHeavyJobBaseAtBoot(
   }
 }
 
-/** A base precisa estar provada antes de fixar o ambiente de qualquer agente. */
+/** Sem base provada, panes diretos nascem degradados e o warm pool não nasce. */
 export function nativeHeavyJobBaseMissing(): boolean {
   return process.platform === 'darwin' && !mainOwnedJobBase;
 }
@@ -128,14 +128,15 @@ export function nativeHeavyJobBaseMissing(): boolean {
 /**
  * Compartilha a prova em voo do boot/retry antes de montar o env, que fica
  * fixo pela vida do agente. Base provada não ganha await extra. Falha recente
- * recusa o spawn sem esperar novamente o prazo inteiro do host.
+ * deixa o spawn seguir degradado sem esperar novamente o prazo do host.
  */
 export function ensureNativeHeavyJobBase(): Promise<void> | undefined {
   if (!nativeHeavyJobBaseMissing()) return undefined;
-  if (jobBaseFlight) return jobBaseFlight;
-  if (Date.now() < jobBaseRetryAfter) return Promise.reject(new Error('native_heavy_job_authority_unavailable'));
+  if (!jobBaseFlight && Date.now() < jobBaseRetryAfter) return undefined;
   jobBaseFlight ??= nativeHeavyJobEnvironment()
-    .then(() => undefined, (error: unknown) => { jobBaseRetryAfter = Date.now() + 10_000; throw error; })
+    .then(() => undefined)
     .finally(() => { jobBaseFlight = undefined; });
-  return jobBaseFlight;
+  // Boot/background retain their rejection for diagnostics/retry; spawns
+  // join the same proof but keep F-955's best-effort environment contract.
+  return jobBaseFlight.catch(() => { jobBaseRetryAfter = Date.now() + 10_000; });
 }

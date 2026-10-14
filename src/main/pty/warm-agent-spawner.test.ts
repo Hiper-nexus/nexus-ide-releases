@@ -69,15 +69,26 @@ describe('F-790: pane ocioso do warm pool e a versão do Codex', () => {
 describe('F-955: pane ocioso sem a base do job nativo', () => {
   it('waits for an in-flight proof and skips warm spawn when it fails', async () => {
     let fail!: (error: Error) => void;
-    heavyBase.prove.mockReturnValueOnce(new Promise<void>((_resolve, reject) => { fail = reject; }));
+    heavyBase.missing = true;
+    heavyBase.prove.mockReturnValueOnce(new Promise<void>((_resolve, reject) => { fail = reject; }).catch(() => undefined));
     const pending = deps.creator!('claude');
     await vi.waitFor(() => expect(heavyBase.prove).toHaveBeenCalledOnce());
     expect(deps.spawn).not.toHaveBeenCalled();
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     fail(new Error('native_heavy_job_authority_unavailable'));
     await expect(pending).resolves.toBeNull();
     expect(deps.spawn).not.toHaveBeenCalled();
-    warn.mockRestore();
+  });
+  it('waits for a successful in-flight native proof before warming a pane', async () => {
+    heavyBase.missing = true;
+    let finish!: () => void;
+    heavyBase.prove.mockReturnValueOnce(new Promise<void>((resolve) => { finish = resolve; }));
+    const pending = deps.creator!('claude');
+    await vi.waitFor(() => expect(heavyBase.prove).toHaveBeenCalledOnce());
+    expect(deps.spawn).not.toHaveBeenCalled();
+    heavyBase.missing = false;
+    finish();
+    await expect(pending).resolves.toMatchObject({ sessionId: 'warm-session' });
+    expect(deps.spawn).toHaveBeenCalledOnce();
   });
   it('não nasce enquanto a base falta: seria adotado depois sem comandos pesados', async () => {
     heavyBase.missing = true;

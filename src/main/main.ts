@@ -722,7 +722,7 @@ async function bootstrap(userPathReady: Promise<void>): Promise<void> {
   bootStep('registerPtyIpc', () => registerPtyIpc());
   // Start the proof without holding renderer boot. The preload module owns the
   // flight; every agent spawn awaits it before fixing its environment, and a
-  // failed proof refuses the spawn until background/on-demand recovery.
+  // failed proof lets the spawn proceed degraded, without heavy commands.
   void bootStepAsync('nativeHeavyJobEnvironment', () => proveNativeHeavyJobBaseAtBoot())
     .catch((error: unknown) => { console.warn('[native-heavy] boot proof failed:', error); });
   // Semantic CommandBlock layer (OSC 133). Fail-closed behind feature flag;

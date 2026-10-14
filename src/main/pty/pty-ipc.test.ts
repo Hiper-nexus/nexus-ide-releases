@@ -460,20 +460,34 @@ describe("registerPtyIpc account fail-fast", () => {
     expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
   });
 
-  it('holds renderer agent spawn behind the native job proof and refuses a failed proof', async () => {
+  it('holds renderer agent spawn behind the native job proof and proceeds degraded after a failed proof', async () => {
     providerDeps.prepareProviderSpawn.mockReturnValueOnce({
       ok: true, overrides: { binPath: '/usr/local/bin/claude', defaultModel: null, extraArgs: [], keyEnv: {}, suppressEnv: [] },
     });
     let fail!: (error: Error) => void;
-    settleDeps.proveHeavyBase.mockReturnValueOnce(new Promise<void>((_resolve, reject) => { fail = reject; }));
+    settleDeps.proveHeavyBase.mockReturnValueOnce(new Promise<void>((_resolve, reject) => { fail = reject; }).catch(() => undefined));
     const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn)!;
     const pending = handler({ sender: { id: 7 } }, { kind: 'cli-agent', adapterId: 'claude', cols: 80, rows: 24 });
     await vi.waitFor(() => expect(settleDeps.proveHeavyBase).toHaveBeenCalledOnce());
     expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
-    const rejected = expect(pending).rejects.toThrow('native_heavy_job_authority_unavailable');
     fail(new Error('native_heavy_job_authority_unavailable'));
-    await rejected;
+    await expect(pending).resolves.toMatchObject({ ok: true });
+    expect(ptyDeps.spawnAgentSession).toHaveBeenCalledOnce();
+  });
+
+  it('waits for a successful in-flight native proof before renderer agent spawn', async () => {
+    providerDeps.prepareProviderSpawn.mockReturnValueOnce({
+      ok: true, overrides: { binPath: '/usr/local/bin/claude', defaultModel: null, extraArgs: [], keyEnv: {}, suppressEnv: [] },
+    });
+    let finish!: () => void;
+    settleDeps.proveHeavyBase.mockReturnValueOnce(new Promise<void>((resolve) => { finish = resolve; }));
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn)!;
+    const pending = handler({ sender: { id: 7 } }, { kind: 'cli-agent', adapterId: 'claude', cols: 80, rows: 24 });
+    await vi.waitFor(() => expect(settleDeps.proveHeavyBase).toHaveBeenCalledOnce());
     expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
+    finish();
+    await expect(pending).resolves.toMatchObject({ ok: true });
+    expect(ptyDeps.spawnAgentSession).toHaveBeenCalledOnce();
   });
 
   it("creates the PTY only after the exact account preparation succeeds", async () => {
