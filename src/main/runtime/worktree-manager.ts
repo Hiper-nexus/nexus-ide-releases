@@ -51,6 +51,7 @@ import {
   type RegisteredWorktreeInfo,
 } from "./worktree-removal-safety";
 import { DEAD_OWNER_WORKTREE_RELEASE_MARKER } from "./worktree-manager-markers";
+import { areWorktreePathsEqual } from "./worktree-path-compare";
 import {
   assertRepositoryUnchangedAsync,
   assertTaskWorktreeAsync,
@@ -1486,10 +1487,14 @@ export class WorktreeManager {
     // Só caminhos de registros Nexus atuais deste runtime; formato de caminho
     // não é proveniência (worktree manual do operador nunca é esquecida).
     // F-1429 parte 2: a adotada É manual — registro dela não autoriza o prune.
-    const known = new Set(this.#snapshot(this.scopeKey(scope)).records
+    // F-1510: no Windows o Git lista `C:/…` e o registro guarda `C:\…`; a
+    // comparação é a mesma da remoção (`areWorktreePathsEqual`).
+    const known = this.#snapshot(this.scopeKey(scope)).records
       .filter((record) => record.adopted !== true)
-      .map((record) => record.worktreePath));
-    if (!prunable.every((worktree) => known.has(worktree.path))) return { skipped: "prunable-not-nexus" };
+      .map((record) => record.worktreePath);
+    if (!prunable.every((worktree) => known.some((knownPath) => areWorktreePathsEqual(knownPath, worktree.path)))) {
+      return { skipped: "prunable-not-nexus" };
+    }
     await this.#asyncGit.run(scope.rootRealPath, ["worktree", "prune"]);
     return { pruned: prunable.length };
   }

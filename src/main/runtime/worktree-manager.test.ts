@@ -181,6 +181,21 @@ describe("WorktreeManager", () => {
     },
   );
 
+  // F-1510: o `git worktree list` do Windows imprime `C:/…`; o registro guarda
+  // `C:\…`. O conjunto de conhecidos nunca casava e o prune nunca rodava.
+  it("F-1510: prune reconhece a worktree do Nexus na grafia do Git", async () => {
+    const scope = projectScope();
+    const record = await manager.create({
+      scope, missionId: "f1510", taskId: "pane-gone", workerId: "gone", ownerKind: "pane",
+      ownership: { files: [], symbols: [], domains: ["pane-gone"] },
+    });
+    fs.rmSync(record.worktreePath, { recursive: true, force: true });
+    expect(git(root, "worktree", "list", "--porcelain")).toContain("prunable");
+
+    expect(await manager.pruneManagedWorktrees(scope)).toEqual({ pruned: 1 });
+    expect(git(root, "worktree", "list", "--porcelain")).not.toContain("prunable");
+  });
+
   it("F-764: cria e reutiliza a worktree sem executar Git síncrono", async () => {
     const asyncGit = new AsyncProcessGitRunner();
     let heartbeatDuringAdd = false;
