@@ -8,7 +8,7 @@ vi.mock('electron', () => ({ app: { isPackaged: false, getAppPath: () => process
 import { createNativeHeavyLocalChannel } from './native-heavy-local-channel';
 import { NativeHeavyCommands } from './native-heavy-command';
 import { nestedHeavyJobBaseCommand, supervisedPtyCommand } from '../pty/darwin-pty-supervisor';
-import { skipIfSupervisorLaunchRejected, skipUnderNexusPtySupervisor } from '../../test/nested-pty-supervisor';
+import { skipUnderNexusPtySupervisor } from '../../test/nested-pty-supervisor';
 import { watchDarwinHeavyCommand } from '../pty/darwin-heavy-command';
 import { OwnedCommandProcesses } from '../pty/owned-command-process';
 import { HeavyCommandPermitPool } from './heavy-command-permit';
@@ -89,7 +89,7 @@ it.runIf(process.platform === 'darwin' && Boolean(opencode))('real OpenCode nati
  const exit = new Promise<number | null>((resolve) => child.once('close', (code) => { cliAlive = false; resolve(code); }));
  const timer = setTimeout(() => child.kill('SIGTERM'), 25_000);
  try {
-  const code = await exit; skipIfSupervisorLaunchRejected(testContext, code, `${stderr}\n${stdout}`); expect(code).toBe(0); expect(modelCalls).toBeGreaterThanOrEqual(2);
+  const code = await exit; expect(code).toBe(0); expect(modelCalls).toBeGreaterThanOrEqual(2);
   if (preflight) { const result = { file: fs.existsSync(path.join(privateTmp, 'path-reached')), unix: JSON.stringify(shapes).includes('unix-reached'), output: shapes.at(-1) }; expect(result.file).toBe(true); expect(result.unix).toBe(true); return; }
   expect(fs.existsSync(path.join(workspace, 'command-ran'))).toBe(true);
   expect(fs.readFileSync(path.join(workspace, 'command-ran'), 'utf8')).toBe('done');

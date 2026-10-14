@@ -1,5 +1,4 @@
 import { execFileSync } from 'node:child_process';
-import fs from 'node:fs';
 import path from 'node:path';
 
 /**
@@ -105,57 +104,4 @@ export function skipUnderNexusPtySupervisor(context: { readonly skip: (note?: st
     console.warn(`[nexus-test] testes PULADOS — ${reason}`);
   }
   context.skip(reason);
-}
-
-/** Texto que o `nexus-pty-supervisor` imprime ao recusar o lançamento (exit 76). */
-export const SUPERVISOR_LAUNCH_REJECTED = 'launch authorization rejected';
-
-type SkipContext = { readonly skip: (note?: string) => never };
-
-/** EPERM/EACCES: o Seatbelt do portão nega leitura/escrita fora do checkout. */
-export function hostDenied(error: unknown): boolean {
-  const code = (error as { code?: unknown } | null)?.code;
-  return code === 'EPERM' || code === 'EACCES';
-}
-
-/**
- * Exit 76 com o texto do supervisor: o portão tira `NEXUS_PANE_*` e nega o
- * `ps`, então `skipUnderNexusPtySupervisor` não vê o ancestral. Não é a fila.
- */
-export function supervisorLaunchRejected(code: number | null, output: string): boolean {
-  return code === 76 && output.includes(SUPERVISOR_LAUNCH_REJECTED);
-}
-
-export function skipIfSupervisorLaunchRejected(context: SkipContext, code: number | null, output: string): void {
-  if (!supervisorLaunchRejected(code, output)) return;
-  context.skip(
-    'AMBIENTE-PANE (F-1217): o supervisor recusou o lançamento (exit 76, launch authorization rejected). ' +
-    'O portão tira NEXUS_PANE_* e nega o ps, então a suíte não vê o ancestral. Não é a fila heavy.',
-  );
-}
-
-/**
- * Diretório de controle ao lado do checkout: fora do TMP (o Codex recusa
- * CODEX_HOME ali) e fora do HOME nativo. O portão nega essa escrita.
- */
-export function controlDirOutsideCheckout(context: SkipContext, prefix: string): string {
-  try {
-    return fs.realpathSync(fs.mkdtempSync(path.join(path.dirname(process.cwd()), prefix)));
-  } catch (error) {
-    if (!hostDenied(error)) throw error;
-    context.skip(
-      `AMBIENTE-SANDBOX (F-1217): mkdtemp ${prefix} fora do checkout recusado (${(error as { code?: string }).code}). ` +
-      'O diretório fica fora do TMP e do HOME nativo; o portão nega essa escrita.',
-    );
-  }
-}
-
-/** realpath de um binário fora do checkout (o Grok mora em ~/.grok). */
-export function realpathOrSkip(context: SkipContext, file: string, label: string): string {
-  try {
-    return fs.realpathSync(file);
-  } catch (error) {
-    if (!hostDenied(error)) throw error;
-    context.skip(`AMBIENTE-SANDBOX (F-1217): realpath de ${label} recusado (${(error as { code?: string }).code}).`);
-  }
 }

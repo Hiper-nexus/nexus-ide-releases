@@ -10,17 +10,6 @@ import { OwnedCommandProcesses } from '../pty/owned-command-process';
 import type { AgentGateContext } from './gate';
 import { appendHeavyCommandPreload } from './native-heavy-preload';
 
-/** Exit 0, and the lane did not refuse. Seatbelt or npm noise is not a refusal.
- * The expect message keeps a short preview: the gate stores only the first line.
- */
-function expectAdmittedQuiet(result: Array<{ code: number | null; stderr: string }>): void {
-  const preview = result.map((row) => JSON.stringify(row.stderr.slice(0, 160))).join(' ');
-  expect(result.map((row) => row.code), preview).toEqual([0, 0]);
-  for (const row of result) {
-    expect(row.stderr, JSON.stringify(row.stderr.slice(0, 220))).not.toMatch(/nexus-heavy|\[Nexus\]|taskpolicy/i);
-  }
-}
-
 it('two actual native Node tsc descendants from the AI operator hand serialize without a mission', async () => {
  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-native-tsc-'));
  fs.writeFileSync(path.join(root, 'fixture.ts'), Array.from({ length: 4000 }, (_, i) => `interface Value${i} { name: string; value: number }`).join('\n'));
@@ -48,7 +37,7 @@ it('two actual native Node tsc descendants from the AI operator hand serialize w
   let stderr = ''; child.stderr.on('data', (data) => { stderr += data; }); child.once('close', (code) => resolve({ code, stderr }));
  });
  try {
-  const result = await Promise.all([run(), run()]); expectAdmittedQuiet(result);
+  const result = await Promise.all([run(), run()]); expect(result.map((r) => r.stderr)).toEqual(['', '']); expect(result.map((r) => r.code)).toEqual([0, 0]);
   await native.drain(); expect(transitions.map((v) => v.kind)).toEqual(['grant', 'release', 'grant', 'release']); expect(pool.snapshot().active).toBe(0);
  } finally { pool.close(); await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true }); }
 }, 30_000);
@@ -168,7 +157,7 @@ it('two actual npm script parents borrow their child TypeScript lease without se
   let stderr = ''; child.stderr.on('data', (data) => { stderr += data; }); child.once('close', (code) => resolve({ code, stderr }));
  });
  try {
-  const result = await Promise.all([run(), run()]); expectAdmittedQuiet(result);
+  const result = await Promise.all([run(), run()]); expect(result.map((r) => r.stderr)).toEqual(['', '']); expect(result.map((r) => r.code)).toEqual([0, 0]);
   await native.drain(); expect(transitions.map((v) => v.kind)).toEqual(['grant', 'release', 'grant', 'release']); expect(pool.snapshot().active).toBe(0);
  } finally { pool.close(); await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true }); }
 }, 30_000);
@@ -200,7 +189,7 @@ it('absolute Bash execution with stripped NODE_OPTIONS is admitted before actual
   let stderr = ''; child.stderr.on('data', (data) => { stderr += data; }); child.once('close', (code) => resolve({ code, stderr }));
  });
  try {
-  const result = await Promise.all([run(), run()]); expectAdmittedQuiet(result);
+  const result = await Promise.all([run(), run()]); expect(result.map((r) => r.stderr)).toEqual(['', '']); expect(result.map((r) => r.code)).toEqual([0, 0]);
   await native.drain(); expect(transitions.map((v) => v.kind)).toEqual(['grant', 'release', 'grant', 'release']); expect(pool.snapshot().active).toBe(0);
  } finally { pool.close(); await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true }); }
 }, 30_000);
@@ -232,7 +221,7 @@ it('absolute zsh execution with stripped NODE_OPTIONS is admitted before actual 
   let stderr = ''; child.stderr.on('data', (data) => { stderr += data; }); child.once('close', (code) => resolve({ code, stderr }));
  });
  try {
-  const result = await Promise.all([run(), run()]); expectAdmittedQuiet(result);
+  const result = await Promise.all([run(), run()]); expect(result.map((r) => r.stderr)).toEqual(['', '']); expect(result.map((r) => r.code)).toEqual([0, 0]);
   await native.drain(); expect(transitions.map((v) => v.kind)).toEqual(['grant', 'release', 'grant', 'release']); expect(pool.snapshot().active).toBe(0);
  } finally { pool.close(); await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true }); }
 }, 30_000);
@@ -263,7 +252,7 @@ it('actual absolute make commands serialize through non-Node shell preexec', asy
   let stderr = ''; child.stderr.on('data', (data) => { stderr += data; }); child.once('close', (code) => resolve({ code, stderr }));
  });
  try {
-  const result = await Promise.all([run(), run()]); expectAdmittedQuiet(result);
+  const result = await Promise.all([run(), run()]); expect(result.map((r) => r.stderr)).toEqual(['', '']); expect(result.map((r) => r.code)).toEqual([0, 0]);
   await native.drain(); expect(transitions.map((v) => v.kind)).toEqual(['grant', 'release', 'grant', 'release']); expect(pool.snapshot().active).toBe(0);
  } finally { pool.close(); await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true }); }
 }, 30_000);
@@ -294,7 +283,7 @@ it.runIf(process.platform === 'darwin')('two actual native Node tsc descendants 
   let stderr = ''; child.stderr.on('data', (data) => { stderr += data; }); child.once('close', (code) => resolve({ code, stderr }));
  });
  try {
-  const result = await Promise.all([run(), run()]); expectAdmittedQuiet(result);
+  const result = await Promise.all([run(), run()]); expect(result.map((r) => r.stderr)).toEqual(['', '']); expect(result.map((r) => r.code)).toEqual([0, 0]);
   await native.drain(); expect(transitions.map((v) => v.kind)).toEqual(['grant', 'release', 'grant', 'release']); expect(pool.snapshot().active).toBe(0);
  } finally { pool.close(); await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true }); }
 }, 30_000);

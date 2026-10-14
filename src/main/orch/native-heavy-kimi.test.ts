@@ -6,7 +6,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import { expect, it } from 'vitest';
 import { NativeHeavyCommands } from './native-heavy-command';
 import { nestedHeavyJobBaseCommand, supervisedPtyCommand } from '../pty/darwin-pty-supervisor';
-import { skipIfSupervisorLaunchRejected, skipUnderNexusPtySupervisor } from '../../test/nested-pty-supervisor';
+import { skipUnderNexusPtySupervisor } from '../../test/nested-pty-supervisor';
 import { watchDarwinHeavyCommand } from '../pty/darwin-heavy-command';
 import { OwnedCommandProcesses } from '../pty/owned-command-process';
 import { HeavyCommandPermitPool } from './heavy-command-permit';
@@ -78,7 +78,7 @@ it.runIf(process.platform === 'darwin' && Boolean(kimi))('real Kimi native Bash 
  const exit = new Promise<number | null>((resolve) => child.once('close', (code) => { cliAlive = false; resolve(code); }));
  const timer = setTimeout(() => child.kill('SIGTERM'), 25_000);
  try {
-  const code = await exit; skipIfSupervisorLaunchRejected(testContext, code, stderr || stdout); expect(code, (stderr || stdout).slice(0, 2048)).toBe(0); expect(modelCalls).toBeGreaterThanOrEqual(2);
+  const code = await exit; expect(code, (stderr || stdout).slice(0, 2048)).toBe(0); expect(modelCalls).toBeGreaterThanOrEqual(2);
   expect(fs.existsSync(path.join(root, 'command-ran')), JSON.stringify(shapes) + (stderr + stdout).slice(0, 8000)).toBe(true);
   expect(fs.readFileSync(path.join(root, 'command-ran'), 'utf8')).toBe('done');
   expect((admissions[0] as { proof?: string }).proof).toBe('darwin-job');
