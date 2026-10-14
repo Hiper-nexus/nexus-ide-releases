@@ -8,7 +8,7 @@ import { SerializeAddon } from '@xterm/addon-serialize';
 import { attachTerminalPathLinks } from './terminal-path-links';
 import { TerminalGhostAssist } from './terminal-ghost-assist';
 import '@xterm/xterm/css/xterm.css';
-import type { PaneModel, PtyPromptState } from '../../shared/types';
+import type { LayoutNode, PaneModel, PtyPromptState } from '../../shared/types';
 import type { PaneParkRequest } from '../../shared/orch-types';
 import { buildPtySpawnRequest } from './spawn-request';
 import type { TerminalSettings } from '../../shared/settings-types';
@@ -1926,27 +1926,36 @@ const HEADLESS_SPAWN_FALLBACK_MS = 200;
  * Envolver o fit num só lugar garante que nenhum dos caminhos de resize (observer
  * por host, refit global, reveal, spawn) escape da regra.
  */
-function fitHostGrid(host: Host): boolean {
+function measureHostGrid(host: Host): { cols: number; rows: number } | null {
   host.gridReady = false;
-  if (host.element.clientWidth <= 0 || host.element.clientHeight <= 0) return false;
+  if (host.element.clientWidth <= 0 || host.element.clientHeight <= 0) return null;
   try {
     const proposed = host.fit.proposeDimensions();
     if (!proposed || !Number.isFinite(proposed.cols) || !Number.isFinite(proposed.rows) ||
-        proposed.cols <= 0 || proposed.rows <= 0) return false;
-    const grid = clampGridToUsableCols({
+        proposed.cols <= 0 || proposed.rows <= 0) return null;
+    return clampGridToUsableCols({
       cols: proposed.cols,
       rows: proposed.rows,
       hasSession: host.sessionId != null,
     });
-    if (grid.cols !== host.term.cols || grid.rows !== host.term.rows) {
-      host.term.resize(grid.cols, grid.rows);
-    }
-    host.gridReady = true;
-    host.hasFittedGrid = true;
   } catch {
     // Hidden slot, unloaded font or a disposed terminal: retry after layout.
-    return false;
+    return null;
   }
+}
+
+function applyHostGrid(host: Host, grid: { cols: number; rows: number }): void {
+  if (grid.cols !== host.term.cols || grid.rows !== host.term.rows) {
+    host.term.resize(grid.cols, grid.rows);
+  }
+  host.gridReady = true;
+  host.hasFittedGrid = true;
+}
+
+function fitHostGrid(host: Host): boolean {
+  const grid = measureHostGrid(host);
+  if (!grid) return false;
+  try { applyHostGrid(host, grid); } catch { return false; }
   return true;
 }
 
@@ -2192,16 +2201,23 @@ function makeResizeObserver(paneId: string, host: Host): ResizeObserver {
  * do Overclock: 1 pane 5%, 24 panes 84%).
  */
 function refitAllHosts(reason: RefitReason): void {
+  const measured: Array<{ host: Host; grid: { cols: number; rows: number }; wasReady: boolean }> = [];
   for (const host of hosts.values()) {
     if (host.disposed || !host.opened || host.virtualized) continue;
-    const before = { cols: host.term.cols, rows: host.term.rows };
+    const wasReady = host.gridReady;
+    const grid = measureHostGrid(host);
+    if (grid) measured.push({ host, grid, wasReady });
+  }
+  // All DOM reads precede buffer reflow / writes, avoiding repeated layout.
+  for (const { host, grid, wasReady } of measured) {
+    const gridChanged = terminalGridChanged(host.term, grid);
     try {
-      if (!fitHostGrid(host)) continue;
+      applyHostGrid(host, grid);
     } catch {
       continue; // Not measurable right now; the ResizeObserver will settle it.
     }
-    const gridChanged =
-      host.term.cols !== before.cols || host.term.rows !== before.rows;
+    if (wasReady && !gridChanged && !shouldRepaintOnRefit({ reason, gridChanged }) &&
+        !host.pendingScrollback && !host.needsTuiRepaint && !host.spawnWhenMeasurable) continue;
     if (gridChanged) flushPendingScrollback(host);
     propagateHostSize(host);
     if (host.isVisible && document.visibilityState !== 'hidden') resumeTerminalOutput(host.term);
@@ -2285,9 +2301,18 @@ function watchDisplayScale(): void {
 }
 watchDisplayScale();
 
+function sameLayoutGeometry(a: LayoutNode | null, b: LayoutNode | null): boolean {
+  if (a === b) return true;
+  if (!a || !b || a.kind !== b.kind || a.id !== b.id) return false;
+  if (a.kind === 'leaf' && b.kind === 'leaf') return a.pane.id === b.pane.id;
+  return a.kind === 'split' && b.kind === 'split' && a.direction === b.direction &&
+    sameLayoutGeometry(a.children[0], b.children[0]) &&
+    sameLayoutGeometry(a.children[1], b.children[1]);
+}
+
 useLayoutStore.subscribe((next, prev) => {
   if (
-    next.root !== prev.root ||
+    !sameLayoutGeometry(next.root, prev.root) ||
     next.maximizedPaneId !== prev.maximizedPaneId
   ) {
     scheduleRefitAll('layout-change');

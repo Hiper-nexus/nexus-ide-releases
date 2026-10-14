@@ -126,7 +126,7 @@ import { useSessionStateStore } from '../state/session-state-store';
 import { setActiveWorkspacePath } from '../state/active-workspace';
 import { useOrchStore } from '../state/orch-store';
 import { useToastStore } from '../state/toast-store';
-import { buildGridTree, listPanes } from '../lib/split-tree';
+import { buildGridTree, closePane, listPanes, splitPane, updatePane } from '../lib/split-tree';
 import { paneIntersectionApplies } from '../lib/pane-intersection';
 import * as terminalOutputScheduler from './terminal-output-scheduler';
 import { DEFAULT_TERMINAL_SETTINGS } from '../../shared/settings-types';
@@ -633,6 +633,68 @@ describe('F-1005 — rodapé do terminal segue o tema (sem faixa preta)', () => 
 });
 
 describe('F-356 — geometria não repinta em cima de conteúdo já desenhado', () => {
+  it('metadata não mede a frota; split, direção, close e maximize medem', async () => {
+    const host = getOrCreateHost(pane);
+    setHostSize(host.element, 1200, 800);
+    attachHost(pane, document.body.appendChild(document.createElement('div')));
+    await vi.advanceTimersByTimeAsync(200);
+    const measure = vi.spyOn(host.fit, 'proposeDimensions');
+    for (const patch of [{ title: 'OSC title' }, { cwd: '/new' }, { accountId: 'other' }, { role: 'worker' as const }]) {
+      useLayoutStore.setState({ root: updatePane(useLayoutStore.getState().root!, pane.id, patch) });
+      await vi.advanceTimersByTimeAsync(200);
+    }
+    expect(measure).not.toHaveBeenCalled();
+
+    const sibling: PaneModel = { id: 'refit-sibling', kind: 'shell', title: 'Sibling' };
+    const split = splitPane(useLayoutStore.getState().root!, pane.id, 'row', sibling);
+    useLayoutStore.setState({ root: split });
+    await vi.advanceTimersByTimeAsync(200);
+    expect(measure).toHaveBeenCalled();
+    measure.mockClear();
+    if (split.kind !== 'split') throw new Error('expected split');
+    useLayoutStore.setState({ root: { ...split, direction: 'column' } });
+    await vi.advanceTimersByTimeAsync(200);
+    expect(measure).toHaveBeenCalled();
+    measure.mockClear();
+    useLayoutStore.setState({ root: closePane(useLayoutStore.getState().root!, sibling.id) ?? undefined });
+    await vi.advanceTimersByTimeAsync(200);
+    expect(measure).toHaveBeenCalled();
+    measure.mockClear();
+    useLayoutStore.setState({ maximizedPaneId: pane.id });
+    await vi.advanceTimersByTimeAsync(200);
+    expect(measure).toHaveBeenCalled();
+    useLayoutStore.setState({ maximizedPaneId: null });
+  });
+
+  it('refit mede todos os hosts antes do primeiro resize e não desperta grids iguais', async () => {
+    const sibling: PaneModel = { id: 'refit-batch', kind: 'shell', title: 'Sibling' };
+    useLayoutStore.setState({ root: buildGridTree([pane, sibling]) });
+    const pair = [pane, sibling].map((target) => {
+      const host = getOrCreateHost(target);
+      setHostSize(host.element, 1200, 800);
+      attachHost(target, document.body.appendChild(document.createElement('div')));
+      return host;
+    });
+    await vi.advanceTimersByTimeAsync(200);
+    eventOrder.length = 0;
+    for (const host of pair) {
+      const measure = host.fit.proposeDimensions.bind(host.fit);
+      vi.spyOn(host.fit, 'proposeDimensions').mockImplementation(() => {
+        eventOrder.push('measure');
+        return measure();
+      });
+      setHostSize(host.element, 1000, 600);
+    }
+    refitAllPanesBeforePaint();
+    expect(eventOrder.slice(0, 4)).toEqual(['measure', 'measure', 'resize', 'resize']);
+    const resume = vi.spyOn(terminalOutputScheduler, 'resumeTerminalOutput');
+    const before = resizeCalls.length;
+    refitAllPanesBeforePaint();
+    expect(resizeCalls).toHaveLength(before);
+    expect(resume).not.toHaveBeenCalled();
+    resume.mockRestore();
+  });
+
   it('clampa para MIN_USABLE_COLS com UM só resize físico, não fit()+resize()', async () => {
     // Repro real (xterm 0.19 + addon-fit): fit.fit() já reflowa o buffer na
     // largura estreita medida (ex.: 30 cols) e SÓ DEPOIS o clamp reflowa de
