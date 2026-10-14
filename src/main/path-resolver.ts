@@ -430,11 +430,9 @@ export async function retryLoginShellPathIfMissed(
 export async function refreshUserPath(): Promise<string> {
   // Clear memo so buildEffectivePath re-probes the login shell.
   memoizedEffectivePath = null;
-  invalidateLookupInPathCache();
   const effective = await resolveEffectivePath();
   process.env.PATH = effective;
   memoizedEffectivePath = effective;
-  invalidateLookupInPathCache();
   folded = true;
   return effective;
 }
@@ -476,10 +474,23 @@ function isExecutableFile(candidate: string): boolean {
   }
 }
 
-const lookupInPathCache = new Map<string, string | null>();
+/** Memo of the running discovery pass; null = every lookup walks the PATH live. */
+let lookupInPathPass: Map<string, string | null> | null = null;
 
-export function invalidateLookupInPathCache(): void {
-  lookupInPathCache.clear();
+/**
+ * Runs one synchronous discovery pass with `lookupInPath` memoized: every
+ * adapter sees one PATH snapshot and each (command, dir) pair is stat'ed once.
+ * Outside a pass lookups stay live, so the pre-spawn resolve sees an install
+ * or a removal immediately (`resolveAdapterBinary` contract).
+ */
+export function withLookupInPathPass<T>(run: () => T): T {
+  if (lookupInPathPass) return run();
+  lookupInPathPass = new Map();
+  try {
+    return run();
+  } finally {
+    lookupInPathPass = null;
+  }
 }
 
 function lookupInSingleDir(
@@ -530,26 +541,24 @@ export function lookupInPath(
   const pathext = process.platform === 'win32'
     ? (process.env.PATHEXT ?? '.EXE;.CMD;.BAT;.COM')
     : '';
+  const memo = lookupInPathPass;
   const cacheKey = `${command}\0${pathSep}\0${pathext}\0${pathString}`;
-  if (lookupInPathCache.has(cacheKey)) {
-    return lookupInPathCache.get(cacheKey) ?? null;
-  }
+  const memoized = memo?.get(cacheKey);
+  if (memoized !== undefined) return memoized;
   for (const dir of pathString.split(pathSep)) {
     if (!dir) continue;
     const dirKey = `${command}\0${pathSep}\0${pathext}\0${dir}`;
-    let hit: string | null;
-    if (lookupInPathCache.has(dirKey)) {
-      hit = lookupInPathCache.get(dirKey) ?? null;
-    } else {
+    let hit = memo?.get(dirKey);
+    if (hit === undefined) {
       hit = lookupInSingleDir(command, dir, pathext);
-      lookupInPathCache.set(dirKey, hit);
+      memo?.set(dirKey, hit);
     }
     if (hit !== null) {
-      lookupInPathCache.set(cacheKey, hit);
+      memo?.set(cacheKey, hit);
       return hit;
     }
   }
-  lookupInPathCache.set(cacheKey, null);
+  memo?.set(cacheKey, null);
   return null;
 }
 
@@ -985,7 +994,7 @@ export function __resetPathResolverForTests(): void {
   folded = false;
   memoizedEffectivePath = null;
   bootLoginProbe = null;
-  invalidateLookupInPathCache();
+  lookupInPathPass = null;
   bootPathRevalidation = undefined;
   bootPathCache = undefined;
   bootPathInheritedPath = undefined;

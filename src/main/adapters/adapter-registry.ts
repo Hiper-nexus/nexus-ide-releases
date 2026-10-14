@@ -26,6 +26,7 @@ import {
   refreshUserPath,
   getEffectivePath,
   warmCliBinaryVersions,
+  withLookupInPathPass,
   type CliBinaryResolution,
 } from '../path-resolver';
 import { CLI_COMPATIBILITY_POLICIES } from './cli-compatibility';
@@ -454,9 +455,12 @@ function resolveAdapterBin(adapter: Adapter): AdapterBinResolution {
 
 function refreshInstalledCache(): void {
   const next = new Map<string, AdapterBinResolution>();
-  for (const [id, adapter] of registry) {
-    next.set(id, resolveAdapterBin(adapter));
-  }
+  // One discovery pass: every adapter resolves against the same PATH snapshot.
+  withLookupInPathPass(() => {
+    for (const [id, adapter] of registry) {
+      next.set(id, resolveAdapterBin(adapter));
+    }
+  });
   installedCache = next;
 }
 
@@ -677,7 +681,8 @@ export function initAdapterRegistry(): void {
   if (seedLocalModelCatalogFromPublished()) {
     invalidateModelCatalogCache();
   }
-  reload();
+  // CLI cache discovery and the binary inventory share one PATH pass.
+  withLookupInPathPass(reload);
   // F-764: o inventário acima só lê versões já em cache (instalação duplicada
   // sem versão conhecida fica na ordem do PATH). As sondas rodam fora do Main;
   // quando voltam, o cache de binários é refeito e o renderer avisado.
@@ -685,6 +690,10 @@ export function initAdapterRegistry(): void {
   // F-990: a listagem viva mudou (ou falhou e caiu na última boa) → o
   // registro recompõe a oferta para spawn, squad e failover.
   stopDiscoveryListener ??= onDiscoveredModelsChanged(scheduleReloadAndBroadcast);
+  // Child processes, no Main cost: restored Codex panes need the version
+  // (--dangerously-bypass-hook-trust) within settleCodexCliVersionForSpawn's
+  // 2 s wait, long before the post-boot idle queue drains.
+  void warmAdapterCliVersions();
 
   try {
     watcher = fs.watch(USER_ADAPTER_DIR, { persistent: false }, () => {
@@ -726,10 +735,11 @@ export function initAdapterRegistry(): void {
     }
   }
 
-  enqueuePostBootIdleTask('adapter-model-refresh', async () => {
+  // Out of the idle queue's series: the queue only picks the start; the
+  // network/CLI listings run in their own budgeted periodic task.
+  enqueuePostBootIdleTask('adapter-model-refresh', () => {
     if (registryController.signal.aborted) return;
-    void warmAdapterCliVersions();
-    await runPeriodicTask('adapter-model-refresh', async (context) => {
+    void runPeriodicTask('adapter-model-refresh', async (context) => {
       await Promise.all([
         context.wait(refreshRemoteModelCatalog()),
         context.wait(refreshAllDiscoveredModels([...registry.keys()], undefined, context)),
@@ -743,7 +753,6 @@ export function initAdapterRegistry(): void {
     }, { signal: registryController.signal, cadenceMs: MODEL_DISCOVERY_POLL_MS }).catch((error) => {
       if (!registryController.signal.aborted) console.warn('[adapter-registry] initial model refresh failed:', error);
     });
-    if (registryController.signal.aborted) return;
     // Remote metadata is eventually consistent; CLI cache watchers provide the
     // immediate path (Claude/Codex/Grok). Polling covers providers that atomically
     // replace caches in directories the platform watcher cannot observe, and
