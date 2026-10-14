@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearRouteProvenance } from './route-provenance';
-import { __resetDiversityMemoForTests } from './tools-domain';
 import type { AgentGateContext } from './gate';
 import { testProjectScope } from './__tests__/scope-fixture';
 
@@ -104,7 +103,6 @@ beforeEach(() => {
   // F-1291: a memória de rotas sem missão é estado do módulo; sem limpar, um
   // caso herda as rotas dos anteriores no fair-share.
   clearRouteProvenance();
-  __resetDiversityMemoForTests();
   rememberKimiSeatReadiness('present');
   h.globalUse = new Map();
   h.benchmark = { schemaVersion: 1, source: 'nexus-benchmark/unpublished', specialties: {} };
@@ -151,7 +149,6 @@ describe('"+ Pane": fair-share dos últimos 7 dias (F-232)', () => {
       [[ 'codex', 'kimi', 'agy' ].find(id => id !== cold.adapterId)!, 0],
     ]);
     h.globalUse.set(cold.adapterId, 12);
-    __resetDiversityMemoForTests(); // A12: o memo de 30s precisa ser limpo entre as duas rotas
     const balanced = await routeLikeSpawn(MEDIUM_TASK);
     expect(balanced.adapterId).not.toBe(cold.adapterId);
     expect(balanced.reason).toContain('fair-share');
@@ -196,7 +193,6 @@ describe('"+ Pane": especialidade da tarefa escolhe a CLI', () => {
   it('interface vai para a lane de topo e documentação para a rota barata: CLIs diferentes', async () => {
     const VISUAL_TASK = 'Ajustar o layout responsivo e o espaçamento do cabeçalho da tela de login';
     const visual = await routeLikeSpawn(VISUAL_TASK);
-    __resetDiversityMemoForTests(); // A12: cada rota no teste vê o estado atualizado
     const doc = await routeLikeSpawn('Atualizar o README com o guia de instalação');
     expect(visual.reason).toContain('specialty=visual');
     expect(visual.reason).toContain('lane visual');
@@ -209,7 +205,6 @@ describe('"+ Pane": especialidade da tarefa escolhe a CLI', () => {
     expect(visual).toMatchObject({ adapterId: 'claude', model: 'claude-opus-5-5' });
     expect(doc.adapterId).not.toBe(visual.adapterId);
     // Com o Opus registrado, a próxima tela cai no Sonnet (mesma CLI, modelo livre).
-    __resetDiversityMemoForTests(); // A12: a rotação visual usa o estado atualizado
     const next = await routeLikeSpawn(VISUAL_TASK);
     expect(next.reason).toContain('lane visual');
     expect(next).toMatchObject({ adapterId: 'claude', model: 'claude-sonnet-5-5' });
