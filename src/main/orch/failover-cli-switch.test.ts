@@ -112,6 +112,8 @@ const ACCOUNTS: Record<string, { id: string; adapterId: string; label: string; m
   'codex-a': { id: 'codex-a', adapterId: 'codex', label: 'ana@example.org', mode: 'subscription', upstream: 'openai', createdAt: 0 },
   // F-1471: a conta irmã da MESMA CLI (só os testes do F-1471 a oferecem).
   'claude-b': { id: 'claude-b', adapterId: 'claude', label: 'maria@example.com', mode: 'subscription', upstream: 'anthropic', createdAt: 1 },
+  // F-1483: a terceira conta da cadeia A → B → C.
+  'claude-c': { id: 'claude-c', adapterId: 'claude', label: 'joana@example.com', mode: 'subscription', upstream: 'anthropic', createdAt: 2 },
 };
 vi.mock('../persistence/account-store', () => ({
   getAccount: vi.fn((id: string) => ACCOUNTS[id] ?? null),
@@ -932,6 +934,48 @@ describe('F-1471: worker de missão troca de conta no MESMO provedor e segue a t
     // O orquestrador recebe o desfecho (um aviso por espera, não um por tentativa).
     expect(h.submit.mock.calls.length).toBe(notices + 1);
     expect(String(h.submit.mock.calls.at(-1)![0].summary)).toContain('pane-claude-2');
+  });
+
+  it('F-1483: A → B → C — B bate o limite sem confirmação e a tarefa reabre em C, que tem folga medida agora, sem pausa', async () => {
+    vi.mocked(pickAvailableForFailover).mockImplementation((_adapterId, excludeId) => ({
+      account: (excludeId === 'claude-b' ? ACCOUNTS['claude-c'] : ACCOUNTS['claude-b']) as never,
+      probe: false,
+    }));
+    worker();
+    registerPaneTaskReroute(handle({
+      reroute: vi.fn(async () => ({ paneId: 'pane-claude-2', adapterId: 'claude', model: 'claude-opus-5-5' })),
+    }));
+    h.dataTaps[0]('session-claude', 'QUOTA');
+    await settle();
+    await settle();
+    expect(events().filter((event) => event.switched).map((event) => event.toAccountId)).toEqual(['claude-b']);
+
+    // O pane novo roda na conta B; o texto do limite chega e a sonda não traz B,
+    // mas traz C medida agora com 30% usados.
+    rendererPane({ paneId: 'pane-claude-2', sessionId: 'session-claude-2', accountId: 'claude-b', missionId: 'mission-1' });
+    const second = handle({
+      paneId: 'pane-claude-2',
+      lineageId: 'pane-claude',
+      reroute: vi.fn(async () => ({ paneId: 'pane-claude-3', adapterId: 'claude' })),
+    });
+    registerPaneTaskReroute(second);
+    h.realQuota = true;
+    h.probeEntry = {
+      id: 'claude:claude-c', adapterId: 'claude', accountId: 'claude-c', label: 'C', installed: true,
+      onCooldown: false, updatedAt: Date.now(),
+      windows: [{ kind: 'hours', label: '5 Horas', usedRatio: 0.3, source: 'provider-api', confidence: 'high' }],
+    };
+    h.dataTaps[0]('session-claude-2', 'LONG');
+    await settle();
+    await settle();
+
+    expect(h.refreshQuota).toHaveBeenCalledTimes(1);
+    expect(second.reroute).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(second.reroute).mock.calls[0]![0].sameAdapter).toMatchObject({ adapterId: 'claude', accountId: 'claude-c' });
+    expect(resolver).not.toHaveBeenCalled();
+    expect(events().filter((event) => event.switched).map((event) => event.toAccountId)).toEqual(['claude-b', 'claude-c']);
+    // Sem a pausa de 15 min no pane de B.
+    expect(events().some((event) => event.paneId === 'pane-claude-2' && event.scheduledRetryAtMs !== undefined)).toBe(false);
   });
 
   it('F-1486: com o prepare da conta irmã pendente, o supervisor já espera (marca antes do heal/prepare)', async () => {

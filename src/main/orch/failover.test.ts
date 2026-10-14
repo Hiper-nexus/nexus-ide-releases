@@ -5,6 +5,7 @@ import type { ProjectExecutionScope } from '../../shared/types';
 import { ACCOUNT_CHANNELS, type Account } from '../../shared/account-types';
 import { testProjectScope } from './__tests__/scope-fixture';
 import {
+  getAccount,
   getActiveAccount,
   pickAvailableForFailover,
 } from '../persistence/account-store';
@@ -14,6 +15,7 @@ const ptyMocks = vi.hoisted(() => ({
   exitTaps: [] as Array<(sessionId: string) => void>,
   agentSessions: new Map<string, unknown>(),
   sessionStates: new Map<string, string>(),
+  shuttingDown: false,
 }));
 
 const toolMocks = vi.hoisted(() => ({
@@ -78,6 +80,8 @@ vi.mock('../pty/pty-manager', () => ({
   getSessionState: vi.fn(
     (sessionId: string) => ptyMocks.sessionStates.get(sessionId) ?? null,
   ),
+  // F-1483: saída de sessão no meio do shutdown do app não apaga a espera persistida.
+  isPtySessionAdmissionSealedForShutdown: vi.fn(() => ptyMocks.shuttingDown),
 }));
 
 // F-995: a troca do ORQUESTRADOR num pane do renderer é do Main. Padrão:
@@ -98,13 +102,37 @@ vi.mock('./failover-orchestrator-respawn', () => ({
 
 // F-1486: o store responde e a missão dos panes de teste não está nele (não é
 // dona do pane) — o caminho de sempre. Sem leitura nenhuma o failover recusa.
-vi.mock('./project-domain-store-registry', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('./project-domain-store-registry')>()),
-  getProjectDomainStores: () => ({
-    missions: { get: () => undefined },
-    handoffs: { submit: () => { throw new Error('handoffs fora do teste'); } },
+// F-1483: os testes da espera podem pôr a missão em `running`, ler os avisos
+// ao Maestro e anunciar escopos no boot (onScope).
+const storeMocks = vi.hoisted(() => ({
+  missionStatus: undefined as string | undefined,
+  submit: vi.fn((_input: Record<string, unknown>): unknown => {
+    throw new Error('handoffs fora do teste');
   }),
+  scopes: [] as unknown[],
+  scopeListeners: new Set<(scope: unknown, suite: unknown) => void>(),
 }));
+vi.mock('./project-domain-store-registry', async (importOriginal) => {
+  const suite = () => ({
+    missions: {
+      get: (id: string) => storeMocks.missionStatus
+        ? { id, status: storeMocks.missionStatus, description: '' }
+        : undefined,
+    },
+    handoffs: { submit: storeMocks.submit },
+  });
+  return {
+    ...(await importOriginal<typeof import('./project-domain-store-registry')>()),
+    getProjectDomainStores: suite,
+    requireProjectDomainStoreRegistry: () => ({
+      onScope: (listener: (scope: unknown, value: unknown) => void) => {
+        storeMocks.scopeListeners.add(listener);
+        for (const scope of storeMocks.scopes) listener(scope, suite());
+        return () => storeMocks.scopeListeners.delete(listener);
+      },
+    }),
+  };
+});
 
 vi.mock('./pane-registry', () => ({
   stripAnsi: (data: string) => data,
@@ -118,6 +146,8 @@ vi.mock('./pane-registry', () => ({
   findPaneBySessionOwnedBy: vi.fn(
     (_owner: WebContents, ref: string) => paneMocks.panes.get(ref) ?? null,
   ),
+  requestPaneClose: vi.fn(async () => true),
+  listPaneSnapshots: vi.fn(() => []),
 }));
 
 const traceMocks = vi.hoisted(() => ({ trace: vi.fn() }));
@@ -194,8 +224,16 @@ import {
   requestSessionRecovery,
   resetInstantAuthDeaths,
   shutdownFailover,
+  TRANSIENT_CONTINUE_PROMPT,
   unregisterFailoverListener,
 } from './failover';
+import { recordPaneSessionData } from './pane-session-output';
+import { initFailoverWaits, listFailoverWaits } from '../persistence/failover-waits';
+import {
+  registerPaneTaskReroute,
+  resetPaneTaskReroutesForTests,
+  type PaneTaskRerouteHandle,
+} from './pane-task-reroute';
 
 type Renderer = WebContents & EventEmitter & { send: ReturnType<typeof vi.fn> };
 
@@ -266,6 +304,10 @@ beforeEach(() => {
   ptyMocks.exitTaps.length = 0;
   ptyMocks.agentSessions.clear();
   ptyMocks.sessionStates.clear();
+  ptyMocks.shuttingDown = false;
+  storeMocks.missionStatus = undefined;
+  storeMocks.submit.mockClear();
+  storeMocks.scopes.length = 0;
   paneMocks.authorities.clear();
   paneMocks.panes.clear();
   paneMocks.runtimeAuthorities.clear();
@@ -562,6 +604,90 @@ describe('account failover authority and lifecycle', () => {
     } finally {
       log.mockRestore();
     }
+  });
+
+  /** F-1483: a sonda não traz a conta do pane, mas traz a irmã medida agora. */
+  async function limitWithFreshSibling(paneNo: number, siblingUsedRatio: number, probe: () => void = () => undefined) {
+    const { detectLimit } = await import('./limit-detector');
+    vi.mocked(detectLimit).mockImplementationOnce((buffer: string) =>
+      buffer.includes('LIMIT') ? sessionLimitHit : null,
+    );
+    const { requireQuotaService } = await import('../quota/quota-service');
+    let probed = false;
+    vi.mocked(requireQuotaService).mockImplementation(() => ({
+      refreshForLimitHit: async () => {
+        probe();
+        probed = true;
+      },
+      lastSnapshot: () => (probed
+        ? {
+            updatedAt: Date.now(),
+            worstUsedRatio: siblingUsedRatio,
+            highUsageCount: 0,
+            unknownCount: 0,
+            entries: [{
+              ...probedEntry(siblingUsedRatio),
+              id: 'claude:account-b', accountId: 'account-b', label: 'Account B', updatedAt: Date.now(),
+            }],
+          }
+        : undefined),
+    }) as unknown as ReturnType<typeof requireQuotaService>);
+    const scope = testProjectScope();
+    const owner = renderer(paneNo);
+    renderers.push(owner);
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerFailoverListener(owner);
+    addPane({ owner, paneId: `pane-${paneNo}`, sessionId: `session-${paneNo}`, missionId: `mission-${paneNo}`, scope });
+    ptyMocks.sessionStates.set(`session-${paneNo}`, 'idle');
+    ptyMocks.dataTaps[0](`session-${paneNo}`, 'LIMIT');
+    await settleFailover();
+    return owner;
+  }
+
+  it('F-1483: sonda sem resposta + irmã com folga medida e fresca + turno encerrado → troca já para a irmã; A só 15 min', async () => {
+    const owner = await limitWithFreshSibling(722, 0.3);
+    expect(accountMocks.setCooldown).toHaveBeenCalledWith(
+      'account-a',
+      100_000 + 15 * 60 * 1000,
+      "You've hit your session limit (limite não confirmado pela API do provider)",
+      undefined,
+    );
+    expect(accountMocks.setCooldown).not.toHaveBeenCalledWith('account-a', 100_000 + 77 * 60 * 1000, expect.anything(), undefined);
+    expect(owner.send).toHaveBeenCalledWith(
+      ACCOUNT_CHANNELS.failover,
+      expect.objectContaining({ paneId: 'pane-722', switched: true, toAccountId: 'account-b' }),
+    );
+    expect(owner.send).not.toHaveBeenCalledWith(
+      ACCOUNT_CHANNELS.failover,
+      expect.objectContaining({ paneId: 'pane-722', scheduledRetryAtMs: expect.any(Number) }),
+    );
+  });
+
+  it('F-1483: irmã medida acima de 80% não encadeia — pausa curta de sempre', async () => {
+    const owner = await limitWithFreshSibling(724, 0.85);
+    expect(owner.send).not.toHaveBeenCalledWith(
+      ACCOUNT_CHANNELS.failover,
+      expect.objectContaining({ paneId: 'pane-724', switched: true }),
+    );
+    expect(owner.send).toHaveBeenCalledWith(
+      ACCOUNT_CHANNELS.failover,
+      expect.objectContaining({ paneId: 'pane-724', switched: false, scheduledRetryAtMs: expect.any(Number) }),
+    );
+  });
+
+  it('F-1483: saída nova depois do limite (turno ainda andando) não troca — F-249 preservado', async () => {
+    const owner = await limitWithFreshSibling(723, 0.3, () => {
+      vi.setSystemTime(Date.now() + 11_000);
+      recordPaneSessionData('session-723', 'a CLI seguiu respondendo depois da frase citada');
+    });
+    expect(owner.send).not.toHaveBeenCalledWith(
+      ACCOUNT_CHANNELS.failover,
+      expect.objectContaining({ paneId: 'pane-723', switched: true }),
+    );
+    expect(owner.send).toHaveBeenCalledWith(
+      ACCOUNT_CHANNELS.failover,
+      expect.objectContaining({ paneId: 'pane-723', switched: false, scheduledRetryAtMs: expect.any(Number) }),
+    );
   });
 
   // Incidente agy (2026-10-13): "401 authentication_error" lido no PTY virou
@@ -1173,7 +1299,7 @@ describe('espera-pela-irmã + cooldown escopado (C1, derivado do oh-my-pi)', () 
     );
   });
 
-  it('reports the real rescheduled time and clears the promise when retries are exhausted', async () => {
+  it('F-1483: a espera não morre em ~4 min — backoff até 15 min e só desiste depois de 24 h, avisando o Maestro', async () => {
     const { pickAvailableForFailover } = await import('../persistence/account-store');
     const owner = armPane(819);
     vi.mocked(pickAvailableForFailover).mockReturnValue({ account: null, probe: false, nextUnblockAtMs: 101_000 });
@@ -1185,10 +1311,138 @@ describe('espera-pela-irmã + cooldown escopado (C1, derivado do oh-my-pi)', () 
     await settleFailover();
     expect(events()).toHaveLength(2);
     expect(events().at(-1)?.scheduledRetryAtMs).toBe(132_000);
-    await vi.advanceTimersByTimeAsync(7 * 30_000);
+    // O teto antigo (8 tentativas a cada 30 s) parava aqui; a espera segue.
+    await vi.advanceTimersByTimeAsync(8 * 30_000);
+    await settleFailover();
+    expect(events().at(-1)?.scheduledRetryAtMs).toBeGreaterThan(Date.now());
+    await vi.advanceTimersByTimeAsync(2 * 60 * 60_000);
+    await settleFailover();
+    const next = events().at(-1)!.scheduledRetryAtMs!;
+    expect(next).toBeGreaterThan(Date.now());
+    expect(next - Date.now()).toBeLessThanOrEqual(15 * 60_000);
+    expect(storeMocks.submit).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(24 * 60 * 60_000);
     await settleFailover();
     expect(events().at(-1)?.switched).toBe(false);
     expect(events().at(-1)?.scheduledRetryAtMs).toBeUndefined();
+    expect(storeMocks.submit).toHaveBeenCalledTimes(1);
+    expect(String(storeMocks.submit.mock.calls[0]![0].summary)).toContain('24 h');
+  });
+
+  it('F-1483: retry volta à própria conta com a sessão viva — "continue" na mesma sessão, nenhum switched:true', async () => {
+    const { pickAvailableForFailover } = await import('../persistence/account-store');
+    const owner = armPane(830);
+    ptyMocks.sessionStates.set('sess-830', 'idle');
+    vi.mocked(pickAvailableForFailover)
+      .mockImplementationOnce(() => ({ account: null, probe: false, nextUnblockAtMs: 500_000 }))
+      .mockImplementationOnce(() => ({ account: accountMocks.current as Account, probe: false }));
+    ptyMocks.dataTaps[0]!('sess-830', 'LIMIT');
+    await settleFailover();
+    await vi.advanceTimersByTimeAsync(61_000);
+    await settleFailover();
+    expect(toolMocks.injectPrompt).toHaveBeenCalledWith('sess-830', TRANSIENT_CONTINUE_PROMPT, undefined, 'failover');
+    const sends = owner.send.mock.calls
+      .filter(([channel]) => channel === ACCOUNT_CHANNELS.failover)
+      .map(([, event]) => event as { switched: boolean; transientPhase?: string });
+    expect(sends.some((event) => event.switched)).toBe(false);
+    expect(sends.at(-1)).toMatchObject({ switched: false, transientPhase: 'nudged' });
+  });
+
+  function taskHandle(paneId: string, reroute: PaneTaskRerouteHandle['reroute']): PaneTaskRerouteHandle {
+    return {
+      paneId, adapterId: 'claude', missionId: `m-${paneId}`, role: 'worker', callerSessionId: 'session-maestro',
+      routeTask: 'implementar o login', lineageId: paneId, operatorOpened: false, pinnedRuntime: false,
+      generation: 0, reroute, hasAlternative: () => true,
+    };
+  }
+
+  it('F-1483: a espera sobrevive ao reinício e religa a missão viva na hora calculada pelos cooldowns persistidos', async () => {
+    const Database = (await import('better-sqlite3')).default;
+    const db = new Database(':memory:');
+    initFailoverWaits(db as never);
+    try {
+      storeMocks.missionStatus = 'running';
+      vi.mocked(getAccount).mockImplementation((id: string) =>
+        id === 'account-a' ? { ...accountMocks.current, cooldownUntil: 160_000 } as Account
+          : id === 'account-b' ? accountMocks.next : null);
+      const owner = armPane(840);
+      const reroute = vi.fn<PaneTaskRerouteHandle['reroute']>(async () => ({ paneId: 'pane-840-b', adapterId: 'claude' }));
+      registerPaneTaskReroute(taskHandle('pane-840', reroute));
+      vi.mocked(pickAvailableForFailover).mockImplementationOnce(() => ({
+        account: null, probe: false, nextUnblockAtMs: 130_000,
+      }));
+      ptyMocks.dataTaps[0]!('sess-840', 'LIMIT');
+      await settleFailover();
+      expect(listFailoverWaits()).toEqual([
+        expect.objectContaining({ paneId: 'pane-840', missionId: 'm-840', retryAt: 131_000, waitKind: 'account' }),
+      ]);
+
+      // Reinício: o app fecha no meio da espera (a saída de sessão é do shutdown).
+      ptyMocks.shuttingDown = true;
+      ptyMocks.exitTaps.forEach((tap) => tap('sess-840'));
+      shutdownFailover();
+      ptyMocks.shuttingDown = false;
+      expect(listFailoverWaits()).toHaveLength(1);
+      expect(reroute).not.toHaveBeenCalled();
+
+      storeMocks.scopes.push(testProjectScope());
+      initFailover();
+      registerFailoverListener(owner);
+      await vi.advanceTimersByTimeAsync(130_999 - Date.now());
+      await settleFailover();
+      expect(reroute).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      await settleFailover();
+      await settleFailover();
+      expect(reroute).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(reroute).mock.calls[0]![0]).toMatchObject({
+        sameAdapter: { adapterId: 'claude', accountId: 'account-b' },
+      });
+      expect(owner.send).toHaveBeenCalledWith(
+        ACCOUNT_CHANNELS.failover,
+        expect.objectContaining({ paneId: 'pane-840', switched: true, toPaneId: 'pane-840-b' }),
+      );
+      expect(listFailoverWaits()).toEqual([]);
+    } finally {
+      vi.mocked(getAccount).mockImplementation((id: string) => {
+        if (id === accountMocks.current.id) return accountMocks.current as Account;
+        if (accountMocks.next && id === accountMocks.next.id) return accountMocks.next;
+        return null;
+      });
+      resetPaneTaskReroutesForTests();
+      initFailoverWaits(null);
+      db.close();
+    }
+  });
+
+  it('F-1483: depois do reinício, missão que não está mais rodando não remonta sozinha — o fato vai ao Maestro', async () => {
+    const Database = (await import('better-sqlite3')).default;
+    const db = new Database(':memory:');
+    initFailoverWaits(db as never);
+    try {
+      armPane(841);
+      vi.mocked(pickAvailableForFailover).mockImplementationOnce(() => ({
+        account: null, probe: false, nextUnblockAtMs: 130_000,
+      }));
+      ptyMocks.dataTaps[0]!('sess-841', 'LIMIT');
+      await settleFailover();
+      expect(listFailoverWaits()).toHaveLength(1);
+      shutdownFailover();
+      storeMocks.missionStatus = 'blocked';
+      storeMocks.scopes.push(testProjectScope());
+      initFailover();
+      await vi.advanceTimersByTimeAsync(60_000);
+      await settleFailover();
+      expect(listFailoverWaits()).toEqual([]);
+      expect(storeMocks.submit).toHaveBeenCalledTimes(1);
+      const summary = String(storeMocks.submit.mock.calls[0]![0].summary);
+      expect(summary).toContain('pane-841');
+      expect(summary).toContain('reinício');
+      expect(vi.mocked(pickAvailableForFailover).mock.calls).toHaveLength(1);
+    } finally {
+      initFailoverWaits(null);
+      db.close();
+    }
   });
 
   it('sondagem last-resort: evento marca probe e não grava coalesce', async () => {

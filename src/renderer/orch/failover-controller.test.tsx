@@ -301,6 +301,28 @@ describe('failover notifications', () => {
     }
   });
 
+  it('F-1483: a conta liberou e a missão seguiu na mesma conversa — aviso, não erro de limite', async () => {
+    let notify!: (event: FailoverEvent) => void;
+    Object.defineProperty(window, 'nexus', { configurable: true, value: { accounts: {
+      onFailover: (callback: typeof notify) => { notify = callback; return () => {}; },
+    } } });
+    const container = document.createElement('div'); document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(<Harness />));
+      notify({
+        paneId: 'pane-l', kind: 'rate-limit', reason: 'rate limit — a conta liberou', fromAccountLabel: 'conta adm',
+        toAccountLabel: '', switched: false, missionId: 'mission-1', transientPhase: 'nudged',
+      });
+      const toasts = useToastStore.getState().toasts.filter((toast) => toast.dedupeKey === 'failover:pane-l');
+      expect(toasts).toHaveLength(1);
+      expect(toasts[0]).toMatchObject({ kind: 'info', title: 'Missão continuou na mesma conta' });
+    } finally {
+      await act(async () => root.unmount()); container.remove();
+      for (const toast of useToastStore.getState().toasts) useToastStore.getState().dismiss(toast.id);
+    }
+  });
+
   it('F-1471: a conta de pane de missão viva é do Main — o renderer não a muda; pane do operador e pane de missão encerrada seguem mudando', async () => {
     let notify!: (event: FailoverEvent) => void;
     Object.defineProperty(window, 'nexus', { configurable: true, value: { accounts: {

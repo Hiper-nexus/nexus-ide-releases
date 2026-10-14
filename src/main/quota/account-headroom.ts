@@ -44,6 +44,8 @@ export interface HeadroomInput {
     }
   >;
   readonly onCooldown?: boolean;
+  /** F-1483: instante da leitura (a folga de uma irmã só conta fresca). */
+  readonly updatedAt?: number;
 }
 
 export interface HeadroomReading {
@@ -114,6 +116,28 @@ export function isHeadroomExhausted(input: HeadroomInput | undefined): boolean {
     if (reading.available <= EPSILON) return true;
   }
   return false;
+}
+
+/**
+ * F-1483: até quando a conta segue sem folga MEDIDA — a janela cheia que
+ * reabre por último. Janela cheia sem reset conhecido conta `unknownResetMs`
+ * a partir de agora (a próxima tentativa relê a cota); a que já reabriu não
+ * conta. `undefined` = nenhuma janela medida cheia. Cooldown não entra: o
+ * store é a autoridade dele.
+ */
+export function fullWindowsReopenAt(
+  input: HeadroomInput | undefined,
+  now: number,
+  unknownResetMs: number,
+): number | undefined {
+  let reopenAt: number | undefined;
+  for (const reading of headroomReadings(input).values()) {
+    if (reading.available > EPSILON) continue;
+    if (reading.resetsAt !== null && reading.resetsAt <= now) continue;
+    const at = reading.resetsAt ?? now + unknownResetMs;
+    reopenAt = reopenAt === undefined ? at : Math.max(reopenAt, at);
+  }
+  return reopenAt;
 }
 
 /**
@@ -199,7 +223,11 @@ export function headroomInputsByAccount(
     if (entry.adapterId !== adapterId || !entry.accountId) continue;
     // Mesmo critério do escore antigo (quotaAvailabilityScore): conta em
     // cooldown não tem folga, seja qual for o motivo.
-    out.set(entry.accountId, { windows: entry.windows, onCooldown: entry.onCooldown });
+    out.set(entry.accountId, {
+      windows: entry.windows,
+      onCooldown: entry.onCooldown,
+      ...(Number.isFinite(entry.updatedAt) ? { updatedAt: entry.updatedAt } : {}),
+    });
   }
   return out.size > 0 ? out : undefined;
 }

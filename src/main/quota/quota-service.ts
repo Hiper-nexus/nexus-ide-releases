@@ -48,6 +48,7 @@ import {
   type LiveUsageAuthResolvers,
   type LiveProviderProbe,
 } from './provider-live-usage';
+import { stopMissionQuotaPoll } from './mission-quota-poll';
 
 /** Cache live API windows briefly — avoid hammering providers on every paint. */
 const PROVIDER_API_TTL_MS = 60_000;
@@ -973,6 +974,8 @@ export function noteQuotaLimitHit(
 }
 
 export function shutdownQuotaService(): void {
+  // F-1483: o poll das contas na missão para junto com o serviço.
+  stopMissionQuotaPoll();
   ipcMain.removeHandler(QUOTA_CHANNELS.connectMimo);
   closeMimoQuotaConnections();
   ipcMain.removeHandler(QUOTA_CHANNELS.snapshot);

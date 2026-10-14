@@ -413,3 +413,69 @@ describe('hasAvailableAccount (gate de spawn quota-aware)', () => {
     expect(hasAvailableAccount('claude', NOW)).toBe(true);
   });
 });
+
+describe('F-1483: conta medida em 100% não é escolhida no failover', () => {
+  const full = (resetsAt?: number) => ({
+    windows: [
+      { kind: 'hours' as const, label: '5 Horas', usedRatio: 1, ...(resetsAt !== undefined ? { resetsAt } : {}) },
+    ],
+  });
+
+  it('irmã com a janela cheia (sem cooldown) não é escolhida e a espera vai até o reset dela', () => {
+    const a = addAcct('a');
+    const b = addAcct('b');
+    const pick = pickAvailableForFailover('claude', a.id, NOW, undefined, {
+      rejectExhausted: true,
+      quotaByAccountId: new Map([[b.id, full(NOW + 2 * HOUR)]]),
+    });
+    expect(pick.account).toBeNull();
+    expect(pick.nextUnblockAtMs).toBe(NOW + 2 * HOUR);
+  });
+
+  it('janela cheia sem reset conhecido: fora por 15 min (a próxima tentativa relê a cota)', () => {
+    const a = addAcct('a');
+    const b = addAcct('b');
+    const pick = pickAvailableForFailover('claude', a.id, NOW, undefined, {
+      rejectExhausted: true,
+      quotaByAccountId: new Map([[b.id, full()]]),
+    });
+    expect(pick.account).toBeNull();
+    expect(pick.nextUnblockAtMs).toBe(NOW + 15 * MINUTE);
+  });
+
+  it('janela cheia com o reset já vencido volta a valer', () => {
+    const a = addAcct('a');
+    const b = addAcct('b');
+    const pick = pickAvailableForFailover('claude', a.id, NOW, undefined, {
+      rejectExhausted: true,
+      quotaByAccountId: new Map([[b.id, full(NOW - 1)]]),
+    });
+    expect(pick.account?.id).toBe(b.id);
+  });
+
+  it('a cheia sai e a irmã livre ganha; a espera vale a mais cedo entre cooldown e reset', () => {
+    const a = addAcct('a');
+    const b = addAcct('b');
+    const c = addAcct('c');
+    setCooldown(c.id, NOW + 30 * MINUTE, 'quota');
+    const quota = new Map([[b.id, full(NOW + 2 * HOUR)]]);
+    expect(
+      pickAvailableForFailover('claude', a.id, NOW, undefined, { rejectExhausted: true, quotaByAccountId: quota })
+        .nextUnblockAtMs,
+    ).toBe(NOW + 30 * MINUTE);
+    const d = addAcct('d');
+    expect(
+      pickAvailableForFailover('claude', a.id, NOW, undefined, { rejectExhausted: true, quotaByAccountId: quota })
+        .account?.id,
+    ).toBe(d.id);
+  });
+
+  it('sem a opção (spawn comum), a conta cheia continua elegível — abre e avisa', () => {
+    const a = addAcct('a');
+    const b = addAcct('b');
+    const pick = pickAvailableForFailover('claude', a.id, NOW, undefined, {
+      quotaByAccountId: new Map([[b.id, full(NOW + 2 * HOUR)]]),
+    });
+    expect(pick.account?.id).toBe(b.id);
+  });
+});

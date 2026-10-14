@@ -21,6 +21,11 @@ export function blockedFailoverToastCopy(
       ).toLocaleTimeString()}.`
     : '';
 
+  // F-1483: retry de limite que voltou à própria conta e pediu "continue".
+  if (event.transientPhase === 'nudged' && effectiveKind(event) !== 'transient') {
+    return { title: 'Missão continuou na mesma conta', detail: `${event.reason}.` };
+  }
+
   switch (effectiveKind(event)) {
     case 'auth':
       return {

@@ -42,7 +42,8 @@ import {
   type FileAuthAdapterId,
 } from '../adapters/managed-credentials';
 import { chooseAccount } from './account-select';
-import type { HeadroomInput } from '../quota/account-headroom';
+import { fullWindowsReopenAt, type HeadroomInput } from '../quota/account-headroom';
+import { initFailoverWaits } from './failover-waits';
 import {
   deleteAgyWindowsKeyringBlob,
   invalidateAgyWindowsKeyringCache,
@@ -204,6 +205,8 @@ function persistFresherManagedAuth(
 export function initAccountStore(database: Db | null): void {
   db = database;
   readOnly = true;
+  // F-1483: as esperas do failover moram no mesmo DB dos blocos de cooldown.
+  initFailoverWaits(database);
   // Registra o read-back de tokens renovados para o scrub de sessão gerenciada
   // (M1): antes de apagar o auth.json no exit, o vault recebe o token fresco.
   setManagedAuthPersister(persistFresherManagedAuth);
@@ -1246,7 +1249,18 @@ export interface FailoverPickOptions {
    * janelas comparáveis (`compareAccountHeadroom`), nunca pelo escore escalar.
    */
   quotaByAccountId?: ReadonlyMap<string, HeadroomInput>;
+  /**
+   * F-1483: troca por limite — conta com alguma janela MEDIDA em 100% que
+   * ainda não reabriu não é destino (respawnar nela só bate de novo). Ela
+   * entra na espera (`nextUnblockAtMs`) pelo reset da janela, ou por
+   * EXHAUSTED_UNKNOWN_RESET_MS quando o reset é desconhecido. O spawn comum
+   * não liga: abre na ativa e avisa.
+   */
+  rejectExhausted?: boolean;
 }
+
+/** F-1483: janela cheia sem reset conhecido — fora até a próxima releitura. */
+const EXHAUSTED_UNKNOWN_RESET_MS = 15 * 60_000;
 
 export interface FailoverPick {
   account: Account | null;
@@ -1272,9 +1286,23 @@ export function pickAvailableForFailover(
   const siblings = listAccounts(adapterId).filter(
     (a) => a.id !== excludeId && !options?.excludeIds?.has(a.id),
   );
+  // F-1483: conta medida cheia sai da escolha e conta na espera pelo reset.
+  const measuredFullUntil = new Map<string, number>();
+  if (options?.rejectExhausted) {
+    for (const sibling of siblings) {
+      const until = fullWindowsReopenAt(
+        options.quotaByAccountId?.get(sibling.id),
+        now,
+        EXHAUSTED_UNKNOWN_RESET_MS,
+      );
+      if (until !== undefined) measuredFullUntil.set(sibling.id, until);
+    }
+  }
   const free = siblings.filter(
     (a) =>
-      !effectiveBlock(a, now, options?.scope) && accountHasFailoverCredential(a),
+      !effectiveBlock(a, now, options?.scope) &&
+      accountHasFailoverCredential(a) &&
+      !measuredFullUntil.has(a.id),
   );
   const chosen = chooseAccount(
     free,
@@ -1287,17 +1315,20 @@ export function pickAvailableForFailover(
   if (chosen) return { account: chosen, probe: false };
 
   let nextUnblockAtMs: number | undefined;
+  const noteUnblock = (at: number): void => {
+    if (nextUnblockAtMs === undefined || at < nextUnblockAtMs) nextUnblockAtMs = at;
+  };
   const blocked: Array<{ account: Account; entry: EffectiveBlock }> = [];
   for (const sibling of siblings) {
     const entry = effectiveBlock(sibling, now, options?.scope);
-    if (!entry) continue;
-    blocked.push({ account: sibling, entry });
-    if (
-      nextUnblockAtMs === undefined ||
-      entry.block.blockedUntil < nextUnblockAtMs
-    ) {
-      nextUnblockAtMs = entry.block.blockedUntil;
+    // F-1483: medida cheia libera no reset da janela (no mais tarde, se também em cooldown).
+    const fullUntil = measuredFullUntil.get(sibling.id);
+    if (!entry) {
+      if (fullUntil !== undefined && accountHasFailoverCredential(sibling)) noteUnblock(fullUntil);
+      continue;
     }
+    blocked.push({ account: sibling, entry });
+    noteUnblock(Math.max(entry.block.blockedUntil, fullUntil ?? 0));
   }
 
   if (options?.allowProbe) {
@@ -1305,6 +1336,7 @@ export function pickAvailableForFailover(
       .filter(
         ({ account, entry }) =>
           accountHasFailoverCredential(account) &&
+          !measuredFullUntil.has(account.id) &&
           entry.block.probeAfter <= now &&
           entry.block.probedAt === undefined,
       )

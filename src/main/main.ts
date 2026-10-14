@@ -342,6 +342,7 @@ import {
   requireQuotaService,
   shutdownQuotaService,
 } from "./quota/quota-service";
+import { startMissionQuotaPoll } from "./quota/mission-quota-poll";
 import { probeClaudeCliUsage } from "./quota/claude-oauth-usage";
 import { fetchClaudeAccountUsageWindows } from "./quota/claude-account-usage";
 import { detectProviderPlan } from "./quota/account-plan";
@@ -961,6 +962,13 @@ async function bootstrap(): Promise<void> {
         resolveGeminiOauthCreds,
         resolveGeminiToken: resolveGeminiAccessToken,
       }),
+  }));
+  // F-1483: com missão viva o Main relê a cota da frota a cada 5 min — a troca
+  // de conta decide por folga medida e fresca, mesmo com a janela fechada.
+  bootStep('startMissionQuotaPoll', () => startMissionQuotaPoll({
+    hasLiveMission: () =>
+      listPaneSnapshots().some((pane) => Boolean(pane.missionId) && pane.state !== 'exited'),
+    refresh: () => requireQuotaService().snapshot(Date.now()),
   }));
   traceBootstrap('after quota service');
   bootStep('registerBillingIpc', () => registerBillingIpc());

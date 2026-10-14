@@ -115,7 +115,9 @@ export function useFailoverController(): void {
         // na conta. 'detected' não vira toast: a CLI quase sempre se cura
         // sozinha em segundos e alarmar era ruído (F-222). Toast só nos
         // desfechos — parou, foi empurrada ou segue quebrada.
-        if (event.kind === 'transient') {
+        // F-1483: a conta liberou e a missão seguiu na MESMA conversa
+        // ("continue") — aviso, não erro de limite, seja qual for o tipo.
+        if (event.kind === 'transient' || event.transientPhase === 'nudged') {
           if (event.transientPhase === 'detected') return;
           push(event.transientPhase === 'nudged' ? 'info' : 'warn', copy.title, {
             detail: copy.detail, dedupeKey: `failover:${event.paneId}`,
