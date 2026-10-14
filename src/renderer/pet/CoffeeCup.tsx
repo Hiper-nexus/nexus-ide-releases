@@ -6,55 +6,113 @@
  * Em prefers-reduced-motion a lata fica estática.
  */
 
-import { useId } from 'react';
+import { useId, type CSSProperties } from 'react';
 
 const CAN_VB_W = 28;
 const CAN_VB_H = 52;
 const CAN_BODY =
   'M 7.2 11.4 L 5.2 13.8 L 5.2 45.6 L 7.2 48.1 L 20.8 48.1 L 22.8 45.6 L 22.8 13.8 L 20.8 11.4 Z';
 
+/** Faíscas do estalo: para onde cada uma voa a partir da boca da lata. */
+const POP_SPARKS: ReadonlyArray<{ x: number; y: number; r: number; dx: number; dy: number }> = [
+  { x: 47.6, y: 8.6, r: 0.9, dx: -7, dy: -6 },
+  { x: 49.8, y: 7.8, r: 0.75, dx: 1, dy: -10 },
+  { x: 51.6, y: 8.6, r: 0.85, dx: 7, dy: -5 },
+];
+
+export type SpillCornerPhase = 'open' | 'sip';
+
+interface CoffeeSpillCornerProps {
+  className?: string;
+  /**
+   * open = a lata abre com estalo (foco): lacre estala, anel de pressão,
+   * espuma sobe e escorre, bolhas. sip = gole quando o XP entra.
+   */
+  phase?: SpillCornerPhase;
+  /** Texto do gole ("+3K XP"); só no sip. */
+  xpLabel?: string | null;
+  /** Fim da cena (a lata saiu de vez) — o contêiner desmonta. */
+  onDone?: () => void;
+}
+
 /**
- * Derrame de energético no canto do pane focado.
- * Lata no canto + filete curto + poça. Nunca uma barra do teto ao chão:
- * o viewBox cabe num canto (~76px). SVG puro, pointer-events none.
- * Anima só opacity e transform (compositor).
- * Em prefers-reduced-motion: poça estática curta.
+ * Lata de energético no canto do pane focado. Cabe no canto (~76px), SVG puro,
+ * pointer-events none. Motion em coffee-cup.css: só transform/opacity, tudo
+ * finito — parada, a lata não custa frame nenhum. Em prefers-reduced-motion:
+ * lata aberta estática e saída só por opacidade.
  */
-export function CoffeeSpillCorner({ className }: { className?: string } = {}) {
+export function CoffeeSpillCorner({
+  className,
+  phase = 'open',
+  xpLabel = null,
+  onDone,
+}: CoffeeSpillCornerProps = {}) {
   return (
     <svg
-      className={`spill-corner${className ? ` ${className}` : ''}`}
+      className={`spill-corner spill-corner--${phase}${className ? ` ${className}` : ''}`}
       viewBox="0 0 64 76"
       width="64"
       height="76"
       fill="none"
       aria-hidden="true"
+      onAnimationEnd={
+        onDone
+          ? (event) => {
+              if (
+                event.target === event.currentTarget &&
+                event.animationName === 'spill-corner-out'
+              ) {
+                onDone();
+              }
+            }
+          : undefined
+      }
     >
-      <g className="spill__can">
-        <rect className="spill__can-body" x="43" y="3.2" width="13" height="27.2" rx="1.6" />
-        <rect className="spill__can-shade" x="51.6" y="4.8" width="3" height="23.6" rx="1" />
-        <rect className="spill__can-sheen" x="44.2" y="5.2" width="1.5" height="21" rx="0.6" />
-        <path className="spill__can-band" d="M 41.6 9.2 L 57.4 18.4 L 57.4 22.2 L 41.6 13 Z" />
-        <ellipse className="spill__can-lid" cx="49.5" cy="3.4" rx="6.8" ry="2.15" />
-        <ellipse className="spill__can-mouth" cx="49.5" cy="3.55" rx="4.2" ry="1.05" />
-      </g>
-      {/* Um arco da boca à poça — pour curto, não onda vertical. */}
+      {/* Espuma que transbordou: escorre pela lateral e empoça na base. */}
       <path
         className="spill__stream spill__stream--body"
-        d="M 43 14 C 34 24 30 40 26 58"
-        strokeWidth="5"
+        d="M 44.4 11.2 C 43.2 15 43.6 22 43.1 33"
+        strokeWidth="2.2"
         strokeLinecap="round"
       />
-      <path
-        className="spill__stream spill__stream--sheen"
-        d="M 44.5 14 C 35.5 24 31.5 40 27.5 58"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      />
-      <circle className="spill__drop spill__drop--1" cx="36" cy="26" r="2.4" />
-      <circle className="spill__drop spill__drop--2" cx="30" cy="40" r="1.8" />
-      <circle className="spill__drop spill__drop--3" cx="28" cy="50" r="2.1" />
-      <ellipse className="spill__pool" cx="26" cy="70" rx="16" ry="4" />
+      <ellipse className="spill__pool" cx="47" cy="37.6" rx="8" ry="1.7" />
+      <g className="spill__can">
+        <rect className="spill__can-body" x="43" y="10" width="13" height="26.4" rx="1.6" />
+        <rect className="spill__can-shade" x="51.6" y="11.6" width="3" height="23.2" rx="1" />
+        <rect className="spill__can-sheen" x="44.2" y="12" width="1.5" height="20.6" rx="0.6" />
+        <path className="spill__can-band" d="M 43 17 L 56 24.6 L 56 28.4 L 43 20.8 Z" />
+        <ellipse className="spill__can-lid" cx="49.5" cy="10" rx="6.8" ry="2.15" />
+        <ellipse className="spill__can-mouth" cx="48.6" cy="10.1" rx="2.6" ry="0.95" />
+        <g className="spill__foam">
+          <circle cx="46.9" cy="8.9" r="1.9" />
+          <circle cx="49.4" cy="7.7" r="2.5" />
+          <circle cx="52" cy="8.8" r="1.8" />
+          <circle cx="50.9" cy="6.5" r="1.1" />
+        </g>
+        <g className="spill__tab">
+          <ellipse className="spill__tab-ring" cx="52.4" cy="9.5" rx="1.7" ry="0.8" strokeWidth="0.7" />
+          <rect className="spill__tab-stem" x="50.2" y="9.2" width="1.4" height="0.6" rx="0.25" />
+        </g>
+      </g>
+      <circle className="spill__pop" cx="49.5" cy="8.6" r="4.2" strokeWidth="0.9" />
+      {POP_SPARKS.map((spark) => (
+        <circle
+          key={`${spark.dx}:${spark.dy}`}
+          className="spill__spark"
+          cx={spark.x}
+          cy={spark.y}
+          r={spark.r}
+          style={{ '--dx': `${spark.dx}px`, '--dy': `${spark.dy}px` } as CSSProperties}
+        />
+      ))}
+      <circle className="spill__drop spill__drop--1" cx="47.6" cy="6.2" r="1.15" />
+      <circle className="spill__drop spill__drop--2" cx="50.4" cy="5" r="0.85" />
+      <circle className="spill__drop spill__drop--3" cx="52.4" cy="6.6" r="1" />
+      {phase === 'sip' && xpLabel ? (
+        <text className="spill__xp" x="40.5" y="4.5" textAnchor="end">
+          {xpLabel}
+        </text>
+      ) : null}
     </svg>
   );
 }

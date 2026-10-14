@@ -3,9 +3,11 @@
  * A lata tem que ler como energético (cilindro, tampa, slash, NEXUS) — não caneca.
  * O derrame é pour curto no canto, nunca uma onda do teto ao chão.
  */
+import fs from 'node:fs';
+import path from 'node:path';
 import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CoffeeCup, CoffeeSpillCorner } from './CoffeeCup';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
@@ -133,5 +135,69 @@ describe('CoffeeSpillCorner — pour curto', () => {
     const drop = Math.max(...ys) - Math.min(...ys);
     expect(drop, 'filete longo demais para um pour de canto').toBeLessThanOrEqual(50);
     expect(Math.max(...ys), 'filete sai do viewBox compacto').toBeLessThanOrEqual(76);
+  });
+});
+
+/** jsdom não tem AnimationEvent: o React escuta a variante webkit ali. */
+function animationEnd(target: Element, animationName: string): void {
+  for (const type of ['animationend', 'webkitAnimationEnd']) {
+    const event = new Event(type, { bubbles: true });
+    Object.defineProperty(event, 'animationName', { value: animationName });
+    act(() => {
+      target.dispatchEvent(event);
+    });
+  }
+}
+
+describe('CoffeeSpillCorner — lata viva', () => {
+  it('abre com estalo: lacre, anel de pressão, faíscas e espuma', () => {
+    const host = render(<CoffeeSpillCorner />);
+    const svg = host.querySelector('svg.spill-corner');
+    expect(svg?.classList.contains('spill-corner--open')).toBe(true);
+    expect(svg?.querySelector('.spill__tab'), 'lacre que estala ausente').not.toBeNull();
+    expect(svg?.querySelector('.spill__pop'), 'anel de pressão ausente').not.toBeNull();
+    expect(svg?.querySelectorAll('.spill__spark').length).toBeGreaterThanOrEqual(3);
+    expect(svg?.querySelector('.spill__foam'), 'espuma ausente').not.toBeNull();
+    expect(svg?.querySelectorAll('.spill__drop').length).toBeGreaterThanOrEqual(3);
+    expect(svg?.querySelector('.spill__xp')).toBeNull();
+  });
+
+  it('gole mostra o XP que entrou', () => {
+    const host = render(<CoffeeSpillCorner phase="sip" xpLabel="+3K XP" />);
+    const svg = host.querySelector('svg.spill-corner');
+    expect(svg?.classList.contains('spill-corner--sip')).toBe(true);
+    expect(svg?.querySelector('.spill__xp')?.textContent).toBe('+3K XP');
+  });
+
+  it('avisa o fim só pela saída da própria lata, não pela animação de um filho', () => {
+    const onDone = vi.fn();
+    const host = render(<CoffeeSpillCorner className="spill-corner--live" onDone={onDone} />);
+    const svg = host.querySelector('svg.spill-corner')!;
+    animationEnd(svg.querySelector('.spill__foam')!, 'spill-corner-out');
+    animationEnd(svg, 'spill-foam-rise');
+    expect(onDone).not.toHaveBeenCalled();
+    animationEnd(svg, 'spill-corner-out');
+    expect(onDone).toHaveBeenCalledTimes(1);
+  });
+
+  it('CSS da lata do pane: só compositor, nada infinito, reduced-motion presente', () => {
+    const css = fs.readFileSync(
+      path.resolve(__dirname, '../styles/coffee-cup.css'),
+      'utf8',
+    );
+    const start = css.indexOf('Lata viva no pane');
+    expect(start, 'seção da lata viva ausente').toBeGreaterThan(-1);
+    const section = css.slice(start);
+    expect(section).not.toMatch(/infinite/);
+    const keyframes = [...section.matchAll(/@keyframes[^{]+\{([\s\S]*?)\n\}/g)]
+      .map((match) => match[1]);
+    expect(keyframes.length).toBeGreaterThan(4);
+    for (const body of keyframes) {
+      const props = [...body.matchAll(/([a-z-]+)\s*:/g)].map((match) => match[1]);
+      for (const prop of props) {
+        expect(['opacity', 'transform']).toContain(prop);
+      }
+    }
+    expect(section).toMatch(/prefers-reduced-motion: reduce/);
   });
 });

@@ -286,10 +286,13 @@
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   Derrame no pane — a lata entorna de verdade
-   Irmão da PaneToolbar, absoluto em .pane. pointer-events: none.
-   Física: tomba → filete cai (scaleY) → gotas → poça espalha → some.
-   Só opacity + transform. ~3.8 s no live.
+   Lata viva no pane — abre com estalo, espuma, gole quando o XP entra
+   Irmã da PaneToolbar, absoluta em .pane, pointer-events: none.
+   open (foco): chega → estala (lacre vira, anel de pressão, faíscas, a lata
+   trepida) → espuma sobe e escorre → bolhas e um balanço curto → sai.
+   sip (XP subiu): reaparece aberta, inclina e bebe, a espuma afunda, "+N XP"
+   sobe, fizz → sai. Só transform/opacity; TUDO finito — quando a cena acaba
+   o contêiner desmonta o SVG e o pane não paga frame nenhum.
    ───────────────────────────────────────────────────────────────────────── */
 
 .spill-corner {
@@ -301,10 +304,25 @@
   overflow: visible;
 }
 
+.spill-corner--live.spill-corner--open {
+  animation: spill-corner-out 600ms var(--ease-overlay-smooth, cubic-bezier(0.22, 0.8, 0.2, 1)) 3.4s forwards;
+}
+
+.spill-corner--sip {
+  animation:
+    spill-corner-in 180ms var(--ease-out-quart, cubic-bezier(0.25, 1, 0.5, 1)) both,
+    spill-corner-out 600ms var(--ease-overlay-smooth, cubic-bezier(0.22, 0.8, 0.2, 1)) 2.3s forwards;
+}
+
+/* ── Lata ── */
+
 .spill__can {
-  transform-box: fill-box;
-  transform-origin: bottom center;
-  animation: spill-can-tip 0.62s var(--ease-out-quart, cubic-bezier(.25,1,.5,1)) forwards;
+  transform-box: view-box;
+  transform-origin: 49.5px 36.4px;
+  animation:
+    spill-can-in 200ms var(--ease-out-quart, cubic-bezier(0.25, 1, 0.5, 1)) both,
+    spill-can-pop 320ms var(--ease-out-quart, cubic-bezier(0.25, 1, 0.5, 1)) 220ms,
+    spill-can-idle 2.2s ease-in-out 1s;
 }
 
 .spill__can-body {
@@ -333,105 +351,285 @@
   fill: color-mix(in srgb, var(--bg, #080709) 86%, var(--text, #faf7f9));
 }
 
-.spill__stream--body {
-  stroke: color-mix(in srgb, var(--ok, #7ee2a8) 74%, var(--gold, #ffd166));
-  opacity: 0;
-  transform-box: fill-box;
-  transform-origin: top center;
-  animation: spill-pour 1.15s var(--ease-overlay-smooth, cubic-bezier(.22,.8,.2,1)) 0.2s forwards;
+.spill__tab {
+  transform-box: view-box;
+  transform-origin: 50.2px 9.5px;
+  animation: spill-tab-flip 260ms var(--ease-out-quart, cubic-bezier(0.25, 1, 0.5, 1)) 200ms both;
 }
 
-.spill__stream--sheen {
-  stroke: color-mix(in srgb, var(--text, #faf7f9) 36%, var(--ok, #7ee2a8));
-  opacity: 0;
-  transform-box: fill-box;
-  transform-origin: top center;
-  animation: spill-pour 1.15s var(--ease-overlay-smooth, cubic-bezier(.22,.8,.2,1)) 0.32s forwards;
+.spill__tab-ring {
+  fill: none;
+  stroke: color-mix(in srgb, var(--text, #faf7f9) 90%, var(--bg, #080709));
 }
 
-.spill__drop--1,
-.spill__drop--2,
-.spill__drop--3 {
-  fill: color-mix(in srgb, var(--ok, #7ee2a8) 72%, var(--gold, #ffd166));
+.spill__tab-stem {
+  fill: color-mix(in srgb, var(--text, #faf7f9) 86%, var(--bg, #080709));
+}
+
+/* ── Estalo ── */
+
+.spill__pop {
+  fill: none;
+  stroke: var(--ok, #7ee2a8);
   opacity: 0;
   transform-box: fill-box;
   transform-origin: center;
+  animation: spill-pop 440ms var(--ease-out-quart, cubic-bezier(0.25, 1, 0.5, 1)) 220ms both;
 }
 
-.spill__drop--1 {
-  animation: spill-drop 0.55s ease-out 0.48s forwards;
+.spill__spark {
+  fill: color-mix(in srgb, var(--text, #faf7f9) 84%, var(--ok, #7ee2a8));
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: spill-spark 480ms var(--ease-out-quart, cubic-bezier(0.25, 1, 0.5, 1)) 230ms both;
 }
 
-.spill__drop--2 {
-  animation: spill-drop 0.58s ease-out 0.78s forwards;
+/* ── Espuma ── */
+
+.spill__foam {
+  fill: color-mix(in srgb, var(--text, #faf7f9) 84%, var(--ok, #7ee2a8));
+  transform-box: view-box;
+  transform-origin: 49.5px 10.2px;
+  animation: spill-foam-rise 560ms var(--ease-overlay-smooth, cubic-bezier(0.22, 0.8, 0.2, 1)) 260ms both;
 }
 
-.spill__drop--3 {
-  animation: spill-drop 0.52s ease-out 1.05s forwards;
+.spill__stream--body {
+  stroke: color-mix(in srgb, var(--text, #faf7f9) 70%, var(--ok, #7ee2a8));
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: 50% 0;
+  animation: spill-drip 760ms var(--ease-overlay-smooth, cubic-bezier(0.22, 0.8, 0.2, 1)) 520ms both;
 }
 
 .spill__pool {
-  fill: color-mix(in srgb, var(--ok, #7ee2a8) 64%, var(--gold, #ffd166));
+  fill: color-mix(in srgb, var(--ok, #7ee2a8) 45%, var(--text, #faf7f9));
   opacity: 0;
   transform-box: fill-box;
   transform-origin: center;
-  animation: spill-pool 0.7s ease-out 1.1s forwards;
+  animation: spill-pool 600ms ease-out 1.1s both;
 }
 
-@keyframes spill-can-tip {
-  from { transform: rotate(4deg); }
-  to   { transform: rotate(-18deg); }
+.spill__drop {
+  fill: color-mix(in srgb, var(--text, #faf7f9) 26%, transparent);
+  stroke: color-mix(in srgb, var(--text, #faf7f9) 80%, var(--ok, #7ee2a8));
+  stroke-width: 0.5;
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: spill-bubble 1.2s ease-out 2 both;
 }
 
-@keyframes spill-pour {
-  from { opacity: 0; transform: scaleY(0.06); }
-  to   { opacity: 0.88; transform: scaleY(1); }
+.spill__drop--1 {
+  animation-delay: 0.9s;
 }
 
-@keyframes spill-drop {
-  from { opacity: 0; transform: translateY(-14px) scale(0.55); }
-  28%  { opacity: 0.82; }
-  to   { opacity: 0.58; transform: translateY(0) scale(1); }
+.spill__drop--2 {
+  animation-delay: 1.2s;
 }
 
-@keyframes spill-pool {
-  from { opacity: 0; transform: scaleX(0.12) scaleY(0.35); }
-  to   { opacity: 0.64; transform: scaleX(1) scaleY(1); }
+.spill__drop--3 {
+  animation-delay: 1.5s;
 }
 
-.spill-corner--live {
-  pointer-events: none;
-  animation: spill-live-out 1.5s 2.3s ease-out forwards;
+/* ── Gole ── */
+
+.spill-corner--sip .spill__can {
+  animation: spill-can-sip 1s var(--ease-overlay-smooth, cubic-bezier(0.22, 0.8, 0.2, 1)) 180ms both;
 }
 
-@keyframes spill-live-out {
+.spill-corner--sip .spill__tab {
+  animation: none;
+  transform: rotate(-62deg);
+}
+
+.spill-corner--sip .spill__foam {
+  animation: spill-foam-gulp 1s var(--ease-overlay-smooth, cubic-bezier(0.22, 0.8, 0.2, 1)) 180ms both;
+}
+
+.spill-corner--sip .spill__pop,
+.spill-corner--sip .spill__stream--body,
+.spill-corner--sip .spill__pool {
+  animation: none;
+  opacity: 0;
+}
+
+.spill-corner--sip .spill__spark {
+  animation-delay: 1.05s;
+}
+
+.spill-corner--sip .spill__drop {
+  animation-duration: 1.1s;
+  animation-iteration-count: 1;
+}
+
+.spill-corner--sip .spill__drop--1 {
+  animation-delay: 0.95s;
+}
+
+.spill-corner--sip .spill__drop--2 {
+  animation-delay: 1.1s;
+}
+
+.spill-corner--sip .spill__drop--3 {
+  animation-delay: 1.3s;
+}
+
+.spill__xp {
+  fill: var(--ok, #7ee2a8);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 8px;
+  font-weight: 700;
+  stroke: color-mix(in srgb, var(--bg, #080709) 85%, transparent);
+  stroke-width: 2.2px;
+  paint-order: stroke;
+  opacity: 0;
+  animation: spill-xp-float 1.7s var(--ease-overlay-smooth, cubic-bezier(0.22, 0.8, 0.2, 1)) 400ms both;
+}
+
+@keyframes spill-corner-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes spill-corner-out {
   from { opacity: 1; }
   to   { opacity: 0; }
 }
 
+@keyframes spill-can-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Estalo: a pressão sai e a lata trepida (achata, estica, assenta). */
+@keyframes spill-can-pop {
+  0%   { transform: scale(1, 1); }
+  30%  { transform: scale(1.06, 0.92); }
+  65%  { transform: translateY(-1px) scale(0.97, 1.04); }
+  100% { transform: scale(1, 1); }
+}
+
+@keyframes spill-can-idle {
+  0%, 100% { transform: rotate(0deg); }
+  30%      { transform: rotate(-1.8deg); }
+  70%      { transform: rotate(1.2deg); }
+}
+
+@keyframes spill-tab-flip {
+  0%   { transform: rotate(0deg); }
+  55%  { transform: rotate(-78deg); }
+  100% { transform: rotate(-62deg); }
+}
+
+@keyframes spill-pop {
+  0%   { opacity: 0; transform: scale(0.3); }
+  12%  { opacity: 0.95; }
+  100% { opacity: 0; transform: scale(2.1); }
+}
+
+@keyframes spill-spark {
+  0%   { opacity: 0; transform: translate(0, 0) scale(0.6); }
+  15%  { opacity: 1; }
+  100% { opacity: 0; transform: translate(var(--dx, 0), var(--dy, -8px)) scale(0.4); }
+}
+
+@keyframes spill-foam-rise {
+  0%   { opacity: 0; transform: scaleY(0); }
+  25%  { opacity: 1; }
+  65%  { transform: scaleY(1.18); }
+  100% { opacity: 1; transform: scaleY(1); }
+}
+
+@keyframes spill-drip {
+  0%   { opacity: 0; transform: scaleY(0.05); }
+  25%  { opacity: 0.9; }
+  100% { opacity: 0.85; transform: scaleY(1); }
+}
+
+@keyframes spill-pool {
+  0%   { opacity: 0; transform: scaleX(0.12) scaleY(0.4); }
+  100% { opacity: 0.7; transform: scaleX(1) scaleY(1); }
+}
+
+@keyframes spill-bubble {
+  0%   { opacity: 0; transform: translateY(0) scale(0.6); }
+  20%  { opacity: 0.9; transform: translateY(-2px) scale(1); }
+  100% { opacity: 0; transform: translateY(-13px) scale(0.7); }
+}
+
+/* Gole: levanta, inclina para o terminal, bebe, volta e assenta. */
+@keyframes spill-can-sip {
+  0%   { transform: translate(0, 0) rotate(0deg); }
+  30%  { transform: translate(-3px, -5px) rotate(-30deg); }
+  58%  { transform: translate(-3px, -5px) rotate(-33deg); }
+  82%  { transform: translate(0, 0) rotate(3deg); }
+  100% { transform: translate(0, 0) rotate(0deg); }
+}
+
+@keyframes spill-foam-gulp {
+  0%   { transform: scaleY(1); }
+  35%  { transform: scaleY(1.25); }
+  60%  { transform: scaleY(0.45); }
+  100% { transform: scaleY(0.8); }
+}
+
+@keyframes spill-xp-float {
+  0%   { opacity: 0; transform: translateY(4px); }
+  18%  { opacity: 1; transform: translateY(0); }
+  75%  { opacity: 1; transform: translateY(-6px); }
+  100% { opacity: 0; transform: translateY(-11px); }
+}
+
+/* Reduced motion: lata aberta estática (lacre virado, espuma, poça), o XP
+   aparece parado e a cena sai só por opacidade. */
 @media (prefers-reduced-motion: reduce) {
-  .spill__can {
+  .spill-corner .spill__can,
+  .spill-corner .spill__tab,
+  .spill-corner .spill__pop,
+  .spill-corner .spill__spark,
+  .spill-corner .spill__foam,
+  .spill-corner .spill__stream--body,
+  .spill-corner .spill__pool,
+  .spill-corner .spill__drop,
+  .spill-corner .spill__xp {
     animation: none;
-    transform: rotate(-10deg);
   }
 
-  .spill__stream--body,
-  .spill__stream--sheen,
-  .spill__drop--1,
-  .spill__drop--2,
-  .spill__drop--3 {
-    animation: none;
+  .spill-corner .spill__tab {
+    transform: rotate(-62deg);
+  }
+
+  .spill-corner .spill__pop,
+  .spill-corner .spill__spark,
+  .spill-corner .spill__drop {
     opacity: 0;
-    transform: none;
   }
 
-  .spill__pool {
-    animation: none;
-    opacity: 0.5;
-    transform: scaleX(1) scaleY(1);
+  .spill-corner .spill__stream--body {
+    opacity: 0.85;
   }
 
-  .spill-corner--live {
-    animation: spill-live-out 0.7s 1.1s ease-out forwards;
+  .spill-corner .spill__pool {
+    opacity: 0.6;
+  }
+
+  .spill-corner .spill__xp {
+    opacity: 1;
+  }
+
+  .spill-corner--sip .spill__stream--body,
+  .spill-corner--sip .spill__pool {
+    opacity: 0;
+  }
+
+  .spill-corner--live.spill-corner--open {
+    animation: spill-corner-out 500ms ease-out 1.6s forwards;
+  }
+
+  .spill-corner--sip {
+    animation:
+      spill-corner-in 160ms ease-out both,
+      spill-corner-out 500ms ease-out 1.8s forwards;
   }
 }
