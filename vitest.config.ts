@@ -36,7 +36,16 @@ export default defineConfig({
       'cloud-api/**',
       // Relay do celular (relay.nexuside.app): `node --test` contra o workerd do `wrangler dev`.
       'relay-worker/**',
+      // Cache por worktree (tsc incremental + fsModuleCache): regenerável,
+      // nunca coletado como suíte.
+      '.nexus-cache/**',
     ],
+    // vitest 5: persiste os transforms entre runs/processos. O default
+    // ('node_modules/.vitest-cache') cairia no node_modules SYMLINKADO das
+    // worktrees isoladas (compartilhado = thrash) — por isso o cache mora por
+    // worktree, fora do node_modules, e é semeado pelo worktree-cow (F-1386).
+    fsModuleCache: true,
+    fsModuleCachePath: '.nexus-cache/vitest',
     setupFiles: ['./src/test/vitest.setup.ts'],
     // The root run also collects server PGlite suites, and `server/vitest.config.ts`
     // does NOT apply to it: Vitest resolves `maxWorkers`/`poolOptions` from the
