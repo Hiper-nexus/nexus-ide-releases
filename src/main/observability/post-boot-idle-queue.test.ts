@@ -1,4 +1,6 @@
+import os from 'node:os';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { warmPool } from '../pty/warm-pool';
 import {
   admitAgentSpawnSync,
   registerAgentMemoryCensus,
@@ -13,6 +15,7 @@ import {
   POST_BOOT_SPAWN_SETTLE_MS,
   PostBootIdleQueue,
   resetPostBootIdleQueueForTest,
+  startPostBootIdleQueue,
   stopPostBootIdleQueue,
 } from './post-boot-idle-queue';
 
@@ -134,7 +137,166 @@ describe('PostBootIdleQueue (Item 9)', () => {
     expect(ran).toEqual(['heavy-task']);
   });
 
+  describe('ceilings (C1/C2)', () => {
+    const DEADLINE_AFTER_MOUNT_MS = 45_000;
+    const DEADLINE_WITHOUT_MOUNT_MS = 90_000;
+    const TASK_TIMEOUT_MS = 30_000;
+    const STOP_TIMEOUT_MS = 1_500;
+    const ceilings = {
+      deadlineAfterMountMs: DEADLINE_AFTER_MOUNT_MS,
+      deadlineWithoutMountMs: DEADLINE_WITHOUT_MOUNT_MS,
+      taskTimeoutMs: TASK_TIMEOUT_MS,
+      stopTimeoutMs: STOP_TIMEOUT_MS,
+    };
+
+    it('drains at boot-complete + deadline while spawns never stop and CPU stays busy', async () => {
+      const ran: string[] = [];
+      let lastSpawnAt = 0;
+      const queue = new PostBootIdleQueue({
+        ...ceilings,
+        // A mission loop admits a pane every 1.5 s (< settle) and one pane is
+        // stuck in "spawning": without a ceiling the queue would never drain.
+        hasPendingSpawns: () => true,
+        getLastSpawnAt: () => lastSpawnAt,
+        hasCpuHeadroom: () => false,
+      });
+      const spawnLoop = setInterval(() => {
+        lastSpawnAt = Date.now();
+        queue.notifyPaneSpawnActivity(lastSpawnAt);
+      }, 1_500);
+      try {
+        queue.enqueue('hooks-consent', () => {
+          ran.push('hooks-consent');
+        });
+        queue.notifyBootComplete(Date.now());
+
+        await vi.advanceTimersByTimeAsync(DEADLINE_AFTER_MOUNT_MS - 1);
+        expect(ran).toEqual([]);
+
+        // +1 ms: a spawn tick landing on the deadline re-arms a 0 ms timer,
+        // which Node clamps to 1 ms.
+        await vi.advanceTimersByTimeAsync(2);
+        expect(ran).toEqual(['hooks-consent']);
+        expect(queue.status().deadlineReached).toBe(true);
+      } finally {
+        clearInterval(spawnLoop);
+      }
+    });
+
+    it('drains at process start + deadline when the renderer never mounts', async () => {
+      const ran: string[] = [];
+      const processStartAt = Date.now() - 10_000;
+      const queue = new PostBootIdleQueue({
+        ...ceilings,
+        hasPendingSpawns: () => false,
+        getLastSpawnAt: () => 0,
+        hasCpuHeadroom: () => true,
+      });
+      queue.enqueue('db-prune', () => {
+        ran.push('db-prune');
+      });
+      queue.start(processStartAt);
+
+      await vi.advanceTimersByTimeAsync(DEADLINE_WITHOUT_MOUNT_MS - 10_000 - 1);
+      expect(ran).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(ran).toEqual(['db-prune']);
+
+      // A late mount cannot move the latched deadline back into gated mode.
+      queue.notifyBootComplete(Date.now());
+      queue.enqueue('late-task', () => {
+        ran.push('late-task');
+      });
+      await vi.advanceTimersByTimeAsync(POST_BOOT_INTER_TASK_YIELD_MS);
+      expect(ran).toEqual(['db-prune', 'late-task']);
+    });
+
+    it('aborts a stuck task at its timeout and still runs the tasks behind it', async () => {
+      const ran: string[] = [];
+      let stuckSignal: AbortSignal | undefined;
+      const errors: string[] = [];
+      const queue = new PostBootIdleQueue({
+        ...ceilings,
+        hasPendingSpawns: () => false,
+        getLastSpawnAt: () => 0,
+        hasCpuHeadroom: () => true,
+        onTaskError: (name) => errors.push(name),
+      });
+      queue.enqueue('never-settles', (signal) => {
+        stuckSignal = signal;
+        return new Promise<void>(() => undefined);
+      });
+      queue.enqueue('initQuotaService', () => {
+        ran.push('initQuotaService');
+      });
+      queue.notifyBootComplete(Date.now());
+
+      await vi.advanceTimersByTimeAsync(POST_BOOT_IDLE_QUIET_MS);
+      expect(queue.status().runningTask).toBe('never-settles');
+      expect(stuckSignal?.aborted).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(TASK_TIMEOUT_MS + POST_BOOT_INTER_TASK_YIELD_MS);
+      expect(stuckSignal?.aborted).toBe(true);
+      expect(errors).toEqual(['never-settles']);
+      expect(ran).toEqual(['initQuotaService']);
+    });
+
+    it('stop() aborts the running task and resolves within the stop ceiling', async () => {
+      let runningSignal: AbortSignal | undefined;
+      const queue = new PostBootIdleQueue({
+        ...ceilings,
+        hasPendingSpawns: () => false,
+        getLastSpawnAt: () => 0,
+        hasCpuHeadroom: () => true,
+      });
+      queue.enqueue('slow-network', (signal) => {
+        runningSignal = signal;
+        return new Promise<void>(() => undefined);
+      });
+      queue.notifyBootComplete(Date.now());
+      await vi.advanceTimersByTimeAsync(POST_BOOT_IDLE_QUIET_MS);
+      expect(queue.status().runningTask).toBe('slow-network');
+
+      let stopped = false;
+      void queue.stop().then(() => {
+        stopped = true;
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(runningSignal?.aborted).toBe(true);
+      await vi.advanceTimersByTimeAsync(STOP_TIMEOUT_MS);
+      expect(stopped).toBe(true);
+    });
+  });
+
+  it('reads CPU headroom without side effects on the warm pool (C6)', async () => {
+    const loadavg = vi.spyOn(os, 'loadavg').mockReturnValue([1_000, 1_000, 1_000]);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const skippedBefore = warmPool.getMetrics().skippedByCpu;
+      const ran: string[] = [];
+      const queue = new PostBootIdleQueue({
+        hasPendingSpawns: () => false,
+        getLastSpawnAt: () => 0,
+        maxCpuDeferrals: 1,
+      });
+      queue.enqueue('cpu-bound', () => {
+        ran.push('cpu-bound');
+      });
+      queue.notifyBootComplete(Date.now());
+      await vi.advanceTimersByTimeAsync(POST_BOOT_IDLE_QUIET_MS);
+      expect(ran).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(ran).toEqual(['cpu-bound']);
+      expect(warmPool.getMetrics().skippedByCpu).toBe(skippedBefore);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+      loadavg.mockRestore();
+    }
+  });
+
   it('connects to trace(boot-complete) and pane-admission signals on the default singleton', async () => {
+    startPostBootIdleQueue();
     let pending = 1;
     const unregisterCensus = registerAgentMemoryCensus(
       () => ({ live: 1, pending }),

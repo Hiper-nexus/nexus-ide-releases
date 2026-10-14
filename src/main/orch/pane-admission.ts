@@ -510,6 +510,7 @@ interface AgentMemoryCensus {
 const agentMemoryCensuses = new Map<string, () => AgentMemoryCensus>();
 let heavyCommandMemoryReservation: (() => number) | null = null;
 let lastPaneSpawnAdmittedAt = 0;
+let paneSpawnEntriesInFlight = 0;
 const paneSpawnActivityListeners = new Set<(at: number) => void>();
 
 function notePaneSpawnAdmitted(now: number): void {
@@ -523,8 +524,35 @@ function notePaneSpawnAdmitted(now: number): void {
   }
 }
 
-/** True while any registered agent transport (PTY or ACP) has a pane in spawning state. */
+/**
+ * Counts a `pty:spawn` call from entry until its result settles. Permit,
+ * Codex-version and native-proof waits happen before any transport marks the
+ * pane as spawning, so the census alone cannot see them.
+ */
+export function trackPaneSpawnEntry<T>(run: () => T): T {
+  paneSpawnEntriesInFlight += 1;
+  const settle = () => {
+    paneSpawnEntriesInFlight = Math.max(0, paneSpawnEntriesInFlight - 1);
+    notePaneSpawnAdmitted(Date.now());
+  };
+  let result: T;
+  try {
+    result = run();
+  } catch (error) {
+    settle();
+    throw error;
+  }
+  if (result instanceof Promise) {
+    void result.then(settle, settle);
+    return result;
+  }
+  settle();
+  return result;
+}
+
+/** True while a pty:spawn call or any agent transport (PTY or ACP) is still starting a pane. */
 export function hasPendingPaneSpawns(): boolean {
+  if (paneSpawnEntriesInFlight > 0) return true;
   const census = readAgentMemoryCensus();
   return census !== null && census.pending > 0;
 }
@@ -540,16 +568,9 @@ export function onPaneSpawnActivity(listener: (at: number) => void): () => void 
   };
 }
 
-export function isPaneAdmissionBusy(now = Date.now(), settleMs = 0): boolean {
-  if (hasPendingPaneSpawns()) return true;
-  if (settleMs > 0 && lastPaneSpawnAdmittedAt > 0 && now - lastPaneSpawnAdmittedAt < settleMs) {
-    return true;
-  }
-  return false;
-}
-
 export function resetPaneSpawnActivityForTest(): void {
   lastPaneSpawnAdmittedAt = 0;
+  paneSpawnEntriesInFlight = 0;
 }
 
 /** Main's heavy-command pool owns this counter; keeps admission acyclic. */

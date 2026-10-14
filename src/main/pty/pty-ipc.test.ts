@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { PTY_CHANNELS } from "../../shared/channels";
+import { hasPendingPaneSpawns } from "../orch/pane-admission";
 
 const tabDeps = vi.hoisted(() => ({ prepare: vi.fn(), requireLive: vi.fn() }));
 // F-790: a espera do Codex pela sonda de versão (o helper real tem testes próprios).
@@ -488,6 +489,29 @@ describe("registerPtyIpc account fail-fast", () => {
     finish();
     await expect(pending).resolves.toMatchObject({ ok: true });
     expect(ptyDeps.spawnAgentSession).toHaveBeenCalledOnce();
+  });
+
+  it('counts a renderer spawn as pending from pty:spawn entry until it settles, including the native-proof wait (C6)', async () => {
+    providerDeps.prepareProviderSpawn.mockReturnValueOnce({
+      ok: true, overrides: { binPath: '/usr/local/bin/claude', defaultModel: null, extraArgs: [], keyEnv: {}, suppressEnv: [] },
+    });
+    let finish!: () => void;
+    settleDeps.proveHeavyBase.mockReturnValueOnce(new Promise<void>((resolve) => { finish = resolve; }));
+    expect(hasPendingPaneSpawns()).toBe(false);
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn)!;
+    const pending = handler({ sender: { id: 7 } }, { kind: 'cli-agent', adapterId: 'claude', cols: 80, rows: 24 });
+    await vi.waitFor(() => expect(settleDeps.proveHeavyBase).toHaveBeenCalledOnce());
+    // The PTY census has nothing in "spawning" yet: only the entry counter sees this wait.
+    expect(hasPendingPaneSpawns()).toBe(true);
+    finish();
+    await expect(pending).resolves.toMatchObject({ ok: true });
+    expect(hasPendingPaneSpawns()).toBe(false);
+  });
+
+  it('settles the pty:spawn entry counter for synchronous refusals', async () => {
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn)!;
+    await handler({ sender: { id: 7 } }, { kind: 'cli-agent', cols: 80, rows: 24, adapterId: '' });
+    expect(hasPendingPaneSpawns()).toBe(false);
   });
 
   it("creates the PTY only after the exact account preparation succeeds", async () => {

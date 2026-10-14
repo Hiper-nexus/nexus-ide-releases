@@ -321,7 +321,6 @@ import {
 } from "./orch/mission-disk-projection";
 import { registerTerminalBlockActionsIpc } from "./terminal/terminal-block-actions-ipc";
 import { registerSearchMixerIpc } from "./search/search-mixer-ipc";
-import { getSearchMixer } from "./search/search-mixer-bootstrap";
 import { registerProductWaveIpc } from "./product-wave-ipc";
 import { registerDiscoveryIpc } from "./discovery/discovery-ipc";
 import { registerMemoryIpc } from "./memory/memory-ipc";
@@ -338,7 +337,7 @@ import {
   shutdownUsageTelemetry,
 } from "./usage/usage-service";
 import {
-  initQuotaService,
+  registerQuotaServiceLazy,
   requireQuotaService,
   shutdownQuotaService,
 } from "./quota/quota-service";
@@ -561,6 +560,11 @@ import {
 import { registerMainHeartbeatIpc } from "./observability/main-heartbeat-ipc";
 import { bootStep, bootStepAsync, describeBootFailure } from './runtime/git-boot-guard';
 import { beginBootPhases, markBootPhase } from './observability/boot-phases';
+import {
+  enqueuePostBootIdleTask,
+  startPostBootIdleQueue,
+  stopPostBootIdleQueue,
+} from "./observability/post-boot-idle-queue";
 
 let projectRuntimeManager: ProjectRuntimeManager | null = null;
 let hookDropBoxWatcher: AgentHookDropBoxWatcher | null = null;
@@ -747,7 +751,6 @@ async function bootstrap(userPathReady: Promise<void>): Promise<void> {
   bootStep('registerMissionEventIpc', () => registerMissionEventIpc());
   // Product paths: CommandBlock actions, SearchMixer, full product-wave IPC.
   bootStep('registerTerminalBlockActionsIpc', () => registerTerminalBlockActionsIpc(runtimeManager));
-  void getSearchMixer; // instantiated lazily on first search:query IPC call
   bootStep('registerSearchMixerIpc', () => registerSearchMixerIpc());
   bootStep('registerProductWaveIpc', () => registerProductWaveIpc());
   // Descoberta universal de configs de ecossistemas de agente (read-only, B4).
@@ -830,19 +833,20 @@ async function bootstrap(userPathReady: Promise<void>): Promise<void> {
   // Tokens das contas Claude secundárias renovados em background — spawn e
   // failover sempre encontram credencial viva no vault (mata o "401 OAuth
   // access token has expired" em respawn horas depois).
+  // O 1º passe é cache-only (nunca destrava o Keychain) e precede o renderer:
+  // panes restaurados no mount já nascem com o token renovado.
   if (!isAutomatedReleaseTest()) {
-    enqueuePostBootIdleTask('startClaudeSubscriptionFreshness', () => {
-      traceBootstrap('before Claude subscription freshness');
-      startClaudeSubscriptionFreshness();
-      traceBootstrap('after Claude subscription freshness');
-    });
+    traceBootstrap('before Claude subscription freshness');
+    startClaudeSubscriptionFreshness();
+    traceBootstrap('after Claude subscription freshness');
   }
   // Piloto automático de máquina nova: oferta única, diálogo nativo com os
   // comandos exatos, instalação em sequência. Atrasado para não competir com
-  // o primeiro paint nem com a abertura dos primeiros panes.
+  // o primeiro paint nem com a abertura dos primeiros panes. O diálogo é
+  // modal e espera o operador: a fila só escolhe o início, nunca o aguarda.
   if (!isAutomatedReleaseTest()) {
-    enqueuePostBootIdleTask('maybeOfferFirstRunProvisioning', async () => {
-      await maybeOfferFirstRunProvisioning(app.getPath("userData")).catch((err) =>
+    enqueuePostBootIdleTask('maybeOfferFirstRunProvisioning', () => {
+      void maybeOfferFirstRunProvisioning(app.getPath("userData")).catch((err) =>
         console.warn("[provisioning] oferta de primeiro boot falhou:", err),
       );
       // Nexus Redline: oferta única de instalação do companheiro na barra
@@ -877,7 +881,6 @@ async function bootstrap(userPathReady: Promise<void>): Promise<void> {
       }
     });
   }
-  void initQuotaService;
   bootStep('initQuotaService', () => registerQuotaServiceLazy(() => ({
     listProviders: () => listProviderSettings({ nonBlockingAuth: true }),
     listAccounts: () => listAccountInfos(),
@@ -1035,12 +1038,6 @@ async function bootstrap(userPathReady: Promise<void>): Promise<void> {
   traceBootstrap('complete');
 }
 
-import {
-  enqueuePostBootIdleTask,
-  stopPostBootIdleQueue,
-} from "./observability/post-boot-idle-queue";
-import { registerQuotaServiceLazy } from "./quota/quota-service";
-
 function isAutomatedReleaseTest(): boolean {
   return isCurrentProcessSmokeTest();
 }
@@ -1054,6 +1051,9 @@ if (squirrelStartupEvent || !wireDeepLinks()) {
 } else {
   app.whenReady().then(async () => {
     beginBootPhases();
+    // Ceilings of the idle queue: wires boot-complete/spawn activity and arms
+    // the no-mount deadline (process start + 90 s).
+    startPostBootIdleQueue();
     markBootPhase('whenReady');
     const userPathReady = resolveUserPath({
       cachePath: path.join(app.getPath("userData"), "login-path.json"),
@@ -1173,6 +1173,26 @@ if (squirrelStartupEvent || !wireDeepLinks()) {
           setTimeout(resolve, 4_000);
         }),
       ]);
+      // Gap A: register Claude+Codex managed hook installers. Installing edits the
+      // user's GLOBAL ~/.claude & ~/.codex config (affects those tools even outside
+      // Nexus), so we NEVER install on launch without consent — register only, then
+      // prompt once (idle queue, below) and install/remove per the persisted
+      // decision (option A). The endpoint itself must exist BEFORE the renderer:
+      // pty-manager injects NEXUS_AGENT_HOOK_ENDPOINT/NEXUS_PANE_KEY only when it
+      // is configured at spawn, and panes restored on mount keep that env for life.
+      if (!isAutomatedReleaseTest()) {
+        try {
+          const userDataPath = app.getPath("userData");
+          configureAgentRuntimeUserDataPath(userDataPath);
+          bootstrapManagedAgentHooks({ enabled: false });
+          const hookServer = await startAgentHookHttpServer({ userDataPath });
+          configureAgentHookEndpointPath(hookServer.endpointFilePath);
+          hookDropBoxWatcher = new AgentHookDropBoxWatcher();
+          hookDropBoxWatcher.start();
+        } catch (err) {
+          console.warn("[main] managed agent hooks bootstrap failed:", err);
+        }
+      }
       if (!startMainWindowRenderer(mainWindow)) {
         throw new Error(
           "renderer start authority disappeared before bootstrap completed",
@@ -1215,10 +1235,8 @@ if (squirrelStartupEvent || !wireDeepLinks()) {
     // footprint por sessão — só mede enquanto algum renderer assina (QLT-11).
     startPaneFootprintBroadcast();
 
-    // Gap A: register Claude+Codex managed hook installers. Installing edits the
-    // user's GLOBAL ~/.claude & ~/.codex config (affects those tools even outside
-    // Nexus), so we NEVER install on launch without consent — register only, then
-    // prompt once and install/remove per the persisted decision (option A).
+    // Gap A (idle): consent prompt, crash sentinel, ShotBridge and legacy hook
+    // cleanup consume nothing a pane spawn needs; they wait for the idle queue.
     if (!isAutomatedReleaseTest()) {
       enqueuePostBootIdleTask('post-boot-hooks-and-shot-bridge', async () => {
         try {
@@ -1233,12 +1251,6 @@ if (squirrelStartupEvent || !wireDeepLinks()) {
             },
           });
           sessionAliveSentinel.start();
-          configureAgentRuntimeUserDataPath(userDataPath);
-          bootstrapManagedAgentHooks({ enabled: false });
-          const hookServer = await startAgentHookHttpServer({ userDataPath });
-          configureAgentHookEndpointPath(hookServer.endpointFilePath);
-          hookDropBoxWatcher = new AgentHookDropBoxWatcher();
-          hookDropBoxWatcher.start();
           void resolveManagedHookConsent({
             userDataPath,
             prompt: async () => {
@@ -1273,7 +1285,7 @@ if (squirrelStartupEvent || !wireDeepLinks()) {
             })
             .catch((err) => console.warn("[main] hook consent failed:", err));
         } catch (err) {
-          console.warn("[main] managed agent hooks bootstrap failed:", err);
+          console.warn("[main] hook consent/session sentinel bootstrap failed:", err);
         }
 
         // shot-bridge: endpoint loopback que recebe capturas/frames do Nexus
@@ -1645,7 +1657,7 @@ function shutdown(): Promise<void> {
   if (shutdownPromise) return shutdownPromise;
   shutdownPromise = (async () => {
     shutdownProgress.startedAt = Date.now();
-    await stopPostBootIdleQueue();
+    await trackShutdownPhase("stopPostBootIdleQueue", () => stopPostBootIdleQueue());
     nativeHeavyCommands.stopAdmission();
     stopMacOSDockWatchdog();
     // F-572: nenhum fechamento automático de pane pode disparar no meio do

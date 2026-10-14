@@ -3927,6 +3927,42 @@ describe("cli-agent spawn argv hardening", () => {
     }
   });
 
+  it("B1: a pane restored after the boot hook step carries hook identity; one spawned before it never gains it", () => {
+    const h = fakeHost();
+    setPtyHost(h.host);
+    const owner = fakeWc();
+    const spawnRestored = (paneId: string) =>
+      spawnAgentSession(
+        owner,
+        { kind: "cli-agent", paneId, cols: 80, rows: 24 },
+        makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }),
+        {},
+        trustedSpawn(),
+      ).sessionId;
+    configureAgentHookEndpointPath(null);
+    let early: string | undefined;
+    let restored: string | undefined;
+    try {
+      // Spawn before the endpoint exists (the bug: hook server in the idle queue).
+      early = spawnRestored("pane-before-hooks");
+      expect(h.specFor(early).env.NEXUS_PANE_KEY).toBeUndefined();
+      // Boot hook step (main.ts, before startMainWindowRenderer).
+      configureAgentHookEndpointPath("/tmp/nexus-hooks/endpoint.env");
+      expect(h.specFor(early).env.NEXUS_PANE_KEY).toBeUndefined();
+      // Pane restored on mount, after the boot hook step.
+      restored = spawnRestored("pane-restored-at-mount");
+      const env = h.specFor(restored).env;
+      expect(env.NEXUS_AGENT_HOOK_ENDPOINT).toBe("/tmp/nexus-hooks/endpoint.env");
+      expect(env.NEXUS_PANE_KEY).toBe(restored);
+      expect(env.NEXUS_PANE_ID).toBe("pane-restored-at-mount");
+      expect(env.NEXUS_PANE_ARMS_DESCRIPTOR).toEqual(expect.any(String));
+    } finally {
+      if (early) killSession(owner, early);
+      if (restored) killSession(owner, restored);
+      configureAgentHookEndpointPath(null);
+    }
+  });
+
   it("injects the stable paneId as NEXUS_PANE_ID when the spawn has one", () => {
     const h = fakeHost();
     setPtyHost(h.host);

@@ -10,8 +10,24 @@ import {
   getCachedSystemMemory,
   getMemoryAfterAgentReservations,
   primeSystemMemoryCacheForTest,
+  hasPendingPaneSpawns,
+  trackPaneSpawnEntry,
   type PaneAdmissionInput,
 } from './pane-admission';
+
+it('counts a pty:spawn entry as pending until its result settles, whatever the outcome (C6)', async () => {
+  expect(trackPaneSpawnEntry(() => 'sync')).toBe('sync');
+  expect(hasPendingPaneSpawns()).toBe(false);
+  expect(() => trackPaneSpawnEntry(() => { throw new Error('refused'); })).toThrow('refused');
+  expect(hasPendingPaneSpawns()).toBe(false);
+
+  let fail!: (error: Error) => void;
+  const waiting = trackPaneSpawnEntry(() => new Promise<string>((_resolve, reject) => { fail = reject; }));
+  expect(hasPendingPaneSpawns()).toBe(true);
+  fail(new Error('permit timeout'));
+  await expect(waiting).rejects.toThrow('permit timeout');
+  expect(hasPendingPaneSpawns()).toBe(false);
+});
 
 it('combines PTY and ACP pending startups without doubling their shared physical count', () => {
   let live = 1;

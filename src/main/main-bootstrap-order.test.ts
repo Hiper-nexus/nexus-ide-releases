@@ -134,7 +134,6 @@ describe('Main Shot destination wiring (F-1054)', () => {
 describe('Post-boot idle queue deferral', () => {
   it('defers heavy post-boot work to enqueuePostBootIdleTask and registers quota lazily', () => {
     expect(bootstrapSource).toContain("enqueuePostBootIdleTask('startCliAutoUpdate'");
-    expect(bootstrapSource).toContain("enqueuePostBootIdleTask('startClaudeSubscriptionFreshness'");
     expect(bootstrapSource).toContain("enqueuePostBootIdleTask('maybeOfferFirstRunProvisioning'");
     expect(bootstrapSource).toContain("enqueuePostBootIdleTask('createRedlineSink'");
     expect(bootstrapSource).toContain("enqueuePostBootIdleTask('syncInstalledRedline'");
@@ -143,5 +142,59 @@ describe('Post-boot idle queue deferral', () => {
     expect(bootstrapSource).not.toContain("bootStep('getSearchMixer', () => getSearchMixer())");
     expect(appReadySource).toContain("enqueuePostBootIdleTask('post-boot-hooks-and-shot-bridge'");
   });
-});
 
+  it('configures the agent hook endpoint before React can restore panes (B1)', () => {
+    // pty-manager injects NEXUS_AGENT_HOOK_ENDPOINT/NEXUS_PANE_KEY only when the
+    // endpoint already exists at spawn; panes restored on mount keep their env.
+    const startRenderer = appReadySource.indexOf('startMainWindowRenderer(mainWindow)');
+    const steps = [
+      'configureAgentRuntimeUserDataPath(userDataPath);',
+      'bootstrapManagedAgentHooks({ enabled: false });',
+      'await startAgentHookHttpServer({ userDataPath });',
+      'configureAgentHookEndpointPath(hookServer.endpointFilePath);',
+      'hookDropBoxWatcher.start();',
+    ];
+    const positions = steps.map((step) => appReadySource.indexOf(step));
+    expect([startRenderer, ...positions]).not.toContain(-1);
+    for (const step of steps) {
+      expect(mainSource.split(step).length - 1, step).toBe(1);
+    }
+    positions.reduce((previous, position) => {
+      expect(previous).toBeLessThan(position);
+      return position;
+    });
+    expect(positions.at(-1)).toBeLessThan(startRenderer);
+    // A queued closure written above the renderer start would still run after
+    // mount: nothing before it may be deferred to the idle queue.
+    expect(appReadySource.slice(0, startRenderer)).not.toContain('enqueuePostBootIdleTask(');
+    const queuedHooks = appReadySource.slice(
+      appReadySource.indexOf("enqueuePostBootIdleTask('post-boot-hooks-and-shot-bridge'"),
+      appReadySource.indexOf('// Gap B:'),
+    );
+    expect(queuedHooks).toContain('resolveManagedHookConsent');
+    expect(queuedHooks).not.toContain('startAgentHookHttpServer');
+  });
+
+  it('runs the cache-only Claude freshness pass in bootstrap, before the renderer (C5)', () => {
+    expect(bootstrapSource).toMatch(/traceBootstrap\('before Claude subscription freshness'\);\s*startClaudeSubscriptionFreshness\(\);/u);
+    expect(mainSource).not.toContain("enqueuePostBootIdleTask('startClaudeSubscriptionFreshness'");
+  });
+
+  it('arms the idle-queue ceilings at whenReady and never awaits the provisioning modal in series (C1/C2)', () => {
+    const arm = appReadySource.indexOf('startPostBootIdleQueue();');
+    const createWindow = appReadySource.indexOf('createMainWindow({ deferRendererLoad: true })');
+    expect(arm).toBeGreaterThan(-1);
+    expect(arm).toBeLessThan(createWindow);
+    const provisioning = bootstrapSource.slice(
+      bootstrapSource.indexOf("enqueuePostBootIdleTask('maybeOfferFirstRunProvisioning'"),
+      bootstrapSource.indexOf("enqueuePostBootIdleTask('createRedlineSink'"),
+    );
+    expect(provisioning).toContain('void maybeOfferFirstRunProvisioning(');
+    expect(provisioning).not.toContain('await maybeOfferFirstRunProvisioning(');
+  });
+
+  it('bounds the idle-queue stop inside a tracked shutdown phase (C2)', () => {
+    expect(mainSource).toMatch(/await trackShutdownPhase\("stopPostBootIdleQueue", \(\) => stopPostBootIdleQueue\(\)\);/u);
+    expect(mainSource).not.toMatch(/\n\s*await stopPostBootIdleQueue\(\);/u);
+  });
+});
