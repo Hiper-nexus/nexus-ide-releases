@@ -21,9 +21,24 @@ vi.mock('./jev-mission-advisor', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./jev-mission-advisor')>()),
   scheduleRecoveryAdvice: vi.fn(),
 }));
-vi.mock('./main-owned-pane-runtime', () => ({ getMainOwnedPane: (paneId: string) => h.panes.get(paneId) }));
+vi.mock('./main-owned-pane-runtime', () => ({
+  getMainOwnedPane: (paneId: string) => h.panes.get(paneId),
+  deleteMainOwnedPane: (paneId: string) => h.panes.delete(paneId),
+}));
 vi.mock('./pane-registry', () => ({ spawnMainOwnedMissionPaneAsync: h.spawn }));
 vi.mock('./pane-session-output', () => ({ markPaneDeliberatelyClosed: vi.fn() }));
+// F-1512: o canal do pacote de cada CLI vem do manifesto builtin real (Kimi cola).
+vi.mock('../adapters/adapter-registry', async (importOriginal) => {
+  const { BUILTIN_ADAPTERS } = await import('../../adapters/builtin');
+  const { adapterSchema } = await import('../../shared/adapter-types');
+  return {
+    ...(await importOriginal<typeof import('../adapters/adapter-registry')>()),
+    getAdapter: (id: string) => {
+      const raw = BUILTIN_ADAPTERS.find((entry) => (entry as { id?: unknown }).id === id);
+      return raw ? adapterSchema.parse(raw) : null;
+    },
+  };
+});
 vi.mock('../pty/pty-manager', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../pty/pty-manager')>()),
   orchTerminateSession: h.terminate,
@@ -113,6 +128,44 @@ describe('F-1480: tarefa despachada atravessa a troca de conta (stores reais)', 
     expect(stores.missionPanes.findByPaneId('new-pane')).toMatchObject({ model: 'claude-sonnet-x',
       effort: 'high', accountId: 'account-b', workerIncarnationId: options.workerIncarnationId, role: 'worker' });
     expect(stores.missionPanes.findByPaneId('old-pane')).toMatchObject({ accountId: 'account-a' });
+  });
+
+  it('F-1512: o substituto já tem o dispatch quando recebe o pacote (heartbeat e handoff acham a tarefa)', async () => {
+    const stores = getProjectDomainStores(scope);
+    const duringBrief: Array<Record<string, unknown>> = [];
+    const deliverBrief = vi.fn(async (sessionId: string) => {
+      const incarnation = (h.spawn.mock.calls[0]![0] as { workerIncarnationId: string }).workerIncarnationId;
+      // O que o handoff do substituto consulta (tools-handoff): o dispatch da sessão dele.
+      const own = stores.taskDispatches.list(missionId).filter((row) => row.sessionId === sessionId);
+      expect(own).toEqual([expect.objectContaining({ taskId: 'task-1', workerIncarnationId: incarnation, state: 'running' })]);
+      duringBrief.push(stores.taskDispatches.heartbeat({ sessionId, missionId, workerIncarnationId: incarnation,
+        leaseMs: 60_000 }) as unknown as Record<string, unknown>);
+      return true;
+    });
+    await expect(respawnMainOwnedPaneWithAccount({
+      paneId: 'old-pane', sessionId: 'old-session', adapterId: 'kimi', toAccountId: 'account-b',
+      fromAccountLabel: 'fixture-a', reason: 'usage limit', touchedFiles: [], diffStat: undefined,
+    }, { deliverBrief })).resolves.toBe(true);
+    expect(deliverBrief).toHaveBeenCalledTimes(1);
+    expect(duringBrief).toEqual([expect.objectContaining({ taskId: 'task-1', sessionId: 'new-session' })]);
+    // O pacote vai antes de a origem sair: o dispatch passou antes dos dois.
+    expect(deliverBrief.mock.invocationCallOrder[0]).toBeLessThan(h.terminate.mock.invocationCallOrder[0]!);
+    expect(() => stores.taskDispatches.heartbeat({ sessionId: 'old-session', missionId,
+      workerIncarnationId: 'workerinc-old', leaseMs: 60_000 })).toThrow(/nenhum dispatch running/);
+  });
+
+  it('F-1512: pacote recusado desfaz a troca e o dispatch volta à origem', async () => {
+    const stores = getProjectDomainStores(scope);
+    await expect(respawnMainOwnedPaneWithAccount({
+      paneId: 'old-pane', sessionId: 'old-session', adapterId: 'kimi', toAccountId: 'account-b',
+      fromAccountLabel: 'fixture-a', reason: 'usage limit', touchedFiles: [], diffStat: undefined,
+    }, { deliverBrief: vi.fn(async () => false) })).resolves.toBe(false);
+    const incarnation = (h.spawn.mock.calls[0]![0] as { workerIncarnationId: string }).workerIncarnationId;
+    expect(stores.taskDispatches.heartbeat({ sessionId: 'old-session', missionId,
+      workerIncarnationId: 'workerinc-old', leaseMs: 60_000 })).toMatchObject({ taskId: 'task-1', paneId: 'old-pane' });
+    expect(() => stores.taskDispatches.heartbeat({ sessionId: 'new-session', missionId,
+      workerIncarnationId: incarnation, leaseMs: 60_000 })).toThrow(/nenhum dispatch running/);
+    expect(h.terminate).not.toHaveBeenCalledWith('old-session', expect.anything());
   });
 
   it('sem pane novo a tarefa continua com a sessão de antes (nada é movido)', async () => {

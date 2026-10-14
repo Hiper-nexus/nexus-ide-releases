@@ -61,7 +61,8 @@ import {
   getPaneTaskReroute,
   registerPaneTaskReroute,
 } from './pane-task-reroute';
-import { carryInFlightRequests, inFlightRequestOf } from './in-flight-request';
+import { carryInFlightRequests, inFlightRequestOf, inFlightRequestsOf } from './in-flight-request';
+import type { TaskDispatchRecord } from './task-dispatch-store';
 import { getAdapter } from '../adapters/adapter-registry';
 import { getAcpDriverSession } from '../acp/acp-harness-driver';
 import {
@@ -608,6 +609,8 @@ export async function respawnMainOwnedPaneWithAccount(input: {
     : { touchedFiles: input.touchedFiles, diffStat: input.diffStat };
   if (!isCurrent()) return false;
   const previous = previousRuntime(input, entry, expectedSessionId);
+  // F-1512: o que o pacote leva; o aceito na origem depois disto é o delta.
+  const capturedRequests = inFlightRequestsOf(input.paneId);
   const planInput: MainOwnedFailoverPlanInput = {
     // F-1480: a sessão exausta ainda vive aqui — a pasta dela é a real.
     cwd: (expectedSessionId ? getSessionCwd(expectedSessionId) : null) ?? undefined,
@@ -764,6 +767,18 @@ export async function respawnMainOwnedPaneWithAccount(input: {
       );
       return false;
     }
+    const replacement = spawned.paneId && spawned.sessionId
+      ? { paneId: spawned.paneId, sessionId: spawned.sessionId }
+      : null;
+    // F-1512: a tarefa despachada passa ao substituto ANTES de qualquer
+    // trabalho dele (colagem do pacote, delta): heartbeat e handoff do pane
+    // novo já acham o dispatch. Troca desfeita devolve o dispatch à origem.
+    const origin = expectedSessionId && entry.meta.workerIncarnationId
+      ? { paneId: input.paneId, sessionId: expectedSessionId, workerIncarnationId: entry.meta.workerIncarnationId }
+      : null;
+    const handedOver = replacement && origin && replacementIncarnationId
+      ? transferTaskDispatch(entry.meta, origin, { ...replacement, workerIncarnationId: replacementIncarnationId })
+      : null;
     // F-1476: o pty-manager só põe o pacote no argv numa sessão NOVA cujo canal
     // o leva para este papel (orquestrador: só posicional) — nunca numa
     // retomada. Sem argv, cola com prova de aceite DEPOIS da prova de boot do
@@ -788,16 +803,33 @@ export async function respawnMainOwnedPaneWithAccount(input: {
           `[failover-mission-respawn] pacote não aceito pelo pane novo de ${input.paneId}; ` +
             'recuperação não confirmada',
         );
+        if (handedOver && origin && replacement && replacementIncarnationId) {
+          transferTaskDispatch(entry.meta, { ...replacement, workerIncarnationId: replacementIncarnationId },
+            origin, handedOver);
+        }
         if (spawned.paneId) await retireUnprovedReplacement(spawned.paneId);
         return false;
       }
     }
     replaced = true;
+    // F-1512: pedido aceito na origem viva durante o boot/colagem (depois da
+    // captura do pacote) vai ao substituto pronto, uma vez, antes de a origem sair.
+    const delta = inFlightRequestsOf(input.paneId).filter((request) => !capturedRequests.includes(request));
+    if (delta.length && spawned.sessionId && spawnedOptions && !resumeClosed && !getAcpDriverSession(spawned.sessionId)) {
+      const forwarded = await (deps.deliverBrief ?? pasteRespawnBrief)(
+        spawned.sessionId,
+        `${RESPAWN_DELTA_PREAMBLE}\n${delta.join('\n---\n')}`,
+        spawnedOptions.adapterId,
+      ).catch(() => false);
+      if (!forwarded) {
+        console.warn(
+          `[failover-mission-respawn] pedido aceito por ${input.paneId} durante a troca não chegou ao pane novo; ` +
+            'ele segue na memória do pane novo para a próxima troca',
+        );
+      }
+    }
     // F-1482: o pane novo herda os pedidos em voo (troca em cadeia A → B → C).
     carryInFlightRequests(input.paneId, spawned.paneId);
-    const replacement = spawned.paneId && spawned.sessionId
-      ? { paneId: spawned.paneId, sessionId: spawned.sessionId }
-      : null;
     if (replacement && spawnedOptions) {
       adoptReplacementLineage(input.paneId, entry.meta, spawnedOptions, replacement);
     }
@@ -808,15 +840,6 @@ export async function respawnMainOwnedPaneWithAccount(input: {
         `[failover-mission-respawn] sessão exausta ${input.sessionId} sem prova ` +
           `de saída; o pane novo ${spawned.paneId} segue`,
       );
-    }
-    // A tarefa despachada segue o pane novo depois que a sessão exausta saiu
-    // (ou ficou inerte): lease e heartbeat passam à sessão/encarnação novas.
-    if (replacement && expectedSessionId && entry.meta.workerIncarnationId && replacementIncarnationId) {
-      transferTaskDispatch(entry.meta, {
-        paneId: input.paneId,
-        sessionId: expectedSessionId,
-        workerIncarnationId: entry.meta.workerIncarnationId,
-      }, { ...replacement, workerIncarnationId: replacementIncarnationId });
     }
     console.info(
       `[failover-mission-respawn] ${input.paneId} religou na conta ` +
@@ -946,24 +969,26 @@ function previousRuntime(
 }
 
 /**
- * F-1480: a tarefa despachada (lease + heartbeat) passa da sessão exausta
- * para a nova pelo mesmo rebind exato do worker reiniciado (CAS por tarefa e
+ * F-1480: a tarefa despachada (lease + heartbeat) passa de uma sessão para a
+ * outra pelo mesmo rebind exato do worker reiniciado (CAS por tarefa e
  * revisão, sem receipt). Worker sem tarefa despachada não tem o que mover.
+ * F-1512: devolve a linha movida (`known` = devolução exata à origem).
  */
 function transferTaskDispatch(
   meta: PaneOrchMeta,
   from: { readonly paneId: string; readonly sessionId: string; readonly workerIncarnationId: string },
   to: { readonly paneId: string; readonly sessionId: string; readonly workerIncarnationId: string },
-): void {
-  if (!meta.scope || !meta.missionId) return;
+  known?: TaskDispatchRecord,
+): TaskDispatchRecord | null {
+  if (!meta.scope || !meta.missionId) return null;
   try {
     const dispatches = getProjectDomainStores(meta.scope).taskDispatches;
-    const dispatch = dispatches.list(meta.missionId).find((row) =>
+    const dispatch = known ?? dispatches.list(meta.missionId).find((row) =>
       row.paneId === from.paneId && row.sessionId === from.sessionId &&
       row.workerIncarnationId === from.workerIncarnationId &&
       (row.state === 'running' || row.state === 'superseded'));
-    if (!dispatch) return;
-    dispatches.rebindRestartedWorker({
+    if (!dispatch) return null;
+    return dispatches.rebindRestartedWorker({
       missionId: meta.missionId,
       paneId: from.paneId,
       expectedSessionId: from.sessionId,
@@ -976,9 +1001,15 @@ function transferTaskDispatch(
       leaseMs: TRANSFERRED_DISPATCH_LEASE_MS,
     });
   } catch (error) {
-    console.warn('[failover-mission-respawn] tarefa despachada não transferida ao pane novo', error);
+    console.warn('[failover-mission-respawn] tarefa despachada não transferida entre os panes', error);
+    return null;
   }
 }
+
+/** F-1512: abre o pedido repassado ao substituto (texto do Nexus ao agente). */
+const RESPAWN_DELTA_PREAMBLE =
+  'Request accepted by your previous pane while Nexus was switching the account ' +
+  '(forwarded once; follow it together with the current task):';
 
 /** Lease inicial da tarefa no pane novo: o heartbeat dele renova (≤ 4 min). */
 const TRANSFERRED_DISPATCH_LEASE_MS = 10 * 60_000;

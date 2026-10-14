@@ -64,6 +64,11 @@ function clipTo(raw: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, Math.max(0, max - 1))}…`;
 }
 
+/** F-1512: cópia dos pedidos lembrados do pane (o mais recente por último). */
+export function inFlightRequestsOf(paneId: string | undefined): readonly string[] {
+  return paneId ? [...(requestsByPane.get(paneId) ?? [])] : [];
+}
+
 /** O pane novo do respawn herda os pedidos do pane que parou. */
 export function carryInFlightRequests(fromPaneId: string, toPaneId: string | undefined): void {
   const kept = requestsByPane.get(fromPaneId);

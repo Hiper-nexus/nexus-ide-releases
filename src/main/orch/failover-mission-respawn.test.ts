@@ -823,7 +823,7 @@ describe('F-1480: troca de conta do worker headless não destrói estado', () =>
     expect(options.effort).toBeUndefined();
   });
 
-  it('a tarefa despachada passa ao pane novo depois de a sessão exausta sair (lease e heartbeat)', async () => {
+  it('F-1512: a tarefa despachada passa ao pane novo logo depois do spawn, antes de a sessão exausta sair', async () => {
     deps.spawnAsync.mockResolvedValueOnce({ requestId: 'async', ok: true, paneId: 'new-pane', sessionId: 'new-session' });
     await expect(switchAccount()).resolves.toBe(true);
     const minted = (deps.spawnAsync.mock.calls[0]![0] as { workerIncarnationId: string }).workerIncarnationId;
@@ -834,7 +834,7 @@ describe('F-1480: troca de conta do worker headless não destrói estado', () =>
       replacementSessionId: 'new-session', replacementPaneId: 'new-pane',
       replacementWorkerIncarnationId: minted, leaseMs: expect.any(Number),
     });
-    expect(rebind.mock.invocationCallOrder[0]).toBeGreaterThan(deps.terminate.mock.invocationCallOrder[0]!);
+    expect(rebind.mock.invocationCallOrder[0]).toBeLessThan(deps.terminate.mock.invocationCallOrder[0]!);
   });
 
   it('rebind recusado (CAS) não desfaz a troca: o pane novo segue', async () => {
@@ -1031,6 +1031,64 @@ describe('F-1482: o pedido em voo do worker atravessa a troca de conta', () => {
     expect(options.resumeFromPaneId).toBe('old-pane');
     expect(options.initialPrompt).toContain('Request in flight: Ajuste do Maestro: usar a fila nova');
     expect(inFlightRequestOf('new-pane')).toBe('Ajuste do Maestro: usar a fila nova');
+  });
+
+  /** F-1512: o Maestro escreve na origem viva enquanto o pane novo sobe. */
+  function spawnAcceptingOriginWrite(write: string) {
+    deps.spawnAsync.mockImplementationOnce(async () => {
+      noteInFlightRequest('old-pane', write);
+      return { requestId: 'r', ok: true, paneId: 'new-pane', sessionId: 'new-session' };
+    });
+  }
+
+  it('F-1512: pedido aceito na origem durante o boot chega ao substituto, uma vez, antes de a origem sair', async () => {
+    noteInFlightRequest('old-pane', 'Implementar o motor');
+    spawnAcceptingOriginWrite('Ajuste do Maestro durante a troca: usar a fila nova');
+    const deliverBrief = vi.fn(async () => true);
+    await expect(respawnMainOwnedPaneWithAccount({
+      paneId: 'old-pane', sessionId: 'old-session', adapterId: 'codex', toAccountId: 'acct-b',
+      fromAccountLabel: 'x', reason: 'quota', touchedFiles: [], diffStat: undefined,
+    }, { deliverBrief })).resolves.toBe(true);
+    // Codex leva o pacote no argv: a única colagem é o delta.
+    expect(deliverBrief).toHaveBeenCalledTimes(1);
+    const [sessionId, prompt, adapterId] = deliverBrief.mock.calls[0] as unknown as [string, string, string];
+    expect([sessionId, adapterId]).toEqual(['new-session', 'codex']);
+    expect(prompt).toContain('Ajuste do Maestro durante a troca: usar a fila nova');
+    // O que o pacote já levou não é repetido.
+    expect(prompt).not.toContain('Implementar o motor');
+    expect((deps.spawnAsync.mock.calls[0]![0] as { initialPrompt: string }).initialPrompt).toContain('Implementar o motor');
+    // Só depois a origem é aposentada.
+    expect(deliverBrief.mock.invocationCallOrder[0]).toBeLessThan(deps.terminate.mock.invocationCallOrder[0]!);
+  });
+
+  it('F-1512: com colagem do pacote, o delta vem depois dele; sem delta, nada extra', async () => {
+    spawnAcceptingOriginWrite('Ajuste do Maestro durante a troca');
+    const deliverBrief = vi.fn(async () => true);
+    await expect(respawnMainOwnedPaneWithAccount({
+      paneId: 'old-pane', sessionId: 'old-session', adapterId: 'kimi', toAccountId: 'acct-b',
+      fromAccountLabel: 'x', reason: 'quota', touchedFiles: [], diffStat: undefined,
+    }, { deliverBrief })).resolves.toBe(true);
+    expect(deliverBrief).toHaveBeenCalledTimes(2);
+    expect((deliverBrief.mock.calls[1] as unknown as [string, string, string])[1]).toContain('Ajuste do Maestro durante a troca');
+
+    resetInFlightRequestsForTests();
+    deliverBrief.mockClear();
+    deps.spawnAsync.mockResolvedValueOnce({ requestId: 'r', ok: true, paneId: 'new-pane', sessionId: 'new-session' });
+    await expect(respawnMainOwnedPaneWithAccount({
+      paneId: 'old-pane', sessionId: 'old-session', adapterId: 'codex', toAccountId: 'acct-b',
+      fromAccountLabel: 'x', reason: 'quota', touchedFiles: [], diffStat: undefined,
+    }, { deliverBrief })).resolves.toBe(true);
+    expect(deliverBrief).not.toHaveBeenCalled();
+  });
+
+  it('F-1512: delta não aceito não desfaz a troca; ele fica na memória do pane novo', async () => {
+    spawnAcceptingOriginWrite('Ajuste do Maestro durante a troca');
+    await expect(respawnMainOwnedPaneWithAccount({
+      paneId: 'old-pane', sessionId: 'old-session', adapterId: 'codex', toAccountId: 'acct-b',
+      fromAccountLabel: 'x', reason: 'quota', touchedFiles: [], diffStat: undefined,
+    }, { deliverBrief: vi.fn(async () => false) })).resolves.toBe(true);
+    expect(inFlightRequestOf('new-pane')).toContain('Ajuste do Maestro durante a troca');
+    expect(deps.terminate).toHaveBeenCalledWith('old-session', expect.objectContaining({ origin: 'failover-respawn' }));
   });
 });
 
