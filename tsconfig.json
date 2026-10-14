@@ -6,6 +6,8 @@
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
     "jsx": "react-jsx",
     "strict": true,
+    "incremental": true,
+    "tsBuildInfoFile": ".nexus-cache/tsc/typecheck.tsbuildinfo",
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noImplicitReturns": true,

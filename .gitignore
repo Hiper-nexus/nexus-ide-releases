@@ -75,6 +75,10 @@ Icon
 
 # TypeScript
 *.tsbuildinfo
+# Cache por worktree de typecheck/testes (tsc incremental + vitest fsModuleCache).
+# Fica fora do node_modules: nas worktrees isoladas ele é um symlink do
+# checkout principal e um cache ali seria compartilhado entre worktrees.
+/.nexus-cache/
 
 # Electron Forge / Vite build
 .vite/
