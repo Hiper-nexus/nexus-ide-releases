@@ -723,7 +723,7 @@ describe("WorktreeManager", () => {
 
     it("só remove com ignorados todos em cache regenerável; out/dist/.env/__pycache__/.next/pasta qualquer mantêm", async () => {
       fs.appendFileSync(path.join(root, ".git", "info", "exclude"),
-        "node_modules/\n__pycache__/\n*.env\nscratch/\nout/\ndist/\n.vite/\n.turbo/\n.cache/\n.next/cache/\n.next/server/\n.pytest_cache/\n");
+        "node_modules/\n__pycache__/\n*.env\nscratch/\nout/\ndist/\n.vite/\n.turbo/\n.cache/\n.nexus-cache/\n.next/cache/\n.next/server/\n.pytest_cache/\n");
       const caches = await writer("caches");
       const kept = { secret: ".env", other: "scratch/dump.sql", out: "out/customer-export.zip", dist: "dist/app.js",
         pyc: "src/__pycache__/m.pyc", next: ".next/server/page.js" };
@@ -735,7 +735,7 @@ describe("WorktreeManager", () => {
       // Diretório não rastreado só com ignorados vira UMA entrada no status
       // (`pkg/`, `.next/`) e mantém a worktree (regra conservadora); aqui os
       // caches ficam onde o Git os reporta pelo nome.
-      for (const cache of [".vite/deps/a.js", ".turbo/cache/b", ".cache/c", ".pytest_cache/v/e"]) {
+      for (const cache of [".vite/deps/a.js", ".turbo/cache/b", ".cache/c", ".pytest_cache/v/e", ".nexus-cache/vitest/a.js"]) {
         write(cache, "x", caches.worktreePath);
       }
       for (const [id, file] of Object.entries(kept)) write(file, `entregável ${id}`, records[id].worktreePath);

@@ -99,7 +99,7 @@ const WORKTREE_STATUS_ARGS = [
  * worktree: podem guardar entregável.
  */
 const REGENERABLE_IGNORED = new Set([
-  "node_modules", ".vite", ".turbo", ".cache", ".pytest_cache",
+  "node_modules", ".vite", ".turbo", ".cache", ".pytest_cache", ".nexus-cache",
 ]);
 
 /**

@@ -873,6 +873,42 @@ describe('F-1386 — lockfile gating e caches de build', () => {
       .toBe('antigo');
   });
 
+  it('copyBuildCaches semeia o cache fs do vitest; dest presente não é recopiado', () => {
+    const source = tmpRoot();
+    const wt = tmpRoot();
+    makeTree(source, {
+      '.nexus-cache/vitest/mod/deadbeef.js': 'transformado',
+    });
+    const result = copyBuildCaches(source, wt);
+    expect(result.copied).toEqual(['.nexus-cache/vitest']);
+    expect(fs.readFileSync(
+      path.join(wt, '.nexus-cache/vitest/mod/deadbeef.js'), 'utf8',
+    )).toBe('transformado');
+
+    const wtWarm = tmpRoot();
+    makeTree(wtWarm, { '.nexus-cache/vitest/mod/local.js': 'da worktree' });
+    const second = copyBuildCaches(source, wtWarm);
+    expect(second.copied).toEqual([]);
+    expect(fs.readFileSync(
+      path.join(wtWarm, '.nexus-cache/vitest/mod/local.js'), 'utf8',
+    )).toBe('da worktree');
+  });
+
+  it('copyBuildCaches: falha na cópia do cache do vitest é fail-open', () => {
+    const source = tmpRoot();
+    const wt = tmpRoot();
+    makeTree(source, { '.nexus-cache/vitest/mod/a.js': 'x' });
+    const result = copyBuildCaches(source, wt, {
+      copyDir: () => {
+        throw new Error('sem espaço');
+      },
+    });
+    expect(result.copied).toEqual([]);
+    expect(result.skipped).toEqual([
+      { rel: '.nexus-cache/vitest', reason: 'copy-failed' },
+    ]);
+  });
+
   it('copyBuildCaches pula arquivo acima do teto', () => {
     const source = tmpRoot();
     const wt = tmpRoot();
