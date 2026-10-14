@@ -12,6 +12,7 @@ import {
 import { discoverCodexModelsViaAppServer } from './codex-model-list';
 import { isCurrentProcessSmokeTest } from '../smoke-core';
 import type { LiveModelListing } from './model-availability';
+import { windowsCliProbeLaunch } from './windows-npm-shim';
 
 /**
  * Descoberta VIVA de modelos por CLI: "saiu modelo novo → aparece no Nexus"
@@ -446,23 +447,27 @@ function isFresh(entry: CacheEntry | undefined, now: number): boolean {
   return now - entry.fetchedAt < ttl;
 }
 
-function execDiscovery(strategy: DiscoveryStrategy): Promise<string[]> {
+function execDiscovery(adapterId: string, strategy: DiscoveryStrategy): Promise<string[]> {
   return new Promise((resolve, reject) => {
     // npm-installed CLIs are `.cmd` shims on Windows. Resolve the same
-    // absolute executable used by the provider registry and let Node invoke
-    // the native command interpreter for that shim; a bare `agy`/`kimi` with
-    // shell:false becomes `spawn <name> ENOENT` in the packaged app.
+    // absolute executable used by the provider registry; a bare `agy`/`kimi`
+    // with shell:false becomes `spawn <name> ENOENT` in the packaged app.
+    // F-1507: the shim runs through its verified package (or a quoted cmd.exe
+    // line), never `shell: true`, which split a path with a space.
     const command = resolveCliBinary(strategy.bin)?.binPath ?? strategy.bin;
+    const launch: ReturnType<typeof windowsCliProbeLaunch> = process.platform === 'win32'
+      ? windowsCliProbeLaunch(adapterId, command, strategy.args)
+      : { file: command, args: [...strategy.args] };
     execFile(
-      command,
-      [...strategy.args],
+      launch.file,
+      launch.args,
       {
         encoding: 'utf8',
         timeout: EXEC_TIMEOUT_MS,
         maxBuffer: 1024 * 1024,
         env: { ...process.env, PATH: getEffectivePath() },
         ...(process.platform === 'win32'
-          ? { shell: true, windowsHide: true }
+          ? { windowsHide: true, windowsVerbatimArguments: launch.windowsVerbatimArguments === true }
           : {}),
       },
       (error, stdout) => {
@@ -549,7 +554,7 @@ export function refreshDiscoveredModels(
   }
   const epoch = discoveryEpoch;
   const listing: Promise<{ models: readonly string[]; defaultModel?: string }> = strategy
-    ? execDiscovery(strategy).then((models) => ({ models }))
+    ? execDiscovery(adapterId, strategy).then((models) => ({ models }))
     : asyncStrategy!().then((result) => ({ ...result, models: sanitizeDiscoveredModels(result.models) }));
   const task = listing
     .then(({ models, defaultModel }) => {

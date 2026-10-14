@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { cliInstallRecipeCandidates } from './cli-install-recipes';
 import { resolveCliBinary } from '../path-resolver';
+import { quoteWindowsArg } from '../pty/windows-command-line';
 
 /**
  * Windows npm creates a .cmd launcher rather than a symlink. Resolve the
@@ -92,4 +93,30 @@ export function windowsNpmShimSpawn(
   return invocation
     ? { file: invocation.executable, argsPrefix: invocation.argsPrefix }
     : null;
+}
+
+/**
+ * F-1507: sonda curta de CLI (`provider list`, `models`) no Windows, com argv
+ * fixo do código. O `shell: true` do Node junta caminho e argv com espaço SEM
+ * aspas: com o npm em `C:\Users\Ana Maria\…` o cmd.exe procurava
+ * `C:\Users\Ana`. Atalho do npm verificado → o pacote pelo `node.exe`, sem
+ * cmd.exe (F-668); `.cmd`/`.bat` não verificado ou nome nu → cmd.exe com o
+ * caminho sempre entre aspas (um caminho não tem `"`) e o argv citado;
+ * `.exe` → direto.
+ */
+export function windowsCliProbeLaunch(
+  adapterId: string,
+  binPath: string,
+  args: readonly string[],
+): { file: string; args: string[]; windowsVerbatimArguments?: true } {
+  const batch = /\.(?:cmd|bat)$/iu.test(binPath);
+  if (!batch && path.isAbsolute(binPath)) return { file: binPath, args: [...args] };
+  const shim = batch ? windowsNpmShimSpawn(adapterId, binPath) : null;
+  if (shim) return { file: shim.file, args: [...shim.argsPrefix, ...args] };
+  const line = [`"${binPath}"`, ...args.map(quoteWindowsArg)].join(' ');
+  return {
+    file: process.env.ComSpec ?? 'cmd.exe',
+    args: ['/d', '/s', '/c', `"${line}"`],
+    windowsVerbatimArguments: true,
+  };
 }

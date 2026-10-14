@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { resolveCliBinary } from '../path-resolver';
+import { windowsCliProbeLaunch } from './windows-npm-shim';
 import {
   classifyKimiProviderList,
   mergeKimiProviderListReadiness,
@@ -28,15 +29,21 @@ function resolveKimiBin(): string {
 }
 
 function defaultExecProviderList(): Promise<{ stdout: string; stderr: string }> {
+  const bin = resolveKimiBin();
+  const args = ['provider', 'list', '--json'];
+  // F-1507: sem `shell: true` (caminho com espaço quebrava no cmd.exe).
+  const launch: ReturnType<typeof windowsCliProbeLaunch> = process.platform === 'win32'
+    ? windowsCliProbeLaunch('kimi', bin, args)
+    : { file: bin, args };
   return new Promise((resolve, reject) => {
     execFile(
-      resolveKimiBin(),
-      ['provider', 'list', '--json'],
+      launch.file,
+      launch.args,
       {
         timeout: EXEC_TIMEOUT_MS,
         encoding: 'utf8',
         ...(process.platform === 'win32'
-          ? { shell: true, windowsHide: true }
+          ? { windowsHide: true, windowsVerbatimArguments: launch.windowsVerbatimArguments === true }
           : {}),
       },
       (err, stdout, stderr) => {

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { windowsNpmShimInvocation, windowsNpmShimSpawn, windowsNpmShimTarget } from './windows-npm-shim';
+import { windowsCliProbeLaunch, windowsNpmShimInvocation, windowsNpmShimSpawn, windowsNpmShimTarget } from './windows-npm-shim';
 
 const roots: string[] = [];
 afterEach(() => {
@@ -102,4 +102,32 @@ describe('spawn direto por trás do .cmd do npm (F-668)', () => {
       expect(fs.existsSync(launch!.file)).toBe(true);
     },
   );
+});
+
+describe('sonda curta de CLI no Windows (F-1507)', () => {
+  it.runIf(process.platform === 'win32')('.exe vai direto; .cmd não verificado vai ao cmd.exe com o caminho entre aspas', () => {
+    const prefix = path.join('C:\\Users\\Ana Maria', 'npm');
+    expect(windowsCliProbeLaunch('kimi', path.join(prefix, 'kimi.exe'), ['provider', 'list'])).toEqual({
+      file: path.join(prefix, 'kimi.exe'),
+      args: ['provider', 'list'],
+    });
+    const launch = windowsCliProbeLaunch('kimi', path.join(prefix, 'missing-kimi.cmd'), ['provider', 'list', '--json']);
+    expect(launch.windowsVerbatimArguments).toBe(true);
+    expect(launch.args).toEqual([
+      '/d', '/s', '/c', `""${path.join(prefix, 'missing-kimi.cmd')}" provider list --json"`,
+    ]);
+  });
+
+  it('atalho do npm verificado não passa pelo cmd.exe', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-probe-shim-'));
+    roots.push(root);
+    const packageRoot = path.join(root, 'node_modules', '@anthropic-ai', 'claude-code');
+    fs.mkdirSync(path.join(packageRoot, 'bin'), { recursive: true });
+    fs.writeFileSync(path.join(packageRoot, 'package.json'), JSON.stringify({ bin: { claude: 'bin/claude.exe' } }));
+    const exe = path.join(packageRoot, 'bin', 'claude.exe');
+    fs.writeFileSync(exe, '');
+    const shim = path.join(root, 'claude.cmd');
+    fs.writeFileSync(shim, CLAUDE_NPM_SHIM);
+    expect(windowsCliProbeLaunch('claude', shim, ['--version'])).toEqual({ file: exe, args: ['--version'] });
+  });
 });

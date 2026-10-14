@@ -359,3 +359,30 @@ describe.skipIf(process.platform === 'win32')('F-990 — última listagem boa (a
     expect(changes).toEqual(['agy', 'agy', 'agy']);
   });
 });
+
+// F-1507: o `shell: true` juntava caminho e argv sem aspas e o cmd.exe partia
+// `C:\Users\Ana Maria\…\opencode.cmd` no espaço; a listagem viva falhava.
+describe.runIf(process.platform === 'win32')('F-1507 — CLI num caminho com espaço no Windows', () => {
+  afterEach(async () => {
+    const resolver = await vi.importActual<typeof import('../path-resolver')>('../path-resolver');
+    vi.mocked(resolveCliBinary).mockImplementation(resolver.resolveCliBinary);
+    resetModelDiscoveryForTests();
+  });
+
+  it('o atalho .cmd roda e a listagem entra', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-discovery-space-'));
+    try {
+      const dir = path.join(root, 'Ana Maria', 'npm');
+      fs.mkdirSync(dir, { recursive: true });
+      const shim = path.join(dir, 'opencode.cmd');
+      fs.writeFileSync(shim, '@echo off\r\nif "%1"=="models" echo opencode/fake-model\r\n');
+      vi.mocked(resolveCliBinary).mockImplementation((command) =>
+        command === 'opencode' ? ({ binPath: shim } as ReturnType<typeof resolveCliBinary>) : null);
+
+      await refreshDiscoveredModels('opencode', { force: true });
+      expect(discoveredModelStateFor('opencode')).toMatchObject({ status: 'ok', models: ['opencode/fake-model'] });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
