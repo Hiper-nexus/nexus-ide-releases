@@ -4,7 +4,11 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { resolveCliBinary } from '../path-resolver';
 import { peekKimiSeatReadiness, rememberKimiSeatReadiness } from './seat-auth-readiness';
-import { refreshKimiSeatReadiness } from './kimi-seat-probe';
+import {
+  invalidateKimiSeatProbeCache,
+  refreshKimiSeatReadiness,
+  resetKimiSeatProbeMemoForTests,
+} from './kimi-seat-probe';
 
 vi.mock('../path-resolver', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../path-resolver')>();
@@ -15,6 +19,7 @@ const roots: string[] = [];
 
 afterEach(async () => {
   rememberKimiSeatReadiness(undefined);
+  resetKimiSeatProbeMemoForTests();
   const actual = await vi.importActual<typeof import('../path-resolver')>('../path-resolver');
   vi.mocked(resolveCliBinary).mockImplementation(actual.resolveCliBinary);
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
@@ -55,6 +60,7 @@ describe('refreshKimiSeatReadiness', () => {
     expect(missing).toBe('missing');
 
     rememberKimiSeatReadiness(undefined);
+    invalidateKimiSeatProbeCache();
     const unreadable = await refreshKimiSeatReadiness({
       execProviderList: async () => {
         throw new Error('timeout');
@@ -113,6 +119,72 @@ describe('refreshKimiSeatReadiness', () => {
       useKimi(shim);
 
       await expect(refreshKimiSeatReadiness()).resolves.toBe('present');
+    });
+  });
+
+  // A4 (perf spawn): TTL 60s + single-flight — a rota de missão chamava
+  // `kimi provider list --json` (4s timeout) em TODO spawn, sem memo.
+  describe('TTL + single-flight (A4)', () => {
+    it('dentro do TTL não re-executa o probe', async () => {
+      let calls = 0;
+      const exec = async () => {
+        calls += 1;
+        return { stdout: JSON.stringify({ providers: [{ source: 'oauth' }] }), stderr: '' };
+      };
+      const first = await refreshKimiSeatReadiness({ execProviderList: exec });
+      const second = await refreshKimiSeatReadiness({ execProviderList: exec });
+      expect(first).toBe('present');
+      expect(second).toBe('present');
+      expect(calls).toBe(1);
+    });
+
+    it('single-flight: chamadas concorrentes compartilham o mesmo probe', async () => {
+      let calls = 0;
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      const exec = async () => {
+        calls += 1;
+        await gate;
+        return { stdout: JSON.stringify({ providers: [{ source: 'oauth' }] }), stderr: '' };
+      };
+      const pending = Promise.all([
+        refreshKimiSeatReadiness({ execProviderList: exec }),
+        refreshKimiSeatReadiness({ execProviderList: exec }),
+        refreshKimiSeatReadiness({ execProviderList: exec }),
+      ]);
+      release();
+      expect(await pending).toEqual(['present', 'present', 'present']);
+      expect(calls).toBe(1);
+    });
+
+    it('após o TTL re-executa o probe', async () => {
+      vi.useFakeTimers();
+      try {
+        let calls = 0;
+        const exec = async () => {
+          calls += 1;
+          return { stdout: JSON.stringify({ providers: [{ source: 'oauth' }] }), stderr: '' };
+        };
+        await refreshKimiSeatReadiness({ execProviderList: exec });
+        vi.advanceTimersByTime(61_000);
+        await refreshKimiSeatReadiness({ execProviderList: exec });
+        expect(calls).toBe(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('invalidateKimiSeatProbeCache força re-probe imediato', async () => {
+      const { invalidateKimiSeatProbeCache } = await import('./kimi-seat-probe');
+      let calls = 0;
+      const exec = async () => {
+        calls += 1;
+        return { stdout: JSON.stringify({ providers: [{ source: 'oauth' }] }), stderr: '' };
+      };
+      await refreshKimiSeatReadiness({ execProviderList: exec });
+      invalidateKimiSeatProbeCache();
+      await refreshKimiSeatReadiness({ execProviderList: exec });
+      expect(calls).toBe(2);
     });
   });
 });

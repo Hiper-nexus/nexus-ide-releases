@@ -70,21 +70,57 @@ function classifyExecError(err: unknown): SeatAuthReadiness {
 }
 
 /**
+ * A4 (perf spawn): a rota de missão chamava `kimi provider list --json`
+ * (timeout 4s) em TODO spawn. TTL 60s + single-flight no padrão do memo AGY
+ * (subscription-auth.ts). Sem gancho de login externo: `invalidateKimiSeatProbeCache`
+ * fica disponível quando o estado de login mudar.
+ */
+const KIMI_SEAT_MEMO_TTL_MS = 60_000;
+let kimiSeatMemo: { at: number; value: SeatAuthReadiness } | undefined;
+let kimiSeatInFlight: Promise<SeatAuthReadiness> | undefined;
+
+/** Invalida o memo quando o estado de login do Kimi mudar. */
+export function invalidateKimiSeatProbeCache(): void {
+  kimiSeatMemo = undefined;
+  kimiSeatInFlight = undefined;
+}
+
+/** Test hook. */
+export function resetKimiSeatProbeMemoForTests(): void {
+  invalidateKimiSeatProbeCache();
+}
+
+/**
  * Refresh Kimi seating proof from `kimi provider list --json`.
  * Stale "No providers configured" must not override a live oauth source.
  */
 export async function refreshKimiSeatReadiness(
   deps: KimiSeatProbeDeps = { execProviderList: defaultExecProviderList },
 ): Promise<SeatAuthReadiness> {
-  const stale = peekKimiSeatReadiness();
-  let live: SeatAuthReadiness;
-  try {
-    const { stdout, stderr } = await deps.execProviderList();
-    live = classifyKimiProviderList(`${stdout}\n${stderr}`);
-  } catch (err) {
-    live = classifyExecError(err);
+  if (kimiSeatMemo && Date.now() - kimiSeatMemo.at < KIMI_SEAT_MEMO_TTL_MS) {
+    return kimiSeatMemo.value;
   }
-  const merged = mergeKimiProviderListReadiness(live, stale);
-  rememberKimiSeatReadiness(merged);
-  return merged;
+  if (kimiSeatInFlight) return kimiSeatInFlight;
+  const run = async (): Promise<SeatAuthReadiness> => {
+    const stale = peekKimiSeatReadiness();
+    let live: SeatAuthReadiness;
+    try {
+      const { stdout, stderr } = await deps.execProviderList();
+      live = classifyKimiProviderList(`${stdout}\n${stderr}`);
+    } catch (err) {
+      live = classifyExecError(err);
+    }
+    const merged = mergeKimiProviderListReadiness(live, stale);
+    rememberKimiSeatReadiness(merged);
+    return merged;
+  };
+  kimiSeatInFlight = run()
+    .then((value) => {
+      kimiSeatMemo = { at: Date.now(), value };
+      return value;
+    })
+    .finally(() => {
+      kimiSeatInFlight = undefined;
+    });
+  return kimiSeatInFlight;
 }

@@ -92,13 +92,29 @@ export function parseSpecialtyBenchmark(raw: unknown): SpecialtyBenchmark | null
   };
 }
 
+// A6 (perf spawn): o overlay do operador era relido (stat + read + parse) a
+// cada rota. Cache por mtime — arquivo imutável entre spawns reaproveita o
+// parse; qualquer escrita (mtime novo) invalida.
+let overlayCache: { mtimeMs: number; value: SpecialtyBenchmark | null } | undefined;
+
+/** Test hook. */
+export function __resetSpecialtyBenchmarkCacheForTests(): void {
+  overlayCache = undefined;
+}
+
 function readUserOverlay(): SpecialtyBenchmark | null {
   try {
-    if (!fs.existsSync(USER_SPECIALTY_BENCHMARK_FILE)) return null;
+    const stat = fs.statSync(USER_SPECIALTY_BENCHMARK_FILE);
+    // mtime.getTime() (ms inteiro): utimesSync e Date truncam para ms;
+    // comparar mtimeMs cru (float sub-ms no APFS) nunca casava.
+    const mtimeMs = stat.mtime.getTime();
+    if (overlayCache && overlayCache.mtimeMs === mtimeMs) return overlayCache.value;
     const raw: unknown = JSON.parse(
       fs.readFileSync(USER_SPECIALTY_BENCHMARK_FILE, 'utf8'),
     );
-    return parseSpecialtyBenchmark(raw);
+    const value = parseSpecialtyBenchmark(raw);
+    overlayCache = { mtimeMs, value };
+    return value;
   } catch {
     return null;
   }

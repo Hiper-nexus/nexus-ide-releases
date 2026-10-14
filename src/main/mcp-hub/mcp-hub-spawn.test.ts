@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  __resetMcpHubSpawnCacheForTests,
   claudeFamilyHubMcpServers,
   codexHubMcpArgs,
   loadMcpHubServersForSpawn,
@@ -16,6 +17,7 @@ import {
 
 const tempDirs: string[] = [];
 afterEach(() => {
+  __resetMcpHubSpawnCacheForTests();
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -357,5 +359,35 @@ describe('selectHubServersForSpawn — pane de missão (F-247)', () => {
         role: 'user',
       }).map((server) => server.key),
     ).toEqual(['sentry']);
+  });
+});
+
+// A6 (perf spawn): o hub era relido (lstat + read + JSON.parse + schema) a
+// cada spawn. Cache por mtime: conteúdo trocado com mtime igual → cache vence.
+describe('loadMcpHubServersForSpawn — cache por mtime (A6)', () => {
+  it('conteúdo novo com mtime igual não é relido; reset re-ler', () => {
+    const workspace = workspaceWithHub([
+      { id: 'a', name: 'A', transport: 'stdio', command: '/bin/a', args: [], tools: [], source: 'codex' },
+    ]);
+    const hubFile = path.join(workspace, '.nexus', 'mcp-hub.json');
+    const first = loadMcpHubServersForSpawn(workspace);
+    expect(first.map((s) => s.key)).toEqual(['a']);
+    const at = fs.statSync(hubFile).mtime;
+    // Troca o conteúdo mas restaura o mtime: o cache deve vencer.
+    fs.writeFileSync(
+      hubFile,
+      JSON.stringify({
+        schemaVersion: 1,
+        servers: [
+          { id: 'b', name: 'B', transport: 'stdio', command: '/bin/b', args: [], tools: [], source: 'codex' },
+        ],
+      }),
+    );
+    fs.utimesSync(hubFile, at, at);
+    const cached = loadMcpHubServersForSpawn(workspace);
+    expect(cached.map((s) => s.key)).toEqual(['a']);
+    __resetMcpHubSpawnCacheForTests();
+    const fresh = loadMcpHubServersForSpawn(workspace);
+    expect(fresh.map((s) => s.key)).toEqual(['b']);
   });
 });

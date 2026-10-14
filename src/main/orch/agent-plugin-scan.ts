@@ -559,10 +559,31 @@ function scanPluginDirectory(
   });
 }
 
+// A6 (perf spawn): ensureSkillsForCli roda em TODO spawn e o scan de plugins
+// (readdir + manifests) era refeito a cada chamada. TTL 60s no padrão do
+// jev-skill-suggestion — instalar um plugin aparece no spawn seguinte.
+const SCAN_CACHE_TTL_MS = 60_000;
+const scanCache = new Map<
+  string,
+  { at: number; found: readonly DiscoveredPlugin[] }
+>();
+
+/** Test hook. */
+export function __resetScanInstalledPluginsCacheForTests(): void {
+  scanCache.clear();
+}
+
 export function scanInstalledPlugins(
   home: string = os.homedir(),
   options: ScanInstalledPluginsOptions = {},
 ): readonly DiscoveredPlugin[] {
+  const cacheable = options.allowedTools === undefined || options.allowedTools === null;
+  const cacheKey = home;
+  const now = Date.now();
+  if (cacheable) {
+    const hit = scanCache.get(cacheKey);
+    if (hit && now - hit.at < SCAN_CACHE_TTL_MS) return hit.found;
+  }
   const found: DiscoveredPlugin[] = [];
   for (const root of PLUGIN_ROOTS) {
     const rootDir = path.join(home, root);
@@ -570,7 +591,11 @@ export function scanInstalledPlugins(
       root === '.claude/plugins' ? claudeCodeInstalls(rootDir, home, options) : null;
     if (installs) {
       for (const plugin of installs) {
-        if (found.length >= MAX_PLUGINS) return Object.freeze(found);
+        if (found.length >= MAX_PLUGINS) {
+          const frozen = Object.freeze(found);
+          if (cacheable) scanCache.set(cacheKey, { at: now, found: frozen });
+          return frozen;
+        }
         found.push(plugin);
       }
       continue;
@@ -582,13 +607,19 @@ export function scanInstalledPlugins(
       continue;
     }
     for (const entry of entries) {
-      if (found.length >= MAX_PLUGINS) return Object.freeze(found);
+      if (found.length >= MAX_PLUGINS) {
+        const frozen = Object.freeze(found);
+        if (cacheable) scanCache.set(cacheKey, { at: now, found: frozen });
+        return frozen;
+      }
       // F-1333: .trash e afins nunca são raiz de plugin.
       if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
       found.push(scanPluginDirectory(path.join(rootDir, entry.name), home, options));
     }
   }
-  return Object.freeze(found);
+  const frozen = Object.freeze(found);
+  if (cacheable) scanCache.set(cacheKey, { at: now, found: frozen });
+  return frozen;
 }
 
 /**

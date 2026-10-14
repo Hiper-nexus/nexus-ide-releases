@@ -167,6 +167,30 @@ function isStdioHubServer(server: McpHubSpawnServer): boolean {
   return !server.url && Boolean(server.command);
 }
 
+// A6 (perf spawn): o hub era relido (lstat + read + JSON.parse + schema) a
+// cada spawn. Cache por mtime do arquivo — config imutável entre spawns
+// reaproveita o parse; qualquer escrita (mtime novo) invalida.
+const hubConfigCache = new Map<
+  string,
+  { mtimeMs: number; config: ReturnType<typeof mcpHubConfigSchema.parse> }
+>();
+
+/** Test hook. */
+export function __resetMcpHubSpawnCacheForTests(): void {
+  hubConfigCache.clear();
+}
+
+function readHubConfig(file: string, stat: fs.Stats) {
+  // mtime.getTime() (ms inteiro): utimesSync/Date truncam para ms.
+  const mtimeMs = stat.mtime.getTime();
+  const hit = hubConfigCache.get(file);
+  if (hit && hit.mtimeMs === mtimeMs) return hit.config;
+  const config = mcpHubConfigSchema.parse(JSON.parse(fs.readFileSync(file, 'utf8')));
+  hubConfigCache.delete(file);
+  hubConfigCache.set(file, { mtimeMs, config });
+  return config;
+}
+
 /**
  * Lê o hub do workspace e devolve os servidores prontos para materialização.
  * Nunca lança: qualquer falha (ausente, symlink, JSON inválido, schema fora do
@@ -190,9 +214,7 @@ export function loadMcpHubServersForSpawn(
     if (!fs.lstatSync(path.dirname(file)).isDirectory()) return [];
     const stat = fs.lstatSync(file);
     if (!stat.isFile() || stat.size > MAX_HUB_FILE_BYTES) return [];
-    let config = mcpHubConfigSchema.parse(
-      JSON.parse(fs.readFileSync(file, 'utf8')),
-    );
+    let config = readHubConfig(file, stat);
     if (options.secretGet) {
       try {
         config = hydrateMcpHubArgs(
