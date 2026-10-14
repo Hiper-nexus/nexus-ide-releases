@@ -1292,6 +1292,68 @@ describe('TerminalWorkspace — abas de feature', () => {
     );
   });
 
+  it('a aba que hospeda a missão mostra "Mapa da equipe" e um clique abre o mapa', () => {
+    // Campo 14/10: o mapa da equipe só existia dentro do Quadro — quem vive
+    // nas abas nem sabia dele.
+    useLayoutStore.setState({
+      root: buildGridTree([
+        { id: 'pane-shell', kind: 'shell', title: 'shell' },
+        {
+          id: 'pane-host',
+          kind: 'cli-agent',
+          title: 'Claude',
+          adapterId: 'claude',
+          role: 'orchestrator',
+          missionId: 'mission-epic',
+          missionHost: true,
+        },
+        {
+          id: 'pane-worker',
+          kind: 'cli-agent',
+          title: 'Codex',
+          adapterId: 'codex',
+          missionId: 'mission-epic',
+        },
+      ]),
+      focusedPaneId: 'pane-host',
+      maximizedPaneId: null,
+    });
+    useOrchStore.setState({
+      paneMissions: {},
+      missions: [],
+      missionSummaries: [
+        { id: 'mission-epic', title: 'Fechar o Epic 22', state: 'running', ...running },
+      ],
+    });
+    useSessionStateStore.setState({
+      paneStates: new Map([['pane-host', 'idle'], ['pane-worker', 'busy']]),
+      displayStates: new Map([['pane-host', 'idle'], ['pane-worker', 'busy']]),
+    });
+    useProductNavigationStore.getState().openTerminal();
+
+    const { host } = mount(<TerminalWorkspace />);
+    const button = host.querySelector<HTMLButtonElement>('.workspace-tabs__team');
+
+    expect(button?.getAttribute('aria-label')).toBe(
+      'Abrir o mapa da equipe de “Fechar o Epic 22”: coordenador e 1 agente, 1 trabalhando',
+    );
+    act(() => button!.click());
+    expect(useProductNavigationStore.getState().destination).toEqual({
+      kind: 'mission',
+      missionId: 'mission-epic',
+      surface: 'board',
+    });
+    useSessionStateStore.setState({ paneStates: new Map(), displayStates: new Map() });
+  });
+
+  it('aba só de terminais não ganha o mapa da equipe', () => {
+    seedTwoSpaces();
+
+    const { host } = mount(<TerminalWorkspace />);
+
+    expect(host.querySelector('.workspace-tabs__team')).toBeNull();
+  });
+
   it('o "+" da barra abre uma aba NOVA com o pane escolhido e leva o operador até ela', () => {
     useLayoutStore.setState({
       root: buildGridTree([{ id: 'pane-shell', kind: 'shell', title: 'shell' }]),

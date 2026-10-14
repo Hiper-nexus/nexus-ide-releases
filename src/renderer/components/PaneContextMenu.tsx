@@ -222,7 +222,7 @@ export function PaneContextMenu({
           const title = useOrchStore
             .getState()
             .missions.find((m) => m.id === missionId)?.title;
-          toastPromoted(title);
+          toastPromoted(title, missionId);
         }
       },
     });

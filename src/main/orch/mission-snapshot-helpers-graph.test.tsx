@@ -60,7 +60,7 @@ vi.mock('./mission-leadership-runtime', () => ({
   getMissionLeadership: () => ({ resolveMissionLeader: harness.resolveMissionLeader }),
 }));
 
-import { projectMissionEngineSnapshotView } from './mission-engine-production';
+import { missionAgentTaskDetail, projectMissionEngineSnapshotView } from './mission-engine-production';
 import { projectMissionSnapshot } from './mission-snapshot';
 import { qualitativeProgress } from '../../renderer/lib/mission-progress-line';
 import {
@@ -641,5 +641,123 @@ describe('F-777: o layout por linhas cabe 10 a 20 helpers', () => {
         expect(overlap, `${layout[a]!.agentId} × ${layout[b]!.agentId}`).toBe(false);
       }
     }
+  });
+});
+
+/**
+ * Campo 14/10, dados REAIS da missão mission-4a60c550 (otimização do Nexus):
+ * os 15 registros de `mission_panes` (sqlite, leitura) e os 7 panes vivos de
+ * `nexus_pane_list` / `nexus_mission_control` no mesmo instante. O squad do
+ * runtime agêntico tem os dois assentos que aparecem como agentName.
+ */
+describe('campo 14/10: equipe real da missão de otimização no mapa', () => {
+  const squadId = 'agentic-runtime-333abc1d';
+  const LIVE = [
+    { paneId: 'pane-mv8gn1b6-2', sessionId: 'pty-mv8gn1i7-1', adapterId: 'claude', role: 'orchestrator', agentName: 'Coordenar e revisar', title: 'Claude · Abertura de panes no Nexus' },
+    { paneId: 'pane-mv8gn4a8-4', sessionId: 'pty-mv8gn4h7-2', adapterId: 'codex', role: 'worker', agentName: 'Implementar interface', title: 'GPT · task-86fc5541c9a3d2da...' },
+    { paneId: 'pane-mv8gq17j-j', sessionId: 'pty-mv8gq26p-7', adapterId: 'claude', role: 'worker', title: 'Claude · Barra de ações da equipe' },
+    { paneId: 'pane-mv8h131x-p', sessionId: 'pty-mv8h13b9-9', adapterId: 'mimo-code', role: 'worker', title: 'MC | Otimizar nexus_pane_spawn: panes lentos' },
+    { paneId: 'pane-mv8h958q-x', sessionId: 'pty-mv8h96iu-11', adapterId: 'claude', role: 'worker', title: 'Claude · Lentidão do loop principal e pane Claude travado' },
+    { paneId: 'pane-mv8in7bt-17', sessionId: 'pty-mv8in7w0-13', adapterId: 'claude', role: 'worker', title: 'Claude · Mapa de agentes da missão visível' },
+    { paneId: 'pane-mv8ip4y6-1a', sessionId: 'pty-mv8ip5kt-14', adapterId: 'devin', role: 'worker', title: 'devin: Fix missing accountId in renderer resume' },
+  ] as const;
+  const RECORDS: Array<[string, 'orchestrator' | 'worker', string, string, string?]> = [
+    ['pane-mv8gn1b6-2', 'orchestrator', 'claude', 'Coordenar e revisar', 'Coordenar e revisar'],
+    ['pane-mv8gn4a8-4', 'worker', 'codex', 'Implementar interface', 'Implementar interface'],
+    ['pane-mv8gnxwc-7', 'worker', 'claude', 'Perf · boot do app'],
+    ['pane-mv8go3d1-a', 'worker', 'claude', 'Perf · renderer runtime'],
+    ['pane-mv8go8m8-d', 'worker', 'agy', 'Perf · main process'],
+    ['pane-mv8goeb0-g', 'worker', 'glm', 'Perf · spawn via MCP'],
+    ['pane-mv8gq17j-j', 'worker', 'claude', 'UI · tela da equipe (squad)'],
+    ['pane-mv8gwzsb-m', 'worker', 'claude', 'UI · mapa dos agentes visível'],
+    ['pane-mv8h131x-p', 'worker', 'mimo-code', 'Perf · spawn MCP quick wins'],
+    ['pane-mv8h1g5v-s', 'worker', 'deepseek', 'Perf · pool de worktrees'],
+    ['pane-mv8h958q-x', 'worker', 'claude', 'Perf · event loop do main'],
+    ['pane-mv8hn7bd-14', 'worker', 'claude', 'Gamificação · Opus 5.5'],
+    ['pane-mv8in7bt-17', 'worker', 'claude', 'claude'],
+    ['pane-mv8ip4y6-1a', 'worker', 'devin', 'Bug · resume sem conta'],
+    ['pane-mv8is04d-1d', 'worker', 'deepseek', 'deepseek'],
+  ];
+
+  function realMission(livePaneIds: readonly string[] = LIVE.map((pane) => pane.paneId)) {
+    harness.squads.set(squadId, {
+      id: squadId,
+      agents: [
+        { id: 'coordenar', agentName: 'Coordenar e revisar', category: 'orchestrator', cli: 'claude', model: 'claude-opus-5-5' },
+        { id: 'implementar', agentName: 'Implementar interface', category: 'executor', cli: 'codex', model: 'gpt-6.1-sol' },
+      ],
+    });
+    harness.resolveMissionLeader.mockReturnValue({
+      sessionId: 'pty-mv8gn1i7-1', paneId: 'pane-mv8gn1b6-2', source: 'durable', proven: true,
+    });
+    const live = LIVE.filter((pane) => livePaneIds.includes(pane.paneId));
+    for (const pane of LIVE) harness.sessionStates.set(pane.sessionId, livePaneIds.includes(pane.paneId) ? 'busy' : 'exited');
+    harness.paneSnapshots = live.map((pane) => ({ ...pane, kind: 'cli-agent', missionId, state: 'busy' }));
+    const view = projectMissionEngineSnapshotView(
+      scope,
+      stores({
+        mission: mission({ squadId }),
+        panes: RECORDS.map(([paneId, role, adapterId, title, agentName], index) => ({
+          id: `row-${paneId}`, missionId, paneId, role, adapterId, title,
+          ...(agentName ? { agentName } : {}),
+          createdAt: index + 1,
+        }) as MissionPaneSpec),
+      }),
+      missionId,
+    );
+    return projectMissionSnapshot(view);
+  }
+
+  it('todo pane vivo da missão vira card; o que fechou sai do mapa', () => {
+    const snapshot = realMission();
+
+    expect(snapshot.agents.map((agent) => agent.paneId).sort()).toEqual(
+      LIVE.map((pane) => pane.paneId).sort(),
+    );
+    expect(snapshot.agents).toHaveLength(7);
+    expect(snapshot.agents.filter((agent) => agent.category === 'orchestrator')).toHaveLength(1);
+    // Registro sem pane vivo (fechados, ou a origem de uma continuação) não volta.
+    for (const closed of ['pane-mv8is04d-1d', 'pane-mv8gwzsb-m', 'pane-mv8gnxwc-7', 'pane-mv8h1g5v-s']) {
+      expect(snapshot.agents.some((agent) => agent.id === `pane:${closed}`)).toBe(false);
+    }
+    expect(renderSnapshot(snapshot).querySelectorAll('.mission-agent-card')).toHaveLength(7);
+
+    const afterClose = realMission(LIVE.map((pane) => pane.paneId).filter((id) => id !== 'pane-mv8ip4y6-1a'));
+    expect(afterClose.agents).toHaveLength(6);
+    expect(afterClose.agents.some((agent) => agent.id === 'pane:pane-mv8ip4y6-1a')).toBe(false);
+  });
+
+  it('sem unidade do plano, o visor mostra a tarefa real do pane, não "Sem tarefa do plano"', () => {
+    const snapshot = realMission();
+    const detailOf = (id: string) => snapshot.agents.find((agent) => agent.id === id)?.detail;
+
+    expect(detailOf('coordenar')).toBe('Abertura de panes no Nexus');
+    expect(detailOf('pane:pane-mv8h958q-x')).toBe('Lentidão do loop principal e pane Claude travado');
+    expect(detailOf('pane:pane-mv8gq17j-j')).toBe('Barra de ações da equipe');
+    expect(detailOf('pane:pane-mv8h131x-p')).toBe('Otimizar nexus_pane_spawn: panes lentos');
+    expect(detailOf('pane:pane-mv8ip4y6-1a')).toBe('Fix missing accountId in renderer resume');
+    expect(detailOf('pane:pane-mv8in7bt-17')).toBe('Mapa de agentes da missão visível');
+    // Codex escreve a pasta da worktree no título: isso não é tarefa, e o
+    // título do spawn repete o nome do card.
+    expect(detailOf('implementar')).toBeUndefined();
+
+    const host = renderSnapshot(snapshot);
+    const card = (id: string) => host.querySelector(`.mission-agent-card[data-agent-id="${id}"]`)!;
+    expect(card('pane:pane-mv8h958q-x').textContent).toContain('Lentidão do loop principal e pane Claude travado');
+    expect(card('pane:pane-mv8h958q-x').textContent).not.toContain('Sem tarefa do plano');
+    expect(card('implementar').textContent).toContain('Terminal ativo · Sem tarefa do plano');
+  });
+});
+
+describe('missionAgentTaskDetail: a tarefa do visor', () => {
+  const base = { agentName: 'Frontend', adapterId: 'codex', workspaceRoot: '/Users/op/dev/nexus-ide' };
+  it.each([
+    ['GPT · nexus-ide', 'Implementar a tela de login', 'Implementar a tela de login'],
+    ['GPT · task-86fc5541c9a3d2da...', 'Frontend', undefined],
+    ['Claude · Frontend', undefined, undefined],
+    [undefined, 'codex', undefined],
+    ['devin: Fix missing accountId in renderer resume', undefined, 'Fix missing accountId in renderer resume'],
+  ] as const)('live %s + spawn %s → %s', (liveTitle, recordTitle, expected) => {
+    expect(missionAgentTaskDetail({ ...base, liveTitle, recordTitle })).toBe(expected);
   });
 });

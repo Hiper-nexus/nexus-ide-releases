@@ -36,6 +36,19 @@ const STATE_LABELS: Readonly<Record<MissionAgentSnapshot['state'], string>> = {
   stopped: 'Interrompido',
 };
 
+/**
+ * A palavra do estado do agente, igual no rack e no inspetor. `queued` com o
+ * terminal vivo é o agente parado no prompt sem trabalho: o motor não tem
+ * estado "ocioso" e cai em `queued`, mas "Na fila" fazia a Coordenação que
+ * espera os helpers parecer que nem começou (campo 14/10).
+ */
+export function missionAgentStateLabel(
+  agent: Pick<MissionAgentSnapshot, 'state' | 'terminalLive'>,
+): string {
+  if (agent.state === 'queued' && agent.terminalLive === true) return 'Em espera';
+  return STATE_LABELS[agent.state];
+}
+
 /** Régua de LEDs de atividade do rack (só desenho; o estado vem em palavra). */
 const ACTIVITY_LEDS = 12;
 
@@ -80,23 +93,27 @@ export function MissionAgentCard({
   onSelectAgent,
 }: MissionAgentCardProps) {
   const categoryLabel = CATEGORY_LABELS[agent.category];
-  const stateLabel = STATE_LABELS[agent.state];
+  const stateLabel = missionAgentStateLabel(agent);
   const toolLabel = rackToolLabel(agent);
   const currentUnitId = currentUnit?.id;
   const currentUnitTitle = currentUnit?.title;
-  const idleLabel = agent.terminalLive === false
+  // Sem unidade do plano, o detalhe é a tarefa real do pane (o título que a
+  // CLI escreve, ver missionAgentTaskDetail no Main). "Sem tarefa do plano"
+  // só quando não há nada: ao lado de "Trabalhando" a frase fazia o terminal
+  // parecer ocioso (campo 14/10).
+  const presence = agent.terminalLive === false
     ? 'Sem terminal ativo'
-    : agent.terminalLive === true
-      ? 'Terminal ativo · Sem tarefa vinculada'
-      : 'Sem tarefa vinculada';
+    : agent.terminalLive === true ? 'Terminal ativo' : null;
+  const noTask = currentUnitId || agent.detail ? null : 'Sem tarefa do plano';
+  const idleLabel = [presence, noTask].filter(Boolean).join(' · ');
+  const showIdle = Boolean(idleLabel) && (agent.terminalLive === false || !currentUnitId);
   const accessibleText = [
     agent.agentName,
     agent.operatorOpened === true ? 'Aberto por você' : null,
     `Papel: ${categoryLabel}`,
     `Ferramenta: ${toolLabel}`,
     `Estado: ${stateLabel}`,
-    agent.terminalLive === false || !currentUnitId ? idleLabel : null,
-    agent.terminalLive === false && !currentUnitId ? 'Sem tarefa vinculada' : null,
+    showIdle ? idleLabel : null,
     currentUnitId
       ? currentUnitTitle
         ? `Unidade atual: ${currentUnitTitle} (${currentUnitId})`
@@ -176,10 +193,9 @@ export function MissionAgentCard({
       )}
 
       <span className="mission-agent-card__display">
-        {(agent.terminalLive === false || !currentUnitId) && (
+        {showIdle && (
           <span className="mission-agent-card__idle" aria-hidden="true">
             {idleLabel}
-            {agent.terminalLive === false && !currentUnitId ? ' · Sem tarefa vinculada' : null}
           </span>
         )}
         {(currentUnitId || agent.detail) && (

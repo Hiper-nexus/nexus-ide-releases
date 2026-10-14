@@ -14,6 +14,7 @@ import { MissionDecisionPanel } from './MissionDecisionPanel';
 import { MarkdownWithMermaid } from '../MarkdownWithMermaid';
 import { ComposerRichTextView } from '../ComposerRichTextView';
 import { MissionCheckpoints } from './MissionCheckpoints';
+import { missionAgentStateLabel } from './MissionAgentCard';
 
 /**
  * F-1005: o renderer só tem a janela que o Main paginou. `total` é o tamanho
@@ -46,16 +47,6 @@ const TABS = [
   { key: 'team', label: 'Equipe' },
   { key: 'result', label: 'Resultado' },
 ] as const satisfies readonly { key: InspectorTab; label: string }[];
-
-const AGENT_STATE_LABELS: Readonly<Record<MissionAgentSnapshot['state'], string>> = {
-  queued: 'Na fila',
-  working: 'Trabalhando',
-  waiting: 'Aguardando',
-  blocked: 'Bloqueado',
-  done: 'Concluído',
-  failed: 'Falhou',
-  stopped: 'Interrompido',
-};
 
 const UNIT_STATUS_LABELS: Readonly<Record<MissionUnit['status'], string>> = {
   pending: 'Pendente',
@@ -171,7 +162,7 @@ function AgentCanonicalDetails({
         <code>{agent.category}</code>
       </CanonicalField>
       <CanonicalField label="Estado">
-        {AGENT_STATE_LABELS[agent.state]} (<code>{agent.state}</code>)
+        {missionAgentStateLabel(agent)} (<code>{agent.state}</code>)
       </CanonicalField>
       <CanonicalField label="CLI">
         <code>{agent.cli}</code>

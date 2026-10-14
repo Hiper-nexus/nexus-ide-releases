@@ -1526,7 +1526,8 @@
 .workspace-tabs__icon-btn:focus-visible,
 .workspace-tab__main:focus-visible,
 .workspace-tab__close:focus-visible,
-.workspace-tabs__mission:focus-visible {
+.workspace-tabs__mission:focus-visible,
+.workspace-tabs__team:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
@@ -1842,6 +1843,101 @@
   color: var(--text);
 }
 
+/* Mapa da equipe: a porta visível do grafo do Quadro, junto das abas que o
+   operador já olha (campo 14/10: "tem gente que nem vê ela"). Mesmo contorno
+   do "Nova missão"; a prévia é um rack de 5px por agente com terminal aberto,
+   e só quem trabalha acende o acento, como os cabos do mapa. */
+.workspace-tabs__team {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  block-size: 28px;
+  padding-inline: var(--space-2) var(--space-2-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-dim);
+  font: 500 var(--text-xs) / 1 var(--font-ui);
+  white-space: nowrap;
+  cursor: pointer;
+  animation: workspace-tabs-team-in 200ms var(--ease-out-quart) both;
+  transition:
+    background 140ms var(--ease-out-quart),
+    color 140ms var(--ease-out-quart),
+    border-color 140ms var(--ease-out-quart);
+}
+
+/* Alguém da equipe trabalhando é estado vivo: o contorno toma o acento, como
+   o botão pressionado da barra, e o rótulo sobe para o texto pleno. */
+.workspace-tabs__team[data-live] {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  color: var(--text);
+}
+
+.workspace-tabs__team:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.workspace-tabs__team:active {
+  background: var(--surface-3);
+}
+
+.workspace-tabs__team-racks {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  block-size: 14px;
+}
+
+.workspace-tabs__team-rack {
+  inline-size: 5px;
+  block-size: 11px;
+  border-radius: 1px;
+  background: var(--surface-3);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+/* O coordenador é o núcleo, mais largo e mais alto, como no mapa. */
+.workspace-tabs__team-rack[data-coordinator] {
+  inline-size: 8px;
+  block-size: 14px;
+}
+
+.workspace-tabs__team-rack[data-state='idle'] {
+  background: color-mix(in srgb, var(--text-faint) 40%, var(--surface-3));
+}
+
+.workspace-tabs__team-rack[data-state='starting'] {
+  background: color-mix(in srgb, var(--state-running) 35%, var(--surface-3));
+}
+
+.workspace-tabs__team-rack[data-state='working'] {
+  background: var(--state-running);
+  box-shadow: none;
+  animation: workspace-tab-live 2.4s var(--ease-out-quart) infinite;
+}
+
+.workspace-tabs__team-more {
+  align-self: center;
+  margin-inline-start: 2px;
+  color: var(--text-faint);
+  font: 500 var(--text-2xs) / 1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes workspace-tabs-team-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 .workspace-tab-menu .pane-context-menu__item[aria-disabled='true'] {
   cursor: default;
   opacity: 0.7;
@@ -1934,7 +2030,13 @@
   .workspace-tabs__icon-btn,
   .workspace-tab__main,
   .workspace-tab__close,
-  .workspace-tabs__mission {
+  .workspace-tabs__mission,
+  .workspace-tabs__team {
     transition: none;
+  }
+
+  .workspace-tabs__team,
+  .workspace-tabs__team-rack[data-state='working'] {
+    animation: none;
   }
 }

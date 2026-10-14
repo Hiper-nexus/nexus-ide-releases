@@ -2,12 +2,12 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { expect, it } from 'vitest';
 import type { MissionAgentSnapshot } from '../../../shared/mission-engine-contract';
-import { MissionAgentCard } from './MissionAgentCard';
+import { MissionAgentCard, missionAgentStateLabel } from './MissionAgentCard';
 
 it.each([
-  [false, 'Sem terminal ativo'],
-  [true, 'Terminal ativo · Sem tarefa vinculada'],
-])('o rack explica a presença física %s sem confundir com unidade em curso', (terminalLive, label) => {
+  [false, 'Sem terminal ativo', 'Na fila'],
+  [true, 'Terminal ativo · Sem tarefa do plano', 'Em espera'],
+])('o rack explica a presença física %s sem confundir com unidade em curso', (terminalLive, label, stateLabel) => {
   const host = document.createElement('div');
   host.innerHTML = renderToStaticMarkup(<MissionAgentCard
     agent={{ id: 'rack', agentName: 'Rack', category: 'executor', cli: 'codex', state: 'queued', terminalLive } as MissionAgentSnapshot}
@@ -15,7 +15,7 @@ it.each([
   />);
   expect(host.querySelector('.mission-agent-card__idle')?.textContent).toContain(label);
   expect(host.querySelector('button')?.getAttribute('aria-label')).toContain(label);
-  expect(host.querySelector('.mission-agent-card__state')?.textContent).toBe('Na fila');
+  expect(host.querySelector('.mission-agent-card__state')?.textContent).toBe(stateLabel);
 });
 
 it.each([
@@ -34,16 +34,29 @@ it.each([
   expect(card.style.getPropertyValue(variable)).toBe(`${width}px`);
 });
 
-it('absence of a linked task is explicit even with real activity detail', () => {
+it('absence of a plan unit is explicit only when there is no task detail either', () => {
   const host = document.createElement('div');
   host.innerHTML = renderToStaticMarkup(<MissionAgentCard
     agent={{ id: 'direct', agentName: 'Agente direto', category: 'executor', cli: 'codex', state: 'working', detail: 'Atividade observada' } as MissionAgentSnapshot}
     position={{ x: 0, y: 0 }} selected={false} onSelectAgent={() => {}}
   />);
-  expect(host.textContent).toContain('Sem tarefa vinculada');
-  expect(host.querySelector('button')?.getAttribute('aria-label')).toContain('Sem tarefa vinculada');
+  expect(host.textContent).not.toContain('Sem tarefa do plano');
+  expect(host.querySelector('button')?.getAttribute('aria-label')).toContain('Detalhe: Atividade observada');
   expect(host.textContent).toContain('Trabalhando');
   expect(host.textContent).toContain('Atividade observada');
+});
+
+// Campo 14/10 (retrabalho): o helper trabalhando mostrava "Sem tarefa do
+// plano" como se estivesse sem nada; a tarefa real vem no detalhe.
+it('helper trabalhando com a tarefa real no detalhe: terminal ativo e a tarefa, sem alegar ociosidade', () => {
+  const host = document.createElement('div');
+  host.innerHTML = renderToStaticMarkup(<MissionAgentCard
+    agent={{ id: 'pane:p5', agentName: 'Perf · event loop do main', category: 'executor', cli: 'claude', state: 'working', terminalLive: true, detail: 'Lentidão do loop principal e pane Claude travado' } as MissionAgentSnapshot}
+    position={{ x: 0, y: 0 }} selected={false} onSelectAgent={() => {}}
+  />);
+  expect(host.querySelector('.mission-agent-card__idle')?.textContent).toBe('Terminal ativo');
+  expect(host.querySelector('.mission-agent-card__detail')?.textContent).toBe('Lentidão do loop principal e pane Claude travado');
+  expect(host.textContent).not.toContain('Sem tarefa do plano');
 });
 
 it.each([false, true, undefined])('activity LEDs respect physical terminal presence %s', (terminalLive) => {
@@ -61,7 +74,30 @@ it('does not claim a current task when its referenced unit is missing from the s
     agent={{ id: 'stale-unit', agentName: 'Agente', category: 'executor', cli: 'codex', state: 'working', terminalLive: true, currentUnitId: 'missing-unit' } as MissionAgentSnapshot}
     position={{ x: 0, y: 0 }} selected={false} onSelectAgent={() => {}}
   />);
-  expect(host.textContent).toContain('Sem tarefa vinculada');
+  expect(host.textContent).toContain('Sem tarefa do plano');
   expect(host.querySelector('.mission-agent-card__unit')).toBeNull();
   expect(host.querySelector('button')?.getAttribute('aria-label')).not.toContain('Unidade atual');
+});
+
+// Campo 14/10: Coordenação viva no prompt aparecia "Na fila" e os helpers
+// "Trabalhando" com "Sem tarefa vinculada" — duas leituras contraditórias.
+it.each([
+  ['queued', true, 'Em espera'],
+  ['queued', false, 'Na fila'],
+  ['queued', undefined, 'Na fila'],
+  ['working', true, 'Trabalhando'],
+  ['done', true, 'Concluído'],
+] as const)('missionAgentStateLabel(%s, terminalLive=%s) = %s', (state, terminalLive, label) => {
+  expect(missionAgentStateLabel({ state, terminalLive })).toBe(label);
+});
+
+it('helper trabalhando sem unidade do plano não se contradiz no visor', () => {
+  const host = document.createElement('div');
+  host.innerHTML = renderToStaticMarkup(<MissionAgentCard
+    agent={{ id: 'pane:p1', agentName: 'Implementar interface', category: 'executor', cli: 'codex', state: 'working', terminalLive: true } as MissionAgentSnapshot}
+    position={{ x: 0, y: 0 }} selected={false} onSelectAgent={() => {}}
+  />);
+  expect(host.querySelector('.mission-agent-card__state')?.textContent).toBe('Trabalhando');
+  expect(host.querySelector('.mission-agent-card__idle')?.textContent).toBe('Terminal ativo · Sem tarefa do plano');
+  expect(host.textContent).not.toContain('Sem tarefa vinculada');
 });
