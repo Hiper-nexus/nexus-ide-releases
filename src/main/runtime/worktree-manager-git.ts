@@ -21,6 +21,7 @@ import {
 } from "./worktree-contract";
 import { validateWorktreeStateSnapshot } from "./worktree-state";
 import { INTERRUPTED_WORKTREE_RESERVATION_FAILURE_MARKER } from "./worktree-manager-markers";
+import { areWorktreePathsEqual } from "./worktree-path-compare";
 
 const MAX_CAS_ATTEMPTS = 16;
 
@@ -28,6 +29,27 @@ const MAX_CAS_ATTEMPTS = 16;
 export const TASK_WORKTREE_NOT_CLEAN_MESSAGE = "task worktree must be clean";
 
 export type RepositorySnapshot = IntegrationCheckoutInspection;
+
+/**
+ * F-1509: a raiz do workspace é gravada com `fs.realpathSync`, que mantém a
+ * caixa digitada e o nome 8.3 (`c:\users\…`, `ADMINI~1`); o Git devolve a
+ * grafia do disco. No Windows compara a forma canônica do sistema (nome longo,
+ * caixa do disco) pelo comparador de worktree; no POSIX a igualdade é exata.
+ * Continua exigindo o MESMO diretório: subpasta ou outro repositório não passa.
+ */
+function isGitTopLevel(topLevel: string, root: string): boolean {
+  if (topLevel === root) return true;
+  if (process.platform !== "win32") return false;
+  try {
+    return areWorktreePathsEqual(
+      fs.realpathSync.native(topLevel),
+      fs.realpathSync.native(root),
+      "win32",
+    );
+  } catch {
+    return false;
+  }
+}
 
 export function gitOutput(
   runner: GitRunner,
@@ -57,7 +79,7 @@ export function readRepositorySnapshot(
   const topLevel = fs.realpathSync(
     gitOutput(git, rootRealPath, ["rev-parse", "--show-toplevel"]),
   );
-  if (topLevel !== rootRealPath) {
+  if (!isGitTopLevel(topLevel, rootRealPath)) {
     throw new Error("scope root must equal the canonical Git top-level");
   }
   assertSafeLocalGitConfig(git, rootRealPath);
@@ -208,7 +230,7 @@ export async function readRepositorySnapshotAsync(
   const topLevel = fs.realpathSync(
     await gitOutputAsync(git, rootRealPath, ["rev-parse", "--show-toplevel"]),
   );
-  if (topLevel !== rootRealPath) {
+  if (!isGitTopLevel(topLevel, rootRealPath)) {
     throw new Error("scope root must equal the canonical Git top-level");
   }
   await assertSafeLocalGitConfigAsync(git, rootRealPath);

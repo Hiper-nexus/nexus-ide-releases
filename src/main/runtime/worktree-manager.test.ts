@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -136,6 +136,51 @@ afterEach(() => {
 });
 
 describe("WorktreeManager", () => {
+  // F-1509: a raiz do workspace é gravada com `fs.realpathSync`, que mantém a
+  // caixa digitada e o nome 8.3; o Git devolve `C:/Users/Administrador/…`.
+  // Toda missão cria a worktree da aba e morria em "scope root must equal the
+  // canonical Git top-level".
+  it.runIf(process.platform === "win32")(
+    "F-1509: raiz com outra caixa ou em 8.3 ainda é o top-level do Git",
+    async () => {
+      const respelled = fs.realpathSync(root.toLowerCase());
+      expect(respelled).not.toBe(fs.realpathSync(root));
+      const lowerScope = projectScope(respelled);
+      const record = await manager.create({
+        scope: lowerScope, missionId: "f1509", taskId: "case", workerId: "worker",
+        ownership: { files: ["src/case.ts"], symbols: [], domains: [] },
+      });
+      expect(record.status).toBe("ready");
+
+      // spawnSync: as opções do execFileSync não tipam windowsVerbatimArguments
+      // (TS2769), e sem ele o Node reescapa as aspas do `for` do cmd.
+      const short = spawnSync(process.env.ComSpec ?? "cmd.exe",
+        ["/d", "/s", "/c", `"for %I in ("${tempDir}") do @echo %~sI"`],
+        { encoding: "utf8", windowsVerbatimArguments: true }).stdout.trim();
+      if (short && short !== tempDir) {
+        // Um projeto tem uma raiz só: estado próprio para a grafia 8.3.
+        const shortScope = projectScope(fs.realpathSync(path.join(short, "repo")));
+        const shortRecord = await new WorktreeManager({
+          runtimeRoot, stateStore: new MemoryWorktreeStateStore(), gitRunner,
+        }).create({
+          scope: shortScope, missionId: "f1509", taskId: "short", workerId: "worker",
+          ownership: { files: ["src/short.ts"], symbols: [], domains: [] },
+        });
+        expect(shortRecord.status).toBe("ready");
+      }
+
+      // O top-level continua exigido: um subdiretório do repositório não é raiz.
+      fs.mkdirSync(path.join(root, "sub"));
+      await expect(new WorktreeManager({
+        runtimeRoot, stateStore: new MemoryWorktreeStateStore(), gitRunner,
+      }).create({
+        scope: projectScope(fs.realpathSync(path.join(root, "sub"))),
+        missionId: "f1509", taskId: "sub", workerId: "worker",
+        ownership: { files: ["src/sub.ts"], symbols: [], domains: [] },
+      })).rejects.toThrow(/canonical Git top-level/);
+    },
+  );
+
   it("F-764: cria e reutiliza a worktree sem executar Git síncrono", async () => {
     const asyncGit = new AsyncProcessGitRunner();
     let heartbeatDuringAdd = false;
