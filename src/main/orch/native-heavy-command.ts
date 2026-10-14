@@ -35,13 +35,18 @@ function queueWaitMessage(wait: HeavyCommandQueueWait): string {
   const root = wait.root.length > 160 ? `…${wait.root.slice(-159)}` : wait.root;
   // F-1434: RAM is named only when free RAM was really below the reserve.
   const gb = (mb: number) => (mb / 1024).toFixed(1);
+  const effective = wait.effectiveMaxActive ?? wait.maxActive;
+  // Same-root serialization still wins when the shrunk cap has room.
+  const pressureBlocked = effective < wait.maxActive && wait.running === 0 && wait.machineActive >= effective;
   const cause = wait.running > 0 ? 'one job per root at a time'
+    : pressureBlocked ? 'esperando: pressão de memória'
     : wait.machineActive >= wait.maxActive ? `machine limit of ${wait.maxActive} parallel heavy jobs`
     : wait.memory?.swapBound ? 'swap use above the configured limit'
     : wait.memory && wait.memory.freeMB !== null && wait.memory.freeMB < wait.memory.neededMB ? `free RAM ${gb(wait.memory.freeMB)} GB below the ${gb(wait.memory.neededMB)} GB reserve`
     : 'machine capacity, not this root';
+  const shown = pressureBlocked ? effective : wait.maxActive;
   return `nexus-heavy: gave up after ${Math.round(wait.waitedMs / 1000)} s in the admission queue of ${root}: ` +
-    `${wait.running} job(s) running there, ${wait.waiting} more waiting (${cause}); machine ${wait.machineActive}/${wait.maxActive} heavy jobs running.`;
+    `${wait.running} job(s) running there, ${wait.waiting} more waiting (${cause}); machine ${wait.machineActive}/${shown} heavy jobs running.`;
 }
 /** F-1434: every refusal carries the line the shell prints; none blames CPU/RAM. */
 function denied(reason: string, detail: string): Admission {

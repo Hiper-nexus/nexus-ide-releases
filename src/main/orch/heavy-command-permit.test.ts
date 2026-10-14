@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { runInNewContext } from 'node:vm';
 import { afterEach, expect, it, vi } from 'vitest';
-import { HeavyCommandPermitPool } from './heavy-command-permit';
+import { HeavyCommandPermitPool, readHeavyCommandMemoryPressure } from './heavy-command-permit';
 import { testProjectScope } from './__tests__/scope-fixture';
 
 const pools: HeavyCommandPermitPool[] = [];
@@ -149,6 +149,71 @@ it('uses one machine slot when RAM is unknown', async () => {
   const value = pool(() => null); const first = await value.acquire(request()); let admitted = false;
   const second = value.acquire(request('another')).then(p => { admitted = true; return p; });
   await Promise.resolve(); expect(admitted).toBe(false); first.release(); (await second).release();
+});
+
+it('shrinks new admissions under darwin memory pressure and leaves running jobs alone', async () => {
+  let level: number | null = 1;
+  const value = new HeavyCommandPermitPool({ memory: () => ({ freeMB: 100_000, swapUsedMB: 0 }),
+    limits: () => ({ minFreeMB: 1000, maxSwapUsedMB: 0 }), refreshMemory: async () => {},
+    pollMs: 10, waitMs: 500, reserveMB: 1000, maxActive: 5, pressure: () => level });
+  pools.push(value);
+  const lane = (root: string) => ({ ...request(), scope: { ...scope, rootRealPath: root } });
+  const warnA = await value.acquire(lane('/warn-a'));
+  const warnB = await value.acquire(lane('/warn-b'));
+  let warned = false;
+  const warnWait = value.acquire(lane('/warn-c')).then((permit) => { warned = true; return permit; });
+  await Promise.resolve();
+  expect(warned).toBe(false);
+  expect(value.snapshot().active).toBe(2);
+  level = 2;
+  let urgent = false;
+  const urgentWait = value.acquire(lane('/urgent')).then((permit) => { urgent = true; return permit; });
+  await Promise.resolve();
+  expect(urgent).toBe(false);
+  expect(value.snapshot().active).toBe(2);
+  warnA.release();
+  const warnedPermit = await warnWait;
+  expect(warned).toBe(true);
+  expect(value.snapshot().active).toBe(2);
+  warnedPermit.release(); warnB.release();
+  (await urgentWait).release();
+  level = null;
+  const running = await Promise.all(['/live-a', '/live-b'].map((root) => value.acquire(lane(root))));
+  expect(value.snapshot().active).toBe(2);
+  level = 4;
+  let extra = false;
+  const criticalWait = value.acquire(lane('/critical')).then((permit) => { extra = true; return permit; });
+  await Promise.resolve();
+  expect(extra).toBe(false);
+  expect(value.snapshot().active).toBe(2);
+  running[0].release();
+  await Promise.resolve();
+  expect(extra).toBe(false);
+  expect(value.snapshot().active).toBe(1);
+  level = 3;
+  running[1].release();
+  (await criticalWait).release();
+  expect(value.snapshot().active).toBe(0);
+});
+
+it('reads darwin vm pressure as an integer 0..4 and fails open elsewhere', () => {
+  const level = readHeavyCommandMemoryPressure();
+  if (process.platform === 'darwin') expect([0, 1, 2, 3, 4]).toContain(level);
+  else expect(level).toBeNull();
+});
+
+it('keeps the configured cap when memory pressure cannot be read', async () => {
+  const readers = [() => null, () => 0, () => 1.5, () => 9, () => { throw new Error('sysctl'); }];
+  for (const pressure of readers) {
+    const value = new HeavyCommandPermitPool({ memory: () => ({ freeMB: 100_000, swapUsedMB: 0 }),
+      limits: () => ({ minFreeMB: 1000, maxSwapUsedMB: 0 }), refreshMemory: async () => {},
+      pollMs: 10, waitMs: 200, reserveMB: 1000, maxActive: 5, pressure });
+    pools.push(value);
+    const lane = (root: string) => ({ ...request(), scope: { ...scope, rootRealPath: root } });
+    const held = await Promise.all(['/p1', '/p2', '/p3'].map((root) => value.acquire(lane(root))));
+    expect(value.snapshot().active).toBe(3);
+    for (const permit of held) permit.release();
+  }
 });
 
 it('queues Main-owned loose helpers without a mission, including direct assistant tools', async () => {

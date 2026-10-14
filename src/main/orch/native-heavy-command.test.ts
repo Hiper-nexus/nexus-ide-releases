@@ -376,3 +376,22 @@ it('F-1434: toda recusa traz a frase do motivo, e só culpa a RAM quando a RAM f
  for (const result of [ownership, machine]) expect(result.message).not.toMatch(/RAM/);
  held.release(); lowRam.close(); busy.close();
 });
+
+it('says it is waiting on memory pressure only when the shrunk cap is what blocks the job', async () => {
+ const scope = { version: 1 as const, installationId: 'finite', projectId: 'pressure', checkoutId: 'main', rootRealPath: '/pressure', identitySource: 'manifest' as const };
+ const ctx = { token: 'pressure', sessionId: 'pressure', role: 'user', scope } as AgentGateContext;
+ const limits = () => ({ minFreeMB: 512, maxSwapUsedMB: 0 });
+ const pool = new HeavyCommandPermitPool({ memory: () => ({ freeMB: 65_536, swapUsedMB: 0 }), limits, refreshMemory: async () => {},
+  pollMs: 5, waitMs: 40, maxActive: 5, pressure: () => 1 });
+ const native = new NativeHeavyCommands({ current: () => true, claim: async () => 'owned', probe: async () => 'gone', acquire: (request) => pool.acquire(request) });
+ const held = await Promise.all(['/other-a', '/other-b'].map((root) => pool.acquire({ scope: { ...scope, rootRealPath: root }, kind: 'tests' })));
+ const blocked = await native.admit(ctx, { pid: 4246, kind: 'tests' });
+ expect(blocked.message).toContain('esperando: pressão de memória');
+ expect(blocked.message).not.toContain('machine 2/5');
+ for (const permit of held) permit.release();
+ const sameRoot = await pool.acquire({ scope, kind: 'tests' });
+ const queued = await native.admit(ctx, { pid: 4247, kind: 'tests' });
+ expect(queued.message).toContain('one job per root at a time');
+ expect(queued.message).not.toContain('esperando: pressão de memória');
+ sameRoot.release(); pool.close();
+});
