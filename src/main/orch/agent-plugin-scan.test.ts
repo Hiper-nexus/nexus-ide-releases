@@ -3,7 +3,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { PLUGIN_MANIFEST_SCHEMA } from './agent-plugin-manifest';
-import { scanInstalledPlugins } from './agent-plugin-scan';
+import {
+  __resetScanInstalledPluginsCacheForTests,
+  scanInstalledPlugins,
+} from './agent-plugin-scan';
 
 /** Manifesto mínimo VÁLIDO segundo a spec: $schema seleciona a versão. */
 function manifest(name: string, extra: Record<string, unknown> = {}) {
@@ -50,6 +53,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  __resetScanInstalledPluginsCacheForTests();
   fs.rmSync(home, { recursive: true, force: true });
 });
 
@@ -330,5 +334,35 @@ describe('varredura de plugins instalados', () => {
     expect(plugin?.status).toBe('quarantined');
     expect(plugin?.verdict.ok).toBe(false);
     expect(plugin?.summary).toContain('link simbólico');
+  });
+});
+
+// A6 (perf spawn): o scan era refeito a cada spawn via ensureSkillsForCli.
+describe('scanInstalledPlugins — TTL cache (A6)', () => {
+  it('segunda chamada dentro do TTL devolve o resultado em cache', () => {
+    writePlugin('.claude/plugins', 'p1', manifest('p1'));
+    const first = scanInstalledPlugins(home);
+    expect(first).toHaveLength(1);
+    // Remove o plugin do disco: com cache ativo o resultado antigo persiste.
+    fs.rmSync(path.join(home, '.claude/plugins/p1'), { recursive: true, force: true });
+    const cached = scanInstalledPlugins(home);
+    expect(cached).toHaveLength(1);
+  });
+
+  it('reset força re-scan', () => {
+    writePlugin('.claude/plugins', 'p1', manifest('p1'));
+    expect(scanInstalledPlugins(home)).toHaveLength(1);
+    fs.rmSync(path.join(home, '.claude/plugins/p1'), { recursive: true, force: true });
+    __resetScanInstalledPluginsCacheForTests();
+    expect(scanInstalledPlugins(home)).toHaveLength(0);
+  });
+
+  it('allowedTools explícito não passa pelo cache', () => {
+    writePlugin('.claude/plugins', 'p1', manifest('p1'));
+    const first = scanInstalledPlugins(home, { allowedTools: ['Read'] });
+    expect(first).toHaveLength(1);
+    fs.rmSync(path.join(home, '.claude/plugins/p1'), { recursive: true, force: true });
+    const second = scanInstalledPlugins(home, { allowedTools: ['Read'] });
+    expect(second).toHaveLength(0);
   });
 });
