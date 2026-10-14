@@ -369,28 +369,36 @@ type ExecFileLike = (
 ) => unknown;
 
 /**
- * Segredo do cofre do SO por conta do provider — ASSÍNCRONO (F-1417). O
- * `execFileSync` antigo rodava dentro do tick de cota e travava o Main até
- * 5 s por conta delegada. Agora: `execFile` com teto, uma leitura em voo por
- * conta, sucesso guardado por 10 min e negação em backoff de 5 min. O valor
- * só existe em memória; nunca é registrado nem gravado.
+ * Segredo do cofre do SO por conta do provider — ASSÍNCRONO (F-1417 / F-1513).
+ *
+ * No macOS (`darwin`), o item `ai.meta.dev.credentials` é gravado pelo binário
+ * nativo `muse-bin-*` via `Security.framework` (`SecItemAdd`), cuja ACL só
+ * autoriza o próprio `muse-bin-*` — nunca `/usr/bin/security`. Chamar
+ * `security find-generic-password -s ai.meta.dev.credentials -a <account> -w`
+ * no boot do QuotaService abria o modal do `SecurityAgent` («security deseja
+ * acessar a chave "ai.meta.dev.credentials"») na tela de Início a cada abertura
+ * do app (e a cada rotação do token ou atualização do `muse-bin`), corria um
+ * `SIGKILL` de 5 s contra a digitação da senha e, se aprovado com «Sempre
+ * permitir», entregava o segredo ao binário público `/usr/bin/security`
+ * (mesma classe do F-993). Por isso, no `darwin` esta função retorna `null`
+ * sem executar `security -w` (a presença da sessão segue provada sem prompt por
+ * `museLoginSignedIn` / `museKeychainItemExists` sem `-w`, F-616).
  */
 export function readMusePlatformSecret(
   account: string,
   execImpl: ExecFileLike = execFile as unknown as ExecFileLike,
   now: () => number = Date.now,
+  platform: NodeJS.Platform = process.platform,
 ): Promise<string | null> {
+  if (platform !== 'linux') return Promise.resolve(null);
   const held = museSecretCache.get(account);
   if (held && now() < held.until) return Promise.resolve(held.value);
   const flight = museSecretFlights.get(account);
   if (flight) return flight;
-  const command =
-    process.platform === 'darwin'
-      ? { file: 'security', args: ['find-generic-password', '-s', MUSE_KEYCHAIN_SERVICE, '-a', account, '-w'] }
-      : process.platform === 'linux'
-        ? { file: 'secret-tool', args: ['lookup', 'service', MUSE_KEYCHAIN_SERVICE, 'account', account] }
-        : null;
-  if (!command) return Promise.resolve(null);
+  const command = {
+    file: 'secret-tool',
+    args: ['lookup', 'service', MUSE_KEYCHAIN_SERVICE, 'account', account],
+  };
   const pending = new Promise<string | null>((resolve) => {
     try {
       execImpl(command.file, command.args, {
@@ -405,7 +413,6 @@ export function readMusePlatformSecret(
           resolve(value);
           return;
         }
-        // 44 = item ausente no macOS: resposta definitiva, cache curto igual.
         const backoff = error.code === 44 ? MUSE_SECRET_CACHE_TTL_MS : MUSE_SECRET_DENIED_BACKOFF_MS;
         museSecretCache.set(account, { value: null, until: now() + backoff });
         resolve(null);

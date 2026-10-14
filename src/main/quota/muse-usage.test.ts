@@ -161,56 +161,77 @@ describe('resolveMuseLoginCredential', () => {
   });
 });
 
-describe('cofre e auth.json do Muse sem travar o Main (F-1417)', () => {
+describe('cofre e auth.json do Muse sem travar o Main nem abrir modal no macOS (F-1417 / F-1513)', () => {
   type Cb = (error: (Error & { code?: unknown }) | null, stdout: string) => void;
 
-  // A leitura do cofre usa `security` (darwin) e `secret-tool` (linux); no
-  // Windows a função retorna null cedo e o exec nunca é chamado.
-  it.skipIf(process.platform === 'win32')('lê o cofre de forma assíncrona, uma leitura em voo, e guarda o sucesso', async () => {
+  it('macOS (darwin) nunca executa security -w para ai.meta.dev.credentials (F-1513)', async () => {
+    clearMuseSecretCache();
+    const execImpl = vi.fn(() => {
+      throw new Error('security -w nunca deve ser chamado para ai.meta.dev.credentials no macOS');
+    });
+    expect(await readMusePlatformSecret('meta', execImpl, () => 1_000, 'darwin')).toBeNull();
+    expect(execImpl).not.toHaveBeenCalled();
+
+    const keychainBlob = JSON.stringify({
+      providers: { meta: { storage: 'keychain', mechanism: 'oauth' } },
+    });
+    expect(await resolveMuseLoginCredential({
+      home: '/nonexistent-muse-home',
+      env: {},
+      readAuthFile: () => keychainBlob,
+      readPlatformSecret: (account) => readMusePlatformSecret(account, execImpl, () => 1_000, 'darwin'),
+    })).toBeNull();
+    expect(museLoginSignedIn({
+      home: '/nonexistent-muse-home',
+      env: {},
+      readAuthFile: () => keychainBlob,
+    })).toBe(true);
+    expect(execImpl).not.toHaveBeenCalled();
+  });
+
+  it('Linux: lê o cofre de forma assíncrona, uma leitura em voo, e guarda o sucesso', async () => {
     clearMuseSecretCache();
     let clock = 1_000;
     const pending: Cb[] = [];
     const execImpl = vi.fn((_f: string, _a: readonly string[], _o: unknown, cb: Cb) => { pending.push(cb); });
-    const first = readMusePlatformSecret('meta', execImpl, () => clock);
-    const second = readMusePlatformSecret('meta', execImpl, () => clock);
+    const first = readMusePlatformSecret('meta', execImpl, () => clock, 'linux');
+    const second = readMusePlatformSecret('meta', execImpl, () => clock, 'linux');
     // Nada bloqueou: a chamada voltou antes de o processo responder.
     expect(pending).toHaveLength(1);
     pending[0]!(null, 'secret-payload');
     expect(await first).toBe('secret-payload');
     expect(await second).toBe('secret-payload');
     clock += MUSE_SECRET_CACHE_TTL_MS - 1;
-    expect(await readMusePlatformSecret('meta', execImpl, () => clock)).toBe('secret-payload');
+    expect(await readMusePlatformSecret('meta', execImpl, () => clock, 'linux')).toBe('secret-payload');
     expect(execImpl).toHaveBeenCalledTimes(1);
     clock += 2;
-    void readMusePlatformSecret('meta', execImpl, () => clock);
+    void readMusePlatformSecret('meta', execImpl, () => clock, 'linux');
     expect(execImpl).toHaveBeenCalledTimes(2);
     clearMuseSecretCache();
   });
 
-  it.skipIf(process.platform === 'win32')('negação do cofre entra em backoff (não reabre o diálogo a cada tick)', async () => {
+  it('Linux: negação do cofre entra em backoff (não reabre o diálogo a cada tick)', async () => {
     clearMuseSecretCache();
     const execImpl = vi.fn((_f: string, _a: readonly string[], _o: unknown, cb: Cb) => {
       cb(Object.assign(new Error('denied'), { code: 51 }), '');
     });
-    expect(await readMusePlatformSecret('meta', execImpl, () => 5)).toBeNull();
-    expect(await readMusePlatformSecret('meta', execImpl, () => 6)).toBeNull();
+    expect(await readMusePlatformSecret('meta', execImpl, () => 5, 'linux')).toBeNull();
+    expect(await readMusePlatformSecret('meta', execImpl, () => 6, 'linux')).toBeNull();
     expect(execImpl).toHaveBeenCalledTimes(1);
     clearMuseSecretCache();
   });
 
-  it.skipIf(process.platform === 'win32')('negação do cofre não reabre o diálogo nos polls seguintes da mesma sessão', async () => {
+  it('Linux: negação do cofre não reabre o diálogo nos polls seguintes da mesma sessão', async () => {
     clearMuseSecretCache();
     const execImpl = vi.fn((_f: string, _a: readonly string[], _o: unknown, cb: Cb) => {
       cb(Object.assign(new Error('denied'), { code: 51 }), '');
     });
     const quotaPoll = 5 * 60_000;
     let clock = 1_000_000;
-    expect(await readMusePlatformSecret('meta', execImpl, () => clock)).toBeNull();
-    // O poll de cota volta a cada 5 min com forceApi; a resposta do operador
-    // («Negar», ou ignorar até o timeout) vale por toda a sessão do processo.
+    expect(await readMusePlatformSecret('meta', execImpl, () => clock, 'linux')).toBeNull();
     for (let poll = 0; poll < 24; poll += 1) {
       clock += quotaPoll;
-      expect(await readMusePlatformSecret('meta', execImpl, () => clock)).toBeNull();
+      expect(await readMusePlatformSecret('meta', execImpl, () => clock, 'linux')).toBeNull();
     }
     expect(execImpl).toHaveBeenCalledTimes(1);
     clearMuseSecretCache();
