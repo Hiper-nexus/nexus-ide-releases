@@ -153,6 +153,31 @@ function persistInspectorCollapsed(collapsed: boolean): void {
 }
 
 
+const MISSION_BOARD_COLLAPSED_KEY = 'nexus.mission.board-collapsed';
+
+function readStoredBoardCollapsed(): boolean {
+  try {
+    return (
+      typeof window !== 'undefined' &&
+      window.localStorage.getItem(MISSION_BOARD_COLLAPSED_KEY) === '1'
+    );
+  } catch {
+    // Storage bloqueado não pode impedir o quadro de montar: nasce expandido.
+    return false;
+  }
+}
+
+function persistBoardCollapsed(collapsed: boolean): void {
+  try {
+    window.localStorage.setItem(
+      MISSION_BOARD_COLLAPSED_KEY,
+      collapsed ? '1' : '0',
+    );
+  } catch {
+    // Preferência é best-effort; o estado da sessão já vale.
+  }
+}
+
 type HeaderAction = Extract<
   MissionAllowedAction,
   'retry-kickoff' | 'resume' | 'stop'
@@ -206,6 +231,25 @@ export function headerActionLabel(
     return 'Retomar o coordenador';
   }
   return HEADER_ACTION_LABELS[action];
+}
+
+/** A única ação sólida do cabeçalho; tudo o mais mora no menu Mais. */
+export type PrimaryHeaderAction = HeaderAction | 'leader-drift-rebind';
+
+/**
+ * Hierarquia do cabeçalho: religar ao Maestro à deriva vem primeiro (é o
+ * reparo que destrava a missão), depois Retomar, depois retomar o
+ * coordenador. Sem nenhuma delas o cabeçalho não inventa primária — Parar e
+ * as ações de ciclo de vida nunca são o botão sólido.
+ */
+export function primaryHeaderAction(
+  allowedActions: readonly MissionAllowedAction[],
+  stateReasonCode: string | undefined,
+): PrimaryHeaderAction | null {
+  if (stateReasonCode === 'leader-drift') return 'leader-drift-rebind';
+  if (allowedActions.includes('resume')) return 'resume';
+  if (allowedActions.includes('retry-kickoff')) return 'retry-kickoff';
+  return null;
 }
 
 export interface MissionBoardProps {
@@ -299,6 +343,104 @@ export function MissionBoard({
   const [inspectorCollapsed, setInspectorCollapsed] = useState(
     readStoredInspectorCollapsed,
   );
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [boardCollapsed, setBoardCollapsed] = useState(
+    readStoredBoardCollapsed,
+  );
+  const toggleBoardCollapsed = useCallback((): void => {
+    setMoreOpen(false);
+    setBoardCollapsed((current) => {
+      const next = !current;
+      persistBoardCollapsed(next);
+      return next;
+    });
+  }, []);
+  const moreButtonRef = useRef<HTMLButtonElement | null>(null);
+  const moreMenuRef = useRef<HTMLDivElement | null>(null);
+  const moreMenuId = useId();
+  const boardBodyId = useId();
+  // Trocar de missão com o menu aberto mostraria ações da missão anterior.
+  useEffect(() => {
+    setMoreOpen(false);
+  }, [missionId]);
+  // Menu Mais aberto: foco no primeiro item habilitado e clique fora fecha
+  // (mesmo idioma do PaneContextMenu).
+  useEffect(() => {
+    if (!moreOpen) return;
+    const items = [
+      ...(moreMenuRef.current?.querySelectorAll<HTMLButtonElement>(
+        '[role="menuitem"]',
+      ) ?? []),
+    ];
+    items.find((item) => !item.disabled)?.focus({ preventScroll: true });
+    const onPointerDown = (event: MouseEvent): void => {
+      const target = event.target as Node;
+      if (
+        moreMenuRef.current?.contains(target) ||
+        moreButtonRef.current?.contains(target)
+      ) {
+        return;
+      }
+      setMoreOpen(false);
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    return () => document.removeEventListener('mousedown', onPointerDown);
+  }, [moreOpen]);
+  const closeMoreMenu = useCallback((restoreFocus: boolean): void => {
+    setMoreOpen(false);
+    if (restoreFocus) {
+      moreButtonRef.current?.focus({ preventScroll: true });
+    }
+  }, []);
+  // Ação disparada do menu usa o botão Mais como invocador: é ele que
+  // continua montado para receber o foco de volta quando a ação termina.
+  const runFromMoreMenu = (
+    run: (invoker: HTMLButtonElement) => void,
+  ): void => {
+    const invoker = moreButtonRef.current;
+    setMoreOpen(false);
+    if (invoker) run(invoker);
+  };
+  const handleMoreMenuKeyDown = (
+    event: ReactKeyboardEvent<HTMLDivElement>,
+  ): void => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeMoreMenu(true);
+      return;
+    }
+    if (event.key === 'Tab') {
+      setMoreOpen(false);
+      return;
+    }
+    if (
+      event.key !== 'ArrowDown' &&
+      event.key !== 'ArrowUp' &&
+      event.key !== 'Home' &&
+      event.key !== 'End'
+    ) {
+      return;
+    }
+    const items = [
+      ...(moreMenuRef.current?.querySelectorAll<HTMLButtonElement>(
+        '[role="menuitem"]',
+      ) ?? []),
+    ].filter((item) => !item.disabled);
+    if (items.length === 0) return;
+    event.preventDefault();
+    const current = items.indexOf(
+      document.activeElement as HTMLButtonElement,
+    );
+    const next =
+      event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? items.length - 1
+          : event.key === 'ArrowUp'
+            ? (current - 1 + items.length) % items.length
+            : (current + 1) % items.length;
+    items[next]?.focus({ preventScroll: true });
+  };
   const toggleInspectorCollapsed = useCallback((): void => {
     setInspectorCollapsed((current) => {
       const next = !current;
@@ -1171,6 +1313,18 @@ export function MissionBoard({
     );
   }
 
+  const primaryAction = primaryHeaderAction(
+    currentSnapshot.allowedActions,
+    currentSnapshot.stateReason?.code,
+  );
+  const visibleHeaderActions = HEADER_ACTIONS.filter(
+    (action) =>
+      currentSnapshot.allowedActions.includes(action) &&
+      (action !== 'stop' || currentMission === null),
+  );
+  const secondaryHeaderActions = visibleHeaderActions.filter(
+    (action) => action !== primaryAction,
+  );
   const canAnswerQuestion =
     currentSnapshot.allowedActions.includes('answer-question');
   const question = currentSnapshot.question ? (
@@ -1215,13 +1369,22 @@ export function MissionBoard({
 
   return (
     <article
-      className="mission-board"
+      className={
+        boardCollapsed ? 'mission-board mission-board--collapsed' : 'mission-board'
+      }
+      data-board-collapsed={boardCollapsed}
       data-state={currentSnapshot.state}
       aria-labelledby={headingId}
       aria-busy={loading || pendingAction !== null}
       style={boardStyle}
     >
-      <header className="mission-board__header">
+      <header
+        className={
+          moreOpen
+            ? 'mission-board__header mission-board__header--menu-open'
+            : 'mission-board__header'
+        }
+      >
         <div className="mission-board__identity">
           <h1 id={headingId} title={currentSnapshot.title}>
             {missionBoardHeading(currentSnapshot.title)}
@@ -1309,7 +1472,7 @@ export function MissionBoard({
           {/* leader-drift: o terminal do Maestro está vivo numa sessão nova e
               a missão ainda aponta a que morreu — a ação primária aqui é
               religar, não parar. */}
-          {currentSnapshot.stateReason?.code === 'leader-drift' && (
+          {primaryAction === 'leader-drift-rebind' && (
             <button
               type="button"
               className="mission-board__button"
@@ -1323,13 +1486,53 @@ export function MissionBoard({
               Religar a missão ao Maestro
             </button>
           )}
+          {(primaryAction === 'resume' ||
+            primaryAction === 'retry-kickoff') && (
+            <button
+              type="button"
+              className="mission-board__button"
+              disabled={pendingAction !== null}
+              aria-busy={pendingAction === primaryAction}
+              onClick={(event) =>
+                runHeaderAction(primaryAction, event.currentTarget)
+              }
+            >
+              {headerActionLabel(primaryAction, currentSnapshot.state)}
+            </button>
+          )}
+          <div className="mission-board__more">
+            <button
+              ref={moreButtonRef}
+              type="button"
+              className="mission-board__button mission-board__button--secondary mission-board__more-button"
+              aria-label="Mais ações da missão"
+              aria-haspopup="menu"
+              aria-expanded={moreOpen}
+              aria-controls={moreMenuId}
+              onClick={() => setMoreOpen((current) => !current)}
+            >
+              Mais
+            </button>
+            <div
+              ref={moreMenuRef}
+              id={moreMenuId}
+              className="mission-board__menu"
+              role="menu"
+              aria-label="Mais ações da missão"
+              hidden={!moreOpen}
+              onKeyDown={handleMoreMenuKeyDown}
+            >
           {/* Sempre no quadro: o destino é a superfície da missão, nunca o
               grid global. Sem pane, o mosaico vazio ensina; com pane, foca. */}
           <button
             type="button"
             className="mission-board__button mission-board__button--secondary"
             disabled={pendingAction !== null}
-            onClick={openMountedMissionTerminals}
+            role="menuitem"
+            onClick={() => {
+              setMoreOpen(false);
+              openMountedMissionTerminals();
+            }}
           >
             Terminais
           </button>
@@ -1339,28 +1542,27 @@ export function MissionBoard({
             type="button"
             className="mission-board__button mission-board__button--secondary"
             onClick={() =>
-              useProductNavigationStore.getState().openNewMission()
+              {
+                setMoreOpen(false);
+                useProductNavigationStore.getState().openNewMission();
+              }
             }
+            role="menuitem"
           >
             + Nova missão
           </button>
-          {HEADER_ACTIONS.filter(
-            (action) =>
-              currentSnapshot.allowedActions.includes(action) &&
-              (action !== 'stop' || currentMission === null),
-          ).map((action) => (
+          {secondaryHeaderActions.map((action) => (
             <button
               key={action}
               type="button"
-              className={`mission-board__button${
-                action === 'stop'
-                  ? ' mission-board__button--secondary mission-board__button--danger'
-                  : ''
+              className={`mission-board__button mission-board__button--secondary${
+                action === 'stop' ? ' mission-board__button--danger' : ''
               }`}
               disabled={pendingAction !== null}
               aria-busy={pendingAction === action}
-              onClick={(event) =>
-                runHeaderAction(action, event.currentTarget)
+              role="menuitem"
+              onClick={() =>
+                runFromMoreMenu((invoker) => runHeaderAction(action, invoker))
               }
             >
               {headerActionLabel(action, currentSnapshot.state)}
@@ -1379,7 +1581,10 @@ export function MissionBoard({
               aria-label={`${lifecycleCopy.verb}: ${lifecycleCopy.title}`}
               disabled={pendingAction !== null}
               aria-busy={pendingAction === lifecycleAction}
-              onClick={(event) => runLifecycleAction(event.currentTarget)}
+              role="menuitem"
+              onClick={() =>
+                runFromMoreMenu((invoker) => runLifecycleAction(invoker))
+              }
             >
               {lifecycleCopy.verb}
             </button>
@@ -1395,13 +1600,37 @@ export function MissionBoard({
               aria-label="Remover: apagar missão e todo o histórico desta execução"
               disabled={pendingAction !== null}
               aria-busy={pendingAction === 'remove'}
-              onClick={(event) =>
-                runLifecycleAction(event.currentTarget, 'remove')
+              role="menuitem"
+              onClick={() =>
+                runFromMoreMenu((invoker) =>
+                  runLifecycleAction(invoker, 'remove'),
+                )
               }
             >
               Remover
             </button>
           )}
+            </div>
+          </div>
+          <button
+            type="button"
+            className="mission-board__button mission-board__button--secondary mission-board__collapse-toggle"
+            aria-expanded={!boardCollapsed}
+            aria-controls={boardBodyId}
+            aria-label={
+              boardCollapsed
+                ? 'Expandir painel da missão'
+                : 'Minimizar painel da missão'
+            }
+            title={
+              boardCollapsed
+                ? 'Expandir painel da missão'
+                : 'Minimizar painel da missão'
+            }
+            onClick={toggleBoardCollapsed}
+          >
+            {boardCollapsed ? 'Expandir' : 'Minimizar'}
+          </button>
         </div>
       </header>
 
@@ -1451,6 +1680,11 @@ export function MissionBoard({
         </p>
       )}
 
+      <div
+        id={boardBodyId}
+        className="mission-board__body"
+        hidden={boardCollapsed}
+      >
       {question && (
         <section
           className="mission-board__question-region"
@@ -1571,6 +1805,7 @@ export function MissionBoard({
           />
         </div>
       )}
+      </div>
     </article>
   );
 }

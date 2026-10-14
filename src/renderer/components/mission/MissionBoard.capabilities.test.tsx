@@ -584,7 +584,7 @@ describe('state-aware mission actions in the canonical mission board', () => {
     expect(capabilityMocks.closeRuntime).not.toHaveBeenCalled();
   });
 
-  it('guards runtime close against double submit, announces failure, restores focus, and stays on the mission', async () => {
+  it('guards runtime close against double submit, announces failure, restores focus to the Mais menu button, and stays on the mission', async () => {
     const pending = deferred<MissionRuntimeCloseResult>();
     capabilityMocks.closeRuntime.mockReturnValueOnce(pending.promise);
     const running = mission({
@@ -595,6 +595,12 @@ describe('state-aware mission actions in the canonical mission board', () => {
     const host = renderMissionBoard(running, 'running');
     await settle();
 
+    // Encerrar mora no menu Mais: abrir pelo caminho real do operador.
+    const more = requiredButton(host, /Mais/i);
+    act(() => {
+      more.click();
+    });
+    await settle();
     const close = requiredButton(host, /Encerrar/i);
     close.focus();
     act(() => {
@@ -614,7 +620,9 @@ describe('state-aware mission actions in the canonical mission board', () => {
     await settle();
 
     expect(announcementText(host)).toMatch(/processo protegido/i);
-    expect(document.activeElement).toBe(close);
+    // O menu fecha ao ativar o item; o foco volta ao botão Mais, não ao
+    // item escondido.
+    expect(document.activeElement).toBe(more);
     expect(useProductNavigationStore.getState().destination).toEqual({
       kind: 'mission',
       missionId: running.id,
@@ -622,13 +630,19 @@ describe('state-aware mission actions in the canonical mission board', () => {
     });
   });
 
-  it('danger-confirms draft discard once, announces cancellation, and restores the invoking focus', async () => {
+  it('danger-confirms draft discard once, announces cancellation, and restores focus to the Mais menu button', async () => {
     const confirmation = deferred<boolean>();
     capabilityMocks.askConfirm.mockReturnValueOnce(confirmation.promise);
     const draft = mission({ status: 'pending', intentState: 'draft' });
     const host = renderMissionBoard(draft, 'draft');
     await settle();
 
+    // Descartar mora no menu Mais: abrir pelo caminho real do operador.
+    const more = requiredButton(host, /Mais/i);
+    act(() => {
+      more.click();
+    });
+    await settle();
     const discard = requiredButton(host, /Descartar/i);
     discard.focus();
     act(() => {
@@ -648,7 +662,9 @@ describe('state-aware mission actions in the canonical mission board', () => {
 
     expect(api.removeMission).not.toHaveBeenCalled();
     expect(announcementText(host)).toMatch(/cancelad/i);
-    expect(document.activeElement).toBe(discard);
+    // O menu fecha ao ativar o item; o foco volta ao botão Mais, não ao
+    // item escondido.
+    expect(document.activeElement).toBe(more);
   });
 
   it.each([

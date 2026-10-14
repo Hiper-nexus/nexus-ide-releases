@@ -1815,6 +1815,189 @@ describe('F-1005 — histórico da atividade paginado pelo Main', () => {
   });
 });
 
+describe('cabeçalho do Quadro: primária única, menu Mais e minimizar', () => {
+  const BOARD_COLLAPSED_KEY = 'nexus.mission.board-collapsed';
+
+  function resumeSnapshot() {
+    return canonicalSnapshot({
+      state: 'blocked_user',
+      stateReason: undefined,
+      allowedActions: ['resume', 'stop'],
+    });
+  }
+
+  function moreButton(host: ParentNode): HTMLButtonElement {
+    const found = host.querySelector<HTMLButtonElement>(
+      'button[aria-haspopup="menu"]',
+    );
+    if (!found) throw new Error('More menu button not found');
+    return found;
+  }
+
+  function moreMenu(host: ParentNode): HTMLElement {
+    const found = host.querySelector<HTMLElement>('[role="menu"]');
+    if (!found) throw new Error('More menu not found');
+    return found;
+  }
+
+  function collapseToggle(host: ParentNode): HTMLButtonElement {
+    const found = [...host.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) =>
+        (button.getAttribute('aria-label') ?? '').includes(
+          'painel da missão',
+        ),
+    );
+    if (!found) throw new Error('Board collapse toggle not found');
+    return found;
+  }
+
+  function boardBody(host: ParentNode): HTMLElement {
+    const controlsId = collapseToggle(host).getAttribute('aria-controls');
+    const found = controlsId ? document.getElementById(controlsId) : null;
+    if (!found) throw new Error('Board body region not found');
+    return found;
+  }
+
+  function board(host: ParentNode): HTMLElement {
+    const found = host.querySelector<HTMLElement>('.mission-board');
+    if (!found) throw new Error('Mission board not found');
+    return found;
+  }
+
+  it('mostra só Retomar como primária sólida e agrupa o resto no Mais fechado', async () => {
+    api.snapshot.mockResolvedValue(resumeSnapshot());
+    const { host } = mount();
+    await flush();
+
+    const header = host.querySelector('header');
+    expect(header).not.toBeNull();
+    const solid = [
+      ...header!.querySelectorAll<HTMLButtonElement>(
+        '.mission-board__actions .mission-board__button',
+      ),
+    ].filter(
+      (button) =>
+        !button.classList.contains('mission-board__button--secondary'),
+    );
+    expect(solid.map(normalizedText)).toEqual(['Retomar']);
+
+    const more = moreButton(host);
+    expect(normalizedText(more)).toContain('Mais');
+    expect(more.getAttribute('aria-expanded')).toBe('false');
+
+    const menu = moreMenu(host);
+    expect(menu.hasAttribute('hidden')).toBe(true);
+    expect(menu.contains(buttonByName(header!, 'Retomar'))).toBe(false);
+    expect(menu.contains(buttonByName(header!, 'Parar'))).toBe(true);
+    expect(menu.contains(buttonByName(header!, 'Terminais'))).toBe(true);
+    expect(menu.contains(buttonByName(header!, '+ Nova missão'))).toBe(true);
+  });
+
+  it('abre o Mais com foco no primeiro item, navega e Esc devolve o foco', async () => {
+    api.snapshot.mockResolvedValue(resumeSnapshot());
+    const { host } = mount();
+    await flush();
+
+    const more = moreButton(host);
+    await click(more);
+    const menu = moreMenu(host);
+    expect(more.getAttribute('aria-expanded')).toBe('true');
+    expect(menu.hasAttribute('hidden')).toBe(false);
+
+    const items = [
+      ...menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+    ];
+    expect(items.length).toBeGreaterThanOrEqual(2);
+    expect(document.activeElement).toBe(items[0]);
+
+    keyDown(items[0]!, 'ArrowDown');
+    expect(document.activeElement).toBe(items[1]);
+
+    keyDown(items[1]!, 'Escape');
+    expect(menu.hasAttribute('hidden')).toBe(true);
+    expect(more.getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(more);
+  });
+
+  it('ação escolhida no Mais executa e fecha o menu', async () => {
+    api.snapshot.mockResolvedValue(resumeSnapshot());
+    const { host, onOpenTerminals } = mount('mission-alpha');
+    await flush();
+
+    await click(moreButton(host));
+    await click(buttonByName(moreMenu(host), 'Terminais'));
+
+    expect(onOpenTerminals).toHaveBeenCalledTimes(1);
+    expect(onOpenTerminals).toHaveBeenCalledWith('mission-alpha');
+    expect(moreMenu(host).hasAttribute('hidden')).toBe(true);
+    expect(moreButton(host).getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('minimizar recolhe o corpo, mantém estado e primária, e persiste', async () => {
+    api.snapshot.mockResolvedValue(resumeSnapshot());
+    const { host } = mount();
+    await flush();
+
+    const toggle = collapseToggle(host);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(boardBody(host).hasAttribute('hidden')).toBe(false);
+
+    await click(toggle);
+    expect(board(host).dataset.boardCollapsed).toBe('true');
+    expect(boardBody(host).hasAttribute('hidden')).toBe(true);
+    expect(collapseToggle(host).getAttribute('aria-expanded')).toBe('false');
+    expect(localStorage.getItem(BOARD_COLLAPSED_KEY)).toBe('1');
+    // A barra fina continua dizendo o estado e oferecendo a primária.
+    expect(host.querySelector('.mission-board__status')).not.toBeNull();
+    expect(boardBody(host).contains(buttonByName(host, 'Retomar'))).toBe(
+      false,
+    );
+
+    await click(buttonByName(host, 'Retomar'));
+    expect(api.command).toHaveBeenCalledWith({
+      kind: 'resume',
+      missionId: 'mission-alpha',
+    });
+
+    await click(collapseToggle(host));
+    expect(board(host).dataset.boardCollapsed).toBe('false');
+    expect(boardBody(host).hasAttribute('hidden')).toBe(false);
+    expect(localStorage.getItem(BOARD_COLLAPSED_KEY)).toBe('0');
+  });
+
+  it('restaura minimizado da preferência guardada', async () => {
+    localStorage.setItem(BOARD_COLLAPSED_KEY, '1');
+    api.snapshot.mockResolvedValue(resumeSnapshot());
+    const { host } = mount();
+    await flush();
+
+    expect(board(host).dataset.boardCollapsed).toBe('true');
+    expect(boardBody(host).hasAttribute('hidden')).toBe(true);
+    expect(collapseToggle(host).getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('monta expandido e ainda minimiza quando o storage está indisponível', async () => {
+    const original = Object.getOwnPropertyDescriptor(window, 'localStorage');
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      get() {
+        throw new Error('storage disabled');
+      },
+    });
+    try {
+      api.snapshot.mockResolvedValue(resumeSnapshot());
+      const { host } = mount();
+      await flush();
+      expect(board(host).dataset.boardCollapsed).toBe('false');
+
+      await click(collapseToggle(host));
+      expect(board(host).dataset.boardCollapsed).toBe('true');
+    } finally {
+      if (original) Object.defineProperty(window, 'localStorage', original);
+    }
+  });
+});
+
 describe('F — leader-drift: Religar a missão ao Maestro', () => {
   const driftReason = {
     code: 'leader-drift',

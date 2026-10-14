@@ -231,6 +231,104 @@
   min-width: 0;
 }
 
+/* Cabeçalho acima do grafo para o menu Mais não ficar sob a região de
+   trabalho; com o menu aberto o cabeçalho deixa o painel vazar para baixo. */
+.mission-board__header {
+  position: relative;
+  z-index: 3;
+}
+
+.mission-board__header--menu-open {
+  overflow: visible;
+}
+
+.mission-board__more {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+/* Caret do Mais em CSS (borda), sem glifo solto no texto do botão. */
+.mission-board__more-button::after {
+  width: 0;
+  height: 0;
+  margin-inline-start: var(--space-2);
+  border-inline: var(--space-1) solid transparent;
+  border-top: var(--space-1) solid currentColor;
+  content: '';
+}
+
+.mission-board__more-button[aria-expanded='true']::after {
+  border-top: 0;
+  border-bottom: var(--space-1) solid currentColor;
+}
+
+/* Mesmo idioma do menu de contexto do pane: painel elevado, itens em linha
+   inteira, foco/hover em accent-soft. */
+.mission-board__menu {
+  position: absolute;
+  inset-inline-end: 0;
+  top: calc(100% + var(--space-1));
+  z-index: 4;
+  display: grid;
+  gap: var(--space-1);
+  min-width: 13rem;
+  padding: var(--space-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-1);
+}
+
+.mission-board__menu[hidden] {
+  display: none;
+}
+
+.mission-board__menu .mission-board__button {
+  justify-content: flex-start;
+  width: 100%;
+  border-color: transparent;
+  text-align: start;
+}
+
+.mission-board__menu .mission-board__button:hover:not(:disabled),
+.mission-board__menu .mission-board__button:focus-visible {
+  background: var(--accent-soft);
+}
+
+.mission-board__menu .mission-board__button--danger:hover:not(:disabled),
+.mission-board__menu .mission-board__button--danger:focus-visible {
+  background: var(--danger-soft);
+}
+
+/* Corpo do quadro: pergunta, grafo/inspetor e barra de direção. Minimizado,
+   some por [hidden] sem desmontar — rascunho e estado sobrevivem. */
+.mission-board__body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.mission-board__body[hidden] {
+  display: none;
+}
+
+/* Minimizado: uma linha só — título, estado, primária, Mais e Expandir. */
+.mission-board--collapsed {
+  flex: 0 0 auto;
+  height: auto;
+}
+
+.mission-board--collapsed .mission-board__workspace,
+.mission-board--collapsed .mission-board__progress,
+.mission-board--collapsed .mission-board__progress-line,
+.mission-board--collapsed .mission-board__background-notice,
+.mission-board--collapsed .mission-board__telemetry,
+.mission-board--collapsed .mission-board__reason {
+  display: none;
+}
+
 .mission-board__button,
 .mission-board__question-option,
 .mission-board__question-submit,

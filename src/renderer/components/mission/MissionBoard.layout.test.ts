@@ -70,6 +70,33 @@ describe("MissionBoard layout system invariants (RED test)", () => {
     expect(missionCss).toMatch(/\.mission-graph__edge--[^:]+\s*\{[^}]*stroke-dasharray:/);
   });
 
+  it("collapsed board is one header line: extras and body hidden without unmount styles", () => {
+    const collapsedRule = cssRule(missionCss, ".mission-board--collapsed");
+    expect(collapsedRule).toMatch(/height:\s*auto/);
+    expect(missionCss).toMatch(
+      /\.mission-board__body\[hidden\]\s*\{[^}]*display:\s*none/,
+    );
+    expect(missionCss).toMatch(
+      /\.mission-board--collapsed \.mission-board__reason\s*\{[^}]*display:\s*none/,
+    );
+    expect(missionCss).toMatch(
+      /\.mission-board--collapsed \.mission-board__workspace[,\s]/,
+    );
+  });
+
+  it("Mais menu is a token-styled panel that leaves flow only when hidden", () => {
+    const menuRule = cssRule(missionCss, ".mission-board__menu");
+    expect(menuRule).toMatch(/position:\s*absolute/);
+    expect(menuRule).toMatch(/background:\s*var\(--bg-elevated\)/);
+    expect(menuRule).toMatch(/border:\s*1px solid var\(--border-strong\)/);
+    expect(missionCss).toMatch(
+      /\.mission-board__menu\[hidden\]\s*\{[^}]*display:\s*none/,
+    );
+    expect(missionCss).toMatch(
+      /\.mission-board__header--menu-open\s*\{[^}]*overflow:\s*visible/,
+    );
+  });
+
   it("keeps the mission title column from shrinking to a single letter", () => {
     const headerRule = cssRule(missionCss, ".mission-board__header");
     expect(headerRule).toMatch(
