@@ -2078,7 +2078,7 @@ async function recordWorkerMortalityTick(
         mcpHandoffClosedTask: false,
       });
     }
-    if (!exitedOrHibernated) continue;
+    if (pane.state !== 'exited' && pane.state !== 'hibernated') continue;
     // F-231: pane aberto pelo operador é mão dele — nunca conta como
     // mortalidade de worker nem alimenta o breaker do adapter.
     // F-918: só a CLI que saiu sozinha conta. Morte por reinício/shutdown
