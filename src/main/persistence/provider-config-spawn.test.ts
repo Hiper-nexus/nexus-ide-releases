@@ -1442,6 +1442,17 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
       .toMatchObject({ authStrategy: 'login-needed', authState: 'missing' });
   });
 
+  it('F-1485: o pane direto do operador abre o Grok com a sessão vencida para aprovar o login; o resto segue barrado', () => {
+    spawnDeps.subscriptionAuthed.mockReturnValue(false);
+    spawnDeps.runtimeKey.mockReturnValue(null);
+    spawnDeps.resolveAuthStrategy.mockReturnValue({
+      strategy: 'login-needed', injectKey: false, suppressKeyEnv: false,
+    });
+    spawnDeps.listAccounts.mockReturnValue([]);
+    expect(prepareProviderSpawn('grok', { allowNativeAuthAttempt: true })).toMatchObject({ ok: true });
+    expect(prepareProviderSpawn('grok', {}).ok).toBe(false);
+  });
+
   it('lets an explicitly chosen Muse try its native Keychain without claiming authenticated or injecting credentials', () => {
     spawnDeps.subscriptionAuthed.mockReturnValue(false);
     spawnDeps.subscriptionStatusAuthed.mockReturnValue(false);

@@ -49,6 +49,7 @@ import { trackManagedSession } from "../adapters/managed-credentials";
 import { isFileAuthAdapter } from "../adapters/managed-credentials";
 import { recordAccountChoiceReceipt } from "../persistence/account-choice-receipts";
 import {
+  grokSpawnUsesOAuth,
   resolveRotatingAuthFile,
   waitForRotatingAuthSpawnGate,
 } from "../adapters/managed-auth-spawn-gate";
@@ -300,7 +301,9 @@ function spawnCliPtyAgentPane(
       effort: request.effort,
       accountId: request.accountId,
       model: request.model,
-      ...(adapter.id === 'muse' && authority.source === 'direct-user' && authority.context === null
+      // F-1485: o pane direto do Grok é onde o operador aprova o login.
+      ...((adapter.id === 'muse' || adapter.id === 'grok') &&
+        authority.source === 'direct-user' && authority.context === null
         ? { allowNativeAuthAttempt: true } : {}),
       // Mesmo predicado que o spawn hook usa para trocar o HOME — a credencial
       // do Claude depende dele (HOME efêmero não alcança a linhagem nativa).
@@ -349,12 +352,19 @@ function spawnCliPtyAgentPane(
     // Gate the selected, materialized file; reuse this preparation after waiting
     // so account rotation cannot switch the credential underneath the lock.
     if (!authSpawnGated) {
-      const authFile = resolveRotatingAuthFile(
-        adapter.id,
-        preparation.overrides.keyEnv,
-      );
+      // F-1485: Grok com API key injetada não usa o OAuth — nem trava nem espera.
+      const authFile = adapter.id === "grok" && !grokSpawnUsesOAuth(preparation.overrides.keyEnv)
+        ? null
+        : resolveRotatingAuthFile(adapter.id, preparation.overrides.keyEnv);
       if (authFile) {
-        return waitForRotatingAuthSpawnGate({ authFile }).then(
+        return waitForRotatingAuthSpawnGate({
+          authFile,
+          // F-1485: sessão Grok OAuth sem renovação recusa o worker na hora; o
+          // pane do operador passa (é nele que o login é aprovado).
+          ...(adapter.id === "grok" && authority.source !== "direct-user"
+            ? { refuseExpiredGrokSession: true }
+            : {}),
+        }).then(
           () => {
             timer.mark("rotating-auth-gate");
             return spawnCliPtyAgentPane(

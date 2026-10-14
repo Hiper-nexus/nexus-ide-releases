@@ -175,6 +175,7 @@ vi.mock('./agy-keyring-activation', () => ({
 import { setLauncherProvidersFileForTests } from '../adapters/launcher-provider-manager';
 import * as secretsStore from './secrets-store';
 import {
+  grokHasNoRenewableSession,
   hasRuntimeKey,
   listProviderSettings,
   prepareProviderSpawn,
@@ -584,5 +585,77 @@ describe('F-724 — sem escolha salva, o DeepSeek segue o launcher do operador',
     const info = store.listProviderSettings({ nonBlockingAuth: true })
       .find((p) => p.adapterId === 'deepseek')!;
     expect(info.upstream).toBe('deepseek');
+  });
+});
+
+describe('F-1485 — Grok sem nenhuma sessão renovável vira login-needed', () => {
+  const NOW = Date.parse('2026-10-13T23:20:00Z');
+  const DAY = 24 * 3600_000;
+  const grokSession = (mintedAtMs: number) => {
+    const iat = Math.floor(mintedAtMs / 1000);
+    const payload = Buffer.from(JSON.stringify({ iat, exp: iat + 6 * 3600 })).toString('base64url');
+    return JSON.stringify({ 'https://auth.x.ai::acct-sintetica': {
+      user_id: 'grok-sintetico', key: `eyJhbGciOiJSUzI1NiJ9.${payload}.sig`, refresh_token: 'rt-sintetico',
+      create_time: new Date(mintedAtMs).toISOString(), expires_at: new Date(mintedAtMs + 6 * 3600_000).toISOString(),
+    } });
+  };
+  const nativeAuth = path.join(fx.home, '.grok', 'auth.json');
+  const writeNative = (blob: string) => {
+    fs.mkdirSync(path.dirname(nativeAuth), { recursive: true });
+    fs.writeFileSync(nativeAuth, blob);
+  };
+  const saveAccount = (id: string, blob: string | null, cached = true) => {
+    fx.accounts.push({ id, adapterId: 'grok', label: id, mode: 'subscription', upstream: 'xai', createdAt: 1 });
+    if (blob) fx.vault.set(`acctcred:${id}`, blob);
+    if (cached) fx.cached.add(`acctcred:${id}`);
+  };
+
+  beforeEach(() => {
+    vi.stubEnv('GROK_HOME', '');
+    fs.rmSync(path.join(fx.home, '.grok'), { recursive: true, force: true });
+  });
+
+  it('perfil nativo parado há 13 dias e nenhuma conta salva: login-needed', () => {
+    writeNative(grokSession(Date.parse('2026-09-30T22:30:58Z')));
+    expect(grokHasNoRenewableSession(NOW)).toBe(true);
+  });
+
+  it('conta salva ainda renovável segura o Grok pronto mesmo com o nativo vencido', () => {
+    writeNative(grokSession(NOW - 13 * DAY));
+    saveAccount('grok-acct-a', grokSession(NOW - 13 * DAY));
+    saveAccount('grok-acct-b', grokSession(NOW - 1 * DAY));
+    expect(grokHasNoRenewableSession(NOW)).toBe(false);
+  });
+
+  it('conta salva com cofre frio não prova nada: não estreita', () => {
+    writeNative(grokSession(NOW - 13 * DAY));
+    saveAccount('grok-acct-fria', grokSession(NOW - 13 * DAY), false);
+    expect(grokHasNoRenewableSession(NOW)).toBe(false);
+  });
+
+  it('dentro dos 7 dias o acesso vencido segue renovável; sem credencial nenhuma não há o que estreitar', () => {
+    writeNative(grokSession(NOW - 2 * DAY));
+    expect(grokHasNoRenewableSession(NOW)).toBe(false);
+    fs.rmSync(nativeAuth);
+    expect(grokHasNoRenewableSession(NOW)).toBe(false);
+  });
+
+  it('managed home renovado hoje por um pane vivo segura o Grok pronto com nativo e cofre velhos', () => {
+    writeNative(grokSession(NOW - 13 * DAY));
+    saveAccount('grok-acct-viva', grokSession(NOW - 13 * DAY));
+    const managedAuth = path.join(fx.home, '.nexus', 'managed-accounts', 'grok', 'grok-acct-viva', 'home', 'auth.json');
+    fs.mkdirSync(path.dirname(managedAuth), { recursive: true });
+    fs.writeFileSync(managedAuth, grokSession(NOW - 3600_000));
+    try {
+      expect(grokHasNoRenewableSession(NOW)).toBe(false);
+    } finally {
+      fs.rmSync(path.join(fx.home, '.nexus', 'managed-accounts'), { recursive: true, force: true });
+    }
+  });
+
+  it('todas as contas e o nativo vencidos: login-needed', () => {
+    writeNative(grokSession(NOW - 9 * DAY));
+    saveAccount('grok-acct-a', grokSession(NOW - 12 * DAY));
+    expect(grokHasNoRenewableSession(NOW)).toBe(true);
   });
 });

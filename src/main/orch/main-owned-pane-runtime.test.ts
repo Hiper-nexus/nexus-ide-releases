@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProviderSpawnPreparation } from '../persistence/provider-config-store';
 import type { MainOwnedPaneHooks, PaneSpawnOptions } from './main-owned-pane-runtime';
@@ -355,6 +356,30 @@ describe('main-owned Codex auth gate', () => {
     expect(result).toMatchObject({ ok: false, error: expect.stringMatching(/selected account.*pin/i) });
     expect(deps.spawn).not.toHaveBeenCalled();
     expect(deps.track).not.toHaveBeenCalled();
+  });
+
+  it('F-1485: worker Grok com sessão sem renovação é recusado com o caminho do login, sem pane físico', async () => {
+    deps.adapterId = 'grok';
+    deps.policy = 'operator-choice';
+    deps.prepare.mockReturnValue({ ok: true, overrides: { ...overrides, keyEnv: { GROK_HOME: '/synthetic/grok-a' } } });
+    const { GROK_LOGIN_REQUIRED_MESSAGE } = await import('../adapters/managed-auth-spawn-gate');
+    deps.gate.mockRejectedValueOnce(new Error(GROK_LOGIN_REQUIRED_MESSAGE));
+    await expect(spawnMainOwnedMissionPaneAsync({ ...options, adapterId: 'grok' }, hooks)).resolves.toMatchObject({
+      ok: false, error: expect.stringContaining('grok login'),
+    });
+    expect(deps.gate).toHaveBeenCalledWith({
+      authFile: path.join('/synthetic/grok-a', 'auth.json'), refuseExpiredGrokSession: true,
+    });
+    expect(deps.spawn).not.toHaveBeenCalled();
+  });
+
+  it('F-1485: worker Grok com XAI_API_KEY injetada não entra em trava, espera nem gate do OAuth', async () => {
+    deps.adapterId = 'grok';
+    deps.policy = 'operator-choice';
+    deps.prepare.mockReturnValue({ ok: true, overrides: { ...overrides, keyEnv: { XAI_API_KEY: 'xai-sintetica' } } });
+    await expect(spawnMainOwnedMissionPaneAsync({ ...options, adapterId: 'grok' }, hooks)).resolves.toMatchObject({ ok: true });
+    expect(deps.gate).not.toHaveBeenCalled();
+    expect(deps.spawn).toHaveBeenCalledOnce();
   });
 
   it('reports refresh timeout without creating a physical pane', async () => {

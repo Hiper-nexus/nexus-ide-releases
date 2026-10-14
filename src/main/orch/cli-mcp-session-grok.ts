@@ -34,7 +34,10 @@ import {
   grokStatusHooksDocument,
 } from './hook-status-config';
 import { grokHubMcpServers } from '../mcp-hub/mcp-hub-spawn';
-import { startAuthWriteThrough, type AuthWriteThroughPolicy } from './overlay-auth-writethrough';
+import {
+  startAuthWriteThrough,
+  type AuthWriteThroughPolicy,
+} from './overlay-auth-writethrough';
 
 function governedGrokProjectPolicy(
   cwd: string | undefined,
@@ -201,7 +204,10 @@ function hasFreshEntry(entries: GrokAuthIdentity[], now: number): boolean {
  * - otherwise, native has a fresh entry AND (managed holds no identities
  *   at all, or one of them matches the native email = same account with
  *   a rotated credential) → native home;
- * - anything else (different-account pin, nothing fresh anywhere) →
+ * - F-1485: nothing fresh anywhere, but native holds the SAME account with a
+ *   newer expiry → native home: every refresh rotates the refresh token, so
+ *   only the newest copy of the family can still be refreshed;
+ * - anything else (different-account pin, nothing newer anywhere) →
  *   providerHome, i.e. exactly today's behavior: the CLI may still
  *   refresh via its own refresh_token, and no foreign identity ever
  *   leaks into a pinned account.
@@ -225,7 +231,15 @@ export function resolveGrokOverlayAuthSource(
       entry.expiresAtMs !== null &&
       entry.expiresAtMs > now + GROK_AUTH_FRESH_SKEW_MS,
   );
-  if (freshNative.length === 0) return providerHome;
+  if (freshNative.length === 0) {
+    const newest = (entries: GrokAuthIdentity[]) =>
+      Math.max(-Infinity, ...entries.map((entry) => entry.expiresAtMs ?? -Infinity));
+    const emails = new Set(managed.map((entry) => entry.email));
+    const sameNative = native.filter((entry) => emails.has(entry.email));
+    return sameNative.length > 0 && newest(sameNative) > newest(managed)
+      ? nativeHome
+      : providerHome;
+  }
   if (managed.length === 0) return nativeHome;
   const managedEmails = new Set(managed.map((entry) => entry.email));
   if (freshNative.some((entry) => managedEmails.has(entry.email))) {
@@ -252,6 +266,80 @@ function linkGrokAuthPair(sourceDir: string, artifactDir: string): string[] {
     linked.push(sourcePath);
   }
   return linked;
+}
+
+/** Hardlinks do arquivo que o próprio Nexus criou: os overlays Grok que o ligam. */
+function nexusOverlayLinks(target: string, artifactRoot: string): number {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(path.join(artifactRoot, 'grok'), { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  let targetStat: fs.Stats;
+  try {
+    targetStat = fs.statSync(target);
+  } catch {
+    return 0;
+  }
+  let links = 0;
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    try {
+      const linked = fs.lstatSync(path.join(artifactRoot, 'grok', entry.name, GROK_AUTH_FILE));
+      if (linked.isFile() && linked.ino === targetStat.ino && linked.dev === targetStat.dev) links++;
+    } catch {
+      // Overlay sem auth.json.
+    }
+  }
+  return links;
+}
+
+/**
+ * F-1485: confinamento FÍSICO do destino de uma credencial devolvida — o
+ * auth.json de `~/.grok`, do home de uma conta Grok salva
+ * (`~/.nexus/managed-accounts/grok/<id>/home`) ou do GROK_HOME exato que o
+ * Main escolheu para o pane (`extraHome`, que também tem de morar dentro do
+ * home do operador). Nenhum componente do home até o arquivo pode ser link ou
+ * junção, o realpath da pasta tem de bater com o caminho esperado, o arquivo é
+ * arquivo comum e nenhum hardlink além dos overlays do Nexus aponta para ele.
+ * Objetivo: não escrever fora do lugar por acidente ou por link plantado — um
+ * processo com a mesma conta de usuário está fora do modelo (já lê o arquivo).
+ */
+export function grokAuthDestinationConfined(
+  source: string,
+  home: string,
+  options: { extraHome?: string; artifactRoot?: string } = {},
+): boolean {
+  const target = path.resolve(source);
+  if (path.basename(target) !== GROK_AUTH_FILE) return false;
+  const dir = path.dirname(target);
+  const base = path.resolve(home);
+  const relative = path.relative(base, dir);
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return false;
+  const parts = relative.split(path.sep);
+  const native = parts.length === 1 && parts[0] === '.grok';
+  const managed = parts.length === 5 && parts[0] === '.nexus' &&
+    parts[1] === 'managed-accounts' && parts[2] === 'grok' &&
+    /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(parts[3]) && parts[4] === 'home';
+  const extra = options.extraHome !== undefined &&
+    path.relative(path.resolve(options.extraHome), dir) === '';
+  if (!native && !managed && !extra) return false;
+  try {
+    for (let index = 1; index <= parts.length; index++) {
+      const stat = fs.lstatSync(path.join(base, ...parts.slice(0, index)));
+      if (stat.isSymbolicLink() || !stat.isDirectory()) return false;
+    }
+    const expected = path.join(fs.realpathSync.native(base), ...parts);
+    if (path.relative(expected, fs.realpathSync.native(dir)) !== '') return false;
+    const file = fs.lstatSync(target, { throwIfNoEntry: false });
+    if (!file) return true;
+    if (!file.isFile() || file.isSymbolicLink()) return false;
+    const artifactRoot = options.artifactRoot ?? path.join(base, '.nexus', 'ephemeral', 'mcp-clients');
+    return file.nlink <= 1 + nexusOverlayLinks(target, artifactRoot);
+  } catch {
+    return false;
+  }
 }
 
 export function prepareGrokMcpSession(
@@ -423,6 +511,8 @@ export function prepareGrokMcpSession(
         overlayFile: path.join(artifactDir, GROK_AUTH_FILE),
         sourceFile: path.join(authSource, GROK_AUTH_FILE),
         policy: GROK_AUTH_WRITE_THROUGH_POLICY,
+        verifyDestination: (source) =>
+          grokAuthDestinationConfined(source, home, { extraHome: providerHome, artifactRoot }),
       });
       activateArtifact(token, {
         artifactDir,

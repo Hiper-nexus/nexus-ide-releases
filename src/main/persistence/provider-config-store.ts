@@ -157,6 +157,8 @@ import {
   isCredentiallessOpenCodeModel,
   isProviderAuthReadyForModel,
 } from '../adapters/model-auth-readiness';
+import { grokSessionNeedsLogin } from '../adapters/auth-freshness';
+import { accountCredentialCandidates } from '../adapters/account-credential-candidates';
 import {
   accountHasFailoverCredential,
   activeClaudeAuthEnv,
@@ -457,6 +459,34 @@ function nativeKeyEnv(
   return envVar ? { [envVar]: key } : {};
 }
 
+/**
+ * F-1485: auth.json do Grok presente não prova login. Quando TODA credencial
+ * Grok conhecida (perfil nativo e contas salvas) passou da janela em que a CLI
+ * ainda renova, o provedor é `login-needed`: o roteador escolhe outra CLI e a
+ * tela de provedores mostra o login, em vez de abrir panes que param no código
+ * do navegador. Por conta valem os candidatos ATUAIS (managed home renovado por
+ * um pane vivo, cofre e nativo da mesma conta), não só o snapshot do cofre.
+ * Cofre frio (segredo não carregado) não prova nada: não estreita.
+ */
+export function grokHasNoRenewableSession(now = Date.now(), home = os.homedir()): boolean {
+  const blobs: string[] = [];
+  for (const dir of [process.env.GROK_HOME?.trim(), path.join(home, '.grok')]) {
+    if (!dir) continue;
+    try {
+      blobs.push(fs.readFileSync(path.join(dir, 'auth.json'), 'utf8'));
+    } catch {
+      // Sem arquivo nesse perfil.
+    }
+  }
+  for (const account of listAccounts('grok')) {
+    if (account.mode !== 'subscription') continue;
+    const key = `acctcred:${account.id}`;
+    if (!hasCachedSecret(key)) return false;
+    blobs.push(...accountCredentialCandidates('grok', account.id, getSecret(key)));
+  }
+  return blobs.length > 0 && blobs.every((blob) => grokSessionNeedsLogin(blob, now));
+}
+
 function authDecision(
   adapterId: string,
   _selectedModel?: string,
@@ -469,15 +499,17 @@ function authDecision(
     adapter?.kind === 'cli-pty' ? adapter.auth.method : 'api_key';
   const probeSubscription = options.statusSnapshot || adapterId === 'agy'
     ? hasSubscriptionAuthForStatus : hasSubscriptionAuth;
+  // AGY's native Keychain is always probed asynchronously before governed
+  // spawn. Synchronous settings/spawn paths consume only that warm cache so
+  // a locked login Keychain can never freeze Electron's main event loop.
+  const subscriptionAuthed = adapterId === 'mimo-code'
+    ? probeSubscription(adapterId, effectiveProviderModel(adapterId, _selectedModel))
+    : probeSubscription(adapterId);
   return resolveAuthStrategy({
     authMethod,
     hasStoredKey: hasRuntimeKey(adapterId),
-    // AGY's native Keychain is always probed asynchronously before governed
-    // spawn. Synchronous settings/spawn paths consume only that warm cache so
-    // a locked login Keychain can never freeze Electron's main event loop.
-    subscriptionAuthed: adapterId === 'mimo-code'
-      ? probeSubscription(adapterId, effectiveProviderModel(adapterId, _selectedModel))
-      : probeSubscription(adapterId),
+    subscriptionAuthed: subscriptionAuthed &&
+      !(adapterId === 'grok' && grokHasNoRenewableSession()),
   });
 }
 
@@ -979,7 +1011,10 @@ export interface ProviderPerSpawn {
   accountId?: string;
   model?: string;
   isolatedHome?: boolean;
-  /** Main-only: an explicitly requested pane may let Muse check its native auth. */
+  /**
+   * Main-only: an explicitly requested pane may let Muse check its native auth
+   * and lets the operator sign in to an expired Grok session (F-1485).
+   */
   allowNativeAuthAttempt?: boolean;
 }
 
@@ -1306,9 +1341,15 @@ function prepareProviderSpawnWithDecision(
     !perSpawn.accountId &&
     spawnDecision?.strategy === 'login-needed' &&
     subscriptionAuthStatusIsUnknown(adapterId);
+  // F-1485: sessão Grok vencida não barra o pane direto do operador — é nele
+  // que o login por código é aprovado.
+  const grokOperatorLogin =
+    adapterId === 'grok' &&
+    perSpawn.allowNativeAuthAttempt === true &&
+    spawnDecision?.strategy === 'login-needed';
   const managedAccountSelection = !perSpawn.accountId &&
     adapterId === 'claude' && listAccounts(adapterId).length > 0;
-  const readiness = perSpawn.accountId || nativeAuthAttempt || managedAccountSelection
+  const readiness = perSpawn.accountId || nativeAuthAttempt || grokOperatorLogin || managedAccountSelection
     ? infrastructure
     : resolveProviderReadiness(adapterId, perSpawn.model, {
         decision: spawnDecision,

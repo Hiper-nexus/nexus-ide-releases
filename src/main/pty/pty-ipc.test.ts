@@ -223,7 +223,7 @@ vi.mock("../adapters/adapter-registry", () => ({
             },
           },
         }
-      : id === "opencode" || id === "custom" || id === "agy" || id === "muse" || id === "codex"
+      : id === "opencode" || id === "custom" || id === "agy" || id === "muse" || id === "codex" || id === "grok"
         ? {
             id,
             kind: "cli-pty",
@@ -615,6 +615,31 @@ describe("registerPtyIpc account fail-fast", () => {
       expect.anything(), expect.anything(), expect.anything(), { binPath: '/usr/local/bin/muse' },
       expect.objectContaining({ source: 'direct-user', context: null, scope: authorityDeps.scope }),
     );
+  });
+
+  it('F-1485: o pane Grok direto do operador pode abrir para aprovar o login, sem a trava de sessão vencida', async () => {
+    providerDeps.prepareProviderSpawn.mockReturnValueOnce({ ok: true, overrides: {} });
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
+    const result = await handler?.({ sender: { id: 7 } }, {
+      kind: 'cli-agent', adapterId: 'grok', cols: 100, rows: 30,
+    });
+    expect(result).toEqual({ ok: true, sessionId: 'pty-created' });
+    expect(providerDeps.prepareProviderSpawn).toHaveBeenCalledWith('grok', expect.objectContaining({
+      allowNativeAuthAttempt: true,
+    }));
+    for (const [options] of authGateDeps.wait.mock.calls) {
+      expect(options).not.toHaveProperty('refuseExpiredGrokSession');
+    }
+  });
+
+  it('F-1485: Grok com XAI_API_KEY injetada nem passa pela trava/espera do OAuth', async () => {
+    providerDeps.prepareProviderSpawn.mockReturnValueOnce({ ok: true, overrides: { keyEnv: { XAI_API_KEY: 'xai-sintetica' } } });
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
+    const result = await handler?.({ sender: { id: 7 } }, {
+      kind: 'cli-agent', adapterId: 'grok', cols: 100, rows: 30,
+    });
+    expect(result).toEqual({ ok: true, sessionId: 'pty-created' });
+    expect(authGateDeps.wait).not.toHaveBeenCalled();
   });
 
   it('does not extend a mission-bound Muse request into a native-auth attempt', async () => {

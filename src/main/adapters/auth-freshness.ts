@@ -253,6 +253,25 @@ export function compareAuthFreshness(
   return null;
 }
 
+/**
+ * F-1485: o Grok só renova a sessão até 7 dias depois da última emissão — a
+ * própria CLI (1.0.52) documenta "tokens expire after 7 days; Grok will prompt
+ * you to re-authenticate". O access token vale 6 h; a emissão é o maior
+ * `create_time`/`iat` do blob, que cada renovação avança.
+ */
+export const GROK_SESSION_REFRESH_WINDOW_MS = 7 * 24 * 60 * 60_000;
+
+/**
+ * Sessão Grok que a CLI não consegue mais renovar: acesso vencido e última
+ * emissão além da janela. Sem data de emissão legível não há prova — false.
+ */
+export function grokSessionNeedsLogin(contents: string, now = Date.now()): boolean {
+  const freshness = authBlobFreshness(contents);
+  if (!freshness || freshness.issuedAt === null) return false;
+  if (freshness.expiresAt !== null && freshness.expiresAt > now) return false;
+  return now - freshness.issuedAt > GROK_SESSION_REFRESH_WINDOW_MS;
+}
+
 function sign(delta: number): -1 | 0 | 1 {
   if (delta > 0) return 1;
   if (delta < 0) return -1;

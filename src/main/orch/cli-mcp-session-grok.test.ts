@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  grokAuthDestinationConfined,
   prepareGrokMcpSession,
   resolveGrokOverlayAuthSource,
 } from './cli-mcp-session-grok';
@@ -129,6 +130,144 @@ describe('resolveGrokOverlayAuthSource', () => {
       entry('user@example.com', new Date(now - 86400_000).toISOString()),
     );
     expect(resolveGrokOverlayAuthSource(managed, home, now)).toBe(managed);
+  });
+});
+
+describe('F-1485: origem mais nova que o snapshot vence', () => {
+  it('nada fresco: a cópia nativa MAIS NOVA da mesma conta vence o snapshot gerenciado velho', () => {
+    const root = tempDir();
+    const home = path.join(root, 'home');
+    const managed = path.join(root, 'managed');
+    fs.mkdirSync(path.join(home, '.grok'), { recursive: true });
+    fs.mkdirSync(managed, { recursive: true });
+    const now = Date.now();
+    // Cada renovação invalida o refresh token anterior: só o mais novo serve.
+    writeAuth(managed, entry('user@example.com', new Date(now - 5 * 86400_000).toISOString()));
+    writeAuth(path.join(home, '.grok'), entry('user@example.com', new Date(now - 3600_000).toISOString()));
+    expect(resolveGrokOverlayAuthSource(managed, home, now)).toBe(path.join(home, '.grok'));
+  });
+
+  it('nada fresco: nativa mais velha (ou de outra conta) não substitui o snapshot gerenciado', () => {
+    const root = tempDir();
+    const home = path.join(root, 'home');
+    const managed = path.join(root, 'managed');
+    fs.mkdirSync(path.join(home, '.grok'), { recursive: true });
+    fs.mkdirSync(managed, { recursive: true });
+    const now = Date.now();
+    writeAuth(managed, entry('user@example.com', new Date(now - 3600_000).toISOString()));
+    writeAuth(path.join(home, '.grok'), entry('user@example.com', new Date(now - 5 * 86400_000).toISOString()));
+    expect(resolveGrokOverlayAuthSource(managed, home, now)).toBe(managed);
+    writeAuth(path.join(home, '.grok'), entry('outra@example.com', new Date(now - 60_000 * 10).toISOString()));
+    expect(resolveGrokOverlayAuthSource(managed, home, now)).toBe(managed);
+  });
+
+  it('o vigia vivo do pane devolve a renovação no fechamento, no próprio arquivo da origem', () => {
+    const root = tempDir();
+    const home = path.join(root, 'home');
+    const native = path.join(home, '.grok');
+    const artifacts = path.join(root, 'artifacts');
+    fs.mkdirSync(native, { recursive: true });
+    const now = Date.now();
+    writeAuth(native, entry('user@example.com', new Date(now - 3600_000).toISOString()));
+    const before = fs.statSync(path.join(native, 'auth.json')).ino;
+    const token = 'test-token-grok-f1485-live';
+    const pane = prepareGrokMcpSession('http://127.0.0.1:9/mcp', token, {
+      home, providerHome: native, artifactRoot: artifacts, governed: true, cwd: root,
+    });
+    const renewed = JSON.stringify(entry('user@example.com', new Date(now + 6 * 3600_000).toISOString()));
+    const overlay = path.join(pane.artifactDir as string, 'auth.json');
+    fs.writeFileSync(`${overlay}.tmp`, renewed);
+    fs.renameSync(`${overlay}.tmp`, overlay);
+    cleanupCliMcpSession(token);
+    expect(fs.readFileSync(path.join(native, 'auth.json'), 'utf8')).toBe(renewed);
+    expect(fs.statSync(path.join(native, 'auth.json')).ino).toBe(before);
+  });
+});
+
+describe('F-1485: credencial devolvida só vai para destino FISICAMENTE confinado', () => {
+  const linkDir = (target: string, link: string) =>
+    fs.symlinkSync(target, link, process.platform === 'win32' ? 'junction' : 'dir');
+
+  it('home de conta salva que é junção para fora: o vigia vivo não grava lá fora', () => {
+    const root = tempDir();
+    const home = path.join(root, 'home');
+    const external = path.join(root, 'externo');
+    const artifacts = path.join(root, 'artifacts');
+    const accountDir = path.join(home, '.nexus', 'managed-accounts', 'grok', 'acct-a');
+    fs.mkdirSync(accountDir, { recursive: true });
+    fs.mkdirSync(external, { recursive: true });
+    const now = Date.now();
+    const old = JSON.stringify(entry('user@example.com', new Date(now - 3600_000).toISOString()));
+    fs.writeFileSync(path.join(external, 'auth.json'), old);
+    linkDir(external, path.join(accountDir, 'home'));
+    const token = 'test-token-grok-f1485-junction';
+    const pane = prepareGrokMcpSession('http://127.0.0.1:9/mcp', token, {
+      home, providerHome: path.join(accountDir, 'home'), artifactRoot: artifacts, governed: true, cwd: root,
+    });
+    const overlay = path.join(pane.artifactDir as string, 'auth.json');
+    fs.writeFileSync(`${overlay}.tmp`, JSON.stringify(entry('user@example.com', new Date(now + 6 * 3600_000).toISOString())));
+    fs.renameSync(`${overlay}.tmp`, overlay);
+    cleanupCliMcpSession(token);
+    expect(fs.readFileSync(path.join(external, 'auth.json'), 'utf8')).toBe(old);
+  });
+
+  it('aceita ~/.grok e o home real de uma conta salva; recusa junção, arquivo-link e caminho fora', () => {
+    const root = tempDir();
+    const home = path.join(root, 'home');
+    const native = path.join(home, '.grok');
+    const managed = path.join(home, '.nexus', 'managed-accounts', 'grok', 'acct-a', 'home');
+    const external = path.join(root, 'externo');
+    fs.mkdirSync(native, { recursive: true });
+    fs.mkdirSync(managed, { recursive: true });
+    fs.mkdirSync(external, { recursive: true });
+    expect(grokAuthDestinationConfined(path.join(native, 'auth.json'), home)).toBe(true);
+    expect(grokAuthDestinationConfined(path.join(managed, 'auth.json'), home)).toBe(true);
+    expect(grokAuthDestinationConfined(path.join(native, 'outro.json'), home)).toBe(false);
+    expect(grokAuthDestinationConfined(path.join(native, '..', '..', 'externo', 'auth.json'), home)).toBe(false);
+    expect(grokAuthDestinationConfined(path.join(external, 'auth.json'), home)).toBe(false);
+    // GROK_HOME do pane fora do home do operador não é destino.
+    expect(grokAuthDestinationConfined(path.join(external, 'auth.json'), home, { extraHome: external })).toBe(false);
+    const linkedAccount = path.join(home, '.nexus', 'managed-accounts', 'grok', 'acct-b');
+    linkDir(path.join(home, '.nexus', 'managed-accounts', 'grok', 'acct-a'), linkedAccount);
+    expect(grokAuthDestinationConfined(path.join(linkedAccount, 'home', 'auth.json'), home)).toBe(false);
+    fs.writeFileSync(path.join(external, 'alvo.json'), '{}');
+    try {
+      fs.symlinkSync(path.join(external, 'alvo.json'), path.join(native, 'auth.json'), 'file');
+    } catch {
+      return; // Windows sem privilégio de symlink de arquivo: a junção acima já cobre o caso.
+    }
+    expect(grokAuthDestinationConfined(path.join(native, 'auth.json'), home)).toBe(false);
+  });
+
+  it('GROK_HOME do pane dentro do home: aceito real, recusado com junção num ancestral', () => {
+    const root = tempDir();
+    const home = path.join(root, 'home');
+    const realParent = path.join(home, 'perfis');
+    const custom = path.join(realParent, 'grok-a');
+    const external = path.join(root, 'externo');
+    fs.mkdirSync(custom, { recursive: true });
+    fs.mkdirSync(path.join(external, 'grok-b'), { recursive: true });
+    expect(grokAuthDestinationConfined(path.join(custom, 'auth.json'), home, { extraHome: custom })).toBe(true);
+    linkDir(external, path.join(home, 'atalho'));
+    const viaJunction = path.join(home, 'atalho', 'grok-b');
+    expect(grokAuthDestinationConfined(path.join(viaJunction, 'auth.json'), home, { extraHome: viaJunction })).toBe(false);
+  });
+
+  it('hardlink estranho no auth.json é recusado; os hardlinks dos overlays do Nexus não', () => {
+    const root = tempDir();
+    const home = path.join(root, 'home');
+    const native = path.join(home, '.grok');
+    const artifacts = path.join(root, 'artifacts');
+    const external = path.join(root, 'externo');
+    fs.mkdirSync(native, { recursive: true });
+    fs.mkdirSync(path.join(artifacts, 'grok', 'overlay-a'), { recursive: true });
+    fs.mkdirSync(external, { recursive: true });
+    const target = path.join(native, 'auth.json');
+    fs.writeFileSync(target, '{}');
+    fs.linkSync(target, path.join(artifacts, 'grok', 'overlay-a', 'auth.json'));
+    expect(grokAuthDestinationConfined(target, home, { artifactRoot: artifacts })).toBe(true);
+    fs.linkSync(target, path.join(external, 'copia.json'));
+    expect(grokAuthDestinationConfined(target, home, { artifactRoot: artifacts })).toBe(false);
   });
 });
 

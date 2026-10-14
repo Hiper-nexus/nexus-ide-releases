@@ -28,6 +28,7 @@ import { recordAccountChoiceReceipt } from "../persistence/account-choice-receip
 import { settleCodexCliVersionForSpawn } from "./codex-cli-version";
 import { ensureNativeHeavyJobBase } from "./native-heavy-preload";
 import {
+  grokSpawnUsesOAuth,
   resolveRotatingAuthFile,
   ROTATING_REFRESH_SPAWN_ADAPTERS,
   waitForRotatingAuthSpawnGate,
@@ -699,9 +700,16 @@ export function spawnMainOwnedMissionPane(
     catch (error) { return { requestId, ok: false, error: error instanceof Error ? error.message : String(error) }; }
   }
   if (coordinateAuthRefresh) {
-    const authFile = resolveRotatingAuthFile(adapter.id, prepared.overrides.keyEnv);
+    // F-1485: Grok com API key injetada não usa o OAuth — nem trava nem espera.
+    const authFile = adapter.id === "grok" && !grokSpawnUsesOAuth(prepared.overrides.keyEnv)
+      ? null
+      : resolveRotatingAuthFile(adapter.id, prepared.overrides.keyEnv);
     if (authFile) {
-      return waitForRotatingAuthSpawnGate({ authFile }).then(
+      // F-1485: pane de missão com OAuth nunca espera login por código no navegador.
+      return waitForRotatingAuthSpawnGate({
+        authFile,
+        ...(adapter.id === "grok" ? { refuseExpiredGrokSession: true } : {}),
+      }).then(
         // Recheck Main authority after waiting, without selecting/materializing
         // again: that could switch the account or restore its stale credential.
         () => {

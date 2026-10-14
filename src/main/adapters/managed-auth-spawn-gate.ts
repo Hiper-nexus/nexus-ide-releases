@@ -20,6 +20,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { withGrokAuthFamilyGate, resetGrokAuthFamiliesForTests } from './grok-auth-family-gate';
+import { grokSessionNeedsLogin } from './auth-freshness';
 import {
   isFileAuthAdapter,
   MANAGED_PROVIDER_SPECS,
@@ -133,6 +134,27 @@ export function authBlobIsFreshForSpawn(
   }
   if (expMs !== null) return expMs > now + skewMs;
   return false;
+}
+
+/**
+ * F-1485: sessão Grok sem renovação possível (ver `grokSessionNeedsLogin`):
+ * a CLI abriria o login por código no pane; num worker ninguém aprova, o
+ * vigia de início derruba o pane aos ~110 s e o Maestro abre outro, que pede
+ * login de novo.
+ */
+export const GROK_LOGIN_REQUIRED_MESSAGE =
+  'A sessão do Grok expirou: a última renovação tem mais de 7 dias e o Grok não renova mais. ' +
+  'Faça login uma vez — clique em "Entrar no Grok" na lista Atenção ou rode `grok login` num terminal — ' +
+  'e os panes Grok voltam a abrir.';
+
+/**
+ * F-1485: o spawn usa a sessão OAuth do Grok — nenhuma API key/token foi
+ * injetada no env preparado. Com `XAI_API_KEY` o OAuth vencido não importa.
+ */
+export function grokSpawnUsesOAuth(keyEnv: Readonly<Record<string, string>> = {}): boolean {
+  return !Object.entries(keyEnv).some(
+    ([name, value]) => /(?:_API_KEY|_AUTH_TOKEN)$/.test(name) && value.trim().length > 0,
+  );
 }
 
 function rotationMarker(blob: string): number | null {
@@ -254,6 +276,11 @@ type GateOptions = {
   timeoutMs?: number;
   pollMs?: number;
   skewMs?: number;
+  /**
+   * F-1485: spawn de agente (não o pane do operador, onde o login é aprovado)
+   * recusa na hora uma sessão Grok sem renovação possível.
+   */
+  refuseExpiredGrokSession?: boolean;
 };
 
 export function waitForRotatingAuthSpawnGate(options: GateOptions): Promise<AuthSpawnGateRole> {
@@ -278,6 +305,9 @@ async function waitForAuthFile(options: GateOptions): Promise<AuthSpawnGateRole>
   const blob = await readAuth(authFile);
   if (!blob) return 'fresh';
   if (authBlobIsFreshForSpawn(blob, now(), skewMs)) return 'fresh';
+  if (options.refuseExpiredGrokSession && grokSessionNeedsLogin(blob, now())) {
+    throw new Error(GROK_LOGIN_REQUIRED_MESSAGE);
+  }
 
   const freshnessAtStart = rotationMarker(blob);
   if (tryAcquireLock(lockPath, now(), timeoutMs)) {

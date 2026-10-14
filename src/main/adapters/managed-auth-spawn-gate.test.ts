@@ -6,6 +6,7 @@ import {
   AUTH_SPAWN_GATE_SKEW_MS,
   AUTH_SPAWN_GATE_TIMEOUT_MS,
   authBlobIsFreshForSpawn,
+  grokSpawnUsesOAuth,
   resetManagedAuthSpawnGateForTests,
   resolveRotatingAuthFile,
   rotatingAuthLockPath,
@@ -93,6 +94,59 @@ describe('authBlobIsFreshForSpawn', () => {
       tokens: { access_token: 'not-a-jwt', refresh_token: 'rt' },
     });
     expect(authBlobIsFreshForSpawn(raw, now)).toBe(true);
+  });
+});
+
+describe('F-1485: sessão do Grok vencida além da renovação', () => {
+  const DAY = 24 * 3600_000;
+  function grokSession(mintedAtMs: number): string {
+    const iat = Math.floor(mintedAtMs / 1000);
+    const payload = Buffer.from(JSON.stringify({ iat, exp: iat + 6 * 3600 })).toString('base64url');
+    return JSON.stringify({ 'https://auth.x.ai::acct-sintetica': {
+      user_id: 'grok-sintetico',
+      key: `eyJhbGciOiJSUzI1NiJ9.${payload}.sig`,
+      refresh_token: 'rt-sintetico',
+      create_time: new Date(mintedAtMs).toISOString(),
+      expires_at: new Date(mintedAtMs + 6 * 3600_000).toISOString(),
+    } });
+  }
+
+  it('worker: recusa na hora com o caminho do login, sem abrir pane que fica preso no código do navegador', async () => {
+    const authFile = path.join(tempDir(), 'auth.json');
+    const now = Date.parse('2026-10-13T23:20:00Z');
+    fs.writeFileSync(authFile, grokSession(Date.parse('2026-09-30T22:30:58Z')));
+    await expect(
+      waitForRotatingAuthSpawnGate({ authFile, now: () => now, refuseExpiredGrokSession: true }),
+    ).rejects.toThrow(/grok login/);
+    expect(fs.existsSync(rotatingAuthLockPath(authFile))).toBe(false);
+  });
+
+  it('dentro dos 7 dias o token vencido segue renovável: o primeiro pane lidera a renovação', async () => {
+    const authFile = path.join(tempDir(), 'auth.json');
+    const now = Date.parse('2026-10-13T23:20:00Z');
+    fs.writeFileSync(authFile, grokSession(now - 2 * DAY));
+    expect(await waitForRotatingAuthSpawnGate({ authFile, now: () => now, refuseExpiredGrokSession: true })).toBe('leader');
+  });
+
+  it('pane do operador passa mesmo vencido: é onde ele aprova o login no navegador', async () => {
+    const authFile = path.join(tempDir(), 'auth.json');
+    const now = Date.parse('2026-10-13T23:20:00Z');
+    fs.writeFileSync(authFile, grokSession(now - 13 * DAY));
+    expect(await waitForRotatingAuthSpawnGate({ authFile, now: () => now })).toBe('leader');
+  });
+
+  it('só sessão OAuth entra na trava: API key/token injetado não depende do OAuth', () => {
+    expect(grokSpawnUsesOAuth({ GROK_HOME: '/managed/grok-a' })).toBe(true);
+    expect(grokSpawnUsesOAuth({})).toBe(true);
+    expect(grokSpawnUsesOAuth({ XAI_API_KEY: 'xai-sintetica' })).toBe(false);
+    expect(grokSpawnUsesOAuth({ XAI_API_KEY: '  ' })).toBe(true);
+  });
+
+  it('access token ainda válido nunca é recusado', async () => {
+    const authFile = path.join(tempDir(), 'auth.json');
+    const now = Date.parse('2026-10-13T23:20:00Z');
+    fs.writeFileSync(authFile, grokSession(now - 60_000));
+    expect(await waitForRotatingAuthSpawnGate({ authFile, now: () => now, refuseExpiredGrokSession: true })).toBe('fresh');
   });
 });
 
