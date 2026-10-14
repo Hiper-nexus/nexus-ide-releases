@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 import type { ProjectExecutionScope } from '../../shared/types';
@@ -25,7 +25,7 @@ export interface HeavyCommandQueueWait {
   readonly machineActive: number;
   /** Configured machine cap, before memory pressure shrinks it. */
   readonly maxActive: number;
-  /** Cap actually applied. Lower than maxActive only while pressure is warn or critical. */
+  /** Cap actually applied. Lower than maxActive only while pressure is warn (2) or critical (4). */
   readonly effectiveMaxActive?: number;
   /** F-1434: the RAM budget at give-up time; freeMB null = no telemetry. */
   readonly memory?: { readonly freeMB: number | null; readonly neededMB: number; readonly swapBound: boolean };
@@ -48,7 +48,7 @@ interface PermitPoolOptions {
   readonly waitMs?: number;
   readonly pollMs?: number;
   readonly maxActive?: number;
-  /** Darwin kern.memorystatus_vm_pressure_level, or null when it cannot be read. */
+  /** Cached dispatch level from kern.memorystatus_vm_pressure_level, or null. */
   pressure?(): number | null;
 }
 const error = (code: string) => new Error(`heavy_command_${code}`);
@@ -73,27 +73,62 @@ const machineActiveLimit = (): number => {
 };
 
 /**
- * xnu doc/vm/memorystatus_notify.md: 0 normal, 1 warning, 2 urgent
- * (same band as warning), 3 critical, 4 jetsam. Older kVMPressure bitfield
- * values are a different API and do not match this sysctl.
- * Fail-open: no reading keeps the configured cap. Never stops a job already running.
+ * `sysctl kern.memorystatus_vm_pressure_level` returns the dispatch level:
+ * 1 normal, 2 warn, 4 critical. xnu doc/vm/memorystatus_notify.md describes
+ * the internal enum (0 normal, 1 warning, 2 urgent, 3 critical, 4 jetsam),
+ * which is not the value this sysctl exposes.
+ * Fail-open: null or any other value keeps the configured cap.
+ * Never stops a job already running.
  */
 export function heavyCommandEffectiveCap(configured: number, level: number | null): number {
-  if (level === 1 || level === 2) return Math.min(configured, 2);
-  if (level === 3 || level === 4) return Math.min(configured, 1);
+  if (level === 2) return Math.min(configured, 2);
+  if (level === 4) return Math.min(configured, 1);
   return configured;
 }
 
-export function readHeavyCommandMemoryPressure(): number | null {
-  if (process.platform !== 'darwin') return null;
-  try {
-    const raw = execFileSync('/usr/sbin/sysctl', ['-n', 'kern.memorystatus_vm_pressure_level'], {
-      encoding: 'utf8', timeout: 1000, stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
-    const level = Number(raw);
-    return Number.isInteger(level) && level >= 0 && level <= 4 ? level : null;
-  } catch { return null; }
+const PRESSURE_INTERVAL_MS = 3_000;
+
+export function parseHeavyCommandPressureOutput(raw: string): number | null {
+  const level = Number(String(raw).trim());
+  return Number.isInteger(level) ? level : null;
 }
+
+export interface HeavyCommandPressureProbe { (callback: (level: number | null) => void): void }
+
+/** Pump reads the last sample. A refresh is async and at most one is in flight. */
+export function createHeavyCommandPressureCache(options?: {
+  now?: () => number;
+  intervalMs?: number;
+  platform?: NodeJS.Platform;
+  probe?: HeavyCommandPressureProbe;
+}): () => number | null {
+  const now = options?.now ?? Date.now;
+  const intervalMs = options?.intervalMs ?? PRESSURE_INTERVAL_MS;
+  const platform = options?.platform ?? process.platform;
+  const probe = options?.probe ?? defaultHeavyCommandPressureProbe;
+  let level: number | null = null;
+  let startedAt = Number.NEGATIVE_INFINITY;
+  let inflight = false;
+  return () => {
+    if (platform !== 'darwin') return null;
+    const current = now();
+    if (!inflight && current - startedAt >= intervalMs) {
+      inflight = true;
+      startedAt = current;
+      try { probe((next) => { inflight = false; level = next; }); }
+      catch { inflight = false; level = null; }
+    }
+    return level;
+  };
+}
+
+function defaultHeavyCommandPressureProbe(callback: (level: number | null) => void): void {
+  execFile('/usr/sbin/sysctl', ['-n', 'kern.memorystatus_vm_pressure_level'],
+    { timeout: 1000, encoding: 'utf8' },
+    (error, stdout) => { callback(error ? null : parseHeavyCommandPressureOutput(String(stdout ?? ''))); });
+}
+
+export const readHeavyCommandMemoryPressure = createHeavyCommandPressureCache();
 
 export class HeavyCommandPermitPool {
   readonly #options: PermitPoolOptions;
@@ -152,7 +187,7 @@ export class HeavyCommandPermitPool {
     if (!read) return null;
     try {
       const level = read();
-      return typeof level === 'number' && Number.isInteger(level) && level >= 0 && level <= 4 ? level : null;
+      return typeof level === 'number' && Number.isInteger(level) ? level : null;
     } catch { return null; }
   }
 

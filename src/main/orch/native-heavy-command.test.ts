@@ -393,7 +393,7 @@ it('says it is waiting on memory pressure only when the shrunk cap is what block
  const ctx = { token: 'pressure', sessionId: 'pressure', role: 'user', scope } as AgentGateContext;
  const limits = () => ({ minFreeMB: 512, maxSwapUsedMB: 0 });
  const pool = new HeavyCommandPermitPool({ memory: () => ({ freeMB: 65_536, swapUsedMB: 0 }), limits, refreshMemory: async () => {},
-  pollMs: 5, waitMs: 40, maxActive: 5, pressure: () => 1 });
+  pollMs: 5, waitMs: 40, maxActive: 5, pressure: () => 2 });
  const native = new NativeHeavyCommands({ current: () => true, claim: async () => 'owned', probe: async () => 'gone', acquire: (request) => pool.acquire(request) });
  const held = await Promise.all(['/other-a', '/other-b'].map((root) => pool.acquire({ scope: { ...scope, rootRealPath: root }, kind: 'tests' })));
  const blocked = await native.admit(ctx, { pid: 4246, kind: 'tests' });
