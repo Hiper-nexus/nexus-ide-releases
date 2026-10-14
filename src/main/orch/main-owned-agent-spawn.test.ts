@@ -421,6 +421,149 @@ describe("main-owned agent spawn boundary", () => {
     ).toThrow(/divergências: resume/);
   });
 
+  it("F-NOVO: o pane de missão sem conta/esforço no modelo defere ao selo persistido", () => {
+    // Campo: "+ Pane → Nesta missão" — `fillOperatorPaneSealedRuntime`
+    // (F-1002) gravou na linha selada a conta física que o Main escolheu,
+    // enquanto o modelo do pane no renderer deliberadamente não espelha
+    // conta de missão (a spec é a autoridade). O payload vinha com
+    // `accountId[undefined != acct-…]` e a retomada morria na cerca para
+    // sempre. `undefined` defere ao selo; o processo nasce na conta
+    // persistida — omissão não amplia autoridade nem troca a conta.
+    missionDeps.mission = { id: "mission-a" };
+    sealDeps.current = authoritySeal;
+    missionPaneDeps.pane = {
+      ...persistedPane,
+      accountId: "acct-mrnwo415-1",
+      effort: "high",
+      authoritySeal,
+    } as never;
+
+    const authorized = authorizeMainOwnedAgentSpawn(
+      owner as never,
+      {
+        kind: "cli-agent",
+        cols: 80,
+        rows: 24,
+        adapterId: "claude",
+        cwd: scope.rootRealPath,
+        paneId: "pane-a",
+        missionId: "mission-a",
+        resume: true,
+      },
+      {} as never,
+    );
+
+    expect(authorized.request).toMatchObject({
+      paneId: "pane-a",
+      missionId: "mission-a",
+      adapterId: "claude",
+      accountId: "acct-mrnwo415-1",
+      effort: "high",
+      resume: true,
+    });
+  });
+
+  it("F-NOVO: uma conta DIFERENTE da selada continua recusada fail-closed", () => {
+    missionDeps.mission = { id: "mission-a" };
+    sealDeps.current = authoritySeal;
+    missionPaneDeps.pane = {
+      ...persistedPane,
+      accountId: "acct-mrnwo415-1",
+      authoritySeal,
+    } as never;
+
+    expect(() =>
+      authorizeMainOwnedAgentSpawn(
+        owner as never,
+        {
+          kind: "cli-agent",
+          cols: 80,
+          rows: 24,
+          adapterId: "claude",
+          accountId: "acct-outra",
+          cwd: scope.rootRealPath,
+          paneId: "pane-a",
+          missionId: "mission-a",
+          resume: true,
+        },
+        {} as never,
+      ),
+    ).toThrow(/accountId\[acct-outra != acct-mrnwo415-1\]/);
+  });
+
+  it("F-NOVO: o renderer não fixa conta num pane cuja spec não selou conta", () => {
+    // Spec sem `accountId` significa "padrão do provedor": um pin inventado
+    // pelo renderer é divergência real (VALOR diferente), não omissão.
+    missionDeps.mission = { id: "mission-a" };
+    sealDeps.current = authoritySeal;
+    missionPaneDeps.pane = { ...persistedPane, authoritySeal } as never;
+
+    expect(() =>
+      authorizeMainOwnedAgentSpawn(
+        owner as never,
+        {
+          kind: "cli-agent",
+          cols: 80,
+          rows: 24,
+          adapterId: "claude",
+          accountId: "acct-renderer",
+          cwd: scope.rootRealPath,
+          paneId: "pane-a",
+          missionId: "mission-a",
+          resume: true,
+        },
+        {} as never,
+      ),
+    ).toThrow(/accountId\[acct-renderer != undefined\]/);
+  });
+
+  it("F-NOVO: conta/esforço omitidos também deferem ao selo do grant pendente", () => {
+    const sealedRequest = {
+      requestId: "spawn-a",
+      paneId: "pane-a",
+      adapterId: "claude",
+      model: undefined,
+      accountId: "acct-sealed",
+      effort: "high",
+      cwd: scope.rootRealPath,
+      title: "Worker",
+      missionId: "mission-a",
+      agentName: "worker-a",
+      role: "worker" as const,
+      resume: false,
+      resumeLatestOnly: false,
+      restorePersistedAuthority: false,
+    } as const;
+    registryDeps.claimPendingSpawnMeta.mockReturnValueOnce({
+      ...pending,
+      requestedCwd: scope.rootRealPath,
+      sealedRequest,
+    });
+
+    const authorized = authorizeMainOwnedAgentSpawn(
+      owner as never,
+      {
+        kind: "cli-agent",
+        cols: 80,
+        rows: 24,
+        adapterId: "claude",
+        cwd: scope.rootRealPath,
+        paneId: "pane-a",
+        missionId: "mission-a",
+        orchRequestId: "spawn-a",
+      },
+      {} as never,
+    );
+
+    expect(authorized.request).toMatchObject({
+      accountId: "acct-sealed",
+      effort: "high",
+      orchRequestId: "spawn-a",
+      paneId: "pane-a",
+      missionId: "mission-a",
+    });
+  });
+
   it("uses one pre-effect fence for pending and recovery grants", () => {
     missionDeps.mission = { id: 'mission-a' };
     assertMainOwnedAgentSpawnGrantActive({

@@ -518,6 +518,76 @@ describe("registerPtyIpc account fail-fast", () => {
     },
   );
 
+  it("resumes a persisted Claude pane whose renderer payload omits accountId (F bug: undefined != sealed)", async () => {
+    // Campo: "[nexus] failed to start — accountId[undefined != acct-…]".
+    // O pane de missão não espelha conta no modelo do renderer (a spec selada
+    // do Main é a autoridade); a cerca deve deferir `undefined` ao selo e
+    // retomar na conta persistida, sem afrouxar para valores divergentes.
+    providerDeps.prepareProviderSpawn.mockReturnValueOnce({
+      ok: true,
+      overrides: {},
+    });
+    const persisted = {
+      id: "mpane-omitted-account",
+      missionId: "mission-a",
+      adapterId: "claude",
+      model: "claude-opus-4-1",
+      accountId: "account-main",
+      effort: "high",
+      title: "Orchestrator",
+      role: "orchestrator" as const,
+      paneId: "pane-omitted-account",
+      cwd: "/workspace/a/trusted-cwd",
+      scope: authorityDeps.scope,
+      authoritySeal: authoritySealFor(),
+      createdAt: 1,
+    };
+    authorityDeps.findMissionPaneByPaneId.mockReturnValue(persisted);
+    authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
+    authorityDeps.resolveCwdForScope.mockReturnValueOnce(persisted.cwd);
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
+
+    const result = await handler?.(
+      { sender: { id: 7 } },
+      {
+        kind: "cli-agent",
+        adapterId: persisted.adapterId,
+        model: persisted.model,
+        // accountId e effort omitidos — exatamente o payload do bug.
+        missionId: persisted.missionId,
+        paneId: persisted.paneId,
+        resume: true,
+        resumeLatestOnly: false,
+        restorePersistedAuthority: false,
+        cwd: persisted.cwd,
+        cols: 100,
+        rows: 30,
+      },
+    );
+
+    expect(result).toEqual({ ok: true, sessionId: "pty-created" });
+    expect(providerDeps.prepareProviderSpawn).toHaveBeenCalledWith(
+      "claude",
+      expect.objectContaining({
+        accountId: "account-main",
+        effort: "high",
+      }),
+    );
+    expect(ptyDeps.spawnAgentSession).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        accountId: "account-main",
+        effort: "high",
+        paneId: persisted.paneId,
+        missionId: persisted.missionId,
+        resume: true,
+      }),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
   it.each([
     {
       label: "freeze after the initial intent-only seal",
