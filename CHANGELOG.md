@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.255 — macOS em dia com a troca de conta e sem modal do Chaveiro
+
+Empacota para macOS (`darwin-arm64`) todas as melhorias da 0.76.253 (`F-1470..F-1512`: troca de conta encadeada na mesma conversa do Claude com reentrega do pedido em voo, coordenador sem recusa nem panes mortos acumulados, AGY ao vivo, QR/relay Cloudflare e rede local com porta fixa, comandos pesados no horário de verão e validações de squads) e corrige de vez no macOS o modal `security deseja acessar a chave "ai.meta.dev.credentials"` na tela de Início (`F-1513`).
+
+- **Chaveiro do Muse no macOS (F-1513).** O item `ai.meta.dev.credentials` é criado pelo binário nativo `muse-bin` via `Security.framework` com ACL exclusiva do próprio `muse-bin`. O `readMusePlatformSecret` no `darwin` não executa mais `/usr/bin/security find-generic-password -w`, eliminando o modal de senha na abertura do app sem perder a detecção de sessão conectada (`museLoginSignedIn` / `museKeychainItemExists` sem `-w`).
+
 ## 0.76.254 — Linux em dia com a troca de conta
 
 A 0.76.252 foi a última com pacote Linux. A 0.76.253 (Troca de conta sem perder nada) saiu só para Windows, e o atualizador do Linux só avança quando a release traz os três pacotes. Esta versão é o mesmo produto da 0.76.253, empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35).

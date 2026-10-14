@@ -10576,7 +10576,7 @@ export const RELEASE_076253: AppRelease = {
     { title: 'Squads mais firmes', detail: 'Editor e importação de squads recusam nome repetido com o nome, aceitam arquivo UTF-16 e com BOM do Windows, leem frontmatter CRLF, recusam CON/NUL e aceitam pastas em 8.3 e com outra caixa.' },
   ],
 };
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076254: AppRelease = {
   version: '0.76.254',
   date: '2026-10-14',
   codename: 'Linux em dia com a troca de conta',
@@ -10591,3 +10591,19 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Atualização do Linux', detail: 'A 0.76.253 só tinha pacote de Windows. O Omarchy consultava o espelho e ficava na 0.76.252.' },
   ],
 };
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.255',
+  date: '2026-10-14',
+  codename: 'macOS em dia com a troca de conta e sem modal do Chaveiro',
+  summary: 'Traz para o macOS toda a troca de conta sem perder nada da 0.76.253 (mesma conversa no Claude, pedido em andamento preservado, coordenador sem recusa nem panes mortos, AGY ao vivo, QR e rede local do celular) e elimina de vez o modal «security deseja acessar a chave "ai.meta.dev.credentials"» ao abrir o app.',
+  highlights: [
+    { title: 'Troca de conta sem perder nada no macOS', detail: 'Quando uma conta bate o limite, o Maestro e os workers trocam para outra conta do mesmo provedor na mesma pasta, continuando a mesma conversa no Claude e reentregando o pedido em andamento.' },
+    { title: 'Sem o modal do Chaveiro do Muse no Início', detail: 'O macOS não abre mais o diálogo «security deseja acessar a chave "ai.meta.dev.credentials"» ao iniciar o NexusIDE: a sessão do Muse é confirmada pelos metadados sem ler o segredo via `/usr/bin/security -w`.' },
+    { title: 'AGY ao vivo, coordenador firme e celular', detail: 'O pane do Antigravity mostra o trabalho ao vivo, a missão mantém um Maestro só na tela e o celular conecta pelo QR na Cloudflare ou na rede local com porta fixa.' },
+  ],
+  fixes: [
+    { title: 'Chaveiro do Muse sem prompt de senha (F-1513)', detail: 'O item `ai.meta.dev.credentials` pertence à ACL exclusiva do binário `muse-bin`; o QuotaService no macOS não invoca mais `security find-generic-password -w` sobre ele.' },
+    { title: 'Espera e retomada da troca de conta (F-1470..F-1512)', detail: 'Inclui todas as correções de encadeamento de contas, StopFailure rate_limit do Claude, reentrega de pedido aceito durante a troca, comandos pesados no horário de verão e validação de squads.' },
+  ],
+};
+
