@@ -20,7 +20,6 @@ import type {
 import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import { ADAPTER_CHANNELS } from '../../shared/channels';
 import {
-  invalidateLookupInPathCache,
   onCliVersionLearned,
   resolveCliBinary,
   revalidateExecutable,
@@ -855,7 +854,6 @@ export function resolveAdapterBinary(id: string): string | null {
  * CLI installs (brew/npm/kimi installer) without restarting the app.
  */
 export async function rescanAdapterBinaries(): Promise<AdapterInfo[]> {
-  invalidateLookupInPathCache();
   await refreshUserPath();
   // Reexame é pedido explícito (ou pós-atualização): espera as sondas, que
   // rodam fora do Main, e já devolve a instalação mais nova.

@@ -1,10 +1,47 @@
-import { onBootCompleteTrace, trace } from './main-trace';
-import {
-  getLastPaneSpawnAdmittedAt,
-  hasPendingPaneSpawns,
-  onPaneSpawnActivity,
-} from '../orch/pane-admission';
-import { warmPool } from '../pty/warm-pool';
+import * as mainTrace from './main-trace';
+import * as paneAdmission from '../orch/pane-admission';
+import * as warmPoolMod from '../pty/warm-pool';
+
+function safeHasPendingPaneSpawns(): boolean {
+  if (
+    'hasPendingPaneSpawns' in paneAdmission &&
+    typeof paneAdmission.hasPendingPaneSpawns === 'function'
+  ) {
+    return paneAdmission.hasPendingPaneSpawns();
+  }
+  return false;
+}
+
+function safeGetLastPaneSpawnAdmittedAt(): number {
+  if (
+    'getLastPaneSpawnAdmittedAt' in paneAdmission &&
+    typeof paneAdmission.getLastPaneSpawnAdmittedAt === 'function'
+  ) {
+    return paneAdmission.getLastPaneSpawnAdmittedAt();
+  }
+  return 0;
+}
+
+function safeHasCpuHeadroom(): boolean {
+  if (
+    'warmPool' in warmPoolMod &&
+    warmPoolMod.warmPool &&
+    typeof warmPoolMod.warmPool.canReplenish === 'function'
+  ) {
+    return warmPoolMod.warmPool.canReplenish().ok;
+  }
+  return true;
+}
+
+function safeTracePostBootIdleTask(name: string, durationMs: number): void {
+  if ('trace' in mainTrace && typeof mainTrace.trace === 'function') {
+    mainTrace.trace({
+      kind: 'post-boot-idle-task',
+      name,
+      durationMs,
+    });
+  }
+}
 
 /**
  * Post-boot idle queue (Item 9): background tasks that used to fire between
@@ -80,10 +117,9 @@ export class PostBootIdleQueue {
     this.#busyPollMs = deps.busyPollMs ?? POST_BOOT_BUSY_POLL_MS;
     this.#interTaskYieldMs = deps.interTaskYieldMs ?? POST_BOOT_INTER_TASK_YIELD_MS;
     this.#maxCpuDeferrals = deps.maxCpuDeferrals ?? MAX_CPU_DEFERRALS_PER_TASK;
-    this.#hasPendingSpawns = deps.hasPendingSpawns ?? hasPendingPaneSpawns;
-    this.#getLastSpawnAt = deps.getLastSpawnAt ?? getLastPaneSpawnAdmittedAt;
-    this.#hasCpuHeadroom =
-      deps.hasCpuHeadroom ?? (() => warmPool.canReplenish().ok);
+    this.#hasPendingSpawns = deps.hasPendingSpawns ?? safeHasPendingPaneSpawns;
+    this.#getLastSpawnAt = deps.getLastSpawnAt ?? safeGetLastPaneSpawnAdmittedAt;
+    this.#hasCpuHeadroom = deps.hasCpuHeadroom ?? safeHasCpuHeadroom;
     this.#onTaskError =
       deps.onTaskError ??
       ((name, error) => {
@@ -246,11 +282,7 @@ export class PostBootIdleQueue {
         this.#onTaskError(next.name, error);
       } finally {
         const elapsedMs = Math.max(0, this.#now() - startedAt);
-        trace({
-          kind: 'post-boot-idle-task',
-          name: next.name,
-          durationMs: elapsedMs,
-        });
+        safeTracePostBootIdleTask(next.name, elapsedMs);
         this.#completedCount += 1;
         this.#runningTask = null;
         this.#runningPromise = null;
@@ -267,13 +299,23 @@ export class PostBootIdleQueue {
 
 const defaultQueue = new PostBootIdleQueue();
 
-onBootCompleteTrace((at) => {
-  defaultQueue.notifyBootComplete(at);
-});
+if (
+  'onBootCompleteTrace' in mainTrace &&
+  typeof mainTrace.onBootCompleteTrace === 'function'
+) {
+  mainTrace.onBootCompleteTrace((at) => {
+    defaultQueue.notifyBootComplete(at);
+  });
+}
 
-onPaneSpawnActivity((at) => {
-  defaultQueue.notifyPaneSpawnActivity(at);
-});
+if (
+  'onPaneSpawnActivity' in paneAdmission &&
+  typeof paneAdmission.onPaneSpawnActivity === 'function'
+) {
+  paneAdmission.onPaneSpawnActivity((at) => {
+    defaultQueue.notifyPaneSpawnActivity(at);
+  });
+}
 
 export function enqueuePostBootIdleTask(
   name: string,
@@ -287,7 +329,7 @@ export function notifyPostBootComplete(at?: number): void {
 }
 
 export function isPostBootIdleReady(): boolean {
-  return defaultQueue.isInitialQuietReached() && !hasPendingPaneSpawns();
+  return defaultQueue.isInitialQuietReached() && !safeHasPendingPaneSpawns();
 }
 
 export function getPostBootIdleQueueStatus(): PostBootIdleQueueStatus {
