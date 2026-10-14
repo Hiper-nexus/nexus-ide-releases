@@ -4,11 +4,13 @@ import {
   ALL_WORKTREE_STATUSES,
   DIGEST_PATTERN,
   SHA_PATTERN,
+  POOL_WORKTREES_SUBDIR,
   assertIdentifier,
   cloneWorktreeRecord,
   digest,
   exclusiveOwnershipOverlap,
   hasOwnershipOverlap,
+  isPooledBranchRef,
   normalizeOwnership,
   sameValues,
   MAX_PANE_BINDINGS,
@@ -131,9 +133,21 @@ function validateRecord(
   // explícita e só vale para writer de pane com a pasta DENTRO da raiz do
   // repositório (nunca a própria raiz). Sem a marca, vale o layout gerenciado
   // e a branch derivada — exatamente como antes do F-1429.
+  // A1: worktree do POOL também é writer de pane, mas com pasta sob
+  // `worktreesRoot/pool/` e branch `nexus-pool/…` (não derivadas de task).
   // Valor cru do disco: só `true` ou ausente são aceitos.
   const rawAdopted: unknown = record.adopted;
   const adopted = rawAdopted === true;
+  const rawPooled: unknown = record.pooled;
+  const pooled = rawPooled === true;
+  const isPooledWorktreePath =
+    typeof record.worktreePath === 'string' &&
+    path.isAbsolute(record.worktreePath) &&
+    path.resolve(record.worktreePath) === record.worktreePath &&
+    record.worktreePath !== record.rootRealPath &&
+    [options.worktreesRoot, options.legacyWorktreesRoot]
+      .filter((root): root is string => typeof root === 'string')
+      .some((root) => isPathInsideOrEqual(path.join(root, POOL_WORKTREES_SUBDIR), record.worktreePath));
   const isAcceptedWorktreePath = adopted
     ? typeof record.worktreePath === 'string' &&
       typeof record.rootRealPath === 'string' &&
@@ -141,16 +155,23 @@ function validateRecord(
       path.resolve(record.worktreePath) === record.worktreePath &&
       record.worktreePath !== record.rootRealPath &&
       isPathInsideOrEqual(record.rootRealPath, record.worktreePath)
-    : acceptedPaths.includes(record.worktreePath);
+    : pooled
+      ? isPooledWorktreePath
+      : acceptedPaths.includes(record.worktreePath);
 
   const isAcceptedBranchRef = adopted
     ? isIntegrationRef(record.branchRef)
-    : record.branchRef === expectedBranch;
+    : pooled
+      ? isPooledBranchRef(record.branchRef)
+      : record.branchRef === expectedBranch;
 
   if (
     (record.ownerKind !== undefined && record.ownerKind !== "pane") ||
     (rawAdopted !== undefined &&
       (!adopted || record.ownerKind !== 'pane' || !record.taskId.startsWith('pane-'))) ||
+    (rawPooled !== undefined &&
+      (!pooled || record.ownerKind !== 'pane' || !record.taskId.startsWith('pane-'))) ||
+    (adopted && pooled) ||
     record.scopeKey !== options.scopeKey ||
     record.scopeKey !== expectedScopeKey ||
     record.taskKey !== expectedTaskKey ||

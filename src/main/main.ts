@@ -269,6 +269,7 @@ import {
   configureWorktreeRuntimeRegistry,
   disposeWorktreeRuntimeRegistry,
 } from "./runtime/worktree-runtime-registry";
+import { shutdownIsolatedWriterPool } from "./orch/isolated-writer-pool";
 import {
   configureAgentHookEndpointPath,
   APP_SHUTDOWN_PTY_TERMINATION,
@@ -1715,6 +1716,7 @@ function shutdown(): Promise<void> {
     disposeNexusDoctorRuntime();
     disposeAuditLogRuntime();
     disposeContextWorkflowRegistry();
+    await shutdownIsolatedWriterPool();
     disposeWorktreeRuntimeRegistry();
       closeDb();
       projectRuntimeManager?.closeAll();

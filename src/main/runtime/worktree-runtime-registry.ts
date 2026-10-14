@@ -536,6 +536,38 @@ export class WorktreeRuntimeRegistry {
     return this.forScope(scope).worktrees.registerExistingPaneWriter(scope, missionId, input);
   }
 
+  /** A1: adota uma worktree do pool pré-alocada como writer de pane. */
+  claimPooledPaneWriter(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    input: {
+      readonly workerId: string;
+      readonly worktreePath: string;
+      readonly branchRef: string;
+      readonly baseSha: string;
+    },
+  ): Promise<WorktreeRecord> {
+    return this.forScope(scope).worktrees.claimPooledPaneWriter(scope, missionId, input);
+  }
+
+  /** A1: remove uma worktree do pool nunca adotada (stale/limpeza). */
+  removePooledWorktree(
+    scope: ProjectExecutionScope,
+    input: { readonly worktreePath: string; readonly branchRef: string },
+  ): Promise<void> {
+    return this.forScope(scope).worktrees.removePooledWorktree(scope, input);
+  }
+
+  /** A1: raiz onde as worktrees gerenciadas moram (para o pool pré-alocar). */
+  worktreesRootFor(scope: ProjectExecutionScope): string {
+    return this.forScope(scope).worktrees.worktreesRoot;
+  }
+
+  /** A1: chave do escopo no estado durável (para o pool indexar por checkout). */
+  worktreeScopeKeyFor(scope: ProjectExecutionScope): string {
+    return this.forScope(scope).worktrees.scopeKey(scope);
+  }
+
   reopenPaneWriter(
     scope: ProjectExecutionScope,
     missionId: string,
@@ -813,12 +845,20 @@ export class WorktreeRuntimeRegistry {
 }
 
 let registry: WorktreeRuntimeRegistry | null = null;
+/**
+ * Geração do registry: incrementa a cada (re)configuração e descarte. O pool
+ * de worktrees (A1) usa esta geração para descartar seu estado em memória
+ * quando o registry é recriado (fim do app, ou teardown de teste) — sem isto,
+ * entradas do pool de um escopo antigo vazariam para o próximo.
+ */
+let registryGeneration = 0;
 
 export function configureWorktreeRuntimeRegistry(
   manager: ProjectRuntimeManager,
 ): WorktreeRuntimeRegistry {
   registry?.dispose();
   registry = new WorktreeRuntimeRegistry(manager);
+  registryGeneration += 1;
   return registry;
 }
 
@@ -831,4 +871,9 @@ export function requireWorktreeRuntimeRegistry(): WorktreeRuntimeRegistry {
 export function disposeWorktreeRuntimeRegistry(): void {
   registry?.dispose();
   registry = null;
+  registryGeneration += 1;
+}
+
+export function worktreeRuntimeRegistryGeneration(): number {
+  return registryGeneration;
 }

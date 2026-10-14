@@ -378,6 +378,13 @@ export const orchSettingsSchema = z.object({
    * Persistida pelo `nexus_harness` action=apply via replaceOrchSettings.
    */
   taskHarnessTable: z.record(z.string(), z.unknown()).nullable().default(null),
+  /**
+   * A1: pool de worktrees pré-alocadas por checkout (acelera o spawn de writer
+   * isolado: 1–2 worktrees já nascem do HEAD com node_modules clonado, fora do
+   * caminho crítico). false = desliga; a env var `NEXUS_WORKTREE_POOL=0`
+   * também desliga em tempo de execução.
+   */
+  worktreePoolEnabled: z.boolean().default(true),
 });
 export type OrchSettings = z.infer<typeof orchSettingsSchema>;
 /**

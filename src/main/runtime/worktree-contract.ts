@@ -8,6 +8,25 @@ import type { MaterializeWorktreeResult } from "./worktree-cow";
 export const SHA_PATTERN = /^[a-f0-9]{40,64}$/;
 export const DIGEST_PATTERN = /^[a-f0-9]{64}$/;
 
+/**
+ * Prefixo de branch das worktrees PRÉ-ALOCADAS do pool (A1). Nunca colide com
+ * as branches derivadas de writer (`refs/heads/nexus/...`), então uma branch de
+ * pool é reconhecível por nome em qualquer listagem (`git worktree list`,
+ * `git for-each-ref`) para a limpeza de boot/shutdown.
+ */
+export const POOL_BRANCH_REF_PREFIX = "refs/heads/nexus-pool/";
+/** Subdiretório, sob a raiz gerenciada, das worktrees do pool. */
+export const POOL_WORKTREES_SUBDIR = "pool";
+
+export function isPooledBranchRef(branchRef: string): boolean {
+  return branchRef.startsWith(POOL_BRANCH_REF_PREFIX) &&
+    branchRef.length > POOL_BRANCH_REF_PREFIX.length &&
+    !branchRef.includes("..") &&
+    !branchRef.includes("//") &&
+    !branchRef.endsWith("/") &&
+    !branchRef.endsWith(".lock");
+}
+
 export interface WorktreeOwnership {
   readonly files: readonly string[];
   readonly symbols: readonly string[];
@@ -50,6 +69,15 @@ export interface WorktreeRecord {
    * Ausente = worktree criada pelo próprio Nexus.
    */
   readonly adopted?: true;
+  /**
+   * F-980/A1: worktree nascida do POOL de worktrees pré-alocadas (A1). A pasta
+   * mora sob `worktreesRoot/pool/` e a branch usa `refs/heads/nexus-pool/…`
+   * (nenhuma derivada de task), mas é um writer de pane normal: GC/limpeza,
+   * retomada e remoção seguem exatamente o caminho dos writers criados pelo
+   * Nexus. Diferente de `adopted` (pasta/branch do operador, nunca removidas),
+   * a worktree do pool É do Nexus e sai pela GC quando liberada.
+   */
+  readonly pooled?: true;
   readonly id: string;
   readonly scopeKey: string;
   readonly projectId: string;
@@ -548,6 +576,8 @@ export function cloneWorktreeRecord(record: WorktreeRecord): WorktreeRecord {
     ...(record.sessionIds ? { sessionIds: Object.freeze([...record.sessionIds]) } : {}),
     // F-1429 parte 2: a marca de adoção atravessa toda transição de estado.
     ...(record.adopted === true ? { adopted: true as const } : {}),
+    // A1: a marca de pool atravessa toda transição de estado (GC/retomada).
+    ...(record.pooled === true ? { pooled: true as const } : {}),
   });
 }
 

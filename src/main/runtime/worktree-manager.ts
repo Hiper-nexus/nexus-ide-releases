@@ -14,6 +14,7 @@ import {
 import {
   ACTIVE_WORKTREE_STATUSES as ACTIVE_STATUSES,
   OwnershipOverlapError,
+  POOL_WORKTREES_SUBDIR,
   WorktreeStateConflictError,
   WorktreeWorkerConflictError,
   assertIdentifier,
@@ -22,6 +23,7 @@ import {
   digest,
   exclusiveOwnershipOverlap as exclusiveOverlap,
   hasOwnershipOverlap as hasOverlap,
+  isPooledBranchRef,
   MAX_PANE_BINDINGS,
   normalizeOwnership,
   sameValues,
@@ -1167,6 +1169,146 @@ export class WorktreeManager {
         result: candidate,
       };
     });
+  }
+
+  /**
+   * A1: adota uma worktree PRÉ-ALOCADA do pool como writer de pane. Prova o
+   * MESMO que `create()` — raiz canônica, branch, HEAD, diretório comum do
+   * Git, config local segura e árvore limpa (`assertTaskWorktreeAsync`) — e
+   * registra `ready` via CAS com a pasta/branch do pool (marca `pooled`).
+   * Falha fechada: qualquer prova falha → lança; o chamador descarta a
+   * worktree e segue pelo caminho atual de alocação.
+   */
+  async claimPooledPaneWriter(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    input: {
+      readonly workerId: string;
+      readonly worktreePath: string;
+      readonly branchRef: string;
+      readonly baseSha: string;
+    },
+  ): Promise<WorktreeRecord> {
+    const repository = await readRepositorySnapshotAsync(this.#asyncGit, scope, false);
+    const realWorktree = fs.existsSync(input.worktreePath)
+      ? fs.realpathSync(input.worktreePath)
+      : "";
+    const poolRoots = [this.worktreesRoot, this.legacyWorktreesRoot].map(
+      (root) => path.join(root, POOL_WORKTREES_SUBDIR),
+    );
+    if (
+      !realWorktree ||
+      realWorktree === repository.rootRealPath ||
+      !poolRoots.some((root) => isPathInsideOrEqual(root, realWorktree)) ||
+      isDangerousWorktreeRemovalPath(realWorktree, repository.rootRealPath)
+    ) {
+      throw new WorktreeStateConflictError(
+        "pooled worktree path is outside the managed pool root",
+      );
+    }
+    if (!isPooledBranchRef(input.branchRef)) {
+      throw new WorktreeStateConflictError(
+        "pooled worktree branch is not a pool branch",
+      );
+    }
+    const taskId = `pane-${assertIdentifier(input.workerId, "workerId")}`;
+    const taskKey = worktreeTaskKey(missionId, taskId);
+    const now = this.#timestamp();
+    const candidate = cloneRecord({
+      ownerKind: "pane",
+      pooled: true,
+      reservationGeneration: randomUUID(),
+      id: `worktree-${taskKey}`,
+      scopeKey: this.scopeKey(scope),
+      projectId: scope.projectId,
+      checkoutId: scope.checkoutId,
+      missionId,
+      taskId,
+      taskKey,
+      workerId: input.workerId,
+      rootRealPath: repository.rootRealPath,
+      worktreePath: realWorktree,
+      branchRef: input.branchRef,
+      integrationRef: repository.integrationRef,
+      baseSha: assertSha(input.baseSha, "pooled base SHA"),
+      ownership: { files: [], symbols: [], domains: [taskId] },
+      dependencies: [],
+      status: "ready",
+      createdAt: now,
+      updatedAt: now,
+    });
+    // Prova de identidade: branch + HEAD + common-dir + config + árvore limpa.
+    const headSha = await assertTaskWorktreeAsync(this.#asyncGit, candidate);
+    if (headSha !== candidate.baseSha) {
+      throw new WorktreeStateConflictError(
+        "pooled worktree HEAD diverged from the pre-allocated base",
+      );
+    }
+    return this.#mutate(this.scopeKey(scope), (records) => {
+      const conflict = records.some(
+        (record) =>
+          record.worktreePath === realWorktree ||
+          record.branchRef === input.branchRef ||
+          (record.taskKey === taskKey && ACTIVE_STATUSES.has(record.status)),
+      );
+      if (conflict) {
+        throw new WorktreeStateConflictError(
+          "pooled worktree path, branch or task is already registered",
+        );
+      }
+      return { records: [...records, candidate], result: candidate };
+    });
+  }
+
+  /**
+   * A1: remove uma worktree do pool que NUNCA foi adotada (stale/descartada na
+   * limpeza de boot/shutdown). Só age sob as raízes do pool e só quando a
+   * worktree ainda está na branch de pool; `--force` porque a branch não está
+   * mesclada. Best-effort: erro conta como "mantida" (a limpeza de boot tenta
+   * de novo).
+   */
+  async removePooledWorktree(
+    scope: ProjectExecutionScope,
+    input: { readonly worktreePath: string; readonly branchRef: string },
+  ): Promise<void> {
+    const git = this.#asyncGit;
+    const root = fs.realpathSync(path.resolve(scope.rootRealPath));
+    if (!fs.statSync(root).isDirectory()) {
+      throw new WorktreeStateConflictError("pooled worktree scope root is not a directory");
+    }
+    const real = fs.existsSync(input.worktreePath)
+      ? fs.realpathSync(input.worktreePath)
+      : "";
+    const poolRoots = [this.worktreesRoot, this.legacyWorktreesRoot].map(
+      (rootDir) => path.join(rootDir, POOL_WORKTREES_SUBDIR),
+    );
+    if (
+      !real ||
+      !poolRoots.some((poolRoot) => isPathInsideOrEqual(poolRoot, real)) ||
+      isDangerousWorktreeRemovalPath(real, root)
+    ) {
+      throw new WorktreeStateConflictError(
+        "pooled worktree path is outside the managed pool root",
+      );
+    }
+    if (!isPooledBranchRef(input.branchRef)) {
+      throw new WorktreeStateConflictError(
+        "pooled worktree branch is not a pool branch",
+      );
+    }
+    const head = await git.run(real, ["symbolic-ref", "--quiet", "HEAD"], { allowFailure: true });
+    if (head.status !== 0 || head.stdout.trim() !== input.branchRef) {
+      // Já não está na branch do pool: nada a remover aqui.
+      return;
+    }
+    await git.run(root, ["worktree", "remove", "--force", real], {
+      timeoutMs: WORKTREE_REMOVE_TIMEOUT_MS,
+    });
+    await git.run(
+      root,
+      ["branch", "-D", input.branchRef.slice("refs/heads/".length)],
+      { allowFailure: true },
+    );
   }
 
   /**
