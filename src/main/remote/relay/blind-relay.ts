@@ -215,8 +215,14 @@ export async function startBlindRelay(
 
   function attachHandlers(ws: WebSocket): void {
     ws.on('message', (data: RawData, isBinary: boolean) => {
-      // Clientes nunca mandam TEXT; controle TEXT é só relay→cliente.
-      if (!isBinary) return;
+      // O único TEXT de cliente é o ping do heartbeat (F-1487): o pong diz que a
+      // sala foi aceita. Controle TEXT é só relay→cliente.
+      if (!isBinary) {
+        if (toBuffer(data).toString() === '{"t":"ping"}' && ws.readyState === ws.OPEN) {
+          ws.send('{"t":"pong"}');
+        }
+        return;
+      }
       const socketMeta = meta.get(ws);
       if (!socketMeta) return;
       const room = rooms.get(socketMeta.roomId);

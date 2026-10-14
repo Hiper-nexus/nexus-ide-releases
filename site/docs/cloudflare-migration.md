@@ -30,7 +30,7 @@ Validação da landing: build concluído, 10 testes passando; navegador com 3D, 
 | Site e LP | Workers Static Assets | Publicar assets e associar rota do domínio |
 | API, login, billing, licença | Workers | Adaptar runtime, ciclo de conexão, erros e limites |
 | Dados de contas, sessões, times e sync | D1 | Portar schema/consultas PostgreSQL para SQLite, preservando invariantes |
-| Relay WebSocket | Durable Objects | Preservar protocolo, isolamento por sala e reconexão |
+| Relay WebSocket | Durable Objects | Migrado em 13/10/2026 (F-1487): Worker `nexus-relay` (`relay-worker/`) publicado com o protocolo da Railway e validado no runtime de produção. Falta só trocar o CNAME antigo de `relay.nexuside.app` pelo domínio do Worker, o que exige permissão de DNS (`docs/deploy-relay-cloudflare.md`) |
 | Arquivos/exports/backups | R2, onde houver necessidade comprovada | Definir acesso e retenção; não tornar backups públicos |
 | Segredos | Secrets/bindings | Transferir sem logs, validar presença e política de rotação |
 

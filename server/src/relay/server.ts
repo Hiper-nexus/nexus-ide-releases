@@ -131,7 +131,14 @@ export async function startRelayServer(options = relayOptionsFromEnv()): Promise
   const attachSocket = (socket: WebSocket): void => {
     socket.on('pong', () => awaitingPong.delete(socket));
     socket.on('message', (data: RawData, isBinary: boolean) => {
-      if (!isBinary) return;
+      // O único TEXT de cliente é o ping do heartbeat (F-1487): o pong diz que a
+      // sala foi aceita, como no relay Cloudflare.
+      if (!isBinary) {
+        if (toBuffer(data).toString() === '{"t":"ping"}' && socket.readyState === WebSocket.OPEN) {
+          socket.send('{"t":"pong"}');
+        }
+        return;
+      }
       const meta = metadata.get(socket);
       const room = meta ? rooms.get(meta.roomId) : undefined;
       if (!meta || !room) return;

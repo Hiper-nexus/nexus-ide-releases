@@ -88,6 +88,19 @@ describe('blind-relay', () => {
     return track(await connect(`${relay!.url}/r/${roomId}?role=${role}`));
   }
 
+  it('F-1487: o ping do heartbeat ganha pong (sala aceita), para guest e host', async () => {
+    relay = await startBlindRelay();
+    const host = await joinRoom(ROOM, 'host');
+    const guest = await joinRoom(ROOM, 'guest');
+    await nextMessage(host); // peer-joined
+    guest.send('{"t":"ping"}');
+    const pong = await nextMessage(guest);
+    expect(pong).toMatchObject({ isBinary: false });
+    expect(pong.data.toString()).toBe('{"t":"pong"}');
+    host.send('{"t":"ping"}');
+    expect((await nextMessage(host)).data.toString()).toBe('{"t":"pong"}');
+  });
+
   it('host + 2 guests: broadcast (peer 0) e unicast (peer N) pelo envelope', async () => {
     relay = await startBlindRelay();
     const host = await joinRoom(ROOM, 'host');

@@ -20,6 +20,9 @@ import type { RelayControlMessage } from '../../../vendor/omp/wire';
 const FATAL_CLOSE_REASONS: Record<number, string> = {
   4001: 'room closed',
   4004: 'no such room',
+  // Relay Cloudflare: outra conexão assumiu a sala depois de um silêncio longo
+  // deste socket. Se ele recebeu isto, estava vivo e a sala não é mais dele.
+  4008: 'another connection took over this room',
   4009: 'a host is already connected for this room',
   4029: 'room is full',
 };
@@ -38,6 +41,23 @@ const MAX_PENDING_SEND_BYTES = 2 * 1024 * 1024;
 const WS_BACKPRESSURE_THRESHOLD = 64 * 1024;
 const WS_BACKPRESSURE_DRAIN_THRESHOLD = 32 * 1024;
 const WS_BACKPRESSURE_DRAIN_RETRY_MS = 25;
+/**
+ * Heartbeat do relay no Cloudflare: Workers não manda ping de protocolo, então
+ * o cliente manda este TEXT e o runtime responde `{"t":"pong"}` sem acordar a
+ * sala. Quem já pingou e some por 2 × RELAY_HEARTBEAT_MS (60 s) cai, e o zumbi
+ * do próprio host deixa de segurar a sala. Os relays Node também respondem.
+ */
+const HEARTBEAT_PING = '{"t":"ping"}';
+const HEARTBEAT_PONG = '{"t":"pong"}';
+const HEARTBEAT_MS = 20_000;
+/**
+ * Os relays aceitam o upgrade (101) e só então recusam a sala (4009, 4008,
+ * 4029, 4004). A conexão só conta como estabelecida (backoff zerado, fila
+ * drenada, onOpen) na primeira mensagem do relay — o pong da sonda mandada no
+ * open — ou depois deste tempo aberta sem close, para relay que não responde
+ * ping. Close antes disso é tentativa falha e segue o backoff.
+ */
+const ESTABLISH_FALLBACK_MS = 1_500;
 
 export type RelaySocketState =
   | 'idle'
@@ -67,6 +87,10 @@ export class RelaySocket {
   #ws: WebSocket | null = null;
   #retryTimer: ReturnType<typeof setTimeout> | undefined;
   #backpressureDrainTimer: ReturnType<typeof setTimeout> | undefined;
+  #heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+  #establishTimer: ReturnType<typeof setTimeout> | undefined;
+  /** O relay aceitou a sala nesta conexão (ver ESTABLISH_FALLBACK_MS). */
+  #established = false;
   #attempt = 0;
   /** Estado terminal: close intencional ou falha fatal. Limpo por connect(). */
   #closed = false;
@@ -79,9 +103,12 @@ export class RelaySocket {
   #pendingSendBytes = 0;
   #state: RelaySocketState = 'idle';
   #lastError: string | null = null;
-  /** Já abriu desde o último connect(); só então 4009 pode ser o próprio zumbi. */
+  /** Já se estabeleceu desde o último connect(); só então 4009 pode ser o próprio zumbi. */
   #openedOnce = false;
-  /** Quando a última conexão aberta caiu (null enquanto aberta). */
+  /**
+   * Quando a última conexão estabelecida caiu (null enquanto estabelecida). Só
+   * uma conexão estabelecida a zera: 101 seguido de close não é volta.
+   */
   #lostAt: number | null = null;
 
   constructor(opts: RelaySocketOptions) {
@@ -89,7 +116,7 @@ export class RelaySocket {
   }
 
   get isOpen(): boolean {
-    return this.#ws?.readyState === WebSocket.OPEN;
+    return this.#writable(this.#ws);
   }
 
   /** Estado observável para UI/telemetria sem expor payload ou chave. */
@@ -134,6 +161,9 @@ export class RelaySocket {
     const hadActivity = this.#ws !== null || this.#retryTimer !== undefined;
     this.#clearRetry();
     this.#clearBackpressureDrain();
+    this.#clearHeartbeat();
+    this.#clearEstablishTimer();
+    this.#established = false;
     const wasClosed = this.#closed;
     this.#closed = true;
     this.#state = 'closed';
@@ -153,7 +183,7 @@ export class RelaySocket {
   async #sendOrdered(frame: unknown, targetPeer: number): Promise<void> {
     if (this.#closed) return;
     const openWs = this.#ws;
-    if (openWs && openWs.readyState === WebSocket.OPEN) {
+    if (this.#writable(openWs)) {
       await this.#drainPendingSends(openWs);
       if (this.#closed) return;
     }
@@ -170,7 +200,7 @@ export class RelaySocket {
     if (this.#closed) return;
 
     const ws = this.#ws;
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
+    if (!this.#writable(ws)) {
       this.#enqueuePendingSend(envelope);
       return;
     }
@@ -210,8 +240,7 @@ export class RelaySocket {
     while (
       this.#pendingSends.length > 0 &&
       !this.#closed &&
-      this.#ws === ws &&
-      ws.readyState === WebSocket.OPEN &&
+      this.#writable(ws) &&
       ws.bufferedAmount < WS_BACKPRESSURE_DRAIN_THRESHOLD
     ) {
       const envelope = this.#pendingSends[0];
@@ -226,11 +255,7 @@ export class RelaySocket {
   }
 
   #writeEnvelope(ws: WebSocket, envelope: Uint8Array): Promise<void> {
-    if (
-      this.#closed ||
-      this.#ws !== ws ||
-      ws.readyState !== WebSocket.OPEN
-    ) {
+    if (this.#closed || !this.#writable(ws)) {
       return Promise.reject(new Error('relay socket is no longer writable'));
     }
     return new Promise<void>((resolve, reject) => {
@@ -255,9 +280,7 @@ export class RelaySocket {
       this.#backpressureDrainTimer = undefined;
       this.#sendChain = this.#sendChain
         .then(async () => {
-          if (this.#closed || this.#ws !== ws || ws.readyState !== WebSocket.OPEN) {
-            return;
-          }
+          if (this.#closed || !this.#writable(ws)) return;
           await this.#drainPendingSends(ws);
           if (this.#pendingSends.length > 0) this.#scheduleBackpressureDrain(ws);
         })
@@ -274,35 +297,87 @@ export class RelaySocket {
     }
   }
 
+  /** Socket atual, aberto e com a sala aceita pelo relay. */
+  #writable(ws: WebSocket | null): ws is WebSocket {
+    return ws !== null && this.#established && this.#ws === ws && ws.readyState === WebSocket.OPEN;
+  }
+
+  #clearEstablishTimer(): void {
+    if (this.#establishTimer !== undefined) {
+      clearTimeout(this.#establishTimer);
+      this.#establishTimer = undefined;
+    }
+  }
+
+  /** O relay aceitou a sala: só agora zera o backoff, drena a fila e avisa onOpen. */
+  #establish(ws: WebSocket): void {
+    if (this.#established || this.#closed || this.#ws !== ws || ws.readyState !== WebSocket.OPEN) return;
+    this.#clearEstablishTimer();
+    this.#established = true;
+    this.#attempt = 0;
+    this.#state = 'open';
+    this.#lastError = null;
+    this.#openedOnce = true;
+    this.#lostAt = null;
+    this.#startHeartbeat(ws);
+    if (this.#pendingSends.length > 0) {
+      this.#sendChain = this.#sendChain
+        .then(async () => {
+          if (this.#closed || !this.#writable(ws)) return;
+          await this.#drainPendingSends(ws);
+          if (this.#pendingSends.length > 0) {
+            this.#scheduleBackpressureDrain(ws);
+          }
+        })
+        .catch(() => {
+          this.#failFatal('relay send failed; resync required');
+        });
+    }
+    this.onOpen?.();
+  }
+
+  #clearHeartbeat(): void {
+    if (this.#heartbeatTimer !== undefined) {
+      clearInterval(this.#heartbeatTimer);
+      this.#heartbeatTimer = undefined;
+    }
+  }
+
+  #startHeartbeat(ws: WebSocket): void {
+    this.#clearHeartbeat();
+    this.#heartbeatTimer = setInterval(() => {
+      if (this.#ws !== ws || ws.readyState !== WebSocket.OPEN) return;
+      try {
+        ws.send(HEARTBEAT_PING);
+      } catch {
+        // Socket caindo: o close dele decide o resto.
+      }
+    }, HEARTBEAT_MS);
+    this.#heartbeatTimer.unref?.();
+  }
+
   #openSocket(): void {
     this.#clearBackpressureDrain();
+    this.#clearHeartbeat();
+    this.#clearEstablishTimer();
+    this.#established = false;
     const ws = new WebSocket(`${this.#opts.wsUrl}?role=${this.#opts.role}`);
     ws.binaryType = 'arraybuffer';
     this.#ws = ws;
     ws.on('open', () => {
       if (this.#ws !== ws) return;
-      this.#attempt = 0;
-      this.#state = 'open';
-      this.#lastError = null;
-      this.#openedOnce = true;
-      this.#lostAt = null;
-      if (this.#pendingSends.length > 0) {
-        this.#sendChain = this.#sendChain
-          .then(async () => {
-            if (this.#closed || this.#ws !== ws) return;
-            await this.#drainPendingSends(ws);
-            if (this.#pendingSends.length > 0) {
-              this.#scheduleBackpressureDrain(ws);
-            }
-          })
-          .catch(() => {
-            this.#failFatal('relay send failed; resync required');
-          });
+      // 101 ainda não é sala aceita: a sonda volta como pong se o relay aceitou.
+      try {
+        ws.send(HEARTBEAT_PING);
+      } catch {
+        // Socket caindo: o close dele decide o resto.
       }
-      this.onOpen?.();
+      this.#establishTimer = setTimeout(() => this.#establish(ws), ESTABLISH_FALLBACK_MS);
+      this.#establishTimer.unref?.();
     });
     ws.on('message', (data: RawData, isBinary: boolean) => {
       if (this.#ws !== ws) return;
+      this.#establish(ws);
       this.#handleMessage(ws, data, isBinary);
     });
     // O close pareado carrega o estado acionável; o erro só explica a queda
@@ -314,6 +389,9 @@ export class RelaySocket {
     ws.on('close', (code: number, reason: Buffer) => {
       if (this.#ws !== ws) return;
       this.#clearBackpressureDrain();
+      this.#clearHeartbeat();
+      this.#clearEstablishTimer();
+      this.#established = false;
       this.#ws = null;
       this.#handleClose(code, redactRelayUrls(reason.toString('utf8')) || transportError);
     });
@@ -321,8 +399,10 @@ export class RelaySocket {
 
   #handleMessage(ws: WebSocket, data: RawData, isBinary: boolean): void {
     if (!isBinary) {
+      const text = toBytes(data).toString();
+      if (text === HEARTBEAT_PONG) return;
       try {
-        this.onControl?.(JSON.parse(toBytes(data).toString()) as RelayControlMessage);
+        this.onControl?.(JSON.parse(text) as RelayControlMessage);
       } catch {
         // Mensagem de controle malformada: ignorada.
       }
@@ -358,6 +438,8 @@ export class RelaySocket {
   #handleClose(code: number, reason: string): void {
     if (this.#closed) return;
     this.#clearBackpressureDrain();
+    // Close antes de estabelecer (101 seguido de 4009, 4008…) mantém a queda
+    // de antes; sem queda anterior (1º connect), o 4009 continua fatal.
     if (this.#openedOnce) this.#lostAt ??= Date.now();
     const fatalReason = FATAL_CLOSE_REASONS[code];
     const ownStaleHost =
@@ -392,6 +474,9 @@ export class RelaySocket {
     const ws = this.#ws;
     this.#ws = null;
     this.#clearBackpressureDrain();
+    this.#clearHeartbeat();
+    this.#clearEstablishTimer();
+    this.#established = false;
     if (ws) {
       try {
         ws.close(1000);

@@ -34,6 +34,8 @@ export default defineConfig({
       // runner (`node --test` e vitest próprio): a suíte do app não os coleta.
       'site/**',
       'cloud-api/**',
+      // Relay do celular (relay.nexuside.app): `node --test` contra o workerd do `wrangler dev`.
+      'relay-worker/**',
     ],
     setupFiles: ['./src/test/vitest.setup.ts'],
     // The root run also collects server PGlite suites, and `server/vitest.config.ts`

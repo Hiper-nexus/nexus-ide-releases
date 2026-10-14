@@ -1,0 +1,37 @@
+{
+  "name": "nexus-relay",
+  "account_id": "53446ce31f241717e814d3766cb43305",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-30",
+  "workers_dev": false,
+  "preview_urls": false,
+  // O desktop e o PWA (app.nexuside.app) conectam aqui; substitui o CNAME antigo da Railway.
+  "routes": [{ "pattern": "relay.nexuside.app", "custom_domain": true }],
+  // Uma sala = um Durable Object (idFromName(roomId)), com a WebSocket Hibernation API.
+  // RelayRegistry é uma instância só: conta as salas abertas para o teto RELAY_MAX_ROOMS.
+  "durable_objects": {
+    "bindings": [
+      { "name": "RELAY_ROOM", "class_name": "RelayRoom" },
+      { "name": "RELAY_REGISTRY", "class_name": "RelayRegistry" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["RelayRoom"] },
+    { "tag": "v2", "new_sqlite_classes": ["RelayRegistry"] }
+  ],
+  // Os valores do relay da Railway (docs/deploy-relay-cloudflare.md) mais os limites do Cloudflare.
+  "vars": {
+    "RELAY_ALLOWED_ORIGINS": "https://app.nexuside.app",
+    "RELAY_MAX_ROOMS": "2000",
+    "RELAY_MAX_PEERS_PER_ROOM": "8",
+    "RELAY_MAX_FRAME_BYTES": "262144",
+    "RELAY_MAX_MESSAGES_PER_SECOND": "1000",
+    "RELAY_ROOM_TTL_MS": "1800000",
+    "RELAY_HEARTBEAT_MS": "30000",
+    "RELAY_IDLE_TAKEOVER_MS": "45000"
+  },
+  // RELAY_MAX_UPGRADES_PER_IP_PER_MINUTE da Railway; o período do limitador nativo é 10 ou 60 s.
+  "ratelimits": [{ "name": "UPGRADE_RATE_LIMITER", "namespace_id": "2101", "simple": { "limit": 60, "period": 60 } }],
+  // Sem invocation logs: a URL da requisição carrega o id da sala, e o relay não registra sala, chave nem token.
+  "observability": { "enabled": true, "logs": { "enabled": true, "invocation_logs": false } }
+}

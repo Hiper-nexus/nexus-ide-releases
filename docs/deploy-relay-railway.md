@@ -1,4 +1,9 @@
-# Relay E2E no Railway
+# Relay E2E no Railway (histórico)
+
+> **Histórico.** O serviço `nexus-relay` da Railway não existe mais. Desde
+> 13/10/2026 (F-1487) o relay é o Worker `nexus-relay` com Durable Objects:
+> veja `docs/deploy-relay-cloudflare.md`. `server/src/relay/server.ts` continua
+> como referência do protocolo e dos testes.
 
 O relay é um serviço separado do backend SaaS. Ele só encaminha frames WebSocket
 selados e nunca deve receber chave, token, link de sala ou payload em logs.
