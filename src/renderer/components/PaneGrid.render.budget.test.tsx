@@ -28,7 +28,7 @@
  * - rebindNotifications (0): `bindPaneMission` do mesmo par é no-op e não
  *   acorda assinante (o orch-bridge chama em todo broadcast).
  */
-import { act, Profiler, type ComponentProps } from 'react';
+import { act, memo, Profiler, type ComponentProps } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { StateCreator, StoreApi } from 'zustand';
@@ -49,6 +49,7 @@ const BUDGET = {
 
 const probe = vi.hoisted(() => ({
   renders: { toolbar: 0, surface: 0, activity: 0 },
+  surfacePaneIds: [] as string[],
   /** listeners vivos por store criado com `create` do zustand. */
   liveListeners: new Map<unknown, Set<unknown>>(),
 }));
@@ -89,10 +90,10 @@ vi.mock('./PaneToolbar', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./PaneToolbar')>();
   return {
     ...actual,
-    PaneToolbar: (props: ComponentProps<typeof actual.PaneToolbar>) => {
+    PaneToolbar: memo((props: ComponentProps<typeof actual.PaneToolbar>) => {
       probe.renders.toolbar += 1;
-      return actual.PaneToolbar(props);
-    },
+      return actual.PaneToolbar.type(props);
+    }),
   };
 });
 vi.mock('./PaneInteractionSurface', async (importOriginal) => {
@@ -101,6 +102,7 @@ vi.mock('./PaneInteractionSurface', async (importOriginal) => {
     ...actual,
     PaneInteractionSurface: (props: ComponentProps<typeof actual.PaneInteractionSurface>) => {
       probe.renders.surface += 1;
+      probe.surfacePaneIds.push(props.pane.id);
       return actual.PaneInteractionSurface(props);
     },
   };
@@ -109,10 +111,10 @@ vi.mock('./PaneActivityStrip', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./PaneActivityStrip')>();
   return {
     ...actual,
-    PaneActivityStrip: (props: ComponentProps<typeof actual.PaneActivityStrip>) => {
+    PaneActivityStrip: memo((props: ComponentProps<typeof actual.PaneActivityStrip>) => {
       probe.renders.activity += 1;
-      return actual.PaneActivityStrip(props);
-    },
+      return actual.PaneActivityStrip.type(props);
+    }),
   };
 });
 
@@ -222,6 +224,8 @@ describe('orçamento de render da grade por broadcast de missão (QLT-01)', () =
       focusedPaneId: panes[0]!.id,
       maximizedPaneId: null,
       hydrated: true,
+      stageFocusMode: false,
+      stagePaneId: null,
     });
   });
 
@@ -287,5 +291,26 @@ describe('orçamento de render da grade por broadcast de missão (QLT-01)', () =
       unsubscribe();
     }
     expect(notifications).toBeLessThanOrEqual(BUDGET.rebindNotifications);
+  });
+
+  it('clique de foco re-renderiza somente os dois panes envolvidos', async () => {
+    const host = document.body.appendChild(document.createElement('div'));
+    root = createRoot(host);
+    act(() => root!.render(<PaneGrid />));
+    await act(async () => {});
+    probe.surfacePaneIds.length = 0;
+    act(() => useLayoutStore.getState().focus(panes[1]!.id));
+    expect([...new Set(probe.surfacePaneIds)].sort()).toEqual([panes[0]!.id, panes[1]!.id]);
+    expect(host.querySelector('.pane--focused')?.textContent).toContain('Writer 1');
+  });
+
+  it('foco em Stage sem pane fixado continua escolhendo o palco', async () => {
+    useLayoutStore.setState({ stageFocusMode: true, stagePaneId: null });
+    const host = document.body.appendChild(document.createElement('div'));
+    root = createRoot(host);
+    act(() => root!.render(<PaneGrid />));
+    await act(async () => {});
+    act(() => useLayoutStore.getState().focus(panes[1]!.id));
+    expect(host.querySelector('.panel--stage-main')?.textContent).toContain('Writer 1');
   });
 });

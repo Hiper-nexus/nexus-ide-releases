@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, useCallback } from 'react';
+import { memo, useLayoutEffect, useRef, useState, useCallback } from 'react';
 import type { PaneModel } from '../../shared/types';
 import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
@@ -34,7 +34,7 @@ interface Props {
  * persistent terminal host and merely re-parented into this slot — so the shell
  * behind the pane never resets on split/close.
  */
-export function PaneLeaf({ pane }: Props) {
+export const PaneLeaf = memo(function PaneLeaf({ pane }: Props) {
   // The marker outranks the kind. A structural placeholder is minted as a
   // shell for one reason only — the tree has no "empty slot" type — and every
   // terminal behaviour it inherits (scrollback replay, PTY spawn, prompt) is
@@ -50,7 +50,7 @@ export function PaneLeaf({ pane }: Props) {
     return <AcpPaneLeaf pane={pane} />;
   }
   return <TerminalPaneLeaf pane={pane} />;
-}
+});
 
 function AcpPaneLeaf({ pane }: Props) {
   const isFocused = useLayoutStore((s) => s.focusedPaneId === pane.id);

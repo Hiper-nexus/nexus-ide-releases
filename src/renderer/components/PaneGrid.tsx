@@ -68,7 +68,8 @@ export function PaneGrid({
   const maximizedPaneId = useLayoutStore((s) => s.maximizedPaneId);
   const stageFocusMode = useLayoutStore((s) => s.stageFocusMode);
   const stagePaneId = useLayoutStore((s) => s.stagePaneId);
-  const focusedPaneId = useLayoutStore((s) => s.focusedPaneId);
+  const stageFocusedPaneId = useLayoutStore((s) => s.stageFocusMode ? s.focusedPaneId : null);
+  const focusedPaneId = stageFocusedPaneId ?? useLayoutStore.getState().focusedPaneId;
   const toggleStageFocus = useLayoutStore((s) => s.toggleStageFocus);
 
   const displayRoot = useMemo(() => {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 import type { PaneActivitySummary } from '../../shared/orch-types';
 import {
   paneActivityDisplay,
@@ -8,7 +8,7 @@ import { useOrchStore } from '../state/orch-store';
 
 const REFRESH_MS = 30_000;
 
-export function PaneActivityStrip({ paneId }: { paneId: string }) {
+export const PaneActivityStrip = memo(function PaneActivityStrip({ paneId }: { paneId: string }) {
   const missionId = useOrchStore((state) => state.paneMissions[paneId]);
   // O ponto "running" numa missão terminal lê como trabalho vivo — com a
   // missão concluída/falha o indicador fica neutro e só o texto informa.
@@ -56,4 +56,4 @@ export function PaneActivityStrip({ paneId }: { paneId: string }) {
       <span className="pane-activity__text">{display.text}</span>
     </div>
   );
-}
+});

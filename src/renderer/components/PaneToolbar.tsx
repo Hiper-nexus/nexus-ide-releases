@@ -1,5 +1,6 @@
 import { useAccessStore } from '../state/access-store';
 import {
+  memo,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -398,7 +399,7 @@ function ToolbarBtn({
  * Per-pane header: identity left; actions right with floating tooltips.
  * Density adapts to pane width; compact mode collapses secondary actions into ⋯.
  */
-export function PaneToolbar({ pane, isFocused }: Props) {
+export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props) {
   const isVacancy = isStructuralPlaceholderPane(pane);
   const split = useLayoutStore((s) => s.split);
   const maximizedPaneId = useLayoutStore((s) => s.maximizedPaneId);
@@ -1114,4 +1115,4 @@ export function PaneToolbar({ pane, isFocused }: Props) {
       </button>
     </div>
   );
-}
+});
