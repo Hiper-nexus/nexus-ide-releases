@@ -435,6 +435,33 @@ describe('MissionSetupRosterRow: cartão do papel na Equipe', () => {
       .toBe('Ferramenta desligada nas configurações.');
   });
 
+  it('o motivo do problema descreve o select de Ferramenta; sem problema não há descrição', () => {
+    const ready = renderCard({ removable: true });
+    expect(
+      ready.querySelector('select[aria-label^="Ferramenta"]')?.hasAttribute('aria-describedby'),
+    ).toBe(false);
+
+    const blocked = renderCard({
+      removable: true,
+      issue: 'Ferramenta desligada nas configurações. Religue ou troque a ferramenta.',
+    });
+    const tool = blocked.querySelector('select[aria-label^="Ferramenta"]')!;
+    const reason = blocked.querySelector('.mission-setup__inline-error')!;
+    expect(reason.id).not.toBe('');
+    expect(tool.getAttribute('aria-describedby')).toBe(reason.id);
+  });
+
+  it('a opção de digitar outro modelo é texto claro, sem emoji como ícone', () => {
+    const host = renderCard({ removable: true });
+    const model = host.querySelector<HTMLSelectElement>('select[aria-label^="Modelo para"]')!;
+    const custom = [...model.options].find((option) => option.value === '__custom__');
+
+    expect(custom?.textContent).toBe('Digitar outro modelo…');
+    expect(
+      [...model.options].some((option) => /\p{Extended_Pictographic}/u.test(option.textContent ?? '')),
+    ).toBe(false);
+  });
+
   it('Instruções e Configurações técnicas ficam juntas, recolhidas, num bloco abaixo dos controles', () => {
     const host = renderCard({ removable: true });
     const more = host.querySelector('.mission-roster-row__more');

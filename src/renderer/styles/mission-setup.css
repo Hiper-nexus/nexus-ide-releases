@@ -209,6 +209,10 @@
   overflow-x: hidden;
   overflow-y: auto;
   overflow-anchor: none;
+  /* Calha sempre reservada: a barra de rolagem clássica come largura da lista, e
+     o dock reserva a mesma (abaixo) para os botões ficarem na mesma borda dos
+     cartões em vez de ~11px além dela. */
+  scrollbar-gutter: stable;
   padding-bottom: var(--space-4);
 }
 
@@ -440,6 +444,12 @@
 }
 
 .mission-setup__inline-error {
+  color: var(--danger);
+}
+
+/* Dentro do cartão o parágrafo também casa `.mission-setup__continuous-section p`
+   (0,1,1), que ganhava da regra acima (0,1,0) e deixava o motivo cinza. */
+.mission-roster-row__card .mission-setup__inline-error {
   color: var(--danger);
 }
 
@@ -721,6 +731,10 @@
   margin-inline: calc(-1 * var(--mission-step-inline));
   padding-inline: var(--mission-step-inline);
   padding-bottom: var(--space-4);
+  /* Mesma calha de rolagem da lista, sem número mágico: `stable` reserva a
+     largura da barra também em caixa com overflow hidden. */
+  overflow: hidden;
+  scrollbar-gutter: stable;
 }
 
 .mission-setup__step-dock .mission-setup__step-actions {
@@ -1314,9 +1328,11 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-4);
   padding: var(--space-4);
-  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+  /* Neutro: acento é estado (DESIGN.md §2). Tingido de rosa, o painel lia como
+     caixa de erro e era um cartão dentro do cartão com cor decorativa. */
+  border: 1px solid var(--border);
   border-radius: var(--radius-xl);
-  background: color-mix(in srgb, var(--accent) 6%, var(--bg-bar));
+  background: var(--bg-bar);
 }
 
 .mission-roster-row__technical-grid .mission-setup__field + .mission-setup__field {
@@ -1395,6 +1411,11 @@
   min-width: 0;
 }
 
+.mission-roster-row:not(.mission-roster-row--compact) .mission-roster-row__control select,
+.mission-roster-row:not(.mission-roster-row--compact) .mission-roster-row__control input {
+  min-height: var(--mission-compact-action-block-size, var(--space-6));
+}
+
 /* Rótulo de campo em caixa normal: legível de relance, sem eyebrow em caixa alta. */
 .mission-roster-row:not(.mission-roster-row--compact) .mission-roster-row__control > span {
   font-size: var(--text-sm);
@@ -1403,6 +1424,15 @@
 }
 
 @container mission-setup (max-width: 600px) {
+  /* O estado vai para a linha do papel, à direita: com "Precisa de ajuste" na
+     linha do nome sobravam ~65px e "Implementar" quebrava no meio da palavra. */
+  .mission-roster-row:not(.mission-roster-row--compact) .mission-roster-row__summary {
+    grid-template-areas:
+      'avatar name name remove'
+      'avatar role status status'
+      'controls controls controls controls';
+  }
+
   .mission-roster-row:not(.mission-roster-row--compact) .mission-roster-row__controls {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -2135,10 +2165,8 @@
 }
 
 .mission-setup__preset span {
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
   font-weight: 650;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
 }
 
 .mission-setup__preset:hover {

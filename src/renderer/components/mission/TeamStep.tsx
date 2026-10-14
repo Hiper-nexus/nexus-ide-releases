@@ -363,9 +363,9 @@ export function TeamStep({
     const rows =
       rosterRef.current?.querySelectorAll<HTMLElement>('.mission-roster-row');
     const adjacentRow = rows?.[removedIndex] ?? rows?.[removedIndex - 1];
-    const adjacentControl = adjacentRow?.querySelector<HTMLElement>(
-      'button:not(:disabled), summary',
-    );
+    // Foco em controle inofensivo (o resumo dos detalhes), nunca no Remover do
+    // vizinho: Enter de novo apagaria o próximo papel sem ninguém ter pedido.
+    const adjacentControl = adjacentRow?.querySelector<HTMLElement>('summary');
     (adjacentControl ?? addRoleControlRef.current)?.focus();
   }, [roster]);
 
@@ -615,7 +615,7 @@ export function TeamStep({
         <div className="mission-setup__continuous-section">
           <div className="mission-setup__section-heading">
             <h2>Papéis da missão</h2>
-            <span className="mission-setup__count-chip">
+            <span className="mission-setup__count-chip" role="status">
               {roster.length} {roster.length === 1 ? 'integrante' : 'integrantes'}
             </span>
           </div>

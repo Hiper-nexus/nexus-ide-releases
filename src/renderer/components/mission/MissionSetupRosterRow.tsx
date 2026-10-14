@@ -140,6 +140,7 @@ export function MissionSetupRosterRow({
     agent.effort && effortOptions.includes(agent.effort),
   );
   const fieldSuffix = agent.id.replace(/[^a-z0-9_-]/giu, '-');
+  const issueId = `mission-roster-issue-${fieldSuffix}`;
 
   const [customModel, setCustomModel] = useState(false);
 
@@ -197,6 +198,7 @@ export function MissionSetupRosterRow({
                 <span>Ferramenta</span>
                 <select
                   aria-label={`Ferramenta de IA para ${agent.agentName}`}
+                  aria-describedby={issue ? issueId : undefined}
                   value={agent.cli}
                   onChange={(event) => handleToolChange(event.target.value)}
                 >
@@ -265,7 +267,7 @@ export function MissionSetupRosterRow({
                         {model}
                       </option>
                     ))}
-                    <option value="__custom__">✏️ Digitar modelo…</option>
+                    <option value="__custom__">Digitar outro modelo…</option>
                   </select>
                 )}
               </label>
@@ -320,67 +322,67 @@ export function MissionSetupRosterRow({
         </div>
 
         {issue && (
-          <p className="mission-setup__inline-error" role="status">
+          <p id={issueId} className="mission-setup__inline-error" role="status">
             {issue}
           </p>
         )}
 
         {!compact && (
           <div className="mission-roster-row__more">
-        <details className="mission-setup__disclosure mission-roster-row__details">
-          <summary>Instruções para {agent.agentName}</summary>
-          <div className="mission-setup__field">
-            <label htmlFor={`mission-instructions-${fieldSuffix}`}>
-              Orientações específicas deste papel (opcional)
-            </label>
-            <textarea
-              id={`mission-instructions-${fieldSuffix}`}
-              value={agent.instructions ?? ''}
-              rows={4}
-              maxLength={SQUAD_AGENT_INSTRUCTIONS_MAX_CHARS}
-              aria-describedby={`mission-instructions-hint-${fieldSuffix}`}
-              onChange={(event) =>
-                onChange({
-                  ...agent,
-                  ...(event.target.value
-                    ? { instructions: event.target.value }
-                    : { instructions: undefined }),
-                })
-              }
-            />
-            <span
-              id={`mission-instructions-hint-${fieldSuffix}`}
-              className="mission-setup__hint"
-            >
-              Até 4.096 caracteres. As instruções não concedem novas ferramentas
-              nem permissões.
-            </span>
-          </div>
-        </details>
+            <details className="mission-setup__disclosure mission-roster-row__details">
+              <summary>Instruções para {agent.agentName}</summary>
+              <div className="mission-setup__field">
+                <label htmlFor={`mission-instructions-${fieldSuffix}`}>
+                  Orientações específicas deste papel (opcional)
+                </label>
+                <textarea
+                  id={`mission-instructions-${fieldSuffix}`}
+                  value={agent.instructions ?? ''}
+                  rows={4}
+                  maxLength={SQUAD_AGENT_INSTRUCTIONS_MAX_CHARS}
+                  aria-describedby={`mission-instructions-hint-${fieldSuffix}`}
+                  onChange={(event) =>
+                    onChange({
+                      ...agent,
+                      ...(event.target.value
+                        ? { instructions: event.target.value }
+                        : { instructions: undefined }),
+                    })
+                  }
+                />
+                <span
+                  id={`mission-instructions-hint-${fieldSuffix}`}
+                  className="mission-setup__hint"
+                >
+                  Até 4.096 caracteres. As instruções não concedem novas ferramentas
+                  nem permissões.
+                </span>
+              </div>
+            </details>
 
-        <details className="mission-setup__disclosure mission-roster-row__details">
-          <summary>
-            Configurações técnicas de {agent.agentName}
-          </summary>
-          <div className="mission-roster-row__technical-grid">
-            <div className="mission-setup__field">
-              <label htmlFor={`mission-role-${fieldSuffix}`}>Papel na equipe</label>
-              <input
-                id={`mission-role-${fieldSuffix}`}
-                type="text"
-                value={agent.agentName}
-                maxLength={128}
-                onChange={(event) =>
-                  onChange({ ...agent, agentName: event.target.value })
-                }
-              />
-              <span className="mission-setup__hint">
-                Nome curto que aparece na revisão.
-              </span>
-            </div>
+            <details className="mission-setup__disclosure mission-roster-row__details">
+              <summary>
+                Configurações técnicas de {agent.agentName}
+              </summary>
+              <div className="mission-roster-row__technical-grid">
+                <div className="mission-setup__field">
+                  <label htmlFor={`mission-role-${fieldSuffix}`}>Papel na equipe</label>
+                  <input
+                    id={`mission-role-${fieldSuffix}`}
+                    type="text"
+                    value={agent.agentName}
+                    maxLength={128}
+                    onChange={(event) =>
+                      onChange({ ...agent, agentName: event.target.value })
+                    }
+                  />
+                  <span className="mission-setup__hint">
+                    Nome curto que aparece na revisão.
+                  </span>
+                </div>
 
-          </div>
-        </details>
+              </div>
+            </details>
           </div>
         )}
       </div>

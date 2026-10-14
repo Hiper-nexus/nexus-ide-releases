@@ -6,7 +6,7 @@
  * próximo cartão aparecendo por baixo). Layout real é conferido no navegador;
  * aqui fica o contrato de estrutura, que é o que impede a regressão.
  */
-import { act } from 'react';
+import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SquadAgent } from '../../../shared/orch-types';
@@ -140,6 +140,34 @@ function renderTeam(roster: readonly SquadAgent[]): HTMLElement {
   return host;
 }
 
+/** Mesmo TeamStep, mas com o roster vivo: remover de verdade re-renderiza o passo. */
+function renderStatefulTeam(initial: readonly SquadAgent[]): HTMLElement {
+  function Stateful() {
+    const [roster, setRoster] = useState(initial);
+    return (
+      <TeamStep
+        roster={roster}
+        lane="standard"
+        recommendationStale={false}
+        revision={1}
+        inventory={INVENTORY}
+        entryContext={null}
+        onRosterChange={setRoster}
+        onBack={vi.fn()}
+        onContinue={vi.fn()}
+        onRetryInventory={vi.fn()}
+        onRefreshRecommendation={vi.fn()}
+      />
+    );
+  }
+  const host = document.createElement('div');
+  document.body.append(host);
+  const root = createRoot(host);
+  mountedRoots.add(root);
+  act(() => root.render(<Stateful />));
+  return host;
+}
+
 function buttonNamed(host: HTMLElement, name: string): HTMLButtonElement {
   const found = [...host.querySelectorAll('button')].find(
     (item) => item.textContent?.includes(name),
@@ -152,6 +180,7 @@ afterEach(() => {
   for (const root of mountedRoots) act(() => root.unmount());
   mountedRoots.clear();
   document.body.replaceChildren();
+  vi.restoreAllMocks();
 });
 
 describe('TeamStep: barra de ações fora da área rolável', () => {
@@ -230,5 +259,40 @@ describe('TeamStep: remover papel', () => {
     }
     const coordinatorRow = host.querySelector('[data-category="orchestrator"]')!;
     expect(coordinatorRow.querySelector('.mission-roster-row__remove')).toBeNull();
+  });
+
+  it('depois de remover um papel o foco vai para um controle inofensivo do vizinho, nunca para o Remover dele', () => {
+    const focus = vi.spyOn(HTMLElement.prototype, 'focus');
+    const host = renderStatefulTeam([COORDINATOR, INTERFACE, ENGINE, REVIEWER]);
+    focus.mockClear();
+
+    act(() =>
+      host
+        .querySelector<HTMLButtonElement>('button[aria-label="Remover Implementar interface"]')!
+        .click(),
+    );
+
+    // Um Enter a mais no Remover do vizinho apagaria o próximo papel sem pedido.
+    const target = focus.mock.contexts.at(-1) as HTMLElement | undefined;
+    expect(target?.tagName).toBe('SUMMARY');
+    expect(target?.closest('.mission-roster-row')?.textContent).toContain('Implementar motor');
+    expect(host.textContent).not.toContain('Implementar interface');
+  });
+});
+
+describe('TeamStep: contagem de integrantes', () => {
+  it('é uma região de status: adicionar, remover e presets são anunciados', () => {
+    const host = renderStatefulTeam([COORDINATOR, INTERFACE, ENGINE, REVIEWER]);
+    const chip = host.querySelector('.mission-setup__count-chip');
+
+    expect(chip?.getAttribute('role')).toBe('status');
+    expect(chip?.textContent).toBe('4 integrantes');
+
+    act(() =>
+      host
+        .querySelector<HTMLButtonElement>('button[aria-label="Remover Implementar motor"]')!
+        .click(),
+    );
+    expect(host.querySelector('.mission-setup__count-chip')?.textContent).toBe('3 integrantes');
   });
 });

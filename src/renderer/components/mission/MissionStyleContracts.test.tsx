@@ -427,12 +427,42 @@ describe('Mission Setup and Mission Board style contracts', () => {
       );
     });
 
+    it('reserves the same scrollbar gutter in the list and in the dock, so the buttons share the cards edge', () => {
+      // A barra clássica come ~11px da lista e nada do dock: sem a mesma calha
+      // reservada nos dois, o Continuar passava da borda dos cartões.
+      expect(missionSetupCss).toMatch(
+        /\.mission-setup__step-scroll\s*\{[^}]*scrollbar-gutter:\s*stable/,
+      );
+      expect(missionSetupCss).toMatch(
+        /\.mission-setup__step--docked\s*>\s*\.mission-setup__step-dock\s*\{[^}]*overflow:\s*hidden[^}]*scrollbar-gutter:\s*stable/,
+      );
+    });
+
+    it('keeps the in-card problem reason in the danger color despite the section paragraph rule', () => {
+      // `.mission-setup__continuous-section p` (0,1,1) vence `.mission-setup__inline-error`
+      // (0,1,0): o motivo saía cinza. jsdom não aplica especificidade, então a
+      // regra mais forte fica travada na fonte.
+      expect(missionSetupCss).toMatch(
+        /\.mission-roster-row__card\s+\.mission-setup__inline-error\s*\{[^}]*color:\s*var\(--danger\)/,
+      );
+    });
+
     it.each([
-      { containerWidth: 900, columns: 3, nameWrap: 'nowrap' },
-      { containerWidth: 520, columns: 1, nameWrap: 'normal' },
+      {
+        containerWidth: 900,
+        columns: 3,
+        nameWrap: 'nowrap',
+        headerRows: ["'avatar name status remove'", "'avatar role status remove'"],
+      },
+      {
+        containerWidth: 520,
+        columns: 1,
+        nameWrap: 'normal',
+        headerRows: ["'avatar name name remove'", "'avatar role status status'"],
+      },
     ])(
       'lays the Ferramenta/Modelo/Esforço controls on $columns track(s) in a $containerWidth px canvas, the same in every card',
-      ({ containerWidth, columns, nameWrap }) => {
+      ({ containerWidth, columns, nameWrap, headerRows }) => {
         installStyleContract(missionStyles, { width: 1_400, containerWidth });
         const host = render(<DockedTeamFixture />);
         const controls = [
@@ -454,6 +484,12 @@ describe('Mission Setup and Mission Board style contracts', () => {
             'white-space',
           ),
         ).toBe(nameWrap);
+        // E o estado sai da linha do nome (que ganha a largura toda) para a do papel.
+        const areas = computedCssValue(
+          host.querySelector<HTMLElement>('.mission-roster-row__summary')!,
+          'grid-template-areas',
+        );
+        for (const row of headerRows) expect(areas).toContain(row);
       },
     );
 
@@ -483,6 +519,8 @@ describe('Mission Setup and Mission Board style contracts', () => {
       const desktopRemove = desktop.querySelector<HTMLElement>('.mission-roster-row__remove')!;
       expect(styleLengthPx(desktopRemove, 'width')).toBeGreaterThanOrEqual(32);
       expect(styleLengthPx(desktopRemove, 'min-height')).toBeGreaterThanOrEqual(32);
+      const desktopSelect = desktop.querySelector<HTMLElement>('.mission-roster-row__control select')!;
+      expect(styleLengthPx(desktopSelect, 'min-height')).toBe(32);
       // Controle só de ícone: quem navega por teclado precisa enxergar onde está.
       markFocusVisible(desktopRemove);
       expect(computedCssValue(desktopRemove, 'outline')).not.toBe('none');
@@ -500,6 +538,38 @@ describe('Mission Setup and Mission Board style contracts', () => {
       const touchRemove = touch.querySelector<HTMLElement>('.mission-roster-row__remove')!;
       expect(styleLengthPx(touchRemove, 'width')).toBeGreaterThanOrEqual(44);
       expect(styleLengthPx(touchRemove, 'min-height')).toBeGreaterThanOrEqual(44);
+      // Os selects do cartão crescem junto com o botão: alvo de toque coerente.
+      const touchSelect = touch.querySelector<HTMLElement>('.mission-roster-row__control select')!;
+      expect(styleLengthPx(touchSelect, 'min-height')).toBeGreaterThanOrEqual(44);
+    });
+
+    it('writes the preset label and captions in sentence case and keeps the technical panel neutral', () => {
+      installStyleContract(missionStyles, { width: 1_400, containerWidth: 1_200 });
+      const host = render(
+        <section className="mission-setup">
+          <div className="mission-setup__presets">
+            <span className="mission-setup__presets-label">Tamanho da equipe</span>
+            <div className="mission-setup__preset-row" role="group" aria-label="Tamanho da equipe">
+              <button type="button" className="mission-setup__preset" aria-pressed="false">
+                <strong>3</strong>
+                <span>Enxuta</span>
+              </button>
+            </div>
+          </div>
+        </section>,
+      );
+      for (const element of [
+        host.querySelector<HTMLElement>('.mission-setup__presets-label')!,
+        host.querySelector<HTMLElement>('.mission-setup__preset span')!,
+      ]) {
+        expect(computedCssValue(element, 'text-transform')).not.toBe('uppercase');
+      }
+      // Painel de Configurações técnicas: neutro, sem tinta de acento (acento é
+      // estado, DESIGN.md §2); tingido de rosa ele lia como caixa de erro.
+      const technicalPanel =
+        missionSetupCss.match(/\.mission-roster-row__technical-grid\s*\{[^}]*\}/)?.[0] ?? '';
+      expect(technicalPanel).not.toBe('');
+      expect(technicalPanel).not.toMatch(/accent/);
     });
 
     it('writes the control labels in sentence case on the team card and leaves the express card alone', () => {

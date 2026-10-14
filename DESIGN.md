@@ -403,4 +403,17 @@ lista de papéis, cortando um cartão ao meio. Código: `TeamStep.tsx`,
   de canvas). Rótulo de campo em caixa normal, sem eyebrow em caixa alta.
 - **Remover é botão só de ícone** (`PixelIcon trash`) com `aria-label` e `title`
   "Remover <papel>", alvo de 32px (maior no toque). Ordem de foco do cartão:
-  controles, remover, detalhes. A variante `--compact` (Expresso) não muda.
+  controles, remover, detalhes. Depois de remover, o foco vai para o resumo dos
+  detalhes do vizinho, nunca para o Remover dele. A variante `--compact`
+  (Expresso) não muda.
+- **Lista e dock partilham a calha de rolagem** (`scrollbar-gutter: stable` nos
+  dois): a barra clássica come largura da lista, e sem a mesma reserva no dock o
+  botão primário passava ~11px da borda dos cartões.
+- **Canvas estreito (até 600px):** o estado desce para a linha do papel, à
+  direita, e o nome do papel quebra em vez de virar reticências; os selects
+  seguem o token de alvo (maior no toque).
+- **Problema no papel:** selo "Precisa de ajuste" e o motivo, em `--danger`, no
+  cartão, ligado ao select de Ferramenta por `aria-describedby`. A contagem de
+  integrantes é `role="status"`, então adicionar, remover e presets são
+  anunciados. O painel de Configurações técnicas é neutro: acento é estado, não
+  tinta de painel.
