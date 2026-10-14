@@ -42,6 +42,8 @@ const h = vi.hoisted(() => ({
   /** F-1473: o pane retomado sobreviveu ao boot. */
   resumeBootOk: vi.fn(async (_target: { paneId?: string; sessionId?: string }): Promise<'proved' | 'failed' | 'closed'> => 'proved'),
   resumeBootDispose: vi.fn(),
+  /** F-1486: o store da missão fora do ar (a leitura lança). */
+  missionsThrow: false,
 }));
 
 vi.mock('../pty/pty-analysis-runtime', async () => {
@@ -151,7 +153,12 @@ vi.mock('./failover-mission-respawn', () => ({
 vi.mock('./project-domain-store-registry', () => ({
   getProjectDomainStores: () => ({
     handoffs: { submit: h.submit },
-    missions: { get: () => ({ id: 'mission-1', orchestratorSessionId: 'session-maestro', status: h.missionStatus }) },
+    missions: {
+      get: () => {
+        if (h.missionsThrow) throw new Error('store da missão fora do ar');
+        return { id: 'mission-1', orchestratorSessionId: 'session-maestro', status: h.missionStatus };
+      },
+    },
   }),
 }));
 vi.mock('./idle-delivery', () => ({ onHandoffSubmitted: h.onHandoffSubmitted }));
@@ -279,6 +286,7 @@ beforeEach(() => {
   h.missionStatus = undefined;
   h.rebind.mockReset().mockReturnValue(false);
   h.resumeBootOk.mockReset().mockResolvedValue('proved');
+  h.missionsThrow = false;
   h.requestPaneClose.mockClear().mockResolvedValue(true);
   h.respawnMainOwned.mockClear().mockResolvedValue(true);
   h.submit.mockClear();
@@ -881,7 +889,7 @@ describe('F-1471: worker de missão troca de conta no MESMO provedor e segue a t
     expect(events().find((event) => event.switched)!.reason).toContain('não recebeu a tarefa');
   });
 
-  it('writer: recusado depois de sair e nenhuma outra CLI — recibo honesto e o orquestrador recebe como retomar', async () => {
+  it('F-1486: writer recusado depois de sair e nenhuma outra CLI — a tarefa espera e o Nexus a reabre sozinho na conta irmã', async () => {
     worker();
     const task = handle({
       reroute: vi.fn(async () => { throw new Error('quem pediu o pane não tem mais sessão viva'); }),
@@ -899,10 +907,104 @@ describe('F-1471: worker de missão troca de conta no MESMO provedor e segue a t
     const last = events().at(-1)!;
     expect(last).toMatchObject({ paneId: 'pane-claude', switched: false });
     expect(last.reason).toContain('não recebeu a tarefa');
-    expect(last.scheduledRetryAtMs).toBeUndefined();
+    // A tarefa sem pane ganha nova tentativa automática (antes: só o resume manual).
+    expect(last.scheduledRetryAtMs).toBeGreaterThan(Date.now());
+    expect(hasPendingFailoverRecovery('pane-claude', 'session-claude')).toBe(true);
     const summary = String(h.submit.mock.calls.at(-1)![0].summary);
     expect(summary).toContain('[troca-de-conta:pane-claude]');
-    expect(summary).toContain('resume');
+    expect(summary).toContain('reabre a tarefa sozinho');
+    const notices = h.submit.mock.calls.length;
+
+    vi.mocked(task.reroute).mockImplementation(async () => ({
+      paneId: 'pane-claude-2', adapterId: 'claude', model: 'claude-opus-5-5',
+    }));
+    await vi.advanceTimersByTimeAsync(last.scheduledRetryAtMs! - Date.now());
+    await settle();
+    await settle();
+    expect(task.reroute).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(task.reroute).mock.calls[1]![0].sameAdapter).toMatchObject({
+      adapterId: 'claude', accountId: 'claude-b',
+    });
+    expect(events().filter((event) => event.switched)).toEqual([
+      expect.objectContaining({ paneId: 'pane-claude', toAccountId: 'claude-b', toPaneId: 'pane-claude-2' }),
+    ]);
+    expect(hasPendingFailoverRecovery('pane-claude', 'session-claude')).toBe(false);
+    // O orquestrador recebe o desfecho (um aviso por espera, não um por tentativa).
+    expect(h.submit.mock.calls.length).toBe(notices + 1);
+    expect(String(h.submit.mock.calls.at(-1)![0].summary)).toContain('pane-claude-2');
+  });
+
+  it('F-1486: com o prepare da conta irmã pendente, o supervisor já espera (marca antes do heal/prepare)', async () => {
+    worker();
+    registerPaneTaskReroute(handle());
+    let verify!: (value: 'match') => void;
+    vi.mocked(verifyManagedClaudeAccountForSpawn).mockImplementationOnce(
+      () => new Promise((resolve) => { verify = resolve; }),
+    );
+    h.dataTaps[0]('session-claude', 'QUOTA');
+    await settle();
+    expect(hasPendingFailoverRecovery('pane-claude', 'session-claude')).toBe(true);
+    verify('match');
+    await settle();
+    await settle();
+    expect(hasPendingFailoverRecovery('pane-claude', 'session-claude')).toBe(false);
+  });
+
+  it('F-1486: recusa da conta irmã não consome o teto de 3 trocas por hora', async () => {
+    for (let n = 1; n <= 4; n += 1) {
+      rendererPane({ paneId: `pane-${n}`, sessionId: `session-${n}`, missionId: 'mission-1' });
+      const task = handle({
+        paneId: `pane-${n}`,
+        lineageId: 'pane-1',
+        exclusiveCheckout: false,
+        hasAlternative: vi.fn(() => false),
+        reroute: vi.fn(async () => {
+          if (n < 4) throw new Error('spawn recusado pela admissão de panes');
+          return { paneId: 'pane-5', adapterId: 'claude' };
+        }),
+      });
+      registerPaneTaskReroute(task);
+      h.dataTaps[0](`session-${n}`, 'QUOTA');
+      await settle();
+      await settle();
+      expect(vi.mocked(task.reroute).mock.calls[0]![0].sameAdapter).toMatchObject({ accountId: 'claude-b' });
+    }
+    expect(events().filter((event) => event.switched)).toEqual([
+      expect.objectContaining({ paneId: 'pane-4', toAccountId: 'claude-b', toPaneId: 'pane-5' }),
+    ]);
+  });
+
+  it('F-1486: duas reaberturas concorrentes da MESMA tarefa (linhagem) dão um só reroute', async () => {
+    let finish!: (next: Reopened) => void;
+    const reroute = vi.fn(() => new Promise<Reopened>((resolve) => { finish = resolve; }));
+    for (const n of [1, 2]) {
+      rendererPane({ paneId: `pane-${n}`, sessionId: `session-${n}`, missionId: 'mission-1' });
+      registerPaneTaskReroute(handle({ paneId: `pane-${n}`, lineageId: 'pane-1', exclusiveCheckout: false, reroute }));
+    }
+    h.dataTaps[0]('session-1', 'QUOTA');
+    h.dataTaps[0]('session-2', 'QUOTA');
+    await settle();
+    await settle();
+    expect(reroute).toHaveBeenCalledTimes(1);
+    finish({ paneId: 'pane-3', adapterId: 'claude' });
+    await settle();
+    expect(reroute).toHaveBeenCalledTimes(1);
+  });
+
+  it('F-1486: o store da missão fora do ar — nada de "trocado" genérico: recibo honesto e orquestrador avisado', async () => {
+    worker();
+    registerPaneTaskReroute(handle());
+    h.missionsThrow = true;
+    h.dataTaps[0]('session-claude', 'QUOTA');
+    await settle();
+    await settle();
+    expect(events().some((event) => event.switched)).toBe(false);
+    const last = events().at(-1)!;
+    expect(last).toMatchObject({ paneId: 'pane-claude', switched: false });
+    expect(last.reason).toContain('não conseguiu ler a missão');
+    const summary = String(h.submit.mock.calls.at(-1)![0].summary);
+    expect(summary).toContain('[troca-de-conta:pane-claude]');
+    expect(summary).not.toContain('maria@example.com');
   });
 
   it('teto próprio: a 4ª troca de conta da mesma tarefa na hora não reabre de novo — segue o caminho de sempre', async () => {

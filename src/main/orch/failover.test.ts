@@ -96,6 +96,16 @@ vi.mock('./failover-orchestrator-respawn', () => ({
   switchRendererOrchestratorAccount: orchestratorSwitch.switch,
 }));
 
+// F-1486: o store responde e a missão dos panes de teste não está nele (não é
+// dona do pane) — o caminho de sempre. Sem leitura nenhuma o failover recusa.
+vi.mock('./project-domain-store-registry', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./project-domain-store-registry')>()),
+  getProjectDomainStores: () => ({
+    missions: { get: () => undefined },
+    handoffs: { submit: () => { throw new Error('handoffs fora do teste'); } },
+  }),
+}));
+
 vi.mock('./pane-registry', () => ({
   stripAnsi: (data: string) => data,
   readSessionOutput: vi.fn(() => 'Maestro: integrando o harvest T3\nYou\'ve hit your session limit'),

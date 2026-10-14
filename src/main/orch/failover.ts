@@ -144,6 +144,8 @@ const RETRY_BUFFER_MS = 1_000;
 const RETRY_MIN_RESCHEDULE_MS = REARM_MS;
 /** Teto de re-agendamentos por watch — evita timer eterno em pool morto. */
 const MAX_SCHEDULED_RETRIES = 8;
+/** F-1486: teto do backoff (30 s·2^(n−1)) entre tentativas sem alvo de liberação. */
+const RETRY_MAX_BACKOFF_MS = 15 * 60_000;
 /**
  * Contas que um mesmo failover tenta preparar antes de desistir (F-676). Com
  * frotas de 10–100 contas, parar na 2ª com prepare falho deixava o pane sem
@@ -691,6 +693,8 @@ interface SwitchRequest {
   reasonSuffix: string;
   /** F-249: limite longo só com o texto do PTY — não autoriza trocar de CLI. */
   unconfirmed?: boolean;
+  /** F-1486: nova tentativa de uma tarefa que ficou sem pane (writer). */
+  taskReopen?: boolean;
 }
 
 /**
@@ -903,7 +907,10 @@ function cliSwitchPack(
   });
 }
 
-type CliSwitchResult = { readonly handled: true } | { readonly handled: false; readonly note: string };
+type CliSwitchResult =
+  | { readonly handled: true }
+  /** `paneGone` (F-1486): o writer já saiu e a reabertura falhou — a tarefa ficou sem pane. */
+  | { readonly handled: false; readonly note: string; readonly paneGone?: boolean };
 
 /**
  * Executa a troca de CLI. `handled:false` = o pane parado continua lá e a
@@ -1012,30 +1019,28 @@ async function continueOnAnotherCli(
         worktreeFromPaneId: paneId,
       },
     );
-    if (!outcome.ok && !outcome.closed) {
-      return { handled: false, note: `troca de CLI indisponível: ${outcome.error}` };
+    if (!outcome.ok) {
+      // F-1486: com o writer já fora (`closed`), a tarefa não fica sem pane —
+      // quem chama agenda a nova tentativa com o pedido guardado.
+      if (outcome.closed) traceOutcome('cli-switch-failed', { paneGone: true });
+      return outcome.closed
+        ? { handled: false, note: `a troca de CLI falhou depois de o pane sair: ${outcome.error}`, paneGone: true }
+        : { handled: false, note: `troca de CLI indisponível: ${outcome.error}` };
     }
-    const toCli = outcome.ok ? adapterLabelOf(outcome.adapterId) : '';
+    const toCli = adapterLabelOf(outcome.adapterId);
     const exhausted = cause ? `${fromCli}: ${cause}` : `${fromCli} esgotou em todas as contas`;
-    const reason = outcome.ok
-      ? `${exhausted}; a tarefa seguiu em ${toCli} ` +
-        `(pane ${outcome.paneId}) com o pacote de continuidade (${hit.reason})`
-      : `${exhausted} e a tarefa não foi reaberta em outra CLI: ` +
-        `${outcome.error} (${hit.reason})`;
     emitFailoverReceipt(authority, {
       ...base,
-      reason,
-      switched: outcome.ok,
-      ...(outcome.ok
-        ? { toAdapterId: outcome.adapterId, toAdapterLabel: toCli, toPaneId: outcome.paneId }
-        : {}),
+      reason:
+        `${exhausted}; a tarefa seguiu em ${toCli} ` +
+        `(pane ${outcome.paneId}) com o pacote de continuidade (${hit.reason})`,
+      switched: true,
+      toAdapterId: outcome.adapterId,
+      toAdapterLabel: toCli,
+      toPaneId: outcome.paneId,
     });
-    traceOutcome(outcome.ok ? 'cli-switched' : 'cli-switch-failed', {
-      ...(outcome.ok ? { toAdapterId: outcome.adapterId, toPaneId: outcome.paneId } : {}),
-    });
-    await notifyCliSwitch(authority, req, outcome.ok
-      ? { toAdapterId: outcome.adapterId, toPaneId: outcome.paneId }
-      : { error: outcome.error }, cause);
+    traceOutcome('cli-switched', { toAdapterId: outcome.adapterId, toPaneId: outcome.paneId });
+    await notifyCliSwitch(authority, req, { toAdapterId: outcome.adapterId, toPaneId: outcome.paneId }, cause);
     return { handled: true };
   }
 
@@ -1152,13 +1157,49 @@ async function continuityFacts(
 const MAX_ACCOUNT_SWITCHES_PER_TASK = 3;
 const ACCOUNT_SWITCH_WINDOW_MS = 60 * 60_000;
 const accountSwitchHistory = new Map<string, number[]>();
-/** F-1471: panes com troca de conta em curso — uma por pane; o supervisor espera. */
-const siblingReopens = new Set<string>();
+/**
+ * F-1486: panes de missão com troca de conta em curso, do pick ao recibo
+ * (heal e prepare inclusos) — o supervisor espera. Contagem: duas notícias
+ * do mesmo pane podem correr juntas.
+ */
+const switchesInFlight = new Map<string, number>();
+/** F-1471: reabertura da tarefa na conta irmã em curso — uma por pane. */
+const reopenInFlight = new Set<string>();
+/** F-1486: uma reabertura por tarefa (linhagem) de cada vez — o teto só conta as que valeram. */
+const lineageReopens = new Set<string>();
 /**
  * F-1473: panes substitutos esperando a prova da retomada — o failover é dono
  * da recuperação deles; a ficha de início do substituto não reabre a tarefa.
  */
 const resumeProofPanes = new Set<string>();
+
+interface PendingTaskReopen {
+  readonly timer: ReturnType<typeof setTimeout>;
+  readonly handle: PaneTaskRerouteHandle;
+}
+/**
+ * F-1486: writer que ficou sem pane (o velho saiu e a conta irmã ou a outra
+ * CLI recusou) — a tarefa espera a próxima tentativa com o pedido guardado.
+ * Por pane; a saída da sessão não cancela (a sessão já saiu).
+ */
+const pendingTaskReopens = new Map<string, PendingTaskReopen>();
+
+function markSwitchInFlight(paneId: string): void {
+  switchesInFlight.set(paneId, (switchesInFlight.get(paneId) ?? 0) + 1);
+}
+
+function releaseSwitchInFlight(paneId: string): void {
+  const left = (switchesInFlight.get(paneId) ?? 1) - 1;
+  if (left > 0) switchesInFlight.set(paneId, left);
+  else switchesInFlight.delete(paneId);
+}
+
+function cancelTaskReopen(paneId: string): void {
+  const pending = pendingTaskReopens.get(paneId);
+  if (!pending) return;
+  clearTimeout(pending.timer);
+  pendingTaskReopens.delete(paneId);
+}
 
 function recentAccountSwitches(lineageId: string, now: number): number[] {
   const recent = (accountSwitchHistory.get(lineageId) ?? []).filter(
@@ -1174,11 +1215,22 @@ function recentAccountSwitches(lineageId: string, now: number): number[] {
  * em vez de levar a mesma tarefa para outra CLI em paralelo.
  */
 export function hasPendingFailoverRecovery(paneId: string, sessionId: string): boolean {
-  if (siblingReopens.has(paneId) || resumeProofPanes.has(paneId)) return true;
+  if (switchesInFlight.has(paneId) || failoverReopensTask(paneId) || resumeProofPanes.has(paneId)) return true;
   for (const pending of pendingRetries.values()) {
     if (pending.authority.sessionId === sessionId) return true;
   }
   return false;
+}
+
+/**
+ * F-1486: o failover está reabrindo esta tarefa com o pedido (reabertura em
+ * curso ou nova tentativa de tarefa sem pane agendada). O supervisor, que
+ * acabou de fechar o pane, devolve o pedido em vez de reabrir em paralelo.
+ * Espera pela conta e troca ainda no prepare não contam: sem o pedido elas
+ * não reabrem nada, e a sessão fechada cancela a espera.
+ */
+export function failoverReopensTask(paneId: string): boolean {
+  return reopenInFlight.has(paneId) || pendingTaskReopens.has(paneId);
 }
 
 /**
@@ -1191,7 +1243,12 @@ function missionOwnsPane(authority: FailoverAuthority): boolean | null {
   try {
     const mission = getProjectDomainStores(authority.scope).missions.get(authority.missionId);
     return mission ? missionOwnsItsPanes(mission) : false;
-  } catch {
+  } catch (error) {
+    // F-1486: sem leitura, quem chama recusa com o motivo (nunca "trocado" genérico).
+    console.warn(
+      '[failover] leitura da missão falhou:',
+      error instanceof Error ? error.message : error,
+    );
     return null;
   }
 }
@@ -1248,7 +1305,8 @@ async function reopenTaskOnSiblingAccount(
     return { handled: false, why: 'o pedido guardado deste pane é de outra CLI' };
   }
   // Uma troca por pane: outra notícia do mesmo limite não abre um segundo pane.
-  if (siblingReopens.has(paneId)) return { handled: true };
+  // F-1486: nem por tarefa — dois panes da mesma linhagem não a reabrem juntos.
+  if (reopenInFlight.has(paneId) || lineageReopens.has(handle.lineageId)) return { handled: true };
   const fromLabel = current?.label ?? adapterId;
   const toMasked = maskAccountLabel(next.label);
   // Teto próprio (não é reabertura por falha, F-1414): troca em série é laço.
@@ -1264,8 +1322,8 @@ async function reopenTaskOnSiblingAccount(
     });
     return { handled: true };
   }
-  switches.push(now);
-  siblingReopens.add(paneId);
+  reopenInFlight.add(paneId);
+  lineageReopens.add(handle.lineageId);
   // A rede do supervisor não reabre a mesma tarefa noutra CLI enquanto esta
   // troca corre (antes do primeiro await: rota + spawn podem passar de 60 s).
   forgetConfirmedPaneLimit(paneId);
@@ -1360,10 +1418,13 @@ async function reopenTaskOnSiblingAccount(
         fallback: {
           cause: `a conta "${toMasked}" com folga não recebeu a tarefa (${outcome.error})`,
           paneGone: outcome.closed,
+          handle,
         },
       });
       return { handled: true };
     }
+    // F-1486: o teto conta a troca que valeu — recusa não o consome.
+    recentAccountSwitches(handle.lineageId, Date.now()).push(now);
     const modelNote =
       previousModel && outcome.model && outcome.model !== previousModel
         ? ` — o modelo "${previousModel}" não estava na rota; a tarefa seguiu em "${outcome.model}"`
@@ -1404,7 +1465,8 @@ async function reopenTaskOnSiblingAccount(
     );
     return { handled: true };
   } finally {
-    siblingReopens.delete(paneId);
+    reopenInFlight.delete(paneId);
+    lineageReopens.delete(handle.lineageId);
   }
 }
 
@@ -1439,8 +1501,10 @@ async function refuseMissionPaneSwitch(req: SwitchRequest, next: Account, why: s
  * Auth: nunca retenta a MESMA credencial morta (1s ticker / 15min cooldown
  * fingiam "Sessão recuperada" e injetavam continue no /login).
  * F-1471: `fallback` = a irmã com folga existia, mas não recebeu a tarefa —
- * o motivo entra no recibo e o Maestro é avisado; com `paneGone` (o writer
- * já tinha saído), não há pane para esperar a conta: só recibo e aviso.
+ * o motivo entra no recibo e o Maestro é avisado. F-1486: com `paneGone` (o
+ * writer já tinha saído, ou a outra CLI recusou depois de ele sair) a tarefa
+ * não fica sem pane: o Nexus agenda a nova tentativa com o pedido guardado
+ * (conta com folga ou outra CLI) e avisa o Maestro uma vez por espera.
  */
 async function continueWithoutSibling(
   req: SwitchRequest,
@@ -1451,6 +1515,8 @@ async function continueWithoutSibling(
       /** Motivo com rótulos mascarados (vai ao recibo e ao Maestro). */
       readonly cause: string;
       readonly paneGone: boolean;
+      /** F-1486: o pedido de spawn guardado na falha (a tarefa sem pane o usa). */
+      readonly handle?: PaneTaskRerouteHandle;
     };
   },
 ): Promise<void> {
@@ -1468,13 +1534,21 @@ async function continueWithoutSibling(
   // pane sair), continua a espera-pela-irmã de sempre, com o motivo.
   const cliPlan = planCliSwitch(req, retryTarget);
   let cliSwitchNote = cliPlan.kind === 'blocked' ? cliPlan.note : undefined;
+  let cliPaneGone = false;
   if (cliPlan.kind === 'go') {
     const switched = await continueOnAnotherCli(req, cliPlan, retryTarget, nextUnblockAtMs, fallback?.cause);
     if (switched.handled) return;
     cliSwitchNote = switched.note;
+    cliPaneGone = switched.paneGone === true;
   }
+  const paneGone = fallback?.paneGone === true || cliPaneGone;
   let scheduledRetryAtMs: number | undefined;
-  if (!fallback?.paneGone && retryTarget !== undefined && attempt < MAX_SCHEDULED_RETRIES) {
+  if (paneGone) {
+    const handle = fallback?.handle ?? getPaneTaskReroute(paneId);
+    if (handle && attempt < MAX_SCHEDULED_RETRIES) {
+      scheduledRetryAtMs = scheduleTaskReopen(req, handle, retryTarget);
+    }
+  } else if (retryTarget !== undefined && attempt < MAX_SCHEDULED_RETRIES) {
     scheduledRetryAtMs = scheduleFailoverRetry(key, authority, hit, retryTarget + RETRY_BUFFER_MS, attempt + 1);
   }
   console.info(
@@ -1490,7 +1564,8 @@ async function continueWithoutSibling(
       nextUnblockAtMs: nextUnblockAtMs ?? null,
       scheduledRetryAtMs: scheduledRetryAtMs ?? null,
       attempt,
-      ...(fallback ? { siblingRefused: true, paneGone: fallback.paneGone } : {}),
+      ...(fallback ? { siblingRefused: true } : {}),
+      ...(fallback || paneGone ? { paneGone } : {}),
     }),
   );
   // Publish the new schedule (or its exhaustion), so the UI never keeps
@@ -1510,27 +1585,49 @@ async function continueWithoutSibling(
     ...(nextUnblockAtMs !== undefined ? { nextUnblockAtMs } : {}),
     ...(scheduledRetryAtMs !== undefined ? { scheduledRetryAtMs } : {}),
   };
-  if (!fallback) {
+  if (!fallback && !paneGone) {
     emitFailover(authority, event);
     return;
   }
   // A sessão velha já saiu (writer): o recibo vai ao dono de quando a troca começou.
-  if (fallback.paneGone) emitFailoverReceipt(authority, event);
+  if (paneGone) emitFailoverReceipt(authority, event);
   else emitFailover(authority, event);
+  // F-1486: um aviso por espera — as tentativas seguintes só avisam no desfecho.
+  if (req.taskReopen && scheduledRetryAtMs !== undefined) return;
   const agent = getAgentSessionInfo(authority.sessionId)?.agentName ?? paneId;
+  const cause = fallback?.cause ?? `${adapterLabelOf(adapterId)} ficou sem conta com folga`;
   await notifyMissionOrchestrator(
     authority,
     `[troca-de-conta:${paneId}] O worker "${agent}" (${adapterId}) esgotou a conta ` +
-      `"${maskAccountLabel(fromLabel)}"; ${fallback.cause}` +
+      `"${maskAccountLabel(fromLabel)}"; ${cause}` +
       (cliSwitchNote ? ` — ${cliSwitchNote}` : '') +
-      (fallback.paneGone
-        ? `. O pane parado já tinha saído (o checkout é de um writer só) e a tarefa ficou sem pane; ` +
-          `o checkout e a branch seguem intactos. Reabra-a com nexus_pane_spawn({ resume: "${paneId}" }).`
-        : '. O pane segue na conta esgotada, à espera de ela liberar. Decida: reabra a tarefa ou espere.'),
+      (!paneGone
+        ? '. O pane segue na conta esgotada, à espera de ela liberar. Decida: reabra a tarefa ou espere.'
+        : scheduledRetryAtMs !== undefined
+          ? `. O pane parado já tinha saído (o checkout é de um writer só); o checkout e a branch seguem ` +
+            `intactos e o Nexus reabre a tarefa sozinho (conta com folga ou outra CLI) às ` +
+            `${new Date(scheduledRetryAtMs).toISOString()}. Não a reabra em paralelo.`
+          : `. O pane parado já tinha saído (o checkout é de um writer só) e a tarefa ficou sem pane; ` +
+            `o checkout e a branch seguem intactos. Reabra-a com nexus_pane_spawn({ resume: "${paneId}" }).`),
   );
 }
 
+/**
+ * F-1486: a marcação do pane de missão vale desde o pick — heal e prepare
+ * podem passar de 60 s e a rede do supervisor não pode reabrir a mesma tarefa
+ * noutra CLI nesse meio-tempo. A ficha do limite só sai na reabertura.
+ */
 async function performSwitch(req: SwitchRequest): Promise<void> {
+  if (!req.authority.missionId) return switchAccount(req);
+  markSwitchInFlight(req.paneId);
+  try {
+    await switchAccount(req);
+  } finally {
+    releaseSwitchInFlight(req.paneId);
+  }
+}
+
+async function switchAccount(req: SwitchRequest): Promise<void> {
   const { authority, paneId, adapterId, hit, now, current, attempt } = req;
   const fromLabel = current?.label ?? adapterId;
   const fromAccountId = current?.id;
@@ -1891,13 +1988,21 @@ async function performSwitch(req: SwitchRequest): Promise<void> {
 
   // F-1471: pane de missão viva no renderer — a conta dele é do Main. Ou o
   // Main troca de verdade, ou o recibo diz que não trocou (nunca "trocado"
-  // sem troca). Sem leitura do store, segue o caminho antigo.
+  // sem troca). F-1486: sem leitura do store também não — o renderer não
+  // religa pane de missão e o "trocado" genérico seria falso.
   // F-1473: com histórico compartilhado, a reabertura retoma a conversa.
+  const owns = authority.missionId && continuity && !req.unconfirmed
+    ? missionOwnsPane(authority)
+    : false;
+  if (owns === null) {
+    await refuseMissionPaneSwitch(req, next, 'o Nexus não conseguiu ler a missão para trocar o pane com segurança');
+    return;
+  }
   if (
     authority.missionId &&
     continuity &&
     !req.unconfirmed &&
-    missionOwnsPane(authority) === true
+    owns
   ) {
     const reopened = await reopenTaskOnSiblingAccount(req, next, continuity, {
       crossAccount,
@@ -2008,6 +2113,116 @@ function fireScheduledRetry(
     attempt,
     reasonSuffix: ' — retry automático (conta liberada)',
   });
+}
+
+/**
+ * F-1486: agenda a nova tentativa de uma tarefa sem pane. A recusa costuma
+ * ser do spawn (admissão, rota), não da conta: backoff curto de 30 s·2^(n−1)
+ * até 15 min, ou antes, quando uma conta libera.
+ */
+function scheduleTaskReopen(
+  req: SwitchRequest,
+  handle: PaneTaskRerouteHandle,
+  retryTarget: number | undefined,
+): number {
+  cancelTaskReopen(req.paneId);
+  const attempt = req.attempt + 1;
+  const now = Date.now();
+  const backoffAt = now + Math.min(RETRY_MIN_RESCHEDULE_MS * 2 ** (attempt - 1), RETRY_MAX_BACKOFF_MS);
+  const at = Math.max(
+    now + RETRY_BUFFER_MS,
+    retryTarget !== undefined ? Math.min(retryTarget + RETRY_BUFFER_MS, backoffAt) : backoffAt,
+  );
+  const timer = setTimeout(() => {
+    pendingTaskReopens.delete(req.paneId);
+    void fireTaskReopen({ ...req, attempt }, handle).catch((error) => {
+      console.warn('[failover] nova tentativa da tarefa sem pane falhou:', error);
+    });
+  }, at - now);
+  timer.unref?.();
+  pendingTaskReopens.set(req.paneId, { timer, handle });
+  return at;
+}
+
+/**
+ * F-1486: reabre a tarefa sem pane — conta com folga (a irmã, ou a própria
+ * que liberou) na MESMA CLI; sem conta, o caminho de sempre (outra CLI ou
+ * nova espera). Missão que deixou de ser dona do pane encerra a espera.
+ */
+async function fireTaskReopen(req: SwitchRequest, handle: PaneTaskRerouteHandle): Promise<void> {
+  const { authority, paneId, adapterId, hit } = req;
+  const owns = missionOwnsPane(authority);
+  if (owns === false) {
+    trace({
+      kind: 'account-failover',
+      outcome: 'task-reopen-dropped',
+      paneId,
+      adapterId,
+      limitKind: hit.kind,
+      reason: hit.reason,
+      missionId: authority.missionId ?? null,
+    });
+    return;
+  }
+  // Sem leitura da missão: nada se reabre no escuro — só a próxima tentativa.
+  if (owns === null) {
+    if (req.attempt < MAX_SCHEDULED_RETRIES) scheduleTaskReopen(req, handle, undefined);
+    return;
+  }
+  markSwitchInFlight(paneId);
+  try {
+    // O pedido vence no registro (TTL) durante a espera — o guardado vale.
+    if (!getPaneTaskReroute(paneId)) registerPaneTaskReroute(handle);
+    const now = Date.now();
+    const current = req.current ? (getAccount(req.current.id) ?? req.current) : null;
+    const retry: SwitchRequest = {
+      ...req,
+      now,
+      current,
+      excludeId: null,
+      ownUnblockAtMs: current?.cooldownUntil && current.cooldownUntil > now ? current.cooldownUntil : undefined,
+      reasonSuffix: ' — retry automático (a tarefa estava sem pane)',
+      taskReopen: true,
+    };
+    const selectionScope = tierScopeFromModelId(req.paneModel) ?? hit.scope;
+    const quotaByAccountId = quotaHeadroomFor(adapterId);
+    const pick = pickAvailableForFailover(adapterId, null, now, quotaScoresFor(adapterId), {
+      ...(selectionScope ? { scope: selectionScope } : {}),
+      ...(quotaByAccountId ? { quotaByAccountId } : {}),
+    });
+    let next = pick.account;
+    let prepareError: string | undefined;
+    if (next) {
+      if (next.adapterId === 'claude') await healClaudeSecondaryBeforePin(next.id, now);
+      const prepared = await prepareFailoverAccount(adapterId, next.id, now);
+      if (!prepared.ok) {
+        prepareError = prepared.error;
+        setCooldown(next.id, now + PREPARE_FAILURE_COOLDOWN_MS, `troca indisponível: ${prepared.error}`, selectionScope);
+        next = null;
+      }
+    }
+    if (!next) {
+      await continueWithoutSibling(retry, {
+        nextUnblockAtMs: pick.nextUnblockAtMs,
+        prepareError,
+        fallback: {
+          cause: `nenhuma conta de ${adapterLabelOf(adapterId)} recebeu a tarefa ainda`,
+          paneGone: true,
+          handle,
+        },
+      });
+      return;
+    }
+    const facts = await continuityFacts(authority, adapterId, current?.id, hit, pick.nextUnblockAtMs);
+    const reopened = await reopenTaskOnSiblingAccount(retry, next, facts, {
+      crossAccount: current ? current.id !== next.id : true,
+      coalesced: false,
+      probe: false,
+    });
+    if (!reopened.handled) await refuseMissionPaneSwitch(retry, next, reopened.why);
+  } finally {
+    releaseSwitchInFlight(paneId);
+  }
 }
 
 /**
@@ -3422,7 +3637,10 @@ export function shutdownFailover(): void {
   modelRotationsByPane.clear();
   cliSwitchHistory.clear();
   accountSwitchHistory.clear();
-  siblingReopens.clear();
+  for (const paneId of [...pendingTaskReopens.keys()]) cancelTaskReopen(paneId);
+  switchesInFlight.clear();
+  reopenInFlight.clear();
+  lineageReopens.clear();
   resumeProofPanes.clear();
   unconfirmedStrikes.clear();
   installationIds.clear();

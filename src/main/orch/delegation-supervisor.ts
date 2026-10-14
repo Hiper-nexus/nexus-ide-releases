@@ -107,9 +107,10 @@ import {
   forgetPaneTaskReroute,
   getPaneTaskReroute,
   paneTaskRerouteBlocker,
+  registerPaneTaskReroute,
 } from './pane-task-reroute';
 import { trace } from '../observability/main-trace';
-import { hasPendingFailoverRecovery } from './failover';
+import { failoverReopensTask, hasPendingFailoverRecovery } from './failover';
 import { noteMissionCliFailure } from './mission-cli-failures';
 import { sanitizePaneBootOutput } from './pane-boot-output';
 import { paneSessionLastOutputAt } from './pane-session-output';
@@ -1335,11 +1336,19 @@ export async function checkLimitedTaskPanes(
     } else {
       // A ficha de início (se ainda viva) não reabre a mesma tarefa de novo.
       releasePaneStartWatch(limit.paneId);
+      // F-1486: o pedido sai do registro ANTES do primeiro await — uma troca
+      // de conta que comece durante o fechamento não o acha nem reabre a
+      // mesma tarefa em paralelo. Pane que não fechou devolve o pedido.
+      forgetPaneTaskReroute(limit.paneId);
       const closed = await requestPaneClose(limit.paneId, limit.sessionId).catch(() => false);
       if (!closed) {
+        registerPaneTaskReroute(handle);
         outcome = { kind: 'reroute-failed', error: 'o pane parado não fechou; nada foi reaberto' };
+      } else if (failoverReopensTask(limit.paneId)) {
+        // O failover assumiu a tarefa durante o fechamento: o pedido é dele.
+        registerPaneTaskReroute(handle);
+        continue;
       } else {
-        forgetPaneTaskReroute(limit.paneId);
         try {
           const next = await handle.reroute({
             excludeAdapterIds: [limit.adapterId],

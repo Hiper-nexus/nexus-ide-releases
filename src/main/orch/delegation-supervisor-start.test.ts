@@ -50,9 +50,14 @@ const h = vi.hoisted(() => ({
   trace: vi.fn(),
   // F-1471: o failover ainda cuida do pane (retry agendado / troca em curso).
   failoverRecovery: vi.fn((_paneId: string, _sessionId: string) => false),
+  // F-1486: o failover está reabrindo a tarefa (pedido dele, não da rede).
+  failoverReopens: vi.fn((_paneId: string) => false),
 }));
 
-vi.mock('./failover', () => ({ hasPendingFailoverRecovery: h.failoverRecovery }));
+vi.mock('./failover', () => ({
+  hasPendingFailoverRecovery: h.failoverRecovery,
+  failoverReopensTask: h.failoverReopens,
+}));
 
 vi.mock('./project-domain-store-registry', () => ({
   requireProjectDomainStoreRegistry: () => ({
@@ -1519,6 +1524,49 @@ describe('F-1414: tarefa delegada sem execução comprovada é reaberta noutra L
       // Só adia: o failover terminou sem tirar a tarefa do pane, a rede age.
       await checkLimitedTaskPanes(NOW + 2 * LIMIT_HANDOFF_MS);
       expect(taskReroute).toHaveBeenCalledTimes(1);
+    });
+
+    it('F-1486: o failover agindo durante o fechamento não acha o pedido — um só reroute', async () => {
+      museWorkerAtLimit();
+      h.requestPaneClose.mockImplementationOnce(async () => {
+        // Uma troca de conta que comece agora reabre a tarefa se achar o pedido.
+        const grabbed = getPaneTaskReroute('pane-muse', NOW + LIMIT_HANDOFF_MS);
+        if (grabbed) {
+          await grabbed.reroute({
+            excludeAdapterIds: [],
+            sameAdapter: { adapterId: 'muse', accountId: 'muse-b' },
+            worktreeFromPaneId: 'pane-muse',
+          });
+        }
+        return true;
+      });
+      await checkLimitedTaskPanes(NOW + LIMIT_HANDOFF_MS);
+      expect(taskReroute).toHaveBeenCalledTimes(1);
+      expect(taskReroute).toHaveBeenCalledWith({ excludeAdapterIds: ['muse'], worktreeFromPaneId: 'pane-muse' });
+    });
+
+    it('F-1486: o failover assumiu a tarefa durante o fechamento — a rede não reabre e devolve o pedido', async () => {
+      museWorkerAtLimit();
+      h.requestPaneClose.mockImplementationOnce(async () => {
+        h.failoverReopens.mockReturnValue(true);
+        return true;
+      });
+      try {
+        await checkLimitedTaskPanes(NOW + LIMIT_HANDOFF_MS);
+        expect(h.failoverReopens).toHaveBeenCalledWith('pane-muse');
+        expect(taskReroute).not.toHaveBeenCalled();
+        expect(getPaneTaskReroute('pane-muse', NOW + LIMIT_HANDOFF_MS)).not.toBeNull();
+      } finally {
+        h.failoverReopens.mockReturnValue(false);
+      }
+    });
+
+    it('F-1486: o pane parado não fechou — o pedido volta ao registro', async () => {
+      museWorkerAtLimit();
+      h.requestPaneClose.mockResolvedValueOnce(false);
+      await checkLimitedTaskPanes(NOW + LIMIT_HANDOFF_MS);
+      expect(taskReroute).not.toHaveBeenCalled();
+      expect(getPaneTaskReroute('pane-muse', NOW + LIMIT_HANDOFF_MS)).not.toBeNull();
     });
 
     it('quem já entregou (handoff da sessão) não é reaberto', async () => {
