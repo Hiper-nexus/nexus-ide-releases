@@ -100,7 +100,9 @@ export function reroutedFailoverToastCopy(
       title: `Trocado para "${event.toAccountLabel}"`,
       detail:
         `"${event.fromAccountLabel}" atingiu o limite (${event.reason}). A tarefa seguiu no pane ` +
-        `${event.toPaneId ?? 'novo'}, na mesma CLI, com o pacote de continuidade.`,
+        `${event.toPaneId ?? 'novo'}, na mesma CLI, ` +
+        // F-1473: no Claude a conversa atravessa a troca de conta.
+        (event.nativeResume ? 'na mesma conversa.' : 'com o pacote de continuidade.'),
     };
   }
   if (effectiveKind(event) === 'model') {

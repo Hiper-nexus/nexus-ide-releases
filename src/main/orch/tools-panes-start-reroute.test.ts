@@ -369,6 +369,45 @@ describe('F-723: ficha de início e reenvio pela rota do spawn', () => {
     expect(getPaneTaskReroute('pane-2')).toMatchObject({ adapterId: 'qwen', lineageId: 'pane-1', generation: 0 });
   });
 
+  it('F-1473: troca de conta com a conversa religada à irmã — o pane novo retoma a conversa do parado e recebe só a nota', async () => {
+    const resolver = vi.fn(async () => ({ adapterId: 'qwen', model: 'qwen3.8-max', routeReservationId: 'rr-1' }));
+    setOperatorRouteResolver(resolver);
+    await paneSpawnTool.handler(
+      { task: 'implementar o login', prompt: 'faça o login', title: 'login' }, orchestrator,
+    );
+    expect(h.spawn.mock.calls[0]![0].resumeFromPaneId).toBeUndefined();
+    resolver.mockResolvedValueOnce({ adapterId: 'qwen', model: 'qwen3.8-max', routeReservationId: 'rr-2' });
+    const note = '[NEXUS FAILOVER HANDOFF]\nNexus moved this pane to account "q•••b" and resumed THIS SAME conversation.';
+    await getPaneTaskReroute('pane-1')!.reroute({
+      excludeAdapterIds: [],
+      sameAdapter: { adapterId: 'qwen', accountId: 'qwen-b', model: 'qwen3.8-max' },
+      appendPrompt: '[NEXUS FAILOVER HANDOFF]\npacote completo',
+      worktreeFromPaneId: 'pane-1',
+      nativeResume: { fromPaneId: 'pane-1', note },
+    });
+    expect(h.spawn.mock.calls[1]![0]).toMatchObject({
+      adapterId: 'qwen', accountId: 'qwen-b', resume: true, resumeFromPaneId: 'pane-1',
+    });
+    const prompt = String(h.spawn.mock.calls[1]![0].prompt);
+    expect(prompt).toContain('resumed THIS SAME conversation');
+    expect(prompt).not.toContain('faça o login');
+    expect(prompt).not.toContain('pacote completo');
+  });
+
+  it('F-1473: retomada sem troca de conta na mesma CLI não vale — reabre com o brief e o pacote, sem resume', async () => {
+    const resolver = vi.fn(async () => ({ adapterId: 'qwen', routeReservationId: 'rr-1' }));
+    setOperatorRouteResolver(resolver);
+    await paneSpawnTool.handler({ task: 'implementar o login', prompt: 'faça o login' }, orchestrator);
+    resolver.mockResolvedValueOnce({ adapterId: 'codex', routeReservationId: 'rr-2' });
+    await getPaneTaskReroute('pane-1')!.reroute({
+      excludeAdapterIds: ['qwen'],
+      appendPrompt: '[NEXUS FAILOVER HANDOFF]\npacote completo',
+      nativeResume: { fromPaneId: 'pane-1', note: 'nota' },
+    });
+    expect(h.spawn.mock.calls[1]![0].resumeFromPaneId).toBeUndefined();
+    expect(String(h.spawn.mock.calls[1]![0].prompt)).toContain('pacote completo');
+  });
+
   it('F-1471: leitor não segura o checkout — o sucessor pode nascer antes de ele sair', async () => {
     setOperatorRouteResolver(vi.fn(async () => ({ adapterId: 'qwen', routeReservationId: 'rr-1' })));
     await paneSpawnTool.handler({ task: 'revisar o login', prompt: 'revise', readOnly: true }, orchestrator);

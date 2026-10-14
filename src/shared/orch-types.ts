@@ -946,6 +946,11 @@ export interface MissionPaneRecoveryRequest {
     | 'role'
   >;
   recap: string;
+  /**
+   * F-1473: troca de conta com histórico compartilhado — o pane retoma a
+   * conversa nativa e recebe esta nota; sem retomada exata, recebe `recap`.
+   */
+  resumeNote?: string;
 }
 
 /** Renderer → main: acknowledged fresh session for the same stable pane. */

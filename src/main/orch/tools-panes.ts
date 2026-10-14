@@ -2025,7 +2025,14 @@ const paneSpawnAfterTabMission = {
             `a troca de conta exige a mesma CLI (${accountPin.adapterId}); a rota devolveu ${options.adapterId}`,
           );
         }
-        options = { ...options, accountId: accountPin.accountId };
+        options = {
+          ...options,
+          accountId: accountPin.accountId,
+          // F-1473: retoma a conversa do pane parado, já religada à irmã.
+          ...(startRecovery?.resumeFromPaneId
+            ? { resume: true, resumeFromPaneId: startRecovery.resumeFromPaneId }
+            : {}),
+        };
       }
       let missionSuite: ReturnType<typeof getProjectDomainStores> | undefined;
       let missionRow: ReturnType<
@@ -2982,6 +2989,8 @@ interface PaneStartRecovery {
   readonly accountPin?: { readonly adapterId: string; readonly accountId: string };
   /** F-1471: modelo do pane anterior, preferido pela rota restrita à mesma CLI. */
   readonly preferModel?: { readonly adapterId: string; readonly model: string };
+  /** F-1473: com `accountPin`, retoma a conversa deste pane (já da irmã). */
+  readonly resumeFromPaneId?: string;
 }
 
 /**
@@ -3075,6 +3084,8 @@ async function rerouteNotStartedSpawn(input: {
   readonly rosterSuccessor?: string | null;
   /** F-1471: troca de conta na MESMA CLI (ver PaneTaskRerouteRequest). */
   readonly sameAdapter?: PaneTaskRerouteRequest['sameAdapter'];
+  /** F-1473: retomada nativa na irmã (ver PaneTaskRerouteRequest). */
+  readonly nativeResume?: PaneTaskRerouteRequest['nativeResume'];
 }): Promise<PaneStartRerouteResult> {
   if (input.rosterSuccessor === null) {
     throw new Error('o roster não tem agente em outra CLI');
@@ -3114,10 +3125,14 @@ async function rerouteNotStartedSpawn(input: {
     : input.excludeAdapterIds;
   const preferAdapterIds = same ? [same.adapterId] : input.preferAdapterIds;
   const brief = str(rest, 'prompt') ?? str(rest, 'task');
+  // F-1473: a conversa retomada já tem o brief — o pane novo recebe só a nota.
+  const resume = same ? input.nativeResume : undefined;
   const args: Record<string, unknown> = {
     ...rest,
     // F-775: o pacote vai DEPOIS do brief; a rota segue a tarefa original.
-    ...(input.appendPrompt
+    ...(resume
+      ? { ...(brief ? { task: str(rest, 'task') ?? brief } : {}), prompt: resume.note }
+      : input.appendPrompt
       ? {
           ...(brief ? { task: str(rest, 'task') ?? brief } : {}),
           prompt: brief ? `${brief}\n\n${input.appendPrompt}` : input.appendPrompt,
@@ -3146,6 +3161,7 @@ async function rerouteNotStartedSpawn(input: {
         ...(input.classificationPrompt ? { classificationPrompt: input.classificationPrompt } : {}),
         ...(same ? { accountPin: { adapterId: same.adapterId, accountId: same.accountId } } : {}),
         ...(same?.model ? { preferModel: { adapterId: same.adapterId, model: same.model } } : {}),
+        ...(resume ? { resumeFromPaneId: resume.fromPaneId } : {}),
         generation: input.generation,
       },
     )) as { paneId?: unknown; harness?: { adapterId?: unknown; model?: unknown } };

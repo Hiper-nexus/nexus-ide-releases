@@ -1252,6 +1252,9 @@ export function checkPaneStarts(now: number = Date.now(), parentContext?: Period
     for (const watch of listPaneStartWatches()) {
       await context.checkpoint();
       if (watch.phase !== 'watching' || watch.redelivering) continue;
+      // F-1473: substituto ainda sob a prova da retomada — a recuperação dele
+      // é do failover (uma por tarefa), não desta ficha.
+      if (hasPendingFailoverRecovery(watch.paneId, watch.sessionId ?? '')) continue;
       try { await context.wait(checkPaneStart(watch, now, context)); }
       catch (error) {
         context.assertCurrent();

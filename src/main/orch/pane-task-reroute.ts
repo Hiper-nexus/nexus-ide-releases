@@ -37,6 +37,12 @@ export interface PaneTaskRerouteRequest {
     readonly accountId: string;
     readonly model?: string;
   };
+  /**
+   * F-1473: com `sameAdapter`, o histórico da CLI atravessa as contas e a
+   * conversa de `fromPaneId` já é da irmã — o pane novo a retoma (`--resume`)
+   * e recebe só `note`, nem o brief nem o pacote.
+   */
+  readonly nativeResume?: { readonly fromPaneId: string; readonly note: string };
 }
 
 export interface PaneTaskRerouteHandle {

@@ -1,4 +1,5 @@
 import type { AgentProviderSessionMetadata } from '../../shared/agent-session-resume';
+import { nativeResumeAcrossAccounts } from '../../shared/cross-account-resume';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { getDb } from './db';
 
@@ -39,7 +40,8 @@ function valid(value: string, max = ID_MAX): string {
 /**
  * Persist the provider-owned conversation identity under immutable project +
  * pane authority. Optional `accountId` binds the session to the vault account
- * that created it so exact resume cannot leak across multi-account failover.
+ * that created it so exact resume cannot leak across multi-account failover
+ * (only the explicit F-1473 rebind moves it, for shared-history adapters).
  *
  * Ownership is sticky: a save without accountId never clears a prior owner.
  */
@@ -167,6 +169,38 @@ export function sessionBelongsToAccount(
   if (want && !stored) return false;
   if (stored && want) return stored === want;
   return true;
+}
+
+/**
+ * F-1473: a troca de conta por limite leva a conversa nativa do pane para a
+ * conta nova — só quando o histórico do adapter é compartilhado entre contas
+ * (`nativeResumeAcrossAccounts`). CAS na conta de origem (ou já na nova); a
+ * chave inclui o adapter, então outro adapter nunca herda a conversa. As linhas
+ * do pane no projeto (escopo de execução e de coordenação) seguem juntas.
+ * Qualquer falha devolve false: quem chama segue com sessão nova + pacote.
+ */
+export function rebindProviderPaneSessionAccount(
+  scope: Readonly<Pick<ProjectExecutionScope, 'installationId' | 'projectId'>>,
+  paneId: string,
+  adapterId: string,
+  fromAccountId: string | undefined,
+  toAccountId: string,
+): boolean {
+  if (!nativeResumeAcrossAccounts(adapterId)) return false;
+  try {
+    const db = getDb();
+    if (!db) return false;
+    const to = valid(toAccountId, 128);
+    const from = fromAccountId?.trim() ? valid(fromAccountId, 128) : null;
+    const result = db.prepare(
+      `UPDATE provider_pane_sessions SET account_id = ?, updated_at = ?
+        WHERE installation_id = ? AND project_id = ? AND pane_id = ? AND adapter_id = ?
+          AND (account_id IS ? OR account_id = ?)`,
+    ).run(to, Date.now(), scope.installationId, scope.projectId, valid(paneId, 256), adapterId, from, to);
+    return ((result as { changes?: number }).changes ?? 0) > 0;
+  } catch {
+    return false;
+  }
 }
 
 /**

@@ -34,6 +34,7 @@ import {
   markPaneParked,
   markPersistedAuthorityOnSpawn,
   onPaneSessionChange,
+  paneResumedExactly,
   respawnMissionPaneFresh,
   submitPromptToPaneConfirmed,
   waitForHealthyPaneSession,
@@ -638,6 +639,7 @@ async function recoverMissionPane(
         req.expectedSessionId,
         RECOVERY_HEALTH_TIMEOUT_MS,
         req.requestId,
+        Boolean(req.resumeNote),
       );
       // The helper owns cleanup until its CAS check, spawn and health check
       // succeed. Only then may this request cancel the exact replacement.
@@ -673,10 +675,15 @@ async function recoverMissionPane(
       useOrchStore.getState().bindPaneMission(req.paneId, req.missionId);
     }
     syncPanesNow(); // Critical: main needs latest state before prompt injection
+    // F-1473: a conversa retomada recebe só a nota; sem retomada exata, o pacote.
+    const recap =
+      req.resumeNote && paneResumedExactly(req.paneId, replacementSessionId)
+        ? req.resumeNote
+        : req.recap;
     if (
       !(await submitPromptToPaneConfirmed(
         req.paneId,
-        req.recap,
+        recap,
         replacementSessionId,
       )) ||
       !isPaneSessionHealthy(req.paneId, replacementSessionId)

@@ -102,7 +102,8 @@ export function sanitizeHandoffHistoryText(
 /* ------------------------------------------------------------------------ *
  * Builder do pack (F-775): motivo+janela/reset mascarados, estado da tarefa
  * (objetivo, arquivos tocados, diff --stat) e próximo passo concreto.
- * Cross-account é sempre sessão nova + este texto — nunca --resume.
+ * Cross-account sem histórico compartilhado é sessão nova + este texto; com
+ * histórico compartilhado (F-1473) o pack é o fallback do resume nativo.
  * ------------------------------------------------------------------------ */
 
 export interface ContinuityPackInput {
@@ -278,4 +279,31 @@ export function buildContinuityPack(input: ContinuityPackInput): string {
   }
   lines.push(FAILOVER_HANDOFF_FOOTER);
   return clampPack(lines.join('\n'));
+}
+
+export interface CrossAccountResumeNoteInput {
+  toAccountLabel: string;
+  role?: string;
+  /** Pedido em voo da tarefa, quando quem troca a conta o conhece. */
+  inFlightRequest?: string;
+}
+
+/**
+ * F-1473: primeira mensagem quando a troca de conta RETOMA a conversa nativa
+ * (`nativeResumeAcrossAccounts`). O histórico inteiro já está na sessão
+ * retomada, então vai só esta nota — nunca o pack. Mesma faixa header→footer
+ * (o detector a ignora) e o pedido citado passa por `quoted`.
+ */
+export function buildCrossAccountResumeNote(input: CrossAccountResumeNoteInput): string {
+  const role = input.role === 'orchestrator' ? 'orchestrator' : 'agent';
+  const lines = [
+    FAILOVER_HANDOFF_HEADER,
+    `Nexus moved this pane to account "${maskAccountLabel(input.toAccountLabel)}" because the previous account ran out of usage, and resumed THIS SAME conversation.`,
+    `Continue as the ${role} exactly where you stopped. Do not re-do completed work.`,
+  ];
+  if (input.inFlightRequest?.trim()) {
+    lines.push(`Request in flight: ${quoted(input.inFlightRequest, MAX_HINT)}`);
+  }
+  lines.push(FAILOVER_HANDOFF_FOOTER);
+  return lines.join('\n');
 }

@@ -36,6 +36,11 @@ const h = vi.hoisted(() => ({
   sessionOutput: '$ npm test\n✓ 12 passed\nYou exceeded your current quota',
   /** F-1471: status da missão no store (ausente = a missão não é dona do pane). */
   missionStatus: undefined as string | undefined,
+  /** F-1473: a conversa do pane foi religada à conta irmã (histórico compartilhado). */
+  rebind: vi.fn((..._args: unknown[]) => false),
+  /** F-1473: o pane retomado sobreviveu ao boot. */
+  resumeBootOk: vi.fn(async (_target: { paneId?: string; sessionId?: string }): Promise<'proved' | 'failed' | 'closed'> => 'proved'),
+  resumeBootDispose: vi.fn(),
 }));
 
 vi.mock('../pty/pty-analysis-runtime', async () => {
@@ -131,8 +136,12 @@ vi.mock('../quota/quota-service', () => ({
     };
   }),
 }));
+vi.mock('../persistence/provider-session-store', () => ({
+  rebindProviderPaneSessionAccount: h.rebind,
+}));
 vi.mock('./failover-mission-respawn', () => ({
   respawnMainOwnedPaneWithAccount: h.respawnMainOwned,
+  observeResumeBoot: vi.fn(() => ({ confirm: h.resumeBootOk, dispose: h.resumeBootDispose })),
   collectGitTaskState: vi.fn(async () => ({
     touchedFiles: ['src/login.ts'],
     diffStat: 'src/login.ts | 4 ++--',
@@ -172,7 +181,12 @@ import {
   type NextCliResolver,
   type PaneTaskRerouteHandle,
 } from './pane-task-reroute';
-import { listConfirmedPaneLimits, resetPaneStartWatchdogForTests } from './pane-start-watchdog';
+import {
+  getPaneStartWatch,
+  listConfirmedPaneLimits,
+  resetPaneStartWatchdogForTests,
+  trackPaneStart,
+} from './pane-start-watchdog';
 import { activeCliLimit, isCliLimited, resetCliLimits } from './cli-limit-registry';
 import {
   pickAvailableForFailover,
@@ -262,6 +276,8 @@ beforeEach(() => {
   h.refreshQuota.mockClear();
   h.sessionOutput = '$ npm test\n✓ 12 passed\nYou exceeded your current quota';
   h.missionStatus = undefined;
+  h.rebind.mockReset().mockReturnValue(false);
+  h.resumeBootOk.mockReset().mockResolvedValue('proved');
   h.requestPaneClose.mockClear().mockResolvedValue(true);
   h.respawnMainOwned.mockClear().mockResolvedValue(true);
   h.submit.mockClear();
@@ -581,6 +597,139 @@ describe('F-1471: worker de missão troca de conta no MESMO provedor e segue a t
       toAccountId: 'claude-b', toAdapterId: 'claude', toPaneId: 'pane-claude-2',
     });
     expect(String(h.submit.mock.calls.at(-1)![0].summary)).toContain('[troca-de-conta:pane-claude]');
+  });
+
+  it('F-1473: Claude com histórico compartilhado — o pane novo na conta irmã retoma a MESMA conversa e recebe só a nota', async () => {
+    worker();
+    h.rebind.mockReturnValue(true);
+    const task = handle({ reroute: vi.fn(async () => ({ paneId: 'pane-claude-2', adapterId: 'claude', model: 'claude-opus-5-5' })) });
+    registerPaneTaskReroute(task);
+    h.dataTaps[0]('session-claude', 'QUOTA');
+    await settle();
+    await settle();
+    expect(h.rebind).toHaveBeenCalledWith(SCOPE, 'pane-claude', 'claude', 'claude-a', 'claude-b');
+    expect(task.reroute).toHaveBeenCalledTimes(1);
+    const request = vi.mocked(task.reroute).mock.calls[0]![0];
+    expect(request.sameAdapter).toEqual({ adapterId: 'claude', accountId: 'claude-b', model: 'claude-opus-5-5' });
+    expect(request.nativeResume?.fromPaneId).toBe('pane-claude');
+    expect(request.nativeResume?.note).toContain('resumed THIS SAME conversation');
+    expect(request.nativeResume?.note).not.toContain('maria@example.com');
+    expect(h.resumeBootOk).toHaveBeenCalledWith({ paneId: 'pane-claude-2' });
+    expect(h.resumeBootDispose).toHaveBeenCalled();
+    expect(events().find((event) => event.switched)).toMatchObject({
+      toAccountId: 'claude-b', toAdapterId: 'claude', toPaneId: 'pane-claude-2', nativeResume: true,
+    });
+    expect(String(h.submit.mock.calls.at(-1)![0].summary)).toContain('retomando a MESMA conversa');
+  });
+
+  it.each([
+    ['o pane retomado cai no boot', 'boot'],
+    ['o spawn com resume é recusado (conversa não encontrada)', 'refused'],
+  ] as const)('F-1473: fallback quando %s — a mesma troca refeita com o pacote, e a tarefa segue', async (_label, failure) => {
+    worker();
+    h.rebind.mockReturnValue(true);
+    if (failure === 'boot') h.resumeBootOk.mockResolvedValueOnce('failed');
+    const reroute = vi.fn<PaneTaskRerouteHandle['reroute']>();
+    if (failure === 'refused') {
+      reroute.mockRejectedValueOnce(new Error('resume_context_unavailable: conversa original indisponível'));
+    } else {
+      reroute.mockResolvedValueOnce({ paneId: 'pane-claude-resumed', adapterId: 'claude', model: 'claude-opus-5-5' });
+    }
+    reroute.mockResolvedValueOnce({ paneId: 'pane-claude-pack', adapterId: 'claude', model: 'claude-opus-5-5' });
+    registerPaneTaskReroute(handle({ reroute }));
+    h.dataTaps[0]('session-claude', 'QUOTA');
+    await settle();
+    await settle();
+    await settle();
+    expect(reroute).toHaveBeenCalledTimes(2);
+    expect(reroute.mock.calls[0]![0].nativeResume).toBeDefined();
+    const fallback = reroute.mock.calls[1]![0];
+    expect(fallback.nativeResume).toBeUndefined();
+    expect(fallback.sameAdapter).toEqual({ adapterId: 'claude', accountId: 'claude-b', model: 'claude-opus-5-5' });
+    expect(fallback.appendPrompt).toContain('You are now running on account');
+    if (failure === 'boot') expect(h.requestPaneClose).toHaveBeenCalledWith('pane-claude-resumed');
+    const receipt = events().find((event) => event.switched);
+    expect(receipt).toMatchObject({ toPaneId: 'pane-claude-pack', toAccountId: 'claude-b' });
+    expect(receipt?.nativeResume).toBeUndefined();
+    expect(resolver).not.toHaveBeenCalled();
+  });
+
+  it('F-1473: durante a prova, o failover é dono do substituto; sem prova, a ficha dele sai e o fallback só começa com ele fechado', async () => {
+    worker();
+    h.rebind.mockReturnValue(true);
+    let prove!: (verdict: 'proved' | 'failed' | 'closed') => void;
+    h.resumeBootOk.mockImplementationOnce(() => new Promise((resolve) => { prove = resolve; }));
+    const reroute = vi.fn<PaneTaskRerouteHandle['reroute']>()
+      .mockImplementationOnce(async () => {
+        // O substituto nasce com a ficha de início dele (F-723), como num spawn de verdade.
+        trackPaneStart({ paneId: 'pane-claude-resumed', adapterId: 'claude', requestId: 'r-resumed',
+          callerSessionId: 'session-maestro', scope: SCOPE, role: 'worker' } as never);
+        return { paneId: 'pane-claude-resumed', adapterId: 'claude', model: 'claude-opus-5-5' };
+      })
+      .mockResolvedValueOnce({ paneId: 'pane-claude-pack', adapterId: 'claude', model: 'claude-opus-5-5' });
+    registerPaneTaskReroute(handle({ reroute }));
+    h.dataTaps[0]('session-claude', 'QUOTA');
+    await settle();
+    await settle();
+    // Supervisor e ficha do substituto esperam: a recuperação é do failover.
+    expect(hasPendingFailoverRecovery('pane-claude-resumed', '')).toBe(true);
+    expect(getPaneStartWatch('pane-claude-resumed')).not.toBeNull();
+    let closeSubstitute!: (closed: boolean) => void;
+    h.requestPaneClose.mockImplementation(async (paneId: string) =>
+      paneId === 'pane-claude-resumed' ? new Promise<boolean>((resolve) => { closeSubstitute = resolve; }) : true);
+    prove('failed');
+    await settle();
+    expect(getPaneStartWatch('pane-claude-resumed')).toBeNull();
+    // O pacote espera o substituto fechar de verdade.
+    expect(reroute).toHaveBeenCalledTimes(1);
+    closeSubstitute(true);
+    await settle();
+    await settle();
+    expect(reroute).toHaveBeenCalledTimes(2);
+    expect(reroute.mock.calls[1]![0].nativeResume).toBeUndefined();
+    expect(hasPendingFailoverRecovery('pane-claude-resumed', '')).toBe(false);
+    expect(events().find((event) => event.switched)).toMatchObject({ toPaneId: 'pane-claude-pack' });
+  });
+
+  it.each([
+    ['com sessão viva', true],
+    ['fechamento recusado mesmo sem sessão viva', false],
+  ] as const)('F-1473: substituto sem prova que não fecha (%s) fica com a tarefa — sem segundo pane e sem "mesma conversa"', async (_label, live) => {
+    worker();
+    h.rebind.mockReturnValue(true);
+    h.resumeBootOk.mockResolvedValueOnce('failed');
+    if (live) {
+      h.sessions.set('session-resumed', { sessionId: 'session-resumed', paneId: 'pane-claude-resumed', adapterId: 'claude' });
+      h.states.set('session-resumed', 'busy');
+    }
+    h.requestPaneClose.mockImplementation(async (paneId: string) => paneId !== 'pane-claude-resumed');
+    const reroute = vi.fn<PaneTaskRerouteHandle['reroute']>()
+      .mockResolvedValueOnce({ paneId: 'pane-claude-resumed', adapterId: 'claude', model: 'claude-opus-5-5' });
+    registerPaneTaskReroute(handle({ reroute }));
+    h.dataTaps[0]('session-claude', 'QUOTA');
+    await settle();
+    await settle();
+    expect(reroute).toHaveBeenCalledTimes(1);
+    const receipt = events().find((event) => event.switched);
+    expect(receipt).toMatchObject({ toPaneId: 'pane-claude-resumed', toAccountId: 'claude-b' });
+    expect(receipt?.nativeResume).toBeUndefined();
+  });
+
+  it('F-1473: substituto encerrado pelo próprio Nexus na janela (missão cancelada, pane fechado) não é queda — sem fallback', async () => {
+    worker();
+    h.rebind.mockReturnValue(true);
+    h.resumeBootOk.mockResolvedValueOnce('closed');
+    const reroute = vi.fn<PaneTaskRerouteHandle['reroute']>()
+      .mockResolvedValueOnce({ paneId: 'pane-claude-resumed', adapterId: 'claude', model: 'claude-opus-5-5' });
+    registerPaneTaskReroute(handle({ reroute }));
+    h.dataTaps[0]('session-claude', 'QUOTA');
+    await settle();
+    await settle();
+    expect(reroute).toHaveBeenCalledTimes(1);
+    expect(h.requestPaneClose).not.toHaveBeenCalledWith('pane-claude-resumed');
+    const receipt = events().find((event) => event.switched);
+    expect(receipt).toMatchObject({ toPaneId: 'pane-claude-resumed' });
+    expect(receipt?.nativeResume).toBeUndefined();
   });
 
   it('a rota sem o modelo anterior: segue no modelo dela e o recibo registra a troca de modelo', async () => {

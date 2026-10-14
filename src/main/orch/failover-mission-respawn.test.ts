@@ -15,6 +15,8 @@ const deps = vi.hoisted(() => ({
   markClosed: vi.fn(),
   stores: vi.fn(),
   worktrees: vi.fn(),
+  /** F-1473: o substituto sem prova sai sem deixar pane morto. */
+  deletePane: vi.fn(() => true),
   /** F-822: nada de processo síncrono no caminho do failover. */
   execFileSync: vi.fn(() => { throw new Error('execFileSync no caminho do failover'); }),
   spawnSyncChild: vi.fn(() => { throw new Error('spawnSync no caminho do failover'); }),
@@ -24,15 +26,34 @@ vi.mock('./jev-mission-advisor', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./jev-mission-advisor')>()),
   scheduleRecoveryAdvice: advisor.scheduleRecoveryAdvice,
 }));
-vi.mock('./main-owned-pane-runtime', () => ({ getMainOwnedPane: deps.getPane }));
+vi.mock('./main-owned-pane-runtime', () => ({ getMainOwnedPane: deps.getPane, deleteMainOwnedPane: deps.deletePane }));
 vi.mock('./pane-registry', () => ({
   spawnMainOwnedMissionPane: deps.spawnSync,
   spawnMainOwnedMissionPaneAsync: deps.spawnAsync,
+}));
+/** F-1473: sessões físicas que a prova da retomada observa. */
+type FakeSession = { paneId: string; spawnedAt: number; resumed: boolean };
+const pty = vi.hoisted(() => ({
+  taps: new Set<(id: string, agent: { paneId?: string } | null, rootExit: { exitCode: number } | null) => void>(),
+  sessions: new Map<string, { paneId: string; spawnedAt: number; resumed: boolean }>(),
+  /** Sessões cujo fim foi pedido pelo Nexus (`getRequestedTerminationOrigin`). */
+  requested: new Set<string>(),
 }));
 vi.mock('../pty/pty-manager', () => ({
   orchTerminateSession: deps.terminate,
   getSessionCwd: deps.sessionCwd,
   getAgentSessionInfo: deps.sessionInfo,
+  getRequestedTerminationOrigin: (id: string) => (pty.requested.has(id) ? 'pane-close' : null),
+  tapSessionTermination: (cb: (id: string, agent: { paneId?: string } | null, rootExit: { exitCode: number } | null) => void) => {
+    pty.taps.add(cb);
+    return () => pty.taps.delete(cb);
+  },
+  getSessionState: (id: string) => (pty.sessions.has(id) ? 'busy' : null),
+  getSessionSpawnedAtMs: (id: string) => pty.sessions.get(id)?.spawnedAt ?? null,
+  getSessionProviderConversation: (id: string) =>
+    pty.sessions.has(id) ? { resumed: pty.sessions.get(id)!.resumed } : null,
+  listAgentSessionsForPane: (paneId: string) =>
+    [...pty.sessions].filter(([, session]) => session.paneId === paneId).map(([sessionId]) => ({ sessionId, paneId })),
 }));
 vi.mock('../observability/main-trace', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../observability/main-trace')>()),
@@ -84,6 +105,9 @@ import {
   collectGitTaskState,
   planMainOwnedFailoverRespawn,
   respawnMainOwnedPaneWithAccount,
+  observeResumeBoot,
+  type ResumeBootObserver,
+  type ResumeBootVerdict,
 } from './failover-mission-respawn';
 import {
   FAILOVER_HANDOFF_FOOTER,
@@ -804,6 +828,239 @@ describe('F-1480: troca de conta do worker headless não destrói estado', () =>
     deps.spawnAsync.mockResolvedValueOnce({ requestId: 'async', ok: true, paneId: 'new-pane', sessionId: 'new-session' });
     await expect(switchAccount()).resolves.toBe(true);
     expect(verdicts).toEqual([['old-session', true]]);
+  });
+});
+
+describe('F-1473: troca de conta Claude continua a MESMA conversa no worker main-owned', () => {
+  const scopedMeta = {
+    ...meta,
+    scope: { version: 1 as const, installationId: 'i', projectId: 'p', checkoutId: 'c', rootRealPath: '/project', identitySource: 'manifest' as const },
+  };
+  const switchInput = {
+    paneId: 'old-pane', sessionId: 'old-session', adapterId: 'claude',
+    toAccountId: 'acct-b', toAccountLabel: 'ana.ops@example.org', fromAccountId: 'acct-a',
+    fromAccountLabel: 'gustavo@example.com', reason: "You've hit your session limit", limitKind: 'rate-limit',
+    taskBrief: 'Continuar F-1473', scrollbackExcerpt: 'trabalho em curso\nusage limit reached',
+    touchedFiles: [] as string[], diffStat: undefined,
+  };
+  beforeEach(() => {
+    vi.clearAllMocks();
+    deps.spawnAsync.mockReset();
+    deps.terminate.mockResolvedValue(true);
+    deps.getPane.mockReturnValue({ entry: { paneId: 'old-pane', sessionId: 'old-session' }, meta: scopedMeta });
+  });
+
+  it('planeia o resume nativo do pane antigo na conta nova com só a nota curta', () => {
+    const plan = planMainOwnedFailoverRespawn({
+      adapterId: 'claude', meta: scopedMeta, paneId: 'old-pane', nativeResume: true,
+      toAccountId: 'acct-b', toAccountLabel: 'ana.ops@example.org', fromAccountLabel: 'gustavo@example.com',
+      reason: 'usage limit reached', scrollbackExcerpt: 'trecho que não vai junto', originalRequest: 'Implementar o motor',
+    });
+    expect(plan.action).toBe('respawn');
+    if (plan.action !== 'respawn') return;
+    expect(plan.options).toMatchObject({ accountId: 'acct-b', resume: true, resumeFromPaneId: 'old-pane' });
+    const prompt = plan.options.initialPrompt ?? '';
+    expect(prompt.startsWith(FAILOVER_HANDOFF_HEADER)).toBe(true);
+    expect(prompt.endsWith(FAILOVER_HANDOFF_FOOTER)).toBe(true);
+    expect(prompt).toContain('resumed THIS SAME conversation');
+    expect(prompt).toContain(maskAccountLabel('ana.ops@example.org'));
+    expect(prompt).toContain('Request in flight: Implementar o motor');
+    expect(prompt).not.toContain('NEW provider session');
+    expect(prompt).not.toContain('Historical context');
+    expect(prompt).not.toContain('trecho que não vai junto');
+    expect(detectLimit(prompt)).toBeNull();
+    expect(detectLimit(prompt.replace(FAILOVER_HANDOFF_HEADER, ''))).toBeNull();
+  });
+
+  it('troca de CLI ou de modelo nunca retoma a conversa', () => {
+    for (const extra of [{ continuityPack: `${FAILOVER_HANDOFF_HEADER}\npack\n${FAILOVER_HANDOFF_FOOTER}` }, { toModel: 'claude-sonnet-5-5' }]) {
+      const plan = planMainOwnedFailoverRespawn({
+        adapterId: 'claude', meta: scopedMeta, paneId: 'old-pane', nativeResume: true,
+        toAccountId: 'acct-b', fromAccountLabel: 'x', reason: 'quota', ...extra,
+      });
+      expect(plan.action).toBe('respawn');
+      if (plan.action !== 'respawn') continue;
+      expect(plan.options).not.toHaveProperty('resumeFromPaneId');
+      expect(plan.options).not.toHaveProperty('resume');
+    }
+  });
+
+  it('conta A → B: religa a conversa, sobe UM pane com --resume e a nota, e só depois reporta a troca', async () => {
+    const rebindSession = vi.fn(() => true);
+    const boot = fakeBoot('proved');
+    deps.sessionCwd.mockReturnValueOnce('/project/packages/web');
+    deps.spawnAsync.mockResolvedValueOnce({ requestId: 'r', ok: true, paneId: 'new-pane', sessionId: 'new-session' });
+    await expect(respawnMainOwnedPaneWithAccount({ ...switchInput, nativeResume: true },
+      { rebindSession, observeResumeBoot: boot.observe })).resolves.toBe(true);
+    expect(rebindSession).toHaveBeenCalledWith(scopedMeta.scope, 'old-pane', 'claude', 'acct-a', 'acct-b');
+    expect(deps.terminate).toHaveBeenCalledWith('old-session', expect.objectContaining({ origin: 'failover-respawn' }));
+    expect(deps.spawnAsync).toHaveBeenCalledTimes(1);
+    const options = deps.spawnAsync.mock.calls[0]![0] as { initialPrompt: string; resume?: boolean; resumeFromPaneId?: string; accountId?: string };
+    // O --resume do Claude acha a conversa pela pasta do cwd: o pane nasce no mesmo lugar.
+    expect(options).toMatchObject({ accountId: 'acct-b', resume: true, resumeFromPaneId: 'old-pane', cwd: '/project/packages/web' });
+    expect(options.initialPrompt).toContain('resumed THIS SAME conversation');
+    expect(options.initialPrompt).not.toContain('Recent terminal excerpt');
+    expect(boot.confirm).toHaveBeenCalledWith({ sessionId: 'new-session', paneId: 'new-pane' });
+    // O observador nasce antes do spawn (a saída no boot não escapa) e é descartado.
+    expect(boot.observe.mock.invocationCallOrder[0]).toBeLessThan(deps.spawnAsync.mock.invocationCallOrder[0]!);
+    expect(boot.dispose).toHaveBeenCalled();
+  });
+
+  it.each([
+    ['o spawn com resume é recusado (conversa não encontrada)', { requestId: 'r', ok: false, error: 'resume_context_unavailable: conversa original indisponível' }, 'proved'],
+    ['o resume sobe e cai no boot', { requestId: 'r', ok: true, paneId: 'resumed-pane', sessionId: 'resumed-session' }, 'failed'],
+  ] as const)('fallback quando %s: sessão nova + pacote, e o pane sobe', async (_label, first, verdict) => {
+    const boot = fakeBoot(verdict);
+    deps.spawnAsync
+      .mockResolvedValueOnce(first as OrchPaneSpawnResult)
+      .mockResolvedValueOnce({ requestId: 'r2', ok: true, paneId: 'pack-pane', sessionId: 'pack-session' });
+    await expect(respawnMainOwnedPaneWithAccount({ ...switchInput, nativeResume: true },
+      { rebindSession: vi.fn(() => true), observeResumeBoot: boot.observe })).resolves.toBe(true);
+    expect(deps.spawnAsync).toHaveBeenCalledTimes(2);
+    const fallback = deps.spawnAsync.mock.calls[1]![0] as { initialPrompt: string; resume?: boolean; resumeFromPaneId?: string; accountId?: string };
+    expect(fallback.accountId).toBe('acct-b');
+    expect(fallback).not.toHaveProperty('resumeFromPaneId');
+    expect(fallback.initialPrompt).toContain('NEW provider session');
+    expect(fallback.initialPrompt).toContain('Continuar F-1473');
+    expect(detectLimit(fallback.initialPrompt)).toBeNull();
+  });
+
+  it('conversa que não pôde ser religada (ou adapter sem histórico compartilhado): só o pacote, como antes', async () => {
+    deps.spawnAsync.mockResolvedValueOnce({ requestId: 'r', ok: true, paneId: 'new-pane', sessionId: 'new-session' });
+    const boot = fakeBoot('proved');
+    await expect(respawnMainOwnedPaneWithAccount({ ...switchInput, nativeResume: true },
+      { rebindSession: vi.fn(() => false), observeResumeBoot: boot.observe })).resolves.toBe(true);
+    expect(deps.spawnAsync).toHaveBeenCalledTimes(1);
+    const options = deps.spawnAsync.mock.calls[0]![0] as { initialPrompt: string };
+    expect(options).not.toHaveProperty('resumeFromPaneId');
+    expect(options.initialPrompt).toContain('NEW provider session');
+    expect(boot.observe).not.toHaveBeenCalled();
+  });
+
+  it('encerrado pelo próprio Nexus na janela (missão cancelada, pane fechado): não é queda — sem fallback', async () => {
+    deps.spawnAsync.mockResolvedValueOnce({ requestId: 'r', ok: true, paneId: 'resumed-pane', sessionId: 'resumed-session' });
+    await expect(respawnMainOwnedPaneWithAccount({ ...switchInput, nativeResume: true },
+      { rebindSession: vi.fn(() => true), observeResumeBoot: fakeBoot('closed').observe })).resolves.toBe(true);
+    expect(deps.spawnAsync).toHaveBeenCalledTimes(1);
+    expect(deps.deletePane).not.toHaveBeenCalled();
+  });
+
+  it('substituto vivo sem prova (não retomou): é encerrado antes do pacote — nunca dois workers', async () => {
+    pty.sessions.set('resumed-session', { paneId: 'resumed-pane', spawnedAt: Date.now(), resumed: false });
+    deps.terminate.mockImplementation(async (...args: unknown[]) => { pty.sessions.delete(String(args[0])); return true; });
+    deps.spawnAsync
+      .mockResolvedValueOnce({ requestId: 'r', ok: true, paneId: 'resumed-pane', sessionId: 'resumed-session' })
+      .mockResolvedValueOnce({ requestId: 'r2', ok: true, paneId: 'pack-pane', sessionId: 'pack-session' });
+    try {
+      await expect(respawnMainOwnedPaneWithAccount({ ...switchInput, nativeResume: true },
+        { rebindSession: vi.fn(() => true), observeResumeBoot: fakeBoot('failed').observe })).resolves.toBe(true);
+      expect(deps.terminate).toHaveBeenCalledWith('resumed-session', expect.objectContaining({ origin: 'failover-respawn' }));
+      const resumedEnd = deps.terminate.mock.calls.findIndex((call) => (call as unknown[])[0] === 'resumed-session');
+      expect(deps.terminate.mock.invocationCallOrder[resumedEnd]).toBeLessThan(deps.spawnAsync.mock.invocationCallOrder[1]!);
+      // Sem pane morto: o substituto sai do inventário antes do pacote.
+      expect(deps.deletePane).toHaveBeenCalledWith('resumed-pane');
+      expect(deps.deletePane.mock.invocationCallOrder[0]).toBeLessThan(deps.spawnAsync.mock.invocationCallOrder[1]!);
+      expect(deps.spawnAsync).toHaveBeenCalledTimes(2);
+    } finally {
+      pty.sessions.clear();
+      deps.terminate.mockReset().mockResolvedValue(true);
+    }
+  });
+});
+
+/** Observador falso da prova de boot (a lógica real tem a suíte própria abaixo). */
+function fakeBoot(verdict: ResumeBootVerdict) {
+  const confirm = vi.fn(async (_target: { paneId?: string; sessionId?: string }): Promise<ResumeBootVerdict> => verdict);
+  const dispose = vi.fn();
+  const observe = vi.fn((): ResumeBootObserver => ({ confirm, dispose }));
+  return { observe, confirm, dispose };
+}
+
+describe('F-1473: observeResumeBoot (a retomada pegou, com prova?)', () => {
+  beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(1_000_000); });
+  afterEach(() => { vi.useRealTimers(); pty.taps.clear(); pty.sessions.clear(); pty.requested.clear(); });
+  const born = (sessionId: string, session: Partial<FakeSession> = {}) =>
+    pty.sessions.set(sessionId, { paneId: 'pane-r', spawnedAt: Date.now(), resumed: true, ...session });
+  const end = (sessionId: string, exitCode = 1) => {
+    const paneId = pty.sessions.get(sessionId)?.paneId;
+    pty.sessions.delete(sessionId);
+    for (const tap of [...pty.taps]) tap(sessionId, { paneId }, { exitCode });
+  };
+
+  it('sessão vinculada, retomada exata e viva 10 s depois do NASCIMENTO físico = prova', async () => {
+    const boot = observeResumeBoot({ windowMs: 10_000 });
+    born('s-1');
+    await vi.advanceTimersByTimeAsync(8_000);
+    let verdict: ResumeBootVerdict | undefined;
+    void boot.confirm({ paneId: 'pane-r' }).then((value) => { verdict = value; });
+    // Contado do nascimento (8 s atrás), não de agora: faltam só 2 s.
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(verdict).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(verdict).toBe('proved');
+    boot.dispose();
+  });
+
+  it('CLI que nasce aos 15 s e cai aos 16 s: sem prova (a janela começa no nascimento)', async () => {
+    const boot = observeResumeBoot({ windowMs: 10_000 });
+    const verdict = boot.confirm({ paneId: 'pane-r' });
+    await vi.advanceTimersByTimeAsync(15_000);
+    born('s-late');
+    await vi.advanceTimersByTimeAsync(1_000);
+    end('s-late');
+    await expect(verdict).resolves.toBe('failed');
+    boot.dispose();
+  });
+
+  it('saída antes de o observador ser consultado (antes do confirm) conta como queda', async () => {
+    const boot = observeResumeBoot({ windowMs: 10_000 });
+    born('s-early');
+    end('s-early');
+    await expect(boot.confirm({ paneId: 'pane-r' })).resolves.toBe('failed');
+    boot.dispose();
+  });
+
+  it('spawn que não retomou (resume não exato) não é prova', async () => {
+    const boot = observeResumeBoot({ windowMs: 10_000 });
+    born('s-fresh', { resumed: false });
+    await expect(boot.confirm({ paneId: 'pane-r' })).resolves.toBe('failed');
+    boot.dispose();
+  });
+
+  it('nenhuma sessão até o prazo de vínculo: sem prova', async () => {
+    const boot = observeResumeBoot({ windowMs: 10_000, bindTimeoutMs: 75_000 });
+    const verdict = boot.confirm({ paneId: 'pane-r' });
+    await vi.advanceTimersByTimeAsync(75_000);
+    await expect(verdict).resolves.toBe('failed');
+    boot.dispose();
+  });
+
+  it('pela sessão dada: o fim de outra sessão não conta; qualquer fim dela antes da janela, sim', async () => {
+    const boot = observeResumeBoot({ windowMs: 10_000 });
+    born('s-2');
+    born('outra', { paneId: 'pane-x' });
+    const verdict = boot.confirm({ sessionId: 's-2' });
+    end('outra');
+    await vi.advanceTimersByTimeAsync(3_000);
+    end('s-2', 0);
+    await expect(verdict).resolves.toBe('failed');
+    boot.dispose();
+    expect(pty.taps.size).toBe(0);
+  });
+
+  it('fim pedido pelo próprio Nexus na janela (antes ou depois do confirm) = closed, não queda', async () => {
+    const boot = observeResumeBoot({ windowMs: 10_000 });
+    born('s-close');
+    const verdict = boot.confirm({ paneId: 'pane-r' });
+    await vi.advanceTimersByTimeAsync(2_000);
+    pty.requested.add('s-close');
+    end('s-close');
+    await expect(verdict).resolves.toBe('closed');
+    born('s-close-early', { paneId: 'pane-q' });
+    pty.requested.add('s-close-early');
+    end('s-close-early');
+    await expect(boot.confirm({ paneId: 'pane-q' })).resolves.toBe('closed');
+    boot.dispose();
   });
 });
 

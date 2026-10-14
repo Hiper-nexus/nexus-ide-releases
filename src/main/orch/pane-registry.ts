@@ -3702,6 +3702,8 @@ export async function requestMissionPaneRecovery(options: {
   pane: MissionPaneSpec;
   scope: ProjectExecutionScope;
   recap: string;
+  /** F-1473: retoma a conversa nativa na conta nova; `recap` é o fallback. */
+  resumeNote?: string;
 }): Promise<MissionPaneRecoveryResult> {
   if (options.role === "worker") {
     return {
@@ -3834,6 +3836,7 @@ export async function requestMissionPaneRecovery(options: {
       role: options.pane.role,
     },
     recap: options.recap.slice(0, 65_536),
+    ...(options.resumeNote ? { resumeNote: options.resumeNote.slice(0, 65_536) } : {}),
   };
   return new Promise((resolve) => {
     let pending!: PendingPaneRecovery;

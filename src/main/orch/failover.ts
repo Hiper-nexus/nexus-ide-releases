@@ -22,13 +22,18 @@ import {
 import { migrateModelId } from '../../shared/model-defaults';
 import {
   buildContinuityPack,
+  buildCrossAccountResumeNote,
   sanitizeHandoffExcerptForDetector,
 } from '../../shared/failover-handoff';
+import { nativeResumeAcrossAccounts } from '../../shared/cross-account-resume';
+import { rebindProviderPaneSessionAccount } from '../persistence/provider-session-store';
 import { maskAccountLabel } from '../../shared/account-choice';
 import { missionOwnsItsPanes } from '../../shared/mission-recovery-policy';
 import {
   collectGitTaskState,
+  observeResumeBoot,
   respawnMainOwnedPaneWithAccount,
+  type ResumeBootVerdict,
 } from './failover-mission-respawn';
 import { switchRendererOrchestratorAccount } from './failover-orchestrator-respawn';
 import { getProjectDomainStores } from './project-domain-store-registry';
@@ -120,7 +125,9 @@ import { noteCliLimit } from './cli-limit-registry';
  * pane (no global activate thrash), and asks the renderer to re-spawn.
  *
  * Cross-account: fresh session + continuity pack (provider session ids are
- * account-owned). Same-account recovery still uses native resume.
+ * account-owned) — except when the CLI's history is shared across accounts
+ * (F-1473, Claude): the same conversation is resumed natively on the new
+ * account, with the pack as fallback. Same-account recovery uses native resume.
  * Multi-pane storms coalesce on the same from-account → same to-account.
  */
 
@@ -1142,6 +1149,11 @@ const ACCOUNT_SWITCH_WINDOW_MS = 60 * 60_000;
 const accountSwitchHistory = new Map<string, number[]>();
 /** F-1471: panes com troca de conta em curso — uma por pane; o supervisor espera. */
 const siblingReopens = new Set<string>();
+/**
+ * F-1473: panes substitutos esperando a prova da retomada — o failover é dono
+ * da recuperação deles; a ficha de início do substituto não reabre a tarefa.
+ */
+const resumeProofPanes = new Set<string>();
 
 function recentAccountSwitches(lineageId: string, now: number): number[] {
   const recent = (accountSwitchHistory.get(lineageId) ?? []).filter(
@@ -1157,7 +1169,7 @@ function recentAccountSwitches(lineageId: string, now: number): number[] {
  * em vez de levar a mesma tarefa para outra CLI em paralelo.
  */
 export function hasPendingFailoverRecovery(paneId: string, sessionId: string): boolean {
-  if (siblingReopens.has(paneId)) return true;
+  if (siblingReopens.has(paneId) || resumeProofPanes.has(paneId)) return true;
   for (const pending of pendingRetries.values()) {
     if (pending.authority.sessionId === sessionId) return true;
   }
@@ -1187,11 +1199,14 @@ type SiblingReopen = { readonly handled: true } | { readonly handled: false; rea
  * "switched" de antes não trocava nada e, 60 s depois, o supervisor levava a
  * tarefa para OUTRA CLI. Aqui o Main reabre a MESMA tarefa na MESMA CLI pela
  * rota do spawn, fixada na irmã, com o modelo de antes, na mesma worktree e
- * com o pacote de continuidade (sessão nova: a conversa do provedor não
- * atravessa contas). Leitor: o pane novo nasce antes de o velho fechar.
- * Writer: o checkout é de um writer só (a delegação no mesmo checkout é
- * serializada e o segundo writer cairia numa worktree NOVA, sem o trabalho
- * não commitado) — o velho sai e o novo entra logo depois. Recusa: a tarefa
+ * com o pacote de continuidade (sessão nova). F-1473: quando o histórico da
+ * CLI atravessa as contas (Claude), o pane novo retoma a MESMA conversa e
+ * recebe só a nota curta; se a retomada não sobe (recusa no spawn ou queda no
+ * boot), a mesma troca é refeita com o pacote. Leitor: o pane novo nasce
+ * antes de o velho fechar. Writer: o checkout é de um writer só (a delegação
+ * no mesmo checkout é serializada e o segundo writer cairia numa worktree
+ * NOVA, sem o trabalho não commitado) — o velho sai e o novo entra logo
+ * depois. Recusa: a tarefa
  * segue pelo caminho de sempre (outra CLI ou espera), com o motivo.
  * `handled:false` = o Nexus não tem como trocar este pane; `why` diz por quê.
  */
@@ -1199,7 +1214,13 @@ async function reopenTaskOnSiblingAccount(
   req: SwitchRequest,
   next: Account,
   facts: NonNullable<FailoverEvent['continuity']>,
-  flags: { readonly crossAccount: boolean; readonly coalesced: boolean; readonly probe: boolean },
+  flags: {
+    readonly crossAccount: boolean;
+    readonly coalesced: boolean;
+    readonly probe: boolean;
+    /** F-1473: o histórico desta CLI atravessa as duas contas. */
+    readonly nativeResume?: boolean;
+  },
 ): Promise<SiblingReopen> {
   const { authority, paneId, adapterId, hit, current, now } = req;
   const handle = getPaneTaskReroute(paneId);
@@ -1248,7 +1269,8 @@ async function reopenTaskOnSiblingAccount(
     // O modelo que o processo rodou de fato (o pane pode não ter id explícito).
     const previousModel = getAgentSessionInfo(authority.sessionId)?.model ?? req.paneModel;
     const pane = { paneId, adapterId, model: req.paneModel, accountId: current?.id };
-    const outcome = await reopenTaskElsewhere(authority, pane, handle, {
+    const spawnFirst = handle.exclusiveCheckout === false;
+    const freshRequest: PaneTaskRerouteRequest = {
       excludeAdapterIds: [],
       sameAdapter: { adapterId, accountId: next.id, ...(previousModel ? { model: previousModel } : {}) },
       appendPrompt: buildContinuityPack({
@@ -1269,7 +1291,43 @@ async function reopenTaskOnSiblingAccount(
           : CLI_SWITCH_NEXT_STEP,
       }),
       worktreeFromPaneId: paneId,
-    }, { spawnFirst: handle.exclusiveCheckout === false });
+    };
+    // F-1473: a conversa vai junto para a irmã; o pane novo a retoma e só
+    // vale depois de sobreviver ao boot. Senão: a mesma troca, com o pacote.
+    const resumeNote =
+      flags.nativeResume &&
+      rebindProviderPaneSessionAccount(authority.scope, paneId, adapterId, current?.id, next.id)
+        ? buildCrossAccountResumeNote({ toAccountLabel: next.label, role: 'worker' })
+        : undefined;
+    let resumedOutcome: TaskReopenOutcome | undefined;
+    if (resumeNote) {
+      // O observador nasce antes do spawn: saída no boot nunca escapa dele.
+      const boot = observeResumeBoot();
+      const proofs: string[] = [];
+      try {
+        resumedOutcome = await reopenTaskElsewhere(
+          authority,
+          pane,
+          handle,
+          { ...freshRequest, nativeResume: { fromPaneId: paneId, note: resumeNote } },
+          {
+            spawnFirst,
+            confirm: (reopenedPaneId) => {
+              proofs.push(reopenedPaneId);
+              resumeProofPanes.add(reopenedPaneId);
+              return boot.confirm({ paneId: reopenedPaneId });
+            },
+          },
+        );
+      } finally {
+        boot.dispose();
+        for (const proof of proofs) resumeProofPanes.delete(proof);
+      }
+    }
+    const resumed = resumedOutcome?.ok === true && !resumedOutcome.unproved;
+    const outcome = resumedOutcome?.ok
+      ? resumedOutcome
+      : await reopenTaskElsewhere(authority, pane, handle, freshRequest, { spawnFirst });
     const traceOutcome = (outcomeName: string, extra: Record<string, unknown> = {}): void =>
       trace({
         kind: 'account-failover',
@@ -1303,7 +1361,7 @@ async function reopenTaskOnSiblingAccount(
     const staleNote = outcome.staleOpen
       ? ` — o pane antigo (${paneId}, conta esgotada) não fechou; feche-o`
       : '';
-    traceOutcome('switched', { toPaneId: outcome.paneId, toModel: outcome.model ?? null });
+    traceOutcome('switched', { toPaneId: outcome.paneId, toModel: outcome.model ?? null, nativeResume: resumed });
     emitFailoverReceipt(authority, {
       paneId,
       fromAccountLabel: fromLabel,
@@ -1321,13 +1379,17 @@ async function reopenTaskOnSiblingAccount(
       toPaneId: outcome.paneId,
       ...(outcome.model ? { toModel: outcome.model } : {}),
       ...(flags.probe ? { probe: true } : {}),
+      ...(resumed ? { nativeResume: true } : {}),
     });
     await notifyMissionOrchestrator(
       authority,
       `[troca-de-conta:${paneId}] O worker "${agent}" (${adapterId}) esgotou a conta ` +
         `"${maskAccountLabel(fromLabel)}" e seguiu na conta "${toMasked}" da mesma CLI ` +
-        `(pane ${outcome.paneId}${outcome.model ? `, modelo ${outcome.model}` : ''}), com o pacote ` +
-        `de continuidade (arquivos tocados, diff e próximo passo)${modelNote}${staleNote}; ` +
+        `(pane ${outcome.paneId}${outcome.model ? `, modelo ${outcome.model}` : ''}), ` +
+        (resumed
+          ? 'retomando a MESMA conversa'
+          : 'com o pacote de continuidade (arquivos tocados, diff e próximo passo)') +
+        `${modelNote}${staleNote}; ` +
         'espere o handoff dela.',
     );
     return { handled: true };
@@ -1617,6 +1679,9 @@ async function performSwitch(req: SwitchRequest): Promise<void> {
   const crossAccount = Boolean(
     fromAccountId ? fromAccountId !== next.id : true,
   );
+  // F-1473: o histórico desta CLI atravessa as contas — a conversa segue.
+  const nativeResume =
+    crossAccount && nativeResumeAcrossAccounts(adapterId, { from: current, to: next });
 
   console.info(
     '[failover]',
@@ -1659,6 +1724,8 @@ async function performSwitch(req: SwitchRequest): Promise<void> {
         limitCooldownMs: hit.cooldownMs,
         // O trecho final do PTY (memória do Main) — o builder poda e mascara.
         scrollbackExcerpt: readSessionOutput(authority.sessionId, CLI_SWITCH_EXCERPT_LINES),
+        fromAccountId,
+        nativeResume,
       });
     } catch (error) {
       console.warn(
@@ -1750,6 +1817,14 @@ async function performSwitch(req: SwitchRequest): Promise<void> {
         ),
         nextStep: ORCHESTRATOR_SWITCH_NEXT_STEP,
       }),
+      ...(nativeResume
+        ? {
+            buildResumeNote: () => buildCrossAccountResumeNote({
+              toAccountLabel: next.label,
+              role: 'orchestrator',
+            }),
+          }
+        : {}),
     });
     if (!switchedOrchestrator.handled) forgetAccountFailoverNote(paneId);
     if (switchedOrchestrator.handled) {
@@ -1805,17 +1880,27 @@ async function performSwitch(req: SwitchRequest): Promise<void> {
   // F-1471: pane de missão viva no renderer — a conta dele é do Main. Ou o
   // Main troca de verdade, ou o recibo diz que não trocou (nunca "trocado"
   // sem troca). Sem leitura do store, segue o caminho antigo.
+  // F-1473: com histórico compartilhado, a reabertura retoma a conversa.
   if (
     authority.missionId &&
     continuity &&
     !req.unconfirmed &&
     missionOwnsPane(authority) === true
   ) {
-    const reopened = await reopenTaskOnSiblingAccount(req, next, continuity, { crossAccount, coalesced, probe });
+    const reopened = await reopenTaskOnSiblingAccount(req, next, continuity, {
+      crossAccount,
+      coalesced,
+      probe,
+      nativeResume,
+    });
     if (!reopened.handled) await refuseMissionPaneSwitch(req, next, reopened.why);
     return;
   }
 
+  // F-1473: o renderer só retoma a conversa que já é da conta nova.
+  const resumable =
+    nativeResume &&
+    rebindProviderPaneSessionAccount(authority.scope, paneId, adapterId, fromAccountId, next.id);
   emitFailover(authority, {
     paneId,
     fromAccountLabel: fromLabel,
@@ -1830,6 +1915,7 @@ async function performSwitch(req: SwitchRequest): Promise<void> {
     missionId: authority.missionId,
     ...(probe ? { probe } : {}),
     ...(continuity ? { continuity } : {}),
+    ...(resumable ? { nativeResume: true } : {}),
   });
   trace({
     kind: 'account-failover',
@@ -2609,6 +2695,8 @@ type TaskReopenOutcome =
       readonly model?: string;
       /** F-1471: pane-first — o pane novo existe, mas o parado não fechou. */
       readonly staleOpen?: boolean;
+      /** F-1473: o pane novo ficou sem a prova pedida (não fechou para o fallback). */
+      readonly unproved?: boolean;
     }
   /** `closed`: o pane parado já saiu — não há mais nada a esperar nele. */
   | { readonly ok: false; readonly error: string; readonly closed: boolean };
@@ -2625,7 +2713,16 @@ async function reopenTaskElsewhere(
   handle: PaneTaskRerouteHandle,
   request: PaneTaskRerouteRequest,
   /** F-1471: pane-first (leitor) — o novo nasce antes; recusado, o parado fica. */
-  options: { readonly spawnFirst?: boolean } = {},
+  options: {
+    readonly spawnFirst?: boolean;
+    /**
+     * F-1473: o pane novo só conta depois desta prova (a retomada sobreviveu
+     * ao boot). `failed`: o pane novo sai e o pedido fica para outra
+     * tentativa; `closed` (o próprio Nexus o encerrou): não é queda, sem
+     * fallback.
+     */
+    readonly confirm?: (paneId: string) => Promise<ResumeBootVerdict>;
+  } = {},
 ): Promise<TaskReopenOutcome> {
   // F-1471: na troca de conta a CLI é a mesma (a conta irmã já foi preparada).
   if (!request.sameAdapter && !handle.hasAlternative(request.excludeAdapterIds)) {
@@ -2643,6 +2740,18 @@ async function reopenTaskElsewhere(
     // F-1471: o pedido fica guardado — o caminho de recurso ainda o usa.
     return { ok: false, error: shortStartError(error), closed: !options.spawnFirst };
   }
+  const verdict = options.confirm ? await options.confirm(next.paneId) : 'proved';
+  let unproved = verdict !== 'proved';
+  if (verdict === 'failed') {
+    // F-1473: uma recuperação por tarefa — a ficha de início do substituto
+    // sai antes de qualquer outra, e o fallback só começa com ele fechado.
+    releasePaneStartWatch(next.paneId);
+    if (await closeReplacementPane(next.paneId)) {
+      forgetPaneTaskReroute(next.paneId);
+      return { ok: false, error: 'a retomada não subiu no pane novo', closed: !options.spawnFirst };
+    }
+    unproved = true;
+  }
   forgetPaneTaskReroute(pane.paneId);
   const staleOpen = options.spawnFirst === true &&
     !(await closeStoppedPane(pane.paneId, authority.sessionId));
@@ -2652,7 +2761,19 @@ async function reopenTaskElsewhere(
     adapterId: next.adapterId,
     ...(next.model ? { model: next.model } : {}),
     ...(staleOpen ? { staleOpen: true } : {}),
+    ...(unproved ? { unproved: true } : {}),
   };
+}
+
+/**
+ * F-1473: fecha o substituto sem prova; true só com o fechamento ACEITO e
+ * nenhuma sessão viva dele (senão o fallback abriria um segundo pane).
+ */
+async function closeReplacementPane(paneId: string): Promise<boolean> {
+  const accepted = await requestPaneClose(paneId).catch(() => false);
+  return accepted && !listAgentSessionsForPane(paneId).some(
+    (session) => (getSessionState(session.sessionId) ?? 'exited') !== 'exited',
+  );
 }
 
 /** Fecha o pane parado; a sessão que já saiu conta como fechada (F-1471). */
@@ -3288,6 +3409,7 @@ export function shutdownFailover(): void {
   cliSwitchHistory.clear();
   accountSwitchHistory.clear();
   siblingReopens.clear();
+  resumeProofPanes.clear();
   unconfirmedStrikes.clear();
   installationIds.clear();
   setModelQuarantineScopeResolver(null);

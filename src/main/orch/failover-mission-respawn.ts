@@ -17,9 +17,21 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { PaneSpawnOptions } from './main-owned-pane-runtime';
 import type { PaneOrchMeta } from './main-owned-pane-runtime';
-import { getMainOwnedPane } from './main-owned-pane-runtime';
+import { deleteMainOwnedPane, getMainOwnedPane } from './main-owned-pane-runtime';
 import { spawnMainOwnedMissionPaneAsync } from './pane-registry';
-import { getAgentSessionInfo, getSessionCwd, orchTerminateSession } from '../pty/pty-manager';
+import {
+  getAgentSessionInfo,
+  getRequestedTerminationOrigin,
+  getSessionCwd,
+  getSessionProviderConversation,
+  getSessionSpawnedAtMs,
+  getSessionState,
+  listAgentSessionsForPane,
+  orchTerminateSession,
+  tapSessionTermination,
+} from '../pty/pty-manager';
+import { EXACT_RESUME_FAST_EXIT_MS } from '../pty/exact-resume-health';
+import { rebindProviderPaneSessionAccount } from '../persistence/provider-session-store';
 import { modelAccessQuarantine } from './model-access-quarantine';
 import { trace } from '../observability/main-trace';
 import { markPaneDeliberatelyClosed } from './pane-session-output';
@@ -36,6 +48,7 @@ import type { OrchPaneSpawnResult } from '../../shared/orch-types';
 import {
   FAILOVER_HANDOFF_FOOTER,
   buildContinuityPack,
+  buildCrossAccountResumeNote,
   type ContinuityPackInput,
 } from '../../shared/failover-handoff';
 import {
@@ -102,6 +115,13 @@ export interface MainOwnedFailoverPlanInput {
    */
   readonly previousModel?: string;
   readonly previousEffort?: string;
+  /**
+   * F-1473: o histórico do adapter atravessa contas (`nativeResumeAcrossAccounts`)
+   * e a conversa de `paneId` já é da conta nova — o pane novo retoma a MESMA
+   * conversa (`--resume`, no `cwd` real da sessão exausta) e recebe só a nota
+   * curta, não o pack.
+   */
+  readonly nativeResume?: boolean;
 }
 
 export type MainOwnedFailoverPlan =
@@ -199,7 +219,14 @@ export function planMainOwnedFailoverRespawn(
   // ("model requires a newer version", …) casaria de novo no detector ao ser
   // digitado no PTY novo e dispararia um failover fantasma na sessão sadia.
   let initialPrompt: string;
-  if (!nativeResumeImpossible(input)) {
+  const resumeFromPaneId = resumesNativeConversation(input) ? input.paneId : undefined;
+  if (resumeFromPaneId) {
+    initialPrompt = buildCrossAccountResumeNote({
+      toAccountLabel: input.toAccountLabel ?? input.toAccountId ?? '',
+      role: meta.role,
+      inFlightRequest: input.originalRequest,
+    });
+  } else if (!nativeResumeImpossible(input)) {
     initialPrompt =
       `O modelo anterior foi rejeitado pelo provider. ` +
       `Você foi religado automaticamente no modelo "${input.toModel}" — ` +
@@ -244,6 +271,7 @@ export function planMainOwnedFailoverRespawn(
       authoritySeal: meta.authoritySeal,
       visualTask: meta.visualTask,
       initialPrompt,
+      ...(resumeFromPaneId ? { resume: true, resumeFromPaneId } : {}),
     },
   };
 }
@@ -272,15 +300,143 @@ function buildCrossAccountPack(
 }
 
 /**
- * ORC-05: o respawn main-owned é SEMPRE sessão nova. Troca de CLI (pack
- * pronto) e troca de conta (ids de sessão do provider são da conta) não têm
- * como retomar a conversa nativa; só a rotação de modelo F-520 (mesma conta,
- * mesma CLI) fica de fora do recorte.
+ * ORC-05: sem resume nativo, o respawn main-owned é sessão nova. Troca de CLI
+ * (pack pronto) nunca retoma; troca de conta só retoma quando o histórico do
+ * adapter atravessa contas (F-1473, `resumesNativeConversation`); a rotação de
+ * modelo F-520 (mesma conta, mesma CLI) fica de fora do recorte.
  */
 export function nativeResumeImpossible(
   input: Pick<MainOwnedFailoverPlanInput, 'continuityPack' | 'toModel'>,
 ): boolean {
   return Boolean(input.continuityPack) || !input.toModel;
+}
+
+/** F-1473: troca de conta (não de CLI nem de modelo) com a conversa religada. */
+function resumesNativeConversation(
+  input: Pick<MainOwnedFailoverPlanInput, 'nativeResume' | 'continuityPack' | 'toModel' | 'toAccountId' | 'paneId'>,
+): boolean {
+  return Boolean(input.nativeResume && input.toAccountId && input.paneId &&
+    !input.continuityPack && !input.toModel);
+}
+
+/** F-1473: prazo para a sessão do pane retomado nascer (o ACK do spawn pode vir antes do PTY). */
+export const RESUME_BIND_TIMEOUT_MS = 75_000;
+const RESUME_POLL_MS = 250;
+
+/**
+ * F-1473: `proved` = a retomada pegou; `failed` = sem prova (sessão não
+ * nasceu, não retomou ou saiu antes da janela); `closed` = o próprio Nexus
+ * encerrou a sessão na janela (missão cancelada, `nexus_pane_close`) — não é
+ * queda e não pede fallback.
+ */
+export type ResumeBootVerdict = 'proved' | 'failed' | 'closed';
+
+export interface ResumeBootObserver {
+  /**
+   * Prova de que a retomada pegou: sessão vinculada ao pane (ou a sessão
+   * dada), nascida de `--resume` exato e viva por `windowMs` contados do
+   * nascimento FÍSICO dela. Nenhuma sessão em `bindTimeoutMs` = `failed`.
+   */
+  confirm(target: { readonly paneId?: string; readonly sessionId?: string }): Promise<ResumeBootVerdict>;
+  dispose(): void;
+}
+
+/**
+ * F-1473: crie ANTES do spawn — a saída que acontece antes de o pane ser
+ * conhecido (ou antes de `confirm`) fica registrada; a origem do encerramento
+ * é lida na hora (pedido do Nexus = `closed`, não queda).
+ */
+export function observeResumeBoot(
+  options: { readonly windowMs?: number; readonly bindTimeoutMs?: number } = {},
+): ResumeBootObserver {
+  const windowMs = options.windowMs ?? EXACT_RESUME_FAST_EXIT_MS;
+  const bindTimeoutMs = options.bindTimeoutMs ?? RESUME_BIND_TIMEOUT_MS;
+  /** Sessões que terminaram desde a criação do observador. */
+  const ended = new Map<string, { readonly paneId?: string; readonly deliberate: boolean }>();
+  const wakers = new Set<() => void>();
+  const untap = tapSessionTermination((sessionId, agent) => {
+    ended.set(sessionId, {
+      paneId: agent?.paneId,
+      deliberate: getRequestedTerminationOrigin(sessionId) !== null,
+    });
+    for (const wake of [...wakers]) wake();
+  });
+  let disposed = false;
+  const nap = (ms: number): Promise<void> =>
+    new Promise((resolve) => {
+      const done = (): void => {
+        clearTimeout(timer);
+        wakers.delete(done);
+        resolve();
+      };
+      const timer = setTimeout(done, Math.max(0, ms));
+      wakers.add(done);
+    });
+  const endOf = (target: { readonly paneId?: string; readonly sessionId?: string }) =>
+    target.sessionId
+      ? ended.get(target.sessionId)
+      : [...ended.values()].find((end) => end.paneId === target.paneId);
+  const verdictOfEnd = (end: { readonly deliberate: boolean }): ResumeBootVerdict =>
+    end.deliberate ? 'closed' : 'failed';
+  const liveSessionOf = (target: { readonly paneId?: string; readonly sessionId?: string }): string | undefined => {
+    if (target.sessionId) return getSessionState(target.sessionId) !== null ? target.sessionId : undefined;
+    return target.paneId
+      ? listAgentSessionsForPane(target.paneId).find((session) => getSessionState(session.sessionId) !== null)?.sessionId
+      : undefined;
+  };
+  return {
+    async confirm(target) {
+      const bindDeadline = Date.now() + bindTimeoutMs;
+      for (;;) {
+        if (disposed) return 'failed';
+        const early = endOf(target);
+        if (early) return verdictOfEnd(early);
+        const sessionId = liveSessionOf(target);
+        if (sessionId) {
+          if (getSessionProviderConversation(sessionId)?.resumed !== true) return 'failed';
+          const provenAt = (getSessionSpawnedAtMs(sessionId) ?? Date.now()) + windowMs;
+          while (Date.now() < provenAt) {
+            await nap(provenAt - Date.now());
+            if (disposed) return 'failed';
+            const end = ended.get(sessionId);
+            if (end) return verdictOfEnd(end);
+          }
+          return getSessionState(sessionId) !== null ? 'proved' : 'failed';
+        }
+        if (Date.now() >= bindDeadline) return 'failed';
+        await nap(Math.min(RESUME_POLL_MS, bindDeadline - Date.now()));
+      }
+    },
+    dispose() {
+      disposed = true;
+      untap();
+      for (const wake of [...wakers]) wake();
+    },
+  };
+}
+
+/**
+ * F-1473: o substituto sem prova sai antes do pacote — cada sessão viva dele
+ * encerrada com prova física (fora do disjuntor e sem cobrança: a tarefa
+ * segue no pane de antes ou no do pacote) e o pane removido, sem sobrar morto.
+ */
+async function retireUnprovedReplacement(paneId: string): Promise<boolean> {
+  markPaneDeliberatelyClosed(paneId);
+  for (const session of listAgentSessionsForPane(paneId)) {
+    if (getSessionState(session.sessionId) === null) continue;
+    try {
+      const exited = await orchTerminateSession(session.sessionId, {
+        origin: FAILOVER_RESPAWN_TERMINATION_ORIGIN,
+      });
+      if (exited !== true) return false;
+    } catch {
+      return false;
+    } finally {
+      settleFailoverRetirement(session.sessionId, true);
+    }
+  }
+  deleteMainOwnedPane(paneId);
+  return true;
 }
 
 /**
@@ -351,7 +507,15 @@ export async function respawnMainOwnedPaneWithAccount(input: {
   readonly toAccountLabel?: string;
   /** F-775: pacote pronto da troca de CLI (`adapterId` é a CLI nova). */
   readonly continuityPack?: string;
-}, deps: { readonly git?: AsyncGitRunner } = {}): Promise<boolean> {
+  /** F-1473: conta esgotada (CAS do religamento da conversa). */
+  readonly fromAccountId?: string;
+  /** F-1473: o histórico do adapter atravessa as duas contas — tenta o resume nativo. */
+  readonly nativeResume?: boolean;
+}, deps: {
+  readonly git?: AsyncGitRunner;
+  readonly rebindSession?: typeof rebindProviderPaneSessionAccount;
+  readonly observeResumeBoot?: () => ResumeBootObserver;
+} = {}): Promise<boolean> {
   const entry = getMainOwnedPane(input.paneId);
   if (!entry || input.sessionId && entry.entry.sessionId !== input.sessionId) return false;
   // F-1166: dica consultiva de recuperação (repetir, trocar de CLI ou escalar).
@@ -385,7 +549,7 @@ export async function respawnMainOwnedPaneWithAccount(input: {
     : { touchedFiles: input.touchedFiles, diffStat: input.diffStat };
   if (!isCurrent()) return false;
   const previous = previousRuntime(input, entry, expectedSessionId);
-  const plan = planMainOwnedFailoverRespawn({
+  const planInput: MainOwnedFailoverPlanInput = {
     // F-1480: a sessão exausta ainda vive aqui — a pasta dela é a real.
     cwd: (expectedSessionId ? getSessionCwd(expectedSessionId) : null) ?? undefined,
     previousModel: previous.model,
@@ -410,22 +574,95 @@ export async function respawnMainOwnedPaneWithAccount(input: {
     paneId: input.paneId,
     // O pedido guardado do spawn (só memória do Main) é o pedido original.
     originalRequest: getPaneTaskReroute(input.paneId)?.routeTask ?? undefined,
-  });
-  if (plan.action === 'skip') {
+  };
+  const plan = planMainOwnedFailoverRespawn(planInput);
+  // F-1473: com histórico compartilhado o pane novo retoma a MESMA conversa;
+  // `plan` (sessão nova + pacote) fica de fallback se a retomada não provar.
+  const resumePlan = input.nativeResume
+    ? planMainOwnedFailoverRespawn({ ...planInput, nativeResume: true })
+    : null;
+  const resumeOptions =
+    resumePlan?.action === 'respawn' && resumePlan.options.resumeFromPaneId
+      ? resumePlan.options
+      : null;
+  if (plan.action === 'skip' && !resumeOptions) {
     console.info(
       `[failover-mission-respawn] pulou ${input.paneId}: ${plan.reason}`,
     );
     return false;
   }
-  // Worker governado ganha geração física NOVA, nunca a do processo exausto.
-  const replacementIncarnationId = entry.meta.workerIncarnationId ? makeId('workerinc') : undefined;
-  const spawnReplacement = () => spawnMainOwnedMissionPaneAsync({
-    ...plan.options,
-    ...(replacementIncarnationId ? { workerIncarnationId: replacementIncarnationId } : {}),
-    assertOriginCurrent: () => {
-      if (!isCurrent()) throw new Error('failover origin pane is stale');
-    },
-  });
+  type RespawnOptions = Extract<MainOwnedFailoverPlan, { action: 'respawn' }>['options'];
+  // Worker governado ganha geração física NOVA, nunca a do processo exausto
+  // (nem a de um substituto que não provou a retomada).
+  let replacementIncarnationId: string | undefined;
+  let spawnedOptions: RespawnOptions | undefined;
+  const spawnWith = (options: RespawnOptions) => {
+    replacementIncarnationId = entry.meta.workerIncarnationId ? makeId('workerinc') : undefined;
+    spawnedOptions = options;
+    return spawnMainOwnedMissionPaneAsync({
+      ...options,
+      ...(replacementIncarnationId ? { workerIncarnationId: replacementIncarnationId } : {}),
+      assertOriginCurrent: () => {
+        if (!isCurrent()) throw new Error('failover origin pane is stale');
+      },
+    });
+  };
+  const scope = entry.meta?.scope;
+  let nativeResumed = false;
+  /**
+   * F-1473: a conversa vai junto para a conta nova e o pane retomado só vale
+   * com prova de boot. Sem prova, o substituto sai e o pacote entra no lugar;
+   * encerrado pelo próprio Nexus na janela, não há fallback.
+   */
+  const spawnReplacement = async (): Promise<OrchPaneSpawnResult> => {
+    if (
+      resumeOptions &&
+      input.toAccountId &&
+      scope &&
+      (deps.rebindSession ?? rebindProviderPaneSessionAccount)(
+        scope, input.paneId, input.adapterId, input.fromAccountId, input.toAccountId,
+      )
+    ) {
+      // O observador nasce antes do spawn: a saída no boot nunca escapa dele.
+      const boot = (deps.observeResumeBoot ?? observeResumeBoot)();
+      try {
+        const resumed = await spawnWith(resumeOptions);
+        if (!resumed.ok) {
+          if (isSeatRefusal(resumed) || plan.action === 'skip') return resumed;
+        } else {
+          const target = {
+            ...(resumed.sessionId ? { sessionId: resumed.sessionId } : {}),
+            ...(resumed.paneId ? { paneId: resumed.paneId } : {}),
+          };
+          const verdict: ResumeBootVerdict =
+            target.sessionId || target.paneId ? await boot.confirm(target) : 'failed';
+          if (verdict !== 'failed') {
+            nativeResumed = verdict === 'proved';
+            return resumed;
+          }
+          console.warn(
+            `[failover-mission-respawn] resume nativo sem prova para ${input.paneId} ` +
+              '(sessão não nasceu, não retomou ou caiu no boot); sessão nova com o pacote',
+          );
+          // Um worker por tarefa: o substituto sem prova sai antes do pacote.
+          if (resumed.paneId && !(await retireUnprovedReplacement(resumed.paneId))) {
+            console.warn(
+              `[failover-mission-respawn] o pane ${resumed.paneId} sem prova de retomada não encerrou; ` +
+                'ele segue com a tarefa',
+            );
+            return resumed;
+          }
+          if (plan.action === 'skip') {
+            return { requestId: resumed.requestId, ok: false, error: 'a retomada não subiu e o pacote não cabe' };
+          }
+        }
+      } finally {
+        boot.dispose();
+      }
+    }
+    if (plan.action === 'skip') return { requestId: 'failover-respawn', ok: false, error: plan.reason };
+    return spawnWith(plan.options);
+  };
   // Aposenta a sessão exausta; true = saída provada (ou sessão já ausente).
   let retireRequested = false;
   const retireExhausted = async (): Promise<boolean> => {
@@ -446,7 +683,9 @@ export async function respawnMainOwnedPaneWithAccount(input: {
     // F-1480: o worker ganha o pane novo ANTES de a sessão exausta sair — se o
     // spawn falhar, a tarefa segue no pane de antes (nada fica sem pane).
     let spawned: OrchPaneSpawnResult | null =
-      plan.options.role === 'worker' ? await spawnReplacement() : null;
+      (resumeOptions ?? (plan.action === 'respawn' ? plan.options : null))?.role === 'worker'
+        ? await spawnReplacement()
+        : null;
     if (!spawned || (!spawned.ok && isSeatRefusal(spawned))) {
       // Orquestrador (um Maestro por missão) ou teto de panes/licença: a vaga
       // é a da sessão exausta. Ela sai antes, e só com prova física — uma
@@ -466,8 +705,8 @@ export async function respawnMainOwnedPaneWithAccount(input: {
     const replacement = spawned.paneId && spawned.sessionId
       ? { paneId: spawned.paneId, sessionId: spawned.sessionId }
       : null;
-    if (replacement) {
-      adoptReplacementLineage(input.paneId, entry.meta, plan.options, replacement);
+    if (replacement && spawnedOptions) {
+      adoptReplacementLineage(input.paneId, entry.meta, spawnedOptions, replacement);
     }
     if (!retireRequested && !(await retireExhausted())) {
       // O pane novo já trabalha; a sessão exausta fica inerte e registrada
@@ -489,7 +728,7 @@ export async function respawnMainOwnedPaneWithAccount(input: {
     console.info(
       `[failover-mission-respawn] ${input.paneId} religou na conta ` +
         `${input.toAccountId ?? 'nativa'} (novo pane ${spawned.paneId}, ` +
-        `session ${spawned.sessionId})`,
+        `session ${spawned.sessionId})${nativeResumed ? ' retomando a mesma conversa' : ''}`,
     );
     return true;
   } finally {

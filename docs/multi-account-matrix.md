@@ -45,13 +45,26 @@ O renderer não troca credenciais globais para abrir um pane. O fluxo canônico 
    Settings → Providers → “Por assinatura (provider logado)” → label → Salvar.  
    Switcher na bar/rail → ativa conta → materializa managed home / OAuth env.  
    Sessões já abertas mantêm a conta antiga até **↻ reiniciar panes**.
-2. **Continuar a tarefa após limite**  
-   Conta A em cooldown → failover → Conta B do mesmo provedor → sessão NOVA na
-   Conta B, na mesma worktree, com o pacote de continuidade (arquivos tocados,
-   diff, trecho do terminal e próximo passo). Não há `--resume` entre contas: a
-   conversa do provedor fica amarrada à conta que a gravou. Worker de missão
-   num pane do renderer (F-1471): o Main reabre a MESMA tarefa na MESMA CLI,
-   fixada na Conta B e com o modelo de antes quando a CLI o oferece; o recibo
+2. **Continuar a mesma conversa (ou a tarefa) após limite**  
+   Conta A em cooldown → failover → Conta B do mesmo provedor. O que atravessa
+   a troca depende de onde a CLI guarda o histórico (F-1473,
+   `nativeResumeAcrossAccounts` em `src/shared/cross-account-resume.ts`):
+   - **Claude** (contas com upstream Anthropic): o transcript é por checkout
+     (`<userData>/provider-state/claude/<checkoutId>/claude/projects`) e a conta
+     é só a credencial. O Main passa a conversa do pane para a Conta B e a CLI
+     sobe com `--resume <mesmo id>`; a primeira mensagem é só uma nota curta
+     ("conta trocada; continue de onde parou" + o pedido em voo), não o pacote.
+     Se a retomada não sobe (conversa não encontrada, erro da CLI no boot), o
+     pane cai sozinho em sessão nova + pacote de continuidade.
+   - **Codex, AGY, Devin, Kimi, Grok e demais**: sessão NOVA na Conta B, na
+     mesma worktree, com o pacote de continuidade (arquivos tocados, diff,
+     trecho do terminal, pedido em voo e próximo passo). O rollout do Codex
+     também é por checkout, mas não está provado que outra conta ChatGPT aceita
+     o histórico (raciocínio cifrado da conta que o gerou); os outros isolam o
+     home inteiro por conta.
+   Worker de missão num pane do renderer (F-1471): o Main reabre a MESMA tarefa
+   na MESMA CLI, fixada na Conta B e com o modelo de antes quando a CLI o
+   oferece — no Claude retomando a conversa do pane antigo (F-1473); o recibo
    só sai com o pane novo. Leitor: o pane novo nasce antes de o velho fechar.
    Writer: o checkout é de um writer só, então o velho sai e o novo entra logo
    depois. Se a Conta B não recebe a tarefa, ela segue em outra CLI ou espera a
@@ -59,11 +72,14 @@ O renderer não troca credenciais globais para abrir um pane. O fluxo canônico 
    sozinho (aberto pelo operador, sem pedido de spawn guardado) recebe recibo
    "não trocado" com o motivo, e o Maestro é avisado. Sem conta irmã com folga,
    a tarefa segue em outra CLI ou espera a conta liberar.
-   Vale também para o orquestrador de missão e para o pane do operador adotado
-   pela missão da aba (F-995): com limite CONFIRMADO (F-249), o Main troca a
-   conta selada do orquestrador e religa o MESMO pane na Conta B pela
-   recuperação do orquestrador, com o pacote de continuidade. O recibo da
-   sessão nova diz "troca automática por limite confirmado".
+   Vale também para o pane do "+ Pane", o worker de missão headless e o
+   orquestrador de missão / pane do operador adotado pela missão da aba
+   (F-995): com limite CONFIRMADO (F-249), o Main troca a conta selada do
+   orquestrador e religa o MESMO pane na Conta B pela recuperação do
+   orquestrador — com a conversa retomada (Claude) ou o pacote de
+   continuidade. O recibo da sessão nova diz "troca automática por limite
+   confirmado". O resume entre contas é ligado por padrão; desligar é a
+   constante `CROSS_ACCOUNT_NATIVE_RESUME` (não há tela de failover).
 3. **Pin de conta no pane**  
    `accountId` na composição da missão; reopen restaura a conta. O pin não
    prende o pane numa conta esgotada: limite confirmado troca para a irmã com
@@ -78,7 +94,8 @@ O renderer não troca credenciais globais para abrir um pane. O fluxo canônico 
 
 ## Não suportado (ainda)
 
-- Continuar a **mesma task** de Claude → Codex (cross-provider).
+- Continuar a **mesma conversa** de Claude → Codex (cross-provider) ou entre
+  contas Codex: segue o pacote de continuidade.
 - Fetch de rate-limit em rede estilo Orca (ChatGPT/Claude web APIs) — a UI mostra
   cooldown/lastError do store local (P4 lean).
 - Snapshot OAuth do OpenClaude no macOS quando a sessão existe somente no

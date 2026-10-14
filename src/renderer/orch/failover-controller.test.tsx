@@ -157,6 +157,51 @@ describe('failover notifications', () => {
     }
   });
 
+  it.each([
+    ['nativeResume: retoma a MESMA conversa com a nota curta (pacote só de fallback)', true],
+    ['sem nativeResume: sessão nova + pacote, como antes', false],
+  ])('F-1473: troca de conta Claude A → B — %s', async (_label, nativeResume) => {
+    let notify!: (event: FailoverEvent) => void;
+    Object.defineProperty(window, 'nexus', { configurable: true, value: { accounts: {
+      onFailover: (callback: typeof notify) => { notify = callback; return () => {}; },
+    } } });
+    const originalRoot = useLayoutStore.getState().root;
+    useLayoutStore.setState({ root: { kind: 'leaf', id: 'resume-leaf', pane: {
+      id: 'resume-pane', kind: 'cli-agent', title: 'Claude', adapterId: 'claude', accountId: 'claude-a',
+    } } });
+    vi.mocked(respawnWithResume).mockClear();
+    const container = document.createElement('div'); document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(<Harness />));
+      notify({
+        paneId: 'resume-pane', kind: 'rate-limit', switched: true, crossAccount: true,
+        fromAccountLabel: 'gustavo@example.com', toAccountLabel: 'ana@example.org',
+        fromAccountId: 'claude-a', toAccountId: 'claude-b', reason: "You've hit your session limit",
+        ...(nativeResume ? { nativeResume: true } : {}),
+      });
+      expect(respawnWithResume).toHaveBeenCalledTimes(1);
+      const [pane, , options] = vi.mocked(respawnWithResume).mock.calls[0]!;
+      expect(pane.accountId).toBe('claude-b');
+      expect(options?.continuityPack).toContain('[NEXUS FAILOVER HANDOFF]');
+      if (nativeResume) {
+        expect(options?.mode).toBe('cross-account-resume');
+        expect(options?.resumeNote).toContain('resumed THIS SAME conversation');
+        expect(options?.resumeNote).not.toContain('NEW provider session');
+        expect(options?.resumeNote).not.toContain('ana@example.org');
+      } else {
+        expect(options?.mode).toBe('cross-account-continuity');
+        expect(options?.resumeNote).toBeUndefined();
+      }
+      const toast = useToastStore.getState().toasts.find((entry) => entry.title.startsWith('Trocado para'));
+      expect(toast?.detail).toContain(nativeResume ? 'A mesma conversa continua' : 'sessão do provider é nova');
+    } finally {
+      await act(async () => root.unmount()); container.remove();
+      useLayoutStore.setState({ root: originalRoot });
+      for (const toast of useToastStore.getState().toasts) useToastStore.getState().dismiss(toast.id);
+    }
+  });
+
   it('recibo aplicado sem troca comprovada não anuncia sucesso nem religa', async () => {
     let notify!: (event: FailoverEvent) => void;
     Object.defineProperty(window, 'nexus', { configurable: true, value: { accounts: {

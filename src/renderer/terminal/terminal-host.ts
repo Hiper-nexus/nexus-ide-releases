@@ -193,6 +193,14 @@ interface Host {
   } | null;
   /** Relive do Maestro: não despejar [nexus] no PTY. */
   quietSpawn?: boolean;
+  /**
+   * F-1473: o próximo spawn retoma na conta nova a conversa da conta esgotada.
+   * Retomada exata recebe `note`; sem ela (ou se ela cai no boot) vale
+   * `fallbackPack`. Missão sem `fallbackPack`: quem pediu (o Main) refaz.
+   */
+  crossAccountResume?: { readonly note?: string; readonly fallbackPack?: string };
+  /** F-1473: sessão atual nasceu de `--resume` exato (o Main achou a conversa). */
+  exactResumeSessionId?: string;
   /** Spawn adiado até o slot ter caixa real (F-009). */
   spawnWhenMeasurable?: boolean;
   /**
@@ -658,7 +666,13 @@ function buildTerminal(kind: 'shell' | 'cli-agent'): {
 
 export type RespawnMode =
   | 'same-account-resume'
-  | 'cross-account-continuity';
+  | 'cross-account-continuity'
+  /** F-1473: histórico compartilhado entre contas — resume nativo, pack de fallback. */
+  | 'cross-account-resume';
+
+/** F-1473: o resume nativo na conta nova caiu no boot — o pane segue com o pacote. */
+const CROSS_ACCOUNT_RESUME_FAILED_NOTICE =
+  '[nexus] a conversa não pôde ser retomada na conta nova — abrindo sessão nova com o pacote de continuidade…';
 
 /**
  * Strip ANSI CSI/OSC sequences for continuity pack excerpts (best-effort).
@@ -1116,6 +1130,8 @@ function startSpawn(
 ): Promise<string | null> {
   const quietSpawn = host.quietSpawn === true;
   host.quietSpawn = false;
+  const crossResume = host.crossAccountResume;
+  host.crossAccountResume = undefined;
   const generation = host.spawnGeneration + 1;
   host.spawnGeneration = generation;
   host.spawnStarted = true;
@@ -1328,6 +1344,8 @@ function startSpawn(
         useLayoutStore.getState().setAccountId(pane.id, res.accountId);
       }
       setHostSession(host, pane.id, res.sessionId, spawnGrid);
+      host.exactResumeSessionId =
+        resume && res.resumeMode === 'exact' ? res.sessionId : undefined;
       // A grade atual vence a do spawn: sem este resize imediato o PTY ficava
       // preso na winsize antiga até um "Redesenhar" (pty-grid-drift F-248).
       propagateHostSize(host);
@@ -1474,7 +1492,10 @@ function startSpawn(
             exitCode !== 0 &&
             !terminationOrigin &&
             Date.now() - spawnedAt < 10_000;
-          if (failedExactResume) {
+          if (failedExactResume && crossResume) {
+            // F-1473: o resume entre contas tem fallback — não é incidente.
+            host.term.writeln(`\r\n\x1b[33m${CROSS_ACCOUNT_RESUME_FAILED_NOTICE}\x1b[0m`);
+          } else if (failedExactResume) {
             const message = missionId
               ? 'Falha ao retomar a sessão desta missão. Retome a missão pelo card.'
               : 'Falha ao retomar a sessão. Abra + Pane e selecione o agente para iniciar uma nova conversa.';
@@ -1492,6 +1513,18 @@ function startSpawn(
           // TUI morta com mouse-tracking ligado deixaria o xterm emitindo
           // SGR de mouse como input durante a fase "digite qualquer tecla".
           host.term.write(TERMINAL_INPUT_MODE_RESET);
+          const fallbackPack = failedExactResume ? crossResume?.fallbackPack : undefined;
+          if (fallbackPack) {
+            // F-1473: o pane nunca fica parado — sessão nova com o pacote.
+            setTimeout(() => {
+              if (host.disposed || host.sessionId) return;
+              respawnWithResume(pane, '[nexus] sessão nova com o pacote de continuidade…', {
+                mode: 'cross-account-continuity',
+                continuityPack: fallbackPack,
+              });
+            }, 0);
+            return;
+          }
           const deliberateClose = host.closingSessionId === res.sessionId;
           host.closingSessionId = undefined;
           if (terminalShutdownNoticeMode) {
@@ -1624,9 +1657,15 @@ function startSpawn(
       // After mount: inject either same-account continue or cross-account pack.
       // Cross-account always injects (fresh session). Same-account resume only
       // when the adapter actually restored something. Never type into /login.
+      // F-1473: retomada exata entre contas recebe só a nota; sem ela, o pacote.
+      const injectedPack = crossResume
+        ? resume && res.resumeMode === 'exact'
+          ? crossResume.note
+          : crossResume.fallbackPack
+        : pack;
       const shouldInjectContinue = shouldInjectResumeContinuation({
         quietSpawn,
-        hasContinuityPack: Boolean(pack),
+        hasContinuityPack: Boolean(injectedPack),
         resume,
         adopted: Boolean(res.adopted),
         resumeMode: res.resumeMode,
@@ -1663,7 +1702,7 @@ function startSpawn(
           }
           const role = pane.role === 'orchestrator' ? 'orchestrator' : 'agent';
           const continuation =
-            pack ??
+            injectedPack ??
             (`Continue the current mission from exactly where you stopped as the ${role}. ` +
               'Preserve existing context and execute the next pending step now.');
           const ports = {
@@ -1679,7 +1718,9 @@ function startSpawn(
           void submitted.then((accepted) => {
             if (!accepted || cancelled || host.disposed || typingSessionId(pane.id) !== resumedSessionId) return;
             host.term.writeln(
-              pack
+              injectedPack && injectedPack === crossResume?.note
+                ? '\r\n\x1b[36m[nexus] conta trocada: a mesma conversa segue nesta conta.\x1b[0m'
+                : injectedPack
                 ? '\r\n\x1b[36m[nexus] handoff multi-conta submetido (sessão nova nesta conta).\x1b[0m'
                 : '\r\n\x1b[36m[nexus] continuidade submetida automaticamente ao agente.\x1b[0m',
             );
@@ -3959,6 +4000,10 @@ function interruptBusyMissionWorkers(
  * - same-account-resume: adapter --resume / --continue
  * - cross-account-continuity: fresh session + continuity pack (no exact resume
  *   of another account's provider session id)
+ * - cross-account-resume (F-1473): the adapter's history is shared across
+ *   accounts and Main moved the conversation to the new account — exact
+ *   resume + `resumeNote`; no exact resume (or a boot failure) falls back to
+ *   the fresh session + `continuityPack`.
  */
 export function respawnWithResume(
   pane: PaneModel,
@@ -3966,6 +4011,8 @@ export function respawnWithResume(
   options?: {
     mode?: RespawnMode;
     continuityPack?: string;
+    /** F-1473: first message of a cross-account exact resume. */
+    resumeNote?: string;
     /** Auth same-account: resume the process, never type into /login. */
     skipContinuation?: boolean;
   },
@@ -4015,6 +4062,12 @@ export function respawnWithResume(
         })()
       : pane;
   const cross = options?.mode === 'cross-account-continuity';
+  if (options?.mode === 'cross-account-resume') {
+    host.crossAccountResume = {
+      note: options.resumeNote,
+      fallbackPack: options.continuityPack,
+    };
+  }
   void startSpawn(
     spawnPane,
     host,
@@ -4024,6 +4077,12 @@ export function respawnWithResume(
     false,
     options?.skipContinuation === true,
   );
+}
+
+/** F-1473: a sessão `sessionId` deste pane nasceu de um `--resume` exato. */
+export function paneResumedExactly(paneId: string, sessionId: string): boolean {
+  const host = hosts.get(paneId);
+  return Boolean(host && !host.disposed && host.exactResumeSessionId === sessionId);
 }
 
 export function hibernateHost(paneId: string): boolean {
@@ -4329,6 +4388,8 @@ export async function respawnMissionPaneFresh(
   expectedSessionId?: string,
   timeoutMs = 75_000,
   recoveryRequestId?: string,
+  /** F-1473: retoma a conversa nativa (o recap vem de quem pediu). */
+  resumeNative = false,
 ): Promise<string> {
   if (!useAccessStore.getState().canUseApp) throw new Error('license_access_denied');
   const host = hosts.get(pane.id);
@@ -4348,8 +4409,12 @@ export async function respawnMissionPaneFresh(
   host.spawnStarted = false;
   host.hibernated = false;
   host.term.writeln(
-    '\r\n\x1b[33m[nexus] contexto degradado — iniciando uma sessão limpa…\x1b[0m',
+    resumeNative
+      ? '\r\n\x1b[33m[nexus] conta trocada — retomando a mesma conversa na conta nova…\x1b[0m'
+      : '\r\n\x1b[33m[nexus] contexto degradado — iniciando uma sessão limpa…\x1b[0m',
   );
+  // F-1473: o Main refaz a troca com o pacote se a retomada não subir.
+  if (resumeNative) host.crossAccountResume = {};
   const spawnPaneBase = pane.orchRequestId
     ? (() => {
         useLayoutStore.getState().clearOrchRequestId(pane.id);
@@ -4364,10 +4429,12 @@ export async function respawnMissionPaneFresh(
   const spawnPromise = startSpawn(
     spawnPane,
     host,
-    false,
+    resumeNative,
     false,
     undefined,
     true,
+    // O recap é do orch-bridge: a retomada não digita o "continue" genérico.
+    resumeNative,
   );
   const spawned = await new Promise<string | null>((resolve) => {
     const timer = setTimeout(() => resolve(null), timeoutMs);

@@ -3059,6 +3059,61 @@ describe('F-1137: respawn continuity waits for native prompt acceptance', () => 
   });
 });
 
+describe('F-1473: troca de conta com histórico compartilhado continua a mesma conversa', () => {
+  async function liveClaudePane(id: string) {
+    const agent: PaneModel = { id, kind: 'cli-agent', adapterId: 'claude', title: 'Claude', accountId: 'acct-b' };
+    useLayoutStore.setState({ root: buildGridTree([agent]), focusedPaneId: agent.id });
+    const host = getOrCreateHost(agent);
+    setHostSize(host.element, 1200, 800);
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(agent, slot);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(getPaneSessionId(agent.id)).toBe('pty-hidden');
+    const writes: Array<{ sessionId: string; data: string }> = [];
+    Object.assign(window.nexus.pty, {
+      writeConfirmed: async (sessionId: string, data: string) => { writes.push({ sessionId, data }); return true; },
+      promptState: async () => ({ turnStartSequence: 1, state: 'idle' as const, awaitingInput: false }),
+      submitPromptEnter: async () => true,
+    });
+    return { agent, writes };
+  }
+  const paste = (text: string) => `\x1b[200~${text}\x1b[201~`;
+  const options = { mode: 'cross-account-resume' as const, resumeNote: 'NOTA: mesma conversa', continuityPack: 'PACOTE completo' };
+
+  it('retomada exata na conta nova: spawn com resume e só a nota como primeira mensagem', async () => {
+    const { agent, writes } = await liveClaudePane('f1473-exact');
+    spawn.mockResolvedValueOnce({ ok: true, sessionId: 'pty-resumed', resumeMode: 'exact' });
+    respawnWithResume(agent, undefined, options);
+    await vi.advanceTimersByTimeAsync(2_800);
+    expect(spawn).toHaveBeenLastCalledWith(expect.objectContaining({ resume: true, accountId: 'acct-b' }));
+    expect(writes).toEqual([{ sessionId: 'pty-resumed', data: paste('NOTA: mesma conversa') }]);
+  });
+
+  it('sem conversa para retomar (contexto novo): a primeira mensagem é o pacote inteiro', async () => {
+    const { agent, writes } = await liveClaudePane('f1473-fresh');
+    spawn.mockResolvedValueOnce({ ok: true, sessionId: 'pty-fresh', resumeMode: 'fresh-context' });
+    respawnWithResume(agent, undefined, options);
+    await vi.advanceTimersByTimeAsync(2_800);
+    expect(writes).toEqual([{ sessionId: 'pty-fresh', data: paste('PACOTE completo') }]);
+  });
+
+  it('retomada que cai no boot: o pane sobe sozinho em sessão nova com o pacote', async () => {
+    const { agent, writes } = await liveClaudePane('f1473-boot-fail');
+    spawn
+      .mockResolvedValueOnce({ ok: true, sessionId: 'pty-resume-dies', resumeMode: 'exact' })
+      .mockResolvedValueOnce({ ok: true, sessionId: 'pty-pack' });
+    respawnWithResume(agent, undefined, options);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(getPaneSessionId(agent.id)).toBe('pty-resume-dies');
+    ptyExitListeners.get('pty-resume-dies')!({ exitCode: 1 });
+    await vi.advanceTimersByTimeAsync(2_800);
+    expect(spawn).toHaveBeenLastCalledWith(expect.objectContaining({ resume: false, accountId: 'acct-b' }));
+    expect(getPaneSessionId(agent.id)).toBe('pty-pack');
+    expect(writes).toEqual([{ sessionId: 'pty-pack', data: paste('PACOTE completo') }]);
+  });
+});
+
 describe('F-429 — Encerrar never becomes automatic human resume', () => {
   it('does not relive a Maestro after Main deliberately terminated it', async () => {
     const agent: PaneModel = { id: 'maestro-429-exit', kind: 'cli-agent', adapterId: 'claude', title: 'Maestro', role: 'orchestrator', missionId: 'mission-429-exit' };

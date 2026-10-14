@@ -1,11 +1,14 @@
-import { describe, expect, it, vi } from 'vitest';
+import Database from 'better-sqlite3';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 const db = vi.hoisted(() => ({
   owners: [] as Array<{ account_id: string | null }>,
   deletes: [] as unknown[][],
   deleteChanges: 1,
+  /** F-1473: SQLite real em memória para o religamento de conta. */
+  real: null as Database.Database | null,
 }));
 vi.mock('./db', () => ({
-  getDb: () => ({
+  getDb: () => db.real ?? ({
     prepare: (sql: string) => ({
       all: () => db.owners,
       run: (...args: unknown[]) => {
@@ -15,7 +18,14 @@ vi.mock('./db', () => ({
     }),
   }),
 }));
-import { forgetProviderSessionById, providerSessionAccountIsCompatible, sessionBelongsToAccount } from './provider-session-store';
+import {
+  forgetProviderSessionById,
+  getProviderPaneSession,
+  providerSessionAccountIsCompatible,
+  rebindProviderPaneSessionAccount,
+  saveProviderPaneSession,
+  sessionBelongsToAccount,
+} from './provider-session-store';
 
 describe('forgetProviderSessionById (F-721)', () => {
   const scope = { installationId: 'i', projectId: 'p', checkoutId: 'c' };
@@ -68,5 +78,60 @@ describe('sessionBelongsToAccount', () => {
   it('allows legacy unowned rows only when caller also has no pin', () => {
     expect(sessionBelongsToAccount(null, undefined)).toBe(true);
     expect(sessionBelongsToAccount(undefined, null)).toBe(true);
+  });
+});
+
+describe('rebindProviderPaneSessionAccount (F-1473)', () => {
+  const scope = { version: 1 as const, installationId: 'i', projectId: 'p', checkoutId: 'c', rootRealPath: '/project', identitySource: 'manifest' as const };
+  const worktree = { ...scope, checkoutId: 'c-worktree', rootRealPath: '/project-wt' };
+  function realDb(): void {
+    db.real = new Database(':memory:');
+    db.real.exec(`CREATE TABLE provider_pane_sessions (
+      installation_id TEXT, project_id TEXT, checkout_id TEXT, pane_id TEXT, adapter_id TEXT,
+      session_key TEXT, session_id TEXT, transcript_path TEXT, updated_at INTEGER, account_id TEXT,
+      PRIMARY KEY (installation_id, project_id, checkout_id, pane_id, adapter_id));`);
+  }
+  afterEach(() => { db.real?.close(); db.real = null; });
+
+  it('Claude A → B: a conversa do pane passa a ser da conta B (todas as linhas do pane) e deixa de ser da A', () => {
+    realDb();
+    saveProviderPaneSession(scope, 'pane-1', 'claude', { key: 'session_id', id: 'ses-claude' }, 'acct-a');
+    saveProviderPaneSession(worktree, 'pane-1', 'claude', { key: 'session_id', id: 'ses-claude' }, 'acct-a');
+    expect(getProviderPaneSession(scope, 'pane-1', 'claude', 'acct-b')).toBeNull();
+    expect(rebindProviderPaneSessionAccount(scope, 'pane-1', 'claude', 'acct-a', 'acct-b')).toBe(true);
+    expect(getProviderPaneSession(scope, 'pane-1', 'claude', 'acct-b')?.id).toBe('ses-claude');
+    expect(getProviderPaneSession(worktree, 'pane-1', 'claude', 'acct-b')?.id).toBe('ses-claude');
+    expect(getProviderPaneSession(scope, 'pane-1', 'claude', 'acct-a')).toBeNull();
+    // Repetir (rajada coalescida) é idempotente.
+    expect(rebindProviderPaneSessionAccount(scope, 'pane-1', 'claude', 'acct-a', 'acct-b')).toBe(true);
+  });
+
+  it('login nativo (sem conta) → conta B também leva a conversa', () => {
+    realDb();
+    saveProviderPaneSession(scope, 'pane-native', 'claude', { key: 'session_id', id: 'ses-native' });
+    expect(rebindProviderPaneSessionAccount(scope, 'pane-native', 'claude', undefined, 'acct-b')).toBe(true);
+    expect(getProviderPaneSession(scope, 'pane-native', 'claude', 'acct-b')?.id).toBe('ses-native');
+  });
+
+  it('adapter sem histórico compartilhado (agy, codex) e adapter diferente nunca herdam a conversa', () => {
+    realDb();
+    saveProviderPaneSession(scope, 'pane-2', 'agy', { key: 'session_id', id: 'ses-agy' }, 'acct-a');
+    saveProviderPaneSession(scope, 'pane-2', 'codex', { key: 'session_id', id: 'ses-codex' }, 'acct-a');
+    saveProviderPaneSession(scope, 'pane-2', 'claude', { key: 'session_id', id: 'ses-claude' }, 'acct-a');
+    expect(rebindProviderPaneSessionAccount(scope, 'pane-2', 'agy', 'acct-a', 'acct-b')).toBe(false);
+    expect(rebindProviderPaneSessionAccount(scope, 'pane-2', 'codex', 'acct-a', 'acct-b')).toBe(false);
+    expect(getProviderPaneSession(scope, 'pane-2', 'agy', 'acct-a')?.id).toBe('ses-agy');
+    expect(getProviderPaneSession(scope, 'pane-2', 'codex', 'acct-a')?.id).toBe('ses-codex');
+    // Religar o Claude não toca a linha de outro adapter do mesmo pane.
+    expect(rebindProviderPaneSessionAccount(scope, 'pane-2', 'claude', 'acct-a', 'acct-b')).toBe(true);
+    expect(getProviderPaneSession(scope, 'pane-2', 'codex', 'acct-b')).toBeNull();
+    expect(getProviderPaneSession(scope, 'pane-2', 'codex', 'acct-a')?.id).toBe('ses-codex');
+  });
+
+  it('CAS: conversa de uma terceira conta não é tomada', () => {
+    realDb();
+    saveProviderPaneSession(scope, 'pane-3', 'claude', { key: 'session_id', id: 'ses-c' }, 'acct-c');
+    expect(rebindProviderPaneSessionAccount(scope, 'pane-3', 'claude', 'acct-a', 'acct-b')).toBe(false);
+    expect(getProviderPaneSession(scope, 'pane-3', 'claude', 'acct-c')?.id).toBe('ses-c');
   });
 });

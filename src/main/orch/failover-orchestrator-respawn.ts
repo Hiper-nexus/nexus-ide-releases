@@ -16,11 +16,17 @@
  * física e pede ao renderer o religamento no MESMO pane, com o pacote de
  * continuidade como recap. O resultado só é "ok" depois que a sessão nova
  * existe e foi religada à missão.
+ *
+ * F-1473: com histórico compartilhado entre as contas (`buildResumeNote`), a
+ * conversa nativa vai junto para a conta nova e o pane a retoma recebendo só
+ * a nota curta. Se a retomada não subir depois do grant, a mesma troca é
+ * refeita com sessão nova + pacote — o orquestrador nunca fica parado.
  */
 import { isDeepStrictEqual } from 'node:util';
 import type { MissionPaneSpec } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { isPtySessionConnectedAndWritable, listAgentSessionsForPane } from '../pty/pty-manager';
+import { rebindProviderPaneSessionAccount } from '../persistence/provider-session-store';
 import { requestMissionPaneRecovery } from './pane-registry';
 import { getProjectDomainStores, sameProjectExecutionScope } from './project-domain-store-registry';
 
@@ -35,6 +41,11 @@ export interface OrchestratorAccountSwitchInput {
    * Montado só depois que o pane se prova o orquestrador selado (lê o PTY).
    */
   readonly buildRecap: () => string;
+  /**
+   * F-1473: presente só quando o histórico do adapter atravessa as duas
+   * contas — nota curta da conversa retomada (o recap vira fallback).
+   */
+  readonly buildResumeNote?: () => string;
 }
 
 export type OrchestratorAccountSwitchResult =
@@ -56,6 +67,8 @@ export interface OrchestratorAccountSwitchDeps {
     accountId: string,
   ) => MissionPaneSpec | null;
   readonly requestRecovery: typeof requestMissionPaneRecovery;
+  /** F-1473: leva a conversa nativa do pane para a conta nova (CAS). */
+  readonly rebindSession?: typeof rebindProviderPaneSessionAccount;
 }
 
 const productionDeps: OrchestratorAccountSwitchDeps = {
@@ -85,8 +98,8 @@ function restoreAccountAfterPreflightRefusal(
   rebound: MissionPaneSpec,
   result: Awaited<ReturnType<typeof requestMissionPaneRecovery>>,
   deps: OrchestratorAccountSwitchDeps,
-): void {
-  if (result.ok || result.requestId !== '' || result.sessionId || result.paneId !== input.paneId || !original.accountId) return;
+): boolean {
+  if (result.ok || result.requestId !== '' || result.sessionId || result.paneId !== input.paneId || !original.accountId) return false;
   try {
     const sessions = listAgentSessionsForPane(input.paneId);
     const session = sessions.length === 1 ? sessions[0] : undefined;
@@ -95,10 +108,11 @@ function restoreAccountAfterPreflightRefusal(
         session.adapterId !== original.adapterId || session.accountId !== original.accountId ||
         !sameProjectExecutionScope(session.coordinationScope ?? session.scope, input.scope) ||
         !isPtySessionConnectedAndWritable(input.sessionId) ||
-        !isDeepStrictEqual(deps.findSpec(input.scope, input.paneId), rebound)) return;
-    deps.rebindAccount(input.scope, input.missionId, input.paneId, input.toAccountId, original.accountId);
+        !isDeepStrictEqual(deps.findSpec(input.scope, input.paneId), rebound)) return false;
+    return deps.rebindAccount(input.scope, input.missionId, input.paneId, input.toAccountId, original.accountId)?.accountId === original.accountId;
   } catch {
     // Leitura/compensação indisponível não autoriza adivinhar a conta física.
+    return false;
   }
 }
 
@@ -138,17 +152,33 @@ export async function switchRendererOrchestratorAccount(
       error: 'a conta selada do orquestrador mudou durante a troca',
     };
   }
+  const rebindSession = deps.rebindSession ?? rebindProviderPaneSessionAccount;
+  const resumeNote =
+    input.buildResumeNote &&
+    rebindSession(input.scope, input.paneId, spec.adapterId, spec.accountId ?? undefined, input.toAccountId)
+      ? input.buildResumeNote()
+      : undefined;
   let result: Awaited<ReturnType<typeof requestMissionPaneRecovery>>;
   try {
-    result = await deps.requestRecovery({
+    const recap = input.buildRecap();
+    const request = {
       missionId: input.missionId,
       paneId: input.paneId,
-      role: 'orchestrator',
+      role: 'orchestrator' as const,
       expectedSessionId: input.sessionId,
       pane: rebound,
       scope: input.scope,
-      recap: input.buildRecap(),
-    });
+      recap,
+    };
+    result = await deps.requestRecovery(resumeNote ? { ...request, resumeNote } : request);
+    // F-1473: a retomada não subiu depois do grant — a mesma troca, agora com
+    // sessão nova e o pacote, sobre a substituta que caiu.
+    if (resumeNote && !result.ok && result.requestId !== '') {
+      result = await deps.requestRecovery({
+        ...request,
+        expectedSessionId: result.sessionId ?? undefined,
+      });
+    }
   } catch (error) {
     return {
       handled: true,
@@ -157,7 +187,11 @@ export async function switchRendererOrchestratorAccount(
     };
   }
   if (!result.ok || !result.sessionId || result.sessionId === input.sessionId) {
-    restoreAccountAfterPreflightRefusal(input, spec, rebound, result, deps);
+    const restored = restoreAccountAfterPreflightRefusal(input, spec, rebound, result, deps);
+    if (restored && resumeNote && spec.accountId) {
+      // A sessão segue viva na conta original: a conversa volta para ela.
+      rebindSession(input.scope, input.paneId, spec.adapterId, input.toAccountId, spec.accountId);
+    }
     return {
       handled: true,
       ok: false,

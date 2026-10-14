@@ -7,6 +7,7 @@ import { listPanes } from '../lib/split-tree';
 import { respawnWithResume, getScrollbackExcerpt } from '../terminal/terminal-host';
 import { buildContinuityPack } from './failover-continuity';
 import { missionOwnsItsPanes } from '../../shared/mission-recovery-policy';
+import { buildCrossAccountResumeNote } from '../../shared/failover-handoff';
 import {
   isSameAccountFailover,
   resolveContinuityMission,
@@ -24,7 +25,9 @@ const CONTINUITY_NEXT_STEP =
 
 /**
  * Reacts to main-process failover events.
- * Cross-account: pin + fresh session + continuity pack (no native --resume).
+ * Cross-account: pin + fresh session + continuity pack; when Main moved the
+ * conversation to the new account (`nativeResume`, F-1473) the same
+ * conversation is resumed natively with a short note, pack as fallback.
  * Same-account recovery: native resume in the same xterm.
  */
 export function useFailoverController(): void {
@@ -224,11 +227,22 @@ export function useFailoverController(): void {
         });
         respawnWithResume(
           updated,
-          `[nexus] limite em "${event.fromAccountLabel}" → conta "${event.toAccountLabel}" (sessão nova + handoff)`,
-          {
-            mode: 'cross-account-continuity',
-            continuityPack,
-          },
+          event.nativeResume
+            ? `[nexus] limite em "${event.fromAccountLabel}" → conta "${event.toAccountLabel}" (mesma conversa)`
+            : `[nexus] limite em "${event.fromAccountLabel}" → conta "${event.toAccountLabel}" (sessão nova + handoff)`,
+          event.nativeResume
+            ? {
+                mode: 'cross-account-resume',
+                continuityPack,
+                resumeNote: buildCrossAccountResumeNote({
+                  toAccountLabel: event.toAccountLabel,
+                  role: updated.role,
+                }),
+              }
+            : {
+                mode: 'cross-account-continuity',
+                continuityPack,
+              },
         );
       }
       if (isSameAccountFailover(event)) {
@@ -243,7 +257,9 @@ export function useFailoverController(): void {
         'success',
         `Trocado para "${event.toAccountLabel}"${coalesceNote}`,
         `"${event.fromAccountLabel}" atingiu o limite (${event.reason}). ` +
-          'Histórico do terminal mantido; sessão do provider é nova nesta conta — contexto reinjetado via handoff.',
+          (event.nativeResume
+            ? 'A mesma conversa continua nesta conta.'
+            : 'Histórico do terminal mantido; sessão do provider é nova nesta conta — contexto reinjetado via handoff.'),
       );
     });
   }, []);

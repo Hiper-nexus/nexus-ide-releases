@@ -25,6 +25,7 @@ const terminal = vi.hoisted(() => ({
   markPaneClosingDeliberately: vi.fn(),
   markPersistedAuthorityOnSpawn: vi.fn(),
   onPaneSessionChange: vi.fn(() => vi.fn()),
+  paneResumedExactly: vi.fn(() => false),
   respawnMissionPaneFresh: vi.fn(async () => 'session-new'),
   submitPromptToPaneConfirmed: vi.fn(async () => true),
   waitForHealthyPaneSession: vi.fn(async () => 'session-new' as string | null),
@@ -831,6 +832,7 @@ describe('orchestration bridge pane recovery', () => {
       'session-old',
       75_000,
       'recovery-a',
+      false,
     );
     expect(rebindMissionOrchestrator).toHaveBeenCalledWith(
       'mission-a',
@@ -921,6 +923,7 @@ describe('orchestration bridge pane recovery', () => {
       'session-old',
       75_000,
       'recovery-f969',
+      false,
     );
     expect(
       listPanes(useLayoutStore.getState().root).find((entry) => entry.id === 'pane-orch')?.accountId,
@@ -942,6 +945,88 @@ describe('orchestration bridge pane recovery', () => {
       paneId: 'pane-orch',
       sessionId: 'session-new',
     });
+    act(() => mounted.root.unmount());
+  });
+
+  it.each([
+    ['retomada exata recebe só a nota', true, 'NOTA: mesma conversa'],
+    ['sem retomada exata recebe o pacote inteiro', false, 'PACOTE completo'],
+  ])('F-1473: troca de conta com histórico compartilhado — %s', async (_label, exact, submitted) => {
+    let recoveryHandler: ((req: MissionPaneRecoveryRequest) => void) | null = null;
+    const sendPaneRecoveryResult = vi.fn();
+    const rebindMissionOrchestrator = vi.fn(async () => ({ ok: true }));
+    terminal.paneResumedExactly.mockReturnValue(exact);
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        mission: missionBridge(),
+        orch: {
+          onPaneSpawnRequest: listener(),
+          onPaneRecoveryRequest: vi.fn(
+            (cb: (req: MissionPaneRecoveryRequest) => void) => {
+              recoveryHandler = cb;
+              return vi.fn();
+            },
+          ),
+          onBrowserOpenRequest: listener(),
+          onPaneCloseRequest: listener(),
+          onPaneParkRequest: listener(),
+          onMissionsChanged: listener(),
+          onHandoffsChanged: listener(),
+          onTodosChanged: listener(),
+          onSquadsChanged: listener(),
+          syncPanes: vi.fn(),
+          sendPaneSpawnResult: vi.fn(),
+          sendPaneRecoveryResult,
+          sendBrowserOpenResult: vi.fn(),
+          rebindMissionOrchestrator,
+        },
+      },
+    });
+    useLayoutStore.setState({
+      root: {
+        kind: 'leaf',
+        id: 'leaf-orch',
+        pane: {
+          id: 'pane-orch',
+          kind: 'cli-agent' as const,
+          title: 'Orchestrator',
+          adapterId: 'claude',
+          accountId: 'acct-a',
+          role: 'orchestrator' as const,
+        },
+      },
+      focusedPaneId: 'pane-orch',
+    });
+    const mounted = mount();
+
+    await act(async () => {
+      recoveryHandler?.({
+        requestId: `recovery-1473-${exact}`,
+        missionId: 'mission-a',
+        paneId: 'pane-orch',
+        expectedSessionId: 'session-old',
+        role: 'orchestrator',
+        pane: { adapterId: 'claude', accountId: 'acct-b', title: 'Orchestrator', role: 'orchestrator' },
+        recap: 'PACOTE completo',
+        resumeNote: 'NOTA: mesma conversa',
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(terminal.respawnMissionPaneFresh).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'pane-orch', accountId: 'acct-b' }),
+      'session-old',
+      75_000,
+      `recovery-1473-${exact}`,
+      true,
+    );
+    expect(terminal.paneResumedExactly).toHaveBeenCalledWith('pane-orch', 'session-new');
+    expect(terminal.submitPromptToPaneConfirmed).toHaveBeenCalledTimes(1);
+    expect(terminal.submitPromptToPaneConfirmed).toHaveBeenCalledWith('pane-orch', submitted, 'session-new');
+    expect(sendPaneRecoveryResult).toHaveBeenCalledWith(expect.objectContaining({ ok: true, sessionId: 'session-new' }));
+    terminal.paneResumedExactly.mockReturnValue(false);
     act(() => mounted.root.unmount());
   });
 

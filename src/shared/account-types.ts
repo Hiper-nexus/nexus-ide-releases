@@ -68,7 +68,8 @@ export const renameAccountSchema = z.object({
 
 /**
  * Main → renderer: a pane's account hit a limit.
- * Cross-account: pin + fresh session + continuity pack (not native --resume).
+ * Cross-account: pin + fresh session + continuity pack, or native resume of
+ * the same conversation when `nativeResume` (F-1473).
  * Same-account recovery: native resume may still apply.
  */
 export interface FailoverEvent {
@@ -129,9 +130,16 @@ export interface FailoverEvent {
   fromAccountId?: string;
   /**
    * True when credentials change (multi-account handoff). Renderer must NOT
-   * exact-resume a provider session id from the previous account.
+   * exact-resume a provider session id from the previous account — unless
+   * `nativeResume` says Main moved that conversation to the new account.
    */
   crossAccount?: boolean;
+  /**
+   * F-1473: the CLI's history is shared across accounts (Claude) and Main
+   * already moved this pane's conversation to `toAccountId`. The renderer
+   * resumes it natively with a short note; the continuity pack is the fallback.
+   */
+  nativeResume?: boolean;
   /** True when this pane re-used a recent switch decision for the same from-account. */
   coalesced?: boolean;
   /** Mission bound to the failing pane when known (continuity pack). */
