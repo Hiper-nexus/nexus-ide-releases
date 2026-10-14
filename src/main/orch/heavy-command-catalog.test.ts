@@ -60,12 +60,25 @@ describe('commandKind still meters programs that do heavy work', () => {
     'env NODE_OPTIONS= NEXUS_HEAVY_HELPER=1 node /opt/node/job-launch.cjs tests /bin/bash -c "npm test"',
     'NEXUS_HEAVY_HELPER=1 /usr/local/bin/node ./resources/heavy-command/job-launch.cjs build /bin/sh -c "make"',
   ])('%s is already admitted', (command) => {
-    expect(catalog.commandKind(command)).toBeNull();
+    const previous = process.env.NEXUS_HEAVY_DIR;
+    delete process.env.NEXUS_HEAVY_DIR;
+    try { expect(catalog.commandKind(command)).toBeNull(); }
+    finally { if (previous === undefined) delete process.env.NEXUS_HEAVY_DIR; else process.env.NEXUS_HEAVY_DIR = previous; }
   });
 
   it('does not treat the helper flag as a general exemption', () => {
     expect(catalog.commandKind('NEXUS_HEAVY_HELPER=1 npx vitest run src/a.test.ts')).toBe('tests');
     expect(catalog.commandKind('node /tmp/job-launch.cjs tests /bin/sh -c "npm test"')).toBe('build');
+  });
+
+  it('exempts only the job-launch inside NEXUS_HEAVY_DIR when that env is set', () => {
+    const previous = process.env.NEXUS_HEAVY_DIR;
+    process.env.NEXUS_HEAVY_DIR = '/Applications/NexusIDE.app/Contents/Resources/heavy-command';
+    try {
+      expect(catalog.commandKind('NEXUS_HEAVY_HELPER=1 node /tmp/job-launch.cjs tests /bin/sh -c "npm test"')).toBe('build');
+      expect(catalog.commandKind('NEXUS_HEAVY_HELPER=1 node /Applications/NexusIDE.app/Contents/Resources/heavy-command/job-launch.cjs tests /bin/sh -c "npm test"')).toBeNull();
+      expect(catalog.commandKind('NEXUS_HEAVY_HELPER=1 node /Applications/NexusIDE.app/Contents/Resources/heavy-command/job-launch.cjs tests /bin/sh -c "npm test" && npm run build')).toBe('build');
+    } finally { if (previous === undefined) delete process.env.NEXUS_HEAVY_DIR; else process.env.NEXUS_HEAVY_DIR = previous; }
   });
 
   it('keeps dev servers persistent and unmetered', () => {

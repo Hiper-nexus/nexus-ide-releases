@@ -512,7 +512,11 @@ function isNodeJobLaunch(words) {
   // ponytail: first positional is the script. `node -r ./hook.js job-launch.cjs`
   // keeps the preload value and stays metered; that is not the nested wrap.
   const script = words.slice(1).find((arg) => arg !== '--' && !arg.startsWith('-'));
-  return Boolean(script && path.basename(String(script).replace(/\\/g, '/')) === 'job-launch.cjs');
+  if (!script || path.basename(String(script).replace(/\\/g, '/')) !== 'job-launch.cjs') return false;
+  const dir = process.env.NEXUS_HEAVY_DIR;
+  if (!dir) return true;
+  // ponytail: path text, not realpath. Another path that links here stays metered.
+  return path.resolve(String(script)) === path.resolve(dir, 'job-launch.cjs');
 }
 function wordsKind(words, seg, depth) {
   if (depth > MAX_DEPTH) return 'build';
