@@ -11,6 +11,7 @@ import {
   installStyleContract,
   markFocusVisible,
   styleLengthPx,
+  styleTracks,
 } from '../style-contract.test-utils';
 
 const rendererStylesPath = path.resolve(
@@ -117,6 +118,86 @@ function MissionStyleFixture() {
         </div>
       </section>
     </>
+  );
+}
+
+/**
+ * Etapa Equipe: área rolável + dock irmãos, e um cartão de papel por variante.
+ * Mesma árvore de classes do TeamStep/MissionSetupRosterRow (sem os dados).
+ */
+function TeamRow({ compact = false }: { compact?: boolean }) {
+  return (
+    <li
+      className={
+        compact ? 'mission-roster-row mission-roster-row--compact' : 'mission-roster-row'
+      }
+    >
+      <div className="mission-roster-row__card">
+        <div className="mission-roster-row__summary">
+          <span className="mission-roster-row__avatar">⚒</span>
+          <div className="mission-roster-row__identity">
+            <strong>Implementar interface</strong>
+            <span className="mission-roster-row__meta">
+              <span className="mission-roster-row__role">Execução</span>
+            </span>
+            <div className="mission-roster-row__controls">
+              <label className="mission-roster-row__control">
+                <span>Ferramenta</span>
+                <select><option>Codex</option></select>
+              </label>
+              <label className="mission-roster-row__control mission-roster-row__control--model">
+                <span>Modelo</span>
+                <select><option>gpt-6.1-sol</option></select>
+              </label>
+              <label className="mission-roster-row__control">
+                <span>Esforço</span>
+                <select><option>High</option></select>
+              </label>
+            </div>
+          </div>
+          <span className="mission-roster-row__status">Pronto</span>
+          <button
+            type="button"
+            className="mission-setup__button mission-setup__button--quiet mission-roster-row__remove"
+            aria-label="Remover Implementar interface"
+          >
+            x
+          </button>
+        </div>
+        <div className="mission-roster-row__more">
+          <details className="mission-setup__disclosure mission-roster-row__details">
+            <summary>Instruções para Implementar interface</summary>
+          </details>
+        </div>
+      </div>
+    </li>
+  );
+}
+
+function DockedTeamFixture({ compact = false }: { compact?: boolean }) {
+  return (
+    <section className="mission-setup">
+      <div className="mission-setup__canvas">
+        <section className="mission-setup__step mission-setup__step--docked">
+          <div className="mission-setup__step-scroll">
+            <ul className="mission-roster">
+              <TeamRow compact={compact} />
+              <TeamRow compact={compact} />
+            </ul>
+          </div>
+          <div className="mission-setup__step-dock">
+            <footer className="mission-setup__step-actions">
+              <button type="button" className="mission-setup__button mission-setup__button--secondary">
+                Voltar para missão
+              </button>
+              <button type="button" className="mission-setup__button mission-setup__button--primary">
+                Continuar para revisão
+              </button>
+            </footer>
+          </div>
+        </section>
+      </div>
+    </section>
   );
 }
 
@@ -313,6 +394,212 @@ describe('Mission Setup and Mission Board style contracts', () => {
     expect(missionSetupCss).toMatch(
       /\.mission-setup__step\s*>\s*\.mission-setup__step-actions/,
     );
+  });
+
+  describe('team step: actions dock and role cards', () => {
+    it('keeps the dock out of the scroller: the step clips, only the scroll region scrolls', () => {
+      const style = installStyleContract(missionStyles, {
+        width: 1_400,
+        containerWidth: 1_200,
+      });
+      const host = render(<DockedTeamFixture />);
+      const scroll = host.querySelector<HTMLElement>('.mission-setup__step-scroll')!;
+      const dock = host.querySelector<HTMLElement>('.mission-setup__step-dock')!;
+      const actions = host.querySelector<HTMLElement>('.mission-setup__step-actions')!;
+
+      // O passo com dock não rola: quem rola é só `.mission-setup__step-scroll`.
+      const dockedStep = '.mission-setup__step.mission-setup__step--docked';
+      expect(activeCssomDeclaration(style, dockedStep, 'overflow')).toBe('hidden');
+      expect(
+        Number.parseFloat(activeCssomDeclaration(style, dockedStep, 'padding-bottom')),
+      ).toBe(0);
+      expect(computedCssValue(scroll, 'overflow-y')).toBe('auto');
+      // A barra dentro do dock é estática: o sticky do rodapé de passo só vale
+      // para filho DIRETO do passo, que era justamente o que cobria os cartões.
+      expect(computedCssValue(actions, 'position')).not.toBe('sticky');
+      expect(computedCssValue(dock, 'position')).not.toBe('sticky');
+      // Dock opaco e separado por fio: nada rolando aparece por trás dele.
+      expect(missionSetupCss).toMatch(
+        /\.mission-setup__step-dock\s*\{[^}]*background:\s*var\(--bg\)[^}]*border-top:\s*1px solid var\(--border\)/,
+      );
+      expect(missionSetupCss).toMatch(
+        /\.mission-setup__step--docked\s*>\s*\.mission-setup__step-dock/,
+      );
+    });
+
+    it('reserves the same scrollbar gutter in the list and in the dock, so the buttons share the cards edge', () => {
+      // A barra clássica come ~11px da lista e nada do dock: sem a mesma calha
+      // reservada nos dois, o Continuar passava da borda dos cartões.
+      expect(missionSetupCss).toMatch(
+        /\.mission-setup__step-scroll\s*\{[^}]*scrollbar-gutter:\s*stable/,
+      );
+      expect(missionSetupCss).toMatch(
+        /\.mission-setup__step--docked\s*>\s*\.mission-setup__step-dock\s*\{[^}]*overflow:\s*hidden[^}]*scrollbar-gutter:\s*stable/,
+      );
+    });
+
+    it('keeps the in-card problem reason in the danger color despite the section paragraph rule', () => {
+      // `.mission-setup__continuous-section p` (0,1,1) vence `.mission-setup__inline-error`
+      // (0,1,0): o motivo saía cinza. jsdom não aplica especificidade, então a
+      // regra mais forte fica travada na fonte.
+      expect(missionSetupCss).toMatch(
+        /\.mission-roster-row__card\s+\.mission-setup__inline-error\s*\{[^}]*color:\s*var\(--danger\)/,
+      );
+    });
+
+    it.each([
+      {
+        containerWidth: 900,
+        columns: 3,
+        nameWrap: 'nowrap',
+        headerRows: ["'avatar name status remove'", "'avatar role status remove'"],
+      },
+      {
+        containerWidth: 520,
+        columns: 1,
+        nameWrap: 'normal',
+        headerRows: ["'avatar name name remove'", "'avatar role status status'"],
+      },
+    ])(
+      'lays the Ferramenta/Modelo/Esforço controls on $columns track(s) in a $containerWidth px canvas, the same in every card',
+      ({ containerWidth, columns, nameWrap, headerRows }) => {
+        installStyleContract(missionStyles, { width: 1_400, containerWidth });
+        const host = render(<DockedTeamFixture />);
+        const controls = [
+          ...host.querySelectorAll<HTMLElement>('.mission-roster-row__controls'),
+        ];
+
+        expect(controls).toHaveLength(2);
+        for (const control of controls) {
+          expect(computedCssValue(control, 'display')).toBe('grid');
+          expect(styleTracks(control, 'grid-template-columns')).toHaveLength(columns);
+        }
+        expect(computedCssValue(controls[0]!, 'grid-template-columns')).toBe(
+          computedCssValue(controls[1]!, 'grid-template-columns'),
+        );
+        // Canvas estreito: o nome do papel quebra em vez de virar "Implementar i…".
+        expect(
+          computedCssValue(
+            host.querySelector<HTMLElement>('.mission-roster-row__identity > strong')!,
+            'white-space',
+          ),
+        ).toBe(nameWrap);
+        // E o estado sai da linha do nome (que ganha a largura toda) para a do papel.
+        const areas = computedCssValue(
+          host.querySelector<HTMLElement>('.mission-roster-row__summary')!,
+          'grid-template-areas',
+        );
+        for (const row of headerRows) expect(areas).toContain(row);
+      },
+    );
+
+    it('puts name, status and remove in one header grid whose remove column is always reserved', () => {
+      installStyleContract(missionStyles, { width: 1_400, containerWidth: 1_200 });
+      const host = render(<DockedTeamFixture />);
+      const summary = host.querySelector<HTMLElement>('.mission-roster-row__summary')!;
+      const identity = host.querySelector<HTMLElement>('.mission-roster-row__identity')!;
+      const status = host.querySelector<HTMLElement>('.mission-roster-row__status')!;
+      const remove = host.querySelector<HTMLElement>('.mission-roster-row__remove')!;
+      const controls = host.querySelector<HTMLElement>('.mission-roster-row__controls')!;
+
+      expect(computedCssValue(summary, 'display')).toBe('grid');
+      // A identidade se dissolve na grade do cabeçalho: nome e papel de um lado,
+      // estado e remover sempre nas mesmas colunas, controles na faixa de baixo.
+      expect(computedCssValue(identity, 'display')).toBe('contents');
+      expect(computedCssValue(summary, 'grid-template-areas')).toContain("'avatar name status remove'");
+      expect(computedCssValue(summary, 'grid-template-areas')).toContain("'controls controls controls controls'");
+      expect(computedCssValue(status, 'grid-area')).toBe('status');
+      expect(computedCssValue(remove, 'grid-area')).toBe('remove');
+      expect(computedCssValue(controls, 'grid-area')).toBe('controls');
+    });
+
+    it('keeps the remove target at the secondary-target minimum (32px, larger on touch/narrow)', () => {
+      installStyleContract(missionStyles, { width: 1_400, containerWidth: 1_200 });
+      const desktop = render(<DockedTeamFixture />);
+      const desktopRemove = desktop.querySelector<HTMLElement>('.mission-roster-row__remove')!;
+      expect(styleLengthPx(desktopRemove, 'width')).toBeGreaterThanOrEqual(32);
+      expect(styleLengthPx(desktopRemove, 'min-height')).toBeGreaterThanOrEqual(32);
+      const desktopSelect = desktop.querySelector<HTMLElement>('.mission-roster-row__control select')!;
+      expect(styleLengthPx(desktopSelect, 'min-height')).toBe(32);
+      // Controle só de ícone: quem navega por teclado precisa enxergar onde está.
+      markFocusVisible(desktopRemove);
+      expect(computedCssValue(desktopRemove, 'outline')).not.toBe('none');
+      expect(styleLengthPx(desktopRemove, 'outline')).toBeGreaterThanOrEqual(2);
+
+      document.head
+        .querySelectorAll('style[data-v2-style-contract]')
+        .forEach((style) => style.remove());
+      installStyleContract(missionStyles, {
+        width: 700,
+        containerWidth: 600,
+        pointer: 'coarse',
+      });
+      const touch = render(<DockedTeamFixture />, 700);
+      const touchRemove = touch.querySelector<HTMLElement>('.mission-roster-row__remove')!;
+      expect(styleLengthPx(touchRemove, 'width')).toBeGreaterThanOrEqual(44);
+      expect(styleLengthPx(touchRemove, 'min-height')).toBeGreaterThanOrEqual(44);
+      // Os selects do cartão crescem junto com o botão: alvo de toque coerente.
+      const touchSelect = touch.querySelector<HTMLElement>('.mission-roster-row__control select')!;
+      expect(styleLengthPx(touchSelect, 'min-height')).toBeGreaterThanOrEqual(44);
+    });
+
+    it('writes the preset label and captions in sentence case and keeps the technical panel neutral', () => {
+      installStyleContract(missionStyles, { width: 1_400, containerWidth: 1_200 });
+      const host = render(
+        <section className="mission-setup">
+          <div className="mission-setup__presets">
+            <span className="mission-setup__presets-label">Tamanho da equipe</span>
+            <div className="mission-setup__preset-row" role="group" aria-label="Tamanho da equipe">
+              <button type="button" className="mission-setup__preset" aria-pressed="false">
+                <strong>3</strong>
+                <span>Enxuta</span>
+              </button>
+            </div>
+          </div>
+        </section>,
+      );
+      for (const element of [
+        host.querySelector<HTMLElement>('.mission-setup__presets-label')!,
+        host.querySelector<HTMLElement>('.mission-setup__preset span')!,
+      ]) {
+        expect(computedCssValue(element, 'text-transform')).not.toBe('uppercase');
+      }
+      // Painel de Configurações técnicas: neutro, sem tinta de acento (acento é
+      // estado, DESIGN.md §2); tingido de rosa ele lia como caixa de erro.
+      const technicalPanel =
+        missionSetupCss.match(/\.mission-roster-row__technical-grid\s*\{[^}]*\}/)?.[0] ?? '';
+      expect(technicalPanel).not.toBe('');
+      expect(technicalPanel).not.toMatch(/accent/);
+    });
+
+    it('writes the control labels in sentence case on the team card and leaves the express card alone', () => {
+      installStyleContract(missionStyles, { width: 1_400, containerWidth: 1_200 });
+      const team = render(<DockedTeamFixture />);
+      const teamLabel = team.querySelector<HTMLElement>('.mission-roster-row__control > span')!;
+      expect(computedCssValue(teamLabel, 'text-transform')).toBe('none');
+
+      const express = render(<DockedTeamFixture compact />);
+      const expressRow = express.querySelector<HTMLElement>('.mission-roster-row--compact')!;
+      expect(
+        computedCssValue(
+          expressRow.querySelector<HTMLElement>('.mission-roster-row__control > span')!,
+          'text-transform',
+        ),
+      ).toBe('uppercase');
+      // Expresso segue com os controles em fila e a linha em flex: só a Equipe mudou.
+      expect(
+        computedCssValue(
+          expressRow.querySelector<HTMLElement>('.mission-roster-row__controls')!,
+          'display',
+        ),
+      ).toBe('flex');
+      expect(
+        computedCssValue(
+          expressRow.querySelector<HTMLElement>('.mission-roster-row__summary')!,
+          'display',
+        ),
+      ).toBe('flex');
+    });
   });
 
   it('removes active mission motion declarations under reduced motion', () => {

@@ -379,3 +379,41 @@ com energia passando. Código: `components/mission/MissionGraph.tsx`,
   `prefers-reduced-motion` tira o movimento e os pacotes. O cabo vivo segue
   marcado pela cor e pelo conector aceso. Pink City só para vivo e
   selecionado.
+
+## 15. Passos da missão com lista longa (Equipe e Revisão)
+
+Pedido do operador (14/10): a barra "Voltar / Continuar" boiava no meio da
+lista de papéis, cortando um cartão ao meio. Código: `TeamStep.tsx`,
+`MissionSetupRosterRow.tsx` e `mission-setup.css`.
+
+- **A barra de ações nunca cobre conteúdo.** Passo com lista que pode passar da
+  janela usa `.mission-setup__step--docked` (Revisão: `--review`): quem rola é
+  `.mission-setup__step-scroll`, e `.mission-setup__step-dock` é irmão dela,
+  opaco (`--bg`) e separado por fio de 1px. `position: sticky; bottom: 0` dentro
+  do scroller do passo é proibido: ele respeita o `padding-bottom` do scroller e
+  deixa a barra boiando sobre a lista. Passo curto (Missão) segue com o rodapé
+  sticky de `.mission-setup__step > .mission-setup__step-actions`.
+- **Motivo do bloqueio mora no dock**, abaixo do botão que ele descreve
+  (`aria-describedby`), e não no fim da lista.
+- **Cartão de papel (variante cheia).** Hierarquia: nome e papel, depois o
+  estado, depois a configuração. O cabeçalho é uma grade (avatar, nome e papel,
+  estado, remover) igual em todo cartão; a coluna de remover é reservada mesmo
+  quando o papel não pode sair, então o estado não muda de lugar. Ferramenta,
+  Modelo e Esforço ficam numa grade de três trilhos (uma coluna abaixo de 600px
+  de canvas). Rótulo de campo em caixa normal, sem eyebrow em caixa alta.
+- **Remover é botão só de ícone** (`PixelIcon trash`) com `aria-label` e `title`
+  "Remover <papel>", alvo de 32px (maior no toque). Ordem de foco do cartão:
+  controles, remover, detalhes. Depois de remover, o foco vai para o resumo dos
+  detalhes do vizinho, nunca para o Remover dele. A variante `--compact`
+  (Expresso) não muda.
+- **Lista e dock partilham a calha de rolagem** (`scrollbar-gutter: stable` nos
+  dois): a barra clássica come largura da lista, e sem a mesma reserva no dock o
+  botão primário passava ~11px da borda dos cartões.
+- **Canvas estreito (até 600px):** o estado desce para a linha do papel, à
+  direita, e o nome do papel quebra em vez de virar reticências; os selects
+  seguem o token de alvo (maior no toque).
+- **Problema no papel:** selo "Precisa de ajuste" e o motivo, em `--danger`, no
+  cartão, ligado ao select de Ferramenta por `aria-describedby`. A contagem de
+  integrantes é `role="status"`, então adicionar, remover e presets são
+  anunciados. O painel de Configurações técnicas é neutro: acento é estado, não
+  tinta de painel.

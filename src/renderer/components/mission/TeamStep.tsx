@@ -309,16 +309,16 @@ export function issueForAgent(
     (item) => item.id === agent.cli,
   );
   if (!adapter) {
-    return 'Ferramenta não instalada nesta máquina — troque a ferramenta deste papel.';
+    return 'Ferramenta não instalada nesta máquina. Troque a ferramenta deste papel.';
   }
   if (
     !isAdapterModelAuthenticated(adapter, inventory.providers, agent.model)
   ) {
-    return 'Ferramenta desligada nas configurações — religue ou troque a ferramenta.';
+    return 'Ferramenta desligada nas configurações. Religue ou troque a ferramenta.';
   }
   if (agent.category === 'orchestrator') {
     if (!canCoordinateMission(adapter)) {
-      return `${adapter.label} não consegue coordenar uma missão — troque a ferramenta deste papel.`;
+      return `${adapter.label} não consegue coordenar uma missão. Troque a ferramenta deste papel.`;
     }
     const provider = providerForAdapter(agent.cli, inventory.providers);
     if (provider?.authStrategy === 'login-needed') {
@@ -363,9 +363,9 @@ export function TeamStep({
     const rows =
       rosterRef.current?.querySelectorAll<HTMLElement>('.mission-roster-row');
     const adjacentRow = rows?.[removedIndex] ?? rows?.[removedIndex - 1];
-    const adjacentControl = adjacentRow?.querySelector<HTMLElement>(
-      'button:not(:disabled), summary',
-    );
+    // Foco em controle inofensivo (o resumo dos detalhes), nunca no Remover do
+    // vizinho: Enter de novo apagaria o próximo papel sem ninguém ter pedido.
+    const adjacentControl = adjacentRow?.querySelector<HTMLElement>('summary');
     (adjacentControl ?? addRoleControlRef.current)?.focus();
   }, [roster]);
 
@@ -593,223 +593,235 @@ export function TeamStep({
   };
 
   return (
-    <section className="mission-setup__step" aria-labelledby="mission-team-title">
-      <header className="mission-setup__step-header">
-        <p className="mission-setup__step-kicker">Etapa 2 · Equipe</p>
-        <div className="mission-setup__team-cafe" aria-hidden="true">
-          <CoffeeCup size={64} />
-        </div>
-        <h1 id="mission-team-title" ref={headingRef} tabIndex={-1}>
-          Monte a equipe
-        </h1>
-        <p>
-          Cada cartão é um papel. Abra só o que quiser ajustar — o resto já vem
-          pronto com a ferramenta conectada.
-        </p>
-      </header>
+    <section
+      className="mission-setup__step mission-setup__step--docked"
+      aria-labelledby="mission-team-title"
+    >
+      <div className="mission-setup__step-scroll">
+        <header className="mission-setup__step-header">
+          <p className="mission-setup__step-kicker">Etapa 2 · Equipe</p>
+          <div className="mission-setup__team-cafe" aria-hidden="true">
+            <CoffeeCup size={64} />
+          </div>
+          <h1 id="mission-team-title" ref={headingRef} tabIndex={-1}>
+            Monte a equipe
+          </h1>
+          <p>
+            Cada cartão é um papel da equipe. A recomendação já vem pronta:
+            ajuste só o que quiser.
+          </p>
+        </header>
 
-      <div className="mission-setup__continuous-section">
-        <div className="mission-setup__section-heading">
-          <h2>Papéis da missão</h2>
-          <span className="mission-setup__count-chip">
-            {roster.length} {roster.length === 1 ? 'integrante' : 'integrantes'}
-          </span>
-        </div>
+        <div className="mission-setup__continuous-section">
+          <div className="mission-setup__section-heading">
+            <h2>Papéis da missão</h2>
+            <span className="mission-setup__count-chip" role="status">
+              {roster.length} {roster.length === 1 ? 'integrante' : 'integrantes'}
+            </span>
+          </div>
 
-        {inventory.status === 'ready' &&
-          inventory.readiness.hasOperationalRoute && (
-            <div className="mission-setup__presets">
-              <span className="mission-setup__presets-label">
-                Tamanho da equipe
-              </span>
-              <div
-                className="mission-setup__preset-row"
-                role="group"
-                aria-label="Tamanho da equipe"
-              >
-                {TEAM_PRESETS.map((preset) => (
-                  <button
-                    key={preset.total}
-                    type="button"
-                    className="mission-setup__preset"
-                    aria-pressed={roster.length === preset.total}
-                    onClick={() => applyTeamPreset(preset.total)}
-                  >
-                    <strong>{preset.total}</strong>
-                    <span>{preset.label}</span>
-                  </button>
-                ))}
+          {inventory.status === 'ready' &&
+            inventory.readiness.hasOperationalRoute && (
+              <div className="mission-setup__presets">
+                <span className="mission-setup__presets-label">
+                  Tamanho da equipe
+                </span>
+                <div
+                  className="mission-setup__preset-row"
+                  role="group"
+                  aria-label="Tamanho da equipe"
+                >
+                  {TEAM_PRESETS.map((preset) => (
+                    <button
+                      key={preset.total}
+                      type="button"
+                      className="mission-setup__preset"
+                      aria-pressed={roster.length === preset.total}
+                      onClick={() => applyTeamPreset(preset.total)}
+                    >
+                      <strong>{preset.total}</strong>
+                      <span>{preset.label}</span>
+                    </button>
+                  ))}
+                </div>
+                <p className="mission-setup__hint">
+                  Equipes maiores fazem mais partes do trabalho ao mesmo tempo.
+                  O limite da máquina continua valendo.
+                </p>
               </div>
-              <p className="mission-setup__hint">
-                Mais gente = mais terminais em paralelo. O limite da máquina
-                continua valendo.
-              </p>
+            )}
+
+          {recommendationStale && (
+            <div
+              className="mission-setup__error-summary"
+              role="status"
+              aria-live="polite"
+            >
+              <strong>
+                A equipe não corresponde mais ao tipo de trabalho
+              </strong>
+              <span>
+                A composição personalizada foi preservada com permissões seguras.
+              </span>
+              <button
+                type="button"
+                className="mission-setup__button mission-setup__button--secondary"
+                disabled={
+                  inventory.status !== 'ready' ||
+                  !inventory.readiness.hasOperationalRoute
+                }
+                onClick={onRefreshRecommendation}
+              >
+                Atualizar recomendação
+              </button>
             </div>
           )}
 
-        {recommendationStale && (
-          <div
-            className="mission-setup__error-summary"
-            role="status"
-            aria-live="polite"
-          >
-            <strong>
-              A equipe não corresponde mais ao tipo de trabalho
-            </strong>
-            <span>
-              A composição personalizada foi preservada com permissões seguras.
-            </span>
-            <button
-              type="button"
-              className="mission-setup__button mission-setup__button--secondary"
-              disabled={
-                inventory.status !== 'ready' ||
-                !inventory.readiness.hasOperationalRoute
-              }
-              onClick={onRefreshRecommendation}
+          {inventory.status === 'loading' && (
+            <p className="mission-setup__status" role="status" aria-live="polite">
+              Conferindo as ferramentas disponíveis…
+            </p>
+          )}
+
+          {inventory.status === 'error' && (
+            <div
+              ref={errorRef}
+              className="mission-setup__error-summary"
+              role="alert"
+              tabIndex={-1}
             >
-              Atualizar recomendação
-            </button>
-          </div>
-        )}
+              <strong>Não foi possível conferir a equipe.</strong>
+              <span>{inventory.error}</span>
+              <button
+                type="button"
+                className="mission-setup__button mission-setup__button--secondary"
+                onClick={onRetryInventory}
+              >
+                Tentar carregar equipe
+              </button>
+            </div>
+          )}
 
-        {inventory.status === 'loading' && (
-          <p className="mission-setup__status" role="status" aria-live="polite">
-            Conferindo as ferramentas disponíveis…
-          </p>
-        )}
-
-        {inventory.status === 'error' && (
-          <div
-            ref={errorRef}
-            className="mission-setup__error-summary"
-            role="alert"
-            tabIndex={-1}
-          >
-            <strong>Não foi possível conferir a equipe.</strong>
-            <span>{inventory.error}</span>
-            <button
-              type="button"
-              className="mission-setup__button mission-setup__button--secondary"
-              onClick={onRetryInventory}
+          {inventory.status === 'ready' && !inventory.readiness.hasOperationalRoute && (
+            <div
+              ref={errorRef}
+              className="mission-setup__error-summary"
+              role="alert"
+              tabIndex={-1}
             >
-              Tentar carregar equipe
-            </button>
-          </div>
-        )}
+              <strong>Não há uma equipe segura disponível.</strong>
+              <span>
+                Conecte uma ferramenta capaz de coordenar e outra capaz de receber
+                trabalho antes de continuar.
+              </span>
+            </div>
+          )}
 
-        {inventory.status === 'ready' && !inventory.readiness.hasOperationalRoute && (
-          <div
-            ref={errorRef}
-            className="mission-setup__error-summary"
-            role="alert"
-            tabIndex={-1}
-          >
-            <strong>Não há uma equipe segura disponível.</strong>
-            <span>
-              Conecte uma ferramenta capaz de coordenar e outra capaz de receber
-              trabalho antes de continuar.
-            </span>
-          </div>
-        )}
+          {roster.length > 0 && (
+            <ul
+              ref={rosterRef}
+              className="mission-roster"
+              aria-label="Papéis da equipe"
+            >
+              {roster.map((agent) => (
+                <MissionSetupRosterRow
+                  key={agent.id}
+                  agent={agent}
+                  candidates={
+                    agent.category === 'orchestrator'
+                      ? inventory.readiness.verifiedMaestros
+                      : inventory.readiness.qualifiedWorkers
+                  }
+                  providers={inventory.providers}
+                  accounts={inventory.accounts}
+                  issue={issueForAgent(agent, inventory)}
+                  removable={
+                    agent.category !== 'orchestrator' || coordinatorCount > 1
+                  }
+                  onChange={updateAgent}
+                  onRemove={() => removeAgent(agent)}
+                />
+              ))}
+            </ul>
+          )}
+        </div>
 
-        {roster.length > 0 && (
-          <ul
-            ref={rosterRef}
-            className="mission-roster"
-            aria-label="Papéis da equipe"
-          >
-            {roster.map((agent) => (
-              <MissionSetupRosterRow
-                key={agent.id}
-                agent={agent}
-                candidates={
-                  agent.category === 'orchestrator'
-                    ? inventory.readiness.verifiedMaestros
-                    : inventory.readiness.qualifiedWorkers
-                }
-                providers={inventory.providers}
-                accounts={inventory.accounts}
-                issue={issueForAgent(agent, inventory)}
-                removable={
-                  agent.category !== 'orchestrator' || coordinatorCount > 1
-                }
-                onChange={updateAgent}
-                onRemove={() => removeAgent(agent)}
-              />
-            ))}
-          </ul>
-        )}
-      </div>
-
-      {inventory.status === 'ready' && inventory.readiness.hasOperationalRoute && (
-        <div className="mission-setup__continuous-section mission-setup__team-actions">
-          <h2>Adicionar papel</h2>
-          <div className="mission-setup__inline-actions mission-setup__role-chips">
-            {coordinatorCount === 0 && (
+        {inventory.status === 'ready' && inventory.readiness.hasOperationalRoute && (
+          <div className="mission-setup__continuous-section mission-setup__team-actions">
+            <h2>Adicionar papel</h2>
+            <div className="mission-setup__inline-actions mission-setup__role-chips">
+              {coordinatorCount === 0 && (
+                <button
+                  type="button"
+                  className="mission-setup__role-chip"
+                  onClick={addCoordinator}
+                >
+                  <span aria-hidden="true">♛</span>
+                  Adicionar coordenação
+                </button>
+              )}
+              <button
+                ref={addRoleControlRef}
+                type="button"
+                className="mission-setup__role-chip"
+                onClick={() => addAgent('executor')}
+              >
+                <span aria-hidden="true">⚒</span>
+                Adicionar implementação
+              </button>
               <button
                 type="button"
                 className="mission-setup__role-chip"
-                onClick={addCoordinator}
+                onClick={() => addAgent('reviewer')}
               >
-                <span aria-hidden="true">♛</span>
-                Adicionar coordenação
+                <span aria-hidden="true">◎</span>
+                Adicionar verificação
               </button>
-            )}
-            <button
-              ref={addRoleControlRef}
-              type="button"
-              className="mission-setup__role-chip"
-              onClick={() => addAgent('executor')}
-            >
-              <span aria-hidden="true">⚒</span>
-              Adicionar implementação
-            </button>
-            <button
-              type="button"
-              className="mission-setup__role-chip"
-              onClick={() => addAgent('reviewer')}
-            >
-              <span aria-hidden="true">◎</span>
-              Adicionar verificação
-            </button>
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {editError && (
-        <div
-          ref={errorRef}
-          className="mission-setup__error-summary"
-          role="alert"
-          tabIndex={-1}
-        >
-          {editError}
-        </div>
-      )}
+        {editError && (
+          <div
+            ref={errorRef}
+            className="mission-setup__error-summary"
+            role="alert"
+            tabIndex={-1}
+          >
+            {editError}
+          </div>
+        )}
+      </div>
 
-      <footer className="mission-setup__step-actions">
-        <button
-          type="button"
-          className="mission-setup__button mission-setup__button--secondary"
-          onClick={onBack}
-        >
-          Voltar para missão
-        </button>
-        <button
-          type="button"
-          className="mission-setup__button mission-setup__button--primary"
-          onClick={continueToReview}
-          aria-describedby={rosterIssue ? 'mission-team-continue-reason' : undefined}
-        >
-          Continuar para revisão
-        </button>
-      </footer>
-      {rosterIssue && (
-        <p id="mission-team-continue-reason" className="mission-setup__hint">
-          {rosterIssue}
-        </p>
-      )}
+      {/* Dock irmão da área rolável (mesmo desenho do ReviewStep): a barra nunca
+          divide o scroller com os cartões nem corta o conteúdo no meio. */}
+      <div className="mission-setup__step-dock">
+        <footer className="mission-setup__step-actions">
+          <button
+            type="button"
+            className="mission-setup__button mission-setup__button--secondary"
+            onClick={onBack}
+          >
+            Voltar para missão
+          </button>
+          <button
+            type="button"
+            className="mission-setup__button mission-setup__button--primary"
+            onClick={continueToReview}
+            aria-describedby={rosterIssue ? 'mission-team-continue-reason' : undefined}
+          >
+            Continuar para revisão
+          </button>
+        </footer>
+        {rosterIssue && (
+          <p
+            id="mission-team-continue-reason"
+            className="mission-setup__hint mission-setup__disabled-reason"
+          >
+            {rosterIssue}
+          </p>
+        )}
+      </div>
     </section>
   );
 }
