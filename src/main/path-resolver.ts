@@ -6,6 +6,7 @@ import { isCurrentProcessSmokeTest } from './smoke-core';
 import { BUILTIN_ADAPTERS } from '../adapters/builtin';
 import { windowsNpmShimSpawn, windowsNpmShimTarget } from './adapters/windows-npm-shim';
 import { compareAppVersions, isValidAppVersion } from '../shared/app-version';
+import { writeFileAtomicAsync } from './util/atomic-write';
 
 /**
  * Single source of truth for CLI PATH + binary resolution.
@@ -321,27 +322,65 @@ export async function resolveEffectivePath(options: {
 
 let folded = false;
 let memoizedEffectivePath: string | null = null;
+let bootPathRevalidation: Promise<string> | undefined;
+let bootPathCache: { file: string; home: string } | undefined;
+let bootPathInheritedPath: string | undefined;
+
+function validLoginPath(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 65_536 &&
+    !/[\x00\r\n]/u.test(value) && value.split(path.delimiter).every((dir) => !dir || path.isAbsolute(dir));
+}
+
+async function readBootPathCache(file: string, home: string): Promise<string> {
+  try {
+    const stat = await fs.promises.stat(file);
+    if (!stat.isFile() || stat.size > 70_000) return '';
+    const cached = JSON.parse(await fs.promises.readFile(file, 'utf8'));
+    return cached?.platform === process.platform && cached.home === home && validLoginPath(cached.loginPath)
+      ? cached.loginPath : '';
+  } catch { return ''; }
+}
+
+/** Best-effort cache only; durable writes run after bootstrap, off the Main thread. */
+async function saveBootPathCache(loginPath: string): Promise<void> {
+  if (!bootPathCache || !validLoginPath(loginPath)) return;
+  await writeFileAtomicAsync(bootPathCache.file, JSON.stringify({
+    platform: process.platform, home: bootPathCache.home, loginPath,
+  })).catch(() => undefined);
+}
 
 /**
  * Fold the login-shell PATH + common install dirs into process.env.PATH.
  * Idempotent; safe to call once during bootstrap BEFORE the adapter registry
  * probes for installed CLIs.
  */
-export async function resolveUserPath(): Promise<void> {
+export async function resolveUserPath(options: {
+  cachePath?: string;
+  home?: string;
+  exec?: LoginShellPathExecutor;
+} = {}): Promise<void> {
   if (folded) return;
-  const home = realUserHome();
+  const home = options.home ?? realUserHome();
+  const processPath = process.env.PATH ?? '';
   // F-1508: no Windows o boot não espera o PowerShell; o PATH do registro
   // entra pela releitura em segundo plano (`retryLoginShellPathIfMissed`).
-  bootLoginProbe = process.platform === 'win32'
-    ? ''
-    : await probeLoginShellPath(undefined, home);
-  const effective = buildEffectivePath({ home, loginPath: bootLoginProbe });
+  const probe = process.platform === 'win32'
+    ? Promise.resolve('')
+    : probeLoginShellPath(options.exec, home);
+  bootPathCache = options.cachePath ? { file: options.cachePath, home } : undefined;
+  const cached = options.cachePath ? await readBootPathCache(options.cachePath, home) : '';
+  // A cache hit releases discovery immediately. The already-running shell is
+  // consumed by the existing background retry/rescan after bootstrap.
+  bootPathRevalidation = cached ? probe : undefined;
+  bootPathInheritedPath = cached ? processPath : undefined;
+  bootLoginProbe = cached ? '' : await probe;
+  const effective = buildEffectivePath({ home, processPath, loginPath: cached || bootLoginProbe });
   process.env.PATH = effective;
   memoizedEffectivePath = effective;
   folded = true;
 }
 
-/** Login-shell PATH seen at boot; '' = probe failed or timed out. */
+/** Login-shell PATH seen at boot; '' = missed or cache awaiting revalidation. */
 let bootLoginProbe: string | null = null;
 /** A slow profile (oh-my-zsh + nvm on a cold login) gets this much time. */
 const LATE_RESOLVE_TIMEOUT_MS = 20_000;
@@ -358,11 +397,21 @@ export async function retryLoginShellPathIfMissed(
   options: { home?: string; bootProbe?: string | null } = {},
 ): Promise<boolean> {
   const bootProbe = options.bootProbe !== undefined ? options.bootProbe : bootLoginProbe;
-  if (bootProbe === null || bootProbe !== '') return false;
+  if (bootProbe === null) return false;
+  if (bootProbe !== '') {
+    await saveBootPathCache(bootProbe);
+    return false;
+  }
   const home = options.home ?? realUserHome();
-  const loginPath = await probeLoginShellPath(exec, home, LATE_RESOLVE_TIMEOUT_MS);
+  const flight = options.bootProbe === undefined ? bootPathRevalidation : undefined;
+  bootPathRevalidation = undefined;
+  const loginPath = (await flight) || await probeLoginShellPath(exec, home, LATE_RESOLVE_TIMEOUT_MS);
   if (!loginPath) return false;
-  const effective = buildEffectivePath({ home, loginPath });
+  // Drop the cached login dirs before rescan; otherwise a stale executable
+  // can keep shadowing the freshly discovered login-shell installation.
+  const processPath = options.bootProbe === undefined ? bootPathInheritedPath : undefined;
+  const effective = buildEffectivePath({ home, processPath, loginPath });
+  bootPathInheritedPath = undefined;
   // No Windows o PATH do registro costuma ser o mesmo herdado: sem mudança,
   // sem reexame de CLIs.
   const changed = effective !== process.env.PATH;
@@ -370,6 +419,7 @@ export async function retryLoginShellPathIfMissed(
   memoizedEffectivePath = effective;
   bootLoginProbe = loginPath;
   folded = true;
+  await saveBootPathCache(loginPath);
   return changed;
 }
 
@@ -936,6 +986,9 @@ export function __resetPathResolverForTests(): void {
   memoizedEffectivePath = null;
   bootLoginProbe = null;
   invalidateLookupInPathCache();
+  bootPathRevalidation = undefined;
+  bootPathCache = undefined;
+  bootPathInheritedPath = undefined;
   cliVersionCache.clear();
   cliVersionProbes.clear();
   cliVersionGeneration += 1;

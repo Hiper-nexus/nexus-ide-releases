@@ -6,6 +6,7 @@ vi.mock('../observability/main-trace', () => ({ trace: hoisted.trace }));
 
 import { GitCommandError } from './git-command';
 import { bootStep, bootStepAsync, describeBootFailure } from './git-boot-guard';
+import { beginBootPhases, markBootPhase } from '../observability/boot-phases';
 
 function gitFailure(code: string): GitCommandError {
   return new GitCommandError(
@@ -73,5 +74,24 @@ describe('passos do boot e falha de git', () => {
     const error = Object.assign(new Error('falha de leitura'), { code: 'EACCES' });
     expect(describeBootFailure(error)).toBe('Error: falha de leitura (EACCES)');
     expect(describeBootFailure('texto solto')).toBe('texto solto');
+  });
+
+  it('times sync and async steps even when they fail without changing error propagation', async () => {
+    const clock = vi.spyOn(performance, 'now').mockReturnValue(0);
+    beginBootPhases();
+    bootStep('sync', () => { clock.mockReturnValue(21); });
+    await expect(bootStepAsync('failed', async () => {
+      clock.mockReturnValue(52);
+      throw new Error('failure');
+    })).rejects.toThrow('failure');
+    markBootPhase('did-finish-load');
+    markBootPhase('mount');
+    expect(hoisted.trace).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'boot-phases', slowSteps: [
+        { step: 'sync', startMs: 0, durationMs: 21 },
+        { step: 'failed', startMs: 21, durationMs: 31 },
+      ],
+    }));
+    clock.mockRestore();
   });
 });

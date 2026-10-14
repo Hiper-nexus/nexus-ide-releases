@@ -1,4 +1,5 @@
 import { isGitOperationalFailure, reportGitFailure } from './git-ipc-guard';
+import { startBootStep, finishBootStep } from '../observability/boot-phases';
 
 /**
  * Passo do boot que pode depender do git. Uma falha operacional do git
@@ -7,12 +8,15 @@ import { isGitOperationalFailure, reportGitFailure } from './git-ipc-guard';
  * Qualquer outro erro continua propagando e cai no diálogo de inicialização.
  */
 export function bootStep<T>(step: string, run: () => T): T | undefined {
+  const started = startBootStep();
   try {
     return run();
   } catch (error) {
     if (!isGitOperationalFailure(error)) throw error;
     reportGitFailure(`boot:${step}`, error);
     return undefined;
+  } finally {
+    finishBootStep(step, started);
   }
 }
 
@@ -20,12 +24,15 @@ export async function bootStepAsync<T>(
   step: string,
   run: () => Promise<T>,
 ): Promise<T | undefined> {
+  const started = startBootStep();
   try {
     return await run();
   } catch (error) {
     if (!isGitOperationalFailure(error)) throw error;
     reportGitFailure(`boot:${step}`, error);
     return undefined;
+  } finally {
+    finishBootStep(step, started);
   }
 }
 

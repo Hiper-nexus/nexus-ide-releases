@@ -1,5 +1,6 @@
 import { periodicCallback } from './observability/periodic-task';
 import { trace } from './observability/main-trace';
+import { markBootPhase } from './observability/boot-phases';
 import path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron';
 import type { IpcMainEvent, IpcMainInvokeEvent, WebContents } from 'electron';
@@ -562,6 +563,7 @@ export function createMainWindow(
     stopMountMonitoring();
     if (!bootCompleteTraceEmitted) {
       bootCompleteTraceEmitted = true;
+      markBootPhase('mount');
       // Fim-a-fim do boot (main-boot → boot-complete): início do processo
       // (timeOrigin) até o primeiro mount do renderer. Recovery/recarga de
       // renderer não emite de novo — não é boot.
@@ -673,6 +675,7 @@ export function createMainWindow(
     loadStartedAt = Date.now();
     stopMountMonitoring();
     bootRecovery.beginNavigation();
+    markBootPhase('renderer-load-start');
     win.loadURL(rendererUrl).catch((err) => {
       console.warn('[window] load failed:', err);
     });
@@ -751,6 +754,7 @@ export function createMainWindow(
     // authorizes the real renderer. That page must not consume mount/Dock
     // proof or arm a reload that could bypass the deferred-load boundary.
     if (!rendererStartAuthorized) return;
+    markBootPhase('did-finish-load');
     finished = true;
     loadFailures = 0;
     bootRecovery.cancelPending();
