@@ -28,6 +28,16 @@ function makeDirUnder(root: string, label: string): string {
   return dir;
 }
 
+/** Nome curto 8.3 do diretório (igual ao original quando o volume não gera 8.3). */
+function windowsShortPath(dir: string): string {
+  const result = spawnSync(
+    process.env.ComSpec ?? 'cmd.exe',
+    ['/d', '/s', '/c', `"for %I in ("${dir}") do @echo %~sI"`],
+    { encoding: 'utf8', windowsVerbatimArguments: true },
+  );
+  return result.status === 0 && result.stdout.trim() ? result.stdout.trim() : dir;
+}
+
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -821,6 +831,39 @@ describe('process sandbox', () => {
       rootRealPath: root, sandboxDir: runtime, env: { PATH: root },
     }, path.join(root, 'docker.exe'), 'registry.example/nexus-sensors:latest')).toThrow(/pinned/);
   });
+
+  // F-1506: no Windows o `%TEMP%` pode vir em 8.3 (`C:\Users\ADMINI~1\…`) e
+  // `createScopedSandboxHome` nasce nele. O vitest.setup canoniza o TEMP, então
+  // o caso só aparece com o nome curto passado explicitamente.
+  it.runIf(process.platform === 'win32')(
+    'accepts a runtime spelled in 8.3 and still finds it inside a checkout spelled in 8.3 (F-1506)',
+    (ctx) => {
+      const root = makeDir('nexus-windows-longname-root');
+      const runtime = makeDir('nexus-windows-longname-runtime');
+      const shortRuntime = windowsShortPath(runtime);
+      const shortRoot = windowsShortPath(root);
+      if (shortRuntime === runtime || shortRoot === root) ctx.skip();
+      const image = `registry.example/nexus-sensors@sha256:${'a'.repeat(64)}`;
+
+      const plan = buildWindowsOciPlan({
+        platform: 'win32', executable: path.join(root, 'node.exe'), args: ['--version'],
+        cwd: root, rootRealPath: root, sandboxDir: shortRuntime, env: { PATH: root },
+      }, path.join(root, 'docker.exe'), image);
+      expect(plan.args).toContain(`type=bind,src=${runtime},dst=/nexus-runtime`);
+      expect(() => buildScopedShellPlan({
+        platform: 'win32', command: 'dir', cwd: root, rootRealPath: root,
+        sandboxDir: shortRuntime, env: { PATH: '' },
+      })).toThrow(/sandbox provider is unavailable/i);
+
+      // A mesma forma dos dois lados também na disjunção: runtime dentro do
+      // checkout continua recusado quando só o checkout vem em 8.3.
+      const nested = makeDirUnder(root, 'runtime');
+      expect(() => buildWindowsOciPlan({
+        platform: 'win32', executable: path.join(root, 'node.exe'), args: [],
+        cwd: shortRoot, rootRealPath: shortRoot, sandboxDir: nested, env: { PATH: root },
+      }, path.join(root, 'docker.exe'), image)).toThrow(/disjoint from the project checkout/);
+    },
+  );
 
   it.runIf(process.platform === 'darwin')(
     'allows runtime metadata traversal to the checkout without exposing sibling contents',

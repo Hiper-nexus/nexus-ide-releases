@@ -546,11 +546,16 @@ function normalizeExecPlan(input: ScopedExecPlanInput): NormalizedExecPlanInput 
   }
   const rootRealPath = fs.realpathSync(input.rootRealPath);
   const cwd = fs.realpathSync(input.cwd);
-  const sandboxDir = fs.realpathSync(input.sandboxDir);
+  // F-1506: HOME/temp privados são resolvidos por realpathSync.native (nome
+  // longo no Windows); o `%TEMP%` 8.3 (`ADMINI~1`) onde o runtime nasce precisa
+  // da mesma forma, senão nenhum HOME "cabe" nele. A disjunção com o checkout
+  // compara as duas raízes na mesma forma canônica.
+  const sandboxDir = fs.realpathSync.native(input.sandboxDir);
+  const rootCanonical = fs.realpathSync.native(rootRealPath);
   if (!isWithin(rootRealPath, cwd)) {
     throw new Error('sandbox cwd escapes project checkout');
   }
-  if (isWithin(rootRealPath, sandboxDir) || isWithin(sandboxDir, rootRealPath)) {
+  if (isWithin(rootCanonical, sandboxDir) || isWithin(sandboxDir, rootCanonical)) {
     throw new Error('sandbox private runtime must be disjoint from the project checkout');
   }
 
@@ -565,7 +570,7 @@ function normalizeExecPlan(input: ScopedExecPlanInput): NormalizedExecPlanInput 
   // AFTER sandboxDir is canonical so the checkout check uses real paths.
   const processHome =
     input.processHome !== undefined
-      ? canonicalProcessHome(input.processHome, rootRealPath)
+      ? canonicalProcessHome(input.processHome, rootCanonical)
       : null;
   if (
     !isWithin(lexicalSandboxDir, requestedHome) ||
