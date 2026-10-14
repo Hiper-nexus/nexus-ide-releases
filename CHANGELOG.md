@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.76.256 — Orquestrador volta, teclado sem letras duplicadas e voz sem falso "falta chave"
+
+Três correções de campo: a missão que perdia o orquestrador volta a reabri-lo, o teclado deixa de enviar cada letra duas vezes depois de religar um pane, e o ditado deixa de acusar falta de chave quando o problema foi tempo limite.
+
+- **Orquestrador da aba volta quando a CLI diz «No conversation found».** O id ditado era gravado antes de existir transcrito; se o orquestrador morria antes da 1ª mensagem, todo `--resume` falhava e a retomada exata recusava a missão com `resume_context_unavailable` em loop. A prova na tela da CLI esquece o vínculo na 1ª ocorrência e a retomada reabre o orquestrador numa conversa nova, sob o contrato selado, com a nota para reler `nexus_handoff_list`.
+- **Letras duplicadas no pane.** Cada sessão nova registrava um receptor de teclado no mesmo xterm e o da sessão anterior só era descartado por `cleanups`; respawns que não passam por ele (acordar depois do exit) deixavam dois receptores escrevendo no PTY. Agora há um único dono da entrada por host.
+- **Ditado sem falso «falta chave».** `stt-needs-key` só vale quando nenhum provedor chegou a tentar; falha por tempo limite, rede ou resposta vazia não é mais rotulada como chave ausente. O tempo limite de nuvem cresce com o tamanho do áudio (12 s + 2 s por MB acima de 1 MB, teto de 60 s) e `stt.failed` registra o motivo por provedor no `voice.log`, sem texto nem chave.
+
 ## 0.76.255 — macOS em dia com a troca de conta e sem modal do Chaveiro
 
 Empacota para macOS (`darwin-arm64`) todas as melhorias da 0.76.253 (`F-1470..F-1512`: troca de conta encadeada na mesma conversa do Claude com reentrega do pedido em voo, coordenador sem recusa nem panes mortos acumulados, AGY ao vivo, QR/relay Cloudflare e rede local com porta fixa, comandos pesados no horário de verão e validações de squads) e corrige de vez no macOS o modal `security deseja acessar a chave "ai.meta.dev.credentials"` na tela de Início (`F-1513`).

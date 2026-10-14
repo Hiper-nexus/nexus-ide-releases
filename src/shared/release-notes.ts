@@ -10591,7 +10591,7 @@ export const RELEASE_076254: AppRelease = {
     { title: 'Atualização do Linux', detail: 'A 0.76.253 só tinha pacote de Windows. O Omarchy consultava o espelho e ficava na 0.76.252.' },
   ],
 };
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076255: AppRelease = {
   version: '0.76.255',
   date: '2026-10-14',
   codename: 'macOS em dia com a troca de conta e sem modal do Chaveiro',
@@ -10606,4 +10606,19 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Espera e retomada da troca de conta (F-1470..F-1512)', detail: 'Inclui todas as correções de encadeamento de contas, StopFailure rate_limit do Claude, reentrega de pedido aceito durante a troca, comandos pesados no horário de verão e validação de squads.' },
   ],
 };
-
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.256',
+  date: '2026-10-14',
+  codename: 'Orquestrador volta, teclado sem letras duplicadas e voz sem falso "falta chave"',
+  summary: 'Corrige a missão que perdia o orquestrador e não reabria, as letras duplicadas ao digitar num pane religado e o ditado que acusava falta de chave quando o problema era tempo limite.',
+  highlights: [
+    { title: 'Orquestrador volta sozinho', detail: 'Quando a CLI responde «No conversation found», o Nexus esquece a conversa inexistente e reabre o orquestrador numa conversa nova, sob o mesmo contrato, em vez de recusar a retomada para sempre.' },
+    { title: 'Teclado sem letras duplicadas', detail: 'Cada pane tem um único receptor de teclado; religar ou acordar o pane depois de uma saída não envia mais cada tecla duas vezes.' },
+    { title: 'Voz com diagnóstico honesto', detail: 'O ditado só diz «falta chave» quando nenhum provedor tentou. Tempo limite cresce com o tamanho do áudio e o log registra o motivo de cada provedor.' },
+  ],
+  fixes: [
+    { title: 'Retomada exata de conversa inexistente', detail: 'A tela da CLI com «No conversation found with session ID» esquece o vínculo na 1ª ocorrência; a retomada da aba troca a linha do orquestrador e leva a nota de conversa perdida.' },
+    { title: 'Receptor de teclado duplicado no terminal', detail: 'startSpawn descarta o receptor anterior antes de registrar o novo, inclusive em respawns que não passam por cleanups.' },
+    { title: 'stt-needs-key e tempo limite da STT', detail: 'needsKey exige provedor sem chave e nenhuma tentativa real; tempo limite de nuvem proporcional ao tamanho do áudio; evento stt.failed no voice.log.' },
+  ],
+};
