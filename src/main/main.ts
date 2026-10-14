@@ -561,6 +561,7 @@ import {
 } from "./observability/event-loop-monitor";
 import { registerMainHeartbeatIpc } from "./observability/main-heartbeat-ipc";
 import { bootStep, bootStepAsync, describeBootFailure } from './runtime/git-boot-guard';
+import { beginBootPhases, markBootPhase } from './observability/boot-phases';
 
 let projectRuntimeManager: ProjectRuntimeManager | null = null;
 let hookDropBoxWatcher: AgentHookDropBoxWatcher | null = null;
@@ -612,7 +613,7 @@ if (process.platform === "win32") {
   }
 }
 
-async function bootstrap(): Promise<void> {
+async function bootstrap(userPathReady: Promise<void>): Promise<void> {
   // Persisted overrides live under userData; must be configured before the
   // first getFeatureFlagRegistry() call anywhere in bootstrap.
   bootStep('configureFeatureFlagRegistry', () => configureFeatureFlagRegistry({
@@ -628,6 +629,7 @@ async function bootstrap(): Promise<void> {
   }
   // Loads ~/.nexus/settings.json before any runtime reads orchestration flags.
   registerSettingsIpc();
+  await userPathReady;
   initAdapterRegistry();
   initializeProviderConfigStore();
   try {
@@ -719,11 +721,11 @@ async function bootstrap(): Promise<void> {
   }));
   bootStep('setPaneTerminalIdentity', () => setPaneTerminalIdentity({ name: "NexusIDE", version: app.getVersion() }));
   bootStep('registerPtyIpc', () => registerPtyIpc());
-  // Authenticate the native job base in the utility host before any agent
-  // receives its synchronous spawn environment. A slow PTY host must not stop
-  // the app from opening: until the base is proved, agents' heavy commands are
-  // refused; the proof retries in the background and before each agent spawn.
-  await bootStepAsync('nativeHeavyJobEnvironment', () => proveNativeHeavyJobBaseAtBoot());
+  // Start the proof without holding renderer boot. The preload module owns the
+  // flight; every agent spawn awaits it before fixing its environment, and a
+  // failed proof lets the spawn proceed degraded, without heavy commands.
+  void bootStepAsync('nativeHeavyJobEnvironment', () => proveNativeHeavyJobBaseAtBoot())
+    .catch((error: unknown) => { console.warn('[native-heavy] boot proof failed:', error); });
   // Semantic CommandBlock layer (OSC 133). Fail-closed behind feature flag;
   // never mutates the PTY byte stream — lateral tap only.
   // Persist finished blocks into project runtime SQLite when flag + scope ok.
@@ -1038,28 +1040,41 @@ if (squirrelStartupEvent || !wireDeepLinks()) {
   app.quit();
 } else {
   app.whenReady().then(async () => {
+    beginBootPhases();
+    markBootPhase('whenReady');
+    const userPathReady = resolveUserPath({
+      cachePath: path.join(app.getPath("userData"), "login-path.json"),
+    }).then(() => { markBootPhase('path-resolved'); });
+    // Observe early failures while the native window/sweep are still starting;
+    // bootstrap awaits the original promise and retains the normal error path.
+    void userPathReady.catch(() => undefined);
     // Varredura de órfãos do PRÓPRIO install: supervisores rodam disclaimed
     // (ppid 1 mesmo saudáveis), então parentesco não distingue vivo de órfão —
     // mas no boot, com o lock de instância única, NENHUM supervisor deste
     // install pode ter dono. Zumbis acumulados (04/08) faziam toda tentativa
     // de sair falhar a prova física; aqui eles morrem antes de existir sessão.
-    if (process.platform === "darwin") {
-      try {
-        const { execFileSync } = await import("node:child_process");
-        sweepOrphanPtySupervisors({
-          resourcesPath: process.resourcesPath,
-          listProcesses: () =>
-            execFileSync("/bin/ps", ["-axo", "pid=,ppid=,command="], {
+    const orphanSupervisorSweep = bootStepAsync('orphanPtySupervisors', async () => {
+      if (process.platform === "darwin") {
+        try {
+          const { execFile } = await import("node:child_process");
+          const processes = await new Promise<string>((resolve, reject) => {
+            execFile("/bin/ps", ["-axo", "pid=,ppid=,command="], {
               encoding: "utf8",
               maxBuffer: 8 * 1024 * 1024,
-            }),
-          kill: (pid, signal) => process.kill(pid, signal),
-          record: recordQuitIncident,
-        });
-      } catch (error) {
-        console.warn("[main] varredura de supervisores órfãos falhou:", error);
+              timeout: 4_000,
+            }, (error, stdout) => { if (error) reject(error); else resolve(stdout); });
+          });
+          sweepOrphanPtySupervisors({
+            resourcesPath: process.resourcesPath,
+            listProcesses: () => processes,
+            kill: (pid, signal) => process.kill(pid, signal),
+            record: recordQuitIncident,
+          });
+        } catch (error) {
+          console.warn("[main] varredura de supervisores órfãos falhou:", error);
+        }
       }
-    }
+    });
     // `protocol.handle` requires app.ready, but must exist before the first
     // BrowserWindow starts navigating. Installing it later in bootstrap made
     // every packaged launch fail its first nexus-app:// request and recover
@@ -1086,6 +1101,7 @@ if (squirrelStartupEvent || !wireDeepLinks()) {
     // (notably Keychain-backed providers) can block the Electron main thread;
     // the native window/Dock item must already exist before touching them.
     const mainWindow = createMainWindow({ deferRendererLoad: true });
+    markBootPhase('window-created');
     if (!mainWindow) {
       // createMainWindow reports the native error. Do not continue bootstrap:
       // it can create auxiliary renderer windows, which must never load after
@@ -1115,13 +1131,14 @@ if (squirrelStartupEvent || !wireDeepLinks()) {
     // is ready. Do not move it into bootstrap(): synchronous adapter, settings,
     // database, or keychain setup can otherwise classify the process as a
     // background UIElement before macOS has a window/Dock item to display.
-    // Finder/dmg launches inherit a minimal PATH. Resolve the login-shell PATH
-    // asynchronously after the native window is visible, then initialize the
-    // adapter registry with the completed value. Slow shell profiles no longer
-    // freeze Electron's main event loop.
+    // Finder/dmg launches inherit a minimal PATH. The early shell probe (or
+    // last good cache) is awaited only at adapter discovery inside bootstrap.
     try {
-      await resolveUserPath();
-      await bootstrap();
+      // Finish the sweep before bootstrap can fork a host/supervisor. A scan
+      // racing a new session could otherwise classify our live helper as orphan.
+      await orphanSupervisorSweep;
+      await bootstrap(userPathReady);
+      markBootPhase('bootstrap-ready');
       // Shell de login lento (oh-my-zsh + nvm num login frio) estoura o prazo
       // curto do boot e CLIs via nvm/fnm pareciam "não instaladas" a sessão
       // toda. Uma segunda sondagem, longa e em background, corrige sozinha.

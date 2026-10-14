@@ -85,51 +85,58 @@ export async function nativeHeavyJobEnvironment(): Promise<Record<string, string
   return { NEXUS_HEAVY_JOB_BASE: mainOwnedJobBase };
 }
 
-let jobBaseBootFailed = false;
 let jobBaseFlight: Promise<void> | undefined;
 let jobBaseRetryAfter = 0;
 
 /**
  * Boot não pode morrer porque o host de PTY demorou (Mac frio ou carregado):
- * o prazo de 15 s virava "NexusIDE não conseguiu inicializar". Sem a base, o
- * macOS recusa os comandos pesados dos agentes (falta a prova darwin-job);
+ * o prazo de 15 s virava "NexusIDE não conseguiu inicializar". Sem a base,
+ * o agente nasce degradado, sem comandos pesados (falta a prova darwin-job);
  * a prova é refeita em background até dar certo, com o último intervalo
  * repetido, e cada spawn de agente tenta antes (ensureNativeHeavyJobBase).
  */
 export async function proveNativeHeavyJobBaseAtBoot(
   retryDelaysMs: readonly number[] = [5_000, 15_000, 30_000, 60_000],
 ): Promise<boolean> {
+  if (!nativeHeavyJobBaseMissing()) return true;
+  jobBaseFlight ??= nativeHeavyJobEnvironment()
+    .then(() => undefined)
+    .finally(() => { jobBaseFlight = undefined; });
   try {
-    await nativeHeavyJobEnvironment();
+    await jobBaseFlight;
     return true;
   } catch (error) {
-    jobBaseBootFailed = true;
     console.warn('[native-heavy] base do job nativo indisponível no boot; comandos pesados dos agentes bloqueados até a nova prova', error);
     void (async () => {
       for (let attempt = 0; !mainOwnedJobBase; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, retryDelaysMs[Math.min(attempt, retryDelaysMs.length - 1)]));
-        await nativeHeavyJobEnvironment().catch(() => undefined);
+        jobBaseFlight ??= nativeHeavyJobEnvironment()
+          .then(() => undefined)
+          .finally(() => { jobBaseFlight = undefined; });
+        await jobBaseFlight.catch(() => undefined);
       }
     })();
     return false;
   }
 }
 
-/** Boot falhou e a base ainda não foi provada: agente nascido agora fica sem comandos pesados. */
+/** Sem base provada, panes diretos nascem degradados e o warm pool não nasce. */
 export function nativeHeavyJobBaseMissing(): boolean {
-  return process.platform === 'darwin' && jobBaseBootFailed && !mainOwnedJobBase;
+  return process.platform === 'darwin' && !mainOwnedJobBase;
 }
 
 /**
- * Depois de um boot sem a base, o spawn físico de agente tenta prová-la antes
- * de montar o ambiente: o env fica fixo pela vida do agente. Num boot normal
- * devolve undefined (sem await extra no spawn). Uma falha recente não faz
- * cada spawn esperar o prazo do host.
+ * Compartilha a prova em voo do boot/retry antes de montar o env, que fica
+ * fixo pela vida do agente. Base provada não ganha await extra. Falha recente
+ * deixa o spawn seguir degradado sem esperar novamente o prazo do host.
  */
 export function ensureNativeHeavyJobBase(): Promise<void> | undefined {
-  if (!jobBaseBootFailed || mainOwnedJobBase || Date.now() < jobBaseRetryAfter) return undefined;
+  if (!nativeHeavyJobBaseMissing()) return undefined;
+  if (!jobBaseFlight && Date.now() < jobBaseRetryAfter) return undefined;
   jobBaseFlight ??= nativeHeavyJobEnvironment()
-    .then(() => undefined, () => { jobBaseRetryAfter = Date.now() + 10_000; })
+    .then(() => undefined)
     .finally(() => { jobBaseFlight = undefined; });
-  return jobBaseFlight;
+  // Boot/background retain their rejection for diagnostics/retry; spawns
+  // join the same proof but keep F-955's best-effort environment contract.
+  return jobBaseFlight.catch(() => { jobBaseRetryAfter = Date.now() + 10_000; });
 }

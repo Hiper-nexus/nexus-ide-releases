@@ -19,9 +19,9 @@ vi.mock('../license-access', () => ({
   requireAccess: () => ({ ok: true }),
 }));
 vi.mock('../orch/codex-cli-version', () => ({ settleCodexCliVersionForSpawn: deps.settle }));
-const heavyBase = vi.hoisted(() => ({ missing: false }));
+const heavyBase = vi.hoisted(() => ({ missing: false, prove: vi.fn<() => Promise<void> | undefined>() }));
 vi.mock('../orch/native-heavy-preload', () => ({
-  ensureNativeHeavyJobBase: () => undefined,
+  ensureNativeHeavyJobBase: heavyBase.prove,
   nativeHeavyJobBaseMissing: () => heavyBase.missing,
 }));
 
@@ -32,6 +32,7 @@ const scope = { rootRealPath: '/synthetic/workspace' } as never;
 
 beforeEach(() => {
   heavyBase.missing = false;
+  heavyBase.prove.mockReset();
   deps.spawn.mockClear();
   deps.settle.mockReset().mockReturnValue(null);
   deps.creator = undefined;
@@ -66,6 +67,29 @@ describe('F-790: pane ocioso do warm pool e a versão do Codex', () => {
 });
 
 describe('F-955: pane ocioso sem a base do job nativo', () => {
+  it('waits for an in-flight proof and skips warm spawn when it fails', async () => {
+    let fail!: (error: Error) => void;
+    heavyBase.missing = true;
+    heavyBase.prove.mockReturnValueOnce(new Promise<void>((_resolve, reject) => { fail = reject; }).catch(() => undefined));
+    const pending = deps.creator!('claude');
+    await vi.waitFor(() => expect(heavyBase.prove).toHaveBeenCalledOnce());
+    expect(deps.spawn).not.toHaveBeenCalled();
+    fail(new Error('native_heavy_job_authority_unavailable'));
+    await expect(pending).resolves.toBeNull();
+    expect(deps.spawn).not.toHaveBeenCalled();
+  });
+  it('waits for a successful in-flight native proof before warming a pane', async () => {
+    heavyBase.missing = true;
+    let finish!: () => void;
+    heavyBase.prove.mockReturnValueOnce(new Promise<void>((resolve) => { finish = resolve; }));
+    const pending = deps.creator!('claude');
+    await vi.waitFor(() => expect(heavyBase.prove).toHaveBeenCalledOnce());
+    expect(deps.spawn).not.toHaveBeenCalled();
+    heavyBase.missing = false;
+    finish();
+    await expect(pending).resolves.toMatchObject({ sessionId: 'warm-session' });
+    expect(deps.spawn).toHaveBeenCalledOnce();
+  });
   it('não nasce enquanto a base falta: seria adotado depois sem comandos pesados', async () => {
     heavyBase.missing = true;
     await expect(deps.creator!('claude')).resolves.toBeNull();

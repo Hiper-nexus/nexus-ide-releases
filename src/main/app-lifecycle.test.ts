@@ -23,7 +23,7 @@ describe('macOS activate lifecycle', () => {
     );
     const failedGuard = source.indexOf('if (!mainWindow)', windowAttempt);
     const quit = source.indexOf('app.quit();', failedGuard);
-    const bootstrap = source.indexOf('await bootstrap();', windowAttempt);
+    const bootstrap = source.indexOf('await bootstrap(userPathReady);', windowAttempt);
 
     expect(windowAttempt).toBeGreaterThanOrEqual(0);
     expect(failedGuard).toBeGreaterThan(windowAttempt);

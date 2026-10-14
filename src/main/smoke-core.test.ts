@@ -150,7 +150,7 @@ describe('smoke isolation', () => {
       '    const mainWindow = createMainWindow({ deferRendererLoad: true });',
       readyStart,
     );
-    const bootstrapBeforeHooks = mainSource.indexOf('    await bootstrap();', readyStart);
+    const bootstrapBeforeHooks = mainSource.indexOf('    await bootstrap(userPathReady);', readyStart);
     const awakeInit = mainSource.indexOf('    getAgentAwakeService();', readyStart);
 
     expect(readyStart).toBeGreaterThan(-1);
