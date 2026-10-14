@@ -70,7 +70,10 @@ const MAX_JEV_FLOW_CANDIDATES = 24;
 const MAX_JEV_INVARIANT_CANDIDATES = 40;
 const MAX_JEV_HURDLE_CANDIDATES = 40;
 const JEV_RELEVANCE_THRESHOLD = 0.5;
-const JEV_TIMEOUT_MS = 6_000;
+// A9 (perf spawn): o brief aguardava 6s de Jev antes de o PTY nascer;
+// 2,5s cobre a cauda do judge sem travar o spawn — fail-open já existe
+// (`.catch(() => null)` → ranking lexical).
+const JEV_TIMEOUT_MS = 2_500;
 const MAX_TASK_CHARS = 1_200;
 /** Peso do arquivo tocado: vale um match de nome de fluxo (×3). */
 const TOUCHED_FILE_WEIGHT = 3;
