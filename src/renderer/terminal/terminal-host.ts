@@ -1348,7 +1348,7 @@ function startSpawn(
         resume && res.resumeMode === 'exact' ? res.sessionId : undefined;
       // A grade atual vence a do spawn: sem este resize imediato o PTY ficava
       // preso na winsize antiga até um "Redesenhar" (pty-grid-drift F-248).
-      propagateHostSize(host);
+      propagateHostSize(host, { assert: res.adopted === true });
       if (res.cwd) useLayoutStore.getState().setPaneCwd(pane.id, res.cwd);
       clearPaneSpawnError(pane.id);
       resetAutomaticSpawnBudget(pane.id);
@@ -2150,12 +2150,12 @@ function tryDeferredSpawn(host: Host): void {
 }
 
 function makeResizeObserver(paneId: string, host: Host): ResizeObserver {
-  let timer: ReturnType<typeof setTimeout> | null = null;
+  let frame: number | null = null;
   return new ResizeObserver(() => {
     if (host.disposed || !host.opened) return;
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(() => {
-      timer = null;
+    if (frame !== null) return;
+    frame = requestAnimationFrame(() => {
+      frame = null;
       if (host.disposed || !host.opened) return;
       if (useLayoutStore.getState().focusedPaneId === paneId) {
         resumeVisibleHost(paneId, host);
@@ -2180,7 +2180,7 @@ function makeResizeObserver(paneId: string, host: Host): ResizeObserver {
       // não pode depender de resumeVisibleHost (que só roda no foco).
       consumeTuiRepaint(host);
       tryDeferredSpawn(host);
-    }, RESIZE_DEBOUNCE_MS);
+    });
   });
 }
 
@@ -3014,6 +3014,10 @@ export function attachHost(pane: PaneModel, slot: HTMLElement): void {
     host.opened = true;
     registerWebglLease(pane.id, host);
   }
+
+  // A new presentation owns visibility; the old wrapper may have hidden the
+  // persistent host during its teardown. Recover even without a focus change.
+  setHostVisibility(pane.id, true);
 
   const beforeGrid = host.reportedGrid;
   if (useLayoutStore.getState().focusedPaneId !== pane.id) {

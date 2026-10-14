@@ -18,6 +18,14 @@ describe('paneSlotIsLaidOut — F-603', () => {
 });
 
 describe('paneIntersectionApplies — F-603', () => {
+  it('ignora callback atrasado de um slot já desmontado após split', () => {
+    const oldSlot = document.createElement('div');
+    document.body.appendChild(oldSlot);
+    oldSlot.remove();
+    expect(paneIntersectionApplies({
+      boundingClientRect: { width: 800, height: 600 }, target: oldSlot,
+    })).toBe(false);
+  });
   it('ignores a laid-out slot inside a hidden workspace', () => {
     const workspace = document.createElement('section');
     workspace.hidden = true;

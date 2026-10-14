@@ -17,6 +17,7 @@ const refreshCalls = vi.hoisted(
 const eventOrder = vi.hoisted(() => [] as string[]);
 /** Callbacks do ResizeObserver stub — o teste dispara o tick manualmente. */
 const resizeObserverTicks = vi.hoisted(() => [] as Array<() => void>);
+const webglContexts = vi.hoisted(() => [] as Array<{ lost?: () => void; disposed: boolean }>);
 
 vi.mock('@xterm/xterm', () => ({
   Terminal: class {
@@ -85,7 +86,13 @@ vi.mock('@xterm/addon-serialize', () => ({
     serialize() { return ''; }
   },
 }));
-vi.mock('@xterm/addon-webgl', () => ({ WebglAddon: class {} }));
+vi.mock('@xterm/addon-webgl', () => ({ WebglAddon: class {
+  disposed = false;
+  lost?: () => void;
+  constructor() { webglContexts.push(this); }
+  onContextLoss(listener: () => void) { this.lost = listener; return { dispose() {} }; }
+  dispose() { this.disposed = true; }
+} }));
 vi.mock('./terminal-path-links', () => ({ attachTerminalPathLinks() {} }));
 const cancelPendingDictation = vi.hoisted(() => vi.fn(() => false));
 vi.mock('../voice/dictation-delivery', async (importOriginal) => ({
@@ -120,6 +127,7 @@ import { setActiveWorkspacePath } from '../state/active-workspace';
 import { useOrchStore } from '../state/orch-store';
 import { useToastStore } from '../state/toast-store';
 import { buildGridTree, listPanes } from '../lib/split-tree';
+import { paneIntersectionApplies } from '../lib/pane-intersection';
 import * as terminalOutputScheduler from './terminal-output-scheduler';
 import { DEFAULT_TERMINAL_SETTINGS } from '../../shared/settings-types';
 import { TERMINAL_THEMES } from '../styles/terminal-theme';
@@ -142,6 +150,7 @@ import {
   rebindLiveMaestroOfMission,
   reconcileHosts,
   refitAllPanesBeforePaint,
+  terminalRendererPerformanceSnapshot,
   refreshHost,
   releaseHeldSpawns,
   repaintPaneTui,
@@ -204,6 +213,7 @@ beforeEach(() => {
     },
   );
   resizeObserverTicks.length = 0;
+  webglContexts.length = 0;
   spawn.mockReset().mockResolvedValue({ ok: true, sessionId: 'pty-hidden' });
   kill.mockReset();
   ptyWrite.mockReset();
@@ -251,6 +261,108 @@ function fireTitle(title: string): void {
 }
 
 describe('spawn adiado sem ninguém esperando a sessão', () => {
+  it('adoção reafirma grade medida mesmo quando o xterm não mudou durante o RPC', async () => {
+    spawn.mockResolvedValueOnce({ ok: true, sessionId: 'pty-adopt-grid', adopted: true });
+    const host = getOrCreateHost(pane);
+    setHostSize(host.element, 1200, 800);
+    attachHost(pane, document.body.appendChild(document.createElement('div')));
+    expect(await waitForSession(pane.id, 1000)).toBe('pty-adopt-grid');
+    expect(window.nexus.pty.resize).toHaveBeenCalledWith('pty-adopt-grid', 120, 40, {
+      assert: true, reported: { cols: 120, rows: 40 },
+    });
+  });
+
+  it('reanexar host oculto recupera visibilidade, saída pausada e grid do PTY', async () => {
+    const host = getOrCreateHost(pane);
+    setHostSize(host.element, 1200, 800);
+    attachHost(pane, document.body.appendChild(document.createElement('div')));
+    expect(await waitForSession(pane.id, 1000)).toBe('pty-hidden');
+    setHostVisibility(pane.id, false);
+    const write = vi.spyOn(host.term, 'write');
+    terminalOutputScheduler.writeTerminalOutput(host.term, 'quadro vivo', { foreground: false, holdBackground: true });
+    setHostSize(host.element, 1000, 1200);
+    attachHost(pane, document.body.appendChild(document.createElement('div')));
+    await vi.advanceTimersByTimeAsync(200);
+    expect(host.isVisible).toBe(true);
+    expect(write).toHaveBeenCalledWith('quadro vivo');
+    expect(window.nexus.pty.resize).toHaveBeenCalledWith('pty-hidden', 100, 60, expect.anything());
+    expect(terminalOutputScheduler.getQueuedChars(host.term)).toBe(0);
+  });
+
+  it('callback do slot antigo não deixa o pane preto até maximizar', async () => {
+    const host = getOrCreateHost(pane);
+    setHostSize(host.element, 1200, 800);
+    const oldSlot = document.body.appendChild(document.createElement('div'));
+    attachHost(pane, oldSlot);
+    expect(await waitForSession(pane.id, 1000)).toBe('pty-hidden');
+    const currentSlot = document.body.appendChild(document.createElement('div'));
+    attachHost(pane, currentSlot);
+    setHostVisibility(pane.id, true);
+    oldSlot.remove();
+    if (paneIntersectionApplies({ target: oldSlot, boundingClientRect: { width: 1200, height: 800 } })) {
+      setHostVisibility(pane.id, false);
+    }
+    const write = vi.spyOn(host.term, 'write');
+    ptyDataListeners.get('pty-hidden')!('quadro vivo antes de maximizar');
+    await vi.advanceTimersByTimeAsync(200);
+    const paintedBeforeMaximize = write.mock.calls.some(([data]) => typeof data === 'string' && data.includes('quadro vivo'));
+    const visibleBeforeMaximize = host.isVisible;
+    // A maximização mascarava o defeito: remount + reveal liberavam a saída.
+    useLayoutStore.setState({ maximizedPaneId: pane.id });
+    attachHost(pane, document.body.appendChild(document.createElement('div')));
+    setHostVisibility(pane.id, true);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(write).toHaveBeenCalledWith('quadro vivo antes de maximizar', expect.any(Function));
+    expect(paintedBeforeMaximize).toBe(true);
+    expect(visibleBeforeMaximize).toBe(true);
+    useLayoutStore.setState({ maximizedPaneId: null });
+  });
+
+  it('resize observer propaga a última grade em um frame, sem esperar debounce nem alternar linhas', async () => {
+    const host = getOrCreateHost(pane);
+    setHostSize(host.element, 1200, 800);
+    attachHost(pane, document.body.appendChild(document.createElement('div')));
+    expect(await waitForSession(pane.id, 1000)).toBe('pty-hidden');
+    await vi.advanceTimersByTimeAsync(200);
+    const resize = vi.mocked(window.nexus.pty.resize);
+    resize.mockClear();
+    resizeCalls.length = 0;
+    setHostSize(host.element, 3510, 1141.5);
+    resizeObserverTicks.forEach((tick) => tick());
+    setHostSize(host.element, 840, 541.5);
+    resizeObserverTicks.forEach((tick) => tick());
+    await vi.advanceTimersByTimeAsync(20);
+    expect(resizeCalls).toEqual([{ cols: 84, rows: 27 }]);
+    expect(resize.mock.calls.map(([, cols, rows]) => ({ cols, rows }))).toEqual([{ cols: 84, rows: 27 }]);
+    expect(host.reportedGrid).toEqual({ cols: host.term.cols, rows: host.term.rows });
+  });
+
+  it('nono pane mantém fallback pintado e contexto perdido repinta sem loop de recriação', async () => {
+    const panes = Array.from({ length: 9 }, (_, index) => ({
+      id: `fallback-${index}`, kind: 'shell' as const, title: 'Shell',
+    }));
+    useLayoutStore.setState({ root: buildGridTree(panes), focusedPaneId: panes[8]!.id });
+    for (const target of panes) {
+      const host = getOrCreateHost(target);
+      setHostSize(host.element, 1200, 800);
+      attachHost(target, document.body.appendChild(document.createElement('div')));
+    }
+    expect(terminalRendererPerformanceSnapshot().activeWebglLeases).toBe(8);
+    const ninth = getOrCreateHost(panes[8]!);
+    const refresh = vi.spyOn(ninth.term, 'refresh');
+    refreshHost(panes[8]!.id);
+    expect(refresh).toHaveBeenCalled();
+    expect(terminalRendererPerformanceSnapshot().activeWebglLeases).toBe(8);
+    const active = webglContexts.findLast((context) => !context.disposed)!;
+    active.lost!();
+    expect(active.disposed).toBe(true);
+    expect(terminalRendererPerformanceSnapshot().activeWebglLeases).toBe(7);
+    const contextsBefore = webglContexts.length;
+    const refreshCount = refreshCalls.length;
+    await vi.advanceTimersByTimeAsync(20);
+    expect(refreshCalls.length).toBeGreaterThan(refreshCount);
+    expect(webglContexts).toHaveLength(contextsBefore);
+  });
   it('F-1368: exit replay after attachment overrides adopted idle and clears the live session', async () => {
     spawn.mockResolvedValueOnce({ ok: true, sessionId: 'pty-already-exited', adopted: true, state: 'idle' });
     window.nexus.pty.onExit = (_sessionId, listener) => {

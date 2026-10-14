@@ -89,6 +89,7 @@ function TerminalPaneLeaf({ pane }: Props) {
   const handleIntersection = useCallback(
     (entries: IntersectionObserverEntry[]) => {
       for (const entry of entries) {
+        if (entry.target !== slotRef.current) continue;
         if (!paneIntersectionApplies(entry)) continue;
         const nowVisible = entry.isIntersecting;
         setIsVisible((prev) => {

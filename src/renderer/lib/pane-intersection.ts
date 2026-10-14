@@ -25,7 +25,8 @@ export function paneIntersectionApplies(entry: {
 }): boolean {
   if (!paneSlotIsLaidOut(entry.boundingClientRect)) return false;
   return !(
-    entry.target instanceof Element && entry.target.closest('[hidden]') !== null
+    entry.target instanceof Element &&
+    (!entry.target.isConnected || entry.target.closest('[hidden]') !== null)
   );
 }
 
