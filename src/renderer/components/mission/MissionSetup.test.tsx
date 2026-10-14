@@ -1629,13 +1629,13 @@ describe('MissionSetup', () => {
       'Implementar motor',
       'Implementar outra parte',
     ]) {
-      act(() => button(host, `Remover ${role}`).click());
+      act(() => buttonByAriaLabel(host, `Remover ${role}`).click());
     }
     const lastWorker = useMissionSetupStore
       .getState()
       .draft.roster.find((agent) => agent.category !== 'orchestrator');
     expect(lastWorker).toBeDefined();
-    act(() => button(host, `Remover ${lastWorker!.agentName}`).click());
+    act(() => buttonByAriaLabel(host, `Remover ${lastWorker!.agentName}`).click());
     expect(host.textContent).toContain('Mantenha ao menos');
     expect(useMissionSetupStore.getState().draft.roster).toHaveLength(2);
   });

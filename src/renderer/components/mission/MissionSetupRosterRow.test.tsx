@@ -349,3 +349,102 @@ describe('missionEffortLabel', () => {
     expect(missionEffortLabel('provider-special')).toBe('provider-special');
   });
 });
+
+describe('MissionSetupRosterRow: cartão do papel na Equipe', () => {
+  function renderCard(options: {
+    removable: boolean;
+    issue?: string | null;
+    onRemove?: () => void;
+  }): HTMLElement {
+    const host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+    mountedRoots.add(root);
+    act(() => {
+      root.render(
+        <MissionSetupRosterRow
+          agent={agent}
+          candidates={[adapter]}
+          providers={[provider]}
+          accounts={[] satisfies AccountInfo[]}
+          issue={options.issue ?? null}
+          removable={options.removable}
+          onChange={vi.fn()}
+          onRemove={options.onRemove ?? vi.fn()}
+        />,
+      );
+    });
+    return host;
+  }
+
+  it('remover é um botão de ícone: nome acessível, dica no hover e nenhum texto visível', () => {
+    const onRemove = vi.fn();
+    const host = renderCard({ removable: true, onRemove });
+    const remove = host.querySelector<HTMLButtonElement>(
+      'button[aria-label="Remover Revisar segurança"]',
+    );
+
+    expect(remove).not.toBeNull();
+    expect(remove!.textContent).toBe('');
+    expect(remove!.querySelector('svg')).not.toBeNull();
+    expect(remove!.title).toBe('Remover Revisar segurança');
+
+    act(() => remove!.click());
+    expect(onRemove).toHaveBeenCalledTimes(1);
+  });
+
+  it('sem removable não há botão: a coordenação única não sai da equipe', () => {
+    const host = renderCard({ removable: false });
+
+    expect(host.querySelector('.mission-roster-row__remove')).toBeNull();
+    expect(host.querySelector('button[aria-label^="Remover"]')).toBeNull();
+  });
+
+  it('a ordem de foco segue a leitura: Ferramenta, Modelo, Esforço, Remover e só então os detalhes', () => {
+    const host = renderCard({ removable: true });
+    const order = [...host.querySelectorAll('select, button, summary')].map(
+      (element) => element.getAttribute('aria-label') ?? element.textContent,
+    );
+
+    expect(order).toEqual([
+      'Ferramenta de IA para Revisar segurança',
+      'Modelo para Revisar segurança',
+      'Esforço do modelo para Revisar segurança',
+      'Remover Revisar segurança',
+      'Instruções para Revisar segurança',
+      'Configurações técnicas de Revisar segurança',
+    ]);
+  });
+
+  it('o estado fica no cabeçalho do cartão: Pronto sem problema, Precisa de ajuste com o motivo', () => {
+    const ready = renderCard({ removable: true });
+    const readyRow = ready.querySelector('.mission-roster-row')!;
+    expect(readyRow.getAttribute('data-state')).toBe('ready');
+    expect(readyRow.querySelector('.mission-roster-row__summary .mission-roster-row__status')?.textContent)
+      .toBe('Pronto');
+
+    const blocked = renderCard({
+      removable: true,
+      issue: 'Ferramenta desligada nas configurações.',
+    });
+    const blockedRow = blocked.querySelector('.mission-roster-row')!;
+    expect(blockedRow.getAttribute('data-state')).toBe('needs-attention');
+    expect(blockedRow.querySelector('.mission-roster-row__status')?.textContent)
+      .toBe('Precisa de ajuste');
+    expect(blockedRow.querySelector('[role="status"].mission-setup__inline-error')?.textContent)
+      .toBe('Ferramenta desligada nas configurações.');
+  });
+
+  it('Instruções e Configurações técnicas ficam juntas, recolhidas, num bloco abaixo dos controles', () => {
+    const host = renderCard({ removable: true });
+    const more = host.querySelector('.mission-roster-row__more');
+    const controls = host.querySelector('.mission-roster-row__controls');
+
+    expect(more).not.toBeNull();
+    expect([...more!.children].map((child) => child.tagName)).toEqual(['DETAILS', 'DETAILS']);
+    expect([...more!.querySelectorAll('details')].every((details) => !details.open)).toBe(true);
+    expect(
+      controls!.compareDocumentPosition(more!) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+});

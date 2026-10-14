@@ -379,3 +379,28 @@ com energia passando. Código: `components/mission/MissionGraph.tsx`,
   `prefers-reduced-motion` tira o movimento e os pacotes. O cabo vivo segue
   marcado pela cor e pelo conector aceso. Pink City só para vivo e
   selecionado.
+
+## 15. Passos da missão com lista longa (Equipe e Revisão)
+
+Pedido do operador (14/10): a barra "Voltar / Continuar" boiava no meio da
+lista de papéis, cortando um cartão ao meio. Código: `TeamStep.tsx`,
+`MissionSetupRosterRow.tsx` e `mission-setup.css`.
+
+- **A barra de ações nunca cobre conteúdo.** Passo com lista que pode passar da
+  janela usa `.mission-setup__step--docked` (Revisão: `--review`): quem rola é
+  `.mission-setup__step-scroll`, e `.mission-setup__step-dock` é irmão dela,
+  opaco (`--bg`) e separado por fio de 1px. `position: sticky; bottom: 0` dentro
+  do scroller do passo é proibido: ele respeita o `padding-bottom` do scroller e
+  deixa a barra boiando sobre a lista. Passo curto (Missão) segue com o rodapé
+  sticky de `.mission-setup__step > .mission-setup__step-actions`.
+- **Motivo do bloqueio mora no dock**, abaixo do botão que ele descreve
+  (`aria-describedby`), e não no fim da lista.
+- **Cartão de papel (variante cheia).** Hierarquia: nome e papel, depois o
+  estado, depois a configuração. O cabeçalho é uma grade (avatar, nome e papel,
+  estado, remover) igual em todo cartão; a coluna de remover é reservada mesmo
+  quando o papel não pode sair, então o estado não muda de lugar. Ferramenta,
+  Modelo e Esforço ficam numa grade de três trilhos (uma coluna abaixo de 600px
+  de canvas). Rótulo de campo em caixa normal, sem eyebrow em caixa alta.
+- **Remover é botão só de ícone** (`PixelIcon trash`) com `aria-label` e `title`
+  "Remover <papel>", alvo de 32px (maior no toque). Ordem de foco do cartão:
+  controles, remover, detalhes. A variante `--compact` (Expresso) não muda.

@@ -8,6 +8,7 @@ import type { ProviderSettingsInfo } from '../../../shared/provider-settings-typ
 import type { AdapterInfo } from '../../../shared/types';
 import { isAdapterModelAuthenticated } from '../../orch/mission-runtime-readiness';
 import { rankPickerModels } from '../../lib/pane-picker-models';
+import { PixelIcon } from '../PixelIcon';
 
 const CATEGORY_LABELS: Record<SquadAgent['category'], string> = {
   orchestrator: 'Coordenação e revisão',
@@ -302,14 +303,18 @@ export function MissionSetupRosterRow({
             {issue ? 'Precisa de ajuste' : 'Pronto'}
           </span>
           )}
+          {/* Só o ícone: o nome do papel já está no cartão, e um texto longo
+              empurrava o estado e quebrava a fila de controles. O nome
+              acessível e a dica carregam "Remover <papel>". */}
           {removable && (
             <button
               type="button"
               className="mission-setup__button mission-setup__button--quiet mission-roster-row__remove"
               aria-label={`Remover ${agent.agentName}`}
+              title={`Remover ${agent.agentName}`}
               onClick={onRemove}
             >
-              Remover {agent.agentName}
+              <PixelIcon name="trash" size={12} />
             </button>
           )}
         </div>
@@ -321,7 +326,7 @@ export function MissionSetupRosterRow({
         )}
 
         {!compact && (
-          <>
+          <div className="mission-roster-row__more">
         <details className="mission-setup__disclosure mission-roster-row__details">
           <summary>Instruções para {agent.agentName}</summary>
           <div className="mission-setup__field">
@@ -376,7 +381,7 @@ export function MissionSetupRosterRow({
 
           </div>
         </details>
-          </>
+          </div>
         )}
       </div>
     </li>
