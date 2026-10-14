@@ -44,15 +44,18 @@ import {
   tapSessionTermination,
 } from '../pty/pty-manager';
 import { adapterCircuitBreakers } from './circuit-breaker';
+import { setCooldown } from '../persistence/account-store';
 import { getPtyAnalysisLimitEvidence } from '../pty/pty-analysis-runtime';
 import { WORKSPACE_HANDOFF_DELIVERY_PREFIX } from './workspace-handoff-delivery';
 import {
-  CREDENTIAL_REJECTED_OPEN_MS,
+  applyStartFailureBreaker,
   decideStartAction,
   executionProofGraceMs,
   finishPaneStartWatch,
   forgetConfirmedPaneLimit,
   LIMIT_HANDOFF_MS,
+  LOGIN_SCREEN_ACCOUNT_PAUSE_MS,
+  loginScreenAccountPauseReason,
   listConfirmedPaneLimits,
   listPaneStartWatches,
   notePaneSessionEnded,
@@ -63,6 +66,8 @@ import {
   paneStartNoticeSummary,
   paneStartProgress,
   paneStartWatchForSession,
+  providerLoginDetail,
+  providerLoginScreen,
   releasePaneStartWatch,
   setPaneStartKick,
   shortStartError,
@@ -985,10 +990,18 @@ async function handlePaneNotStarted(
   // quarentena é da INSTALAÇÃO (some quando a CLI muda, isto é, quando o
   // catálogo é revalidado) ou, sem instalação provada, da conta.
   const diagnosis = diagnosePaneBoot(outputTail, watch.failure?.exitCode ?? null);
+  // F-1477: CLI viva, sem turno, parada na tela de login do provedor (Grok com
+  // OAuth vencido) é credencial recusada: o disjuntor abre e a rota para de
+  // mandar trabalho a uma CLI que morreria igual em todo pane novo.
+  const loginScreen = failureCause === 'turn-not-started' && providerLoginScreen(outputTail);
   // Só a saída no boot vira recusa de modelo: a recusa do provedor no turno
   // (`provider-request`, F-765) já tem causa e é do failover.
   const cause: PaneNotStartedCause =
-    diagnosis.modelRejected && failureCause === 'boot-exit' ? 'model-rejected' : failureCause;
+    diagnosis.modelRejected && failureCause === 'boot-exit'
+      ? 'model-rejected'
+      : loginScreen
+        ? 'provider-auth'
+        : failureCause;
   // F-1270: recusa de capacidade (teto/memória) é CLI-agnóstica — não é falha
   // da CLI nem do modelo. Não reroteia (outra CLI esbarra no mesmo teto), não
   // conta no disjuntor e devolve a mensagem real a quem pediu.
@@ -1025,20 +1038,31 @@ async function handlePaneNotStarted(
   };
   if (deliveredMeanwhile()) return;
   let breaker: 'trip' | 'count' | 'skipped' = 'skipped';
+  // F-734: o escopo da credencial é lido antes de fechar (a sessão some).
+  const session = watch.sessionId !== null ? getAgentSessionInfo(watch.sessionId) : null;
+  const accountBound = Boolean(session?.accountId);
   if (!watch.operatorOpened) {
-    // F-734: o escopo da credencial é lido antes de fechar (a sessão some).
-    const session = watch.sessionId !== null ? getAgentSessionInfo(watch.sessionId) : null;
-    const accountBound = Boolean(session?.accountId);
     await closeNotStartedPane(watch);
     if (deliveredMeanwhile()) return;
     if (!capacityRefused) {
       // Recusa de capacidade não é falha da CLI: fecha o pane morto, mas não
       // conta no disjuntor do adapter.
       breaker = startFailureBreakerAction({ cause, accountBound });
-      if (breaker === 'trip') {
-        adapterCircuitBreakers.trip(watch.adapterId, CREDENTIAL_REJECTED_OPEN_MS);
-      } else if (breaker === 'count') {
-        adapterCircuitBreakers.recordFailure(watch.adapterId);
+      applyStartFailureBreaker(adapterCircuitBreakers, watch.adapterId, breaker);
+      // F-1477: conta gerenciada na tela de login é estado DESSA credencial —
+      // sai da escolha automática sem derrubar as outras contas da CLI (e o
+      // sucesso de outra conta não a libera). Login nativo é a chave global:
+      // o disjuntor do adapter acima.
+      if (loginScreen && session?.accountId) {
+        try {
+          setCooldown(
+            session.accountId,
+            Date.now() + LOGIN_SCREEN_ACCOUNT_PAUSE_MS,
+            loginScreenAccountPauseReason(watch.adapterId),
+          );
+        } catch (error) {
+          console.warn(`[delegation-supervisor] pausa da conta sem login falhou: ${shortStartError(error)}`);
+        }
       }
       // F-1427: a tarefa saiu desta CLI sem prova de execução — falha dela
       // nesta missão (o exclude do Maestro vale e o sucesso 14d registra).
@@ -1078,7 +1102,9 @@ async function handlePaneNotStarted(
   }
   // F-1270: o motivo da recusa de capacidade viaja em `failure.detail` (o
   // diagnóstico do boot só existe com sessão; aqui o spawn foi recusado antes).
-  const detail = diagnosis.detail ?? watch.failure?.detail ?? null;
+  const detail = loginScreen
+    ? providerLoginDetail(watch.adapterId, accountBound)
+    : diagnosis.detail ?? watch.failure?.detail ?? null;
   const summary = paneStartNoticeSummary({
     paneId: watch.paneId,
     adapterId: watch.adapterId,

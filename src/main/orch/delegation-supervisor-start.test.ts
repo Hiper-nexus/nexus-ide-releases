@@ -52,6 +52,7 @@ const h = vi.hoisted(() => ({
   failoverRecovery: vi.fn((_paneId: string, _sessionId: string) => false),
   // F-1486: o failover está reabrindo a tarefa (pedido dele, não da rede).
   failoverReopens: vi.fn((_paneId: string) => false),
+  setCooldown: vi.fn((_id: string, _until: number, _reason: string) => {}),
 }));
 
 vi.mock('./failover', () => ({
@@ -154,6 +155,11 @@ vi.mock('./nexus-task-fail-closed-recovery', () => ({
   flushAllNexusTaskFailClosedRetries: vi.fn(),
 }));
 vi.mock('../observability/main-trace', () => ({ trace: h.trace }));
+// F-1477: a pausa da conta gerenciada sem login é observada, nunca gravada.
+vi.mock('../persistence/account-store', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../persistence/account-store')>()),
+  setCooldown: h.setCooldown,
+}));
 
 import {
   checkLimitedTaskPanes,
@@ -1341,6 +1347,67 @@ describe('F-1414: tarefa delegada sem execução comprovada é reaberta noutra L
       expect.objectContaining({ kind: 'pane-not-started', cause: 'turn-not-started', outcome: 'rerouted' }),
     );
     expect(getPaneStartWatch('pane-kimi')).toBeNull();
+  });
+
+  /** F-1477: Grok vivo, parado na tela de OAuth vencido, sem turno. */
+  function grokOnLoginScreen(tail: string, accountId?: string): void {
+    trackPaneStart(watchInit({ paneId: 'pane-grok', requestId: 'orchspawn-grok', adapterId: 'grok' }));
+    h.pendingSession.mockReturnValue({ state: 'bound', sessionId: 'session-grok' });
+    h.spawnedAt.mockReturnValue(NOW - START_GRACE_MS - 5_000);
+    h.sessionState.mockReturnValue('idle');
+    h.getSemantic.mockReturnValue({ status: 'idle', updatedAt: NOW - 1_000 });
+    h.sessionOutput.mockReturnValue(tail);
+    h.agentInfo.mockReturnValue({ adapterId: 'grok', ...(accountId ? { accountId } : {}) });
+    h.listPaneSnapshots.mockReturnValue([
+      { paneId: 'pane-grok', sessionId: 'session-grok', kind: 'cli-agent', role: 'worker', state: 'idle', missionId: 'mission-f723' },
+    ]);
+  }
+  const GROK_LOGIN = 'Grok CLI\n\n⠋ Approve in your browser to finish signing in…';
+
+  it('F-1477: Grok de login nativo parado na tela de login vira provider-auth e a CLI sai da rota', async () => {
+    grokOnLoginScreen(GROK_LOGIN);
+    await checkPaneStarts(NOW);
+    expect(reroute).toHaveBeenCalledWith(['grok']);
+    // Login nativo é a chave de todo pane da CLI: o disjuntor do adapter abre.
+    expect(adapterCircuitBreakers.isOpen('grok')).toBe(true);
+    expect(h.setCooldown).not.toHaveBeenCalled();
+    expect(summaryAt()).toContain('Motivo: grok precisa de login — conclua o login da CLI');
+    expect(h.trace).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'pane-not-started', cause: 'provider-auth', breaker: 'trip' }),
+    );
+  });
+
+  it('F-1477: conta gerenciada na tela de login pausa só ESSA conta — o Grok segue roteável', async () => {
+    grokOnLoginScreen(GROK_LOGIN, 'acct-grok-a');
+    await checkPaneStarts(NOW);
+    expect(reroute).toHaveBeenCalledWith(['grok']);
+    // Conta A sem login não derruba a conta B: o adapter só conta a falha.
+    expect(adapterCircuitBreakers.isOpen('grok')).toBe(false);
+    expect(adapterCircuitBreakers.snapshot('grok').recentFailures).toBe(1);
+    expect(h.setCooldown).toHaveBeenCalledTimes(1);
+    expect(h.setCooldown).toHaveBeenCalledWith(
+      'acct-grok-a',
+      expect.any(Number),
+      expect.stringMatching(/session expired.*grok/),
+    );
+    // Um sucesso de outra conta fecha o disjuntor do adapter, mas não libera A.
+    adapterCircuitBreakers.recordSuccess('grok');
+    expect(h.setCooldown.mock.calls.map(([id]) => id)).toEqual(['acct-grok-a']);
+    expect(summaryAt()).toContain('grok precisa de login nesta conta');
+    expect(h.trace).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'pane-not-started', cause: 'provider-auth', breaker: 'count' }),
+    );
+  });
+
+  it('F-1477 guarda: tela ociosa sem login segue turn-not-started e só conta no disjuntor', async () => {
+    grokOnLoginScreen('Grok CLI\n\nO relatório citava "Approve in your browser" ontem.\n❯ ');
+    await checkPaneStarts(NOW);
+    expect(adapterCircuitBreakers.isOpen('grok')).toBe(false);
+    expect(h.setCooldown).not.toHaveBeenCalled();
+    expect(summaryAt()).not.toContain('precisa de login');
+    expect(h.trace).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'pane-not-started', cause: 'turn-not-started', breaker: 'count' }),
+    );
   });
 
   // F-1427: a reabertura por falta de prova é falha da CLI nesta missão — o

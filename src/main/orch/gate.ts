@@ -93,6 +93,12 @@ export interface AgentGateContext {
    * (own worktree/branch). It gets the same git guard as an isolated worker.
    */
   isolatedWriter?: true;
+  /**
+   * F-1477: Main-owned — revisão informativa que a rota tirou de Claude/Codex
+   * numa tarefa de segurança crítica. O approve desta sessão nunca satisfaz o
+   * portão de integração (`nexus_review_verdict`).
+   */
+  informativeReview?: true;
   allowedTools: string[] | null;
   allowedSkills: string[] | null;
   /**
@@ -227,6 +233,7 @@ export interface MintTokenInput {
   executionScope?: ProjectExecutionScope;
   sharedTabWorktree?: true;
   isolatedWriter?: true;
+  informativeReview?: true;
   allowedTools?: string[] | null;
   allowedSkills?: string[] | null;
   /**
@@ -356,6 +363,7 @@ export function mintToken(input: MintTokenInput): AgentGateContext {
     executionScope: Object.freeze({ ...executionScope }),
     ...(input.sharedTabWorktree === true ? { sharedTabWorktree: true as const } : {}),
     ...(input.isolatedWriter === true ? { isolatedWriter: true as const } : {}),
+    ...(input.informativeReview === true ? { informativeReview: true as const } : {}),
     // Snapshot caller-owned arrays at the mint boundary. Mutating spawn
     // metadata afterwards must never widen an already-issued bearer.
     allowedTools:

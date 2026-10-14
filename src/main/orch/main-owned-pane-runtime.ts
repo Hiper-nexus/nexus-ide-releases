@@ -98,6 +98,12 @@ export interface PaneOrchMeta {
    * docs/analysis/2026-08-06-refatoracao-execucao-simples.md.
    */
   isolatedWriter?: boolean;
+  /**
+   * F-1477: revisão informativa que a rota tirou de Claude/Codex numa tarefa
+   * de segurança crítica. O token herda a marca e o approve deste pane nunca
+   * satisfaz o portão de integração (`nexus_review_verdict`).
+   */
+  informativeReview?: true;
   /** Exact approved revision seal retained with the physical process. */
   authoritySeal?: MissionPaneAuthoritySeal;
   /**
@@ -164,6 +170,12 @@ export interface PaneSpawnOptions {
    * Ausente = caminho simples no mesmo checkout (comentário em PaneOrchMeta).
    */
   isolatedWriter?: boolean;
+  /**
+   * F-1477: revisão informativa que a rota tirou de Claude/Codex numa tarefa
+   * de segurança crítica. O token herda a marca e o approve deste pane nunca
+   * satisfaz o portão de integração (`nexus_review_verdict`).
+   */
+  informativeReview?: true;
   /** Exact approved revision seal retained by the physical PTY. */
   authoritySeal?: MissionPaneAuthoritySeal;
   /**
@@ -771,6 +783,7 @@ export function spawnMainOwnedMissionPane(
     readOnly: options.readOnly === true,
     nativeReadOnly,
     operatorOpened: options.operatorOpened === true || undefined,
+    ...(options.informativeReview === true ? { informativeReview: true as const } : {}),
     authoritySeal: options.authoritySeal,
     ...(exactResumeRequired ? { exactResumeRequired: true as const } : {}),
   });

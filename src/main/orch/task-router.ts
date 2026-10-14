@@ -98,6 +98,17 @@ export interface RouteContext {
   reviewedFindingFix?: boolean;
   /** F-1415: spawn somente leitura — nunca é escrita, o propósito é revisão. Never MCP input. */
   readOnly?: boolean;
+  /**
+   * F-1477: revisão INFORMATIVA provada pelo Main no spawn — somente leitura
+   * (pedida ou herdada do chamador), sem worktree de escrita e fora dos
+   * caminhos que abrem juiz de integração (`nexus_route_task`, revisor da
+   * conclusão de código). Só ela tira a auditoria de segurança crítica de
+   * Claude/Codex; o portão de integração não aceita o veredito de outro juiz
+   * numa missão de segurança crítica (`securityCriticalGateJudge`). `readOnly`
+   * sozinho não basta: o revisor de portão também é somente leitura.
+   * Never MCP input.
+   */
+  informativeReview?: boolean;
   /** Adapters already used by panes in this mission (diversity boost). */
   missionUsedAdapters?: ReadonlySet<string>;
   /** How many times each adapter appears in the mission (diversity attenuation). */
@@ -872,6 +883,45 @@ const JUDGE_SECURITY_CRITICAL_ADAPTERS: ReadonlySet<string> = new Set([
   'claude',
   'codex',
 ]);
+
+/**
+ * F-1477: o portão de integração também segue o F-817. Numa missão de
+ * segurança crítica (mesma classificação do roteador sobre o texto dela), só
+ * Claude/Codex aprovam push/merge/conclusão — a revisão informativa que foi
+ * para Argon/Grok fica registrada, mas não vira portão. `false` = o juiz não
+ * pode satisfazer o portão desta missão.
+ */
+/**
+ * F-1477 (re-veredito): a rota informativa só TIROU a auditoria de Claude/Codex
+ * quando a tarefa era de segurança crítica e o assento ficou fora deles. Esse
+ * pane nasce marcado (`informativeReview`) e o approve dele nunca satisfaz o
+ * portão de integração, seja qual for a classificação da missão.
+ */
+export function informativeReviewSeat(route: {
+  readonly tier?: unknown;
+  readonly specialty?: unknown;
+  readonly adapterId?: unknown;
+}): boolean {
+  return (
+    route.tier === 'critical' &&
+    route.specialty === 'security' &&
+    typeof route.adapterId === 'string' &&
+    !JUDGE_SECURITY_CRITICAL_ADAPTERS.has(route.adapterId)
+  );
+}
+
+export function securityCriticalGateJudge(
+  missionText: string,
+  reviewerAdapterId: string,
+): boolean {
+  if (JUDGE_SECURITY_CRITICAL_ADAPTERS.has(reviewerAdapterId)) return true;
+  const text = missionText.trim();
+  if (!text) return true;
+  return !(
+    classifyTask(text).tier === 'critical' &&
+    classifyRouteSpecialty(text).specialty === 'security'
+  );
+}
 
 /**
  * O assento só entra quando a CLI anunciou o modelo (sonda viva). Vale também
@@ -2319,8 +2369,15 @@ export function routeTask(
   ) {
     // F-817: auditoria de segurança crítica só com o conjunto frontier
     // provado (Claude/Codex); sem eles o Maestro julga, sem empréstimo.
+    // F-1477: só a revisão INFORMATIVA (provada pelo Main no spawn: somente
+    // leitura, sem worktree de escrita, fora dos caminhos de juiz de
+    // integração) usa a lane inteira, que espalha por uso na missão
+    // ("segurança", "migração" e "produção" faziam quase toda revisão cair só
+    // em Claude/Codex). Juiz de portão e writer seguem Claude/Codex.
     const securityCriticalAudit =
-      tier === 'critical' && specialtyVerdict.specialty === 'security';
+      tier === 'critical' &&
+      specialtyVerdict.specialty === 'security' &&
+      context.informativeReview !== true;
     const judgeLane = securityCriticalAudit
       ? JUDGE_FRONTIER_LANE.filter((seat) =>
           JUDGE_SECURITY_CRITICAL_ADAPTERS.has(seat.adapterId),

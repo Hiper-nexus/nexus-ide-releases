@@ -30,6 +30,7 @@
 import type { AgentStopFailureCategory } from '../../shared/agent-stop-failure';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { sanitizeMissionOrchestratorExitOutput } from './mission-orchestrator-exit-policy';
+import type { CircuitBreakerRegistry } from './circuit-breaker';
 
 /**
  * Prazo para o pane provar que começou: sessão viva com turno aberto. Vale do
@@ -303,6 +304,80 @@ export function startFailureBreakerAction(input: {
   const credential =
     input.cause === 'provider-auth' || input.cause === 'provider-billing';
   return credential && !input.accountBound ? 'trip' : 'count';
+}
+
+/**
+ * F-1477 (F-736): aplica a ação no disjuntor do adapter. A 1ª queda de uma
+ * credencial nativa abre direto pela janela dela; a sonda half-open que cai de
+ * novo segue o recuo (×4, até `maxOpenMs`) em vez de reabrir sempre 15 min.
+ */
+export function applyStartFailureBreaker(
+  breakers: Pick<CircuitBreakerRegistry, 'state' | 'trip' | 'recordFailure'>,
+  adapterId: string,
+  action: 'trip' | 'count' | 'skipped',
+): void {
+  if (action === 'skipped') return;
+  if (action === 'count' || breakers.state(adapterId) === 'half-open') {
+    breakers.recordFailure(adapterId);
+    return;
+  }
+  breakers.trip(adapterId, CREDENTIAL_REJECTED_OPEN_MS);
+}
+
+/**
+ * F-1477: pausa da CONTA gerenciada que parou na tela de login — a mesma
+ * janela e o mesmo motivo de auth da sonda de quota (main.ts: "oauth session
+ * expired"), que tiram a credencial da escolha automática sem tocar nas
+ * outras contas da CLI. O login de verdade (leitura saudável do provedor) ou
+ * a conta pinada pelo operador a liberam antes.
+ */
+export const LOGIN_SCREEN_ACCOUNT_PAUSE_MS = 12 * 60 * 60_000;
+export function loginScreenAccountPauseReason(adapterId: string): string {
+  return `oauth session expired — ${adapterId} parou na tela de login do provedor (F-1477)`;
+}
+
+/**
+ * F-1477: telas de login de CLI vistas parando um pane sem turno. Só frases
+ * inteiras e típicas da tela — nunca frase solta ("login required", "waiting
+ * for approval" aparecem em trabalho ecoado):
+ * - Grok com OAuth vencido: "Approve in your browser to finish signing in…";
+ * - URL de login aberta pela CLI ("Opening https://…/device", "/oauth/authorize");
+ * - código de dispositivo ("one-time code: ABCD-1234");
+ * - título sozinho na linha: "Sign in with Google" (AGY), "Sign in with
+ *   ChatGPT" (Codex), "Select login method" (Claude).
+ * Ancoradas no começo da linha (só espaço, spinner braille e moldura da TUI
+ * antes; o código de dispositivo aceita até 40 caracteres sem aspas) e lidas só nas últimas
+ * linhas: prosa que cita a frase e login antigo rolado para cima não contam.
+ */
+const LOGIN_LINE_PREFIX = '^[\\s\\u2800-\\u28FF│┃›❯✻✶✳⏺◐◓◑◒]*';
+const PROVIDER_LOGIN_SCREENS: readonly RegExp[] = [
+  new RegExp(`${LOGIN_LINE_PREFIX}approve in your browser to finish signing in\\b`, 'iu'),
+  new RegExp(
+    `${LOGIN_LINE_PREFIX}(?:open|opening|visit|go to|navigate to)\\s+(?:the (?:url|link|page)\\s+)?` +
+      'https?:\\/\\/\\S*\\b(?:device|devicelogin|login|oauth|authorize|signin|sign-in)\\b',
+    'iu',
+  ),
+  // Código de dispositivo, ancorado: só a moldura e até 40 caracteres sem
+  // aspas/crase antes ("! First copy your one-time code: ABCD-1234").
+  new RegExp(`${LOGIN_LINE_PREFIX}!?\\s*[^"'\`\\n]{0,40}\\b[Cc]ode:?\\s+[A-Z0-9]{4}-[A-Z0-9]{4}\\b`, 'u'),
+  new RegExp(`${LOGIN_LINE_PREFIX}(?:sign in with (?:google|chatgpt)|select login method:?)\\s*$`, 'iu'),
+];
+const PROVIDER_LOGIN_TAIL_LINES = 8;
+
+export function providerLoginScreen(outputTail: string | null | undefined): boolean {
+  if (!outputTail) return false;
+  return outputTail
+    .split(/\r?\n/u)
+    .filter((line) => line.trim().length > 0)
+    .slice(-PROVIDER_LOGIN_TAIL_LINES)
+    .some((line) => PROVIDER_LOGIN_SCREENS.some((screen) => screen.test(line)));
+}
+
+/** F-1477: motivo do aviso quando a CLI parou na tela de login (frase fixa). */
+export function providerLoginDetail(adapterId: string, accountBound: boolean): string {
+  return accountBound
+    ? `${adapterId} precisa de login nesta conta — conclua o login; a conta fica fora da escolha automática por até 12 h (sem sonda automática: fixe a conta num pane depois do login para usá-la antes)`
+    : `${adapterId} precisa de login — conclua o login da CLI; ela fica fora da rota até lá`;
 }
 
 const PROVIDER_REJECTED_TAIL = 'o turno do brief acabou antes de qualquer trabalho';

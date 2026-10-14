@@ -5,6 +5,8 @@ import {
   isFrontierReviewer,
   judgeSeatNeedsAccessProof,
   routeTask,
+  informativeReviewSeat,
+  securityCriticalGateJudge,
   type AdapterAvailability,
 } from './task-router';
 import {
@@ -305,6 +307,70 @@ describe('lane de julgamento (F-233: só modelos de ponta julgam)', () => {
         claudeCodexUsed,
       );
       expect(['agy', 'grok']).toContain(generic!.adapterId);
+    });
+
+    // F-1477 (fundador, 13/10: "cadê o uso do Kimi, do MiniMax, do Grok, do
+    // Devin?"): "segurança", "migração" e "produção" fazem quase toda revisão
+    // virar critical/security, e a trava do F-817 a prendia em Claude/Codex.
+    // Revisão Codex: `readOnly` sozinho não prova nada (o juiz de portão também
+    // é somente leitura). Só a revisão INFORMATIVA provada pelo Main no spawn
+    // (`informativeReview`: somente leitura, sem worktree de escrita, fora dos
+    // caminhos de juiz) usa a lane inteira, que espalha por uso na missão.
+    const SECURITY_REVIEW = 'revisar somente leitura a segurança da migração para produção';
+    const routeWith = (context: Record<string, unknown>) => routeTask(
+      SECURITY_REVIEW,
+      everyone,
+      DEFAULT_ROUTING_TABLE,
+      undefined,
+      false,
+      undefined,
+      { ...claudeCodexUsed, ...context },
+    );
+
+    it('F-1477 (1/3): revisão informativa somente leitura usa a lane completa e espalha', () => {
+      const decision = routeWith({ readOnly: true, informativeReview: true });
+      expect(decision!.tier).toBe('critical');
+      expect(decision!.specialty).toBe('security');
+      expect(decision!.reason).toContain('lane de julgamento (modelos de ponta)');
+      expect(decision!.reason).not.toContain('segurança crítica: Claude/Codex');
+      expect(['agy', 'grok']).toContain(decision!.adapterId);
+    });
+
+    it('F-1477 (2/3): juiz de portão (somente leitura, sem a prova informativa) continua Claude/Codex', () => {
+      // nexus_route_task e o revisor da conclusão de código abrem juiz cujo
+      // approve vira portão de integração: readOnly, mas nunca informativo.
+      const decision = routeWith({ readOnly: true });
+      expect(decision!.reason).toContain('lane de julgamento (segurança crítica: Claude/Codex)');
+      expect(['claude', 'codex']).toContain(decision!.adapterId);
+    });
+
+    it('F-1477 (3/3): writer — sem readOnly ou readOnly com worktree de escrita — continua Claude/Codex', () => {
+      // `spawnRouteAuthority` dá só `readOnly` ao readOnly+isolatedWriter (F-1318).
+      for (const context of [{}, { readOnly: true, informativeReview: false }]) {
+        const decision = routeWith(context);
+        expect(decision!.reason).toContain('lane de julgamento (segurança crítica: Claude/Codex)');
+        expect(['claude', 'codex']).toContain(decision!.adapterId);
+      }
+    });
+
+    it('F-1477: informativeReviewSeat marca só o assento que saiu de Claude/Codex em segurança crítica', () => {
+      const informative = routeWith({ readOnly: true, informativeReview: true });
+      expect(informativeReviewSeat(informative!)).toBe(true);
+      expect(informativeReviewSeat({ tier: 'critical', specialty: 'security', adapterId: 'claude' })).toBe(false);
+      expect(informativeReviewSeat({ tier: 'critical', specialty: 'security', adapterId: 'codex' })).toBe(false);
+      expect(informativeReviewSeat({ tier: 'hard', specialty: 'security', adapterId: 'grok' })).toBe(false);
+      expect(informativeReviewSeat({ tier: 'critical', specialty: 'feature', adapterId: 'grok' })).toBe(false);
+    });
+
+    it('F-1477: o portão de integração só aceita Claude/Codex em missão de segurança crítica', () => {
+      const missionGoal = 'Auditar a segurança da autenticação e dos tokens de produção';
+      expect(securityCriticalGateJudge(missionGoal, 'claude')).toBe(true);
+      expect(securityCriticalGateJudge(missionGoal, 'codex')).toBe(true);
+      expect(securityCriticalGateJudge(missionGoal, 'grok')).toBe(false);
+      expect(securityCriticalGateJudge(missionGoal, 'agy')).toBe(false);
+      // Fora de segurança crítica o F-779 não muda: Argon/Grok aprovam.
+      expect(securityCriticalGateJudge('Revisar o layout do kanban', 'grok')).toBe(true);
+      expect(securityCriticalGateJudge('', 'grok')).toBe(true);
     });
 
     it('sem Claude/Codex instalados, Grok e Argon não recebem a auditoria: o Maestro julga', () => {

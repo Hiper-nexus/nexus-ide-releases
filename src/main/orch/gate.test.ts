@@ -83,6 +83,14 @@ describe('F-1157: o gate não nega tool nem skill a nenhum agente', () => {
     expect(canonicalToolName('nexus_pane_read')).toBe('pane_read');
   });
 
+  it('F-1477: a marca de revisão informativa do spawn chega ao token (e só quando o Main a deu)', () => {
+    resetGateForTests();
+    const informative = mintToken({ label: 'info', role: 'worker', missionId: 'm-info', readOnly: true, informativeReview: true, scope: testProjectScope() });
+    expect(informative.informativeReview).toBe(true);
+    const judge = mintToken({ label: 'juiz', role: 'worker', missionId: 'm-info', readOnly: true, scope: testProjectScope() });
+    expect(judge.informativeReview).toBeUndefined();
+  });
+
   it('readOnly só vira fronteira (readOnlyEnforced) quando o operador escolheu o Hardened', () => {
     resetGateForTests();
     const label = mintToken({ label: 'rotulo', role: 'worker', missionId: 'm-ro', readOnly: true, scope: testProjectScope() });

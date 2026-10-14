@@ -3467,6 +3467,8 @@ export function requestPaneSpawn(
         nativeReadOnly: options.nativeReadOnly,
         // Writer isolado que o Nexus criou: o token herda a guarda de git.
         ...(options.isolatedWriter === true ? { isolatedWriter: true } : {}),
+        // F-1477: revisão informativa (approve nunca vira portão).
+        ...(options.informativeReview === true ? { informativeReview: true as const } : {}),
         ...(options.operatorOpened === true ? { operatorOpened: true } : {}),
         authoritySeal: options.authoritySeal
           ? Object.freeze({ ...options.authoritySeal })

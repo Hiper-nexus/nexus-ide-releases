@@ -95,7 +95,7 @@ import { loadModelCatalog, modelCatalogInfo, isModelBlockedForAutoRouting } from
 import { discoverCliModels } from '../adapters/cli-model-discovery';
 import { modelAccessQuarantine } from './model-access-quarantine';
 import { newestInModelLine } from '../../shared/model-line';
-import { resolveRoutableModel } from './task-router';
+import { informativeReviewSeat, resolveRoutableModel } from './task-router';
 import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import {
   authorizePaneRef,
@@ -848,11 +848,33 @@ export interface OperatorRouteInternal {
   /** F-1415: o spawn é readOnly — o roteador trata como revisão, nunca writer. */
   readonly readOnly?: boolean;
   /**
+   * F-1477: revisão informativa provada aqui (`spawnRouteAuthority`): somente
+   * leitura e sem worktree de escrita. Só ela usa a lane de julgamento inteira
+   * em segurança crítica; o portão não aceita o veredito dela (tools-domain).
+   */
+  readonly informativeReview?: boolean;
+  /**
    * F-802: só sugerir (o hook /hook/delegate apontando a CLI melhor): sem o
    * lote do Jev (não gasta a chave do operador) e sem registrar proveniência
    * de spawn nem diário de rotas — nada foi decidido.
    */
   readonly suggestOnly?: boolean;
+}
+
+/**
+ * F-1477: a autoridade EFETIVA do pane que vai nascer, para o roteador. O
+ * readOnly vem do pedido ou do chamador (o filho herda, `coerceSpawnReadOnly`).
+ * Revisão informativa exige somente leitura E nenhuma worktree de escrita: o
+ * F-1318 faz `isolatedWriter` vencer o rótulo readOnly — é writer.
+ */
+export function spawnRouteAuthority(
+  args: Record<string, unknown>,
+  ctx: Pick<AgentGateContext, 'readOnly'>,
+): Pick<OperatorRouteInternal, 'readOnly' | 'informativeReview'> {
+  if (args.readOnly !== true && ctx.readOnly !== true) return {};
+  return args.isolatedWriter === true
+    ? { readOnly: true }
+    : { readOnly: true, informativeReview: true };
 }
 
 export type OperatorRouteResolver = (
@@ -1471,7 +1493,7 @@ const paneSpawnAfterTabMission = {
             !isOperatorChoicePolicy(getOrchSettings().squadCliPolicy)
               ? { requireReadOnlyEnforceable: true }
               : {}),
-            ...(args.readOnly === true ? { readOnly: true } : {}),
+            ...spawnRouteAuthority(args, ctx),
           });
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
@@ -1703,6 +1725,9 @@ const paneSpawnAfterTabMission = {
               ...routePreference(pinRedistributed, recoveryPreferred),
               // F-1471: troca de conta — o modelo do pane anterior fica.
               ...(startRecovery?.preferModel ? { preferModel: startRecovery.preferModel } : {}),
+              // F-1477: a rota dentro da missão também sabe a autoridade
+              // efetiva do pane (readOnly do pedido/chamador, writer isolado).
+              ...spawnRouteAuthority(args, ctx),
             },
           );
         } finally {
@@ -1847,6 +1872,12 @@ const paneSpawnAfterTabMission = {
     if (autoRoute) {
       const spawnRoute = spawnRouteFrom(autoRoute);
       if (spawnRoute) options = { ...options, spawnRoute };
+      // F-1477: a rota informativa tirou a auditoria de segurança crítica de
+      // Claude/Codex — o pane nasce marcado e o approve dele nunca satisfaz o
+      // portão de integração, seja qual for a classificação da missão.
+      if (spawnRouteAuthority(args, ctx).informativeReview === true && informativeReviewSeat(autoRoute)) {
+        options = { ...options, informativeReview: true };
+      }
     }
     // "Escolha livre de agentes" (opt-in por missão): atravessa os três gates
     // cerimoniais (release-qualified / squad_binding / route_reservation)

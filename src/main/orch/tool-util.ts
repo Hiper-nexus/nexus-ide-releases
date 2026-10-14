@@ -1519,6 +1519,12 @@ export interface SpawnToolOptions {
   executionMode?: 'same_checkout' | 'isolated_worktree' | 'read_only';
   isolatedWriter?: boolean;
   /**
+   * F-1477: revisão informativa que a rota tirou de Claude/Codex numa tarefa
+   * de segurança crítica. Main-owned (nunca argumento MCP): o token herda a
+   * marca e o approve desse pane nunca satisfaz o portão de integração.
+   */
+  informativeReview?: true;
+  /**
    * "Escolha livre de agentes" da missão (contract-sealed). Propagado ao
    * backstop físico assertReleaseQualifiedMissionWorkerSpawn para que o gate de
    * CLI release-qualified honre o opt-in por missão mesmo sob `governed`.

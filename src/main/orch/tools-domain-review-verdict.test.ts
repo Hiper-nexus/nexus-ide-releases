@@ -118,6 +118,65 @@ describe('nexus_review_verdict', () => {
     });
   });
 
+  // F-1477 (revisão Codex): a revisão informativa de segurança crítica pode
+  // ir para Argon/Grok — mas o approve dela não pode virar portão de
+  // integração. Só Claude/Codex aprovam uma missão de segurança crítica (F-817).
+  it('F-1477: missão de segurança crítica — approve do Grok fica informativo; Claude satisfaz', async () => {
+    missionId = suite.missions.create({
+      title: 'Auditar a segurança da autenticação e dos tokens de produção',
+    }).id;
+    vi.mocked(getAgentSessionInfo).mockReturnValue({ model: 'grok-4.7' } as never);
+    const grok = await reviewTool().handler(
+      { verdict: 'approve', summary: 'Sem achados.' },
+      { ...ctxFor('worker'), providerId: 'grok' },
+    );
+    expect(grok).toMatchObject({
+      recorded: true,
+      frontier: false,
+      satisfiesGate: false,
+      hint: expect.stringContaining('Claude/Codex'),
+    });
+    vi.mocked(getAgentSessionInfo).mockReturnValue({ model: 'claude-fable-5-1' } as never);
+    const claude = await reviewTool().handler(
+      { verdict: 'approve', summary: 'Auditado.' },
+      ctxFor('orchestrator'),
+    );
+    expect(claude).toMatchObject({ frontier: true, satisfiesGate: true });
+  });
+
+  it('F-1477 (re-veredito): revisão informativa de segurança numa missão que NÃO é de segurança não aprova integração', async () => {
+    // "auditar a segurança da auth antes do merge" aberta como readOnly numa
+    // missão "Melhorar o kanban": a rota foi para o Grok como informativa e o
+    // pane nasceu marcado. O approve dele nunca satisfaz o portão.
+    missionId = suite.missions.create({ title: 'Melhorar o kanban' }).id;
+    vi.mocked(getAgentSessionInfo).mockReturnValue({ model: 'grok-4.7' } as never);
+    const result = await reviewTool().handler(
+      { verdict: 'approve', summary: 'Auth auditada, pode mergear.' },
+      { ...ctxFor('worker'), providerId: 'grok', readOnly: true, informativeReview: true },
+    );
+    expect(result).toMatchObject({
+      recorded: true,
+      frontier: false,
+      satisfiesGate: false,
+      hint: expect.stringContaining('revisão informativa'),
+    });
+    // O mesmo juiz sem a marca (juiz aberto pelo caminho de portão) continua valendo.
+    const judge = await reviewTool().handler(
+      { verdict: 'approve', summary: 'Diff limpo.' },
+      { ...ctxFor('worker'), providerId: 'grok' },
+    );
+    expect(judge).toMatchObject({ frontier: true, satisfiesGate: true });
+  });
+
+  it('F-1477: fora de segurança crítica o approve do Grok continua satisfazendo o portão (F-779)', async () => {
+    vi.mocked(getAgentSessionInfo).mockReturnValue({ model: 'grok-4.7' } as never);
+    const result = await reviewTool().handler(
+      { verdict: 'approve', summary: 'Diff limpo.' },
+      { ...ctxFor('worker'), providerId: 'grok' },
+    );
+    expect(result).toMatchObject({ frontier: true, satisfiesGate: true });
+  });
+
   it('árvore suja aparece na resposta e no hint', async () => {
     vi.mocked(getAgentSessionInfo).mockReturnValue({
       model: 'claude-opus-5-6',

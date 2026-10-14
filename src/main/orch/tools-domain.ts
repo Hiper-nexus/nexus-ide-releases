@@ -71,6 +71,7 @@ import {
   GLOBAL_USE_WINDOW_MS,
   isFrontierReviewer,
   routeTask,
+  securityCriticalGateJudge,
   type RouteContext,
   type TaskTier,
 } from './task-router';
@@ -1188,7 +1189,20 @@ const reviewVerdictTool: McpToolDef = {
     const reviewerModel = ctx.sessionId
       ? getAgentSessionInfo(ctx.sessionId)?.model
       : undefined;
-    const frontier = isFrontierReviewer(reviewerAdapter, reviewerModel);
+    // F-1477: missão de segurança crítica só passa no portão com juiz
+    // Claude/Codex (F-817) — a revisão informativa roteada para Argon/Grok
+    // fica registrada, mas não aprova push/merge.
+    const gateMission = getProjectDomainStores(ctx.scope).missions.get(ctx.missionId);
+    const securityGateJudge = securityCriticalGateJudge(
+      gateMission?.intentContract?.goal ?? gateMission?.title ?? '',
+      reviewerAdapter,
+    );
+    // F-1477 (re-veredito): o pane que nasceu como revisão informativa (a rota
+    // o tirou de Claude/Codex numa tarefa de segurança crítica) nunca aprova
+    // integração — a tarefa pode ser de segurança numa missão que não é.
+    const informativeOnly = ctx.informativeReview === true;
+    const frontier =
+      isFrontierReviewer(reviewerAdapter, reviewerModel) && securityGateJudge && !informativeOnly;
     const recorded = getProjectDomainStores(ctx.scope)
       .missions.reviewVerdicts.record({
         missionId: ctx.missionId,
@@ -1215,6 +1229,14 @@ const reviewVerdictTool: McpToolDef = {
         ? {
             hint: 'árvore suja: commite antes do veredito — o portão exige veredito do HEAD exato',
           }
+        : informativeOnly
+          ? {
+              hint: 'veredito registrado como informativo: este pane nasceu como revisão informativa de segurança crítica (fora de Claude/Codex) e não aprova integração — abra o juiz via nexus_route_task "revisão" ou julgue como Maestro',
+            }
+        : !securityGateJudge
+          ? {
+              hint: 'veredito registrado como informativo: missão de segurança crítica só passa no portão com juiz Claude/Codex (F-817) — abra o juiz via nexus_route_task "revisão" ou julgue como Maestro',
+            }
         : !frontier
           ? {
               hint: 'veredito registrado, mas só modelo de ponta (Fable/Opus/Sonnet/Sol 6.1/Astra) satisfaz o portão de push — o Maestro julga ou abre juiz via nexus_route_task "revisão"',
@@ -2414,7 +2436,14 @@ export async function routeTaskForCaller(
   const ruleContext: RouteContext = {
     classificationText: classificationTask,
     reviewedFindingFix,
-    ...(internal.readOnly === true || args.readOnly === true ? { readOnly: true } : {}),
+    // F-1477: a autoridade efetiva inclui o chamador somente leitura (o filho
+    // herda o readOnly, `coerceSpawnReadOnly`). `informativeReview` só vem do
+    // spawn provado pelo Main — `nexus_route_task` e o revisor da conclusão
+    // abrem juiz de portão e nunca o recebem.
+    ...(internal.readOnly === true || args.readOnly === true || ctx.readOnly === true
+      ? { readOnly: true }
+      : {}),
+    ...(internal.informativeReview === true ? { informativeReview: true } : {}),
     missionUsedAdapters:
       usedAdapterIds.length > 0 ? new Set(usedAdapterIds) : undefined,
     missionUseCounts,

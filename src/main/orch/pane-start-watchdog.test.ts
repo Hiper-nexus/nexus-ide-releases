@@ -6,6 +6,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { testProjectScope } from './__tests__/scope-fixture';
 import {
   START_GRACE_MS,
+  CREDENTIAL_REJECTED_OPEN_MS,
+  applyStartFailureBreaker,
+  loginScreenAccountPauseReason,
   decideStartAction,
   getPaneStartWatch,
   notePaneSessionEnded,
@@ -15,6 +18,8 @@ import {
   notStartedCause,
   paneStartNoticeSummary,
   paneStartProgress,
+  providerLoginDetail,
+  providerLoginScreen,
   providerRejectedCause,
   releasePaneStartWatch,
   resetPaneStartWatchdogForTests,
@@ -24,6 +29,7 @@ import {
   trackPaneStart,
   type StartCheckInput,
 } from './pane-start-watchdog';
+import { CircuitBreakerRegistry } from './circuit-breaker';
 
 const NOW = 50_000_000;
 
@@ -205,6 +211,76 @@ describe('turno do brief recusado pelo provedor (F-734)', () => {
     expect(startFailureBreakerAction({ cause: 'spawn-refused', accountBound: false })).toBe(
       'count',
     );
+  });
+
+  // F-1477: o Grok com OAuth vencido parava em "Approve in your browser to
+  // finish signing in…" — turn-not-started contava 1 falha e a rota mandava a
+  // próxima tarefa ao mesmo Grok, que morria igual. Revisão Codex: só frases
+  // inteiras da tela de login, URL de login e código de dispositivo.
+  it('F-1477: tela de login do provedor no fim da saída é reconhecida', () => {
+    for (const screen of [
+      'Grok CLI v1.4\n\n⠋ Approve in your browser to finish signing in…',
+      'Opening https://accounts.x.ai/device …',
+      'Visit https://auth.openai.com/oauth/authorize?client_id=x',
+      '! First copy your one-time code: ABCD-1234',
+      '› Sign in with Google',
+      '  Select login method:',
+    ]) {
+      expect(providerLoginScreen(screen)).toBe(true);
+    }
+  });
+
+  it('F-1477: frase solta de trabalho ecoado, prosa citada e login antigo não contam', () => {
+    for (const screen of [
+      // Falsos positivos achados na revisão Codex (conteúdo de trabalho ecoado).
+      'Login required is the literal banner under review',
+      'Waiting for approval of the merge request',
+      // Frases soltas, sem a tela inteira.
+      '│ Login required',
+      'Please log in to continue.',
+      '  Waiting for approval…',
+      'O pane mostrou "Approve in your browser to finish signing in" ontem.',
+      '- a CLI dizia `Approve in your browser to finish signing in` antes',
+      'Sign in with Google é o botão que vamos estilizar',
+      'Visit https://example.com/docs to read the guide',
+      // Código de dispositivo citado ou no meio de uma frase longa não é tela.
+      'O teste usa "code: ABCD-1234" como exemplo de dispositivo',
+      'Na revisão do fluxo de pareamento, o ticket diz que o code ABCD-1234 expira',
+      ['Approve in your browser to finish signing in…', ...Array.from({ length: 12 }, (_, i) => `linha de trabalho ${i}`)].join('\n'),
+      '',
+    ]) {
+      expect(providerLoginScreen(screen)).toBe(false);
+    }
+    expect(providerLoginScreen(null)).toBe(false);
+  });
+
+  it('F-1477: login com conta gerenciada é estado da conta; sem conta, abre o disjuntor da CLI', () => {
+    // A regra do F-734 vale para a tela de login: conta gerenciada só conta no
+    // adapter (a pausa é da conta); login nativo é a chave global.
+    expect(startFailureBreakerAction({ cause: 'provider-auth', accountBound: true })).toBe('count');
+    expect(startFailureBreakerAction({ cause: 'provider-auth', accountBound: false })).toBe('trip');
+    expect(loginScreenAccountPauseReason('grok')).toMatch(/session expired/);
+    expect(providerLoginDetail('grok', false)).toContain('grok precisa de login');
+    expect(providerLoginDetail('grok', true)).toContain('nesta conta');
+  });
+
+  it('F-1477 (F-736): sonda half-open que cai de novo segue o recuo em vez de reabrir 15 min', () => {
+    let now = 1_000_000;
+    const breakers = new CircuitBreakerRegistry({}, () => now);
+    applyStartFailureBreaker(breakers, 'grok', 'trip');
+    expect(breakers.isOpen('grok')).toBe(true);
+    now += CREDENTIAL_REJECTED_OPEN_MS;
+    expect(breakers.state('grok')).toBe('half-open');
+    applyStartFailureBreaker(breakers, 'grok', 'trip');
+    // Recuo ×4 (até 30 min): 20 min depois ainda aberto; o trip fixo já
+    // estaria em half-open aos 15 min.
+    now += 20 * 60_000;
+    expect(breakers.isOpen('grok')).toBe(true);
+    // `count` só conta e `skipped` não toca no disjuntor.
+    const fresh = new CircuitBreakerRegistry({}, () => now);
+    applyStartFailureBreaker(fresh, 'kimi', 'count');
+    applyStartFailureBreaker(fresh, 'kimi', 'skipped');
+    expect(fresh.snapshot('kimi')).toMatchObject({ state: 'closed', recentFailures: 1 });
   });
 
   it('aviso: categoria do motivo, nunca texto do provedor', () => {

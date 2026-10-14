@@ -146,7 +146,7 @@ vi.mock('../adapters/cli-model-discovery', async (original) => ({
 import { operatorRecentlyNamedCli } from './operator-cli-mentions';
 import { operatorNamedCliInSubmittedPrompts } from './operator-submitted-prompts';
 
-import { paneSpawnTool, reserveWorkerSpawnSlot, setOperatorRouteResolver } from './tools-panes';
+import { paneSpawnTool, reserveWorkerSpawnSlot, setOperatorRouteResolver, spawnRouteAuthority } from './tools-panes';
 import { NEXUS_BROWSER_WORKER_TOOLS } from './nexus-browser-policy';
 import type { MissionIntentContract } from '../../shared/mission-intent';
 
@@ -235,6 +235,53 @@ describe('nexus_pane_spawn dentro da missão sem adapterId', () => {
     expect(receipt.harness.source).toBe('auto-route');
     expect(receipt.route.tier).toBe('medium');
     expect(receipt.route.ignored).toEqual({ model: 'ignorado' });
+  });
+
+  // F-1477 (revisão Codex): a rota dentro da missão não sabia que o pane era
+  // somente leitura — a diversificação da revisão informativa nunca chegava.
+  it.each([
+    ['readOnly do pedido', { readOnly: true }, {}, { readOnly: true, informativeReview: true }],
+    ['readOnly herdado do chamador', {}, { readOnly: true }, { readOnly: true, informativeReview: true }],
+    ['writer isolado rotulado readOnly', { readOnly: true, isolatedWriter: true }, {}, { readOnly: true }],
+  ] as const)('F-1477: a rota da missão recebe a autoridade efetiva (%s)', async (_label, extraArgs, extraCtx, expected) => {
+    const resolver = vi.fn(async () => ({ adapterId: 'codex', model: 'gpt-5.4', effort: 'high', routeReservationId: 'rr-ro' }));
+    setOperatorRouteResolver(resolver);
+    const caller = { ...ctx, ...extraCtx };
+    await paneSpawnTool.handler({ task: 'revisar a segurança da migração', prompt: 'revise', ...extraArgs }, caller)
+      .catch(() => undefined);
+    const internal = (resolver.mock.calls[0] as unknown[] | undefined)?.[2] as Record<string, unknown> | undefined;
+    expect(internal).toBeDefined();
+    expect({ readOnly: internal!.readOnly, informativeReview: internal!.informativeReview })
+      .toEqual({ informativeReview: undefined, ...expected });
+  });
+
+  it('F-1477: spawnRouteAuthority — informativa só quando somente leitura e sem worktree de escrita', () => {
+    expect(spawnRouteAuthority({}, {})).toEqual({});
+    expect(spawnRouteAuthority({ readOnly: true }, {})).toEqual({ readOnly: true, informativeReview: true });
+    expect(spawnRouteAuthority({}, { readOnly: true })).toEqual({ readOnly: true, informativeReview: true });
+    expect(spawnRouteAuthority({ readOnly: true, isolatedWriter: true }, {})).toEqual({ readOnly: true });
+    expect(spawnRouteAuthority({ isolatedWriter: true }, {})).toEqual({});
+  });
+
+  // F-1477 (re-veredito): o pane que a rota informativa tirou de Claude/Codex
+  // numa tarefa de segurança crítica nasce marcado — o approve dele nunca
+  // satisfaz o portão de integração, seja qual for a missão.
+  it.each([
+    ['Grok informativo em segurança crítica', 'grok', { readOnly: true }, true],
+    ['Claude em segurança crítica (juiz de sempre)', 'claude', { readOnly: true }, false],
+    ['Grok sem readOnly (rota de writer)', 'grok', {}, false],
+  ] as const)('F-1477: marca de revisão informativa no spawn — %s', async (_label, adapterId, extraArgs, marked) => {
+    const resolver = vi.fn(async () => ({
+      adapterId, model: 'fixture-model', effort: 'high', routeReservationId: 'rr-sec', tier: 'critical', specialty: 'security',
+    }));
+    setOperatorRouteResolver(resolver);
+    // Escolha livre: o roster do squad não restringe a CLI roteada.
+    h.mission.intentContract = { ...(h.mission.intentContract as object), freeAgentChoice: true };
+    await paneSpawnTool.handler({ task: 'auditar a segurança da auth antes do merge', prompt: 'audite', ...extraArgs }, ctx)
+      .catch(() => undefined);
+    expect(h.spawn).toHaveBeenCalled();
+    const options = h.spawn.mock.calls[0][0] as { informativeReview?: true };
+    expect(options.informativeReview === true).toBe(marked);
   });
 
   it('carries the visual routing specialty even when the brief has no UI keyword', async () => {
