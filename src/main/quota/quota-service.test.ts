@@ -41,6 +41,30 @@ const LIVE_USAGE = {
   },
 };
 
+describe('QuotaService.publishSnapshot (post-boot first read)', () => {
+  it('honors the live API cache that refresh() bypasses', async () => {
+    const fetchImpl = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ config: { creditUsagePercent: 6 } }), text: async () => '' }));
+    const svc = new QuotaService({
+      listProviders: () => [provider('grok')],
+      listAccounts: () => [{ id: 'grok-a', adapterId: 'grok', label: 'Grok', mode: 'subscription', hasCredential: true, onCooldown: false } as AccountInfo],
+      resolveGrokTokenCandidates: () => ['fresh-access'],
+      fetchImpl,
+    });
+    try {
+      await svc.snapshot();
+      const probes = fetchImpl.mock.calls.length;
+      expect(probes).toBeGreaterThan(0);
+      const published = await svc.publishSnapshot();
+      expect(published.entries[0].windows.some((w) => w.usedRatio === 0.06)).toBe(true);
+      expect(fetchImpl).toHaveBeenCalledTimes(probes);
+      await svc.refresh();
+      expect(fetchImpl.mock.calls.length).toBeGreaterThan(probes);
+    } finally {
+      svc.stop();
+    }
+  });
+});
+
 describe('QuotaService limit-hit expiry', () => {
   it('clears a proven stale auth warning and publishes the updated account to Redline immediately', async () => {
     let needsRelogin = true;

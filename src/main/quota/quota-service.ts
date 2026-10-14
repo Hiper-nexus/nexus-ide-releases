@@ -922,6 +922,11 @@ export class QuotaService {
     this.#broadcastTimer.unref?.();
   }
 
+  /** Rebuild honoring the API/plan caches + broadcast (post-boot first read). */
+  async publishSnapshot(): Promise<QuotaFleetSnapshot> {
+    return this.#refreshAndPublish(await this.snapshot());
+  }
+
   /** Force rebuild + live API re-probe + broadcast (UI refresh button). */
   async refresh(): Promise<QuotaFleetSnapshot> {
     return this.#refreshAndPublish(await this.snapshot(Date.now(), { forceApi: true }));
@@ -973,6 +978,17 @@ function ensureQuotaService(): QuotaService | null {
   return configured;
 }
 
+/**
+ * First quota read off the boot path: a cache-honoring snapshot (no forced
+ * fleet re-probe), then the broadcast the renderer waits for after it got
+ * the empty lazy snapshot.
+ */
+function enqueueLazyQuotaInit(): void {
+  enqueuePostBootIdleTask('initQuotaService', async () => {
+    await ensureQuotaService()?.publishSnapshot();
+  });
+}
+
 function registerQuotaIpcHandlers(): void {
   ipcMain.removeHandler(QUOTA_CHANNELS.snapshot);
   ipcMain.removeHandler(QUOTA_CHANNELS.refresh);
@@ -985,18 +1001,14 @@ function registerQuotaIpcHandlers(): void {
   });
   ipcMain.handle(QUOTA_CHANNELS.snapshot, async () => {
     if (!configured && lazyDepsFactory && !isPostBootIdleReady()) {
-      enqueuePostBootIdleTask('initQuotaService', async () => {
-        await ensureQuotaService()?.refresh();
-      });
+      enqueueLazyQuotaInit();
       return EMPTY_LAZY_QUOTA_SNAPSHOT;
     }
     return requireQuotaService().snapshot();
   });
   ipcMain.handle(QUOTA_CHANNELS.refresh, async () => {
     if (!configured && lazyDepsFactory && !isPostBootIdleReady()) {
-      enqueuePostBootIdleTask('initQuotaService', async () => {
-        await ensureQuotaService()?.refresh();
-      });
+      enqueueLazyQuotaInit();
       return EMPTY_LAZY_QUOTA_SNAPSHOT;
     }
     return requireQuotaService().refresh();
@@ -1013,9 +1025,7 @@ export function registerQuotaServiceLazy(depsFactory: () => QuotaServiceDeps): v
   configured = null;
   lazyDepsFactory = depsFactory;
   registerQuotaIpcHandlers();
-  enqueuePostBootIdleTask('initQuotaService', async () => {
-    await ensureQuotaService()?.refresh();
-  });
+  enqueueLazyQuotaInit();
 }
 
 export function initQuotaService(deps: QuotaServiceDeps): QuotaService {
