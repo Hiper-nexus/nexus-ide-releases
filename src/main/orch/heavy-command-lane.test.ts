@@ -204,6 +204,51 @@ describe('F-1229: o cwd chega ao Main pelo próprio pedido', () => {
     if (pid > 1) { try { process.kill(pid, 'SIGKILL'); } catch { /* already reaped */ } }
   });
 
+  // PRIO_DARWIN_PROCESS (4) is 0 normally and 1 under taskpolicy -b. Nice stays 0.
+  const darwinPriority = (args: string[], env: NodeJS.ProcessEnv) => new Promise<string>((resolve, reject) => {
+    const child = spawn(process.execPath, args, { cwd: temp, stdio: ['ignore', 'pipe', 'pipe'], env });
+    let output = '', err = '';
+    child.stdout!.on('data', (data) => { output += data; });
+    child.stderr!.on('data', (data) => { err += data; });
+    const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error(`priority probe hung: ${err}`)); }, 8_000);
+    child.once('error', (error) => { clearTimeout(timer); reject(error); });
+    child.once('exit', (code) => {
+      clearTimeout(timer);
+      if (code !== 0) reject(new Error(`exit ${code}: ${err || output}`));
+      else resolve(output.trim());
+    });
+  });
+  const priorityJob = JSON.stringify({ file: '/usr/bin/perl', args: ['-e', 'while (@ARGV && $ARGV[0] ne "--") { shift @ARGV } shift @ARGV; exec @ARGV or die $!', 'heavy-job'] });
+
+  it('job-launch runs the job at darwin background priority, unless NEXUS_HEAVY_QOS=0', async () => {
+    if (process.platform !== 'darwin') return;
+    const probe = ['import os', 'print(os.getpriority(4, 0))'].join('; ');
+    const launch = (qos?: string) => darwinPriority(
+      [path.join(resources, 'job-launch.cjs'), 'build', '/usr/bin/python3', '-c', probe],
+      { PATH: '/usr/bin:/bin', ...(qos ? { NEXUS_HEAVY_QOS: qos } : {}), NEXUS_HEAVY_JOB_BASE: priorityJob },
+    );
+    expect(await launch()).toBe('1');
+    expect(await launch('0')).toBe('0');
+  });
+
+  it('dispatch runs the admitted job at darwin background priority', async () => {
+    if (process.platform !== 'darwin') return;
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ allow: true, leaseId: 'qos-lease' }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as { port: number }).port;
+    try {
+      const probe = ['import os', 'print(os.getpriority(4, 0))'].join('; ');
+      const priority = await darwinPriority(
+        [path.join(resources, 'dispatch.cjs'), 'build', '/usr/bin/python3', JSON.stringify(['-c', probe]), 'false'],
+        { PATH: '/usr/bin:/bin', NEXUS_GATE_TOKEN: 'finite-qos', NEXUS_HEAVY_COMMAND_URL: `http://127.0.0.1:${port}/hook/heavy-command` },
+      );
+      expect(priority).toBe('1');
+    } finally { server.close(); }
+  }, 10_000);
+
   it('request.cjs envia o cwd do job (ou a dica do darwin-job) e imprime o motivo do Main', async () => {
     const bodies: Array<Record<string, unknown>> = [];
     const message = 'nexus-heavy: gave up after 300 s in the admission queue of /repo: 1 job(s) running there, 5 more waiting';

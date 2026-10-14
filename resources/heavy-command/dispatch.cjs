@@ -22,7 +22,7 @@ try {
 }
 // This process is itself a descendant covered by the physical lease. Prevent
 // its preload from recursively wrapping the already-admitted target a second time.
-const child = cp.spawn(file, args, { env: process.env, shell, stdio: 'inherit' });
+const child = require('./qos.cjs').spawnBackground(cp, file, args, { env: process.env, shell, stdio: 'inherit' });
 for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(signal, () => { try { child.kill(signal); } catch {} });
 child.on('error', () => process.exit(127));
 child.on('exit', (code, signal) => { if (signal) { try { process.kill(process.pid, signal); } catch { process.exit(1); } } else process.exit(code ?? 1); });

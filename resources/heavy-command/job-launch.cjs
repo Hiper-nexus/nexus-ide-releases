@@ -50,7 +50,7 @@ async function main() {
     }
     delete env.NEXUS_HEAVY_INHERITED_FD3;
     if (relay.signal.aborted) throw new Error('job cancelled');
-    const job = cp.spawn(target, targetArgs, { env, stdio });
+    const job = require('./qos.cjs').spawnBackground(cp, target, targetArgs, { env, stdio });
     relay.bind(job);
     let failed = false;
     job.once('error', () => { failed = true; });
