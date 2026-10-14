@@ -10637,7 +10637,7 @@ export const RELEASE_076257: AppRelease = {
     { title: 'Atualização do Linux', detail: 'A 0.76.255 só tinha pacote de macOS e a 0.76.256 ainda não tinha Linux. O Omarchy consultava o espelho e ficava na 0.76.254. O modal do Chaveiro do Muse não muda o Linux.' },
   ],
 };
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076258: AppRelease = {
   version: '0.76.258',
   date: '2026-10-14',
   codename: 'Menus nativos do Windows com o tema do app',
@@ -10647,5 +10647,22 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
   fixes: [
     { title: 'color-scheme nos temas (F-380)', detail: ':root declara color-scheme dark e o tema nexus-light declara light, para o popup nativo do select não herdar o canvas claro do sistema.' },
+  ],
+};
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.259',
+  date: '2026-10-14',
+  codename: 'Panes mais rápidos, sem tela preta, e XP que conta de verdade',
+  summary: 'Abrir e redimensionar panes ficou mais leve, o processo principal parou de travar em gravações síncronas, o pane de missão volta a retomar sem conta, o mapa da equipe fica à vista e a gamificação passa a responder ao trabalho real.',
+  highlights: [
+    { title: 'Sem pane preto', detail: 'O terminal adotado recebe na hora o tamanho certo, o resize sai no frame seguinte e um pane que remonta volta visível sozinho.' },
+    { title: 'Abrir pane mais rápido', detail: 'Writer isolado usa uma worktree já preparada, o brief espera o Jev por no máximo 2,5 s e leituras repetidas do spawn ficam em cache.' },
+    { title: 'Nexus mais leve com muitos panes', detail: 'Sem fsync no espelho de diagnóstico, shim por fs.watch em vez de varrer a cada 40 ms, foco que redesenha só os panes envolvidos.' },
+    { title: 'XP de verdade', detail: 'Handoffs aceitos e turnos do MiMo dão XP, o medidor volta à barra lateral e a lata de energético do pane ganha vida.' },
+  ],
+  fixes: [
+    { title: 'Retomada sem conta (F-1514)', detail: 'Conta omitida pela interface usa a conta selada do pane; conta diferente continua recusada.' },
+    { title: 'Mapa da equipe e etapa Equipe', detail: 'Mapa na barra de abas com a tarefa real de cada agente; a barra Voltar/Continuar não cobre mais os cartões.' },
+    { title: 'Builds nas worktrees', detail: 'Typecheck incremental e cache de testes por worktree em .nexus-cache, copiados por CoW para worktrees novas.' },
   ],
 };
