@@ -1291,33 +1291,98 @@ export class WorktreeManager {
       );
       throw new WorktreeStateConflictError("pooled worktree move failed");
     }
-    // Prova da identidade FINAL (igual ao create()): branch derivada, caminho
-    // derivado, ainda limpo e na base congelada.
-    const finalCandidate = cloneRecord({
-      ...pooledCandidate,
-      worktreePath: derivedPath,
-      branchRef: derivedBranchRef,
-    });
-    const finalHead = await assertTaskWorktreeAsync(this.#asyncGit, finalCandidate);
-    if (finalHead !== baseSha) {
-      throw new WorktreeStateConflictError(
-        "adopted worktree HEAD diverged from the pre-allocated base",
-      );
-    }
-    return this.#mutate(this.scopeKey(scope), (records) => {
-      const conflict = records.some(
-        (record) =>
-          record.worktreePath === derivedPath ||
-          record.branchRef === derivedBranchRef ||
-          (record.taskKey === taskKey && ACTIVE_STATUSES.has(record.status)),
-      );
-      if (conflict) {
+    // Após o move, qualquer falha (prova final ou CAS) deixaria a worktree no
+    // caminho/branch DERIVADOS sem registro — vazamento (nenhuma limpeza a
+    // encontra: a de boot do pool só olha pool/+nexus-pool/, e o GC só olha
+    // registros). Rollback completo: devolve a pool/+nexus-pool/ (descartável
+    // pelo caminho normal); se o rollback falhar, remove --force o derivado.
+    try {
+      // Prova da identidade FINAL (igual ao create()): branch derivada,
+      // caminho derivado, ainda limpo e na base congelada.
+      const finalCandidate = cloneRecord({
+        ...pooledCandidate,
+        worktreePath: derivedPath,
+        branchRef: derivedBranchRef,
+      });
+      const finalHead = await assertTaskWorktreeAsync(this.#asyncGit, finalCandidate);
+      if (finalHead !== baseSha) {
         throw new WorktreeStateConflictError(
-          "adopted worktree path, branch or task is already registered",
+          "adopted worktree HEAD diverged from the pre-allocated base",
         );
       }
-      return { records: [...records, finalCandidate], result: finalCandidate };
-    });
+      return this.#mutate(this.scopeKey(scope), (records) => {
+        const conflict = records.some(
+          (record) =>
+            record.worktreePath === derivedPath ||
+            record.branchRef === derivedBranchRef ||
+            (record.taskKey === taskKey && ACTIVE_STATUSES.has(record.status)),
+        );
+        if (conflict) {
+          throw new WorktreeStateConflictError(
+            "adopted worktree path, branch or task is already registered",
+          );
+        }
+        return { records: [...records, finalCandidate], result: finalCandidate };
+      });
+    } catch (error) {
+      await this.#rollbackPooledAdoption(
+        repository.rootRealPath,
+        realWorktree,
+        derivedPath,
+        poolBranchName,
+        derivedBranchName,
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * A1: desfaz a conversão de uma adoção do pool que falhou APÓS o `move`
+   * (prova final ou CAS). Devolve a worktree para `pool/` + `nexus-pool/…`
+   * (descartável pelo caminho normal do pool); se a reversão falhar, força a
+   * remoção do que sobrou (caminho derivado ou de pool + branch derivada),
+   * guardada por `isDangerousWorktreeRemovalPath` — nunca deixa worktree nem
+   * branch derivadas órfãs sem registro.
+   */
+  async #rollbackPooledAdoption(
+    repositoryRoot: string,
+    poolPath: string,
+    derivedPath: string,
+    poolBranchName: string,
+    derivedBranchName: string,
+  ): Promise<void> {
+    const git = this.#asyncGit;
+    const moveBack = await git.run(
+      repositoryRoot,
+      ["worktree", "move", derivedPath, poolPath],
+      { allowFailure: true },
+    );
+    const renameBack = moveBack.status === 0
+      ? await git.run(
+          repositoryRoot,
+          ["branch", "-m", derivedBranchName, poolBranchName],
+          { allowFailure: true },
+        )
+      : { status: 1 };
+    if (moveBack.status === 0 && renameBack.status === 0) return;
+    // Reversão falhou (parcial ou total): remove --force o que sobrou.
+    for (const candidate of [poolPath, derivedPath]) {
+      if (
+        fs.existsSync(candidate) &&
+        !isDangerousWorktreeRemovalPath(candidate, repositoryRoot)
+      ) {
+        await git.run(
+          repositoryRoot,
+          ["worktree", "remove", "--force", candidate],
+          { allowFailure: true, timeoutMs: WORKTREE_REMOVE_TIMEOUT_MS },
+        );
+      }
+    }
+    await git.run(
+      repositoryRoot,
+      ["branch", "-D", derivedBranchName],
+      { allowFailure: true },
+    );
   }
 
   /**

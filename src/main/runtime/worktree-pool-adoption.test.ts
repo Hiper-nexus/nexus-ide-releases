@@ -208,6 +208,42 @@ describe('WorktreeManager pooled worktree adoption (A1)', () => {
     expect(fs.existsSync(poolPath)).toBe(false);
   });
 
+  it('CAS conflict after the move rolls back and leaves no derived worktree/branch', async () => {
+    const base = headSha();
+    // Cria um writer real com o MESMO workerId (mesma identidade derivada),
+    // depois apaga a worktree e a branch físicas para simular um registro órfão
+    // que só conflita no CAS (branch -m e move ainda encontram os alvos livres).
+    const existing = await manager.create({
+      scope: scope(),
+      missionId: 'operator-hand',
+      taskId: 'pane-worker-1',
+      workerId: 'worker-1',
+      ownerKind: 'pane',
+      ownership: { files: [], symbols: [], domains: ['pane-worker-1'] },
+    });
+    const derived = derivedIdentity('operator-hand', 'worker-1');
+    git(root, 'worktree', 'remove', '--force', existing.worktreePath);
+    git(root, 'branch', '-D', existing.branchRef.slice('refs/heads/'.length));
+
+    const { worktreePath: poolPath, branchRef: poolBranch } = await materializePooled('cas-conflict');
+
+    await expect(
+      manager.claimPooledPaneWriter(scope(), 'operator-hand', {
+        workerId: 'worker-1',
+        worktreePath: poolPath,
+        branchRef: poolBranch,
+        baseSha: base,
+      }),
+    ).rejects.toBeInstanceOf(WorktreeStateConflictError);
+
+    // Rollback completo: nada de caminho nem branch derivados órfãos.
+    expect(fs.existsSync(derived.worktreePath)).toBe(false);
+    expect(git(root, 'branch', '--list', derived.branchRef.slice('refs/heads/'.length))).toBe('');
+    // A pré-alocada voltou ao pool, na branch de pool — descartável.
+    expect(fs.existsSync(poolPath)).toBe(true);
+    expect(git(poolPath, 'symbolic-ref', '--quiet', 'HEAD')).toBe(poolBranch);
+  });
+
   it('rejects a pooled worktree whose HEAD diverged from the claimed base', async () => {
     const { worktreePath, branchRef } = await materializePooled('stale-head');
     const original = headSha();
