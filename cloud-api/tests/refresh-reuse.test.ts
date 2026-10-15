@@ -50,6 +50,55 @@ function interleave(db: SqliteD1, pattern: RegExp, effect: () => Promise<unknown
   });
 }
 
+/** Every statement matching `pattern` fails when it runs, as a D1 error would. */
+function failing(db: SqliteD1, pattern: RegExp): D1Database {
+  return new Proxy(db, {
+    get(target, property) {
+      if (property === 'prepare') return (query: string) => target.prepare(pattern.test(query) ? 'UPDATE missing_table SET broken=1' : query);
+      const value = Reflect.get(target, property);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
+
+async function sessionStamp(db: SqliteD1, refresh: string): Promise<number | null | undefined> {
+  return (await db.prepare('SELECT last_used_at AS at FROM sessions WHERE refresh_id=?').bind(await idOf(db, refresh)).first<{ at: number | null }>())?.at;
+}
+
+test('the first authenticated use stamps the session once; a failed stamp never fails the request', async () => {
+  const { db, mac } = await setup();
+  const now = Date.now();
+  assert.equal(await sessionStamp(db, mac.refresh), null);
+
+  assert.ok(await sessionFor(failing(db, /^UPDATE sessions SET last_used_at/), mac.session, 'desktop', now));
+  assert.equal(await sessionStamp(db, mac.refresh), null);
+
+  assert.ok(await sessionFor(db, mac.session, 'desktop', now + 1000));
+  assert.equal(await sessionStamp(db, mac.refresh), now + 1000);
+  assert.ok(await sessionFor(db, mac.session, 'desktop', now + 2000));
+  assert.equal(await sessionStamp(db, mac.refresh), now + 1000, 'one write per session');
+  db.close();
+});
+
+test('once the successor session was used, the old token inside the window is reuse: the family dies', async () => {
+  const { db, mac, vm } = await setup();
+  const root = await idOf(db, mac.refresh);
+  const now = Date.now();
+  const app = await rotateRefresh(db, mac.refresh, 'desktop', now);
+  assert.ok(app);
+  const me = await createApp().request('/v1/me', { headers: { Authorization: `Bearer ${app.tokens.session}` } }, environment(db));
+  assert.equal(me.status, 200, 'the app uses its new session right away');
+
+  // A copy of the rotated token comes back seconds later: the app did receive its pair.
+  assert.equal(await rotateRefresh(db, mac.refresh, 'desktop', now + 5_000), null);
+
+  assert.equal(await sessionFor(db, app.tokens.session, 'desktop'), null);
+  assert.equal(await rotateRefresh(db, app.tokens.refresh, 'desktop', now + 6_000), null);
+  assert.ok(await sessionFor(db, vm.session, 'desktop'), 'other devices stay signed in');
+  assert.deepEqual(await events(db), [{ kind: 'refresh_reuse_family_revoked', family_root: root, account_id: 'user' }]);
+  db.close();
+});
+
 test('a retry inside the grace window gets a new pair, kills the lost successor and spares other families', async () => {
   const { db, mac, vm } = await setup();
   const root = await idOf(db, mac.refresh);

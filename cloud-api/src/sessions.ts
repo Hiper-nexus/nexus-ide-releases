@@ -7,7 +7,9 @@ export const REFRESH_TTL_MS=30*24*60*60*1000;
  * first rotation, so retries never extend it. */
 export const REFRESH_REUSE_GRACE_MS=60*1000;
 export interface Tokens {session:string;refresh:string;csrf:string|null;}
-const UNREVOKED_PARENT=' WHERE EXISTS(SELECT 1 FROM refresh_tokens WHERE id=? AND revoked_at IS NULL)';
+const UNREVOKED_PARENT='EXISTS(SELECT 1 FROM refresh_tokens WHERE id=? AND revoked_at IS NULL)';
+/** Binds the rotated token twice: no successor of it, nor the session issued with one, was ever used. */
+const SUCCESSORS_UNUSED='NOT EXISTS(SELECT 1 FROM refresh_tokens WHERE rotated_from=? AND used_at IS NOT NULL) AND NOT EXISTS(SELECT 1 FROM sessions s JOIN refresh_tokens c ON c.id=s.refresh_id WHERE c.rotated_from=? AND s.last_used_at IS NOT NULL)';
 /** The family is the rotated_from tree under `?`, its root included. */
 const FAMILY='WITH RECURSIVE family(id) AS (SELECT ? UNION SELECT r.id FROM refresh_tokens r JOIN family f ON r.rotated_from=f.id) ';
 /** Prepares a token pair whose two inserts share `guard`: both happen or neither does. The session records
@@ -15,9 +17,10 @@ const FAMILY='WITH RECURSIVE family(id) AS (SELECT ? UNION SELECT r.id FROM refr
 async function preparePair(db:D1Database,accountId:string,channel:AuthChannel,now:number,parent:string|null,guard:string,args:string[]){
   const session=randomToken(),refresh=randomToken(),csrf=channel==='web'?randomToken():null,refreshId=crypto.randomUUID();
   const [sessionHash,refreshHash,csrfHash]=await Promise.all([hashToken(session),hashToken(refresh),csrf?hashToken(csrf):Promise.resolve(null)]);
+  const where=guard?' WHERE '+guard:'';
   return {tokens:{session,refresh,csrf},refreshId,statements:[
-    db.prepare('INSERT INTO sessions(id,account_id,token_hash,expires_at,created_at,csrf_hash,channel,refresh_id) SELECT ?,?,?,?,?,?,?,?'+guard).bind(crypto.randomUUID(),accountId,sessionHash,now+SESSION_TTL_MS,now,csrfHash,channel,refreshId,...args),
-    db.prepare('INSERT INTO refresh_tokens(id,account_id,token_hash,rotated_from,expires_at,created_at,channel) SELECT ?,?,?,?,?,?,?'+guard+' RETURNING id').bind(refreshId,accountId,refreshHash,parent,now+REFRESH_TTL_MS,now,channel,...args),
+    db.prepare('INSERT INTO sessions(id,account_id,token_hash,expires_at,created_at,csrf_hash,channel,refresh_id) SELECT ?,?,?,?,?,?,?,?'+where).bind(crypto.randomUUID(),accountId,sessionHash,now+SESSION_TTL_MS,now,csrfHash,channel,refreshId,...args),
+    db.prepare('INSERT INTO refresh_tokens(id,account_id,token_hash,rotated_from,expires_at,created_at,channel) SELECT ?,?,?,?,?,?,?'+where+' RETURNING id').bind(refreshId,accountId,refreshHash,parent,now+REFRESH_TTL_MS,now,channel,...args),
   ]};
 }
 /** Inserts a token pair. With `parent`, both inserts only happen while that refresh token is
@@ -30,7 +33,15 @@ async function issue(db:D1Database,accountId:string,channel:AuthChannel,now:numb
 export async function issueTokens(db:D1Database,accountId:string,channel:AuthChannel,now=Date.now()):Promise<Tokens>{
   const tokens=await issue(db,accountId,channel,now,null);if(!tokens)throw new Error('token issuance failed');return tokens;
 }
-export async function sessionFor(db:D1Database,raw:string,channel:AuthChannel,now=Date.now()):Promise<SessionRow|null>{return db.prepare('SELECT * FROM sessions WHERE token_hash=? AND channel=? AND revoked_at IS NULL AND expires_at>? LIMIT 1').bind(await hashToken(raw),channel,now).first<SessionRow>();}
+export async function sessionFor(db:D1Database,raw:string,channel:AuthChannel,now=Date.now()):Promise<SessionRow|null>{
+  const row=await db.prepare('SELECT * FROM sessions WHERE token_hash=? AND channel=? AND revoked_at IS NULL AND expires_at>? LIMIT 1').bind(await hashToken(raw),channel,now).first<SessionRow>();
+  // First use only, so one write per session: a used successor session closes the retry window of its parent.
+  if(row&&row.last_used_at===null){
+    try{await db.prepare('UPDATE sessions SET last_used_at=? WHERE id=? AND last_used_at IS NULL').bind(now,row.id).run();}
+    catch(error){console.error('nexus-cloud-api: last_used_at da sessão falhou:',error instanceof Error?error.message:'unknown');}
+  }
+  return row;
+}
 export async function revokeAll(db:D1Database,accountId:string,now=Date.now(),channel?:AuthChannel):Promise<void>{
   const clause=channel?' AND channel=?':'';const args=channel?[now,accountId,channel]:[now,accountId];
   await db.batch([db.prepare('UPDATE sessions SET revoked_at=? WHERE account_id=?'+clause).bind(...args),db.prepare('UPDATE refresh_tokens SET revoked_at=? WHERE account_id=?'+clause).bind(...args)]);
@@ -42,13 +53,16 @@ async function familyRoot(db:D1Database,id:string):Promise<string>{
 }
 /** Replays a rotation whose response was lost: the unused successor and the session issued with it are
  * superseded by a new pair, in one transaction. A concurrent retry runs whole before or after this one,
- * so only one pair stays alive. Nothing is issued once any successor of `prior` was used: that is reuse. */
+ * so only one pair stays alive. Nothing is issued once any successor of `prior`, or its session, was used:
+ * that is reuse. The app uses a new session right away, so the window shrinks to about one round trip. */
 async function retryRotation(db:D1Database,prior:RefreshTokenRow,root:string,now:number):Promise<Tokens|null>{
   const unused='SELECT id FROM refresh_tokens WHERE rotated_from=? AND used_at IS NULL AND revoked_at IS NULL';
-  const pair=await preparePair(db,prior.account_id,prior.channel,now,prior.id,UNREVOKED_PARENT+' AND NOT EXISTS(SELECT 1 FROM refresh_tokens WHERE rotated_from=? AND used_at IS NOT NULL)',[prior.id,prior.id]);
+  // Every statement shares the guard: a refused retry changes nothing and the caller revokes the family.
+  const guard=`${UNREVOKED_PARENT} AND ${SUCCESSORS_UNUSED}`,args=[prior.id,prior.id,prior.id];
+  const pair=await preparePair(db,prior.account_id,prior.channel,now,prior.id,guard,args);
   const results=await db.batch<{id:string}>([
-    db.prepare(`UPDATE sessions SET revoked_at=? WHERE revoked_at IS NULL AND refresh_id IN (${unused})`).bind(now,prior.id),
-    db.prepare(`UPDATE refresh_tokens SET revoked_at=? WHERE id IN (${unused})`).bind(now,prior.id),
+    db.prepare(`UPDATE sessions SET revoked_at=? WHERE revoked_at IS NULL AND refresh_id IN (${unused}) AND ${guard}`).bind(now,prior.id,...args),
+    db.prepare(`UPDATE refresh_tokens SET revoked_at=? WHERE id IN (${unused}) AND ${guard}`).bind(now,prior.id,...args),
     ...pair.statements,
     db.prepare("INSERT INTO auth_events(id,account_id,kind,family_root,created_at) SELECT ?,?,'refresh_reuse_grace',?,? WHERE EXISTS(SELECT 1 FROM refresh_tokens WHERE id=?)").bind(crypto.randomUUID(),prior.account_id,root,now,pair.refreshId),
   ]);
