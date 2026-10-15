@@ -1,13 +1,17 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { contrastRatio, hexToSrgb, srgbToHex } from './palette-gen';
+import { PALETTES, type UiPalette } from './ui-theme';
 
 /**
  * Contrato visual do rail (DESIGN.md §2, §4, §6, §11, §13): lista plana e
  * densa — tokens em vez de hex, sem caixa-alta de eyebrow, sem faixa lateral de
- * acento, e movimento só para o estado VIVO (o pulso em opacity, com a guarda
- * de reduced-motion que a ProductStyleContracts confere). É uma leitura do CSS,
- * não render: o navegador de verdade confere o resto.
+ * acento, movimento só para o estado VIVO (o pulso em opacity, com a guarda
+ * de reduced-motion que a ProductStyleContracts confere), alvos de pelo menos
+ * 32px e texto de hierarquia com AA sobre a superfície que o rail pinta. É uma
+ * leitura do CSS e das paletas, não render: o navegador de verdade confere o
+ * resto.
  */
 
 const stylesDir = path.resolve(process.cwd(), 'src/renderer/styles');
@@ -165,5 +169,201 @@ describe('rail: contrato visual da lista plana', () => {
     const selected = rule('.workspace-rail__row--selected')?.body ?? '';
     expect(selected).toMatch(/background:\s*color-mix\(in srgb, var\(--accent\)/);
     expect(selected).not.toMatch(/\bborder\b/);
+  });
+});
+
+const spacePx = new Map(
+  [
+    ...(rulesOf(read('base.css')).find((candidate) => candidate.selector === ':root')?.body ?? '')
+      .matchAll(/(--space-[\w-]+)\s*:\s*(\d+(?:\.\d+)?)px/g),
+  ].map((match) => [match[1], Number(match[2])] as const),
+);
+
+/** `Npx`, tokens de espaço (`--space-*`) e `calc(a ± b)` entre eles, em px; NaN quando não resolve. */
+function lengthPx(value: string): number {
+  const resolved = value
+    .replace(/var\((--space-[\w-]+)\)/g, (_all, token: string) => `${spacePx.get(token) ?? 'NaN'}px`)
+    .replace(/^\s*calc\(([\s\S]*)\)\s*$/, '$1');
+  const term = /([+-]?)\s*(\d+(?:\.\d+)?)px/g;
+  const total = [...resolved.matchAll(term)].reduce(
+    (sum, match) => sum + (match[1] === '-' ? -1 : 1) * Number(match[2]),
+    0,
+  );
+  return resolved.replace(term, '').trim() === '' ? total : Number.NaN;
+}
+
+/** Cada valor (px) de `property` declarado para `selector` nas regras dadas. */
+const sizesOf = (rules: Rule[], selector: string, property: string) =>
+  rules
+    .filter((candidate) => candidate.selector.split(',').some((part) => part.trim() === selector))
+    .flatMap((candidate) => {
+      const declared = candidate.body.match(new RegExp(`(?:^|[;\\s])${property}\\s*:\\s*([^;]+);`));
+      return declared ? [lengthPx(declared[1])] : [];
+    });
+
+describe('rail: alvos de toque (DESIGN.md §13: 32px no desktop, maior no toque)', () => {
+  const DESKTOP_FLOOR = 32;
+  const TOUCH_FLOOR = 44;
+  /** Controle do rail → declarações que lhe dão o alvo (linha: altura mínima; ícone: os dois eixos). */
+  const TARGETS: Record<string, string[]> = {
+    '.workspace-rail__search-btn': ['min-height'],
+    '.workspace-rail__mission-cta': ['min-height'],
+    '.workspace-rail__row': ['min-height'],
+    // Recentes e o resumo de agentes mediam 24px: disclosure é botão, não rótulo.
+    '.workspace-rail__group-toggle': ['min-height'],
+    '.workspace-rail__agents-toggle': ['min-height'],
+    '.workspace-rail__missions-more': ['min-height'],
+    '.workspace-rail__workspace-toggle': ['height', 'min-width'],
+    '.workspace-rail__workspace-action': ['height', 'width'],
+    '.workspace-rail__mission-remove': ['height', 'width'],
+    '.workspace-rail__row-grid-action': ['height', 'width'],
+    '.workspace-cleanup button': ['min-height'],
+  };
+
+  it('resolve tokens de espaço e calc() (o guard não está lendo o vazio)', () => {
+    expect(lengthPx('var(--space-6)')).toBe(32);
+    expect(lengthPx('calc(var(--space-6) + var(--space-3))')).toBe(44);
+    expect(lengthPx('var(--space-5)')).toBe(24);
+    // Só o que é espaço resolve: qualquer outro token vira NaN e reprova o alvo.
+    expect(lengthPx('var(--radius-md)')).toBeNaN();
+  });
+
+  it.each(Object.entries(TARGETS))('%s mede pelo menos 32px', (selector, properties) => {
+    for (const property of properties) {
+      const sizes = sizesOf(railRules, selector, property);
+      expect(sizes.length, `${selector} não declara ${property}`).toBeGreaterThan(0);
+      expect(Math.min(...sizes), `${selector} · ${property}`).toBeGreaterThanOrEqual(DESKTOP_FLOOR);
+    }
+  });
+
+  it('no toque (pointer: coarse) as linhas e os disclosures sobem para 44px', () => {
+    const coarse = [
+      ...stripComments(appShellCss).matchAll(
+        /@media \(pointer: coarse\)\s*\{((?:[^{}]*\{[^{}]*\})+)\s*\}/g,
+      ),
+    ].flatMap((match) => rulesOf(match[1]));
+    expect(coarse.length).toBeGreaterThan(0);
+    for (const selector of [
+      '.workspace-rail__new',
+      '.workspace-rail__row',
+      '.workspace-rail__group-toggle',
+      '.workspace-rail__agents-toggle',
+      '.workspace-rail__cockpit-status .workspace-rail__settings',
+    ]) {
+      const sizes = sizesOf(coarse, selector, 'min-height');
+      expect(sizes.length, `${selector} fora do bloco pointer: coarse`).toBeGreaterThan(0);
+      expect(Math.min(...sizes), selector).toBeGreaterThanOrEqual(TOUCH_FLOOR);
+    }
+  });
+});
+
+describe('rail: contraste do texto sobre --bg-bar e sobre a linha selecionada, em todo tema de PALETTES', () => {
+  const AA = 4.5;
+  /** Token de texto do CSS → chave da paleta. Alias novo falha alto no teste abaixo, de propósito. */
+  const TEXT_KEY: Record<string, keyof UiPalette> = {
+    '--text': 'text',
+    '--text-main': 'text',
+    '--text-dim': 'textDim',
+    '--text-muted': 'textDim', // alias de --text-dim em base.css
+    '--text-faint': 'textFaint',
+  };
+  const SURFACE_KEY: Record<string, keyof UiPalette> = {
+    '--bg': 'bg',
+    '--bg-elevated': 'bgElevated',
+    '--bg-bar': 'bgBar',
+  };
+  const INK = /(?:^|[;\s])color\s*:\s*var\((--text[\w-]*)\)\s*;/;
+  const themes = Object.entries(PALETTES) as Array<[string, UiPalette]>;
+
+  /** Regras do rail que pintam texto com a hierarquia de texto (`color: var(--text…)`). */
+  const railText = railRules.flatMap((candidate) => {
+    const token = candidate.body.match(INK)?.[1];
+    return token ? [{ selector: candidate.selector.replace(/\s+/g, ' '), token }] : [];
+  });
+
+  // Superfícies lidas do CSS: o fundo que o rail pinta e o toque de acento da seleção.
+  const railSurface = rule('.workspace-rail')?.body.match(/background\s*:\s*var\((--[\w-]+)\)/)?.[1] ?? '';
+  const selection = rule('.workspace-rail__row--selected')?.body.match(
+    /background\s*:\s*color-mix\(in srgb,\s*var\(--accent\)\s+(\d+(?:\.\d+)?)%,\s*transparent\)/,
+  );
+  const selectionShare = Number(selection?.[1]) / 100;
+
+  /** Fundo do rail e o da linha selecionada (acento sobre o fundo do rail) neste tema. */
+  const surfacesOf = (palette: UiPalette) => {
+    const bar = palette[SURFACE_KEY[railSurface]];
+    const from = hexToSrgb(palette.accent);
+    const to = hexToSrgb(bar);
+    const mix = (index: 0 | 1 | 2) => from[index] * selectionShare + to[index] * (1 - selectionShare);
+    return { bar, selected: srgbToHex([mix(0), mix(1), mix(2)]) };
+  };
+
+  it('lê do CSS o fundo do rail e o acento da seleção, e o texto de hierarquia que o rail usa', () => {
+    // Os 7 temas selecionáveis: laço vazio aprovaria tudo.
+    expect(themes.length).toBeGreaterThanOrEqual(7);
+    expect(SURFACE_KEY[railSurface], `fundo do .workspace-rail: "${railSurface}"`).toBeDefined();
+    expect(selectionShare).toBeGreaterThan(0);
+    expect(selectionShare).toBeLessThan(0.5);
+    expect(railText.length).toBeGreaterThan(50);
+    expect(
+      railText.filter(({ token }) => !(token in TEXT_KEY)).map(({ selector, token }) => `${selector} → ${token}`),
+    ).toEqual([]);
+  });
+
+  // O rail inteiro pousa em --bg-bar. Tema claro: o --text-faint de #6b7080 media 4,36:1 ali
+  // (só --bg e --bg-elevated eram conferidos), em "Reportar bug" e nos títulos de seção de 11px.
+  it.each(['.workspace-rail__report', '.workspace-rail__group-title'])(
+    '%s: o texto pequeno segura 4,5:1 sobre --bg-bar em todos os temas',
+    (selector) => {
+      const token = rule(selector)?.body.match(INK)?.[1] ?? '';
+      expect(TEXT_KEY[token], `${selector} precisa de um token de texto (color: ${token})`).toBeDefined();
+      for (const [theme, palette] of themes) {
+        expect(
+          contrastRatio(palette[TEXT_KEY[token]], surfacesOf(palette).bar),
+          `${selector} (${token}) · ${theme}`,
+        ).toBeGreaterThanOrEqual(AA);
+      }
+    },
+  );
+
+  it.each(themes.map(([theme]) => theme))(
+    '%s: todo texto de hierarquia do rail segura 4,5:1 sobre --bg-bar',
+    (theme) => {
+      const palette = PALETTES[theme as keyof typeof PALETTES];
+      const below = railText
+        .map(({ selector, token }) => ({
+          selector,
+          token,
+          ratio: contrastRatio(palette[TEXT_KEY[token]], surfacesOf(palette).bar),
+        }))
+        .filter(({ ratio }) => ratio < AA)
+        .map(({ selector, token, ratio }) => `${selector} (${token}) = ${ratio.toFixed(2)}`);
+      expect(below).toEqual([]);
+    },
+  );
+
+  /**
+   * Sobre a linha selecionada (acento a 12% sobre a barra, DESIGN.md §16) o texto
+   * perde contraste e HOJE alguns pares ficam abaixo de 4,5:1. Subir isso pede mexer
+   * na paleta ou na tinta da seleção (decisão de design, fora da correção do rail
+   * sobre a barra). Este registro é a catraca: par novo abaixo de 4,5 falha, e par
+   * que passar a ≥4,5 também falha até sair da lista.
+   */
+  const BELOW_AA_ON_SELECTION = [
+    'nexus-gray:textFaint',
+    'nexus-light:textDim',
+    'nexus-light:textFaint',
+    'nexus-red:textFaint',
+    'solarized-dark:text',
+    'solarized-dark:textDim',
+    'solarized-dark:textFaint',
+  ];
+
+  it('sobre a linha selecionada a dívida de contraste conhecida não cresce nem encolhe sem registro', () => {
+    const below = themes.flatMap(([theme, palette]) =>
+      (['text', 'textDim', 'textFaint'] as const)
+        .filter((key) => contrastRatio(palette[key], surfacesOf(palette).selected) < AA)
+        .map((key) => `${theme}:${key}`),
+    );
+    expect(below.sort()).toEqual([...BELOW_AA_ON_SELECTION].sort());
   });
 });

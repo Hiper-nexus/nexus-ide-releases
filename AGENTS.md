@@ -286,6 +286,15 @@ saber isto antes de mexer:
   pessoa (`missionNeedsWord`); nas demais o estado vive no glifo, no `aria-label`
   e no `title`. Teste novo de estado de missão confere o `aria-label`, não o
   `textContent`.
+- Alvo e contraste (revisão independente de `de645e3d1`):
+  `workspace-rail-style.test.ts` trava o piso de 32px (44px no toque) dos
+  controles do rail e 4,5:1 do texto de hierarquia sobre `--bg-bar` nos 7
+  `PALETTES`. O `--text-faint` do `nexus-light` media 4,36:1 sobre a barra porque
+  só `--bg` e `--bg-elevated` eram conferidos; a causa era a paleta (`base.css` e
+  `ui-theme.ts` guardam o mesmo valor e `ui-theme.test.ts` confere que andam
+  juntos), não os seletores. Sobre a linha selecionada o guard é catraca da
+  dívida conhecida (7 pares tema:token), não aprovação: subir isso é decisão de
+  paleta ou de tinta da seleção.
 
 ## Conventions
 

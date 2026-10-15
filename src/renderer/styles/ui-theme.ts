@@ -149,7 +149,9 @@ export const PALETTES: Record<TerminalThemeId, UiPalette> = {
     borderStrong: "#c3cddf",
     text: "#2a3040",
     textDim: "#5d6880",
-    textFaint: "#6b7080",
+    // 4.63:1 sobre --bg-bar (o rail e o cabeçalho pousam nela), 4.93 sobre --bg
+    // e 5.24 sobre o elevated. O #6b7080 anterior media 4.36 sobre a barra.
+    textFaint: "#676c7b",
     // ≥4.5:1 tanto sobre --bg-bar quanto sobre --bg para rótulos pequenos,
     // mantendo também texto branco AA no acento sólido.
     accent: "#0b70b4",

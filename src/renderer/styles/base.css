@@ -307,8 +307,10 @@
   --live: #08783f;
   --warn: #9a6b00;
   --gold: #8a6d00;
-  /* Terceiro nível de texto re-escurecido para AA sobre fundo claro. */
-  --text-faint: #6b7080;
+  /* Terceiro nível de texto re-escurecido para AA sobre fundo claro: ≥4.5:1
+     sobre --bg, --bg-elevated E --bg-bar (4.63 na barra, onde pousam o rail e o
+     cabeçalho; o #6b7080 anterior media 4.36 ali). Espelho de ui-theme.ts. */
+  --text-faint: #676c7b;
   /* CTA primário invertido no claro: sólido escuro, tinta clara — a mesma
      escola (CTA neutro; o acento indica, não vende). */
   --btn-primary: #16181d;
@@ -366,8 +368,8 @@
 }
 
 /* O terceiro nível de texto é calculado POR TEMA. Cada valor fica ≥4.5:1
-   sobre --bg e --bg-elevated do próprio tema e um degrau abaixo de
-   --text-dim, preservando a hierarquia. */
+   sobre --bg, --bg-elevated e --bg-bar do próprio tema (a barra é onde o rail
+   pousa) e um degrau abaixo de --text-dim, preservando a hierarquia. */
 [data-theme='dracula'] {
   /* 5.32:1 sobre #282a36, 4.74:1 sobre #2f3242. */
   --text-faint: #979dba;

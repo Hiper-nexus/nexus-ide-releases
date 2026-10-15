@@ -410,29 +410,29 @@ describe("--text-faint holds AA in EVERY theme", () => {
     delete document.documentElement.dataset.platform;
   });
 
-  const themes: TerminalThemeId[] = [
-    "nexus-dark",
-    "nexus-light",
-    "dracula",
-    "solarized-dark",
-  ];
+  // Every selectable theme, not a hand-picked subset: pink-city, gray and red
+  // were never checked. --bg-bar is where the rail and the header sit, and the
+  // nexus-light faint ink measured 4.36:1 there while passing the other two.
+  const themes = Object.keys(PALETTES) as TerminalThemeId[];
 
   it.each(themes)(
-    "%s: third-level text stays >=4.5:1 over --bg and --bg-elevated",
+    "%s: third-level text stays >=4.5:1 over --bg, --bg-elevated and --bg-bar",
     (themeId) => {
-      // The palette is applied inline by applyUiTheme; --text-faint lives only
-      // in CSS, so the two sources have to be crossed to see the real pair.
+      // applyUiTheme writes the palette inline and base.css keeps a static
+      // fallback copy of --text-faint; the two have to agree, and the pair is
+      // measured against the surfaces the palette really paints.
       applyUiTheme(themeId);
       const root = document.documentElement.style;
       const faint = tokenForTheme(themeId, "--text-faint");
 
       expect(faint).toMatch(/^#[0-9a-f]{6}$/i);
-      expect(
-        contrast(faint, root.getPropertyValue("--bg")),
-      ).toBeGreaterThanOrEqual(4.5);
-      expect(
-        contrast(faint, root.getPropertyValue("--bg-elevated")),
-      ).toBeGreaterThanOrEqual(4.5);
+      expect(faint.toLowerCase()).toBe(PALETTES[themeId].textFaint.toLowerCase());
+      for (const surface of ["--bg", "--bg-elevated", "--bg-bar"]) {
+        expect(
+          contrast(faint, root.getPropertyValue(surface)),
+          surface,
+        ).toBeGreaterThanOrEqual(4.5);
+      }
     },
   );
 

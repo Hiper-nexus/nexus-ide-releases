@@ -497,3 +497,11 @@ pulso de "ao vivo" repete).
   de você", memória sob pressão, cotas e Perfil de Operador sem cartão.
   Configurações, atalhos e o estado local dividem uma faixa de 32px. Título de
   seção nunca em caixa-alta.
+- **Alvo e contraste.** Todo controle do rail declara alvo de pelo menos 32px
+  (44px em `pointer: coarse` nas linhas e nos disclosures), inclusive o botão de
+  recolher Recentes e o resumo de agentes, que mediam 24px. O texto de hierarquia
+  (`--text`, `--text-dim`, `--text-faint`) segura 4,5:1 sobre `--bg-bar`, onde o
+  rail pousa, nos sete temas: o `--text-faint` do `nexus-light` media 4,36:1 ali
+  e subiu para 4,63. Sobre a linha selecionada (acento a 12%) alguns pares ainda
+  ficam abaixo de 4,5:1; estão listados como dívida no guard
+  (`workspace-rail-style.test.ts`). "Reportar bug" mede ~22px de altura.
