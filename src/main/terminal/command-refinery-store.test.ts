@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import Database from 'better-sqlite3';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -75,6 +76,52 @@ function makeStore(): CommandRefineryStore {
 }
 
 describe('CommandRefineryStore', () => {
+  it('backfills a batch with one aggregate read instead of one read per command', () => {
+    manager.closeAll();
+    const queries: string[] = [];
+    manager = new ProjectRuntimeManager({ baseDir, appVersion: 'test',
+      databaseFactory: (filename, options) => new Database(filename, {
+        ...options, verbose: (query) => queries.push(String(query)),
+      }),
+    });
+    const blocks = new CommandBlockStore(manager, testProjectScope());
+    const store = makeStore();
+    for (let index = 0; index < 32; index += 1) {
+      store.record(makeBlock(`npm task-${index}`));
+      blocks.insert(makeBlock(`npm task-${index}`));
+    }
+    queries.length = 0;
+    store.suggest({ cwd: `${PROJECT_ROOT}/app` });
+    expect(queries.filter((query) => /^SELECT/i.test(query.trim()) && /FROM command_stats/i.test(query)))
+      .toHaveLength(3); // one batch decay read + two candidate tiers
+    expect(store.suggest({ cwd: `${PROJECT_ROOT}/app`, prefix: 'npm task-0', limit: 1 })[0]?.totalCount).toBe(2);
+  });
+
+  it('matches online aggregation when backfilling repeated commands after decay', () => {
+    const directScope = testProjectScope({ checkoutId: 'direct' });
+    const legacyScope = testProjectScope({ checkoutId: 'legacy' });
+    const direct = new CommandRefineryStore(manager, directScope, { now: () => now });
+    const legacy = new CommandRefineryStore(manager, legacyScope, { now: () => now });
+    const blocks = new CommandBlockStore(manager, legacyScope);
+    for (let index = 0; index < 8; index += 1) {
+      const block = makeBlock('npm repeated', { status: index < 4 ? 'success' : 'failed' });
+      direct.record(block);
+      legacy.record(block);
+    }
+    const target = { cwd: `${PROJECT_ROOT}/app`, command: 'npm repeated' };
+    direct.dismiss(target);
+    legacy.dismiss(target);
+    now += 60 * DAY_MS;
+    for (let index = 0; index < 3; index += 1) {
+      const block = makeBlock('npm repeated', { status: index === 0 ? 'failed' : 'success' });
+      direct.record(block);
+      blocks.insert(block);
+    }
+    const expected = direct.suggest({ cwd: target.cwd });
+    expect(legacy.suggest({ cwd: target.cwd })).toEqual(expected);
+    expect(expected[0]).toMatchObject({ totalCount: 5, successCount: 3, distinctDays: 2 });
+  });
+
   it('installs the aggregate and idempotency tables as an append-only migration', () => {
     const runtime = manager.open(testProjectScope());
     const tables = runtime.db

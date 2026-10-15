@@ -9,6 +9,7 @@ import { commandBlockSchema, type CommandBlock } from '../../shared/command-bloc
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
   ScopedStoreBinding,
+  prepareCached,
   ScopedStoreCorruptionError,
   type ScopedStoreOptions,
 } from '../orch/scoped-store';
@@ -64,6 +65,13 @@ const legacyCommandRowSchema = z
 
 type CommandStatRow = z.infer<typeof commandStatRowSchema>;
 type LegacyCommandRow = z.infer<typeof legacyCommandRowSchema>;
+type StoredDecayCounts = {
+  total_count: number;
+  success_count: number;
+  dismissed_count: number;
+  last_decayed_at: number;
+};
+
 
 interface RefineryObservation {
   readonly observationKey: string;
@@ -193,8 +201,7 @@ export class CommandRefineryStore {
     const cwd = parsePath(target.cwd, 'cwd');
     const now = this.#binding.now();
     const db = this.#binding.writeDatabase();
-    const info = db
-      .prepare(
+    const info = db.prepare(
         `UPDATE command_stats
          SET dismissed_count = dismissed_count + 1,
              last_dismissed_at = ?
@@ -204,8 +211,7 @@ export class CommandRefineryStore {
       .run(now, cwd, command) as { changes?: number };
     if ((info.changes ?? 0) > 0) return true;
     return Boolean(
-      db
-        .prepare(
+      db.prepare(
           `SELECT 1 FROM command_stats WHERE cwd = ? AND command = ?`,
         )
         .get(cwd, command),
@@ -215,9 +221,7 @@ export class CommandRefineryStore {
   resolveRunnable(target: CommandSuggestionTarget): string | null {
     const command = parseCommand(target.command);
     const cwd = parsePath(target.cwd, 'cwd');
-    const raw = this.#binding
-      .readDatabase()
-      .prepare(
+    const raw = this.#binding.readDatabase().prepare(
         `SELECT command FROM command_stats
          WHERE cwd = ? AND command = ?
            AND (last_dismissed_at IS NULL OR last_used > last_dismissed_at)`,
@@ -232,8 +236,7 @@ export class CommandRefineryStore {
     try {
       const db = this.#binding.writeDatabase();
       while (true) {
-        const rawRows = db
-          .prepare(
+        const rawRows = prepareCached(db,
             `SELECT
                blocks.idempotency_key, blocks.command, blocks.cwd,
                blocks.project_root, blocks.git_branch, blocks.started_at,
@@ -252,7 +255,23 @@ export class CommandRefineryStore {
         const rows = rawRows.map(parseLegacyCommandRow);
         const now = this.#binding.now();
         db.transaction(() => {
-          for (const row of rows) this.#backfillRow(db, row, now);
+          // ponytail: preload decay state once per bounded batch, then consume
+          // each key once. Inserts in this batch already start at this clock.
+          const decayRows = prepareCached(db,
+            `SELECT cwd, command, total_count, success_count,
+                    dismissed_count, last_decayed_at
+             FROM command_stats
+             WHERE (cwd, command) IN (
+               SELECT json_extract(value, '$.cwd'), json_extract(value, '$.command')
+               FROM json_each(?)
+             )`,
+          ).all(JSON.stringify(rows.map((row) => ({
+            cwd: row.cwd, command: row.command.trim(),
+          })))) as Array<StoredDecayCounts & { cwd: string; command: string }>;
+          const decayByCommand = new Map(decayRows.map((row) => [
+            JSON.stringify([row.cwd, row.command]), row,
+          ]));
+          for (const row of rows) this.#backfillRow(db, row, now, decayByCommand);
         })();
         if (rows.length < LEGACY_BACKFILL_BATCH) return;
       }
@@ -267,6 +286,7 @@ export class CommandRefineryStore {
     db: Database.Database,
     row: LegacyCommandRow,
     now: number,
+    decayByCommand: Map<string, StoredDecayCounts>,
   ): void {
     const usedAt = row.ended_at ?? row.started_at;
     const scrubbed = redactCommandLine(row.command);
@@ -295,6 +315,7 @@ export class CommandRefineryStore {
         isSuccess: row.status === 'success',
       },
       now,
+      decayByCommand,
     );
   }
 
@@ -302,6 +323,7 @@ export class CommandRefineryStore {
     db: Database.Database,
     observation: RefineryObservation,
     now: number,
+    decayByCommand?: Map<string, StoredDecayCounts>,
   ): boolean {
     if (
       !this.#insertObservation(
@@ -313,15 +335,14 @@ export class CommandRefineryStore {
       return false;
     }
     const day = Math.floor(observation.usedAt / DAY_MS);
-    this.#decay(db, observation.cwd, observation.command, now);
-    const distinctDay = db
-      .prepare(
+    this.#decay(db, observation.cwd, observation.command, now, decayByCommand);
+    const distinctDay = prepareCached(db,
         `INSERT OR IGNORE INTO command_stat_days (cwd, command, day)
          VALUES (?, ?, ?)`,
       )
       .run(observation.cwd, observation.command, day) as { changes?: number };
 
-    db.prepare(
+    prepareCached(db,
       `INSERT INTO command_stats (
          cwd, command, cwd_project_root, total_count, success_count,
          distinct_days, last_day, first_used, last_used, last_branch,
@@ -367,8 +388,7 @@ export class CommandRefineryStore {
     observationKey: string,
     observedAt: number,
   ): boolean {
-    const info = db
-      .prepare(
+    const info = prepareCached(db,
         `INSERT OR IGNORE INTO command_stat_observations
            (observation_key, observed_at)
          VALUES (?, ?)`,
@@ -382,20 +402,15 @@ export class CommandRefineryStore {
     cwd: string,
     command: string,
     now: number,
+    decayByCommand?: Map<string, StoredDecayCounts>,
   ): void {
-    const raw = db
-      .prepare(
+    const key = JSON.stringify([cwd, command]);
+    const raw = decayByCommand ? decayByCommand.get(key) : prepareCached(db,
         `SELECT total_count, success_count, dismissed_count, last_decayed_at
          FROM command_stats WHERE cwd = ? AND command = ?`,
       )
-      .get(cwd, command) as
-      | {
-          total_count: number;
-          success_count: number;
-          dismissed_count: number;
-          last_decayed_at: number;
-        }
-      | undefined;
+      .get(cwd, command) as StoredDecayCounts | undefined;
+    decayByCommand?.delete(key);
     if (!raw) return;
     const decayed = effectiveCounts(
       {
@@ -407,7 +422,7 @@ export class CommandRefineryStore {
       now,
     );
     if (decayed.periods === 0) return;
-    db.prepare(
+    prepareCached(db,
       `UPDATE command_stats SET
          total_count = ?, success_count = ?, dismissed_count = ?,
          last_decayed_at = ?
@@ -448,8 +463,7 @@ function readCandidates(
   pattern: string,
   limit: number,
 ): CommandStatRow[] {
-  return db
-    .prepare(
+  return prepareCached(db,
       `SELECT * FROM command_stats
        WHERE command LIKE ? ESCAPE '\\' COLLATE NOCASE
          AND (last_dismissed_at IS NULL OR last_used > last_dismissed_at)

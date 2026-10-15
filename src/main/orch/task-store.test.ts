@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import Database from 'better-sqlite3';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -197,6 +198,35 @@ describe('scoped task store', () => {
 
     expect(() => tasks.list()).toThrow(/no persistence fallback/i);
     expect(() => tasks.create({ title: 'lost' })).toThrow(/no persistence fallback/i);
+  });
+
+  it('hydrates and validates an entire sealed plan with two SELECTs', () => {
+    const queries: string[] = [];
+    const runtimeManager = new ProjectRuntimeManager({ baseDir, appVersion: 'test',
+      databaseFactory: (filename, options) => new Database(filename, {
+        ...options, verbose: (query) => queries.push(String(query)),
+      }),
+    });
+    managers.push(runtimeManager);
+    const scope = testProjectScope();
+    const missions = createScopedMissionStore(runtimeManager, scope);
+    const mission = missions.create({ title: 'Batch plan', squadId: squad.id,
+      intentVersion: 1, intentState: 'dispatched',
+      intentContract: compileIntentContract({ goal: 'Batch plan', intentVersion: 1 }),
+    });
+    missions.setStatus(mission.id, 'running');
+    const tasks = createScopedTaskStore(runtimeManager, scope);
+    tasks.createPlanAtomically({ missionId: mission.id, intentVersion: 1, squad: { id: squad.id, agents: squad.agents },
+      rows: Array.from({ length: 32 }, (_, index) => ({ plannerId: `unit-${index}`,
+        title: `Unit ${index}`, detail: '', agentRef: 'api-worker', agentCategory: 'executor' as const,
+      })),
+    });
+    queries.length = 0;
+    expect(tasks.listPlannedTasks(mission.id, 1)).toHaveLength(32);
+    expect(queries.filter((query) => /^SELECT/i.test(query.trim()))).toHaveLength(2);
+    runtimeManager.open(scope).db.prepare("UPDATE tasks SET title = 'forged' WHERE id = ?")
+      .run(tasks.list(mission.id)[0]!.id);
+    expect(() => tasks.listPlannedTasks(mission.id, 1)).toThrow(/task plan receipt/i);
   });
 
   it('creates a mission plan atomically and replays it with stable ids', () => {

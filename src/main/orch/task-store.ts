@@ -18,6 +18,7 @@ import type { ProjectExecutionScope } from '../../shared/types';
 import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import {
   ScopedStoreBinding,
+  prepareCached,
   ScopedStoreCorruptionError,
   type ScopedEntity,
   type ScopedStoreChangeListener,
@@ -683,8 +684,7 @@ export class ScopedTaskStore {
         ...(patch.status !== undefined ? { status: patch.status } : {}),
         updatedAt: this.#binding.now(),
       };
-      const result = db
-        .prepare(
+      const result = db.prepare(
           `UPDATE tasks
            SET title = ?, detail = ?, status = ?, updated_at = ?
            WHERE id = ?`,
@@ -722,8 +722,7 @@ export class ScopedTaskStore {
         status: nextStatus,
         updatedAt: this.#binding.now(),
       };
-      const result = db
-        .prepare(
+      const result = db.prepare(
           `UPDATE tasks
            SET status = ?, updated_at = ?
            WHERE id = ?`,
@@ -761,16 +760,14 @@ export class ScopedTaskStore {
       rawMissionId === undefined ? undefined : entityIdSchema.parse(rawMissionId);
     const db = this.#binding.readDatabase();
     const rows = missionId
-      ? db
-          .prepare(
+      ? db.prepare(
             `SELECT id, mission_id, title, detail, status,
                     provider_waiver_reason, created_at, updated_at
              FROM tasks WHERE mission_id = ?
              ORDER BY created_at DESC, id ASC`,
           )
           .all(missionId)
-      : db
-          .prepare(
+      : db.prepare(
             `SELECT id, mission_id, title, detail, status,
                     provider_waiver_reason, created_at, updated_at
              FROM tasks ORDER BY created_at DESC, id ASC`,
@@ -783,8 +780,7 @@ export class ScopedTaskStore {
     db: Database.Database,
     id: string,
   ): ScopedTaskRecord | null {
-    const row = db
-      .prepare(
+    const row = prepareCached(db,
         `SELECT id, mission_id, title, detail, status,
                 provider_waiver_reason, created_at, updated_at
          FROM tasks WHERE id = ?`,
@@ -797,8 +793,9 @@ export class ScopedTaskStore {
     db: Database.Database,
     missionId: string,
     intentVersion: number,
+    tasks = new Map<string, ScopedTaskRecord>(),
   ): TaskPlanReceipt | null {
-    const rawRow = db.prepare(
+    const rawRow = prepareCached(db,
       `SELECT mission_id, intent_version, plan_hash, planner_json, squad_id,
               roster_hash, roster_snapshot_json, created_at
        FROM mission_task_plans
@@ -831,6 +828,15 @@ export class ScopedTaskStore {
       ) {
         throw new Error('plan envelope does not match its database coordinates');
       }
+      const taskRows = prepareCached(db,
+        `SELECT id, mission_id, title, detail, status,
+                provider_waiver_reason, created_at, updated_at
+         FROM tasks WHERE id IN (SELECT value FROM json_each(?))`,
+      ).all(JSON.stringify(plannerEnvelope.tasks.map((entry) => entry.taskId)));
+      for (const rawTask of taskRows) {
+        const task = this.#fromRow(rawTask);
+        tasks.set(task.id, task);
+      }
       const plannerIds = new Set<string>();
       const taskIds = new Set<string>();
       for (const entry of plannerEnvelope.tasks) {
@@ -849,7 +855,7 @@ export class ScopedTaskStore {
         if (agent.id !== entry.agentRef || agent.category !== entry.agentCategory) {
           throw new Error('planned task agent does not match roster snapshot');
         }
-        const task = this.#getFromDatabase(db, entry.taskId);
+        const task = tasks.get(entry.taskId);
         if (!task || task.missionId !== row.mission_id) {
           throw new Error('plan receipt points to a missing or foreign task');
         }
@@ -883,15 +889,18 @@ export class ScopedTaskStore {
     missionId: string,
     intentVersion: number,
   ): PlannedTaskRecord[] {
+    // ponytail: hydrate once for both receipt validation and the returned records.
+    const tasks = new Map<string, ScopedTaskRecord>();
     const receipt = this.#getPlanReceiptFromDatabase(
       db,
       missionId,
       intentVersion,
+      tasks,
     );
     if (!receipt) return [];
     const agents = new Map(receipt.agents.map((agent) => [agent.id, agent]));
     return receipt.tasks.map((entry) => {
-      const task = this.#getFromDatabase(db, entry.taskId);
+      const task = tasks.get(entry.taskId);
       const agent = agents.get(entry.agentRef);
       if (!task || !agent) {
         throw new ScopedStoreCorruptionError('task plan receipt');
