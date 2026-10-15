@@ -58,7 +58,7 @@ import {
 } from "./dictation-session-trace";
 import { spawn } from "node:child_process";
 import { transcribe } from "./stt-service";
-import { speak, stopSystemSpeech } from "./tts-service";
+import { speak, speakPreview, stopSystemSpeech } from "./tts-service";
 import { echoSuppressor } from "./echo-suppress";
 import { matchWakeWord } from "../../shared/jarvis-passive-nlu";
 import {
@@ -1226,6 +1226,12 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
       const parsed = speakRequestSchema.safeParse(raw);
       if (!parsed.success) return { ok: false, error: "invalid speak request" };
       try {
+        // Pré-escuta: o Main monta a frase e chama o provider pedido direto.
+        // Sem `text` do renderer, sem cadeia, sem fallback, sem eco — a pessoa
+        // precisa ouvir a voz QUE ESCOLHEU, não a primeira que funcionar.
+        if (parsed.data.preview) {
+          return await speakPreview(parsed.data.preview, getVoiceConfig());
+        }
         return await speak(parsed.data, getVoiceConfig(), currentProbes());
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

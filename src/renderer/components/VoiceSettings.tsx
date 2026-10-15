@@ -26,6 +26,7 @@ import { credentialLinkForEnv } from '../../shared/credential-links';
 import { openExternalFromAnchor } from '../lib/open-external';
 import { CloseButton } from './CloseButton';
 import { PixelIcon } from './PixelIcon';
+import { VoicePreviewButton } from './VoicePreviewButton';
 import { playSpeakResult } from '../voice/voice-playback';
 import type { JarvisRequest } from '../../shared/voice-ipc';
 import {
@@ -981,28 +982,36 @@ export function VoiceSettings({ onClose, embedded = false }: VoiceSettingsProps 
                           ))}
                         </select>
                       </label>
-                      <label className="agent-picker__label">
-                        {ttsIsGemini ? (
-                          <span><ProviderLogo adapterId="gemini" label="Gemini" size="xs" /> Voz por etapas</span>
-                        ) : (
-                          'Voz por etapas'
-                        )}
-                        <select
-                          className="agent-picker__select"
-                          value={ttsVoice}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setTtsVoice(v);
-                            void persistVoicePick({ ttsVoice: v });
-                          }}
-                        >
-                          {(ttsIsGemini ? GEMINI_TTS_VOICE_OPTIONS : OPENAI_TTS_VOICE_OPTIONS).map((v) => (
-                            <option key={v.id} value={v.id}>
-                              {v.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
+                      <div className="voice-settings__voice-row">
+                        <label className="agent-picker__label">
+                          {ttsIsGemini ? (
+                            <span><ProviderLogo adapterId="gemini" label="Gemini" size="xs" /> Voz por etapas</span>
+                          ) : (
+                            'Voz por etapas'
+                          )}
+                          <select
+                            className="agent-picker__select"
+                            value={ttsVoice}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setTtsVoice(v);
+                              void persistVoicePick({ ttsVoice: v });
+                            }}
+                          >
+                            {(ttsIsGemini ? GEMINI_TTS_VOICE_OPTIONS : OPENAI_TTS_VOICE_OPTIONS).map((v) => (
+                              <option key={v.id} value={v.id}>
+                                {v.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        {/* A amostra toca SÓ no clique do botão — trocar o select
+                            nunca fala sozinho. */}
+                        <VoicePreviewButton
+                          provider={ttsIsGemini ? 'gemini' : 'openai'}
+                          voice={ttsVoice}
+                        />
+                      </div>
                       {ttsIsGemini ? (
                         <label className="agent-picker__label">
                           Modelo da voz

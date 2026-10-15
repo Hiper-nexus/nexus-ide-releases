@@ -58,8 +58,14 @@ export async function playAudioBase64(
   base64: string,
   _format: string,
   onPlaybackStart?: () => void,
+  /**
+   * Toca mesmo com as respostas mutadas. Só a PRÉ-ESCUTA da voz usa: o botão
+   * foi clicado justamente para ouvir, e responder "não dá para ouvir" ficaria
+   * sem explicação. A fala da Jarvis continua respeitando o mute.
+   */
+  options: { ignoreMute?: boolean } = {},
 ): Promise<number> {
-  if (isResponseMuted()) return 0;
+  if (!options.ignoreMute && isResponseMuted()) return 0;
   const gen = playbackGen;
   const bytes = base64ToBytes(base64);
   const ctx = new AudioContext();
@@ -111,9 +117,15 @@ export async function playAudioBase64(
 export async function playSpeakResult(
   result: SpeakResult,
   onPlaybackStart?: () => void,
+  options: { ignoreMute?: boolean } = {},
 ): Promise<number> {
   if (result.ok && result.mode === 'audio') {
-    return playAudioBase64(result.audioBase64, result.format, onPlaybackStart);
+    return playAudioBase64(
+      result.audioBase64,
+      result.format,
+      onPlaybackStart,
+      options,
+    );
   }
   return 0;
 }

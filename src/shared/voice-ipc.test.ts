@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   jarvisLiveAudioPlaybackEventSchema,
   jarvisLiveToolResultInputSchema,
+  speakRequestSchema,
   transcribeRequestSchema,
 } from './voice-ipc';
 
@@ -66,5 +67,30 @@ describe('jarvisLiveToolResultInputSchema', () => {
         summary,
       }).success,
     ).toBe(true);
+  });
+});
+
+describe('speakRequestSchema', () => {
+  it('aceita preview sem text: a frase da amostra e montada no Main', () => {
+    const parsed = speakRequestSchema.safeParse({
+      preview: { provider: 'gemini', voice: 'Sulafat' },
+    });
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.text).toBeUndefined();
+  });
+
+  it('recusa provider fora de gemini/openai (xAI nao tem TTS de amostra)', () => {
+    expect(
+      speakRequestSchema.safeParse({ preview: { provider: 'xai', voice: 'rex' } }).success,
+    ).toBe(false);
+    expect(
+      speakRequestSchema.safeParse({ preview: { provider: 'gemini', voice: '' } }).success,
+    ).toBe(false);
+  });
+
+  it('fala normal continua exigindo texto nao vazio', () => {
+    expect(speakRequestSchema.safeParse({ text: 'oi' }).success).toBe(true);
+    expect(speakRequestSchema.safeParse({ text: '   ' }).success).toBe(false);
+    expect(speakRequestSchema.safeParse({}).success).toBe(false);
   });
 });

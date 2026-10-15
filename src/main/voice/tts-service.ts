@@ -9,11 +9,18 @@ import type {
   VoicePlugin,
 } from '../../shared/voice-config';
 import {
+  DEFAULT_GEMINI_TTS,
   DEFAULT_GEMINI_TTS_MODEL,
   DEFAULT_GEMINI_TTS_VOICE,
   GEMINI_TTS_ENDPOINT,
+  GEMINI_TTS_VOICE_OPTIONS,
+  OPENAI_TTS_VOICE_OPTIONS,
 } from '../../shared/voice-config';
-import type { SpeakRequest, SpeakResult } from '../../shared/voice-ipc';
+import type {
+  SpeakPreviewProvider,
+  SpeakRequest,
+  SpeakResult,
+} from '../../shared/voice-ipc';
 import { toSpeakable } from './speakable';
 import { echoSuppressor } from './echo-suppress';
 import { classifyKind, flattenChain, type ProviderProbes } from './provider-select';
@@ -439,7 +446,9 @@ export async function speak(
   deps: TtsDeps = defaultDeps,
 ): Promise<SpeakResult> {
   const mode = req.speakMode ?? config.speakMode;
-  const text = toSpeakable(req.text, mode);
+  // `text` é dispensável só na pré-escuta (que nem entra aqui); neste caminho
+  // um pedido sem texto é uma fala silenciosa, não uma exceção.
+  const text = toSpeakable(req.text ?? '', mode);
   if (!text) return { ok: true, provider: '-', mode: 'silent' };
 
   const configuredHeadProvider = flattenChain(config.tts)[0]?.provider;
@@ -485,4 +494,84 @@ export async function speak(
         ? `No text-to-speech provider succeeded. Tried — ${failures.join(' · ')}.`
         : 'No text-to-speech provider available.',
   };
+}
+
+/* ------------------------------------------------------------------ *
+ * Pré-escuta da voz (voz por etapas)
+ * ------------------------------------------------------------------ */
+
+/**
+ * Vozes que a pré-escuta aceita, por provider. É a MESMA lista que o seletor
+ * da tela mostra, então o botão nunca anuncia uma voz que o provedor recusa.
+ * A validação acontece ANTES de qualquer fetch: a amostra vai como `voice` no
+ * corpo da requisição, e um id fora da allowlist não é entrada de ninguém.
+ */
+const PREVIEW_VOICE_ALLOWLIST: Record<SpeakPreviewProvider, ReadonlySet<string>> = {
+  gemini: new Set(GEMINI_TTS_VOICE_OPTIONS.map((option) => option.id)),
+  openai: new Set(OPENAI_TTS_VOICE_OPTIONS.map((option) => option.id)),
+};
+
+/** Teto curto: a amostra não é resposta, é uma frase. Custa um segundo de áudio. */
+export const VOICE_PREVIEW_MAX_CHARS = 80;
+
+/**
+ * Frase da amostra, montada AQUI e não no renderer: o texto da pré-escuta é do
+ * produto, e um renderer não precisa poder falar por ele. O nome da persona vem
+ * da config (é o que a pessoa escolheu) e é cortado para não estourar o teto.
+ */
+export function buildVoicePreviewText(assistantName: string | undefined): string {
+  const name = (assistantName ?? '').trim().slice(0, 40) || 'Jarvis';
+  return `Olá, eu sou ${name}. Esta é a minha voz.`.slice(0, VOICE_PREVIEW_MAX_CHARS);
+}
+
+export function voicePreviewAllowed(
+  provider: SpeakPreviewProvider,
+  voice: string,
+): boolean {
+  return PREVIEW_VOICE_ALLOWLIST[provider]?.has(voice) ?? false;
+}
+
+/**
+ * Toca UMA amostra da voz escolhida, direto no provider pedido.
+ *
+ * Deliberadamente fora de `speak()`: sem cadeia, sem fallback (se o Gemini
+ * falhar, a pessoa tem que saber que o GEMINI falhou, não ouvir a voz da
+ * OpenAI achando que ouviu a do Gemini), sem tocar no `stickyTtsProvider` e
+ * sem registrar eco — uma amostra não é fala da Jarvis e não pode censurar a
+ * transcrição de quem estiver falando.
+ */
+export async function speakPreview(
+  preview: { provider: SpeakPreviewProvider; voice: string },
+  config: VoiceConfig,
+  deps: TtsDeps = defaultDeps,
+): Promise<SpeakResult> {
+  if (!voicePreviewAllowed(preview.provider, preview.voice)) {
+    // Sem fetch, sem log de conteúdo: a voz rejeitada não é segredo, mas
+    // também não é um incidente.
+    logVoice('warn', 'tts.previewRejected', 'voz fora da lista de pré-escuta', {
+      provider: preview.provider,
+    });
+    return { ok: false, error: `voz não suportada: ${preview.voice}` };
+  }
+
+  const text = buildVoicePreviewText(config.persona.assistantName);
+  const plugin: VoicePlugin =
+    preview.provider === 'gemini'
+      ? { ...DEFAULT_GEMINI_TTS, voice: preview.voice }
+      : {
+          type: 'tts',
+          provider: 'openai',
+          endpoint: 'https://api.openai.com/v1/audio/speech',
+          auth: { type: 'api_key', envVar: 'OPENAI_API_KEY' },
+          model: 'gpt-4o-mini-tts',
+          voice: preview.voice,
+          speed: 1.0,
+          format: 'mp3',
+        };
+
+  const result = await speakVia(plugin, text, deps, config.persona);
+  logVoice('info', 'tts.preview', `amostra ${preview.provider}/${preview.voice}`, {
+    ok: result.ok,
+  });
+  return result;
 }

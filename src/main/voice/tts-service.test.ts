@@ -2,10 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_VOICE_CONFIG, type VoiceConfig, type VoicePlugin } from '../../shared/voice-config';
 import type { ProviderProbes } from './provider-select';
 import {
+  buildVoicePreviewText,
   extractGeminiTtsAudio,
   resetStickyTtsProvider,
   speak,
+  speakPreview,
   TTS_STICKY_FALLBACK_RETRY_MS,
+  VOICE_PREVIEW_MAX_CHARS,
+  voicePreviewAllowed,
   type TtsDeps,
 } from './tts-service';
 
@@ -419,5 +423,124 @@ describe('Gemini 3.8 TTS', () => {
       }),
     ).toEqual({ data: 'AA', mimeType: 'audio/wav' });
     expect(extractGeminiTtsAudio({ output_audio: { data: 'AA' } })).toBeNull();
+  });
+});
+
+describe('speakPreview (pre-escuta da voz)', () => {
+  beforeEach(() => {
+    resetStickyTtsProvider();
+  });
+
+  const geminiAudio = () =>
+    new Response(
+      JSON.stringify({
+        status: 'completed',
+        steps: [{ type: 'model_output', content: [{ type: 'audio', mime_type: 'audio/wav', data: 'UklGRg==' }] }],
+      }),
+      { status: 200 },
+    );
+
+  it('a frase da amostra e montada no Main e a voz escolhida vai no corpo', async () => {
+    const fetchImpl = vi.fn(async (_url: string, _init: RequestInit) => geminiAudio());
+    const result = await speakPreview(
+      { provider: 'gemini', voice: 'Sulafat' },
+      { ...DEFAULT_VOICE_CONFIG, persona: { ...DEFAULT_VOICE_CONFIG.persona, assistantName: 'Jarvis' } },
+      deps({
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        getEnv: vi.fn((name: string) => (name === 'GEMINI_API_KEY' ? 'g-key' : undefined)),
+      }),
+    );
+
+    expect(result).toMatchObject({ ok: true, provider: 'gemini', mode: 'audio' });
+    const [, init] = fetchImpl.mock.calls[0]!;
+    const body = JSON.parse(String(init.body));
+    // A voz pedida e a do seletor, nao a do config.
+    expect(body.generation_config.speech_config).toEqual([{ voice: 'Sulafat' }]);
+    // O texto nao vem do renderer.
+    expect(body.input[0].content[0].text).toBe('Olá, eu sou Jarvis. Esta é a minha voz.');
+  });
+
+  it('sem fallback: provider pedido que falha devolve o erro DELE, nao a voz de outro', async () => {
+    const fetchImpl = vi.fn(async (url: string) =>
+      url.includes('googleapis') ? new Response('boom', { status: 500 }) : new Response('mp3', { status: 200 }),
+    );
+    const result = await speakPreview(
+      { provider: 'gemini', voice: 'Charon' },
+      DEFAULT_VOICE_CONFIG,
+      deps({
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        getEnv: vi.fn(() => 'k'),
+      }),
+    );
+
+    expect(result.ok).toBe(false);
+    // Uma unica chamada: a cadeia nao foi percorrida.
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(String(fetchImpl.mock.calls[0]![0])).toContain('googleapis');
+  });
+
+  it('voz fora da allowlist e recusada SEM qualquer fetch', async () => {
+    const fetchImpl = vi.fn(async () => geminiAudio());
+    const result = await speakPreview(
+      { provider: 'gemini', voice: 'Zeus' },
+      DEFAULT_VOICE_CONFIG,
+      deps({
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        getEnv: vi.fn(() => 'g-key'),
+      }),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('a allowlist e a mesma do seletor de tela (por provider)', () => {
+    expect(voicePreviewAllowed('gemini', 'Sulafat')).toBe(true);
+    expect(voicePreviewAllowed('gemini', 'ash')).toBe(false);
+    expect(voicePreviewAllowed('openai', 'ash')).toBe(true);
+    expect(voicePreviewAllowed('openai', 'Sulafat')).toBe(false);
+  });
+
+  it('a amostra nao gruda no provider sticky nem no supressor de eco', async () => {
+    const fetchImpl = vi.fn(async (url: string) =>
+      url.includes('googleapis')
+        ? new Response(
+            JSON.stringify({
+              status: 'completed',
+              steps: [{ type: 'model_output', content: [{ type: 'audio', mime_type: 'audio/wav', data: 'UklGRg==' }] }],
+            }),
+            { status: 200 },
+          )
+        : new Response('mp3', { status: 200 }),
+    );
+    const ttsDeps = deps({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      getEnv: vi.fn(() => 'k'),
+    });
+
+    // Fala normal: a cabeça da cadeia (gemini) funciona e gruda.
+    await speak({ text: 'Oi.', speakMode: 'full' }, DEFAULT_VOICE_CONFIG, PROBES, ttsDeps);
+    expect(String(fetchImpl.mock.calls[0]![0])).toContain('googleapis');
+
+    // Amostra pelo OpenAI: funciona, mas nao pode virar o provider escolhido.
+    const preview = await speakPreview(
+      { provider: 'openai', voice: 'ash' },
+      DEFAULT_VOICE_CONFIG,
+      ttsDeps,
+    );
+    expect(preview).toMatchObject({ ok: true, provider: 'openai' });
+
+    // A fala seguinte continua na cabeça: se a amostra tivesse grudado, viraria
+    // openai (fallback promoted) e a voz da conversa mudaria sozinha.
+    fetchImpl.mockClear();
+    await speak({ text: 'Oi de novo.', speakMode: 'full' }, DEFAULT_VOICE_CONFIG, PROBES, ttsDeps);
+    expect(String(fetchImpl.mock.calls[0]![0])).toContain('googleapis');
+  });
+
+  it('a frase da amostra respeita o nome da persona e o teto de 80 caracteres', () => {
+    expect(buildVoicePreviewText('Jarvis')).toBe('Olá, eu sou Jarvis. Esta é a minha voz.');
+    expect(buildVoicePreviewText('  ')).toBe('Olá, eu sou Jarvis. Esta é a minha voz.');
+    const long = buildVoicePreviewText('N'.repeat(200));
+    expect(long.length).toBeLessThanOrEqual(VOICE_PREVIEW_MAX_CHARS);
   });
 });

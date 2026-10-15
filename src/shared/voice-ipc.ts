@@ -55,19 +55,45 @@ export const transcribeRequestSchema = z.object({
 
 export type TranscribeRequest = z.infer<typeof transcribeRequestSchema>;
 
-export const speakRequestSchema = z.object({
-  text: z.string().min(1).max(20_000),
-  /** Override the configured speakMode for this utterance (optional). */
-  speakMode: z.enum(['summary', 'full', 'off']).optional(),
-  /**
-   * false = não registrar na janela anti-eco. Para acks/fillers curtos
-   * ("Sim?", "Deixa comigo.") — registrá-los censurava respostas legítimas
-   * parecidas do usuário logo em seguida.
-   */
-  echoRecord: z.boolean().optional(),
-});
+export const speakRequestSchema = z
+  .object({
+    /**
+     * Frase a falar. OBRIGATÓRIA na fala normal; dispensável na pré-escuta, em
+     * que o texto é montado no Main (`buildVoicePreviewText`) — um renderer
+     * não precisa poder falar por ela.
+     */
+    text: z.string().max(20_000).optional(),
+    /** Override the configured speakMode for this utterance (optional). */
+    speakMode: z.enum(['summary', 'full', 'off']).optional(),
+    /**
+     * false = não registrar na janela anti-eco. Para acks/fillers curtos
+     * ("Sim?", "Deixa comigo.") — registrá-los censurava respostas legítimas
+     * parecidas do usuário logo em seguida.
+     */
+    echoRecord: z.boolean().optional(),
+    /**
+     * Pré-escuta da voz: pede UMA amostra da voz escolhida, sem cadeia, sem
+     * fallback e sem tocar no supressor de eco. O provider é explícito porque
+     * o rótulo honesto é "amostra pelo Gemini TTS" e não "a voz que vai falar".
+     */
+    preview: z
+      .object({
+        provider: z.enum(['gemini', 'openai']),
+        voice: z.string().min(1).max(64),
+      })
+      .optional(),
+  })
+  // Sem preview, falar continua exigindo texto: um pedido vazio precisa
+  // continuar sendo pedido inválido, não uma fala silenciosa.
+  .refine((value) => value.preview !== undefined || Boolean(value.text?.trim()), {
+    message: 'text required unless preview is present',
+    path: ['text'],
+  });
 
 export type SpeakRequest = z.infer<typeof speakRequestSchema>;
+
+/** Provedores com TTS próprio para a pré-escuta da voz. xAI fica de fora. */
+export type SpeakPreviewProvider = 'gemini' | 'openai';
 
 export const voiceLogSchema = z.object({
   level: z.enum(['info', 'warn', 'error']),
