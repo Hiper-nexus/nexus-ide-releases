@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { hasUsableLocalSpeech, shouldDiscardBeforeRealtime } from './capture-gate';
+import {
+  hasUsableLocalSpeech,
+  shouldDiscardBeforeRealtime,
+  shouldDiscardDictationCapture,
+} from './capture-gate';
 
 const MIN_SPEECH_SEC = 0.25;
 
@@ -105,6 +109,52 @@ describe('capture-gate', () => {
           allowWeakSpeech: true,
         },
       ),
+    ).toBe(false);
+  });
+});
+
+describe('shouldDiscardDictationCapture', () => {
+  const base = {
+    durationSec: 2,
+    heardSpeech: true,
+    maxRms: 0.08,
+    maxPeak: 0.4,
+    quality: { speechSec: 1.4 },
+  };
+
+  it('mantém ditado com fala real', () => {
+    expect(shouldDiscardDictationCapture(base)).toBe(false);
+  });
+
+  it('descarta captura curta demais', () => {
+    expect(shouldDiscardDictationCapture({ ...base, durationSec: 0.2 })).toBe(true);
+  });
+
+  it('descarta áudio quase mudo mesmo que o VAD tenha disparado', () => {
+    expect(
+      shouldDiscardDictationCapture({ ...base, maxRms: 0.002, maxPeak: 0.008 }),
+    ).toBe(true);
+  });
+
+  it('descarta captura sem quadros de fala acima do ruído (ruído estacionário)', () => {
+    expect(
+      shouldDiscardDictationCapture({ ...base, quality: { speechSec: 0 } }),
+    ).toBe(true);
+  });
+
+  it('um "sim" curto mas audível passa', () => {
+    expect(
+      shouldDiscardDictationCapture({
+        ...base,
+        durationSec: 0.6,
+        quality: { speechSec: 0.3 },
+      }),
+    ).toBe(false);
+  });
+
+  it('sem medidas, decide só por duração (não bloqueia por falta de dado)', () => {
+    expect(
+      shouldDiscardDictationCapture({ durationSec: 1, heardSpeech: undefined }),
     ).toBe(false);
   });
 });

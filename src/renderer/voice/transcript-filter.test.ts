@@ -156,3 +156,11 @@ describe('C3 Fase 1 — fix real do "sim" seco: stripper consciente de confirma�
     expect(stripWakeAckEcho('confirmo', 'patrão')).toBe('confirmo');
   });
 });
+
+describe('isDiscardableTranscript — alucinação em loop', () => {
+  it('descarta a mesma frase repetida em silêncio/ruído', () => {
+    const text = Array(5).fill('The following is a presentation of the').join('. ');
+    expect(isDiscardableTranscript(text, { inConversation: false })).toBe(true);
+    expect(isDiscardableTranscript(text, { inConversation: true })).toBe(true);
+  });
+});

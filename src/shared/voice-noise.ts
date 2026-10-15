@@ -50,6 +50,10 @@ const MEDIA_BOILERPLATE = [
   /\breceber notificacoes? de novos videos?\b/,
 ];
 
+/** Crédito de programa que o Whisper inventa sobre silêncio (frase curta, sem pedido real). */
+const PRESENTATION_CREDIT = /\bthe following is a presentation of\b/;
+const PRESENTATION_CREDIT_MAX_WORDS = 10;
+
 function normalizeWords(text: string): string[] {
   const normalized = text
     .toLowerCase()
@@ -78,9 +82,60 @@ export function isMediaBoilerplateTranscript(text: string): boolean {
     normalized.split(' ').length <= 5;
 }
 
+/** Repetições mínimas para tratar um n-grama colado como degenerado. */
+const REPEAT_MIN_UNIGRAM = 5;
+const REPEAT_MIN_NGRAM = 3;
+const REPEAT_MAX_NGRAM = 10;
+/** Fração mínima das palavras coberta pelo bloco repetido. */
+const REPEAT_COVERAGE = 0.8;
+const REPEAT_MIN_SENTENCES = 3;
+
+/**
+ * Loop de decodificação do Whisper: a mesma frase (ou palavra) repetida
+ * várias vezes. Fala humana ditada não repete 3+ vezes a mesma frase.
+ */
+export function isDegenerateRepetition(text: string): boolean {
+  const sentences = text
+    .split(/[.!?\n]+/)
+    .map((part) => normalizeWords(part).join(' '))
+    .filter(Boolean);
+  if (sentences.length >= REPEAT_MIN_SENTENCES) {
+    const counts = new Map<string, number>();
+    for (const sentence of sentences) {
+      counts.set(sentence, (counts.get(sentence) ?? 0) + 1);
+    }
+    const top = Math.max(...counts.values());
+    if (top >= REPEAT_MIN_SENTENCES && top / sentences.length >= 0.6) return true;
+  }
+  const words = normalizeWords(text);
+  for (let size = 1; size <= REPEAT_MAX_NGRAM; size += 1) {
+    const needed = size === 1 ? REPEAT_MIN_UNIGRAM : REPEAT_MIN_NGRAM;
+    if (words.length < size * needed) break;
+    for (let start = 0; start + size * needed <= words.length; start += 1) {
+      const unit = words.slice(start, start + size).join(' ');
+      let reps = 1;
+      while (
+        start + (reps + 1) * size <= words.length &&
+        words.slice(start + reps * size, start + (reps + 1) * size).join(' ') === unit
+      ) {
+        reps += 1;
+      }
+      if (reps >= needed && (reps * size) / words.length >= REPEAT_COVERAGE) return true;
+    }
+  }
+  return false;
+}
+
 export function isLikelyNoiseTranscript(text: string): boolean {
   const words = normalizeWords(text);
   const normalized = words.join(' ');
+  if (isDegenerateRepetition(text)) return true;
+  if (
+    PRESENTATION_CREDIT.test(normalized) &&
+    words.length <= PRESENTATION_CREDIT_MAX_WORDS
+  ) {
+    return true;
+  }
   // Saudações curtas deliberadas são fala real, não ruído.
   if (normalized === 'oi' || normalized === 'e ai') return false;
   // "Jarvis", "Ei Jarvis", "Hey Javes", "javis" sozinho → engajamento.
