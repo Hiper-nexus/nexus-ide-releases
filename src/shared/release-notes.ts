@@ -10834,7 +10834,7 @@ export const RELEASE_076270: AppRelease = {
     { title: 'Checkpoint oculto no Windows (F-1532)', detail: 'O checkpoint do writer funciona com tmp em nome curto 8.3 no Windows.' },
   ],
 };
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076271: AppRelease = {
   version: '0.76.271',
   date: '2026-10-15',
   codename: 'Teclado, medidor e dependências em ordem',
@@ -10845,5 +10845,26 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
   fixes: [
     { title: 'node_modules ligado à worktree', detail: 'No Node 24 a remoção recursiva atravessa o junction e apaga as dependências do checkout de origem (medido). O contrato do worker proíbe apagar ou reinstalar esse node_modules.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.272',
+  date: '2026-10-15',
+  codename: 'Linux em dia com a retomada e os agentes',
+  summary: 'O app no Linux deixa a 0.76.267 e passa a incluir a 0.76.270 e a 0.76.271: retomada com efeito e causa, agentes à vista, perfil com XP global, teclado que não duplica tecla depois de hibernar e worktree com node_modules ligado.',
+  highlights: [
+    { title: 'Quem trabalha agora', detail: 'O rail, as abas e o cabeçalho da missão contam os agentes trabalhando, e "Em andamento" lista todos os repositórios ativos sem duplicar em Recentes.' },
+    { title: 'Retomada com efeito', detail: 'Retomar não termina mais sem efeito nem sem a causa, não duplica o pane de origem e devolve a especificação selada numa gravação só do layout.' },
+    { title: 'Quadro mais limpo', detail: 'Uma ação primária por vez, o resto no menu Mais, e o Quadro pode ser minimizado (a escolha fica salva).' },
+    { title: 'XP global e perfil', detail: 'Patente, poder e XP de hoje somam os projetos já abertos, com detalhe por projeto. O HUD ganhou faixa própria no rodapé da rail.' },
+  ],
+  fixes: [
+    { title: 'Tecla dobrada ao hibernar', detail: 'Reidratar um pane hibernado e depois acordá-lo ou retomá-lo não soma um segundo receptor de teclado.' },
+    { title: 'Spawn idempotente', detail: 'O mesmo pedido, da mesma sessão, devolve o pane que já nasceu. Recusa por carga não pune a CLI no disjuntor.' },
+    { title: 'Voz sem gravação fantasma', detail: 'Soltar a tecla enquanto o microfone ainda abre encerra a captura. Reescrita do ditado que ecoava o português é recusada.' },
+    { title: 'Handoff cortado', detail: 'Colagem picotada é detectada pelo marcador do Codex e reentregue, sem Enter em texto truncado. Sem marcador, a detecção não ocorre.' },
+    { title: 'node_modules da worktree', detail: 'A worktree isolada nasce com node_modules ligado. O contrato do worker proíbe apagar ou reinstalar esse diretório, porque a remoção recursiva atravessa o link.' },
+    { title: 'Atualização do Linux', detail: 'As tags 0.76.270 e 0.76.271 não recebem pacotes Linux. A 0.76.271 é a candidata do Windows. O Linux sai na 0.76.272.' },
   ],
 };

@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.76.272 — Linux em dia com a retomada e os agentes
+
+As tags 0.76.270 e 0.76.271 não recebem pacotes Linux. Esta versão leva o produto das duas, empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). A 0.76.271 é a candidata do instalador do Windows.
+
+No desktop Linux, em relação à 0.76.267:
+
+- **Retomada**. Retomar não termina mais sem efeito nem sem a causa. O orquestrador religa sem esperar workers podres. A reserva da retomada da aba tem prazo. A especificação selada volta e o espelho do layout grava numa só atualização (fim do `accountId[undefined != acct-…]`).
+- **Sem pane duplicado**. A folha de origem é aposentada na transferência. A fita retida do terminal respeita a largura. O aviso de pausa diz o motivo e reavalia quando a missão destrava.
+- **Agentes à vista**. O rail, as abas e o cabeçalho da missão mostram quem está trabalhando agora. "Em andamento" lista todos os repositórios ativos sem duplicar em Recentes.
+- **Quadro**. Uma ação primária por vez, o resto no menu Mais, e minimizar com a escolha salva.
+- **Perfil e XP global**. O HUD tem faixa própria no rodapé da rail. Patente, poder e XP de hoje somam os projetos já abertos nesta máquina, com detalhe por projeto.
+- **Jev 1.14 preview**. Selecionável em Chaves de API. O padrão continua o estável. Limiares e rubricas não foram recalibrados para a 1.14.
+- **Spawn**. O mesmo pedido da mesma sessão devolve o pane que já nasceu. Recusa por carga não conta como falha da CLI.
+- **Teclado**. A tecla segue o estado vivo e sobrevive à hibernação. Reidratar um pane hibernado e depois acordá-lo ou retomá-lo não soma um segundo receptor (cada tecla deixava de chegar dobrada).
+- **Handoff**. Colagem picotada é detectada pelo marcador do Codex e reentregue, sem Enter em texto truncado. Sem marcador, a detecção não ocorre, e entregas grandes não são divididas em partes.
+- **Voz**. Reescrita do ditado que ecoava o português é recusada. Soltar a tecla enquanto o microfone abre encerra a captura.
+- **Worktree e medidor**. A worktree isolada nasce com `node_modules` ligado e fora do git. O contrato do worker proíbe apagar ou reinstalar esse `node_modules` (no Node 24 a remoção recursiva atravessa o link). O mapa do portão de regressão tem prazo e cache. O medidor de comandos pesados classifica o comando como o bash o lê, mesmo com barra antes de uma letra.
+- **Não muda o Linux**. O checkpoint oculto com tmp em nome curto 8.3 é correção de Windows.
+
 ## 0.76.271 — Teclado, medidor e dependências em ordem
 
 Correções dos achados da revisão independente da 0.76.270 (que já estava na main; o instalador do Windows não saiu por limite de orçamento do GitHub Actions).
