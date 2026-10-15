@@ -208,6 +208,9 @@ beforeEach(() => {
     role: "orchestrator",
   });
   deps.updateMission.mockReturnValue(mission);
+  // A4: recusas consultam a composição para apontar o pane que ficou com a
+  // conversa (`movedToPaneId`); vazio = sem sucessor conhecido.
+  deps.listMissionPanes.mockReturnValue([]);
   deps.getAdapter.mockReturnValue({ id: "codex", kind: "cli-pty" });
   deps.isBuiltinAdapter.mockReturnValue(true);
   deps.orchestrationEvidenceForAdapter.mockReturnValue("verified");
@@ -924,15 +927,33 @@ describe("renderer mission authority", () => {
         "mission-a",
         "pane-forged",
       ),
-    ).toMatchObject({ authorized: false });
+    ).toMatchObject({ authorized: false, reason: "spec-missing" });
 
     // F-721: enquanto a retomada da aba leva a conversa deste líder para
-    // outro pane, o restore do renderer não o religa.
+    // outro pane, o restore do renderer não o religa — e a resposta diz ONDE
+    // a conversa continua para o aviso do leaf aposentado (A2/A4).
+    deps.listMissionPanes.mockReturnValue([
+      {
+        id: "mpane-b",
+        missionId: "mission-a",
+        paneId: "pane-b",
+        adapterId: "codex",
+        cwd: session.cwd,
+        title: "Maestro novo",
+        role: "orchestrator",
+        scope,
+        createdAt: 2,
+      },
+    ]);
     const release = beginOperatorTabResumeTransfer("mission-a", "pane-a");
     try {
       expect(
         authority.canRestoreMissionPaneForRenderer(owner, "mission-a", "pane-a"),
-      ).toMatchObject({ authorized: false });
+      ).toMatchObject({
+        authorized: false,
+        reason: "transfer-in-flight",
+        movedToPaneId: "pane-b",
+      });
     } finally {
       release?.();
     }
@@ -1004,7 +1025,55 @@ describe("renderer mission authority", () => {
         "mission-a",
         "pane-replanned",
       ),
-    ).toMatchObject({ authorized: false });
+    ).toMatchObject({ authorized: false, reason: "stale-seal" });
+  });
+
+  it("A4: cada recusa carrega o motivo fechado que o gate escreve no pane", () => {
+    const spec = {
+      id: "mpane-a",
+      missionId: "mission-a",
+      paneId: "pane-a",
+      adapterId: "codex",
+      cwd: session.cwd,
+      title: "Review · orq",
+      role: "orchestrator" as const,
+      scope,
+      createdAt: 1,
+    };
+    deps.findMissionPaneByPaneId.mockReturnValue(spec);
+
+    // Missão ausente: encerrou (ou nunca existiu neste escopo).
+    deps.getMission.mockReturnValue(null);
+    expect(
+      authority.canRestoreMissionPaneForRenderer(owner, "mission-a", "pane-a"),
+    ).toMatchObject({ authorized: false, reason: "mission-terminal" });
+
+    // done/failed: autoridade de dispatch encerrada com a missão.
+    deps.getMission.mockReturnValue({ ...approvedMission, status: "done" });
+    expect(
+      authority.canRestoreMissionPaneForRenderer(owner, "mission-a", "pane-a"),
+    ).toMatchObject({ authorized: false, reason: "mission-terminal" });
+
+    // Pergunta aberta do Maestro: o pane espera a resposta do operador.
+    deps.getMission.mockReturnValue({
+      ...approvedMission,
+      status: "blocked",
+      intentState: "blocked_user",
+    });
+    expect(
+      authority.canRestoreMissionPaneForRenderer(owner, "mission-a", "pane-a"),
+    ).toMatchObject({ authorized: false, reason: "mission-blocked-question" });
+
+    // Execução encerrada pelo operador (veredito mais recente na descrição).
+    deps.getMission.mockReturnValue({
+      ...approvedMission,
+      status: "blocked",
+      intentState: "blocked_technical",
+      description: "x\n<!-- nexus:runtime-closed -->",
+    });
+    expect(
+      authority.canRestoreMissionPaneForRenderer(owner, "mission-a", "pane-a"),
+    ).toMatchObject({ authorized: false, reason: "runtime-closed" });
   });
 
   it("restaura pane sem selo gravado (Via Rápida não grava selo de autoridade)", () => {

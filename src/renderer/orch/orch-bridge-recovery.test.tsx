@@ -20,6 +20,7 @@ import { useOrchBridge } from './orch-bridge';
 const terminal = vi.hoisted(() => ({
   cancelPaneRecovery: vi.fn(),
   getPaneSessionId: vi.fn((_paneId: string) => null as string | null),
+  holdSpawnUntilApproved: vi.fn(),
   isPaneSessionHealthy: vi.fn(() => true),
   isSpawnHeld: vi.fn((_paneId: string) => false),
   markPaneClosingDeliberately: vi.fn(),
@@ -27,6 +28,7 @@ const terminal = vi.hoisted(() => ({
   onPaneSessionChange: vi.fn(() => vi.fn()),
   paneResumedExactly: vi.fn(() => false),
   respawnMissionPaneFresh: vi.fn(async () => 'session-new'),
+  setHeldPaneNotice: vi.fn(),
   submitPromptToPaneConfirmed: vi.fn(async () => true),
   waitForHealthyPaneSession: vi.fn(async () => 'session-new' as string | null),
   waitForSession: vi.fn(async () => 'session-new' as string | null),
@@ -1858,6 +1860,7 @@ describe('orchestration bridge pane recovery', () => {
     expect(listPanes(useLayoutStore.getState().root).some((candidate) => candidate.id === pane.id)).toBe(true);
     act(() => mounted.root.unmount());
   });
+
 });
 
 // ── F-1475: a missão mostra um Maestro só, sem panes mortos acumulados ──────

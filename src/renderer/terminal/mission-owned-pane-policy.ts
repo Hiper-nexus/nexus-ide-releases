@@ -4,6 +4,7 @@
  */
 
 import type { PaneSessionState } from '../../shared/surface-payload-types';
+import type { MissionPaneRestoreDenialReason } from '../../shared/orch-types';
 
 export type StaleAuthorityAction = 'sync-once' | 'unlock-keyboard';
 
@@ -446,6 +447,62 @@ export const MISSION_HOLD_NOTICE =
 export const STANDALONE_HOLD_NOTICE =
   '[Nexus] Agente em pausa — a sessão anterior NÃO foi reiniciada automaticamente.\r\n' +
   '  Confirme o diálogo ou retome a missão no rail quando quiser.\r\n';
+
+/**
+ * A4: o gate já sabe que o pane é de missão mas ainda não tem a resposta do
+ * Main — o pane nunca mostra o "use Retomar" genérico nessa janela.
+ */
+export const MISSION_AUTHORITY_PENDING_NOTICE =
+  '[Nexus] Agente em pausa — conferindo a retomada desta sessão no Main…\r\n';
+
+/**
+ * A4: uma linha específica por motivo de recusa. O gate aposenta o pane com
+ * a ação certa — nunca o "use Retomar" de um pane que o Main não vai soltar.
+ * `reason` ausente (canal legado, erro de IPC) cai no aviso genérico.
+ */
+export function missionPaneRestoreHoldNotice(
+  reason: MissionPaneRestoreDenialReason | undefined,
+  continuesAt?: string,
+): string {
+  // A2: quando o Main aponta o pane que ficou com a conversa, o aviso o
+  // nomeia ("a conversa continua no pane 7"), nunca um "outro pane" vago.
+  // `continuesAt` já chega com a preposição ("no pane 7", "em «Maestro»").
+  const destination = continuesAt ?? 'no pane novo da missão';
+  switch (reason) {
+    case 'mission-blocked-question':
+      return (
+        '[Nexus] Agente aposentado — a missão parou numa pergunta aberta.\r\n' +
+        '  Responda pela missão no rail para retomar.\r\n'
+      );
+    case 'runtime-closed':
+      return (
+        '[Nexus] Agente aposentado — a execução foi encerrada pelo operador.\r\n' +
+        '  Inicie uma nova missão no rail.\r\n'
+      );
+    case 'stale-seal':
+      return (
+        '[Nexus] Agente aposentado — a retomada desta sessão não bate com a missão atual.\r\n' +
+        '  A conversa segue com o líder vivo no rail.\r\n'
+      );
+    case 'transfer-in-flight':
+      return (
+        '[Nexus] Agente aposentado — a conversa deste pane continua\r\n' +
+        `  ${destination}. Este pane pode ser fechado.\r\n`
+      );
+    case 'spec-missing':
+      return (
+        '[Nexus] Agente aposentado — este pane não faz mais parte da missão.\r\n' +
+        `  A conversa segue ${destination}. Este pane pode ser fechado.\r\n`
+      );
+    case 'mission-terminal':
+      return (
+        '[Nexus] Agente aposentado — a missão encerrou.\r\n' +
+        '  O relatório final está na aba da missão no rail.\r\n'
+      );
+    default:
+      return MISSION_HOLD_NOTICE;
+  }
+}
 
 /**
  * F-721: o aviso de pausa fica no scrollback quando o MESMO pane é solto e

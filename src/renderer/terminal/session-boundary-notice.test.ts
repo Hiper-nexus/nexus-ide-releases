@@ -3,6 +3,7 @@ import {
   SESSION_BOUNDARY_NOTICE,
   TERMINAL_INPUT_MODE_RESET,
   terminalBufferHasContent,
+  terminalBufferIsNoticeOnly,
   type TerminalBufferProbe,
 } from './session-boundary-notice';
 
@@ -46,6 +47,60 @@ describe('terminalBufferHasContent', () => {
 
   it('ignores whitespace-only rows', () => {
     expect(terminalBufferHasContent(bufferOf(['   ', '\t']))).toBe(false);
+  });
+});
+
+describe('terminalBufferIsNoticeOnly (A3)', () => {
+  it('buffer vazio ou só com avisos é "só aviso" — não vale histórico', () => {
+    expect(terminalBufferIsNoticeOnly(bufferOf([]))).toBe(true);
+    expect(terminalBufferIsNoticeOnly(bufferOf(['', '  ', '']))).toBe(true);
+    expect(
+      terminalBufferIsNoticeOnly(
+        bufferOf([
+          '[Nexus] Agente em pausa — a sessão anterior NÃO foi reiniciada automaticamente.',
+          '  Clique a missão no rail e use Retomar.',
+          '',
+        ]),
+      ),
+    ).toBe(true);
+    expect(
+      terminalBufferIsNoticeOnly(
+        bufferOf(['── histórico anterior guardado: reaparece quando o painel voltar à largura da captura ──']),
+      ),
+    ).toBe(true);
+  });
+
+  it('segunda linha dinâmica de aviso de transferência continua sendo aviso', () => {
+    expect(
+      terminalBufferIsNoticeOnly(
+        bufferOf([
+          '[Nexus] Agente aposentado — a conversa deste pane continua',
+          '  no pane 7. Este pane pode ser fechado.',
+          '',
+        ]),
+      ),
+    ).toBe(true);
+    expect(
+      terminalBufferIsNoticeOnly(
+        bufferOf([
+          '[Nexus] Agente aposentado — este pane não faz mais parte da missão.',
+          '  A conversa segue no pane 7. Este pane pode ser fechado.',
+        ]),
+      ),
+    ).toBe(true);
+  });
+
+  it('qualquer saída real entre os avisos tira o buffer da classe "só aviso"', () => {
+    expect(
+      terminalBufferIsNoticeOnly(
+        bufferOf(['[nexus] agente entregou.', 'total 42', '']),
+      ),
+    ).toBe(false);
+    expect(
+      terminalBufferIsNoticeOnly(
+        bufferOf(['$ npm test', '── histórico guardado ──']),
+      ),
+    ).toBe(false);
   });
 });
 

@@ -120,7 +120,11 @@ vi.mock('./terminal-ghost-assist', () => ({
   },
 }));
 
-import { useLayoutStore } from '../state/layout-store';
+import {
+  flushLayout,
+  switchWorkspaceLayout,
+  useLayoutStore,
+} from '../state/layout-store';
 import { useAdapterStore } from '../state/adapter-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { setActiveWorkspacePath } from '../state/active-workspace';
@@ -3394,5 +3398,127 @@ describe('F-429 — Encerrar never becomes automatic human resume', () => {
     expect(resumeMissionBootstrap).not.toHaveBeenCalled();
     if (stopped) expect(command).not.toHaveBeenCalled();
     else expect(command).toHaveBeenCalledWith({ kind: 'retry-kickoff', missionId });
+  });
+});
+
+describe('A3 — a fita pendente sobrevive à divergência de largura', () => {
+  const tapePane = (over: Partial<PaneModel> = {}): PaneModel => ({
+    id: 'shell-tape',
+    kind: 'shell',
+    title: 'Terminal',
+    ...over,
+  });
+
+  it('largura divergente retém a fita, avisa UMA vez e replaya quando a largura volta', async () => {
+    const tape = 'FITA-REAL\x1b[32mOK\x1b[0m '.repeat(20);
+    const p = tapePane({
+      terminalScrollback: tape,
+      terminalScrollbackCols: 90,
+    });
+    useLayoutStore.setState({
+      root: buildGridTree([p]),
+      focusedPaneId: 'outro-pane',
+    });
+    const host = getOrCreateHost(p);
+    setHostSize(host.element, 1000, 800); // 100 col ≠ 90 da captura
+    const writeSpy = vi.spyOn(host.term, 'write');
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(p, slot);
+
+    // O fit do attach rodou o flush fora da geometria: fita RETIDA.
+    expect(host.term.cols).toBe(100);
+    expect(host.pendingScrollback).toBe(tape);
+    const mismatchWrites = () =>
+      writeSpy.mock.calls.filter(([data]) =>
+        String(data).includes('largura da captura'),
+      );
+    expect(mismatchWrites()).toHaveLength(1);
+    expect(writeSpy.mock.calls.some(([data]) => data === tape)).toBe(false);
+
+    // Outra largura provisória, outro flush: nem a fita sai nem o aviso repete.
+    setHostSize(host.element, 1100, 800); // 110 col
+    resizeObserverTicks.forEach((tick) => tick());
+    await vi.advanceTimersByTimeAsync(200);
+    expect(host.term.cols).toBe(110);
+    expect(host.pendingScrollback).toBe(tape);
+    expect(mismatchWrites()).toHaveLength(1);
+
+    // A grade voltou à largura da captura: a fita entra e o pendente fecha.
+    setHostSize(host.element, 900, 800); // 90 col
+    resizeObserverTicks.forEach((tick) => tick());
+    await vi.advanceTimersByTimeAsync(200);
+    expect(host.term.cols).toBe(90);
+    expect(host.pendingScrollback).toBeUndefined();
+    expect(host.pendingScrollbackCols).toBeUndefined();
+    expect(writeSpy.mock.calls.some(([data]) => data === tape)).toBe(true);
+  });
+
+  it('hibernar com a fita retida guarda a FITA no snapshot, não o aviso', async () => {
+    const tape = 'HISTORICO-REAL '.repeat(60);
+    const p = tapePane({
+      terminalScrollback: tape,
+      terminalScrollbackCols: 90,
+    });
+    useLayoutStore.setState({
+      root: buildGridTree([p]),
+      focusedPaneId: 'outro-pane',
+    });
+    const host = getOrCreateHost(p);
+    setHostSize(host.element, 1000, 800);
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(p, slot);
+    expect(await waitForSession(p.id, 1_000)).toBe('pty-hidden');
+    // A fita segue pendente (100 col ≠ 90) — o buffer visível só tem o aviso.
+    expect(host.pendingScrollback).toBe(tape);
+
+    for (let i = 0; i < 24; i++) {
+      getOrCreateHost({ id: `filler-tape-${i}`, kind: 'shell', title: `t${i}` });
+    }
+    setHostVisibility(p.id, false);
+    await vi.advanceTimersByTimeAsync(20);
+
+    expect(host.virtualized).not.toBeNull();
+    expect(host.virtualized!.snapshot).toBe(tape.slice(-256_000));
+    expect(host.virtualized!.cols).toBe(90);
+    expect(host.pendingScrollback).toBeUndefined();
+  });
+
+  it('o snapshot de persistência nunca grava o buffer só-aviso por cima da fita', async () => {
+    const tape = 'HISTORICO-SALVO '.repeat(60);
+    const p = tapePane({
+      id: 'shell-saved',
+      terminalScrollback: tape,
+      terminalScrollbackCols: 90,
+    });
+    const layoutSave = { load: vi.fn(), save: vi.fn(), saveSync: vi.fn() };
+    layoutSave.load.mockResolvedValue({
+      root: buildGridTree([p]),
+      focusedPaneId: 'outro-pane',
+    });
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: { ...window.nexus, layout: layoutSave },
+    });
+    await switchWorkspaceLayout('/ws-tape');
+
+    const host = getOrCreateHost(
+      listPanes(useLayoutStore.getState().root).find(
+        (item) => item.id === p.id,
+      )!,
+    );
+    setHostSize(host.element, 1000, 800);
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(listPanes(useLayoutStore.getState().root)[0]!, slot);
+    expect(host.pendingScrollback).toBe(tape);
+
+    flushLayout(true);
+    const saved = layoutSave.saveSync.mock.calls.at(-1)?.[1] as {
+      root: { pane?: { terminalScrollback?: string; terminalScrollbackCols?: number } };
+    };
+    expect(saved.root.pane?.terminalScrollback).toBe(tape);
+    expect(saved.root.pane?.terminalScrollbackCols).toBe(90);
   });
 });

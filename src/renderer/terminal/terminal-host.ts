@@ -138,6 +138,7 @@ import {
   SESSION_BOUNDARY_NOTICE,
   TERMINAL_INPUT_MODE_RESET,
   terminalBufferHasContent,
+  terminalBufferIsNoticeOnly,
 } from './session-boundary-notice';
 import {
   canReplayScrollback,
@@ -270,10 +271,20 @@ interface Host {
    * Largura em que `pendingScrollback` foi capturado. Esperar a largura
    * definitiva não basta: a fita já CARREGA a geometria antiga. Reescrever
    * 100 colunas de moldura numa grade de 76 produz exatamente o entrelaçamento
-   * descrito acima. Quando as larguras não batem, o replay é descartado — um
-   * pane limpo com a sessão viva atrás é melhor que histórico ilegível.
+   * descrito acima. A3: divergência NÃO descarta — a fita fica pendente e
+   * entra quando a grade volta à largura da captura.
    */
   pendingScrollbackCols?: number;
+  /**
+   * Aviso de divergência de largura já impresso para ESTA fita pendente —
+   * cada flush fora da geometria reaplicava uma linha nova.
+   */
+  scrollbackMismatchNoticed?: boolean;
+  /**
+   * Último texto de aviso de retenção escrito neste xterm (dedupe: o gate
+   * atualiza o motivo sem repetir a mesma linha).
+   */
+  holdNoticeText?: string;
   /**
    * The pane already shows (or is about to replay) content from a previous
    * session — persisted scrollback or an earlier live session in this same
@@ -313,22 +324,36 @@ interface Host {
 
 /**
  * Reescreve o scrollback salvo assim que o terminal tem a largura final.
- * Idempotente: só corre uma vez por host.
+ * Idempotente por fita: um episódio de divergência segura a fita até a
+ * largura da captura voltar (attach, ResizeObserver, refit global, resume,
+ * reidratação — todos passam por aqui).
  */
 function flushPendingScrollback(host: Host): void {
   const pending = host.pendingScrollback;
   if (!pending || host.disposed || !host.opened) return;
   const capturedCols = host.pendingScrollbackCols;
-  delete host.pendingScrollback;
-  delete host.pendingScrollbackCols;
 
-  // Geometria diferente: a fita é irrecuperável. Descartar é a única saída
-  // honesta — reflow não desfaz cursor absoluto.
+  // A3: geometria diferente NÃO destrói a fita. Cursor absoluto não reflui —
+  // mas a divergência costuma ser transitória (grade de boot, pane revelado
+  // numa largura provisória). A fita espera pendente e entra quando a grade
+  // volta à largura da captura; o aviso sai uma vez por episódio.
   if (!canReplayScrollback(capturedCols, host.term.cols)) {
-    host.term.write(SCROLLBACK_WIDTH_MISMATCH_NOTICE);
+    if (!host.scrollbackMismatchNoticed) {
+      host.scrollbackMismatchNoticed = true;
+      try {
+        host.term.write(SCROLLBACK_WIDTH_MISMATCH_NOTICE);
+      } catch {
+        // xterm em estado ímpar — o próximo flush tenta o aviso de novo
+        // (a flag só trava a impressão que já aconteceu).
+        host.scrollbackMismatchNoticed = false;
+      }
+    }
     return;
   }
 
+  delete host.pendingScrollback;
+  delete host.pendingScrollbackCols;
+  delete host.scrollbackMismatchNoticed;
   host.inputVisibility.follow();
   host.term.write(pending, () => {
     if (host.disposed || !host.inputVisibility.isFollowing) return;
@@ -474,6 +499,12 @@ useAccessStore.subscribe((state, previous) => {
   }
 });
 const MAX_PERSISTED_SCROLLBACK = 256_000;
+/**
+ * A3: teto do buffer que vale sondar linha a linha como "só aviso". Um
+ * serialize() maior que isso carrega conteúdo real demais para ser só
+ * boundary/hold — nem o scan nem a classificação valem o risco.
+ */
+const MAX_NOTICE_ONLY_PROBE_CHARS = 8_192;
 
 setTerminalSnapshotProvider((paneId) => {
   const host = hosts.get(paneId);
@@ -487,10 +518,33 @@ setTerminalSnapshotProvider((paneId) => {
   if (!host.opened) return undefined;
   try {
     flushTerminalOutput(host.term);
-    return {
-      data: host.serialize.serialize().slice(-MAX_PERSISTED_SCROLLBACK),
-      cols: host.term.cols,
-    };
+    const live = host.serialize.serialize().slice(-MAX_PERSISTED_SCROLLBACK);
+    // A3: um buffer que só carrega avisos não é histórico — é o que sobrou
+    // enquanto a fita real esperava a largura (ou o pane estava retido).
+    // Gravar isso apagava o scrollback salvo do pane; preferimos a fita
+    // pendente e, na falta dela, o snapshot que já estava no layout.
+    if (
+      live.length <= MAX_NOTICE_ONLY_PROBE_CHARS &&
+      terminalBufferIsNoticeOnly(host.term.buffer.active)
+    ) {
+      const pending = host.pendingScrollback;
+      if (pending && pending.length > live.length) {
+        return {
+          data: pending.slice(-MAX_PERSISTED_SCROLLBACK),
+          cols: host.pendingScrollbackCols ?? host.term.cols,
+        };
+      }
+      const saved = listPanes(useLayoutStore.getState().root).find(
+        (pane) => pane.id === paneId,
+      );
+      if (saved?.terminalScrollback && saved.terminalScrollback.length > live.length) {
+        return {
+          data: saved.terminalScrollback.slice(-MAX_PERSISTED_SCROLLBACK),
+          cols: saved.terminalScrollbackCols ?? host.term.cols,
+        };
+      }
+    }
+    return { data: live, cols: host.term.cols };
   } catch {
     return undefined;
   }
@@ -2389,8 +2443,24 @@ function virtualizeHost(host: Host): void {
   let snapshot = '';
   let cols = host.term.cols;
   try {
-    snapshot = host.serialize.serialize().slice(-MAX_PERSISTED_SCROLLBACK);
+    const live = host.serialize.serialize().slice(-MAX_PERSISTED_SCROLLBACK);
     cols = host.term.cols;
+    // A3: com a fita pendente por largura, o buffer só carrega o aviso de
+    // divergência — hibernar esse buffer apagava o histórico. A fita vira
+    // o snapshot (ela já está selada na geometria em que foi capturada).
+    if (
+      host.pendingScrollback &&
+      live.length <= MAX_NOTICE_ONLY_PROBE_CHARS &&
+      terminalBufferIsNoticeOnly(host.term.buffer.active)
+    ) {
+      snapshot = host.pendingScrollback.slice(-MAX_PERSISTED_SCROLLBACK);
+      cols = host.pendingScrollbackCols ?? cols;
+      delete host.pendingScrollback;
+      delete host.pendingScrollbackCols;
+      delete host.scrollbackMismatchNoticed;
+    } else {
+      snapshot = live;
+    }
     host.term.dispose();
   } catch {
     return; // terminal em estado ímpar — não hibernar é seguro
@@ -3094,9 +3164,13 @@ export function attachHost(pane: PaneModel, slot: HTMLElement): void {
           const missionOwned = Boolean(
             pane.missionId ?? useOrchStore.getState().paneMissions[pane.id],
           );
-          host.term.writeln(
-            `\r\n${missionOwned ? MISSION_HOLD_NOTICE : STANDALONE_HOLD_NOTICE}`,
-          );
+          // A4: quando o gate já sabe o motivo da retenção, o pane diz o
+          // motivo — nunca o "use Retomar" de uma retomada que não existe.
+          const notice =
+            heldPaneNotices.get(pane.id) ??
+            (missionOwned ? MISSION_HOLD_NOTICE : STANDALONE_HOLD_NOTICE);
+          host.holdNoticeText = notice;
+          host.term.writeln(`\r\n${notice}`);
         } catch {
           // xterm may not be ready; ignore.
         }
@@ -3157,6 +3231,34 @@ const firstSpawnIntent = new Map<string, FirstSpawnIntent>();
 const heldSpawnPanes = new Set<string>();
 /** F-213: quando cada pane entrou no held — mede a espera da aprovação. */
 const heldSpawnSinceMs = new Map<string, number>();
+/**
+ * A4: texto que um pane retido deve exibir, decidido pelo gate a partir da
+ * recusa do Main. Sobrevive ao attach tardio: attachHost lê o mapa quando o
+ * pane ainda não estava aberto; num host aberto o aviso é escrito na hora.
+ */
+const heldPaneNotices = new Map<string, string>();
+
+/**
+ * A4: registra (e, se o pane já está aberto, imprime) o aviso de retenção.
+ * Reescrever o MESMO texto não repete a linha — o gate pode reavaliar a cada
+ * mudança de estado da missão sem encher o buffer.
+ */
+export function setHeldPaneNotice(paneId: string, notice: string): void {
+  const host = hosts.get(paneId);
+  if (host && host.holdNoticeText === notice) {
+    heldPaneNotices.set(paneId, notice);
+    return;
+  }
+  heldPaneNotices.set(paneId, notice);
+  if (!host || host.disposed || !host.opened) return;
+  try {
+    host.holdNoticeText = notice;
+    host.holdNoticeWritten = true;
+    host.term.writeln(`\r\n${notice}`);
+  } catch {
+    // xterm em estado ímpar — o texto fica no mapa para o próximo attach.
+  }
+}
 
 function markFirstSpawnIntent(paneId: string, intent: FirstSpawnIntent): void {
   firstSpawnIntent.set(paneId, intent);
@@ -3181,6 +3283,7 @@ export function consumeFirstSpawnIntent(paneId: string): {
 export function markResumeOnSpawn(paneId: string): void {
   // Intentional resume (reopen mission / user confirmed) always clears a hold.
   heldSpawnPanes.delete(paneId);
+  heldPaneNotices.delete(paneId);
   // F-1002: ação explícita zera o orçamento dos spawns automáticos.
   resetAutomaticSpawnBudget(paneId);
   markFirstSpawnIntent(paneId, 'resume');
@@ -3233,6 +3336,7 @@ export function isSpawnHeld(paneId: string): boolean {
 /** Forget every renderer-local spawn intent before pruning an orphan leaf. */
 export function discardPaneSpawnState(paneId: string): void {
   heldSpawnPanes.delete(paneId);
+  heldPaneNotices.delete(paneId);
   resetAutomaticSpawnBudget(paneId);
   heldSpawnSinceMs.delete(paneId);
   firstSpawnIntent.delete(paneId);
@@ -3254,6 +3358,7 @@ export function releaseHeldSpawns(
     // re-release after a coalesced prompt.
     heldSpawnPanes.delete(paneId);
     if (opts.resume) {
+      heldPaneNotices.delete(paneId);
       const host = hosts.get(paneId);
       // Layout restore is intentionally observed from both the store and App.
       // Never leave a latent resume flag behind when the first observer already
@@ -3289,6 +3394,7 @@ function listPanesFromLayout(): readonly PaneModel[] {
 export function markPersistedAuthorityOnSpawn(paneId: string): void {
   markFirstSpawnIntent(paneId, 'restore');
   heldSpawnPanes.delete(paneId);
+  heldPaneNotices.delete(paneId);
   unlockExitedSessionlessHost(paneId);
   kickHeldSpawnIfReady(paneId);
 }
@@ -3742,6 +3848,7 @@ export async function unlockRetiredMissionPane(
   options?: { readonly operatorInitiated?: boolean },
 ): Promise<void> {
   heldSpawnPanes.delete(pane.id);
+  heldPaneNotices.delete(pane.id);
   const target = host ?? hosts.get(pane.id);
   const missionId =
     pane.missionId ?? useOrchStore.getState().paneMissions[pane.id];

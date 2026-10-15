@@ -15,11 +15,15 @@ import {
   type MissionOrchestratorRuntimeSnapshot,
   type PromotedPlanSnapshot,
 } from "../../shared/mission-intent";
-import { hasAutomaticTechnicalRecovery } from "../../shared/mission-recovery-policy";
+import {
+  hasAutomaticTechnicalRecovery,
+  wasMissionRuntimeClosedByOperator,
+} from "../../shared/mission-recovery-policy";
 import {
   normalizeMilestones,
   type Mission,
   type MissionPaneRestoreAuthority,
+  type MissionPaneRestoreDenialReason,
   type MissionPaneSpec,
   type MissionPatch,
   type PaneActivitySummary,
@@ -1364,29 +1368,61 @@ export class RendererMissionAuthority {
     missionId: string,
     paneId: string,
   ): MissionPaneRestoreAuthority {
-    const denied: MissionPaneRestoreAuthority = { authorized: false };
+    const denied = (
+      reason: MissionPaneRestoreDenialReason,
+    ): MissionPaneRestoreAuthority => ({ authorized: false, reason });
     const rendererScope = requireRendererWorkspaceScope(owner);
     const suite = this.#stores.forScope(rendererScope);
     const mission = suite.missions.get(missionId);
     const spec = suite.missionPanes.findByPaneId(paneId);
+    // A4: cada recusa carrega o motivo fechado — o gate aposenta o leaf com a
+    // linha certa em vez do "use Retomar" que prometia uma retomada impossível.
+    if (!mission) return denied('mission-terminal');
+    // A2/A4: o pane que hoje carrega a conversa da missão — para o aviso do
+    // leaf aposentado poder dizer "a conversa continua no pane X".
+    const successorOrchestratorPaneId = (): string | undefined =>
+      suite.missionPanes
+        .list(missionId)
+        .find(
+          (candidate) =>
+            candidate.role === 'orchestrator' && candidate.paneId !== paneId,
+        )?.paneId;
     if (
-      !mission ||
       !spec ||
       spec.missionId !== missionId ||
       spec.paneId !== paneId ||
       !spec.scope ||
       !sameScope(rendererScope, spec.scope) ||
-      !hasCurrentDispatchAuthority(mission) ||
       isAutomatedReviewerCompositionPane(spec)
     ) {
-      return denied;
+      return {
+        ...denied('spec-missing'),
+        movedToPaneId: successorOrchestratorPaneId(),
+      };
+    }
+    if (!hasCurrentDispatchAuthority(mission)) {
+      return denied(
+        wasMissionRuntimeClosedByOperator(mission)
+          ? 'runtime-closed'
+          : mission.status === 'blocked' &&
+              mission.intentState === 'blocked_user'
+            ? 'mission-blocked-question'
+            : mission.status === 'done' || mission.status === 'failed'
+              ? 'mission-terminal'
+              : 'stale-seal',
+      );
     }
     // F-721: a conversa deste líder está sendo levada pelo Main para outro
     // pane. O restore do renderer o deixa parado em vez de subir um segundo
     // Maestro (e sem a conversa) na mesma missão.
     const continuation = (spec as import('./mission-pane-store').ScopedMissionPaneSpec).workerContinuation
       ? reconcilePreparedWorkerContinuation(spec as import('./mission-pane-store').ScopedMissionPaneSpec).workerContinuation : undefined;
-    if (isOperatorTabResumeTransferSource(missionId, paneId) || continuation && continuation.state !== 'released') return denied;
+    if (isOperatorTabResumeTransferSource(missionId, paneId) || continuation && continuation.state !== 'released') {
+      return {
+        ...denied('transfer-in-flight'),
+        movedToPaneId: successorOrchestratorPaneId(),
+      };
+    }
     // Sealed runtime the renderer must mirror before kicking the respawn.
     // The persisted-authority fence compares the spawn request to this row;
     // a layout restored without accountId used to send undefined and die.
@@ -1402,7 +1438,7 @@ export class RendererMissionAuthority {
     // trabalhando INVISÍVEL ("nenhum pane foi aberto ainda" com 8 CLIs vivas).
     if (!spec.authoritySeal) return { authorized: true, sealed };
     const squad = mission.squadId ? getSquad(mission.squadId) : null;
-    if (!squad && mission.squadId) return denied;
+    if (!squad && mission.squadId) return denied('stale-seal');
     const currentSeal = resolveMissionPaneAuthoritySeal(
       rendererScope,
       mission,
@@ -1416,7 +1452,7 @@ export class RendererMissionAuthority {
     if (sameMissionPaneApprovalSeal(spec.authoritySeal, currentSeal)) {
       return { authorized: true, sealed };
     }
-    return denied;
+    return denied('stale-seal');
   }
 
   /** Activity is best-effort metadata: a resolver bug must not break reopen. */

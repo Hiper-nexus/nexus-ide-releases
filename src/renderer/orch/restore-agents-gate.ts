@@ -14,7 +14,12 @@ import {
   holdSpawnUntilApproved,
   isSpawnHeld,
   releaseHeldSpawns,
+  setHeldPaneNotice,
 } from '../terminal/terminal-host';
+import {
+  MISSION_AUTHORITY_PENDING_NOTICE,
+  missionPaneRestoreHoldNotice,
+} from '../terminal/mission-owned-pane-policy';
 import { isAutomatedReviewerPaneIdentity } from '../../shared/automated-reviewer-pane';
 import { useOrchStore } from '../state/orch-store';
 import { listPanes } from '../lib/split-tree';
@@ -92,7 +97,10 @@ function resolveMissionIdForRestore(pane: PaneModel): string | undefined {
   );
 }
 
-const missionAuthorityChecks = new Map<string, Promise<boolean>>();
+const missionAuthorityChecks = new Map<
+  string,
+  Promise<MissionPaneRestoreAuthority>
+>();
 const orphanPrunesInFlight = new Set<string>();
 const MISSION_AUTHORITY_INITIAL_RETRY_DELAY_MS = 100;
 const MISSION_AUTHORITY_MAX_RETRY_DELAY_MS = 400;
@@ -177,9 +185,9 @@ function waitForMissionAuthorityRetry(
 async function requestMissionPaneAuthority(
   pane: PaneModel,
   generation: RestoreWorkspaceGeneration,
-): Promise<boolean> {
+): Promise<MissionPaneRestoreAuthority> {
   const missionId = resolveMissionIdForRestore(pane);
-  if (!missionId) return false;
+  if (!missionId) return { authorized: false, reason: 'spec-missing' };
   let retryDelayMs = MISSION_AUTHORITY_INITIAL_RETRY_DELAY_MS;
   while (isCurrentRestoreWorkspaceGeneration(generation)) {
     try {
@@ -203,10 +211,13 @@ async function requestMissionPaneAuthority(
       ) {
         applySealedRestoreRuntime(pane.id, result.sealed);
       }
-      return (
-        result === true ||
-        (typeof result === 'object' && result !== null && result.authorized === true)
-      );
+      if (result === true) return { authorized: true };
+      if (typeof result === 'object' && result !== null) {
+        // Devolve o objeto inteiro: `reason` e `movedToPaneId` são o que o
+        // pane aposentado precisa para dizer onde a conversa continuou.
+        return result;
+      }
+      return { authorized: false };
     } catch (error) {
       if (!isCurrentRestoreWorkspaceGeneration(generation) || reportLicenseDenial(error)) throw error;
       const shouldRetry = await waitForMissionAuthorityRetry(
@@ -226,8 +237,10 @@ async function requestMissionPaneAuthority(
 function confirmMissionPaneAuthority(
   pane: PaneModel,
   generation: RestoreWorkspaceGeneration,
-): Promise<boolean> {
-  if (!resolveMissionIdForRestore(pane)) return Promise.resolve(false);
+): Promise<MissionPaneRestoreAuthority> {
+  if (!resolveMissionIdForRestore(pane)) {
+    return Promise.resolve({ authorized: false, reason: 'spec-missing' });
+  }
   const key = missionAuthorityKey(pane, generation);
   const existing = missionAuthorityChecks.get(key);
   if (existing) return existing;
@@ -288,6 +301,25 @@ function applySealedRestoreRuntime(
 }
 
 /**
+ * A4: o aviso do pane aposentado. Quando o Main aponta o pane que ficou com
+ * a conversa (`movedToPaneId`), o texto o nomeia pelo número que o operador
+ * vê no cabeçalho — "a conversa continua no pane 7", não "em outro pane".
+ */
+function restoreDenialNotice(authority: MissionPaneRestoreAuthority): string {
+  const target = authority.movedToPaneId
+    ? listPanes(useLayoutStore.getState().root).find(
+        (item) => item.id === authority.movedToPaneId,
+      )
+    : undefined;
+  const label = target
+    ? target.paneNumber !== undefined
+      ? `no pane ${target.paneNumber}`
+      : `em «${agentLabel(target)}»`
+    : undefined;
+  return missionPaneRestoreHoldNotice(authority.reason, label);
+}
+
+/**
  * Negar autoridade NUNCA apaga o pane — ele é APOSENTADO.
  *
  * O estado seguro já está armado quando chegamos aqui: `gateRestoredAgents`
@@ -309,6 +341,7 @@ function applySealedRestoreRuntime(
 function retireUnauthorizedMissionPane(
   pane: PaneModel,
   generation: RestoreWorkspaceGeneration,
+  authority: MissionPaneRestoreAuthority,
 ): void {
   if (!isCurrentRestoreWorkspaceGeneration(generation)) return;
   const key = missionAuthorityKey(pane, generation);
@@ -317,6 +350,10 @@ function retireUnauthorizedMissionPane(
   try {
     // Idempotente, e reafirmado a cada gate: nunca soltar, nunca apagar.
     holdSpawnUntilApproved(pane.id);
+    // A4: UMA linha específica no pane aposentado — "a conversa continua no
+    // pane novo", "responda a pergunta", "a missão encerrou" — nunca o
+    // "use Retomar" de uma retomada que o Main já recusou.
+    setHeldPaneNotice(pane.id, restoreDenialNotice(authority));
     const livePaneIds = new Set(
       listPanes(useLayoutStore.getState().root).map((item) => item.id),
     );
@@ -407,17 +444,20 @@ export async function gateRestoredAgents(
   const missionAgents = agents.filter(looksLikeMissionAgent);
   const missionRestores = missionAgents.map(async (pane) => {
     try {
-      const isAuthorized = await confirmMissionPaneAuthority(
+      // A4: enquanto o Main confere, o pane anuncia a conferência — um attach
+      // precoce nunca mostra o "use Retomar" genérico de missão.
+      setHeldPaneNotice(pane.id, MISSION_AUTHORITY_PENDING_NOTICE);
+      const authority = await confirmMissionPaneAuthority(
         pane,
         restoreGeneration,
       );
       if (!isCurrentRestoreWorkspaceGeneration(restoreGeneration)) return;
       if (deferForAccess([pane])) return;
-      if (isAuthorized) {
+      if (authority.authorized) {
         releaseHeldSpawns([pane.id], { resume: true });
         return;
       }
-      retireUnauthorizedMissionPane(pane, restoreGeneration);
+      retireUnauthorizedMissionPane(pane, restoreGeneration, authority);
     } catch (error) {
       if (!isCurrentRestoreWorkspaceGeneration(restoreGeneration)) return;
       if (deferForAccess([pane])) return;
@@ -537,6 +577,41 @@ async function restoreStandaloneAgents(
         askBatches.delete(askKey);
       }
     }
+  }
+}
+
+/**
+ * A4: o broadcast de missões é o sinal de que a autoridade pode ter mudado.
+ * Panes retidos são reavaliados — a missão que destravou (pergunta
+ * respondida, contrato re-aprovado, selo reconciliado) solta o pane sozinho;
+ * ainda recusado, a linha do pane passa a dizer o motivo novo. Não há loop:
+ * `releaseHeldSpawns` tira o pane do conjunto e o próximo broadcast não o
+ * reavalia; a dedupe de `setHeldPaneNotice` evita repetir a mesma linha.
+ */
+export function reevaluateHeldMissionPanes(): void {
+  const generation = captureRestoreWorkspaceGeneration();
+  for (const pane of listPanes(useLayoutStore.getState().root)) {
+    if (
+      pane.kind !== 'cli-agent' ||
+      !looksLikeMissionAgent(pane) ||
+      !isSpawnHeld(pane.id) ||
+      !resolveMissionIdForRestore(pane)
+    ) {
+      continue;
+    }
+    void confirmMissionPaneAuthority(pane, generation)
+      .then((authority) => {
+        if (!isCurrentRestoreWorkspaceGeneration(generation)) return;
+        if (authority.authorized) {
+          releaseHeldSpawns([pane.id], { resume: true });
+          return;
+        }
+        setHeldPaneNotice(pane.id, restoreDenialNotice(authority));
+      })
+      .catch(() => {
+        // Main indisponível neste broadcast: o pane segue retido e a última
+        // linha continua valendo — a próxima mudança de estado reavalia.
+      });
   }
 }
 

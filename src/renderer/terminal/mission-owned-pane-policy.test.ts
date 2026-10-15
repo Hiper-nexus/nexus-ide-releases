@@ -20,7 +20,9 @@ import {
   shouldPrintMissionPaneExitNotice,
   terminalDeadPaneFastPathApplies,
   latestCivilianDeliverySummary,
+  MISSION_AUTHORITY_PENDING_NOTICE,
   MISSION_HOLD_NOTICE,
+  missionPaneRestoreHoldNotice,
   MISSION_OWNED_EXIT_NOTICE,
   missionOwnedExitNotice,
   orchestratorOwnedExitLines,
@@ -820,5 +822,62 @@ describe('avisos de revive — nenhuma tecla pós-done cai no silêncio', () => 
     expect(DEAD_PANE_MISSION_RELIVED_NOTICE).toContain('reabre em outro pane');
     expect(DEAD_PANE_MISSION_RELIVED_NOTICE).toContain('histórico');
     expect(DEAD_PANE_MISSION_RELIVED_NOTICE).not.toMatch(/\babre em outro pane/);
+  });
+});
+
+describe('missionPaneRestoreHoldNotice — A4: uma linha por motivo', () => {
+  it('pergunta aberta aponta o rail, nunca o Retomar', () => {
+    const notice = missionPaneRestoreHoldNotice('mission-blocked-question');
+    expect(notice).toContain('pergunta aberta');
+    expect(notice).toContain('Responda pela missão no rail');
+    expect(notice).not.toContain('use Retomar');
+  });
+
+  it('runtime encerrado pelo operador não promete retomada', () => {
+    const notice = missionPaneRestoreHoldNotice('runtime-closed');
+    expect(notice).toContain('encerrada pelo operador');
+    expect(notice).toContain('nova missão');
+    expect(notice).not.toContain('use Retomar');
+  });
+
+  it('selo fora da revisão aprovada aponta o líder vivo', () => {
+    const notice = missionPaneRestoreHoldNotice('stale-seal');
+    expect(notice).toContain('não bate com a missão atual');
+    expect(notice).toContain('líder vivo');
+    expect(notice).not.toContain('use Retomar');
+  });
+
+  it('transferência em voo e spec ausente dizem ONDE a conversa continua (A2)', () => {
+    const moved = missionPaneRestoreHoldNotice('transfer-in-flight', 'no pane 7');
+    expect(moved).toContain('conversa deste pane continua');
+    expect(moved).toContain('no pane 7');
+    expect(moved).not.toContain('use Retomar');
+
+    const missing = missionPaneRestoreHoldNotice('spec-missing', 'no pane 7');
+    expect(missing).toContain('não faz mais parte da missão');
+    expect(missing).toContain('no pane 7');
+    expect(missing).not.toContain('use Retomar');
+  });
+
+  it('sem destino conhecido o aviso nomeia o pane novo da missão', () => {
+    expect(missionPaneRestoreHoldNotice('transfer-in-flight')).toContain(
+      'no pane novo da missão',
+    );
+  });
+
+  it('missão terminal aponta o relatório na aba da missão', () => {
+    const notice = missionPaneRestoreHoldNotice('mission-terminal');
+    expect(notice).toContain('a missão encerrou');
+    expect(notice).toContain('relatório final');
+    expect(notice).not.toContain('use Retomar');
+  });
+
+  it('motivo ausente ou desconhecido cai no aviso genérico (canal legado)', () => {
+    expect(missionPaneRestoreHoldNotice(undefined)).toBe(MISSION_HOLD_NOTICE);
+  });
+
+  it('a conferência em curso nunca mostra o genérico', () => {
+    expect(MISSION_AUTHORITY_PENDING_NOTICE).toContain('conferindo');
+    expect(MISSION_AUTHORITY_PENDING_NOTICE).not.toContain('use Retomar');
   });
 });

@@ -36,10 +36,12 @@ import {
   onPaneSessionChange,
   paneResumedExactly,
   respawnMissionPaneFresh,
+  setHeldPaneNotice,
   submitPromptToPaneConfirmed,
   waitForHealthyPaneSession,
   waitForSession,
 } from '../terminal/terminal-host';
+import { missionPaneRestoreHoldNotice } from '../terminal/mission-owned-pane-policy';
 import { waitForBrowserPaneCreated } from '../browser/browser-host';
 import { initAgentNotificationBridge } from './agent-notification-bridge';
 import {
@@ -48,6 +50,7 @@ import {
   snapshotLeadershipPanes,
   type LeadershipMissionSnapshot,
 } from './leadership-reflect';
+import { reevaluateHeldMissionPanes } from './restore-agents-gate';
 import type { Handoff } from '../../shared/orch-types';
 import {
   newlyDispatchedPlanMissionIds,
@@ -281,7 +284,16 @@ function retireTerminalMissionPanes(
     if (!missionId || !terminalIds.has(missionId)) return false;
     return !getPaneSessionId(pane.id);
   });
-  for (const pane of retired) holdSpawnUntilApproved(pane.id);
+  for (const pane of retired) {
+    holdSpawnUntilApproved(pane.id);
+    // A4: o pane retido explica POR QUE ficou — "a missão encerrou, o
+    // relatório está no rail", nunca o "use Retomar" de uma retomada que
+    // não existe para uma missão terminal.
+    setHeldPaneNotice(
+      pane.id,
+      missionPaneRestoreHoldNotice('mission-terminal'),
+    );
+  }
 }
 
 const recoveryInFlight = new Set<string>();
@@ -984,6 +996,10 @@ export function useOrchBridge(): void {
         );
         useOrchStore.getState().setMissions(missions);
         retireTerminalMissionPanes(missions);
+        // A4: estado de missão mudou — panes retidos pelo gate são
+        // reavaliados (pergunta respondida solta o pane; motivo novo atualiza
+        // a linha) sem esperar o operador clicar em nada.
+        reevaluateHeldMissionPanes();
         // Plan-lane adoption metric (local only; seen-id dedupe + empty-prev skip).
         const metrics = usePlanLaneMetricsStore.getState();
         for (const id of newlyDispatchedPlanMissionIds(

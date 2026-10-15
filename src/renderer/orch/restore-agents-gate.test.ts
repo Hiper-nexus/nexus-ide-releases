@@ -8,6 +8,7 @@ const markResumeOnSpawn = vi.fn();
 const releaseHeldSpawns = vi.fn();
 const discardPaneSpawnState = vi.fn();
 const isSpawnHeld = vi.fn();
+const setHeldPaneNotice = vi.fn();
 const unlockRetiredMissionPane = vi.fn();
 const askConfirm = vi.fn();
 const askChoice = vi.fn();
@@ -40,6 +41,7 @@ vi.mock('../terminal/terminal-host', () => ({
   discardPaneSpawnState: (...args: unknown[]) =>
     discardPaneSpawnState(...args),
   isSpawnHeld: (...args: unknown[]) => isSpawnHeld(...args),
+  setHeldPaneNotice: (...args: unknown[]) => setHeldPaneNotice(...args),
   unlockRetiredMissionPane: (...args: unknown[]) =>
     unlockRetiredMissionPane(...args),
 }));
@@ -79,6 +81,7 @@ vi.mock('../state/orch-store', () => ({
 import {
   gateRestoredAgents,
   installRestoredAgentsGate,
+  reevaluateHeldMissionPanes,
   resetRestoredAgentsGate,
   resolveAgentRestoreAction,
 } from './restore-agents-gate';
@@ -127,6 +130,7 @@ describe('restore-agents-gate', () => {
     discardPaneSpawnState.mockReset();
     isSpawnHeld.mockReset();
     isSpawnHeld.mockReturnValue(true);
+    setHeldPaneNotice.mockReset();
     unlockRetiredMissionPane.mockReset();
     askConfirm.mockReset();
     askChoice.mockReset();
@@ -314,7 +318,10 @@ describe('restore-agents-gate', () => {
   });
 
   it('aposenta o pane de missão sem autoridade em vez de apagá-lo do layout', async () => {
-    canRestoreMissionPane.mockResolvedValue(false);
+    canRestoreMissionPane.mockResolvedValue({
+      authorized: false,
+      reason: 'spec-missing',
+    });
 
     const orphan = missionAgent('orphan-pane', 'Orquestrador órfão');
     await gateRestoredAgents([orphan]);
@@ -332,6 +339,63 @@ describe('restore-agents-gate', () => {
     // E não pode virar shell: `reclaim-shell` spawna processo novo e descarta
     // o histórico, que é justamente o que o operador perdeu.
     expect(unlockRetiredMissionPane).not.toHaveBeenCalled();
+  });
+
+  it('A4: a recusa estruturada escreve UMA linha específica, nunca o "use Retomar"', async () => {
+    canRestoreMissionPane.mockResolvedValue({
+      authorized: false,
+      reason: 'mission-blocked-question',
+    });
+
+    await gateRestoredAgents([missionAgent('held-q', 'Orquestrador')]);
+
+    // Primeiro o aviso de conferência (janela IPC), depois a recusa precisa.
+    expect(setHeldPaneNotice).toHaveBeenCalledWith(
+      'held-q',
+      expect.stringContaining('conferindo'),
+    );
+    const last = setHeldPaneNotice.mock.calls.at(-1);
+    expect(last?.[0]).toBe('held-q');
+    expect(last?.[1]).toContain('pergunta aberta');
+    expect(last?.[1]).not.toContain('use Retomar');
+    expect(releaseHeldSpawns).not.toHaveBeenCalled();
+    expect(closePane).not.toHaveBeenCalled();
+  });
+
+  it('A2/A4: o pane de origem da transferência diz onde a conversa continuou', async () => {
+    const successor = {
+      ...agent('pane-novo', 'Maestro'),
+      paneNumber: 7,
+    };
+    const source = missionAgent('pane-origem', 'Orquestrador antigo');
+    layoutRoot.current = buildGridTree([source, successor]) as never;
+    canRestoreMissionPane.mockResolvedValue({
+      authorized: false,
+      reason: 'transfer-in-flight',
+      movedToPaneId: 'pane-novo',
+    });
+
+    await gateRestoredAgents([source]);
+
+    const last = setHeldPaneNotice.mock.calls.at(-1);
+    expect(last?.[0]).toBe('pane-origem');
+    expect(last?.[1]).toContain('no pane 7');
+    expect(last?.[1]).toContain('pode ser fechado');
+    expect(last?.[1]).not.toContain('use Retomar');
+    expect(releaseHeldSpawns).not.toHaveBeenCalledWith(
+      ['pane-origem'],
+      { resume: true },
+    );
+  });
+
+  it('recusa sem motivo (boolean legado) cai no aviso genérico, nunca inventa', async () => {
+    canRestoreMissionPane.mockResolvedValue(false);
+
+    await gateRestoredAgents([missionAgent('legacy-denial', 'Orquestrador')]);
+
+    const last = setHeldPaneNotice.mock.calls.at(-1);
+    expect(last?.[0]).toBe('legacy-denial');
+    expect(last?.[1]).toContain('use Retomar');
   });
 
   it('nunca deixa o operador mudo: o último pane também é aposentado, não apagado', async () => {
@@ -769,6 +833,61 @@ describe('restore-agents-gate', () => {
     expect(releasedIds).toEqual(['paneB']);
     expect(closePane).not.toHaveBeenCalled();
     expect(discardPaneSpawnState).not.toHaveBeenCalled();
+  });
+
+  it('A4: a reavaliação de panes retidos solta o pane quando a missão destrava', async () => {
+    // O broadcast de missões chama reevaluateHeldMissionPanes (orch-bridge).
+    // Aqui provamos o contrato do lado do gate: retido + missão aprovada de
+    // novo → o hold cai e o pane retoma sem gesto do operador.
+    const held = missionAgent('held-revived', 'Orquestrador');
+    layoutRoot.current = { kind: 'leaf', id: 'leaf-held', pane: held };
+    canRestoreMissionPane.mockResolvedValue({
+      authorized: true,
+      sealed: { accountId: 'acct-nova' },
+    });
+
+    reevaluateHeldMissionPanes();
+    await vi.waitFor(() => {
+      expect(releaseHeldSpawns).toHaveBeenCalledWith(['held-revived'], {
+        resume: true,
+      });
+    });
+    expect(setAccountId).toHaveBeenCalledWith('held-revived', 'acct-nova');
+    expect(closePane).not.toHaveBeenCalled();
+  });
+
+  it('A4: a reavaliação atualiza a linha do pane ainda retido (motivo novo)', async () => {
+    const held = missionAgent('held-still', 'Orquestrador');
+    layoutRoot.current = { kind: 'leaf', id: 'leaf-held2', pane: held };
+    canRestoreMissionPane.mockResolvedValue({
+      authorized: false,
+      reason: 'mission-terminal',
+    });
+
+    reevaluateHeldMissionPanes();
+    await vi.waitFor(() => {
+      expect(setHeldPaneNotice).toHaveBeenCalledWith(
+        'held-still',
+        expect.stringContaining('a missão encerrou'),
+      );
+    });
+    expect(releaseHeldSpawns).not.toHaveBeenCalled();
+  });
+
+  it('A4: Main indisponível na reavaliação mantém o pane retido (fail-closed)', async () => {
+    const held = missionAgent('held-offline', 'Orquestrador');
+    layoutRoot.current = { kind: 'leaf', id: 'leaf-held3', pane: held };
+    canRestoreMissionPane.mockRejectedValue(new Error('main restarting'));
+
+    reevaluateHeldMissionPanes();
+    // A reavaliação retenta internamente (authority unavailable = retry);
+    // tudo o que NÃO pode acontecer é soltar ou fechar o pane.
+    await vi.waitFor(() => {
+      expect(canRestoreMissionPane).toHaveBeenCalled();
+    });
+    expect(releaseHeldSpawns).not.toHaveBeenCalled();
+    expect(closePane).not.toHaveBeenCalled();
+    expect(unlockRetiredMissionPane).not.toHaveBeenCalled();
   });
 
   it('installRestoredAgentsGate wires the layout restore handler', () => {

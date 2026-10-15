@@ -19,6 +19,7 @@ const terminal = vi.hoisted(() => ({
   isPaneSessionHealthy: vi.fn(() => true),
   isSpawnHeld: vi.fn((_paneId: string) => false),
   markPersistedAuthorityOnSpawn: vi.fn(),
+  setHeldPaneNotice: vi.fn(),
   onPaneSessionChange: vi.fn(
     (_cb: (paneId: string, sessionId: string | null) => void) => vi.fn(),
   ),

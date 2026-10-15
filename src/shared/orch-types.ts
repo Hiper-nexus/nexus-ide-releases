@@ -853,6 +853,22 @@ export interface PaneSnapshot extends PaneRegistryEntry {
 }
 
 /**
+ * A4: motivo FECHADO da recusa do restore. Um booleano apagava a diferença
+ * entre "a missão parou numa pergunta", "o runtime foi encerrado", "o selo
+ * envelheceu", "a conversa está voando para outro pane" e "o pane saiu da
+ * composição" — e o pane retido acabava com o mesmo "use Retomar" genérico
+ * para todos. Cada valor casa com UM ramo da recusa em Main; o gate escreve
+ * a linha específica com a ação certa e reavalia quando a missão muda.
+ */
+export type MissionPaneRestoreDenialReason =
+  | 'mission-blocked-question'
+  | 'runtime-closed'
+  | 'stale-seal'
+  | 'transfer-in-flight'
+  | 'spec-missing'
+  | 'mission-terminal';
+
+/**
  * Main → renderer: restore proof for one persisted mission pane.
  *
  * `sealed` is the durable runtime the renderer MUST mirror on the layout
@@ -871,6 +887,17 @@ export interface MissionPaneRestoreAuthority {
     effort?: string;
     cwd?: string;
   };
+  /**
+   * Preenchido numa recusa estruturada. Ausente = canal legado/erro de IPC —
+   * o gate cai no aviso genérico, nunca inventa motivo.
+   */
+  reason?: MissionPaneRestoreDenialReason;
+  /**
+   * A2/A4: para recusas de conversa transferida, o pane que passou a carregar
+   * a conversa (spec de orquestrador atual da missão). O gate usa para o
+   * aviso dizer ONDE a conversa continua, não só "em outro pane".
+   */
+  movedToPaneId?: string;
 }
 
 /** Main → renderer: please create a pane and spawn its session. */
