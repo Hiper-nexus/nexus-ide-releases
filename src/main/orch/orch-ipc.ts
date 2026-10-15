@@ -97,6 +97,7 @@ import {
 import {
   getOwnedAgentSessionInfo,
   inspectSessionLease,
+  isPtySessionAdmissionSealedForShutdown,
   listAgentSessions,
   orchWriteSession,
 } from '../pty/pty-manager';
@@ -1525,7 +1526,8 @@ export async function initOrchestration(): Promise<void> {
   if (
     orchestrationClosing ||
     orchestrationCloseFlight ||
-    orchestrationShutdownBlocked
+    orchestrationShutdownBlocked ||
+    isPtySessionAdmissionSealedForShutdown()
   ) {
     throw new Error(
       'orchestration lifecycle is closing or awaiting a failed-closed shutdown',

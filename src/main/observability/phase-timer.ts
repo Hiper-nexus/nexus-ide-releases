@@ -21,6 +21,12 @@ export interface PhaseTimer {
   lastPhase(): string | null;
 }
 
+type StallWatchEvent = 'pause' | 'orchestration-gate';
+const stallWatchListeners = new WeakMap<
+  PhaseTimer,
+  Set<(event: StallWatchEvent) => void>
+>();
+
 export function startPhaseTimer(
   now: () => number = () => Date.now(),
 ): PhaseTimer {
@@ -28,7 +34,7 @@ export function startPhaseTimer(
   let lastAt = startedAt;
   const phases: Record<string, number> = {};
   let lastPhase: string | null = null;
-  return {
+  const timer: PhaseTimer = {
     lastPhase: () => lastPhase,
     mark(name: string): void {
       const at = now();
@@ -37,16 +43,34 @@ export function startPhaseTimer(
       // a soma das fases — telemetria nunca reporta tempo negativo.
       phases[name] = (phases[name] ?? 0) + Math.max(0, at - lastAt);
       lastAt = at;
+      if (name === 'orchestration-gate') {
+        const listeners = stallWatchListeners.get(timer);
+        if (listeners) {
+          for (const listener of listeners) listener('orchestration-gate');
+        }
+      }
     },
     finish(): PhaseTimingResult {
       return { totalMs: Math.max(0, now() - startedAt), phases };
     },
   };
+  return timer;
 }
 
 export interface PhaseTimerStall extends PhaseTimingResult {
   /** Last finished phase: the spawn is stuck in whatever awaits after it. */
   readonly afterPhase: string | null;
+}
+
+/**
+ * Suspends `watchPhaseTimerStall` while `awaitCliSpawnOrchestration` is in
+ * flight (which owns its own 30 s ceiling); marking `orchestration-gate`
+ * automatically re-arms a fresh `stallMs` budget for the post-gate phases.
+ */
+export function pausePhaseTimerStall(timer: PhaseTimer): void {
+  const listeners = stallWatchListeners.get(timer);
+  if (!listeners) return;
+  for (const listener of listeners) listener('pause');
 }
 
 /**
@@ -59,9 +83,43 @@ export function watchPhaseTimerStall(
   stallMs: number,
   report: (stall: PhaseTimerStall) => void,
 ): () => void {
-  const handle = setTimeout(() => {
-    report({ ...timer.finish(), afterPhase: timer.lastPhase() });
-  }, stallMs);
-  handle.unref?.();
-  return () => clearTimeout(handle);
+  let handle: ReturnType<typeof setTimeout> | null = null;
+  let fired = false;
+  let stopped = false;
+  const disarm = (): void => {
+    if (handle !== null) {
+      clearTimeout(handle);
+      handle = null;
+    }
+  };
+  const arm = (): void => {
+    if (stopped || fired) return;
+    disarm();
+    handle = setTimeout(() => {
+      handle = null;
+      if (stopped || fired) return;
+      fired = true;
+      report({ ...timer.finish(), afterPhase: timer.lastPhase() });
+    }, stallMs);
+    handle.unref?.();
+  };
+  const onEvent = (event: StallWatchEvent): void => {
+    if (event === 'pause') {
+      disarm();
+    } else if (event === 'orchestration-gate') {
+      arm();
+    }
+  };
+  let listeners = stallWatchListeners.get(timer);
+  if (!listeners) {
+    listeners = new Set();
+    stallWatchListeners.set(timer, listeners);
+  }
+  listeners.add(onEvent);
+  arm();
+  return () => {
+    stopped = true;
+    disarm();
+    listeners?.delete(onEvent);
+  };
 }

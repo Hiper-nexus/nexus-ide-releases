@@ -37,6 +37,7 @@ const ipcDeps = vi.hoisted(() => {
 
 const ptyDeps = vi.hoisted(() => ({
   adoptMainOwnedAgentSession: vi.fn((): unknown => null),
+  isPtySessionAdmissionSealedForShutdown: vi.fn(() => false),
   listAgentSessionsForPane: vi.fn((): unknown[] => []),
   spawnAgentSession: vi.fn(() => ({ sessionId: "pty-created" })),
   spawnSession: vi.fn(() => ({ sessionId: "shell-created" })),
@@ -121,6 +122,8 @@ vi.mock("electron", () => ({
 
 vi.mock("./pty-manager", () => ({
   adoptMainOwnedAgentSession: ptyDeps.adoptMainOwnedAgentSession,
+  isPtySessionAdmissionSealedForShutdown:
+    ptyDeps.isPtySessionAdmissionSealedForShutdown,
   listAgentSessionsForPane: ptyDeps.listAgentSessionsForPane,
   killSession: ptyDeps.killSession,
   orchKillSession: ptyDeps.orchKillSession,
@@ -1877,7 +1880,7 @@ describe("registerPtyIpc account fail-fast", () => {
       expect(ptyDeps.spawnAgentSession).toHaveBeenCalledOnce();
     });
 
-    it("gate travado estoura num teto e fecha com motivo (pane nunca fica mudo)", async () => {
+    it("gate travado estoura num teto e fecha com motivo em PT-BR (pane nunca fica mudo)", async () => {
       vi.useFakeTimers();
       try {
         setCliSpawnOrchestrationGate(() => new Promise<void>(() => undefined));
@@ -1885,13 +1888,68 @@ describe("registerPtyIpc account fail-fast", () => {
         await vi.advanceTimersByTimeAsync(31_000);
         await expect(pending).resolves.toMatchObject({
           ok: false,
-          error: expect.stringContaining("orchestration"),
+          error:
+            "O Nexus ainda está preparando os agentes. Tente abrir o pane de novo em alguns segundos.",
         });
         expect(providerDeps.prepareProviderSpawnAuthoritative).not.toHaveBeenCalled();
         expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
       } finally {
         vi.useRealTimers();
       }
+    });
+
+    it("registra orchestration-gate separado de provider-prep e não conta a espera como stall contra PANE_SPAWN_STALL_MS", async () => {
+      vi.useFakeTimers();
+      try {
+        providerDeps.prepareProviderSpawn.mockReturnValueOnce({
+          ok: true,
+          overrides: {
+            binPath: "/usr/local/bin/claude",
+            defaultModel: null,
+            extraArgs: [],
+            keyEnv: {},
+            suppressEnv: [],
+          },
+        });
+        let ready!: () => void;
+        setCliSpawnOrchestrationGate(
+          () => new Promise<void>((resolve) => { ready = resolve; }),
+        );
+        const pending = spawnClaude();
+        // Espera de 20 s no gate (> PANE_SPAWN_STALL_MS = 15 s, < teto de 30 s).
+        await vi.advanceTimersByTimeAsync(20_000);
+        ready();
+        await expect(pending).resolves.toMatchObject({ ok: true });
+
+        const stalledEvents = traceDeps.trace.mock.calls
+          .map(([event]) => event as Record<string, unknown>)
+          .filter((event) => event.kind === "pane-spawn-stalled");
+        expect(stalledEvents).toEqual([]);
+
+        const timingEvents = traceDeps.trace.mock.calls
+          .map(([event]) => event as Record<string, unknown>)
+          .filter((event) => event.kind === "pane-spawn-timing");
+        expect(timingEvents).toHaveLength(1);
+        const phases = timingEvents[0]?.phases as Record<string, number>;
+        expect(phases["orchestration-gate"]).toBeGreaterThanOrEqual(20_000);
+        expect(phases["provider-prep"]).toBeLessThan(1_000);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("recusa o spawn após o selo de shutdown sem chamar o gate de orquestração (initOrchestration)", async () => {
+      ptyDeps.isPtySessionAdmissionSealedForShutdown.mockReturnValueOnce(true);
+      const gateSpy = vi.fn(async () => undefined);
+      setCliSpawnOrchestrationGate(gateSpy);
+
+      expect(await spawnClaude()).toMatchObject({
+        ok: false,
+      });
+      expect(gateSpy).not.toHaveBeenCalled();
+      expect(providerDeps.prepareProviderSpawnAuthoritative).not.toHaveBeenCalled();
+      expect(providerDeps.prepareProviderSpawn).not.toHaveBeenCalled();
+      expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
     });
 
     it("pane de shell puro não consulta o gate — resolve sem MCP", async () => {

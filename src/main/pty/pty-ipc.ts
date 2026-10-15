@@ -32,6 +32,7 @@ import {
   recoverSessionOutput,
   setPtyHost,
   startSessionMortalityReconciler,
+  isPtySessionAdmissionSealedForShutdown,
 } from "./pty-manager";
 import { createRealPtyHost } from "./pty-host-client";
 import {
@@ -103,6 +104,7 @@ import {
 import { selectPersistedWorkerRestartDispatch } from "./persisted-worker-restart";
 import { trace } from "../observability/main-trace";
 import {
+  pausePhaseTimerStall,
   startPhaseTimer,
   watchPhaseTimerStall,
   type PhaseTimer,
@@ -268,27 +270,39 @@ function spawnCliPtyAgentPane(
   orchestrationSettled = false,
 ): SpawnResult | Promise<SpawnResult> {
   try {
+    // Recursões internas (gate → prep → auth → permissão) compartilham o
+    // timer — um spawn, um evento. Chamador sem timer mede sozinho.
+    const timer = spawnTiming ?? startPhaseTimer();
+    if (isPtySessionAdmissionSealedForShutdown()) {
+      return {
+        ok: false,
+        error: "PTY session admission is sealed for application shutdown",
+      };
+    }
     // Gate de orquestração (corrida de 16/08): com o renderer navegando em
     // paralelo ao bootstrap, um pane restaurado chega aqui antes do
     // MCP/coordinator. Espera ANTES de tocar provider, permissão ou PTY —
     // rejeição fecha o spawn sem preparação parcial. Pane de shell nunca
     // passa por esta função.
     if (!orchestrationSettled && hasCliSpawnOrchestrationGate()) {
+      pausePhaseTimerStall(timer);
       return awaitCliSpawnOrchestration().then(
-        () =>
-          spawnCliPtyAgentPane(
+        () => {
+          timer.mark("orchestration-gate");
+          return spawnCliPtyAgentPane(
             sender, adapter, spawn, authoritativePreparation,
-            authSpawnGated, spawnPermitAcquired, spawnTiming, true,
-          ),
-        (error: unknown): SpawnResult => ({
-          ok: false,
-          error: error instanceof Error ? error.message : String(error),
-        }),
+            authSpawnGated, spawnPermitAcquired, timer, true,
+          );
+        },
+        (error: unknown): SpawnResult => {
+          timer.mark("orchestration-gate");
+          return {
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        },
       );
     }
-    // Recursões internas (prep → gate → permissão) compartilham o timer —
-    // um spawn, um evento. Chamador sem timer mede sozinho.
-    const timer = spawnTiming ?? startPhaseTimer();
     const {
       request,
       authority,

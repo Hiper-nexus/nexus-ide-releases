@@ -47,9 +47,7 @@ export async function awaitCliSpawnOrchestration(): Promise<void> {
         timer = setTimeout(() => {
           reject(
             new Error(
-              `orchestration did not become ready within ${
-                CLI_SPAWN_ORCHESTRATION_TIMEOUT_MS / 1000
-              }s — MCP startup still retrying`,
+              'O Nexus ainda está preparando os agentes. Tente abrir o pane de novo em alguns segundos.',
             ),
           );
         }, CLI_SPAWN_ORCHESTRATION_TIMEOUT_MS);
