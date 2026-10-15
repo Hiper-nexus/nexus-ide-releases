@@ -81,7 +81,7 @@ export function ExpressTerminalOptions(): React.JSX.Element {
           icon="board"
           size="sm"
           variant="ghost"
-          title="Quadro de tarefas"
+          title="Missões e tarefas"
           subtitle="Veja o que falta e o que já foi entregue."
           data-launcher-action="tasks"
           shortcut={launcherShortcutHint('tasks') ?? undefined}

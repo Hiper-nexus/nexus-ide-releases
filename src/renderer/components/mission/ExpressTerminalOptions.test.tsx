@@ -90,7 +90,7 @@ describe('ExpressTerminalOptions', () => {
       useProductNavigationStore.getState(),
       'openTaskBoard',
     );
-    act(() => buttonWith(host, 'Quadro de tarefas').click());
+    act(() => buttonWith(host, 'Missões e tarefas').click());
     expect(openTaskBoard).toHaveBeenCalledTimes(1);
   });
 

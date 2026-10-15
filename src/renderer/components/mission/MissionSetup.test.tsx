@@ -2628,7 +2628,7 @@ describe('Caminho Expresso', () => {
     expect(announced?.classList.contains('mission-setup__sr-only')).toBe(true);
     expect(announced?.textContent).toBe(
       'Atalhos do teclado: 1 Montar meus terminais; 2 Criar com IA; 3 Abrir projeto existente; ' +
-        '4 Terminal sem IA; 5 Quadro de tarefas; 6 Memória do projeto',
+        '4 Terminal sem IA; 5 Missões e tarefas; 6 Memória do projeto',
     );
     expect(host.querySelector('[data-launcher-action="pane"] kbd')?.getAttribute('aria-hidden')).toBe('true');
   });

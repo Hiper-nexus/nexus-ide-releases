@@ -314,7 +314,7 @@ export function TaskBoardWorkspace() {
   return (
     <section
       className="product-workspace product-page task-board-workspace"
-      aria-label="Quadro de tarefas"
+      aria-label="Missões e tarefas"
     >
       <header className="product-workspace__header">
         <div className="product-workspace__identity">

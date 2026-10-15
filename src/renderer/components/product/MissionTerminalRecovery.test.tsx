@@ -91,7 +91,7 @@ describe('mission terminal recovery', () => {
   });
   it('takes a real pending question to the board without resuming work', async () => {
     render({ description: 'Qual opção você prefere?' });
-    expect(button().textContent).toBe('Responder no Quadro');
+    expect(button().textContent).toBe('Responder à missão');
     await act(async () => button().click());
     expect(reopen).not.toHaveBeenCalled();
     expect(useProductNavigationStore.getState().destination).toMatchObject({
@@ -104,7 +104,7 @@ describe('mission terminal recovery', () => {
     async (status) => {
       render({ status });
       expect(host.textContent).not.toContain('dormindo');
-      expect(button().textContent).toBe('Abrir Quadro');
+      expect(button().textContent).toBe('Ver missão');
       await act(async () => button().click());
       expect(reopen).not.toHaveBeenCalled();
     },

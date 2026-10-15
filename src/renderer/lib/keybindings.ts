@@ -84,7 +84,7 @@ export const KEYBINDING_COMMANDS: readonly KeybindingCommandDefinition[] = [
   { id: 'content-search', label: 'Buscar texto nos arquivos do projeto', defaults: ['Mod+Shift+F'], when: 'hasWorkspace && !terminalInUse' },
   { id: 'attention-inbox', label: 'Lista de atenção', defaults: ['Mod+J'], when: 'hasWorkspace', legacy: {} },
   { id: 'mission-new', label: 'Nova missão', defaults: ['Mod+N'], legacy: {} },
-  { id: 'task-board', label: 'Quadro de tarefas', defaults: ['Mod+B'], legacy: {} },
+  { id: 'task-board', label: 'Missões e tarefas', defaults: ['Mod+B'], legacy: {} },
   { id: 'project-overview', label: 'Visão geral do projeto', defaults: ['Mod+G'], when: 'hasWorkspace && projectOverview', legacy: {} },
   { id: 'settings', label: 'Configurações', defaults: ['Mod+Comma'], legacy: { anyShift: true, anyAlt: true } },
   { id: 'operator-profile', label: 'Perfil do Operador', defaults: ['Mod+Shift+O'], legacy: {} },
