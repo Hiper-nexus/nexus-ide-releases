@@ -3405,17 +3405,34 @@ export async function resumeFastLaneMission(
   };
   const processedOutcome = (): FastLaneResumeOutcome => {
     const sessionId = liveOrchestratorSessionId(missionId) ?? liveRegisteredOrchestratorSessionId(missionId);
-    // A5: 'request-processed' SEM sessão viva é o Retomar que termina sem
-    // efeito — propaga a falha com a causa em vez de um recibo mudo.
-    if (!sessionId) {
-      throw new Error(
-        'a retomada não religou a coordenação: nenhuma sessão de orquestrador ' +
-          'viva foi provada após o bootstrap',
-      );
+    if (sessionId) {
+      return sessionId === liveMaestroSessionId
+        ? { kind: 'already-running', sessionId }
+        : { kind: 'request-processed' };
     }
-    return sessionId === liveMaestroSessionId
-      ? { kind: 'already-running', sessionId }
-      : { kind: 'request-processed' };
+    // A projeção de panes pode ficar para trás do spawn que ESTE processo
+    // acabou de provar (ownsPhysical no respawn): vale a sessão do runtime
+    // local, desde que viva.
+    const local = orchPanes.get(missionId)?.sessionId ?? null;
+    if (
+      local !== null &&
+      (classifySessionLiveness(getSessionState(local)) === 'live' ||
+        getAcpDriverSession(local) !== null)
+    ) {
+      return { kind: 'request-processed' };
+    }
+    // Desfecho legítimo: retries esgotados terminam em bloqueio técnico
+    // VISÍVEL, com objetivo e handoffs preservados — não é retomada muda.
+    const after = stores.missions.get(missionId);
+    if (after?.status === 'blocked' && after.intentState === 'blocked_technical') {
+      return { kind: 'request-processed' };
+    }
+    // A5: 'request-processed' SEM sessão viva e SEM bloqueio visível é o
+    // Retomar que termina sem efeito — propaga a falha com a causa.
+    throw new Error(
+      'a retomada não religou a coordenação: nenhuma sessão de orquestrador ' +
+        'viva foi provada após o bootstrap',
+    );
   };
   if (remountKind === 'operator') {
     clearOperatorDismissedPanes(missionId);
