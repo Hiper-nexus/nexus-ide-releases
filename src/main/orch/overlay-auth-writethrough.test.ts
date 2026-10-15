@@ -15,6 +15,19 @@ const grokAuth = (refresh: string, expiresAt: string, key = ACCOUNT, email = 'op
   JSON.stringify({ [key]: { email, refresh_token: refresh, expires_at: expiresAt } });
 
 const NOW = Date.parse('2026-09-29T12:00:00Z');
+
+/**
+ * Dois testes abaixo dependem de um evento REAL do fs.watch. No macOS (FSEvents)
+ * o evento é PERDIDO quando outros processos agitam o disco (várias panes
+ * compilando): medido na base 310b0f75a e em HEAD com a mesma taxa, 7 de 30
+ * execuções sob carga esperavam 2 s por um evento que nunca chegou. Não é
+ * atraso (com 12 s de prazo os falhos esperavam os 12 s inteiros), então prazo
+ * maior não ajuda: repete a tentativa. Em produção essa perda é coberta pela
+ * rede de segurança do vigia (SAFETY_STAT_MS), testada com timers falsos no
+ * bloco do M2, sem depender do SO.
+ */
+const REAL_WATCH_EVENT_RETRIES = 3;
+
 const dirs: string[] = [];
 function tempDir(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-auth-wt-'));
@@ -95,7 +108,7 @@ describe('devolução do auth.json renovado ao perfil de origem (F-684)', () => 
     expect(fs.readFileSync(path.join(paneB, 'auth.json'), 'utf8')).toBe(renewed);
   });
 
-  it('vigia por fs.watch: sem poll de statSync ocioso, e a renovação volta sem esperar o intervalo', async () => {
+  it('vigia por fs.watch: sem poll de statSync ocioso, e a renovação volta sem esperar o intervalo', { retry: REAL_WATCH_EVENT_RETRIES }, async () => {
     const native = tempDir();
     const paneDir = tempDir();
     const source = path.join(native, 'auth.json');
@@ -173,7 +186,7 @@ describe('F-1485: a renovação do Grok não se perde no Windows e só volta par
     return { native, dir, source, overlay, stop };
   }
 
-  it('Windows: gravação na origem recusada (EPERM, depois EBUSY) é tentada de novo sem nova mudança no overlay; o lock da CLI fica intacto', async () => {
+  it('Windows: gravação na origem recusada (EPERM, depois EBUSY) é tentada de novo sem nova mudança no overlay; o lock da CLI fica intacto', { retry: REAL_WATCH_EVENT_RETRIES }, async () => {
     const native = tempDir();
     const dir = tempDir();
     const source = path.join(native, 'auth.json');
