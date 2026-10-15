@@ -12,6 +12,7 @@ import {
 import { contrastRatio, hexToOklch } from './palette-gen';
 import { PALETTES, applyUiTheme, resolveImportedTheme } from './ui-theme';
 import {
+  appearanceFromBackground,
   flattenOver,
   isVsCodeThemeFile,
   parseVsCodeColor,
@@ -224,6 +225,25 @@ describe('importar tema do VS Code', () => {
     });
     expect(lying.appearance).toBe('light');
     expect(lying.ui.btnPrimary).toBe(PALETTES['nexus-light'].btnPrimary);
+  });
+
+  it('expõe a mesma regra de aparência para quem monta tema fora do importador', () => {
+    expect(appearanceFromBackground('#ffffff')).toBe('light');
+    expect(appearanceFromBackground('#f7f8fb')).toBe('light');
+    expect(appearanceFromBackground('#080709')).toBe('dark');
+    // Fronteira: #767676 é o cinza mais escuro com 4,5:1 sobre branco (L ≥ 0,179).
+    expect(appearanceFromBackground('#767676')).toBe('light');
+    expect(appearanceFromBackground('#757575')).toBe('dark');
+    for (const [id, palette] of Object.entries(PALETTES)) {
+      expect(appearanceFromBackground(palette.bg), id).toBe(
+        id === 'nexus-light' ? 'light' : 'dark',
+      );
+    }
+    const imported = parseVsCodeThemeFile({
+      name: 'Same rule',
+      colors: { 'editor.background': '#fdfdfd', 'editor.foreground': '#202020' },
+    });
+    expect(imported.appearance).toBe(appearanceFromBackground(imported.ui.bg));
   });
 
   it('lê color(display-p3 …) de temas de gamut amplo', () => {

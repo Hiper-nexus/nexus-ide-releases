@@ -5,6 +5,7 @@ import {
 } from '../../../shared/settings-types';
 import { PALETTES, applyUiTheme, type UiPalette } from '../../styles/ui-theme';
 import { TERMINAL_THEMES } from '../../styles/terminal-theme';
+import { appearanceFromBackground } from '../../styles/vscode-theme-import';
 
 /**
  * Editor de temas (herdado do t3code ThemeEditor): a pessoa ajusta as cores
@@ -154,14 +155,21 @@ export function ThemeEditorPanel({
   const preview: ImportedTheme = {
     id: 'custom-preview',
     label,
-    appearance: themeId === 'nexus-light' ? 'light' : 'dark',
+    // O fundo editado manda, não o id do tema de origem: um claro nascido de
+    // um escuro precisa de `color-scheme: light` nos menus e controles nativos.
+    appearance: appearanceFromBackground(colors.bg),
     ui: colors,
     terminal: terminalFromTheme(themeId),
   };
 
   const applyDraft = (next: typeof colors) => {
     setColors(next);
-    applyUiTheme(themeId, { ...preview, ui: next });
+    // `preview` ainda é o render anterior: o lado vem do fundo que acabou de mudar.
+    applyUiTheme(themeId, {
+      ...preview,
+      ui: next,
+      appearance: appearanceFromBackground(next.bg),
+    });
   };
 
   const restore = () => {

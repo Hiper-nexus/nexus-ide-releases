@@ -208,6 +208,16 @@ function isDark(hex: string): boolean {
   return relativeLuminance(hex) < DARK_LUMINANCE_THRESHOLD;
 }
 
+/**
+ * Lado (claro/escuro) que um fundo pede. É ele que escolhe a rampa de
+ * superfícies, a banda de sinais, o CTA neutro e o `color-scheme` dos menus
+ * nativos (`applyUiTheme`): segue o fundo REAL, nunca o `type` declarado pelo
+ * arquivo nem o id do tema de onde a edição partiu.
+ */
+export function appearanceFromBackground(bg: string): ImportedTheme['appearance'] {
+  return isDark(bg) ? 'dark' : 'light';
+}
+
 function clearsOn(color: string, surfaces: readonly string[], floor: number): boolean {
   return surfaces.every((surface) => contrastRatio(color, surface) >= floor);
 }
@@ -317,7 +327,7 @@ export function parseVsCodeThemeFile(value: unknown): ImportedTheme {
   const bg = toHex(canvasColor);
   // Nexus: a aparência segue o fundo real, não o `type` declarado — é ela que
   // escolhe a rampa de superfícies, os sinais e o CTA neutro.
-  const appearance = isDark(bg) ? 'dark' : 'light';
+  const appearance = appearanceFromBackground(bg);
   const fallback = FALLBACK_PALETTE[appearance];
 
   /** Superfície do arquivo só entra se ficar do mesmo lado claro/escuro do

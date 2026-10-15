@@ -190,6 +190,7 @@ function KeyField({ provider }: { provider: ProviderSettingsInfo }) {
         <input
           className="settings-input"
           type="password"
+          autoComplete="new-password"
           value={draft}
           aria-label={keyLabel}
           placeholder={hasKey ? '•••• (substituir)' : 'colar API key'}
@@ -294,6 +295,7 @@ function CustomModels({ provider }: { provider: ProviderSettingsInfo }) {
       <div className="prov__models-add">
         <input
           className="settings-input"
+          autoComplete="off"
           value={draft}
           placeholder="ex.: glm-5.3, gpt-5.6, claude-sonnet-5…"
           onChange={(e) => setDraft(e.target.value)}
@@ -838,6 +840,7 @@ function ProviderDetail({
                   Binário (vazio = <code>{provider.detectedBin}</code>)
                   <input
                     className="settings-input"
+                    autoComplete="off"
                     value={binDraft}
                     placeholder={provider.detectedBin}
                     onChange={(e) => setBinDraft(e.target.value)}
@@ -848,6 +851,7 @@ function ProviderDetail({
                   Args extras
                   <input
                     className="settings-input"
+                    autoComplete="off"
                     value={argsDraft}
                     placeholder="ex.: --verbose --foo bar"
                     onChange={(e) => setArgsDraft(e.target.value)}

@@ -1,6 +1,14 @@
 /** @vitest-environment jsdom */
-import { describe, expect, it } from 'vitest';
-import { slugify, toOpaqueHex } from './ThemeEditorPanel';
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { ImportedTheme } from '../../../shared/settings-types';
+import { PALETTES } from '../../styles/ui-theme';
+import { parseVsCodeThemeFile } from '../../styles/vscode-theme-import';
+import { ThemeEditorPanel, slugify, toOpaqueHex } from './ThemeEditorPanel';
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
+  .IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('toOpaqueHex', () => {
   it('hex já opaco passa em minúsculo', () => {
@@ -65,4 +73,116 @@ describe('ThemeEditorPanel schema', () => {
     });
     expect(ok.success).toBe(true);
   });
+});
+
+describe('ThemeEditorPanel appearance', () => {
+  const roots: Root[] = [];
+
+  afterEach(() => {
+    act(() => {
+      for (const root of roots.splice(0)) root.unmount();
+    });
+    document.body.replaceChildren();
+    document.documentElement.removeAttribute('style');
+    delete document.documentElement.dataset.theme;
+  });
+
+  function mountEditor(
+    themeId: keyof typeof PALETTES,
+    activeImported: ImportedTheme | null = null,
+  ): { host: HTMLElement; onSave: ReturnType<typeof vi.fn> } {
+    const onSave = vi.fn();
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    roots.push(root);
+    act(() =>
+      root.render(
+        <ThemeEditorPanel
+          themeId={themeId}
+          activeImported={activeImported}
+          onSave={onSave}
+          onClose={() => {}}
+        />,
+      ),
+    );
+    return { host, onSave };
+  }
+
+  function swatch(host: HTMLElement, label: string): HTMLInputElement {
+    const field = [...host.querySelectorAll('label.theme-editor__field')].find(
+      (candidate) => candidate.querySelector('span')?.textContent === label,
+    );
+    const input = field?.querySelector<HTMLInputElement>('input[type="color"]');
+    if (!input) throw new Error(`Color field was not rendered: ${label}`);
+    return input;
+  }
+
+  function pick(input: HTMLInputElement, value: string): void {
+    const setter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      'value',
+    )?.set;
+    if (!setter) throw new Error('HTMLInputElement value setter unavailable');
+    act(() => {
+      setter.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  }
+
+  function save(host: HTMLElement): void {
+    const button = [...host.querySelectorAll('button')].find(
+      (candidate) => candidate.textContent === 'Salvar tema',
+    );
+    if (!button) throw new Error('Save button was not rendered');
+    act(() => button.click());
+  }
+
+  it('follows the background luminance, not the id of the theme the editor started from', () => {
+    const light = mountEditor('nexus-dark');
+    pick(swatch(light.host, 'Fundo'), '#ffffff');
+    // The live preview must flip the native-control side right away...
+    expect(document.documentElement.dataset.theme).toBe('nexus-light');
+    save(light.host);
+    // ...and the saved theme must carry the same side.
+    expect(light.onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ appearance: 'light' }),
+    );
+  });
+
+  it('turns a light built-in into a dark theme when its background goes dark', () => {
+    const dark = mountEditor('nexus-light');
+    pick(swatch(dark.host, 'Fundo'), '#101014');
+    expect(document.documentElement.dataset.theme).toBe('nexus-pink-city');
+    save(dark.host);
+    expect(dark.onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ appearance: 'dark' }),
+    );
+  });
+
+  it('keeps an imported light theme light when it is the base of the copy', () => {
+    const imported = parseVsCodeThemeFile({
+      name: 'Paper',
+      colors: { 'editor.background': '#fbfbfb', 'editor.foreground': '#1f2328' },
+    });
+    expect(imported.appearance).toBe('light');
+    const { host, onSave } = mountEditor('nexus-dark', imported);
+    save(host);
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ appearance: 'light' }),
+    );
+  });
+
+  it.each(Object.keys(PALETTES) as Array<keyof typeof PALETTES>)(
+    'saves %s with the side it already had when nothing is edited',
+    (themeId) => {
+      const { host, onSave } = mountEditor(themeId);
+      save(host);
+      expect(onSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          appearance: themeId === 'nexus-light' ? 'light' : 'dark',
+        }),
+      );
+    },
+  );
 });

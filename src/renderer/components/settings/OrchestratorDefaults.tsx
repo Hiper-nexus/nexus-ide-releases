@@ -485,6 +485,7 @@ export function OrchestratorDefaults() {
             className="settings-input"
             type="url"
             inputMode="url"
+            autoComplete="off"
             spellCheck={false}
             placeholder="desligado — ex.: http://127.0.0.1:20128/v1"
             aria-label="Base URL do gateway de IA local"

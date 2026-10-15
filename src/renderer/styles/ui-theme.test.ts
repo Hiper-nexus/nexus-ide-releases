@@ -24,6 +24,20 @@ function ruleBody(css: string, selector: string): string {
   return css.replace(/\r\n/g, "\n").match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`))?.[1] ?? "";
 }
 
+/**
+ * Every flat rule whose selector list mentions `needle`. Comments are dropped
+ * first, so prose that quotes a selector never counts as the selector itself.
+ */
+function rulesMentioning(
+  css: string,
+  needle: string,
+): Array<{ selectors: string; body: string }> {
+  const flat = css.replace(/\r\n/g, "\n").replace(/\/\*[\s\S]*?\*\//g, "");
+  return [...flat.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .map((match) => ({ selectors: match[1]!.trim(), body: match[2]! }))
+    .filter((rule) => rule.selectors.includes(needle));
+}
+
 /** Value a theme resolves for a token: its own block, else the :root default. */
 function tokenForTheme(themeId: TerminalThemeId, token: string): string {
   const scoped = ruleBody(baseCss, `[data-theme='${themeId}']`);
@@ -131,6 +145,73 @@ describe("Native form control theme", () => {
     expect(getComputedStyle(document.documentElement).colorScheme).toBe("light");
     applyUiTheme("nexus-pink-city");
     expect(getComputedStyle(document.documentElement).colorScheme).toBe("dark");
+  });
+});
+
+describe("Closed controls and autofill on native Windows surfaces", () => {
+  const TEMPLATE_SELECT = ".confirm__orch-template-select";
+
+  it("paints the orchestration template select from tokens instead of the UA default", () => {
+    const select = ruleBody(panelsCss, TEMPLATE_SELECT);
+    expect(select).toContain("width: 100%");
+    expect(select).toContain("background: var(--bg)");
+    expect(select).toContain("border: 1px solid var(--border-strong)");
+    expect(select).toContain("color: var(--text)");
+    expect(select).not.toMatch(/#[0-9a-f]{3,8}\b/i);
+
+    const label = ruleBody(panelsCss, ".confirm__orch-template");
+    expect(label).toContain("display: flex");
+    expect(label).toContain("flex-direction: column");
+    expect(label).toContain("color: var(--text-dim)");
+    expect(label).not.toMatch(/#[0-9a-f]{3,8}\b/i);
+  });
+
+  it("keeps that select focusable and readable when disabled, in every theme", () => {
+    const focus = ruleBody(panelsCss, `${TEMPLATE_SELECT}:focus-visible`);
+    expect(focus).toContain("outline: 2px solid var(--accent)");
+    expect(focus).toContain("border-color: var(--accent)");
+
+    const disabled = ruleBody(panelsCss, `${TEMPLATE_SELECT}:disabled`);
+    expect(disabled).toContain("color: var(--text-dim)");
+    expect(disabled).toContain("opacity: 1");
+
+    for (const [name, palette] of Object.entries(PALETTES)) {
+      expect(contrast(palette.text, palette.bg), `${name}: select ink`).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(palette.textDim, palette.bg), `${name}: disabled ink`).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it("answers hover quietly (enabled only) and keeps a touch-sized floor on coarse pointers", () => {
+    const hover = ruleBody(panelsCss, `${TEMPLATE_SELECT}:hover:not(:disabled)`);
+    expect(hover).toContain("background: color-mix(in srgb, var(--bg) 92%, var(--text))");
+    expect(hover).not.toMatch(/#[0-9a-f]{3,8}\b/i);
+
+    // Same 44px floor `.settings-input` gets in ui-actions.css; it has to live
+    // here because panels.css loads later and its own min-height would win.
+    const coarse = panelsCss
+      .replace(/\r\n/g, "\n")
+      .match(/@media \(pointer: coarse\)\s*\{\s*\.confirm__orch-template-select\s*\{([^}]*)\}/)?.[1];
+    expect(coarse ?? "").toContain("min-height: 44px");
+  });
+
+  it("keeps autofilled fields on the app surface instead of the UA light fill", () => {
+    const rules = rulesMentioning(baseCss, "input:-webkit-autofill");
+    expect(rules).toHaveLength(1);
+    const { selectors, body } = rules[0]!;
+    for (const field of ["input", "textarea", "select"]) {
+      expect(selectors, `${field} prefixed`).toContain(`${field}:-webkit-autofill`);
+      expect(selectors, `${field} standard`).toContain(`${field}:autofill`);
+    }
+    // The UA paints `color` and the background with !important; only the text
+    // fill, the inset shadow and a never-finishing transition can outrank it.
+    expect(body).toContain("-webkit-text-fill-color: var(--text)");
+    expect(body).toContain("caret-color: var(--text)");
+    expect(body).toContain("box-shadow: 0 0 0 1000px var(--bg-elevated) inset");
+    expect(body).toMatch(/transition:\s*background-color 9999s/);
+    expect(body).not.toMatch(/#[0-9a-f]{3,8}\b/i);
+    for (const [name, palette] of Object.entries(PALETTES)) {
+      expect(contrast(palette.text, palette.bgElevated), `${name}: autofill ink`).toBeGreaterThanOrEqual(4.5);
+    }
   });
 });
 

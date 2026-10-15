@@ -639,6 +639,55 @@
   color: var(--text-dim);
 }
 
+/* Template Pack: select fechado com superfície por token, a mesma do campo de
+   motivo e dos selects de Configurações. Sem regra, o campo caía no estilo
+   nativo do SO (canvas claro no Windows) entre botões e popup já temados. */
+.confirm__orch-template {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1-5);
+  margin: var(--space-3) 0 var(--space-4);
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+.confirm__orch-template-select {
+  width: 100%;
+  min-height: 32px;
+  padding: var(--space-1-5) var(--space-2-5);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg);
+  color: var(--text);
+  font-size: var(--text-sm);
+}
+
+.confirm__orch-template-select:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--bg) 92%, var(--text));
+}
+
+.confirm__orch-template-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-color: var(--accent);
+}
+
+/* Desabilitado continua legível: tinta secundária em vez de apagar o campo. */
+.confirm__orch-template-select:disabled {
+  color: var(--text-dim);
+  opacity: 1;
+  cursor: not-allowed;
+}
+
+/* Piso de toque do `.settings-input` (ui-actions.css). Mora aqui porque este
+   arquivo carrega depois e o `min-height` acima venceria a regra de lá. */
+@media (pointer: coarse) {
+  .confirm__orch-template-select {
+    min-height: 44px;
+  }
+}
+
 .confirm__btn {
   background: transparent;
   border: 1px solid var(--border-strong);

@@ -423,6 +423,24 @@ textarea {
   font-family: inherit;
 }
 
+/* Autofill (inclusive o valor aceito de um <datalist>) repinta o campo com o
+   preenchimento claro do UA, e o UA crava `color` e o fundo com !important: com
+   o texto quase branco do app sobra texto claro em fundo claro. Só o
+   `-webkit-text-fill-color`, a sombra interna e uma transição que nunca termina
+   vencem um !important do UA; a transição também segura a faixa sob a borda
+   translúcida, que a sombra (só dentro do padding) não cobre. */
+input:-webkit-autofill,
+input:autofill,
+textarea:-webkit-autofill,
+textarea:autofill,
+select:-webkit-autofill,
+select:autofill {
+  -webkit-text-fill-color: var(--text);
+  caret-color: var(--text);
+  box-shadow: 0 0 0 1000px var(--bg-elevated) inset;
+  transition: background-color 9999s ease-out 0s;
+}
+
 html,
 body,
 #root {

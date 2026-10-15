@@ -1146,6 +1146,7 @@ export function AccountsManager({
                 className="settings-input"
                 value={label}
                 placeholder="nome da conta (ex.: z.ai, longcat-pessoal)"
+                autoComplete="off"
                 autoFocus
                 aria-label="Nome da conta"
                 onChange={(e) => setLabel(e.target.value)}
@@ -1169,6 +1170,7 @@ export function AccountsManager({
               <input
                 className="settings-input"
                 type="password"
+                autoComplete="new-password"
                 value={key}
                 placeholder="cole a API key"
                 aria-label="API key"

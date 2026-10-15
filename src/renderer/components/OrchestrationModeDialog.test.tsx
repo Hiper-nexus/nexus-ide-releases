@@ -1,4 +1,6 @@
 /** @vitest-environment jsdom */
+import fs from 'node:fs';
+import path from 'node:path';
 import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -79,6 +81,19 @@ function referencedText(element: HTMLElement, attribute: string): string {
     .map((id) => document.getElementById(id)?.textContent?.trim() ?? '')
     .filter(Boolean)
     .join(' ');
+}
+
+// jsdom rewrites import.meta.url, so the stylesheets come from the vitest root.
+const stylesDir = path.resolve(process.cwd(), 'src/renderer/styles');
+const allCss = fs
+  .readdirSync(stylesDir)
+  .filter((file) => file.endsWith('.css'))
+  .map((file) => fs.readFileSync(path.join(stylesDir, file), 'utf8'))
+  .join('\n');
+
+/** A class no stylesheet mentions leaves the native control: on Windows, the OS canvas. */
+function hasCssRule(className: string): boolean {
+  return new RegExp(`\\.${className}(?![\\w-])`).test(allCss);
 }
 
 function keydown(target: EventTarget, key: string, shiftKey = false): KeyboardEvent {
@@ -166,6 +181,20 @@ describe('OrchestrationModeDialog behavioral contract', () => {
     expect(event.defaultPrevented).toBe(false);
     expect(observedAtDocument).toBe(true);
     expect(document.activeElement).toBe(select);
+  });
+
+  it('styles the Pack template field it renders instead of leaving the native control', () => {
+    renderWithInvoker();
+    void ask();
+
+    const select = currentDialog().querySelector<HTMLSelectElement>('select');
+    const label = select?.closest('label');
+    if (!select || !label) throw new Error('Pack template field was not rendered');
+    for (const element of [label, select]) {
+      for (const className of element.classList) {
+        expect(hasCssRule(className), `.${className} has a stylesheet rule`).toBe(true);
+      }
+    }
   });
 
   it('resolves Pack, Guiado, and explicit cancel through the rendered controls', async () => {

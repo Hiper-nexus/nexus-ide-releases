@@ -672,6 +672,7 @@ export function ApiKeysSection() {
         <div className="api-keys-section__filter-row" style={{ flexWrap: 'wrap', gap: 8 }}>
           <input
             type="password"
+            autoComplete="new-password"
             className="settings-input api-keys-section__search"
             placeholder="Passphrase (mín. 8 caracteres)"
             value={passphrase}

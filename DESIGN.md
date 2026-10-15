@@ -264,6 +264,12 @@ já o desliga sozinho e compensa em opacidade.
 - Janela: `hiddenInset` no mac, frame nativo nos demais (`src/main/window.ts`).
 - Fontes bundled (Inter/JetBrains Mono/VT323) — não depender de fonte do OS.
 - Scrollbar própria global (idioma único, sem depender do nativo).
+- Controles nativos (no Windows o canvas do SO é claro): `color-scheme` da raiz
+  acompanha o fundo real do tema (`light` só sob `nexus-light`, inclusive tema
+  importado ou criado no editor); `select option/optgroup` e o estado autofill
+  têm fundo e tinta por token em `base.css`; todo select fechado tem regra de
+  token (`.settings-input`, `.wizard__mini-select`, `.confirm__orch-template-select`
+  …): classe sem regra cai no controle do SO (F-380).
 
 ## 8. Temas
 
