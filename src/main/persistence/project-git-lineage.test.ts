@@ -145,7 +145,17 @@ describe('processGitRunner', () => {
     process.env.USERPROFILE = home;
 
     const inside = processGitRunner.run(repo, ['rev-parse', '--is-inside-work-tree']);
-    expect(inside.stderr).toBe('');
+    // O shim git→xcrun do macOS emite "couldn't create cache file … xcrun_db"
+    // no stderr (às vezes com linha vazia extra) quando o ambiente nega a
+    // escrita do cache do xcrun (sandbox de verificação/CI); o git em si roda
+    // normal e a config global continua neutralizada — ruído do shim não é
+    // config vazando. Qualquer OUTRA linha de stderr continua falhando o teste.
+    const xcrunShimNoise = /^git: error: couldn't create cache file '[^']*' \(errno=[^)]*\)$/;
+    const significant = inside.stderr
+      .split('\n')
+      .filter((line) => line !== '' && !xcrunShimNoise.test(line))
+      .join('\n');
+    expect(significant).toBe('');
     expect(inside.status).toBe(0);
     expect(inside.stdout.trim()).toBe('true');
 
