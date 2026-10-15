@@ -3,13 +3,74 @@ import path from 'node:path';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 import { AsyncProcessGitRunner, ProcessGitRunner } from '../runtime/git-command';
+import { smallFileToken, statToken } from '../git/proof-fingerprint';
 import { isInsidePath, resolveCwdForScope } from '../orch/workspace-path';
 
 // Only in-flight creation is cached: every resume rechecks the durable record
 // and Git identity. Closing a tab never deletes unmerged commits or WIP.
 const pending = new Map<string, Promise<string>>();
 
+// F-980: a verificação de identidade da aba custava 4 spawns síncronos de git
+// em cada "+pane"/resume. A descoberta (common/admin/toplevel) agora é cacheada
+// por fingerprint das DUAS pontas da cadeia de ponteiros (.git da worktree ↔
+// gitdir/commondir do admin) + stat das raízes. Fail-closed: as checagens puras
+// de fs (incluindo reler admin/gitdir) rodam a cada chamada, e ponteiro trocado
+// por fora muda o fingerprint → recompute via git → recusa.
+const TAB_PROOF_TTL_MS = 5 * 60_000;
+
+interface TabGitProof {
+  readonly common: string;
+  readonly admin: string;
+  readonly toplevel: string;
+  readonly commonFromRoot: string;
+}
+
+const tabProofCache = new Map<
+  string,
+  { fingerprint: string; proof: TabGitProof; at: number }
+>();
+const tabProofStatsState = { gitRuns: 0, hits: 0 };
+
+export function tabGitProofStats(): { readonly gitRuns: number; readonly hits: number } {
+  return { ...tabProofStatsState };
+}
+
+export function clearTabGitProofCache(): void {
+  tabProofCache.clear();
+}
+
+function tabProofFingerprint(scopeRoot: string, root: string): string | null {
+  const rootToken = statToken(root);
+  const scopeToken = statToken(scopeRoot);
+  if (rootToken === null || scopeToken === null) return null;
+  const dotGit = path.join(root, '.git');
+  const dotGitToken = smallFileToken(dotGit);
+  if (dotGitToken === null) return null;
+  let admin: string;
+  try {
+    const content = fs.readFileSync(dotGit, 'utf8').trim();
+    if (!content.startsWith('gitdir:')) return null;
+    const target = content.slice('gitdir:'.length).trim();
+    if (!target) return null;
+    admin = fs.realpathSync.native(
+      path.isAbsolute(target) ? target : path.resolve(root, target),
+    );
+  } catch {
+    return null;
+  }
+  return [
+    rootToken,
+    scopeToken,
+    dotGitToken,
+    statToken(path.join(scopeRoot, '.git')) ?? 'absent',
+    statToken(admin) ?? 'absent',
+    smallFileToken(path.join(admin, 'gitdir')) ?? 'absent',
+    smallFileToken(path.join(admin, 'commondir')) ?? 'absent',
+  ].join('|');
+}
+
 function gitPath(cwd: string, arg: string): string {
+  tabProofStatsState.gitRuns += 1;
   const result = new ProcessGitRunner().run(cwd, ['rev-parse', '--path-format=absolute', arg]);
   if (result.status !== 0) throw new Error('Não foi possível verificar a pasta Git da aba.');
   return fs.realpathSync(result.stdout.trim());
@@ -17,13 +78,36 @@ function gitPath(cwd: string, arg: string): string {
 
 function assertTabGitIdentity(scope: ProjectExecutionScope, root: string): void {
   const dotGit = path.join(root, '.git');
-  const common = gitPath(scope.rootRealPath, '--git-common-dir');
-  const admin = gitPath(root, '--absolute-git-dir');
+  const key = `${scope.rootRealPath}\0${root}`;
+  const fingerprint = tabProofFingerprint(scope.rootRealPath, root);
+  let proof: TabGitProof | undefined;
+  if (fingerprint !== null) {
+    const hit = tabProofCache.get(key);
+    if (
+      hit &&
+      hit.fingerprint === fingerprint &&
+      Date.now() - hit.at < TAB_PROOF_TTL_MS
+    ) {
+      tabProofStatsState.hits += 1;
+      proof = hit.proof;
+    }
+  }
+  if (!proof) {
+    proof = {
+      common: gitPath(scope.rootRealPath, '--git-common-dir'),
+      admin: gitPath(root, '--absolute-git-dir'),
+      toplevel: gitPath(root, '--show-toplevel'),
+      commonFromRoot: gitPath(root, '--git-common-dir'),
+    };
+    if (fingerprint !== null) {
+      tabProofCache.set(key, { fingerprint, proof, at: Date.now() });
+    }
+  }
   if (fs.lstatSync(root).isSymbolicLink() || fs.realpathSync(root) !== root ||
       !fs.lstatSync(dotGit).isFile() || root === scope.rootRealPath ||
-      gitPath(root, '--show-toplevel') !== root || gitPath(root, '--git-common-dir') !== common ||
-      path.dirname(admin) !== path.join(common, 'worktrees') ||
-      fs.realpathSync(path.resolve(admin, fs.readFileSync(path.join(admin, 'gitdir'), 'utf8').trim())) !== dotGit) {
+      proof.toplevel !== root || proof.commonFromRoot !== proof.common ||
+      path.dirname(proof.admin) !== path.join(proof.common, 'worktrees') ||
+      fs.realpathSync(path.resolve(proof.admin, fs.readFileSync(path.join(proof.admin, 'gitdir'), 'utf8').trim())) !== dotGit) {
     throw new Error('A pasta isolada da aba mudou no disco. Abra uma nova aba ou restaure a worktree.');
   }
 }
