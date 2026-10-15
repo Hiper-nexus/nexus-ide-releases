@@ -85,6 +85,7 @@ vi.mock('./acp-mission-spawn', () => ({ spawnMainOwnedAcpMissionPane: deps.acpSp
 vi.mock('./agent-identity-spawn', () => ({ issueAgentIdentityBestEffort: vi.fn() }));
 
 import { deleteMainOwnedPane, getMainOwnedPane, setMainOwnedPane, spawnMainOwnedMissionPane, spawnMainOwnedMissionPaneAsync } from './main-owned-pane-runtime';
+import { CliSpawnPermitTimeoutError } from '../adapters/cli-auto-update';
 
 const options: PaneSpawnOptions & { missionId: string; role: 'worker' } = {
   adapterId: 'codex', missionId: 'synthetic-mission', role: 'worker',
@@ -520,5 +521,16 @@ describe('F-429 — Main Autopilot spawn cannot outlive Stop', () => {
     deps.missionCurrent = false; finish();
     await expect(pending).resolves.toMatchObject({ ok: false, error: expect.stringMatching(/mission.*authorized/) });
     expect(physicalSpawn).not.toHaveBeenCalled();
+  });
+});
+
+describe('teto do permit de spawn durante troca de binário', () => {
+  it('devolve ok:false com a mensagem para o usuário em vez de rejeitar, sem spawnar', async () => {
+    deps.acquirePermit.mockRejectedValueOnce(new CliSpawnPermitTimeoutError('codex', 60_000));
+
+    const result = await spawnMainOwnedMissionPaneAsync(options, hooks);
+
+    expect(result).toMatchObject({ ok: false, requestId: expect.any(String), error: expect.stringMatching(/codex.*atualizada/su) });
+    expect(deps.spawn).not.toHaveBeenCalled();
   });
 });

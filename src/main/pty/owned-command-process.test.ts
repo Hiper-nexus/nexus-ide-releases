@@ -134,3 +134,30 @@ it('F-1479: na volta do horário de verão o filho real com `lstart` "anterior" 
  table = ps(pane);
  expect(await tracker.probe('s', id)).toBe('gone');
 });
+
+it('F-1479 risco residual: na hora repetida o claim recusa o processo nascido no segundo observado', async () => {
+ // TZ controlado: `ps lstart` é relógio local de America/New_York e o Date.parse lê a 1ª ocorrência.
+ const zone = 'America/New_York';
+ const parts = (iso: string) => Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: zone, hourCycle: 'h23',
+   weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+   .formatToParts(new Date(iso)).map((part) => [part.type, part.value]));
+ const lstart = (iso: string) => { const p = parts(iso); return `${p.weekday} ${p.month} ${p.day.padStart(2, ' ')} ${p.hour}:${p.minute}:${p.second} ${p.year}`; };
+ const ps = (...lines: Array<[number, number, string]>) => parseProcessTable(lines.map(([pid, ppid, iso]) => `${pid} ${ppid} ${pid} ${pid} ttys001 ${lstart(iso)}`).join('\n'));
+ const previous = process.env.TZ;
+ process.env.TZ = zone;
+ try {
+   const pane: [number, number, string] = [10, 1, '2026-11-01T05:00:00Z'];
+   // 01:10:00 EST (2ª ocorrência), visto 400 ms depois: o PID pode ter sido reutilizado neste segundo.
+   const sameSecond = ps(pane, [20, 10, '2026-11-01T06:10:00Z']);
+   const tracker = new OwnedCommandProcesses((id) => id === 's' ? { pid: 10, identity: pane } : null,
+     async (pid) => collectDescendantRows(pid, sameSecond, Date.parse('2026-11-01T06:10:00.400Z')));
+   expect(await tracker.claim('s', 20)).toBeNull();
+   // Um segundo antes o nascimento é inequívoco: o claim sai.
+   const earlier = ps(pane, [20, 10, '2026-11-01T06:09:59Z']);
+   const control = new OwnedCommandProcesses((id) => id === 's' ? { pid: 10, identity: pane } : null,
+     async (pid) => collectDescendantRows(pid, earlier, Date.parse('2026-11-01T06:10:00.400Z')));
+   expect(await control.claim('s', 20)).toBeTypeOf('string');
+ } finally {
+   if (previous === undefined) delete process.env.TZ; else process.env.TZ = previous;
+ }
+});

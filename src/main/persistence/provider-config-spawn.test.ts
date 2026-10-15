@@ -758,7 +758,7 @@ describe('background CLI maintenance during pane startup', () => {
       }
     });
 
-    it('B3: fetch pendente no boot libera lease após prazo de 120s e permite spawn da mesma CLI', async () => {
+    it('B3: spawn preso por install no lugar é recusado no teto; o prazo de 120s do fetch libera o lease', async () => {
       spawnDeps.systemIdleTime.mockReturnValue(0);
       checkedAgo(3 * 60 * 60_000);
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -778,16 +778,34 @@ describe('background CLI maintenance during pane startup', () => {
 
       spawnDeps.downloadInstaller.mockImplementation(() => new Promise(() => {}));
 
+      const traceModule = await import('../observability/main-trace');
+      const traceSpy = vi.spyOn(traceModule, 'trace');
+
       stop = startCliAutoUpdate('/fixture-quota-home', () => false);
       await vi.advanceTimersByTimeAsync(5_000);
 
       let claudePermit: (() => void) | undefined;
-      void acquireCliSpawnPermit('claude').then((release) => { claudePermit = release; });
+      let refusal: unknown;
+      void acquireCliSpawnPermit('claude').then(
+        (release) => { claudePermit = release; },
+        (error: unknown) => { refusal = error; },
+      );
       await vi.advanceTimersByTimeAsync(0);
       expect(claudePermit).toBeUndefined();
 
-      await vi.advanceTimersByTimeAsync(120_000);
+      // Teto da espera: recusa com erro claro e trace; nunca nasce por cima da troca.
+      await vi.advanceTimersByTimeAsync(cliAutoUpdateModule.CLI_SPAWN_PERMIT_TIMEOUT_MS);
+      expect(claudePermit).toBeUndefined();
+      expect(refusal).toBeInstanceOf(cliAutoUpdateModule.CliSpawnPermitTimeoutError);
+      expect(traceSpy).toHaveBeenCalledWith(expect.objectContaining({
+        kind: 'cli-update', adapterId: 'claude', status: 'spawn-refused', phase: 'spawn-permit-timeout',
+      }));
+      traceSpy.mockRestore();
 
+      // O prazo B3 do fetch libera o lease: o spawn seguinte da mesma CLI sai na hora.
+      await vi.advanceTimersByTimeAsync(120_000);
+      void acquireCliSpawnPermit('claude').then((release) => { claudePermit = release; });
+      await vi.advanceTimersByTimeAsync(0);
       expect(claudePermit).toBeTypeOf('function');
       claudePermit!();
 

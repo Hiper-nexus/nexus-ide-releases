@@ -87,7 +87,7 @@ import {
   restoreExecutableIfMissing,
 } from '../adapters/in-use-executable';
 import {
-  BOOT_RECHECK_MS, CliAutoUpdateQueue, CliUpdateLease, caskManifestArtifactKinds, caskReceiptArtifactKinds,
+  BOOT_RECHECK_MS, CliAutoUpdateQueue, CliSpawnPermitTimeoutError, CliUpdateLease, caskManifestArtifactKinds, caskReceiptArtifactKinds,
   caskReceiptPath, caskTokenFromRealBinPath, cliUpdateKey, cliVersionCheck, cliVersionCheckUpToDate, isBrewRunner,
   isVersionedCliInstall, selectAutomaticCliUpdateRecipe, shouldOfferAutoCliConsent,
 } from '../adapters/cli-auto-update';
@@ -210,9 +210,23 @@ let isProviderConfigInitialized = false;
 const listeners = new Set<WebContents>();
 const cliUpdateLease = new CliUpdateLease();
 
-/** Hold until a pane has registered its PTY, so an updater cannot replace its launcher mid-spawn. */
+/**
+ * Hold until a pane has registered its PTY, so an updater cannot replace its
+ * launcher mid-spawn. A troca no lugar que passa do teto recusa o spawn
+ * (`CliSpawnPermitTimeoutError`, mensagem para o usuário) em vez de prender o
+ * pane em "Ainda subindo…".
+ */
 export async function acquireCliSpawnPermit(adapterId: string): Promise<() => void> {
-  const release = await cliUpdateLease.acquireSpawnPermit(adapterId);
+  let release: () => void;
+  try {
+    release = await cliUpdateLease.acquireSpawnPermit(adapterId);
+  } catch (error) {
+    if (error instanceof CliSpawnPermitTimeoutError) {
+      trace({ kind: 'cli-update', adapterId, status: 'spawn-refused', phase: 'spawn-permit-timeout',
+        elapsedMs: error.waitedMs });
+    }
+    throw error;
+  }
   if (adapterId === 'minimax-code') {
     // F-789: com o lançador travado pelo permit, o Node do mcode fica decidido
     // (sondagem assíncrona, em cache) antes do spawn síncrono. Nunca bloqueia

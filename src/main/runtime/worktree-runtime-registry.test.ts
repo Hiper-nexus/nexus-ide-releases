@@ -14,6 +14,7 @@ import {
 import { ScopedStoreBinding } from "../orch/scoped-store";
 import { WorktreeManager } from './worktree-manager';
 import { SqliteWorktreeStateStore } from './sqlite-workflow-state-stores';
+import { skipIfCwdProbeDeniedBySandbox } from '../../test/cwd-probe-sandbox';
 
 const sweep = vi.hoisted(() => vi.fn());
 const liveSession = vi.hoisted(() => vi.fn((_worktreePath: string) => false));
@@ -1396,7 +1397,8 @@ describe("F-908: coleta de worktrees de writers paradas", () => {
   const salvageRefs = (root: string) =>
     git(root, "for-each-ref", "--format=%(refname)", "refs/nexus-salvage/").split("\n").filter(Boolean);
 
-  it("remove o writer de missão integrado e limpo: pasta, branch e registro", async () => {
+  it("remove o writer de missão integrado e limpo: pasta, branch e registro", async (context) => {
+    skipIfCwdProbeDeniedBySandbox(context);
     const { root, scope, manager } = fixture();
     const registry = new WorktreeRuntimeRegistry(manager);
     setMission(manager, scope, "mission-done", "done");
@@ -1411,7 +1413,8 @@ describe("F-908: coleta de worktrees de writers paradas", () => {
     registry.dispose();
   });
 
-  it("worktree suja ganha a salvaguarda F-794 e FICA; limpa não mesclada sai e a branch fica", async () => {
+  it("worktree suja ganha a salvaguarda F-794 e FICA; limpa não mesclada sai e a branch fica", async (context) => {
+    skipIfCwdProbeDeniedBySandbox(context);
     const { root, scope, manager } = fixture();
     const registry = new WorktreeRuntimeRegistry(manager);
     setMission(manager, scope, "mission-failed", "failed");
@@ -1432,39 +1435,46 @@ describe("F-908: coleta de worktrees de writers paradas", () => {
     registry.dispose();
   });
 
-  it("missão viva, sessão viva dentro ou liberação recente mantêm a worktree", async () => {
+  it("missão viva, sessão viva dentro ou liberação recente mantêm a worktree", async (context) => {
     const { scope, manager } = fixture();
     const registry = new WorktreeRuntimeRegistry(manager);
-    setMission(manager, scope, "mission-live", "running");
-    setMission(manager, scope, "mission-done", "done");
-    const live = await paneWriter(registry, scope, "mission-live", "live");
-    const busy = await paneWriter(registry, scope, "mission-done", "busy");
-    liveSession.mockImplementation((worktreePath) => worktreePath === busy.worktreePath);
-    expect((await registry.collectAgedPaneWriterWorktrees(scope, NOW)).removed).toEqual([]);
-    liveSession.mockReturnValue(false);
-    // Processo real que fez `cd` para dentro (cwd ATUAL, provado por lsof/procfs).
-    if (process.platform !== "win32") {
-      fs.mkdirSync(path.join(busy.worktreePath, "sub"));
-      const shell = spawn("sleep", ["30"], { cwd: path.join(busy.worktreePath, "sub"), stdio: "ignore" });
-      try {
-        await new Promise((resolve) => shell.once("spawn", resolve));
-        expect((await registry.collectAgedPaneWriterWorktrees(scope, NOW)).removed).toEqual([]);
-      } finally {
-        shell.kill("SIGKILL");
-        await new Promise((resolve) => shell.once("exit", resolve));
+    // O skip do sandbox lança no meio: o dispose (timer de GC de 30 s) roda mesmo assim.
+    try {
+      setMission(manager, scope, "mission-live", "running");
+      setMission(manager, scope, "mission-done", "done");
+      const live = await paneWriter(registry, scope, "mission-live", "live");
+      const busy = await paneWriter(registry, scope, "mission-done", "busy");
+      liveSession.mockImplementation((worktreePath) => worktreePath === busy.worktreePath);
+      expect((await registry.collectAgedPaneWriterWorktrees(scope, NOW)).removed).toEqual([]);
+      liveSession.mockReturnValue(false);
+      // Processo real que fez `cd` para dentro (cwd ATUAL, provado por lsof/procfs).
+      if (process.platform !== "win32") {
+        // Daqui em diante a remoção exige PROVA da sonda real.
+        skipIfCwdProbeDeniedBySandbox(context);
+        fs.mkdirSync(path.join(busy.worktreePath, "sub"));
+        const shell = spawn("sleep", ["30"], { cwd: path.join(busy.worktreePath, "sub"), stdio: "ignore" });
+        try {
+          await new Promise((resolve) => shell.once("spawn", resolve));
+          expect((await registry.collectAgedPaneWriterWorktrees(scope, NOW)).removed).toEqual([]);
+        } finally {
+          shell.kill("SIGKILL");
+          await new Promise((resolve) => shell.once("exit", resolve));
+        }
+        fs.rmdirSync(path.join(busy.worktreePath, "sub"));
+        expect((await registry.collectAgedPaneWriterWorktrees(scope, NOW)).removed.map((r) => r.taskId))
+          .toEqual([busy.taskId]);
       }
-      fs.rmdirSync(path.join(busy.worktreePath, "sub"));
-      expect((await registry.collectAgedPaneWriterWorktrees(scope, NOW)).removed.map((r) => r.taskId))
-        .toEqual([busy.taskId]);
+      // Idade mínima padrão (24 h): acabou de ser liberada, não é candidata.
+      expect((await registry.collectAgedPaneWriterWorktrees(scope)).removed).toEqual([]);
+      expect(fs.existsSync(live.worktreePath)).toBe(true);
+      expect(registry.listMission(scope, "mission-live")).toHaveLength(1);
+    } finally {
+      registry.dispose();
     }
-    // Idade mínima padrão (24 h): acabou de ser liberada, não é candidata.
-    expect((await registry.collectAgedPaneWriterWorktrees(scope)).removed).toEqual([]);
-    expect(fs.existsSync(live.worktreePath)).toBe(true);
-    expect(registry.listMission(scope, "mission-live")).toHaveLength(1);
-    registry.dispose();
   });
 
-  it("respeita o teto de candidatos por rodada", async () => {
+  it("respeita o teto de candidatos por rodada", async (context) => {
+    skipIfCwdProbeDeniedBySandbox(context);
     const { scope, manager } = fixture();
     const registry = new WorktreeRuntimeRegistry(manager);
     const records = [];
@@ -1577,7 +1587,8 @@ describe("F-908: coleta de worktrees de writers paradas", () => {
 
   it.skipIf(process.platform !== "darwin" && process.platform !== "linux")(
     "GC estrito do fim do pane também exige a prova de cwd real do SO",
-    async () => {
+    async (context) => {
+      skipIfCwdProbeDeniedBySandbox(context);
       const { root, scope, manager } = fixture();
       const registry = new WorktreeRuntimeRegistry(manager);
       setMission(manager, scope, "mission-live", "running");

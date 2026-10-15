@@ -61,6 +61,7 @@ import {
   readLinkedBaseSnapshotAsync,
   resolveBaseRefAsync,
   assertTaskWorktree,
+  ensureDirectory,
   readRepositorySnapshot,
   reconcileInterruptedReservation,
 } from "./worktree-manager-git";
@@ -180,29 +181,6 @@ function assertExecutorOwnershipIsNotAuthority(files: readonly string[]): void {
   }
 }
 
-function isInside(root: string, candidate: string): boolean {
-  const relative = path.relative(root, candidate);
-  return (
-    relative === "" ||
-    (relative !== ".." &&
-      !relative.startsWith(`..${path.sep}`) &&
-      !path.isAbsolute(relative))
-  );
-}
-
-function ensureDirectory(directory: string, parent?: string): string {
-  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const stat = fs.lstatSync(directory);
-  if (stat.isSymbolicLink() || !stat.isDirectory()) {
-    throw new Error(`runtime path is not a real directory: ${directory}`);
-  }
-  const real = fs.realpathSync(directory);
-  if (parent && !isInside(parent, real)) {
-    throw new Error(`runtime path escapes its parent: ${directory}`);
-  }
-  fs.chmodSync(real, 0o700);
-  return real;
-}
 
 
 export class WorktreeManager {
@@ -1179,9 +1157,11 @@ export class WorktreeManager {
    * indistinguível de um criado por `create()` — passa pelo salvage
    * (`ISOLATED_WRITER_BRANCH_PREFIX`), pelo `tools-git` e pela identidade do
    * workflow-state. Prova o MESMO que `create()` (raiz, branch, HEAD,
-   * common-dir, config, árvore limpa) antes E depois da conversão. Falha
-   * fechada: prova/rename/move falha → lança; o chamador descarta e cai no
-   * caminho atual de alocação.
+   * common-dir, config, árvore limpa) antes E depois da conversão. Ordem
+   * recuperável: intenção `reserved` → rename → move → `ready`; um crash no
+   * meio a reconciliação de boot conclui ou falha fechada. Falha fechada:
+   * prova/rename/move falha → lança; o chamador descarta e cai no caminho
+   * atual de alocação.
    */
   async claimPooledPaneWriter(
     scope: ProjectExecutionScope,
@@ -1264,85 +1244,109 @@ export class WorktreeManager {
         "pooled worktree HEAD diverged from the pre-allocated base",
       );
     }
+    // Intenção durável ANTES de qualquer mutação Git (mesma ordem do
+    // create()): o registro `reserved` já nomeia a identidade derivada. Se o
+    // processo morrer entre o rename, o move e a promoção, a reconciliação de
+    // boot (`reconcileInterruptedReservations`) conclui a adoção ou falha
+    // fechada — nunca sobra branch derivada sem registro.
+    const scopeKey = this.scopeKey(scope);
+    const intent = cloneRecord({
+      ...pooledCandidate,
+      worktreePath: derivedPath,
+      branchRef: derivedBranchRef,
+      status: "reserved",
+    });
+    this.#mutate(scopeKey, (records) => {
+      const conflict = records.some(
+        (record) =>
+          record.worktreePath === derivedPath ||
+          record.branchRef === derivedBranchRef ||
+          (record.taskKey === taskKey && ACTIVE_STATUSES.has(record.status)),
+      );
+      if (conflict) {
+        throw new WorktreeStateConflictError(
+          "adopted worktree path, branch or task is already registered",
+        );
+      }
+      return { records: [...records, intent], result: intent };
+    });
+    const dropIntent = () => {
+      try {
+        this.#mutate(scopeKey, (records) => {
+          const kept = records.filter(
+            (record) =>
+              record.taskKey !== taskKey ||
+              record.status !== "reserved" ||
+              record.reservationGeneration !== intent.reservationGeneration,
+          );
+          return { records: kept.length === records.length ? records : kept, result: undefined };
+        });
+      } catch {
+        // Prefere a causa original; a intenção que sobrar a reconciliação de
+        // boot fecha.
+      }
+    };
     // Conversão. Rename da branch é instantâneo; o move do worktree é um
     // rename no mesmo volume e leva o node_modules clonado junto.
     const poolBranchName = input.branchRef.slice("refs/heads/".length);
     const derivedBranchName = derivedBranchRef.slice("refs/heads/".length);
-    const rename = await this.#asyncGit.run(
-      repository.rootRealPath,
-      ["branch", "-m", poolBranchName, derivedBranchName],
-      { allowFailure: true },
-    );
-    if (rename.status !== 0) {
-      throw new WorktreeStateConflictError("pooled worktree branch rename failed");
-    }
-    const move = await this.#asyncGit.run(
-      repository.rootRealPath,
-      ["worktree", "move", realWorktree, derivedPath],
-      { allowFailure: true },
-    );
-    if (move.status !== 0) {
-      // Parcial: branch já renomeada, caminho ainda no pool. Reverte o rename
-      // para o chamador descartar via removePooledWorktree (branch de pool).
-      await this.#asyncGit.run(
+    try {
+      const rename = await this.#asyncGit.run(
         repository.rootRealPath,
-        ["branch", "-m", derivedBranchName, poolBranchName],
+        ["branch", "-m", poolBranchName, derivedBranchName],
         { allowFailure: true },
       );
-      throw new WorktreeStateConflictError("pooled worktree move failed");
-    }
-    // Após o move, qualquer falha (prova final ou CAS) deixaria a worktree no
-    // caminho/branch DERIVADOS sem registro — vazamento (nenhuma limpeza a
-    // encontra: a de boot do pool só olha pool/+nexus-pool/, e o GC só olha
-    // registros). Rollback completo: devolve a pool/+nexus-pool/ (descartável
-    // pelo caminho normal); se o rollback falhar, remove --force o derivado.
-    try {
+      if (rename.status !== 0) {
+        throw new WorktreeStateConflictError("pooled worktree branch rename failed");
+      }
+      const move = await this.#asyncGit.run(
+        repository.rootRealPath,
+        ["worktree", "move", realWorktree, derivedPath],
+        { allowFailure: true },
+      );
+      if (move.status !== 0) {
+        throw new WorktreeStateConflictError("pooled worktree move failed");
+      }
       // Prova da identidade FINAL (igual ao create()): branch derivada,
       // caminho derivado, ainda limpo e na base congelada.
-      const finalCandidate = cloneRecord({
-        ...pooledCandidate,
-        worktreePath: derivedPath,
-        branchRef: derivedBranchRef,
-      });
-      const finalHead = await assertTaskWorktreeAsync(this.#asyncGit, finalCandidate);
+      const finalHead = await assertTaskWorktreeAsync(this.#asyncGit, intent);
       if (finalHead !== baseSha) {
         throw new WorktreeStateConflictError(
           "adopted worktree HEAD diverged from the pre-allocated base",
         );
       }
-      return this.#mutate(this.scopeKey(scope), (records) => {
-        const conflict = records.some(
-          (record) =>
-            record.worktreePath === derivedPath ||
-            record.branchRef === derivedBranchRef ||
-            (record.taskKey === taskKey && ACTIVE_STATUSES.has(record.status)),
-        );
-        if (conflict) {
+      return this.#transition(scopeKey, taskKey, (record) => {
+        if (record.status !== "reserved" ||
+            record.reservationGeneration !== intent.reservationGeneration) {
           throw new WorktreeStateConflictError(
-            "adopted worktree path, branch or task is already registered",
+            "pooled adoption intent changed during conversion",
           );
         }
-        return { records: [...records, finalCandidate], result: finalCandidate };
+        return { ...record, status: "ready", updatedAt: this.#timestamp() };
       });
     } catch (error) {
-      await this.#rollbackPooledAdoption(
+      // Rename/move podem ter rodado mesmo com o runner rejeitando (prazo).
+      // Devolve a pool/+nexus-pool/ o que tiver acontecido; a intenção só sai
+      // quando nada derivado sobrou — senão a reconciliação de boot a fecha.
+      const restored = await this.#rollbackPooledAdoption(
         repository.rootRealPath,
         realWorktree,
         derivedPath,
         poolBranchName,
         derivedBranchName,
       );
+      if (restored) dropIntent();
       throw error;
     }
   }
 
   /**
-   * A1: desfaz a conversão de uma adoção do pool que falhou APÓS o `move`
-   * (prova final ou CAS). Devolve a worktree para `pool/` + `nexus-pool/…`
-   * (descartável pelo caminho normal do pool); se a reversão falhar, força a
+   * A1: desfaz a conversão de uma adoção do pool que falhou no meio. Devolve
+   * a worktree para `pool/` + `nexus-pool/…` (descartável pelo caminho normal
+   * do pool), desfazendo só o que aconteceu; se a reversão falhar, força a
    * remoção do que sobrou (caminho derivado ou de pool + branch derivada),
-   * guardada por `isDangerousWorktreeRemovalPath` — nunca deixa worktree nem
-   * branch derivadas órfãs sem registro.
+   * guardada por `isDangerousWorktreeRemovalPath`. Nunca lança: `true` quando
+   * nenhuma worktree nem branch derivada sobrou.
    */
   async #rollbackPooledAdoption(
     repositoryRoot: string,
@@ -1350,39 +1354,36 @@ export class WorktreeManager {
     derivedPath: string,
     poolBranchName: string,
     derivedBranchName: string,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const git = this.#asyncGit;
-    const moveBack = await git.run(
-      repositoryRoot,
-      ["worktree", "move", derivedPath, poolPath],
-      { allowFailure: true },
-    );
-    const renameBack = moveBack.status === 0
-      ? await git.run(
-          repositoryRoot,
-          ["branch", "-m", derivedBranchName, poolBranchName],
-          { allowFailure: true },
-        )
-      : { status: 1 };
-    if (moveBack.status === 0 && renameBack.status === 0) return;
+    // O runner assíncrono rejeita no prazo mesmo com allowFailure.
+    const status = async (args: readonly string[], timeoutMs?: number) => {
+      try {
+        return (await git.run(repositoryRoot, args,
+          { allowFailure: true, ...(timeoutMs ? { timeoutMs } : {}) })).status;
+      } catch {
+        return null;
+      }
+    };
+    const derivedBranchGone = async () =>
+      await status(["show-ref", "--verify", "--quiet", `refs/heads/${derivedBranchName}`]) === 1;
+    const movedBack = !fs.existsSync(derivedPath) ||
+      await status(["worktree", "move", derivedPath, poolPath]) === 0;
+    if (movedBack && (await status(["branch", "-m", derivedBranchName, poolBranchName]) === 0 ||
+        await derivedBranchGone())) {
+      return true;
+    }
     // Reversão falhou (parcial ou total): remove --force o que sobrou.
     for (const candidate of [poolPath, derivedPath]) {
       if (
         fs.existsSync(candidate) &&
         !isDangerousWorktreeRemovalPath(candidate, repositoryRoot)
       ) {
-        await git.run(
-          repositoryRoot,
-          ["worktree", "remove", "--force", candidate],
-          { allowFailure: true, timeoutMs: WORKTREE_REMOVE_TIMEOUT_MS },
-        );
+        await status(["worktree", "remove", "--force", candidate], WORKTREE_REMOVE_TIMEOUT_MS);
       }
     }
-    await git.run(
-      repositoryRoot,
-      ["branch", "-D", derivedBranchName],
-      { allowFailure: true },
-    );
+    await status(["branch", "-D", derivedBranchName]);
+    return !fs.existsSync(derivedPath) && await derivedBranchGone();
   }
 
   /**

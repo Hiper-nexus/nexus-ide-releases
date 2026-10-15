@@ -27,6 +27,22 @@ export function shouldOfferAutoCliConsent(
   return !preferences || (!preferences.enabled && now >= (preferences.askAgainAt ?? 0));
 }
 
+/**
+ * Teto da espera de um spawn por uma atualização que troca o binário no lugar.
+ * Estourado, o spawn é RECUSADO (nunca nasce por cima da troca em andamento).
+ */
+export const CLI_SPAWN_PERMIT_TIMEOUT_MS = 60_000;
+
+export class CliSpawnPermitTimeoutError extends Error {
+  constructor(readonly adapterId: string, readonly waitedMs: number) {
+    super(
+      `A CLI ${adapterId} está sendo atualizada há mais de ${Math.round(waitedMs / 1000)} s. ` +
+      'O pane não foi aberto para não rodar no meio da troca do binário; tente de novo quando a atualização terminar.',
+    );
+    this.name = 'CliSpawnPermitTimeoutError';
+  }
+}
+
 /** Prevent the manual button and background runner from updating one CLI together. */
 export class CliUpdateLease {
   private active: string | null = null;
@@ -106,15 +122,25 @@ export class CliUpdateLease {
     };
   }
 
-  acquireSpawnPermit(adapterId: string): Promise<() => void> {
-    adapterId = cliUpdateKey(adapterId);
-    if (this.active !== adapterId || this.activeSpawnSafe) {
-      return Promise.resolve(this.grantSpawnPermit(adapterId));
+  acquireSpawnPermit(adapterId: string, timeoutMs = CLI_SPAWN_PERMIT_TIMEOUT_MS): Promise<() => void> {
+    const key = cliUpdateKey(adapterId);
+    if (this.active !== key || this.activeSpawnSafe) {
+      return Promise.resolve(this.grantSpawnPermit(key));
     }
-    return new Promise((resolve) => {
-      const waiters = this.spawnWaiters.get(adapterId) ?? [];
-      waiters.push(resolve);
-      this.spawnWaiters.set(adapterId, waiters);
+    return new Promise((resolve, reject) => {
+      const grant = (release: () => void) => {
+        clearTimeout(timer);
+        resolve(release);
+      };
+      // Sai da fila antes de recusar: o fim da troca não entrega permit a quem desistiu.
+      const timer = setTimeout(() => {
+        const remaining = (this.spawnWaiters.get(key) ?? []).filter((waiter) => waiter !== grant);
+        if (remaining.length > 0) this.spawnWaiters.set(key, remaining);
+        else this.spawnWaiters.delete(key);
+        reject(new CliSpawnPermitTimeoutError(key, timeoutMs));
+      }, timeoutMs);
+      timer.unref?.();
+      this.spawnWaiters.set(key, [...(this.spawnWaiters.get(key) ?? []), grant]);
     });
   }
 }

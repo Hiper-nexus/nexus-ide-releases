@@ -5,6 +5,8 @@ import { execFile } from 'node:child_process';
 
 export const DESCENDANT_KILL_GRACE_MS = 2_000;
 export const DESCENDANT_SNAPSHOT_TIMEOUT_MS = 1_000;
+/** Teto de qualquer captura do `ps`: nada que ela liste nasceu mais tarde que isso. */
+const MAX_SNAPSHOT_TIMEOUT_MS = 30_000;
 const PS_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
 
 export interface ProcessTableRow {
@@ -298,17 +300,48 @@ function boundedTimeout(
   fallback: number,
 ): number {
   if (value === undefined) return fallback;
-  if (!Number.isInteger(value) || value < 0 || value > 30_000) {
+  if (!Number.isInteger(value) || value < 0 || value > MAX_SNAPSHOT_TIMEOUT_MS) {
     throw new Error('invalid PTY process-tree termination timeout');
   }
   return value;
 }
 
-function hasUnambiguousStartIdentity(
+/** Maior recuo de relógio de um horário de verão real (Troll: 2 h), com folga. */
+const MAX_DST_FALLBACK_MS = 3 * 60 * 60_000;
+
+function localWallClockMs(at: number): number {
+  return at - new Date(at).getTimezoneOffset() * 60_000;
+}
+
+/**
+ * Latest absolute instant a local `ps lstart` may denote for a row observed at
+ * `observedAtMs`. On a DST fall-back the repeated hour maps to two instants
+ * and `Date.parse` picks the first, so a process born in the current second
+ * read an hour older (F-1479 residual). The second reading only counts when
+ * the capture that listed the row could have seen it.
+ */
+function latestStartInstant(row: ProcessTableRow, observedAtMs: number): number {
+  if (row.startedAtUtcMs !== undefined) return row.startedAtUtcMs;
+  const earliest = Date.parse(row.startedAt);
+  if (!Number.isFinite(earliest)) return Number.NaN;
+  const later = earliest + (new Date(earliest + MAX_DST_FALLBACK_MS).getTimezoneOffset() -
+    new Date(earliest).getTimezoneOffset()) * 60_000;
+  return later > earliest && localWallClockMs(later) === localWallClockMs(earliest) &&
+    later <= observedAtMs + MAX_SNAPSHOT_TIMEOUT_MS
+    ? later
+    : earliest;
+}
+
+/**
+ * Same-second PID-reuse fence shared by the termination tree and the heavy
+ * command claims. `ps lstart` has second resolution: a start that may fall in
+ * the observed second (or later), or that cannot be read, is ambiguous.
+ */
+export function hasUnambiguousStartIdentity(
   row: ProcessTableRow,
   capturedAtMs: number,
 ): boolean {
-  const startedAtMs = Date.parse(row.startedAt);
+  const startedAtMs = latestStartInstant(row, capturedAtMs);
   if (!Number.isFinite(startedAtMs)) return false;
   // `ps lstart` has second resolution. A same-second replacement cannot be
   // distinguished safely, so it is never escalated or declared gone.

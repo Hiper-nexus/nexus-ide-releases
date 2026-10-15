@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   collectDescendantRows,
+  hasUnambiguousStartIdentity,
   killPtyRoot,
   parseProcessTable,
   terminatePtyProcessTree,
@@ -424,5 +425,76 @@ describe('PTY descendant physical authority', () => {
       descendantsExited: false,
       error: expect.stringMatching(/plataforma|inventário/i),
     });
+  });
+});
+
+/** `ps -o lstart` (LC_ALL=C) do instante `iso` no relógio local de `zone`. */
+function lstartIn(zone: string, iso: string): string {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: zone, hourCycle: 'h23', weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(new Date(iso)).map((part) => [part.type, part.value]));
+  return `${parts.weekday} ${parts.month} ${parts.day.padStart(2, ' ')} ${parts.hour}:${parts.minute}:${parts.second} ${parts.year}`;
+}
+
+/** TZ do processo controlado (o `Date.parse` do `lstart` lê a hora local). */
+async function inTimeZone(zone: string, run: () => void | Promise<void>): Promise<void> {
+  const previous = process.env.TZ;
+  process.env.TZ = zone;
+  try {
+    await run();
+  } finally {
+    if (previous === undefined) delete process.env.TZ;
+    else process.env.TZ = previous;
+  }
+}
+
+describe('F-1479 risco residual: cerca de PID reutilizado no mesmo segundo atravessa o horário de verão', () => {
+  // Nascimento e observação em UTC absoluto; o `lstart` sai no relógio local da zona.
+  const fence = (zone: string, bornIso: string, observedIso: string) =>
+    hasUnambiguousStartIdentity(
+      { pid: 20, ppid: 10, pgid: 20, sid: 0, tty: 'ttys001', startedAt: lstartIn(zone, bornIso) },
+      Date.parse(observedIso),
+    );
+
+  it.each([
+    // America/New_York, 1º/11/2026: 01:00–02:00 local acontece duas vezes (EDT 05–06Z, EST 06–07Z).
+    ['America/New_York', '2026-11-01T06:10:00Z', '2026-11-01T06:10:00.400Z', false, '2ª ocorrência, mesmo segundo'],
+    ['America/New_York', '2026-11-01T05:10:00Z', '2026-11-01T06:10:00.400Z', false, 'mesmo relógio local da 1ª ocorrência: indistinguível'],
+    ['America/New_York', '2026-11-01T06:10:00Z', '2026-11-01T06:10:01.200Z', true, '2ª ocorrência, segundo seguinte'],
+    ['America/New_York', '2026-11-01T05:59:59Z', '2026-11-01T06:00:00.500Z', true, 'nasce 01:59:59 EDT, visto 01:00:00 EST'],
+    ['America/New_York', '2026-11-01T05:40:00Z', '2026-11-01T06:15:00.200Z', true, 'nasce 01:40 EDT, visto 01:15 EST: 01:40 EST ainda é futuro'],
+    // 8/3/2026: 02:00 EST pula para 03:00 EDT (lacuna).
+    ['America/New_York', '2026-03-08T06:59:59Z', '2026-03-08T07:00:00.500Z', true, 'atravessa a lacuna'],
+    ['America/New_York', '2026-03-08T07:00:00Z', '2026-03-08T07:00:00.500Z', false, 'depois da lacuna, mesmo segundo'],
+    // America/Sao_Paulo histórico: 17/2/2019 00:00 BRST voltou para 16/2 23:00 BRT (23:00–00:00 duas vezes).
+    ['America/Sao_Paulo', '2019-02-17T02:30:00Z', '2019-02-17T02:30:00.300Z', false, '2ª ocorrência, mesmo segundo'],
+    ['America/Sao_Paulo', '2019-02-17T01:59:59Z', '2019-02-17T02:00:00.500Z', true, 'nasce 23:59:59 BRST, visto 23:00:00 BRT'],
+    // 4/11/2018: 00:00 BRT pulou para 01:00 BRST (lacuna).
+    ['America/Sao_Paulo', '2018-11-04T02:59:59Z', '2018-11-04T03:00:00.500Z', true, 'atravessa a lacuna'],
+    ['America/Sao_Paulo', '2018-11-04T03:00:00Z', '2018-11-04T03:00:00.500Z', false, 'depois da lacuna, mesmo segundo'],
+  ])('%s: nasce %s, visto %s → inequívoco=%s (%s)', async (zone, bornIso, observedIso, unambiguous) => {
+    await inTimeZone(zone, () => {
+      expect(fence(zone, bornIso, observedIso)).toBe(unambiguous);
+    });
+  });
+
+  it('o TZ do teste vale: na hora repetida o Date.parse lê a 1ª ocorrência', async () => {
+    await inTimeZone('America/New_York', () => {
+      expect(new Date(Date.parse(lstartIn('America/New_York', '2026-11-01T06:10:00Z'))).toISOString())
+        .toBe('2026-11-01T05:10:00.000Z');
+    });
+    await inTimeZone('America/Sao_Paulo', () => {
+      expect(new Date(Date.parse(lstartIn('America/Sao_Paulo', '2019-02-17T02:30:00Z'))).toISOString())
+        .toBe('2019-02-17T01:30:00.000Z');
+    });
+  });
+
+  it('sem leitura do lstart a cerca falha fechada; horário absoluto (Windows) compara direto', () => {
+    expect(hasUnambiguousStartIdentity(row(20, 10, 20, 'not a date'), CAPTURED_AT_MS)).toBe(false);
+    const at = Date.parse('2026-11-01T06:10:00.000Z');
+    const windowsRow = { ...row(20, 10, 20, '2026-11-01T06:10:00.000Z'), startedAtUtcMs: at };
+    expect(hasUnambiguousStartIdentity(windowsRow, at + 400)).toBe(false);
+    expect(hasUnambiguousStartIdentity(windowsRow, at + 1_000)).toBe(true);
   });
 });
