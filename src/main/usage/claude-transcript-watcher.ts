@@ -84,7 +84,7 @@ interface FileState {
   remainder: string;
   decoder: StringDecoder;
   restored: boolean;
-  /** Último stat visto: o ciclo ignora o arquivo quando mtime+size batem. */
+  /** Stat da última leitura COMPLETA (offset === size): o ciclo ignora o arquivo quando mtime+size batem. */
   mtimeMs: number;
   size: number;
   /** Última linha `user` (prompt/resultado de tool) vista neste arquivo. */
@@ -357,17 +357,16 @@ export class ClaudeTranscriptWatcher {
       Object.assign(state, freshFileState(), { restored: true });
       this.opts.resumeStore?.delete(file);
     }
-    // O stat que manda é o do ingest (a fila é assíncrona): é ele que o
-    // próximo ciclo compara para pular arquivo intacto.
-    state.mtimeMs = stat.mtimeMs;
-    state.size = size;
-    if (size === state.offset) return;
+    if (size === state.offset) {
+      this.markIntact(state, stat);
+      return;
+    }
 
     let fh: fs.promises.FileHandle;
     try {
       fh = await fs.promises.open(file, 'r');
     } catch {
-      return; // leitura falhou — o próximo poll tenta de novo
+      return; // leitura falhou — mtime/size não foram marcados: o próximo poll tenta de novo
     }
     const slice = { lines: 0, startedAt: Date.now() };
     try {
@@ -395,12 +394,27 @@ export class ClaudeTranscriptWatcher {
         if (!(await this.deliverLines(lines, file, state, slice))) return;
         if (boundary >= 0) state.committedOffset = readOffset + boundary;
       }
+      this.markIntact(state, stat);
     } finally {
       await fh.close().catch(() => undefined);
       // Even an interrupted read may have fully delivered earlier chunks.
       // committedOffset advances only after every line in a chunk is delivered.
       await this.checkpoint(file, state);
     }
+  }
+
+  /**
+   * mtime+size é o que o próximo ciclo compara para pular arquivo intacto, e
+   * o stat que manda é o do ingest (a fila é assíncrona). Só vale quando o
+   * arquivo foi lido ATÉ esse stat: falha de open/read com offset < size deixa
+   * o registro anterior, que difere do stat atual, e o ciclo seguinte tenta de
+   * novo — senão o último turno de uma sessão ociosa só entraria no próximo
+   * write ou restart.
+   */
+  private markIntact(state: FileState, stat: fs.Stats): void {
+    if (state.offset !== stat.size) return;
+    state.mtimeMs = stat.mtimeMs;
+    state.size = stat.size;
   }
 
   /** Entrega as linhas cedendo o event loop a cada fatia; false = watcher parado. */

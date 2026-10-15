@@ -425,6 +425,29 @@ describe('ClaudeTranscriptWatcher custo por ciclo de varredura', () => {
     expect(digestSpy.mock.calls.length - digestsAt).toBe(0);
   });
 
+  it.each([
+    ['lido até o stat do ingest', undefined],
+    ['em dia desde o 1º contato (vazio)', ''],
+  ])('arquivo %s é pulado já no ciclo seguinte ao 1º contato', async (_label, content) => {
+    const project = setup(1);
+    const file = project.files[0]!;
+    if (content !== undefined) fs.writeFileSync(file, content);
+    // Só o poll dirige o ingest: um evento de fs.watch (o macOS entrega o do
+    // arquivo recém-escrito) somaria um stat e tornaria a contagem instável.
+    vi.spyOn(fs, 'watch').mockImplementation(() => {
+      throw new Error('watch indisponível');
+    });
+    const marker = statCounterFor(file);
+    const opendirSpy = vi.spyOn(fs.promises, 'opendir');
+    watcherForProject(project).start();
+
+    await vi.waitFor(() => expect(opendirSpy.mock.calls.length).toBeGreaterThanOrEqual(6), { timeout: 5_000, interval: 5 });
+    // Pulado custa 1 stat por ciclo (o do scanFile); só o 1º contato paga o
+    // stat do ingest. Sem marcar o stat (após a leitura, ou no ramo em dia)
+    // o ciclo seguinte reenfileira o arquivo e a conta passa de 1 por ciclo.
+    expect(marker.count()).toBeLessThanOrEqual(opendirSpy.mock.calls.length + 1);
+  });
+
   it('arquivo que cresce entre ciclos é lido no ciclo seguinte', async () => {
     const project = setup(1);
     const seen: string[] = [];
@@ -529,6 +552,60 @@ describe('ClaudeTranscriptWatcher custo por ciclo de varredura', () => {
       () => expect(intervalSpy.mock.calls.filter((call) => call[1] === 5_000).length).toBeGreaterThanOrEqual(2),
       { timeout: 5_000, interval: 10 },
     );
+  });
+
+  describe('falha de open/read com a sessão ociosa', () => {
+    // Sessão ociosa: o arquivo não muda (mesmo mtime+size) entre o ciclo que
+    // falhou e o seguinte. O skip por stat só vale para arquivo LIDO até o stat;
+    // se open/read falhou com offset < size, o ciclo seguinte tem de tentar de
+    // novo, senão o último turno só entra no próximo write ou restart.
+    const failure = (code: string, text: string) => Object.assign(new Error(`${code}: ${text}`), { code });
+
+    function onlyPollDrivesIngest(project: ReturnType<typeof setup>, seen: string[]): ClaudeTranscriptWatcher {
+      // Sem fs.watch nenhum evento extra reenfileira o arquivo e mascara o bug.
+      vi.spyOn(fs, 'watch').mockImplementation(() => {
+        throw new Error('watch indisponível');
+      });
+      return watcherForProject(project, { onEvent: (event) => seen.push(event.messageId ?? '') });
+    }
+
+    it('open que falha uma vez (EMFILE) não arma o skip: o ciclo seguinte ingere o turno', async () => {
+      const project = setup(1);
+      const seen: string[] = [];
+      const realOpen = fs.promises.open.bind(fs.promises);
+      let opens = 0;
+      vi.spyOn(fs.promises, 'open').mockImplementation(async (...args: Parameters<typeof fs.promises.open>) => {
+        opens += 1;
+        if (opens === 1) throw failure('EMFILE', 'too many open files');
+        return realOpen(...args);
+      });
+      onlyPollDrivesIngest(project, seen).start();
+
+      await vi.waitFor(() => expect(seen).toEqual(['message-s-0']), { timeout: 2_000, interval: 5 });
+      expect(opens).toBeGreaterThanOrEqual(2);
+    });
+
+    it('read que falha uma vez (EIO) não arma o skip: o ciclo seguinte relê do offset', async () => {
+      const project = setup(1);
+      const seen: string[] = [];
+      const realOpen = fs.promises.open.bind(fs.promises);
+      let reads = 0;
+      vi.spyOn(fs.promises, 'open').mockImplementation(async (...args: Parameters<typeof fs.promises.open>) => {
+        const handle = await realOpen(...args);
+        const realRead = handle.read.bind(handle) as (...readArgs: unknown[]) => Promise<unknown>;
+        Object.assign(handle, {
+          read: (...readArgs: unknown[]) => {
+            reads += 1;
+            return reads === 1 ? Promise.reject(failure('EIO', 'i/o error')) : realRead(...readArgs);
+          },
+        });
+        return handle;
+      });
+      onlyPollDrivesIngest(project, seen).start();
+
+      await vi.waitFor(() => expect(seen).toEqual(['message-s-0']), { timeout: 2_000, interval: 5 });
+      expect(reads).toBeGreaterThanOrEqual(2);
+    });
   });
 });
 
