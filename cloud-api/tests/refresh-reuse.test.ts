@@ -391,25 +391,47 @@ test('a corrupted rotated_from cycle ends the family walk instead of hanging', a
   db.close();
 });
 
-test('/auth/exchange answers with the pair while the license is still being signed', async (t) => {
+/** An exchange whose license read runs `stall` right after it starts; returns once that read began. */
+async function exchangeStalled(t: { after: (fn: () => void) => void }, stall: () => Promise<unknown>): Promise<{ db: SqliteD1; pending: Promise<Response> }> {
   const { db } = await setup();
   const { hashToken, pkceChallenge } = await import('../src/crypto.js');
   const code = 'c'.repeat(43), verifier = 'v'.repeat(43);
   await db.prepare('INSERT INTO auth_codes(code_hash,account_id,expires_at,created_at,code_challenge) VALUES(?,?,?,?,?)')
     .bind(await hashToken(code), 'user', Date.now() + 60_000, Date.now(), await pkceChallenge(verifier)).run();
   let reached!: () => void;
-  const slow = new Promise<void>(resolve => { reached = resolve; });
-  const stalled = interleave(db, /^SELECT \* FROM accounts WHERE id=\?/, async () => { reached(); await new Promise(() => {}); });
+  const started = new Promise<void>(resolve => { reached = resolve; });
+  const stalled = interleave(db, /^SELECT \* FROM accounts WHERE id=\?/, async () => { reached(); await stall(); });
   mock.timers.enable({ apis: ['setTimeout'] });
   t.after(() => mock.timers.reset());
+  const pending = Promise.resolve(createApp().request('/v1/auth/exchange', { method: 'POST', headers: json, body: JSON.stringify({ code, code_verifier: verifier }) }, environment(stalled as SqliteD1)));
+  await started;
+  return { db, pending };
+}
 
-  const pending = createApp().request('/v1/auth/exchange', { method: 'POST', headers: json, body: JSON.stringify({ code, code_verifier: verifier }) }, environment(stalled as SqliteD1));
-  await slow;
-  mock.timers.tick(2_000);
+test('/auth/exchange waits up to 8 s for the license: one signed in 5 s is in the answer', async (t) => {
+  const { db, pending } = await exchangeStalled(t, () => new Promise(resolve => setTimeout(resolve, 5_000)));
+  mock.timers.tick(5_000);
   const response = await pending;
 
   assert.equal(response.status, 200);
-  const body = await response.json() as { data: { session: string; refresh: string; licenca?: string } };
+  const body = await response.json() as { data: { session: string; licenca?: string } };
+  assert.equal(typeof body.data.licenca, 'string', 'released apps refuse a login without it');
+  assert.ok(await sessionFor(db, body.data.session, 'desktop'));
+  db.close();
+});
+
+test('/auth/exchange releases a license that never signs at 8 s, still with the pair', async (t) => {
+  const { db, pending } = await exchangeStalled(t, () => new Promise(() => {}));
+  let settled = false;
+  void pending.then(() => { settled = true; });
+  mock.timers.tick(7_999);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(settled, false, 'still waiting just under 8 s');
+  mock.timers.tick(1);
+  const response = await pending;
+
+  assert.equal(response.status, 200);
+  const body = await response.json() as { data: { session: string; licenca?: string } };
   assert.equal(body.data.licenca, undefined, 'the app fetches /v1/license itself');
   assert.ok(await sessionFor(db, body.data.session, 'desktop'));
   db.close();

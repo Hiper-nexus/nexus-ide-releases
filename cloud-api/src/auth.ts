@@ -17,7 +17,10 @@ import { licenseForAccount } from './licences.js';
 import { requireNativeAuth, requireWebAuth, requireCsrf } from './middleware.js';
 const STATE_TTL_MS = 10 * 60 * 1000;
 const CODE_TTL_MS = 60 * 1000;
-const LICENSE_BUDGET_MS = 2_000;
+/** The refresh answers fast: the old token is already spent, and the app fetches /v1/license on its own. */
+const REFRESH_LICENSE_WAIT_MS = 2_000;
+/** Released apps refuse an exchange without licenca and give up after 10 s; a login is rare, so it waits longer. */
+const EXCHANGE_LICENSE_WAIT_MS = 8_000;
 /** Migration the refresh rotation needs (0011): on an older schema it would spend the token and then fail. */
 const REFRESH_SCHEMA_VERSION = 11;
 /** Databases already proven current in this isolate. Migrations only move forward, so a miss is checked again. */
@@ -57,12 +60,12 @@ async function requireRefreshSchema(db: D1Database): Promise<void> {
         throw new HTTPException(503, { message: 'Serviço em atualização. Tente de novo em instantes.' });
     currentSchemas.add(db);
 }
-/** The signed license, or undefined after LICENSE_BUDGET_MS or on failure: clients fetch /v1/license on their own. */
-function licenseWithin(c: AuthContext, accountId: string, route: string): Promise<string | undefined> {
+/** The signed license, or undefined after `waitMs` or on failure: clients fetch /v1/license on their own. */
+function licenseWithin(c: AuthContext, accountId: string, route: string, waitMs: number): Promise<string | undefined> {
     return settleWithin(licenseForAccount(c.env.DB, accountId, c.get('config')).catch((error: unknown) => {
         console.error(`nexus-cloud-api: licença do ${route} falhou:`, error instanceof Error ? error.message : 'unknown');
         return undefined;
-    }), LICENSE_BUDGET_MS);
+    }), waitMs);
 }
 function providerOf(value: string): Provider {
     if (value !== 'google' && value !== 'github')
@@ -207,7 +210,7 @@ export function createAuthRoutes(fetchFn: typeof fetch = fetch): Hono<AppEnv> {
             throw new HTTPException(400, { message: 'Código de login inválido ou já utilizado.' });
         // The single-use code is spent: the pair is issued right away and a slow license only waits its budget.
         const { session, refresh } = await issueTokens(c.env.DB, accountId, 'desktop');
-        const licenca = await licenseWithin(c, accountId, 'exchange');
+        const licenca = await licenseWithin(c, accountId, 'exchange', EXCHANGE_LICENSE_WAIT_MS);
         return c.json({ ok: true, data: { session, refresh, licenca } });
     });
     routes.post('/auth/refresh', async (c) => {
@@ -220,7 +223,7 @@ export function createAuthRoutes(fetchFn: typeof fetch = fetch): Hono<AppEnv> {
         // The old token is already consumed: a client that times out waiting keeps it, and presenting it again
         // past the retry window revokes its family. Clients fetch /v1/license on their own, so a failed or slow
         // license only waits.
-        const licenca = await licenseWithin(c, rotated.accountId, 'refresh');
+        const licenca = await licenseWithin(c, rotated.accountId, 'refresh', REFRESH_LICENSE_WAIT_MS);
         return c.json({ ok: true, data: { session, refresh, licenca } });
     });
     routes.post('/auth/logout', requireNativeAuth, async (c) => { await revokeAll(c.env.DB, c.get('session').account_id); return c.json({ ok: true }); });
