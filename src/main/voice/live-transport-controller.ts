@@ -133,6 +133,8 @@ export class LiveTransportController {
   private reconnectStableTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempt = 0;
   private reconnectGeneration = 0;
+  /** Geração da cadeia de conexão: rejeição tardia de rota morta não publica. */
+  private connectGeneration = 0;
   private _latestContext = '';
   private _recentToolResults: string[] = [];
   private pendingMic: Int16Array[] = [];
@@ -803,6 +805,9 @@ export class LiveTransportController {
     this._provider?.close();
     this._provider = null;
     this.connecting = null;
+    // Um connect ainda em voo morre aqui: a rejeição tardia dele não publica
+    // a falha da rota antiga nem avança para os candidatos dela.
+    this.connectGeneration += 1;
     this.providerSpeaking = false;
     this.clearPendingMic();
     this.patchRealtimeReady(false);
@@ -874,6 +879,8 @@ export class LiveTransportController {
     this._provider?.close();
     this._provider = null;
     this.connecting = null;
+    // Mesmo motivo do hardStop: connect em voo não sobrevive à dormência.
+    this.connectGeneration += 1;
     this._fsm.patchStatus({ status: 'dormant', realtimeReady: false });
   }
 
@@ -990,6 +997,11 @@ export class LiveTransportController {
       flushPendingMic: (provider) => this.flushPendingMic(provider),
       startQuestionPoll: () => this.questionPoller.start(),
       clearPendingMic: () => this.clearPendingMic(),
+      beginConnectAttempt: () => {
+        this.connectGeneration += 1;
+        return this.connectGeneration;
+      },
+      isAttemptCurrent: (attempt) => attempt === this.connectGeneration,
     };
   }
 

@@ -54,6 +54,14 @@ export interface LiveProviderRuntimeHost {
   flushPendingMic(provider: TurnManagedRealtimeProvider): void;
   startQuestionPoll(): void;
   clearPendingMic(): void;
+  /**
+   * Nova cadeia de conexão: avança a geração e devolve o token dela. hardStop,
+   * dormência e troca de config/credencial avançam também — matando qualquer
+   * connect ainda em voo da rota anterior.
+   */
+  beginConnectAttempt(): number;
+  /** A tentativa segue atual? Rejeição tardia de geração morta não publica. */
+  isAttemptCurrent(attempt: number): boolean;
 }
 
 export async function connectFirstLiveProvider(
@@ -61,11 +69,15 @@ export async function connectFirstLiveProvider(
   greeting: string | undefined,
   host: LiveProviderRuntimeHost,
 ): Promise<void> {
+  const attempt = host.beginConnectAttempt();
   host.getProvider()?.close();
   host.setProvider(null);
   const attempts: RealtimeFailure[] = [];
   for (const candidate of candidates) {
-    if (await tryConnectCandidate(candidate, greeting, host, attempts)) return;
+    if (await tryConnectCandidate(candidate, greeting, host, attempts, attempt)) return;
+    // hardStop/troca de config durante o connect: a cadeia morre em silêncio,
+    // sem tentar a próxima rota nem publicar a falha da configuração antiga.
+    if (!host.isAttemptCurrent(attempt)) return;
   }
   // Toda a cadeia caiu. O motivo vai no estado (traduzido para a pessoa) e não
   // num console.warn: era exatamente esse silêncio que deixava o chip
@@ -87,6 +99,7 @@ async function tryConnectCandidate(
   greeting: string | undefined,
   host: LiveProviderRuntimeHost,
   attempts: RealtimeFailure[],
+  attempt: number,
 ): Promise<boolean> {
   const provider = candidate.provider;
   host.setProvider(provider);
@@ -95,6 +108,11 @@ async function tryConnectCandidate(
   if (activeTurnId) provider.beginUserTurn?.(activeTurnId);
   try {
     await provider.connect();
+    // Socket que abriu DEPOIS do hardStop: não pertence à rota atual — fecha.
+    if (!host.isAttemptCurrent(attempt)) {
+      provider.close();
+      return false;
+    }
     activateConnectedProvider(candidate, provider, greeting, host);
     return true;
   } catch (err) {
@@ -112,6 +130,11 @@ async function tryConnectCandidate(
       category,
       status: status ?? null,
     });
+    provider.close();
+    if (host.getProvider() === provider) host.setProvider(null);
+    // Geração morta (hardStop / troca de chave ou modelo): o motivo era da
+    // rota ANTIGA — fica no log, nunca no estado da sessão nova.
+    if (!host.isAttemptCurrent(attempt)) return false;
     // A falha sobe AGORA, não só no fim da cadeia: enquanto a próxima rota
     // tenta, o chip precisa dizer o que já caiu. Sem isso a degradação
     // reconecta e a pessoa volta a ver "conectando" sem explicação nenhuma.
@@ -122,8 +145,6 @@ async function tryConnectCandidate(
         realtimeFailure: failure,
       });
     }
-    provider.close();
-    if (host.getProvider() === provider) host.setProvider(null);
     return false;
   }
 }

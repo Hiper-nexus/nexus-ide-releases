@@ -42,8 +42,11 @@ function fakeCandidate(
   return candidate;
 }
 
-function hostFor(session: JarvisLiveSession): LiveProviderRuntimeHost {
+function hostFor(
+  session: JarvisLiveSession,
+): LiveProviderRuntimeHost & { invalidateAttempts(): void } {
   let provider: TurnManagedRealtimeProvider | null = null;
+  let generation = 0;
   return {
     fsm: session,
     toolCalls: {} as LiveProviderRuntimeHost['toolCalls'],
@@ -75,7 +78,31 @@ function hostFor(session: JarvisLiveSession): LiveProviderRuntimeHost {
     flushPendingMic: vi.fn(),
     startQuestionPoll: vi.fn(),
     clearPendingMic: vi.fn(),
+    beginConnectAttempt: () => {
+      generation += 1;
+      return generation;
+    },
+    isAttemptCurrent: (attempt) => attempt === generation,
+    // Simula o hardStop do controller: a geração morre e o provider sai do host.
+    invalidateAttempts: () => {
+      generation += 1;
+      provider = null;
+    },
   };
+}
+
+function deferred(): {
+  promise: Promise<void>;
+  resolve: () => void;
+  reject: (err: Error) => void;
+} {
+  let resolve!: () => void;
+  let reject!: (err: Error) => void;
+  const promise = new Promise<void>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
 }
 
 function liveSession(): JarvisLiveSession {
@@ -174,6 +201,42 @@ describe('connectFirstLiveProvider', () => {
       model: 'gpt-realtime-2.1-mini',
       attempts: 2,
     });
+  });
+
+  it('hardStop durante o connect: a rejeição tardia não publica falha antiga nem tenta a próxima rota', async () => {
+    const session = liveSession();
+    const host = hostFor(session);
+    const pending = deferred();
+    const openai = fakeCandidate('openai', () => pending.promise, 'fixture-old-model');
+    const gemini = fakeCandidate('gemini', async () => {}, 'gemini-live');
+
+    const started = connectFirstLiveProvider([openai, gemini], undefined, host);
+    // Troca de chave/modelo no meio do socket: a cadeia inteira fica obsoleta.
+    host.invalidateAttempts();
+    pending.reject(new Error('websocket closed before setup'));
+    await started;
+
+    expect(session.getState().realtimeFailure ?? null).toBeNull();
+    expect(session.getState().status).not.toBe('error');
+    // O 2º candidato da cadeia ANTIGA não é tentado.
+    expect(gemini.provider.connect).not.toHaveBeenCalled();
+  });
+
+  it('socket que abre depois do hardStop é fechado e não ativa', async () => {
+    const session = liveSession();
+    const host = hostFor(session);
+    const pending = deferred();
+    const openai = fakeCandidate('openai', () => pending.promise, 'fixture-old-model');
+
+    const started = connectFirstLiveProvider([openai], undefined, host);
+    host.invalidateAttempts();
+    pending.resolve();
+    await started;
+
+    expect(openai.provider.close).toHaveBeenCalled();
+    expect(host.getProvider()).toBeNull();
+    expect(session.getState().realtimeReady).toBe(false);
+    expect(session.getState().realtimeFailure ?? null).toBeNull();
   });
 
   it('não deixa vazar chave nem texto cru do provedor no estado', async () => {

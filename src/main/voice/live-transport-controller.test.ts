@@ -2781,6 +2781,150 @@ describe('LiveTransportController', () => {
     vi.doUnmock('../jarvis/realtime/factory');
   });
 
+  it('troca de chave durante conexão pendente: a rejeição tardia não publica falha antiga', async () => {
+    vi.resetModules();
+    const pending = deferred();
+    const openai = fakeProvider(() => pending.promise);
+    const gemini = fakeProvider(async () => {});
+    let candidates: RealtimeProviderCandidate[] = [
+      { id: 'openai', provider: openai, model: 'gpt-realtime-2.1-mini' },
+      { id: 'gemini', provider: gemini },
+    ];
+
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          enabled: true,
+          transport: 'openai-realtime',
+        },
+      }),
+    }));
+    vi.doMock('./voice-secrets', () => ({
+      resolveVoiceApiKey: () => 'key',
+      voiceApiKeySource: () => 'env',
+    }));
+    vi.doMock('./jarvis-memory', () => ({
+      jarvisMemory: { factsBlock: () => '' },
+    }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => candidates,
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['openai', 'gemini'],
+    }));
+
+    const { LiveTransportController } = await import('./live-transport-controller');
+    const session = new JarvisLiveSession(() => {}, () => 1000);
+    session.setEnabled(true);
+    session.start({ reason: 'manual' });
+    const controller = new LiveTransportController(() => {}, session);
+
+    const started = controller.onStart();
+    expect(openai.connect).toHaveBeenCalledTimes(1);
+
+    // setKey no voice-ipc: hardStop + clearRealtimeFailure.
+    controller.hardStop();
+    controller.clearRealtimeFailure();
+
+    // O socket antigo morre depois: a rejeição chega com a rota já invalidada.
+    pending.reject(new Error('websocket closed before setup'));
+    await started;
+
+    expect(session.getState().realtimeFailure ?? null).toBeNull();
+    expect(session.getState().status).not.toBe('error');
+    // O 2º candidato da cadeia ANTIGA não é tentado.
+    expect(gemini.connect).not.toHaveBeenCalled();
+
+    // A conexão nova (chave nova) não é afetada pela tentativa morta.
+    const fresh = fakeProvider(async () => {});
+    candidates = [{ id: 'openai', provider: fresh, model: 'gpt-realtime-2.1-mini' }];
+    await controller.onStart();
+    expect(fresh.connect).toHaveBeenCalledTimes(1);
+    expect(session.getState()).toMatchObject({
+      realtimeReady: true,
+      realtimeProvider: 'openai',
+    });
+
+    vi.doUnmock('./voice-config-store');
+    vi.doUnmock('./voice-secrets');
+    vi.doUnmock('./jarvis-memory');
+    vi.doUnmock('../jarvis/realtime/factory');
+  });
+
+  it('troca de modelo durante conexão pendente: a falha do modelo antigo não sobe ao chip', async () => {
+    vi.resetModules();
+    const pending = deferred();
+    const grokOld = fakeProvider(() => pending.promise);
+    const openai = fakeProvider(async () => {});
+    let candidates: RealtimeProviderCandidate[] = [
+      { id: 'grok', provider: grokOld, model: 'grok-voice-2.0' },
+      { id: 'openai', provider: openai, model: 'gpt-realtime-2.1-mini' },
+    ];
+
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          enabled: true,
+          transport: 'grok-realtime',
+        },
+      }),
+    }));
+    vi.doMock('./voice-secrets', () => ({
+      resolveVoiceApiKey: () => 'key',
+      voiceApiKeySource: () => 'env',
+    }));
+    vi.doMock('./jarvis-memory', () => ({
+      jarvisMemory: { factsBlock: () => '' },
+    }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => candidates,
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['grok', 'openai'],
+    }));
+
+    const { LiveTransportController } = await import('./live-transport-controller');
+    const session = new JarvisLiveSession(() => {}, () => 1000);
+    session.setEnabled(true);
+    session.start({ reason: 'manual' });
+    const controller = new LiveTransportController(() => {}, session);
+
+    const started = controller.onStart();
+    expect(grokOld.connect).toHaveBeenCalledTimes(1);
+
+    // setConfig no voice-ipc (modelo novo): hardStop + clearRealtimeFailure.
+    controller.hardStop();
+    controller.clearRealtimeFailure();
+
+    // A recusa do modelo ANTIGO chega tarde — era da configuração anterior.
+    pending.reject(new Error('Unexpected server response: 404'));
+    await started;
+
+    const state = session.getState();
+    expect(state.realtimeFailure ?? null).toBeNull();
+    expect(state.status).not.toBe('error');
+    expect(JSON.stringify(state)).not.toContain('grok-voice-2.0');
+    // O fallback da cadeia antiga também não é tentado.
+    expect(openai.connect).not.toHaveBeenCalled();
+
+    // A cadeia nova (modelo novo) conecta normalmente.
+    const grokNew = fakeProvider(async () => {});
+    candidates = [{ id: 'grok', provider: grokNew, model: 'grok-voice-3.0' }];
+    await controller.onStart();
+    expect(grokNew.connect).toHaveBeenCalledTimes(1);
+    expect(session.getState()).toMatchObject({
+      realtimeReady: true,
+      realtimeProvider: 'grok',
+    });
+
+    vi.doUnmock('./voice-config-store');
+    vi.doUnmock('./voice-secrets');
+    vi.doUnmock('./jarvis-memory');
+    vi.doUnmock('../jarvis/realtime/factory');
+  });
+
   it('não chama response.cancel quando a sessão está dormant', async () => {
     const provider = fakeProvider(async () => {});
     const { LiveTransportController } = await import('./live-transport-controller');
