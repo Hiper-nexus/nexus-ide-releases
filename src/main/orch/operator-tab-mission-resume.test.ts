@@ -1,9 +1,14 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Mission, MissionPaneSpec } from '../../shared/orch-types';
+
+const traceMock = vi.hoisted(() => vi.fn());
+vi.mock('../observability/main-trace', () => ({ trace: traceMock }));
+
 import {
   OPERATOR_TAB_RESUME_LOST_NOTE,
   OPERATOR_TAB_RESUME_NOTE,
   planOperatorTabResume,
+  OPERATOR_TAB_RESUME_TRANSFER_TTL_MS,
   beginOperatorTabResumeTransfer,
   isOperatorTabResumeTransferSource,
   operatorTabMissionResumeSpec,
@@ -115,5 +120,59 @@ describe('planOperatorTabResume (conversa esquecida não trava a retomada)', () 
   it('troca de conta segue o caminho já existente (conversa nova, linha substituída)', () => {
     expect(planOperatorTabResume({ sameAccount: false, conversationRecorded: true }))
       .toEqual({ resumeFromPane: false, replaceRow: true, conversationLost: false });
+  });
+});
+
+describe('transferência da conversa da aba — TTL (A9)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    traceMock.mockClear();
+  });
+  afterEach(() => {
+    resetOperatorTabResumeTransfersForTests();
+    vi.useRealTimers();
+  });
+
+  it('passou de 60 s com a reserva viva: trace de alerta, sem expirar', () => {
+    beginOperatorTabResumeTransfer('mission-a', 'pane-antigo');
+    vi.advanceTimersByTime(60_000);
+    expect(traceMock).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'operator-tab-resume-transfer-stale', missionId: 'mission-a' }),
+    );
+    expect(operatorTabResumeTransferInFlight('mission-a')).toBe(true);
+    expect(isOperatorTabResumeTransferSource('mission-a', 'pane-antigo')).toBe(true);
+  });
+
+  it('spawn que não nasce no TTL: a reserva expira e uma nova retomada é aceita', () => {
+    const stuck = beginOperatorTabResumeTransfer('mission-a', 'pane-antigo');
+    expect(stuck).toBeTypeOf('function');
+    expect(beginOperatorTabResumeTransfer('mission-a', 'pane-antigo')).toBeNull();
+
+    vi.advanceTimersByTime(OPERATOR_TAB_RESUME_TRANSFER_TTL_MS + 1);
+
+    expect(operatorTabResumeTransferInFlight('mission-a')).toBe(false);
+    expect(isOperatorTabResumeTransferSource('mission-a', 'pane-antigo')).toBe(false);
+    expect(traceMock).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'operator-tab-resume-transfer-expired', missionId: 'mission-a' }),
+    );
+    // Nova retomada da mesma missão volta a ser aceita.
+    expect(beginOperatorTabResumeTransfer('mission-a', 'pane-antigo')).toBeTypeOf('function');
+  });
+
+  it('mesmo sem o timer disparar, leitura depois do TTL não enxerga a reserva', () => {
+    beginOperatorTabResumeTransfer('mission-a', 'pane-antigo');
+    // Relógio avança sem timers (proteção contra ambiente sem o watchdog).
+    const base = Date.now();
+    vi.setSystemTime(base + OPERATOR_TAB_RESUME_TRANSFER_TTL_MS + 1);
+    expect(operatorTabResumeTransferInFlight('mission-a')).toBe(false);
+    expect(beginOperatorTabResumeTransfer('mission-a', 'pane-antigo')).toBeTypeOf('function');
+  });
+
+  it('liberação antes do TTL não traceia nem expira nada', () => {
+    const release = beginOperatorTabResumeTransfer('mission-a', 'pane-antigo');
+    release!();
+    vi.advanceTimersByTime(OPERATOR_TAB_RESUME_TRANSFER_TTL_MS * 2);
+    expect(traceMock).not.toHaveBeenCalled();
+    expect(operatorTabResumeTransferInFlight('mission-a')).toBe(false);
   });
 });

@@ -807,6 +807,63 @@ describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
     expect(isOperatorTabResumeTransferSource('mission-1', 'pane-operador')).toBe(false);
   });
 
+  it('A9: reserva pendurada (spawn que não nasceu) expira e a retomada volta a ser aceita', async () => {
+    // A reserva da conversa da aba não tinha TTL: um spawn pendurado prendia o
+    // pane de origem e recusava toda nova retomada da missão até o app
+    // reiniciar (o Map é de processo).
+    liveMission = {
+      ...mission,
+      squadId: undefined,
+      intentContract: { ...mission.intentContract, workspaceBinding: { version: 1, adoptedPaneId: 'pane-operador' } },
+    } as unknown as Mission;
+    harness.missionPaneSpecs = [
+      {
+        id: 'mp-1', missionId: 'mission-1', paneId: 'pane-operador', adapterId: 'claude',
+        model: 'claude-opus-5-5', accountId: 'acct-operador', role: 'orchestrator',
+        title: 'Orquestrador', agentName: 'Orquestrador',
+      },
+    ];
+    const {
+      OPERATOR_TAB_RESUME_TRANSFER_TTL_MS,
+      beginOperatorTabResumeTransfer,
+      isOperatorTabResumeTransferSource,
+    } = await import('./operator-tab-mission-resume');
+    // Simula o spawn pendurado: a reserva ficou aberta e a liberação nunca rodou.
+    const stuck = beginOperatorTabResumeTransfer('mission-1', 'pane-operador');
+    expect(stuck).toBeTypeOf('function');
+
+    await expect(
+      fastLane.resumeFastLaneMission(scope, 'mission-1', { remountKind: 'operator' }),
+    ).rejects.toThrow(/já está sendo retomada/);
+
+    vi.advanceTimersByTime(OPERATOR_TAB_RESUME_TRANSFER_TTL_MS + 1_000);
+    expect(isOperatorTabResumeTransferSource('mission-1', 'pane-operador')).toBe(false);
+
+    await fastLane.resumeFastLaneMission(scope, 'mission-1', { remountKind: 'operator' });
+    expect(harness.spawnCount).toBe(1);
+    expect(harness.spawnOptions[0]).toMatchObject({ resume: true, resumeFromPaneId: 'pane-operador' });
+  });
+
+  it('A5: watcher registrado sem sessão viva não prova retomada — o bootstrap respawna', async () => {
+    // O bootstrap retornava em silêncio quando um watcher já existia, mesmo
+    // com a sessão vigiada morta (ex.: morte depois de um CAS perdido): o
+    // Retomar terminava sem efeito ('request-processed' mudo).
+    await fastLane.fastLaneBootstrap(scope, 'mission-1');
+    expect(harness.spawnCount).toBe(1);
+
+    // A sessão vigiada morreu sem o watcher perceber (tick não rodou).
+    harness.sessionStates.set('session-1', 'exited');
+    harness.snapshots.length = 0;
+    harness.trace.mockClear();
+
+    await fastLane.fastLaneBootstrap(scope, 'mission-1');
+
+    expect(harness.trace).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'fast-lane-stale-watcher', missionId: 'mission-1' }),
+    );
+    expect(harness.spawnCount).toBe(2);
+  });
+
   it('marca antiga de "Pedir um ajuste" não deixa a conversa retomada parada (F-665)', async () => {
     // Campo 28/09 12:49: ajuste pedido às 10:24; às 12:48 o Retomar ainda
     // mandava "AGUARDE O OPERADOR" e o orquestrador parava sem dizer onde estava.

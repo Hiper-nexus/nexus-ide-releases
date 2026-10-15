@@ -1,4 +1,5 @@
 import { TAB_COMPLETION_INSTRUCTION } from './operator-tab-completion';
+import { trace } from '../observability/main-trace';
 import type { Mission, MissionPaneSpec, SquadAgent } from '../../shared/orch-types';
 import { awaitingAdjustmentSince } from '../../shared/mission-recovery-policy';
 
@@ -122,36 +123,102 @@ export function operatorTabMissionLeader(
  * recusada. Depois do spawn, `moveOrchestratorPane` tira o pane antigo da
  * composição e a cerca exclusiva do pty-manager cobre o Maestro vivo.
  */
-const tabResumeTransfers = new Map<string, { readonly fromPaneId: string }>();
+const tabResumeTransfers = new Map<string, TabResumeTransfer>();
+
+interface TabResumeTransfer {
+  readonly fromPaneId: string;
+  readonly startedAt: number;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
+/**
+ * Fusível da reserva (A9): sem TTL, um spawn pendurado (renderer sem resposta,
+ * provider-prep lento) prendia o pane de origem e recusava toda nova retomada
+ * da missão até o app reiniciar — o Map é de processo. Trace de alerta aos 60
+ * s; a reserva expira se o spawn não nasceu dentro do TTL.
+ */
+export const OPERATOR_TAB_RESUME_TRANSFER_TRACE_MS = 60_000;
+export const OPERATOR_TAB_RESUME_TRANSFER_TTL_MS = 5 * 60_000;
+
+function dropTabResumeTransfer(missionId: string, transfer: TabResumeTransfer): boolean {
+  if (tabResumeTransfers.get(missionId) !== transfer) return false;
+  if (transfer.timer) clearTimeout(transfer.timer);
+  tabResumeTransfers.delete(missionId);
+  return true;
+}
+
+function expireTabResumeTransfer(missionId: string, transfer: TabResumeTransfer, now: number): void {
+  if (!dropTabResumeTransfer(missionId, transfer)) return;
+  trace({
+    kind: 'operator-tab-resume-transfer-expired',
+    missionId,
+    paneId: transfer.fromPaneId,
+    elapsedMs: now - transfer.startedAt,
+  });
+}
+
+function armTabResumeTransferWatchdog(missionId: string, transfer: TabResumeTransfer): void {
+  const staleTimer = setTimeout(() => {
+    if (tabResumeTransfers.get(missionId) !== transfer) return;
+    trace({
+      kind: 'operator-tab-resume-transfer-stale',
+      missionId,
+      paneId: transfer.fromPaneId,
+      elapsedMs: OPERATOR_TAB_RESUME_TRANSFER_TRACE_MS,
+    });
+    const expiryTimer = setTimeout(
+      () => expireTabResumeTransfer(missionId, transfer, Date.now()),
+      OPERATOR_TAB_RESUME_TRANSFER_TTL_MS - OPERATOR_TAB_RESUME_TRANSFER_TRACE_MS,
+    );
+    expiryTimer.unref?.();
+    transfer.timer = expiryTimer;
+  }, OPERATOR_TAB_RESUME_TRANSFER_TRACE_MS);
+  staleTimer.unref?.();
+  transfer.timer = staleTimer;
+}
+
+/** A reserva viva da missão; uma reserva além do TTL expira na leitura também. */
+function liveTabResumeTransfer(missionId: string, now = Date.now()): TabResumeTransfer | null {
+  const transfer = tabResumeTransfers.get(missionId);
+  if (!transfer) return null;
+  if (now - transfer.startedAt >= OPERATOR_TAB_RESUME_TRANSFER_TTL_MS) {
+    expireTabResumeTransfer(missionId, transfer, now);
+    return null;
+  }
+  return transfer;
+}
 
 /**
  * Reserva a transferência da conversa da missão. Devolve a liberação, ou null
- * quando outra retomada da mesma missão já está em andamento.
+ * quando outra retomada da mesma missão já está em andamento (e não expirou).
  */
 export function beginOperatorTabResumeTransfer(
   missionId: string,
   fromPaneId: string,
 ): (() => void) | null {
-  if (tabResumeTransfers.has(missionId)) return null;
-  const transfer = { fromPaneId };
+  if (liveTabResumeTransfer(missionId)) return null;
+  const transfer: TabResumeTransfer = { fromPaneId, startedAt: Date.now(), timer: null };
   tabResumeTransfers.set(missionId, transfer);
+  armTabResumeTransferWatchdog(missionId, transfer);
   return () => {
-    if (tabResumeTransfers.get(missionId) === transfer) tabResumeTransfers.delete(missionId);
+    dropTabResumeTransfer(missionId, transfer);
   };
 }
 
 /** O pane é a origem de uma transferência em andamento (o Main é o dono dele). */
 export function isOperatorTabResumeTransferSource(missionId: string, paneId: string): boolean {
-  return tabResumeTransfers.get(missionId)?.fromPaneId === paneId;
+  return liveTabResumeTransfer(missionId)?.fromPaneId === paneId;
 }
 
 /** Há uma retomada da conversa desta missão em andamento. */
 export function operatorTabResumeTransferInFlight(missionId: string): boolean {
-  return tabResumeTransfers.has(missionId);
+  return liveTabResumeTransfer(missionId) !== null;
 }
 
 export function resetOperatorTabResumeTransfersForTests(): void {
-  tabResumeTransfers.clear();
+  for (const [missionId, transfer] of tabResumeTransfers) {
+    dropTabResumeTransfer(missionId, transfer);
+  }
 }
 
 /** O pane do operador descrito como o orquestrador que o spawn espera. */
