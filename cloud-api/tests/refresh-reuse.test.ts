@@ -113,15 +113,83 @@ test('a retry inside the grace window gets a new pair, kills the lost successor 
   assert.notEqual(retried.tokens.refresh, lost.tokens.refresh);
   assert.ok(await sessionFor(db, retried.tokens.session, 'desktop'));
   assert.equal(await sessionFor(db, lost.tokens.session, 'desktop'), null, 'the session issued with the lost successor dies');
-  assert.equal(await rotateRefresh(db, lost.tokens.refresh, 'desktop', now + 31_000), null, 'the lost successor cannot rotate');
-  // The superseded successor is revoked, so presenting it revoked nothing else.
-  assert.ok(await sessionFor(db, retried.tokens.session, 'desktop'));
+  // The app never saw the lost successor, so it never presents it (see the superseded tests below).
   assert.ok(await sessionFor(db, vm.session, 'desktop'), 'other devices stay signed in');
   assert.ok(await sessionFor(db, mac.session, 'desktop'), 'the session issued at login stays valid until it expires');
   assert.ok(await rotateRefresh(db, vm.refresh, 'desktop', now + 32_000));
   assert.ok(await rotateRefresh(db, retried.tokens.refresh, 'desktop', now + 33_000), 'the new pair keeps renewing');
   assert.deepEqual(await events(db), [{ kind: 'refresh_reuse_grace', family_root: root, account_id: 'user' }]);
   db.close();
+});
+
+test('a thief that wins the window is caught when the app presents the successor it superseded', async () => {
+  const { db, mac, vm } = await setup();
+  const root = await idOf(db, mac.refresh);
+  const now = Date.now();
+  const app = await rotateRefresh(db, mac.refresh, 'desktop', now);
+  assert.ok(app);
+  // A copy of the rotated token arrives before the app touched its new pair: it looks like a lost response.
+  const thief = await rotateRefresh(db, mac.refresh, 'desktop', now + 5_000);
+  assert.ok(thief);
+  assert.equal(await sessionFor(db, app.tokens.session, 'desktop'), null);
+
+  // Its session revoked, the app refreshes with the successor it holds.
+  assert.equal(await rotateRefresh(db, app.tokens.refresh, 'desktop', now + 6_000), null);
+
+  assert.equal(await sessionFor(db, thief.tokens.session, 'desktop'), null, 'the thief loses the family');
+  assert.equal(await rotateRefresh(db, thief.tokens.refresh, 'desktop', now + 7_000), null);
+  assert.ok(await sessionFor(db, vm.session, 'desktop'), 'other devices stay signed in');
+  assert.ok(await rotateRefresh(db, vm.refresh, 'desktop', now + 8_000));
+  const caught = [{ kind: 'refresh_reuse_grace', family_root: root, account_id: 'user' }, { kind: 'refresh_reuse_family_revoked', family_root: root, account_id: 'user' }];
+  assert.deepEqual(await events(db), caught);
+  // Presented again, the successor finds a dead family and records nothing more.
+  assert.equal(await rotateRefresh(db, app.tokens.refresh, 'desktop', now + 9_000), null);
+  assert.deepEqual(await events(db), caught);
+  db.close();
+});
+
+test('a retry that loses the race with a logout revokes and records nothing', async () => {
+  const { db, mac } = await setup();
+  const now = Date.now();
+  assert.ok(await rotateRefresh(db, mac.refresh, 'desktop', now));
+  const racing = interleave(db, /^SELECT \* FROM refresh_tokens WHERE token_hash/, () => revokeAll(db, 'user', now + 500));
+
+  assert.equal(await rotateRefresh(racing, mac.refresh, 'desktop', now + 1000), null);
+
+  assert.equal((await db.prepare('SELECT count(*) AS n FROM refresh_tokens WHERE revoked_at IS NULL').first<{ n: number }>())?.n, 0);
+  assert.deepEqual(await events(db), []);
+  db.close();
+});
+
+test('a superseded successor is inert after a logout, once expired, or when its family is already dead', async () => {
+  const day = 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  {
+    const { db, mac } = await setup();
+    const lost = await rotateRefresh(db, mac.refresh, 'desktop', now);
+    assert.ok(lost && await rotateRefresh(db, mac.refresh, 'desktop', now + 1000));
+    await revokeAll(db, 'user', now + 2000);
+    const fresh = await issueTokens(db, 'user', 'desktop', now + 3000);
+    assert.equal(await rotateRefresh(db, lost.tokens.refresh, 'desktop', now + 4000), null);
+    assert.ok(await sessionFor(db, fresh.session, 'desktop'), 'the login after the logout survives');
+    assert.ok(await rotateRefresh(db, fresh.refresh, 'desktop', now + 5000));
+    assert.deepEqual((await events(db)).map(event => event.kind), ['refresh_reuse_grace']);
+    db.close();
+  }
+  {
+    // Superseded a month ago; the family kept renewing and is alive today.
+    const { db } = await setup();
+    const old = await issueTokens(db, 'user', 'desktop', now - 31 * day);
+    const lost = await rotateRefresh(db, old.refresh, 'desktop', now - 31 * day + 1000);
+    const retried = await rotateRefresh(db, old.refresh, 'desktop', now - 31 * day + 2000);
+    assert.ok(lost && retried);
+    const current = await rotateRefresh(db, retried.tokens.refresh, 'desktop', now - 2 * day);
+    assert.ok(current);
+    assert.equal(await rotateRefresh(db, lost.tokens.refresh, 'desktop', now), null);
+    assert.ok(await rotateRefresh(db, current.tokens.refresh, 'desktop', now + 1000), 'the family keeps renewing');
+    assert.deepEqual((await events(db)).map(event => event.kind), ['refresh_reuse_grace']);
+    db.close();
+  }
 });
 
 test('concurrent retries of one lost rotation leave exactly one live pair', async () => {

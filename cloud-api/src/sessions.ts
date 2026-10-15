@@ -62,18 +62,21 @@ async function retryRotation(db:D1Database,prior:RefreshTokenRow,root:string,now
   const pair=await preparePair(db,prior.account_id,prior.channel,now,prior.id,guard,args);
   const results=await db.batch<{id:string}>([
     db.prepare(`UPDATE sessions SET revoked_at=? WHERE revoked_at IS NULL AND refresh_id IN (${unused}) AND ${guard}`).bind(now,prior.id,...args),
-    db.prepare(`UPDATE refresh_tokens SET revoked_at=? WHERE id IN (${unused}) AND ${guard}`).bind(now,prior.id,...args),
+    db.prepare(`UPDATE refresh_tokens SET revoked_at=?,revoked_reason='superseded' WHERE id IN (${unused}) AND ${guard}`).bind(now,prior.id,...args),
     ...pair.statements,
     db.prepare("INSERT INTO auth_events(id,account_id,kind,family_root,created_at) SELECT ?,?,'refresh_reuse_grace',?,? WHERE EXISTS(SELECT 1 FROM refresh_tokens WHERE id=?)").bind(crypto.randomUUID(),prior.account_id,root,now,pair.refreshId),
   ]);
   return results[3].results.length?pair.tokens:null;
 }
-/** Sessions issued before migration 0010 have no refresh_id and are not reached: they expire within SESSION_TTL_MS. */
+/** Sessions issued before migration 0010 have no refresh_id and are not reached: they expire within SESSION_TTL_MS.
+ * A family with no live token left (a logout, an earlier detection) has nothing to revoke: no event either.
+ * Superseded tokens are relabeled, so presenting one of them again does nothing. */
 async function revokeFamily(db:D1Database,accountId:string,root:string,now:number):Promise<void>{
   await db.batch([
+    // First, so it sees the family before this revocation.
+    db.prepare(FAMILY+"INSERT INTO auth_events(id,account_id,kind,family_root,created_at) SELECT ?,?,'refresh_reuse_family_revoked',?,? WHERE EXISTS(SELECT 1 FROM refresh_tokens WHERE id IN (SELECT id FROM family) AND revoked_at IS NULL AND expires_at>?)").bind(root,crypto.randomUUID(),accountId,root,now,now),
     db.prepare(FAMILY+'UPDATE sessions SET revoked_at=? WHERE revoked_at IS NULL AND refresh_id IN (SELECT id FROM family)').bind(root,now),
-    db.prepare(FAMILY+'UPDATE refresh_tokens SET revoked_at=? WHERE revoked_at IS NULL AND id IN (SELECT id FROM family)').bind(root,now),
-    db.prepare("INSERT INTO auth_events(id,account_id,kind,family_root,created_at) VALUES(?,?,'refresh_reuse_family_revoked',?,?)").bind(crypto.randomUUID(),accountId,root,now),
+    db.prepare(FAMILY+"UPDATE refresh_tokens SET revoked_at=COALESCE(revoked_at,?),revoked_reason='family' WHERE (revoked_at IS NULL OR revoked_reason='superseded') AND id IN (SELECT id FROM family)").bind(root,now),
   ]);
 }
 export async function rotateRefresh(db:D1Database,raw:string,channel:AuthChannel,now=Date.now()):Promise<{accountId:string;tokens:Tokens}|null>{
@@ -81,9 +84,13 @@ export async function rotateRefresh(db:D1Database,raw:string,channel:AuthChannel
   const row=await db.prepare('UPDATE refresh_tokens SET used_at=? WHERE token_hash=? AND channel=? AND used_at IS NULL AND revoked_at IS NULL AND expires_at>? RETURNING *').bind(now,hash,channel,now).first<RefreshTokenRow>();
   if(row){const tokens=await issue(db,row.account_id,channel,now,row.id);return tokens?{accountId:row.account_id,tokens}:null;}
   const prior=await db.prepare('SELECT * FROM refresh_tokens WHERE token_hash=? AND channel=? LIMIT 1').bind(hash,channel).first<RefreshTokenRow>();
-  // Only a rotated, still-unrevoked token proves reuse. A revoked or expired one is a logged-out app
+  if(!prior||prior.expires_at<=now)return null;
+  // A successor superseded inside the window never reached its legitimate holder: whoever presents it
+  // lost the family to whoever retried. Detection only; revokeFamily is a no-op once the family is dead.
+  if(prior.revoked_reason==='superseded'){await revokeFamily(db,prior.account_id,await familyRoot(db,prior.id),now);return null;}
+  // Otherwise only a rotated, still-unrevoked token proves reuse. A revoked or expired one is a logged-out app
   // waking up: revoking again would sign every other app out, and each of them would do the same back.
-  if(!prior||prior.used_at===null||prior.revoked_at!==null||prior.expires_at<=now)return null;
+  if(prior.used_at===null||prior.revoked_at!==null)return null;
   const root=await familyRoot(db,prior.id);
   if(now-prior.used_at<REFRESH_REUSE_GRACE_MS){const tokens=await retryRotation(db,prior,root,now);if(tokens)return{accountId:prior.account_id,tokens};}
   // Real reuse: another holder of this family. Only the family dies; the account's other devices keep theirs.
