@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.76.270 — Retomada sem tropeço e agentes à vista
+
+Reaplicada sobre a 0.76.267 (as tags 0.76.264 a 0.76.267 já eram de outra linha de trabalho).
+
+- **Retomada**: Retomar não termina mais sem efeito nem sem a causa; o orquestrador religa sem esperar workers podres; a reserva da retomada da aba tem prazo; a retomada devolve a especificação selada e alinha o espelho do layout numa gravação só (fim do `accountId[undefined != acct-…]`).
+- **Retomada sem duplicata**: a folha de origem é aposentada na transferência (F-1538), o scrollback respeita a largura (F-1539) e o aviso de pausa traz o motivo e reavalia quando a missão destrava (F-1540).
+- **Agentes à vista**: o rail, as abas e o cabeçalho da missão mostram quem está trabalhando agora; "Em andamento" lista todos os repositórios ativos sem duplicar em Recentes.
+- **Quadro**: uma ação primária por vez, menu Mais e minimizar com a escolha salva.
+- **Jev 1.14 preview**: selecionável em Chaves de API; o padrão continua o estável. Limiares (0,35) e rubricas não foram recalibrados para a 1.14.
+- **Spawn**: o mesmo `requestId` da mesma sessão devolve o pane que já nasceu; recusa por carga não conta como falha da CLI no disjuntor.
+- **Voz**: reescrita do ditado CODE que ecoava o português é recusada (F-1530).
+- **Windows**: portão de regressão com prazo e cache, lexer do catálogo com caminho do Windows, worktree isolada com `node_modules` ligado e fora do git, e checkpoint oculto com tmp 8.3.
+
+Ainda abertos (em `docs/qa/items`): teclado do pane após hibernar, entrega de handoff cortada pelo ConPTY (F-1536) e gravação fantasma de voz no Windows (F-1541).
+
 ## 0.76.267 — Linux em dia com a velocidade
 
 A 0.76.264 saiu só para macOS (DMG e ZIP darwin arm64). Esta versão não anexa pacotes Linux àquela release. O produto é o da 0.76.264, empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). A tag 0.76.265 não foi publicada: a suíte recusou o teste do cache de symref porque `git init` cria `master` quando `init.defaultBranch` não é `main`. O teste agora segue o branch que o init criou. A tag 0.76.266 também não foi publicada: o smoke empacotado chamou `releaseReadiness` enquanto o bootstrap ainda registrava o IPC. A prova espera o handler.

@@ -10791,7 +10791,7 @@ export const RELEASE_076266: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076267: AppRelease = {
   version: '0.76.267',
   date: '2026-10-15',
   codename: 'Linux em dia com a velocidade',
@@ -10808,5 +10808,25 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Pool de worktrees após crash', detail: 'Uma worktree pré-alocada que estava sendo adotada no momento de um crash é concluída quando o Nexus abre de novo.' },
     { title: 'Espera de atualização de CLI com teto', detail: 'Abrir um pane enquanto uma CLI se atualiza desiste em 60 s e mostra o motivo.' },
     { title: 'Atualização do Linux', detail: 'A 0.76.264 só tinha pacote de macOS. As tags 0.76.265 e 0.76.266 não foram publicadas. O Linux sai na 0.76.267.' },
+  ],
+};
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.270',
+  date: '2026-10-15',
+  codename: 'Retomada sem tropeço e agentes à vista',
+  summary: 'A retomada de missão deixa de terminar sem efeito ou sem dizer a causa e não duplica o pane de origem, o rail e as abas mostram quem está trabalhando agora, o Quadro ganha uma ação principal só, e o spawn de panes deixa de duplicar quando o Main está sob carga.',
+  highlights: [
+    { title: 'Quem trabalha agora', detail: 'O rail, as abas e o cabeçalho da missão contam os agentes trabalhando, e "Em andamento" lista todos os repositórios ativos sem duplicar em Recentes.' },
+    { title: 'Quadro mais limpo', detail: 'Uma ação primária por vez, o resto no menu Mais, e o Quadro pode ser minimizado (a escolha fica salva).' },
+    { title: 'Jev 1.14 preview', detail: 'Selecionável em Chaves de API › Modelos de decisão; o padrão continua o estável e um modelo recusado volta ao jev-latest.' },
+    { title: 'Spawn idempotente', detail: 'O mesmo requestId, da mesma sessão, devolve o pane que já nasceu em vez de abrir um segundo; recusa por carga não pune a CLI no disjuntor.' },
+  ],
+  fixes: [
+    { title: 'Retomar com efeito e causa (A5/A7/A9)', detail: 'Retomar não termina mais sem efeito nem sem a causa, o orquestrador religa sem esperar workers podres e a reserva da retomada da aba tem prazo.' },
+    { title: 'accountId[undefined != acct-…] (A1/A6/A8)', detail: 'A retomada devolve a especificação selada e alinha o espelho do layout numa única gravação, evitando a recusa da cerca do spawn persistido.' },
+    { title: 'Retomada sem pane duplicado (F-1538/F-1539/F-1540)', detail: 'A folha de origem é aposentada na transferência, a fita retida do terminal respeita a largura (sem quebra por uma coluna) e o aviso de pausa diz o motivo e reavalia quando a missão destrava.' },
+    { title: 'Ditado em inglês (F-1530)', detail: 'Reescrita do CODE que devolvia o português é detectada e recusada; a STT de fallback sempre é tentada.' },
+    { title: 'Portão de regressão e worktree (F-1533/F-1535)', detail: 'O mapa do portão tem prazo e cache, o lexer do catálogo preserva caminho do Windows e a worktree isolada nasce com node_modules ligado (fora do git).' },
+    { title: 'Checkpoint oculto no Windows (F-1532)', detail: 'O checkpoint do writer funciona com tmp em nome curto 8.3 no Windows.' },
   ],
 };
