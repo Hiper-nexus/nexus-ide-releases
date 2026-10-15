@@ -19,6 +19,7 @@ struct RedlineWindow: Codable, Equatable {
     let label: String
     let usedRatio: Double?
     let resetsAt: Double?
+    var estimated: Bool? = nil
 }
 
 struct RedlineDecisiveWindow: Codable, Equatable {
@@ -43,6 +44,7 @@ struct RedlineEntry: Codable, Equatable {
     let excludedReason: String?
     let headroom: Double?
     let decisiveWindow: RedlineDecisiveWindow?
+    var readHint: String? = nil
 }
 
 struct RedlineRankingRow: Codable, Equatable {
@@ -281,7 +283,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return snap.entries.filter { wanted.contains($0.id) }
         }
         return Array(snap.entries.filter { entry in
-            entry.windows.contains { $0.usedRatio != nil }
+            entry.windows.contains { $0.usedRatio != nil && $0.estimated != true }
         }.prefix(6))
     }
 
@@ -308,7 +310,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var worst: (entry: RedlineEntry, window: RedlineWindow)?
         for entry in entriesForBar(snap) {
             for win in entry.windows
-            where ["hours", "session", "weekly", "monthly"].contains(win.kind) {
+            where ["hours", "session", "weekly", "monthly", "credits"].contains(win.kind) && win.estimated != true {
                 guard let used = win.usedRatio else { continue }
                 if used > (worst?.window.usedRatio ?? -1) { worst = (entry, win) }
             }
