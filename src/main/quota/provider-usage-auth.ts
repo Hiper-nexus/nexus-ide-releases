@@ -31,6 +31,8 @@ import { probeClaudeCredentialIdentity } from './claude-native-account';
 import { kimiNativeCredentialFiles } from '../adapters/kimi-credential-files';
 import { readClaudeConfigSnapshotAsync } from '../adapters/claude-config-snapshot';
 import { readAgyWindowsKeyringBlobAsync } from '../adapters/agy-windows-keyring';
+import type { GeminiRefreshedGrant } from './agy-usage';
+import { writeJsonAtomic } from '../util/atomic-write';
 
 const CRED_PREFIX = 'acctcred:';
 const KEY_PREFIX = 'acctkey:';
@@ -56,6 +58,18 @@ function safeGetSecret(key: string): string | null {
   try {
     const v = getSecret(key);
     return typeof v === 'string' && v.trim() ? v.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function jsonObject(blob: string | null): Record<string, unknown> | null {
+  if (!blob) return null;
+  try {
+    const parsed = JSON.parse(blob) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
   } catch {
     return null;
   }
@@ -485,18 +499,7 @@ export function persistKimiRotatedCreds(
   now = Date.now(),
 ): void {
   if (!accountId || getAccount(accountId)?.adapterId !== 'kimi') return;
-  const prior = safeGetSecret(CRED_PREFIX + accountId);
-  let base: Record<string, unknown> = {};
-  if (prior) {
-    try {
-      const parsed = JSON.parse(prior) as unknown;
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        base = parsed as Record<string, unknown>;
-      }
-    } catch {
-      base = {};
-    }
-  }
+  const base = jsonObject(safeGetSecret(CRED_PREFIX + accountId)) ?? {};
   const next = {
     ...base,
     access_token: rotated.accessToken,
@@ -528,14 +531,16 @@ export async function resolveGeminiOauthCreds(
 ): Promise<GeminiOauthCredsResolved | null> {
   if (accountId) {
     if (getAccount(accountId)?.adapterId !== 'agy') return null;
-    const blob = safeGetSecret(CRED_PREFIX + accountId);
-    if (blob) {
+    // O managed home que o CLI do pane renovou vence o vault (mesma
+    // identidade); senão o refresh daqui usaria um refresh token já trocado.
+    for (const blob of accountCredentialCandidates('agy', accountId,
+      safeGetSecret(CRED_PREFIX + accountId))) {
       const c = parseGeminiCredsBlob(blob);
       if (c) return c;
     }
     return null;
   }
-  const blob = readText(path.join(os.homedir(), '.gemini', 'oauth_creds.json'));
+  const blob = readText(geminiNativeCredsPath());
   if (blob) {
     const parsed = parseGeminiCredsBlob(blob);
     if (parsed) return parsed;
@@ -545,6 +550,78 @@ export async function resolveGeminiOauthCreds(
   if (process.platform !== 'win32') return null;
   const slot = await readAgyWindowsKeyringBlobAsync();
   return slot ? parseGeminiOauthBlob(slot) : null;
+}
+
+function geminiNativeCredsPath(): string {
+  return path.join(os.homedir(), '.gemini', 'oauth_creds.json');
+}
+
+/**
+ * Write-back do grant Google renovado na linhagem de onde ele veio.
+ *
+ * Conta pinada: o blob VAULT recebe access, expiry, id_token e o refresh token
+ * em vigor (o rotacionado ou o usado), preservando o resto (email, o envelope
+ * `{token: …}` do AGY). Sem isso a conta em Reserva continua no cofre com o
+ * access vencido e um refresh token que o Google pode ter trocado.
+ *
+ * Linha nativa: `~/.gemini/oauth_creds.json` é do CLI. Só uma ROTAÇÃO volta
+ * lá, e só se o arquivo ainda guarda o refresh token usado: outro login ou um
+ * refresh do próprio CLI no meio do caminho vencem.
+ */
+export function persistGeminiRotatedCreds(
+  accountId: string | undefined,
+  grant: GeminiRefreshedGrant,
+  usedRefreshToken: string,
+): void {
+  if (accountId) {
+    if (getAccount(accountId)?.adapterId !== 'agy') return;
+    const prior = safeGetSecret(CRED_PREFIX + accountId);
+    const base = jsonObject(prior);
+    // Snapshot de diretório ou blob sem token: formato que este write não conhece.
+    if (!base || !prior || !parseGeminiOauthBlob(prior)) return;
+    setSecret(CRED_PREFIX + accountId,
+      JSON.stringify(withGeminiGrant(base, grant, usedRefreshToken)));
+    return;
+  }
+  if (!grant.refreshToken || grant.refreshToken === usedRefreshToken) return;
+  const file = geminiNativeCredsPath();
+  const prior = readText(file);
+  const base = jsonObject(prior);
+  if (!base || !prior || parseGeminiOauthBlob(prior)?.refreshToken !== usedRefreshToken) return;
+  writeJsonAtomic(file, withGeminiGrant(base, grant, usedRefreshToken));
+}
+
+function withGeminiGrant(
+  base: Record<string, unknown>,
+  grant: GeminiRefreshedGrant,
+  usedRefreshToken: string,
+): Record<string, unknown> {
+  // gemini-cli: tokens no topo com `expiry_date` em ms. AGY 1.1 / Windows:
+  // token Go em `{token: {…, expiry: "<RFC 3339>"}}`.
+  const token = base.token;
+  const nested = token && typeof token === 'object' && !Array.isArray(token)
+    ? (token as Record<string, unknown>)
+    : null;
+  const target = nested ?? base;
+  const next: Record<string, unknown> = {
+    ...target,
+    access_token: grant.accessToken,
+    refresh_token: grant.refreshToken ?? usedRefreshToken,
+  };
+  if (typeof grant.expiryDate === 'number') {
+    if ('expiry_date' in target || (!nested && !('expiry' in target))) {
+      next.expiry_date = grant.expiryDate;
+    } else {
+      next.expiry = typeof target.expiry === 'number'
+        ? grant.expiryDate
+        : new Date(grant.expiryDate).toISOString();
+    }
+  }
+  // Um id_token velho ao lado do access novo faria o blob parecer MAIS antigo
+  // que a cópia do managed home (auth-freshness compara o `iat`), e a cópia
+  // velha voltaria ao cofre. Só troca o que já existe: não infla o blob.
+  if (grant.idToken && 'id_token' in target) next.id_token = grant.idToken;
+  return nested ? { ...base, token: next } : next;
 }
 
 function tokenFields(source: {

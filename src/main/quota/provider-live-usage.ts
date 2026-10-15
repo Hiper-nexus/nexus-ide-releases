@@ -23,7 +23,11 @@ import {
   resolveDevinApiKey,
 } from './devin-usage';
 import { fetchCursorUsageWindowsLive } from './cursor-usage';
-import { fetchAgyUsageWindows, type GeminiOauthCreds } from './agy-usage';
+import {
+  fetchAgyUsageWindows,
+  type GeminiOauthCreds,
+  type GeminiRefreshedGrant,
+} from './agy-usage';
 import { fetchAgyBridgeUsage } from './agy-bridge';
 import { fetchAgyCliUsageWindows } from './agy-cli-usage';
 import {
@@ -147,6 +151,15 @@ export interface LiveUsageAuthResolvers {
   resolveGeminiOauthCreds?: (
     accountId?: string,
   ) => GeminiOauthCreds | null | Promise<GeminiOauthCreds | null>;
+  /**
+   * Write-back do grant Google renovado: vault da conta pinada; na linha
+   * nativa, só uma rotação volta ao ~/.gemini do CLI.
+   */
+  persistGeminiRotatedCreds?: (
+    accountId: string | undefined,
+    grant: GeminiRefreshedGrant,
+    usedRefreshToken: string,
+  ) => void;
   resolveLongcatApiKey?: (
     accountId?: string,
   ) => string | null | Promise<string | null>;
@@ -499,10 +512,24 @@ export async function fetchLiveProviderWindows(
       }
       if (!creds) return NO_CREDENTIAL;
       // Access expirado + refresh válido não pode ficar vazio (mesmo buraco do
-      // Kimi). O refresh Google devolve access novo em memória — o grant do
-      // ~/.gemini do CLI não é rotacionado nem consumido por isso.
+      // Kimi). O grant renovado volta à linhagem de onde veio: o blob vault da
+      // conta pinada (senão a conta em Reserva fica com access vencido e um
+      // refresh token que o Google pode ter trocado); na linha nativa, só uma
+      // rotação volta ao ~/.gemini do CLI.
+      const usedRefresh = creds.refreshToken?.trim();
+      const persist = deps.persistGeminiRotatedCreds;
       return asProbe(
-        await fetchAgyUsageWindows(creds, { fetchImpl, now, allowRefresh: true }),
+        await fetchAgyUsageWindows(creds, {
+          fetchImpl,
+          now,
+          allowRefresh: true,
+          ...(persist && usedRefresh
+            ? {
+                persistRefreshed: (grant: GeminiRefreshedGrant) =>
+                  persist(accountId, grant, usedRefresh),
+              }
+            : {}),
+        }),
         'unavailable',
       );
     }

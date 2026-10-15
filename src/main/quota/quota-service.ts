@@ -39,6 +39,7 @@ import {
   hasClaudeNativeSession,
   fetchCodexAccountUsage,
   persistKimiRotatedCreds as persistKimiRotatedCredsAuth,
+  persistGeminiRotatedCreds as persistGeminiRotatedCredsAuth,
 } from './provider-usage-auth';
 import { fetchGrokAccountUsage } from './grok-account-usage';
 import { PLAN_CAPABLE_ADAPTERS } from './account-plan';
@@ -193,6 +194,8 @@ export interface QuotaServiceDeps {
         refreshToken?: string;
         expiryDate?: number;
       } | null>;
+  /** Write-back do grant Google renovado (vault da conta pinada). */
+  persistGeminiRotatedCreds?: LiveUsageAuthResolvers['persistGeminiRotatedCreds'];
   resolveLongcatApiKey?: (
     accountId?: string,
   ) => string | null | Promise<string | null>;
@@ -643,6 +646,9 @@ export class QuotaService {
               persistKimiRotatedCredsAuth(accountId, rotated)),
       resolveGeminiToken: this.#deps.resolveGeminiToken,
       resolveGeminiOauthCreds: this.#deps.resolveGeminiOauthCreds,
+      persistGeminiRotatedCreds:
+        this.#deps.persistGeminiRotatedCreds ??
+        (process.env.VITEST ? undefined : persistGeminiRotatedCredsAuth),
       resolveLongcatApiKey: this.#deps.resolveLongcatApiKey,
       resolveLongcatApiKeyCandidates: this.#deps.resolveLongcatApiKeyCandidates,
       resolveGenericApiKeyCandidates: this.#deps.resolveGenericApiKeyCandidates,

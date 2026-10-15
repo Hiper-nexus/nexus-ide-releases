@@ -117,10 +117,25 @@ export function parseAgyUserQuota(
   ];
 }
 
+/** Grant de um refresh Google bem-sucedido. */
+export interface GeminiRefreshedGrant {
+  accessToken: string;
+  /** Só quando o Google devolveu refresh token (rotação). */
+  refreshToken?: string;
+  /** Epoch ms, de `expires_in`. */
+  expiryDate?: number;
+  /** O `iat` dele é o sinal de emissão que auth-freshness compara. */
+  idToken?: string;
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === 'string' && value ? value : undefined;
+}
+
 export async function refreshGeminiAccessToken(
   refreshToken: string,
-  opts?: { fetchImpl?: FetchLike; timeoutMs?: number },
-): Promise<string | null> {
+  opts?: { fetchImpl?: FetchLike; timeoutMs?: number; now?: number },
+): Promise<GeminiRefreshedGrant | null> {
   const rt = refreshToken?.trim();
   if (!rt) return null;
   const fetchImpl = opts?.fetchImpl ?? (globalThis.fetch as FetchLike);
@@ -148,10 +163,25 @@ export async function refreshGeminiAccessToken(
       signal: controller.signal,
     });
     if (!res.ok) return null;
-    const json = (await res.json()) as { access_token?: unknown };
-    return typeof json.access_token === 'string' && json.access_token
-      ? json.access_token
-      : null;
+    const json = (await res.json()) as {
+      access_token?: unknown;
+      refresh_token?: unknown;
+      expires_in?: unknown;
+      id_token?: unknown;
+    };
+    const accessToken = nonEmptyString(json.access_token);
+    if (!accessToken) return null;
+    const rotated = nonEmptyString(json.refresh_token);
+    const idToken = nonEmptyString(json.id_token);
+    const expiresIn = json.expires_in;
+    return {
+      accessToken,
+      ...(rotated ? { refreshToken: rotated } : {}),
+      ...(typeof expiresIn === 'number' && Number.isFinite(expiresIn) && expiresIn > 0
+        ? { expiryDate: (opts?.now ?? Date.now()) + expiresIn * 1000 }
+        : {}),
+      ...(idToken ? { idToken } : {}),
+    };
   } catch {
     return null;
   } finally {
@@ -167,6 +197,11 @@ export async function fetchAgyUsageWindows(
     now?: number;
     /** Default false: o login nativo ~/.gemini é do CLI, não da sonda de cota. */
     allowRefresh?: boolean;
+    /**
+     * Destino do grant renovado (a linhagem de onde a credencial veio). Sem
+     * ele o refresh fica só em memória e o blob salvo segue vencido.
+     */
+    persistRefreshed?: (grant: GeminiRefreshedGrant) => void;
   },
 ): Promise<QuotaWindow[] | null> {
   const fetchImpl = opts?.fetchImpl ?? (globalThis.fetch as FetchLike);
@@ -180,10 +215,19 @@ export async function fetchAgyUsageWindows(
     (typeof creds.expiryDate === 'number' && creds.expiryDate < now + 60_000);
 
   if (expired && creds.refreshToken && opts?.allowRefresh === true) {
-    access = await refreshGeminiAccessToken(creds.refreshToken, {
+    const grant = await refreshGeminiAccessToken(creds.refreshToken, {
       fetchImpl,
       timeoutMs,
+      now,
     });
+    access = grant?.accessToken ?? null;
+    if (grant && opts.persistRefreshed) {
+      try {
+        opts.persistRefreshed(grant);
+      } catch {
+        /* write-back best-effort: a leitura deste ciclo segue com o access novo */
+      }
+    }
   }
   if (!access) return null;
 

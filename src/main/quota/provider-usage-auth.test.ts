@@ -65,8 +65,12 @@ import {
   fetchCodexAccountUsage, resolveClaudeToken, resolveCodexAuthCandidates, resolveProviderApiKeyCandidates,
   resolveGrokAccessTokenCandidates, resolveKimiAccessTokenCandidates,
   resolveKimiOauthCreds, resolveGeminiOauthCreds, persistKimiRotatedCreds,
-  parseGeminiOauthBlob, hasClaudeNativeSession,
+  parseGeminiOauthBlob, hasClaudeNativeSession, persistGeminiRotatedCreds,
 } from './provider-usage-auth';
+import { fetchLiveProviderWindows } from './provider-live-usage';
+import { GEMINI_TOKEN_URL } from './agy-usage';
+import { compareAuthFreshness } from '../adapters/auth-freshness';
+import { managedHomePath } from '../adapters/managed-credentials';
 import { discoveredModelStateFor, resetModelDiscoveryForTests } from '../adapters/model-discovery';
 
 const tempHomes: string[] = [];
@@ -360,6 +364,155 @@ describe('persistKimiRotatedCreds', () => {
     mocks.getAccount.mockReturnValue({ adapterId: 'grok' });
     persistKimiRotatedCreds('acct-9', { accessToken: 'x' });
     expect(mocks.setSecret).not.toHaveBeenCalled();
+  });
+});
+
+/** JWT sem assinatura: auth-freshness só lê os claims (`iat`). */
+function unsignedJwt(claims: Record<string, unknown>): string {
+  return `eyJhbGciOiJub25lIn0.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.sig`;
+}
+
+function inMemoryVault(): Map<string, string> {
+  const vault = new Map<string, string>();
+  mocks.getSecret.mockImplementation((key) => vault.get(key) ?? null);
+  mocks.setSecret.mockImplementation((key, value) => {
+    vault.set(key, value);
+  });
+  return vault;
+}
+
+describe('persistGeminiRotatedCreds', () => {
+  const NOW = Date.parse('2026-10-15T12:00:00Z');
+  const identity = { sub: 'google-sub-1', email: 'reserva@example.test' };
+
+  it('conta AGY em Reserva: o refresh grava access, expiry e refresh rotacionado no vault e a cota sai', async () => {
+    const vault = inMemoryVault();
+    mocks.getAccount.mockReturnValue({ adapterId: 'agy', email: identity.email });
+    const prior = JSON.stringify({
+      access_token: 'old-at',
+      refresh_token: 'old-rt',
+      expiry_date: NOW - 3_600_000,
+      id_token: unsignedJwt({ ...identity, iat: NOW / 1000 - 7_200 }),
+      scope: 'cloud-platform',
+    });
+    vault.set('acctcred:acct-reserva', prior);
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url === GEMINI_TOKEN_URL) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            access_token: 'new-at',
+            refresh_token: 'new-rt',
+            expires_in: 3600,
+            id_token: unsignedJwt({ ...identity, iat: NOW / 1000 }),
+          }),
+        };
+      }
+      if (url.includes('retrieveUserQuota')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ buckets: [{ remainingFraction: 0.4, tokenType: 'REQUESTS' }] }),
+        };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    });
+    const deps = {
+      resolveGeminiOauthCreds,
+      persistGeminiRotatedCreds,
+      fetchImpl: fetchImpl as never,
+    };
+
+    const probe = await fetchLiveProviderWindows('agy', 'acct-reserva', deps, NOW);
+
+    expect(probe.windows?.[0]?.usedRatio).toBeCloseTo(0.6);
+    const saved = vault.get('acctcred:acct-reserva') ?? '';
+    expect(JSON.parse(saved)).toMatchObject({
+      access_token: 'new-at',
+      refresh_token: 'new-rt',
+      expiry_date: NOW + 3_600_000,
+      scope: 'cloud-platform',
+    });
+    expect(await resolveGeminiOauthCreds('acct-reserva')).toEqual({
+      accessToken: 'new-at',
+      refreshToken: 'new-rt',
+      expiryDate: NOW + 3_600_000,
+    });
+    // O id_token novo carrega o `iat`: o blob renovado é o mais fresco para
+    // materialize/read-back, e a cópia velha não volta ao cofre.
+    expect(compareAuthFreshness(saved, prior)).toBe(1);
+
+    fetchImpl.mockClear();
+    const next = await fetchLiveProviderWindows('agy', 'acct-reserva', deps, NOW + 60_000);
+    expect(next.windows?.[0]?.usedRatio).toBeCloseTo(0.6);
+    expect(fetchImpl).not.toHaveBeenCalledWith(GEMINI_TOKEN_URL, expect.anything());
+  });
+
+  it('envelope Go do AGY: atualiza o token aninhado, expiry RFC 3339 e mantém o refresh usado', () => {
+    const vault = inMemoryVault();
+    mocks.getAccount.mockReturnValue({ adapterId: 'agy' });
+    vault.set('acctcred:acct-go', JSON.stringify({
+      auth_method: 'oauth',
+      token: { access_token: 'old-at', token_type: 'Bearer', refresh_token: 'rt-1', expiry: '2026-10-15T10:00:00Z' },
+    }));
+    persistGeminiRotatedCreds('acct-go', { accessToken: 'new-at', expiryDate: NOW + 3_600_000 }, 'rt-1');
+    expect(JSON.parse(vault.get('acctcred:acct-go') ?? '')).toEqual({
+      auth_method: 'oauth',
+      token: {
+        access_token: 'new-at',
+        token_type: 'Bearer',
+        refresh_token: 'rt-1',
+        expiry: '2026-10-15T13:00:00.000Z',
+      },
+    });
+  });
+
+  it('não escreve em conta de outro provider nem em snapshot de diretório', () => {
+    const vault = inMemoryVault();
+    mocks.getAccount.mockReturnValue({ adapterId: 'kimi' });
+    persistGeminiRotatedCreds('acct-kimi', { accessToken: 'x' }, 'rt');
+    mocks.getAccount.mockReturnValue({ adapterId: 'agy' });
+    vault.set('acctcred:acct-snap', JSON.stringify({ __nexusDirSnapshot: true, root: 'antigravity', files: {} }));
+    persistGeminiRotatedCreds('acct-snap', { accessToken: 'x' }, 'rt');
+    expect(mocks.setSecret).not.toHaveBeenCalled();
+  });
+
+  it('linha nativa: só a rotação volta ao ~/.gemini, e só se o arquivo ainda tem o refresh usado', () => {
+    const file = path.join(os.homedir(), '.gemini', 'oauth_creds.json');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const original = JSON.stringify({ access_token: 'cli-at', refresh_token: 'cli-rt', expiry_date: 1, scope: 's' });
+    fs.writeFileSync(file, original);
+
+    persistGeminiRotatedCreds(undefined, { accessToken: 'n-at', expiryDate: NOW }, 'cli-rt');
+    expect(fs.readFileSync(file, 'utf8')).toBe(original);
+    persistGeminiRotatedCreds(undefined, { accessToken: 'n-at', refreshToken: 'n-rt' }, 'outro-login-rt');
+    expect(fs.readFileSync(file, 'utf8')).toBe(original);
+
+    persistGeminiRotatedCreds(undefined, { accessToken: 'n-at', refreshToken: 'n-rt', expiryDate: NOW }, 'cli-rt');
+    expect(JSON.parse(fs.readFileSync(file, 'utf8'))).toEqual({
+      access_token: 'n-at', refresh_token: 'n-rt', expiry_date: NOW, scope: 's',
+    });
+    if (process.platform !== 'win32') expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+    expect(mocks.setSecret).not.toHaveBeenCalled();
+  });
+
+  it('conta pinada lê o managed home que o CLI do pane renovou antes do vault', async () => {
+    const vault = inMemoryVault();
+    mocks.getAccount.mockReturnValue({ adapterId: 'agy' });
+    vault.set('acctcred:acct-pane', JSON.stringify({
+      access_token: 'vault-at', refresh_token: 'vault-rt', expiry_date: NOW - 1,
+      id_token: unsignedJwt({ ...identity, iat: NOW / 1000 - 7_200 }),
+    }));
+    const managed = path.join(managedHomePath('agy', 'acct-pane'), 'oauth_creds.json');
+    fs.mkdirSync(path.dirname(managed), { recursive: true });
+    fs.writeFileSync(managed, JSON.stringify({
+      access_token: 'cli-at', refresh_token: 'cli-rt', expiry_date: NOW + 3_000_000,
+      id_token: unsignedJwt({ ...identity, iat: NOW / 1000 }),
+    }));
+    expect(await resolveGeminiOauthCreds('acct-pane')).toEqual({
+      accessToken: 'cli-at', refreshToken: 'cli-rt', expiryDate: NOW + 3_000_000,
+    });
   });
 });
 
