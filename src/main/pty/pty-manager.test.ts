@@ -1298,6 +1298,71 @@ it('A1: warm children reserve both trial slots and adoption reuses a reservation
 });
 
 describe("PTY session ownership (renderer capability boundary)", () => {
+  it("readoção zera a janela de ACK: as mensagens em voo do renderer anterior não seguram o push do novo", async () => {
+    const real = fakeHost();
+    let handlers: PtySessionHandlers | null = null;
+    setPtyHost({
+      spawn(spec, next) {
+        handlers = next;
+        return real.host.spawn(spec, next);
+      },
+    });
+    const authority = legacyManualWorker();
+    const { sessionId } = spawnMainOwnedAgentSession(
+      { kind: "cli-agent", cols: 120, rows: 36, paneId: "pane-window-reset", adapterId: "test-cli" },
+      makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }),
+      {},
+      authority,
+    );
+    const claim = {
+      paneId: "pane-window-reset",
+      adapterId: "test-cli",
+      missionId: "mission-worker",
+      role: "worker" as const,
+      workerIncarnationId: "worker-incarnation-main-owned",
+      model: undefined,
+      accountId: undefined,
+      effort: undefined,
+      cwd: authority.cwd,
+      agentName: undefined,
+      readOnly: false,
+      nativeReadOnly: true,
+      allowedTools: [] as string[],
+      allowedSkills: null,
+      authoritySeal: undefined,
+      scope: authority.scope,
+    };
+    const makeOwner = () => {
+      const send = vi.fn();
+      return { send, wc: { isDestroyed: () => false, isCrashed: () => false, send } as unknown as WebContents };
+    };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const first = makeOwner();
+      expect(adoptMainOwnedAgentSession(first.wc, claim)).not.toBeNull();
+      const h = handlers as PtySessionHandlers | null;
+      const big = "x".repeat(40 * 1024);
+      h?.onData(big); // em voo
+      h?.onData(big); // em voo: 80 KiB, janela de caracteres cheia
+      h?.onData(big); // retido atrás da janela
+      const dataSends = (send: ReturnType<typeof vi.fn>) =>
+        send.mock.calls.filter(([channel]) => channel === PTY_CHANNELS.data);
+      expect(dataSends(first.send)).toHaveLength(2);
+
+      // A janela fecha: o renderer sai (reload) sem confirmar nada.
+      killSessionsFor(first.wc);
+      const second = makeOwner();
+      expect(adoptMainOwnedAgentSession(second.wc, claim)).not.toBeNull();
+      h?.onData(big);
+      // As 2 mensagens do renderer anterior não existem mais para o novo: o retido sai já.
+      const sent = dataSends(second.send).map(([, event]) => event as { sequence: number });
+      expect(sent.map((event) => event.sequence)).toEqual([3, 4]);
+    } finally {
+      warn.mockRestore();
+      await orchTerminateSession(sessionId);
+    }
+  });
+
   it("keeps a detached mission agent in the app-shutdown physical inventory", async () => {
     const h = fakeHost();
     setPtyHost(h.host);
@@ -1563,13 +1628,10 @@ describe("PTY session ownership (renderer capability boundary)", () => {
         ),
       ).toHaveLength(1);
 
-      // O ack do que o renderer recebeu libera a janela: os pausados saem em
-      // ordem, sem saída nova e sem pull — um por vez, cada um enche a janela.
+      // O recover acima ENTREGOU 2..4 ao renderer: não são empurrados de novo
+      // (uma faixa que cruzasse o high-water dele seria descartada inteira).
       acknowledgeSessionOutput(owner, sessionId, 1);
-      expect(dataSends().map(([, e]) => e.sequence)).toEqual([1, 2]);
-      acknowledgeSessionOutput(owner, sessionId, 2);
-      acknowledgeSessionOutput(owner, sessionId, 3);
-      expect(dataSends().map(([, e]) => e.sequence)).toEqual([1, 2, 3, 4]);
+      expect(dataSends().map(([, e]) => e.sequence)).toEqual([1]);
       acknowledgeSessionOutput(owner, sessionId, 4);
       h?.onData("tail");
       expect(dataSends().at(-1)?.[1]).toEqual({
@@ -1577,14 +1639,21 @@ describe("PTY session ownership (renderer capability boundary)", () => {
         data: "tail",
         sequence: 5,
       });
-      expect(dataSends()).toHaveLength(5);
+      expect(dataSends()).toHaveLength(2);
     } finally {
       warn.mockRestore();
       orchKillSession(sessionId);
     }
   });
 
-  it("rajada de 20 chunks: o ack do que chegou empurra o resto em ordem, sem saída nova nem pull", () => {
+  /** Sequências cobertas por um evento de push (faixa coalescida: firstSequence..sequence). */
+  const coveredSequences = (event: { sequence: number; firstSequence?: number }): number[] =>
+    Array.from(
+      { length: event.sequence - (event.firstSequence ?? event.sequence) + 1 },
+      (_, i) => (event.firstSequence ?? event.sequence) + i,
+    );
+
+  it("rajada de 20 chunks: o ack do que chegou empurra o resto coalescido e em ordem, sem saída nova nem pull", () => {
     let handlers: PtySessionHandlers | null = null;
     setPtyHost({
       spawn(_spec, nextHandlers) {
@@ -1612,25 +1681,28 @@ describe("PTY session ownership (renderer capability boundary)", () => {
       const received = () =>
         send.mock.calls
           .filter(([channel]) => channel === PTY_CHANNELS.data)
-          .map(([, e]) => e as { sessionId: string; data: string; sequence: number });
-      expect(received().map((e) => e.sequence)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+          .map(([, e]) => e as { sessionId: string; data: string; sequence: number; firstSequence?: number });
+      const covered = () => received().flatMap(coveredSequences);
+      // Os dois primeiros saem direto; o resto fica retido para sair junto.
+      expect(received().map((e) => e.sequence)).toEqual([1, 2]);
 
       // Renderer acka só o que recebeu, como o preload faz — sem pty:recover.
       let guard = 0;
-      while (received().length < 20 && guard < 10) {
-        const last = received().at(-1)!.sequence;
-        acknowledgeSessionOutput(owner, sessionId, last);
+      while (covered().length < 20 && guard < 10) {
+        acknowledgeSessionOutput(owner, sessionId, received().at(-1)!.sequence);
         guard += 1;
       }
-      const seqs = received().map((e) => e.sequence);
-      expect(seqs).toEqual(Array.from({ length: 20 }, (_, i) => i + 1));
-      expect(received().map((e) => e.data)).toEqual(
-        Array.from({ length: 20 }, (_, i) => `chunk-${i + 1};`),
+      expect(covered()).toEqual(Array.from({ length: 20 }, (_, i) => i + 1));
+      // Bytes na mesma ordem, uma única vez, em bem menos de 20 mensagens.
+      expect(received().map((e) => e.data).join("")).toBe(
+        Array.from({ length: 20 }, (_, i) => `chunk-${i + 1};`).join(""),
       );
+      expect(received().length).toBeLessThanOrEqual(3);
       expect(received().every((e) => e.sessionId === sessionId)).toBe(true);
       // Ack final não re-envia nada.
+      const sent = received().length;
       acknowledgeSessionOutput(owner, sessionId, 20);
-      expect(received()).toHaveLength(20);
+      expect(received()).toHaveLength(sent);
     } finally {
       warn.mockRestore();
       orchKillSession(sessionId);
@@ -1662,18 +1734,24 @@ describe("PTY session ownership (renderer capability boundary)", () => {
     try {
       const h = handlers as PtySessionHandlers | null;
       for (let i = 1; i <= 12; i += 1) h?.onData(`c${i}`);
-      const seqs = () =>
+      const events = () =>
         send.mock.calls
           .filter(([channel]) => channel === PTY_CHANNELS.data)
-          .map(([, e]) => (e as { sequence: number }).sequence);
-      expect(seqs()).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
-      // Ack parcial libera 2 vagas; o drain no ack leva 9 e 10.
-      acknowledgeSessionOutput(owner, sessionId, 2);
-      expect(seqs()).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-      // Mais vagas e chunk novo: 11 e 12 saem antes do 13.
-      acknowledgeSessionOutput(owner, sessionId, 10);
+          .map(([, e]) => e as { sequence: number; firstSequence?: number; data: string });
+      const seqs = () => events().flatMap(coveredSequences);
+      expect(seqs()).toEqual([1, 2]);
+      // O ack libera a janela: os retidos 3..12 saem JUNTOS e em ordem.
+      acknowledgeSessionOutput(owner, sessionId, 1);
+      expect(seqs()).toEqual(Array.from({ length: 12 }, (_, i) => i + 1));
+      expect(events().at(-1)).toMatchObject({ firstSequence: 3, sequence: 12 });
+      // Já há 2 mensagens em voo: o chunk novo não fura a fila, espera o ack.
       h?.onData("c13");
+      expect(seqs()).toEqual(Array.from({ length: 12 }, (_, i) => i + 1));
+      acknowledgeSessionOutput(owner, sessionId, 12);
       expect(seqs()).toEqual(Array.from({ length: 13 }, (_, i) => i + 1));
+      expect(events().map((e) => e.data).join("")).toBe(
+        Array.from({ length: 13 }, (_, i) => `c${i + 1}`).join(""),
+      );
     } finally {
       warn.mockRestore();
       orchKillSession(sessionId);
@@ -1711,8 +1789,10 @@ describe("PTY session ownership (renderer capability boundary)", () => {
       });
       const stream = send.mock.calls
         .filter(([channel]) => channel === PTY_CHANNELS.data || channel === PTY_CHANNELS.exit)
-        .map(([channel, e]) =>
-          channel === PTY_CHANNELS.exit ? "exit" : (e as { sequence: number }).sequence,
+        .flatMap<string | number>(([channel, e]) =>
+          channel === PTY_CHANNELS.exit
+            ? ["exit"]
+            : coveredSequences(e as { sequence: number; firstSequence?: number }),
         );
       expect(stream).toEqual([...Array.from({ length: 20 }, (_, i) => i + 1), "exit"]);
     } finally {

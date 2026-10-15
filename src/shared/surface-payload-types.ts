@@ -649,7 +649,10 @@ export type SpawnResult =
 export interface PtyDataEvent {
   sessionId: string;
   data: string;
+  /** Sequência do chunk; numa mensagem coalescida, a do ÚLTIMO chunk da faixa. */
   sequence: number;
+  /** Só em mensagem coalescida: sequência do primeiro chunk (`firstSequence`..`sequence`). */
+  firstSequence?: number;
 }
 
 /**

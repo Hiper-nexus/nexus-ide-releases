@@ -35,10 +35,14 @@ export type PtyGapPushResult = {
   gapHealed: boolean;
 };
 
+/** Faixa de sequências coalescida pelo Main: `first`..`last`, um único `data`. */
+type PendingRange = { last: number; data: string };
+
 export class PtyGapBuffer {
   /** Contiguous high-water: only advances for delivered sequences. */
   highWater = 0;
-  private pending = new Map<number, string>();
+  /** Chaveado pela PRIMEIRA sequência da faixa (um chunk simples é first === last). */
+  private pending = new Map<number, PendingRange>();
   private pendingChars = 0;
 
   get pendingCount(): number {
@@ -50,22 +54,29 @@ export class PtyGapBuffer {
   }
 
   /**
-   * Feed one chunk. Returns the contiguous run to deliver (empty when the
-   * chunk was a duplicate or was buffered behind a hole).
+   * Feed one chunk, or one coalesced range (`firstSequence`..`sequence` in a
+   * single `data`, as the Main's drain sends it). Returns the contiguous run
+   * to deliver (empty when the chunk was a duplicate or was buffered behind a
+   * hole). A range that overlaps what was already delivered is not delivered:
+   * without per-chunk lengths it cannot be sliced, so it is dropped and the
+   * recover pull fetches the remainder chunk by chunk.
    */
-  push(sequence: number, data: string): PtyGapPushResult {
+  push(sequence: number, data: string, firstSequence = sequence): PtyGapPushResult {
     if (sequence <= this.highWater) {
       return { chunks: [], gapHealed: false }; // duplicate / already acked
     }
-    if (sequence === this.highWater + 1) {
+    if (firstSequence <= this.highWater) {
+      return { chunks: [], gapHealed: false }; // partial overlap: recover pulls the rest
+    }
+    if (firstSequence === this.highWater + 1) {
       const chunks: PtyGapChunk[] = [{ sequence, data }];
       this.highWater = sequence;
       this.flushInto(chunks);
       return { chunks, gapHealed: false };
     }
     // Out-of-order: buffer behind the hole and let the recover pull fill it.
-    if (!this.pending.has(sequence)) {
-      this.pending.set(sequence, data);
+    if (!this.pending.has(firstSequence)) {
+      this.pending.set(firstSequence, { last: sequence, data });
       this.pendingChars += data.length;
     }
     if (
@@ -88,10 +99,11 @@ export class PtyGapBuffer {
   acceptHole(resumeSequence: number): PtyGapChunk[] {
     if (resumeSequence <= this.highWater + 1) return [];
     this.highWater = resumeSequence - 1;
-    for (const [sequence, chunk] of this.pending) {
-      if (sequence <= this.highWater) {
-        this.pending.delete(sequence);
-        this.pendingChars -= chunk.length;
+    for (const [first, range] of this.pending) {
+      // Uma faixa que cruza o ponto de retomada também sai: o recover repõe o resto.
+      if (first <= this.highWater) {
+        this.pending.delete(first);
+        this.pendingChars -= range.data.length;
       }
     }
     const chunks: PtyGapChunk[] = [];
@@ -108,14 +120,11 @@ export class PtyGapBuffer {
   }
 
   private flushInto(chunks: PtyGapChunk[]): void {
-    let next = this.highWater + 1;
-    while (this.pending.has(next)) {
-      const data = this.pending.get(next)!;
-      this.pending.delete(next);
-      this.pendingChars -= data.length;
-      this.highWater = next;
-      chunks.push({ sequence: next, data });
-      next += 1;
+    for (let range = this.pending.get(this.highWater + 1); range; range = this.pending.get(this.highWater + 1)) {
+      this.pending.delete(this.highWater + 1);
+      this.pendingChars -= range.data.length;
+      this.highWater = range.last;
+      chunks.push({ sequence: range.last, data: range.data });
     }
   }
 }

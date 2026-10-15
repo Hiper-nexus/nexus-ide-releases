@@ -334,7 +334,7 @@ function deliverRecoveredPtyData(
 function deliverPtyData(payload: PtyDataEvent, meta?: PtyDataMeta): void {
   const sessionId = payload.sessionId;
   const buffer = ptyGapBuffer(sessionId);
-  const result = buffer.push(payload.sequence, payload.data);
+  const result = buffer.push(payload.sequence, payload.data, payload.firstSequence);
   if (result.gapHealed) {
     warnPtyGapThrottled(
       sessionId,

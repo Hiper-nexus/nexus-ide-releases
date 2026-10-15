@@ -24,8 +24,9 @@ try {
   }, { ghosttyWasmPath, trace: (event) => port.postMessage({ kind: 'trace', event }) });
   port.on('message', (record: AnalysisInput) => {
     current = record;
+    // O início vai pela memória compartilhada (token + horário); o Main confere em 250 ms.
+    // Sem mensagem por registro: o resultado é a única.
     if (record.watchdogToken) progress?.start(record.watchdogToken);
-    port.postMessage({ kind: 'work-start', workerEpoch: record.workerEpoch, job: record.eventSeq, sessionId: record.sessionId, watchdogToken: record.watchdogToken });
     core.process(record);
     if (record.watchdogToken) progress?.complete(record.watchdogToken);
     current = null;

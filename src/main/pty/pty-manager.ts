@@ -241,8 +241,14 @@ interface Session {
   replayChars: number;
   /** Highest sequence actually handed to `wc.send` (not merely buffered). */
   lastPushedSequence: number;
-  /** Pushed-but-unacked chunks in flight — T3 `OutputProtocol` window. */
-  pendingPushChunks: number;
+  /**
+   * Mensagens de push em voo (sem ack), em ordem, com a última sequência e os
+   * chars de cada uma — janela T3 `OutputProtocol`: o que conta é mensagem de
+   * IPC, não chunk. Só o ack as libera; a evicção do replay não mexe nela.
+   */
+  pushedMessages: Array<{ end: number; chars: number }>;
+  /** Timer da janela curta de coalescência (chunks retidos saem juntos). */
+  pushFlushTimer: ReturnType<typeof setTimeout> | null;
   /** Sum of `data.length` for those in-flight chunks. */
   pendingPushChars: number;
   /** Throttle marker for the output-backpressure warning. */
@@ -1160,6 +1166,20 @@ function canSend(wc: WebContents | null): wc is WebContents {
  */
 const MAX_PENDING_PUSH_CHUNKS = 8;
 const MAX_PENDING_PUSH_CHARS = 64 * 1024;
+/**
+ * Coalescência do push (#17): o primeiro chunk depois do idle e o seguinte
+ * saem na hora (eco de tecla não espera nada); com `afterMessages` mensagens
+ * já em voo, os chunks seguintes ficam retidos no replay e saem JUNTOS numa
+ * mensagem (faixa `firstSequence`..`sequence`) quando o ack chega, quando a
+ * janela curta vence ou quando os retidos passam de `flushChars`. A janela
+ * T3 (8 mensagens / 64 KiB em voo) continua mandando: o renderer não é afogado.
+ */
+export const PTY_PUSH_COALESCE = {
+  windowMs: 4,
+  afterMessages: 2,
+  flushChars: 32 * 1024,
+  maxChars: MAX_PENDING_PUSH_CHARS,
+} as const;
 const OUTPUT_BACKPRESSURE_WARN_INTERVAL_MS = 30_000;
 
 function warnOutputBackpressureThrottled(
@@ -1176,7 +1196,7 @@ function warnOutputBackpressureThrottled(
   session.lastBackpressureWarnAt = now;
   console.warn(
     `[pty-manager] output backpressure for ${sessionId}: ` +
-      `unacked ${session.replayChars} chars / ${session.pendingPushChunks} chunks ` +
+      `unacked ${session.replayChars} chars / ${session.pushedMessages.length} messages ` +
       `(window ${MAX_PENDING_PUSH_CHUNKS}×${MAX_PENDING_PUSH_CHARS}); ` +
       `push paused until the renderer acks`,
   );
@@ -1251,19 +1271,40 @@ function makeSessionId(): string {
  */
 function pushWindowHasRoom(session: Session): boolean {
   return (
-    session.pendingPushChunks < MAX_PENDING_PUSH_CHUNKS &&
+    session.pushedMessages.length < MAX_PENDING_PUSH_CHUNKS &&
     session.pendingPushChars < MAX_PENDING_PUSH_CHARS
   );
 }
 
 function pushOutputEvent(
   session: Session,
-  event: { sessionId: string; data: string; sequence: number },
+  event: { sessionId: string; data: string; sequence: number; firstSequence?: number },
 ): void {
   session.wc!.send(PTY_CHANNELS.data, event);
   session.lastPushedSequence = event.sequence;
-  session.pendingPushChunks += 1;
+  session.pushedMessages.push({ end: event.sequence, chars: event.data.length });
   session.pendingPushChars += event.data.length;
+}
+
+/** O ack cobriu estas mensagens até o fim delas: a janela reabre. */
+function releasePushedMessages(session: Session, throughSequence: number): void {
+  const messages = session.pushedMessages;
+  let released = 0;
+  while (released < messages.length && messages[released]!.end <= throughSequence) {
+    session.pendingPushChars -= messages[released]!.chars;
+    released += 1;
+  }
+  if (released > 0) messages.splice(0, released);
+}
+
+/**
+ * Novo renderer (readoção/reattach): as mensagens em voo eram do anterior e
+ * nunca serão confirmadas; o replay do novo recomeça do ack. A janela volta a
+ * abrir em vez de ficar cheia até o pull de 15 s.
+ */
+function resetPushWindow(session: Session): void {
+  session.pushedMessages = [];
+  session.pendingPushChars = 0;
 }
 
 /** Índice da primeira entrada do replay com sequence > lastPushedSequence. */
@@ -1300,15 +1341,50 @@ function drainPausedOutput(
 ): void {
   if (!canSend(session.wc)) return;
   const replay = session.replay;
-  for (let i = firstUnpushedReplayIndex(session); i < replay.length; i += 1) {
+  let i = firstUnpushedReplayIndex(session);
+  while (i < replay.length) {
     if (!endOfStream && !pushWindowHasRoom(session)) return;
-    const entry = replay[i]!;
-    pushOutputEvent(session, {
-      sessionId,
-      data: entry.data,
-      sequence: entry.sequence,
-    });
+    const first = replay[i]!;
+    // Uma mensagem leva a faixa contígua que cabe no que resta da janela de
+    // caracteres (nunca menos que o primeiro chunk, que sempre sai).
+    const budget = endOfStream
+      ? PTY_PUSH_COALESCE.maxChars
+      : Math.min(
+          PTY_PUSH_COALESCE.maxChars,
+          Math.max(first.data.length, MAX_PENDING_PUSH_CHARS - session.pendingPushChars),
+        );
+    let chars = first.data.length;
+    let end = i + 1;
+    while (end < replay.length && chars + replay[end]!.data.length <= budget) {
+      chars += replay[end]!.data.length;
+      end += 1;
+    }
+    const last = replay[end - 1]!;
+    if (end - i === 1) {
+      pushOutputEvent(session, { sessionId, data: first.data, sequence: first.sequence });
+    } else {
+      let data = '';
+      for (let j = i; j < end; j += 1) data += replay[j]!.data;
+      pushOutputEvent(session, {
+        sessionId,
+        data,
+        sequence: last.sequence,
+        firstSequence: first.sequence,
+      });
+    }
+    i = end;
   }
+}
+
+/** Janela curta: chunks retidos atrás de mensagens em voo saem juntos. */
+function schedulePushFlush(session: Session, sessionId: string): void {
+  if (session.pushFlushTimer) return;
+  session.pushFlushTimer = setTimeout(() => {
+    session.pushFlushTimer = null;
+    if (sessions.get(sessionId) !== session) return;
+    drainPausedOutput(session, sessionId);
+  }, PTY_PUSH_COALESCE.windowMs);
+  session.pushFlushTimer.unref?.();
 }
 
 /** Unacked output kept for recover pulls (~1M chars). */
@@ -1340,10 +1416,6 @@ function onSessionData(
     ) {
       const dropped = session.replay[drop];
       session.replayChars -= dropped.data.length;
-      if (dropped.sequence <= session.lastPushedSequence) {
-        session.pendingPushChunks = Math.max(0, session.pendingPushChunks - 1);
-        session.pendingPushChars = Math.max(0, session.pendingPushChars - dropped.data.length);
-      }
       drop += 1;
     }
     session.replay.splice(0, drop);
@@ -1351,18 +1423,22 @@ function onSessionData(
   if (canSend(session.wc)) {
     if (
       session.lastPushedSequence === event.sequence - 1 &&
-      pushWindowHasRoom(session)
+      pushWindowHasRoom(session) &&
+      session.pushedMessages.length < PTY_PUSH_COALESCE.afterMessages
     ) {
-      // Caminho quente: nada pausado à frente e janela aberta — envio direto.
+      // Caminho quente: nada retido à frente e poucas mensagens em voo — envio direto.
       pushOutputEvent(session, event);
-    } else {
-      // Há pausados à frente (ou a janela fechou): o chunk novo não fura a
-      // fila. O dreno respeita a ordem e a janela; o que sobrar sai no
-      // próximo ack, e o recover pull continua cobrindo buracos.
-      drainPausedOutput(session, sessionId);
-      if (session.lastPushedSequence < event.sequence) {
-        warnOutputBackpressureThrottled(sessionId, session);
+    } else if (pushWindowHasRoom(session)) {
+      // Retido para sair coalescido: no ack, na janela curta ou ao juntar bytes
+      // suficientes. Não fura a fila: o dreno respeita a ordem e a janela.
+      if (Math.max(0, session.replayChars - session.pendingPushChars) >= PTY_PUSH_COALESCE.flushChars) {
+        drainPausedOutput(session, sessionId);
+      } else {
+        schedulePushFlush(session, sessionId);
       }
+    } else {
+      // Janela fechada: o ack reabre; o recover pull continua cobrindo buracos.
+      warnOutputBackpressureThrottled(sessionId, session);
     }
   }
   // F-764 C.1: taps de dados em lote por sessão (o push ao renderer acima e a
@@ -1458,6 +1534,7 @@ function finalizeSession(
   terminationOrigins.delete(sessionId);
   resizeDropTracedSessions.delete(sessionId);
   if (s.idleTimer) clearTimeout(s.idleTimer);
+  if (s.pushFlushTimer) clearTimeout(s.pushFlushTimer);
   if (s.hookBusyTimer) clearTimeout(s.hookBusyTimer);
   if (s.missionOrchestratorGrantTimer) {
     clearTimeout(s.missionOrchestratorGrantTimer);
@@ -1638,7 +1715,8 @@ export function spawnSession(
       replay: [],
       replayChars: 0,
       lastPushedSequence: 0,
-      pendingPushChunks: 0,
+      pushedMessages: [],
+      pushFlushTimer: null,
       pendingPushChars: 0,
       lastBackpressureWarnAt: 0,
       shellIntegrationCleanup: [...cleanupPaths],
@@ -3409,7 +3487,8 @@ export function spawnAgentSession(
     replay: [],
     replayChars: 0,
     lastPushedSequence: 0,
-    pendingPushChunks: 0,
+    pushedMessages: [],
+    pushFlushTimer: null,
     pendingPushChars: 0,
     lastBackpressureWarnAt: 0,
     shellIntegrationCleanup: [],
@@ -3624,6 +3703,7 @@ export function adoptMainOwnedAgentSession(
   if (matches.length !== 1) return null;
   const [sessionId, session] = matches[0]!;
   session.wc = wc;
+  resetPushWindow(session);
   if (canSend(wc)) {
     wc.send(PTY_CHANNELS.stateChange, { sessionId, state: session.state });
   }
@@ -3658,6 +3738,7 @@ export function reattachDetachedMissionAgentSession(
     return false;
   }
   session.wc = wc;
+  resetPushWindow(session);
   wc.send(PTY_CHANNELS.stateChange, { sessionId, state: session.state });
   return true;
 }
@@ -3749,26 +3830,19 @@ export function acknowledgeSessionOutput(
   // Replay is ordered by sequence: drop the acknowledged prefix in place.
   let drop = 0;
   let droppedChars = 0;
-  let droppedPushedChunks = 0;
-  let droppedPushedChars = 0;
   while (
     drop < session.replay.length &&
     session.replay[drop].sequence <= session.acknowledgedSequence
   ) {
     const entry = session.replay[drop];
     droppedChars += entry.data.length;
-    if (entry.sequence <= session.lastPushedSequence) {
-      droppedPushedChunks += 1;
-      droppedPushedChars += entry.data.length;
-    }
     drop += 1;
   }
   if (drop > 0) {
     session.replay.splice(0, drop);
     session.replayChars -= droppedChars;
-    session.pendingPushChunks = Math.max(0, session.pendingPushChunks - droppedPushedChunks);
-    session.pendingPushChars = Math.max(0, session.pendingPushChars - droppedPushedChars);
   }
+  releasePushedMessages(session, session.acknowledgedSequence);
   // O ack liberou a janela: os pausados saem já, sem esperar saída nova nem o
   // pull periódico de 15 s do preload.
   drainPausedOutput(session, sessionId);
@@ -3781,9 +3855,15 @@ export function recoverSessionOutput(
 ): Array<{ sessionId: string; sequence: number; data: string }> {
   const session = ownedSession(wc, sessionId);
   if (!session) return [];
-  return session.replay
+  const entries = session.replay
     .filter((entry) => entry.sequence > afterSequence)
     .map((entry) => ({ sessionId, ...entry }));
+  // O que o pull entrega não é empurrado de novo: uma faixa coalescida que
+  // cruzasse o high-water do preload seria descartada inteira, e a cauda dela
+  // se perderia se o processo saísse antes de outro pull.
+  const last = entries.at(-1);
+  if (last) session.lastPushedSequence = Math.max(session.lastPushedSequence, last.sequence);
+  return entries;
 }
 
 export function getOwnedAgentSessionInfo(

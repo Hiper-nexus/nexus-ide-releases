@@ -1,14 +1,34 @@
 import {
-  ANALYSIS_GLOBAL_BYTES, ANALYSIS_SESSION_BYTES, ANALYSIS_UNIT_BYTES,
+  ANALYSIS_DEAD_TEXT_TTL_MS, ANALYSIS_GLOBAL_BYTES, ANALYSIS_SCREEN_CHARS, ANALYSIS_SESSION_BYTES, ANALYSIS_UNIT_BYTES,
   validAnalysisResult, type AnalysisBinding, type AnalysisConsumer,
   type AnalysisEvent, type AnalysisFence, type AnalysisInput, type AnalysisResult,
 } from './pty-analysis-protocol';
+
+/**
+ * Espelho da tela do worker: a mesma cauda de ANALYSIS_SCREEN_CHARS, montada
+ * dos deltas. Anexar é O(delta); a cauda só é materializada na leitura.
+ */
+class ScreenMirror {
+  #chunks: string[] = []; #chars = 0; #cached: string | null = '';
+  replace(text: string) { this.#chunks = text ? [text] : []; this.#chars = text.length; this.#cached = text; }
+  append(delta: string) {
+    this.#chunks.push(delta); this.#chars += delta.length; this.#cached = null;
+    if (this.#chars > 2 * ANALYSIS_SCREEN_CHARS) this.text();
+  }
+  text(): string {
+    if (this.#cached !== null) return this.#cached;
+    const joined = this.#chunks.join('');
+    const tail = joined.length > ANALYSIS_SCREEN_CHARS ? joined.slice(-ANALYSIS_SCREEN_CHARS) : joined;
+    this.#chunks = tail ? [tail] : []; this.#chars = tail.length; this.#cached = tail;
+    return tail;
+  }
+}
 
 type InputBody<T = AnalysisInput> = T extends AnalysisFence ? Omit<T, keyof AnalysisFence> : never;
 interface Session {
   totalAdmitted: number; totalAcked: number; generation: number; seq: number; lastDataSeq: number; accepted: number; queue: AnalysisInput[];
   bytes: number; status: 'active' | 'sealed' | 'degraded' | 'terminated';
-  paused: boolean; text: string; latest: Map<AnalysisConsumer, { value: unknown; fence: AnalysisFence }>; evidence: Map<AnalysisConsumer, unknown[]>;
+  paused: boolean; screen: ScreenMirror; exitedAt?: number; latest: Map<AnalysisConsumer, { value: unknown; fence: AnalysisFence }>; evidence: Map<AnalysisConsumer, unknown[]>;
 }
 interface Subscription {
   registration: number;
@@ -36,10 +56,11 @@ export class PtyAnalysisClient {
   constructor(private readonly deps: AnalysisClientDeps) {}
 
   bind(id: string, binding: AnalysisBinding): number {
+    this.#releaseDeadText();
     const prior = this.#sessions.get(id);
     if (prior) { this.deps.acknowledged?.(id, prior.bytes); this.#discard(id, prior); }
     const session: Session = { totalAdmitted: prior?.totalAdmitted ?? 0, totalAcked: prior?.totalAcked ?? 0, generation: ++this.#generation, seq: 0, lastDataSeq: 0, accepted: 0,
-      queue: [], bytes: 0, status: this.#degraded ? 'degraded' : 'active', paused: false, text: '', latest: new Map(), evidence: new Map() };
+      queue: [], bytes: 0, status: this.#degraded ? 'degraded' : 'active', paused: false, screen: new ScreenMirror(), latest: new Map(), evidence: new Map() };
     this.#sessions.set(id, session);
     this.#enqueue(id, { kind: 'bind', binding });
     for (const [consumer, sub] of this.#subscribers) this.#enqueue(id, {
@@ -50,7 +71,12 @@ export class PtyAnalysisClient {
   has(id: string): boolean { return this.#sessions.has(id); }
   generation(id: string): number | null { return this.#sessions.get(id)?.generation ?? null; }
   status(id: string): Session['status'] | null { return this.#sessions.get(id)?.status ?? null; }
-  text(id: string): string { return this.#sessions.get(id)?.text ?? ''; }
+  text(id: string): string {
+    const s = this.#sessions.get(id); if (!s) return '';
+    // TTL também na leitura: sessão morta sem bind/exit depois não segura 256 KB para sempre.
+    if (s.exitedAt !== undefined && this.deps.now() - s.exitedAt > ANALYSIS_DEAD_TEXT_TTL_MS) s.screen.replace('');
+    return s.screen.text();
+  }
   latest(id: string, consumer: AnalysisConsumer) { const s = this.#sessions.get(id); const entry = s?.latest.get(consumer); return entry && entry.fence.eventSeq >= (s?.lastDataSeq ?? Infinity) ? entry : null; }
   evidence(id: string, consumer: AnalysisConsumer): readonly unknown[] { return this.#sessions.get(id)?.evidence.get(consumer) ?? []; }
   data(id: string, data: string): boolean {
@@ -112,13 +138,15 @@ export class PtyAnalysisClient {
   terminate(id: string): void {
     const s = this.#sessions.get(id); if (!s) return;
     if (s.status !== 'active') return;
-    s.status = 'terminated'; this.#enqueue(id, { kind: 'terminate' });
+    s.status = 'terminated'; s.exitedAt = this.deps.now(); this.#enqueue(id, { kind: 'terminate' });
   }
   exit(id: string): void {
     const s = this.#sessions.get(id); if (!s) return;
     if (s.status === 'sealed' || s.status === 'terminated') return;
     if (s.status === 'active') s.status = 'sealed';
+    s.exitedAt = this.deps.now();
     this.#enqueue(id, { kind: 'exit' });
+    this.#releaseDeadText();
     // Finite immutable tombstones, never retain dead PTY authority.
     if (this.#sessions.size > 256) for (const [old, entry] of this.#sessions) {
       if (old !== id && entry.status !== 'active' && entry.queue.length === 0 && this.#flight?.sessionId !== old) {
@@ -146,7 +174,8 @@ export class PtyAnalysisClient {
     }
     s.accepted = Math.max(s.accepted, r.eventSeq);
     if (s.status !== 'degraded' && s.status !== 'terminated') {
-      if (r.screenText !== undefined) s.text = r.screenText;
+      if (r.screenText !== undefined) s.screen.replace(r.screenText);
+      else if (r.screenAppend) s.screen.append(r.screenAppend);
       for (const event of r.events) this.#apply(r, s, event);
     }
     const pending = this.#barriers.get(r.sessionId);
@@ -184,6 +213,11 @@ export class PtyAnalysisClient {
     if (sub && sub.registration === e.registration && (s.status === 'active' || (s.status === 'sealed' && e.archival))) {
       try { sub.callback(r.sessionId, e.value, r); } catch { this.deps.trace?.({ kind: 'pty-analysis-consumer-error', consumer: e.consumer, error: 'callback-failed' }); }
     }
+  }
+  /** O texto de tela de sessão morta (256 KB cada) não precisa sobreviver ao ring de saída do Main. */
+  #releaseDeadText() {
+    const cutoff = this.deps.now() - ANALYSIS_DEAD_TEXT_TTL_MS;
+    for (const s of this.#sessions.values()) if (s.exitedAt !== undefined && s.exitedAt < cutoff) s.screen.replace('');
   }
   #pause(id: string, s: Session, paused: boolean) { if (s.paused !== paused) { s.paused = paused; this.deps.flow(id, paused); } }
   #discard(id: string, s: Session) {

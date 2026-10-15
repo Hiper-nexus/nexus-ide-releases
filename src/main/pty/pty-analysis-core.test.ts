@@ -64,7 +64,8 @@ describe('production analysis reducers', () => {
       const events = results.flatMap((r) => r.events);
       expect(events.filter((e) => e.consumer === 'dev-server').map((e) => e.value)).toContainEqual(['http://localhost:5173/']);
       expect(events.filter((e) => e.consumer === 'command').flatMap((e) => e.value)).toContainEqual({ kind: 'command_finished', exitCode: 0 });
-      expect(results.at(-1)?.screenText).toBe('Local: http://localhost:5173/\n');
+      expect(results.map((r) => r.screenAppend ?? '').join('')).toBe('Local: http://localhost:5173/\n');
+      expect(results.some((r) => r.screenText !== undefined)).toBe(false);
       core.close();
     }
   });

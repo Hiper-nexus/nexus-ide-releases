@@ -13,7 +13,7 @@ import { LegacyHandoffParser } from '../orch/legacy-handoff';
 import { MissionMarkerObserver } from '../orch/mission-completion-marker-core';
 import { Osc133Scanner } from '../terminal/shell-integration-osc133';
 import { redactCommandLine } from '../../shared/secret-redaction';
-import { ANALYSIS_EVENT_CAP, validAnalysisGrid, type AnalysisBinding, type AnalysisConsumer, type AnalysisEvent, type AnalysisInput, type AnalysisResult, type AnalysisWorkerTrace } from './pty-analysis-protocol';
+import { ANALYSIS_EVENT_CAP, ANALYSIS_SCREEN_CHARS, validAnalysisGrid, type AnalysisBinding, type AnalysisConsumer, type AnalysisEvent, type AnalysisInput, type AnalysisResult, type AnalysisWorkerTrace } from './pty-analysis-protocol';
 
 interface Consumer { registration: number; config?: unknown }
 interface Session {
@@ -24,6 +24,8 @@ interface Session {
   prompt: CliPromptAutoResponder; firstRun: FirstRunInterstitialResponder;
   devTail: string; devUrls: Set<string>; pasteTail: string; lines: string;
   publishAt: number; timer: ReturnType<typeof setTimeout> | null;
+  /** Texto de tela anexado desde o último snapshot enviado ao Main (o delta). */
+  unsent: string[]; unsentChars: number;
 }
 const PASTE_CODEX = /Pasted\s*Content\s*\d+\s*chars/i;
 const PASTE_DEVIN = /Pasted\s*text\s*#\s*\d+\s*(?:\+\s*\d+\s*lines|\(\s*\d+\s*chars\s*\))/i;
@@ -69,7 +71,7 @@ export class PtyAnalysisCore {
         failover: new FailoverTextReducer(), marker: new MissionMarkerObserver(), osc: new Osc133Scanner(),
         token: new TokenSpeedTextAnalyzer(), tokenParts: [], draft: '',
         prompt: new CliPromptAutoResponder(() => true, () => {}), firstRun: new FirstRunInterstitialResponder(),
-        devTail: '', devUrls: new Set(), pasteTail: '', lines: '', publishAt: 0, timer: null });
+        devTail: '', devUrls: new Set(), pasteTail: '', lines: '', publishAt: 0, timer: null, unsent: [], unsentChars: 0 });
     }
     const s = this.#sessions.get(record.sessionId);
     if (!s || s.fence.generation !== record.generation || s.fence.workerEpoch !== record.workerEpoch || record.eventSeq < s.fence.eventSeq) return;
@@ -161,6 +163,7 @@ export class PtyAnalysisCore {
     const id = s.fence.sessionId;
     let plain = '';
     this.#screen.append(id, raw, (value) => { plain = value; });
+    if (plain) { s.unsent.push(plain); s.unsentChars += plain.length; }
     if (s.consumers.has('screen')) this.#detector.onData(id, raw);
     if (s.consumers.has('command')) for (const event of s.osc.push(raw)) {
       // Secrets never return to Main command-block persistence or diagnostics.
@@ -234,7 +237,19 @@ export class PtyAnalysisCore {
   #publish(s: Session, events: readonly AnalysisEvent[], ackBytes: number, done: boolean, snapshot = false) {
     const { workerEpoch, sessionId, generation, eventSeq, observedAt } = s.fence;
     this.publish({ workerEpoch, sessionId, generation, eventSeq, observedAt, kind: 'result', events: [...events], ackBytes, done,
-      ...(snapshot ? { screenText: this.#screen.text(s.fence.sessionId) } : {}) });
+      ...(snapshot ? this.#screenDelta(s) : {}) });
+  }
+  /**
+   * Só o texto novo cruza o postMessage (o Main espelha a mesma cauda de
+   * 256 KB). Tela inteira apenas se o delta sozinho já passa do teto; nada se
+   * a tela não mudou.
+   */
+  #screenDelta(s: Session): Pick<AnalysisResult, 'screenText' | 'screenAppend'> {
+    const { unsent, unsentChars } = s;
+    s.unsent = []; s.unsentChars = 0;
+    if (unsentChars === 0) return {};
+    if (unsentChars > ANALYSIS_SCREEN_CHARS) return { screenText: this.#screen.text(s.fence.sessionId) };
+    return { screenAppend: unsent.join('') };
   }
   #drop(id: string) {
     const s = this.#sessions.get(id); if (s?.timer) clearTimeout(s.timer);

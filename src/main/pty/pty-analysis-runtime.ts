@@ -29,6 +29,8 @@ let progress: AnalysisJobProgress | null = null;
 let activeRecord: AnalysisInput | null = null;
 let activeToken = 0; let nextToken = 0; let workStartedToken = 0;
 let deadlineActivity: number | null = null;
+/** O resultado atrás dos timers do Main perdoa o prazo uma vez por job; sem resultado, a segunda vez derruba. */
+let lateAckGranted = false;
 function stopDeadline() { if (deadline) clearTimeout(deadline); deadline = null; deadlineActivity = null; }
 function fail(reason: string) {
   stopDeadline(); const old = worker; worker = null; ready = false; pending = null; activeRecord = null; progress = null;
@@ -38,17 +40,41 @@ function fail(reason: string) {
   if (old) { physicalStop = Promise.all([physicalStop, old.terminate()]).then(() => {}); void physicalStop.catch(() => {}); }
   return physicalStop;
 }
+/** Orçamento de trabalho de um registro depois que o Worker o começou, e prazo total de entrega. */
+const WORK_BUDGET_MS = 250;
+const DELIVERY_BUDGET_MS = 2_000;
 function armDeadline(ms: number, reason: string, activity: number | null = null) {
   stopDeadline();
   deadlineActivity = activity;
   const owner = worker; const job = activeToken; const jobProgress = progress;
   deadline = setTimeout(() => {
     if (worker !== owner || (activity === null && activeToken !== job)) return;
+    if (activity === null && (reason === 'work-check' || reason === 'delivery-timeout')) {
+      // O Worker não posta work-start por registro (#17): o início está na memória
+      // compartilhada. Terminou: o resultado só está atrás dos timers do Main (uma
+      // vez por job; sem resultado de verdade vale o prazo de entrega). Começou: tem
+      // 250 ms de trabalho a partir do INÍCIO. Não começou: vale o prazo de entrega.
+      if (!lateAckGranted && jobProgress?.completed(job)) {
+        lateAckGranted = true;
+        trace({ kind: 'pty-analysis-main-delayed-ack', workerEpoch: activeRecord?.workerEpoch, job, budgetMs: ms });
+        if (activeRecord) armDeadline(DELIVERY_BUDGET_MS, 'delivery-timeout'); else stopDeadline();
+        return;
+      }
+      const elapsed = jobProgress?.elapsedMs(job) ?? null;
+      if (elapsed !== null && !jobProgress?.completed(job)) {
+        const left = WORK_BUDGET_MS - Math.max(0, elapsed);
+        if (left > 0) { armDeadline(left, 'work-check'); return; }
+        fail('work-timeout'); return;
+      }
+      if (reason === 'work-check') { armDeadline(DELIVERY_BUDGET_MS - WORK_BUDGET_MS, 'delivery-timeout'); return; }
+      fail(reason); return;
+    }
     // The result can be queued behind Main's timers after a long Main callback.
     // Only this exact job on this exact Worker can prove completion; a missing
     // ACK still has the separate, unchanged two-second delivery deadline.
     if (reason === 'work-timeout' && (activity === null ? jobProgress?.completed(job) : jobProgress?.completedActivity(activity))) {
       trace({ kind: 'pty-analysis-main-delayed-ack', workerEpoch: activeRecord?.workerEpoch, job, budgetMs: ms });
+      lateAckGranted = true;
       if (activeRecord) armDeadline(2_000, 'delivery-timeout'); else stopDeadline();
       return;
     }
@@ -104,9 +130,9 @@ function send(record: AnalysisInput) {
   ensureWorker();
   if (!ready) { pending = record; return; }
   activeRecord = record; activeToken = nextToken = nextToken >= 0x7fffffff ? 1 : nextToken + 1;
-  workStartedToken = 0; progress!.reset();
+  workStartedToken = 0; lateAckGranted = false; progress!.reset();
   // Covers a worker that stops consuming before posting work-start as well.
-  if (deadlineActivity === null) armDeadline(2_000, 'delivery-timeout');
+  if (deadlineActivity === null) armDeadline(WORK_BUDGET_MS, 'work-check');
   worker!.postMessage({ ...record, watchdogToken: activeToken });
 }
 export const analysisClient = new PtyAnalysisClient({ post: send, now: Date.now,
