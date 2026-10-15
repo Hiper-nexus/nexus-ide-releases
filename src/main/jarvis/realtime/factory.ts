@@ -25,6 +25,12 @@ export interface RealtimeProviderFactoryOptions {
 
 export interface RealtimeProviderCandidate {
   id: RealtimeProviderId;
+  /**
+   * Modelo que ESTA candidata vai pedir. Sem segredo (é id público) e presente
+   * para o diagnóstico: quando a rota cai, o motivo na tela precisa dizer qual
+   * modelo foi recusado, senão sobra só "não conectou".
+   */
+  model?: string;
   provider: TurnManagedRealtimeProvider;
 }
 
@@ -217,6 +223,7 @@ export function createRealtimeProviderCandidates(
       if (apiKey) {
         candidates.push({
           id: providerId,
+          model: live.grokModel,
           provider: createGrokRealtimeProvider({
             apiKey,
             model: live.grokModel,
@@ -243,6 +250,7 @@ export function createRealtimeProviderCandidates(
         for (const voice of voices) {
           candidates.push({
             id: providerId,
+            model: live.openaiModel,
             provider: new OpenAIRealtimeProvider({
               apiKey,
               model: live.openaiModel,
@@ -263,6 +271,7 @@ export function createRealtimeProviderCandidates(
     if (apiKey) {
       candidates.push({
         id: providerId,
+        model: live.liveModel,
         provider: new GeminiLiveProvider({
           apiKey,
           model: live.liveModel,

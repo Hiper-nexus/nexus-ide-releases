@@ -50,7 +50,9 @@ import {
   isLocalToolCallId,
   isScreenContext,
   localToolCallId,
+  buildRealtimeFailure,
   buildResumeContext,
+  noCandidateCategory,
   MAX_LIVE_HISTORY_ENTRY_CHARS,
   trimLiveHistory,
 } from './live-transport-helpers';
@@ -363,6 +365,25 @@ export class LiveTransportController {
     });
     if (candidates.length === 0) {
       this.clearPendingMic();
+      // Sem candidato a sessão sai muda: o `onStart` antigo só desligava o
+      // realtimeReady e a pessoa ficava com um chip parado e nenhuma pista.
+      // Aqui a distinção que importa é "nenhuma rota tem chave" (configure) vs
+      // "a chave consta e não decifra" (problema de vault — pedir chave nova
+      // não resolve, e era o que o cliente do Windows via sem entender).
+      const keyPresent = resolveRealtimeProviderIds(getVoiceConfig()).some(
+        (id) => voiceApiKeySource(REALTIME_PROVIDER_ENV_VAR[id]) !== 'missing',
+      );
+      const category = noCandidateCategory(keyPresent);
+      logVoice('warn', 'live.noCandidate', 'nenhuma rota realtime tinha credencial utilizável', {
+        category,
+        transport: getVoiceConfig().jarvisLive.transport,
+      });
+      this._fsm.patchStatus({
+        status: 'error',
+        realtimeReady: false,
+        error: 'transporte realtime sem credencial — usando Classic',
+        realtimeFailure: buildRealtimeFailure(category, null, this.now()),
+      });
       this.patchRealtimeReady(false);
       return Promise.resolve();
     }

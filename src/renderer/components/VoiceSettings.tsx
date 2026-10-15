@@ -31,8 +31,12 @@ import type { JarvisRequest } from '../../shared/voice-ipc';
 import {
   keyPlaceholder,
   keyStatusText,
+  liveConnectionView,
   liveSmokeFailureMessage,
+  liveTestErrorMessage,
   providerOption,
+  realtimeFailureMessage,
+  REALTIME_TRANSPORT_LABEL,
 } from './voice-settings-helpers';
 import { createDraftHydrationBarrier } from '../lib/ui-overlay-policy';
 import { isMac } from '../lib/platform';
@@ -42,11 +46,7 @@ type RealtimeTransport = Exclude<JarvisLiveTransport, 'classic'>;
 /** Rota oficial da voz do produto (ver voice-config.ts). */
 const DEFAULT_REALTIME_TRANSPORT: RealtimeTransport = 'grok-realtime';
 
-const REALTIME_TRANSPORT_LABEL: Record<RealtimeTransport, string> = {
-  'grok-realtime': 'Grok Voice',
-  'gemini-live': 'Gemini Live',
-  'openai-realtime': 'OpenAI Realtime',
-};
+
 
 type VoiceSettingsTab =
   | 'canal'
@@ -598,6 +598,10 @@ export function VoiceSettings({ onClose, embedded = false }: VoiceSettingsProps 
             setTestResult(
               `Realtime confirmado: reprodução de áudio iniciada em ${result.latencyMs} ms.`,
             );
+          } else if (liveState?.realtimeFailure) {
+            // Com a categoria em mãos, o motivo é nomeado por rota ("Grok Voice
+            // recusou a chave") em vez da lista genérica de variáveis.
+            setError(realtimeFailureMessage(liveState.realtimeFailure, realtimeTransport));
           } else {
             setError(liveSmokeFailureMessage(result.reason, realtimeTransport));
           }
@@ -630,7 +634,9 @@ export function VoiceSettings({ onClose, embedded = false }: VoiceSettingsProps 
       }
       setTestResult('JARVIS respondeu sem fala audível.');
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      // O erro cru do Main ("voice session requires an authorized project
+      // scope") não diz o que fazer; a tradução mora no helper.
+      setError(liveTestErrorMessage(err));
     } finally {
       setTestingJarvis(false);
     }
@@ -656,27 +662,26 @@ export function VoiceSettings({ onClose, embedded = false }: VoiceSettingsProps 
   const activeBrain =
     info?.jarvisBrain.active?.provider ?? info?.jarvisBrain.chain[0]?.provider ?? 'fallback';
   const realtimeActive = Boolean(jarvisLiveOn && liveRealtime && liveState?.realtimeReady);
-  const liveTransportLabel = REALTIME_TRANSPORT_LABEL[realtimeTransport];
   const realtimeConfigured = Boolean(jarvisLiveOn && liveRealtime);
-  const liveConnectionTone = realtimeActive
-    ? 'online'
-    : realtimeConfigured
-      ? 'connecting'
-      : 'idle';
-  const liveConnectionLabel = realtimeActive
-    ? `${liveTransportLabel} conectado`
-    : realtimeConfigured
-      ? `${liveTransportLabel} conectando`
-      : jarvisLiveOn
-        ? 'Jarvis Live clássico'
-        : 'Jarvis em modo manual';
-  const liveConnectionDetail = realtimeActive
-    ? `Wake word e conversa seguem direto pelo ${liveTransportLabel}. O TTS clássico só entra como fallback.`
-    : realtimeConfigured
-      ? `O canal ${liveTransportLabel} será usado assim que a sessão terminar de conectar.`
-      : jarvisLiveOn
-        ? 'A sessão contínua está ativa, mas usa o pipeline clássico de voz.'
-        : 'Ative Jarvis Live para manter uma sessão de voz contínua.';
+  const liveTransportLabel = REALTIME_TRANSPORT_LABEL[realtimeTransport];
+  // Um único lugar decide o que o chip mostra: antes ele era derivado só de
+  // `realtimeReady`, então uma falha de conexão ficava indefinidamente em
+  // "conectando" sem motivo. `attempted` separa "ainda não tentou" (pronto) de
+  // "tentando agora": uma sessão viva sem realtimeReady já entrou em onStart.
+  const liveConnection = liveConnectionView({
+    transport: realtimeTransport,
+    configured: realtimeConfigured,
+    classicLive: jarvisLiveOn && !liveRealtime,
+    realtimeReady: realtimeActive,
+    failure: liveState?.realtimeFailure,
+    connectedProvider: liveState?.realtimeProvider,
+    attempted: Boolean(
+      liveState?.sessionId || liveState?.status === 'error' || liveState?.status === 'listening',
+    ),
+  });
+  const liveConnectionTone = liveConnection.tone;
+  const liveConnectionLabel = liveConnection.label;
+  const liveConnectionDetail = liveConnection.detail;
   const wakeMode =
     wakeWordOn && info?.wakeLockHolderPid
       ? 'ativação por voz em uso por outra instância'

@@ -117,6 +117,19 @@
   border-color: var(--accent);
 }
 
+/* Falha de conexão: o orbe deixa de pulsar e o anel some — o silêncio é a
+   informação. Sem animação de "conectando" quando já se sabe que não conectou. */
+.voice-settings__orb--error .voice-settings__orb-core,
+.voice-settings__orb--no-key .voice-settings__orb-core {
+  border-color: color-mix(in srgb, var(--danger) 55%, var(--border));
+  color: var(--danger);
+}
+
+.voice-settings__orb--standby .voice-settings__orb-core {
+  border-color: color-mix(in srgb, var(--text-dim) 50%, var(--border));
+  color: var(--text-dim);
+}
+
 .voice-settings__hero-copy {
   min-width: 0;
   flex: 1 1 auto;
@@ -167,6 +180,27 @@
   border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
   color: var(--accent);
   background: var(--accent-soft);
+}
+
+/* O chip é palavra + glifo: o texto já diz o estado, o ponto só dá o tom.
+   Erro e falta de credencial são tons distintos — uma é falha, a outra é
+   configuração faltando, e pedir uma chave nova não resolve um vault. */
+.voice-settings__connection--error {
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+
+.voice-settings__connection--no-key {
+  border-color: color-mix(in srgb, var(--warn) 40%, var(--border));
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
+}
+
+.voice-settings__connection--standby {
+  border-color: var(--border-strong);
+  color: var(--text-dim);
+  background: transparent;
 }
 
 .voice-settings__subtitle {

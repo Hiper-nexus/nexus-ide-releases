@@ -188,6 +188,57 @@ describe('LiveTransportController', () => {
   // immediately once loaded.
   }, 30_000);
 
+  it('nenhum candidato com a chave listada: erro visível de vault, não "conectando"', async () => {
+    vi.resetModules();
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          enabled: true,
+          transport: 'grok-realtime',
+        },
+      }),
+    }));
+    // A chave CONSTA (isRealtimeConfigured passa) mas não decifra: é o caso em
+    // que pedir uma chave nova não resolve. Antes isso saía mudo e o cliente
+    // ficava olhando "Grok Voice conectando" para sempre.
+    vi.doMock('./voice-secrets', () => ({
+      resolveVoiceApiKey: () => undefined,
+      voiceApiKeySource: () => 'stored',
+    }));
+    vi.doMock('./jarvis-memory', () => ({
+      jarvisMemory: { factsBlock: () => '' },
+    }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => [],
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['grok'],
+    }));
+
+    const { LiveTransportController } = await import('./live-transport-controller');
+    const session = new JarvisLiveSession(() => {}, () => 1000);
+    session.setEnabled(true);
+    session.start({ reason: 'manual' });
+    const controller = new LiveTransportController(() => {}, session);
+
+    await controller.onStart();
+
+    expect(session.getState()).toMatchObject({
+      status: 'error',
+      realtimeReady: false,
+    });
+    expect(session.getState().realtimeFailure).toMatchObject({
+      category: 'vault_unreadable',
+      provider: null,
+    });
+
+    vi.doUnmock('./voice-config-store');
+    vi.doUnmock('./voice-secrets');
+    vi.doUnmock('./jarvis-memory');
+    vi.doUnmock('../jarvis/realtime/factory');
+  }, 30_000);
+
   it('falls back from a failed OpenAI realtime provider to Gemini Live', async () => {
     vi.resetModules();
     const openai = fakeProvider(async () => {

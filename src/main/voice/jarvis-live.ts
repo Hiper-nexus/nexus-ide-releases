@@ -188,6 +188,17 @@ export class JarvisLiveSession {
       pendingMic: patch.pendingMic ?? this.state.pendingMic,
       realtimeReady: patch.realtimeReady ?? this.state.realtimeReady,
       error: patch.error,
+      // A falha de conexão tem memória própria: um patch de status posterior
+      // (audio, transcript, listening) NÃO pode apagá-la, senão o operador vê o
+      // motivo sumir sozinho. Só `null` explícito (sucesso/stop) limpa.
+      realtimeFailure:
+        patch.realtimeFailure === undefined
+          ? this.state.realtimeFailure
+          : patch.realtimeFailure,
+      realtimeProvider:
+        patch.realtimeProvider === undefined
+          ? this.state.realtimeProvider
+          : patch.realtimeProvider,
     };
     this.broadcastState();
     return this.getState();

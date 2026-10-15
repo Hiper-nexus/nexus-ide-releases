@@ -1,4 +1,7 @@
-import type { JarvisLiveSmokeFailureReason } from '../../shared/voice-ipc';
+import type {
+  JarvisLiveSmokeFailureReason,
+  RealtimeFailure,
+} from '../../shared/voice-ipc';
 import { ThrottledCounter } from '../../shared/live-flow-counter';
 import { isLikelyNoiseTranscript } from '../../shared/voice-noise';
 import { jarvisLatencyTracker } from '../jarvis/realtime/metrics';
@@ -10,7 +13,11 @@ import type {
 import { echoSuppressor } from './echo-suppress';
 import type { JarvisLiveSession } from './jarvis-live';
 import type { LiveToolCallCoordinator } from './live-tool-call-registry';
-import { isIgnorableRealtimeError } from './live-transport-helpers';
+import {
+  buildRealtimeFailure,
+  classifyRealtimeConnectError,
+  isIgnorableRealtimeError,
+} from './live-transport-helpers';
 import { logVoice } from './voice-log';
 
 export interface LiveProviderRuntimeHost {
@@ -56,13 +63,21 @@ export async function connectFirstLiveProvider(
 ): Promise<void> {
   host.getProvider()?.close();
   host.setProvider(null);
+  const attempts: RealtimeFailure[] = [];
   for (const candidate of candidates) {
-    if (await tryConnectCandidate(candidate, greeting, host)) return;
+    if (await tryConnectCandidate(candidate, greeting, host, attempts)) return;
   }
+  // Toda a cadeia caiu. O motivo vai no estado (traduzido para a pessoa) e não
+  // num console.warn: era exatamente esse silêncio que deixava o chip
+  // "Grok Voice conectando" parado sem explicação nenhuma.
+  const last = attempts[attempts.length - 1];
   host.fsm.patchStatus({
     status: 'error',
     realtimeReady: false,
     error: 'transporte realtime falhou — usando Classic',
+    realtimeFailure: last
+      ? { ...last, attempts: attempts.length }
+      : buildRealtimeFailure('no_key', null, host.now()),
   });
   host.clearPendingMic();
 }
@@ -71,6 +86,7 @@ async function tryConnectCandidate(
   candidate: RealtimeProviderCandidate,
   greeting: string | undefined,
   host: LiveProviderRuntimeHost,
+  attempts: RealtimeFailure[],
 ): Promise<boolean> {
   const provider = candidate.provider;
   host.setProvider(provider);
@@ -79,12 +95,33 @@ async function tryConnectCandidate(
   if (activeTurnId) provider.beginUserTurn?.(activeTurnId);
   try {
     await provider.connect();
-    activateConnectedProvider(provider, greeting, host);
+    activateConnectedProvider(candidate, provider, greeting, host);
     return true;
   } catch (err) {
-    console.warn(
-      `[live] ${candidate.id}: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    const { category, status } = classifyRealtimeConnectError(err);
+    const failure = buildRealtimeFailure(category, candidate.id, host.now(), {
+      model: candidate.model,
+      status,
+    });
+    attempts.push(failure);
+    // Só categoria/modelo/status entram no log — o texto do provedor pode
+    // carregar payload e a chave nunca sai daqui.
+    logVoice('warn', 'live.candidateFailed', 'rota realtime falhou; tentando a próxima', {
+      provider: candidate.id,
+      model: candidate.model ?? null,
+      category,
+      status: status ?? null,
+    });
+    // A falha sobe AGORA, não só no fim da cadeia: enquanto a próxima rota
+    // tenta, o chip precisa dizer o que já caiu. Sem isso a degradação
+    // reconecta e a pessoa volta a ver "conectando" sem explicação nenhuma.
+    const currentStatus = host.fsm.getState().status;
+    if (currentStatus !== 'off') {
+      host.fsm.patchStatus({
+        status: currentStatus,
+        realtimeFailure: failure,
+      });
+    }
     provider.close();
     if (host.getProvider() === provider) host.setProvider(null);
     return false;
@@ -92,6 +129,7 @@ async function tryConnectCandidate(
 }
 
 function activateConnectedProvider(
+  candidate: RealtimeProviderCandidate,
   provider: TurnManagedRealtimeProvider,
   greeting: string | undefined,
   host: LiveProviderRuntimeHost,
@@ -107,7 +145,19 @@ function activateConnectedProvider(
   host.sendGreetingIfSafe(provider, greeting);
   host.flushPendingMic(provider);
   host.startQuestionPoll();
-  host.fsm.patchStatus({ status: 'listening', realtimeReady: true });
+  // Sucesso limpa a falha: só agora a pessoa pode ver "online", e o provedor
+  // registrado é o que conectou DE FATO (pode ter sido a degradação, não a
+  // rota configurada).
+  host.fsm.patchStatus({
+    status: 'listening',
+    realtimeReady: true,
+    realtimeFailure: null,
+    realtimeProvider: candidate.id,
+  });
+  logVoice('info', 'live.providerConnected', 'transporte realtime conectado', {
+    provider: candidate.id,
+    model: candidate.model ?? null,
+  });
 }
 
 export function bindLiveProvider(

@@ -1,14 +1,108 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildRealtimeFailure,
+  classifyRealtimeConnectError,
+  httpStatusFromMessage,
   isIgnorableRealtimeError,
   isLocalToolCallId,
   isScreenContext,
   localToolCallId,
+  noCandidateCategory,
   trimLiveHistory,
   buildResumeContext,
   MAX_LIVE_HISTORY_ENTRY_CHARS,
   MAX_RESUME_CONTEXT_CHARS,
 } from './live-transport-helpers';
+
+describe('classifyRealtimeConnectError', () => {
+  // As mensagens abaixo são as que o runtime REAL produz (openai-realtime.ts):
+  // o handshake recusado chega como "Unexpected server response: NNN" do `ws`, o
+  // timeout e o fechamento pré-setup têm frases próprias do provider.
+  it('classifica recusa de credencial', () => {
+    expect(
+      classifyRealtimeConnectError(new Error('Unexpected server response: 401')).category,
+    ).toBe('auth_rejected');
+    expect(
+      classifyRealtimeConnectError(new Error('Unexpected server response: 403')).category,
+    ).toBe('auth_rejected');
+    expect(
+      classifyRealtimeConnectError(new Error('Incorrect API key provided')).category,
+    ).toBe('auth_rejected');
+  });
+
+  it('classifica modelo rejeitado e extrai o status', () => {
+    const result = classifyRealtimeConnectError(
+      new Error('Unexpected server response: 404'),
+    );
+    expect(result.category).toBe('model_rejected');
+    expect(result.status).toBe(404);
+    expect(
+      classifyRealtimeConnectError({ message: 'The model grok-voice-x does not exist' }).category,
+    ).toBe('model_rejected');
+    // 400 só é modelo quando a mensagem fala de modelo.
+    expect(
+      classifyRealtimeConnectError(new Error('Unexpected server response: 400')).category,
+    ).toBe('provider_error');
+  });
+
+  it('classifica timeout e fechamento antes do setup', () => {
+    expect(
+      classifyRealtimeConnectError(new Error('OpenAI realtime setup timeout')).category,
+    ).toBe('timeout');
+    expect(
+      classifyRealtimeConnectError(
+        new Error('OpenAI realtime socket closed before setup'),
+      ).category,
+    ).toBe('closed_before_setup');
+  });
+
+  it('classifica erro de rede e o resto como provider_error', () => {
+    expect(
+      classifyRealtimeConnectError(new Error('connect ECONNREFUSED 104.18.1.1:443')).category,
+    ).toBe('network');
+    expect(
+      classifyRealtimeConnectError(new Error('getaddrinfo ENOTFOUND api.x.ai')).category,
+    ).toBe('network');
+    expect(classifyRealtimeConnectError(new Error('algo estranho')).category).toBe(
+      'provider_error',
+    );
+  });
+
+  it('nunca devolve o texto do erro, só categoria e status', () => {
+    const result = classifyRealtimeConnectError(
+      new Error('rejeitou a chave xai-SECRET-123456 com payload gigante'),
+    );
+    expect(Object.keys(result).sort()).toEqual(['category', 'status']);
+    expect(JSON.stringify(result)).not.toContain('SECRET');
+  });
+
+  it('lê o status HTTP das duas formas que o provedor escreve', () => {
+    expect(httpStatusFromMessage('Unexpected server response: 429')).toBe(429);
+    expect(httpStatusFromMessage('status 503')).toBe(503);
+    expect(httpStatusFromMessage('sem status aqui')).toBeUndefined();
+    // Número fora da faixa HTTP não vira status.
+    expect(httpStatusFromMessage('response 9999')).toBeUndefined();
+  });
+
+  it('separa "sem chave" de "chave que não decifra"', () => {
+    expect(noCandidateCategory(false)).toBe('no_key');
+    expect(noCandidateCategory(true)).toBe('vault_unreadable');
+  });
+
+  it('buildRealtimeFailure só carrega campo presente (sem undefined solto)', () => {
+    const failure = buildRealtimeFailure('timeout', 'grok', 1234, {
+      model: 'grok-voice-3.0',
+    });
+    expect(failure).toEqual({
+      category: 'timeout',
+      provider: 'grok',
+      model: 'grok-voice-3.0',
+      attempts: 1,
+      at: 1234,
+    });
+    expect('status' in buildRealtimeFailure('no_key', null, 1)).toBe(false);
+  });
+});
 
 describe('live-transport-helpers', () => {
   it('classifies wake/reconexão as non-screen context', () => {

@@ -3,6 +3,7 @@ import {
   HOLD_TO_TALK_MAX_MS,
   HOLD_TO_TALK_MIN_MS,
   type JarvisBrainProviderId,
+  type RealtimeProviderKey,
   type VoiceRouting,
   type VoiceSpeakMode,
 } from './voice-config';
@@ -449,11 +450,49 @@ export interface JarvisLiveState {
   status: JarvisLiveStatus;
   /** True only after the realtime transport socket is connected and setup-complete. */
   realtimeReady: boolean;
+  /**
+   * Por que a rota realtime NÃO conectou. Categoria estável, nunca texto cru do
+   * provedor: o operador precisa de um motivo acionável ("chave recusada",
+   * "modelo inexistente"), e um erro de socket cru não é traduzível nem
+   * seguro para log. Ausente = nada tentou ainda.
+   */
+  realtimeFailure?: RealtimeFailure | null;
+  /** Rota realtime que conectou de fato — pode ser diferente da configurada. */
+  realtimeProvider?: RealtimeProviderKey | null;
   startedAt: number | null;
   lastActiveAt: number | null;
   turns: number;
   pendingMic: boolean;
   error?: string;
+}
+
+/**
+ * Motivo de uma conexão realtime mal-sucedida. O conjunto é fechado de
+ * propósito: cada categoria mapeia UMA ação para quem está olhando a tela.
+ * `no_key`/`vault_unreadable` são decididos no Main antes de qualquer fetch
+ * (nenhuma rota tinha credencial utilizável).
+ */
+export type RealtimeFailureCategory =
+  | 'auth_rejected'
+  | 'model_rejected'
+  | 'timeout'
+  | 'closed_before_setup'
+  | 'network'
+  | 'provider_error'
+  | 'no_key'
+  | 'vault_unreadable';
+
+export interface RealtimeFailure {
+  category: RealtimeFailureCategory;
+  /** Rota que caiu (nunca a chave, nunca o id do modelo completo de credencial). */
+  provider: RealtimeProviderKey | null;
+  /** Modelo tentado, quando a rota tem um. Sem segredo: é id público. */
+  model?: string;
+  /** Status HTTP do handshake quando o provedor respondeu (ex.: 404). */
+  status?: number;
+  /** Quantas rotas caíram nesta tentativa (1 quando só havia uma). */
+  attempts: number;
+  at: number;
 }
 
 export interface JarvisLiveStartRequest {
@@ -530,6 +569,13 @@ export interface JarvisLiveStatusPatch {
   pendingMic?: boolean;
   realtimeReady?: boolean;
   error?: string;
+  /**
+   * `undefined` PRESERVA a falha já registrada (um patch de status não pode
+   * apagar o motivo de uma queda anterior); `null` limpa explicitamente, que é
+   * o que o sucesso e o stop() fazem.
+   */
+  realtimeFailure?: RealtimeFailure | null;
+  realtimeProvider?: RealtimeProviderKey | null;
 }
 
 export interface JarvisLiveTranscriptEvent {
@@ -630,6 +676,28 @@ export const jarvisLiveRescueRequestSchema = z.object({
   text: z.string().min(1).max(20_000),
 });
 
+/** Categoria fechada: o renderer traduz cada uma para UM motivo acionável. */
+export const realtimeFailureCategorySchema = z.enum([
+  'auth_rejected',
+  'model_rejected',
+  'timeout',
+  'closed_before_setup',
+  'network',
+  'provider_error',
+  'no_key',
+  'vault_unreadable',
+]);
+
+export const realtimeFailureSchema = z.object({
+  category: realtimeFailureCategorySchema,
+  provider: z.enum(['grok', 'openai', 'gemini']).nullable(),
+  // Id público de modelo; nunca a credencial. Limitado para não aceitar lerdeza.
+  model: z.string().max(128).optional(),
+  status: z.number().int().min(100).max(599).optional(),
+  attempts: z.number().int().min(1).max(8),
+  at: z.number().min(0),
+});
+
 export const jarvisLiveStatusPatchSchema = z.object({
   status: z.enum([
     'dormant',
@@ -642,6 +710,8 @@ export const jarvisLiveStatusPatchSchema = z.object({
   pendingMic: z.boolean().optional(),
   realtimeReady: z.boolean().optional(),
   error: z.string().max(500).optional(),
+  realtimeFailure: realtimeFailureSchema.nullable().optional(),
+  realtimeProvider: z.enum(['grok', 'openai', 'gemini']).nullable().optional(),
 });
 
 export const jarvisLiveTranscriptInputSchema = z.object({
