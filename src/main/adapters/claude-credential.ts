@@ -5,7 +5,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   clearClaudeConfigSnapshotCache,
-  readClaudeConfigSnapshot,
+  readClaudeConfigForDecision,
 } from './claude-config-snapshot';
 
 /**
@@ -358,7 +358,13 @@ function writeClaudeCredential(blob: string, service: string): boolean {
   return ok;
 }
 
-/** The email of the currently signed-in Claude account (from ~/.claude.json). */
-export function activeClaudeEmail(): string | null {
-  return readClaudeConfigSnapshot(path.join(os.homedir(), '.claude.json'))?.email ?? null;
+/**
+ * E-mail do login Claude nativo (~/.claude.json). Alimenta decisões de
+ * autorização (renovar grant, fixar pane no store nativo, failover), então
+ * relê sempre: `null` = sem login nativo; `undefined` = o arquivo existe mas
+ * não deu para ler agora (teto, instável, ilegível) — quem decide fecha.
+ */
+export function activeClaudeEmail(): string | null | undefined {
+  const config = readClaudeConfigForDecision(path.join(os.homedir(), '.claude.json'));
+  return config === undefined ? undefined : config?.email ?? null;
 }

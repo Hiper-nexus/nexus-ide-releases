@@ -125,6 +125,9 @@ export function readAgyWindowsKeyringBlob(options: {
   } catch {
     value = null;
   }
+  // Leitura mais nova que qualquer assíncrona em voo: ela não pode sobrescrever.
+  readGeneration += 1;
+  readFlight = null;
   readCache = { at: now, value };
   return value;
 }

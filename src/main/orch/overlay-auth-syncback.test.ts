@@ -1,8 +1,14 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { syncBackOverlayAuth } from './overlay-auth-syncback';
+import { syncBackClaudeEphemeralAuth, syncBackOverlayAuth } from './overlay-auth-syncback';
+
+const snapshot = vi.hoisted(() => ({ clear: vi.fn() }));
+vi.mock('../adapters/claude-config-snapshot', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  clearClaudeConfigSnapshotCache: snapshot.clear,
+}));
 
 const created: string[] = [];
 function tmp(): string {
@@ -86,5 +92,24 @@ describe('syncBackOverlayAuth', () => {
     expect(() =>
       syncBackOverlayAuth(path.join(realHome, 'missing'), realHome, new Set()),
     ).not.toThrow();
+  });
+});
+
+describe('syncBackClaudeEphemeralAuth', () => {
+  it('forgets the in-memory ~/.claude.json snapshot after rescuing a login identity (M1)', () => {
+    const realHome = tmp();
+    const overlay = tmp();
+    fs.writeFileSync(path.join(realHome, '.claude.json'), JSON.stringify({ projects: {} }));
+    fs.writeFileSync(
+      path.join(overlay, '.claude.json'),
+      JSON.stringify({ oauthAccount: { emailAddress: 'fresh@example.test' } }),
+    );
+    snapshot.clear.mockClear();
+
+    syncBackClaudeEphemeralAuth(overlay, realHome);
+
+    expect(JSON.parse(fs.readFileSync(path.join(realHome, '.claude.json'), 'utf8')).oauthAccount)
+      .toEqual({ emailAddress: 'fresh@example.test' });
+    expect(snapshot.clear).toHaveBeenCalled();
   });
 });

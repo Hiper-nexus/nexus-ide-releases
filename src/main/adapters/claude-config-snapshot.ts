@@ -2,9 +2,10 @@
  * `.claude.json` do Claude Code (o nativo `~/.claude.json` ou o de um perfil
  * `CLAUDE_CONFIG_DIR`): pode passar de dezenas de MB (histórico por projeto) e
  * é reescrito pelo CLI o tempo todo. Toda leitura passa por aqui, por um
- * descritor só (`redline-safe-read`: arquivo regular, teto, sem FIFO) e gated
- * pelo stamp `mtimeMs:tamanho` — arquivo igual não é relido nem reparseado,
- * exatamente como o AccountFileCache do Codenotch.
+ * descritor só (`redline-safe-read`: arquivo regular, teto, sem FIFO). Exibição
+ * e ciclos usam o cache pelo stamp forte (inode, tamanho, mtime e ctime em ns):
+ * arquivo igual não é relido nem reparseado. Decisão de autorização relê
+ * sempre ({@link readClaudeConfigForDecision}).
  *
  * O snapshot guarda só identidade/plano/uso (nenhum token). Ainda assim
  * `invalidateClaudeCredentialCache()` (troca de conta, logout) limpa tudo.
@@ -67,25 +68,68 @@ function parseClaudeConfig(text: string): ClaudeConfigSnapshot | null {
   }
 }
 
+/**
+ * `known: false` = o arquivo existe mas não deu para ler agora (teto, FIFO,
+ * instável durante a leitura, ilegível, JSON pela metade). Só ausência é
+ * "sem login nativo"; decisão de autorização sobre o desconhecido fecha.
+ */
+interface SettledRead {
+  readonly snapshot: ClaudeConfigSnapshot | null;
+  readonly known: boolean;
+}
+
+/** Sobe a cada limpeza: leitura assíncrona de antes não republica no cache. */
+let cacheGeneration = 0;
+
+const STRONG_STAMP = { strongStamp: true } as const;
+
 function settle(
   accountFile: string,
   held: { stamp: string; snapshot: ClaudeConfigSnapshot | null } | undefined,
   read: SafeRead,
-): ClaudeConfigSnapshot | null {
-  if (read.kind === 'unchanged') return held?.snapshot ?? null;
+  generation: number,
+): SettledRead {
+  if (read.kind === 'unchanged') {
+    const snapshot = held?.snapshot ?? null;
+    return { snapshot, known: snapshot !== null };
+  }
   if (read.kind === 'none') {
-    configSnapshotCache.delete(accountFile);
-    return null;
+    if (generation === cacheGeneration) configSnapshotCache.delete(accountFile);
+    return { snapshot: null, known: read.stamp === 'missing' };
   }
   const snapshot = parseClaudeConfig(read.text);
-  configSnapshotCache.set(accountFile, { stamp: read.stamp, snapshot });
-  return snapshot;
+  if (generation === cacheGeneration) {
+    configSnapshotCache.set(accountFile, { stamp: read.stamp, snapshot });
+  }
+  return { snapshot, known: snapshot !== null };
 }
 
-/** Caminhos síncronos (troca de conta, sonda pré-spawn): stamp antes de ler. */
+/** Caminhos síncronos de exibição (sonda pré-spawn, status): stamp antes de ler. */
 export function readClaudeConfigSnapshot(accountFile: string): ClaudeConfigSnapshot | null {
   const held = configSnapshotCache.get(accountFile);
-  return settle(accountFile, held, readRegularFileCapped(accountFile, CONFIG_FILE_MAX_BYTES, held?.stamp));
+  return settle(
+    accountFile,
+    held,
+    readRegularFileCapped(accountFile, CONFIG_FILE_MAX_BYTES, held?.stamp, STRONG_STAMP),
+    cacheGeneration,
+  ).snapshot;
+}
+
+/**
+ * DECISÕES de autorização (renovar grant, fixar pane no store nativo,
+ * failover): sempre relê, sem confiar em stamp. `null` = arquivo ausente;
+ * `undefined` = presente mas ilegível agora — o chamador fecha.
+ */
+export function readClaudeConfigForDecision(
+  accountFile: string,
+): ClaudeConfigSnapshot | null | undefined {
+  const read = settle(
+    accountFile,
+    undefined,
+    readRegularFileCapped(accountFile, CONFIG_FILE_MAX_BYTES, undefined, STRONG_STAMP),
+    cacheGeneration,
+  );
+  return read.known ? read.snapshot : undefined;
 }
 
 /** Ciclos periódicos (cota, plano): nada de IO síncrono no Main. */
@@ -93,10 +137,17 @@ export async function readClaudeConfigSnapshotAsync(
   accountFile: string,
 ): Promise<ClaudeConfigSnapshot | null> {
   const held = configSnapshotCache.get(accountFile);
-  const read = await readRegularFileCappedAsync(accountFile, CONFIG_FILE_MAX_BYTES, held?.stamp);
-  return settle(accountFile, held, read);
+  const generation = cacheGeneration;
+  const read = await readRegularFileCappedAsync(
+    accountFile,
+    CONFIG_FILE_MAX_BYTES,
+    held?.stamp,
+    STRONG_STAMP,
+  );
+  return settle(accountFile, held, read, generation).snapshot;
 }
 
 export function clearClaudeConfigSnapshotCache(): void {
   configSnapshotCache.clear();
+  cacheGeneration += 1;
 }

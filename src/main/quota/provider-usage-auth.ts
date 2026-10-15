@@ -154,10 +154,15 @@ export function claudeNativeAccessTokenExpiresAt(): number | null {
 }
 
 export async function hasClaudeNativeSession(configDir?: string): Promise<boolean> {
-  const snap = await readClaudeConfigSnapshotAsync(
-    path.join(configDir ?? os.homedir(), '.claude.json'),
-  );
-  return Boolean(snap?.email || snap?.organizationUuid);
+  try {
+    const snap = await readClaudeConfigSnapshotAsync(
+      path.join(configDir ?? os.homedir(), '.claude.json'),
+    );
+    return Boolean(snap?.email || snap?.organizationUuid);
+  } catch {
+    // Evidência de sessão é opcional: falha de IO nunca derruba o ciclo de cota.
+    return false;
+  }
 }
 
 /** Codex auth for the exact account, or the unpinned native login. */

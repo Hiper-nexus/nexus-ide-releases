@@ -120,6 +120,24 @@ describe('leitura assíncrona da vaga para o ciclo de cota (#18)', () => {
     expect(after).toHaveBeenCalledTimes(1);
   });
 
+  it('leitura síncrona fresca mais nova não é sobrescrita por leitura assíncrona antiga em voo (L3)', async () => {
+    let finish: Callback = () => undefined;
+    const slow = vi.fn((_file: string, _args: string[], _options: unknown, callback: Callback) => {
+      finish = callback;
+      return { stdin: { end: vi.fn() } };
+    });
+    const older = readAgyWindowsKeyringBlobAsync({ exec: slow as never, platform: 'win32', now: 1_000 });
+    const newer = JSON.stringify({ token: { access_token: 'b', refresh_token: 'rb' }, id_token: 'h.e30.s' });
+    const syncExec = vi.fn(() => Buffer.from(newer).toString('base64'));
+    expect(readAgyWindowsKeyringBlob({ exec: syncExec as never, platform: 'win32', now: 1_050, fresh: true })).toBe(newer);
+    finish(null, Buffer.from(keyringBlob).toString('base64'));
+    expect(await older).toBe(keyringBlob);
+
+    const never = vi.fn();
+    expect(readAgyWindowsKeyringBlob({ exec: never as never, platform: 'win32', now: 1_100 })).toBe(newer);
+    expect(never).not.toHaveBeenCalled();
+  });
+
   it('falha do PowerShell vira null sem lançar, e fora do Windows não executa nada', async () => {
     const failing = vi.fn((_file: string, _args: string[], _options: unknown, callback: Callback) => {
       callback(new Error('powershell exploded'), '');

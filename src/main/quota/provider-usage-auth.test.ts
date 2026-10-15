@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   codexCliUsage: vi.fn(),
   verifiedNativeClaudeToken: vi.fn(async () => null as string | null),
   readAgyKeyringAsync: vi.fn(async () => null as string | null),
+  snapshotAsync: vi.fn(),
   probeClaudeCredentialIdentity: vi.fn<() => Promise<'match' | 'mismatch' | 'auth-expired' | 'unavailable'>>(async () => 'match'),
 }));
 
@@ -50,6 +51,11 @@ vi.mock('../adapters/launcher-provider-manager', () => ({
 
 vi.mock('../adapters/native-oauth-keychain', () => ({ readNativeOAuthCredential: mocks.nativeCredential }));
 vi.mock('../adapters/agy-windows-keyring', () => ({ readAgyWindowsKeyringBlobAsync: mocks.readAgyKeyringAsync }));
+vi.mock('../adapters/claude-config-snapshot', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../adapters/claude-config-snapshot')>();
+  mocks.snapshotAsync.mockImplementation(actual.readClaudeConfigSnapshotAsync);
+  return { ...actual, readClaudeConfigSnapshotAsync: mocks.snapshotAsync };
+});
 vi.mock('../adapters/managed-claude-auth', () => ({
   hasManagedClaudeAuth: mocks.hasManagedClaudeAuth,
   readManagedClaudeAuthAsync: mocks.readManagedClaudeAuthAsync,
@@ -391,6 +397,11 @@ describe('quota cycle reads without blocking Main (#18)', () => {
     }));
     expect(await resolveGeminiOauthCreds()).toMatchObject({ accessToken: 'agy-at', refreshToken: 'agy-rt' });
     expect(mocks.readAgyKeyringAsync).toHaveBeenCalledTimes(1);
+  });
+
+  it('never rejects the live-usage cycle when the config read fails (L2)', async () => {
+    mocks.snapshotAsync.mockRejectedValueOnce(new Error('EIO on close'));
+    await expect(hasClaudeNativeSession()).resolves.toBe(false);
   });
 
   it('answers the native Claude session evidence asynchronously from ~/.claude.json', async () => {
