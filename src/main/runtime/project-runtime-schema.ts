@@ -1227,4 +1227,27 @@ END;`,
       id: '055-handoff-workspace-recipient', schemaVersion: 55, appVersion: '0.76.239',
       sql: `ALTER TABLE handoffs ADD COLUMN workspace_recipient_session_id TEXT;`,
     }),
+    // Additive indexes for existing runtimes. Pane/audit identities remain
+    // non-unique: their stores must still detect ambiguous physical authority.
+    createProjectMigration({
+      id: '056-hot-path-query-indexes', schemaVersion: 56, appVersion: '0.76.259',
+      sql: `
+CREATE INDEX IF NOT EXISTS idx_mission_panes_pane
+  ON mission_panes(pane_id, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_audit_authority
+  ON audit_events(mission_id, actor, action, outcome);
+CREATE INDEX IF NOT EXISTS idx_usage_mission ON usage_events(mission_id);
+CREATE INDEX IF NOT EXISTS idx_usage_pane ON usage_events(pane_id);
+CREATE INDEX IF NOT EXISTS idx_usage_provider_session
+  ON usage_events(provider, event_type, json_extract(metadata_json, '$.sessionId'));
+CREATE INDEX IF NOT EXISTS idx_route_decisions_mission ON route_decisions(mission_id);
+CREATE INDEX IF NOT EXISTS usage_events_token_snapshot_idx ON usage_events(
+  event_type, json_extract(metadata_json, '$.accountId'), provider,
+  input_units, output_units, cost_micros,
+  CAST(json_extract(metadata_json, '$.cacheReadTokens') AS INTEGER),
+  CAST(json_extract(metadata_json, '$.cacheWrite5mTokens') AS INTEGER),
+  CAST(json_extract(metadata_json, '$.cacheWrite1hTokens') AS INTEGER),
+  pane_id, json_extract(metadata_json, '$.displayPaneId'), occurred_at, id
+);`,
+    }),
   ]);

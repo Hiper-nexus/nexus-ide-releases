@@ -706,6 +706,20 @@ describe("main-owned mission pane spawn", () => {
     );
     expect(pty.spawn).toHaveBeenCalledTimes(1);
 
+    // A pane shell without its physical session is not an acknowledgement.
+    // Even after a successful send the next heartbeat must retry the hint.
+    owner.send.mockClear();
+    syncPanes([
+      { paneId: result.paneId!, sessionId: null, title: "Worker Headless",
+        kind: "cli-agent", adapterId: "codex", state: "spawning" },
+    ], owner, "renderer-generation-a");
+    syncPanes([
+      { paneId: result.paneId!, sessionId: null, title: "Worker Headless",
+        kind: "cli-agent", adapterId: "codex", state: "spawning" },
+    ], owner, "renderer-generation-a");
+    expect(owner.send.mock.calls.filter(([channel]) =>
+      channel === ORCH_CHANNELS.panePresentationRequest)).toHaveLength(2);
+
     owner.send.mockClear();
     syncPanes(
       [
@@ -732,6 +746,16 @@ describe("main-owned mission pane spawn", () => {
       sessionId: "pty-headless-1",
     });
     expect(pty.spawn).toHaveBeenCalledTimes(1);
+
+    const confirmedEntry = {
+      paneId: result.paneId!, sessionId: "pty-headless-1", title: "Worker Headless",
+      kind: "cli-agent" as const, adapterId: "codex", state: "spawning" as const,
+    };
+    syncPanes([confirmedEntry], owner, "renderer-generation-a");
+    syncPanes([confirmedEntry], owner, "renderer-generation-a");
+    expect(owner.send).not.toHaveBeenCalledWith(
+      ORCH_CHANNELS.panePresentationRequest, expect.anything(),
+    );
 
     // Cmd+R/HMR keeps the WebContents but replaces the preload document. Its
     // first empty mirror must detach the old presentation and replay the same
