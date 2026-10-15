@@ -154,6 +154,30 @@ describe('captureHiddenCheckpoint', () => {
     expect(git(worktree, 'rev-parse', 'HEAD')).toBe(wtBefore.head);
   });
 
+  it('F-1442: tmp com nome curto 8.3 (ADMINI~1) no Windows cria a ref em worktree', async () => {
+    // Campo 14/10: `os.tmpdir()` volta `C:\Users\ADMINI~1\AppData\Local\Temp`
+    // e o realpath nativo do índice expande para `C:\Users\Administrador\…` —
+    // grafias legítimas do MESMO diretório recusavam todo handoff com
+    // "unsafe private Git index path". Máquina sem a divergência não prova
+    // nada (a suíte comum já cobre o caminho feliz); junction/UNC/fora do
+    // tmp seguem recusados em git-command.test.ts (F-1442).
+    if (process.platform !== 'win32') return;
+    const nativeTemp = fs.realpathSync.native(os.tmpdir()).replaceAll('/', '\\').toLowerCase();
+    const jsTemp = fs.realpathSync(os.tmpdir()).replaceAll('/', '\\').toLowerCase();
+    if (nativeTemp === jsTemp) return;
+
+    const worktree = path.join(temp, 'writer-f1442');
+    git(repo, 'worktree', 'add', '-q', '-b', 'nexus/writer-f1442', worktree);
+    write(worktree, 'feito.txt', 'trabalho do writer\n');
+
+    const result = await captureHiddenCheckpoint({ cwd: worktree, scopeId: SCOPE });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(checkpointRefs(repo)).toEqual([result.ref]);
+    expect(git(repo, 'show', `${result.ref}:feito.txt`)).toBe('trabalho do writer');
+  });
+
   it('recusa sparse checkout com erro visível e não grava ref', async () => {
     git(repo, 'config', 'core.sparseCheckout', 'true');
     write(repo, 'novo.txt', 'x\n');
