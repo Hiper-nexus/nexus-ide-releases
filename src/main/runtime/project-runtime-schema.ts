@@ -1230,7 +1230,7 @@ END;`,
     // Additive indexes for existing runtimes. Pane/audit identities remain
     // non-unique: their stores must still detect ambiguous physical authority.
     createProjectMigration({
-      id: '056-hot-path-query-indexes', schemaVersion: 56, appVersion: '0.76.259',
+      id: '056-hot-path-query-indexes', schemaVersion: 56, appVersion: '0.76.264',
       sql: `
 CREATE INDEX IF NOT EXISTS idx_mission_panes_pane
   ON mission_panes(pane_id, created_at, id);
