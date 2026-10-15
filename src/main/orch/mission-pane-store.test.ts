@@ -817,17 +817,22 @@ describe('retomada da missão da aba move o pane do orquestrador (F-664)', () =>
         missionId: mission.id, paneId, workerIncarnationId, accountId, effort: undefined,
       });
 
-    // Encarnação errada e worker que não é do operador: nada muda.
+    // Encarnação errada: nada muda. Worker do Maestro (não-operador) também
+    // pode ser curado — a cerca exige a conta selada em qualquer papel.
     expect(fill('pane-muyuzbjn-1e', 'workerinc-outra', 'acct-mrqvpdwz-1')).toBeNull();
-    expect(fill('pane-worker', 'workerinc-worker', 'acct-mrqvpdwz-1')).toBeNull();
+    expect(fill('pane-worker', 'workerinc-wrong', 'acct-mrqvpdwz-1')).toBeNull();
     expect(panes.findByPaneId('pane-worker')?.accountId).toBeUndefined();
-    expect(maestroWorker.operatorOpened).toBeUndefined();
 
     expect(fill('pane-muyuzbjn-1e', 'workerinc-muyuzbil-1c', 'acct-mrqvpdwz-1')).toMatchObject({
       id: operator.id, accountId: 'acct-mrqvpdwz-1', operatorOpened: true,
     });
+    // Qualquer papel: worker do Maestro com a mesma encarnação física.
+    expect(fill('pane-worker', 'workerinc-worker', 'acct-mrqvpdwz-1')).toMatchObject({
+      id: maestroWorker.id, accountId: 'acct-mrqvpdwz-1', role: 'worker',
+    });
     // Conta já gravada nunca é trocada por este caminho.
     expect(fill('pane-muyuzbjn-1e', 'workerinc-muyuzbil-1c', 'acct-outra')).toBeNull();
+    expect(fill('pane-worker', 'workerinc-worker', 'acct-outra')).toBeNull();
     runtimeManager.close(scope);
     expect(
       createScopedMissionPaneStore(runtimeManager, scope).findByPaneId('pane-muyuzbjn-1e'),

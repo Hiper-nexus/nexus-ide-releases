@@ -547,14 +547,32 @@ async function presentLiveMainOwnedPane(
     return;
   }
 
+  // Align sealed runtime (account, model, effort, cwd) onto the layout pane
+  // BEFORE any spawn kick. The restored layout may carry `accountId:
+  // undefined` (mission panes never write the account on successful spawn —
+  // only operator panes do) while Main sealed a physical account. The
+  // persisted-authority fence requires that exact account; kicking with the
+  // stale mirror rejects as `accountId[undefined != acct-…]` and the pane
+  // dies after the automatic spawn budget.
+  const sealedPane = current
+    ? alignPaneToSealedRecovery(current, req.pane)
+    : paneFromPresentation(req);
+  if (current) {
+    const layout = useLayoutStore.getState();
+    const existingNow = listPanes(layout.root);
+    const next = panesAfterMainOwnedPresentation(existingNow, sealedPane);
+    if (next !== existingNow) layout.setPanes(next);
+  }
   // This flag asks the PTY boundary to adopt persisted Main authority. It
-  // never grants a fresh renderer-authored spawn.
+  // never grants a fresh renderer-authored spawn. Mark AFTER the layout
+  // carries the sealed account so the kick re-reads the aligned pane.
   markPersistedAuthorityOnSpawn(req.paneId);
   useOrchStore.getState().bindPaneMission(req.paneId, req.missionId);
-  const pane = current ?? paneFromPresentation(req);
-  const next = panesAfterMainOwnedPresentation(existing, pane);
-  if (next !== existing) {
-    useLayoutStore.getState().setPanes(next);
+  if (!current) {
+    const layout = useLayoutStore.getState();
+    const existingNow = listPanes(layout.root);
+    const next = panesAfterMainOwnedPresentation(existingNow, sealedPane);
+    if (next !== existingNow) layout.setPanes(next);
   }
   focusFreshlyPresentedPane(req.paneId, current !== undefined, req.role);
   assertPresentedPaneMounted(req.paneId);
@@ -759,6 +777,37 @@ export function useOrchBridge(): void {
             // bind no Main ainda podem falhar e a missão ficaria sem nenhum
             // Maestro na tela. O espelho do broadcast aposenta quando o Main
             // publicar a sessão durável do pane novo (mirrorConfirmedLeadership).
+            if (existing) {
+              // Retry of the same Main grant: the layout pane may predate the
+              // sealed runtime (restored without accountId). Mirror the grant
+              // before waitForSession kicks the spawn, or the persisted-
+              // authority fence rejects as `accountId[undefined != acct-…]`.
+              // Only fields the grant actually sealed are applied — an absent
+              // accountId is also sealed authority and must not be invented.
+              const layout = useLayoutStore.getState();
+              if (
+                req.accountId !== undefined &&
+                existing.accountId !== req.accountId
+              ) {
+                layout.setAccountId(existing.id, req.accountId);
+              }
+              if (req.model !== undefined && existing.model !== req.model) {
+                layout.setPaneModel(existing.id, req.model);
+              }
+              if (req.cwd && existing.cwd !== req.cwd) {
+                layout.setPaneCwd(existing.id, req.cwd);
+              }
+              if (req.effort !== undefined && existing.effort !== req.effort) {
+                const aligned: PaneModel = {
+                  ...existing,
+                  effort: req.effort,
+                };
+                const next = listPanes(layout.root).map((item) =>
+                  item.id === existing.id ? aligned : item,
+                );
+                layout.setPanes(next);
+              }
+            }
             paneId = existing?.id ??
               useLayoutStore.getState().spawnOrchPane({
                 paneId: req.paneId,

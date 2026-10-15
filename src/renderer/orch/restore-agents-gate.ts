@@ -1,4 +1,5 @@
 import { reportLicenseDenial } from '../state/access-guard';
+import type { MissionPaneRestoreAuthority } from '../../shared/orch-types';
 import { useAccessStore } from '../state/access-store';
 import type { PaneModel } from '../../shared/types';
 import type { OrchSettings } from '../../shared/settings-types';
@@ -75,6 +76,19 @@ function looksLikeMissionAgent(pane: PaneModel): boolean {
     pane.missionId ||
     pane.role === 'orchestrator' ||
     pane.role === 'worker',
+  );
+}
+
+/**
+ * Mission identity for restore authority. Layout `missionId` is metadata;
+ * the orch store may hold the binding when the layout row lost it. Without
+ * the fallback a restored worker with only `role` never reached Main's
+ * sealed runtime and kicked the fence with `accountId: undefined`.
+ */
+function resolveMissionIdForRestore(pane: PaneModel): string | undefined {
+  return (
+    pane.missionId ??
+    useOrchStore.getState().paneMissions[pane.id]
   );
 }
 
@@ -164,17 +178,35 @@ async function requestMissionPaneAuthority(
   pane: PaneModel,
   generation: RestoreWorkspaceGeneration,
 ): Promise<boolean> {
+  const missionId = resolveMissionIdForRestore(pane);
+  if (!missionId) return false;
   let retryDelayMs = MISSION_AUTHORITY_INITIAL_RETRY_DELAY_MS;
   while (isCurrentRestoreWorkspaceGeneration(generation)) {
     try {
-      const isAuthorized = await window.nexus.orch.canRestoreMissionPane({
-        missionId: pane.missionId!,
+      // Tolera mock/IPC legado que ainda devolve boolean.
+      const result = (await window.nexus.orch.canRestoreMissionPane({
+        missionId,
         paneId: pane.id,
-      });
+      })) as MissionPaneRestoreAuthority | boolean;
       if (!isCurrentRestoreWorkspaceGeneration(generation)) {
         throw new Error('restore generation changed');
       }
-      return isAuthorized;
+      // Sealed runtime from Main: the layout may carry `accountId:
+      // undefined` while Main sealed a physical account. The persisted-
+      // authority fence requires that exact account; kick with the stale
+      // mirror rejects as `accountId[undefined != acct-…]`.
+      if (
+        typeof result === 'object' &&
+        result !== null &&
+        result.authorized === true &&
+        result.sealed
+      ) {
+        applySealedRestoreRuntime(pane.id, result.sealed);
+      }
+      return (
+        result === true ||
+        (typeof result === 'object' && result !== null && result.authorized === true)
+      );
     } catch (error) {
       if (!isCurrentRestoreWorkspaceGeneration(generation) || reportLicenseDenial(error)) throw error;
       const shouldRetry = await waitForMissionAuthorityRetry(
@@ -195,7 +227,7 @@ function confirmMissionPaneAuthority(
   pane: PaneModel,
   generation: RestoreWorkspaceGeneration,
 ): Promise<boolean> {
-  if (!pane.missionId) return Promise.resolve(false);
+  if (!resolveMissionIdForRestore(pane)) return Promise.resolve(false);
   const key = missionAuthorityKey(pane, generation);
   const existing = missionAuthorityChecks.get(key);
   if (existing) return existing;
@@ -206,6 +238,53 @@ function confirmMissionPaneAuthority(
   });
   missionAuthorityChecks.set(key, check);
   return check;
+}
+
+/**
+ * Mirror Main's sealed runtime onto the layout pane before the restore
+ * gate releases the hold. `setAccountId`/`setPaneModel` persist; `effort`
+ * has no dedicated setter, so the full pane is rewritten when needed.
+ */
+function applySealedRestoreRuntime(
+  paneId: string,
+  sealed: {
+    readonly adapterId?: string;
+    readonly model?: string;
+    readonly accountId?: string;
+    readonly effort?: string;
+    readonly cwd?: string;
+  },
+): void {
+  const layout = useLayoutStore.getState();
+  const pane = listPanes(layout.root).find((item) => item.id === paneId);
+  if (!pane || pane.kind !== 'cli-agent') return;
+  // Same rule as alignPaneToSealedRecovery (orch-bridge.ts): sealed wins for
+  // runtime identity; only fields Main actually sealed are written.
+  if (sealed.accountId !== undefined && pane.accountId !== sealed.accountId) {
+    layout.setAccountId(paneId, sealed.accountId);
+  }
+  if (sealed.model !== undefined && pane.model !== sealed.model) {
+    layout.setPaneModel(paneId, sealed.model);
+  }
+  if (sealed.cwd && pane.cwd !== sealed.cwd) {
+    layout.setPaneCwd(paneId, sealed.cwd);
+  }
+  if (
+    (sealed.effort !== undefined && pane.effort !== sealed.effort) ||
+    (sealed.adapterId !== undefined && pane.adapterId !== sealed.adapterId)
+  ) {
+    const aligned: PaneModel = {
+      ...pane,
+      ...(sealed.adapterId !== undefined
+        ? { adapterId: sealed.adapterId }
+        : {}),
+      ...(sealed.effort !== undefined ? { effort: sealed.effort } : {}),
+    };
+    const next = listPanes(layout.root).map((item) =>
+      item.id === paneId ? aligned : item,
+    );
+    layout.setPanes(next);
+  }
 }
 
 /**

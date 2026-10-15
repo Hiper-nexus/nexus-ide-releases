@@ -16,6 +16,10 @@ const closePane = vi.fn();
 const pruneMissionBindings = vi.fn();
 const orchGet = vi.fn();
 const canRestoreMissionPane = vi.fn();
+const setAccountId = vi.fn();
+const setPaneModel = vi.fn();
+const setPaneCwd = vi.fn();
+const setPanes = vi.fn();
 const layoutRoot = vi.hoisted(() => ({
   current: {
     kind: 'leaf' as const,
@@ -54,6 +58,10 @@ vi.mock('../state/layout-store', () => ({
     getState: () => ({
       close: (...args: unknown[]) => closePane(...args),
       root: layoutRoot.current,
+      setAccountId: (...args: unknown[]) => setAccountId(...args),
+      setPaneModel: (...args: unknown[]) => setPaneModel(...args),
+      setPaneCwd: (...args: unknown[]) => setPaneCwd(...args),
+      setPanes: (...args: unknown[]) => setPanes(...args),
     }),
   },
 }));
@@ -63,6 +71,7 @@ vi.mock('../state/orch-store', () => ({
     getState: () => ({
       pruneMissionBindings: (...args: unknown[]) =>
         pruneMissionBindings(...args),
+      paneMissions: {} as Record<string, string>,
     }),
   },
 }));
@@ -126,6 +135,10 @@ describe('restore-agents-gate', () => {
     pruneMissionBindings.mockReset();
     orchGet.mockReset();
     canRestoreMissionPane.mockReset();
+    setAccountId.mockReset();
+    setPaneModel.mockReset();
+    setPaneCwd.mockReset();
+    setPanes.mockReset();
     orchGet.mockResolvedValue({ agentRestorePolicy: 'ask' });
     canRestoreMissionPane.mockResolvedValue(true);
     layoutRoot.current = {
@@ -226,6 +239,44 @@ describe('restore-agents-gate', () => {
     expect(canRestoreMissionPane).toHaveBeenCalledWith({
       missionId: 'mission-a',
       paneId: 'mission-orch',
+    });
+  });
+
+  it('mirrors Main sealed accountId onto the layout before releasing a mission pane', async () => {
+    // Root of accountId[undefined != acct-…] on the restore path: the
+    // layout restored without accountId while Main sealed a physical
+    // account. The fence requires that exact account; kick with the stale
+    // mirror rejected three times and the pane died behind "Agente em pausa".
+    layoutRoot.current = {
+      kind: 'leaf',
+      id: 'leaf-mission',
+      pane: {
+        id: 'mission-orch',
+        kind: 'cli-agent',
+        title: 'Orquestrador',
+        
+        cwd: '/ws',
+        
+        missionId: 'mission-a',
+        role: 'orchestrator',
+        // No accountId: the restored layout lost the sealed account.
+      },
+    };
+    canRestoreMissionPane.mockResolvedValue({
+      authorized: true,
+      sealed: {
+        accountId: 'acct-sealed-1',
+        model: 'gpt-5.6-sol',
+        effort: 'high',
+        cwd: '/workspace/sealed',
+      },
+    });
+    await gateRestoredAgents([missionAgent('mission-orch', 'Orquestrador')]);
+
+    expect(setAccountId).toHaveBeenCalledWith('mission-orch', 'acct-sealed-1');
+    expect(setPaneModel).toHaveBeenCalledWith('mission-orch', 'gpt-5.6-sol');
+    expect(releaseHeldSpawns).toHaveBeenCalledWith(['mission-orch'], {
+      resume: true,
     });
   });
 

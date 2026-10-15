@@ -2160,7 +2160,7 @@ export function registerOrchIpc(): void {
           paneId: z.string().min(1).max(128),
         })
         .safeParse(raw);
-      if (!parsed.success) return false;
+      if (!parsed.success) return { authorized: false };
       return requireMissionAuthority().canRestoreMissionPaneForRenderer(
         event.sender,
         parsed.data.missionId,

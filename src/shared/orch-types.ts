@@ -852,6 +852,27 @@ export interface PaneSnapshot extends PaneRegistryEntry {
   oneShotAlive?: boolean;
 }
 
+/**
+ * Main → renderer: restore proof for one persisted mission pane.
+ *
+ * `sealed` is the durable runtime the renderer MUST mirror on the layout
+ * pane before kicking a respawn. The persisted-authority fence compares the
+ * spawn request to the Main-sealed row; a layout restored from disk can
+ * carry `accountId: undefined` while Main sealed a physical account — the
+ * fence then rejects as `accountId[undefined != acct-…]` and the pane dies
+ * after the automatic spawn budget.
+ */
+export interface MissionPaneRestoreAuthority {
+  authorized: boolean;
+  sealed?: {
+    adapterId?: string;
+    model?: string;
+    accountId?: string;
+    effort?: string;
+    cwd?: string;
+  };
+}
+
 /** Main → renderer: please create a pane and spawn its session. */
 export interface OrchPaneSpawnRequest {
   requestId: string;

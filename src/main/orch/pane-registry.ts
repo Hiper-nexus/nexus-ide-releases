@@ -1869,14 +1869,13 @@ function resolveMainOwnedPanePresentation(
         false,
       );
     }
-    // F-1002: linha do "+ Pane → Nesta missão" gravada sem a conta/esforço
-    // que o Main selou neste PTY. A apresentação abaixo pede a adoção com a
-    // ficha física; sem preencher a linha a cerca do spawn persistido recusa
-    // para sempre. A fonte é o PTY do próprio Main, mesma encarnação.
+    // F-1002: linha gravada sem a conta/esforço que o Main selou neste PTY.
+    // A apresentação abaixo pede a adoção com a ficha física; sem preencher a
+    // linha a cerca do spawn persistido recusa para sempre. Vale para qualquer
+    // papel (worker do operador, worker do Maestro, orquestrador). A fonte é
+    // o PTY do próprio Main, mesma encarnação — nunca o renderer.
     if (
       !acpSession &&
-      spec.operatorOpened === true &&
-      agent.operatorOpened === true &&
       agent.workerIncarnationId === spec.workerIncarnationId &&
       ((spec.accountId === undefined && agent.accountId !== undefined) ||
         (spec.effort === undefined && agent.effort !== undefined))

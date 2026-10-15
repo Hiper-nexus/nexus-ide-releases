@@ -19,6 +19,7 @@ import { hasAutomaticTechnicalRecovery } from "../../shared/mission-recovery-pol
 import {
   normalizeMilestones,
   type Mission,
+  type MissionPaneRestoreAuthority,
   type MissionPaneSpec,
   type MissionPatch,
   type PaneActivitySummary,
@@ -1362,7 +1363,8 @@ export class RendererMissionAuthority {
     owner: WebContents,
     missionId: string,
     paneId: string,
-  ): boolean {
+  ): MissionPaneRestoreAuthority {
+    const denied: MissionPaneRestoreAuthority = { authorized: false };
     const rendererScope = requireRendererWorkspaceScope(owner);
     const suite = this.#stores.forScope(rendererScope);
     const mission = suite.missions.get(missionId);
@@ -1377,31 +1379,44 @@ export class RendererMissionAuthority {
       !hasCurrentDispatchAuthority(mission) ||
       isAutomatedReviewerCompositionPane(spec)
     ) {
-      return false;
+      return denied;
     }
     // F-721: a conversa deste líder está sendo levada pelo Main para outro
     // pane. O restore do renderer o deixa parado em vez de subir um segundo
     // Maestro (e sem a conversa) na mesma missão.
     const continuation = (spec as import('./mission-pane-store').ScopedMissionPaneSpec).workerContinuation
       ? reconcilePreparedWorkerContinuation(spec as import('./mission-pane-store').ScopedMissionPaneSpec).workerContinuation : undefined;
-    if (isOperatorTabResumeTransferSource(missionId, paneId) || continuation && continuation.state !== 'released') return false;
+    if (isOperatorTabResumeTransferSource(missionId, paneId) || continuation && continuation.state !== 'released') return denied;
+    // Sealed runtime the renderer must mirror before kicking the respawn.
+    // The persisted-authority fence compares the spawn request to this row;
+    // a layout restored without accountId used to send undefined and die.
+    const sealed = {
+      adapterId: spec.adapterId,
+      model: spec.model,
+      accountId: spec.accountId,
+      effort: spec.effort,
+      cwd: spec.cwd,
+    };
     // Via Rápida: pane gravado pelo main, escopo conferido acima — sem selo
     // gravado não há o que comparar, e recusar aqui deixava a equipe inteira
     // trabalhando INVISÍVEL ("nenhum pane foi aberto ainda" com 8 CLIs vivas).
-    if (!spec.authoritySeal) return true;
+    if (!spec.authoritySeal) return { authorized: true, sealed };
     const squad = mission.squadId ? getSquad(mission.squadId) : null;
-    if (!squad && mission.squadId) return false;
+    if (!squad && mission.squadId) return denied;
     const currentSeal = resolveMissionPaneAuthoritySeal(
       rendererScope,
       mission,
       squad,
     );
     if (sameMissionPaneAuthoritySeal(spec.authoritySeal, currentSeal)) {
-      return true;
+      return { authorized: true, sealed };
     }
     // Restart / PREVC pode rotacionar só a metade workflow. Aprovação
     // (intent + squad) intacta: reconcilia — não some com a equipe.
-    return sameMissionPaneApprovalSeal(spec.authoritySeal, currentSeal);
+    if (sameMissionPaneApprovalSeal(spec.authoritySeal, currentSeal)) {
+      return { authorized: true, sealed };
+    }
+    return denied;
   }
 
   /** Activity is best-effort metadata: a resolver bug must not break reopen. */

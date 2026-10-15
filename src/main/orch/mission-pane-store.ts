@@ -760,11 +760,12 @@ export class ScopedMissionPaneStore {
   }
 
   /**
-   * F-1002: linha do "+ Pane → Nesta missão" gravada antes da correção, sem a
-   * conta/esforço que o Main selou no PTY. Preenche SÓ o campo ausente, a
-   * partir da ficha física do Main (nunca do renderer), na linha exata
-   * (missão + pane + worker do operador + encarnação). Valor já gravado nunca
-   * é sobrescrito; divergência devolve null.
+   * F-1002: linha gravada antes da correção, sem a conta/esforço que o Main
+   * selou no PTY. Preenche SÓ o campo ausente, a partir da ficha física do
+   * Main (nunca do renderer), na linha exata (missão + pane + encarnação).
+   * Vale para qualquer papel — worker do operador, worker do Maestro e
+   * orquestrador. Valor já gravado nunca é sobrescrito; divergência devolve
+   * null.
    */
   fillOperatorPaneSealedRuntime(input: {
     readonly missionId: string;
@@ -782,8 +783,6 @@ export class ScopedMissionPaneStore {
       const existing = rows[0];
       if (
         existing.missionId !== missionId ||
-        existing.role !== 'worker' ||
-        existing.operatorOpened !== true ||
         existing.workerIncarnationId !== input.workerIncarnationId
       ) {
         return { spec: null, changed: false };
@@ -808,7 +807,7 @@ export class ScopedMissionPaneStore {
         .prepare('UPDATE mission_panes SET account_id = ?, effort = ? WHERE id = ?')
         .run(next.accountId ?? null, next.effort ?? null, existing.id);
       if (update.changes !== 1) {
-        throw new ScopedStoreCorruptionError('operator pane sealed runtime fill');
+        throw new ScopedStoreCorruptionError('pane sealed runtime fill');
       }
       return { spec: next, changed: true };
     })();

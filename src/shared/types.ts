@@ -831,7 +831,7 @@ export interface NexusApi {
     canRestoreMissionPane(input: {
       missionId: string;
       paneId: string;
-    }): Promise<boolean>;
+    }): Promise<import('./orch-types').MissionPaneRestoreAuthority>;
     /**
      * F-1173: checkpoints ocultos dos writers da missão. O renderer manda
      * missionId (+ ref); a árvore sai sempre da autoridade do Main.

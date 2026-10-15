@@ -917,14 +917,14 @@ describe("renderer mission authority", () => {
         "mission-a",
         "pane-a",
       ),
-    ).toBe(true);
+    ).toMatchObject({ authorized: true });
     expect(
       authority.canRestoreMissionPaneForRenderer(
         owner,
         "mission-a",
         "pane-forged",
       ),
-    ).toBe(false);
+    ).toMatchObject({ authorized: false });
 
     // F-721: enquanto a retomada da aba leva a conversa deste líder para
     // outro pane, o restore do renderer não o religa.
@@ -932,13 +932,13 @@ describe("renderer mission authority", () => {
     try {
       expect(
         authority.canRestoreMissionPaneForRenderer(owner, "mission-a", "pane-a"),
-      ).toBe(false);
+      ).toMatchObject({ authorized: false });
     } finally {
       release?.();
     }
     expect(
       authority.canRestoreMissionPaneForRenderer(owner, "mission-a", "pane-a"),
-    ).toBe(true);
+    ).toMatchObject({ authorized: true });
   });
 
   it("restaura pane cujo selo de workflow rotacionou no restart (aprovação intacta)", () => {
@@ -971,7 +971,7 @@ describe("renderer mission authority", () => {
         "mission-a",
         "pane-rotated",
       ),
-    ).toBe(true);
+    ).toMatchObject({ authorized: true });
   });
 
   it("recusa restore quando a aprovação (intent) mudou — isso pede replane", () => {
@@ -1004,7 +1004,7 @@ describe("renderer mission authority", () => {
         "mission-a",
         "pane-replanned",
       ),
-    ).toBe(false);
+    ).toMatchObject({ authorized: false });
   });
 
   it("restaura pane sem selo gravado (Via Rápida não grava selo de autoridade)", () => {
@@ -1027,7 +1027,7 @@ describe("renderer mission authority", () => {
         "mission-a",
         "pane-legacy",
       ),
-    ).toBe(true);
+    ).toMatchObject({ authorized: true });
   });
 
   it("never exposes a legacy PREVC reviewer to renderer reopen", () => {

@@ -296,20 +296,24 @@ export async function reopenMission(
     });
   }
 
+  // Safe multi-mission: keep every live pane, append this mission's panes.
+  // (reconcileHosts only kills hosts for panes removed from the tree.)
+  // setPanes BEFORE prepareMissionPaneResume: the resume kick re-reads the
+  // layout pane, and the sealed accountId from specsToPanes must already be
+  // there or the persisted-authority fence rejects as
+  // `accountId[undefined != acct-…]`.
+  if (keptDurable.length === 0) {
+    useLayoutStore.getState().setPanes(panes);
+  } else {
+    useLayoutStore.getState().setPanes([...keptDurable, ...panes]);
+  }
+
   // All rejection gates passed and blocked authority was rearmed. Only now may
   // renderer host preparation trigger a PTY adoption/resume. Live sessions are
   // deliberately skipped: they must never be reset, replaced, or left with a
   // latent resume flag.
   for (const pane of panes) {
     if (!existingSessionByPane.get(pane.id)) prepareMissionPaneResume(pane.id);
-  }
-
-  // Safe multi-mission: keep every live pane, append this mission's panes.
-  // (reconcileHosts only kills hosts for panes removed from the tree.)
-  if (keptDurable.length === 0) {
-    useLayoutStore.getState().setPanes(panes);
-  } else {
-    useLayoutStore.getState().setPanes([...keptDurable, ...panes]);
   }
 
   for (const pane of panes) {

@@ -236,6 +236,76 @@ describe('orchestration bridge pane recovery', () => {
     act(() => mounted.root.unmount());
   });
 
+  it('mirrors the sealed accountId onto a restored layout pane before kicking the spawn', async () => {
+    // Root of accountId[undefined != acct-…]: the layout restored a mission
+    // pane without accountId (mission panes never write the account on
+    // successful spawn). The presentation carries Main's sealed account, but
+    // the old path kept `current` as-is and kicked the spawn with undefined —
+    // the persisted-authority fence then rejected three times and the pane
+    // died behind "Agente em pausa".
+    terminal.waitForSession.mockResolvedValueOnce('session-sealed');
+    // No live session yet: the restored pane must go through
+    // presentLiveMainOwnedPane, not the exact-healthy short-circuit.
+    terminal.getPaneSessionId.mockReturnValue(null);
+    const present = installPresentationHarness();
+    useLayoutStore.setState({
+      root: {
+        kind: 'leaf',
+        id: 'leaf-restored',
+        pane: {
+          id: 'pane-sealed',
+          kind: 'cli-agent',
+          title: 'Maestro',
+          adapterId: 'codex',
+          missionId: 'mission-sealed',
+          role: 'orchestrator',
+          // No accountId: the restored layout lost the sealed account.
+        },
+      },
+      focusedPaneId: 'pane-sealed',
+    });
+    const mounted = mount();
+    const request: MissionPanePresentationRequest = {
+      missionId: 'mission-sealed',
+      paneId: 'pane-sealed',
+      sessionId: 'session-sealed',
+      role: 'orchestrator',
+      pane: {
+        adapterId: 'codex',
+        model: 'gpt-5.6-sol',
+        accountId: 'acct-sealed-1',
+        effort: 'high',
+        cwd: '/workspace/sealed',
+        title: 'Maestro',
+        agentName: 'Maestro',
+        role: 'orchestrator',
+      },
+    };
+
+    await act(async () => {
+      present(request);
+      await vi.waitFor(() => {
+        expect(terminal.waitForSession).toHaveBeenCalledWith(
+          'pane-sealed',
+          75_000,
+        );
+      });
+    });
+
+    // The layout must carry the sealed account BEFORE the spawn kick, so the
+    // request that reaches Main's fence matches the sealed row.
+    const pane = listPanes(useLayoutStore.getState().root).find(
+      (item) => item.id === 'pane-sealed',
+    );
+    expect(pane?.accountId).toBe('acct-sealed-1');
+    expect(pane?.model).toBe('gpt-5.6-sol');
+    expect(pane?.effort).toBe('high');
+    expect(terminal.markPersistedAuthorityOnSpawn).toHaveBeenCalledWith(
+      'pane-sealed',
+    );
+    act(() => mounted.root.unmount());
+  });
+
   it('holds a presentation until the layout hydrates, then replaces the placeholder (ghost pane race)', async () => {
     // The exact production race: the bridge mounts and Main presents mission
     // panes BEFORE the persisted workspace layout hydrates. Un-gated, the
