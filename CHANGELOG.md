@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.76.261 — Linux em dia com panes rápidos, mapa da equipe e XP
+
+A 0.76.257 foi a última com pacote Linux. A 0.76.258 saiu só para Windows (menus nativos seguem o tema do app, sem efeito no Linux) e a 0.76.259 saiu só para macOS. A tag 0.76.260 não foi publicada: a suíte no Ubuntu 22.04 recusou o ledger de proveniência do T3 Code, desatualizado depois do mapa da equipe e do orçamento de foco. Esta versão é o mesmo produto da 0.76.259, com esses hashes em dia, empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35).
+
+No desktop Linux, em relação à 0.76.257:
+
+- **Pane preto ou embaralhado.** O PTY adotado recebe na hora a grade real do xterm (antes ficava em 80×24 até um «Redesenhar»). O resize sai no frame seguinte, sem o debounce de 150 ms. Um pane que remonta volta visível sozinho, e o split e o fechar não descartam mais o contexto WebGL do pane vizinho.
+- **Abrir pane mais rápido.** Writer isolado adota uma worktree pré-alocada em vez de criá-la na hora (`NEXUS_WORKTREE_POOL=0` desliga). O brief pré-PTY espera o Jev por no máximo 2,5 s (eram 6 s), o probe do Kimi tem cache de 60 s, e as leituras repetidas de disco do spawn (benchmark, hub.json, plugins) usam cache por mtime.
+- **Processo principal mais leve.** Medido: ~10% do loop ia para `fsync` síncrono. O espelho diagnóstico da missão não faz mais `F_FULLFSYNC` (eram 6 por projeção) nem reescreve o que não mudou. A cadeia de recibos dos handoffs é verificada uma vez por leitura (era uma vez por linha). O shim de cada worker acorda por `fs.watch` em vez de varrer a pasta a cada 40 ms. O fast-lane não roda git para worker ocupado. O snapshot de missão não é projetado duas vezes. Um spawn que não assenta em 15 s registra `pane-spawn-stalled` com a fase em que parou.
+- **Grade com muitos panes.** Mudança de título, cwd ou conta não remede a frota. O refit mede todos os hosts antes de aplicar qualquer resize. O foco re-renderiza só os dois panes envolvidos. Snapshots de missão repetidos são descartados, e o «+ Pane» lê o histórico dos panes só quando precisa.
+- **Retomada de pane de missão sem conta (F-1514).** A cerca do spawn tratava a conta omitida pela interface como divergência e o pane morria em toda retomada. A conta omitida passa a usar a conta selada; uma conta diferente continua recusada.
+- **Mapa da equipe à vista.** Botão na barra de abas dos Terminais. O cartão de cada agente mostra a tarefa real do pane em vez de «Sem tarefa do plano».
+- **Etapa Equipe.** A barra Voltar/Continuar não cobre mais os cartões. Os cartões têm grade fixa e o Remover virou ícone com nome acessível.
+- **Gamificação que funciona.** Handoffs aceitos pelo orquestrador passam a dar XP (antes nenhum pontuava), turnos do MiMo contam, o medidor de XP volta à barra lateral, e o perfil mostra o próximo nível e o que falta. A lata de energético do pane abre com estalo e dá um gole com o «+XP», com animação finita, só no compositor e respeitando «reduzir movimento».
+- **Builds nas worktrees.** O cache do typecheck incremental e o cache de transformação dos testes ficam em `.nexus-cache/` por worktree e são copiados por CoW para a worktree nova.
+
+No mesmo binário, sem mudar o comportamento do Linux: no Windows os menus nativos dos seletores seguem o tema do app (0.76.258).
+
+## 0.76.260 — Corte não publicado
+
+A tag anotada existe e não tem pacote. A suíte no Ubuntu 22.04 recusou o ledger de proveniência do T3 Code (`CommandPalette.tsx` e o orçamento de render da grade) depois das mudanças da 0.76.259. A 0.76.261 atualiza os hashes e publica o Linux.
+
 ## 0.76.259 — Panes mais rápidos, sem tela preta, e XP que conta de verdade
 
 Missão de desempenho: abrir e redimensionar panes, o processo principal e as builds ficaram mais leves. Também volta o pane de missão que não retomava por falta de conta, o mapa da equipe fica à vista e a gamificação passa a responder ao trabalho real.
