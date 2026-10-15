@@ -557,3 +557,52 @@ describe('rail em modo foco (Configurações)', () => {
     expect(activeCssomDeclaration(active, '.workspace-rail__cockpit-status', 'grid-row')).toBe(String(footerRows));
   });
 });
+
+describe('sinal de "trabalhando agora" (rail, abas e cabeçalho da missão)', () => {
+  const pulses = [
+    // Pulso dos agentes e do contador no rail.
+    '.workspace-rail__live-dot',
+    '.workspace-rail__agent-dot--working',
+    '.workspace-rail__agent-dot--starting',
+    // O ponto da missão já pulsava no rail: entrou na mesma regra.
+    '.workspace-rail__mission--running .workspace-rail__mission-dot',
+    // Selo da aba e chip do cabeçalho dos Terminais da missão.
+    '.workspace-tab__working-dot',
+    '.terminal-workspace__live-dot',
+  ] as const;
+
+  it('todo pulso anima só opacity, nunca layout, borda ou sombra', () => {
+    // O rail e as abas vivem ao lado do canvas do xterm: o pulso é de
+    // compositor. Os keyframes que os pulsos usam não podem ganhar outra
+    // propriedade sem este teste acusar.
+    for (const name of ['state-breathe', 'workspace-tab-live']) {
+      const source = productStyles.join('\n');
+      const match = new RegExp(`@keyframes ${name}\\s*\\{([\\s\\S]*?\\})\\s*\\}`).exec(source);
+      if (!match) throw new Error(`@keyframes ${name} não encontrado`);
+      const properties = [...match[1]!.matchAll(/([a-z-]+)\s*:/g)].map((entry) => entry[1]);
+      expect(properties.length).toBeGreaterThan(0);
+      for (const property of properties) expect(property).toBe('opacity');
+    }
+  });
+
+  it('pulsa com movimento permitido e fica parado em prefers-reduced-motion', () => {
+    const normal = installStyleContract(productStyles, { width: 1_400 });
+    for (const selector of pulses) {
+      expect(
+        cssDeclarationHasPositiveDuration(
+          activeCssomDeclaration(normal, selector, 'animation'),
+        ),
+        selector,
+      ).toBe(true);
+    }
+
+    normal.remove();
+    const reduced = installStyleContract(productStyles, {
+      width: 1_400,
+      reducedMotion: true,
+    });
+    for (const selector of pulses) {
+      expect(activeCssomDeclaration(reduced, selector, 'animation'), selector).toBe('none');
+    }
+  });
+});

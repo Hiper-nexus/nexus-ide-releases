@@ -139,6 +139,29 @@
   padding-block: var(--space-2);
 }
 
+/* Quem está trabalhando nos terminais desta missão, ao lado do título. */
+.terminal-workspace__live {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-1-5);
+  padding: var(--space-1) var(--space-2-5);
+  border: 1px solid color-mix(in srgb, var(--state-running) 45%, transparent);
+  border-radius: var(--radius-round);
+  background: color-mix(in srgb, var(--state-running) 10%, transparent);
+  color: var(--state-running);
+  font: 600 var(--text-xs) / 1 var(--font-ui);
+  white-space: nowrap;
+}
+
+.terminal-workspace__live-dot {
+  inline-size: 6px;
+  block-size: 6px;
+  border-radius: var(--radius-round);
+  background: currentColor;
+  animation: workspace-tab-live 2.4s var(--ease-out-quart) infinite;
+}
+
 /* F-527: com 2+ missões vivas na mesma árvore de panes, a vista Terminais
    ganha chips de foco por missão — separação explícita, "todas" a um clique. */
 .terminal-workspace__filterbar {
@@ -1732,6 +1755,30 @@
   color: var(--text);
 }
 
+/* Agentes trabalhando na aba: ponto vivo + número, sem precisar abri-la. A
+   palavra ("N trabalhando agora") mora no nome acessível e no tooltip da aba;
+   o ponto reusa o respirar do glifo de missão viva. */
+.workspace-tab__working {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px 5px;
+  border-radius: var(--radius-round);
+  background: color-mix(in srgb, var(--state-running) 14%, transparent);
+  color: var(--state-running);
+  font: 600 var(--text-2xs) / 1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.workspace-tab__working-dot {
+  inline-size: 5px;
+  block-size: 5px;
+  border-radius: var(--radius-round);
+  background: currentColor;
+  animation: workspace-tab-live 2.4s var(--ease-out-quart) infinite;
+}
+
 .workspace-tab__close {
   position: absolute;
   inset-block-start: 50%;
@@ -2023,7 +2070,9 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .workspace-tab[data-tone='live'] .workspace-tab__glyph {
+  .workspace-tab[data-tone='live'] .workspace-tab__glyph,
+  .workspace-tab__working-dot,
+  .terminal-workspace__live-dot {
     animation: none;
   }
 

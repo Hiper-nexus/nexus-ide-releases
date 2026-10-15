@@ -30,8 +30,9 @@ import {
   toastPromoted,
 } from '../../lib/pane-mission-promote';
 import { askConfirm, useConfirmStore } from '../../state/confirm-store';
-import { WorkspaceTabs, workspaceTabIsClosable } from './WorkspaceTabs';
+import { workspaceTabIsClosable } from './WorkspaceTabs';
 import { missionTeamOfScope } from './MissionTeamMapButton';
+import { LiveWorkspaceTabs, MissionWorkingChip } from './TerminalLiveSignals';
 import { missionLifecycleLabel } from '../../lib/mission-lifecycle-copy';
 import { missionAwaitsOperatorReview } from '../../../shared/mission-recovery-policy';
 import { PixelIcon } from '../PixelIcon';
@@ -567,6 +568,14 @@ export function TerminalWorkspace({
     effectiveScopeKey && !overview
       ? scopes.find((scope) => scope.key === effectiveScopeKey)
       : undefined;
+  // Cabeçalho da missão: o chip conta quem trabalha NOS terminais que ele
+  // desenha (ver MissionWorkingChip). O estado vivo é assinado lá, não aqui —
+  // este componente carrega o grid dos xterms e não re-renderiza a cada turno.
+  const missionPaneIds = useMemo(
+    () =>
+      inMission && effectiveScopeKey ? visibleIdsFor(effectiveScopeKey) : null,
+    [inMission, effectiveScopeKey, visibleIdsFor],
+  );
 
   return (
     <section
@@ -585,6 +594,7 @@ export function TerminalWorkspace({
               <span className="product-workspace__context">{contextLabel}</span>
               <h1>Terminais</h1>
             </div>
+            <MissionWorkingChip panes={panes} visibleIds={missionPaneIds} />
           </div>
           {onBackToBoard ? (
             <button
@@ -600,7 +610,9 @@ export function TerminalWorkspace({
           ) : null}
         </header>
       ) : (
-        <WorkspaceTabs
+        <LiveWorkspaceTabs
+          panes={panes}
+          scopeOf={scopeOf}
           scopes={scopes}
           activeScopeKey={overview ? null : effectiveScopeKey}
           sideScopeKey={liveSideKey}

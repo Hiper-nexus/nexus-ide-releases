@@ -15,6 +15,7 @@ import {
   isIsolationStopReasonCode,
 } from '../../../shared/session-restore-liveness';
 import { missionLifecycleLabel } from '../../lib/mission-lifecycle-copy';
+import { workingNowLabel } from '../../lib/agent-roster';
 import type { PaneScopeEntry } from '../../lib/pane-spaces';
 import { PanePicker } from '../PanePicker';
 import { PixelIcon, type PixelIconName } from '../PixelIcon';
@@ -212,6 +213,7 @@ function tabTooltip(scope: PaneScopeEntry, side: boolean, movable = false): stri
   }
   if (scope.orchestrator) lines.push(`Orquestrador: ${scope.orchestrator.title}`);
   lines.push(`${scope.paneCount} ${scope.paneCount === 1 ? 'painel' : 'painéis'}`);
+  if (scope.workingCount) lines.push(workingNowLabel(scope.workingCount));
   if (side) lines.push('Aberta ao lado');
   if (scope.kind !== 'mission') lines.push('Duplo clique para renomear');
   if (movable) lines.push(`Arraste para mudar a ordem (teclado: ${moveShortcutLabel()})`);
@@ -221,7 +223,8 @@ function tabTooltip(scope: PaneScopeEntry, side: boolean, movable = false): stri
 function tabAccessibleName(scope: PaneScopeEntry): string {
   const label = stateLabel(scope.state, scope.stateReasonCode);
   const count = `${scope.paneCount} ${scope.paneCount === 1 ? 'painel' : 'painéis'}`;
-  return [scope.title, label, count].filter(Boolean).join(', ');
+  const working = scope.workingCount ? workingNowLabel(scope.workingCount) : null;
+  return [scope.title, label, count, working].filter(Boolean).join(', ');
 }
 
 interface TabMenuState {
@@ -380,6 +383,7 @@ export function WorkspaceTabs({
               data-side={side || undefined}
               data-scope-kind={scope.kind}
               data-tone={tone ?? undefined}
+              data-working={scope.workingCount || undefined}
               data-dragging={dragKey === scope.key || undefined}
               data-drop={dropTarget?.key === scope.key ? dropTarget.side : undefined}
               draggable={canReorder && !isEditing}
@@ -493,6 +497,14 @@ export function WorkspaceTabs({
                   {side ? (
                     <span className="workspace-tab__side" aria-hidden="true">
                       <PixelIcon name="split-right" size={10} />
+                    </span>
+                  ) : null}
+                  {scope.workingCount ? (
+                    // Quem trabalha nesta aba, à vista sem abri-la. A palavra
+                    // mora no nome acessível e no tooltip; aqui, ponto + número.
+                    <span className="workspace-tab__working" aria-hidden="true">
+                      <span className="workspace-tab__working-dot" />
+                      {scope.workingCount}
                     </span>
                   ) : null}
                   <span className="workspace-tab__count" aria-hidden="true">

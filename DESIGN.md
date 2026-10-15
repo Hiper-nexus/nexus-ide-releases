@@ -228,6 +228,19 @@ já o desliga sozinho e compensa em opacidade.
   em duas grelhas com o nome de cada metade. O "+" é o mesmo picker do
   "+ Pane", ancorado na barra e abrindo para baixo.
 - Frota em linguagem clara: "2 trabalhando · 1 morto" (nunca "zzz"/"x").
+- **Quem trabalha agora** (rail, abas dos Terminais e cabeçalho da missão): a
+  frase "N trabalhando agora" fica sempre à vista, nunca atrás de um recolher.
+  O agente `busy` leva o realce de acento (`--state-running`: fundo a 9% e marca
+  de 2px na borda), o glifo `status-busy` e a palavra "Trabalhando"; dois ou
+  mais ao mesmo tempo ganham a marca "em paralelo". Aguardando, dormindo,
+  encerrado e sem sessão ficam em tom secundário (`--text-dim`/`--text-faint`,
+  logo esmaecido), sempre com a palavra do estado. A ordem das linhas é a do
+  layout e não muda com o estado (linha que pula a cada busy↔idle é clique no
+  alvo errado); o pulso é só opacity (`state-breathe`) e para em
+  `prefers-reduced-motion`. A regra de "trabalhando" é uma só
+  (`src/renderer/lib/agent-roster.ts`, sobre `displayStates`): rail, abas e
+  cabeçalho nunca contam diferente. Título OSC que é pasta de worktree, caminho
+  ou id nunca aparece como tarefa.
 - Pane comunica estado pela borda: busy = acento, morto = danger, hibernado =
   tracejado dim; foco = acento + glow contido.
 - Densidade: monitoramento denso é OK (terminal, telemetria); **CTAs de

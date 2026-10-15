@@ -33,6 +33,13 @@ export interface PaneScopeEntry {
   readonly id?: string;
   readonly title: string;
   readonly paneCount: number;
+  /**
+   * Agentes deste escopo trabalhando agora. Não vem de `listPaneScopes` (que só
+   * conhece layout e missões): `withWorkingCounts` o acrescenta na hora de
+   * desenhar a barra, para o estado vivo não mexer na identidade dos escopos
+   * que os callbacks do grid usam. Presente só quando maior que zero.
+   */
+  readonly workingCount?: number;
   /** Estado da missão, quando o renderer já conhece a projeção. */
   readonly state?: string;
   /**
@@ -356,6 +363,40 @@ export function listPaneScopes(input: ListPaneScopesInput): PaneScopeEntry[] {
     const nextIdx = (seenIndices.get(s.title) ?? 0) + 1;
     seenIndices.set(s.title, nextIdx);
     return { ...s, title: `${s.title} #${nextIdx}` };
+  });
+}
+
+/**
+ * Quantos agentes trabalham em cada escopo. Só escopo com trabalho entra no
+ * mapa; `workingPaneIds` vem do estado vivo dos panes (`agent-roster`).
+ */
+export function workingCountsByScope(
+  panes: readonly PaneModel[],
+  scopeOf: (pane: PaneModel) => string,
+  workingPaneIds: ReadonlySet<string>,
+): ReadonlyMap<string, number> {
+  const counts = new Map<string, number>();
+  for (const pane of panes) {
+    if (!workingPaneIds.has(pane.id)) continue;
+    const key = scopeOf(pane);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/**
+ * Acrescenta `workingCount` às abas que têm agente trabalhando. A aba sem
+ * trabalho segue sendo o MESMO objeto, e sem ninguém trabalhando devolve o
+ * MESMO array: só muda de identidade a aba cujo número realmente mudou.
+ */
+export function withWorkingCounts(
+  scopes: readonly PaneScopeEntry[],
+  counts: ReadonlyMap<string, number>,
+): readonly PaneScopeEntry[] {
+  if (counts.size === 0) return scopes;
+  return scopes.map((scope) => {
+    const workingCount = counts.get(scope.key);
+    return workingCount ? { ...scope, workingCount } : scope;
   });
 }
 

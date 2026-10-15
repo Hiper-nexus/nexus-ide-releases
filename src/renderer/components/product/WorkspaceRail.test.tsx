@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   WorkspaceRail,
   type WorkspaceRailProps,
@@ -15,6 +15,9 @@ import { useLayoutStore } from '../../state/layout-store';
 import { useWorkspaceStore } from '../../state/workspace-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { usePaneFootprintStore } from '../../state/pane-footprint-store';
+import { useSessionStateStore } from '../../state/session-state-store';
+import { usePaneParkedStore } from '../../state/pane-parked-store';
+import type { PaneModel, PaneSessionState } from '../../../shared/types';
 import { buildGridTree, createLeaf, createPane } from '../../lib/split-tree';
 
 (
@@ -1291,5 +1294,355 @@ describe('WorkspaceRail', () => {
     });
     expect(host.querySelector('[data-mission-id="m-5min"] .workspace-rail__mission-age')?.textContent).toBe('5m');
     expect(host.querySelector('[data-mission-id="m-sem-idade"] .workspace-rail__mission-age')).toBeNull();
+  });
+});
+
+/**
+ * Quem está trabalhando agora: o operador abria o rail e via "3 agentes"
+ * recolhido, cada um com o título cortado — com mais de um agente rodando em
+ * paralelo não dava para saber QUEM trabalhava.
+ */
+describe('WorkspaceRail — agentes trabalhando agora', () => {
+  const agentPane = (
+    patch: Partial<PaneModel> & { id: string },
+  ): PaneModel => ({
+    kind: 'cli-agent',
+    title: '',
+    adapterId: 'claude',
+    ...patch,
+  });
+
+  const CLAUDE = {
+    id: 'claude',
+    kind: 'cli-pty' as const,
+    label: 'Claude',
+    icon: '◆',
+    models: { list: ['sonnet'], default: 'sonnet' },
+    installed: true,
+    installCommand: 'npm i -g claude',
+    idleTimeoutMs: 800,
+    orchestratorCapable: true,
+  };
+
+  /** Monta o layout, aplica os estados reais pela store e devolve o restauro. */
+  function seedFleet(
+    panes: PaneModel[],
+    states: Record<string, PaneSessionState>,
+  ): () => void {
+    const previousRoot = useLayoutStore.getState().root;
+    act(() => {
+      useLayoutStore.setState({ root: buildGridTree(panes), focusedPaneId: null });
+      useAdapterStore.getState().receive([CLAUDE]);
+      for (const [paneId, state] of Object.entries(states)) {
+        useSessionStateStore.getState().setPaneState(paneId, state);
+      }
+    });
+    return () => {
+      act(() => {
+        useLayoutStore.setState({ root: previousRoot });
+        useAdapterStore.getState().receive([]);
+        for (const paneId of Object.keys(states)) {
+          useSessionStateStore.getState().clearPaneState(paneId);
+        }
+        usePaneParkedStore.setState({ parked: new Map() });
+      });
+    };
+  }
+
+  const MISSION_PANES: PaneModel[] = [
+    agentPane({
+      id: 'orq',
+      role: 'orchestrator',
+      agentName: 'Maestro',
+      missionId: 'mission-running',
+      paneNumber: 1,
+      title: 'Claude · Coordenar a entrega',
+    }),
+    agentPane({
+      id: 'fe',
+      agentName: 'Frontend',
+      adapterId: 'codex',
+      model: 'gpt-5.6-luna-medium',
+      missionId: 'mission-running',
+      paneNumber: 2,
+      title: 'GPT · Corrigir histórico omitido ao mudar de aba',
+    }),
+    agentPane({
+      id: 'rev',
+      agentName: 'Revisor',
+      missionId: 'mission-running',
+      paneNumber: 3,
+      title: 'Claude · Revisar o diff',
+    }),
+  ];
+
+  const missionRow = (host: HTMLElement, id: string) =>
+    host.querySelector<HTMLElement>(`[data-mission-id="${id}"]`)!.closest('li')!;
+
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it('a missão com agente trabalhando abre sozinha, sem clique e sem estar selecionada', () => {
+    const restore = seedFleet(MISSION_PANES, { orq: 'busy', fe: 'busy', rev: 'idle' });
+    try {
+      const { host } = renderRail({ selection: null });
+      const card = missionRow(host, 'mission-running');
+
+      expect(card.querySelector('.workspace-rail__agents-toggle')!.textContent).toContain(
+        '2 trabalhando agora',
+      );
+      expect(card.querySelector('.workspace-rail__live-tag')?.textContent).toBe('em paralelo');
+      const items = [...card.querySelectorAll<HTMLElement>('.workspace-rail__agent-item')];
+      expect(items.map((item) => item.dataset.paneId)).toEqual(['orq', 'fe', 'rev']);
+      expect(items.map((item) => item.dataset.agentState)).toEqual([
+        'working',
+        'working',
+        'waiting',
+      ]);
+      // A outra missão não tem agente nenhum: nada de bloco.
+      expect(
+        missionRow(host, 'mission-blocked').querySelector('.workspace-rail__agents-block'),
+      ).toBeNull();
+    } finally {
+      restore();
+    }
+  });
+
+  it('missão com todos aguardando segue recolhida e diz que ninguém trabalha', () => {
+    const restore = seedFleet(MISSION_PANES, { orq: 'idle', fe: 'idle', rev: 'idle' });
+    try {
+      const { host } = renderRail({ selection: null });
+      const card = missionRow(host, 'mission-running');
+
+      expect(card.querySelector('.workspace-rail__agents-toggle')!.textContent).toContain(
+        '3 agentes · aguardando',
+      );
+      expect(card.querySelector('.workspace-rail__agents-list')).toBeNull();
+    } finally {
+      restore();
+    }
+  });
+
+  it('recolher é escolha do operador e os agentes que trabalham não somem com ela', () => {
+    const restore = seedFleet(MISSION_PANES, { orq: 'busy', fe: 'idle', rev: 'idle' });
+    try {
+      const { host } = renderRail({ selection: null });
+      const card = missionRow(host, 'mission-running');
+      const toggle = card.querySelector<HTMLButtonElement>('.workspace-rail__agents-toggle')!;
+      const visibleIds = () =>
+        [...card.querySelectorAll<HTMLElement>('.workspace-rail__agent-item')].map(
+          (item) => item.dataset.paneId,
+        );
+
+      expect(visibleIds()).toEqual(['orq', 'fe', 'rev']);
+      act(() => toggle.click());
+      expect(toggle.getAttribute('aria-expanded')).toBe('false');
+      expect(visibleIds()).toEqual(['orq']);
+      act(() => toggle.click());
+      expect(visibleIds()).toEqual(['orq', 'fe', 'rev']);
+    } finally {
+      restore();
+    }
+  });
+
+  it('a linha do projeto aberto diz "N trabalhando agora" e o vizinho não inventa contagem', () => {
+    const restore = seedFleet(MISSION_PANES, { orq: 'busy', fe: 'busy', rev: 'busy' });
+    try {
+      const { host } = renderRail({
+        selection: null,
+        currentWorkspaceId: 'atlas',
+        activeWorkspaces: [
+          ...activeWorkspaces,
+          { id: 'cometa', name: 'Cometa', missions: [] },
+        ],
+      });
+      const current = host.querySelector<HTMLButtonElement>('[data-workspace-id="atlas"]')!;
+      const neighbour = host.querySelector<HTMLButtonElement>('[data-workspace-id="cometa"]')!;
+
+      expect(current.querySelector('.workspace-rail__workspace-live')!.textContent).toBe(
+        '3 trabalhando agoraem paralelo',
+      );
+      expect(current.getAttribute('aria-label')).toBe(
+        'Projeto aberto agora: Atlas local. 3 trabalhando agora',
+      );
+      expect(current.title).toContain('3 trabalhando agora');
+      expect(neighbour.querySelector('.workspace-rail__workspace-live')).toBeNull();
+      expect(neighbour.getAttribute('aria-label')).toBe('Abrir workspace Cometa');
+    } finally {
+      restore();
+    }
+  });
+
+  it('a faixa fixa mostra quantos trabalham em Terminais, fora da rolagem', () => {
+    const restore = seedFleet(MISSION_PANES, { orq: 'busy', fe: 'idle', rev: 'busy' });
+    try {
+      const { host } = renderRail({ selection: null });
+      const terminals = host.querySelector<HTMLButtonElement>('[aria-label="Abrir Terminais"]')!;
+      const chip = terminals.querySelector('.workspace-rail__live-chip')!;
+
+      expect(chip.textContent).toContain('2');
+      expect(chip.textContent).toContain('2 trabalhando agora');
+      expect(chip.getAttribute('title')).toBe('2 trabalhando agora');
+      expect(host.querySelector('.workspace-rail__scroll')!.contains(chip)).toBe(false);
+      // O nome acessível não muda; a contagem entra como descrição.
+      expect(terminals.getAttribute('aria-describedby')).toBe(chip.id);
+      // A contagem de panes continua ao lado.
+      expect(terminals.querySelector('.workspace-rail__row-count')!.textContent).toBe('3');
+    } finally {
+      restore();
+    }
+  });
+
+  it('sem ninguém trabalhando a faixa fixa e a linha do projeto ficam quietas', () => {
+    const restore = seedFleet(MISSION_PANES, { orq: 'idle', fe: 'exited', rev: 'idle' });
+    try {
+      const { host } = renderRail({ selection: null, currentWorkspaceId: 'atlas' });
+
+      expect(host.querySelector('.workspace-rail__live-chip')).toBeNull();
+      expect(host.querySelector('.workspace-rail__workspace-live')).toBeNull();
+      expect(
+        host.querySelector('[aria-label="Abrir Terminais"]')!.hasAttribute('aria-describedby'),
+      ).toBe(false);
+    } finally {
+      restore();
+    }
+  });
+
+  it('agentes fora de missão aparecem sob o projeto aberto, com o mesmo destaque', () => {
+    const restore = seedFleet(
+      [
+        agentPane({ id: 'solto-a', paneNumber: 4, title: 'Claude · Ajustar o login' }),
+        agentPane({ id: 'solto-b', adapterId: 'grok', paneNumber: 5, title: 'Grok' }),
+        { id: 'sh', kind: 'shell', title: 'zsh' },
+      ],
+      { 'solto-a': 'busy', 'solto-b': 'idle' },
+    );
+    try {
+      const { host } = renderRail({
+        selection: null,
+        currentWorkspaceId: 'atlas',
+        activeWorkspaces: [{ id: 'atlas', name: 'Atlas local', missions: [], livePaneCount: 3 }],
+      });
+      const loose = host.querySelector('.workspace-rail__loose-agents')!;
+
+      expect(loose).not.toBeNull();
+      expect(
+        loose.querySelector('.workspace-rail__agents-toggle')!.getAttribute('aria-label'),
+      ).toBe('Terminais: 2 agentes, 1 trabalhando agora');
+      // O título visível do bloco: sem ele "2 agentes" não diz de quem são.
+      expect(loose.querySelector('.workspace-rail__agents-scope')!.textContent).toBe('Terminais');
+      const items = [...loose.querySelectorAll<HTMLElement>('.workspace-rail__agent-item')];
+      expect(items.map((item) => item.dataset.paneId)).toEqual(['solto-a', 'solto-b']);
+      expect(items[0]!.querySelector('.workspace-rail__agent-task')!.textContent).toBe(
+        'Ajustar o login',
+      );
+      // O shell nunca é contado como agente.
+      expect(host.querySelector('.workspace-rail__workspace-live')!.textContent).toBe(
+        '1 trabalhando agora',
+      );
+    } finally {
+      restore();
+    }
+  });
+
+  it('agentes soltos não ficam presos num projeto recolhido que nem tem missões para reabrir', () => {
+    localStorage.setItem('nexus.activityRail.collapsedWorkspaces', JSON.stringify(['atlas']));
+    const restore = seedFleet([agentPane({ id: 'solto', paneNumber: 4 })], { solto: 'busy' });
+    try {
+      const { host } = renderRail({
+        selection: null,
+        currentWorkspaceId: 'atlas',
+        activeWorkspaces: [{ id: 'atlas', name: 'Atlas local', missions: [], livePaneCount: 1 }],
+      });
+
+      expect(host.querySelector('.workspace-rail__loose-agents')).not.toBeNull();
+    } finally {
+      restore();
+    }
+  });
+
+  it('clicar num agente solto foca o pane e abre os Terminais', () => {
+    const previousDestination = useProductNavigationStore.getState().destination;
+    const restore = seedFleet([agentPane({ id: 'solto', paneNumber: 4 })], { solto: 'busy' });
+    try {
+      act(() => useProductNavigationStore.setState({ destination: { kind: 'launcher' } }));
+      const { host } = renderRail({
+        selection: null,
+        currentWorkspaceId: 'atlas',
+        activeWorkspaces: [{ id: 'atlas', name: 'Atlas local', missions: [], livePaneCount: 1 }],
+      });
+
+      act(() => host.querySelector<HTMLButtonElement>('.workspace-rail__agent-btn')!.click());
+
+      expect(useLayoutStore.getState().focusedPaneId).toBe('solto');
+      expect(useProductNavigationStore.getState().destination).toEqual({ kind: 'terminal' });
+    } finally {
+      restore();
+      act(() => useProductNavigationStore.setState({ destination: previousDestination }));
+    }
+  });
+
+  it('estacionado pelo guardian aparece dormindo e não conta como trabalho', () => {
+    const restore = seedFleet(MISSION_PANES, { orq: 'busy', fe: 'busy', rev: 'idle' });
+    try {
+      act(() =>
+        usePaneParkedStore
+          .getState()
+          .markParked('fe', { sessionId: 's', parkedAt: 1, reason: 'idle' }),
+      );
+      const { host } = renderRail({ selection: null });
+      const card = missionRow(host, 'mission-running');
+      const parked = card.querySelector<HTMLElement>('[data-pane-id="fe"]')!;
+
+      expect(parked.dataset.agentState).toBe('sleeping');
+      expect(parked.querySelector('.workspace-rail__agent-state')!.textContent).toBe('Dormindo');
+      expect(card.querySelector('.workspace-rail__agents-toggle')!.textContent).toContain(
+        '1 trabalhando agora',
+      );
+      expect(card.querySelector('.workspace-rail__live-tag')).toBeNull();
+    } finally {
+      restore();
+    }
+  });
+
+  it('o estado muda ao vivo sem mexer na ordem das linhas', () => {
+    vi.useFakeTimers();
+    const restore = seedFleet(MISSION_PANES, { orq: 'busy', fe: 'busy', rev: 'idle' });
+    try {
+      const { host } = renderRail({ selection: null });
+      const card = missionRow(host, 'mission-running');
+      const order = () =>
+        [...card.querySelectorAll<HTMLElement>('.workspace-rail__agent-item')].map(
+          (item) => item.dataset.paneId,
+        );
+      expect(order()).toEqual(['orq', 'fe', 'rev']);
+
+      // O revisor começa e o Frontend termina: o busy do Frontend segura um
+      // instante (displayStates) para o rail não piscar no respiro do stream.
+      act(() => {
+        useSessionStateStore.getState().setPaneState('rev', 'busy');
+        useSessionStateStore.getState().setPaneState('fe', 'idle');
+      });
+      expect(card.querySelector('.workspace-rail__agents-toggle')!.textContent).toContain(
+        '3 trabalhando agora',
+      );
+      act(() => {
+        vi.advanceTimersByTime(1_500);
+      });
+      expect(card.querySelector('.workspace-rail__agents-toggle')!.textContent).toContain(
+        '2 trabalhando agora',
+      );
+      expect(card.querySelector<HTMLElement>('[data-pane-id="fe"]')!.dataset.agentState).toBe(
+        'waiting',
+      );
+      expect(card.querySelector<HTMLElement>('[data-pane-id="rev"]')!.dataset.agentState).toBe(
+        'working',
+      );
+      expect(order()).toEqual(['orq', 'fe', 'rev']);
+    } finally {
+      restore();
+      vi.useRealTimers();
+    }
   });
 });

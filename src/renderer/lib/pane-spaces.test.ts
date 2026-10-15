@@ -14,6 +14,8 @@ import {
   scopeKeyForPaneId,
   selectScopePanes,
   spaceScopeKey,
+  withWorkingCounts,
+  workingCountsByScope,
 } from './pane-spaces';
 
 function pane(patch: Partial<PaneModel> & { id: string }): PaneModel {
@@ -322,6 +324,59 @@ describe('listPaneScopes — as abas que o operador vê', () => {
       'Meus terminais #1',
       'Meus terminais #2',
     ]);
+  });
+});
+
+describe('workingCountsByScope / withWorkingCounts — o estado vivo da aba', () => {
+  const panes = [
+    pane({ id: 'a1', missionId: 'mA' }),
+    pane({ id: 'a2', missionId: 'mA' }),
+    pane({ id: 'b1', spaceId: 'sp1', spaceTitle: 'Blog' }),
+    pane({ id: 'loose', kind: 'shell' }),
+  ];
+  const scopeOf = paneScopeResolver(panes, {});
+  const missions = [{ id: 'mA', title: 'Missão A', state: 'running' }];
+
+  it('conta quem trabalha em cada escopo e só devolve escopo com trabalho', () => {
+    const counts = workingCountsByScope(panes, scopeOf, new Set(['a1', 'a2', 'loose']));
+    expect([...counts]).toEqual([
+      [missionScopeKey('mA'), 2],
+      [LOOSE_SCOPE_KEY, 1],
+    ]);
+    expect(workingCountsByScope(panes, scopeOf, new Set()).size).toBe(0);
+  });
+
+  it('o agente da missão hospedada conta na aba que a hospeda', () => {
+    const hosted = [
+      pane({ id: 'host', spaceId: 'sp1', spaceTitle: 'Checkout', missionId: 'mA', missionHost: true }),
+      pane({ id: 'worker', spaceId: 'sp1', spaceTitle: 'Checkout', missionId: 'mA' }),
+    ];
+    const counts = workingCountsByScope(
+      hosted,
+      paneScopeResolver(hosted, {}),
+      new Set(['host', 'worker']),
+    );
+    expect([...counts]).toEqual([[spaceScopeKey('sp1'), 2]]);
+  });
+
+  it('acrescenta workingCount só nas abas com trabalho e não mexe nas demais', () => {
+    const scopes = listPaneScopes({ panes, paneMissions: {}, missions });
+    const counts = workingCountsByScope(panes, scopeOf, new Set(['a1', 'a2', 'loose']));
+    const live = withWorkingCounts(scopes, counts);
+
+    expect(live.map((s) => [s.key, s.workingCount])).toEqual([
+      [missionScopeKey('mA'), 2],
+      [spaceScopeKey('sp1'), undefined],
+      [LOOSE_SCOPE_KEY, 1],
+    ]);
+    // A aba quieta é o MESMO objeto, e as originais não são alteradas.
+    expect(live[1]).toBe(scopes[1]);
+    expect(scopes.some((s) => 'workingCount' in s)).toBe(false);
+  });
+
+  it('ninguém trabalhando devolve o mesmo array — a barra não ganha identidade nova à toa', () => {
+    const scopes = listPaneScopes({ panes, paneMissions: {}, missions });
+    expect(withWorkingCounts(scopes, new Map())).toBe(scopes);
   });
 });
 

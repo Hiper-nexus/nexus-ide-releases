@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useState, type ComponentPropsWithoutRef } from 'react';
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useState,
+  type ComponentPropsWithoutRef,
+} from 'react';
 import type {
   MissionLifecycleState,
   MissionStateReason,
@@ -15,12 +21,20 @@ import { listPanes } from '../../lib/split-tree';
 import { useLayoutStore } from '../../state/layout-store';
 import { useOrchStore } from '../../state/orch-store';
 import { useSessionStateStore } from '../../state/session-state-store';
+import { usePaneParkedStore } from '../../state/pane-parked-store';
 import { formatShortcut } from '../../lib/platform';
 import { useQuotaStore } from '../../state/quota-store';
 import { useLifetimeUsage } from '../../state/lifetime-usage';
 import { useAdapterStore } from '../../state/adapter-store';
 import { useMinuteTick } from '../../lib/use-minute-tick';
-import { ProviderLogo } from '../ProviderLogo';
+import {
+  emptyRosterFleet,
+  groupRosterFleets,
+  workingNowLabel,
+  type RosterFleet,
+  type RosterFleets,
+} from '../../lib/agent-roster';
+import { RailAgentRoster, type RailAgentMeta } from './RailAgentRoster';
 import { useTerminalGridDialogStore } from '../../state/terminal-grid-dialog-store';
 import { useCommandPaletteStore } from '../../state/command-palette-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
@@ -239,11 +253,54 @@ interface WorkspaceGroupProps {
    * conta o outro `web`, mesmo que ele esteja na outra seção.
    */
   pathLabels: ReadonlyMap<string, string>;
+  /**
+   * Agentes do layout aberto por missão e soltos, já com o estado vivo. Só o
+   * workspace corrente tem panes no renderer; os vizinhos seguem só com o
+   * estado das missões.
+   */
+  fleets: RosterFleets;
+  adapterMeta: ReadonlyMap<string, RailAgentMeta>;
   selection: WorkspaceRailSelection;
   onSelectWorkspace: (workspaceId: string) => void;
   onSelectMission: (missionId: string, workspaceId?: string) => void;
   onRemoveWorkspace?: (workspaceId: string) => void;
   onRemoveMission?: (missionId: string, workspaceId: string) => void;
+}
+
+/** Chave do bloco de agentes soltos de um projeto em `expandedRosters`. */
+function looseRosterKey(workspaceId: string): string {
+  return `loose:${workspaceId}`;
+}
+
+/**
+ * O bloco de agentes abre por escolha do operador; sem escolha, abre sozinho
+ * na missão selecionada e enquanto alguém trabalha nele.
+ */
+function rosterOpen(
+  expanded: Readonly<Record<string, boolean>>,
+  key: string,
+  fleet: RosterFleet,
+  selected = false,
+): boolean {
+  return expanded[key] ?? (selected || fleet.workingCount > 0);
+}
+
+/**
+ * O agente pertence a esta missão. Abrir a superfície global aqui misturava o
+ * mosaico dela com os panes de outras missões; o foco precisa preservar a
+ * fronteira da missão.
+ */
+function focusMissionAgent(missionId: string, paneId: string): void {
+  useLayoutStore.getState().focus(paneId);
+  const navigation = useProductNavigationStore.getState();
+  navigation.openMission(missionId);
+  navigation.showMissionTerminals();
+}
+
+/** Agente solto: os Terminais levam a aba até o pane que recebeu o foco. */
+function focusLooseAgent(paneId: string): void {
+  useLayoutStore.getState().focus(paneId);
+  useProductNavigationStore.getState().openTerminal();
 }
 
 /**
@@ -271,6 +328,8 @@ function WorkspaceGroup({
   group,
   workspaces,
   pathLabels,
+  fleets,
+  adapterMeta,
   selection,
   onSelectWorkspace,
   onSelectMission,
@@ -282,28 +341,22 @@ function WorkspaceGroup({
   // missões em "Em andamento" fazia a pill dizer 1 com 2 projetos na tela.
   const groupCount = workspaces.length;
 
-  const paneMissions = useOrchStore((s) => s.paneMissions);
-  const root = useLayoutStore((s) => s.root);
-  const paneStates = useSessionStateStore((s) => s.paneStates);
-  const adapters = useAdapterStore((s) => s.adapters);
-  const allPanes = useMemo(() => listPanes(root), [root]);
-  const adapterMetaById = useMemo(() => {
-    const map = new Map<string, { label: string; icon: string }>();
-    for (const adapter of adapters) {
-      map.set(adapter.id, { label: adapter.label, icon: adapter.icon });
-    }
-    return map;
-  }, [adapters]);
   // Paginação por pasta: o rail estreito não comporta 100+ missões.
   const [missionListLimits, setMissionListLimits] = useState<
     Record<string, number>
   >({});
-  // Estilo Orca: a missão selecionada já abre com os agentes visíveis.
+  // Estilo Orca: a missão selecionada já abre com os agentes visíveis. Sem
+  // escolha do operador, o bloco também abre sozinho enquanto alguém trabalha
+  // nele; recolher é uma escolha explícita (e os agentes trabalhando continuam
+  // à vista mesmo recolhido — ver RailAgentRoster). As chaves são ids de missão
+  // e `loose:<projeto>` (ver looseRosterKey) — por isso "rosters", não missões.
   const selectedMissionId =
     selection?.kind === 'mission' ? selection.missionId : null;
-  const [expandedMissions, setExpandedMissions] = useState<
+  const [expandedRosters, setExpandedRosters] = useState<
     Record<string, boolean>
   >(() => (selectedMissionId ? { [selectedMissionId]: true } : {}));
+  const toggleRoster = (key: string, expanded: boolean) =>
+    setExpandedRosters((prev) => ({ ...prev, [key]: !expanded }));
   // Árvore de spaces: projeto recolhível, preferência persistida por caminho.
   // Default = tudo aberto (comportamento de sempre); o projeto da missão
   // selecionada abre mesmo recolhido, para a seleção nunca sumir da vista.
@@ -323,41 +376,50 @@ function WorkspaceGroup({
   // missão depois do mount nunca expandia os agentes dela.
   useEffect(() => {
     if (!selectedMissionId) return;
-    setExpandedMissions((prev) =>
+    setExpandedRosters((prev) =>
       prev[selectedMissionId] ? prev : { ...prev, [selectedMissionId]: true },
     );
   }, [selectedMissionId]);
   // Tudo que muda ordem, conjunto ou altura das linhas: quando muda, as
   // listas medem e animam; renders de status/idade não mexem em nada.
   const railLayoutKey = useMemo(() => {
-    const paneCount = new Map<string, number>();
-    for (const pane of allPanes) {
-      const missionId = pane.missionId ?? paneMissions[pane.id];
-      if (missionId) paneCount.set(missionId, (paneCount.get(missionId) ?? 0) + 1);
-    }
-    const workspaceKeys = workspaces.map((workspace) =>
-      [
+    // Altura do bloco de agentes: quantos, quantos trabalhando (some e aparece
+    // com o trabalho) e se a lista inteira está aberta.
+    const rosterKey = (fleet: RosterFleet, open: boolean) =>
+      `${fleet.agents.length}.${fleet.workingCount}${open ? 'x' : ''}`;
+    const workspaceKeys = workspaces.map((workspace) => {
+      const isCurrentWorkspace = workspace.id === currentWorkspaceId;
+      const loose = isCurrentWorkspace ? fleets.loose : emptyRosterFleet();
+      const live = isCurrentWorkspace && fleets.all.workingCount > 0 ? 'L' : '';
+      return [
         workspace.id,
         collapsedWorkspaces.has(workspace.id) ? 'c' : 'o',
         missionListLimits[workspace.id] ?? '',
+        `${live}${rosterKey(loose, rosterOpen(expandedRosters, looseRosterKey(workspace.id), loose))}`,
         workspace.missions
-          .map(
-            (mission) =>
-              `${mission.id}/${mission.worktrees?.map((w) => `${w.branch}=${w.status}`).join(';') ?? ''}/${
-                expandedMissions[mission.id] ? 'x' : ''
-              }/${paneCount.get(mission.id) ?? 0}`,
-          )
+          .map((mission) => {
+            const fleet = fleets.byMission.get(mission.id) ?? emptyRosterFleet();
+            return `${mission.id}/${mission.worktrees?.map((w) => `${w.branch}=${w.status}`).join(';') ?? ''}/${rosterKey(
+              fleet,
+              rosterOpen(
+                expandedRosters,
+                mission.id,
+                fleet,
+                mission.id === selectedMissionId,
+              ),
+            )}`;
+          })
           .join(','),
-      ].join(':'),
-    );
+      ].join(':');
+    });
     return `${selectedMissionId ?? ''}#${workspaceKeys.join('|')}`;
   }, [
-    allPanes,
-    paneMissions,
+    fleets,
     workspaces,
+    currentWorkspaceId,
     collapsedWorkspaces,
     missionListLimits,
-    expandedMissions,
+    expandedRosters,
     selectedMissionId,
   ]);
 
@@ -412,6 +474,19 @@ function WorkspaceGroup({
             ? 'Projeto aberto agora — a pasta não existe mais no disco'
             : 'Projeto aberto agora';
           const where = workspace.path ? ` em ${workspace.path}` : '';
+          // Só o projeto aberto tem panes no renderer: os vizinhos seguem só
+          // com o estado das missões e não inventam contagem de agentes.
+          const liveFleet = isCurrent ? fleets.all : emptyRosterFleet();
+          const liveNote =
+            liveFleet.workingCount > 0
+              ? workingNowLabel(liveFleet.workingCount)
+              : null;
+          const looseFleet = isCurrent ? fleets.loose : emptyRosterFleet();
+          const looseKey = looseRosterKey(workspace.id);
+          const looseOpen = rosterOpen(expandedRosters, looseKey, looseFleet);
+          // O recolher do projeto só existe com missões; sem elas não há botão
+          // para reabrir, então os agentes soltos não podem ficar presos nele.
+          const rostersHidden = isCollapsed && workspace.missions.length > 0;
 
           return (
             <li className="workspace-rail__workspace-item" key={workspace.id}>
@@ -424,16 +499,19 @@ function WorkspaceGroup({
                   data-workspace-id={workspace.id}
                   data-current={isCurrent || undefined}
                   data-missing={isMissing || undefined}
+                  data-working={liveFleet.workingCount || undefined}
                   aria-current={workspaceSelected ? 'page' : undefined}
                   aria-label={
-                    isCurrent
+                    (isCurrent
                       ? `${currentNote}: ${workspace.name}${where}`
-                      : `Abrir workspace ${workspace.name}${where}`
+                      : `Abrir workspace ${workspace.name}${where}`) +
+                    (liveNote ? `. ${liveNote}` : '')
                   }
                   title={[
                     workspace.name,
                     workspace.path,
                     isCurrent ? currentNote : null,
+                    liveNote,
                   ]
                     .filter(Boolean)
                     .join('\n')}
@@ -477,6 +555,20 @@ function WorkspaceGroup({
                         {(workspace.livePaneCount ?? 0) > 0
                           ? ` · ${workspace.livePaneCount} ${workspace.livePaneCount === 1 ? 'pane aberto' : 'panes abertos'}`
                           : ''}
+                      </span>
+                    ) : null}
+                    {liveNote ? (
+                      <span className="workspace-rail__workspace-live">
+                        <span
+                          className="workspace-rail__live-dot"
+                          aria-hidden="true"
+                        />
+                        {liveNote}
+                        {liveFleet.parallel ? (
+                          <span className="workspace-rail__live-tag">
+                            em paralelo
+                          </span>
+                        ) : null}
                       </span>
                     ) : null}
                   </span>
@@ -535,6 +627,20 @@ function WorkspaceGroup({
                 ) : null}
               </div>
 
+              {!rostersHidden && looseFleet.agents.length > 0 ? (
+                <div className="workspace-rail__loose-agents">
+                  <RailAgentRoster
+                    fleet={looseFleet}
+                    scopeLabel="nos terminais"
+                    heading="Terminais"
+                    expanded={looseOpen}
+                    onToggle={() => toggleRoster(looseKey, looseOpen)}
+                    onFocusAgent={focusLooseAgent}
+                    adapterMeta={adapterMeta}
+                  />
+                </div>
+              ) : null}
+
               {workspace.missions.length > 0 && !isCollapsed ? (
                 <RailMotionList
                   className="workspace-rail__mission-list"
@@ -575,10 +681,14 @@ function WorkspaceGroup({
                     // O rail mostra o titulo em ate 2 linhas: o corte de chrome (48) partia
                     // o titulo no meio da palavra; o tooltip guarda o titulo inteiro.
                     const chromeTitle = missionChromeTitle(mission.title, 96);
-                    const missionPanes = allPanes.filter(
-                      (p) => (p.missionId ?? paneMissions[p.id]) === mission.id,
+                    const missionFleet =
+                      fleets.byMission.get(mission.id) ?? emptyRosterFleet();
+                    const isExpanded = rosterOpen(
+                      expandedRosters,
+                      mission.id,
+                      missionFleet,
+                      missionSelected,
                     );
-                    const isExpanded = expandedMissions[mission.id] ?? false;
 
                     return (
                       <li key={mission.id} className="workspace-rail__mission-card-item">
@@ -645,96 +755,16 @@ function WorkspaceGroup({
                           ) : null}
                         </div>
 
-                        {missionPanes.length > 0 && (
-                          <div className="workspace-rail__agents-block">
-                            <button
-                              type="button"
-                              className="workspace-rail__agents-toggle"
-                              aria-label={`${missionPanes.length} agentes nesta missão`}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setExpandedMissions((prev) => ({
-                                  ...prev,
-                                  [mission.id]: !isExpanded,
-                                }));
-                              }}
-                            >
-                              <span className="workspace-rail__agents-pill">
-                                <PixelIcon name="users" size={10} />
-                                <span>
-                                  {missionPanes.length}{' '}
-                                  {missionPanes.length === 1 ? 'agente' : 'agentes'}
-                                </span>
-                              </span>
-                              <span
-                                className={`workspace-rail__agents-chevron${
-                                  isExpanded
-                                    ? ' workspace-rail__agents-chevron--open'
-                                    : ''
-                                }`}
-                              >
-                                <PixelIcon name="chevron-down" size={9} />
-                              </span>
-                            </button>
-                            {isExpanded && (
-                              <ul className="workspace-rail__agents-list">
-                                {missionPanes.map((pane) => {
-                                  const state = paneStates.get(pane.id) ?? 'idle';
-                                  const adapterMeta = pane.adapterId
-                                    ? adapterMetaById.get(pane.adapterId)
-                                    : undefined;
-                                  return (
-                                    <li
-                                      key={pane.id}
-                                      className="workspace-rail__agent-item"
-                                    >
-                                      <button
-                                        type="button"
-                                        className="workspace-rail__agent-btn"
-                                        title={`Focar ${pane.title || 'agente'}`}
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          useLayoutStore.getState().focus(pane.id);
-                                          // O agente pertence a esta missão. Abrir a
-                                          // superfície global aqui misturava o mosaico
-                                          // dela com os panes de outras missões; o foco
-                                          // precisa preservar a fronteira da missão.
-                                          const navigation =
-                                            useProductNavigationStore.getState();
-                                          navigation.openMission(mission.id);
-                                          navigation.showMissionTerminals();
-                                        }}
-                                      >
-                                        <span
-                                          className={`workspace-rail__agent-dot workspace-rail__agent-dot--${state}`}
-                                        />
-                                        {pane.adapterId ? (
-                                          <ProviderLogo
-                                            adapterId={pane.adapterId}
-                                            label={
-                                              adapterMeta?.label ?? pane.adapterId
-                                            }
-                                            fallback={adapterMeta?.icon}
-                                            size="xs"
-                                          />
-                                        ) : null}
-                                        <span className="workspace-rail__agent-name">
-                                          {pane.title || 'Agente'}
-                                        </span>
-                                        {pane.adapterId &&
-                                        !adapterMeta ? (
-                                          <span className="workspace-rail__agent-adapter">
-                                            {pane.adapterId}
-                                          </span>
-                                        ) : null}
-                                      </button>
-                                    </li>
-                                  );
-                                })}
-                              </ul>
-                            )}
-                          </div>
-                        )}
+                        <RailAgentRoster
+                          fleet={missionFleet}
+                          scopeLabel="nesta missão"
+                          expanded={isExpanded}
+                          onToggle={() => toggleRoster(mission.id, isExpanded)}
+                          onFocusAgent={(paneId) =>
+                            focusMissionAgent(mission.id, paneId)
+                          }
+                          adapterMeta={adapterMeta}
+                        />
                       </li>
                     );
                   })}
@@ -830,7 +860,34 @@ export function WorkspaceRail({
   const pairedStart = Boolean(onOpenLauncher && projectEnabled && onOpenProject);
 
   const layoutRoot = useLayoutStore((s) => s.root);
-  const totalPanes = listPanes(layoutRoot).length;
+  const allPanes = useMemo(() => listPanes(layoutRoot), [layoutRoot]);
+  const totalPanes = allPanes.length;
+  const paneMissions = useOrchStore((s) => s.paneMissions);
+  // `displayStates` é o estado de apresentação (o busy fica um instante depois
+  // de ociosar): a mesma fonte do chip da toolbar, para o rail não piscar.
+  const displayStates = useSessionStateStore((s) => s.displayStates);
+  const parkedPanes = usePaneParkedStore((s) => s.parked);
+  const adapters = useAdapterStore((s) => s.adapters);
+  const adapterMeta = useMemo(() => {
+    const map = new Map<string, RailAgentMeta>();
+    for (const adapter of adapters) {
+      map.set(adapter.id, { label: adapter.label, icon: adapter.icon });
+    }
+    return map;
+  }, [adapters]);
+  // Uma só leitura da frota por render, para o rail inteiro: o grupo, a linha
+  // do projeto e o chip de Terminais nunca discordam na contagem.
+  const fleets = useMemo(
+    () =>
+      groupRosterFleets(allPanes, paneMissions, {
+        states: displayStates,
+        parked: parkedPanes,
+        adapterLabel: (adapterId) => adapterMeta.get(adapterId)?.label,
+      }),
+    [allPanes, paneMissions, displayStates, parkedPanes, adapterMeta],
+  );
+  const liveWorking = fleets.all.workingCount;
+  const liveChipId = useId();
   const quotaEntries = useQuotaStore((s) => s.snapshot.entries);
   const lifetimeUsage = useLifetimeUsage();
   const quotaTick = useMinuteTick();
@@ -947,10 +1004,30 @@ export function WorkspaceRail({
               }`}
               aria-current={terminalsSelected ? 'page' : undefined}
               aria-label="Abrir Terminais"
+              aria-describedby={liveWorking > 0 ? liveChipId : undefined}
               onClick={onOpenTerminals}
             >
               <PixelIcon name="terminal" size={12} />
               <span className="workspace-rail__row-label">Terminais</span>
+              {liveWorking > 0 ? (
+                // Fica na faixa fixa, fora da rolagem: quantos agentes
+                // trabalham agora é visível mesmo com a lista de projetos
+                // rolada ou recolhida.
+                <span
+                  id={liveChipId}
+                  className="workspace-rail__live-chip"
+                  title={workingNowLabel(liveWorking)}
+                >
+                  <span
+                    className="workspace-rail__live-dot"
+                    aria-hidden="true"
+                  />
+                  <span aria-hidden="true">{liveWorking}</span>
+                  <span className="workspace-rail__sr-only">
+                    {workingNowLabel(liveWorking)}
+                  </span>
+                </span>
+              ) : null}
               {totalPanes > 0 ? (
                 <span className="workspace-rail__row-count">{totalPanes}</span>
               ) : null}
@@ -1005,6 +1082,8 @@ export function WorkspaceRail({
           group="active"
           workspaces={activeWorkspaces}
           pathLabels={pathLabels}
+          fleets={fleets}
+          adapterMeta={adapterMeta}
           selection={selection}
           onSelectWorkspace={onSelectWorkspace}
           onSelectMission={onSelectMission}
@@ -1018,6 +1097,8 @@ export function WorkspaceRail({
           group="recent"
           workspaces={recentWorkspaces}
           pathLabels={pathLabels}
+          fleets={fleets}
+          adapterMeta={adapterMeta}
           selection={selection}
           onSelectWorkspace={onSelectWorkspace}
           onSelectMission={onSelectMission}

@@ -1602,3 +1602,183 @@ describe('TerminalWorkspace — abas de feature', () => {
     expect(activeChipLabel(host)).toBe('Blog');
   });
 });
+
+describe('TerminalWorkspace — agentes trabalhando agora', () => {
+  const AGENTS: PaneModel[] = [
+    {
+      id: 'ag-a1',
+      kind: 'cli-agent',
+      title: 'Claude · Tarefa A',
+      adapterId: 'claude',
+      spaceId: 'space-a',
+      spaceTitle: 'Checkout',
+    },
+    {
+      id: 'ag-a2',
+      kind: 'cli-agent',
+      title: 'GPT · Tarefa B',
+      adapterId: 'codex',
+      spaceId: 'space-a',
+      spaceTitle: 'Checkout',
+    },
+    {
+      id: 'ag-b1',
+      kind: 'cli-agent',
+      title: 'Grok · Tarefa C',
+      adapterId: 'grok',
+      spaceId: 'space-b',
+      spaceTitle: 'Blog',
+    },
+    { id: 'sh-b', kind: 'shell', title: 'zsh', spaceId: 'space-b', spaceTitle: 'Blog' },
+  ];
+
+  function seedAgents(states: Record<string, 'busy' | 'idle' | 'exited'>): () => void {
+    useLayoutStore.setState({
+      root: buildGridTree(AGENTS),
+      focusedPaneId: 'ag-a1',
+      maximizedPaneId: null,
+    });
+    act(() => {
+      for (const [paneId, state] of Object.entries(states)) {
+        useSessionStateStore.getState().setPaneState(paneId, state);
+      }
+    });
+    return () => {
+      act(() => {
+        for (const paneId of Object.keys(states)) {
+          useSessionStateStore.getState().clearPaneState(paneId);
+        }
+      });
+    };
+  }
+
+  const tabBy = (host: HTMLElement, title: string) =>
+    [...host.querySelectorAll<HTMLElement>('.workspace-tab')].find(
+      (tab) => tab.querySelector('.workspace-tab__title')?.textContent === title,
+    )!;
+
+  it('cada aba conta os agentes dela que trabalham e a palavra vai no nome acessível', () => {
+    const restore = seedAgents({ 'ag-a1': 'busy', 'ag-a2': 'busy', 'ag-b1': 'idle' });
+    try {
+      usePaneScopeStore.getState().focusScope(spaceScopeKey('space-a'));
+      const { host } = mount(<TerminalWorkspace />);
+      const checkout = tabBy(host, 'Checkout');
+      const blog = tabBy(host, 'Blog');
+
+      expect(checkout.querySelector('.workspace-tab__working')?.textContent).toBe('2');
+      expect(checkout.querySelector('[role="tab"]')!.getAttribute('aria-label')).toContain(
+        '2 trabalhando agora',
+      );
+      expect(blog.querySelector('.workspace-tab__working')).toBeNull();
+    } finally {
+      restore();
+    }
+  });
+
+  it('o shell não conta como agente e o agente que terminou sai da contagem', () => {
+    const restore = seedAgents({ 'ag-a1': 'idle', 'ag-a2': 'exited', 'ag-b1': 'busy' });
+    try {
+      usePaneScopeStore.getState().focusScope(spaceScopeKey('space-a'));
+      const { host } = mount(<TerminalWorkspace />);
+
+      expect(tabBy(host, 'Checkout').querySelector('.workspace-tab__working')).toBeNull();
+      expect(tabBy(host, 'Blog').querySelector('.workspace-tab__working')?.textContent).toBe('1');
+    } finally {
+      restore();
+    }
+  });
+
+  it('o selo da aba acompanha o estado ao vivo', () => {
+    const restore = seedAgents({ 'ag-a1': 'idle', 'ag-a2': 'idle', 'ag-b1': 'idle' });
+    try {
+      usePaneScopeStore.getState().focusScope(spaceScopeKey('space-a'));
+      const { host } = mount(<TerminalWorkspace />);
+      expect(host.querySelector('.workspace-tab__working')).toBeNull();
+
+      act(() => useSessionStateStore.getState().setPaneState('ag-b1', 'busy'));
+      expect(tabBy(host, 'Blog').querySelector('.workspace-tab__working')?.textContent).toBe('1');
+    } finally {
+      restore();
+    }
+  });
+
+  it('o cabeçalho dos Terminais da missão diz quantos trabalham nela, em paralelo a partir de dois', () => {
+    const missionPanes: PaneModel[] = [
+      { id: 'mp-1', kind: 'cli-agent', title: 'Claude · A', adapterId: 'claude', missionId: 'mission-x' },
+      { id: 'mp-2', kind: 'cli-agent', title: 'GPT · B', adapterId: 'codex', missionId: 'mission-x' },
+      { id: 'mp-3', kind: 'cli-agent', title: 'Grok · C', adapterId: 'grok', missionId: 'mission-y' },
+    ];
+    useLayoutStore.setState({
+      root: buildGridTree(missionPanes),
+      focusedPaneId: 'mp-1',
+      maximizedPaneId: null,
+    });
+    useOrchStore.setState({
+      paneMissions: { 'mp-1': 'mission-x', 'mp-2': 'mission-x', 'mp-3': 'mission-y' },
+    });
+    act(() => {
+      useSessionStateStore.getState().setPaneState('mp-1', 'busy');
+      useSessionStateStore.getState().setPaneState('mp-3', 'busy');
+    });
+    try {
+      const { host } = mount(<TerminalWorkspace missionId="mission-x" onBackToBoard={vi.fn()} />);
+      const live = () => host.querySelector('.terminal-workspace__live')?.textContent;
+
+      // Só conta o que a missão desenha: o agente da outra missão não entra.
+      expect(live()).toBe('1 trabalhando agora');
+
+      act(() => useSessionStateStore.getState().setPaneState('mp-2', 'busy'));
+      expect(live()).toBe('2 trabalhando agora · em paralelo');
+
+      act(() => {
+        useSessionStateStore.getState().setPaneState('mp-1', 'exited');
+        useSessionStateStore.getState().setPaneState('mp-2', 'exited');
+      });
+      expect(live()).toBeUndefined();
+    } finally {
+      act(() => {
+        for (const paneId of ['mp-1', 'mp-2', 'mp-3']) {
+          useSessionStateStore.getState().clearPaneState(paneId);
+        }
+      });
+    }
+  });
+});
+
+describe('TerminalWorkspace — o estado dos agentes não re-renderiza o grid', () => {
+  it('busy↔idle atualiza o selo da aba sem recriar as props do PaneGrid', () => {
+    // O grid carrega os xterms; um re-render do TerminalWorkspace a cada turno
+    // de agente refaria o mosaico (e entregaria callbacks novos) o tempo todo.
+    // O estado vivo é assinado só pelos componentes folha de TerminalLiveSignals.
+    useLayoutStore.setState({
+      root: buildGridTree([
+        { id: 'solo-a', kind: 'cli-agent', title: 'Claude · A', adapterId: 'claude', spaceId: 'sp', spaceTitle: 'Checkout' },
+        { id: 'solo-b', kind: 'cli-agent', title: 'GPT · B', adapterId: 'codex', spaceId: 'sp', spaceTitle: 'Checkout' },
+      ]),
+      focusedPaneId: 'solo-a',
+      maximizedPaneId: null,
+    });
+    usePaneScopeStore.getState().focusScope(spaceScopeKey('sp'));
+    try {
+      const { host } = mount(<TerminalWorkspace />);
+      const before = paneGridProps();
+      expect(before.onPaneCreated).toBeTypeOf('function');
+
+      act(() => useSessionStateStore.getState().setPaneState('solo-a', 'busy'));
+      expect(host.querySelector('.workspace-tab__working')?.textContent).toBe('1');
+      act(() => useSessionStateStore.getState().setPaneState('solo-b', 'busy'));
+      expect(host.querySelector('.workspace-tab__working')?.textContent).toBe('2');
+      act(() => useSessionStateStore.getState().setPaneState('solo-a', 'exited'));
+      act(() => useSessionStateStore.getState().setPaneState('solo-b', 'exited'));
+      expect(host.querySelector('.workspace-tab__working')).toBeNull();
+
+      // Mesma referência = o PaneGrid nem foi chamado de novo.
+      expect(paneGridProps()).toBe(before);
+    } finally {
+      act(() => {
+        useSessionStateStore.getState().clearPaneState('solo-a');
+        useSessionStateStore.getState().clearPaneState('solo-b');
+      });
+    }
+  });
+});

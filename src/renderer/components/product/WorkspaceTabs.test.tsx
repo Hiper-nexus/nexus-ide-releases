@@ -584,3 +584,38 @@ describe('workspaceTabIsClosable / workspaceTabTone', () => {
     expect(workspaceTabTone('blocked_user', 'open-question')).toBe('attention');
   });
 });
+
+describe('WorkspaceTabs — agentes trabalhando agora', () => {
+  const scopes = [
+    space({ key: 'space:a', id: 'a', title: 'Checkout', paneCount: 5, workingCount: 2 }),
+    space({ key: 'space:b', id: 'b', title: 'Blog', paneCount: 3 }),
+  ];
+
+  it('a aba com agentes trabalhando mostra ponto vivo e número sem precisar abri-la', () => {
+    const { host } = render({ scopes, activeScopeKey: 'space:b' });
+    const [checkout, blog] = [...host.querySelectorAll<HTMLElement>('.workspace-tab')];
+
+    const badge = checkout!.querySelector('.workspace-tab__working')!;
+    expect(badge.textContent).toBe('2');
+    expect(badge.querySelector('.workspace-tab__working-dot')).not.toBeNull();
+    expect(checkout!.getAttribute('data-working')).toBe('2');
+    // A contagem de painéis segue ao lado; a aba quieta não ganha selo.
+    expect(checkout!.querySelector('.workspace-tab__count')!.textContent).toBe('5');
+    expect(blog!.querySelector('.workspace-tab__working')).toBeNull();
+    expect(blog!.hasAttribute('data-working')).toBe(false);
+  });
+
+  it('a palavra vai no nome acessível e no tooltip — o selo é só ponto e número', () => {
+    const { host } = render({ scopes });
+    const [checkout, blog] = [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+
+    expect(checkout!.getAttribute('aria-label')).toBe('Checkout, 5 painéis, 2 trabalhando agora');
+    expect(checkout!.getAttribute('title')).toContain('2 trabalhando agora');
+    expect(checkout!.querySelector('.workspace-tab__working')!.getAttribute('aria-hidden')).toBe(
+      'true',
+    );
+    // Sem ninguém trabalhando o nome acessível é o de sempre.
+    expect(blog!.getAttribute('aria-label')).toBe('Blog, 3 painéis');
+    expect(blog!.getAttribute('title')).not.toContain('trabalhando');
+  });
+});
