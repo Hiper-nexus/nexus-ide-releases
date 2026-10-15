@@ -6,6 +6,7 @@ import {
 } from '../lib/pane-birth-display';
 import { useSessionStateStore } from '../state/session-state-store';
 import { getPaneSessionId, onPaneSessionChange } from '../terminal/terminal-host';
+import { ProviderLogo } from './ProviderLogo';
 
 /**
  * Estado "nascendo" de um pane de agente: enquanto o PTY não reporta sessão,
@@ -53,7 +54,10 @@ export function PaneBirthOverlay({ pane }: { pane: PaneModel }) {
       role="status"
       aria-live="polite"
     >
-      <span className="pane-birth__pulse" aria-hidden="true" />
+      <span className="pane-birth__identity" aria-hidden="true">
+        <ProviderLogo adapterId={pane.adapterId ?? ''} label={pane.agentName ?? pane.adapterId ?? 'Agente'} />
+        <span className="pane-birth__pulse" />
+      </span>
       <strong className="pane-birth__headline">{display.headline}</strong>
       <span className="pane-birth__detail">{display.detail}</span>
     </div>

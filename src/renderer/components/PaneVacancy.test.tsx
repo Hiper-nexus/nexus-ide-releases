@@ -309,7 +309,7 @@ describe('a SOLITARY structural placeholder is a vacancy, not a session', () => 
     );
     expect(text()).not.toMatch(/https:\/\/admin\.wordnet\.com\.vc/u);
     expect(text()).not.toMatch(/Motivo não registrado/u);
-    expect(text()).not.toMatch(/painel/i);
+    expect(text()).not.toContain('aqui dentro deste painel');
     expect(text()).toMatch(/Atividade|quadro/i);
     act(() => root.unmount());
   });
@@ -430,7 +430,7 @@ describe('a SOLITARY structural placeholder is a vacancy, not a session', () => 
     expect(labels).not.toContain('Fim');
     expect(labels).not.toContain('Dormir');
     expect(labels).not.toContain('Cmds');
-    expect(buttonWith('À direita')).toBeTruthy();
+    expect(buttonWith('Dividir à direita')).toBeTruthy();
 
     act(() => root.unmount());
   });
@@ -439,7 +439,7 @@ describe('a SOLITARY structural placeholder is a vacancy, not a session', () => 
     seedPlaceholderOnly();
     render();
 
-    act(() => buttonWith('À direita').click());
+    act(() => buttonWith('Dividir à direita').click());
 
     const panes = listPanes(useLayoutStore.getState().root);
     expect(panes).toHaveLength(2);
