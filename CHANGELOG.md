@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.76.282 — Linux em dia com a voz e a lateral
+
+A tag 0.76.281 não recebe pacotes Linux. Esta versão leva o produto dela, empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). A 0.76.281 é a candidata do Windows. O ConPTY do Qwen e a admissão de comando pesado no Windows não são o motivo deste pacote.
+
+No desktop Linux, em relação à 0.76.280:
+
+- **Lateral em lista plana**. Cada projeto vira um grupo, as missões ocupam uma linha e os agentes aparecem aninhados. O hover mantém contraste AA nos sete temas.
+- **Voz**. O Grok Voice 3.0 vira o padrão e as configurações antigas migram sozinhas. A falha do realtime aparece no chip e no teste com o motivo. Um botão de play toca a amostra da voz na Voz por etapas e na Voz Gemini Live. Trocar a chave ou o modelo durante uma conexão cancela a tentativa anterior, e a falha antiga não volta.
+- **Grok com sessão vencida**. A conta sai da rota até o novo login. O card de abertura do painel mostra a falha.
+- **Escritor isolado em qualquer aba**. Abas com HEAD solto aceitam escritores isolados. Se o isolamento não for possível, o escritor segue no checkout compartilhado e o recibo diz o motivo.
+- **Quadro**. A aba Conversa cabe em painéis estreitos. Orientação a um coordenador ocupado é recusada na hora, as orientações não somem, a resposta mostra "Aguardando confirmação…" e o foco volta ao editor. A linha do tempo detalhada lê o quadro certo e as recusas aparecem em PT-BR.
+
 ## 0.76.281 — Windows legível e voz que se explica
 
 - **Menus legíveis no Windows** (F-380). Popups e seletores nativos seguem as cores do tema, sem texto claro sobre fundo claro.
