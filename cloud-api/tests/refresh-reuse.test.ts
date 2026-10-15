@@ -377,6 +377,21 @@ test('a family revocation never crosses accounts, even over a corrupted rotated_
   db.close();
 });
 
+test('reuse near the root of a chain over 50k tokens revokes the tip too', async () => {
+  const { db } = await setup();
+  const { hashToken } = await import('../src/crypto.js');
+  const now = Date.now();
+  const raw = 'r'.repeat(43);
+  await seedChain(db, 'chain-', 50_000, now - 2 * GRACE_MS);
+  await db.prepare("UPDATE refresh_tokens SET token_hash=? WHERE id='chain-100'").bind(await hashToken(raw)).run();
+
+  assert.equal(await rotateRefresh(db, raw, 'desktop', now), null);
+
+  const alive = await db.prepare("SELECT count(*) AS n FROM refresh_tokens WHERE id LIKE 'chain-%' AND revoked_at IS NULL").first<{ n: number }>();
+  assert.equal(alive?.n, 0, 'the newest token, chain-50000, is revoked with the rest');
+  db.close();
+});
+
 test('a retry never revokes another account over a corrupted rotated_from edge', async () => {
   const { db, mac } = await setup();
   await seedAccount(db, 'other');

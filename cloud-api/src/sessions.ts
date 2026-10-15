@@ -12,14 +12,14 @@ const UNREVOKED_PARENT='EXISTS(SELECT 1 FROM refresh_tokens WHERE id=? AND revok
 const SUCCESSORS_UNUSED='NOT EXISTS(SELECT 1 FROM refresh_tokens WHERE rotated_from=? AND used_at IS NOT NULL) AND NOT EXISTS(SELECT 1 FROM sessions s JOIN refresh_tokens c ON c.id=s.refresh_id WHERE c.rotated_from=? AND s.last_used_at IS NOT NULL)';
 /** ponytail: the walk up to the root stops after this many links (30 days of rotations every ~4 min), so a
  * corrupted rotated_from cycle ends there. A token deeper than this finds an ancestor instead of the real root;
- * the family under that ancestor still reaches every newer token. Older branches above it are left out. */
+ * the family under that ancestor still reaches every newer token. Older branches above it are left out; the
+ * upgrade path is a family_id column inherited on rotation. */
 const ROOT_DEPTH_LIMIT=10_000;
-/** ponytail: a family revocation reaches at most this many tokens. UNION already ends a corrupted cycle (each id
- * once); this only bounds a pathological family, whose excess then just expires. The upgrade path for both
- * ceilings is a family_id column inherited on rotation. */
-const FAMILY_SIZE_LIMIT=50_000;
-/** The family is the rotated_from tree under `?`, its root included. No depth column: it would defeat the dedup. */
-const FAMILY=`WITH RECURSIVE family(id) AS (SELECT ? UNION SELECT r.id FROM refresh_tokens r JOIN family f ON r.rotated_from=f.id LIMIT ${FAMILY_SIZE_LIMIT}) `;
+/** The family is the rotated_from tree under `?`, its root included. No ceiling: a LIMIT here counts rows in
+ * breadth-first order from the root, so it would cut the newest tokens first, the live tip included. UNION on
+ * the id alone already ends a corrupted cycle, and no depth column, which would defeat that dedup. FAMILY only
+ * runs on reuse, and a family grows at most as fast as the rate limit and expiry allow. */
+const FAMILY='WITH RECURSIVE family(id) AS (SELECT ? UNION SELECT r.id FROM refresh_tokens r JOIN family f ON r.rotated_from=f.id) ';
 /** Prepares a token pair whose two inserts share `guard`: both happen or neither does. The session records
  * the refresh token issued with it, so revoking a family also reaches its sessions. */
 async function preparePair(db:D1Database,accountId:string,channel:AuthChannel,now:number,parent:string|null,guard:string,args:(string|number)[]){
