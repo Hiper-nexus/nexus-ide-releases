@@ -105,16 +105,22 @@ describe('apiFetch', () => {
   });
 
   it('falha transitória do refresh mantém o par salvo', async () => {
-    const d = deps();
-    const discardRejectedSession = vi.fn();
-    (d.fetchFn as ReturnType<typeof vi.fn>)
-      .mockResolvedValueOnce(json({ ok: false }, 401))
-      .mockResolvedValueOnce(json({ ok: false }, 503));
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const d = deps();
+      const discardRejectedSession = vi.fn();
+      (d.fetchFn as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(json({ ok: false }, 401))
+        .mockResolvedValue(json({ ok: false }, 503));
 
-    await apiFetch('/v1/license', {}, { ...d, discardRejectedSession } as never);
+      const flight = apiFetch('/v1/license', {}, { ...d, discardRejectedSession } as never);
+      await vi.advanceTimersByTimeAsync(3_000);
 
-    expect(discardRejectedSession).not.toHaveBeenCalled();
-    expect(d.store['auth:refresh']).toBe('ref-1');
+      expect((await flight).status).toBe(401);
+      expect((d.fetchFn as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(3);
+      expect(discardRejectedSession).not.toHaveBeenCalled();
+      expect(d.store['auth:refresh']).toBe('ref-1');
+    } finally { vi.useRealTimers(); }
   });
 
   it('sem sessao no Keychain retorna 401 sintetico sem rede', async () => {
@@ -366,6 +372,27 @@ describe('refresh que não pode perder o 200', () => {
       expect(d.store['auth:refresh']).toBe('r2');
       expect(traced(events)).toEqual([
         { kind: 'auth-refresh', ok: false, status: 0, outcome },
+        { kind: 'auth-refresh', ok: true, status: 200, outcome: 'rotated' },
+      ]);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('depois de um 5xx, um retry rápido com o MESMO refresh guarda o par novo', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const events: Record<string, unknown>[] = [];
+      const d = deps({ backendUrl: 'https://api.retry-5xx.test', trace: (event: Record<string, unknown>) => { events.push(event); } });
+      d.fetchFn.mockResolvedValueOnce(json({}, 401))
+        .mockResolvedValueOnce(json({ ok: false }, 503))
+        .mockResolvedValueOnce(json({ ok: true, data: { session: 's2', refresh: 'r2' } }))
+        .mockResolvedValueOnce(json({ ok: true, data: 1 }));
+      const flight = apiFetch('/v1/team', {}, d as never);
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect((await flight).status).toBe(200);
+      expect(refreshBodies(d)).toEqual(['ref-1', 'ref-1']);
+      expect(d.store['auth:refresh']).toBe('r2');
+      expect(traced(events)).toEqual([
+        { kind: 'auth-refresh', ok: false, status: 503, outcome: 'rejected' },
         { kind: 'auth-refresh', ok: true, status: 200, outcome: 'rotated' },
       ]);
     } finally { vi.useRealTimers(); }

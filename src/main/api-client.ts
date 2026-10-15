@@ -193,9 +193,9 @@ async function requestRefresh(deps: ApiDeps, refresh: string, started: number): 
 }
 
 /**
- * One request plus, after a timeout or network error, one quick retry with
- * the SAME token: the server may have consumed it already, and its retry
- * window only answers a retry that arrives within 60 s.
+ * One request plus, after a timeout, a network error or a 5xx, one quick
+ * retry with the SAME token: the server may have consumed it already, and its
+ * retry window only answers a retry that arrives within 60 s.
  */
 async function requestWithRetry(
   deps: ApiDeps,
@@ -207,7 +207,9 @@ async function requestWithRetry(
   for (let attempt = 0; ; attempt += 1) {
     const started = Date.now();
     try {
-      return await requestRefresh(deps, refresh, started);
+      const res = await requestRefresh(deps, refresh, started);
+      if (res.status < 500 || attempt > 0) return res;
+      report('rejected', res.status, started);
     } catch (error) {
       const outcome = failureOf(error);
       report(outcome, 0, started);
