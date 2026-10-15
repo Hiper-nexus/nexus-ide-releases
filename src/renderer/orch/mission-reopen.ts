@@ -44,6 +44,12 @@ export interface MissionReopenResult {
   sessionIds?: string[];
   /** Wall clock of the successful orchestrator rebind/readiness acknowledgement. */
   ackedAt?: number;
+  /**
+   * A7: panes que NÃO confirmaram sessão, sem derrubar a retomada — o
+   * orquestrador já foi religado. Cada entrada nomeia o pane, o motivo e a
+   * ação sugerida.
+   */
+  partialPanes?: Array<{ paneId: string; reason: string; action: string }>;
 }
 
 function reopenAckId(missionId: string): string {
@@ -314,45 +320,56 @@ export async function reopenMission(
   useLayoutStore.getState().focus(panes[0]!.id);
 
   // Physical acknowledgement: an updated layout is not proof that the CLI
-  // sessions exist. Wait for every exact pane, then rebind the persisted
-  // orchestrator before any caller (especially voice) may claim success.
-  const maybeSessions = await Promise.all(
-    panes.map((pane) => waitForSession(pane.id, 10_000)),
-  );
-  const missingIndex = maybeSessions.findIndex((sessionId) => !sessionId);
-  if (missingIndex >= 0) {
-    return {
-      ok: false,
-      error: `O pane ${panes[missingIndex]!.id} não confirmou uma sessão ativa.`,
-    };
-  }
-  const sessionIds = maybeSessions as string[];
+  // sessions exist. A7: o orquestrador é aguardado PRIMEIRO e religado assim
+  // que a sessão DELE confirma — um worker que não sobe vira resultado
+  // parcial nomeado, sem derrubar o ack da missão nem impedir o rebind.
+  const sessionWaits = panes.map((pane) => waitForSession(pane.id, 10_000));
   // Quem lidera é o MAIN. Duas leituras dele, nesta ordem: a sessão durável
   // (A) que alguma pane restaurada carrega, e a composição que ele registrou
   // em `listMissionPanes` (C). O `Math.max(0, findIndex(...))` antigo promovia
   // o PRIMEIRO pane a orquestrador sempre que nenhuma spec tinha o papel — o
   // rebind durável gravava no motor a mentira de que um worker era o líder.
-  const durableLeaderIndex = mission.orchestratorSessionId
-    ? sessionIds.indexOf(mission.orchestratorSessionId)
-    : -1;
-  const orchestratorIndex =
-    durableLeaderIndex >= 0
-      ? durableLeaderIndex
-      : panes.findIndex((pane) => pane.role === 'orchestrator');
-  if (orchestratorIndex < 0) {
-    return {
-      ok: false,
-      error:
-        'A composição desta missão não registra um pane de orquestrador: nada foi promovido.',
-    };
+  const roleOrchestratorIndex = panes.findIndex((pane) => pane.role === 'orchestrator');
+  const durableSessionId = mission.orchestratorSessionId ?? null;
+  let sessions: (string | null)[] | null = null;
+  let orchestratorIndex = -1;
+  let orchestratorSessionId: string | null = null;
+  if (roleOrchestratorIndex >= 0) {
+    const own = await sessionWaits[roleOrchestratorIndex]!;
+    if (own && (!durableSessionId || own === durableSessionId)) {
+      orchestratorIndex = roleOrchestratorIndex;
+      orchestratorSessionId = own;
+    }
   }
-  const orchestratorSessionId = sessionIds[orchestratorIndex];
-  if (!orchestratorSessionId) {
+  if (orchestratorIndex < 0 && durableSessionId) {
+    // O líder durável pode ser outro pane da composição: a identidade dele só
+    // é conhecida quando a sessão daquele pane resolve.
+    sessions = await Promise.all(sessionWaits);
+    const durableLeaderIndex = sessions.indexOf(durableSessionId);
+    if (durableLeaderIndex >= 0) {
+      orchestratorIndex = durableLeaderIndex;
+      orchestratorSessionId = durableSessionId;
+    } else if (
+      roleOrchestratorIndex >= 0 &&
+      sessions[roleOrchestratorIndex]
+    ) {
+      orchestratorIndex = roleOrchestratorIndex;
+      orchestratorSessionId = sessions[roleOrchestratorIndex]!;
+    }
+  }
+  if (orchestratorIndex < 0) {
+    if (roleOrchestratorIndex < 0) {
+      return {
+        ok: false,
+        error:
+          'A composição desta missão não registra um pane de orquestrador: nada foi promovido.',
+      };
+    }
     return { ok: false, error: 'O orquestrador restaurado não confirmou sessão.' };
   }
   const rebound = await window.nexus.orch.rebindMissionOrchestrator(
     mission.id,
-    orchestratorSessionId,
+    orchestratorSessionId!,
   );
   if (!rebound.ok) {
     return {
@@ -361,10 +378,27 @@ export async function reopenMission(
     };
   }
 
+  // Com a liderança religada, os demais panes são aguardados até o fim; quem
+  // falhou entra como parcial nomeado (pane, motivo, ação).
+  const resolvedSessions: (string | null)[] =
+    sessions ?? (await Promise.all(sessionWaits));
+  const failedPanes = panes
+    .map((pane, index) => ({ pane, sessionId: resolvedSessions[index] }))
+    .filter((entry) => !entry.sessionId)
+    .map((entry) => ({
+      paneId: entry.pane.id,
+      reason: 'não confirmou uma sessão ativa no prazo',
+      action: 'use Retomar novamente para recriar este pane',
+    }));
+  const sessionIds = resolvedSessions.filter(
+    (sessionId): sessionId is string => Boolean(sessionId),
+  );
+
   const multi = existing.length > 0;
   return acknowledgedReopen(mission.id, sessionIds, {
     panes: panes.length,
     soft: false,
     multi,
+    ...(failedPanes.length > 0 ? { partialPanes: failedPanes } : {}),
   });
 }

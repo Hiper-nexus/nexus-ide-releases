@@ -428,7 +428,9 @@ describe('reopenMission soft / multi', () => {
     expect(setPanes).not.toHaveBeenCalled();
   });
 
-  it('does not claim restore success before every pane and rebind are acknowledged', async () => {
+  it('A7: worker sem sessão não derruba a retomada — rebind acontece e o pane vira parcial nomeado', async () => {
+    // Antes: um único worker podre devolvia ok:false ANTES do rebind — o
+    // Maestro ficava vivo na tela sem a liderança religada no Main.
     listMissionPanes.mockResolvedValueOnce([
       {
         id: 'spec-orch',
@@ -462,8 +464,55 @@ describe('reopenMission soft / multi', () => {
       createdAt: 1,
       updatedAt: 2,
     });
+    expect(result.ok).toBe(true);
+    expect(window.nexus.orch.rebindMissionOrchestrator).toHaveBeenCalledWith(
+      'mission-b',
+      'session-orch-b',
+    );
+    expect(result.sessionIds).toEqual(['session-orch-b']);
+    expect(result.partialPanes).toEqual([
+      expect.objectContaining({ paneId: 'worker-b' }),
+    ]);
+    expect(result.partialPanes![0]!.reason).toBeTruthy();
+    expect(result.partialPanes![0]!.action).toBeTruthy();
+  });
+
+  it('A7: orquestrador sem sessão continua derrubando a retomada (sem rebind)', async () => {
+    listMissionPanes.mockResolvedValueOnce([
+      {
+        id: 'spec-orch',
+        missionId: 'mission-b',
+        adapterId: 'gemini',
+        title: 'orch-b',
+        role: 'orchestrator',
+        paneId: 'orch-b',
+        createdAt: 1,
+      },
+      {
+        id: 'spec-worker',
+        missionId: 'mission-b',
+        adapterId: 'codex',
+        title: 'worker-b',
+        role: 'worker',
+        paneId: 'worker-b',
+        createdAt: 1,
+      },
+    ]);
+    terminalMocks.waitForSession.mockImplementation(async (paneId: string) =>
+      paneId === 'orch-b' ? null : `session-${paneId}`,
+    );
+    const result = await reopenMission({
+      id: 'mission-b',
+      title: 'B',
+      description: '',
+      status: 'running',
+      milestones: [],
+      learnings: '',
+      createdAt: 1,
+      updatedAt: 2,
+    });
     expect(result).toMatchObject({ ok: false });
-    expect(result.error).toMatch(/worker-b.*não confirmou/i);
+    expect(result.error).toMatch(/orquestrador restaurado não confirmou sessão/i);
     expect(window.nexus.orch.rebindMissionOrchestrator).not.toHaveBeenCalled();
   });
 
