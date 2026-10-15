@@ -80,8 +80,8 @@ test('a dead or expired refresh token is refused without logging out the other d
   const stolen = await issueTokens(db, 'user', 'desktop');
   const successor = await rotateRefresh(db, stolen.refresh, 'desktop');
   assert.ok(successor);
-  // Real reuse of a rotated token still revokes every desktop session.
-  assert.equal(await rotateRefresh(db, stolen.refresh, 'desktop'), null);
+  // Real reuse of a rotated token, past the retry window, still revokes its family.
+  assert.equal(await rotateRefresh(db, stolen.refresh, 'desktop', Date.now() + 60_000), null);
   assert.equal(await sessionFor(db, successor.tokens.session, 'desktop'), null);
   const expired = await issueTokens(db, 'user', 'desktop', Date.now() - 31 * 24 * 60 * 60 * 1000);
   // Another app (or machine) signs in again after the revocation.

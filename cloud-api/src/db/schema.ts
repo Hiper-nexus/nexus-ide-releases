@@ -60,6 +60,8 @@ export interface SessionRow {
   readonly last_used_at: EpochMilliseconds | null;
   readonly csrf_hash: string | null;
   readonly channel: AuthChannel;
+  /** Refresh token issued with this session (migration 0010); null for older sessions. */
+  readonly refresh_id: string | null;
 }
 
 export interface RefreshTokenRow {

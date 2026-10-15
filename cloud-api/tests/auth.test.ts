@@ -124,6 +124,8 @@ test('authenticated native profile refuses web bearer and web refresh replay sta
     assert.equal((await router.request('/v1/me', { headers: { Authorization: `Bearer ${native.session}` } }, env)).status, 200);
     const refresh = () => router.request('/v1/web/session', { headers: { Origin: SITE, Cookie: `__Host-nexus_refresh=${web.refresh}` } }, env);
     assert.equal((await payload(await refresh())).data.authenticated, true);
+    // Replayed past the retry window: real reuse, which revokes only that web family.
+    await db.exec('UPDATE refresh_tokens SET used_at=used_at-60000 WHERE used_at IS NOT NULL');
     assert.equal((await payload(await refresh())).data.authenticated, false);
     assert.ok(await sessionFor(db, native.session, 'desktop'));
     db.close();
