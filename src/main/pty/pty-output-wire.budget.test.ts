@@ -33,10 +33,11 @@ vi.mock('../license-access', async () => (await import('../__tests__/licensed-ac
  *   sequência própria.
  * - stateSendsPerBusyRun (1): a virada para busy sai uma vez por rajada, não
  *   a cada chunk (o guard `session.state !== "busy"` do pty-manager).
- * - envelopeBytesPerEvent (64; medido 53): o evento é só
- *   `{ sessionId, data, sequence }` — campo novo no envelope paga em toda
- *   mensagem de toda sessão. Folga de 11 bytes só para os dígitos do contador
- *   do sessionId e da sequência, que variam com a ordem dos testes.
+ * - envelopeBytesPerEvent (96; medido 71 na mensagem coalescida, 53 na simples):
+ *   o evento é `{ sessionId, data, sequence }` e, só quando o Main junta
+ *   chunks retidos numa mensagem (#17), `firstSequence` — campo novo no
+ *   envelope paga em toda mensagem de toda sessão. Folga só para os dígitos do
+ *   contador do sessionId e da sequência, que variam com a ordem dos testes.
  * - tapDeliveriesPerBurst (2): F-764 C.1 — os taps de dados recebem a rajada
  *   em lote (o 1º chunk na virada para busy + 1 lote de ≤ 16 ms / 32 KB), não
  *   chunk a chunk.
@@ -44,14 +45,15 @@ vi.mock('../license-access', async () => (await import('../__tests__/licensed-ac
  *   sem ack; a fila de IPC dentro do Main não cresce sem limite. Teto externo:
  *   quem segura de fato é a janela T3 abaixo (64 KiB em voo).
  * - pendingPushChunks (8) e pendingPushChars (65536 = 64 KiB): janela T3
- *   `OutputProtocol` — no máximo 8 chunks / 64 KiB em voo sem ack, para que
+ *   `OutputProtocol` — no máximo 8 MENSAGENS / 64 KiB em voo sem ack, para que
  *   rajadas de chunks minúsculos não encham o IPC do Electron (400×80 chars
- *   são 32 KiB, abaixo do teto de caracteres, mas 400 mensagens).
+ *   são 32 KiB, abaixo do teto de caracteres, mas 400 chunks). Desde o #17 os
+ *   chunks retidos atrás da janela saem coalescidos numa mensagem só.
  */
 const BUDGET = {
   dataSendsPerChunk: 1,
   stateSendsPerBusyRun: 1,
-  envelopeBytesPerEvent: 64,
+  envelopeBytesPerEvent: 96,
   tapDeliveriesPerBurst: 2,
   unackedPushChars: 512 * 1024,
   pendingPushChunks: 8,
@@ -195,7 +197,7 @@ describe('orçamento de wire da saída de PTY (QLT-01)', () => {
     await finish(shell);
   });
 
-  it('janela T3 de ACK: no máximo 8 chunks / 64 KiB em voo sem confirmação', async () => {
+  it('janela T3 de ACK: no máximo 8 mensagens / 64 KiB em voo sem confirmação', async () => {
     fakeClock();
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const shell = spawnShell();
@@ -211,19 +213,19 @@ describe('orçamento de wire da saída de PTY (QLT-01)', () => {
     expect(work.chunks).toBeLessThanOrEqual(BUDGET.pendingPushChunks);
     expect(work.pushedChars).toBeLessThanOrEqual(BUDGET.pendingPushChars);
 
-    // ACK dos 8 em voo reabre a janela: os PAUSADOS saem na hora, em ordem
-    // (9..16), sem saída nova nem pull — e de novo no máximo 8 em voo. O chunk
-    // ao vivo seguinte não fura a fila: espera atrás dos pausados.
+    // ACK do que está em voo reabre a janela: os RETIDOS saem na hora, em
+    // ordem, numa mensagem só (3..400 cabem em 64 KiB). O chunk ao vivo
+    // seguinte não fura a fila: sai depois, com a sequência seguinte.
     const last = events.at(-1)!;
     acknowledgeSessionOutput(shell.owner, shell.sessionId, last.sequence);
-    const drained = (sendsOn(shell, PTY_CHANNELS.data) as Array<{ sequence: number }>)
-      .slice(events.length)
-      .map((event) => event.sequence);
+    const drained = (sendsOn(shell, PTY_CHANNELS.data) as Array<{ sequence: number; firstSequence?: number }>)
+      .slice(events.length);
     shell.handlers.onData(tiny);
     const afterAck = sendsOn(shell, PTY_CHANNELS.data).length;
-    console.info('[perf-budget] pty-output pending-window-after-ack', JSON.stringify({ afterAck }));
-    expect(drained).toEqual(Array.from({ length: BUDGET.pendingPushChunks }, (_, i) => last.sequence + 1 + i));
-    expect(afterAck).toBe(events.length + BUDGET.pendingPushChunks);
+    console.info('[perf-budget] pty-output pending-window-after-ack', JSON.stringify({ afterAck, drained: drained.length }));
+    expect(drained).toEqual([{ firstSequence: last.sequence + 1, sequence: 400 }].map((range) => expect.objectContaining(range)));
+    expect(afterAck).toBe(events.length + 2);
+    expect((sendsOn(shell, PTY_CHANNELS.data) as Array<{ sequence: number }>).at(-1)?.sequence).toBe(401);
     await finish(shell);
   });
 });

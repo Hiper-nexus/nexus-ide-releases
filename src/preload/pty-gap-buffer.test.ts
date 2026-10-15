@@ -127,3 +127,57 @@ describe('PtyGapBuffer', () => {
     expect(PTY_GAP_NOTICE.endsWith('\r\n')).toBe(true);
   });
 });
+
+describe('PtyGapBuffer com faixas coalescidas (#17)', () => {
+  it('entrega uma faixa contígua como um chunk que avança o high-water até o fim dela', () => {
+    const buf = new PtyGapBuffer();
+    expect(buf.push(1, 'a').chunks).toEqual([{ sequence: 1, data: 'a' }]);
+    expect(buf.push(5, 'bcde', 2).chunks).toEqual([{ sequence: 5, data: 'bcde' }]);
+    expect(buf.highWater).toBe(5);
+    expect(buf.push(6, 'f').chunks).toEqual([{ sequence: 6, data: 'f' }]);
+  });
+
+  it('segura uma faixa atrás de um buraco e a solta quando o buraco fecha', () => {
+    const buf = new PtyGapBuffer();
+    expect(buf.push(6, 'cdef', 3).chunks).toEqual([]);
+    expect(buf.pendingCount).toBe(1);
+    expect(buf.push(7, 'g').chunks).toEqual([]);
+    const healed = buf.push(2, 'ab', 1);
+    expect(healed.chunks).toEqual([
+      { sequence: 2, data: 'ab' },
+      { sequence: 6, data: 'cdef' },
+      { sequence: 7, data: 'g' },
+    ]);
+    expect(buf.highWater).toBe(7);
+    expect(buf.pendingBytes).toBe(0);
+  });
+
+  it('faixa já entregue (inclusive pelo recover) é duplicata e some', () => {
+    const buf = new PtyGapBuffer();
+    for (let sequence = 1; sequence <= 5; sequence += 1) buf.push(sequence, String(sequence));
+    expect(buf.push(4, 'xx', 3)).toEqual({ chunks: [], gapHealed: false });
+    expect(buf.highWater).toBe(5);
+  });
+
+  it('faixa que sobrepõe o já entregue não é entregue inteira: o recover busca só o resto', () => {
+    const buf = new PtyGapBuffer();
+    for (let sequence = 1; sequence <= 3; sequence += 1) buf.push(sequence, String(sequence));
+    // 2..5 traz 2 e 3 de novo: sem os tamanhos por chunk não dá para fatiar.
+    const result = buf.push(5, 'DUP', 2);
+    expect(result).toEqual({ chunks: [], gapHealed: false });
+    expect(buf.highWater).toBe(3);
+    expect(buf.pendingCount).toBe(0);
+    // O recover devolve 4 e 5 individualmente e o fluxo segue.
+    expect(buf.push(4, '4').chunks).toEqual([{ sequence: 4, data: '4' }]);
+    expect(buf.push(5, '5').chunks).toEqual([{ sequence: 5, data: '5' }]);
+  });
+
+  it('buraco aceito descarta faixas pendentes inteiras abaixo do ponto de retomada', () => {
+    const buf = new PtyGapBuffer();
+    buf.push(9, 'old', 7);
+    const chunks = buf.acceptHole(10);
+    expect(chunks).toEqual([]);
+    expect(buf.highWater).toBe(9);
+    expect(buf.pendingCount).toBe(0);
+  });
+});
