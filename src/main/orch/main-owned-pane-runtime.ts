@@ -13,6 +13,7 @@ import type { ProjectExecutionScope } from "../../shared/types";
 import type { SpawnRouteInfo } from '../../shared/spawn-route';
 import { copyProviderPaneSession } from '../persistence/provider-session-store';
 import { currentMimoSessionOwnerKey } from '../adapters/mimo-session-owner';
+import { CliSpawnPermitTimeoutError } from '../adapters/cli-auto-update';
 import { visualTaskAtSpawn } from './visual-handoff-gate';
 import {
   getAdapter,
@@ -928,7 +929,19 @@ export async function spawnMainOwnedMissionPaneAsync(
     const withPermit = async (
       run: () => OrchPaneSpawnResult | Promise<OrchPaneSpawnResult>,
     ): Promise<OrchPaneSpawnResult> => {
-      const release = await acquireCliSpawnPermit(options.adapterId);
+      let release: () => void;
+      try {
+        release = await acquireCliSpawnPermit(options.adapterId);
+      } catch (error) {
+        // Teto da espera por uma troca de binário: os chamadores (+ Pane,
+        // fast lane, tool-util) esperam um resultado, não uma rejeição.
+        if (!(error instanceof CliSpawnPermitTimeoutError)) throw error;
+        return {
+          requestId: options.continuationTarget?.requestId ?? makeId("orchspawn"),
+          ok: false,
+          error: error.message,
+        };
+      }
       options.spawnTimer?.mark("cli-spawn-permit");
       try {
         // F-955: env do agente nasce com a base do job nativo quando possível.
