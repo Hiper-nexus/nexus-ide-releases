@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.76.265 — Linux em dia com a velocidade
+## 0.76.266 — Linux em dia com a velocidade
 
-A 0.76.264 saiu só para macOS (DMG e ZIP darwin arm64). Esta versão não anexa pacotes Linux àquela release. O produto é o da 0.76.264, empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35).
+A 0.76.264 saiu só para macOS (DMG e ZIP darwin arm64). Esta versão não anexa pacotes Linux àquela release. O produto é o da 0.76.264, empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). A tag 0.76.265 não foi publicada: a suíte recusou o teste do cache de symref porque `git init` cria `master` quando `init.defaultBranch` não é `main`. O teste agora segue o branch que o init criou.
 
 No desktop Linux, em relação à 0.76.263:
 
@@ -20,6 +20,10 @@ No desktop Linux, em relação à 0.76.263:
   - O token renovado de uma CLI agora volta à origem mesmo se o `fs.watch` morrer calado.
   - Uma confirmação do Jarvis pendente no fechamento do app não concede mais permissão.
 - **Não muda o Linux.** No APFS, uma raiz com caixa diferente é aceita como top-level do Git (F-1509). Isso é só macOS.
+
+## 0.76.265 — Corte não publicado
+
+A tag anotada existe e não tem pacote. No Ubuntu 22.04 (Git 2.55, branch inicial `master`) o teste `project-git-lineage.cache` pedia `refs/heads/main` e o `rev-parse HEAD^{tree}` falhava. A 0.76.266 corrige o teste e publica o Linux.
 
 ## 0.76.264 — Nexus mais rápido de ponta a ponta
 

@@ -10755,8 +10755,28 @@ export const RELEASE_076264: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076265: AppRelease = {
   version: '0.76.265',
+  date: '2026-10-15',
+  codename: 'Linux em dia com a velocidade',
+  summary: 'Corte não publicado. A suíte no Ubuntu 22.04 recusou o teste do cache de symref: git init cria master quando o branch padrão não é main. O Linux sai na 0.76.266.',
+  highlights: [
+    { title: 'Terminal em lotes', detail: 'A saída de cada pane chega à tela agrupada, em vez de uma mensagem por pedaço. Comandos com muita saída deixam de travar a janela.' },
+    { title: 'Git e arquivos sem travar', detail: 'Push, pull, status, explorador de arquivos e anexos rodam fora do processo principal. A interface continua respondendo durante essas operações.' },
+    { title: 'Abertura mais leve', detail: 'O Nexus carrega menos ao abrir: fontes mais leves, painéis secundários sob demanda e tarefas de fundo depois que a janela aparece.' },
+    { title: 'Espaço para ditar ajustável', detail: 'Segurar Espaço inicia o ditado depois de 450 ms. Em Voz, você ajusta esse tempo entre 250 e 1000 ms. Um toque normal continua digitando o espaço.' },
+  ],
+  fixes: [
+    { title: 'Login nos três sistemas', detail: 'Uma renovação repetida derruba só aquele aparelho. Mac, Linux, Windows e web continuam conectados.' },
+    { title: 'Anexos grandes', detail: 'Arquivos acima de cerca de 3 MiB soltos na janela voltam a ser anexados.' },
+    { title: 'Pool de worktrees após crash', detail: 'Uma worktree pré-alocada que estava sendo adotada no momento de um crash é concluída quando o Nexus abre de novo.' },
+    { title: 'Espera de atualização de CLI com teto', detail: 'Abrir um pane enquanto uma CLI se atualiza desiste em 60 s e mostra o motivo.' },
+    { title: 'Atualização do Linux', detail: 'A 0.76.264 só tinha pacote de macOS. O Linux não anexa arquivos a essa release e sai na 0.76.266.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.266',
   date: '2026-10-15',
   codename: 'Linux em dia com a velocidade',
   summary: 'O app no Linux deixa a 0.76.263 e passa a incluir a 0.76.264: o terminal manda a saída em lotes, git e arquivos saem do processo principal, o app abre mais leve e renovar a sessão em um aparelho não desconecta os outros.',
@@ -10771,6 +10791,6 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Anexos grandes', detail: 'Arquivos acima de cerca de 3 MiB soltos na janela voltam a ser anexados.' },
     { title: 'Pool de worktrees após crash', detail: 'Uma worktree pré-alocada que estava sendo adotada no momento de um crash é concluída quando o Nexus abre de novo.' },
     { title: 'Espera de atualização de CLI com teto', detail: 'Abrir um pane enquanto uma CLI se atualiza desiste em 60 s e mostra o motivo.' },
-    { title: 'Atualização do Linux', detail: 'A 0.76.264 só tinha pacote de macOS. O Linux não anexa arquivos a essa release e sai na 0.76.265.' },
+    { title: 'Atualização do Linux', detail: 'A 0.76.264 só tinha pacote de macOS. A tag 0.76.265 não foi publicada. O Linux sai na 0.76.266.' },
   ],
 };

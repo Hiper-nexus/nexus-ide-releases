@@ -175,18 +175,21 @@ describe('git repository proof cache', () => {
   });
 
   // M1a: stat só do primeiro ref é cego a update-ref no DESTINO de um symref.
-  it('update-ref no destino de um symref (HEAD→alias→main) invalida', () => {
-    git(root, 'symbolic-ref', 'refs/heads/alias', 'refs/heads/main');
+  it('update-ref no destino de um symref (HEAD→alias→branch) invalida', () => {
+    // git init usa master salvo init.defaultBranch. A cadeia tem de apontar
+    // para o branch que o commit criou, não para um nome fixo.
+    const branch = git(root, 'rev-parse', '--abbrev-ref', 'HEAD');
+    git(root, 'symbolic-ref', 'refs/heads/alias', `refs/heads/${branch}`);
     git(root, 'symbolic-ref', 'HEAD', 'refs/heads/alias');
     const first = collectGitRepositoryContext(root);
-    // Commit novo sem tocar no worktree: só o ref de destino (main) é
+    // Commit novo sem tocar no worktree: só o ref de destino é
     // reescrito — alias, HEAD e a raiz ficam intocados.
     const tree = git(root, 'rev-parse', 'HEAD^{tree}');
     const next = execFileSync('git', ['-C', root, 'commit-tree', tree, '-m', 'two'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
     }).trim();
-    git(root, 'update-ref', 'refs/heads/main', next);
+    git(root, 'update-ref', `refs/heads/${branch}`, next);
     const before = gitProofStats();
     const second = collectGitRepositoryContext(root);
     expect(second.proof.headCommit).toBe(next);
