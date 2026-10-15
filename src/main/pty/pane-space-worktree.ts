@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
-import { ProcessGitRunner } from '../runtime/git-command';
+import { AsyncProcessGitRunner, ProcessGitRunner } from '../runtime/git-command';
 import { isInsidePath, resolveCwdForScope } from '../orch/workspace-path';
 
 // Only in-flight creation is cached: every resume rechecks the durable record
@@ -82,7 +82,7 @@ export async function preparePaneSpaceWorktree(
         }
         return existing.worktreePath;
       }
-      const head = new ProcessGitRunner().run(scope.rootRealPath, ['rev-parse', '--verify', 'HEAD^{commit}'], { allowFailure: true });
+      const head = await new AsyncProcessGitRunner().run(scope.rootRealPath, ['rev-parse', '--verify', 'HEAD^{commit}'], { allowFailure: true });
       if (head.status !== 0) throw new Error('Para abrir uma aba isolada, o projeto precisa de um repositório Git com pelo menos um commit. Inicialize e faça o primeiro commit, ou continue na aba existente.');
       const record = await registry.create({
         scope, missionId: spaceId, taskId: 'tab', workerId: spaceId,

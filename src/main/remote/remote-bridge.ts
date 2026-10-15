@@ -1155,9 +1155,9 @@ export async function handleAuthedMessage(
     // só leitura, pelos serviços do desktop (remote-workspace-rpc.ts). Stage,
     // commit, checkout e escrita não têm comando aqui: caem em `unknown command`.
     case 'git.status':
-      return remoteGitStatus(resolveRemotePaneWorkspace(msg.paneId, scope));
+      return await remoteGitStatus(resolveRemotePaneWorkspace(msg.paneId, scope));
     case 'git.diff':
-      return remoteGitDiff(resolveRemotePaneWorkspace(msg.paneId, scope), msg.path, {
+      return await remoteGitDiff(resolveRemotePaneWorkspace(msg.paneId, scope), msg.path, {
         staged: msg.staged === true,
         untracked: msg.untracked === true,
       });

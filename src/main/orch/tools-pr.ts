@@ -20,9 +20,9 @@ import type { GitHubHttp } from '../source-control/github-forge-provider';
 
 export type PrToolDeps = {
   token: () => string | null;
-  remoteUrl: (cwd: string) => string | null;
-  currentBranch: (cwd: string) => string | null;
-  defaultBranch: (cwd: string) => string;
+  remoteUrl: (cwd: string) => string | null | Promise<string | null>;
+  currentBranch: (cwd: string) => string | null | Promise<string | null>;
+  defaultBranch: (cwd: string) => string | Promise<string>;
   http: GitHubHttp;
   now?: () => number;
 };
@@ -87,14 +87,14 @@ export function buildPrTools(overrides: Partial<PrToolDeps> = {}): McpToolDef[] 
       assertIsolatedWriterGitTool(ctx, 'nexus_pr_create');
       const input = prCreateArgsSchema.parse(args);
       const cwd = resolveCwd(ctx, input.cwd);
-      const forge = selectForge(deps.remoteUrl(cwd));
+      const forge = selectForge(await deps.remoteUrl(cwd));
       // This credential belongs to GitHub only; never hand it to another forge.
       if (!forge || forge.providerId !== 'github' || forge.host !== 'github.com') {
         return { ok: false, error: 'origin precisa apontar para um repositório do GitHub.com' };
       }
-      const head = input.head ?? deps.currentBranch(cwd);
+      const head = input.head ?? (await deps.currentBranch(cwd));
       if (!head) return { ok: false, error: 'HEAD destacado: selecione uma branch antes de criar o PR' };
-      const base = input.base ?? deps.defaultBranch(cwd);
+      const base = input.base ?? (await deps.defaultBranch(cwd));
       prCreateArgsSchema.parse({ ...input, head, base });
       if (head === base) return { ok: false, error: 'head e base são a mesma branch; selecione a branch do trabalho' };
       const token = deps.token();
@@ -140,7 +140,7 @@ export function buildPrTools(overrides: Partial<PrToolDeps> = {}): McpToolDef[] 
     },
     handler: async (args, ctx) => {
       const cwd = resolveCwd(ctx, str(args, 'cwd'));
-      const remote = deps.remoteUrl(cwd);
+      const remote = await deps.remoteUrl(cwd);
       const forge = selectForge(remote);
       if (!forge) {
         return { ok: false, error: 'origin não é um remote hospedado reconhecido' };
@@ -156,7 +156,7 @@ export function buildPrTools(overrides: Partial<PrToolDeps> = {}): McpToolDef[] 
           ? args.number
           : undefined;
       if (!number) {
-        const branch = deps.currentBranch(cwd);
+        const branch = await deps.currentBranch(cwd);
         if (!branch || !provider.getReviewForBranch) {
           return { ok: true, branch: branch ?? null, review: null };
         }
@@ -211,7 +211,7 @@ export function buildPrTools(overrides: Partial<PrToolDeps> = {}): McpToolDef[] 
     },
     handler: async (args, ctx) => {
       const cwd = resolveCwd(ctx, str(args, 'cwd'));
-      const remote = deps.remoteUrl(cwd);
+      const remote = await deps.remoteUrl(cwd);
       const forge = selectForge(remote);
       if (!forge) {
         return { ok: false, error: 'origin não é um remote hospedado reconhecido' };
@@ -230,7 +230,7 @@ export function buildPrTools(overrides: Partial<PrToolDeps> = {}): McpToolDef[] 
           ? args.number
           : undefined;
       if (!number) {
-        const branch = deps.currentBranch(cwd);
+        const branch = await deps.currentBranch(cwd);
         if (!branch || !provider.getReviewForBranch) {
           return { ok: false, error: 'informe number do PR' };
         }
@@ -282,7 +282,7 @@ export function buildPrTools(overrides: Partial<PrToolDeps> = {}): McpToolDef[] 
     },
     handler: async (args, ctx) => {
       const cwd = resolveCwd(ctx, str(args, 'cwd'));
-      const remote = deps.remoteUrl(cwd);
+      const remote = await deps.remoteUrl(cwd);
       const forge = selectForge(remote);
       if (!forge) {
         return { ok: false, error: 'origin não é um remote hospedado reconhecido' };
@@ -301,7 +301,7 @@ export function buildPrTools(overrides: Partial<PrToolDeps> = {}): McpToolDef[] 
           ? args.number
           : undefined;
       if (!number) {
-        const branch = deps.currentBranch(cwd);
+        const branch = await deps.currentBranch(cwd);
         if (!branch || !provider.getReviewForBranch) {
           return { ok: false, error: 'informe number do PR' };
         }

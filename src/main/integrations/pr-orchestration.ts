@@ -30,10 +30,10 @@ export interface PrBranchPushState {
 }
 
 export interface PrOrchestrationDeps {
-  currentBranch: () => string | null;
-  defaultBranch: () => string;
-  branchPushState?: (branch: string) => PrBranchPushState;
-  push: (branch: string) => { ok: boolean; error?: string };
+  currentBranch: () => string | null | Promise<string | null>;
+  defaultBranch: () => string | Promise<string>;
+  branchPushState?: (branch: string) => PrBranchPushState | Promise<PrBranchPushState>;
+  push: (branch: string) => { ok: boolean; error?: string } | Promise<{ ok: boolean; error?: string }>;
   createPr: (input: {
     sourceBranch: string;
     targetBranch: string;
@@ -74,19 +74,19 @@ export async function orchestratePrCreation(
   input: PrOrchestrationInput,
   deps: PrOrchestrationDeps,
 ): Promise<PrCreateResult> {
-  const branch = input.sourceBranch ?? deps.currentBranch();
+  const branch = input.sourceBranch ?? (await deps.currentBranch());
   if (!branch) return { ok: false, error: 'cannot resolve current branch' };
-  const target = input.targetBranch ?? deps.defaultBranch();
+  const target = input.targetBranch ?? (await deps.defaultBranch());
   if (branch === target) {
     return {
       ok: false,
       error: `branch atual "${branch}" é o alvo do PR — troque de branch antes de abrir o PR`,
     };
   }
-  const state = deps.branchPushState?.(branch);
+  const state = await deps.branchPushState?.(branch);
   const needsPush = !state || !state.isOnRemote || state.aheadCount > 0;
   if (needsPush) {
-    const pushed = deps.push(branch);
+    const pushed = await deps.push(branch);
     if (!pushed.ok) {
       const githubError = classifyGitPushError(
         pushed.error ?? 'git push failed',
