@@ -295,4 +295,180 @@ describe("V8 promise hook sharing (perf #7)", () => {
       resetGateForTests();
     }
   });
+
+  // L6: com o hook V8 compartilhado, o fechamento de uma fronteira não pode
+  // revogar a outra nem desarmar o hook enquanto houver fence aberta, e a
+  // verificação "a promise nasceu dentro desta fronteira" é POR fence.
+  // "Vivo" é provado cunhando um recibo de DENTRO do contexto assíncrono da
+  // fronteira: binding revogado lança "physical agent transport boundary".
+  const REVOKED = /physical agent transport boundary/i;
+
+  interface Deferred<T> {
+    readonly promise: Promise<T>;
+    readonly resolve: (value: T) => void;
+  }
+
+  function deferred<T = void>(): Deferred<T> {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((settle) => {
+      resolve = settle;
+    });
+    return { promise, resolve };
+  }
+
+  function mintProbe(ctx: AgentGateContext, toolCallId: string): string | undefined {
+    try {
+      mintAgentTransportPhysicalReceipt({ ctx, toolCallId, toolName: "nexus_handoff_submit" });
+      return undefined;
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  /** Macrotask agendada DENTRO da fronteira: roda depois de o `run*` voltar. */
+  function mintProbeNextTick(ctx: AgentGateContext, toolCallId: string): Promise<string | undefined> {
+    return new Promise((resolve) => {
+      setImmediate(() => resolve(mintProbe(ctx, toolCallId)));
+    });
+  }
+
+  it("A fecha antes de B: B segue viva e a reação que B registrou na própria promise já vê live=false", async () => {
+    resetGateForTests();
+    const ctxA = workerCtx("session-hook-a", "incarnation-hook-a");
+    const ctxB = workerCtx("session-hook-b", "incarnation-hook-b");
+    const gateA = deferred();
+    const aClosed = deferred();
+    let resultB: Deferred<string> | undefined;
+    let aAfterClose!: Promise<string | undefined>;
+    let bWhileAClosed!: Promise<string | undefined>;
+    let bSettlementReaction!: Promise<string | undefined>;
+    let runA: Promise<void> | undefined;
+    let runB: Promise<string> | undefined;
+    try {
+      runA = runInsidePtyStreamAgentTransport("session-hook-a", ctxA, async () => {
+        aAfterClose = aClosed.promise.then(() => mintProbe(ctxA, "a-after-a-closed"));
+        await gateA.promise;
+      });
+      runB = runInsidePtyStreamAgentTransport("session-hook-b", ctxB, () => {
+        // Nasce DENTRO de B: uma promise de fora falharia fechada de saída.
+        const result = deferred<string>();
+        resultB = result;
+        bWhileAClosed = aClosed.promise.then(() => mintProbe(ctxB, "b-while-a-is-closed"));
+        // Registrada na promise de resultado de B ANTES do `.finally` de
+        // fallback da fronteira: a ordem adversa que a fence de settlement cobre.
+        bSettlementReaction = result.promise.then(() => mintProbe(ctxB, "b-in-own-settlement-reaction"));
+        return result.promise;
+      });
+
+      gateA.resolve();
+      await runA;
+      aClosed.resolve();
+
+      expect(await aAfterClose).toMatch(REVOKED);
+      // O hook compartilhado fechou A, não B.
+      expect(await bWhileAClosed).toBeUndefined();
+
+      resultB!.resolve("b-done");
+      await runB;
+      expect(await bSettlementReaction).toMatch(REVOKED);
+    } finally {
+      gateA.resolve();
+      resultB?.resolve("cleanup");
+      aClosed.resolve();
+      await Promise.allSettled([runA, runB]);
+      resetGateForTests();
+    }
+  });
+
+  it("o hook compartilhado só é desarmado depois que B fecha, a última fronteira aberta", async () => {
+    resetGateForTests();
+    const ctxA = workerCtx("session-hook-a", "incarnation-hook-a");
+    const ctxB = workerCtx("session-hook-b", "incarnation-hook-b");
+    const realCreateHook = promiseHooks.createHook.bind(promiseHooks);
+    let created = 0;
+    let stopped = 0;
+    const createHookSpy = vi.spyOn(promiseHooks, "createHook").mockImplementation((callbacks) => {
+      created += 1;
+      const stop = realCreateHook(callbacks) as () => void;
+      return () => {
+        stopped += 1;
+        stop();
+      };
+    });
+    const gateA = deferred();
+    const gateB = deferred();
+    let runA: Promise<void> | undefined;
+    let runB: Promise<void> | undefined;
+    try {
+      runA = runInsidePtyStreamAgentTransport("session-hook-a", ctxA, async () => {
+        await gateA.promise;
+      });
+      runB = runInsidePtyStreamAgentTransport("session-hook-b", ctxB, async () => {
+        await gateB.promise;
+      });
+      expect({ created, stopped }).toEqual({ created: 1, stopped: 0 });
+
+      gateA.resolve();
+      await runA;
+      // A fechou, B segue aberta: o hook tem de continuar armado.
+      expect({ created, stopped }).toEqual({ created: 1, stopped: 0 });
+
+      gateB.resolve();
+      await runB;
+      expect({ created, stopped }).toEqual({ created: 1, stopped: 1 });
+    } finally {
+      gateA.resolve();
+      gateB.resolve();
+      await Promise.allSettled([runA, runB]);
+      createHookSpy.mockRestore();
+      resetGateForTests();
+    }
+  });
+
+  it("promise criada antes de B abrir não está no conjunto observado de B: fail-closed, com A mantendo o hook armado", async () => {
+    resetGateForTests();
+    const ctxA = workerCtx("session-hook-a", "incarnation-hook-a");
+    const ctxB = workerCtx("session-hook-b", "incarnation-hook-b");
+    const gateA = deferred();
+    let foreign: Deferred<string> | undefined;
+    let born: Deferred<string> | undefined;
+    let runA: Promise<void> | undefined;
+    let runBorn: Promise<string> | undefined;
+    let runForeign: Promise<string> | undefined;
+    try {
+      runA = runInsidePtyStreamAgentTransport("session-hook-a", ctxA, async () => {
+        await gateA.promise;
+      });
+      // Nasce com a fence de A viva (o hook compartilhado a observa para A) e
+      // ANTES de B abrir: nunca entra no conjunto observado de B.
+      foreign = deferred<string>();
+
+      // Controle: a promise que nasce DENTRO de B mantém B viva enquanto pendente.
+      let bornProbe!: Promise<string | undefined>;
+      runBorn = runInsidePtyStreamAgentTransport("session-hook-b", ctxB, () => {
+        born = deferred<string>();
+        bornProbe = mintProbeNextTick(ctxB, "b-promise-born-inside");
+        return born.promise;
+      });
+      expect(await bornProbe).toBeUndefined();
+      born!.resolve("born");
+      await runBorn;
+
+      // Mesmo B, agora devolvendo a promise anterior a ele: a fronteira fecha
+      // na hora, sem esperar o settlement dela (que segue pendente).
+      let foreignProbe!: Promise<string | undefined>;
+      const foreignPromise = foreign.promise;
+      runForeign = runInsidePtyStreamAgentTransport("session-hook-b", ctxB, () => {
+        foreignProbe = mintProbeNextTick(ctxB, "b-promise-born-before-b");
+        return foreignPromise;
+      });
+      expect(await foreignProbe).toMatch(REVOKED);
+    } finally {
+      gateA.resolve();
+      born?.resolve("cleanup");
+      foreign?.resolve("cleanup");
+      await Promise.allSettled([runA, runBorn, runForeign]);
+      resetGateForTests();
+    }
+  });
 });
