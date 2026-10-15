@@ -150,3 +150,76 @@ it('F-429: automatic remount cannot remove the operator stop seal', async () => 
   expect(harness.resumeTechnical).not.toHaveBeenCalled();
   expect(harness.mission.description).toContain('runtime-closed');
 });
+
+describe('resumeFastLaneMission — CAS do resumeTechnical (A5)', () => {
+  function blockedTechnicalMission(): Mission {
+    return {
+      ...blockedUserMission('objetivo do operador'),
+      intentState: 'blocked_technical',
+      updatedAt: 1,
+    } as Mission;
+  }
+
+  it('linha que muda entre a leitura e o CAS é relida e o CAS é retentado uma vez', async () => {
+    harness.mission = blockedTechnicalMission();
+    harness.handoffs = [];
+    harness.resumeTechnical.mockReset();
+    harness.resumeTechnical
+      .mockImplementationOnce(() => {
+        // Watcher/outro comando mudou a linha entre o get e o CAS.
+        harness.mission = { ...harness.mission!, updatedAt: 2 };
+        throw new Error('store: CAS conflict (updatedAt mudou)');
+      })
+      .mockImplementationOnce(() => {
+        harness.mission = { ...harness.mission!, status: 'running', intentState: 'executing' } as Mission;
+      });
+
+    // O bootstrap seguinte depende de runtime que este teste não monta; o que
+    // importa é que o CAS foi retentado com a linha fresca e o erro, se
+    // houver, não é o de conflito.
+    const outcome = await resumeFastLaneMission(scope, 'mission-1').then(
+      () => null,
+      (error: unknown) => error,
+    );
+
+    expect(harness.resumeTechnical).toHaveBeenCalledTimes(2);
+    expect(harness.resumeTechnical).toHaveBeenNthCalledWith(
+      2,
+      scope,
+      expect.objectContaining({ missionId: 'mission-1', expectedUpdatedAt: 2 }),
+    );
+    expect(String(outcome ?? '')).not.toMatch(/corrida de estado/);
+  });
+
+  it('CAS perdido nas duas tentativas propaga o conflito (esperado vs atual), nunca request-processed mudo', async () => {
+    harness.mission = blockedTechnicalMission();
+    harness.handoffs = [];
+    harness.resumeTechnical.mockReset().mockImplementation(() => {
+      harness.mission = { ...harness.mission!, updatedAt: harness.mission!.updatedAt + 1 };
+      throw new Error('store: status mudou');
+    });
+
+    await expect(resumeFastLaneMission(scope, 'mission-1')).rejects.toThrow(
+      /corrida de estado.*esperado blocked\/blocked_technical@1, atual blocked\/blocked_technical@2/,
+    );
+    expect(harness.resumeTechnical).toHaveBeenCalledTimes(2);
+  });
+
+  it('linha já reaberta por outro caminho (running) não retenta o CAS', async () => {
+    harness.mission = blockedTechnicalMission();
+    harness.handoffs = [];
+    harness.resumeTechnical.mockReset().mockImplementationOnce(() => {
+      // Outra retomada venceu a corrida e já reabriu a missão.
+      harness.mission = { ...harness.mission!, status: 'running', intentState: 'executing', updatedAt: 2 } as Mission;
+      throw new Error('store: CAS conflict');
+    });
+
+    const outcome = await resumeFastLaneMission(scope, 'mission-1').then(
+      () => null,
+      (error: unknown) => error,
+    );
+
+    expect(harness.resumeTechnical).toHaveBeenCalledTimes(1);
+    expect(String(outcome ?? '')).not.toMatch(/corrida de estado/);
+  });
+});

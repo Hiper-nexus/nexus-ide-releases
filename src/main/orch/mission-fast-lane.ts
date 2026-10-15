@@ -2878,18 +2878,36 @@ export async function fastLaneBootstrap(
   if (!mission) throw new Error('missão não encontrada para a Via Rápida');
 
   const key = watcherKey(scope, missionId);
-  if (watchers.has(key)) {
-    // Watcher already up (Maestro remounted). Iniciar / religado must still
-    // self-walk if writers are gone — otherwise the civilian sees 1 pane.
-    void maybeRedispatchFastLaneFirstWave(scope, mission, {
-      focusedLiveMission: true,
-    }).catch((error) => {
-      console.warn(
-        '[fast-lane] first-wave on remount/Iniciar falhou:',
-        error instanceof Error ? error.message : error,
-      );
-    });
-    return;
+  const existingWatcher = watchers.get(key);
+  if (existingWatcher) {
+    // A5: watcher registrado não prova retomada — a SESSÃO vigiada precisa
+    // estar viva. Um watcher velho (sessão morta depois de um CAS perdido,
+    // por exemplo) fazia o bootstrap retornar em silêncio e o Retomar
+    // terminava sem efeito.
+    const watchedAlive =
+      classifySessionLiveness(getSessionState(existingWatcher.orchSessionId)) === 'live' ||
+      getAcpDriverSession(existingWatcher.orchSessionId) !== null ||
+      liveRegisteredOrchestratorSessionId(missionId) === existingWatcher.orchSessionId;
+    if (!watchedAlive) {
+      trace({
+        kind: 'fast-lane-stale-watcher',
+        missionId,
+        sessionId: existingWatcher.orchSessionId,
+      });
+      stopWatcher(scope, missionId);
+    } else {
+      // Watcher already up (Maestro remounted). Iniciar / religado must still
+      // self-walk if writers are gone — otherwise the civilian sees 1 pane.
+      void maybeRedispatchFastLaneFirstWave(scope, mission, {
+        focusedLiveMission: true,
+      }).catch((error) => {
+        console.warn(
+          '[fast-lane] first-wave on remount/Iniciar falhou:',
+          error instanceof Error ? error.message : error,
+        );
+      });
+      return;
+    }
   }
 
   if (mission.status === 'running') {
@@ -3387,7 +3405,15 @@ export async function resumeFastLaneMission(
   };
   const processedOutcome = (): FastLaneResumeOutcome => {
     const sessionId = liveOrchestratorSessionId(missionId) ?? liveRegisteredOrchestratorSessionId(missionId);
-    return sessionId && sessionId === liveMaestroSessionId
+    // A5: 'request-processed' SEM sessão viva é o Retomar que termina sem
+    // efeito — propaga a falha com a causa em vez de um recibo mudo.
+    if (!sessionId) {
+      throw new Error(
+        'a retomada não religou a coordenação: nenhuma sessão de orquestrador ' +
+          'viva foi provada após o bootstrap',
+      );
+    }
+    return sessionId === liveMaestroSessionId
       ? { kind: 'already-running', sessionId }
       : { kind: 'request-processed' };
   };
@@ -3456,56 +3482,83 @@ export async function resumeFastLaneMission(
   // nesse estado limparia a pergunta sem resposta (bug de campo 2026-08-18).
   // Leftover parked é isolamento de rail, não pergunta — Retomar religa.
   if ((mission.status === 'blocked' || operatorStopped) && mission.intentState) {
-    const runtimeClosedByOperator = operatorStopped;
-    const leftoverParked = wasMissionLeftoverParked(mission);
+    const handoffs = stores.handoffs.list({ missionId, includeDelivered: true });
     // F-738: só a pergunta REGISTRADA (clarify no ledger) prende a missão à
     // resposta. O bloqueio declarado pelo Maestro por set_status não registra
     // pergunta, e o processo dele já foi encerrado — exigir answer-question
     // ali deixava a missão sem saída.
-    if (
-      mission.intentState === 'blocked_user' &&
-      !runtimeClosedByOperator &&
-      !leftoverParked &&
-      resolveOpenMissionQuestion(
-        mission,
-        getProjectDomainStores(scope).handoffs.list({
-          missionId,
-          includeDelivered: true,
-        }),
-        mission.orchestratorSessionId ?? null,
-      )
-    ) {
-      throw new Error(
-        'missão bloqueada por pergunta do operador exige resposta ' +
-          '(answer-question) antes de retomar',
-      );
-    }
+    const assertNoOpenOperatorQuestion = (row: Mission): void => {
+      const rowRuntimeClosed = hasCurrentMissionRuntimeCloseVerdict(row);
+      const rowLeftoverParked = wasMissionLeftoverParked(row);
+      if (
+        row.intentState === 'blocked_user' &&
+        !rowRuntimeClosed &&
+        !rowLeftoverParked &&
+        resolveOpenMissionQuestion(row, handoffs, row.orchestratorSessionId ?? null)
+      ) {
+        throw new Error(
+          'missão bloqueada por pergunta do operador exige resposta ' +
+            '(answer-question) antes de retomar',
+        );
+      }
+    };
     // Reabrir tira o selo de quem parou: o de "dormindo", ou o de encerrado
     // pelo operador junto com o bloqueio declarado pelo Maestro (F-738).
-    const sealedMarkers = leftoverParked && !runtimeClosedByOperator
-      ? [NEXUS_LEFTOVER_PARKED_MARKER]
-      : [MISSION_RUNTIME_CLOSED_MARKER, AGENT_STATUS_BLOCK_MARKER, NEXUS_LEFTOVER_PARKED_MARKER];
-    try {
+    const attemptTechnicalResume = (row: Mission): void => {
+      const rowRuntimeClosed = hasCurrentMissionRuntimeCloseVerdict(row);
+      const rowLeftoverParked = wasMissionLeftoverParked(row);
+      const sealedMarkers = rowLeftoverParked && !rowRuntimeClosed
+        ? [NEXUS_LEFTOVER_PARKED_MARKER]
+        : [MISSION_RUNTIME_CLOSED_MARKER, AGENT_STATUS_BLOCK_MARKER, NEXUS_LEFTOVER_PARKED_MARKER];
       missionEngineForScope(scope).resumeTechnical(scope, {
         missionId,
-        expectedStatus: mission.status,
-        expectedIntentState: mission.intentState ?? 'executing',
-        expectedUpdatedAt: mission.updatedAt,
-        expectedIntentVersion: mission.intentVersion ?? 0,
+        expectedStatus: row.status,
+        expectedIntentState: row.intentState ?? 'executing',
+        expectedUpdatedAt: row.updatedAt,
+        expectedIntentVersion: row.intentVersion ?? 0,
         description:
           sealedMarkers.reduce(
             (description, marker) =>
               stripMissionVerdictParagraph(description, marker),
-            mission.description ?? '',
+            row.description ?? '',
           ) || 'Missão reaberta pelo operador.',
       });
-    } catch (error) {
-      console.warn(
-        '[fast-lane] resumeTechnical falhou:',
-        error instanceof Error ? error.message : error,
-      );
-      // Falhou o resumeTechnical, mas o bootstrap ainda pode funcionar
-      // se a missão já estiver em running.
+    };
+    assertNoOpenOperatorQuestion(mission);
+    try {
+      attemptTechnicalResume(mission);
+    } catch (firstError) {
+      // A5: a linha pode ter mudado entre a leitura acima e o CAS (watcher ou
+      // outro comando concorrente). Relê UMA vez e retenta com os valores
+      // frescos; persistindo, PROPAGA a causa — o warn antigo deixava o
+      // bootstrap seguir com a missão ainda bloqueada e o Retomar terminava
+      // sem efeito ('request-processed' mudo).
+      const latest = stores.missions.get(missionId);
+      if (!latest) {
+        throw new Error(`a missão ${missionId} não existe mais durante a retomada`);
+      }
+      const alreadyResumed =
+        latest.status === 'running' &&
+        latest.intentState !== 'blocked_user' &&
+        latest.intentState !== 'blocked_technical';
+      if (alreadyResumed) {
+        // Outro caminho reabriu a missão entre a leitura e o CAS: o objetivo
+        // já foi alcançado, segue para o bootstrap.
+        trace({ kind: 'fast-lane-resume-cas-retry', missionId, status: 'already-running' });
+      } else {
+        assertNoOpenOperatorQuestion(latest);
+        try {
+          attemptTechnicalResume(latest);
+          trace({ kind: 'fast-lane-resume-cas-retry', missionId, status: 'recovered' });
+        } catch (retryError) {
+          throw new Error(
+            'a retomada perdeu a corrida de estado da missão: ' +
+              `esperado ${mission.status}/${mission.intentState ?? '—'}@${mission.updatedAt}, ` +
+              `atual ${latest.status}/${latest.intentState ?? '—'}@${latest.updatedAt} — ` +
+              (retryError instanceof Error ? retryError.message : String(retryError)),
+          );
+        }
+      }
     }
     await fastLaneBootstrap(scope, missionId, { invocation });
     return processedOutcome();
