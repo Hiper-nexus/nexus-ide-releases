@@ -58,6 +58,16 @@ export class ClaudeTranscriptResumeStore {
 
   set(transcript: string, record: ClaudeTranscriptResumeRecord): void {
     this.ensureLoaded();
+    const existing = this.cache.get(transcript);
+    // Regravar o mesmo registro não é mudança: sem dirty nem revision nova.
+    if (
+      existing &&
+      existing.offset === record.offset &&
+      existing.headDigest === record.headDigest &&
+      existing.boundaryDigest === record.boundaryDigest
+    ) {
+      return;
+    }
     // delete + set renews the insertion order, so the cap evicts the oldest.
     this.cache.delete(transcript);
     this.cache.set(transcript, record);
@@ -75,9 +85,13 @@ export class ClaudeTranscriptResumeStore {
     if (this.loaded) return Promise.resolve();
     if (this.loadFlight) return this.loadFlight;
     const flight = (async () => {
+      // A carga espelha o disco: sem mutação durante ela, nada há a gravar.
+      // Mutacao no meio do load sobe revision e continua exigindo save.
+      const revisionAtLoad = this.revision;
       const result = await readRegularFileCappedAsync(this.file, 1024 * 1024);
       if (this.loaded) return;
       this.loaded = true;
+      this.savedRevision = revisionAtLoad;
       if (result.kind !== 'text') return;
       try {
         const parsed = JSON.parse(result.text) as Partial<ResumeFile>;
@@ -149,6 +163,9 @@ export class ClaudeTranscriptResumeStore {
   private ensureLoaded(): void {
     if (this.loaded) return;
     this.loaded = true;
+    // A leitura síncrona espelha o disco: marca como já gravado para o
+    // primeiro saveAsync não reescrever um conteúdo idêntico.
+    this.savedRevision = this.revision;
     let raw: string;
     try {
       raw = fs.readFileSync(this.file, 'utf8');
