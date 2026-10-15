@@ -6,7 +6,7 @@ import { afterEach, beforeEach, expect, it } from 'vitest';
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { configureWorktreeRuntimeRegistry, disposeWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 import { testProjectScope } from '../orch/__tests__/scope-fixture';
-import { preparePaneSpaceWorktree, isSharedPaneSpaceWorktree } from './pane-space-worktree';
+import { preparePaneSpaceWorktree, isSharedPaneSpaceWorktree, tabGitProofStats, clearTabGitProofCache } from './pane-space-worktree';
 
 let temp: string;
 let manager: ProjectRuntimeManager;
@@ -37,6 +37,7 @@ beforeEach(() => {
 afterEach(() => {
   disposeWorktreeRuntimeRegistry();
   manager?.closeAll();
+  clearTabGitProofCache();
   fs.rmSync(temp, { recursive: true, force: true });
 });
 
@@ -92,4 +93,33 @@ it('rejects an invalid tab, escaped cwd and a deleted or substituted worktree wi
   fs.symlinkSync(scope.rootRealPath, a.cwd, 'dir');
   await expect(preparePaneSpaceWorktree(scope, 'space-a')).rejects.toThrow();
   expect(fs.readFileSync(path.join(scope.rootRealPath, 'file.txt'), 'utf8')).toBe('base');
+});
+
+// F-980: a verificação de identidade da aba custava 4 spawns síncronos de git
+// em cada "+pane"/resume. A prova agora é cacheada por fingerprint das duas
+// pontas da cadeia de ponteiros (.git da worktree ↔ gitdir do admin), com as
+// checagens puras de fs refeitas a cada chamada. Fail-closed: ponteiro trocado
+// por fora invalida e o assert continua recusando.
+it('reuses the cached tab git proof on the second verification (zero git spawns)', async () => {
+  const a = await preparePaneSpaceWorktree(scope, 'space-cache');
+  const before = tabGitProofStats();
+  expect(before.gitRuns).toBeGreaterThan(0);
+  const again = await preparePaneSpaceWorktree(scope, 'space-cache');
+  expect(again.cwd).toBe(a.cwd);
+  const after = tabGitProofStats();
+  expect(after.gitRuns).toBe(before.gitRuns);
+  expect(after.hits).toBe(before.hits + 1);
+});
+
+it('a tampered .git pointer invalidates the cache and still fails closed', async () => {
+  const a = await preparePaneSpaceWorktree(scope, 'space-cache-tamper');
+  const before = tabGitProofStats();
+  const admin = git(scope.rootRealPath, 'rev-parse', '--absolute-git-dir');
+  rewriteGitPointer(a.cwd, `gitdir: ${admin}\n`);
+  await expect(
+    preparePaneSpaceWorktree(scope, 'space-cache-tamper'),
+  ).rejects.toThrow('A pasta isolada da aba mudou no disco');
+  const after = tabGitProofStats();
+  expect(after.gitRuns).toBeGreaterThan(before.gitRuns);
+  expect(after.hits).toBe(before.hits);
 });

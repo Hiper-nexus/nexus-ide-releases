@@ -1,7 +1,8 @@
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { smallFileToken, statToken } from '../git/proof-fingerprint';
 import type {
   GitRepositoryLineage,
   ProjectManifest,
@@ -82,29 +83,89 @@ export type LineageCompatibility =
       readonly detail: string;
     };
 
+/**
+ * O mesmo ambiente endurecido para o runner síncrono e para o assíncrono de
+ * aquecimento: a prova cacheada só vale se os dois lados observarem o git da
+ * MESMA forma (config global neutralizada, replace objects desligado). O
+ * AsyncProcessGitRunner de runtime não serve aqui: ele mantém a config global
+ * para credenciais (F-580) e provaria linhagem com regras diferentes.
+ *
+ * GIT_GRAFT_FILE: o git honra .git/info/grafts MESMO com
+ * --no-replace-objects — um repo hostil fabrica a ancestralidade de
+ * `merge-base --is-ancestor` e forja a âncora do F-107. Arquivo vazio = sem
+ * grafts (o mesmo dispositivo nulo da config global).
+ */
+function hardenedGitEnvironment(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (/^(?:GIT_|LD_|DYLD_)/.test(key)) continue;
+    env[key] = value;
+  }
+  return {
+    ...env,
+    GIT_CONFIG_GLOBAL: EMPTY_GIT_CONFIG,
+    GIT_CONFIG_NOSYSTEM: '1',
+    GIT_GRAFT_FILE: EMPTY_GIT_CONFIG,
+    GIT_NO_REPLACE_OBJECTS: '1',
+    GIT_OPTIONAL_LOCKS: '0',
+    GIT_TERMINAL_PROMPT: '0',
+  };
+}
+
 export const processGitRunner: ProjectGitRunner = Object.freeze({
   run(cwd: string, args: readonly string[]): ProjectGitResult {
-    const env: NodeJS.ProcessEnv = {};
-    for (const [key, value] of Object.entries(process.env)) {
-      if (/^(?:GIT_|LD_|DYLD_)/.test(key)) continue;
-      env[key] = value;
-    }
     const result = spawnSync('git', [...args], {
       cwd,
       encoding: 'utf8',
       shell: false,
       timeout: GIT_TIMEOUT_MS,
       maxBuffer: MAX_GIT_OUTPUT_BYTES,
-      env: {
-        ...env,
-        GIT_CONFIG_GLOBAL: EMPTY_GIT_CONFIG,
-        GIT_CONFIG_NOSYSTEM: '1',
-        GIT_NO_REPLACE_OBJECTS: '1',
-        GIT_OPTIONAL_LOCKS: '0',
-        GIT_TERMINAL_PROMPT: '0',
-      },
+      env: hardenedGitEnvironment(),
     });
     return projectGitResultFromSpawn(result);
+  },
+});
+
+/** Mesma prova, sem spawnSync: aquece o cache fora do caminho quente do Main. */
+export const asyncProcessGitRunner: AsyncProjectGitRunner = Object.freeze({
+  run(
+    cwd: string,
+    args: readonly string[],
+  ): Promise<ProjectGitResult> {
+    return new Promise((resolve) => {
+      const child = spawn('git', [...args], {
+        cwd,
+        shell: false,
+        timeout: GIT_TIMEOUT_MS,
+        env: hardenedGitEnvironment(),
+      });
+      let stdout = '';
+      let stderr = '';
+      let settled = false;
+      child.stdout?.on('data', (chunk: Buffer) => {
+        if (stdout.length < MAX_GIT_OUTPUT_BYTES) stdout += chunk.toString('utf8');
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        if (stderr.length < MAX_GIT_OUTPUT_BYTES) stderr += chunk.toString('utf8');
+      });
+      const finish = (result: {
+        error?: Error;
+        status?: number | null;
+      }): void => {
+        if (settled) return;
+        settled = true;
+        resolve(
+          projectGitResultFromSpawn({
+            error: result.error ?? null,
+            status: result.status ?? null,
+            stdout,
+            stderr,
+          }),
+        );
+      };
+      child.on('error', (error) => finish({ error }));
+      child.on('close', (status) => finish({ status }));
+    });
   },
 });
 
@@ -350,6 +411,22 @@ export function collectGitRepositoryContext(
   rootRealPath: string,
   runner: ProjectGitRunner = processGitRunner,
 ): GitRepositoryContext {
+  // Cache só para o runner padrão: runners de teste injetados não devem ler
+  // (nem aquecer) provas de outras execuções.
+  const cacheable = runner === processGitRunner;
+  if (cacheable) {
+    const cached = getCachedGitRepositoryContext(rootRealPath);
+    if (cached) {
+      proofStats.contextHits += 1;
+      return cached;
+    }
+    proofStats.contextSyncRuns += 1;
+  }
+  // TOCTOU (H1): o fingerprint lido ANTES da prova é o único que pode
+  // casar com ela. Se o disco muda no meio dos spawns (ex.: origin
+  // trocado por fora), gravar {fingerprint novo, prova antiga} serviria a
+  // prova velha por até o TTL — então grava só se nada mudou.
+  const before = cacheable ? gitRepositoryFingerprint(rootRealPath) : null;
   const proof = collectGitRepositoryProof(rootRealPath, runner);
   const topLevelRealPath = fs.realpathSync(
     requiredGit(runner, rootRealPath, ['rev-parse', '--show-toplevel']),
@@ -368,12 +445,332 @@ export function collectGitRepositoryContext(
   if (!isInside(commonDirRealPath, gitDirRealPath)) {
     throw new Error('Git worktree directory is outside its common directory');
   }
+  const context = Object.freeze({
+    proof,
+    topLevelRealPath,
+    gitDirRealPath,
+    commonDirRealPath,
+  });
+  if (
+    cacheable &&
+    before !== null &&
+    gitRepositoryFingerprint(rootRealPath) === before
+  ) {
+    storeGitRepositoryContext(rootRealPath, before, context);
+  }
+  return context;
+}
+
+export async function collectGitRepositoryContextAsync(
+  rootRealPath: string,
+  runner: AsyncProjectGitRunner = asyncProcessGitRunner,
+): Promise<GitRepositoryContext> {
+  const proof = await collectGitRepositoryProofAsync(rootRealPath, runner);
+  const topLevelRealPath = fs.realpathSync(
+    await requiredGitAsync(runner, rootRealPath, ['rev-parse', '--show-toplevel']),
+  );
+  if (!isSameDirectory(topLevelRealPath, rootRealPath)) {
+    throw new Error('project manifest must live at the Git worktree root');
+  }
+  const gitDirRealPath = resolveGitDirectory(
+    rootRealPath,
+    await requiredGitAsync(runner, rootRealPath, ['rev-parse', '--absolute-git-dir']),
+  );
+  const commonDirRealPath = resolveGitDirectory(
+    rootRealPath,
+    await requiredGitAsync(runner, rootRealPath, ['rev-parse', '--git-common-dir']),
+  );
+  if (!isInside(commonDirRealPath, gitDirRealPath)) {
+    throw new Error('Git worktree directory is outside its common directory');
+  }
   return Object.freeze({
     proof,
     topLevelRealPath,
     gitDirRealPath,
     commonDirRealPath,
   });
+}
+
+// ─── Cache da prova (fail-closed) ───────────────────────────────────────────
+//
+// A resolução de identidade rodava 8–10 spawnSync('git') por chamada. A prova
+// agora é cacheada por fingerprint do estado do repositório que ela lê: raiz,
+// entrada .git, gitdir/commondir, HEAD (+ref resolvida), configs locais,
+// packed-refs, shallow e alternates. TTL de 5 min limita deriva temporal
+// (ex.: troca do binário git); watchers em gitdir/commondir revalidam por
+// evento. Qualquer token ilegível → fingerprint null → recomputa pelo caminho
+// síncrono normal e quarentena quando for o caso.
+
+export const GIT_PROOF_CACHE_TTL_MS = 5 * 60_000;
+
+interface ContextCacheEntry {
+  readonly fingerprint: string;
+  readonly context: GitRepositoryContext;
+  readonly at: number;
+  readonly gitDirRealPath: string;
+  readonly commonDirRealPath: string;
+}
+
+const contextCache = new Map<string, ContextCacheEntry>();
+const proofWatchers = new Map<string, fs.FSWatcher>();
+const proofStats = {
+  contextSyncRuns: 0,
+  contextHits: 0,
+  warmRuns: 0,
+  invalidations: 0,
+};
+
+export function gitProofStats(): {
+  readonly contextSyncRuns: number;
+  readonly contextHits: number;
+  readonly warmRuns: number;
+  readonly invalidations: number;
+} {
+  return { ...proofStats };
+}
+
+export function clearGitRepositoryContextCache(): void {
+  contextCache.clear();
+  for (const watcher of proofWatchers.values()) {
+    try {
+      watcher.close();
+    } catch {
+      // watcher já morto (diretório sumiu): só esquece
+    }
+  }
+  proofWatchers.clear();
+}
+
+/**
+ * Descobre o gitdir exatamente como o git o faria a partir da entrada `.git`
+ * da raiz — arquivo `gitdir: <path>` (worktree vinculada) ou o próprio
+ * diretório. Fs puro; null quando a cadeia não pode ser seguida.
+ */
+function gitDirectoryFromEntry(rootRealPath: string): string | null {
+  try {
+    const entry = path.join(rootRealPath, '.git');
+    const stat = fs.statSync(entry);
+    if (stat.isFile()) {
+      const content = fs.readFileSync(entry, 'utf8').trim();
+      if (!content.startsWith('gitdir:')) return null;
+      const target = content.slice('gitdir:'.length).trim();
+      if (!target) return null;
+      return fs.realpathSync.native(
+        path.isAbsolute(target) ? target : path.resolve(rootRealPath, target),
+      );
+    }
+    if (stat.isDirectory()) return fs.realpathSync.native(entry);
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function resolvedRefToken(gitDir: string, commonDir: string): string {
+  try {
+    let current = fs.readFileSync(path.join(gitDir, 'HEAD'), 'utf8').trim();
+    const stats: string[] = [];
+    // Segue a cadeia de symrefs (HEAD → alias → main…): statar só o primeiro
+    // ref é cego a update-ref no destino do symref. Cada salto entra com seu
+    // próprio stat; cadeia maior que 5 saltos é ilegível → fingerprint único
+    // → o cache nunca serve (fail-closed).
+    for (let hop = 0; hop < 5; hop += 1) {
+      const ref = /^ref:\s*(\S+)$/u.exec(current);
+      if (!ref) {
+        return stats.length === 0 ? 'detached' : `d:${stats.join('>')}`;
+      }
+      const name = ref[1] as string;
+      const gitDirStat = statToken(path.join(gitDir, name));
+      const refFile = gitDirStat !== null
+        ? path.join(gitDir, name)
+        : path.join(commonDir, name);
+      const stat = gitDirStat ?? statToken(refFile);
+      if (stat === null) return `unborn:${stats.join('>')}`;
+      stats.push(stat);
+      current = fs.readFileSync(refFile, 'utf8').trim();
+    }
+    return 'unreadable';
+  } catch {
+    return 'unreadable';
+  }
+}
+
+/**
+ * Fingerprint de TODA a entrada que decide a prova. Se ela não mudou, a prova
+ * cacheada é tão boa quanto recomputar; se mudou (ou não dá para ler),
+ * recomputa. Cobertura: conteúdo do HEAD e stat da cadeia de refs resolvida
+ * — symrefs seguidos até o destino (commit novo, troca de branch, update-ref
+ * no fim da cadeia) —, configs locais (origin), packed-refs (fetch/gc),
+ * reftable, shallow e info/grafts do COMMON dir (uma edição numa worktree
+ * vinculada mexe no common, não no gitdir particular), alternates e a
+ * própria cadeia de ponteiros .git → gitdir → commondir.
+ */
+export function gitRepositoryFingerprint(rootRealPath: string): string | null {
+  const rootToken = statToken(rootRealPath);
+  if (rootToken === null) return null;
+  const gitDir = gitDirectoryFromEntry(rootRealPath);
+  if (gitDir === null) return null;
+  const headToken = smallFileToken(path.join(gitDir, 'HEAD'));
+  if (headToken === null) return null;
+  const commonDirToken = smallFileToken(path.join(gitDir, 'commondir'));
+  let commonDir = gitDir;
+  if (commonDirToken !== null) {
+    try {
+      const raw = fs.readFileSync(path.join(gitDir, 'commondir'), 'utf8').trim();
+      commonDir = fs.realpathSync.native(
+        path.isAbsolute(raw) ? raw : path.resolve(gitDir, raw),
+      );
+    } catch {
+      return null;
+    }
+  }
+  return [
+    rootToken,
+    'e', statToken(path.join(rootRealPath, '.git')) ?? 'absent',
+    'g', statToken(gitDir) ?? 'absent',
+    'h', headToken,
+    'cd', commonDirToken ?? 'absent',
+    'd', statToken(commonDir) ?? 'absent',
+    'cfg', statToken(path.join(gitDir, 'config')) ?? 'absent',
+    'cfgC', statToken(path.join(commonDir, 'config')) ?? 'absent',
+    'cw', statToken(path.join(gitDir, 'config.worktree')) ?? 'absent',
+    'pr', statToken(path.join(commonDir, 'packed-refs')) ?? 'absent',
+    'rt', smallFileToken(path.join(commonDir, 'reftable', 'tables.list')) ?? 'absent',
+    'sh', statToken(path.join(commonDir, 'shallow')) ?? 'absent',
+    'gr', statToken(path.join(commonDir, 'info', 'grafts')) ?? 'absent',
+    'alt', statToken(path.join(commonDir, 'objects', 'info', 'alternates')) ?? 'absent',
+    'r', resolvedRefToken(gitDir, commonDir),
+  ].join('|');
+}
+
+function getCachedGitRepositoryContext(
+  rootRealPath: string,
+): GitRepositoryContext | null {
+  const entry = contextCache.get(rootRealPath);
+  if (!entry) return null;
+  if (Date.now() - entry.at >= GIT_PROOF_CACHE_TTL_MS) {
+    contextCache.delete(rootRealPath);
+    return null;
+  }
+  const fingerprint = gitRepositoryFingerprint(rootRealPath);
+  if (fingerprint === null || fingerprint !== entry.fingerprint) {
+    proofStats.invalidations += 1;
+    contextCache.delete(rootRealPath);
+    return null;
+  }
+  return entry.context;
+}
+
+function dropEntriesTouching(directory: string): void {
+  for (const [key, entry] of contextCache) {
+    if (
+      entry.gitDirRealPath === directory ||
+      entry.commonDirRealPath === directory
+    ) {
+      proofStats.invalidations += 1;
+      contextCache.delete(key);
+    }
+  }
+}
+
+function watchProofDirectories(context: GitRepositoryContext): void {
+  for (const directory of new Set([
+    context.gitDirRealPath,
+    context.commonDirRealPath,
+  ])) {
+    if (proofWatchers.has(directory)) continue;
+    let watcher: fs.FSWatcher;
+    try {
+      watcher = fs.watch(directory, { recursive: true }, () => {
+        // Evento NÃO derruba às cegas: escrever o index não invalida uma prova
+        // que não depende do index. Revalida por fingerprint e descarta só o
+        // que de fato mudou.
+        for (const [key, entry] of contextCache) {
+          if (
+            entry.gitDirRealPath !== directory &&
+            entry.commonDirRealPath !== directory
+          ) {
+            continue;
+          }
+          const fingerprint = gitRepositoryFingerprint(key);
+          if (fingerprint === null || fingerprint !== entry.fingerprint) {
+            proofStats.invalidations += 1;
+            contextCache.delete(key);
+          }
+        }
+      });
+    } catch {
+      // Sem watcher o cache segue correto: a leitura revalida por
+      // fingerprint e o TTL limita a janela.
+      return;
+    }
+    // O watcher não pode segurar o event loop do Main na saída.
+    watcher.unref();
+    watcher.on('error', () => {
+      if (proofWatchers.get(directory) === watcher) {
+        proofWatchers.delete(directory);
+      }
+      try {
+        watcher.close();
+      } catch {
+        // já fechado
+      }
+      dropEntriesTouching(directory);
+    });
+    proofWatchers.set(directory, watcher);
+  }
+}
+
+function storeGitRepositoryContext(
+  rootRealPath: string,
+  fingerprint: string,
+  context: GitRepositoryContext,
+): void {
+  contextCache.set(rootRealPath, {
+    fingerprint,
+    context,
+    at: Date.now(),
+    gitDirRealPath: context.gitDirRealPath,
+    commonDirRealPath: context.commonDirRealPath,
+  });
+  watchProofDirectories(context);
+}
+
+const warmInFlight = new Map<string, Promise<void>>();
+
+/**
+ * Aquece o cache da prova de forma assíncrona (spawn, não spawnSync) para que
+ * a próxima resolução síncrona não pague os 8 spawns de git. Falha em
+ * silêncio: quem decide é sempre o caminho síncrono fail-closed.
+ */
+export function warmGitRepositoryContext(rootRealPath: string): Promise<void> {
+  const existing = warmInFlight.get(rootRealPath);
+  if (existing) return existing;
+  const task = (async () => {
+    proofStats.warmRuns += 1;
+    const before = gitRepositoryFingerprint(rootRealPath);
+    if (before === null) return;
+    try {
+      const context = await collectGitRepositoryContextAsync(rootRealPath);
+      // Prova só entra no cache se a entrada não mudou durante o aquecimento.
+      if (gitRepositoryFingerprint(rootRealPath) === before) {
+        storeGitRepositoryContext(rootRealPath, before, context);
+      }
+    } catch {
+      // silencioso: o caminho síncrono recompute e quarentena quando for o caso
+    }
+  })();
+  const settled = task.then(
+    () => undefined,
+    () => undefined,
+  );
+  warmInFlight.set(rootRealPath, settled);
+  void settled.then(() => {
+    if (warmInFlight.get(rootRealPath) === settled) {
+      warmInFlight.delete(rootRealPath);
+    }
+  });
+  return task;
 }
 
 function intersects(left: readonly string[], right: readonly string[]): boolean {

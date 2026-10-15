@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  asyncProcessGitRunner,
   collectGitRepositoryContext,
   collectGitRepositoryProof,
   compareRepositoryLineage,
@@ -145,13 +146,56 @@ describe('processGitRunner', () => {
     process.env.USERPROFILE = home;
 
     const inside = processGitRunner.run(repo, ['rev-parse', '--is-inside-work-tree']);
-    expect(inside.stderr).toBe('');
+    // O shim git→xcrun do macOS emite "couldn't create cache file … xcrun_db"
+    // no stderr (às vezes com linha vazia extra) quando o ambiente nega a
+    // escrita do cache do xcrun (sandbox de verificação/CI); o git em si roda
+    // normal e a config global continua neutralizada — ruído do shim não é
+    // config vazando. Qualquer OUTRA linha de stderr continua falhando o teste.
+    const xcrunShimNoise = /^git: error: couldn't create cache file '[^']*' \(errno=[^)]*\)$/;
+    const significant = inside.stderr
+      .split('\n')
+      .filter((line) => line !== '' && !xcrunShimNoise.test(line))
+      .join('\n');
+    expect(significant).toBe('');
     expect(inside.status).toBe(0);
     expect(inside.stdout.trim()).toBe('true');
 
     const config = processGitRunner.run(repo, ['config', '--list', '--show-origin']);
     expect(config.status).toBe(0);
     expect(config.stdout).not.toContain('config-global-vazou');
+  });
+
+  // H2: grafts fabricam ancestralidade — o git honra .git/info/grafts mesmo
+  // com --no-replace-objects, então um repo hostil forja a âncora do
+  // `merge-base --is-ancestor`. O env endurecido precisa neutralizar o arquivo.
+  it('ignora .git/info/grafts: âncora fabricada não é ancestral', async () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-lineage-grafts-'));
+    tempDirs.push(repo);
+    const gitIn = (...args: string[]) =>
+      execFileSync(
+        'git',
+        ['-C', repo, '-c', 'user.name=Nexus Test', '-c', 'user.email=nexus@example.invalid', ...args],
+        { stdio: ['ignore', 'pipe', 'pipe'] },
+      );
+    gitIn('init', '-q', '-b', 'main');
+    gitIn('commit', '-q', '--allow-empty', '-m', 'base');
+    gitIn('checkout', '-q', '--orphan', 'fabricated');
+    gitIn('commit', '-q', '--allow-empty', '-m', 'orphan');
+    const fabricated = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+    gitIn('checkout', '-q', 'main');
+    const head = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+    // Grafts inventa o commit órfão como pai do HEAD da main.
+    fs.mkdirSync(path.join(repo, '.git', 'info'), { recursive: true });
+    fs.writeFileSync(path.join(repo, '.git', 'info', 'grafts'), `${head} ${fabricated}\n`);
+    const probe = ['merge-base', '--is-ancestor', fabricated, 'HEAD'];
+    expect(processGitRunner.run(repo, probe, { allowFailure: true }).status).toBe(1);
+    expect((await asyncProcessGitRunner.run(repo, probe, { allowFailure: true })).status).toBe(1);
   });
 });
 

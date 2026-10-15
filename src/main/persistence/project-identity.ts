@@ -17,15 +17,22 @@ export {
   type ProjectIdentityQuarantineCode,
 } from '../../shared/types';
 import {
+  asyncProcessGitRunner,
+  clearGitRepositoryContextCache,
   collectGitRepositoryContext,
+  collectGitRepositoryContextAsync,
   compareRepositoryLineage,
+  gitRepositoryFingerprint,
   isGitCommitReachable,
+  isGitCommitReachableAsync,
   isSameDirectory,
   processGitRunner,
   repositoryLineageId,
+  type AsyncProjectGitRunner,
   type GitRepositoryContext,
   type ProjectGitRunner,
 } from './project-git-lineage';
+import { smallFileToken } from '../git/proof-fingerprint';
 export const PROJECT_MANIFEST_PATH = '.nexus/project.json';
 const INSTALLATION_FILE = path.join(os.homedir(), '.nexus', 'installation.json');
 const CHECKOUT_REGISTRY_FILE = path.join(
@@ -328,6 +335,144 @@ function manifestInGitHistory(
   return result.status === 0 && result.stdout.trim().length > 0;
 }
 
+// ─── Cache da identidade (fail-closed) ──────────────────────────────────────
+//
+// projectIdentity roda a prova completa (contexto + anchors + F-107) com
+// spawns síncronos. O resultado é cacheado por fingerprint do repositório
+// (gitRepositoryFingerprint) + do manifesto; qualquer mudança — commit, troca
+// de branch, rewrite do manifesto, troca de inode da raiz — invalida e o
+// caminho síncrono inteiro roda de novo, quarentenando quando deve.
+
+const GIT_IDENTITY_CACHE_TTL_MS = 5 * 60_000;
+
+interface IdentityCacheEntry {
+  readonly fingerprint: string;
+  readonly identity: ResolvedProjectIdentity;
+  readonly at: number;
+}
+
+const identityCache = new Map<string, IdentityCacheEntry>();
+const identityStats = {
+  identityRuns: 0,
+  identityHits: 0,
+  identityWarmRuns: 0,
+};
+
+export function projectIdentityStats(): {
+  readonly identityRuns: number;
+  readonly identityHits: number;
+  readonly identityWarmRuns: number;
+} {
+  return { ...identityStats };
+}
+
+function projectIdentityFingerprint(rootRealPath: string): string | null {
+  const gitToken = gitRepositoryFingerprint(rootRealPath);
+  if (gitToken === null) return null;
+  const manifestToken = smallFileToken(
+    path.join(rootRealPath, PROJECT_MANIFEST_PATH),
+    MAX_PROJECT_MANIFEST_BYTES,
+  );
+  // Manifesto ilegível nunca cacheia: o caminho síncrono decide (e erra alto).
+  if (manifestToken === null) return null;
+  return `${gitToken}|m:${manifestToken}`;
+}
+
+async function manifestInGitHistoryAsync(
+  rootRealPath: string,
+  runner: AsyncProjectGitRunner,
+): Promise<boolean> {
+  const result = await runner.run(
+    rootRealPath,
+    ['log', '--format=%H', '-1', '--', PROJECT_MANIFEST_PATH],
+    { allowFailure: true },
+  );
+  return result.status === 0 && result.stdout.trim().length > 0;
+}
+
+const identityWarmInFlight = new Map<string, Promise<void>>();
+
+/**
+ * Aquece o cache da identidade de forma assíncrona (spawn, não spawnSync),
+ * espelhando a verificação síncrona com o MESMO runner endurecido de
+ * linhagem. Qualquer inconsistência simplesmente não aquece: a decisão é
+ * sempre do caminho síncrono fail-closed.
+ */
+export function warmProjectIdentity(workspaceRoot: string): Promise<void> {
+  // Mesma autoridade canônica do caminho síncrono: aquecer outro path (ex.
+  // /var vs /private/var no macOS) criaria outra chave de cache e a leitura
+  // do manifesto falharia a checagem de workspace.
+  let rootRealPath: string;
+  try {
+    rootRealPath = fs.realpathSync(path.resolve(workspaceRoot));
+  } catch {
+    return Promise.resolve();
+  }
+  const existing = identityWarmInFlight.get(rootRealPath);
+  if (existing) return existing;
+  const task = (async () => {
+    identityStats.identityWarmRuns += 1;
+    const manifestFile = path.join(rootRealPath, PROJECT_MANIFEST_PATH);
+    if (!fs.existsSync(manifestFile)) return;
+    const before = projectIdentityFingerprint(rootRealPath);
+    if (before === null) return;
+    try {
+      const raw = readProjectManifest(rootRealPath, manifestFile);
+      if (legacyProjectManifestSchema.safeParse(raw).success) return;
+      const parsed = projectManifestSchema.safeParse(raw);
+      if (!parsed.success) return;
+      const repository = await collectGitRepositoryContextAsync(rootRealPath);
+      // Anchors primeiro, como na verificação síncrona: o alcance é consultado
+      // em async e decidido pelo comparador puro com o resultado em mãos.
+      const reachable = new Set<string>();
+      for (const anchor of parsed.data.repository.anchorCommits) {
+        if (
+          await isGitCommitReachableAsync(rootRealPath, anchor, asyncProcessGitRunner)
+        ) {
+          reachable.add(anchor);
+        }
+      }
+      const compatibility = compareRepositoryLineage(
+        parsed.data.repository,
+        repository.proof,
+        (commit) => reachable.has(commit),
+      );
+      if (!compatibility.ok) return;
+      if (
+        originProofsDiverge(parsed.data.repository, repository.proof) &&
+        !(await manifestInGitHistoryAsync(rootRealPath, asyncProcessGitRunner))
+      ) {
+        return;
+      }
+      if (projectIdentityFingerprint(rootRealPath) !== before) return;
+      identityCache.set(rootRealPath, {
+        fingerprint: before,
+        at: Date.now(),
+        identity: Object.freeze({
+          projectId: parsed.data.projectId,
+          identitySource: 'manifest',
+          manifest: parsed.data,
+          repository,
+          lineageId: repositoryLineageId(parsed.data),
+        }),
+      });
+    } catch {
+      // silencioso: o caminho síncrono decide
+    }
+  })();
+  const settled = task.then(
+    () => undefined,
+    () => undefined,
+  );
+  identityWarmInFlight.set(rootRealPath, settled);
+  void settled.then(() => {
+    if (identityWarmInFlight.get(rootRealPath) === settled) {
+      identityWarmInFlight.delete(rootRealPath);
+    }
+  });
+  return task;
+}
+
 function projectIdentity(
   rootRealPath: string,
   runner: ProjectGitRunner,
@@ -338,6 +483,22 @@ function projectIdentity(
       identitySource: 'provisional',
     };
   }
+  const cacheable = runner === processGitRunner;
+  const fingerprint = cacheable
+    ? projectIdentityFingerprint(rootRealPath)
+    : null;
+  if (fingerprint !== null) {
+    const hit = identityCache.get(rootRealPath);
+    if (
+      hit &&
+      hit.fingerprint === fingerprint &&
+      Date.now() - hit.at < GIT_IDENTITY_CACHE_TTL_MS
+    ) {
+      identityStats.identityHits += 1;
+      return hit.identity;
+    }
+  }
+  identityStats.identityRuns += 1;
   const raw = readProjectManifest(rootRealPath, manifestFile);
   const legacy = legacyProjectManifestSchema.safeParse(raw);
   if (legacy.success) {
@@ -390,13 +551,23 @@ function projectIdentity(
       `O manifesto não consta no histórico deste repositório e o origin diverge do registrado. Regenere ${PROJECT_MANIFEST_PATH} para este repositório, ou abra o clone correto.`,
     );
   }
-  return Object.freeze({
+  const identity: ResolvedProjectIdentity = Object.freeze({
     projectId: parsed.data.projectId,
     identitySource: 'manifest',
     manifest: parsed.data,
     repository,
     lineageId: repositoryLineageId(parsed.data),
   });
+  // Só cacheia se a entrada não mudou durante a verificação (guarda contra
+  // corrida de mid-flight): fingerprint distinto nunca casa no próximo hit.
+  if (fingerprint !== null && projectIdentityFingerprint(rootRealPath) === fingerprint) {
+    identityCache.set(rootRealPath, {
+      fingerprint,
+      identity,
+      at: Date.now(),
+    });
+  }
+  return identity;
 }
 export function createProjectManifest(
   workspaceRoot: string,
@@ -506,6 +677,13 @@ function writeCheckoutRegistry(file: string, registry: CheckoutRegistry): void {
 }
 const CHECKOUT_REGISTRY_LOCK_RETRY_ATTEMPTS = 8;
 const CHECKOUT_REGISTRY_LOCK_RETRY_BASE_MS = 15;
+/**
+ * `lastSeenAt` is a liveness marker with no reader at finer granularity —
+ * rewriting + fsync-ing ~/.nexus/checkouts.json on every scope resolution
+ * used to cost an F_FULLFSYNC per minute per workspace for a timestamp.
+ * Entries refresh at most once per window; real changes still write at once.
+ */
+const CHECKOUT_LAST_SEEN_REFRESH_MS = 3_600_000;
 
 function sleepSync(ms: number): void {
   if (ms <= 0) return;
@@ -747,6 +925,15 @@ function resolveGitCheckoutId(
         );
       }
       assertNoLiveCheckoutDuplicate(match, rootRealPath, runner);
+      // Nothing but lastSeenAt would change: token matched by construction,
+      // projectId asserted above, lineage and path still the same. Skipping
+      // the rewrite (and its fsync) keeps every resolution after the first
+      // free of synchronous disk writes; real changes still write at once.
+      const unchanged =
+        match.lineageId === identity.lineageId &&
+        match.rootRealPath === rootRealPath &&
+        now - match.lastSeenAt < CHECKOUT_LAST_SEEN_REFRESH_MS;
+      if (unchanged) return match.checkoutId;
       const entries = registry.entries.map((entry) =>
         entry === match
           ? gitCheckoutEntry(
@@ -821,6 +1008,12 @@ function resolveProvisionalCheckoutId(
     const now = Date.now();
     if (matches.length === 1) {
       const match = matches[0];
+      // Matched entries already carry this exact fingerprint and project; a
+      // rewrite here could only move lastSeenAt (same throttle as git-token).
+      const fresh = now - match.lastSeenAt < CHECKOUT_LAST_SEEN_REFRESH_MS;
+      if (match.rootRealPath === rootRealPath && fresh) {
+        return match.checkoutId;
+      }
       writeCheckoutRegistry(file, {
         ...registry,
         entries: registry.entries.map((entry) =>
@@ -895,6 +1088,8 @@ const scopeCache = new Map<string, ScopeCacheEntry>();
 
 export function clearProjectExecutionScopeCache(): void {
   scopeCache.clear();
+  identityCache.clear();
+  clearGitRepositoryContextCache();
 }
 
 /**
@@ -903,6 +1098,10 @@ export function clearProjectExecutionScopeCache(): void {
  * used to spawnSync git on the main thread and freeze CDP
  * (DEV 25/08: json/list hung while rev-list ETIMEDOUT). Negative entries
  * keep a timed-out git from blocking every subsequent tick.
+ *
+ * A cache hit also re-warms the identity proof asynchronously (spawn, never
+ * spawnSync), so by the time this scope entry expires the proof cache is hot
+ * and the next synchronous resolution runs no git at all.
  */
 export function resolveProjectExecutionScopeCached(
   workspaceRoot: string,
@@ -912,7 +1111,10 @@ export function resolveProjectExecutionScopeCached(
   const key = path.resolve(workspaceRoot);
   const hit = scopeCache.get(key);
   if (hit && now - hit.at < PROJECT_EXECUTION_SCOPE_CACHE_TTL_MS) {
-    if (hit.kind === 'ok') return hit.scope;
+    if (hit.kind === 'ok') {
+      void warmProjectIdentity(hit.scope.rootRealPath);
+      return hit.scope;
+    }
     throw hit.error;
   }
   try {
