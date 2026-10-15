@@ -113,6 +113,15 @@ afterEach(() => {
 });
 
 describe('Nexus V2 shell and product workspace style contracts', () => {
+  it('keeps project lists vertical and unbulleted when recovery links are styled', () => {
+    installStyleContract(productStyles, { width: 900 });
+    const host = render(<ul className="workspace-rail__workspace-list"><li>Projeto um</li><li>Projeto dois</li></ul>);
+    const list = host.querySelector('ul')!;
+    expect(computedCssValue(list, 'display')).not.toBe('inline-flex');
+    expect(computedCssValue(list, 'list-style')).toBe('none');
+    expect(styleLengthPx(list, 'padding-left')).toBe(0);
+  });
+
   it.each([
     { theme: 'nexus-pink-city', pixel: 'off' },
     { theme: 'nexus-light', pixel: 'off' },

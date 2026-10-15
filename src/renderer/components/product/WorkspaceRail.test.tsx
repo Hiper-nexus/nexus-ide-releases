@@ -100,6 +100,26 @@ function renderRail(overrides: Partial<WorkspaceRailProps> = {}) {
 }
 
 describe('WorkspaceRail', () => {
+  it('keeps pending decisions above the scrolling mission history and opens the inbox', () => {
+    const onOpenAttention = vi.fn();
+    const { host } = renderRail({ attentionCount: 3, onOpenAttention });
+    const attention = host.querySelector<HTMLButtonElement>('[aria-label="Abrir a lista do que precisa de você (3)"]')!;
+    const history = host.querySelector('.workspace-rail__scroll')!;
+    expect(attention.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(attention.closest('.workspace-rail__utilities')).toBeNull();
+    expect(attention.closest('.workspace-rail__fixed')).not.toBeNull();
+    act(() => attention.click());
+    expect(onOpenAttention).toHaveBeenCalledOnce();
+  });
+
+  it('names the mission destination so a beginner can find it without knowing the word Quadro', () => {
+    const { host, handlers } = renderRail();
+    const button = host.querySelector<HTMLButtonElement>('[aria-label="Abrir Missões e tarefas"]');
+    expect(button?.textContent).toContain('Missões');
+    act(() => button!.click());
+    expect(handlers.onOpenTaskBoard).toHaveBeenCalledOnce();
+  });
+
   it('mantém "Reportar bug" à vista no topo do rail e abre o diálogo de problema', () => {
     useBugReportDialogStore.setState({ isOpen: false });
     const { host } = renderRail();
@@ -150,7 +170,7 @@ describe('WorkspaceRail', () => {
     expect(wide('Abrir Terminais')).toBe(true);
     // Sem Projeto, Início não deixa buraco na primeira linha da grade.
     expect(wide('Voltar ao Início')).toBe(true);
-    expect(wide('Abrir Quadro')).toBe(false);
+    expect(wide('Abrir Missões e tarefas')).toBe(false);
   });
 
   it('opens an existing project without entering the creation flow', () => {
@@ -342,7 +362,7 @@ describe('WorkspaceRail', () => {
       const row = host.querySelector(`[data-mission-id="mission-${id}"]`);
 
       expect(row?.textContent).toContain(label);
-      expect(row?.getAttribute('aria-label')).toBe(`Missão ${id}. ${label}`);
+      expect(row?.getAttribute('aria-label')).toBe(`Missão ${id}. ${label}${state === 'blocked_technical' ? '. Abrir para retomar' : ''}`);
       expect(row?.getAttribute('data-mission-state')).toBe(state);
       expect(row?.classList.contains(`workspace-rail__mission--${tone}`)).toBe(
         true,
@@ -490,7 +510,7 @@ describe('WorkspaceRail', () => {
       host.querySelector<HTMLButtonElement>('[data-workspace-id="atlas"]')?.click();
       host.querySelector<HTMLButtonElement>('[data-mission-id="mission-running"]')?.click();
       host.querySelector<HTMLButtonElement>('[aria-label="Abrir Terminais"]')?.click();
-      host.querySelector<HTMLButtonElement>('[aria-label="Abrir Quadro"]')?.click();
+      host.querySelector<HTMLButtonElement>('[aria-label="Abrir Missões e tarefas"]')?.click();
       host.querySelector<HTMLButtonElement>('[aria-label="Abrir Memória"]')?.click();
       host.querySelector<HTMLButtonElement>('[aria-label="Abrir Configurações"]')?.click();
     });

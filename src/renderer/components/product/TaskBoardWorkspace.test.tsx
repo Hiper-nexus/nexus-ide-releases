@@ -782,6 +782,11 @@ describe('TaskBoardWorkspace — lanes de missão derivadas do snapshot', () => 
 
     const needsYou = host.querySelector('.mission-kanban__lane[data-lane="needs_you"]');
     expect(cardTitles(needsYou)).toEqual(['Parada pelo operador']);
+    const recover = needsYou?.querySelector<HTMLButtonElement>('.mission-kanban__card-open');
+    expect(recover?.textContent).toContain('Abrir para retomar');
+    act(() => recover!.click());
+    expect(useProductNavigationStore.getState().destination).toMatchObject({ kind: 'mission', missionId: 'stopped', surface: 'board' });
+    expect(orchBoundary.updateMission).not.toHaveBeenCalled();
     expect(host.querySelector('details.mission-kanban__archive')).toBeNull();
     const removes = [
       ...host.querySelectorAll<HTMLButtonElement>('.mission-kanban__card-remove'),

@@ -14,6 +14,7 @@ import {
   MISSION_LIFECYCLE_LABELS,
   MISSION_RUNNING_ATTENTION_LABEL,
   missionLifecycleLabel,
+  missionRecoveryNavigationLabel,
 } from '../../lib/mission-lifecycle-copy';
 import { MISSION_AWAITING_INSTRUCTION_REASON_CODE } from '../../../shared/session-restore-liveness';
 import { missionChromeTitle } from '../../../shared/mission-identity';
@@ -681,6 +682,7 @@ function WorkspaceGroup({
                     // O rail mostra o titulo em ate 2 linhas: o corte de chrome (48) partia
                     // o titulo no meio da palavra; o tooltip guarda o titulo inteiro.
                     const chromeTitle = missionChromeTitle(mission.title, 96);
+                    const recoveryLabel = missionRecoveryNavigationLabel(mission.status, mission.stateReason?.code);
                     const missionFleet =
                       fleets.byMission.get(mission.id) ?? emptyRosterFleet();
                     const isExpanded = rosterOpen(
@@ -703,7 +705,7 @@ function WorkspaceGroup({
                             data-mission-id={mission.id}
                             data-mission-state={mission.status}
                             aria-current={missionSelected ? 'page' : undefined}
-                            aria-label={`${chromeTitle}. ${status.label}`}
+                            aria-label={`${chromeTitle}. ${status.label}${recoveryLabel ? `. ${recoveryLabel}` : ''}`}
                             title={`${mission.title}: ${status.label}`}
                             onClick={() =>
                               onSelectMission(mission.id, workspace.id)
@@ -735,6 +737,7 @@ function WorkspaceGroup({
                                   </span>
                                 ) : null}
                               </span>
+                              {recoveryLabel ? <span className="workspace-rail__recovery-link">{recoveryLabel}<PixelIcon name="chevron" size={10} /></span> : null}
                             </span>
                           </button>
                           {onRemoveMission ? (
@@ -1053,11 +1056,12 @@ export function WorkspaceRail({
               taskBoardSelected ? ' workspace-rail__row--selected' : ''
             }`}
             aria-current={taskBoardSelected ? 'page' : undefined}
-            aria-label="Abrir Quadro"
+            aria-label="Abrir Missões e tarefas"
+            title="Missões, retomadas e tarefas do projeto"
             onClick={onOpenTaskBoard}
           >
             <PixelIcon name="board" size={12} />
-            <span className="workspace-rail__row-label">Quadro</span>
+            <span className="workspace-rail__row-label">Missões</span>
           </button>
         </li>
         <li>
@@ -1074,6 +1078,20 @@ export function WorkspaceRail({
             <span className="workspace-rail__row-label">Memória</span>
           </button>
         </li>
+        {onOpenAttention && attentionCount > 0 ? (
+          <li className="workspace-rail__fixed-item--wide">
+            <button
+              type="button"
+              className="workspace-rail__attention"
+              aria-label={`Abrir a lista do que precisa de você (${attentionCount})`}
+              onClick={onOpenAttention}
+            >
+              <PixelIcon name="warn" size={12} />
+              <span className="workspace-rail__row-label">Precisa de você</span>
+              <span className="workspace-rail__row-count">{attentionCount}</span>
+            </button>
+          </li>
+        ) : null}
       </ul>
 
       <div className="workspace-rail__scroll">
@@ -1117,18 +1135,6 @@ export function WorkspaceRail({
         <div className="workspace-rail__utilities">
         <TrialNoticeCard />
         <WorkspaceCleanup />
-        {onOpenAttention && attentionCount > 0 ? (
-          <button
-            type="button"
-            className="workspace-rail__row workspace-rail__fixed-row"
-            aria-label={`Abrir a lista do que precisa de você (${attentionCount})`}
-            onClick={onOpenAttention}
-          >
-            <PixelIcon name="warn" size={12} />
-            <span className="workspace-rail__row-label">Precisa de você</span>
-            <span className="workspace-rail__row-count">{attentionCount}</span>
-          </button>
-        ) : null}
 
         <RailMemoryPressure onOpen={onOpenUsageQuota} />
 

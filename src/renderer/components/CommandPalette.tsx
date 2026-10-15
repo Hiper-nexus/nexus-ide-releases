@@ -528,11 +528,11 @@ export function CommandPalette() {
     );
     tool(
       'board',
-      'Quadro de tarefas',
+      'Missões e tarefas',
       'board',
       () => useProductNavigationStore.getState().openTaskBoard(),
       shortcut('task-board'),
-      'quadro tarefas pipeline kanban',
+      'quadro missões missoes retomar continuar tarefas pipeline kanban',
     );
     tool(
       'squads',
