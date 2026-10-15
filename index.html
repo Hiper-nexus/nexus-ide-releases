@@ -28,10 +28,13 @@
       crossorigin
     />
     <!-- Splash estático de boot: cobre a espera do gate boot:ready enquanto
-         o Main registra o IPC — o React remove o nó ao montar. Fundo =
-         backgroundColor do BrowserWindow (#0b0b0c) para a moldura e o
-         primeiro paint serem um só campo escuro. VT323 = assinatura pixel
-         da casa; barra em --accent (#ff4f8b), a cor do que está vivo. -->
+         o Main registra o IPC — o ErrorBoundary remove o nó no primeiro
+         commit do React. Fundo = var(--bg, #080709), coerente com o
+         backgroundColor do BrowserWindow (#080709) para a moldura e o
+         primeiro paint serem um só campo escuro. O tema claro mora no banco
+         do Main (hidratado após boot:ready) e o CSP empacotado proíbe script
+         inline, então o flash escuro inicial até o mount é aceito. VT323 =
+         assinatura pixel da casa; barra em --accent (#ff4f8b). -->
     <style>
       #nexus-boot-splash {
         position: fixed;
@@ -41,7 +44,7 @@
         align-items: center;
         justify-content: center;
         gap: 14px;
-        background: #0b0b0c;
+        background: var(--bg, #080709);
         color: #928b90;
         font-family: 'VT323', ui-monospace, monospace;
       }

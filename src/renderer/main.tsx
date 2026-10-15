@@ -25,10 +25,10 @@ if (!container) {
 const bootWindow = window as Window & { __nexusBootAwaiting?: boolean };
 const mountApp = (): void => {
   bootWindow.__nexusBootAwaiting = false;
-  document.getElementById('nexus-boot-splash')?.remove();
   // The ErrorBoundary both renders a readable screen on a boot crash (instead of a
-  // black window) and fires the main-process mount signal from its post-commit
-  // lifecycle — see ErrorBoundary for why this replaces the old `[diag]` log.
+  // black window), removes the static boot splash on the first React commit, and
+  // fires the main-process mount signal from its post-commit lifecycle — see
+  // ErrorBoundary for why this replaces the old `[diag]` log.
   createRoot(container).render(
     <ErrorBoundary>
       <App />

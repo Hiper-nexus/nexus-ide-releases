@@ -376,10 +376,9 @@ export function createMainWindow(
     height: 820,
     minWidth: 640,
     minHeight: 420,
-    // Precisa casar com --bg (base.css) — cor de pré-paint da janela. Ficou
-    // preso no azul-negro de duas identidades atrás: sem isto o primeiro paint
-    // pisca a cor antiga antes do renderer assumir.
-    backgroundColor: '#0b0b0c',
+    // Precisa casar com --bg (base.css) e com o splash estático — cor de
+    // pré-paint da janela (#080709).
+    backgroundColor: '#080709',
     title: 'NexusIDE',
     // Windows gets the same multi-resolution ICO embedded in the executable.
     // It is an explicit runtime source only on Windows; macOS continues to use
