@@ -1,4 +1,5 @@
 import { useAccessStore } from '../state/access-store';
+import { useShallow } from 'zustand/react/shallow';
 import {
   memo,
   useEffect,
@@ -39,6 +40,10 @@ import { getPaneSessionId } from '../terminal/terminal-host';
 import { askConfirm } from '../state/confirm-store';
 import { useOrchStore } from '../state/orch-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
+import { useToastStore } from '../state/toast-store';
+import { missionOwnsItsPanes, wasMissionRuntimeClosedByOperator } from '../../shared/mission-recovery-policy';
+import { wasMissionLeftoverParked } from '../../shared/mission-leftover-isolation';
+import { confirmAndReopenMission } from '../orch/confirm-reopen-mission';
 import {
   promotePaneWithMissionChoice,
   toastPromoted,
@@ -131,6 +136,7 @@ interface ToolbarAction {
   active?: boolean;
   /** Keep visible even in compact mode (not buried in ⋯). */
   primary?: boolean;
+  busy?: boolean;
   run: () => void;
 }
 
@@ -375,7 +381,10 @@ function ToolbarBtn({
         .filter(Boolean)
         .join(' ')}
       aria-label={action.label}
+      disabled={action.busy}
+      aria-busy={action.busy || undefined}
       role={menu ? 'menuitem' : undefined}
+      title={tipText(action)}
       data-tip={tipText(action)}
       onClick={(e: MouseEvent) => {
         e.stopPropagation();
@@ -412,6 +421,8 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
   const promoteMissionPaneRole = useLayoutStore((s) => s.promoteMissionPaneRole);
   const setPaneRole = useLayoutStore((s) => s.setPaneRole);
   const destination = useProductNavigationStore((s) => s.destination);
+  const recoveryInFlight = useRef(false);
+  const [recoveringMission, setRecoveringMission] = useState(false);
   // Slot posicional ⌘1-9: derivado do layout AO VIVO — recalcula quando panes
   // abrem/fecham, exatamente como o atalho resolve o alvo.
   const paneSlot = useLayoutStore((s) =>
@@ -423,9 +434,17 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
   // True state for actions (dormir/reiniciar guards); display for avatar chrome.
   const paneState = useSessionStateStore((s) => s.paneStates.get(pane.id));
   const displayState = useSessionStateStore((s) => s.displayStates.get(pane.id));
-  const agentCategory = useOrchStore((s) =>
-    resolveAgentCategory(s.squads, pane.agentName, pane.role),
-  );
+  const { agentCategory, missionId, missionOwned, missionCanResume } = useOrchStore(useShallow((s) => {
+    const mission = s.missions.find((candidate) => candidate.id === (pane.missionId ?? s.paneMissions[pane.id]));
+    return {
+      agentCategory: resolveAgentCategory(s.squads, pane.agentName, pane.role),
+      missionId: mission?.id,
+      missionOwned: Boolean(mission && missionOwnsItsPanes(mission)),
+      missionCanResume: Boolean(mission && (mission.status === 'running' ||
+        (mission.status === 'blocked' && (mission.intentState !== 'blocked_user' ||
+          wasMissionRuntimeClosedByOperator(mission) || wasMissionLeftoverParked(mission))))),
+    };
+  }));
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(pane.title);
   const [density, setDensity] = useState<Density>('full');
@@ -536,8 +555,39 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
   const actions = useMemo((): ToolbarAction[] => {
     const list: ToolbarAction[] = [];
 
+    if (missionId) {
+      const canResume = !hasLiveSession && missionCanResume;
+      list.push({
+        id: 'mission-controls',
+        label: recoveringMission ? 'Retomando…' : canResume ? 'Retomar missão' : 'Abrir missão',
+        detail: canResume ? 'Continuar esta missão com a conversa e o trabalho preservados' : 'Ver andamento, retomada e ações desta missão',
+        icon: canResume ? 'restart' : 'crown-outline',
+        primary: true,
+        busy: recoveringMission,
+        run: () => {
+          if (recoveryInFlight.current) return;
+          if (!canResume) {
+            useProductNavigationStore.getState().openMission(missionId);
+            return;
+          }
+          const mission = useOrchStore.getState().missions.find((candidate) => candidate.id === missionId);
+          if (!mission) return;
+          recoveryInFlight.current = true;
+          setRecoveringMission(true);
+          void confirmAndReopenMission(mission).then((result) => {
+            if (!result.ok) useToastStore.getState().push('error', 'Não foi possível retomar a missão', result.error);
+          }).catch((error: unknown) => {
+            useToastStore.getState().push('error', 'Não foi possível retomar a missão', error instanceof Error ? error.message : String(error));
+          }).finally(() => {
+            recoveryInFlight.current = false;
+            setRecoveringMission(false);
+          });
+        },
+      });
+    }
+
     if (pane.kind !== 'browser' && !isVacancy) {
-      if (pane.role === 'orchestrator') {
+      if (pane.role === 'orchestrator' && !missionId) {
         list.push({
           id: 'mission-leader',
           label: 'Orquestrador',
@@ -547,7 +597,7 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
           primary: true,
           run: () => {},
         });
-      } else {
+      } else if (pane.role !== 'orchestrator') {
         list.push({
           // Muda o PAPEL do pane (consequência alta): mora no menu "…", em
           // grupo próprio, e não ao lado de "Ampliar"/"À direita", onde um
@@ -589,7 +639,7 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
         icon: 'scroll-bottom',
         run: () => scrollPaneToBottom(pane.id, pane.kind === 'cli-agent'),
       });
-      list.push({
+      if (!missionOwned) list.push({
         id: 'hibernate',
         label: isSleeping ? 'Acordar' : 'Dormir',
         detail: isParked
@@ -630,7 +680,7 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
           run: () => repaintPaneTui(pane.id),
         });
       }
-      list.push({
+      if (!missionOwned) list.push({
         id: 'restart',
         label: 'Reiniciar',
         detail: 'Reinicia a CLI e retoma a conversa (--resume)',
@@ -718,6 +768,10 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
     stagePaneId,
     paneState,
     hasLiveSession,
+    missionId,
+    missionCanResume,
+    missionOwned,
+    recoveringMission,
     promoteMissionPaneRole,
     setPaneRole,
     destination,
@@ -755,7 +809,7 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
           a.id === 'restart',
   );
   const missionVisible = density === 'compact' ? [] : actions.filter(
-    (a) => a.id === 'mission-leader',
+    (a) => a.id === 'mission-leader' || a.id === 'mission-controls',
   );
   const layoutVisible = density === 'compact' ? [] : actions.filter(
     (a) =>

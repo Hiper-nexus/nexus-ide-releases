@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.76.263 — Linux em dia com a retomada
+
+A 0.76.262 saiu só para macOS (DMG e ZIP darwin). Esta versão não anexa pacotes Linux àquela release. O produto é o da 0.76.262, empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35).
+
+No desktop Linux, em relação à 0.76.261:
+
+- **Reabrir o Nexus (F-386).** Cada pane retoma depois da própria confirmação de autoridade. Uma missão em retry não segura outras missões nem a política dos agentes avulsos. Workspace, acesso e retenção de panes não autorizados continuam conferidos.
+- **Controles de missão nos panes (F-387).** Abrir missão leva ao Quadro; Retomar missão usa o fluxo canônico quando aplicável, mostra andamento, impede clique duplicado e exibe falhas. Dormir e Reiniciar individuais permanecem nos terminais avulsos. Revisão e resposta do operador continuam no Quadro.
+- **Botões que não somem (F-031).** O cabeçalho do Quadro tem uma faixa própria para as ações em qualquer largura. Telemetria e motivos longos não cortam a retomada.
+- **Orçamento de render.** Os controles de recuperação da missão não consomem o orçamento de desenho dos panes.
+- **Cofre real fora dos testes.** O teste do OpenClaude isola Keychain e config dir. Isso não muda o app no Linux.
+
+## 0.76.262 — Retomada clara, trabalho preservado
+
+- **Reabrir o Nexus (F-386).** Cada pane retoma depois da própria confirmação de autoridade. Uma missão em retry não segura outras missões nem a política dos agentes avulsos. Workspace, acesso e retenção de panes não autorizados continuam conferidos.
+- **Controles de missão nos panes (F-387).** Abrir missão leva ao Quadro; Retomar missão usa o fluxo canônico quando aplicável, mostra andamento, impede clique duplicado e exibe falhas. Dormir e Reiniciar individuais permanecem nos terminais avulsos. Revisão e resposta do operador continuam no Quadro.
+- **Botões que não somem (F-031).** O cabeçalho do Quadro tem uma faixa própria para as ações em qualquer largura. Telemetria e motivos longos não cortam a retomada.
+- **Cofre real fora dos testes.** Incorporado o isolamento do Keychain e do config dir no teste OpenClaude; a asserção de ausência não imprime o valor de uma credencial.
+
 ## 0.76.261 — Linux em dia com panes rápidos, mapa da equipe e XP
 
 A 0.76.257 foi a última com pacote Linux. A 0.76.258 saiu só para Windows (menus nativos seguem o tema do app, sem efeito no Linux) e a 0.76.259 saiu só para macOS. A tag 0.76.260 não foi publicada: a suíte no Ubuntu 22.04 recusou o ledger de proveniência do T3 Code, desatualizado depois do mapa da equipe e do orçamento de foco. Esta versão é o mesmo produto da 0.76.259, com esses hashes em dia, empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35).

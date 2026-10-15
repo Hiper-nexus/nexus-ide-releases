@@ -55,17 +55,17 @@
 
 .mission-board__header {
   display: grid;
-  grid-template-columns: minmax(14rem, 1.4fr) auto minmax(0, 0.7fr) auto;
+  grid-template-columns: minmax(14rem, 1fr) minmax(0, auto);
   align-items: center;
-  flex: 0 0 var(--mission-board-header-size);
-  gap: var(--space-4);
+  flex: 0 0 auto;
+  gap: var(--space-2) var(--space-4);
   width: 100%;
-  height: var(--mission-board-header-size);
+  height: auto;
   min-width: 0;
   min-height: var(--mission-board-header-size);
-  max-height: var(--mission-board-header-size);
-  overflow: hidden;
-  padding: 0 var(--space-4);
+  max-height: none;
+  overflow: visible;
+  padding: var(--space-2) var(--space-4);
   border-bottom: 1px solid var(--border-strong);
   background: var(--bg-bar);
 }
@@ -104,6 +104,8 @@
 .mission-board__status-group {
   grid-column: 2;
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
   gap: var(--space-3);
   min-width: 0;
@@ -185,7 +187,7 @@
 }
 
 .mission-board__reason {
-  grid-column: 3;
+  grid-column: 1 / -1;
   display: grid;
   min-width: 0;
   gap: var(--space-1);
@@ -220,10 +222,11 @@
 }
 
 .mission-board__actions {
-  grid-column: 4;
+  grid-column: 1 / -1;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: var(--space-2);
   min-width: 0;
 }

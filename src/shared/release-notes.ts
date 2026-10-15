@@ -10683,7 +10683,7 @@ export const RELEASE_076260: AppRelease = {
     { title: 'Atualização do Linux', detail: 'A 0.76.258 só tinha pacote de Windows e a 0.76.259 só de macOS. O Omarchy consultava o espelho e ficava na 0.76.257. Os menus nativos do Windows não mudam o Linux.' },
   ],
 };
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076261: AppRelease = {
   version: '0.76.261',
   date: '2026-10-14',
   codename: 'Linux em dia com panes rápidos, mapa da equipe e XP',
@@ -10699,5 +10699,39 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Mapa da equipe e etapa Equipe', detail: 'Mapa na barra de abas com a tarefa real de cada agente; a barra Voltar/Continuar não cobre mais os cartões.' },
     { title: 'Atualização do Linux', detail: 'A 0.76.258 só tinha pacote de Windows e a 0.76.259 só de macOS. O Omarchy consultava o espelho e ficava na 0.76.257. Os menus nativos do Windows não mudam o Linux.' },
     { title: 'Ledger de proveniência', detail: 'A tag 0.76.260 não foi publicada. Os hashes do CommandPalette e do orçamento de render da grade acompanham o mapa da equipe e o foco que redesenha só os dois panes.' },
+  ],
+};
+
+export const RELEASE_076262: AppRelease = {
+  version: '0.76.262',
+  date: '2026-10-14',
+  codename: 'Retomada clara, trabalho preservado',
+  summary: 'Ao reabrir o Nexus, uma missão aguardando resposta do sistema não prende mais os outros terminais. Os controles da missão ficam visíveis e os panes mostram o caminho certo para continuar.',
+  highlights: [
+    { title: 'Cada missão volta no seu tempo', detail: 'Um pane já autorizado retoma sem esperar outra missão que ainda está carregando. Agentes avulsos também seguem sua preferência de retomada.' },
+    { title: 'Retomada ao alcance', detail: 'O pane da missão oferece Abrir missão ou Retomar missão conforme o estado. Durante a retomada, o botão informa o andamento e evita cliques repetidos.' },
+    { title: 'Comandos sempre à vista', detail: 'As ações do Quadro têm uma faixa própria e se ajustam à largura. Título e telemetria não empurram mais o botão de retomada para fora da tela.' },
+  ],
+  fixes: [
+    { title: 'Ações que correspondem ao estado', detail: 'Panes controlados pela missão não oferecem mais Dormir e Reiniciar individuais que o sistema recusava. Missões aguardando revisão ou resposta abrem o Quadro.' },
+    { title: 'Falhas de retomada visíveis', detail: 'Se a retomada falhar, o Nexus apresenta o erro e permite tentar novamente.' },
+    { title: 'Teste de credenciais isolado', detail: 'O teste de OpenClaude usa um cofre simulado e deixa de consultar a credencial real do Mac.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.263',
+  date: '2026-10-14',
+  codename: 'Linux em dia com a retomada',
+  summary: 'O app no Linux deixa a 0.76.261 e passa a incluir a 0.76.262: ao reabrir, uma missão aguardando resposta não prende os outros terminais, e os controles da missão ficam visíveis.',
+  highlights: [
+    { title: 'Cada missão volta no seu tempo', detail: 'Um pane já autorizado retoma sem esperar outra missão que ainda está carregando. Agentes avulsos também seguem sua preferência de retomada.' },
+    { title: 'Retomada ao alcance', detail: 'O pane da missão oferece Abrir missão ou Retomar missão conforme o estado. Durante a retomada, o botão informa o andamento e evita cliques repetidos.' },
+    { title: 'Comandos sempre à vista', detail: 'As ações do Quadro têm uma faixa própria e se ajustam à largura. Título e telemetria não empurram mais o botão de retomada para fora da tela.' },
+  ],
+  fixes: [
+    { title: 'Ações que correspondem ao estado', detail: 'Panes controlados pela missão não oferecem mais Dormir e Reiniciar individuais que o sistema recusava. Missões aguardando revisão ou resposta abrem o Quadro.' },
+    { title: 'Falhas de retomada visíveis', detail: 'Se a retomada falhar, o Nexus apresenta o erro e permite tentar novamente.' },
+    { title: 'Atualização do Linux', detail: 'A 0.76.262 só tinha pacote de macOS. O Linux não anexa arquivos a essa release e sai na 0.76.263.' },
   ],
 };
