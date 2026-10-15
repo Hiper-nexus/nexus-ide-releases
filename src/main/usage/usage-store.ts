@@ -8,6 +8,7 @@ import {
 import { priceForModel } from '../orch/pricing';
 import {
   ScopedStoreBinding,
+  prepareCached,
   ScopedStoreCorruptionError,
   type ScopedStoreChangeListener,
   type ScopedStoreOptions,
@@ -245,7 +246,8 @@ function persistedUsageIdentity(
   id: string,
   provider: string,
 ): PersistedUsageIdentityRow | undefined {
-  return db.prepare(
+  return prepareCached(
+    db,
     `SELECT model,
             input_units,
             output_units,
@@ -272,7 +274,7 @@ function resolveMessageUsageIdentity(
 ): ResolvedUsageIdentity {
   const stableId = deterministicUsageId(provider, record.sessionId, messageId);
   const stableExists =
-    db.prepare('SELECT 1 AS found FROM usage_events WHERE id = ?').get(
+    prepareCached(db, 'SELECT 1 AS found FROM usage_events WHERE id = ?').get(
       stableId,
     ) !== undefined;
   if (stableExists || provider !== 'codex') {
@@ -294,7 +296,7 @@ function resolveMessageUsageIdentity(
       record,
       legacyMessageId,
       messageId,
-    )
+  )
   ) {
     return { id: stableId, existed: false };
   }
@@ -321,12 +323,12 @@ function readPersistedUsageRow(
   db: Database.Database,
   id: string,
 ): PersistedUsageRow | null {
-  const row = db
-    .prepare(
-      `SELECT mission_id, pane_id, provider, event_type, model, input_units,
+  const row = prepareCached(
+    db,
+    `SELECT mission_id, pane_id, provider, event_type, model, input_units,
               output_units, cost_micros, metadata_json, occurred_at
        FROM usage_events WHERE id = ?`,
-    )
+  )
     .get(id) as (Omit<PersistedUsageRow, 'metadata'> & { metadata_json: unknown }) | undefined;
   if (!row) return null;
   let metadata: UsageMetadata | null = null;
@@ -511,7 +513,8 @@ export class ScopedUsageStore {
       // Replayed unchanged: no write, no fsync, no change broadcast.
       return false;
     }
-    db.prepare(
+    prepareCached(
+      db,
       `INSERT INTO usage_events
          (id, mission_id, pane_id, provider, model, event_type, input_units,
           output_units, cost_micros, metadata_json, occurred_at)
@@ -580,13 +583,12 @@ export class ScopedUsageStore {
 
   #sessionIndex(): Map<string, Set<string>> {
     if (this.#knownSessions) return this.#knownSessions;
-    const rows = this.#binding
-      .readDatabase()
-      .prepare(
-        `SELECT DISTINCT provider, json_extract(metadata_json, '$.sessionId') AS session_id
+    const rows = prepareCached(
+      this.#binding.readDatabase(),
+      `SELECT DISTINCT provider, json_extract(metadata_json, '$.sessionId') AS session_id
          FROM usage_events
          WHERE event_type = ?`,
-      )
+    )
       .all(TOKEN_EVENT_TYPE) as Array<{ provider: unknown; session_id: unknown }>;
     const index = new Map<string, Set<string>>();
     for (const row of rows) {
@@ -603,42 +605,42 @@ export class ScopedUsageStore {
   }
 
   totals(): UsageTotals {
-    const row = this.#binding
-      .readDatabase()
-      .prepare(`${TOTALS_SELECT} WHERE event_type = ?`)
+    const row = prepareCached(
+      this.#binding.readDatabase(),
+      `${TOTALS_SELECT} WHERE event_type = ?`,
+    )
       .get(TOKEN_EVENT_TYPE) as TotalsRow | undefined;
     return toTotals(row);
   }
 
   totalsBySession(rawSessionId: string): UsageTotals {
     const sessionId = z.string().min(1).max(512).parse(rawSessionId);
-    const row = this.#binding
-      .readDatabase()
-      .prepare(
-        `${TOTALS_SELECT}
+    const row = prepareCached(
+      this.#binding.readDatabase(),
+      `${TOTALS_SELECT}
          WHERE event_type = ?
            AND json_extract(metadata_json, '$.sessionId') = ?`,
-      )
+    )
       .get(TOKEN_EVENT_TYPE, sessionId) as TotalsRow | undefined;
     return toTotals(row);
   }
 
   totalsByMission(rawMissionId: string): UsageTotals {
     const missionId = entityIdSchema.parse(rawMissionId);
-    const row = this.#binding
-      .readDatabase()
-      .prepare(`${TOTALS_SELECT} WHERE event_type = ? AND mission_id = ?`)
+    const row = prepareCached(
+      this.#binding.readDatabase(),
+      `${TOTALS_SELECT} WHERE event_type = ? AND mission_id = ?`,
+    )
       .get(TOKEN_EVENT_TYPE, missionId) as TotalsRow | undefined;
     return toTotals(row);
   }
 
   breakdownByModel(): Array<{ model: string } & UsageTotals> {
-    const rows = this.#binding
-      .readDatabase()
-      .prepare(
-        `${TOTALS_SELECT.replace('SELECT', 'SELECT model,')}
+    const rows = prepareCached(
+      this.#binding.readDatabase(),
+      `${TOTALS_SELECT.replace('SELECT', 'SELECT model,')}
          WHERE event_type = ? GROUP BY model ORDER BY model ASC`,
-      )
+    )
       .all(TOKEN_EVENT_TYPE) as Array<TotalsRow & { model: unknown }>;
     return rows.map((row) => {
       const model = z.string().min(1).max(256).parse(row.model);
@@ -647,16 +649,15 @@ export class ScopedUsageStore {
   }
 
   totalsByPane(): PaneUsageTotals[] {
-    const rows = this.#binding
-      .readDatabase()
-      .prepare(
-        `${TOTALS_SELECT.replace(
-          'SELECT',
-          `SELECT COALESCE(
+    const rows = prepareCached(
+      this.#binding.readDatabase(),
+      `${TOTALS_SELECT.replace(
+        'SELECT',
+        `SELECT COALESCE(
              mp.pane_id,
              json_extract(usage_events.metadata_json, '$.displayPaneId')
            ) AS display_pane_id,`,
-        )}
+      )}
          LEFT JOIN mission_panes mp ON mp.id = usage_events.pane_id
          WHERE usage_events.event_type = ?
            AND COALESCE(
@@ -665,7 +666,7 @@ export class ScopedUsageStore {
            ) IS NOT NULL
          GROUP BY display_pane_id
          ORDER BY display_pane_id ASC`,
-      )
+    )
       .all(TOKEN_EVENT_TYPE) as Array<TotalsRow & { display_pane_id: unknown }>;
     const lastContext = this.#lastContextByPane();
     return rows.map((row) => {
@@ -683,32 +684,35 @@ export class ScopedUsageStore {
    * (o que o modelo viu na última rodada), nunca a soma da sessão.
    */
   #lastContextByPane(): Map<string, number> {
-    const rows = this.#binding
-      .readDatabase()
-      .prepare(
-        `SELECT display_pane_id, last_context FROM (
-           SELECT
-             COALESCE(
-               mp.pane_id,
-               json_extract(usage_events.metadata_json, '$.displayPaneId')
-             ) AS display_pane_id,
-             usage_events.input_units
-               + COALESCE(
-                   CAST(json_extract(usage_events.metadata_json, '$.cacheReadTokens') AS INTEGER),
-                   0
-                 ) AS last_context,
-             ROW_NUMBER() OVER (
-               PARTITION BY COALESCE(
-                 mp.pane_id,
-                 json_extract(usage_events.metadata_json, '$.displayPaneId')
-               )
-               ORDER BY usage_events.occurred_at DESC, usage_events.id DESC
-             ) AS rn
-           FROM usage_events
-           LEFT JOIN mission_panes mp ON mp.id = usage_events.pane_id
-           WHERE usage_events.event_type = ?
-         ) WHERE rn = 1`,
-      )
+    // Project before the window sorter, which otherwise evaluates JSON again.
+    const rows = prepareCached(
+      this.#binding.readDatabase(),
+      `WITH contexts AS MATERIALIZED (
+         SELECT
+           COALESCE(
+             mp.pane_id,
+             json_extract(usage_events.metadata_json, '$.displayPaneId')
+           ) AS display_pane_id,
+           usage_events.input_units
+             + COALESCE(
+                 CAST(json_extract(usage_events.metadata_json, '$.cacheReadTokens') AS INTEGER),
+                 0
+               ) AS last_context,
+           usage_events.occurred_at,
+           usage_events.id
+         FROM usage_events
+         LEFT JOIN mission_panes mp ON mp.id = usage_events.pane_id
+         WHERE usage_events.event_type = ?
+       )
+       SELECT display_pane_id, last_context FROM (
+         SELECT display_pane_id, last_context,
+                ROW_NUMBER() OVER (
+                  PARTITION BY display_pane_id
+                  ORDER BY occurred_at DESC, id DESC
+                ) AS rn
+         FROM contexts
+       ) WHERE rn = 1`,
+    )
       .all(TOKEN_EVENT_TYPE) as Array<{
       display_pane_id: unknown;
       last_context: unknown;
@@ -727,19 +731,18 @@ export class ScopedUsageStore {
   }
 
   totalsByAccount(): AccountUsageTotals[] {
-    const rows = this.#binding
-      .readDatabase()
-      .prepare(
-        `${TOTALS_SELECT.replace(
-          'SELECT',
-          `SELECT provider,
+    const rows = prepareCached(
+      this.#binding.readDatabase(),
+      `${TOTALS_SELECT.replace(
+        'SELECT',
+        `SELECT provider,
              json_extract(metadata_json, '$.accountId') AS account_id,`,
-        )}
+      )}
          WHERE event_type = ?
            AND json_extract(metadata_json, '$.accountId') IS NOT NULL
-         GROUP BY provider, account_id
+         GROUP BY account_id, provider
          ORDER BY account_id ASC, provider ASC`,
-      )
+    )
       .all(TOKEN_EVENT_TYPE) as Array<
         TotalsRow & { account_id: unknown; provider: unknown }
       >;
@@ -761,17 +764,16 @@ export class ScopedUsageStore {
     let accounts = this.#sessionAccounts.get(key);
     if (!accounts) {
       if (!this.#sessionIndex().get(provider)?.has(sessionId)) return null;
-      const rows = this.#binding
-        .readDatabase()
-        .prepare(
-          `SELECT DISTINCT json_extract(metadata_json, '$.accountId') AS account_id
+      const rows = prepareCached(
+        this.#binding.readDatabase(),
+        `SELECT DISTINCT json_extract(metadata_json, '$.accountId') AS account_id
            FROM usage_events
            WHERE event_type = ?
              AND provider = ?
              AND json_extract(metadata_json, '$.sessionId') = ?
              AND json_extract(metadata_json, '$.accountId') IS NOT NULL
            LIMIT 2`,
-        )
+      )
         .all(TOKEN_EVENT_TYPE, provider, sessionId) as Array<{
           account_id: unknown;
         }>;
@@ -785,10 +787,9 @@ export class ScopedUsageStore {
     rawPaneId: string,
   ): CapturedProviderSession | null {
     const paneId = entityIdSchema.parse(rawPaneId);
-    const row = this.#binding
-      .readDatabase()
-      .prepare(
-        `SELECT provider, metadata_json, occurred_at
+    const row = prepareCached(
+      this.#binding.readDatabase(),
+      `SELECT provider, metadata_json, occurred_at
          FROM usage_events
          LEFT JOIN mission_panes mp ON mp.id = usage_events.pane_id
          WHERE usage_events.event_type = ?
@@ -798,7 +799,7 @@ export class ScopedUsageStore {
            ) = ?
          ORDER BY usage_events.occurred_at DESC, usage_events.id DESC
          LIMIT 1`,
-      )
+    )
       .get(TOKEN_EVENT_TYPE, paneId) as
       | { provider: unknown; metadata_json: unknown; occurred_at: unknown }
       | undefined;
@@ -838,10 +839,9 @@ export class ScopedUsageStore {
     rawSessionId: string,
   ): CodexSessionAuthority | null {
     const sessionId = z.string().min(1).max(512).parse(rawSessionId);
-    const rows = this.#binding
-      .readDatabase()
-      .prepare(
-        `SELECT DISTINCT
+    const rows = prepareCached(
+      this.#binding.readDatabase(),
+      `SELECT DISTINCT
            COALESCE(
              mission_panes.pane_id,
              json_extract(usage_events.metadata_json, '$.displayPaneId')
@@ -856,7 +856,7 @@ export class ScopedUsageStore {
            AND (
              usage_events.pane_id IS NULL OR
              mission_panes.adapter_id = 'codex'
-           )
+    )
          LIMIT 2`,
       )
       .all(TOKEN_EVENT_TYPE, sessionId) as Array<{
@@ -897,7 +897,7 @@ export class ScopedUsageStore {
       if (!claimedMissionId) return { internalPaneId: null, missionId: null };
       if (existing?.mission_id === claimedMissionId) return { internalPaneId: existing.pane_id, missionId: claimedMissionId };
       if (!paneId) return { internalPaneId: null, missionId: claimedMissionId };
-      const rows = db.prepare('SELECT id FROM mission_panes WHERE pane_id = ? AND mission_id = ? LIMIT 2')
+      const rows = prepareCached(db, 'SELECT id FROM mission_panes WHERE pane_id = ? AND mission_id = ? LIMIT 2')
         .all(paneId, claimedMissionId) as Array<{ id: unknown }>;
       if (rows.length > 1) throw new ScopedStoreCorruptionError('usage native pane ownership');
       // A released mission's historical row may have lost its live pane id.
@@ -907,11 +907,11 @@ export class ScopedUsageStore {
     if (!paneId) {
       return { internalPaneId: null, missionId: claimedMissionId };
     }
-    const rows = db
-      .prepare(
-        `SELECT id, mission_id FROM mission_panes
+    const rows = prepareCached(
+      db,
+      `SELECT id, mission_id FROM mission_panes
          WHERE pane_id = ? ORDER BY created_at DESC LIMIT 2`,
-      )
+    )
       .all(paneId) as Array<{ id: unknown; mission_id: unknown }>;
     if (rows.length > 1) {
       throw new ScopedStoreCorruptionError('usage pane ownership');

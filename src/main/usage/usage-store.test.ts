@@ -579,3 +579,92 @@ describe.skipIf(!sqliteAvailable)('totalsByPane lastContextTokens', () => {
     expect(row?.lastContextTokens ?? null).toBeNull();
   });
 });
+
+
+describe.skipIf(!sqliteAvailable)('token snapshot hot path', () => {
+  it('keeps timestamp/id tie-breaking for loose historical panes after an older turn is updated', () => {
+    const { baseDir, scope } = fixture();
+    const runtimeManager = manager(baseDir);
+    const store = createScopedUsageStore(runtimeManager, scope);
+    store.record('claude', usage({ paneId: 'loose-tie', messageId: 'first', inputTokens: 10, cacheReadTokens: 5, timestamp: 100 }));
+    store.record('claude', usage({ paneId: 'loose-tie', messageId: 'second', inputTokens: 30, cacheReadTokens: 7, timestamp: 100 }));
+    const newest = runtimeManager.open(scope).db.prepare('SELECT input_units FROM usage_events ORDER BY occurred_at DESC, id DESC LIMIT 1').get() as { input_units: number };
+    const context = newest.input_units === 10 ? 15 : 37;
+    expect(store.totalsByPane()[0].lastContextTokens).toBe(context);
+    store.record('claude', usage({ paneId: 'loose-tie', messageId: 'old', inputTokens: 90, cacheReadTokens: 9, timestamp: 50 }));
+    store.record('claude', usage({ paneId: 'loose-tie', messageId: 'old', inputTokens: 100, cacheReadTokens: 11, timestamp: 50 }));
+    expect(store.totalsByPane()[0]).toMatchObject({ inputTokens: 140, cacheReadTokens: 23, turns: 3, lastContextTokens: context });
+  });
+
+  it('reuses prepared snapshot queries and reopens after the runtime LRU closes its database', () => {
+    const { baseDir, scope } = fixture();
+    const runtimeManager = manager(baseDir);
+    const store = createScopedUsageStore(runtimeManager, scope);
+    store.record('claude', usage({ paneId: 'pane-hot', accountId: 'acct-hot' }));
+    const snapshot = () => ({ global: store.totals(), panes: store.totalsByPane(), accounts: store.totalsByAccount() });
+    const expected = snapshot();
+    const db = runtimeManager.open(scope).db;
+    const prepare = vi.spyOn(db, 'prepare');
+    expect(snapshot()).toEqual(expected);
+    expect(prepare).not.toHaveBeenCalled();
+    prepare.mockRestore();
+    expect(runtimeManager.close(scope)).toBe(true);
+    expect(snapshot()).toEqual(expected);
+    store.record('claude', usage({ paneId: 'pane-hot', accountId: 'acct-hot', outputTokens: 300 }));
+    expect(snapshot().global.outputTokens).toBe(300);
+  });
+
+  it('avoids JSON evaluation in indexed snapshot queries and preserves every total on 10,000 events', () => {
+    const { baseDir, scope } = fixture();
+    const runtimeManager = manager(baseDir);
+    const mission = createScopedMissionStore(runtimeManager, scope).create({ title: 'Snapshot benchmark' });
+    const panes = createScopedMissionPaneStore(runtimeManager, scope);
+    const internalPaneIds = Array.from({ length: 6 }, (_, i) => panes.record({
+      missionId: mission.id, adapterId: 'claude', paneId: `pane-${i}`, title: `Worker ${i}`,
+    }).id);
+    const db = runtimeManager.open(scope).db;
+    const insert = db.prepare(`INSERT INTO usage_events
+      (id, mission_id, pane_id, provider, model, event_type, input_units, output_units, cost_micros, metadata_json, occurred_at)
+      VALUES (?, ?, ?, ?, ?, 'token-usage', ?, ?, ?, ?, ?)`);
+    db.transaction(() => {
+      for (let i = 0; i < 10_000; i++) insert.run(
+        `bench-${String(i).padStart(5, '0')}`, i % 7 === 0 ? null : mission.id,
+        i % 7 === 0 ? null : internalPaneIds[i % 6], i % 2 === 0 ? 'claude' : 'codex',
+        'claude-sonnet-4-5', i % 100, i % 200, i * 3,
+        JSON.stringify({ schemaVersion: 1, sessionId: `session-${i % 30}`, messageId: `message-${i}`,
+          displayPaneId: i % 7 === 0 ? `loose-${i % 3}` : `fallback-${i % 6}`,
+          accountId: i % 5 === 0 ? null : `account-${i % 3}`, cacheReadTokens: i % 50,
+          cacheWrite5mTokens: i % 20, cacheWrite1hTokens: i % 10,
+          sourceTimestamp: i, recordedAt: i }), Math.floor(i / 2),
+      );
+    })();
+    const store = createScopedUsageStore(runtimeManager, scope);
+    const snapshot = () => ({ global: store.totals(), panes: store.totalsByPane(), accounts: store.totalsByAccount() });
+    const index = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'usage_events_token_snapshot_idx'").get() as { sql: string } | undefined;
+    expect(index).toBeDefined();
+    db.exec('DROP INDEX usage_events_token_snapshot_idx');
+    const prepare = vi.spyOn(db, 'prepare');
+    const before = snapshot();
+    const queries = prepare.mock.calls.map(([sql]) => sql).filter(sql => sql.includes('SUM(') || sql.includes('ROW_NUMBER()'));
+    prepare.mockRestore();
+    const measure = () => {
+      const elapsed: number[] = [];
+      for (let i = 0; i < 9; i++) {
+        const started = performance.now(); snapshot(); elapsed.push(performance.now() - started);
+      }
+      return elapsed.sort((a, b) => a - b)[4];
+    };
+    const baselineMs = measure();
+    db.exec(index!.sql);
+    const after = snapshot();
+    expect(after).toEqual(before);
+    expect(after.global.turns).toBe(10_000);
+    expect(after.panes).toHaveLength(9);
+    expect(queries).toHaveLength(4);
+    process.stdout.write(`[usage snapshot benchmark] 10000 events / 6 mission panes / 3 loose panes / 3 accounts; median of 9: before=${baselineMs.toFixed(3)}ms after=${measure().toFixed(3)}ms\n`);
+    for (const sql of queries) {
+      const program = db.prepare(`EXPLAIN ${sql}`).all('token-usage') as Array<{ opcode: string; p4: string | null }>;
+      expect(program.filter(row => ['Function', 'PureFunc'].includes(row.opcode) && row.p4?.startsWith('json_extract')), sql).toEqual([]);
+    }
+  });
+});
