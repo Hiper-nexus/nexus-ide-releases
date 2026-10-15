@@ -38,6 +38,11 @@ export interface MaterializeWorktreeResult {
   cowMethods: Readonly<Record<string, HeavyDirCloneMethod>>;
   /** F-908: diretórios pulados sem clone APFS possível (o writer segue sem eles). */
   cowSkipped: readonly { readonly dir: string; readonly reason: string }[];
+  /**
+   * F-1535: fora do macOS não há clonefile — estes diretórios foram LINKADOS
+   * (junction no Windows, symlink no POSIX) em vez de clonados.
+   */
+  linkedDirs: readonly string[];
   /** `git worktree add` wall time — surfaced on pane-spawn-timing (F-215). */
   gitWorktreeMs: number;
   /** CoW copy of heavy dirs — the dominant step before the JXA clonefile. */
@@ -190,7 +195,7 @@ async function removePartialCloneDestAsync(dest: string): Promise<void> {
 }
 
 /** `clonefile` = clonefile(2) do diretório; `cp-clone` = `cp -cR` no mesmo volume. */
-export type HeavyDirCloneMethod = 'clonefile' | 'cp-clone';
+export type HeavyDirCloneMethod = 'clonefile' | 'cp-clone' | 'link';
 export type HeavyDirCloneOutcome =
   | { readonly method: HeavyDirCloneMethod }
   | { readonly skipped: string };
@@ -678,6 +683,49 @@ export async function copyBuildCaches(
 /**
  * Materialize a linked git worktree, then optionally CoW heavy content.
  */
+/**
+ * F-1535: fora do macOS não existe clonefile, e a worktree nascia sem
+ * `node_modules` — o worker tinha de criar o link à mão (e, sem ele, o `npx`
+ * baixava um runner alheio do cache do npx em vez de usar o do projeto).
+ * Mesmo padrão já em produção no F-246 (comparação com a base): resolve o
+ * realpath da origem e linka; junction no Windows, symlink no POSIX (o Node
+ * ignora o `type` fora do Windows). Melhor esforço: nunca bloqueia o spawn.
+ *
+ * Segurança de remoção, medida no Windows: `git worktree remove --force` NÃO
+ * segue o junction (a árvore real de dependências sobreviveu com canário), e o
+ * Main remove árvores por `removeTree`, que tira os links antes (F-663).
+ * `node_modules` é o único diretório linkável de propósito: os caches de build
+ * seguem COPIADOS por {@link copyBuildCaches}, porque dois worktrees
+ * escrevendo no mesmo `.vite`/`.turbo` se corrompem.
+ */
+export function linkHeavyDirs(
+  repositoryRoot: string,
+  worktreePath: string,
+  dirs: readonly string[],
+): string[] {
+  const linked: string[] = [];
+  for (const rel of dirs) {
+    if (!rel || rel.includes('..') || path.isAbsolute(rel)) continue;
+    const dest = path.join(worktreePath, rel);
+    if (fs.existsSync(dest)) continue;
+    let source: string;
+    try {
+      source = fs.realpathSync(path.join(repositoryRoot, rel));
+      if (!fs.statSync(source).isDirectory()) continue;
+    } catch {
+      continue; // origem inexistente ou ilegível: o writer segue sem ela
+    }
+    try {
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.symlinkSync(source, dest, 'junction');
+      linked.push(rel.replaceAll('\\', '/'));
+    } catch {
+      // Sem privilégio de link nem junction possível: não é fatal.
+    }
+  }
+  return linked;
+}
+
 export async function materializeGitWorktree(
   input: MaterializeWorktreeInput,
 ): Promise<MaterializeWorktreeResult> {
@@ -738,6 +786,10 @@ export async function materializeGitWorktree(
       else cowSkipped.push({ dir, reason: outcome.skipped });
     },
   );
+  // F-1535: sem CoW (Windows/Linux) os mesmos diretórios — já barrados pelo
+  // gate de lockfile acima — entram por link, para a worktree nascer pronta.
+  const linkedDirs = cowWorktreeAvailable() ? [] : linkHeavyDirs(input.repositoryRoot, input.worktreePath, cowDirs);
+  for (const dir of linkedDirs) cowMethods[dir] = 'link';
   const cowMs = Date.now() - cowStart;
 
   // F-1386: caches de build portáteis — melhor esforço, nunca bloqueia o spawn.
@@ -754,6 +806,7 @@ export async function materializeGitWorktree(
     cowCopied,
     cowMethods,
     cowSkipped,
+    linkedDirs,
     gitWorktreeMs,
     cowMs,
   };

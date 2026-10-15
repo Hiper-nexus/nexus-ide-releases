@@ -11,6 +11,7 @@ import {
   discoverNestedCowDirs,
   discoverTsbuildinfoFiles,
   findLockfile,
+  linkHeavyDirs,
   lockfilesMatch,
   materializeGitWorktree,
   tryClonefileCopy,
@@ -993,5 +994,133 @@ describe('F-1386 — lockfile gating e caches de build', () => {
       { dir: 'node_modules', reason: 'lockfile-mismatch' },
     ]);
     expect(fs.existsSync(path.join(wt, 'node_modules'))).toBe(false);
+  });
+});
+
+// F-1535: fora do macOS não há clonefile, então a worktree nascia sem
+// node_modules e o worker criava o link à mão (ou o `npx` baixava um runner
+// alheio). O link é o substituto do clone; os caches de build seguem copiados.
+describe('linkHeavyDirs (F-1535)', () => {
+  it('linka node_modules da origem e o conteúdo fica legível na worktree', () => {
+    const root = tmpRoot();
+    try {
+      const repo = path.join(root, 'repo');
+      const wt = path.join(root, 'wt');
+      makeTree(repo, { 'node_modules/vitest/index.js': 'module.exports = 1;\n' });
+      fs.mkdirSync(wt, { recursive: true });
+
+      expect(linkHeavyDirs(repo, wt, ['node_modules'])).toEqual(['node_modules']);
+      const linked = path.join(wt, 'node_modules');
+      expect(fs.lstatSync(linked).isSymbolicLink()).toBe(true);
+      expect(fs.readFileSync(path.join(linked, 'vitest', 'index.js'), 'utf8'))
+        .toContain('module.exports');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('não sobrepõe um node_modules que já existe na worktree', () => {
+    const root = tmpRoot();
+    try {
+      const repo = path.join(root, 'repo');
+      const wt = path.join(root, 'wt');
+      makeTree(repo, { 'node_modules/a/index.js': 'from repo\n' });
+      makeTree(wt, { 'node_modules/a/index.js': 'from worktree\n' });
+
+      expect(linkHeavyDirs(repo, wt, ['node_modules'])).toEqual([]);
+      expect(fs.readFileSync(path.join(wt, 'node_modules', 'a', 'index.js'), 'utf8'))
+        .toBe('from worktree\n');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('origem ausente é pulada em silêncio (writer segue sem ela)', () => {
+    const root = tmpRoot();
+    try {
+      const repo = path.join(root, 'repo');
+      const wt = path.join(root, 'wt');
+      fs.mkdirSync(repo, { recursive: true });
+      fs.mkdirSync(wt, { recursive: true });
+
+      expect(linkHeavyDirs(repo, wt, ['node_modules'])).toEqual([]);
+      expect(fs.existsSync(path.join(wt, 'node_modules'))).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('origem que já é link resolve para o alvo real, sem encadear links', () => {
+    const root = tmpRoot();
+    try {
+      const real = path.join(root, 'real-modules');
+      makeTree(root, { 'real-modules/pkg/index.js': 'real\n' });
+      const repo = path.join(root, 'repo');
+      const wt = path.join(root, 'wt');
+      fs.mkdirSync(repo, { recursive: true });
+      fs.mkdirSync(wt, { recursive: true });
+      fs.symlinkSync(real, path.join(repo, 'node_modules'), 'junction');
+
+      expect(linkHeavyDirs(repo, wt, ['node_modules'])).toEqual(['node_modules']);
+      expect(fs.realpathSync(path.join(wt, 'node_modules'))).toBe(fs.realpathSync(real));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(darwin)('materializeGitWorktree nasce com node_modules linkado', async () => {
+    const root = tmpRoot();
+    try {
+      const repo = path.join(root, 'repo');
+      const wt = path.join(root, 'wt');
+      makeTree(repo, { 'node_modules/vitest/index.js': 'x\n' });
+      const run = vi.fn(async (_cwd: string, args: readonly string[]) => {
+        if (args[0] === 'rev-parse') return { status: 0, stdout: repo, stderr: '' };
+        if (args[0] === 'check-ignore') return { status: 1, stdout: '', stderr: '' };
+        fs.mkdirSync(wt, { recursive: true });
+        return { status: 0, stdout: '', stderr: '' };
+      });
+
+      const result = await materializeGitWorktree({
+        repositoryRoot: repo, worktreePath: wt, branchRef: 'refs/heads/nexus/t',
+        headSha: 'abc', git: { run } as never,
+      });
+
+      expect(result.linkedDirs).toEqual(['node_modules']);
+      expect(result.cowMethods['node_modules']).toBe('link');
+      expect(fs.existsSync(path.join(wt, 'node_modules', 'vitest', 'index.js'))).toBe(true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(darwin)('lockfile diferente continua barrando o node_modules linkado', async () => {
+    const root = tmpRoot();
+    try {
+      const repo = path.join(root, 'repo');
+      const wt = path.join(root, 'wt');
+      makeTree(repo, {
+        'node_modules/vitest/index.js': 'x\n',
+        'package-lock.json': '{"lockfileVersion":3}',
+      });
+      const run = vi.fn(async (_cwd: string, args: readonly string[]) => {
+        if (args[0] === 'rev-parse') return { status: 0, stdout: repo, stderr: '' };
+        if (args[0] === 'check-ignore') return { status: 1, stdout: '', stderr: '' };
+        fs.mkdirSync(wt, { recursive: true });
+        fs.writeFileSync(path.join(wt, 'package-lock.json'), '{"lockfileVersion":2}');
+        return { status: 0, stdout: '', stderr: '' };
+      });
+
+      const result = await materializeGitWorktree({
+        repositoryRoot: repo, worktreePath: wt, branchRef: 'refs/heads/nexus/t',
+        headSha: 'abc', git: { run } as never,
+      });
+
+      expect(result.linkedDirs).toEqual([]);
+      expect(result.cowSkipped).toEqual([{ dir: 'node_modules', reason: 'lockfile-mismatch' }]);
+      expect(fs.existsSync(path.join(wt, 'node_modules'))).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });
