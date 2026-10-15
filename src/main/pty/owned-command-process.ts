@@ -18,20 +18,33 @@ export class OwnedCommandProcesses {
   async claim(sessionId: string, pid: number, proof?: 'darwin-job'): Promise<string | null> {
     if (!Number.isSafeInteger(pid) || pid <= 0) return null;
     const root = this.rootFor(sessionId); if (!root || root.pid === pid) return null;
-    const snapshot = await this.capture(root.pid);
+    let snapshot = await this.capture(root.pid);
     if (!snapshot?.root || this.rootFor(sessionId)?.identity !== root.identity) return null;
     // A Main RPC timeout may leave an unobserved claim. Physical disappearance
     // still frees its host slot without inventing exit or forgetting live work.
+    const firstInventory = snapshot.inventory;
     for (const [id, claim] of this.#claims) {
       if (claim.physical) { if (claim.physical.state() === 'gone') this.#rememberGone(id, claim.sessionId); continue; }
       const gone = [...claim.rows.values()].every(({ row }) => {
-        const current = snapshot.inventory.filter((candidate) => candidate.pid === row.pid);
+        const current = firstInventory.filter((candidate) => candidate.pid === row.pid);
         return current.length === 0 || current.length === 1 && current[0].startedAt !== row.startedAt;
       });
       if (gone) this.#rememberGone(id, claim.sessionId);
     }
     if (this.#claims.size >= 128) return null;
-    const row = snapshot.descendants.find((candidate) => candidate.pid === pid);
+    let row = snapshot.descendants.find((candidate) => candidate.pid === pid);
+    // F-1544: o comando pesado pede a vaga nos primeiros ms de vida, ainda no
+    // segundo da captura (cerca de mesmo segundo = ambíguo). Espera a virada e
+    // reamostra UMA vez; a cerca em si não muda.
+    if (row && !hasUnambiguousStartIdentity(row, snapshot.capturedAtMs)) {
+      const wait = Math.floor(snapshot.capturedAtMs / 1_000) * 1_000 + 1_000 - this.clock.now() + 25;
+      if (wait > 0 && wait <= 1_500) {
+        await this.clock.sleep(wait);
+        snapshot = await this.capture(root.pid);
+        if (!snapshot?.root || this.rootFor(sessionId)?.identity !== root.identity) return null;
+        row = snapshot.descendants.find((candidate) => candidate.pid === pid);
+      }
+    }
     if (!row || !hasUnambiguousStartIdentity(row, snapshot.capturedAtMs)) return null;
     let physical: PhysicalCommandClaim | undefined;
     if (proof) {

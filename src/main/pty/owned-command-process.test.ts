@@ -184,3 +184,11 @@ it('borrow ainda nega pid ausente e identidade que segue ambígua depois da ream
  expect(await tracker.borrow('s', id, 999)).toBe(false);
  expect(await tracker.borrow('s', id, 30)).toBe(false); expect(sleeps()).toBe(1);
 });
+it('claim também espera a virada do segundo quando o comando nasceu no segundo da captura (F-1544)', async () => {
+ const t0 = Date.parse('2026-10-15T12:00:02.500Z'); const identity = {}; let now = t0; let sleeps = 0;
+ const rows = [winRow(10, 1, t0 - 60_000), winRow(20, 10, Date.parse('2026-10-15T12:00:02.450Z'))];
+ const capture = async (pid: number): Promise<DescendantSnapshot> => ({ root: rows.find((r) => r.pid === pid) ?? null, descendants: rows.filter((r) => r.ppid === pid), inventory: rows, capturedAtMs: now });
+ const tracker = new OwnedCommandProcesses(() => ({ pid: 10, identity }), capture, undefined, { now: () => now, sleep: async (ms) => { sleeps += 1; now += ms; } });
+ expect(await tracker.claim('s', 20)).toBeTypeOf('string'); expect(sleeps).toBe(1);
+ expect(await tracker.claim('s', 999)).toBeNull();
+});
