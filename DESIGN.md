@@ -374,6 +374,13 @@ ficam na faixa fixa antes do histórico, nunca nas utilidades roláveis. Missõe
 dormindo ou bloqueadas tecnicamente mostram **Abrir para retomar**: é navegação
 para a recuperação autorizada, não uma ordem de religar sessões.
 
+Contas de IA fala em ferramentas e contas; “instalada”, “ativada” e “conectada”
+são estados distintos. Operações em lote começam recolhidas. O menu Ações do
+painel explica as operações em texto visível, com altura natural e rolagem na
+janela baixa; nunca achatar os itens para caber. Preparação identifica o agente
+sem usar “Subindo” como única explicação.
+
+
 ## 13. Criação direta e navegação por resultado
 
 - **Início é o formulário real de criação.** Um título, uma frase, o pedido e

@@ -10872,9 +10872,16 @@ export const RELEASE_076272: AppRelease = {
 export const CURRENT_RELEASE: AppRelease = {
   version: '0.76.273',
   date: '2026-10-15',
-  codename: 'Mac em dia com a retomada e os agentes',
-  summary: 'O macOS recebe as melhorias da 0.76.270 e as correções da revisão 0.76.271: retomada com a especificação selada, agentes à vista, XP global e teclado sem tecla duplicada ao hibernar.',
-  highlights: RELEASE_076270.highlights,
+  codename: 'Mais claro, mais vivo',
+  summary: 'Configuração guiada, contas de IA mais claras, retomadas fáceis de encontrar e uma lata de energia com mais vida. O Mac também recebe as melhorias de missão, teclado e agentes incluídas no Windows 0.76.272.',
+  highlights: [
+    { title: 'Configure pelo que você precisa', detail: 'A nova Configuração rápida leva direto a conectar uma IA, ajustar a leitura, configurar o microfone ou ver seus limites. A busca entende termos como “entrar no Claude” e “aumentar letra”.' },
+    { title: 'Suas contas de IA, sem confusão', detail: 'A tela distingue ferramentas instaladas, ativadas e conectadas. Conectar minha conta fica em destaque; instalar ou atualizar várias ferramentas é uma opção separada.' },
+    { title: 'Retome sem procurar o botão', detail: 'Missões tem acesso direto na navegação. Pendências ficam acima do histórico e trabalhos dormindo mostram Abrir para retomar.' },
+    { title: 'Ações explicadas nos painéis', detail: 'O menu Ações explica cada operação e mantém a leitura em janelas pequenas. Focar painel e Dividir à direita deixam claro o que cada controle faz.' },
+    { title: 'Energia com movimento', detail: 'A lata ganhou presença, estalo e espuma na abertura e celebra o XP recebido. As cenas respeitam o modo sóbrio, a visibilidade e a preferência por movimento reduzido.' },
+    ...RELEASE_076270.highlights,
+  ],
   fixes: [
     { title: 'Retomada de missão', detail: 'O coordenador religa sem esperar workers sem sessão. A transferência preserva a conta e a conversa seladas, aposenta o pane antigo e tem prazo e erros visíveis.' },
     { title: 'Teclado após hibernar', detail: 'O pane acompanha o estado vivo e mantém um único receptor de teclado ao acordar ou retomar.' },

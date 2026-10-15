@@ -1,10 +1,16 @@
 # Changelog
 
-## 0.76.273 — Mac em dia com a retomada e os agentes
+## 0.76.273 — Mais claro, mais vivo
+
+- Configuração rápida com caminhos diretos para conectar IA, ajustar aparência/texto, microfone, equipe, uso e diagnóstico; busca por palavras comuns em português.
+- Contas de IA com ferramentas, login e API identificáveis; instalar em lote fica recolhido; instalação e ativação não são apresentadas como autenticação.
+- Missões na navegação, pendências antes do histórico e “Abrir para retomar” nos trabalhos parados. A retomada continua passando pela autoridade do Main.
+- Menu Ações dos painéis com explicações, nomes claros e rolagem em janela baixa; preparação do agente com identidade e aviso legível de demora.
+- Lata de energia maior, estalo/espuma e celebração de XP real, com cenas finitas e respeito ao modo sóbrio, à visibilidade e ao movimento reduzido.
 
 Saída macOS arm64, a partir da main `d8359c414a9bc71869bbaf6747c1a444c8fcb11d`.
 A última release Mac com DMG/ZIP público era a 0.76.264 (`3202b9712c2c5f353ede24a6cff281992a605c1b`).
-Inclui todos os commits até o Windows 0.76.270 (`469f852b95211e3e89fcc6799fc18b716ebafc85`) e a revisão 0.76.271.
+Inclui a base do Windows 0.76.272, com as melhorias da 0.76.270 e a revisão 0.76.271.
 
 - Retomada com especificação e conta seladas, transferência com prazo, pane de origem aposentado, erros visíveis e religação do coordenador antes dos workers sem sessão.
 - Spawn idempotente por sessão/requestId e recusa por carga sem punir a CLI.

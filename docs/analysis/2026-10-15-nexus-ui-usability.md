@@ -64,9 +64,35 @@ Status: implementação em andamento; sem nova publicação nesta rodada.
 - Capturas/vídeo em `release-artifacts/nexus-ui/`. Renderer real, com dados e
   fronteira de APIs simulados; não são prova do aplicativo instalado.
 
-Ainda faltam: experiência mais expressiva no nascimento do agente (hoje apenas
-um chip Subindo), restante da navegação/ações dos panes e equipe, validação no app
-isolado, testes/gates da candidata e publicação Mac. Não marcar objetivo completo.
-Monitor segue consultando; `holdUntil` até 15/10 21:12 UTC impede revisão/publicação
-paralela. Liberar ao concluir a candidata (ou renovar se ainda houver trabalho),
-sem desativar o LaunchAgent.
+## Estado da candidata após a segunda onda
+
+- F-393 implementado: menu Ações com descrições, nomes claros e preparação com
+  logo/texto legível. Em 1280×420 o menu rola sem achatar/sobrepor conteúdo.
+- F-394 implementado: Contas de IA usa linguagem por tarefa, entrada na conta
+  destacada, instalação em lote recolhida e distinção entre instalada,
+  ativada e conectada. Atalhos e mensagens usam os mesmos nomes da interface.
+- Grok/OpenCode/QoS corrigidos nas provas nativas: 15 testes passaram no
+  contexto normal; 13 passaram no LaunchAgent Background. Ver relatório
+  `2026-10-15-native-release-gates.md`. Nenhum script distribuído foi alterado.
+- Revisões independentes sem achados pendentes nos escopos de UI e testes.
+- Primeira suíte completa: 28.590 passaram, 7 falharam, 103 skips declarados,
+  em 516,64 s. Falhas eram os nomes antigos em testes e hashes de proveniência;
+  corrigidas sem remover checks. O conjunto de follow-up teve 388 testes
+  aprovados; a consistência de navegação teve 235 aprovados.
+- Typecheck final passou; renderer sinks = 0. Certificado Developer ID válido
+  e consulta ao perfil nexus-notary bem-sucedida (pré-check, não nova assinatura).
+
+## Próximos gates obrigatórios
+
+1. Suíte completa sobre as fontes finais e limpas; não alterar fontes enquanto
+   ela roda. Observar o handle vivo, nunca reiniciar por timeout de observação.
+2. Sanity no aplicativo isolado: Início, equipe, configurações, terminal e
+   retomada; usar smokes/E2E canônicos e capturas para o que faltar.
+3. Revalidar origem/versão, criar tag anotada local e executar release:mac:
+   build, assinatura/notarização, E2E, smoke empacotado e publicação.
+4. Conferir recibos, hashes e assets públicos do Mac; liberar o monitor.
+
+O monitor segue consultando Windows, com revisão/publicação paralela suspensa
+por `holdUntil` até 15/10 21:12 UTC. Liberar ao concluir (ou renovar se necessário).
+Candidata local não é release publicada. App instalado e sessões do operador
+continuam preservados. Não marcar o objetivo concluído antes desses gates.
