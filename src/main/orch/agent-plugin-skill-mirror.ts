@@ -7,6 +7,7 @@ import {
   type AgentPluginToolReduction,
 } from './agent-plugin-skill';
 import { removeTreeSync } from '../util/remove-tree';
+import { scanComponentFiles } from './skill-threat-scan';
 
 const MAX_SKILL_TREE_DEPTH = 16;
 const MAX_SKILL_TREE_FILES = 512;
@@ -34,6 +35,32 @@ interface CopyBudget {
 function isInside(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate);
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+/**
+ * L7: o veredito do scan pode ter até 60 s (cache) e o plugin pode ter mudado
+ * desde então. Lê pelo descritor, sem seguir link, prova que é o mesmo
+ * arquivo inspecionado agora e devolve os bytes que serão escaneados E
+ * gravados — nunca um caminho que muda entre o scan e a cópia.
+ */
+function readInspectedFile(realSource: string, inspected: fs.Stats, relative: string): Buffer {
+  const fd = fs.openSync(
+    realSource,
+    fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0),
+  );
+  try {
+    const opened = fs.fstatSync(fd);
+    if (!opened.isFile() || opened.dev !== inspected.dev || opened.ino !== inspected.ino) {
+      throw new Error(`skill mudou durante a cópia: ${relative}`);
+    }
+    const bytes = fs.readFileSync(fd);
+    if (bytes.length !== inspected.size) {
+      throw new Error(`skill mudou durante a cópia: ${relative}`);
+    }
+    return bytes;
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 function copyContainedTree(input: {
@@ -81,15 +108,20 @@ function copyContainedTree(input: {
   if (input.budget.bytes > MAX_SKILL_TREE_BYTES) {
     throw new Error(`skill excede ${MAX_SKILL_TREE_BYTES} bytes`);
   }
+  const bytes = readInspectedFile(realSource, stat, input.relative);
+  const threat = scanComponentFiles([{ name: input.relative, buffer: bytes }]);
+  if (threat.blocked) {
+    throw new Error(`conteúdo hostil em ${threat.blockReason ?? input.relative}`);
+  }
   if (input.relative === 'SKILL.md') {
     const materialized = materializeAgentPluginSkill(
-      fs.readFileSync(realSource, 'utf8'),
+      bytes.toString('utf8'),
       { providerName: input.providerName, allowedTools: input.allowedTools },
     );
     fs.writeFileSync(input.target, materialized.content, { mode: 0o600 });
     return;
   }
-  fs.copyFileSync(realSource, input.target, fs.constants.COPYFILE_EXCL);
+  fs.writeFileSync(input.target, bytes, { flag: 'wx', mode: 0o600 });
   fs.chmodSync(input.target, stat.mode & 0o755);
 }
 

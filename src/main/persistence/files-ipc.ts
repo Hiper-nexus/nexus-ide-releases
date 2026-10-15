@@ -26,6 +26,7 @@ import { readClipboardFileUris } from './clipboard-file-uris';
 import { convertHeicToJpeg, heicConvertPayloadBytes } from './heic-convert';
 import { requireRendererWorkspaceScope } from './renderer-workspace-scope';
 import { searchWorkspaceFiles } from '../orch/workspace-file-search';
+import { forEachWithConcurrency } from '../util/concurrency';
 
 /**
  * File explorer backend — sandboxed to the invoking renderer's main-owned
@@ -50,6 +51,14 @@ const IGNORED = new Set([
   '.DS_Store',
 ]);
 const NOFOLLOW_FLAG = fs.constants.O_NOFOLLOW ?? 0;
+/**
+ * L5: um FIFO trocado entre o lstat e o open prenderia uma thread do pool do
+ * libuv para sempre (open de FIFO espera a outra ponta). Com O_NONBLOCK o
+ * open volta na hora e o fstat seguinte recusa o que não é arquivo regular.
+ */
+const NONBLOCK_FLAG = fs.constants.O_NONBLOCK ?? 0;
+/** L4: lstat simultâneos por listagem; o pool do libuv tem 4 threads. */
+const LIST_LSTAT_CONCURRENCY = 32;
 const PRIVATE_FILE_MODE = 0o600;
 
 type DescriptorOperation = 'read' | 'write';
@@ -241,16 +250,12 @@ export async function listDir(
       return { ok: false, error: 'unsafe directory' };
     }
     const prefix = relPath.split(path.sep).join('/');
-    // ponytail: um lstat por entrada, todos de uma vez na fila do libuv; uma
-    // pasta com dezenas de milhares de itens enfileira tudo. Limitar a
-    // concorrência se isso aparecer.
-    const listed = await Promise.all(
-      dirents.map((dirent) =>
-        safeListEntry(directory.abs, dirent, path.posix.join(prefix, dirent.name)),
-      ),
-    );
+    const listed: FileNode[] = [];
+    await forEachWithConcurrency(dirents, LIST_LSTAT_CONCURRENCY, async (dirent) => {
+      const entry = await safeListEntry(directory.abs, dirent, path.posix.join(prefix, dirent.name));
+      if (entry) listed.push(entry);
+    });
     const entries = listed
-      .filter((entry): entry is FileNode => entry !== null)
       // Directories first, then alphabetical.
       .sort((a, b) => {
         if (a.kind !== b.kind) return a.kind === 'dir' ? -1 : 1;
@@ -294,7 +299,7 @@ async function readFile(
       return { ok: false, error: 'unsafe file' };
     }
     hooks.beforeOpen?.('read');
-    handle = await fsp.open(resolved.abs, fs.constants.O_RDONLY | NOFOLLOW_FLAG);
+    handle = await fsp.open(resolved.abs, fs.constants.O_RDONLY | NOFOLLOW_FLAG | NONBLOCK_FLAG);
     const opened = await validateOpenedFile(
       scope,
       resolved.root,
@@ -342,11 +347,12 @@ async function writeFile(
     }
     hooks.beforeOpen?.('write');
     const flags = before
-      ? fs.constants.O_WRONLY | NOFOLLOW_FLAG
+      ? fs.constants.O_WRONLY | NOFOLLOW_FLAG | NONBLOCK_FLAG
       : fs.constants.O_WRONLY |
         fs.constants.O_CREAT |
         fs.constants.O_EXCL |
-        NOFOLLOW_FLAG;
+        NOFOLLOW_FLAG |
+        NONBLOCK_FLAG;
     handle = await fsp.open(resolved.abs, flags, PRIVATE_FILE_MODE);
     created = before === null;
     const opened = await validateOpenedFile(

@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -651,5 +652,76 @@ describe('explorador sem IO síncrono no Main (#21)', () => {
     }
     expect(fs.readFileSync(path.join(root, 'nested', 'new.txt'), 'utf8')).toBe('novo');
     expect(fs.readFileSync(path.join(outside, 'same.txt'), 'utf8')).toBe('outside-secret');
+  });
+});
+
+describe('explorador: limites de recurso (L4, L5)', () => {
+  function bound(id: number, name: string): { root: string; window: Renderer } {
+    const root = project(name, 'inside');
+    const window = renderer(id);
+    renderers.push(window);
+    bindResolvedRendererWorkspaceScope(window, scope(root, 'project-a', 'checkout-a'));
+    return { root, window };
+  }
+
+  it('lista uma pasta larga com no máximo 64 lstat em voo (L4)', async () => {
+    const { root, window } = bound(1101, 'wide-root');
+    for (let i = 0; i < 300; i += 1) fs.writeFileSync(path.join(root, `f${i}.txt`), 'x');
+    const realLstat = fs.promises.lstat.bind(fs.promises);
+    let inFlight = 0;
+    let peak = 0;
+    const spy = vi.spyOn(fs.promises, 'lstat').mockImplementation((async (...args: Parameters<typeof realLstat>) => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      try {
+        return await realLstat(...args);
+      } finally {
+        inFlight -= 1;
+      }
+    }) as never);
+    try {
+      const listed = await invoke<Promise<FileTreeResult>>(FILES_CHANNELS.list, window, { relPath: '' });
+      expect(listed.entries).toHaveLength(302);
+      expect(peak).toBeLessThanOrEqual(64);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')('FIFO trocado antes do open não prende uma thread do pool (L5)', async () => {
+    const { root, window } = bound(1102, 'fifo-root');
+    const target = path.join(root, 'same.txt');
+    const swapToFifo = () => {
+      fs.rmSync(target);
+      execFileSync('mkfifo', [target]);
+    };
+    // RED: sem O_NONBLOCK o open fica preso; libera a outra ponta para não
+    // deixar a thread do pool pendurada depois do teste.
+    const settle = async (pending: Promise<unknown>, releaseFlags: number) => {
+      const hung = Symbol('hung');
+      const outcome = await Promise.race([
+        pending,
+        new Promise((resolve) => setTimeout(() => resolve(hung), 1_000)),
+      ]);
+      if (outcome !== hung) return outcome;
+      const fd = fs.openSync(target, releaseFlags | fs.constants.O_NONBLOCK);
+      await pending.catch(() => undefined);
+      fs.closeSync(fd);
+      return 'hung';
+    };
+    electronMock.handlers.clear();
+    registerFilesIpc({ beforeOpen: swapToFifo });
+
+    expect(await settle(
+      Promise.resolve(invoke(FILES_CHANNELS.read, window, { relPath: 'same.txt' })),
+      fs.constants.O_WRONLY,
+    )).toEqual({ ok: false, error: 'unsafe file' });
+
+    fs.rmSync(target);
+    fs.writeFileSync(target, 'again');
+    expect(await settle(
+      Promise.resolve(invoke(FILES_CHANNELS.write, window, { relPath: 'same.txt', content: 'x' })),
+      fs.constants.O_RDONLY,
+    )).toEqual({ ok: false, error: 'unsafe file' });
   });
 });

@@ -1,10 +1,11 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PLUGIN_MANIFEST_SCHEMA } from './agent-plugin-manifest';
 import {
   __resetScanInstalledPluginsCacheForTests,
+  __scanInstalledPluginsCacheSizeForTests,
   scanInstalledPlugins,
 } from './agent-plugin-scan';
 
@@ -365,6 +366,20 @@ describe('scanInstalledPlugins — TTL cache (A6)', () => {
     expect(scanInstalledPlugins(home, { allowedTools: ['Bash', 'Read'] })).toHaveLength(1);
     // Lista diferente nunca recebe o resultado filtrado de outra.
     expect(scanInstalledPlugins(home, { allowedTools: ['Read'] })).toHaveLength(0);
+  });
+
+  it('o cache tem teto e descarta entradas vencidas (L6)', () => {
+    writePlugin('.claude/plugins', 'p1', manifest('p1'));
+    for (let i = 0; i < 100; i += 1) scanInstalledPlugins(home, { allowedTools: [`tool-${i}`] });
+    expect(__scanInstalledPluginsCacheSizeForTests()).toBeLessThanOrEqual(32);
+    const later = Date.now() + 61_000;
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(later);
+    try {
+      scanInstalledPlugins(home, { allowedTools: ['late'] });
+      expect(__scanInstalledPluginsCacheSizeForTests()).toBe(1);
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it('sem lista ([] efetivo) e lista nula não dividem a mesma entrada (#22)', () => {
