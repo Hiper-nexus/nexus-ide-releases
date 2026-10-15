@@ -488,6 +488,15 @@ export function grokHasNoRenewableSession(now = Date.now(), home = os.homedir())
   return blobs.length > 0 && blobs.every((blob) => grokSessionNeedsLogin(blob, now));
 }
 
+/**
+ * Adapters cuja decisão de auth DEPENDE do modelo: o mimo-code tem produto e
+ * região (Token Plan) por modelo, então a sonda de assinatura recebe o modelo e
+ * a listagem decide uma vez por modelo. Os demais dividem UMA decisão por
+ * listagem (perf #9). authDecision e listProviderSettings leem este conjunto:
+ * adapter novo com auth por modelo entra aqui, não em dois `=== 'mimo-code'`.
+ */
+const MODEL_AWARE_AUTH: ReadonlySet<string> = new Set(['mimo-code']);
+
 function authDecision(
   adapterId: string,
   _selectedModel?: string,
@@ -503,7 +512,7 @@ function authDecision(
   // AGY's native Keychain is always probed asynchronously before governed
   // spawn. Synchronous settings/spawn paths consume only that warm cache so
   // a locked login Keychain can never freeze Electron's main event loop.
-  const subscriptionAuthed = adapterId === 'mimo-code'
+  const subscriptionAuthed = MODEL_AWARE_AUTH.has(adapterId)
     ? probeSubscription(adapterId, effectiveProviderModel(adapterId, _selectedModel))
     : probeSubscription(adapterId);
   return resolveAuthStrategy({
@@ -1939,14 +1948,15 @@ function toInfo(
     deepseekSelected
       ? resolveDeepseekProviderKey(deepseekSelected, { vault: 'skip' })
       : resolveApiKeyWithoutVault(adapterId);
-  // authDecision só depende do modelo no mimo-code (produto/região por
-  // modelo); nos demais adapters uma decisão por listagem cobre o filtro de
-  // modelos, o default e a checagem do qwen (perf #9). A negativa continua
-  // sem cache em hasSubscriptionAuth — a próxima listagem reprova ao vivo.
+  // authDecision só depende do modelo nos adapters de MODEL_AWARE_AUTH
+  // (mimo-code: produto/região por modelo); nos demais uma decisão por
+  // listagem cobre o filtro de modelos, o default e a checagem do qwen (perf
+  // #9). A negativa continua sem cache em hasSubscriptionAuth — a próxima
+  // listagem reprova ao vivo.
   const authStatusSnapshot = options.nonBlockingAuth === true;
   let sharedAuthDecision: AuthDecision | undefined;
   const authDecisionFor = (model?: string): AuthDecision =>
-    adapterId === 'mimo-code'
+    MODEL_AWARE_AUTH.has(adapterId)
       ? authDecision(adapterId, model, { statusSnapshot: authStatusSnapshot })
       : (sharedAuthDecision ??= authDecision(adapterId, undefined, {
           statusSnapshot: authStatusSnapshot,
