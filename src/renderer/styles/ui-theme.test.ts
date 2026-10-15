@@ -21,7 +21,7 @@ const panelsCss = readStyles("panels.css");
 /** Body of the first rule matching `selector`, in the given stylesheet. */
 function ruleBody(css: string, selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return css.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`))?.[1] ?? "";
+  return css.replace(/\r\n/g, "\n").match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`))?.[1] ?? "";
 }
 
 /** Value a theme resolves for a token: its own block, else the :root default. */
@@ -84,6 +84,29 @@ describe("Native form control theme", () => {
 
   it("uses dark native menus before settings load", () => {
     expect(getComputedStyle(document.documentElement).colorScheme).toBe("dark");
+  });
+
+  it("sets both popup colors explicitly, independently of the select's colors", () => {
+    const popup = ruleBody(baseCss, "select option,\nselect optgroup");
+    expect(popup).toContain("background: var(--bg-elevated)");
+    expect(popup).toContain("color: var(--text)");
+    expect(popup).not.toMatch(/#[0-9a-f]{3,8}\b/i);
+  });
+
+  it("keeps disabled options legible, including disabled groups and selects", () => {
+    const disabled = ruleBody(baseCss, [
+      "select option:disabled",
+      "select optgroup:disabled",
+      "select optgroup:disabled option",
+      "select:disabled option",
+      "select:disabled optgroup",
+    ].join(",\n"));
+    expect(disabled).toContain("color: var(--text-dim)");
+    expect(disabled).toContain("opacity: 1");
+    for (const [name, palette] of Object.entries(PALETTES)) {
+      expect(contrast(palette.text, palette.bgElevated), `${name}: option`).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(palette.textDim, palette.bgElevated), `${name}: disabled`).toBeGreaterThanOrEqual(4.5);
+    }
   });
 
   it("keeps native menus on the same side as every built-in theme", () => {

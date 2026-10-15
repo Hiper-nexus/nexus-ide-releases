@@ -394,6 +394,25 @@ button {
   color: inherit;
 }
 
+/* Windows/Electron popups can retain the system canvas despite color-scheme.
+   Set both sides of the pair on the popup rows, even for custom-styled selects. */
+select option,
+select optgroup {
+  background: var(--bg-elevated);
+  color: var(--text);
+}
+
+/* Disabled is still readable: use secondary ink rather than fading the row.
+   Cover inherited disabled states too, since options have their own ink above. */
+select option:disabled,
+select optgroup:disabled,
+select optgroup:disabled option,
+select:disabled option,
+select:disabled optgroup {
+  color: var(--text-dim);
+  opacity: 1;
+}
+
 /* Controles de formulário não herdam fonte por padrão (o UA usa a do
    sistema): 24% do texto de Chaves de API e 25% de Equipes renderizavam em
    Arial. Componente que precisa de outra família declara a sua. */
