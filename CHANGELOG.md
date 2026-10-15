@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.76.278 — Linux em dia com as cotas
+
+A tag 0.76.277 não recebe pacotes Linux. Esta versão leva o produto dela, empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). A 0.76.277 é a candidata do Mac. Os medidores circulares do companheiro Mac não entram neste pacote.
+
+No desktop Linux, em relação à 0.76.276:
+
+- **Cursor mensal**. A franquia mensal aparece sem janelas genéricas de 5 horas e semana que o Cursor não informou.
+- **Antigravity nativo**. Uma conta salva deixa de ocultar a fonte de cota da sessão nativa. Essa leitura permanece na própria linha, sem ser atribuída a outra conta.
+- **Leitura com contexto**. Os motivos permitidos de cota indisponível acompanham a conta até o snapshot do Redline. Estimativas ficam identificadas; somente medições confirmadas entram no resumo da barra. Texto livre do provedor continua de fora.
+
 ## 0.76.277 — Redline mais visual no Mac
 
 - Redline redesenhado com medidores circulares, cotas lado a lado, logos maiores e uma faixa gráfica das contas. Os filtros Todas, Com leitura e Resolver levam direto ao que precisa de atenção.

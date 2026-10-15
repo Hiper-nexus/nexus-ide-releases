@@ -10930,7 +10930,7 @@ export const RELEASE_076276: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076277: AppRelease = {
   version: '0.76.277',
   date: '2026-10-15',
   codename: 'Redline mais visual no Mac',
@@ -10943,5 +10943,20 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Cursor mensal', detail: 'A franquia mensal aparece sem janelas genéricas de 5 horas e semana que o Cursor não informou.' },
     { title: 'Antigravity nativo', detail: 'Uma conta salva deixa de ocultar a fonte de cota da sessão nativa. Essa leitura permanece em sua própria linha, sem ser atribuída a outra conta.' },
     { title: 'Leitura com contexto', detail: 'Os motivos de cota indisponível acompanham a conta até o Redline. Estimativas ficam identificadas; somente medições confirmadas entram no resumo da barra.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.278',
+  date: '2026-10-15',
+  codename: 'Linux em dia com as cotas',
+  summary: 'O app no Linux deixa a 0.76.276 e passa a mostrar a franquia mensal do Cursor, a cota nativa do Antigravity na própria linha e o motivo quando uma leitura não está disponível. A tag 0.76.277 não recebe pacotes Linux; os medidores circulares ficam no companheiro do Mac.',
+  highlights: [
+    { title: 'Cursor mensal', detail: 'A franquia mensal aparece sem janelas genéricas de 5 horas e semana que o Cursor não informou.' },
+    { title: 'Antigravity nativo', detail: 'Uma conta salva deixa de ocultar a fonte de cota da sessão nativa. Essa leitura permanece em sua própria linha, sem ser atribuída a outra conta.' },
+  ],
+  fixes: [
+    { title: 'Leitura com contexto', detail: 'Os motivos permitidos de cota indisponível acompanham a conta até o snapshot do Redline. Estimativas ficam identificadas; somente medições confirmadas entram no resumo da barra.' },
+    { title: 'Atualização do Linux', detail: 'A tag 0.76.277 não recebe pacotes Linux. Ela é a candidata do Mac. O Linux sai na 0.76.278.' },
   ],
 };
