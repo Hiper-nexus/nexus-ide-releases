@@ -17,16 +17,21 @@ beforeEach(async () => {
  */
 const fixture = (name: string) => new URL(`./__tests__/${name}`, import.meta.url);
 
-it('AnalysisJobProgress guarda o horário de início do job e só o devolve para o token em andamento', () => {
+it('AnalysisJobProgress mede o tempo de trabalho no relógio monotônico e só para o token em andamento', () => {
   const progress = new AnalysisJobProgress();
-  expect(progress.startedAt(1)).toBe(0);
-  const before = Date.now();
+  expect(progress.elapsedMs(1)).toBeNull();
   progress.start(1);
-  expect(progress.startedAt(1)).toBeGreaterThanOrEqual(before);
-  expect(progress.startedAt(1)).toBeLessThanOrEqual(Date.now());
-  expect(progress.startedAt(2)).toBe(0);
+  // Relógio de parede dando um salto (sleep do Mac, ajuste de NTP) não conta como trabalho.
+  const wall = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 3_600_000);
+  try {
+    const elapsed = progress.elapsedMs(1);
+    expect(elapsed).not.toBeNull();
+    expect(elapsed!).toBeGreaterThanOrEqual(0);
+    expect(elapsed!).toBeLessThan(1_000);
+  } finally { wall.mockRestore(); }
+  expect(progress.elapsedMs(2)).toBeNull();
   progress.reset();
-  expect(progress.startedAt(1)).toBe(0);
+  expect(progress.elapsedMs(1)).toBeNull();
 });
 
 it('o entry do worker de produção não posta work-start por registro, só o da avaliação com manifesto', () => {
@@ -97,3 +102,31 @@ it('job que ainda nem começou só cai no prazo de entrega de 2 s, não nos 250 
     expect(elapsed).toBeLessThan(3_500);
   } finally { await shutdownPtyAnalysis(); }
 }, 10_000);
+
+it('worker que só começa depois de 1,7 s e termina logo não é morto quando o Main fica bloqueado além do prazo de entrega', async () => {
+  setPtyAnalysisWorkerFactoryForTests((progress) => new Worker(fixture('analysis-late-worker.cjs'), { workerData: { analysisProgress: progress } }));
+  startPtyAnalysis(); bindPtyAnalysisSession('late-complete'); expect(await flushPtyAnalysis('late-complete')).toBe(true);
+  try {
+    feedPtyAnalysis('late-complete', 'late-complete');
+    // Main preso de 1,6 s a 2,4 s na fase `check` (setImmediate): o prazo de 2 s vence DENTRO do
+    // bloqueio e, na volta, a fase de timers roda ANTES de entregar o resultado que já está na fila.
+    await new Promise<void>((resolve) => setTimeout(() => setImmediate(() => { const until = Date.now() + 800; while (Date.now() < until) Math.imul(31, 17); resolve(); }), 1_600));
+    expect(await flushPtyAnalysis('late-complete')).toBe(true);
+    expect(analysisClient.status('late-complete')).toBe('active');
+  } finally { await shutdownPtyAnalysis(); }
+}, 15_000);
+
+it('worker que começa perto do prazo de entrega e trava recebe o orçamento de trabalho, não o corte de entrega', async () => {
+  setPtyAnalysisWorkerFactoryForTests((progress) => new Worker(fixture('analysis-late-worker.cjs'), { workerData: { analysisProgress: progress } }));
+  startPtyAnalysis(); bindPtyAnalysisSession('late-poison'); expect(await flushPtyAnalysis('late-poison')).toBe(true);
+  try {
+    const startedAt = performance.now();
+    feedPtyAnalysis('late-poison', 'late-poison');
+    expect(await flushPtyAnalysis('late-poison')).toBe(false);
+    const elapsed = performance.now() - startedAt;
+    // Começou em ~1,9 s e travou: cai ~250 ms depois do início como work-timeout, não aos 2 s como delivery-timeout.
+    expect(analysisClient.metrics().lastFailure).toBe('work-timeout');
+    expect(elapsed).toBeGreaterThanOrEqual(2_100);
+    expect(elapsed).toBeLessThan(3_500);
+  } finally { await shutdownPtyAnalysis(); }
+}, 15_000);
