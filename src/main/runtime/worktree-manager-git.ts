@@ -12,6 +12,7 @@ import {
   type GitRunner,
 } from "./git-command";
 import {
+  POOL_WORKTREES_SUBDIR,
   WorktreeStateConflictError,
   assertSha,
   cloneWorktreeRecord as cloneRecord,
@@ -22,6 +23,7 @@ import {
 import { validateWorktreeStateSnapshot } from "./worktree-state";
 import { INTERRUPTED_WORKTREE_RESERVATION_FAILURE_MARKER } from "./worktree-manager-markers";
 import { areWorktreePathsEqual } from "./worktree-path-compare";
+import { isPathInsideOrEqual } from "./worktree-removal-safety";
 
 const MAX_CAS_ATTEMPTS = 16;
 
@@ -431,6 +433,35 @@ export interface ReservationReconcileDeps {
   timestamp(): number;
 }
 
+/**
+ * A1: a adoção do pool grava a intenção `reserved` (identidade derivada) antes
+ * do `branch -m`; um crash entre o rename e o `worktree move` deixa a branch
+ * derivada em `pool/…`. Conclui o move para o caminho da intenção — só para
+ * uma worktree ligada sob a raiz do pool — e a prova normal decide depois.
+ */
+function convergeInterruptedPoolAdoption(
+  deps: ReservationReconcileDeps,
+  record: WorktreeRecord,
+): void {
+  if (record.ownerKind !== "pane" || fs.existsSync(record.worktreePath)) return;
+  const listed = deps.git.run(record.rootRealPath, ["worktree", "list", "--porcelain"], {
+    allowFailure: true,
+  });
+  if (listed.status !== 0) return;
+  const holder = listed.stdout.split("\n\n").map((block) => block.split("\n"))
+    .find((lines) => lines.includes(`branch ${record.branchRef}`))
+    ?.find((line) => line.startsWith("worktree "))?.slice("worktree ".length);
+  const real = holder && fs.existsSync(holder) ? fs.realpathSync(holder) : "";
+  const poolRoots = [deps.worktreesRoot, deps.legacyWorktreesRoot]
+    .filter((root): root is string => root !== undefined)
+    .map((root) => path.join(root, POOL_WORKTREES_SUBDIR));
+  if (!real || !poolRoots.some((root) => isPathInsideOrEqual(root, real))) return;
+  fs.mkdirSync(path.dirname(record.worktreePath), { recursive: true, mode: 0o700 });
+  deps.git.run(record.rootRealPath, ["worktree", "move", real, record.worktreePath], {
+    allowFailure: true,
+  });
+}
+
 export function reconcileInterruptedReservation(
   deps: ReservationReconcileDeps,
   scope: ProjectExecutionScope,
@@ -462,6 +493,7 @@ export function reconcileInterruptedReservation(
         );
       }
       const repository = readRepositorySnapshot(deps.git, scope, current.ownerKind !== "pane");
+      convergeInterruptedPoolAdoption(deps, current);
       if (
         repository.integrationRef !== current.integrationRef ||
         repository.headSha !== current.baseSha

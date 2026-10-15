@@ -7,6 +7,7 @@ import type { ProjectExecutionScope } from '../../shared/types';
 import {
   AsyncProcessGitRunner,
   WorktreeManager,
+  type AsyncGitRunner,
   WorktreeStateConflictError,
   materializeGitWorktree,
   worktreeBranchRef,
@@ -99,6 +100,52 @@ function derivedIdentity(missionId: string, workerId: string) {
     managedWorktreeRelativePath(PROJECT_ID, 'checkout-pool-test', taskKey),
   );
   return { taskId, taskKey, branchRef, worktreePath };
+}
+
+/**
+ * Runner que "morre" logo depois do passo `crashAfter`: o passo roda de
+ * verdade e toda chamada seguinte fica pendente para sempre — o processo
+ * acabou ali, então nenhum rollback em memória roda.
+ */
+function crashingGitRunner(crashAfter: (args: readonly string[]) => boolean) {
+  let dead = false;
+  let signalCrash!: () => void;
+  const crashed = new Promise<void>((resolve) => { signalCrash = resolve; });
+  const runner: AsyncGitRunner = {
+    async run(cwd, args, options) {
+      if (dead) return new Promise<never>(() => {});
+      if (crashAfter(args)) {
+        dead = true;
+        const result = await asyncGit.run(cwd, args, options);
+        signalCrash();
+        await new Promise<never>(() => {});
+        return result;
+      }
+      return asyncGit.run(cwd, args, options);
+    },
+  };
+  return { runner, crashed };
+}
+
+/** Worktrees ligadas ao repositório: caminho real → branch. */
+function linkedWorktrees(): Map<string, string> {
+  const listed = new Map<string, string>();
+  for (const block of git(root, 'worktree', 'list', '--porcelain').split('\n\n').slice(1)) {
+    const lines = block.split('\n');
+    const worktreePath = lines.find((line) => line.startsWith('worktree '))?.slice('worktree '.length) ?? '';
+    const branch = lines.find((line) => line.startsWith('branch '))?.slice('branch '.length) ?? '';
+    listed.set(fs.realpathSync(worktreePath), branch);
+  }
+  return listed;
+}
+
+function rebootManager(): WorktreeManager {
+  return new WorktreeManager({
+    runtimeRoot,
+    worktreesRoot,
+    stateStore,
+    now: () => 1_700_000_000_000,
+  });
 }
 
 beforeEach(() => {
@@ -208,11 +255,11 @@ describe('WorktreeManager pooled worktree adoption (A1)', () => {
     expect(fs.existsSync(poolPath)).toBe(false);
   });
 
-  it('CAS conflict after the move rolls back and leaves no derived worktree/branch', async () => {
+  it('registered identity conflict is refused before any Git mutation (no derived worktree/branch)', async () => {
     const base = headSha();
     // Cria um writer real com o MESMO workerId (mesma identidade derivada),
-    // depois apaga a worktree e a branch físicas para simular um registro órfão
-    // que só conflita no CAS (branch -m e move ainda encontram os alvos livres).
+    // depois apaga a worktree e a branch físicas para simular um registro órfão:
+    // a intenção durável conflita antes do branch -m/move.
     const existing = await manager.create({
       scope: scope(),
       missionId: 'operator-hand',
@@ -299,5 +346,90 @@ describe('WorktreeManager pooled worktree adoption (A1)', () => {
 
     expect(fs.existsSync(worktreePath)).toBe(false);
     expect(git(root, 'branch', '--list', 'nexus-pool/discard')).toBe('');
+  });
+});
+
+describe('WorktreeManager pooled adoption crash recovery (A1)', () => {
+  const isBranchRename = (args: readonly string[]) => args[0] === 'branch' && args[1] === '-m';
+  const isWorktreeMove = (args: readonly string[]) => args[0] === 'worktree' && args[1] === 'move';
+
+  it.each([
+    ['depois do rename da branch, antes do move', isBranchRename],
+    ['depois do move, antes de gravar a adoção', isWorktreeMove],
+  ])('crash %s: o boot conclui a adoção na identidade derivada, sem órfã', async (_label, crashAfter) => {
+    const base = headSha();
+    const pooled = await materializePooled('crash');
+    const derived = derivedIdentity('operator-hand', 'worker-1');
+    const { runner, crashed } = crashingGitRunner(crashAfter);
+    const dying = new WorktreeManager({
+      runtimeRoot,
+      worktreesRoot,
+      stateStore,
+      asyncGitRunner: runner,
+      now: () => 1_700_000_000_000,
+    });
+    void dying.claimPooledPaneWriter(scope(), 'operator-hand', {
+      workerId: 'worker-1',
+      worktreePath: pooled.worktreePath,
+      branchRef: pooled.branchRef,
+      baseSha: base,
+    }).catch(() => {});
+    await crashed;
+
+    // Novo processo, mesmo estado durável: a reconciliação de boot.
+    const rebooted = rebootManager();
+    rebooted.reconcileInterruptedReservations(scope());
+
+    const record = rebooted.get(scope(), 'operator-hand', derived.taskId);
+    expect(record).toMatchObject({
+      status: 'ready',
+      worktreePath: derived.worktreePath,
+      branchRef: derived.branchRef,
+      baseSha: base,
+    });
+    expect(git(derived.worktreePath, 'symbolic-ref', '--quiet', 'HEAD')).toBe(derived.branchRef);
+    // Toda worktree ligada tem registro (nenhuma branch derivada esquecida em pool/).
+    expect([...linkedWorktrees()]).toEqual([[derived.worktreePath, derived.branchRef]]);
+  });
+
+  it('crash antes do rename: a intenção falha fechada e a pré-alocada segue descartável pelo pool', async () => {
+    const base = headSha();
+    const pooled = await materializePooled('crash-before-rename');
+    const derived = derivedIdentity('operator-hand', 'worker-1');
+    let signalCrash!: () => void;
+    const crashed = new Promise<void>((resolve) => { signalCrash = resolve; });
+    const dying = new WorktreeManager({
+      runtimeRoot,
+      worktreesRoot,
+      stateStore,
+      asyncGitRunner: {
+        run(cwd, args, options) {
+          if (isBranchRename(args)) {
+            signalCrash();
+            return new Promise<never>(() => {});
+          }
+          return asyncGit.run(cwd, args, options);
+        },
+      },
+      now: () => 1_700_000_000_000,
+    });
+    void dying.claimPooledPaneWriter(scope(), 'operator-hand', {
+      workerId: 'worker-1',
+      worktreePath: pooled.worktreePath,
+      branchRef: pooled.branchRef,
+      baseSha: base,
+    }).catch(() => {});
+    await crashed;
+
+    const rebooted = rebootManager();
+    rebooted.reconcileInterruptedReservations(scope());
+
+    // A intenção não vira writer: nada físico na identidade derivada.
+    expect(rebooted.get(scope(), 'operator-hand', derived.taskId)?.status ?? 'failed').toBe('failed');
+    expect(fs.existsSync(derived.worktreePath)).toBe(false);
+    // A pré-alocada ficou intacta na branch de pool: a limpeza de boot do pool a remove.
+    expect(git(pooled.worktreePath, 'symbolic-ref', '--quiet', 'HEAD')).toBe(pooled.branchRef);
+    await rebooted.removePooledWorktree(scope(), pooled);
+    expect(linkedWorktrees().size).toBe(0);
   });
 });
