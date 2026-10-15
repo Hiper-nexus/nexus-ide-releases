@@ -29,6 +29,8 @@ vi.mock('../persistence/provider-config-store', () => ({
   listProviderSettings: h.listProviderSettings,
   isProviderEnabled: () => true,
   providerReadiness: () => ({ ready: true, reason: 'ready' }),
+  warmGrokAccountCredentialCache: () => {},
+  sessionExpiredBeyondRenewal: () => false,
 }));
 vi.mock('../persistence/account-store', async () => ({
   ...(await vi.importActual<typeof import('../persistence/account-store')>(

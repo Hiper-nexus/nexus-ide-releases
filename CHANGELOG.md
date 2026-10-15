@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.76.282 — Linux em dia com a voz e a lateral
+## 0.76.283 — Linux em dia com a voz e a lateral
 
-A tag 0.76.281 não recebe pacotes Linux. Esta versão leva o produto dela, empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). A 0.76.281 é a candidata do Windows. O ConPTY do Qwen e a admissão de comando pesado no Windows não são o motivo deste pacote.
+A tag 0.76.282 não recebe pacotes Linux: a suíte não fechava (hashes de proveniência desatualizados e o mock do aquecimento da conta Grok). Esta versão corrige isso e leva o produto da 0.76.281, empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). A 0.76.281 é a candidata do Windows. O ConPTY do Qwen e a admissão de comando pesado no Windows não são o motivo deste pacote.
 
 No desktop Linux, em relação à 0.76.280:
 
@@ -11,6 +11,10 @@ No desktop Linux, em relação à 0.76.280:
 - **Grok com sessão vencida**. A conta sai da rota até o novo login. O card de abertura do painel mostra a falha.
 - **Escritor isolado em qualquer aba**. Abas com HEAD solto aceitam escritores isolados. Se o isolamento não for possível, o escritor segue no checkout compartilhado e o recibo diz o motivo.
 - **Quadro**. A aba Conversa cabe em painéis estreitos. Orientação a um coordenador ocupado é recusada na hora, as orientações não somem, a resposta mostra "Aguardando confirmação…" e o foco volta ao editor. A linha do tempo detalhada lê o quadro certo e as recusas aparecem em PT-BR.
+
+## 0.76.282 — Linux em dia com a voz e a lateral
+
+A tag 0.76.281 não recebe pacotes Linux. A suíte desta tag não fechou, então ela também não recebe pacotes Linux.
 
 ## 0.76.281 — Windows legível e voz que se explica
 

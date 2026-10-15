@@ -11014,7 +11014,7 @@ export const RELEASE_076281: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076282: AppRelease = {
   version: '0.76.282',
   date: '2026-10-15',
   codename: 'Linux em dia com a voz e a lateral',
@@ -11030,6 +11030,26 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Grok com sessão vencida', detail: 'Uma conta do Grok com login vencido sai da rota até você entrar de novo. O card de abertura mostra a falha em vez de ficar carregando.' },
     { title: 'Conversa do Quadro', detail: 'A aba Conversa cabe em painéis estreitos. Orientação a um coordenador ocupado é recusada na hora, as orientações não somem e o foco volta ao editor depois do envio.' },
     { title: 'Mensagens claras', detail: 'Respostas aguardam a sua confirmação com "Aguardando confirmação…", a linha do tempo detalhada mostra o quadro correto e as recusas aparecem em português.' },
-    { title: 'Atualização do Linux', detail: 'A tag 0.76.281 não recebe pacotes Linux. Ela é a candidata do Windows. O Linux sai na 0.76.282.' },
+    { title: 'Atualização do Linux', detail: 'A tag 0.76.281 não recebe pacotes Linux. Ela é a candidata do Windows. A suíte da 0.76.282 não fechou; o Linux sai na 0.76.283.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.283',
+  date: '2026-10-15',
+  codename: 'Linux em dia com a voz e a lateral',
+  summary: 'No Linux, a lateral vira uma lista plana, a voz explica a falha do realtime e toca uma amostra antes da escolha, e o Quadro cabe em painel estreito. A tag 0.76.282 não recebe pacotes Linux.',
+  highlights: [
+    { title: 'Lateral em lista plana', detail: 'Cada projeto vira um grupo, missões ocupam uma linha e agentes aparecem aninhados. O destaque ao passar o mouse mantém o contraste em todos os temas.' },
+    { title: 'Ouça antes de escolher', detail: 'Um botão de play toca uma amostra de cada voz na Voz por etapas e na Voz Gemini Live. Parar ou trocar de voz interrompe a amostra anterior.' },
+    { title: 'Grok Voice 3.0', detail: 'O modelo realtime atual da xAI vira o padrão, e configurações com o modelo antigo migram sozinhas. Quando a conexão falha, o chip e o teste dizem o motivo.' },
+  ],
+  fixes: [
+    { title: 'Escritor isolado em qualquer aba', detail: 'Abas com HEAD solto aceitam escritores isolados. Quando o isolamento não é possível, o escritor segue no checkout compartilhado e o recibo explica por quê.' },
+    { title: 'Troca de chave ou modelo na voz', detail: 'Trocar a chave ou o modelo durante uma conexão cancela a tentativa anterior: a falha antiga não volta ao chip.' },
+    { title: 'Grok com sessão vencida', detail: 'Uma conta do Grok com login vencido sai da rota até você entrar de novo. O card de abertura mostra a falha em vez de ficar carregando.' },
+    { title: 'Conversa do Quadro', detail: 'A aba Conversa cabe em painéis estreitos. Orientação a um coordenador ocupado é recusada na hora, as orientações não somem e o foco volta ao editor depois do envio.' },
+    { title: 'Mensagens claras', detail: 'Respostas aguardam a sua confirmação com "Aguardando confirmação…", a linha do tempo detalhada mostra o quadro correto e as recusas aparecem em português.' },
+    { title: 'Atualização do Linux', detail: 'A tag 0.76.282 não recebe pacotes Linux. A suíte dela não fechava. O Linux sai na 0.76.283.' },
   ],
 };

@@ -53,6 +53,8 @@ vi.mock('../persistence/provider-config-store', () => ({
   listProviderSettings: mocks.listProviderSettings,
   isProviderEnabled: mocks.isProviderEnabled,
   providerReadiness: mocks.providerReadiness,
+  warmGrokAccountCredentialCache: () => {},
+  sessionExpiredBeyondRenewal: () => false,
 }));
 
 vi.mock('../persistence/account-store', async () => {
