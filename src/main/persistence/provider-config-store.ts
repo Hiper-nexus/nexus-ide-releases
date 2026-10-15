@@ -496,10 +496,41 @@ export function grokHasNoRenewableSession(now = Date.now(), home = os.homedir())
   for (const account of listAccounts('grok')) {
     if (account.mode !== 'subscription') continue;
     const key = `acctcred:${account.id}`;
+    // Conta sem credencial nenhuma no cofre não tem o que provar: não veta.
+    // Presença no índice cifrado basta (sem decifrar), como em hasRuntimeKey.
+    if (!hasSecret(key)) continue;
     if (!hasCachedSecret(key)) return false;
     blobs.push(...accountCredentialCandidates('grok', account.id, getSecret(key)));
   }
   return blobs.length > 0 && blobs.every((blob) => grokSessionNeedsLogin(blob, now));
+}
+
+/**
+ * F-1485: o veto de cofre frio acima é correto para a checagem SÍNCRONA (a
+ * prontidão é consultada no boot e não pode decifrar — ver `hasRuntimeKey`),
+ * mas no incidente de 13–15/10 ele deixou o Grok routable a rota inteira: o
+ * cofre estava frio, o estreitamento não aconteceu, o gate recusou o spawn
+ * (`GROK_LOGIN_REQUIRED_MESSAGE`) e o Maestro reabriu — 7 recusas seguidas.
+ *
+ * Quem está num limite ASSÍNCRONO que precede a checagem (rota de spawn,
+ * sonda de auth) aquece o cofre aqui antes, do mesmo jeito que
+ * `warmSquadRuntimeSubscriptionAuth` faz pelo AGY/Kimi. É o mesmo segredo que
+ * o spawn decifraria instantes depois; não abre caminho de boot nem novo egress.
+ */
+export function warmGrokAccountCredentialCache(): void {
+  for (const account of listAccounts('grok')) {
+    if (account.mode !== 'subscription') continue;
+    getSecret(`acctcred:${account.id}`);
+  }
+}
+
+/**
+ * Motivo específico para o recibo da rota: a credencial EXISTE, mas a própria
+ * CLI não a renova mais (o Grok para de renovar 7 dias depois da emissão).
+ * "sem credencial pronta" dizia outra coisa e o operador procurava uma chave.
+ */
+export function sessionExpiredBeyondRenewal(adapterId: string): boolean {
+  return adapterId === 'grok' && grokHasNoRenewableSession();
 }
 
 /**

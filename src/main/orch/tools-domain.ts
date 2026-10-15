@@ -66,7 +66,11 @@ import {
   measureIntegrationStateAsync,
 } from './integration-review-gate';
 import { resolveReviewVerdictTarget } from './review-verdict-target';
-import { listProviderSettings } from '../persistence/provider-config-store';
+import {
+  listProviderSettings,
+  sessionExpiredBeyondRenewal,
+  warmGrokAccountCredentialCache,
+} from '../persistence/provider-config-store';
 import {
   GLOBAL_USE_WINDOW_MS,
   isFrontierReviewer,
@@ -2141,6 +2145,12 @@ export async function routeTaskForCaller(
     // login-needed e derrubar o roteamento da missão.
     await warmSquadRuntimeSubscriptionAuth();
   }
+  // F-1485: vale para a rota COM e SEM missão. `grokHasNoRenewableSession` não
+  // decifra no caminho síncrono (boot), então com o cofre frio o veto deixava o
+  // Grok routable, o gate recusava o spawn e o Maestro reabria — 7 recusas no
+  // incidente de 13–15/10. Aquecer aqui é o mesmo segredo que o spawn decifraria
+  // em seguida; é leitura local, sem subprocesso.
+  warmGrokAccountCredentialCache();
   const governedMissionWorkerIds = missionId
     ? liveSquadRuntimeInventory().policy.routableWorkerCliIds
     : null;
@@ -2222,7 +2232,11 @@ export async function routeTaskForCaller(
               a.adapterId === 'opencode' && models.length > 0,
           })
         ) {
-          return 'sem credencial pronta';
+          // F-1485: a credencial EXISTE, mas a CLI não a renova mais. Dizer
+          // "sem credencial pronta" mandava o operador procurar uma chave.
+          return sessionExpiredBeyondRenewal(a.adapterId)
+            ? 'sessão expirada — precisa de login'
+            : 'sem credencial pronta';
         }
         if (
           writerCircuitBlocksSeat({

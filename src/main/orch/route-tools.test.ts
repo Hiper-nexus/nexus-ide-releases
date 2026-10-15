@@ -18,6 +18,9 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../persistence/provider-config-store', () => ({
+  // F-1485: a rota aquece o cofre do Grok antes da prontidão síncrona.
+  warmGrokAccountCredentialCache: () => {},
+  sessionExpiredBeyondRenewal: () => false,
   listProviderSettings: mocks.listProviderSettings,
   isProviderEnabled: mocks.isProviderEnabled,
   providerReadiness: mocks.providerReadiness,

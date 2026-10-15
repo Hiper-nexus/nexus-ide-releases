@@ -99,7 +99,14 @@ vi.mock('../adapters/provider-test', () => ({ testProviderKey: vi.fn() }));
 
 vi.mock('./secrets-store', () => ({
   getKey: (id: string) => fx.vault.get(id) ?? null,
-  getSecret: (key: string) => fx.vault.get(key) ?? null,
+  // O getSecret real decifra E guarda em memória (secrets-store.ts:395-408) —
+  // é exatamente isso que "aquecer o cofre" significa. Um mock que não aquece
+  // esconderia o caminho de warmGrokAccountCredentialCache.
+  getSecret: (key: string) => {
+    const value = fx.vault.get(key) ?? null;
+    if (value !== null) fx.cached.add(key);
+    return value;
+  },
   hasSecret: (key: string) => fx.vault.has(key),
   hasCachedSecret: (key: string) => fx.cached.has(key),
   isSecureStorageAvailable: () => true,
@@ -183,6 +190,8 @@ import {
   registerProviderIpc,
   resolveQuotaApiKey,
   resolveRuntimeApiKey,
+  sessionExpiredBeyondRenewal,
+  warmGrokAccountCredentialCache,
 } from './provider-config-store';
 
 const TOKEN_PLAN_ANTHROPIC = 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic';
@@ -658,5 +667,33 @@ describe('F-1485 — Grok sem nenhuma sessão renovável vira login-needed', () 
     writeNative(grokSession(NOW - 9 * DAY));
     saveAccount('grok-acct-a', grokSession(NOW - 12 * DAY));
     expect(grokHasNoRenewableSession(NOW)).toBe(true);
+  });
+
+  it('cofre frio não estreita no caminho síncrono, mas aquecer no limite assíncrono estreita', () => {
+    // Incidente de 13–15/10: o cofre estava frio na hora da rota, o veto de
+    // cofre frio deixava o Grok routable, o gate recusava o spawn e o Maestro
+    // reabria — 7 recusas seguidas. O veto continua valendo para a checagem
+    // síncrona (boot não decifra); quem está num limite assíncrono aquece.
+    writeNative(grokSession(NOW - 13 * DAY));
+    saveAccount('grok-acct-fria-2', grokSession(NOW - 13 * DAY), false);
+    expect(grokHasNoRenewableSession(NOW)).toBe(false);
+    warmGrokAccountCredentialCache();
+    expect(grokHasNoRenewableSession(NOW)).toBe(true);
+    expect(sessionExpiredBeyondRenewal('grok')).toBe(true);
+  });
+
+  it('conta sem credencial nenhuma no cofre não veta: o nativo vencido decide', () => {
+    writeNative(grokSession(NOW - 13 * DAY));
+    fx.accounts.push({
+      id: 'grok-acct-sem-cred', adapterId: 'grok', label: 'sem cred',
+      mode: 'subscription', upstream: 'xai', createdAt: 1,
+    });
+    expect(grokHasNoRenewableSession(NOW)).toBe(true);
+  });
+
+  it('sessionExpiredBeyondRenewal só fala do Grok', () => {
+    writeNative(grokSession(NOW - 13 * DAY));
+    expect(sessionExpiredBeyondRenewal('grok')).toBe(true);
+    expect(sessionExpiredBeyondRenewal('claude')).toBe(false);
   });
 });
