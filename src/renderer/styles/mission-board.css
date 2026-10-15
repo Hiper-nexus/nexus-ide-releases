@@ -242,6 +242,11 @@
   overflow: visible;
 }
 
+/* O cabeçalho sozinho não libera o menu: o quadro minimizado também corta. */
+.mission-board:has(.mission-board__header--menu-open) {
+  overflow: visible;
+}
+
 .mission-board__more {
   position: relative;
   flex: 0 0 auto;
@@ -266,7 +271,7 @@
    inteira, foco/hover em accent-soft. */
 .mission-board__menu {
   position: absolute;
-  inset-inline-end: 0;
+  inset-inline-start: 0;
   top: calc(100% + var(--space-1));
   z-index: 4;
   display: grid;
@@ -3277,6 +3282,16 @@
 
 /* Tela estreita: o zoom desce para a própria linha, longe do "detalhes". */
 @container mission-board (max-width: 720px) {
+  .mission-board__more {
+    position: static;
+  }
+
+  .mission-board__menu {
+    inset-inline-start: var(--space-4);
+    max-width: calc(100cqw - var(--space-4) * 2);
+    min-width: min(13rem, calc(100cqw - var(--space-4) * 2));
+  }
+
   .mission-graph__zoom-controls {
     flex: 1 1 100%;
     justify-content: flex-end;

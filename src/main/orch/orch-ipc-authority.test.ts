@@ -15,6 +15,7 @@ import {
 import type { Mission, Squad } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { withMissionLifecycleLock } from './mission-lifecycle-lock';
+import { redeliverPendingHandoffs } from './idle-delivery';
 
 interface TestOwner {
   id: number;
@@ -118,6 +119,7 @@ const harness = vi.hoisted(() => {
     resolveOwnedPaneForAdoption: vi.fn(),
     promoteOrchestrator: vi.fn(),
     createPaneMission: vi.fn(),
+    deliverLeaderNotice: vi.fn(async (..._args: any[]) => true),
     spawnOperatorPane: vi.fn(),
     planPromotionCandidate: vi.fn(),
     promotePlan: vi.fn(),
@@ -386,6 +388,11 @@ vi.mock('./pane-registry', () => ({
   resolvePaneSpawn: vi.fn(),
   syncPanes: vi.fn(),
   unregisterOrchRenderer: vi.fn(),
+}));
+vi.mock('./tool-util', async original => ({
+  ...(await original<typeof import('./tool-util')>()),
+  injectPrompt: vi.fn(async () => {}),
+  deliverAgentPrompt: harness.deliverLeaderNotice,
 }));
 vi.mock('../pty/pty-manager', () => ({
   isPtySessionAdmissionSealedForShutdown: () => false,
@@ -842,6 +849,7 @@ beforeEach(() => {
   harness.operatorInput.missionPanes.splice(0);
   harness.operatorInput.writes.length = 0;
   vi.clearAllMocks();
+  harness.deliverLeaderNotice.mockReset().mockResolvedValue(true);
   harness.dialog.showMessageBox.mockReset();
   harness.dialog.showOpenDialog.mockReset();
   harness.dialog.showSaveDialog.mockReset();
@@ -4310,6 +4318,73 @@ describe('teclado do operador em pane de missão', () => {
 });
 
 describe('missionCreateForPane — a missão do GRUPO do pane (F-374)', () => {
+  function promotedLeader() {
+    configureRendererMissionAuthority({} as never);
+    const sender = owner(939); harness.scopes.set(sender.id, SCOPE_A);
+    harness.missionEngines.set(JSON.stringify(SCOPE_A), { list: async () => [] });
+    const mission = { id: 'mission-399', title: 'Cold native mission', orchestratorSessionId: 'pty-399' };
+    harness.createPaneMission.mockResolvedValue({ ok: true, mission });
+    harness.agentSessions.push({ sessionId: 'pty-399', paneId: 'pane-399', missionId: mission.id,
+      role: 'orchestrator', adapterId: 'claude', accountId: 'account-399', scope: SCOPE_A });
+    return { sender, mission, create: () => canonicalHandler(ORCH_CHANNELS.missionCreateForPane)(
+      { sender }, { paneId: 'pane-399', title: mission.title }) };
+  }
+
+  it('F-399 waits for the complete promotion notice to be accepted before the next direction', async () => {
+    const { create } = promotedLeader();
+    let accept!: (value: boolean) => void;
+    harness.deliverLeaderNotice.mockReturnValueOnce(new Promise(resolve => { accept = resolve; }));
+    const nextDirection = vi.fn();
+    const pending = Promise.resolve(create()).then(value => { nextDirection(); return value; });
+    await vi.waitFor(() => expect(harness.deliverLeaderNotice).toHaveBeenCalledOnce());
+    expect(nextDirection).not.toHaveBeenCalled();
+    expect(redeliverPendingHandoffs).not.toHaveBeenCalled();
+    const [sessionId, text, invocation, options] = harness.deliverLeaderNotice.mock.calls[0];
+    expect(sessionId).toBe('pty-399');
+    expect(Buffer.byteLength(text)).toBeGreaterThan(1023);
+    expect(options).toEqual({ adapterId: 'claude' });
+    expect(() => invocation.assertCurrentAuthority()).not.toThrow();
+    accept(true);
+    await expect(pending).resolves.toMatchObject({ ok: true, mission: { id: 'mission-399' } });
+    expect(nextDirection).toHaveBeenCalledOnce();
+    expect(redeliverPendingHandoffs).toHaveBeenCalledExactlyOnceWith(SCOPE_A, 'mission-399');
+    expect(harness.operatorInput.writes).toEqual([]);
+  });
+
+  it.each(['rejected', 'unconfirmed'])('F-399 keeps the promoted mission when notice delivery is %s', async outcome => {
+    const { create, mission } = promotedLeader();
+    if (outcome === 'rejected') harness.deliverLeaderNotice.mockRejectedValueOnce(new Error('cold CLI unavailable'));
+    else harness.deliverLeaderNotice.mockResolvedValueOnce(false);
+    await expect(create()).resolves.toEqual({ ok: true, mission });
+    expect(harness.deliverLeaderNotice).toHaveBeenCalledOnce();
+    expect(harness.terminatePty).not.toHaveBeenCalled();
+  });
+
+  it('F-399 workspace changes reject only the response, never the physical announcement authority', async () => {
+    const { create, sender } = promotedLeader();
+    let accept!: (value: boolean) => void;
+    harness.deliverLeaderNotice.mockReturnValueOnce(new Promise(resolve => { accept = resolve; }));
+    const pending = create();
+    await vi.waitFor(() => expect(harness.deliverLeaderNotice).toHaveBeenCalledOnce());
+    const rejected = expect(pending).rejects.toThrow(/scope|workspace/);
+    harness.scopes.set(sender.id, SCOPE_B);
+    expect(() => harness.deliverLeaderNotice.mock.calls[0][2].assertCurrentAuthority()).not.toThrow();
+    accept(true);
+    await rejected;
+  });
+
+  it('F-399 binds the announcement to the promoted physical session', async () => {
+    const { create } = promotedLeader();
+    harness.deliverLeaderNotice.mockImplementationOnce(async (_id, _text, invocation) => {
+      harness.agentSessions[0] = { ...harness.agentSessions[0], accountId: 'other-account' };
+      expect(() => invocation.assertCurrentAuthority()).toThrow(/authority/);
+      throw new Error('promotion authority changed');
+    });
+    await expect(create()).resolves.toMatchObject({ ok: true, mission: { id: 'mission-399' } });
+    expect(harness.deliverLeaderNotice).toHaveBeenCalledOnce();
+    expect(harness.terminatePty).not.toHaveBeenCalled();
+  });
+
   it('rejeita ownGroup não-booleano como invalid_payload', async () => {
     configureRendererMissionAuthority({} as never);
     const sender = owner(931);

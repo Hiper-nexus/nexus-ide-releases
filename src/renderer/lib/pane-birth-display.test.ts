@@ -18,7 +18,7 @@ const BASE = {
 describe('paneBirthDisplay', () => {
   it('names who is coming up while the PTY has no session yet', () => {
     expect(paneBirthDisplay(BASE)).toEqual({
-      headline: 'Subindo…',
+      headline: 'Preparando agente…',
       detail: 'Codex Dev — codex · gpt-5.6-sol',
       slow: false,
       failed: false,
@@ -30,7 +30,7 @@ describe('paneBirthDisplay', () => {
       ...BASE,
       elapsedMs: PANE_BIRTH_SLOW_AFTER_MS,
     });
-    expect(display).toMatchObject({ headline: 'Ainda subindo…', slow: true });
+    expect(display).toMatchObject({ headline: 'A abertura está demorando', slow: true });
     expect(display?.detail).toMatch(/demorando/i);
   });
 
@@ -52,7 +52,7 @@ describe('paneBirthDisplay', () => {
   it('covers the pane that has no state at all yet', () => {
     expect(
       paneBirthDisplay({ ...BASE, sessionState: undefined }),
-    ).toMatchObject({ headline: 'Subindo…' });
+    ).toMatchObject({ headline: 'Preparando agente…' });
   });
 
   it('falls back to the CLI id when the roster carries no agent name', () => {
@@ -62,7 +62,7 @@ describe('paneBirthDisplay', () => {
         agentName: undefined,
         model: undefined,
       })?.detail,
-    ).toBe('codex — codex');
+    ).toBe('codex');
   });
 
   it('degrades to a generic identity when nothing is known', () => {

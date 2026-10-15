@@ -234,7 +234,8 @@ import {
 import { BoundedAsyncOperationPool } from './bounded-async-operation-pool';
 import { missionControlPlaneSnapshot } from "./mission-control-plane-ipc";
 import { announceTabMissionLeader } from "./operator-hand-mission";
-import { injectPrompt } from "./tool-util";
+import { promotedLeaderNoticeAuthority } from './promoted-leader-notice';
+import { deliverAgentPrompt } from "./tool-util";
 import { setOperatorTabMissionProvider } from "./tools-panes";
 import {
   ORCHESTRATOR_ADOPTION_TTL_MS,
@@ -2259,10 +2260,20 @@ export function registerOrchIpc(): void {
     );
     if (result.ok && result.mission) {
       const scope = requireLiveRendererWorkspaceScope(event.sender, requestedScope);
-      redeliverPendingHandoffs(scope, result.mission.id);
       broadcastProjectStore(scope, "missions");
-      const leader = result.mission.orchestratorSessionId;
-      if (leader) void announceTabMissionLeader(leader, result.mission.title, injectPrompt);
+      const mission = result.mission;
+      const leader = mission.orchestratorSessionId;
+      if (leader) {
+        await announceTabMissionLeader(leader, mission.title, async (sessionId, notice) => {
+          const { adapterId, invocation } = promotedLeaderNoticeAuthority({
+            scope, paneId: parsed.data.paneId, missionId: mission.id, sessionId,
+          });
+          const accepted = await deliverAgentPrompt(sessionId, notice, invocation, { adapterId });
+          if (!accepted) throw new Error('operator_tab_mission_notice_unconfirmed');
+        });
+      }
+      requireLiveRendererWorkspaceScope(event.sender, requestedScope);
+      redeliverPendingHandoffs(scope, mission.id);
     }
     return result;
   });

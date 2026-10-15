@@ -68,10 +68,10 @@ export function MissionTerminalRecovery({ missionId }: { missionId: string }) {
               : parked
                 ? 'Esta missão está dormindo. Retome para continuar de onde parou.'
                 : needsAnswer
-                  ? 'Esta missão aguarda sua resposta. Abra o Quadro para responder.'
+                  ? 'Esta missão aguarda sua resposta. Abra a missão para responder.'
                   : canRestore
                     ? 'Reabra o terminal desta missão para continuar a conversa.'
-                    : 'Abra o Quadro para consultar o histórico e as ações desta missão.'}
+                    : 'Abra a missão para consultar o histórico e as ações desta missão.'}
           </p>
           {error ? <p role="alert">{error}</p> : null}
         </>
@@ -99,7 +99,7 @@ export function MissionTerminalRecovery({ missionId }: { missionId: string }) {
             onClick={() =>
               useProductNavigationStore.getState().openMission(missionId)
             }
-            title={needsAnswer ? 'Responder no Quadro' : 'Abrir Quadro'}
+            title={needsAnswer ? 'Responder à missão' : 'Ver missão'}
           />
         )
       }

@@ -1269,7 +1269,7 @@ describe('F-231 — "+ Pane" numa aba com missão viva escolhe o destino', () =>
     ).not.toBeNull();
   });
 
-  it('"Nesta missão" spawna via Main (worker operatorOpened), não via layout', async () => {
+  it('F-398 "Nesta missão" waits for Main presentation instead of pinning an absent pane', async () => {
     const { onPaneCreated } = mountMissionPicker();
     openMenu();
     pickDestination('mission');
@@ -1285,7 +1285,7 @@ describe('F-231 — "+ Pane" numa aba com missão viva escolhe o destino', () =>
       adapterId: 'codex',
       model: 'codex-alt',
     });
-    expect(onPaneCreated).toHaveBeenCalledWith('pane-op');
+    expect(onPaneCreated).not.toHaveBeenCalled();
   });
 
   it('"Nesta missão" transporta o id de uma conta sem e-mail', async () => {

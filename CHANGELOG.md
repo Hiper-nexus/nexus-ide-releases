@@ -1,5 +1,74 @@
 # Changelog
 
+## 0.76.276 — Linux em dia com a clareza
+
+As tags 0.76.273 e 0.76.275 não recebem pacotes Linux. Esta versão leva o produto delas, empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). A 0.76.275 é a candidata do Mac. O isolamento do Keychain no smoke empacotado vale só no macOS.
+
+No desktop Linux, em relação à 0.76.272:
+
+- **Configuração rápida**. Caminhos diretos para conectar uma IA, ajustar aparência e texto, microfone, equipe, uso e diagnóstico. A busca entende termos como “entrar no Claude” e “aumentar letra”.
+- **Contas sem confusão**. A tela distingue ferramenta instalada, ativada e conectada. Conectar a conta fica em destaque; instalar várias ferramentas fica recolhido e não é apresentado como autenticação.
+- **Retomada à vista**. Missões na navegação, pendências antes do histórico e “Abrir para retomar” nos trabalhos parados. A retomada continua na autoridade do Main.
+- **Ações explicadas**. O menu Ações dos painéis explica cada operação, com nomes claros e rolagem em janela baixa. A preparação do agente mostra a identidade e avisa quando demora.
+- **Lata**. Maior, com estalo e espuma, e celebra XP real. As cenas são finitas e respeitam o modo sóbrio, a visibilidade e o movimento reduzido.
+- **Painel da missão**. “Nesta missão” aparece assim que o registro fica pronto, sem esperar outro evento.
+- **Missão parada continua parada**. Foco e sinais automáticos do terminal não contam como tecla sua e não religam um painel que o runtime encerrou.
+- **Coordenação**. O aviso ao coordenador espera a IA pronta e o aceite antes da próxima instrução.
+- **Leitura leve**. Abrir um painel solto lê só o trecho final do terminal.
+- **Primeiros passos**. O guia usa os nomes atuais de Configurações e não marca como pronta uma chave inválida nem uma conta que ainda pede login.
+- **Quadro**. O menu Mais não é cortado com o Quadro minimizado. Recusa de religação aponta nova tentativa no Quadro, sem prometer reinício local.
+
+## 0.76.275 — Mais fácil de usar, painéis à vista
+
+- Inclui a configuração rápida, navegação de missões, ações explicadas e lata animada descritas na candidata 0.76.273 abaixo. A 0.76.273 foi validada como candidata local; o Mac público recebe este conjunto na 0.76.275.
+- Ao criar a missão de um painel, o aviso ao coordenador é entregue depois de a IA estar pronta e a criação aguarda o aceite, evitando truncamento e colisão com a instrução seguinte.
+- + Pane → Nesta missão solicita a apresentação após o registro durável, sem depender de um próximo evento da missão para mostrar o painel.
+- Relatórios automáticos de foco/terminal não retomam missão parada nem acordam um painel estacionado. Reanexar a tela não recria o processo encerrado pelo Main; retomada explícita preservada.
+- A consulta de continuidade ao abrir um painel solto lê uma cauda limitada do terminal, sem serializar todo o histórico nem drenar a saída pendente.
+- Primeiros passos com caminhos atuais de Configurações, conexão de conta em destaque e sem selo Pronto para chave inválida. Contas sem credencial ou que exigem login não completam automaticamente o checklist.
+
+
+## 0.76.273 — Mais claro, mais vivo
+
+- Configuração rápida com caminhos diretos para conectar IA, ajustar aparência/texto, microfone, equipe, uso e diagnóstico; busca por palavras comuns em português.
+- Contas de IA com ferramentas, login e API identificáveis; instalar em lote fica recolhido; instalação e ativação não são apresentadas como autenticação.
+- Missões na navegação, pendências antes do histórico e “Abrir para retomar” nos trabalhos parados. A retomada continua passando pela autoridade do Main.
+- Menu Ações dos painéis com explicações, nomes claros e rolagem em janela baixa; preparação do agente com identidade e aviso legível de demora.
+- Lata de energia maior, estalo/espuma e celebração de XP real, com cenas finitas e respeito ao modo sóbrio, à visibilidade e ao movimento reduzido.
+
+Saída macOS arm64, a partir da main `d8359c414a9bc71869bbaf6747c1a444c8fcb11d`.
+A última release Mac com DMG/ZIP público era a 0.76.264 (`3202b9712c2c5f353ede24a6cff281992a605c1b`).
+Inclui a base do Windows 0.76.272, com as melhorias da 0.76.270 e a revisão 0.76.271.
+
+- Retomada com especificação e conta seladas, transferência com prazo, pane de origem aposentado, erros visíveis e religação do coordenador antes dos workers sem sessão.
+- Spawn idempotente por sessão/requestId e recusa por carga sem punir a CLI.
+- Agentes ativos no rail/abas/cabeçalho, Quadro com primária única e perfil com XP global.
+- Teclado vivo após hibernação sem receptor duplicado; ditado sem captura fantasma; medidor com leitura POSIX de comandos escapados.
+- F-388: menu Mais não é cortado pelo Quadro minimizado nem pela lateral em largura compacta.
+- F-389: recusa de religação orienta nova tentativa no Quadro, sem prometer reinício local recusado pelo runtime da missão.
+
+Exclusivos de outras plataformas: checkpoint tmp 8.3/ConPTY no Windows e links de dependências sem CoW no Windows/Linux. O Mac mantém CoW.
+Limites conhecidos: F-1536 só detecta colagem truncada em CLI com marcador (Codex), sem divisão em partes; XP global só soma projetos abertos desde a versão que o introduziu. A mitigação por contrato de remoção de junction no Windows (F-1543) não é trava mecânica.
+
+## 0.76.272 — Linux em dia com a retomada e os agentes
+
+As tags 0.76.270 e 0.76.271 não recebem pacotes Linux. Esta versão leva o produto das duas, empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). A 0.76.271 é a candidata do instalador do Windows.
+
+No desktop Linux, em relação à 0.76.267:
+
+- **Retomada**. Retomar não termina mais sem efeito nem sem a causa. O orquestrador religa sem esperar workers podres. A reserva da retomada da aba tem prazo. A especificação selada volta e o espelho do layout grava numa só atualização (fim do `accountId[undefined != acct-…]`).
+- **Sem pane duplicado**. A folha de origem é aposentada na transferência. A fita retida do terminal respeita a largura. O aviso de pausa diz o motivo e reavalia quando a missão destrava.
+- **Agentes à vista**. O rail, as abas e o cabeçalho da missão mostram quem está trabalhando agora. "Em andamento" lista todos os repositórios ativos sem duplicar em Recentes.
+- **Quadro**. Uma ação primária por vez, o resto no menu Mais, e minimizar com a escolha salva.
+- **Perfil e XP global**. O HUD tem faixa própria no rodapé da rail. Patente, poder e XP de hoje somam os projetos já abertos nesta máquina, com detalhe por projeto.
+- **Jev 1.14 preview**. Selecionável em Chaves de API. O padrão continua o estável. Limiares e rubricas não foram recalibrados para a 1.14.
+- **Spawn**. O mesmo pedido da mesma sessão devolve o pane que já nasceu. Recusa por carga não conta como falha da CLI.
+- **Teclado**. A tecla segue o estado vivo e sobrevive à hibernação. Reidratar um pane hibernado e depois acordá-lo ou retomá-lo não soma um segundo receptor (cada tecla deixava de chegar dobrada).
+- **Handoff**. Colagem picotada é detectada pelo marcador do Codex e reentregue, sem Enter em texto truncado. Sem marcador, a detecção não ocorre, e entregas grandes não são divididas em partes.
+- **Voz**. Reescrita do ditado que ecoava o português é recusada. Soltar a tecla enquanto o microfone abre encerra a captura.
+- **Worktree e medidor**. A worktree isolada nasce com `node_modules` ligado e fora do git. O contrato do worker proíbe apagar ou reinstalar esse `node_modules` (no Node 24 a remoção recursiva atravessa o link). O mapa do portão de regressão tem prazo e cache. O medidor de comandos pesados classifica o comando como o bash o lê, mesmo com barra antes de uma letra.
+- **Não muda o Linux**. O checkpoint oculto com tmp em nome curto 8.3 é correção de Windows.
+
 ## 0.76.271 — Teclado, medidor e dependências em ordem
 
 Correções dos achados da revisão independente da 0.76.270 (que já estava na main; o instalador do Windows não saiu por limite de orçamento do GitHub Actions).

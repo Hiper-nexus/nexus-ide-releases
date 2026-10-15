@@ -1690,6 +1690,8 @@ body {
   flex: 0 0 auto;
 }
 
+.toolbar__more-label { font-size: var(--text-sm); font-weight: 500; }
+
 .toolbar__menu {
   position: fixed;
   z-index: var(--z-soft-panel);
@@ -1698,7 +1700,7 @@ body {
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
   contain: layout style;
-  width: 220px;
+  width: 320px;
   max-width: calc(100vw - var(--space-2) * 2);
   max-height: calc(100vh - var(--space-2) * 2);
   overflow: auto;
@@ -1713,6 +1715,7 @@ body {
 }
 
 .toolbar__menu-head {
+  flex: 0 0 auto;
   margin: 0 0 4px;
   padding: 2px 8px;
   font-size: 10px;
@@ -1723,6 +1726,7 @@ body {
 
 .toolbar__menu-item {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 8px;
   width: 100%;
@@ -1731,7 +1735,8 @@ body {
   color: var(--text);
   cursor: pointer;
   text-align: left;
-  padding: 7px 8px;
+  padding: var(--space-2) var(--space-2-5);
+  min-height: 44px;
   border-radius: 6px;
   font-size: 12px;
   line-height: 1.2;
@@ -1763,6 +1768,20 @@ body {
 .toolbar__menu-item-label {
   flex: 1 1 auto;
   font-weight: 500;
+}
+
+.toolbar__menu-item-copy {
+  display: grid;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: var(--space-1);
+}
+
+.toolbar__menu-item-detail {
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .toolbar__menu-item-kbd {
@@ -1906,8 +1925,8 @@ body {
   display: grid;
   grid-template-columns: auto 1fr;
   grid-template-areas:
-    'pulse headline'
-    'pulse detail';
+    'identity headline'
+    'identity detail';
   align-items: center;
   gap: 0 var(--space-2);
   padding: var(--space-2) var(--space-3);
@@ -1919,7 +1938,6 @@ body {
 }
 
 .pane-birth__pulse {
-  grid-area: pulse;
   width: 7px;
   height: 7px;
   border-radius: 50%;
@@ -1927,9 +1945,25 @@ body {
   animation: pane-birth-pulse 1.5s var(--ease-out-quart) infinite;
 }
 
+.pane-birth__identity {
+  grid-area: identity;
+  display: grid;
+  place-items: center;
+  position: relative;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+}
+.pane-birth__identity .pane-birth__pulse {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+}
+
 .pane-birth__headline {
   grid-area: headline;
-  font-size: 11px;
+  font-size: var(--text-lg);
   font-weight: 600;
   letter-spacing: 0.01em;
   color: var(--text);
@@ -1937,11 +1971,12 @@ body {
 
 .pane-birth__detail {
   grid-area: detail;
-  font-size: 10px;
+  font-size: var(--text-sm);
   color: var(--text-dim);
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .pane-birth--slow {

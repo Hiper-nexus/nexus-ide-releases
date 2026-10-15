@@ -320,9 +320,21 @@
   transform-box: view-box;
   transform-origin: 49.5px 36.4px;
   animation:
-    spill-can-in 200ms var(--ease-out-quart, cubic-bezier(0.25, 1, 0.5, 1)) both,
-    spill-can-pop 320ms var(--ease-out-quart, cubic-bezier(0.25, 1, 0.5, 1)) 220ms,
-    spill-can-idle 2.2s ease-in-out 1s;
+    spill-can-in 320ms var(--ease-out-quart, cubic-bezier(0.25, 1, 0.5, 1)) both,
+    spill-can-pop 460ms var(--ease-out-quart, cubic-bezier(0.25, 1, 0.5, 1)) 320ms,
+    spill-can-idle 1.8s ease-in-out 1s;
+}
+
+.spill__can-base { fill: color-mix(in srgb, var(--text) 50%, var(--bg)); }
+.spill__can-bolt { fill: var(--ok); }
+.spill__can-mark { fill: var(--text); font: 600 3.2px var(--font-ui); }
+.spill__pressure {
+  fill: none;
+  stroke: var(--ok);
+  transform-box: fill-box;
+  transform-origin: center;
+  opacity: 0;
+  animation: spill-pressure 620ms var(--ease-out-quart) 380ms both;
 }
 
 .spill__can-body {
@@ -354,7 +366,7 @@
 .spill__tab {
   transform-box: view-box;
   transform-origin: 50.2px 9.5px;
-  animation: spill-tab-flip 260ms var(--ease-out-quart, cubic-bezier(0.25, 1, 0.5, 1)) 200ms both;
+  animation: spill-tab-flip 260ms var(--ease-out-quart, cubic-bezier(0.25, 1, 0.5, 1)) 320ms both;
 }
 
 .spill__tab-ring {
@@ -374,7 +386,7 @@
   opacity: 0;
   transform-box: fill-box;
   transform-origin: center;
-  animation: spill-pop 440ms var(--ease-out-quart, cubic-bezier(0.25, 1, 0.5, 1)) 220ms both;
+  animation: spill-pop 440ms var(--ease-out-quart, cubic-bezier(0.25, 1, 0.5, 1)) 360ms both;
 }
 
 .spill__spark {
@@ -382,7 +394,7 @@
   opacity: 0;
   transform-box: fill-box;
   transform-origin: center;
-  animation: spill-spark 480ms var(--ease-out-quart, cubic-bezier(0.25, 1, 0.5, 1)) 230ms both;
+  animation: spill-spark 480ms var(--ease-out-quart, cubic-bezier(0.25, 1, 0.5, 1)) 370ms both;
 }
 
 /* ── Espuma ── */
@@ -391,7 +403,7 @@
   fill: color-mix(in srgb, var(--text, #faf7f9) 84%, var(--ok, #7ee2a8));
   transform-box: view-box;
   transform-origin: 49.5px 10.2px;
-  animation: spill-foam-rise 560ms var(--ease-overlay-smooth, cubic-bezier(0.22, 0.8, 0.2, 1)) 260ms both;
+  animation: spill-foam-rise 560ms var(--ease-overlay-smooth, cubic-bezier(0.22, 0.8, 0.2, 1)) 400ms both;
 }
 
 .spill__stream--body {
@@ -399,7 +411,7 @@
   opacity: 0;
   transform-box: fill-box;
   transform-origin: 50% 0;
-  animation: spill-drip 760ms var(--ease-overlay-smooth, cubic-bezier(0.22, 0.8, 0.2, 1)) 520ms both;
+  animation: spill-drip 760ms var(--ease-overlay-smooth, cubic-bezier(0.22, 0.8, 0.2, 1)) 700ms both;
 }
 
 .spill__pool {
@@ -448,6 +460,7 @@
 }
 
 .spill-corner--sip .spill__pop,
+.spill-corner--sip .spill__pressure,
 .spill-corner--sip .spill__stream--body,
 .spill-corner--sip .spill__pool {
   animation: none;
@@ -498,16 +511,23 @@
 }
 
 @keyframes spill-can-in {
-  from { opacity: 0; transform: translateY(-6px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; transform: translate(5px, 9px) rotate(16deg) scale(.82); }
+  to   { opacity: 1; transform: translate(0, 0) rotate(0deg) scale(1); }
 }
 
 /* Estalo: a pressão sai e a lata trepida (achata, estica, assenta). */
 @keyframes spill-can-pop {
-  0%   { transform: scale(1, 1); }
-  30%  { transform: scale(1.06, 0.92); }
-  65%  { transform: translateY(-1px) scale(0.97, 1.04); }
-  100% { transform: scale(1, 1); }
+  0%   { transform: translateY(0) rotate(0deg) scale(1); }
+  22%  { transform: translateY(1px) rotate(-5deg) scale(1.08, .9); }
+  48%  { transform: translateY(-4px) rotate(4deg) scale(.96, 1.04); }
+  76%  { transform: translateY(0) rotate(-2deg) scale(1.02, .98); }
+  100% { transform: translateY(0) rotate(0deg) scale(1); }
+}
+
+@keyframes spill-pressure {
+  0% { opacity: 0; transform: scale(.65); }
+  18% { opacity: .8; }
+  100% { opacity: 0; transform: scale(1.2) translateY(-3px); }
 }
 
 @keyframes spill-can-idle {
@@ -587,6 +607,7 @@
   .spill-corner .spill__can,
   .spill-corner .spill__tab,
   .spill-corner .spill__pop,
+  .spill-corner .spill__pressure,
   .spill-corner .spill__spark,
   .spill-corner .spill__foam,
   .spill-corner .spill__stream--body,
@@ -601,6 +622,7 @@
   }
 
   .spill-corner .spill__pop,
+  .spill-corner .spill__pressure,
   .spill-corner .spill__spark,
   .spill-corner .spill__drop {
     opacity: 0;

@@ -81,7 +81,7 @@ export const SHORTCUTS: readonly ShortcutEntry[] = Object.freeze([
   Object.freeze({
     id: 'task-board',
     keys: formatShortcut('mod', 'B'),
-    action: 'Quadro de tarefas',
+    action: 'Missões e tarefas',
     group: 'command' as const,
   }),
   Object.freeze({

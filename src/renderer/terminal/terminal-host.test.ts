@@ -148,10 +148,13 @@ import {
   markResumeOnSpawn,
   getOrCreateHost,
   getPaneSessionId,
+  getScrollbackExcerpt,
   hibernateHost,
   wakeHost,
   holdSpawnUntilApproved,
   markPaneClosingDeliberately,
+  markPaneParked,
+  prepareMissionPaneResume,
   orchAutoReliveGate,
   rebindLiveMaestroOfMission,
   reconcileHosts,
@@ -268,6 +271,30 @@ afterEach(() => {
 function fireTitle(title: string): void {
   for (const listener of [...xtermEvents.onTitleChange]) listener(title);
 }
+
+describe('F-396 continuity excerpt under output backlog', () => {
+  it('reads the parsed tail without draining queued output or serializing history', () => {
+    const host = openHiddenHost();
+    const parsed = 'Please run /login';
+    const line = { isWrapped: false, length: parsed.length,
+      getCell: () => ({ getWidth: () => 1, getChars: () => 'x' }),
+      translateToString: () => parsed,
+    };
+    const buffer = { length: 5_000, baseY: 4_999, cursorY: 0, getLine: vi.fn(() => line) };
+    Object.defineProperty(host.term, 'buffer', { value: { normal: buffer, active: buffer } });
+    const serialize = vi.spyOn(host.serialize, 'serialize');
+    const write = vi.spyOn(host.term, 'write');
+    const backlog = 'queued output '.repeat(8_000);
+    terminalOutputScheduler.writeTerminalOutput(host.term, backlog, { foreground: false });
+    const queuedBefore = terminalOutputScheduler.getQueuedChars(host.term);
+    expect(queuedBefore).toBeGreaterThan(0);
+    expect(getScrollbackExcerpt(pane.id, parsed.length)).toBe(parsed);
+    expect(buffer.getLine).toHaveBeenCalledTimes(1);
+    expect(serialize).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
+    expect(terminalOutputScheduler.getQueuedChars(host.term)).toBe(queuedBefore);
+  });
+});
 
 describe('spawn adiado sem ninguém esperando a sessão', () => {
   it('split e close no mesmo frame preservam a lease WebGL do pane pivô', async () => {
@@ -3559,6 +3586,84 @@ describe('F-1473: troca de conta com histórico compartilhado continua a mesma c
     expect(spawn).toHaveBeenLastCalledWith(expect.objectContaining({ resume: false, accountId: 'acct-b' }));
     expect(getPaneSessionId(agent.id)).toBe('pty-pack');
     expect(writes).toEqual([{ sessionId: 'pty-pack', data: paste('PACOTE completo') }]);
+  });
+});
+
+describe('F-395 — reports and presentation cannot restart a stopped pane', () => {
+  let sequence = 0;
+  const reports = ['\x1b[I', '\x1b[O', '\x1b[12;40R', '\x1b[?1;2c', '\x1b[<64;10;5M'];
+  const emitInput = (data: string) => { for (const listener of [...xtermEvents.onData]) listener(data); };
+
+  async function stoppedChief() {
+    const id = `f395-${++sequence}`, missionId = `mission-${id}`, sessionId = `pty-${id}`;
+    const agent: PaneModel = { id, kind: 'cli-agent', adapterId: 'claude', title: 'Chief', role: 'orchestrator', missionId };
+    const stopped = { id: missionId, status: 'blocked', intentState: 'blocked_user',
+      description: '<!-- nexus:runtime-closed -->\n[NEXUS_RUNTIME_CLOSED] Execução encerrada pelo operador.' };
+    const command = vi.fn(async () => ({}));
+    Object.assign(window.nexus, { mission: { command, snapshot: vi.fn(async () => null) },
+      orch: { listMissions: vi.fn(async () => [stopped]) } });
+    useLayoutStore.setState({ root: buildGridTree([agent]), focusedPaneId: id });
+    useOrchStore.setState({ paneMissions: { [id]: missionId }, missions: [{ id: missionId, status: 'running' } as never] });
+    spawn.mockResolvedValueOnce({ ok: true, sessionId });
+    const host = getOrCreateHost(agent), slot = document.createElement('div');
+    document.body.appendChild(slot); setHostSize(host.element, 1200, 800); attachHost(agent, slot);
+    await vi.advanceTimersByTimeAsync(100);
+    ptyExitListeners.get(sessionId)!({ exitCode: 0, terminationOrigin: 'mission-termination' });
+    useOrchStore.setState({ missions: [stopped as never] });
+    useLayoutStore.getState().reflectMissionLeader(missionId, null);
+    return { agent, host, slot, command, missionId };
+  }
+
+  it.each(reports)('does not interpret the stopped chief report %j as a human resume', async report => {
+    const { command } = await stoppedChief();
+    emitInput(report);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(command).not.toHaveBeenCalled();
+    expect(spawn).toHaveBeenCalledOnce();
+    expect(kill).not.toHaveBeenCalled();
+  });
+
+  it('preserves real keyboard recovery after ignoring reports', async () => {
+    const { command, missionId } = await stoppedChief();
+    emitInput('\x1b[I');
+    await vi.advanceTimersByTimeAsync(500);
+    expect(command).not.toHaveBeenCalled();
+    emitInput('\r');
+    await vi.advanceTimersByTimeAsync(500);
+    expect(command).toHaveBeenCalledExactlyOnceWith({ kind: 'resume', missionId });
+  });
+
+  it('keeps a stopped host inert on attach and headless wait, then accepts explicit resume', async () => {
+    const { agent, host, slot } = await stoppedChief();
+    attachHost(agent, slot);
+    const waiting = waitForSession(agent.id, 1000);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(await waiting).toBeNull();
+    expect(spawn).toHaveBeenCalledOnce();
+    expect(kill).not.toHaveBeenCalled();
+    spawn.mockResolvedValueOnce({ ok: true, sessionId: 'f395-explicit' });
+    prepareMissionPaneResume(agent.id);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(getPaneSessionId(agent.id)).toBe('f395-explicit');
+    expect(host.spawnStarted).toBe(true);
+    expect(spawn).toHaveBeenLastCalledWith(expect.objectContaining({ resume: true }));
+  });
+
+  it('forwards reports on a live session and only human input wakes a parked shell', async () => {
+    const host = getOrCreateHost(pane), slot = document.createElement('div');
+    document.body.appendChild(slot); setHostSize(host.element, 1200, 800); attachHost(pane, slot);
+    await vi.advanceTimersByTimeAsync(100);
+    emitInput('\x1b[I');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ptyWriteConfirmed).toHaveBeenCalledWith('pty-hidden', '\x1b[I');
+    markPaneParked({ paneId: pane.id, sessionId: 'pty-hidden', parkedAt: Date.now(), reason: 'idle' });
+    for (const report of reports) emitInput(report);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(spawn).toHaveBeenCalledOnce();
+    spawn.mockResolvedValueOnce({ ok: true, sessionId: 'f395-woken' });
+    emitInput('x');
+    await vi.advanceTimersByTimeAsync(100);
+    expect(getPaneSessionId(pane.id)).toBe('f395-woken');
   });
 });
 

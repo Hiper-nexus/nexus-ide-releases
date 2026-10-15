@@ -3,6 +3,7 @@ import { useShallow } from 'zustand/react/shallow';
 import {
   memo,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -368,6 +369,7 @@ function ToolbarBtn({
   menu?: boolean;
 }) {
   const isLeader = action.id === 'mission-leader';
+  const detailId = useId();
   return (
     <button
       type="button"
@@ -381,6 +383,7 @@ function ToolbarBtn({
         .filter(Boolean)
         .join(' ')}
       aria-label={action.label}
+      aria-describedby={menu ? detailId : undefined}
       disabled={action.busy}
       aria-busy={action.busy || undefined}
       role={menu ? 'menuitem' : undefined}
@@ -392,11 +395,12 @@ function ToolbarBtn({
       }}
     >
       <PixelIcon name={action.icon} size={menu ? 12 : 11} />
-      {(menu || density === 'full') && (
-        <span className={menu ? 'toolbar__menu-item-label' : 'toolbar__btn-label'}>
-          {action.label}
+      {menu ? (
+        <span className="toolbar__menu-item-copy">
+          <span className="toolbar__menu-item-label">{action.label}</span>
+          <span className="toolbar__menu-item-detail" id={detailId}>{action.detail}</span>
         </span>
-      )}
+      ) : density === 'full' ? <span className="toolbar__btn-label">{action.label}</span> : null}
       {menu && action.shortcut && (
         <span className="toolbar__menu-item-kbd">{action.shortcut}</span>
       )}
@@ -643,10 +647,10 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
         id: 'hibernate',
         label: isSleeping ? 'Acordar' : 'Dormir',
         detail: isParked
-          ? 'Estacionado pelo guardian (ocioso) — acorda retomando a mesma sessão'
+          ? 'Suspenso por inatividade. Reabre a conversa deste agente'
           : isHibernated
-            ? 'Reabre o processo deste pane'
-            : 'Encerra o processo e mantém o buffer na tela',
+            ? 'Reabre este agente para continuar'
+            : 'Interrompe o agente e mantém as mensagens na tela',
         icon: isSleeping ? 'sun' : 'moon',
         active: isSleeping,
         run: () => {
@@ -683,7 +687,7 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
       if (!missionOwned) list.push({
         id: 'restart',
         label: 'Reiniciar',
-        detail: 'Reinicia a CLI e retoma a conversa (--resume)',
+        detail: 'Reabre o agente e tenta continuar a conversa anterior',
         icon: 'restart',
         primary: true,
         run: () => {
@@ -694,7 +698,7 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
           }
           void askConfirm({
             title: 'Reiniciar este agente?',
-            body: 'O agente está trabalhando. Reiniciar interrompe a tarefa atual e retoma a conversa (--resume).',
+            body: 'O agente está trabalhando. Reiniciar interrompe a tarefa atual e tenta continuar a conversa anterior.',
             confirmLabel: 'Reiniciar agente',
             danger: true,
           }).then((ok) => {
@@ -716,10 +720,10 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
     }
     list.push({
       id: 'stage-focus',
-      label: stageFocusMode ? 'Grade Normal' : 'Foco Stage',
+      label: stageFocusMode ? 'Ver todos os painéis' : 'Focar painel',
       detail: stageFocusMode
-        ? 'Restaura a grade completa com todos os panes'
-        : 'Destaque no pane ativo com rail de companions (Cmd+Shift+F)',
+        ? 'Volta à grade com todos os painéis'
+        : 'Destaca este painel e mantém os outros acessíveis ao lado',
       shortcut: formatShortcut('mod', 'shift', 'F'),
       icon: stageFocusMode ? 'grid' : 'sparkle',
       active: stageFocusMode,
@@ -741,16 +745,16 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
     // da toolbar e o utilizador ficava sem forma de fechar a janela.
     list.push({
       id: 'split-right',
-      label: 'À direita',
-      detail: 'Cria um novo pane ao lado (não copia o terminal)',
+      label: 'Dividir à direita',
+      detail: 'Abre um novo painel à direita. A conversa atual permanece aqui',
       shortcut: formatShortcut('mod', 'D'),
       icon: 'split-right',
       run: () => split(pane.id, 'row'),
     });
     list.push({
       id: 'split-down',
-      label: 'Abaixo',
-      detail: 'Cria um novo pane abaixo (não copia o terminal)',
+      label: 'Dividir abaixo',
+      detail: 'Abre um novo painel abaixo. A conversa atual permanece aqui',
       shortcut: formatShortcut('mod', 'shift', 'D'),
       icon: 'split-down',
       run: () => split(pane.id, 'column'),
@@ -1118,12 +1122,13 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
               aria-haspopup="menu"
               aria-expanded={menuOpen}
               data-tip="Mais ações (dormir, dividir, fim…)"
+              title="Ações deste painel"
               onClick={(e) => {
                 e.stopPropagation();
                 if (!menuOpen && menuTriggerRef.current) {
                   const anchor = menuTriggerRef.current.getBoundingClientRect();
                   const below = anchor.bottom + MENU_ANCHOR_GAP;
-                  const estimatedWidth = 220;
+                  const estimatedWidth = 320;
                   setMenuPosition({
                     left: Math.max(MENU_VIEWPORT_GUTTER, Math.min(anchor.right - estimatedWidth, window.innerWidth - estimatedWidth - MENU_VIEWPORT_GUTTER)),
                     top: Math.max(MENU_VIEWPORT_GUTTER, below),
@@ -1135,11 +1140,12 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
               }}
             >
               <PixelIcon name="more" size={11} />
+              {density !== 'compact' ? <span className="toolbar__more-label">Ações</span> : null}
             </button>
             {menuOpen && (
               <OverlayLayer>
               <div ref={menuRef} className="toolbar__menu" role="menu" style={menuPosition}>
-                <p className="toolbar__menu-head">Ações do pane</p>
+                <p className="toolbar__menu-head">Ações do painel</p>
                 {overflow.map(renderMenuItem)}
                 {overflow.length > 0 && overflowRole.length > 0 && (
                   <div className="toolbar__menu-sep" role="separator" />

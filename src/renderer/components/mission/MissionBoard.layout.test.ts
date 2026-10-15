@@ -97,6 +97,21 @@ describe("MissionBoard layout system invariants (RED test)", () => {
     );
   });
 
+  it("lets Mais escape the collapsed board's clipping boundary", () => {
+    const openBoardRule = cssRule(
+      missionCss,
+      ".mission-board:has(.mission-board__header--menu-open)",
+    );
+    expect(openBoardRule).toMatch(/overflow:\s*visible/);
+  });
+
+  it("keeps Mais inside a compact board instead of aligning past its left edge", () => {
+    expect(cssRule(missionCss, ".mission-board__menu")).toMatch(/inset-inline-start:\s*0/);
+    expect(missionCss).toMatch(
+      /@container mission-board \(max-width: 720px\)[\s\S]*?\.mission-board__more\s*\{[^}]*position:\s*static/,
+    );
+  });
+
   it("keeps the mission title column from shrinking to a single letter", () => {
     const headerRule = cssRule(missionCss, ".mission-board__header");
     expect(headerRule).toMatch(

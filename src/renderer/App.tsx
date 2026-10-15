@@ -265,7 +265,7 @@ function productDestinationLabel(destination: ProductDestination): string {
         ? 'Quadro da missão'
         : 'Terminais da missão';
     case 'task-board':
-      return 'Quadro de tarefas';
+      return 'Missões e tarefas';
     case 'memory':
       return 'Memória do projeto';
     case 'settings':

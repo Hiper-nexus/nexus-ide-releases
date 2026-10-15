@@ -2,7 +2,24 @@ import { describe, expect, it } from 'vitest';
 import {
   MISSION_LIFECYCLE_LABELS,
   missionLifecycleLabel,
+  missionRecoveryNavigationLabel,
 } from './mission-lifecycle-copy';
+
+describe('missionRecoveryNavigationLabel', () => {
+  it('points sleeping and technically blocked missions toward recovery', () => {
+    expect(missionRecoveryNavigationLabel('blocked_user', 'session-sleeping')).toBe('Abrir para retomar');
+    expect(missionRecoveryNavigationLabel('running', 'session-dead')).toBe('Abrir para retomar');
+    expect(missionRecoveryNavigationLabel('blocked_technical')).toBe('Abrir para retomar');
+  });
+
+  it('does not offer recovery for ended missions with stale reasons or a live user question', () => {
+    expect(missionRecoveryNavigationLabel('completed', 'session-dead')).toBeNull();
+    expect(missionRecoveryNavigationLabel('failed', 'session-sleeping')).toBeNull();
+    expect(missionRecoveryNavigationLabel('stopping', 'runtime-closed')).toBeNull();
+    expect(missionRecoveryNavigationLabel('blocked_user', 'open-question')).toBeNull();
+    expect(missionRecoveryNavigationLabel('running')).toBeNull();
+  });
+});
 
 describe('missionLifecycleLabel', () => {
   it('pedido humano real continua Precisa de você', () => {

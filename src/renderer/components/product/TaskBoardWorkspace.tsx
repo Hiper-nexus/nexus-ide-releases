@@ -21,6 +21,7 @@ import { useProductNavigationStore } from '../../state/product-navigation-store'
 import { useToastStore } from '../../state/toast-store';
 import { ActionCard, EmptyState } from '../ActionCard';
 import { PixelIcon } from '../PixelIcon';
+import { missionRecoveryNavigationLabel } from '../../lib/mission-lifecycle-copy';
 
 const TODO_STATUS_OPTIONS: ReadonlyArray<{
   value: TodoStatus;
@@ -65,6 +66,7 @@ interface MissionKanbanCardProps {
 function MissionKanbanCard({ entry, now, onOpen }: MissionKanbanCardProps) {
   const { summary } = entry;
   const removable = isRemovableTaskBoardMission(entry);
+  const recoveryLabel = missionRecoveryNavigationLabel(summary.state, summary.stateReason?.code);
   return (
     <li
       className="mission-kanban__card"
@@ -106,6 +108,7 @@ function MissionKanbanCard({ entry, now, onOpen }: MissionKanbanCardProps) {
             {relativeAgeLabel(summary.updatedAt, now)}
           </time>
         </span>
+        {recoveryLabel ? <span className="mission-kanban__recovery-link">{recoveryLabel}<PixelIcon name="chevron" size={11} /></span> : null}
       </button>
     </li>
   );
@@ -311,7 +314,7 @@ export function TaskBoardWorkspace() {
   return (
     <section
       className="product-workspace product-page task-board-workspace"
-      aria-label="Quadro de tarefas"
+      aria-label="Missões e tarefas"
     >
       <header className="product-workspace__header">
         <div className="product-workspace__identity">
@@ -320,9 +323,9 @@ export function TaskBoardWorkspace() {
           </span>
           <div className="product-workspace__heading">
             <span className="product-workspace__context">
-              Missões e tarefas
+              Projeto atual
             </span>
-            <h1>Quadro</h1>
+            <h1>Missões e tarefas</h1>
           </div>
         </div>
         {itemCount > 0 ? (

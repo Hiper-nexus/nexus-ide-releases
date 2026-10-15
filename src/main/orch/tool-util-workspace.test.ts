@@ -2,6 +2,8 @@ import { resetLicensedAccessMock } from '../__tests__/licensed-access';
 beforeEach(resetLicensedAccessMock);
 vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
 import { requireAccess } from '../license-access';
+import { tabMissionLeaderNotice } from './operator-hand-mission';
+import { promotedLeaderNoticeAuthority } from './promoted-leader-notice';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const stubs = vi.hoisted(() => ({
@@ -105,6 +107,7 @@ vi.mock('../pty/pty-analysis-runtime', async original => {
 vi.mock('../pty/pty-manager', () => ({
   countLiveAgentSessions: vi.fn(() => 0),
   getAgentSessionInfo: stubs.physicalSessionInfo,
+  listAgentSessions: () => { const info = stubs.physicalSessionInfo(); return info ? [info] : []; },
   hasAcceptedNativeArgvPrompt: stubs.nativeArgvAccepted,
   orchWriteSession: stubs.writeSession,
   orchTerminateSession: stubs.terminateSession,
@@ -2560,6 +2563,63 @@ describe('agent prompt injection', () => {
       await vi.advanceTimersByTimeAsync(500);
       await rejected;
     } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('F-399 waits for cold Claude idle before pasting the complete promotion notice', async () => {
+    vi.useFakeTimers();
+    try {
+      const notice = tabMissionLeaderNotice('Cold native mission');
+      expect(Buffer.byteLength(notice)).toBeGreaterThan(1023);
+      stubs.physicalSessionInfo.mockReturnValue({ adapterId: 'claude' });
+      stubs.sessionState.mockReturnValue('spawning');
+      const pending = deliverAgentPrompt('session-1', notice, undefined, { adapterId: 'claude' });
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(stubs.writeSession).not.toHaveBeenCalled();
+      stubs.sessionState.mockReturnValue('idle');
+      await vi.advanceTimersByTimeAsync(550);
+      expect(stubs.writeSession).toHaveBeenNthCalledWith(1, 'session-1', notice, expect.anything());
+      expect(stubs.writeSession).toHaveBeenNthCalledWith(2, 'session-1', '\r', expect.anything());
+      stubs.turnStartSequence = 1;
+      for (const tap of [...stubs.turnStartTaps]) tap({ sessionId: 'session-1', sequence: 1 });
+      await vi.advanceTimersByTimeAsync(400);
+      await expect(pending).resolves.toBe(true);
+    } finally {
+      stubs.physicalSessionInfo.mockReset().mockReturnValue(null);
+      vi.useRealTimers();
+    }
+  });
+
+  it('F-399 changing the displayed workspace after paste cannot revoke the promoted physical leader', async () => {
+    vi.useFakeTimers();
+    try {
+      let displayedScope = scope;
+      const otherScope = { ...scope, checkoutId: 'other-checkout' };
+      stubs.physicalSessionInfo.mockReturnValue({ sessionId: 'session-1', paneId: 'pane-399',
+        missionId: 'mission-399', role: 'orchestrator', adapterId: 'claude', scope });
+      stubs.sessionState.mockReturnValue('idle');
+      const { invocation, adapterId } = promotedLeaderNoticeAuthority({ scope, paneId: 'pane-399',
+        missionId: 'mission-399', sessionId: 'session-1' });
+      const notice = tabMissionLeaderNotice('Workspace can move');
+      stubs.writeSession.mockImplementation(((_sessionId: string, data: string) => {
+        if (data === notice) displayedScope = otherScope;
+        return true;
+      }) as typeof stubs.writeSession);
+      const pending = deliverAgentPrompt('session-1', notice, invocation, { adapterId });
+      await vi.advanceTimersByTimeAsync(500);
+      expect(displayedScope).toBe(otherScope);
+      expect(stubs.writeSession).toHaveBeenNthCalledWith(2, 'session-1', '\r', expect.anything());
+      stubs.sessionState.mockReturnValue('busy');
+      for (const tap of [...stubs.stateTaps]) tap('session-1', 'busy');
+      stubs.turnStartSequence = 1;
+      for (const tap of [...stubs.turnStartTaps]) tap({ sessionId: 'session-1', sequence: 1 });
+      await vi.advanceTimersByTimeAsync(400);
+      await expect(pending).resolves.toBe(true);
+      expect(stubs.writeSession).toHaveBeenCalledTimes(2);
+      expect(stubs.terminateSession).not.toHaveBeenCalled();
+    } finally {
+      stubs.physicalSessionInfo.mockReset().mockReturnValue(null);
       vi.useRealTimers();
     }
   });

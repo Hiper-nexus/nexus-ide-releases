@@ -60,6 +60,24 @@ describe('FirstStepsGuide activation facts', () => {
     );
   });
 
+  it('does not mark connection complete from an invalid stored key', () => {
+    useProviderStore.setState({ providers: [{
+      adapterId: 'gemini', hasKey: true, authState: 'ok',
+      credentialReadiness: 'invalid-credential',
+    } as never] });
+    render(<FirstStepsGuide />);
+    expect(useOnboardingStore.getState().state.checklist.connectedAccount).toBe(false);
+  });
+
+  it.each([
+    { hasCredential: false, needsRelogin: false },
+    { hasCredential: true, needsRelogin: true },
+  ])('does not mark connection complete from an unusable saved account: %j', account => {
+    useAccountStore.setState({ accounts: [account as never] });
+    render(<FirstStepsGuide />);
+    expect(useOnboardingStore.getState().state.checklist.connectedAccount).toBe(false);
+  });
+
   it('does not mark createdMission just because the guide is mounted', () => {
     render(<FirstStepsGuide />);
     expect(useOnboardingStore.getState().state.checklist.createdMission).toBe(

@@ -320,6 +320,9 @@ export function packagedSmokeArgs(userData, platform = process.platform) {
     PACKAGED_SMOKE_ARGUMENT,
     `--user-data-dir=${isolatedUserData}`,
   ];
+  // Chromium's cookie encryption can otherwise prompt the real macOS Keychain
+  // even with private HOME/userData. Test-only, as in Electron PR #53790.
+  if (platform === 'darwin') args.push('--use-mock-keychain');
   // GitHub-hosted Linux runners do not grant the user namespace required by
   // Chromium's setuid sandbox. This flag is scoped to the packaged smoke
   // harness; normal Linux launches remain sandboxed and unchanged.

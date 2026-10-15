@@ -147,6 +147,11 @@ corrija os dele).
 - 150–250ms, easings nomeadas (`--ease-out-quart/quint/expo`); feedback ~120ms.
 - Motion comunica ESTADO (vivo, mudou, terminou), nunca decoração.
 - `prefers-reduced-motion` obrigatório em todo keyframe.
+- Lata de energia no pane: sequência finita de entrada, estalo, espuma e
+  saída; ganho de XP usa o snapshot real. `PaneEnergyCan` controla panes com
+  sessão e vagas vazias: modo sóbrio ou ocultação encerram a cena, sem replay
+  ao voltar. O SVG usa a área útil para a lata ser reconhecível e nunca
+  intercepta cliques. Movimento reduzido conserva a leitura estática.
 - **Nunca** animar box-shadow/border em `.pane`: repinta o canvas do xterm e
   lê como flicker. Estado do pane muda cor de borda com transição estática.
 
@@ -359,12 +364,30 @@ a composição operacional observada sem copiar propriedade visual de terceiros.
 
 ### Organização das configurações
 
-A navegação principal agrupa as funções em nove áreas por finalidade. Cada
+A navegação principal agrupa as funções em sete áreas por finalidade. Cada
 área apresenta apenas suas seções; busca global encontra os destinos individuais.
 Não voltar à lista de dezenas de destinos na barra lateral. A biblioteca Meus
 pets tem acesso permanente e não depende de o mascote flutuante estar ligado.
 Catálogo de modelos de mídia e conexão dos serviços são funções distintas,
 com um caminho direto entre elas.
+
+Sem destino explícito, Configurações abre em **Configuração rápida**: conectar
+uma IA é a ação principal; aparência, texto, microfone, uso, equipe e diagnóstico
+são ações por intenção. Cada uma navega à implementação existente. Links para
+seções específicas não passam pelo guia. Busca combina palavras comuns entre
+campos e aliases; não exige que o cliente conheça o nome técnico da tela.
+
+Na navegação do app, **Missões** abre **Missões e tarefas** (o Quadro). Pendências
+ficam na faixa fixa antes do histórico, nunca nas utilidades roláveis. Missões
+dormindo ou bloqueadas tecnicamente mostram **Abrir para retomar**: é navegação
+para a recuperação autorizada, não uma ordem de religar sessões.
+
+Contas de IA fala em ferramentas e contas; “instalada”, “ativada” e “conectada”
+são estados distintos. Operações em lote começam recolhidas. O menu Ações do
+painel explica as operações em texto visível, com altura natural e rolagem na
+janela baixa; nunca achatar os itens para caber. Preparação identifica o agente
+sem usar “Subindo” como única explicação.
+
 
 ## 13. Criação direta e navegação por resultado
 

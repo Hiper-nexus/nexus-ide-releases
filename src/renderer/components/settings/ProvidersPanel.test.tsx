@@ -145,7 +145,7 @@ describe('ProvidersPanel hub', () => {
   it('shows the complete CLI catalog, including absent CLIs, by default', () => {
     const { host, root } = mount();
     expect(host.querySelector('[data-testid="prov-detected-count"]')?.textContent)
-      .toBe('3 CLIs no catálogo · 2 detectadas');
+      .toBe('3 ferramentas no catálogo · 2 instaladas');
     const tiles = host.querySelectorAll('[data-testid="prov-tile-grid"] .prov-row');
     expect(tiles.length).toBe(3);
     expect(host.textContent).toContain('Claude');
@@ -154,7 +154,7 @@ describe('ProvidersPanel hub', () => {
     expect(host.textContent).toContain('2 modelos');
     // Single rescan CTA (no duplicate buttons).
     const refresh = [...host.querySelectorAll('button')].filter((b) =>
-      /Reexaminar CLIs|Examinando/.test(b.textContent ?? ''),
+      /Verificar ferramentas|Examinando/.test(b.textContent ?? ''),
     );
     expect(refresh).toHaveLength(1);
     act(() => root.unmount());
@@ -163,7 +163,7 @@ describe('ProvidersPanel hub', () => {
   it('lets the operator disable automatic CLI updates from the CLI tab', async () => {
     const { host, root } = mount();
     await act(async () => { await Promise.resolve(); });
-    const toggle = host.querySelector<HTMLInputElement>('[aria-label="Atualizar CLIs automaticamente"]');
+    const toggle = host.querySelector<HTMLInputElement>('[aria-label="Atualizar ferramentas automaticamente"]');
     expect(toggle?.checked).toBe(true);
     await act(async () => { toggle!.click(); await Promise.resolve(); });
     expect(window.nexus.providers.setCliAutoUpdates).toHaveBeenCalledWith(false);
@@ -180,8 +180,12 @@ describe('ProvidersPanel hub', () => {
     });
     const { host, root } = mount();
     expect(host.textContent).toContain(
-      'Instalar 1 CLI com instalador verificado',
+      'Instalar 1 ferramenta com instalador verificado',
     );
+    const batch = host.querySelector<HTMLDetailsElement>('.prov-hub__batch');
+    expect(batch).not.toBeNull();
+    expect(batch?.open).toBe(false);
+    expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain('Ferramentas de IA');
     act(() => root.unmount());
   });
 
@@ -250,7 +254,7 @@ describe('ProvidersPanel hub', () => {
   it('switches to Remotos/API tab for api-provider adapters', async () => {
     const { host, root } = mount();
     const tabs = [...host.querySelectorAll<HTMLButtonElement>('.prov-hub__tab')];
-    const remote = tabs.find((t) => t.textContent?.includes('Remotos'));
+    const remote = tabs.find((t) => t.textContent?.includes('Serviços por API'));
     expect(remote).toBeTruthy();
     await act(async () => remote!.click());
     expect(host.textContent).toContain('GLM');
@@ -531,7 +535,7 @@ describe('ProvidersPanel hub', () => {
     expect(chips!.textContent).toContain('conectado');
     // O toggle diz o estado de disponibilidade em texto, não só pela posição.
     expect(host.querySelector('.prov-detail .prov__toggle-label')?.textContent)
-      .toBe('Disponível');
+      .toBe('Ativada');
     act(() => root.unmount());
   });
 

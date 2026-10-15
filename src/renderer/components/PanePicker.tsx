@@ -1092,7 +1092,8 @@ export function PanePicker({
         })
         .then((result) => {
           if (result.ok) {
-            onPaneCreated?.(result.paneId);
+            // Main presents the sealed pane in its mission. This id
+            // may not be mounted yet; the loose-pane callback would pin it early.
             return;
           }
           useToastStore.getState().push(

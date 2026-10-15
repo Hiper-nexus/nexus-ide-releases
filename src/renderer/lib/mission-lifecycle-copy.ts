@@ -3,7 +3,19 @@ import {
   MISSION_AWAITING_INSTRUCTION_LABEL,
   MISSION_AWAITING_INSTRUCTION_REASON_CODE,
   isolationStopLabel,
+  isIsolationStopReasonCode,
 } from '../../shared/session-restore-liveness';
+
+/** Navigation hint only: the mission page owns the authorized recovery action. */
+export function missionRecoveryNavigationLabel(
+  state: MissionLifecycleState,
+  reasonCode?: string,
+): string | null {
+  if (state !== 'running' && state !== 'blocked_user' && state !== 'blocked_technical') return null;
+  return isIsolationStopReasonCode(reasonCode) || state === 'blocked_technical'
+    ? 'Abrir para retomar'
+    : null;
+}
 
 /**
  * Status words a civilian understands at a glance.

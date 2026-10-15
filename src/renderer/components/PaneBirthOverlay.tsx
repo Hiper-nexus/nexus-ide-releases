@@ -11,6 +11,7 @@ import {
   subscribePaneSpawnErrors,
 } from '../terminal/pane-spawn-errors';
 import { getPaneSessionId, onPaneSessionChange } from '../terminal/terminal-host';
+import { ProviderLogo } from './ProviderLogo';
 
 /**
  * Estado "nascendo" de um pane de agente: enquanto o PTY não reporta sessão,
@@ -88,10 +89,12 @@ export function PaneBirthOverlay({ pane }: { pane: PaneModel }) {
       role={display.failed ? 'alert' : 'status'}
       aria-live={display.failed ? 'assertive' : 'polite'}
     >
-      {/* Sem pulso em falha: não há nada "em andamento" para animar. */}
-      {!display.failed && (
-        <span className="pane-birth__pulse" aria-hidden="true" />
-      )}
+      {/* Sem pulso em falha: não há nada "em andamento" para animar; o logo
+          fica, porque identifica QUAL agente não subiu. */}
+      <span className="pane-birth__identity" aria-hidden="true">
+        <ProviderLogo adapterId={pane.adapterId ?? ''} label={pane.agentName ?? pane.adapterId ?? 'Agente'} />
+        {!display.failed && <span className="pane-birth__pulse" />}
+      </span>
       <strong className="pane-birth__headline">{display.headline}</strong>
       <span className="pane-birth__detail">{display.detail}</span>
     </div>

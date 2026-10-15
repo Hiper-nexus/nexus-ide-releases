@@ -2008,10 +2008,19 @@ function warnStaleMainOwnedPaneKeptLiveOnce(
   );
 }
 
-function requestMainOwnedPanePresentations(owner: WebContents): void {
+/** Publish only after the durable composition exists; pane sync remains the replay path. */
+export function presentMainOwnedPaneToRenderer(owner: WebContents, paneId: string): void {
+  const pane = getMainOwnedPane(paneId);
+  if (pane) requestMainOwnedPanePresentations(owner, [pane]);
+}
+
+function requestMainOwnedPanePresentations(
+  owner: WebContents,
+  candidates: Iterable<MainOwnedPane> = mainOwnedPaneValues(),
+): void {
   const scope = getRendererWorkspaceScope(owner);
   if (!scope || owner.isDestroyed() || owner.isCrashed()) return;
-  for (const pane of mainOwnedPaneValues()) {
+  for (const pane of candidates) {
     const resolution = resolveMainOwnedPanePresentation(scope, pane);
     if (resolution.kind !== "stale" || resolution.retire) {
       staleLivePaneWarnings.delete(staleMainOwnedPaneRetirementKey(pane));

@@ -1,0 +1,79 @@
+.settings-start {
+  max-width: 920px;
+  container-type: inline-size;
+}
+
+.settings-start__connect {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  margin-block: var(--space-6);
+  padding: var(--space-5);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+}
+
+.settings-start__symbol {
+  display: grid;
+  place-items: center;
+  flex: 0 0 48px;
+  height: 48px;
+  color: var(--text);
+  background: var(--surface-3);
+  border-radius: var(--radius-lg);
+}
+
+.settings-start__intro { min-width: 0; }
+.settings-start__intro h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--text-2xl);
+  font-weight: 600;
+  text-wrap: balance;
+}
+
+.settings-start__intro p,
+.settings-start__help {
+  max-width: 65ch;
+  color: var(--text-dim);
+  font-size: var(--text-lg);
+  line-height: 1.6;
+  text-wrap: pretty;
+}
+
+.settings-start__intro p { margin-block: var(--space-2) var(--space-4); }
+.settings-start__intro .settings-btn { min-height: 40px; gap: var(--space-3); }
+.settings-start__heading { margin-block: 0 var(--space-2); font-size: var(--text-xl); font-weight: 600; }
+.settings-start__tasks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 var(--space-5); list-style: none; padding: 0; margin: 0; }
+.settings-start__tasks li { min-width: 0; }
+.settings-start__task {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: 88px;
+  padding: var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.settings-start__task:hover { background: var(--surface-2); }
+.settings-start__task:active { background: var(--surface-3); }
+.settings-start__task:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.settings-start__task-icon { display: flex; flex-shrink: 0; color: var(--text-dim); }
+.settings-start__task-copy { display: grid; gap: var(--space-1); min-width: 0; }
+.settings-start__task-copy strong { font-size: var(--text-lg); font-weight: 600; }
+.settings-start__task-copy > span { color: var(--text-dim); font-size: var(--text-sm); line-height: 1.5; text-wrap: pretty; }
+.settings-start__arrow { margin-left: auto; flex-shrink: 0; color: var(--text-faint); }
+.settings-start__help { margin-top: var(--space-5); }
+
+@container (max-width: 560px) {
+  .settings-start__tasks { grid-template-columns: minmax(0, 1fr); }
+  .settings-start__connect { padding: var(--space-4); gap: var(--space-3); }
+  .settings-start__symbol { display: none; }
+  .settings-start__task { min-height: 76px; }
+}

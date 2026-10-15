@@ -64,7 +64,7 @@ function identity(input: PaneBirthInput): string {
   const who = input.agentName?.trim() || input.adapterId?.trim() || 'agente';
   const cli = input.adapterId?.trim();
   const model = input.model?.trim();
-  const suffix = [cli, model].filter(Boolean).join(' · ');
+  const suffix = [cli?.toLowerCase() === who.toLowerCase() ? undefined : cli, model].filter(Boolean).join(' · ');
   return suffix ? `${who} — ${suffix}` : who;
 }
 
@@ -117,7 +117,7 @@ export function paneBirthDisplay(
   }
   const slow = input.elapsedMs >= PANE_BIRTH_SLOW_AFTER_MS;
   return {
-    headline: slow ? 'Ainda subindo…' : 'Subindo…',
+    headline: slow ? 'A abertura está demorando' : 'Preparando agente…',
     detail: slow
       ? `${identity(input)} está demorando mais que o normal para responder.`
       : identity(input),

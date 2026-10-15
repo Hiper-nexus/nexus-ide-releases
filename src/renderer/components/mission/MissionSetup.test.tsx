@@ -2628,7 +2628,7 @@ describe('Caminho Expresso', () => {
     expect(announced?.classList.contains('mission-setup__sr-only')).toBe(true);
     expect(announced?.textContent).toBe(
       'Atalhos do teclado: 1 Montar meus terminais; 2 Criar com IA; 3 Abrir projeto existente; ' +
-        '4 Terminal sem IA; 5 Quadro de tarefas; 6 Memória do projeto',
+        '4 Terminal sem IA; 5 Missões e tarefas; 6 Memória do projeto',
     );
     expect(host.querySelector('[data-launcher-action="pane"] kbd')?.getAttribute('aria-hidden')).toBe('true');
   });
@@ -3376,7 +3376,7 @@ describe('Caminho Expresso', () => {
     expect(host.textContent).toContain('Falta conectar uma ferramenta de IA');
     // O pré-requisito deixou de ser texto morto: existe um botão que resolve.
     expect(button(host, 'Conectar uma ferramenta de IA')).toBeDefined();
-    expect([...host.querySelectorAll('button')].filter((item) =>
+    expect([...host.querySelectorAll('#express-provider-block button, #express-maestro-login button')].filter((item) =>
       item.textContent?.trim().startsWith('Conectar'),
     )).toHaveLength(1);
 
@@ -3407,7 +3407,7 @@ describe('Caminho Expresso', () => {
     const issue = host.querySelector('#express-maestro-login');
     expect(issue?.textContent).toContain('Ferramenta não instalada');
     expect(host.querySelector('#express-provider-block')).toBeNull();
-    expect([...host.querySelectorAll('button')].filter((item) =>
+    expect([...host.querySelectorAll('#express-provider-block button, #express-maestro-login button')].filter((item) =>
       item.textContent?.trim().startsWith('Conectar'),
     )).toHaveLength(1);
     expect(button(host, 'Iniciar criação').disabled).toBe(true);

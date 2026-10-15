@@ -251,9 +251,18 @@ describe('resolvePackagedTarget / packagedBinaryForApp', () => {
 });
 
 describe('isolation args and environment', () => {
-  it('launches with positional sentinel and Chromium user-data switch', () => {
+  it('isolates macOS Chromium keychain access inside the private smoke launch', () => {
     const userData = path.resolve('/tmp/nexus-packaged-smoke');
     expect(packagedSmokeArgs(userData, 'darwin')).toEqual([
+      'nexus-smoke-test',
+      `--user-data-dir=${userData}`,
+      '--use-mock-keychain',
+    ]);
+  });
+
+  it('keeps Windows smoke arguments unchanged without the macOS mock keychain', () => {
+    const userData = path.resolve('/tmp/nexus-packaged-smoke');
+    expect(packagedSmokeArgs(userData, 'win32')).toEqual([
       'nexus-smoke-test',
       `--user-data-dir=${userData}`,
     ]);

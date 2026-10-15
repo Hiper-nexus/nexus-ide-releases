@@ -213,7 +213,7 @@ describe('Settings terminal-producing actions', () => {
       // O login relê a sonda ANTES de abrir o terminal: é esse baseline que
       // depois prova se houve login novo. Por isso o clique é assíncrono.
       await act(async () => {
-        button(host, 'Abrir login da CLI').click();
+        button(host, 'Conectar minha conta').click();
         await Promise.resolve();
         await Promise.resolve();
       });
@@ -254,7 +254,7 @@ describe('Settings terminal-producing actions', () => {
       // O login relê a sonda ANTES de abrir o terminal: é esse baseline que
       // depois prova se houve login novo. Por isso o clique é assíncrono.
       await act(async () => {
-        button(host, 'Abrir login da CLI').click();
+        button(host, 'Conectar minha conta').click();
         await Promise.resolve();
         await Promise.resolve();
       });

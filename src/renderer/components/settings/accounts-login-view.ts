@@ -3,7 +3,7 @@
  * Copy e flags juntos para o componente não decidir hierarquia no JSX.
  */
 
-export const LOGIN_CTA_OPEN = 'Abrir login da CLI';
+export const LOGIN_CTA_OPEN = 'Conectar minha conta';
 export const LOGIN_CTA_SWITCH = 'Entrar com outra conta';
 export const LOGIN_CTA_BUSY = 'Abrindo terminal…';
 /** Ação de cadastro — a mesma frase em Providers e no menu "+ Pane". */

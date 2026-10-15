@@ -1116,7 +1116,7 @@ export function MissionBoard({
         setActionAnnouncement(
           result === 'no-live-maestro'
             ? 'O terminal do Maestro não está vivo — abra Terminais e use Retomar.'
-            : 'O Nexus recusou religar — abra Terminais e use Reiniciar no Maestro.',
+            : 'O Nexus recusou religar a missão. Tente novamente neste quadro.',
         );
         restoreFocus = true;
       } catch (reason) {

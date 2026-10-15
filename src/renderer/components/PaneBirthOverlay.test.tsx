@@ -68,7 +68,7 @@ describe('PaneBirthOverlay', () => {
       useSessionStateStore.getState().setPaneState(PANE.id, 'spawning');
     });
     const host = mount();
-    expect(host.textContent).toContain('Subindo…');
+    expect(host.textContent).toContain('Preparando agente…');
     expect(host.textContent).toContain('Codex Dev');
     expect(host.textContent).toContain('gpt-5.6-sol');
   });
@@ -78,7 +78,7 @@ describe('PaneBirthOverlay', () => {
       useSessionStateStore.getState().setPaneState(PANE.id, 'spawning');
     });
     const host = mount();
-    expect(host.textContent).toContain('Subindo…');
+    expect(host.textContent).toContain('Preparando agente…');
     act(() => {
       liveSessionId = 'session-1';
       for (const cb of sessionListeners) cb(PANE.id, 'session-1');
@@ -94,7 +94,7 @@ describe('PaneBirthOverlay', () => {
     act(() => {
       for (const cb of sessionListeners) cb('pane-other', 'session-other');
     });
-    expect(host.textContent).toContain('Subindo…');
+    expect(host.textContent).toContain('Preparando agente…');
   });
 
   it('never covers a pane whose session already died', () => {
@@ -104,12 +104,12 @@ describe('PaneBirthOverlay', () => {
     expect(mount().textContent).toBe('');
   });
 
-  it('turns a Main refusal into a categorical failure, not an eternal "Subindo…"', () => {
+  it('turns a Main refusal into a categorical failure, not an eternal "Preparando agente…"', () => {
     act(() => {
       useSessionStateStore.getState().setPaneState(PANE.id, 'spawning');
     });
     const host = mount();
-    expect(host.textContent).toContain('Subindo…');
+    expect(host.textContent).toContain('Preparando agente…');
     act(() => {
       recordPaneSpawnError(
         PANE.id,

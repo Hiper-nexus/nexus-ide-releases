@@ -205,24 +205,36 @@ describe('F-1229: o cwd chega ao Main pelo próprio pedido', () => {
   });
 
   // pthread_get_qos_class_np: QOS_CLASS_UTILITY is 0x11 under taskpolicy -c utility.
-  const darwinPriority = (args: string[], env: NodeJS.ProcessEnv) => new Promise<string>((resolve, reject) => {
-    const child = spawn(process.execPath, args, { cwd: temp, stdio: ['ignore', 'pipe', 'pipe'], env });
+  let priorityProbeSequence = 0;
+  const darwinPriority = (args: string[], env: NodeJS.ProcessEnv) => new Promise<{ qos: string; clamps: string[][] }>((resolve, reject) => {
+    const trace = path.join(temp, `qos-${++priorityProbeSequence}.jsonl`);
+    const preload = path.join(temp, `qos-${priorityProbeSequence}.cjs`);
+    // Observe the entrypoint's actual spawn, without rewriting any shipped
+    // resource. Background QoS alone cannot distinguish a missing wrapper.
+    fs.writeFileSync(preload, `const cp = require('node:child_process');
+const spawn = cp.spawn;
+cp.spawn = function(file, args, options) {
+  if (file === '/usr/sbin/taskpolicy') require('node:fs').appendFileSync(${JSON.stringify(trace)}, JSON.stringify(args.slice(0, 2)) + '\\n');
+  return spawn.call(this, file, args, options);
+};\n`);
+    const child = spawn(process.execPath, ['--require', preload, ...args], { cwd: temp, stdio: ['ignore', 'pipe', 'pipe'], env });
     let output = '', err = '';
     child.stdout!.on('data', (data) => { output += data; });
     child.stderr!.on('data', (data) => { err += data; });
     const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error(`priority probe hung: ${err}`)); }, 8_000);
     child.once('error', (error) => { clearTimeout(timer); reject(error); });
-    child.once('exit', (code) => {
+    child.once('close', (code) => {
       clearTimeout(timer);
       if (code !== 0) reject(new Error(`exit ${code}: ${err || output}`));
-      else resolve(output.trim());
+      else {
+        try {
+          const clamps = fs.existsSync(trace) ? fs.readFileSync(trace, 'utf8').trim().split('\n').map(line => JSON.parse(line) as string[]) : [];
+          resolve({ qos: output.trim(), clamps });
+        } catch (error) { reject(error); }
+      }
     });
   });
-  const priorityJob = JSON.stringify({ file: '/usr/bin/perl', args: ['-e', 'while (@ARGV && $ARGV[0] ne "--") { shift @ARGV } shift @ARGV; exec @ARGV or die $!', 'heavy-job'] });
-
-  it('job-launch runs the job at darwin utility QoS, unless NEXUS_HEAVY_QOS=0', async () => {
-    if (process.platform !== 'darwin') return;
-    const probe = [
+  const probe = [
       'import ctypes',
       'libc=ctypes.CDLL("/usr/lib/libSystem.B.dylib")',
       'fn=libc.pthread_get_qos_class_np',
@@ -235,12 +247,48 @@ describe('F-1229: o cwd chega ao Main pelo próprio pedido', () => {
       'fn(self(), ctypes.byref(qos), ctypes.byref(rel))',
       'print(hex(qos.value))',
     ].join('; ');
+  // A launchd Background job inherits a stricter class (0x9). Compare with
+  // taskpolicy itself under the SAME process policy, not a foreground literal.
+  const referencePriority = (utility: boolean) => execFileSync(
+    utility ? '/usr/sbin/taskpolicy' : '/usr/bin/python3',
+    [...(utility ? ['-c', 'utility', '/usr/bin/python3'] : []), '-c', probe],
+    { encoding: 'utf8', env: { PATH: '/usr/bin:/bin' } },
+  ).trim();
+
+  it('requests the utility clamp explicitly and leaves the opt-out command intact', () => {
+    if (process.platform !== 'darwin') return;
+    const policy = require('../../../resources/heavy-command/qos.cjs') as {
+      spawnBackground(cp: { spawn: (...args: unknown[]) => unknown }, file: string, args: string[], options: object): unknown;
+    };
+    const spawnJob = vi.fn();
+    const options = { env: { PATH: '/usr/bin:/bin' }, stdio: 'inherit' };
+    const before = process.env.NEXUS_HEAVY_QOS;
+    try {
+      delete process.env.NEXUS_HEAVY_QOS;
+      policy.spawnBackground({ spawn: spawnJob }, '/usr/bin/python3', ['-c', probe], options);
+      expect(spawnJob).toHaveBeenLastCalledWith('/usr/sbin/taskpolicy', ['-c', 'utility', '/usr/bin/python3', '-c', probe], options);
+      process.env.NEXUS_HEAVY_QOS = '0';
+      policy.spawnBackground({ spawn: spawnJob }, '/usr/bin/python3', ['-c', probe], options);
+      expect(spawnJob).toHaveBeenLastCalledWith('/usr/bin/python3', ['-c', probe], options);
+    } finally {
+      if (before === undefined) delete process.env.NEXUS_HEAVY_QOS;
+      else process.env.NEXUS_HEAVY_QOS = before;
+    }
+  });
+
+  const priorityJob = JSON.stringify({ file: '/usr/bin/perl', args: ['-e', 'while (@ARGV && $ARGV[0] ne "--") { shift @ARGV } shift @ARGV; exec @ARGV or die $!', 'heavy-job'] });
+
+  it('job-launch runs the job at darwin utility QoS, unless NEXUS_HEAVY_QOS=0', async () => {
+    if (process.platform !== 'darwin') return;
+
     const launch = (qos?: string) => darwinPriority(
       [path.join(resources, 'job-launch.cjs'), 'build', '/usr/bin/python3', '-c', probe],
       { PATH: '/usr/bin:/bin', ...(qos ? { NEXUS_HEAVY_QOS: qos } : {}), NEXUS_HEAVY_JOB_BASE: priorityJob },
     );
-    expect(await launch()).toBe('0x11');
-    expect(await launch('0')).not.toBe('0x11');
+    const utility = referencePriority(true);
+    expect(['0x9', '0x11']).toContain(utility);
+    expect(await launch()).toEqual({ qos: utility, clamps: [['-c', 'utility']] });
+    expect(await launch('0')).toEqual({ qos: referencePriority(false), clamps: [] });
   });
 
   it('dispatch runs the admitted job at darwin utility QoS', async () => {
@@ -252,24 +300,14 @@ describe('F-1229: o cwd chega ao Main pelo próprio pedido', () => {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const port = (server.address() as { port: number }).port;
     try {
-      const probe = [
-        'import ctypes',
-        'libc=ctypes.CDLL("/usr/lib/libSystem.B.dylib")',
-        'fn=libc.pthread_get_qos_class_np',
-        'fn.restype=ctypes.c_int',
-        'fn.argtypes=[ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint), ctypes.POINTER(ctypes.c_int)]',
-        'self=libc.pthread_self',
-        'self.restype=ctypes.c_void_p',
-        'self.argtypes=[]',
-        'qos=ctypes.c_uint(); rel=ctypes.c_int()',
-        'fn(self(), ctypes.byref(qos), ctypes.byref(rel))',
-        'print(hex(qos.value))',
-      ].join('; ');
+
       const priority = await darwinPriority(
         [path.join(resources, 'dispatch.cjs'), 'build', '/usr/bin/python3', JSON.stringify(['-c', probe]), 'false'],
         { PATH: '/usr/bin:/bin', NEXUS_GATE_TOKEN: 'finite-qos', NEXUS_HEAVY_COMMAND_URL: `http://127.0.0.1:${port}/hook/heavy-command` },
       );
-      expect(priority).toBe('0x11');
+      const utility = referencePriority(true);
+      expect(['0x9', '0x11']).toContain(utility);
+      expect(priority).toEqual({ qos: utility, clamps: [['-c', 'utility']] });
     } finally { server.close(); }
   }, 10_000);
 

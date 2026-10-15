@@ -3,6 +3,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAccessStore } from '../state/access-store';
+import { useGamificationStore } from '../state/gamification-store';
 import type { Mission } from '../../shared/orch-types';
 import type { PaneModel, WorkspaceLayout } from '../../shared/types';
 import { buildGridTree, listPanes } from '../lib/split-tree';
@@ -187,7 +188,8 @@ function livePane(): PaneModel {
 
 describe('a SOLITARY structural placeholder is a vacancy, not a session', () => {
   beforeEach(() => {
-  useAccessStore.setState({ canUseApp: true, loading: false, maxAgents: null, cloudSync: true, blockedReason: null });
+    useGamificationStore.setState({ sober: false });
+    useAccessStore.setState({ canUseApp: true, loading: false, maxAgents: null, cloudSync: true, blockedReason: null });
     installNexus();
     setActiveWorkspacePath(WORKSPACE);
     useOrchStore.setState({ missions: [], paneMissions: {} });
@@ -203,6 +205,7 @@ describe('a SOLITARY structural placeholder is a vacancy, not a session', () => 
   });
 
   afterEach(() => {
+    act(() => root?.unmount());
     setTerminalSnapshotProvider(null);
     detachWorkspaceLayout();
     setActiveWorkspacePath(null);
@@ -306,7 +309,7 @@ describe('a SOLITARY structural placeholder is a vacancy, not a session', () => 
     );
     expect(text()).not.toMatch(/https:\/\/admin\.wordnet\.com\.vc/u);
     expect(text()).not.toMatch(/Motivo não registrado/u);
-    expect(text()).not.toMatch(/painel/i);
+    expect(text()).not.toContain('aqui dentro deste painel');
     expect(text()).toMatch(/Atividade|quadro/i);
     act(() => root.unmount());
   });
@@ -427,7 +430,7 @@ describe('a SOLITARY structural placeholder is a vacancy, not a session', () => 
     expect(labels).not.toContain('Fim');
     expect(labels).not.toContain('Dormir');
     expect(labels).not.toContain('Cmds');
-    expect(buttonWith('À direita')).toBeTruthy();
+    expect(buttonWith('Dividir à direita')).toBeTruthy();
 
     act(() => root.unmount());
   });
@@ -436,7 +439,7 @@ describe('a SOLITARY structural placeholder is a vacancy, not a session', () => 
     seedPlaceholderOnly();
     render();
 
-    act(() => buttonWith('À direita').click());
+    act(() => buttonWith('Dividir à direita').click());
 
     const panes = listPanes(useLayoutStore.getState().root);
     expect(panes).toHaveLength(2);
@@ -445,6 +448,13 @@ describe('a SOLITARY structural placeholder is a vacancy, not a session', () => 
     );
 
     act(() => root.unmount());
+  });
+
+  it('keeps the focused idle vacancy quiet when sober mode is enabled', () => {
+    seedPlaceholderOnly();
+    useGamificationStore.setState({ sober: true });
+    render();
+    expect(host.querySelector('.spill-corner')).toBeNull();
   });
 
   it('shows the fizz overlay on the focused idle vacancy', () => {

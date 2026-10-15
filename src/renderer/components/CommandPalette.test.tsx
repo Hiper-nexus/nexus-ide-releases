@@ -105,7 +105,7 @@ afterEach(() => {
 describe('CommandPalette product navigation', () => {
   it.each([
     ['Nova missão', { kind: 'mission-setup' }],
-    ['Quadro de tarefas', { kind: 'task-board' }],
+    ['Missões e tarefas', { kind: 'task-board' }],
     ['Memória do projeto', { kind: 'memory' }],
     ['Configurações', { kind: 'settings' }],
   ] as const)(
@@ -146,7 +146,7 @@ describe('CommandPalette product navigation', () => {
     expect(labels.some((label) => label.includes('Painel de operações'))).toBe(
       false,
     );
-    expect(labels.some((label) => label.includes('Quadro de tarefas'))).toBe(
+    expect(labels.some((label) => label.includes('Missões e tarefas'))).toBe(
       true,
     );
     expect(labels.some((label) => label.includes('Lista de atenção'))).toBe(

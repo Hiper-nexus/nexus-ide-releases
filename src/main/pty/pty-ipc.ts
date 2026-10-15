@@ -465,7 +465,7 @@ function spawnCliPtyAgentPane(
       throw new Error(
         `${adapter.label} is installed but Nexus could not resolve an absolute ` +
           `executable path for "${adapter.bin}". Open Settings → AI accounts → ` +
-          `Reexaminar CLIs, or set an absolute binary path. Common locations: ` +
+          `Verificar ferramentas, or set an absolute binary path. Common locations: ` +
           `~/.kimi-code/bin, ~/.local/bin, /opt/homebrew/bin, npm global bin.`,
       );
     }

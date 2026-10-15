@@ -1,4 +1,5 @@
 export type SettingsSection =
+  | 'getting-started'
   | 'account'
   | 'api-keys'
   | 'appearance'
@@ -83,6 +84,11 @@ function pillarGroup(
 export const SETTINGS_GROUPS: NavGroup[] = [
   pillarGroup('you', [
     {
+      id: 'getting-started', icon: 'GO', pixelIcon: 'config', title: 'Configuração rápida',
+      subtitle: 'Conectar sua IA e preparar o Nexus para você',
+      aliases: ['começar', 'primeiros passos', 'ajuda', 'setup'],
+    },
+    {
       id: 'account',
       icon: 'ID',
       pixelIcon: 'id-badge',
@@ -135,6 +141,7 @@ export const SETTINGS_GROUPS: NavGroup[] = [
         'wake',
         'mic',
         'microfone',
+        'configurar microfone',
         'ditado',
       ],
     },
@@ -146,7 +153,7 @@ export const SETTINGS_GROUPS: NavGroup[] = [
       pixelIcon: 'grid',
       title: 'Tema',
       subtitle: 'Temas, cores e aparência',
-      aliases: ['pixel · tema · paleta', 'appearance', 'theme', 'visual', 'ui'],
+      aliases: ['pixel · tema · paleta', 'appearance', 'theme', 'visual', 'ui', 'mudar tema', 'modo claro', 'modo escuro'],
     },
     {
       id: 'pets', icon: 'PET', pixelIcon: 'user', title: 'Mascotes',
@@ -158,7 +165,7 @@ export const SETTINGS_GROUPS: NavGroup[] = [
       pixelIcon: 'terminal',
       title: 'Terminal',
       subtitle: 'Texto e comportamento dos terminais',
-      aliases: ['fonte · shell', 'console', 'xterm'],
+      aliases: ['fonte · shell', 'console', 'xterm', 'aumentar letra', 'tamanho do texto', 'zoom'],
     },
     {
       id: 'shortcuts',
@@ -176,7 +183,7 @@ export const SETTINGS_GROUPS: NavGroup[] = [
       pixelIcon: 'key',
       title: 'Contas de IA',
       subtitle: 'Contas e ferramentas de IA',
-      aliases: ['login · chaves', 'keys', 'models', 'cli', 'clis', 'login', 'entrar', 'token'],
+      aliases: ['login · chaves', 'keys', 'models', 'cli', 'clis', 'login', 'entrar', 'token', 'conectar minha IA', 'Claude', 'Codex', 'Gemini', 'Kimi', 'Grok'],
     },
     {
       id: 'usage-quota',
@@ -191,6 +198,7 @@ export const SETTINGS_GROUPS: NavGroup[] = [
         'rate limit',
         'semanal',
         'analytics',
+        'gastos',
       ],
     },
     {
@@ -425,6 +433,7 @@ export const SETTINGS_GROUPS: NavGroup[] = [
 
 /** YOU · APP · AGENTS · SYSTEM — pilares emocionais da nav (endorphin). */
 const SETTINGS_SECTION_PILLAR: Record<SettingsSection, SettingsNavPillarId> = {
+  'getting-started': 'you',
   account: 'you',
   'api-keys': 'you',
   voice: 'you',
@@ -481,24 +490,21 @@ function normalize(value: string): string {
     .replace(/\p{Diacritic}/gu, '');
 }
 
-/**
- * Filtra os grupos por título/subtítulo (case- e diacritic-insensitive),
- * descartando grupos que ficam sem itens. Query vazia devolve tudo intacto.
- */
+const SEARCH_CONNECTORS = new Set(['a', 'as', 'o', 'os', 'de', 'da', 'do', 'das', 'dos', 'e', 'em', 'no', 'na', 'nos', 'nas', 'meu', 'minha', 'meus', 'minhas', 'um', 'uma', 'para']);
+
+/** Combina palavras entre título, descrição e aliases, preservando a busca por frase. */
 export function filterSettingsGroups(groups: NavGroup[], query: string): NavGroup[] {
   const q = normalize(query.trim());
   if (!q) return groups;
+  const terms = q.split(/\s+/).filter(term => !SEARCH_CONNECTORS.has(term));
   return groups
     .map((group) => ({
       ...group,
-      items: group.items.filter(
-        (item) =>
-          normalize(item.title).includes(q) ||
-          normalize(item.subtitle).includes(q) ||
-          normalize(group.label).includes(q) ||
-          (group.story ? normalize(group.story).includes(q) : false) ||
-          (item.aliases ?? []).some((alias) => normalize(alias).includes(q)),
-      ),
+      items: group.items.filter((item) => {
+        const fields = [item.title, item.subtitle, group.label, group.story ?? '', ...(item.aliases ?? [])].map(normalize);
+        return fields.some(field => field.includes(q)) ||
+          (terms.length > 0 && terms.every(term => fields.some(field => field.includes(term))));
+      }),
     }))
     .filter((group) => group.items.length > 0);
 }

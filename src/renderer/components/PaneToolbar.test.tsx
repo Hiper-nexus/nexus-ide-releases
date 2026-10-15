@@ -172,8 +172,13 @@ describe('PaneToolbar narrow controls', () => {
     const menu = document.querySelector('[role="menu"]');
     expect(menu).not.toBeNull();
     expect(host.contains(menu)).toBe(false);
-    expect(menu?.querySelector('[aria-label="À direita"]')).not.toBeNull();
-    expect(menu?.querySelector('[aria-label="Abaixo"]')).not.toBeNull();
+    expect(menu?.querySelector('[aria-label="Dividir à direita"]')).not.toBeNull();
+    expect(menu?.querySelector('[aria-label="Dividir abaixo"]')).not.toBeNull();
+    const split = menu?.querySelector<HTMLButtonElement>('[aria-label="Dividir à direita"]');
+    const detailId = split?.getAttribute('aria-describedby');
+    expect(detailId).toBeTruthy();
+    expect(document.getElementById(detailId!)?.textContent).toMatch(/direita/i);
+    expect(split?.textContent).toContain(document.getElementById(detailId!)?.textContent);
     expect(menu?.contains(document.activeElement)).toBe(true);
     const surfaceShortcut = vi.fn();
     window.addEventListener('keydown', surfaceShortcut);
@@ -187,6 +192,15 @@ describe('PaneToolbar narrow controls', () => {
     }
     expect(document.querySelector('[role="menu"]')).toBeNull();
     expect(document.activeElement).toBe(trigger);
+  });
+
+  it('labels the actions menu when the pane has room and keeps the compact trigger usable', () => {
+    const host = mount(600);
+    const trigger = host.querySelector('[aria-label="Mais ações do pane"]')!;
+    expect(trigger.textContent).toContain('Ações');
+    act(() => measure(120));
+    expect(host.querySelector('[aria-label="Mais ações do pane"]')).not.toBeNull();
+    expect(host.querySelector('.toolbar__more-label')).toBeNull();
   });
 
   it('keeps the maximize behavior reachable from the compact menu', () => {
@@ -338,12 +352,12 @@ describe('PaneToolbar narrow controls', () => {
     }
   });
 
-  it('exibe o botão de Foco Stage na barra de ferramentas em largura normal', () => {
+  it('exibe o botão de Focar painel na barra de ferramentas em largura normal', () => {
     const pane2: PaneModel = { id: 'pane-2', kind: 'shell', title: 'Terminal 2' };
     useLayoutStore.setState({ root: buildGridTree([pane, pane2]), focusedPaneId: pane.id, maximizedPaneId: null });
     const host = mount(600);
     const stageBtn = host.querySelector<HTMLButtonElement>(
-      '[aria-label="Foco Stage"], [aria-label="Grade Normal"]',
+      '[aria-label="Focar painel"], [aria-label="Ver todos os painéis"]',
     );
     expect(stageBtn).not.toBeNull();
     act(() => stageBtn!.click());

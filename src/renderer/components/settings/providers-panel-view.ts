@@ -50,17 +50,17 @@ export function tabDetectedLabel(
   visibleCount: number,
 ): string {
   if (tab === 'remote') {
-    return `${visibleCount} remoto${visibleCount === 1 ? '' : 's'}`;
+    return `${visibleCount} serviço${visibleCount === 1 ? '' : 's'} por API`;
   }
   if (tab === 'login') {
     const n = providers.filter(
       (p) => isExternalLoginProvider(p) && p.installed,
     ).length;
-    return `${n} com login detectado${n === 1 ? '' : 's'}`;
+    return `${n} ferramenta${n === 1 ? '' : 's'} instalada${n === 1 ? '' : 's'} para conectar`;
   }
   const n = countDetectedClis(providers);
   const catalogSize = providers.filter(isLocalCliProvider).length;
-  return `${catalogSize} CLI${catalogSize === 1 ? '' : 's'} no catálogo · ${n} detectada${n === 1 ? '' : 's'}`;
+  return `${catalogSize} ferramenta${catalogSize === 1 ? '' : 's'} no catálogo · ${n} instalada${n === 1 ? '' : 's'}`;
 }
 
 export function filterProvidersForTab(

@@ -57,8 +57,8 @@ export const LAUNCHER_ACTIONS: readonly ActionNameEntry[] = [
   },
   {
     id: 'tasks',
-    label: 'Quadro de tarefas',
-    accessibleName: 'Quadro de tarefas: ver e organizar o trabalho da missão',
+    label: 'Missões e tarefas',
+    accessibleName: 'Missões e tarefas: ver e organizar o trabalho da missão',
     shortcut: '5',
     description: 'Acompanhe o que falta e o que já foi entregue.',
   },

@@ -31,10 +31,16 @@ export function FirstStepsGuide(): React.JSX.Element {
   const missions = useOrchStore((s) => s.missions);
 
   useEffect(() => {
-    const hasKey = providers.some((p) => p.hasKey);
+    const usableProviders = providers.filter((p) =>
+      p.credentialReadiness !== 'invalid-credential' &&
+      p.credentialReadiness !== 'no-credential',
+    );
+    const hasKey = usableProviders.some((p) => p.hasKey);
     // Sessão de CLI/subscription prova conta mesmo sem chave (Codex/Claude OAuth).
-    const hasSession = providers.some((p) => p.authState === 'ok');
-    const hasAccount = accounts.length > 0;
+    const hasSession = usableProviders.some((p) => p.authState === 'ok');
+    const hasAccount = accounts.some((account) =>
+      account.hasCredential && !account.needsRelogin,
+    );
     syncDerivedFlags({
       hasLiveAccountOrKey: hasKey || hasSession || hasAccount,
       hasWorkspace: Boolean(workspace?.path),
@@ -66,7 +72,7 @@ export function FirstStepsGuide(): React.JSX.Element {
   return (
     <>
       <ActivationChecklist
-        onOpenApiKeys={openApiKeys}
+        onOpenProviders={openProviders}
         onOpenWorkspace={openWorkspace}
         onExplainDictation={explainDictation}
         onOpenPane={openPlusPane}

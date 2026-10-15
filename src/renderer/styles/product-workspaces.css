@@ -858,6 +858,16 @@
   font: 500 var(--text-xs)/1.2 var(--font-ui);
 }
 
+.mission-kanban__recovery-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-block: var(--space-2) var(--space-1);
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
 .mission-kanban__card-age {
   color: var(--text-faint);
   font-family: var(--font-mono);

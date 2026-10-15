@@ -282,7 +282,7 @@ describe('TerminalWorkspace contracts', () => {
 
     expect(host.querySelector('.grid--mission-empty')).not.toBeNull();
     expect(host.textContent).toContain('Terminal da missão fechado');
-    expect(host.textContent).toContain('Abrir Quadro');
+    expect(host.textContent).toContain('Ver missão');
   });
 
   it('missão dormindo tem rótulo e retomada coerentes', () => {
