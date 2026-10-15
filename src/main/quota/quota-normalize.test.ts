@@ -10,6 +10,15 @@ import {
 } from './quota-normalize';
 
 describe('quota-normalize', () => {
+  it('uses the monthly Cursor allowance without inventing rolling subscription windows', () => {
+    expect(defaultUnknownWindows('cursor-agent')).toEqual([unknownWindow('monthly', 'Mensal')]);
+    const windows = mergeWindows(defaultUnknownWindows('cursor-agent'), [knownWindow({
+      kind: 'monthly', label: 'Mensal', usedRatio: 0.42, source: 'provider-api', confidence: 'high',
+    })]);
+    expect(windows.map(({ label, usedRatio }) => ({ label, usedRatio }))).toEqual([
+      { label: 'Mensal', usedRatio: 0.42 },
+    ]);
+  });
   it('does not invent five-hour or weekly MiMo windows', () => {
     expect(defaultUnknownWindows('mimo-code')).toEqual([unknownWindow('credits', 'Token Plan')]);
   });
