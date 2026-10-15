@@ -1,13 +1,24 @@
 import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
+import type { FileHandle } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import type {
   MissionAttachmentSnapshot,
 } from '../../shared/mission-intent';
 import type { ProjectExecutionScope } from '../../shared/types';
 
 const IS_WINDOWS = process.platform === 'win32';
+
+/**
+ * #21: o caminho dos BYTES (decode, gravação, fsync, cópia) não bloqueia o
+ * Main. `realpath` em JS (promisify), o mesmo algoritmo do `realpathSync`: o
+ * nativo corrige a caixa no APFS e mudaria as comparações de raiz.
+ */
+const fsp = fs.promises;
+const realpath = promisify(fs.realpath);
+const readFd = promisify(fs.read);
 
 /**
  * No Windows não há modo POSIX: diretórios reportam sempre 0o666 e o chmod só
@@ -262,48 +273,74 @@ export function droppedFileName(name: string, token: string): string {
   return `${safeToken(token)}-${safeName}`;
 }
 
-function decodeBase64(base64: string): Buffer {
+/** 1 Mi caracteres (múltiplo de 4): decode + prova de cada fatia leva ~1 ms. */
+const BASE64_SLICE_CHARS = 1024 * 1024;
+
+/**
+ * Decodifica o base64 do renderer em fatias, cedendo o loop entre elas. A
+ * prova continua a mesma: re-encodar dá EXATAMENTE a entrada (só alfabeto
+ * válido, padding só no fim, bits finais zerados). A regex de antes fazia
+ * backtracking por grupo e estourava a pilha acima de ~3 MiB, recusando
+ * qualquer drop grande.
+ */
+async function decodeBase64(base64: string): Promise<Buffer> {
   if (
     base64.length > DROPPED_ATTACHMENT_MAX_BASE64_CHARS ||
-    !/^(?:[a-zA-Z0-9+/]{4})*(?:[a-zA-Z0-9+/]{2}==|[a-zA-Z0-9+/]{3}=)?$/.test(
-      base64,
-    )
+    base64.length % 4 !== 0
   ) {
     throw new Error('invalid or oversized dropped-file payload');
   }
-  const decoded = Buffer.from(base64, 'base64');
-  if (
-    decoded.length > DROPPED_ATTACHMENT_MAX_BYTES ||
-    decoded.toString('base64') !== base64
-  ) {
-    throw new Error('dropped file exceeds the 14 MiB item limit');
+  const parts: Buffer[] = [];
+  let size = 0;
+  for (let start = 0; start < base64.length; start += BASE64_SLICE_CHARS) {
+    const slice = base64.slice(start, start + BASE64_SLICE_CHARS);
+    const last = start + BASE64_SLICE_CHARS >= base64.length;
+    const part = Buffer.from(slice, 'base64');
+    if ((!last && slice.includes('=')) || part.toString('base64') !== slice) {
+      throw new Error('invalid or oversized dropped-file payload');
+    }
+    size += part.length;
+    if (size > DROPPED_ATTACHMENT_MAX_BYTES) {
+      throw new Error('dropped file exceeds the 14 MiB item limit');
+    }
+    parts.push(part);
+    if (!last) await new Promise<void>((resolve) => setImmediate(resolve));
   }
-  return decoded;
+  return Buffer.concat(parts, size);
 }
 
+interface ExclusiveFileLabels {
+  /** Prefixo das mensagens de staging ("dropped-file", "mission context"). */
+  readonly stage: string;
+  /** Nome do arquivo nas provas de dono/link ("dropped file"). */
+  readonly file: string;
+}
+
+const DROPPED_LABELS: ExclusiveFileLabels = { stage: 'dropped-file', file: 'dropped file' };
+const MISSION_CONTEXT_LABELS: ExclusiveFileLabels = {
+  stage: 'mission context',
+  file: 'mission context file',
+};
+
 /**
- * Stages one renderer-provided blob without following links or replacing an
- * existing path. The returned path is already canonical and private.
+ * Cria `file` em `root` com O_EXCL|O_NOFOLLOW, grava por `writeInto`, fsync e
+ * prova que o caminho canônico ainda é o mesmo inode privado, do dono e de
+ * link único. Qualquer falha desfaz só o arquivo que ela mesma criou.
  */
-export function saveDroppedFile(
-  name: string,
-  base64: string,
-  options: SaveDroppedFileOptions = {},
-): SaveDroppedFileResult {
-  let file = '';
-  let fd: number | null = null;
-  let created = false;
+async function writeExclusivePrivateFile(
+  root: string,
+  file: string,
+  uid: number | null,
+  expectedSize: number,
+  writeInto: (handle: FileHandle) => Promise<void>,
+  labels: ExclusiveFileLabels,
+): Promise<string> {
+  let handle: FileHandle | null = null;
   let createdIdentity: fs.Stats | null = null;
   try {
-    const decoded = decodeBase64(base64);
-    const root = requireDroppedDirectory(options, true);
-    const token =
-      options.token?.() ??
-      `${Date.now().toString(36)}-${randomBytes(8).toString('hex')}`;
-    file = path.join(root, droppedFileName(name, token));
     const noFollow =
       'O_NOFOLLOW' in fs.constants ? fs.constants.O_NOFOLLOW : 0;
-    fd = fs.openSync(
+    handle = await fsp.open(
       file,
       fs.constants.O_WRONLY |
         fs.constants.O_CREAT |
@@ -311,29 +348,28 @@ export function saveDroppedFile(
         noFollow,
       0o600,
     );
-    created = true;
-    const opened = fs.fstatSync(fd);
+    const opened = await handle.stat();
     createdIdentity = opened;
     if (!opened.isFile()) {
-      throw new Error('dropped-file target is not a regular file');
+      throw new Error(`${labels.stage} target is not a regular file`);
     }
-    assertOwned(opened, expectedUid(options), 'dropped file');
-    assertSingleLink(opened, 'dropped file');
-    fs.writeFileSync(fd, decoded);
-    fs.fchmodSync(fd, 0o600);
-    fs.fsyncSync(fd);
-    const written = fs.fstatSync(fd);
+    assertOwned(opened, uid, labels.file);
+    assertSingleLink(opened, labels.file);
+    await writeInto(handle);
+    await handle.chmod(0o600);
+    await handle.sync();
+    const written = await handle.stat();
     if (
       !written.isFile() ||
-      written.size !== decoded.length ||
+      written.size !== expectedSize ||
       !sameFileIdentity(opened, written)
     ) {
-      throw new Error('dropped-file write was not durable');
+      throw new Error(`${labels.stage} write was not durable`);
     }
-    assertSingleLink(written, 'dropped file');
-    const canonical = fs.realpathSync(file);
-    const current = fs.lstatSync(file);
-    const canonicalStat = fs.lstatSync(canonical);
+    assertSingleLink(written, labels.file);
+    const canonical = await realpath(file);
+    const current = await fsp.lstat(file);
+    const canonicalStat = await fsp.lstat(canonical);
     if (
       !isInside(root, canonical) ||
       current.isSymbolicLink() ||
@@ -342,34 +378,58 @@ export function saveDroppedFile(
       !sameFileIdentity(written, current) ||
       !sameFileIdentity(written, canonicalStat)
     ) {
-      throw new Error('dropped-file path changed during staging');
+      throw new Error(`${labels.stage} path changed during staging`);
     }
-    assertOwned(current, expectedUid(options), 'dropped file');
-    assertSingleLink(current, 'dropped file');
-    fs.closeSync(fd);
-    fd = null;
-    return { ok: true, path: canonical };
+    assertOwned(current, uid, labels.file);
+    assertSingleLink(current, labels.file);
+    const closing = handle;
+    handle = null;
+    await closing.close();
+    return canonical;
   } catch (error) {
-    if (fd !== null) {
+    await handle?.close().catch(() => undefined);
+    if (createdIdentity) {
       try {
-        fs.closeSync(fd);
-      } catch {
-        // Best-effort cleanup below.
-      }
-    }
-    if (created && file && createdIdentity) {
-      try {
-        const current = fs.lstatSync(file);
+        const current = await fsp.lstat(file);
         if (
           !current.isSymbolicLink() &&
           sameFileIdentity(createdIdentity, current)
         ) {
-          fs.unlinkSync(file);
+          await fsp.unlink(file);
         }
       } catch {
         // The exclusively-created file was already removed.
       }
     }
+    throw error;
+  }
+}
+
+/**
+ * Stages one renderer-provided blob without following links or replacing an
+ * existing path. The returned path is already canonical and private.
+ */
+export async function saveDroppedFile(
+  name: string,
+  base64: string,
+  options: SaveDroppedFileOptions = {},
+): Promise<SaveDroppedFileResult> {
+  try {
+    const decoded = await decodeBase64(base64);
+    const root = requireDroppedDirectory(options, true);
+    const token =
+      options.token?.() ??
+      `${Date.now().toString(36)}-${randomBytes(8).toString('hex')}`;
+    const canonical = await writeExclusivePrivateFile(
+      root,
+      path.join(root, droppedFileName(name, token)),
+      expectedUid(options),
+      decoded.length,
+      (handle) => handle.writeFile(decoded),
+      DROPPED_LABELS,
+    );
+    return { ok: true, path: canonical };
+  } catch (error) {
     return {
       ok: false,
       error: error instanceof Error ? error.message : 'save failed',
@@ -457,15 +517,15 @@ function requireMissionContextDirectory(
  * Copies one renderer-provided blob into the project so mission agents can
  * read it. Returns a root-relative context path, never a host home path.
  */
-export function importWorkspaceMissionAttachment(
+export async function importWorkspaceMissionAttachment(
   workspaceRoot: string,
   name: string,
   base64: string,
   options: SaveDroppedFileOptions = {},
-): SaveDroppedFileResult {
+): Promise<SaveDroppedFileResult> {
   let decoded: Buffer;
   try {
-    decoded = decodeBase64(base64);
+    decoded = await decodeBase64(base64);
   } catch (error) {
     return {
       ok: false,
@@ -492,19 +552,15 @@ const STREAM_CHUNK_BYTES = 1024 * 1024;
  * varia (blob único vs. stream de um fd local); se ele lançar, o arquivo
  * criado exclusivamente é desfeito pelo cleanup comum.
  */
-function stageMissionContextFile(
+async function stageMissionContextFile(
   workspaceRoot: string,
   name: string,
   options: SaveDroppedFileOptions,
   payload: {
     readonly expectedSize: number;
-    readonly writeInto: (fd: number) => void;
+    readonly writeInto: (handle: FileHandle) => Promise<void>;
   },
-): SaveDroppedFileResult {
-  let file = '';
-  let fd: number | null = null;
-  let created = false;
-  let createdIdentity: fs.Stats | null = null;
+): Promise<SaveDroppedFileResult> {
   try {
     const uid = expectedUid(options);
     const root = requireMissionContextDirectory(workspaceRoot, uid);
@@ -512,54 +568,14 @@ function stageMissionContextFile(
       options.token?.() ??
       `${Date.now().toString(36)}-${randomBytes(8).toString('hex')}`;
     const storedName = droppedFileName(name, token);
-    file = path.join(root, storedName);
-    const noFollow =
-      'O_NOFOLLOW' in fs.constants ? fs.constants.O_NOFOLLOW : 0;
-    fd = fs.openSync(
-      file,
-      fs.constants.O_WRONLY |
-        fs.constants.O_CREAT |
-        fs.constants.O_EXCL |
-        noFollow,
-      0o600,
+    const canonical = await writeExclusivePrivateFile(
+      root,
+      path.join(root, storedName),
+      uid,
+      payload.expectedSize,
+      payload.writeInto,
+      MISSION_CONTEXT_LABELS,
     );
-    created = true;
-    const opened = fs.fstatSync(fd);
-    createdIdentity = opened;
-    if (!opened.isFile()) {
-      throw new Error('mission context target is not a regular file');
-    }
-    assertOwned(opened, uid, 'mission context file');
-    assertSingleLink(opened, 'mission context file');
-    payload.writeInto(fd);
-    fs.fchmodSync(fd, 0o600);
-    fs.fsyncSync(fd);
-    const written = fs.fstatSync(fd);
-    if (
-      !written.isFile() ||
-      written.size !== payload.expectedSize ||
-      !sameFileIdentity(opened, written)
-    ) {
-      throw new Error('mission context write was not durable');
-    }
-    assertSingleLink(written, 'mission context file');
-    const canonical = fs.realpathSync(file);
-    const current = fs.lstatSync(file);
-    const canonicalStat = fs.lstatSync(canonical);
-    if (
-      !isInside(root, canonical) ||
-      current.isSymbolicLink() ||
-      !current.isFile() ||
-      !canonicalStat.isFile() ||
-      !sameFileIdentity(written, current) ||
-      !sameFileIdentity(written, canonicalStat)
-    ) {
-      throw new Error('mission context path changed during staging');
-    }
-    assertOwned(current, uid, 'mission context file');
-    assertSingleLink(current, 'mission context file');
-    fs.closeSync(fd);
-    fd = null;
 
     // Espelho de conveniência em ~/.nexus/attachments/mission-context/:
     // Agentes de linha de comando (como Claude Code, Kimi, etc.) frequentemente deduzem
@@ -581,7 +597,7 @@ function stageMissionContextFile(
             fs.mkdirSync(userMissionContext, { mode: 0o700 });
           }
           const mirrorFile = path.join(userMissionContext, storedName);
-          fs.copyFileSync(canonical, mirrorFile, fs.constants.COPYFILE_EXCL);
+          await fsp.copyFile(canonical, mirrorFile, fs.constants.COPYFILE_EXCL);
         }
       }
     } catch {
@@ -594,26 +610,6 @@ function stageMissionContextFile(
       absolutePath: canonical,
     };
   } catch (error) {
-    if (fd !== null) {
-      try {
-        fs.closeSync(fd);
-      } catch {
-        // Best-effort cleanup below.
-      }
-    }
-    if (created && file && createdIdentity) {
-      try {
-        const current = fs.lstatSync(file);
-        if (
-          !current.isSymbolicLink() &&
-          sameFileIdentity(createdIdentity, current)
-        ) {
-          fs.unlinkSync(file);
-        }
-      } catch {
-        // The exclusively-created file was already removed.
-      }
-    }
     return {
       ok: false,
       error: error instanceof Error ? error.message : 'import failed',
@@ -625,12 +621,12 @@ function stageMissionContextFile(
  * Same staging for bytes that never crossed the IPC as base64 — a `file://`
  * read or an http(s) download done in main. Enforces the same 14 MiB cap.
  */
-export function importWorkspaceMissionAttachmentBytes(
+export async function importWorkspaceMissionAttachmentBytes(
   workspaceRoot: string,
   name: string,
   decoded: Buffer,
   options: SaveDroppedFileOptions = {},
-): SaveDroppedFileResult {
+): Promise<SaveDroppedFileResult> {
   if (decoded.length > DROPPED_ATTACHMENT_MAX_BYTES) {
     return {
       ok: false,
@@ -639,7 +635,7 @@ export function importWorkspaceMissionAttachmentBytes(
   }
   return stageMissionContextFile(workspaceRoot, name, options, {
     expectedSize: decoded.length,
-    writeInto: (fd) => fs.writeFileSync(fd, decoded),
+    writeInto: (handle) => handle.writeFile(decoded),
   });
 }
 
@@ -650,23 +646,23 @@ export function importWorkspaceMissionAttachmentBytes(
  * ultrapassar `maxBytes` (padrão 256 MiB, F-582) ou o tamanho final não bater
  * com `expectedSize` (o arquivo mudou durante a cópia).
  */
-export function importWorkspaceMissionAttachmentFromFile(
+export async function importWorkspaceMissionAttachmentFromFile(
   workspaceRoot: string,
   name: string,
   sourceFd: number,
   expectedSize: number,
   options: SaveDroppedFileOptions & { maxBytes?: number } = {},
-): SaveDroppedFileResult {
+): Promise<SaveDroppedFileResult> {
   const maxBytes = options.maxBytes ?? DROPPED_LOCAL_FILE_MAX_BYTES;
   return stageMissionContextFile(workspaceRoot, name, options, {
     expectedSize,
-    writeInto: (fd) => {
+    writeInto: async (handle) => {
       const chunk = Buffer.allocUnsafe(
         Math.min(STREAM_CHUNK_BYTES, Math.max(1, expectedSize)),
       );
       let total = 0;
       for (;;) {
-        const read = fs.readSync(
+        const { bytesRead: read } = await readFd(
           sourceFd,
           chunk,
           0,
@@ -678,7 +674,7 @@ export function importWorkspaceMissionAttachmentFromFile(
         if (total > maxBytes) {
           throw new Error('local file exceeds the 256 MiB item limit');
         }
-        fs.writeSync(fd, chunk, 0, read);
+        await handle.write(chunk, 0, read);
       }
       if (total !== expectedSize) {
         throw new Error('local file changed during the staged copy');

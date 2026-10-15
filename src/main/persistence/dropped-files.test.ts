@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -59,8 +59,8 @@ afterEach(() => {
 });
 
 describe('secure dropped-file staging', () => {
-  it('creates a private directory and an exclusive regular file', () => {
-    const result = saveDroppedFile(
+  it('creates a private directory and an exclusive regular file', async () => {
+    const result = await saveDroppedFile(
       'print erro.png',
       Buffer.from('evidência').toString('base64'),
       { homeDir, token: () => 'fixed-token' },
@@ -78,7 +78,7 @@ describe('secure dropped-file staging', () => {
     expect(fs.statSync(file).mode & 0o777).toBe(fileMode);
   });
 
-  it('does not follow or replace a pre-existing symlink', () => {
+  it('does not follow or replace a pre-existing symlink', async () => {
     fs.mkdirSync(droppedDir(), { recursive: true, mode: 0o700 });
     const outside = path.join(tempRoot, 'outside.txt');
     fs.writeFileSync(outside, 'não tocar');
@@ -88,7 +88,7 @@ describe('secure dropped-file staging', () => {
     );
     fs.symlinkSync(outside, candidate);
 
-    const result = saveDroppedFile(
+    const result = await saveDroppedFile(
       'attack.txt',
       Buffer.from('forjado').toString('base64'),
       { homeDir, token: () => 'fixed-token' },
@@ -99,12 +99,12 @@ describe('secure dropped-file staging', () => {
     expect(fs.lstatSync(candidate).isSymbolicLink()).toBe(true);
   });
 
-  it('does not create the dropped directory through a symlinked ~/.nexus', () => {
+  it('does not create the dropped directory through a symlinked ~/.nexus', async () => {
     const outside = path.join(tempRoot, 'outside-nexus');
     fs.mkdirSync(outside);
     fs.symlinkSync(outside, path.join(homeDir, '.nexus'));
 
-    const result = saveDroppedFile(
+    const result = await saveDroppedFile(
       'attack.txt',
       Buffer.from('forjado').toString('base64'),
       { homeDir, token: () => 'fixed-token' },
@@ -114,9 +114,9 @@ describe('secure dropped-file staging', () => {
     expect(fs.existsSync(path.join(outside, 'dropped'))).toBe(false);
   });
 
-  it('rejects a decoded item above 14 MiB before creating a file', () => {
+  it('rejects a decoded item above 14 MiB before creating a file', async () => {
     const oversized = Buffer.alloc(DROPPED_ATTACHMENT_MAX_BYTES + 1, 1);
-    const result = saveDroppedFile('large.bin', oversized.toString('base64'), {
+    const result = await saveDroppedFile('large.bin', oversized.toString('base64'), {
       homeDir,
       token: () => 'oversized',
     });
@@ -133,10 +133,10 @@ describe('workspace mission-context import', () => {
     return fs.realpathSync(root);
   }
 
-  it('copies bytes into a root-relative .nexus/attachments/mission-context path and mirrors to home', () => {
+  it('copies bytes into a root-relative .nexus/attachments/mission-context path and mirrors to home', async () => {
     const root = workspace();
     fs.mkdirSync(path.join(homeDir, '.nexus'), { recursive: true, mode: 0o700 });
-    const result = importWorkspaceMissionAttachment(
+    const result = await importWorkspaceMissionAttachment(
       root,
       'cliente.m4a',
       Buffer.from('audio-bytes').toString('base64'),
@@ -171,13 +171,13 @@ describe('workspace mission-context import', () => {
     expect(fs.readFileSync(mirror, 'utf8')).toBe('audio-bytes');
   });
 
-  it('streams a local fd into mission-context (F-582)', () => {
+  it('streams a local fd into mission-context (F-582)', async () => {
     const root = workspace();
     const source = path.join(tempRoot, 'video.mp4');
     fs.writeFileSync(source, 'v'.repeat(1024 * 1024 + 7));
     const sourceFd = fs.openSync(source, fs.constants.O_RDONLY);
     try {
-      const result = importWorkspaceMissionAttachmentFromFile(
+      const result = await importWorkspaceMissionAttachmentFromFile(
         root,
         'video.mp4',
         sourceFd,
@@ -200,7 +200,7 @@ describe('workspace mission-context import', () => {
     }
   });
 
-  it('does not mirror a streamed file above 14 MiB into ~/.nexus (F-582 review)', () => {
+  it('does not mirror a streamed file above 14 MiB into ~/.nexus (F-582 review)', async () => {
     const root = workspace();
     fs.mkdirSync(path.join(homeDir, '.nexus'), { mode: 0o700 });
     const source = path.join(tempRoot, 'grande.mp4');
@@ -208,7 +208,7 @@ describe('workspace mission-context import', () => {
     fs.truncateSync(source, DROPPED_ATTACHMENT_MAX_BYTES + 1024);
     const sourceFd = fs.openSync(source, fs.constants.O_RDONLY);
     try {
-      const result = importWorkspaceMissionAttachmentFromFile(
+      const result = await importWorkspaceMissionAttachmentFromFile(
         root,
         'grande.mp4',
         sourceFd,
@@ -237,14 +237,14 @@ describe('workspace mission-context import', () => {
     }
   });
 
-  it('still mirrors a streamed file at or under 14 MiB into ~/.nexus', () => {
+  it('still mirrors a streamed file at or under 14 MiB into ~/.nexus', async () => {
     const root = workspace();
     fs.mkdirSync(path.join(homeDir, '.nexus'), { mode: 0o700 });
     const source = path.join(tempRoot, 'pequeno.mp4');
     fs.writeFileSync(source, 'v'.repeat(1024));
     const sourceFd = fs.openSync(source, fs.constants.O_RDONLY);
     try {
-      const result = importWorkspaceMissionAttachmentFromFile(
+      const result = await importWorkspaceMissionAttachmentFromFile(
         root,
         'pequeno.mp4',
         sourceFd,
@@ -265,7 +265,7 @@ describe('workspace mission-context import', () => {
     }
   });
 
-  it('aborts the streamed copy when the source grew past expectedSize and removes the staged file', () => {
+  it('aborts the streamed copy when the source grew past expectedSize and removes the staged file', async () => {
     const root = workspace();
     const source = path.join(tempRoot, 'mutante.bin');
     fs.writeFileSync(source, 'x'.repeat(4096));
@@ -275,7 +275,7 @@ describe('workspace mission-context import', () => {
       ...MISSION_CONTEXT_ATTACHMENT_PREFIX.split('/'),
     );
     try {
-      const result = importWorkspaceMissionAttachmentFromFile(
+      const result = await importWorkspaceMissionAttachmentFromFile(
         root,
         'mutante.bin',
         sourceFd,
@@ -293,14 +293,14 @@ describe('workspace mission-context import', () => {
     }
   });
 
-  it('does not follow a symlink out of the workspace', () => {
+  it('does not follow a symlink out of the workspace', async () => {
     const root = workspace();
     const outside = path.join(tempRoot, 'outside');
     fs.mkdirSync(outside);
     const nexus = path.join(root, '.nexus');
     fs.symlinkSync(outside, nexus);
 
-    const result = importWorkspaceMissionAttachment(
+    const result = await importWorkspaceMissionAttachment(
       root,
       'attack.txt',
       Buffer.from('forjado').toString('base64'),
@@ -641,4 +641,55 @@ describe('sealed mission attachment lifecycle', () => {
     expect(fs.existsSync(orphan.path)).toBe(false);
   });
 
+});
+
+describe('anexo grande sem bloquear o Main (#21)', () => {
+  it('salva 14 MiB exatos (a regex antiga estourava a pilha acima de ~3 MiB) cedendo o loop', async () => {
+    const bytes = randomBytes(DROPPED_ATTACHMENT_MAX_BYTES);
+    let yielded = false;
+    setImmediate(() => { yielded = true; });
+    const pending = saveDroppedFile('grande.bin', bytes.toString('base64'), {
+      homeDir,
+      token: () => 'big',
+    });
+    expect(pending).toBeInstanceOf(Promise);
+    const result = await pending;
+    expect(result).toMatchObject({ ok: true });
+    expect(yielded).toBe(true);
+    if (result.ok) expect(fs.readFileSync(result.path).equals(bytes)).toBe(true);
+  });
+
+  it.each([
+    ['bits finais sujos', 'QR=='],
+    ['caractere fora do alfabeto', 'QU!D'],
+    ['comprimento fora de múltiplo de 4', 'QUJ'],
+    ['padding no fim de uma fatia que não é a última', `${'QUJD'.repeat(262_143)}QQ==${'QUJD'.repeat(4)}`],
+    ['padding no meio', `QQ==${'QUJD'.repeat(400_000)}`],
+  ])('recusa base64 não canônico (%s) antes de criar arquivo', async (_label, base64) => {
+    const result = await saveDroppedFile('x.bin', base64, { homeDir, token: () => 'bad' });
+    expect(result).toMatchObject({ ok: false });
+    expect(fs.existsSync(droppedDir())).toBe(false);
+  });
+
+  it('copia o arquivo local em blocos sem bloquear o loop', async () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(tempRoot, 'stream-')));
+    const source = path.join(tempRoot, 'video-grande.mp4');
+    const bytes = randomBytes(3 * 1024 * 1024 + 5);
+    fs.writeFileSync(source, bytes);
+    const sourceFd = fs.openSync(source, fs.constants.O_RDONLY);
+    try {
+      let yielded = false;
+      setImmediate(() => { yielded = true; });
+      const pending = importWorkspaceMissionAttachmentFromFile(
+        root, 'video-grande.mp4', sourceFd, bytes.length, { token: () => 'stream-big' },
+      );
+      expect(pending).toBeInstanceOf(Promise);
+      const result = await pending;
+      expect(result.ok).toBe(true);
+      expect(yielded).toBe(true);
+      if (result.ok) expect(fs.readFileSync(path.join(root, result.path)).equals(bytes)).toBe(true);
+    } finally {
+      fs.closeSync(sourceFd);
+    }
+  });
 });

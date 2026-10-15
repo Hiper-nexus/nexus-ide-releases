@@ -223,11 +223,11 @@ export function macPrivacyMessage(
  * bytes NÃO são materializados aqui — quem copia é o estágio stream
  * (`importWorkspaceMissionAttachmentFromFile`) com o fd ainda aberto.
  */
-function stageLocalFile(
+async function stageLocalFile(
   workspaceRoot: string,
   requested: string,
   options: SaveDroppedFileOptions,
-): SaveDroppedFileResult {
+): Promise<SaveDroppedFileResult> {
   const name = path.basename(requested) || 'arquivo';
   if (!path.isAbsolute(requested)) {
     return { ok: false, error: `Caminho precisa ser absoluto: "${name}".` };
@@ -257,7 +257,8 @@ function stageLocalFile(
     if (opened.size > DROPPED_LOCAL_FILE_MAX_BYTES) {
       return { ok: false, error: tooLargeMessage(name, LOCAL_LIMIT_LABEL) };
     }
-    return importWorkspaceMissionAttachmentFromFile(
+    // `await` aqui dentro: o `finally` só fecha o fd depois da cópia.
+    return await importWorkspaceMissionAttachmentFromFile(
       workspaceRoot,
       name,
       fd,

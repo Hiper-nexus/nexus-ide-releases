@@ -85,7 +85,7 @@ function project(name: string, content: string): string {
 }
 
 describe('file explorer IPC renderer authority', () => {
-  it('isolates list, read, and write by the invoking WebContents scope', () => {
+  it('isolates list, read, and write by the invoking WebContents scope', async () => {
     const rootA = project('project-a', 'content-a');
     const rootB = project('project-b', 'content-b');
     fs.writeFileSync(path.join(rootA, 'only-a.txt'), 'a', 'utf8');
@@ -102,10 +102,10 @@ describe('file explorer IPC renderer authority', () => {
       scope(rootB, 'project-b', 'checkout-b'),
     );
 
-    const listA = invoke<FileTreeResult>(FILES_CHANNELS.list, windowA, {
+    const listA = await invoke<FileTreeResult>(FILES_CHANNELS.list, windowA, {
       relPath: '',
     });
-    const listB = invoke<FileTreeResult>(FILES_CHANNELS.list, windowB, {
+    const listB = await invoke<FileTreeResult>(FILES_CHANNELS.list, windowB, {
       relPath: '',
     });
     expect(listA.entries?.map((entry) => entry.name)).toContain('only-a.txt');
@@ -114,24 +114,24 @@ describe('file explorer IPC renderer authority', () => {
     expect(listB.entries?.map((entry) => entry.name)).not.toContain('only-a.txt');
 
     expect(
-      invoke<ReadFileResult>(FILES_CHANNELS.read, windowA, {
+      await invoke<ReadFileResult>(FILES_CHANNELS.read, windowA, {
         relPath: 'same.txt',
       }),
     ).toMatchObject({ ok: true, content: 'content-a' });
     expect(
-      invoke<ReadFileResult>(FILES_CHANNELS.read, windowB, {
+      await invoke<ReadFileResult>(FILES_CHANNELS.read, windowB, {
         relPath: 'same.txt',
       }),
     ).toMatchObject({ ok: true, content: 'content-b' });
 
     const pathFromAToB = path.relative(rootA, path.join(rootB, 'same.txt'));
     expect(
-      invoke<ReadFileResult>(FILES_CHANNELS.read, windowA, {
+      await invoke<ReadFileResult>(FILES_CHANNELS.read, windowA, {
         relPath: pathFromAToB,
       }),
     ).toEqual({ ok: false, error: 'path outside workspace' });
     expect(
-      invoke(FILES_CHANNELS.write, windowA, {
+      await invoke(FILES_CHANNELS.write, windowA, {
         relPath: pathFromAToB,
         content: 'cross-project-write',
       }),
@@ -141,7 +141,7 @@ describe('file explorer IPC renderer authority', () => {
     );
 
     expect(
-      invoke(FILES_CHANNELS.write, windowA, {
+      await invoke(FILES_CHANNELS.write, windowA, {
         relPath: 'nested/from-a.txt',
         content: 'written-a',
       }),
@@ -253,7 +253,7 @@ describe('file explorer IPC renderer authority', () => {
     ).resolves.toMatchObject({ ok: false });
   });
 
-  it('rejects a stale scope when its canonical root path is replaced', () => {
+  it('rejects a stale scope when its canonical root path is replaced', async () => {
     const rootA = project('stale-a', 'content-a');
     const rootB = project('stale-b', 'content-b');
     const archivedA = path.join(baseDir, 'stale-a-archived');
@@ -272,7 +272,7 @@ describe('file explorer IPC renderer authority', () => {
     );
 
     expect(
-      invoke<ReadFileResult>(FILES_CHANNELS.read, window, {
+      await invoke<ReadFileResult>(FILES_CHANNELS.read, window, {
         relPath: 'same.txt',
       }),
     ).toEqual({ ok: false, error: 'path outside workspace' });
@@ -281,7 +281,7 @@ describe('file explorer IPC renderer authority', () => {
     );
   });
 
-  it('preserves symlink escape protection for existing and new write targets', () => {
+  it('preserves symlink escape protection for existing and new write targets', async () => {
     const root = project('symlink-root', 'inside');
     const outside = project('outside', 'outside');
     const link = path.join(root, 'escape');
@@ -297,17 +297,17 @@ describe('file explorer IPC renderer authority', () => {
       scope(root, 'project-a', 'checkout-a'),
     );
 
-    const listed = invoke<FileTreeResult>(FILES_CHANNELS.list, window, {
+    const listed = await invoke<FileTreeResult>(FILES_CHANNELS.list, window, {
       relPath: '',
     });
     expect(listed.entries?.map((entry) => entry.name)).not.toContain('escape');
     expect(
-      invoke<ReadFileResult>(FILES_CHANNELS.read, window, {
+      await invoke<ReadFileResult>(FILES_CHANNELS.read, window, {
         relPath: 'escape/same.txt',
       }),
     ).toEqual({ ok: false, error: 'path outside workspace' });
     expect(
-      invoke(FILES_CHANNELS.write, window, {
+      await invoke(FILES_CHANNELS.write, window, {
         relPath: 'escape/new.txt',
         content: 'blocked',
       }),
@@ -315,7 +315,7 @@ describe('file explorer IPC renderer authority', () => {
     expect(fs.existsSync(path.join(outside, 'new.txt'))).toBe(false);
   });
 
-  it('rejects external hardlinks for list, read, and write without changing the inode', () => {
+  it('rejects external hardlinks for list, read, and write without changing the inode', async () => {
     const root = project('hardlink-root', 'inside');
     const outside = project('hardlink-outside', 'outside-secret');
     const externalFile = path.join(outside, 'same.txt');
@@ -328,19 +328,19 @@ describe('file explorer IPC renderer authority', () => {
       scope(root, 'project-a', 'checkout-a'),
     );
 
-    const listed = invoke<FileTreeResult>(FILES_CHANNELS.list, window, {
+    const listed = await invoke<FileTreeResult>(FILES_CHANNELS.list, window, {
       relPath: '',
     });
     expect(listed.entries?.map((entry) => entry.name)).not.toContain(
       'external-hardlink.txt',
     );
     expect(
-      invoke<ReadFileResult>(FILES_CHANNELS.read, window, {
+      await invoke<ReadFileResult>(FILES_CHANNELS.read, window, {
         relPath: 'external-hardlink.txt',
       }),
     ).toEqual({ ok: false, error: 'unsafe file' });
     expect(
-      invoke(FILES_CHANNELS.write, window, {
+      await invoke(FILES_CHANNELS.write, window, {
         relPath: 'external-hardlink.txt',
         content: 'must-not-write',
       }),
@@ -348,7 +348,7 @@ describe('file explorer IPC renderer authority', () => {
     expect(fs.readFileSync(externalFile, 'utf8')).toBe('outside-secret');
   });
 
-  it('fails closed when the parent is swapped to an external symlink before descriptor open', () => {
+  it('fails closed when the parent is swapped to an external symlink before descriptor open', async () => {
     const root = project('swap-root', 'inside');
     const outside = project('swap-outside', 'outside-secret');
     fs.writeFileSync(path.join(root, 'nested', 'target.txt'), 'inside-target');
@@ -375,7 +375,7 @@ describe('file explorer IPC renderer authority', () => {
     });
 
     expect(
-      invoke(FILES_CHANNELS.write, window, {
+      await invoke(FILES_CHANNELS.write, window, {
         relPath: 'nested/target.txt',
         content: 'must-not-write',
       }),
@@ -388,7 +388,7 @@ describe('file explorer IPC renderer authority', () => {
     );
   });
 
-  it('does not read an external target swapped in before descriptor open', () => {
+  it('does not read an external target swapped in before descriptor open', async () => {
     const root = project('read-swap-root', 'inside-target');
     const outside = project('read-swap-outside', 'outside-secret');
     const original = path.join(root, 'same-original.txt');
@@ -409,14 +409,14 @@ describe('file explorer IPC renderer authority', () => {
     });
 
     expect(
-      invoke<ReadFileResult>(FILES_CHANNELS.read, window, {
+      await invoke<ReadFileResult>(FILES_CHANNELS.read, window, {
         relPath: 'same.txt',
       }),
     ).toEqual({ ok: false, error: 'unsafe file' });
     expect(fs.readFileSync(original, 'utf8')).toBe('inside-target');
   });
 
-  it('creates new files exclusively, preserves empty files, and never overwrites a swapped target', () => {
+  it('creates new files exclusively, preserves empty files, and never overwrites a swapped target', async () => {
     const root = project('create-root', 'inside');
     const window = renderer(703);
     renderers.push(window);
@@ -426,7 +426,7 @@ describe('file explorer IPC renderer authority', () => {
     );
 
     expect(
-      invoke(FILES_CHANNELS.write, window, {
+      await invoke(FILES_CHANNELS.write, window, {
         relPath: 'nested/empty.txt',
         content: '',
       }),
@@ -447,7 +447,7 @@ describe('file explorer IPC renderer authority', () => {
       },
     });
     expect(
-      invoke(FILES_CHANNELS.write, window, {
+      await invoke(FILES_CHANNELS.write, window, {
         relPath: 'nested/raced.txt',
         content: 'must-not-overwrite',
       }),
@@ -457,7 +457,7 @@ describe('file explorer IPC renderer authority', () => {
     );
   });
 
-  it('imports an external blob into workspace mission-context, not ~/.nexus/dropped', () => {
+  it('imports an external blob into workspace mission-context, not ~/.nexus/dropped', async () => {
     const root = project('import-root', 'inside');
     const window = renderer(801);
     renderers.push(window);
@@ -466,7 +466,7 @@ describe('file explorer IPC renderer authority', () => {
       scope(root, 'project-a', 'checkout-a'),
     );
 
-    const result = invoke<{ ok: boolean; path?: string }>(
+    const result = await invoke<{ ok: boolean; path?: string }>(
       FILES_CHANNELS.importMissionAttachment,
       window,
       { name: 'cliente.m4a', base64: Buffer.from('audio-bytes').toString('base64') },
@@ -615,5 +615,41 @@ describe('busca de arquivo por nome (Mod+P da paleta)', () => {
     expect(() =>
       invoke(FILES_CHANNELS.search, renderer(964), { query: 'x' }),
     ).toThrow();
+  });
+});
+
+describe('explorador sem IO síncrono no Main (#21)', () => {
+  it('lista, lê e grava por fs.promises com as mesmas recusas de link', async () => {
+    const root = project('async-root', 'inside');
+    const outside = project('async-outside', 'outside-secret');
+    fs.symlinkSync(path.join(outside, 'same.txt'), path.join(root, 'link.txt'));
+    fs.linkSync(path.join(outside, 'same.txt'), path.join(root, 'hard.txt'));
+    const window = renderer(1001);
+    renderers.push(window);
+    bindResolvedRendererWorkspaceScope(window, scope(root, 'project-a', 'checkout-a'));
+    const syncCalls = ([
+      'lstatSync', 'realpathSync', 'readdirSync', 'statSync', 'openSync',
+      'fstatSync', 'readFileSync', 'writeFileSync', 'fsyncSync', 'ftruncateSync',
+    ] as const).map((name) => vi.spyOn(fs, name));
+
+    const listed = invoke<Promise<FileTreeResult>>(FILES_CHANNELS.list, window, { relPath: '' });
+    expect(listed).toBeInstanceOf(Promise);
+    expect((await listed).entries?.map((entry) => `${entry.kind}:${entry.name}`))
+      .toEqual(['dir:nested', 'file:same.txt']);
+    expect(await invoke(FILES_CHANNELS.read, window, { relPath: 'same.txt' }))
+      .toEqual({ ok: true, content: 'inside' });
+    expect(await invoke(FILES_CHANNELS.read, window, { relPath: 'link.txt' }))
+      .toEqual({ ok: false, error: 'path outside workspace' });
+    expect(await invoke(FILES_CHANNELS.write, window, { relPath: 'nested/new.txt', content: 'novo' }))
+      .toEqual({ ok: true });
+    expect(await invoke(FILES_CHANNELS.write, window, { relPath: 'hard.txt', content: 'x' }))
+      .toEqual({ ok: false, error: 'unsafe file' });
+
+    for (const spy of syncCalls) {
+      expect(spy, spy.getMockName()).not.toHaveBeenCalled();
+      spy.mockRestore();
+    }
+    expect(fs.readFileSync(path.join(root, 'nested', 'new.txt'), 'utf8')).toBe('novo');
+    expect(fs.readFileSync(path.join(outside, 'same.txt'), 'utf8')).toBe('outside-secret');
   });
 });

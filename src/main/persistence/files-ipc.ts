@@ -1,5 +1,7 @@
 import fs from 'node:fs';
+import type { FileHandle } from 'node:fs/promises';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import { ipcMain } from 'electron';
 import {
   FILES_CHANNELS,
@@ -29,7 +31,13 @@ import { searchWorkspaceFiles } from '../orch/workspace-file-search';
  * File explorer backend — sandboxed to the invoking renderer's main-owned
  * workspace scope. Every relPath is resolved against its canonical root and
  * rejected if it escapes it, including through symlinks.
+ *
+ * #21: nenhum IO síncrono no Main. `fs.promises` e o `fs.realpath` em JS
+ * (promisify): o mesmo algoritmo do `realpathSync` — o `realpath(3)` nativo
+ * corrige a caixa no APFS e mudaria a comparação com a raiz autorizada.
  */
+const fsp = fs.promises;
+const realpath = promisify(fs.realpath);
 
 const MAX_READ_BYTES = 2_000_000;
 const IGNORED = new Set([
@@ -89,14 +97,14 @@ function sameDirectory(
   );
 }
 
-function canonicalScopeRoot(
+async function canonicalScopeRoot(
   scope: ProjectExecutionScope,
-): DirectorySnapshot | null {
+): Promise<DirectorySnapshot | null> {
   const authorizedRoot = path.resolve(scope.rootRealPath);
   try {
-    const rootStat = fs.lstatSync(authorizedRoot);
+    const rootStat = await fsp.lstat(authorizedRoot);
     if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) return null;
-    const realRoot = fs.realpathSync(authorizedRoot);
+    const realRoot = await realpath(authorizedRoot);
     if (path.relative(authorizedRoot, realRoot) !== '') return null;
     return { abs: realRoot, identity: identityOf(rootStat) };
   } catch {
@@ -104,19 +112,19 @@ function canonicalScopeRoot(
   }
 }
 
-function canonicalDirectory(
+async function canonicalDirectory(
   root: DirectorySnapshot,
   requestedPath: string,
-): DirectorySnapshot | null {
+): Promise<DirectorySnapshot | null> {
   try {
-    const realPath = fs.realpathSync(requestedPath);
+    const realPath = await realpath(requestedPath);
     if (
       path.relative(requestedPath, realPath) !== '' ||
       !isInsideRoot(root.abs, realPath)
     ) {
       return null;
     }
-    const stat = fs.lstatSync(requestedPath);
+    const stat = await fsp.lstat(requestedPath);
     if (stat.isSymbolicLink() || !stat.isDirectory()) return null;
     return { abs: realPath, identity: identityOf(stat) };
   } catch {
@@ -124,11 +132,11 @@ function canonicalDirectory(
   }
 }
 
-function resolveLexicalPath(
+async function resolveLexicalPath(
   scope: ProjectExecutionScope,
   relPath: string,
-): { root: DirectorySnapshot; abs: string } | null {
-  const root = canonicalScopeRoot(scope);
+): Promise<{ root: DirectorySnapshot; abs: string } | null> {
+  const root = await canonicalScopeRoot(scope);
   if (!root) return null;
   const abs = path.resolve(root.abs, relPath);
   if (!isInsideRoot(root.abs, abs)) return null;
@@ -139,116 +147,116 @@ function isSafeRegularFile(stat: fs.Stats): boolean {
   return stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1;
 }
 
-function lstatOrNull(file: string): fs.Stats | null {
+async function lstatOrNull(file: string): Promise<fs.Stats | null> {
   try {
-    return fs.lstatSync(file);
+    return await fsp.lstat(file);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw error;
   }
 }
 
-function isBoundaryCurrent(
+async function isBoundaryCurrent(
   scope: ProjectExecutionScope,
   rootBefore: DirectorySnapshot,
   parentBefore: DirectorySnapshot,
   file: string,
-): boolean {
-  const root = canonicalScopeRoot(scope);
+): Promise<boolean> {
+  const root = await canonicalScopeRoot(scope);
   if (!sameDirectory(root, rootBefore)) return false;
-  const parent = root ? canonicalDirectory(root, path.dirname(file)) : null;
+  const parent = root ? await canonicalDirectory(root, path.dirname(file)) : null;
   return sameDirectory(parent, parentBefore);
 }
 
-function isListedDirectoryCurrent(
+async function isListedDirectoryCurrent(
   scope: ProjectExecutionScope,
   rootBefore: DirectorySnapshot,
   directoryBefore: DirectorySnapshot,
-): boolean {
-  const root = canonicalScopeRoot(scope);
+): Promise<boolean> {
+  const root = await canonicalScopeRoot(scope);
   if (!sameDirectory(root, rootBefore)) return false;
   const directory = root
-    ? canonicalDirectory(root, directoryBefore.abs)
+    ? await canonicalDirectory(root, directoryBefore.abs)
     : null;
   return sameDirectory(directory, directoryBefore);
 }
 
-function validateOpenedFile(
+async function validateOpenedFile(
   scope: ProjectExecutionScope,
   rootBefore: DirectorySnapshot,
   parentBefore: DirectorySnapshot,
   file: string,
-  fd: number,
+  handle: FileHandle,
   expectedBefore: fs.Stats | null,
-): fs.Stats | null {
-  const opened = fs.fstatSync(fd);
+): Promise<fs.Stats | null> {
+  const opened = await handle.stat();
   if (!isSafeRegularFile(opened)) return null;
   if (expectedBefore && !hasIdentity(opened, identityOf(expectedBefore))) {
     return null;
   }
 
-  if (!isBoundaryCurrent(scope, rootBefore, parentBefore, file)) return null;
-  const current = lstatOrNull(file);
+  if (!(await isBoundaryCurrent(scope, rootBefore, parentBefore, file))) return null;
+  const current = await lstatOrNull(file);
   if (!current || !isSafeRegularFile(current)) return null;
   if (!hasIdentity(current, identityOf(opened))) return null;
   return opened;
 }
 
-function safeListEntry(
-  root: DirectorySnapshot,
+/**
+ * Entrada direta de uma pasta JÁ canônica (realpath = ela mesma, dentro da
+ * raiz): um nome do readdir que não é symlink resolve para `pasta/nome`, logo
+ * também dentro da raiz. O realpath por entrada (até 2 por item, um lstat por
+ * componente do caminho) era redundante; a pasta é revalidada antes e depois
+ * da listagem. Arquivo continua exigindo regular de link único.
+ */
+async function safeListEntry(
   directory: string,
-  name: string,
+  dirent: fs.Dirent,
   relPath: string,
-): FileNode | null {
-  if (IGNORED.has(name)) return null;
+): Promise<FileNode | null> {
+  const { name } = dirent;
+  if (IGNORED.has(name) || dirent.isSymbolicLink()) return null;
   try {
-    const entryPath = path.join(directory, name);
-    const stat = fs.lstatSync(entryPath);
+    const stat = await fsp.lstat(path.join(directory, name));
     if (stat.isSymbolicLink()) return null;
-    if (stat.isDirectory()) {
-      if (!canonicalDirectory(root, entryPath)) return null;
-      return { name, relPath, kind: 'dir' };
-    }
-    if (!isSafeRegularFile(stat)) return null;
-    const realPath = fs.realpathSync(entryPath);
-    if (path.relative(entryPath, realPath) !== '') return null;
-    if (!isInsideRoot(root.abs, realPath)) return null;
-    return { name, relPath, kind: 'file' };
+    if (stat.isDirectory()) return { name, relPath, kind: 'dir' };
+    return isSafeRegularFile(stat) ? { name, relPath, kind: 'file' } : null;
   } catch {
     return null;
   }
 }
 
 /** Também usado pela Remote Bridge (F-1014) com o escopo do checkout do pane. */
-export function listDir(scope: ProjectExecutionScope, relPath: string): FileTreeResult {
-  const resolved = resolveLexicalPath(scope, relPath);
+export async function listDir(
+  scope: ProjectExecutionScope,
+  relPath: string,
+): Promise<FileTreeResult> {
+  const resolved = await resolveLexicalPath(scope, relPath);
   if (!resolved) return { ok: false, error: 'path outside workspace' };
-  const directory = canonicalDirectory(resolved.root, resolved.abs);
+  const directory = await canonicalDirectory(resolved.root, resolved.abs);
   if (!directory) return { ok: false, error: 'path outside workspace' };
   try {
-    const dirents = fs.readdirSync(directory.abs, { withFileTypes: true });
-    if (!isListedDirectoryCurrent(scope, resolved.root, directory)) {
+    const dirents = await fsp.readdir(directory.abs, { withFileTypes: true });
+    if (!(await isListedDirectoryCurrent(scope, resolved.root, directory))) {
       return { ok: false, error: 'unsafe directory' };
     }
-    const entries: FileNode[] = dirents
-      .map((dirent) =>
-        safeListEntry(
-          resolved.root,
-          directory.abs,
-          dirent.name,
-          path.posix.join(
-            relPath.split(path.sep).join('/'),
-            dirent.name,
-          ),
-        ),
-      )
+    const prefix = relPath.split(path.sep).join('/');
+    // ponytail: um lstat por entrada, todos de uma vez na fila do libuv; uma
+    // pasta com dezenas de milhares de itens enfileira tudo. Limitar a
+    // concorrência se isso aparecer.
+    const listed = await Promise.all(
+      dirents.map((dirent) =>
+        safeListEntry(directory.abs, dirent, path.posix.join(prefix, dirent.name)),
+      ),
+    );
+    const entries = listed
       .filter((entry): entry is FileNode => entry !== null)
       // Directories first, then alphabetical.
       .sort((a, b) => {
         if (a.kind !== b.kind) return a.kind === 'dir' ? -1 : 1;
         return a.name.localeCompare(b.name);
       });
-    if (!isListedDirectoryCurrent(scope, resolved.root, directory)) {
+    if (!(await isListedDirectoryCurrent(scope, resolved.root, directory))) {
       return { ok: false, error: 'unsafe directory' };
     }
     return { ok: true, entries };
@@ -265,63 +273,63 @@ export function looksBinary(buffer: Buffer): boolean {
   return false;
 }
 
-function readFile(
+async function readFile(
   scope: ProjectExecutionScope,
   relPath: string,
   hooks: FilesIpcTestHooks,
-): ReadFileResult {
-  const resolved = resolveLexicalPath(scope, relPath);
+): Promise<ReadFileResult> {
+  const resolved = await resolveLexicalPath(scope, relPath);
   if (!resolved) return { ok: false, error: 'path outside workspace' };
-  const parent = canonicalDirectory(resolved.root, path.dirname(resolved.abs));
+  const parent = await canonicalDirectory(resolved.root, path.dirname(resolved.abs));
   if (!parent) return { ok: false, error: 'path outside workspace' };
-  let fd: number | null = null;
+  let handle: FileHandle | null = null;
   try {
-    const before = fs.lstatSync(resolved.abs);
+    const before = await fsp.lstat(resolved.abs);
     if (before.isSymbolicLink()) {
       return { ok: false, error: 'path outside workspace' };
     }
     if (before.isDirectory()) return { ok: false, error: 'is a directory' };
     if (!isSafeRegularFile(before)) return { ok: false, error: 'unsafe file' };
-    if (!isBoundaryCurrent(scope, resolved.root, parent, resolved.abs)) {
+    if (!(await isBoundaryCurrent(scope, resolved.root, parent, resolved.abs))) {
       return { ok: false, error: 'unsafe file' };
     }
     hooks.beforeOpen?.('read');
-    fd = fs.openSync(resolved.abs, fs.constants.O_RDONLY | NOFOLLOW_FLAG);
-    const opened = validateOpenedFile(
+    handle = await fsp.open(resolved.abs, fs.constants.O_RDONLY | NOFOLLOW_FLAG);
+    const opened = await validateOpenedFile(
       scope,
       resolved.root,
       parent,
       resolved.abs,
-      fd,
+      handle,
       before,
     );
     if (!opened) return { ok: false, error: 'unsafe file' };
     if (opened.size > MAX_READ_BYTES) return { ok: true, tooLarge: true };
-    const buffer = fs.readFileSync(fd);
+    const buffer = await handle.readFile();
     if (looksBinary(buffer)) return { ok: true, binary: true };
     return { ok: true, content: buffer.toString('utf8') };
   } catch {
     return { ok: false, error: 'unsafe file' };
   } finally {
-    if (fd !== null) fs.closeSync(fd);
+    await handle?.close();
   }
 }
 
-function writeFile(
+async function writeFile(
   scope: ProjectExecutionScope,
   relPath: string,
   content: string,
   hooks: FilesIpcTestHooks,
-): { ok: boolean; error?: string } {
-  const resolved = resolveLexicalPath(scope, relPath);
+): Promise<{ ok: boolean; error?: string }> {
+  const resolved = await resolveLexicalPath(scope, relPath);
   if (!resolved) return { ok: false, error: 'path outside workspace' };
-  const parent = canonicalDirectory(resolved.root, path.dirname(resolved.abs));
+  const parent = await canonicalDirectory(resolved.root, path.dirname(resolved.abs));
   if (!parent) return { ok: false, error: 'path outside workspace' };
-  let fd: number | null = null;
+  let handle: FileHandle | null = null;
   let created = false;
   let completed = false;
   try {
-    const before = lstatOrNull(resolved.abs);
+    const before = await lstatOrNull(resolved.abs);
     if (before?.isSymbolicLink()) {
       return { ok: false, error: 'path outside workspace' };
     }
@@ -329,7 +337,7 @@ function writeFile(
     if (before && !isSafeRegularFile(before)) {
       return { ok: false, error: 'unsafe file' };
     }
-    if (!isBoundaryCurrent(scope, resolved.root, parent, resolved.abs)) {
+    if (!(await isBoundaryCurrent(scope, resolved.root, parent, resolved.abs))) {
       return { ok: false, error: 'unsafe file' };
     }
     hooks.beforeOpen?.('write');
@@ -339,41 +347,42 @@ function writeFile(
         fs.constants.O_CREAT |
         fs.constants.O_EXCL |
         NOFOLLOW_FLAG;
-    fd = fs.openSync(resolved.abs, flags, PRIVATE_FILE_MODE);
+    handle = await fsp.open(resolved.abs, flags, PRIVATE_FILE_MODE);
     created = before === null;
-    const opened = validateOpenedFile(
+    const opened = await validateOpenedFile(
       scope,
       resolved.root,
       parent,
       resolved.abs,
-      fd,
+      handle,
       before,
     );
     if (!opened) return { ok: false, error: 'unsafe file' };
-    if (!isSafeRegularFile(fs.fstatSync(fd))) {
+    if (!isSafeRegularFile(await handle.stat())) {
       return { ok: false, error: 'unsafe file' };
     }
-    fs.ftruncateSync(fd, 0);
-    fs.writeFileSync(fd, content, 'utf8');
-    fs.fsyncSync(fd);
+    await handle.truncate(0);
+    await handle.writeFile(content, 'utf8');
+    await handle.sync();
     completed = true;
     return { ok: true };
   } catch {
     return { ok: false, error: 'unsafe file' };
   } finally {
-    if (fd !== null) {
-      const opened = fs.fstatSync(fd);
-      if (created && !completed) {
-        try {
-          const current = fs.lstatSync(resolved.abs);
+    if (handle !== null) {
+      try {
+        if (created && !completed) {
+          const opened = await handle.stat();
+          const current = await fsp.lstat(resolved.abs);
           if (hasIdentity(current, identityOf(opened))) {
-            fs.unlinkSync(resolved.abs);
+            await fsp.unlink(resolved.abs);
           }
-        } catch {
-          // The safely-created file was already removed or moved.
         }
+      } catch {
+        // The safely-created file was already removed or moved.
+      } finally {
+        await handle.close();
       }
-      fs.closeSync(fd);
     }
   }
 }
@@ -387,7 +396,7 @@ async function searchFiles(
   scope: ProjectExecutionScope,
   query: string,
 ): Promise<SearchFilesResult> {
-  const root = canonicalScopeRoot(scope);
+  const root = await canonicalScopeRoot(scope);
   if (!root) return { ok: false, error: 'unsafe workspace' };
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
   const result = await searchWorkspaceFiles(
@@ -433,20 +442,21 @@ export function registerFilesIpc(hooks: FilesIpcTestHooks = {}): void {
     ) {
       return { ok: false, error: 'invalid payload' };
     }
-    const result = importWorkspaceMissionAttachment(
+    return importWorkspaceMissionAttachment(
       scope.rootRealPath,
       raw.name,
       raw.base64,
-    );
-    if (!result.ok) {
-      // F-582: o motivo sai no log do Main (nunca bytes/base64) — sem isto a
-      // recusa virava o toast genérico do renderer e a causa sumia.
-      console.warn(
-        '[files] mission attachment import failed:',
-        result.error,
-      );
-    }
-    return result;
+    ).then((result) => {
+      if (!result.ok) {
+        // F-582: o motivo sai no log do Main (nunca bytes/base64) — sem isto a
+        // recusa virava o toast genérico do renderer e a causa sumia.
+        console.warn(
+          '[files] mission attachment import failed:',
+          result.error,
+        );
+      }
+      return result;
+    });
   });
 
   // Drop sem `File`: o renderer só tem o endereço (`file://` ou http(s)).
