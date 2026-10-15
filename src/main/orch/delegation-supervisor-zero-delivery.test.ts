@@ -60,6 +60,7 @@ vi.mock('./nexus-task-fail-closed-recovery', () => ({
 vi.mock('../observability/main-trace', () => ({ trace: vi.fn() }));
 
 import {
+  DELEGATION_SUPERVISOR_AGENT,
   prepareDelegationSupervisor,
   reconcileDelegationSupervisor,
   shutdownDelegationSupervisor,
@@ -98,7 +99,7 @@ function suite(mission: Mission) {
     },
     tasks: { list: () => [] },
     handoffs: {
-      list: vi.fn(() => []),
+      list: vi.fn((): import('../../shared/orch-types').Handoff[] => []),
       submit: h.submit.mockImplementation((input: Record<string, unknown>) => ({
         id: `handoff-${h.submit.mock.calls.length}`,
         createdAt: NOW,
@@ -149,6 +150,39 @@ describe('F-986: vigia de zero entrega no scan real', () => {
     h.toolActivity.mockReturnValue(0);
     await shutdownDelegationSupervisor();
     prepareDelegationSupervisor();
+  });
+
+  it('uses one handoff list per mission per tick even with an idle leader', async () => {
+    const mission = studyMission();
+    const stores = suite(mission);
+    h.onScope!(SCOPE, stores);
+    h.listPaneSnapshots.mockReturnValue(panes(mission, 'busy'));
+    await reconcileDelegationSupervisor(NOW);
+    expect(stores.handoffs.list).toHaveBeenCalledTimes(1);
+    await reconcileDelegationSupervisor(NOW + MIN);
+    expect(stores.handoffs.list).toHaveBeenCalledTimes(2);
+  });
+
+  it('expires queued recoveries without relisting, and retries a failed conditional write next tick', async () => {
+    const mission = studyMission();
+    const stores = suite(mission);
+    const old = { id: 'old', missionId: mission.id, status: 'stalled' as const,
+      fromAgent: DELEGATION_SUPERVISOR_AGENT, summary: 'old recovery', artifacts: [],
+      evidenceIds: [], evidenceTrust: 'unverified' as const, claimTrust: 'untrusted' as const,
+      delivered: false, deliveryState: 'queued' as const, createdAt: NOW - 60 * MIN };
+    stores.handoffs.list.mockReturnValue([old]);
+    stores.handoffs.markSubmitted.mockReturnValueOnce(false);
+    h.onScope!(SCOPE, stores);
+    h.listPaneSnapshots.mockReturnValue(panes(mission, 'busy'));
+    await reconcileDelegationSupervisor(NOW);
+    expect(stores.handoffs.list).toHaveBeenCalledTimes(1);
+    expect(stores.handoffs.markSubmitted).toHaveBeenCalledWith('old');
+    expect(old.deliveryState).toBe('queued');
+    stores.handoffs.markSubmitted.mockReturnValue(true);
+    await reconcileDelegationSupervisor(NOW + MIN);
+    expect(stores.handoffs.list).toHaveBeenCalledTimes(2);
+    expect(stores.handoffs.markSubmitted).toHaveBeenCalledTimes(2);
+    expect(old.deliveryState).toBe('submitted');
   });
 
   it('seis panes readOnly ocupados por uma hora: nenhum poke, nenhuma escalada', async () => {

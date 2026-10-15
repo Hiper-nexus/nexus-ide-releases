@@ -376,13 +376,12 @@ function rearmStuckHandoffDelivery(
   mission: Mission,
   orchestratorPaneState: string | undefined,
   now: number,
+  handoffs: readonly Handoff[],
   orchestratorStaleBusy = false,
 ): void {
   let pendingDeliverable = 0;
   try {
-    pendingDeliverable = pendingDeliverableHandoffs(
-      suite.handoffs.list({ missionId: mission.id, includeDelivered: false }),
-    );
+    pendingDeliverable = pendingDeliverableHandoffs(handoffs.filter(row => !row.delivered));
   } catch {
     return; // sem leitura confiável não decide
   }
@@ -1560,25 +1559,26 @@ async function scanSuite(suite: ProjectDomainStoreSuite, now: number, context: P
       if (!current()) continue missions;
       if (pane.sessionId) liveSessionIds.add(pane.sessionId);
     }
-    let recoveries = suite.handoffs
-      .list({ missionId: mission.id, includeDelivered: true })
+    const handoffs = suite.handoffs.list({ missionId: mission.id, includeDelivered: true });
+    const recoveries = handoffs
       .filter((handoff) => handoff.fromAgent === DELEGATION_SUPERVISOR_AGENT)
       .sort((left, right) => left.createdAt - right.createdAt);
     // Expire leftover queued recoveries (hello-file / prior mission) so they
     // stop freezing the supervisor and stop idle-delivery spam forever.
-    let expiredStale = false;
-    for (const hint of recoveries) {
+    for (const recovery of recoveries) {
       await context.checkpoint();
       if (!current()) continue missions;
-      const recovery = suite.handoffs.list({ missionId: mission.id, includeDelivered: true }).find((live) => live.id === hint.id);
-      if (!recovery) continue;
       if (
         recovery.deliveryState === 'queued' &&
         now - recovery.createdAt >= RECOVERY_QUEUED_TTL_MS
       ) {
         try {
-          suite.handoffs.markSubmitted(recovery.id);
-          expiredStale = true;
+          // The conditional UPDATE revalidates queued state after checkpoints.
+          // Reflect our write in this tick's snapshot; other writes appear next tick.
+          if (suite.handoffs.markSubmitted(recovery.id)) {
+            recovery.delivered = true;
+            recovery.deliveryState = 'submitted';
+          }
         } catch (error) {
           console.warn(
             `[delegation-supervisor] falha ao expirar recovery enfileirado ` +
@@ -1587,12 +1587,6 @@ async function scanSuite(suite: ProjectDomainStoreSuite, now: number, context: P
           );
         }
       }
-    }
-    if (expiredStale) {
-      recoveries = suite.handoffs
-        .list({ missionId: mission.id, includeDelivered: true })
-        .filter((handoff) => handoff.fromAgent === DELEGATION_SUPERVISOR_AGENT)
-        .sort((left, right) => left.createdAt - right.createdAt);
     }
     const hasBoundOrchestrator = Boolean(
       mission.orchestratorSessionId ||
@@ -1627,7 +1621,7 @@ async function scanSuite(suite: ProjectDomainStoreSuite, now: number, context: P
       (mission.status === 'done' && !wasMissionApprovedByOperator(mission));
 
     if (isOrchIdleOrStale && rearmStatusEligible) {
-      rearmStuckHandoffDelivery(suite, mission, orchestratorPaneState, now, orchestratorStaleBusy);
+      rearmStuckHandoffDelivery(suite, mission, orchestratorPaneState, now, handoffs, orchestratorStaleBusy);
     }
 
     // Chef-idle: orchestrator is idle while workers are present. This state is
@@ -1663,8 +1657,7 @@ async function scanSuite(suite: ProjectDomainStoreSuite, now: number, context: P
     {
       let workerHandoffCount = 0;
       try {
-        workerHandoffCount = suite.handoffs
-          .list({ missionId: mission.id, includeDelivered: true })
+        workerHandoffCount = handoffs
           .filter(
             (handoff) =>
               handoff.fromAgent !== DELEGATION_SUPERVISOR_AGENT &&
