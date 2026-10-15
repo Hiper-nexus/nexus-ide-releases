@@ -152,15 +152,35 @@ function persistPair(deps: ApiDeps, pair: RotatedPair): boolean {
   return deps.setSecret('auth:refresh', pair.refresh).ok && deps.setSecret('auth:session', pair.session).ok;
 }
 
+/** The unsaved pair of the current login; one left behind by another login is dropped. */
+function livePair(deps: ApiDeps): RotatedPair | undefined {
+  const pair = unsavedPairs.get(deps.backendUrl);
+  if (!pair) return undefined;
+  const stored = deps.getSecret('auth:refresh');
+  if (pair.generation === deps.generation?.() && (stored === pair.replaced || stored === pair.refresh)) return pair;
+  unsavedPairs.delete(deps.backendUrl);
+  return undefined;
+}
+
+/** The session to present: the unsaved pair's, while the Keychain still holds the replaced one. */
+function currentSession(deps: ApiDeps): string | null {
+  return livePair(deps)?.session ?? deps.getSecret('auth:session');
+}
+
+/**
+ * Logout and a refused refresh end the login: no unsaved pair outlives it.
+ * Returns the session apiFetch was presenting, so the logout revokes that one.
+ */
+export function dropUnsavedPairs(deps: ApiDeps = defaultDeps()): string | null {
+  const session = livePair(deps)?.session ?? null;
+  unsavedPairs.clear();
+  return session;
+}
+
 /** The refresh to present: an unsaved rotated pair wins over the spent token still in the Keychain. */
 function currentRefresh(deps: ApiDeps): string | null {
-  const stored = deps.getSecret('auth:refresh');
-  const pair = unsavedPairs.get(deps.backendUrl);
-  if (!pair) return stored;
-  if (pair.generation !== deps.generation?.() || (stored !== pair.replaced && stored !== pair.refresh)) {
-    unsavedPairs.delete(deps.backendUrl);
-    return stored;
-  }
+  const pair = livePair(deps);
+  if (!pair) return deps.getSecret('auth:refresh');
   if (persistPair(deps, pair)) {
     unsavedPairs.delete(deps.backendUrl);
     if (pair.account) deps.bindAccount?.(pair.account, pair.session, pair.previousSession ?? undefined);
@@ -290,7 +310,7 @@ export async function apiFetch(
   init: ApiRequestInit = {},
   deps: ApiDeps = defaultDeps(),
 ): Promise<ApiResult> {
-  let session = deps.getSecret('auth:session');
+  let session = currentSession(deps);
   const generation = deps.generation?.();
   if (!session) return { status: 401, json: null };
   try {
@@ -298,7 +318,7 @@ export async function apiFetch(
     // A body belongs to this login generation; never replay it under a new account.
     if (deps.generation?.() !== generation) return { status: 401, json: null };
     if (res.status === 401) {
-      const current = deps.getSecret('auth:session');
+      const current = currentSession(deps);
       if (current && current !== session) {
         // Outro voo já renovou a sessão: repete UMA vez com ela em vez de
         // devolver um 401 espúrio.

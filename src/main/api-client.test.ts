@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { apiFetch } from './api-client';
+import { apiFetch, dropUnsavedPairs } from './api-client';
 
 function deps(over: Record<string, unknown> = {}) {
   const store: Record<string, string> = {
@@ -437,31 +437,52 @@ describe('refresh que não pode perder o 200', () => {
       d.store[key] = value;
       return { ok: true };
     };
+    // The server only accepts the newest session it issued.
+    let live = 'none';
     d.fetchFn.mockImplementation(async (url: string, init: RequestInit) => {
       if (url.endsWith('/v1/auth/refresh')) {
         const presented = JSON.parse(String(init.body)).refresh as string;
         const next = presented === 'ref-1' ? '2' : presented === 'r2' ? '3' : 'x';
-        return json({ ok: true, data: { session: `s${next}`, refresh: `r${next}` } });
+        live = `s${next}`;
+        return json({ ok: true, data: { session: live, refresh: `r${next}` } });
       }
       const auth = (init.headers as Record<string, string>).authorization;
-      return auth === 'Bearer sess-1' ? json({}, 401) : json({ ok: true, data: auth });
+      return auth === `Bearer ${live}` ? json({ ok: true, data: auth }) : json({}, 401);
     });
 
     const first = await apiFetch('/v1/team', {}, d as never);
     expect(first).toEqual({ status: 200, json: { ok: true, data: 'Bearer s2' } });
     expect(d.store['auth:refresh']).toBe('ref-1');
 
-    const second = await apiFetch('/v1/team', {}, d as never);
-    expect(second.status).toBe(200);
-    keychainUp = true;
-    const third = await apiFetch('/v1/team', {}, d as never);
-    expect(third.status).toBe(200);
+    // The next requests present the session of the unsaved pair, not the stale one on disk.
+    expect(await apiFetch('/v1/team', {}, d as never)).toEqual({ status: 200, json: { ok: true, data: 'Bearer s2' } });
+    expect(refreshBodies(d)).toEqual(['ref-1']);
 
-    // Each rotation presents the newest pair, kept in memory while the Keychain refused it.
+    // Once that session expires, the rotation presents the unsaved refresh.
+    live = 'expired';
+    expect((await apiFetch('/v1/team', {}, d as never)).json).toEqual({ ok: true, data: 'Bearer s3' });
+    // The Keychain is back: the next rotation saves the unsaved pair first, then presents it.
+    keychainUp = true;
+    live = 'expired-again';
+    expect((await apiFetch('/v1/team', {}, d as never)).json).toEqual({ ok: true, data: 'Bearer sx' });
+
     expect(refreshBodies(d)).toEqual(['ref-1', 'r2', 'r3']);
     expect(d.store['auth:refresh']).toBe('rx');
     expect(d.store['auth:session']).toBe('sx');
     expect(traced(events)[0]).toEqual({ kind: 'auth-refresh', ok: false, status: 200, outcome: 'persist-failed' });
+  });
+
+  it('logout e recusa esquecem o par não salvo; o logout recebe a sessão dele para revogar', async () => {
+    const d = deps({ backendUrl: 'https://api.drop.test', setSecret: () => ({ ok: false, error: 'keychain locked' }) });
+    d.fetchFn.mockResolvedValueOnce(json({}, 401))
+      .mockResolvedValueOnce(json({ ok: true, data: { session: 's2', refresh: 'r2' } }))
+      .mockResolvedValue(json({ ok: true }));
+    await apiFetch('/v1/team', {}, d as never);
+
+    expect(dropUnsavedPairs(d as never)).toBe('s2');
+    expect(dropUnsavedPairs(d as never)).toBeNull();
+    await apiFetch('/v1/team', {}, d as never);
+    expect((d.fetchFn.mock.calls.at(-1)![1].headers as Record<string, string>).authorization).toBe('Bearer sess-1');
   });
 
   it('registra a recusa do servidor sem segredo', async () => {
