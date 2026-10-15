@@ -192,6 +192,35 @@ function knownMissionRecovery(raw: string): string | null {
   if (/mission direct target is busy/i.test(raw)) {
     return "O Maestro está no meio de um turno. A orientação não foi enviada e o texto continua no campo; tente quando ele terminar.";
   }
+  // D10: recusas do Main que chegavam em inglês cru ou eram trocadas pelo texto
+  // genérico, escondendo o que a pessoa podia fazer.
+  if (/unsafe terminal control in prompt/i.test(raw)) {
+    return "O texto tem caracteres de controle de terminal (comuns em log colado). Cole só o texto limpo e envie de novo.";
+  }
+  if (/mission direct for a single worker is ambiguous/i.test(raw)) {
+    return "Há mais de um agente rodando e @todos não escolhe um deles. Escolha o agente em «Enviar para» e envie de novo.";
+  }
+  if (/mission direct requires a live worker in the fast-lane squad/i.test(raw)) {
+    return "Nenhum agente da equipe está rodando agora. Use Retomar no Quadro e envie de novo.";
+  }
+  if (/mission direct target worker is not live/i.test(raw)) {
+    return "O agente escolhido não está rodando agora. Escolha outro em «Enviar para» ou envie para @todos.";
+  }
+  if (/mission direct ACP target is not ready/i.test(raw)) {
+    return "O agente está no meio de um turno. A orientação não foi enviada e o texto continua no campo; tente quando ele terminar.";
+  }
+  if (/mission direct delivery was not accepted/i.test(raw)) {
+    return "O agente não confirmou o recebimento da orientação. O texto continua no campo; tente de novo.";
+  }
+  if (/mission engine answer requires the consumed current question/i.test(raw)) {
+    return "Esta pergunta já foi respondida ou mudou. Atualize o Quadro e responda a pergunta atual.";
+  }
+  if (/mission engine resume requires a technical block/i.test(raw)) {
+    return "A missão não está parada por um problema técnico, então não há o que retomar agora. Atualize o Quadro.";
+  }
+  if (/renderer has no authorized workspace scope/i.test(raw)) {
+    return "A janela perdeu a autorização da pasta do projeto. Reabra a pasta e tente de novo.";
+  }
   return null;
 }
 

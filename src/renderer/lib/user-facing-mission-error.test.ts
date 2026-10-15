@@ -233,6 +233,55 @@ describe("user-facing mission errors", () => {
     ).not.toContain("Nada foi enviado");
   });
 
+  it("D10: recusas do Main antes em inglês cru ou trocadas pelo genérico viram a ação que destrava", () => {
+    const ipc = (raw: string) =>
+      new Error(`Error invoking remote method 'orch:mission.command': Error: ${raw}`);
+    const busyAgent =
+      "O agente está no meio de um turno. A orientação não foi enviada e o texto continua no campo; tente quando ele terminar.";
+    const cases: ReadonlyArray<readonly [string, string]> = [
+      [
+        "unsafe terminal control in prompt",
+        "O texto tem caracteres de controle de terminal (comuns em log colado). Cole só o texto limpo e envie de novo.",
+      ],
+      [
+        "mission direct for a single worker is ambiguous: name the target agent",
+        "Há mais de um agente rodando e @todos não escolhe um deles. Escolha o agente em «Enviar para» e envie de novo.",
+      ],
+      [
+        "mission direct requires a live worker in the fast-lane squad",
+        "Nenhum agente da equipe está rodando agora. Use Retomar no Quadro e envie de novo.",
+      ],
+      [
+        "mission direct target worker is not live",
+        "O agente escolhido não está rodando agora. Escolha outro em «Enviar para» ou envie para @todos.",
+      ],
+      ["mission direct ACP target is not ready", busyAgent],
+      [
+        "mission direct delivery was not accepted",
+        "O agente não confirmou o recebimento da orientação. O texto continua no campo; tente de novo.",
+      ],
+      [
+        "mission engine answer requires the consumed current question",
+        "Esta pergunta já foi respondida ou mudou. Atualize o Quadro e responda a pergunta atual.",
+      ],
+      [
+        "mission engine resume requires a technical block",
+        "A missão não está parada por um problema técnico, então não há o que retomar agora. Atualize o Quadro.",
+      ],
+      [
+        "renderer has no authorized workspace scope",
+        "A janela perdeu a autorização da pasta do projeto. Reabra a pasta e tente de novo.",
+      ],
+    ];
+    for (const [raw, expected] of cases) {
+      const generic = "Não foi possível enviar. Tente novamente.";
+      expect(toUserFacingMissionError(ipc(raw), generic)).toBe(expected);
+      // Sem o "Detalhe técnico" do fallback e sem inglês cru sobrando.
+      expect(toUserFacingMissionRecovery(ipc(raw), generic)).toBe(expected);
+      expect(expected).not.toMatch(/mission|engine|renderer|worker|prompt/i);
+    }
+  });
+
   it("maps mission-direct diagnostics to operator Portuguese recovery copy", () => {
     const cases: ReadonlyArray<readonly [string, string]> = [
       [
