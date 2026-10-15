@@ -1803,8 +1803,7 @@
   cursor: pointer;
 }
 
-.workspace-rail__cockpit-header:focus-visible,
-.workspace-rail__cockpit-open:focus-visible {
+.workspace-rail__cockpit-header:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: var(--radius-sm);
@@ -1830,61 +1829,6 @@
      empurra o percentual para fora e a borda corta o dado. */
   grid-template-columns: minmax(0, 1fr);
   gap: var(--space-2);
-}
-
-/*
-  Card expandido: TODAS as contas, cada uma com a sua janela. A lista rola por
-  dentro (a barra lateral continua dona da altura). A linha de janelas fica
-  garantida aqui mesmo que a regra de janela baixa volte a escondê-la.
-*/
-.workspace-rail__cockpit--expanded {
-  cursor: default;
-}
-
-.workspace-rail__cockpit-summary {
-  margin-bottom: var(--space-2);
-  font-family: var(--font-mono);
-  font-size: var(--text-2xs);
-  line-height: 1.3;
-  color: var(--text-dim);
-}
-
-.workspace-rail__cockpit--expanded .workspace-rail__cockpit-bars {
-  max-height: min(50vh, 28rem);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding-right: var(--space-1);
-  scrollbar-width: thin;
-}
-
-.workspace-rail__cockpit--expanded .workspace-rail__quota-item + .workspace-rail__quota-item {
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--border);
-}
-
-.workspace-rail__cockpit--expanded .workspace-rail__quota-line {
-  display: block;
-}
-
-.workspace-rail__cockpit-open {
-  width: 100%;
-  margin-top: var(--space-2);
-  padding: var(--space-1) var(--space-2);
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  font: inherit;
-  font-size: var(--text-2xs);
-  color: var(--text-dim);
-  cursor: pointer;
-  transition:
-    color 120ms var(--ease-out-quart),
-    border-color 120ms var(--ease-out-quart);
-}
-
-.workspace-rail__cockpit-open:hover {
-  color: var(--text);
-  border-color: var(--border-strong);
 }
 
 .workspace-rail__quota-item {
@@ -2282,7 +2226,6 @@
   .workspace-rail__report,
   .workspace-rail__open-project,
   .workspace-rail__cockpit,
-  .workspace-rail__cockpit-open,
   .workspace-rail__quota-bar,
   .workspace-cleanup button {
     transition: none;

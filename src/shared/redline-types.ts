@@ -14,6 +14,7 @@
 import {
   compareEntriesByConsumption,
   peakUsedRatio,
+  type QuotaReadHint,
   type QuotaWindowKind,
 } from './quota-types';
 
@@ -85,6 +86,8 @@ export interface RedlineEntry {
     | 'needs-relogin'
     | 'cooldown'
     | 'unknown-usage';
+  /** Allowlisted diagnosis from the quota probe; never raw provider errors. */
+  readHint?: QuotaReadHint;
   /** Folga efetiva 0..1 (1 = vazia). Presente só quando eligible. */
   headroom?: number;
   decisiveWindow?: RedlineDecisiveWindow;

@@ -126,7 +126,7 @@ testDelegate.renderStatusItem()
 
 let panel = testDelegate.quotaPanel
 panel.update(snapshot: fixture, launchAtLogin: false)
-let testWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 600), styleMask: [.borderless], backing: .buffered, defer: false)
+let testWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 720), styleMask: [.borderless], backing: .buffered, defer: false)
 testWindow.contentView = panel.view
 panel.view.layoutSubtreeIfNeeded()
 let scroll = panel.scrollView
@@ -150,8 +150,10 @@ func descendants<T: NSView>(_ root: NSView, of type: T.Type) -> [T] {
     return found
 }
 let renderedFields = fields(panel.view)
+let readingFilter = descendants(panel.view, of: NSButton.self).first { $0.title.hasPrefix("Com leitura") }
+check(readingFilter != nil, "the graphical overview must offer a working measured-quota filter")
 check(renderedFields.contains { $0.stringValue.contains("Conta 24") }, "the last account must have a visible label")
-check(renderedFields.contains { $0.stringValue.contains("37% usado") }, "usage must be readable without relying on color")
+check(renderedFields.contains { $0.stringValue == "37%" }, "usage must be readable without relying on color")
 check(renderedFields.allSatisfy(\.isEnabled), "quota text must not be dimmed as disabled menu actions")
 let panelButtons = descendants(panel.view, of: NSButton.self)
 for title in ["Atualizar agora", "Abrir no Nexus", "Iniciar com o macOS", "Sair"] {
@@ -302,7 +304,7 @@ let unknown = RedlineEntry(id: "unknown", adapterId: "kimi", accountId: nil,
     updatedAt: now, eligible: false, excludedReason: "unknown-usage", headroom: nil, decisiveWindow: nil)
 panel.update(snapshot: RedlineSnapshotFile(formatVersion: 1, generatedBy: "nexus", updatedAt: now - 900_000,
     worstUsedRatio: nil, entries: [unknown], ranking: [:], statusBarEntryIds: []), launchAtLogin: false)
-check(fields(panel.view).contains { $0.stringValue.contains("Mensal · Sem leitura") }, "unknown quota must remain visible without inventing zero usage")
+check(fields(panel.view).contains { $0.stringValue.contains("Sem leitura") }, "unknown quota must remain visible without inventing zero usage")
 check(!fields(panel.view).contains { $0.stringValue.contains("0%") }, "unknown usage must not be presented as zero")
 check(fields(panel.view).contains { $0.stringValue.contains("Nexus offline") }, "old snapshots must identify offline data")
 check(scroll.contentView.bounds.origin.y == 0, "a shorter list must clamp its old scroll offset")
@@ -320,10 +322,10 @@ let timed = RedlineEntry(id: "timed", adapterId: "codex", accountId: nil, label:
 let timedSnapshot = RedlineSnapshotFile(formatVersion: 1, generatedBy: "nexus", updatedAt: now,
     worstUsedRatio: 0.37, entries: [timed], ranking: [:], statusBarEntryIds: [])
 panel.update(snapshot: timedSnapshot, launchAtLogin: false)
-check(fields(panel.view).contains { $0.stringValue.contains("reseta em 1m") }, "the reset should start in the future, on the same line as the gauge")
+check(fields(panel.view).contains { $0.stringValue == "1m" }, "the reset should start in the future, beside the graphical gauge")
 Thread.sleep(forTimeInterval: 0.25)
 panel.update(snapshot: timedSnapshot, launchAtLogin: false)
-check(fields(panel.view).contains { $0.stringValue.contains("reseta em agora") }, "reset countdown must advance even without new snapshot data")
+check(fields(panel.view).contains { $0.stringValue == "agora" }, "reset countdown must advance even without new snapshot data")
 check(fields(panel.view).contains { $0.stringValue.contains("Em espera · agora") }, "cooldown countdown must advance without rebuilding accounts")
 panel.update(snapshot: nil, launchAtLogin: false)
 check(fields(panel.view).contains { $0.stringValue.contains("Sem dados ainda") }, "missing snapshots must explain how to load data")
@@ -363,7 +365,7 @@ let wide = QuotaPanelController(target: testDelegate)
 wide.availableScreenSize = bigScreen
 wide.update(snapshot: snapshot19, launchAtLogin: false)
 check(!wide.isExpanded, "the panel must open compact")
-check(wide.preferredContentSize() == NSSize(width: 400, height: 600), "the compact panel keeps its 400x600 popover")
+check(wide.preferredContentSize() == NSSize(width: 460, height: 720), "the compact overview has room for the graphical meters")
 check(descendants(wide.view, of: NSButton.self).contains { $0.title == "Ampliar" },
       "the header must offer Ampliar")
 
@@ -452,7 +454,7 @@ check(announcements == 2, "a snapshot that changes the layout must resize the ex
 wide.update(snapshot: snapshot19, launchAtLogin: false)
 wide.toggleExpanded()
 check(!wide.isExpanded, "Reduzir must go back to the compact panel")
-check(wide.preferredContentSize() == NSSize(width: 400, height: 600), "reduced size is the compact popover")
+check(wide.preferredContentSize() == NSSize(width: 460, height: 720), "reduced size is the compact popover")
 check(wideScroll.documentView is NSStackView && wideScroll.hasVerticalScroller,
       "the compact panel must be a vertical scrolling list again")
 check(descendants(wide.view, of: NSButton.self).contains { $0.title == "Ampliar" }, "the header button must flip back to Ampliar")
@@ -491,7 +493,113 @@ check(testDelegate.popover.behavior == .applicationDefined,
 check(testDelegate.popover.contentSize.width > 400, "the popover must grow with the panel")
 testDelegate.quotaPanel.toggleExpanded()
 check(testDelegate.popover.behavior == .transient, "reducing must restore the click-outside-to-close behavior")
-check(testDelegate.popover.contentSize == NSSize(width: 400, height: 600), "reducing must restore the compact popover size")
+check(testDelegate.popover.contentSize == NSSize(width: 460, height: 720), "reducing must restore the compact popover size")
+
+// Exercise the on-disk contract: old companions silently discarded these fields.
+func decodeEntry(_ extra: [String: Any], windows: [[String: Any]]) -> RedlineEntry {
+    var object = try! JSONSerialization.jsonObject(with: JSONEncoder().encode(fixtureEntries[0])) as! [String: Any]
+    object.merge(extra) { _, value in value }
+    object["windows"] = windows
+    return try! JSONDecoder().decode(RedlineEntry.self, from: JSONSerialization.data(withJSONObject: object))
+}
+let monthlyCursor = decodeEntry(["adapterId": "cursor-agent", "label": "Cursor Agent"], windows: [
+    ["kind": "hours", "label": "5 Horas"], ["kind": "weekly", "label": "Semanal"],
+    ["kind": "monthly", "label": "Mensal", "usedRatio": 0.42],
+])
+func showEntry(_ entry: RedlineEntry) {
+    panel.update(snapshot: RedlineSnapshotFile(formatVersion: 1, generatedBy: "nexus", updatedAt: now,
+        worstUsedRatio: nil, entries: [entry], ranking: [:], statusBarEntryIds: nil), launchAtLogin: false)
+    panel.view.layoutSubtreeIfNeeded()
+}
+showEntry(monthlyCursor)
+check(!fields(panel.view).contains { $0.stringValue.contains("5 Horas") || $0.stringValue.contains("Semanal") },
+      "Cursor's monthly allowance must not be preceded by imaginary five-hour/weekly failures")
+let connectedNoQuota = decodeEntry(["readHint": "quota-key-required", "excludedReason": "unknown-usage"], windows: [])
+showEntry(connectedNoQuota)
+check(fields(panel.view).contains { $0.stringValue.contains("Conectado") && $0.stringValue.contains("cota") },
+      "a connected account that needs a quota source must keep its actionable diagnosis")
+let connectionRepair = descendants(panel.view, of: NSButton.self).first { $0.title == "Resolver no Nexus" }
+check(connectionRepair?.target != nil && connectionRepair?.action == #selector(AppDelegate.openNexusApp),
+      "an unreadable account must offer a real route to its quota settings")
+let estimated = decodeEntry([:], windows: [["kind": "weekly", "label": "Semanal", "usedRatio": 0.99, "estimated": true]])
+showEntry(estimated)
+check(fields(panel.view).contains { $0.stringValue.localizedCaseInsensitiveContains("estimad") },
+      "low-confidence percentages must be explicitly labelled as estimates")
+testDelegate.snapshot = RedlineSnapshotFile(formatVersion: 1, generatedBy: "nexus", updatedAt: now,
+    worstUsedRatio: nil, entries: [estimated], ranking: [:], statusBarEntryIds: nil)
+testDelegate.renderStatusItem()
+check(!testDelegate.statusItem.button!.attributedTitle.string.contains("99%"),
+      "an estimated percentage must never become the measured status-bar usage")
+let measuredCredits = decodeEntry([:], windows: [["kind": "credits", "label": "Token Plan", "usedRatio": 0.34]])
+testDelegate.snapshot = RedlineSnapshotFile(formatVersion: 1, generatedBy: "nexus", updatedAt: now,
+    worstUsedRatio: 0.34, entries: [measuredCredits], ranking: [:], statusBarEntryIds: nil)
+testDelegate.renderStatusItem()
+check(testDelegate.statusItem.button!.attributedTitle.string.contains("34%"),
+      "a measured Token Plan credit pool must participate in the status-bar summary")
+
+let zeroReading = decodeEntry(["id": "zero-reading"], windows: [["kind": "monthly", "label": "Mensal", "usedRatio": 0]])
+let filterSnapshot = RedlineSnapshotFile(formatVersion: 1, generatedBy: "nexus", updatedAt: now,
+    worstUsedRatio: 0.42, entries: [monthlyCursor, zeroReading, connectedNoQuota, estimated], ranking: [:], statusBarEntryIds: nil)
+panel.update(snapshot: filterSnapshot, launchAtLogin: false)
+descendants(panel.view, of: NSButton.self).first { $0.title.hasPrefix("Com leitura") }!.performClick(nil)
+check(document.arrangedSubviews.count == 2 && fields(document).contains { $0.stringValue == "42%" }
+      && fields(document).contains { $0.stringValue == "0%" },
+      "the measured filter must keep confirmed zero/nonzero measurements and exclude estimates and missing data")
+descendants(panel.view, of: NSButton.self).first { $0.title.hasPrefix("Resolver  ") }!.performClick(nil)
+check(document.arrangedSubviews.count == 2 && !fields(document).contains { $0.stringValue == "42%" },
+      "the attention filter must expose missing and estimated quota without borrowing known account readings")
+descendants(panel.view, of: NSButton.self).first { $0.title.hasPrefix("Todas") }!.performClick(nil)
+check(document.arrangedSubviews.count == 4, "returning to all must restore every account")
+
+// A filter can reduce an expanded grid to one column or an empty state.
+let small = QuotaPanelController(target: testDelegate)
+small.update(snapshot: filterSnapshot, launchAtLogin: false)
+small.toggleExpanded()
+let smallWindow = NSWindow(contentRect: NSRect(origin: .zero, size: small.preferredContentSize()),
+                           styleMask: [.borderless], backing: .buffered, defer: false)
+smallWindow.contentView = small.view
+for snapshotEntries in [[monthlyCursor], []] {
+    small.update(snapshot: RedlineSnapshotFile(formatVersion: 1, generatedBy: "nexus", updatedAt: now,
+        worstUsedRatio: nil, entries: snapshotEntries, ranking: [:], statusBarEntryIds: nil), launchAtLogin: false)
+    smallWindow.setContentSize(small.preferredContentSize())
+    small.view.setFrameSize(small.preferredContentSize())
+    small.view.layoutSubtreeIfNeeded()
+    let controls = descendants(small.view, of: NSButton.self).filter {
+        ["Atualizar agora", "Abrir no Nexus", "Iniciar com o macOS", "Sair"].contains($0.title)
+    }
+    for (index, first) in controls.enumerated() {
+        check(first.frame.minX >= 0 && first.frame.maxX <= small.view.bounds.width,
+              "expanded filtering must keep every footer action inside the panel")
+        for second in controls.dropFirst(index + 1) {
+            check(!first.frame.intersects(second.frame), "expanded filtering must not overlap footer controls")
+        }
+    }
+}
+let nearReset = decodeEntry(["id": "near-reset", "label": "Near reset"], windows: [
+    ["kind": "weekly", "label": "Semanal", "usedRatio": 0.9, "resetsAt": now + 60_000],
+])
+panel.update(snapshot: RedlineSnapshotFile(formatVersion: 1, generatedBy: "nexus", updatedAt: now,
+    worstUsedRatio: 0.9, entries: [nearReset, monthlyCursor], ranking: ["claude": [
+        RedlineRankingRow(entryId: "near-reset", adapterId: "claude", label: "Near reset", emailMasked: nil,
+                          headroom: 0.99, decisiveWindow: nil, minutesToReset: 1),
+    ]], statusBarEntryIds: nil), launchAtLogin: false)
+check(fields(panel.view).contains { $0.stringValue == "58% livre" },
+      "the visible free percentage must use measured consumption, never early reset credit")
+let expiredEstimate = decodeEntry(["excludedReason": "needs-relogin"], windows: [
+    ["kind": "weekly", "label": "Semanal", "usedRatio": 0.2, "estimated": true],
+])
+showEntry(expiredEstimate)
+check(fields(panel.view).contains { $0.stringValue.contains("Sessão expirada") },
+      "estimated-only quota must not hide an expired login")
+check(descendants(panel.view, of: NSButton.self).contains { $0.title == "Resolver no Nexus" },
+      "estimated-only quota with an expired login must offer recovery")
+let cooldownEnd = Date.now.timeIntervalSince1970 * 1000 + 200
+let waitingUnknown = decodeEntry(["onCooldown": true, "cooldownUntil": cooldownEnd, "excludedReason": "cooldown"], windows: [])
+showEntry(waitingUnknown)
+check(fields(panel.view).contains { $0.stringValue == "Em espera · 1m" }, "unknown quota must retain its cooldown")
+Thread.sleep(forTimeInterval: 0.3)
+showEntry(waitingUnknown)
+check(fields(panel.view).contains { $0.stringValue == "Em espera · agora" }, "unknown quota cooldown must advance on unchanged snapshot polls")
 
 NSStatusBar.system.removeStatusItem(testDelegate.statusItem)
 print("Redline UI checks passed")

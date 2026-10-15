@@ -19,6 +19,7 @@ struct RedlineWindow: Codable, Equatable {
     let label: String
     let usedRatio: Double?
     let resetsAt: Double?
+    var estimated: Bool? = nil
 }
 
 struct RedlineDecisiveWindow: Codable, Equatable {
@@ -43,6 +44,7 @@ struct RedlineEntry: Codable, Equatable {
     let excludedReason: String?
     let headroom: Double?
     let decisiveWindow: RedlineDecisiveWindow?
+    var readHint: String? = nil
 }
 
 struct RedlineRankingRow: Codable, Equatable {
@@ -100,8 +102,8 @@ func urgencyColor(forUsed used: Double?) -> NSColor {
     NSColor(name: nil) { appearance in
         let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
         guard let used else { return dark ? color(hex: 0xAAAAAF) : color(hex: 0x515154) }
-        if used >= 0.85 { return dark ? color(hex: 0xFF8178) : color(hex: 0xB3382C) }
-        if used >= 0.60 { return dark ? color(hex: 0xE5C07B) : color(hex: 0x9A5B00) }
+        if used >= 0.8 { return dark ? color(hex: 0xFF8178) : color(hex: 0xB3382C) }
+        if used >= 0.5 { return dark ? color(hex: 0xE5C07B) : color(hex: 0x9A5B00) }
         return dark ? color(hex: 0x7EE2A8) : color(hex: 0x1B7A3D)
     }
 }
@@ -281,7 +283,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return snap.entries.filter { wanted.contains($0.id) }
         }
         return Array(snap.entries.filter { entry in
-            entry.windows.contains { $0.usedRatio != nil }
+            entry.windows.contains { $0.usedRatio != nil && $0.estimated != true }
         }.prefix(6))
     }
 
@@ -308,7 +310,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var worst: (entry: RedlineEntry, window: RedlineWindow)?
         for entry in entriesForBar(snap) {
             for win in entry.windows
-            where ["hours", "session", "weekly", "monthly"].contains(win.kind) {
+            where ["hours", "session", "weekly", "monthly", "credits"].contains(win.kind) && win.estimated != true {
                 guard let used = win.usedRatio else { continue }
                 if used > (worst?.window.usedRatio ?? -1) { worst = (entry, win) }
             }

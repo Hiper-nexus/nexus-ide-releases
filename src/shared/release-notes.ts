@@ -10907,7 +10907,7 @@ export const RELEASE_076275: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076276: AppRelease = {
   version: '0.76.276',
   date: '2026-10-15',
   codename: 'Linux em dia com a clareza',
@@ -10927,5 +10927,68 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Primeiros passos coerentes', detail: 'O guia usa os nomes atuais de Configurações e prioriza conectar sua conta. Chave inválida ou conta que exige novo login não conta como uma conexão pronta.' },
     { title: 'Menu Mais sem corte', detail: 'As ações continuam acessíveis com o Quadro minimizado e em largura compacta. Recusa de religação pede nova tentativa no Quadro.' },
     { title: 'Atualização do Linux', detail: 'As tags 0.76.273 e 0.76.275 não recebem pacotes Linux. A 0.76.275 é a candidata do Mac. O Linux sai na 0.76.276.' },
+  ],
+};
+
+export const RELEASE_076277: AppRelease = {
+  version: '0.76.277',
+  date: '2026-10-15',
+  codename: 'Redline mais visual no Mac',
+  summary: 'Suas cotas em um olhar: medidores circulares, contas lado a lado e filtros para chegar às conexões que precisam de atenção. O Redline do Mac também explica melhor quando uma leitura não está disponível.',
+  highlights: [
+    { title: 'Cotas mais visuais', detail: 'Medidores circulares e logos maiores mostram o consumo de cada conta. A visão ampliada organiza tudo em colunas, com menos texto repetido.' },
+    { title: 'Encontre o que precisa', detail: 'Os filtros Todas, Com leitura e Resolver separam as contas com medições das conexões pendentes. Resolver no Nexus abre o caminho para corrigir a conexão.' },
+  ],
+  fixes: [
+    { title: 'Cursor mensal', detail: 'A franquia mensal aparece sem janelas genéricas de 5 horas e semana que o Cursor não informou.' },
+    { title: 'Antigravity nativo', detail: 'Uma conta salva deixa de ocultar a fonte de cota da sessão nativa. Essa leitura permanece em sua própria linha, sem ser atribuída a outra conta.' },
+    { title: 'Leitura com contexto', detail: 'Os motivos de cota indisponível acompanham a conta até o Redline. Estimativas ficam identificadas; somente medições confirmadas entram no resumo da barra.' },
+  ],
+};
+
+export const RELEASE_076278: AppRelease = {
+  version: '0.76.278',
+  date: '2026-10-15',
+  codename: 'Linux em dia com as cotas',
+  summary: 'O app no Linux deixa a 0.76.276 e passa a mostrar a franquia mensal do Cursor, a cota nativa do Antigravity na própria linha e o motivo quando uma leitura não está disponível. A tag 0.76.277 não recebe pacotes Linux; os medidores circulares ficam no companheiro do Mac.',
+  highlights: [
+    { title: 'Cursor mensal', detail: 'A franquia mensal aparece sem janelas genéricas de 5 horas e semana que o Cursor não informou.' },
+    { title: 'Antigravity nativo', detail: 'Uma conta salva deixa de ocultar a fonte de cota da sessão nativa. Essa leitura permanece em sua própria linha, sem ser atribuída a outra conta.' },
+  ],
+  fixes: [
+    { title: 'Leitura com contexto', detail: 'Os motivos permitidos de cota indisponível acompanham a conta até o snapshot do Redline. Estimativas ficam identificadas; somente medições confirmadas entram no resumo da barra.' },
+    { title: 'Atualização do Linux', detail: 'A tag 0.76.277 não recebe pacotes Linux. Ela é a candidata do Mac. O Linux sai na 0.76.278.' },
+  ],
+};
+
+export const RELEASE_076279: AppRelease = {
+  version: '0.76.279',
+  date: '2026-10-15',
+  codename: 'Cotas à frente e barras segmentadas',
+  summary: 'Clique em Cotas na lateral para abrir uma visão ampla à frente da tela. O Redline também ganha barras segmentadas, números maiores e menos texto.',
+  highlights: [
+    { title: 'Cotas à frente da tela', detail: 'O painel abre acima da interface, com todas as contas, busca, filtros, atualização e acesso às configurações. A lateral continua compacta.' },
+    { title: 'Barras segmentadas no Redline', detail: 'Os círculos dão lugar a barras com escala e percentuais em destaque, mantendo os dados reais de cada janela.' },
+  ],
+  fixes: [
+    { title: 'Leitura sem sobreposição', detail: 'A lista completa deixa de ficar espremida na lateral e encoberta pelo perfil do operador.' },
+    { title: 'Teclado no lugar certo', detail: 'Tab e Escape continuam no painel durante a atualização. Ir para Configurações preserva o foco do destino; fechar devolve o foco à origem.' },
+    { title: 'Dados com contexto', detail: 'Sem leitura, estimativa, pausa e sessão expirada continuam distintos. Nenhum percentual de outra conta é exibido na linha errada.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.280',
+  date: '2026-10-15',
+  codename: 'Linux em dia com as cotas à frente',
+  summary: 'No Linux, Cotas abre um painel amplo à frente da tela, com barras segmentadas, busca e filtros. A tag 0.76.279 não recebe pacotes Linux; as barras da barra de menus ficam no companheiro do Mac.',
+  highlights: [
+    { title: 'Cotas à frente da tela', detail: 'O clique em Cotas abre o painel acima da interface, com todas as contas, busca, filtros, atualização e acesso às configurações. A lateral continua compacta.' },
+    { title: 'Barras no painel', detail: 'O painel de cotas usa barras segmentadas e as janelas de cada conta. Sem leitura, estimativa, pausa e sessão expirada continuam distintos.' },
+  ],
+  fixes: [
+    { title: 'Leitura sem sobreposição', detail: 'A lista completa deixa de ficar espremida na lateral e encoberta pelo perfil do operador.' },
+    { title: 'Teclado no lugar certo', detail: 'Tab e Escape continuam no painel durante a atualização. Ir para Configurações preserva o foco do destino; fechar devolve o foco à origem.' },
+    { title: 'Atualização do Linux', detail: 'A tag 0.76.279 não recebe pacotes Linux. Ela é a candidata do Mac. O Linux sai na 0.76.280.' },
   ],
 };

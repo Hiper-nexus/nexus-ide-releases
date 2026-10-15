@@ -20,7 +20,7 @@ import {
   type RedlineSnapshotFile,
   type RedlineWindow,
 } from '../../shared/redline-types';
-import type { QuotaWindowKind } from '../../shared/quota-types';
+import type { QuotaReadHint, QuotaWindowKind } from '../../shared/quota-types';
 
 /** Snapshot real tem poucos KB por conta; 1 MiB é folga de sobra e barra abuso. */
 export const REDLINE_SNAPSHOT_MAX_BYTES = 1024 * 1024;
@@ -48,6 +48,11 @@ const EXCLUDED_REASONS: ReadonlySet<string> = new Set([
   'needs-relogin',
   'cooldown',
   'unknown-usage',
+]);
+
+const READ_HINTS: ReadonlySet<string> = new Set<QuotaReadHint>([
+  'auth-expired', 'identity-mismatch', 'no-credential',
+  'cli-missing', 'unavailable', 'quota-key-required',
 ]);
 
 // Controles C0/C1, DEL, marcas e overrides bidi, espaços de largura zero,
@@ -179,6 +184,9 @@ function readEntry(raw: unknown): RedlineEntry | null {
   }
   if (typeof raw.excludedReason === 'string' && EXCLUDED_REASONS.has(raw.excludedReason)) {
     entry.excludedReason = raw.excludedReason as RedlineEntry['excludedReason'];
+  }
+  if (typeof raw.readHint === 'string' && READ_HINTS.has(raw.readHint)) {
+    entry.readHint = raw.readHint as QuotaReadHint;
   }
   const headroom = readRatio(raw.headroom);
   if (headroom !== null) entry.headroom = headroom;

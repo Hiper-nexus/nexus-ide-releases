@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.76.280 — Linux em dia com as cotas à frente
+
+A tag 0.76.279 não recebe pacotes Linux. Esta versão leva o produto dela, empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). A 0.76.279 é a candidata do Mac. As barras segmentadas do companheiro da barra de menus do Mac não entram neste pacote.
+
+No desktop Linux, em relação à 0.76.278:
+
+- **Cotas à frente**. Clicar em Cotas na lateral abre um painel amplo acima da interface. A lateral fica compacta e deixa de ser encoberta pelo perfil do operador.
+- **Leitura da conta**. O painel traz barras segmentadas, janelas por conta, busca, filtros, atualização e o caminho para Uso e cotas. Escape, Tab e o retorno do foco continuam no painel, inclusive durante a atualização.
+- **Dados no lugar**. Sem leitura, estimativa, pausa e sessão expirada continuam distintos. O percentual de outra conta não aparece na linha errada.
+
+## 0.76.279 — Cotas à frente e barras segmentadas
+
+- Clicar em Cotas na lateral abre um painel amplo à frente da interface. A rail conserva sua prévia compacta, sem expandir a lista atrás do perfil do operador.
+- O painel oferece busca, filtros por leitura/pendência, atualização e acesso a Uso e cotas. Escape, Tab e retorno de foco foram validados, inclusive durante atualização e ao navegar para Configurações.
+- O Redline da barra de menus troca os círculos por barras segmentadas com escala, percentuais em destaque e os mesmos sinais visuais da interface do app.
+- Leituras desconhecidas e estimativas permanecem identificadas. A credencial de outra conta nunca aparece como consumo desta linha.
+- Publicação macOS arm64. O Redline atualizado acompanha o NexusIDE e é sincronizado na abertura do app.
+
+## 0.76.278 — Linux em dia com as cotas
+
+A tag 0.76.277 não recebe pacotes Linux. Esta versão leva o produto dela, empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). A 0.76.277 é a candidata do Mac. Os medidores circulares do companheiro Mac não entram neste pacote.
+
+No desktop Linux, em relação à 0.76.276:
+
+- **Cursor mensal**. A franquia mensal aparece sem janelas genéricas de 5 horas e semana que o Cursor não informou.
+- **Antigravity nativo**. Uma conta salva deixa de ocultar a fonte de cota da sessão nativa. Essa leitura permanece na própria linha, sem ser atribuída a outra conta.
+- **Leitura com contexto**. Os motivos permitidos de cota indisponível acompanham a conta até o snapshot do Redline. Estimativas ficam identificadas; somente medições confirmadas entram no resumo da barra. Texto livre do provedor continua de fora.
+
+## 0.76.277 — Redline mais visual no Mac
+
+- Redline redesenhado com medidores circulares, cotas lado a lado, logos maiores e uma faixa gráfica das contas. Os filtros Todas, Com leitura e Resolver levam direto ao que precisa de atenção.
+- Painel compacto mais amplo e modo ampliado em colunas, com menos texto repetido, resets curtos e ação Resolver no Nexus para conexões sem leitura.
+- Cursor exibe a franquia mensal sem acrescentar janelas genéricas de 5 horas e semana.
+- Antigravity mantém a leitura da sessão nativa acessível mesmo quando há uma conta salva; a cota nativa conserva sua própria linha, sem ser atribuída à conta do cofre.
+- O diagnóstico de leitura acompanha o snapshot até o Redline. Estimativas ficam identificadas e fora do resumo medido; créditos confirmados passam a participar da barra.
+- Publicação macOS arm64. Sessões expiradas ou fontes de cota ainda não conectadas continuam exigindo recuperação no Nexus; ausência de leitura nunca vira 0%.
+
 ## 0.76.276 — Linux em dia com a clareza
 
 As tags 0.76.273 e 0.76.275 não recebem pacotes Linux. Esta versão leva o produto delas, empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). A 0.76.275 é a candidata do Mac. O isolamento do Keychain no smoke empacotado vale só no macOS.

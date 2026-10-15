@@ -1,14 +1,11 @@
-import { useId, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import type { ProviderQuotaEntry } from '../../../shared/quota-types';
 import { collapseSharedQuotaEntries } from '../../../shared/quota-types';
 import type { PetLifetimeStats } from '../../../shared/pet-types';
 import { fmtTokens, fmtUsd } from '../../lib/lifetime-format';
 import { prioritizeReportedQuotas, shortWindowsLine } from '../../lib/quota-display';
-import {
-  loadQuotaCardExpanded,
-  saveQuotaCardExpanded,
-} from '../../lib/rail-quota-prefs';
 import { ProviderLogo } from '../ProviderLogo';
+import { QuotaOverview } from './QuotaOverview';
 
 /** Quantas contas o card mostra recolhido: as que mais consomem. */
 const COLLAPSED_VISIBLE = 4;
@@ -38,10 +35,10 @@ interface QuotaItemView {
  */
 function describeQuotaItem(entry: ProviderQuotaEntry, now: number): QuotaItemView {
   const identityMismatch = entry.readHint === 'identity-mismatch';
-  const visible = identityMismatch ? { ...entry, windows: [] } : entry;
+  const visible = { ...entry, windows: identityMismatch ? [] : entry.windows.filter((window) => window.confidence !== 'low') };
   let worst: number | null = null;
   for (const window of visible.windows) {
-    if (window.usedRatio === null) continue;
+    if (window.usedRatio === null || window.confidence === 'low') continue;
     if (worst === null || window.usedRatio > worst) worst = window.usedRatio;
   }
   const authExpired = entry.readHint === 'auth-expired' || identityMismatch;
@@ -109,103 +106,32 @@ function QuotaItem({ entry, now }: { entry: ProviderQuotaEntry; now: number }) {
   );
 }
 
-/**
- * Cotas no rodapé da barra lateral. Recolhido mostra os 4 que mais consomem;
- * um clique expande TODAS as contas (com a janela de cada uma) e outro
- * recolhe. A página completa de uso continua a um botão de distância.
- */
-export function RailQuotaCard({
-  entries,
-  now,
-  lifetimeUsage,
-  onOpenUsage,
-}: RailQuotaCardProps) {
-  const listId = useId();
-  const all = useMemo(
-    () => prioritizeReportedQuotas(collapseSharedQuotaEntries([...entries])),
-    [entries],
-  );
-  const expandable = all.length > COLLAPSED_VISIBLE;
-  const [savedExpanded, setSavedExpanded] = useState(loadQuotaCardExpanded);
-  const expanded = expandable && savedExpanded;
-  const visible = expanded ? all : all.slice(0, COLLAPSED_VISIBLE);
-  const providers = useMemo(() => new Set(all.map((e) => e.adapterId)).size, [all]);
-
-  const activate = () => {
-    if (!expandable) {
-      onOpenUsage();
-      return;
-    }
-    const next = !expanded;
-    setSavedExpanded(next);
-    saveQuotaCardExpanded(next);
-  };
-
-  const hint = !expandable ? 'Ver' : expanded ? 'Recolher' : `Ver todas (${all.length})`;
-  const showUsage =
-    lifetimeUsage !== null &&
-    (lifetimeUsage.tokensBurned > 0 || lifetimeUsage.usdEquivalent > 0);
-
+/** Compact preview in the rail; all detailed reading happens in the foreground portal. */
+export function RailQuotaCard({ entries, now, lifetimeUsage, onOpenUsage }: RailQuotaCardProps) {
+  const [open, setOpen] = useState(false);
+  const opener = useRef<HTMLButtonElement>(null);
+  const activate = () => { opener.current?.focus(); setOpen(true); };
+  const close = useCallback(() => setOpen(false), []);
+  const all = useMemo(() => prioritizeReportedQuotas(collapseSharedQuotaEntries([...entries])), [entries]);
+  const showUsage = lifetimeUsage !== null && (lifetimeUsage.tokensBurned > 0 || lifetimeUsage.usdEquivalent > 0);
   return (
-    <div
-      className={`workspace-rail__cockpit${expanded ? ' workspace-rail__cockpit--expanded' : ''}`}
-    >
-      <button
-        type="button"
-        className="workspace-rail__cockpit-header"
-        aria-expanded={expandable ? expanded : undefined}
-        aria-controls={expandable ? listId : undefined}
-        aria-label={
-          !expandable
-            ? 'Ver uso de cotas nas Configurações'
-            : expanded
-              ? 'Recolher cotas'
-              : `Ver todas (${all.length}) as contas e suas cotas`
-        }
-        title="Cotas de IA disponíveis"
-        onClick={activate}
-      >
+    <div className="workspace-rail__cockpit">
+      <button ref={opener} type="button" className="workspace-rail__cockpit-header" aria-haspopup="dialog"
+        aria-expanded={open} aria-label="Ver cotas de todas as contas" title="Abrir painel de cotas"
+        onClick={activate}>
         <span className="workspace-rail__cockpit-title">Cotas</span>
-        <span className="workspace-rail__cockpit-detail-hint">{hint}</span>
+        <span className="workspace-rail__cockpit-detail-hint">Ampliar · {all.length}</span>
       </button>
-      {expanded ? (
-        <div className="workspace-rail__cockpit-summary">
-          {providers} {providers === 1 ? 'provedor' : 'provedores'} · {all.length}{' '}
-          {all.length === 1 ? 'conta' : 'contas'}
-        </div>
-      ) : null}
-      {/* Mouse: o corpo do card também alterna. Teclado e leitor de tela usam o botão acima. */}
-      <div
-        id={listId}
-        role="list"
-        className="workspace-rail__cockpit-bars"
-        aria-label="Cotas por conta"
-        onClick={expanded ? undefined : activate}
-      >
-        {visible.map((entry) => (
-          <QuotaItem key={entry.id} entry={entry} now={now} />
-        ))}
+      <div role="list" className="workspace-rail__cockpit-bars" aria-label="Cotas por conta" onClick={activate}>
+        {all.slice(0, COLLAPSED_VISIBLE).map((entry) => <QuotaItem key={entry.id} entry={entry} now={now} />)}
       </div>
-      {expanded ? (
-        <button
-          type="button"
-          className="workspace-rail__cockpit-open"
-          onClick={onOpenUsage}
-        >
-          Abrir uso e cotas
-        </button>
-      ) : null}
-      {showUsage ? (
-        <div
-          className="workspace-rail__cockpit-usage"
-          title="Consumo real acumulado em todos os projetos — o que custaria em API paga; a assinatura já cobre"
-        >
+      {showUsage && lifetimeUsage && (
+        <div className="workspace-rail__cockpit-usage" title="Consumo real acumulado em todos os projetos">
           <span>⚡ {fmtTokens(lifetimeUsage.tokensBurned)} tok torrados</span>
-          <span className="workspace-rail__cockpit-usage-usd">
-            {fmtUsd(lifetimeUsage.usdEquivalent)} em API
-          </span>
+          <span className="workspace-rail__cockpit-usage-usd">{fmtUsd(lifetimeUsage.usdEquivalent)} em API</span>
         </div>
-      ) : null}
+      )}
+      {open && <QuotaOverview entries={all} now={now} onClose={close} onOpenUsage={onOpenUsage} />}
     </div>
   );
 }

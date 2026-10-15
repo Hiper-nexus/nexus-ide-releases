@@ -25,25 +25,24 @@ private let panelHairlineStrong = NSColor.white.withAlphaComponent(0.16)
 /// o separador e o pin de largura dos filhos. Se o pin pedir a largura cheia
 /// da row, o Auto Layout honra um inset e quebra o outro (o filho desliza
 /// ~16pt para a esquerda e o logo nasce clipado na borda do clip view).
-private let rowHorizontalInset: CGFloat = 16
+private let rowHorizontalInset: CGFloat = 20
 
-/// Geometria do painel. O compacto é o popover de sempre (400 de largura,
-/// teto de 600 de altura). O ampliado põe TODAS as contas em colunas fixas.
-private let compactPanelWidth: CGFloat = 400
-private let compactPanelMaxHeight: CGFloat = 600
+/// Compacto gráfico (460 × 720); o ampliado reparte as contas em colunas.
+private let compactPanelWidth: CGFloat = 460
+private let compactPanelMaxHeight: CGFloat = 720
 private let expandedColumnWidth: CGFloat = 360
 private let expandedMaxColumns = 4
 /// Respiro que o popover precisa dos cantos da tela (era o `- 32` do togglePanel).
 private let screenMargin: CGFloat = 32
-private let panelHeaderHeight: CGFloat = 88
+private let panelHeaderHeight: CGFloat = 190
 private let compactFooterHeight: CGFloat = 96
 /// Ampliado: uma faixa só (botões + início automático + Sair), mais enxuta no print.
 private let expandedFooterHeight: CGFloat = 57
 
 private func quotaInk(for used: Double?) -> NSColor {
     guard let used else { return panelTextFaint }
-    if used >= 0.85 { return panelDanger }
-    if used >= 0.60 { return panelWarn }
+    if used >= 0.8 { return panelDanger }
+    if used >= 0.5 { return panelWarn }
     return panelOk
 }
 
@@ -90,38 +89,17 @@ private final class VerticalHairline: NSView {
     }
 }
 
-/// Linha de conta: separador de hairline no pé (inset 16pt), nunca após a
-/// última — hierarquia por espaçamento, não por cartões.
+/// Superfície de conta com espaço para os medidores gráficos e a identidade.
 private final class AccountRow: NSStackView {
-    var showsSeparator = true
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        guard showsSeparator else { return }
-        panelHairline.setFill()
-        // A linha não é flipped: y=0 é o pé visual da row. Inset simétrico.
-        NSRect(x: rowHorizontalInset, y: 0,
-               width: bounds.width - rowHorizontalInset * 2, height: 1).fill()
-    }
-}
-
-/// Medidor DESENHADO (56×4, raio 2): trilho branco a 8%, preenchimento na cor
-/// do estado com mínimo de 2pt quando há uso — sem glifo ▮ fazendo as vezes.
-private final class GaugeView: NSView {
-    var ratio: Double = 0
-    var ink: NSColor = panelTextFaint
-
-    override var intrinsicContentSize: NSSize { NSSize(width: 56, height: 4) }
-
-    override func draw(_ dirtyRect: NSRect) {
-        panelHairline.setFill()
-        NSBezierPath(roundedRect: bounds, xRadius: 2, yRadius: 2).fill()
-        let clamped = min(1, max(0, ratio))
-        guard clamped > 0 else { return }
-        let width = max(2, bounds.width * clamped)
-        ink.setFill()
-        NSBezierPath(roundedRect: NSRect(x: 0, y: 0, width: width, height: bounds.height),
-                     xRadius: 2, yRadius: 2).fill()
+        let outline = NSBezierPath(roundedRect: bounds.insetBy(dx: 8, dy: 4), xRadius: 12, yRadius: 12)
+        panelColor(0x16151A).setFill()
+        outline.fill()
+        panelHairline.setStroke()
+        outline.lineWidth = 1
+        outline.stroke()
     }
 }
 
@@ -140,6 +118,7 @@ private final class PanelButton: NSButton {
     private let style: Style
     private var buttonTitle: String
     private var hovering = false
+    var isSelected = false { didSet { state = isSelected ? .on : .off; needsDisplay = true } }
 
     /// Fill em repouso — o que o contraste mede. Só a CTA primária tem fill.
     var restingFill: NSColor? {
@@ -195,12 +174,21 @@ private final class PanelButton: NSButton {
             panelColor(0xFAF7F9, hovering ? 0.85 : 1).setFill()
             path.fill()
         case .secondary:
-            if hovering { NSColor.white.withAlphaComponent(0.04).setFill(); path.fill() }
+            if hovering || isSelected {
+                NSColor.white.withAlphaComponent(isSelected ? 0.10 : 0.04).setFill()
+                path.fill()
+            }
             panelHairlineStrong.withAlphaComponent(hovering ? 0.24 : 0.16).setStroke()
             path.lineWidth = 1
             path.stroke()
         case .ghost:
             break
+        }
+        if window?.firstResponder === self {
+            panelAccent.setStroke()
+            let focus = NSBezierPath(roundedRect: bounds.insetBy(dx: 2, dy: 2), xRadius: 6, yRadius: 6)
+            focus.lineWidth = 2
+            focus.stroke()
         }
         let text = titleText(buttonTitle)
         let size = text.size()
@@ -228,7 +216,16 @@ final class QuotaPanelController: NSViewController {
 
     private let titleLabel = NSTextField(labelWithString: "Nexus Redline")
     private let summaryLabel = NSTextField(labelWithString: "")
+    private let freshnessLabel = NSTextField(labelWithString: "")
     private let recommendationLabel = NSTextField(labelWithString: "")
+    private let recommendationValue = NSTextField(labelWithString: "")
+    private let recommendationCaption = NSTextField(labelWithString: "Mais folga agora")
+    private let fleetStrip = QuotaFleetStrip()
+    private let allFilter = PanelButton(title: "Todas", style: .secondary, target: nil, action: nil)
+    private let measuredFilter = PanelButton(title: "Com leitura", style: .secondary, target: nil, action: nil)
+    private let attentionFilter = PanelButton(title: "Resolver", style: .secondary, target: nil, action: nil)
+    private enum AccountFilter { case all, measured, attention }
+    private var accountFilter = AccountFilter.all
     let scrollView = NSScrollView()
     private let accounts = AccountList()
     private let headerHairline = Hairline()
@@ -285,16 +282,30 @@ final class QuotaPanelController: NSViewController {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     override func loadView() {
-        view = PanelBackground(frame: NSRect(x: 0, y: 0, width: 400, height: 600))
+        view = PanelBackground(frame: NSRect(x: 0, y: 0, width: compactPanelWidth, height: compactPanelMaxHeight))
         (view as? PanelBackground)?.surface = surfaceColor
         // Escuro sempre, independente do tema do macOS.
         view.appearance = NSAppearance(named: .darkAqua)
 
-        titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        titleLabel.font = .systemFont(ofSize: 22, weight: .semibold)
         titleLabel.textColor = panelText
         summaryLabel.font = .systemFont(ofSize: 11)
-        recommendationLabel.font = .systemFont(ofSize: 11)
+        summaryLabel.lineBreakMode = .byTruncatingTail
+        freshnessLabel.font = .systemFont(ofSize: 11)
+        freshnessLabel.textColor = panelTextFaint
+        recommendationLabel.font = .systemFont(ofSize: 13, weight: .semibold)
         recommendationLabel.lineBreakMode = .byTruncatingTail
+        recommendationCaption.font = .systemFont(ofSize: 10, weight: .medium)
+        recommendationCaption.textColor = panelTextDim
+        recommendationValue.font = .monospacedDigitSystemFont(ofSize: 22, weight: .semibold)
+        recommendationValue.textColor = panelOk
+        recommendationValue.alignment = .right
+        for (button, action) in [(allFilter, #selector(showAllAccounts)),
+                                 (measuredFilter, #selector(showMeasuredAccounts)),
+                                 (attentionFilter, #selector(showAttentionAccounts))] {
+            button.target = self
+            button.action = action
+        }
 
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
@@ -318,14 +329,16 @@ final class QuotaPanelController: NSViewController {
             .font: NSFont.systemFont(ofSize: 11), .foregroundColor: panelTextDim,
         ])
 
-        for child in [titleLabel, summaryLabel, recommendationLabel,
+        for child in [titleLabel, summaryLabel, freshnessLabel, recommendationLabel,
+                      recommendationValue, recommendationCaption, fleetStrip, allFilter, measuredFilter, attentionFilter,
                       scrollView, headerHairline, footerHairline, expandButton,
                       refreshButton, openButton, loginButton, quitButton] {
             view.addSubview(child)
         }
     }
 
-    private var footerHeight: CGFloat { isExpanded ? expandedFooterHeight : compactFooterHeight }
+    private var usesWideFooter: Bool { isExpanded && (expandedLayout?.columns ?? 0) > 1 }
+    private var footerHeight: CGFloat { usesWideFooter ? expandedFooterHeight : compactFooterHeight }
 
     override func viewDidLayout() {
         super.viewDidLayout()
@@ -333,23 +346,33 @@ final class QuotaPanelController: NSViewController {
         let height = view.bounds.height
         // O botão de ampliar divide o topo com o título.
         let expandWidth: CGFloat = 76
-        titleLabel.frame = NSRect(x: 16, y: height - 34, width: width - 32 - expandWidth - 8, height: 20)
-        expandButton.frame = NSRect(x: width - 16 - expandWidth, y: height - 36, width: expandWidth, height: 24)
-        summaryLabel.frame = NSRect(x: 16, y: height - 54, width: width - 32, height: 14)
-        recommendationLabel.frame = NSRect(x: 16, y: height - 74, width: width - 32, height: 14)
+        titleLabel.frame = NSRect(x: 20, y: height - 42, width: width - 40 - expandWidth - 8, height: 28)
+        expandButton.frame = NSRect(x: width - 16 - expandWidth, y: height - 40, width: expandWidth, height: 28)
+        summaryLabel.frame = NSRect(x: 20, y: height - 62, width: width - 40, height: 14)
+        fleetStrip.frame = NSRect(x: 20, y: height - 81, width: width - 40, height: 7)
+        freshnessLabel.frame = NSRect(x: 20, y: height - 101, width: width - 40, height: 14)
+        recommendationCaption.frame = NSRect(x: 20, y: height - 122, width: width - 168, height: 12)
+        recommendationLabel.frame = NSRect(x: 20, y: height - 142, width: width - 168, height: 18)
+        recommendationValue.frame = NSRect(x: width - 140, y: height - 143, width: 120, height: 30)
+        let filterWidth = (width - 48) / 3
+        for (index, filter) in [allFilter, measuredFilter, attentionFilter].enumerated() {
+            filter.frame = NSRect(x: 20 + CGFloat(index) * (filterWidth + 4), y: height - 180,
+                                  width: filterWidth, height: 28)
+        }
         headerHairline.frame = NSRect(x: 0, y: height - panelHeaderHeight, width: width, height: 1)
         footerHairline.frame = NSRect(x: 0, y: footerHeight, width: width, height: 1)
         scrollView.frame = NSRect(x: 0, y: footerHeight + 1, width: width,
                                   height: max(24, height - panelHeaderHeight - footerHeight - 1))
-        if isExpanded {
+        if usesWideFooter {
             // Uma faixa só: ações à esquerda, início automático e Sair à direita.
             refreshButton.frame = NSRect(x: 16, y: 14, width: 172, height: 30)
             openButton.frame = NSRect(x: 196, y: 14, width: 172, height: 30)
             quitButton.frame = NSRect(x: width - 80, y: 19, width: 64, height: 20)
             loginButton.frame = NSRect(x: width - 80 - 12 - 190, y: 19, width: 190, height: 20)
         } else {
-            refreshButton.frame = NSRect(x: 16, y: 50, width: 172, height: 30)
-            openButton.frame = NSRect(x: width - 188, y: 50, width: 172, height: 30)
+            let buttonWidth = (width - 44) / 2
+            refreshButton.frame = NSRect(x: 16, y: 46, width: buttonWidth, height: 36)
+            openButton.frame = NSRect(x: width - 16 - buttonWidth, y: 46, width: buttonWidth, height: 36)
             loginButton.frame = NSRect(x: 16, y: 18, width: 260, height: 20)
             quitButton.frame = NSRect(x: width - 80, y: 18, width: 64, height: 20)
         }
@@ -377,9 +400,9 @@ final class QuotaPanelController: NSViewController {
         }
         let scroller = layout.scrolls
             ? NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy) : 0
-        let chrome = panelHeaderHeight + expandedFooterHeight + 1
+        let chrome = panelHeaderHeight + footerHeight + 1
         let height = layout.scrolls ? maxHeight : min(maxHeight, layout.listHeight + chrome)
-        return NSSize(width: layout.contentWidth + scroller, height: height)
+        return NSSize(width: max(compactPanelWidth, layout.contentWidth + scroller), height: height)
     }
 
     @objc func toggleExpanded() {
@@ -418,43 +441,78 @@ final class QuotaPanelController: NSViewController {
         apply(snapshot: snapshot, launchAtLogin: launchAtLogin, announce: true)
     }
 
+    @objc private func showAllAccounts() { selectFilter(.all) }
+    @objc private func showMeasuredAccounts() { selectFilter(.measured) }
+    @objc private func showAttentionAccounts() { selectFilter(.attention) }
+
+    private func selectFilter(_ filter: AccountFilter) {
+        guard accountFilter != filter else { return }
+        accountFilter = filter
+        hasRendered = false
+        scrollView.contentView.scroll(to: .zero)
+        apply(snapshot: latestSnapshot, launchAtLogin: loginButton.state == .on, announce: true)
+    }
+
+    private func hasMeasurement(_ entry: RedlineEntry) -> Bool {
+        entry.windows.contains { $0.usedRatio != nil && $0.estimated != true }
+    }
+
     private func apply(snapshot: RedlineSnapshotFile?, launchAtLogin: Bool, announce: Bool) {
         loadViewIfNeeded()
         latestSnapshot = snapshot
         loginButton.state = launchAtLogin ? .on : .off
         let entries = snapshot?.entries ?? []
         let providers = Set(entries.map(\.adapterId)).count
-        let summary = NSMutableAttributedString(
+        let measured = entries.filter(hasMeasurement).count
+        let summary = NSAttributedString(
             string: "\(providers) \(providers == 1 ? "provedor" : "provedores") · \(entries.count) \(entries.count == 1 ? "conta" : "contas")",
             attributes: [.foregroundColor: panelTextDim])
+        let freshness = NSMutableAttributedString(string: "", attributes: [.foregroundColor: panelTextFaint])
         if let snapshot {
             let stale = Date.now.timeIntervalSince1970 - snapshot.updatedAt / 1000 > staleThreshold
-            summary.append(NSAttributedString(
-                string: " · atualizado \(ageLabel(snapshot.updatedAt))",
-                attributes: [.foregroundColor: panelTextDim]))
+            freshness.append(NSAttributedString(
+                string: "\(measured) com leitura · \(entries.count - measured) sem dados · \(ageLabel(snapshot.updatedAt))",
+                attributes: [.foregroundColor: panelTextFaint]))
             if stale {
-                summary.append(NSAttributedString(
+                freshness.append(NSAttributedString(
                     string: " · Nexus offline", attributes: [.foregroundColor: panelWarn]))
             }
         } else {
-            summary.append(NSAttributedString(
-                string: " · abra o Nexus para carregar", attributes: [.foregroundColor: panelTextDim]))
+            freshness.append(NSAttributedString(
+                string: "Abra o Nexus para carregar as cotas", attributes: [.foregroundColor: panelTextDim]))
         }
         summaryLabel.attributedStringValue = summary
+        freshnessLabel.attributedStringValue = freshness
+        fleetStrip.inks = entries.map { entry in
+            quotaInk(for: entry.windows.filter { $0.estimated != true }.compactMap(\.usedRatio).max())
+        }
+        fleetStrip.setAccessibilityElement(true)
+        fleetStrip.setAccessibilityLabel("\(measured) contas com leitura; \(entries.count - measured) sem dados. Uma faixa por conta.")
+        allFilter.setLabel("Todas  \(entries.count)")
+        measuredFilter.setLabel("Com leitura  \(measured)")
+        attentionFilter.setLabel("Resolver  \(entries.count - measured)")
+        allFilter.isSelected = accountFilter == .all
+        measuredFilter.isSelected = accountFilter == .measured
+        attentionFilter.isSelected = accountFilter == .attention
 
-        let best = snapshot?.ranking.values.flatMap { $0 }.max { $0.headroom < $1.headroom }
+        // The ranking includes prospective reset credit; this graphic describes
+        // quota available now, using only measured consumption of eligible rows.
+        let best = entries.filter(\.eligible).compactMap { entry -> (entry: RedlineEntry, headroom: Double)? in
+            guard let used = entry.windows.filter({ $0.estimated != true }).compactMap(\.usedRatio).max() else { return nil }
+            return (entry, max(0, 1 - used))
+        }.max { $0.headroom < $1.headroom }
         if let best {
-            let text = NSMutableAttributedString(
-                string: "Mais folga: \(providerName(best.adapterId)) · \(best.label) · ",
-                attributes: [.foregroundColor: panelTextDim])
-            text.append(NSAttributedString(
-                string: "\(Int((best.headroom * 100).rounded()))%",
-                attributes: [.foregroundColor: panelOk]))
+            let text = NSAttributedString(string: best.entry.label, attributes: [.foregroundColor: panelText])
             recommendationLabel.attributedStringValue = text
+            recommendationValue.stringValue = "\(Int((best.headroom * 100).rounded()))% livre"
+            recommendationValue.setAccessibilityLabel("\(recommendationValue.stringValue) de folga")
+            recommendationCaption.stringValue = "Mais folga agora"
         } else {
             recommendationLabel.attributedStringValue = NSAttributedString(
-                string: "Uso por conta · role para ver todas",
+                string: "Cotas por conta",
                 attributes: [.foregroundColor: panelTextDim])
+            recommendationValue.stringValue = "—"
+            recommendationCaption.stringValue = "Aguardando leitura"
         }
         recommendationLabel.toolTip = recommendationLabel.stringValue
 
@@ -470,14 +528,21 @@ final class QuotaPanelController: NSViewController {
         wrapRoles.removeAll()
         for row in accounts.arrangedSubviews { accounts.removeArrangedSubview(row); row.removeFromSuperview() }
         currentRows = []
-        if entries.isEmpty {
+        let shown = entries.filter { entry in
+            switch accountFilter {
+            case .all: return true
+            case .measured: return hasMeasurement(entry)
+            case .attention: return !hasMeasurement(entry)
+            }
+        }
+        if shown.isEmpty {
             expandedLayout = nil
             showEmptyRow()
         } else if isExpanded {
-            showExpandedColumns(entries)
+            showExpandedColumns(shown)
         } else {
             expandedLayout = nil
-            showCompactRows(entries)
+            showCompactRows(shown)
         }
         view.needsLayout = true
         view.layoutSubtreeIfNeeded()
@@ -500,12 +565,15 @@ final class QuotaPanelController: NSViewController {
         scrollView.documentView = accounts
         scrollView.hasVerticalScroller = true
         let empty = AccountRow()
-        empty.showsSeparator = false
+        empty.orientation = .vertical
+        empty.alignment = .leading
+        empty.spacing = 8
         empty.edgeInsets = NSEdgeInsets(
-            top: 12, left: rowHorizontalInset, bottom: 12, right: rowHorizontalInset)
+            top: 16, left: rowHorizontalInset, bottom: 16, right: rowHorizontalInset)
+        let isFiltered = !(latestSnapshot?.entries.isEmpty ?? true)
         for child in [
-            label("Sem dados ainda.", color: panelTextDim),
-            label("Abra o Nexus e atualize as cotas para ver o painel.",
+            label(isFiltered ? "Nenhuma conta neste filtro." : "Sem dados ainda.", color: panelTextDim),
+            label(isFiltered ? "Escolha Todas para ver suas conexões." : "Abra o Nexus e atualize as cotas para ver o painel.",
                   color: panelTextFaint, size: 11),
         ] {
             empty.addArrangedSubview(child)
@@ -521,9 +589,8 @@ final class QuotaPanelController: NSViewController {
     private func showCompactRows(_ entries: [RedlineEntry]) {
         scrollView.documentView = accounts
         scrollView.hasVerticalScroller = true
-        for (index, entry) in entries.enumerated() {
+        for entry in entries {
             let row = accountRow(entry)
-            row.showsSeparator = index < entries.count - 1
             currentRows.append(row)
             addRow(row, to: accounts)
         }
@@ -547,10 +614,11 @@ final class QuotaPanelController: NSViewController {
         let heights = rows.map { $0.frame.height }
 
         let maxHeight = max(240, availableScreenSize.height - screenMargin)
-        let availableList = maxHeight - (panelHeaderHeight + expandedFooterHeight + 1)
         let perColumn = expandedColumnWidth + 1
         let maxColumns = max(1, min(expandedMaxColumns,
                                     Int((availableScreenSize.width - screenMargin + 1) / perColumn)))
+        let plannedFooter = maxColumns > 1 && entries.count > 1 ? expandedFooterHeight : compactFooterHeight
+        let availableList = maxHeight - (panelHeaderHeight + plannedFooter + 1)
         let plan = planColumns(heights: heights, availableHeight: availableList,
                                minColumns: min(2, maxColumns), maxColumns: maxColumns)
 
@@ -563,8 +631,6 @@ final class QuotaPanelController: NSViewController {
             column.alignment = .leading
             column.spacing = 0
             for rowIndex in range {
-                // Sem fio no pé da última de cada coluna: o fio vertical já separa.
-                rows[rowIndex].showsSeparator = rowIndex < range.upperBound - 1
                 addRow(rows[rowIndex], to: column)
             }
             let height = heights[range].reduce(0, +)
@@ -598,8 +664,7 @@ final class QuotaPanelController: NSViewController {
     /// fixo grande demais subestima a altura e clipa texto na vertical.
     private enum WrapRole: CGFloat {
         case full = 0
-        case head = 88  // logo 16 + gap 8 + chip "Ativa" ~64
-        case quota = 66 // medidor 56 + gap 10
+        case head = 100 // logo 24 + gap 8 + chip Ativa
     }
 
     private var wrapRoles: [ObjectIdentifier: WrapRole] = [:]
@@ -638,9 +703,9 @@ final class QuotaPanelController: NSViewController {
         let row = AccountRow()
         row.orientation = .vertical
         row.alignment = .leading
-        row.spacing = 4
+        row.spacing = 8
         row.edgeInsets = NSEdgeInsets(
-            top: 12, left: rowHorizontalInset, bottom: 12, right: rowHorizontalInset)
+            top: 16, left: rowHorizontalInset, bottom: 16, right: rowHorizontalInset)
 
         // Linha 1: logo oficial + nome. O logo carrega o provider — o prefixo
         // "Provider · " era redundante, a não ser que o nome SEJA o provider.
@@ -654,17 +719,17 @@ final class QuotaPanelController: NSViewController {
         if let logo = RedlineAssets.logoView(for: entry.adapterId, tint: panelText) {
             let holder = NSView()
             holder.addSubview(logo)
-            logo.frame = NSRect(x: 0, y: 0, width: 16, height: 16)
+            logo.frame = NSRect(x: 0, y: 0, width: 24, height: 24)
             holder.translatesAutoresizingMaskIntoConstraints = false
-            holder.widthAnchor.constraint(equalToConstant: 16).isActive = true
-            holder.heightAnchor.constraint(equalToConstant: 17).isActive = true
+            holder.widthAnchor.constraint(equalToConstant: 24).isActive = true
+            holder.heightAnchor.constraint(equalToConstant: 24).isActive = true
             head.addArrangedSubview(holder)
         }
         let provider = providerName(entry.adapterId)
         let title = entry.label.caseInsensitiveCompare(provider) == .orderedSame
             ? provider : entry.label
         // O título divide a linha com o logo (16+8) e o chip "Ativa".
-        head.addArrangedSubview(label(title, color: panelText, weight: .semibold, role: .head))
+        head.addArrangedSubview(label(title, color: panelText, size: 13, weight: .semibold, role: .head))
         if entry.active {
             let dot = NSView()
             dot.wantsLayer = true
@@ -688,7 +753,7 @@ final class QuotaPanelController: NSViewController {
         }
 
         let state = accountState(entry)
-        if !state.isEmpty {
+        if !state.isEmpty && entry.windows.contains(where: { $0.usedRatio != nil }) {
             // O estado viaja em palavras, nunca só em cor.
             let statusLabel = label(state, color: panelWarn, size: 11)
             row.addArrangedSubview(statusLabel)
@@ -697,52 +762,7 @@ final class QuotaPanelController: NSViewController {
             }
         }
 
-        if entry.windows.isEmpty { row.addArrangedSubview(label("Sem leitura de cota", color: panelTextFaint, size: 11)) }
-        for quota in entry.windows {
-            guard let used = quota.usedRatio else {
-                row.addArrangedSubview(label("\(quota.label) · Sem leitura", color: panelTextFaint, size: 11))
-                continue
-            }
-            let gauge = GaugeView()
-            gauge.ratio = used
-            gauge.ink = quotaInk(for: used)
-            gauge.translatesAutoresizingMaskIntoConstraints = false
-            gauge.widthAnchor.constraint(equalToConstant: 56).isActive = true
-            gauge.heightAnchor.constraint(equalToConstant: 4).isActive = true
-
-            // O texto fica depois do medidor (56) + gap (10).
-            let text = label("", size: 11, role: .quota)
-            let render = {
-                let line = NSMutableAttributedString(
-                    string: "\(quota.label) · ",
-                    attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: panelTextDim])
-                line.append(NSAttributedString(string: pct(used), attributes: [
-                    .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
-                    .foregroundColor: quotaInk(for: used),
-                ]))
-                line.append(NSAttributedString(
-                    string: " usado",
-                    attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: panelTextDim]))
-                if quota.resetsAt != nil {
-                    line.append(NSAttributedString(
-                        string: " · reseta em \(countdown(quota.resetsAt))",
-                        attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: panelTextFaint]))
-                }
-                return line
-            }
-            text.attributedStringValue = render()
-
-            let line = NSStackView()
-            line.orientation = .horizontal
-            line.alignment = .centerY
-            line.spacing = 10
-            line.addArrangedSubview(gauge)
-            line.addArrangedSubview(text)
-            row.addArrangedSubview(line)
-            if quota.resetsAt != nil {
-                updateCountdowns.append { text.attributedStringValue = render() }
-            }
-        }
+        addQuotaWindows(entry, to: row)
         for child in row.arrangedSubviews {
             child.translatesAutoresizingMaskIntoConstraints = false
             // Pin à largura do CONTEÚDO — a row inteira sobrescreveria os
@@ -753,6 +773,140 @@ final class QuotaPanelController: NSViewController {
             ).isActive = true
         }
         return row
+    }
+
+    private func addQuotaWindows(_ entry: RedlineEntry, to row: AccountRow) {
+        let known = entry.windows.filter { $0.usedRatio != nil }
+        guard !known.isEmpty else {
+            row.addArrangedSubview(missingQuota(entry))
+            return
+        }
+        for start in stride(from: 0, to: known.count, by: 2) {
+            let pair = NSStackView()
+            pair.orientation = .horizontal
+            pair.distribution = .fillEqually
+            pair.alignment = .centerY
+            pair.spacing = 16
+            for quota in known[start..<min(start + 2, known.count)] {
+                pair.addArrangedSubview(quotaMetric(quota))
+            }
+            row.addArrangedSubview(pair)
+        }
+        if !hasMeasurement(entry) && !accountState(entry).isEmpty {
+            let actions = NSStackView(views: [connectionButton(entry)])
+            actions.orientation = .horizontal
+            row.addArrangedSubview(actions)
+        }
+        let missing = entry.windows.filter { $0.usedRatio == nil }
+        if !missing.isEmpty {
+            row.toolTip = missing.map(\.label).joined(separator: ", ") + " · não informada pelo provedor"
+        }
+    }
+
+    private func quotaMetric(_ quota: RedlineWindow) -> NSStackView {
+        let metric = NSStackView()
+        metric.orientation = .vertical
+        metric.alignment = .leading
+        metric.spacing = 4
+        let heading = NSStackView()
+        heading.orientation = .horizontal
+        heading.distribution = .fill
+        heading.alignment = .firstBaseline
+        heading.spacing = 8
+        let caption = NSTextField(wrappingLabelWithString: quota.label)
+        caption.font = .systemFont(ofSize: 11, weight: .medium)
+        caption.textColor = panelTextDim
+        caption.preferredMaxLayoutWidth = 90
+        caption.maximumNumberOfLines = 3
+        caption.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let value = NSTextField(labelWithString: pct(quota.usedRatio))
+        value.font = .monospacedDigitSystemFont(ofSize: 22, weight: .semibold)
+        value.textColor = panelText
+        value.setContentCompressionResistancePriority(.required, for: .horizontal)
+        heading.addArrangedSubview(caption)
+        heading.addArrangedSubview(value)
+        let gauge = QuotaMeterView(quota: quota,
+                                  ink: quota.estimated == true ? panelTextDim : quotaInk(for: quota.usedRatio),
+                                  track: panelHairlineStrong)
+        for child in [heading, gauge] {
+            metric.addArrangedSubview(child)
+            child.translatesAutoresizingMaskIntoConstraints = false
+            child.widthAnchor.constraint(equalTo: metric.widthAnchor).isActive = true
+        }
+        metric.addArrangedSubview(quotaTiming(quota))
+        return metric
+    }
+
+    private func quotaTiming(_ quota: RedlineWindow) -> NSStackView {
+        let timing = NSStackView()
+        timing.orientation = .horizontal
+        timing.alignment = .centerY
+        timing.spacing = 4
+        if quota.estimated == true {
+            timing.addArrangedSubview(label("Estimado", color: panelTextDim, size: 10))
+        }
+        guard quota.resetsAt != nil else { return timing }
+        let reset = NSTextField(labelWithString: countdown(quota.resetsAt))
+        reset.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        reset.textColor = panelTextFaint
+        reset.setAccessibilityLabel("Renova em \(reset.stringValue)")
+        if let image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Renova em") {
+            let icon = NSImageView(image: image)
+            icon.contentTintColor = panelTextFaint
+            icon.widthAnchor.constraint(equalToConstant: 10).isActive = true
+            icon.heightAnchor.constraint(equalToConstant: 10).isActive = true
+            timing.addArrangedSubview(icon)
+        }
+        timing.addArrangedSubview(reset)
+        updateCountdowns.append {
+            reset.stringValue = countdown(quota.resetsAt)
+            reset.setAccessibilityLabel("Renova em \(reset.stringValue)")
+        }
+        return timing
+    }
+
+    private func missingQuota(_ entry: RedlineEntry) -> NSStackView {
+        let content = NSStackView()
+        content.orientation = .horizontal
+        content.alignment = .centerY
+        content.spacing = 12
+        if let image = NSImage(systemSymbolName: "antenna.radiowaves.left.and.right.slash", accessibilityDescription: "Sem leitura") {
+            let icon = NSImageView(image: image)
+            icon.contentTintColor = panelTextFaint
+            icon.widthAnchor.constraint(equalToConstant: 28).isActive = true
+            icon.heightAnchor.constraint(equalToConstant: 28).isActive = true
+            content.addArrangedSubview(icon)
+        }
+        let detail = NSStackView()
+        detail.orientation = .vertical
+        detail.alignment = .leading
+        detail.spacing = 4
+        let state = accountState(entry)
+        let status = label(state.isEmpty ? quotaReadMessage(entry) : state, color: panelTextDim, size: 11)
+        detail.addArrangedSubview(status)
+        if entry.onCooldown { updateCountdowns.append { status.stringValue = accountState(entry) } }
+        detail.addArrangedSubview(connectionButton(entry))
+        content.addArrangedSubview(detail)
+        return content
+    }
+
+    private func connectionButton(_ entry: RedlineEntry) -> NSButton {
+        let resolve = PanelButton(title: "Resolver no Nexus", style: .secondary,
+                                  target: openButton.target as AnyObject?, action: openButton.action)
+        resolve.setAccessibilityLabel("Resolver a conexão de \(entry.label) no Nexus")
+        resolve.widthAnchor.constraint(equalToConstant: 132).isActive = true
+        resolve.heightAnchor.constraint(equalToConstant: 26).isActive = true
+        return resolve
+    }
+
+}
+
+private func quotaReadMessage(_ entry: RedlineEntry) -> String {
+    switch entry.readHint {
+    case "quota-key-required": return "Conectado · cota pendente"
+    case "cli-missing": return "CLI não encontrada"
+    case "unavailable": return "Cota indisponível"
+    default: return "Sem leitura de cota"
     }
 }
 

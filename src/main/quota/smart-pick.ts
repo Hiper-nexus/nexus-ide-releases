@@ -121,6 +121,7 @@ export function scoreFleet(
       updatedAt: entry.updatedAt,
       eligible,
       ...(reason ? { excludedReason: reason } : {}),
+      ...(entry.readHint ? { readHint: entry.readHint } : {}),
       ...(decisive
         ? {
             headroom: decisive.headroom,
