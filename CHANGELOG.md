@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.76.265 — Linux em dia com a velocidade
+
+A 0.76.264 saiu só para macOS (DMG e ZIP darwin arm64). Esta versão não anexa pacotes Linux àquela release. O produto é o da 0.76.264, empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35).
+
+No desktop Linux, em relação à 0.76.263:
+
+- **Login sem derrubar os outros aparelhos.** Se uma renovação de sessão for repetida (resposta perdida ou retry), só a cadeia daquele aparelho é revogada. Mac, Linux, Windows e web continuam logados. O app aguarda a renovação por até 30 s e tenta outra vez após erro 5xx. Se o cofre recusar a gravação, o par novo fica em memória. O trace registra `auth-refresh`. No servidor, o token mais recente da família também é revogado, e a web reemite apenas o CSRF da sessão em vez de abrir uma família nova.
+- **Terminal mais leve.** A saída do PTY é enviada ao renderer em lotes (até 64 KiB, com janela de 8 mensagens), e não mais um IPC por pedaço. A cauda continua chegando quando o processo sai. O worker de análise recebe apenas o trecho novo da tela e deixou de reter um buffer de 256 KB por pane.
+- **Abertura mais leve.** As fontes vêm em WOFF2 com todos os glifos da TUI. Os painéis secundários carregam sob demanda, com prefetch quando o app está ocioso. Mermaid, shiki, katex e cytoscape saíram do app.asar. O PATH fica em cache, a prova do heavy saiu do boot, o `ps` é assíncrono e as tarefas pós-boot entram numa fila ociosa com prazo.
+- **Git fora do processo principal.** Push, pull, status, PR e o HEAD do workspace do pane rodam de forma assíncrona. Mutações git no mesmo repositório seguem uma fila em ordem. A prova de identidade do repositório e da aba fica em cache enquanto nada muda no `.git`. Esse cache cobre symrefs, reftable, shallow, grafts e worktree vinculada.
+- **IO fora do loop.** Ler credenciais e cota, abrir o explorador de arquivos e soltar anexos na janela não bloqueiam mais o processo principal.
+- **Banco local.** Usa `synchronous=NORMAL` apenas com journal em WAL (FULL nos demais casos), mantém cache de statements preparados por conexão e ganhou índices para as consultas mais frequentes (migração 056).
+- **Processo principal mais enxuto.** A fronteira MCP usa um único hook de promises compartilhado. Listar provedores não varre mais o PATH. O watcher de transcripts relê apenas o que mudou, e os timers ociosos ficam desligados. A fila heavy libera a vaga quando o processo sai, roda com QoS utility e respeita um teto sob pressão de memória.
+- **Espaço para ditar.** Segurar Espaço começa o ditado depois de 450 ms; o tempo é ajustável de 250 a 1000 ms em Voz. Toques normais digitam o espaço. Gravações curtas ou silenciosas e repetições do Whisper são descartadas.
+- **Workers e pool.** A adoção de uma worktree pré-alocada sobrevive a um crash no meio do processo. Um spawn que espera a troca de binário de uma CLI desiste em 60 s com mensagem clara. A cerca de PID reutilizado continua valendo na hora repetida do horário de verão.
+- **Corrigido.**
+  - Anexos acima de ~3 MiB falhavam ao serem soltos.
+  - O token renovado de uma CLI agora volta à origem mesmo se o `fs.watch` morrer calado.
+  - Uma confirmação do Jarvis pendente no fechamento do app não concede mais permissão.
+- **Não muda o Linux.** No APFS, uma raiz com caixa diferente é aceita como top-level do Git (F-1509). Isso é só macOS.
+
 ## 0.76.264 — Nexus mais rápido de ponta a ponta
 
 Saída para macOS (DMG e ZIP darwin arm64). Traz a 0.76.262 e todo o trabalho de velocidade feito depois da 0.76.259.
