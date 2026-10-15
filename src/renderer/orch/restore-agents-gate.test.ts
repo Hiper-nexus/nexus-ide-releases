@@ -638,6 +638,25 @@ describe('restore-agents-gate', () => {
     expect(closePane).not.toHaveBeenCalled();
   });
 
+  it('retries mission authority after access is lost during restore and then unlocked', async () => {
+    installRestoredAgentsGate();
+    const pane = missionAgent('access-race', 'Missão preservada');
+    layoutRoot.current = { kind: 'leaf', id: 'leaf-access-race', pane };
+    canRestoreMissionPane.mockImplementationOnce(async () => {
+      useAccessStore.setState({ canUseApp: false });
+      throw new Error('license_access_denied');
+    });
+
+    await gateRestoredAgents([pane]);
+    expect(releaseHeldSpawns).not.toHaveBeenCalledWith([pane.id], { resume: true });
+    canRestoreMissionPane.mockResolvedValue(true);
+    useAccessStore.setState({ canUseApp: true });
+
+    await vi.waitFor(() => expect(releaseHeldSpawns).toHaveBeenCalledWith([pane.id], { resume: true }));
+    expect(canRestoreMissionPane).toHaveBeenCalledTimes(2);
+    expect(closePane).not.toHaveBeenCalled();
+  });
+
   it('defers every pane in a coalesced restore prompt when access is revoked', async () => {
     installRestoredAgentsGate();
     const panes = [agent('batch-a', 'A'), agent('batch-b', 'B')];

@@ -333,13 +333,15 @@ export async function gateRestoredAgents(
         restoreGeneration,
       );
       if (!isCurrentRestoreWorkspaceGeneration(restoreGeneration)) return;
+      if (deferForAccess([pane])) return;
       if (isAuthorized) {
-        if (!deferForAccess([pane])) releaseHeldSpawns([pane.id], { resume: true });
+        releaseHeldSpawns([pane.id], { resume: true });
         return;
       }
       retireUnauthorizedMissionPane(pane, restoreGeneration);
     } catch (error) {
       if (!isCurrentRestoreWorkspaceGeneration(restoreGeneration)) return;
+      if (deferForAccess([pane])) return;
       // Main may be restarting. Fail closed and retain the hold; absence of a
       // reply is not proof that the durable pane is an orphan.
       console.warn(
