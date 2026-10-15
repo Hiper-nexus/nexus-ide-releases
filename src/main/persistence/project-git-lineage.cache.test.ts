@@ -12,9 +12,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   clearGitRepositoryContextCache,
   collectGitRepositoryContext,
+  collectGitRepositoryProof,
   gitProofStats,
   processGitRunner,
   warmGitRepositoryContext,
+  type GitRepositoryContext,
   type ProjectGitRunner,
 } from './project-git-lineage';
 
@@ -129,5 +131,111 @@ describe('git repository proof cache', () => {
     const before = gitProofStats();
     collectGitRepositoryContext(root);
     expect(gitProofStats().contextSyncRuns).toBe(before.contextSyncRuns + 1);
+  });
+
+  // H1: o store não pode gravar {fingerprint novo, prova antiga} quando o
+  // disco muda no meio da coleta — a leitura seguinte serviria o origin
+  // velho ao F-107 por até 5 minutos.
+  it('origin trocado DURANTE a coleta não vira cache podre (TOCTOU do store)', () => {
+    git(root, 'remote', 'add', 'origin', 'https://example.invalid/before.git');
+    // Shim na frente do PATH: quando a prova chega ao rev-list (depois de ler
+    // o origin), troca a URL no disco e delega ao git real. A prova prependa
+    // `--no-replace-objects`, então o subcomando é o $2.
+    const shimDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-git-shim-'));
+    const shim = path.join(shimDir, 'git');
+    fs.writeFileSync(
+      shim,
+      [
+        '#!/bin/sh',
+        'if [ "$2" = "rev-list" ]; then',
+        '  /usr/bin/git remote set-url origin https://example.invalid/after.git >/dev/null 2>&1 || true',
+        'fi',
+        'exec /usr/bin/git "$@"',
+        '',
+      ].join('\n'),
+    );
+    fs.chmodSync(shim, 0o755);
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${shimDir}${path.delimiter}${originalPath}`;
+    let duringRace: GitRepositoryContext | undefined;
+    try {
+      duringRace = collectGitRepositoryContext(root);
+    } finally {
+      process.env.PATH = originalPath;
+      fs.rmSync(shimDir, { recursive: true, force: true });
+    }
+    const before = gitProofStats();
+    const second = collectGitRepositoryContext(root);
+    // Sem hit: o store só grava prova casada com o disco que ela leu.
+    expect(gitProofStats().contextSyncRuns).toBe(before.contextSyncRuns + 1);
+    expect(gitProofStats().contextHits).toBe(before.contextHits);
+    const truth = collectGitRepositoryProof(root);
+    expect(second.proof.originHashes).toEqual(truth.originHashes);
+    expect(duringRace?.proof.originHashes).not.toEqual(truth.originHashes);
+  });
+
+  // M1a: stat só do primeiro ref é cego a update-ref no DESTINO de um symref.
+  it('update-ref no destino de um symref (HEAD→alias→main) invalida', () => {
+    git(root, 'symbolic-ref', 'refs/heads/alias', 'refs/heads/main');
+    git(root, 'symbolic-ref', 'HEAD', 'refs/heads/alias');
+    const first = collectGitRepositoryContext(root);
+    // Commit novo sem tocar no worktree: só o ref de destino (main) é
+    // reescrito — alias, HEAD e a raiz ficam intocados.
+    const tree = git(root, 'rev-parse', 'HEAD^{tree}');
+    const next = execFileSync('git', ['-C', root, 'commit-tree', tree, '-m', 'two'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+    git(root, 'update-ref', 'refs/heads/main', next);
+    const before = gitProofStats();
+    const second = collectGitRepositoryContext(root);
+    expect(second.proof.headCommit).toBe(next);
+    expect(first.proof.headCommit).not.toBe(next);
+    expect(gitProofStats().contextSyncRuns).toBe(before.contextSyncRuns + 1);
+    expect(gitProofStats().contextHits).toBe(before.contextHits);
+  });
+
+  // M1b: reftable é outra fonte de refs que o fingerprint não via. Criar o
+  // diretório já invalida pelo stat do gitdir; o buraco é a EDIÇÃO do
+  // tables.list, que não toca nenhum outro token.
+  it('edição de reftable/tables.list invalida o cache', () => {
+    fs.mkdirSync(path.join(root, '.git', 'reftable'), { recursive: true });
+    const tables = path.join(root, '.git', 'reftable', 'tables.list');
+    fs.writeFileSync(tables, '00000001 fake-a\n');
+    collectGitRepositoryContext(root);
+    fs.writeFileSync(tables, '00000002 fake-b\n');
+    const before = gitProofStats();
+    collectGitRepositoryContext(root);
+    expect(gitProofStats().contextSyncRuns).toBe(before.contextSyncRuns + 1);
+    expect(gitProofStats().contextHits).toBe(before.contextHits);
+  });
+
+  // M1c: shallow e info/grafts vivem no COMMON dir; numa worktree vinculada
+  // o fingerprint estatava o gitdir particular e era cego a edições no common.
+  it('shallow e info/grafts do common dir invalidam a worktree vinculada', () => {
+    const linkedPath = `${root}-linked`;
+    git(root, 'worktree', 'add', '-q', linkedPath, '-b', 'linked-branch');
+    const linked = fs.realpathSync.native(linkedPath);
+    try {
+      collectGitRepositoryContext(linked);
+      const common = path.join(root, '.git');
+      const before = gitProofStats();
+      fs.writeFileSync(
+        path.join(common, 'shallow'),
+        `${git(root, 'rev-parse', 'HEAD')}\n`,
+      );
+      const afterShallow = collectGitRepositoryContext(linked);
+      expect(gitProofStats().contextSyncRuns).toBe(before.contextSyncRuns + 1);
+      expect(gitProofStats().contextHits).toBe(before.contextHits);
+      expect(afterShallow.proof.isShallow).toBe(true);
+      fs.mkdirSync(path.join(common, 'info'), { recursive: true });
+      fs.writeFileSync(path.join(common, 'info', 'grafts'), '\n');
+      const mid = gitProofStats();
+      collectGitRepositoryContext(linked);
+      expect(gitProofStats().contextSyncRuns).toBe(mid.contextSyncRuns + 1);
+      expect(gitProofStats().contextHits).toBe(mid.contextHits);
+    } finally {
+      fs.rmSync(linkedPath, { recursive: true, force: true });
+    }
   });
 });
