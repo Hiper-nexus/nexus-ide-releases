@@ -41,6 +41,7 @@ vi.mock('@xterm/xterm', () => ({
     focus() {}
     write() {}
     writeln() {}
+    reset() {}
     refresh(start: number, end: number) {
       refreshCalls.push({ start, end });
     }
@@ -3826,5 +3827,220 @@ describe('A3 — a fita pendente sobrevive à divergência de largura', () => {
     };
     expect(saved.root.pane?.terminalScrollback).toBe(tape);
     expect(saved.root.pane?.terminalScrollbackCols).toBe(90);
+  });
+});
+
+describe('ConPTY (Windows) — título do console host e resize do PTY com o xterm', () => {
+  const agent: PaneModel = {
+    id: 'agent-conpty',
+    kind: 'cli-agent',
+    adapterId: 'agy',
+    title: 'AGY',
+  };
+  const ptyResize = () => vi.mocked(window.nexus.pty.resize);
+  const asWindows = () => Object.assign(window.nexus, { platform: 'win32' });
+  const POWERSHELL = String.raw`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`;
+  const CMD_AGY = String.raw`C:\WINDOWS\system32\cmd.exe - agy.cmd`;
+
+  // O describe A3 (acima) deixa a chave de persistência do layout aberta
+  // (switchWorkspaceLayout) e o bridge de cada teste não tem `layout`: o save
+  // com debounce de 300 ms disparado por um setTitle real estourava com
+  // TypeError no layout-store. Este bloco não depende da ordem dos describes.
+  beforeEach(() => {
+    Object.assign(window.nexus, {
+      layout: { load: vi.fn(), save: vi.fn(), saveSync: vi.fn() },
+    });
+  });
+
+  function mountAgent(slotWidth = 1200, slotHeight = 800) {
+    useLayoutStore.setState({
+      root: buildGridTree([agent]),
+      focusedPaneId: agent.id,
+    });
+    const host = getOrCreateHost(agent);
+    setHostSize(host.element, slotWidth, slotHeight);
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(agent, slot);
+    return host;
+  }
+
+  describe('título (OSC 0/2 automático do console host)', () => {
+    it('agente: o executável do ConPTY não sobrescreve o título do CLI', async () => {
+      mountAgent();
+      const setTitle = vi.spyOn(useLayoutStore.getState(), 'setTitle');
+      fireTitle(CMD_AGY);
+      fireTitle(POWERSHELL);
+      fireTitle(String.raw`Administrador: C:\Windows\System32\cmd.exe`);
+      await vi.advanceTimersByTimeAsync(300);
+      expect(setTitle).not.toHaveBeenCalled();
+
+      // Título de tarefa real continua passando, com a família do adapter.
+      fireTitle('⠋ Fix terminal spinner');
+      await vi.advanceTimersByTimeAsync(300);
+      expect(setTitle).toHaveBeenCalledExactlyOnceWith(
+        agent.id,
+        'AGY · Fix terminal spinner',
+      );
+      discardPaneSpawnState(agent.id);
+    });
+
+    it('shell: grava só o nome do executável, nunca o caminho', async () => {
+      const host = getOrCreateHost(pane);
+      setHostSize(host.element, 1200, 800);
+      const slot = document.createElement('div');
+      document.body.appendChild(slot);
+      attachHost(pane, slot);
+      const setTitle = vi.spyOn(useLayoutStore.getState(), 'setTitle');
+      fireTitle(POWERSHELL);
+      await vi.advanceTimersByTimeAsync(300);
+      expect(setTitle).toHaveBeenCalledExactlyOnceWith(pane.id, 'powershell');
+
+      fireTitle(CMD_AGY);
+      await vi.advanceTimersByTimeAsync(300);
+      expect(setTitle).toHaveBeenLastCalledWith(pane.id, 'cmd');
+    });
+  });
+
+  describe('bounce de grade (repaintPaneTui)', () => {
+    it('Windows: o par rows-1/rows vai ao xterm e ao PTY, na mesma ordem', async () => {
+      asWindows();
+      const host = mountAgent();
+      expect(await waitForSession(agent.id, 1000)).toBe('pty-hidden');
+      ptyResize().mockClear();
+      ptyResize().mockImplementation(() => {
+        eventOrder.push('pty');
+      });
+      resizeCalls.length = 0;
+      eventOrder.length = 0;
+
+      repaintPaneTui(agent.id);
+
+      // asserção do winsize, depois xterm e PTY encolhem e voltam juntos.
+      expect(eventOrder).toEqual(['pty', 'resize', 'pty', 'resize', 'pty']);
+      expect(resizeCalls).toEqual([
+        { cols: 120, rows: 39 },
+        { cols: 120, rows: 40 },
+      ]);
+      expect(host.term.rows).toBe(40);
+      expect(host.reportedGrid).toEqual({ cols: 120, rows: 40 });
+      discardPaneSpawnState(agent.id);
+    });
+
+    it('fora do Windows: o bounce segue só no PTY (xterm intocado)', async () => {
+      mountAgent();
+      expect(await waitForSession(agent.id, 1000)).toBe('pty-hidden');
+      ptyResize().mockClear();
+      resizeCalls.length = 0;
+
+      repaintPaneTui(agent.id);
+
+      expect(ptyResize()).toHaveBeenNthCalledWith(2, 'pty-hidden', 120, 39);
+      expect(ptyResize()).toHaveBeenNthCalledWith(3, 'pty-hidden', 120, 40);
+      expect(resizeCalls).toEqual([]);
+      discardPaneSpawnState(agent.id);
+    });
+  });
+
+  describe('attachHost com a grade real diferente da reportada', () => {
+    async function reattachWithNewSlotSize() {
+      const host = mountAgent();
+      expect(await waitForSession(agent.id, 1000)).toBe('pty-hidden');
+      // Pane sem foco: o attach mede e propaga a grade real sozinho.
+      useLayoutStore.setState({ focusedPaneId: 'other-pane' });
+      setHostSize(host.element, 900, 600);
+      ptyResize().mockClear();
+      const slot = document.createElement('div');
+      document.body.appendChild(slot);
+      attachHost(agent, slot);
+      expect(host.term.cols).toBe(90);
+      expect(host.term.rows).toBe(30);
+    }
+
+    it('Windows: só o resize da grade real, sem bounce redundante', async () => {
+      asWindows();
+      await reattachWithNewSlotSize();
+      expect(ptyResize().mock.calls).toEqual([
+        ['pty-hidden', 90, 30, undefined],
+      ]);
+      discardPaneSpawnState(agent.id);
+    });
+
+    it('fora do Windows: resize da grade real e depois o bounce rows-1/rows', async () => {
+      await reattachWithNewSlotSize();
+      expect(ptyResize().mock.calls).toEqual([
+        ['pty-hidden', 90, 30, undefined],
+        ['pty-hidden', 90, 29],
+        ['pty-hidden', 90, 30],
+      ]);
+      discardPaneSpawnState(agent.id);
+    });
+  });
+
+  describe('adoção de sessão headless', () => {
+    async function adoptAgent() {
+      spawn.mockResolvedValueOnce({
+        ok: true,
+        sessionId: 'pty-adopted',
+        adopted: true,
+      });
+      vi.mocked(window.nexus.pty.replay).mockImplementation(async (sessionId) => {
+        await Promise.resolve();
+        ptyDataListeners.get(sessionId)!('hello\r\n', { replayed: true });
+      });
+      const host = mountAgent();
+      const termWrite = vi.spyOn(host.term, 'write');
+      expect(await waitForSession(agent.id, 1000)).toBe('pty-adopted');
+      ptyResize().mockClear();
+      resizeCalls.length = 0;
+      return { host, termWrite };
+    }
+
+    it('Windows: um único resize na grade real e a fita headless não é regravada', async () => {
+      asWindows();
+      const { host, termWrite } = await adoptAgent();
+
+      await vi.advanceTimersByTimeAsync(400);
+      expect(ptyResize().mock.calls).toEqual([['pty-adopted', 120, 40]]);
+      expect(resizeCalls).toEqual([]);
+
+      // O ConPTY repintou na grade real: nada a refazer por cima.
+      Object.assign(host.term.buffer.active, { baseY: 1 });
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(termWrite).not.toHaveBeenCalledWith('hello\r\n');
+      expect(ptyResize()).toHaveBeenCalledTimes(1);
+      discardPaneSpawnState(agent.id);
+    });
+
+    it('Windows: pane ainda vazio depois da janela → bounce espelhado, não a fita de 120 colunas', async () => {
+      asWindows();
+      const { termWrite } = await adoptAgent();
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(termWrite).not.toHaveBeenCalledWith('hello\r\n');
+      expect(ptyResize().mock.calls).toEqual([
+        ['pty-adopted', 120, 40],
+        ['pty-adopted', 120, 39],
+        ['pty-adopted', 120, 40],
+      ]);
+      expect(resizeCalls).toEqual([
+        { cols: 120, rows: 39 },
+        { cols: 120, rows: 40 },
+      ]);
+      discardPaneSpawnState(agent.id);
+    });
+
+    it('fora do Windows: SIGWINCH duplo e fita regravada, como antes', async () => {
+      const { termWrite } = await adoptAgent();
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(ptyResize().mock.calls).toEqual([
+        ['pty-adopted', 120, 39],
+        ['pty-adopted', 120, 40],
+      ]);
+      expect(termWrite).toHaveBeenCalledWith('hello\r\n');
+      expect(resizeCalls).toEqual([]);
+      discardPaneSpawnState(agent.id);
+    });
   });
 });

@@ -45,7 +45,11 @@ import {
   type DroppedPayload,
 } from '../lib/mission-shell-file-intake';
 import { listPanes } from '../lib/split-tree';
-import { cliPaneDisplayTitle, normalizePaneTitle } from '../lib/pane-title';
+import {
+  cliPaneDisplayTitle,
+  normalizePaneTitle,
+  windowsConsoleHostName,
+} from '../lib/pane-title';
 import {
   missionOwnsItsPanes,
   wasMissionRuntimeClosedByOperator,
@@ -1798,14 +1802,24 @@ function startSpawn(
         // reescrito num xterm mais estreito ele vira lixo permanente no
         // scrollback. Depois do replay: zera o terminal e força SIGWINCH
         // duplo — o TUI fullscreen repinta o quadro inteiro na largura real.
+        // No Windows o ConPTY repinta a visão dele num resize que muda a
+        // grade: um único resize na grade real basta, e o par rows-1/rows só
+        // no PTY (xterm parado) rolaria o buffer do ConPTY fora de sincronia.
         const adoptedSessionId = res.sessionId;
+        const adoptedOnConpty = xtermWindowsPty() !== undefined;
         setTimeout(() => {
           if (host.disposed || host.sessionId !== adoptedSessionId) return;
           try {
             host.term.reset();
             const cols = host.term.cols;
             const rows = host.term.rows;
-            window.nexus.pty.resize(adoptedSessionId, cols, Math.max(2, rows - 1));
+            if (!adoptedOnConpty) {
+              window.nexus.pty.resize(
+                adoptedSessionId,
+                cols,
+                Math.max(2, rows - 1),
+              );
+            }
             window.nexus.pty.resize(adoptedSessionId, cols, rows);
             host.reportedGrid = { cols, rows };
           } catch {
@@ -1823,6 +1837,17 @@ function startSpawn(
             adoptionTape = null;
             if (host.disposed || host.sessionId !== adoptedSessionId) return;
             if (!tape) return;
+            if (adoptedOnConpty) {
+              // A fita é a saída do PTY headless (120 colunas): regravada por
+              // cima do repaint do ConPTY na grade real, vira lixo. Pane ainda
+              // vazio = o resize não mudou a grade e o ConPTY ficou quieto;
+              // o bounce espelhado no xterm o faz repintar na largura certa.
+              tape.clear();
+              if (!terminalBufferHasContent(host.term.buffer.active)) {
+                bouncePtyGrid(host);
+              }
+              return;
+            }
             const outcome = repaintAdoptedFrame({
               hasContent: terminalBufferHasContent(host.term.buffer.active),
               tape: tape.read(),
@@ -2161,7 +2186,16 @@ function bouncePtyGrid(host: Host): void {
   const cols = host.term.cols;
   const rows = host.term.rows;
   if (cols < 2 || rows < 1) return;
-  window.nexus.pty.resize(host.sessionId, cols, Math.max(2, rows - 1));
+  const bounceRows = Math.max(2, rows - 1);
+  // ConPTY mantém buffer próprio: ao encolher uma linha ele rola 1 linha para
+  // o scrollback e reimprime a visão. Um xterm que não acompanhou o resize
+  // perde a sincronia com o cursor relativo da TUI (spinner sobreposto,
+  // quadros triplicados). No Windows o mesmo par de grades vai ao xterm
+  // também, para a heurística `windowsPty` dele rodar junto com a do ConPTY.
+  const mirrorInTerm = xtermWindowsPty() !== undefined;
+  if (mirrorInTerm) host.term.resize(cols, bounceRows);
+  window.nexus.pty.resize(host.sessionId, cols, bounceRows);
+  if (mirrorInTerm) host.term.resize(cols, rows);
   window.nexus.pty.resize(host.sessionId, cols, rows);
   host.reportedGrid = { cols, rows };
 }
@@ -2579,11 +2613,20 @@ interface PaneTitleThrottleState {
 const titleThrottleState = new WeakMap<Host, PaneTitleThrottleState>();
 
 function applyIncomingPaneTitle(host: Host, rawTitle: string): void {
-  const { title } = normalizePaneTitle(rawTitle);
-  if (!title) return;
+  const normalized = normalizePaneTitle(rawTitle);
+  if (!normalized.title) return;
   const pane = listPanes(useLayoutStore.getState().root).find(
     (candidate) => candidate.id === host.paneId,
   );
+  let title = normalized.title;
+  // OSC automático do console host do ConPTY (caminho do powershell/cmd): não
+  // é título de tarefa. Agente mantém o título dele; shell fica só com o nome
+  // do executável.
+  const consoleHost = windowsConsoleHostName(title);
+  if (consoleHost !== null) {
+    if (pane?.kind === 'cli-agent') return;
+    title = consoleHost;
+  }
   const display =
     pane?.kind === 'cli-agent'
       ? cliPaneDisplayTitle(pane.adapterId, title)
@@ -3173,18 +3216,21 @@ export function attachHost(pane: PaneModel, slot: HTMLElement): void {
   setHostVisibility(pane.id, true);
 
   const beforeGrid = host.reportedGrid;
+  let sentRealGrid = false;
   if (useLayoutStore.getState().focusedPaneId !== pane.id) {
     try {
       if (fitHostGrid(host)) {
         flushPendingScrollback(host);
-        propagateHostSize(host);
+        sentRealGrid = propagateHostSize(host);
       }
     } catch {
       // Slot not measurable yet; the ResizeObserver will retry.
     }
   }
   // Headless spawn (waitForSession) pinta a TUI em 80×24. No attach, se a
-  // grade real mudou, bounce SIGWINCH — o mesmo truque da adoption.
+  // grade real mudou, bounce SIGWINCH — o mesmo truque da adoption. No
+  // Windows o resize que mudou a grade já faz o ConPTY repintar a visão
+  // inteira; o bounce em cima só rola o buffer dele mais uma vez.
   if (
     shouldBouncePtyGridAfterAttach({
       hasSession: Boolean(host.sessionId),
@@ -3192,7 +3238,8 @@ export function attachHost(pane: PaneModel, slot: HTMLElement): void {
         cols: host.term.cols,
         rows: host.term.rows,
       }),
-    })
+    }) &&
+    !(sentRealGrid && xtermWindowsPty() !== undefined)
   ) {
     bouncePtyGrid(host);
   }

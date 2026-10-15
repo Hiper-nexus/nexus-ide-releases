@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { cliPaneDisplayTitle, normalizePaneTitle } from './pane-title';
+import {
+  cliPaneDisplayTitle,
+  isWindowsConsoleHostTitle,
+  normalizePaneTitle,
+  windowsConsoleHostName,
+} from './pane-title';
 
 describe('normalizePaneTitle', () => {
   it.each([
@@ -94,5 +99,82 @@ describe('cliPaneDisplayTitle — F-597 identidade da CLI no cabeçalho', () => 
   it('título vazio cai na família sozinha', () => {
     expect(cliPaneDisplayTitle('grok', '')).toBe('Grok');
     expect(cliPaneDisplayTitle('codex', '   ')).toBe('GPT');
+  });
+});
+
+describe('isWindowsConsoleHostTitle — OSC automático do ConPTY', () => {
+  it.each([
+    String.raw`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`,
+    String.raw`C:\WINDOWS\system32\cmd.exe - agy.cmd`,
+    String.raw`Administrador: C:\Windows\System32\cmd.exe`,
+    String.raw`Administrator: C:\Program Files\PowerShell\7\pwsh.exe`,
+    String.raw`c:/windows/system32/cmd.exe`,
+    String.raw`\\?\C:\Windows\System32\cmd.exe`,
+    String.raw`C:\tools\agy.cmd`,
+    String.raw`C:\tools\run.bat - build`,
+    String.raw`C:\tools\boot.ps1`,
+    String.raw`C:\tools\edit.com`,
+    'Windows PowerShell',
+    'Administrator: Windows PowerShell',
+    'Prompt de Comando',
+    'Command Prompt',
+  ])('reconhece %j', (title) => {
+    expect(isWindowsConsoleHostTitle(title)).toBe(true);
+  });
+
+  it.each([
+    'nexus-ide',
+    'zsh',
+    'Fix Codex pane',
+    '⠋ Running command…',
+    String.raw`C:\Users\me\project`,
+    String.raw`C:\Users\me\notes.txt`,
+    String.raw`C:\repo\build.exe falhou na CI`,
+    '/usr/bin/zsh',
+    'node.exe',
+    '',
+  ])('deixa passar %j', (title) => {
+    expect(isWindowsConsoleHostTitle(title)).toBe(false);
+  });
+
+  it('windowsConsoleHostName devolve só o executável, sem pasta nem extensão', () => {
+    expect(
+      windowsConsoleHostName(
+        String.raw`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`,
+      ),
+    ).toBe('powershell');
+    expect(windowsConsoleHostName(String.raw`C:\WINDOWS\system32\cmd.exe - agy.cmd`)).toBe('cmd');
+    expect(windowsConsoleHostName(String.raw`Administrador: C:\Windows\System32\cmd.exe`)).toBe('cmd');
+    expect(windowsConsoleHostName('Command Prompt')).toBe('Command Prompt');
+    expect(windowsConsoleHostName('nexus-ide')).toBeNull();
+  });
+});
+
+describe('cliPaneDisplayTitle — título do console host nunca vira cabeçalho', () => {
+  it('descarta o caminho do console host e devolve só a família', () => {
+    expect(
+      cliPaneDisplayTitle('agy', String.raw`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`),
+    ).toBe('AGY');
+    expect(cliPaneDisplayTitle('agy', String.raw`C:\WINDOWS\system32\cmd.exe - agy.cmd`)).toBe('AGY');
+    expect(cliPaneDisplayTitle('agy', String.raw`Administrador: C:\Windows\System32\cmd.exe`)).toBe('AGY');
+  });
+
+  it('limpa título já gravado no layout ("AGY · C:\\Windows\\…")', () => {
+    expect(
+      cliPaneDisplayTitle('agy', String.raw`AGY · C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`),
+    ).toBe('AGY');
+    expect(cliPaneDisplayTitle('agy', 'AGY · Windows PowerShell')).toBe('AGY');
+  });
+
+  it('preserva títulos legítimos de tarefa', () => {
+    expect(cliPaneDisplayTitle('agy', 'Fix terminal spinner')).toBe('AGY · Fix terminal spinner');
+    expect(cliPaneDisplayTitle('agy', 'AGY · Fix terminal spinner')).toBe('AGY · Fix terminal spinner');
+    expect(cliPaneDisplayTitle('agy', String.raw`C:\Users\me\project`)).toBe(
+      String.raw`AGY · C:\Users\me\project`,
+    );
+  });
+
+  it('sem família (shell) não inventa nada: devolve o texto cru', () => {
+    expect(cliPaneDisplayTitle(undefined, 'zsh')).toBe('zsh');
   });
 });
