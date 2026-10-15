@@ -53,6 +53,15 @@ describe('maskEmail', () => {
 });
 
 describe('buildRedlineSnapshotFile', () => {
+  it.each(['quota-key-required', 'unavailable', 'cli-missing', 'auth-expired'] as const)(
+    'preserves the actionable quota diagnosis %s for the companion', (readHint) => {
+      const file = buildRedlineSnapshotFile(snapshotWith([{
+        id: 'minimax-code', adapterId: 'minimax-code', label: 'MiniMax',
+        installed: true, onCooldown: false, windows: [], readHint, updatedAt: NOW,
+      }]), [], NOW);
+      expect(file.entries[0]).toMatchObject({ readHint });
+    },
+  );
   it('F-720: GLM e GLM Flash na mesma chave viram uma linha só no Redline', () => {
     const zai = (id: string, label: string): ProviderQuotaEntry => ({
       id,

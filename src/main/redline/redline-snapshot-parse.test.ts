@@ -53,6 +53,14 @@ function file(overrides: Record<string, unknown> = {}): string {
 }
 
 describe('parseRedlineSnapshot', () => {
+  it('preserves only allowlisted quota diagnoses', () => {
+    const snap = parseRedlineSnapshot(file({ entries: [
+      entry({ id: 'valid', readHint: 'quota-key-required' }),
+      entry({ id: 'invalid', readHint: 'untrusted-diagnostic-secret' }),
+    ] }));
+    expect(snap?.entries[0]).toMatchObject({ readHint: 'quota-key-required' });
+    expect(snap?.entries[1]).not.toHaveProperty('readHint');
+  });
   it('parses a well-formed snapshot', () => {
     const snap = parseRedlineSnapshot(file());
     expect(snap).not.toBeNull();
