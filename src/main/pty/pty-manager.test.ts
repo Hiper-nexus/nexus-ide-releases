@@ -814,6 +814,33 @@ describe("gateway de IA local (OmniRoute-like)", () => {
     expect(env.ANTHROPIC_BASE_URL).toBe("https://api.z.ai/api/anthropic");
   });
 
+  // O Qwen Code piscava/redesenhava no ConPTY do Windows. Só o pane qwen recebe
+  // a variável (env.static do manifesto, mesclada aqui); nada toca o
+  // ~/.qwen/settings.json do operador.
+  it("o pane Qwen força saída sincronizada no Windows", async () => {
+    const { BUILTIN_ADAPTERS } = await import("../../adapters/builtin");
+    const manifests = BUILTIN_ADAPTERS as ReadonlyArray<{
+      id: string;
+      env?: { static?: Record<string, string> };
+    }>;
+    const manifest = manifests.find((entry) => entry.id === "qwen");
+    if (!manifest) throw new Error("manifesto do qwen ausente");
+    const { adapterSchema } = await import("../../shared/adapter-types");
+    const adapter = adapterSchema.parse(manifest);
+    if (adapter.kind !== "cli-pty") throw new Error("qwen não é cli-pty");
+    expect(agentEnv(adapter, null).QWEN_CODE_FORCE_SYNCHRONIZED_OUTPUT).toBe("1");
+    // Só o qwen: nenhum outro adapter embutido herda a variável.
+    expect(
+      manifests
+        .filter((entry) => entry.id !== "qwen")
+        .some((entry) =>
+          Object.keys(entry.env?.static ?? {}).includes(
+            "QWEN_CODE_FORCE_SYNCHRONIZED_OUTPUT",
+          ),
+        ),
+    ).toBe(false);
+  });
+
   it("constrói um env de identidade sem o gateway", () => {
     const adapter = claudeLike();
     expect(agentEnv(adapter, GATEWAY).ANTHROPIC_BASE_URL).toBe(GATEWAY);

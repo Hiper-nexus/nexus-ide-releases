@@ -40,7 +40,9 @@
     "initialPromptFlag": "--prompt-interactive"
   },
   "env": {
-    "static": {},
+    "static": {
+      "QWEN_CODE_FORCE_SYNCHRONIZED_OUTPUT": "1"
+    },
     "passthrough": [
       "BAILIAN_TOKEN_PLAN_API_KEY",
       "DASHSCOPE_API_KEY",
