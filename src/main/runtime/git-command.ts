@@ -65,20 +65,50 @@ export function createPrivateGitIndex(): PrivateGitIndex {
   });
 }
 
-function assertPrivateIndexPath(indexFile: string): string {
+/**
+ * F-1442: comparison form of a path. Windows spells one directory several
+ * legitimate ways — 8.3 short name (`ADMINI~1`), case, `/` vs `\`, and the
+ * `\\?\` prefix `realpath.native` returns — and the JS `realpath` expands none
+ * of them, so comparing spellings refused the real private temp index on every
+ * handoff. Only the canonical form is compared; the caller keeps its own path.
+ */
+function canonicalPathForComparison(value: string): string {
+  // `native` resolves reparse points AND expands 8.3 short names; the JS
+  // realpath leaves `C:\Users\ADMINI~1\…` untouched, which is what made the
+  // two sides of the containment check disagree.
+  const real = fs.realpathSync.native(value);
+  return normalizePathForComparison(real);
+}
+
+function normalizePathForComparison(value: string): string {
+  if (process.platform !== 'win32') return value;
+  let out = value.replaceAll('/', '\\');
+  if (out.startsWith('\\\\?\\UNC\\')) out = `\\\\${out.slice('\\\\?\\UNC\\'.length)}`;
+  else if (out.startsWith('\\\\?\\')) out = out.slice('\\\\?\\'.length);
+  // The NTFS namespace is case-insensitive: two spellings are one directory.
+  return out.toLowerCase();
+}
+
+function isUncPath(canonical: string): boolean {
+  return process.platform === 'win32' && canonical.startsWith('\\\\');
+}
+
+export function assertPrivateIndexPath(indexFile: string): string {
   const resolved = path.resolve(indexFile);
   const parent = path.dirname(resolved);
-  const tempRoot = fs.realpathSync(os.tmpdir());
-  const parentReal = fs.realpathSync(parent);
   const parentStat = fs.lstatSync(parent);
+  const parentCanonical = canonicalPathForComparison(parent);
+  const tempCanonical = canonicalPathForComparison(os.tmpdir());
   if (
-    path.basename(resolved) !== 'index' ||
+    path.basename(resolved).toLowerCase() !== 'index' ||
     !path.basename(parent).startsWith('nexus-git-index-') ||
+    // lstat reports a Windows junction as a symlink: the index must sit in a
+    // directory Nexus created, never behind a link somebody else planted.
     parentStat.isSymbolicLink() ||
     !parentStat.isDirectory() ||
-    parentReal !== parent ||
-    (parentReal !== tempRoot &&
-      !parentReal.startsWith(`${tempRoot}${path.sep}`))
+    isUncPath(parentCanonical) ||
+    (parentCanonical !== tempCanonical &&
+      !parentCanonical.startsWith(`${tempCanonical}${path.sep}`))
   ) {
     throw new Error('unsafe private Git index path');
   }

@@ -27,6 +27,35 @@ describe('commandKind ignores tool names that are not the program being run', ()
   });
 });
 
+// F-1445: no Windows o separador é `\`, e o lexer tratava `\` como escape POSIX
+// incondicional — `node_modules\.bin\vitest` virava `node_modules.binvitest`,
+// saía do catálogo e o comando pesado nunca era medido. A barra do POSIX só
+// some antes de caractere especial ao shell (`echo a\b` imprime `a\b`).
+describe('commandKind reads Windows backslash launcher paths (F-1445)', () => {
+  it.each([
+    ['node_modules\\.bin\\vitest run src/x.test.ts', 'tests'],
+    ['.\\node_modules\\.bin\\vitest.cmd run src/x.test.ts', 'tests'],
+    ['node_modules\\.bin\\tsc --noEmit', 'typescript'],
+    ['C:\\repo\\node_modules\\.bin\\jest --runInBand', 'tests'],
+  ])('%s → %s', (command, kind) => {
+    expect(catalog.commandKind(command)).toBe(kind);
+  });
+
+  it('keeps the forward-slash and bare forms working', () => {
+    expect(catalog.commandKind('node_modules/.bin/vitest run src/x.test.ts')).toBe('tests');
+    expect(catalog.commandKind('npx vitest run src/x.test.ts')).toBe('tests');
+    expect(catalog.commandKind('npx.cmd vitest run src/x.test.ts')).toBe('tests');
+  });
+
+  it('still consumes the backslash that escapes a shell metacharacter', () => {
+    // `a\ b` é UM argumento com espaço, não dois: o escape continua valendo.
+    expect(catalog.commandKind('echo a\\ b')).toBeNull();
+    expect(catalog.commandKind('echo \\$HOME')).toBeNull();
+    // `a\b` preserva a barra (comportamento real do bash).
+    expect(catalog.commandKind('echo a\\b')).toBeNull();
+  });
+});
+
 describe('commandKind still meters programs that do heavy work', () => {
   it.each([
     ['npx vitest run src/a.test.ts', 'tests'],

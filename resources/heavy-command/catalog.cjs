@@ -194,6 +194,9 @@ const infoOnly = (name, args) => args.length > 0 &&
 const DYNAMIC = '\u0000';
 const MAX_NESTING = 64;
 const MAX_DEPTH = 16;
+// F-1445: characters whose preceding backslash the shell consumes. Everything
+// else keeps it (`a\b` stays `a\b`), so a Windows path survives the lexer.
+const ESCAPE_DROPS_BACKSLASH = /[`$"'\\ \t|&;<>()*?[\]{}!#~]/;
 const newSegment = (pipedIn = false) => ({ words: [], heredocs: [], herestrings: [], stdinFile: false, pipedIn });
 /**
  * Splits a command line the way the shell reads it into simple commands
@@ -360,7 +363,15 @@ function lex(src, ctx, mode) {
       if (word === null) word = '';
       if (ch === "'") word += single();
       else if (ch === '"') word += double();
-      else if (ch === '\\') { if (src[i] === '\n') { i++; if (word === '') word = null; } else if (i < src.length) word += src[i++]; }
+      // F-1445: a backslash only loses itself before a character that is
+      // special to the shell — `echo a\b` prints `a\b`, and `double()` above
+      // already worked that way. Dropping it unconditionally mangled Windows
+      // paths (`node_modules\.bin\vitest` lexed to `node_modules.binvitest`),
+      // so the launcher fell out of the catalog and was never metered.
+      else if (ch === '\\') {
+        if (src[i] === '\n') { i++; if (word === '') word = null; }
+        else if (i < src.length) { if (ESCAPE_DROPS_BACKSLASH.test(src[i])) word += src[i++]; else { word += '\\'; word += src[i++]; } }
+      }
       else if (ch === '`') word += backtick(false);
       else if (ch === '$') word += dollar(false);
       else word += ch;

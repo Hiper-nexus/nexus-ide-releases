@@ -3,9 +3,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  assertPrivateIndexPath,
   assertSafeLocalGitConfig,
   assertSafeLocalGitConfigAsync,
   AsyncProcessGitRunner,
+  createPrivateGitIndex,
   isExecutableGitConfigEntry,
   ProcessGitRunner,
   type GitRunner,
@@ -221,5 +223,138 @@ describe('F-1384: Git do Nexus não deixa index.lock órfão na worktree', () =>
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+// F-1442: no Windows o mesmo diretório tem várias grafias legítimas (nome curto
+// 8.3, maiúsculas, `/`, prefixo `\\?\`, junction de TEMP redirecionado). A
+// validação comparava GRAFIAS e recusava o índice privado legítimo, então todo
+// handoff de writer saía sem checkpoint ("unsafe private Git index path").
+describe('assertPrivateIndexPath (F-1442)', () => {
+  const isWindows = process.platform === 'win32';
+  const roots: string[] = [];
+  let tmpdirSpy: ReturnType<typeof vi.spyOn> | null = null;
+
+  function track<T extends string>(dir: T): T {
+    roots.push(dir);
+    return dir;
+  }
+
+  /** `nexus-git-index-*` real dentro do tmp, como createPrivateIndex faz. */
+  function privateIndexDir(under: string = os.tmpdir()): string {
+    return track(fs.mkdtempSync(path.join(under, 'nexus-git-index-')));
+  }
+
+  function linkDir(target: string, name: string, under: string = os.tmpdir()): string {
+    const link = track(path.join(under, name));
+    fs.symlinkSync(target, link, isWindows ? 'junction' : 'dir');
+    return link;
+  }
+
+  afterEach(() => {
+    tmpdirSpy?.mockRestore();
+    tmpdirSpy = null;
+    vi.restoreAllMocks();
+    for (const root of roots.splice(0)) {
+      try {
+        fs.rmSync(root, { recursive: true, force: true, maxRetries: 3 });
+      } catch {
+        // melhor esforço: tmp do SO
+      }
+    }
+  });
+
+  it('aceita o índice que createPrivateGitIndex produz', () => {
+    const index = createPrivateGitIndex();
+    try {
+      expect(assertPrivateIndexPath(index.path)).toBe(index.path);
+    } finally {
+      index.dispose();
+    }
+  });
+
+  it('aceita o tmp alcançado por junction (TEMP redirecionado)', () => {
+    const real = track(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-tmp-real-')));
+    const redirected = linkDir(real, 'nexus-tmp-link');
+    const dir = privateIndexDir(redirected);
+    tmpdirSpy = vi.spyOn(os, 'tmpdir').mockReturnValue(redirected);
+
+    expect(assertPrivateIndexPath(path.join(dir, 'index'))).toBe(
+      path.join(dir, 'index'),
+    );
+  });
+
+  it('aceita grafia nativa (nome longo) com tmpdir de nome curto 8.3', (ctx) => {
+    if (!isWindows) return ctx.skip();
+    const dir = privateIndexDir();
+    const native = fs.realpathSync.native(dir);
+    const js = fs.realpathSync(dir);
+    if (native === js) return ctx.skip(); // máquina sem nome curto no tmp
+
+    expect(assertPrivateIndexPath(path.join(native, 'index'))).toBe(
+      path.join(native, 'index'),
+    );
+  });
+
+  it('aceita tmpdir com outra caixa e separador (NTFS é case-insensitive)', (ctx) => {
+    if (!isWindows) return ctx.skip();
+    const dir = privateIndexDir();
+    tmpdirSpy = vi.spyOn(os, 'tmpdir').mockReturnValue(os.tmpdir().toUpperCase());
+
+    expect(() => assertPrivateIndexPath(path.join(dir, 'index'))).not.toThrow();
+    expect(() =>
+      assertPrivateIndexPath(path.join(dir, 'index').replaceAll('\\', '/')),
+    ).not.toThrow();
+  });
+
+  it('aceita o prefixo de caminho estendido \\\\?\\ do mesmo diretório', (ctx) => {
+    if (!isWindows) return ctx.skip();
+    const dir = privateIndexDir();
+    const extended = `\\\\?\\${fs.realpathSync.native(dir)}`;
+    if (!fs.existsSync(path.join(extended, '.'))) return ctx.skip();
+
+    expect(() => assertPrivateIndexPath(path.join(extended, 'index'))).not.toThrow();
+  });
+
+  it('continua recusando pai que É um link/junction', () => {
+    const real = privateIndexDir();
+    const link = linkDir(real, 'nexus-git-index-link');
+
+    expect(() => assertPrivateIndexPath(path.join(link, 'index'))).toThrow(
+      'unsafe private Git index path',
+    );
+  });
+
+  it('continua recusando índice fora do tmp privado', () => {
+    const dir = privateIndexDir();
+    const otherTmp = track(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-tmp-other-')));
+    tmpdirSpy = vi.spyOn(os, 'tmpdir').mockReturnValue(otherTmp);
+
+    expect(() => assertPrivateIndexPath(path.join(dir, 'index'))).toThrow(
+      'unsafe private Git index path',
+    );
+  });
+
+  it('continua recusando UNC', (ctx) => {
+    if (!isWindows) return ctx.skip();
+    const shareRoot = `\\\\127.0.0.1\\C$\\${os.tmpdir().replace(/^[A-Za-z]:\\/, '')}`;
+    if (!fs.existsSync(shareRoot)) return ctx.skip(); // compartilhamento admin off
+    const dir = privateIndexDir(shareRoot);
+
+    expect(() => assertPrivateIndexPath(path.join(dir, 'index'))).toThrow(
+      'unsafe private Git index path',
+    );
+  });
+
+  it('continua recusando basename e prefixo errados', () => {
+    const dir = privateIndexDir();
+
+    expect(() => assertPrivateIndexPath(path.join(dir, 'not-index'))).toThrow(
+      'unsafe private Git index path',
+    );
+    const foreign = track(fs.mkdtempSync(path.join(os.tmpdir(), 'not-ours-')));
+    expect(() => assertPrivateIndexPath(path.join(foreign, 'index'))).toThrow(
+      'unsafe private Git index path',
+    );
   });
 });

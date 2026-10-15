@@ -16,9 +16,11 @@ import { computeBlastRadius } from '../context/orientation/orientation-blast-rad
 import type { ProjectOrientationMap } from '../context/orientation/orientation-types';
 import {
   __resetRegressionGateForTests,
+  computeImpactedTests,
   detectRegressionRunner,
   formatRegressionGateReport,
   hashRegressionFile,
+  MIN_TEST_BUDGET_MS,
   RECORDED_EDIT_MAX_HASH_BYTES,
   runRegressionGate,
   type RegressionExec,
@@ -363,7 +365,12 @@ describe('runRegressionGate', () => {
     expect(exec).not.toHaveBeenCalled();
     expect(result.status).toBe('unavailable');
     expect(result.testsRun).toEqual([]);
-    expect(result.testsNotRun).toHaveLength(2);
+    // F-1443: com o prazo do mapa reservando o piso dos testes, o mapa é
+    // CORTADO em vez de rodar até o fim — o indireto (distância 2, que só o
+    // grafo de imports alcança) nem é descoberto; sobra o co-localizado do
+    // diff. Nada roda nos dois casos e nada é certificado, então o contrato do
+    // F-1348 (recibo não culpa nem credita o runner) segue inteiro.
+    expect(result.testsNotRun).toEqual(['src/a.test.ts']);
     // Nenhum runner executou nada: o recibo não pode culpar (nem creditar) o vitest.
     expect(result.runner).toBeNull();
     expect(result.notRun).toEqual({
@@ -372,7 +379,6 @@ describe('runRegressionGate', () => {
       testBudgetMs: 2_000,
       byDistance: [
         { distance: 1, run: 0, notRun: 1, causes: ['map-deadline'] },
-        { distance: 2, run: 0, notRun: 1, causes: ['map-deadline'] },
       ],
     });
   });
@@ -1722,4 +1728,59 @@ it('completion cannot approve when the import traversal budget omitted known imp
     const result = await runRegressionGate({ scope, includeE2E: true }, { exec });
     expect(result.coverage?.indexComplete).toBe(false); expect(result.status).toBe('unavailable');
   } finally { spy.mockRestore(); }
+});
+
+// F-1443: o mapa de imports não tinha prazo — num repositório grande ele comia
+// o orçamento inteiro do handoff (`testBudgetMs: 0`, 110 impactados sem rodar)
+// e segurava a resposta do `nexus_handoff_submit` até estourar o transporte MCP.
+describe('prazo do mapa de imports (F-1443)', () => {
+  it('mapa cortado pelo prazo ainda roda o teste co-localizado do diff e NÃO certifica', async () => {
+    const { root, scope } = project();
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    const { exec } = fakeVitest();
+    // timeoutMs == MIN_TEST_BUDGET_MS ⇒ o prazo do mapa vence de imediato:
+    // reproduz o repositório grande sem precisar de um índice grande.
+    const result = await runRegressionGate(
+      { scope, timeoutMs: MIN_TEST_BUDGET_MS },
+      { exec },
+    );
+
+    expect(result.warnings.join('\n')).toContain('mapa de imports cortado pelo prazo');
+    // A convenção co-localizada vem da lista de arquivos do walk, não das
+    // arestas de import: sobrevive ao corte.
+    expect(result.testsRun).toContain('src/a.test.ts');
+    expect(exec).toHaveBeenCalled();
+    // O grafo ficou parcial: o indireto (b.test.ts ← b.ts ← a.ts) se perdeu.
+    expect(result.testsRun).not.toContain('src/b.test.ts');
+    // Seleção parcial nunca é aprovação, mesmo com tudo que rodou passando.
+    expect(result.status).toBe('unavailable');
+    expect(result.coverage?.indexComplete).toBe(false);
+  });
+
+  it('o piso reservado deixa orçamento para os testes em vez de testBudgetMs 0', async () => {
+    const { root, scope } = project();
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    // Um teste selecionado a mais que o runner não chega a rodar: o recibo
+    // precisa mostrar que sobrou orçamento, não `testBudgetMs: 0`.
+    const { exec } = fakeVitest();
+    const result = await runRegressionGate({ scope, timeoutMs: MIN_TEST_BUDGET_MS }, { exec });
+    const mapMs = result.notRun?.mapMs ?? 0;
+    expect(mapMs).toBeLessThan(MIN_TEST_BUDGET_MS);
+  });
+
+  it('o cache de imports invalida por mtime e não serve grafo velho', async () => {
+    const { root, scope } = project();
+    const first = await computeImpactedTests(scope, ['src/a.ts']);
+    // b.test.ts importa b, que importa a: alcançado pelo grafo reverso.
+    expect(first.tests).toContain('src/b.test.ts');
+
+    // Mesmo NÚMERO DE BYTES, conteúdo sem o import: só o mtime pode invalidar
+    // o cache (24 chars + \n nas duas pontas).
+    write(root, 'src/b.test.ts', 'export const zz = 00000;\n');
+    const bumped = new Date(Date.now() + 5_000);
+    fs.utimesSync(path.join(root, 'src/b.test.ts'), bumped, bumped);
+
+    const second = await computeImpactedTests(scope, ['src/a.ts']);
+    expect(second.tests).not.toContain('src/b.test.ts');
+  });
 });
