@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { app, ipcMain } from 'electron';
 import {
   OPS_CHANNELS,
@@ -61,22 +61,48 @@ function packagedContentsPath(): string | null {
   return path.dirname(path.dirname(app.getPath('exe')));
 }
 
-function packagedInfoValue(key: string): string | null {
+/** Bounded async run of a pinned macOS signing/notarization tool. The
+ * release-readiness check used to execFileSync/spawnSync codesign/spctl/stapler
+ * on the Main thread and freeze the event loop for seconds on every poll. */
+function runTool(
+  file: string,
+  args: readonly string[],
+  timeoutMs = 30_000,
+): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      file,
+      [...args],
+      {
+        encoding: 'utf8',
+        timeout: timeoutMs,
+        maxBuffer: 1024 * 1024,
+        windowsHide: true,
+      },
+      (error, stdout, stderr) => {
+        if (error) return reject(error);
+        resolve({ stdout: stdout ?? '', stderr: stderr ?? '' });
+      },
+    );
+  });
+}
+
+async function packagedInfoValue(key: string): Promise<string | null> {
   const contents = packagedContentsPath();
   if (!contents) return null;
   try {
-    return execFileSync(
+    const { stdout } = await runTool(
       '/usr/bin/plutil',
       ['-extract', key, 'raw', '-o', '-', path.join(contents, 'Info.plist')],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
-    ).trim();
+    );
+    return stdout.trim();
   } catch {
     return null;
   }
 }
 
-function checkVisionEntitlementCopy(forgeConfig: string | null): ReleaseReadinessCheck {
-  const packagedCopy = packagedInfoValue('NSScreenCaptureUsageDescription');
+async function checkVisionEntitlementCopy(forgeConfig: string | null): Promise<ReleaseReadinessCheck> {
+  const packagedCopy = await packagedInfoValue('NSScreenCaptureUsageDescription');
   const hasCopy = app.isPackaged
     ? Boolean(packagedCopy)
     : forgeConfig?.includes('NSScreenCaptureUsageDescription') === true;
@@ -108,35 +134,28 @@ function checkUpdateSource(source: ReleaseReadinessSnapshot['updateSource']): Re
   };
 }
 
-function verifyPackagedSignature(): boolean {
+async function verifyPackagedSignature(): Promise<boolean> {
   const contents = packagedContentsPath();
   if (!contents) return false;
   try {
-    execFileSync(
+    await runTool(
       '/usr/bin/codesign',
       ['--verify', '--deep', '--strict', path.dirname(contents)],
-      { stdio: 'ignore' },
     );
-    const signature = spawnSync(
+    const signature = await runTool(
       '/usr/bin/codesign',
       ['-d', '--verbose=4', path.dirname(contents)],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
     );
-    if (
-      signature.status !== 0 ||
-      !signature.stderr.includes('Authority=Developer ID Application:')
-    ) {
+    if (!signature.stderr.includes('Authority=Developer ID Application:')) {
       return false;
     }
-    execFileSync(
+    await runTool(
       '/usr/sbin/spctl',
       ['--assess', '--type', 'execute', '--verbose=2', path.dirname(contents)],
-      { stdio: 'ignore' },
     );
-    execFileSync(
+    await runTool(
       '/usr/bin/xcrun',
       ['stapler', 'validate', path.dirname(contents)],
-      { stdio: 'ignore' },
     );
     return true;
   } catch {
@@ -144,9 +163,9 @@ function verifyPackagedSignature(): boolean {
   }
 }
 
-function checkPackageMakers(forgeConfig: string | null): ReleaseReadinessCheck {
+async function checkPackageMakers(forgeConfig: string | null): Promise<ReleaseReadinessCheck> {
   if (app.isPackaged) {
-    const signed = verifyPackagedSignature();
+    const signed = await verifyPackagedSignature();
     return {
       id: 'packaging-artifacts',
       label: 'Developer ID, Gatekeeper e notarização',
@@ -168,11 +187,15 @@ function checkPackageMakers(forgeConfig: string | null): ReleaseReadinessCheck {
   };
 }
 
-export function buildReleaseReadinessSnapshot(): ReleaseReadinessSnapshot {
+export async function buildReleaseReadinessSnapshot(): Promise<ReleaseReadinessSnapshot> {
   const appVersion = app.getVersion();
   const packageVersion = readPackageVersion() ?? (app.isPackaged ? appVersion : null);
   const forgeConfig = readProjectFile(FORGE_CONFIG);
   const source = updateSource();
+  const [visionEntitlementCopy, packageMakers] = await Promise.all([
+    checkVisionEntitlementCopy(forgeConfig),
+    checkPackageMakers(forgeConfig),
+  ]);
   return {
     checkedAt: new Date().toISOString(),
     appVersion,
@@ -182,9 +205,9 @@ export function buildReleaseReadinessSnapshot(): ReleaseReadinessSnapshot {
     updateSource: source,
     checks: [
       checkVersionAlignment(appVersion, packageVersion),
-      checkVisionEntitlementCopy(forgeConfig),
+      visionEntitlementCopy,
       checkUpdateSource(source),
-      checkPackageMakers(forgeConfig),
+      packageMakers,
     ],
   };
 }
@@ -209,7 +232,7 @@ export function registerOpsIpc(): void {
       typeof rawLimit === 'number' ? rawLimit : 80,
     ),
   );
-  ipcMain.handle(OPS_CHANNELS.releaseReadiness, () =>
+  ipcMain.handle(OPS_CHANNELS.releaseReadiness, async () =>
     buildReleaseReadinessSnapshot(),
   );
 }

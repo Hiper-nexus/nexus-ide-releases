@@ -196,62 +196,6 @@
       "reason": "Linux desktop database registration during portable-app setup; fixed argv and five-second timeout, never per terminal chunk."
     },
     {
-      "file": "src/main/ops/ops-ipc.ts",
-      "method": "execFileSync",
-      "kind": "call",
-      "fingerprint": "12b42a39ccc8deaca29f3bc787c38dc0a8c413c7f5b3ea45b3e915e8eae0822a",
-      "count": 1,
-      "reason": "Explicit operator app-integrity/repair checks with pinned macOS signing tools; these existing verification calls fail closed."
-    },
-    {
-      "file": "src/main/ops/ops-ipc.ts",
-      "method": "execFileSync",
-      "kind": "call",
-      "fingerprint": "14988be2987e7d889b68fb1c583a0145e21f0f2a3803af218a4cfc45edc17b03",
-      "count": 1,
-      "reason": "Explicit operator app-integrity/repair checks with pinned macOS signing tools; these existing verification calls fail closed."
-    },
-    {
-      "file": "src/main/ops/ops-ipc.ts",
-      "method": "execFileSync",
-      "kind": "call",
-      "fingerprint": "1cfa1e13620c14c5d6d193dadf321d365f7f9da4e47a4340026fbf950070e169",
-      "count": 1,
-      "reason": "Explicit operator app-integrity/repair checks with pinned macOS signing tools; these existing verification calls fail closed."
-    },
-    {
-      "file": "src/main/ops/ops-ipc.ts",
-      "method": "execFileSync",
-      "kind": "call",
-      "fingerprint": "dd74aacdca51d24c9061ecdbc3393889a49f1b94367f438dacf221615391d8d4",
-      "count": 1,
-      "reason": "Explicit operator app-integrity/repair checks with pinned macOS signing tools; these existing verification calls fail closed."
-    },
-    {
-      "file": "src/main/ops/ops-ipc.ts",
-      "method": "execFileSync",
-      "kind": "import",
-      "fingerprint": "05b667683ccb14c4169b2a4558abf9bf93132c9db1e21fc7a629c5a82b32509f",
-      "count": 1,
-      "reason": "Explicit operator app-integrity/repair checks with pinned macOS signing tools; these existing verification calls fail closed."
-    },
-    {
-      "file": "src/main/ops/ops-ipc.ts",
-      "method": "spawnSync",
-      "kind": "call",
-      "fingerprint": "14eb446722da3c8bfc7caa1b7269a135771757cc53c2b19cc4b671abf27bf9a5",
-      "count": 1,
-      "reason": "Explicit operator app-integrity/repair checks with pinned macOS signing tools; these existing verification calls fail closed."
-    },
-    {
-      "file": "src/main/ops/ops-ipc.ts",
-      "method": "spawnSync",
-      "kind": "import",
-      "fingerprint": "36c0bd9f907a923481e84e567e620c87f881da11fb0633d8951a810cd052ca9d",
-      "count": 1,
-      "reason": "Explicit operator app-integrity/repair checks with pinned macOS signing tools; these existing verification calls fail closed."
-    },
-    {
       "file": "src/main/orch/cli-mcp-session-agy.ts",
       "method": "execFileSync",
       "kind": "call",

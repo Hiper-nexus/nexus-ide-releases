@@ -9,7 +9,7 @@ import {
 } from '../jarvis/audit-log';
 import { testProjectScope } from '../orch/__tests__/scope-fixture';
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
-import { buildAuditLogSnapshot } from './ops-ipc';
+import { buildAuditLogSnapshot, buildReleaseReadinessSnapshot } from './ops-ipc';
 
 vi.mock('electron', () => ({
   app: {
@@ -50,5 +50,20 @@ describe('operational audit export', () => {
     expect(snapshotB.entries.map((entry) => entry.session)).toEqual(['b']);
     expect(snapshotA.path).not.toBe(snapshotB.path);
     expect(snapshotA.path.endsWith('runtime.sqlite3')).toBe(true);
+  });
+});
+
+describe('release readiness snapshot', () => {
+  it('resolve assíncrono dos quatro checks em modo dev', async () => {
+    const pending = buildReleaseReadinessSnapshot();
+    expect(pending).toBeInstanceOf(Promise);
+    const snapshot = await pending;
+    expect(snapshot.packaged).toBe(false);
+    expect(snapshot.checks.map((check) => check.id)).toEqual([
+      'version-alignment',
+      'screen-capture-copy',
+      'update-source',
+      'packaging-artifacts',
+    ]);
   });
 });
