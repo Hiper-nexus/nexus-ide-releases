@@ -294,6 +294,16 @@ como o usuário, então o GitHub sozinho não é a raiz de confiança.
 
 Additive SQLite migrations only. Feature flags kill-switch new paths.
 
+SQLite runtime and nexus.db use `synchronous=NORMAL` only when the effective
+journal mode is WAL; other modes retain FULL (engine decision, 2026-10-14).
+WAL/NORMAL preserves consistency, but recent committed transactions can roll
+back after power loss or an OS crash; it does not promise loss of at most one
+transaction ([SQLite contract](https://www.sqlite.org/pragma.html#pragma_synchronous)).
+The event-ledger verified tip is invalidated by connection identity,
+`total_changes()` and `data_version`; caller-owned transactions always reverify
+the chain and never promote an uncommitted tip. Unrelated DB writes also
+invalidate it conservatively.
+
 F-1151 (worker continuation): the `mission_panes` scope envelope is written as
 schemaVersion 8 (adds the nullable `workerContinuation` claim). The decoder still
 reads V2..V7 and never rewrites a row on read. Rollback note: a build that predates
