@@ -14,7 +14,7 @@ const SUCCESSORS_UNUSED='NOT EXISTS(SELECT 1 FROM refresh_tokens WHERE rotated_f
 const FAMILY='WITH RECURSIVE family(id) AS (SELECT ? UNION SELECT r.id FROM refresh_tokens r JOIN family f ON r.rotated_from=f.id) ';
 /** Prepares a token pair whose two inserts share `guard`: both happen or neither does. The session records
  * the refresh token issued with it, so revoking a family also reaches its sessions. */
-async function preparePair(db:D1Database,accountId:string,channel:AuthChannel,now:number,parent:string|null,guard:string,args:string[]){
+async function preparePair(db:D1Database,accountId:string,channel:AuthChannel,now:number,parent:string|null,guard:string,args:(string|number)[]){
   const session=randomToken(),refresh=randomToken(),csrf=channel==='web'?randomToken():null,refreshId=crypto.randomUUID();
   const [sessionHash,refreshHash,csrfHash]=await Promise.all([hashToken(session),hashToken(refresh),csrf?hashToken(csrf):Promise.resolve(null)]);
   const where=guard?' WHERE '+guard:'';
@@ -23,15 +23,20 @@ async function preparePair(db:D1Database,accountId:string,channel:AuthChannel,no
     db.prepare('INSERT INTO refresh_tokens(id,account_id,token_hash,rotated_from,expires_at,created_at,channel) SELECT ?,?,?,?,?,?,?'+where+' RETURNING id').bind(refreshId,accountId,refreshHash,parent,now+REFRESH_TTL_MS,now,channel,...args),
   ]};
 }
-/** Inserts a token pair. With `parent`, both inserts only happen while that refresh token is
- * still unrevoked, in one atomic batch: a rotation that loses the race with a revocation
- * (logout or replay detection) issues nothing instead of surviving it. */
-async function issue(db:D1Database,accountId:string,channel:AuthChannel,now:number,parent:string|null):Promise<Tokens|null>{
-  const pair=await preparePair(db,accountId,channel,now,parent,parent?UNREVOKED_PARENT:'',parent?[parent]:[]);
-  const [,inserted]=await db.batch<{id:string}>(pair.statements);return inserted.results.length?pair.tokens:null;
-}
 export async function issueTokens(db:D1Database,accountId:string,channel:AuthChannel,now=Date.now()):Promise<Tokens>{
-  const tokens=await issue(db,accountId,channel,now,null);if(!tokens)throw new Error('token issuance failed');return tokens;
+  const pair=await preparePair(db,accountId,channel,now,null,'',[]);
+  const [,inserted]=await db.batch<{id:string}>(pair.statements);if(!inserted.results.length)throw new Error('token issuance failed');return pair.tokens;
+}
+/** Spends `row` and issues its successor in one transaction: a failure burns nothing, and a retry of the
+ * same token runs whole before or after it, never in between. The inserts only follow this claim (token
+ * spent now, still unrevoked, no successor yet); a rotation that lost the claim issues nothing. */
+async function claimAndIssue(db:D1Database,row:RefreshTokenRow,now:number):Promise<Tokens|null>{
+  const pair=await preparePair(db,row.account_id,row.channel,now,row.id,'EXISTS(SELECT 1 FROM refresh_tokens WHERE id=? AND used_at=? AND revoked_at IS NULL) AND NOT EXISTS(SELECT 1 FROM refresh_tokens WHERE rotated_from=?)',[row.id,now,row.id]);
+  const [,,inserted]=await db.batch<{id:string}>([
+    db.prepare('UPDATE refresh_tokens SET used_at=? WHERE id=? AND used_at IS NULL AND revoked_at IS NULL AND expires_at>?').bind(now,row.id,now),
+    ...pair.statements,
+  ]);
+  return inserted.results.length?pair.tokens:null;
 }
 export async function sessionFor(db:D1Database,raw:string,channel:AuthChannel,now=Date.now()):Promise<SessionRow|null>{
   const row=await db.prepare('SELECT * FROM sessions WHERE token_hash=? AND channel=? AND revoked_at IS NULL AND expires_at>? LIMIT 1').bind(await hashToken(raw),channel,now).first<SessionRow>();
@@ -81,9 +86,13 @@ async function revokeFamily(db:D1Database,accountId:string,root:string,now:numbe
 }
 export async function rotateRefresh(db:D1Database,raw:string,channel:AuthChannel,now=Date.now()):Promise<{accountId:string;tokens:Tokens}|null>{
   const hash=await hashToken(raw);
-  const row=await db.prepare('UPDATE refresh_tokens SET used_at=? WHERE token_hash=? AND channel=? AND used_at IS NULL AND revoked_at IS NULL AND expires_at>? RETURNING *').bind(now,hash,channel,now).first<RefreshTokenRow>();
-  if(row){const tokens=await issue(db,row.account_id,channel,now,row.id);return tokens?{accountId:row.account_id,tokens}:null;}
-  const prior=await db.prepare('SELECT * FROM refresh_tokens WHERE token_hash=? AND channel=? LIMIT 1').bind(hash,channel).first<RefreshTokenRow>();
+  const find=()=>db.prepare('SELECT * FROM refresh_tokens WHERE token_hash=? AND channel=? LIMIT 1').bind(hash,channel).first<RefreshTokenRow>();
+  let prior=await find();
+  if(prior&&prior.used_at===null&&prior.revoked_at===null&&prior.expires_at>now){
+    const tokens=await claimAndIssue(db,prior,now);if(tokens)return{accountId:prior.account_id,tokens};
+    // Another request spent or revoked it first: decide on what the token is now.
+    prior=await find();
+  }
   if(!prior||prior.expires_at<=now)return null;
   // A successor superseded inside the window never reached its legitimate holder: whoever presents it
   // lost the family to whoever retried. Detection only; revokeFamily is a no-op once the family is dead.

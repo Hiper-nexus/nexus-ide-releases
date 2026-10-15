@@ -218,6 +218,34 @@ test('concurrent retries of one lost rotation leave exactly one live pair', asyn
   db.close();
 });
 
+test('a failure while issuing the pair leaves the refresh token unspent', async () => {
+  const { db, mac } = await setup();
+  const now = Date.now();
+  await assert.rejects(rotateRefresh(failing(db, /^INSERT INTO sessions/), mac.refresh, 'desktop', now));
+
+  // Long past the retry window it is still a first use, not reuse.
+  assert.ok(await rotateRefresh(db, mac.refresh, 'desktop', now + 2 * GRACE_MS));
+  assert.deepEqual(await events(db), []);
+  db.close();
+});
+
+test('a retry that lands while the original rotation is in flight leaves one live pair', async () => {
+  const { db, mac } = await setup();
+  const parent = await idOf(db, mac.refresh);
+  const now = Date.now();
+  let inner: Awaited<ReturnType<typeof rotateRefresh>> = null;
+  // Right after the original request first touches the token, before it issued anything.
+  const racing = interleave(db, /refresh_tokens (SET used_at|WHERE token_hash)/, async () => { inner = await rotateRefresh(db, mac.refresh, 'desktop', now + 1000); });
+
+  const outer = await rotateRefresh(racing, mac.refresh, 'desktop', now);
+
+  assert.ok(outer && inner);
+  const live = await db.prepare('SELECT count(*) AS n FROM refresh_tokens WHERE rotated_from=? AND revoked_at IS NULL').bind(parent).first<{ n: number }>();
+  const sessions = await db.prepare('SELECT count(*) AS n FROM sessions s JOIN refresh_tokens r ON r.id=s.refresh_id WHERE r.rotated_from=? AND s.revoked_at IS NULL').bind(parent).first<{ n: number }>();
+  assert.deepEqual([live?.n, sessions?.n], [1, 1]);
+  db.close();
+});
+
 test('reuse past the window revokes only that family; the other device keeps its session', async () => {
   const { db, mac, vm } = await setup();
   const root = await idOf(db, mac.refresh);

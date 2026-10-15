@@ -62,8 +62,9 @@ test('a refresh rotation that loses the race with a revocation leaves no usable 
   const db = new SqliteD1();
   await seedAccount(db, 'user');
   const tokens = await issueTokens(db, 'user', 'desktop');
-  // The replay detection revokes the whole family between the consumption and the issuance.
-  const racing = interleave(db, /^UPDATE refresh_tokens SET used_at/, () => revokeAll(db, 'user', Date.now(), 'desktop'));
+  // The revocation lands after the rotation read the token and before it issued anything
+  // (claim and issuance share one batch, so there is no gap between them anymore).
+  const racing = interleave(db, /refresh_tokens (SET used_at|WHERE token_hash)/, () => revokeAll(db, 'user', Date.now(), 'desktop'));
   const rotated = await rotateRefresh(racing, tokens.refresh, 'desktop');
   assert.equal(rotated, null);
   const live = await db.prepare('SELECT count(*) AS n FROM sessions WHERE revoked_at IS NULL').first<{ n: number }>();
