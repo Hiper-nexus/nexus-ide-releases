@@ -31,6 +31,17 @@ import path from 'node:path';
 /** Tentativas da pendência depois que o pane fechou (uma por volta do vigia). */
 const DETACHED_RETRIES = 5;
 
+/**
+ * Rede de segurança com o fs.watch aparentemente saudável: um stat por pane a
+ * cada 30 s (o ritmo do rescan do ClaudeTranscriptWatcher). O watch pode morrer
+ * sem 'error' nem evento: no Linux a pasta removida e recriada mata o inotify e
+ * o último evento chega com o nome da própria pasta, que o filtro de basename
+ * descarta; FUSE/rede e overflow de FSEvents/inotify também. Sem esta rede nada
+ * mais acordaria o vigia e o refresh token rotacionado só voltaria à origem no
+ * fechamento do pane (se o app cair antes, o operador perde o login: F-684).
+ */
+const SAFETY_STAT_MS = 30_000;
+
 export interface AuthWriteThroughPolicy {
   /** Maior validade (epoch ms) do blob; null quando ilegível/sem data. */
   expiry(blob: string): number | null;
@@ -234,9 +245,14 @@ export function startAuthWriteThrough(input: {
   // nova mudança no overlay (F-1485); sem pendência o temporizador desarma.
   let retryTimer: ReturnType<typeof setInterval> | null = null;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
+  let safetyTimer: ReturnType<typeof setInterval> | null = null;
   const disarmRetry = (): void => {
     if (retryTimer) clearInterval(retryTimer);
     retryTimer = null;
+  };
+  const disarmSafety = (): void => {
+    if (safetyTimer) clearInterval(safetyTimer);
+    safetyTimer = null;
   };
   const wake = (): void => {
     check();
@@ -254,7 +270,8 @@ export function startAuthWriteThrough(input: {
   };
   // O acordar é por fs.watch na PASTA (a CLI regrava por temporário + rename, o
   // que troca o inode do arquivo vigiado); o poll por statSync fica só de
-  // reserva para quando o watch falha ou é recusado.
+  // reserva para quando o watch falha ou é recusado. Com o watch saudável ainda
+  // corre a rede lenta (SAFETY_STAT_MS): o watch que morre calado não arma poll.
   let watcher: fs.FSWatcher | null = null;
   const overlayBase = path.basename(input.overlayFile);
   try {
@@ -265,14 +282,18 @@ export function startAuthWriteThrough(input: {
     watcher.on('error', () => {
       watcher?.close();
       watcher = null;
+      disarmSafety(); // o poll rápido assume
       armPoll();
     });
+    safetyTimer = setInterval(wake, SAFETY_STAT_MS);
+    safetyTimer.unref?.();
   } catch {
     watcher = null;
     armPoll();
   }
   return () => {
     watcher?.close();
+    disarmSafety();
     if (pollTimer) clearInterval(pollTimer);
     disarmRetry();
     tick();
