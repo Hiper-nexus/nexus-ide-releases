@@ -5,7 +5,12 @@ import { execFile } from 'node:child_process';
 import { ipcMain } from 'electron';
 import { PROVIDER_CHANNELS } from '../../shared/provider-settings-types';
 import type { AdapterAuthStatus, AuthState } from '../../shared/provider-settings-types';
-import { listProviderSettings, notifyProviderAuthChanged } from '../persistence/provider-config-store';
+import {
+  grokHasNoRenewableSession,
+  listProviderSettings,
+  notifyProviderAuthChanged,
+  warmGrokAccountCredentialCache,
+} from '../persistence/provider-config-store';
 import {
   claudeOauthEmail,
   hasSubscriptionAuth,
@@ -146,10 +151,27 @@ const OAUTH_PROBES: Record<
           detail: 'sem sessão — rode `agy` e conclua o OAuth',
         };
   },
-  grok: async () =>
-    hasNativeFileAuth('grok')
-      ? { state: 'ok', detail: 'sessão Grok OAuth local' }
-      : { state: 'missing', detail: 'sem sessão — rode `grok login`' },
+  grok: async () => {
+    if (!hasNativeFileAuth('grok')) {
+      return { state: 'missing', detail: 'sem sessão — rode `grok login`' };
+    }
+    // F-1485: exceção à regra do cabeçalho ("checar expiração geraria alarme
+    // falso"). O Grok para de renovar 7 dias depois da emissão — a própria CLI
+    // 1.0.52 documenta "Grok will prompt you to re-authenticate" — então aqui o
+    // arquivo presente NÃO é sessão viva: o pane sobe, para no código do
+    // navegador e ninguém aprova. `grokSessionNeedsLogin` exige acesso vencido E
+    // emissão além da janela; um relogin recente reescreve create_time/iat e
+    // desarma o aviso sozinho. Só metadado de data: nenhum token é lido ou exposto.
+    if (grokHasNoRenewableSession()) {
+      return {
+        state: 'missing',
+        detail:
+          'a sessão do Grok expirou e a CLI não renova mais — use "Entrar" no ' +
+          'cartão do Grok em Atenção, ou Configurações › Contas de IA',
+      };
+    }
+    return { state: 'ok', detail: 'sessão Grok OAuth local' };
+  },
   kimi: async () => {
     // File OAuth alone was the 19 Aug false positive (CLI 0.37.2 half-dead
     // after folder-trust). Only a live `kimi provider list` with source=oauth
@@ -217,6 +239,11 @@ const OAUTH_PROBES: Record<
 export async function probeAdapterAuth(
   options: ProbeAdapterAuthOptions = {},
 ): Promise<AdapterAuthStatus[]> {
+  // F-1485: a sonda é assíncrona e alimenta authState, que a lista Atenção
+  // exige como 'missing' para mostrar o botão "Entrar". Sem aquecer o cofre,
+  // `grokHasNoRenewableSession` vê cofre frio, não estreita, e o cartão some
+  // exatamente quando o operador precisa dele.
+  warmGrokAccountCredentialCache();
   const infos = listProviderSettings({ nonBlockingAuth: true }).filter((p) => p.adapterId !== 'shell');
   const statuses = await Promise.all(
     infos.map(async (info): Promise<AdapterAuthStatus> => {

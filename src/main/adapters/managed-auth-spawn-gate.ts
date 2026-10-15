@@ -144,8 +144,8 @@ export function authBlobIsFreshForSpawn(
  */
 export const GROK_LOGIN_REQUIRED_MESSAGE =
   'A sessão do Grok expirou: a última renovação tem mais de 7 dias e o Grok não renova mais. ' +
-  'Faça login uma vez — clique em "Entrar no Grok" na lista Atenção ou rode `grok login` num terminal — ' +
-  'e os panes Grok voltam a abrir.';
+  'Faça login uma vez — use "Entrar" no cartão do Grok na lista Atenção (ou em Configurações › ' +
+  'Contas de IA), ou rode `grok login` num terminal — e os panes Grok voltam a abrir.';
 
 /**
  * F-1485: o spawn usa a sessão OAuth do Grok — nenhuma API key/token foi

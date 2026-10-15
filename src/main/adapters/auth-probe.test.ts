@@ -10,6 +10,10 @@ const authMocks = vi.hoisted(() => ({
   ),
   openclaude: vi.fn(async () => ({ value: true, cacheUpdated: true })),
   changed: vi.fn(),
+  // F-1485: sessão Grok além da janela de renovação da própria CLI.
+  grokExpired: false,
+  grokHasKey: false,
+  warmGrok: vi.fn(),
   kimiReadiness: 'missing' as 'missing' | 'present',
   filePresent: new Map<string, boolean>([
     ['codex', true],
@@ -34,13 +38,15 @@ vi.mock('electron', () => ({
 
 vi.mock('../persistence/provider-config-store', () => ({
   notifyProviderAuthChanged: authMocks.changed,
+  grokHasNoRenewableSession: () => authMocks.grokExpired,
+  warmGrokAccountCredentialCache: authMocks.warmGrok,
   listProviderSettings: () => [
     { adapterId: 'claude', installed: true, hasKey: false },
     { adapterId: 'codex', installed: true, hasKey: false },
     { adapterId: 'agy', installed: true, hasKey: false },
     { adapterId: 'openclaude', installed: true, hasKey: false },
     { adapterId: 'muse', installed: true, hasKey: false },
-    { adapterId: 'grok', installed: true, hasKey: false },
+    { adapterId: 'grok', installed: true, hasKey: authMocks.grokHasKey },
     { adapterId: 'kimi', installed: true, hasKey: false },
     { adapterId: 'opencode', installed: true, hasKey: false },
     { adapterId: 'aider', installed: true, hasKey: true },
@@ -130,6 +136,42 @@ describe('probeAdapterAuth provider-specific diagnostics', () => {
     const result = await probeAdapterAuth();
     expect(result.find((entry) => entry.adapterId === 'claude')?.state).toBe('unknown');
     expect(result.find((entry) => entry.adapterId === 'grok')?.state).toBe('ok');
+  });
+
+  it('F-1485: auth.json do Grok além da janela de renovação é missing, não ok', async () => {
+    // Sem isto a lista Atenção nunca mostra o cartão (ela exige authState
+    // 'missing'), e o operador fica sem o botão "Entrar" que já existe.
+    authMocks.grokExpired = true;
+    try {
+      const result = await probeAdapterAuth();
+      const grok = result.find((entry) => entry.adapterId === 'grok');
+      expect(grok?.state).toBe('missing');
+      expect(grok?.detail).toContain('Entrar');
+      expect(grok?.detail).toContain('Contas de IA');
+      // O cofre é aquecido ANTES da checagem síncrona, senão o veto de cofre
+      // frio esconde a expiração (fo o loop de 7 spawns recusados).
+      expect(authMocks.warmGrok).toHaveBeenCalled();
+    } finally {
+      authMocks.grokExpired = false;
+      authMocks.warmGrok.mockClear();
+    }
+  });
+
+  it('F-1485: API key no cofre cobre o Grok mesmo com a sessão OAuth vencida', async () => {
+    // `grokSpawnUsesOAuth` é falso com chave injetada: o spawn nem passa pelo
+    // gate, então a sonda não pode pedir login de quem tem chave.
+    authMocks.grokExpired = true;
+    authMocks.grokHasKey = true;
+    try {
+      const result = await probeAdapterAuth();
+      expect(result.find((entry) => entry.adapterId === 'grok')).toMatchObject({
+        state: 'ok',
+        detail: 'API key no cofre',
+      });
+    } finally {
+      authMocks.grokExpired = false;
+      authMocks.grokHasKey = false;
+    }
   });
   it('reports current login commands and treats Aider as API-key-only', async () => {
     const result = await probeAdapterAuth();
