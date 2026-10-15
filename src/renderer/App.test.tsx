@@ -326,6 +326,21 @@ function currentDestination(host: HTMLElement): string | null {
   return destinations[0]?.dataset.productDestination ?? null;
 }
 
+/**
+ * O destino de um painel React.lazy (80c30b24f) só existe depois que o chunk
+ * commita; espera a condição observável — um destino visível e igual — em vez
+ * de contar ticks, como o diff do Pierre (e540c2dc6).
+ */
+async function expectDestination(host: HTMLElement, expected: string): Promise<void> {
+  await vi.waitFor(
+    async () => {
+      await act(async () => {});
+      expect(currentDestination(host)).toBe(expected);
+    },
+    { timeout: 10_000, interval: 5 },
+  );
+}
+
 function mountApp(): HTMLElement {
   const host = document.createElement('div');
   document.body.appendChild(host);
@@ -776,7 +791,7 @@ describe('App Nexus V2 cutover', () => {
     expect(bars()).toBeNull();
   });
 
-  it('keeps the scheduler terminal host mounted but hidden while Mission Board is active', () => {
+  it('keeps the scheduler terminal host mounted but hidden while Mission Board is active', async () => {
     openWorkspace();
     useProductNavigationStore.getState().openMission('mission-scheduler');
     const host = mountApp();
@@ -795,9 +810,7 @@ describe('App Nexus V2 cutover', () => {
         '[hidden]',
       ),
     ).toBe(terminalHost);
-    expect(currentDestination(host)).toBe(
-      'mission-board:mission-scheduler',
-    );
+    await expectDestination(host, 'mission-board:mission-scheduler');
 
     act(() =>
       useProductNavigationStore.getState().showMissionTerminals(),
@@ -809,9 +822,7 @@ describe('App Nexus V2 cutover', () => {
     expect(revealedHost).toBe(terminalHost);
     expect(revealedHost?.hidden).toBe(false);
     expect(revealedHost?.hasAttribute('aria-hidden')).toBe(false);
-    expect(currentDestination(host)).toBe(
-      'mission-terminals:mission-scheduler',
-    );
+    await expectDestination(host, 'mission-terminals:mission-scheduler');
 
     act(() => useProductNavigationStore.getState().openTaskBoard());
 
@@ -819,7 +830,7 @@ describe('App Nexus V2 cutover', () => {
       host.querySelector('[data-terminal-workspace-host="true"]'),
     ).toBe(terminalHost);
     expect(terminalHost?.hidden).toBe(true);
-    expect(currentDestination(host)).toBe('task-board');
+    await expectDestination(host, 'task-board');
   });
 
   it('reparents the contextual panel with a deterministic focus round trip', () => {

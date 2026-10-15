@@ -217,6 +217,23 @@ function dialogContaining(text: string): HTMLElement | null {
   );
 }
 
+/**
+ * Os painéis raiz viraram React.lazy (80c30b24f): o primeiro commit puxa o
+ * chunk e o diálogo só entra no DOM depois. Espera a condição observável — o
+ * diálogo montado — em vez de contar ticks, como o diff do Pierre (e540c2dc6).
+ */
+async function dialogWhenMounted(text: string): Promise<HTMLElement> {
+  return vi.waitFor(
+    async () => {
+      await act(async () => {});
+      const dialog = dialogContaining(text);
+      if (!dialog) throw new Error(`diálogo "${text}" ainda não montou`);
+      return dialog;
+    },
+    { timeout: 10_000, interval: 5 },
+  );
+}
+
 function lastBrowserSuppression(): boolean | undefined {
   return browserHost.setBrowserPaneSuppression.mock.calls.at(-1)?.[1];
 }
@@ -374,11 +391,10 @@ describe('App bug report entry', () => {
     expect(dialogContaining('Reportar um problema')).toBeNull();
 
     act(() => bridge.open());
-    const dialog = dialogContaining('Reportar um problema');
-    expect(dialog).not.toBeNull();
+    const dialog = await dialogWhenMounted('Reportar um problema');
 
     act(() => {
-      dialog?.dispatchEvent(
+      dialog.dispatchEvent(
         new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
       );
     });
@@ -387,9 +403,9 @@ describe('App bug report entry', () => {
   it('places the report beneath the interactive hard confirmation', async () => {
     const bridge = installBugReportBridge(); mountApp(); await act(async () => {});
     act(() => bridge.open());
+    const report = await dialogWhenMounted('Reportar um problema');
     let confirmed!: Promise<boolean>;
     act(() => { confirmed = useConfirmStore.getState().ask({ title: 'Descartar relato', body: 'Descartar alterações?', confirmLabel: 'Descartar' }); });
-    const report = dialogContaining('Reportar um problema')!;
     const confirmation = document.querySelector('[role="alertdialog"]')!;
     expect(report.compareDocumentPosition(confirmation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     const button = [...confirmation.querySelectorAll('button')].find(item => item.textContent === 'Descartar')!;
@@ -402,6 +418,9 @@ describe('App bug report entry', () => {
     act(() => { decision = useConfirmStore.getState().ask({ title: 'Pergunta pendente', body: 'Continuar?', confirmLabel: 'Continuar' }); });
     const focused = document.activeElement;
     act(() => bridge.open());
+    // O relato é lazy: espera o diálogo montado para que "não roubar o foco"
+    // seja afirmado sobre um diálogo que existe.
+    await dialogWhenMounted('Reportar um problema');
     expect(document.activeElement).toBe(focused);
     act(() => useConfirmStore.getState().decide(false));
     await expect(decision).resolves.toBe(false);
@@ -432,6 +451,7 @@ describe('App bug report entry', () => {
       useAccessStore.setState({ canUseApp: false, loading: false, blockedReason: 'inactive' } as never),
     );
     act(() => bridge.open());
+    await dialogWhenMounted('Reportar um problema');
     expect(dialogContaining('Reportar um problema')).not.toBeNull();
   });
 
@@ -497,7 +517,7 @@ describe('App root blocking overlays', () => {
 
     act(() => useMediaStudioStore.getState().show());
 
-    expect(dialogContaining('Estúdio de Mídia')).not.toBeNull();
+    await dialogWhenMounted('Estúdio de Mídia');
     expect(blockingLabels()).toMatch(MEDIA_REPORT);
     expect(terminalVisibility().visible).toBe(false);
     expect(currentScreenSnapshot().context).toMatch(MEDIA_REPORT);
@@ -519,8 +539,7 @@ describe('App root blocking overlays', () => {
 
     act(() => useGamificationStore.setState({ profileOpen: true }));
 
-    const profile = dialogContaining('Perfil de Operador');
-    expect(profile).not.toBeNull();
+    const profile = await dialogWhenMounted('Perfil de Operador');
     expect(profile?.textContent).toContain('Operador em modo recruta');
     expect(blockingLabels()).toMatch(PROFILE_REPORT);
     expect(terminalVisibility().visible).toBe(false);
