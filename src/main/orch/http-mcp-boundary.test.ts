@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { promiseHooks } from "node:v8";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   bindTokenToSession,
   mintToken,
@@ -242,5 +243,56 @@ describe("physical agent transport boundary", () => {
       "orch/handoff-physical-ack-authority.ts",
       "orch/handoff-store.ts",
     ]);
+  });
+});
+
+describe("V8 promise hook sharing (perf #7)", () => {
+  function workerCtx(session: string, incarnation: string): AgentGateContext {
+    const ctx = mintToken({
+      label: `physical worker ${session}`,
+      role: "worker",
+      providerId: "codex",
+      missionId: "mission-a",
+      workerIncarnationId: incarnation,
+      scope: testProjectScope(),
+      allowedTools: ["nexus_handoff_submit"],
+    });
+    bindTokenToSession(ctx.token, session);
+    return ctx;
+  }
+
+  it("installs one shared hook across overlapping async boundaries and releases it when idle", async () => {
+    resetGateForTests();
+    const ctxA = workerCtx("session-hook-a", "incarnation-hook-a");
+    const ctxB = workerCtx("session-hook-b", "incarnation-hook-b");
+    const createHookSpy = vi.spyOn(promiseHooks, "createHook");
+    let releaseA!: () => void;
+    let releaseB!: () => void;
+    const gateA = new Promise<void>((resolve) => {
+      releaseA = resolve;
+    });
+    const gateB = new Promise<void>((resolve) => {
+      releaseB = resolve;
+    });
+    try {
+      const runA = runInsidePtyStreamAgentTransport("session-hook-a", ctxA, async () => {
+        await gateA;
+      });
+      const runB = runInsidePtyStreamAgentTransport("session-hook-b", ctxB, async () => {
+        await gateB;
+      });
+      expect(createHookSpy).toHaveBeenCalledTimes(1);
+      releaseA();
+      await runA;
+      releaseB();
+      await runB;
+      // Ocioso: o hook é desinstalado (o fast-path de Promise volta); a
+      // próxima fronteira reinstala — nunca uma instalação por request.
+      await runInsidePtyStreamAgentTransport("session-hook-a", ctxA, async () => {});
+      expect(createHookSpy).toHaveBeenCalledTimes(2);
+    } finally {
+      createHookSpy.mockRestore();
+      resetGateForTests();
+    }
   });
 });

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { INITIAL_PROJECT_MIGRATIONS } from '../runtime/project-runtime-schema';
 import { CommandReceiptStore } from './command-receipts';
@@ -54,4 +54,21 @@ it('F-1080: a new upsert preserves its actual binding and refuses replacement',(
   const stored=store.upsert({commandId:'bound-upsert',commandType:'checkpoint.capture',projectId:scope.projectId,status:'accepted',resultSequence:4,bindingDigest:binding});
   expect(stored.bindingDigest).toBe(binding);
   expect(()=>store.upsert({commandId:'bound-upsert',commandType:'checkpoint.capture',projectId:scope.projectId,status:'accepted',resultSequence:5,bindingDigest:'b'.repeat(64)})).toThrow('command_effect_identity_conflict');
+});
+
+describe('perf #7: rememberDispatchOutcome funde os UPDATEs do settlement',()=>{
+  it('settle de uma dispatch.observation grava no máximo 2 UPDATEs em command_receipts',()=>{
+    const store=new CommandReceiptStore(manager,scope);
+    store.acceptDispatchObservation({commandId:'perf-settle',toolName:'nexus_terminal_run',bindingDigest:'a'.repeat(64),generated:false,projectId:scope.projectId});
+    const db=manager.open(scope).db;
+    const prepareSpy=vi.spyOn(db,'prepare');
+    store.rememberDispatchOutcome('perf-settle',{ok:true,tool:'nexus_terminal_run'});
+    const updates=prepareSpy.mock.calls.filter(([sql])=>typeof sql==='string'&&sql.startsWith('UPDATE command_receipts'));
+    prepareSpy.mockRestore();
+    expect(updates).toHaveLength(2);
+    const saved=store.getByCommandId('perf-settle')!;
+    expect(saved.dispatchState).toBe('settled');
+    expect(saved.status).toBe('accepted');
+    expect(saved.outcomeJson).not.toBeNull();
+  });
 });

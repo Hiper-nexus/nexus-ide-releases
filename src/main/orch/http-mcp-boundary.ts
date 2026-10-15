@@ -92,37 +92,69 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
  * `run()` returns. The mutable liveness bit therefore is the actual authority
  * lifetime: synchronous operations revoke it on return/throw, and asynchronous
  * operations revoke it when the returned promise settles.
+ *
+ * The settlement fence needs V8's promise hook: only the settled callback runs
+ * BEFORE reactions the operation registered on its own result promise, and
+ * only the init callback proves the returned promise was born inside this
+ * boundary (a foreign promise fails closed). Instead of one hook per request —
+ * each `createHook` toggles the isolate-wide Promise fast-path and K concurrent
+ * requests stack K JS callbacks on every promise — all live boundaries share
+ * ONE hook (perf #7): installed when the first fence opens, dropped when the
+ * last closes, so an idle Main keeps the fast-path.
  */
+interface TransportFence {
+  readonly observedPromises: WeakSet<Promise<unknown>>;
+  readonly settledPromises: WeakSet<Promise<unknown>>;
+  settlementPromise: Promise<unknown> | undefined;
+  readonly close: () => void;
+}
+
+const activeTransportFences = new Set<TransportFence>();
+let stopSharedPromiseHook: (() => void) | null = null;
+
+function armSharedPromiseHook(): void {
+  if (stopSharedPromiseHook) return;
+  stopSharedPromiseHook = promiseHooks.createHook({
+    init(promise) {
+      for (const fence of activeTransportFences) {
+        fence.observedPromises.add(promise);
+      }
+    },
+    settled(promise) {
+      for (const fence of activeTransportFences) {
+        fence.settledPromises.add(promise);
+        if (promise === fence.settlementPromise) fence.close();
+      }
+    },
+  }) as () => void;
+}
+
+function disarmSharedPromiseHookWhenIdle(): void {
+  if (activeTransportFences.size > 0 || !stopSharedPromiseHook) return;
+  const stop = stopSharedPromiseHook;
+  stopSharedPromiseHook = null;
+  stop();
+}
+
 function runWithLiveTransport<T>(
   binding: AgentTransportBinding,
   operation: () => T,
 ): T {
-  const observedPromises = new WeakSet<Promise<unknown>>();
-  const settledPromises = new WeakSet<Promise<unknown>>();
-  let settlementPromise: Promise<unknown> | undefined;
   let closed = false;
-  let stopSettlementTracking = () => {};
-  const close = () => {
-    if (closed) return;
-    closed = true;
-    binding.live = false;
-    stopSettlementTracking();
+  const fence: TransportFence = {
+    observedPromises: new WeakSet(),
+    settledPromises: new WeakSet(),
+    settlementPromise: undefined,
+    close: () => {
+      if (closed) return;
+      closed = true;
+      binding.live = false;
+      activeTransportFences.delete(fence);
+      disarmSharedPromiseHookWhenIdle();
+    },
   };
-
-  // Promise reactions run in registration order. A `.finally(close)` attached
-  // after `operation()` returns is therefore too late when the operation first
-  // registered its own `.then(...)` on the same result promise. V8's settled
-  // hook runs before any of those reactions and closes the physical authority
-  // at the promise's logical settlement boundary.
-  stopSettlementTracking = promiseHooks.createHook({
-    init(promise) {
-      observedPromises.add(promise);
-    },
-    settled(promise) {
-      settledPromises.add(promise);
-      if (promise === settlementPromise) close();
-    },
-  }) as () => void;
+  activeTransportFences.add(fence);
+  armSharedPromiseHook();
 
   let result: T;
   let returnsPromise: boolean;
@@ -130,7 +162,7 @@ function runWithLiveTransport<T>(
     result = activeAgentTransports.run(binding, operation);
     returnsPromise = isPromiseLike(result);
   } catch (error) {
-    close();
+    fence.close();
     throw error;
   }
   if (returnsPromise) {
@@ -139,16 +171,16 @@ function runWithLiveTransport<T>(
     // settlement point: it may already have settled while no hook observed it.
     // Fail closed instead of granting its retained async resources authority.
     if (
-      !observedPromises.has(returnedPromise) ||
-      settledPromises.has(returnedPromise)
+      !fence.observedPromises.has(returnedPromise) ||
+      fence.settledPromises.has(returnedPromise)
     ) {
-      close();
+      fence.close();
     } else {
-      settlementPromise = returnedPromise;
+      fence.settlementPromise = returnedPromise;
     }
-    return Promise.resolve(result).finally(close) as T;
+    return Promise.resolve(result).finally(fence.close) as T;
   }
-  close();
+  fence.close();
   return result;
 }
 
