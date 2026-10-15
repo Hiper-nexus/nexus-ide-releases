@@ -1248,13 +1248,14 @@ const paneSpawn: McpToolDef = {
     // id, o reenvio devolve o pane que existe — e a resposta é a mesma.
     const callerRequest = validCallerRequestId(args.requestId);
     if (!callerRequest.ok) throw new Error(callerRequest.error);
-    // O id do chamador vale só dentro do ESCOPO de quem o mandou (missão, ou a
-    // sessão quando não há missão): o mesmo texto em outra missão é outro
+    // O id do chamador vale só dentro do ESCOPO de quem o mandou (a sessão,
+    // que não muda quando o pane do operador é promovido a orquestrador no meio
+    // do spawn; a missão só quando não há sessão): o mesmo texto em outra missão é outro
     // pedido e nunca devolve o recibo (worktree, branch, conta) de terceiros.
     const callerRequestId =
       callerRequest.requestId === null
         ? null
-        : `${ctx.missionId ? `m:${ctx.missionId}` : `s:${ctx.sessionId ?? 'none'}`}|${callerRequest.requestId}`;
+        : `${ctx.sessionId ? `s:${ctx.sessionId}` : ctx.missionId ? `m:${ctx.missionId}` : 'none'}|${callerRequest.requestId}`;
     const paneStillAlive = (paneId: string | null): boolean =>
       paneId !== null && (findPane(paneId) !== null || isPaneSpawnPending(paneId));
     if (callerRequestId !== null) {

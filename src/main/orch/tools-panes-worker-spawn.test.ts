@@ -115,7 +115,7 @@ describe('F-1531: o mesmo requestId não abre um segundo pane', () => {
 
   it('reenvio com o requestId em curso devolve o estado, sem tocar no spawn', async () => {
     // O primeiro pedido reservou o id e está no preparo pesado (rota/worktree).
-    beginPaneSpawnRequest({ requestId: 'm:mission-1|w1-visual' });
+    beginPaneSpawnRequest({ requestId: 's:session-worker|w1-visual' });
 
     // Sem a deduplicação esta chamada iria ao spawn e MORRERIA (não há
     // runtime de pane no teste): voltar com o recibo prova que o Main
@@ -137,17 +137,28 @@ describe('F-1531: o mesmo requestId não abre um segundo pane', () => {
   });
 
   it('o mesmo requestId em outra missão é outro pedido e não devolve recibo alheio', async () => {
-    beginPaneSpawnRequest({ requestId: 'm:mission-A|scout-1' });
+    beginPaneSpawnRequest({ requestId: 's:session-A|scout-1' });
     // Missão B manda o MESMO texto: não pode juntar-se ao pedido de A. O spawn
     // real morre neste teste (sem runtime), e isso é a prova de que não houve join.
     const outcome = await paneSpawnTool.handler(
       { adapterId: 'codex', requestId: 'scout-1' },
-      context({ role: 'user', label: 'pane do operador', missionId: 'mission-B' }),
+      context({ role: 'user', label: 'pane do operador', missionId: 'mission-B', sessionId: 'session-B' }),
     ).then(
       (value) => value as { deduplicated?: boolean },
       () => ({ rejected: true }) as { deduplicated?: boolean },
     );
     expect(outcome.deduplicated).not.toBe(true);
+  });
+
+  it('a chave não muda quando o pane do operador ganha missão no meio do spawn', async () => {
+    beginPaneSpawnRequest({ requestId: 's:session-worker|w3-promo' });
+    for (const missionId of [undefined, 'mission-tab']) {
+      const outcome = await paneSpawnTool.handler(
+        { adapterId: 'codex', requestId: 'w3-promo' },
+        context({ role: 'user', label: 'pane do operador', missionId }),
+      );
+      expect(outcome).toMatchObject({ deduplicated: true, inFlight: true, requestId: 'w3-promo' });
+    }
   });
 
   it('erro antes do spawn (expect inválido) libera a chave em vez de prendê-la', async () => {
@@ -157,7 +168,7 @@ describe('F-1531: o mesmo requestId não abre um segundo pane', () => {
         context({ role: 'user', label: 'pane do operador' }),
       ),
     ).rejects.toThrow();
-    expect(paneSpawnRequestState('m:mission-1|w2-erro')).toBeNull();
+    expect(paneSpawnRequestState('s:session-worker|w2-erro')).toBeNull();
   });
 
   it('requestId inválido é recusado antes de qualquer spawn', async () => {
