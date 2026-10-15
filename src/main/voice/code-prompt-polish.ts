@@ -162,7 +162,8 @@ export function polishLooksLikeEcho(source: string, polished: string): boolean {
   const sourceNorm = source.toLowerCase().replace(/\s+/g, ' ').trim();
   const polishedNorm = polished.toLowerCase().replace(/\s+/g, ' ').trim();
   if (!polishedNorm || !sourceNorm) return false;
-  if (sourceNorm === polishedNorm) return true;
+  // Texto curto ("ok", "sim") idêntico não prova eco: já pode ser inglês.
+  if (sourceNorm === polishedNorm) return sourceNorm.split(' ').length >= 2;
 
   const sourceWords = new Set(sourceNorm.split(' ').filter((w) => w.length > 0));
   const polishedWords = polishedNorm.split(' ').filter((w) => w.length > 0);
