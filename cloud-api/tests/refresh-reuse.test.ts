@@ -1,7 +1,7 @@
 import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { SqliteD1 } from './helpers/sqlite-d1.js';
-import { environment, seedAccount } from './helpers/fixtures.js';
+import { environment, seedAccount, SITE } from './helpers/fixtures.js';
 import { createApp } from '../src/index.js';
 import { issueTokens, revokeAll, rotateRefresh, sessionFor, type Tokens } from '../src/sessions.js';
 
@@ -338,5 +338,26 @@ test('/auth/refresh answers with the rotated pair while the license is still bei
   assert.equal(body.data.licenca, undefined, 'the app fetches /v1/license itself');
   assert.ok(await sessionFor(db, body.data.session, 'desktop'));
   assert.ok(await rotateRefresh(db, body.data.refresh, 'desktop'));
+  db.close();
+});
+
+test('/auth/refresh and the web rotation answer 503 before spending a token while the schema is behind', async () => {
+  const { db, mac } = await setup();
+  const web = await issueTokens(db, 'user', 'web');
+  const used = async (refresh: string) => (await db.prepare('SELECT used_at FROM refresh_tokens WHERE id=?').bind(await idOf(db, refresh)).first<{ used_at: number | null }>())?.used_at;
+  const app = createApp();
+  const desktop = () => app.request('/v1/auth/refresh', { method: 'POST', headers: json, body: JSON.stringify({ refresh: mac.refresh }) }, environment(db));
+  const page = () => app.request('/v1/web/session', { headers: { Origin: SITE, Cookie: `__Host-nexus_refresh=${web.refresh}` } }, environment(db));
+  // The Worker was deployed before its migration.
+  await db.prepare("UPDATE system_metadata SET value='10' WHERE key='schema_version'").run();
+
+  assert.equal((await desktop()).status, 503);
+  assert.equal((await page()).status, 503);
+  assert.equal(await used(mac.refresh), null);
+  assert.equal(await used(web.refresh), null);
+
+  await db.prepare("UPDATE system_metadata SET value='11' WHERE key='schema_version'").run();
+  assert.equal((await desktop()).status, 200, 'the same isolate recovers once the migration lands');
+  assert.equal(((await (await page()).json()) as { data: { authenticated: boolean } }).data.authenticated, true);
   db.close();
 });

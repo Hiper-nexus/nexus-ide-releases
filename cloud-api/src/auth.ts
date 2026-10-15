@@ -18,6 +18,10 @@ import { requireNativeAuth, requireWebAuth, requireCsrf } from './middleware.js'
 const STATE_TTL_MS = 10 * 60 * 1000;
 const CODE_TTL_MS = 60 * 1000;
 const REFRESH_LICENSE_BUDGET_MS = 2_000;
+/** Migration the refresh rotation needs (0011): on an older schema it would spend the token and then fail. */
+const REFRESH_SCHEMA_VERSION = 11;
+/** Databases already proven current in this isolate. Migrations only move forward, so a miss is checked again. */
+const currentSchemas = new WeakSet<D1Database>();
 const DESKTOP_CLIENTS: readonly DesktopClient[] = ['nexus', 'shot'];
 const APP_STATE = /^[A-Za-z0-9._~-]{1,128}$/;
 const CHALLENGE = /^[A-Za-z0-9_-]{43}$/;
@@ -43,6 +47,15 @@ function settleWithin<T>(work: Promise<T>, ms: number): Promise<T | undefined> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const late = new Promise<undefined>(resolve => { timer = setTimeout(() => resolve(undefined), ms); });
     return Promise.race([work, late]).finally(() => clearTimeout(timer));
+}
+/** 503 before any token is spent while the Worker runs ahead of its migration. */
+async function requireRefreshSchema(db: D1Database): Promise<void> {
+    if (currentSchemas.has(db))
+        return;
+    const row = await db.prepare("SELECT value FROM system_metadata WHERE key='schema_version'").first<{ value: string }>();
+    if (!(Number(row?.value) >= REFRESH_SCHEMA_VERSION))
+        throw new HTTPException(503, { message: 'Serviço em atualização. Tente de novo em instantes.' });
+    currentSchemas.add(db);
 }
 function providerOf(value: string): Provider {
     if (value !== 'google' && value !== 'github')
@@ -143,6 +156,8 @@ async function webSession(c: AuthContext) {
     const session = rawSession ? await sessionFor(c.env.DB, rawSession, 'web') : null;
     let accountId = session?.account_id, csrf = getCookie(c, '__Host-nexus_csrf');
     if (!session) {
+        if (rawRefresh)
+            await requireRefreshSchema(c.env.DB);
         const rotated = rawRefresh ? await rotateRefresh(c.env.DB, rawRefresh, 'web') : null;
         if (!rotated) {
             clearWebCookies(c);
@@ -189,6 +204,7 @@ export function createAuthRoutes(fetchFn: typeof fetch = fetch): Hono<AppEnv> {
     });
     routes.post('/auth/refresh', async (c) => {
         const body = await jsonBody(c.req.raw, refreshSchema);
+        await requireRefreshSchema(c.env.DB);
         const rotated = await rotateRefresh(c.env.DB, body.refresh, 'desktop');
         if (!rotated)
             throw new HTTPException(401, { message: 'Sessão inválida. Entre novamente.' });
