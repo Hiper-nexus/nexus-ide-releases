@@ -72,18 +72,31 @@ export interface PaneAdmissionLimits {
  * memória disponível; este teto não garante ausência de swap em todo projeto.
  * Acima de 16 GB a reserva histórica de 8 GB permanece.
  */
-export function limitsForMachine(totalMB: number): PaneAdmissionLimits {
+export function limitsForMachine(
+  totalMB: number,
+  platform: NodeJS.Platform = process.platform,
+): PaneAdmissionLimits {
   const total = Number.isFinite(totalMB) && totalMB > 0 ? totalMB : 24 * 1024;
   // F-588: Em máquinas inferiores (<= 8 GB), 2 panes é o limite de segurança;
   // em 12 GB, 3; em 16 GB+, 4 a 12 proporcional à RAM livre.
   const minPanes = total <= 8 * 1024 ? 2 : total <= 12 * 1024 ? 3 : 4;
   const osReserveMB = total <= 16 * 1024 ? 10 * 1024 : 8 * 1024;
   const byRam = Math.floor((total - osReserveMB) / 1280);
+  // A reserva de 15 % crescia sem teto: 4,9 GB num Mac/PC de 32 GB e 9,8 GB
+  // num de 64 GB, bloqueando o 3º worker automático numa máquina com folga
+  // real (cliente Windows 32 GB, 2 panes vivos). Teto de 4 GB — e 2 GB no
+  // win32, onde o `free` medido ainda ignora parte da Standby List que o
+  // `memorystatus_level` do macOS já conta (ver `sampleSystemMemory`). Com
+  // isso uma máquina >= 16 GB e poucos panes vivos (<= 4) só recusa quando
+  // não cabe nem 1 worker (~1,25 GB) acima da reserva.
+  const win32 = platform === 'win32';
+  const reserveCapMB = win32 ? 2048 : 4096;
+  const reservePct = win32 ? 0.08 : 0.15;
   return Object.freeze({
     enabled: true,
     hardBlocks: false,
     maxAgentPanes: Math.min(12, Math.max(minPanes, byRam)),
-    minFreeMB: Math.max(1024, Math.round(0.15 * total)),
+    minFreeMB: Math.min(reserveCapMB, Math.max(1024, Math.round(reservePct * total))),
     maxSwapUsedMB: 0,
   });
 }
@@ -325,7 +338,12 @@ export function evaluatePaneAdmission(input: PaneAdmissionInput): PaneAdmissionV
     if (budget && budget.slots === 0) {
       const message = budget.limitedBy === 'cap'
         ? capMessage
-        : `Memória sem folga para outro worker (${AGENT_PANE_FOOTPRINT_MB} MB acima da reserva de ${limits.minFreeMB} MB). ${idleHint}`;
+        : memory?.freeMB !== null && memory
+          ? `Memória RAM da máquina sem folga para outro worker: ${Math.round(memory.freeMB)} MB livres medidos ` +
+            `< reserva de ${limits.minFreeMB} MB + ${AGENT_PANE_FOOTPRINT_MB} MB por worker ` +
+            `(folga de memória física, não limite do plano). ${idleHint}`
+          : `Memória sem folga para outro worker (${AGENT_PANE_FOOTPRINT_MB} MB acima da reserva de ${limits.minFreeMB} MB; ` +
+            `memória física da máquina, não limite do plano). ${idleHint}`;
       return {
         ok: false,
         reason: budget.limitedBy === 'cap' ? 'cap' : 'memory',
@@ -391,8 +409,9 @@ function envInt(value: string | undefined, fallback: number, min: number): numbe
 export function readPaneAdmissionLimits(
   env: NodeJS.ProcessEnv = process.env,
   totalMB: number = os.totalmem() / (1024 * 1024),
+  platform: NodeJS.Platform = process.platform,
 ): PaneAdmissionLimits {
-  const base = limitsForMachine(totalMB);
+  const base = limitsForMachine(totalMB, platform);
   const guard = (env.NEXUS_PANE_GUARD ?? '').trim().toLowerCase();
   const hard = (env.NEXUS_PANE_CAP_HARD ?? '').trim().toLowerCase();
   return {
@@ -585,17 +604,28 @@ export function parseElectronSwapUsedMB(
     : null;
 }
 
+/** Dependências de leitura de memória, injetáveis para testes fora do Electron. */
+export interface SystemMemoryDeps {
+  readonly readElectron?: () => SystemMemoryInfoLike | null;
+  /** `os.freemem()` em bytes; injetável para determinismo nos testes. */
+  readonly freemem?: () => number;
+}
+
 /**
  * Amostra da memória do sistema para o gate. `free` do Electron é em KB.
  * macOS: swap via `sysctl vm.swapusage` (o físico sai do nível do kernel).
  * Windows: o swap do Electron é commit, não swap (ver
- * `parseElectronSwapUsedMB`). Ausência de dado vira null — o gate nunca
- * inventa pressão.
+ * `parseElectronSwapUsedMB`) e o `free` cru ignora a Standby List (cache
+ * reutilizável na hora): o sinal é o MAIOR entre `free`, `os.freemem()`
+ * (GlobalMemoryStatusEx ullAvailPhys, inclui standby) e `available`, senão
+ * uma máquina de 32 GB com 2 panes parece sem folga para o 3º (cliente
+ * 15/10). Ausência de dado vira null — o gate nunca inventa pressão.
  */
 export async function sampleSystemMemory(
   platform: NodeJS.Platform = process.platform,
+  deps: SystemMemoryDeps = {},
 ): Promise<SystemMemorySample | null> {
-  const info = readElectronMemory();
+  const info = (deps.readElectron ?? readElectronMemory)();
   if (!info) return null;
   const kbToMB = (value: number | undefined): number | null =>
     typeof value === 'number' && Number.isFinite(value) ? value / 1024 : null;
@@ -607,6 +637,14 @@ export async function sampleSystemMemory(
       freeMB: darwin.availableMB ?? kbToMB(info.free),
       swapUsedMB: darwin.swapUsedMB,
     };
+  }
+  if (platform === 'win32') {
+    const freeMB = Math.max(
+      kbToMB(info.free) ?? 0,
+      Math.floor((deps.freemem ?? os.freemem)() / (1024 * 1024)),
+      kbToMB(info.available) ?? 0,
+    );
+    return { freeMB, swapUsedMB: parseElectronSwapUsedMB(info, platform) };
   }
   // Linux expõe `available`, que já conta cache recuperável; nos demais, `free`.
   const freeMB = platform === 'linux' ? kbToMB(info.available) ?? kbToMB(info.free) : kbToMB(info.free);
@@ -723,18 +761,29 @@ function allocatedAgentCount(): number | null {
   return census ? census.live - census.pending : null;
 }
 
-export function refreshSystemMemorySample(): Promise<void> {
+export function refreshSystemMemorySample(
+  deps: SystemMemoryDeps & { readonly platform?: NodeJS.Platform } = {},
+): Promise<void> {
   if (memoryRefreshInFlight) return memoryRefreshInFlight;
   // Capture BEFORE reading: children starting during the async sample cannot
-  // be assumed to have their footprint reflected in it.
-  const allocatedAgents = allocatedAgentCount();
-  memoryRefreshInFlight = sampleSystemMemory()
+  // be assumed to have their footprint reflected in it. But a pane whose
+  // startup already COMPLETED before the read finished IS in the sample —
+  // count it too, or the reservation below debits 1280 MB per pane the system
+  // already measured (cliente Windows 32 GB: 2 panes vivos, 3º recusado).
+  const before = allocatedAgentCount();
+  const maxAllocated = (a: number | null, b: number | null): number | null =>
+    a === null ? b : b === null ? a : Math.max(a, b);
+  memoryRefreshInFlight = sampleSystemMemory(deps.platform ?? process.platform, deps)
     .then(
       (sample) => {
-        memoryCache = { at: Date.now(), sample, allocatedAgents };
+        memoryCache = {
+          at: Date.now(),
+          sample,
+          allocatedAgents: maxAllocated(before, allocatedAgentCount()),
+        };
       },
       () => {
-        memoryCache = { at: Date.now(), sample: null, allocatedAgents };
+        memoryCache = { at: Date.now(), sample: null, allocatedAgents: before };
       },
     )
     .finally(() => {

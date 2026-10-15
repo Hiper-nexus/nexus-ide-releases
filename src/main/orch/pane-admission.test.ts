@@ -611,3 +611,88 @@ describe('pane-admission: recusa de capacidade no caminho MCP (F-1270)', () => {
     expect(parsePaneAdmissionRefusal(undefined)).toBeNull();
   });
 });
+
+describe('pane-admission: Windows 32 GB (cliente 15/10) — standby/cache não trava o 3º worker', () => {
+  it('a reserva padrão para de crescer linearmente: 32/64 GB não exigem 4,9/9,8 GB livres', async () => {
+    const { limitsForMachine } = await import('./pane-admission');
+    expect(limitsForMachine(32 * 1024).minFreeMB).toBe(4096);
+    expect(limitsForMachine(64 * 1024).minFreeMB).toBe(4096);
+    // 24 GB (referência Mac) segue em 15 %: abaixo do teto, nada muda.
+    expect(limitsForMachine(24 * 1024).minFreeMB).toBe(Math.round(0.15 * 24 * 1024));
+    // win32: `free` não vê toda a Standby List → reserva (e percentual) menores.
+    expect(limitsForMachine(32 * 1024, 'win32').minFreeMB).toBe(2048);
+    expect(limitsForMachine(64 * 1024, 'win32').minFreeMB).toBe(2048);
+    expect(limitsForMachine(16 * 1024, 'win32').minFreeMB).toBe(1311);
+    // O piso de 1 GB e o teto de panes seguem intactos.
+    expect(limitsForMachine(8 * 1024, 'win32').minFreeMB).toBe(1024);
+    expect(limitsForMachine(32 * 1024, 'win32').maxAgentPanes).toBe(12);
+  });
+
+  it('cenário do cliente: 32 GB, 2 panes vivos, 3º worker automático admitido', () => {
+    const limits = limitsForMachine(32 * 1024, 'win32');
+    // Antes: reserva de 15 % (4.915 MB) + 1.280 MB do worker exigiam ≥ 6.195 MB
+    // "livres" medidos sem standby — e ainda debitava 1.280 MB por pane não
+    // medido. Agora a amostra corrigida (maior entre free/os.freemem/available)
+    // e a reserva de 2.048 MB admitem o 3º worker com ~7 GB disponíveis.
+    const verdict = evaluatePaneAdmission({
+      liveAgentPanes: 2,
+      limits,
+      memory: { freeMB: 7 * 1024, swapUsedMB: null },
+      idleCandidates: [],
+      automaticWorker: true,
+    });
+    expect(verdict.ok).toBe(true);
+    // Sem folga REAL continua recusando — e a mensagem nomeia o medido vs a
+    // reserva e deixa claro que é memória RAM, não limite do plano.
+    const blocked = evaluatePaneAdmission({
+      liveAgentPanes: 2,
+      limits,
+      memory: { freeMB: limits.minFreeMB + AGENT_PANE_FOOTPRINT_MB - 1, swapUsedMB: null },
+      idleCandidates: [],
+      automaticWorker: true,
+    });
+    expect(blocked).toMatchObject({ ok: false, reason: 'memory' });
+    if (blocked.ok) return;
+    expect(blocked.message).toContain('MB livres medidos');
+    expect(blocked.message).toContain('não limite do plano');
+  });
+
+  it('sampleSystemMemory no win32 usa o maior entre free, os.freemem e available', async () => {
+    const { sampleSystemMemory } = await import('./pane-admission');
+    const sample = await sampleSystemMemory('win32', {
+      readElectron: () => ({ free: 2_048 * 1024, available: 9_216 * 1024 }),
+      freemem: () => 7 * 1024 ** 3,
+    });
+    expect(sample).toEqual({ freeMB: 9_216, swapUsedMB: null });
+    const fallback = await sampleSystemMemory('win32', {
+      readElectron: () => ({ free: 3_072 * 1024 }),
+      freemem: () => 2 * 1024 ** 3,
+    });
+    expect(fallback).toEqual({ freeMB: 3_072, swapUsedMB: null });
+  });
+
+  it('refresh não debita pane cuja inicialização terminou antes da leitura da amostra', async () => {
+    const { refreshSystemMemorySample } = await import('./pane-admission');
+    let live = 0;
+    let pending = 0;
+    const undo = registerAgentMemoryCensus(() => ({ live, pending }), 'test-win32');
+    try {
+      await refreshSystemMemorySample({
+        platform: 'win32',
+        // Pane inicializado DURANTE a janela assíncrona da amostra: a leitura
+        // acontece depois dele, então seu footprint já está medido — sem a
+        // dupla contagem de 1.280 MB que recusava o 3º worker do cliente.
+        readElectron: () => {
+          live = 2;
+          pending = 0;
+          return { free: 10_000 * 1024 };
+        },
+        freemem: () => 10_000 * 1024 ** 2,
+      });
+      expect(getMemoryAfterAgentReservations()?.freeMB).toBe(10_000);
+    } finally {
+      undo();
+      primeSystemMemoryCacheForTest(null);
+    }
+  });
+});
