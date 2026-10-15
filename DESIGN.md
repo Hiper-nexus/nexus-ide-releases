@@ -218,6 +218,13 @@ já o desliga sozinho e compensa em opacidade.
   missão** (única primária sólida). Secundário mora no `⋯` e no ⌘K.
   Gamificação (XP) fora da zona de status. "Novo workspace" é uma ação compacta
   única junto à identidade do workspace; nunca se repete no menu ▾ da marca.
+- **Perfil de Operador** (gamificação): entrada permanente no rodapé da rail,
+  numa faixa própria acima de Configurações (`OperatorHud variant="rail"`;
+  continua à vista no modo foco), e cartão em Minha conta (`variant="card"`);
+  nunca na WorkspaceBar. O diálogo segue a receita do card da casa: título de
+  seção em frase (13px), acento só no poder e nos progressos, ouro só no
+  dinheiro economizado, sem grade, varredura nem faixa decorativa. O cabeçalho
+  diz de qual projeto vem o XP (é por pasta). Guard: `operator-profile-style.test.ts`.
 - **Abas dos Terminais** (`WorkspaceTabs`): uma aba por feature — os panes
   dela e a missão que um deles começou. Linguagem de editor, não de
   dashboard: a ativa é o mesmo chão da grelha (`--bg`, sem fio embaixo) com

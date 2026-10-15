@@ -262,6 +262,22 @@ const TIER_FLOOR: Record<GamificationTier, number> = {
 
 const TIER_ORDER = Object.keys(TIER_FLOOR) as GamificationTier[];
 
+/** Tier logo acima de `tier`; `null` no topo (ou tier desconhecido). */
+export function nextTierOf(tier: GamificationTier): GamificationTier | null {
+  const index = TIER_ORDER.indexOf(tier);
+  return index < 0 ? null : (TIER_ORDER[index + 1] ?? null);
+}
+
+/** Nível 1-based exibido no HUD ("Lv 3"); tier desconhecido conta como nível 1. */
+export function tierLevelOf(tier: GamificationTier): number {
+  return Math.max(1, TIER_ORDER.indexOf(tier) + 1);
+}
+
+/** "1 dia" / "2 dias" — contador com plural pt-BR (zero é plural). */
+export function pluralPt(count: number, one: string, other: string): string {
+  return `${count} ${count === 1 ? one : other}`;
+}
+
 export function tierProgress(snapshot: {
   powerLevel: number;
   nextTierAt: number | null;

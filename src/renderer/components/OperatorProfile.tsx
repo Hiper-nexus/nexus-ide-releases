@@ -6,13 +6,16 @@ import {
 import {
   activeOperatorQuests,
   listAchievementProgress,
+  nextTierOf,
   nextTierPlan,
+  pluralPt,
   recentAchievements,
   tierProgress,
   xpKindLabel,
 } from '../../shared/gamification-progress';
 import { useGamificationStore } from '../state/gamification-store';
 import { useQuotaStore } from '../state/quota-store';
+import { useWorkspaceStore } from '../state/workspace-store';
 import { useLifetimeUsage } from '../state/lifetime-usage';
 import { ChosenPetPortrait } from './ChosenPetPortrait';
 import { fmt } from './operator-sprite-data';
@@ -24,6 +27,7 @@ import { PixelIcon } from './PixelIcon';
  * Perfil de Operador — cockpit gamificado vivo:
  * poder + próximo marco, quests acionáveis, feed de XP, conquistas com
  * progresso (não só "Bloqueada"), skins e I/O. Abre com hydrate fresco.
+ * A entrada visível mora no `OperatorHud` (rail e Minha conta), não só aqui.
  */
 
 const XP_BREAKDOWN_COPY: Array<[string, string]> = [
@@ -38,6 +42,12 @@ const XP_BREAKDOWN_COPY: Array<[string, string]> = [
 ];
 
 const DEFAULT_SKIN_LABEL = 'padrão';
+
+/** O feed é um relance, não um histórico: sem rolagem aninhada dentro do diálogo. */
+const FEED_LIMIT = 8;
+
+const FOCUSABLE =
+  'button:not([disabled]), input:not([disabled]):not([type="hidden"]), textarea:not([disabled]), select:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])';
 
 function receive(snapshot: GamificationSnapshot): void {
   useGamificationStore.getState().receive(snapshot);
@@ -63,11 +73,14 @@ export function OperatorProfile() {
   // Assinaturas conectadas: soma dos planos detectados pelos próprios
   // providers (sai do somatório quando a conta é removida).
   const plans = useQuotaStore((s) => s.snapshot.plans);
+  // O XP é por pasta de projeto: o nome do projeto ativo explica o número.
+  const projectName = useWorkspaceStore((s) => s.current?.name ?? null);
   const [now, setNow] = useState(() => Date.now());
   const dialogRef = useRef<HTMLElement>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
   const titleId = useId();
   const descriptionId = useId();
+  const sectionId = useId();
 
   useEffect(() => {
     if (!open) {
@@ -85,9 +98,7 @@ export function OperatorProfile() {
       restoreFocusRef.current = document.activeElement;
     }
 
-    const initialFocus = dialogRef.current?.querySelector<HTMLElement>(
-      'button:not([disabled]), input:not([disabled]):not([type="hidden"]), textarea:not([disabled]), select:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
-    );
+    const initialFocus = dialogRef.current?.querySelector<HTMLElement>(FOCUSABLE);
     initialFocus?.focus();
   }, [open]);
 
@@ -111,8 +122,6 @@ export function OperatorProfile() {
     return () => window.clearInterval(id);
   }, [open]);
 
-
-
   const progress = useMemo(() => tierProgress(snapshot), [snapshot]);
   const quests = useMemo(() => activeOperatorQuests(snapshot), [snapshot]);
   const achievements = useMemo(
@@ -124,21 +133,28 @@ export function OperatorProfile() {
     snapshot.powerLevel === 0 &&
     Object.values(snapshot.counters).every((value) => value === 0) &&
     Object.values(lifetime?.counters ?? {}).every((value) => value === 0);
-  const stars = '★'.repeat(Math.min(snapshot.prestige, 5));
+  const stars = Math.min(Math.max(snapshot.prestige, 0), 5);
   const efficient = snapshot.counters.efficient_mission ?? 0;
-  const recent = snapshot.recent ?? [];
+  const recent = (snapshot.recent ?? []).slice(0, FEED_LIMIT);
   const todayXp = snapshot.todayXp ?? 0;
   const recentUnlocks = recentAchievements(snapshot.achievements);
   const plan = nextTierPlan(progress.remaining);
-  const nextTierName = progress.nextTier
-    ? GAMIFICATION_COPY.tiers[progress.nextTier]
-    : null;
+  const nextTier = nextTierOf(snapshot.tier);
+  const nextTierName = nextTier ? GAMIFICATION_COPY.tiers[nextTier] : null;
   const nextLine =
     progress.remaining === null
       ? snapshot.prestigeReady
-        ? 'jornada no topo — pronta para transcender'
-        : 'jornada no topo'
-      : `faltam ${fmt(progress.remaining)} XP para ${nextTierName ?? 'transcender'}`;
+        ? 'Jornada no topo. Pronta para transcender.'
+        : 'Jornada no topo.'
+      : `Faltam ${fmt(progress.remaining)} XP para ${nextTierName ?? 'o próximo marco'}.`;
+  const scopeLine = [
+    snapshot.branch !== 'base'
+      ? `Ramo ${GAMIFICATION_COPY.branches[snapshot.branch]}`
+      : null,
+    projectName ? `XP do projeto ${projectName}` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
 
   if (!open) return null;
 
@@ -168,6 +184,13 @@ export function OperatorProfile() {
     await window.nexus.settings.orchSet({ soberMode: value });
   };
 
+  const consumoId = `${sectionId}-consumo`;
+  const questsId = `${sectionId}-quests`;
+  const achievementsId = `${sectionId}-achievements`;
+  const feedId = `${sectionId}-feed`;
+  const deliveriesId = `${sectionId}-deliveries`;
+  const skinsId = `${sectionId}-skins`;
+
   return (
     <div className="operator-profile__backdrop" onClick={close}>
       <section
@@ -190,9 +213,7 @@ export function OperatorProfile() {
           event.preventDefault();
           event.stopPropagation();
           const controls = Array.from(
-            event.currentTarget.querySelectorAll<HTMLElement>(
-              'button:not([disabled]), input:not([disabled]):not([type="hidden"]), textarea:not([disabled]), select:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
-            ),
+            event.currentTarget.querySelectorAll<HTMLElement>(FOCUSABLE),
           ).filter(
             (element) => element.getAttribute('aria-hidden') !== 'true',
           );
@@ -224,27 +245,35 @@ export function OperatorProfile() {
             <h2 id={titleId} className="operator-profile__title">
               Perfil de Operador
             </h2>
-            <span className="operator-profile__branch">
-              {GAMIFICATION_COPY.branches[snapshot.branch]}
-              {stars && (
+            {scopeLine ? (
+              <span className="operator-profile__scope">{scopeLine}</span>
+            ) : null}
+            <div className="operator-profile__rank">
+              <span className="operator-profile__tier">
+                {GAMIFICATION_COPY.tiers[snapshot.tier]}
+              </span>
+              {stars > 0 ? (
                 <span
                   className="operator-profile__stars"
+                  role="img"
+                  aria-label={`Transcendência ${snapshot.prestige}`}
                   title={`Transcendência ${snapshot.prestige}`}
                 >
-                  {stars}
+                  {Array.from({ length: stars }, (_, index) => (
+                    <PixelIcon key={index} name="star" size={11} />
+                  ))}
                 </span>
-              )}
-            </span>
-            <span className="operator-profile__tier">
-              {GAMIFICATION_COPY.tiers[snapshot.tier]}
-            </span>
-            <span className="operator-profile__power-label">Poder</span>
-            <span
-              className="operator-profile__power"
-              title={`${snapshot.powerLevel.toLocaleString('pt-BR')} de poder`}
-            >
-              {fmt(snapshot.powerLevel)}
-            </span>
+              ) : null}
+            </div>
+            <div className="operator-profile__power-row">
+              <span
+                className="operator-profile__power"
+                title={`${snapshot.powerLevel.toLocaleString('pt-BR')} de poder`}
+              >
+                {fmt(snapshot.powerLevel)}
+              </span>
+              <span className="operator-profile__power-label">de poder</span>
+            </div>
             <span className="operator-profile__bar" aria-hidden="true">
               <span
                 className="operator-profile__bar-fill"
@@ -277,6 +306,25 @@ export function OperatorProfile() {
           </button>
         </header>
 
+        <ul className="operator-profile__stats" aria-label="Resumo da jornada">
+          <li>
+            <strong>
+              {unlockedCount}/{achievements.length}
+            </strong>{' '}
+            conquistas
+          </li>
+          <li>
+            <strong>{snapshot.streakDays}</strong>{' '}
+            {snapshot.streakDays === 1
+              ? 'dia útil seguido'
+              : 'dias úteis seguidos'}
+          </li>
+          <li>
+            <strong>{snapshot.shieldsLeft}</strong>{' '}
+            {snapshot.shieldsLeft === 1 ? 'escudo' : 'escudos'} no mês
+          </li>
+        </ul>
+
         {snapshot.prestigeReady && (
           <div className="operator-profile__prestige">
             {confirmPrestige ? (
@@ -306,118 +354,90 @@ export function OperatorProfile() {
                 className="operator-profile__btn operator-profile__btn--primary"
                 onClick={() => setConfirmPrestige(true)}
               >
-                ★ Transcender
+                <PixelIcon name="star" size={11} />
+                Transcender
               </button>
             )}
           </div>
         )}
 
-        {lifetime && (
-          <section
-            className="operator-profile__consumo"
-            aria-label="Consumo real acumulado"
-          >
-            <div className="operator-profile__consumo-head">
-              <h3>Consumo real</h3>
-              <span className="operator-profile__consumo-note">
-                todos os projetos · quanto custaria em API paga
-              </span>
-            </div>
-            <div className="operator-profile__consumo-grid">
-              <div className="operator-profile__consumo-cell operator-profile__consumo-cell--money">
-                <span className="operator-profile__consumo-value">
-                  {fmtUsd(lifetime.usdEquivalent)}
-                </span>
-                <span className="operator-profile__consumo-label">
-                  economizados em assinatura
-                </span>
-              </div>
-              <div className="operator-profile__consumo-cell">
-                <span className="operator-profile__consumo-value">
-                  {fmtTokens(lifetime.tokensBurned)}
-                </span>
-                <span className="operator-profile__consumo-label">
-                  tokens torrados
-                </span>
-              </div>
-              <div className="operator-profile__consumo-cell">
-                <span className="operator-profile__consumo-value">
-                  {lifetime.panesServed}
-                </span>
-                <span className="operator-profile__consumo-label">panes</span>
-              </div>
-              <div className="operator-profile__consumo-cell">
-                <span className="operator-profile__consumo-value">
-                  {fmt(lifetime.turns)}
-                </span>
-                <span className="operator-profile__consumo-label">turnos</span>
-              </div>
-              {lifetime.mediaUsd > 0 && (
-                <div className="operator-profile__consumo-cell">
-                  <span className="operator-profile__consumo-value">
-                    {fmtUsd(lifetime.mediaUsd)}
-                  </span>
-                  <span className="operator-profile__consumo-label">
-                    em mídia gerada
-                  </span>
-                </div>
-              )}
-              {plans && plans.detected > 0 && (
-                <div
-                  className="operator-profile__consumo-cell"
-                  title={
-                    plans.connected > plans.priced
-                      ? `${fmtUsd(plans.monthlyUsd)} soma só os ${plans.priced} planos com preço de lista. ${plans.connected - plans.priced} contas conectadas ficam de fora — o provider não informou o plano ou o preço não é único.`
-                      : `${plans.detected} assinatura(s) detectada(s) pelos providers`
-                  }
-                >
-                  <span className="operator-profile__consumo-value">
-                    {fmtUsd(plans.monthlyUsd)}
-                  </span>
-                  <span className="operator-profile__consumo-label">
-                    {plans.priced === 1
-                      ? 'plano com preço'
-                      : `${plans.priced} planos com preço`}
-                    {plans.connected > plans.priced
-                      ? ` · ${plans.connected - plans.priced} contas fora da soma`
-                      : ''}
-                  </span>
-                </div>
-              )}
-              <div className="operator-profile__consumo-cell">
-                <span className="operator-profile__consumo-value">
-                  {lifetime.missionsDone}
-                </span>
-                <span className="operator-profile__consumo-label">
-                  missões vistas
-                </span>
-              </div>
-            </div>
-          </section>
-        )}
-
-        {emptyProfile ? (
+        {emptyProfile && (
           <div className="operator-profile__empty" role="status">
             <strong className="operator-profile__empty-title">
               Operador em modo recruta
             </strong>
             <p>
-              O XP sobe com <em>entrega real</em> — turno de agente com saída,
+              O XP sobe com <em>entrega real</em>: turno de agente com saída,
               handoff aceito pelo orquestrador, missão concluída, task done,
-              mídia gerada ou ação da Jarvis. O consumo acima já é seu: a assinatura cobre o
+              mídia gerada ou ação da Jarvis. O consumo abaixo já é seu: a
+              assinatura cobre o
               que a API cobraria.
             </p>
           </div>
-        ) : (
-          <div className="operator-profile__pulse" role="status">
-            <span>
-              {unlockedCount}/{achievements.length} conquistas
-            </span>
-            <span aria-hidden="true">·</span>
-            <span>{snapshot.streakDays} dias seguidos</span>
-            <span aria-hidden="true">·</span>
-            <span>{snapshot.shieldsLeft} escudos</span>
-          </div>
+        )}
+
+        {lifetime && (
+          <section
+            className="operator-profile__section operator-profile__consumo"
+            aria-labelledby={consumoId}
+          >
+            <div className="operator-profile__section-head">
+              <h3 id={consumoId}>Consumo real</h3>
+              <span className="operator-profile__section-note">
+                todos os projetos · quanto custaria em API paga
+              </span>
+            </div>
+            <div className="operator-profile__consumo-hero">
+              <span className="operator-profile__consumo-money">
+                {fmtUsd(lifetime.usdEquivalent)}
+              </span>
+              <span className="operator-profile__consumo-money-label">
+                economizados em assinatura
+              </span>
+            </div>
+            <dl className="operator-profile__facts">
+              <div>
+                <dt>tokens torrados</dt>
+                <dd>{fmtTokens(lifetime.tokensBurned)}</dd>
+              </div>
+              <div>
+                <dt>panes</dt>
+                <dd>{lifetime.panesServed}</dd>
+              </div>
+              <div>
+                <dt>turnos</dt>
+                <dd>{fmt(lifetime.turns)}</dd>
+              </div>
+              <div>
+                <dt>missões vistas</dt>
+                <dd>{lifetime.missionsDone}</dd>
+              </div>
+              {lifetime.mediaUsd > 0 && (
+                <div>
+                  <dt>em mídia gerada</dt>
+                  <dd>{fmtUsd(lifetime.mediaUsd)}</dd>
+                </div>
+              )}
+            </dl>
+            {plans && plans.detected > 0 && (
+              <p
+                className="operator-profile__plans-note"
+                title={
+                  plans.connected > plans.priced
+                    ? `${fmtUsd(plans.monthlyUsd)} por mês soma só os ${plans.priced} planos com preço de lista. ${plans.connected - plans.priced} contas conectadas ficam de fora porque o provider não informou o plano ou o preço não é único.`
+                    : `${plans.detected} assinatura(s) detectada(s) pelos providers`
+                }
+              >
+                {plans.priced === 0
+                  ? `${pluralPt(plans.detected, 'assinatura detectada', 'assinaturas detectadas')}, sem preço de lista para somar.`
+                  : `Assinaturas: ${fmtUsd(plans.monthlyUsd)}/mês em ${pluralPt(plans.priced, 'plano com preço', 'planos com preço')}${
+                      plans.connected > plans.priced
+                        ? ` · ${pluralPt(plans.connected - plans.priced, 'conta fora', 'contas fora')} da soma`
+                        : ''
+                    }.`}
+              </p>
+            )}
+          </section>
         )}
 
         {recentUnlocks.length > 0 && (
@@ -443,69 +463,145 @@ export function OperatorProfile() {
         {quests.length > 0 && (
           <section
             className="operator-profile__section"
-            aria-label="Próximas recompensas"
+            aria-labelledby={questsId}
           >
-            <h3>Próximas recompensas</h3>
+            <h3 id={questsId}>Próximas recompensas</h3>
             <ul className="operator-profile__quests">
               {quests.map((quest) => (
                 <li key={quest.id} className="operator-profile__quest">
-                  <div className="operator-profile__quest-head">
-                    <strong>{quest.title}</strong>
+                  <span
+                    className="operator-profile__quest-mark"
+                    aria-hidden="true"
+                  />
+                  <div className="operator-profile__quest-body">
+                    <strong className="operator-profile__quest-title">
+                      {quest.title}
+                    </strong>
+                    <p className="operator-profile__quest-hint">{quest.hint}</p>
+                    {quest.target > 1 && (
+                      <span
+                        className="operator-profile__mini-bar"
+                        role="progressbar"
+                        aria-valuemin={0}
+                        aria-valuemax={quest.target}
+                        aria-valuenow={Math.min(quest.current, quest.target)}
+                        aria-label={`${quest.title}: ${quest.current} de ${quest.target}`}
+                      >
+                        <span
+                          className="operator-profile__mini-bar-fill"
+                          style={{ transform: `scaleX(${quest.ratio})` }}
+                        />
+                      </span>
+                    )}
+                  </div>
+                  <div className="operator-profile__quest-reward">
+                    <span className="operator-profile__quest-count">
+                      {quest.current}/{quest.target}
+                    </span>
                     <span className="operator-profile__quest-meta">
-                      {quest.current}/{quest.target} · {quest.rewardHint}
+                      {quest.rewardHint}
                     </span>
                   </div>
-                  <p className="operator-profile__quest-hint">{quest.hint}</p>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
+        <section
+          className="operator-profile__section"
+          aria-labelledby={achievementsId}
+        >
+          <div className="operator-profile__section-head">
+            <h3 id={achievementsId}>Conquistas</h3>
+            <span className="operator-profile__section-note">
+              {unlockedCount} de {achievements.length}
+            </span>
+          </div>
+          <ul className="operator-profile__achievements">
+            {achievements.map((item) => (
+              <li
+                key={item.id}
+                className={
+                  item.unlocked
+                    ? 'operator-profile__achievement operator-profile__achievement--live'
+                    : 'operator-profile__achievement operator-profile__achievement--locked'
+                }
+              >
+                <span className="operator-profile__achievement-title">
+                  {item.title}
+                  {item.unlocked && (
+                    <span className="operator-profile__achievement-badge">
+                      <PixelIcon name="check" size={10} />
+                      Conquistada
+                    </span>
+                  )}
+                </span>
+                <span className="operator-profile__achievement-desc">
+                  {item.unlocked
+                    ? item.description
+                    : `${item.current}/${item.target} · ${item.description}`}
+                </span>
+                {!item.unlocked && item.target > 1 && (
                   <span
                     className="operator-profile__mini-bar"
                     role="progressbar"
                     aria-valuemin={0}
-                    aria-valuemax={quest.target}
-                    aria-valuenow={Math.min(quest.current, quest.target)}
-                    aria-label={`${quest.title}: ${quest.current} de ${quest.target}`}
+                    aria-valuemax={item.target}
+                    aria-valuenow={Math.min(item.current, item.target)}
+                    aria-label={`${item.title}: ${item.current} de ${item.target}`}
                   >
                     <span
                       className="operator-profile__mini-bar-fill"
-                      style={{ transform: `scaleX(${quest.ratio})` }}
+                      style={{ transform: `scaleX(${item.ratio})` }}
                     />
                   </span>
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
 
-        {recent.length > 0 && (
-          <section className="operator-profile__section" aria-label="Feed de XP">
-            <h3>Feed recente</h3>
-            <ul className="operator-profile__feed">
-              {recent.map((event, index) => (
-                <li
-                  key={`${event.createdAt}-${event.kind}-${index}`}
-                  className="operator-profile__feed-item"
-                >
-                  <span className="operator-profile__feed-xp">
-                    +{fmt(event.points)}
-                  </span>
-                  <span className="operator-profile__feed-kind">
-                    {xpKindLabel(event.kind)}
-                    {(event.count ?? 1) > 1 ? ` ×${event.count}` : ''}
-                  </span>
-                  <span className="operator-profile__feed-time">
-                    {formatRelativeTime(event.createdAt, now)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
+        <div
+          className={
+            recent.length > 0
+              ? 'operator-profile__grid'
+              : 'operator-profile__grid operator-profile__grid--single'
+          }
+        >
+          {recent.length > 0 && (
+            <section
+              className="operator-profile__section"
+              aria-labelledby={feedId}
+            >
+              <h3 id={feedId}>Feed recente</h3>
+              <ul className="operator-profile__feed">
+                {recent.map((event, index) => (
+                  <li
+                    key={`${event.createdAt}-${event.kind}-${index}`}
+                    className="operator-profile__feed-item"
+                  >
+                    <span className="operator-profile__feed-xp">
+                      +{fmt(event.points)}
+                    </span>
+                    <span className="operator-profile__feed-kind">
+                      {xpKindLabel(event.kind)}
+                      {(event.count ?? 1) > 1 ? ` ×${event.count}` : ''}
+                    </span>
+                    <span className="operator-profile__feed-time">
+                      {formatRelativeTime(event.createdAt, now)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
 
-        <div className="operator-profile__grid">
           <section
             className="operator-profile__section"
-            aria-label="Detalhes dos pontos"
+            aria-labelledby={deliveriesId}
           >
-            <h3>Entregas · todos os projetos</h3>
+            <h3 id={deliveriesId}>Entregas · todos os projetos</h3>
             <ul className="operator-profile__list">
               {XP_BREAKDOWN_COPY.map(([kind, label]) => (
                 <li key={kind}>
@@ -527,27 +623,6 @@ export function OperatorProfile() {
                   {label}
                 </li>
               ))}
-            </ul>
-          </section>
-
-          <section
-            className="operator-profile__section"
-            aria-label="Ritmo e eficiência"
-          >
-            <h3>Ritmo</h3>
-            <ul className="operator-profile__list">
-              <li>
-                <span className="operator-profile__count">
-                  {snapshot.streakDays}
-                </span>{' '}
-                dias úteis seguidos
-              </li>
-              <li>
-                <span className="operator-profile__count">
-                  {snapshot.shieldsLeft}
-                </span>{' '}
-                escudos restantes no mês
-              </li>
               <li>
                 <span className="operator-profile__count">{efficient}</span>{' '}
                 missões na banda eficiente
@@ -556,49 +631,15 @@ export function OperatorProfile() {
           </section>
         </div>
 
-        <section className="operator-profile__section" aria-label="Conquistas">
-          <h3>Conquistas</h3>
-          <div className="operator-profile__achievements">
-            {achievements.map((item) => (
-              <div
-                key={item.id}
-                className={
-                  item.unlocked
-                    ? 'operator-profile__achievement operator-profile__achievement--live'
-                    : 'operator-profile__achievement operator-profile__achievement--locked'
-                }
-              >
-                <span className="operator-profile__achievement-title">
-                  {item.title}
-                </span>
-                <span className="operator-profile__achievement-desc">
-                  {item.unlocked
-                    ? item.description
-                    : `${item.current}/${item.target} · ${item.description}`}
-                </span>
-                <span
-                  className="operator-profile__mini-bar"
-                  role="progressbar"
-                  aria-valuemin={0}
-                  aria-valuemax={item.target}
-                  aria-valuenow={Math.min(item.current, item.target)}
-                  aria-label={`${item.title}: ${item.current} de ${item.target}`}
-                >
-                  <span
-                    className="operator-profile__mini-bar-fill"
-                    style={{ transform: `scaleX(${item.ratio})` }}
-                  />
-                </span>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section className="operator-profile__section" aria-label="Skins">
-          <h3>Visuais do mascote</h3>
+        <section
+          className="operator-profile__section"
+          aria-labelledby={skinsId}
+        >
+          <h3 id={skinsId}>Visuais do mascote</h3>
           <div className="operator-profile__skins">
             <button
               type="button"
+              aria-pressed={snapshot.selectedSkin === null}
               className={
                 snapshot.selectedSkin === null
                   ? 'operator-profile__skin operator-profile__skin--active'
@@ -612,6 +653,7 @@ export function OperatorProfile() {
               <button
                 key={skin}
                 type="button"
+                aria-pressed={snapshot.selectedSkin === skin}
                 className={
                   snapshot.selectedSkin === skin
                     ? 'operator-profile__skin operator-profile__skin--active'
@@ -651,12 +693,12 @@ export function OperatorProfile() {
               checked={sober}
               onChange={(e) => void handleSober(e.target.checked)}
             />
-            Modo sóbrio (oculta HUD e celebrações; o XP continua)
+            Modo sóbrio (esconde pontos e celebrações; o XP continua)
           </label>
           <span className="operator-profile__hint">
-            Reabra este perfil a qualquer momento com{' '}
-            {formatShortcut('mod', 'shift', 'O')}. O XP
-            é contado por pasta de projeto.
+            Reabra este perfil pelo cartão no menu lateral ou com{' '}
+            {formatShortcut('mod', 'shift', 'O')}. O XP é contado por pasta de
+            projeto.
           </span>
           {ioMessage && (
             <span className="operator-profile__io" role="status">

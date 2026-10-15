@@ -134,55 +134,31 @@
   white-space: nowrap;
 }
 
-/* ---- HUD do Operador (gamificação) ---- */
+/* ---- HUD do Operador: entrada visível do perfil (rail e Minha conta) ---- */
+/* Cromo que fica na tela o dia todo: cor chapada, sem varredura nem brilho.
+   O acento mora só na barra de progresso do tier (estado vivo). */
 .operator-hud {
   position: relative;
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: var(--space-2);
-  flex: 0 0 auto;
-  padding: 2px var(--space-2-5) var(--space-1);
+  gap: var(--space-2-5);
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-1-5) var(--space-2-5);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  background: var(--bg-bar);
+  background: var(--surface-overlay);
   font: inherit;
-  font-size: var(--text-xs);
+  text-align: left;
   color: var(--text-dim);
   cursor: pointer;
-  transition: border-color 160ms var(--ease-out-quart),
+  transition:
+    background-color 160ms var(--ease-out-quart),
+    border-color 160ms var(--ease-out-quart),
     color 160ms var(--ease-out-quart);
 }
-
-.operator-hud--sober {
-  gap: var(--space-2-5);
-}
-
-.operator-hud__sober-label {
-  font-size: var(--text-sm);
-  font-weight: 650;
-  color: var(--text);
-}
-
-.operator-hud--compact {
-  min-height: 40px;
-}
-.operator-hud__level {
-  display: inline-flex;
-  align-items: center;
-  padding: 0 var(--space-1);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  font-family: var(--font-mono);
-  font-size: var(--text-2xs);
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--accent);
-  background: var(--accent-soft);
-  white-space: nowrap;
-}
-.operator-hud:hover,
-.operator-hud:focus-visible {
+.operator-hud:hover {
+  background: var(--surface-hover);
   border-color: var(--border-strong);
   color: var(--text);
 }
@@ -190,827 +166,6 @@
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
-.operator-hud__power {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  color: var(--text);
-}
-.operator-hud__detail {
-  display: none;
-  align-items: center;
-  gap: var(--space-1-5);
-  letter-spacing: 0.04em;
-  white-space: nowrap;
-}
-.operator-hud:hover .operator-hud__detail,
-.operator-hud:focus-visible .operator-hud__detail {
-  display: inline-flex;
-  animation: operator-hud-fade 180ms var(--ease-out-quart);
-}
-.operator-hud__stars {
-  color: var(--gold);
-  letter-spacing: 0.1em;
-}
-.operator-hud__bar {
-  position: absolute;
-  left: 10px;
-  right: 10px;
-  bottom: 1px;
-  height: 2px;
-  border-radius: 1px;
-  background: var(--accent-soft);
-  overflow: hidden;
-}
-.operator-hud__bar-fill {
-  display: block;
-  height: 100%;
-  background: var(--accent);
-  transform-origin: left center;
-  transition: transform 240ms var(--ease-out-quint);
-}
-@keyframes operator-hud-fade {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .operator-hud__bar-fill {
-    transition: none;
-  }
-  .operator-hud:hover .operator-hud__detail,
-  .operator-hud:focus-visible .operator-hud__detail {
-    animation: none;
-  }
-}
-
-/* Telas estreitas: HUD compacto sempre visível; tier só no hover em telas largas. */
-@media (max-width: 1280px) {
-  .operator-hud {
-    gap: var(--space-1);
-    padding: 2px var(--space-1-5) var(--space-1);
-  }
-  .operator-hud__detail {
-    display: none !important;
-  }
-}
-
-@media (max-width: 960px) {
-  .operator-hud__power {
-    font-size: var(--text-2xs);
-  }
-  .cost-summary {
-    gap: var(--space-1-5);
-    padding: 2px var(--space-1-5);
-    font-size: var(--text-2xs);
-  }
-}
-
-
-/* ---- Perfil de Operador (overlay) ---- */
-.operator-profile__backdrop {
-  position: fixed;
-  inset: 0;
-  /* Modal focado de verdade: degrau hard-modal da ladder. Continua acima do
-     Settings (app-chrome 55) e abaixo de confirm (1300) — diálogos decisivos
-     cobrem o perfil. */
-  z-index: var(--z-hard-modal);
-  display: grid;
-  place-items: center;
-  /* 78%: cockpit focado — o app atrás não pode vazar por cima do diálogo. */
-  background: color-mix(in srgb, var(--bg) 78%, transparent);
-}
-.operator-profile {
-  position: relative;
-  width: min(720px, calc(100vw - 48px));
-  max-height: min(86vh, 780px);
-  overflow-y: auto;
-  padding: var(--space-5) var(--space-5) var(--space-5);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-lg);
-  background:
-    linear-gradient(90deg, color-mix(in srgb, var(--accent) 4%, transparent) 1px, transparent 1px),
-    linear-gradient(0deg, color-mix(in srgb, var(--ok) 3.5%, transparent) 1px, transparent 1px),
-    linear-gradient(180deg, color-mix(in srgb, var(--bg-elevated) 98%, transparent), color-mix(in srgb, var(--bg) 98%, transparent));
-  background-size: 24px 24px, 24px 24px, auto;
-  color: var(--text);
-  box-shadow: var(--shadow-3);
-  animation: operator-profile-in 200ms var(--ease-out-quint);
-  background-position: 0 0, 0 0, 0 0;
-}
-/* Deriva lenta do grid de fundo — dá "vida de terminal" ao perfil. */
-@media (prefers-reduced-motion: no-preference) {
-  .operator-profile {
-    animation: operator-profile-in 200ms var(--ease-out-quint),
-      operator-profile-drift 24s linear infinite;
-  }
-}
-@keyframes operator-profile-drift {
-  to { background-position: 0 -48px, -48px 0, 0 0; }
-}
-
-.operator-profile::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 3px;
-  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-  background:
-    linear-gradient(90deg, var(--accent) 0 18%, transparent 18% 22%, var(--ok) 22% 32%, transparent 32% 36%, var(--warn) 36% 44%, transparent 44%);
-  pointer-events: none;
-}
-/* Varredura de scanline atravessando o perfil na abertura. */
-.operator-profile::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  height: 40%;
-  pointer-events: none;
-  background: linear-gradient(
-    180deg,
-    color-mix(in oklab, var(--accent) 12%, transparent),
-    transparent
-  );
-  opacity: 0;
-  animation: operator-profile-scan 900ms 120ms var(--ease-out-quart);
-}
-@keyframes operator-profile-scan {
-  0% { opacity: 0.9; transform: translateY(-40%); }
-  100% { opacity: 0; transform: translateY(260%); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .operator-profile::after { display: none; }
-}
-@keyframes operator-profile-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-.operator-profile__header {
-  position: relative;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: var(--space-4) var(--space-4);
-  align-items: start;
-  padding: var(--space-1) var(--space-6) var(--space-4) 0;
-  border-bottom: 1px solid var(--border);
-  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 6%, transparent), transparent 70%);
-}
-.operator-profile__header > :first-child,
-.operator-profile__pet {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  line-height: 0;
-  /* Placa do mascote: o retrato vira um "badge" de operador em vez de
-     sprite solto flutuando no header. */
-  padding: var(--space-2);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  background:
-    radial-gradient(
-      circle at 50% 30%,
-      color-mix(in srgb, var(--accent) 16%, transparent),
-      transparent 72%
-    ),
-    color-mix(in srgb, var(--bg) 55%, transparent);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
-}
-.operator-profile__pet canvas {
-  display: block;
-}
-.operator-hud__pet {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  line-height: 0;
-}
-
-/* ── Chrome comum do pet: retrato com lata cafeinada ─────────────────────────
-   Cobre todos os skins (sheet / custom / operator). position: relative garante
-   que o badge absoluto da lata não escape do flow. overflow: visible permite
-   que a lata ultrapasse as bordas do retrato sem ser cortada.
-   ─────────────────────────────────────────────────────────────────────────── */
-.chosen-pet-portrait {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  line-height: 0;
-  overflow: visible;
-}
-
-.chosen-pet-portrait__coffee {
-  position: absolute;
-  bottom: -20%;
-  left: -20%;
-  opacity: 1;
-  pointer-events: none;
-  animation: pet-coffee-in 380ms ease-out;
-}
-
-.chosen-pet-portrait--compact .chosen-pet-portrait__coffee {
-  bottom: -8%;
-  left: -8%;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .chosen-pet-portrait__coffee {
-    animation: none;
-  }
-}
-.operator-profile__identity {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  min-width: 0;
-}
-.operator-profile__title {
-  margin: 0 0 var(--space-1);
-  color: var(--text);
-  font-size: var(--text-lg);
-  font-weight: 650;
-  line-height: 1.25;
-  letter-spacing: -0.01em;
-}
-.operator-profile__branch {
-  font-size: var(--text-xs);
-  line-height: 1.5;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--text-dim);
-  margin-bottom: var(--space-1-5);
-}
-.operator-profile__stars {
-  margin-left: var(--space-2);
-  color: var(--gold);
-  letter-spacing: 0.12em;
-}
-.operator-profile__tier {
-  font-size: var(--text-2xl);
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  line-height: 1.25;
-  text-transform: uppercase;
-}
-.operator-profile__power-label {
-  margin-top: var(--space-2);
-  font-size: var(--text-2xs);
-  font-weight: 700;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--text-dim);
-}
-.operator-profile__power {
-  font-family: var(--font-mono);
-  font-size: clamp(var(--text-3xl), 5vw, var(--text-hero));
-  /* Número de exibição fluido com limites nos degraus da régua (22→34px). */
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  line-height: 1.15;
-  color: var(--accent);
-}
-.operator-profile__bar {
-  display: block;
-  height: 7px;
-  margin-top: var(--space-3);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-xs);
-  background: color-mix(in srgb, var(--bg) 62%, transparent);
-  overflow: hidden;
-}
-.operator-profile__bar-fill {
-  display: block;
-  height: 100%;
-  background:
-    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.2) 0 4px, transparent 4px 8px),
-    linear-gradient(90deg, var(--accent), var(--ok));
-  transform-origin: left center;
-  transition: transform 240ms var(--ease-out-quint);
-}
-.operator-profile__next {
-  font-size: var(--text-xs);
-  line-height: 1.4;
-  color: var(--text-dim);
-  margin-top: var(--space-1-5);
-}
-.operator-profile__close {
-  position: absolute;
-  top: 2px;
-  right: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--bg) 28%, transparent);
-  padding: var(--space-1) var(--space-2);
-  cursor: pointer;
-  color: var(--text-dim);
-  z-index: 1;
-}
-.operator-profile__close:hover {
-  color: var(--text);
-  border-color: var(--border-strong);
-}
-.operator-profile__prestige {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-2-5);
-  margin-top: var(--space-3);
-  padding: var(--space-2-5) var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--bg) 42%, transparent);
-  font-size: var(--text-sm);
-  color: var(--text-dim);
-}
-.operator-profile__empty {
-  margin-top: var(--space-3);
-  padding: var(--space-3) var(--space-3);
-  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
-  border-radius: var(--radius-md);
-  background:
-    linear-gradient(
-      135deg,
-      color-mix(in srgb, var(--accent) 14%, transparent),
-      color-mix(in srgb, var(--ok) 8%, transparent)
-    );
-  color: var(--text-dim);
-  font-size: var(--text-sm);
-  line-height: 1.5;
-}
-.operator-profile__empty-title {
-  display: block;
-  margin-bottom: var(--space-1-5);
-  color: var(--text);
-  font-size: var(--text-sm);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-.operator-profile__empty p {
-  margin: 0;
-}
-
-/* ── Consumo real (vida útil): "quanto já torramos juntos" ─────────────
-   A banda lê o tracker de vida útil (todos os escopos) — tokens e o
-   equivalente USD de API pública. Ouro para o dinheiro: é o número que
-   prova o valor da assinatura. */
-.operator-profile__consumo {
-  margin-top: var(--space-3);
-  padding: var(--space-3);
-  border: 1px solid color-mix(in srgb, var(--gold) 32%, var(--border));
-  border-radius: var(--radius-md);
-  background:
-    linear-gradient(
-      135deg,
-      color-mix(in srgb, var(--gold) 9%, transparent),
-      transparent 55%
-    ),
-    color-mix(in srgb, var(--bg) 46%, transparent);
-}
-.operator-profile__consumo-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-3);
-  margin-bottom: var(--space-2-5);
-}
-.operator-profile__consumo-head h3 {
-  margin: 0;
-  font-size: var(--text-2xs);
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--gold);
-}
-.operator-profile__consumo-note {
-  font-size: var(--text-2xs);
-  color: var(--text-dim);
-  letter-spacing: 0.04em;
-}
-.operator-profile__consumo-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
-  gap: var(--space-2);
-}
-.operator-profile__consumo-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-  padding: var(--space-2) var(--space-2-5);
-  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--bg) 55%, transparent);
-}
-.operator-profile__consumo-value {
-  font-family: var(--font-mono);
-  font-size: var(--text-xl);
-  font-weight: 650;
-  font-variant-numeric: tabular-nums;
-  line-height: 1.2;
-  color: var(--text);
-  white-space: nowrap;
-}
-.operator-profile__consumo-cell--money {
-  border-color: color-mix(in srgb, var(--gold) 45%, var(--border));
-  background: color-mix(in srgb, var(--gold) 7%, var(--bg) 50%);
-}
-.operator-profile__consumo-cell--money .operator-profile__consumo-value {
-  color: var(--gold);
-}
-.operator-profile__consumo-label {
-  font-size: var(--text-2xs);
-  line-height: 1.3;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--text-dim);
-}
-
-.operator-profile__plan {
-  font-size: var(--text-xs);
-  line-height: 1.4;
-  color: var(--text-faint);
-}
-.operator-profile__today {
-  align-self: flex-start;
-  margin-top: var(--space-2);
-  padding: 2px var(--space-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-round);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  font-variant-numeric: tabular-nums;
-  color: var(--text-dim);
-}
-.operator-profile__today--live {
-  border-color: color-mix(in srgb, var(--ok) 40%, var(--border));
-  color: var(--ok);
-}
-.operator-profile__recent-unlocks {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-1-5);
-}
-.operator-profile__recent-unlock {
-  padding: var(--space-1) var(--space-2-5);
-  border: 1px solid color-mix(in srgb, var(--ok) 40%, var(--border));
-  border-radius: var(--radius-round);
-  background: color-mix(in srgb, var(--ok) 8%, transparent);
-  color: var(--text);
-  font-size: var(--text-sm);
-}
-.operator-profile__pulse {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-  margin-top: var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--bg) 42%, transparent);
-  color: var(--text-dim);
-  font-size: var(--text-sm);
-  font-variant-numeric: tabular-nums;
-}
-.operator-profile__quests {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-.operator-profile__quest {
-  padding: var(--space-2-5) var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--bg) 40%, transparent);
-}
-.operator-profile__quest-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-1-5) var(--space-3);
-}
-.operator-profile__quest-head strong {
-  font-size: var(--text-md);
-  color: var(--text);
-}
-.operator-profile__quest-meta {
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  color: var(--accent);
-}
-.operator-profile__quest-hint {
-  margin: var(--space-1) 0 var(--space-2);
-  font-size: var(--text-sm);
-  line-height: 1.4;
-  color: var(--text-dim);
-}
-.operator-profile__mini-bar {
-  display: block;
-  height: 4px;
-  border-radius: var(--radius-round);
-  background: color-mix(in srgb, var(--bg) 55%, transparent);
-  border: 1px solid var(--border);
-  overflow: hidden;
-}
-.operator-profile__mini-bar-fill {
-  display: block;
-  height: 100%;
-  width: 100%;
-  background: linear-gradient(90deg, var(--accent), var(--ok));
-  transform-origin: left center;
-  transition: transform 240ms var(--ease-out-quint);
-}
-@media (prefers-reduced-motion: reduce) {
-  .operator-profile__mini-bar-fill {
-    transition: none;
-  }
-}
-.operator-profile__feed {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  max-height: 160px;
-  overflow: auto;
-}
-.operator-profile__feed-item {
-  display: grid;
-  grid-template-columns: 64px 1fr auto;
-  gap: var(--space-2-5);
-  align-items: center;
-  padding: var(--space-1-5) var(--space-2);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--bg) 28%, transparent);
-  font-size: var(--text-sm);
-}
-.operator-profile__feed-xp {
-  font-family: var(--font-mono);
-  font-weight: 600;
-  color: var(--ok);
-}
-.operator-profile__feed-kind {
-  color: var(--text);
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.operator-profile__feed-time {
-  color: var(--text-dim);
-  font-variant-numeric: tabular-nums;
-}
-.operator-profile__achievement--live {
-  border-color: color-mix(in srgb, var(--ok) 45%, var(--border));
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ok) 12%, transparent);
-}
-.operator-profile__hint-inline {
-  font-size: var(--text-xs);
-  color: var(--text-dim);
-  align-self: center;
-}
-.operator-profile__grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-4);
-}
-@media (max-width: 640px) {
-  .operator-profile__grid {
-    grid-template-columns: 1fr;
-  }
-}
-.operator-profile__section {
-  margin-top: var(--space-4);
-}
-.operator-profile__section h3 {
-  margin: 0 0 var(--space-2);
-  font-size: var(--text-xs);
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: #9aa7c4;
-}
-.operator-profile__list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  font-size: var(--text-md);
-}
-.operator-profile__count {
-  display: inline-block;
-  min-width: 34px;
-  font-family: var(--font-mono);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  color: var(--text);
-}
-.operator-profile__achievements {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: var(--space-2);
-}
-.operator-profile__achievement {
-  padding: var(--space-2) var(--space-2-5);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--bg) 36%, transparent);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-.operator-profile__achievement--locked {
-  opacity: 0.55;
-}
-.operator-profile__achievement-title {
-  font-size: var(--text-sm);
-  font-weight: 600;
-}
-.operator-profile__achievement--locked .operator-profile__achievement-title {
-  color: var(--text-dim);
-}
-.operator-profile__achievement-desc {
-  font-size: var(--text-xs);
-  color: var(--text-dim);
-}
-.operator-profile__skins {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-.operator-profile__skin {
-  padding: var(--space-1) var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--bg) 36%, transparent);
-  font-size: var(--text-sm);
-  color: var(--text-dim);
-  cursor: pointer;
-  transition: border-color 160ms var(--ease-out-quart),
-    color 160ms var(--ease-out-quart);
-}
-.operator-profile__skin:hover {
-  border-color: var(--border-strong);
-  color: var(--text);
-}
-.operator-profile__skin--active {
-  border-color: var(--accent);
-  color: var(--text);
-  background: var(--accent-soft);
-}
-.operator-profile__footer {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-3);
-  margin-top: var(--space-5);
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--border);
-  font-size: var(--text-sm);
-}
-.operator-profile__btn {
-  padding: var(--space-1) var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--bg) 36%, transparent);
-  font-size: var(--text-sm);
-  color: var(--text);
-  cursor: pointer;
-  transition: border-color 160ms var(--ease-out-quart);
-}
-.operator-profile__btn:hover {
-  border-color: var(--border-strong);
-}
-.operator-profile__btn--primary {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-.operator-profile__sober {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1-5);
-  color: var(--text-dim);
-  cursor: pointer;
-}
-.operator-profile__io {
-  flex-basis: 100%;
-  color: var(--text-dim);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  word-break: break-all;
-}
-.operator-profile__hint {
-  flex-basis: 100%;
-  color: var(--text-dim);
-  font-size: var(--text-xs);
-  opacity: 0.8;
-}
-@media (prefers-reduced-motion: reduce) {
-  .operator-profile {
-    animation: none;
-  }
-  .operator-profile__bar-fill {
-    transition: none;
-  }
-}
-.cost-summary__item--total {
-  color: var(--text);
-  font-weight: 600;
-}
-
-
-/* ---- HUD "nerd polish": barra viva + varredura no hover ---- */
-/* HUD persistente não ganha glow — brilho é privilégio dos FX transitórios de
-   celebração logo acima; cromo que fica na tela o dia todo fala em cor chapada. */
-.operator-hud__power {
-  color: var(--accent);
-}
-/* Shimmer contínuo e sutil percorrendo a barra de progresso. */
-/* Shimmer só quando o operador OLHA (hover/foco) — "calmo em ruído": nada
-   de brilho perpétuo em repouso na zona operacional. */
-.operator-hud__bar-fill::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    rgba(255, 255, 255, 0.5) 50%,
-    transparent 100%
-  );
-  transform: translateX(-100%);
-}
-.operator-hud:hover .operator-hud__bar-fill::after,
-.operator-hud:focus-visible .operator-hud__bar-fill::after {
-  animation: operator-hud-shimmer 2.6s var(--ease-out-quart) infinite;
-}
-.operator-hud__bar-fill { position: relative; overflow: hidden; }
-@keyframes operator-hud-shimmer {
-  0% { transform: translateX(-100%); }
-  55%, 100% { transform: translateX(220%); }
-}
-/* Varredura de scanline no hover — leitura "terminal/HUD". */
-.operator-hud::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: linear-gradient(
-    100deg,
-    transparent 30%,
-    color-mix(in oklab, var(--accent) 16%, transparent) 50%,
-    transparent 70%
-  );
-  transform: translateX(-110%);
-  opacity: 0;
-  pointer-events: none;
-}
-.operator-hud:hover::after,
-.operator-hud:focus-visible::after {
-  opacity: 1;
-  animation: operator-hud-sweep 900ms var(--ease-out-quart);
-}
-@keyframes operator-hud-sweep {
-  from { transform: translateX(-110%); }
-  to { transform: translateX(110%); }
-}
-/* Pulso do chip de nível quando o mascote celebra (mood via sprite). */
-@keyframes operator-hud-level-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 transparent; }
-  50% { box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 40%, transparent); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .operator-hud__bar-fill::after,
-  .operator-hud::after {
-    display: none;
-  }
-}
-
 /* ---- HUD no rail (F-gamificação): cromo do dia todo, calmo ----
    Poder em texto, ganho e "hoje" em --ok (entrega = sinal ok), nível neutro:
    o rosa fica para o que está vivo. Nada contínuo: o "+N" e o tique do
@@ -1121,6 +276,683 @@
   }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .operator-hud,
+  .operator-hud__bar-fill {
+    transition: none;
+  }
+}
+
+@media (max-width: 960px) {
+  .cost-summary {
+    gap: var(--space-1-5);
+    padding: 2px var(--space-1-5);
+    font-size: var(--text-2xs);
+  }
+}
+
+
+/* ---- Perfil de Operador (overlay) ---- */
+/* Receita da casa (DESIGN.md §5): --bg-elevated, borda, --radius-xl, sombra.
+   Sem gradiente decorativo, sem grade em deriva, sem varredura: o acento é
+   sinal (poder e progresso), o resto é hierarquia tipográfica. */
+.operator-profile__backdrop {
+  position: fixed;
+  inset: 0;
+  /* Modal focado de verdade: degrau hard-modal da ladder. Continua acima do
+     Settings (app-chrome 55) e abaixo de confirm (1300) — diálogos decisivos
+     cobrem o perfil. */
+  z-index: var(--z-hard-modal);
+  display: grid;
+  place-items: center;
+  /* 78%: cockpit focado — o app atrás não pode vazar por cima do diálogo. */
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+}
+.operator-profile {
+  position: relative;
+  width: min(720px, calc(100vw - 48px));
+  max-height: min(86vh, 780px);
+  overflow-y: auto;
+  padding: var(--space-5);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xl);
+  background: var(--bg-elevated);
+  color: var(--text);
+  box-shadow: var(--shadow-3), var(--shadow-inset-hi);
+  animation: operator-profile-in 200ms var(--ease-out-quint);
+}
+@keyframes operator-profile-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.operator-profile :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ── Cabeçalho: placa do pet + identidade (tier, poder, próximo marco) ── */
+.operator-profile__header {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+  padding: 0 var(--space-6) var(--space-4) 0;
+  border-bottom: 1px solid var(--border);
+}
+.operator-profile__pet {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+  /* Placa do mascote: o retrato vira um "badge" de operador em vez de
+     sprite solto flutuando no header. */
+  padding: var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+  box-shadow: var(--shadow-inset-hi);
+}
+.operator-profile__pet canvas {
+  display: block;
+}
+
+/* ── Chrome comum do pet: retrato com lata cafeinada ─────────────────────────
+   Cobre todos os skins (sheet / custom / operator). position: relative garante
+   que o badge absoluto da lata não escape do flow. overflow: visible permite
+   que a lata ultrapasse as bordas do retrato sem ser cortada.
+   ─────────────────────────────────────────────────────────────────────────── */
+.chosen-pet-portrait {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+  overflow: visible;
+}
+
+.chosen-pet-portrait__coffee {
+  position: absolute;
+  bottom: -20%;
+  left: -20%;
+  opacity: 1;
+  pointer-events: none;
+  animation: pet-coffee-in 380ms ease-out;
+}
+
+.chosen-pet-portrait--compact .chosen-pet-portrait__coffee {
+  bottom: -8%;
+  left: -8%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chosen-pet-portrait__coffee {
+    animation: none;
+  }
+}
+.operator-profile__identity {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.operator-profile__title {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--text-xl);
+  font-weight: 650;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+.operator-profile__scope {
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+.operator-profile__rank {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+.operator-profile__tier {
+  font-size: var(--text-2xl);
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  line-height: 1.2;
+  color: var(--text);
+}
+.operator-profile__stars {
+  display: inline-flex;
+  gap: 2px;
+  color: var(--gold);
+}
+.operator-profile__power-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+.operator-profile__power {
+  font-family: var(--font-mono);
+  /* Número de exibição fluido com limites nos degraus da régua (22→34px). */
+  font-size: clamp(var(--text-3xl), 5vw, var(--text-hero));
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  color: var(--accent);
+}
+.operator-profile__power-label {
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+.operator-profile__bar {
+  display: block;
+  height: 6px;
+  margin-top: var(--space-2);
+  border-radius: var(--radius-round);
+  background: var(--surface-3);
+  overflow: hidden;
+}
+.operator-profile__bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transform-origin: left center;
+  transition: transform 240ms var(--ease-out-quint);
+}
+.operator-profile__next {
+  font-size: var(--text-sm);
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+.operator-profile__close {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: grid;
+  place-items: center;
+  width: var(--space-6);
+  height: var(--space-6);
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition:
+    background-color 120ms var(--ease-out-quart),
+    border-color 120ms var(--ease-out-quart),
+    color 120ms var(--ease-out-quart);
+}
+.operator-profile__close:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+/* ── Resumo da jornada: três números, uma linha ── */
+.operator-profile__stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-5);
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+.operator-profile__stats strong {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.operator-profile__prestige {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2-5);
+  margin-top: var(--space-3);
+  padding: var(--space-2-5) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+.operator-profile__empty {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+.operator-profile__empty-title {
+  display: block;
+  margin-bottom: var(--space-1);
+  color: var(--text);
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+.operator-profile__empty p {
+  margin: 0;
+}
+
+/* ── Seções: título em frase (13px), nota à direita; sem eyebrow em caixa-alta ── */
+.operator-profile__section {
+  margin-top: var(--space-5);
+}
+.operator-profile__section h3 {
+  margin: 0 0 var(--space-2-5);
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--text);
+}
+.operator-profile__section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-3);
+  margin-bottom: var(--space-2-5);
+}
+.operator-profile__section-head h3 {
+  margin: 0;
+  /* Em janela estreita a nota desce para a linha de baixo; o título nunca quebra. */
+  white-space: nowrap;
+}
+.operator-profile__section-note {
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+  text-align: right;
+}
+
+/* ── Consumo real (vida útil): o dinheiro é o único número em ouro ──
+   A banda lê o tracker de vida útil (todos os escopos): tokens e o
+   equivalente USD de API pública — o número que prova o valor da assinatura. */
+.operator-profile__consumo {
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+}
+.operator-profile__consumo-hero {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-3);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+.operator-profile__consumo-money {
+  font-family: var(--font-mono);
+  font-size: var(--text-3xl);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+  color: var(--gold);
+}
+.operator-profile__consumo-money-label {
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+.operator-profile__facts {
+  display: grid;
+  /* 96px: quatro números cabem em linha desde ~500px de diálogo, sem célula órfã. */
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: var(--space-3) var(--space-4);
+  margin: var(--space-3) 0 0;
+}
+.operator-profile__facts > div {
+  display: flex;
+  /* O DOM lê "rótulo, valor"; o olho lê "valor, rótulo". */
+  flex-direction: column-reverse;
+  gap: 2px;
+  min-width: 0;
+}
+.operator-profile__facts dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xl);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  white-space: nowrap;
+}
+.operator-profile__facts dt {
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+}
+.operator-profile__plans-note {
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+
+/* ── Próximas recompensas: linhas com divisória, anel = pendente ── */
+.operator-profile__quests {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.operator-profile__quest {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--space-3);
+  align-items: start;
+  padding: var(--space-2-5) 0;
+  border-top: 1px solid var(--border);
+}
+.operator-profile__quest:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+/* Vaga aberta: anel tracejado, para não ler como botão de rádio. */
+.operator-profile__quest-mark {
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  border: 1.5px dashed var(--state-pending);
+  border-radius: var(--radius-round);
+}
+.operator-profile__quest-title {
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--text);
+}
+.operator-profile__quest-hint {
+  margin: 2px 0 0;
+  font-size: var(--text-sm);
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+.operator-profile__quest-reward {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  text-align: right;
+}
+.operator-profile__quest-count {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+.operator-profile__quest-meta {
+  font-size: var(--text-xs);
+  color: var(--text);
+}
+@media (max-width: 560px) {
+  .operator-profile__quest {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .operator-profile__quest-reward {
+    grid-column: 2;
+    flex-direction: row;
+    align-items: baseline;
+    gap: var(--space-2);
+    text-align: left;
+  }
+}
+.operator-profile__mini-bar {
+  display: block;
+  height: 4px;
+  margin-top: var(--space-1-5);
+  border-radius: var(--radius-round);
+  background: var(--surface-3);
+  overflow: hidden;
+}
+.operator-profile__mini-bar-fill {
+  display: block;
+  height: 100%;
+  width: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transform-origin: left center;
+  transition: transform 240ms var(--ease-out-quint);
+}
+
+/* ── Conquistas: lista em duas colunas; desbloqueada = palavra + check ── */
+.operator-profile__achievements {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 0 var(--space-5);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.operator-profile__achievement {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--border);
+}
+.operator-profile__achievement-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--text);
+}
+.operator-profile__achievement--locked .operator-profile__achievement-title {
+  font-weight: 500;
+  color: var(--text-dim);
+}
+.operator-profile__achievement-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--state-done);
+}
+.operator-profile__achievement-desc {
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+
+/* ── Feed e entregas: duas colunas, sem rolagem aninhada ── */
+.operator-profile__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-5);
+}
+.operator-profile__grid > .operator-profile__section {
+  margin-top: var(--space-5);
+}
+.operator-profile__grid--single {
+  grid-template-columns: minmax(0, 1fr);
+}
+@media (max-width: 640px) {
+  .operator-profile__grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+}
+.operator-profile__feed {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.operator-profile__feed-item {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  align-items: baseline;
+  padding: var(--space-1-5) 0;
+  border-top: 1px solid var(--border);
+  font-size: var(--text-sm);
+}
+.operator-profile__feed-item:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+.operator-profile__feed-xp {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--state-done);
+}
+.operator-profile__feed-kind {
+  color: var(--text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.operator-profile__feed-time {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.operator-profile__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+.operator-profile__count {
+  display: inline-block;
+  min-width: 5ch;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+/* ── Visuais do mascote e rodapé ── */
+.operator-profile__skins {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.operator-profile__skin {
+  min-height: var(--space-6);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition:
+    border-color 160ms var(--ease-out-quart),
+    color 160ms var(--ease-out-quart);
+}
+.operator-profile__skin:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+.operator-profile__skin--active {
+  border-color: var(--accent);
+  color: var(--text);
+  background: var(--accent-soft);
+}
+.operator-profile__hint-inline {
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+  align-self: center;
+}
+.operator-profile__footer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+  font-size: var(--text-sm);
+}
+.operator-profile__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  min-height: var(--space-6);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    background-color 120ms var(--ease-out-quart),
+    border-color 120ms var(--ease-out-quart);
+}
+.operator-profile__btn:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+}
+/* CTA primário da casa: branco neutro, nunca o acento (DESIGN.md §2). */
+.operator-profile__btn--primary {
+  border-color: transparent;
+  background: var(--btn-primary);
+  color: var(--btn-primary-ink);
+  font-weight: 600;
+}
+.operator-profile__btn--primary:hover {
+  background: var(--btn-primary-hover);
+  border-color: transparent;
+}
+.operator-profile__sober {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.operator-profile__io {
+  flex-basis: 100%;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  word-break: break-all;
+}
+.operator-profile__hint {
+  flex-basis: 100%;
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+}
+@media (prefers-reduced-motion: reduce) {
+  .operator-profile {
+    animation: none;
+  }
+  .operator-profile__bar-fill,
+  .operator-profile__mini-bar-fill,
+  .operator-profile__close,
+  .operator-profile__skin,
+  .operator-profile__btn {
+    transition: none;
+  }
+}
+.cost-summary__item--total {
+  color: var(--text);
+  font-weight: 600;
+}
+
+
 /* ---- Custom models ---- */
 .prov__models-add {
   display: flex;
@@ -1211,4 +1043,42 @@
 
 @media (prefers-reduced-motion: reduce) {
   .ctx-chip__fill { transition: none; }
+}
+
+/* ---- Acréscimos do Perfil: XP de hoje, plano e desbloqueios recentes ---- */
+.operator-profile__plan {
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  color: var(--text-faint);
+}
+.operator-profile__today {
+  align-self: flex-start;
+  margin-top: var(--space-2);
+  padding: 2px var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-round);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+.operator-profile__today--live {
+  border-color: color-mix(in srgb, var(--ok) 40%, var(--border));
+  color: var(--ok);
+}
+.operator-profile__recent-unlocks {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1-5);
+}
+.operator-profile__recent-unlock {
+  padding: var(--space-1) var(--space-2-5);
+  border: 1px solid color-mix(in srgb, var(--ok) 40%, var(--border));
+  border-radius: var(--radius-round);
+  background: color-mix(in srgb, var(--ok) 8%, transparent);
+  color: var(--text);
+  font-size: var(--text-sm);
 }

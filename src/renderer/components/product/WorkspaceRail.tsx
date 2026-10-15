@@ -1141,8 +1141,11 @@ export function WorkspaceRail({
           />
         ) : null}
 
-        <OperatorHud />
         </div>
+
+        {/* F-1521: faixa PRÓPRIA do rodapé, fora das utilidades — o modo foco
+            esconde as utilidades e o perfil continua à vista. */}
+        <OperatorHud />
 
         <div className="workspace-rail__cockpit-status">
           <button

@@ -4,8 +4,11 @@ import {
   activeOperatorQuests,
   DAILY_XP_GOAL,
   listAchievementProgress,
+  nextTierOf,
   nextTierPlan,
+  pluralPt,
   recentAchievements,
+  tierLevelOf,
   tierProgress,
   xpKindLabel,
 } from './gamification-progress';
@@ -142,5 +145,24 @@ describe('gamification progress', () => {
       ).map((item) => item.title),
     ).toEqual(['Arquiteto de Times', 'Primeiro Deploy']);
     expect(recentAchievements(['desconhecida'])).toEqual([]);
+  });
+
+  it('names the next tier and the 1-based level shown in the HUD', () => {
+    expect(nextTierOf('RECRUTA')).toBe('INICIADO');
+    expect(nextTierOf('MAESTRO')).toBe('LENDA');
+    expect(nextTierOf('LENDA')).toBeNull();
+    expect(tierLevelOf('RECRUTA')).toBe(1);
+    expect(tierLevelOf('LENDA')).toBe(6);
+    // Tier desconhecido (snapshot de build antigo) nunca vira nível 0 nem "próximo = RECRUTA".
+    expect(tierLevelOf('FANTASMA' as never)).toBe(1);
+    expect(nextTierOf('FANTASMA' as never)).toBeNull();
+  });
+
+  it('pluralizes pt-BR counters (1 dia útil / 2 dias úteis, 0 = plural)', () => {
+    expect(pluralPt(1, 'dia útil seguido', 'dias úteis seguidos')).toBe(
+      '1 dia útil seguido',
+    );
+    expect(pluralPt(0, 'escudo', 'escudos')).toBe('0 escudos');
+    expect(pluralPt(2, 'escudo', 'escudos')).toBe('2 escudos');
   });
 });

@@ -1681,7 +1681,8 @@
 .workspace-rail__footer {
   grid-row: 6;
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
+  /* Utilidades (cedem altura) / perfil do Operador / Configurações. */
+  grid-template-rows: minmax(0, 1fr) auto auto;
   /* Mesma trava da navegação: o label de Configurações encolhe com ellipsis
      em vez de empurrar o chip Local para fora do rail. */
   grid-template-columns: minmax(0, 1fr);
@@ -2113,9 +2114,15 @@
   background: var(--state-failed, #ef4444);
 }
 
+/* Entrada do Perfil de Operador: faixa própria acima de Configurações, fora das
+   utilidades, para continuar à vista no modo foco (Configurações aberta). */
+.workspace-rail__footer > .operator-hud--rail {
+  grid-row: 2;
+}
+
 .workspace-rail__cockpit-status {
   /* Sempre na faixa `auto` do rodapé, mesmo com as utilidades ocultas. */
-  grid-row: 2;
+  grid-row: 3;
   display: flex;
   align-items: center;
   justify-content: space-between;

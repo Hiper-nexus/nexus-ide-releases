@@ -244,6 +244,22 @@ saber isto antes de mexer:
   depois do pack (eco ou colagem) só vale na 2ª ocorrência; o observer da CLI
   vale na hora.
 
+## Perfil de Operador: entrada sempre visível (F-1521)
+
+- O perfil só abria por "Meu perfil" no rodapé das Configurações e por Ctrl/⌘+Shift+O: o
+  HUD saiu do chrome em 10/08 (`ceeece469`) e do rodapé das Configurações em
+  05/09 (`b6e9a3a0c`). `OperatorHud` mora numa faixa PRÓPRIA do rodapé da rail (fora de
+  `.workspace-rail__utilities`, que o modo foco esconde). Não monte o HUD dentro
+  das utilidades da rail. Em modo sóbrio o HUD some; o perfil segue por
+  "Meu perfil" nas Configurações e por Ctrl/⌘+Shift+O.
+- O XP é por pasta de projeto: o nexus-ide entrou no registro de checkouts em
+  14/10 (0.76.255) e mostrava RECRUTA ao lado do HiperGO com 6.886 eventos.
+  O cabeçalho do diálogo diz "XP do projeto <nome>"; não tire o escopo da tela.
+- O HUD só conta e celebra ganho do MESMO escopo (`rootRealPath`): trocar de
+  projeto ou hidratar o snapshot não é XP novo.
+- `operator-profile-style.test.ts` trava hex literal, animação em loop,
+  eyebrow em caixa-alta e opacidade em conquista travada no CSS do perfil.
+
 ## Conventions
 
 - Co-located tests: `foo.ts` → `foo.test.ts` in the same directory.
