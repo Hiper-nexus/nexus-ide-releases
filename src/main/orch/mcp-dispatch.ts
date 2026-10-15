@@ -242,10 +242,8 @@ function resolveProductionMissionForIntentGate(
   if (!mission) return null;
   return {
     mission,
-    taskCount: suite.tasks.list(mission.id).length,
-    workerPaneCount: suite.missionPanes
-      .list(mission.id)
-      .filter((pane) => pane.role === "worker").length,
+    taskCount: suite.tasks.countByMission(mission.id),
+    workerPaneCount: suite.missionPanes.countWorkersByMission(mission.id),
   };
 }
 

@@ -464,12 +464,13 @@ export class CommandReceiptStore {
       if(!stored || stored.outcomeJson!==null)return;
       db.prepare('UPDATE command_receipts SET outcome_json=? WHERE command_id=? AND outcome_json IS NULL').run(JSON.stringify(projection),id);
       if(stored.commandType!=='dispatch.observation')return;
-      db.prepare('UPDATE command_receipts SET dispatch_state=? WHERE command_id=?').run(response,id);
       this.#appendDispatchEvent(db,id,'response',response,stored.physicalState);
       if(stored.physicalState==='none' && response!=='unknown'){
         const sequence=this.#appendDispatchEvent(db,id,'settled',response,'none');
         db.prepare("UPDATE command_receipts SET result_sequence=?,dispatch_state='settled',status=? WHERE command_id=?")
           .run(sequence,response==='observed-rejection'?'rejected':'accepted',id);
+      } else {
+        db.prepare('UPDATE command_receipts SET dispatch_state=? WHERE command_id=?').run(response,id);
       }
     })();
   }

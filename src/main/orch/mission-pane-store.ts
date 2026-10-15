@@ -515,6 +515,18 @@ export class ScopedMissionPaneStore {
     return this.#listFromDatabase(this.#binding.readDatabase(), missionId);
   }
 
+  /** Workers da missão sem hidratar as linhas (portão de intenção, perf #7). */
+  countWorkersByMission(rawMissionId: string): number {
+    const missionId = entityIdSchema.parse(rawMissionId);
+    const row = this.#binding
+      .readDatabase()
+      .prepare(
+        "SELECT COUNT(*) AS count FROM mission_panes WHERE mission_id = ? AND role = 'worker'",
+      )
+      .get(missionId) as { count: number };
+    return row.count;
+  }
+
   promotePaneToOrchestrator(
     rawMissionId: string,
     rawPaneId: string,

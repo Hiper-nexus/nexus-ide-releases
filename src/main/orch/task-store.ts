@@ -776,6 +776,16 @@ export class ScopedTaskStore {
     return rows.map((row) => this.#fromRow(row));
   }
 
+  /** Contagem por missão sem hidratar as linhas (portão de intenção, perf #7). */
+  countByMission(rawMissionId: string): number {
+    const missionId = entityIdSchema.parse(rawMissionId);
+    const row = this.#binding
+      .readDatabase()
+      .prepare('SELECT COUNT(*) AS count FROM tasks WHERE mission_id = ?')
+      .get(missionId) as { count: number };
+    return row.count;
+  }
+
   #getFromDatabase(
     db: Database.Database,
     id: string,

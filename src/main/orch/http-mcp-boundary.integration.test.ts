@@ -135,6 +135,34 @@ function captureError(operation: () => unknown): string | undefined {
   }
 }
 
+interface Deferred<T = void> {
+  readonly promise: Promise<T>;
+  readonly resolve: (value: T) => void;
+}
+
+function deferred<T = void>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
+/**
+ * Coordenação entre duas requisições HTTP concorrentes (L6): A fecha antes de B
+ * e B, ainda aberta, tem de continuar viva até o settlement da PRÓPRIA promise.
+ */
+interface OverlapGates {
+  readonly aInside: Deferred;
+  readonly releaseA: Deferred;
+  readonly aClosed: Deferred;
+  readonly bInside: Deferred;
+  settleB?: () => void;
+  aAfterClose?: Promise<string | undefined>;
+  bWhileAClosed?: Promise<string | undefined>;
+  bSettlementReaction?: Promise<string | undefined>;
+}
+
 describe("physical HTTP MCP handoff boundary", () => {
   let baseDir = "";
   let manager: ProjectRuntimeManager;
@@ -150,10 +178,12 @@ describe("physical HTTP MCP handoff boundary", () => {
   let dispatches: ReturnType<typeof createTaskDispatchStore>;
   let handoffs: ReturnType<typeof createScopedHandoffStore>;
   let orchestratorCtx: AgentGateContext;
+  let overlap: OverlapGates | undefined;
 
   beforeEach(async () => {
     handlerCalls = 0;
     terminalTailCapture = undefined;
+    overlap = undefined;
     retainAcknowledged.mockClear();
     baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-http-mcp-proof-"));
     manager = new ProjectRuntimeManager({
@@ -429,6 +459,63 @@ describe("physical HTTP MCP handoff boundary", () => {
         const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
           args: Record<string, unknown>;
         };
+        if (overlap && String(body.args.summary).includes("overlap-http-lifetime")) {
+          const gates = overlap;
+          const probe = (toolCallId: string) =>
+            captureError(() =>
+              mintAgentTransportPhysicalReceipt({
+                ctx: requestCtx,
+                toolCallId,
+                toolName: "nexus_handoff_submit",
+              }),
+            );
+          if (String(body.args.summary).includes("lane-a")) {
+            const result = await runInsideHttpMcpTransport(
+              request,
+              requestCtx,
+              async () => {
+                gates.aAfterClose = gates.aClosed.promise.then(() =>
+                  probe("tool-call-lane-a-after-close"),
+                );
+                gates.aInside.resolve();
+                await gates.releaseA.promise;
+                return { ok: true };
+              },
+            );
+            response.writeHead(200, { "content-type": "application/json" });
+            response.end(JSON.stringify(result));
+            return;
+          }
+          const result = await runInsideHttpMcpTransport(
+            request,
+            requestCtx,
+            () => {
+              // Nasce DENTRO da fronteira de B: promise de fora falharia fechada.
+              const own = new Promise<{ ok: boolean }>((resolve) => {
+                gates.settleB = () => resolve({ ok: true });
+              });
+              gates.bWhileAClosed = gates.aClosed.promise.then(() =>
+                probe("tool-call-lane-b-while-a-closed"),
+              );
+              // Registrada na promise de resultado de B antes do `.finally` de
+              // fallback da fronteira.
+              gates.bSettlementReaction = own.then(() =>
+                probe("tool-call-lane-b-settlement-reaction"),
+              );
+              gates.bInside.resolve();
+              return own;
+            },
+          );
+          const [midFlightMintError, reactionMintError] = await Promise.all([
+            gates.bWhileAClosed,
+            gates.bSettlementReaction,
+          ]);
+          response.writeHead(200, { "content-type": "application/json" });
+          response.end(
+            JSON.stringify({ ...result, midFlightMintError, reactionMintError }),
+          );
+          return;
+        }
         if (
           String(body.args.summary).includes(
             "settlement-reaction-http-lifetime",
@@ -600,6 +687,7 @@ describe("physical HTTP MCP handoff boundary", () => {
         detachedConsumeError?: string;
         reactionMintError?: string;
         reactionConsumeError?: string;
+        midFlightMintError?: string;
       },
     };
   }
@@ -1037,6 +1125,51 @@ describe("physical HTTP MCP handoff boundary", () => {
         ),
       },
     });
+    expect(countRows(manager, "handoffs")).toBe(0);
+    expect(countRows(manager, "handoff_mcp_receipts")).toBe(0);
+  });
+
+  it("closing request A leaves concurrent request B live, and B's own settlement reaction already sees it revoked", async () => {
+    // Duas requisições loopback autenticadas ao mesmo tempo compartilham UM hook
+    // V8: A fechar antes não pode revogar B (hook desarmado cedo) nem deixar a
+    // reação que B registrou na própria promise rodar antes da revogação de B.
+    const gates: OverlapGates = {
+      aInside: deferred(),
+      releaseA: deferred(),
+      aClosed: deferred(),
+      bInside: deferred(),
+    };
+    overlap = gates;
+    let postA: ReturnType<typeof post> | undefined;
+    let postB: ReturnType<typeof post> | undefined;
+    try {
+      postA = post("overlap-http-lifetime lane-a");
+      await gates.aInside.promise;
+      postB = post("overlap-http-lifetime lane-b");
+      await gates.bInside.promise;
+
+      gates.releaseA.resolve();
+      expect(await postA).toMatchObject({ status: 200, body: { ok: true } });
+      gates.aClosed.resolve();
+      expect(await gates.aAfterClose).toMatch(/physical agent transport boundary/i);
+
+      gates.settleB?.();
+      const resultB = await postB;
+      expect(resultB).toMatchObject({
+        status: 200,
+        body: {
+          ok: true,
+          reactionMintError: expect.stringMatching(/physical agent transport boundary/i),
+        },
+      });
+      // A já fechou e B ainda não tinha liquidado: B estava viva.
+      expect(resultB.body.midFlightMintError).toBeUndefined();
+    } finally {
+      gates.releaseA.resolve();
+      gates.aClosed.resolve();
+      gates.settleB?.();
+      await Promise.allSettled([postA, postB]);
+    }
     expect(countRows(manager, "handoffs")).toBe(0);
     expect(countRows(manager, "handoff_mcp_receipts")).toBe(0);
   });

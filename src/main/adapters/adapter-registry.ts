@@ -838,6 +838,15 @@ export function getAdapterResolvedBin(id: string): string | null {
 }
 
 /**
+ * Aviso de instalação do cache de descoberta, sem andar o PATH. Depois de
+ * `resolveAdapterBinary`/`refreshInstalledCache` o cache está quente; listar
+ * provedores nunca deve re-resolver o binário só para este aviso (perf #9).
+ */
+export function getAdapterInstallationWarning(id: string): string | undefined {
+  return installedCache.get(canonicalCliAdapterId(id))?.installationWarning;
+}
+
+/**
  * Live resolve (bypasses cache). Prefer for pre-spawn revalidation.
  * Returns absolute path or null.
  */

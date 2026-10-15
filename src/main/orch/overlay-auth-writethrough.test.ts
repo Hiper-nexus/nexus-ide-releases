@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -14,6 +15,19 @@ const grokAuth = (refresh: string, expiresAt: string, key = ACCOUNT, email = 'op
   JSON.stringify({ [key]: { email, refresh_token: refresh, expires_at: expiresAt } });
 
 const NOW = Date.parse('2026-09-29T12:00:00Z');
+
+/**
+ * Dois testes abaixo dependem de um evento REAL do fs.watch. No macOS (FSEvents)
+ * o evento é PERDIDO quando outros processos agitam o disco (várias panes
+ * compilando): medido na base 310b0f75a e em HEAD com a mesma taxa, 7 de 30
+ * execuções sob carga esperavam 2 s por um evento que nunca chegou. Não é
+ * atraso (com 12 s de prazo os falhos esperavam os 12 s inteiros), então prazo
+ * maior não ajuda: repete a tentativa. Em produção essa perda é coberta pela
+ * rede de segurança do vigia (SAFETY_STAT_MS), testada com timers falsos no
+ * bloco do M2, sem depender do SO.
+ */
+const REAL_WATCH_EVENT_RETRIES = 3;
+
 const dirs: string[] = [];
 function tempDir(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-auth-wt-'));
@@ -94,6 +108,53 @@ describe('devolução do auth.json renovado ao perfil de origem (F-684)', () => 
     expect(fs.readFileSync(path.join(paneB, 'auth.json'), 'utf8')).toBe(renewed);
   });
 
+  it('vigia por fs.watch: sem poll de statSync ocioso, e a renovação volta sem esperar o intervalo', { retry: REAL_WATCH_EVENT_RETRIES }, async () => {
+    const native = tempDir();
+    const paneDir = tempDir();
+    const source = path.join(native, 'auth.json');
+    const overlay = path.join(paneDir, 'auth.json');
+    fs.writeFileSync(source, grokAuth('r1', '2026-09-23T01:59:00Z'));
+    fs.copyFileSync(source, overlay);
+    const watch = vi.spyOn(fs, 'watch');
+    const interval = vi.spyOn(globalThis, 'setInterval');
+    // Intervalo enorme: se a devolução depender do poll, o teste estoura o waitFor.
+    const stop = startAuthWriteThrough({ overlayFile: overlay, sourceFile: source, policy, intervalMs: 600_000 });
+    try {
+      expect(watch).toHaveBeenCalledTimes(1);
+      expect(String(watch.mock.calls[0][0])).toBe(path.dirname(overlay));
+      // Sem poll de statSync ocioso no ritmo do vigia: o único temporizador é a
+      // rede de segurança lenta (30–60 s), nunca o intervalMs.
+      expect(interval).toHaveBeenCalledTimes(1);
+      expect(interval.mock.calls[0][1]).toBeGreaterThanOrEqual(30_000);
+      expect(interval.mock.calls[0][1]).toBeLessThanOrEqual(60_000);
+      const renewed = grokAuth('r9', '2099-01-01T00:00:00Z');
+      cliRenameWrite(overlay, renewed);
+      await vi.waitFor(() => expect(fs.readFileSync(source, 'utf8')).toBe(renewed), { timeout: 2_000, interval: 20 });
+    } finally {
+      stop();
+    }
+  });
+
+  it('sem fs.watch (lança ao abrir), volta ao poll por intervalo', async () => {
+    const native = tempDir();
+    const paneDir = tempDir();
+    const source = path.join(native, 'auth.json');
+    const overlay = path.join(paneDir, 'auth.json');
+    fs.writeFileSync(source, grokAuth('r1', '2026-09-23T01:59:00Z'));
+    fs.copyFileSync(source, overlay);
+    vi.spyOn(fs, 'watch').mockImplementation(() => { throw new Error('EPERM: watch indisponível (simulado)'); });
+    const interval = vi.spyOn(globalThis, 'setInterval');
+    const stop = startAuthWriteThrough({ overlayFile: overlay, sourceFile: source, policy, intervalMs: 20 });
+    try {
+      expect(interval).toHaveBeenCalledTimes(1);
+      const renewed = grokAuth('r9', '2099-01-01T00:00:00Z');
+      cliRenameWrite(overlay, renewed);
+      await vi.waitFor(() => expect(fs.readFileSync(source, 'utf8')).toBe(renewed), { timeout: 2_000, interval: 20 });
+    } finally {
+      stop();
+    }
+  });
+
   it('o disposer faz a última passada ao fechar o pane', () => {
     const native = tempDir();
     const pane = tempDir();
@@ -125,7 +186,7 @@ describe('F-1485: a renovação do Grok não se perde no Windows e só volta par
     return { native, dir, source, overlay, stop };
   }
 
-  it('Windows: gravação na origem recusada (EPERM, depois EBUSY) é tentada de novo sem nova mudança no overlay; o lock da CLI fica intacto', async () => {
+  it('Windows: gravação na origem recusada (EPERM, depois EBUSY) é tentada de novo sem nova mudança no overlay; o lock da CLI fica intacto', { retry: REAL_WATCH_EVENT_RETRIES }, async () => {
     const native = tempDir();
     const dir = tempDir();
     const source = path.join(native, 'auth.json');
@@ -208,5 +269,119 @@ describe('F-1485: a renovação do Grok não se perde no Windows e só volta par
     p.stop();
     expect(verify).toHaveBeenCalledTimes(2);
     expect(fs.readFileSync(p.source, 'utf8')).toBe(old);
+  });
+});
+
+describe('fs.watch que morre sem erro: a rede de segurança lenta ainda devolve a renovação (M2)', () => {
+  /** Limite superior da rede de segurança (contrato: um stat a cada 30–60 s). */
+  const SAFETY_WINDOW_MS = 60_000;
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /**
+   * Um fs.watch "vivo" que nunca entrega evento nem 'error': a pasta removida e
+   * recriada no Linux (o evento chega com o nome da própria pasta e o filtro de
+   * basename o descarta), FUSE/rede, overflow do FSEvents/inotify.
+   */
+  function silentWatch() {
+    const watcher = new EventEmitter() as EventEmitter & { close: ReturnType<typeof vi.fn> };
+    watcher.close = vi.fn();
+    vi.spyOn(fs, 'watch').mockReturnValue(watcher as unknown as fs.FSWatcher);
+    return watcher;
+  }
+
+  function watchedPane(intervalMs = 600_000) {
+    const native = tempDir();
+    const dir = tempDir();
+    const source = path.join(native, 'auth.json');
+    const overlay = path.join(dir, 'auth.json');
+    fs.writeFileSync(source, grokAuth('r1', '2026-09-23T01:59:00Z'));
+    fs.copyFileSync(source, overlay);
+    const stop = startAuthWriteThrough({ overlayFile: overlay, sourceFile: source, policy, intervalMs });
+    return { source, overlay, stop };
+  }
+
+  it('sem nenhum evento do watch, a renovação do overlay volta à origem dentro do intervalo de segurança', () => {
+    vi.useFakeTimers();
+    silentWatch();
+    const p = watchedPane();
+    try {
+      const renewed = grokAuth('r2', '2099-01-01T00:00:00Z');
+      cliRenameWrite(p.overlay, renewed);
+      expect(fs.readFileSync(p.source, 'utf8')).not.toBe(renewed);
+
+      vi.advanceTimersByTime(SAFETY_WINDOW_MS);
+
+      expect(fs.readFileSync(p.source, 'utf8')).toBe(renewed);
+    } finally {
+      p.stop();
+    }
+  });
+
+  it('a passada acordada pela rede de segurança que a origem recusa (EBUSY) segue o retry do F-1485', () => {
+    vi.useFakeTimers();
+    silentWatch();
+    const retryMs = 2_000;
+    const p = watchedPane(retryMs);
+    try {
+      const refusals = ['EBUSY'];
+      failSourceWrites(p.source, refusals);
+      const renewed = grokAuth('r2', '2099-01-01T00:00:00Z');
+      cliRenameWrite(p.overlay, renewed);
+
+      // Anda até a 1ª passada de segurança, que a origem recusa (não importa
+      // o valor exato da constante: só que ela cai dentro do contrato).
+      for (let elapsed = 0; refusals.length > 0 && elapsed < SAFETY_WINDOW_MS; elapsed += 1_000) {
+        vi.advanceTimersByTime(1_000);
+      }
+      expect(refusals).toEqual([]);
+      expect(fs.readFileSync(p.source, 'utf8')).not.toBe(renewed);
+
+      // Só o retry rápido (retryMs) pode recuperar agora; uma 2ª passada de
+      // segurança está a dezenas de segundos.
+      vi.advanceTimersByTime(retryMs);
+
+      expect(fs.readFileSync(p.source, 'utf8')).toBe(renewed);
+    } finally {
+      p.stop();
+    }
+  });
+
+  it('o disposer fecha o watcher e TODOS os temporizadores, o de segurança inclusive', () => {
+    vi.useFakeTimers();
+    const watcher = silentWatch();
+    const p = watchedPane();
+
+    expect(vi.getTimerCount()).toBe(1); // só a rede de segurança: nada de poll rápido ocioso
+    p.stop();
+
+    expect(watcher.close).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+    // Depois do fechamento nada mais acorda: a mudança no overlay não volta sozinha.
+    const late = grokAuth('r3', '2099-01-01T00:00:00Z');
+    cliRenameWrite(p.overlay, late);
+    vi.advanceTimersByTime(SAFETY_WINDOW_MS * 2);
+    expect(fs.readFileSync(p.source, 'utf8')).not.toBe(late);
+  });
+
+  it('watch que acusa erro: o poll no ritmo do vigia assume e devolve a renovação; o disposer limpa tudo', () => {
+    vi.useFakeTimers();
+    const watcher = silentWatch();
+    const pollMs = 20_000; // abaixo da rede de segurança: só o poll rápido explica a devolução
+    const p = watchedPane(pollMs);
+    try {
+      watcher.emit('error', new Error('watch morreu (simulado)'));
+
+      const renewed = grokAuth('r2', '2099-01-01T00:00:00Z');
+      cliRenameWrite(p.overlay, renewed);
+      vi.advanceTimersByTime(pollMs);
+
+      expect(fs.readFileSync(p.source, 'utf8')).toBe(renewed);
+    } finally {
+      p.stop();
+    }
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

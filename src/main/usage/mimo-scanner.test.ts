@@ -109,6 +109,37 @@ describe('MiMo checkout database reader', () => {
     await scanner.stop();
   });
 
+  it('arms the 1s poll only while there is work and disarms it when idle', async () => {
+    const { binding } = fixture();
+    const realSetInterval = globalThis.setInterval;
+    const realClearInterval = globalThis.clearInterval;
+    const armed: ReturnType<typeof setInterval>[] = [];
+    const cleared: ReturnType<typeof setInterval>[] = [];
+    vi.spyOn(globalThis, 'setInterval').mockImplementation(((fn: () => void, ms?: number) => {
+      const timer = realSetInterval(fn, ms); armed.push(timer); return timer;
+    }) as typeof setInterval);
+    vi.spyOn(globalThis, 'clearInterval').mockImplementation(((timer?: ReturnType<typeof setInterval>) => {
+      if (timer) cleared.push(timer); realClearInterval(timer);
+    }) as typeof clearInterval);
+    try {
+      const onEvent = vi.fn();
+      const scanner = new MimoUsageScanner(onEvent); scanners.push(scanner);
+      scanner.start();
+      expect(armed).toHaveLength(0);
+      scanner.bind(binding);
+      expect(armed).toHaveLength(1);
+      await scanner.scan();
+      expect(armed).toHaveLength(1);
+      expect(cleared).toHaveLength(0);
+      scanner.remove(binding.ptySessionId);
+      await scanner.scan();
+      expect(armed).toHaveLength(1);
+      expect(cleared).toHaveLength(1);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
   it('refuses database symlink swaps and does not follow another checkout', async () => {
     const { db, binding } = fixture(); const other = fixture('checkout-b');
     db.close(); databases.splice(databases.indexOf(db), 1);

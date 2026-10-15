@@ -884,3 +884,29 @@ describe('retomada da missão da aba move o pane do orquestrador (F-664)', () =>
     expect(panes.findByPaneId(participant.paneId!)).toEqual(participant);
   });
 });
+
+describe('countWorkersByMission (perf #7)', () => {
+  it('conta só os workers da missão, sem hidratar as linhas', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    const missions = createScopedMissionStore(runtimeManager, scope, {
+      idFactory: () => 'mission-a',
+    });
+    const panes = createScopedMissionPaneStore(runtimeManager, scope);
+    missions.create({ title: 'Mission A' });
+    panes.record({
+      missionId: 'mission-a', adapterId: 'codex', paneId: 'pane-w1',
+      role: 'worker', agentName: 'W1', workerIncarnationId: 'inc-w1',
+    });
+    panes.record({
+      missionId: 'mission-a', adapterId: 'codex', paneId: 'pane-w2',
+      role: 'worker', agentName: 'W2', workerIncarnationId: 'inc-w2',
+    });
+    panes.record({
+      missionId: 'mission-a', adapterId: 'claude', paneId: 'pane-maestro',
+      role: 'orchestrator', agentName: 'Maestro',
+    });
+    expect(panes.countWorkersByMission('mission-a')).toBe(2);
+    expect(panes.countWorkersByMission('mission-b')).toBe(0);
+  });
+});

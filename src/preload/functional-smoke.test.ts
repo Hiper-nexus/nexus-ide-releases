@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { HoldToTalkDiscriminator } from '../renderer/voice/hold-to-talk';
 import {
   DEFAULT_ECHO_PROBE_TIMEOUT_MS,
   PTY_ECHO_WAIT_MS,
@@ -567,6 +568,88 @@ describe('runFunctionalSmokeProbes — Space hold-to-talk no smoke empacotado', 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('esperava falha');
     expect(result.failedProbe).toBe('dictation-hold-to-talk');
+    // Reprovado pelo contrato do discriminador, não por acaso pela entrega no PTY.
+    expect(result.reason).toBe('discriminator');
+  });
+
+  type SmokeDeps = NonNullable<Parameters<typeof runFunctionalSmokeProbes>[2]>;
+  type HoldToTalkProbe = ReturnType<NonNullable<SmokeDeps['holdToTalkFactory']>>;
+
+  /**
+   * Discriminador REAL com UM desvio por vez. O contrato vigente
+   * (hold-to-talk.ts, aa08c268c): com o keydown retido o auto-repeat do SO é
+   * suprimido — não digita, não vaza a tecla, não arma nem cancela o hold — e
+   * a decisão é só pelo limiar. Cada caso quebra uma cláusula e a sonda tem
+   * de reprová-lo como `discriminator`.
+   */
+  function withDeviation(
+    deviate: (real: HoldToTalkDiscriminator) => Partial<HoldToTalkProbe>,
+  ): () => HoldToTalkProbe {
+    return () => {
+      const real = new HoldToTalkDiscriminator();
+      return {
+        keyDown: (event) => real.keyDown(event),
+        thresholdElapsed: () => real.thresholdElapsed(),
+        keyUp: () => real.keyUp(),
+        ...deviate(real),
+      };
+    };
+  }
+
+  const repeatOnly =
+    (patch: Partial<ReturnType<HoldToTalkProbe['keyDown']>>) =>
+    (real: HoldToTalkDiscriminator): Partial<HoldToTalkProbe> => ({
+      keyDown: (event) => {
+        const outcome = real.keyDown(event);
+        return event.repeat ? { ...outcome, ...patch } : outcome;
+      },
+    });
+
+  it.each<[string, (real: HoldToTalkDiscriminator) => Partial<HoldToTalkProbe>]>([
+    [
+      'o toque devolve zero espaços (o discriminador engole a tecla)',
+      (real) => ({ keyUp: () => ({ ...real.keyUp(), emitSpaces: 0 }) }),
+    ],
+    [
+      'o repeat do SO digita um espaço com o keydown retido (contrato anterior ao aa08c268c)',
+      repeatOnly({ emitSpaces: 1 }),
+    ],
+    ['o repeat do SO arma o ditado antes do limiar', repeatOnly({ startDictation: true })],
+    ['o repeat do SO vaza a tecla para o terminal', repeatOnly({ suppressKey: false })],
+    [
+      'o repeat do SO cancela o hold pendente (o limiar deixa de armar)',
+      (real) => {
+        let cancelled = false;
+        return {
+          keyDown: (event) => {
+            if (event.repeat) cancelled = true;
+            return real.keyDown(event);
+          },
+          thresholdElapsed: () => {
+            const outcome = real.thresholdElapsed();
+            return cancelled ? { ...outcome, startDictation: false } : outcome;
+          },
+        };
+      },
+    ],
+    [
+      'o hold nunca arma o ditado',
+      (real) => ({ thresholdElapsed: () => ({ ...real.thresholdElapsed(), startDictation: false }) }),
+    ],
+  ])('falha quando %s', async (_clause, deviate) => {
+    const api = successfulApi();
+
+    const result = await runFunctionalSmokeProbes(api, '/tmp/nexus-smoke-workspace', {
+      delay: async () => {},
+      probeTimeoutMs: 100,
+      holdToTalkFactory: withDeviation(deviate),
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      failedProbe: 'dictation-hold-to-talk',
+      reason: 'discriminator',
+    });
   });
 
   it('falha se o espaço do toque não chegar ao pane (tecla engolida)', async () => {

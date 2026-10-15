@@ -802,3 +802,23 @@ describe('scoped task store', () => {
     ).toThrow(/invalid task plan receipt/i);
   });
 });
+
+describe('countByMission (perf #7)', () => {
+  it('conta por missão sem hidratar as linhas', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    let nextMissionId = 0;
+    const missions = createScopedMissionStore(runtimeManager, scope, {
+      idFactory: () => `mission-${++nextMissionId}`,
+    });
+    const missionA = missions.create({ title: 'Mission A' });
+    const tasks = createScopedTaskStore(runtimeManager, scope);
+    tasks.create({ title: 'A1', missionId: missionA.id });
+    tasks.create({ title: 'A2', missionId: missionA.id });
+    const missionB = missions.create({ title: 'Mission B' });
+    tasks.create({ title: 'B1', missionId: missionB.id });
+    expect(tasks.countByMission(missionA.id)).toBe(2);
+    expect(tasks.countByMission(missionB.id)).toBe(1);
+    expect(tasks.countByMission('mission-c')).toBe(0);
+  });
+});
