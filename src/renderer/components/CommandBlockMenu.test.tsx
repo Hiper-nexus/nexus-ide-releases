@@ -31,11 +31,16 @@ const api = vi.hoisted(() => ({
     }),
   ),
   ptyWrite: vi.fn(),
+  writeToPane: vi.fn(),
   pushToast: vi.fn(),
 }));
 
 vi.mock('../terminal/terminal-host', () => ({
   getPaneSessionId: () => 'session-a',
+  writeToPane: (paneId: string, data: string) => {
+    api.writeToPane(paneId, data);
+    return true;
+  },
 }));
 vi.mock('../state/toast-store', () => ({
   useToastStore: (selector: (state: { push: typeof api.pushToast }) => unknown) =>
@@ -470,7 +475,7 @@ describe('CommandBlockMenu histórico das CLIs (F-1171)', () => {
       insert!.click();
       await Promise.resolve();
     });
-    expect(api.ptyWrite).toHaveBeenCalledWith('session-a', 'pnpm build');
+    expect(api.writeToPane).toHaveBeenCalledWith('pane-a', 'pnpm build');
     expect(host.querySelector('[data-testid="command-block-menu"]')).toBeNull();
   });
 });

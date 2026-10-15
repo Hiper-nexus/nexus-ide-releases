@@ -1083,6 +1083,8 @@ describe('reidratação religa o teclado do pane (hibernação, 14/10)', () => {
       getOrCreateHost({ id: `filler-keys-${i}`, kind: 'shell', title: `t${i}` });
     }
     setHostVisibility(agent.id, false);
+    // O esconder é adiado por um frame (split re-parenta o mesmo xterm).
+    await vi.advanceTimersByTimeAsync(20);
     expect(host.virtualized).not.toBeNull();
     xtermEvents.onData.clear();
     ptyWriteConfirmed.mockClear();
@@ -1115,9 +1117,10 @@ describe('reidratação religa o teclado do pane (hibernação, 14/10)', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(await waitForSession(pane.id, 1_000)).toBe('pty-b');
 
-    ptyWrite.mockClear();
+    ptyWriteConfirmed.mockClear();
     for (const listener of [...xtermEvents.onData]) listener('b');
-    expect(ptyWrite).toHaveBeenCalledExactlyOnceWith('pty-b', 'b');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ptyWriteConfirmed).toHaveBeenCalledExactlyOnceWith('pty-b', 'b');
   });
 });
 
