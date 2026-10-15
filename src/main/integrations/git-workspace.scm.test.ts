@@ -1,5 +1,5 @@
 /**
- * Integration smoke: real git binary + ProcessGitRunner for SCM UI helpers.
+ * Integration smoke: real git binary + AsyncProcessGitRunner for SCM UI helpers.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -53,10 +53,10 @@ describe('git-workspace SCM integration (real git)', () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  it('status → stage → unstage → stage → commit → log → fileDiff', () => {
-    expect(gitCurrentBranch(root)).toBe('main');
+  it('status → stage → unstage → stage → commit → log → fileDiff', async () => {
+    expect(await gitCurrentBranch(root)).toBe('main');
 
-    let status = gitScmStatus(root);
+    let status = await gitScmStatus(root);
     expect(status.ok).toBe(true);
     if (!status.ok) return;
     expect(status.clean).toBe(true);
@@ -70,93 +70,93 @@ describe('git-workspace SCM integration (real git)', () => {
     fs.writeFileSync(path.join(root, 'hello.ts'), 'export const n = 1;\n');
     fs.writeFileSync(path.join(root, 'README.md'), '# scm\nchanged\n');
 
-    status = gitScmStatus(root);
+    status = await gitScmStatus(root);
     expect(status.ok).toBe(true);
     if (!status.ok) return;
     expect(status.clean).toBe(false);
     expect(status.untracked.map((f) => f.path)).toContain('hello.ts');
     expect(status.unstaged.map((f) => f.path)).toContain('README.md');
 
-    const stageHello = gitStage(root, ['hello.ts']);
+    const stageHello = await gitStage(root, ['hello.ts']);
     expect(stageHello).toEqual({ ok: true });
 
-    status = gitScmStatus(root);
+    status = await gitScmStatus(root);
     expect(status.ok).toBe(true);
     if (!status.ok) return;
     expect(status.staged.map((f) => f.path)).toContain('hello.ts');
     expect(status.untracked.map((f) => f.path)).not.toContain('hello.ts');
 
-    const unstageHello = gitUnstage(root, ['hello.ts']);
+    const unstageHello = await gitUnstage(root, ['hello.ts']);
     expect(unstageHello).toEqual({ ok: true });
 
-    status = gitScmStatus(root);
+    status = await gitScmStatus(root);
     expect(status.ok).toBe(true);
     if (!status.ok) return;
     expect(status.staged.map((f) => f.path)).not.toContain('hello.ts');
     expect(status.untracked.map((f) => f.path)).toContain('hello.ts');
 
-    expect(gitStage(root, ['hello.ts', 'README.md'])).toEqual({ ok: true });
+    expect(await gitStage(root, ['hello.ts', 'README.md'])).toEqual({ ok: true });
 
-    const stagedDiff = gitFileDiff(root, 'README.md', { staged: true });
+    const stagedDiff = await gitFileDiff(root, 'README.md', { staged: true });
     expect(stagedDiff.ok).toBe(true);
     if (!stagedDiff.ok) return;
     expect(stagedDiff.diff).toContain('changed');
 
-    const untrackedDiff = gitFileDiff(root, 'hello.ts', { untracked: true });
+    const untrackedDiff = await gitFileDiff(root, 'hello.ts', { untracked: true });
     expect(untrackedDiff).toMatchObject({ ok: true, untracked: true });
 
-    const commit = gitCommitMessage(root, 'feat: scm smoke');
+    const commit = await gitCommitMessage(root, 'feat: scm smoke');
     expect(commit.ok).toBe(true);
     if (!commit.ok) return;
     expect(commit.summary.length).toBeGreaterThan(0);
 
-    status = gitScmStatus(root);
+    status = await gitScmStatus(root);
     expect(status.ok).toBe(true);
     if (!status.ok) return;
     expect(status.clean).toBe(true);
 
-    const log = gitLogOneline(root, 5);
+    const log = await gitLogOneline(root, 5);
     expect(log.ok).toBe(true);
     if (!log.ok) return;
     expect(log.commits[0]?.subject).toBe('feat: scm smoke');
     expect(log.commits.some((c) => c.subject === 'init')).toBe(true);
   });
 
-  it('rejects path traversal and empty commit message', () => {
-    expect(gitStage(root, ['../escape.txt']).ok).toBe(false);
-    expect(gitCommitMessage(root, '   ').ok).toBe(false);
-    expect(gitFileDiff(root, '/etc/passwd').ok).toBe(false);
+  it('rejects path traversal and empty commit message', async () => {
+    expect((await gitStage(root, ['../escape.txt'])).ok).toBe(false);
+    expect((await gitCommitMessage(root, '   ')).ok).toBe(false);
+    expect((await gitFileDiff(root, '/etc/passwd')).ok).toBe(false);
   });
 
-  it('branches → checkout -b → checkout existing → discard changes', () => {
-    let b = gitBranches(root);
+  it('branches → checkout -b → checkout existing → discard changes', async () => {
+    let b = await gitBranches(root);
     expect(b.ok).toBe(true);
     expect(b.current).toBe('main');
     expect(b.branches).toContain('main');
 
     // Create and switch branch
-    const created = gitCheckoutBranch(root, 'feature-orca', true);
+    const created = await gitCheckoutBranch(root, 'feature-orca', true);
     expect(created).toEqual({ ok: true });
-    expect(gitCurrentBranch(root)).toBe('feature-orca');
+    expect(await gitCurrentBranch(root)).toBe('feature-orca');
 
-    b = gitBranches(root);
+    b = await gitBranches(root);
     expect(b.current).toBe('feature-orca');
     expect(b.branches).toContain('feature-orca');
     expect(b.branches).toContain('main');
 
     // Switch back to main
-    const switched = gitCheckoutBranch(root, 'main', false);
+    const switched = await gitCheckoutBranch(root, 'main', false);
     expect(switched).toEqual({ ok: true });
-    expect(gitCurrentBranch(root)).toBe('main');
+    expect(await gitCurrentBranch(root)).toBe('main');
 
     // Discard modified file
     fs.writeFileSync(path.join(root, 'README.md'), '# modified\n');
-    const statusMod = gitScmStatus(root);
+    const statusMod = await gitScmStatus(root);
     expect(statusMod.ok).toBe(true);
     if (statusMod.ok) expect(statusMod.clean).toBe(false);
-    const discarded = gitDiscard(root, ['README.md']);
+    const discarded = await gitDiscard(root, ['README.md']);
     expect(discarded).toEqual({ ok: true });
-    const statusClean = gitScmStatus(root);
+    const statusClean = await gitScmStatus(root);
     expect(statusClean.ok).toBe(true);
     if (statusClean.ok) expect(statusClean.clean).toBe(true);
     expect(fs.readFileSync(path.join(root, 'README.md'), 'utf8')).toBe('# scm\n');

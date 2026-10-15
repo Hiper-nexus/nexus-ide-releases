@@ -192,8 +192,8 @@ function remoteChange(change: GitFileChange): RemoteGitChange {
  * `git status` do checkout do pane pelo serviço do painel Git. Sem `remote`
  * (a URL pode carregar credencial) e sem a saída crua do porcelain.
  */
-export function remoteGitStatus(workspace: RemotePaneWorkspace): RemoteGitStatus {
-  const status = gitScmStatus(workspace.root);
+export async function remoteGitStatus(workspace: RemotePaneWorkspace): Promise<RemoteGitStatus> {
+  const status = await gitScmStatus(workspace.root);
   if (!status.ok) throw shortError('git status failed', status.error, workspace.root);
   return {
     paneId: workspace.paneId,
@@ -263,18 +263,18 @@ export type RemoteGitDiff =
   | ({ readonly path: string; readonly staged: boolean; readonly kind: 'untracked' } & BoundedRead);
 
 /** Diff de UM arquivo do checkout do pane (o mesmo `gitFileDiff` do painel Git). */
-export function remoteGitDiff(
+export async function remoteGitDiff(
   workspace: RemotePaneWorkspace,
   rawPath: unknown,
   options: { staged: boolean; untracked: boolean },
-): RemoteGitDiff {
+): Promise<RemoteGitDiff> {
   const relativePath = resolveRemoteWorkspacePath(workspace.root, rawPath, { allowRoot: false });
   const staged = options.staged && !options.untracked;
   if (options.untracked) {
     // Arquivo novo não tem lado "antes": o conteúdo inteiro é a adição.
     return { path: relativePath, staged, kind: 'untracked', ...readBounded(workspace, relativePath) };
   }
-  const diff = gitFileDiff(workspace.root, relativePath, { staged });
+  const diff = await gitFileDiff(workspace.root, relativePath, { staged });
   if (!diff.ok) throw shortError('git diff failed', diff.error, workspace.root);
   // Linha de cabeçalho do git (num patch de texto toda linha vem com prefixo).
   if (/^(?:Binary files .+ differ|GIT binary patch)$/m.test(diff.diff)) {

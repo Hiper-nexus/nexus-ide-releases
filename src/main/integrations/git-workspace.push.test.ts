@@ -56,18 +56,18 @@ describe('gitDefaultBranch / gitPushCurrentBranch (real git)', () => {
     fs.rmSync(clone, { recursive: true, force: true });
   });
 
-  it('resolves the real default branch (trunk, not main)', () => {
-    expect(gitDefaultBranch(clone)).toBe('trunk');
+  it('resolves the real default branch (trunk, not main)', async () => {
+    expect(await gitDefaultBranch(clone)).toBe('trunk');
   });
 
-  it('falls back to main when no remote HEAD is known', () => {
+  it('falls back to main when no remote HEAD is known', async () => {
     const solo = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-solo-'));
     run(solo, ['init', '-b', 'main']);
-    expect(gitDefaultBranch(solo)).toBe('main');
+    expect(await gitDefaultBranch(solo)).toBe('main');
     fs.rmSync(solo, { recursive: true, force: true });
   });
 
-  it('surfaces a structured git error instead of a cryptic HTTP for a blocked push', () => {
+  it('surfaces a structured git error instead of a cryptic HTTP for a blocked push', async () => {
     // The hardened runner refuses the local `file:` transport by design
     // (GIT_ALLOW_PROTOCOL = https/ssh/git/http). Real origins are https/ssh;
     // what we assert here is the finding's core: the failure comes back as a
@@ -77,34 +77,34 @@ describe('gitDefaultBranch / gitPushCurrentBranch (real git)', () => {
     run(clone, ['add', 'f.txt']);
     run(clone, ['commit', '-m', 'work']);
 
-    const result = gitPushCurrentBranch(clone, 'feature/x');
+    const result = await gitPushCurrentBranch(clone, 'feature/x');
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error).toBeTruthy();
     expect(result.error.toLowerCase()).toContain('transport');
   });
 
-  it('rejects an unsafe branch name before invoking git', () => {
-    expect(gitPushCurrentBranch(clone, '--force').ok).toBe(false);
-    expect(gitPushCurrentBranch(clone, 'HEAD').ok).toBe(false);
-    expect(gitPushCurrentBranch(clone, '').ok).toBe(false);
+  it('rejects an unsafe branch name before invoking git', async () => {
+    expect((await gitPushCurrentBranch(clone, '--force')).ok).toBe(false);
+    expect((await gitPushCurrentBranch(clone, 'HEAD')).ok).toBe(false);
+    expect((await gitPushCurrentBranch(clone, '')).ok).toBe(false);
   });
 
-  it('rejects refspec-injection branch names (: + ~ .. metacharacters)', () => {
+  it('rejects refspec-injection branch names (: + ~ .. metacharacters)', async () => {
     // Sem esta guarda, 'a:refs/heads/b' viraria um refspec empurrando um ref
     // local para uma branch remota arbitrária; '+a:b' faria force-push.
-    expect(gitPushCurrentBranch(clone, 'main:refs/heads/production').ok).toBe(false);
-    expect(gitPushCurrentBranch(clone, '+main:refs/heads/x').ok).toBe(false);
-    expect(gitPushCurrentBranch(clone, 'feature~1').ok).toBe(false);
-    expect(gitPushCurrentBranch(clone, 'a b').ok).toBe(false);
-    expect(gitPushCurrentBranch(clone, 'foo/../bar').ok).toBe(false);
+    expect((await gitPushCurrentBranch(clone, 'main:refs/heads/production')).ok).toBe(false);
+    expect((await gitPushCurrentBranch(clone, '+main:refs/heads/x')).ok).toBe(false);
+    expect((await gitPushCurrentBranch(clone, 'feature~1')).ok).toBe(false);
+    expect((await gitPushCurrentBranch(clone, 'a b')).ok).toBe(false);
+    expect((await gitPushCurrentBranch(clone, 'foo/../bar')).ok).toBe(false);
     // Nome válido com barra e ponto passa da validação (falha depois no
     // transporte file: do runner endurecido, não na validação de nome).
-    const r = gitPushCurrentBranch(clone, 'feature/x.1');
+    const r = await gitPushCurrentBranch(clone, 'feature/x.1');
     if (!r.ok) expect(r.error.toLowerCase()).not.toContain('inválido');
   });
 
-  it('returns a structured error when there is no origin remote', () => {
+  it('returns a structured error when there is no origin remote', async () => {
     const noRemote = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-noremote-'));
     run(noRemote, ['init', '-b', 'main']);
     run(noRemote, ['config', 'user.name', 'x']);
@@ -112,7 +112,7 @@ describe('gitDefaultBranch / gitPushCurrentBranch (real git)', () => {
     fs.writeFileSync(path.join(noRemote, 'a.txt'), 'a\n');
     run(noRemote, ['add', 'a.txt']);
     run(noRemote, ['commit', '-m', 'a']);
-    const result = gitPushCurrentBranch(noRemote, 'main');
+    const result = await gitPushCurrentBranch(noRemote, 'main');
     expect(result.ok).toBe(false);
     fs.rmSync(noRemote, { recursive: true, force: true });
   });
@@ -143,45 +143,45 @@ describe('gitBranchPushState (real git)', () => {
     fs.rmSync(clone, { recursive: true, force: true });
   });
 
-  it('reports a never-pushed branch as not on remote', () => {
+  it('reports a never-pushed branch as not on remote', async () => {
     run(clone, ['checkout', '-b', 'feature/new']);
-    expect(gitBranchPushState(clone, 'feature/new')).toEqual({
+    expect(await gitBranchPushState(clone, 'feature/new')).toEqual({
       isOnRemote: false,
       aheadCount: 0,
     });
   });
 
-  it('reports a pushed branch as on remote with zero ahead', () => {
+  it('reports a pushed branch as on remote with zero ahead', async () => {
     run(clone, ['checkout', '-b', 'feature/x']);
     fs.writeFileSync(path.join(clone, 'f.txt'), 'work\n');
     run(clone, ['add', 'f.txt']);
     run(clone, ['commit', '-m', 'work']);
     // Raw helper push — the hardened runner refuses the local file: transport.
     run(clone, ['push', '-u', 'origin', 'feature/x']);
-    expect(gitBranchPushState(clone, 'feature/x')).toEqual({
+    expect(await gitBranchPushState(clone, 'feature/x')).toEqual({
       isOnRemote: true,
       aheadCount: 0,
     });
   });
 
-  it('counts ahead commits after the branch is on remote', () => {
+  it('counts ahead commits after the branch is on remote', async () => {
     run(clone, ['checkout', '-b', 'feature/y']);
     run(clone, ['push', '-u', 'origin', 'feature/y']);
     fs.writeFileSync(path.join(clone, 'g.txt'), 'more\n');
     run(clone, ['add', 'g.txt']);
     run(clone, ['commit', '-m', 'more']);
-    expect(gitBranchPushState(clone, 'feature/y')).toEqual({
+    expect(await gitBranchPushState(clone, 'feature/y')).toEqual({
       isOnRemote: true,
       aheadCount: 1,
     });
   });
 
-  it('treats unsafe branch names as not on remote (push path validates later)', () => {
-    expect(gitBranchPushState(clone, '--force')).toEqual({
+  it('treats unsafe branch names as not on remote (push path validates later)', async () => {
+    expect(await gitBranchPushState(clone, '--force')).toEqual({
       isOnRemote: false,
       aheadCount: 0,
     });
-    expect(gitBranchPushState(clone, 'a:refs/heads/b')).toEqual({
+    expect(await gitBranchPushState(clone, 'a:refs/heads/b')).toEqual({
       isOnRemote: false,
       aheadCount: 0,
     });
@@ -212,28 +212,28 @@ describe('gitUpstreamStatus (real git)', () => {
     fs.rmSync(clone, { recursive: true, force: true });
   });
 
-  it('reports tracking branch with zero divergence', () => {
-    expect(gitUpstreamStatus(clone, 'trunk')).toEqual({
+  it('reports tracking branch with zero divergence', async () => {
+    expect(await gitUpstreamStatus(clone, 'trunk')).toEqual({
       hasUpstream: true,
       ahead: 0,
       behind: 0,
     });
   });
 
-  it('counts ahead after a local commit', () => {
+  it('counts ahead after a local commit', async () => {
     fs.writeFileSync(path.join(clone, 'n.txt'), 'n\n');
     run(clone, ['add', 'n.txt']);
     run(clone, ['commit', '-m', 'n']);
-    expect(gitUpstreamStatus(clone, 'trunk')).toEqual({
+    expect(await gitUpstreamStatus(clone, 'trunk')).toEqual({
       hasUpstream: true,
       ahead: 1,
       behind: 0,
     });
   });
 
-  it('reports no upstream on a never-pushed branch', () => {
+  it('reports no upstream on a never-pushed branch', async () => {
     run(clone, ['checkout', '-b', 'feature/local']);
-    expect(gitUpstreamStatus(clone, 'feature/local')).toEqual({
+    expect(await gitUpstreamStatus(clone, 'feature/local')).toEqual({
       hasUpstream: false,
       ahead: 0,
       behind: 0,

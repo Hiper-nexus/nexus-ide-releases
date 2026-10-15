@@ -176,26 +176,26 @@ export function registerIntegrationsIpc(): void {
     return setLinearKey(parsed.data.token);
   });
 
-  ipcMain.handle(INTEGRATIONS_CHANNELS.gitDiff, (event) => {
+  ipcMain.handle(INTEGRATIONS_CHANNELS.gitDiff, async (event) => {
     try {
       const cwd = workspaceCwd(event);
-      const diff = gitDiff(cwd);
+      const diff = await gitDiff(cwd);
       if (!diff.ok) return diff;
       return {
         ok: true as const,
         diff: diff.diff,
-        branch: gitCurrentBranch(cwd),
-        remote: gitRemoteOrigin(cwd),
+        branch: await gitCurrentBranch(cwd),
+        remote: await gitRemoteOrigin(cwd),
       };
     } catch (err) {
       return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
     }
   });
 
-  ipcMain.handle(INTEGRATIONS_CHANNELS.gitStatus, (event) => {
+  ipcMain.handle(INTEGRATIONS_CHANNELS.gitStatus, async (event) => {
     try {
       const cwd = workspaceCwd(event);
-      const scm = gitScmStatus(cwd);
+      const scm = await gitScmStatus(cwd);
       if (!scm.ok) return scm;
       // Legacy callers expect a printable LF `status` string.
       return {
@@ -207,51 +207,51 @@ export function registerIntegrationsIpc(): void {
     }
   });
 
-  ipcMain.handle(INTEGRATIONS_CHANNELS.gitStage, (event, raw) => {
+  ipcMain.handle(INTEGRATIONS_CHANNELS.gitStage, async (event, raw) => {
     const parsed = gitPathsSchema.safeParse(raw);
     if (!parsed.success) return { ok: false as const, error: 'invalid paths' };
     try {
-      return gitStage(workspaceCwd(event), parsed.data.paths);
+      return await gitStage(workspaceCwd(event), parsed.data.paths);
     } catch (err) {
       return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
     }
   });
 
-  ipcMain.handle(INTEGRATIONS_CHANNELS.gitUnstage, (event, raw) => {
+  ipcMain.handle(INTEGRATIONS_CHANNELS.gitUnstage, async (event, raw) => {
     const parsed = gitPathsSchema.safeParse(raw);
     if (!parsed.success) return { ok: false as const, error: 'invalid paths' };
     try {
-      return gitUnstage(workspaceCwd(event), parsed.data.paths);
+      return await gitUnstage(workspaceCwd(event), parsed.data.paths);
     } catch (err) {
       return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
     }
   });
 
-  ipcMain.handle(INTEGRATIONS_CHANNELS.gitCommit, (event, raw) => {
+  ipcMain.handle(INTEGRATIONS_CHANNELS.gitCommit, async (event, raw) => {
     const parsed = gitCommitSchema.safeParse(raw);
     if (!parsed.success) return { ok: false as const, error: 'invalid commit message' };
     try {
-      return gitCommitMessage(workspaceCwd(event), parsed.data.message);
+      return await gitCommitMessage(workspaceCwd(event), parsed.data.message);
     } catch (err) {
       return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
     }
   });
 
-  ipcMain.handle(INTEGRATIONS_CHANNELS.gitLog, (event, raw) => {
+  ipcMain.handle(INTEGRATIONS_CHANNELS.gitLog, async (event, raw) => {
     const parsed = gitLogSchema.safeParse(raw ?? {});
     if (!parsed.success) return { ok: false as const, error: 'invalid log request' };
     try {
-      return gitLogOneline(workspaceCwd(event), parsed.data.count);
+      return await gitLogOneline(workspaceCwd(event), parsed.data.count);
     } catch (err) {
       return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
     }
   });
 
-  ipcMain.handle(INTEGRATIONS_CHANNELS.gitFileDiff, (event, raw) => {
+  ipcMain.handle(INTEGRATIONS_CHANNELS.gitFileDiff, async (event, raw) => {
     const parsed = gitFileDiffSchema.safeParse(raw);
     if (!parsed.success) return { ok: false as const, error: 'invalid diff request' };
     try {
-      return gitFileDiff(workspaceCwd(event), parsed.data.path, {
+      return await gitFileDiff(workspaceCwd(event), parsed.data.path, {
         staged: parsed.data.staged,
         untracked: parsed.data.untracked,
       });
@@ -260,49 +260,49 @@ export function registerIntegrationsIpc(): void {
     }
   });
 
-  ipcMain.handle(INTEGRATIONS_CHANNELS.gitPush, (event) => {
+  ipcMain.handle(INTEGRATIONS_CHANNELS.gitPush, async (event) => {
     try {
       const cwd = workspaceCwd(event);
-      const branch = gitCurrentBranch(cwd);
+      const branch = await gitCurrentBranch(cwd);
       if (!branch) return { ok: false as const, error: 'sem branch para enviar' };
-      return gitPushCurrentBranch(cwd, branch);
+      return await gitPushCurrentBranch(cwd, branch);
     } catch (err) {
       return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
     }
   });
 
-  ipcMain.handle(INTEGRATIONS_CHANNELS.gitPull, (event, raw) => {
+  ipcMain.handle(INTEGRATIONS_CHANNELS.gitPull, async (event, raw) => {
     const parsed = gitPullSchema.safeParse(raw ?? {});
     try {
-      return gitPullCurrentBranch(workspaceCwd(event), parsed.success ? parsed.data?.rebase : false);
+      return await gitPullCurrentBranch(workspaceCwd(event), parsed.success ? parsed.data?.rebase : false);
     } catch (err) {
       return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
     }
   });
 
-  ipcMain.handle(INTEGRATIONS_CHANNELS.gitDiscard, (event, raw) => {
+  ipcMain.handle(INTEGRATIONS_CHANNELS.gitDiscard, async (event, raw) => {
     const parsed = gitPathsSchema.safeParse(raw);
     if (!parsed.success) return { ok: false as const, error: 'caminhos inválidos para descarte' };
     try {
-      return gitDiscard(workspaceCwd(event), parsed.data.paths);
+      return await gitDiscard(workspaceCwd(event), parsed.data.paths);
     } catch (err) {
       return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
     }
   });
 
-  ipcMain.handle(INTEGRATIONS_CHANNELS.gitBranches, (event) => {
+  ipcMain.handle(INTEGRATIONS_CHANNELS.gitBranches, async (event) => {
     try {
-      return gitBranches(workspaceCwd(event));
+      return await gitBranches(workspaceCwd(event));
     } catch (err) {
       return { ok: false as const, current: null, branches: [], error: err instanceof Error ? err.message : String(err) };
     }
   });
 
-  ipcMain.handle(INTEGRATIONS_CHANNELS.gitCheckout, (event, raw) => {
+  ipcMain.handle(INTEGRATIONS_CHANNELS.gitCheckout, async (event, raw) => {
     const parsed = gitCheckoutSchema.safeParse(raw);
     if (!parsed.success) return { ok: false as const, error: 'dados de branch inválidos' };
     try {
-      return gitCheckoutBranch(workspaceCwd(event), parsed.data.branch, parsed.data.create);
+      return await gitCheckoutBranch(workspaceCwd(event), parsed.data.branch, parsed.data.create);
     } catch (err) {
       return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
     }
@@ -314,7 +314,7 @@ export function registerIntegrationsIpc(): void {
     if (!parsed.success) return { ok: false, error: 'invalid request' };
     try {
       const cwd = workspaceCwd(event);
-      const forge = selectForge(gitRemoteOrigin(cwd));
+      const forge = selectForge(await gitRemoteOrigin(cwd));
       if (!forge) {
         return { ok: false, error: 'origin não é um remote hospedado reconhecido' };
       }
@@ -376,7 +376,7 @@ export function registerIntegrationsIpc(): void {
   ipcMain.handle(INTEGRATIONS_CHANNELS.forgeBranchReview, async (event) => {
     try {
       const cwd = workspaceCwd(event);
-      const forge = selectForge(gitRemoteOrigin(cwd));
+      const forge = selectForge(await gitRemoteOrigin(cwd));
       if (!forge) {
         return { ok: false, error: 'origin não é um remote hospedado reconhecido' };
       }
@@ -384,7 +384,7 @@ export function registerIntegrationsIpc(): void {
       if (!token) {
         return { ok: false, error: forgeTokenMissingHint(forge.providerId) };
       }
-      const branch = gitCurrentBranch(cwd);
+      const branch = await gitCurrentBranch(cwd);
       if (!branch) return { ok: false, error: 'não consegui resolver a branch atual' };
       const provider = resolveForgeProvider(forge, token, defaultGithubHttp);
       if (!provider.getReviewForBranch) {
@@ -406,7 +406,7 @@ export function registerIntegrationsIpc(): void {
   ipcMain.handle(INTEGRATIONS_CHANNELS.forgeInspectPr, async (event) => {
     try {
       const cwd = workspaceCwd(event);
-      const forge = selectForge(gitRemoteOrigin(cwd));
+      const forge = selectForge(await gitRemoteOrigin(cwd));
       if (!forge) {
         return { ok: false, error: 'origin não é um remote hospedado reconhecido' };
       }
@@ -414,7 +414,7 @@ export function registerIntegrationsIpc(): void {
       if (!token) {
         return { ok: false, error: forgeTokenMissingHint(forge.providerId) };
       }
-      const branch = gitCurrentBranch(cwd);
+      const branch = await gitCurrentBranch(cwd);
       if (!branch) return { ok: false, error: 'não consegui resolver a branch atual' };
       const provider = resolveForgeProvider(forge, token, defaultGithubHttp);
       if (!provider.getReviewForBranch || !provider.inspectReview) {
@@ -446,7 +446,7 @@ export function registerIntegrationsIpc(): void {
     if (!parsed.success) return { ok: false, error: 'invalid request' };
     try {
       const cwd = workspaceCwd(event);
-      const forge = selectForge(gitRemoteOrigin(cwd));
+      const forge = selectForge(await gitRemoteOrigin(cwd));
       if (!forge) {
         return { ok: false, error: 'origin não é um remote hospedado reconhecido' };
       }
@@ -460,7 +460,7 @@ export function registerIntegrationsIpc(): void {
       }
       let number = parsed.data.number;
       if (!number) {
-        const branch = gitCurrentBranch(cwd);
+        const branch = await gitCurrentBranch(cwd);
         if (!branch || !provider.getReviewForBranch) {
           return { ok: false, error: 'informe o número do PR' };
         }
@@ -501,7 +501,7 @@ export function registerIntegrationsIpc(): void {
     if (!parsed.success) return { ok: false, error: 'invalid request' };
     try {
       const cwd = workspaceCwd(event);
-      const forge = selectForge(gitRemoteOrigin(cwd));
+      const forge = selectForge(await gitRemoteOrigin(cwd));
       if (!forge) {
         return { ok: false, error: 'origin não é um remote hospedado reconhecido' };
       }
@@ -515,7 +515,7 @@ export function registerIntegrationsIpc(): void {
       }
       let number = parsed.data.number;
       if (!number) {
-        const branch = gitCurrentBranch(cwd);
+        const branch = await gitCurrentBranch(cwd);
         if (!branch || !provider.getReviewForBranch) {
           return { ok: false, error: 'informe o número do PR' };
         }
@@ -556,7 +556,7 @@ export function registerIntegrationsIpc(): void {
     if (!token) return { ok: false, error: 'GitHub token missing' };
     try {
       const cwd = workspaceCwd(event);
-      const repo = parseGithubRepo(gitRemoteOrigin(cwd));
+      const repo = parseGithubRepo(await gitRemoteOrigin(cwd));
       if (!repo) return { ok: false, error: 'origin is not a GitHub remote' };
       return listGithubPulls(token, repo.owner, repo.name);
     } catch (err) {
@@ -571,7 +571,7 @@ export function registerIntegrationsIpc(): void {
     if (!token) return { ok: false, error: 'GitHub token missing' };
     try {
       const cwd = workspaceCwd(event);
-      const repo = parseGithubRepo(gitRemoteOrigin(cwd));
+      const repo = parseGithubRepo(await gitRemoteOrigin(cwd));
       if (!repo) return { ok: false, error: 'origin is not a GitHub remote' };
       return listGithubIssues(token, repo.owner, repo.name, parsed.data);
     } catch (err) {

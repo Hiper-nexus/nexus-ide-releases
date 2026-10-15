@@ -5,10 +5,12 @@
  * The workspace path is trusted, but the repository CONTENTS are not: a cloned
  * repo can carry executable local config (`core.fsmonitor`, a `.gitattributes`
  * diff/textconv driver, hooks) that git would run merely on `status`/`diff`.
- * Every call therefore goes through the hardened ProcessGitRunner — which
+ * Every call therefore goes through the hardened AsyncProcessGitRunner — which
  * disables hooks/fsmonitor and scrubs the GIT_, LD_ and DYLD_ env families —
  * and the untrusted status/diff reads additionally refuse a repo whose local
- * config is executable.
+ * config is executable. Asynchronous so the Electron Main thread keeps serving
+ * renderer/PTY events during slow repository probes (the Source Control panel
+ * used to poll `git status` with several spawnSync calls per tick).
  */
 import {
   assertSafeGitPathspec,
@@ -23,18 +25,18 @@ import {
   type GitStatusResult,
 } from '../../shared/git-scm';
 import { parseHostedRemote } from '../git/hosted-remote-url';
-import { ProcessGitRunner, assertSafeLocalGitConfig } from '../runtime/git-command';
+import { AsyncProcessGitRunner, assertSafeLocalGitConfigAsync } from '../runtime/git-command';
 
-const runner = new ProcessGitRunner();
+const runner = new AsyncProcessGitRunner();
 const MAX_COMMIT_MESSAGE = 4096;
 const MAX_PATHS = 500;
 
-function git(
+async function git(
   cwd: string,
   args: string[],
-): { ok: boolean; stdout: string; stderr: string; code: number } {
+): Promise<{ ok: boolean; stdout: string; stderr: string; code: number }> {
   try {
-    const r = runner.run(cwd, args, { allowFailure: true });
+    const r = await runner.run(cwd, args, { allowFailure: true });
     return { ok: r.status === 0, stdout: r.stdout, stderr: r.stderr, code: r.status };
   } catch (err) {
     return {
@@ -46,9 +48,9 @@ function git(
   }
 }
 
-function refuseUnsafeConfig(cwd: string): string | null {
+async function refuseUnsafeConfig(cwd: string): Promise<string | null> {
   try {
-    assertSafeLocalGitConfig(runner, cwd);
+    await assertSafeLocalGitConfigAsync(runner, cwd);
     return null;
   } catch (err) {
     return err instanceof Error ? err.message : 'unsafe repository';
@@ -70,15 +72,15 @@ function normalizePaths(paths: string[]): string[] | { error: string } {
   return paths;
 }
 
-export function gitCurrentBranch(cwd: string): string | null {
-  const r = git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']);
+export async function gitCurrentBranch(cwd: string): Promise<string | null> {
+  const r = await git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']);
   if (!r.ok) return null;
   const b = r.stdout.trim();
   return b && b !== 'HEAD' ? b : null;
 }
 
-export function gitRemoteOrigin(cwd: string): string | null {
-  const r = git(cwd, ['config', '--get', 'remote.origin.url']);
+export async function gitRemoteOrigin(cwd: string): Promise<string | null> {
+  const r = await git(cwd, ['config', '--get', 'remote.origin.url']);
   if (!r.ok) return null;
   return r.stdout.trim() || null;
 }
@@ -88,8 +90,8 @@ export function gitRemoteOrigin(cwd: string): string | null {
  * Prefers the cached origin/HEAD symbolic ref (no network); falls back to
  * 'main' when the remote head is unknown (fresh clone / no remote).
  */
-export function gitDefaultBranch(cwd: string): string {
-  const symbolic = git(cwd, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']);
+export async function gitDefaultBranch(cwd: string): Promise<string> {
+  const symbolic = await git(cwd, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']);
   if (symbolic.ok) {
     const ref = symbolic.stdout.trim().replace(/^origin\//, '');
     if (ref) return ref;
@@ -108,39 +110,39 @@ export function gitDefaultBranch(cwd: string): string {
 // leading '+' would force-push. Restrict to the plain ref-name charset.
 const SAFE_BRANCH_NAME = /^[A-Za-z0-9._/-]+$/;
 
-export function gitPushCurrentBranch(cwd: string, branch: string): GitMutateResult {
-  const unsafe = refuseUnsafeConfig(cwd);
+export async function gitPushCurrentBranch(cwd: string, branch: string): Promise<GitMutateResult> {
+  const unsafe = await refuseUnsafeConfig(cwd);
   if (unsafe) return { ok: false, error: unsafe };
   const name = branch.trim();
   if (!name || name === 'HEAD') return { ok: false, error: 'no branch to push' };
   if (!SAFE_BRANCH_NAME.test(name) || name.startsWith('-') || name.includes('..')) {
     return { ok: false, error: `nome de branch inválido para push: ${name}` };
   }
-  const r = git(cwd, ['push', '--set-upstream', 'origin', name]);
+  const r = await git(cwd, ['push', '--set-upstream', 'origin', name]);
   if (!r.ok) {
     return { ok: false, error: r.stderr.trim() || r.stdout.trim() || `git push exit ${r.code}` };
   }
   return { ok: true };
 }
 
-export function gitPullCurrentBranch(cwd: string, rebase = false): GitMutateResult {
-  const unsafe = refuseUnsafeConfig(cwd);
+export async function gitPullCurrentBranch(cwd: string, rebase = false): Promise<GitMutateResult> {
+  const unsafe = await refuseUnsafeConfig(cwd);
   if (unsafe) return { ok: false, error: unsafe };
   const args = rebase ? ['pull', '--rebase'] : ['pull'];
-  const r = git(cwd, args);
+  const r = await git(cwd, args);
   if (!r.ok) {
     return { ok: false, error: r.stderr.trim() || r.stdout.trim() || `git pull exit ${r.code}` };
   }
   return { ok: true };
 }
 
-export function gitDiscard(cwd: string, paths: string[]): GitMutateResult {
-  const unsafe = refuseUnsafeConfig(cwd);
+export async function gitDiscard(cwd: string, paths: string[]): Promise<GitMutateResult> {
+  const unsafe = await refuseUnsafeConfig(cwd);
   if (unsafe) return { ok: false, error: unsafe };
   const normalized = normalizePaths(paths);
   if ('error' in normalized) return { ok: false, error: normalized.error };
-  const restoreRes = git(cwd, ['restore', '--', ...normalized]);
-  const cleanRes = git(cwd, ['clean', '-fd', '--', ...normalized]);
+  const restoreRes = await git(cwd, ['restore', '--', ...normalized]);
+  const cleanRes = await git(cwd, ['clean', '-fd', '--', ...normalized]);
   if (!restoreRes.ok && !cleanRes.ok) {
     return {
       ok: false,
@@ -150,15 +152,15 @@ export function gitDiscard(cwd: string, paths: string[]): GitMutateResult {
   return { ok: true };
 }
 
-export function gitBranches(cwd: string): {
+export async function gitBranches(cwd: string): Promise<{
   ok: boolean;
   current: string | null;
   branches: string[];
   error?: string;
-} {
-  const unsafe = refuseUnsafeConfig(cwd);
+}> {
+  const unsafe = await refuseUnsafeConfig(cwd);
   if (unsafe) return { ok: false, current: null, branches: [], error: unsafe };
-  const r = git(cwd, ['branch', '--list', '--no-color']);
+  const r = await git(cwd, ['branch', '--list', '--no-color']);
   if (!r.ok) {
     return {
       ok: false,
@@ -183,12 +185,12 @@ export function gitBranches(cwd: string): {
   return { ok: true, current, branches };
 }
 
-export function gitCheckoutBranch(
+export async function gitCheckoutBranch(
   cwd: string,
   branch: string,
   create = false,
-): GitMutateResult {
-  const unsafe = refuseUnsafeConfig(cwd);
+): Promise<GitMutateResult> {
+  const unsafe = await refuseUnsafeConfig(cwd);
   if (unsafe) return { ok: false, error: unsafe };
   const name = branch.trim();
   if (!name || name === 'HEAD') return { ok: false, error: 'nome de branch inválido' };
@@ -196,7 +198,7 @@ export function gitCheckoutBranch(
     return { ok: false, error: `nome de branch inválido: ${name}` };
   }
   const args = create ? ['checkout', '-b', name] : ['checkout', name];
-  const r = git(cwd, args);
+  const r = await git(cwd, args);
   if (!r.ok) {
     return {
       ok: false,
@@ -212,10 +214,10 @@ export function gitCheckoutBranch(
  * needsPush = !isOnRemote || aheadCount > 0). Invalid/unknown branch names
  * report "not on remote" so the gate falls back to the (validating) push.
  */
-export function gitBranchPushState(
+export async function gitBranchPushState(
   cwd: string,
   branch: string,
-): { isOnRemote: boolean; aheadCount: number } {
+): Promise<{ isOnRemote: boolean; aheadCount: number }> {
   const name = branch.trim();
   if (
     !name ||
@@ -226,14 +228,14 @@ export function gitBranchPushState(
   ) {
     return { isOnRemote: false, aheadCount: 0 };
   }
-  const probe = git(cwd, [
+  const probe = await git(cwd, [
     'rev-parse',
     '--verify',
     '--quiet',
     `refs/remotes/origin/${name}`,
   ]);
   if (!probe.ok) return { isOnRemote: false, aheadCount: 0 };
-  const ahead = git(cwd, ['rev-list', '--count', `origin/${name}..${name}`]);
+  const ahead = await git(cwd, ['rev-list', '--count', `origin/${name}..${name}`]);
   const aheadCount = ahead.ok ? Number.parseInt(ahead.stdout.trim(), 10) || 0 : 0;
   return { isOnRemote: true, aheadCount };
 }
@@ -250,10 +252,10 @@ function parseLeftRightCount(stdout: string): { ahead: number; behind: number } 
  * Divergence vs the configured upstream, falling back to origin/<branch>
  * when tracking is missing but the remote ref exists (already published).
  */
-export function gitUpstreamStatus(
+export async function gitUpstreamStatus(
   cwd: string,
   branch: string | null,
-): { hasUpstream: boolean; ahead: number; behind: number } {
+): Promise<{ hasUpstream: boolean; ahead: number; behind: number }> {
   const empty = { hasUpstream: false, ahead: 0, behind: 0 };
   if (!branch) return empty;
   const name = branch.trim();
@@ -267,10 +269,10 @@ export function gitUpstreamStatus(
     return empty;
   }
 
-  const tracked = git(cwd, ['rev-parse', '--abbrev-ref', '@{upstream}']);
+  const tracked = await git(cwd, ['rev-parse', '--abbrev-ref', '@{upstream}']);
   const upstreamRef = tracked.ok ? tracked.stdout.trim() : '';
   if (upstreamRef) {
-    const count = git(cwd, [
+    const count = await git(cwd, [
       'rev-list',
       '--left-right',
       '--count',
@@ -280,9 +282,9 @@ export function gitUpstreamStatus(
     return { hasUpstream: true, ...parseLeftRightCount(count.stdout) };
   }
 
-  const probe = gitBranchPushState(cwd, name);
+  const probe = await gitBranchPushState(cwd, name);
   if (!probe.isOnRemote) return empty;
-  const behind = git(cwd, ['rev-list', '--count', `HEAD..origin/${name}`]);
+  const behind = await git(cwd, ['rev-list', '--count', `HEAD..origin/${name}`]);
   return {
     hasUpstream: true,
     ahead: probe.aheadCount,
@@ -290,14 +292,14 @@ export function gitUpstreamStatus(
   };
 }
 
-export function gitDiff(cwd: string, staged = false): { ok: true; diff: string } | { ok: false; error: string } {
-  const unsafe = refuseUnsafeConfig(cwd);
+export async function gitDiff(cwd: string, staged = false): Promise<{ ok: true; diff: string } | { ok: false; error: string }> {
+  const unsafe = await refuseUnsafeConfig(cwd);
   if (unsafe) return { ok: false, error: unsafe };
   // --no-ext-diff blocks a repo-supplied external diff driver from running.
   const args = staged
     ? ['diff', '--no-ext-diff', '--cached']
     : ['diff', '--no-ext-diff', 'HEAD'];
-  const r = git(cwd, args);
+  const r = await git(cwd, args);
   // git diff exits 1 when there are differences — still success for our UI.
   if (r.code !== 0 && r.code !== 1) {
     return { ok: false, error: r.stderr.trim() || `git diff exit ${r.code}` };
@@ -306,11 +308,11 @@ export function gitDiff(cwd: string, staged = false): { ok: true; diff: string }
 }
 
 /** Structured status for the Source Control panel. */
-export function gitScmStatus(cwd: string): GitStatusResult {
-  const unsafe = refuseUnsafeConfig(cwd);
+export async function gitScmStatus(cwd: string): Promise<GitStatusResult> {
+  const unsafe = await refuseUnsafeConfig(cwd);
   if (unsafe) return { ok: false, error: unsafe };
   // -z: NUL-terminated paths (no C-quoting) — required for spaces/unicode.
-  const r = git(cwd, [
+  const r = await git(cwd, [
     'status',
     '--porcelain=v1',
     '-z',
@@ -320,13 +322,13 @@ export function gitScmStatus(cwd: string): GitStatusResult {
     return { ok: false, error: r.stderr.trim() || `git status exit ${r.code}` };
   }
   const parsed = parsePorcelainV1(r.stdout);
-  const branch = gitCurrentBranch(cwd);
-  const upstream = gitUpstreamStatus(cwd, branch);
+  const branch = await gitCurrentBranch(cwd);
+  const upstream = await gitUpstreamStatus(cwd, branch);
   return {
     ok: true,
     branch,
-    remote: gitRemoteOrigin(cwd),
-    defaultBranch: gitDefaultBranch(cwd),
+    remote: await gitRemoteOrigin(cwd),
+    defaultBranch: await gitDefaultBranch(cwd),
     hasUnresolvedConflicts: hasUnresolvedGitConflicts(
       parsed.staged,
       parsed.unstaged,
@@ -336,22 +338,22 @@ export function gitScmStatus(cwd: string): GitStatusResult {
   };
 }
 
-export function gitStage(cwd: string, paths: string[]): GitMutateResult {
-  const unsafe = refuseUnsafeConfig(cwd);
+export async function gitStage(cwd: string, paths: string[]): Promise<GitMutateResult> {
+  const unsafe = await refuseUnsafeConfig(cwd);
   if (unsafe) return { ok: false, error: unsafe };
   const normalized = normalizePaths(paths);
   if ('error' in normalized) return { ok: false, error: normalized.error };
-  const r = git(cwd, ['add', '--', ...normalized]);
+  const r = await git(cwd, ['add', '--', ...normalized]);
   if (!r.ok) return { ok: false, error: r.stderr.trim() || `git add exit ${r.code}` };
   return { ok: true };
 }
 
-export function gitUnstage(cwd: string, paths: string[]): GitMutateResult {
-  const unsafe = refuseUnsafeConfig(cwd);
+export async function gitUnstage(cwd: string, paths: string[]): Promise<GitMutateResult> {
+  const unsafe = await refuseUnsafeConfig(cwd);
   if (unsafe) return { ok: false, error: unsafe };
   const normalized = normalizePaths(paths);
   if ('error' in normalized) return { ok: false, error: normalized.error };
-  const r = git(cwd, ['restore', '--staged', '--', ...normalized]);
+  const r = await git(cwd, ['restore', '--staged', '--', ...normalized]);
   if (!r.ok) {
     return {
       ok: false,
@@ -361,8 +363,8 @@ export function gitUnstage(cwd: string, paths: string[]): GitMutateResult {
   return { ok: true };
 }
 
-export function gitCommitMessage(cwd: string, message: string): GitCommitResult {
-  const unsafe = refuseUnsafeConfig(cwd);
+export async function gitCommitMessage(cwd: string, message: string): Promise<GitCommitResult> {
+  const unsafe = await refuseUnsafeConfig(cwd);
   if (unsafe) return { ok: false, error: unsafe };
   const msg = message.trim();
   if (!msg) return { ok: false, error: 'commit message required' };
@@ -370,28 +372,28 @@ export function gitCommitMessage(cwd: string, message: string): GitCommitResult 
     return { ok: false, error: `commit message too long (max ${MAX_COMMIT_MESSAGE})` };
   }
   if (/[\0]/.test(msg)) return { ok: false, error: 'commit message contains NUL' };
-  const r = git(cwd, ['commit', '-m', msg]);
+  const r = await git(cwd, ['commit', '-m', msg]);
   if (!r.ok) {
     return { ok: false, error: r.stderr.trim() || r.stdout.trim() || `git commit exit ${r.code}` };
   }
   return { ok: true, summary: r.stdout.trim() || 'committed' };
 }
 
-export function gitLogOneline(cwd: string, count = 20): GitLogResult {
-  const unsafe = refuseUnsafeConfig(cwd);
+export async function gitLogOneline(cwd: string, count = 20): Promise<GitLogResult> {
+  const unsafe = await refuseUnsafeConfig(cwd);
   if (unsafe) return { ok: false, error: unsafe };
   const n = Number.isInteger(count) && count > 0 ? Math.min(count, 100) : 20;
-  const r = git(cwd, ['log', '--oneline', '-n', String(n)]);
+  const r = await git(cwd, ['log', '--oneline', '-n', String(n)]);
   if (!r.ok) return { ok: false, error: r.stderr.trim() || `git log exit ${r.code}` };
   return { ok: true, commits: parseGitLogOneline(r.stdout) };
 }
 
-export function gitFileDiff(
+export async function gitFileDiff(
   cwd: string,
   path: string,
   opts: { staged?: boolean; untracked?: boolean } = {},
-): GitFileDiffResult {
-  const unsafe = refuseUnsafeConfig(cwd);
+): Promise<GitFileDiffResult> {
+  const unsafe = await refuseUnsafeConfig(cwd);
   if (unsafe) return { ok: false, error: unsafe };
   try {
     assertSafeGitPathspec(path);
@@ -404,7 +406,7 @@ export function gitFileDiff(
   const args = opts.staged
     ? ['diff', '--no-ext-diff', '--cached', '--', path]
     : ['diff', '--no-ext-diff', 'HEAD', '--', path];
-  const r = git(cwd, args);
+  const r = await git(cwd, args);
   if (r.code !== 0 && r.code !== 1) {
     return { ok: false, error: r.stderr.trim() || `git diff exit ${r.code}` };
   }
