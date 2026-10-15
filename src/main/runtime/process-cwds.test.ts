@@ -37,13 +37,15 @@ describe('F-908: cwd atual dos processos', () => {
 
   it.skipIf(!posix)('porta real enxerga o cwd de um processo vivo e esquece depois que ele sai', async () => {
     const dir = tmp();
-    const child = spawn('sleep', ['30'], { cwd: dir, stdio: 'ignore' });
+    // Vive mais que a espera pela prova; a saída é observada desde o spawn.
+    const child = spawn('sleep', ['600'], { cwd: dir, stdio: 'ignore' });
+    const exited = new Promise((resolve) => child.once('exit', resolve));
     try {
       await new Promise((resolve) => child.once('spawn', resolve));
       expect(await firstProof(dir)).toContain(dir);
     } finally {
       child.kill('SIGKILL');
-      await new Promise((resolve) => child.once('exit', resolve));
+      await exited;
     }
     expect(await firstProof(dir)).not.toContain(dir);
   }, 120_000);
