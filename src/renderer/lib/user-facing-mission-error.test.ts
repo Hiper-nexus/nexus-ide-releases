@@ -255,6 +255,11 @@ describe("user-facing mission errors", () => {
         "mission direct requires live current dispatch authority",
         "A missão está parada. Use Retomar no Quadro antes de orientar a equipe.",
       ],
+      [
+        "mission direct target is busy",
+        "O Maestro está no meio de um turno. A orientação não foi enviada e " +
+          "o texto continua no campo; tente quando ele terminar.",
+      ],
     ];
     for (const [raw, expected] of cases) {
       expect(

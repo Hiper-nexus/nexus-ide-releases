@@ -187,6 +187,11 @@ function knownMissionRecovery(raw: string): string | null {
   if (/mission direct requires live current dispatch authority/i.test(raw)) {
     return "A missão está parada. Use Retomar no Quadro antes de orientar a equipe.";
   }
+  // D1: o Main recusa na hora um alvo em turno (a entrega esperaria 30 s e mentiria
+  // "o Nexus encerrou a execução"). Nada foi escrito; o rascunho segue no campo.
+  if (/mission direct target is busy/i.test(raw)) {
+    return "O Maestro está no meio de um turno. A orientação não foi enviada e o texto continua no campo; tente quando ele terminar.";
+  }
   return null;
 }
 

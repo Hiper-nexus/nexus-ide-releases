@@ -215,6 +215,7 @@ function makeHarness(options: {
     sessionId: string,
   ) => OwnedAgentSessionInfo | null;
   readonly resumeOrchestrator?: MissionDirectDeliveryDeps['resumeOrchestrator'];
+  readonly isSessionInjectableIdle?: MissionDirectDeliveryDeps['isSessionInjectableIdle'];
   readonly missionsUpdate?: (
     id: string,
     patch: { readonly status: Mission['status'] },
@@ -247,6 +248,9 @@ function makeHarness(options: {
     emitMissionEvent: emitSpy as unknown as MissionDirectDeliveryDeps['emitMissionEvent'],
     ...(options.resumeOrchestrator
       ? { resumeOrchestrator: options.resumeOrchestrator }
+      : {}),
+    ...(options.isSessionInjectableIdle
+      ? { isSessionInjectableIdle: options.isSessionInjectableIdle }
       : {}),
   };
   return { stores, deps, deliverSpy, emitSpy };
@@ -869,6 +873,144 @@ describe('mission direct — operador como orquestrador', () => {
     await deliverMissionDirectInstruction(makeScope(), stores, directCommand(), deps);
 
     expect(deliverSpy).toHaveBeenCalledTimes(1);
+  });
+
+  describe('D1 — alvo no meio de um turno', () => {
+    // Sem isto a entrega esperava 2 × 15 s por um idle que não vinha e terminava em
+    // "agent pane did not start after prompt delivery" (o Quadro dizia "encerrou com segurança").
+    it('worker ocupado: recusa na hora, sem escrever no pane nem registrar a orientação', async () => {
+      const squad = makeSquad();
+      const mission = makeApprovedMission(squad);
+      const injectable = vi.fn(() => false);
+      const { stores, deps, deliverSpy, emitSpy } = makeHarness({
+        mission,
+        squad,
+        workers: [makeWorkerSession()],
+        panes: [makeWorkerPane()],
+        isSessionInjectableIdle: injectable,
+      });
+
+      await expect(
+        deliverMissionDirectInstruction(makeScope(), stores, directCommand(), deps),
+      ).rejects.toThrow('mission direct target is busy');
+
+      expect(injectable).toHaveBeenCalledWith('sess-worker');
+      expect(deliverSpy).not.toHaveBeenCalled();
+      expect(emitSpy).not.toHaveBeenCalled();
+    });
+
+    it('Maestro vivo e ocupado: mesma recusa, e a orientação reenviada no idle entrega uma vez', async () => {
+      const squad = makeSquad([
+        makeAgent(),
+        makeAgent({ id: 'ag-orch', agentName: 'Orquestrador', category: 'orchestrator' }),
+      ]);
+      const orch = makeOrchSession();
+      const mission = makeApprovedMission(squad);
+      mission.orchestratorSessionId = orch.sessionId;
+      let injectable = false;
+      const { stores, deps, deliverSpy, emitSpy } = makeHarness({
+        mission,
+        squad,
+        workers: [makeWorkerSession()],
+        panes: [makeWorkerPane(), makeOrchPane()],
+        getRuntimeAgentSessionInfo: (sessionId) => (sessionId === orch.sessionId ? orch : null),
+        isSessionInjectableIdle: () => injectable,
+      });
+
+      await expect(
+        deliverMissionDirectInstruction(makeScope(), stores, directCommand(), deps),
+      ).rejects.toThrow('mission direct target is busy');
+      expect(deliverSpy).not.toHaveBeenCalled();
+
+      injectable = true;
+      await deliverMissionDirectInstruction(makeScope(), stores, directCommand(), deps);
+      expect(deliverSpy).toHaveBeenCalledTimes(1);
+      expect(deliverSpy.mock.calls[0]?.[0]).toBe(orch.sessionId);
+      expect(emitSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('alvo ocioso segue o caminho normal', async () => {
+      const squad = makeSquad();
+      const mission = makeApprovedMission(squad);
+      const { stores, deps, deliverSpy } = makeHarness({
+        mission,
+        squad,
+        workers: [makeWorkerSession()],
+        panes: [makeWorkerPane()],
+        isSessionInjectableIdle: () => true,
+      });
+
+      await deliverMissionDirectInstruction(makeScope(), stores, directCommand(), deps);
+
+      expect(deliverSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('o Maestro religado por este comando ainda está em boot: espera o idle em vez de recusar', async () => {
+      const squad = makeSquad([
+        makeAgent(),
+        makeAgent({ id: 'ag-orch', agentName: 'Orquestrador', category: 'orchestrator' }),
+      ]);
+      const mission = makeApprovedMission(squad);
+      const orch = makeOrchSession();
+      let live = false;
+      const resume = vi.fn(async () => {
+        live = true;
+        mission.orchestratorSessionId = orch.sessionId;
+      });
+      const { stores, deps, deliverSpy } = makeHarness({
+        mission,
+        squad,
+        workers: [makeWorkerSession()],
+        panes: [makeWorkerPane(), makeOrchPane()],
+        getRuntimeAgentSessionInfo: (sessionId) =>
+          live && sessionId === orch.sessionId ? orch : null,
+        resumeOrchestrator: resume,
+        isSessionInjectableIdle: () => false, // o processo novo ainda está subindo
+      });
+
+      await deliverMissionDirectInstruction(makeScope(), stores, directCommand(), deps);
+
+      expect(resume).toHaveBeenCalledTimes(1);
+      expect(deliverSpy).toHaveBeenCalledTimes(1);
+      expect(deliverSpy.mock.calls[0]?.[0]).toBe(orch.sessionId);
+    });
+
+    it('a fila do kickoff espera o 1º turno do Maestro: entregue ao fim, não recusada como ocupada', async () => {
+      const scope = makeScope();
+      const squad = makeSquad([
+        makeAgent(),
+        makeAgent({ id: 'ag-orch', agentName: 'Orquestrador', category: 'orchestrator' }),
+      ]);
+      const mission = makeApprovedMission(squad, { orchestratorSessionId: 'sess-orch-live' });
+      const h = makeHarness({
+        mission,
+        squad,
+        workers: [],
+        panes: [makeOrchPane()],
+        kickoffReceipt: true,
+        getRuntimeAgentSessionInfo: (id) => makeOrchSession({ sessionId: id }),
+        isSessionInjectableIdle: () => false, // o Maestro está no turno do briefing
+      });
+      const current = beginKickoffBriefDelivery(scope, {
+        missionId: mission.id,
+        orchestratorSessionId: mission.orchestratorSessionId!,
+        intentVersion: 1,
+        intentAuthorityHash: kickoffIntentAuthorityHash(mission),
+        promptHash: 'a'.repeat(64),
+      });
+
+      // Com o transporte do briefing pendente a orientação só entra na fila.
+      await deliverMissionDirectInstruction(scope, h.stores, directCommand(), h.deps);
+      expect(h.deliverSpy).not.toHaveBeenCalled();
+
+      endKickoffBriefDelivery(current, true);
+      await flushQueuedKickoffDirectsForMission(scope, h.stores, mission.id, h.deps);
+
+      expect(h.deliverSpy).toHaveBeenCalledTimes(1);
+      expect(h.emitSpy.mock.calls.map((call) => call[1]).at(-1)?.payload.deliveryState).toBe(
+        'delivered',
+      );
+    });
   });
 });
 

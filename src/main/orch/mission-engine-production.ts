@@ -78,6 +78,7 @@ import {
 import {
   getAgentSemanticStatus,
   getAgentSemanticStatusBySession,
+  isSessionInjectableIdle,
 } from "./agent-status";
 import {
   assertSafePtyPrompt,
@@ -478,6 +479,11 @@ export interface MissionDirectDeliveryDeps {
   readonly readSessionOutput?: (sessionId: string, maxLines?: number) => string;
   /** F-682: orientação aceita vira prova de pedido do operador (menção de CLI). */
   readonly noteOperatorDirection?: (sessionId: string, text: string) => void;
+  /**
+   * D1: o alvo pode receber texto agora? É o mesmo predicado que a entrega usa
+   * (`isSessionInjectableIdle`). Ausente = sem recusa imediata (só a espera da entrega).
+   */
+  readonly isSessionInjectableIdle?: (sessionId: string) => boolean;
 }
 
 export interface MissionDirectDeliveryOptions {
@@ -508,6 +514,8 @@ const productionMissionDirectDeliveryDeps: MissionDirectDeliveryDeps = {
   getSessionState,
   readSessionOutput,
   noteOperatorDirection,
+  // Preguiçoso: lido só na entrega, não ao carregar o módulo (testes mockam ./agent-status em parte).
+  isSessionInjectableIdle: (sessionId) => isSessionInjectableIdle(sessionId),
 };
 
 interface MissionDirectAuthority {
@@ -519,6 +527,8 @@ interface MissionDirectAuthority {
   /** Missão da aba: alvos são 'orchestrator'/null ou 'pane:<paneId>' de worker. */
   readonly operatorTabMission: boolean;
   readonly authorityFingerprint: string;
+  /** O Maestro foi religado por este comando: o boot dele ainda está em curso. */
+  readonly resumedOrchestrator?: boolean;
 }
 
 /**
@@ -894,7 +904,10 @@ async function resolveMissionDirectAuthority(
       throw error;
     }
     await deps.resumeOrchestrator(scope, command.missionId);
-    return missionDirectAuthority(scope, stores, command, deps);
+    return {
+      ...missionDirectAuthority(scope, stores, command, deps),
+      resumedOrchestrator: true,
+    };
   }
 }
 
@@ -1113,6 +1126,18 @@ export async function deliverMissionDirectInstruction(
       console.warn("[mission-direct] ACP turn ended after acceptance:", error);
     });
   } else {
+    // D1: turno em andamento não enfileira. A entrega esperaria 2 × 15 s por um
+    // idle que não vem e terminaria num "agente não ficou pronto" falso: recusa já,
+    // sem escrever nada, e o texto continua no campo. Esperam de propósito o
+    // Maestro recém-religado (ainda em boot) e a fila do kickoff (1º turno).
+    if (
+      !options.conversationAlreadyAccepted &&
+      !initial.resumedOrchestrator &&
+      deps.isSessionInjectableIdle &&
+      !deps.isSessionInjectableIdle(initial.sessionId)
+    ) {
+      throw new Error("mission direct target is busy");
+    }
     const accepted = await deps.deliverAgentPrompt(
       initial.sessionId,
       prompt,
