@@ -7,6 +7,12 @@ import type { PaneModel } from '../../shared/types';
 import { buildGridTree } from '../lib/split-tree';
 import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
+import { useOrchStore } from '../state/orch-store';
+import { useProductNavigationStore } from '../state/product-navigation-store';
+import { useToastStore } from '../state/toast-store';
+
+const reopen = vi.hoisted(() => vi.fn());
+vi.mock('../orch/confirm-reopen-mission', () => ({ confirmAndReopenMission: reopen }));
 
 const close = vi.hoisted(() => vi.fn());
 vi.mock('../terminal/pane-close-guard', () => ({ requestPaneClose: close }));
@@ -31,12 +37,12 @@ let measure!: (width: number) => void;
 const roots: Root[] = [];
 const pane: PaneModel = { id: 'narrow-toolbar', kind: 'shell', title: 'Terminal' };
 
-function mount(width: number): HTMLElement {
+function mount(width: number, model: PaneModel = pane): HTMLElement {
   const host = document.createElement('div');
   document.body.appendChild(host);
   const root = createRoot(host);
   roots.push(root);
-  act(() => root.render(<PaneToolbar pane={pane} isFocused />));
+  act(() => root.render(<PaneToolbar pane={model} isFocused />));
   act(() => measure(width));
   return host;
 }
@@ -44,6 +50,9 @@ function mount(width: number): HTMLElement {
 beforeEach(() => {
   useAccessStore.setState({ canUseApp: true, maxAgents: null });
   vi.clearAllMocks();
+  vi.mocked(getPaneSessionId).mockReturnValue(null);
+  useOrchStore.setState({ missions: [], paneMissions: {} });
+  useToastStore.setState({ toasts: [] });
   vi.stubGlobal('ResizeObserver', class {
     constructor(callback: ResizeObserverCallback) {
       measure = width => callback([{ contentRect: { width } } as ResizeObserverEntry], this as unknown as ResizeObserver);
@@ -69,6 +78,51 @@ function overflowToolbar(host: HTMLElement, content: number, box: number): void 
 }
 
 describe('PaneToolbar narrow controls', () => {
+  const missionPane: PaneModel = { id: 'leader', kind: 'cli-agent', title: 'Coordenador', adapterId: 'claude', role: 'orchestrator', missionId: 'mission-a' };
+  function seedMission() {
+    useOrchStore.setState({ missions: [{ id: 'mission-a', title: 'Entrega', description: '', status: 'running', milestones: [], learnings: '', createdAt: 1, updatedAt: 1 }] });
+  }
+
+  it.each(['done', 'blocked'] as const)('keeps the board reachable for a %s mission that needs operator review or a response', (status) => {
+    seedMission();
+    useOrchStore.setState((state) => ({ missions: state.missions.map(mission => ({ ...mission, status, intentState: status === 'blocked' ? 'blocked_user' as const : 'done' as const })) }));
+    const host = mount(1000, missionPane);
+    expect(host.querySelector('[aria-label="Retomar missão"]')).toBeNull();
+    const controls = host.querySelector<HTMLButtonElement>('[aria-label="Abrir missão"]');
+    expect(controls).not.toBeNull();
+    act(() => controls!.click());
+    expect(useProductNavigationStore.getState().destination).toEqual({ kind: 'mission', missionId: 'mission-a', surface: 'board' });
+    expect(reopen).not.toHaveBeenCalled();
+  });
+
+  it('opens mission controls from a live pane instead of offering refused lifecycle actions', () => {
+    seedMission();
+    vi.mocked(getPaneSessionId).mockReturnValue('live-session');
+    const host = mount(1000, missionPane);
+    expect(host.querySelector('[aria-label="Dormir"]')).toBeNull();
+    expect(host.querySelector('[aria-label="Reiniciar"]')).toBeNull();
+    const controls = host.querySelector<HTMLButtonElement>('[aria-label="Abrir missão"]');
+    expect(controls).not.toBeNull();
+    act(() => controls!.click());
+    expect(useProductNavigationStore.getState().destination).toEqual({ kind: 'mission', missionId: 'mission-a', surface: 'board' });
+  });
+
+  it('resumes a stopped pane once and exposes a failed recovery to the operator', async () => {
+    seedMission();
+    vi.mocked(getPaneSessionId).mockReturnValue(null);
+    let finish!: (value: { ok: false; error: string }) => void;
+    reopen.mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    const host = mount(1000, missionPane);
+    const resume = host.querySelector<HTMLButtonElement>('[aria-label="Retomar missão"]');
+    expect(resume).not.toBeNull();
+    act(() => { resume!.click(); resume!.click(); });
+    expect(reopen).toHaveBeenCalledTimes(1);
+    expect(host.querySelector('[aria-busy="true"]')).not.toBeNull();
+    await act(async () => finish({ ok: false, error: 'Conversa indisponível' }));
+    expect(useToastStore.getState().toasts.some(toast => toast.kind === 'error')).toBe(true);
+    expect(host.querySelector('[aria-label="Retomar missão"]:disabled')).toBeNull();
+  });
+
   it('F-717: pane largo cuja barra cheia transborda desce para ícones e mantém o Fechar', () => {
     const host = mount(850);
     const toolbar = host.querySelector<HTMLElement>('.toolbar')!;
