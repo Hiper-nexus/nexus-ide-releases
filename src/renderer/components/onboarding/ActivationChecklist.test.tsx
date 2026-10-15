@@ -32,7 +32,7 @@ function button(host: HTMLElement, label: string): HTMLButtonElement {
 
 function setup() {
   const handlers: ActivationChecklistHandlers = {
-    onOpenApiKeys: vi.fn(),
+    onOpenProviders: vi.fn(),
     onOpenWorkspace: vi.fn(),
     onExplainDictation: vi.fn(),
     onOpenPane: vi.fn(),
@@ -48,15 +48,15 @@ describe('ActivationChecklist', () => {
     useOnboardingStore.getState().reset();
   });
 
-  it('lists the five activation steps and runs the keys shortcut', () => {
+  it('lists the five activation steps and runs the account connection shortcut', () => {
     const { host, handlers } = setup();
     expect(host.textContent).toContain('Primeiros passos');
     expect(host.textContent).toContain('Conecte uma IA ou chave');
     expect(host.textContent).toContain('Dite com Space');
     expect(host.textContent).toContain('Abra um + Pane');
     expect(host.textContent).toContain('Crie a primeira missão');
-    act(() => button(host, 'Chaves de API').click());
-    expect(handlers.onOpenApiKeys).toHaveBeenCalledOnce();
+    act(() => button(host, 'Conectar minha conta').click());
+    expect(handlers.onOpenProviders).toHaveBeenCalledOnce();
   });
 
   it('marks manual steps and hides when complete or dismissed', () => {

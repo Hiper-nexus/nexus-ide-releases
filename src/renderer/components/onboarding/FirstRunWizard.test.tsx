@@ -52,11 +52,16 @@ describe('FirstRunWizard', () => {
     useProviderStore.setState({ providers: [] });
   });
 
-  it('teaches keys first with the real settings paths', () => {
+  it('opens account connection first and keeps API keys available', () => {
     const { host, handlers } = setup();
-    expect(host.textContent).toContain('Colocar suas chaves');
-    expect(host.textContent).toContain('Ajustes → Chaves de API');
-    expect(host.textContent).toContain('Providers → Entrar');
+    expect(host.textContent).toContain('Conecte sua IA');
+    expect(host.textContent).toContain('Configurações → Chaves de API');
+    expect(host.textContent).toContain('Configurações → Contas de IA');
+    const primary = host.querySelector<HTMLButtonElement>('.onboarding-step__body .onboarding-btn--primary');
+    expect(primary?.textContent).toBe('Conectar minha conta');
+    act(() => primary!.click());
+    expect(handlers.onOpenProviders).toHaveBeenCalledOnce();
+    expect(handlers.onOpenApiKeys).not.toHaveBeenCalled();
     act(() => button(host, 'Abrir Chaves de API').click());
     expect(handlers.onOpenApiKeys).toHaveBeenCalledOnce();
   });
@@ -64,7 +69,7 @@ describe('FirstRunWizard', () => {
   it('walks keys → agents → project → use and finishes with Começar', () => {
     const { host, handlers } = setup();
     act(() => button(host, 'Continuar').click());
-    expect(host.textContent).toContain('Agentes prontos');
+    expect(host.textContent).toContain('Suas ferramentas de IA');
     act(() => button(host, 'Continuar').click());
     expect(host.textContent).toContain('Seu primeiro projeto');
     act(() => button(host, 'Continuar').click());
@@ -128,8 +133,22 @@ describe('FirstRunWizard', () => {
     const { host } = setup();
     act(() => button(host, 'Continuar').click());
     expect(host.textContent).toContain('Codex');
-    expect(host.textContent).toContain('Pronto');
-    expect(host.textContent).toContain('Falta login');
+    expect(host.textContent).toContain('conectado');
+    expect(host.textContent).toContain('precisa login');
+  });
+
+  it('does not call an invalid stored key ready or connected', () => {
+    useProviderStore.setState({ providers: [{
+      adapterId: 'gemini', label: 'Gemini', kind: 'api-provider', enabled: true,
+      installed: true, hasKey: true, authState: 'ok', authStrategy: 'api-key',
+      credentialReadiness: 'invalid-credential',
+    }] as never });
+    const { host } = setup();
+    act(() => button(host, 'Continuar').click());
+    expect(host.textContent).toContain('chave inválida');
+    expect(host.textContent).not.toContain('Pronto');
+    expect(host.textContent).not.toContain('conectado');
+    expect(host.querySelector('.onboarding-badge--ok')).toBeNull();
   });
 
   it('explains when no agent is connected yet', () => {

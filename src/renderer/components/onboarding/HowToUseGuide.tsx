@@ -32,8 +32,8 @@ export function HowToUseGuide(handlers: HowToUseGuideHandlers) {
         <li>
           <strong>Onde ficam as chaves</strong>
           <p>
-            Ajustes → Chaves de API para colar a chave do provedor. Providers
-            para login de CLI (Codex, Claude e outras).
+            Configurações → Contas de IA para entrar na sua conta do Claude,
+            Codex ou de outra ferramenta. Use Chaves de API se você tem uma chave.
           </p>
         </li>
       </ul>
@@ -56,7 +56,7 @@ export function HowToUseGuide(handlers: HowToUseGuideHandlers) {
             Chaves de API
           </button>
           <button type="button" className="onboarding-btn" onClick={handlers.onOpenProviders}>
-            Providers
+            Contas de IA
           </button>
         </div>
       </div>

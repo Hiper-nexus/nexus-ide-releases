@@ -6,7 +6,7 @@ import {
 import { PixelIcon, type PixelIconName } from '../PixelIcon';
 
 export interface ActivationChecklistHandlers {
-  onOpenApiKeys: () => void;
+  onOpenProviders: () => void;
   onOpenWorkspace: () => void;
   onExplainDictation: () => void;
   onOpenPane: () => void;
@@ -24,10 +24,10 @@ const ITEMS: Array<{
   {
     key: 'connectedAccount',
     label: 'Conecte uma IA ou chave',
-    hint: 'Chave em Ajustes → Chaves de API, ou login na CLI em Providers.',
+    hint: 'Abra Configurações → Contas de IA para entrar na sua conta, ou Chaves de API para usar uma chave.',
     icon: 'key',
-    actionLabel: 'Chaves de API',
-    action: 'onOpenApiKeys',
+    actionLabel: 'Conectar minha conta',
+    action: 'onOpenProviders',
   },
   {
     key: 'openedProject',

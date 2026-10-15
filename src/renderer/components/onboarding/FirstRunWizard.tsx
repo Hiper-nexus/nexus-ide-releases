@@ -28,14 +28,14 @@ const STEP_META: Record<
   { label: string; title: string; lead: string }
 > = {
   keys: {
-    label: 'Chaves',
-    title: 'Colocar suas chaves',
+    label: 'Sua IA',
+    title: 'Conecte sua IA',
     lead: 'As IAs do Nexus usam a sua conta ou a sua chave. Você configura uma vez.',
   },
   agents: {
     label: 'Agentes',
-    title: 'Agentes prontos',
-    lead: 'Escolha um agente para começar a codar. Dá para acrescentar outros depois.',
+    title: 'Suas ferramentas de IA',
+    lead: 'Escolha uma IA para começar seu projeto. Dá para acrescentar outros depois.',
   },
   project: {
     label: 'Projeto',
@@ -52,25 +52,22 @@ const STEP_META: Record<
 function StepKeys({ onOpenApiKeys, onOpenProviders }: FirstRunWizardHandlers) {
   return (
     <div className="onboarding-step__body">
-      <ol className="onboarding-path" aria-label="Onde colocar as chaves">
+      <ol className="onboarding-path" aria-label="Como conectar sua IA">
         <li>
-          <strong>Ajustes → Chaves de API</strong>
-          <p>Cole a chave (por exemplo <code>sk-…</code>) do provedor que você usa.</p>
+          <strong>Configurações → Contas de IA</strong>
+          <p>Entre na sua conta do Claude, Codex ou de outra ferramenta de IA.</p>
         </li>
         <li>
-          <strong>Providers → Entrar</strong>
-          <p>
-            Para CLIs locais (Codex, Claude e outras), faça login na conta — o
-            Nexus detecta a sessão.
-          </p>
+          <strong>Configurações → Chaves de API</strong>
+          <p>Se você usa uma chave de API, cole a chave do seu serviço aqui.</p>
         </li>
       </ol>
       <div className="onboarding-actions">
-        <button type="button" className="onboarding-btn onboarding-btn--primary" onClick={onOpenApiKeys}>
-          Abrir Chaves de API
+        <button type="button" className="onboarding-btn onboarding-btn--primary" onClick={onOpenProviders}>
+          Conectar minha conta
         </button>
-        <button type="button" className="onboarding-btn" onClick={onOpenProviders}>
-          Abrir Providers
+        <button type="button" className="onboarding-btn" onClick={onOpenApiKeys}>
+          Abrir Chaves de API
         </button>
       </div>
       <p className="onboarding-note">
@@ -89,16 +86,15 @@ function StepAgents({ onOpenProviders }: FirstRunWizardHandlers) {
     <div className="onboarding-step__body">
       {agents.length === 0 ? (
         <p className="onboarding-note">
-          Nenhuma ferramenta de IA conectada ainda. Abra Providers para entrar
-          numa conta ou colar uma chave — depois elas aparecem aqui como
-          «Pronto».
+          Nenhuma ferramenta de IA conectada ainda. Abra Contas de IA para
+          escolher uma ferramenta e conectar sua conta.
         </p>
       ) : (
         <ul className="onboarding-agent-list" aria-label="Agentes">
           {agents.map((provider) => {
-            const status = providerStatusLabel(provider);
-            const ready =
-              provider.authState === 'ok' || provider.hasKey;
+            const status = providerStatusLabel(provider, {
+              authState: provider.authState ?? 'unknown',
+            });
             return (
               <li key={provider.adapterId} className="onboarding-agent">
                 <span className="onboarding-agent__icon" aria-hidden="true">
@@ -109,12 +105,12 @@ function StepAgents({ onOpenProviders }: FirstRunWizardHandlers) {
                 </span>
                 <div className="onboarding-agent__copy">
                   <strong>{provider.label}</strong>
-                  <span>{status.label}</span>
+                  <span>{isLocalCliProvider(provider) ? 'Ferramenta no computador' : 'Serviço por API'}</span>
                 </div>
                 <span
-                  className={`onboarding-badge${ready ? ' onboarding-badge--ok' : ''}`}
+                  className={`onboarding-badge${status.tone === 'ok' ? ' onboarding-badge--ok' : ''}`}
                 >
-                  {ready ? 'Pronto' : 'Falta login'}
+                  {status.label}
                 </span>
               </li>
             );
@@ -180,7 +176,7 @@ function StepUse({
         </li>
         <li>
           <strong>Onde ficam as chaves</strong>
-          <p>Ajustes → Chaves de API · Providers para login de CLI.</p>
+          <p>Configurações → Contas de IA para entrar na sua conta, ou Chaves de API para usar uma chave.</p>
         </li>
       </ul>
       <div className="onboarding-actions onboarding-actions--wrap">
