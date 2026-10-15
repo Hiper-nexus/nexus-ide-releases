@@ -90,12 +90,15 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
 }
 
 const LEASE_RETENTION_MS = 60 * 60 * 1000;
-/** Removes login state, tokens and cron leases that can no longer be used, and the expired diagnostics of bug reports. */
+/** Refresh reuse diagnostics: long enough to investigate an incident, then gone. */
+const AUTH_EVENT_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+/** Removes login state, tokens and cron leases that can no longer be used, old auth events, and the expired diagnostics of bug reports. */
 export async function cleanupExpired(db: D1Database, now = Date.now()): Promise<void> {
   await db.batch([
     ...['oauth_states', 'auth_codes', 'sessions', 'refresh_tokens'].map(table => db.prepare(`DELETE FROM ${table} WHERE expires_at<?`).bind(now)),
     // An expired lease can be re-acquired by any peer, so keeping it only grows the table.
     db.prepare('DELETE FROM cron_leases WHERE expires_at<?').bind(now - LEASE_RETENTION_MS),
+    db.prepare('DELETE FROM auth_events WHERE created_at<?').bind(now - AUTH_EVENT_RETENTION_MS),
   ]);
   // Older deployments may not have the activity migration yet. Other cleanup still runs.
   try { await purgeActivityDays(db, now); } catch (error) {

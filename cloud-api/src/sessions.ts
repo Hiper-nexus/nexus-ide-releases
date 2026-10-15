@@ -10,8 +10,12 @@ export interface Tokens {session:string;refresh:string;csrf:string|null;}
 const UNREVOKED_PARENT='EXISTS(SELECT 1 FROM refresh_tokens WHERE id=? AND revoked_at IS NULL)';
 /** Binds the rotated token twice: no successor of it, nor the session issued with one, was ever used. */
 const SUCCESSORS_UNUSED='NOT EXISTS(SELECT 1 FROM refresh_tokens WHERE rotated_from=? AND used_at IS NOT NULL) AND NOT EXISTS(SELECT 1 FROM sessions s JOIN refresh_tokens c ON c.id=s.refresh_id WHERE c.rotated_from=? AND s.last_used_at IS NOT NULL)';
+/** ponytail: chains deeper than this (30 days of rotations every ~4 min) are walked only this far, so a
+ * corrupted rotated_from cycle ends instead of running until the D1 timeout. Past it, older branches of the
+ * family are left out of a revocation; the upgrade path is a family_id column inherited on rotation. */
+const FAMILY_DEPTH_LIMIT=10_000;
 /** The family is the rotated_from tree under `?`, its root included. */
-const FAMILY='WITH RECURSIVE family(id) AS (SELECT ? UNION SELECT r.id FROM refresh_tokens r JOIN family f ON r.rotated_from=f.id) ';
+const FAMILY=`WITH RECURSIVE family(id,depth) AS (SELECT ?,0 UNION SELECT r.id,f.depth+1 FROM refresh_tokens r JOIN family f ON r.rotated_from=f.id WHERE f.depth<${FAMILY_DEPTH_LIMIT}) `;
 /** Prepares a token pair whose two inserts share `guard`: both happen or neither does. The session records
  * the refresh token issued with it, so revoking a family also reaches its sessions. */
 async function preparePair(db:D1Database,accountId:string,channel:AuthChannel,now:number,parent:string|null,guard:string,args:(string|number)[]){
@@ -53,7 +57,7 @@ export async function revokeAll(db:D1Database,accountId:string,now=Date.now(),ch
 }
 /** Topmost ancestor still stored (cleanup deletes expired tokens oldest first, so the chain stays contiguous). */
 async function familyRoot(db:D1Database,id:string):Promise<string>{
-  const row=await db.prepare('WITH RECURSIVE up(id,parent,depth) AS (SELECT id,rotated_from,0 FROM refresh_tokens WHERE id=? UNION ALL SELECT r.id,r.rotated_from,up.depth+1 FROM refresh_tokens r JOIN up ON r.id=up.parent) SELECT id FROM up ORDER BY depth DESC LIMIT 1').bind(id).first<{id:string}>();
+  const row=await db.prepare(`WITH RECURSIVE up(id,parent,depth) AS (SELECT id,rotated_from,0 FROM refresh_tokens WHERE id=? UNION ALL SELECT r.id,r.rotated_from,up.depth+1 FROM refresh_tokens r JOIN up ON r.id=up.parent WHERE up.depth<${FAMILY_DEPTH_LIMIT}) SELECT id FROM up ORDER BY depth DESC LIMIT 1`).bind(id).first<{id:string}>();
   return row?.id??id;
 }
 /** Replays a rotation whose response was lost: the unused successor and the session issued with it are
@@ -79,9 +83,10 @@ async function retryRotation(db:D1Database,prior:RefreshTokenRow,root:string,now
 async function revokeFamily(db:D1Database,accountId:string,root:string,now:number):Promise<void>{
   await db.batch([
     // First, so it sees the family before this revocation.
-    db.prepare(FAMILY+"INSERT INTO auth_events(id,account_id,kind,family_root,created_at) SELECT ?,?,'refresh_reuse_family_revoked',?,? WHERE EXISTS(SELECT 1 FROM refresh_tokens WHERE id IN (SELECT id FROM family) AND revoked_at IS NULL AND expires_at>?)").bind(root,crypto.randomUUID(),accountId,root,now,now),
-    db.prepare(FAMILY+'UPDATE sessions SET revoked_at=? WHERE revoked_at IS NULL AND refresh_id IN (SELECT id FROM family)').bind(root,now),
-    db.prepare(FAMILY+"UPDATE refresh_tokens SET revoked_at=COALESCE(revoked_at,?),revoked_reason='family' WHERE (revoked_at IS NULL OR revoked_reason='superseded') AND id IN (SELECT id FROM family)").bind(root,now),
+    db.prepare(FAMILY+"INSERT INTO auth_events(id,account_id,kind,family_root,created_at) SELECT ?,?,'refresh_reuse_family_revoked',?,? WHERE EXISTS(SELECT 1 FROM refresh_tokens WHERE account_id=? AND revoked_at IS NULL AND expires_at>? AND id IN (SELECT id FROM family))").bind(root,crypto.randomUUID(),accountId,root,now,accountId,now),
+    // account_id: rotation never links accounts, and a corrupted edge must not either.
+    db.prepare(FAMILY+'UPDATE sessions SET revoked_at=? WHERE account_id=? AND revoked_at IS NULL AND refresh_id IN (SELECT id FROM family)').bind(root,now,accountId),
+    db.prepare(FAMILY+"UPDATE refresh_tokens SET revoked_at=COALESCE(revoked_at,?),revoked_reason='family' WHERE account_id=? AND (revoked_at IS NULL OR revoked_reason='superseded') AND id IN (SELECT id FROM family)").bind(root,now,accountId),
   ]);
 }
 export async function rotateRefresh(db:D1Database,raw:string,channel:AuthChannel,now=Date.now()):Promise<{accountId:string;tokens:Tokens}|null>{

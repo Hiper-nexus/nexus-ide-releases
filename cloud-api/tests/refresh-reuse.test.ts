@@ -2,7 +2,7 @@ import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { SqliteD1 } from './helpers/sqlite-d1.js';
 import { environment, seedAccount, SITE } from './helpers/fixtures.js';
-import { createApp } from '../src/index.js';
+import { cleanupExpired, createApp } from '../src/index.js';
 import { issueTokens, revokeAll, rotateRefresh, sessionFor, type Tokens } from '../src/sessions.js';
 
 // 14/10 incident: a desktop app that lost the 200 of a rotation presented the old refresh again 30 s later,
@@ -359,5 +359,70 @@ test('/auth/refresh and the web rotation answer 503 before spending a token whil
   await db.prepare("UPDATE system_metadata SET value='11' WHERE key='schema_version'").run();
   assert.equal((await desktop()).status, 200, 'the same isolate recovers once the migration lands');
   assert.equal(((await (await page()).json()) as { data: { authenticated: boolean } }).data.authenticated, true);
+  db.close();
+});
+
+test('a family revocation never crosses accounts, even over a corrupted rotated_from edge', async () => {
+  const { db, mac } = await setup();
+  await seedAccount(db, 'other');
+  const other = await issueTokens(db, 'other', 'desktop');
+  const now = Date.now();
+  assert.ok(await rotateRefresh(db, mac.refresh, 'desktop', now));
+  await db.prepare('UPDATE refresh_tokens SET rotated_from=? WHERE id=?').bind(await idOf(db, mac.refresh), await idOf(db, other.refresh)).run();
+
+  assert.equal(await rotateRefresh(db, mac.refresh, 'desktop', now + 2 * GRACE_MS), null);
+
+  assert.ok(await sessionFor(db, other.session, 'desktop'), "the other account's session survives");
+  assert.ok(await rotateRefresh(db, other.refresh, 'desktop', now + 2 * GRACE_MS + 1000));
+  db.close();
+});
+
+test('a corrupted rotated_from cycle ends the family walk instead of hanging', async () => {
+  const { db, mac } = await setup();
+  const now = Date.now();
+  const first = await rotateRefresh(db, mac.refresh, 'desktop', now);
+  assert.ok(first);
+  // The root now points back at its own successor.
+  await db.prepare('UPDATE refresh_tokens SET rotated_from=? WHERE id=?').bind(await idOf(db, first.tokens.refresh), await idOf(db, mac.refresh)).run();
+
+  assert.equal(await rotateRefresh(db, mac.refresh, 'desktop', now + 2 * GRACE_MS), null);
+
+  assert.equal(await sessionFor(db, first.tokens.session, 'desktop'), null, 'the family still dies');
+  db.close();
+});
+
+test('/auth/exchange answers with the pair while the license is still being signed', async (t) => {
+  const { db } = await setup();
+  const { hashToken, pkceChallenge } = await import('../src/crypto.js');
+  const code = 'c'.repeat(43), verifier = 'v'.repeat(43);
+  await db.prepare('INSERT INTO auth_codes(code_hash,account_id,expires_at,created_at,code_challenge) VALUES(?,?,?,?,?)')
+    .bind(await hashToken(code), 'user', Date.now() + 60_000, Date.now(), await pkceChallenge(verifier)).run();
+  let reached!: () => void;
+  const slow = new Promise<void>(resolve => { reached = resolve; });
+  const stalled = interleave(db, /^SELECT \* FROM accounts WHERE id=\?/, async () => { reached(); await new Promise(() => {}); });
+  mock.timers.enable({ apis: ['setTimeout'] });
+  t.after(() => mock.timers.reset());
+
+  const pending = createApp().request('/v1/auth/exchange', { method: 'POST', headers: json, body: JSON.stringify({ code, code_verifier: verifier }) }, environment(stalled as SqliteD1));
+  await slow;
+  mock.timers.tick(2_000);
+  const response = await pending;
+
+  assert.equal(response.status, 200);
+  const body = await response.json() as { data: { session: string; refresh: string; licenca?: string } };
+  assert.equal(body.data.licenca, undefined, 'the app fetches /v1/license itself');
+  assert.ok(await sessionFor(db, body.data.session, 'desktop'));
+  db.close();
+});
+
+test('cleanup keeps auth events for 90 days', async () => {
+  const { db } = await setup();
+  const now = Date.now();
+  const day = 24 * 60 * 60 * 1000;
+  for (const [id, age] of [['old', 91 * day], ['recent', 89 * day]] as const) {
+    await db.prepare("INSERT INTO auth_events(id,account_id,kind,family_root,created_at) VALUES(?,'user','refresh_reuse_grace','root',?)").bind(id, now - age).run();
+  }
+  await cleanupExpired(db, now);
+  assert.deepEqual((await db.prepare('SELECT id FROM auth_events').all<{ id: string }>()).results.map(row => row.id), ['recent']);
   db.close();
 });
