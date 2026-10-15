@@ -140,6 +140,7 @@ export async function confirmMcpTool(
     return { ok: false, error: 'invalid tool name' };
   }
   const tool = resolveTool(await getRegistry(), toolName);
+  if(isRuntimeProcessAdmissionSealedForShutdown()) return {ok:false,error:'app_shutdown'};
   if (!tool) {
     return { ok: false, error: `unknown tool: ${toolName}` };
   }

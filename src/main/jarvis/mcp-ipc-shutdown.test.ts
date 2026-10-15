@@ -23,6 +23,8 @@ import { isRuntimeProcessAdmissionSealedForShutdown,runtimeProcessAdmissionAbort
 import { terminateAllSessions,__resetPtyShutdownLifecycleForTests } from '../pty/pty-manager';
 import { registerMcpInvokeIpc,invokeMcpTool,confirmMcpTool,clearMcpRendererSession } from './mcp-ipc';
 import * as permissions from './permissions';
+import { createConfirmationToken } from './confirmation-tokens';
+import { permissionScopeForTool } from '../orch/mcp-dispatch';
 import { testProjectScope } from '../orch/__tests__/scope-fixture';
 let root:string;let manager:ProjectRuntimeManager;let scope:ReturnType<typeof testProjectScope>;
 const sender=Object.assign(new EventEmitter(),{id:1090,isDestroyed:()=>false,isCrashed:()=>false});
@@ -59,13 +61,29 @@ it('F-1090: shutdown signal reaches actual Git internal await boundary and preve
   expect(h.handler).toHaveBeenCalledOnce();expect(git.mock.calls.filter(([,args])=>args[0]==='status'||args[0]==='fetch'||args[0]==='merge')).toEqual([]);
 });
 it('F-1090: native confirmation pending at seal cannot grant permission afterward',async()=>{
-  let finish!:(value:{response:number})=>void;h.dialog.mockImplementation(()=>new Promise(r=>{finish=r;}));
+  let opened!:()=>void;const dialogOpened=new Promise<void>(resolve=>{opened=resolve;});
+  let finish!:(value:{response:number})=>void;h.dialog.mockImplementation(()=>new Promise(r=>{finish=r;opened();}));
   const grant=vi.spyOn(permissions,'grantPermission');
   const pending=confirmMcpTool({tool:'nexus_ui_action',args:{action:'click',ref:'u1e1'}},scope);
-  expect(h.dialog).toHaveBeenCalledOnce();sealRuntimeProcessAdmissionForShutdown();finish({response:1});
-  expect(await pending).toMatchObject({ok:false});expect(grant).not.toHaveBeenCalled();
+  await dialogOpened;expect(h.dialog).toHaveBeenCalledOnce();sealRuntimeProcessAdmissionForShutdown();finish({response:1});
+  expect(await pending).toMatchObject({ok:false,error:'app_shutdown'});expect(grant).not.toHaveBeenCalled();
   h.dialog.mockClear();
   expect(await confirmMcpTool({tool:'nexus_ui_action',args:{action:'click',ref:'u1e1'}},scope)).toMatchObject({ok:false,error:'app_shutdown'});
+  expect(h.dialog).not.toHaveBeenCalled();expect(grant).not.toHaveBeenCalled();
+});
+
+it('F-1090: confirmation queued before seal cannot prompt, accept a token, or bypass confirmation after registry await',async()=>{
+  const args={action:'click',ref:'u1e1'};
+  const token=createConfirmationToken(permissionScopeForTool('jarvis-renderer',scope,'nexus_ui_action',args));
+  const grant=vi.spyOn(permissions,'grantPermission');
+  h.dialog.mockResolvedValue({response:1});
+  const pending=[
+    confirmMcpTool({tool:'nexus_ui_action',args},scope),
+    confirmMcpTool({tool:'nexus_ui_action',args,granted:true,token},scope),
+    confirmMcpTool({tool:'nexus_context_doctor',args:{}},scope),
+  ];
+  sealRuntimeProcessAdmissionForShutdown();
+  expect(await Promise.all(pending)).toEqual(pending.map(()=>({ok:false,error:'app_shutdown'})));
   expect(h.dialog).not.toHaveBeenCalled();expect(grant).not.toHaveBeenCalled();
 });
 
