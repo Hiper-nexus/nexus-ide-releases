@@ -2,7 +2,7 @@ import { resetLicensedAccessMock } from '../__tests__/licensed-access';
 beforeEach(resetLicensedAccessMock);
 import { requireAccess } from '../license-access';
 vi.mock('../license-access', async () => (await import('../__tests__/licensed-access')).licensedAccessMock);
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import type { WebContents } from "electron";
@@ -294,6 +294,7 @@ vi.mock("./mission-pane-authority", () => ({
 }));
 
 import { detachOwnedMissionAgentSession } from "../pty/pty-manager";
+import { acquireCliSpawnPermit } from '../persistence/provider-config-store';
 import {
   attachOrchMeta,
   forgetParkedBrowserPane,
@@ -309,6 +310,8 @@ import {
   requestMissionWorkerPaneRetirement,
   requestPaneClose,
   requestPaneSpawn,
+  presentMainOwnedPaneToRenderer,
+  spawnMainOwnedMissionPaneAsync,
   PENDING_SPAWN_RESULT,
   resolvePaneSpawn,
   reclaimDetachedMissionSession,
@@ -654,6 +657,86 @@ describe("main-owned mission pane spawn", () => {
     expect(pty.spawn.mock.calls[0]?.[2]).toMatchObject({
       binPath: "/mock/bin/agy",
     });
+  });
+
+  it("F-398 presents a committed pane immediately without another renderer sync", async () => {
+    const owner = { id: 938, isDestroyed: () => false, isCrashed: () => false, send: vi.fn() } as unknown as WebContents;
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    onTestFinished(() => { syncPanes([], owner); clearRendererWorkspaceScope(owner); });
+    registerOrchRenderer(owner);
+    syncPanes([], owner, 'steady-renderer');
+    const result = await spawnMainOwnedMissionPaneAsync({
+      adapterId: 'codex', model: 'gpt-5.6-sol', cwd: executionScope.rootRealPath,
+      missionId: 'mission-headless', agentName: 'Worker Headless',
+      workerIncarnationId: 'worker-incarnation-main', role: 'worker',
+      allowedTools: [], allowedSkills: null, scope, executionScope,
+    });
+    onTestFinished(() => { if (result.paneId) deleteMainOwnedPane(result.paneId); });
+    expect(result.ok).toBe(true);
+    vi.mocked(owner.send).mockClear();
+    presentMainOwnedPaneToRenderer(owner, result.paneId!);
+    expect(owner.send).toHaveBeenCalledWith(ORCH_CHANNELS.panePresentationRequest,
+      expect.objectContaining({ paneId: result.paneId, sessionId: 'pty-headless-1' }));
+    expect(pty.spawn).toHaveBeenCalledTimes(1);
+
+    // The old heartbeat replay remains safe after the exact pane is adopted.
+    syncPanes([{ paneId: result.paneId!, sessionId: 'pty-headless-1', title: 'Worker Headless',
+      kind: 'cli-agent', adapterId: 'codex', model: 'gpt-5.6-sol', state: 'spawning' }], owner, 'steady-renderer');
+    vi.mocked(owner.send).mockClear();
+    presentMainOwnedPaneToRenderer(owner, result.paneId!);
+    expect(owner.send).not.toHaveBeenCalledWith(ORCH_CHANNELS.panePresentationRequest, expect.anything());
+    expect(pty.spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it("F-398 does not present in a changed workspace or before the durable record exists", async () => {
+    const owner = { id: 939, isDestroyed: () => false, isCrashed: () => false, send: vi.fn() } as unknown as WebContents;
+    onTestFinished(() => clearRendererWorkspaceScope(owner));
+    const result = await spawnMainOwnedMissionPaneAsync({
+      adapterId: 'codex', model: 'gpt-5.6-sol', cwd: executionScope.rootRealPath,
+      missionId: 'mission-headless', agentName: 'Worker Headless',
+      workerIncarnationId: 'worker-incarnation-main', role: 'worker',
+      allowedTools: [], allowedSkills: null, scope, executionScope,
+    });
+    onTestFinished(() => { if (result.paneId) deleteMainOwnedPane(result.paneId); });
+    bindResolvedRendererWorkspaceScope(owner, { ...scope, checkoutId: 'elsewhere' });
+    presentMainOwnedPaneToRenderer(owner, result.paneId!);
+    expect(owner.send).not.toHaveBeenCalled();
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    missionAuthority.paneSpecAvailable = false;
+    presentMainOwnedPaneToRenderer(owner, result.paneId!);
+    expect(owner.send).not.toHaveBeenCalled();
+    expect(pty.live.has('pty-headless-1')).toBe(true);
+    expect(pty.terminate).not.toHaveBeenCalled();
+    missionAuthority.paneSpecAvailable = true;
+    presentMainOwnedPaneToRenderer(owner, result.paneId!);
+    expect(owner.send).toHaveBeenCalledWith(ORCH_CHANNELS.panePresentationRequest, expect.anything());
+  });
+
+  it("F-398 keeps a pane alive when its renderer changes workspace during spawn preparation", async () => {
+    const owner = { id: 940, isDestroyed: () => false, isCrashed: () => false, send: vi.fn() } as unknown as WebContents;
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    onTestFinished(() => clearRendererWorkspaceScope(owner));
+    let grant!: (release: () => void) => void;
+    vi.mocked(acquireCliSpawnPermit).mockReturnValueOnce(new Promise((resolve) => { grant = resolve; }));
+    const pending = spawnMainOwnedMissionPaneAsync({
+      adapterId: 'codex', model: 'gpt-5.6-sol', cwd: executionScope.rootRealPath,
+      missionId: 'mission-headless', agentName: 'Worker Headless',
+      workerIncarnationId: 'worker-incarnation-main', role: 'worker',
+      allowedTools: [], allowedSkills: null, scope, executionScope,
+    });
+    bindResolvedRendererWorkspaceScope(owner, { ...scope, checkoutId: 'changed-while-waiting' });
+    grant(() => {});
+    const result = await pending;
+    onTestFinished(() => { if (result.paneId) deleteMainOwnedPane(result.paneId); });
+    expect(result.ok).toBe(true);
+    presentMainOwnedPaneToRenderer(owner, result.paneId!);
+    expect(owner.send).not.toHaveBeenCalled();
+    expect(pty.live.has('pty-headless-1')).toBe(true);
+    expect(pty.terminate).not.toHaveBeenCalled();
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    presentMainOwnedPaneToRenderer(owner, result.paneId!);
+    expect(owner.send).toHaveBeenCalledWith(ORCH_CHANNELS.panePresentationRequest, expect.anything());
+    expect(pty.spawn).toHaveBeenCalledTimes(1);
   });
 
   it("re-presents the exact live main-owned session on a renderer generation without spawning again", async () => {

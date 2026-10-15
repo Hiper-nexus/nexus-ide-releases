@@ -60,6 +60,7 @@ import {
   findPaneOwnedBy,
   getPaneRuntimeAuthorityBySession,
   getRenderedPaneTabKey,
+  presentMainOwnedPaneToRenderer,
   spawnMainOwnedMissionPaneAsync,
 } from "./pane-registry";
 import { makeId } from "./store-util";
@@ -1622,6 +1623,10 @@ export class RendererMissionAuthority {
             : "mission_pane_record_failed",
       };
     }
+    // No renderer heartbeat exists: publish now, using the live workspace and
+    // the same sealed presentation checks as syncPanes. A workspace switch
+    // leaves the physical pane alive for presentation when its project returns.
+    presentMainOwnedPaneToRenderer(owner, spawned.paneId);
     return {
       ok: true,
       paneId: spawned.paneId,

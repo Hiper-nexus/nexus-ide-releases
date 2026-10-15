@@ -83,12 +83,14 @@ vi.mock("./isolated-writer-worktree", async (importOriginal) => ({
 // continuam reais.
 const operatorSpawn = vi.hoisted(() => ({
   calls: [] as Array<Record<string, unknown>>,
+  present: vi.fn(),
 }));
 vi.mock("./pane-registry", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("./pane-registry")>();
   return {
     ...actual,
+    presentMainOwnedPaneToRenderer: operatorSpawn.present,
     spawnMainOwnedMissionPaneAsync: vi.fn(
       async (options: Record<string, unknown>) => {
         operatorSpawn.calls.push(options);
@@ -302,6 +304,7 @@ afterEach(async () => {
   setOperatorTabMissionProvider(null);
   physical.spawned.length = 0;
   operatorSpawn.calls.length = 0;
+  operatorSpawn.present.mockReset();
   operatorPhysical.clear();
   vi.restoreAllMocks();
   for (const sessionId of sessions.splice(0)) await orchTerminateSession(sessionId);
@@ -1178,6 +1181,27 @@ describe("F-231 — '+ Pane' dentro da missão (spawnOperatorPaneFromRenderer)",
       operatorOpened: true,
       adapterId: "test-cli",
     });
+  });
+
+  it("F-398 presents the operator pane only after recording its durable composition", async () => {
+    const missionId = await liveMission();
+    operatorSpawn.present.mockImplementation((renderer, paneId) => {
+      expect(renderer).toBe(owner);
+      expect(requireProjectDomainStoreRegistry().forScope(scope).missionPanes.list(missionId))
+        .toContainEqual(expect.objectContaining({ paneId, operatorOpened: true }));
+    });
+    const result = await authority().spawnOperatorPaneFromRenderer(owner, { missionId, adapterId: 'test-cli' });
+    expect(result.ok).toBe(true);
+    expect(operatorSpawn.present).toHaveBeenCalledExactlyOnceWith(owner, 'pane-op-1');
+  });
+
+  it("F-398 never presents a pane whose durable composition failed to record", async () => {
+    const missionId = await liveMission();
+    const suite = requireProjectDomainStoreRegistry().forScope(scope);
+    vi.spyOn(suite.missionPanes, 'record').mockImplementationOnce(() => { throw new Error('record failed'); });
+    const result = await authority().spawnOperatorPaneFromRenderer(owner, { missionId, adapterId: 'test-cli' });
+    expect(result).toEqual({ ok: false, error: 'mission_pane_record_failed: record failed' });
+    expect(operatorSpawn.present).not.toHaveBeenCalled();
   });
 
   it("F-1002: a linha durável sela a conta do PTY e a adoção pelo renderer passa na cerca", async () => {
