@@ -1,7 +1,7 @@
 import { captureNativeHeavyProcessSnapshot } from './native-heavy-process-snapshot';
 import type { PhysicalCommandClaim } from './darwin-heavy-command';
 import { randomUUID } from 'node:crypto';
-import { type DescendantSnapshot, type ProcessTableRow } from './pty-descendant-termination';
+import { hasUnambiguousStartIdentity, type DescendantSnapshot, type ProcessTableRow } from './pty-descendant-termination';
 export type CommandProcessState = 'live' | 'gone' | 'unknown';
 interface Root { pid: number; identity: object }
 interface Claim { sessionId: string; rootIdentity: object; rows: Map<number, { row: ProcessTableRow; observedAt: number }>; root: ProcessTableRow; physical?: PhysicalCommandClaim }
@@ -31,7 +31,7 @@ export class OwnedCommandProcesses {
     }
     if (this.#claims.size >= 128) return null;
     const row = snapshot.descendants.find((candidate) => candidate.pid === pid);
-    if (!row || !Number.isFinite(Date.parse(row.startedAt)) || Date.parse(row.startedAt) >= Math.floor(snapshot.capturedAtMs / 1000) * 1000) return null;
+    if (!row || !hasUnambiguousStartIdentity(row, snapshot.capturedAtMs)) return null;
     let physical: PhysicalCommandClaim | undefined;
     if (proof) {
       physical = await this.watch?.(pid) ?? undefined;
@@ -79,7 +79,7 @@ export class OwnedCommandProcesses {
     const snapshot = await this.capture(claim.root.pid);
     if (this.#claims.get(id) !== claim || !snapshot?.root || snapshot.root.startedAt !== claim.root.startedAt) return false;
     const row = pid === claim.root.pid ? snapshot.root : snapshot.descendants.find((candidate) => candidate.pid === pid);
-    if (!row || !Number.isFinite(Date.parse(row.startedAt)) || Date.parse(row.startedAt) >= Math.floor(snapshot.capturedAtMs / 1000) * 1000) return false;
+    if (!row || !hasUnambiguousStartIdentity(row, snapshot.capturedAtMs)) return false;
     const merged = new Map(claim.rows);
     for (const member of [row, ...snapshot.descendants]) {
       const prior = merged.get(member.pid);
@@ -105,7 +105,7 @@ export class OwnedCommandProcesses {
     for (const expected of claim.rows.values()) {
       const current = snapshot.inventory.filter((row) => row.pid === expected.row.pid);
       if (!current.length || (current.length === 1 && current[0].startedAt !== expected.row.startedAt)) continue;
-      if (current.length !== 1 || Date.parse(expected.row.startedAt) >= Math.floor(expected.observedAt / 1000) * 1000) ambiguous = true;
+      if (current.length !== 1 || !hasUnambiguousStartIdentity(expected.row, expected.observedAt)) ambiguous = true;
       else live = true;
     }
     if (live) return 'live'; if (ambiguous) return 'unknown';
