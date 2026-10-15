@@ -58,17 +58,29 @@ function renderer(shell: Spawned) {
   return {
     get text() { return text; },
     /** Entrega o que o Main enviou desde a última volta e confirma, como um RTT. */
-    roundTrip(): number {
+    roundTrip(options: { ack?: boolean } = {}): number {
       const events = dataEvents(shell).slice(cursor);
       cursor += events.length;
       for (const event of events) {
         for (const chunk of gap.push(event.sequence, event.data, event.firstSequence).chunks) {
           text += chunk.data;
-          acknowledgeSessionOutput(shell.owner, shell.sessionId, chunk.sequence);
+          if (options.ack !== false) acknowledgeSessionOutput(shell.owner, shell.sessionId, chunk.sequence);
         }
       }
       return events.length;
     },
+    /** O pull periódico de 15 s / pty.replay da adoção: recover a partir do high-water do preload. */
+    pull(options: { ack?: boolean } = {}): number {
+      const events = recoverSessionOutput(shell.owner, shell.sessionId, gap.highWater);
+      for (const event of events) {
+        for (const chunk of gap.push(event.sequence, event.data).chunks) {
+          text += chunk.data;
+          if (options.ack !== false) acknowledgeSessionOutput(shell.owner, shell.sessionId, chunk.sequence);
+        }
+      }
+      return events.length;
+    },
+    get highWater() { return gap.highWater; },
   };
 }
 
@@ -197,5 +209,45 @@ describe('coalescência do push de saída do PTY (#17)', () => {
     expect(lastData).toBeGreaterThanOrEqual(0);
     expect(calls.indexOf(PTY_CHANNELS.exit)).toBeGreaterThan(lastData);
     expect(dataEvents(shell).map((event) => event.data).join('')).toBe(expected);
+  });
+
+  it('recover entrega os retidos, sai mais saída e o processo morre antes do ack: o renderer fecha com o texto completo', async () => {
+    fakeClock();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const shell = spawnShell();
+    const view = renderer(shell);
+    let expected = '';
+    const emit = (from: number, to: number) => {
+      for (let i = from; i <= to; i += 1) { const chunk = chunkOf(i); expected += chunk; shell.handlers.onData(chunk); }
+    };
+    emit(1, 5); // 1 e 2 saem direto; 3..5 ficam retidos atrás de 2 mensagens em voo
+    view.roundTrip({ ack: false });
+    expect(view.highWater).toBe(2);
+    // O pull de 15 s traz 3..5; o ack do preload ainda está a caminho do Main.
+    expect(view.pull({ ack: false })).toBe(3);
+    expect(view.highWater).toBe(5);
+    emit(6, 7); // 6 e 7 chegam retidos e o processo sai antes do ack de 5
+    await finish(shell);
+    view.roundTrip({ ack: false });
+    expect(view.text).toBe(expected);
+  });
+
+  it('o que o recover já entregou não volta numa faixa: saída nova antes do ack sai só com sequências novas', async () => {
+    fakeClock();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const shell = spawnShell();
+    const view = renderer(shell);
+    for (let i = 1; i <= 5; i += 1) shell.handlers.onData(chunkOf(i));
+    view.roundTrip({ ack: false });
+    view.pull({ ack: false });
+    expect(view.highWater).toBe(5);
+    const sentBefore = dataEvents(shell).length;
+    shell.handlers.onData(chunkOf(6));
+    vi.advanceTimersByTime(PTY_PUSH_COALESCE.windowMs * 3);
+    const fresh = dataEvents(shell).slice(sentBefore);
+    expect(fresh.length).toBeGreaterThan(0);
+    // Uma faixa 3..6 cruzaria o high-water 5 do preload: seria descartada inteira (e recuperada por mais um pull).
+    for (const event of fresh) expect(event.firstSequence ?? event.sequence).toBeGreaterThan(5);
+    await finish(shell);
   });
 });

@@ -1297,6 +1297,16 @@ function releasePushedMessages(session: Session, throughSequence: number): void 
   if (released > 0) messages.splice(0, released);
 }
 
+/**
+ * Novo renderer (readoção/reattach): as mensagens em voo eram do anterior e
+ * nunca serão confirmadas; o replay do novo recomeça do ack. A janela volta a
+ * abrir em vez de ficar cheia até o pull de 15 s.
+ */
+function resetPushWindow(session: Session): void {
+  session.pushedMessages = [];
+  session.pendingPushChars = 0;
+}
+
 /** Índice da primeira entrada do replay com sequence > lastPushedSequence. */
 function firstUnpushedReplayIndex(session: Session): number {
   const replay = session.replay;
@@ -3693,6 +3703,7 @@ export function adoptMainOwnedAgentSession(
   if (matches.length !== 1) return null;
   const [sessionId, session] = matches[0]!;
   session.wc = wc;
+  resetPushWindow(session);
   if (canSend(wc)) {
     wc.send(PTY_CHANNELS.stateChange, { sessionId, state: session.state });
   }
@@ -3727,6 +3738,7 @@ export function reattachDetachedMissionAgentSession(
     return false;
   }
   session.wc = wc;
+  resetPushWindow(session);
   wc.send(PTY_CHANNELS.stateChange, { sessionId, state: session.state });
   return true;
 }
@@ -3843,9 +3855,15 @@ export function recoverSessionOutput(
 ): Array<{ sessionId: string; sequence: number; data: string }> {
   const session = ownedSession(wc, sessionId);
   if (!session) return [];
-  return session.replay
+  const entries = session.replay
     .filter((entry) => entry.sequence > afterSequence)
     .map((entry) => ({ sessionId, ...entry }));
+  // O que o pull entrega não é empurrado de novo: uma faixa coalescida que
+  // cruzasse o high-water do preload seria descartada inteira, e a cauda dela
+  // se perderia se o processo saísse antes de outro pull.
+  const last = entries.at(-1);
+  if (last) session.lastPushedSequence = Math.max(session.lastPushedSequence, last.sequence);
+  return entries;
 }
 
 export function getOwnedAgentSessionInfo(
