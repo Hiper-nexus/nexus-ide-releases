@@ -387,6 +387,16 @@ describe('packaged legal notices', () => {
     expect(shouldPackageFile('C:\\work\\nexus\\.vite\\build\\main.js')).toBe(true);
     expect(shouldPackageFile('\\node_modules\\better-sqlite3\\build\\Release\\better_sqlite3.node')).toBe(true);
     expect(shouldPackageFile('C:\\work\\nexus\\node_modules\\onnxruntime-node\\bin\\napi-v3\\win32\\x64\\onnxruntime.dll')).toBe(true);
+    // Renderer chunks already contain these. typescript stays: Main runs tsc.
+    expect(shouldPackageFile('/node_modules/mermaid/dist/mermaid.js')).toBe(false);
+    expect(shouldPackageFile('/node_modules/@mermaid-js/parser/dist/index.js')).toBe(false);
+    expect(shouldPackageFile('/node_modules/@shikijs/langs/dist/index.mjs')).toBe(false);
+    expect(shouldPackageFile('/node_modules/shiki/dist/index.mjs')).toBe(false);
+    expect(shouldPackageFile('/node_modules/katex/dist/katex.js')).toBe(false);
+    expect(shouldPackageFile('/node_modules/cytoscape/dist/cytoscape.cjs')).toBe(false);
+    expect(shouldPackageFile('/node_modules/cytoscape-fcose/index.js')).toBe(false);
+    expect(shouldPackageFile('/node_modules/foo/node_modules/katex/dist/katex.js')).toBe(false);
+    expect(shouldPackageFile('/node_modules/typescript/lib/typescript.js')).toBe(true);
     // Provenance ledger is for engineers; not required in the app bundle.
     expect(shouldPackageFile('/third_party/provenance/orca-143c36e.json')).toBe(
       false,
