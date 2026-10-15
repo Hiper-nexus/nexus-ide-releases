@@ -10961,7 +10961,7 @@ export const RELEASE_076278: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076279: AppRelease = {
   version: '0.76.279',
   date: '2026-10-15',
   codename: 'Cotas à frente e barras segmentadas',
@@ -10974,5 +10974,21 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Leitura sem sobreposição', detail: 'A lista completa deixa de ficar espremida na lateral e encoberta pelo perfil do operador.' },
     { title: 'Teclado no lugar certo', detail: 'Tab e Escape continuam no painel durante a atualização. Ir para Configurações preserva o foco do destino; fechar devolve o foco à origem.' },
     { title: 'Dados com contexto', detail: 'Sem leitura, estimativa, pausa e sessão expirada continuam distintos. Nenhum percentual de outra conta é exibido na linha errada.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.280',
+  date: '2026-10-15',
+  codename: 'Linux em dia com as cotas à frente',
+  summary: 'No Linux, Cotas abre um painel amplo à frente da tela, com barras segmentadas, busca e filtros. A tag 0.76.279 não recebe pacotes Linux; as barras da barra de menus ficam no companheiro do Mac.',
+  highlights: [
+    { title: 'Cotas à frente da tela', detail: 'O clique em Cotas abre o painel acima da interface, com todas as contas, busca, filtros, atualização e acesso às configurações. A lateral continua compacta.' },
+    { title: 'Barras no painel', detail: 'O painel de cotas usa barras segmentadas e as janelas de cada conta. Sem leitura, estimativa, pausa e sessão expirada continuam distintos.' },
+  ],
+  fixes: [
+    { title: 'Leitura sem sobreposição', detail: 'A lista completa deixa de ficar espremida na lateral e encoberta pelo perfil do operador.' },
+    { title: 'Teclado no lugar certo', detail: 'Tab e Escape continuam no painel durante a atualização. Ir para Configurações preserva o foco do destino; fechar devolve o foco à origem.' },
+    { title: 'Atualização do Linux', detail: 'A tag 0.76.279 não recebe pacotes Linux. Ela é a candidata do Mac. O Linux sai na 0.76.280.' },
   ],
 };

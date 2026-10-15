@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.76.280 — Linux em dia com as cotas à frente
+
+A tag 0.76.279 não recebe pacotes Linux. Esta versão leva o produto dela, empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). A 0.76.279 é a candidata do Mac. As barras segmentadas do companheiro da barra de menus do Mac não entram neste pacote.
+
+No desktop Linux, em relação à 0.76.278:
+
+- **Cotas à frente**. Clicar em Cotas na lateral abre um painel amplo acima da interface. A lateral fica compacta e deixa de ser encoberta pelo perfil do operador.
+- **Leitura da conta**. O painel traz barras segmentadas, janelas por conta, busca, filtros, atualização e o caminho para Uso e cotas. Escape, Tab e o retorno do foco continuam no painel, inclusive durante a atualização.
+- **Dados no lugar**. Sem leitura, estimativa, pausa e sessão expirada continuam distintos. O percentual de outra conta não aparece na linha errada.
+
 ## 0.76.279 — Cotas à frente e barras segmentadas
 
 - Clicar em Cotas na lateral abre um painel amplo à frente da interface. A rail conserva sua prévia compacta, sem expandir a lista atrás do perfil do operador.
