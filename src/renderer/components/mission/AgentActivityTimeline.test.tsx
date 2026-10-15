@@ -749,3 +749,98 @@ describe('AgentActivityTimeline — detalhe em markdown (F-1169)', () => {
     expect(host.querySelector('.agent-timeline__markdown')).toBeNull();
   });
 });
+
+describe('AgentActivityTimeline — payload no formato do projetor (D5)', () => {
+  // observer-mission-event-projector.ts grava o quadro do observer ANINHADO em `payload.observer`
+  // e só copia a identidade (toolName, toolKind, paneId…) para o topo. Estes eventos têm essa forma.
+  function projected(
+    sequence: number,
+    type: MissionEvent['type'],
+    observer: unknown,
+    top: Record<string, unknown> = {},
+  ): MissionEvent {
+    return {
+      id: `proj-${sequence}`,
+      sequence,
+      missionId: 'm-1',
+      runId: 'observer:0f3a9c1d',
+      origin: 'main',
+      deliveryStatus: 'delivered',
+      type,
+      occurredAt: 2000 + sequence,
+      payload: { frameSeq: sequence, sessionId: 'pty-1', paneId: 'pane-1', ...top, observer },
+      idempotencyKey: `observer:0f3a9c1d:${sequence}:digest`,
+    } as MissionEvent;
+  }
+
+  it('tool_result com ok:false não vira "Concluída com sucesso" e traz a saída para expandir', () => {
+    const [failed, passed] = parseTimelineItems(
+      [
+        projected(1, 'observer.tool_result', { callId: 'c1', toolName: 'Bash', ok: false, content: 'exit 1: boom' }, { toolName: 'Bash' }),
+        projected(2, 'observer.tool_result', { callId: 'c2', toolName: 'Bash', ok: true, content: '18 testes' }, { toolName: 'Bash' }),
+      ],
+      'm-1',
+    );
+
+    expect(failed).toMatchObject({ kind: 'shell', status: 'failed', subtitle: 'Falha na execução', detail: 'exit 1: boom', detailFormat: 'raw' });
+    expect(passed).toMatchObject({ status: 'completed', subtitle: 'Concluída com sucesso', detail: '18 testes' });
+  });
+
+  it('etapas e estado: número da etapa, erro de turno e status vêm do quadro aninhado', () => {
+    const items = parseTimelineItems(
+      [
+        projected(1, 'observer.turn_started', { turnId: 'turn-3', turnSequence: 3 }, { turnId: 'turn-3' }),
+        projected(2, 'observer.turn_ended', { turnId: 'turn-3', outcome: 'error' }, { turnId: 'turn-3' }),
+        projected(3, 'observer.turn_ended', { turnId: 'turn-4', outcome: 'completed' }),
+        projected(4, 'observer.status_changed', { paneId: 'pane-1', status: 'error', previousStatus: 'working', transitioned: true }),
+        projected(5, 'observer.status_changed', { paneId: 'pane-1', status: 'completed', previousStatus: 'working', transitioned: true }),
+      ],
+      'm-1',
+    );
+
+    expect(items[0]).toMatchObject({ title: 'Etapa 3', status: 'running' });
+    expect(items[1]).toMatchObject({ subtitle: 'Terminou com erro', status: 'failed' });
+    expect(items[2]).toMatchObject({ subtitle: 'Ações da etapa finalizadas', status: 'completed' });
+    expect(items[3]).toMatchObject({ title: 'Estado: error', status: 'failed' });
+    expect(items[4]).toMatchObject({ title: 'Estado: completed', status: 'completed' });
+  });
+
+  it('tool_call lê o comando do quadro aninhado e o topo continua mandando em conflito', () => {
+    const [call, conflict] = parseTimelineItems(
+      [
+        projected(1, 'observer.tool_call', { callId: 'c1', toolName: 'Bash', input: 'npm test' }, { toolName: 'Bash' }),
+        projected(2, 'observer.tool_call', { callId: 'c2', toolName: 'Read', input: 'a.ts' }, { toolName: 'Bash' }),
+      ],
+      'm-1',
+    );
+
+    expect(call).toMatchObject({ kind: 'shell', subtitle: 'npm test', paneId: 'pane-1' });
+    expect(conflict).toMatchObject({ kind: 'shell' });
+  });
+
+  it.each([['uma string'], [['lista']], [null], [undefined]])(
+    'observer malformado (%j) não derruba a timeline e o payload plano segue valendo',
+    (observer) => {
+      const [item] = parseTimelineItems(
+        [projected(1, 'observer.tool_result', observer, { toolName: 'Bash', ok: false, output: 'saída plana' })],
+        'm-1',
+      );
+
+      expect(item).toMatchObject({ status: 'failed', subtitle: 'Falha na execução', detail: 'saída plana' });
+    },
+  );
+
+  it('a timeline mostra a falha do projetor e abre a saída ao clicar', () => {
+    const host = render(
+      <AgentActivityTimeline
+        events={[projected(1, 'observer.tool_result', { callId: 'c1', toolName: 'Bash', ok: false, content: 'exit 1: boom' }, { toolName: 'Bash' })]}
+        missionId="m-1"
+      />,
+    );
+
+    expect(host.textContent).toContain('Falha na execução');
+    expect(host.textContent).not.toContain('Concluída com sucesso');
+    act(() => host.querySelector<HTMLElement>('.agent-timeline__card')!.click());
+    expect(host.querySelector('.agent-timeline__pre')?.textContent).toBe('exit 1: boom');
+  });
+});

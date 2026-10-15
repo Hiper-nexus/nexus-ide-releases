@@ -97,12 +97,28 @@ function stringifyPayload(payload: unknown): string | undefined {
   return undefined;
 }
 
+/**
+ * O projetor do observer grava o quadro ANINHADO em `payload.observer` (ok, outcome,
+ * status, turnSequence, content…) e copia só a identidade para o topo (toolName,
+ * paneId…). Lê os dois, com o topo mandando; sem isso toda falha virava "Concluída
+ * com sucesso" e nenhuma saída tinha o que expandir.
+ */
+function timelinePayload(payload: unknown): Record<string, unknown> {
+  const top = (payload ?? {}) as Record<string, unknown>;
+  const observer = top.observer;
+  const nested =
+    observer !== null && typeof observer === 'object' && !Array.isArray(observer)
+      ? (observer as Record<string, unknown>)
+      : {};
+  return { ...nested, ...top };
+}
+
 export function parseTimelineItems(events: readonly MissionEvent[], missionId: string): TimelineItemModel[] {
   const items: TimelineItemModel[] = [];
 
   for (const event of events) {
     if (event.missionId !== missionId) continue;
-    const p = (event.payload ?? {}) as Record<string, unknown>;
+    const p = timelinePayload(event.payload);
     const detail = stringifyPayload(p);
     const textDetail = typeof payloadOutput(p) === 'string';
 
