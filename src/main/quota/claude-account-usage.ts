@@ -28,7 +28,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import type { QuotaWindow } from '../../shared/quota-types';
 import { knownWindow } from './quota-normalize';
 import {
@@ -43,7 +43,11 @@ import {
   materializeManagedClaudeAuth,
   readManagedClaudeAuth,
 } from '../adapters/managed-claude-auth';
-import { claudeCredentialBlobIsUsable } from '../adapters/claude-credential';
+import {
+  claudeCredentialBlobIsUsable,
+  claudeCredentialCacheGeneration,
+} from '../adapters/claude-credential';
+import { readClaudeConfigSnapshotAsync } from '../adapters/claude-config-snapshot';
 import {
   claudeBlobIsExpiredUnhealable,
   claudeBlobIsRenewable,
@@ -61,7 +65,7 @@ import {
 } from './claude-oauth-usage';
 import { probeClaudeCredentialIdentity } from './claude-native-account';
 import { readNativeOAuthCredential } from '../adapters/native-oauth-keychain';
-import { readRegularFileCapped } from '../redline/redline-safe-read';
+import { readRegularFileCappedAsync } from '../redline/redline-safe-read';
 import type { QuotaReadHint } from '../../shared/quota-types';
 
 const CRED_PREFIX = 'acctcred:';
@@ -84,8 +88,11 @@ const PROFILE_MARKERS = [
   '.claude.json',
 ];
 
-/** `.claude.json` pode passar de dezenas de MB (histórico por projeto). */
-const CONFIG_FILE_MAX_BYTES = 64 * 1024 * 1024;
+export {
+  clearClaudeConfigSnapshotCache,
+  readClaudeConfigSnapshot,
+  type ClaudeConfigSnapshot,
+} from '../adapters/claude-config-snapshot';
 
 export interface ClaudeProfileInfo {
   /** null = `~/.claude` (perfil default); o sufixo de `~/.claude-<slug>` senão. */
@@ -96,102 +103,6 @@ export interface ClaudeProfileInfo {
    * um perfil via CLAUDE_CONFIG_DIR guarda DENTRO (Codenotch ClaudeProfile).
    */
   accountFile: string;
-}
-
-interface ClaudeConfigSnapshot {
-  email?: string;
-  accountUuid?: string;
-  usageAccountUuid?: string;
-  organizationUuid?: string;
-  usageFetchedAtMs?: number;
-  usage?: unknown;
-  /** `oauthAccount.organizationRateLimitTier` — 'default_claude_max_20x' etc. */
-  rateLimitTier?: string;
-  organizationType?: string;
-  billingType?: string;
-}
-
-/**
- * `.claude.json` é grande e reescrito pelo CLI o tempo todo — decode gated
- * por mtime+size, exatamente como o AccountFileCache do Codenotch.
- */
-const configSnapshotCache = new Map<
-  string,
-  { mtimeMs: number; size: number; snapshot: ClaudeConfigSnapshot | null }
->();
-
-export function readClaudeConfigSnapshot(
-  accountFile: string,
-): ClaudeConfigSnapshot | null {
-  let stat: fs.Stats;
-  try {
-    stat = fs.statSync(accountFile);
-  } catch {
-    configSnapshotCache.delete(accountFile);
-    return null;
-  }
-  if (stat.size > CONFIG_FILE_MAX_BYTES) return null;
-  const held = configSnapshotCache.get(accountFile);
-  if (held && held.mtimeMs === stat.mtimeMs && held.size === stat.size) {
-    return held.snapshot;
-  }
-  let snapshot: ClaudeConfigSnapshot | null = null;
-  try {
-    const raw = JSON.parse(fs.readFileSync(accountFile, 'utf8')) as Record<
-      string,
-      unknown
-    >;
-    const account = raw?.oauthAccount as Record<string, unknown> | undefined;
-    const cached = raw?.cachedUsageUtilization as
-      | Record<string, unknown>
-      | undefined;
-    snapshot = {
-      accountUuid: typeof account?.accountUuid === 'string' ? account.accountUuid : undefined,
-      usageAccountUuid: typeof cached?.accountUuid === 'string' ? cached.accountUuid : undefined,
-      email:
-        typeof account?.emailAddress === 'string' && account.emailAddress
-          ? account.emailAddress
-          : undefined,
-      organizationUuid:
-        typeof account?.organizationUuid === 'string' &&
-        account.organizationUuid
-          ? account.organizationUuid
-          : undefined,
-      usageFetchedAtMs:
-        typeof cached?.fetchedAtMs === 'number' &&
-        Number.isFinite(cached.fetchedAtMs)
-          ? cached.fetchedAtMs
-          : undefined,
-      usage: cached?.utilization,
-      rateLimitTier:
-        typeof account?.organizationRateLimitTier === 'string' &&
-        account.organizationRateLimitTier
-          ? account.organizationRateLimitTier
-          : undefined,
-      organizationType:
-        typeof account?.organizationType === 'string' &&
-        account.organizationType
-          ? account.organizationType
-          : undefined,
-      billingType:
-        typeof account?.billingType === 'string' && account.billingType
-          ? account.billingType
-          : undefined,
-    };
-  } catch {
-    snapshot = null;
-  }
-  configSnapshotCache.set(accountFile, {
-    mtimeMs: stat.mtimeMs,
-    size: stat.size,
-    snapshot,
-  });
-  return snapshot;
-}
-
-/** Test seam — esvazia o cache gated por mtime entre fixtures. */
-export function clearClaudeConfigSnapshotCache(): void {
-  configSnapshotCache.clear();
 }
 
 /**
@@ -208,40 +119,57 @@ export function claudeProfileKeychainService(configDir: string): string {
 }
 
 /**
+ * Um ciclo de cota descobre perfis uma vez POR CONTA e ainda sonda o item de
+ * cada uma: sem memória, eram N×perfis processos `security` por ciclo. A
+ * resposta (só existência, nunca o segredo) vale pouco e cai junto com
+ * qualquer invalidação de credencial — troca de conta, logout, escrita.
+ */
+const KEYCHAIN_EXISTS_TTL_MS = 30_000;
+const keychainExistsCache = new Map<string, {
+  generation: number;
+  until: number;
+  exists: Promise<boolean>;
+}>();
+
+/**
  * O item existe? Só atributos (sem `-w`): metadados não passam pela ACL do
  * item, então enumerar não custa prompt por candidato — mesmo motivo do
- * `hasKeychainCredential` do Codenotch.
+ * `hasKeychainCredential` do Codenotch. Assíncrono: o `security` responde em
+ * 20–50 ms e não pode congelar o Main.
  */
-function keychainItemExists(service: string): boolean {
-  if (process.platform !== 'darwin') return false;
-  try {
-    const res = spawnSync(
-      'security',
-      ['find-generic-password', '-s', service],
-      { stdio: ['ignore', 'ignore', 'ignore'], timeout: 3_000, killSignal: 'SIGKILL' },
-    );
-    return res.status === 0;
-  } catch {
-    return false;
-  }
+function keychainItemExists(service: string, fresh = false): Promise<boolean> {
+  if (process.platform !== 'darwin') return Promise.resolve(false);
+  const generation = claudeCredentialCacheGeneration();
+  const held = keychainExistsCache.get(service);
+  if (!fresh && held && held.generation === generation && Date.now() < held.until) return held.exists;
+  const exists = new Promise<boolean>((resolve) => {
+    try {
+      execFile(
+        'security',
+        ['find-generic-password', '-s', service],
+        { timeout: 3_000, killSignal: 'SIGKILL', windowsHide: true },
+        (error) => resolve(error === null),
+      );
+    } catch {
+      resolve(false);
+    }
+  });
+  keychainExistsCache.set(service, { generation, until: Date.now() + KEYCHAIN_EXISTS_TTL_MS, exists });
+  return exists;
 }
+
+const isFileOrDir = (file: string): Promise<boolean> =>
+  fs.promises.stat(file).then((stat) => stat.isFile() || stat.isDirectory(), () => false);
 
 /**
  * O perfil tem credencial? Sem token o diretório não é uma conta — é o que
  * separa `~/.claude-work` de `~/.claude-mem` (plugin que escreve os mesmos
  * markers mas nunca teve login). O default passa sempre (o app sempre o leu).
  */
-function profileHasCredential(configDir: string, slug: string | null): boolean {
-  const services =
-    slug === null
-      ? [claudeProfileKeychainService(configDir), CLAUDE_KEYCHAIN_SERVICE]
-      : [claudeProfileKeychainService(configDir)];
-  if (services.some(keychainItemExists)) return true;
-  try {
-    return fs.statSync(path.join(configDir, '.credentials.json')).isFile();
-  } catch {
-    return false;
-  }
+async function profileHasCredential(configDir: string): Promise<boolean> {
+  if (await keychainItemExists(claudeProfileKeychainService(configDir))) return true;
+  return fs.promises.stat(path.join(configDir, '.credentials.json'))
+    .then((stat) => stat.isFile(), () => false);
 }
 
 /**
@@ -249,9 +177,9 @@ function profileHasCredential(configDir: string, slug: string | null): boolean {
  * verdade (markers + credencial), slugs em ordem alfabética — a ordem nunca
  * troca entre leituras.
  */
-export function discoverClaudeProfiles(
+export async function discoverClaudeProfiles(
   home = os.homedir(),
-): ClaudeProfileInfo[] {
+): Promise<ClaudeProfileInfo[]> {
   const defaultDir = path.join(home, '.claude');
   const profiles: ClaudeProfileInfo[] = [
     {
@@ -262,7 +190,7 @@ export function discoverClaudeProfiles(
   ];
   let names: string[] = [];
   try {
-    names = fs.readdirSync(home);
+    names = await fs.promises.readdir(home);
   } catch {
     return profiles;
   }
@@ -271,32 +199,29 @@ export function discoverClaudeProfiles(
       continue;
     }
     const dir = path.join(home, name);
-    try {
-      if (!fs.statSync(dir).isDirectory()) continue;
-    } catch {
-      continue;
-    }
-    if (
-      !PROFILE_MARKERS.some((m) => {
-        try {
-          return fs.statSync(path.join(dir, m)).isFile() ||
-            fs.statSync(path.join(dir, m)).isDirectory();
-        } catch {
-          return false;
-        }
-      })
-    ) {
-      continue;
-    }
-    const slug = name.slice('.claude-'.length);
-    if (!profileHasCredential(dir, slug)) continue;
+    if (!(await fs.promises.stat(dir).then((stat) => stat.isDirectory(), () => false))) continue;
+    const marked = await Promise.all(PROFILE_MARKERS.map((m) => isFileOrDir(path.join(dir, m))));
+    if (!marked.includes(true)) continue;
+    if (!(await profileHasCredential(dir))) continue;
     profiles.push({
-      slug,
+      slug: name.slice('.claude-'.length),
       configDir: dir,
       accountFile: path.join(dir, '.claude.json'),
     });
   }
   return profiles;
+}
+
+/** O primeiro perfil de disco cujo `.claude.json` é desta identidade. */
+export async function findClaudeProfileByEmail(
+  email: string,
+  home?: string,
+): Promise<ClaudeProfileInfo | undefined> {
+  for (const profile of await discoverClaudeProfiles(home)) {
+    const snap = await readClaudeConfigSnapshotAsync(profile.accountFile);
+    if (snap?.email?.trim().toLowerCase() === email) return profile;
+  }
+  return undefined;
 }
 
 /**
@@ -377,8 +302,11 @@ export interface FetchClaudeAccountUsageOptions {
   runImpl?: ClaudeCliRunImpl;
   fetchImpl?: FetchLike;
   /** Test seam for the macOS scoped Keychain existence check. */
-  keychainProbe?: (service: string) => boolean;
+  keychainProbe?: (service: string) => boolean | Promise<boolean>;
 }
+
+/** `fresh`: a CLI acabou de rodar e pode ter migrado/trocado o item. */
+type KeychainProbe = (service: string, fresh?: boolean) => boolean | Promise<boolean>;
 
 /** Resultado da cascata por conta: janelas ou o motivo honesto da ausência. */
 export interface ClaudeAccountUsageResult {
@@ -388,13 +316,14 @@ export interface ClaudeAccountUsageResult {
 
 async function readProfileCredential(
   profile: ClaudeProfileInfo,
-  probe: (service: string) => boolean,
+  probe: KeychainProbe,
+  fresh = false,
 ): Promise<{ credential: string | null; unavailable: boolean }> {
   if (process.platform === 'darwin') {
     const service = profile.slug === null
       ? CLAUDE_KEYCHAIN_SERVICE
       : claudeProfileKeychainService(profile.configDir);
-    if (probe(service)) {
+    if (await probe(service, fresh)) {
       try {
         const credential = await readNativeOAuthCredential(service, undefined, { bypassCache: true });
         return { credential, unavailable: credential === null };
@@ -406,7 +335,7 @@ async function readProfileCredential(
   }
   // Revisão de segurança (BAIXA): stat + readFileSync tinha janela entre os
   // dois e pendurava num FIFO. Um descritor, O_NONBLOCK, só arquivo regular.
-  const read = readRegularFileCapped(path.join(profile.configDir, '.credentials.json'), 1_000_000);
+  const read = await readRegularFileCappedAsync(path.join(profile.configDir, '.credentials.json'), 1_000_000);
   if (read.kind === 'text') return { credential: read.text, unavailable: false };
   // `unchanged` só existe com `knownStamp`, que aqui não é passado. Se ainda
   // assim vier, nada foi lido agora: fonte indisponível, nunca "sem credencial".
@@ -430,6 +359,7 @@ export async function fetchClaudeAccountUsageWindows(
   if (!account || account.adapterId !== 'claude') {
     return { windows: null, hint: 'no-credential' };
   }
+  const keychainProbe: KeychainProbe = opts.keychainProbe ?? keychainItemExists;
   let hint: QuotaReadHint | undefined;
   let expiredButRenewable = false;
   // F-1416: `probeClaudeCredentialIdentity` diz 'auth-expired' só pelo relógio
@@ -473,7 +403,8 @@ export async function fetchClaudeAccountUsageWindows(
   const ownedScopedWindows = async (fallback: string | null = null): Promise<ClaudeAccountUsageResult> => {
     const directory = managedClaudeAuthDirectory(accountId, opts.home);
     const service = claudeProfileKeychainService(directory);
-    if (process.platform === 'darwin' && (opts.keychainProbe ?? keychainItemExists)(service)) {
+    // Logo depois da CLI: a existência do item é relida, nunca a do ciclo anterior.
+    if (process.platform === 'darwin' && await keychainProbe(service, true)) {
       // Claude chooses its scoped Keychain item over the private file. A valid
       // file cannot prove that the CLI will use the same account. Bypass the
       // short successful-read cache; a denied read remains backed off.
@@ -525,12 +456,8 @@ export async function fetchClaudeAccountUsageWindows(
   //    É esta conta — fontes do perfil são autoritativas para ela.
   const email = account.email?.trim().toLowerCase();
   if (email) {
-    const profile = discoverClaudeProfiles(opts.home).find((p) => {
-      const snap = readClaudeConfigSnapshot(p.accountFile);
-      return snap?.email?.trim().toLowerCase() === email;
-    });
+    const profile = await findClaudeProfileByEmail(email, opts.home);
     if (profile) {
-      const keychainProbe = opts.keychainProbe ?? keychainItemExists;
       const profileRead = await readProfileCredential(profile, keychainProbe);
       let credential = profileRead.credential;
       let identity = profileRead.unavailable ? 'unavailable' : await probeClaudeCredentialIdentity(credential, email, {
@@ -547,7 +474,7 @@ export async function fetchClaudeAccountUsageWindows(
           credential && claudeBlobIsRenewable(credential, now)) {
         const cli = await probeClaudeCliUsage({ now, runImpl: opts.runImpl, nativeProfile: true });
         cliAuthFailed = cli.failure === 'auth-expired';
-        const reread = await readProfileCredential(profile, keychainProbe);
+        const reread = await readProfileCredential(profile, keychainProbe, true);
         if (!reread.unavailable && reread.credential && reread.credential !== credential) {
           credential = reread.credential;
           identity = await probeClaudeCredentialIdentity(credential, email, {

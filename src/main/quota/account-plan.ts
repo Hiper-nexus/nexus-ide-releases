@@ -24,10 +24,8 @@ import {
   managedClaudeAuthDirectory,
   hasManagedClaudeAuth,
 } from '../adapters/managed-claude-auth';
-import {
-  discoverClaudeProfiles,
-  readClaudeConfigSnapshot,
-} from './claude-account-usage';
+import { findClaudeProfileByEmail } from './claude-account-usage';
+import { readClaudeConfigSnapshotAsync } from '../adapters/claude-config-snapshot';
 import type { CodexChatGptAuth } from './codex-usage';
 import type { GeminiOauthCreds } from './agy-usage';
 import type { FetchLike } from './claude-oauth-usage';
@@ -73,11 +71,11 @@ export function planFromClaudeTier(
 }
 
 /** `.claude.json` cru → plano, com guarda de e-mail quando a conta declara. */
-export function planFromClaudeAccountFile(
+export async function planFromClaudeAccountFile(
   accountFile: string,
   expectedEmail?: string,
-): AccountPlan | null {
-  const snap = readClaudeConfigSnapshot(accountFile);
+): Promise<AccountPlan | null> {
+  const snap = await readClaudeConfigSnapshotAsync(accountFile);
   if (!snap?.rateLimitTier && !snap?.organizationType) return null;
   const accountEmail = expectedEmail?.trim().toLowerCase();
   if (
@@ -98,16 +96,16 @@ export function planFromClaudeAccountFile(
  *  2. perfil de disco com o MESMO e-mail da conta;
  *  3. `~/.claude.json` nativo, só quando o e-mail casa.
  */
-export function claudeAccountPlan(
+export async function claudeAccountPlan(
   accountId: string,
   opts: { home?: string } = {},
-): AccountPlan | null {
+): Promise<AccountPlan | null> {
   const account = getAccount(accountId);
   if (!account || account.adapterId !== 'claude') return null;
   const email = account.email?.trim().toLowerCase() || undefined;
 
   if (hasManagedClaudeAuth(accountId)) {
-    const p = planFromClaudeAccountFile(
+    const p = await planFromClaudeAccountFile(
       path.join(managedClaudeAuthDirectory(accountId, opts.home), '.claude.json'),
       email,
     );
@@ -115,12 +113,9 @@ export function claudeAccountPlan(
   }
 
   if (email) {
-    const profile = discoverClaudeProfiles(opts.home).find((p) => {
-      const snap = readClaudeConfigSnapshot(p.accountFile);
-      return snap?.email?.trim().toLowerCase() === email;
-    });
+    const profile = await findClaudeProfileByEmail(email, opts.home);
     if (profile) {
-      const p = planFromClaudeAccountFile(profile.accountFile, email);
+      const p = await planFromClaudeAccountFile(profile.accountFile, email);
       if (p) return p;
     }
   }
@@ -130,7 +125,7 @@ export function claudeAccountPlan(
 }
 
 /** Plano da linha nativa (`~/.claude.json`) — conta do login do CLI. */
-export function claudeNativePlan(home = os.homedir()): AccountPlan | null {
+export function claudeNativePlan(home = os.homedir()): Promise<AccountPlan | null> {
   return planFromClaudeAccountFile(path.join(home, '.claude.json'));
 }
 
@@ -268,8 +263,8 @@ export interface DetectPlanDeps {
   ) => string | null | Promise<string | null>;
   fetchImpl?: FetchLike;
   /** Injetável em teste — leitura de plano Claude por conta vault. */
-  claudePlan?: (accountId: string) => AccountPlan | null;
-  claudeNative?: () => AccountPlan | null;
+  claudePlan?: (accountId: string) => AccountPlan | null | Promise<AccountPlan | null>;
+  claudeNative?: () => AccountPlan | null | Promise<AccountPlan | null>;
 }
 
 /**
@@ -284,9 +279,10 @@ export async function detectProviderPlan(
   try {
     switch (adapterId) {
       case 'claude':
-        return accountId
+        // `await` dentro do try: uma leitura que rejeita vira null, não exceção.
+        return await (accountId
           ? (deps.claudePlan ?? claudeAccountPlan)(accountId)
-          : (deps.claudeNative ?? claudeNativePlan)();
+          : (deps.claudeNative ?? claudeNativePlan)());
       case 'codex': {
         const list = deps.resolveCodexAuthCandidates
           ? await Promise.resolve(deps.resolveCodexAuthCandidates(accountId))

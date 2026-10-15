@@ -135,7 +135,7 @@ export interface QuotaServiceDeps {
    */
   claudeCliUsage?: () => Promise<ClaudeCliUsageProbe>;
   /** Evidência de login nativo Claude prévio (`oauthAccount` no ~/.claude.json). */
-  claudeNativeSession?: () => boolean;
+  claudeNativeSession?: () => boolean | Promise<boolean>;
   /** Access token nativo vencido (expiresAt cliente — refresh é do CLI). */
   claudeNativeTokenExpired?: () => boolean;
   /**

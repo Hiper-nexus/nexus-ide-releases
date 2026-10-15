@@ -12,7 +12,7 @@
  * um pane no Windows. Nenhum segredo passa por argv ou log: o blob viaja por
  * stdin em base64 e o resultado volta pelo stdout do PowerShell.
  */
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 
 export const AGY_KEYRING_TARGET = 'gemini:antigravity';
 /** UserName que o go-keyring grava (service:user → target). */
@@ -62,15 +62,22 @@ if ([NexusAgyKeyring]::Delete('${AGY_KEYRING_TARGET}')) { [Console]::Out.Write('
 type ExecFileSync = typeof execFileSync;
 
 let readCache: { at: number; value: string | null } | null = null;
+let readFlight: Promise<string | null> | null = null;
+/** Leitura em voo de antes de uma troca de conta não publica no cache. */
+let readGeneration = 0;
 
 export function invalidateAgyWindowsKeyringCache(): void {
   readCache = null;
+  readFlight = null;
+  readGeneration += 1;
 }
+
+const POWERSHELL_ARGS = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command'];
 
 function runPowerShell(exec: ExecFileSync, script: string, input?: string): string {
   const out = exec(
     'powershell.exe',
-    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
+    [...POWERSHELL_ARGS, script],
     {
       encoding: 'utf8',
       timeout: POWERSHELL_TIMEOUT_MS,
@@ -120,6 +127,55 @@ export function readAgyWindowsKeyringBlob(options: {
   }
   readCache = { at: now, value };
   return value;
+}
+
+/**
+ * Mesma vaga e mesmo cache de {@link readAgyWindowsKeyringBlob}, sem bloquear
+ * o Main: o PowerShell compila o C# a cada leitura (0,5–2,5 s). Para o ciclo
+ * de cota, que não pode congelar a interface.
+ */
+export function readAgyWindowsKeyringBlobAsync(options: {
+  exec?: typeof execFile;
+  now?: number;
+  platform?: NodeJS.Platform;
+} = {}): Promise<string | null> {
+  if ((options.platform ?? process.platform) !== 'win32') return Promise.resolve(null);
+  if (!options.exec && process.env.VITEST) return Promise.resolve(null);
+  const now = options.now ?? Date.now();
+  if (readCache && now - readCache.at < READ_TTL_MS) return Promise.resolve(readCache.value);
+  if (readFlight) return readFlight;
+  const generation = readGeneration;
+  const flight = new Promise<string | null>((resolve) => {
+    const settle = (value: string | null) => {
+      if (generation === readGeneration) readCache = { at: now, value };
+      resolve(value);
+    };
+    try {
+      const child = (options.exec ?? execFile)(
+        'powershell.exe',
+        [...POWERSHELL_ARGS, READ_SCRIPT],
+        { encoding: 'utf8', timeout: POWERSHELL_TIMEOUT_MS, windowsHide: true },
+        (error, stdout) => {
+          const encoded = error ? '' : String(stdout).trim();
+          let value: string | null = null;
+          try {
+            value = encoded ? decodeAgyKeyringPayload(Buffer.from(encoded, 'base64')) : null;
+          } catch {
+            value = null;
+          }
+          settle(value);
+        },
+      );
+      // Sem EOF no stdin o PowerShell 5.1 pode esperar entrada para sempre.
+      child?.stdin?.end();
+    } catch {
+      settle(null);
+    }
+  }).finally(() => {
+    if (readFlight === flight) readFlight = null;
+  });
+  readFlight = flight;
+  return flight;
 }
 
 /** Grava `blob` na vaga do AGY. Falso em qualquer falha — nunca lança com segredo. */

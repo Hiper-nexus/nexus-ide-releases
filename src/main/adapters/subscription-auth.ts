@@ -7,6 +7,7 @@ import {
   readActiveClaudeCredential,
   readClaudeCredentialFile,
 } from './claude-credential';
+import { readClaudeConfigSnapshot } from './claude-config-snapshot';
 import { realUserHome, resolveCliBinary } from '../path-resolver';
 import { hasNativeFileAuth, captureNativeAuth } from './managed-credentials';
 import { mimoCredentialSupportsModel } from './mimo-auth';
@@ -224,15 +225,8 @@ export function claudeKeychainHasAsync(
 /** Email of the active Claude OAuth account from ~/.claude.json, if any.
  *  Identity only — not proof of a live session (see detectSubscriptionAuth). */
 export function claudeOauthEmail(home = os.homedir()): string | null {
-  try {
-    const raw = JSON.parse(
-      fs.readFileSync(path.join(home, '.claude.json'), 'utf8'),
-    ) as { oauthAccount?: { emailAddress?: unknown } };
-    const email = raw?.oauthAccount?.emailAddress;
-    return typeof email === 'string' && email.includes('@') ? email : null;
-  } catch {
-    return null;
-  }
+  const email = readClaudeConfigSnapshot(path.join(home, '.claude.json'))?.email;
+  return email?.includes('@') ? email : null;
 }
 
 /**

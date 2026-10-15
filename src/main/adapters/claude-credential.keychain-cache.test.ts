@@ -132,3 +132,26 @@ describe('Claude keychain reads are memoized (prompt storm)', () => {
     expect(execFileSync).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('activeClaudeEmail reads ~/.claude.json through the stamp cache (#18)', () => {
+  function writeClaudeJson(email: string, mtime: Date): void {
+    const file = path.join(fixture.home, '.claude.json');
+    fs.writeFileSync(file, JSON.stringify({ oauthAccount: { emailAddress: email } }));
+    fs.utimesSync(file, mtime, mtime);
+  }
+
+  it('does not reparse an unchanged file and forgets it on account switch or logout', () => {
+    const pinned = new Date('2026-10-14T12:00:00Z');
+    writeClaudeJson('aaa@x.com', pinned);
+    expect(credential.activeClaudeEmail()).toBe('aaa@x.com');
+
+    // Same size + mtime: served from memory, no new JSON.parse of the file.
+    writeClaudeJson('bbb@x.com', pinned);
+    expect(credential.activeClaudeEmail()).toBe('aaa@x.com');
+
+    // Account switch / logout clears every derived cache: the identity of
+    // the previous account cannot outlive it in memory.
+    credential.invalidateClaudeCredentialCache();
+    expect(credential.activeClaudeEmail()).toBe('bbb@x.com');
+  });
+});
