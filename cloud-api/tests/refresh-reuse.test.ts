@@ -377,6 +377,22 @@ test('a family revocation never crosses accounts, even over a corrupted rotated_
   db.close();
 });
 
+test('a retry never revokes another account over a corrupted rotated_from edge', async () => {
+  const { db, mac } = await setup();
+  await seedAccount(db, 'other');
+  const other = await issueTokens(db, 'other', 'desktop');
+  const now = Date.now();
+  assert.ok(await rotateRefresh(db, mac.refresh, 'desktop', now));
+  // The other account's unused token now hangs under the rotated one.
+  await db.prepare('UPDATE refresh_tokens SET rotated_from=? WHERE id=?').bind(await idOf(db, mac.refresh), await idOf(db, other.refresh)).run();
+
+  assert.ok(await rotateRefresh(db, mac.refresh, 'desktop', now + 5_000), 'the retry inside the window still gets its pair');
+
+  assert.ok(await sessionFor(db, other.session, 'desktop'), "the other account's session survives");
+  assert.ok(await rotateRefresh(db, other.refresh, 'desktop', now + 6_000), 'and its token still rotates');
+  db.close();
+});
+
 test('a corrupted rotated_from cycle ends the family walk instead of hanging', async () => {
   const { db, mac } = await setup();
   const now = Date.now();

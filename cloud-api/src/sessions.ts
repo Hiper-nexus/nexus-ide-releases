@@ -71,11 +71,12 @@ async function familyRoot(db:D1Database,id:string):Promise<string>{
 async function retryRotation(db:D1Database,prior:RefreshTokenRow,root:string,now:number):Promise<Tokens|null>{
   const unused='SELECT id FROM refresh_tokens WHERE rotated_from=? AND used_at IS NULL AND revoked_at IS NULL';
   // Every statement shares the guard: a refused retry changes nothing and the caller revokes the family.
+  // account_id, as in revokeFamily: a corrupted edge to another account's token must not reach it.
   const guard=`${UNREVOKED_PARENT} AND ${SUCCESSORS_UNUSED}`,args=[prior.id,prior.id,prior.id];
   const pair=await preparePair(db,prior.account_id,prior.channel,now,prior.id,guard,args);
   const results=await db.batch<{id:string}>([
-    db.prepare(`UPDATE sessions SET revoked_at=? WHERE revoked_at IS NULL AND refresh_id IN (${unused}) AND ${guard}`).bind(now,prior.id,...args),
-    db.prepare(`UPDATE refresh_tokens SET revoked_at=?,revoked_reason='superseded' WHERE id IN (${unused}) AND ${guard}`).bind(now,prior.id,...args),
+    db.prepare(`UPDATE sessions SET revoked_at=? WHERE account_id=? AND revoked_at IS NULL AND refresh_id IN (${unused}) AND ${guard}`).bind(now,prior.account_id,prior.id,...args),
+    db.prepare(`UPDATE refresh_tokens SET revoked_at=?,revoked_reason='superseded' WHERE account_id=? AND id IN (${unused}) AND ${guard}`).bind(now,prior.account_id,prior.id,...args),
     ...pair.statements,
     db.prepare("INSERT INTO auth_events(id,account_id,kind,family_root,created_at) SELECT ?,?,'refresh_reuse_grace',?,? WHERE EXISTS(SELECT 1 FROM refresh_tokens WHERE id=?)").bind(crypto.randomUUID(),prior.account_id,root,now,pair.refreshId),
   ]);
