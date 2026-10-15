@@ -31,6 +31,12 @@ export interface MissionJournalHistory {
 interface MissionInspectorProps {
   readonly snapshot: MissionSnapshot;
   readonly events: readonly MissionEvent[];
+  /**
+   * D2: eventos da corrida `operator-direction` lidos por runId. `events` é só a
+   * janela recente e perde a orientação em minutos; estes entram só na Conversa
+   * (Atividade e paginação seguem com `events`).
+   */
+  readonly operatorDirectionEvents?: readonly MissionEvent[];
   readonly onCommand: (command: MissionEngineCommand) => Promise<MissionSnapshot>;
   readonly question: ReactNode;
   readonly onOpenTerminals?: () => void;
@@ -453,6 +459,16 @@ function acceptedOperatorDirections(
   return directions.sort((left, right) => left.sequence - right.sequence);
 }
 
+/** Junta a janela recente com as orientações lidas por runId, uma vez por evento. */
+function withOperatorDirectionEvents(
+  events: readonly MissionEvent[],
+  operatorDirectionEvents: readonly MissionEvent[] | undefined,
+): readonly MissionEvent[] {
+  if (!operatorDirectionEvents || operatorDirectionEvents.length === 0) return events;
+  const known = new Set(events.map((event) => event.id));
+  return [...events, ...operatorDirectionEvents.filter((event) => !known.has(event.id))];
+}
+
 function directionTargetLabel(
   targetAgentId: string | null,
   agents: readonly MissionAgentSnapshot[],
@@ -470,10 +486,14 @@ function directionTargetLabel(
 function ConversationProjection({
   snapshot,
   events,
+  operatorDirectionEvents,
   question,
   onCommand,
 }: MissionInspectorProps) {
-  const directions = acceptedOperatorDirections(events, snapshot.id);
+  const directions = acceptedOperatorDirections(
+    withOperatorDirectionEvents(events, operatorDirectionEvents),
+    snapshot.id,
+  );
   const canDirect = snapshot.allowedActions.includes('direct');
 
   return (
@@ -1129,6 +1149,7 @@ function InspectorPanelContent({
   selectedAgentId,
   snapshot,
   events,
+  operatorDirectionEvents,
   onCommand,
   question,
   journal,
@@ -1147,6 +1168,7 @@ function InspectorPanelContent({
         <ConversationProjection
           snapshot={snapshot}
           events={events}
+          operatorDirectionEvents={operatorDirectionEvents}
           onCommand={onCommand}
           question={question}
         />
@@ -1170,6 +1192,7 @@ function InspectorPanelContent({
 export function MissionInspector({
   snapshot,
   events,
+  operatorDirectionEvents,
   onCommand,
   question,
   onOpenTerminals,
@@ -1271,6 +1294,7 @@ export function MissionInspector({
               selectedAgentId={selectedAgentId}
               snapshot={snapshot}
               events={events}
+              operatorDirectionEvents={operatorDirectionEvents}
               onCommand={onCommand}
               question={question}
               journal={journal}

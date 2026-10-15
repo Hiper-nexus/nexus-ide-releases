@@ -82,6 +82,13 @@ import {
 
 /** Tamanho da janela recente E de cada página anterior pedida ao Main. */
 const RECENT_EVENT_LIMIT = 40;
+/** `runId` com que o Main grava a orientação aceita e o desfecho da entrega dela. */
+const OPERATOR_DIRECTION_RUN_ID = 'operator-direction';
+/**
+ * D2: teto do replay do Main (MISSION_REPLAY_MAX_EVENTS). Até ele vêm todas as
+ * orientações da missão; acima, as mais novas.
+ */
+const OPERATOR_DIRECTION_REPLAY_LIMIT = 128;
 
 interface JournalHistoryState {
   readonly total: number | null;
@@ -326,6 +333,10 @@ export function MissionBoard({
   snapshotRef.current = snapshot;
   const [events, setEvents] = useState<MissionEvent[]>([]);
   eventsRef.current = events;
+  // D2: orientações do operador lidas por runId, fora da janela recente de `events`.
+  const [operatorDirectionEvents, setOperatorDirectionEvents] = useState<
+    MissionEvent[]
+  >([]);
   const [journalHistory, setJournalHistory] = useState(EMPTY_JOURNAL_HISTORY);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -521,6 +532,7 @@ export function MissionBoard({
 
     setSnapshot(null);
     setEvents([]);
+    setOperatorDirectionEvents([]);
     eventsRef.current = [];
     olderPagesLoadedRef.current = false;
     setJournalHistory(EMPTY_JOURNAL_HISTORY);
@@ -616,6 +628,31 @@ export function MissionBoard({
           hasMore: merged.keptOlder ? current.hasMore : recent.hasMore === true,
           loading: current.loading,
         }));
+        // D2: a janela recente é de TODOS os eventos (cada chamada de ferramenta
+        // de cada pane conta) e empurra a orientação do operador para fora dela
+        // em minutos. Orientação e desfecho moram numa corrida própria: busca só
+        // essa e a aba Conversa mescla com a janela, sem tocar na paginação.
+        try {
+          const replay = await window.nexus.orch.missionEventsReplay?.({
+            missionId,
+            runId: OPERATOR_DIRECTION_RUN_ID,
+            limit: OPERATOR_DIRECTION_REPLAY_LIMIT,
+          });
+          if (
+            replay &&
+            !replay.error &&
+            isCurrentSession() &&
+            journalGenerationRef.current === requestGeneration
+          ) {
+            setOperatorDirectionEvents(
+              replay.enabled === false
+                ? []
+                : parseJournalEvents(replay.events, missionId),
+            );
+          }
+        } catch {
+          // Evidência suplementar: a lista segue com a última leitura boa.
+        }
       } catch (reason) {
         if (
           isCurrentSession() &&
@@ -1772,6 +1809,7 @@ export function MissionBoard({
               <MissionInspector
                 snapshot={currentSnapshot}
                 events={events}
+                operatorDirectionEvents={operatorDirectionEvents}
                 onCommand={executeCommand}
                 question={question}
                 onOpenTerminals={openMountedMissionTerminals}

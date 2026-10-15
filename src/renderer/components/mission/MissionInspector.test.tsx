@@ -331,6 +331,7 @@ const ACTIVE_QUESTION: ReactNode = (
 interface MountOptions {
   readonly snapshot?: MissionSnapshot;
   readonly events?: MissionEvent[];
+  readonly operatorDirectionEvents?: MissionEvent[];
   readonly question?: ReactNode;
   readonly onOpenTerminals?: () => void;
 }
@@ -340,6 +341,7 @@ const mountedRoots = new Set<Root>();
 function mount({
   snapshot = SNAPSHOT,
   events = [],
+  operatorDirectionEvents,
   question = ACTIVE_QUESTION,
   onOpenTerminals,
 }: MountOptions = {}): HTMLElement {
@@ -356,6 +358,7 @@ function mount({
       <MissionInspector
         snapshot={snapshot}
         events={events}
+        operatorDirectionEvents={operatorDirectionEvents}
         onCommand={onCommand}
         question={question}
         onOpenTerminals={onOpenTerminals}
@@ -675,6 +678,83 @@ describe('MissionInspector', () => {
     const rows = selectTab(mount({ events: [lateUncertainty, proved, second, unproven, first] }), 'Conversa').querySelectorAll('.mission-inspector__direction-list li');
     expect(rows).toHaveLength(2); expect(rows[0].textContent).toContain('Entrega confirmada.');
     expect(rows[0].textContent).not.toContain('Entrega não confirmada.'); expect(rows[1].textContent).toContain('Na fila de início da coordenação.');
+  });
+
+  describe('D2 — a orientação não some quando sai da janela recente', () => {
+    // A janela recente é só atividade de pane: ~40 chamadas de ferramenta depois, a orientação
+    // aceita já não estava em `events` e a aba voltava a "Nenhuma orientação aceita ainda.".
+    const toolWindow = (): MissionEvent[] =>
+      Array.from({ length: 40 }, (_, index) =>
+        event({
+          sequence: 100 + index,
+          id: `tool-call-${index}`,
+          type: 'observer.tool_call',
+          payload: { observer: { toolName: 'Read' } },
+          idempotencyKey: `tool-call-key-${index}`,
+        }),
+      );
+    const [older, recent] = ACCEPTED_DIRECTION_EVENTS as [MissionEvent, MissionEvent];
+
+    it('mostra a orientação lida por runId que a janela recente não tem, uma vez só quando está nas duas', () => {
+      const panel = selectTab(
+        mount({
+          events: [...toolWindow(), recent],
+          operatorDirectionEvents: [older, recent],
+        }),
+        'Conversa',
+      );
+      const rows = panel.querySelectorAll('.mission-inspector__direction-list li');
+
+      expect(rows).toHaveLength(2);
+      expect(rows[0]?.textContent).toContain(older.payload.text);
+      expect(rows[1]?.textContent).toContain(recent.payload.text);
+      expect(panel.textContent).not.toMatch(/nenhuma orientação.*ainda/i);
+    });
+
+    it('sem o replay a janela sozinha não a tem (o caso que sumia)', () => {
+      const panel = selectTab(mount({ events: toolWindow() }), 'Conversa');
+
+      expect(panel.textContent).toMatch(/nenhuma orientação.*ainda/i);
+    });
+
+    it('o desfecho da entrega, que ainda está na janela, assenta a orientação lida só pelo replay', () => {
+      const queued = event({
+        ...older,
+        payload: { ...older.payload, deliveryState: 'queued', directionId: 'a'.repeat(64) },
+      });
+      const delivered = event({
+        sequence: 150,
+        id: 'direction-delivery',
+        runId: 'operator-direction',
+        type: 'custom',
+        idempotencyKey: `operator_direction_delivery:${'a'.repeat(64)}:delivered`,
+        payload: {
+          kind: 'operator_direction_delivery',
+          directionId: 'a'.repeat(64),
+          deliveryState: 'delivered',
+          reason: 'acceptance_proved',
+        },
+      });
+      const panel = selectTab(
+        mount({ events: [...toolWindow(), delivered], operatorDirectionEvents: [queued] }),
+        'Conversa',
+      );
+      const rows = panel.querySelectorAll('.mission-inspector__direction-list li');
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.textContent).toContain('Entrega confirmada.');
+    });
+
+    it('só a Conversa usa o replay: a Atividade segue com a janela recente', () => {
+      const host = mount({
+        events: toolWindow(),
+        operatorDirectionEvents: [older, recent],
+      });
+      const activity = selectTab(host, 'Atividade').textContent ?? '';
+
+      expect(activity).not.toContain(older.payload.text);
+      expect(activity).not.toContain(recent.payload.text);
+    });
   });
 
   it('states explicitly when Conversation has no accepted operator direction', () => {

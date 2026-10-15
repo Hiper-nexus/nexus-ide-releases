@@ -163,12 +163,14 @@ vi.mock('./MissionInspector', () => ({
   MissionInspector: ({
     snapshot,
     events,
+    operatorDirectionEvents,
     onCommand,
     question,
     journal,
   }: {
     snapshot: MissionSnapshot;
     events: MissionEvent[];
+    operatorDirectionEvents?: MissionEvent[];
     onCommand: (command: MissionEngineCommand) => Promise<MissionSnapshot>;
     question: ReactNode;
     journal?: {
@@ -181,6 +183,13 @@ vi.mock('./MissionInspector', () => ({
     <aside aria-label="Inspetor da missão">
       <div data-testid="journal-events">
         {events.map((event) =>
+          typeof event.payload.text === 'string'
+            ? event.payload.text
+            : event.type,
+        )}
+      </div>
+      <div data-testid="direction-events">
+        {(operatorDirectionEvents ?? []).map((event) =>
           typeof event.payload.text === 'string'
             ? event.payload.text
             : event.type,
@@ -239,6 +248,8 @@ const api = {
   onChanged: vi.fn<Window['nexus']['mission']['onChanged']>(),
   missionEventsRecent:
     vi.fn<Window['nexus']['orch']['missionEventsRecent']>(),
+  missionEventsReplay:
+    vi.fn<Window['nexus']['orch']['missionEventsReplay']>(),
   missionEventsAck: vi.fn<Window['nexus']['orch']['missionEventsAck']>(),
 };
 
@@ -410,6 +421,7 @@ function installNexusApi(): void {
       },
       orch: {
         missionEventsRecent: api.missionEventsRecent,
+        missionEventsReplay: api.missionEventsReplay,
         missionEventsAck: api.missionEventsAck,
       },
     } as unknown as Window['nexus'],
@@ -611,11 +623,13 @@ beforeEach(() => {
   api.command.mockReset();
   api.onChanged.mockReset();
   api.missionEventsRecent.mockReset();
+  api.missionEventsReplay.mockReset();
   api.missionEventsAck.mockReset();
 
   api.snapshot.mockResolvedValue(canonicalSnapshot());
   api.command.mockImplementation(async () => canonicalSnapshot());
   api.missionEventsRecent.mockResolvedValue({ events: [] });
+  api.missionEventsReplay.mockResolvedValue({ events: [] });
   api.missionEventsAck.mockResolvedValue({ ok: true });
   api.onChanged.mockImplementation((listener) => {
     const subscription = {
@@ -2110,5 +2124,100 @@ describe('F — leader-drift: Religar a missão ao Maestro', () => {
       host.querySelector('button[data-mission-command="leader-drift-rebind"]'),
     ).toBeNull();
     expect(normalizedText(host)).not.toContain('Religar a missão ao Maestro');
+  });
+});
+
+describe('D2 — orientações do operador fora da janela recente', () => {
+  const directionsText = (host: HTMLElement): string =>
+    host.querySelector('[data-testid="direction-events"]')?.textContent ?? '';
+  const journalText = (host: HTMLElement): string =>
+    host.querySelector('[data-testid="journal-events"]')?.textContent ?? '';
+
+  it('busca a corrida operator-direction por runId e entrega ao inspetor o que a janela recente não traz', async () => {
+    // A janela de 40 eventos é só atividade de pane: a orientação de há horas ficou de fora.
+    api.missionEventsRecent.mockResolvedValue({
+      events: [canonicalEvent('mission-alpha', 'atividade recente', 90)],
+    });
+    api.missionEventsReplay.mockResolvedValue({
+      events: [canonicalEvent('mission-alpha', 'orientação de há horas', 2)],
+    });
+
+    const { host } = mount();
+    await flush();
+    await flush();
+
+    expect(api.missionEventsReplay).toHaveBeenCalledWith({
+      missionId: 'mission-alpha',
+      runId: 'operator-direction',
+      limit: 128,
+    });
+    expect(directionsText(host)).toContain('orientação de há horas');
+    // A janela do journal (e a paginação da Atividade) não recebe o evento antigo.
+    expect(journalText(host)).toContain('atividade recente');
+    expect(journalText(host)).not.toContain('orientação de há horas');
+  });
+
+  it('replay que falha não derruba a janela recente nem acende o aviso do journal', async () => {
+    api.missionEventsRecent.mockResolvedValue({
+      events: [canonicalEvent('mission-alpha', 'atividade recente', 90)],
+    });
+    api.missionEventsReplay.mockRejectedValue(new Error('replay indisponível'));
+
+    const { host } = mount();
+    await flush();
+    await flush();
+
+    expect(journalText(host)).toContain('atividade recente');
+    expect(directionsText(host)).toBe('');
+    expect(normalizedText(host)).not.toMatch(/atividade recente\. Tente/);
+  });
+
+  it('erro do Main numa leitura seguinte mantém a última boa; journal desligado esvazia como a janela recente', async () => {
+    api.missionEventsReplay
+      .mockResolvedValueOnce({
+        events: [canonicalEvent('mission-alpha', 'orientação lida antes', 2)],
+      })
+      .mockResolvedValueOnce({ events: [], error: 'replay failed' })
+      .mockResolvedValueOnce({ events: [], enabled: false });
+
+    const { host } = mount();
+    await flush();
+    await flush();
+    expect(directionsText(host)).toContain('orientação lida antes');
+
+    emitChanged([canonicalSummary({ title: 'Mudou', updatedAt: 1_786_080_001_000 })]);
+    await flush();
+    await flush();
+    expect(api.missionEventsReplay).toHaveBeenCalledTimes(2);
+    expect(directionsText(host)).toContain('orientação lida antes');
+
+    emitChanged([canonicalSummary({ title: 'Mudou de novo', updatedAt: 1_786_080_002_000 })]);
+    await flush();
+    await flush();
+    expect(api.missionEventsReplay).toHaveBeenCalledTimes(3);
+    expect(directionsText(host)).toBe('');
+  });
+
+  it('trocar de missão descarta as orientações da anterior', async () => {
+    api.missionEventsReplay.mockImplementation(async ({ missionId }) => ({
+      events:
+        missionId === 'mission-alpha'
+          ? [canonicalEvent('mission-alpha', 'orientação da alpha', 2)]
+          : [],
+    }));
+    const terminals = vi.fn<(missionId: string) => void>();
+    const { host, root } = mount('mission-alpha', terminals);
+    await flush();
+    await flush();
+    expect(directionsText(host)).toContain('orientação da alpha');
+
+    rerender(root, 'mission-beta', terminals);
+    await flush();
+    await flush();
+
+    expect(directionsText(host)).toBe('');
+    expect(api.missionEventsReplay).toHaveBeenLastCalledWith(
+      expect.objectContaining({ missionId: 'mission-beta' }),
+    );
   });
 });
