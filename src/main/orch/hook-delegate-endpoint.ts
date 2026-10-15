@@ -425,6 +425,7 @@ function onceBudget(read: ParallelBudgetFn): ParallelBudgetFn {
 /** O que fixou o teto seguro, em pt-BR curto (vai dentro das dicas). */
 function budgetCeilingNote(budget: ParallelHelperBudget): string {
   if (budget.limitedBy === 'swap') return 'swap acima do limite desta máquina';
+  if (budget.limitedBy === 'license') return 'limite de agentes do plano menos 2 vagas para Maestro e revisor';
   if (budget.limitedBy === 'memory' && budget.freeMB !== null) {
     return `${(budget.freeMB / 1024).toFixed(1).replace('.', ',')} GB de memória livre`;
   }

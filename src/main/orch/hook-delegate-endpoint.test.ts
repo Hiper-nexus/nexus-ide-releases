@@ -1080,6 +1080,17 @@ describe('F-784: leque da delegação amarrado ao teto seguro da máquina', () =
       budget(1, { limitedBy: 'memory', freeMB: 4_700 }),
     );
     expect(lowMemory).toContain('1 em paralelo agora (teto seguro: 4,6 GB de memória livre)');
+    // Plano de teste (6 agentes): o corte é da licença, não dos panes da máquina.
+    const trial = formatDelegationContext(
+      { parts: 6, writers: 3, confidence: 0.9, model: 'j' },
+      budget(4, { limitedBy: 'license' }),
+    );
+    expect(trial).toContain(
+      '4 em paralelo agora (teto seguro: limite de agentes do plano menos 2 vagas para Maestro e revisor)',
+    );
+    expect(trial).not.toContain('panes de agente vivos');
+    expect(trial).toContain('Encerre o turno');
+    expect(trial.length).toBeLessThanOrEqual(400);
   });
 
   it('máquina no teto (03/10: 15 CLIs vivas): não abre helper nem promove o pane', async () => {

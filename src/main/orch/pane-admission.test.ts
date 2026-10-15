@@ -476,6 +476,102 @@ describe('pane-admission: orçamento de paralelismo da delegação (F-784)', () 
     expect(budget).toBeNull();
     expect(helpersToOpenNow(4, budget)).toBe(4);
   });
+
+  describe('plano com teto de agentes (Trial = 6): o leque guarda o Maestro e o revisor', () => {
+    // ~28 vagas por memória: só o teto de panes (11 com o Maestro vivo) e a licença contam.
+    const ample = { freeMB: 40_000, swapUsedMB: 0 };
+
+    it('Trial (maxAgents 6): no máximo 4 helpers simultâneos, sobra 1 vaga para o revisor', async () => {
+      const { helpersToOpenNow, parallelHelperBudget } = await import('./pane-admission');
+      // Primeira onda, só o Maestro vivo. Sem o teto da licença o leque pedia 11
+      // helpers, os workers ocupavam as 6 vagas e a missão travava sem revisor.
+      const budget = parallelHelperBudget({
+        liveAgentPanes: 1,
+        limits: mac24,
+        memory: ample,
+        licenseMaxAgents: 6,
+      });
+      expect(budget).toMatchObject({ slots: 4, limitedBy: 'license', liveAgentPanes: 1, maxAgentPanes: 12 });
+      expect(helpersToOpenNow(6, budget)).toBe(4);
+      // Maestro + 4 helpers = 5 das 6 vagas: a sexta é do revisor independente.
+      expect(1 + (budget?.slots ?? 0)).toBe(6 - 1);
+    });
+
+    it.each([
+      [1, 1],
+      [2, 1],
+      [3, 1],
+      [4, 2],
+      [5, 3],
+      [6, 4],
+      [8, 6],
+    ])('maxAgents %i → %i helper(s): reserva 2 vagas, com piso 1', async (maxAgents, helpers) => {
+      const { parallelHelperBudget } = await import('./pane-admission');
+      expect(
+        parallelHelperBudget({ liveAgentPanes: 1, limits: mac24, memory: ample, licenseMaxAgents: maxAgents }),
+      ).toMatchObject({ slots: helpers, limitedBy: 'license' });
+    });
+
+    it.each([[null], [undefined], [Number.NaN]])(
+      'sem teto de agentes (%s: Pro/Team ilimitado ou leitura ausente) o orçamento é o da máquina',
+      async (licenseMaxAgents) => {
+        const { parallelHelperBudget } = await import('./pane-admission');
+        expect(
+          parallelHelperBudget({ liveAgentPanes: 1, limits: mac24, memory: ample, licenseMaxAgents }),
+        ).toMatchObject({ slots: 11, limitedBy: 'cap' });
+      },
+    );
+
+    it('a licença só encolhe: se a máquina já cabe menos (ou o mesmo), a razão da máquina fica', async () => {
+      const { parallelHelperBudget } = await import('./pane-admission');
+      // 2 vagas pelo teto de panes < 4 da licença.
+      expect(
+        parallelHelperBudget({ liveAgentPanes: 10, limits: mac24, memory: null, licenseMaxAgents: 6 }),
+      ).toMatchObject({ slots: 2, limitedBy: 'cap' });
+      // Empate (4 e 4): quem fixou o número primeiro é a máquina.
+      expect(
+        parallelHelperBudget({ liveAgentPanes: 8, limits: mac24, memory: null, licenseMaxAgents: 6 }),
+      ).toMatchObject({ slots: 4, limitedBy: 'cap' });
+      // 2 vagas por memória < 4 da licença.
+      const twoAndHalf = mac24.minFreeMB + 2.5 * AGENT_PANE_FOOTPRINT_MB;
+      expect(
+        parallelHelperBudget({
+          liveAgentPanes: 1,
+          limits: mac24,
+          memory: { freeMB: twoAndHalf, swapUsedMB: 0 },
+          licenseMaxAgents: 6,
+        }),
+      ).toMatchObject({ slots: 2, limitedBy: 'memory' });
+    });
+
+    it('a licença nunca zera o orçamento: zero continua sendo só da máquina (memória, swap, guard)', async () => {
+      const { parallelHelperBudget } = await import('./pane-admission');
+      expect(
+        parallelHelperBudget({
+          liveAgentPanes: 1,
+          limits: mac24,
+          memory: { freeMB: 2_000, swapUsedMB: 0 },
+          licenseMaxAgents: 6,
+        }),
+      ).toMatchObject({ slots: 0, limitedBy: 'memory' });
+      expect(
+        parallelHelperBudget({
+          liveAgentPanes: 1,
+          limits: { ...mac24, maxSwapUsedMB: 4_000 },
+          memory: { freeMB: 14_000, swapUsedMB: 9_200 },
+          licenseMaxAgents: 6,
+        }),
+      ).toMatchObject({ slots: 0, limitedBy: 'swap' });
+      expect(
+        parallelHelperBudget({
+          liveAgentPanes: 1,
+          limits: { ...mac24, enabled: false },
+          memory: ample,
+          licenseMaxAgents: 6,
+        }),
+      ).toBeNull();
+    });
+  });
 });
 
 describe('pane-admission: recusa de capacidade no caminho MCP (F-1270)', () => {

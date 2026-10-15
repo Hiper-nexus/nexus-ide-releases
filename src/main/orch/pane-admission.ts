@@ -430,11 +430,22 @@ export function readPaneAdmissionLimits(
 /** Régua de `limitsForMachine`: ~1,25 GB por pane de agente (CLI + MCP filhos). */
 export const AGENT_PANE_FOOTPRINT_MB = 1280;
 
+/**
+ * Vagas da licença que o leque de helpers nunca ocupa: 1 para o Maestro (e o
+ * relive dele) e 1 para o revisor independente. Num plano com teto de agentes
+ * (Trial = 6) os workers não podem gastar as vagas todas, senão a missão não
+ * consegue abrir o revisor e trava.
+ */
+const LICENSE_RESERVED_AGENT_SEATS = 2;
+
 export interface ParallelHelperBudget {
   /** Helpers novos que cabem agora; 0 = não abrir mais. */
   readonly slots: number;
-  /** O que fixou o número: teto de panes vivos, memória disponível ou swap armado. */
-  readonly limitedBy: 'cap' | 'memory' | 'swap';
+  /**
+   * O que fixou o número: teto de panes vivos, memória disponível, swap armado
+   * ou o teto de agentes simultâneos do plano (licença).
+   */
+  readonly limitedBy: 'cap' | 'memory' | 'swap' | 'license';
   readonly liveAgentPanes: number;
   readonly maxAgentPanes: number;
   /** Memória disponível do kernel; null = sem amostra (só o teto de panes decide). */
@@ -450,13 +461,20 @@ export interface ParallelHelperBudget {
  * livre, à régua de ~1,25 GB por pane. Sem amostra de memória só o teto de
  * panes conta (o gate nunca inventa pressão); guard desligado
  * (`NEXUS_PANE_GUARD=off`) = sem orçamento (null).
+ *
+ * Plano com teto de agentes (`licenseMaxAgents` não nulo, Trial = 6): o leque
+ * nunca passa de `licenseMaxAgents - 2` helpers (piso 1), reservando o Maestro
+ * e o revisor independente. Quem lê a licença é o chamador
+ * (`currentParallelHelperBudget`): este módulo fica puro, sem importar o Main.
  */
 export function parallelHelperBudget(input: {
   readonly liveAgentPanes: number;
   readonly limits: PaneAdmissionLimits;
   readonly memory: SystemMemorySample | null;
+  /** Agentes simultâneos da licença (`maxAgents()`); null/ausente = ilimitado. */
+  readonly licenseMaxAgents?: number | null;
 }): ParallelHelperBudget | null {
-  const { limits, memory, liveAgentPanes } = input;
+  const { limits, memory, liveAgentPanes, licenseMaxAgents } = input;
   if (!limits.enabled) return null;
   const capSlots = Math.max(0, limits.maxAgentPanes - liveAgentPanes);
   const freeMB = memory?.freeMB ?? null;
@@ -478,9 +496,23 @@ export function parallelHelperBudget(input: {
     freeMB === null
       ? capSlots
       : Math.max(0, Math.floor((freeMB - limits.minFreeMB) / AGENT_PANE_FOOTPRINT_MB));
-  return memorySlots < capSlots
-    ? { ...base, slots: memorySlots, limitedBy: 'memory' }
-    : { ...base, slots: capSlots, limitedBy: 'cap' };
+  const machine: ParallelHelperBudget =
+    memorySlots < capSlots
+      ? { ...base, slots: memorySlots, limitedBy: 'memory' }
+      : { ...base, slots: capSlots, limitedBy: 'cap' };
+  // O piso 1 faz o teto da licença só ENCOLHER o leque, nunca zerá-lo: quem
+  // recusa por licença é o gate dela (`license_agent_limit`), não este número.
+  // ponytail: teto fixo, não líquido dos helpers já vivos — cobre a primeira
+  // onda (só o Maestro vivo), onde o Trial estourava as 6 vagas; nas
+  // reposições o gate da licença segue como árbitro. Upgrade: descontar
+  // `liveAgentPanes` (vagas livres menos a do revisor) e aceitar zero.
+  const licenseSlots =
+    typeof licenseMaxAgents === 'number' && Number.isFinite(licenseMaxAgents)
+      ? Math.max(1, licenseMaxAgents - LICENSE_RESERVED_AGENT_SEATS)
+      : null;
+  return licenseSlots !== null && licenseSlots < machine.slots
+    ? { ...machine, slots: licenseSlots, limitedBy: 'license' }
+    : machine;
 }
 
 /**
