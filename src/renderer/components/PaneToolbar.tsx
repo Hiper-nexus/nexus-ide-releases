@@ -1,4 +1,5 @@
 import { useAccessStore } from '../state/access-store';
+import { useShallow } from 'zustand/react/shallow';
 import {
   memo,
   useEffect,
@@ -420,10 +421,6 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
   const promoteMissionPaneRole = useLayoutStore((s) => s.promoteMissionPaneRole);
   const setPaneRole = useLayoutStore((s) => s.setPaneRole);
   const destination = useProductNavigationStore((s) => s.destination);
-  const mission = useOrchStore((s) =>
-    s.missions.find((candidate) => candidate.id === (pane.missionId ?? s.paneMissions[pane.id])),
-  );
-  const missionOwned = Boolean(mission && missionOwnsItsPanes(mission));
   const recoveryInFlight = useRef(false);
   const [recoveringMission, setRecoveringMission] = useState(false);
   // Slot posicional ⌘1-9: derivado do layout AO VIVO — recalcula quando panes
@@ -437,9 +434,17 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
   // True state for actions (dormir/reiniciar guards); display for avatar chrome.
   const paneState = useSessionStateStore((s) => s.paneStates.get(pane.id));
   const displayState = useSessionStateStore((s) => s.displayStates.get(pane.id));
-  const agentCategory = useOrchStore((s) =>
-    resolveAgentCategory(s.squads, pane.agentName, pane.role),
-  );
+  const { agentCategory, missionId, missionOwned, missionCanResume } = useOrchStore(useShallow((s) => {
+    const mission = s.missions.find((candidate) => candidate.id === (pane.missionId ?? s.paneMissions[pane.id]));
+    return {
+      agentCategory: resolveAgentCategory(s.squads, pane.agentName, pane.role),
+      missionId: mission?.id,
+      missionOwned: Boolean(mission && missionOwnsItsPanes(mission)),
+      missionCanResume: Boolean(mission && (mission.status === 'running' ||
+        (mission.status === 'blocked' && (mission.intentState !== 'blocked_user' ||
+          wasMissionRuntimeClosedByOperator(mission) || wasMissionLeftoverParked(mission))))),
+    };
+  }));
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(pane.title);
   const [density, setDensity] = useState<Density>('full');
@@ -550,10 +555,8 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
   const actions = useMemo((): ToolbarAction[] => {
     const list: ToolbarAction[] = [];
 
-    if (mission) {
-      const canResume = !hasLiveSession && (mission.status === 'running' ||
-        (mission.status === 'blocked' && (mission.intentState !== 'blocked_user' ||
-          wasMissionRuntimeClosedByOperator(mission) || wasMissionLeftoverParked(mission))));
+    if (missionId) {
+      const canResume = !hasLiveSession && missionCanResume;
       list.push({
         id: 'mission-controls',
         label: recoveringMission ? 'Retomando…' : canResume ? 'Retomar missão' : 'Abrir missão',
@@ -564,9 +567,11 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
         run: () => {
           if (recoveryInFlight.current) return;
           if (!canResume) {
-            useProductNavigationStore.getState().openMission(mission.id);
+            useProductNavigationStore.getState().openMission(missionId);
             return;
           }
+          const mission = useOrchStore.getState().missions.find((candidate) => candidate.id === missionId);
+          if (!mission) return;
           recoveryInFlight.current = true;
           setRecoveringMission(true);
           void confirmAndReopenMission(mission).then((result) => {
@@ -582,7 +587,7 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
     }
 
     if (pane.kind !== 'browser' && !isVacancy) {
-      if (pane.role === 'orchestrator' && !mission) {
+      if (pane.role === 'orchestrator' && !missionId) {
         list.push({
           id: 'mission-leader',
           label: 'Orquestrador',
@@ -763,7 +768,8 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
     stagePaneId,
     paneState,
     hasLiveSession,
-    mission,
+    missionId,
+    missionCanResume,
     missionOwned,
     recoveringMission,
     promoteMissionPaneRole,
