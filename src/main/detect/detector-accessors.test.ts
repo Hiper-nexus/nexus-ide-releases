@@ -37,6 +37,7 @@ vi.mock('../pty/pty-analysis-runtime', async () => {
         if (!entry) {
           const core = new PtyAnalysisCore(manifests, result => {
             if (result.screenText !== undefined) texts.set(result.sessionId, result.screenText);
+            else if (result.screenAppend) texts.set(result.sessionId, (texts.get(result.sessionId) ?? '') + result.screenAppend);
             for (const event of result.events) if (event.consumer === 'screen') publish(result.sessionId, event.value, result);
           });
           entry = { core, seq: 0 }; cores.set(id, entry);

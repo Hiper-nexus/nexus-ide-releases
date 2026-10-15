@@ -3,6 +3,8 @@ export const ANALYSIS_UNIT_BYTES = 65_536;
 export const ANALYSIS_SESSION_BYTES = 262_144;
 export const ANALYSIS_GLOBAL_BYTES = 4 * 1024 * 1024;
 export const ANALYSIS_EVENT_CAP = 64;
+/** Teto de chars da tela retida por sessão (worker e espelho do Main). */
+export const ANALYSIS_SCREEN_CHARS = 262_144;
 export type AnalysisConsumer = 'screen' | 'dev-server' | 'failover' | 'completion' | 'handoff' | 'paste' | 'command' | 'pipe' | 'token' | 'prompt' | 'first-run' | 'mission-control';
 export interface AnalysisFence {
   readonly workerEpoch: number;
@@ -49,7 +51,10 @@ export type AnalysisResult = AnalysisFence & {
   readonly events: readonly AnalysisEvent[];
   readonly ackBytes: number;
   readonly done?: boolean;
+  /** Tela inteira do worker (substitui o espelho do Main): só quando o delta não cabe. */
   readonly screenText?: string;
+  /** Texto de tela NOVO desde o snapshot anterior; o Main anexa e mantém o teto. */
+  readonly screenAppend?: string;
 };
 export type AnalysisWorkerMessage = AnalysisResult | { kind: 'ready' } | { kind: 'trace'; event: AnalysisWorkerTrace } | { kind: 'work-start'; workerEpoch: number; job: number; sessionId: string; watchdogToken?: number; activityToken?: number; manifestId?: string } | { kind: 'work-end'; watchdogToken?: number; activityToken?: number } | { kind: 'failed'; reason: string };
 const CONSUMERS = new Set<AnalysisConsumer>(['screen', 'dev-server', 'failover', 'completion', 'handoff', 'paste', 'command', 'pipe', 'token', 'prompt', 'first-run', 'mission-control']);
@@ -61,5 +66,6 @@ export function validAnalysisResult(value: unknown): value is AnalysisResult {
     typeof r.observedAt === 'number' && Number.isFinite(r.observedAt) &&
     Number.isSafeInteger(r.ackBytes) && r.ackBytes >= 0 && r.ackBytes <= ANALYSIS_UNIT_BYTES &&
     Array.isArray(r.events) && r.events.length <= ANALYSIS_EVENT_CAP && r.events.every((event) => event && CONSUMERS.has(event.consumer) && Number.isSafeInteger(event.registration) && event.registration > 0 && (event.archival === undefined || typeof event.archival === 'boolean')) &&
-    (r.screenText === undefined || (typeof r.screenText === 'string' && r.screenText.length <= 262_144));
+    (r.screenText === undefined || (typeof r.screenText === 'string' && r.screenText.length <= ANALYSIS_SCREEN_CHARS)) &&
+    (r.screenAppend === undefined || (typeof r.screenAppend === 'string' && r.screenAppend.length <= ANALYSIS_SCREEN_CHARS && r.screenText === undefined));
 }
