@@ -2,9 +2,9 @@ import { hashToken, randomToken } from './crypto.js';
 import type { AuthChannel, RefreshTokenRow, SessionRow } from './db/schema.js';
 export const SESSION_TTL_MS=15*60*1000;
 export const REFRESH_TTL_MS=30*24*60*60*1000;
-/** A rotated refresh presented again this soon, before its successor was ever used, is the same client
- * retrying a rotation whose response it lost (timeout, quit, failed Keychain write). Counted from the
- * first rotation, so retries never extend it. */
+/** A rotated refresh presented again this soon, before its successor or that successor's session was ever
+ * used, is the same client retrying a rotation whose response it lost (timeout, quit, failed Keychain write).
+ * Counted from the first rotation, so retries never extend it. */
 export const REFRESH_REUSE_GRACE_MS=60*1000;
 export interface Tokens {session:string;refresh:string;csrf:string|null;}
 const UNREVOKED_PARENT='EXISTS(SELECT 1 FROM refresh_tokens WHERE id=? AND revoked_at IS NULL)';
