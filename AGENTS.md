@@ -450,6 +450,14 @@ saber isto antes de mexer:
   veredito; base inatingível/sem prazo não reclassifica, só avisa.
   Cache key não mudou — a comparação depende só de (diffHash, base).
 
+- Seatbelt do portão: `/bin/ps` é setuid e o Seatbelt recusa exec setuid
+  (`spawn EPERM`), então a sonda real de cwd (`listProcessCwds`, F-908) falha
+  fechada e prova de "fora de uso" nunca sai lá dentro. Teste que exige essa
+  PROVA chama `skipIfCwdProbeDeniedBySandbox(context)`
+  (`src/test/cwd-probe-sandbox.ts`): pula com motivo `AMBIENTE-SANDBOX` só com
+  ps em EPERM e exec comum funcionando, lidos crus do SO (nunca pela sonda sob
+  teste). Fora do sandbox nada pula; sonda quebrada continua falhando.
+
 ## Orquestração automática e modelo por tarefa (F-200/F-214)
 
 - Todo pedido digitado num pane do "+ Pane" passa pelo Jev de delegação

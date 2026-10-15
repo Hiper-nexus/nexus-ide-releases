@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { decodeLsofName, listProcessCwds, type ProcessCwdExec } from './process-cwds';
+import { skipIfCwdProbeDeniedBySandbox } from '../../test/cwd-probe-sandbox';
 
 const temps: string[] = [];
 /** mkdtemp cria 0700 do próprio usuário: serve de ancestral privado. */
@@ -35,7 +36,8 @@ describe('F-908: cwd atual dos processos', () => {
     return cwds;
   }, { timeout: 45_000, interval: 50 });
 
-  it.skipIf(!posix)('porta real enxerga o cwd de um processo vivo e esquece depois que ele sai', async () => {
+  it.skipIf(!posix)('porta real enxerga o cwd de um processo vivo e esquece depois que ele sai', async (context) => {
+    skipIfCwdProbeDeniedBySandbox(context);
     const dir = tmp();
     // Vive mais que a espera pela prova; a saída é observada desde o spawn.
     const child = spawn('sleep', ['600'], { cwd: dir, stdio: 'ignore' });
