@@ -6,6 +6,7 @@ const stubs = vi.hoisted(() => ({
   isOneShotSessionRunning: vi.fn((_sessionId: string) => false),
   analysisEnabled: vi.fn(() => false),
   analysisText: vi.fn(() => ""),
+  analysisHas: vi.fn((_sessionId: string) => false),
 }));
 
 vi.mock("../pty/pty-manager", () => ({
@@ -16,11 +17,12 @@ vi.mock("../pty/pty-manager", () => ({
 
 vi.mock('../pty/pty-analysis-runtime', () => ({
   isPtyAnalysisEnabled: stubs.analysisEnabled,
-  analysisClient: { text: stubs.analysisText },
+  analysisClient: { text: stubs.analysisText, has: stubs.analysisHas },
 }));
 
 import {
   readSessionOutput,
+  recordPaneSessionData,
   __evictExitedBufferForTests,
   __resetDeliberatelyClosedPanesForTests,
   markPaneDeliberatelyClosed,
@@ -219,4 +221,21 @@ it('normalizes invalid line counts consistently without truncating intentional a
     for (const lines of [NaN, -Infinity, -1, 0]) expect(readSessionOutput('synthetic', lines)).toBe('');
     expect(readSessionOutput('synthetic', 2.8)).toBe('second\nlast');
   } finally { stubs.analysisEnabled.mockReturnValue(false); }
+});
+
+describe('cópia do output em Main (#13)', () => {
+  it('sessão que a análise já espelha não retém um segundo ring de 256 KB', () => {
+    stubs.analysisEnabled.mockReturnValue(true);
+    stubs.analysisHas.mockImplementation((id) => id === 'espelhada');
+    try {
+      recordPaneSessionData('espelhada', 'duplicado\n');
+      recordPaneSessionData('sem-analise', 'so no ring\n');
+    } finally { stubs.analysisEnabled.mockReturnValue(false); stubs.analysisHas.mockReturnValue(false); }
+    // Sem análise o leitor cai no ring: a sessão espelhada não deixou nada nele.
+    expect(readSessionOutput('espelhada', 10)).toBe('');
+    expect(readSessionOutput('sem-analise', 10)).toBe('so no ring\n');
+    // O estado da sessão (saída, última escrita) continua registrado.
+    recordPaneSessionExit('espelhada');
+    expect(wasPaneSessionExitObserved('espelhada')).toBe(true);
+  });
 });

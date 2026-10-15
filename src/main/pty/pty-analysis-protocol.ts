@@ -5,6 +5,8 @@ export const ANALYSIS_GLOBAL_BYTES = 4 * 1024 * 1024;
 export const ANALYSIS_EVENT_CAP = 64;
 /** Teto de chars da tela retida por sessão (worker e espelho do Main). */
 export const ANALYSIS_SCREEN_CHARS = 262_144;
+/** Quanto o espelho de tela de uma sessão morta fica legível (= TTL do ring de saída em pane-session-output). */
+export const ANALYSIS_DEAD_TEXT_TTL_MS = 30 * 60_000;
 export type AnalysisConsumer = 'screen' | 'dev-server' | 'failover' | 'completion' | 'handoff' | 'paste' | 'command' | 'pipe' | 'token' | 'prompt' | 'first-run' | 'mission-control';
 export interface AnalysisFence {
   readonly workerEpoch: number;

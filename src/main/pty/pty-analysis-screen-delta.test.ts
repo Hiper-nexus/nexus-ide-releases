@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { SessionScreenBuffer } from '../detect/screen-buffer';
 import { PtyAnalysisClient } from './pty-analysis-client';
 import { PtyAnalysisCore } from './pty-analysis-core';
-import type { AnalysisResult } from './pty-analysis-protocol';
+import { ANALYSIS_DEAD_TEXT_TTL_MS, type AnalysisResult } from './pty-analysis-protocol';
 
 /**
  * #3 da auditoria de velocidade: o worker não pode clonar os 256 KB de
@@ -105,5 +105,23 @@ describe('delta de screenText do worker de análise', () => {
     // Antes: ~10 snapshots/s × 262 144 chars × 6 panes ≈ 15,7 M chars/s.
     expect(cloned).toBeLessThanOrEqual(fresh * 1.5);
     for (const pane of panes) expect(pane.client.text(SESSION).length).toBe(MAX_SCREEN_CHARS);
+  });
+
+  it('texto de sessão morta é liberado depois do TTL, sem tocar nas sessões vivas', async () => {
+    const { client, tick } = loop();
+    client.data(SESSION, 'fim do trabalho\n');
+    tick(200);
+    client.exit(SESSION);
+    client.bind('viva', {});
+    client.data('viva', 'ainda rodando\n');
+    tick(150);
+    expect(await client.barrier('viva')).toBe(true);
+    tick(ANALYSIS_DEAD_TEXT_TTL_MS - 60_000);
+    client.bind('outra', {});
+    expect(client.text(SESSION)).toBe('fim do trabalho\n');
+    tick(120_000);
+    client.bind('outra-2', {});
+    expect(client.text(SESSION)).toBe('');
+    expect(client.text('viva')).toBe('ainda rodando\n');
   });
 });

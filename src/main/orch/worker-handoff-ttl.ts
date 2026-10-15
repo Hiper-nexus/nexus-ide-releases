@@ -1,5 +1,5 @@
 /**
- * Worker TTL pós-handoff (paridade Bridge 1.2.4, opt-in).
+ * Worker TTL pós-handoff (paridade Bridge 1.2.4).
  *
  * O modelo fecha workers ~30s após um handoff limpo: o resultado já é
  * durável no SQLite, então manter o PTY vivo só consome pane, memória e
@@ -10,10 +10,11 @@
  * máquina de encerramento da missão passa a ser a dona).
  *
  * Fail-safe por construção:
- * - opt-in via feature.mission.workerHandoffTtl (default OFF — igual ao
- *   opt-in do modelo; e evita invariant violation no e2e real-mission,
- *   que ancora workers a PTYs físicos vivos, mesmo raciocínio do
- *   feature.mission.warmupAdvisories);
+ * - gate feature.mission.workerHandoffTtl, DEFAULT-ON desde 568c1324 (flag
+ *   em shared/feature-flags.ts); o opt-out por override existe para o e2e
+ *   real-mission, que ancora workers a PTYs físicos vivos, mesmo raciocínio do
+ *   feature.mission.warmupAdvisories. Fechar é definitivo (sem hibernação):
+ *   quem reaproveita o worker depois do TTL abre outro pane;
  * - nunca toca orchestrator/user panes;
  * - o fechamento usa requestMissionPaneClose com a identidade física exata
  *   (pane+session+incarnation), a mesma autoridade do teardown da missão;

@@ -164,6 +164,10 @@ export function recordPaneSessionData(sessionId: string, data: string): void {
     buffer = { chunks: [], size: 0, exited: false };
     buffers.set(sessionId, buffer);
   }
+  // Com a análise ligada, readSessionOutput lê o espelho do worker (a mesma
+  // cauda de 256 KB, já sem ANSI): reter o texto aqui seria a segunda cópia.
+  // O registro da sessão (exited/exitedAt) continua, só o texto não.
+  if (isPtyAnalysisEnabled() && analysisClient.has(sessionId)) return;
   buffer.chunks.push(data);
   buffer.size += data.length;
   while (buffer.size > RING_BUFFER_CAP && buffer.chunks.length > 1) {

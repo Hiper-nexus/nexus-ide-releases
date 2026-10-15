@@ -1,5 +1,5 @@
 import {
-  ANALYSIS_GLOBAL_BYTES, ANALYSIS_SCREEN_CHARS, ANALYSIS_SESSION_BYTES, ANALYSIS_UNIT_BYTES,
+  ANALYSIS_DEAD_TEXT_TTL_MS, ANALYSIS_GLOBAL_BYTES, ANALYSIS_SCREEN_CHARS, ANALYSIS_SESSION_BYTES, ANALYSIS_UNIT_BYTES,
   validAnalysisResult, type AnalysisBinding, type AnalysisConsumer,
   type AnalysisEvent, type AnalysisFence, type AnalysisInput, type AnalysisResult,
 } from './pty-analysis-protocol';
@@ -28,7 +28,7 @@ type InputBody<T = AnalysisInput> = T extends AnalysisFence ? Omit<T, keyof Anal
 interface Session {
   totalAdmitted: number; totalAcked: number; generation: number; seq: number; lastDataSeq: number; accepted: number; queue: AnalysisInput[];
   bytes: number; status: 'active' | 'sealed' | 'degraded' | 'terminated';
-  paused: boolean; screen: ScreenMirror; latest: Map<AnalysisConsumer, { value: unknown; fence: AnalysisFence }>; evidence: Map<AnalysisConsumer, unknown[]>;
+  paused: boolean; screen: ScreenMirror; exitedAt?: number; latest: Map<AnalysisConsumer, { value: unknown; fence: AnalysisFence }>; evidence: Map<AnalysisConsumer, unknown[]>;
 }
 interface Subscription {
   registration: number;
@@ -56,6 +56,7 @@ export class PtyAnalysisClient {
   constructor(private readonly deps: AnalysisClientDeps) {}
 
   bind(id: string, binding: AnalysisBinding): number {
+    this.#releaseDeadText();
     const prior = this.#sessions.get(id);
     if (prior) { this.deps.acknowledged?.(id, prior.bytes); this.#discard(id, prior); }
     const session: Session = { totalAdmitted: prior?.totalAdmitted ?? 0, totalAcked: prior?.totalAcked ?? 0, generation: ++this.#generation, seq: 0, lastDataSeq: 0, accepted: 0,
@@ -138,7 +139,9 @@ export class PtyAnalysisClient {
     const s = this.#sessions.get(id); if (!s) return;
     if (s.status === 'sealed' || s.status === 'terminated') return;
     if (s.status === 'active') s.status = 'sealed';
+    s.exitedAt = this.deps.now();
     this.#enqueue(id, { kind: 'exit' });
+    this.#releaseDeadText();
     // Finite immutable tombstones, never retain dead PTY authority.
     if (this.#sessions.size > 256) for (const [old, entry] of this.#sessions) {
       if (old !== id && entry.status !== 'active' && entry.queue.length === 0 && this.#flight?.sessionId !== old) {
@@ -205,6 +208,11 @@ export class PtyAnalysisClient {
     if (sub && sub.registration === e.registration && (s.status === 'active' || (s.status === 'sealed' && e.archival))) {
       try { sub.callback(r.sessionId, e.value, r); } catch { this.deps.trace?.({ kind: 'pty-analysis-consumer-error', consumer: e.consumer, error: 'callback-failed' }); }
     }
+  }
+  /** O texto de tela de sessão morta (256 KB cada) não precisa sobreviver ao ring de saída do Main. */
+  #releaseDeadText() {
+    const cutoff = this.deps.now() - ANALYSIS_DEAD_TEXT_TTL_MS;
+    for (const s of this.#sessions.values()) if (s.exitedAt !== undefined && s.exitedAt < cutoff) s.screen.replace('');
   }
   #pause(id: string, s: Session, paused: boolean) { if (s.paused !== paused) { s.paused = paused; this.deps.flow(id, paused); } }
   #discard(id: string, s: Session) {
