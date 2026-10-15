@@ -1358,6 +1358,14 @@ function deliverNow(authority: DeliveryAuthority, handoffs: readonly Handoff[]):
     pending.cancelIngest = undefined;
     // Sessão que saiu fica com o tap de saída; teto vencido tenta assim mesmo.
     if (outcome === 'exit' || !pendingEnters.has(pending)) return;
+    if (outcome === 'interrupted') {
+      // F-1536: a TUI aceitou só uma fração da colagem — o CR viraria quebra de
+      // linha dentro de um texto picotado. Sem CR: a tentativa falha por
+      // 'paste_interrupted' e a escada de reentrega cola a entrega de novo.
+      clearPendingEnter(pending);
+      failReserved('paste_interrupted');
+      return;
+    }
     scheduleSubmit(
       Math.max(
         outcome === 'marker' ? PASTE_INGEST_GRACE_MS : 0,

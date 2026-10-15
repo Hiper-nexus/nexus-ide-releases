@@ -27,7 +27,7 @@ interface Session {
   /** Texto de tela anexado desde o último snapshot enviado ao Main (o delta). */
   unsent: string[]; unsentChars: number;
 }
-const PASTE_CODEX = /Pasted\s*Content\s*\d+\s*chars/i;
+const PASTE_CODEX = /Pasted\s*Content\s*(\d+)\s*chars/i;
 const PASTE_DEVIN = /Pasted\s*text\s*#\s*\d+\s*(?:\+\s*\d+\s*lines|\(\s*\d+\s*chars\s*\))/i;
 /** Pure stream reducer. This module's entire import graph is Worker-safe. */
 export class PtyAnalysisCore {
@@ -204,8 +204,17 @@ export class PtyAnalysisCore {
     if (s.consumers.has('paste')) {
       s.pasteTail = (s.pasteTail + plain).slice(-8_192);
       const adapter = (s.consumers.get('paste')?.config as { adapterId?: string } | undefined)?.adapterId ?? s.binding.adapterId;
-      if ((adapter === 'devin' ? PASTE_DEVIN : PASTE_CODEX).test(s.pasteTail)) {
-        this.#emit(s, 'paste', { marker: true, watchId: (s.consumers.get('paste')?.config as { watchId?: number } | undefined)?.watchId }); s.consumers.delete('paste'); s.pasteTail = '';
+      const marker = adapter === 'devin' ? PASTE_DEVIN : PASTE_CODEX;
+      const match = marker.exec(s.pasteTail);
+      if (match) {
+        // F-1446: o N do marcador é quanto a TUI ACEITOU — colagem picotada
+        // pelo ConPTY chega com N bem menor que o colado; o Main compara.
+        const value: { marker: true; watchId?: number; chars?: number } = {
+          marker: true,
+          watchId: (s.consumers.get('paste')?.config as { watchId?: number } | undefined)?.watchId,
+        };
+        if (adapter !== 'devin') value.chars = Number(match[1]);
+        this.#emit(s, 'paste', value); s.consumers.delete('paste'); s.pasteTail = '';
       }
     }
     if (s.consumers.has('pipe')) {

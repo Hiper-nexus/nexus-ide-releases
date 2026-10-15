@@ -116,6 +116,7 @@ import { ORCH_SPAWN_GRANT_TTL_MS } from './orch-spawn-grant-recovery';
 import { noteInFlightRequest } from './in-flight-request';
 import {
   PASTE_INGEST_GRACE_MS,
+  PASTE_INTERRUPTED_ERROR,
   pasteIngestPlanForSession,
   watchPasteIngest,
   type PasteIngestWatch,
@@ -701,7 +702,14 @@ async function submitEnter(
   try {
     const settled = delay(PROMPT_SETTLE_MS);
     // F-735: o Enter só sai depois que a TUI aceitou a colagem inteira.
-    if (ingest && (await ingest.done) === 'marker') {
+    const ingestOutcome = ingest ? await ingest.done : null;
+    if (ingestOutcome === 'interrupted') {
+      // F-1446: a TUI aceitou só uma fração da colagem — o Enter viraria
+      // quebra de linha dentro de um texto picotado. Sem Enter: o chamador
+      // reenvia (a escada do brief/handoff recola).
+      throw new Error(PASTE_INTERRUPTED_ERROR);
+    }
+    if (ingestOutcome === 'marker') {
       await delay(PASTE_INGEST_GRACE_MS);
     }
     await settled;
@@ -992,7 +1000,18 @@ async function injectWithBusyProof(
       },
       true,
       ingest,
-    );
+    ).catch((error: unknown) => {
+      if (
+        error instanceof Error &&
+        error.message === PASTE_INTERRUPTED_ERROR
+      ) {
+        // F-1446: colagem aceita pela metade — o Enter NÃO saiu (bom), o
+        // `submitted` segue falso e o fluxo abaixo já limpa o strand
+        // picotado (Ctrl-U) e devolve 'not-written' para o chamador recolar.
+        return;
+      }
+      throw error;
+    });
     if (!submitted) {
       clearStrandedComposer();
       return 'not-written';

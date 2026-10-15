@@ -213,6 +213,40 @@ describe('espera pela ingestão da colagem (F-735)', () => {
     expect(exitedOutcome).toBe('exit');
   });
 
+  it('F-1446: o plano do Codex carrega o esperado; o do Devin não compara N', () => {
+    expect(pasteIngestPlan('codex', 'x'.repeat(4_500))?.expectedChars).toBe(4_500);
+    expect(pasteIngestPlan('devin', linesOf(117))?.expectedChars).toBeUndefined();
+  });
+
+  it('F-1446: marcador com uma fração do colado resolve interrupted na hora (sem Enter)', async () => {
+    // Campo 14/10: colagem de ~16 mil caracteres picotada pelo ConPTY — o
+    // Codex só aceitou o último pedaço. O marcador sai com N minúsculo.
+    const plan = pasteIngestPlan('codex', 'x'.repeat(4_531))!;
+    const watch = watchPasteIngest('pty-codex', plan);
+    let outcome: PasteIngestOutcome | null = null;
+    void watch.done.then((value) => { outcome = value; });
+
+    emit('pty-codex', '[Pasted Content 412 chars]');
+    // A interrupção é imediata: não espera quiet nem teto — o Enter tem que
+    // estar proibido já na próxima virada.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(outcome).toBe('interrupted');
+    expect(pty.dataTaps).toHaveLength(0);
+  });
+
+  it('F-1446: N dentro da tolerância (ConPTY nunca é exato) segue marker', async () => {
+    const plan = pasteIngestPlan('codex', 'x'.repeat(4_531))!;
+    const watch = watchPasteIngest('pty-codex', plan);
+    let outcome: PasteIngestOutcome | null = null;
+    void watch.done.then((value) => { outcome = value; });
+
+    // 4.304 de 4.531 ≈ 95% — acima da razão de 0,9, é uma colagem boa cujo
+    // N só foi contado diferente (quebras de linha convertidas).
+    emit('pty-codex', '[Pasted Content 4304 chars]');
+    await vi.advanceTimersByTimeAsync(PASTE_QUIESCE_MS);
+    expect(outcome).toBe('marker');
+  });
+
   it('cancelar desarma os taps e o teto sem resolver', async () => {
     const plan = pasteIngestPlan('codex', 'x'.repeat(4_500))!;
     const watch = watchPasteIngest('pty-codex', plan);

@@ -65,15 +65,37 @@ export const PASTE_QUIESCE_MAX_MS = 2_000;
 const PASTE_INGEST_BASE_MS = 2_000;
 const PASTE_INGEST_MS_PER_CHAR = 1.5;
 export const PASTE_INGEST_MAX_MS = 30_000;
+/**
+ * F-1446: o N do marcador do Codex nunca é exato (o ConPTY converte quebras
+ * de linha, a TUI conta à sua maneira), mas uma colagem PICOTADA chega com
+ * uma FRAÇÃO do colado — no campo (14/10) só o último pedaço de ~16 mil
+ * caracteres sobreviveu. Abaixo desta proporção do esperado a colagem é
+ * interrompida: sem Enter, entrega falha por 'paste_interrupted' e a escada
+ * de reentrega cola de novo.
+ */
+export const PASTE_INTERRUPTED_RATIO = 0.9;
+/**
+ * Mensagem do erro que `submitEnter` lança quando a colagem chegou picotada
+ * (F-1446) — texto estável para o chamador distinguir de outras falhas e
+ * reenviar em vez de apertar Enter num texto incompleto.
+ */
+export const PASTE_INTERRUPTED_ERROR =
+  'pasted text was only partially ingested by the CLI';
 /** Só a saída nova interessa, e o marcador cabe com folga neste rabo. */
 
 
 export interface PasteIngestPlan {
   readonly marker: RegExp;
   readonly capMs: number;
+  /**
+   * F-1446: caracteres que a TUI precisa reportar no marcador para a colagem
+   * contar como inteira. O ConPTY pode picotar a escrita e o Codex aceitar só
+   * o último pedaço — o marcador sai com N bem menor que o colado.
+   */
+  readonly expectedChars?: number;
 }
 
-export type PasteIngestOutcome = 'marker' | 'cap' | 'exit';
+export type PasteIngestOutcome = 'marker' | 'cap' | 'exit' | 'interrupted';
 
 export interface PasteIngestWatch {
   /** Resolve no marcador, no teto ou na saída da sessão. */
@@ -103,7 +125,12 @@ export function pasteIngestPlan(
   pasted: string,
 ): PasteIngestPlan | null {
   if (adapterId === 'codex' && pasted.length >= CODEX_LARGE_PASTE_CHARS) {
-    return { marker: CODEX_PASTE_MARKER, capMs: pasteIngestCapMs(pasted.length) };
+    return {
+      marker: CODEX_PASTE_MARKER,
+      capMs: pasteIngestCapMs(pasted.length),
+      // F-1446: o marcador tem que reportar (quase) tudo que foi colado.
+      expectedChars: pasted.length,
+    };
   }
   if (adapterId === 'devin' && lineCount(pasted) >= DEVIN_LARGE_PASTE_LINES) {
     return { marker: DEVIN_PASTE_MARKER, capMs: pasteIngestCapMs(pasted.length) };
@@ -182,7 +209,19 @@ export function watchPasteIngest(
     }, Math.max(0, wait));
     if (typeof quiesceTimer.unref === 'function') quiesceTimer.unref();
   };
-  untapMarker = watchPtyAnalysisSession('paste', sessionId, { adapterId: plan.marker === DEVIN_PASTE_MARKER ? 'devin' : 'codex' }, () => {
+  untapMarker = watchPtyAnalysisSession('paste', sessionId, { adapterId: plan.marker === DEVIN_PASTE_MARKER ? 'devin' : 'codex' }, (value) => {
+    // F-1446: colagem que a TUI aceitou só pela metade não é entrega — o CR
+    // viraria quebra de linha dentro de um texto picotado. Sem tolerância o
+    // N nunca exato do Codex dispararia falso positivo a cada colagem boa.
+    const chars = (value as { chars?: number } | null | undefined)?.chars;
+    if (
+      typeof chars === 'number' &&
+      typeof plan.expectedChars === 'number' &&
+      chars < plan.expectedChars * PASTE_INTERRUPTED_RATIO
+    ) {
+      finish('interrupted');
+      return;
+    }
     sawMarker = true;
     // O marcador é saída: conta mesmo se a análise chegar antes do tap.
     lastMarkerAt = lastDataAt = Date.now();

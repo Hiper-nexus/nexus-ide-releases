@@ -291,7 +291,7 @@ import {
   withHandoffContract,
   deliverPromptAfterPendingSpawn,
 } from './tool-util';
-import { PASTE_INGEST_GRACE_MS, PASTE_QUIESCE_MS } from './paste-ingest';
+import { PASTE_INGEST_GRACE_MS, PASTE_INTERRUPTED_ERROR, PASTE_QUIESCE_MS } from './paste-ingest';
 import { startPhaseTimer } from '../observability/phase-timer';
 import { cliPromptAutoResponder } from './cli-prompt-autoresponder';
 import { PreSpawnProbeError } from '../pty/pre-spawn-probe';
@@ -2663,6 +2663,34 @@ describe('agent prompt injection', () => {
       await vi.advanceTimersByTimeAsync(400);
       await pending;
       expect(stubs.writeSession).toHaveBeenCalledTimes(2);
+      expect(stubs.dataTaps).toHaveLength(0);
+    } finally {
+      stubs.physicalSessionInfo.mockReset().mockReturnValue(null);
+      vi.useRealTimers();
+    }
+  });
+
+  it('F-1446: marcador com fração do colado proíbe o Enter e devolve erro para reenviar', async () => {
+    vi.useFakeTimers();
+    try {
+      stubs.physicalSessionInfo.mockReturnValue({ adapterId: 'codex' });
+      stubs.sessionState.mockReturnValue('idle');
+      let settled: string | undefined;
+      const pending = injectPrompt('session-1', 'linha do brief\n'.repeat(300));
+      void pending.then(
+        () => { settled = 'resolved'; },
+        (error: unknown) => { settled = error instanceof Error ? error.message : String(error); },
+      );
+      await vi.advanceTimersByTimeAsync(3_000);
+      // Só a colagem saiu até aqui.
+      expect(stubs.writeSession).toHaveBeenCalledOnce();
+
+      // O ConPTY picotou a escrita: o marcador reporta uma fração mínima.
+      for (const tap of [...stubs.dataTaps]) tap('session-1', '[Pasted Content 331 chars]');
+      await vi.advanceTimersByTimeAsync(5_000);
+      // O Enter NUNCA saiu — viraria quebra de linha dentro do texto picotado.
+      expect(stubs.writeSession).toHaveBeenCalledOnce();
+      expect(settled).toBe(PASTE_INTERRUPTED_ERROR);
       expect(stubs.dataTaps).toHaveLength(0);
     } finally {
       stubs.physicalSessionInfo.mockReset().mockReturnValue(null);

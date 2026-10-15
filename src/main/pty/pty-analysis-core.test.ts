@@ -94,6 +94,24 @@ describe('production analysis reducers', () => {
     expect(failover.some((value) => value.held?.kind === 'model')).toBe(true);
     core.close();
   });
+  it('F-1446: o consumidor de colagem emite o N do marcador do Codex (Devin não tem N)', () => {
+    const { core, feed, results } = fixture();
+    feed({ kind: 'arm', consumer: 'paste', registration: 1, config: { adapterId: 'codex' } });
+    feed({ kind: 'data', data: '[Pasted Content 4304 chars]' });
+    feed({ kind: 'flush' });
+    const pastes = results.flatMap((r) => r.events).filter((e) => e.consumer === 'paste').map((e) => e.value);
+    expect(pastes).toContainEqual({ marker: true, chars: 4304 });
+    core.close();
+
+    // Devin: o marcador não carrega contagem comparável — sem `chars`.
+    const devin = fixture();
+    devin.feed({ kind: 'arm', consumer: 'paste', registration: 1, config: { adapterId: 'devin' } });
+    devin.feed({ kind: 'data', data: '[Pasted text #1 +117 lines]' });
+    devin.feed({ kind: 'flush' });
+    const devinPastes = devin.results.flatMap((r) => r.events).filter((e) => e.consumer === 'paste').map((e) => e.value);
+    expect(devinPastes).toContainEqual({ marker: true });
+    devin.core.close();
+  });
   it('seals PRONTO immediately before exit and excludes registered prompt echo', () => {
     const { core, feed, results } = fixture();
     feed({ kind: 'arm', consumer: 'completion', registration: 1, config: { prompt: 'Escreva PRONTO: <resumo>' } });

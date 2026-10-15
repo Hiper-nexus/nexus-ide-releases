@@ -907,6 +907,26 @@ describe('idle delivery authority and lifecycle', { timeout: 60_000 }, () => {
       delivery.shutdownIdleDelivery();
     });
 
+    it('F-1536: marcador com fração do texto (colagem picotada) NÃO recebe CR e a entrega não conta como feita', async () => {
+      const delivery = await import('./idle-delivery');
+      const { PASTE_INGEST_GRACE_MS, PASTE_QUIESCE_MS } = await import('./paste-ingest');
+      const scope = testProjectScope();
+      authorizeTarget(scope);
+      ptyMocks.adapters.set('orchestrator-session', 'codex');
+      ptyMocks.state = 'idle';
+      delivery.initIdleDelivery();
+
+      delivery.onHandoffSubmitted(bigHandoff(), scope);
+      await advanceUntilPasted(delivery);
+
+      // O ConPTY comeu o começo: a TUI aceitou 300 de ~4 mil caracteres.
+      emit('[Pasted Content 300 chars]');
+      await vi.advanceTimersByTimeAsync(PASTE_INGEST_GRACE_MS + PASTE_QUIESCE_MS + 5_000);
+      expect(crs()).toHaveLength(0);
+      expect(storeMocks.delivered).toEqual([]);
+      delivery.shutdownIdleDelivery();
+    });
+
     it('sem marcador, o CR sai no teto proporcional ao tamanho', async () => {
       const delivery = await import('./idle-delivery');
       const { pasteIngestCapMs } = await import('./paste-ingest');
