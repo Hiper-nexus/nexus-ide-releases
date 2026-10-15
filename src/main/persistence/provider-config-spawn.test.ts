@@ -73,6 +73,19 @@ const spawnDeps = vi.hoisted(() => ({
   verifyClaudeAccount: vi.fn<(_id: string, onVerified?: (blob: string) => void) => Promise<'match' | 'mismatch' | 'auth-expired' | 'unavailable'>>(
     async (_id, onVerified) => { onVerified?.('verified-claude-blob'); return 'match'; },
   ),
+  resolveCliBinary: vi.fn((runner: string): { binPath: string } | null =>
+    runner === '/usr/local/bin/claude'
+      ? { binPath: runner }
+      : runner === 'npm'
+      ? { binPath: 'C:\\Program Files\\nodejs\\npm.cmd' }
+      : runner === 'bash'
+      ? { binPath: '/bin/bash' }
+      : (runner === 'brew' || runner === spawnDeps.brewBin) && spawnDeps.brewBin
+      ? { binPath: spawnDeps.brewBin }
+      : null,
+  ),
+  /** Avisos de instalação servidos pelo cache de descoberta (perf #9). */
+  installationWarnings: new Map<string, string>(),
 }));
 
 vi.mock('node:os', async (importOriginal) => {
@@ -316,6 +329,8 @@ vi.mock('../adapters/adapter-registry', () => ({
             ? credentiallessAdapter
           : null,
   isBinResolvable: () => true,
+  getAdapterInstallationWarning: (id: string) =>
+    spawnDeps.installationWarnings.get(id),
   getAdapterResolvedBin: (id: string) =>
     id === 'mimo-code' ? '/usr/local/bin/mimo' : id === 'claude'
       ? spawnDeps.resolvedClaudeBin
@@ -371,16 +386,7 @@ vi.mock('../path-resolver', () => ({
   revalidateExecutable: (binPath: string) =>
     typeof binPath === 'string' &&
     (binPath.startsWith('/') || /^[A-Za-z]:[\\/]/.test(binPath)),
-  resolveCliBinary: (runner: string) =>
-    runner === '/usr/local/bin/claude'
-      ? { binPath: runner }
-      : runner === 'npm'
-      ? { binPath: 'C:\\Program Files\\nodejs\\npm.cmd' }
-      : runner === 'bash'
-      ? { binPath: '/bin/bash' }
-      : (runner === 'brew' || runner === spawnDeps.brewBin) && spawnDeps.brewBin
-      ? { binPath: spawnDeps.brewBin }
-      : null,
+  resolveCliBinary: spawnDeps.resolveCliBinary,
 }));
 
 vi.mock('../adapters/control-args', () => ({
@@ -1361,6 +1367,65 @@ describe('F-789: o permit da CLI decide o Node do mcode antes do spawn', () => {
     } finally {
       warn.mockRestore();
     }
+  });
+});
+
+describe('caminho quente do PROVIDER_CHANNELS.list (perf #9)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    spawnDeps.installationWarnings.clear();
+    spawnDeps.runtimeKey.mockReturnValue(null);
+    spawnDeps.hasSecret.mockReturnValue(false);
+    spawnDeps.hasCachedSecret.mockReturnValue(false);
+    spawnDeps.getSecret.mockReturnValue(null);
+    spawnDeps.launcherKey.mockReturnValue(null);
+    spawnDeps.subscriptionAuthed.mockReturnValue(true);
+    spawnDeps.subscriptionStatusAuthed.mockReturnValue(true);
+    spawnDeps.subscriptionStatusUnknown.mockReturnValue(false);
+    spawnDeps.resolveAuthStrategy.mockReturnValue({
+      strategy: 'subscription',
+      injectKey: false,
+      suppressKeyEnv: true,
+    });
+    spawnDeps.listAccounts.mockReturnValue([]);
+    spawnDeps.quotaSnapshot.mockReturnValue(null);
+    spawnDeps.ensureSubscriptionActive.mockReturnValue(true);
+  });
+
+  it('decide a auth UMA vez por adapter, não uma vez por modelo', () => {
+    listProviderSettings();
+    for (const adapterId of ['claude', 'kimi', 'muse', 'opencode']) {
+      const calls = spawnDeps.subscriptionAuthed.mock.calls.filter(
+        ([id]) => id === adapterId,
+      );
+      expect(calls, adapterId).toHaveLength(1);
+    }
+    // AGY sempre sonda pela via de status (cache morno do Keychain).
+    const agyCalls = spawnDeps.subscriptionStatusAuthed.mock.calls.filter(
+      ([id]) => id === 'agy',
+    );
+    expect(agyCalls).toHaveLength(1);
+  });
+
+  it('mimo-code continua model-aware (produto/região por modelo)', () => {
+    listProviderSettings();
+    const mimoCalls = spawnDeps.subscriptionAuthed.mock.calls.filter(
+      ([id]) => id === 'mimo-code',
+    );
+    // Um por modelo ofertado + o default efetivo.
+    expect(mimoCalls.length).toBeGreaterThan(1);
+  });
+
+  it('lê o aviso de instalação do cache de descoberta, sem re-resolver o binário no PATH', () => {
+    spawnDeps.installationWarnings.set(
+      'claude',
+      '2 instalações: 5.5.0 e 5.6.0; usando 5.6.0',
+    );
+    const list = listProviderSettings();
+    expect(
+      list.find((p) => p.adapterId === 'claude')?.cliInstallationWarning,
+    ).toBe('2 instalações: 5.5.0 e 5.6.0; usando 5.6.0');
+    expect(spawnDeps.resolveCliBinary).not.toHaveBeenCalled();
   });
 });
 

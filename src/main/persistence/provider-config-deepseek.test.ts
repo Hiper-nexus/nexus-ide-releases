@@ -58,6 +58,7 @@ vi.mock('../adapters/adapter-registry', () => ({
   isBuiltinAdapter: () => true,
   isBinResolvable: () => true,
   getAdapterResolvedBin: (id: string) => `/usr/local/bin/${id === 'qwen' ? 'qwen' : 'claude'}`,
+  getAdapterInstallationWarning: () => undefined,
   resolveAdapterBinary: (id: string) => `/usr/local/bin/${id === 'qwen' ? 'qwen' : 'claude'}`,
   rescanAdapterBinaries: vi.fn(async () => []),
   notifyAdaptersChanged: vi.fn(),

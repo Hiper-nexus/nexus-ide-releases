@@ -39,6 +39,7 @@ import {
 } from '../../shared/provider-settings-types';
 import {
   getAdapter,
+  getAdapterInstallationWarning,
   getAdapterResolvedBin,
   isBinResolvable,
   isBuiltinAdapter,
@@ -1904,8 +1905,10 @@ function toInfo(
         ? cached
         : resolveAdapterBinary(adapterId);
   }
+  // O aviso vem do cache de descoberta (populado acima quando frio): listar
+  // provedores nunca anda o PATH só para ele (perf #9).
   const cliInstallationWarning = adapter.kind === 'cli-pty' && !cfg.binPath
-    ? resolveCliBinary(adapter.bin)?.installationWarning : undefined;
+    ? getAdapterInstallationWarning(adapterId) : undefined;
   const detectedBin =
     adapter.kind !== 'api-provider'
       ? resolved || adapter.bin
@@ -1936,8 +1939,20 @@ function toInfo(
     deepseekSelected
       ? resolveDeepseekProviderKey(deepseekSelected, { vault: 'skip' })
       : resolveApiKeyWithoutVault(adapterId);
+  // authDecision só depende do modelo no mimo-code (produto/região por
+  // modelo); nos demais adapters uma decisão por listagem cobre o filtro de
+  // modelos, o default e a checagem do qwen (perf #9). A negativa continua
+  // sem cache em hasSubscriptionAuth — a próxima listagem reprova ao vivo.
+  const authStatusSnapshot = options.nonBlockingAuth === true;
+  let sharedAuthDecision: AuthDecision | undefined;
+  const authDecisionFor = (model?: string): AuthDecision =>
+    adapterId === 'mimo-code'
+      ? authDecision(adapterId, model, { statusSnapshot: authStatusSnapshot })
+      : (sharedAuthDecision ??= authDecision(adapterId, undefined, {
+          statusSnapshot: authStatusSnapshot,
+        }));
   const qwenUsesConfiguredKey = adapterId === 'qwen' && listAccounts('qwen').length === 0 &&
-    authDecision(adapterId, undefined, { statusSnapshot: options.nonBlockingAuth === true }).strategy === 'api-key';
+    authDecisionFor(undefined).strategy === 'api-key';
   if (qwenUsesConfiguredKey && cfg.enabled && installed) {
     if (hasSecret('qwen') && !hasCachedSecret('qwen')) {
       // A cold encrypted vault cannot be replaced by a different settings key.
@@ -1949,9 +1964,7 @@ function toInfo(
   }
   const credentialReadiness = qwenUsesConfiguredKey ? peekQwenReadiness().state : undefined;
   const authReadyModels = models.filter((model) => {
-    const strategy = authDecision(adapterId, model, {
-      statusSnapshot: options.nonBlockingAuth === true,
-    }).strategy;
+    const strategy = authDecisionFor(model).strategy;
     if (strategy === 'api-key' && (credentialReadiness === 'invalid-credential' || credentialReadiness === 'no-credential')) return false;
     return isProviderAuthReadyForModel(
       { adapterId, authStrategy: strategy },
@@ -1964,9 +1977,7 @@ function toInfo(
     models,
     models.includes(offer.defaultModel) ? offer.defaultModel : adapter.models.default,
   );
-  const strategy = authDecision(adapterId, defaultModel, {
-    statusSnapshot: options.nonBlockingAuth === true,
-  }).strategy;
+  const strategy = authDecisionFor(defaultModel).strategy;
   // F-992: o aviso de versão aparece aqui ANTES de qualquer spawn — versão já
   // sondada do binário que o spawn usaria (nunca executa a CLI aqui).
   const spawnBin = userBinOk ? cfg.binPath : resolved;
