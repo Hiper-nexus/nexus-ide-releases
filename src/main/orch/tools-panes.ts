@@ -1248,39 +1248,59 @@ const paneSpawn: McpToolDef = {
     // id, o reenvio devolve o pane que existe — e a resposta é a mesma.
     const callerRequest = validCallerRequestId(args.requestId);
     if (!callerRequest.ok) throw new Error(callerRequest.error);
-    const callerRequestId = callerRequest.requestId;
+    // O id do chamador vale só dentro do ESCOPO de quem o mandou (missão, ou a
+    // sessão quando não há missão): o mesmo texto em outra missão é outro
+    // pedido e nunca devolve o recibo (worktree, branch, conta) de terceiros.
+    const callerRequestId =
+      callerRequest.requestId === null
+        ? null
+        : `${ctx.missionId ? `m:${ctx.missionId}` : `s:${ctx.sessionId ?? 'none'}`}|${callerRequest.requestId}`;
+    const paneStillAlive = (paneId: string | null): boolean =>
+      paneId !== null && (findPane(paneId) !== null || isPaneSpawnPending(paneId));
     if (callerRequestId !== null) {
-      const seen = paneSpawnRequestState(callerRequestId);
-      if (seen) return joinedPaneSpawnReceipt(seen);
+      let seen = paneSpawnRequestState(callerRequestId);
+      // Pedido com pane já conhecido que MORREU depois (PTY que não subiu,
+      // watchdog que fechou): a chave não pode prender um pane morto.
+      if (seen && seen.paneId !== null && !paneStillAlive(seen.paneId)) {
+        releasePaneSpawnRequest({ requestId: callerRequestId, paneId: seen.paneId });
+        seen = null;
+      }
+      if (seen) return { ...joinedPaneSpawnReceipt(seen), requestId: callerRequest.requestId };
       // Reserva antes da rota/worktree: um reenvio concorrente entra na fila
       // atrás desta e recebe o mesmo pane, sem abrir um segundo.
       if (beginPaneSpawnRequest({ requestId: callerRequestId }).kind === 'joined') {
         const inFlight = paneSpawnRequestState(callerRequestId);
-        if (inFlight) return joinedPaneSpawnReceipt(inFlight);
+        if (inFlight) {
+          return { ...joinedPaneSpawnReceipt(inFlight), requestId: callerRequest.requestId };
+        }
       }
     }
-    // Contrato de entrega inválido falha AQUI, visível para quem declarou —
-    // nunca no handoff do worker, que não tem como consertar o schema. Antes
-    // da missão da aba: argumento inválido não deixa missão nem pane promovido.
-    const deliveryContract = parseExpectArg(args.expect);
-    // Missão SOB DEMANDA (0.76.110, decisão do operador): o primeiro helper que
-    // um pane do "+ Pane" abre cria a missão leve da aba e adota o pane como
-    // orquestrador dela — o helper nasce nela e as entregas chegam ao pane, que
-    // não perde o alcance de mão do operador (pane-authz). Pane que só conversa
-    // não vira missão; filho do operador e Hardened seguem como antes. Se não
-    // der, nada muda: o spawn segue pela mão do operador.
+    let deliveryContract: ReturnType<typeof parseExpectArg>;
     let tabMission: OperatorTabMission | null = null;
-    if (
-      operatorTabMissionProvider &&
-      ctx.role === 'user' &&
-      !ctx.missionId &&
-      ctx.sessionId &&
-      !ctx.operatorParentSessionId &&
-      !str(args, 'missionId') &&
-      !str(args, 'resume') &&
-      isOperatorChoicePolicy(getOrchSettings().squadCliPolicy)
-    ) {
-      tabMission = await operatorTabMissionProvider(ctx, operatorRouteTask(args));
+    try {
+      // Contrato de entrega inválido falha AQUI, visível para quem declarou —
+      // nunca no handoff do worker, que não tem como consertar o schema. Antes
+      // da missão da aba: argumento inválido não deixa missão nem pane promovido.
+      deliveryContract = parseExpectArg(args.expect);
+      // Missão SOB DEMANDA (0.76.110, decisão do operador): o primeiro helper que
+      // um pane do "+ Pane" abre cria a missão leve da aba e adota o pane como
+      // orquestrador dela. Se não der, nada muda: o spawn segue pela mão do operador.
+      if (
+        operatorTabMissionProvider &&
+        ctx.role === 'user' &&
+        !ctx.missionId &&
+        ctx.sessionId &&
+        !ctx.operatorParentSessionId &&
+        !str(args, 'missionId') &&
+        !str(args, 'resume') &&
+        isOperatorChoicePolicy(getOrchSettings().squadCliPolicy)
+      ) {
+        tabMission = await operatorTabMissionProvider(ctx, operatorRouteTask(args));
+      }
+    } catch (error) {
+      // Erro ANTES do spawn também libera a chave (senão ela prende 30 min).
+      if (callerRequestId !== null) releasePaneSpawnRequest({ requestId: callerRequestId });
+      throw error;
     }
     const spawnTiming: PaneSpawnTiming = {
       timer: startPhaseTimer(),
