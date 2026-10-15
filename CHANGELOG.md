@@ -8,6 +8,7 @@ Reaplicada sobre a 0.76.267 (as tags 0.76.264 a 0.76.267 já eram de outra linha
 - **Retomada sem duplicata**: a folha de origem é aposentada na transferência (F-1538), o scrollback respeita a largura (F-1539) e o aviso de pausa traz o motivo e reavalia quando a missão destrava (F-1540).
 - **Agentes à vista**: o rail, as abas e o cabeçalho da missão mostram quem está trabalhando agora; "Em andamento" lista todos os repositórios ativos sem duplicar em Recentes.
 - **Quadro**: uma ação primária por vez, menu Mais e minimizar com a escolha salva.
+- **Perfil de Operador (F-1521) e XP global (F-1542)**: o HUD tem faixa própria no rodapé da rail (some em modo sóbrio) e o diálogo perdeu os loops de animação, hex literal e caixa-alta. Patente, poder e XP de hoje passam a ser a soma dos projetos já abertos nesta máquina, com a seção "Por projeto"; conquistas, sequência e prestígio seguem por projeto. Projetos que ainda não foram abertos nesta versão entram na soma quando forem.
 - **Jev 1.14 preview**: selecionável em Chaves de API; o padrão continua o estável. Limiares (0,35) e rubricas não foram recalibrados para a 1.14.
 - **Spawn**: o mesmo `requestId` da mesma sessão devolve o pane que já nasceu; recusa por carga não conta como falha da CLI no disjuntor.
 - **Teclado do pane (F-1537)**: a tecla segue o estado vivo do pane e sobrevive à hibernação.

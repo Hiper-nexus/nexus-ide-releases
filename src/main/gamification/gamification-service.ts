@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import { z } from 'zod';
 import type {
+  GamificationGlobalSummary,
   GamificationSnapshot,
   StoredXpEvent,
   XpEventInput,
@@ -18,6 +19,11 @@ import type {
 } from '../orch/project-domain-store-registry';
 import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { evaluateAchievements } from './achievements';
+import {
+  type GlobalXpLedger,
+  globalProjectKey,
+  globalProjectLabel,
+} from './global-xp-ledger';
 import { computePoints, foldAggregate } from './xp-engine';
 import {
   countTodaySameBucket,
@@ -81,6 +87,8 @@ export interface ProjectGamificationServiceOptions {
   now?: () => number;
   soberMode?: (scope: ProjectExecutionScope) => boolean;
   agentCategory?: (agentName: string) => string | null;
+  /** XP global do operador (soma dos projetos abertos); opcional. */
+  globalLedger?: GlobalXpLedger;
 }
 
 interface ScopeState {
@@ -123,6 +131,7 @@ export class ProjectGamificationService {
   readonly #now: () => number;
   readonly #soberMode: (scope: ProjectExecutionScope) => boolean;
   readonly #agentCategory: (agentName: string) => string | null;
+  readonly #globalLedger: GlobalXpLedger | null;
   readonly #states = new Map<string, ScopeState>();
   readonly #unsubscribes: Array<() => void> = [];
   #started = false;
@@ -135,6 +144,7 @@ export class ProjectGamificationService {
     this.#now = options.now ?? Date.now;
     this.#soberMode = options.soberMode ?? (() => false);
     this.#agentCategory = options.agentCategory ?? (() => null);
+    this.#globalLedger = options.globalLedger ?? null;
   }
 
   start(): void {
@@ -390,6 +400,7 @@ export class ProjectGamificationService {
       if (state.changedTimer) clearTimeout(state.changedTimer);
     }
     this.#states.clear();
+    this.#globalLedger?.flush();
   }
 
   #activateScope(scope: ProjectExecutionScope): void {
@@ -709,6 +720,21 @@ export class ProjectGamificationService {
     for (const event of events) {
       if (event.createdAt >= todayStart) todayXp += event.points;
     }
+    const globalKey = globalProjectKey(scope);
+    let global: GamificationGlobalSummary | undefined;
+    if (this.#globalLedger) {
+      try {
+        this.#globalLedger.record(
+          globalKey,
+          globalProjectLabel(scope.rootRealPath),
+          power,
+          todayXp,
+        );
+        global = this.#globalLedger.summary(globalKey);
+      } catch (error) {
+        console.warn('[gamification] global xp failed:', error);
+      }
+    }
     return {
       powerLevel: power,
       tier,
@@ -725,6 +751,7 @@ export class ProjectGamificationService {
       counters,
       recent: groupRecentEvents(events),
       todayXp,
+      ...(global ? { global } : {}),
       ruleVersion: RULE_VERSION,
       projectId: scope.projectId,
       checkoutId: scope.checkoutId,

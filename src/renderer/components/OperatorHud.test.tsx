@@ -98,6 +98,31 @@ describe('OperatorHud no rail', () => {
     expect(host.querySelector('.operator-hud__gain')).toBeNull();
   });
 
+  it('mostra a patente GLOBAL quando o main traz a soma dos projetos', () => {
+    useGamificationStore.setState({
+      snapshot: live({
+        powerLevel: 6_886,
+        tier: 'RECRUTA',
+        tierFloor: 'RECRUTA',
+        nextTierAt: 100_000,
+        todayXp: 100,
+        global: {
+          powerLevel: 631_975,
+          tier: 'VETERANO',
+          nextTierAt: 1_500_000,
+          todayXp: 17_225,
+          projectCount: 2,
+          projects: [],
+        },
+      }),
+    });
+    const text = render().querySelector('button.operator-hud')?.textContent ?? '';
+    expect(text).toContain('VETERANO');
+    expect(text).toContain('632K');
+    expect(text).toContain('+17.2K hoje');
+    expect(text).not.toContain('RECRUTA');
+  });
+
   it('opens the profile on click', () => {
     const openProfile = vi.fn();
     useGamificationStore.setState({ snapshot: live(), openProfile });

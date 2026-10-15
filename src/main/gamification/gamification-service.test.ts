@@ -14,6 +14,7 @@ import {
   createProjectMigration,
 } from '../runtime/project-runtime-schema';
 import { getMeta, listXpEvents } from './gamification-store';
+import { GlobalXpLedger } from './global-xp-ledger';
 import {
   hasGreenEvidence,
   ProjectGamificationService,
@@ -338,6 +339,37 @@ describe('ProjectGamificationService on scoped runtimes', () => {
     const snapshot = service.snapshot(executionScope);
     expect(snapshot.counters.handoff_success).toBe(1);
     expect(snapshot.streakDays).toBe(1);
+  });
+
+  it('soma o XP de projetos distintos no resumo global sem ler o banco de outro', () => {
+    const runtimeManager = createManager();
+    const registry = createRegistry(runtimeManager);
+    const ledgerFile = path.join(os.tmpdir(), `nx-gxp-svc-${process.pid}-${Date.now()}.json`);
+    const ledger = new GlobalXpLedger({ file: ledgerFile });
+    const service = new ProjectGamificationService({
+      runtimeManager,
+      domainStores: registry,
+      broadcast: vi.fn(),
+      globalLedger: ledger,
+    });
+    services.push(service);
+    service.start();
+    const a = scope('project-a');
+    const b = scope('project-b');
+
+    service.recordJarvisAction(a, 'open_terminal', true);
+    service.recordMediaGenerated(b, 'image', null);
+    const snapA = service.snapshot(a);
+    const snapB = service.snapshot(b);
+
+    expect(snapA.powerLevel).toBe(1_500);
+    expect(snapB.powerLevel).toBe(1_000);
+    expect(snapB.global?.powerLevel).toBe(2_500);
+    expect(snapB.global?.projectCount).toBe(2);
+    expect(snapB.global?.projects.filter((p) => p.current)).toHaveLength(1);
+    expect(JSON.stringify(snapB.global)).not.toContain('/workspace/');
+    service.dispose();
+    fs.rmSync(ledgerFile, { force: true });
   });
 
   it('reports today XP and groups bursts of the same kind in the feed', () => {

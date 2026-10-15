@@ -336,3 +336,34 @@ export function recentAchievements(
   }
   return recent;
 }
+
+/**
+ * O perfil é da pessoa: poder, patente, próximo marco e XP de hoje vêm da
+ * soma dos projetos (`snapshot.global`); conquistas, sequência e prestígio
+ * seguem por projeto. Sem `global` (build antigo do main) devolve o próprio
+ * snapshot.
+ */
+export function withGlobalXp<
+  T extends {
+    powerLevel: number;
+    tier: GamificationTier;
+    nextTierAt: number | null;
+    todayXp?: number;
+    global?: {
+      powerLevel: number;
+      tier: GamificationTier;
+      nextTierAt: number | null;
+      todayXp: number;
+    };
+  },
+>(snapshot: T): T {
+  const global = snapshot.global;
+  if (!global) return snapshot;
+  return {
+    ...snapshot,
+    powerLevel: global.powerLevel,
+    tier: global.tier,
+    nextTierAt: global.nextTierAt,
+    todayXp: global.todayXp,
+  };
+}

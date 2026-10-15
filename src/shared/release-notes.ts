@@ -10820,6 +10820,7 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Quadro mais limpo', detail: 'Uma ação primária por vez, o resto no menu Mais, e o Quadro pode ser minimizado (a escolha fica salva).' },
     { title: 'Jev 1.14 preview', detail: 'Selecionável em Chaves de API › Modelos de decisão; o padrão continua o estável e um modelo recusado volta ao jev-latest.' },
     { title: 'Spawn idempotente', detail: 'O mesmo requestId, da mesma sessão, devolve o pane que já nasceu em vez de abrir um segundo; recusa por carga não pune a CLI no disjuntor.' },
+    { title: 'XP global e perfil sempre à vista', detail: 'Patente, poder e XP de hoje somam os projetos já abertos, com detalhe "Por projeto" no perfil; o HUD ganhou faixa própria no rodapé da rail e o diálogo perdeu animações em loop (F-1521/F-1542).' },
   ],
   fixes: [
     { title: 'Retomar com efeito e causa (A5/A7/A9)', detail: 'Retomar não termina mais sem efeito nem sem a causa, o orquestrador religa sem esperar workers podres e a reserva da retomada da aba tem prazo.' },

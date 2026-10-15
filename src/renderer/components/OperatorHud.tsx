@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { GAMIFICATION_COPY } from '../../shared/gamification-types';
-import { tierProgress } from '../../shared/gamification-progress';
+import { tierProgress, withGlobalXp } from '../../shared/gamification-progress';
 import { useGamificationStore, xpGain } from '../state/gamification-store';
 import { fmt } from './operator-sprite-data';
 
@@ -22,7 +22,8 @@ interface Gain {
 }
 
 export function OperatorHud() {
-  const snapshot = useGamificationStore((s) => s.snapshot);
+  const projectSnapshot = useGamificationStore((s) => s.snapshot);
+  const snapshot = withGlobalXp(projectSnapshot);
   const sober = useGamificationStore((s) => s.sober);
   const openProfile = useGamificationStore((s) => s.openProfile);
   const [gain, setGain] = useState<Gain | null>(null);

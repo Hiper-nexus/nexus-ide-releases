@@ -256,6 +256,34 @@ describe('OperatorProfile content', () => {
     ).toBe('XP do projeto nexus-ide');
   });
 
+  it('XP global: patente e poder somados, com detalhe por projeto', () => {
+    const dialog = openWith({
+      powerLevel: 6_886,
+      tier: 'RECRUTA',
+      nextTierAt: 100_000,
+      global: {
+        powerLevel: 105_886,
+        tier: 'INICIADO',
+        nextTierAt: 400_000,
+        todayXp: 600,
+        projectCount: 2,
+        projects: [
+          { label: 'hipergo', power: 99_000, current: false },
+          { label: 'nexus-ide', power: 6_886, current: true },
+        ],
+      },
+    });
+
+    expect(dialog.querySelector('.operator-profile__tier')?.textContent).toBe('INICIADO');
+    expect(dialog.querySelector('.operator-profile__scope')?.textContent).toBe('XP de 2 projetos');
+    expect(dialog.querySelector('.operator-profile__next')?.textContent).toBe(
+      'Faltam 294K XP para VETERANO.',
+    );
+    const rows = Array.from(dialog.querySelectorAll('.operator-profile__project'));
+    expect(rows.map((row) => row.textContent)).toEqual(['hipergo99K', 'nexus-ide · aqui6.9K']);
+    expect(dialog.querySelector('.operator-profile__project--current')).not.toBeNull();
+  });
+
   it('só mostra o ramo quando o mascote já evoluiu', () => {
     expect(
       openWith({ branch: 'base' }).querySelector('.operator-profile__scope'),

@@ -11,6 +11,7 @@ import {
   pluralPt,
   recentAchievements,
   tierProgress,
+  withGlobalXp,
   xpKindLabel,
 } from '../../shared/gamification-progress';
 import { useGamificationStore } from '../state/gamification-store';
@@ -64,7 +65,9 @@ function formatRelativeTime(createdAt: number, now: number): string {
 export function OperatorProfile() {
   const open = useGamificationStore((s) => s.profileOpen);
   const close = useGamificationStore((s) => s.closeProfile);
-  const snapshot = useGamificationStore((s) => s.snapshot);
+  const projectSnapshot = useGamificationStore((s) => s.snapshot);
+  const snapshot = useMemo(() => withGlobalXp(projectSnapshot), [projectSnapshot]);
+  const globalXp = projectSnapshot.global ?? null;
   const sober = useGamificationStore((s) => s.sober);
   const setSober = useGamificationStore((s) => s.setSober);
   const [confirmPrestige, setConfirmPrestige] = useState(false);
@@ -151,7 +154,11 @@ export function OperatorProfile() {
     snapshot.branch !== 'base'
       ? `Ramo ${GAMIFICATION_COPY.branches[snapshot.branch]}`
       : null,
-    projectName ? `XP do projeto ${projectName}` : null,
+    globalXp
+      ? `XP de ${pluralPt(globalXp.projectCount, 'projeto', 'projetos')}`
+      : projectName
+        ? `XP do projeto ${projectName}`
+        : null,
   ]
     .filter(Boolean)
     .join(' · ');
@@ -305,6 +312,41 @@ export function OperatorProfile() {
             <PixelIcon name="close" size={12} />
           </button>
         </header>
+
+        {globalXp && globalXp.projects.length > 0 ? (
+          <section
+            className="operator-profile__projects"
+            aria-label="XP por projeto"
+          >
+            <h3 className="operator-profile__projects-title">Por projeto</h3>
+            <ul className="operator-profile__projects-list">
+              {globalXp.projects.map((item, index) => (
+                <li
+                  key={`${item.label}-${index}`}
+                  className={
+                    item.current
+                      ? 'operator-profile__project operator-profile__project--current'
+                      : 'operator-profile__project'
+                  }
+                >
+                  <span className="operator-profile__project-name">
+                    {item.label}
+                    {item.current ? ' · aqui' : ''}
+                  </span>
+                  <strong
+                    title={`${item.power.toLocaleString('pt-BR')} de poder`}
+                  >
+                    {fmt(item.power)}
+                  </strong>
+                </li>
+              ))}
+            </ul>
+            <span className="operator-profile__projects-note">
+              Soma dos projetos já abertos nesta versão; cada projeto entra ao ser
+              aberto.
+            </span>
+          </section>
+        ) : null}
 
         <ul className="operator-profile__stats" aria-label="Resumo da jornada">
           <li>

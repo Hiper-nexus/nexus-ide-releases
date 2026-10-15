@@ -10,6 +10,7 @@ import {
   recentAchievements,
   tierLevelOf,
   tierProgress,
+  withGlobalXp,
   xpKindLabel,
 } from './gamification-progress';
 
@@ -164,5 +165,26 @@ describe('gamification progress', () => {
     );
     expect(pluralPt(0, 'escudo', 'escudos')).toBe('0 escudos');
     expect(pluralPt(2, 'escudo', 'escudos')).toBe('2 escudos');
+  });
+});
+
+describe('withGlobalXp', () => {
+  const base = { powerLevel: 6_886, tier: 'RECRUTA' as const, nextTierAt: 100_000, todayXp: 5 };
+  it('sem global devolve o próprio snapshot', () => {
+    expect(withGlobalXp(base)).toBe(base);
+  });
+  it('com global troca poder, patente, marco e hoje; preserva o resto', () => {
+    const out = withGlobalXp({
+      ...base,
+      prestige: 2,
+      global: { powerLevel: 120_000, tier: 'INICIADO' as const, nextTierAt: 400_000, todayXp: 90 },
+    });
+    expect(out).toMatchObject({
+      powerLevel: 120_000,
+      tier: 'INICIADO',
+      nextTierAt: 400_000,
+      todayXp: 90,
+      prestige: 2,
+    });
   });
 });

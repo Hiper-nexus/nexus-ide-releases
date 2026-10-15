@@ -63,6 +63,25 @@ export interface GamificationRecentEvent {
   count?: number;
 }
 
+export interface GamificationGlobalProject {
+  /** Nome curto da pasta; nunca caminho. */
+  label: string;
+  power: number;
+  /** O projeto deste snapshot. */
+  current: boolean;
+}
+
+/** Soma dos projetos já abertos nesta máquina (perfil é da pessoa). */
+export interface GamificationGlobalSummary {
+  powerLevel: number;
+  tier: GamificationTier;
+  nextTierAt: number | null;
+  todayXp: number;
+  projectCount: number;
+  /** Maiores primeiro, truncado. */
+  projects: GamificationGlobalProject[];
+}
+
 export interface GamificationSnapshot {
   /** Present on main-process snapshots; omitted only by renderer empty state. */
   readonly projectId?: string;
@@ -86,6 +105,8 @@ export interface GamificationSnapshot {
   recent: GamificationRecentEvent[];
   /** XP ganho desde a meia-noite local (ausente em builds antigos do main). */
   todayXp?: number;
+  /** XP global do operador; ausente em builds antigos do main. */
+  global?: GamificationGlobalSummary;
   ruleVersion: number;
 }
 

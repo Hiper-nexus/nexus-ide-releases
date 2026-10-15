@@ -252,9 +252,15 @@ saber isto antes de mexer:
   `.workspace-rail__utilities`, que o modo foco esconde). Não monte o HUD dentro
   das utilidades da rail. Em modo sóbrio o HUD some; o perfil segue por
   "Meu perfil" nas Configurações e por Ctrl/⌘+Shift+O.
-- O XP é por pasta de projeto: o nexus-ide entrou no registro de checkouts em
-  14/10 (0.76.255) e mostrava RECRUTA ao lado do HiperGO com 6.886 eventos.
-  O cabeçalho do diálogo diz "XP do projeto <nome>"; não tire o escopo da tela.
+- F-1542: o XP que o operador VÊ é global (patente, poder, próximo marco e XP de
+  hoje = soma dos projetos); o que GANHA continua gravado por projeto. O nexus-ide
+  mostrava RECRUTA ao lado do HiperGO com 6.886 eventos. `GlobalXpLedger`
+  (`<userData>/gamification/global-xp.json`, escrita atômica) guarda só valor
+  absoluto, rótulo curto (pasta), chave em hash e dia, nunca caminho; cada serviço
+  de escopo informa o PRÓPRIO valor, nenhum lê o banco de outro projeto. A soma só
+  conhece projetos abertos desde esta versão: diga isso na UI, não prometa total
+  histórico. Conquistas, quests, sequência e prestígio seguem por projeto
+  (`withGlobalXp` troca só poder/patente/marco/hoje).
 - O HUD só conta e celebra ganho do MESMO escopo (`rootRealPath`): trocar de
   projeto ou hidratar o snapshot não é XP novo.
 - `operator-profile-style.test.ts` trava hex literal, animação em loop,

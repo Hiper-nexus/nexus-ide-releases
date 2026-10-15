@@ -480,6 +480,7 @@ import {
   configureGamificationService,
   shutdownGamificationService,
 } from "./gamification/gamification-service";
+import { GlobalXpLedger } from "./gamification/global-xp-ledger";
 import { GAMIFICATION_CHANNELS } from "../shared/gamification-types";
 import { requireProjectDomainStoreRegistry } from "./orch/project-domain-store-registry";
 import { closeMissionRuntimePreservingHistory } from "./orch/mission-runtime-termination";
@@ -700,6 +701,9 @@ async function bootstrap(userPathReady: Promise<void>): Promise<void> {
     cacheRoot: path.join(app.getPath("userData"), "orientation-maps"),
   }));
   const gamificationService = configureGamificationService({
+    globalLedger: new GlobalXpLedger({
+      file: path.join(app.getPath("userData"), "gamification", "global-xp.json"),
+    }),
     runtimeManager: runtimeManager,
     domainStores: requireProjectDomainStoreRegistry(),
     broadcast: (scope, channel, payload) => {
