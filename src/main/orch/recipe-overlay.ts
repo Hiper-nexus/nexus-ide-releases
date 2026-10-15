@@ -10,9 +10,9 @@ import {
   proposeRecipes,
 } from './catalog-overlay';
 
-export function buildRecipeOverlay(workspacePath?: string): RecipeOverlayResult {
+export async function buildRecipeOverlay(workspacePath?: string): Promise<RecipeOverlayResult> {
   const squads = listSquads();
-  const tools = getToolCatalog();
+  const tools = await getToolCatalog();
   const installed = listInstalledCatalogItems();
   const issues = lintSquadRecipes({
     squads,

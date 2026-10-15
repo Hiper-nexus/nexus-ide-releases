@@ -84,7 +84,7 @@ import {
   boundedConfirmationLine,
 } from "./confirmation-format";
 import { MAX_MCP_PAYLOAD_BYTES } from "./mcp-args-validation";
-import { buildToolset } from "./tools";
+import { loadToolset } from "./toolset-loader";
 import {
   assertMissionSpawnAuthorityCurrent,
   findPane,
@@ -2074,7 +2074,7 @@ export async function startMcpServer(): Promise<void> {
     });
   }
   registry = {
-    tools: buildToolset(),
+    tools: await loadToolset(),
     serverName: "nexus-ide",
     serverVersion: app.getVersion(),
   };
@@ -2336,8 +2336,8 @@ export function getMcpRuntimeInfo(): McpRuntimeInfo {
 }
 
 /** Names + descriptions of the native MCP toolset (settings drawer TOOLS). */
-export function getToolCatalog(): Array<{ name: string; description: string }> {
-  const tools = registry?.tools ?? buildToolset();
+export async function getToolCatalog(): Promise<Array<{ name: string; description: string }>> {
+  const tools = registry?.tools ?? await loadToolset();
   return tools.map((tool) => ({
     name: tool.name,
     description: tool.description,

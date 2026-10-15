@@ -2990,7 +2990,7 @@ export function registerOrchIpc(): void {
   });
 
   const recipeOverlaySchema = z.object({}).strict();
-  ipcMain.handle(ORCH_CHANNELS.recipeOverlay, (event, raw) => {
+  ipcMain.handle(ORCH_CHANNELS.recipeOverlay, async (event, raw) => {
     const scope = requireLiveRendererWorkspaceScope(event.sender);
     const parsed = recipeOverlaySchema.safeParse(raw ?? {});
     if (!parsed.success) throw new Error("invalid recipe overlay request");
@@ -3091,7 +3091,7 @@ export function registerOrchIpc(): void {
       if (!ownsOperation) fence.dispose();
     }
   });
-  ipcMain.handle(ORCH_CHANNELS.toolsList, (event) => {
+  ipcMain.handle(ORCH_CHANNELS.toolsList, async (event) => {
     requireLiveRendererWorkspaceScope(event.sender);
     return getToolCatalog();
   });

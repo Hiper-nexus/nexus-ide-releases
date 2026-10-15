@@ -1,6 +1,7 @@
-import { buildToolset } from '../orch/tools';
+import { loadToolset } from '../orch/toolset-loader';
 
 /** Catálogo compacto de tools MCP para o prompt do cérebro Jarvis. */
-export function jarvisToolCatalogCompact(): string {
-  return buildToolset().map((t) => t.name).join(', ');
+export async function jarvisToolCatalogCompact(): Promise<string> {
+  const tools = await loadToolset();
+  return tools.map((t) => t.name).join(', ');
 }

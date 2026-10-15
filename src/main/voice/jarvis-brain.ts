@@ -712,7 +712,7 @@ export async function jarvisThink(
   const voiceConfig = getVoiceConfig();
   const messages: Array<{ role: string; content: string }> = [
     { role: 'system', content: SYSTEM_PROMPT },
-    { role: 'system', content: `Nexus MCP tools (use mcp_tool to invoke):\n${jarvisToolCatalogCompact()}` },
+    { role: 'system', content: `Nexus MCP tools (use mcp_tool to invoke):\n${await jarvisToolCatalogCompact()}` },
     { role: 'system', content: buildJarvisPersonaInstruction(voiceConfig.persona) },
     { role: 'system', content: contextBlock(ctx) },
     ...(facts

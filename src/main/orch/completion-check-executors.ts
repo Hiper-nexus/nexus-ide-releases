@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { ProjectExecutionScope } from '../../shared/types';
-import { runTypecheckSensor, runDependencyAuditSensor, type MechanicalExec, type MechanicalCheckResult } from '../context/mechanical-sensors';
+import type { MechanicalExec, MechanicalCheckResult } from '../context/mechanical-sensors';
 import { sanitizedTestEnv, type RegressionExec } from '../regression-gate/regression-gate';
 import { buildScopedExecPlan, createScopedSandboxHome } from '../runtime/process-sandbox';
 import { removeTreeSync } from '../util/remove-tree';
@@ -44,7 +44,7 @@ export function createCompletionCheckExecutors(input: {
       return result.exitCode === null && !result.retryable ? { ...result, stderr: unavailable(result.stderr).stderr } : result;
     } catch (error) { return unavailable(error); }
   };
-  const sensor = async (root: string, kind: 'typescript' | 'install', invoke: typeof runTypecheckSensor): Promise<MechanicalCheckResult> => {
+  const sensor = async (root: string, kind: 'typescript' | 'install', invoke: (root: string, deps?: { exec?: MechanicalExec; signal?: AbortSignal }) => Promise<MechanicalCheckResult>): Promise<MechanicalCheckResult> => {
     let infrastructure: string | undefined; let retryable = false;
     const exec: MechanicalExec = async (file, args, options) => {
       const sandbox = createScopedSandboxHome(input.executionScope);
@@ -66,8 +66,8 @@ export function createCompletionCheckExecutors(input: {
     return infrastructure ? { ...result, status: 'unavailable', summary: infrastructure, retryable, findings: [] } : result;
   };
   return {
-    typecheck: (root: string) => sensor(root, 'typescript', runTypecheckSensor),
-    audit: (root: string) => sensor(root, 'install', runDependencyAuditSensor),
+    typecheck: async (root: string) => sensor(root, 'typescript', (await import('../context/mechanical-sensors')).runTypecheckSensor),
+    audit: async (root: string) => sensor(root, 'install', (await import('../context/mechanical-sensors')).runDependencyAuditSensor),
     regression: ((file, args, options) => run(file, args, options, 'tests')) satisfies RegressionExec,
   };
 }
