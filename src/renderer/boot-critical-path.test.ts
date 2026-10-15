@@ -33,7 +33,7 @@ describe('renderer boot weight', () => {
     expect(appSource).toContain('<Suspense fallback={<div className="product-workspace"');
   });
 
-  it('preloads only the first-paint faces, as latin woff2', () => {
+  it('preloads only the first-paint faces, as woff2', () => {
     expect(html).toContain('VT323-Regular.woff2');
     expect(html).toContain('Inter.var.woff2');
     expect(html).not.toContain('JetBrainsMono');

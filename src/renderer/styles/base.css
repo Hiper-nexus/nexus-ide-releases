@@ -25,7 +25,9 @@
 
 /* JetBrains Mono (variável, OFL) — mono de UI (badges, atalhos, dados) E a
    primeira do stack do xterm (terminal-host DEFAULT_FONT_STACK): terminal
-   idêntico nos 3 OSs. A paleta do xterm continua própria (terminal-theme). */
+   idêntico nos 3 OSs. O WOFF2 leva o cmap inteiro do TTF, inclusive
+   ─│╭╮ ● ❯ ⚠ que a TUI desenha. A paleta do xterm continua própria
+   (terminal-theme). */
 @font-face {
   font-family: 'JetBrains Mono';
   src: url('./fonts/JetBrainsMono.var.woff2') format('woff2');
