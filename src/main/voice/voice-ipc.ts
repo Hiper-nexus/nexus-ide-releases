@@ -754,6 +754,8 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
         "recriando provider após mudança de configuração",
       );
       liveTransport.hardStop();
+      // A falha registrada era da configuração anterior: não segue no chip.
+      liveTransport.clearRealtimeFailure();
     }
     liveSession.setEnabled(nextConfig.jarvisLive.enabled);
     // Re-register the accelerator only if it actually changed.
@@ -785,6 +787,7 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
           },
         );
         liveTransport.hardStop();
+        liveTransport.clearRealtimeFailure();
       }
       const info = fullInfo();
       broadcast(VOICE_CHANNELS.infoChanged, info);

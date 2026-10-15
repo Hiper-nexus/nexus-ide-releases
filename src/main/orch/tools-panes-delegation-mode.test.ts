@@ -83,6 +83,19 @@ describe('pre-contract same-checkout delegation', () => {
     expect(prompt).toContain('não use stash, reset, checkout');
     expect(prompt).toContain('Corrija o fluxo de voz.');
     expect(prompt).toContain('nexus_handoff_submit');
+    expect(prompt).toContain('único writer neste checkout');
+  });
+
+  it('contrato compartilhado (auto-isolamento falho) não promete writer único', () => {
+    const prompt = withSameCheckoutWorkerContract('Corrija o fluxo de voz.', {
+      sharedCheckout: true,
+    });
+
+    expect(prompt).toContain('outro writer pode estar ativo NESTE checkout agora');
+    expect(prompt).not.toContain('único writer neste checkout');
+    expect(prompt).toContain('não use stash, reset, checkout');
+    expect(prompt).toContain('Corrija o fluxo de voz.');
+    expect(prompt).toContain('nexus_handoff_submit');
   });
 
   it('serializes maxWorkers reservations across concurrent spawn attempts', () => {

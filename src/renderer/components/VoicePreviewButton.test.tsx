@@ -10,9 +10,10 @@ import {
 
 vi.mock('../voice/voice-playback', () => ({
   playSpeakResult: vi.fn(async () => 900),
+  stopPreviewPlayback: vi.fn(),
 }));
 
-const { playSpeakResult } = await import('../voice/voice-playback');
+const { playSpeakResult, stopPreviewPlayback } = await import('../voice/voice-playback');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const host = document.createElement('div');
@@ -20,7 +21,9 @@ document.body.append(host);
 let root = createRoot(host);
 
 beforeEach(() => {
-  vi.mocked(playSpeakResult).mockClear();
+  vi.mocked(playSpeakResult).mockReset();
+  vi.mocked(playSpeakResult).mockImplementation(async () => 900);
+  vi.mocked(stopPreviewPlayback).mockClear();
 });
 
 afterEach(() => {
@@ -83,7 +86,7 @@ it('o clique pede a amostra do provider e da voz escolhidos, e toca', async () =
   expect(playSpeakResult).toHaveBeenCalledWith(
     expect.objectContaining({ ok: true }),
     undefined,
-    { ignoreMute: true },
+    { ignoreMute: true, preview: true },
   );
   // Volta ao repouso depois de tocar, sem erro na tela.
   expect(host.querySelector('[role="alert"]')).toBeNull();
@@ -115,8 +118,9 @@ it('aria-label muda com o estado e diz o provider real', async () => {
   await act(async () => {
     await Promise.resolve();
   });
-  expect(button().getAttribute('aria-label')).toBe('Gerando amostra pelo Gemini TTS');
-  expect(button().disabled).toBe(true);
+  // Durante a geração o botão é Parar (clicável), não um rótulo desabilitado.
+  expect(button().getAttribute('aria-label')).toBe('Parar amostra do Gemini TTS');
+  expect(button().disabled).toBe(false);
 
   await act(async () => {
     release?.();
@@ -189,6 +193,195 @@ it('o rótulo honesto nomeia o provider em todos os estados', () => {
   expect(voicePreviewLabel('openai', 'idle')).toBe('Ouvir amostra pelo OpenAI TTS');
   expect(voicePreviewLabel('openai', 'playing')).toBe('Tocando amostra do OpenAI TTS');
   expect(voicePreviewLabel('gemini', 'error')).toBe('Falha na amostra do Gemini TTS');
+});
+
+it('Parar durante a geração descarta a resposta pendente', async () => {
+  let release: (() => void) | null = null;
+  const speak = vi.fn(
+    () =>
+      new Promise((resolve) => {
+        release = () => resolve(speakResult(true));
+      }),
+  );
+  Object.defineProperty(window, 'nexus', {
+    configurable: true,
+    value: { voice: { speak } },
+  });
+  await render('gemini');
+
+  act(() => {
+    button().click();
+  });
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(button().getAttribute('aria-label')).toBe('Parar amostra do Gemini TTS');
+  expect(button().disabled).toBe(false);
+
+  // O mesmo botão agora é Parar: cancela antes de a resposta chegar.
+  act(() => {
+    button().click();
+  });
+  expect(stopPreviewPlayback).toHaveBeenCalled();
+  expect(button().getAttribute('aria-label')).toBe('Ouvir amostra pelo Gemini TTS');
+
+  await act(async () => {
+    release?.();
+    await Promise.resolve();
+  });
+  expect(playSpeakResult).not.toHaveBeenCalled();
+});
+
+it('Parar durante a reprodução para a fonte da amostra', async () => {
+  let releasePlay: (() => void) | null = null;
+  vi.mocked(playSpeakResult).mockImplementation(
+    () =>
+      new Promise<number>((resolve) => {
+        releasePlay = () => resolve(900);
+      }),
+  );
+  Object.defineProperty(window, 'nexus', {
+    configurable: true,
+    value: { voice: { speak: vi.fn(async () => speakResult(true)) } },
+  });
+  await render('gemini');
+
+  act(() => {
+    button().click();
+  });
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(playSpeakResult).toHaveBeenCalledTimes(1);
+  expect(button().getAttribute('aria-label')).toBe('Parar amostra do Gemini TTS');
+
+  act(() => {
+    button().click();
+  });
+  expect(stopPreviewPlayback).toHaveBeenCalled();
+  expect(button().getAttribute('aria-label')).toBe('Ouvir amostra pelo Gemini TTS');
+
+  await act(async () => {
+    releasePlay?.();
+    await Promise.resolve();
+  });
+});
+
+it('trocar a voz durante a geração invalida a resposta anterior', async () => {
+  let release: (() => void) | null = null;
+  const speak = vi.fn(
+    () =>
+      new Promise((resolve) => {
+        release = () => resolve(speakResult(true));
+      }),
+  );
+  Object.defineProperty(window, 'nexus', {
+    configurable: true,
+    value: { voice: { speak } },
+  });
+  await render('gemini', 'Charon');
+
+  act(() => {
+    button().click();
+  });
+  await act(async () => {
+    await Promise.resolve();
+  });
+
+  // A voz muda com a geração em voo: a resposta é da voz antiga, não toca.
+  await render('gemini', 'Kore');
+  await act(async () => {
+    release?.();
+    await Promise.resolve();
+  });
+
+  expect(playSpeakResult).not.toHaveBeenCalled();
+  expect(button().getAttribute('aria-label')).toBe('Ouvir amostra pelo Gemini TTS');
+});
+
+it('desmontar durante a reprodução para a fonte', async () => {
+  const playRelease: Array<() => void> = [];
+  vi.mocked(playSpeakResult).mockImplementation(
+    () =>
+      new Promise<number>((resolve) => {
+        playRelease.push(() => resolve(900));
+      }),
+  );
+  Object.defineProperty(window, 'nexus', {
+    configurable: true,
+    value: { voice: { speak: vi.fn(async () => speakResult(true)) } },
+  });
+  await render('gemini');
+
+  act(() => {
+    button().click();
+  });
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(playSpeakResult).toHaveBeenCalledTimes(1);
+
+  act(() => root.unmount());
+  expect(stopPreviewPlayback).toHaveBeenCalled();
+  playRelease[0]?.();
+  root = createRoot(host);
+});
+
+it('duas amostras na tela: iniciar uma para a outra', async () => {
+  const playReleases: Array<() => void> = [];
+  vi.mocked(playSpeakResult).mockImplementation(
+    () =>
+      new Promise<number>((resolve) => {
+        playReleases.push(() => resolve(900));
+      }),
+  );
+  const speak = vi.fn(async () => speakResult(true));
+  Object.defineProperty(window, 'nexus', {
+    configurable: true,
+    value: { voice: { speak } },
+  });
+  await act(async () => {
+    root.render(
+      <>
+        <VoicePreviewButton provider="gemini" voice="Charon" />
+        <VoicePreviewButton provider="openai" voice="ash" />
+      </>,
+    );
+  });
+  const buttons = () =>
+    Array.from(host.querySelectorAll<HTMLButtonElement>('.voice-preview__button'));
+
+  act(() => {
+    buttons()[0].click();
+  });
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(buttons()[0].getAttribute('aria-label')).toBe('Parar amostra do Gemini TTS');
+
+  act(() => {
+    buttons()[1].click();
+  });
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  // A primeira foi parada; só a segunda segue tocando.
+  expect(stopPreviewPlayback).toHaveBeenCalled();
+  expect(buttons()[0].getAttribute('aria-label')).toBe('Ouvir amostra pelo Gemini TTS');
+  expect(buttons()[1].getAttribute('aria-label')).toBe('Parar amostra do OpenAI TTS');
+  expect(speak).toHaveBeenLastCalledWith({
+    preview: { provider: 'openai', voice: 'ash' },
+  });
+
+  await act(async () => {
+    for (const release of playReleases) release();
+    await Promise.resolve();
+  });
 });
 
 it('desmontar no meio da geração não escreve na tela', async () => {

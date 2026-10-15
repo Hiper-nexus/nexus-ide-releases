@@ -239,6 +239,52 @@ describe('LiveTransportController', () => {
     vi.doUnmock('../jarvis/realtime/factory');
   }, 30_000);
 
+  it('clearRealtimeFailure apaga a falha velha (mudança de config/credencial)', async () => {
+    vi.resetModules();
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          enabled: true,
+          transport: 'grok-realtime',
+        },
+      }),
+    }));
+    vi.doMock('./voice-secrets', () => ({
+      resolveVoiceApiKey: () => undefined,
+      voiceApiKeySource: () => 'stored',
+    }));
+    vi.doMock('./jarvis-memory', () => ({
+      jarvisMemory: { factsBlock: () => '' },
+    }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => [],
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['grok'],
+    }));
+
+    const { LiveTransportController } = await import('./live-transport-controller');
+    const session = new JarvisLiveSession(() => {}, () => 1000);
+    session.setEnabled(true);
+    session.start({ reason: 'manual' });
+    const controller = new LiveTransportController(() => {}, session);
+
+    await controller.onStart();
+    expect(session.getState().realtimeFailure).toMatchObject({
+      category: 'vault_unreadable',
+    });
+
+    // A troca de rota/credencial invalida o motivo: ele era da config antiga.
+    controller.clearRealtimeFailure();
+    expect(session.getState().realtimeFailure ?? null).toBeNull();
+
+    vi.doUnmock('./voice-config-store');
+    vi.doUnmock('./voice-secrets');
+    vi.doUnmock('./jarvis-memory');
+    vi.doUnmock('../jarvis/realtime/factory');
+  }, 30_000);
+
   it('falls back from a failed OpenAI realtime provider to Gemini Live', async () => {
     vi.resetModules();
     const openai = fakeProvider(async () => {

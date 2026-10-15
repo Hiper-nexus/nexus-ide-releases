@@ -33,10 +33,9 @@ import {
   keyPlaceholder,
   keyStatusText,
   liveConnectionView,
-  liveSmokeFailureMessage,
+  liveSmokeTestOutcomeMessage,
   liveTestErrorMessage,
   providerOption,
-  realtimeFailureMessage,
   REALTIME_TRANSPORT_LABEL,
 } from './voice-settings-helpers';
 import { createDraftHydrationBarrier } from '../lib/ui-overlay-policy';
@@ -595,17 +594,12 @@ export function VoiceSettings({ onClose, embedded = false }: VoiceSettingsProps 
           const result = await window.nexus.voice.liveSmokeTest({
             text: req.transcript,
           });
-          if (result.ok) {
-            setTestResult(
-              `Realtime confirmado: reprodução de áudio iniciada em ${result.latencyMs} ms.`,
-            );
-          } else if (liveState?.realtimeFailure) {
-            // Com a categoria em mãos, o motivo é nomeado por rota ("Grok Voice
-            // recusou a chave") em vez da lista genérica de variáveis.
-            setError(realtimeFailureMessage(liveState.realtimeFailure, realtimeTransport));
-          } else {
-            setError(liveSmokeFailureMessage(result.reason, realtimeTransport));
-          }
+          // O estado que decide a mensagem é o DEVOLVIDO pela tentativa:
+          // o liveState daqui é o de antes de liveStart e ainda não tem a
+          // falha nova (a 1ª auth_rejected virava mensagem genérica).
+          const outcome = liveSmokeTestOutcomeMessage(result, realtimeTransport);
+          if (outcome.ok) setTestResult(outcome.text);
+          else setError(outcome.text);
         } finally {
           if (!hadLiveSession) {
             await window.nexus.voice.liveHardTeardown().catch(() => null);

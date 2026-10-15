@@ -1,4 +1,7 @@
-import type { JarvisLiveSmokeFailureReason } from '../../shared/voice-ipc';
+import type {
+  JarvisLiveSmokeFailureReason,
+  JarvisLiveSmokeTestResult,
+} from '../../shared/voice-ipc';
 import type {
   RealtimeFailure,
   ResolvedProvider,
@@ -103,6 +106,31 @@ export function liveSmokeFailureMessage(
 }
 
 /**
+ * Mensagem do botão Testar a partir do resultado DESTA tentativa. Ler o
+ * liveState capturado antes de liveStart/liveSmokeTest escondia a 1ª falha:
+ * a categoria (ex.: auth_rejected) nasce durante a tentativa e só existe no
+ * `result.state` devolvido por ela — o estado anterior ainda não a tem.
+ */
+export function liveSmokeTestOutcomeMessage(
+  result: JarvisLiveSmokeTestResult,
+  transport: RealtimeTransport,
+): { ok: boolean; text: string } {
+  if (result.ok) {
+    return {
+      ok: true,
+      text: `Realtime confirmado: reprodução de áudio iniciada em ${result.latencyMs} ms.`,
+    };
+  }
+  if (result.state.realtimeFailure) {
+    return {
+      ok: false,
+      text: realtimeFailureMessage(result.state.realtimeFailure, transport),
+    };
+  }
+  return { ok: false, text: liveSmokeFailureMessage(result.reason, transport) };
+}
+
+/**
  * Como o chip de conexão é derivado. Antes ele era `realtimeReady ? conectado :
  * conectando`, o que deixava o cliente do Windows olhando para "Grok Voice
  * conectando" parado, sem nenhuma pista do motivo: a falha do provider vivia
@@ -110,7 +138,8 @@ export function liveSmokeFailureMessage(
  *
  * Ordem de decisão (a primeira que casa vence):
  *   1. Conectou        -> online, nomeando a rota REAL (pode ser degradação)
- *   2. Houve falha     -> error / no-key, com o motivo por categoria
+ *   2. Houve falha     -> error / no-key, com o motivo por categoria — só a
+ *      falha da configuração ATUAL (realtime ligado e rota da cadeia atual)
  *   3. Status de erro  -> error, sem categoria (caminho que não classifies)
  *   4. Nada tentou     -> standby (pronto, conecta quando você falar)
  *   5. Qualquer outro  -> connecting
@@ -227,7 +256,18 @@ export function liveConnectionView(input: {
     };
   }
 
-  if (input.failure) {
+  // Falha velha não manda no modo atual: com o realtime desligado (Classic)
+  // ou com a rota que caiu fora da cadeia do transporte escolhido, ela é de
+  // outra configuração — o chip segue para standby/connecting. Sem provedor
+  // (no_key) a falha é da cadeia inteira e vale para qualquer transporte.
+  const failureApplies = Boolean(
+    input.configured &&
+      input.failure &&
+      (input.failure.provider === null ||
+        REALTIME_FALLBACK_CHAIN[input.transport].includes(input.failure.provider)),
+  );
+
+  if (input.failure && failureApplies) {
     const missing = isMissingCredential(input.failure);
     return {
       tone: missing ? 'no-key' : 'error',

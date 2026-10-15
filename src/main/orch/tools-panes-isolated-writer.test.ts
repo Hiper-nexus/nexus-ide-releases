@@ -1321,6 +1321,10 @@ describe('isolamento que falha: auto degrada para same_checkout, false é honrad
     expect(receipt.isolationFallback.blockedBy).toMatch(/same-checkout delegation is serialized/);
     expect(h.spawn.mock.calls[1][0].cwd).toBe(ctx.scope.rootRealPath);
     expect(h.spawn.mock.calls[1][0].prompt).toContain('same_checkout');
+    // O filho é avisado de que outro writer pode estar ativo e o contrato
+    // não promete exclusividade que o fallback não tem.
+    expect(h.spawn.mock.calls[1][0].prompt).toContain('outro writer pode estar ativo NESTE checkout agora');
+    expect(h.spawn.mock.calls[1][0].prompt).not.toContain('único writer neste checkout');
     expect(registry.listMission(ctx.scope, ctx.missionId!)).toHaveLength(0);
     // O claim síncrono segura o próximo: o terceiro writer vê o checkout ocupado
     // (e degrada também, já que isolar continua falhando).
@@ -1335,6 +1339,11 @@ describe('isolamento que falha: auto degrada para same_checkout, false é honrad
     expect(receipt.executionMode).toBe('same_checkout');
     expect(receipt.isolationFallback?.reason).toBe('integration-branch-missing');
     expect(receipt.isolationFallback?.blockedBy).toMatch(/writer pane-0 ainda ativo/);
+    // Igual ao ramo de missão: o prompt avisa que outro writer pode estar
+    // ativo neste checkout e não promete "único writer".
+    expect(h.spawn.mock.calls[1][0].prompt).toContain('outro writer pode estar ativo NESTE checkout agora');
+    expect(h.spawn.mock.calls[1][0].prompt).not.toContain('único writer neste checkout');
+    expect(h.spawn.mock.calls[1][0].prompt).toContain('edite');
     expect(h.spawn.mock.calls[1][0].cwd).toBeUndefined();
     expect(h.spawn.mock.calls[1][0].isolatedWriter).toBeUndefined();
     expect(opRecords()).toHaveLength(0);

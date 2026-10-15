@@ -683,13 +683,23 @@ function isolatedWriterOptions(
   };
 }
 
-export function withSameCheckoutWorkerContract(prompt: string): string {
+export function withSameCheckoutWorkerContract(
+  prompt: string,
+  options: { sharedCheckout?: boolean } = {},
+): string {
+  // No fallback do auto-isolamento outro writer PODE estar ativo aqui: o
+  // contrato avisa em vez de prometer a exclusividade do caminho normal.
+  const exclusivity = options.sharedCheckout
+    ? 'A tentativa de isolar este writer numa worktree própria falhou, então ' +
+      'outro writer pode estar ativo NESTE checkout agora. '
+    : 'Você é o único writer neste checkout (outros writers rodam em worktrees próprias); ';
   return (
     '## Nexus execution authority\n' +
     'executionMode=`same_checkout`: esta tarefa depende do WIP atual e roda no ' +
     'checkout já aberto. Preserve integralmente o trabalho existente: não use stash, ' +
-    'reset, checkout, clean nem troque de branch. Você é o único writer neste checkout ' +
-    '(outros writers rodam em worktrees próprias); limite mudanças ao escopo pedido, inspecione o git status antes de editar ' +
+    'reset, checkout, clean nem troque de branch. ' +
+    exclusivity +
+    'limite mudanças ao escopo pedido, inspecione o git status antes de editar ' +
     'e não reverta arquivos que você não criou. Ao terminar, chame nexus_handoff_submit ' +
     'uma vez com arquivos tocados, validações e qualquer bloqueio.\n\n' +
     prompt
@@ -2133,6 +2143,16 @@ const paneSpawnAfterTabMission = {
         options = isolatedWriterOptions(options, ctx.scope, isolatedWriter);
       } else if (isolationFallback) {
         executionMode = 'same_checkout';
+        // Mesmo aviso do ramo de missão: sem worktree própria, outro writer
+        // pode estar ativo neste checkout — nada de "único writer".
+        options = {
+          ...options,
+          memoryQuery: options.memoryQuery ?? options.prompt,
+          prompt: withSameCheckoutWorkerContract(
+            options.prompt ?? 'Execute a tarefa delegada.',
+            { sharedCheckout: true },
+          ),
+        };
       }
     }
     let isolatedWriterPending = false;
@@ -2549,13 +2569,10 @@ const paneSpawnAfterTabMission = {
               executionScope: writerExecutionScope,
               memoryQuery: options.memoryQuery ?? options.prompt,
               prompt: withSameCheckoutWorkerContract(
-                // O contrato diz "único writer neste checkout": quando o
-                // auto-isolamento falhou isso é falso — a nota corrige.
-                (isolationFallback
-                  ? 'Nota: a tentativa de isolar este writer numa worktree própria falhou, ' +
-                    'então outro writer pode estar ativo NESTE checkout agora.\n\n'
-                  : '') +
-                  (options.prompt ?? 'Inspecione o estado atual e aguarde uma tarefa com escopo explícito.'),
+                options.prompt ?? 'Inspecione o estado atual e aguarde uma tarefa com escopo explícito.',
+                // Auto-isolamento falhou: contrato compartilhado, sem a
+                // promessa de "único writer" (outro pode estar ativo aqui).
+                { sharedCheckout: Boolean(isolationFallback) },
               ),
             };
           }

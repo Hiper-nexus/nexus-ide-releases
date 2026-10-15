@@ -809,6 +809,22 @@ export class LiveTransportController {
   }
 
   /**
+   * Mudança de config/credencial (live.configChanged/credentialChanged): a
+   * falha registrada era da rota anterior e não pode seguir no chip.
+   * Só a falha sai; status/erro da sessão ficam como estão.
+   */
+  clearRealtimeFailure(): void {
+    const state = this._fsm.getState();
+    if (!state.enabled || !state.sessionId || !state.realtimeFailure) return;
+    this._fsm.patchStatus({
+      status: state.status === 'off' ? 'dormant' : state.status,
+      realtimeReady: state.realtimeReady,
+      error: state.error,
+      realtimeFailure: null,
+    });
+  }
+
+  /**
    * Transfer audio ownership to Classic. Closing the provider makes every late
    * provider callback fail the identity checks installed by bindProvider().
    */

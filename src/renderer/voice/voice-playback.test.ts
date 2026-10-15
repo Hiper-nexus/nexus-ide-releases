@@ -1,6 +1,11 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { playAudioBase64, playSpeakResult } from './voice-playback';
+import {
+  playAudioBase64,
+  playSpeakResult,
+  stopAllPlayback,
+  stopPreviewPlayback,
+} from './voice-playback';
 import { isResponseMuted } from './response-output-gate';
 
 vi.mock('./voice-store', () => ({
@@ -86,6 +91,63 @@ describe('playAudioBase64', () => {
     expect(duration).toBe(500);
     expect(decoded).toBe(1);
     expect(started).toBe(1);
+  });
+
+  it('stopPreviewPlayback corta só a amostra; a fala normal segue', async () => {
+    const sources: Array<{
+      buffer: unknown;
+      onended: (() => void) | null;
+      stopCalls: number;
+      connect(): void;
+      start(): void;
+      stop(): void;
+    }> = [];
+    class ManualSource {
+      buffer: unknown = null;
+      onended: (() => void) | null = null;
+      stopCalls = 0;
+      connect() {}
+      start() {
+        sources.push(this);
+      }
+      stop() {
+        this.stopCalls += 1;
+        this.onended?.();
+      }
+    }
+    class ManualContext {
+      state = 'running';
+      destination = {};
+      async resume() {}
+      close() {}
+      createBufferSource() {
+        return new ManualSource();
+      }
+      async decodeAudioData() {
+        return { duration: 0.5 };
+      }
+    }
+    vi.stubGlobal('AudioContext', ManualContext);
+
+    const jarvis = playAudioBase64(WAV_BASE64, 'wav');
+    await vi.waitFor(() => expect(sources).toHaveLength(1));
+    const preview = playAudioBase64(WAV_BASE64, 'wav', undefined, {
+      ignoreMute: true,
+      preview: true,
+    });
+    await vi.waitFor(() => expect(sources).toHaveLength(2));
+    const [jarvisSource, previewSource] = sources;
+
+    stopPreviewPlayback();
+    expect(previewSource.stopCalls).toBe(1);
+    // A fala da Jarvis não é tocada pelo Parar da amostra.
+    expect(jarvisSource.stopCalls).toBe(0);
+    await preview;
+
+    // O barge-in continua cortando a fala normal.
+    stopAllPlayback();
+    expect(jarvisSource.stopCalls).toBe(1);
+    await jarvis;
   });
 
   it('playSpeakResult repassa ignoreMute só quando pedido', async () => {

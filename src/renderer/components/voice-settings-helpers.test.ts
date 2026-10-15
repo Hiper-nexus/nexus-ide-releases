@@ -2,11 +2,16 @@ import { describe, expect, it } from 'vitest';
 import {
   liveConnectionView,
   liveSmokeFailureMessage,
+  liveSmokeTestOutcomeMessage,
   liveTestErrorMessage,
   realtimeFailureMessage,
   realtimeMissingCredentialMessage,
 } from './voice-settings-helpers';
-import type { RealtimeFailure } from '../../shared/voice-ipc';
+import type {
+  JarvisLiveState,
+  JarvisLiveSmokeTestResult,
+  RealtimeFailure,
+} from '../../shared/voice-ipc';
 
 const BASE = {
   transport: 'grok-realtime' as const,
@@ -111,6 +116,51 @@ describe('liveConnectionView', () => {
     expect(vault.detail).toMatch(/não pôde ser lida/);
   });
 
+  it('falha velha não prevalece com o realtime desligado (Classic/manual)', () => {
+    const failure: RealtimeFailure = {
+      category: 'auth_rejected',
+      provider: 'grok',
+      attempts: 1,
+      at: 1,
+    };
+    const classic = liveConnectionView({
+      ...BASE,
+      configured: false,
+      classicLive: true,
+      failure,
+    });
+    expect(classic.tone).toBe('standby');
+    expect(classic.label).toBe('Jarvis Live clássico');
+
+    const manual = liveConnectionView({ ...BASE, configured: false, failure });
+    expect(manual.tone).toBe('standby');
+    expect(manual.label).toBe('Jarvis em modo manual');
+  });
+
+  it('falha de rota fora da cadeia atual não prevalece após trocar o transporte', () => {
+    // Erro do Grok; a pessoa trocou para Gemini Live (cadeia gemini → openai,
+    // sem grok). O chip volta ao estado do transporte atual.
+    const view = liveConnectionView({
+      transport: 'gemini-live',
+      configured: true,
+      classicLive: false,
+      realtimeReady: false,
+      attempted: false,
+      failure: { category: 'auth_rejected', provider: 'grok', attempts: 1, at: 1 },
+    });
+    expect(view.tone).toBe('standby');
+    expect(view.label).toBe('Pronto — conecta quando você falar');
+  });
+
+  it('falha dentro da cadeia atual continua valendo', () => {
+    const view = liveConnectionView({
+      ...BASE,
+      failure: { category: 'auth_rejected', provider: 'grok', attempts: 1, at: 1 },
+    });
+    expect(view.tone).toBe('error');
+    expect(view.detail).toMatch(/Grok Voice recusou a chave/);
+  });
+
   it('uma falha de credencial aponta a cadeia inteira, não só a cabeça', () => {
     const message = realtimeFailureMessage(
       { category: 'no_key', provider: null, attempts: 1, at: 1 },
@@ -159,6 +209,68 @@ describe('liveSmokeFailureMessage', () => {
     expect(liveSmokeFailureMessage('provider_error', 'gemini-live')).toContain(
       'desconectou',
     );
+  });
+});
+
+describe('liveSmokeTestOutcomeMessage', () => {
+  const state = (over: Partial<JarvisLiveState> = {}): JarvisLiveState => ({
+    enabled: true,
+    sessionId: 's1',
+    status: 'error',
+    realtimeReady: false,
+    startedAt: 1,
+    lastActiveAt: 1,
+    turns: 0,
+    pendingMic: false,
+    ...over,
+  });
+
+  it('sucesso confirma com a latência da tentativa', () => {
+    const result: JarvisLiveSmokeTestResult = {
+      ok: true,
+      evidence: 'audio',
+      latencyMs: 42,
+      state: state({ status: 'listening', realtimeReady: true }),
+    };
+    const outcome = liveSmokeTestOutcomeMessage(result, 'grok-realtime');
+    expect(outcome.ok).toBe(true);
+    expect(outcome.text).toContain('42 ms');
+  });
+
+  it('a 1ª falha usa a categoria do estado DEVOLVIDO, não a mensagem genérica', () => {
+    // Antes: o botão lia o liveState de antes da tentativa (sem falha) e
+    // mostrava "nenhuma rota conectou" mesmo com auth_rejected no resultado.
+    const result: JarvisLiveSmokeTestResult = {
+      ok: false,
+      evidence: 'none',
+      latencyMs: null,
+      reason: 'realtime_unavailable',
+      state: state({
+        realtimeFailure: {
+          category: 'auth_rejected',
+          provider: 'grok',
+          status: 401,
+          attempts: 1,
+          at: 1,
+        },
+      }),
+    };
+    const outcome = liveSmokeTestOutcomeMessage(result, 'grok-realtime');
+    expect(outcome.ok).toBe(false);
+    expect(outcome.text).toMatch(/Grok Voice recusou a chave \(HTTP 401\)/);
+  });
+
+  it('sem categoria no estado devolvido, o motivo do smoke decide', () => {
+    const result: JarvisLiveSmokeTestResult = {
+      ok: false,
+      evidence: 'none',
+      latencyMs: null,
+      reason: 'response_timeout',
+      state: state({ realtimeFailure: null }),
+    };
+    const outcome = liveSmokeTestOutcomeMessage(result, 'gemini-live');
+    expect(outcome.ok).toBe(false);
+    expect(outcome.text).toContain('não respondeu em 15 segundos');
   });
 });
 

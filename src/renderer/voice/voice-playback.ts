@@ -18,6 +18,9 @@ export { registerWakeSuppressor as bindWakeSuppressor };
 
 let playbackGen = 0;
 let liveSources: AudioBufferSourceNode[] = [];
+// Canal da pré-escuta de voz: parar a amostra não pode cortar a fala da Jarvis.
+let previewGen = 0;
+let previewSources: AudioBufferSourceNode[] = [];
 
 function isJarvisLiveEnabled(): boolean {
   const info = useVoiceStore.getState().info;
@@ -42,6 +45,20 @@ export function stopAllPlayback(interruptReason = 'barge-in'): void {
     }
   }
   liveSources = [];
+  stopPreviewPlayback();
+}
+
+/** Corta só a amostra de voz e invalida a pendente; a fala normal segue. */
+export function stopPreviewPlayback(): void {
+  previewGen += 1;
+  for (const src of previewSources) {
+    try {
+      src.stop();
+    } catch {
+      // já parado
+    }
+  }
+  previewSources = [];
 }
 
 function base64ToBytes(base64: string): Uint8Array {
@@ -62,11 +79,13 @@ export async function playAudioBase64(
    * Toca mesmo com as respostas mutadas. Só a PRÉ-ESCUTA da voz usa: o botão
    * foi clicado justamente para ouvir, e responder "não dá para ouvir" ficaria
    * sem explicação. A fala da Jarvis continua respeitando o mute.
+   * `preview` põe a fonte no canal da amostra (stopPreviewPlayback).
    */
-  options: { ignoreMute?: boolean } = {},
+  options: { ignoreMute?: boolean; preview?: boolean } = {},
 ): Promise<number> {
   if (!options.ignoreMute && isResponseMuted()) return 0;
   const gen = playbackGen;
+  const genPreview = previewGen;
   const bytes = base64ToBytes(base64);
   const ctx = new AudioContext();
   try {
@@ -75,6 +94,7 @@ export async function playAudioBase64(
     const arrayBuffer = bytes.buffer.slice(0) as ArrayBuffer;
     const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
     if (gen !== playbackGen) return 0;
+    if (options.preview && genPreview !== previewGen) return 0;
     const durationMs = Math.ceil(audioBuffer.duration * 1000);
     // Atribuição de "duas vozes": todo áudio local audível fica no voice.log;
     // voz ouvida sem linha correspondente = veio de OUTRO app.
@@ -94,7 +114,7 @@ export async function playAudioBase64(
     // her own voice from streaming to the provider as "user speech".
     markLocalAudioPlaying(durationMs, Date.now());
     const source = ctx.createBufferSource();
-    liveSources.push(source);
+    (options.preview ? previewSources : liveSources).push(source);
     source.buffer = audioBuffer;
     source.connect(ctx.destination);
     await new Promise<void>((resolve) => {
@@ -107,6 +127,7 @@ export async function playAudioBase64(
       }
     });
     liveSources = liveSources.filter((s) => s !== source);
+    previewSources = previewSources.filter((s) => s !== source);
     return durationMs;
   } finally {
     void ctx.close();
@@ -117,7 +138,7 @@ export async function playAudioBase64(
 export async function playSpeakResult(
   result: SpeakResult,
   onPlaybackStart?: () => void,
-  options: { ignoreMute?: boolean } = {},
+  options: { ignoreMute?: boolean; preview?: boolean } = {},
 ): Promise<number> {
   if (result.ok && result.mode === 'audio') {
     return playAudioBase64(
