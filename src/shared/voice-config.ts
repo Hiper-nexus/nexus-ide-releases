@@ -145,8 +145,25 @@ export function realtimeFallbackHasCredential(
  * Grok Voice (xAI) — rota oficial da voz do Nexus. Versão explícita de
  * propósito: o alias `grok-voice-latest` migra sozinho no provedor e trocaria a
  * voz do produto sem ninguém decidir isso.
+ *
+ * `grok-voice-3.0` é o id publicado hoje no catálogo da xAI (endpoint REALTIME,
+ * junto de `grok-voice-2.0`, marcado Deprecated). O `grok-voice-think-fast-2.0`
+ * que o Nexus pinava antes NÃO existe na documentação da xAI — toda sessão
+ * Grok abria contra um id que o provedor rejeita, e a falha só aparecia num
+ * `console.warn` (virou `live.candidateFailed` + estado visível).
  */
-export const DEFAULT_GROK_VOICE_MODEL = 'grok-voice-think-fast-2.0';
+export const DEFAULT_GROK_VOICE_MODEL = 'grok-voice-3.0';
+
+/**
+ * Modelos de voz do Grok que o Nexus já gravou e que hoje não conectam. Só eles
+ * migram na carga: um `grokModel` escolhido por conta própria é decisão de quem
+ * configurou, e uma config em dia não pode ser reescrita.
+ */
+export const LEGACY_GROK_VOICE_MODELS: readonly string[] = [
+  'grok-voice-think-fast-1.0',
+  'grok-voice-think-fast-2.0',
+  'grok-voice-2.0',
+];
 /** Voz interna masculina da xAI (as outras rotas também abrem em masculina). */
 export const DEFAULT_GROK_VOICE = 'rex';
 
@@ -247,7 +264,8 @@ export const jarvisLiveConfigSchema = z
       .default('grok-realtime'),
     /** Modelo de voz da xAI (rota oficial). Versão explícita de propósito: o
      *  alias `grok-voice-latest` migra sozinho e trocaria a voz do Nexus sem
-     *  decisão de ninguém. */
+     *  decisão de ninguém. Só os ids de `LEGACY_GROK_VOICE_MODELS` migram para
+     *  o default na carga. */
     grokModel: z.string().min(1).max(128).default(DEFAULT_GROK_VOICE_MODEL),
     /** Voz interna da xAI (masculina, como as outras rotas). */
     grokVoice: z.string().min(1).max(64).default(DEFAULT_GROK_VOICE),

@@ -9,6 +9,7 @@ import type { RealtimeWsInit, RealtimeWsLike } from './openai-realtime';
 import {
   DEFAULT_GROK_VOICE,
   DEFAULT_GROK_VOICE_MODEL,
+  LEGACY_GROK_VOICE_MODELS,
 } from '../../../shared/voice-config';
 
 function sessionOf(payload: Record<string, unknown>): Record<string, unknown> {
@@ -157,5 +158,40 @@ describe('createGrokRealtimeProvider', () => {
   it('publishes rex as the default voice, and it is a real xAI voice', () => {
     expect(DEFAULT_GROK_VOICE).toBe('rex');
     expect(GROK_VOICES).toContain(DEFAULT_GROK_VOICE);
+  });
+
+  it('pins a model id xAI actually publishes — no think-fast', async () => {
+    // O `grok-voice-think-fast-2.0` que o Nexus pinava não existe no catálogo
+    // da xAI: toda sessão abria contra um id rejeitado e a falha só aparecia
+    // num console.warn. O id precisa existir, e nenhum think-fast pode voltar.
+    expect(DEFAULT_GROK_VOICE_MODEL).toBe('grok-voice-3.0');
+    expect(DEFAULT_GROK_VOICE_MODEL).not.toMatch(/think-fast/);
+    expect(LEGACY_GROK_VOICE_MODELS).toContain('grok-voice-think-fast-2.0');
+
+    let seenUrl = '';
+    const ws: RealtimeWsLike = {
+      readyState: 0,
+      send: () => {},
+      close: () => {},
+      on: () => ws,
+    } as unknown as RealtimeWsLike;
+    const provider = createGrokRealtimeProvider({
+      apiKey: 'xai-chave',
+      instructions: 'oi',
+      wsFactory: (url) => {
+        seenUrl = url;
+        return ws;
+      },
+      setTimeoutFn: (() => 0) as unknown as typeof setTimeout,
+      clearTimeoutFn: () => {},
+    });
+    void provider.connect().catch(() => {});
+
+    expect(seenUrl).toContain('model=grok-voice-3.0');
+    expect(seenUrl).not.toContain('think-fast');
+  });
+
+  it('GROK_VOICES é a lista publicada pela xAI, sem ids inventados', () => {
+    expect([...GROK_VOICES].sort()).toEqual(['ara', 'eve', 'leo', 'rex', 'sal']);
   });
 });

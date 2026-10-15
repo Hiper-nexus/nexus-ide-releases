@@ -223,6 +223,8 @@ export interface VoiceRuntimeInfo {
     /** 'classic' = FSM batch; os demais = áudio realtime ('grok-realtime' é o
      *  padrão oficial da voz). */
     transport: 'classic' | 'openai-realtime' | 'gemini-live' | 'grok-realtime';
+    /** Modelo de voz da xAI em uso (sem segredo), para diagnosticar a conexão. */
+    grokModel?: string;
     openaiModel: string;
     openaiVoice: string;
     /** Gemini Live prebuilt voice (Charon, Fenrir, …). */

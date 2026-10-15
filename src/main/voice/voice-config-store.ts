@@ -5,12 +5,14 @@ import { execFileSync } from 'node:child_process';
 import {
   DEFAULT_GEMINI_LIVE_MODEL,
   DEFAULT_GEMINI_LIVE_VOICE,
+  DEFAULT_GROK_VOICE_MODEL,
   DEFAULT_VOICE_CONFIG,
   DEFAULT_GEMINI_TTS,
   DEFAULT_OPENAI_VOICE,
   DEFAULT_XAI_STT,
   LEGACY_GEMINI_LIVE_MODEL,
   LEGACY_GEMINI_LIVE_VOICE,
+  LEGACY_GROK_VOICE_MODELS,
   clampHoldToTalkMs,
   flattenJarvisBrainProviders,
   isWindowScopedShortcut,
@@ -216,6 +218,21 @@ export function loadVoiceConfig(): VoiceConfig {
       };
       migrated = true;
       console.log('[voice] Gemini Live migrado de 2.5 para 3.1 (baixa latência)');
+    }
+    // O Grok Voice pinava um id que a xAI nunca publicou (think-fast-2.0), então
+    // toda sessão da rota oficial abria contra um modelo inexistente. Migra só
+    // os ids que o Nexus gravou; um `grokModel` escolhido por conta própria
+    // continua intocado, igual à política do Gemini Live acima.
+    if (LEGACY_GROK_VOICE_MODELS.includes(userConfig.jarvisLive.grokModel)) {
+      const legacyGrokModel = userConfig.jarvisLive.grokModel;
+      userConfig.jarvisLive = {
+        ...userConfig.jarvisLive,
+        grokModel: DEFAULT_GROK_VOICE_MODEL,
+      };
+      migrated = true;
+      console.log(
+        `[voice] Grok Voice migrado de ${legacyGrokModel} para ${DEFAULT_GROK_VOICE_MODEL}`,
+      );
     }
     // Gacrux era o default feminino anterior — migra para Charon (masculino).
     if (userConfig.jarvisLive.voiceName === LEGACY_GEMINI_LIVE_VOICE) {
@@ -556,6 +573,9 @@ export function buildRuntimeInfo(): VoiceRuntimeInfo {
     jarvisLive: {
       enabled: current.jarvisLive.enabled,
       transport: current.jarvisLive.transport,
+      // Modelo de voz em uso (sem segredo): quando o Grok não conecta, dá para
+      // conferir na tela qual id a sessão tentou.
+      grokModel: current.jarvisLive.grokModel,
       openaiModel: current.jarvisLive.openaiModel,
       openaiVoice: current.jarvisLive.openaiVoice,
       voiceName: current.jarvisLive.voiceName,

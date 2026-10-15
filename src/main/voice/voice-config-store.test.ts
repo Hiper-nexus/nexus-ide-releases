@@ -79,7 +79,10 @@ describe('voice-config-store', () => {
     expect(config.jarvisLive.transport).toBe('grok-realtime');
     // Versão explícita, nunca o alias `grok-voice-latest`: o alias migra
     // sozinho no provedor e trocaria a voz do produto sem decisão de ninguém.
-    expect(config.jarvisLive.grokModel).toBe('grok-voice-think-fast-2.0');
+    // `grok-voice-3.0` é o id publicado no catálogo da xAI; o `think-fast-2.0`
+    // que o Nexus pinava antes não existe lá e derrubava toda sessão Grok.
+    expect(config.jarvisLive.grokModel).toBe('grok-voice-3.0');
+    expect(config.jarvisLive.grokModel).not.toContain('think-fast');
     expect(config.jarvisLive.grokVoice).toBe('rex');
     // As rotas de degradação continuam configuradas e prontas.
     expect(config.jarvisLive.liveModel).toBe('gemini-3.1-flash-live-preview');
@@ -157,6 +160,72 @@ describe('voice-config-store', () => {
     );
 
     expect(store.loadVoiceConfig().jarvisLive.liveModel).toBe('gemini-live-custom');
+  });
+
+  it('migra os modelos Grok Voice legados (think-fast e 2.0) para o 3.0', async () => {
+    const { home, store } = await loadStoreInTempHome();
+    const { DEFAULT_VOICE_CONFIG, LEGACY_GROK_VOICE_MODELS } = await import(
+      '../../shared/voice-config'
+    );
+    const file = path.join(home, '.nexus', 'plugins', 'voice', 'nexus-voice.json');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+
+    // Cada id legado é reescrito em disco e recarregado: loadVoiceConfig lê o
+    // arquivo toda vez, então o mesmo store exercita as três entradas.
+    for (const legacy of LEGACY_GROK_VOICE_MODELS) {
+      fs.writeFileSync(
+        file,
+        JSON.stringify({
+          ...DEFAULT_VOICE_CONFIG,
+          jarvisLive: { ...DEFAULT_VOICE_CONFIG.jarvisLive, grokModel: legacy },
+        }),
+      );
+
+      expect(store.loadVoiceConfig().jarvisLive.grokModel).toBe('grok-voice-3.0');
+      // A migração é persistida: o arquivo deixa de carregar o id morto.
+      const saved = JSON.parse(fs.readFileSync(file, 'utf-8')) as {
+        jarvisLive: { grokModel: string };
+      };
+      expect(saved.jarvisLive.grokModel).toBe('grok-voice-3.0');
+    }
+  });
+
+  it('preserva um modelo Grok Voice customizado e persiste a migração em disco', async () => {
+    const { home, store } = await loadStoreInTempHome();
+    const { DEFAULT_VOICE_CONFIG } = await import('../../shared/voice-config');
+    const file = path.join(home, '.nexus', 'plugins', 'voice', 'nexus-voice.json');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          grokModel: 'grok-voice-meu-provedor',
+        },
+      }),
+    );
+
+    expect(store.loadVoiceConfig().jarvisLive.grokModel).toBe('grok-voice-meu-provedor');
+  });
+
+  it('a migração do Grok Voice é idempotente (config já em dia não é reescrita)', async () => {
+    const { home, store } = await loadStoreInTempHome();
+    const { DEFAULT_VOICE_CONFIG } = await import('../../shared/voice-config');
+    const file = path.join(home, '.nexus', 'plugins', 'voice', 'nexus-voice.json');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: { ...DEFAULT_VOICE_CONFIG.jarvisLive, grokModel: 'grok-voice-3.0' },
+      }),
+    );
+
+    expect(store.loadVoiceConfig().jarvisLive.grokModel).toBe('grok-voice-3.0');
+    vi.resetModules();
+    const reloaded = await import('./voice-config-store');
+    expect(reloaded.loadVoiceConfig().jarvisLive.grokModel).toBe('grok-voice-3.0');
   });
 
   it('preserva o transporte escolhido pelo usuário (validador, sem coerção)', async () => {

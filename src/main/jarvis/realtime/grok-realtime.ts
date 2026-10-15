@@ -27,8 +27,11 @@ import {
  */
 export const GROK_REALTIME_URL = 'wss://api.x.ai/v1/realtime';
 
-/** Vozes internas publicadas pela xAI. */
-export const GROK_VOICES = ['rex', 'eve', 'ara'] as const;
+/**
+ * Vozes publicadas pela xAI para a rota Grok Voice. Uma voz fora desta lista é
+ * recusada na conexão e a sessão morre sem voz.
+ */
+export const GROK_VOICES = ['ara', 'eve', 'leo', 'rex', 'sal'] as const;
 
 /** 24 kHz casa com o OUTPUT_SAMPLE_RATE do LiveAudioPlayer do renderer. */
 const GROK_TARGET_RATE = 24_000;
