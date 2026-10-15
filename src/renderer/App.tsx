@@ -1,13 +1,12 @@
 import { AccessBoundary } from './components/AccessBoundary';
 import { useAccessStore } from './state/access-store';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   detachWorkspaceLayout,
   switchWorkspaceLayoutWithFallback,
   useLayoutStore,
 } from './state/layout-store';
 import { VoiceHud } from './components/VoiceHud';
-import { VoiceSettings } from './components/VoiceSettings';
 import { DictationModeChip } from './components/DictationModeChip';
 import { VoiceLevelBars } from './components/VoiceLevelBars';
 import {
@@ -18,23 +17,18 @@ import { CommandPalette } from './components/CommandPalette';
 import { useCommandPaletteStore } from './state/command-palette-store';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { ChoiceDialog } from './components/ChoiceDialog';
-import { BugReportDialog } from './components/bug-report/BugReportDialog';
 import { useBugReportDialogStore } from './state/bug-report-dialog-store';
 import { TerminalGridDialog } from './components/TerminalGridDialog';
 import { OverlayLayer } from './overlay/overlay-layer';
-import { FirstRunWizard } from './components/onboarding/FirstRunWizard';
 import { useOnboardingStore } from './state/onboarding-store';
 import { usePanePickerStore } from './state/pane-picker-store';
 import { openExpressBareShell } from './components/mission/ExpressTerminalOptions';
 import { OrchestrationModeDialog } from './components/OrchestrationModeDialog';
-import { MediaStudioPanel } from './components/MediaStudioPanel';
-import { OperatorProfile } from './components/OperatorProfile';
 import { useOrchestrationModeStore } from './state/orchestration-mode-store';
 import { useMediaStudioStore } from './state/media-studio-store';
 import { useConfirmStore } from './state/confirm-store';
 import { useToastStore } from './state/toast-store';
 import { missionBlockCauseText } from '../shared/mission-block-cause';
-import { KeyboardCheatsheet } from './components/KeyboardCheatsheet';
 import { useCheatsheetStore } from './state/cheatsheet-store';
 import { useVoiceController } from './voice/voice-controller';
 import { useOrchBridge } from './orch/orch-bridge';
@@ -115,7 +109,6 @@ import {
   shellClaimsMissionFileDrop,
 } from './lib/mission-shell-file-intake';
 import { MissionJournalPanel } from './components/product/MissionJournalPanel';
-import { FanoutComparePanel } from './components/FanoutComparePanel';
 import { GitPanelBody } from './components/GitPanelBody';
 import { applyProgressiveLaunchIfPending } from './lib/progressive-launch';
 import { useProductFlags } from './lib/use-product-flags';
@@ -129,15 +122,11 @@ import {
 } from './components/product/WorkspaceRail';
 import { projectRailWorkspaces } from './components/product/rail-workspaces';
 import { MissionSetup } from './components/mission/MissionSetup';
-import { MissionBoard } from './components/mission/MissionBoard';
 import {
   TerminalWorkspace,
   TerminalWorkspaceEmpty,
 } from './components/product/TerminalWorkspace';
-import { ProjectOverviewConnected } from './components/product/ProjectOverview';
-import { TaskBoardWorkspace } from './components/product/TaskBoardWorkspace';
-import { MemoryWorkspace } from './components/product/MemoryWorkspace';
-import { SettingsWorkspace } from './components/settings/SettingsWorkspace';
+
 import { AgentNotifications } from './components/AgentNotifications';
 import { AttentionInbox } from './components/AttentionInbox';
 import { useAttentionInboxStore } from './state/attention-inbox-store';
@@ -155,6 +144,77 @@ import {
   type ContextualTab,
 } from '../shared/contextual-panel';
 import { setVisibleInterval } from './lib/visible-interval';
+
+const SettingsWorkspace = lazy(() =>
+  import('./components/settings/SettingsWorkspace').then((mod) => ({ default: mod.SettingsWorkspace })),
+);
+const MediaStudioPanel = lazy(() =>
+  import('./components/MediaStudioPanel').then((mod) => ({ default: mod.MediaStudioPanel })),
+);
+const OperatorProfile = lazy(() =>
+  import('./components/OperatorProfile').then((mod) => ({ default: mod.OperatorProfile })),
+);
+const MemoryWorkspace = lazy(() =>
+  import('./components/product/MemoryWorkspace').then((mod) => ({ default: mod.MemoryWorkspace })),
+);
+const TaskBoardWorkspace = lazy(() =>
+  import('./components/product/TaskBoardWorkspace').then((mod) => ({ default: mod.TaskBoardWorkspace })),
+);
+const MissionBoard = lazy(() =>
+  import('./components/mission/MissionBoard').then((mod) => ({ default: mod.MissionBoard })),
+);
+const ProjectOverviewConnected = lazy(() =>
+  import('./components/product/ProjectOverview').then((mod) => ({ default: mod.ProjectOverviewConnected })),
+);
+const VoiceSettings = lazy(() =>
+  import('./components/VoiceSettings').then((mod) => ({ default: mod.VoiceSettings })),
+);
+const BugReportDialog = lazy(() =>
+  import('./components/bug-report/BugReportDialog').then((mod) => ({ default: mod.BugReportDialog })),
+);
+const KeyboardCheatsheet = lazy(() =>
+  import('./components/KeyboardCheatsheet').then((mod) => ({ default: mod.KeyboardCheatsheet })),
+);
+const FanoutComparePanel = lazy(() =>
+  import('./components/FanoutComparePanel').then((mod) => ({ default: mod.FanoutComparePanel })),
+);
+const FirstRunWizard = lazy(() =>
+  import('./components/onboarding/FirstRunWizard').then((mod) => ({ default: mod.FirstRunWizard })),
+);
+
+const DEFERRED_PANEL_LOADERS = [
+  () => import('./components/settings/SettingsWorkspace'),
+  () => import('./components/MediaStudioPanel'),
+  () => import('./components/OperatorProfile'),
+  () => import('./components/product/MemoryWorkspace'),
+  () => import('./components/product/TaskBoardWorkspace'),
+  () => import('./components/mission/MissionBoard'),
+  () => import('./components/product/ProjectOverview'),
+  () => import('./components/VoiceSettings'),
+  () => import('./components/bug-report/BugReportDialog'),
+  () => import('./components/KeyboardCheatsheet'),
+  () => import('./components/FanoutComparePanel'),
+] as const;
+
+function prefetchDeferredPanels(includeWizard: boolean): void {
+  const run = () => {
+    for (const load of DEFERRED_PANEL_LOADERS) void load();
+    if (includeWizard) void import('./components/onboarding/FirstRunWizard');
+  };
+  if (typeof window.requestIdleCallback === 'function') {
+    window.requestIdleCallback(() => run());
+    return;
+  }
+  window.setTimeout(run, 1);
+}
+
+function DeferredCanvas({ children }: { children: ReactNode }) {
+  return (
+    <Suspense fallback={<div className="product-workspace" aria-hidden="true" />}>
+      {children}
+    </Suspense>
+  );
+}
 
 const TERMINAL_CONTEXTUAL_TABS: readonly ContextualTab[] = [
   'mission',
@@ -275,6 +335,12 @@ export function App() {
   // ("Rendered more hooks than during the previous render") — tela branca no
   // primeiro boot, quando workspaceHydrated ainda é false.
   const attentionCount = useAttentionInboxStore((s) => s.count);
+  const wizardOpen = useOnboardingStore((state) => state.wizardOpen);
+  const wizardHydrated = useOnboardingStore((state) => state.hydrated);
+  useEffect(() => {
+    if (!workspaceHydrated) return;
+    prefetchDeferredPanels(wizardHydrated && wizardOpen);
+  }, [workspaceHydrated, wizardHydrated, wizardOpen]);
   /**
    * Clicar numa missão no rail abre a aba que responde o estado dela: entrega
    * concluída no Resultado, pergunta pendente na Conversa, falha na
@@ -1234,7 +1300,11 @@ export function App() {
     case 'terminal':
       break;
     case 'project':
-      destinationContent = <ProjectOverviewConnected />;
+      destinationContent = (
+        <DeferredCanvas>
+          <ProjectOverviewConnected />
+        </DeferredCanvas>
+      );
       break;
     case 'mission-setup':
       destinationContent = <MissionSetup />;
@@ -1242,6 +1312,7 @@ export function App() {
     case 'mission':
       if (destination.surface === 'board') {
         destinationContent = (
+          <DeferredCanvas>
           <MissionBoard
             missionId={destination.missionId}
             onOpenTerminals={(missionId) => {
@@ -1255,17 +1326,30 @@ export function App() {
               useProductNavigationStore.getState().showMissionTerminals();
             }}
           />
+          </DeferredCanvas>
         );
       }
       break;
     case 'task-board':
-      destinationContent = <TaskBoardWorkspace />;
+      destinationContent = (
+        <DeferredCanvas>
+          <TaskBoardWorkspace />
+        </DeferredCanvas>
+      );
       break;
     case 'memory':
-      destinationContent = <MemoryWorkspace />;
+      destinationContent = (
+        <DeferredCanvas>
+          <MemoryWorkspace />
+        </DeferredCanvas>
+      );
       break;
     case 'settings':
-      destinationContent = <SettingsWorkspace />;
+      destinationContent = (
+        <DeferredCanvas>
+          <SettingsWorkspace />
+        </DeferredCanvas>
+      );
       break;
   }
 
@@ -1372,7 +1456,9 @@ export function App() {
           memory: <MemoryPanelBody />,
           mission: (
             <>
-              <FanoutComparePanel />
+              <Suspense fallback={null}>
+                <FanoutComparePanel />
+              </Suspense>
               <MissionJournalPanel />
             </>
           ),
@@ -1511,18 +1597,28 @@ export function App() {
             <OverlayLayer>
               {canUseApp && <>
               <VoiceHud />
-              <VoiceSettings />
+              <Suspense fallback={null}>
+                <VoiceSettings />
+              </Suspense>
               {mediaStudioOpen ? (
-                <MediaStudioPanel
-                  open={mediaStudioOpen}
-                  onClose={closeMediaStudio}
-                />
+                <Suspense fallback={null}>
+                  <MediaStudioPanel
+                    open={mediaStudioOpen}
+                    onClose={closeMediaStudio}
+                  />
+                </Suspense>
               ) : null}
-              {operatorProfileOpen ? <OperatorProfile /> : null}
+              {operatorProfileOpen ? (
+                <Suspense fallback={null}>
+                  <OperatorProfile />
+                </Suspense>
+              ) : null}
               {orchestrationModeOpen ? <OrchestrationModeDialog /> : null}
               <CommandPalette />
               <AttentionInbox />
-              <KeyboardCheatsheet />
+              <Suspense fallback={null}>
+                <KeyboardCheatsheet />
+              </Suspense>
               <TerminalGridDialog />
               </>}
             </OverlayLayer>
@@ -1546,25 +1642,31 @@ export function App() {
           cobrança é justamente quem precisa conseguir reportar — e a faixa de
           main ocupado (F-764 C.7) vale para qualquer tela. */}
       <OverlayLayer>
-        <BugReportDialog />
+        <Suspense fallback={null}>
+          <BugReportDialog />
+        </Suspense>
         <ConfirmDialog />
         <ChoiceDialog />
         <Toasts />
         <MainBusyBanner />
-        <FirstRunWizard
-          onOpenApiKeys={() => navigation.openSettings('api-keys')}
-          onOpenProviders={() => navigation.openSettings('providers')}
-          onOpenWorkspace={() => {
-            void useWorkspaceStore.getState().pick();
-          }}
-          onStartMission={() => {
-            navigation.openMissionSetup();
-          }}
-          onOpenPane={() => {
-            usePanePickerStore.getState().requestOpen();
-          }}
-          onOpenShellTerminal={() => openExpressBareShell()}
-        />
+        {wizardOpen ? (
+          <Suspense fallback={null}>
+            <FirstRunWizard
+              onOpenApiKeys={() => navigation.openSettings('api-keys')}
+              onOpenProviders={() => navigation.openSettings('providers')}
+              onOpenWorkspace={() => {
+                void useWorkspaceStore.getState().pick();
+              }}
+              onStartMission={() => {
+                navigation.openMissionSetup();
+              }}
+              onOpenPane={() => {
+                usePanePickerStore.getState().requestOpen();
+              }}
+              onOpenShellTerminal={() => openExpressBareShell()}
+            />
+          </Suspense>
+        ) : null}
       </OverlayLayer>
     </div>
   );
