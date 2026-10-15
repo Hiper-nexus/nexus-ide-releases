@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { act } from 'react';
+import { act, useLayoutEffect, useRef, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProviderQuotaEntry } from '../../../shared/quota-types';
@@ -84,94 +84,127 @@ const items = (host: HTMLElement) => host.querySelectorAll('.workspace-rail__quo
 const toggle = (host: HTMLElement) =>
   host.querySelector('.workspace-rail__cockpit-header') as HTMLButtonElement;
 
+const dialog = () => document.querySelector<HTMLElement>('[role="dialog"][aria-label="Cotas das suas IAs"]');
+const clickByText = (scope: ParentNode, text: string) => {
+  const button = [...scope.querySelectorAll('button')].find((item) => item.textContent?.includes(text));
+  expect(button).toBeTruthy();
+  act(() => button!.click());
+};
+
 describe('RailQuotaCard', () => {
-  it('starts collapsed with the 4 hungriest accounts and offers to show them all', () => {
+  it('opens every account in a portal above the workspace while the rail stays compact', () => {
     const { host } = mount();
     expect(items(host)).toHaveLength(4);
-    expect(toggle(host).getAttribute('aria-expanded')).toBe('false');
-    expect(toggle(host).textContent).toContain('Ver todas');
-    expect(toggle(host).textContent).toContain('7');
-    // O nome acessível começa pelo texto visível (controle por voz: "Ver todas").
-    expect(toggle(host).getAttribute('aria-label')).toMatch(/^Ver todas \(7\)/);
-  });
-
-  it('clicking the header expands to EVERY account, including unread ones', () => {
-    const { host } = mount();
     act(() => toggle(host).click());
-    expect(items(host)).toHaveLength(7);
-    expect(toggle(host).getAttribute('aria-expanded')).toBe('true');
-    expect(toggle(host).textContent).toContain('Recolher');
-    expect(host.textContent).toContain('Cursor-Agent');
-    expect(host.textContent).toContain('Kimi');
-  });
-
-  it('clicking the card body (not only the header) also expands it', () => {
-    const { host } = mount();
-    act(() => (host.querySelector('.workspace-rail__cockpit-bars') as HTMLElement).click());
-    expect(items(host)).toHaveLength(7);
-  });
-
-  it('collapses again on a second click', () => {
-    const { host } = mount();
-    act(() => toggle(host).click());
-    act(() => toggle(host).click());
+    const panel = dialog();
+    expect(panel).not.toBeNull();
+    expect(host.contains(panel)).toBe(false);
+    expect(document.getElementById('nexus-overlay-root')?.contains(panel)).toBe(true);
+    expect(panel?.querySelectorAll('.quota-overview__account')).toHaveLength(7);
     expect(items(host)).toHaveLength(4);
-    expect(toggle(host).getAttribute('aria-expanded')).toBe('false');
+    expect(panel?.textContent).toContain('Cursor-Agent');
+    expect(toggle(host).getAttribute('aria-haspopup')).toBe('dialog');
   });
 
-  it('summarizes providers and accounts, and shows window detail, when expanded', () => {
-    const { host } = mount();
-    expect(host.querySelector('.workspace-rail__cockpit-summary')).toBeNull();
-    act(() => toggle(host).click());
-    expect(host.querySelector('.workspace-rail__cockpit-summary')?.textContent).toBe(
-      '6 provedores · 7 contas',
-    );
-    expect(host.querySelector('.workspace-rail__quota-line')).not.toBeNull();
-  });
-
-  it('keeps the way to the full usage page: a button, only when expanded', () => {
-    const { host, onOpenUsage } = mount();
-    expect(host.querySelector('.workspace-rail__cockpit-open')).toBeNull();
-    act(() => toggle(host).click());
-    const open = host.querySelector('.workspace-rail__cockpit-open') as HTMLButtonElement;
-    expect(open.textContent).toContain('Abrir uso e cotas');
-    act(() => open.click());
-    expect(onOpenUsage).toHaveBeenCalledTimes(1);
-    // Abrir os detalhes não recolhe nem expande por tabela.
-    expect(items(host)).toHaveLength(7);
-  });
-
-  it('remembers the choice across mounts', () => {
-    const first = mount();
-    act(() => toggle(first.host).click());
-    const second = mount();
-    expect(items(second.host)).toHaveLength(7);
-  });
-
-  it('with 4 or fewer accounts there is nothing to expand: the card opens usage', () => {
+  it('opens the foreground panel from the card body and with fewer than four accounts', () => {
     const { host, onOpenUsage } = mount({ entries: ENTRIES.slice(0, 3) });
-    expect(items(host)).toHaveLength(3);
-    expect(toggle(host).hasAttribute('aria-expanded')).toBe(false);
-    expect(toggle(host).textContent).not.toContain('Ver todas');
+    act(() => (host.querySelector('.workspace-rail__cockpit-bars') as HTMLElement).click());
+    expect(dialog()?.querySelectorAll('.quota-overview__account')).toHaveLength(3);
+    expect(onOpenUsage).not.toHaveBeenCalled();
+  });
+
+  it('ignores the legacy inline expansion preference and never reopens a modal on mount', () => {
+    localStorage.setItem('nexus.rail.quotaExpanded.v1', 'expanded');
+    const { host } = mount();
+    expect(items(host)).toHaveLength(4);
+    expect(dialog()).toBeNull();
+  });
+
+  it('closes with Escape and restores focus to the opener', () => {
+    const { host } = mount();
+    toggle(host).focus();
     act(() => toggle(host).click());
+    expect(dialog()?.contains(document.activeElement)).toBe(true);
+    act(() => dialog()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+    expect(dialog()).toBeNull();
+    expect(document.activeElement).toBe(toggle(host));
+  });
+
+  it('keeps Tab within the foreground panel and closes from its close action', () => {
+    const { host } = mount();
+    act(() => toggle(host).click());
+    const panel = dialog()!;
+    const buttons = [...panel.querySelectorAll<HTMLButtonElement>('button')];
+    buttons.at(-1)!.focus();
+    act(() => panel.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })));
+    expect(document.activeElement).toBe(buttons[0]);
+    act(() => panel.querySelector<HTMLButtonElement>('[aria-label="Fechar cotas"]')!.click());
+    expect(dialog()).toBeNull();
+  });
+
+  it('opens settings after closing the overview', () => {
+    const { host, onOpenUsage } = mount();
+    act(() => toggle(host).click());
+    clickByText(dialog()!, 'Uso e cotas');
     expect(onOpenUsage).toHaveBeenCalledTimes(1);
-    expect(items(host)).toHaveLength(3);
+    expect(dialog()).toBeNull();
   });
 
-  it('still shows the lifetime consumption line in both states', () => {
-    const { host } = mount();
-    expect(host.textContent).toContain('tok torrados');
+  it('filters missing readings and preserves confirmed zero separately from unknown', () => {
+    const { host } = mount({ entries: [entry('zero', 'codex', 'Zero fixture', 0), entry('unknown', 'cursor', 'Unknown fixture', null)] });
     act(() => toggle(host).click());
+    expect(dialog()?.querySelector('[role="meter"]')?.getAttribute('aria-valuenow')).toBe('0');
+    expect(dialog()?.textContent).toContain('Sem leitura');
+    clickByText(dialog()!, 'Resolver');
+    expect(dialog()?.querySelectorAll('.quota-overview__account')).toHaveLength(1);
+    expect(dialog()?.textContent).toContain('Unknown fixture');
+    expect(dialog()?.querySelector('[role="meter"]')).toBeNull();
+  });
+
+  it('keeps identity-mismatch and estimated quota out of measured results', () => {
+    const estimated = entry('estimate', 'glm', 'Estimate fixture', 0.25);
+    estimated.windows = estimated.windows.map((window) => ({ ...window, confidence: 'low' }));
+    const { host } = mount({ entries: [estimated, entry('mismatch', 'claude', 'Mismatch fixture', 0.9, { readHint: 'identity-mismatch' })] });
+    act(() => toggle(host).click());
+    expect(dialog()?.textContent).not.toContain('90%');
+    expect(dialog()?.textContent).toContain('Estimado');
+    clickByText(dialog()!, 'Com leitura');
+    expect(dialog()?.querySelectorAll('.quota-overview__account')).toHaveLength(0);
+  });
+
+  it('keeps the lifetime usage summary on the rail', () => {
+    const { host } = mount();
     expect(host.textContent).toContain('tok torrados');
   });
 
-  it('exposes the expanded list as a labelled region wired to the toggle', () => {
+  it('closes only for an actual backdrop click, not clicks inside the panel', () => {
     const { host } = mount();
     act(() => toggle(host).click());
-    const controls = toggle(host).getAttribute('aria-controls');
-    expect(controls).toBeTruthy();
-    const region = host.querySelector(`[id="${controls}"]`);
-    expect(region).not.toBeNull();
-    expect(region?.getAttribute('role')).toBe('list');
+    act(() => dialog()!.click());
+    expect(dialog()).not.toBeNull();
+    act(() => document.querySelector<HTMLElement>('.quota-overview__backdrop')!.click());
+    expect(dialog()).toBeNull();
+    expect(document.activeElement).toBe(toggle(host));
+  });
+
+  it('preserves the settings destination focus instead of returning to the rail', () => {
+    function Destination() {
+      const heading = useRef<HTMLHeadingElement>(null);
+      useLayoutEffect(() => { heading.current?.focus(); }, []);
+      return <h2 ref={heading} tabIndex={-1}>Destino das configurações</h2>;
+    }
+    function Navigation() {
+      const [settings, setSettings] = useState(false);
+      return <><RailQuotaCard entries={ENTRIES} now={Date.now()} lifetimeUsage={null} onOpenUsage={() => setSettings(true)} />{settings && <Destination />}</>;
+    }
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    roots.push(root);
+    act(() => root.render(<Navigation />));
+    act(() => toggle(host).click());
+    clickByText(dialog()!, 'Uso e cotas');
+    expect(dialog()).toBeNull();
+    expect(document.activeElement?.textContent).toBe('Destino das configurações');
   });
 });

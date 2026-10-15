@@ -668,12 +668,19 @@ describe('WorkspaceRail', () => {
     expect(cockpit).toBeTruthy();
     expect(cockpit?.textContent).toContain('Claude');
     expect(cockpit?.textContent).toContain('35%');
-    // Com poucas contas não há o que expandir: o cabeçalho (um botão de
-    // verdade, alcançável por teclado) leva direto ao uso e cotas.
+    // Toda quantidade abre o painel à frente; Configurações é uma ação dele.
     const header = cockpit!.querySelector('.workspace-rail__cockpit-header') as HTMLButtonElement;
     expect(header.tagName).toBe('BUTTON');
     act(() => header.click());
+    expect(onOpenUsageQuota).not.toHaveBeenCalled();
+    const overview = document.querySelector<HTMLElement>('[role="dialog"][aria-label="Cotas das suas IAs"]');
+    expect(overview).not.toBeNull();
+    expect(host.contains(overview)).toBe(false);
+    expect(overview?.textContent).toContain('35%');
+    const openUsage = overview!.querySelector<HTMLButtonElement>('.quota-overview__footer button')!;
+    act(() => openUsage.click());
     expect(onOpenUsageQuota).toHaveBeenCalledTimes(1);
+    expect(document.querySelector('[role="dialog"][aria-label="Cotas das suas IAs"]')).toBeNull();
 
     const conn = host.querySelector('.workspace-rail__cockpit-conn');
     expect(conn?.textContent).toContain('Local');
