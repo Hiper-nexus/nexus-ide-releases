@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
+const agyCliQuota = vi.hoisted(() => vi.fn(async () => null as import('../../shared/quota-types').QuotaWindow[] | null));
+vi.mock('./agy-cli-usage', () => ({ fetchAgyCliUsageWindows: agyCliQuota }));
+vi.mock('./agy-bridge', () => ({ fetchAgyBridgeUsage: async () => null }));
+
 vi.mock('electron', () => ({
   BrowserWindow: { getAllWindows: () => [] },
   ipcMain: {
@@ -42,6 +46,25 @@ const LIVE_USAGE = {
 };
 
 describe('QuotaService.publishSnapshot (post-boot first read)', () => {
+  it('keeps native AGY quota visible when a saved subscription cannot use its direct OAuth endpoint', async () => {
+    agyCliQuota.mockResolvedValueOnce([{
+      kind: 'weekly', label: 'Gemini Models · Semanal', usedRatio: 0.09,
+      source: 'provider-api', confidence: 'high',
+    }]);
+    const svc = new QuotaService({
+      listProviders: () => [{ ...provider('agy', 'Antigravity'), authStrategy: 'subscription' }],
+      listAccounts: () => [{ id: 'saved-agy', adapterId: 'agy', label: 'Salva', active: true,
+        mode: 'subscription', hasCredential: true, onCooldown: false } as AccountInfo],
+    });
+    try {
+      const snapshot = await svc.snapshot(HIT_AT);
+      const native = snapshot.entries.find((entry) => entry.adapterId === 'agy' && !entry.accountId);
+      expect(native?.windows.some((window) => window.usedRatio === 0.09)).toBe(true);
+      expect(native?.label).toContain('CLI nativo');
+      const saved = snapshot.entries.find((entry) => entry.accountId === 'saved-agy');
+      expect(saved?.windows.every((window) => window.usedRatio === null)).toBe(true);
+    } finally { svc.stop(); agyCliQuota.mockReset(); }
+  });
   it('honors the live API cache that refresh() bypasses', async () => {
     const fetchImpl = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ config: { creditUsagePercent: 6 } }), text: async () => '' }));
     const svc = new QuotaService({

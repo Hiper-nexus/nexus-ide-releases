@@ -517,9 +517,11 @@ export class QuotaService {
         vault.every((a) => a.mode === p.authStrategy)
       );
 
-      // Bare system/CLI row only when the native login is distinct from vault rows
-      // (e.g. native subscription session while vault only has API keys).
-      if (!vaultCoversNativeAuth) {
+      // AGY's native CLI/bridge is a separate quota source: its direct OAuth
+      // endpoint can reject saved consumer accounts. Keep that source visible
+      // under its own identity, never assign native readings to a vault row.
+      const hasNativeOnlyQuotaSource = p.adapterId === 'agy' && p.authStrategy === 'subscription';
+      if (!vaultCoversNativeAuth || hasNativeOnlyQuotaSource) {
         draft.push({
           adapterId: p.adapterId,
           usageProviderId: declaredQuotaUpstream(p),
