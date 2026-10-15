@@ -102,8 +102,8 @@ func urgencyColor(forUsed used: Double?) -> NSColor {
     NSColor(name: nil) { appearance in
         let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
         guard let used else { return dark ? color(hex: 0xAAAAAF) : color(hex: 0x515154) }
-        if used >= 0.85 { return dark ? color(hex: 0xFF8178) : color(hex: 0xB3382C) }
-        if used >= 0.60 { return dark ? color(hex: 0xE5C07B) : color(hex: 0x9A5B00) }
+        if used >= 0.8 { return dark ? color(hex: 0xFF8178) : color(hex: 0xB3382C) }
+        if used >= 0.5 { return dark ? color(hex: 0xE5C07B) : color(hex: 0x9A5B00) }
         return dark ? color(hex: 0x7EE2A8) : color(hex: 0x1B7A3D)
     }
 }

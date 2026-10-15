@@ -41,8 +41,8 @@ private let expandedFooterHeight: CGFloat = 57
 
 private func quotaInk(for used: Double?) -> NSColor {
     guard let used else { return panelTextFaint }
-    if used >= 0.85 { return panelDanger }
-    if used >= 0.60 { return panelWarn }
+    if used >= 0.8 { return panelDanger }
+    if used >= 0.5 { return panelWarn }
     return panelOk
 }
 
@@ -803,61 +803,66 @@ final class QuotaPanelController: NSViewController {
         }
     }
 
-    private func orbit(_ quota: RedlineWindow) -> QuotaOrbitView {
-        let gauge = QuotaOrbitView(quota: quota,
-                                  ink: quota.estimated == true ? panelTextDim : quotaInk(for: quota.usedRatio),
-                                  track: panelHairlineStrong, text: panelText, muted: panelTextDim)
-        gauge.translatesAutoresizingMaskIntoConstraints = false
-        gauge.widthAnchor.constraint(equalToConstant: 64).isActive = true
-        gauge.heightAnchor.constraint(equalToConstant: 64).isActive = true
-        return gauge
-    }
-
     private func quotaMetric(_ quota: RedlineWindow) -> NSStackView {
         let metric = NSStackView()
-        metric.orientation = .horizontal
-        metric.alignment = .centerY
-        metric.spacing = 8
-        metric.addArrangedSubview(orbit(quota))
-        let detail = NSStackView()
-        detail.orientation = .vertical
-        detail.alignment = .leading
-        detail.spacing = 5
+        metric.orientation = .vertical
+        metric.alignment = .leading
+        metric.spacing = 4
+        let heading = NSStackView()
+        heading.orientation = .horizontal
+        heading.distribution = .fill
+        heading.alignment = .firstBaseline
+        heading.spacing = 8
         let caption = NSTextField(wrappingLabelWithString: quota.label)
         caption.font = .systemFont(ofSize: 11, weight: .medium)
         caption.textColor = panelTextDim
-        caption.preferredMaxLayoutWidth = 84
+        caption.preferredMaxLayoutWidth = 90
         caption.maximumNumberOfLines = 3
-        caption.setContentCompressionResistancePriority(.required, for: .vertical)
-        detail.addArrangedSubview(caption)
-        if quota.resetsAt != nil {
-            let reset = NSTextField(labelWithString: countdown(quota.resetsAt))
-            reset.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-            reset.textColor = panelTextFaint
-            reset.setAccessibilityLabel("Renova em \(reset.stringValue)")
-            let timing = NSStackView()
-            timing.orientation = .horizontal
-            timing.alignment = .centerY
-            timing.spacing = 4
-            if let image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Renova em") {
-                let icon = NSImageView(image: image)
-                icon.contentTintColor = panelTextFaint
-                icon.widthAnchor.constraint(equalToConstant: 10).isActive = true
-                icon.heightAnchor.constraint(equalToConstant: 10).isActive = true
-                timing.addArrangedSubview(icon)
-            }
-            timing.addArrangedSubview(reset)
-            detail.addArrangedSubview(timing)
-            updateCountdowns.append {
-                reset.stringValue = countdown(quota.resetsAt)
-                reset.setAccessibilityLabel("Renova em \(reset.stringValue)")
-            }
+        caption.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let value = NSTextField(labelWithString: pct(quota.usedRatio))
+        value.font = .monospacedDigitSystemFont(ofSize: 22, weight: .semibold)
+        value.textColor = panelText
+        value.setContentCompressionResistancePriority(.required, for: .horizontal)
+        heading.addArrangedSubview(caption)
+        heading.addArrangedSubview(value)
+        let gauge = QuotaMeterView(quota: quota,
+                                  ink: quota.estimated == true ? panelTextDim : quotaInk(for: quota.usedRatio),
+                                  track: panelHairlineStrong)
+        for child in [heading, gauge] {
+            metric.addArrangedSubview(child)
+            child.translatesAutoresizingMaskIntoConstraints = false
+            child.widthAnchor.constraint(equalTo: metric.widthAnchor).isActive = true
         }
-        if quota.estimated == true {
-            detail.addArrangedSubview(label("Estimado", color: panelTextDim, size: 10))
-        }
-        metric.addArrangedSubview(detail)
+        metric.addArrangedSubview(quotaTiming(quota))
         return metric
+    }
+
+    private func quotaTiming(_ quota: RedlineWindow) -> NSStackView {
+        let timing = NSStackView()
+        timing.orientation = .horizontal
+        timing.alignment = .centerY
+        timing.spacing = 4
+        if quota.estimated == true {
+            timing.addArrangedSubview(label("Estimado", color: panelTextDim, size: 10))
+        }
+        guard quota.resetsAt != nil else { return timing }
+        let reset = NSTextField(labelWithString: countdown(quota.resetsAt))
+        reset.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        reset.textColor = panelTextFaint
+        reset.setAccessibilityLabel("Renova em \(reset.stringValue)")
+        if let image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Renova em") {
+            let icon = NSImageView(image: image)
+            icon.contentTintColor = panelTextFaint
+            icon.widthAnchor.constraint(equalToConstant: 10).isActive = true
+            icon.heightAnchor.constraint(equalToConstant: 10).isActive = true
+            timing.addArrangedSubview(icon)
+        }
+        timing.addArrangedSubview(reset)
+        updateCountdowns.append {
+            reset.stringValue = countdown(quota.resetsAt)
+            reset.setAccessibilityLabel("Renova em \(reset.stringValue)")
+        }
+        return timing
     }
 
     private func missingQuota(_ entry: RedlineEntry) -> NSStackView {
@@ -865,8 +870,13 @@ final class QuotaPanelController: NSViewController {
         content.orientation = .horizontal
         content.alignment = .centerY
         content.spacing = 12
-        let empty = RedlineWindow(kind: "local", label: "Cota", usedRatio: nil, resetsAt: nil)
-        content.addArrangedSubview(orbit(empty))
+        if let image = NSImage(systemSymbolName: "antenna.radiowaves.left.and.right.slash", accessibilityDescription: "Sem leitura") {
+            let icon = NSImageView(image: image)
+            icon.contentTintColor = panelTextFaint
+            icon.widthAnchor.constraint(equalToConstant: 28).isActive = true
+            icon.heightAnchor.constraint(equalToConstant: 28).isActive = true
+            content.addArrangedSubview(icon)
+        }
         let detail = NSStackView()
         detail.orientation = .vertical
         detail.alignment = .leading

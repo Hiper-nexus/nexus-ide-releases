@@ -1,59 +1,62 @@
 import AppKit
 
-/// A real usage fraction: the arc is consumed quota, the remaining track is free.
-/// Unknown values stay empty and estimated values are explicitly announced.
-final class QuotaOrbitView: NSView {
+/// Instrument-style segmented consumption meter; no fill is fabricated for unknown usage.
+final class QuotaMeterView: NSView {
     private let ratio: Double?
     private let ink: NSColor
     private let track: NSColor
-    private let value = NSTextField(labelWithString: "")
-    private let unit = NSTextField(labelWithString: "usado")
-    private let diameter: CGFloat = 64
-    private let stroke: CGFloat = 5
+    private let segmentCount = 28
+    private let segmentGap: CGFloat = 2
+    private let barHeight: CGFloat = 13
+    private let scaleHeight: CGFloat = 7
 
-    init(quota: RedlineWindow, ink: NSColor, track: NSColor, text: NSColor, muted: NSColor) {
+    init(quota: RedlineWindow, ink: NSColor, track: NSColor) {
         ratio = quota.usedRatio
         self.ink = ink
         self.track = track
         super.init(frame: .zero)
-        value.stringValue = quota.usedRatio.map { "\(Int(($0 * 100).rounded()))%" } ?? "—"
-        value.font = .monospacedDigitSystemFont(ofSize: 17, weight: .semibold)
-        value.textColor = text
-        value.alignment = .center
-        unit.font = .systemFont(ofSize: 10, weight: .medium)
-        unit.textColor = muted
-        unit.alignment = .center
-        unit.isHidden = ratio == nil
-        addSubview(value)
-        addSubview(unit)
         setAccessibilityElement(true)
-        setAccessibilityLabel("\(quota.label), \(value.stringValue) usado\(quota.estimated == true ? ", estimado" : "")")
+        let percent = quota.usedRatio.map { "\(Int(($0 * 100).rounded()))% usado" } ?? "sem leitura"
+        setAccessibilityLabel("\(quota.label), \(percent)\(quota.estimated == true ? ", estimado" : "")")
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-    override var intrinsicContentSize: NSSize { NSSize(width: diameter, height: diameter) }
+    override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: barHeight + scaleHeight) }
 
-    override func layout() {
-        super.layout()
-        value.frame = NSRect(x: 0, y: bounds.midY - (ratio == nil ? 11 : 3), width: bounds.width, height: 22)
-        unit.frame = NSRect(x: 0, y: bounds.midY - 14, width: bounds.width, height: 12)
+    private func segments(_ fill: NSColor) {
+        let width = (bounds.width - CGFloat(segmentCount - 1) * segmentGap) / CGFloat(segmentCount)
+        guard width > 0 else { return }
+        let bevel = min(CGFloat(3), width / 3)
+        fill.setFill()
+        for index in 0..<segmentCount {
+            let x = CGFloat(index) * (width + segmentGap)
+            let path = NSBezierPath()
+            path.move(to: NSPoint(x: x, y: scaleHeight))
+            path.line(to: NSPoint(x: x + width - bevel, y: scaleHeight))
+            path.line(to: NSPoint(x: x + width, y: scaleHeight + barHeight))
+            path.line(to: NSPoint(x: x + bevel, y: scaleHeight + barHeight))
+            path.close()
+            path.fill()
+        }
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        let circle = bounds.insetBy(dx: stroke, dy: stroke)
-        let path = NSBezierPath(ovalIn: circle)
-        path.lineWidth = stroke
+        segments(track)
+        if let ratio, ratio > 0 {
+            NSGraphicsContext.saveGraphicsState()
+            NSBezierPath(rect: NSRect(x: 0, y: 0, width: bounds.width * CGFloat(min(1, max(0, ratio))), height: bounds.height)).addClip()
+            segments(ink)
+            NSGraphicsContext.restoreGraphicsState()
+        }
         track.setStroke()
-        path.stroke()
-        guard let ratio, ratio > 0 else { return }
-        let arc = NSBezierPath()
-        arc.appendArc(withCenter: NSPoint(x: bounds.midX, y: bounds.midY),
-                      radius: circle.width / 2, startAngle: 90,
-                      endAngle: 90 - CGFloat(min(1, max(0, ratio))) * 360, clockwise: true)
-        arc.lineWidth = stroke
-        arc.lineCapStyle = .round
-        ink.setStroke()
-        arc.stroke()
+        let scale = NSBezierPath()
+        for step in 0...4 {
+            let x = max(0.5, min(bounds.width - 0.5, bounds.width * CGFloat(step) / 4))
+            scale.move(to: NSPoint(x: x, y: 0))
+            scale.line(to: NSPoint(x: x, y: step.isMultiple(of: 2) ? 4 : 2))
+        }
+        scale.lineWidth = 1
+        scale.stroke()
     }
 }
 
