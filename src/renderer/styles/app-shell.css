@@ -904,8 +904,14 @@
     transform 120ms var(--ease-out-quart);
 }
 
+/* Hover sem seleção também é superfície pintada: sobre --surface-hover (7% de
+   --text) o --text-dim caía abaixo de 4,5:1 no nexus-light (4,35) e o
+   --text-faint também no nexus-red (4,26). A tinta desce para 4% (o degrau de
+   --surface-overlay) e o faint sobe para dim, mesmo remap da linha
+   selecionada. A selecionada repõe a tinta de acento na regra dela abaixo. */
 .workspace-rail__row:hover {
-  background: var(--surface-hover);
+  --text-faint: var(--text-dim);
+  background: color-mix(in srgb, var(--text) 4%, transparent);
   color: var(--text);
 }
 

@@ -386,6 +386,56 @@ describe('rail: contraste do texto sobre --bg-bar e sobre a linha selecionada, e
    * (`--text-faint: var(--text-dim)`); a medição segue esse reapontamento lido do
    * CSS. Tinta maior, token novo ou o reapontamento removido derrubam o par aqui.
    */
+  /**
+   * Hover de linha SEM seleção: a superfície que `.workspace-rail__row:hover`
+   * pinta (tinta de --text sobre --bg-bar) mais os remaps que ela declara. O
+   * fundo pode ser um color-mix direto ou um token (`var(--surface-…)`) cujo
+   * valor em base.css é o mesmo formato de color-mix.
+   */
+  const MIX_OVER = /color-mix\(in srgb,\s*var\((--[\w-]+)\)\s+(\d+(?:\.\d+)?)%,\s*transparent\)/;
+  const baseCss = read('base.css');
+  const declaredValue = (token: string): string =>
+    rulesOf(baseCss).find((candidate) => candidate.selector === ':root')?.body
+      .match(new RegExp(`(?:^|[;\\s])${token.replace(/-/g, '\\-')}\\s*:\\s*([^;]+);`))?.[1]
+      ?.trim() ?? '';
+  const hoverSurface = (palette: UiPalette): string => {
+    const body = rule('.workspace-rail__row:hover')?.body ?? '';
+    const declaration = body.match(/background\s*:\s*([^;]+);/)?.[1]?.trim() ?? '';
+    const resolved = declaration.startsWith('var(')
+      ? declaredValue(declaration.slice('var('.length, -1).trim())
+      : declaration;
+    const mix = resolved.match(MIX_OVER);
+    expect(mix, '.workspace-rail__row:hover precisa pintar uma tinta mensurável').not.toBeNull();
+    const ink = mix![1] === '--accent' ? palette.accent : palette[TEXT_KEY[mix![1]]];
+    expect(ink, `tinta do hover: ${mix![1]}`).toBeDefined();
+    const share = Number(mix![2]) / 100;
+    const from = hexToSrgb(ink);
+    const to = hexToSrgb(barOf(palette));
+    return srgbToHex([
+      from[0] * share + to[0] * (1 - share),
+      from[1] * share + to[1] * (1 - share),
+      from[2] * share + to[2] * (1 - share),
+    ]);
+  };
+
+  it.each(themes.map(([theme]) => theme))(
+    '%s: no hover de linha SEM seleção text, dim e faint seguram 4,5:1',
+    (theme) => {
+      const palette = PALETTES[theme as keyof typeof PALETTES];
+      const remap = remapOf('.workspace-rail__row:hover');
+      const surface = hoverSurface(palette);
+      const below = (['--text', '--text-dim', '--text-faint'] as const).flatMap((token) => {
+        const painted = remap.get(token) ?? token;
+        expect(TEXT_KEY[painted], `hover: ${token} → ${painted}`).toBeDefined();
+        const ratio = contrastRatio(palette[TEXT_KEY[painted]], surface);
+        return ratio < AA
+          ? [`${token}${painted === token ? '' : ` → ${painted}`} = ${ratio.toFixed(2)}`]
+          : [];
+      });
+      expect(below).toEqual([]);
+    },
+  );
+
   it.each(themes.map(([theme]) => theme))(
     '%s: sobre a linha selecionada (repouso e hover) text, dim e faint seguram 4,5:1',
     (theme) => {
