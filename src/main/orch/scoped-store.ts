@@ -9,6 +9,25 @@ import type {
   ProjectRuntimeManager,
 } from '../runtime/project-runtime-manager';
 
+const preparedStatements = new WeakMap<Database.Database, Map<string, Database.Statement>>();
+
+/** Cache compilation, never rows or authority; each LRU reopen gets a new DB key. */
+export function prepareCached(db: Database.Database, sql: string): Database.Statement {
+  let cache = preparedStatements.get(db);
+  if (!cache) {
+    cache = new Map();
+    preparedStatements.set(db, cache);
+  }
+  const existing = cache.get(sql);
+  if (existing) return existing;
+  const statement = db.prepare(sql);
+  // ponytail: bound dynamic IN-clause SQL to 128 statements per connection;
+  // a dedicated static query is preferable if a path exceeds this ceiling.
+  if (cache.size >= 128) cache.delete(cache.keys().next().value!);
+  cache.set(sql, statement);
+  return statement;
+}
+
 export interface ScopeCoordinates {
   readonly projectId: string;
   readonly checkoutId: string;

@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { configureSqliteDurability } from '../persistence/sqlite-pragmas';
 import { randomUUID } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import type { ProjectMigration } from './project-runtime-schema';
@@ -103,8 +104,7 @@ function configureSafetyPragmas(db: Database.Database): void {
 }
 
 function configureOperationalPragmas(db: Database.Database): void {
-  db.pragma('journal_mode = WAL');
-  db.pragma('synchronous = FULL');
+  configureSqliteDurability(db);
   db.pragma('wal_autocheckpoint = 1000');
 }
 
@@ -443,7 +443,7 @@ export function initializeProjectDatabase(
   input: ProjectMigrationRunInput,
 ): ProjectMigrationRunResult {
   configureSafetyPragmas(input.db);
-  quickCheck(input.db);
+  const initialQuickCheck = quickCheck(input.db);
 
   const tables = userTableNames(input.db);
   const hasScope = tables.has('__nexus_runtime_scope');
@@ -479,7 +479,7 @@ export function initializeProjectDatabase(
     validateAppliedHistory(verified, input.migrations);
     validateUserVersion(input.db, verified);
     validateRuntimeScope(input.db, input.projectId, input.checkoutId);
-    const result = quickCheck(input.db);
+    const result = pending.length > 0 ? quickCheck(input.db) : initialQuickCheck;
     configureOperationalPragmas(input.db);
 
     return {

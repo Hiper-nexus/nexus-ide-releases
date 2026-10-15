@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { configureSqliteDurability } from './sqlite-pragmas';
 import { app } from 'electron';
 import { enqueuePostBootIdleTask } from '../observability/post-boot-idle-queue';
 import { migrateSchema, planSchemaMigration } from './schema-migrations';
@@ -274,13 +275,9 @@ export function getDb(): Db | null {
       );
     }
     db = new Database(file);
-    // WAL + synchronous FULL: a mesma durabilidade do journal de rollback,
-    // com um fsync por commit em vez de criar/apagar o -journal a cada
-    // escrita (contas, cooldowns e sessões de pane são gravados no spawn), e
-    // leitores que não bloqueiam o escritor. Mesmo padrão dos bancos de
-    // runtime do projeto. Cópias do arquivo precisam levar -wal e -shm juntos.
-    db.exec('PRAGMA journal_mode = WAL');
-    db.exec('PRAGMA synchronous = FULL');
+    // NORMAL in WAL avoids commit fsync; a power loss may lose recent
+    // committed transactions, but not corrupt the database. Backups still include WAL/SHM.
+    configureSqliteDurability(db);
     db.exec('PRAGMA busy_timeout = 5000');
     snapshot = snapshotBeforeMigration(db, file);
     db.exec(SCHEMA);
