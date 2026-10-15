@@ -943,24 +943,31 @@ export function VoiceSettings({ onClose, embedded = false }: VoiceSettingsProps 
                       Escolha a voz usada por cada serviço. Estas escolhas são salvas na hora.
                     </p>
                   </div>
-                  <label className="agent-picker__label voice-settings__voice-primary">
-                    <span><ProviderLogo adapterId="gemini" label="Gemini" size="xs" /> Voz Gemini Live</span>
-                    <select
-                      className="agent-picker__select"
-                      value={geminiVoice}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setGeminiVoice(v);
-                        void persistVoicePick({ jarvisLiveGeminiVoice: v });
-                      }}
-                    >
-                      {GEMINI_LIVE_VOICE_OPTIONS.map((v) => (
-                        <option key={v.id} value={v.id}>
-                          {v.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                  <div className="voice-settings__voice-row">
+                    <label className="agent-picker__label voice-settings__voice-primary">
+                      <span><ProviderLogo adapterId="gemini" label="Gemini" size="xs" /> Voz Gemini Live</span>
+                      <select
+                        className="agent-picker__select"
+                        value={geminiVoice}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setGeminiVoice(v);
+                          void persistVoicePick({ jarvisLiveGeminiVoice: v });
+                        }}
+                      >
+                        {GEMINI_LIVE_VOICE_OPTIONS.map((v) => (
+                          <option key={v.id} value={v.id}>
+                            {v.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {/* As 8 vozes do Live existem com o mesmo id no Gemini TTS: a
+                        amostra sai pelo TTS, sem abrir sessão realtime. O OpenAI
+                        Realtime fica sem botão — verse/cedar/ballad não existem
+                        no TTS da OpenAI. */}
+                    <VoicePreviewButton provider="gemini" voice={geminiVoice} />
+                  </div>
                   <details className="voice-settings__fallback-voices" open>
                     <summary>Vozes dos outros serviços</summary>
                     <div className="voice-settings__form-grid">

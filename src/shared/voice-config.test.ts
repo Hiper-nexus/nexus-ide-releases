@@ -15,7 +15,16 @@ import {
   normalizeKeyCode,
   legacyVoiceConfigSchema,
   realtimeFallbackHasCredential,
+  GEMINI_LIVE_VOICE_OPTIONS,
+  GEMINI_TTS_VOICE_OPTIONS,
 } from './voice-config';
+
+describe('pré-escuta da voz Gemini Live', () => {
+  it('toda voz do Live existe no Gemini TTS (a amostra sai por ele)', () => {
+    const tts = new Set(GEMINI_TTS_VOICE_OPTIONS.map((v) => v.id));
+    expect(GEMINI_LIVE_VOICE_OPTIONS.filter((v) => !tts.has(v.id))).toEqual([]);
+  });
+});
 
 describe('voiceConfigSchema', () => {
   it('accepts the shipped default config', () => {
