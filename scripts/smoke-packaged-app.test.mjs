@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { EventEmitter } from 'node:events';
 import { finished } from 'node:stream/promises';
 import { createPackage } from '@electron/asar';
@@ -661,7 +662,7 @@ describe('proofs: renderer, functional, marker, natives', () => {
   });
 
   it('F-1295: cada extraResource do forge e o sentinela do diretório existem no repositório', () => {
-    const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+    const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
     // linux: mesmo conjunto estático, sem o supervisor Darwin gerado no build.
     for (const spec of requiredResourceArtifacts({ platform: 'linux' })) {
       const sourcePath = spec.kind === 'file' && spec.relative.includes('/')

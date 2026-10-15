@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 
 const roots = [];
@@ -21,7 +22,7 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
     z.writestr(i,base64.b64decode(content) if kind=='elf' else content)
 `, zip, JSON.stringify(entries)], { encoding: 'utf8' });
   if (fixture.status !== 0) throw new Error(fixture.stderr);
-  return spawnSync('python3', [new URL('./extract-linux-zip.py', import.meta.url).pathname, '--archive', zip, '--out', path.join(root, 'extracted')], { encoding: 'utf8' });
+  return spawnSync('python3', [fileURLToPath(new URL('./extract-linux-zip.py', import.meta.url)), '--archive', zip, '--out', path.join(root, 'extracted')], { encoding: 'utf8' });
 }
 
 describe.skipIf(process.platform !== 'linux')('generated Linux ZIP extraction boundary', () => {

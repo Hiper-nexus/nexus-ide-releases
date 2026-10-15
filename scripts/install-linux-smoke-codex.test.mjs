@@ -2,10 +2,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 
 const roots = [];
-const script = new URL('./install-linux-smoke-codex.mjs', import.meta.url);
+const script = fileURLToPath(new URL('./install-linux-smoke-codex.mjs', import.meta.url));
 function root() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-linux-codex-test-'));
   roots.push(dir);
@@ -25,7 +26,7 @@ describe.skipIf(process.platform !== 'linux' || process.arch !== 'x64')('verifie
     const githubPath = path.join(dir, 'github-path');
     const githubEnv = path.join(dir, 'github-env');
     fs.writeFileSync(archive, 'untrusted archive bytes');
-    const result = spawnSync(process.execPath, [script.pathname, '--archive', archive, '--prefix', prefix], {
+    const result = spawnSync(process.execPath, [script, '--archive', archive, '--prefix', prefix], {
       env: { ...process.env, GITHUB_PATH: githubPath, GITHUB_ENV: githubEnv }, encoding: 'utf8',
     });
     expect(result.status).not.toBe(0);
