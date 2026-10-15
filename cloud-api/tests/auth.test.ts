@@ -104,7 +104,8 @@ test('valid web session recovers missing or forged CSRF cookie with new cookie-b
         const result = await payload(response);
         assert.equal(result.data.authenticated, true);
         assert.notEqual(result.data.csrfToken, 'forged');
-        const logout = await router.request('/v1/web/logout', { method: 'POST', headers: { Origin: SITE, Cookie: cookies(response), 'X-CSRF-Token': result.data.csrfToken! } }, env);
+        // Only the CSRF cookie is reissued; the session stays the same.
+        const logout = await router.request('/v1/web/logout', { method: 'POST', headers: { Origin: SITE, Cookie: `__Host-nexus_session=${rawSession}; ${cookies(response)}`, 'X-CSRF-Token': result.data.csrfToken! } }, env);
         assert.equal(logout.status, 200);
         if (!csrfCookie) {
             const fresh = await issueTokens(db, 'account', 'web');

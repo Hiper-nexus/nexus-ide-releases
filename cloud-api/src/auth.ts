@@ -35,11 +35,14 @@ const refreshSchema = z.strictObject({ refresh: TOKEN });
 const WEB_COOKIES = ['__Host-nexus_session', '__Host-nexus_refresh', '__Host-nexus_csrf', '__Host-nexus_oauth_state'] as const;
 const cookieOptions = { httpOnly: true, secure: true, sameSite: 'Lax' as const, path: '/' };
 type AuthContext = Context<AppEnv>;
+function setCsrfCookie(c: AuthContext, csrf: string): void {
+    setCookie(c, '__Host-nexus_csrf', csrf, { ...cookieOptions, maxAge: SESSION_TTL_MS / 1000 });
+}
 export function setWebCookies(c: AuthContext, tokens: Tokens): void {
     setCookie(c, '__Host-nexus_session', tokens.session, { ...cookieOptions, maxAge: SESSION_TTL_MS / 1000 });
     setCookie(c, '__Host-nexus_refresh', tokens.refresh, { ...cookieOptions, maxAge: REFRESH_TTL_MS / 1000 });
     if (tokens.csrf)
-        setCookie(c, '__Host-nexus_csrf', tokens.csrf, { ...cookieOptions, maxAge: SESSION_TTL_MS / 1000 });
+        setCsrfCookie(c, tokens.csrf);
 }
 export function clearWebCookies(c: AuthContext): void {
     for (const cookie of WEB_COOKIES)
@@ -178,9 +181,11 @@ async function webSession(c: AuthContext) {
         setWebCookies(c, rotated.tokens);
     }
     else if (!csrf || !session.csrf_hash || !safeEqual(await hashToken(csrf), session.csrf_hash)) {
-        const tokens = await issueTokens(c.env.DB, session.account_id, 'web');
-        csrf = tokens.csrf ?? undefined;
-        setWebCookies(c, tokens);
+        // Only this session's CSRF is reissued. A new pair would start a family (rotated_from NULL) that no
+        // reuse detection reaches: a stolen refresh, rotated once, would keep it alive.
+        csrf = randomToken();
+        await c.env.DB.prepare('UPDATE sessions SET csrf_hash=? WHERE id=? AND revoked_at IS NULL').bind(await hashToken(csrf), session.id).run();
+        setCsrfCookie(c, csrf);
     }
     const profile = await profileFor(c, accountId!);
     // Managing billing depends on having a Stripe customer, never on app access: a suspended subscriber must still reach the portal.

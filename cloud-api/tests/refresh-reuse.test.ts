@@ -392,6 +392,58 @@ test('reuse near the root of a chain over 50k tokens revokes the tip too', async
   db.close();
 });
 
+test('a web session without a valid CSRF gets a new CSRF for itself, never a new token pair', async () => {
+  const { db } = await setup();
+  const app = createApp();
+  const web = await issueTokens(db, 'user', 'web');
+  // Today's CSRF cookie attributes, from a web rotation, to compare with.
+  const rotation = await app.request('/v1/web/session', { headers: { Origin: SITE, Cookie: `__Host-nexus_refresh=${(await issueTokens(db, 'user', 'web')).refresh}` } }, environment(db));
+  const attributes = (cookie: string | undefined) => cookie?.split(';').slice(1).map(part => part.trim()).sort().join('; ');
+  const expected = attributes(rotation.headers.getSetCookie().find(cookie => cookie.startsWith('__Host-nexus_csrf=')));
+  assert.ok(expected);
+  const rows = async () => db.prepare('SELECT (SELECT count(*) FROM sessions) AS sessions, (SELECT count(*) FROM refresh_tokens) AS refresh').first();
+  const before = await rows();
+
+  const proofs: string[] = [];
+  for (const csrfCookie of ['', '; __Host-nexus_csrf=forged']) {
+    const page = await app.request('/v1/web/session', { headers: { Origin: SITE, Cookie: `__Host-nexus_session=${web.session}${csrfCookie}` } }, environment(db));
+    assert.equal(page.status, 200);
+    const body = await page.json() as { data: { authenticated: boolean; csrfToken?: string } };
+    assert.equal(body.data.authenticated, true);
+    const set = page.headers.getSetCookie();
+    assert.equal(set.length, 1, 'only the CSRF cookie is set: session and refresh stay the same');
+    assert.equal(set[0].split(';')[0], `__Host-nexus_csrf=${body.data.csrfToken}`);
+    assert.equal(attributes(set[0]), expected, 'same cookie attributes as today');
+    proofs.push(body.data.csrfToken!);
+  }
+  assert.deepEqual(await rows(), before, 'no session and no refresh token were created');
+
+  // The newest CSRF protects the same session on a mutable route; the one before it no longer does.
+  const logout = (csrf: string) => app.request('/v1/web/logout', { method: 'POST', headers: { Origin: SITE, Cookie: `__Host-nexus_session=${web.session}; __Host-nexus_csrf=${csrf}`, 'X-CSRF-Token': csrf } }, environment(db));
+  assert.equal((await logout(proofs[0])).status, 403);
+  assert.equal((await logout(proofs[1])).status, 200);
+  assert.equal(await sessionFor(db, web.session, 'web'), null);
+  db.close();
+});
+
+test('a stolen web refresh cannot mint a family of its own through /web/session', async () => {
+  const { db } = await setup();
+  const login = await issueTokens(db, 'user', 'web');
+  const now = Date.now();
+  // The attacker rotates the stolen refresh, then calls /web/session with that session alone.
+  const stolen = await rotateRefresh(db, login.refresh, 'web', now);
+  assert.ok(stolen);
+  const page = await createApp().request('/v1/web/session', { headers: { Origin: SITE, Cookie: `__Host-nexus_session=${stolen.tokens.session}` } }, environment(db));
+  assert.equal(page.status, 200);
+
+  // The legitimate browser presents the same refresh later: reuse, and the family dies.
+  assert.equal(await rotateRefresh(db, login.refresh, 'web', now + 2 * GRACE_MS), null);
+
+  const live = await db.prepare("SELECT (SELECT count(*) FROM refresh_tokens WHERE channel='web' AND revoked_at IS NULL) AS refresh, (SELECT count(*) FROM sessions WHERE channel='web' AND revoked_at IS NULL) AS sessions").first();
+  assert.deepEqual(live, { refresh: 0, sessions: 0 }, 'the attacker keeps nothing alive');
+  db.close();
+});
+
 test('a retry never revokes another account over a corrupted rotated_from edge', async () => {
   const { db, mac } = await setup();
   await seedAccount(db, 'other');
