@@ -703,6 +703,36 @@ describe("WorktreeManager", () => {
     expect(fs.readFileSync(path.join(tab.worktreePath, "README.md"), "utf8")).toBe("WIP da aba\n");
   });
 
+  it("F-980: base de aba com HEAD destacado (worktree durável) gera writer; o checkout de coordenação segue exigindo branch", async () => {
+    const scope = projectScope();
+    const canonical = new WorktreeManager({ runtimeRoot: path.join(fs.realpathSync(tempDir), "runtime"),
+      stateStore, gitRunner, now: () => 1_700_000_000_000 });
+    const pane = (id: string) => ({ scope, missionId: "operator-hand", taskId: `pane-${id}`, workerId: id,
+      ownerKind: "pane" as const, ownership: { files: [], symbols: [], domains: [`pane-${id}`] } });
+    const tab = await canonical.create({ scope, missionId: "space-detached", taskId: "tab", workerId: "space-detached",
+      ownerKind: "pane", ownership: { files: [], symbols: [], domains: ["space-detached"] } });
+    write("tab.txt", "commit da aba\n", tab.worktreePath);
+    git(tab.worktreePath, "add", "tab.txt");
+    git(tab.worktreePath, "commit", "-qm", "tab work");
+    // A pasta da aba nasce com HEAD destacado por desenho.
+    git(tab.worktreePath, "checkout", "-q", "--detach");
+    expect(() => git(tab.worktreePath, "symbolic-ref", "--quiet", "HEAD")).toThrow();
+    const tabHead = git(tab.worktreePath, "rev-parse", "HEAD");
+
+    const writer = await canonical.create({ ...pane("d"), baseRootRealPath: tab.worktreePath });
+    expect(writer.baseSha).toBe(tabHead);
+    expect(writer.rootRealPath).toBe(scope.rootRealPath);
+    expect(writer.integrationRef).toBe(git(root, "symbolic-ref", "HEAD"));
+    expect(git(writer.worktreePath, "rev-parse", "HEAD")).toBe(tabHead);
+    expect(git(writer.worktreePath, "symbolic-ref", "HEAD")).toBe(writer.branchRef);
+
+    // O checkout de coordenação (o escopo) NÃO ganha a mesma licença.
+    git(root, "checkout", "-q", "--detach");
+    await expect(canonical.create({ ...pane("e") })).rejects.toThrow(/integration branch/);
+    await expect(canonical.create({ ...pane("f"), baseRootRealPath: tab.worktreePath }))
+      .rejects.toThrow(/integration branch/);
+  });
+
   describe("F-908: coleta de writers de pane", () => {
     const scope = () => projectScope();
     const writer = async (id: string, commit = true) => {

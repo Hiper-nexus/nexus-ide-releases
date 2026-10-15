@@ -222,6 +222,14 @@ export async function readRepositorySnapshotAsync(
     "projectId" | "checkoutId" | "rootRealPath"
   >,
   requireClean: boolean,
+  /**
+   * F-980 (HEAD destacado): só a BASE de um writer (a pasta isolada de uma aba) pode ter HEAD
+   * destacado — a worktree durável da aba nasce assim por desenho. O checkout
+   * de coordenação continua exigindo branch de integração. Com HEAD solto,
+   * `integrationRef` vem de `detachedIntegrationRef` (a do checkout) e a base
+   * só contribui com raiz e SHA.
+   */
+  detachedBase?: { readonly integrationRef: string },
 ): Promise<RepositorySnapshot> {
   const expectedRoot = path.resolve(scope.rootRealPath);
   const rootRealPath = fs.realpathSync(expectedRoot);
@@ -247,9 +255,14 @@ export async function readRepositorySnapshotAsync(
       "HEAD",
     ]);
   } catch (error) {
-    throw new Error("primary checkout must be on an integration branch", {
-      cause: error,
-    });
+    if (!detachedBase) {
+      throw new Error("primary checkout must be on an integration branch", {
+        cause: error,
+      });
+    }
+    // `symbolic-ref --quiet` sai 1 sem saída com HEAD solto. A prova de que é
+    // isso (e não um repositório quebrado) é o `rev-parse HEAD^{commit}` abaixo.
+    integrationRef = detachedBase.integrationRef;
   }
   if (!integrationRef.startsWith("refs/heads/")) {
     throw new Error("primary checkout has an invalid integration ref");
@@ -282,6 +295,8 @@ export async function assertRepositoryUnchangedAsync(
   git: AsyncGitRunner,
   expected: RepositorySnapshot,
   requireClean: boolean,
+  /** F-980: base vinculada (pasta da aba, HEAD possivelmente solto): só o SHA a identifica. */
+  linkedBase = false,
 ): Promise<void> {
   const current = await readRepositorySnapshotAsync(
     git,
@@ -291,9 +306,10 @@ export async function assertRepositoryUnchangedAsync(
       rootRealPath: expected.rootRealPath,
     } as ProjectExecutionScope,
     requireClean,
+    linkedBase ? { integrationRef: expected.integrationRef } : undefined,
   );
   if (
-    current.integrationRef !== expected.integrationRef ||
+    (!linkedBase && current.integrationRef !== expected.integrationRef) ||
     current.headSha !== expected.headSha
   ) {
     throw new WorktreeStateConflictError(
@@ -318,6 +334,7 @@ export async function readLinkedBaseSnapshotAsync(
     git,
     { projectId: "", checkoutId: "", rootRealPath: baseRootRealPath },
     false,
+    { integrationRef: repository.integrationRef },
   );
   const commonDirectory = async (root: string) => fs.realpathSync(
     await gitOutputAsync(git, root, ["rev-parse", "--path-format=absolute", "--git-common-dir"]),

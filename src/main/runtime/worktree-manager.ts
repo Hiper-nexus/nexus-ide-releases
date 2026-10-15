@@ -559,7 +559,7 @@ export class WorktreeManager {
 
     try {
       await assertRepositoryUnchangedAsync(this.#asyncGit, repository, requireClean);
-      if (baseRoot !== repository) await assertRepositoryUnchangedAsync(this.#asyncGit, baseRoot, false);
+      if (baseRoot !== repository) await assertRepositoryUnchangedAsync(this.#asyncGit, baseRoot, false, true);
       assertCurrentAuthority();
       if (reservation.resurrected) {
         // The derived path and branch exist by design: the slot was released
@@ -606,7 +606,7 @@ export class WorktreeManager {
       }
       assertCurrentAuthority();
       await assertRepositoryUnchangedAsync(this.#asyncGit, repository, requireClean);
-      if (baseRoot !== repository) await assertRepositoryUnchangedAsync(this.#asyncGit, baseRoot, false);
+      if (baseRoot !== repository) await assertRepositoryUnchangedAsync(this.#asyncGit, baseRoot, false, true);
       assertCurrentAuthority();
       return this.#transition(scopeKey, taskKey, (record) => {
         if (record.status !== "reserved" || record.workerId !== workerId ||
