@@ -1648,6 +1648,8 @@ describe('LiveTransportController', () => {
       arguments: { short: true },
     });
 
+    // The real MCP catalog loads on demand, outside the static boot graph.
+    await vi.dynamicImportSettled();
     const toolCall = events.find((event) => event.channel === VOICE_CHANNELS.liveToolCall);
     expect(toolCall?.payload).toMatchObject({
       source: 'realtime',

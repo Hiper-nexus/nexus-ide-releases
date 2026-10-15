@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { compileManifest } from '../detect/compiler';
 import { loadManifestDir } from '../detect/manifest';
 import { PtyAnalysisCore } from './pty-analysis-core';
@@ -70,11 +70,17 @@ describe('production analysis reducers', () => {
     }
   });
   it('scans quota markers in the middle of a megabyte instead of only its tail', () => {
+    // This checks scan coverage; a slow wall-clock scan has a separate bounded backoff policy.
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(100);
     const { core, feed, results } = fixture();
-    feed({ kind: 'arm', consumer: 'failover', registration: 1 });
-    feed({ kind: 'data', data: 'x'.repeat(500_000) + '\nusage limit reached\n' + 'y'.repeat(500_000) });
-    expect(results.flatMap((r) => r.events).some((e) => e.consumer === 'failover' && (e.value as { hit?: { kind: string } }).hit?.kind === 'rate-limit')).toBe(true);
-    core.close();
+    try {
+      feed({ kind: 'arm', consumer: 'failover', registration: 1 });
+      feed({ kind: 'data', data: 'x'.repeat(500_000) + '\nusage limit reached\n' + 'y'.repeat(500_000) });
+      expect(results.flatMap((r) => r.events).some((e) => e.consumer === 'failover' && (e.value as { hit?: { kind: string } }).hit?.kind === 'rate-limit')).toBe(true);
+    } finally {
+      core.close();
+      clock.mockRestore();
+    }
   });
   it('F-999: pack de continuidade colado na sessão segura o 1º sinal de modelo da saída', () => {
     const { core, feed, results } = fixture();
