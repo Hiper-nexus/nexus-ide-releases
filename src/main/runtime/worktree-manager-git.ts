@@ -30,6 +30,22 @@ const MAX_CAS_ATTEMPTS = 16;
 /** Stable contract reason shared with the scheduler merge lane. */
 export const TASK_WORKTREE_NOT_CLEAN_MESSAGE = "task worktree must be clean";
 
+/**
+ * HEAD solto na prova de integração. A mensagem diz QUAL checkout falhou e o
+ * que fazer: no checkout de coordenação é voltar para a branch de integração;
+ * na pasta isolada de uma aba o HEAD solto é por desenho (F-980) — quem cai
+ * aqui com ela tem a prova de vínculo quebrada e deve reabrir pela aba/missão.
+ */
+export function integrationBranchError(rootRealPath: string, cause: unknown): Error {
+  return new Error(
+    `primary checkout must be on an integration branch: HEAD solto em ${rootRealPath}. ` +
+      `Se é o checkout de coordenação, volte para a branch de integração nele ` +
+      `(ex.: git -C "${rootRealPath}" switch <branch>) e repita; ` +
+      "se é a pasta isolada de uma aba, reabra o writer pela missão da aba ou use readOnly:true.",
+    { cause },
+  );
+}
+
 export type RepositorySnapshot = IntegrationCheckoutInspection;
 
 /**
@@ -96,9 +112,7 @@ export function readRepositorySnapshot(
       "HEAD",
     ]);
   } catch (error) {
-    throw new Error("primary checkout must be on an integration branch", {
-      cause: error,
-    });
+    throw integrationBranchError(rootRealPath, error);
   }
   if (!integrationRef.startsWith("refs/heads/")) {
     throw new Error("primary checkout has an invalid integration ref");
@@ -256,9 +270,7 @@ export async function readRepositorySnapshotAsync(
     ]);
   } catch (error) {
     if (!detachedBase) {
-      throw new Error("primary checkout must be on an integration branch", {
-        cause: error,
-      });
+      throw integrationBranchError(rootRealPath, error);
     }
     // `symbolic-ref --quiet` sai 1 sem saída com HEAD solto. A prova de que é
     // isso (e não um repositório quebrado) é o `rev-parse HEAD^{commit}` abaixo.

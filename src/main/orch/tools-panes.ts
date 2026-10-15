@@ -181,6 +181,7 @@ import {
   type IsolatedWriterAllocation,
 } from './isolated-writer-worktree';
 import { defaultMissionWorkerTools } from './nexus-browser-policy';
+import { WorktreeStateConflictError } from '../runtime/worktree-contract';
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { isOperatorTabMission } from './operator-tab-mission-resume';
@@ -641,6 +642,29 @@ async function tryAdoptNestedWorktreeWriter(
 function nestedWorktreeBusy(reason: string, worktreeRoot: string): string {
   return `${reason} (worktree ${worktreeRoot}); para writers em paralelo use isolatedWriter:true — ` +
     'o Nexus cria worktree/branch própria, registrada para integração';
+}
+
+/**
+ * Auto-isolamento que falhou: o writer fica no checkout compartilhado (com o
+ * claim síncrono do F-981) em vez de recusar o spawn inteiro, e o recibo traz
+ * `isolationFallback` com o motivo CATEGÓRICO — estável para quem lê, sem
+ * path nem stderr do Git.
+ */
+export function classifyIsolationFallback(error: unknown): string {
+  if (error instanceof WorktreeStateConflictError) return 'worktree-state-conflict';
+  const message = error instanceof Error ? error.message : String(error);
+  if (/integration branch|integration ref/i.test(message)) return 'integration-branch-missing';
+  if (/authority|revoked|abort/i.test(message)) return 'authority-revoked';
+  if (/scope root|top-level|canonical/i.test(message)) return 'scope-invalid';
+  return 'allocation-failed';
+}
+
+/** `isolatedWriter:false` explícito: a colisão com writer ativo é recusa clara, nunca auto-isolamento. */
+function isolatedWriterDisabledRefusal(blockedBy: string): Error {
+  return new Error(
+    `${blockedBy} — isolatedWriter:false foi honrado (sem auto-isolamento); ` +
+      'espere a entrega do writer ativo, abra como readOnly ou peça isolatedWriter:true',
+  );
 }
 
 function isolatedWriterOptions(
@@ -2000,6 +2024,8 @@ const paneSpawnAfterTabMission = {
     let isolatedWriterReason: string | undefined;
     /** F-1429 parte 3: por que a worktree aninhada não foi adotada (spawn seguiu). */
     let adoptionSkipped: string | undefined;
+    /** Auto-isolamento falhou: o writer ficou no checkout (claim mantido) e o recibo explica. */
+    let isolationFallback: { reason: string; blockedBy: string } | undefined;
     // Claim síncrono do checkout (ver delegated-writer-gate): tomado no mesmo
     // bloco da decisão, antes de qualquer await; solto no finally.
     let writerClaim: ReturnType<typeof claimSameCheckoutWriter> | undefined;
@@ -2053,6 +2079,9 @@ const paneSpawnAfterTabMission = {
           if (blockedBy === undefined) writerClaim = claimSameCheckoutWriter(checkoutRoot);
         }
         if (nested && blockedBy !== undefined) throw new Error(nestedWorktreeBusy(blockedBy, checkoutRoot));
+        if (args.isolatedWriter === false && blockedBy !== undefined) {
+          throw isolatedWriterDisabledRefusal(blockedBy);
+        }
         if (args.isolatedWriter === true || blockedBy !== undefined) {
           let baseRootRealPath: string | undefined;
           try {
@@ -2076,6 +2105,15 @@ const paneSpawnAfterTabMission = {
               spawnTiming.meta.gitWorktreeMs = isolatedWriter.materialize.gitWorktreeMs;
               spawnTiming.meta.cowMs = isolatedWriter.materialize.cowMs;
             }
+          } catch (error) {
+            // Pedido explícito (`true`) continua recusando: o chamador pediu
+            // worktree. O automático é melhoria, não pré-condição — falhou, o
+            // writer fica no checkout COM o claim síncrono (o próximo spawn
+            // segue serializado) e o recibo explica (`isolationFallback`).
+            if (args.isolatedWriter === true) throw error;
+            console.warn('[isolated-writer] auto-isolamento falhou; writer segue no checkout compartilhado:', error);
+            writerClaim = claimSameCheckoutWriter(checkoutRoot);
+            isolationFallback = { reason: classifyIsolationFallback(error), blockedBy: blockedBy! };
           } finally {
             spawnTiming?.timer.mark('writer-isolation');
           }
@@ -2093,6 +2131,8 @@ const paneSpawnAfterTabMission = {
       if (isolatedWriter) {
         executionMode = 'isolated_worktree';
         options = isolatedWriterOptions(options, ctx.scope, isolatedWriter);
+      } else if (isolationFallback) {
+        executionMode = 'same_checkout';
       }
     }
     let isolatedWriterPending = false;
@@ -2112,7 +2152,10 @@ const paneSpawnAfterTabMission = {
             : {}),
           ...(isolatedWriterReason ? { reason: isolatedWriterReason } : {}),
         } }
-      : adoptionSkipped ? { adoptionSkipped } : {};
+      : {
+          ...(adoptionSkipped ? { adoptionSkipped } : {}),
+          ...(isolationFallback ? { isolationFallback } : {}),
+        };
     let releaseWorkerSlot: (() => void) | undefined;
     let spawnedWorkerPaneId: string | undefined;
     /** F-1388: recibo do resume fresh-in-worktree (writer sem conversa retomável). */
@@ -2446,6 +2489,9 @@ const paneSpawnAfterTabMission = {
               if (blockedBy === undefined) writerClaim = claimSameCheckoutWriter(checkoutRoot);
             }
             if (nested && blockedBy !== undefined) throw new Error(nestedWorktreeBusy(blockedBy, checkoutRoot));
+            if (args.isolatedWriter === false && blockedBy !== undefined) {
+              throw isolatedWriterDisabledRefusal(blockedBy);
+            }
             // Paridade com a mão do operador: o segundo writer comum é
             // auto-isolado numa worktree própria em vez de recusado.
             if (args.isolatedWriter === true || blockedBy !== undefined) {
@@ -2470,6 +2516,13 @@ const paneSpawnAfterTabMission = {
                   spawnTiming.meta.gitWorktreeMs = isolatedWriter.materialize.gitWorktreeMs;
                   spawnTiming.meta.cowMs = isolatedWriter.materialize.cowMs;
                 }
+              } catch (error) {
+                // `true` explícito recusa (o chamador pediu worktree); o
+                // automático degrada para o checkout com o claim síncrono.
+                if (args.isolatedWriter === true) throw error;
+                console.warn('[isolated-writer] auto-isolamento falhou; writer segue no checkout compartilhado:', error);
+                writerClaim = claimSameCheckoutWriter(checkoutRoot);
+                isolationFallback = { reason: classifyIsolationFallback(error), blockedBy: blockedBy! };
               } finally {
                 spawnTiming?.timer.mark('writer-isolation');
               }
@@ -2496,7 +2549,13 @@ const paneSpawnAfterTabMission = {
               executionScope: writerExecutionScope,
               memoryQuery: options.memoryQuery ?? options.prompt,
               prompt: withSameCheckoutWorkerContract(
-                options.prompt ?? 'Inspecione o estado atual e aguarde uma tarefa com escopo explícito.',
+                // O contrato diz "único writer neste checkout": quando o
+                // auto-isolamento falhou isso é falso — a nota corrige.
+                (isolationFallback
+                  ? 'Nota: a tentativa de isolar este writer numa worktree própria falhou, ' +
+                    'então outro writer pode estar ativo NESTE checkout agora.\n\n'
+                  : '') +
+                  (options.prompt ?? 'Inspecione o estado atual e aguarde uma tarefa com escopo explícito.'),
               ),
             };
           }

@@ -1298,3 +1298,79 @@ describe('F-980/F-981: writers paralelos da aba isolada e cwd em outra worktree'
     h.panes.splice(h.panes.indexOf(pending), 1);
   });
 });
+
+describe('isolamento que falha: auto degrada para same_checkout, false é honrado, true recusa', () => {
+  let op: AgentGateContext;
+  beforeEach(() => {
+    op = { ...ctx, token: 'op', label: 'operador', role: 'user', sessionId: 'op-session', missionId: undefined };
+    resetWriterClaimsForTests();
+  });
+  const detachHead = () => git(ctx.scope.rootRealPath, 'checkout', '--detach', 'HEAD');
+  const opRecords = () => registry.listMission(op.scope, OPERATOR_HAND_WORKTREE_KEY);
+
+  it('missão: auto-isolamento falho degrada para same_checkout com isolationFallback no recibo', async () => {
+    await paneSpawnTool.handler({ agentName: 'Executor' }, ctx);
+    expect(h.spawn.mock.calls[0][0].cwd).toBe(ctx.scope.rootRealPath);
+    detachHead();
+    const receipt = await paneSpawnTool.handler({ agentName: 'Executor' }, ctx) as Record<string, any>;
+    expect(receipt.executionMode).toBe('same_checkout');
+    expect(receipt.isolatedWorktree).toBeUndefined();
+    expect(receipt.isolationFallback).toMatchObject({
+      reason: 'integration-branch-missing',
+    });
+    expect(receipt.isolationFallback.blockedBy).toMatch(/same-checkout delegation is serialized/);
+    expect(h.spawn.mock.calls[1][0].cwd).toBe(ctx.scope.rootRealPath);
+    expect(h.spawn.mock.calls[1][0].prompt).toContain('same_checkout');
+    expect(registry.listMission(ctx.scope, ctx.missionId!)).toHaveLength(0);
+    // O claim síncrono segura o próximo: o terceiro writer vê o checkout ocupado
+    // (e degrada também, já que isolar continua falhando).
+    const third = await paneSpawnTool.handler({ agentName: 'Executor' }, ctx) as Record<string, any>;
+    expect(third.isolationFallback?.reason).toBe('integration-branch-missing');
+  });
+
+  it('mão do operador: auto-isolamento falho degrada para same_checkout com isolationFallback', async () => {
+    await paneSpawnTool.handler({ adapterId: 'codex', prompt: 'edite' }, op);
+    detachHead();
+    const receipt = await paneSpawnTool.handler({ adapterId: 'codex', prompt: 'edite' }, op) as Record<string, any>;
+    expect(receipt.executionMode).toBe('same_checkout');
+    expect(receipt.isolationFallback?.reason).toBe('integration-branch-missing');
+    expect(receipt.isolationFallback?.blockedBy).toMatch(/writer pane-0 ainda ativo/);
+    expect(h.spawn.mock.calls[1][0].cwd).toBeUndefined();
+    expect(h.spawn.mock.calls[1][0].isolatedWriter).toBeUndefined();
+    expect(opRecords()).toHaveLength(0);
+  });
+
+  it.each([{ label: 'missão', args: { agentName: 'Executor' }, c: () => ctx },
+           { label: 'mão do operador', args: { adapterId: 'codex' }, c: () => op }])(
+    'isolatedWriter:false explícito ($label): colisão recusa, sem worktree e sem spawn',
+    async ({ args, c }) => {
+      await paneSpawnTool.handler(args, c());
+      await expect(paneSpawnTool.handler({ ...args, isolatedWriter: false }, c()))
+        .rejects.toThrow(/same-checkout delegation is serialized|writer pane-0 ainda ativo/);
+      expect(h.spawn).toHaveBeenCalledTimes(1);
+      expect(registry.listMission(ctx.scope, ctx.missionId!)).toHaveLength(0);
+      expect(opRecords()).toHaveLength(0);
+    },
+  );
+
+  it('isolatedWriter:false explícito sem colisão roda no checkout normalmente', async () => {
+    const receipt = await paneSpawnTool.handler({ agentName: 'Executor', isolatedWriter: false }, ctx) as Record<string, any>;
+    expect(receipt.executionMode).toBe('same_checkout');
+    expect(receipt.isolationFallback).toBeUndefined();
+    expect(h.spawn.mock.calls[0][0].cwd).toBe(ctx.scope.rootRealPath);
+  });
+
+  it.each([{ label: 'missão', args: { agentName: 'Executor' }, c: () => ctx },
+           { label: 'mão do operador', args: { adapterId: 'codex' }, c: () => op }])(
+    'isolatedWriter:true explícito ($label) continua recusando quando a alocação falha — com mensagem acionável',
+    async ({ args, c }) => {
+      detachHead();
+      await expect(paneSpawnTool.handler({ ...args, isolatedWriter: true }, c()))
+        .rejects.toThrow(/integration branch/);
+      // O erro diz QUAL checkout falhou e O QUE fazer (voltar para a branch).
+      await expect(paneSpawnTool.handler({ ...args, isolatedWriter: true }, c()))
+        .rejects.toThrow(/git .*switch|branch de integração/i);
+      expect(h.spawn).not.toHaveBeenCalled();
+    },
+  );
+});
