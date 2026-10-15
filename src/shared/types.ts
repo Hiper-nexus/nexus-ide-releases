@@ -416,6 +416,12 @@ export interface NexusApi {
     /** Tell main that React committed its first frame (mount watchdog). */
     signalMounted(report?: { ok: boolean; error?: string }): void;
     /**
+     * Gate de montagem do boot: resolve quando o bootstrap do main registrou
+     * todo o IPC; rejeita se o bootstrap falhar. O documento carrega em
+     * paralelo — o React monta só depois disto.
+     */
+    ready(): Promise<void>;
+    /**
      * Pinga o main (F-764 C.7). Resolve quando ele atende; a demora é o sinal
      * de main ocupado que a faixa "Nexus ocupado" mostra.
      */

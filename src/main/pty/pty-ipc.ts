@@ -15,6 +15,10 @@ import {
 import type { SpawnResult, ProjectExecutionScope } from "../../shared/types";
 import { preparePaneSpaceWorktree } from './pane-space-worktree';
 import {
+  awaitCliSpawnOrchestration,
+  hasCliSpawnOrchestrationGate,
+} from './cli-spawn-orchestration-gate';
+import {
   spawnSession,
   spawnAgentSession,
   adoptMainOwnedAgentSession,
@@ -28,6 +32,7 @@ import {
   recoverSessionOutput,
   setPtyHost,
   startSessionMortalityReconciler,
+  isPtySessionAdmissionSealedForShutdown,
 } from "./pty-manager";
 import { createRealPtyHost } from "./pty-host-client";
 import {
@@ -99,6 +104,7 @@ import {
 import { selectPersistedWorkerRestartDispatch } from "./persisted-worker-restart";
 import { trace } from "../observability/main-trace";
 import {
+  pausePhaseTimerStall,
   startPhaseTimer,
   watchPhaseTimerStall,
   type PhaseTimer,
@@ -261,11 +267,42 @@ function spawnCliPtyAgentPane(
   authSpawnGated = false,
   spawnPermitAcquired = false,
   spawnTiming?: PhaseTimer,
+  orchestrationSettled = false,
 ): SpawnResult | Promise<SpawnResult> {
   try {
-    // Recursões internas (prep → gate → permissão) compartilham o timer —
-    // um spawn, um evento. Chamador sem timer mede sozinho.
+    // Recursões internas (gate → prep → auth → permissão) compartilham o
+    // timer — um spawn, um evento. Chamador sem timer mede sozinho.
     const timer = spawnTiming ?? startPhaseTimer();
+    if (isPtySessionAdmissionSealedForShutdown()) {
+      return {
+        ok: false,
+        error: "PTY session admission is sealed for application shutdown",
+      };
+    }
+    // Gate de orquestração (corrida de 16/08): com o renderer navegando em
+    // paralelo ao bootstrap, um pane restaurado chega aqui antes do
+    // MCP/coordinator. Espera ANTES de tocar provider, permissão ou PTY —
+    // rejeição fecha o spawn sem preparação parcial. Pane de shell nunca
+    // passa por esta função.
+    if (!orchestrationSettled && hasCliSpawnOrchestrationGate()) {
+      pausePhaseTimerStall(timer);
+      return awaitCliSpawnOrchestration().then(
+        () => {
+          timer.mark("orchestration-gate");
+          return spawnCliPtyAgentPane(
+            sender, adapter, spawn, authoritativePreparation,
+            authSpawnGated, spawnPermitAcquired, timer, true,
+          );
+        },
+        (error: unknown): SpawnResult => {
+          timer.mark("orchestration-gate");
+          return {
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        },
+      );
+    }
     const {
       request,
       authority,
@@ -328,7 +365,7 @@ function spawnCliPtyAgentPane(
         (preparation) => {
           timer.mark("provider-prep");
           return spawnCliPtyAgentPane(
-            sender, adapter, spawn, preparation, false, false, timer,
+            sender, adapter, spawn, preparation, false, false, timer, true,
           );
         },
         (error) => {
@@ -380,6 +417,7 @@ function spawnCliPtyAgentPane(
               true,
               false,
               timer,
+              true,
             );
           },
           (error) => {
@@ -507,7 +545,7 @@ function spawnCliPtyAgentPane(
             const proving = ensureNativeHeavyJobBase();
             if (proving) await proving;
             return await spawnCliPtyAgentPane(
-              sender, adapter, spawn, preparation, true, true, timer,
+              sender, adapter, spawn, preparation, true, true, timer, true,
             );
           } finally {
             release();

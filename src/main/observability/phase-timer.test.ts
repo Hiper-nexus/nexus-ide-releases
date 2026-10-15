@@ -99,4 +99,30 @@ describe('watchPhaseTimerStall', () => {
       vi.useRealTimers();
     }
   });
+
+  it('re-arms the stall budget when orchestration-gate is marked so gate wait does not count as stall', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    try {
+      const timer = startPhaseTimer();
+      const reports: Array<{ totalMs: number; afterPhase: string | null; phases: Record<string, number> }> = [];
+      watchPhaseTimerStall(timer, 15_000, (report) => reports.push(report));
+      vi.advanceTimersByTime(12_000);
+      timer.mark('orchestration-gate');
+      // 10s after orchestration-gate (22s total > 15s): still within post-gate 15s budget.
+      vi.advanceTimersByTime(10_000);
+      expect(reports).toEqual([]);
+      // 5s more (15s after orchestration-gate): now reports stall after orchestration-gate.
+      vi.advanceTimersByTime(5_000);
+      expect(reports).toEqual([
+        {
+          totalMs: 27_000,
+          afterPhase: 'orchestration-gate',
+          phases: { 'orchestration-gate': 12_000 },
+        },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
+

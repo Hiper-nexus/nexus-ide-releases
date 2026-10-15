@@ -35,6 +35,10 @@ import {
   RendererMountWatchdog,
 } from './reliability/renderer-mount-watchdog';
 import { RendererBootRecovery } from './reliability/renderer-boot-recovery';
+import {
+  registerBootReadyIpc,
+  shouldRearmMountWatchdogForBootGate,
+} from './boot-ready-gate';
 import { confirmDbBoot } from './persistence/db';
 import { handleRenderProcessGone } from './agent-runtime/agent-runtime-bridge';
 import {
@@ -298,6 +302,32 @@ export function ensureMacDockPresence(): void {
   reassertMacOSDockPresence();
 }
 
+export function isAuthorizedRendererSurfaceReady(input: {
+  windowDestroyed: boolean;
+  rendererStartAuthorized: boolean;
+  windowVisible: boolean;
+  lastLoadFailed: boolean;
+  currentUrl: string;
+  expectedRendererUrl: string;
+}): boolean {
+  if (
+    input.windowDestroyed ||
+    !input.rendererStartAuthorized ||
+    input.windowVisible ||
+    input.lastLoadFailed
+  ) {
+    return false;
+  }
+  if (!input.currentUrl || input.currentUrl === 'about:blank') {
+    return false;
+  }
+  try {
+    return new URL(input.currentUrl).href === new URL(input.expectedRendererUrl).href;
+  } catch {
+    return false;
+  }
+}
+
 export function createMainWindow(
   options: CreateMainWindowOptions = {},
 ): BrowserWindow | null {
@@ -346,10 +376,9 @@ export function createMainWindow(
     height: 820,
     minWidth: 640,
     minHeight: 420,
-    // Precisa casar com --bg (base.css) — cor de pré-paint da janela. Ficou
-    // preso no azul-negro de duas identidades atrás: sem isto o primeiro paint
-    // pisca a cor antiga antes do renderer assumir.
-    backgroundColor: '#0b0b0c',
+    // Precisa casar com --bg (base.css) e com o splash estático — cor de
+    // pré-paint da janela (#080709).
+    backgroundColor: '#080709',
     title: 'NexusIDE',
     // Windows gets the same multi-resolution ICO embedded in the executable.
     // It is an explicit runtime source only on Windows; macOS continues to use
@@ -395,6 +424,11 @@ export function createMainWindow(
   // own bundle. Defense in depth against a compromised renderer.
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (event) => event.preventDefault());
+
+  // Gate boot:ready registrado antes de qualquer navegação: com o load
+  // paralelo ao bootstrap, o primeiro invoke do renderer já precisa achar
+  // o handler — é ele que segura o React até o IPC estar inteiro de pé.
+  registerBootReadyIpc();
 
   // Capture the reference up front: inside the 'destroyed' handler the
   // `win.webContents` getter can already throw "Object has been destroyed".
@@ -472,6 +506,8 @@ export function createMainWindow(
   let mountPoll: NodeJS.Timeout | null = null;
   let loadStartedAt = Date.now();
   let loadFailures = 0;
+  let lastLoadFailed = false;
+  let readyToShowPending = false;
   let suppressAbortedLoadUntil = 0;
   let loadWatchdog: NodeJS.Timeout | null = null;
   let rendererStartAuthorized = false;
@@ -555,6 +591,34 @@ export function createMainWindow(
     clearInterval(mountPoll);
     mountPoll = null;
   };
+  // A moldura nativa aparece no primeiro paint do renderer autorizado — o
+  // splash estático do index.html cobre a espera do gate boot:ready. O show
+  // definitivo (Dock/foco) continua sendo o commitRendererBoot no mount.
+  win.on('ready-to-show', () => {
+    readyToShowPending = true;
+    revealReadyToShowIfAuthorized();
+  });
+  function revealReadyToShowIfAuthorized(): void {
+    if (
+      win.isDestroyed() ||
+      !rendererStartAuthorized ||
+      win.isVisible() ||
+      lastLoadFailed ||
+      !isAuthorizedRendererSurfaceReady({
+        windowDestroyed: win.isDestroyed(),
+        rendererStartAuthorized,
+        windowVisible: win.isVisible(),
+        lastLoadFailed,
+        currentUrl: wc.getURL(),
+        expectedRendererUrl: rendererUrl,
+      })
+    ) {
+      return;
+    }
+    readyToShowPending = false;
+    markBootPhase('ready-to-show');
+    win.show();
+  }
   const commitRendererBoot = (): void => {
     mounted = true;
     bootRecovery.rendererCommitted();
@@ -671,6 +735,7 @@ export function createMainWindow(
     // Rejeições são esperadas durante o boot do Vite (ERR_ABORTED em reload
     // concorrente) — o watchdog cuida do retry; nunca deixar virar unhandled.
     finished = false;
+    lastLoadFailed = false;
     mounted = false;
     loadStartedAt = Date.now();
     stopMountMonitoring();
@@ -685,6 +750,8 @@ export function createMainWindow(
     if (!rendererStartAuthorized) return;
     if (!isMainFrame) return;
     if (code === -3 && Date.now() < suppressAbortedLoadUntil) return;
+    lastLoadFailed = true;
+    finished = false;
     loadFailures += 1;
     console.warn(
       `[window] load falhou (${code} ${desc}) — recuperação ${bootRecovery.attempts + 1}`,
@@ -749,11 +816,27 @@ export function createMainWindow(
     }, { cadenceMs: 3_000, timeoutMs: Math.max(1000, 3_000) }), 3_000);
   };
   const MOUNT_POLL_MS = 2_000;
+  let bootGateWatchStartedAt: number | null = null;
   wc.on('did-finish-load', () => {
     // BrowserWindow may finish its implicit about:blank before Main bootstrap
     // authorizes the real renderer. That page must not consume mount/Dock
     // proof or arm a reload that could bypass the deferred-load boundary.
-    if (!rendererStartAuthorized) return;
+    if (!rendererStartAuthorized || lastLoadFailed) return;
+    if (
+      !isAuthorizedRendererSurfaceReady({
+        windowDestroyed: win.isDestroyed(),
+        rendererStartAuthorized: true,
+        windowVisible: false,
+        lastLoadFailed: false,
+        currentUrl: wc.getURL(),
+        expectedRendererUrl: rendererUrl,
+      })
+    ) {
+      return;
+    }
+    if (readyToShowPending) {
+      revealReadyToShowIfAuthorized();
+    }
     markBootPhase('did-finish-load');
     finished = true;
     loadFailures = 0;
@@ -763,11 +846,21 @@ export function createMainWindow(
     // A fast renderer can commit before the top-level load event reaches Main.
     // onMounted already showed the window and cancelled monitoring in that case.
     if (mounted) return;
+    bootGateWatchStartedAt ??= Date.now();
+    const gateWaitStartedAt = bootGateWatchStartedAt;
     mountWatchdog.arm();
     let devDiagnosticsCaptured = false;
     const poll = setInterval(periodicCallback(`renderer-mount:${wc.id}`, async (ctx) => {
       if (win.isDestroyed() || mounted) {
         clearInterval(poll);
+        return;
+      }
+      // O gate boot:ready segura o React montado enquanto o bootstrap
+      // registra o IPC: consulta síncrona no Main (sem executeJavaScript, que
+      // falharia com o renderer ocupado e queimaria o orçamento de 5
+      // recuperações), limitada por BOOT_READY_DEADLINE_MS.
+      if (shouldRearmMountWatchdogForBootGate(gateWaitStartedAt)) {
+        mountWatchdog.arm();
         return;
       }
       await ctx.wait(wc.executeJavaScript(
@@ -840,6 +933,7 @@ export function createMainWindow(
     }
     bootRecovery.beginNavigation({ manualRetry });
     finished = false;
+    lastLoadFailed = false;
     mounted = false;
     loadStartedAt = Date.now();
     stopMountMonitoring();

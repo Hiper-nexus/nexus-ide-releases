@@ -36,6 +36,50 @@ describe("deferred main renderer navigation", () => {
     }
   });
 
+  it("registers the boot:ready gate before any renderer navigation", () => {
+    const create = between(
+      "export function createMainWindow(",
+      "const startRenderer = (): void =>",
+    );
+    expect(create).toContain("registerBootReadyIpc()");
+  });
+
+  it("reveals the native frame at ready-to-show only for the authorized renderer URL that loaded without error", () => {
+    const readyToShow = between(
+      "win.on('ready-to-show'",
+      "const commitRendererBoot",
+    );
+    expect(readyToShow).toContain("!rendererStartAuthorized");
+    expect(readyToShow).toContain("win.isVisible()");
+    expect(readyToShow).toContain("lastLoadFailed");
+    expect(readyToShow).toContain("isAuthorizedRendererSurfaceReady(");
+    expect(readyToShow).toContain("markBootPhase('ready-to-show')");
+    expect(readyToShow).toContain("win.show()");
+    // Não é o commit: o show definitivo (Dock/foco) continua no mount.
+    expect(readyToShow).not.toContain("commitRendererBoot()");
+
+    const helper = between(
+      "export function isAuthorizedRendererSurfaceReady(",
+      "export function createMainWindow(",
+    );
+    expect(helper).toContain("about:blank");
+    expect(helper).toContain("input.lastLoadFailed");
+    expect(helper).toContain("new URL(input.currentUrl).href === new URL(input.expectedRendererUrl).href");
+  });
+
+  it("treats a renderer awaiting the boot gate as alive in Main up to the deadline without executeJavaScript polling", () => {
+    const mountPoll = between(
+      "wc.on('did-finish-load'",
+      "wc.on('did-start-navigation'",
+    );
+    const rearmCheck = mountPoll.indexOf("shouldRearmMountWatchdogForBootGate(");
+    const rootProbe = mountPoll.indexOf("wc.executeJavaScript(");
+    expect(rearmCheck).toBeGreaterThanOrEqual(0);
+    expect(rootProbe).toBeGreaterThan(rearmCheck);
+    expect(mountPoll).toContain("mountWatchdog.arm()");
+    expect(mountPoll).not.toContain("__nexusBootAwaiting");
+  });
+
   it("starts one real navigation explicitly and keeps the normal activate path immediate", () => {
     const startRenderer = between(
       "const startRenderer = (): void =>",

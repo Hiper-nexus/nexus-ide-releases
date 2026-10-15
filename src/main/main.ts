@@ -26,6 +26,12 @@ import {
   startMainWindowRenderer,
 } from "./window";
 import {
+  handleBootReadyFailure,
+  rejectBootReady,
+  resolveBootReady,
+  withBootReadyDeadline,
+} from "./boot-ready-gate";
+import {
   installRendererProtocol,
   registerRendererProtocolScheme,
 } from "./renderer-protocol";
@@ -274,6 +280,7 @@ import {
   configureAgentHookEndpointPath,
   APP_SHUTDOWN_PTY_TERMINATION,
   countLiveAgentSessions,
+  isPtySessionAdmissionSealedForShutdown,
   stopSessionMortalityReconciler,
   getAgentSessionInfo,
   listLiveSessionLocations,
@@ -837,6 +844,7 @@ async function bootstrap(userPathReady: Promise<void>): Promise<void> {
   // cost-tracker heurístico: a UI prefere o real quando ele existe.
   await bootStepAsync('initUsageTelemetry', () => initUsageTelemetry(runtimeManager));
   traceBootstrap('after usage telemetry');
+  if (isPtySessionAdmissionSealedForShutdown()) return;
   // Tokens das contas Claude secundárias renovados em background — spawn e
   // failover sempre encontram credencial viva no vault (mata o "401 OAuth
   // access token has expired" em respawn horas depois).
@@ -1029,8 +1037,11 @@ async function bootstrap(userPathReady: Promise<void>): Promise<void> {
   // Gamificação SÓ depois: o retro replay precisa dos stores orch hidratados
   // (senão a estreia gravaria replayDone com zero eventos).
   void initOrchestration()
-    .then(() => gamificationService.start())
+    .then(() => {
+      if (!isPtySessionAdmissionSealedForShutdown()) gamificationService.start();
+    })
     .catch((err) => {
+      if (isPtySessionAdmissionSealedForShutdown()) return;
       console.warn("[nexus] orchestration failed to start:", err);
       gamificationService.start();
     });
@@ -1143,10 +1154,11 @@ if (squirrelStartupEvent || !wireDeepLinks()) {
     registerAgentHookIpc();
 
     // The native BrowserWindow/Dock ownership exists before any optional
-    // integration starts, but renderer navigation remains deferred. Loading
-    // React before bootstrap registered preload IPC made the first launch race
-    // through "No handler registered" responses and could strand stores on
-    // their fallback state until a reload.
+    // integration starts. Renderer navigation now runs IN PARALLEL with
+    // bootstrap: the document loads immediately (static splash) while React
+    // waits on the boot:ready gate, resolved only after every IPC handler
+    // below is registered — the same "No handler registered" anti-race the
+    // deferred load gave, one step earlier.
     // This must remain the first potentially visible operation after Electron
     // is ready. Do not move it into bootstrap(): synchronous adapter, settings,
     // database, or keychain setup can otherwise classify the process as a
@@ -1154,72 +1166,76 @@ if (squirrelStartupEvent || !wireDeepLinks()) {
     // Finder/dmg launches inherit a minimal PATH. The early shell probe (or
     // last good cache) is awaited only at adapter discovery inside bootstrap.
     try {
-      // Finish the sweep before bootstrap can fork a host/supervisor. A scan
-      // racing a new session could otherwise classify our live helper as orphan.
-      await orphanSupervisorSweep;
-      await bootstrap(userPathReady);
-      markBootPhase('bootstrap-ready');
-      // Shell de login lento (oh-my-zsh + nvm num login frio) estoura o prazo
-      // curto do boot e CLIs via nvm/fnm pareciam "não instaladas" a sessão
-      // toda. Uma segunda sondagem, longa e em background, corrige sozinha.
-      void retryLoginShellPathIfMissed()
-        .then((changed) => (changed ? rescanAdapterBinaries() : undefined))
-        .catch((error: unknown) => {
-          console.warn("[path] late login-shell PATH retry failed:", error);
-        });
-      // MCP boot race (print 2026-08-16): o renderer restaurava panes de
-      // agente enquanto o servidor MCP embutido ainda não tinha feito bind —
-      // os CLIs spawnados imprimiam "MCP startup interrupted …
-      // nexus_<hex> not initialized". initOrchestration é idempotente: aqui
-      // esperamos o voo já em curso (bootstrap dispara fire-and-forget),
-      // com teto: bind travado não pode segurar a janela para sempre (o
-      // supervisor segue retentando em background).
-      await Promise.race([
-        initOrchestration().catch(() => undefined),
-        new Promise<void>((resolve) => {
-          setTimeout(resolve, 4_000);
-        }),
-      ]);
-      // Gap A: register Claude+Codex managed hook installers. Installing edits the
-      // user's GLOBAL ~/.claude & ~/.codex config (affects those tools even outside
-      // Nexus), so we NEVER install on launch without consent — register only, then
-      // prompt once (idle queue, below) and install/remove per the persisted
-      // decision (option A). The endpoint itself must exist BEFORE the renderer:
-      // pty-manager injects NEXUS_AGENT_HOOK_ENDPOINT/NEXUS_PANE_KEY only when it
-      // is configured at spawn, and panes restored on mount keep that env for life.
-      if (!isAutomatedReleaseTest()) {
-        try {
-          const userDataPath = app.getPath("userData");
-          configureAgentRuntimeUserDataPath(userDataPath);
-          bootstrapManagedAgentHooks({ enabled: false });
-          const hookServer = await startAgentHookHttpServer({ userDataPath });
-          configureAgentHookEndpointPath(hookServer.endpointFilePath);
-          hookDropBoxWatcher = new AgentHookDropBoxWatcher();
-          hookDropBoxWatcher.start();
-        } catch (err) {
-          console.warn("[main] managed agent hooks bootstrap failed:", err);
+      await withBootReadyDeadline(async () => {
+        if (!startMainWindowRenderer(mainWindow)) {
+          throw new Error(
+            "renderer start authority disappeared before bootstrap completed",
+          );
         }
-      }
-      if (!startMainWindowRenderer(mainWindow)) {
-        throw new Error(
-          "renderer start authority disappeared before bootstrap completed",
-        );
-      }
+        // Finish the sweep before bootstrap can fork a host/supervisor. A scan
+        // racing a new session could otherwise classify our live helper as orphan.
+        await orphanSupervisorSweep;
+        if (isPtySessionAdmissionSealedForShutdown()) return;
+        await bootstrap(userPathReady);
+        if (isPtySessionAdmissionSealedForShutdown()) return;
+        markBootPhase('bootstrap-ready');
+        // Shell de login lento (oh-my-zsh + nvm num login frio) estoura o prazo
+        // curto do boot e CLIs via nvm/fnm pareciam "não instaladas" a sessão
+        // toda. Uma segunda sondagem, longa e em background, corrige sozinha.
+        void retryLoginShellPathIfMissed()
+          .then((changed) => (changed ? rescanAdapterBinaries() : undefined))
+          .catch((error: unknown) => {
+            console.warn("[path] late login-shell PATH retry failed:", error);
+          });
+        // MCP boot race (print 2026-08-16): o renderer restaurava panes de
+        // agente enquanto o servidor MCP embutido ainda não tinha feito bind —
+        // os CLIs spawnados imprimiam "MCP startup interrupted …
+        // nexus_<hex> not initialized". Hoje a espera mora no funil de spawn:
+        // pty-ipc aguarda o flight de initOrchestration (fire-and-forget no
+        // bootstrap) antes de tocar provider e PTY — a janela não para mais
+        // num teto arbitrário e pane de shell nunca espera MCP.
+        // Gap A: register Claude+Codex managed hook installers. Installing edits the
+        // user's GLOBAL ~/.claude & ~/.codex config (affects those tools even outside
+        // Nexus), so we NEVER install on launch without consent — register only, then
+        // prompt once (idle queue, below) and install/remove per the persisted
+        // decision (option A). The endpoint itself must exist BEFORE the renderer:
+        // pty-manager injects NEXUS_AGENT_HOOK_ENDPOINT/NEXUS_PANE_KEY only when it
+        // is configured at spawn, and panes restored on mount keep that env for life.
+        if (!isAutomatedReleaseTest()) {
+          try {
+            const userDataPath = app.getPath("userData");
+            configureAgentRuntimeUserDataPath(userDataPath);
+            bootstrapManagedAgentHooks({ enabled: false });
+            const hookServer = await startAgentHookHttpServer({ userDataPath });
+            if (isPtySessionAdmissionSealedForShutdown()) return;
+            configureAgentHookEndpointPath(hookServer.endpointFilePath);
+            hookDropBoxWatcher = new AgentHookDropBoxWatcher();
+            hookDropBoxWatcher.start();
+          } catch (err) {
+            console.warn("[main] managed agent hooks bootstrap failed:", err);
+          }
+        }
+        // Todo o IPC de boot está registrado: libera o React — o documento já
+        // carregou e o splash estático cobre a espera até o primeiro mount.
+        resolveBootReady();
+      });
     } catch (error) {
-      console.error("[main] bootstrap failed before renderer navigation:", error);
-      const bootFailureReason = describeBootFailure(error);
-      trace({ kind: "boot-failed", reason: bootFailureReason });
-      try {
-        dialog.showErrorBox(
-          "NexusIDE não conseguiu inicializar",
-          "O núcleo do aplicativo falhou antes de abrir a interface. " +
-            "Reinicie o Nexus; nenhum renderer parcial foi carregado." +
-            `\n\nMotivo: ${bootFailureReason}`,
-        );
-      } catch {
-        // The process still exits instead of exposing a renderer with partial IPC.
-      }
-      app.quit();
+      rejectBootReady(error);
+      handleBootReadyFailure(error, {
+        isShutdownSealed: isPtySessionAdmissionSealedForShutdown,
+        showErrorBox: (title, content) => dialog.showErrorBox(title, content),
+        quitApp: () => app.quit(),
+        describeFailure: describeBootFailure,
+        onLogError: (err) => {
+          console.error("[main] bootstrap failed before renderer navigation:", err);
+        },
+        onTraceFailure: (reason) => {
+          trace({ kind: "boot-failed", reason });
+        },
+      });
+      return;
+    }
+    if (isPtySessionAdmissionSealedForShutdown()) {
       return;
     }
 

@@ -37,6 +37,7 @@ const ipcDeps = vi.hoisted(() => {
 
 const ptyDeps = vi.hoisted(() => ({
   adoptMainOwnedAgentSession: vi.fn((): unknown => null),
+  isPtySessionAdmissionSealedForShutdown: vi.fn(() => false),
   listAgentSessionsForPane: vi.fn((): unknown[] => []),
   spawnAgentSession: vi.fn(() => ({ sessionId: "pty-created" })),
   spawnSession: vi.fn(() => ({ sessionId: "shell-created" })),
@@ -121,6 +122,8 @@ vi.mock("electron", () => ({
 
 vi.mock("./pty-manager", () => ({
   adoptMainOwnedAgentSession: ptyDeps.adoptMainOwnedAgentSession,
+  isPtySessionAdmissionSealedForShutdown:
+    ptyDeps.isPtySessionAdmissionSealedForShutdown,
   listAgentSessionsForPane: ptyDeps.listAgentSessionsForPane,
   killSession: ptyDeps.killSession,
   orchKillSession: ptyDeps.orchKillSession,
@@ -310,6 +313,7 @@ const traceDeps = vi.hoisted(() => ({ trace: vi.fn() }));
 vi.mock("../observability/main-trace", () => ({ trace: traceDeps.trace }));
 
 import { configurePtyProjectRuntimeManager, registerPtyIpc } from "./pty-ipc";
+import { setCliSpawnOrchestrationGate } from "./cli-spawn-orchestration-gate";
 import { issueImmediateSquadSpawnGrant } from "../orch/spawn-authority";
 
 function approvedMissionForSpawn() {
@@ -1807,6 +1811,161 @@ describe("registerPtyIpc account fail-fast", () => {
       error: expect.stringMatching(/approval|required|current intent/i),
     });
     expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
+  });
+
+  describe("orchestration gate no spawn de CLI (boot 16/08)", () => {
+    beforeEach(() => setCliSpawnOrchestrationGate(null));
+    afterEach(() => setCliSpawnOrchestrationGate(null));
+
+    const spawnClaude = () =>
+      ipcDeps.handlers.get(PTY_CHANNELS.spawn)!(
+        { sender: { id: 7 } },
+        { kind: "cli-agent", adapterId: "claude", cols: 80, rows: 24 },
+      );
+
+    it("segura o spawn até a orquestração ficar pronta — sem tocar provider nem PTY antes", async () => {
+      providerDeps.prepareProviderSpawn.mockReturnValueOnce({
+        ok: true,
+        overrides: {
+          binPath: "/usr/local/bin/claude",
+          defaultModel: null,
+          extraArgs: [],
+          keyEnv: {},
+          suppressEnv: [],
+        },
+      });
+      let ready!: () => void;
+      setCliSpawnOrchestrationGate(
+        () => new Promise<void>((resolve) => { ready = resolve; }),
+      );
+      const pending = spawnClaude();
+      // Várias voltas de microtask: se o gate fosse ignorado, o pipeline de
+      // provider/PTY já teria andado — ele não pode ter andado.
+      for (let round = 0; round < 10; round += 1) await Promise.resolve();
+      expect(providerDeps.prepareProviderSpawnAuthoritative).not.toHaveBeenCalled();
+      expect(providerDeps.prepareProviderSpawn).not.toHaveBeenCalled();
+      expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
+      ready();
+      await expect(pending).resolves.toMatchObject({ ok: true });
+      expect(ptyDeps.spawnAgentSession).toHaveBeenCalledOnce();
+    });
+
+    it("falha fechado quando a orquestração está encerrando (sem PTY, sem provider)", async () => {
+      setCliSpawnOrchestrationGate(() =>
+        Promise.reject(
+          new Error("orchestration lifecycle is closing"),
+        ),
+      );
+      await expect(spawnClaude()).resolves.toMatchObject({
+        ok: false,
+        error: "orchestration lifecycle is closing",
+      });
+      expect(providerDeps.prepareProviderSpawnAuthoritative).not.toHaveBeenCalled();
+      expect(providerDeps.prepareProviderSpawn).not.toHaveBeenCalled();
+      expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
+    });
+
+    it("sem gate configurado, o spawn segue como sempre seguiu", async () => {
+      providerDeps.prepareProviderSpawn.mockReturnValueOnce({
+        ok: true,
+        overrides: {
+          binPath: "/usr/local/bin/claude",
+          defaultModel: null,
+          extraArgs: [],
+          keyEnv: {},
+          suppressEnv: [],
+        },
+      });
+      await expect(spawnClaude()).resolves.toMatchObject({ ok: true });
+      expect(ptyDeps.spawnAgentSession).toHaveBeenCalledOnce();
+    });
+
+    it("gate travado estoura num teto e fecha com motivo em PT-BR (pane nunca fica mudo)", async () => {
+      vi.useFakeTimers();
+      try {
+        setCliSpawnOrchestrationGate(() => new Promise<void>(() => undefined));
+        const pending = spawnClaude();
+        await vi.advanceTimersByTimeAsync(31_000);
+        await expect(pending).resolves.toMatchObject({
+          ok: false,
+          error:
+            "O Nexus ainda está preparando os agentes. Tente abrir o pane de novo em alguns segundos.",
+        });
+        expect(providerDeps.prepareProviderSpawnAuthoritative).not.toHaveBeenCalled();
+        expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("registra orchestration-gate separado de provider-prep e não conta a espera como stall contra PANE_SPAWN_STALL_MS", async () => {
+      vi.useFakeTimers();
+      try {
+        providerDeps.prepareProviderSpawn.mockReturnValueOnce({
+          ok: true,
+          overrides: {
+            binPath: "/usr/local/bin/claude",
+            defaultModel: null,
+            extraArgs: [],
+            keyEnv: {},
+            suppressEnv: [],
+          },
+        });
+        let ready!: () => void;
+        setCliSpawnOrchestrationGate(
+          () => new Promise<void>((resolve) => { ready = resolve; }),
+        );
+        const pending = spawnClaude();
+        // Espera de 20 s no gate (> PANE_SPAWN_STALL_MS = 15 s, < teto de 30 s).
+        await vi.advanceTimersByTimeAsync(20_000);
+        ready();
+        await expect(pending).resolves.toMatchObject({ ok: true });
+
+        const stalledEvents = traceDeps.trace.mock.calls
+          .map(([event]) => event as Record<string, unknown>)
+          .filter((event) => event.kind === "pane-spawn-stalled");
+        expect(stalledEvents).toEqual([]);
+
+        const timingEvents = traceDeps.trace.mock.calls
+          .map(([event]) => event as Record<string, unknown>)
+          .filter((event) => event.kind === "pane-spawn-timing");
+        expect(timingEvents).toHaveLength(1);
+        const phases = timingEvents[0]?.phases as Record<string, number>;
+        expect(phases["orchestration-gate"]).toBeGreaterThanOrEqual(20_000);
+        expect(phases["provider-prep"]).toBeLessThan(1_000);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("recusa o spawn após o selo de shutdown sem chamar o gate de orquestração (initOrchestration)", async () => {
+      ptyDeps.isPtySessionAdmissionSealedForShutdown.mockReturnValueOnce(true);
+      const gateSpy = vi.fn(async () => undefined);
+      setCliSpawnOrchestrationGate(gateSpy);
+
+      expect(await spawnClaude()).toMatchObject({
+        ok: false,
+      });
+      expect(gateSpy).not.toHaveBeenCalled();
+      expect(providerDeps.prepareProviderSpawnAuthoritative).not.toHaveBeenCalled();
+      expect(providerDeps.prepareProviderSpawn).not.toHaveBeenCalled();
+      expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
+    });
+
+    it("pane de shell puro não consulta o gate — resolve sem MCP", async () => {
+      setCliSpawnOrchestrationGate(() => new Promise<void>(() => undefined));
+      const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn)!;
+      // O caminho de shell devolve SpawnResult síncrono — sem promessa no
+      // gate: prova de que nunca esperou pela orquestração.
+      const result = await Promise.resolve(
+        handler(
+          { sender: { id: 7 } },
+          { kind: "shell", cols: 80, rows: 24 },
+        ),
+      );
+      expect(result).toMatchObject({ ok: true, sessionId: "shell-created" });
+      expect(ptyDeps.spawnSession).toHaveBeenCalledOnce();
+    });
   });
 
   describe("F-213 pane spawn timing", () => {

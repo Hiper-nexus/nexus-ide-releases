@@ -33,6 +33,7 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidMount(): void {
+    document.getElementById('nexus-boot-splash')?.remove();
     window.nexus.app.signalMounted(
       this.state.error
         ? { ok: false, error: this.state.error.message || 'React boot failed' }

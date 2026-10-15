@@ -228,6 +228,11 @@ export const WINDOW_CHANNELS = {
    * distinguish "page loaded" from "app actually rendered" — in dev AND in
    * the packaged app, where a boot crash used to leave a black window. */
   mounted: 'renderer:mounted',
+  /** invoke: renderer → main. Gate de montagem do boot paralelo: o documento
+   * carrega cedo, mas o React só monta quando o bootstrap terminou de
+   * registrar todo o IPC. Rejeita se o bootstrap falhar — nenhum renderer
+   * parcial executa IPC antes dele. */
+  bootReady: 'boot:ready',
   /** send: main → preload. Runs the isolated packaged functional probes only
    * after React has mounted during --smoke-test. Never emitted in normal use. */
   functionalSmokeRun: 'smoke:functional:run',

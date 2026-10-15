@@ -1,7 +1,7 @@
 import { trace } from './main-trace';
 
 type BootPhase = 'whenReady' | 'window-created' | 'path-resolved' |
-  'bootstrap-ready' | 'renderer-load-start' | 'did-finish-load' | 'mount';
+  'bootstrap-ready' | 'renderer-load-start' | 'ready-to-show' | 'did-finish-load' | 'mount';
 let boot: {
   phases: Partial<Record<BootPhase, number>>;
   slowSteps: Array<{ step: string; startMs: number; durationMs: number }>;

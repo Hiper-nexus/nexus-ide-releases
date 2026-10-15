@@ -21,13 +21,15 @@ it('emits one boot event with milestones and only steps over 20ms, including fai
   markBootPhase('path-resolved');
   markBootPhase('bootstrap-ready');
   markBootPhase('renderer-load-start');
+  markBootPhase('ready-to-show');
   markBootPhase('did-finish-load');
   expect(emit).not.toHaveBeenCalled();
   markBootPhase('mount');
   expect(emit).toHaveBeenCalledExactlyOnceWith({
     kind: 'boot-phases', startedAt: performance.timeOrigin,
     phases: { whenReady: 100, 'window-created': 100, 'path-resolved': 151,
-      'bootstrap-ready': 151, 'renderer-load-start': 151, 'did-finish-load': 151, mount: 151 },
+      'bootstrap-ready': 151, 'renderer-load-start': 151, 'ready-to-show': 151,
+      'did-finish-load': 151, mount: 151 },
     slowSteps: [{ step: 'slow', startMs: 120, durationMs: 31 }],
   });
   now.mockRestore();

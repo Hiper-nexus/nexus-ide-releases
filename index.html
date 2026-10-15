@@ -20,8 +20,64 @@
       type="font/woff2"
       crossorigin
     />
+    <!-- Splash estático de boot: cobre a espera do gate boot:ready enquanto
+         o Main registra o IPC — o ErrorBoundary remove o nó no primeiro
+         commit do React. Fundo = var(--bg, #080709), coerente com o
+         backgroundColor do BrowserWindow (#080709) para a moldura e o
+         primeiro paint serem um só campo escuro. O tema claro mora no banco
+         do Main (hidratado após boot:ready) e o CSP empacotado proíbe script
+         inline, então o flash escuro inicial até o mount é aceito. VT323 =
+         assinatura pixel da casa; barra em --accent (#ff4f8b). -->
+    <style>
+      #nexus-boot-splash {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        background: var(--bg, #080709);
+        color: #928b90;
+        font-family: 'VT323', ui-monospace, monospace;
+      }
+      #nexus-boot-splash .boot-mark {
+        font-size: 28px;
+        letter-spacing: 0.12em;
+        color: #aaa2a8;
+      }
+      #nexus-boot-splash .boot-bar {
+        width: 120px;
+        height: 2px;
+        overflow: hidden;
+        background: rgb(255 255 255 / 0.08);
+      }
+      #nexus-boot-splash .boot-bar::before {
+        content: '';
+        display: block;
+        width: 40%;
+        height: 100%;
+        background: #ff4f8b;
+        animation: nexus-boot-slide 1.2s ease-in-out infinite;
+      }
+      @keyframes nexus-boot-slide {
+        from { transform: translateX(-100%); }
+        to { transform: translateX(300%); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #nexus-boot-splash .boot-bar::before {
+          animation: none;
+          width: 100%;
+          opacity: 0.35;
+        }
+      }
+    </style>
   </head>
   <body>
+    <div id="nexus-boot-splash" role="status" aria-label="Inicializando o NexusIDE">
+      <div class="boot-mark">NEXUS</div>
+      <div class="boot-bar"></div>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/renderer/main.tsx"></script>
   </body>
