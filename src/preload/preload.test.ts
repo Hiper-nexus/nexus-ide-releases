@@ -199,6 +199,13 @@ describe('preload PTY delivery', () => {
     expect(electronMock.ipcRenderer.invoke).toHaveBeenCalledWith('billing:logout');
   });
 
+  it('exposes the boot mount gate as a single invoke of boot:ready', async () => {
+    const api = await loadPreloadApi();
+    electronMock.ipcRenderer.invoke.mockResolvedValue(undefined);
+    await api.app.ready();
+    expect(electronMock.ipcRenderer.invoke).toHaveBeenCalledWith('boot:ready');
+  });
+
   it('pinga o main por app:heartbeat sem carga nenhuma (F-764 C.7)', async () => {
     const api = await loadPreloadApi();
     electronMock.ipcRenderer.invoke.mockResolvedValue({ at: 42 });

@@ -788,6 +788,7 @@ const api: NexusApi = {
   },
   app: {
     signalMounted: (report) => ipcRenderer.send(WINDOW_CHANNELS.mounted, report),
+    ready: () => ipcRenderer.invoke(WINDOW_CHANNELS.bootReady),
     heartbeat: () => ipcRenderer.invoke(WINDOW_CHANNELS.heartbeat),
     openExternal: (url: string) =>
       ipcRenderer.invoke(WINDOW_CHANNELS.openExternal, url),
