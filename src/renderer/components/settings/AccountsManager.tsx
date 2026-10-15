@@ -913,7 +913,7 @@ export function AccountsManager({
           </button>
           {auth?.state === 'unknown' && loginCommand && (
             <button type="button" className="settings-btn" disabled={busy} onClick={() => void openLoginTerminal()}>
-              Abrir login da CLI
+              Conectar minha conta
             </button>
           )}
         </div>
@@ -1045,7 +1045,7 @@ export function AccountsManager({
                 onClick={() => setAddMode('api-key')}
                 disabled={busy}
               >
-                <PixelIcon name="key" size={12} /> Adicionar API key
+                <PixelIcon name="key" size={12} /> Adicionar chave de API
               </button>
             </div>
           </>
@@ -1079,7 +1079,7 @@ export function AccountsManager({
                   disabled={busy}
                   title={`Abre um terminal com “${loginCommand}”`}
                 >
-                  {panel.loginCta ?? 'Abrir login da CLI'}
+                  {panel.loginCta ?? 'Conectar minha conta'}
                 </button>
               )}
               <button
@@ -1134,7 +1134,7 @@ export function AccountsManager({
         )}
 
         {addMode === 'api-key' && (
-          <div className="acct__form" role="group" aria-label="Adicionar API key">
+          <div className="acct__form" role="group" aria-label="Adicionar chave de API">
             <p className="acct__form-title">
               Nova conta com key nativa ou roteada (GLM, LongCat,
               OpenRouter…). O segredo fica criptografado no cofre do Nexus; a

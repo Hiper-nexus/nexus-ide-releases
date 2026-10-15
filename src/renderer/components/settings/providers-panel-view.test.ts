@@ -183,10 +183,16 @@ describe('providers-panel-view', () => {
   it('labels detected counts per tab context', () => {
     const all = [claude, shellLike, missing, glm];
     expect(tabDetectedLabel('clis', all, 2)).toBe(
-      '3 CLIs no catálogo · 2 detectadas',
+      '3 ferramentas no catálogo · 2 instaladas',
     );
-    expect(tabDetectedLabel('login', all, 1)).toBe('1 com login detectado');
-    expect(tabDetectedLabel('remote', all, 1)).toBe('1 remoto');
+    expect(tabDetectedLabel('login', all, 1)).toBe('1 ferramenta instalada para conectar');
+    expect(tabDetectedLabel('remote', all, 1)).toBe('1 serviço por API');
+  });
+
+  it('does not describe an installed tool without a session as a detected login', () => {
+    const disconnected = { ...claude, authStrategy: 'login-needed' as const, authState: 'missing' as const };
+    expect(tabDetectedLabel('login', [disconnected], 1)).toBe('1 ferramenta instalada para conectar');
+    expect(providerStatusLabel(disconnected, { authState: 'missing' }).label).toBe('precisa login');
   });
 
   it('picks a stable default selection preferring installed providers', () => {

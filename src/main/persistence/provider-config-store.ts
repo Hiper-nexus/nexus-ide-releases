@@ -954,7 +954,7 @@ function providerInfrastructureReadiness(adapterId: string): ProviderReadiness {
         // (nvm, pnpm, instalador próprio). O caminho que funciona vem antes.
         reason:
           `${adapter.label} não foi encontrado no PATH do Nexus. Se já está ` +
-          `instalado, use Configurações › Contas de IA › Reexaminar CLIs ou ` +
+          `instalado, use Configurações › Contas de IA › Verificar ferramentas ou ` +
           `informe o caminho do binário. Para instalar: ${adapter.install.command}`,
       };
     }

@@ -1,3 +1,4 @@
+import '../../styles/providers-onboarding.css';
 import {
   useCallback,
   useEffect,
@@ -640,11 +641,11 @@ function ProviderDetail({
           <p className="prov-detail__sub">
             {provider.installed
               ? isLocalCliProvider(provider) && provider.detectedBin
-                ? <>CLI local · binário <code>{provider.detectedBin}</code></>
+                ? <span title={provider.detectedBin}>Ferramenta instalada neste computador</span>
                 : isRemoteProvider(provider)
                   ? 'Provider remoto — acesso por chave de API.'
                   : 'Disponível nesta máquina.'
-              : 'Não encontrado no PATH — instale a CLI ou aponte o binário em Avançado'}
+              : 'Ferramenta não instalada. Instale abaixo ou indique uma instalação existente em Avançado'}
           </p>
           {provider.cliInstallationWarning && (
             <p className="prov-detail__sub" role="status">{provider.cliInstallationWarning}</p>
@@ -743,7 +744,7 @@ function ProviderDetail({
             <span className="prov__switch-thumb" />
           </span>
           <span className="prov__toggle-label">
-            {provider.enabled ? 'Disponível' : 'Desligada'}
+            {provider.enabled ? 'Ativada' : 'Desativada'}
           </span>
         </label>
       </header>
@@ -891,9 +892,9 @@ function ProviderDetail({
 }
 
 const TAB_LABELS: Record<ProvidersHubTab, string> = {
-  clis: 'CLIs',
-  login: 'Login',
-  remote: 'Remotos / API',
+  clis: 'Ferramentas de IA',
+  login: 'Entrar nas contas',
+  remote: 'Serviços por API',
 };
 
 export function ProvidersPanel() {
@@ -1016,7 +1017,7 @@ export function ProvidersPanel() {
   );
 
   // Contagem por aba = tamanho do catálogo daquele tipo (independe do filtro
-  // "Mostrar ausentes"), para a pessoa ver o que cada aba cobre antes de abrir.
+  // "Mostrar ferramentas não instaladas"), para a pessoa ver o que cada aba cobre antes de abrir.
   const tabCounts = useMemo(
     () => ({
       clis: providers.filter(isLocalCliProvider).length,
@@ -1172,39 +1173,44 @@ export function ProvidersPanel() {
     <section className="prov-hub">
       <header className="prov-hub__header">
         <div>
-          <SettingsSectionTitle>Providers</SettingsSectionTitle>
+          <SettingsSectionTitle>Contas de IA</SettingsSectionTitle>
           <p className="settings-detail__hint prov-hub__lede">
-            Conecte suas ferramentas e defina os modelos que você quer usar.
+            Escolha a IA que você usa. Conecte sua conta ou configure uma chave de API.
           </p>
         </div>
         {(missingInstallable.length > 0 || updatableInstalled.length > 0) && (
           <div className="prov-hub__header-actions">
-            {missingInstallable.length > 0 && (
-              <button
-                type="button"
-                className="settings-btn settings-btn--primary"
-                disabled={provisioning !== null}
-                onClick={() => void provisionMissing()}
-                title="Instala em sequência apenas as CLIs ausentes com instalador oficial verificado — cada uma pede a confirmação nativa com o comando exato"
-              >
-                {provisioning
-                  ? `Instalando ${provisioning}…`
-                  : `Instalar ${missingInstallable.length} CLI${missingInstallable.length === 1 ? '' : 's'} com instalador verificado`}
-              </button>
-            )}
-            {updatableInstalled.length > 0 && (
-              <button
-                type="button"
-                className="settings-btn"
-                disabled={provisioning !== null}
-                onClick={() => void updateInstalled()}
-                title="Reexecuta o instalador oficial de cada CLI instalada para atualizá-la à última versão — cada uma pede a confirmação nativa com o comando exato"
-              >
-                {provisioning
-                  ? `Atualizando ${provisioning}…`
-                  : `Atualizar ${updatableInstalled.length} CLIs`}
-              </button>
-            )}
+            <details className="prov-hub__batch">
+              <summary>Instalar ou atualizar várias ferramentas</summary>
+              <div className="prov-hub__batch-actions">
+                {missingInstallable.length > 0 && (
+                  <button
+                    type="button"
+                    className="settings-btn"
+                    disabled={provisioning !== null}
+                    onClick={() => void provisionMissing()}
+                    title="Instala em sequência apenas as CLIs ausentes com instalador oficial verificado — cada uma pede a confirmação nativa com o comando exato"
+                  >
+                    {provisioning
+                      ? `Instalando ${provisioning}…`
+                      : `Instalar ${missingInstallable.length} ferramenta${missingInstallable.length === 1 ? '' : 's'} com instalador verificado`}
+                  </button>
+                )}
+                {updatableInstalled.length > 0 && (
+                  <button
+                    type="button"
+                    className="settings-btn"
+                    disabled={provisioning !== null}
+                    onClick={() => void updateInstalled()}
+                    title="Reexecuta o instalador oficial de cada CLI instalada para atualizá-la à última versão — cada uma pede a confirmação nativa com o comando exato"
+                  >
+                    {provisioning
+                      ? `Atualizando ${provisioning}…`
+                      : `Atualizar ${updatableInstalled.length} ferramentas`}
+                  </button>
+                )}
+              </div>
+            </details>
           </div>
         )}
       </header>
@@ -1212,9 +1218,9 @@ export function ProvidersPanel() {
       <div className="prov-hub__api-keys-banner" role="region" aria-label="Acesso rápido às chaves de API">
         <div className="prov-hub__api-keys-banner-info">
           <PixelIcon name="key" size={12} className="prov-hub__api-keys-banner-icon" />
-          <span className="prov-hub__api-keys-banner-badge">Novo</span>
+
           <span className="prov-hub__api-keys-banner-text">
-            Procurando onde inserir chaves de API (Gemini, Grok, Groq, OpenAI, Claude...)?
+            Já tem uma chave de API? Configure a conexão por chave.
           </span>
         </div>
         <button
@@ -1277,7 +1283,7 @@ export function ProvidersPanel() {
                   }));
                 }}
               />
-              Mostrar ausentes
+              Mostrar ferramentas não instaladas
             </label>
           )}
           {tab === 'clis' && autoCliUpdates && (
@@ -1286,10 +1292,10 @@ export function ProvidersPanel() {
                 type="checkbox"
                 checked={autoCliUpdates.enabled}
                 disabled={autoCliBusy}
-                aria-label="Atualizar CLIs automaticamente"
+                aria-label="Atualizar ferramentas automaticamente"
                 onChange={(event) => void changeAutoCliUpdates(event.target.checked)}
               />
-              Atualizar CLIs automaticamente
+              Atualizar ferramentas automaticamente
             </label>
           )}
           <div className="prov-hub__actions">
@@ -1298,10 +1304,10 @@ export function ProvidersPanel() {
               className="settings-btn"
               disabled={refreshing}
               onClick={() => void refreshCatalog()}
-              title="Reexamina PATH e caminhos absolutos das CLIs, auth e catálogo de modelos"
+              title="Procura ferramentas instaladas, verifica a conexão e atualiza o catálogo de modelos"
               data-testid="prov-rescan-clis"
             >
-              {refreshing ? 'Examinando…' : 'Reexaminar CLIs'}
+              {refreshing ? 'Examinando…' : 'Verificar ferramentas'}
             </button>
           </div>
         </div>
@@ -1333,7 +1339,7 @@ export function ProvidersPanel() {
               <>
                 <p className="prov-hub__empty-title">
                   Nenhuma ferramenta de IA encontrada neste computador.
-                  Escolha uma para instalar ou use Reexaminar CLIs se já instalou uma.
+                  Escolha uma para instalar ou use Verificar ferramentas se já instalou uma.
                 </p>
                 <p className="prov-hub__empty-hint">
                   Você poderá entrar com sua conta na ferramenta escolhida.
@@ -1358,7 +1364,7 @@ export function ProvidersPanel() {
                 Nenhuma CLI com login de assinatura nesta lista.
                 {showAbsent
                   ? ''
-                  : ' Ative “Mostrar ausentes” para ver as instaláveis.'}
+                  : ' Ative “Mostrar ferramentas não instaladas” para ver as instaláveis.'}
               </p>
             )}
           </div>

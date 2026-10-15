@@ -114,10 +114,10 @@ describe('AccountsManager', () => {
 
     expect(host.textContent).toContain('Sessão nativa de claude');
     expect(host.textContent).toContain('conectado');
-    expect(host.textContent).toContain('API key');
+    expect(host.textContent).toContain('Adicionar chave de API');
     expect(host.textContent).toMatch(/adicionar conta/i);
     expect(host.textContent).toContain('Salvar esta conta');
-    expect(host.textContent).not.toMatch(/abrir login da CLI/i);
+    expect(host.textContent).not.toMatch(/conectar minha conta/i);
     expect(host.textContent).not.toMatch(/1 ·/i);
     act(() => root.unmount());
   });
@@ -241,7 +241,7 @@ describe('AccountsManager', () => {
     });
 
     expect(host.textContent).toContain('precisa login');
-    expect(host.textContent).toMatch(/abrir login da CLI/i);
+    expect(host.textContent).toMatch(/conectar minha conta/i);
     expect(host.textContent).toContain('O app Claude no Dock não conta');
     expect(host.textContent).not.toMatch(/salvar conta logada/i);
     expect(host.textContent).not.toMatch(/entrar com nova conta/i);
@@ -291,7 +291,7 @@ describe('AccountsManager', () => {
     expect(host.textContent).toContain('Pessoal');
     expect(host.textContent).not.toContain('Em uso');
     expect(host.textContent).not.toContain('próximo terminal');
-    expect(host.textContent).toMatch(/abrir login da CLI/i);
+    expect(host.textContent).toMatch(/conectar minha conta/i);
     act(() => root.unmount());
   });
 
