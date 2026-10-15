@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.76.276 — Linux em dia com a clareza
+
+As tags 0.76.273 e 0.76.275 não recebem pacotes Linux. Esta versão leva o produto delas, empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). A 0.76.275 é a candidata do Mac. O isolamento do Keychain no smoke empacotado vale só no macOS.
+
+No desktop Linux, em relação à 0.76.272:
+
+- **Configuração rápida**. Caminhos diretos para conectar uma IA, ajustar aparência e texto, microfone, equipe, uso e diagnóstico. A busca entende termos como “entrar no Claude” e “aumentar letra”.
+- **Contas sem confusão**. A tela distingue ferramenta instalada, ativada e conectada. Conectar a conta fica em destaque; instalar várias ferramentas fica recolhido e não é apresentado como autenticação.
+- **Retomada à vista**. Missões na navegação, pendências antes do histórico e “Abrir para retomar” nos trabalhos parados. A retomada continua na autoridade do Main.
+- **Ações explicadas**. O menu Ações dos painéis explica cada operação, com nomes claros e rolagem em janela baixa. A preparação do agente mostra a identidade e avisa quando demora.
+- **Lata**. Maior, com estalo e espuma, e celebra XP real. As cenas são finitas e respeitam o modo sóbrio, a visibilidade e o movimento reduzido.
+- **Painel da missão**. “Nesta missão” aparece assim que o registro fica pronto, sem esperar outro evento.
+- **Missão parada continua parada**. Foco e sinais automáticos do terminal não contam como tecla sua e não religam um painel que o runtime encerrou.
+- **Coordenação**. O aviso ao coordenador espera a IA pronta e o aceite antes da próxima instrução.
+- **Leitura leve**. Abrir um painel solto lê só o trecho final do terminal.
+- **Primeiros passos**. O guia usa os nomes atuais de Configurações e não marca como pronta uma chave inválida nem uma conta que ainda pede login.
+- **Quadro**. O menu Mais não é cortado com o Quadro minimizado. Recusa de religação aponta nova tentativa no Quadro, sem prometer reinício local.
+
 ## 0.76.275 — Mais fácil de usar, painéis à vista
 
 - Inclui a configuração rápida, navegação de missões, ações explicadas e lata animada descritas na candidata 0.76.273 abaixo. A 0.76.273 foi validada como candidata local; o Mac público recebe este conjunto na 0.76.275.

@@ -10892,7 +10892,7 @@ export const RELEASE_076273: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076275: AppRelease = {
   ...RELEASE_076273,
   version: '0.76.275',
   codename: 'Mais fácil de usar, painéis à vista',
@@ -10904,5 +10904,28 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Leitura leve do histórico', detail: 'Abrir um painel solto consulta apenas o trecho final do terminal, sem serializar todo o histórico nem forçar a saída pendente.' },
     { title: 'Primeiros passos coerentes', detail: 'O guia usa os nomes atuais de Configurações e prioriza conectar sua conta. Chave inválida ou conta que exige novo login não conta como uma conexão pronta.' },
     ...RELEASE_076273.fixes,
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.276',
+  date: '2026-10-15',
+  codename: 'Linux em dia com a clareza',
+  summary: 'O app no Linux deixa a 0.76.272 e passa a incluir a configuração guiada, contas e ações mais claras, a retomada fácil de encontrar e a lata animada. As tags 0.76.273 e 0.76.275 não recebem pacotes Linux; a 0.76.275 é a candidata do Mac.',
+  highlights: [
+    { title: 'Configure pelo que você precisa', detail: 'A Configuração rápida leva direto a conectar uma IA, ajustar a leitura, configurar o microfone ou ver seus limites. A busca entende termos como “entrar no Claude” e “aumentar letra”.' },
+    { title: 'Suas contas de IA, sem confusão', detail: 'A tela distingue ferramentas instaladas, ativadas e conectadas. Conectar a conta fica em destaque; instalar ou atualizar várias ferramentas é uma opção separada.' },
+    { title: 'Retome sem procurar o botão', detail: 'Missões tem acesso direto na navegação. Pendências ficam acima do histórico e trabalhos dormindo mostram Abrir para retomar.' },
+    { title: 'Ações explicadas nos painéis', detail: 'O menu Ações explica cada operação e mantém a leitura em janelas pequenas. Focar painel e Dividir à direita deixam claro o que cada controle faz.' },
+    { title: 'Energia com movimento', detail: 'A lata ganhou presença, estalo e espuma na abertura e celebra o XP recebido. As cenas respeitam o modo sóbrio, a visibilidade e a preferência por movimento reduzido.' },
+  ],
+  fixes: [
+    { title: 'Início da coordenação', detail: 'Ao criar uma missão a partir de um painel, o aviso ao coordenador aguarda a preparação da IA e a confirmação de recebimento antes de liberar a próxima instrução.' },
+    { title: 'Novo painel na missão', detail: 'O painel aberto em Nesta missão é apresentado assim que o registro fica pronto, sem depender de outro evento da missão para aparecer.' },
+    { title: 'Missão parada continua parada', detail: 'Sinais automáticos de foco e do terminal não são tratados como uma tecla sua. Voltar à tela não religa sozinho o painel encerrado pelo runtime.' },
+    { title: 'Leitura leve do histórico', detail: 'Abrir um painel solto consulta apenas o trecho final do terminal, sem serializar todo o histórico nem forçar a saída pendente.' },
+    { title: 'Primeiros passos coerentes', detail: 'O guia usa os nomes atuais de Configurações e prioriza conectar sua conta. Chave inválida ou conta que exige novo login não conta como uma conexão pronta.' },
+    { title: 'Menu Mais sem corte', detail: 'As ações continuam acessíveis com o Quadro minimizado e em largura compacta. Recusa de religação pede nova tentativa no Quadro.' },
+    { title: 'Atualização do Linux', detail: 'As tags 0.76.273 e 0.76.275 não recebem pacotes Linux. A 0.76.275 é a candidata do Mac. O Linux sai na 0.76.276.' },
   ],
 };
