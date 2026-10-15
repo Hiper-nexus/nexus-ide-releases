@@ -433,6 +433,31 @@ export interface ReservationReconcileDeps {
   timestamp(): number;
 }
 
+function isInside(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return (
+    relative === "" ||
+    (relative !== ".." &&
+      !relative.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(relative))
+  );
+}
+
+/** Diretório real (não link) dentro de `parent`, 0700; devolve o caminho real. */
+export function ensureDirectory(directory: string, parent?: string): string {
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const stat = fs.lstatSync(directory);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new Error(`runtime path is not a real directory: ${directory}`);
+  }
+  const real = fs.realpathSync(directory);
+  if (parent && !isInside(parent, real)) {
+    throw new Error(`runtime path escapes its parent: ${directory}`);
+  }
+  fs.chmodSync(real, 0o700);
+  return real;
+}
+
 /**
  * A1: a adoção do pool grava a intenção `reserved` (identidade derivada) antes
  * do `branch -m`; um crash entre o rename e o `worktree move` deixa a branch
@@ -444,6 +469,12 @@ function convergeInterruptedPoolAdoption(
   record: WorktreeRecord,
 ): void {
   if (record.ownerKind !== "pane" || fs.existsSync(record.worktreePath)) return;
+  const roots = [deps.worktreesRoot, deps.legacyWorktreesRoot]
+    .filter((root): root is string => root !== undefined);
+  const managedRoot = roots.find((root) => isPathInsideOrEqual(root, record.worktreePath));
+  if (!managedRoot) return;
+  // Mesma cerca do snapshot antes de qualquer Git: config local insegura não roda.
+  assertSafeLocalGitConfig(deps.git, record.rootRealPath);
   const listed = deps.git.run(record.rootRealPath, ["worktree", "list", "--porcelain"], {
     allowFailure: true,
   });
@@ -452,14 +483,20 @@ function convergeInterruptedPoolAdoption(
     .find((lines) => lines.includes(`branch ${record.branchRef}`))
     ?.find((line) => line.startsWith("worktree "))?.slice("worktree ".length);
   const real = holder && fs.existsSync(holder) ? fs.realpathSync(holder) : "";
-  const poolRoots = [deps.worktreesRoot, deps.legacyWorktreesRoot]
-    .filter((root): root is string => root !== undefined)
-    .map((root) => path.join(root, POOL_WORKTREES_SUBDIR));
+  const poolRoots = roots.map((root) => path.join(root, POOL_WORKTREES_SUBDIR));
   if (!real || !poolRoots.some((root) => isPathInsideOrEqual(root, real))) return;
-  fs.mkdirSync(path.dirname(record.worktreePath), { recursive: true, mode: 0o700 });
-  deps.git.run(record.rootRealPath, ["worktree", "move", real, record.worktreePath], {
+  ensureDirectory(path.dirname(record.worktreePath), managedRoot);
+  const moved = deps.git.run(record.rootRealPath, ["worktree", "move", real, record.worktreePath], {
     allowFailure: true,
   });
+  if (moved.status !== 0) {
+    console.warn("[worktree] adoção do pool interrompida: o move de boot falhou; a intenção falha fechada", {
+      status: moved.status,
+      from: real,
+      to: record.worktreePath,
+      stderr: moved.stderr.trim().slice(0, 500),
+    });
+  }
 }
 
 export function reconcileInterruptedReservation(
@@ -492,8 +529,10 @@ export function reconcileInterruptedReservation(
           "reserved worktree does not belong to the requested scope",
         );
       }
-      const repository = readRepositorySnapshot(deps.git, scope, current.ownerKind !== "pane");
+      // Antes do snapshot: ele lança com o checkout em HEAD destacado, e a
+      // worktree renomeada ficaria em pool/ sem nenhuma limpeza que a ache.
       convergeInterruptedPoolAdoption(deps, current);
+      const repository = readRepositorySnapshot(deps.git, scope, current.ownerKind !== "pane");
       if (
         repository.integrationRef !== current.integrationRef ||
         repository.headSha !== current.baseSha

@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
   AsyncProcessGitRunner,
@@ -273,15 +273,32 @@ describe('WorktreeManager pooled worktree adoption (A1)', () => {
     git(root, 'branch', '-D', existing.branchRef.slice('refs/heads/'.length));
 
     const { worktreePath: poolPath, branchRef: poolBranch } = await materializePooled('cas-conflict');
+    // Conta as mutações Git: recusa antes do Git ≠ rollback tardio.
+    const mutations: string[] = [];
+    const counting = new WorktreeManager({
+      runtimeRoot,
+      worktreesRoot,
+      stateStore,
+      asyncGitRunner: {
+        run(cwd, args, options) {
+          if ((args[0] === 'branch' && args[1] === '-m') || (args[0] === 'worktree' && args[1] === 'move')) {
+            mutations.push(args.join(' '));
+          }
+          return asyncGit.run(cwd, args, options);
+        },
+      },
+      now: () => 1_700_000_000_000,
+    });
 
     await expect(
-      manager.claimPooledPaneWriter(scope(), 'operator-hand', {
+      counting.claimPooledPaneWriter(scope(), 'operator-hand', {
         workerId: 'worker-1',
         worktreePath: poolPath,
         branchRef: poolBranch,
         baseSha: base,
       }),
     ).rejects.toBeInstanceOf(WorktreeStateConflictError);
+    expect(mutations).toEqual([]);
 
     // Rollback completo: nada de caminho nem branch derivados órfãos.
     expect(fs.existsSync(derived.worktreePath)).toBe(false);
@@ -353,13 +370,10 @@ describe('WorktreeManager pooled adoption crash recovery (A1)', () => {
   const isBranchRename = (args: readonly string[]) => args[0] === 'branch' && args[1] === '-m';
   const isWorktreeMove = (args: readonly string[]) => args[0] === 'worktree' && args[1] === 'move';
 
-  it.each([
-    ['depois do rename da branch, antes do move', isBranchRename],
-    ['depois do move, antes de gravar a adoção', isWorktreeMove],
-  ])('crash %s: o boot conclui a adoção na identidade derivada, sem órfã', async (_label, crashAfter) => {
+  /** Adoção que "morre" logo depois de `crashAfter`; devolve a pré-alocada e a base. */
+  async function crashAdoption(name: string, crashAfter: (args: readonly string[]) => boolean) {
     const base = headSha();
-    const pooled = await materializePooled('crash');
-    const derived = derivedIdentity('operator-hand', 'worker-1');
+    const pooled = await materializePooled(name);
     const { runner, crashed } = crashingGitRunner(crashAfter);
     const dying = new WorktreeManager({
       runtimeRoot,
@@ -375,6 +389,15 @@ describe('WorktreeManager pooled adoption crash recovery (A1)', () => {
       baseSha: base,
     }).catch(() => {});
     await crashed;
+    return { base, pooled };
+  }
+
+  it.each([
+    ['depois do rename da branch, antes do move', isBranchRename],
+    ['depois do move, antes de gravar a adoção', isWorktreeMove],
+  ])('crash %s: o boot conclui a adoção na identidade derivada, sem órfã', async (_label, crashAfter) => {
+    const { base } = await crashAdoption('crash', crashAfter);
+    const derived = derivedIdentity('operator-hand', 'worker-1');
 
     // Novo processo, mesmo estado durável: a reconciliação de boot.
     const rebooted = rebootManager();
@@ -431,5 +454,116 @@ describe('WorktreeManager pooled adoption crash recovery (A1)', () => {
     expect(git(pooled.worktreePath, 'symbolic-ref', '--quiet', 'HEAD')).toBe(pooled.branchRef);
     await rebooted.removePooledWorktree(scope(), pooled);
     expect(linkedWorktrees().size).toBe(0);
+  });
+
+  it('crash depois do rename com o checkout principal em HEAD destacado: o boot ainda leva a worktree à identidade derivada', async () => {
+    const { pooled } = await crashAdoption('crash-detached', isBranchRename);
+    const derived = derivedIdentity('operator-hand', 'worker-1');
+    git(root, 'checkout', '-q', '--detach');
+
+    const rebooted = rebootManager();
+    rebooted.reconcileInterruptedReservations(scope());
+
+    // A prova do checkout falha fechada (HEAD destacado), mas a worktree fica
+    // no caminho registrado: o GC de writers a encontra; nada órfão em pool/.
+    expect(rebooted.get(scope(), 'operator-hand', derived.taskId)?.status).toBe('failed');
+    expect(fs.existsSync(pooled.worktreePath)).toBe(false);
+    expect([...linkedWorktrees()]).toEqual([[derived.worktreePath, derived.branchRef]]);
+  });
+
+  it('o move de boot que falha fica registrado no log e a intenção falha fechada', async () => {
+    const { pooled } = await crashAdoption('crash-locked', isBranchRename);
+    const derived = derivedIdentity('operator-hand', 'worker-1');
+    git(root, 'worktree', 'lock', pooled.worktreePath);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const rebooted = rebootManager();
+      rebooted.reconcileInterruptedReservations(scope());
+
+      expect(rebooted.get(scope(), 'operator-hand', derived.taskId)?.status).toBe('failed');
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('adoção do pool interrompida'),
+        expect.objectContaining({ status: expect.any(Number) }),
+      );
+    } finally {
+      warn.mockRestore();
+      git(root, 'worktree', 'unlock', pooled.worktreePath);
+    }
+  });
+
+  it('convergência só move a worktree que está sob pool/: fora dela nada sai do lugar', async () => {
+    const { pooled } = await crashAdoption('crash-outside', isBranchRename);
+    const derived = derivedIdentity('operator-hand', 'worker-1');
+    const elsewhere = path.join(tempDir, 'elsewhere');
+    git(root, 'worktree', 'move', pooled.worktreePath, elsewhere);
+
+    const rebooted = rebootManager();
+    rebooted.reconcileInterruptedReservations(scope());
+
+    expect(rebooted.get(scope(), 'operator-hand', derived.taskId)?.status).toBe('failed');
+    expect(fs.existsSync(derived.worktreePath)).toBe(false);
+    expect(git(elsewhere, 'symbolic-ref', '--quiet', 'HEAD')).toBe(derived.branchRef);
+  });
+
+  /**
+   * Runner cujo passo roda de verdade e mesmo assim REJEITA (o prazo do runner
+   * assíncrono rejeita até com allowFailure). `stuck` recusa sem rodar.
+   */
+  function rejectingRunner(rejectAfterRunning: (args: readonly string[]) => boolean,
+    stuck: (args: readonly string[]) => boolean = () => false): AsyncGitRunner {
+    let rejected = false;
+    return {
+      async run(cwd, args, options) {
+        if (rejected && stuck(args)) throw new Error('Git process could not complete');
+        const result = await asyncGit.run(cwd, args, options);
+        if (!rejected && rejectAfterRunning(args)) {
+          rejected = true;
+          throw new Error('Git process could not complete');
+        }
+        return result;
+      },
+    };
+  }
+
+  it.each([
+    ['o rename', isBranchRename],
+    ['o move', isWorktreeMove],
+  ])('runner rejeita depois de %s ter rodado: desfaz e retira a intenção', async (_label, rejectAfter) => {
+    const base = headSha();
+    const pooled = await materializePooled('rejected');
+    const derived = derivedIdentity('operator-hand', 'worker-1');
+    const flaky = new WorktreeManager({
+      runtimeRoot, worktreesRoot, stateStore, asyncGitRunner: rejectingRunner(rejectAfter), now: () => 1_700_000_000_000,
+    });
+
+    await expect(flaky.claimPooledPaneWriter(scope(), 'operator-hand', {
+      workerId: 'worker-1', worktreePath: pooled.worktreePath, branchRef: pooled.branchRef, baseSha: base,
+    })).rejects.toThrow('Git process could not complete');
+
+    expect(manager.get(scope(), 'operator-hand', derived.taskId)).toBeNull();
+    expect([...linkedWorktrees()]).toEqual([[pooled.worktreePath, pooled.branchRef]]);
+  });
+
+  it('reversão incerta mantém a intenção para o boot, que a conclui', async () => {
+    const base = headSha();
+    const pooled = await materializePooled('rollback-stuck');
+    const derived = derivedIdentity('operator-hand', 'worker-1');
+    // O move roda e rejeita; toda limpeza seguinte de worktree trava.
+    const flaky = new WorktreeManager({
+      runtimeRoot, worktreesRoot, stateStore, now: () => 1_700_000_000_000,
+      asyncGitRunner: rejectingRunner(isWorktreeMove,
+        (args) => args[0] === 'worktree' || (args[0] === 'branch' && (args[1] === '-m' || args[1] === '-D'))),
+    });
+
+    await expect(flaky.claimPooledPaneWriter(scope(), 'operator-hand', {
+      workerId: 'worker-1', worktreePath: pooled.worktreePath, branchRef: pooled.branchRef, baseSha: base,
+    })).rejects.toThrow('Git process could not complete');
+
+    // A worktree ficou na identidade derivada: a intenção não pode sumir.
+    expect(manager.get(scope(), 'operator-hand', derived.taskId)?.status).toBe('reserved');
+    const rebooted = rebootManager();
+    rebooted.reconcileInterruptedReservations(scope());
+    expect(rebooted.get(scope(), 'operator-hand', derived.taskId)?.status).toBe('ready');
+    expect([...linkedWorktrees()]).toEqual([[derived.worktreePath, derived.branchRef]]);
   });
 });
