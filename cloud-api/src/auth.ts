@@ -17,6 +17,7 @@ import { licenseForAccount } from './licences.js';
 import { requireNativeAuth, requireWebAuth, requireCsrf } from './middleware.js';
 const STATE_TTL_MS = 10 * 60 * 1000;
 const CODE_TTL_MS = 60 * 1000;
+const REFRESH_LICENSE_BUDGET_MS = 2_000;
 const DESKTOP_CLIENTS: readonly DesktopClient[] = ['nexus', 'shot'];
 const APP_STATE = /^[A-Za-z0-9._~-]{1,128}$/;
 const CHALLENGE = /^[A-Za-z0-9_-]{43}$/;
@@ -36,6 +37,12 @@ export function setWebCookies(c: AuthContext, tokens: Tokens): void {
 export function clearWebCookies(c: AuthContext): void {
     for (const cookie of WEB_COOKIES)
         setCookie(c, cookie, '', { ...cookieOptions, maxAge: 0 });
+}
+/** `work`'s value, or undefined once `ms` pass first. */
+function settleWithin<T>(work: Promise<T>, ms: number): Promise<T | undefined> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<undefined>(resolve => { timer = setTimeout(() => resolve(undefined), ms); });
+    return Promise.race([work, late]).finally(() => clearTimeout(timer));
 }
 function providerOf(value: string): Provider {
     if (value !== 'google' && value !== 'github')
@@ -186,12 +193,13 @@ export function createAuthRoutes(fetchFn: typeof fetch = fetch): Hono<AppEnv> {
         if (!rotated)
             throw new HTTPException(401, { message: 'Sessão inválida. Entre novamente.' });
         const { session, refresh } = rotated.tokens;
-        // The old token is already consumed: losing this pair makes the client's retry look like reuse, which
-        // revokes every desktop app. Clients fetch /v1/license on their own, so an unsigned license only waits.
-        const licenca = await licenseForAccount(c.env.DB, rotated.accountId, c.get('config')).catch((error: unknown) => {
+        // The old token is already consumed: a client that times out waiting keeps it, and presenting it again
+        // past the retry window revokes its family. Clients fetch /v1/license on their own, so a failed or slow
+        // license only waits.
+        const licenca = await settleWithin(licenseForAccount(c.env.DB, rotated.accountId, c.get('config')).catch((error: unknown) => {
             console.error('nexus-cloud-api: licença do refresh falhou:', error instanceof Error ? error.message : 'unknown');
             return undefined;
-        });
+        }), REFRESH_LICENSE_BUDGET_MS);
         return c.json({ ok: true, data: { session, refresh, licenca } });
     });
     routes.post('/auth/logout', requireNativeAuth, async (c) => { await revokeAll(c.env.DB, c.get('session').account_id); return c.json({ ok: true }); });
