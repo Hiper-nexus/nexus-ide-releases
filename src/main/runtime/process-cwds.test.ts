@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { decodeLsofName, listProcessCwds, type ProcessCwdExec } from './process-cwds';
 
 const temps: string[] = [];
@@ -24,20 +24,29 @@ afterEach(() => {
 const posix = process.platform === 'darwin' || process.platform === 'linux';
 
 describe('F-908: cwd atual dos processos', () => {
+  /**
+   * Primeira PROVA da porta real. `null` é "sem prova" pelo contrato: sob
+   * carga, um processo do mesmo uid nasce entre o `ps` e o `lsof` e a amostra
+   * não vale. Re-amostra só nesse caso; a asserção é sobre a prova obtida.
+   */
+  const firstProof = (dir: string) => vi.waitFor(async () => {
+    const cwds = await listProcessCwds({ privateAncestors: [dir] });
+    if (cwds === null) throw new Error('sem prova nesta amostra (processo nascendo/saindo entre ps e lsof)');
+    return cwds;
+  }, { timeout: 45_000, interval: 50 });
+
   it.skipIf(!posix)('porta real enxerga o cwd de um processo vivo e esquece depois que ele sai', async () => {
     const dir = tmp();
     const child = spawn('sleep', ['30'], { cwd: dir, stdio: 'ignore' });
     try {
       await new Promise((resolve) => child.once('spawn', resolve));
-      expect(await listProcessCwds({ privateAncestors: [dir] })).toContain(dir);
+      expect(await firstProof(dir)).toContain(dir);
     } finally {
       child.kill('SIGKILL');
       await new Promise((resolve) => child.once('exit', resolve));
     }
-    const after = await listProcessCwds({ privateAncestors: [dir] });
-    expect(after).not.toBeNull();
-    expect(after).not.toContain(dir);
-  });
+    expect(await firstProof(dir)).not.toContain(dir);
+  }, 120_000);
 
   describe('darwin com ps/lsof falsos', () => {
     const fake = (ps: string, lsof: string, status: { ps?: number | null; lsof?: number | null } = {}) => {
