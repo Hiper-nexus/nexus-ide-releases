@@ -2,9 +2,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { __resetPathResolverForTests, resolveCliBinary, resolveSpawnBinary, warmCliBinaryVersions } from '../path-resolver';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
-  CliAutoUpdateQueue, CliUpdateLease, caskReceiptArtifactKinds, caskReceiptPath, cliVersionCheck,
+  CLI_SPAWN_PERMIT_TIMEOUT_MS, CliAutoUpdateQueue, CliSpawnPermitTimeoutError, CliUpdateLease, caskReceiptArtifactKinds, caskReceiptPath, cliVersionCheck,
   cliVersionCheckUpToDate, isSafeAutomaticCliRecipe, isVersionedCliInstall,
   selectAutomaticCliUpdateRecipe, shouldOfferAutoCliConsent,
 } from './cli-auto-update';
@@ -432,5 +432,46 @@ describe('F-1397: spawn durante atualização versionada não espera o lease', (
     heldPane();
     lease.release('claude');
     expect(lease.isSpawning('claude')).toBe(false);
+  });
+});
+
+describe('teto da espera do permit de spawn durante uma troca de binário no lugar', () => {
+  it('recusa com erro claro no teto, sem spawnar por cima nem deixar o spawn na fila', async () => {
+    vi.useFakeTimers();
+    try {
+      const lease = new CliUpdateLease();
+      expect(lease.acquire('codex')).toBe(true); // npm: troca o binário no lugar
+      let entered = false;
+      const permit = lease.acquireSpawnPermit('codex').then((release) => { entered = true; return release; });
+      const refused = expect(permit).rejects.toThrow(CliSpawnPermitTimeoutError);
+      await vi.advanceTimersByTimeAsync(CLI_SPAWN_PERMIT_TIMEOUT_MS - 1);
+      expect(entered).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await refused;
+      await expect(permit).rejects.toThrow(/codex.*atualizada.*tente de novo/su);
+      // A troca acaba depois: o spawn recusado não ganha permit atrasado.
+      lease.release('codex');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(entered).toBe(false);
+      expect(lease.isSpawning('codex')).toBe(false);
+      expect(lease.acquire('codex')).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('permit concedido antes do teto desarma o prazo', async () => {
+    vi.useFakeTimers();
+    try {
+      const lease = new CliUpdateLease();
+      expect(lease.acquire('codex')).toBe(true);
+      const permit = lease.acquireSpawnPermit('codex');
+      lease.release('codex');
+      const release = await permit;
+      expect(vi.getTimerCount()).toBe(0);
+      release();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
