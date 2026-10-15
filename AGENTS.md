@@ -266,6 +266,27 @@ saber isto antes de mexer:
 - `operator-profile-style.test.ts` trava hex literal, animação em loop,
   eyebrow em caixa-alta e opacidade em conquista travada no CSS do perfil.
 
+## Rail em lista plana, um grupo por projeto (15/10)
+
+- O rail é uma lista plana (DESIGN.md §16; guard em `workspace-rail-style.test.ts`):
+  projeto = cabeçalho de texto, missão = UMA linha com glifo de estado, agente =
+  linha aninhada. Não volte a cartão, borda em repouso, selo em caixa-alta,
+  listra lateral de acento nem hex no CSS do rail; o único movimento que repete
+  é o pulso `state-breathe` de "ao vivo", e só nas folhas.
+- "Em andamento" lista, ao mesmo tempo, todo projeto com trabalho vivo
+  (`projectRailWorkspaces`: o aberto + vizinhos com missão running/blocked/
+  recovering, relidos a cada 60 s por `hydrateCrossWorkspace`). O renderer só
+  tem os panes do projeto aberto: vizinho mostra missões, nunca contagem de
+  agentes; panes soltos de outro projeto não aparecem (vivem em `parkedHosts`,
+  dentro do `terminal-host.ts`, sem assinatura para o rail).
+- "Recentes" nasce recolhido, abre sozinho quando nada está em andamento acima e
+  a escolha da pessoa vive em `loadRecentWorkspacesOpen` (tri-state: `null` =
+  sem escolha). A seleção nunca some atrás do recolher.
+- A palavra do estado da missão só ganha linha própria quando ela pede algo da
+  pessoa (`missionNeedsWord`); nas demais o estado vive no glifo, no `aria-label`
+  e no `title`. Teste novo de estado de missão confere o `aria-label`, não o
+  `textContent`.
+
 ## Conventions
 
 - Co-located tests: `foo.ts` → `foo.test.ts` in the same directory.

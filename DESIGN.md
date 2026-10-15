@@ -237,14 +237,16 @@ já o desliga sozinho e compensa em opacidade.
 - Frota em linguagem clara: "2 trabalhando · 1 morto" (nunca "zzz"/"x").
 - **Quem trabalha agora** (rail, abas dos Terminais e cabeçalho da missão): a
   frase "N trabalhando agora" fica sempre à vista, nunca atrás de um recolher.
-  O agente `busy` leva o realce de acento (`--state-running`: fundo a 9% e marca
-  de 2px na borda), o glifo `status-busy` e a palavra "Trabalhando"; dois ou
-  mais ao mesmo tempo ganham a marca "em paralelo". Aguardando, dormindo,
-  encerrado e sem sessão ficam em tom secundário (`--text-dim`/`--text-faint`,
-  logo esmaecido), sempre com a palavra do estado. A ordem das linhas é a do
-  layout e não muda com o estado (linha que pula a cada busy↔idle é clique no
-  alvo errado); o pulso é só opacity (`state-breathe`) e para em
-  `prefers-reduced-motion`. A regra de "trabalhando" é uma só
+  O agente `busy` leva o nome em texto pleno e o glifo `status-busy` respirando
+  em acento (`--state-running`), sem fundo e sem faixa na borda (§16); a
+  palavra "Trabalhando" mora no resumo do bloco e no nome acessível; dois ou
+  mais ao mesmo tempo ganham a marca "em paralelo" (texto de acento, não selo).
+  Aguardando, dormindo, encerrado e sem sessão ficam em tom secundário
+  (`--text-dim`/`--text-faint`, logo esmaecido), sempre com a palavra do estado
+  na linha. A ordem das linhas é a do layout e não muda com o estado (linha
+  que pula a cada busy↔idle é clique no alvo errado); o pulso é só opacity
+  (`state-breathe`), mora nas folhas (chip dos Terminais, glifo da missão e do
+  agente) e para em `prefers-reduced-motion`. A regra de "trabalhando" é uma só
   (`src/renderer/lib/agent-roster.ts`, sobre `displayStates`): rail, abas e
   cabeçalho nunca contam diferente. Título OSC que é pasta de worktree, caminho
   ou id nunca aparece como tarefa.
@@ -309,9 +311,9 @@ Reproduzir composição, densidade e fluxo — nunca marca, logo, copy, sprites 
 outros assets do Overclock:
 
 - **Rail compacto e hierárquico.** Largura persistente de `250px` (faixa
-  permitida: 200–280px). Workspace/missão no padrão card Orca; agentes aparecem
-  aninhados apenas quando existem. Seleção usa fill sutil + borda de 1px; os
-  demais itens não ganham card próprio.
+  permitida: 200–280px). Agentes aparecem aninhados apenas quando existem. Desde
+  15/10 workspace e missão deixaram o padrão card Orca e são linhas de uma
+  lista plana, uma por item, sem card próprio (§16); a seleção é só fundo.
 - **Canvas é o protagonista.** Terminal, editor ou entrega ocupam o restante.
   Inspector é secundário: inline apenas quando canvas + inspector cabem;
   empilhado em 1100px. Painéis de contexto são sob demanda.
@@ -369,9 +371,10 @@ com um caminho direto entre elas.
 - **Uma entrada persistente.** `Novo pedido` aparece uma vez na rail. Início,
   abertura de projeto e demais destinos precedem o histórico rolável. Limpeza
   permanece recolhida junto às utilidades do projeto.
-- **Hierarquia legível.** Títulos dos trabalhos em 13px; estados em 12px, numa
-  linha própria. Não repetir o nome do projeto nem a branch em cada trabalho.
-  O cabeçalho identifica projeto/destino e agrupa utilidades à direita.
+- **Hierarquia legível.** Títulos dos trabalhos em 13px, numa linha só; o
+  estado vai no glifo e, quando o trabalho pede algo da pessoa, em 12px numa
+  linha própria (§16). Não repetir o nome do projeto nem a branch em cada
+  trabalho. O cabeçalho identifica projeto/destino e agrupa utilidades à direita.
 - **Espaço disponível governa layout.** A equipe responde à largura do canvas,
   não apenas à janela. Nomes e seletores não podem se sobrepor ao reduzir a
   janela ou abrir painéis. Alvos secundários de pelo menos 32px no desktop.
@@ -440,3 +443,51 @@ lista de papéis, cortando um cartão ao meio. Código: `TeamStep.tsx`,
   integrantes é `role="status"`, então adicionar, remover e presets são
   anunciados. O painel de Configurações técnicas é neutro: acento é estado, não
   tinta de painel.
+
+## 16. Rail em lista plana, um grupo por projeto
+
+Pedido do operador (15/10): o rail estava pesado (cartão do projeto, da missão e
+do agente, mais chips e bordas) e, com mais de um projeto vivo, virava uma pilha
+de cartões. A referência de organização é a lista densa e plana de um app de
+chat: ações no topo, grupos por projeto, uma linha por item. Código:
+`WorkspaceRail.tsx`, `RailAgentRoster.tsx` e `app-shell.css`; o guard é
+`workspace-rail-style.test.ts` (sem hex, sem caixa-alta, sem faixa lateral, só o
+pulso de "ao vivo" repete).
+
+- **Topo em linhas.** Marca e "Reportar bug" sem caixa, busca, "Novo pedido"
+  como a primeira linha da lista (o mais num círculo, peso 600; segue com ≥40px)
+  e os destinos numa coluna só (Início, Projeto, Terminais, Quadro, Memória).
+  Sem grade de duas colunas e sem fio entre as faixas; só o rodapé tem fio em
+  cima. O contador de panes dos Terminais é número solto; selo âmbar fica para
+  o que pede a pessoa.
+- **Em andamento é todo projeto com trabalho vivo, ao mesmo tempo.** O aberto
+  agora e cada vizinho com missão ativa (`projectRailWorkspaces`) têm
+  cabeçalho próprio, com as missões embaixo. O nome é texto de 12px/600 em
+  `--text-dim`; o aberto vai em `--text` com a palavra "atual" no degrau mais
+  baixo, sem selo nem faixa. Projetos se separam por respiro, nunca por moldura.
+  O caminho só ocupa a linha quando dois projetos têm o mesmo nome; nos demais
+  vai no tooltip e no nome acessível. A contagem de agentes só existe para o
+  projeto aberto (o renderer não tem os panes dos vizinhos).
+- **Recentes é o histórico e nasce recolhido.** Abre sozinho quando nada está
+  em andamento acima (senão o rail ficaria sem projeto para abrir); a escolha da
+  pessoa fica salva (`loadRecentWorkspacesOpen`) e a seleção nunca some atrás do
+  recolher.
+- **Missão é uma linha.** Glifo de estado (PixelIcon: a forma muda com o estado,
+  não só a cor), título em 13px com reticências e idade. A palavra do estado
+  ganha uma linha própria só quando a missão pede algo da pessoa (pronta para
+  iniciar, aguardando instrução, bloqueada, falha, entrega para revisar); nas
+  demais ela vive no nome acessível e no tooltip. Selecionada é fundo de acento
+  a 12%, sem borda. Remover aparece no hover/foco, em alvo de 32px.
+- **Agentes aninhados** recuam para o texto do título da missão: glifo de estado,
+  logo, nome e a palavra do estado (omitida em quem trabalha, que o resumo "N
+  trabalhando agora" já diz). A tarefa ocupa uma linha, duas em quem trabalha; a
+  CLI só aparece quando não há tarefa ou o logo é só a letra de reserva. Sem
+  fundo, sem faixa, sem borda.
+- **Movimento.** O pulso (opacity, `state-breathe`) mora nas folhas: chip dos
+  Terminais, glifo da missão e glifo do agente. O ponto do cabeçalho do projeto
+  e do resumo do bloco é marcador parado.
+- **Rodapé enxuto.** "Limpar projeto" é uma linha de texto sempre à vista (F-528;
+  o vermelho só acende no hover e a confirmação não mudou), seguida de "Precisa
+  de você", memória sob pressão, cotas e Perfil de Operador sem cartão.
+  Configurações, atalhos e o estado local dividem uma faixa de 32px. Título de
+  seção nunca em caixa-alta.

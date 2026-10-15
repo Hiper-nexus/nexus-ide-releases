@@ -564,8 +564,8 @@ describe('sinal de "trabalhando agora" (rail, abas e cabeçalho da missão)', ()
     '.workspace-rail__live-dot',
     '.workspace-rail__agent-dot--working',
     '.workspace-rail__agent-dot--starting',
-    // O ponto da missão já pulsava no rail: entrou na mesma regra.
-    '.workspace-rail__mission--running .workspace-rail__mission-dot',
+    // O glifo de estado da missão já pulsava no rail: entrou na mesma regra.
+    '.workspace-rail__mission--running .workspace-rail__mission-indicator',
     // Selo da aba e chip do cabeçalho dos Terminais da missão.
     '.workspace-tab__working-dot',
     '.terminal-workspace__live-dot',

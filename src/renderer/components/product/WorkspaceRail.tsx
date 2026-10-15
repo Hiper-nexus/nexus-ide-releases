@@ -54,7 +54,9 @@ import {
 } from './mission-branch-groups';
 import {
   loadCollapsedWorkspacePaths,
+  loadRecentWorkspacesOpen,
   saveCollapsedWorkspacePaths,
+  saveRecentWorkspacesOpen,
 } from '../../lib/mission-rail-prefs';
 import { useRailListMotion } from '../../lib/rail-list-motion';
 
@@ -242,6 +244,25 @@ function missionStatusDisplay(
     : { ...MISSION_STATUS[state], label };
 }
 
+/**
+ * A linha da missão é uma só e o estado vive no glifo (a forma muda, não só a
+ * cor), no nome acessível e no tooltip. A palavra ganha uma linha própria
+ * apenas quando a missão pede algo da pessoa — esperando o início ou uma
+ * instrução, bloqueada, falha, entrega para revisar —, o que não pode se perder
+ * no meio de uma lista densa.
+ */
+function missionNeedsWord(
+  tone: MissionStatusTone,
+  awaitsOperatorReview: boolean,
+): boolean {
+  return (
+    awaitsOperatorReview ||
+    tone === 'ready' ||
+    tone === 'blocked' ||
+    tone === 'failed'
+  );
+}
+
 interface WorkspaceGroupProps {
   currentWorkspaceId?: string;
   currentWorkspaceMissing?: boolean;
@@ -253,6 +274,18 @@ interface WorkspaceGroupProps {
    * conta o outro `web`, mesmo que ele esteja na outra seção.
    */
   pathLabels: ReadonlyMap<string, string>;
+  /**
+   * Projetos cujo nome se repete na lista (dois `web` de repositórios
+   * diferentes). Só estes mostram o caminho na própria linha; para os demais o
+   * caminho fica no tooltip e no nome acessível.
+   */
+  ambiguousIds: ReadonlySet<string>;
+  /**
+   * Só vale para "Recentes": se a seção abre quando a pessoa nunca escolheu.
+   * Abre quando nada está em andamento acima (o rail não pode ficar sem projeto
+   * para abrir); com trabalho vivo na tela, o histórico começa recolhido.
+   */
+  defaultOpen?: boolean;
   /**
    * Agentes do layout aberto por missão e soltos, já com o estado vivo. Só o
    * workspace corrente tem panes no renderer; os vizinhos seguem só com o
@@ -328,6 +361,8 @@ function WorkspaceGroup({
   group,
   workspaces,
   pathLabels,
+  ambiguousIds,
+  defaultOpen = true,
   fleets,
   adapterMeta,
   selection,
@@ -337,6 +372,7 @@ function WorkspaceGroup({
   onRemoveMission,
 }: WorkspaceGroupProps) {
   const labelId = `workspace-rail-${group}-label`;
+  const listId = useId();
   // O contador é de repositórios listados na seção, nos dois grupos: contar
   // missões em "Em andamento" fazia a pill dizer 1 com 2 projetos na tela.
   const groupCount = workspaces.length;
@@ -380,6 +416,21 @@ function WorkspaceGroup({
       prev[selectedMissionId] ? prev : { ...prev, [selectedMissionId]: true },
     );
   }, [selectedMissionId]);
+  // Recentes recolhem: o rail é a fila do agora e o histórico abre por escolha.
+  // Sem escolha salva vale `defaultOpen`. A seleção nunca some atrás do
+  // recolher (mesma regra do projeto recolhido, acima).
+  const collapsible = group === 'recent';
+  const [recentsChoice, setRecentsChoice] = useState<boolean | null>(() =>
+    collapsible ? loadRecentWorkspacesOpen() : null,
+  );
+  const selectionInGroup = workspaces.some((workspace) =>
+    selection?.kind === 'workspace'
+      ? selection.workspaceId === workspace.id
+      : selection?.kind === 'mission' &&
+        workspace.missions.some((mission) => mission.id === selection.missionId),
+  );
+  const groupOpen =
+    !collapsible || selectionInGroup || (recentsChoice ?? defaultOpen);
   // Tudo que muda ordem, conjunto ou altura das linhas: quando muda, as
   // listas medem e animam; renders de status/idade não mexem em nada.
   const railLayoutKey = useMemo(() => {
@@ -412,7 +463,7 @@ function WorkspaceGroup({
           .join(','),
       ].join(':');
     });
-    return `${selectedMissionId ?? ''}#${workspaceKeys.join('|')}`;
+    return `${selectedMissionId ?? ''}${groupOpen ? '' : '!'}#${workspaceKeys.join('|')}`;
   }, [
     fleets,
     workspaces,
@@ -421,6 +472,7 @@ function WorkspaceGroup({
     missionListLimits,
     expandedRosters,
     selectedMissionId,
+    groupOpen,
   ]);
 
   if (workspaces.length === 0) return null;
@@ -432,346 +484,396 @@ function WorkspaceGroup({
       aria-labelledby={labelId}
     >
       <div className="workspace-rail__group-header">
-        <span id={labelId} className="workspace-rail__group-title">
-          {label}
-        </span>
-        {groupCount > 0 ? (
-          <span className="workspace-rail__group-pill">{groupCount}</span>
-        ) : null}
+        {collapsible ? (
+          <button
+            type="button"
+            className="workspace-rail__group-toggle"
+            aria-expanded={groupOpen}
+            aria-controls={groupOpen ? listId : undefined}
+            aria-label={`${label}: ${groupCount} ${groupCount === 1 ? 'projeto' : 'projetos'}`}
+            onClick={() => {
+              const next = !groupOpen;
+              setRecentsChoice(next);
+              saveRecentWorkspacesOpen(next);
+            }}
+          >
+            <span
+              className={`workspace-rail__group-chevron${
+                groupOpen ? ' workspace-rail__group-chevron--open' : ''
+              }`}
+              aria-hidden="true"
+            >
+              <PixelIcon name="chevron-down" size={10} />
+            </span>
+            <span id={labelId} className="workspace-rail__group-title">
+              {label}
+            </span>
+            <span className="workspace-rail__group-pill">{groupCount}</span>
+          </button>
+        ) : (
+          <>
+            <span id={labelId} className="workspace-rail__group-title">
+              {label}
+            </span>
+            {groupCount > 0 ? (
+              <span className="workspace-rail__group-pill">{groupCount}</span>
+            ) : null}
+          </>
+        )}
       </div>
-      <RailMotionList
-        className="workspace-rail__workspace-list"
-        layoutKey={railLayoutKey}
-      >
-        {workspaces.map((workspace) => {
-          const workspaceSelected =
-            selection?.kind === 'workspace' &&
-            selection.workspaceId === workspace.id;
-          // A selecionada sempre aparece, mesmo além da página atual.
-          const selectedIndex =
-            selection?.kind === 'mission'
-              ? workspace.missions.findIndex(
-                  (mission) => mission.id === selection.missionId,
-                )
-              : -1;
-          const defaultMissionLimit = Math.max(
-            RAIL_MISSION_PAGE_SIZE,
-            selectedIndex + 1,
-          );
-          const missionLimit =
-            missionListLimits[workspace.id] ?? defaultMissionLimit;
-          const visibleMissions = workspace.missions.slice(0, missionLimit);
-          const hiddenMissionCount =
-            workspace.missions.length - visibleMissions.length;
-          const missionRows = flattenMissionBranchGroups(visibleMissions);
-          const isCollapsed =
-            collapsedWorkspaces.has(workspace.id) && selectedIndex < 0;
-          // "Onde estamos" é independente de seleção: selecionar a missão de
-          // outra pasta não pode apagar qual projeto está aberto agora.
-          const isCurrent = workspace.id === currentWorkspaceId;
-          const isMissing = isCurrent && currentWorkspaceMissing;
-          const currentNote = isMissing
-            ? 'Projeto aberto agora — a pasta não existe mais no disco'
-            : 'Projeto aberto agora';
-          const where = workspace.path ? ` em ${workspace.path}` : '';
-          // Só o projeto aberto tem panes no renderer: os vizinhos seguem só
-          // com o estado das missões e não inventam contagem de agentes.
-          const liveFleet = isCurrent ? fleets.all : emptyRosterFleet();
-          const liveNote =
-            liveFleet.workingCount > 0
-              ? workingNowLabel(liveFleet.workingCount)
-              : null;
-          const looseFleet = isCurrent ? fleets.loose : emptyRosterFleet();
-          const looseKey = looseRosterKey(workspace.id);
-          const looseOpen = rosterOpen(expandedRosters, looseKey, looseFleet);
-          // O recolher do projeto só existe com missões; sem elas não há botão
-          // para reabrir, então os agentes soltos não podem ficar presos nele.
-          const rostersHidden = isCollapsed && workspace.missions.length > 0;
+      {groupOpen ? (
+        <RailMotionList
+          id={listId}
+          className="workspace-rail__workspace-list"
+          layoutKey={railLayoutKey}
+        >
+          {workspaces.map((workspace) => {
+            const workspaceSelected =
+              selection?.kind === 'workspace' &&
+              selection.workspaceId === workspace.id;
+            // A selecionada sempre aparece, mesmo além da página atual.
+            const selectedIndex =
+              selection?.kind === 'mission'
+                ? workspace.missions.findIndex(
+                    (mission) => mission.id === selection.missionId,
+                  )
+                : -1;
+            const defaultMissionLimit = Math.max(
+              RAIL_MISSION_PAGE_SIZE,
+              selectedIndex + 1,
+            );
+            const missionLimit =
+              missionListLimits[workspace.id] ?? defaultMissionLimit;
+            const visibleMissions = workspace.missions.slice(0, missionLimit);
+            const hiddenMissionCount =
+              workspace.missions.length - visibleMissions.length;
+            const missionRows = flattenMissionBranchGroups(visibleMissions);
+            const isCollapsed =
+              collapsedWorkspaces.has(workspace.id) && selectedIndex < 0;
+            // "Onde estamos" é independente de seleção: selecionar a missão de
+            // outra pasta não pode apagar qual projeto está aberto agora.
+            const isCurrent = workspace.id === currentWorkspaceId;
+            const isMissing = isCurrent && currentWorkspaceMissing;
+            const currentNote = isMissing
+              ? 'Projeto aberto agora — a pasta não existe mais no disco'
+              : 'Projeto aberto agora';
+            const where = workspace.path ? ` em ${workspace.path}` : '';
+            // O caminho só ganha lugar na linha quando o nome sozinho não
+            // distingue duas pastas; nos demais fica no tooltip e no nome acessível.
+            const pathLabel = ambiguousIds.has(workspace.id)
+              ? (pathLabels.get(workspace.id) ?? workspace.path)
+              : undefined;
+            // Só o projeto aberto tem panes no renderer: os vizinhos seguem só
+            // com o estado das missões e não inventam contagem de agentes.
+            const liveFleet = isCurrent ? fleets.all : emptyRosterFleet();
+            const liveNote =
+              liveFleet.workingCount > 0
+                ? workingNowLabel(liveFleet.workingCount)
+                : null;
+            const looseFleet = isCurrent ? fleets.loose : emptyRosterFleet();
+            const looseKey = looseRosterKey(workspace.id);
+            const looseOpen = rosterOpen(expandedRosters, looseKey, looseFleet);
+            // O recolher do projeto só existe com missões; sem elas não há botão
+            // para reabrir, então os agentes soltos não podem ficar presos nele.
+            const rostersHidden = isCollapsed && workspace.missions.length > 0;
+            // Sem missões a linha do projeto é tudo o que há para dizer do que
+            // está aberto; com missões, elas mesmas (e o chip de Terminais) contam.
+            const openPanes = workspace.livePaneCount ?? 0;
+            const emptyActivity =
+              group === 'active' && workspace.missions.length === 0 && openPanes > 0;
 
-          return (
-            <li className="workspace-rail__workspace-item" key={workspace.id}>
-              <div className="workspace-rail__workspace-row-wrapper">
-                <button
-                  type="button"
-                  className={`workspace-rail__row workspace-rail__workspace${
-                    workspaceSelected ? ' workspace-rail__row--selected' : ''
-                  }${isCurrent ? ' workspace-rail__workspace--current' : ''}`}
-                  data-workspace-id={workspace.id}
-                  data-current={isCurrent || undefined}
-                  data-missing={isMissing || undefined}
-                  data-working={liveFleet.workingCount || undefined}
-                  aria-current={workspaceSelected ? 'page' : undefined}
-                  aria-label={
-                    (isCurrent
-                      ? `${currentNote}: ${workspace.name}${where}`
-                      : `Abrir workspace ${workspace.name}${where}`) +
-                    (liveNote ? `. ${liveNote}` : '')
-                  }
-                  title={[
-                    workspace.name,
-                    workspace.path,
-                    isCurrent ? currentNote : null,
-                    liveNote,
-                  ]
-                    .filter(Boolean)
-                    .join('\n')}
-                  onClick={() => onSelectWorkspace(workspace.id)}
-                >
-                  <span className="workspace-rail__workspace-icon" aria-hidden>
-                    <PixelIcon name="files" size={12} />
-                  </span>
-                  <span className="workspace-rail__workspace-copy">
-                    <span className="workspace-rail__workspace-title">
-                      <span className="workspace-rail__row-label">
-                        {workspace.name}
+            return (
+              <li className="workspace-rail__workspace-item" key={workspace.id}>
+                <div className="workspace-rail__workspace-row-wrapper">
+                  <button
+                    type="button"
+                    className={`workspace-rail__row workspace-rail__workspace${
+                      workspaceSelected ? ' workspace-rail__row--selected' : ''
+                    }${isCurrent ? ' workspace-rail__workspace--current' : ''}`}
+                    data-workspace-id={workspace.id}
+                    data-current={isCurrent || undefined}
+                    data-missing={isMissing || undefined}
+                    data-working={liveFleet.workingCount || undefined}
+                    aria-current={workspaceSelected ? 'page' : undefined}
+                    aria-label={
+                      (isCurrent
+                        ? `${currentNote}: ${workspace.name}${where}`
+                        : `Abrir workspace ${workspace.name}${where}`) +
+                      (liveNote ? `. ${liveNote}` : '')
+                    }
+                    title={[
+                      workspace.name,
+                      workspace.path,
+                      isCurrent ? currentNote : null,
+                      liveNote,
+                    ]
+                      .filter(Boolean)
+                      .join('\n')}
+                    onClick={() => onSelectWorkspace(workspace.id)}
+                  >
+                    {group === 'recent' ? (
+                      <span className="workspace-rail__workspace-icon" aria-hidden>
+                        <PixelIcon name="files" size={12} />
                       </span>
-                      {isCurrent ? (
-                        <span
-                          className={`workspace-rail__workspace-current${
-                            isMissing
-                              ? ' workspace-rail__workspace-current--missing'
-                              : ''
-                          }`}
-                        >
-                          {isMissing ? 'pasta sumiu' : 'atual'}
+                    ) : null}
+                    <span className="workspace-rail__workspace-copy">
+                      <span className="workspace-rail__workspace-title">
+                        <span className="workspace-rail__row-label">
+                          {workspace.name}
                         </span>
-                      ) : null}
-                    </span>
-                    {workspace.path ? (
-                      <span
-                        className="workspace-rail__workspace-path"
-                        title={workspace.path}
-                      >
-                        {pathLabels.get(workspace.id) ?? workspace.path}
-                      </span>
-                    ) : null}
-                    {group === 'active' &&
-                    (workspace.missions.length > 0 ||
-                      (workspace.livePaneCount ?? 0) > 0) ? (
-                      <span className="workspace-rail__workspace-activity">
-                        {workspace.missions.length > 0
-                          ? `${workspace.missions.length} ${workspace.missions.length === 1 ? 'missão' : 'missões'}`
-                          : 'sem missão'}
-                        {(workspace.livePaneCount ?? 0) > 0
-                          ? ` · ${workspace.livePaneCount} ${workspace.livePaneCount === 1 ? 'pane aberto' : 'panes abertos'}`
-                          : ''}
-                      </span>
-                    ) : null}
-                    {liveNote ? (
-                      <span className="workspace-rail__workspace-live">
-                        <span
-                          className="workspace-rail__live-dot"
-                          aria-hidden="true"
-                        />
-                        {liveNote}
-                        {liveFleet.parallel ? (
-                          <span className="workspace-rail__live-tag">
-                            em paralelo
+                        {isCurrent ? (
+                          <span
+                            className={`workspace-rail__workspace-current${
+                              isMissing
+                                ? ' workspace-rail__workspace-current--missing'
+                                : ''
+                            }`}
+                          >
+                            {isMissing ? 'pasta sumiu' : 'atual'}
+                          </span>
+                        ) : null}
+                        {pathLabel ? (
+                          <span
+                            className="workspace-rail__workspace-path"
+                            title={workspace.path}
+                          >
+                            {pathLabel}
                           </span>
                         ) : null}
                       </span>
-                    ) : null}
-                  </span>
-                </button>
-                {workspace.missions.length > 0 ? (
-                  <button
-                    type="button"
-                    className={`workspace-rail__workspace-toggle${
-                      isCollapsed ? ' workspace-rail__workspace-toggle--collapsed' : ''
-                    }`}
-                    data-action="toggle-workspace"
-                    data-workspace-id={workspace.id}
-                    aria-expanded={!isCollapsed}
-                    aria-label={
-                      isCollapsed
-                        ? `Mostrar as ${workspace.missions.length} missões de ${workspace.name}`
-                        : `Recolher as missões de ${workspace.name}`
-                    }
-                    title={isCollapsed ? 'Mostrar missões' : 'Recolher missões'}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      toggleWorkspaceCollapsed(workspace.id);
-                    }}
-                  >
-                    <PixelIcon name="chevron-down" size={10} />
-                    {isCollapsed ? (
-                      <span className="workspace-rail__workspace-count">
-                        {workspace.missions.length}
-                      </span>
-                    ) : null}
+                      {emptyActivity ? (
+                        <span className="workspace-rail__workspace-activity">
+                          sem missão · {openPanes}{' '}
+                          {openPanes === 1 ? 'pane aberto' : 'panes abertos'}
+                        </span>
+                      ) : null}
+                      {liveNote ? (
+                        <span className="workspace-rail__workspace-live">
+                          <span
+                            className="workspace-rail__live-dot"
+                            aria-hidden="true"
+                          />
+                          {liveNote}
+                          {liveFleet.parallel ? (
+                            <span className="workspace-rail__live-tag">
+                              em paralelo
+                            </span>
+                          ) : null}
+                        </span>
+                      ) : null}
+                    </span>
                   </button>
-                ) : null}
-                {onRemoveWorkspace ? (
-                  <button
-                    type="button"
-                    className="workspace-rail__workspace-action"
-                    data-action="remove-workspace"
-                    data-workspace-id={workspace.id}
-                    aria-label={
-                      workspace.id === currentWorkspaceId
-                        ? `Fechar o projeto ${workspace.name}`
-                        : `Remover workspace ${workspace.name} dos recentes`
-                    }
-                    title={
-                      workspace.id === currentWorkspaceId
-                        ? `Fechar este projeto (encerra as sessões abertas)`
-                        : `Remover ${workspace.name} dos recentes`
-                    }
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onRemoveWorkspace(workspace.id);
-                    }}
-                  >
-                    <PixelIcon name="trash" size={11} />
-                  </button>
-                ) : null}
-              </div>
-
-              {!rostersHidden && looseFleet.agents.length > 0 ? (
-                <div className="workspace-rail__loose-agents">
-                  <RailAgentRoster
-                    fleet={looseFleet}
-                    scopeLabel="nos terminais"
-                    heading="Terminais"
-                    expanded={looseOpen}
-                    onToggle={() => toggleRoster(looseKey, looseOpen)}
-                    onFocusAgent={focusLooseAgent}
-                    adapterMeta={adapterMeta}
-                  />
+                  {workspace.missions.length > 0 ? (
+                    <button
+                      type="button"
+                      className={`workspace-rail__workspace-toggle${
+                        isCollapsed
+                          ? ' workspace-rail__workspace-toggle--collapsed'
+                          : ''
+                      }`}
+                      data-action="toggle-workspace"
+                      data-workspace-id={workspace.id}
+                      aria-expanded={!isCollapsed}
+                      aria-label={
+                        isCollapsed
+                          ? `Mostrar as ${workspace.missions.length} missões de ${workspace.name}`
+                          : `Recolher as missões de ${workspace.name}`
+                      }
+                      title={isCollapsed ? 'Mostrar missões' : 'Recolher missões'}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        toggleWorkspaceCollapsed(workspace.id);
+                      }}
+                    >
+                      <PixelIcon name="chevron-down" size={10} />
+                      {isCollapsed ? (
+                        <span className="workspace-rail__workspace-count">
+                          {workspace.missions.length}
+                        </span>
+                      ) : null}
+                    </button>
+                  ) : null}
+                  {onRemoveWorkspace ? (
+                    <button
+                      type="button"
+                      className="workspace-rail__workspace-action"
+                      data-action="remove-workspace"
+                      data-workspace-id={workspace.id}
+                      aria-label={
+                        workspace.id === currentWorkspaceId
+                          ? `Fechar o projeto ${workspace.name}`
+                          : `Remover workspace ${workspace.name} dos recentes`
+                      }
+                      title={
+                        workspace.id === currentWorkspaceId
+                          ? `Fechar este projeto (encerra as sessões abertas)`
+                          : `Remover ${workspace.name} dos recentes`
+                      }
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onRemoveWorkspace(workspace.id);
+                      }}
+                    >
+                      <PixelIcon name="trash" size={11} />
+                    </button>
+                  ) : null}
                 </div>
-              ) : null}
 
-              {workspace.missions.length > 0 && !isCollapsed ? (
-                <RailMotionList
-                  className="workspace-rail__mission-list"
-                  aria-label={`Missões em ${workspace.name}`}
-                  layoutKey={railLayoutKey}
-                >
-                  {missionRows.map((row) => {
-                    if (row.kind === 'branch') {
-                      const statusLabel = worktreeStatusLabel(row.status);
+                {!rostersHidden && looseFleet.agents.length > 0 ? (
+                  <div className="workspace-rail__loose-agents">
+                    <RailAgentRoster
+                      fleet={looseFleet}
+                      scopeLabel="nos terminais"
+                      heading="Terminais"
+                      expanded={looseOpen}
+                      onToggle={() => toggleRoster(looseKey, looseOpen)}
+                      onFocusAgent={focusLooseAgent}
+                      adapterMeta={adapterMeta}
+                    />
+                  </div>
+                ) : null}
+
+                {workspace.missions.length > 0 && !isCollapsed ? (
+                  <RailMotionList
+                    className="workspace-rail__mission-list"
+                    aria-label={`Missões em ${workspace.name}`}
+                    layoutKey={railLayoutKey}
+                  >
+                    {missionRows.map((row) => {
+                      if (row.kind === 'branch') {
+                        const statusLabel = worktreeStatusLabel(row.status);
+                        return (
+                          <li
+                            key={`branch:${row.branch}`}
+                            className={`workspace-rail__branch workspace-rail__branch--${row.status}`}
+                            data-rail-branch={row.branch}
+                            aria-label={`Branch ${row.branch}${statusLabel ? ` (${statusLabel})` : ''}`}
+                            title={row.branch}
+                          >
+                            <span
+                              className="workspace-rail__branch-glyph"
+                              aria-hidden="true"
+                            >
+                              ⑂
+                            </span>
+                            <span className="workspace-rail__branch-name">
+                              {row.branch}
+                            </span>
+                            {statusLabel ? (
+                              <span className="workspace-rail__branch-status">
+                                {statusLabel}
+                              </span>
+                            ) : null}
+                          </li>
+                        );
+                      }
+                      const mission = row.mission;
+                      const status = missionStatusDisplay(
+                        mission.status,
+                        mission.needsAttention,
+                        mission.stateReason,
+                        mission.awaitsOperatorReview === true,
+                      );
+                      const missionSelected =
+                        selection?.kind === 'mission' &&
+                        selection.missionId === mission.id;
+                      // Uma linha por missão: a reticência é do CSS e o tooltip
+                      // guarda o título inteiro. O estado vai no glifo (a forma
+                      // muda, não só a cor), no nome acessível e no tooltip; a
+                      // palavra só ganha linha quando pede algo da pessoa.
+                      const chromeTitle = missionChromeTitle(mission.title, 96);
+                      const showStatusWord = missionNeedsWord(
+                        status.tone,
+                        mission.awaitsOperatorReview === true,
+                      );
+                      const missionFleet =
+                        fleets.byMission.get(mission.id) ?? emptyRosterFleet();
+                      const isExpanded = rosterOpen(
+                        expandedRosters,
+                        mission.id,
+                        missionFleet,
+                        missionSelected,
+                      );
+
                       return (
                         <li
-                          key={`branch:${row.branch}`}
-                          className={`workspace-rail__branch workspace-rail__branch--${row.status}`}
-                          data-rail-branch={row.branch}
-                          aria-label={`Branch ${row.branch}${statusLabel ? ` (${statusLabel})` : ''}`}
-                          title={row.branch}
+                          key={mission.id}
+                          className="workspace-rail__mission-card-item"
                         >
-                          <span className="workspace-rail__branch-glyph" aria-hidden="true">
-                            ⑂
-                          </span>
-                          <span className="workspace-rail__branch-name">{row.branch}</span>
-                          {statusLabel ? (
-                            <span className="workspace-rail__branch-status">{statusLabel}</span>
-                          ) : null}
-                        </li>
-                      );
-                    }
-                    const mission = row.mission;
-                    const status = missionStatusDisplay(
-                      mission.status,
-                      mission.needsAttention,
-                      mission.stateReason,
-                      mission.awaitsOperatorReview === true,
-                    );
-                    const missionSelected =
-                      selection?.kind === 'mission' &&
-                      selection.missionId === mission.id;
-                    // O rail mostra o titulo em ate 2 linhas: o corte de chrome (48) partia
-                    // o titulo no meio da palavra; o tooltip guarda o titulo inteiro.
-                    const chromeTitle = missionChromeTitle(mission.title, 96);
-                    const missionFleet =
-                      fleets.byMission.get(mission.id) ?? emptyRosterFleet();
-                    const isExpanded = rosterOpen(
-                      expandedRosters,
-                      mission.id,
-                      missionFleet,
-                      missionSelected,
-                    );
-
-                    return (
-                      <li key={mission.id} className="workspace-rail__mission-card-item">
-                        <div className="workspace-rail__mission-row">
-                          <button
-                            type="button"
-                            className={`workspace-rail__row workspace-rail__mission workspace-rail__mission--${status.tone}${
-                              missionSelected
-                                ? ' workspace-rail__row--selected'
-                                : ''
-                            }`}
-                            data-mission-id={mission.id}
-                            data-mission-state={mission.status}
-                            aria-current={missionSelected ? 'page' : undefined}
-                            aria-label={`${chromeTitle}. ${status.label}`}
-                            title={`${mission.title}: ${status.label}`}
-                            onClick={() =>
-                              onSelectMission(mission.id, workspace.id)
-                            }
-                          >
-                            <div className="workspace-rail__mission-card-top">
+                          <div className="workspace-rail__mission-row">
+                            <button
+                              type="button"
+                              className={`workspace-rail__row workspace-rail__mission workspace-rail__mission--${status.tone}${
+                                missionSelected
+                                  ? ' workspace-rail__row--selected'
+                                  : ''
+                              }`}
+                              data-mission-id={mission.id}
+                              data-mission-state={mission.status}
+                              aria-current={missionSelected ? 'page' : undefined}
+                              aria-label={`${chromeTitle}. ${status.label}`}
+                              title={`${mission.title}: ${status.label}`}
+                              onClick={() =>
+                                onSelectMission(mission.id, workspace.id)
+                              }
+                            >
                               <span
                                 className="workspace-rail__mission-indicator"
                                 aria-hidden="true"
                               >
-                                <span className="workspace-rail__mission-dot" />
-                                <PixelIcon name={status.icon} size={11} className="workspace-rail__mission-icon-fallback" />
+                                <PixelIcon name={status.icon} size={11} />
                               </span>
                               <span className="workspace-rail__row-label">
                                 {chromeTitle}
                               </span>
-                            </div>
-                            <span className="workspace-rail__mission-copy">
-                              <span className="workspace-rail__mission-meta-line">
+                              {mission.updatedAt ? (
+                                <span
+                                  className="workspace-rail__mission-age"
+                                  title={new Date(mission.updatedAt).toLocaleString()}
+                                >
+                                  {relativeAgeLabel(mission.updatedAt, Date.now())}
+                                </span>
+                              ) : null}
+                              {showStatusWord ? (
                                 <span className="workspace-rail__mission-status">
                                   {status.label}
                                 </span>
-                                {mission.updatedAt ? (
-                                  <span
-                                    className="workspace-rail__mission-age"
-                                    title={new Date(mission.updatedAt).toLocaleString()}
-                                  >
-                                    {relativeAgeLabel(mission.updatedAt, Date.now())}
-                                  </span>
-                                ) : null}
-                              </span>
-                            </span>
-                          </button>
-                          {onRemoveMission ? (
-                            <button
-                              type="button"
-                              className="workspace-rail__mission-remove"
-                              data-action="remove-mission"
-                              data-mission-id={mission.id}
-                              aria-label={`Remover missão ${mission.title}`}
-                              title={`Remover "${mission.title}" — apaga a missão e o histórico`}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                onRemoveMission(mission.id, workspace.id);
-                              }}
-                            >
-                              <PixelIcon name="trash" size={11} />
+                              ) : null}
                             </button>
-                          ) : null}
-                        </div>
+                            {onRemoveMission ? (
+                              <button
+                                type="button"
+                                className="workspace-rail__mission-remove"
+                                data-action="remove-mission"
+                                data-mission-id={mission.id}
+                                aria-label={`Remover missão ${mission.title}`}
+                                title={`Remover "${mission.title}" — apaga a missão e o histórico`}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  onRemoveMission(mission.id, workspace.id);
+                                }}
+                              >
+                                <PixelIcon name="trash" size={11} />
+                              </button>
+                            ) : null}
+                          </div>
 
-                        <RailAgentRoster
-                          fleet={missionFleet}
-                          scopeLabel="nesta missão"
-                          expanded={isExpanded}
-                          onToggle={() => toggleRoster(mission.id, isExpanded)}
-                          onFocusAgent={(paneId) =>
-                            focusMissionAgent(mission.id, paneId)
-                          }
-                          adapterMeta={adapterMeta}
-                        />
-                      </li>
-                    );
-                  })}
-                </RailMotionList>
-              ) : null}
-              {workspace.missions.length > 0 &&
-                hiddenMissionCount > 0 ? (
+                          <RailAgentRoster
+                            fleet={missionFleet}
+                            scopeLabel="nesta missão"
+                            expanded={isExpanded}
+                            onToggle={() => toggleRoster(mission.id, isExpanded)}
+                            onFocusAgent={(paneId) =>
+                              focusMissionAgent(mission.id, paneId)
+                            }
+                            adapterMeta={adapterMeta}
+                          />
+                        </li>
+                      );
+                    })}
+                  </RailMotionList>
+                ) : null}
+                {workspace.missions.length > 0 && hiddenMissionCount > 0 ? (
                   <button
                     type="button"
                     className="workspace-rail__missions-more"
@@ -780,8 +882,7 @@ function WorkspaceGroup({
                     onClick={() =>
                       setMissionListLimits((prev) => ({
                         ...prev,
-                        [workspace.id]:
-                          missionLimit + RAIL_MISSION_PAGE_SIZE,
+                        [workspace.id]: missionLimit + RAIL_MISSION_PAGE_SIZE,
                       }))
                     }
                   >
@@ -803,10 +904,11 @@ function WorkspaceGroup({
                     Mostrar menos
                   </button>
                 ) : null}
-            </li>
-          );
-        })}
-      </RailMotionList>
+              </li>
+            );
+          })}
+        </RailMotionList>
+      ) : null}
     </section>
   );
 }
@@ -856,8 +958,6 @@ export function WorkspaceRail({
   const taskBoardSelected = isSelected(selection, 'task-board');
   const memorySelected = isSelected(selection, 'memory');
   const settingsSelected = isSelected(selection, 'settings');
-  // Início e Projeto dividem a primeira linha da grade; sozinho, ocupa a linha.
-  const pairedStart = Boolean(onOpenLauncher && projectEnabled && onOpenProject);
 
   const layoutRoot = useLayoutStore((s) => s.root);
   const allPanes = useMemo(() => listPanes(layoutRoot), [layoutRoot]);
@@ -895,6 +995,18 @@ export function WorkspaceRail({
     () => workspacePathLabels([...activeWorkspaces, ...recentWorkspaces]),
     [activeWorkspaces, recentWorkspaces],
   );
+  // O caminho só ocupa a linha do projeto quando o nome não basta: dois `web`
+  // de repositórios diferentes, mesmo que estejam em seções distintas.
+  const ambiguousIds = useMemo(() => {
+    const byName = new Map<string, string[]>();
+    for (const workspace of [...activeWorkspaces, ...recentWorkspaces]) {
+      const key = workspace.name.trim().toLowerCase();
+      byName.set(key, [...(byName.get(key) ?? []), workspace.id]);
+    }
+    return new Set(
+      [...byName.values()].filter((ids) => ids.length > 1).flat(),
+    );
+  }, [activeWorkspaces, recentWorkspaces]);
 
   return (
     <nav className="workspace-rail__navigation" aria-label="Destinos do Nexus">
@@ -964,7 +1076,7 @@ export function WorkspaceRail({
 
       <ul className="workspace-rail__fixed" aria-label="Destinos fixos">
         {onOpenLauncher ? (
-          <li className={pairedStart ? undefined : 'workspace-rail__fixed-item--wide'}>
+          <li>
             <button
               type="button"
               className={`workspace-rail__row workspace-rail__fixed-row${
@@ -980,7 +1092,7 @@ export function WorkspaceRail({
           </li>
         ) : null}
         {projectEnabled && onOpenProject ? (
-          <li className={pairedStart ? undefined : 'workspace-rail__fixed-item--wide'}>
+          <li>
             <button
               type="button"
               className={`workspace-rail__row workspace-rail__fixed-row${
@@ -995,7 +1107,7 @@ export function WorkspaceRail({
             </button>
           </li>
         ) : null}
-        <li className="workspace-rail__fixed-item--wide">
+        <li>
           <div className="workspace-rail__fixed-row-wrap">
             <button
               type="button"
@@ -1029,7 +1141,9 @@ export function WorkspaceRail({
                 </span>
               ) : null}
               {totalPanes > 0 ? (
-                <span className="workspace-rail__row-count">{totalPanes}</span>
+                <span className="workspace-rail__row-count workspace-rail__row-count--quiet">
+                  {totalPanes}
+                </span>
               ) : null}
             </button>
             <button
@@ -1082,6 +1196,7 @@ export function WorkspaceRail({
           group="active"
           workspaces={activeWorkspaces}
           pathLabels={pathLabels}
+          ambiguousIds={ambiguousIds}
           fleets={fleets}
           adapterMeta={adapterMeta}
           selection={selection}
@@ -1097,6 +1212,8 @@ export function WorkspaceRail({
           group="recent"
           workspaces={recentWorkspaces}
           pathLabels={pathLabels}
+          ambiguousIds={ambiguousIds}
+          defaultOpen={activeWorkspaces.length === 0}
           fleets={fleets}
           adapterMeta={adapterMeta}
           selection={selection}

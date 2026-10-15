@@ -247,7 +247,12 @@
   display: contents;
 }
 
-/* Workspace rail */
+/* Workspace rail
+
+   Lista plana e densa (DESIGN.md §11 e §13): uma altura de linha, um grupo por
+   projeto com cabeçalho discreto, o estado no glifo (a forma muda, não só a
+   cor). Sem cartão, sem borda em repouso, sem caixa-alta. O acento marca só o
+   que está VIVO e o que está selecionado; o resto é hierarquia de texto. */
 
 .workspace-rail__navigation {
   display: grid;
@@ -278,7 +283,6 @@
   min-width: 0;
   min-height: var(--bar-height);
   padding: var(--space-2) var(--space-3);
-  border-bottom: 1px solid var(--border);
 }
 
 :root[data-platform='mac'] .workspace-rail__identity {
@@ -290,6 +294,7 @@
   -webkit-app-region: no-drag;
 }
 
+/* Reportar bug: porta sempre à vista, mas quieta — texto e glifo, sem caixa. */
 .workspace-rail__report {
   display: inline-flex;
   flex: 0 1 auto;
@@ -299,14 +304,16 @@
   padding: var(--space-1) var(--space-2);
   appearance: none;
   background: transparent;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm, 6px);
+  border: 0;
+  border-radius: var(--radius-md);
   font: inherit;
   font-size: var(--text-xs);
-  color: var(--text-dim);
+  color: var(--text-faint);
   white-space: nowrap;
   cursor: pointer;
-  transition: color 120ms ease, border-color 120ms ease, background-color 120ms ease;
+  transition:
+    color 120ms var(--ease-out-quart),
+    background-color 120ms var(--ease-out-quart);
   -webkit-app-region: no-drag;
 }
 
@@ -318,7 +325,6 @@
 .workspace-rail__report:hover {
   color: var(--text);
   background: var(--surface-hover);
-  border-color: var(--border-strong, var(--border));
 }
 
 .workspace-rail__report:focus-visible {
@@ -379,7 +385,7 @@
 }
 
 .workspace-rail__new:hover {
-  background: color-mix(in srgb, var(--text) 7%, transparent);
+  background: var(--surface-hover);
 }
 
 .workspace-rail__new:active {
@@ -387,7 +393,7 @@
 }
 
 .workspace-rail__search-wrap {
-  padding: var(--space-3) var(--space-3) var(--space-2);
+  padding: 0 var(--space-2) var(--space-2);
 }
 
 .workspace-rail__search-btn {
@@ -399,16 +405,19 @@
   padding: 0 var(--space-2);
   border-radius: var(--radius-md);
   border: 1px solid var(--border);
-  background: var(--surface-1);
+  background: transparent;
   color: var(--text-dim);
   font-size: var(--text-md);
   font-weight: 500;
   cursor: pointer;
-  transition: opacity 160ms var(--ease-out-quart);
+  transition:
+    background-color 160ms var(--ease-out-quart),
+    border-color 160ms var(--ease-out-quart),
+    color 160ms var(--ease-out-quart);
 }
 
 .workspace-rail__search-btn:hover {
-  background: var(--surface-2);
+  background: var(--surface-hover);
   border-color: var(--border-strong);
   color: var(--text);
 }
@@ -422,18 +431,17 @@
   text-align: left;
 }
 
+/* Atalho: texto mono quieto, não uma tecla desenhada. */
 .workspace-rail__search-kbd {
   display: inline-flex;
   align-items: center;
   flex-shrink: 0;
-  margin-right: 2px;
-  padding: 0 var(--space-1);
-  border-radius: var(--radius-xs);
-  border: 1px solid var(--border);
-  background: var(--surface-2);
-  font-size: var(--text-sm);
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: var(--text-xs);
   font-family: var(--font-mono);
-  color: var(--text-dim);
+  color: var(--text-faint);
 }
 
 .workspace-rail__scroll {
@@ -443,7 +451,7 @@
      ficava centralizado no meio do rail, com um vazio embaixo (print 28/09). */
   grid-row: 5;
   min-height: 0;
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-2);
   overflow-x: hidden;
   overflow-y: auto;
   scrollbar-gutter: stable;
@@ -455,7 +463,7 @@
   display: flex;
   align-items: stretch;
   gap: var(--space-1);
-  padding: 0 var(--space-3) var(--space-2);
+  padding: 0 var(--space-2) var(--space-1);
 }
 
 .workspace-rail__actions .workspace-rail__mission-cta {
@@ -464,7 +472,7 @@
   min-width: 0;
 }
 
-/* Abrir projeto: secundário ao lado do Novo pedido, mesma altura (40px). */
+/* Abrir projeto: ícone ao lado do Novo pedido, mesma altura (40px), sem caixa. */
 .workspace-rail__open-project {
   appearance: none;
   font: inherit;
@@ -473,20 +481,18 @@
   place-items: center;
   width: calc(var(--space-6) + var(--space-2));
   padding: 0;
-  border: 1px solid var(--border);
+  border: 0;
   border-radius: var(--radius-md);
-  background: var(--surface-overlay);
-  color: var(--text-dim);
+  background: transparent;
+  color: var(--text-faint);
   cursor: pointer;
   transition:
     background-color 120ms var(--ease-out-quart),
-    border-color 120ms var(--ease-out-quart),
     color 120ms var(--ease-out-quart);
 }
 
 .workspace-rail__open-project:hover {
   background: var(--surface-hover);
-  border-color: var(--border-strong);
   color: var(--text);
 }
 
@@ -495,7 +501,9 @@
   outline-offset: 2px;
 }
 
-/* One persistent creation action, outside the scrolling project history. */
+/* A entrada de criação é uma só, fora do histórico rolável. Linha como as
+   demais, só que maior e com o mais num círculo: o que a distingue é o glifo
+   e o peso, não uma caixa. */
 .workspace-rail__mission-cta {
   appearance: none;
   font: inherit;
@@ -506,18 +514,19 @@
   width: 100%;
   min-height: calc(var(--space-6) + var(--space-2));
   margin: 0;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border-strong);
+  padding: var(--space-1) var(--space-2);
+  border: 0;
   border-radius: var(--radius-md);
-  background: var(--surface-2);
+  background: transparent;
   color: var(--text);
   text-align: left;
-  transition: transform 120ms var(--ease-out-quart);
+  transition:
+    background-color 160ms var(--ease-out-quart),
+    transform 120ms var(--ease-out-quart);
 }
 
 .workspace-rail__mission-cta:hover {
-  border-color: var(--text-dim);
-  background: var(--surface-3);
+  background: var(--surface-hover);
 }
 
 .workspace-rail__mission-cta:active {
@@ -533,9 +542,11 @@
   display: grid;
   flex: 0 0 auto;
   place-items: center;
-  width: var(--space-4);
-  height: var(--space-4);
-  color: currentColor;
+  width: var(--space-5);
+  height: var(--space-5);
+  border-radius: var(--radius-round);
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+  color: var(--text);
 }
 
 .workspace-rail__mission-cta-copy {
@@ -555,53 +566,88 @@
   text-overflow: ellipsis;
 }
 
-.workspace-rail__mission-cta-sub {
-  color: var(--text-faint);
-  font-size: 10px;
-  line-height: 1.2;
-}
-
-.workspace-rail__mission-cta-plus {
-  display: grid;
-  flex: 0 0 auto;
-  place-items: center;
-  color: var(--text-faint);
-}
+/* ── Grupos e projetos ────────────────────────────────────────────────────
+   "Em andamento" lista, ao mesmo tempo, todo projeto com trabalho vivo: cada
+   um com o próprio cabeçalho e as próprias missões. "Recentes" é o histórico e
+   nasce recolhido. */
 
 .workspace-rail__group + .workspace-rail__group {
-  margin-top: var(--space-4);
+  margin-top: var(--space-3);
 }
 
 .workspace-rail__group-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 2px var(--space-1) 4px;
-  margin-bottom: 2px;
+  gap: var(--space-1-5);
+  min-height: var(--space-5);
+  padding: 0 var(--space-2);
+  margin-bottom: var(--space-1);
 }
 
+/* Rótulo da seção: o degrau mais baixo da hierarquia, só texto. */
 .workspace-rail__group-title {
   display: block;
-  color: var(--text-dim);
-  font-size: var(--text-sm);
-  font-weight: 600;
-  text-transform: none;
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+  font-weight: 500;
   line-height: 1.4;
 }
 
+/* A contagem é um número, não um selo. */
 .workspace-rail__group-pill {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: var(--space-4);
-  height: var(--space-4);
-  padding: 0 var(--space-1);
-  border-radius: var(--radius-round);
-  background: var(--surface-2);
-  color: var(--text-dim);
-  font-size: var(--text-sm);
-  font-weight: 600;
+  color: var(--text-faint);
   font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Recentes: o cabeçalho é o botão de recolher, na largura da linha. */
+.workspace-rail__group-header:has(.workspace-rail__group-toggle) {
+  padding: 0;
+}
+
+.workspace-rail__group-toggle {
+  appearance: none;
+  font: inherit;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  width: 100%;
+  min-height: var(--space-5);
+  margin: 0;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  transition: background-color 160ms var(--ease-out-quart);
+}
+
+.workspace-rail__group-toggle:hover {
+  background: var(--surface-hover);
+}
+
+.workspace-rail__group-toggle:hover .workspace-rail__group-title {
+  color: var(--text-dim);
+}
+
+.workspace-rail__group-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.workspace-rail__group-chevron {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  transform: rotate(-90deg);
+  transition: transform 160ms var(--ease-out-quart);
+}
+
+.workspace-rail__group-chevron--open {
+  transform: none;
 }
 
 .workspace-rail__workspace-list,
@@ -619,8 +665,14 @@
   position: relative;
 }
 
+/* Projetos em andamento se separam por respiro, não por moldura. */
 .workspace-rail__workspace-item + .workspace-rail__workspace-item {
-  margin-top: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+/* Recentes são linhas de uma lista, coladas como qualquer outra. */
+[data-rail-group='recent'] .workspace-rail__workspace-item + .workspace-rail__workspace-item {
+  margin-top: 1px;
 }
 
 .workspace-rail__workspace-row-wrapper {
@@ -633,29 +685,44 @@
 .workspace-rail__workspace-row-wrapper .workspace-rail__workspace {
   flex: 1 1 auto;
   min-width: 0;
+}
+
+/* Espaço reservado, só na linha do nome, para as ações que aparecem no hover
+   (recolher e fechar): o nome nunca corre por baixo delas, e a linha de baixo
+   ("N trabalhando agora · em paralelo") segue com a largura inteira. */
+.workspace-rail__workspace-row-wrapper .workspace-rail__workspace-title {
   padding-right: var(--space-6);
+}
+
+.workspace-rail__workspace-row-wrapper:has(.workspace-rail__workspace-toggle)
+  .workspace-rail__workspace-title {
+  padding-right: calc(var(--space-6) * 2 + var(--space-2));
 }
 
 /* Árvore de spaces: recolher/mostrar as missões de um projeto. Aparece no
    hover como as demais ações da linha; recolhido, fica visível com a contagem
    — senão a pessoa não sabe que há missões escondidas ali. */
 .workspace-rail__workspace-toggle {
+  position: absolute;
+  right: var(--space-6);
+  top: var(--space-4);
+  transform: translateY(-50%);
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
   min-width: var(--space-6);
   height: var(--space-6);
   padding: 0 var(--space-1);
-  border: 1px solid transparent;
+  border: 0;
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-faint);
   cursor: pointer;
   opacity: 0;
-  flex-shrink: 0;
   transition:
     opacity 160ms var(--ease-out-quart),
-    transform 160ms var(--ease-out-quart);
+    background-color 160ms var(--ease-out-quart),
+    color 160ms var(--ease-out-quart);
 }
 
 .workspace-rail__workspace-row-wrapper:hover .workspace-rail__workspace-toggle,
@@ -670,7 +737,12 @@
 
 .workspace-rail__workspace-toggle:hover {
   color: var(--text);
-  background: color-mix(in srgb, var(--text) 6%, transparent);
+  background: var(--surface-hover);
+}
+
+.workspace-rail__workspace-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .workspace-rail__workspace-count {
@@ -680,15 +752,15 @@
   color: var(--text-dim);
 }
 
-/* Branch como nó da árvore (herdr/Sidecar): mono, discreta, indentada. */
+/* Branch como nó da árvore (herdr/Sidecar): mono, discreta. */
 .workspace-rail__branch {
   display: flex;
   align-items: center;
   gap: var(--space-1-5);
-  min-height: 24px;
-  margin: var(--space-1) 0 2px;
-  padding: 0 var(--space-2) 0 var(--space-2-5);
-  color: var(--text-dim);
+  min-height: var(--space-5);
+  margin: var(--space-1) 0 0;
+  padding: 0 var(--space-2);
+  color: var(--text-faint);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   min-width: 0;
@@ -714,31 +786,31 @@
 }
 
 .workspace-rail__branch--queued .workspace-rail__branch-status {
-  color: var(--warn);
+  color: var(--status-warning);
 }
 
 .workspace-rail__branch--failed .workspace-rail__branch-status,
 .workspace-rail__branch--abandoned .workspace-rail__branch-status {
-  color: var(--danger);
+  color: var(--status-danger);
 }
 
 .workspace-rail__branch--integrated .workspace-rail__branch-status {
-  color: var(--ok);
+  color: var(--status-success);
 }
 
 .workspace-rail__workspace-action {
   position: absolute;
-  right: var(--space-1);
-  top: 50%;
+  right: 0;
+  top: var(--space-4);
   transform: translateY(-50%);
   display: flex;
   align-items: center;
   justify-content: center;
-  width: var(--space-5);
-  height: var(--space-5);
+  width: var(--space-6);
+  height: var(--space-6);
   padding: 0;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-faint);
   cursor: pointer;
@@ -758,8 +830,8 @@
 }
 
 .workspace-rail__workspace-action:hover {
-  background: color-mix(in srgb, var(--danger, #ff6b4a) 15%, transparent);
-  color: var(--danger, #ff6b4a);
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
+  color: var(--danger);
 }
 
 .workspace-rail__workspace-action:active {
@@ -767,17 +839,18 @@
 }
 
 .workspace-rail__workspace-action:focus-visible {
-  outline: 1px solid var(--accent);
-  outline-offset: -1px;
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
+/* Linha base: transparente em repouso; o hover só acende o fundo. */
 .workspace-rail__row {
   display: flex;
   align-items: center;
   width: 100%;
   min-width: 0;
-  min-height: calc(var(--space-6) + var(--space-2));
-  padding: var(--space-2);
+  min-height: var(--space-6);
+  padding: var(--space-1) var(--space-2);
   border: 0;
   border-radius: var(--radius-md);
   background: transparent;
@@ -791,7 +864,7 @@
 }
 
 .workspace-rail__row:hover {
-  background: color-mix(in srgb, var(--text) 6%, transparent);
+  background: var(--surface-hover);
   color: var(--text);
 }
 
@@ -803,31 +876,34 @@
   outline-offset: calc(-1 * var(--radius-xs));
 }
 
+/* Selecionado: o toque de acento da superfície (DESIGN.md §5), só no fundo. */
 .workspace-rail__row--selected {
-  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border-strong));
-  background: color-mix(in srgb, var(--accent) 10%, var(--bg-bar));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
   color: var(--text);
 }
 
-/* Paginação do Quadro: botão fantasma — sem o reset de appearance o UA
-   pinta botão nativo claro com o texto claro herdado do rail. */
+.workspace-rail__row--selected:hover {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+/* Paginação das missões: texto quieto alinhado aos títulos, sem caixa. */
 .workspace-rail__missions-more {
   appearance: none;
   font: inherit;
   cursor: pointer;
   display: flex;
   align-items: center;
-  justify-content: center;
   width: 100%;
   min-height: var(--space-6);
-  margin-top: var(--space-1);
-  padding: var(--space-1) var(--space-2);
-  border: 1px solid var(--border-strong);
+  margin: 0;
+  padding: var(--space-1) var(--space-2) var(--space-1)
+    calc(var(--space-2) * 2 + var(--space-4));
+  border: 0;
   border-radius: var(--radius-md);
   background: transparent;
-  color: var(--text-dim);
+  color: var(--text-faint);
   font-size: var(--text-sm);
-  font-weight: 600;
+  font-weight: 500;
   white-space: nowrap;
   transition:
     background-color 160ms var(--ease-out-quart),
@@ -835,7 +911,7 @@
 }
 
 .workspace-rail__missions-more:hover {
-  background: color-mix(in srgb, var(--text) 7%, transparent);
+  background: var(--surface-hover);
   color: var(--text);
 }
 
@@ -844,14 +920,25 @@
 }
 
 .workspace-rail__missions-more:focus-visible {
-  outline: 1px solid var(--accent);
-  outline-offset: 1px;
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
+/* Cabeçalho do projeto: o nome é o título do grupo, em texto pequeno e firme;
+   missões e agentes embaixo é que são o conteúdo. */
 .workspace-rail__workspace {
   gap: var(--space-2);
   align-items: center;
   font-weight: 600;
+}
+
+[data-rail-group='active'] .workspace-rail__workspace {
+  font-size: var(--text-sm);
+}
+
+/* Recentes são itens, não títulos: mesmo corpo das missões. */
+[data-rail-group='recent'] .workspace-rail__workspace {
+  font-weight: 500;
 }
 
 .workspace-rail__workspace-copy {
@@ -863,63 +950,47 @@
 .workspace-rail__workspace-title {
   display: flex;
   min-width: 0;
-  align-items: center;
+  align-items: baseline;
   gap: var(--space-1-5);
 }
 
-/* O nome nunca some atrás do selo: ele cede primeiro com reticências. */
+/* O nome nunca some atrás do marcador: ele cede primeiro com reticências. */
 .workspace-rail__workspace-title .workspace-rail__row-label {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
 }
 
-/* Projeto aberto agora: inconfundível em qualquer grupo (Em andamento tem
-   vizinhos com missão; Recentes tem homônimos) e independente de seleção. A
-   borda de acento é sombra interna para não mexer no layout da linha. */
+/* Projeto aberto agora: o nome em texto pleno e a palavra "atual" no degrau
+   mais baixo. Independe de seleção e não ocupa uma coluna só dele. */
 .workspace-rail__workspace--current {
   color: var(--text);
-  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .workspace-rail__workspace--current .workspace-rail__workspace-icon {
-  color: var(--accent);
+  color: var(--text-dim);
 }
 
 .workspace-rail__workspace-current {
   flex: 0 0 auto;
-  flex-shrink: 0;
-  padding: 0 6px;
-  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
-  border-radius: var(--radius-round);
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-family: var(--font-mono);
-  font-size: var(--text-2xs);
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  line-height: 1.5;
-  text-transform: uppercase;
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+  font-weight: 400;
   white-space: nowrap;
 }
 
-/* A pasta sumiu do disco: o selo troca de cor e de texto, a borda idem. */
-.workspace-rail__workspace--current[data-missing='true'] {
-  box-shadow: inset 2px 0 0 var(--danger);
-}
-
-.workspace-rail__workspace--current[data-missing='true']
-  .workspace-rail__workspace-icon {
-  color: var(--danger);
+/* A pasta sumiu do disco: a palavra e o nome trocam de cor, sem faixa. */
+.workspace-rail__workspace--current[data-missing='true'] .workspace-rail__row-label {
+  color: var(--status-danger);
 }
 
 .workspace-rail__workspace-current--missing {
-  border-color: color-mix(in srgb, var(--danger) 60%, transparent);
-  background: var(--danger-soft);
-  color: var(--danger);
+  color: var(--status-danger);
+  font-weight: 500;
 }
 
-/* O texto já chega encurtado pelo fim (shortenWorkspacePath): o prefixo é
-   comum a todas as pastas, a cauda é o que distingue duas chamadas `web`. */
+/* O caminho só aparece quando o nome sozinho não distingue duas pastas; o
+   texto já chega encurtado pelo fim (shortenWorkspacePath): a cauda é o que
+   distingue duas chamadas `web`. */
 .workspace-rail__workspace-path {
   min-width: 0;
   overflow: hidden;
@@ -964,13 +1035,24 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Total de panes nos Terminais: informação, não alerta — número solto. */
+.workspace-rail__row-count--quiet {
+  min-width: 0;
+  padding: 0;
+  background: none;
+  color: var(--text-faint);
+  font-weight: 500;
+}
+
+/* ── Missões: uma linha, estado no glifo ───────────────────────────────── */
+
 .workspace-rail__mission-list {
-  margin: 4px 0 6px 0;
-  padding: 0 0 0 var(--space-4);
+  margin: 0;
+  padding: 0;
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 1px;
 }
 
 .workspace-rail__mission-card-item {
@@ -982,15 +1064,10 @@
   width: 100%;
 }
 
-.workspace-rail__mission-row:has(.workspace-rail__mission-remove) .workspace-rail__mission {
-  padding-right: calc(var(--space-6) + var(--space-2));
-}
-
 .workspace-rail__mission-remove {
   position: absolute;
-  right: var(--space-1);
-  top: 50%;
-  transform: translateY(-50%);
+  right: 0;
+  top: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1003,14 +1080,20 @@
   color: var(--text-faint);
   cursor: pointer;
   /* Ação aparece no hover/foco sem mover o rótulo; em repouso a linha é só
-     identidade + estado. */
+     identidade + estado — e o botão invisível não intercepta o clique da
+     linha (remover é destrutivo). */
   opacity: 0;
-  transition: opacity 160ms var(--ease-out-quart);
+  pointer-events: none;
+  transition:
+    opacity 160ms var(--ease-out-quart),
+    background-color 160ms var(--ease-out-quart),
+    color 160ms var(--ease-out-quart);
 }
 
 .workspace-rail__mission-row:hover .workspace-rail__mission-remove,
 .workspace-rail__mission-row:focus-within .workspace-rail__mission-remove {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .workspace-rail__mission-remove:hover {
@@ -1024,224 +1107,76 @@
 }
 
 .workspace-rail__mission-remove:active {
-  transform: translateY(-50%) scale(0.96);
+  transform: scale(0.96);
 }
 
+/* Glifo | título | idade; a palavra do estado, quando existe, desce para a
+   segunda linha sob o título. */
 .workspace-rail__mission {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: var(--space-1);
-  width: 100%;
-  min-height: var(--space-7);
-  padding: var(--space-2) var(--space-2-5);
-  border-radius: var(--radius-md);
-  border: 1px solid transparent;
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
-  transition: transform 120ms var(--ease-out-quart);
+  display: grid;
+  grid-template-columns: var(--space-4) minmax(0, 1fr) auto;
+  column-gap: var(--space-2);
+  align-items: center;
+  align-content: center;
+  color: var(--text);
 }
 
-.workspace-rail__mission:hover {
-  background: var(--surface-2, #16151a);
-  border-color: var(--border-strong);
+/* Missão que não pede nada de ninguém recua um degrau. */
+.workspace-rail__mission--done,
+.workspace-rail__mission--pending {
+  color: var(--text-dim);
 }
 
+.workspace-rail__mission:hover,
 .workspace-rail__mission.workspace-rail__row--selected {
-  background: var(--surface-2);
-  border-color: var(--border-strong);
-}
-
-.workspace-rail__mission-card-top {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  width: 100%;
-  min-width: 0;
-}
-
-.workspace-rail__mission-indicator {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  width: 10px;
-  height: 10px;
-}
-
-.workspace-rail__mission-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: var(--radius-round, 50%);
-  flex-shrink: 0;
-  background: var(--text-faint);
-  box-shadow: 0 0 0 1.5px var(--surface-sidebar, #0b0a0d);
-  transition: background-color 140ms ease, box-shadow 140ms ease;
-}
-
-.workspace-rail__mission-icon-fallback {
-  display: none !important;
-}
-
-/* Paseo calibrated status dots (6pt, 90% chroma, WCAG 3:1 contrast floor) */
-.workspace-rail__mission--running .workspace-rail__mission-dot {
-  background: var(--status-dot-running, var(--accent));
-  box-shadow: 0 0 0 1.5px var(--surface-sidebar, #0b0a0d), 0 0 8px color-mix(in srgb, var(--status-dot-running, var(--accent)) 65%, transparent);
-  animation: state-breathe 1.8s ease-in-out infinite;
-}
-
-.workspace-rail__mission--ready .workspace-rail__mission-dot {
-  background: var(--status-dot-success, #35c264);
-  box-shadow: 0 0 0 1.5px var(--surface-sidebar, #0b0a0d);
-}
-
-.workspace-rail__mission--blocked .workspace-rail__mission-dot {
-  background: var(--status-dot-warning, #db932e);
-  box-shadow: 0 0 0 1.5px var(--surface-sidebar, #0b0a0d);
-}
-
-.workspace-rail__mission--failed .workspace-rail__mission-dot {
-  background: var(--status-dot-danger, #f7796d);
-  box-shadow: 0 0 0 1.5px var(--surface-sidebar, #0b0a0d);
-}
-
-.workspace-rail__mission--pending .workspace-rail__mission-dot {
-  background: var(--text-faint);
-  box-shadow: 0 0 0 1.5px var(--surface-sidebar, #0b0a0d);
-}
-
-.workspace-rail__mission--done .workspace-rail__mission-dot {
-  background: var(--status-dot-success, #35c264);
-  box-shadow: 0 0 0 1.5px var(--surface-sidebar, #0b0a0d);
-}
-
-/* Calibrated status text labels (serene chroma, non-fluorescent) */
-.workspace-rail__mission--running .workspace-rail__mission-indicator,
-.workspace-rail__mission--running .workspace-rail__mission-status {
-  color: var(--status-running, var(--state-running));
-}
-
-.workspace-rail__mission--ready .workspace-rail__mission-indicator,
-.workspace-rail__mission--ready .workspace-rail__mission-status {
-  color: var(--status-success, var(--state-ready));
-}
-
-.workspace-rail__mission--blocked .workspace-rail__mission-indicator,
-.workspace-rail__mission--blocked .workspace-rail__mission-status {
-  color: var(--status-warning, var(--state-blocked));
-}
-
-.workspace-rail__mission--failed .workspace-rail__mission-indicator,
-.workspace-rail__mission--failed .workspace-rail__mission-status {
-  color: var(--status-danger, var(--state-failed));
-}
-
-.workspace-rail__mission--pending .workspace-rail__mission-indicator,
-.workspace-rail__mission--pending .workspace-rail__mission-status {
-  color: var(--state-pending);
-}
-
-.workspace-rail__mission--done .workspace-rail__mission-indicator,
-.workspace-rail__mission--done .workspace-rail__mission-status {
-  color: var(--status-success, var(--state-done));
+  color: var(--text);
 }
 
 .workspace-rail__mission .workspace-rail__row-label {
   font-size: var(--text-md);
-  font-weight: 500;
-  color: var(--text);
+  font-weight: 400;
   line-height: 1.4;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  white-space: normal;
-  overflow-wrap: break-word;
+  color: inherit;
 }
 
-/* Nome do projeto é o título da hierarquia; caminho e andamento são apoio. */
-.workspace-rail__workspace .workspace-rail__row-label {
-  color: var(--text);
+/* O glifo do estado: o MESMO conjunto do chip da toolbar e dos agentes, de
+   formas diferentes (anel, círculo cheio, triângulo, cruz, visto), então o
+   estado nunca viaja só em cor. */
+.workspace-rail__mission-indicator {
+  display: inline-grid;
+  place-items: center;
+  width: var(--space-4);
+  height: var(--space-4);
+  color: var(--text-faint);
 }
 
-.workspace-rail__workspace-activity {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-dim);
-  font-size: var(--text-2xs);
-  font-weight: 500;
-  line-height: 1.35;
+.workspace-rail__mission--running .workspace-rail__mission-indicator {
+  color: var(--status-running, var(--state-running));
+  animation: state-breathe 1.8s ease-in-out infinite;
 }
 
-.workspace-rail__mission-copy {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  width: 100%;
+.workspace-rail__mission--ready .workspace-rail__mission-indicator {
+  color: var(--status-dot-success);
 }
 
-.workspace-rail__mission-meta-line {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  font-size: var(--text-sm);
-  color: var(--text-dim);
-  padding-left: var(--space-4);
-  min-width: 0;
-  overflow: hidden;
+.workspace-rail__mission--blocked .workspace-rail__mission-indicator {
+  color: var(--status-dot-warning);
 }
 
-.workspace-rail__mission-repo-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 1px 4px;
-  border-radius: 3px;
-  background: var(--surface-overlay);
-  border: 1px solid var(--border);
-  font-size: 9px;
-  font-weight: 600;
-  color: var(--text-dim);
-  max-width: 85px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex-shrink: 0;
+.workspace-rail__mission--failed .workspace-rail__mission-indicator {
+  color: var(--status-dot-danger);
 }
 
-.workspace-rail__mission-repo-mark {
-  width: 4px;
-  height: 4px;
-  border-radius: 1px;
-  background: var(--status-merged);
-  flex-shrink: 0;
+.workspace-rail__mission--pending .workspace-rail__mission-indicator {
+  color: var(--state-pending);
 }
 
-.workspace-rail__mission-repo-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workspace-rail__mission-branch {
-  font-family: var(--font-mono);
-  font-size: 9.5px;
-  color: var(--text-dim);
-  background: var(--surface-overlay);
-  padding: 0 3px;
-  border-radius: 2px;
-  max-width: 65px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex-shrink: 0;
+.workspace-rail__mission--done .workspace-rail__mission-indicator {
+  color: var(--status-dot-success);
 }
 
 /* Idade sem segundos (Sidecar): precisão que o dado não sustenta só faz a
-   linha piscar. */
+   linha piscar. Some no hover quando a linha oferece remover. */
 .workspace-rail__mission-age {
   margin-left: auto;
   flex: 0 0 auto;
@@ -1249,23 +1184,50 @@
   font-size: var(--text-2xs);
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  transition: opacity 160ms var(--ease-out-quart);
 }
 
+.workspace-rail__mission-row:has(.workspace-rail__mission-remove):hover
+  .workspace-rail__mission-age,
+.workspace-rail__mission-row:has(.workspace-rail__mission-remove):focus-within
+  .workspace-rail__mission-age {
+  opacity: 0;
+}
+
+/* A palavra só ganha linha quando a missão pede algo da pessoa. */
 .workspace-rail__mission-status {
-  font-size: var(--text-sm);
-  font-weight: 500;
-  color: var(--text-dim);
+  grid-column: 2 / -1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--text-dim);
+}
+
+.workspace-rail__mission--ready .workspace-rail__mission-status,
+.workspace-rail__mission--done .workspace-rail__mission-status {
+  color: var(--status-success);
+}
+
+.workspace-rail__mission--blocked .workspace-rail__mission-status {
+  color: var(--status-warning);
+}
+
+.workspace-rail__mission--failed .workspace-rail__mission-status {
+  color: var(--status-danger);
 }
 
 /* ── Quem está trabalhando agora ──────────────────────────────────────────
    O sinal vem primeiro: "N trabalhando agora" fica sempre na linha do bloco e
-   o agente que trabalha ganha o realce de acento (rosa = o que está VIVO).
-   Aguardando, dormindo e encerrado ficam em tom secundário. A ordem das linhas
-   não depende do estado — só cor, glifo e palavra mudam —, então nada pula sob
-   o mouse a cada busy↔idle. Pulso só em opacity (compositor), como o da missão. */
+   o agente que trabalha ganha o acento (rosa = o que está VIVO), sem fundo
+   nem faixa. Aguardando, dormindo e encerrado ficam em tom secundário. A
+   ordem das linhas não depende do estado — só cor, glifo e palavra mudam —,
+   então nada pula sob o mouse a cada busy↔idle. Pulso só em opacity
+   (compositor), como o da missão. */
 
 /* Ponto de "ao vivo": o mesmo respirar do pulso da missão. */
 .workspace-rail__live-dot {
@@ -1277,18 +1239,27 @@
   animation: state-breathe 1.6s ease-in-out infinite;
 }
 
-/* "em paralelo": dois ou mais trabalhando ao mesmo tempo. */
+/* "em paralelo": dois ou mais trabalhando ao mesmo tempo. Texto de acento
+   depois de um ponto médio, não um selo. */
 .workspace-rail__live-tag {
   flex: 0 0 auto;
-  padding: 0 var(--space-1-5);
-  border: 1px solid color-mix(in srgb, var(--state-running) 45%, transparent);
-  border-radius: var(--radius-round);
-  background: color-mix(in srgb, var(--state-running) 10%, transparent);
   color: var(--state-running);
-  font-size: var(--text-2xs);
-  font-weight: 600;
-  line-height: 16px;
+  font-size: var(--text-xs);
+  font-weight: 500;
   white-space: nowrap;
+}
+
+.workspace-rail__live-tag::before {
+  content: '·' / '';
+  margin-right: var(--space-1-5);
+}
+
+/* O pulso mora nas folhas (chip dos Terminais, glifo da missão e do agente).
+   No cabeçalho do projeto e no resumo do bloco o ponto é só marcador: três
+   níveis respirando ao mesmo tempo viram ruído, não sinal. */
+.workspace-rail__workspace-live .workspace-rail__live-dot,
+.workspace-rail__agents-live .workspace-rail__live-dot {
+  animation: none;
 }
 
 /* Linha "N trabalhando agora" sob o nome do projeto aberto. */
@@ -1300,7 +1271,19 @@
   min-width: 0;
   color: var(--state-running);
   font-size: var(--text-xs);
-  font-weight: 600;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+/* O que o projeto tem para dizer quando não há missão: só os panes abertos. */
+.workspace-rail__workspace-activity {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+  font-weight: 400;
   line-height: 1.35;
 }
 
@@ -1311,9 +1294,6 @@
   align-items: center;
   gap: var(--space-1);
   margin-left: auto;
-  padding: 0 var(--space-1-5);
-  border-radius: var(--radius-round);
-  background: color-mix(in srgb, var(--state-running) 14%, transparent);
   color: var(--state-running);
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
@@ -1323,7 +1303,7 @@
 }
 
 .workspace-rail__live-chip + .workspace-rail__row-count {
-  margin-left: var(--space-1-5);
+  margin-left: var(--space-2);
 }
 
 .workspace-rail__sr-only {
@@ -1338,22 +1318,10 @@
   border: 0;
 }
 
+/* O bloco recua para o texto do título da missão (aninhado, sem fio). */
 .workspace-rail__agents-block {
-  margin: 2px 0 var(--space-1) var(--space-4);
-  padding-left: var(--space-2);
-  border-left: 1px solid var(--border);
-}
-
-/* Com gente trabalhando o fio do bloco acende; em paralelo ele engrossa (a
-   largura extra sai do padding, então o conteúdo não anda). */
-.workspace-rail__agents-block[data-working] {
-  border-left-color: color-mix(in srgb, var(--state-running) 60%, var(--border));
-}
-
-.workspace-rail__agents-block[data-parallel] {
-  border-left-width: 2px;
-  padding-left: calc(var(--space-2) - 1px);
-  border-left-color: var(--state-running);
+  margin: 0 0 var(--space-1) calc(var(--space-2) + var(--space-4));
+  padding: 0;
 }
 
 .workspace-rail__agents-toggle {
@@ -1362,12 +1330,12 @@
   justify-content: space-between;
   gap: var(--space-1-5);
   width: 100%;
-  min-height: 24px;
-  padding: 2px var(--space-1);
+  min-height: var(--space-5);
+  padding: 0 var(--space-2);
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background: transparent;
-  color: var(--text-dim);
+  color: var(--text-faint);
   font: 500 var(--text-xs) / 1.35 var(--font-ui);
   text-align: left;
   cursor: pointer;
@@ -1377,7 +1345,7 @@
 }
 
 .workspace-rail__agents-toggle:hover {
-  background: color-mix(in srgb, var(--text) 6%, transparent);
+  background: var(--surface-hover);
   color: var(--text);
 }
 
@@ -1398,7 +1366,7 @@
 /* Título do bloco dos terminais soltos: ocupa a primeira linha do resumo. */
 .workspace-rail__agents-scope {
   flex: 1 0 100%;
-  color: var(--text);
+  color: var(--text-dim);
   font-weight: 600;
 }
 
@@ -1414,7 +1382,15 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  color: var(--text-dim);
+  color: var(--text-faint);
+}
+
+/* Com a lista aberta e gente trabalhando, o total só repetiria o que as
+   linhas já mostram; recolhido ele diz quantos ficaram escondidos. */
+.workspace-rail__agents-block[data-working]
+  .workspace-rail__agents-toggle[aria-expanded='true']
+  .workspace-rail__agents-total {
+  display: none;
 }
 
 .workspace-rail__agents-chevron {
@@ -1430,8 +1406,8 @@
 
 .workspace-rail__agents-list {
   display: grid;
-  gap: 2px;
-  margin: var(--space-1) 0 0;
+  gap: 1px;
+  margin: 0;
   padding: 0;
   list-style: none;
 }
@@ -1439,11 +1415,11 @@
 .workspace-rail__agent-btn {
   display: flex;
   align-items: flex-start;
-  gap: var(--space-2);
+  gap: var(--space-1-5);
   width: 100%;
-  padding: var(--space-1-5) var(--space-2);
+  padding: var(--space-1) var(--space-2);
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-dim);
   text-align: left;
@@ -1454,7 +1430,7 @@
 }
 
 .workspace-rail__agent-btn:hover {
-  background: color-mix(in srgb, var(--text) 6%, transparent);
+  background: var(--surface-hover);
   color: var(--text);
 }
 
@@ -1548,8 +1524,21 @@
   white-space: nowrap;
 }
 
-/* Tarefa: até duas linhas — o corte em uma só escondia justamente o que
-   distingue um agente do outro. */
+/* Com a tarefa na linha, o logo já diz qual ferramenta é (o modelo fica no
+   tooltip e no nome acessível): a linha da CLI só aparece quando ela é a única
+   coisa a dizer, ou quando o logo é só uma letra de reserva. */
+.workspace-rail__agent-copy:has(.workspace-rail__agent-task)
+  .workspace-rail__agent-adapter {
+  display: none;
+}
+
+.workspace-rail__agent-btn:has(.provider-logo__fallback)
+  .workspace-rail__agent-adapter {
+  display: block;
+}
+
+/* Tarefa: uma linha em quem espera, duas em quem trabalha — o corte em uma só
+   escondia justamente o que distingue um agente do outro. */
 .workspace-rail__agent-task {
   display: -webkit-box;
   overflow: hidden;
@@ -1558,28 +1547,24 @@
   line-height: 1.4;
   overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+}
+
+/* Quem trabalha agora: o nome em texto pleno (a tarefa fica um degrau abaixo,
+   senão disputa com ele), a palavra do estado já está no resumo ("N
+   trabalhando agora") e o glifo respira em acento. Sem fundo, sem faixa. */
+.workspace-rail__agent-item[data-agent-state='working'] .workspace-rail__agent-name {
+  color: var(--text);
+}
+
+.workspace-rail__agent-item[data-agent-state='working'] .workspace-rail__agent-task {
   -webkit-line-clamp: 2;
 }
 
-/* Quem trabalha agora: realce de acento com marca na borda e texto pleno. */
-.workspace-rail__agent-item[data-agent-state='working'] .workspace-rail__agent-btn {
-  background: color-mix(in srgb, var(--state-running) 9%, transparent);
-  box-shadow: inset 2px 0 0 var(--state-running);
-  color: var(--text);
-}
-
-.workspace-rail__agent-item[data-agent-state='working'] .workspace-rail__agent-btn:hover {
-  background: color-mix(in srgb, var(--state-running) 14%, transparent);
-}
-
-.workspace-rail__agent-item[data-agent-state='working'] .workspace-rail__agent-name,
-.workspace-rail__agent-item[data-agent-state='working'] .workspace-rail__agent-task {
-  color: var(--text);
-}
-
+/* A palavra "Trabalhando" já está no resumo do bloco e no nome acessível; na
+   linha ela só empurrava o nome. Os demais estados seguem escritos. */
 .workspace-rail__agent-item[data-agent-state='working'] .workspace-rail__agent-state {
-  color: var(--state-running);
-  font-weight: 600;
+  display: none;
 }
 
 /* Secundário: logo esmaecido e texto no degrau mais baixo. */
@@ -1594,40 +1579,37 @@
   color: var(--text-faint);
 }
 
-/* Agentes de fora de missão: mesma indentação das missões do projeto. */
-.workspace-rail__loose-agents {
-  padding-left: var(--space-4);
+/* Agentes de fora de missão: direto sob o nome do projeto, sem recuo extra. */
+.workspace-rail__loose-agents .workspace-rail__agents-block {
+  margin-left: 0;
 }
 
-/* Destinos em grade de duas colunas: a altura que sobra vai para projetos e
-   missões. Terminais (trabalho vivo, contador e grade) ocupa a linha inteira. */
+/* Destinos: uma coluna de linhas, como a lista de ações do topo de um app de
+   chat. Terminais (trabalho vivo, contador e grade) é só mais uma linha. */
 .workspace-rail__fixed {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-1);
-  padding: var(--space-2) var(--space-3);
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1px;
+  padding: 0 var(--space-2) var(--space-2);
   margin: 0;
-  border-bottom: 1px solid var(--border);
 }
 
 .workspace-rail__fixed > li {
   min-width: 0;
 }
 
-.workspace-rail__fixed-item--wide {
-  grid-column: 1 / -1;
-}
-
 .workspace-rail__fixed-row-wrap {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--space-1);
 }
 
 .workspace-rail__fixed-row-wrap .workspace-rail__fixed-row {
   flex: 1;
 }
 
+/* Ações-ícone (grade de terminais, chaves, voz): só o glifo; o fundo acende no
+   hover e o foco por teclado desenha o anel. */
 .workspace-rail__row-grid-action {
   display: inline-flex;
   align-items: center;
@@ -1635,24 +1617,20 @@
   width: var(--space-6);
   height: var(--space-6);
   padding: 0;
-  /* Em repouso precisa PARECER botão: sem borda nem fundo era um quadrado
-     escuro vazio ao lado de "Terminais". */
-  border: 1px solid var(--border);
+  border: 0;
   border-radius: var(--radius-md);
-  background: var(--surface-overlay);
-  color: var(--text-dim);
+  background: transparent;
+  color: var(--text-faint);
   cursor: pointer;
   transition:
     background-color 120ms var(--ease-out-quart),
-    border-color 120ms var(--ease-out-quart),
     color 120ms var(--ease-out-quart);
   flex-shrink: 0;
 }
 
 .workspace-rail__row-grid-action:hover {
   background: var(--surface-hover);
-  border-color: var(--border-strong);
-  color: var(--text-main);
+  color: var(--text);
 }
 
 .workspace-rail__row-grid-action:focus-visible {
@@ -1663,14 +1641,6 @@
 .workspace-rail__fixed-row,
 .workspace-rail__settings {
   gap: var(--space-2);
-}
-
-/* Célula da grade: alvo de 32px (piso de secundário no desktop), sem folga
-   vertical extra. */
-.workspace-rail__fixed-row {
-  gap: var(--space-1-5);
-  min-height: var(--space-6);
-  padding: 0 var(--space-1-5);
 }
 
 /* Em rail estreito quem cede é o texto (ellipsis), nunca o ícone. */
@@ -1687,7 +1657,7 @@
      em vez de empurrar o chip Local para fora do rail. */
   grid-template-columns: minmax(0, 1fr);
   min-height: 0;
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-2);
   border-top: 1px solid var(--border);
 }
 
@@ -1702,14 +1672,16 @@
   scrollbar-gutter: stable;
 }
 
+/* Cotas: texto e barras direto sobre o rodapé, sem cartão. O fundo só acende
+   no hover porque o corpo todo é clicável. */
 .workspace-rail__cockpit {
-  margin: var(--space-2) 0;
-  padding: var(--space-2);
-  background: var(--surface-overlay, rgba(255, 255, 255, 0.03));
-  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
-  border-radius: var(--radius-sm, 6px);
+  margin: var(--space-1) 0;
+  padding: var(--space-1) var(--space-2);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-md);
   cursor: pointer;
-  transition: border-color 120ms ease, background-color 120ms ease;
+  transition: background-color 160ms var(--ease-out-quart);
 }
 
 /*
@@ -1758,7 +1730,6 @@
 
 .workspace-rail__cockpit:hover {
   background: var(--surface-hover);
-  border-color: var(--border, rgba(255, 255, 255, 0.15));
 }
 
 .workspace-rail__cockpit-header {
@@ -1780,21 +1751,19 @@
 .workspace-rail__cockpit-open:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: var(--radius-sm, 6px);
+  border-radius: var(--radius-sm);
 }
 
+/* Título em frase, no mesmo degrau do rótulo de seção — nunca eyebrow. */
 .workspace-rail__cockpit-title {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-dim);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--text-faint);
 }
 
 .workspace-rail__cockpit-detail-hint {
-  font-size: 10px;
-  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  color: var(--text-faint);
   flex-shrink: 0;
   white-space: nowrap;
 }
@@ -1819,7 +1788,7 @@
 .workspace-rail__cockpit-summary {
   margin-bottom: var(--space-2);
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: var(--text-2xs);
   line-height: 1.3;
   color: var(--text-dim);
 }
@@ -1834,7 +1803,7 @@
 
 .workspace-rail__cockpit--expanded .workspace-rail__quota-item + .workspace-rail__quota-item {
   padding-top: var(--space-2);
-  border-top: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  border-top: 1px solid var(--border);
 }
 
 .workspace-rail__cockpit--expanded .workspace-rail__quota-line {
@@ -1846,18 +1815,20 @@
   margin-top: var(--space-2);
   padding: var(--space-1) var(--space-2);
   background: transparent;
-  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
-  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
   font: inherit;
-  font-size: 10px;
+  font-size: var(--text-2xs);
   color: var(--text-dim);
   cursor: pointer;
-  transition: color 120ms ease, border-color 120ms ease;
+  transition:
+    color 120ms var(--ease-out-quart),
+    border-color 120ms var(--ease-out-quart);
 }
 
 .workspace-rail__cockpit-open:hover {
   color: var(--text);
-  border-color: var(--border, rgba(255, 255, 255, 0.15));
+  border-color: var(--border-strong);
 }
 
 .workspace-rail__quota-item {
@@ -1870,7 +1841,7 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 10px;
+  font-size: var(--text-2xs);
 }
 
 .workspace-rail__quota-name {
@@ -1906,15 +1877,15 @@
 
 .workspace-rail__quota-val {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--text-2xs);
   font-weight: 600;
 }
 
 .workspace-rail__quota-pause {
-  font-size: 8px;
+  font-size: var(--text-2xs);
   line-height: 1;
-  padding: 2px 4px;
-  border-radius: var(--radius-xs, 3px);
+  padding: 2px var(--space-1);
+  border-radius: var(--radius-xs);
   border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
   color: var(--warn);
   white-space: nowrap;
@@ -1924,13 +1895,13 @@
 .workspace-rail__quota-item--cool .workspace-rail__quota-track {
   background: repeating-linear-gradient(
     -45deg,
-    var(--surface-overlay, rgba(255, 255, 255, 0.1)) 0 3px,
-    rgba(255, 255, 255, 0.04) 3px 6px
+    var(--surface-hover) 0 3px,
+    var(--surface-overlay) 3px 6px
   );
 }
 
 .workspace-rail__quota-val--ok {
-  color: var(--state-ready, #10b981);
+  color: var(--state-ready);
 }
 
 .workspace-rail__quota-val--unknown {
@@ -1938,17 +1909,17 @@
 }
 
 .workspace-rail__quota-val--warn {
-  color: var(--state-blocked, #f59e0b);
+  color: var(--state-blocked);
 }
 
 .workspace-rail__quota-val--danger {
-  color: var(--state-failed, #ef4444);
+  color: var(--state-failed);
 }
 
 .workspace-rail__quota-track {
   height: 3px;
-  background: var(--surface-overlay, rgba(255, 255, 255, 0.1));
-  border-radius: 2px;
+  background: var(--surface-hover);
+  border-radius: var(--radius-xs);
   overflow: hidden;
 }
 
@@ -1956,12 +1927,12 @@
   height: 100%;
   width: 100%;
   transform-origin: left center;
-  border-radius: 2px;
-  transition: transform 200ms ease;
+  border-radius: var(--radius-xs);
+  transition: transform 200ms var(--ease-out-quart);
 }
 
 .workspace-rail__quota-bar--ok {
-  background: var(--state-ready, #10b981);
+  background: var(--state-ready);
 }
 
 .workspace-rail__quota-bar--unknown {
@@ -1974,7 +1945,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 9px;
+  font-size: var(--text-2xs);
   line-height: 1.3;
   font-family: var(--font-mono);
   color: var(--text-dim);
@@ -1989,9 +1960,9 @@
   gap: var(--space-2);
   margin-top: var(--space-2);
   padding-top: var(--space-2);
-  border-top: 1px dashed var(--border, rgba(255, 255, 255, 0.08));
+  border-top: 1px solid var(--border);
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: var(--text-2xs);
   line-height: 1.3;
   color: var(--text-dim);
   white-space: nowrap;
@@ -2107,11 +2078,11 @@
 }
 
 .workspace-rail__quota-bar--warn {
-  background: var(--state-blocked, #f59e0b);
+  background: var(--state-blocked);
 }
 
 .workspace-rail__quota-bar--danger {
-  background: var(--state-failed, #ef4444);
+  background: var(--state-failed);
 }
 
 /* Entrada do Perfil de Operador: faixa própria acima de Configurações, fora das
@@ -2157,16 +2128,15 @@
 .workspace-rail__cockpit-led {
   width: 6px;
   height: 6px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   background: var(--live);
-  box-shadow: 0 0 5px color-mix(in srgb, var(--live) 60%, transparent);
 }
 
 .workspace-rail__cockpit-conn-label {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--text-2xs);
   font-weight: 500;
-  color: var(--text-dim);
+  color: var(--text-faint);
 }
 
 .workspace-rail__new:disabled,
@@ -2239,14 +2209,33 @@
   .workspace-rail__live-dot,
   .workspace-rail__agent-dot--working,
   .workspace-rail__agent-dot--starting,
-  .workspace-rail__mission--running .workspace-rail__mission-dot {
+  .workspace-rail__mission--running .workspace-rail__mission-indicator {
     animation: none;
   }
 
   .workspace-rail__agents-toggle,
   .workspace-rail__agents-chevron,
-  .workspace-rail__agent-btn {
+  .workspace-rail__agent-btn,
+  .workspace-rail__group-toggle,
+  .workspace-rail__group-chevron,
+  .workspace-rail__workspace-toggle,
+  .workspace-rail__workspace-action,
+  .workspace-rail__mission-remove,
+  .workspace-rail__mission-age,
+  .workspace-rail__missions-more,
+  .workspace-rail__report,
+  .workspace-rail__open-project,
+  .workspace-rail__cockpit,
+  .workspace-rail__cockpit-open,
+  .workspace-rail__quota-bar,
+  .workspace-cleanup button {
     transition: none;
+  }
+
+  .workspace-rail__workspace-action:active,
+  .workspace-rail__mission-remove:active,
+  .workspace-rail__missions-more:active {
+    transform: none;
   }
 }
 
@@ -2257,20 +2246,55 @@
     min-height: calc(var(--space-6) + var(--space-3));
   }
 }
-.workspace-cleanup { padding: 0 var(--space-1); color: var(--text-dim); font-size: var(--text-xs); }
-.workspace-cleanup__title { display: block; padding: var(--space-1) var(--space-1); border-radius: var(--radius-sm); font-weight: 600; cursor: pointer; list-style: none; }
-.workspace-cleanup__title::-webkit-details-marker { display: none; }
-.workspace-cleanup__title::before { content: '+'; display: inline-block; width: 1em; color: var(--text-faint); font-family: var(--font-mono); }
-.workspace-cleanup[open] > .workspace-cleanup__title::before { content: '\2212'; }
-.workspace-cleanup__title:hover { background: color-mix(in srgb, var(--text) 6%, transparent); color: var(--text); }
-.workspace-cleanup__actions { padding-bottom: var(--space-1); }
-/* F-528: linha compacta sempre visível — as ações destrutivas não podem
-   morrer escondidas atrás do disclosure (o dono as procurou e não achou). */
-.workspace-cleanup__actions--inline { display: flex; gap: var(--space-1); padding-bottom: var(--space-1); }
-.workspace-cleanup__actions--inline button { display: block; flex: 1 1 0; min-width: 0; text-align: center; padding: var(--space-1) var(--space-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.workspace-cleanup button { display: block; width: 100%; text-align: left; padding: var(--space-2); margin-top: var(--space-1); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elevated); color: var(--text); font: inherit; cursor: pointer; }
-.workspace-cleanup button:hover:not(:disabled) { border-color: var(--danger); }
-.workspace-cleanup button:disabled { opacity: .5; cursor: wait; }
+/* Limpar projeto: uma linha quieta e sempre à vista (F-528 — as ações
+   destrutivas não podem morrer escondidas atrás de um disclosure, o dono as
+   procurou e não achou). Texto sobre o rodapé, sem caixa; o vermelho só acende
+   no hover, e a confirmação com o texto completo segue na frente da ação. */
+.workspace-cleanup {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--space-6);
+  padding: 0 var(--space-2);
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+}
+.workspace-cleanup__title {
+  flex: 0 0 auto;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.workspace-cleanup__actions {
+  display: flex;
+  flex: 1 1 auto;
+  justify-content: flex-end;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.workspace-cleanup button {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  min-height: var(--space-6);
+  padding: 0 var(--space-1-5);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-faint);
+  font: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition:
+    background-color 120ms var(--ease-out-quart),
+    color 120ms var(--ease-out-quart);
+}
+.workspace-cleanup button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+}
+.workspace-cleanup button:disabled { opacity: 0.5; cursor: wait; }
 .workspace-cleanup :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* Modo foco (Configurações): o rail fica só com marca, busca, destinos fixos e

@@ -174,12 +174,18 @@
   display: grid;
   gap: var(--space-1);
   width: 100%;
-  margin-top: var(--space-2);
-  padding: var(--space-2) var(--space-2-5);
+  margin-top: var(--space-1);
+  padding: var(--space-1-5) var(--space-2);
+  /* Sem moldura em repouso: o rodapé do rail é uma lista de linhas, e o
+     fundo só acende no hover (mesma linguagem das demais). */
+  border: 0;
   border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--bg) 40%, transparent);
+  background: transparent;
   text-align: left;
   overflow: visible;
+}
+.operator-hud.operator-hud--rail:hover {
+  background: var(--surface-hover);
 }
 .operator-hud--rail .operator-hud__head {
   position: relative;
@@ -198,9 +204,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--text-2xs);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  font-size: var(--text-xs);
   color: var(--text-dim);
 }
 .operator-hud--rail .operator-hud__power {

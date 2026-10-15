@@ -7,7 +7,9 @@ import {
   setMissionArchived,
   togglePinnedMissionId,
   loadCollapsedWorkspacePaths,
+  loadRecentWorkspacesOpen,
   saveCollapsedWorkspacePaths,
+  saveRecentWorkspacesOpen,
 } from './mission-rail-prefs';
 
 function memoryStore(seed: Record<string, string> = {}) {
@@ -103,5 +105,33 @@ describe('archived missions (view-only, per workspace)', () => {
     like.setItem('nexus.activityRail.collapsedWorkspaces', '{not json');
     expect(loadCollapsedWorkspacePaths(like)).toEqual([]);
     expect(loadCollapsedWorkspacePaths(null)).toEqual([]);
+  });
+
+  it('Recentes: sem escolha salva é null (a tela decide o padrão) e a escolha vale nos dois sentidos', () => {
+    const store = new Map<string, string>();
+    const like = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) };
+    expect(loadRecentWorkspacesOpen(like)).toBeNull();
+    saveRecentWorkspacesOpen(true, like);
+    expect(loadRecentWorkspacesOpen(like)).toBe(true);
+    saveRecentWorkspacesOpen(false, like);
+    // Recolher de propósito é uma escolha: não volta a ser "sem escolha".
+    expect(loadRecentWorkspacesOpen(like)).toBe(false);
+    like.setItem('nexus.activityRail.recentWorkspacesOpen', 'qualquer-coisa');
+    expect(loadRecentWorkspacesOpen(like)).toBeNull();
+    expect(loadRecentWorkspacesOpen(null)).toBeNull();
+    expect(() => saveRecentWorkspacesOpen(true, null)).not.toThrow();
+  });
+
+  it('Recentes: storage que lança nunca quebra o rail', () => {
+    const broken = {
+      getItem: () => {
+        throw new Error('blocked');
+      },
+      setItem: () => {
+        throw new Error('quota');
+      },
+    };
+    expect(loadRecentWorkspacesOpen(broken)).toBeNull();
+    expect(() => saveRecentWorkspacesOpen(false, broken)).not.toThrow();
   });
 });

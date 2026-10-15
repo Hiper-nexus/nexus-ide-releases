@@ -35,12 +35,33 @@ function render(node: ReactNode): HTMLElement {
   return host;
 }
 
+beforeEach(() => {
+  // "Recentes" lembra a escolha da pessoa no localStorage: cada teste parte do
+  // padrão, nunca da escolha de outro.
+  localStorage.clear();
+});
+
 afterEach(() => {
   for (const root of mountedRoots.splice(0)) {
     act(() => root.unmount());
   }
   document.body.replaceChildren();
+  localStorage.clear();
 });
+
+/** Recentes nasce recolhido quando há projeto em andamento: abre pelo botão. */
+function recentsToggle(host: ParentNode): HTMLButtonElement {
+  const toggle = host.querySelector<HTMLButtonElement>(
+    '[data-rail-group="recent"] .workspace-rail__group-toggle',
+  );
+  if (!toggle) throw new Error('Recentes não tem botão de recolher');
+  return toggle;
+}
+
+function expandRecents(host: ParentNode): void {
+  if (recentsToggle(host).getAttribute('aria-expanded') === 'true') return;
+  act(() => recentsToggle(host).click());
+}
 
 const activeWorkspaces: WorkspaceRailWorkspace[] = [
   {
@@ -126,31 +147,55 @@ describe('WorkspaceRail', () => {
     expect(handlers.onCreateNew).toHaveBeenCalledOnce();
   });
 
-  it('shows each request title and state without repeating its project or branch', () => {
+  it('shows each request on one line, with its state in the glyph and the accessible name', () => {
     const { host } = renderRail();
     const request = host.querySelector('[data-mission-id="mission-running"]')!;
     expect(request.textContent).toContain('Corrigir o login');
-    expect(request.textContent).toContain('Trabalhando');
+    // O estado vai no glifo (a forma muda, não só a cor), no nome acessível e no
+    // tooltip; a palavra só ganha linha quando a missão pede algo da pessoa.
+    expect(request.getAttribute('aria-label')).toBe('Corrigir o login. Trabalhando');
+    expect(request.getAttribute('title')).toContain('Trabalhando');
+    expect(
+      request.querySelector('.workspace-rail__mission-indicator[aria-hidden="true"] svg'),
+    ).not.toBeNull();
+    expect(request.querySelector('.workspace-rail__mission-status')).toBeNull();
+    // Sem repetir o projeto nem a branch em cada trabalho.
     expect(request.querySelector('.workspace-rail__mission-repo-chip')).toBeNull();
     expect(request.querySelector('.workspace-rail__mission-branch')).toBeNull();
+    // Quem pede a pessoa escreve a palavra, em linha própria.
+    expect(
+      host.querySelector(
+        '[data-mission-id="mission-blocked"] .workspace-rail__mission-status',
+      )?.textContent,
+    ).toBe('Precisa de você');
   });
 
-  it('groups the entry actions and packs destinations in a compact grid', () => {
-    const { host } = renderRail({ onOpenLauncher: vi.fn(), onOpenWorkspace: vi.fn() });
+  it('groups the entry actions and lists the destinations as one flat column', () => {
+    const { host } = renderRail({
+      onOpenLauncher: vi.fn(),
+      onOpenWorkspace: vi.fn(),
+      projectEnabled: true,
+      onOpenProject: vi.fn(),
+    });
     const actions = host.querySelector('.workspace-rail__actions')!;
     const destinations = host.querySelector('[aria-label="Destinos fixos"]')!;
     const open = host.querySelector('[aria-label="Abrir projeto existente"]')!;
     expect(actions.contains(open)).toBe(true);
     expect(destinations.contains(open)).toBe(false);
-    const wide = (label: string) =>
-      host
-        .querySelector(`[aria-label="${label}"]`)!
-        .closest('li')!
-        .classList.contains('workspace-rail__fixed-item--wide');
-    expect(wide('Abrir Terminais')).toBe(true);
-    // Sem Projeto, Início não deixa buraco na primeira linha da grade.
-    expect(wide('Voltar ao Início')).toBe(true);
-    expect(wide('Abrir Quadro')).toBe(false);
+    // Uma coluna só: toda linha é filha direta da lista, na ordem de uso, e
+    // nenhuma ocupa "a linha inteira" por exceção (sem grade de duas colunas).
+    expect(
+      [...destinations.children].map((item) =>
+        item.querySelector('button')?.getAttribute('aria-label'),
+      ),
+    ).toEqual([
+      'Voltar ao Início',
+      'Abrir Projeto',
+      'Abrir Terminais',
+      'Abrir Quadro',
+      'Abrir Memória',
+    ]);
+    expect(destinations.querySelector('.workspace-rail__fixed-item--wide')).toBeNull();
   });
 
   it('opens an existing project without entering the creation flow', () => {
@@ -175,6 +220,7 @@ describe('WorkspaceRail', () => {
   it('removes a mission from either group without selecting or opening it', () => {
     const onRemoveMission = vi.fn();
     const { host, handlers } = renderRail({ onRemoveMission });
+    expandRecents(host);
     for (const missionId of ['mission-running', 'mission-blocked', 'mission-done']) {
       const remove = host.querySelector<HTMLButtonElement>(
         `[data-action="remove-mission"][data-mission-id="${missionId}"]`,
@@ -195,6 +241,11 @@ describe('WorkspaceRail', () => {
     expect(active?.textContent).toContain('Atlas local');
     expect(active?.textContent).toContain('Corrigir o login');
     expect(active?.textContent).toContain('Publicar a versão');
+    // Recentes é histórico: com trabalho em andamento acima, nasce recolhido.
+    expect(recentsToggle(host).getAttribute('aria-expanded')).toBe('false');
+    expect(recent?.textContent).not.toContain('Cometa');
+    expandRecents(host);
+    expect(recentsToggle(host).getAttribute('aria-expanded')).toBe('true');
     expect(recent?.textContent).toContain('Cometa');
     expect(recent?.textContent).toContain('Revisar a página inicial');
     expect(
@@ -236,6 +287,8 @@ describe('WorkspaceRail', () => {
   });
 
   it('maps every canonical mission state and prioritizes running warnings', () => {
+    // `word`: a palavra do estado ganha linha própria só quando a missão pede
+    // algo da pessoa; nos demais o estado vive no glifo e no nome acessível.
     const statusCases = [
       {
         id: 'draft',
@@ -243,6 +296,7 @@ describe('WorkspaceRail', () => {
         needsAttention: false,
         label: 'Preparando',
         tone: 'pending',
+        word: false,
       },
       {
         id: 'review-ready',
@@ -250,6 +304,7 @@ describe('WorkspaceRail', () => {
         needsAttention: false,
         label: 'Pronta para iniciar',
         tone: 'ready',
+        word: true,
       },
       {
         id: 'starting',
@@ -257,6 +312,7 @@ describe('WorkspaceRail', () => {
         needsAttention: false,
         label: 'Iniciando',
         tone: 'pending',
+        word: false,
       },
       {
         id: 'running',
@@ -264,6 +320,7 @@ describe('WorkspaceRail', () => {
         needsAttention: false,
         label: 'Trabalhando',
         tone: 'running',
+        word: false,
       },
       {
         id: 'running-warning',
@@ -271,6 +328,7 @@ describe('WorkspaceRail', () => {
         needsAttention: true,
         label: 'Trabalhando · aviso',
         tone: 'blocked',
+        word: true,
       },
       {
         id: 'blocked-user',
@@ -278,6 +336,7 @@ describe('WorkspaceRail', () => {
         needsAttention: true,
         label: 'Precisa de você',
         tone: 'blocked',
+        word: true,
       },
       {
         id: 'blocked-technical',
@@ -285,6 +344,7 @@ describe('WorkspaceRail', () => {
         needsAttention: true,
         label: 'Precisa de reparo',
         tone: 'blocked',
+        word: true,
       },
       {
         id: 'recovering',
@@ -292,6 +352,7 @@ describe('WorkspaceRail', () => {
         needsAttention: true,
         label: 'Recuperando',
         tone: 'running',
+        word: false,
       },
       {
         id: 'stopping',
@@ -299,6 +360,7 @@ describe('WorkspaceRail', () => {
         needsAttention: false,
         label: 'Parando',
         tone: 'pending',
+        word: false,
       },
       {
         id: 'failed',
@@ -306,6 +368,7 @@ describe('WorkspaceRail', () => {
         needsAttention: true,
         label: 'Falhou',
         tone: 'failed',
+        word: true,
       },
       {
         id: 'completed',
@@ -313,6 +376,7 @@ describe('WorkspaceRail', () => {
         needsAttention: false,
         label: 'Pronto',
         tone: 'done',
+        word: false,
       },
     ] as const;
     const { host } = renderRail({
@@ -338,21 +402,65 @@ describe('WorkspaceRail', () => {
         .click();
     });
 
-    for (const { id, state, label, tone } of statusCases) {
+    for (const { id, state, label, tone, word } of statusCases) {
       const row = host.querySelector(`[data-mission-id="mission-${id}"]`);
 
-      expect(row?.textContent).toContain(label);
+      // O nome acessível e o tooltip dizem o estado em TODA linha.
       expect(row?.getAttribute('aria-label')).toBe(`Missão ${id}. ${label}`);
+      expect(row?.getAttribute('title')).toBe(`Missão ${id}: ${label}`);
       expect(row?.getAttribute('data-mission-state')).toBe(state);
       expect(row?.classList.contains(`workspace-rail__mission--${tone}`)).toBe(
         true,
       );
+      // O glifo é um desenho (a forma muda com o estado), não só uma cor.
       expect(
         row?.querySelector(
-          '.workspace-rail__mission-indicator[aria-hidden="true"]',
+          '.workspace-rail__mission-indicator[aria-hidden="true"] svg',
         ),
       ).not.toBeNull();
+      // A palavra só ganha linha própria quando a missão pede algo da pessoa.
+      const statusWord = row?.querySelector('.workspace-rail__mission-status');
+      if (word) {
+        expect(statusWord?.textContent, id).toBe(label);
+      } else {
+        expect(statusWord, id).toBeNull();
+        expect(row?.textContent, id).not.toContain(label);
+      }
     }
+  });
+
+  it('o glifo da missão muda de forma com o estado, não só de cor', () => {
+    const { host } = renderRail({
+      activeWorkspaces: [
+        {
+          id: 'shapes',
+          name: 'Formas',
+          missions: (
+            [
+              ['run', 'running'],
+              ['fail', 'failed'],
+              ['done', 'completed'],
+              ['block', 'blocked_technical'],
+            ] as const
+          ).map(([id, status]) => ({
+            id: `mission-${id}`,
+            title: `Missão ${id}`,
+            status,
+            needsAttention: false,
+          })),
+        },
+      ],
+      recentWorkspaces: [],
+    });
+    const glyphs = ['run', 'fail', 'done', 'block'].map(
+      (id) =>
+        host.querySelector(
+          `[data-mission-id="mission-${id}"] .workspace-rail__mission-indicator svg`,
+        )?.innerHTML,
+    );
+    expect(glyphs.every((glyph) => typeof glyph === 'string' && glyph.length > 0)).toBe(true);
+    // Quatro estados, quatro desenhos: ninguém depende só da cor para distinguir.
+    expect(new Set(glyphs).size).toBe(4);
   });
 
   it('missão completed aguardando revisão humana mostra a entrega pronta com tom de conclusão', () => {
@@ -1122,12 +1230,13 @@ describe('WorkspaceRail', () => {
     expect(badge.className).toContain('workspace-rail__workspace-current--missing');
     expect(current.getAttribute('aria-label')).toContain('não existe mais no disco');
     // Só o projeto aberto pode "sumir"; um recente não herda o estado.
+    expandRecents(host);
     expect(
       host.querySelector('[data-workspace-id="cometa"]')?.getAttribute('data-missing'),
     ).toBeNull();
   });
 
-  it('mostra o caminho da pasta na linha do projeto, não só o apelido', () => {
+  it('o caminho da pasta vai no tooltip e no nome acessível; a linha só o mostra quando o nome não distingue', () => {
     const { host } = renderRail({
       recentWorkspaces: [
         {
@@ -1138,6 +1247,7 @@ describe('WorkspaceRail', () => {
         },
       ],
     });
+    expandRecents(host);
 
     const row = host.querySelector<HTMLButtonElement>(
       '[data-workspace-id="/Users/ana/dev/cometa"]',
@@ -1145,9 +1255,38 @@ describe('WorkspaceRail', () => {
     expect(row).not.toBeNull();
     expect(row!.title).toContain('/Users/ana/dev/cometa');
     expect(row!.getAttribute('aria-label')).toContain('/Users/ana/dev/cometa');
+    // Nome único: o caminho não polui a linha (era um dump em mono sob cada projeto).
+    expect(host.querySelector('.workspace-rail__workspace-path')).toBeNull();
+  });
+
+  it('dois projetos com o mesmo nome ganham o caminho na linha, mesmo em seções diferentes', () => {
+    const { host } = renderRail({
+      activeWorkspaces: [
+        {
+          id: '/a/web',
+          path: '/a/web',
+          name: 'web',
+          missions: [
+            { id: 'm-web', title: 'Ajustar o site', status: 'running', needsAttention: false },
+          ],
+        },
+      ],
+      recentWorkspaces: [
+        { id: '/b/web', path: '/b/web', name: 'web', missions: [] },
+        { id: '/c/api', path: '/c/api', name: 'api', missions: [] },
+      ],
+      selection: null,
+    });
+    expandRecents(host);
+
+    const paths = [...host.querySelectorAll('.workspace-rail__workspace-path')].map(
+      (el) => el.textContent,
+    );
+    // Só as duas `web` se distinguem pela linha; `api` é única e fica limpa.
+    expect(paths).toEqual(['/a/web', '/b/web']);
     expect(
-      host.querySelector('.workspace-rail__workspace-path')?.textContent,
-    ).toBe('…/dev/cometa');
+      host.querySelector('[data-workspace-id="/c/api"] .workspace-rail__workspace-path'),
+    ).toBeNull();
   });
 
   it('conta as pastas de Recentes, que nunca têm missões para contar', () => {
@@ -1198,16 +1337,19 @@ describe('WorkspaceRail', () => {
     expect(
       active?.querySelector('.workspace-rail__group-pill')?.textContent,
     ).toBe('2');
-    // A missão fica agrupada sob o repositório dela, com estado e panes.
+    // A missão fica agrupada sob o repositório dela; as missões são o conteúdo,
+    // então a linha do projeto não as repete em "N missões".
     const nexusRow = host.querySelector('[data-workspace-id="/nexus-ide"]');
-    expect(nexusRow?.closest('li')?.textContent).toContain('1 missão');
     expect(nexusRow?.closest('li')?.textContent).toContain(
       'bug visual windows analisando layout da barra lateral',
     );
+    expect(nexusRow?.closest('li')?.querySelector('.workspace-rail__workspace-activity')).toBeNull();
+    // Sem missão, a linha do projeto é tudo o que há para dizer do que está aberto.
     const hiperRow = host.querySelector('[data-workspace-id="/hipergo"]');
-    expect(hiperRow?.closest('li')?.textContent).toContain('2 panes abertos');
+    expect(hiperRow?.closest('li')?.textContent).toContain('sem missão · 2 panes abertos');
     // Nenhum repositório listado em Em andamento reaparece em Recentes.
     const recent = host.querySelector('[data-rail-group="recent"]');
+    expandRecents(host);
     expect(recent?.textContent).toContain('saasbarbearia');
     expect(recent?.textContent).not.toContain('nexus-ide');
   });
@@ -1294,6 +1436,175 @@ describe('WorkspaceRail', () => {
     });
     expect(host.querySelector('[data-mission-id="m-5min"] .workspace-rail__mission-age')?.textContent).toBe('5m');
     expect(host.querySelector('[data-mission-id="m-sem-idade"] .workspace-rail__mission-age')).toBeNull();
+  });
+});
+
+/**
+ * Recentes é o histórico: nasce recolhido e abre por escolha — o rail é a fila
+ * do agora. Sem projeto em andamento ele abre sozinho (senão não restaria
+ * nenhum projeto para abrir), e a escolha da pessoa vale nos dois sentidos.
+ */
+describe('WorkspaceRail — Recentes recolhido', () => {
+  const stored = () =>
+    localStorage.getItem('nexus.activityRail.recentWorkspacesOpen');
+
+  it('nasce recolhido com trabalho em andamento acima e lembra a escolha nos dois sentidos', () => {
+    const { host } = renderRail();
+    const toggle = recentsToggle(host);
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(toggle.getAttribute('aria-controls')).toBeNull();
+    expect(toggle.getAttribute('aria-label')).toBe('Recentes: 1 projeto');
+    expect(host.querySelector('[data-workspace-id="cometa"]')).toBeNull();
+
+    act(() => toggle.click());
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    const list = document.getElementById(toggle.getAttribute('aria-controls')!);
+    expect(list?.querySelector('[data-workspace-id="cometa"]')).not.toBeNull();
+    expect(stored()).toBe('open');
+
+    act(() => toggle.click());
+    expect(host.querySelector('[data-workspace-id="cometa"]')).toBeNull();
+    expect(stored()).toBe('closed');
+  });
+
+  it('a escolha salva vale na próxima vez que o rail abre', () => {
+    localStorage.setItem('nexus.activityRail.recentWorkspacesOpen', 'open');
+    const { host } = renderRail();
+    expect(recentsToggle(host).getAttribute('aria-expanded')).toBe('true');
+    expect(host.querySelector('[data-workspace-id="cometa"]')).not.toBeNull();
+  });
+
+  it('abre sozinho quando nada está em andamento: o rail não pode ficar sem projeto para abrir', () => {
+    const { host } = renderRail({ activeWorkspaces: [], selection: null });
+    expect(recentsToggle(host).getAttribute('aria-expanded')).toBe('true');
+    expect(host.querySelector('[data-workspace-id="cometa"]')).not.toBeNull();
+
+    // Quem recolheu de propósito continua recolhido, mesmo sem nada em andamento.
+    act(() => recentsToggle(host).click());
+    expect(host.querySelector('[data-workspace-id="cometa"]')).toBeNull();
+    const second = renderRail({ activeWorkspaces: [], selection: null });
+    expect(recentsToggle(second.host).getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('a seleção nunca some atrás do recolher', () => {
+    const { host } = renderRail({
+      selection: { kind: 'workspace', workspaceId: 'cometa' },
+    });
+    expect(recentsToggle(host).getAttribute('aria-expanded')).toBe('true');
+    expect(
+      host.querySelector('[data-workspace-id="cometa"]')?.getAttribute('aria-current'),
+    ).toBe('page');
+  });
+});
+
+/**
+ * Trabalhando em mais de um projeto: todo projeto com trabalho ativo aparece ao
+ * mesmo tempo, cada um com o próprio cabeçalho e as próprias missões; o aberto
+ * agora leva uma marca discreta e o histórico não disputa a vista.
+ */
+describe('WorkspaceRail — vários projetos vivos ao mesmo tempo', () => {
+  const live: WorkspaceRailWorkspace[] = [
+    {
+      id: '/ws/atlas',
+      path: '/ws/atlas',
+      name: 'atlas',
+      missions: [
+        { id: 'a1', title: 'Corrigir o login', status: 'running', needsAttention: false },
+      ],
+    },
+    {
+      id: '/ws/hipergo',
+      path: '/ws/hipergo',
+      name: 'hipergo',
+      missions: [
+        { id: 'h1', title: 'Cadastro Microsoft perdido', status: 'running', needsAttention: false },
+        { id: 'h2', title: 'Página de sorteio', status: 'blocked_user', needsAttention: true },
+      ],
+    },
+    {
+      id: '/ws/saas',
+      path: '/ws/saas',
+      name: 'saasbarbearia',
+      missions: [
+        { id: 's1', title: 'Booking button', status: 'recovering', needsAttention: true },
+      ],
+    },
+  ];
+  const history: WorkspaceRailWorkspace[] = [
+    { id: '/ws/radarbi', path: '/ws/radarbi', name: 'radarbi', missions: [] },
+  ];
+
+  function renderLive(overrides: Partial<WorkspaceRailProps> = {}) {
+    return renderRail({
+      activeWorkspaces: live,
+      recentWorkspaces: history,
+      currentWorkspaceId: '/ws/atlas',
+      selection: null,
+      ...overrides,
+    });
+  }
+
+  it('lista cada projeto com trabalho ativo, cada um com as próprias missões', () => {
+    const { host } = renderLive();
+    const active = host.querySelector('[data-rail-group="active"]')!;
+    const items = [...active.querySelectorAll('.workspace-rail__workspace-item')];
+
+    expect(
+      items.map(
+        (item) =>
+          item.querySelector(
+            '.workspace-rail__workspace-title .workspace-rail__row-label',
+          )?.textContent,
+      ),
+    ).toEqual(['atlas', 'hipergo', 'saasbarbearia']);
+    // As missões de cada projeto moram no item dele, em linhas compactas.
+    expect(
+      items.map((item) =>
+        [...item.querySelectorAll('[data-mission-id]')].map((row) =>
+          row.getAttribute('data-mission-id'),
+        ),
+      ),
+    ).toEqual([['a1'], ['h1', 'h2'], ['s1']]);
+    // A contagem da seção é de projetos, não de missões.
+    expect(active.querySelector('.workspace-rail__group-pill')?.textContent).toBe('3');
+  });
+
+  it('marca só o projeto aberto, e de forma discreta (palavra quieta, sem selo)', () => {
+    const { host } = renderLive();
+    const active = host.querySelector('[data-rail-group="active"]')!;
+    const marks = active.querySelectorAll('.workspace-rail__workspace-current');
+    expect(marks).toHaveLength(1);
+    expect(marks[0]!.textContent).toBe('atual');
+    expect(
+      marks[0]!.closest('[data-workspace-id]')?.getAttribute('data-workspace-id'),
+    ).toBe('/ws/atlas');
+    // O vizinho segue com o nome acessível de "abrir", sem fingir ser o atual.
+    expect(
+      host.querySelector('[data-workspace-id="/ws/hipergo"]')?.getAttribute('aria-label'),
+    ).toBe('Abrir workspace hipergo em /ws/hipergo');
+  });
+
+  it('o histórico não disputa a vista com o trabalho vivo', () => {
+    const { host } = renderLive();
+    expect(host.querySelector('[data-workspace-id="/ws/radarbi"]')).toBeNull();
+    expect(recentsToggle(host).getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('clicar numa missão de outro projeto leva o id do projeto dela junto', () => {
+    const { host, handlers } = renderLive();
+    act(() =>
+      host.querySelector<HTMLButtonElement>('[data-mission-id="h2"]')!.click(),
+    );
+    expect(handlers.onSelectMission).toHaveBeenCalledWith('h2', '/ws/hipergo');
+  });
+
+  it('missão que pede a pessoa se destaca pela palavra em qualquer projeto', () => {
+    const { host } = renderLive();
+    const words = [...host.querySelectorAll('.workspace-rail__mission-status')].map(
+      (el) => [el.closest('[data-mission-id]')?.getAttribute('data-mission-id'), el.textContent],
+    );
+    // Só a bloqueada do hipergo pede a pessoa; a recuperando segue no glifo.
+    expect(words).toEqual([['h2', 'Precisa de você']]);
   });
 });
 
