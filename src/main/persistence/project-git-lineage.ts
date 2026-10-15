@@ -89,6 +89,11 @@ export type LineageCompatibility =
  * MESMA forma (config global neutralizada, replace objects desligado). O
  * AsyncProcessGitRunner de runtime não serve aqui: ele mantém a config global
  * para credenciais (F-580) e provaria linhagem com regras diferentes.
+ *
+ * GIT_GRAFT_FILE: o git honra .git/info/grafts MESMO com
+ * --no-replace-objects — um repo hostil fabrica a ancestralidade de
+ * `merge-base --is-ancestor` e forja a âncora do F-107. Arquivo vazio = sem
+ * grafts (o mesmo dispositivo nulo da config global).
  */
 function hardenedGitEnvironment(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
@@ -100,6 +105,7 @@ function hardenedGitEnvironment(): NodeJS.ProcessEnv {
     ...env,
     GIT_CONFIG_GLOBAL: EMPTY_GIT_CONFIG,
     GIT_CONFIG_NOSYSTEM: '1',
+    GIT_GRAFT_FILE: EMPTY_GIT_CONFIG,
     GIT_NO_REPLACE_OBJECTS: '1',
     GIT_OPTIONAL_LOCKS: '0',
     GIT_TERMINAL_PROMPT: '0',
@@ -416,6 +422,11 @@ export function collectGitRepositoryContext(
     }
     proofStats.contextSyncRuns += 1;
   }
+  // TOCTOU (H1): o fingerprint lido ANTES da prova é o único que pode
+  // casar com ela. Se o disco muda no meio dos spawns (ex.: origin
+  // trocado por fora), gravar {fingerprint novo, prova antiga} serviria a
+  // prova velha por até o TTL — então grava só se nada mudou.
+  const before = cacheable ? gitRepositoryFingerprint(rootRealPath) : null;
   const proof = collectGitRepositoryProof(rootRealPath, runner);
   const topLevelRealPath = fs.realpathSync(
     requiredGit(runner, rootRealPath, ['rev-parse', '--show-toplevel']),
@@ -440,11 +451,12 @@ export function collectGitRepositoryContext(
     gitDirRealPath,
     commonDirRealPath,
   });
-  if (cacheable) {
-    const fingerprint = gitRepositoryFingerprint(rootRealPath);
-    if (fingerprint !== null) {
-      storeGitRepositoryContext(rootRealPath, fingerprint, context);
-    }
+  if (
+    cacheable &&
+    before !== null &&
+    gitRepositoryFingerprint(rootRealPath) === before
+  ) {
+    storeGitRepositoryContext(rootRealPath, before, context);
   }
   return context;
 }
@@ -556,15 +568,28 @@ function gitDirectoryFromEntry(rootRealPath: string): string | null {
 
 function resolvedRefToken(gitDir: string, commonDir: string): string {
   try {
-    const head = fs.readFileSync(path.join(gitDir, 'HEAD'), 'utf8').trim();
-    const ref = /^ref:\s*(\S+)$/u.exec(head);
-    if (!ref) return 'detached';
-    const name = ref[1] as string;
-    const loose = statToken(path.join(gitDir, name));
-    if (loose !== null) return `w:${loose}`;
-    const shared = statToken(path.join(commonDir, name));
-    if (shared !== null) return `c:${shared}`;
-    return 'unborn';
+    let current = fs.readFileSync(path.join(gitDir, 'HEAD'), 'utf8').trim();
+    const stats: string[] = [];
+    // Segue a cadeia de symrefs (HEAD → alias → main…): statar só o primeiro
+    // ref é cego a update-ref no destino do symref. Cada salto entra com seu
+    // próprio stat; cadeia maior que 5 saltos é ilegível → fingerprint único
+    // → o cache nunca serve (fail-closed).
+    for (let hop = 0; hop < 5; hop += 1) {
+      const ref = /^ref:\s*(\S+)$/u.exec(current);
+      if (!ref) {
+        return stats.length === 0 ? 'detached' : `d:${stats.join('>')}`;
+      }
+      const name = ref[1] as string;
+      const gitDirStat = statToken(path.join(gitDir, name));
+      const refFile = gitDirStat !== null
+        ? path.join(gitDir, name)
+        : path.join(commonDir, name);
+      const stat = gitDirStat ?? statToken(refFile);
+      if (stat === null) return `unborn:${stats.join('>')}`;
+      stats.push(stat);
+      current = fs.readFileSync(refFile, 'utf8').trim();
+    }
+    return 'unreadable';
   } catch {
     return 'unreadable';
   }
@@ -573,9 +598,12 @@ function resolvedRefToken(gitDir: string, commonDir: string): string {
 /**
  * Fingerprint de TODA a entrada que decide a prova. Se ela não mudou, a prova
  * cacheada é tão boa quanto recomputar; se mudou (ou não dá para ler),
- * recomputa. Cobertura: conteúdo do HEAD e stat da ref resolvida (commit novo,
- * troca de branch), configs locais (origin), packed-refs (fetch/gc), shallow,
- * alternates e a própria cadeia de ponteiros .git → gitdir → commondir.
+ * recomputa. Cobertura: conteúdo do HEAD e stat da cadeia de refs resolvida
+ * — symrefs seguidos até o destino (commit novo, troca de branch, update-ref
+ * no fim da cadeia) —, configs locais (origin), packed-refs (fetch/gc),
+ * reftable, shallow e info/grafts do COMMON dir (uma edição numa worktree
+ * vinculada mexe no common, não no gitdir particular), alternates e a
+ * própria cadeia de ponteiros .git → gitdir → commondir.
  */
 export function gitRepositoryFingerprint(rootRealPath: string): string | null {
   const rootToken = statToken(rootRealPath);
@@ -607,7 +635,9 @@ export function gitRepositoryFingerprint(rootRealPath: string): string | null {
     'cfgC', statToken(path.join(commonDir, 'config')) ?? 'absent',
     'cw', statToken(path.join(gitDir, 'config.worktree')) ?? 'absent',
     'pr', statToken(path.join(commonDir, 'packed-refs')) ?? 'absent',
-    'sh', statToken(path.join(gitDir, 'shallow')) ?? 'absent',
+    'rt', smallFileToken(path.join(commonDir, 'reftable', 'tables.list')) ?? 'absent',
+    'sh', statToken(path.join(commonDir, 'shallow')) ?? 'absent',
+    'gr', statToken(path.join(commonDir, 'info', 'grafts')) ?? 'absent',
     'alt', statToken(path.join(commonDir, 'objects', 'info', 'alternates')) ?? 'absent',
     'r', resolvedRefToken(gitDir, commonDir),
   ].join('|');
@@ -674,6 +704,8 @@ function watchProofDirectories(context: GitRepositoryContext): void {
       // fingerprint e o TTL limita a janela.
       return;
     }
+    // O watcher não pode segurar o event loop do Main na saída.
+    watcher.unref();
     watcher.on('error', () => {
       if (proofWatchers.get(directory) === watcher) {
         proofWatchers.delete(directory);
