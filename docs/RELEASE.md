@@ -464,6 +464,8 @@ assinatura). O worker não assina nada.
 O input `version` deve corresponder ao package.json, sem prefixo `v`. O worker não
 publica releases, e só pode ser iniciado a partir de `main` protegido.
 
+Sem crédito/orçamento do GitHub Actions (o job falha em segundos com "An Actions budget is preventing further use"), o candidato Windows é gerado localmente no PC Windows do operador (`npm run make` + `npm run release:candidate`, mesmo recibo schemaVersion 2 `signing: none` com o hash de cada executável) e os artefatos sobem para a Release com `gh release upload`; com orçamento, o caminho padrão continua sendo o `windows-release.yml`.
+
 No Mac, selecione o run autenticado:
 
 ```bash

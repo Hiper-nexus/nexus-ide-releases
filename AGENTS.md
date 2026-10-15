@@ -85,6 +85,12 @@ npm run rebuild:node           # rebuild native modules for Node (CI/tests)
   (`windows-latest`); não depende mais do runner no PC do operador. O recibo
   (schemaVersion 2, `signing: none`) traz o hash de cada executável. A versão assinada é a da
   Microsoft Store (MSIX), que a Store reassina de graça.
+- Sem crédito/orçamento do GitHub Actions (o job falha em segundos com "An
+  Actions budget is preventing further use"), o candidato Windows é gerado
+  LOCALMENTE no PC Windows do operador (`npm run make` + `npm run
+  release:candidate`, mesmo recibo schemaVersion 2 `signing: none` com o hash de
+  cada executável) e os artefatos sobem para a Release com `gh release upload`.
+  Com orçamento, o caminho padrão continua sendo o `windows-release.yml`.
 
 ## Authoritative Owners
 
