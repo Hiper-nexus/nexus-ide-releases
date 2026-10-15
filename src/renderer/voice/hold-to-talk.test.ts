@@ -8,6 +8,7 @@ import {
   HOLD_TO_TALK_THRESHOLD_MS,
   HoldToTalkDiscriminator,
   clampHoldToTalkMs,
+  HoldPressGuard,
 } from './hold-to-talk';
 
 describe('fiação viva do hold-to-talk', () => {
@@ -198,5 +199,32 @@ describe('HoldToTalkDiscriminator', () => {
     expect(clampHoldToTalkMs(600.4)).toBe(600);
     expect(clampHoldToTalkMs(undefined)).toBe(450);
     expect(clampHoldToTalkMs(Number.NaN)).toBe(450);
+  });
+});
+
+describe('HoldPressGuard (F-1541)', () => {
+  it('soltar durante a partida invalida o pressionamento', () => {
+    const guard = new HoldPressGuard();
+    const token = guard.press();
+    expect(guard.isHeld(token)).toBe(true);
+    guard.release();
+    expect(guard.isHeld(token)).toBe(false);
+  });
+
+  it('repetição com a tecla baixa mantém o token (auto-repeat do hotkey global)', () => {
+    const guard = new HoldPressGuard();
+    const first = guard.press();
+    const repeat = guard.press();
+    expect(repeat).toBe(first);
+    expect(guard.isHeld(first)).toBe(true);
+  });
+
+  it('um press novo após soltar invalida o token do anterior', () => {
+    const guard = new HoldPressGuard();
+    const first = guard.press();
+    guard.release();
+    const second = guard.press();
+    expect(guard.isHeld(first)).toBe(false);
+    expect(guard.isHeld(second)).toBe(true);
   });
 });

@@ -129,3 +129,39 @@ export class HoldToTalkDiscriminator {
     return previous === 'talking' ? outcome({ stopDictation: true }) : INERT;
   }
 }
+
+/**
+ * Guarda de "soltou durante a partida" (F-1541).
+ *
+ * Iniciar a captura é assíncrono (`getUserMedia` no Windows leva centenas de
+ * ms). Se a tecla sobe nessa janela, o stop vê "não está gravando" e é
+ * ignorado; a captura então termina de abrir sozinha e grava, sem ninguém para
+ * parar, até a válvula de 5 min — o "espaço preso" que o operador via enquanto
+ * digitava. Cada pressionamento ganha um token; quem inicia confere, DEPOIS de
+ * a captura abrir, se aquele mesmo pressionamento ainda está pressionado.
+ */
+export class HoldPressGuard {
+  #generation = 0;
+  #held = false;
+
+  /**
+   * Registra um pressionamento e devolve o token dele. Repetição com a tecla
+   * já baixa (WM_HOTKEY auto-repeat no Windows) mantém o MESMO token: senão a
+   * repetição invalidaria a captura legítima que ainda está abrindo.
+   */
+  press(): number {
+    if (!this.#held) this.#generation += 1;
+    this.#held = true;
+    return this.#generation;
+  }
+
+  /** A tecla subiu (ou o hold foi cancelado). */
+  release(): void {
+    this.#held = false;
+  }
+
+  /** O pressionamento `token` ainda está de pé? Um press novo invalida o velho. */
+  isHeld(token: number): boolean {
+    return this.#held && this.#generation === token;
+  }
+}

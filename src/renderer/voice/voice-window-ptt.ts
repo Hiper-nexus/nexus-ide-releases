@@ -69,6 +69,11 @@ export function shouldIgnoreWindowPttTarget(target: EventTarget | null): boolean
   return false;
 }
 
+const MODIFIER_CODES: ReadonlySet<string> = new Set([
+  'ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight',
+  'AltLeft', 'AltRight', 'MetaLeft', 'MetaRight', 'CapsLock', 'OS',
+]);
+
 export function codeMatchesPttKey(eventCode: string, keyCode: string): boolean {
   const wanted = keyCode.trim().toLowerCase();
   if (!wanted) return false;
@@ -147,6 +152,17 @@ export function attachWindowPtt(
         options.onDisabledKeyDown?.();
       }
       return;
+    }
+    // F-1541: outra tecla de verdade durante o hold prova que o keyup do PTT
+    // se perdeu (foco em iframe/webview, IME): fecha o ditado em vez de gravar
+    // enquanto o operador já digita. Modificadores soltos não contam.
+    if (
+      discriminator.state === 'talking' &&
+      !codeMatchesPttKey(e.code, options.getKeyCode()) &&
+      !MODIFIER_CODES.has(e.code)
+    ) {
+      apply(discriminator.keyUp(), null);
+      heldTarget = null;
     }
     if (e.defaultPrevented) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;

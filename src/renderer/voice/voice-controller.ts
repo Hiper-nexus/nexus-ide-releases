@@ -126,6 +126,7 @@ import { PassiveWakeAdmission } from './passive-wake-admission';
 import { pttStartAction } from './ptt-barge-in';
 import {
   HOLD_TO_TALK_SAFETY_MAX_MS,
+  HoldPressGuard,
   HOLD_TO_TALK_SILENCE_MS,
   clampHoldToTalkMs,
 } from './hold-to-talk';
@@ -1364,7 +1365,24 @@ export function useVoiceController(active = true): void {
       }
     });
 
+    // F-1541: keyup que chega enquanto a captura ainda abre não pode se perder.
+    const pttGuard = new HoldPressGuard();
+    const dictationGuard = new HoldPressGuard();
+    const stopIfReleasedWhileStarting = (
+      guard: HoldPressGuard,
+      token: number,
+    ): void => {
+      if (guard.isHeld(token) || !isListening(capture.current)) return;
+      logVoiceEvent(
+        'info',
+        'voice.holdReleasedWhileStarting',
+        'tecla subiu antes da captura abrir; encerrando',
+      );
+      void finishAndProcessFacade(capture.current!, busy);
+    };
+
     const onStart = () => {
+      const holdToken = pttGuard.press();
       if (useVoiceStore.getState().info?.captureAllowed === false) return;
       // A keyboard PTT press is an explicit local gesture and may reactivate
       // input after power-off. Merely saying the wake word cannot.
@@ -1404,9 +1422,10 @@ export function useVoiceController(active = true): void {
         'ptt',
         undefined,
         busy,
-      );
+      ).then(() => stopIfReleasedWhileStarting(pttGuard, holdToken));
     };
     const onStop = () => {
+      pttGuard.release();
       if (!isListening(capture.current)) return;
       void finishAndProcessFacade(capture.current!, busy);
     };
@@ -1430,6 +1449,7 @@ export function useVoiceController(active = true): void {
     // transcreve PT→EN (Groq) e injeta no pane focado. A Jarvis fica nos
     // gatilhos dela: ⌘⇧Space global, wake word e clique.
     const onDictationStart = () => {
+      const holdToken = dictationGuard.press();
       if (useVoiceStore.getState().info?.captureAllowed === false) return;
       const action = pttStartAction({
         isListening: isListening(capture.current),
@@ -1464,11 +1484,12 @@ export function useVoiceController(active = true): void {
         'dictation',
         undefined,
         busy,
-      );
+      ).then(() => stopIfReleasedWhileStarting(dictationGuard, holdToken));
       // Fato de ativação do onboarding: o operador ditou (Space hold ou botão).
       useOnboardingStore.getState().markChecklist('dictatedWithSpace');
     };
     const onDictationStop = () => {
+      dictationGuard.release();
       if (!isListening(capture.current)) return;
       void finishAndProcessFacade(capture.current!, busy);
     };

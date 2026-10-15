@@ -197,6 +197,33 @@ describe('attachWindowPtt', () => {
     dispose();
   });
 
+  it('F-1541: outra tecla durante o hold prova o keyup perdido e encerra o ditado', () => {
+    const { onStart, onStop, dispose } = attach();
+    keydown();
+    vi.advanceTimersByTime(HOLD_MS);
+    expect(onStart).toHaveBeenCalledTimes(1);
+
+    // O keyup do Space nunca chegou (foco em iframe/IME); o operador já digita.
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyA', bubbles: true }));
+    expect(onStop).toHaveBeenCalledTimes(1);
+
+    // O keyup tardio não para de novo.
+    keyup();
+    expect(onStop).toHaveBeenCalledTimes(1);
+    dispose();
+  });
+
+  it('F-1541: modificador durante o hold não encerra o ditado', () => {
+    const { onStop, dispose } = attach();
+    keydown();
+    vi.advanceTimersByTime(HOLD_MS);
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'ShiftLeft', bubbles: true }));
+    expect(onStop).not.toHaveBeenCalled();
+    keyup();
+    expect(onStop).toHaveBeenCalledTimes(1);
+    dispose();
+  });
+
   it('janela escondida com a tecla baixa (keyup perdido) cancela o hold', () => {
     const { onStart, onStop, emitSpace, dispose } = attach();
     keydown();
