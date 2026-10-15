@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkspaceLayout } from '../../shared/types';
+import { workspaceLayoutSchema } from '../../shared/ipc';
 import { testProjectScope } from '../orch/__tests__/scope-fixture';
 import { ScopedStoreCorruptionError } from '../orch/scoped-store';
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
@@ -87,6 +88,18 @@ describe('scoped layout store', () => {
     expect(store.load()?.layout.root).toMatchObject({
       pane: { role: 'worker', agentName: 'Reviewer' },
     });
+  });
+
+  it('parses the layout schema only once per save', () => {
+    const runtimeManager = manager();
+    const store = createScopedLayoutStore(runtimeManager, testProjectScope());
+    const parse = vi.spyOn(workspaceLayoutSchema, 'parse');
+    try {
+      store.save(layout());
+      expect(parse).toHaveBeenCalledTimes(1);
+    } finally {
+      parse.mockRestore();
+    }
   });
 
   it('validates inputs and fails explicitly on corrupted persisted JSON', () => {

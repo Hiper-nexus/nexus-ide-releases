@@ -94,6 +94,49 @@ describe('devolução do auth.json renovado ao perfil de origem (F-684)', () => 
     expect(fs.readFileSync(path.join(paneB, 'auth.json'), 'utf8')).toBe(renewed);
   });
 
+  it('vigia por fs.watch: sem poll de statSync ocioso, e a renovação volta sem esperar o intervalo', async () => {
+    const native = tempDir();
+    const paneDir = tempDir();
+    const source = path.join(native, 'auth.json');
+    const overlay = path.join(paneDir, 'auth.json');
+    fs.writeFileSync(source, grokAuth('r1', '2026-09-23T01:59:00Z'));
+    fs.copyFileSync(source, overlay);
+    const watch = vi.spyOn(fs, 'watch');
+    const interval = vi.spyOn(globalThis, 'setInterval');
+    // Intervalo enorme: se a devolução depender do poll, o teste estoura o waitFor.
+    const stop = startAuthWriteThrough({ overlayFile: overlay, sourceFile: source, policy, intervalMs: 600_000 });
+    try {
+      expect(watch).toHaveBeenCalledTimes(1);
+      expect(String(watch.mock.calls[0][0])).toBe(path.dirname(overlay));
+      expect(interval).not.toHaveBeenCalled();
+      const renewed = grokAuth('r9', '2099-01-01T00:00:00Z');
+      cliRenameWrite(overlay, renewed);
+      await vi.waitFor(() => expect(fs.readFileSync(source, 'utf8')).toBe(renewed), { timeout: 2_000, interval: 20 });
+    } finally {
+      stop();
+    }
+  });
+
+  it('sem fs.watch (lança ao abrir), volta ao poll por intervalo', async () => {
+    const native = tempDir();
+    const paneDir = tempDir();
+    const source = path.join(native, 'auth.json');
+    const overlay = path.join(paneDir, 'auth.json');
+    fs.writeFileSync(source, grokAuth('r1', '2026-09-23T01:59:00Z'));
+    fs.copyFileSync(source, overlay);
+    vi.spyOn(fs, 'watch').mockImplementation(() => { throw new Error('EPERM: watch indisponível (simulado)'); });
+    const interval = vi.spyOn(globalThis, 'setInterval');
+    const stop = startAuthWriteThrough({ overlayFile: overlay, sourceFile: source, policy, intervalMs: 20 });
+    try {
+      expect(interval).toHaveBeenCalledTimes(1);
+      const renewed = grokAuth('r9', '2099-01-01T00:00:00Z');
+      cliRenameWrite(overlay, renewed);
+      await vi.waitFor(() => expect(fs.readFileSync(source, 'utf8')).toBe(renewed), { timeout: 2_000, interval: 20 });
+    } finally {
+      stop();
+    }
+  });
+
   it('o disposer faz a última passada ao fechar o pane', () => {
     const native = tempDir();
     const pane = tempDir();

@@ -49,6 +49,7 @@ export class MimoUsageScanner {
   readonly #reader = new MimoWorkerReader();
   readonly #taskId = `mimo-usage:${++scannerSequence}`;
   #timer: ReturnType<typeof setInterval> | null = null;
+  #started = false;
   #stopped = false;
   #flight: Promise<void> | null = null;
   #stopFlight: Promise<void> | null = null;
@@ -68,18 +69,32 @@ export class MimoUsageScanner {
     // Preserve the exact registry object: its private WeakMap proof cannot be cloned.
     this.#states.set(binding.ptySessionId, { binding,
       cursor: { at: 0, id: '' }, highWatermark: 0, seen: new Map() });
+    this.#syncTimer();
     if (previous) void this.scan();
+  }
+  /** O poll de 1s só existe enquanto há sessões ativas ou aposentadas a drenar. */
+  #syncTimer(): void {
+    if (this.#stopped || !this.#started) return;
+    const hasWork = this.#states.size > 0 || this.#retired.length > 0;
+    if (hasWork && !this.#timer) {
+      this.#timer = setInterval(() => { void this.scan(); }, POLL_MS);
+      this.#timer.unref?.();
+    } else if (!hasWork && this.#timer) {
+      clearInterval(this.#timer);
+      this.#timer = null;
+    }
   }
   start(): void {
     if (this.#stopped) return;
-    if (!this.#timer) this.#timer = setInterval(() => { void this.scan(); }, POLL_MS);
-    this.#timer.unref?.();
+    this.#started = true;
+    this.#syncTimer();
   }
   remove(ptySessionId: string): void {
     if (this.#stopped) return;
     const state = this.#states.get(ptySessionId);
     if (state) { state.retiredAt = Date.now(); this.#retired.push(state); }
     this.#states.delete(ptySessionId);
+    this.#syncTimer();
     void this.scan();
   }
   scan(): Promise<void> {
@@ -119,7 +134,7 @@ export class MimoUsageScanner {
       } finally { for (const state of retired) this.releaseBinding(state.binding); }
     }, { timeoutMs: 20_000, sliceMs: 10 }).catch(() => {
       // Availability/locks/cancellation never stop a pane or advance an unreturned cursor.
-    }).finally(() => { this.#flight = null; });
+    }).finally(() => { this.#flight = null; this.#syncTimer(); });
     return this.#flight;
   }
   stop(): Promise<void> {

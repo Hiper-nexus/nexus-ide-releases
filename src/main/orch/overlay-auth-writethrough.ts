@@ -26,6 +26,7 @@
  * e depois de abrir (nada de escrever através de link plantado no meio).
  */
 import fs from 'node:fs';
+import path from 'node:path';
 
 /** Tentativas da pendência depois que o pane fechou (uma por volta do vigia). */
 const DETACHED_RETRIES = 5;
@@ -223,15 +224,57 @@ export function startAuthWriteThrough(input: {
     }
   };
   let seen = statSignature(input.overlayFile);
-  const timer = setInterval(() => {
+  const check = (): void => {
     const current = statSignature(input.overlayFile);
     if (current === seen && pending === null) return;
     seen = current;
     tick();
-  }, intervalMs);
-  timer.unref?.();
+  };
+  // A passada que falhou fica pendente e é refeita a cada intervalMs mesmo sem
+  // nova mudança no overlay (F-1485); sem pendência o temporizador desarma.
+  let retryTimer: ReturnType<typeof setInterval> | null = null;
+  let pollTimer: ReturnType<typeof setInterval> | null = null;
+  const disarmRetry = (): void => {
+    if (retryTimer) clearInterval(retryTimer);
+    retryTimer = null;
+  };
+  const wake = (): void => {
+    check();
+    if (pollTimer) return;
+    if (pending === null) disarmRetry();
+    else if (!retryTimer) {
+      retryTimer = setInterval(wake, intervalMs);
+      retryTimer.unref?.();
+    }
+  };
+  const armPoll = (): void => {
+    if (pollTimer) return;
+    pollTimer = setInterval(wake, intervalMs);
+    pollTimer.unref?.();
+  };
+  // O acordar é por fs.watch na PASTA (a CLI regrava por temporário + rename, o
+  // que troca o inode do arquivo vigiado); o poll por statSync fica só de
+  // reserva para quando o watch falha ou é recusado.
+  let watcher: fs.FSWatcher | null = null;
+  const overlayBase = path.basename(input.overlayFile);
+  try {
+    watcher = fs.watch(path.dirname(input.overlayFile), { persistent: false }, (_event, filename) => {
+      if (filename !== null && filename.toString() !== overlayBase) return;
+      wake();
+    });
+    watcher.on('error', () => {
+      watcher?.close();
+      watcher = null;
+      armPoll();
+    });
+  } catch {
+    watcher = null;
+    armPoll();
+  }
   return () => {
-    clearInterval(timer);
+    watcher?.close();
+    if (pollTimer) clearInterval(pollTimer);
+    disarmRetry();
     tick();
     if (pending !== null) {
       const blob = pending;

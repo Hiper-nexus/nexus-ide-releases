@@ -28,13 +28,13 @@ export type ScopedWorkspaceLayout = ScopedEntity<{
 
 type LayoutRow = z.infer<typeof layoutRowSchema>;
 
-function encodeLayout(rawLayout: WorkspaceLayout): string {
+function encodeLayout(rawLayout: WorkspaceLayout): { layout: WorkspaceLayout; serialized: string } {
   const layout = workspaceLayoutSchema.parse(rawLayout);
   const serialized = JSON.stringify(layout);
   if (Buffer.byteLength(serialized, 'utf8') > MAX_LAYOUT_BYTES) {
     throw new TypeError('workspace layout must be smaller than 4 MiB');
   }
-  return serialized;
+  return { layout, serialized };
 }
 
 function parsePersistedLayout(raw: string): WorkspaceLayout {
@@ -92,7 +92,7 @@ export class ScopedLayoutStore {
   }
 
   save(rawLayout: WorkspaceLayout): ScopedWorkspaceLayout {
-    const layoutJson = encodeLayout(rawLayout);
+    const { layout, serialized } = encodeLayout(rawLayout);
     const updatedAt = this.#binding.now();
     this.#binding
       .writeDatabase()
@@ -103,10 +103,10 @@ export class ScopedLayoutStore {
            layout_json = excluded.layout_json,
            updated_at = excluded.updated_at`,
       )
-      .run(LAYOUT_SINGLETON_ID, layoutJson, updatedAt);
+      .run(LAYOUT_SINGLETON_ID, serialized, updatedAt);
     this.#binding.emitChange();
     return {
-      layout: parsePersistedLayout(layoutJson),
+      layout,
       updatedAt,
       ...this.#binding.coordinates,
     };
