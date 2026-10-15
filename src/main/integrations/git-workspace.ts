@@ -24,12 +24,39 @@ import {
   type GitMutateResult,
   type GitStatusResult,
 } from '../../shared/git-scm';
+import fs from 'node:fs';
 import { parseHostedRemote } from '../git/hosted-remote-url';
 import { AsyncProcessGitRunner, assertSafeLocalGitConfigAsync } from '../runtime/git-command';
 
 const runner = new AsyncProcessGitRunner();
 const MAX_COMMIT_MESSAGE = 4096;
 const MAX_PATHS = 500;
+
+/**
+ * Mutations (stage/commit/checkout/pull/push/discard) take .git/index.lock and
+ * rewrite HEAD; two async spawns on one repository — double click, poll racing
+ * an action — used to collide with "index.lock: File exists". Each real
+ * repository root gets a FIFO tail so writes serialize, while reads (already
+ * GIT_OPTIONAL_LOCKS=0) keep running in parallel.
+ */
+const mutationTails = new Map<string, Promise<unknown>>();
+
+function serializeGitMutation<T>(cwd: string, operation: () => Promise<T>): Promise<T> {
+  let key: string;
+  try {
+    key = fs.realpathSync(cwd);
+  } catch {
+    key = cwd;
+  }
+  const tail = mutationTails.get(key) ?? Promise.resolve();
+  const run = tail.then(operation, operation);
+  const settled = run.then(() => undefined, () => undefined);
+  mutationTails.set(key, settled);
+  void settled.then(() => {
+    if (mutationTails.get(key) === settled) mutationTails.delete(key);
+  });
+  return run;
+}
 
 async function git(
   cwd: string,
@@ -110,46 +137,52 @@ export async function gitDefaultBranch(cwd: string): Promise<string> {
 // leading '+' would force-push. Restrict to the plain ref-name charset.
 const SAFE_BRANCH_NAME = /^[A-Za-z0-9._/-]+$/;
 
-export async function gitPushCurrentBranch(cwd: string, branch: string): Promise<GitMutateResult> {
-  const unsafe = await refuseUnsafeConfig(cwd);
-  if (unsafe) return { ok: false, error: unsafe };
-  const name = branch.trim();
-  if (!name || name === 'HEAD') return { ok: false, error: 'no branch to push' };
-  if (!SAFE_BRANCH_NAME.test(name) || name.startsWith('-') || name.includes('..')) {
-    return { ok: false, error: `nome de branch inválido para push: ${name}` };
-  }
-  const r = await git(cwd, ['push', '--set-upstream', 'origin', name]);
-  if (!r.ok) {
-    return { ok: false, error: r.stderr.trim() || r.stdout.trim() || `git push exit ${r.code}` };
-  }
-  return { ok: true };
+export function gitPushCurrentBranch(cwd: string, branch: string): Promise<GitMutateResult> {
+  return serializeGitMutation(cwd, async () => {
+    const unsafe = await refuseUnsafeConfig(cwd);
+    if (unsafe) return { ok: false, error: unsafe };
+    const name = branch.trim();
+    if (!name || name === 'HEAD') return { ok: false, error: 'no branch to push' };
+    if (!SAFE_BRANCH_NAME.test(name) || name.startsWith('-') || name.includes('..')) {
+      return { ok: false, error: `nome de branch inválido para push: ${name}` };
+    }
+    const r = await git(cwd, ['push', '--set-upstream', 'origin', name]);
+    if (!r.ok) {
+      return { ok: false, error: r.stderr.trim() || r.stdout.trim() || `git push exit ${r.code}` };
+    }
+    return { ok: true };
+  });
 }
 
-export async function gitPullCurrentBranch(cwd: string, rebase = false): Promise<GitMutateResult> {
-  const unsafe = await refuseUnsafeConfig(cwd);
-  if (unsafe) return { ok: false, error: unsafe };
-  const args = rebase ? ['pull', '--rebase'] : ['pull'];
-  const r = await git(cwd, args);
-  if (!r.ok) {
-    return { ok: false, error: r.stderr.trim() || r.stdout.trim() || `git pull exit ${r.code}` };
-  }
-  return { ok: true };
+export function gitPullCurrentBranch(cwd: string, rebase = false): Promise<GitMutateResult> {
+  return serializeGitMutation(cwd, async () => {
+    const unsafe = await refuseUnsafeConfig(cwd);
+    if (unsafe) return { ok: false, error: unsafe };
+    const args = rebase ? ['pull', '--rebase'] : ['pull'];
+    const r = await git(cwd, args);
+    if (!r.ok) {
+      return { ok: false, error: r.stderr.trim() || r.stdout.trim() || `git pull exit ${r.code}` };
+    }
+    return { ok: true };
+  });
 }
 
-export async function gitDiscard(cwd: string, paths: string[]): Promise<GitMutateResult> {
-  const unsafe = await refuseUnsafeConfig(cwd);
-  if (unsafe) return { ok: false, error: unsafe };
-  const normalized = normalizePaths(paths);
-  if ('error' in normalized) return { ok: false, error: normalized.error };
-  const restoreRes = await git(cwd, ['restore', '--', ...normalized]);
-  const cleanRes = await git(cwd, ['clean', '-fd', '--', ...normalized]);
-  if (!restoreRes.ok && !cleanRes.ok) {
-    return {
-      ok: false,
-      error: restoreRes.stderr.trim() || cleanRes.stderr.trim() || 'falha ao descartar alterações',
-    };
-  }
-  return { ok: true };
+export function gitDiscard(cwd: string, paths: string[]): Promise<GitMutateResult> {
+  return serializeGitMutation(cwd, async () => {
+    const unsafe = await refuseUnsafeConfig(cwd);
+    if (unsafe) return { ok: false, error: unsafe };
+    const normalized = normalizePaths(paths);
+    if ('error' in normalized) return { ok: false, error: normalized.error };
+    const restoreRes = await git(cwd, ['restore', '--', ...normalized]);
+    const cleanRes = await git(cwd, ['clean', '-fd', '--', ...normalized]);
+    if (!restoreRes.ok && !cleanRes.ok) {
+      return {
+        ok: false,
+        error: restoreRes.stderr.trim() || cleanRes.stderr.trim() || 'falha ao descartar alterações',
+      };
+    }
+    return { ok: true };
+  });
 }
 
 export async function gitBranches(cwd: string): Promise<{
@@ -185,27 +218,29 @@ export async function gitBranches(cwd: string): Promise<{
   return { ok: true, current, branches };
 }
 
-export async function gitCheckoutBranch(
+export function gitCheckoutBranch(
   cwd: string,
   branch: string,
   create = false,
 ): Promise<GitMutateResult> {
-  const unsafe = await refuseUnsafeConfig(cwd);
-  if (unsafe) return { ok: false, error: unsafe };
-  const name = branch.trim();
-  if (!name || name === 'HEAD') return { ok: false, error: 'nome de branch inválido' };
-  if (!SAFE_BRANCH_NAME.test(name) || name.startsWith('-') || name.includes('..')) {
-    return { ok: false, error: `nome de branch inválido: ${name}` };
-  }
-  const args = create ? ['checkout', '-b', name] : ['checkout', name];
-  const r = await git(cwd, args);
-  if (!r.ok) {
-    return {
-      ok: false,
-      error: r.stderr.trim() || r.stdout.trim() || `git checkout exit ${r.code}`,
-    };
-  }
-  return { ok: true };
+  return serializeGitMutation(cwd, async () => {
+    const unsafe = await refuseUnsafeConfig(cwd);
+    if (unsafe) return { ok: false, error: unsafe };
+    const name = branch.trim();
+    if (!name || name === 'HEAD') return { ok: false, error: 'nome de branch inválido' };
+    if (!SAFE_BRANCH_NAME.test(name) || name.startsWith('-') || name.includes('..')) {
+      return { ok: false, error: `nome de branch inválido: ${name}` };
+    }
+    const args = create ? ['checkout', '-b', name] : ['checkout', name];
+    const r = await git(cwd, args);
+    if (!r.ok) {
+      return {
+        ok: false,
+        error: r.stderr.trim() || r.stdout.trim() || `git checkout exit ${r.code}`,
+      };
+    }
+    return { ok: true };
+  });
 }
 
 
@@ -338,45 +373,51 @@ export async function gitScmStatus(cwd: string): Promise<GitStatusResult> {
   };
 }
 
-export async function gitStage(cwd: string, paths: string[]): Promise<GitMutateResult> {
-  const unsafe = await refuseUnsafeConfig(cwd);
-  if (unsafe) return { ok: false, error: unsafe };
-  const normalized = normalizePaths(paths);
-  if ('error' in normalized) return { ok: false, error: normalized.error };
-  const r = await git(cwd, ['add', '--', ...normalized]);
-  if (!r.ok) return { ok: false, error: r.stderr.trim() || `git add exit ${r.code}` };
-  return { ok: true };
+export function gitStage(cwd: string, paths: string[]): Promise<GitMutateResult> {
+  return serializeGitMutation(cwd, async () => {
+    const unsafe = await refuseUnsafeConfig(cwd);
+    if (unsafe) return { ok: false, error: unsafe };
+    const normalized = normalizePaths(paths);
+    if ('error' in normalized) return { ok: false, error: normalized.error };
+    const r = await git(cwd, ['add', '--', ...normalized]);
+    if (!r.ok) return { ok: false, error: r.stderr.trim() || `git add exit ${r.code}` };
+    return { ok: true };
+  });
 }
 
-export async function gitUnstage(cwd: string, paths: string[]): Promise<GitMutateResult> {
-  const unsafe = await refuseUnsafeConfig(cwd);
-  if (unsafe) return { ok: false, error: unsafe };
-  const normalized = normalizePaths(paths);
-  if ('error' in normalized) return { ok: false, error: normalized.error };
-  const r = await git(cwd, ['restore', '--staged', '--', ...normalized]);
-  if (!r.ok) {
-    return {
-      ok: false,
-      error: r.stderr.trim() || `git restore --staged exit ${r.code}`,
-    };
-  }
-  return { ok: true };
+export function gitUnstage(cwd: string, paths: string[]): Promise<GitMutateResult> {
+  return serializeGitMutation(cwd, async () => {
+    const unsafe = await refuseUnsafeConfig(cwd);
+    if (unsafe) return { ok: false, error: unsafe };
+    const normalized = normalizePaths(paths);
+    if ('error' in normalized) return { ok: false, error: normalized.error };
+    const r = await git(cwd, ['restore', '--staged', '--', ...normalized]);
+    if (!r.ok) {
+      return {
+        ok: false,
+        error: r.stderr.trim() || `git restore --staged exit ${r.code}`,
+      };
+    }
+    return { ok: true };
+  });
 }
 
-export async function gitCommitMessage(cwd: string, message: string): Promise<GitCommitResult> {
-  const unsafe = await refuseUnsafeConfig(cwd);
-  if (unsafe) return { ok: false, error: unsafe };
-  const msg = message.trim();
-  if (!msg) return { ok: false, error: 'commit message required' };
-  if (msg.length > MAX_COMMIT_MESSAGE) {
-    return { ok: false, error: `commit message too long (max ${MAX_COMMIT_MESSAGE})` };
-  }
-  if (/[\0]/.test(msg)) return { ok: false, error: 'commit message contains NUL' };
-  const r = await git(cwd, ['commit', '-m', msg]);
-  if (!r.ok) {
-    return { ok: false, error: r.stderr.trim() || r.stdout.trim() || `git commit exit ${r.code}` };
-  }
-  return { ok: true, summary: r.stdout.trim() || 'committed' };
+export function gitCommitMessage(cwd: string, message: string): Promise<GitCommitResult> {
+  return serializeGitMutation(cwd, async () => {
+    const unsafe = await refuseUnsafeConfig(cwd);
+    if (unsafe) return { ok: false, error: unsafe };
+    const msg = message.trim();
+    if (!msg) return { ok: false, error: 'commit message required' };
+    if (msg.length > MAX_COMMIT_MESSAGE) {
+      return { ok: false, error: `commit message too long (max ${MAX_COMMIT_MESSAGE})` };
+    }
+    if (/[\0]/.test(msg)) return { ok: false, error: 'commit message contains NUL' };
+    const r = await git(cwd, ['commit', '-m', msg]);
+    if (!r.ok) {
+      return { ok: false, error: r.stderr.trim() || r.stdout.trim() || `git commit exit ${r.code}` };
+    }
+    return { ok: true, summary: r.stdout.trim() || 'committed' };
+  });
 }
 
 export async function gitLogOneline(cwd: string, count = 20): Promise<GitLogResult> {
