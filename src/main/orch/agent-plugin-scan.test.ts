@@ -357,12 +357,20 @@ describe('scanInstalledPlugins — TTL cache (A6)', () => {
     expect(scanInstalledPlugins(home)).toHaveLength(0);
   });
 
-  it('allowedTools explícito não passa pelo cache', () => {
+  it('allowedTools explícito também usa o cache, uma entrada por lista (#22)', () => {
     writePlugin('.claude/plugins', 'p1', manifest('p1'));
-    const first = scanInstalledPlugins(home, { allowedTools: ['Read'] });
-    expect(first).toHaveLength(1);
+    expect(scanInstalledPlugins(home, { allowedTools: ['Read', 'Bash'] })).toHaveLength(1);
     fs.rmSync(path.join(home, '.claude/plugins/p1'), { recursive: true, force: true });
-    const second = scanInstalledPlugins(home, { allowedTools: ['Read'] });
-    expect(second).toHaveLength(0);
+    // Mesma lista (outra ordem): o spawn seguinte não refaz o scan síncrono.
+    expect(scanInstalledPlugins(home, { allowedTools: ['Bash', 'Read'] })).toHaveLength(1);
+    // Lista diferente nunca recebe o resultado filtrado de outra.
+    expect(scanInstalledPlugins(home, { allowedTools: ['Read'] })).toHaveLength(0);
+  });
+
+  it('sem lista ([] efetivo) e lista nula não dividem a mesma entrada (#22)', () => {
+    writePlugin('.claude/plugins', 'p1', manifest('p1'));
+    expect(scanInstalledPlugins(home)).toHaveLength(1);
+    fs.rmSync(path.join(home, '.claude/plugins/p1'), { recursive: true, force: true });
+    expect(scanInstalledPlugins(home, { allowedTools: null })).toHaveLength(0);
   });
 });
