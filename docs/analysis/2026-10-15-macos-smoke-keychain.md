@@ -33,3 +33,7 @@ Nenhum arquivo em `src/` foi alterado; não há ocorrência do switch nele. O he
 - Sem instalação, rebuild, mudança de assinatura, alteração de Keychain real ou execução de app nesta correção. `node_modules` é um link para a dependência existente da b6ed.
 
 A worktree do harness é `/Users/cleofasrocha/.codex/worktrees/nexus-smoke-keychain-274.noindex`, branch `fix/macos-smoke-keychain-274`. A próxima execução usa o script dessa worktree, mas mantém `--source-sha 5fffda01710af8491df7cfe6ebfa25e85e7a3d02`, versão `0.76.274`, app/ZIP originais e o receipt absoluto `/Users/cleofasrocha/.codex/worktrees/b6ed/nexus-ide/release-artifacts/candidate-build.json`. O SHA do commit do harness não substitui o SHA da candidata nem seu receipt.
+
+## Repetição no mesmo app assinado
+
+O ensaio com o harness corrigido carregou a prévia em 256 ms e capturou o PNG em 246 ms; escrita, handoff, revisão e ACK passaram. A falha seguinte foi outra: inicialização do coordenador promovido (F-399). O artefato 274 não foi modificado nem publicado. O bloqueio do Keychain do teste ficou confirmado e resolvido sem alterar o produto.

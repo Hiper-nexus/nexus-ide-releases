@@ -134,3 +134,29 @@ continuam preservados. Não marcar o objetivo concluído antes desses gates.
   o minuto relatado em todas as IAs. A adoção após a apresentação ainda passa
   pelos gates usuais. Não atribuir a esse defeito o timeout MCP de prompt.
 - Próximo: pacote assinado/notarizado, gates nativos e publicação canônica.
+
+## Resultado nativo da 274 e candidata 275
+
+- Build 274 passou assinatura/notarização, gate de candidata e E2E. A prova de
+  estabilidade de cinco minutos passou, com saída física limpa e heaps sem
+  crescimento persistente. A 274 permanece uma candidata local não publicada.
+- A captura do navegador bloqueou por uma chamada do Chromium ao Keychain no
+  perfil de teste. Confirmado por amostra nativa de SecItemAdd e pela repetição
+  do MESMO app assinado com `--use-mock-keychain` somente no harness privado.
+  O navegador, a captura, os handoffs e os ACKs então passaram. Nenhuma
+  configuração do aplicativo instalado ou Keychain do operador foi alterada.
+- O próximo passo do teste encontrou F-399: anúncio ao pane recém-promovido
+  usava injeção bruta assíncrona, sem esperar prontidão/aceite. O transcript
+  contém apenas 1.023 bytes do anúncio e nenhum comando IDLE; ainda assim a
+  direção seguinte foi considerada aceita por observar o turno do anúncio.
+- A 275 deverá aguardar a entrega comprovada do aviso antes de devolver a
+  criação da missão. Preservar falha de aviso sem desfazer a promoção e manter
+  as cercas de escopo/sessão. Não reutilizar os artefatos 274 para esta alteração.
+
+## Fontes finais da 275
+
+- F-399: 312 testes em quatro arquivos passaram; a revisão separou o workspace
+  exibido da autoridade física durante a entrega. Trocar de projeto não encerra
+  o líder da missão original. Tipos, metadados e renderer sinks passaram.
+- A confirmação do aviso integral e do comando seguinte em turnos nativos
+  distintos continua obrigatória antes de publicar.

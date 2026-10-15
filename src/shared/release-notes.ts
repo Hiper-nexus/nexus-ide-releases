@@ -10894,10 +10894,11 @@ export const RELEASE_076273: AppRelease = {
 
 export const CURRENT_RELEASE: AppRelease = {
   ...RELEASE_076273,
-  version: '0.76.274',
+  version: '0.76.275',
   codename: 'Mais fácil de usar, painéis à vista',
   summary: 'O Mac recebe configuração guiada, contas e ações mais claras, retomada fácil de encontrar e a nova animação da lata. Esta versão também corrige a apresentação do painel aberto dentro de uma missão e impede que sinais automáticos do terminal retomem uma missão parada.',
   fixes: [
+    { title: 'Início da coordenação', detail: 'Ao criar uma missão a partir de um painel, o aviso ao coordenador aguarda a preparação da IA e a confirmação de recebimento antes de liberar a próxima instrução.' },
     { title: 'Novo painel na missão', detail: 'O painel aberto em Nesta missão é apresentado assim que o registro fica pronto, sem depender de outro evento da missão para aparecer.' },
     { title: 'Missão parada continua parada', detail: 'Sinais automáticos de foco e do terminal não são tratados como uma tecla sua. Voltar à tela não religa sozinho o painel encerrado pelo runtime.' },
     { title: 'Leitura leve do histórico', detail: 'Abrir um painel solto consulta apenas o trecho final do terminal, sem serializar todo o histórico nem forçar a saída pendente.' },
