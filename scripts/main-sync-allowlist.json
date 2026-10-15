@@ -303,9 +303,9 @@
       "file": "src/main/persistence/project-git-lineage.ts",
       "method": "spawnSync",
       "kind": "call",
-      "fingerprint": "83b65d7c67510c9c70182a935585ebe5418a6f97d6302561a6dc85d9d504cffa",
+      "fingerprint": "288b9b6d0d4da61cd8af1a50dfd9fe4ffca9c8738c9c259fdfcfb3ecbf542c72",
       "count": 1,
-      "reason": "Existing bounded canonical Git lineage identity probe; sanitized environment/output and identity consistency precede persistence."
+      "reason": "Existing bounded canonical Git lineage identity probe; sanitized environment/output and identity consistency precede persistence. Same single probe after extracting hardenedGitEnvironment() so the async warm runner shares the identical environment (cache proof parity)."
     },
     {
       "file": "src/main/persistence/project-git-lineage.ts",

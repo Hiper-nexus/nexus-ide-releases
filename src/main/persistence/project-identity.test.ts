@@ -9,8 +9,14 @@ import {
   clearProjectExecutionScopeCache,
   createProjectManifest,
   getOrCreateInstallationId,
+  projectIdentityStats,
   resolveProjectExecutionScope,
+  warmProjectIdentity,
 } from './project-identity';
+import {
+  clearGitRepositoryContextCache,
+  gitProofStats,
+} from './project-git-lineage';
 
 const PROJECT_ID = '018f6f5e-c2e8-7a59-8d75-3f7e5ab87c91';
 
@@ -667,5 +673,88 @@ describe('project identity', () => {
     expect(() => resolveProjectExecutionScope(workspace, opts)).toThrow(
       /checkout id collision/i,
     );
+  });
+});
+
+describe('identity proof cache (fail-closed)', () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-identity-cache-'));
+    clearGitRepositoryContextCache();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    clearProjectExecutionScopeCache();
+    clearGitRepositoryContextCache();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('resolução pós-aquecimento não roda git síncrono', async () => {
+    initializeRepository(root, {
+      origin: 'https://example.invalid/owner/repo.git',
+      content: 'cache-warm',
+    });
+    commitManifest(root);
+    await warmProjectIdentity(root);
+
+    const gitBefore = gitProofStats();
+    const idBefore = projectIdentityStats();
+    const scope = resolveProjectExecutionScope(
+      root,
+      options(root, 'installation-warm'),
+    );
+    expect(scope.identitySource).toBe('manifest');
+    expect(gitProofStats().contextSyncRuns).toBe(gitBefore.contextSyncRuns);
+    expect(projectIdentityStats().identityHits).toBe(idBefore.identityHits + 1);
+  });
+
+  it('manifesto adulterado quarentena mesmo com o cache quente', () => {
+    initializeRepository(root, {
+      origin: 'https://example.invalid/owner/repo.git',
+      content: 'cache-poison',
+    });
+    commitManifest(root);
+    const opts = options(root, 'installation-poison');
+    const first = resolveProjectExecutionScope(root, opts);
+    expect(first.identitySource).toBe('manifest');
+
+    // Troca o manifesto por um de OUTRO projeto: o cache NÃO pode servir a
+    // identidade antiga — a fingerprint do manifesto mudou, então recompute
+    // e quarentena (fail-closed).
+    const manifestFile = path.join(root, PROJECT_MANIFEST_PATH);
+    const manifest = JSON.parse(
+      fs.readFileSync(manifestFile, 'utf8'),
+    ) as Record<string, unknown>;
+    const repository = manifest.repository as Record<string, unknown>;
+    manifest.projectId = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+    repository.originHashes = [`origin-sha256-${'ab'.repeat(32)}`];
+    repository.anchorCommits = [];
+    repository.rootCommits = [];
+    fs.writeFileSync(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`);
+
+    expectQuarantine(
+      () => resolveProjectExecutionScope(root, opts),
+      'repository-lineage-mismatch',
+    );
+  });
+
+  it('TTL vencido recomputa a identidade', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    initializeRepository(root, {
+      origin: 'https://example.invalid/owner/repo.git',
+      content: 'cache-ttl',
+    });
+    commitManifest(root);
+    const opts = options(root, 'installation-ttl');
+    resolveProjectExecutionScope(root, opts);
+    const before = projectIdentityStats();
+
+    vi.setSystemTime(new Date('2026-01-01T00:06:00Z'));
+    clearProjectExecutionScopeCache();
+    resolveProjectExecutionScope(root, opts);
+    expect(projectIdentityStats().identityRuns).toBe(before.identityRuns + 1);
   });
 });
