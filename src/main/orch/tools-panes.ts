@@ -115,6 +115,15 @@ import {
   untrackPaneStart,
   type PaneStartRerouteResult,
 } from './pane-start-watchdog';
+// F-1531: idempotência do spawn por `requestId` do chamador.
+import {
+  beginPaneSpawnRequest,
+  joinedPaneSpawnReceipt,
+  paneSpawnRequestState,
+  releasePaneSpawnRequest,
+  settlePaneSpawnRequest,
+  validCallerRequestId,
+} from './pane-spawn-request-registry';
 import {
   forgetPaneTaskReroute,
   getPaneTaskReroute,
@@ -1216,12 +1225,40 @@ const paneSpawn: McpToolDef = {
           'recent work is related (receipt: reused:true + reusedReason) — ' +
           'saving the spawn and re-briefing.',
       },
+      requestId: {
+        type: 'string',
+        description:
+          'Your own id for THIS request (letters, digits, dot, hyphen, ' +
+          'underscore or colon; max 120 chars; no "orchspawn-" prefix). ' +
+          'Always pass one for a task you care about: the same requestId ' +
+          'sent again returns the SAME pane instead of opening a duplicate ' +
+          '(receipt: deduplicated:true), so a call that timed out on your ' +
+          'side can be retried safely. The id is remembered for 30 min, ' +
+          'the lifetime of the spawn grant.',
+      },
     },
   },
   handler: async (args, ctx, invocation) => {
     assertLicenseAccess();
     assertMcpInvocationCurrent(invocation);
     assertCallerMaySpawnPane(ctx.role);
+    // F-1531: idempotência por `requestId`, antes de QUALQUER preparo pesado.
+    // Campo 14/10: o cliente MCP estourou 120 s com o pane já nascendo; o
+    // Maestro leu "falhou" e reenviou, abrindo DUPLICATA (0,5–1 GB cada). Com o
+    // id, o reenvio devolve o pane que existe — e a resposta é a mesma.
+    const callerRequest = validCallerRequestId(args.requestId);
+    if (!callerRequest.ok) throw new Error(callerRequest.error);
+    const callerRequestId = callerRequest.requestId;
+    if (callerRequestId !== null) {
+      const seen = paneSpawnRequestState(callerRequestId);
+      if (seen) return joinedPaneSpawnReceipt(seen);
+      // Reserva antes da rota/worktree: um reenvio concorrente entra na fila
+      // atrás desta e recebe o mesmo pane, sem abrir um segundo.
+      if (beginPaneSpawnRequest({ requestId: callerRequestId }).kind === 'joined') {
+        const inFlight = paneSpawnRequestState(callerRequestId);
+        if (inFlight) return joinedPaneSpawnReceipt(inFlight);
+      }
+    }
     // Contrato de entrega inválido falha AQUI, visível para quem declarou —
     // nunca no handoff do worker, que não tem como consertar o schema. Antes
     // da missão da aba: argumento inválido não deixa missão nem pane promovido.
@@ -1253,7 +1290,7 @@ const paneSpawn: McpToolDef = {
       // F-1185: a adoção acima é efeito do próprio Main sobre este chamador.
       if (tabMission) invocation?.reanchorAfterOwnPromotion?.();
       assertMcpInvocationCurrent(invocation);
-      return await paneSpawnAfterTabMission.handler(
+      const result = await paneSpawnAfterTabMission.handler(
         args,
         ctx,
         invocation,
@@ -1261,7 +1298,25 @@ const paneSpawn: McpToolDef = {
         deliveryContract,
         spawnTiming,
       );
+      // F-1531: o pane nasceu — o id do chamador passa a valer este pane. Um
+      // reenvio depois disso devolve exatamente este recibo.
+      if (callerRequestId !== null) {
+        const paneId = str(result as Record<string, unknown>, 'paneId');
+        if (paneId !== undefined) {
+          settlePaneSpawnRequest({
+            requestId: callerRequestId,
+            paneId,
+            sessionId: str(result as Record<string, unknown>, 'sessionId') ?? null,
+            receipt: result as Record<string, unknown>,
+          });
+        }
+      }
+      return result;
     } catch (error) {
+      // F-1531: spawn que NÃO saiu libera o id do chamador — uma recusa de
+      // verdade (admissão, argv, CLI morta) precisa poder ser refeita. Fixar
+      // a chave devolveria um pane morto para sempre.
+      if (callerRequestId !== null) releasePaneSpawnRequest({ requestId: callerRequestId });
       // Spawn que não saiu não deixa a missão da aba que nasceu para ele:
       // missão running vazia e pane promovido sem helper nenhum.
       spawnTiming.meta.errorCode = classifySpawnErrorCode(error);

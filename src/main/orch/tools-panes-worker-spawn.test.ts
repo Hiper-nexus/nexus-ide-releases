@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PreEffectRefusalError, type AgentGateContext } from './gate';
 import { testProjectScope } from './__tests__/scope-fixture';
 import {
@@ -6,6 +6,11 @@ import {
   coerceSpawnReadOnly,
   paneSpawnTool,
 } from './tools-panes';
+import {
+  beginPaneSpawnRequest,
+  paneSpawnRequestState,
+  resetPaneSpawnRequestsForTests,
+} from './pane-spawn-request-registry';
 import * as domainStores from './project-domain-store-registry';
 
 function context(
@@ -100,6 +105,46 @@ describe('nexus_pane_spawn — agentName sem squad (F-1334)', () => {
     // F-1314/F-1388: missão sem squad consulta o catálogo; nome desconhecido
     // recusa pre-effect com a mensagem específica, não a genérica de squad.
     expect((outcome as Error).message).toMatch(/unknown squad agent: Executor/);
+  });
+});
+
+describe('F-1531: o mesmo requestId não abre um segundo pane', () => {
+  beforeEach(() => {
+    resetPaneSpawnRequestsForTests();
+  });
+
+  it('reenvio com o requestId em curso devolve o estado, sem tocar no spawn', async () => {
+    // O primeiro pedido reservou o id e está no preparo pesado (rota/worktree).
+    beginPaneSpawnRequest({ requestId: 'w1-visual' });
+
+    // Sem a deduplicação esta chamada iria ao spawn e MORRERIA (não há
+    // runtime de pane no teste): voltar com o recibo prova que o Main
+    // interceptou antes de qualquer efeito.
+    const outcome = await paneSpawnTool.handler(
+      { adapterId: 'codex', requestId: 'w1-visual' },
+      context({ role: 'user', label: 'pane do operador' }),
+    );
+
+    expect(outcome).toMatchObject({
+      ok: true,
+      pending: true,
+      deduplicated: true,
+      inFlight: true,
+      paneId: null,
+      requestId: 'w1-visual',
+    });
+    expect(String((outcome as { note: string }).note)).toContain('nenhum pane novo foi aberto');
+  });
+
+  it('requestId inválido é recusado antes de qualquer spawn', async () => {
+    await expect(
+      paneSpawnTool.handler(
+        { adapterId: 'codex', requestId: 'orchspawn-falso' },
+        context({ role: 'user', label: 'pane do operador' }),
+      ),
+    ).rejects.toThrow(/requestId inválido/);
+    // Nada foi reservado: um id recusado não ocupa a chave.
+    expect(paneSpawnRequestState('orchspawn-falso')).toBeNull();
   });
 });
 

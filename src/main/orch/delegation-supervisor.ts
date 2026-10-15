@@ -60,6 +60,7 @@ import {
   listPaneStartWatches,
   notePaneSessionEnded,
   notePaneStartFailure,
+  notePaneStartPressure,
   notePaneTurnEnded,
   notStartedCause,
   paneLimitNoticeSummary,
@@ -120,7 +121,11 @@ import { noteMissionCliFailure } from './mission-cli-failures';
 import { sanitizePaneBootOutput } from './pane-boot-output';
 import { paneSessionLastOutputAt } from './pane-session-output';
 import { diagnosePaneBoot } from './pane-boot-diagnosis';
-import { parsePaneAdmissionRefusal } from './pane-admission';
+import {
+  mainPressureNow,
+  parsePaneAdmissionRefusal,
+  parseMainPressureRefusal,
+} from './pane-admission';
 import {
   currentModelQuarantineScope,
   MODEL_ACCESS_QUARANTINE_MS,
@@ -947,18 +952,26 @@ async function redeliverPaneStartBrief(
   }
 }
 
-/** Pane morto sai da grade, desde que ninguém tenha outra sessão viva nele. */
-async function closeNotStartedPane(watch: PaneStartWatch): Promise<void> {
+/**
+ * Pane morto sai da grade, desde que ninguém tenha outra sessão viva nele.
+ * Devolve `true` só quando ele SAIU — `requestPaneClose` responde `true`
+ * apenas quando removeu o pane do registro, então o retorno é a prova.
+ */
+async function closeNotStartedPane(watch: PaneStartWatch): Promise<boolean> {
   const snapshot = listPaneSnapshots().find((pane) => pane.paneId === watch.paneId);
-  if (!snapshot) return;
+  if (!snapshot) return true;
   const current = snapshot.sessionId ?? undefined;
-  if (current && current !== watch.sessionId) return;
+  if (current && current !== watch.sessionId) return false;
   try {
     // Revisão Fable (F-1414): pane parked não tem sessão viva — fechar pela
     // sessão morta devolve false e deixa um zumbi no layout. Fecha pelo pane.
-    await requestPaneClose(watch.paneId, snapshot.state === 'parked' ? undefined : current);
+    return await requestPaneClose(
+      watch.paneId,
+      snapshot.state === 'parked' ? undefined : current,
+    );
   } catch {
     // Fechar é limpeza; o aviso e o reenvio importam mais.
+    return false;
   }
 }
 
@@ -1004,7 +1017,9 @@ async function handlePaneNotStarted(
   // F-1270: recusa de capacidade (teto/memória) é CLI-agnóstica — não é falha
   // da CLI nem do modelo. Não reroteia (outra CLI esbarra no mesmo teto), não
   // conta no disjuntor e devolve a mensagem real a quem pediu.
-  const capacityRefused = cause === 'capacity-refused';
+  // F-1534: recusa por CARGA da máquina (descritores, memória do SO, Main
+  // encerrando PTYs, licença) entra na mesmaFamily: trocar de CLI não resolve.
+  const capacityRefused = cause === 'capacity-refused' || cause === 'main-pressure-refused';
   if (cause === 'model-rejected') {
     const session = watch.sessionId !== null ? getAgentSessionInfo(watch.sessionId) : null;
     const model = diagnosis.rejectedModel ?? session?.model ?? null;
@@ -1040,8 +1055,11 @@ async function handlePaneNotStarted(
   // F-734: o escopo da credencial é lido antes de fechar (a sessão some).
   const session = watch.sessionId !== null ? getAgentSessionInfo(watch.sessionId) : null;
   const accountBound = Boolean(session?.accountId);
+  // F-1534: o pane original precisa ter SAÍDO antes do sucessor abrir. Campo
+  // 14/10: em um caso ele ficou com o brief e o sucessor nasceu em paralelo.
+  let paneClosed = watch.operatorOpened === true;
   if (!watch.operatorOpened) {
-    await closeNotStartedPane(watch);
+    paneClosed = await closeNotStartedPane(watch);
     if (deliveredMeanwhile()) return;
     if (!capacityRefused) {
       // Recusa de capacidade não é falha da CLI: fecha o pane morto, mas não
@@ -1078,14 +1096,26 @@ async function handlePaneNotStarted(
   }
   let outcome: PaneStartOutcome;
   if (capacityRefused) {
-    outcome = { kind: 'not-rerouted', why: 'capacity' };
+    outcome = {
+      kind: 'not-rerouted',
+      why: cause === 'main-pressure-refused' ? 'pressure' : 'capacity',
+    };
   } else if (action === 'reroute' && watch.reroute) {
     if (deliveredMeanwhile()) return;
-    try {
-      const next = await watch.reroute([watch.adapterId]);
-      outcome = { kind: 'rerouted', paneId: next.paneId, adapterId: next.adapterId };
-    } catch (error) {
-      outcome = { kind: 'reroute-failed', error: shortStartError(error) };
+    // F-1534: só reabre com o pane original fora da grade. Duas instâncias
+    // com o mesmo brief é pior do que a tarefa esperar.
+    if (!paneClosed) {
+      outcome = {
+        kind: 'reroute-failed',
+        error: 'o pane original não saiu da grade; feche-o antes de reenviar',
+      };
+    } else {
+      try {
+        const next = await watch.reroute([watch.adapterId]);
+        outcome = { kind: 'rerouted', paneId: next.paneId, adapterId: next.adapterId };
+      } catch (error) {
+        outcome = { kind: 'reroute-failed', error: shortStartError(error) };
+      }
     }
   } else {
     outcome = {
@@ -1245,6 +1275,10 @@ async function checkPaneStart(watch: PaneStartWatch, now: number, context?: Peri
   }
   // Sem veredito ainda: nunca reenvia por cima de um brief já entregue.
   if (!watch.failure && executionJudged) return;
+  // F-1534: a máquina/Main no limite agora. Veredito por PRAZO espera a
+  // pressão assentar (MAIN_PRESSURE_SETTLE_MS); falha PROVADA não espera.
+  const mainPressure = mainPressureNow();
+  if (mainPressure) notePaneStartPressure(watch, now);
   const action = decideStartAction({
     role: watch.role,
     operatorOpened: watch.operatorOpened === true,
@@ -1262,6 +1296,8 @@ async function checkPaneStart(watch: PaneStartWatch, now: number, context?: Peri
     rerouted: startRerouteChainExhausted(watch),
     pinnedRuntime: watch.pinnedRuntime,
     hasAlternative: watch.hasAlternative?.() ?? false,
+    mainPressure,
+    pressureSince: watch.pressureSince,
     now,
   });
   if (action === 'none') return;
@@ -1437,15 +1473,21 @@ function installPaneStartTaps(): void {
     // mensagem real e marca `capacity-refused` (não reroteia); o resto é recusa
     // da CLI e segue o reenvio de sempre.
     const refusal = parsePaneAdmissionRefusal(failure.error);
+    // F-1534: campo 14/10 — com o Main sob carga, recusa por CARGA (descritores,
+    // memória do SO, Main encerrando PTYs, teto da licença) chegava como
+    // `spawn-refused`: contava no disjuntor da CLI (F-736) e mandava a tarefa
+    // para outra CLI. Trocar de CLI não resolve falta de recurso da máquina,
+    // então isso é CLI-agnóstico como a capacidade.
+    const pressure = refusal ? null : parseMainPressureRefusal(failure.error);
     // F-1410: a recusa de CLI leva a 1ª linha saneada do erro para o trace
     // local — sem isso a causa só ia ao console e o diagnóstico se perdia
     // (dois spawns do Muse de 12/10 recusados sem motivo em lugar nenhum).
     notePaneStartFailure(
       failure.paneId,
-      refusal ? 'capacity-refused' : 'spawn-refused',
+      refusal ? 'capacity-refused' : pressure ? 'main-pressure-refused' : 'spawn-refused',
       Date.now(),
-      refusal?.message,
-      refusal ? undefined : shortStartError(failure.error),
+      refusal?.message ?? pressure?.message,
+      refusal || pressure ? undefined : shortStartError(failure.error),
     );
   });
   const untapTermination = tapSessionTermination((sessionId, agent, rootExit) => {

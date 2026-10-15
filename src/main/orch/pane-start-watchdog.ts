@@ -88,6 +88,14 @@ export function executionProofGraceMs(adapterId: string): number {
  * reabrir a tarefa; depois, o supervisor reabre noutra CLI.
  */
 export const LIMIT_HANDOFF_MS = 60_000;
+/**
+ * F-1534: com o Main sob pressão, um veredito por PRAZO (pane vivo sem turno)
+ * espera este tempo antes de virar reenvio. Campo 14/10: com 6+ workers e o
+ * gate de regressão mapeando, o AGY (CLI viva, turno atrasado) foi julgado
+ * "não começou" e a tarefa foi mandada para o Muse. A pressão é TRANSITÓRIA:
+ * sem este prazo, carga vira veredito de CLI. Falha PROVADA não espera.
+ */
+export const MAIN_PRESSURE_SETTLE_MS = 2 * START_GRACE_MS;
 const EARLY_MARK_TTL_MS = 2 * 60_000;
 const MAX_EARLY_MARKS = 256;
 
@@ -127,6 +135,13 @@ export type PaneStartFailureCause =
   | 'spawn-refused'
   /** F-1270: teto de panes/memória — CLI-agnóstico, nunca reroteia. */
   | 'capacity-refused'
+  /**
+   * F-1534: o Main/máquina recusou por CARGA (descritores, memória do SO,
+   * Main encerrando PTYs, teto da licença) com o texto sem o código do gate.
+   * CLI-agnóstico como `capacity-refused`: não conta no disjuntor e não
+   * reroteia — trocar de CLI não resolve falta de recurso da máquina.
+   */
+  | 'main-pressure-refused'
   | 'boot-exit'
   /** F-1367: saída com erro após o teto de boot; não penaliza disjuntor da CLI. */
   | 'worker-exit'
@@ -169,6 +184,19 @@ export interface StartCheckInput {
   readonly hasAlternative: boolean;
   readonly now: number;
   readonly graceMs?: number;
+  /**
+   * F-1534: a máquina/Main está no limite AGORA (sem vaga de pane, memória no
+   * fim, descritores esgotados). Só segura veredito por PRAZO.
+   */
+  readonly mainPressure?: boolean;
+  /** Quando a pressão foi vista pela 1ª vez nesta ficha (nunca vista = null). */
+  readonly pressureSince?: number | null;
+}
+
+/** F-1534: a pressão vista agora ainda está dentro do prazo de assentamento. */
+function pressureSettling(input: StartCheckInput): boolean {
+  if (input.pressureSince === null || input.pressureSince === undefined) return false;
+  return input.now - input.pressureSince < MAIN_PRESSURE_SETTLE_MS;
 }
 
 /**
@@ -198,6 +226,10 @@ export function decideStartAction(input: StartCheckInput): StartAction {
     notStarted = input.now - input.redeliveredAt >= graceMs;
   }
   if (!notStarted) return 'none';
+  // F-1534: com o Main saturado, espera a pressão assentar antes de punir a
+  // CLI. Só vale para veredito por PRAZO — `failed` é falha provada e não
+  // espera ninguém.
+  if (!input.failed && input.mainPressure && pressureSettling(input)) return 'none';
   if (
     input.operatorOpened ||
     input.rerouted ||
@@ -301,6 +333,9 @@ export function startFailureBreakerAction(input: {
   readonly accountBound: boolean;
 }): 'trip' | 'count' | 'skipped' {
   if (input.cause === 'worker-exit' || input.cause === 'parked-before-start') return 'skipped';
+  // F-1534: falta de recurso da MÁQUINA não é a CLI. Contar aqui era o que
+  // abria o disjuntor (F-736) e mandava a tarefa para outra CLI sob carga.
+  if (input.cause === 'main-pressure-refused') return 'skipped';
   const credential =
     input.cause === 'provider-auth' || input.cause === 'provider-billing';
   return credential && !input.accountBound ? 'trip' : 'count';
@@ -385,6 +420,8 @@ const PROVIDER_REJECTED_TAIL = 'o turno do brief acabou antes de qualquer trabal
 const CAUSE_TEXT: Readonly<Record<PaneNotStartedCause, string>> = {
   'spawn-refused': 'o CLI não subiu (o spawn foi recusado)',
   'capacity-refused': 'a máquina não tem vaga para mais um pane de agente',
+  'main-pressure-refused':
+    'a máquina ou o Nexus estava no limite (carga, memória ou panes ocupados) — não é falha desta CLI',
   'boot-exit': 'o processo saiu antes de abrir o primeiro turno',
   'worker-exit': 'o processo encerrou após o período de boot (trabalho em andamento)',
   'brief-rejected': 'o briefing não foi aceito pelo pane',
@@ -414,7 +451,7 @@ export type PaneStartOutcome =
   | { readonly kind: 'reroute-failed'; readonly error: string }
   | {
       readonly kind: 'not-rerouted';
-      readonly why: 'operator' | 'chain-limit' | 'pinned' | 'no-alternative' | 'capacity';
+      readonly why: 'operator' | 'chain-limit' | 'pinned' | 'no-alternative' | 'capacity' | 'pressure';
     };
 
 /** Motivo curto de erro para o aviso: 1ª linha, sem segredo, até 160 chars. */
@@ -465,6 +502,11 @@ export function paneStartNoticeSummary(input: {
     capacity:
       'A máquina está no teto (ou sem memória); não reenviei para outra CLI — ' +
       'feche os que entregaram ou aguarde.',
+    // F-1534: trocar de CLI não resolve falta de recurso da máquina.
+    pressure:
+      'O Main ou a máquina estava no limite (carga, memória ou panes ocupados); ' +
+      'não reenviei para outra CLI — aguarde a carga passar e reenvie, ou feche ' +
+      'os panes que já entregaram.',
   }[outcome.why];
   return `${head} ${why}`;
 }
@@ -503,6 +545,10 @@ export function paneLimitNoticeSummary(input: {
     pinned: 'A CLI foi pedida pelo operador; não troquei sozinho — decida.',
     'no-alternative': 'Nenhuma outra CLI está disponível — decida.',
     capacity: 'A máquina está no teto; não reenviei — decida.',
+    // F-1534
+    pressure:
+      'O Main ou a máquina estava no limite; não reenviei para outra CLI — ' +
+      'aguarde a carga passar.',
     'not-reopenable': 'O Nexus não tem o pedido para reabrir esta tarefa — decida.',
   }[outcome.why];
   return `${head} ${why}`;
@@ -581,6 +627,11 @@ export interface PaneStartWatch extends PaneStartWatchInit {
    */
   executionSeenAt: number | null;
   redeliveredAt: number | null;
+  /**
+   * F-1534: quando a pressão da máquina/Main foi vista pela 1ª vez nesta ficha.
+   * A data é o COMEÇO do prazo de espera, não o instante atual.
+   */
+  pressureSince: number | null;
   /** Passo 1 em curso: a varredura espera, mas a saída da sessão ainda conta. */
   redelivering: boolean;
   /** 'acting' = passo 2 em curso (fechar, rerotear, avisar). */
@@ -648,6 +699,7 @@ export function trackPaneStart(init: PaneStartWatchInit): PaneStartWatch {
     modelRejectedAt: null,
     executionSeenAt: null,
     redeliveredAt: null,
+    pressureSince: null,
     redelivering: false,
     phase: 'watching',
   };
@@ -764,6 +816,15 @@ export function notePaneTurnEnded(
   }
   watch.turnOutcome = progress.kind === 'not-ours' ? 'not-ours' : 'started';
   return null;
+}
+
+/**
+ * F-1534: a varredura viu a máquina/Main no limite. Marca a 1ª vez (o prazo de
+ * espera conta daqui) e nunca volta atrás — a pressão que já passou não
+ * ressuscita o começo do prazo.
+ */
+export function notePaneStartPressure(watch: PaneStartWatch, now: number = Date.now()): void {
+  watch.pressureSince ??= now;
 }
 
 /** A entrega comprovada do spawn (colagem com ACK pendente) abriu o turno. */

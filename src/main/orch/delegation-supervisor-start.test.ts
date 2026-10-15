@@ -294,6 +294,9 @@ describe('F-723: pane que não começou a tarefa é corrigido ou mandado para ou
     reroute.mockResolvedValue({ paneId: 'pane-novo', adapterId: 'codex' });
     redeliver.mockResolvedValue(false);
     adapterCircuitBreakers.reset();
+    // O registro de falhas por CLI da missão é estado de módulo: sem reset, um
+    // teste que reroteia contamina a recusa por pressão do F-1534.
+    resetMissionCliFailures();
     resetPaneStartWatchdogForTests();
     resetModelAccessQuarantineForTests();
     await shutdownDelegationSupervisor();
@@ -411,6 +414,110 @@ describe('F-723: pane que não começou a tarefa é corrigido ou mandado para ou
       }),
     );
     expect(getPaneStartWatch('pane-qwen')).toBeNull();
+  });
+
+  // F-1534: campo 14/10 — com o Main sob carga, recusa por recurso da máquina
+  // contava como falha da CLI (disjuntor F-736) e mandava a tarefa para outra.
+  describe('F-1534: recusa por carga da Main não é falha da CLI', () => {
+    it.each([
+      ['pty-manager', 'PTY shutdown is in progress; new sessions are blocked'],
+      ['caminho MCP de admissão', 'spawn recusado pela admissão de panes (teto): Teto de 12 panes de agente atingido (12 vivos).'],
+      ['fork sem recurso do SO', 'spawn /bin/sh EAGAIN'],
+      ['descritor esgotado', 'spawn /bin/sh EMFILE'],
+      ['teto de agentes da licença', 'license_agent_limit: 3 de 3 agentes em uso'],
+    ])('recusa por pressão (%s) não conta no disjuntor nem reroteia', async (_label, error) => {
+      vi.useFakeTimers({ now: NOW, toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      trackPaneStart(watchInit());
+      h.listPaneSnapshots.mockReturnValue([
+        { paneId: 'pane-qwen', kind: 'cli-agent', role: 'worker', state: 'exited', missionId: 'mission-f723' },
+      ]);
+      h.pendingSession.mockReturnValue({ state: 'gone' });
+      h.startFailureTap!({
+        requestId: 'orchspawn-qwen',
+        paneId: 'pane-qwen',
+        adapterId: 'qwen',
+        missionId: 'mission-f723',
+        error,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      await flush();
+
+      // Nada de punir a CLI: nem disjuntor, nem reenvio, nem falha da missão.
+      expect(adapterCircuitBreakers.snapshot('qwen').recentFailures).toBe(0);
+      expect(adapterCircuitBreakers.isOpen('qwen')).toBe(false);
+      expect(reroute).not.toHaveBeenCalled();
+      expect(redeliver).not.toHaveBeenCalled();
+      expect(missionCliFailures('mission-f723', 'qwen')).toHaveLength(0);
+      // A tentativa sem sessão continua liquidada (nada nasce atrasado).
+      expect(h.abandon).toHaveBeenCalledWith('orchspawn-qwen', expect.any(String));
+      // O trace local carrega a CAUSA, como o item pede.
+      expect(h.trace).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'pane-not-started',
+          paneId: 'pane-qwen',
+          cause: 'main-pressure-refused',
+          outcome: 'not-rerouted',
+          breaker: 'skipped',
+        }),
+      );
+      const handoff = h.submit.mock.calls[0]![0] as Record<string, string>;
+      expect(handoff.summary).toContain('não começou a tarefa');
+      expect(handoff.summary).not.toContain('Reenviada para');
+      expect(getPaneStartWatch('pane-qwen')).toBeNull();
+    });
+
+    it('recusa da própria CLI continua contando e reroteando uma única vez', async () => {
+      vi.useFakeTimers({ now: NOW, toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      trackPaneStart(watchInit());
+      h.listPaneSnapshots.mockReturnValue([
+        { paneId: 'pane-qwen', kind: 'cli-agent', role: 'worker', state: 'exited', missionId: 'mission-f723' },
+      ]);
+      h.pendingSession.mockReturnValue({ state: 'gone' });
+      h.startFailureTap!({
+        requestId: 'orchspawn-qwen',
+        paneId: 'pane-qwen',
+        adapterId: 'qwen',
+        missionId: 'mission-f723',
+        error: 'claude: missing absolute binary path for spawn (adapter.bin=claude)',
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      await flush();
+
+      expect(adapterCircuitBreakers.snapshot('qwen').recentFailures).toBe(1);
+      expect(reroute).toHaveBeenCalledTimes(1);
+      expect(reroute).toHaveBeenCalledWith(['qwen']);
+      // Uma vez só: a varredura seguinte não repete.
+      await reconcileDelegationSupervisor(NOW + 60_000);
+      await flush();
+      expect(reroute).toHaveBeenCalledTimes(1);
+    });
+
+    it('pane original que não saiu da grade: não abre o sucessor em paralelo', async () => {
+      vi.useFakeTimers({ now: NOW, toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      trackPaneStart(watchInit());
+      // O close é recusado: o pane continua no registro com o brief. Snapshot sem
+// sessão (a tentativa foi liquidada) para o close ser de fato tentado.
+      h.requestPaneClose.mockResolvedValueOnce(false);
+      h.listPaneSnapshots.mockReturnValue([
+        { paneId: 'pane-qwen', kind: 'cli-agent', role: 'worker', state: 'idle', missionId: 'mission-f723' },
+      ]);
+      h.pendingSession.mockReturnValue({ state: 'gone' });
+      h.startFailureTap!({
+        requestId: 'orchspawn-qwen',
+        paneId: 'pane-qwen',
+        adapterId: 'qwen',
+        missionId: 'mission-f723',
+        error: 'Qwen Code: modelo selado "qwen3.7-plus" não entrou no argv do spawn',
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      await flush();
+
+      // O sucessor NÃO nasce enquanto o original estiver na grade.
+      expect(reroute).not.toHaveBeenCalled();
+      expect(h.submit).toHaveBeenCalledTimes(1);
+      const handoff = h.submit.mock.calls[0]![0] as Record<string, string>;
+      expect(handoff.summary).toContain('o pane original não saiu da grade');
+    });
   });
 
   it('sessão viva sem turno (família Claude): reenvia o brief uma vez e, ainda parado, manda para outro', async () => {

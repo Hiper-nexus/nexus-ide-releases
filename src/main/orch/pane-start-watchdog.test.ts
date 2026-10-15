@@ -5,6 +5,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { testProjectScope } from './__tests__/scope-fixture';
 import {
+  MAIN_PRESSURE_SETTLE_MS,
   START_GRACE_MS,
   CREDENTIAL_REJECTED_OPEN_MS,
   applyStartFailureBreaker,
@@ -14,6 +15,7 @@ import {
   notePaneSessionEnded,
   notePaneStartAccepted,
   notePaneStartFailure,
+  notePaneStartPressure,
   notePaneTurnEnded,
   notStartedCause,
   paneStartNoticeSummary,
@@ -281,6 +283,91 @@ describe('turno do brief recusado pelo provedor (F-734)', () => {
     applyStartFailureBreaker(fresh, 'kimi', 'count');
     applyStartFailureBreaker(fresh, 'kimi', 'skipped');
     expect(fresh.snapshot('kimi')).toMatchObject({ state: 'closed', recentFailures: 1 });
+  });
+
+  // F-1534: campo 14/10 — com o Main sob carga, spawn recusado por pressão da
+  // máquina contava como falha da CLI (disjuntor F-736 + reenvio para uma CLI
+  // de qualidade menor). Nenhum dos dois pode acontecer.
+  describe('F-1534: pressão da Main não é falha da CLI', () => {
+    it('recusa por pressão não toca o disjuntor do adapter', () => {
+      expect(startFailureBreakerAction({ cause: 'main-pressure-refused', accountBound: false })).toBe(
+        'skipped',
+      );
+      expect(startFailureBreakerAction({ cause: 'main-pressure-refused', accountBound: true })).toBe(
+        'skipped',
+      );
+    });
+
+    it('aviso de pressão diz que a máquina estava no limite (não a CLI)', () => {
+      const summary = paneStartNoticeSummary({
+        paneId: 'pane-grok',
+        adapterId: 'grok',
+        cause: 'main-pressure-refused',
+        outcome: { kind: 'not-rerouted', why: 'pressure' },
+        detail: 'o Main está encerrando as PTYs',
+      });
+      expect(summary).toContain('a máquina ou o Nexus estava no limite');
+      expect(summary).toContain('Motivo: o Main está encerrando as PTYs.');
+      expect(summary).not.toContain('Reenviada para');
+      expect(summary).toContain('não reenviei para outra CLI');
+    });
+
+    it('pane vivo sem turno sob pressão: espera o assentamento antes de mandar para outro', () => {
+      const pressureSince = NOW - 30_000;
+      // Veredito por PRAZO (não por falha provada) + Main saturado: espera.
+      expect(
+        decideStartAction(input({ redeliveredAt: NOW - START_GRACE_MS, mainPressure: true, pressureSince })),
+      ).toBe('none');
+      // Pressão já assentada (passou o prazo): age como sempre.
+      expect(
+        decideStartAction(input({
+          redeliveredAt: NOW - START_GRACE_MS,
+          mainPressure: true,
+          pressureSince: NOW - MAIN_PRESSURE_SETTLE_MS - 1_000,
+        })),
+      ).toBe('reroute');
+      // Sem pressão: o prazo vale, como antes do F-1534.
+      expect(decideStartAction(input({ redeliveredAt: NOW - START_GRACE_MS }))).toBe('reroute');
+    });
+
+    it('falha PROVADA da CLI não espera a pressão acabar', () => {
+      expect(
+        decideStartAction(input({
+          failed: true,
+          mainPressure: true,
+          pressureSince: NOW - 1_000,
+        })),
+      ).toBe('reroute');
+    });
+
+    it('a pressão só segura o prazo depois de vista de verdade', () => {
+      // `mainPressure` ligado sem `pressureSince` (nunca observado) não segura.
+      expect(
+        decideStartAction(input({ redeliveredAt: NOW - START_GRACE_MS, mainPressure: true, pressureSince: null })),
+      ).toBe('reroute');
+    });
+
+    it('a ficha guarda quando a pressão apareceu', () => {
+      const watch = trackPaneStart({
+        paneId: 'pane-pressao',
+        requestId: 'orchspawn-pressao',
+        adapterId: 'agy',
+        scope: testProjectScope(),
+        missionId: 'mission-a',
+        role: 'worker',
+        callerSessionId: 'session-maestro',
+        turnProof: false,
+        pinnedRuntime: false,
+        rerouted: false,
+        createdAt: NOW,
+      });
+      expect(watch.pressureSince).toBeNull();
+      notePaneStartPressure(watch, NOW - 1_000);
+      expect(watch.pressureSince).toBe(NOW - 1_000);
+      // Uma pressão que já passou não volta a marcar o começo.
+      notePaneStartPressure(watch, NOW - 5_000);
+      expect(watch.pressureSince).toBe(NOW - 1_000);
+    });
   });
 
   it('aviso: categoria do motivo, nunca texto do provedor', () => {

@@ -12,7 +12,10 @@ import {
   primeSystemMemoryCacheForTest,
   hasPendingPaneSpawns,
   trackPaneSpawnEntry,
+  parseMainPressureRefusal,
+  mainPressureNow,
   type PaneAdmissionInput,
+  type PaneAdmissionLimits,
 } from './pane-admission';
 
 it('counts a pty:spawn entry as pending until its result settles, whatever the outcome (C6)', async () => {
@@ -515,6 +518,78 @@ describe('pane-admission: recusa de capacidade no caminho MCP (F-1270)', () => {
         liveAgentPanes: cap - 1, licensedAgentPanes: cap, env: hard,
       }).ok,
     ).toBe(true);
+  });
+
+  // F-1534: recusa por carga/admissão do Main NÃO é falha da CLI (campo 14/10:
+  // 6+ workers e o gate de regressão mapeando derrubaram spawns que nasceram).
+  describe('F-1534: recusa por pressão do Main não é falha da CLI', () => {
+    it.each([
+      ['admissão codificada do renderer', 'pane_admission_cap: Teto de 12 panes de agente atingido.', 'admission'],
+      ['admissão codificada de memória', 'pane_admission_memory: Sem folga de memória.', 'admission'],
+      [
+        'recusa do caminho MCP (texto sem o código interno)',
+        'spawn recusado pela admissão de panes (teto): Teto de 12 panes de agente atingido (12 vivos).',
+        'admission',
+      ],
+      [
+        'recusa do caminho MCP por memória',
+        'spawn recusado pela admissão de panes (memória): Memória sem folga para outro worker.',
+        'admission',
+      ],
+      ['Main encerrando PTYs', 'PTY shutdown is in progress; new sessions are blocked', 'shutdown'],
+      ['teto de agentes da licença', 'license_agent_limit: 3 de 3 agentes em uso', 'license'],
+      ['licença sem acesso', 'license_access_denied: sem licença ativa', 'license'],
+      ['fork sem memória', 'spawn /bin/sh EAGAIN', 'os-pressure'],
+      ['descritor esgotado', 'spawn /bin/sh EMFILE', 'os-pressure'],
+      ['volume cheio', 'spawn /bin/sh ENOSPC', 'os-pressure'],
+      ['reset de conexão sob carga', 'read ECONNRESET', 'os-pressure'],
+    ])('%s → pressão (não CLI)', (_label, error, kind) => {
+      const parsed = parseMainPressureRefusal(new Error(error));
+      expect(parsed?.kind).toBe(kind);
+      // A mensagem real viaja: o aviso ao Maestro nomeia o motivo da máquina.
+      expect(parsed?.message.length).toBeGreaterThan(0);
+    });
+
+    it.each([
+      'Qwen Code: modelo selado "qwen3.7-plus" não entrou no argv do spawn',
+      'claude: missing absolute binary path for spawn (adapter.bin=claude)',
+      'Codex not found on PATH. Install: npm i -g @openai/codex',
+      'native_deferred_spawn_context_changed',
+      '',
+    ])('recusa da própria CLI NÃO vira pressão: %s', (error) => {
+      expect(parseMainPressureRefusal(new Error(error))).toBeNull();
+    });
+
+    it('mainPressureNow só fecha com folga zero (teto, memória ou Main ocupado)', () => {
+      // Limites explícitos: a régua de memória padrão escala com a RAM da
+      // máquina de teste e o número não pode depender do host.
+      const limits: PaneAdmissionLimits = {
+        ...readPaneAdmissionLimits({ NEXUS_PANE_GUARD: 'hard', NEXUS_PANE_CAP: '4' }),
+        minFreeMB: 4_000,
+        maxSwapUsedMB: 0,
+      };
+      let live = 0;
+      const undo = registerAgentMemoryCensus(() => ({ live, pending: 0 }), 'test-pressure');
+      try {
+        primeSystemMemoryCacheForTest({ freeMB: 10_000, swapUsedMB: 0 });
+        expect(mainPressureNow({ limits, liveAgentPanes: () => live })).toBe(false);
+        // Sem vaga de pane, mesmo com folga de sobra.
+        live = 4;
+        expect(mainPressureNow({ limits, liveAgentPanes: () => live })).toBe(true);
+        // Com memória no fim, um pane abaixo do teto também fecha.
+        primeSystemMemoryCacheForTest({ freeMB: 512, swapUsedMB: 0 });
+        live = 1;
+        expect(mainPressureNow({ limits, liveAgentPanes: () => live })).toBe(true);
+      } finally {
+        undo();
+        primeSystemMemoryCacheForTest(null);
+      }
+    });
+
+    it('guard desligado não fecha por pressão (o gate avisa, não trava)', () => {
+      const limits = readPaneAdmissionLimits({ NEXUS_PANE_GUARD: 'off' });
+      expect(mainPressureNow({ limits, liveAgentPanes: () => 99 })).toBe(false);
+    });
   });
 
   it('o erro codificado sobrevive ao Error.message e a mensagem real volta', async () => {

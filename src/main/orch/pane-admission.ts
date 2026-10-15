@@ -172,6 +172,123 @@ export function parsePaneAdmissionRefusal(error: unknown): PaneAdmissionRefusal 
   };
 }
 
+/**
+ * F-1534: o que é pressão DA MÁQUINA/DA MAIN e o que é a CLI morta.
+ *
+ * Campo 14/10, com o Main sob carga (6+ workers e o gate de regressão
+ * mapeando), spawns recusados viraram "falha da CLI": contaram no disjuntor
+ * (F-736), abriram o disjuntor e mandaram a tarefa para uma CLI de qualidade
+ * menor. A recusa NÃO era da CLI — era da máquina. Esta função é a régua: ela
+ * classifica o texto de recusa que o tap de spawn pendente recebe.
+ *
+ * O escopo garante a leitura: o tap só fala de tentativas cujo PTY NUNCA
+ * nasceu (antes de qualquer sessão), então o texto é do mecanismo de spawn —
+ * nunca da saída de uma CLI falando com o provedor. Um erro de rede do
+ * provedor chega pelo outro caminho (turno recusado, `provider-request`), que
+ * segue sendo falha da conta.
+ *
+ * Recusa da CLI que NÃO entra aqui e continua sendo falha dela: modelo
+ * selado fora do argv, binário ausente no PATH, effort não suportado.
+ */
+export type MainPressureRefusalKind =
+  /** Teto de panes ou memória, pelo gate (F-572/F-1270). */
+  | 'admission'
+  /** O Main está encerrando PTYs — estado da Main, não da CLI. */
+  | 'shutdown'
+  /** Licença/teto de agentes: conta da máquina, não a CLI. */
+  | 'license'
+  /** O SO não cedeu o recurso para o fork (memória, descritores, disco). */
+  | 'os-pressure';
+
+export interface MainPressureRefusal {
+  readonly kind: MainPressureRefusalKind;
+  /** Motivo real, legível, já sem o código interno. */
+  readonly message: string;
+}
+
+/**
+ * `pty-manager` codifica a recusa (`pane_admission_*`); o caminho MCP de
+ * `tool-util` joga a mesma recusa como frase para o Maestro ler. As duas são
+ * capacidade — as duas precisam ser lidas como tal.
+ */
+const TOOL_PATH_ADMISSION_REFUSAL =
+  /\bspawn recusado pela admiss[aã]o de panes\s*\((?:teto|mem[oó]ria)\)\s*:\s*([\s\S]*)$/iu;
+/** Recusa da licença/teto de agentes, com o padrão do `LicenseError`. */
+const LICENSE_REFUSAL = /\b(license_agent_limit|license_access_denied)\b\s*:?\s*([\s\S]*)$/iu;
+/** Erros de recurso do SO no fork/spawn do PTY (pty-manager re-lança o host). */
+const OS_PRESSURE_CODES =
+  /\b(?:spawn\s+\S+\s+)?\b(EAGAIN|EMFILE|ENFILE|ENOMEM|ENOSPC|EBUSY|ETXTBSY|ECONNRESET)\b/iu;
+
+/**
+ * Recupera a recusa por pressão da Main de um `Error.message` (ou string).
+ * Devolve `null` quando a recusa é da própria CLI (ou não é recusa).
+ */
+export function parseMainPressureRefusal(error: unknown): MainPressureRefusal | null {
+  const text = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+  if (!text.trim()) return null;
+  // Capacidade tem precedência: o código do gate é mais específico que o texto.
+  const admission = parsePaneAdmissionRefusal(text);
+  if (admission) {
+    return { kind: 'admission', message: admission.message };
+  }
+  const toolPath = text.match(TOOL_PATH_ADMISSION_REFUSAL);
+  if (toolPath) {
+    return { kind: 'admission', message: (toolPath[1] ?? '').trim() };
+  }
+  if (/PTY shutdown is in progress/iu.test(text)) {
+    return { kind: 'shutdown', message: 'o Main está encerrando as PTYs' };
+  }
+  const license = text.match(LICENSE_REFUSAL);
+  if (license) {
+    return {
+      kind: 'license',
+      message: (license[2] ?? '').trim() || 'a licença não abre mais agentes nesta máquina',
+    };
+  }
+  const os = text.match(OS_PRESSURE_CODES);
+  if (os) {
+    return {
+      kind: 'os-pressure',
+      message: `o sistema não cedeu recurso para abrir a PTY (${os[1]?.toUpperCase()})`,
+    };
+  }
+  return null;
+}
+
+/**
+ * F-1534: a máquina (ou o Main) está no limite AGORA — falta vaga de pane,
+ * falta memória com a reserva dos agentes já vivos, ou o gate está fechado.
+ * Só com folga zero; com uma vaga livre a máquina não está sob pressão.
+ *
+ * É o sinal que segura o disjuntor e o reenvio enquanto o Main está
+ * saturado: uma CLI que "não começou" porque a máquina não tinha vaga não é
+ * uma CLI quebrada.
+ */
+export function mainPressureNow(
+  deps: {
+    readonly limits?: PaneAdmissionLimits;
+    readonly env?: NodeJS.ProcessEnv;
+    readonly liveAgentPanes?: () => number;
+    readonly now?: number;
+  } = {},
+): boolean {
+  try {
+    const limits = deps.limits ?? readPaneAdmissionLimits(deps.env);
+    // Gate desligado: o dono da máquina mandou não travar. Sem pressão do gate
+    // não há recusa por carga para culpar.
+    if (!limits.enabled) return false;
+    const now = deps.now ?? Date.now();
+    const memory = getMemoryAfterAgentReservations(now) ?? getCachedSystemMemory(now);
+    if (isUnderMemoryPressure(memory, limits)) return true;
+    const liveAgentPanes = deps.liveAgentPanes?.() ?? 0;
+    const budget = parallelHelperBudget({ liveAgentPanes, limits, memory });
+    return budget !== null && budget.slots === 0;
+  } catch {
+    // A telemetria nunca vira trava: sem leitura, sem pressão inventada.
+    return false;
+  }
+}
+
 const CAP_WARNING_RATIO = 0.8;
 
 function describeIdleCandidates(candidates: readonly IdlePaneCandidate[]): string {
