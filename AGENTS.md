@@ -219,6 +219,12 @@ saber isto antes de mexer:
 - **Token de acesso vencido não é sessão perdida (F-639).** Com refresh token,
   o spawn deixa a própria CLI renovar (um run no store que o pane vai usar) e
   prova a identidade no token novo; "entre novamente" só se nem ela conseguiu.
+  Na Reserva (só cofre, sem CLI dona), `ensureFreshClaudeSubscription` renova
+  por HTTP sem prova prévia apenas se o refresh token não estiver no login
+  nativo nem em outra linha do cofre, e o token novo prova a conta antes de
+  entrar no cofre. Escopo gerenciado vencido com OUTRA linhagem, mais velha
+  que o cofre, não bloqueia essa cura (a cota cai para o passo 3); com a
+  mesma linhagem, a CLI continua sendo a única que renova.
 - **«Entrar novamente» da mesma conta abre o login mesmo se o snapshot vivo
   falhar.** O aviso «Não consegui guardar a conta atual» continua quando o
   cadastro de uma segunda conta não consegue gravar a primeira, e quando o

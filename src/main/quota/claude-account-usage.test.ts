@@ -877,6 +877,94 @@ describe('fetchClaudeAccountUsageWindows', () => {
     expect(mocks.refreshClaudeOauthBlobDetailed).not.toHaveBeenCalled();
   });
 
+  describe('Reserva com access token vencido e refresh token vivo', () => {
+    function oauth(token: string, expiresAt: number): string {
+      return JSON.stringify({ claudeAiOauth: { accessToken: token, refreshToken: `rt-${token}`, expiresAt } });
+    }
+    const expiredVault = oauth('vault', NOW - 1_000);
+    const renewed = oauth('renewed', NOW + 8 * 60 * 60 * 1000);
+    let vault: string | null;
+    let scoped: string | null;
+
+    beforeEach(() => {
+      vault = expiredVault;
+      scoped = null;
+      mocks.getAccount.mockReturnValue({ adapterId: 'claude', email: 'adm@example.test' });
+      mocks.getSecret.mockImplementation(() => vault);
+      mocks.readManagedClaudeAuth.mockImplementation(() => scoped);
+      mocks.claudeBlobNeedsRefresh.mockImplementation((blob: string) =>
+        blob === renewed ? null : { refreshToken: 'rt' });
+      // O dono da renovação (account-store) grava o token novo, já provado.
+      mocks.ensureFreshClaudeSubscription.mockImplementation(async () => {
+        vault = renewed;
+        return true;
+      });
+      mocks.materializeManagedClaudeAuth.mockImplementation((_id: string, blob: string) => {
+        scoped = blob;
+        return { directory: '/managed/acct-adm/auth', blob, env: {} };
+      });
+      mocks.probeClaudeCredentialIdentity.mockImplementation(async (blob: string | null) =>
+        blob === renewed ? 'match' : 'auth-expired');
+      mocks.probeClaudeOauthUsage.mockImplementation(async (token: string) => ({
+        windows: token === 'renewed' ? [cliWindow('Semanal', 0.12)] : null,
+        failure: token === 'renewed' ? undefined : 'auth-expired',
+      }));
+    });
+
+    it('conta só do cofre renova, rematerializa o escopo e devolve a cota', async () => {
+      const r = await fetchClaudeAccountUsageWindows('acct-adm', { now: NOW, home: makeHome() });
+
+      expect(r).toEqual({ windows: [cliWindow('Semanal', 0.12)] });
+      expect(mocks.ensureFreshClaudeSubscription).toHaveBeenCalledWith('acct-adm', NOW);
+      expect(mocks.materializeManagedClaudeAuth).toHaveBeenCalledWith('acct-adm', renewed);
+      expect(mocks.probeClaudeOauthUsage).toHaveBeenCalledWith('renewed', expect.objectContaining({ now: NOW }));
+    });
+
+    it('escopo gerenciado vencido numa linhagem mais velha cai para o cofre e lê a cota', async () => {
+      scoped = oauth('scope-old', NOW - 60 * 60 * 1000);
+      vault = oauth('vault-new', NOW - 1_000);
+      mocks.managedClaudeAuthHasCredential.mockReturnValue(true);
+      mocks.probeClaudeCliUsage.mockResolvedValue({ windows: null, failure: 'auth-expired' });
+
+      const r = await fetchClaudeAccountUsageWindows('acct-adm', { now: NOW, home: makeHome() });
+
+      expect(r).toEqual({ windows: [cliWindow('Semanal', 0.12)] });
+      expect(mocks.ensureFreshClaudeSubscription).toHaveBeenCalledWith('acct-adm', NOW);
+      expect(mocks.materializeManagedClaudeAuth).toHaveBeenCalledWith('acct-adm', renewed);
+      // Dois runs da CLI, ambos no escopo da própria conta.
+      expect(mocks.probeClaudeCliUsage).toHaveBeenCalledTimes(2);
+      for (const [opts] of mocks.probeClaudeCliUsage.mock.calls) {
+        expect((opts as { env: Record<string, string> }).env[CLAUDE_MANAGED_AUTH_ENV])
+          .toBe('/managed/acct-adm/auth');
+      }
+    });
+
+    it('escopo vencido sem nada mais fresco no cofre segue «sessão expirada», sem 2º run', async () => {
+      scoped = expiredVault;
+      mocks.managedClaudeAuthHasCredential.mockReturnValue(true);
+      mocks.probeClaudeCliUsage.mockResolvedValue({ windows: null, failure: 'auth-expired' });
+
+      const r = await fetchClaudeAccountUsageWindows('acct-adm', { now: NOW, home: makeHome() });
+
+      expect(r).toEqual({ windows: null, hint: 'auth-expired' });
+      expect(mocks.ensureFreshClaudeSubscription).not.toHaveBeenCalled();
+      expect(mocks.materializeManagedClaudeAuth).not.toHaveBeenCalled();
+      expect(mocks.probeClaudeCliUsage).toHaveBeenCalledTimes(1);
+    });
+
+    it('cofre mais fresco que não renovou mantém o motivo do escopo, nunca «tente mais tarde»', async () => {
+      scoped = oauth('scope-old', NOW - 60 * 60 * 1000);
+      mocks.managedClaudeAuthHasCredential.mockReturnValue(true);
+      mocks.probeClaudeCliUsage.mockResolvedValue({ windows: null, failure: 'auth-expired' });
+      mocks.ensureFreshClaudeSubscription.mockResolvedValue(false);
+
+      const r = await fetchClaudeAccountUsageWindows('acct-adm', { now: NOW, home: makeHome() });
+
+      expect(r).toEqual({ windows: null, hint: 'auth-expired' });
+      expect(mocks.materializeManagedClaudeAuth).not.toHaveBeenCalled();
+    });
+  });
+
   it('uses a CLI-refreshed scoped token without an independent HTTP refresh', async () => {
     const home = makeHome();
     fs.mkdirSync(path.join(home, '.claude'));

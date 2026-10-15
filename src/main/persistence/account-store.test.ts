@@ -42,14 +42,24 @@ const deps = vi.hoisted(() => ({
   probeClaudeCliUsage: vi.fn(async (_opts?: { env?: Record<string, string> }) => ({ windows: null })),
 }));
 
-function oauthBlob(accessToken: string): string {
+function oauthBlob(accessToken: string, expiresAt?: number): string {
   return JSON.stringify({
     claudeAiOauth: {
       accessToken,
       refreshToken: `refresh-${accessToken}`,
       scopes: ['user:profile', 'user:inference'],
+      ...(expiresAt === undefined ? {} : { expiresAt }),
     },
   });
+}
+
+function expiresAtOf(blob: string): number {
+  try {
+    const value = JSON.parse(blob)?.claudeAiOauth?.expiresAt;
+    return typeof value === 'number' ? value : 0;
+  } catch {
+    return 0;
+  }
 }
 
 vi.mock('./secrets-store', () => ({
@@ -143,10 +153,13 @@ vi.mock('../adapters/managed-claude-auth', () => ({
   CLAUDE_MANAGED_AUTH_ENV: 'CLAUDE_SECURESTORAGE_CONFIG_DIR',
   managedClaudeAuthDirectory: (id: string) => `/tmp/claude/${id}/auth`,
   hasManagedClaudeAuth: (id: string) => deps.managedProfiles.has(id),
-  readManagedClaudeAuth: (id: string) => deps.managedProfiles.get(id) ?? null,
-  readManagedClaudeAuthAsync: async (id: string) => deps.managedProfiles.get(id) ?? null,
+  managedClaudeAuthHasCredential: (id: string) => Boolean(deps.managedProfiles.get(id)),
+  readManagedClaudeAuth: (id: string) => deps.managedProfiles.get(id) || null,
+  readManagedClaudeAuthAsync: async (id: string) => deps.managedProfiles.get(id) || null,
   removeManagedClaudeAuth: (id: string) => deps.managedProfiles.delete(id),
-  freshestClaudeCredential: (...blobs: Array<string | null>) => blobs.find(Boolean) ?? null,
+  // Mesma regra da produção: maior expiresAt vence, empate fica com o primeiro.
+  freshestClaudeCredential: (...blobs: Array<string | null>) => blobs.reduce<string | null>(
+    (best, blob) => blob && (!best || expiresAtOf(blob) > expiresAtOf(best)) ? blob : best, null),
   materializeManagedClaudeAuth: (id: string, blob: string, options?: { replace?: boolean }) => {
     if (deps.failManagedMaterialize) throw new Error('managed Claude store unavailable');
     if (!deps.managedProfiles.has(id) || options?.replace) deps.managedProfiles.set(id, blob);
@@ -849,18 +862,83 @@ describe('renovação morta veta failover no escuro', () => {
     expect(deps.calls).not.toContain(`setSecret:acctcred:${a.id}`);
   });
 
-  it('does not rotate an unproven expired vault-only Claude refresh token', async () => {
+  it('Reserva com access token vencido renova pelo refresh token e sai de «sessão expirada»', async () => {
+    // Campo: a conta foi para a Reserva, o app dormiu além da vida do access
+    // token e a prova pré-refresh (exigia 'match') nunca passava — dead-end.
+    const a = addSecondary('Conta Adm', 'adm@example.test', oauthBlob('expired'));
+    setCooldown(a.id, Date.now() + 12 * 60 * 60 * 1000, 'oauth session expired — sonda de quota');
+    deps.needsRefresh.mockReturnValue({ refreshToken: 'refresh-expired' });
+    deps.refreshBlob.mockResolvedValueOnce(oauthBlob('renewed'));
+    deps.probeClaudeIdentity.mockImplementation(async (blob) =>
+      blob === oauthBlob('renewed') ? 'match' : 'auth-expired');
+    expect(listAccountInfos().find((i) => i.id === a.id)?.needsRelogin).toBe(true);
+
+    expect(await ensureFreshClaudeSubscription(a.id)).toBe(true);
+    expect(deps.refreshBlob).toHaveBeenCalledWith(oauthBlob('expired'), expect.any(Number));
+    // A prova acontece no token NOVO antes de ele entrar no cofre.
+    expect(deps.probeClaudeIdentity).toHaveBeenLastCalledWith(
+      oauthBlob('renewed'), 'adm@example.test', expect.anything(),
+    );
+    expect(deps.secrets.get(`acctcred:${a.id}`)).toBe(oauthBlob('renewed'));
+    expect(listAccountInfos().find((i) => i.id === a.id)?.needsRelogin).toBe(false);
+    expect(deps.keychainWrites).toEqual([]);
+  });
+
+  it('token renovado sem prova de identidade nunca chega ao cofre', async () => {
     const a = addSecondary('Conta B', 'b@example.test', oauthBlob('expired'));
-    deps.needsRefresh.mockReturnValue({ refreshToken: 'rt-b' });
+    deps.needsRefresh.mockReturnValue({ refreshToken: 'refresh-expired' });
     deps.refreshBlob.mockResolvedValueOnce(oauthBlob('fresh'));
     deps.probeClaudeIdentity.mockResolvedValue('auth-expired');
 
     expect(await verifyManagedClaudeAccountForSpawn(a.id)).toBe('auth-expired');
     expect(await ensureFreshClaudeSubscription(a.id)).toBe(false);
-    expect(deps.refreshBlob).not.toHaveBeenCalled();
     // Sem escopo gerenciado não há CLI dona da renovação para chamar.
     expect(deps.probeClaudeCliUsage).not.toHaveBeenCalled();
     expect(deps.secrets.get(`acctcred:${a.id}`)).toBe(oauthBlob('expired'));
+  });
+
+  it.each([
+    ['o login nativo', (_a: Account) => {
+      deps.keychain = oauthBlob('shared');
+    }],
+    ['outra linha do cofre', (_a: Account) => {
+      const sibling = addSecondary('Conta Irmã', 'irma@example.test', oauthBlob('irma'));
+      deps.secrets.set(`acctcred:${sibling.id}`, oauthBlob('shared'));
+    }],
+  ])('não rotaciona token vencido sem prova cuja linhagem também está n%s', async (_where, share) => {
+    const a = addSecondary('Conta B', 'b@example.test', oauthBlob('b'));
+    deps.secrets.set(`acctcred:${a.id}`, oauthBlob('shared'));
+    share(a);
+    deps.needsRefresh.mockReturnValue({ refreshToken: 'refresh-shared' });
+    deps.refreshBlob.mockResolvedValue(oauthBlob('fresh'));
+    deps.probeClaudeIdentity.mockResolvedValue('auth-expired');
+
+    expect(await ensureFreshClaudeSubscription(a.id)).toBe(false);
+    // Rotacionar consumiria o refresh token de quem também o carrega (F-615).
+    expect(deps.refreshBlob).not.toHaveBeenCalled();
+    expect(deps.secrets.get(`acctcred:${a.id}`)).toBe(oauthBlob('shared'));
+  });
+
+  it('preservar a sessão nativa grava o blob vivo na linha existente e limpa «sessão expirada»', async () => {
+    // A conta já está no cofre com token velho, escopo gerenciado velho e a
+    // marca de sessão expirada; o login nativo dela rotacionou o token.
+    const a = addSecondary('Conta Adm', 'adm@example.test', oauthBlob('adm-old'));
+    (deps as Record<string, unknown>).marked = [a];
+    setCooldown(a.id, Date.now() + 12 * 60 * 60 * 1000, 'oauth session expired — sonda de quota');
+    deps.needsRefresh.mockReturnValue({ refreshToken: 'refresh-adm-old' });
+    await ensureFreshClaudeSubscription(a.id); // refresh real falha → marca
+    expect(hasRecentClaudeRefreshFailure(a.id)).toBe(true);
+    deps.managedProfiles.set(a.id, oauthBlob('adm-old'));
+
+    deps.activeEmail = 'adm@example.test';
+    deps.keychain = oauthBlob('adm-rotated');
+    const saved = await addActiveSessionAccountAuthoritative('claude', 'Conta Adm');
+
+    expect(saved?.id).toBe(a.id);
+    expect(deps.secrets.get(`acctcred:${a.id}`)).toBe(oauthBlob('adm-rotated'));
+    expect(deps.managedProfiles.get(a.id)).toBe(oauthBlob('adm-rotated'));
+    expect(hasRecentClaudeRefreshFailure(a.id)).toBe(false);
+    expect(listAccountInfos().find((i) => i.id === a.id)?.needsRelogin).toBe(false);
   });
 
   describe('F-639: access token vencido no escopo gerenciado', () => {
@@ -926,6 +1004,54 @@ describe('renovação morta veta failover no escuro', () => {
 
       expect(await verifyManagedClaudeAccountForSpawn(a.id)).toBe('auth-expired');
       expect(deps.probeClaudeCliUsage).not.toHaveBeenCalled();
+    });
+
+    it('escopo vencido com a MESMA linhagem do cofre continua só da CLI', async () => {
+      const a = addManagedExpired();
+      deps.probeClaudeIdentity.mockResolvedValue('auth-expired');
+      deps.refreshBlob.mockResolvedValue(oauthBlob('nexus-rotated'));
+
+      expect(await ensureFreshClaudeSubscription(a.id)).toBe(false);
+      expect(deps.refreshBlob).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['outra linhagem, mais velha', oauthBlob('scope-old', 1_000)],
+      ['nenhuma credencial', ''],
+    ])('escopo vencido com %s: o cofre renova a própria linhagem por HTTP', async (_case, scope) => {
+      const a = addSecondary('Conta Adm', 'adm@example.test', oauthBlob('vault-new', 2_000));
+      deps.managedProfiles.set(a.id, scope);
+      setCooldown(a.id, Date.now() + 12 * 60 * 60 * 1000, 'oauth session expired — sonda de quota');
+      deps.needsRefresh.mockReturnValue({ refreshToken: 'refresh-vault-new' });
+      deps.refreshBlob.mockResolvedValueOnce(oauthBlob('vault-renewed'));
+      deps.probeClaudeIdentity.mockImplementation(async (blob) =>
+        blob === oauthBlob('vault-renewed') ? 'match' : 'auth-expired');
+
+      expect(await ensureFreshClaudeSubscription(a.id)).toBe(true);
+      expect(deps.refreshBlob).toHaveBeenCalledWith(oauthBlob('vault-new', 2_000), expect.any(Number));
+      expect(deps.secrets.get(`acctcred:${a.id}`)).toBe(oauthBlob('vault-renewed'));
+      expect(listAccountInfos().find((i) => i.id === a.id)?.needsRelogin).toBe(false);
+    });
+
+    it('escopo com OUTRA linhagem mais NOVA que o cofre não deixa o Nexus rotacionar o cofre', async () => {
+      const a = addSecondary('Conta Adm', 'adm@example.test', oauthBlob('vault-old', 1_000));
+      deps.managedProfiles.set(a.id, oauthBlob('scope-new', 2_000));
+      deps.needsRefresh.mockReturnValue({ refreshToken: 'refresh-vault-old' });
+      deps.probeClaudeIdentity.mockResolvedValue('auth-expired');
+
+      expect(await ensureFreshClaudeSubscription(a.id)).toBe(false);
+      expect(deps.refreshBlob).not.toHaveBeenCalled();
+    });
+
+    it('read-back provado do escopo tira a conta de «sessão expirada»', async () => {
+      const a = addManagedExpired();
+      setCooldown(a.id, Date.now() + 12 * 60 * 60 * 1000, 'oauth session expired — sonda de quota');
+      deps.managedProfiles.set(a.id, oauthBlob('b-renewed-by-cli'));
+
+      expect(await ensureFreshClaudeSubscription(a.id)).toBe(true);
+      expect(deps.secrets.get(`acctcred:${a.id}`)).toBe(oauthBlob('b-renewed-by-cli'));
+      expect(listAccountInfos().find((i) => i.id === a.id)?.needsRelogin).toBe(false);
+      expect(deps.refreshBlob).not.toHaveBeenCalled();
     });
   });
 

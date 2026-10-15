@@ -38,6 +38,7 @@ import {
 } from '../persistence/account-store';
 import { getSecret } from '../persistence/secrets-store';
 import {
+  freshestClaudeCredential,
   managedClaudeAuthHasCredential,
   managedClaudeAuthDirectory,
   materializeManagedClaudeAuth,
@@ -384,6 +385,8 @@ export async function fetchClaudeAccountUsageWindows(
   // renovação (escopo gerenciado) respondeu sessão expirada, o grant morreu.
   const cliProvedExpiry = (failure: string | undefined): boolean =>
     expiredButRenewable && failure === 'auth-expired';
+  /** Credencial do escopo gerenciado que a última leitura provou (ou não). */
+  let scopedCredential: string | null = null;
   const ownedWindows = async (credential: string | null): Promise<ClaudeAccountUsageResult> => {
     const identity = await probeClaudeCredentialIdentity(
       credential, account.email, { now, fetchImpl: opts.fetchImpl },
@@ -410,12 +413,14 @@ export async function fetchClaudeAccountUsageWindows(
       // short successful-read cache; a denied read remains backed off.
       try {
         const live = await readNativeOAuthCredential(service, undefined, { bypassCache: true });
+        scopedCredential = live;
         return live ? ownedWindows(live) : { windows: null, hint: 'unavailable' };
       } catch {
         return { windows: null, hint: 'unavailable' };
       }
     }
     const local = readManagedClaudeAuth(accountId) ?? fallback;
+    scopedCredential = local;
     return ownedWindows(local);
   };
 
@@ -431,6 +436,7 @@ export async function fetchClaudeAccountUsageWindows(
   // vault no passo 3 — renovaria uma cópia da linhagem nativa, e quem perde
   // a corrida é o login do operador.
   const nativeLogin = claudeAccountIsNativeLogin(account);
+  let managedFailed = false;
   if (!nativeLogin &&
       managedClaudeAuthHasCredential(accountId, { home: opts.home })) {
     const directory = managedClaudeAuthDirectory(accountId, opts.home);
@@ -448,14 +454,24 @@ export async function fetchClaudeAccountUsageWindows(
       ? 'auth-expired'
       : owned.hint ?? cliFailureHint(probe.failure ?? 'unavailable');
     // A managed scope that failed must not fall through to a native profile
-    // whose display metadata merely resembles this saved account.
-    return { windows: null, hint: hint ?? 'unavailable' };
+    // whose display metadata merely resembles this saved account. Only this
+    // account's own vault may still heal it (step 3), and only when the vault
+    // is strictly fresher than the scope (ties keep the scope, as
+    // materialization does): a scope left on an older lineage never renews,
+    // and the Reserva row stayed «sessão expirada» with a live refresh token.
+    const vault = readVaultCredentialBlob(accountId);
+    if ((hint !== 'auth-expired' && hint !== 'unavailable') || !vault ||
+        !claudeCredentialBlobIsUsable(vault) || claudeBlobIsExpiredUnhealable(vault, now) ||
+        freshestClaudeCredential(scopedCredential, vault) === freshestClaudeCredential(scopedCredential)) {
+      return { windows: null, hint };
+    }
+    managedFailed = true;
   }
 
   // 2) Perfil de disco com o MESMO e-mail da conta. A sessão daquele perfil
   //    É esta conta — fontes do perfil são autoritativas para ela.
   const email = account.email?.trim().toLowerCase();
-  if (email) {
+  if (email && !managedFailed) {
     const profile = await findClaudeProfileByEmail(email, opts.home);
     if (profile) {
       const profileRead = await readProfileCredential(profile, keychainProbe);
@@ -540,7 +556,8 @@ export async function fetchClaudeAccountUsageWindows(
     await ensureFreshClaudeSubscription(accountId, now);
     const refreshed = readVaultCredentialBlob(accountId);
     if (!refreshed || refreshed === blob || getAccount(accountId)?.email !== account.email) {
-      return { windows: null, hint: 'unavailable' };
+      // Cofre sem cura: um escopo gerenciado vencido continua dizendo por quê.
+      return { windows: null, hint: managedFailed && hint ? hint : 'unavailable' };
     }
     verifiedBlob = refreshed;
     vaultIdentity = await probeClaudeCredentialIdentity(verifiedBlob, account.email, {

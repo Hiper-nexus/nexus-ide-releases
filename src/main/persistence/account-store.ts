@@ -57,6 +57,7 @@ import {
   freshestClaudeCredential,
   hasManagedClaudeAuth,
   managedClaudeAuthDirectory,
+  managedClaudeAuthHasCredential,
   materializeManagedClaudeAuth,
   readManagedClaudeAuthAsync,
   removeManagedClaudeAuth,
@@ -386,9 +387,53 @@ function persistManagedClaudeReadback(account: Account, renewed: string | null):
   const latest = freshestClaudeCredential(renewed, saved);
   if (latest && latest !== saved) {
     const result = setSecret(CRED_PREFIX + account.id, latest);
-    if (result.ok) clearClaudeRefreshFailure(account.id);
+    if (result.ok) settleRenewedClaudeCredential(account.id);
   }
   return latest;
+}
+
+function claudeRefreshToken(blob: string | null): string | null {
+  try {
+    const token = blob ? JSON.parse(blob)?.claudeAiOauth?.refreshToken : null;
+    return typeof token === 'string' && token ? token : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Outra cópia conhecida da mesma linhagem: o login nativo ou outra linha do
+ * cofre. Rotacionar um token sem prova prévia de identidade consumiria a
+ * sessão da irmã que o carrega (F-615) — só a linhagem exclusiva renova.
+ */
+function claudeLineageSharedElsewhere(accountId: string, blob: string): boolean {
+  const refreshToken = claudeRefreshToken(blob);
+  if (!refreshToken) return true;
+  if (claudeRefreshToken(readNativeClaudeSnapshot().blob) === refreshToken) return true;
+  // ponytail: escopos gerenciados das irmãs espelham o cofre delas (read-back
+  // provado); comparar o cofre evita ler N Keychains a cada renovação.
+  return listAccounts('claude').some((other) => other.id !== accountId &&
+    claudeRefreshToken(getSecret(CRED_PREFIX + other.id)) === refreshToken);
+}
+
+/**
+ * O escopo gerenciado não carrega a linhagem do cofre: está vazio, ou guarda
+ * OUTRA, mais velha (re-login/preservação que não chegou a ele). A CLI desse
+ * escopo nunca renovará o cofre. Mesma linhagem continua sendo só da CLI.
+ * Limite: com o Keychain do escopo negado e um arquivo antigo, a comparação vê
+ * o arquivo; a materialização seguinte falha fechada até o Keychain abrir e
+ * então semeia o escopo com o cofre renovado (mais fresco).
+ */
+function managedScopeLacksVaultLineage(
+  accountId: string,
+  scoped: string | null,
+  vault: string | null,
+): boolean {
+  const vaultRefresh = claudeRefreshToken(vault);
+  if (!vault || !vaultRefresh) return false;
+  if (!scoped) return !managedClaudeAuthHasCredential(accountId);
+  return claudeRefreshToken(scoped) !== vaultRefresh &&
+    freshestClaudeCredential(scoped, vault) === slimClaudeCredentialBlob(vault);
 }
 
 /**
@@ -931,6 +976,23 @@ function markClaudeRefreshFailed(account: { id: string; label: string }): void {
 }
 
 /**
+ * Credencial provada e gravada no cofre: a conta sai de «sessão expirada» já.
+ * Cura silenciosa deixava o badge pendurado com Configurações aberto — emite
+ * na transição da marca de renovação mesmo quando não havia cooldown vivo
+ * (F-512). A expiração por TTL é preguiçosa: aparece no próximo emit.
+ */
+function settleRenewedClaudeCredential(accountId: string): void {
+  const clearedRefreshFailure = claudeRefreshFailedAt.delete(accountId);
+  let clearedCooldown = false;
+  try {
+    clearedCooldown = clearRefutedAuthCooldown(accountId, 'claude', 'credencial Claude renovada');
+  } catch {
+    // Metadado que não gravou não desfaz a credencial já salva.
+  }
+  if (!clearedCooldown && clearedRefreshFailure) emit();
+}
+
+/**
  * Renova o blob OAuth de uma conta Claude SECUNDÁRIA perto de expirar e grava
  * o resultado (refresh token rotacionado) de volta no vault. A conta que é o
  * login nativo do Keychain NUNCA é renovada por aqui — rotacionar a linhagem
@@ -958,9 +1020,11 @@ export async function ensureFreshClaudeSubscription(
       markClaudeIdentityMismatch(accountId, 'readback Claude');
       return false;
     }
-    if (identity !== 'match' || !sameClaudeAccountIdentity(account) ||
-        getSecret(CRED_PREFIX + accountId) !== previous) return false;
-    return persistManagedClaudeReadback(account, latest) !== previous;
+    if (!sameClaudeAccountIdentity(account) || getSecret(CRED_PREFIX + accountId) !== previous) return false;
+    if (identity === 'match') return persistManagedClaudeReadback(account, latest) !== previous;
+    // Escopo vencido com OUTRA linhagem (ou nenhuma): a CLI dele não é dona da
+    // linhagem do cofre, que segue para a renovação abaixo.
+    if (identity !== 'auth-expired' || !managedScopeLacksVaultLineage(accountId, latest, previous)) return false;
   }
   const nativeEmail = activeClaudeEmail();
   // M1: o login nativo nunca é renovado por aqui. Sem conseguir ler quem é o
@@ -981,15 +1045,19 @@ export async function ensureFreshClaudeSubscription(
   claudeRefreshInFlight.add(accountId);
   try {
     // Refresh rotates an opaque grant. Prove the current access token belongs
-    // to this account before touching that grant; an expired, unproven token
-    // must be recovered through the provider login instead.
+    // to this account before touching that grant. An expired access token
+    // (Reserva after sleep or a closed app) can never be proven: it rotates
+    // only when no other known store shares its lineage, and the new token
+    // must still prove this account before it reaches the vault.
     const beforeIdentity = await probeClaudeCredentialIdentity(blob, account.email, { now });
     if (beforeIdentity === 'mismatch') {
       markClaudeIdentityMismatch(accountId, 'refresh Claude');
       return false;
     }
-    if (beforeIdentity !== 'match' || !sameClaudeAccountIdentity(account) ||
+    const unproven = beforeIdentity === 'auth-expired';
+    if ((beforeIdentity !== 'match' && !unproven) || !sameClaudeAccountIdentity(account) ||
         getSecret(CRED_PREFIX + accountId) !== blob) return false;
+    if (unproven && claudeLineageSharedElsewhere(accountId, blob)) return false;
     const updateBlob =
       refreshImpl ??
       (options.force ? forceRefreshClaudeOauthBlob : refreshClaudeOauthBlob);
@@ -1015,21 +1083,7 @@ export async function ensureFreshClaudeSubscription(
       );
       return false;
     }
-    // Cura silenciosa deixava o badge "sessão expirada" pendurado com
-    // Configurações aberto: emite na transição true→false também. (A expiração
-    // por TTL é preguiçosa — aparece no próximo emit de qualquer origem.)
-    const clearedRefreshFailure = claudeRefreshFailedAt.delete(accountId);
-    const currentAccount = accounts.get(accountId);
-    // `clearCooldown` só emite quando havia cooldown vivo. Se o cooldown de
-    // auth já tinha expirado (no-op) mas o refresh-failure mudou de estado, o
-    // emit ainda precisa sair — senão o badge fica pendurado até outro evento.
-    const clearedCooldown =
-      currentAccount && isAuthCooldownReason(currentAccount.lastError)
-        ? clearCooldown(accountId, 'credencial Claude renovada')
-        : false;
-    if (!clearedCooldown && clearedRefreshFailure) {
-      emit();
-    }
+    settleRenewedClaudeCredential(accountId);
     console.info('[accounts] claude oauth renovado para conta', account.label);
     return true;
   } catch {
@@ -2123,12 +2177,16 @@ function upsertCooldownBlock(
  * Blocos escopados (tier:*) ficam: refutação account-wide não desprova um
  * limite por tier.
  */
-export function clearRefutedAuthCooldown(id: string, adapterId: string): boolean {
+export function clearRefutedAuthCooldown(
+  id: string,
+  adapterId: string,
+  note = 'sessão confirmada por leitura provider-api',
+): boolean {
   const account = accounts.get(id);
   if (!account || account.adapterId !== adapterId || !isAuthCooldownReason(account.lastError)) return false;
   const globalBlock = cooldownBlocks.get(id)?.get(GLOBAL_SCOPE);
   if (globalBlock && globalBlock.blockedUntil > Date.now() && !isAuthCooldownReason(globalBlock.reason)) return false;
-  return clearCooldown(id, 'sessão confirmada por leitura provider-api');
+  return clearCooldown(id, note);
 }
 
 export function clearCooldown(id: string, note: string): boolean {
