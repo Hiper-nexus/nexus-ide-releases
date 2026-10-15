@@ -506,6 +506,13 @@ function writeCheckoutRegistry(file: string, registry: CheckoutRegistry): void {
 }
 const CHECKOUT_REGISTRY_LOCK_RETRY_ATTEMPTS = 8;
 const CHECKOUT_REGISTRY_LOCK_RETRY_BASE_MS = 15;
+/**
+ * `lastSeenAt` is a liveness marker with no reader at finer granularity —
+ * rewriting + fsync-ing ~/.nexus/checkouts.json on every scope resolution
+ * used to cost an F_FULLFSYNC per minute per workspace for a timestamp.
+ * Entries refresh at most once per window; real changes still write at once.
+ */
+const CHECKOUT_LAST_SEEN_REFRESH_MS = 3_600_000;
 
 function sleepSync(ms: number): void {
   if (ms <= 0) return;
@@ -747,6 +754,15 @@ function resolveGitCheckoutId(
         );
       }
       assertNoLiveCheckoutDuplicate(match, rootRealPath, runner);
+      // Nothing but lastSeenAt would change: token matched by construction,
+      // projectId asserted above, lineage and path still the same. Skipping
+      // the rewrite (and its fsync) keeps every resolution after the first
+      // free of synchronous disk writes; real changes still write at once.
+      const unchanged =
+        match.lineageId === identity.lineageId &&
+        match.rootRealPath === rootRealPath &&
+        now - match.lastSeenAt < CHECKOUT_LAST_SEEN_REFRESH_MS;
+      if (unchanged) return match.checkoutId;
       const entries = registry.entries.map((entry) =>
         entry === match
           ? gitCheckoutEntry(
@@ -821,6 +837,12 @@ function resolveProvisionalCheckoutId(
     const now = Date.now();
     if (matches.length === 1) {
       const match = matches[0];
+      // Matched entries already carry this exact fingerprint and project; a
+      // rewrite here could only move lastSeenAt (same throttle as git-token).
+      const fresh = now - match.lastSeenAt < CHECKOUT_LAST_SEEN_REFRESH_MS;
+      if (match.rootRealPath === rootRealPath && fresh) {
+        return match.checkoutId;
+      }
       writeCheckoutRegistry(file, {
         ...registry,
         entries: registry.entries.map((entry) =>

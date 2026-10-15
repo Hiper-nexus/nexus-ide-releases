@@ -375,6 +375,74 @@ describe('project identity', () => {
     expect(after.rootRealPath).toBe(fs.realpathSync(moved));
   });
 
+  it('skips the checkouts.json rewrite when only a fresh lastSeenAt would change', () => {
+    vi.useFakeTimers();
+    try {
+      const repository = path.join(root, 'last-seen-throttle');
+      initializeRepository(repository, { origin: 'https://example.invalid/owner/repo.git' });
+      commitManifest(repository);
+      const registryFile = path.join(root, 'checkouts-throttle.json');
+      const registryOptions = {
+        installationId: 'installation-throttle',
+        checkoutRegistryFile: registryFile,
+      };
+
+      vi.setSystemTime(1_700_000_000_000);
+      resolveProjectExecutionScope(repository, registryOptions);
+      const afterFirst = fs.readFileSync(registryFile, 'utf8');
+
+      vi.setSystemTime(1_700_000_001_000);
+      resolveProjectExecutionScope(repository, registryOptions);
+      const afterSecond = fs.readFileSync(registryFile, 'utf8');
+      expect(afterSecond).toBe(afterFirst);
+
+      // Beyond the refresh window the liveness marker is written again.
+      vi.setSystemTime(1_700_000_000_000 + 3_600_000 + 2_000);
+      resolveProjectExecutionScope(repository, registryOptions);
+      const afterWindow = JSON.parse(fs.readFileSync(registryFile, 'utf8')) as {
+        entries: { lastSeenAt: number }[];
+      };
+      expect(afterWindow.entries[0]!.lastSeenAt).toBe(1_700_000_000_000 + 3_600_000 + 2_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('rewrites checkouts.json immediately when a matched entry changes beyond lastSeenAt', () => {
+    vi.useFakeTimers();
+    try {
+      const original = path.join(root, 'throttle-move');
+      initializeRepository(original, { content: 'throttle-move' });
+      writeManifest(original);
+      const registryFile = path.join(root, 'checkouts-throttle-move.json');
+      const registryOptions = {
+        installationId: 'installation-throttle-move',
+        checkoutRegistryFile: registryFile,
+      };
+
+      vi.setSystemTime(1_700_000_000_000);
+      const before = resolveProjectExecutionScope(original, registryOptions);
+      const afterFirst = fs.readFileSync(registryFile, 'utf8');
+
+      // A copy+delete move changes rootRealPath: the registry must follow the
+      // move right away even though lastSeenAt is still fresh.
+      const moved = path.join(root, 'throttle-moved');
+      fs.cpSync(original, moved, { recursive: true, preserveTimestamps: true });
+      fs.rmSync(original, { recursive: true, force: true });
+      vi.setSystemTime(1_700_000_001_000);
+      const after = resolveProjectExecutionScope(moved, registryOptions);
+
+      expect(after.checkoutId).toBe(before.checkoutId);
+      const rewritten = fs.readFileSync(registryFile, 'utf8');
+      expect(rewritten).not.toBe(afterFirst);
+      const entry = (JSON.parse(rewritten) as { entries: { rootRealPath: string }[] })
+        .entries[0]!;
+      expect(entry.rootRealPath).toBe(fs.realpathSync(moved));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('quarantines a duplicated live checkout token instead of colliding ids', () => {
     const original = path.join(root, 'original');
     const duplicate = path.join(root, 'duplicate');
