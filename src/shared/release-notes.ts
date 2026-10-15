@@ -10702,7 +10702,7 @@ export const RELEASE_076261: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076262: AppRelease = {
   version: '0.76.262',
   date: '2026-10-14',
   codename: 'Retomada clara, trabalho preservado',
@@ -10716,5 +10716,22 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Ações que correspondem ao estado', detail: 'Panes controlados pela missão não oferecem mais Dormir e Reiniciar individuais que o sistema recusava. Missões aguardando revisão ou resposta abrem o Quadro.' },
     { title: 'Falhas de retomada visíveis', detail: 'Se a retomada falhar, o Nexus apresenta o erro e permite tentar novamente.' },
     { title: 'Teste de credenciais isolado', detail: 'O teste de OpenClaude usa um cofre simulado e deixa de consultar a credencial real do Mac.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.263',
+  date: '2026-10-14',
+  codename: 'Linux em dia com a retomada',
+  summary: 'O app no Linux deixa a 0.76.261 e passa a incluir a 0.76.262: ao reabrir, uma missão aguardando resposta não prende os outros terminais, e os controles da missão ficam visíveis.',
+  highlights: [
+    { title: 'Cada missão volta no seu tempo', detail: 'Um pane já autorizado retoma sem esperar outra missão que ainda está carregando. Agentes avulsos também seguem sua preferência de retomada.' },
+    { title: 'Retomada ao alcance', detail: 'O pane da missão oferece Abrir missão ou Retomar missão conforme o estado. Durante a retomada, o botão informa o andamento e evita cliques repetidos.' },
+    { title: 'Comandos sempre à vista', detail: 'As ações do Quadro têm uma faixa própria e se ajustam à largura. Título e telemetria não empurram mais o botão de retomada para fora da tela.' },
+  ],
+  fixes: [
+    { title: 'Ações que correspondem ao estado', detail: 'Panes controlados pela missão não oferecem mais Dormir e Reiniciar individuais que o sistema recusava. Missões aguardando revisão ou resposta abrem o Quadro.' },
+    { title: 'Falhas de retomada visíveis', detail: 'Se a retomada falhar, o Nexus apresenta o erro e permite tentar novamente.' },
+    { title: 'Atualização do Linux', detail: 'A 0.76.262 só tinha pacote de macOS. O Linux não anexa arquivos a essa release e sai na 0.76.263.' },
   ],
 };
