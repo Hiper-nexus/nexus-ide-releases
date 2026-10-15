@@ -1438,35 +1438,39 @@ describe("F-908: coleta de worktrees de writers paradas", () => {
   it("missão viva, sessão viva dentro ou liberação recente mantêm a worktree", async (context) => {
     const { scope, manager } = fixture();
     const registry = new WorktreeRuntimeRegistry(manager);
-    setMission(manager, scope, "mission-live", "running");
-    setMission(manager, scope, "mission-done", "done");
-    const live = await paneWriter(registry, scope, "mission-live", "live");
-    const busy = await paneWriter(registry, scope, "mission-done", "busy");
-    liveSession.mockImplementation((worktreePath) => worktreePath === busy.worktreePath);
-    expect((await registry.collectAgedPaneWriterWorktrees(scope, NOW)).removed).toEqual([]);
-    liveSession.mockReturnValue(false);
-    // Processo real que fez `cd` para dentro (cwd ATUAL, provado por lsof/procfs).
-    if (process.platform !== "win32") {
-      // Daqui em diante a remoção exige PROVA da sonda real.
-      skipIfCwdProbeDeniedBySandbox(context);
-      fs.mkdirSync(path.join(busy.worktreePath, "sub"));
-      const shell = spawn("sleep", ["30"], { cwd: path.join(busy.worktreePath, "sub"), stdio: "ignore" });
-      try {
-        await new Promise((resolve) => shell.once("spawn", resolve));
-        expect((await registry.collectAgedPaneWriterWorktrees(scope, NOW)).removed).toEqual([]);
-      } finally {
-        shell.kill("SIGKILL");
-        await new Promise((resolve) => shell.once("exit", resolve));
+    // O skip do sandbox lança no meio: o dispose (timer de GC de 30 s) roda mesmo assim.
+    try {
+      setMission(manager, scope, "mission-live", "running");
+      setMission(manager, scope, "mission-done", "done");
+      const live = await paneWriter(registry, scope, "mission-live", "live");
+      const busy = await paneWriter(registry, scope, "mission-done", "busy");
+      liveSession.mockImplementation((worktreePath) => worktreePath === busy.worktreePath);
+      expect((await registry.collectAgedPaneWriterWorktrees(scope, NOW)).removed).toEqual([]);
+      liveSession.mockReturnValue(false);
+      // Processo real que fez `cd` para dentro (cwd ATUAL, provado por lsof/procfs).
+      if (process.platform !== "win32") {
+        // Daqui em diante a remoção exige PROVA da sonda real.
+        skipIfCwdProbeDeniedBySandbox(context);
+        fs.mkdirSync(path.join(busy.worktreePath, "sub"));
+        const shell = spawn("sleep", ["30"], { cwd: path.join(busy.worktreePath, "sub"), stdio: "ignore" });
+        try {
+          await new Promise((resolve) => shell.once("spawn", resolve));
+          expect((await registry.collectAgedPaneWriterWorktrees(scope, NOW)).removed).toEqual([]);
+        } finally {
+          shell.kill("SIGKILL");
+          await new Promise((resolve) => shell.once("exit", resolve));
+        }
+        fs.rmdirSync(path.join(busy.worktreePath, "sub"));
+        expect((await registry.collectAgedPaneWriterWorktrees(scope, NOW)).removed.map((r) => r.taskId))
+          .toEqual([busy.taskId]);
       }
-      fs.rmdirSync(path.join(busy.worktreePath, "sub"));
-      expect((await registry.collectAgedPaneWriterWorktrees(scope, NOW)).removed.map((r) => r.taskId))
-        .toEqual([busy.taskId]);
+      // Idade mínima padrão (24 h): acabou de ser liberada, não é candidata.
+      expect((await registry.collectAgedPaneWriterWorktrees(scope)).removed).toEqual([]);
+      expect(fs.existsSync(live.worktreePath)).toBe(true);
+      expect(registry.listMission(scope, "mission-live")).toHaveLength(1);
+    } finally {
+      registry.dispose();
     }
-    // Idade mínima padrão (24 h): acabou de ser liberada, não é candidata.
-    expect((await registry.collectAgedPaneWriterWorktrees(scope)).removed).toEqual([]);
-    expect(fs.existsSync(live.worktreePath)).toBe(true);
-    expect(registry.listMission(scope, "mission-live")).toHaveLength(1);
-    registry.dispose();
   });
 
   it("respeita o teto de candidatos por rodada", async (context) => {
