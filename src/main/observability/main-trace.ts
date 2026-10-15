@@ -5,7 +5,8 @@ import { redactSecretText } from '../../shared/secret-redaction';
 
 export const TRACE_ROTATION_BYTES = 5 * 1024 * 1024;
 export const TRACE_ROTATION_GENERATIONS = 3;
-const SENSITIVE_KEY_RE = /key|token|secret|password|authorization|bearer|credential/i;
+// Login credentials too (session, previousSession, refresh, cookie), but not PTY ids like sessionId.
+const SENSITIVE_KEY_RE = /key|token|secret|password|authorization|bearer|credential|cookie|session$|refresh$/i;
 const FREE_TEXT_KEY_RE = /detail|error|message|stderr|stdout|reason/i;
 
 /** Bounded redaction also handles cycles and excessive depth without exposing their leaves. */

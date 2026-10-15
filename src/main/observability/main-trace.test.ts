@@ -37,6 +37,17 @@ describe('redactSecrets', () => {
     expect(out.message).toBe('sem segredo');
   });
 
+  it('redige sessão, refresh e cookie de login, mas mantém ids de sessão de PTY', () => {
+    const out = redactSecrets({
+      session: 'opaque-session', previousSession: 'old-session', refresh: 'opaque-refresh',
+      cookie: '__Host-nexus_session=x', setCookie: 'y', sessionId: 'pty-1', sessions: 3,
+    }) as Record<string, unknown>;
+    expect(out).toEqual({
+      session: '[redacted]', previousSession: '[redacted]', refresh: '[redacted]',
+      cookie: '[redacted]', setCookie: '[redacted]', sessionId: 'pty-1', sessions: 3,
+    });
+  });
+
   it('não explode com valores não-objeto', () => {
     expect(redactSecrets('string')).toBe('string');
     expect(redactSecrets(undefined)).toBeUndefined();
