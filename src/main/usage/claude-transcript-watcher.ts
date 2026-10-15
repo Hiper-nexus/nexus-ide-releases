@@ -107,6 +107,16 @@ function yieldToEventLoop(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+/** Só ENOENT prova que o arquivo sumiu; EIO/EACCES/EMFILE são falhas transitórias. */
+async function fileIsGone(file: string): Promise<boolean> {
+  try {
+    await fs.promises.stat(file);
+    return false;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT';
+  }
+}
+
 function freshFileState(): FileState {
   return {
     offset: 0,
@@ -269,10 +279,13 @@ export class ClaudeTranscriptWatcher {
     }
     // Sumiu da listagem de um dir varrido com sucesso: solta o estado e o
     // registro de resume. Dir que falhou no opendir NÃO varre — falha
-    // transitória de listagem não pode apagar registros (reemissão).
+    // transitória de listagem não pode apagar registros (reemissão). E a
+    // listagem pode omitir arquivo vivo (corrida com rename, FS de rede): só
+    // ENOENT no stat prova que sumiu.
     for (const file of [...this.files.keys()]) {
       if (scanned.has(file)) continue;
       if (!listedDirs.has(path.dirname(file))) continue;
+      if (!(await context.wait(fileIsGone(file)))) continue;
       this.files.delete(file);
       this.opts.resumeStore?.delete(file);
     }

@@ -490,6 +490,57 @@ describe('ClaudeTranscriptWatcher custo por ciclo de varredura', () => {
     await vi.waitFor(() => expect(seen).toContain('message-s-1-9'), { timeout: 5_000, interval: 5 });
   });
 
+  it.each<[string, string | undefined]>([
+    ['o stat ainda acha o arquivo', undefined],
+    ['o stat falha com EIO (não é ENOENT)', 'EIO'],
+  ])('listagem que omite arquivo vivo não apaga estado nem resume e não reemite: %s', async (_label, statFailure) => {
+    const project = setup(1, true);
+    const file = project.files[0]!;
+    const store = new ClaudeTranscriptResumeStore(path.join(project.stateDir, 'resume.json'));
+    const seen: string[] = [];
+    let hidden = false;
+    let listings = 0;
+    const realOpendir = fs.promises.opendir.bind(fs.promises);
+    vi.spyOn(fs.promises, 'opendir').mockImplementation(async (...args: Parameters<typeof fs.promises.opendir>) => {
+      listings += 1;
+      const dir = await realOpendir(...args);
+      if (!hidden) return dir;
+      // Listagem incompleta (corrida com rename, FS de rede): o arquivo existe
+      // em disco mas o opendir não o devolve.
+      const realRead = dir.read.bind(dir);
+      Object.assign(dir, {
+        read: async () => {
+          for (;;) {
+            const entry = await realRead();
+            if (!entry || entry.name !== path.basename(file)) return entry;
+          }
+        },
+      });
+      return dir;
+    });
+    if (statFailure) {
+      const realStat = fs.promises.stat.bind(fs.promises);
+      vi.spyOn(fs.promises, 'stat').mockImplementation(((target: fs.PathLike, ...rest: unknown[]) =>
+        hidden && String(target) === file
+          ? Promise.reject(Object.assign(new Error(`${statFailure}: falha transitória`), { code: statFailure }))
+          : (realStat as (...args: unknown[]) => Promise<fs.Stats>)(target, ...rest)) as typeof fs.promises.stat);
+    }
+    watcherForProject(project, { resumeStore: store, onEvent: (event) => seen.push(event.messageId ?? '') }).start();
+    await vi.waitFor(() => expect(store.get(file)).not.toBeNull(), { timeout: 5_000, interval: 5 });
+    expect(seen).toHaveLength(1);
+
+    hidden = true;
+    const hiddenFrom = listings;
+    await vi.waitFor(() => expect(listings).toBeGreaterThanOrEqual(hiddenFrom + 5), { timeout: 5_000, interval: 5 });
+    expect(store.get(file)).not.toBeNull();
+
+    hidden = false;
+    const visibleFrom = listings;
+    await vi.waitFor(() => expect(listings).toBeGreaterThanOrEqual(visibleFrom + 5), { timeout: 5_000, interval: 5 });
+    // Sem a confirmação por stat o estado era apagado e o arquivo relido do zero.
+    expect(seen).toHaveLength(1);
+  });
+
   it('sobe o rescan para 30s quando todos os diretórios têm fs.watch saudável', async () => {
     const project = setup(1);
     const intervalSpy = vi.spyOn(globalThis, 'setInterval');
