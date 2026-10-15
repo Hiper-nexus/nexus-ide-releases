@@ -35,6 +35,7 @@ import {
   RendererMountWatchdog,
 } from './reliability/renderer-mount-watchdog';
 import { RendererBootRecovery } from './reliability/renderer-boot-recovery';
+import { registerBootReadyIpc } from './boot-ready-gate';
 import { confirmDbBoot } from './persistence/db';
 import { handleRenderProcessGone } from './agent-runtime/agent-runtime-bridge';
 import {
@@ -396,6 +397,11 @@ export function createMainWindow(
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (event) => event.preventDefault());
 
+  // Gate boot:ready registrado antes de qualquer navegação: com o load
+  // paralelo ao bootstrap, o primeiro invoke do renderer já precisa achar
+  // o handler — é ele que segura o React até o IPC estar inteiro de pé.
+  registerBootReadyIpc();
+
   // Capture the reference up front: inside the 'destroyed' handler the
   // `win.webContents` getter can already throw "Object has been destroyed".
   const wc = win.webContents;
@@ -555,6 +561,13 @@ export function createMainWindow(
     clearInterval(mountPoll);
     mountPoll = null;
   };
+  // A moldura nativa aparece no primeiro paint do renderer autorizado — o
+  // splash estático do index.html cobre a espera do gate boot:ready. O show
+  // definitivo (Dock/foco) continua sendo o commitRendererBoot no mount.
+  win.on('ready-to-show', () => {
+    if (win.isDestroyed() || !rendererStartAuthorized || win.isVisible()) return;
+    win.show();
+  });
   const commitRendererBoot = (): void => {
     mounted = true;
     bootRecovery.rendererCommitted();
@@ -778,6 +791,19 @@ export function createMainWindow(
           if (win.isDestroyed() || mounted || mountPoll !== poll) return;
           if (hasContent) {
             commitRendererBoot();
+            return;
+          }
+          // O gate boot:ready segura o React montado enquanto o bootstrap
+          // registra o IPC: documento vivo aguardando não é renderer morto.
+          // Re-arma o prazo em vez de recarregar uma página saudável.
+          const awaitingGate = await ctx.wait(wc.executeJavaScript(
+            'window.__nexusBootAwaiting === true',
+          )).catch(() => false);
+          // Mesma cerca da resposta anterior: uma avaliação atrasada de um
+          // load velho não re-arma o watchdog do load atual.
+          if (win.isDestroyed() || mounted || mountPoll !== poll) return;
+          if (awaitingGate) {
+            mountWatchdog.arm();
             return;
           }
           if (devServerUrl && !devDiagnosticsCaptured) {

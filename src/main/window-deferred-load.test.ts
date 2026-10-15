@@ -36,6 +36,35 @@ describe("deferred main renderer navigation", () => {
     }
   });
 
+  it("registers the boot:ready gate before any renderer navigation", () => {
+    const create = between(
+      "export function createMainWindow(",
+      "const startRenderer = (): void =>",
+    );
+    expect(create).toContain("registerBootReadyIpc()");
+  });
+
+  it("reveals the native frame at ready-to-show only for the authorized renderer", () => {
+    const readyToShow = between(
+      "win.on('ready-to-show'",
+      "const commitRendererBoot",
+    );
+    expect(readyToShow).toContain("!rendererStartAuthorized");
+    expect(readyToShow).toContain("win.isVisible()");
+    expect(readyToShow).toContain("win.show()");
+    // Não é o commit: o show definitivo (Dock/foco) continua no mount.
+    expect(readyToShow).not.toContain("commitRendererBoot()");
+  });
+
+  it("treats a renderer awaiting the boot gate as alive instead of reloading it", () => {
+    const mountPoll = between(
+      "wc.on('did-finish-load'",
+      "wc.on('did-start-navigation'",
+    );
+    expect(mountPoll).toContain("__nexusBootAwaiting");
+    expect(mountPoll).toContain("mountWatchdog.arm()");
+  });
+
   it("starts one real navigation explicitly and keeps the normal activate path immediate", () => {
     const startRenderer = between(
       "const startRenderer = (): void =>",

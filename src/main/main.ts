@@ -25,6 +25,7 @@ import {
   createMainWindow,
   startMainWindowRenderer,
 } from "./window";
+import { rejectBootReady, resolveBootReady } from "./boot-ready-gate";
 import {
   installRendererProtocol,
   registerRendererProtocolScheme,
@@ -1137,10 +1138,11 @@ if (squirrelStartupEvent || !wireDeepLinks()) {
     registerAgentHookIpc();
 
     // The native BrowserWindow/Dock ownership exists before any optional
-    // integration starts, but renderer navigation remains deferred. Loading
-    // React before bootstrap registered preload IPC made the first launch race
-    // through "No handler registered" responses and could strand stores on
-    // their fallback state until a reload.
+    // integration starts. Renderer navigation now runs IN PARALLEL with
+    // bootstrap: the document loads immediately (static splash) while React
+    // waits on the boot:ready gate, resolved only after every IPC handler
+    // below is registered — the same "No handler registered" anti-race the
+    // deferred load gave, one step earlier.
     // This must remain the first potentially visible operation after Electron
     // is ready. Do not move it into bootstrap(): synchronous adapter, settings,
     // database, or keychain setup can otherwise classify the process as a
@@ -1148,6 +1150,11 @@ if (squirrelStartupEvent || !wireDeepLinks()) {
     // Finder/dmg launches inherit a minimal PATH. The early shell probe (or
     // last good cache) is awaited only at adapter discovery inside bootstrap.
     try {
+      if (!startMainWindowRenderer(mainWindow)) {
+        throw new Error(
+          "renderer start authority disappeared before bootstrap completed",
+        );
+      }
       // Finish the sweep before bootstrap can fork a host/supervisor. A scan
       // racing a new session could otherwise classify our live helper as orphan.
       await orphanSupervisorSweep;
@@ -1164,16 +1171,10 @@ if (squirrelStartupEvent || !wireDeepLinks()) {
       // MCP boot race (print 2026-08-16): o renderer restaurava panes de
       // agente enquanto o servidor MCP embutido ainda não tinha feito bind —
       // os CLIs spawnados imprimiam "MCP startup interrupted …
-      // nexus_<hex> not initialized". initOrchestration é idempotente: aqui
-      // esperamos o voo já em curso (bootstrap dispara fire-and-forget),
-      // com teto: bind travado não pode segurar a janela para sempre (o
-      // supervisor segue retentando em background).
-      await Promise.race([
-        initOrchestration().catch(() => undefined),
-        new Promise<void>((resolve) => {
-          setTimeout(resolve, 4_000);
-        }),
-      ]);
+      // nexus_<hex> not initialized". Hoje a espera mora no funil de spawn:
+      // pty-ipc aguarda o flight de initOrchestration (fire-and-forget no
+      // bootstrap) antes de tocar provider e PTY — a janela não para mais
+      // num teto arbitrário e pane de shell nunca espera MCP.
       // Gap A: register Claude+Codex managed hook installers. Installing edits the
       // user's GLOBAL ~/.claude & ~/.codex config (affects those tools even outside
       // Nexus), so we NEVER install on launch without consent — register only, then
@@ -1194,12 +1195,11 @@ if (squirrelStartupEvent || !wireDeepLinks()) {
           console.warn("[main] managed agent hooks bootstrap failed:", err);
         }
       }
-      if (!startMainWindowRenderer(mainWindow)) {
-        throw new Error(
-          "renderer start authority disappeared before bootstrap completed",
-        );
-      }
+      // Todo o IPC de boot está registrado: libera o React — o documento já
+      // carregou e o splash estático cobre a espera até o primeiro mount.
+      resolveBootReady();
     } catch (error) {
+      rejectBootReady(error);
       console.error("[main] bootstrap failed before renderer navigation:", error);
       const bootFailureReason = describeBootFailure(error);
       trace({ kind: "boot-failed", reason: bootFailureReason });

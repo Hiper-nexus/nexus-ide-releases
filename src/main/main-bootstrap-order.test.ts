@@ -50,15 +50,17 @@ describe("main bootstrap settings migration order", () => {
     );
   });
 
-  it("constructs the native window early but starts React only after every bootstrap IPC is registered", () => {
+  it("starts renderer navigation early and holds the React mount on the boot:ready gate", () => {
     const createWindow = appReadySource.indexOf(
       "createMainWindow({ deferRendererLoad: true })",
     );
     const resolvePath = appReadySource.indexOf("const userPathReady = resolveUserPath({");
-    const bootstrap = appReadySource.indexOf("await bootstrap(userPathReady);");
     const startRenderer = appReadySource.indexOf(
       "startMainWindowRenderer(mainWindow)",
     );
+    const bootstrap = appReadySource.indexOf("await bootstrap(userPathReady);");
+    const gateResolve = appReadySource.indexOf("resolveBootReady();");
+    const gateReject = appReadySource.indexOf("rejectBootReady(error)");
     const bootstrapFailure = appReadySource.indexOf(
       "bootstrap failed before renderer navigation",
     );
@@ -66,14 +68,33 @@ describe("main bootstrap settings migration order", () => {
     expect([
       createWindow,
       resolvePath,
-      bootstrap,
       startRenderer,
+      bootstrap,
+      gateResolve,
+      gateReject,
       bootstrapFailure,
     ]).not.toContain(-1);
     expect(resolvePath).toBeLessThan(createWindow);
-    expect(resolvePath).toBeLessThan(bootstrap);
-    expect(bootstrap).toBeLessThan(startRenderer);
-    expect(startRenderer).toBeLessThan(bootstrapFailure);
+    // A navegação roda em paralelo ao bootstrap; quem segura o React é o
+    // gate boot:ready — ele resolve só depois de todo o IPC registrado.
+    expect(startRenderer).toBeLessThan(bootstrap);
+    expect(bootstrap).toBeLessThan(gateResolve);
+    expect(gateResolve).toBeLessThan(gateReject);
+    expect(gateReject).toBeLessThan(bootstrapFailure);
+  });
+
+  it("does not park the window on the 4 s orchestration race — CLI spawns wait at their own gate", () => {
+    // A corrida de 16/08 se resolve no funil de spawn (pty-ipc espera
+    // orchestrationReady), não bloqueando a janela num teto arbitrário.
+    const gateRegion = appReadySource.slice(
+      appReadySource.indexOf("await bootstrap(userPathReady);"),
+      appReadySource.indexOf("resolveBootReady();"),
+    );
+    expect(gateRegion).not.toContain("initOrchestration(");
+    expect(gateRegion).not.toContain("Promise.race(");
+    // O fire-and-forget do bootstrap continua: a orquestração inicia cedo,
+    // só não é mais pré-condição da janela.
+    expect(bootstrapSource).toContain("void initOrchestration()");
   });
 
   it('awaits the early PATH flight immediately before adapter discovery and automatically rescans after revalidation', () => {
@@ -146,7 +167,8 @@ describe('Post-boot idle queue deferral', () => {
   it('configures the agent hook endpoint before React can restore panes (B1)', () => {
     // pty-manager injects NEXUS_AGENT_HOOK_ENDPOINT/NEXUS_PANE_KEY only when the
     // endpoint already exists at spawn; panes restored on mount keep their env.
-    const startRenderer = appReadySource.indexOf('startMainWindowRenderer(mainWindow)');
+    // Com o renderer paralelo, "antes do React" = antes do gate resolver.
+    const gateResolve = appReadySource.indexOf('resolveBootReady();');
     const steps = [
       'configureAgentRuntimeUserDataPath(userDataPath);',
       'bootstrapManagedAgentHooks({ enabled: false });',
@@ -155,7 +177,7 @@ describe('Post-boot idle queue deferral', () => {
       'hookDropBoxWatcher.start();',
     ];
     const positions = steps.map((step) => appReadySource.indexOf(step));
-    expect([startRenderer, ...positions]).not.toContain(-1);
+    expect([gateResolve, ...positions]).not.toContain(-1);
     for (const step of steps) {
       expect(mainSource.split(step).length - 1, step).toBe(1);
     }
@@ -163,10 +185,10 @@ describe('Post-boot idle queue deferral', () => {
       expect(previous).toBeLessThan(position);
       return position;
     });
-    expect(positions.at(-1)).toBeLessThan(startRenderer);
-    // A queued closure written above the renderer start would still run after
-    // mount: nothing before it may be deferred to the idle queue.
-    expect(appReadySource.slice(0, startRenderer)).not.toContain('enqueuePostBootIdleTask(');
+    expect(positions.at(-1)).toBeLessThan(gateResolve);
+    // A queued closure written above the renderer mount gate would still run
+    // after mount: nothing before it may be deferred to the idle queue.
+    expect(appReadySource.slice(0, gateResolve)).not.toContain('enqueuePostBootIdleTask(');
     const queuedHooks = appReadySource.slice(
       appReadySource.indexOf("enqueuePostBootIdleTask('post-boot-hooks-and-shot-bridge'"),
       appReadySource.indexOf('// Gap B:'),
