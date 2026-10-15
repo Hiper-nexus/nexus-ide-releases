@@ -1,4 +1,11 @@
-import { useId, useRef, type Dispatch, type FormEvent, type SetStateAction } from 'react';
+import {
+  useEffect,
+  useId,
+  useRef,
+  type Dispatch,
+  type FormEvent,
+  type SetStateAction,
+} from 'react';
 import type {
   MissionEngineCommand,
   MissionQuestion as MissionQuestionContract,
@@ -55,6 +62,9 @@ export function MissionQuestion({
   const freeTextId = useId();
   const freeTextLabelId = useId();
   const freeTextRef = useRef<ComposerTiptapEditorHandle | null>(null);
+  const formRef = useRef<HTMLFormElement | null>(null);
+  // D4: o editor vira contenteditable=false durante o envio e o navegador derruba o foco no body.
+  const refocusEditorRef = useRef(false);
   const errorId = useId();
   const answerText = state.text.trim();
   const hasAnswer = Boolean(state.optionId || answerText);
@@ -62,10 +72,22 @@ export function MissionQuestion({
     .filter(Boolean)
     .join(' ') || undefined;
 
+  // Só a instância que enviou devolve o foco (a pergunta aparece em duas regiões), e só se
+  // ninguém o pegou no meio do envio.
+  useEffect(() => {
+    if (state.pending || !refocusEditorRef.current) return;
+    refocusEditorRef.current = false;
+    const active = document.activeElement;
+    if (!active || active === document.body || formRef.current?.contains(active)) {
+      freeTextRef.current?.focus();
+    }
+  }, [state.pending]);
+
   const submitAnswer = async (): Promise<void> => {
     if (state.pending || pendingQuestionStates.has(state) || !hasAnswer) return;
 
     pendingQuestionStates.add(state);
+    refocusEditorRef.current = formRef.current?.contains(document.activeElement) ?? false;
 
     const command: MissionEngineCommand = state.optionId
       ? {
@@ -134,6 +156,7 @@ export function MissionQuestion({
 
   return (
     <form
+      ref={formRef}
       className="mission-board__question"
       aria-labelledby={promptId}
       aria-describedby={describedBy}

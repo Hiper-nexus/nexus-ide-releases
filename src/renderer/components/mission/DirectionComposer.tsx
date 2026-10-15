@@ -52,6 +52,9 @@ export function DirectionComposer({
   const errorId = useId();
   const quoteNoticeId = useId();
   const pendingRef = useRef(false);
+  const formRef = useRef<HTMLFormElement | null>(null);
+  // D4: o editor vira contenteditable=false durante o envio e o navegador derruba o foco no body.
+  const refocusEditorRef = useRef(false);
   const draftRef = useRef<ComposerTiptapEditorHandle | null>(null);
   const [targetAgentId, setTargetAgentId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
@@ -84,6 +87,17 @@ export function DirectionComposer({
     draftRef.current?.focusEnd();
   }, [draft]);
 
+  // Terminado o envio (certo ou não), quem estava digitando volta ao editor; se a pessoa
+  // levou o foco a outro campo no meio do envio, ele fica onde ela o pôs.
+  useEffect(() => {
+    if (pending || !refocusEditorRef.current) return;
+    refocusEditorRef.current = false;
+    const active = document.activeElement;
+    if (!active || active === document.body || formRef.current?.contains(active)) {
+      draftRef.current?.focus();
+    }
+  }, [pending]);
+
   if (disabled) return null;
 
   const submitDirection = async (): Promise<void> => {
@@ -91,6 +105,7 @@ export function DirectionComposer({
     if (!text || pendingRef.current) return;
 
     pendingRef.current = true;
+    refocusEditorRef.current = formRef.current?.contains(document.activeElement) ?? false;
     setPending(true);
     setError(null);
 
@@ -122,6 +137,7 @@ export function DirectionComposer({
 
   return (
     <form
+      ref={formRef}
       className="mission-board__direction-composer"
       aria-busy={pending}
       // Rascunho de várias linhas (citação, Shift+Enter): a barra deixa de ser pílula.

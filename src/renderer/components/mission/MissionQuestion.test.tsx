@@ -591,6 +591,79 @@ describe('MissionQuestion', () => {
     ).toBe(true);
   });
 
+  describe('D4 — foco depois do envio', () => {
+    // O campo trava durante o envio e o Chromium joga o foco no body (focus fixup); o jsdom não
+    // faz isso, então o teste o reproduz com blur() e confere que o foco volta ao campo certo.
+    async function failAnswer(request: Deferred<MissionSnapshot>): Promise<void> {
+      await act(async () => {
+        request.reject(new Error('falha'));
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    }
+
+    it('devolve o foco ao campo da resposta livre da instância que enviou, e só dela', async () => {
+      const request = deferred<MissionSnapshot>();
+      const onCommand = vi.fn<CommandHandler>().mockReturnValue(request.promise);
+      const { host } = render(
+        <SharedQuestionHarness snapshot={canonicalSnapshot()} onCommand={onCommand} />,
+      );
+      const top = fieldByLabel(region(host, 'Pergunta no topo da missão'), 'Resposta livre');
+      const conversation = fieldByLabel(region(host, 'Pergunta na conversa'), 'Resposta livre');
+      enterText(top, 'Resposta que ainda vou ajustar.');
+      act(() => top.focus());
+      expect(document.activeElement).toBe(top);
+
+      click(button(region(host, 'Pergunta no topo da missão'), 'Responder'));
+      expect(isControlDisabled(top)).toBe(true);
+      act(() => top.blur());
+      expect(document.activeElement).toBe(document.body);
+      await failAnswer(request);
+
+      expect(isControlDisabled(top)).toBe(false);
+      expect(document.activeElement).toBe(top);
+      expect(document.activeElement).not.toBe(conversation);
+    });
+
+    it('não rouba o foco de quem foi para outro campo durante o envio', async () => {
+      const outside = document.createElement('input');
+      document.body.appendChild(outside);
+      const request = deferred<MissionSnapshot>();
+      const onCommand = vi.fn<CommandHandler>().mockReturnValue(request.promise);
+      const { host } = render(
+        <SharedQuestionHarness snapshot={canonicalSnapshot()} onCommand={onCommand} />,
+      );
+      const top = region(host, 'Pergunta no topo da missão');
+      const field = fieldByLabel(top, 'Resposta livre');
+      enterText(field, 'Resposta.');
+      act(() => field.focus());
+
+      click(button(top, 'Responder'));
+      act(() => field.blur());
+      act(() => outside.focus());
+      await failAnswer(request);
+
+      expect(document.activeElement).toBe(outside);
+    });
+
+    it('não puxa o foco nem ao montar nem quando o envio não nasceu na pergunta', async () => {
+      const request = deferred<MissionSnapshot>();
+      const onCommand = vi.fn<CommandHandler>().mockReturnValue(request.promise);
+      const { host } = render(
+        <SharedQuestionHarness snapshot={canonicalSnapshot()} onCommand={onCommand} />,
+      );
+      const top = region(host, 'Pergunta no topo da missão');
+      // Montar a tela não leva o foco ao campo.
+      expect(document.activeElement).toBe(document.body);
+      enterText(fieldByLabel(top, 'Resposta livre'), 'Resposta.');
+
+      click(button(top, 'Responder')); // click() programático não move o foco: segue no body
+      await failAnswer(request);
+
+      expect(document.activeElement).toBe(document.body);
+    });
+  });
+
   it('D3: "Agora não" não abre diálogo de confirmação, então o rótulo segue sendo o de envio', async () => {
     const dismiss = deferred<void>();
     const onDismiss = vi.fn().mockReturnValue(dismiss.promise);

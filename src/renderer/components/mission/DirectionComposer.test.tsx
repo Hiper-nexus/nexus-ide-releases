@@ -524,6 +524,104 @@ describe('DirectionComposer — editor rich-text (F-1170)', () => {
   });
 });
 
+describe('DirectionComposer — foco depois do envio (D4)', () => {
+  // Durante o envio o editor vira contenteditable=false sem tabindex e o Chromium joga o foco
+  // no body (focus fixup). O jsdom não faz isso: os testes reproduzem o navegador com blur().
+  function browserDropsFocus(draft: DraftSurface): void {
+    expect(isDraftDisabled(draft)).toBe(true);
+    act(() => draft.blur());
+    expect(document.activeElement).toBe(document.body);
+  }
+
+  async function settle(request: Deferred<MissionSnapshot>, outcome: 'ok' | 'fail'): Promise<void> {
+    await act(async () => {
+      if (outcome === 'ok') request.resolve(RETURNED_SNAPSHOT);
+      else request.reject(new Error('falha'));
+      await request.promise.catch(() => undefined);
+      await Promise.resolve();
+    });
+  }
+
+  it.each(['ok', 'fail'] as const)(
+    'devolve o foco ao editor quando o envio por Enter termina (%s)',
+    async (outcome) => {
+      const request = deferred<MissionSnapshot>();
+      const host = mountComposer(vi.fn(async () => request.promise));
+      const { draft } = composerControls(host);
+      setDraft(draft, 'Revise a evidência final.');
+      act(() => draft.focus());
+      expect(document.activeElement).toBe(draft);
+
+      pressEnter(draft);
+      await act(async () => {
+        await Promise.resolve();
+      });
+      browserDropsFocus(draft);
+      await settle(request, outcome);
+
+      expect(isDraftDisabled(draft)).toBe(false);
+      expect(document.activeElement).toBe(draft);
+    },
+  );
+
+  it('quem envia pelo botão (foco dentro do compositor) também volta a digitar no editor', async () => {
+    const request = deferred<MissionSnapshot>();
+    const host = mountComposer(vi.fn(async () => request.promise));
+    const { draft, submit } = composerControls(host);
+    setDraft(draft, 'Mais uma orientação.');
+    act(() => submit.focus());
+    expect(document.activeElement).toBe(submit);
+
+    await act(async () => {
+      submit.click();
+      await Promise.resolve();
+    });
+    // O botão também fica disabled durante o envio (e, vazio o rascunho, depois dele):
+    // o foco que estava nele não serve a quem digita.
+    expect(submit.disabled).toBe(true);
+    await settle(request, 'ok');
+
+    expect(document.activeElement).toBe(draft);
+  });
+
+  it('não rouba o foco de quem foi para outro campo durante o envio', async () => {
+    const outside = document.createElement('input');
+    document.body.appendChild(outside);
+    const request = deferred<MissionSnapshot>();
+    const host = mountComposer(vi.fn(async () => request.promise));
+    const { draft } = composerControls(host);
+    setDraft(draft, 'Orientação em andamento.');
+    act(() => draft.focus());
+
+    pressEnter(draft);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    browserDropsFocus(draft);
+    act(() => outside.focus());
+    await settle(request, 'ok');
+
+    expect(document.activeElement).toBe(outside);
+  });
+
+  it('não puxa o foco nem ao montar nem quando o envio não nasceu no compositor', async () => {
+    const request = deferred<MissionSnapshot>();
+    const host = mountComposer(vi.fn(async () => request.promise));
+    const { draft, submit } = composerControls(host);
+    // Montar a tela não leva o foco ao editor.
+    expect(document.activeElement).toBe(document.body);
+
+    setDraft(draft, 'Enviada sem o foco no compositor.');
+    await act(async () => {
+      submit.click(); // click() programático não move o foco: ele segue no body
+      await Promise.resolve();
+    });
+    await settle(request, 'ok');
+
+    expect(document.activeElement).toBe(document.body);
+  });
+});
+
 describe('DirectionComposer — citação da atividade (WEB-17)', () => {
   const QUOTE: QuoteDraft = {
     origin: {
