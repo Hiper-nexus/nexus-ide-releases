@@ -388,6 +388,7 @@ vi.mock('./pane-registry', () => ({
   unregisterOrchRenderer: vi.fn(),
 }));
 vi.mock('../pty/pty-manager', () => ({
+  isPtySessionAdmissionSealedForShutdown: () => false,
   getSessionState: (sessionId: string) =>
     harness.agentSessions.some((entry) => entry.sessionId === sessionId)
       ? 'idle'

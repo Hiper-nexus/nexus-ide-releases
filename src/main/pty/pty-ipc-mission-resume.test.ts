@@ -119,6 +119,7 @@ vi.mock("electron", () => ({
 }));
 
 vi.mock("./pty-manager", () => ({
+  isPtySessionAdmissionSealedForShutdown: () => false,
   adoptMainOwnedAgentSession: ptyDeps.adoptMainOwnedAgentSession,
   getSessionState: ptyDeps.getSessionState,
   listAgentSessionsForPane: ptyDeps.listAgentSessionsForPane,
