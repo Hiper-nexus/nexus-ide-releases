@@ -676,7 +676,9 @@ export async function runFunctionalSmokeProbes(
     // keydown, então TODO espaço de digitação normal era roubado e o HUD
     // piscava. Esta probe fecha as duas metades no binário empacotado:
     // (a) o CONTRATO do discriminador — toque nunca arma e devolve o espaço,
-    //     hold arma, e um toque jamais emite start+stop (o "pisca");
+    //     hold arma (mesmo com auto-repeat do SO no meio: com o keydown
+    //     retido o repeat é suprimido, não digita nem vaza a tecla), e um
+    //     toque jamais emite start+stop (o "pisca");
     // (b) a ENTREGA física — o espaço que o toque devolve é escrito num PTY
     //     real e ECOA de volta. Sem (b), a correção poderia "passar" enquanto
     //     engole a tecla, que é um sintoma pior que o bug original.
@@ -704,11 +706,25 @@ export async function runFunctionalSmokeProbes(
           hold.keyDown({ repeat: false });
           const holdArms = hold.thresholdElapsed().startDictation === true;
 
-          const typing = make();
-          typing.keyDown({ repeat: false });
-          const repeatIsTyping = typing.keyDown({ repeat: true }).emitSpaces === 1;
+          // Auto-repeat do SO com o keydown retido (hold-to-talk.ts, aa08c268c):
+          // suprimido — não digita espaço, não vaza a tecla, não arma o ditado
+          // antes do limiar nem cancela o hold; a decisão segue só pelo tempo.
+          const repeating = make();
+          repeating.keyDown({ repeat: false });
+          const repeat = repeating.keyDown({ repeat: true });
+          const repeatIsSuppressed =
+            repeat.suppressKey === true &&
+            repeat.emitSpaces === 0 &&
+            repeat.startDictation === false;
+          const holdArmsAfterRepeat =
+            repeating.thresholdElapsed().startDictation === true;
 
-          if (!tapTypesSpace || !holdArms || !repeatIsTyping) {
+          if (
+            !tapTypesSpace ||
+            !holdArms ||
+            !repeatIsSuppressed ||
+            !holdArmsAfterRepeat
+          ) {
             dictationCleanup.reason = 'discriminator';
             return false;
           }
