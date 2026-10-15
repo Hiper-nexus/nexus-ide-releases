@@ -44,7 +44,13 @@ async function fixture(options = {}) {
           uiGet: async () => { operations.push('get'); return { pixelMode }; },
           uiSet: async patch => { operations.push('set'); if (options.forbidSet) throw new Error('read phase must never set'); if (!options.dropWrite) pixelMode = patch.pixelMode; return { pixelMode }; },
         },
-        ops: { releaseReadiness: async () => { operations.push('version'); return { appVersion: options.version ?? '0.76.166', packaged: options.packaged ?? true, privateField: 'must not appear in proof' }; } },
+        ops: { releaseReadiness: async () => {
+          operations.push('version');
+          if ((options.versionFailures ?? 0) >= operations.filter(op => op === 'version').length) {
+            throw new Error('No handler registered for ops:releaseReadiness');
+          }
+          return { appVersion: options.version ?? '0.76.166', packaged: options.packaged ?? true, privateField: 'must not appear in proof' };
+        } },
       };
       try {
         const value = await vm.runInNewContext(message.params.expression, { window: options.noApi ? {} : { nexus } });
@@ -154,6 +160,19 @@ describe('packaged restart preference proof', () => {
     const f = await fixture({ rpcErrorWhen: () => true, rpcError: { code: 'PRIVATE_REMOTE_CODE', message: 'PRIVATE_REMOTE_MESSAGE' } });
     await expect(run(f)).rejects.toThrow('CDP command failed: method=SystemInfo.getProcessInfo stage=browser-process-identity code=unavailable');
     expect(f.operations).toEqual([]);
+  });
+  it('waits when releaseReadiness rejects before IPC is registered', async () => {
+    const f = await fixture({ versionFailures: 1 });
+    const writes = [];
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(chunk => { writes.push(String(chunk)); return true; });
+    try {
+      expect(await run(f)).toEqual({ phase: 'write', pid: 4321, appVersion: '0.76.166', packaged: true, pixelMode: true });
+    } finally { stdout.mockRestore(); }
+    expect(f.operations).toEqual(['version', 'version', 'get', 'set', 'get']);
+    const records = writes.join('').trim().split('\n').map(line => JSON.parse(line.replace('[smoke] restart-discovery ', '')));
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ phase: 'write', transientRounds: 1, classification: 'ipc-not-ready' });
+    expect(writes.join('')).not.toContain('No handler');
   });
   it('writes through real CDP transport after checking version and the initial preference', async () => {
     const f = await fixture();

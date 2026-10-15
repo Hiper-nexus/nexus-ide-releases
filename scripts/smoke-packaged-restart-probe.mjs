@@ -8,8 +8,14 @@ const API_AVAILABLE = `Boolean(window.nexus &&
   typeof window.nexus.settings?.uiSet === 'function' &&
   typeof window.nexus.ops?.releaseReadiness === 'function')`;
 const VERSION = `(async () => {
-  const value = await window.nexus.ops.releaseReadiness();
-  return {appVersion: value?.appVersion, packaged: value?.packaged};
+  try {
+    const value = await window.nexus.ops.releaseReadiness();
+    return {appVersion: value?.appVersion, packaged: value?.packaged};
+  } catch {
+    // The splash document loads before bootstrap registers IPC. A rejected
+    // invoke is "not ready", not a failed proof.
+    return {pending: true};
+  }
 })()`;
 const GET_PIXEL_MODE = `(async () => (await window.nexus.settings.uiGet())?.pixelMode)()`;
 const SET_PIXEL_MODE = `(async () => { await window.nexus.settings.uiSet({pixelMode:true}); return true; })()`;
@@ -169,6 +175,7 @@ export async function probeRestartPreferences(child, {
     if (!Array.isArray(browserProcesses) || browserProcesses.length !== 1 || Number(browserProcesses[0].id) !== child.pid) throw new Error('CDP process identity mismatch');
     browser.dispose();
     let selected;
+    let version;
     for (;;) {
       signal.throwIfAborted();
       const listing = await targets(port);
@@ -197,10 +204,25 @@ export async function probeRestartPreferences(child, {
         continue;
       }
       if (matches.length > 1) throw new Error('ambiguous Nexus CDP page');
-      if (matches.length === 1) { [selected] = matches; break; }
+      if (matches.length === 1) {
+        const candidate = matches[0];
+        const probed = await candidate.evaluate(VERSION, 'app-version');
+        if (probed?.pending === true) {
+          candidate.dispose();
+          transientRounds += 1;
+          process.stdout.write(`[smoke] restart-discovery ${JSON.stringify({
+            phase, transientRounds, elapsedMs: Math.round(performance.now() - discoveryStarted),
+            classification: 'ipc-not-ready',
+          })}\n`);
+          await pause();
+          continue;
+        }
+        selected = candidate;
+        version = probed;
+        break;
+      }
       await pause();
     }
-    const version = await selected.evaluate(VERSION, 'app-version');
     if (version?.packaged !== true) throw new Error('restart probe target is not packaged');
     if (version.appVersion !== expectedVersion) throw new Error('restart probe version mismatch');
     const initial = await selected.evaluate(GET_PIXEL_MODE, 'preference-read');
