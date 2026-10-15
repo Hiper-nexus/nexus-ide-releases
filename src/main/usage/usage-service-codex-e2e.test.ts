@@ -99,6 +99,8 @@ vi.mock('./claude-transcript-watcher', () => ({
   ClaudeTranscriptWatcher: class {
     start(): void {}
 
+    rescan(): void {}
+
     stop(): void {}
   },
 }));

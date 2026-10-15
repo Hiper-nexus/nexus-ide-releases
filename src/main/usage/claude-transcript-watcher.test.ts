@@ -605,6 +605,101 @@ describe('ClaudeTranscriptWatcher custo por ciclo de varredura', () => {
     );
   });
 
+  describe('rescan() quando um root de execução é autorizado depois do start', () => {
+    /** Projeto com o 1º root já ingerido e o poll em 30 s (fs.watch saudável), mais um 2º root a conceder. */
+    async function liveWatcherWithSlowPoll(seen: string[]) {
+      const project = setup(1);
+      const secondRoot = path.join(project.tempRoot, 'worktrees', 'task-1');
+      const secondDir = path.join(project.configDir, 'projects', claudeProjectSlug(secondRoot));
+      fs.mkdirSync(secondDir, { recursive: true });
+      const roots = new Set([project.workspace]);
+      const intervalSpy = vi.spyOn(globalThis, 'setInterval');
+      // pollMs omitido: 5 s até o 1º rescan provar o watch, depois 30 s.
+      const watcher = new ClaudeTranscriptWatcher({
+        workspacePath: project.workspace,
+        workspacePaths: () => roots,
+        configDirs: [project.configDir],
+        onEvent: (event) => seen.push(event.messageId ?? ''),
+      });
+      liveWatchers.push(watcher);
+      watcher.start();
+      await vi.waitFor(() => expect(seen).toEqual(['message-s-0']), { timeout: 5_000, interval: 5 });
+      await vi.waitFor(
+        () => expect(intervalSpy.mock.calls.some((call) => call[1] === 30_000)).toBe(true),
+        { timeout: 5_000, interval: 5 },
+      );
+      const grant = (): void => {
+        roots.add(secondRoot);
+        fs.writeFileSync(path.join(secondDir, 'granted.jsonl'), transcriptLine('granted'));
+      };
+      return { watcher, grant };
+    }
+
+    it('varre o root recém-concedido na hora, sem esperar o poll lento de 30 s', async () => {
+      const seen: string[] = [];
+      const { watcher, grant } = await liveWatcherWithSlowPoll(seen);
+
+      grant();
+      // Premissa do teste: sem o pedido, o poll de 30 s não o vê tão cedo.
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(seen).not.toContain('message-granted');
+
+      watcher.rescan();
+
+      await vi.waitFor(() => expect(seen).toContain('message-granted'), { timeout: 2_000, interval: 5 });
+    });
+
+    it('rescan() durante uma varredura em curso não se perde: roda outra assim que ela termina', async () => {
+      const project = setup(1);
+      const secondRoot = path.join(project.tempRoot, 'worktrees', 'task-1');
+      const secondDir = path.join(project.configDir, 'projects', claudeProjectSlug(secondRoot));
+      fs.mkdirSync(secondDir, { recursive: true });
+      const roots = new Set([project.workspace]);
+      const seen: string[] = [];
+      // Segura a 1ª listagem: a varredura em curso já resolveu os dirs ANTES do grant.
+      const realOpendir = fs.promises.opendir.bind(fs.promises);
+      let releaseFirstListing!: () => void;
+      const firstListing = new Promise<void>((resolve) => {
+        releaseFirstListing = resolve;
+      });
+      let listings = 0;
+      vi.spyOn(fs.promises, 'opendir').mockImplementation(async (...args: Parameters<typeof fs.promises.opendir>) => {
+        listings += 1;
+        if (listings === 1) await firstListing;
+        return realOpendir(...args);
+      });
+      const watcher = new ClaudeTranscriptWatcher({
+        workspacePath: project.workspace,
+        workspacePaths: () => roots,
+        configDirs: [project.configDir],
+        onEvent: (event) => seen.push(event.messageId ?? ''),
+      });
+      liveWatchers.push(watcher);
+      watcher.start();
+      await vi.waitFor(() => expect(listings).toBe(1), { timeout: 2_000, interval: 5 });
+
+      roots.add(secondRoot);
+      fs.writeFileSync(path.join(secondDir, 'granted.jsonl'), transcriptLine('granted'));
+      watcher.rescan();
+      releaseFirstListing();
+
+      await vi.waitFor(() => expect(seen).toContain('message-granted'), { timeout: 2_000, interval: 5 });
+    });
+
+    it('rescan() depois de stop() é inerte', async () => {
+      const project = setup(1);
+      const watcher = watcherForProject(project);
+      watcher.start();
+      await watcher.stop();
+      const opendirSpy = vi.spyOn(fs.promises, 'opendir');
+
+      watcher.rescan();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(opendirSpy).not.toHaveBeenCalled();
+    });
+  });
+
   describe('falha de open/read com a sessão ociosa', () => {
     // Sessão ociosa: o arquivo não muda (mesmo mtime+size) entre o ciclo que
     // falhou e o seguinte. O skip por stat só vale para arquivo LIDO até o stat;

@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
     workspacePath: string;
     workspacePaths?: () => Iterable<string>;
   }>,
+  /** workspacePath de cada watcher que recebeu rescan(), na ordem. */
+  watcherRescans: [] as string[],
   codexScannerOptions: null as null | {
     isWatched: (cwd: string) => boolean;
     sessionsDirs?: () => readonly string[];
@@ -125,14 +127,21 @@ vi.mock('../persistence/provider-session-store', () => ({
 
 vi.mock('./claude-transcript-watcher', () => ({
   ClaudeTranscriptWatcher: class {
+    readonly #workspacePath: string;
+
     constructor(options: {
       workspacePath: string;
       workspacePaths?: () => Iterable<string>;
     }) {
+      this.#workspacePath = options.workspacePath;
       mocks.watcherOptions.push(options);
     }
 
     start(): void {}
+
+    rescan(): void {
+      mocks.watcherRescans.push(this.#workspacePath);
+    }
 
     stop(): void {}
   },
@@ -282,6 +291,7 @@ afterEach(() => {
   mocks.resumeLookup = null;
   mocks.userDataDir = '';
   mocks.watcherOptions.length = 0;
+  mocks.watcherRescans.length = 0;
   mocks.codexScannerOptions = null;
   mocks.panes.clear();
   mocks.providerPaneSession = null;
@@ -357,6 +367,60 @@ describe.skipIf(!sqliteAvailable)(
       expect([
         ...(mocks.watcherOptions[1].workspacePaths?.() ?? []),
       ]).not.toContain(worktreeA.rootRealPath);
+
+      service.stop();
+    });
+
+    it('asks the live watcher to rescan when a NEW execution root is authorized, never for a known one', () => {
+      const parent = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'usage-claude-rescan-'),
+      );
+      tempRoots.push(parent);
+      const scope = scopeFixture(parent, 'checkout-a');
+      const firstWorktree = executionScope(
+        scope,
+        path.join(parent, 'worktrees', 'task-1'),
+      );
+      const secondWorktree = executionScope(
+        scope,
+        path.join(parent, 'worktrees', 'task-2'),
+      );
+      const manager = new ProjectRuntimeManager({
+        baseDir: path.join(parent, 'runtime'),
+        appVersion: 'usage-service-test',
+      });
+      managers.push(manager);
+      const service = new UsageTelemetryService(
+        new ProjectUsageStoreRegistry(manager),
+      );
+      service.start();
+
+      const firstToken = mintToken({
+        label: 'worker-1',
+        role: 'worker',
+        scope,
+        executionScope: firstWorktree,
+      });
+      bindTokenToSession(firstToken.token, 'pty-1');
+      dictateClaude('pty-1', firstWorktree.rootRealPath);
+      // O watcher nasce DEPOIS do grant e varre todos os roots no start.
+      expect(mocks.watcherOptions).toHaveLength(1);
+      expect(mocks.watcherRescans).toEqual([]);
+
+      const secondToken = mintToken({
+        label: 'worker-2',
+        role: 'worker',
+        scope,
+        executionScope: secondWorktree,
+      });
+      bindTokenToSession(secondToken.token, 'pty-2');
+      dictateClaude('pty-2', secondWorktree.rootRealPath);
+      // Watcher vivo, root novo: varre já em vez de esperar o poll lento.
+      expect(mocks.watcherRescans).toEqual([scope.rootRealPath]);
+
+      dictateClaude('pty-2', secondWorktree.rootRealPath);
+      dictateClaude('pty-1', firstWorktree.rootRealPath);
+      expect(mocks.watcherRescans).toHaveLength(1);
 
       service.stop();
     });

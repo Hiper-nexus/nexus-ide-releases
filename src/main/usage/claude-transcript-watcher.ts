@@ -233,6 +233,17 @@ export class ClaudeTranscriptWatcher {
     }
   }
 
+  /**
+   * Um root de execução acabou de entrar em `workspacePaths`: varre já, sem
+   * esperar o poll (30 s com fs.watch saudável em todos os dirs). Uma varredura
+   * em curso resolveu os dirs ANTES do grant, então o pedido não se perde: outra
+   * começa assim que ela termina.
+   */
+  rescan(): void {
+    if (this.scanInFlight) void this.scanInFlight.then(() => this.scheduleScan());
+    else this.scheduleScan();
+  }
+
   /** Um rescan por vez: o poll não empilha varreduras enquanto uma corre. */
   private scheduleScan(): void {
     if (this.stopped || this.scanInFlight) return;

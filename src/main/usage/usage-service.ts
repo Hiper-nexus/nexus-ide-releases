@@ -456,7 +456,11 @@ export class UsageTelemetryService {
       );
     }
     this.#rootOwners.set(executionRoot, key);
+    if (state.executionRoots.has(executionRoot)) return;
     state.executionRoots.add(executionRoot);
+    // Root novo com o watcher já vivo: o poll lento (30 s com fs.watch saudável
+    // em todos os dirs) só o veria depois. Sem watcher, o start varre todos.
+    state.watcher?.rescan();
   }
 
   #onSessionDictated(info: DictatedSessionInfo): void {

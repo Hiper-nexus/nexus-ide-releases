@@ -12,7 +12,7 @@ vi.mock('electron', () => ({ app: { getPath: () => deps.root }, BrowserWindow: {
 vi.mock('../pty/pty-manager', () => ({ setSessionDictationHook: (fn: typeof deps.hook) => { deps.hook = fn; },
   setResumeSessionLookup: vi.fn(), setResumeSessionForget: vi.fn() }));
 vi.mock('../orch/gate', () => ({ getContextBySession: (id: string) => deps.contexts.get(id), executionScopeFor: (ctx: any) => ctx.scope }));
-vi.mock('./claude-transcript-watcher', () => ({ ClaudeTranscriptWatcher: class { start() {} stop() { return deps.stops.get('claude'); } } }));
+vi.mock('./claude-transcript-watcher', () => ({ ClaudeTranscriptWatcher: class { start() {} rescan() {} stop() { return deps.stops.get('claude'); } } }));
 vi.mock('./codex-scanner', () => ({ CodexUsageScanner: class { start() {} stop() { return deps.stops.get('codex'); } } }));
 vi.mock('./mimo-scanner', () => ({ MimoUsageScanner: class {
   constructor(callback: typeof deps.mimoEvent) { deps.mimoEvent = callback; }
