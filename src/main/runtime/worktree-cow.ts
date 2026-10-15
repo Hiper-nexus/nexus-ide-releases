@@ -718,12 +718,50 @@ export function linkHeavyDirs(
     try {
       fs.mkdirSync(path.dirname(dest), { recursive: true });
       fs.symlinkSync(source, dest, 'junction');
+      excludeLinkedDir(worktreePath, rel);
       linked.push(rel.replaceAll('\\', '/'));
     } catch {
       // Sem privilégio de link nem junction possível: não é fatal.
     }
   }
   return linked;
+}
+
+/**
+ * Um link não é diretório para o git: o padrão `node_modules/` (com barra) do
+ * .gitignore não o casa, e o `git add -A` do writer commitaria o link com o
+ * caminho absoluto do host. Por isso o link entra no `info/exclude`, ancorado e
+ * sem barra final (casa link e diretório). Falha aqui nunca derruba o spawn.
+ */
+function excludeLinkedDir(worktreePath: string, rel: string): void {
+  try {
+    const dotGit = path.join(worktreePath, '.git');
+    let gitDir = dotGit;
+    if (fs.statSync(dotGit).isFile()) {
+      const match = /^gitdir:\s*(.+)$/m.exec(fs.readFileSync(dotGit, 'utf8'));
+      if (!match) return;
+      gitDir = path.resolve(worktreePath, match[1]!.trim());
+    }
+    let commonDir = gitDir;
+    try {
+      commonDir = path.resolve(gitDir, fs.readFileSync(path.join(gitDir, 'commondir'), 'utf8').trim());
+    } catch {
+      // checkout comum: o git dir já é o comum
+    }
+    const line = `/${rel.replaceAll('\\', '/').replace(/\/+$/, '')}`;
+    const excludePath = path.join(commonDir, 'info', 'exclude');
+    let current = '';
+    try {
+      current = fs.readFileSync(excludePath, 'utf8');
+    } catch {
+      fs.mkdirSync(path.dirname(excludePath), { recursive: true });
+    }
+    if (current.split(/\r?\n/).includes(line)) return;
+    const prefix = current === '' || current.endsWith('\n') ? '' : '\n';
+    fs.appendFileSync(excludePath, `${prefix}${line}\n`);
+  } catch {
+    // sem o exclude o risco é o do estado anterior: não é fatal
+  }
 }
 
 export async function materializeGitWorktree(

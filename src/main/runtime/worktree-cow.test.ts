@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -1014,6 +1015,33 @@ describe('linkHeavyDirs (F-1535)', () => {
       expect(fs.lstatSync(linked).isSymbolicLink()).toBe(true);
       expect(fs.readFileSync(path.join(linked, 'vitest', 'index.js'), 'utf8'))
         .toContain('module.exports');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('o link não aparece como não rastreado nem com `node_modules/` (barra) no .gitignore', () => {
+    const root = tmpRoot();
+    try {
+      const repo = path.join(root, 'repo');
+      makeTree(repo, {
+        '.gitignore': 'node_modules/\n',
+        'a.txt': 'a\n',
+        'node_modules/dep/index.js': 'x\n',
+      });
+      const git = (cwd: string, ...args: string[]) =>
+        execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], {
+          cwd,
+          encoding: 'utf8',
+        });
+      git(repo, 'init', '-q');
+      git(repo, 'add', '.gitignore', 'a.txt');
+      git(repo, 'commit', '-q', '-m', 'init');
+      const wt = path.join(root, 'wt');
+      git(repo, 'worktree', 'add', '-q', '--detach', wt);
+
+      expect(linkHeavyDirs(repo, wt, ['node_modules'])).toEqual(['node_modules']);
+      expect(git(wt, 'status', '--porcelain')).not.toContain('node_modules');
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
