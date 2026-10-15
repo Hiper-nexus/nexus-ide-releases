@@ -2057,7 +2057,7 @@ describe('F — leader-drift: Religar a missão ao Maestro', () => {
     );
   });
 
-  it('main recusa a religação → orienta a usar Reiniciar no Maestro', async () => {
+  it('main recusa a religação → permite tentar pelo quadro sem prometer reinício local', async () => {
     rebindLiveMaestroMock.mockResolvedValue('refused');
     const { host } = mount();
     await flush();
@@ -2066,8 +2066,9 @@ describe('F — leader-drift: Religar a missão ao Maestro', () => {
     await flush();
 
     expect(normalizedText(host)).toContain(
-      'O Nexus recusou religar — abra Terminais e use Reiniciar no Maestro.',
+      'O Nexus recusou religar a missão. Tente novamente neste quadro.',
     );
+    expect(normalizedText(host)).not.toContain('use Reiniciar');
   });
 
   it('enquanto religa o botão fica ocupado e não dispara IPC duplicado', async () => {

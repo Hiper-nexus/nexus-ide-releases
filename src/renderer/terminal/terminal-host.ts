@@ -4162,7 +4162,7 @@ async function rebindRelivedOrchestrator(
  * «Religar a missão ao Maestro» do Quadro: o orquestrador já está vivo numa
  * sessão nova (relive) e a missão ainda aponta a que morreu. Responde o
  * resultado para a UI orientar o próximo passo — Retomar quando não há
- * Maestro vivo, Reiniciar quando o Main recusa.
+ * Maestro vivo. Uma recusa não autoriza reinício local do pane de missão.
  */
 export async function rebindLiveMaestroOfMission(
   missionId: string,
