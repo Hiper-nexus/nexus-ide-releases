@@ -15,15 +15,7 @@ import {
   type CandidateQualityAnalysis,
   type CandidateQualityDeclaredLimit,
 } from '../context/candidate-quality-scanner';
-import {
-  runDependencyAuditSensor,
-  runDependencyFreshnessSensor,
-  runTestCoverageSensor,
-  runTypecheckSensor,
-  mechanicalProjectRequirements,
-  type MechanicalCheckResult,
-  type MechanicalFinding,
-} from '../context/mechanical-sensors';
+import type { MechanicalCheckResult, MechanicalFinding } from '../context/mechanical-sensors';
 import type { ReviewCategory, ReviewFindingInput } from '../context/review-council';
 import type { McpToolInvocation } from './mcp-protocol';
 import { deliverAgentPrompt } from './tool-util';
@@ -416,18 +408,19 @@ export async function enforceCivilianAutoReview(
   // Etapa 2 — sensores mecânicos Nexus-owned: typecheck + auditoria de
   // dependências + cobertura de testes quando o projeto permite. Não dependem
   // de scripts no alvo; falha de infraestrutura é indisponível, não bloqueio.
-  const requirements = await wait(mechanicalProjectRequirements(root, changedFiles));
+  const sensors = await import('../context/mechanical-sensors');
+  const requirements = await wait(sensors.mechanicalProjectRequirements(root, changedFiles));
   const strictCompletion = input.completionBaseSha !== undefined;
   const ownedChecks = strictCompletion ? createCompletionCheckExecutors({ scope: input.scope, executionScope,
     missionId: input.mission.id, signal: input.lifetime?.signal, assertCurrent }) : null;
-  const typecheck = launch(() => dependencies.typecheck ? dependencies.typecheck(root) : ownedChecks ? ownedChecks.typecheck(root) : runTypecheckSensor(root, { signal: input.lifetime?.signal }));
-  const audit = () => launch(() => (dependencies.audit ?? ownedChecks?.audit ?? runDependencyAuditSensor)(root));
+  const typecheck = launch(() => dependencies.typecheck ? dependencies.typecheck(root) : ownedChecks ? ownedChecks.typecheck(root) : sensors.runTypecheckSensor(root, { signal: input.lifetime?.signal }));
+  const audit = () => launch(() => (dependencies.audit ?? ownedChecks?.audit ?? sensors.runDependencyAuditSensor)(root));
   // One project permit: do not spend the shorter audit deadline waiting for
   // this same completion's compiler on every retry.
   const mechanical = await wait(Promise.all([
     typecheck,
     strictCompletion ? typecheck.then(audit) : audit(),
-    launch(() => dependencies.freshness ? dependencies.freshness(root) : runDependencyFreshnessSensor(root, {
+    launch(() => dependencies.freshness ? dependencies.freshness(root) : sensors.runDependencyFreshnessSensor(root, {
       signal: input.lifetime?.signal,
       assertCurrentAuthority: () => {
         assertCurrent();
@@ -439,7 +432,7 @@ export async function enforceCivilianAutoReview(
         }
       },
     })),
-    launch(() => (dependencies.testCoverage ?? runTestCoverageSensor)(root, changedFiles)),
+    launch(() => (dependencies.testCoverage ?? sensors.runTestCoverageSensor)(root, changedFiles)),
   ]));
   const mechanicalBlocking = mechanicalToReviewFindings(mechanical);
   const regressionGate =

@@ -19,7 +19,7 @@ import type {
 import type { ProjectExecutionScope } from '../../shared/types';
 import { resolveTool } from '../orch/mcp-protocol';
 import type { McpRegistry } from '../orch/mcp-protocol';
-import { buildToolset } from '../orch/tools';
+import { loadToolset } from '../orch/toolset-loader';
 import { requiresConfirmation, confirmationReason } from '../jarvis/guardrails';
 import {
   grantPermission,
@@ -43,10 +43,10 @@ import { sameProjectScope } from '../orch/project-scoped-broadcast';
 let registry: McpRegistry | null = null;
 const RENDERER_SESSION_ID = 'jarvis-renderer';
 
-function getRegistry(): McpRegistry {
+async function getRegistry(): Promise<McpRegistry> {
   if (!registry) {
     registry = {
-      tools: buildToolset(),
+      tools: await loadToolset(),
       serverName: 'nexus-ide',
       serverVersion: '0.0.0',
     };
@@ -54,7 +54,8 @@ function getRegistry(): McpRegistry {
   return registry;
 }
 
-function rendererToolContext(scope: ProjectExecutionScope) {
+async function rendererToolContext(scope: ProjectExecutionScope) {
+  const tools = (await getRegistry()).tools;
   return {
     token: 'renderer-ipc',
     label: 'Jarvis Renderer',
@@ -63,7 +64,7 @@ function rendererToolContext(scope: ProjectExecutionScope) {
     // This matters for the small high-impact subset that the server gate never
     // grants through a null (implicit) allowlist. Guardrails still require an
     // exact native confirmation and audit entry before those handlers run.
-    allowedTools: getRegistry().tools.map((tool) => tool.name),
+    allowedTools: tools.map((tool) => tool.name),
     allowedSkills: null,
     stopAttempts: 0,
     handoffSubmitted: false,
@@ -89,10 +90,10 @@ export async function invokeMcpTool(
 
   return dispatchToolCall(
     'ipc-renderer',
-    getRegistry(),
+    await getRegistry(),
     toolName,
     raw?.args ?? {},
-    rendererToolContext(projectScope),
+    await rendererToolContext(projectScope),
     {
       ...dispatchOptions,
       callerSignal: dispatchOptions.callerSignal
@@ -138,7 +139,7 @@ export async function confirmMcpTool(
   if (!toolName || typeof toolName !== 'string') {
     return { ok: false, error: 'invalid tool name' };
   }
-  const tool = resolveTool(getRegistry(), toolName);
+  const tool = resolveTool(await getRegistry(), toolName);
   if (!tool) {
     return { ok: false, error: `unknown tool: ${toolName}` };
   }

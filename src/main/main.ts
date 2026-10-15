@@ -219,7 +219,7 @@ import {
 } from "./design/design-ipc";
 import { registerLayoutIpc } from "./persistence/layout-ipc";
 import { registerAdapterIpc } from "./adapters/adapter-ipc";
-import { registerVoiceIpc, closeVoiceIpc } from "./voice/voice-ipc";
+
 import { registerJevIpc } from "./jev/jev-ipc";
 import { registerMissionPickIpc } from "./jev/jev-mission-pick-ipc";
 import { registerDecisionModelIpc } from "./decision-models/decision-model-ipc";
@@ -464,7 +464,7 @@ import {
 } from "./gamification/gamification-ipc";
 import { registerMcpIpc } from "./jarvis/mcp-ipc";
 import { registerOpsIpc } from "./ops/ops-ipc";
-import { registerEvalRankingIpc } from "./eval/eval-ipc";
+
 import {
   configureAuditLogRuntime,
   disposeAuditLogRuntime,
@@ -776,7 +776,10 @@ async function bootstrap(userPathReady: Promise<void>): Promise<void> {
   bootStep('registerLayoutIpc', () => registerLayoutIpc(runtimeManager));
   bootStep('registerAdapterIpc', () => registerAdapterIpc());
   traceBootstrap('before voice IPC');
-  bootStep('registerVoiceIpc', () => registerVoiceIpc(runtimeManager));
+  await bootStepAsync('registerVoiceIpc', async () => {
+    const { registerVoiceIpc } = await import('./voice/voice-ipc');
+    registerVoiceIpc(runtimeManager);
+  });
   traceBootstrap('after voice IPC');
   bootStep('registerJevIpc', () => registerJevIpc());
   bootStep('registerMissionPickIpc', () => registerMissionPickIpc());
@@ -825,7 +828,10 @@ async function bootstrap(userPathReady: Promise<void>): Promise<void> {
   bootStep('registerGamificationIpc', () => registerGamificationIpc(gamificationService));
   bootStep('registerMcpIpc', () => registerMcpIpc());
   bootStep('registerOpsIpc', () => registerOpsIpc());
-  bootStep('registerEvalRankingIpc', () => registerEvalRankingIpc());
+  await bootStepAsync('registerEvalRankingIpc', async () => {
+    const { registerEvalRankingIpc } = await import('./eval/eval-ipc');
+    registerEvalRankingIpc();
+  });
   traceBootstrap('after secondary IPC registration');
   // Telemetria REAL de tokens (transcript watchers → SQLite). Convive com o
   // cost-tracker heurístico: a UI prefere o real quando ele existe.
@@ -1747,6 +1753,7 @@ function shutdown(): Promise<void> {
     await closeAdapterRegistry();
     await stopCliAutoUpdate?.();
     stopCliAutoUpdate = null;
+    const { closeVoiceIpc } = await import('./voice/voice-ipc');
     closeVoiceIpc();
     await shutdownUsageTelemetry();
     await stopPetPeriodicWork();

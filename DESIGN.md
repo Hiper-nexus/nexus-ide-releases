@@ -129,10 +129,13 @@ corrija os dele).
 
 ## 3. Tipografia
 
-- **UI**: `Inter` (variável, bundled em `styles/fonts/`) — mesmo render em
-  mac/Windows/Linux. Fallback: stack do sistema.
-- **Mono de UI**: `JetBrains Mono` (bundled) — badges, atalhos, dados.
+- **UI**: `Inter` (variável, WOFF2 do TTF inteiro em `styles/fonts/`) — mesmo
+  render em mac/Windows/Linux. Fallback: stack do sistema. Preload no primeiro paint.
+- **Mono de UI**: `JetBrains Mono` (WOFF2 sem subset, sem preload) — badges,
+  atalhos, dados e a primeira fonte do terminal. O cmap conserva o
+  box-drawing: a TUI desenha essas molduras.
 - **Assinatura pixel**: `VT323` — eyebrows, kickers, badges, boots, sprites.
+  Está no rótulo do boot, então o WOFF2 entra no preload junto com a Inter.
   Regras: nunca corpo de texto; piso de 12px; um toque por tela, não cinco.
 - Hierarquia por peso (400/500/600/650) e escala, não por famílias extras.
 - Copy de produto em **PT-BR**. Labels de botão = verbo + objeto

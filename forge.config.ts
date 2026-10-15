@@ -109,12 +109,18 @@ function packagedMacApps(outputPaths: readonly string[]): string[] {
   });
 }
 
+/** Packages the renderer already bundles. Shipping them again in app.asar
+ * only adds parse weight at boot. `typescript` stays: Main shells out to tsc. */
+const RENDERER_BUNDLE_ONLY_PACKAGE =
+  /\/node_modules\/(?:@mermaid-js\/|mermaid(?:\/|$)|@shikijs\/|shiki(?:\/|$)|katex(?:\/|$)|cytoscape(?:-[^/]+)?(?:\/|$))/u;
+
 export function shouldPackageFile(file: string): boolean {
   if (!file) return true;
   // Electron Packager passes POSIX paths on Unix and backslash paths on
   // Windows. Keep the inclusion policy identical across release runners.
   const normalized = file.replaceAll('\\', '/');
   const rootRelative = normalized.replace(/^[A-Za-z]:/u, '');
+  if (RENDERER_BUNDLE_ONLY_PACKAGE.test(rootRelative)) return false;
   return (
     rootRelative === '/package.json' ||
     rootRelative === '/LICENSE' ||

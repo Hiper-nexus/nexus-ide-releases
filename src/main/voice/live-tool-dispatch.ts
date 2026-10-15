@@ -4,7 +4,7 @@
  * paths so the controller stays under the 800-line cap.
  */
 import { logVoice } from './voice-log';
-import { buildToolset } from '../orch/tools';
+import { loadToolset } from '../orch/toolset-loader';
 import { isFarewellIntent } from '../jarvis/realtime/farewell-intent';
 import {
   COARSE_VOICE_TOOL_NAMES,
@@ -24,7 +24,11 @@ import type { RealtimeToolCallEvent, TurnManagedRealtimeProvider } from '../jarv
 import type { JarvisLiveSession } from './jarvis-live';
 import type { JarvisLiveToolEvent, JarvisLiveToolResultEvent } from '../../shared/voice-ipc';
 
-const NEXUS_MCP_TOOL_NAMES = new Set(buildToolset().map((tool) => tool.name));
+let nexusToolNames: Promise<Set<string>> | null = null;
+function loadNexusToolNames(): Promise<Set<string>> {
+  nexusToolNames ??= loadToolset().then((tools) => new Set(tools.map((tool) => tool.name)));
+  return nexusToolNames;
+}
 
 function normalizedIntent(text: string): string {
   return text
@@ -385,13 +389,20 @@ export function handleRealtimeToolCall(host: ToolDispatchHost, call: RealtimeToo
     handleCoarseVoiceToolCall(host, call);
     return;
   }
-  if (NEXUS_MCP_TOOL_NAMES.has(call.name)) {
-    dispatchNexusAction(host, call, {
-      action: 'mcp_tool',
-      tool: call.name,
-      args: call.arguments,
-    });
-    return;
-  }
-  rejectToolCall(host, call, `tool realtime não suportada: ${call.name}`, { error: 'unsupported_tool' });
+  void loadNexusToolNames().then(
+    (names) => {
+      if (names.has(call.name)) {
+        dispatchNexusAction(host, call, {
+          action: 'mcp_tool',
+          tool: call.name,
+          args: call.arguments,
+        });
+        return;
+      }
+      rejectToolCall(host, call, `tool realtime não suportada: ${call.name}`, { error: 'unsupported_tool' });
+    },
+    () => {
+      rejectToolCall(host, call, `tool realtime não suportada: ${call.name}`, { error: 'unsupported_tool' });
+    },
+  );
 }

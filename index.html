@@ -4,27 +4,20 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>NexusIDE</title>
-    <!-- Fontes da casa: preload evita FOUT. VT323 = identidade pixel;
-         Inter/JetBrains Mono = UI/mono idênticas em mac, Windows e Linux. -->
+    <!-- Primeiro paint: Inter (cumprimento) e VT323 (rótulo pixel do boot).
+         JetBrains Mono fica no @font-face, sem preload — não está acima da dobra. -->
     <link
       rel="preload"
-      href="/src/renderer/styles/fonts/VT323-Regular.ttf"
+      href="/src/renderer/styles/fonts/VT323-Regular.woff2"
       as="font"
-      type="font/ttf"
+      type="font/woff2"
       crossorigin
     />
     <link
       rel="preload"
-      href="/src/renderer/styles/fonts/Inter.var.ttf"
+      href="/src/renderer/styles/fonts/Inter.var.woff2"
       as="font"
-      type="font/ttf"
-      crossorigin
-    />
-    <link
-      rel="preload"
-      href="/src/renderer/styles/fonts/JetBrainsMono.var.ttf"
-      as="font"
-      type="font/ttf"
+      type="font/woff2"
       crossorigin
     />
   </head>
