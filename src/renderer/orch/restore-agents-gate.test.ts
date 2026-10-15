@@ -359,6 +359,35 @@ describe('restore-agents-gate', () => {
     expect(discardPaneSpawnState).not.toHaveBeenCalled();
   });
 
+  it('restores authorized mission panes and standalone agents while another mission retries', async () => {
+    vi.useFakeTimers();
+    orchGet.mockResolvedValue({ agentRestorePolicy: 'resume' });
+    canRestoreMissionPane.mockImplementation(({ paneId }: { paneId: string }) =>
+      paneId === 'waiting' ? Promise.reject(new Error('mission store warming up')) : Promise.resolve(true),
+    );
+    const restoring = gateRestoredAgents([
+      missionAgent('waiting', 'Missão indisponível'),
+      { ...missionAgent('ready', 'Missão disponível'), missionId: 'mission-b' },
+      agent('solo', 'Agente avulso'),
+    ]);
+
+    try {
+      await vi.advanceTimersByTimeAsync(1_500);
+      const resumedIds = releaseHeldSpawns.mock.calls
+        .filter(([, options]) => options.resume === true)
+        .flatMap(([ids]) => ids);
+      expect(resumedIds).toContain('ready');
+      expect(resumedIds).toContain('solo');
+      expect(resumedIds).not.toContain('waiting');
+      expect(closePane).not.toHaveBeenCalled();
+    } finally {
+      resetRestoredAgentsGate();
+      await vi.runAllTimersAsync();
+      await restoring;
+      vi.useRealTimers();
+    }
+  });
+
   it('keeps a mission pane held while Main is unavailable without treating errors as false', async () => {
     vi.useFakeTimers();
     canRestoreMissionPane.mockRejectedValue(new Error('main restarting'));

@@ -316,7 +316,7 @@ export async function gateRestoredAgents(
   // Always hold first so a fast attach cannot race before policy resolves.
   for (const pane of agents) holdSpawnUntilApproved(pane.id);
 
-  const deferForAccess = (pending = agents): boolean => {
+  const deferForAccess = (pending: readonly PaneModel[] = agents): boolean => {
     if (useAccessStore.getState().canUseApp) return false;
     for (const pane of pending) accessPending.set(pane.id, { pane, path: restoreGeneration.path });
     return true;
@@ -326,38 +326,41 @@ export async function gateRestoredAgents(
   // Layout metadata is not authority. Main validates the exact
   // (missionId,paneId,approved revision) before a provider resume is requested.
   const missionAgents = agents.filter(looksLikeMissionAgent);
-  const confirmedMissionIds: string[] = [];
-  await Promise.all(
-    missionAgents.map(async (pane) => {
-      try {
-        const isAuthorized = await confirmMissionPaneAuthority(
-          pane,
-          restoreGeneration,
-        );
-        if (!isCurrentRestoreWorkspaceGeneration(restoreGeneration)) return;
-        if (isAuthorized) {
-          confirmedMissionIds.push(pane.id);
-          return;
-        }
-        retireUnauthorizedMissionPane(pane, restoreGeneration);
-      } catch (error) {
-        if (!isCurrentRestoreWorkspaceGeneration(restoreGeneration)) return;
-        // Main may be restarting. Fail closed and retain the hold; absence of a
-        // reply is not proof that the durable pane is an orphan.
-        console.warn(
-          `[restore] mission pane authority unavailable pane=${pane.id}:`,
-          error,
-        );
+  const missionRestores = missionAgents.map(async (pane) => {
+    try {
+      const isAuthorized = await confirmMissionPaneAuthority(
+        pane,
+        restoreGeneration,
+      );
+      if (!isCurrentRestoreWorkspaceGeneration(restoreGeneration)) return;
+      if (isAuthorized) {
+        if (!deferForAccess([pane])) releaseHeldSpawns([pane.id], { resume: true });
+        return;
       }
-    }),
-  );
-  if (isCurrentRestoreWorkspaceGeneration(restoreGeneration)) {
-    if (deferForAccess()) return;
-    releaseHeldSpawns(confirmedMissionIds, { resume: true });
-  } else {
-    return;
-  }
+      retireUnauthorizedMissionPane(pane, restoreGeneration);
+    } catch (error) {
+      if (!isCurrentRestoreWorkspaceGeneration(restoreGeneration)) return;
+      // Main may be restarting. Fail closed and retain the hold; absence of a
+      // reply is not proof that the durable pane is an orphan.
+      console.warn(
+        `[restore] mission pane authority unavailable pane=${pane.id}:`,
+        error,
+      );
+    }
+  });
+  // Each pane can resume as soon as its own authority is ready. A retrying
+  // mission must not block another mission or the standalone restore policy.
+  await Promise.all([
+    ...missionRestores,
+    restoreStandaloneAgents(agents, restoreGeneration, deferForAccess),
+  ]);
+}
 
+async function restoreStandaloneAgents(
+  agents: readonly PaneModel[],
+  restoreGeneration: RestoreWorkspaceGeneration,
+  deferForAccess: (panes: readonly PaneModel[]) => boolean,
+): Promise<void> {
   const restorable = agents.filter((pane) => !looksLikeMissionAgent(pane));
   if (restorable.length === 0) return;
   const ids = restorable.map((pane) => pane.id);
@@ -365,7 +368,7 @@ export async function gateRestoredAgents(
   const action = resolveAgentRestoreAction(await loadPolicy());
   if (!isCurrentRestoreWorkspaceGeneration(restoreGeneration)) return;
 
-  if (deferForAccess()) return;
+  if (deferForAccess(restorable)) return;
   if (action === 'resume') {
     applyDecision(ids, 'resume');
     return;
