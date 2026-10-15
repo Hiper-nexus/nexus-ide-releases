@@ -391,6 +391,52 @@ test('a corrupted rotated_from cycle ends the family walk instead of hanging', a
   db.close();
 });
 
+/** Inserts refresh tokens `prefix`0..`last` of 'user', each rotated from the previous one, the last one unused. */
+async function seedChain(db: SqliteD1, prefix: string, last: number, usedAt: number): Promise<void> {
+  await db.prepare(`WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i+1 FROM n WHERE i<?)
+    INSERT INTO refresh_tokens(id,account_id,token_hash,rotated_from,used_at,expires_at,created_at,channel)
+    SELECT ?||i,'user',?||'-hash-'||i,CASE WHEN i>0 THEN ?||(i-1) END,CASE WHEN i<? THEN ? END,?,?,'desktop' FROM n`)
+    .bind(last, prefix, prefix, prefix, last, usedAt, usedAt + 30 * 24 * 60 * 60 * 1000, usedAt).run();
+}
+
+test('a rotated_from cycle with 500 leaves revokes exactly its family in milliseconds', async () => {
+  const { db, mac } = await setup();
+  const { hashToken } = await import('../src/crypto.js');
+  const now = Date.now();
+  const raw = 'x'.repeat(43);
+  await seedChain(db, 'x', 1, now - 2 * GRACE_MS);
+  // x0 and x1 point at each other, and 500 unused leaves hang off x0.
+  await db.prepare("UPDATE refresh_tokens SET rotated_from='x1', used_at=?, token_hash=? WHERE id='x0'").bind(now - 2 * GRACE_MS, await hashToken(raw)).run();
+  await db.prepare(`WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i+1 FROM n WHERE i<499)
+    INSERT INTO refresh_tokens(id,account_id,token_hash,rotated_from,expires_at,created_at,channel) SELECT 'leaf'||i,'user','leaf-hash-'||i,'x0',?,?,'desktop' FROM n`).bind(now + GRACE_MS * 1000, now).run();
+
+  const started = performance.now();
+  assert.equal(await rotateRefresh(db, raw, 'desktop', now), null);
+  const elapsed = performance.now() - started;
+
+  assert.ok(elapsed < 250, `family revocation took ${Math.round(elapsed)} ms`);
+  const alive = await db.prepare("SELECT count(*) AS n FROM refresh_tokens WHERE revoked_at IS NULL AND (id LIKE 'leaf%' OR id IN ('x0','x1'))").first<{ n: number }>();
+  assert.equal(alive?.n, 0, 'the whole cycle and its leaves are revoked');
+  assert.ok(await sessionFor(db, mac.session, 'desktop'), 'the other family is untouched');
+  db.close();
+});
+
+test('reuse near the tip of a 10.5k chain leaves no live token in the family', async () => {
+  const { db } = await setup();
+  const { hashToken } = await import('../src/crypto.js');
+  const now = Date.now();
+  const raw = 'c'.repeat(43);
+  // The prefix keeps the chain apart from the UUID ids of the tokens issued by setup().
+  await seedChain(db, 'chain-', 10_500, now - 2 * GRACE_MS);
+  await db.prepare("UPDATE refresh_tokens SET token_hash=? WHERE id='chain-10000'").bind(await hashToken(raw)).run();
+
+  assert.equal(await rotateRefresh(db, raw, 'desktop', now), null);
+
+  const alive = await db.prepare("SELECT count(*) AS n FROM refresh_tokens WHERE id LIKE 'chain-%' AND revoked_at IS NULL").first<{ n: number }>();
+  assert.equal(alive?.n, 0, 'the tip and every token up to the root are revoked');
+  db.close();
+});
+
 /** An exchange whose license read runs `stall` right after it starts; returns once that read began. */
 async function exchangeStalled(t: { after: (fn: () => void) => void }, stall: () => Promise<unknown>): Promise<{ db: SqliteD1; pending: Promise<Response> }> {
   const { db } = await setup();
