@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.76.277 — Redline mais visual no Mac
+
+- Redline redesenhado com medidores circulares, cotas lado a lado, logos maiores e uma faixa gráfica das contas. Os filtros Todas, Com leitura e Resolver levam direto ao que precisa de atenção.
+- Painel compacto mais amplo e modo ampliado em colunas, com menos texto repetido, resets curtos e ação Resolver no Nexus para conexões sem leitura.
+- Cursor exibe a franquia mensal sem acrescentar janelas genéricas de 5 horas e semana.
+- Antigravity mantém a leitura da sessão nativa acessível mesmo quando há uma conta salva; a cota nativa conserva sua própria linha, sem ser atribuída à conta do cofre.
+- O diagnóstico de leitura acompanha o snapshot até o Redline. Estimativas ficam identificadas e fora do resumo medido; créditos confirmados passam a participar da barra.
+- Publicação macOS arm64. Sessões expiradas ou fontes de cota ainda não conectadas continuam exigindo recuperação no Nexus; ausência de leitura nunca vira 0%.
+
 ## 0.76.276 — Linux em dia com a clareza
 
 As tags 0.76.273 e 0.76.275 não recebem pacotes Linux. Esta versão leva o produto delas, empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). A 0.76.275 é a candidata do Mac. O isolamento do Keychain no smoke empacotado vale só no macOS.

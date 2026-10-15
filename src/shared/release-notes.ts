@@ -10907,7 +10907,7 @@ export const RELEASE_076275: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076276: AppRelease = {
   version: '0.76.276',
   date: '2026-10-15',
   codename: 'Linux em dia com a clareza',
@@ -10927,5 +10927,21 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Primeiros passos coerentes', detail: 'O guia usa os nomes atuais de Configurações e prioriza conectar sua conta. Chave inválida ou conta que exige novo login não conta como uma conexão pronta.' },
     { title: 'Menu Mais sem corte', detail: 'As ações continuam acessíveis com o Quadro minimizado e em largura compacta. Recusa de religação pede nova tentativa no Quadro.' },
     { title: 'Atualização do Linux', detail: 'As tags 0.76.273 e 0.76.275 não recebem pacotes Linux. A 0.76.275 é a candidata do Mac. O Linux sai na 0.76.276.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.277',
+  date: '2026-10-15',
+  codename: 'Redline mais visual no Mac',
+  summary: 'Suas cotas em um olhar: medidores circulares, contas lado a lado e filtros para chegar às conexões que precisam de atenção. O Redline do Mac também explica melhor quando uma leitura não está disponível.',
+  highlights: [
+    { title: 'Cotas mais visuais', detail: 'Medidores circulares e logos maiores mostram o consumo de cada conta. A visão ampliada organiza tudo em colunas, com menos texto repetido.' },
+    { title: 'Encontre o que precisa', detail: 'Os filtros Todas, Com leitura e Resolver separam as contas com medições das conexões pendentes. Resolver no Nexus abre o caminho para corrigir a conexão.' },
+  ],
+  fixes: [
+    { title: 'Cursor mensal', detail: 'A franquia mensal aparece sem janelas genéricas de 5 horas e semana que o Cursor não informou.' },
+    { title: 'Antigravity nativo', detail: 'Uma conta salva deixa de ocultar a fonte de cota da sessão nativa. Essa leitura permanece em sua própria linha, sem ser atribuída a outra conta.' },
+    { title: 'Leitura com contexto', detail: 'Os motivos de cota indisponível acompanham a conta até o Redline. Estimativas ficam identificadas; somente medições confirmadas entram no resumo da barra.' },
   ],
 };
