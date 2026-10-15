@@ -2532,7 +2532,17 @@ function rehydrateHost(host: Host): void {
     (candidate) => candidate.id === host.paneId,
   );
   if (pane) {
-    host.term.onData((data) => handlePaneKeyboardInput(host, pane, data));
+    // Mesmo dono único do spawn: um `startSpawn` posterior (acordar após exit,
+    // Retomar) descarta ESTE listener em vez de somar um segundo ("bbuugg").
+    host.inputListener?.dispose();
+    const input = host.term.onData((data) =>
+      handlePaneKeyboardInput(host, pane, data),
+    );
+    host.inputListener = input;
+    host.cleanups.push(() => {
+      input.dispose();
+      if (host.inputListener === input) host.inputListener = undefined;
+    });
   }
   wireTermInteractions(host, host.kind === 'cli-agent');
   if (host.kind === 'shell') {

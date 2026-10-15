@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.76.271 — Teclado, medidor e dependências em ordem
+
+Correções dos achados da revisão independente da 0.76.270 (que já estava na main; o instalador do Windows não saiu por limite de orçamento do GitHub Actions).
+
+- **Teclado**: reidratar um pane hibernado e depois acordá-lo ou retomá-lo não soma um segundo receptor de teclado (cada tecla chegava duas vezes).
+- **Medidor de comandos pesados**: `n\px vitest run` (barra antes de letra) deixava o comando fora do medidor, porque o bash descarta a barra e o lexer a mantinha. Agora o comando é classificado nas duas leituras.
+- **node_modules ligado (F-1535)**: no Node 24 a remoção recursiva atravessa o junction e apaga as dependências do checkout de origem (provado com canário). O contrato do worker proíbe apagar ou reinstalar esse node_modules. Não há trava mecânica: um worker que ignore o contrato ainda pode causar o dano.
+- Limites conhecidos: F-1536 parcial; sem teste no app real.
+
 ## 0.76.270 — Retomada sem tropeço e agentes à vista
 
 Reaplicada sobre a 0.76.267 (as tags 0.76.264 a 0.76.267 já eram de outra linha de trabalho).

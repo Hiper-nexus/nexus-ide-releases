@@ -24,6 +24,14 @@ describe("worker handoff transport contract", () => {
     expect(prompt).not.toContain("chamando a tool nexus_handoff_submit");
   });
 
+  it("proíbe o worker de apagar o node_modules ligado ao checkout de origem (Node 24 atravessa o junction)", () => {
+    const prompt = withHandoffContract("Corrija o fluxo da missão.", {
+      quirks: { mcpAutoload: false, nexusMcp: "none" },
+    });
+    expect(prompt).toContain("nunca o apague nem reinstale");
+    expect(prompt).toContain("Node 24");
+  });
+
   it.each(["opencode", "agy"])("keeps physically usable MCP adapters on nexus_handoff_submit (%s)", (nexusMcp) => {
     // F-697: o AGY entrega pelo MCP da ponte registrada no perfil nativo.
     const prompt = withHandoffContract("Corrija o fluxo da missão.", {

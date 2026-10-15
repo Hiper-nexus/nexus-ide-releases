@@ -1124,6 +1124,50 @@ describe('reidratação religa o teclado do pane (hibernação, 14/10)', () => {
   });
 });
 
+describe('reidratação + respawn: um único receptor de teclado (F-1434 médio)', () => {
+  it('acordar após exit DEPOIS de reidratar não soma segundo listener', async () => {
+    const agent2: PaneModel = {
+      id: 'agent-rehydrate-respawn',
+      kind: 'cli-agent',
+      adapterId: 'codex',
+      title: 'Codex',
+    };
+    useLayoutStore.setState({
+      root: buildGridTree([agent2]),
+      focusedPaneId: agent2.id,
+    });
+    spawn
+      .mockResolvedValueOnce({ ok: true, sessionId: 'pty-r1' })
+      .mockResolvedValueOnce({ ok: true, sessionId: 'pty-r2' });
+    const host = getOrCreateHost(agent2);
+    setHostSize(host.element, 1200, 800);
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(agent2, slot);
+    expect(await waitForSession(agent2.id, 1_000)).toBe('pty-r1');
+
+    for (let i = 0; i < 24; i++) {
+      getOrCreateHost({ id: `filler-respawn-${i}`, kind: 'shell', title: `t${i}` });
+    }
+    setHostVisibility(agent2.id, false);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(host.virtualized).not.toBeNull();
+    xtermEvents.onData.clear();
+    setHostVisibility(agent2.id, true);
+    await vi.advanceTimersByTimeAsync(60);
+
+    ptyExitListeners.get('pty-r1')?.({ exitCode: 0 });
+    expect(wakeHost(agent2)).toBe(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await waitForSession(agent2.id, 1_000)).toBe('pty-r2');
+
+    ptyWriteConfirmed.mockClear();
+    for (const listener of [...xtermEvents.onData]) listener('b');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ptyWriteConfirmed).toHaveBeenCalledExactlyOnceWith('pty-r2', 'b');
+  });
+});
+
 describe('B1 (F-1393): input humano no pane cancela o ditado pendente', () => {
   it('tecla no xterm cancela; foco, mouse e escrita programática (writeToPane) não', async () => {
     spawn.mockResolvedValueOnce({ ok: true, sessionId: 'pty-b1' });

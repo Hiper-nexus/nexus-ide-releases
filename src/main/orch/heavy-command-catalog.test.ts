@@ -51,8 +51,15 @@ describe('commandKind reads Windows backslash launcher paths (F-1535)', () => {
     // `a\ b` é UM argumento com espaço, não dois: o escape continua valendo.
     expect(catalog.commandKind('echo a\\ b')).toBeNull();
     expect(catalog.commandKind('echo \\$HOME')).toBeNull();
-    // `a\b` preserva a barra (comportamento real do bash).
+    // `a\b` não é pesado em nenhuma das duas leituras.
     expect(catalog.commandKind('echo a\\b')).toBeNull();
+  });
+
+  it('escapar uma letra do programa não tira o comando do medidor (bash descarta a barra)', () => {
+    // `bash -c 'echo n\px'` imprime `npx`: a leitura POSIX também é classificada.
+    expect(catalog.commandKind('n\\px vitest run x')).toBe('tests');
+    expect(catalog.commandKind('t\\sc --noEmit')).toBe('typescript');
+    expect(catalog.commandKind('cd mobile && n\\px vitest run x')).toBe('tests');
   });
 });
 

@@ -207,9 +207,19 @@ const newSegment = (pipedIn = false) => ({ words: [], heredocs: [], herestrings:
  * redirection targets never become words.
  */
 function shellSegments(command) {
-  const ctx = { all: [], nesting: 0 };
-  lex(String(command), ctx, 'list');
-  return ctx.all;
+  const src = String(command);
+  const windowsReading = { all: [], nesting: 0, posixEscape: false };
+  lex(src, windowsReading, 'list');
+  // F-1535 follow-up: the bash that runs the command drops EVERY backslash
+  // outside quotes (`n\px` runs `npx`), while the Windows reading keeps it
+  // so `node_modules\.bin\vitest` still resolves. The command is classified
+  // under both readings, so escaping a letter of the program name cannot step
+  // out of the meter. Heavier-of-both is fail-closed; the first reading stays
+  // first so callers that take `[0]` keep their behaviour.
+  if (!src.includes('\\')) return windowsReading.all;
+  const posixReading = { all: [], nesting: 0, posixEscape: true };
+  lex(src, posixReading, 'list');
+  return windowsReading.all.concat(posixReading.all);
 }
 function lex(src, ctx, mode) {
   let i = 0;
@@ -370,7 +380,7 @@ function lex(src, ctx, mode) {
       // so the launcher fell out of the catalog and was never metered.
       else if (ch === '\\') {
         if (src[i] === '\n') { i++; if (word === '') word = null; }
-        else if (i < src.length) { if (ESCAPE_DROPS_BACKSLASH.test(src[i])) word += src[i++]; else { word += '\\'; word += src[i++]; } }
+        else if (i < src.length) { if (ctx.posixEscape || ESCAPE_DROPS_BACKSLASH.test(src[i])) word += src[i++]; else { word += '\\'; word += src[i++]; } }
       }
       else if (ch === '`') word += backtick(false);
       else if (ch === '$') word += dollar(false);

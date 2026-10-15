@@ -10810,7 +10810,7 @@ export const RELEASE_076267: AppRelease = {
     { title: 'Atualização do Linux', detail: 'A 0.76.264 só tinha pacote de macOS. As tags 0.76.265 e 0.76.266 não foram publicadas. O Linux sai na 0.76.267.' },
   ],
 };
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076270: AppRelease = {
   version: '0.76.270',
   date: '2026-10-15',
   codename: 'Retomada sem tropeço e agentes à vista',
@@ -10832,5 +10832,18 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Ditado em inglês (F-1530)', detail: 'Reescrita do CODE que devolvia o português é detectada e recusada; a STT de fallback sempre é tentada.' },
     { title: 'Portão de regressão e worktree (F-1533/F-1535)', detail: 'O mapa do portão tem prazo e cache, o lexer do catálogo preserva caminho do Windows e a worktree isolada nasce com node_modules ligado (fora do git).' },
     { title: 'Checkpoint oculto no Windows (F-1532)', detail: 'O checkpoint do writer funciona com tmp em nome curto 8.3 no Windows.' },
+  ],
+};
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.271',
+  date: '2026-10-15',
+  codename: 'Teclado, medidor e dependências em ordem',
+  summary: 'Correções da revisão independente da 0.76.270: a tecla deixa de chegar dobrada depois de hibernar e acordar o pane, o medidor de comandos pesados não é mais contornado por barra invertida, e o contrato dos workers avisa para nunca apagar o node_modules ligado ao checkout de origem. A 0.76.270 foi publicada como código; o instalador do Windows sai nesta versão.',
+  highlights: [
+    { title: 'Tecla dobrada ao hibernar', detail: 'Reidratar um pane hibernado e depois acordá-lo ou retomá-lo não soma um segundo receptor de teclado ("bbuugg").' },
+    { title: 'Medidor de comandos pesados', detail: 'Escapar uma letra do programa (n\px) não tira mais o comando do medidor: o comando é lido como o Windows e como o bash o leem.' },
+  ],
+  fixes: [
+    { title: 'node_modules ligado à worktree', detail: 'No Node 24 a remoção recursiva atravessa o junction e apaga as dependências do checkout de origem (medido). O contrato do worker proíbe apagar ou reinstalar esse node_modules.' },
   ],
 };

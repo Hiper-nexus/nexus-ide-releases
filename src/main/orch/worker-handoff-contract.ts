@@ -132,7 +132,10 @@ export function withHandoffContract(
     'Dúvida que só o operador resolve: nexus_handoff_submit com status ' +
     '"blocked" e a pergunta no summary. Você pode usar ferramentas e subagentes nativos ' +
     'da CLI (spawn_agent, Task) quando ajudarem a concluir a tarefa, dentro do ' +
-    'workspace, das permissões e da conta/sessão deste pane.';
+    'workspace, das permissões e da conta/sessão deste pane. ' +
+    'Se node_modules desta worktree for um link/junction para o checkout de origem, ' +
+    'nunca o apague nem reinstale (npm ci, rm -rf, rimraf): no Node 24 a remoção ' +
+    'recursiva atravessa o link e apaga as dependências do checkout de origem.';
   const visualVerification = isUiShapedWork(
     [prompt, ...(hints.hints ?? [])].filter(Boolean).join('\n'),
   )
