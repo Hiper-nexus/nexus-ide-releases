@@ -1441,8 +1441,9 @@ describe('WorkspaceRail', () => {
 
 /**
  * Recentes é o histórico: nasce recolhido e abre por escolha — o rail é a fila
- * do agora. Sem projeto em andamento ele abre sozinho (senão não restaria
- * nenhum projeto para abrir), e a escolha da pessoa vale nos dois sentidos.
+ * do agora. Só abre sozinho com o grupo de cima vazio, isto é, sem projeto
+ * aberto (senão não restaria nenhum projeto para abrir); o projeto aberto conta
+ * como "acima" mesmo ocioso. A escolha da pessoa vale nos dois sentidos.
  */
 describe('WorkspaceRail — Recentes recolhido', () => {
   const stored = () =>
@@ -1474,12 +1475,29 @@ describe('WorkspaceRail — Recentes recolhido', () => {
     expect(host.querySelector('[data-workspace-id="cometa"]')).not.toBeNull();
   });
 
-  it('abre sozinho quando nada está em andamento: o rail não pode ficar sem projeto para abrir', () => {
+  it('com o projeto aberto ocioso (sem missão e sem pane) continua recolhido: ele já é o projeto da lista', () => {
+    // `projectRailWorkspaces` sempre põe o projeto aberto em "acima", mesmo sem
+    // nada rodando: o grupo vira "Projeto atual" e o histórico não abre sozinho.
+    const { host } = renderRail({
+      activeWorkspaces: [
+        { id: 'atlas', name: 'Atlas local', path: '/ws/atlas', missions: [] },
+      ],
+      currentWorkspaceId: 'atlas',
+      selection: null,
+    });
+    expect(
+      host.querySelector('[data-rail-group="active"] .workspace-rail__group-title')?.textContent,
+    ).toBe('Projeto atual');
+    expect(recentsToggle(host).getAttribute('aria-expanded')).toBe('false');
+    expect(host.querySelector('[data-workspace-id="cometa"]')).toBeNull();
+  });
+
+  it('abre sozinho sem projeto aberto: o rail não pode ficar sem projeto para abrir', () => {
     const { host } = renderRail({ activeWorkspaces: [], selection: null });
     expect(recentsToggle(host).getAttribute('aria-expanded')).toBe('true');
     expect(host.querySelector('[data-workspace-id="cometa"]')).not.toBeNull();
 
-    // Quem recolheu de propósito continua recolhido, mesmo sem nada em andamento.
+    // Quem recolheu de propósito continua recolhido, mesmo sem projeto aberto.
     act(() => recentsToggle(host).click());
     expect(host.querySelector('[data-workspace-id="cometa"]')).toBeNull();
     const second = renderRail({ activeWorkspaces: [], selection: null });

@@ -246,8 +246,9 @@ export function saveCollapsedWorkspacePaths(
 
 // "Recentes" no rail nasce recolhido: o rail é a fila do agora e o histórico
 // abre por escolha. Tri-state de propósito: `null` = a pessoa nunca escolheu e
-// quem desenha decide o padrão (abre quando não há projeto em andamento acima,
-// senão o rail ficaria só com um título e nenhum projeto para abrir).
+// quem desenha decide o padrão (abre só quando não há projeto algum acima, nem
+// o aberto ocioso; senão o rail ficaria só com um título e nenhum projeto para
+// abrir).
 const RECENT_WORKSPACES_OPEN_KEY = 'nexus.activityRail.recentWorkspacesOpen';
 
 export function loadRecentWorkspacesOpen(

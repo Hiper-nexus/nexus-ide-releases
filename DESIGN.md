@@ -474,16 +474,19 @@ pulso de "ao vivo" repete).
   O caminho só ocupa a linha quando dois projetos têm o mesmo nome; nos demais
   vai no tooltip e no nome acessível. A contagem de agentes só existe para o
   projeto aberto (o renderer não tem os panes dos vizinhos).
-- **Recentes é o histórico e nasce recolhido.** Abre sozinho quando nada está
-  em andamento acima (senão o rail ficaria sem projeto para abrir); a escolha da
-  pessoa fica salva (`loadRecentWorkspacesOpen`) e a seleção nunca some atrás do
-  recolher.
+- **Recentes é o histórico e nasce recolhido.** Abre sozinho só quando o grupo de
+  cima está vazio, isto é, não há projeto aberto (senão o rail ficaria sem
+  projeto para abrir). O projeto aberto conta como "acima" mesmo ocioso, sem
+  missão nem pane (o grupo então se chama "Projeto atual", não "Em andamento"):
+  com ele na tela, Recentes nasce recolhido. A escolha da pessoa fica salva
+  (`loadRecentWorkspacesOpen`) e a seleção nunca some atrás do recolher.
 - **Missão é uma linha.** Glifo de estado (PixelIcon: a forma muda com o estado,
   não só a cor), título em 13px com reticências e idade. A palavra do estado
   ganha uma linha própria só quando a missão pede algo da pessoa (pronta para
   iniciar, aguardando instrução, bloqueada, falha, entrega para revisar); nas
   demais ela vive no nome acessível e no tooltip. Selecionada é fundo de acento
-  a 12%, sem borda. Remover aparece no hover/foco, em alvo de 32px.
+  a 6%, sem borda (o hover guarda a mesma tinta). Remover aparece no hover/foco,
+  em alvo de 32px.
 - **Agentes aninhados** recuam para o texto do título da missão: glifo de estado,
   logo, nome e a palavra do estado (omitida em quem trabalha, que o resumo "N
   trabalhando agora" já diz). A tarefa ocupa uma linha, duas em quem trabalha; a
@@ -497,11 +500,24 @@ pulso de "ao vivo" repete).
   de você", memória sob pressão, cotas e Perfil de Operador sem cartão.
   Configurações, atalhos e o estado local dividem uma faixa de 32px. Título de
   seção nunca em caixa-alta.
-- **Alvo e contraste.** Todo controle do rail declara alvo de pelo menos 32px
-  (44px em `pointer: coarse` nas linhas e nos disclosures), inclusive o botão de
-  recolher Recentes e o resumo de agentes, que mediam 24px. O texto de hierarquia
-  (`--text`, `--text-dim`, `--text-faint`) segura 4,5:1 sobre `--bg-bar`, onde o
-  rail pousa, nos sete temas: o `--text-faint` do `nexus-light` media 4,36:1 ali
-  e subiu para 4,63. Sobre a linha selecionada (acento a 12%) alguns pares ainda
-  ficam abaixo de 4,5:1; estão listados como dívida no guard
-  (`workspace-rail-style.test.ts`). "Reportar bug" mede ~22px de altura.
+- **Alvo.** Os controles da lista `TARGETS` de `workspace-rail-style.test.ts`
+  declaram alvo de pelo menos 32px, e as linhas e os disclosures sobem para 44px
+  em `pointer: coarse`: busca, "Novo pedido", linhas de destino, projeto e
+  missão, o botão de recolher Recentes e o resumo de agentes (que mediam 24px),
+  "Mostrar mais", recolher o projeto, remover e os atalhos em ícone. **Três
+  controles NÃO chegam a 32px e ficam fora do guard:** o cabeçalho do card de
+  Cotas (~14px; recolhido, o corpo das barras também alterna com o mouse,
+  expandido só o cabeçalho recolhe), "Abrir uso e cotas" (~22px, só com o card
+  expandido) e "Reportar bug" (~22px, na faixa da marca, que não incha). Subir
+  qualquer um muda o layout do rodapé ou da faixa: é dívida conhecida, não regra
+  cumprida.
+- **Contraste do texto.** O texto de hierarquia (`--text`, `--text-dim`,
+  `--text-faint`) segura 4,5:1 sobre `--bg-bar`, onde o rail pousa, nos sete
+  temas: o `--text-faint` do `nexus-light` media 4,36:1 ali e subiu para 4,63.
+  Sobre a linha selecionada a tinta de acento é 6% (a 12% eram 7 pares abaixo de
+  4,5:1, ex.: `solarized-dark` `--text` 4,27; o teto medido é 7,3% no
+  `nexus-light` e 9,1% no `solarized-dark`) e o hover guarda a mesma tinta. Dentro
+  da linha selecionada o `--text-faint` vale `--text-dim` (idade, "atual",
+  caminho, atividade, contador): o faint do `nexus-light` não passa sobre a
+  tinta (4,27). O guard mede os três degraus sobre essa linha, em repouso e no
+  hover, nos sete temas, sem lista de exceção.

@@ -720,17 +720,23 @@
   background: transparent;
   color: var(--text-faint);
   cursor: pointer;
+  /* Em repouso o botão é invisível e não intercepta o clique da linha do
+     projeto: antes, um clique ou toque na ponta direita da linha recolhia as
+     missões em vez de abrir o projeto. */
   opacity: 0;
+  pointer-events: none;
   transition:
     opacity 160ms var(--ease-out-quart),
     background-color 160ms var(--ease-out-quart),
     color 160ms var(--ease-out-quart);
 }
 
+/* Recolhido ele já está à vista (com a contagem), então também recebe o clique. */
 .workspace-rail__workspace-row-wrapper:hover .workspace-rail__workspace-toggle,
 .workspace-rail__workspace-row-wrapper:focus-within .workspace-rail__workspace-toggle,
 .workspace-rail__workspace-toggle--collapsed {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .workspace-rail__workspace-toggle--collapsed svg {
@@ -878,14 +884,21 @@
   outline-offset: calc(-1 * var(--radius-xs));
 }
 
-/* Selecionado: o toque de acento da superfície (DESIGN.md §5), só no fundo. */
-.workspace-rail__row--selected {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  color: var(--text);
-}
-
+/* Selecionado: o toque de acento da superfície (DESIGN.md §5), só no fundo.
+   6% é o que cabe: a 12% o texto da linha caía abaixo de 4,5:1 (solarized-dark
+   `--text` 4,27; nexus-light `--text-dim` 4,23). O teto medido é 7,3% no
+   nexus-light (`--text-dim`) e 9,1% no solarized-dark (`--text`); 6% deixa
+   folga para o arredondamento do alfa. O hover da linha selecionada guarda a
+   mesma tinta (subia para 16%): acima do teto o AA cai de novo.
+   `--text-faint` não chega a 4,5:1 sobre essa tinta no nexus-light (4,27),
+   então dentro da linha selecionada ele vale `--text-dim`: idade, "atual",
+   caminho, atividade e contador sobem um degrau enquanto ela está selecionada.
+   `workspace-rail-style.test.ts` mede os três degraus nos sete temas. */
+.workspace-rail__row--selected,
 .workspace-rail__row--selected:hover {
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  --text-faint: var(--text-dim);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  color: var(--text);
 }
 
 /* Paginação das missões: texto quieto alinhado aos títulos, sem caixa. */

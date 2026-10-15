@@ -282,8 +282,10 @@ interface WorkspaceGroupProps {
   ambiguousIds: ReadonlySet<string>;
   /**
    * Só vale para "Recentes": se a seção abre quando a pessoa nunca escolheu.
-   * Abre quando nada está em andamento acima (o rail não pode ficar sem projeto
-   * para abrir); com trabalho vivo na tela, o histórico começa recolhido.
+   * Abre só com o grupo de cima vazio, isto é, sem projeto aberto (o rail não
+   * pode ficar sem projeto para abrir). O projeto aberto conta como "acima"
+   * mesmo ocioso (grupo "Projeto atual", sem missão nem pane): com ele na tela,
+   * o histórico começa recolhido.
    */
   defaultOpen?: boolean;
   /**

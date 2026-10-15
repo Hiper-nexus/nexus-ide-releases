@@ -156,6 +156,19 @@ describe('rail: contrato visual da lista plana', () => {
     );
   });
 
+  it('o recolher do projeto invisível em repouso não intercepta o clique da linha', () => {
+    expect(rule('.workspace-rail__workspace-toggle')?.body).toMatch(/pointer-events:\s*none/);
+    // Quem fica à vista (hover, foco, recolhido com a contagem) recebe o clique.
+    for (const selector of [
+      '.workspace-rail__workspace-row-wrapper:hover .workspace-rail__workspace-toggle',
+      '.workspace-rail__workspace-row-wrapper:focus-within .workspace-rail__workspace-toggle',
+      '.workspace-rail__workspace-toggle--collapsed',
+    ]) {
+      expect(rule(selector)?.body, selector).toMatch(/opacity:\s*1/);
+      expect(rule(selector)?.body, selector).toMatch(/pointer-events:\s*auto/);
+    }
+  });
+
   it('os destinos são uma coluna só (sem grade de duas colunas)', () => {
     const fixed = rulesFor('.workspace-rail__fixed')
       .map((candidate) => candidate.body)
@@ -283,26 +296,50 @@ describe('rail: contraste do texto sobre --bg-bar e sobre a linha selecionada, e
 
   // Superfícies lidas do CSS: o fundo que o rail pinta e o toque de acento da seleção.
   const railSurface = rule('.workspace-rail')?.body.match(/background\s*:\s*var\((--[\w-]+)\)/)?.[1] ?? '';
-  const selection = rule('.workspace-rail__row--selected')?.body.match(
-    /background\s*:\s*color-mix\(in srgb,\s*var\(--accent\)\s+(\d+(?:\.\d+)?)%,\s*transparent\)/,
-  );
-  const selectionShare = Number(selection?.[1]) / 100;
+  /** A linha selecionada pinta texto sobre a tinta em repouso e com o mouse em cima. */
+  const SELECTED = ['.workspace-rail__row--selected', '.workspace-rail__row--selected:hover'] as const;
+  const TINT = /background\s*:\s*color-mix\(in srgb,\s*var\(--accent\)\s+(\d+(?:\.\d+)?)%,\s*transparent\)/;
+  /** Quanto de acento a regra põe sobre o fundo (a última declaração vence); NaN se não há. */
+  const shareOf = (selector: string) =>
+    Number(
+      rulesFor(selector)
+        .map((candidate) => candidate.body.match(TINT)?.[1])
+        .filter(Boolean)
+        .pop(),
+    ) / 100;
+  /**
+   * Tokens de texto que a regra reaponta para os filhos (`--text-faint: var(--text-dim)`):
+   * o degrau que a linha pinta DE FATO, que é o que o contraste precisa medir.
+   */
+  const remapOf = (selector: string) =>
+    new Map(
+      rulesFor(selector).flatMap((candidate) =>
+        [...candidate.body.matchAll(/(?:^|[;\s])(--text[\w-]*)\s*:\s*var\((--text[\w-]*)\)\s*;/g)].map(
+          (match) => [match[1], match[2]] as const,
+        ),
+      ),
+    );
 
-  /** Fundo do rail e o da linha selecionada (acento sobre o fundo do rail) neste tema. */
-  const surfacesOf = (palette: UiPalette) => {
-    const bar = palette[SURFACE_KEY[railSurface]];
+  /** Fundo do rail neste tema. */
+  const barOf = (palette: UiPalette) => palette[SURFACE_KEY[railSurface]];
+  /** Fundo da linha selecionada neste tema: o acento a `share` sobre o fundo do rail. */
+  const selectedOver = (palette: UiPalette, share: number) => {
     const from = hexToSrgb(palette.accent);
-    const to = hexToSrgb(bar);
-    const mix = (index: 0 | 1 | 2) => from[index] * selectionShare + to[index] * (1 - selectionShare);
-    return { bar, selected: srgbToHex([mix(0), mix(1), mix(2)]) };
+    const to = hexToSrgb(barOf(palette));
+    const mix = (index: 0 | 1 | 2) => from[index] * share + to[index] * (1 - share);
+    return srgbToHex([mix(0), mix(1), mix(2)]);
   };
 
   it('lê do CSS o fundo do rail e o acento da seleção, e o texto de hierarquia que o rail usa', () => {
     // Os 7 temas selecionáveis: laço vazio aprovaria tudo.
     expect(themes.length).toBeGreaterThanOrEqual(7);
     expect(SURFACE_KEY[railSurface], `fundo do .workspace-rail: "${railSurface}"`).toBeDefined();
-    expect(selectionShare).toBeGreaterThan(0);
-    expect(selectionShare).toBeLessThan(0.5);
+    // Repouso E hover declaram a tinta: sem a do hover, o hover genérico (mais
+    // específico) apagaria a seleção e pintaria o texto sobre outra superfície.
+    for (const selector of SELECTED) {
+      expect(shareOf(selector), `${selector}: tinta de acento`).toBeGreaterThan(0);
+      expect(shareOf(selector), `${selector}: tinta de acento`).toBeLessThan(0.5);
+    }
     expect(railText.length).toBeGreaterThan(50);
     expect(
       railText.filter(({ token }) => !(token in TEXT_KEY)).map(({ selector, token }) => `${selector} → ${token}`),
@@ -318,7 +355,7 @@ describe('rail: contraste do texto sobre --bg-bar e sobre a linha selecionada, e
       expect(TEXT_KEY[token], `${selector} precisa de um token de texto (color: ${token})`).toBeDefined();
       for (const [theme, palette] of themes) {
         expect(
-          contrastRatio(palette[TEXT_KEY[token]], surfacesOf(palette).bar),
+          contrastRatio(palette[TEXT_KEY[token]], barOf(palette)),
           `${selector} (${token}) · ${theme}`,
         ).toBeGreaterThanOrEqual(AA);
       }
@@ -333,7 +370,7 @@ describe('rail: contraste do texto sobre --bg-bar e sobre a linha selecionada, e
         .map(({ selector, token }) => ({
           selector,
           token,
-          ratio: contrastRatio(palette[TEXT_KEY[token]], surfacesOf(palette).bar),
+          ratio: contrastRatio(palette[TEXT_KEY[token]], barOf(palette)),
         }))
         .filter(({ ratio }) => ratio < AA)
         .map(({ selector, token, ratio }) => `${selector} (${token}) = ${ratio.toFixed(2)}`);
@@ -342,28 +379,31 @@ describe('rail: contraste do texto sobre --bg-bar e sobre a linha selecionada, e
   );
 
   /**
-   * Sobre a linha selecionada (acento a 12% sobre a barra, DESIGN.md §16) o texto
-   * perde contraste e HOJE alguns pares ficam abaixo de 4,5:1. Subir isso pede mexer
-   * na paleta ou na tinta da seleção (decisão de design, fora da correção do rail
-   * sobre a barra). Este registro é a catraca: par novo abaixo de 4,5 falha, e par
-   * que passar a ≥4,5 também falha até sair da lista.
+   * Sobre a linha selecionada (acento sobre a barra, DESIGN.md §16) o texto
+   * segura 4,5:1 como em qualquer outro lugar — sem lista de exceção. Mede os três
+   * degraus como a linha os pinta DE FATO: `--text-faint` não chega a 4,5 sobre a
+   * tinta no nexus-light, e a regra o reaponta para `--text-dim` dentro da linha
+   * (`--text-faint: var(--text-dim)`); a medição segue esse reapontamento lido do
+   * CSS. Tinta maior, token novo ou o reapontamento removido derrubam o par aqui.
    */
-  const BELOW_AA_ON_SELECTION = [
-    'nexus-gray:textFaint',
-    'nexus-light:textDim',
-    'nexus-light:textFaint',
-    'nexus-red:textFaint',
-    'solarized-dark:text',
-    'solarized-dark:textDim',
-    'solarized-dark:textFaint',
-  ];
-
-  it('sobre a linha selecionada a dívida de contraste conhecida não cresce nem encolhe sem registro', () => {
-    const below = themes.flatMap(([theme, palette]) =>
-      (['text', 'textDim', 'textFaint'] as const)
-        .filter((key) => contrastRatio(palette[key], surfacesOf(palette).selected) < AA)
-        .map((key) => `${theme}:${key}`),
-    );
-    expect(below.sort()).toEqual([...BELOW_AA_ON_SELECTION].sort());
-  });
+  it.each(themes.map(([theme]) => theme))(
+    '%s: sobre a linha selecionada (repouso e hover) text, dim e faint seguram 4,5:1',
+    (theme) => {
+      const palette = PALETTES[theme as keyof typeof PALETTES];
+      const below = SELECTED.flatMap((selector) => {
+        const remap = remapOf(selector);
+        expect(shareOf(selector), `${selector}: tinta de acento`).toBeGreaterThan(0);
+        const surface = selectedOver(palette, shareOf(selector));
+        return (['--text', '--text-dim', '--text-faint'] as const).flatMap((token) => {
+          const painted = remap.get(token) ?? token;
+          expect(TEXT_KEY[painted], `${selector}: ${token} → ${painted}`).toBeDefined();
+          const ratio = contrastRatio(palette[TEXT_KEY[painted]], surface);
+          return ratio < AA
+            ? [`${selector} · ${token}${painted === token ? '' : ` → ${painted}`} = ${ratio.toFixed(2)}`]
+            : [];
+        });
+      });
+      expect(below).toEqual([]);
+    },
+  );
 });

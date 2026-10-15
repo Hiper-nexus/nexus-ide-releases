@@ -279,22 +279,31 @@ saber isto antes de mexer:
   tem os panes do projeto aberto: vizinho mostra missões, nunca contagem de
   agentes; panes soltos de outro projeto não aparecem (vivem em `parkedHosts`,
   dentro do `terminal-host.ts`, sem assinatura para o rail).
-- "Recentes" nasce recolhido, abre sozinho quando nada está em andamento acima e
-  a escolha da pessoa vive em `loadRecentWorkspacesOpen` (tri-state: `null` =
-  sem escolha). A seleção nunca some atrás do recolher.
+- "Recentes" nasce recolhido e só abre sozinho com o grupo de cima vazio (sem
+  projeto aberto; o aberto conta como "acima" mesmo ocioso, grupo "Projeto
+  atual"). A escolha da pessoa vive em `loadRecentWorkspacesOpen` (tri-state:
+  `null` = sem escolha). A seleção nunca some atrás do recolher.
 - A palavra do estado da missão só ganha linha própria quando ela pede algo da
   pessoa (`missionNeedsWord`); nas demais o estado vive no glifo, no `aria-label`
   e no `title`. Teste novo de estado de missão confere o `aria-label`, não o
   `textContent`.
 - Alvo e contraste (revisão independente de `de645e3d1`):
   `workspace-rail-style.test.ts` trava o piso de 32px (44px no toque) dos
-  controles do rail e 4,5:1 do texto de hierarquia sobre `--bg-bar` nos 7
-  `PALETTES`. O `--text-faint` do `nexus-light` media 4,36:1 sobre a barra porque
+  controles da lista `TARGETS` (linhas, disclosures, ações de linha, atalhos em
+  ícone) e 4,5:1 do texto de hierarquia sobre `--bg-bar` nos 7 `PALETTES`. NÃO
+  chegam a 32px, fora do guard: cabeçalho do card de Cotas (~14px), "Abrir uso e
+  cotas" (~22px) e "Reportar bug" (~22px); não escreva que todo controle do rail
+  tem 32px. O `--text-faint` do `nexus-light` media 4,36:1 sobre a barra porque
   só `--bg` e `--bg-elevated` eram conferidos; a causa era a paleta (`base.css` e
   `ui-theme.ts` guardam o mesmo valor e `ui-theme.test.ts` confere que andam
-  juntos), não os seletores. Sobre a linha selecionada o guard é catraca da
-  dívida conhecida (7 pares tema:token), não aprovação: subir isso é decisão de
-  paleta ou de tinta da seleção.
+  juntos), não os seletores.
+- Linha selecionada do rail: tinta de acento de 6% (a 12% eram 7 pares abaixo de
+  4,5:1; teto medido 7,3% no `nexus-light`/`--text-dim`, 9,1% no
+  `solarized-dark`/`--text`), o hover guarda a mesma tinta, e dentro de
+  `.workspace-rail__row--selected` o `--text-faint` é reapontado para
+  `--text-dim` (o faint do `nexus-light` dá 4,27 sobre a tinta). O guard exige
+  4,5:1 de text/dim/faint nos 7 temas sobre essa linha, em repouso e no hover,
+  sem catraca de dívida. Tinta maior ou o reapontamento removido reprovam lá.
 
 ## Conventions
 
