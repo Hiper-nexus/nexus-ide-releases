@@ -56,3 +56,39 @@ export function shouldDiscardBeforeRealtime(
   if (opts.allowWeakSpeech && hasRecoverableWeakSpeech(input)) return false;
   return !opts.shouldTryRealtime && !opts.hasQueuedRealtimeTranscript;
 }
+
+/** Ditado com menos que isto de tecla baixa útil não carrega fala. */
+export const DICTATION_MIN_DURATION_SEC = 0.3;
+/** Fala mínima (quadros acima do piso de ruído) para valer um ditado. */
+export const DICTATION_MIN_SPEECH_SEC = 0.2;
+/** Abaixo disto (RMS e pico) o microfone está praticamente mudo. */
+const NEAR_MUTE_RMS = 0.003;
+const NEAR_MUTE_PEAK = 0.012;
+
+export interface DictationCaptureGateInput {
+  durationSec: number;
+  heardSpeech?: boolean;
+  maxRms?: number;
+  maxPeak?: number;
+  quality?: { speechSec: number };
+}
+
+/**
+ * Ditado: true = não mandar ao STT. Whisper alucina frases fixas ("The
+ * following is a presentation of...") sobre silêncio/ruído; sem fala medida
+ * não há o que transcrever. Medidas ausentes nunca bloqueiam (só a duração).
+ */
+export function shouldDiscardDictationCapture(
+  input: DictationCaptureGateInput,
+): boolean {
+  if (input.durationSec < DICTATION_MIN_DURATION_SEC) return true;
+  if (
+    input.maxRms !== undefined &&
+    input.maxPeak !== undefined &&
+    input.maxRms < NEAR_MUTE_RMS &&
+    input.maxPeak < NEAR_MUTE_PEAK
+  ) {
+    return true;
+  }
+  return input.quality !== undefined && input.quality.speechSec < DICTATION_MIN_SPEECH_SEC;
+}

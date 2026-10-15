@@ -15,7 +15,11 @@ import {
   type DictationSessionDraft,
   type DictationSessionOutcome,
 } from './dictation-session';
-import { hasUsableLocalSpeech, shouldDiscardBeforeRealtime } from './capture-gate';
+import {
+  hasUsableLocalSpeech,
+  shouldDiscardBeforeRealtime,
+  shouldDiscardDictationCapture,
+} from './capture-gate';
 import {
   isDiscardableTranscript,
   isWakeAckOnlyTranscript,
@@ -383,6 +387,14 @@ export async function finishAndProcess(
           openVoiceSettings: () =>
             useProductNavigationStore.getState().openSettings('voice'),
         });
+      }
+      if (shouldDiscardDictationCapture(result)) {
+        console.log('[voice] ditado sem fala audível (mudo/curto) — descartado antes do STT');
+        reportDictationSession({ result: 'empty', errorCode: 'no-speech' });
+        store.setDictationPending(null);
+        store.setNote('Nada audível: ditado descartado');
+        store.setStatus('idle');
+        return;
       }
       store.setStatus('transcribing');
       const stt = await transcribeCapture();

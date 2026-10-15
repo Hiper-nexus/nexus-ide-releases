@@ -1,8 +1,10 @@
 import { z } from 'zod';
-import type {
-  JarvisBrainProviderId,
-  VoiceRouting,
-  VoiceSpeakMode,
+import {
+  HOLD_TO_TALK_MAX_MS,
+  HOLD_TO_TALK_MIN_MS,
+  type JarvisBrainProviderId,
+  type VoiceRouting,
+  type VoiceSpeakMode,
 } from './voice-config';
 
 /**
@@ -112,6 +114,13 @@ export const setConfigRequestSchema = z.object({
   personaCustomInstructions: z.string().max(2_000).optional(),
   /** Modo de saída do ditado: tradução EN otimizada p/ execução ou PT literal. */
   dictationOutputMode: z.enum(['english', 'portuguese']).optional(),
+  /** Atraso para ditar segurando Space (ms). */
+  holdToTalkMs: z
+    .number()
+    .int()
+    .min(HOLD_TO_TALK_MIN_MS)
+    .max(HOLD_TO_TALK_MAX_MS)
+    .optional(),
 });
 
 export type SetConfigRequest = z.infer<typeof setConfigRequestSchema>;
@@ -187,6 +196,8 @@ export interface VoiceRuntimeInfo {
   hotkeyArmed?: boolean;
   /** Modo de saída do ditado (paridade ClockVoice): EN execução ou PT literal. */
   dictationOutputMode?: 'english' | 'portuguese';
+  /** Atraso (ms) para o Space armar o ditado ao ser segurado. */
+  holdToTalkMs?: number;
   /** Wake word ("Jarvis") toggle + whether its Picovoice key is present. */
   wakeWordEnabled: boolean;
   /**

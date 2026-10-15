@@ -496,3 +496,39 @@ describe('voice-config-store — migração do Grok Voice Transcribe (xAI)', () 
     expect(providersOf(second.stt)).toEqual(['openai', 'xai']);
   });
 });
+
+describe('voice-config-store — atraso do hold-to-talk', () => {
+  afterEach(() => {
+    vi.doUnmock('node:os');
+    vi.resetModules();
+  });
+
+  it('padrão 450ms, persiste o patch e limita à faixa 250–1000', async () => {
+    const { home, store } = await loadStoreInTempHome();
+    store.loadVoiceConfig();
+    expect(store.buildRuntimeInfo().holdToTalkMs).toBe(450);
+
+    store.applyConfigPatch({ holdToTalkMs: 700 });
+    expect(store.buildRuntimeInfo().holdToTalkMs).toBe(700);
+    const file = path.join(home, '.nexus', 'plugins', 'voice', 'nexus-voice.json');
+    expect(JSON.parse(fs.readFileSync(file, 'utf8')).input.holdToTalkMs).toBe(700);
+
+    // Patch inalheio não zera o valor.
+    store.applyConfigPatch({ speakMode: 'off' });
+    expect(store.buildRuntimeInfo().holdToTalkMs).toBe(700);
+
+    // Valor fora da faixa gravado à mão no arquivo é limitado na leitura.
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+    raw.input.holdToTalkMs = 99_999;
+    fs.writeFileSync(file, JSON.stringify(raw));
+    store.loadVoiceConfig();
+    expect(store.buildRuntimeInfo().holdToTalkMs).toBe(1000);
+  });
+
+  it('o schema do IPC rejeita atraso fora da faixa', async () => {
+    const { setConfigRequestSchema } = await import('../../shared/voice-ipc');
+    expect(setConfigRequestSchema.safeParse({ holdToTalkMs: 200 }).success).toBe(false);
+    expect(setConfigRequestSchema.safeParse({ holdToTalkMs: 1001 }).success).toBe(false);
+    expect(setConfigRequestSchema.safeParse({ holdToTalkMs: 500 }).success).toBe(true);
+  });
+});

@@ -127,6 +127,7 @@ import { pttStartAction } from './ptt-barge-in';
 import {
   HOLD_TO_TALK_SAFETY_MAX_MS,
   HOLD_TO_TALK_SILENCE_MS,
+  clampHoldToTalkMs,
 } from './hold-to-talk';
 import { attachWindowPtt } from './voice-window-ptt';
 import { onDictationRequest } from './manual-dictation';
@@ -1493,6 +1494,8 @@ export function useVoiceController(active = true): void {
       {
         getKeyCode: () =>
           useVoiceStore.getState().info?.pushToTalkKeyCode ?? 'Space',
+        getHoldMs: () =>
+          clampHoldToTalkMs(useVoiceStore.getState().info?.holdToTalkMs),
         isEnabled: () => {
           const info = useVoiceStore.getState().info;
           if (!info || info.captureAllowed === false) return false;

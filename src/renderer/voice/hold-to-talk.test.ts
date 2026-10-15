@@ -3,8 +3,11 @@ import { describe, expect, it } from 'vitest';
 import {
   HOLD_TO_TALK_SAFETY_MAX_MS,
   HOLD_TO_TALK_SILENCE_MS,
+  HOLD_TO_TALK_MAX_MS,
+  HOLD_TO_TALK_MIN_MS,
   HOLD_TO_TALK_THRESHOLD_MS,
   HoldToTalkDiscriminator,
+  clampHoldToTalkMs,
 } from './hold-to-talk';
 
 describe('fiação viva do hold-to-talk', () => {
@@ -97,23 +100,39 @@ describe('HoldToTalkDiscriminator', () => {
     expect(events.some((e) => e.stopDictation)).toBe(false);
   });
 
-  it('auto-repeat antes do limiar é digitação: libera a tecla e devolve o espaço retido', () => {
+  it('auto-repeat antes do limiar é suprimido: a decisão é só por tempo', () => {
     const d = new HoldToTalkDiscriminator();
     d.keyDown({ repeat: false });
 
     const repeat = d.keyDown({ repeat: true });
-    expect(repeat.suppressKey).toBe(false);
-    expect(repeat.emitSpaces).toBe(1);
+    expect(repeat.suppressKey).toBe(true);
+    expect(repeat.emitSpaces).toBe(0);
     expect(repeat.startDictation).toBe(false);
-    expect(d.state).toBe('typing');
+    expect(d.state).toBe('pending');
 
-    // O limiar que já estava armado não pode armar ditado depois disso.
-    expect(d.thresholdElapsed().startDictation).toBe(false);
+    // Segurou além do limiar, mesmo com repeats do SO no meio: fala.
+    expect(d.thresholdElapsed().startDictation).toBe(true);
+    expect(d.state).toBe('talking');
+  });
 
-    // Repeats seguintes seguem passando direto para o terminal.
-    const next = d.keyDown({ repeat: true });
-    expect(next.suppressKey).toBe(false);
-    expect(next.emitSpaces).toBe(0);
+  it('soltar antes do limiar após repeats entrega exatamente 1 espaço', () => {
+    const d = new HoldToTalkDiscriminator();
+    d.keyDown({ repeat: false });
+    d.keyDown({ repeat: true });
+    d.keyDown({ repeat: true });
+
+    const up = d.keyUp();
+    expect(up.emitSpaces).toBe(1);
+    expect(up.startDictation).toBe(false);
+    expect(d.state).toBe('idle');
+  });
+
+  it('repeat órfão (sem keydown retido) não vira espaço nem ditado', () => {
+    const d = new HoldToTalkDiscriminator();
+    const repeat = d.keyDown({ repeat: true });
+    expect(repeat.suppressKey).toBe(false);
+    expect(repeat.emitSpaces).toBe(0);
+    expect(d.state).toBe('idle');
   });
 
   it('auto-repeat durante o ditado continua suprimido', () => {
@@ -125,17 +144,6 @@ describe('HoldToTalkDiscriminator', () => {
     expect(repeat.suppressKey).toBe(true);
     expect(repeat.emitSpaces).toBe(0);
     expect(d.state).toBe('talking');
-  });
-
-  it('soltar após digitação por repeat não encerra ditado nenhum', () => {
-    const d = new HoldToTalkDiscriminator();
-    d.keyDown({ repeat: false });
-    d.keyDown({ repeat: true });
-
-    const up = d.keyUp();
-    expect(up.stopDictation).toBe(false);
-    expect(up.suppressKey).toBe(false);
-    expect(d.state).toBe('idle');
   });
 
   it('keyup sem keydown correspondente é inerte', () => {
@@ -174,8 +182,21 @@ describe('HoldToTalkDiscriminator', () => {
     expect(d.keyUp().emitSpaces).toBe(1);
   });
 
-  it('o limiar é curto o bastante para push-to-talk e longo o bastante para um toque', () => {
-    expect(HOLD_TO_TALK_THRESHOLD_MS).toBeGreaterThanOrEqual(150);
-    expect(HOLD_TO_TALK_THRESHOLD_MS).toBeLessThanOrEqual(400);
+  it('o limiar padrão (450ms) é maior que um espaço de digitação lento e cabe na faixa configurável', () => {
+    // Contrato novo: o teto subiu de 400 para 600 ms porque o auto-repeat do SO
+    // deixou de ser sinal de digitação (é suprimido em 'pending').
+    expect(HOLD_TO_TALK_THRESHOLD_MS).toBe(450);
+    expect(HOLD_TO_TALK_THRESHOLD_MS).toBeGreaterThanOrEqual(HOLD_TO_TALK_MIN_MS);
+    expect(HOLD_TO_TALK_THRESHOLD_MS).toBeLessThanOrEqual(600);
+    expect(HOLD_TO_TALK_MIN_MS).toBe(250);
+    expect(HOLD_TO_TALK_MAX_MS).toBe(1000);
+  });
+
+  it('clampHoldToTalkMs prende na faixa e cai no padrão para lixo', () => {
+    expect(clampHoldToTalkMs(100)).toBe(250);
+    expect(clampHoldToTalkMs(5000)).toBe(1000);
+    expect(clampHoldToTalkMs(600.4)).toBe(600);
+    expect(clampHoldToTalkMs(undefined)).toBe(450);
+    expect(clampHoldToTalkMs(Number.NaN)).toBe(450);
   });
 });

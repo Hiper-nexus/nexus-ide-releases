@@ -16,6 +16,10 @@ import {
   GEMINI_TTS_MODEL_OPTIONS,
   GEMINI_TTS_VOICE_OPTIONS,
   OPENAI_TTS_VOICE_OPTIONS,
+  HOLD_TO_TALK_DEFAULT_MS,
+  HOLD_TO_TALK_MAX_MS,
+  HOLD_TO_TALK_MIN_MS,
+  clampHoldToTalkMs,
 } from '../../shared/voice-config';
 import type { JarvisLiveTransport } from '../../shared/voice-config';
 import { credentialLinkForEnv } from '../../shared/credential-links';
@@ -171,6 +175,7 @@ export function VoiceSettings({ onClose, embedded = false }: VoiceSettingsProps 
   const [jarvisBrainProvider, setJarvisBrainProvider] = useState('');
   const [speakMode, setSpeakMode] = useState('summary');
   const [dictationMode, setDictationMode] = useState<'english' | 'portuguese'>('english');
+  const [holdMs, setHoldMs] = useState<number>(HOLD_TO_TALK_DEFAULT_MS);
   const [routing, setRouting] = useState('focused-pane');
   const [triggerKey, setTriggerKey] = useState('Space');
   const [wakeWordOn, setWakeWordOn] = useState(false);
@@ -275,6 +280,7 @@ export function VoiceSettings({ onClose, embedded = false }: VoiceSettingsProps 
     );
     setSpeakMode(info.speakMode);
     setDictationMode(info.dictationOutputMode ?? 'english');
+    setHoldMs(clampHoldToTalkMs(info.holdToTalkMs));
     setRouting(info.routing);
     setTriggerKey(info.pushToTalkKeyCode);
     setTriggerAccel(info.shortcut);
@@ -429,6 +435,7 @@ export function VoiceSettings({ onClose, embedded = false }: VoiceSettingsProps 
           : {}),
         speakMode: speakMode as 'summary' | 'full' | 'off',
         dictationOutputMode: dictationMode,
+        holdToTalkMs: clampHoldToTalkMs(holdMs),
         routing: (jarvisLiveOn ? 'jarvis' : routing) as
           | 'jarvis'
           | 'focused-pane'
@@ -1066,6 +1073,25 @@ export function VoiceSettings({ onClose, embedded = false }: VoiceSettingsProps 
                           Português como foi falado
                         </option>
                       </select>
+                    </label>
+                    <label className="agent-picker__label">
+                      <span>
+                        Atraso para ditar segurando Espaço: {holdMs} ms
+                      </span>
+                      <input
+                        type="range"
+                        className="voice-settings__hold-range"
+                        min={HOLD_TO_TALK_MIN_MS}
+                        max={HOLD_TO_TALK_MAX_MS}
+                        step={50}
+                        value={holdMs}
+                        aria-label="Atraso para ditar segurando Espaço, em milissegundos"
+                        onChange={(e) => setHoldMs(Number(e.target.value))}
+                      />
+                      <small>
+                        Maior evita ditar sem querer ao digitar. Com o ditado
+                        ligado, segurar Espaço não repete espaços.
+                      </small>
                     </label>
                   </div>
 

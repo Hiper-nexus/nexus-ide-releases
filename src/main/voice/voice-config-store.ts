@@ -11,6 +11,7 @@ import {
   DEFAULT_XAI_STT,
   LEGACY_GEMINI_LIVE_MODEL,
   LEGACY_GEMINI_LIVE_VOICE,
+  clampHoldToTalkMs,
   flattenJarvisBrainProviders,
   isWindowScopedShortcut,
   keyCodeFromAccelerator,
@@ -400,6 +401,9 @@ export function applyConfigPatch(patch: SetConfigRequest): VoiceConfig {
       ...current.input,
       shortcut,
       pushToTalkKey: { code: pushToTalkKeyCode },
+      ...(patch.holdToTalkMs !== undefined
+        ? { holdToTalkMs: clampHoldToTalkMs(patch.holdToTalkMs) }
+        : {}),
     },
     stt,
     // Voz e modelo valem para a CABEÇA da cadeia; modelo Gemini só quando é
@@ -545,6 +549,7 @@ export function buildRuntimeInfo(): VoiceRuntimeInfo {
     pushToTalkKeyCode,
     hotkeyMode,
     hotkeyScope: isWindowScopedShortcut(shortcut) ? 'window' : 'global',
+    holdToTalkMs: clampHoldToTalkMs(current.input.holdToTalkMs),
     wakeWordEnabled: current.wakeWord.enabled,
     dictationOutputMode:
       current.stt.outputMode === 'portuguese' ? 'portuguese' : 'english',

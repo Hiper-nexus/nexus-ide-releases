@@ -201,12 +201,34 @@ export const GEMINI_LIVE_VOICE_OPTIONS = [
 /** Default OpenAI (Realtime + alinhamento TTS). Ash cobre realtime e TTS. */
 export const DEFAULT_OPENAI_VOICE = 'ash';
 
+/**
+ * Atraso (ms) que o Space precisa ficar baixo para armar o ditado. Padrão
+ * 450 ms: um espaço de digitação lento passa de 250 ms (o relato do operador),
+ * e 450 ainda é uma espera curta para quem quer falar. Faixa configurável.
+ */
+export const HOLD_TO_TALK_DEFAULT_MS = 450;
+export const HOLD_TO_TALK_MIN_MS = 250;
+export const HOLD_TO_TALK_MAX_MS = 1000;
+
+/** Prende o atraso na faixa; qualquer valor não numérico cai no padrão. */
+export function clampHoldToTalkMs(value: number | null | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return HOLD_TO_TALK_DEFAULT_MS;
+  }
+  return Math.min(
+    HOLD_TO_TALK_MAX_MS,
+    Math.max(HOLD_TO_TALK_MIN_MS, Math.round(value)),
+  );
+}
+
 const inputSchema = z.object({
   mode: z.enum(['push-to-talk']).default('push-to-talk'),
   /** Electron accelerator for keydown (globalShortcut). */
   shortcut: z.string().min(1).max(64).default('CommandOrControl+Shift+Space'),
   /** Bare key code for the uiohook keyup match (e.g. "Space"). */
   pushToTalkKey: z.object({ code: z.string().max(32) }).optional(),
+  /** Atraso do hold-to-talk em ms (limitado na leitura por `clampHoldToTalkMs`). */
+  holdToTalkMs: z.number().optional(),
 });
 
 export const jarvisLiveConfigSchema = z

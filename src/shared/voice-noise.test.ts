@@ -64,3 +64,34 @@ describe('isLikelyNoiseTranscript', () => {
     expect(isLikelyNoiseTranscript(transcript)).toBe(true);
   });
 });
+
+describe('repetição degenerada e alucinação de apresentação', () => {
+  const HALLUCINATION = Array(6)
+    .fill('The following is a presentation of the')
+    .join('. ');
+
+  it('descarta a alucinação "The following is a presentation of..." repetida', async () => {
+    const { isDegenerateRepetition, isLikelyNoiseTranscript } = await import('./voice-noise');
+    expect(isDegenerateRepetition(HALLUCINATION)).toBe(true);
+    expect(isLikelyNoiseTranscript(HALLUCINATION)).toBe(true);
+  });
+
+  it('descarta a frase sozinha (boilerplate conhecido)', async () => {
+    const { isLikelyNoiseTranscript } = await import('./voice-noise');
+    expect(isLikelyNoiseTranscript('The following is a presentation of the')).toBe(true);
+  });
+
+  it('pega repetição da mesma palavra ou n-grama colada', async () => {
+    const { isDegenerateRepetition } = await import('./voice-noise');
+    expect(isDegenerateRepetition('you you you you you you')).toBe(true);
+    expect(isDegenerateRepetition('thank you so much thank you so much thank you so much')).toBe(true);
+  });
+
+  it('não pega fala normal nem repetição curta legítima', async () => {
+    const { isDegenerateRepetition } = await import('./voice-noise');
+    expect(isDegenerateRepetition('abra o arquivo de configuração e rode os testes')).toBe(false);
+    expect(isDegenerateRepetition('no no')).toBe(false);
+    expect(isDegenerateRepetition('run the tests. then run the build. then commit')).toBe(false);
+    expect(isDegenerateRepetition('')).toBe(false);
+  });
+});

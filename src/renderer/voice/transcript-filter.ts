@@ -11,7 +11,10 @@
  * os artefatos que nunca são fala real (créditos, pontuação pura).
  */
 
-import { isMediaBoilerplateTranscript } from '../../shared/voice-noise';
+import {
+  isDegenerateRepetition,
+  isMediaBoilerplateTranscript,
+} from '../../shared/voice-noise';
 
 /** Alucinações clássicas do Whisper em áudio sem fala. */
 const COLD_GHOSTS = new Set([
@@ -214,6 +217,7 @@ export function isDiscardableTranscript(
   if (clean.length === 0) return true;
   if (NON_SPEECH_TAG.test(clean)) return true;
   if (isMediaBoilerplateTranscript(clean)) return true;
+  if (isDegenerateRepetition(text)) return true;
   if (JARVIS_SELF_ECHO.has(clean)) return true;
   return opts.inConversation ? HARD_GHOSTS.has(clean) : COLD_GHOSTS.has(clean);
 }
