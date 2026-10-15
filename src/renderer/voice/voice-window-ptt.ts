@@ -18,12 +18,15 @@ import {
   HoldToTalkDiscriminator,
 } from './hold-to-talk';
 
+/** keyCode que o Chromium reporta para teclas processadas por um IME. */
+const IME_KEY_CODE = 229;
+
 export interface WindowPttCallbacks {
   onStart: () => void;
   onStop: () => void;
   /**
    * Entrega os espaços retidos ao destino que tinha foco quando a tecla desceu
-   * (toque rápido, ou auto-repeat que provou ser digitação).
+   * (toque rápido: soltou antes do limiar).
    */
   emitSpace?: (target: EventTarget | null, count: number) => void;
 }
@@ -147,6 +150,8 @@ export function attachWindowPtt(
     }
     if (e.defaultPrevented) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
+    // Space dentro de composição de IME confirma o texto: nunca reter.
+    if (e.isComposing || e.keyCode === IME_KEY_CODE) return;
     if (!codeMatchesPttKey(e.code, options.getKeyCode())) return;
     if (shouldIgnoreWindowPttTarget(e.target)) return;
     if (!e.repeat) heldTarget = e.target;
@@ -164,14 +169,22 @@ export function attachWindowPtt(
     heldTarget = null;
   };
 
+  // Janela minimizada / troca de Space do macOS pode esconder a página sem
+  // blur, perdendo o keyup: nunca deixa o hold preso.
+  const onVisibilityChange = () => {
+    if (document.visibilityState === 'hidden') onBlur();
+  };
+
   window.addEventListener('keydown', onKeyDown, true);
   window.addEventListener('keyup', onKeyUp, true);
   window.addEventListener('blur', onBlur);
+  document.addEventListener('visibilitychange', onVisibilityChange);
 
   return () => {
     window.removeEventListener('keydown', onKeyDown, true);
     window.removeEventListener('keyup', onKeyUp, true);
     window.removeEventListener('blur', onBlur);
+    document.removeEventListener('visibilitychange', onVisibilityChange);
     clearThreshold();
     apply(discriminator.cancel(), null);
   };

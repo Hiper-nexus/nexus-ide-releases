@@ -150,18 +150,88 @@ describe('attachWindowPtt', () => {
     dispose();
   });
 
-  it('auto-repeat antes do limiar é digitação: libera a tecla e não arma', () => {
+  it('auto-repeat antes do limiar é suprimido e a decisão segue só o tempo', () => {
     const { onStart, emitSpace, dispose } = attach();
 
     keydown();
     vi.advanceTimersByTime(HOLD_MS - 100);
     const repeat = keydown(true);
 
-    expect(repeat.defaultPrevented).toBe(false);
-    expect(emitSpace).toHaveBeenCalledTimes(1);
+    expect(repeat.defaultPrevented).toBe(true);
+    expect(emitSpace).not.toHaveBeenCalled();
 
+    // O limiar original ainda vence: segurou, então fala.
+    vi.advanceTimersByTime(100);
+    expect(onStart).toHaveBeenCalledTimes(1);
+    dispose();
+  });
+
+  it('soltar antes do limiar com repeats no meio entrega exatamente 1 espaço', () => {
+    const { onStart, emitSpace, dispose } = attach();
+    keydown();
+    vi.advanceTimersByTime(HOLD_MS - 100);
+    keydown(true);
+    keydown(true);
+    keyup();
+    expect(emitSpace).toHaveBeenCalledTimes(1);
+    expect(emitSpace.mock.calls[0]![1]).toBe(1);
     vi.advanceTimersByTime(HOLD_MS * 4);
     expect(onStart).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it('keydown em composição de IME não é retido nem arma ditado', () => {
+    const { onStart, emitSpace, dispose } = attach();
+    const event = new KeyboardEvent('keydown', {
+      code: 'Space',
+      bubbles: true,
+      cancelable: true,
+      isComposing: true,
+    });
+    window.dispatchEvent(event);
+    vi.advanceTimersByTime(HOLD_MS * 2);
+    keyup();
+    expect(event.defaultPrevented).toBe(false);
+    expect(onStart).not.toHaveBeenCalled();
+    expect(emitSpace).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it('janela escondida com a tecla baixa (keyup perdido) cancela o hold', () => {
+    const { onStart, onStop, emitSpace, dispose } = attach();
+    keydown();
+    vi.advanceTimersByTime(HOLD_MS - 50);
+    const spy = vi
+      .spyOn(document, 'visibilityState', 'get')
+      .mockReturnValue('hidden');
+    document.dispatchEvent(new Event('visibilitychange'));
+    spy.mockRestore();
+    vi.advanceTimersByTime(HOLD_MS * 4);
+    expect(onStart).not.toHaveBeenCalled();
+    expect(onStop).not.toHaveBeenCalled();
+    expect(emitSpace).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it('o atraso é lido a cada pressionamento (mudança em Configurações vale na hora)', () => {
+    let holdMs = 300;
+    const onStart = vi.fn();
+    const dispose = attachWindowPtt(
+      { onStart, onStop: vi.fn(), emitSpace: vi.fn() },
+      { getKeyCode: () => 'Space', isEnabled: () => true, getHoldMs: () => holdMs },
+    );
+    keydown();
+    vi.advanceTimersByTime(300);
+    expect(onStart).toHaveBeenCalledTimes(1);
+    keyup();
+
+    holdMs = 800;
+    keydown();
+    vi.advanceTimersByTime(700);
+    expect(onStart).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(100);
+    expect(onStart).toHaveBeenCalledTimes(2);
+    keyup();
     dispose();
   });
 

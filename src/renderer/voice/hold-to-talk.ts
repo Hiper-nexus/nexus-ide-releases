@@ -13,16 +13,25 @@
  * ponta; a camada DOM (`voice-window-ptt.ts`) só traduz eventos e agenda o
  * timer do limiar.
  *
- * Auto-repeat: uma tecla segurada além do delay de repetição do SO é
- * digitação-com-tecla-baixa, não necessariamente um hold de fala. Se um repeat
- * chega ANTES do limiar, o estado vira `typing`: a tecla é liberada, o espaço
- * retido é devolvido e o ditado não arma mais naquele ciclo. O limiar é
- * deliberadamente menor que o menor delay de repetição usual do SO (~250ms),
- * então em push-to-talk normal o ditado arma antes de qualquer repeat.
+ * Auto-repeat: enquanto o keydown está retido (`pending`), repeats do SO são
+ * SUPRIMIDOS e a decisão é só por tempo: segurou além do limiar → fala; soltou
+ * antes → exatamente 1 espaço. Isso permite um limiar maior que o delay de
+ * repetição do SO (~225–375 ms no macOS), que é o que protege quem digita
+ * espaços devagar. Troca assumida: segurar Space para repetir espaços deixa de
+ * funcionar enquanto o ditado por Space está habilitado.
  */
 
+import {
+  HOLD_TO_TALK_DEFAULT_MS,
+  HOLD_TO_TALK_MAX_MS,
+  HOLD_TO_TALK_MIN_MS,
+  clampHoldToTalkMs,
+} from '../../shared/voice-config';
+
+export { HOLD_TO_TALK_MAX_MS, HOLD_TO_TALK_MIN_MS, clampHoldToTalkMs };
+
 /** Limiar de hold. Abaixo disso é toque (espaço); acima é fala. */
-export const HOLD_TO_TALK_THRESHOLD_MS = 250;
+export const HOLD_TO_TALK_THRESHOLD_MS = HOLD_TO_TALK_DEFAULT_MS;
 
 /**
  * Válvula de segurança do hold-to-talk (tecla presa / keyup perdido).
@@ -43,7 +52,7 @@ export const HOLD_TO_TALK_SAFETY_MAX_MS = 5 * 60_000;
  */
 export const HOLD_TO_TALK_SILENCE_MS = Number.POSITIVE_INFINITY;
 
-export type HoldToTalkState = 'idle' | 'pending' | 'talking' | 'typing';
+export type HoldToTalkState = 'idle' | 'pending' | 'talking';
 
 export interface HoldToTalkOutcome {
   /** O caller deve chamar preventDefault/stopPropagation neste evento. */
@@ -78,22 +87,14 @@ export class HoldToTalkDiscriminator {
   /** keydown físico da tecla de PTT. */
   keyDown(event: { readonly repeat: boolean }): HoldToTalkOutcome {
     if (event.repeat) {
-      if (this.#state === 'talking') {
-        // Já estamos falando: repeat não vira caractere.
-        return outcome({ suppressKey: true });
-      }
-      if (this.#state === 'pending') {
-        // Repeat antes do limiar = digitação. Devolve o espaço retido e passa
-        // a deixar a tecla fluir para o terminal.
-        this.#state = 'typing';
-        return outcome({ emitSpaces: 1 });
-      }
-      // Em 'typing' (ou 'idle' órfão) o navegador entrega o caractere sozinho.
-      return INERT;
+      // Repeat nunca vira caractere nem muda de estado: em 'talking' seria
+      // espaço no meio da fala; em 'pending' a decisão é só por tempo. Sem
+      // keydown retido ('idle' órfão) o navegador entrega a tecla sozinho.
+      return this.#state === 'idle' ? INERT : outcome({ suppressKey: true });
     }
     if (this.#state !== 'idle') {
       // Sem duplicar retenção nem re-armar o timer.
-      return outcome({ suppressKey: this.#state !== 'typing' });
+      return outcome({ suppressKey: true });
     }
     this.#state = 'pending';
     return outcome({ suppressKey: true, armThreshold: true });
@@ -117,7 +118,7 @@ export class HoldToTalkDiscriminator {
     if (previous === 'talking') {
       return outcome({ suppressKey: true, stopDictation: true });
     }
-    // 'typing' ou 'idle': a tecla pertence ao terminal.
+    // 'idle': a tecla pertence ao terminal.
     return INERT;
   }
 

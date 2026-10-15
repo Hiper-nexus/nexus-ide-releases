@@ -122,23 +122,37 @@ describe('Space hold-to-talk — tempo de parede real', () => {
     expect(recorder.stops).toBe(1);
   });
 
-  it('auto-repeat do SO durante digitação NÃO é confundido com hold de fala', async () => {
+  it('auto-repeat do SO antes do limiar é suprimido; soltar cedo = 1 espaço, sem ditado', async () => {
     const helper = mountTerminal();
     const recorder: Recorder = { starts: 0, stops: 0, spaces: 0 };
     attach(recorder, helper);
 
-    // Tecla baixa, e o SO começa a repetir ANTES do limiar vencer.
     press(helper);
     await sleep(40);
     press(helper, true);
     await sleep(40);
     press(helper, true);
-    // Passa do limiar ainda com a tecla baixa: mesmo assim é digitação.
-    await sleep(HOLD_TO_TALK_THRESHOLD_MS);
     release(helper);
+    await sleep(HOLD_TO_TALK_THRESHOLD_MS);
 
     expect(recorder.starts).toBe(0);
-    expect(recorder.spaces).toBeGreaterThanOrEqual(1);
+    expect(recorder.spaces).toBe(1);
+  });
+
+  it('segurar além do limiar com auto-repeat do SO no meio ainda arma o ditado', async () => {
+    const helper = mountTerminal();
+    const recorder: Recorder = { starts: 0, stops: 0, spaces: 0 };
+    attach(recorder, helper);
+
+    press(helper);
+    await sleep(100);
+    press(helper, true);
+    await sleep(HOLD_TO_TALK_THRESHOLD_MS);
+
+    expect(recorder.starts).toBe(1);
+    expect(recorder.spaces).toBe(0);
+    release(helper);
+    expect(recorder.stops).toBe(1);
   });
 
   it('toque logo abaixo do limiar ainda é espaço, não fala', async () => {
