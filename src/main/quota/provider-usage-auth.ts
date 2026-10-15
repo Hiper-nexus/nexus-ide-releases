@@ -6,7 +6,6 @@
  * configured vault, launcher, environment, and native login candidates.
  */
 
-import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -30,6 +29,8 @@ import { probeCodexCliUsage } from './codex-cli-usage';
 import type { LiveProviderProbe } from './provider-live-usage';
 import { probeClaudeCredentialIdentity } from './claude-native-account';
 import { kimiNativeCredentialFiles } from '../adapters/kimi-credential-files';
+import { readClaudeConfigSnapshotAsync } from '../adapters/claude-config-snapshot';
+import { readAgyWindowsKeyringBlobAsync } from '../adapters/agy-windows-keyring';
 
 const CRED_PREFIX = 'acctcred:';
 const KEY_PREFIX = 'acctkey:';
@@ -152,20 +153,14 @@ export function claudeNativeAccessTokenExpiresAt(): number | null {
   }
 }
 
-export function hasClaudeNativeSession(configDir?: string): boolean {
+export async function hasClaudeNativeSession(configDir?: string): Promise<boolean> {
   try {
-    const file = configDir
-      ? path.join(configDir, '.claude.json')
-      : path.join(os.homedir(), '.claude.json');
-    const raw = JSON.parse(readText(file) ?? 'null') as Record<
-      string,
-      unknown
-    > | null;
-    const acct = raw?.oauthAccount as Record<string, unknown> | undefined;
-    return Boolean(
-      acct && (acct.emailAddress || acct.organizationUuid),
+    const snap = await readClaudeConfigSnapshotAsync(
+      path.join(configDir ?? os.homedir(), '.claude.json'),
     );
+    return Boolean(snap?.email || snap?.organizationUuid);
   } catch {
+    // Evidência de sessão é opcional: falha de IO nunca derruba o ciclo de cota.
     return false;
   }
 }
@@ -517,8 +512,8 @@ function extractKimiToken(blob: string): string | null {
   return parseKimiCredsBlob(blob)?.accessToken ?? null;
 }
 
-export function resolveGeminiAccessToken(accountId?: string): string | null {
-  return resolveGeminiOauthCreds(accountId)?.accessToken ?? null;
+export async function resolveGeminiAccessToken(accountId?: string): Promise<string | null> {
+  return (await resolveGeminiOauthCreds(accountId))?.accessToken ?? null;
 }
 
 export interface GeminiOauthCredsResolved {
@@ -528,9 +523,9 @@ export interface GeminiOauthCredsResolved {
 }
 
 /** Full OAuth blob for AGY/Gemini quota (access + refresh). */
-export function resolveGeminiOauthCreds(
+export async function resolveGeminiOauthCreds(
   accountId?: string,
-): GeminiOauthCredsResolved | null {
+): Promise<GeminiOauthCredsResolved | null> {
   if (accountId) {
     if (getAccount(accountId)?.adapterId !== 'agy') return null;
     const blob = safeGetSecret(CRED_PREFIX + accountId);
@@ -545,8 +540,11 @@ export function resolveGeminiOauthCreds(
     const parsed = parseGeminiCredsBlob(blob);
     if (parsed) return parsed;
   }
-  if (process.platform === 'win32') return readAgyWindowsCredential();
-  return null;
+  // go-keyring no Windows grava o OAuth em `gemini:antigravity`. A leitura
+  // assíncrona divide cache e invalidação (troca de conta) com o spawn.
+  if (process.platform !== 'win32') return null;
+  const slot = await readAgyWindowsKeyringBlobAsync();
+  return slot ? parseGeminiOauthBlob(slot) : null;
 }
 
 function tokenFields(source: {
@@ -596,45 +594,6 @@ export function parseGeminiOauthBlob(blob: string): GeminiOauthCredsResolved | n
 
 function parseGeminiCredsBlob(blob: string): GeminiOauthCredsResolved | null {
   return parseGeminiOauthBlob(blob);
-}
-
-const AGY_WIN_CRED_TTL_MS = 60_000;
-let agyWinCredCache: { at: number; value: GeminiOauthCredsResolved | null } | null = null;
-
-/** go-keyring no Windows grava o OAuth em `gemini:antigravity`. Sem segredo no log. */
-function readAgyWindowsCredential(): GeminiOauthCredsResolved | null {
-  if (process.platform !== 'win32') return null;
-  const now = Date.now();
-  if (agyWinCredCache && now - agyWinCredCache.at < AGY_WIN_CRED_TTL_MS) {
-    return agyWinCredCache.value;
-  }
-  let value: GeminiOauthCredsResolved | null = null;
-  try {
-    const script = [
-      'Add-Type @"',
-      'using System; using System.Runtime.InteropServices; using System.Text;',
-      'public class NexusAgyCred {',
-      '  [DllImport("advapi32", SetLastError=true, CharSet=CharSet.Unicode)]',
-      '  public static extern bool CredRead(string t, int type, int f, out IntPtr p);',
-      '  [DllImport("advapi32")] public static extern void CredFree(IntPtr p);',
-      '  [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]',
-      '  public struct C { public uint Flags; public uint Type; public IntPtr TargetName; public IntPtr Comment; public long LastWritten; public uint CredentialBlobSize; public IntPtr CredentialBlob; public uint Persist; public uint AttributeCount; public IntPtr Attributes; public IntPtr TargetAlias; public IntPtr UserName; }',
-      '  public static string Read() { IntPtr p; if (!CredRead("gemini:antigravity", 1, 0, out p)) return ""; try { var c = Marshal.PtrToStructure<C>(p); if (c.CredentialBlobSize==0) return ""; var b = new byte[c.CredentialBlobSize]; Marshal.Copy(c.CredentialBlob, b, 0, b.Length); return Encoding.UTF8.GetString(b); } finally { CredFree(p); } }',
-      '}',
-      '"@',
-      '[Console]::Out.Write([NexusAgyCred]::Read())',
-    ].join('\n');
-    const raw = execFileSync(
-      'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-Command', script],
-      { encoding: 'utf8', timeout: 8_000, windowsHide: true },
-    );
-    value = raw.trim() ? parseGeminiOauthBlob(raw) : null;
-  } catch {
-    value = null;
-  }
-  agyWinCredCache = { at: now, value };
-  return value;
 }
 
 export { extractClaudeAccessToken };

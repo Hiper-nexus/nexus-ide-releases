@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { clearClaudeConfigSnapshotCache } from '../adapters/claude-config-snapshot';
 
 const NO_NAMES: ReadonlySet<string> = new Set();
 
@@ -108,6 +109,7 @@ function syncBackClaudeAuthIdentity(
     fs.writeFileSync(realPath, JSON.stringify(merged, null, 2), {
       mode: 0o600,
     });
+    clearClaudeConfigSnapshotCache();
   } catch {
     // Best effort.
   }

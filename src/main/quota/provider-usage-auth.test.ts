@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => ({
   getActiveAccount: vi.fn(),
   codexCliUsage: vi.fn(),
   verifiedNativeClaudeToken: vi.fn(async () => null as string | null),
+  readAgyKeyringAsync: vi.fn(async () => null as string | null),
+  snapshotAsync: vi.fn(),
   probeClaudeCredentialIdentity: vi.fn<() => Promise<'match' | 'mismatch' | 'auth-expired' | 'unavailable'>>(async () => 'match'),
 }));
 
@@ -48,6 +50,12 @@ vi.mock('../adapters/launcher-provider-manager', () => ({
 }));
 
 vi.mock('../adapters/native-oauth-keychain', () => ({ readNativeOAuthCredential: mocks.nativeCredential }));
+vi.mock('../adapters/agy-windows-keyring', () => ({ readAgyWindowsKeyringBlobAsync: mocks.readAgyKeyringAsync }));
+vi.mock('../adapters/claude-config-snapshot', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../adapters/claude-config-snapshot')>();
+  mocks.snapshotAsync.mockImplementation(actual.readClaudeConfigSnapshotAsync);
+  return { ...actual, readClaudeConfigSnapshotAsync: mocks.snapshotAsync };
+});
 vi.mock('../adapters/managed-claude-auth', () => ({
   hasManagedClaudeAuth: mocks.hasManagedClaudeAuth,
   readManagedClaudeAuthAsync: mocks.readManagedClaudeAuthAsync,
@@ -57,7 +65,7 @@ import {
   fetchCodexAccountUsage, resolveClaudeToken, resolveCodexAuthCandidates, resolveProviderApiKeyCandidates,
   resolveGrokAccessTokenCandidates, resolveKimiAccessTokenCandidates,
   resolveKimiOauthCreds, resolveGeminiOauthCreds, persistKimiRotatedCreds,
-  parseGeminiOauthBlob,
+  parseGeminiOauthBlob, hasClaudeNativeSession,
 } from './provider-usage-auth';
 import { discoveredModelStateFor, resetModelDiscoveryForTests } from '../adapters/model-discovery';
 
@@ -316,7 +324,7 @@ describe('multi-account credential scoping', () => {
     expect(resolveGrokAccessTokenCandidates('wrong-account')).toEqual([]);
     expect(resolveKimiAccessTokenCandidates('wrong-account')).toEqual([]);
     expect(resolveKimiOauthCreds('wrong-account')).toBeNull();
-    expect(resolveGeminiOauthCreds('wrong-account')).toBeNull();
+    expect(await resolveGeminiOauthCreds('wrong-account')).toBeNull();
   });
 });
 
@@ -374,5 +382,34 @@ describe('parseGeminiOauthBlob', () => {
       expiryDate: Date.parse('2026-09-21T12:00:00.000Z'),
     });
     expect(parseGeminiOauthBlob('não é json')).toBeNull();
+  });
+});
+
+describe('quota cycle reads without blocking Main (#18)', () => {
+  const HOST_PLATFORM = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  afterEach(() => Object.defineProperty(process, 'platform', HOST_PLATFORM));
+
+  it('reads the Windows AGY slot through the shared async keyring reader', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    mocks.readAgyKeyringAsync.mockResolvedValueOnce(JSON.stringify({
+      token: { access_token: 'agy-at', refresh_token: 'agy-rt', expiry: '2026-10-14T20:00:00Z' },
+      id_token: 'h.e30.s',
+    }));
+    expect(await resolveGeminiOauthCreds()).toMatchObject({ accessToken: 'agy-at', refreshToken: 'agy-rt' });
+    expect(mocks.readAgyKeyringAsync).toHaveBeenCalledTimes(1);
+  });
+
+  it('never rejects the live-usage cycle when the config read fails (L2)', async () => {
+    mocks.snapshotAsync.mockRejectedValueOnce(new Error('EIO on close'));
+    await expect(hasClaudeNativeSession()).resolves.toBe(false);
+  });
+
+  it('answers the native Claude session evidence asynchronously from ~/.claude.json', async () => {
+    const file = path.join(os.homedir(), '.claude.json');
+    const pending = hasClaudeNativeSession();
+    expect(pending).toBeInstanceOf(Promise);
+    expect(await pending).toBe(false);
+    fs.writeFileSync(file, JSON.stringify({ oauthAccount: { organizationUuid: 'org-1' } }));
+    expect(await hasClaudeNativeSession()).toBe(true);
   });
 });

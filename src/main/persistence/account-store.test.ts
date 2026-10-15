@@ -22,7 +22,7 @@ const deps = vi.hoisted(() => ({
   keychainWrites: [] as string[],
   cachedSecrets: new Set<string>(),
   failSecretWrites: false,
-  activeEmail: null as string | null,
+  activeEmail: null as string | null | undefined,
   serverEmail: null as string | null,
   keychain: null as string | null,
   managedProfiles: new Map<string, string>(),
@@ -107,6 +107,18 @@ vi.mock('../quota/claude-oauth-refresh', async () => {
       deps.refreshBlob(blob, now),
     refreshClaudeOauthBlob: (blob: string, now: number) =>
       deps.refreshBlob(blob, now),
+  };
+});
+
+const agyKeyring = vi.hoisted(() => ({ invalidate: vi.fn() }));
+vi.mock('../adapters/agy-windows-keyring', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../adapters/agy-windows-keyring')>();
+  return {
+    ...actual,
+    invalidateAgyWindowsKeyringCache: (...args: []) => {
+      agyKeyring.invalidate(...args);
+      actual.invalidateAgyWindowsKeyringCache(...args);
+    },
   };
 });
 
@@ -635,6 +647,17 @@ describe('addActiveSessionAccount não duplica o mesmo assinante', () => {
     expect(deps.secrets.get(`acctcred:${target.id}`)).toBe(blob('workspace-a'));
   });
 
+  it('captura explícita do AGY descarta a leitura memoizada da vaga antes de capturar (L3)', () => {
+    const order: string[] = [];
+    agyKeyring.invalidate.mockReset().mockImplementation(() => { order.push('invalidate'); });
+    vi.mocked(captureNativeAuth).mockImplementationOnce(() => {
+      order.push('capture');
+      return null;
+    });
+    addActiveSessionAccount('agy', 'AGY');
+    expect(order).toEqual(['invalidate', 'capture']);
+  });
+
   it('reautenticação direcionada recusa accountId de outro provider', () => {
     const claude = addClaudeAccount(
       'Claude',
@@ -904,6 +927,19 @@ describe('renovação morta veta failover no escuro', () => {
       expect(await verifyManagedClaudeAccountForSpawn(a.id)).toBe('auth-expired');
       expect(deps.probeClaudeCliUsage).not.toHaveBeenCalled();
     });
+  });
+
+  it('identidade nativa ilegível fecha a guarda: não renova sem saber se é o login nativo (M1)', async () => {
+    const a = addSecondary('Conta B', 'b@example.test', oauthBlob('b-access'));
+    deps.needsRefresh.mockReturnValue({ refreshToken: 'rt-b' });
+    deps.refreshBlob.mockResolvedValue(oauthBlob('b-access-2'));
+    // ~/.claude.json presente mas acima do teto, instável ou JSON pela metade.
+    deps.activeEmail = undefined;
+    expect(await ensureFreshClaudeSubscription(a.id)).toBe(false);
+    expect(deps.refreshBlob).not.toHaveBeenCalled();
+    // Sem arquivo (nenhum login nativo) a renovação segue normal.
+    deps.activeEmail = null;
+    expect(await ensureFreshClaudeSubscription(a.id)).toBe(true);
   });
 
   it('falha real de refresh marca a conta (skips não marcam)', async () => {

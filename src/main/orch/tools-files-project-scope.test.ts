@@ -75,4 +75,28 @@ describe('file tools project scope', () => {
     expect(fs.existsSync(path.join(projectA, 'worker.txt'))).toBe(false);
     expect(fs.readFileSync(path.join(projectB, 'worker.txt'), 'utf8')).toBe('isolated');
   });
+
+  it('reads file content off the Main loop (full, line range and open) (#22)', async () => {
+    fs.writeFileSync(path.join(projectA, 'lines.txt'), 'one\ntwo\r\nthree\nfour');
+    const tools = buildFileTools();
+    const read = tools.find((candidate) => candidate.name === 'nexus_file_read')!;
+    const open = tools.find((candidate) => candidate.name === 'nexus_file_open')!;
+    const readFileSync = vi.spyOn(fs, 'readFileSync');
+    const readSync = vi.spyOn(fs, 'readSync');
+    try {
+      await expect(read.handler({ path: 'lines.txt' }, contextForA())).resolves.toMatchObject({
+        content: 'one\ntwo\r\nthree\nfour',
+      });
+      await expect(read.handler({ path: 'lines.txt', offset: 2, limit: 2 }, contextForA()))
+        .resolves.toMatchObject({ offset: 2, limit: 2, content: 'two\nthree' });
+      await expect(open.handler({ path: 'same.txt' }, contextForA())).resolves.toMatchObject({
+        content: 'from-a',
+      });
+      expect(readFileSync).not.toHaveBeenCalled();
+      expect(readSync).not.toHaveBeenCalled();
+    } finally {
+      readFileSync.mockRestore();
+      readSync.mockRestore();
+    }
+  });
 });

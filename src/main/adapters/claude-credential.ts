@@ -3,6 +3,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import {
+  clearClaudeConfigSnapshotCache,
+  readClaudeConfigForDecision,
+} from './claude-config-snapshot';
 
 /**
  * Claude Code subscription credential swap (macOS) — ported from the
@@ -169,6 +173,8 @@ const CREDENTIAL_READ_TTL_MS = 15_000;
 const CREDENTIAL_DENIED_BACKOFF_MS = 5 * 60_000;
 
 const credentialReadCache = new Map<string, { blob: string | null; until: number }>();
+/** Sobe a cada invalidação: caches derivados (existência no Keychain) se descartam sozinhos. */
+let credentialCacheGeneration = 0;
 
 function rememberCredentialRead(
   service: string,
@@ -185,8 +191,18 @@ function rememberCredentialRead(
  * logout, testes).
  */
 export function invalidateClaudeCredentialCache(service?: string): void {
-  if (service === undefined) credentialReadCache.clear();
-  else credentialReadCache.delete(service);
+  credentialCacheGeneration += 1;
+  if (service !== undefined) {
+    credentialReadCache.delete(service);
+    return;
+  }
+  credentialReadCache.clear();
+  // Troca de conta/logout: nem a identidade da conta anterior fica em memória.
+  clearClaudeConfigSnapshotCache();
+}
+
+export function claudeCredentialCacheGeneration(): number {
+  return credentialCacheGeneration;
 }
 
 /** Claude 2.1.278 derives this namespace from CLAUDE_SECURESTORAGE_CONFIG_DIR. */
@@ -342,15 +358,13 @@ function writeClaudeCredential(blob: string, service: string): boolean {
   return ok;
 }
 
-/** The email of the currently signed-in Claude account (from ~/.claude.json). */
-export function activeClaudeEmail(): string | null {
-  try {
-    const raw = JSON.parse(
-      fs.readFileSync(path.join(os.homedir(), '.claude.json'), 'utf8'),
-    );
-    const email = raw?.oauthAccount?.emailAddress;
-    return typeof email === 'string' && email.length > 0 ? email : null;
-  } catch {
-    return null;
-  }
+/**
+ * E-mail do login Claude nativo (~/.claude.json). Alimenta decisões de
+ * autorização (renovar grant, fixar pane no store nativo, failover), então
+ * relê sempre: `null` = sem login nativo; `undefined` = o arquivo existe mas
+ * não deu para ler agora (teto, instável, ilegível) — quem decide fecha.
+ */
+export function activeClaudeEmail(): string | null | undefined {
+  const config = readClaudeConfigForDecision(path.join(os.homedir(), '.claude.json'));
+  return config === undefined ? undefined : config?.email ?? null;
 }

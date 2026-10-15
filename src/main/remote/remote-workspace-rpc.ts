@@ -297,12 +297,12 @@ export type RemoteFileEntry = {
 };
 
 /** Uma pasta do checkout do pane, pelo `listDir` do explorador do desktop. */
-export function remoteFilesList(
+export async function remoteFilesList(
   workspace: RemotePaneWorkspace,
   rawPath: unknown,
-): { readonly path: string; readonly entries: readonly RemoteFileEntry[]; readonly truncated: boolean } {
+): Promise<{ readonly path: string; readonly entries: readonly RemoteFileEntry[]; readonly truncated: boolean }> {
   const relativePath = resolveRemoteWorkspacePath(workspace.root, rawPath ?? '', { allowRoot: true });
-  const listed = listDir(workspace.scope, relativePath);
+  const listed = await listDir(workspace.scope, relativePath);
   if (!listed.ok) throw shortError('files list failed', listed.error ?? 'list failed', workspace.root);
   // Segredos nem aparecem (o explorador já esconde `.git`, links e node_modules).
   const visible = (listed.entries ?? []).filter((entry) => !isRestrictedSegment(entry.name));

@@ -3,6 +3,7 @@ import { executionScopeFor } from './gate';
 import { requireStr, str } from './tool-util';
 import fs from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
+import { promisify } from 'node:util';
 import {
   searchWorkspaceFiles,
   type SearchBudgets,
@@ -28,6 +29,13 @@ import { assertGovernedWorkspaceControlBoundary } from './governed-workspace-con
 */
 
 const MAX_FULL_FILE_BYTES = 8 * 1024 * 1024;
+/**
+ * #22: as tools de leitura mais chamadas pelos agentes leem o CONTEÚDO (até
+ * 8 MiB) no pool do libuv. A abertura validada continua síncrona: são poucas
+ * syscalls de metadados (~0,5 ms medido) e é ela que prova o descritor.
+ */
+const readFd = promisify(fs.read);
+const readFileFd = promisify(fs.readFile);
 const MAX_RANGE_LINES = 10_000;
 const DEFAULT_SEARCH_MAX_RESULTS = 100;
 const HARD_SEARCH_MAX_RESULTS = 1_000;
@@ -47,12 +55,12 @@ function assertFullReadSize(stat: fs.Stats): void {
   }
 }
 
-function readLineRange(
+async function readLineRange(
   fd: number,
   encoding: BufferEncoding,
   start: number,
   limit: number,
-): string[] {
+): Promise<string[]> {
   const decoder = new StringDecoder(encoding);
   const buffer = Buffer.allocUnsafe(64 * 1024);
   const selected: string[] = [];
@@ -87,7 +95,7 @@ function readLineRange(
 
   let position = 0;
   while (selected.length < limit) {
-    const bytesRead = fs.readSync(fd, buffer, 0, buffer.byteLength, position);
+    const { bytesRead } = await readFd(fd, buffer, 0, buffer.byteLength, position);
     if (bytesRead === 0) break;
     position += bytesRead;
     if (consume(decoder.write(buffer.subarray(0, bytesRead)))) return selected;
@@ -126,7 +134,7 @@ const fileOpen: McpToolDef = {
     const handle = openWorkspaceFileForRead(executionScopeFor(ctx), relativePath);
     try {
       assertFullReadSize(handle.stat);
-      const content = fs.readFileSync(handle.fd, {
+      const content = await readFileFd(handle.fd, {
         encoding: encoding as BufferEncoding,
       });
       return {
@@ -231,7 +239,7 @@ const fileRead: McpToolDef = {
       const limit = typeof args.limit === 'number' ? args.limit : undefined;
       if (offset === undefined && limit === undefined) {
         assertFullReadSize(handle.stat);
-        const raw = fs.readFileSync(handle.fd, {
+        const raw = await readFileFd(handle.fd, {
           encoding: encoding as BufferEncoding,
         });
         return { path: relativePath, content: raw };

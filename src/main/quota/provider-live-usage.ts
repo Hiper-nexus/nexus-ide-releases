@@ -83,7 +83,7 @@ export interface LiveUsageAuthResolvers {
    * (`no-credential`); sem token + com evidência = sessão morta
    * (`auth-expired` → «Entrar novamente»).
    */
-  claudeNativeSession?: () => boolean;
+  claudeNativeSession?: () => boolean | Promise<boolean>;
   /**
    * Access token nativo vencido (`expiresAt` cliente). A linhagem nativa
    * é do CLI — não refreshamos; token vencido equivale a sessão expirada.
@@ -305,7 +305,7 @@ export async function fetchLiveProviderWindows(
       // Sem token resolvível (ou token nativo vencido — o refresh da
       // linhagem nativa é do CLI, não nosso): o `oauthAccount` no
       // ~/.claude.json distingue «sessão morreu» de «nunca conectou».
-      const sessionEvidence = deps.claudeNativeSession?.() === true;
+      const sessionEvidence = (await deps.claudeNativeSession?.()) === true;
       const tokenExpired = deps.claudeNativeTokenExpired?.() === true;
       const noTokenHint: QuotaReadHint =
         oauthDead || tokenExpired

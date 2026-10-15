@@ -33,6 +33,7 @@ import {
   type FetchLike,
 } from './claude-oauth-usage';
 import { fetchClaudeAccountUsageWindows } from './claude-account-usage';
+import { forEachWithConcurrency } from '../util/concurrency';
 import {
   claudeNativeAccessTokenExpiresAt,
   hasClaudeNativeSession,
@@ -83,23 +84,6 @@ const PROBE_FAILURE_BACKOFF_MS = 5 * 60_000;
  */
 export const QUOTA_PROBE_CONCURRENCY = 6;
 
-/** Roda `task` em cada item com no máximo `limit` em voo; preserva erros por item. */
-export async function forEachWithConcurrency<T>(
-  items: ReadonlyArray<T>,
-  limit: number,
-  task: (item: T) => Promise<void>,
-): Promise<void> {
-  let next = 0;
-  const worker = async (): Promise<void> => {
-    while (next < items.length) {
-      const item = items[next];
-      next += 1;
-      await task(item as T);
-    }
-  };
-  const workers = Math.max(1, Math.min(limit, items.length));
-  await Promise.all(Array.from({ length: workers }, worker));
-}
 
 /**
  * Every fleet CLI is eligible for a live/generic probe. Unknown adapters
@@ -135,7 +119,7 @@ export interface QuotaServiceDeps {
    */
   claudeCliUsage?: () => Promise<ClaudeCliUsageProbe>;
   /** Evidência de login nativo Claude prévio (`oauthAccount` no ~/.claude.json). */
-  claudeNativeSession?: () => boolean;
+  claudeNativeSession?: () => boolean | Promise<boolean>;
   /** Access token nativo vencido (expiresAt cliente — refresh é do CLI). */
   claudeNativeTokenExpired?: () => boolean;
   /**

@@ -38,6 +38,20 @@ export interface SafeReadOptions {
    * Para arquivos que só o Nexus escreve, onde symlink nunca é legítimo.
    */
   readonly noFollow?: boolean;
+  /**
+   * Stamp com inode e ctime em ns além de mtime/tamanho: `cp -p`, rsync,
+   * restauração ou relógio grosso (NTFS, SMB, HFS+) mantêm mtime e tamanho,
+   * mas não o ctime nem o inode. Para quem decide autorização pelo conteúdo.
+   */
+  readonly strongStamp?: boolean;
+}
+
+type StampSource = { ino: bigint; size: bigint; mtimeNs: bigint; ctimeNs: bigint };
+
+function stampOf(stat: { mtimeMs: number; size: number }, strong: StampSource | null): string {
+  return strong
+    ? `${strong.ino}:${strong.size}:${strong.mtimeNs}:${strong.ctimeNs}`
+    : `${stat.mtimeMs}:${stat.size}`;
 }
 
 /** Same bounded descriptor/regular-file policy for periodic Main readers. */
@@ -59,7 +73,7 @@ export async function readRegularFileCappedAsync(
   try {
     const stat = await handle.stat();
     if (!stat.isFile() || stat.size > maxBytes) return { kind: 'none', stamp: `rejected:${stat.size}` };
-    const stamp = `${stat.mtimeMs}:${stat.size}`;
+    const stamp = stampOf(stat, options.strongStamp ? await handle.stat({ bigint: true }) : null);
     if (stamp === knownStamp) return { kind: 'unchanged' };
     const buffer = Buffer.alloc(stat.size + 1);
     let filled = 0;
@@ -69,10 +83,12 @@ export async function readRegularFileCappedAsync(
       filled += bytesRead;
     }
     const after = await handle.stat();
-    if (filled > stat.size || after.size !== stat.size || after.mtimeMs !== stat.mtimeMs) return { kind: 'none', stamp: 'unstable' };
+    if (filled > stat.size || after.size !== stat.size || after.mtimeMs !== stat.mtimeMs ||
+        (options.strongStamp && after.ctimeMs !== stat.ctimeMs)) return { kind: 'none', stamp: 'unstable' };
     return { kind: 'text', stamp, text: buffer.toString('utf8', 0, filled) };
   } catch { return { kind: 'none', stamp: 'unreadable' }; }
-  finally { await handle.close(); }
+  // Fechar falhou depois de ler tudo: a leitura vale; nunca rejeita o chamador.
+  finally { await handle.close().catch(() => undefined); }
 }
 
 export function readRegularFileCapped(
@@ -111,7 +127,7 @@ export function readRegularFileCapped(
     if (!stat.isFile() || stat.size > maxBytes) {
       return { kind: 'none', stamp: `rejected:${stat.size}` };
     }
-    const stamp = `${stat.mtimeMs}:${stat.size}`;
+    const stamp = stampOf(stat, options.strongStamp ? fstatSync(fd, { bigint: true }) : null);
     if (knownStamp !== undefined && stamp === knownStamp) return { kind: 'unchanged' };
     // Um byte a mais que o tamanho visto: se vier, o arquivo cresceu no meio.
     const buffer = Buffer.alloc(stat.size + 1);

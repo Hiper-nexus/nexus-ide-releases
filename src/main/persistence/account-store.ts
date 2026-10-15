@@ -375,7 +375,8 @@ function readNativeClaudeSnapshot(): NativeClaudeSnapshot {
     const raw = readActiveClaudeCredential();
     return raw ? slimClaudeCredentialBlob(raw) : null;
   })();
-  return { blob, account: nativeClaudeAccount(blob, activeClaudeEmail()) };
+  // Identidade ilegível (`undefined`): só o dono do token decide, sem e-mail.
+  return { blob, account: nativeClaudeAccount(blob, activeClaudeEmail() ?? null) };
 }
 
 function persistManagedClaudeReadback(account: Account, renewed: string | null): string | null {
@@ -962,6 +963,10 @@ export async function ensureFreshClaudeSubscription(
     return persistManagedClaudeReadback(account, latest) !== previous;
   }
   const nativeEmail = activeClaudeEmail();
+  // M1: o login nativo nunca é renovado por aqui. Sem conseguir ler quem é o
+  // login nativo agora (~/.claude.json acima do teto, instável, ilegível), a
+  // guarda fecha em vez de arriscar rotacionar a linhagem do operador.
+  if (nativeEmail === undefined) return false;
   if (
     nativeEmail &&
     account.email &&
@@ -1554,6 +1559,9 @@ export function addActiveSessionAccount(
       email = activeClaudeEmail() ?? undefined;
     }
   } else if (isFileAuthAdapter(adapterId)) {
+    // Mesma regra da captura Claude acima: a vaga do AGY no Windows acabou de
+    // mudar fora do Nexus; uma leitura memoizada salvaria a conta anterior.
+    if (adapterId === 'agy') invalidateAgyWindowsKeyringCache();
     const capture = captureNativeAuth(adapterId);
     if (capture) {
       blob = capture.blob;

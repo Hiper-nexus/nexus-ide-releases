@@ -568,22 +568,46 @@ const scanCache = new Map<
   { at: number; found: readonly DiscoveredPlugin[] }
 >();
 
+/** Uma entrada por (home, lista de tools); listas distintas não crescem sem fim. */
+const SCAN_CACHE_MAX_ENTRIES = 32;
+
+function rememberScan(key: string, now: number, found: readonly DiscoveredPlugin[]): void {
+  for (const [held, entry] of scanCache) {
+    if (now - entry.at >= SCAN_CACHE_TTL_MS) scanCache.delete(held);
+  }
+  scanCache.delete(key);
+  // Map preserva a ordem de inserção: o primeiro é o mais antigo.
+  while (scanCache.size >= SCAN_CACHE_MAX_ENTRIES) {
+    const oldest = scanCache.keys().next().value;
+    if (oldest === undefined) break;
+    scanCache.delete(oldest);
+  }
+  scanCache.set(key, { at: now, found });
+}
+
 /** Test hook. */
 export function __resetScanInstalledPluginsCacheForTests(): void {
   scanCache.clear();
+}
+
+/** Test hook. */
+export function __scanInstalledPluginsCacheSizeForTests(): number {
+  return scanCache.size;
 }
 
 export function scanInstalledPlugins(
   home: string = os.homedir(),
   options: ScanInstalledPluginsOptions = {},
 ): readonly DiscoveredPlugin[] {
-  const cacheable = options.allowedTools === undefined || options.allowedTools === null;
-  const cacheKey = home;
+  // #22: com lista explícita (inventário MCP, espelho de skills no spawn) o
+  // scan síncrono custava ~10 ms por chamada. Uma entrada por lista EFETIVA:
+  // sem lista vale [] (scanPluginDirectory), diferente de null; a ordem não
+  // muda o filtro.
+  const effective = options.allowedTools === undefined ? [] : options.allowedTools;
+  const cacheKey = `${home}\0${JSON.stringify(effective === null ? null : [...effective].sort())}`;
   const now = Date.now();
-  if (cacheable) {
-    const hit = scanCache.get(cacheKey);
-    if (hit && now - hit.at < SCAN_CACHE_TTL_MS) return hit.found;
-  }
+  const hit = scanCache.get(cacheKey);
+  if (hit && now - hit.at < SCAN_CACHE_TTL_MS) return hit.found;
   const found: DiscoveredPlugin[] = [];
   for (const root of PLUGIN_ROOTS) {
     const rootDir = path.join(home, root);
@@ -593,7 +617,7 @@ export function scanInstalledPlugins(
       for (const plugin of installs) {
         if (found.length >= MAX_PLUGINS) {
           const frozen = Object.freeze(found);
-          if (cacheable) scanCache.set(cacheKey, { at: now, found: frozen });
+          rememberScan(cacheKey, now, frozen);
           return frozen;
         }
         found.push(plugin);
@@ -609,7 +633,7 @@ export function scanInstalledPlugins(
     for (const entry of entries) {
       if (found.length >= MAX_PLUGINS) {
         const frozen = Object.freeze(found);
-        if (cacheable) scanCache.set(cacheKey, { at: now, found: frozen });
+        rememberScan(cacheKey, now, frozen);
         return frozen;
       }
       // F-1333: .trash e afins nunca são raiz de plugin.
@@ -618,7 +642,7 @@ export function scanInstalledPlugins(
     }
   }
   const frozen = Object.freeze(found);
-  if (cacheable) scanCache.set(cacheKey, { at: now, found: frozen });
+  rememberScan(cacheKey, now, frozen);
   return frozen;
 }
 

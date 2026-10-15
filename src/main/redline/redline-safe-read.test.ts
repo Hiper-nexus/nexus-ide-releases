@@ -2,7 +2,8 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import fsp from 'node:fs/promises';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readRegularFileCapped, readRegularFileCappedAsync } from './redline-safe-read';
 
 describe('readRegularFileCapped', () => {
@@ -23,6 +24,41 @@ describe('readRegularFileCapped', () => {
     rmSync(dir, { recursive: true, force: true });
   });
   const file = () => path.join(dir, 'f.json');
+
+  it('strongStamp notices a same-size rewrite with a restored mtime (M1)', async () => {
+    const pinned = new Date('2026-10-14T12:00:00Z');
+    writeFileSync(file(), '{"a":1}');
+    utimesSync(file(), pinned, pinned);
+    const first = readRegularFileCapped(file(), 1024, undefined, { strongStamp: true });
+    expect(first.kind).toBe('text');
+    const stamp = first.kind === 'text' ? first.stamp : '';
+    expect(readRegularFileCapped(file(), 1024, stamp, { strongStamp: true })).toEqual({ kind: 'unchanged' });
+    writeFileSync(file(), '{"a":2}');
+    utimesSync(file(), pinned, pinned);
+    expect(readRegularFileCapped(file(), 1024, stamp, { strongStamp: true }))
+      .toMatchObject({ kind: 'text', text: '{"a":2}' });
+    expect(await readRegularFileCappedAsync(file(), 1024, stamp, { strongStamp: true }))
+      .toMatchObject({ kind: 'text', text: '{"a":2}' });
+  });
+
+  it('a close failure after a complete async read does not reject (L2)', async () => {
+    writeFileSync(file(), '{"a":1}');
+    const realOpen = fsp.open.bind(fsp);
+    const spy = vi.spyOn(fsp, 'open').mockImplementation(async (...args: Parameters<typeof fsp.open>) => {
+      const handle = await realOpen(...args);
+      const close = handle.close.bind(handle);
+      handle.close = async () => {
+        await close();
+        throw new Error('EIO on close');
+      };
+      return handle;
+    });
+    try {
+      await expect(readRegularFileCappedAsync(file(), 1024)).resolves.toMatchObject({ kind: 'text', text: '{"a":1}' });
+    } finally {
+      spy.mockRestore();
+    }
+  });
 
   it('reads a regular file and returns a stamp', () => {
     writeFileSync(file(), '{"a":1}');

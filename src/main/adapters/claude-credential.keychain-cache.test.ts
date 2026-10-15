@@ -132,3 +132,27 @@ describe('Claude keychain reads are memoized (prompt storm)', () => {
     expect(execFileSync).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('activeClaudeEmail is a fresh decision read of ~/.claude.json (M1)', () => {
+  function writeClaudeJson(email: string, mtime: Date): void {
+    const file = path.join(fixture.home, '.claude.json');
+    fs.writeFileSync(file, JSON.stringify({ oauthAccount: { emailAddress: email } }));
+    fs.utimesSync(file, mtime, mtime);
+  }
+
+  it('sees a same-size, same-mtime account switch immediately', () => {
+    const pinned = new Date('2026-10-14T12:00:00Z');
+    writeClaudeJson('aaa@x.com', pinned);
+    expect(credential.activeClaudeEmail()).toBe('aaa@x.com');
+    writeClaudeJson('bbb@x.com', pinned);
+    expect(credential.activeClaudeEmail()).toBe('bbb@x.com');
+  });
+
+  it('answers null when there is no file and undefined when it cannot be read', () => {
+    expect(credential.activeClaudeEmail()).toBeNull();
+    const file = path.join(fixture.home, '.claude.json');
+    fs.writeFileSync(file, '');
+    fs.truncateSync(file, 64 * 1024 * 1024 + 1);
+    expect(credential.activeClaudeEmail()).toBeUndefined();
+  });
+});

@@ -5,6 +5,7 @@ import {
   invalidateAgyWindowsKeyringCache,
   isAgyKeyringBlob,
   readAgyWindowsKeyringBlob,
+  readAgyWindowsKeyringBlobAsync,
   writeAgyWindowsKeyringBlob,
 } from './agy-windows-keyring';
 
@@ -76,5 +77,75 @@ describe('vaga do AGY no Gerenciador de Credenciais (F-677)', () => {
     expect(isAgyKeyringBlob(keyringBlob)).toBe(true);
     expect(isAgyKeyringBlob(JSON.stringify({ access_token: 'a', refresh_token: 'r' }))).toBe(false);
     expect(isAgyKeyringBlob('not json')).toBe(false);
+  });
+});
+
+describe('leitura assíncrona da vaga para o ciclo de cota (#18)', () => {
+  type Callback = (error: Error | null, stdout: string) => void;
+  const asyncExec = (stdout: () => string) => vi.fn(
+    (_file: string, _args: string[], _options: unknown, callback: Callback) => {
+      queueMicrotask(() => callback(null, stdout()));
+      return { stdin: { end: vi.fn() } };
+    },
+  );
+
+  it('não bloqueia o Main, junta leituras simultâneas e divide o cache curto com a leitura síncrona', async () => {
+    const exec = asyncExec(() => Buffer.from(keyringBlob).toString('base64'));
+    const reads = await Promise.all([1, 2, 3].map(() =>
+      readAgyWindowsKeyringBlobAsync({ exec: exec as never, platform: 'win32', now: 1_000 })));
+    expect(reads).toEqual([keyringBlob, keyringBlob, keyringBlob]);
+    expect(exec).toHaveBeenCalledTimes(1);
+    // O segredo nunca vai no argv; o stdin é fechado para o PowerShell não esperar.
+    expect((exec.mock.calls[0]![1] as string[]).join(' ')).not.toContain('refresh_token');
+    expect(exec.mock.results[0]!.value.stdin.end).toHaveBeenCalled();
+
+    const syncExec = vi.fn();
+    expect(readAgyWindowsKeyringBlob({ exec: syncExec as never, platform: 'win32', now: 2_000 })).toBe(keyringBlob);
+    expect(syncExec).not.toHaveBeenCalled();
+  });
+
+  it('troca de conta no meio da leitura não publica o blob anterior no cache', async () => {
+    let finish: Callback = () => undefined;
+    const slow = vi.fn((_file: string, _args: string[], _options: unknown, callback: Callback) => {
+      finish = callback;
+      return { stdin: { end: vi.fn() } };
+    });
+    const pending = readAgyWindowsKeyringBlobAsync({ exec: slow as never, platform: 'win32', now: 1_000 });
+    invalidateAgyWindowsKeyringCache();
+    finish(null, Buffer.from(keyringBlob).toString('base64'));
+    expect(await pending).toBe(keyringBlob);
+
+    const after = asyncExec(() => '');
+    expect(await readAgyWindowsKeyringBlobAsync({ exec: after as never, platform: 'win32', now: 1_100 })).toBeNull();
+    expect(after).toHaveBeenCalledTimes(1);
+  });
+
+  it('leitura síncrona fresca mais nova não é sobrescrita por leitura assíncrona antiga em voo (L3)', async () => {
+    let finish: Callback = () => undefined;
+    const slow = vi.fn((_file: string, _args: string[], _options: unknown, callback: Callback) => {
+      finish = callback;
+      return { stdin: { end: vi.fn() } };
+    });
+    const older = readAgyWindowsKeyringBlobAsync({ exec: slow as never, platform: 'win32', now: 1_000 });
+    const newer = JSON.stringify({ token: { access_token: 'b', refresh_token: 'rb' }, id_token: 'h.e30.s' });
+    const syncExec = vi.fn(() => Buffer.from(newer).toString('base64'));
+    expect(readAgyWindowsKeyringBlob({ exec: syncExec as never, platform: 'win32', now: 1_050, fresh: true })).toBe(newer);
+    finish(null, Buffer.from(keyringBlob).toString('base64'));
+    expect(await older).toBe(keyringBlob);
+
+    const never = vi.fn();
+    expect(readAgyWindowsKeyringBlob({ exec: never as never, platform: 'win32', now: 1_100 })).toBe(newer);
+    expect(never).not.toHaveBeenCalled();
+  });
+
+  it('falha do PowerShell vira null sem lançar, e fora do Windows não executa nada', async () => {
+    const failing = vi.fn((_file: string, _args: string[], _options: unknown, callback: Callback) => {
+      callback(new Error('powershell exploded'), '');
+      return { stdin: { end: vi.fn() } };
+    });
+    expect(await readAgyWindowsKeyringBlobAsync({ exec: failing as never, platform: 'win32', now: 1 })).toBeNull();
+    const never = vi.fn();
+    expect(await readAgyWindowsKeyringBlobAsync({ exec: never as never, platform: 'darwin' })).toBeNull();
+    expect(never).not.toHaveBeenCalled();
   });
 });

@@ -7,6 +7,7 @@ import type { QuotaWindow } from '../../shared/quota-types';
 
 const mocks = vi.hoisted(() => ({
   spawnSync: vi.fn(),
+  execFile: vi.fn(),
   getAccount: vi.fn(),
   claudeAccountIsNativeLogin: vi.fn((_account: unknown) => false),
   ensureFreshClaudeSubscription: vi.fn(async () => false),
@@ -36,6 +37,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('node:child_process', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   spawnSync: mocks.spawnSync,
+  execFile: mocks.execFile,
 }));
 
 vi.mock('../persistence/account-store', () => ({
@@ -91,6 +93,7 @@ import {
   readClaudeConfigSnapshot,
 } from './claude-account-usage';
 import { CLAUDE_MANAGED_AUTH_ENV } from '../adapters/managed-claude-auth';
+import { invalidateClaudeCredentialCache } from '../adapters/claude-credential';
 
 const NOW = Date.parse('2026-09-20T20:00:00Z');
 const HOST_PLATFORM = Object.getOwnPropertyDescriptor(process, 'platform')!;
@@ -158,9 +161,15 @@ beforeEach(() => {
   vi.spyOn(os, 'homedir').mockReturnValue(makeHome());
   // Keychain fixtures must never inspect the developer's real login or depend
   // on the host OS. Scoped items exist only when a test supplies keychainProbe.
-  mocks.spawnSync.mockReset().mockImplementation((_command: string, args: string[]) => ({
-    status: args.at(-1) === 'Claude Code-credentials' ? 0 : 1,
-  }));
+  mocks.spawnSync.mockReset();
+  mocks.execFile.mockReset().mockImplementation((
+    _command: string, args: string[], _options: unknown, callback: (error: Error | null) => void,
+  ) => {
+    callback(args.at(-1) === 'Claude Code-credentials'
+      ? null
+      : Object.assign(new Error('absent'), { code: 44 }));
+  });
+  invalidateClaudeCredentialCache();
   clearClaudeConfigSnapshotCache();
   mocks.getAccount.mockReset();
   mocks.ensureFreshClaudeSubscription.mockReset().mockResolvedValue(false);
@@ -251,7 +260,7 @@ describe('parseClaudeCachedUtilization', () => {
 });
 
 describe('discoverClaudeProfiles', () => {
-  it('always lists the default profile, sorted extras after it', () => {
+  it('always lists the default profile, sorted extras after it', async () => {
     const home = makeHome();
     fs.mkdirSync(path.join(home, '.claude'));
     writeClaudeJson(path.join(home, '.claude.json'), {});
@@ -266,7 +275,7 @@ describe('discoverClaudeProfiles', () => {
     fs.mkdirSync(path.join(mem, 'sessions'), { recursive: true });
     writeClaudeJson(path.join(mem, 'settings.json'), {});
 
-    const profiles = discoverClaudeProfiles(home);
+    const profiles = await discoverClaudeProfiles(home);
     expect(profiles.map((p) => p.slug)).toEqual([null, 'work']);
     expect(profiles[0]!.accountFile).toBe(path.join(home, '.claude.json'));
     expect(profiles[1]!.accountFile).toBe(
@@ -274,12 +283,39 @@ describe('discoverClaudeProfiles', () => {
     );
   });
 
-  it('ignores non-directories and marker-less .claude-* dirs', () => {
+  it('ignores non-directories and marker-less .claude-* dirs', async () => {
     const home = makeHome();
     fs.mkdirSync(path.join(home, '.claude'));
     writeClaudeJson(path.join(home, '.claude.json.bak'), {});
     fs.mkdirSync(path.join(home, '.claude-empty'));
-    expect(discoverClaudeProfiles(home).map((p) => p.slug)).toEqual([null]);
+    expect((await discoverClaudeProfiles(home)).map((p) => p.slug)).toEqual([null]);
+  });
+
+  it('probes the Keychain without blocking Main and once per burst until an account switch (#18)', async () => {
+    const home = makeHome();
+    fs.mkdirSync(path.join(home, '.claude'));
+    const work = path.join(home, '.claude-work');
+    fs.mkdirSync(path.join(work, 'sessions'), { recursive: true });
+    const workService = claudeProfileKeychainService(work);
+    mocks.execFile.mockImplementation((
+      _command: string, args: string[], _options: unknown, callback: (error: Error | null) => void,
+    ) => { callback(args.at(-1) === workService ? null : Object.assign(new Error('absent'), { code: 44 })); });
+
+    // A quota cycle discovers profiles once per account: one probe serves all.
+    for (let i = 0; i < 3; i += 1) {
+      expect((await discoverClaudeProfiles(home)).map((p) => p.slug)).toEqual([null, 'work']);
+    }
+    expect(mocks.spawnSync).not.toHaveBeenCalled();
+    expect(mocks.execFile).toHaveBeenCalledTimes(1);
+    expect(mocks.execFile.mock.calls[0]![1]).toEqual(['find-generic-password', '-s', workService]);
+
+    // Logout/switch: the existence answer of the previous session is dropped.
+    invalidateClaudeCredentialCache();
+    mocks.execFile.mockImplementation((
+      _command: string, _args: string[], _options: unknown, callback: (error: Error | null) => void,
+    ) => { callback(Object.assign(new Error('absent'), { code: 44 })); });
+    expect((await discoverClaudeProfiles(home)).map((p) => p.slug)).toEqual([null]);
+    expect(mocks.execFile).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -330,7 +366,7 @@ describe('fetchClaudeAccountUsageWindows', () => {
     expect(mocks.probeClaudeOauthUsage).toHaveBeenCalledWith('native-file-token', expect.objectContaining({ now: NOW }));
     expect(keychainProbe).not.toHaveBeenCalled();
     expect(mocks.readNativeOAuthCredential).not.toHaveBeenCalled();
-    expect(mocks.spawnSync).not.toHaveBeenCalled();
+    expect(mocks.execFile).not.toHaveBeenCalled();
   });
 
   it.skipIf(process.platform === 'win32')('credencial de perfil que é FIFO não pendura e fica indisponível (revisão de segurança)', async () => {

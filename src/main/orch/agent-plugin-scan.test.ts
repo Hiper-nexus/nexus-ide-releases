@@ -1,10 +1,11 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PLUGIN_MANIFEST_SCHEMA } from './agent-plugin-manifest';
 import {
   __resetScanInstalledPluginsCacheForTests,
+  __scanInstalledPluginsCacheSizeForTests,
   scanInstalledPlugins,
 } from './agent-plugin-scan';
 
@@ -357,12 +358,34 @@ describe('scanInstalledPlugins — TTL cache (A6)', () => {
     expect(scanInstalledPlugins(home)).toHaveLength(0);
   });
 
-  it('allowedTools explícito não passa pelo cache', () => {
+  it('allowedTools explícito também usa o cache, uma entrada por lista (#22)', () => {
     writePlugin('.claude/plugins', 'p1', manifest('p1'));
-    const first = scanInstalledPlugins(home, { allowedTools: ['Read'] });
-    expect(first).toHaveLength(1);
+    expect(scanInstalledPlugins(home, { allowedTools: ['Read', 'Bash'] })).toHaveLength(1);
     fs.rmSync(path.join(home, '.claude/plugins/p1'), { recursive: true, force: true });
-    const second = scanInstalledPlugins(home, { allowedTools: ['Read'] });
-    expect(second).toHaveLength(0);
+    // Mesma lista (outra ordem): o spawn seguinte não refaz o scan síncrono.
+    expect(scanInstalledPlugins(home, { allowedTools: ['Bash', 'Read'] })).toHaveLength(1);
+    // Lista diferente nunca recebe o resultado filtrado de outra.
+    expect(scanInstalledPlugins(home, { allowedTools: ['Read'] })).toHaveLength(0);
+  });
+
+  it('o cache tem teto e descarta entradas vencidas (L6)', () => {
+    writePlugin('.claude/plugins', 'p1', manifest('p1'));
+    for (let i = 0; i < 100; i += 1) scanInstalledPlugins(home, { allowedTools: [`tool-${i}`] });
+    expect(__scanInstalledPluginsCacheSizeForTests()).toBeLessThanOrEqual(32);
+    const later = Date.now() + 61_000;
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(later);
+    try {
+      scanInstalledPlugins(home, { allowedTools: ['late'] });
+      expect(__scanInstalledPluginsCacheSizeForTests()).toBe(1);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it('sem lista ([] efetivo) e lista nula não dividem a mesma entrada (#22)', () => {
+    writePlugin('.claude/plugins', 'p1', manifest('p1'));
+    expect(scanInstalledPlugins(home)).toHaveLength(1);
+    fs.rmSync(path.join(home, '.claude/plugins/p1'), { recursive: true, force: true });
+    expect(scanInstalledPlugins(home, { allowedTools: null })).toHaveLength(0);
   });
 });

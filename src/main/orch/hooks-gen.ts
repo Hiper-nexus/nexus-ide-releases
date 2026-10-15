@@ -25,6 +25,7 @@ import {
   linkDeveloperIdentity,
 } from '../pty/private-home-operator';
 import { removeTreeSync } from '../util/remove-tree';
+import { clearClaudeConfigSnapshotCache } from '../adapters/claude-config-snapshot';
 import { HANDOFF_SPOOL_WRITER_JS } from './handoff-spool-entry';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { privateRuntimeClaudeKeyResponse } from '../runtime-gate-mode';
@@ -739,6 +740,7 @@ export function ensureNativeClaudeProjectTrust(
       ...((trust.projects as Record<string, unknown>) ?? {}),
     };
     fs.writeFileSync(profilePath, JSON.stringify(profile, null, 2), { mode: 0o600 });
+    clearClaudeConfigSnapshotCache();
   } catch {
     // Best effort — do not fail spawn if realHome/.claude.json is not writable
   }
