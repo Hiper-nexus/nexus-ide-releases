@@ -10,10 +10,12 @@ Reaplicada sobre a 0.76.267 (as tags 0.76.264 a 0.76.267 já eram de outra linha
 - **Quadro**: uma ação primária por vez, menu Mais e minimizar com a escolha salva.
 - **Jev 1.14 preview**: selecionável em Chaves de API; o padrão continua o estável. Limiares (0,35) e rubricas não foram recalibrados para a 1.14.
 - **Spawn**: o mesmo `requestId` da mesma sessão devolve o pane que já nasceu; recusa por carga não conta como falha da CLI no disjuntor.
-- **Voz**: reescrita do ditado CODE que ecoava o português é recusada (F-1530).
+- **Teclado do pane (F-1537)**: a tecla segue o estado vivo do pane e sobrevive à hibernação.
+- **Entrega de handoff (F-1536)**: colagem picotada pelo ConPTY é detectada pelo marcador do Codex e reentregue, sem Enter em texto truncado (parcial: sem divisão em partes; Claude sem marcador não é detectado).
+- **Voz**: reescrita do ditado CODE que ecoava o português é recusada (F-1530); tecla solta durante a abertura do microfone não deixa gravação fantasma (F-1541).
 - **Windows**: portão de regressão com prazo e cache, lexer do catálogo com caminho do Windows, worktree isolada com `node_modules` ligado e fora do git, e checkpoint oculto com tmp 8.3.
 
-Ainda abertos (em `docs/qa/items`): teclado do pane após hibernar, entrega de handoff cortada pelo ConPTY (F-1536) e gravação fantasma de voz no Windows (F-1541).
+Limites conhecidos (em `docs/qa/items`): F-1536 só detecta a colagem truncada onde há marcador (Codex) e não divide entregas grandes em partes.
 
 ## 0.76.267 — Linux em dia com a velocidade
 
