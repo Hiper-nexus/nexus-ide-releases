@@ -3,6 +3,10 @@ import { decisionSettingsSchema, hasAudioRecipientConsent, hasVisionRecipientCon
 import { orchSettingsSchema } from './settings-types';
 
 describe('decision model configuration', () => {
+  it('accepts the verified Jev preview without silently accepting invented model ids', () => {
+    expect(decisionSettingsSchema.parse({ jevModel: 'jev-1.14.0' }).jevModel).toBe('jev-1.14.0');
+    expect(decisionSettingsSchema.safeParse({ jevModel: 'jev-1.14.0-preview' }).success).toBe(false);
+  });
   it('preserves native Jev behavior when loading old settings', () => {
     expect(orchSettingsSchema.parse({}).decisionModels).toEqual({
       mode: 'jev', clefModel: 'clef', cloudflareAccountId: '', visionEnabled: false,

@@ -1291,7 +1291,7 @@ saber isto antes de mexer:
   rank, tool_pick, route_*, pane_close — F-709) nunca são julgados. Args vão compactados
   (string > 300 chars vira `<N chars>`, JSON ≤ 2 KB, redigidos) e NUNCA
   entram no decision log. Cache de veredito por sessão+args por 60 s.
-  Limiar 0.35 medido em 17/09 (`git push --force main` numa missão de login
+  Limiar 0.35 medido em 17/09 com jev-1.13.0 (`git push --force main` numa missão de login
   saiu coherent 0.33 / destructive 0.88); recalibrar pelo painel.
 - **`nexus_tool_pick`** (`orch/tools-tool-pick.ts`, read-only,
   alcançável por todo agente): pré-filtro lexical (sinônimos pt-BR → inglês) sobre as
@@ -1793,6 +1793,17 @@ saber isto antes de mexer:
   `review_reports` é do council PREVC — não reutilizar.
 
 ## Jev enxugando a orquestração (F-194/F-195/F-196/F-197)
+
+- Jev 1.14 (14/10): docs oficiais `https://docs.typesafe.ai/models` expõem
+  `jev-1.14.0`; `jev-preview` aponta para ele, `jev-latest` ainda para 1.13.0.
+  Seleção em Chaves de API → Modelos de decisão (`decisionModels.jevModel`);
+  NEXUS_JEV_MODEL prevalece. O padrão continua estável: preview é opt-in e
+  modelo recusado tenta `jev-latest` uma vez, sem trocar de provedor.
+  O limiar 0.35 e as rubricas de tier/esforço são calibrações históricas de
+  1.13.0; precisam de reavaliação no MESMO conjunto antes de migrar o padrão.
+  A fixture real de 01/10 continua histórica, nunca rebatizada como 1.14.
+  O conjunto sintético `scripts/fixtures/decision-models/nexus-cases.json`
+  não substitui as 78 tarefas de audit_events nem a calibração de 17/09.
 
 - F-194: o rubric de tier do `jev-task-routing.ts` foi avaliado com o Jev real
   sobre 78 tarefas delegadas (`audit_events`): texto antigo 60 hard, novo 32

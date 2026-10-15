@@ -1,7 +1,8 @@
 import type { DecisionAudio, DecisionImage, DecisionRoute, DecisionUsageReceipt } from '../../shared/decision-models';
 import { redactState, redactQuestions } from '../decision-models/decision-redaction';
 import { judgeDecision, type DecisionJudgeDeps } from '../decision-models/decision-judge';
-import { getDecisionAvailability } from '../decision-models/decision-availability';
+import { getDecisionAvailability, getDecisionSettings } from '../decision-models/decision-availability';
+import { jevModel } from '../decision-models/decision-routing';
 import { JEV_RESPONSE_POLICY, validateDecisionResponse } from '../decision-models/decision-response';
 export { redactSecrets, redactState, capText } from '../decision-models/decision-redaction';
 import type { JevTestResult } from '../../shared/jev-ipc';
@@ -211,16 +212,15 @@ export async function judgeJevTransport(
     return null;
   }
 
-  const model = input.model ?? process.env.NEXUS_JEV_MODEL ?? DEFAULT_MODEL;
-  const body = JSON.stringify({
+  let model = input.model ?? jevModel((deps?.getSettings ?? getDecisionSettings)());
+  const payload = {
     state: redactState(input.state),
-    model,
     // As perguntas também saem do processo: instruções estruturadas carregam
     // texto do repositório (regra, armadilha, fluxo) e recebem a mesma
     // redação do state — segredo colado numa fonte nunca vaza para a API.
     // A chave é identificador: redactQuestions redige valores, não nomes.
     questions: redactQuestions(input.questions),
-  });
+  };
 
   const started = now();
   let lastFailure = 'unknown error';
@@ -238,7 +238,7 @@ export async function judgeJevTransport(
           Authorization: `Bearer ${key}`,
           'Content-Type': 'application/json',
         },
-        body,
+        body: JSON.stringify({ ...payload, model }),
         signal: input.signal
           ? AbortSignal.any([
               AbortSignal.timeout(input.timeoutMs ?? DEFAULT_TIMEOUT_MS),
@@ -270,6 +270,12 @@ export async function judgeJevTransport(
           requestCount, durationMs: now() - started,
           usageIncomplete: Boolean(validated.usageMissing || requestCount > 1),
         } };
+      }
+      // Only a rejected model triggers the stable retry; auth/quota errors keep fail-open.
+      if (attempt === 0 && model !== DEFAULT_MODEL && (res.status === 400 || res.status === 404)
+        && /(?:unknown|invalid|unsupported)[ _]+model|model(?:_not_found|_unavailable)|model\b[^\n]{0,160}\b(?:not found|not available|does not exist|not exist|unknown|unsupported)/i.test(errorMessage(data, res.status))) {
+        model = DEFAULT_MODEL;
+        continue;
       }
       const retryable = res.status === 429 || res.status === 529 || res.status >= 500;
       lastFailure = `HTTP ${res.status}: ${errorMessage(data, res.status)}`;
@@ -347,9 +353,10 @@ export async function judge(input: JudgeInput, deps?: JudgeDeps): Promise<JevRes
 export interface TestJevDeps {
   fetch?: typeof fetch;
   resolveKey?: () => string | undefined;
+  model?: string;
 }
 
-/** Teste de conexão iniciado pelo usuário (GET /v1/models). Nunca vaza a chave. */
+/** User-initiated model listing + small synthetic POST probe (billable input tokens). Never exposes the key. */
 export async function testJevConnection(deps?: TestJevDeps): Promise<JevTestResult> {
   const doFetch = deps?.fetch ?? fetch;
   const key = (deps?.resolveKey ?? resolveJevApiKey)();
@@ -375,7 +382,12 @@ export async function testJevConnection(deps?: TestJevDeps): Promise<JevTestResu
             .map((m) => (typeof m.name === 'string' ? m.name : ''))
             .filter(Boolean)
         : [];
-    return { ok: true, detail: `Conectado — modelos: ${models.join(', ') || 'nenhum'}` };
+    const selected = deps?.model ?? jevModel(getDecisionSettings());
+    const result = await judgeJevTransport({ model: selected, state: 'Synthetic connection test.',
+      questions: { connected: { type: 'noul', instructions: 'Is this a connection test?' } }, retryOnTimeout: false,
+    }, { fetch: doFetch, resolveKey: () => key });
+    if (!result) return { ok: false, detail: `A chave conectou, mas o modelo ${selected} não respondeu.` };
+    return { ok: true, detail: `Conectado — respondeu: ${result.model}; solicitado: ${selected}; modelos: ${models.join(', ') || 'nenhum'}` };
   } catch (err) {
     return { ok: false, detail: err instanceof Error ? err.message : String(err) };
   }

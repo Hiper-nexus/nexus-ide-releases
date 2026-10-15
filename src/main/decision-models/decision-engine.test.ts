@@ -17,6 +17,12 @@ const MEASURED: DecisionQualityTable = { version: 1, generatedAt: 1, source: 'ev
 const measured = { budgetLevel: 'normal' as const, quality: MEASURED };
 
 describe('roteador v2 (F-1165): só no Automático', () => {
+  it('routes auto Jev candidates to the selected preview without reusing stable measurements', () => {
+    const plan = planAutoDecision(text('taskRouting'), { ...auto, jevModel: 'jev-1.14.0' },
+      { jev: true, clef: false, luna: false }, measured);
+    expect(plan?.route).toMatchObject({ model: 'jev-1.14.0', evidence: 'prior' });
+    expect(plan?.members).toBeUndefined();
+  });
   it('modos explícitos não passam pelo v2', () => {
     for (const mode of ['jev', 'clef', 'luna', 'together'] as const) {
       expect(planAutoDecision(text('toolPick'), { ...auto, mode }, all, normal)).toBeNull();

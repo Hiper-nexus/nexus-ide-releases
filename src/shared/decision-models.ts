@@ -16,6 +16,8 @@ export const LUNA_DECISION_MODEL = 'gpt-6-luna';
 /** Variantes Cloudflare aceitas. Clef-omni é a única que entende áudio. */
 export const CLEF_MODELS = ['clef', 'clef-flash', 'clef-omni'] as const;
 export const CLEF_AUDIO_MODEL = 'clef-omni';
+/** Verified at https://docs.typesafe.ai/models on 2026-10-14. */
+export const JEV_MODELS = ['jev-latest', 'jev-1.14.0', 'jev-preview', 'jev-1.13.0'] as const;
 
 /** Orçamento de decisão por missão (F-1164). 0 ou ausente = padrão. */
 export const DEFAULT_MISSION_DECISION_BUDGET_USD = 0.5;
@@ -24,6 +26,8 @@ export const MAX_MISSION_DECISION_BUDGET_USD = 20;
 export const decisionSettingsSchema = z.object({
   mode: z.enum(['auto', 'jev', 'clef', 'luna', 'together']).default('jev'),
   clefModel: z.enum(CLEF_MODELS).default('clef'),
+  /** Absent preserves the stable alias and historical calibration. */
+  jevModel: z.enum(JEV_MODELS).optional(),
   cloudflareAccountId: z.string().trim().regex(/^(?:[a-fA-F0-9]{32})?$/).default(''),
   visionEnabled: z.boolean().default(false),
   /** Absent = legacy Cloudflare-only consent; a new recipient always needs an explicit grant. */

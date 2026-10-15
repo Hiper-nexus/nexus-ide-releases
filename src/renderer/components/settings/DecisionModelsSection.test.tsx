@@ -34,6 +34,14 @@ const orchSet = () => (window.nexus.settings.orchSet as ReturnType<typeof vi.fn>
 const bridge = () => window.nexus.decisionModels as unknown as Record<'status' | 'setKey' | 'test', ReturnType<typeof vi.fn>>;
 
 describe('complementary decision model settings', () => {
+  it('persists the verified Jev preview selection and offers the stable alias', async () => {
+    await mount();
+    const select = host.querySelector<HTMLSelectElement>('select[aria-label="Versão do Jev"]')!;
+    expect(select.value).toBe('jev-latest');
+    expect(select.textContent).toContain('1.14');
+    await act(async () => { choose('Versão do Jev', 'jev-1.14.0'); });
+    expect(orchSet()).toHaveBeenCalledWith({ decisionModels: expect.objectContaining({ jevModel: 'jev-1.14.0' }) });
+  });
   beforeEach(() => {
     storedToken = ''; rejectedSave = false; statusFails = false;
     status = { settings: { mode: 'jev', clefModel: 'clef', cloudflareAccountId: ACCOUNT, visionEnabled: false },

@@ -18,7 +18,7 @@ import { decisionInputUsdPerMillion, estimateDecisionCostUsd, estimateDecisionIn
 import { decisionQuality, MIN_QUALITY_CASES, type DecisionModelKey, type DecisionQualityTable, type QualityModality } from './decision-quality';
 import {
   JEV_PINNED_SURFACES, REVERSIBLE_ENSEMBLE_SURFACES, SECURITY_ENSEMBLE_SURFACES,
-  resolveDecisionRoute, type DecisionAvailability,
+  resolveDecisionRoute, jevModel, type DecisionAvailability,
 } from './decision-routing';
 
 export const DECISION_ENGINE_POLICY = 'decision-engine-v2' as const;
@@ -78,8 +78,8 @@ function providerOf(key: DecisionModelKey): DecisionProvider {
   return key === 'jev' ? 'jev' : key === 'luna' ? 'luna' : 'clef';
 }
 
-function modelIdOf(key: DecisionModelKey): string {
-  return key === 'jev' ? process.env.NEXUS_JEV_MODEL ?? 'jev-latest' : key === 'luna' ? LUNA_DECISION_MODEL : key;
+function modelIdOf(key: DecisionModelKey, selectedJevModel: string): string {
+  return key === 'jev' ? selectedJevModel : key === 'luna' ? LUNA_DECISION_MODEL : key;
 }
 
 /** Quem tem credencial E atende a modalidade, com o consentimento correspondente. */
@@ -104,13 +104,14 @@ export function eligibleDecisionModels(
 
 export function scoreDecisionCandidates(
   keys: readonly DecisionModelKey[], surface: string | undefined, profile: DecisionSurfaceProfile,
-  table: DecisionQualityTable | null, lambda = DECISION_COST_LAMBDA,
+  table: DecisionQualityTable | null, lambda = DECISION_COST_LAMBDA, selectedJevModel = process.env.NEXUS_JEV_MODEL ?? 'jev-latest',
 ): DecisionCandidate[] {
   const all = keys.map((key): DecisionCandidate => {
     const provider = providerOf(key);
-    const estimate = decisionQuality(table, surface, key, profile.modality);
+    // Versionless historical Jev measurements cannot certify a different model.
+    const estimate = decisionQuality(key === 'jev' && selectedJevModel !== 'jev-latest' && selectedJevModel !== 'jev-1.13.0' ? null : table, surface, key, profile.modality);
     const usdPerMillion = decisionInputUsdPerMillion(provider, key === 'luna' ? LUNA_DECISION_MODEL : key);
-    return { key, provider, model: modelIdOf(key), quality: estimate.quality, source: estimate.source,
+    return { key, provider, model: modelIdOf(key, selectedJevModel), quality: estimate.quality, source: estimate.source,
       usdPerMillion, score: estimate.quality - lambda * usdPerMillion, p50Ms: estimate.p50Ms, surfaceCases: estimate.surfaceCases };
   });
   // Elegibilidade é credencial + modalidade + consentimento; a qualidade só ordena.
@@ -152,7 +153,7 @@ export function planAutoDecision(
     return route ? { route, estimatedTokens: tokens, estimatedUsd: estimateDecisionCostUsd(tokens, route.provider, route.model) } : null;
   }
   const ranked = scoreDecisionCandidates(eligibleDecisionModels(profile, settings, available), input.surface, profile,
-    options.quality, options.lambda);
+    options.quality, options.lambda, jevModel(settings));
   if (!ranked.length) {
     // Sem candidato no v2: a política v1 ainda decide (e o diário tem a linha da consulta).
     const route = resolveDecisionRoute(input, settings, available);

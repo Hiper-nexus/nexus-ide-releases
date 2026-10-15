@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { canRouteBrowserVisual, clefModel, ensembleMembers, resolveDecisionRoute } from './decision-routing';
 import { decisionSettingsSchema, type DecisionSettings } from '../../shared/decision-models';
 
@@ -6,6 +6,17 @@ const settings: DecisionSettings = { mode: 'auto', clefModel: 'clef', cloudflare
 const visionConsent: NonNullable<DecisionSettings['visionConsent']> = { version: 1, recipients: ['clef', 'luna'] };
 const both = { jev: true, clef: true };
 describe('complementary decision routing', () => {
+  it('preserves the environment override above the saved Jev selection', () => {
+    vi.stubEnv('NEXUS_JEV_MODEL', 'jev-1.13.0');
+    try {
+      expect(resolveDecisionRoute({}, { ...settings, jevModel: 'jev-1.14.0' }, both)?.model).toBe('jev-1.13.0');
+    } finally { vi.unstubAllEnvs(); }
+  });
+  it('uses the selected preview for pinned decisions and every Jev ensemble member', () => {
+    const preview = { ...settings, jevModel: 'jev-1.14.0' as const };
+    expect(resolveDecisionRoute({ surface: 'dispatchGuard' }, preview, both)?.model).toBe('jev-1.14.0');
+    expect(ensembleMembers({}, { ...preview, mode: 'together' }, { ...both, luna: true })?.[0].model).toBe('jev-1.14.0');
+  });
   it('uses Clef for tool selection, researchTriage, and rank in auto mode (F-783)', () => {
     expect(resolveDecisionRoute({ surface: 'toolPick' }, settings, both)).toMatchObject({ provider: 'clef', model: 'clef', evidence: 'public-benchmark' });
     expect(resolveDecisionRoute({ surface: 'researchTriage' }, settings, both)).toMatchObject({

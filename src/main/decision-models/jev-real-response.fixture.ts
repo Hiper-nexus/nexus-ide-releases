@@ -27,3 +27,10 @@ export function jevRealResponse() {
     usage: { input_tokens: 422, output_tokens: 73 },
   };
 }
+
+/** Real vault-backed nexus_judge response on 2026-10-14; synthetic connectivity only, not calibration. */
+export const JEV_114_CONNECTION_RESPONSE = {
+  model: 'jev-1.14.0',
+  answers: { available: { type: 'noul' as const, noul: 0.96 } },
+  usage: { input_tokens: 291, output_tokens: 20 },
+};

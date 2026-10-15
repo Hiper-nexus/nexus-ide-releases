@@ -17,7 +17,7 @@ import {
 } from './jev-decision-log';
 import { decisionResultUsage } from '../decision-models/decision-usage';
 import type { DecisionSettings } from '../../shared/decision-models';
-import { JEV_REAL_QUESTIONS, jevRealResponse } from '../decision-models/jev-real-response.fixture';
+import { JEV_REAL_QUESTIONS, jevRealResponse, JEV_114_CONNECTION_RESPONSE } from '../decision-models/jev-real-response.fixture';
 
 function jsonResponse(status: number, body: unknown, headers?: Record<string, string>) {
   return new Response(typeof body === 'string' ? body : JSON.stringify(body), {
@@ -38,6 +38,37 @@ const okBody = {
 };
 
 describe('judge', () => {
+  it.each([401, 403, 400])('does not fall back on authentication or unrelated request errors (HTTP %s)', async status => {
+    const mockFetch = vi.fn(async () => jsonResponse(status, { message: status === 400 ? 'Invalid state' : 'Unauthorized' }));
+    expect(await judge({ model: 'jev-1.14.0', state: 'x', questions: { q: question } },
+      { fetch: mockFetch as unknown as typeof fetch, resolveKey: () => 'k' })).toBeNull();
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+  it('accepts the captured 1.14 response and preserves the effective version', async () => {
+    const result = await judge({ state: 'Synthetic connectivity check: version 1.14 released.', model: 'jev-1.14.0',
+      questions: { available: { type: 'noul', instructions: 'Does the state mention version 1.14?' } } },
+    { fetch: vi.fn(async () => jsonResponse(200, JEV_114_CONNECTION_RESPONSE)) as typeof fetch, resolveKey: () => 'k' });
+    expect(result?.model).toBe('jev-1.14.0');
+    expect(result?.answers.available).toEqual(JEV_114_CONNECTION_RESPONSE.answers.available);
+  });
+  it.each([400, 404])('retries an unavailable preview once with the stable alias (HTTP %s)', async status => {
+    const mockFetch = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(status, { error: { message: 'Model jev-1.14.0 not found' } }))
+      .mockResolvedValueOnce(jsonResponse(200, okBody));
+    const result = await judge({ model: 'jev-1.14.0', state: 'x', questions: { q: question } },
+      { fetch: mockFetch as unknown as typeof fetch, resolveKey: () => 'k' });
+    expect(mockFetch.mock.calls.map(call => JSON.parse(call[1].body).model)).toEqual(['jev-1.14.0', 'jev-latest']);
+    expect(result?.model).toBe('jev-1.13.0');
+    expect(result?.requestCount).toBe(2);
+  });
+
+  it('keeps fail-open when both the preview and stable model are unavailable', async () => {
+    const mockFetch = vi.fn(async () => jsonResponse(404, { message: 'Unknown model' }));
+    expect(await judge({ model: 'jev-1.14.0', state: 'x', questions: { q: question } },
+      { fetch: mockFetch as unknown as typeof fetch, resolveKey: () => 'k' })).toBeNull();
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
   beforeEach(() => {
     resetJevStatsForTesting();
     delete process.env.NEXUS_JEV_MODEL;
@@ -581,6 +612,22 @@ describe('capText', () => {
 });
 
 describe('testJevConnection', () => {
+  it('does not claim a connected model when the model probe fails', async () => {
+    const mockFetch = vi.fn().mockResolvedValueOnce(jsonResponse(200, { models: [{ name: 'jev-latest' }] }))
+      .mockResolvedValueOnce(jsonResponse(400, { message: 'Invalid state' }));
+    expect(await testJevConnection({ fetch: mockFetch as unknown as typeof fetch, resolveKey: () => 'k', model: 'jev-1.14.0' }))
+      .toMatchObject({ ok: false, detail: expect.stringContaining('não respondeu') });
+  });
+  it('probes the selected model and exposes the actual version rather than claiming an alias answered', async () => {
+    const mockFetch = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, { models: [{ name: 'jev-latest' }, { name: 'jev-preview' }] }))
+      .mockResolvedValueOnce(jsonResponse(200, { model: 'jev-1.14.0', answers: { connected: { type: 'noul', noul: 0.96 } }, usage: { input_tokens: 291, output_tokens: 20 } }));
+    const result = await testJevConnection({ fetch: mockFetch as unknown as typeof fetch, resolveKey: () => 'k', model: 'jev-1.14.0' });
+    expect(result.ok).toBe(true);
+    expect(result.detail).toContain('respondeu: jev-1.14.0');
+    expect(JSON.parse(mockFetch.mock.calls[1][1].body).model).toBe('jev-1.14.0');
+  });
+
   it('reports missing key without fetching', async () => {
     const mockFetch = vi.fn();
     const result = await testJevConnection({
@@ -592,9 +639,9 @@ describe('testJevConnection', () => {
   });
 
   it('lists model names on success', async () => {
-    const mockFetch = vi.fn(async () =>
+    const mockFetch = vi.fn().mockResolvedValueOnce(
       jsonResponse(200, { models: [{ name: 'jev-latest' }, { name: 'jev-preview' }] }),
-    );
+    ).mockResolvedValueOnce(jsonResponse(200, { model: 'jev-1.13.0', answers: { connected: { type: 'noul', noul: 1 } }, usage: { input_tokens: 50, output_tokens: 5 } }));
     const result = await testJevConnection({
       fetch: mockFetch as unknown as typeof fetch,
       resolveKey: () => 'k',

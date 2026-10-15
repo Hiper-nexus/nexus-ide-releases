@@ -26,6 +26,15 @@ export function DecisionModeControls({ settings, busy, onChange }: {
           <option value="together">Luna junto com Jev e Clef</option>
         </select>
       </label>
+      {(settings.mode === 'jev' || settings.mode === 'auto' || settings.mode === 'together') && <label className="settings-field">Versão do Jev
+        <select className="settings-input" aria-label="Versão do Jev" value={settings.jevModel ?? 'jev-latest'} disabled={busy}
+          onChange={event => onChange({ jevModel: event.target.value as DecisionSettings['jevModel'] })}>
+          <option value="jev-latest">Estável (jev-latest)</option>
+          <option value="jev-1.14.0">Jev 1.14.0 (preview)</option>
+          <option value="jev-preview">Preview mais recente (jev-preview)</option>
+          <option value="jev-1.13.0">Jev 1.13.0 (calibração histórica)</option>
+        </select>
+      </label>}
       {settings.mode === 'clef' && <label className="settings-field">Variante Cloudflare
         <select className="settings-input" aria-label="Variante Cloudflare" value={settings.clefModel} disabled={busy}
           onChange={event => onChange({ clefModel: event.target.value as DecisionSettings['clefModel'] })}>
@@ -35,6 +44,10 @@ export function DecisionModeControls({ settings, busy, onChange }: {
         </select>
       </label>}
     </div>
+    {(settings.mode === 'jev' || settings.mode === 'auto' || settings.mode === 'together') && <p className="settings-field__note">
+      O preview 1.14 precisa de reavaliação dos limiares medidos em 1.13. Se a API recusar o modelo, a consulta tenta o estável.
+      {' '}O teste de conexão mostra a versão que respondeu. NEXUS_JEV_MODEL, quando configurado, prevalece sobre esta escolha.
+    </p>}
     {settings.mode === 'clef' && <p className="settings-field__note">Preços por milhão de tokens de entrada. O Clef aceita até 65.536 tokens de contexto,
       {' '}o Clef-omni até 64.000 e o Flash até 24.576: em estados longos, prefira Clef ou Clef-omni.
       {' '}A variante escolhida vale para todas as decisões que vão ao Clef, inclusive o julgamento visual do navegador.</p>}

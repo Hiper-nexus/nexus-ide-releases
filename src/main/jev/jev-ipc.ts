@@ -17,6 +17,8 @@ import {
 } from './jev-secrets';
 import { getJevStats, testJevConnection } from './jev-client';
 import { isJevAutopilotEnabled } from './jev-autopilot';
+import { getDecisionSettings } from '../decision-models/decision-availability';
+import { jevModel } from '../decision-models/decision-routing';
 import {
   jevDecisionStats,
   listJevDecisions,
@@ -37,7 +39,7 @@ export function registerJevIpc(): void {
       keyMasked: maskedJevApiKey(),
       secureStorageAvailable: isJevSecretStorageAvailable(),
       autopilot: isJevAutopilotEnabled(),
-      model: process.env.NEXUS_JEV_MODEL ?? 'jev-latest',
+      model: jevModel(getDecisionSettings()),
       stats: {
         calls: stats.calls,
         failures: stats.failures,

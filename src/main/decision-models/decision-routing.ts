@@ -3,6 +3,9 @@ import type { JudgeInput } from '../jev/jev-client';
 import type { JevDecisionSurface } from '../jev/jev-decision-log';
 
 export interface DecisionAvailability { jev: boolean; clef: boolean; luna?: boolean }
+export function jevModel(settings: DecisionSettings): string {
+  return process.env.NEXUS_JEV_MODEL ?? settings.jevModel ?? 'jev-latest';
+}
 type RouteInput = Pick<JudgeInput, 'surface' | 'model' | 'images'>;
 
 /**
@@ -87,8 +90,7 @@ export function canRouteBrowserVisual(settings: DecisionSettings, available: Dec
  */
 export function ensembleMembers(input: RouteInput, settings: DecisionSettings, available: DecisionAvailability): DecisionRoute[] | null {
   if (settings.mode !== 'together') return null;
-  const jevModel = process.env.NEXUS_JEV_MODEL ?? 'jev-latest';
-  const jev = route('jev', jevModel, 'manual', 'ensemble');
+  const jev = route('jev', jevModel(settings), 'manual', 'ensemble');
   const luna = route('luna', LUNA_DECISION_MODEL, input.images?.length ? 'capability' : 'manual', 'ensemble');
   const clef = route('clef', settings.clefModel, input.images?.length ? 'capability' : 'manual', 'ensemble');
   if (input.images?.length) {
@@ -118,11 +120,11 @@ function operatorLuna(input: RouteInput, available: DecisionAvailability, eviden
 export function resolveDecisionRoute(input: RouteInput, settings: DecisionSettings, available: DecisionAvailability): DecisionRoute | null {
   const explicitClef = clefModel(input.model);
   const pinned = explicitProvider(input.model);
-  const jevModel = input.model ?? process.env.NEXUS_JEV_MODEL ?? 'jev-latest';
+  const selectedJevModel = input.model ?? jevModel(settings);
   if (settings.mode === 'together') {
     if (!input.images?.length && input.surface && LABEL_SURFACES.has(input.surface)) {
       if (!available.jev) return null;
-      return route('jev', process.env.NEXUS_JEV_MODEL ?? 'jev-latest', 'manual', 'labels');
+      return route('jev', jevModel(settings), 'manual', 'labels');
     }
     return ensembleMembers(input, settings, available)?.[0] ?? null;
   }
@@ -157,10 +159,10 @@ export function resolveDecisionRoute(input: RouteInput, settings: DecisionSettin
   if (input.surface && JEV_PINNED_SURFACES.has(input.surface)) {
     if (explicitClef || pinned === 'luna' || settings.mode === 'clef' || !available.jev) return null;
     return settings.mode === 'jev'
-      ? route('jev', jevModel, 'manual', 'manual')
-      : route('jev', jevModel, 'legacy', 'jev-pinned');
+      ? route('jev', selectedJevModel, 'manual', 'manual')
+      : route('jev', selectedJevModel, 'legacy', 'jev-pinned');
   }
-  if (settings.mode === 'jev') return available.jev ? route('jev', jevModel, 'manual', 'manual') : null;
+  if (settings.mode === 'jev') return available.jev ? route('jev', selectedJevModel, 'manual', 'manual') : null;
   if (settings.mode === 'clef') {
     if (!available.clef || (explicitClef && explicitClef !== settings.clefModel)) return null;
     return route('clef', settings.clefModel, 'manual', 'manual');
@@ -168,7 +170,7 @@ export function resolveDecisionRoute(input: RouteInput, settings: DecisionSettin
   if (pinned) {
     const ready = pinned === 'luna' ? lunaReady(available) : available[pinned];
     if (!ready) return null;
-    const model = pinned === 'clef' ? explicitClef ?? 'clef' : pinned === 'luna' ? LUNA_DECISION_MODEL : jevModel;
+    const model = pinned === 'clef' ? explicitClef ?? 'clef' : pinned === 'luna' ? LUNA_DECISION_MODEL : selectedJevModel;
     return route(pinned, model, 'manual', 'explicit-model');
   }
   const preferred: DecisionProvider = input.surface && CLEF_PREFERRED_SURFACES.has(input.surface) ? 'clef' : 'jev';
@@ -180,6 +182,6 @@ export function resolveDecisionRoute(input: RouteInput, settings: DecisionSettin
     : input.surface === 'researchTriage' ? 'research-triage'
     : input.surface === 'rank' || input.surface === 'rankTool' ? 'ranking'
     : 'public-benchmark';
-  return route(selected, selected === 'clef' ? 'clef' : selected === 'luna' ? LUNA_DECISION_MODEL : jevModel, evidence,
+  return route(selected, selected === 'clef' ? 'clef' : selected === 'luna' ? LUNA_DECISION_MODEL : selectedJevModel, evidence,
     selected !== preferred ? 'credential-fallback' : selected === 'clef' ? autoReason : 'legacy');
 }
