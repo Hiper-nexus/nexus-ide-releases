@@ -81,6 +81,18 @@ describe("main bootstrap settings migration order", () => {
     expect(bootstrap).toBeLessThan(gateResolve);
     expect(gateResolve).toBeLessThan(gateReject);
     expect(gateReject).toBeLessThan(bootstrapFailure);
+    expect(appReadySource).toContain("await withBootReadyDeadline(async () => {");
+    expect(appReadySource).toContain("handleBootReadyFailure(error, {");
+    expect(appReadySource).toContain("isShutdownSealed: isPtySessionAdmissionSealedForShutdown");
+    const telemetryAwait = bootstrapSource.indexOf("await bootStepAsync('initUsageTelemetry'");
+    const shutdownCheckAfterTelemetry = bootstrapSource.indexOf(
+      "if (isPtySessionAdmissionSealedForShutdown()) return;",
+      telemetryAwait,
+    );
+    const initOrch = bootstrapSource.indexOf("void initOrchestration()");
+    expect(telemetryAwait).toBeGreaterThan(-1);
+    expect(shutdownCheckAfterTelemetry).toBeGreaterThan(telemetryAwait);
+    expect(shutdownCheckAfterTelemetry).toBeLessThan(initOrch);
   });
 
   it("does not park the window on the 4 s orchestration race — CLI spawns wait at their own gate", () => {

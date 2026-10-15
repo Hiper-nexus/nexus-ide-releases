@@ -94,4 +94,119 @@ describe('boot:ready mount gate', () => {
       handler({ sender: { getURL: () => 'https://evil.example' }, senderFrame: null }),
     ).toThrow();
   });
+
+  it('resolves a reload invoke immediately after resolveBootReady has already settled', async () => {
+    const { gate, trusted, handler } = await loadModules();
+    gate.resolveBootReady();
+    let settled = false;
+    void handler(trustedEvent(trusted)).then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(true);
+    expect(gate.isBootReadyPending()).toBe(false);
+  });
+
+  it('caps mount watchdog re-arms at BOOT_READY_DEADLINE_MS and stops once boot:ready settles', async () => {
+    const { gate } = await loadModules();
+    expect(gate.BOOT_READY_DEADLINE_MS).toBeGreaterThanOrEqual(90_000);
+    const startedAt = 1_000;
+    expect(gate.isBootReadyPending()).toBe(true);
+    expect(gate.shouldRearmMountWatchdogForBootGate(startedAt, startedAt + 20_000)).toBe(true);
+    expect(
+      gate.shouldRearmMountWatchdogForBootGate(
+        startedAt,
+        startedAt + gate.BOOT_READY_DEADLINE_MS - 1,
+      ),
+    ).toBe(true);
+    expect(
+      gate.shouldRearmMountWatchdogForBootGate(
+        startedAt,
+        startedAt + gate.BOOT_READY_DEADLINE_MS,
+      ),
+    ).toBe(false);
+
+    gate.resolveBootReady();
+    expect(gate.shouldRearmMountWatchdogForBootGate(startedAt, startedAt + 2_000)).toBe(false);
+  });
+
+  it('rejects boot:ready at BOOT_READY_DEADLINE_MS when bootstrap never resolves and triggers error dialog + quit', async () => {
+    vi.useFakeTimers();
+    try {
+      const { gate, trusted, handler } = await loadModules();
+      const showErrorBox = vi.fn();
+      const quitApp = vi.fn();
+      const rendererWaiter = handler(trustedEvent(trusted));
+      const waiterExpectation = expect(rendererWaiter).rejects.toThrow(/boot:ready deadline/i);
+
+      const flow = gate
+        .withBootReadyDeadline(() => new Promise<void>(() => {}))
+        .catch((error: unknown) => {
+          gate.handleBootReadyFailure(error, {
+            isShutdownSealed: () => false,
+            showErrorBox,
+            quitApp,
+          });
+        });
+
+      await vi.advanceTimersByTimeAsync(gate.BOOT_READY_DEADLINE_MS - 1);
+      expect(gate.isBootReadyPending()).toBe(true);
+      expect(showErrorBox).not.toHaveBeenCalled();
+      expect(quitApp).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1);
+      await flow;
+      await waiterExpectation;
+
+      expect(gate.isBootReadyPending()).toBe(false);
+      expect(showErrorBox).toHaveBeenCalledTimes(1);
+      expect(showErrorBox.mock.calls[0]?.[0]).toBe('NexusIDE não conseguiu inicializar');
+      expect(quitApp).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('skips error dialog and post-await orchestration when shutdown is sealed during bootstrap', async () => {
+    const { gate, trusted, handler } = await loadModules();
+    const showErrorBox = vi.fn();
+    const quitApp = vi.fn();
+    const initOrchestration = vi.fn();
+    let shutdownSealed = false;
+    let releaseBootstrapStep!: () => void;
+    const bootstrapStep = new Promise<void>((resolve) => {
+      releaseBootstrapStep = resolve;
+    });
+
+    const rendererWaiter = handler(trustedEvent(trusted));
+    const waiterExpectation = expect(rendererWaiter).rejects.toThrow(/shutdown/i);
+
+    const bootFlow = gate
+      .withBootReadyDeadline(async () => {
+        await bootstrapStep;
+        if (shutdownSealed) {
+          throw new Error('bootstrap aborted: shutdown sealed');
+        }
+        initOrchestration();
+        gate.resolveBootReady();
+      })
+      .catch((error: unknown) => {
+        gate.handleBootReadyFailure(error, {
+          isShutdownSealed: () => shutdownSealed,
+          showErrorBox,
+          quitApp,
+        });
+      });
+
+    // User closes window / Cmd+W during bootstrap -> seals shutdown admission.
+    shutdownSealed = true;
+    releaseBootstrapStep();
+    await bootFlow;
+    await waiterExpectation;
+
+    expect(initOrchestration).not.toHaveBeenCalled();
+    expect(showErrorBox).not.toHaveBeenCalled();
+    expect(quitApp).not.toHaveBeenCalled();
+  });
 });
+

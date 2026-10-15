@@ -35,7 +35,10 @@ import {
   RendererMountWatchdog,
 } from './reliability/renderer-mount-watchdog';
 import { RendererBootRecovery } from './reliability/renderer-boot-recovery';
-import { registerBootReadyIpc } from './boot-ready-gate';
+import {
+  registerBootReadyIpc,
+  shouldRearmMountWatchdogForBootGate,
+} from './boot-ready-gate';
 import { confirmDbBoot } from './persistence/db';
 import { handleRenderProcessGone } from './agent-runtime/agent-runtime-bridge';
 import {
@@ -762,6 +765,7 @@ export function createMainWindow(
     }, { cadenceMs: 3_000, timeoutMs: Math.max(1000, 3_000) }), 3_000);
   };
   const MOUNT_POLL_MS = 2_000;
+  let bootGateWatchStartedAt: number | null = null;
   wc.on('did-finish-load', () => {
     // BrowserWindow may finish its implicit about:blank before Main bootstrap
     // authorizes the real renderer. That page must not consume mount/Dock
@@ -776,11 +780,21 @@ export function createMainWindow(
     // A fast renderer can commit before the top-level load event reaches Main.
     // onMounted already showed the window and cancelled monitoring in that case.
     if (mounted) return;
+    bootGateWatchStartedAt ??= Date.now();
+    const gateWaitStartedAt = bootGateWatchStartedAt;
     mountWatchdog.arm();
     let devDiagnosticsCaptured = false;
     const poll = setInterval(periodicCallback(`renderer-mount:${wc.id}`, async (ctx) => {
       if (win.isDestroyed() || mounted) {
         clearInterval(poll);
+        return;
+      }
+      // O gate boot:ready segura o React montado enquanto o bootstrap
+      // registra o IPC: consulta síncrona no Main (sem executeJavaScript, que
+      // falharia com o renderer ocupado e queimaria o orçamento de 5
+      // recuperações), limitada por BOOT_READY_DEADLINE_MS.
+      if (shouldRearmMountWatchdogForBootGate(gateWaitStartedAt)) {
+        mountWatchdog.arm();
         return;
       }
       await ctx.wait(wc.executeJavaScript(
@@ -791,19 +805,6 @@ export function createMainWindow(
           if (win.isDestroyed() || mounted || mountPoll !== poll) return;
           if (hasContent) {
             commitRendererBoot();
-            return;
-          }
-          // O gate boot:ready segura o React montado enquanto o bootstrap
-          // registra o IPC: documento vivo aguardando não é renderer morto.
-          // Re-arma o prazo em vez de recarregar uma página saudável.
-          const awaitingGate = await ctx.wait(wc.executeJavaScript(
-            'window.__nexusBootAwaiting === true',
-          )).catch(() => false);
-          // Mesma cerca da resposta anterior: uma avaliação atrasada de um
-          // load velho não re-arma o watchdog do load atual.
-          if (win.isDestroyed() || mounted || mountPoll !== poll) return;
-          if (awaitingGate) {
-            mountWatchdog.arm();
             return;
           }
           if (devServerUrl && !devDiagnosticsCaptured) {

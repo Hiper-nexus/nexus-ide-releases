@@ -56,13 +56,17 @@ describe("deferred main renderer navigation", () => {
     expect(readyToShow).not.toContain("commitRendererBoot()");
   });
 
-  it("treats a renderer awaiting the boot gate as alive instead of reloading it", () => {
+  it("treats a renderer awaiting the boot gate as alive in Main up to the deadline without executeJavaScript polling", () => {
     const mountPoll = between(
       "wc.on('did-finish-load'",
       "wc.on('did-start-navigation'",
     );
-    expect(mountPoll).toContain("__nexusBootAwaiting");
+    const rearmCheck = mountPoll.indexOf("shouldRearmMountWatchdogForBootGate(");
+    const rootProbe = mountPoll.indexOf("wc.executeJavaScript(");
+    expect(rearmCheck).toBeGreaterThanOrEqual(0);
+    expect(rootProbe).toBeGreaterThan(rearmCheck);
     expect(mountPoll).toContain("mountWatchdog.arm()");
+    expect(mountPoll).not.toContain("__nexusBootAwaiting");
   });
 
   it("starts one real navigation explicitly and keeps the normal activate path immediate", () => {
