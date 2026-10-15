@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.76.274 — Mais fácil de usar, painéis à vista
+
+- Inclui a configuração rápida, navegação de missões, ações explicadas e lata animada descritas na candidata 0.76.273 abaixo. A 0.76.273 foi validada como candidata local; o Mac público recebe este conjunto na 0.76.274.
+- + Pane → Nesta missão solicita a apresentação após o registro durável, sem depender de um próximo evento da missão para mostrar o painel.
+- Relatórios automáticos de foco/terminal não retomam missão parada nem acordam um painel estacionado. Reanexar a tela não recria o processo encerrado pelo Main; retomada explícita preservada.
+- A consulta de continuidade ao abrir um painel solto lê uma cauda limitada do terminal, sem serializar todo o histórico nem drenar a saída pendente.
+- Primeiros passos com caminhos atuais de Configurações, conexão de conta em destaque e sem selo Pronto para chave inválida. Contas sem credencial ou que exigem login não completam automaticamente o checklist.
+
+
 ## 0.76.273 — Mais claro, mais vivo
 
 - Configuração rápida com caminhos diretos para conectar IA, ajustar aparência/texto, microfone, equipe, uso e diagnóstico; busca por palavras comuns em português.

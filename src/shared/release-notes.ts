@@ -10869,7 +10869,7 @@ export const RELEASE_076272: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076273: AppRelease = {
   version: '0.76.273',
   date: '2026-10-15',
   codename: 'Mais claro, mais vivo',
@@ -10889,5 +10889,19 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Menu Mais sem corte', detail: 'As ações continuam acessíveis com o Quadro minimizado e em largura compacta.' },
     { title: 'Recusa de religação', detail: 'A mensagem permite tentar novamente pelo Quadro, sem recomendar reinício local de um pane controlado pela missão.' },
     { title: 'Ditado e comandos pesados', detail: 'Soltar a tecla durante a abertura do microfone encerra a captura. O medidor também reconhece comandos escapados pelo bash.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  ...RELEASE_076273,
+  version: '0.76.274',
+  codename: 'Mais fácil de usar, painéis à vista',
+  summary: 'O Mac recebe configuração guiada, contas e ações mais claras, retomada fácil de encontrar e a nova animação da lata. Esta versão também corrige a apresentação do painel aberto dentro de uma missão e impede que sinais automáticos do terminal retomem uma missão parada.',
+  fixes: [
+    { title: 'Novo painel na missão', detail: 'O painel aberto em Nesta missão é apresentado assim que o registro fica pronto, sem depender de outro evento da missão para aparecer.' },
+    { title: 'Missão parada continua parada', detail: 'Sinais automáticos de foco e do terminal não são tratados como uma tecla sua. Voltar à tela não religa sozinho o painel encerrado pelo runtime.' },
+    { title: 'Leitura leve do histórico', detail: 'Abrir um painel solto consulta apenas o trecho final do terminal, sem serializar todo o histórico nem forçar a saída pendente.' },
+    { title: 'Primeiros passos coerentes', detail: 'O guia usa os nomes atuais de Configurações e prioriza conectar sua conta. Chave inválida ou conta que exige novo login não conta como uma conexão pronta.' },
+    ...RELEASE_076273.fixes,
   ],
 };

@@ -96,3 +96,41 @@ O monitor segue consultando Windows, com revisão/publicação paralela suspensa
 por `holdUntil` até 15/10 21:12 UTC. Liberar ao concluir (ou renovar se necessário).
 Candidata local não é release publicada. App instalado e sessões do operador
 continuam preservados. Não marcar o objetivo concluído antes desses gates.
+
+## Inspeção nativa e terceira rodada
+
+- A suíte final da candidata 273 passou: 28.598 testes, 103 skips declarados,
+  zero falhas. Build assinado/notarizado, gate de candidato, E2E e smoke passaram.
+  A tag local `v0.76.273` e os artefatos foram preservados; não houve publicação.
+- O teste adicional de runtime nativo encontrou duas condições: inventário
+  amostrado antes do PID de um worker aparecer e retomada involuntária de missão
+  parada ao remontar/focar o terminal. F-395 cobre as guardas e a prova de PID.
+- O novo relato do operador sobre + Pane entrou no escopo antes de publicar.
+  F-396 remove leitura integral de histórico: 5 mil linhas custavam cerca de
+  19 ms no benchmark; a cauda limitada custa menos de 0,1 ms. Isso, isoladamente,
+  não prova a causa de uma espera superior a um minuto.
+- A investigação F-398 encontrou a dependência de um futuro `syncPanes` para
+  apresentar o painel main-owned aberto dentro da missão. A correção deve
+  apresentar após o registro durável, validando o workspace atual do renderer.
+- F-397 alinha o guia inicial aos menus atuais e evita prontidão contraditória.
+  Preview em `release-artifacts/nexus-ui/onboarding-final.png`.
+- Próxima candidata: 0.76.274, preservando a 273 para rastreabilidade. Antes de
+  publicar, repetir gates sobre fontes finais, teste nativo de missão/retomada
+  e soak. O aplicativo instalado do operador não foi reiniciado nem substituído.
+
+## Validação da 0.76.274 antes do pacote
+
+- 417 testes focados em 12 arquivos passaram; typecheck passou e renderer sinks = 0.
+- Suíte ampla: 28.635 passaram, 103 skips declarados e duas falhas em
+  `MissionSetup.test.tsx` (contagem global de qualquer botão Conectar, incluindo
+  o atalho novo do checklist). Nenhuma outra falha em 2.214 arquivos.
+- Ajuste exclusivamente de teste: contar os botões dos dois avisos de conexão,
+  preservando a asserção de uma única ação e a ausência do aviso genérico quando
+  há um específico. O arquivo inteiro foi repetido: 94/94 passaram. Código de
+  produção permaneceu idêntico ao exercitado na suíte ampla; não se declara
+  exit zero para aquela invocação ampla.
+- F-395 a F-398 têm regressões e revisão independente sem bloqueadores.
+- Limite de F-398: prova espera pela apresentação; não reproduziu em hardware
+  o minuto relatado em todas as IAs. A adoção após a apresentação ainda passa
+  pelos gates usuais. Não atribuir a esse defeito o timeout MCP de prompt.
+- Próximo: pacote assinado/notarizado, gates nativos e publicação canônica.
