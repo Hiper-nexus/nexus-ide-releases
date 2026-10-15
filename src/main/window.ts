@@ -302,6 +302,32 @@ export function ensureMacDockPresence(): void {
   reassertMacOSDockPresence();
 }
 
+export function isAuthorizedRendererSurfaceReady(input: {
+  windowDestroyed: boolean;
+  rendererStartAuthorized: boolean;
+  windowVisible: boolean;
+  lastLoadFailed: boolean;
+  currentUrl: string;
+  expectedRendererUrl: string;
+}): boolean {
+  if (
+    input.windowDestroyed ||
+    !input.rendererStartAuthorized ||
+    input.windowVisible ||
+    input.lastLoadFailed
+  ) {
+    return false;
+  }
+  if (!input.currentUrl || input.currentUrl === 'about:blank') {
+    return false;
+  }
+  try {
+    return new URL(input.currentUrl).href === new URL(input.expectedRendererUrl).href;
+  } catch {
+    return false;
+  }
+}
+
 export function createMainWindow(
   options: CreateMainWindowOptions = {},
 ): BrowserWindow | null {
@@ -481,6 +507,8 @@ export function createMainWindow(
   let mountPoll: NodeJS.Timeout | null = null;
   let loadStartedAt = Date.now();
   let loadFailures = 0;
+  let lastLoadFailed = false;
+  let readyToShowPending = false;
   let suppressAbortedLoadUntil = 0;
   let loadWatchdog: NodeJS.Timeout | null = null;
   let rendererStartAuthorized = false;
@@ -568,9 +596,30 @@ export function createMainWindow(
   // splash estático do index.html cobre a espera do gate boot:ready. O show
   // definitivo (Dock/foco) continua sendo o commitRendererBoot no mount.
   win.on('ready-to-show', () => {
-    if (win.isDestroyed() || !rendererStartAuthorized || win.isVisible()) return;
-    win.show();
+    readyToShowPending = true;
+    revealReadyToShowIfAuthorized();
   });
+  function revealReadyToShowIfAuthorized(): void {
+    if (
+      win.isDestroyed() ||
+      !rendererStartAuthorized ||
+      win.isVisible() ||
+      lastLoadFailed ||
+      !isAuthorizedRendererSurfaceReady({
+        windowDestroyed: win.isDestroyed(),
+        rendererStartAuthorized,
+        windowVisible: win.isVisible(),
+        lastLoadFailed,
+        currentUrl: wc.getURL(),
+        expectedRendererUrl: rendererUrl,
+      })
+    ) {
+      return;
+    }
+    readyToShowPending = false;
+    markBootPhase('ready-to-show');
+    win.show();
+  }
   const commitRendererBoot = (): void => {
     mounted = true;
     bootRecovery.rendererCommitted();
@@ -687,6 +736,7 @@ export function createMainWindow(
     // Rejeições são esperadas durante o boot do Vite (ERR_ABORTED em reload
     // concorrente) — o watchdog cuida do retry; nunca deixar virar unhandled.
     finished = false;
+    lastLoadFailed = false;
     mounted = false;
     loadStartedAt = Date.now();
     stopMountMonitoring();
@@ -701,6 +751,8 @@ export function createMainWindow(
     if (!rendererStartAuthorized) return;
     if (!isMainFrame) return;
     if (code === -3 && Date.now() < suppressAbortedLoadUntil) return;
+    lastLoadFailed = true;
+    finished = false;
     loadFailures += 1;
     console.warn(
       `[window] load falhou (${code} ${desc}) — recuperação ${bootRecovery.attempts + 1}`,
@@ -770,7 +822,22 @@ export function createMainWindow(
     // BrowserWindow may finish its implicit about:blank before Main bootstrap
     // authorizes the real renderer. That page must not consume mount/Dock
     // proof or arm a reload that could bypass the deferred-load boundary.
-    if (!rendererStartAuthorized) return;
+    if (!rendererStartAuthorized || lastLoadFailed) return;
+    if (
+      !isAuthorizedRendererSurfaceReady({
+        windowDestroyed: win.isDestroyed(),
+        rendererStartAuthorized: true,
+        windowVisible: false,
+        lastLoadFailed: false,
+        currentUrl: wc.getURL(),
+        expectedRendererUrl: rendererUrl,
+      })
+    ) {
+      return;
+    }
+    if (readyToShowPending) {
+      revealReadyToShowIfAuthorized();
+    }
     markBootPhase('did-finish-load');
     finished = true;
     loadFailures = 0;
@@ -867,6 +934,7 @@ export function createMainWindow(
     }
     bootRecovery.beginNavigation({ manualRetry });
     finished = false;
+    lastLoadFailed = false;
     mounted = false;
     loadStartedAt = Date.now();
     stopMountMonitoring();
