@@ -320,3 +320,129 @@ it('never retries an activity body with another login after an in-flight 401', a
   expect((await flight).status).toBe(401);
   expect(d.fetchFn).toHaveBeenCalledTimes(1);
 });
+
+// Incidente 14/10: o servidor gira o refresh antes de responder. Um app que desiste cedo, ou que não
+// consegue salvar o par novo, fica com o token já usado; reapresentá-lo fora da janela de 60 s do
+// servidor derruba a família inteira.
+describe('refresh que não pode perder o 200', () => {
+  const timeout = () => Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
+  const refreshBodies = (d: { fetchFn: ReturnType<typeof vi.fn> }) => d.fetchFn.mock.calls
+    .filter(call => String(call[0]).endsWith('/v1/auth/refresh'))
+    .map(call => JSON.parse(String((call[1] as RequestInit).body)).refresh as string);
+  const traced = (events: Record<string, unknown>[]) => events.map(({ durationMs, ...event }) => {
+    expect(typeof durationMs).toBe('number');
+    return event;
+  });
+
+  it('espera até 30 s pela resposta do refresh', async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+    const d = deps({ backendUrl: 'https://api.timeout.test' });
+    d.fetchFn.mockResolvedValueOnce(json({}, 401))
+      .mockResolvedValueOnce(json({ ok: true, data: { session: 's2', refresh: 'r2' } }))
+      .mockResolvedValueOnce(json({ ok: true }));
+    await apiFetch('/v1/team', {}, d as never);
+    expect(timeoutSpy.mock.calls.map(call => call[0])).toEqual([10_000, 30_000, 10_000]);
+    timeoutSpy.mockRestore();
+  });
+
+  it.each([
+    ['timeout', timeout()],
+    ['network', new TypeError('fetch failed')],
+  ])('depois de %s, um retry rápido com o MESMO refresh guarda o par novo', async (outcome, failure) => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const events: Record<string, unknown>[] = [];
+      const d = deps({ backendUrl: `https://api.retry-${outcome}.test`, trace: (event: Record<string, unknown>) => { events.push(event); } });
+      d.fetchFn.mockResolvedValueOnce(json({}, 401))
+        .mockRejectedValueOnce(failure)
+        .mockResolvedValueOnce(json({ ok: true, data: { session: 's2', refresh: 'r2' } }))
+        .mockResolvedValueOnce(json({ ok: true, data: 1 }));
+      const flight = apiFetch('/v1/team', {}, d as never);
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(refreshBodies(d)).toEqual(['ref-1']);
+      await vi.advanceTimersByTimeAsync(3_001);
+      expect((await flight).status).toBe(200);
+      expect(refreshBodies(d)).toEqual(['ref-1', 'ref-1']);
+      expect(d.store['auth:refresh']).toBe('r2');
+      expect(traced(events)).toEqual([
+        { kind: 'auth-refresh', ok: false, status: 0, outcome },
+        { kind: 'auth-refresh', ok: true, status: 200, outcome: 'rotated' },
+      ]);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('tenta de novo uma vez só e mantém o par salvo quando a rede segue fora', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const discardRejectedSession = vi.fn();
+      const d = deps({ backendUrl: 'https://api.offline.test', discardRejectedSession });
+      d.fetchFn.mockResolvedValueOnce(json({}, 401)).mockRejectedValue(timeout());
+      const flight = apiFetch('/v1/team', {}, d as never);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect((await flight).status).toBe(401);
+      expect(refreshBodies(d)).toEqual(['ref-1', 'ref-1']);
+      expect(discardRejectedSession).not.toHaveBeenCalled();
+      expect(d.store['auth:refresh']).toBe('ref-1');
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('um logout durante a espera cancela o retry', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      let generation = 1;
+      const d = deps({ backendUrl: 'https://api.logout.test', generation: () => generation });
+      d.fetchFn.mockResolvedValueOnce(json({}, 401)).mockRejectedValueOnce(timeout());
+      const flight = apiFetch('/v1/team', {}, d as never);
+      await vi.advanceTimersByTimeAsync(100);
+      generation += 1;
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect((await flight).status).toBe(401);
+      expect(refreshBodies(d)).toEqual(['ref-1']);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('um 200 que o Keychain não salvou fica em memória; o refresh antigo nunca volta ao servidor', async () => {
+    let keychainUp = false;
+    const events: Record<string, unknown>[] = [];
+    const d = deps({ backendUrl: 'https://api.keychain.test', trace: (event: Record<string, unknown>) => { events.push(event); } });
+    d.setSecret = (key: string, value: string) => {
+      if (!keychainUp) return { ok: false, error: 'keychain locked' };
+      d.store[key] = value;
+      return { ok: true };
+    };
+    d.fetchFn.mockImplementation(async (url: string, init: RequestInit) => {
+      if (url.endsWith('/v1/auth/refresh')) {
+        const presented = JSON.parse(String(init.body)).refresh as string;
+        const next = presented === 'ref-1' ? '2' : presented === 'r2' ? '3' : 'x';
+        return json({ ok: true, data: { session: `s${next}`, refresh: `r${next}` } });
+      }
+      const auth = (init.headers as Record<string, string>).authorization;
+      return auth === 'Bearer sess-1' ? json({}, 401) : json({ ok: true, data: auth });
+    });
+
+    const first = await apiFetch('/v1/team', {}, d as never);
+    expect(first).toEqual({ status: 200, json: { ok: true, data: 'Bearer s2' } });
+    expect(d.store['auth:refresh']).toBe('ref-1');
+
+    const second = await apiFetch('/v1/team', {}, d as never);
+    expect(second.status).toBe(200);
+    keychainUp = true;
+    const third = await apiFetch('/v1/team', {}, d as never);
+    expect(third.status).toBe(200);
+
+    // Each rotation presents the newest pair, kept in memory while the Keychain refused it.
+    expect(refreshBodies(d)).toEqual(['ref-1', 'r2', 'r3']);
+    expect(d.store['auth:refresh']).toBe('rx');
+    expect(d.store['auth:session']).toBe('sx');
+    expect(traced(events)[0]).toEqual({ kind: 'auth-refresh', ok: false, status: 200, outcome: 'persist-failed' });
+  });
+
+  it('registra a recusa do servidor sem segredo', async () => {
+    const events: Record<string, unknown>[] = [];
+    const d = deps({ backendUrl: 'https://api.rejected.test', trace: (event: Record<string, unknown>) => { events.push(event); } });
+    d.fetchFn.mockResolvedValueOnce(json({}, 401)).mockResolvedValueOnce(json({ ok: false }, 401));
+    await apiFetch('/v1/team', {}, d as never);
+    expect(traced(events)).toEqual([{ kind: 'auth-refresh', ok: false, status: 401, outcome: 'rejected' }]);
+    expect(JSON.stringify(events)).not.toMatch(/ref-1|sess-1/);
+  });
+});

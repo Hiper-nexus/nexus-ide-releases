@@ -358,3 +358,16 @@ it.each([
     deleteSecret: key => { steps.push(key); secrets.delete(key); return { ok: true }; } });
   expect(steps).toEqual(expected);
 });
+
+it('records why the app signed out, without credentials, in the Main trace', async () => {
+  const events: Record<string, unknown>[] = [];
+  const secrets = new Map([['auth:session', 'session-secret'], ['auth:refresh', 'refresh-secret']]);
+  const store = { clearAccess: () => {}, getSecret: (key: string) => secrets.get(key) ?? null,
+    deleteSecret: (key: string) => { secrets.delete(key); return { ok: true }; }, trace: (event: Record<string, unknown>) => { events.push(event); } };
+  discardRejectedSession('other-refresh', store);
+  discardRejectedSession('refresh-secret', store);
+  secrets.set('auth:session', 'session-secret');
+  await logoutAuthSession({ ...store, backendUrl: 'https://api.test', fetchFn: vi.fn().mockResolvedValue(new Response(null)) });
+  expect(events).toEqual([{ kind: 'signed-out', reason: 'refresh-rejected' }, { kind: 'signed-out', reason: 'user-logout' }]);
+  expect(JSON.stringify(events)).not.toMatch(/secret/);
+});

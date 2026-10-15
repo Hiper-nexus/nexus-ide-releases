@@ -12,6 +12,8 @@ export interface ApiDeps {
   setSecret: (key: string, value: string) => { ok: boolean; error?: string };
   /** The server refused this refresh for good: forget it, never present it again. */
   discardRejectedSession?: (refresh: string) => void;
+  /** Main trace sink (main.trace.ndjson). Events never carry tokens. */
+  trace?: (event: Record<string, unknown>) => void;
 }
 
 export interface ApiResult {
@@ -34,8 +36,30 @@ export interface ApiRequestInit {
 }
 
 const DEFAULT_TIMEOUT_MS = 10_000;
+// The server consumes the refresh before it answers: giving up early leaves the app holding a spent token.
+const REFRESH_TIMEOUT_MS = 30_000;
+// One quick retry with the same token lands inside the server's 60 s retry window (REFRESH_REUSE_GRACE_MS).
+const REFRESH_RETRY_DELAY_MS = 3_000;
 const DEFAULT_RESPONSE_BUDGET = 256 * 1024;
 const refreshFlights = new Map<string, Promise<string | null>>();
+
+type RefreshOutcome = 'rotated' | 'timeout' | 'network' | 'rejected' | 'invalid-response' | 'superseded' | 'persist-failed';
+interface RotatedPair {
+  session: string;
+  refresh: string;
+  /** Stored refresh this pair replaces; the server already spent it. */
+  replaced: string | null;
+  previousSession: string | null;
+  account: string | null | undefined;
+  generation: number | undefined;
+}
+/**
+ * Pairs the server handed over but the Keychain refused, by backend. The token
+ * still on disk is spent: presenting it again looks like reuse, so the pair
+ * here is presented instead until it persists. A login or logout that
+ * replaces the stored pair drops it.
+ */
+const unsavedPairs = new Map<string, RotatedPair>();
 
 function defaultDeps(): ApiDeps {
   // Lazy require: secrets-store importa electron/safeStorage indiretamente no app.
@@ -52,6 +76,7 @@ function defaultDeps(): ApiDeps {
     getSecret: (key) => secrets.getSecret(key),
     setSecret: (key, value) => secrets.setInternalSecret(key, value),
     discardRejectedSession: (refresh) => auth.discardRejectedSession(refresh),
+    trace: (event) => (require('./observability/main-trace') as typeof import('./observability/main-trace')).trace(event),
   };
 }
 
@@ -122,54 +147,136 @@ async function boundedJson(
   return JSON.parse(new TextDecoder().decode(bytes)) as unknown;
 }
 
+/** Refresh first: if the session write then fails, the next request can still recover with the valid token. */
+function persistPair(deps: ApiDeps, pair: RotatedPair): boolean {
+  return deps.setSecret('auth:refresh', pair.refresh).ok && deps.setSecret('auth:session', pair.session).ok;
+}
+
+/** The refresh to present: an unsaved rotated pair wins over the spent token still in the Keychain. */
+function currentRefresh(deps: ApiDeps): string | null {
+  const stored = deps.getSecret('auth:refresh');
+  const pair = unsavedPairs.get(deps.backendUrl);
+  if (!pair) return stored;
+  if (pair.generation !== deps.generation?.() || (stored !== pair.replaced && stored !== pair.refresh)) {
+    unsavedPairs.delete(deps.backendUrl);
+    return stored;
+  }
+  if (persistPair(deps, pair)) {
+    unsavedPairs.delete(deps.backendUrl);
+    if (pair.account) deps.bindAccount?.(pair.account, pair.session, pair.previousSession ?? undefined);
+  }
+  return pair.refresh;
+}
+
+function failureOf(error: unknown): RefreshOutcome {
+  if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) return 'timeout';
+  if (error instanceof SyntaxError || (error instanceof Error && error.message.includes('byte budget'))) return 'invalid-response';
+  return 'network';
+}
+
+interface RefreshResponse {
+  status: number;
+  body: unknown;
+  started: number;
+}
+type RefreshReport = (outcome: RefreshOutcome, status: number, started: number) => void;
+
+async function requestRefresh(deps: ApiDeps, refresh: string, started: number): Promise<RefreshResponse> {
+  const res = await deps.fetchFn(urlFor(deps, '/v1/auth/refresh'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ refresh }),
+    signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS),
+  });
+  // The timeout also covers the body: a 200 whose body is lost is a lost rotation too.
+  return { status: res.status, body: res.ok ? await boundedJson(res) : null, started };
+}
+
+/**
+ * One request plus, after a timeout or network error, one quick retry with
+ * the SAME token: the server may have consumed it already, and its retry
+ * window only answers a retry that arrives within 60 s.
+ */
+async function requestWithRetry(
+  deps: ApiDeps,
+  refresh: string,
+  report: RefreshReport,
+): Promise<RefreshResponse | null> {
+  const stored = deps.getSecret('auth:refresh');
+  const generation = deps.generation?.();
+  for (let attempt = 0; ; attempt += 1) {
+    const started = Date.now();
+    try {
+      return await requestRefresh(deps, refresh, started);
+    } catch (error) {
+      const outcome = failureOf(error);
+      report(outcome, 0, started);
+      if (outcome === 'invalid-response' || attempt > 0) return null;
+    }
+    await new Promise((resolve) => setTimeout(resolve, REFRESH_RETRY_DELAY_MS));
+    // A logout or a new login during the wait owns the session now.
+    if (deps.generation?.() !== generation || deps.getSecret('auth:refresh') !== stored) return null;
+  }
+}
+
 async function performRefresh(
   deps: ApiDeps,
   refresh: string,
 ): Promise<string | null> {
+  const stored = deps.getSecret('auth:refresh');
   const previousSession = deps.getSecret('auth:session');
   const account = deps.getAccountId?.();
   const generation = deps.generation?.();
-  try {
-    const res = await deps.fetchFn(urlFor(deps, '/v1/auth/refresh'), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ refresh }),
-      signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
-    });
-    // Each dead refresh the server receives revokes every desktop session of
-    // the account: re-presenting it on the next retry or boot signs the user
-    // out of the apps where they just logged in again. A login started during
-    // the request owns the session now: discarding would cancel it.
-    if (res.status === 401 && deps.generation?.() === generation) deps.discardRejectedSession?.(refresh);
-    if (!res.ok) return null;
-    const body = (await boundedJson(res)) as {
-      ok?: boolean;
-      data?: { session?: string; refresh?: string; licenca?: string };
-    };
-    const session = body.data?.session;
-    const nextRefresh = body.data?.refresh;
-    if (!body.ok || typeof session !== 'string' || !session || typeof nextRefresh !== 'string' || !nextRefresh) return null;
-    if (deps.generation?.() !== generation || deps.getSecret('auth:session') !== previousSession || deps.getSecret('auth:refresh') !== refresh) return null;
-    // Persist the next single-use refresh first. If session persistence then
-    // fails, the following request can still recover with the valid token.
-    if (!deps.setSecret('auth:refresh', nextRefresh).ok) return null;
-    if (!deps.setSecret('auth:session', session).ok) return null;
-    if (account && deps.bindAccount && !deps.bindAccount(account, session, previousSession ?? undefined).ok) return null;
-    if (typeof body.data?.licenca === 'string') deps.applyLicense?.(body.data.licenca);
-    return session;
-  } catch {
+  const report: RefreshReport = (outcome, status, started) => {
+    deps.trace?.({ kind: 'auth-refresh', ok: outcome === 'rotated', status, durationMs: Date.now() - started, outcome });
+  };
+  const res = await requestWithRetry(deps, refresh, report);
+  if (!res) return null;
+  // A refused refresh is never presented again: a spent one past the server's
+  // retry window revokes its whole family, signing this app out after a new
+  // login. A login started during the request owns the session now:
+  // discarding would cancel it. A refused unsaved pair takes its spent token along.
+  if (res.status === 401 && deps.generation?.() === generation) {
+    if (unsavedPairs.get(deps.backendUrl)?.refresh === refresh) unsavedPairs.delete(deps.backendUrl);
+    deps.discardRejectedSession?.(stored ?? refresh);
+  }
+  if (res.status < 200 || res.status > 299) {
+    report('rejected', res.status, res.started);
     return null;
   }
+  const body = res.body as { ok?: boolean; data?: { session?: string; refresh?: string; licenca?: string } } | null;
+  const session = body?.data?.session;
+  const nextRefresh = body?.data?.refresh;
+  if (!body?.ok || typeof session !== 'string' || !session || typeof nextRefresh !== 'string' || !nextRefresh) {
+    report('invalid-response', res.status, res.started);
+    return null;
+  }
+  if (deps.generation?.() !== generation || deps.getSecret('auth:session') !== previousSession || deps.getSecret('auth:refresh') !== stored) {
+    report('superseded', res.status, res.started);
+    return null;
+  }
+  const pair: RotatedPair = { session, refresh: nextRefresh, replaced: stored, previousSession, account, generation };
+  unsavedPairs.delete(deps.backendUrl);
+  if (!persistPair(deps, pair)) {
+    // Never fall back to the spent token: this pair is presented until the Keychain takes it.
+    unsavedPairs.set(deps.backendUrl, pair);
+    report('persist-failed', res.status, res.started);
+    return session;
+  }
+  report('rotated', res.status, res.started);
+  if (account && deps.bindAccount && !deps.bindAccount(account, session, previousSession ?? undefined).ok) return null;
+  if (typeof body.data?.licenca === 'string') deps.applyLicense?.(body.data.licenca);
+  return session;
 }
 
 async function tryRefresh(deps: ApiDeps): Promise<string | null> {
-  const refresh = deps.getSecret('auth:refresh');
+  const refresh = currentRefresh(deps);
   if (!refresh) return null;
   const key = `${deps.backendUrl}:${createHash('sha256').update(refresh).digest('hex')}`;
   const active = refreshFlights.get(key);
   if (active) return active;
   let flight: Promise<string | null>;
-  flight = performRefresh(deps, refresh).finally(() => {
+  flight = performRefresh(deps, refresh).catch(() => null).finally(() => {
     if (refreshFlights.get(key) === flight) refreshFlights.delete(key);
   });
   refreshFlights.set(key, flight);
