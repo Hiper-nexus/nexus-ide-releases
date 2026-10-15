@@ -470,19 +470,20 @@ describe('MissionQuestion', () => {
     expect(controls.length).toBeGreaterThan(0);
     expect(controls.filter((control) => control.getAttribute('role') === 'textbox')).toHaveLength(2);
     expect(controls.every(isControlDisabled)).toBe(true);
+    // D3: o Main abre um diálogo nativo antes de entregar; nada foi enviado ainda.
     expect(
       Array.from(
         host.querySelectorAll<HTMLButtonElement>('button[type="submit"]'),
         (control) => control.textContent?.trim(),
       ),
-    ).toEqual(['Enviando resposta…', 'Enviando resposta…']);
+    ).toEqual(['Aguardando confirmação…', 'Aguardando confirmação…']);
     expect(
       Array.from(host.querySelectorAll<HTMLFormElement>('form')).every(
         (form) => form.getAttribute('aria-busy') === 'true',
       ),
     ).toBe(true);
 
-    click(button(conversation, 'Enviando resposta…'));
+    click(button(conversation, 'Aguardando confirmação…'));
     expect(onCommand).toHaveBeenCalledTimes(1);
 
     await act(async () => {
@@ -550,6 +551,71 @@ describe('MissionQuestion', () => {
 
     expect(view.host.textContent).not.toContain(QUESTION.prompt);
     expect(view.host.querySelectorAll('button')).toHaveLength(0);
+  });
+
+  it('D3: negar o diálogo de confirmação mostra que nada foi enviado, preserva a resposta e libera os controles', async () => {
+    const request = deferred<MissionSnapshot>();
+    const onCommand = vi.fn<CommandHandler>().mockReturnValue(request.promise);
+    const { host } = render(
+      <SharedQuestionHarness snapshot={canonicalSnapshot()} onCommand={onCommand} />,
+    );
+    const top = region(host, 'Pergunta no topo da missão');
+    const conversation = region(host, 'Pergunta na conversa');
+    const answer = 'Publicar só depois da auditoria.';
+
+    enterText(fieldByLabel(top, 'Resposta livre'), answer);
+    click(button(top, 'Responder'));
+    expect(button(top, 'Aguardando confirmação…').disabled).toBe(true);
+
+    await act(async () => {
+      // O que o Main lança quando a pessoa clica em "Negar", dá Esc ou fecha o diálogo.
+      request.reject(
+        new Error("Error invoking remote method 'orch:mission.command': Error: user_denied"),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const alerts = Array.from(host.querySelectorAll<HTMLElement>('[role="alert"]'));
+    expect(alerts.map((alert) => alert.textContent?.trim())).toEqual([
+      'Você não confirmou o envio da resposta. Nada foi enviado.',
+      'Você não confirmou o envio da resposta. Nada foi enviado.',
+    ]);
+    expect(host.textContent).not.toMatch(/user_denied/i);
+    expect(fieldValue(fieldByLabel(conversation, 'Resposta livre'))).toBe(answer);
+    expect(button(top, 'Responder').disabled).toBe(false);
+    expect(
+      Array.from(host.querySelectorAll<HTMLElement>(CONTROLS)).every(
+        (control) => !isControlDisabled(control),
+      ),
+    ).toBe(true);
+  });
+
+  it('D3: "Agora não" não abre diálogo de confirmação, então o rótulo segue sendo o de envio', async () => {
+    const dismiss = deferred<void>();
+    const onDismiss = vi.fn().mockReturnValue(dismiss.promise);
+    const { host } = render(
+      <SharedQuestionHarness
+        snapshot={canonicalSnapshot()}
+        onCommand={vi.fn<CommandHandler>()}
+        onDismiss={onDismiss}
+      />,
+    );
+    const top = region(host, 'Pergunta no topo da missão');
+
+    click(button(top, 'Agora não'));
+
+    expect(onDismiss).toHaveBeenCalledOnce();
+    expect(
+      Array.from(
+        host.querySelectorAll<HTMLButtonElement>('button[type="submit"]'),
+        (control) => control.textContent?.trim(),
+      ),
+    ).toEqual(['Enviando resposta…', 'Enviando resposta…']);
+    await act(async () => {
+      dismiss.resolve();
+      await dismiss.promise;
+    });
   });
 
   it('adia com Agora não sem enviar resposta vazia', async () => {

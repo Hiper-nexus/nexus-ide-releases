@@ -328,6 +328,29 @@ export function toUserFacingMissionError(
   return humanizeMissionErrorDetail(detail, fallback) ?? fallback;
 }
 
+const ANSWER_DENIED_RECOVERY =
+  "Você não confirmou o envio da resposta. Nada foi enviado.";
+
+/**
+ * Resposta humana à pergunta da missão: o Main abre um diálogo nativo antes de
+ * entregá-la e `user_denied` é a pessoa dizendo não (ou fechando o diálogo). Só
+ * vale neste fluxo: parar a missão e outros comandos também lançam `user_denied`,
+ * e "nada foi enviado" seria falso para eles.
+ */
+export function toUserFacingAnswerRecovery(
+  cause: unknown,
+  fallback = DEFAULT_UNKNOWN_ERROR,
+): string {
+  const detail =
+    cause instanceof Error
+      ? cause.message
+      : typeof cause === "string"
+        ? cause
+        : "";
+  if (/\buser_denied\b/i.test(detail)) return ANSWER_DENIED_RECOVERY;
+  return toUserFacingMissionRecovery(cause, fallback);
+}
+
 /**
  * Main product surfaces have an Operations trail for diagnostics. Keep their
  * recovery copy actionable without repeating transport paths or stack residue.

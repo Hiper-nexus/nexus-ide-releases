@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   humanizeMissionErrorDetail,
+  toUserFacingAnswerRecovery,
   toUserFacingMissionError,
   toUserFacingMissionRecovery,
 } from "./user-facing-mission-error";
@@ -206,6 +207,30 @@ describe("user-facing mission errors", () => {
         "Não foi possível iniciar a missão. Tente novamente.",
       ),
     ).toMatch(/arquivos não commitados em \.context/i);
+  });
+
+  it("D3: negar o diálogo de confirmação da resposta diz que nada foi enviado, só no fluxo da resposta", () => {
+    const denied = new Error(
+      "Error invoking remote method 'orch:mission.command': Error: user_denied",
+    );
+    const fallback = "Não foi possível enviar a resposta. Tente novamente.";
+
+    expect(toUserFacingAnswerRecovery(denied, fallback)).toBe(
+      "Você não confirmou o envio da resposta. Nada foi enviado.",
+    );
+    expect(toUserFacingAnswerRecovery("user_denied", fallback)).toBe(
+      "Você não confirmou o envio da resposta. Nada foi enviado.",
+    );
+    // Parar a missão (e outros comandos) também lança user_denied: a cópia da resposta
+    // não vale para eles, e outros erros da resposta seguem o humanizador comum.
+    expect(toUserFacingMissionRecovery(denied, fallback)).not.toContain("resposta");
+    expect(
+      toUserFacingAnswerRecovery(new Error("connection refused"), fallback),
+    ).toBe(toUserFacingMissionRecovery(new Error("connection refused"), fallback));
+    // Código que só contém o trecho em outro identificador não é recusa.
+    expect(
+      toUserFacingAnswerRecovery(new Error("not_user_denied_code"), fallback),
+    ).not.toContain("Nada foi enviado");
   });
 
   it("maps mission-direct diagnostics to operator Portuguese recovery copy", () => {

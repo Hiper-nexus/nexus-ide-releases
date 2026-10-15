@@ -4,7 +4,10 @@ import type {
   MissionQuestion as MissionQuestionContract,
   MissionSnapshot,
 } from '../../../shared/mission-engine-contract';
-import { toUserFacingMissionRecovery } from '../../lib/user-facing-mission-error';
+import {
+  toUserFacingAnswerRecovery,
+  toUserFacingMissionRecovery,
+} from '../../lib/user-facing-mission-error';
 import {
   ComposerTiptapEditor,
   type ComposerTiptapEditorHandle,
@@ -18,6 +21,11 @@ export interface MissionQuestionState {
   readonly optionId: string | null;
   readonly text: string;
   readonly pending: boolean;
+  /**
+   * Responder: o Main abre um diálogo nativo e só entrega depois do "Confirmar".
+   * Enquanto `pending` por esse caminho, o rótulo diz que a espera é a confirmação.
+   */
+  readonly awaitingConfirmation?: boolean;
   readonly error: string | null;
 }
 
@@ -73,20 +81,22 @@ export function MissionQuestion({
           text: answerText,
         };
 
-    onStateChange({ ...state, pending: true, error: null });
+    onStateChange({ ...state, pending: true, awaitingConfirmation: true, error: null });
 
     try {
       await onCommand(command);
       onStateChange((current) => ({
         ...current,
         pending: false,
+        awaitingConfirmation: false,
         error: null,
       }));
     } catch (reason) {
-      const error = toUserFacingMissionRecovery(reason, ANSWER_ERROR_MESSAGE);
+      const error = toUserFacingAnswerRecovery(reason, ANSWER_ERROR_MESSAGE);
       onStateChange((current) => ({
         ...current,
         pending: false,
+        awaitingConfirmation: false,
         error,
       }));
     } finally {
@@ -216,7 +226,11 @@ export function MissionQuestion({
         className="mission-board__question-submit"
         disabled={state.pending || !hasAnswer}
       >
-        {state.pending ? 'Enviando resposta…' : 'Responder'}
+        {state.pending
+          ? state.awaitingConfirmation
+            ? 'Aguardando confirmação…'
+            : 'Enviando resposta…'
+          : 'Responder'}
       </button>
 
       {onDismiss && (
