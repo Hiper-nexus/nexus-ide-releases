@@ -71,7 +71,12 @@ export class PtyAnalysisClient {
   has(id: string): boolean { return this.#sessions.has(id); }
   generation(id: string): number | null { return this.#sessions.get(id)?.generation ?? null; }
   status(id: string): Session['status'] | null { return this.#sessions.get(id)?.status ?? null; }
-  text(id: string): string { return this.#sessions.get(id)?.screen.text() ?? ''; }
+  text(id: string): string {
+    const s = this.#sessions.get(id); if (!s) return '';
+    // TTL também na leitura: sessão morta sem bind/exit depois não segura 256 KB para sempre.
+    if (s.exitedAt !== undefined && this.deps.now() - s.exitedAt > ANALYSIS_DEAD_TEXT_TTL_MS) s.screen.replace('');
+    return s.screen.text();
+  }
   latest(id: string, consumer: AnalysisConsumer) { const s = this.#sessions.get(id); const entry = s?.latest.get(consumer); return entry && entry.fence.eventSeq >= (s?.lastDataSeq ?? Infinity) ? entry : null; }
   evidence(id: string, consumer: AnalysisConsumer): readonly unknown[] { return this.#sessions.get(id)?.evidence.get(consumer) ?? []; }
   data(id: string, data: string): boolean {
@@ -133,7 +138,7 @@ export class PtyAnalysisClient {
   terminate(id: string): void {
     const s = this.#sessions.get(id); if (!s) return;
     if (s.status !== 'active') return;
-    s.status = 'terminated'; this.#enqueue(id, { kind: 'terminate' });
+    s.status = 'terminated'; s.exitedAt = this.deps.now(); this.#enqueue(id, { kind: 'terminate' });
   }
   exit(id: string): void {
     const s = this.#sessions.get(id); if (!s) return;

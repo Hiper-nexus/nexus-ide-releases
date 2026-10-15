@@ -157,6 +157,10 @@ export function paneSessionLastOutputAt(sessionId: string): number | undefined {
   return lastOutputAtBySession.get(sessionId);
 }
 
+function analysisServesSession(status: string | null): boolean {
+  return status === 'active' || status === 'sealed';
+}
+
 export function recordPaneSessionData(sessionId: string, data: string): void {
   lastOutputAtBySession.set(sessionId, Date.now());
   let buffer = buffers.get(sessionId);
@@ -164,10 +168,11 @@ export function recordPaneSessionData(sessionId: string, data: string): void {
     buffer = { chunks: [], size: 0, exited: false };
     buffers.set(sessionId, buffer);
   }
-  // Com a análise ligada, readSessionOutput lê o espelho do worker (a mesma
-  // cauda de 256 KB, já sem ANSI): reter o texto aqui seria a segunda cópia.
-  // O registro da sessão (exited/exitedAt) continua, só o texto não.
-  if (isPtyAnalysisEnabled() && analysisClient.has(sessionId)) return;
+  // Com a análise saudável (active/sealed), readSessionOutput lê o espelho do
+  // worker (a mesma cauda de 256 KB, já sem ANSI): reter o texto aqui seria a
+  // segunda cópia. O registro da sessão (exited/exitedAt) continua, só o texto
+  // não. Degradada/terminada/desconhecida ou análise desligada: o ring recebe.
+  if (isPtyAnalysisEnabled() && analysisServesSession(analysisClient.status(sessionId))) return;
   buffer.chunks.push(data);
   buffer.size += data.length;
   while (buffer.size > RING_BUFFER_CAP && buffer.chunks.length > 1) {
@@ -269,7 +274,8 @@ export function readSessionOutput(sessionId: string, lines = 200): string {
   const requestedLines = lines === Infinity ? Number.MAX_SAFE_INTEGER
     : Number.isFinite(lines) ? Math.max(0, Math.floor(lines)) : 0;
   if (requestedLines === 0) return "";
-  if (isPtyAnalysisEnabled()) {
+  const status = analysisClient.status(sessionId);
+  if (isPtyAnalysisEnabled() && (status === 'active' || status === 'sealed')) {
     const text = analysisClient.text(sessionId);
     let start = text.length;
     for (let index = 0; index < requestedLines; index++) {
@@ -282,13 +288,20 @@ export function readSessionOutput(sessionId: string, lines = 200): string {
     }
     return text.slice(start + 1);
   }
+  // A análise não serve esta sessão (degradada, terminada, desligada): o ring,
+  // que passou a receber a saída, vem depois do espelho congelado de antes.
+  const frozen = status === 'degraded' || status === 'terminated' ? analysisClient.text(sessionId) : "";
   const buffer = buffers.get(sessionId);
-  if (!buffer) return "";
-  const key = `${buffer.chunks.length}:${buffer.size}`;
-  if (buffer.stripCache?.key !== key) {
-    buffer.stripCache = { key, text: stripAnsi(buffer.chunks.join("")) };
+  if (!buffer && !frozen) return "";
+  let ringText = "";
+  if (buffer) {
+    const key = `${buffer.chunks.length}:${buffer.size}`;
+    if (buffer.stripCache?.key !== key) {
+      buffer.stripCache = { key, text: stripAnsi(buffer.chunks.join("")) };
+    }
+    ringText = buffer.stripCache.text;
   }
-  const allLines = buffer.stripCache.text.split("\n");
+  const allLines = (frozen + ringText).split("\n");
   return allLines.slice(Math.max(0, allLines.length - requestedLines)).join("\n");
 }
 

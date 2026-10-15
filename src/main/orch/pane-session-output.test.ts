@@ -6,7 +6,7 @@ const stubs = vi.hoisted(() => ({
   isOneShotSessionRunning: vi.fn((_sessionId: string) => false),
   analysisEnabled: vi.fn(() => false),
   analysisText: vi.fn(() => ""),
-  analysisHas: vi.fn((_sessionId: string) => false),
+  analysisStatus: vi.fn((_sessionId: string): string | null => 'active'),
 }));
 
 vi.mock("../pty/pty-manager", () => ({
@@ -17,7 +17,7 @@ vi.mock("../pty/pty-manager", () => ({
 
 vi.mock('../pty/pty-analysis-runtime', () => ({
   isPtyAnalysisEnabled: stubs.analysisEnabled,
-  analysisClient: { text: stubs.analysisText, has: stubs.analysisHas },
+  analysisClient: { text: stubs.analysisText, status: stubs.analysisStatus },
 }));
 
 import {
@@ -181,7 +181,7 @@ async function readAnalysisOffThread(text: string, lines: number): Promise<strin
   const worker = new Worker(`
     const { parentPort } = require('node:worker_threads');
     const isPtyAnalysisEnabled = () => true;
-    const analysisClient = { text: () => ${JSON.stringify(text)} };
+    const analysisClient = { text: () => ${JSON.stringify(text)}, status: () => 'active' };
     const read = (${reader});
     parentPort.postMessage(read('synthetic-boot', ${String(lines)}));
   `, { eval: true });
@@ -224,18 +224,44 @@ it('normalizes invalid line counts consistently without truncating intentional a
 });
 
 describe('cópia do output em Main (#13)', () => {
-  it('sessão que a análise já espelha não retém um segundo ring de 256 KB', () => {
-    stubs.analysisEnabled.mockReturnValue(true);
-    stubs.analysisHas.mockImplementation((id) => id === 'espelhada');
-    try {
-      recordPaneSessionData('espelhada', 'duplicado\n');
-      recordPaneSessionData('sem-analise', 'so no ring\n');
-    } finally { stubs.analysisEnabled.mockReturnValue(false); stubs.analysisHas.mockReturnValue(false); }
-    // Sem análise o leitor cai no ring: a sessão espelhada não deixou nada nele.
-    expect(readSessionOutput('espelhada', 10)).toBe('');
-    expect(readSessionOutput('sem-analise', 10)).toBe('so no ring\n');
+  const withAnalysis = (status: string | null, run: () => void, enabled = true) => {
+    stubs.analysisEnabled.mockReturnValue(enabled);
+    stubs.analysisStatus.mockReturnValue(status);
+    try { run(); } finally { stubs.analysisEnabled.mockReturnValue(false); stubs.analysisStatus.mockReturnValue('active'); }
+  };
+
+  it('sessão que a análise espelha (active ou sealed) não retém um segundo ring de 256 KB', () => {
+    for (const status of ['active', 'sealed']) {
+      const id = `espelhada-${status}`;
+      withAnalysis(status, () => recordPaneSessionData(id, 'duplicado\n'));
+      // Sem análise o leitor cai no ring: a sessão espelhada não deixou nada nele.
+      expect(readSessionOutput(id, 10)).toBe('');
+    }
     // O estado da sessão (saída, última escrita) continua registrado.
-    recordPaneSessionExit('espelhada');
-    expect(wasPaneSessionExitObserved('espelhada')).toBe(true);
+    recordPaneSessionExit('espelhada-active');
+    expect(wasPaneSessionExitObserved('espelhada-active')).toBe(true);
+  });
+
+  it('sessão degradada, terminada, desconhecida ou com a análise desligada continua no ring', () => {
+    for (const status of ['degraded', 'terminated', null]) {
+      const id = `no-ring-${String(status)}`;
+      withAnalysis(status, () => recordPaneSessionData(id, 'so no ring\n'));
+      expect(readSessionOutput(id, 10)).toBe('so no ring\n');
+    }
+    withAnalysis('active', () => recordPaneSessionData('analise-desligada', 'apos shutdown\n'), false);
+    expect(readSessionOutput('analise-desligada', 10)).toBe('apos shutdown\n');
+  });
+
+  it('readSessionOutput serve o espelho só com a sessão saudável; degradada, terminada ou após shutdown, devolve o espelho congelado + o ring novo', () => {
+    stubs.analysisText.mockReturnValue('antes da degradação\n');
+    try {
+      withAnalysis('active', () => expect(readSessionOutput('lida', 10)).toBe('antes da degradação\n'));
+      withAnalysis('sealed', () => expect(readSessionOutput('lida', 10)).toBe('antes da degradação\n'));
+      // Degradou: o espelho parou, o ring passa a receber o que vier depois.
+      withAnalysis('degraded', () => recordPaneSessionData('lida', 'depois\n'));
+      for (const [status, enabled] of [['degraded', true], ['terminated', true], ['degraded', false]] as const) {
+        withAnalysis(status, () => expect(readSessionOutput('lida', 10)).toBe('antes da degradação\ndepois\n'), enabled);
+      }
+    } finally { stubs.analysisText.mockReturnValue(''); }
   });
 });

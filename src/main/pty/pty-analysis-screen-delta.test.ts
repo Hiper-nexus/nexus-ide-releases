@@ -124,4 +124,26 @@ describe('delta de screenText do worker de análise', () => {
     expect(client.text(SESSION)).toBe('');
     expect(client.text('viva')).toBe('ainda rodando\n');
   });
+
+  it('o TTL vale na leitura: sessão morta sem nenhum bind/exit depois também libera o texto', async () => {
+    const { client, tick } = loop();
+    client.data(SESSION, 'ultimas linhas\n');
+    tick(200);
+    client.exit(SESSION);
+    expect(client.text(SESSION)).toBe('ultimas linhas\n');
+    tick(ANALYSIS_DEAD_TEXT_TTL_MS + 1_000);
+    expect(client.text(SESSION)).toBe('');
+  });
+
+  it('sessão encerrada por terminate() também entra no TTL do texto', async () => {
+    const { client, tick } = loop();
+    client.data(SESSION, 'processo morto na marra\n');
+    tick(200);
+    expect(await client.barrier(SESSION)).toBe(true);
+    client.terminate(SESSION);
+    tick(ANALYSIS_DEAD_TEXT_TTL_MS - 1_000);
+    expect(client.text(SESSION)).toBe('processo morto na marra\n');
+    tick(2_000);
+    expect(client.text(SESSION)).toBe('');
+  });
 });
