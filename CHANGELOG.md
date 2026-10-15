@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.76.279 — Cotas à frente e barras segmentadas
+
+- Clicar em Cotas na lateral abre um painel amplo à frente da interface. A rail conserva sua prévia compacta, sem expandir a lista atrás do perfil do operador.
+- O painel oferece busca, filtros por leitura/pendência, atualização e acesso a Uso e cotas. Escape, Tab e retorno de foco foram validados, inclusive durante atualização e ao navegar para Configurações.
+- O Redline da barra de menus troca os círculos por barras segmentadas com escala, percentuais em destaque e os mesmos sinais visuais da interface do app.
+- Leituras desconhecidas e estimativas permanecem identificadas. A credencial de outra conta nunca aparece como consumo desta linha.
+- Publicação macOS arm64. O Redline atualizado acompanha o NexusIDE e é sincronizado na abertura do app.
+
 ## 0.76.278 — Linux em dia com as cotas
 
 A tag 0.76.277 não recebe pacotes Linux. Esta versão leva o produto dela, empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). A 0.76.277 é a candidata do Mac. Os medidores circulares do companheiro Mac não entram neste pacote.

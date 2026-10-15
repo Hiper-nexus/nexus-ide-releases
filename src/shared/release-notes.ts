@@ -10946,7 +10946,7 @@ export const RELEASE_076277: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076278: AppRelease = {
   version: '0.76.278',
   date: '2026-10-15',
   codename: 'Linux em dia com as cotas',
@@ -10958,5 +10958,21 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: [
     { title: 'Leitura com contexto', detail: 'Os motivos permitidos de cota indisponível acompanham a conta até o snapshot do Redline. Estimativas ficam identificadas; somente medições confirmadas entram no resumo da barra.' },
     { title: 'Atualização do Linux', detail: 'A tag 0.76.277 não recebe pacotes Linux. Ela é a candidata do Mac. O Linux sai na 0.76.278.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.279',
+  date: '2026-10-15',
+  codename: 'Cotas à frente e barras segmentadas',
+  summary: 'Clique em Cotas na lateral para abrir uma visão ampla à frente da tela. O Redline também ganha barras segmentadas, números maiores e menos texto.',
+  highlights: [
+    { title: 'Cotas à frente da tela', detail: 'O painel abre acima da interface, com todas as contas, busca, filtros, atualização e acesso às configurações. A lateral continua compacta.' },
+    { title: 'Barras segmentadas no Redline', detail: 'Os círculos dão lugar a barras com escala e percentuais em destaque, mantendo os dados reais de cada janela.' },
+  ],
+  fixes: [
+    { title: 'Leitura sem sobreposição', detail: 'A lista completa deixa de ficar espremida na lateral e encoberta pelo perfil do operador.' },
+    { title: 'Teclado no lugar certo', detail: 'Tab e Escape continuam no painel durante a atualização. Ir para Configurações preserva o foco do destino; fechar devolve o foco à origem.' },
+    { title: 'Dados com contexto', detail: 'Sem leitura, estimativa, pausa e sessão expirada continuam distintos. Nenhum percentual de outra conta é exibido na linha errada.' },
   ],
 };
