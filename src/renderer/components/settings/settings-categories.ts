@@ -24,7 +24,7 @@ export interface SettingsCategory {
  * nome único, igual na aba, no caminho e no título da página.
  */
 export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
-  { id: 'account', title: 'Conta e acesso a IAs', description: 'Plano, contas de IA, chaves e gastos', icon: 'key', pillar: 'you', sections: ['account', 'providers', 'api-keys', 'usage-quota'] },
+  { id: 'account', title: 'Conta e acesso a IAs', description: 'Começar, conectar IAs e acompanhar gastos', icon: 'key', pillar: 'you', sections: ['getting-started', 'providers', 'account', 'api-keys', 'usage-quota'] },
   { id: 'voice', title: 'Jarvis e voz', description: 'Assistente, microfone e captura de tela', icon: 'mic', pillar: 'you', sections: ['voice', 'vision'] },
   { id: 'personalization', title: 'Aparência e teclado', description: 'Tema, mascotes, terminal e atalhos', icon: 'grid', pillar: 'app', sections: ['appearance', 'pets', 'terminal', 'shortcuts'] },
   { id: 'ai', title: 'Equipes e modelos', description: 'Quem trabalha e com qual modelo', icon: 'users', pillar: 'agents', sections: ['squads', 'llms', 'ranking', 'media', 'media-catalog', 'agent-connection'], advanced: ['agent-connection'] },

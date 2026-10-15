@@ -212,6 +212,32 @@ describe('responsive settings navigation', () => {
 });
 
 describe('SettingsWorkspace contracts', () => {
+  it('opens with actionable setup guidance instead of billing', async () => {
+    useProductNavigationStore.getState().openSettings();
+    const host = mount(<SettingsWorkspace />);
+    await settleSectionEffects();
+    expect(host.querySelector('[data-settings-section="getting-started"]')).not.toBeNull();
+    expect(findButton(host, /^Conectar uma IA/)).toBeDefined();
+  });
+
+  it('sends setup tasks to existing settings routes, including in a controlled surface', async () => {
+    const selectPage = vi.fn();
+    const host = mount(<SettingsWorkspace section={null} onSectionChange={selectPage} />);
+    await settleSectionEffects();
+    for (const [label, section] of [
+      [/^Conectar uma IA/, 'providers'],
+      [/^Ajustar a aparência/, 'appearance'],
+      [/^Aumentar o texto/, 'terminal'],
+      [/^Configurar o microfone/, 'voice'],
+      [/^Ver uso e limites/, 'usage-quota'],
+      [/^Escolher a equipe/, 'squads'],
+      [/^Resolver um problema/, 'diagnostics'],
+    ] as const) {
+      act(() => findButton(host, label).click());
+      expect(selectPage).toHaveBeenLastCalledWith(section);
+    }
+  });
+
   it('reacts to store deep-links while account, appearance, terminal, and remote sections remain reachable in one page shell', async () => {
     useProductNavigationStore.getState().openSettings('account');
     const host = mount(<SettingsWorkspace />);

@@ -1,4 +1,5 @@
 import { AcpHarnessPanel } from './AcpHarnessPanel';
+import { SettingsStartSection } from './SettingsStartSection';
 import {
   SETTINGS_CATEGORIES,
   settingsCategoryFor,
@@ -169,11 +170,13 @@ function NavRow({
 
 function SettingsSectionContent({
   section,
+  onSelectSection,
   adapters,
   adapterStatus,
   onRetryAdapters,
 }: {
   section: SettingsSection;
+  onSelectSection: (section: SettingsSection) => void;
   adapters: AdapterInfo[];
   adapterStatus: "loading" | "ready" | "error";
   onRetryAdapters: () => void;
@@ -201,6 +204,8 @@ function SettingsSectionContent({
     </section>;
   }
   switch (section) {
+    case 'getting-started':
+      return <SettingsStartSection onSelect={onSelectSection} />;
     case 'account':
       return <AccountSection />;
     case 'api-keys':
@@ -495,7 +500,7 @@ export function SettingsSurface({
                 Nenhum ajuste encontrado para “{query}”.
               </p>
               <p className="settings-nav__no-match-hint">
-                Tente o nome antigo ou em inglês — os aliases continuam valendo.
+                Tente “conta de IA”, “microfone” ou “tema”. Você também pode limpar a busca para ver todas as áreas.
               </p>
               <button
                 type="button"
@@ -636,6 +641,7 @@ export function SettingsSurface({
           <SettingsRouteTitleProvider title={SETTINGS_ITEMS.find(item => item.id === section)?.title ?? null}>
             <SettingsSectionContent
               section={section}
+              onSelectSection={onSelectSection}
               adapters={adapters}
               adapterStatus={adapterStatus}
               onRetryAdapters={() => setAdapterAttempt(attempt => attempt + 1)}

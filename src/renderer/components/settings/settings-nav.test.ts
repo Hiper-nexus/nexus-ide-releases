@@ -67,6 +67,24 @@ describe('SETTINGS_GROUPS', () => {
 });
 
 describe('filterSettingsGroups', () => {
+  test.each([
+    ['entrar no Claude', 'providers'],
+    ['conectar minha IA', 'providers'],
+    ['aumentar letra terminal', 'terminal'],
+    ['mudar tema', 'appearance'],
+    ['configurar microfone', 'voice'],
+    ['gastos e limites', 'usage-quota'],
+  ])('encontra a intenção "%s" sem exigir o nome técnico', (query, section) => {
+    expect(filterSettingsGroups(SETTINGS_GROUPS, query).flatMap(group => group.items.map(item => item.id)))
+      .toContain(section);
+  });
+
+  test('combina palavras em campos diferentes sem perder palavras desconhecidas', () => {
+    const ids = filterSettingsGroups(SETTINGS_GROUPS, 'terminal fonte').flatMap(group => group.items.map(item => item.id));
+    expect(ids).toContain('terminal');
+    expect(filterSettingsGroups(SETTINGS_GROUPS, 'terminal inexistente')).toEqual([]);
+  });
+
   test('returns all groups unchanged for an empty query', () => {
     const result = filterSettingsGroups(SETTINGS_GROUPS, '');
     expect(result).toEqual(SETTINGS_GROUPS);
