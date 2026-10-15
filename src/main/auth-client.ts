@@ -86,6 +86,8 @@ export interface AuthDeps {
   bindAccount: (id: string, session: string) => { ok: boolean; error?: string };
   clearAccess: () => void;
   applyLicense: (jwt: string) => { ok: boolean; error?: string };
+  /** Fetches /v1/license after a login answered without one (the server only waits 2 s to sign it). */
+  syncLicense?: () => void;
   openExternal: (url: string) => void;
   /**
    * Checagem prévia do início do login. `null` = pode abrir o navegador; senão
@@ -119,6 +121,7 @@ function defaultDeps(): AuthDeps {
     bindAccount: bindAuthenticatedAccount,
     clearAccess: () => (require('./license-access') as typeof import('./license-access')).clearAccess(),
     applyLicense: (jwt) => access.applyOnlineLicenseToken(jwt),
+    syncLicense: () => void (require('./license-sync') as typeof import('./license-sync')).syncLicenseOnce(),
     openExternal: (url) => void shell.openExternal(url),
     probeLogin: (url) => probeLoginEndpoint(url, fetch),
   };
@@ -227,10 +230,13 @@ export async function exchangeAuthCode(
     failure = 'exchange-invalid-response';
     const json = (await res.json()) as {
       ok: boolean;
-      data?: { session: string; refresh: string; licenca: string };
+      data?: { session: string; refresh: string; licenca?: string };
     };
     if (superseded()) return { ok: false, error: 'login superseded' };
-    if (!json.ok || !json.data || !['session', 'refresh', 'licenca'].every(key => typeof json.data?.[key as keyof typeof json.data] === 'string' && json.data[key as keyof typeof json.data])) return reject('exchange-invalid-response');
+    // licenca may be absent (signed late); when present it must be a token.
+    const licenca = json.data?.licenca;
+    if (!json.ok || !json.data || !(['session', 'refresh'] as const).every(key => typeof json.data?.[key] === 'string' && json.data[key])
+      || (licenca !== undefined && (typeof licenca !== 'string' || !licenca))) return reject('exchange-invalid-response');
     // A signed license does not prove which account owns this opaque session.
     failure = 'exchange-network';
     const profileResponse = await deps.fetchFn(`${deps.backendUrl}/v1/me`, {
@@ -241,8 +247,7 @@ export async function exchangeAuthCode(
     const profile = await profileResponse.json() as { ok?: boolean; data?: { id?: unknown } };
     if (superseded()) return { ok: false, error: 'login superseded' };
     if (!profileResponse.ok || !profile.ok || typeof profile.data?.id !== 'string' || !profile.data.id.trim()) return reject('account identity unavailable');
-    const proof = deps.validateLicense(json.data.licenca, profile.data.id);
-    if (!proof.ok) return reject('exchange-license-invalid');
+    if (licenca !== undefined && !deps.validateLicense(licenca, profile.data.id).ok) return reject('exchange-license-invalid');
     failure = 'exchange-storage';
     deps.clearAccess();
     // Falha FECHADO: se qualquer persistência falhar, o login não "parece"
@@ -253,8 +258,12 @@ export async function exchangeAuthCode(
     if (!s2.ok) return reject('exchange-storage');
     const binding = deps.bindAccount(profile.data.id, json.data.session);
     if (!binding.ok) return reject('exchange-storage');
+    if (licenca === undefined) {
+      deps.syncLicense?.();
+      return { ok: true };
+    }
     failure = 'exchange-license-invalid';
-    const lic = deps.applyLicense(json.data.licenca);
+    const lic = deps.applyLicense(licenca);
     if (!lic.ok) return reject('exchange-license-invalid');
     return { ok: true };
   } catch {
@@ -270,21 +279,25 @@ export interface LogoutDeps {
   fetchFn: typeof fetch;
   /** Main trace sink (main.trace.ndjson): why the app signed out, never the credentials. */
   trace?: (event: Record<string, unknown>) => void;
+  /** Forgets the rotated pair the Keychain refused; returns its session, the one the app was presenting. */
+  dropUnsavedPairs?: () => string | null;
 }
 function defaultLogoutDeps(): LogoutDeps {
   return { backendUrl: resolveBackendUrl(), getSecret: key => secretStore().getSecret(key),
     deleteSecret: key => secretStore().deleteInternalSecret(key), fetchFn: fetch,
     clearAccess: () => (require('./license-access') as typeof import('./license-access')).clearAccess(),
-    trace: event => (require('./observability/main-trace') as typeof import('./observability/main-trace')).trace(event) };
+    trace: event => (require('./observability/main-trace') as typeof import('./observability/main-trace')).trace(event),
+    dropUnsavedPairs: () => (require('./api-client') as typeof import('./api-client')).dropUnsavedPairs() };
 }
 /**
  * Local-only logout after the server refused `refresh`. No /v1/auth/logout:
  * the session is already dead server-side. A newer login that replaced the
  * pair during the request is left alone.
  */
-export function discardRejectedSession(refresh: string, deps: Pick<LogoutDeps, 'getSecret' | 'deleteSecret' | 'clearAccess' | 'trace'> = defaultLogoutDeps()): void {
+export function discardRejectedSession(refresh: string, deps: Pick<LogoutDeps, 'getSecret' | 'deleteSecret' | 'clearAccess' | 'trace' | 'dropUnsavedPairs'> = defaultLogoutDeps()): void {
   if (deps.getSecret('auth:refresh') !== refresh) return;
   deps.trace?.({ kind: 'signed-out', reason: 'refresh-rejected' });
+  deps.dropUnsavedPairs?.();
   deps.clearAccess();
   deps.deleteSecret('auth:session');
   deps.deleteSecret('auth:refresh');
@@ -292,8 +305,10 @@ export function discardRejectedSession(refresh: string, deps: Pick<LogoutDeps, '
 /** Main-owned logout. Revocation comes first; existing processes and project data are untouched. */
 export async function logoutAuthSession(deps: LogoutDeps = defaultLogoutDeps()): Promise<{ ok: boolean; error?: string }> {
   deps.trace?.({ kind: 'signed-out', reason: 'user-logout' });
+  // The pair the Keychain refused is the live one: revoke its session, not the replaced one on disk.
+  // Read before clearAccess, which starts a new login generation.
+  const session = deps.dropUnsavedPairs?.() ?? deps.getSecret('auth:session');
   deps.clearAccess();
-  const session = deps.getSecret('auth:session');
   const removedSession = deps.deleteSecret('auth:session');
   const removedRefresh = deps.deleteSecret('auth:refresh');
   if (session) {

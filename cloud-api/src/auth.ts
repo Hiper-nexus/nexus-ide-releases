@@ -17,7 +17,14 @@ import { licenseForAccount } from './licences.js';
 import { requireNativeAuth, requireWebAuth, requireCsrf } from './middleware.js';
 const STATE_TTL_MS = 10 * 60 * 1000;
 const CODE_TTL_MS = 60 * 1000;
-const REFRESH_LICENSE_BUDGET_MS = 2_000;
+/** The refresh answers fast: the old token is already spent, and the app fetches /v1/license on its own. */
+const REFRESH_LICENSE_WAIT_MS = 2_000;
+/** Released apps refuse an exchange without licenca and give up after 10 s; a login is rare, so it waits longer. */
+const EXCHANGE_LICENSE_WAIT_MS = 8_000;
+/** Migration the refresh rotation needs (0011): on an older schema it would spend the token and then fail. */
+const REFRESH_SCHEMA_VERSION = 11;
+/** Databases already proven current in this isolate. Migrations only move forward, so a miss is checked again. */
+const currentSchemas = new WeakSet<D1Database>();
 const DESKTOP_CLIENTS: readonly DesktopClient[] = ['nexus', 'shot'];
 const APP_STATE = /^[A-Za-z0-9._~-]{1,128}$/;
 const CHALLENGE = /^[A-Za-z0-9_-]{43}$/;
@@ -28,11 +35,14 @@ const refreshSchema = z.strictObject({ refresh: TOKEN });
 const WEB_COOKIES = ['__Host-nexus_session', '__Host-nexus_refresh', '__Host-nexus_csrf', '__Host-nexus_oauth_state'] as const;
 const cookieOptions = { httpOnly: true, secure: true, sameSite: 'Lax' as const, path: '/' };
 type AuthContext = Context<AppEnv>;
+function setCsrfCookie(c: AuthContext, csrf: string): void {
+    setCookie(c, '__Host-nexus_csrf', csrf, { ...cookieOptions, maxAge: SESSION_TTL_MS / 1000 });
+}
 export function setWebCookies(c: AuthContext, tokens: Tokens): void {
     setCookie(c, '__Host-nexus_session', tokens.session, { ...cookieOptions, maxAge: SESSION_TTL_MS / 1000 });
     setCookie(c, '__Host-nexus_refresh', tokens.refresh, { ...cookieOptions, maxAge: REFRESH_TTL_MS / 1000 });
     if (tokens.csrf)
-        setCookie(c, '__Host-nexus_csrf', tokens.csrf, { ...cookieOptions, maxAge: SESSION_TTL_MS / 1000 });
+        setCsrfCookie(c, tokens.csrf);
 }
 export function clearWebCookies(c: AuthContext): void {
     for (const cookie of WEB_COOKIES)
@@ -43,6 +53,22 @@ function settleWithin<T>(work: Promise<T>, ms: number): Promise<T | undefined> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const late = new Promise<undefined>(resolve => { timer = setTimeout(() => resolve(undefined), ms); });
     return Promise.race([work, late]).finally(() => clearTimeout(timer));
+}
+/** 503 before any token is spent while the Worker runs ahead of its migration. */
+async function requireRefreshSchema(db: D1Database): Promise<void> {
+    if (currentSchemas.has(db))
+        return;
+    const row = await db.prepare("SELECT value FROM system_metadata WHERE key='schema_version'").first<{ value: string }>();
+    if (!(Number(row?.value) >= REFRESH_SCHEMA_VERSION))
+        throw new HTTPException(503, { message: 'Serviço em atualização. Tente de novo em instantes.' });
+    currentSchemas.add(db);
+}
+/** The signed license, or undefined after `waitMs` or on failure: clients fetch /v1/license on their own. */
+function licenseWithin(c: AuthContext, accountId: string, route: string, waitMs: number): Promise<string | undefined> {
+    return settleWithin(licenseForAccount(c.env.DB, accountId, c.get('config')).catch((error: unknown) => {
+        console.error(`nexus-cloud-api: licença do ${route} falhou:`, error instanceof Error ? error.message : 'unknown');
+        return undefined;
+    }), waitMs);
 }
 function providerOf(value: string): Provider {
     if (value !== 'google' && value !== 'github')
@@ -143,6 +169,8 @@ async function webSession(c: AuthContext) {
     const session = rawSession ? await sessionFor(c.env.DB, rawSession, 'web') : null;
     let accountId = session?.account_id, csrf = getCookie(c, '__Host-nexus_csrf');
     if (!session) {
+        if (rawRefresh)
+            await requireRefreshSchema(c.env.DB);
         const rotated = rawRefresh ? await rotateRefresh(c.env.DB, rawRefresh, 'web') : null;
         if (!rotated) {
             clearWebCookies(c);
@@ -153,9 +181,11 @@ async function webSession(c: AuthContext) {
         setWebCookies(c, rotated.tokens);
     }
     else if (!csrf || !session.csrf_hash || !safeEqual(await hashToken(csrf), session.csrf_hash)) {
-        const tokens = await issueTokens(c.env.DB, session.account_id, 'web');
-        csrf = tokens.csrf ?? undefined;
-        setWebCookies(c, tokens);
+        // Only this session's CSRF is reissued. A new pair would start a family (rotated_from NULL) that no
+        // reuse detection reaches: a stolen refresh, rotated once, would keep it alive.
+        csrf = randomToken();
+        await c.env.DB.prepare('UPDATE sessions SET csrf_hash=? WHERE id=? AND revoked_at IS NULL').bind(await hashToken(csrf), session.id).run();
+        setCsrfCookie(c, csrf);
     }
     const profile = await profileFor(c, accountId!);
     // Managing billing depends on having a Stripe customer, never on app access: a suspended subscriber must still reach the portal.
@@ -183,12 +213,15 @@ export function createAuthRoutes(fetchFn: typeof fetch = fetch): Hono<AppEnv> {
         const accountId = await consumeAuthCode(c.env.DB, body.code, body.code_verifier, pkceChallenge);
         if (!accountId)
             throw new HTTPException(400, { message: 'Código de login inválido ou já utilizado.' });
-        const licenca = await licenseForAccount(c.env.DB, accountId, c.get('config'));
+        // The single-use code is spent. The license is signed while the pair is issued, and its wait counts
+        // from now, so the answer stays inside the 10 s of released apps. licenseWithin never rejects.
+        const licenca = licenseWithin(c, accountId, 'exchange', EXCHANGE_LICENSE_WAIT_MS);
         const { session, refresh } = await issueTokens(c.env.DB, accountId, 'desktop');
-        return c.json({ ok: true, data: { session, refresh, licenca } });
+        return c.json({ ok: true, data: { session, refresh, licenca: await licenca } });
     });
     routes.post('/auth/refresh', async (c) => {
         const body = await jsonBody(c.req.raw, refreshSchema);
+        await requireRefreshSchema(c.env.DB);
         const rotated = await rotateRefresh(c.env.DB, body.refresh, 'desktop');
         if (!rotated)
             throw new HTTPException(401, { message: 'Sessão inválida. Entre novamente.' });
@@ -196,10 +229,7 @@ export function createAuthRoutes(fetchFn: typeof fetch = fetch): Hono<AppEnv> {
         // The old token is already consumed: a client that times out waiting keeps it, and presenting it again
         // past the retry window revokes its family. Clients fetch /v1/license on their own, so a failed or slow
         // license only waits.
-        const licenca = await settleWithin(licenseForAccount(c.env.DB, rotated.accountId, c.get('config')).catch((error: unknown) => {
-            console.error('nexus-cloud-api: licença do refresh falhou:', error instanceof Error ? error.message : 'unknown');
-            return undefined;
-        }), REFRESH_LICENSE_BUDGET_MS);
+        const licenca = await licenseWithin(c, rotated.accountId, 'refresh', REFRESH_LICENSE_WAIT_MS);
         return c.json({ ok: true, data: { session, refresh, licenca } });
     });
     routes.post('/auth/logout', requireNativeAuth, async (c) => { await revokeAll(c.env.DB, c.get('session').account_id); return c.json({ ok: true }); });

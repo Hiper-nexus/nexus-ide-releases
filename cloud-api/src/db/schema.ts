@@ -74,6 +74,8 @@ export interface RefreshTokenRow {
   readonly revoked_at: EpochMilliseconds | null;
   readonly created_at: EpochMilliseconds;
   readonly channel: AuthChannel;
+  /** Migration 0011: 'superseded' by a retry, revoked with its 'family', or null (logout, older rows). */
+  readonly revoked_reason: 'superseded' | 'family' | null;
 }
 
 /** Desktop app that started a login; each one registers its own deep-link scheme. */

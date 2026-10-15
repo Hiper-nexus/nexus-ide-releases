@@ -178,6 +178,32 @@ describe('exchangeAuthCode (binding local)', () => {
     expect(d.applyLicense).toHaveBeenCalledWith('jwt');
   });
 
+  it('licença atrasada no servidor: guarda os tokens, não valida nada e pede a licença depois', async () => {
+    const syncLicense = vi.fn();
+    const fetchFn = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, data: { session: 's', refresh: 'r' } })))
+      .mockResolvedValue(new Response(JSON.stringify({ ok: true, data: { id: 'account-a' } })));
+    const d = deps({ fetchFn, syncLicense });
+    await beginLogin('github', d);
+    const nonce = new URL((d.openExternal as ReturnType<typeof vi.fn>).mock.calls[0][0] as string).searchParams.get('app_state')!;
+
+    expect(await exchangeAuthCode('code123', nonce, d)).toEqual({ ok: true });
+
+    expect(d.setSecret).toHaveBeenCalledWith('auth:refresh', 'r');
+    expect(d.bindAccount).toHaveBeenCalledWith('account-a', 's');
+    expect(d.validateLicense).not.toHaveBeenCalled();
+    expect(d.applyLicense).not.toHaveBeenCalled();
+    expect(syncLicense).toHaveBeenCalledTimes(1);
+  });
+
+  it('licença presente mas vazia continua sendo resposta inválida', async () => {
+    const fetchFn = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, data: { session: 's', refresh: 'r', licenca: '' } })));
+    const d = deps({ fetchFn });
+    await beginLogin('github', d);
+    const nonce = new URL((d.openExternal as ReturnType<typeof vi.fn>).mock.calls[0][0] as string).searchParams.get('app_state')!;
+    expect(await exchangeAuthCode('code123', nonce, d)).toEqual({ ok: false, error: 'exchange-invalid-response' });
+    expect(d.setSecret).not.toHaveBeenCalled();
+  });
+
   it('nonce é single-use: segundo deep link com o mesmo state → rejeita', async () => {
     const d = deps();
     await beginLogin('github', d);
@@ -370,4 +396,23 @@ it('records why the app signed out, without credentials, in the Main trace', asy
   await logoutAuthSession({ ...store, backendUrl: 'https://api.test', fetchFn: vi.fn().mockResolvedValue(new Response(null)) });
   expect(events).toEqual([{ kind: 'signed-out', reason: 'refresh-rejected' }, { kind: 'signed-out', reason: 'user-logout' }]);
   expect(JSON.stringify(events)).not.toMatch(/secret/);
+});
+
+it('logout revokes the unsaved pair apiFetch was using; logout and a refused refresh both forget it', async () => {
+  const steps: string[] = [];
+  const secrets = new Map([['auth:session', 'spent-session'], ['auth:refresh', 'spent-refresh']]);
+  const store = { clearAccess: () => { steps.push('clear'); }, getSecret: (key: string) => secrets.get(key) ?? null,
+    deleteSecret: (key: string) => { secrets.delete(key); return { ok: true }; },
+    dropUnsavedPairs: () => { steps.push('drop'); return 'memory-session'; } };
+  const fetchFn = vi.fn().mockResolvedValue(new Response(null));
+
+  await logoutAuthSession({ ...store, backendUrl: 'https://api.test', fetchFn });
+
+  expect((fetchFn.mock.calls[0][1] as RequestInit & { headers: Record<string, string> }).headers.authorization).toBe('Bearer memory-session');
+  // Read before clearAccess starts a new login generation.
+  expect(steps).toEqual(['drop', 'clear']);
+  steps.length = 0;
+  secrets.set('auth:refresh', 'r');
+  discardRejectedSession('r', store);
+  expect(steps).toEqual(['drop', 'clear']);
 });

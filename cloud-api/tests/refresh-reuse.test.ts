@@ -1,8 +1,8 @@
 import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { SqliteD1 } from './helpers/sqlite-d1.js';
-import { environment, seedAccount } from './helpers/fixtures.js';
-import { createApp } from '../src/index.js';
+import { environment, seedAccount, SITE } from './helpers/fixtures.js';
+import { cleanupExpired, createApp } from '../src/index.js';
 import { issueTokens, revokeAll, rotateRefresh, sessionFor, type Tokens } from '../src/sessions.js';
 
 // 14/10 incident: a desktop app that lost the 200 of a rotation presented the old refresh again 30 s later,
@@ -50,6 +50,55 @@ function interleave(db: SqliteD1, pattern: RegExp, effect: () => Promise<unknown
   });
 }
 
+/** Every statement matching `pattern` fails when it runs, as a D1 error would. */
+function failing(db: SqliteD1, pattern: RegExp): D1Database {
+  return new Proxy(db, {
+    get(target, property) {
+      if (property === 'prepare') return (query: string) => target.prepare(pattern.test(query) ? 'UPDATE missing_table SET broken=1' : query);
+      const value = Reflect.get(target, property);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
+
+async function sessionStamp(db: SqliteD1, refresh: string): Promise<number | null | undefined> {
+  return (await db.prepare('SELECT last_used_at AS at FROM sessions WHERE refresh_id=?').bind(await idOf(db, refresh)).first<{ at: number | null }>())?.at;
+}
+
+test('the first authenticated use stamps the session once; a failed stamp never fails the request', async () => {
+  const { db, mac } = await setup();
+  const now = Date.now();
+  assert.equal(await sessionStamp(db, mac.refresh), null);
+
+  assert.ok(await sessionFor(failing(db, /^UPDATE sessions SET last_used_at/), mac.session, 'desktop', now));
+  assert.equal(await sessionStamp(db, mac.refresh), null);
+
+  assert.ok(await sessionFor(db, mac.session, 'desktop', now + 1000));
+  assert.equal(await sessionStamp(db, mac.refresh), now + 1000);
+  assert.ok(await sessionFor(db, mac.session, 'desktop', now + 2000));
+  assert.equal(await sessionStamp(db, mac.refresh), now + 1000, 'one write per session');
+  db.close();
+});
+
+test('once the successor session was used, the old token inside the window is reuse: the family dies', async () => {
+  const { db, mac, vm } = await setup();
+  const root = await idOf(db, mac.refresh);
+  const now = Date.now();
+  const app = await rotateRefresh(db, mac.refresh, 'desktop', now);
+  assert.ok(app);
+  const me = await createApp().request('/v1/me', { headers: { Authorization: `Bearer ${app.tokens.session}` } }, environment(db));
+  assert.equal(me.status, 200, 'the app uses its new session right away');
+
+  // A copy of the rotated token comes back seconds later: the app did receive its pair.
+  assert.equal(await rotateRefresh(db, mac.refresh, 'desktop', now + 5_000), null);
+
+  assert.equal(await sessionFor(db, app.tokens.session, 'desktop'), null);
+  assert.equal(await rotateRefresh(db, app.tokens.refresh, 'desktop', now + 6_000), null);
+  assert.ok(await sessionFor(db, vm.session, 'desktop'), 'other devices stay signed in');
+  assert.deepEqual(await events(db), [{ kind: 'refresh_reuse_family_revoked', family_root: root, account_id: 'user' }]);
+  db.close();
+});
+
 test('a retry inside the grace window gets a new pair, kills the lost successor and spares other families', async () => {
   const { db, mac, vm } = await setup();
   const root = await idOf(db, mac.refresh);
@@ -64,15 +113,83 @@ test('a retry inside the grace window gets a new pair, kills the lost successor 
   assert.notEqual(retried.tokens.refresh, lost.tokens.refresh);
   assert.ok(await sessionFor(db, retried.tokens.session, 'desktop'));
   assert.equal(await sessionFor(db, lost.tokens.session, 'desktop'), null, 'the session issued with the lost successor dies');
-  assert.equal(await rotateRefresh(db, lost.tokens.refresh, 'desktop', now + 31_000), null, 'the lost successor cannot rotate');
-  // The superseded successor is revoked, so presenting it revoked nothing else.
-  assert.ok(await sessionFor(db, retried.tokens.session, 'desktop'));
+  // The app never saw the lost successor, so it never presents it (see the superseded tests below).
   assert.ok(await sessionFor(db, vm.session, 'desktop'), 'other devices stay signed in');
   assert.ok(await sessionFor(db, mac.session, 'desktop'), 'the session issued at login stays valid until it expires');
   assert.ok(await rotateRefresh(db, vm.refresh, 'desktop', now + 32_000));
   assert.ok(await rotateRefresh(db, retried.tokens.refresh, 'desktop', now + 33_000), 'the new pair keeps renewing');
   assert.deepEqual(await events(db), [{ kind: 'refresh_reuse_grace', family_root: root, account_id: 'user' }]);
   db.close();
+});
+
+test('a thief that wins the window is caught when the app presents the successor it superseded', async () => {
+  const { db, mac, vm } = await setup();
+  const root = await idOf(db, mac.refresh);
+  const now = Date.now();
+  const app = await rotateRefresh(db, mac.refresh, 'desktop', now);
+  assert.ok(app);
+  // A copy of the rotated token arrives before the app touched its new pair: it looks like a lost response.
+  const thief = await rotateRefresh(db, mac.refresh, 'desktop', now + 5_000);
+  assert.ok(thief);
+  assert.equal(await sessionFor(db, app.tokens.session, 'desktop'), null);
+
+  // Its session revoked, the app refreshes with the successor it holds.
+  assert.equal(await rotateRefresh(db, app.tokens.refresh, 'desktop', now + 6_000), null);
+
+  assert.equal(await sessionFor(db, thief.tokens.session, 'desktop'), null, 'the thief loses the family');
+  assert.equal(await rotateRefresh(db, thief.tokens.refresh, 'desktop', now + 7_000), null);
+  assert.ok(await sessionFor(db, vm.session, 'desktop'), 'other devices stay signed in');
+  assert.ok(await rotateRefresh(db, vm.refresh, 'desktop', now + 8_000));
+  const caught = [{ kind: 'refresh_reuse_grace', family_root: root, account_id: 'user' }, { kind: 'refresh_reuse_family_revoked', family_root: root, account_id: 'user' }];
+  assert.deepEqual(await events(db), caught);
+  // Presented again, the successor finds a dead family and records nothing more.
+  assert.equal(await rotateRefresh(db, app.tokens.refresh, 'desktop', now + 9_000), null);
+  assert.deepEqual(await events(db), caught);
+  db.close();
+});
+
+test('a retry that loses the race with a logout revokes and records nothing', async () => {
+  const { db, mac } = await setup();
+  const now = Date.now();
+  assert.ok(await rotateRefresh(db, mac.refresh, 'desktop', now));
+  const racing = interleave(db, /^SELECT \* FROM refresh_tokens WHERE token_hash/, () => revokeAll(db, 'user', now + 500));
+
+  assert.equal(await rotateRefresh(racing, mac.refresh, 'desktop', now + 1000), null);
+
+  assert.equal((await db.prepare('SELECT count(*) AS n FROM refresh_tokens WHERE revoked_at IS NULL').first<{ n: number }>())?.n, 0);
+  assert.deepEqual(await events(db), []);
+  db.close();
+});
+
+test('a superseded successor is inert after a logout, once expired, or when its family is already dead', async () => {
+  const day = 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  {
+    const { db, mac } = await setup();
+    const lost = await rotateRefresh(db, mac.refresh, 'desktop', now);
+    assert.ok(lost && await rotateRefresh(db, mac.refresh, 'desktop', now + 1000));
+    await revokeAll(db, 'user', now + 2000);
+    const fresh = await issueTokens(db, 'user', 'desktop', now + 3000);
+    assert.equal(await rotateRefresh(db, lost.tokens.refresh, 'desktop', now + 4000), null);
+    assert.ok(await sessionFor(db, fresh.session, 'desktop'), 'the login after the logout survives');
+    assert.ok(await rotateRefresh(db, fresh.refresh, 'desktop', now + 5000));
+    assert.deepEqual((await events(db)).map(event => event.kind), ['refresh_reuse_grace']);
+    db.close();
+  }
+  {
+    // Superseded a month ago; the family kept renewing and is alive today.
+    const { db } = await setup();
+    const old = await issueTokens(db, 'user', 'desktop', now - 31 * day);
+    const lost = await rotateRefresh(db, old.refresh, 'desktop', now - 31 * day + 1000);
+    const retried = await rotateRefresh(db, old.refresh, 'desktop', now - 31 * day + 2000);
+    assert.ok(lost && retried);
+    const current = await rotateRefresh(db, retried.tokens.refresh, 'desktop', now - 2 * day);
+    assert.ok(current);
+    assert.equal(await rotateRefresh(db, lost.tokens.refresh, 'desktop', now), null);
+    assert.ok(await rotateRefresh(db, current.tokens.refresh, 'desktop', now + 1000), 'the family keeps renewing');
+    assert.deepEqual((await events(db)).map(event => event.kind), ['refresh_reuse_grace']);
+    db.close();
+  }
 });
 
 test('concurrent retries of one lost rotation leave exactly one live pair', async () => {
@@ -98,6 +215,34 @@ test('concurrent retries of one lost rotation leave exactly one live pair', asyn
   const winner = [outer, inner].filter(pair => pair !== null);
   const alive = await Promise.all(winner.map(async pair => Boolean(await sessionFor(db, pair!.tokens.session, 'desktop'))));
   assert.deepEqual(alive.filter(Boolean).length, 1);
+  db.close();
+});
+
+test('a failure while issuing the pair leaves the refresh token unspent', async () => {
+  const { db, mac } = await setup();
+  const now = Date.now();
+  await assert.rejects(rotateRefresh(failing(db, /^INSERT INTO sessions/), mac.refresh, 'desktop', now));
+
+  // Long past the retry window it is still a first use, not reuse.
+  assert.ok(await rotateRefresh(db, mac.refresh, 'desktop', now + 2 * GRACE_MS));
+  assert.deepEqual(await events(db), []);
+  db.close();
+});
+
+test('a retry that lands while the original rotation is in flight leaves one live pair', async () => {
+  const { db, mac } = await setup();
+  const parent = await idOf(db, mac.refresh);
+  const now = Date.now();
+  let inner: Awaited<ReturnType<typeof rotateRefresh>> = null;
+  // Right after the original request first touches the token, before it issued anything.
+  const racing = interleave(db, /refresh_tokens (SET used_at|WHERE token_hash)/, async () => { inner = await rotateRefresh(db, mac.refresh, 'desktop', now + 1000); });
+
+  const outer = await rotateRefresh(racing, mac.refresh, 'desktop', now);
+
+  assert.ok(outer && inner);
+  const live = await db.prepare('SELECT count(*) AS n FROM refresh_tokens WHERE rotated_from=? AND revoked_at IS NULL').bind(parent).first<{ n: number }>();
+  const sessions = await db.prepare('SELECT count(*) AS n FROM sessions s JOIN refresh_tokens r ON r.id=s.refresh_id WHERE r.rotated_from=? AND s.revoked_at IS NULL').bind(parent).first<{ n: number }>();
+  assert.deepEqual([live?.n, sessions?.n], [1, 1]);
   db.close();
 });
 
@@ -193,5 +338,276 @@ test('/auth/refresh answers with the rotated pair while the license is still bei
   assert.equal(body.data.licenca, undefined, 'the app fetches /v1/license itself');
   assert.ok(await sessionFor(db, body.data.session, 'desktop'));
   assert.ok(await rotateRefresh(db, body.data.refresh, 'desktop'));
+  db.close();
+});
+
+test('/auth/refresh and the web rotation answer 503 before spending a token while the schema is behind', async () => {
+  const { db, mac } = await setup();
+  const web = await issueTokens(db, 'user', 'web');
+  const used = async (refresh: string) => (await db.prepare('SELECT used_at FROM refresh_tokens WHERE id=?').bind(await idOf(db, refresh)).first<{ used_at: number | null }>())?.used_at;
+  const app = createApp();
+  const desktop = () => app.request('/v1/auth/refresh', { method: 'POST', headers: json, body: JSON.stringify({ refresh: mac.refresh }) }, environment(db));
+  const page = () => app.request('/v1/web/session', { headers: { Origin: SITE, Cookie: `__Host-nexus_refresh=${web.refresh}` } }, environment(db));
+  // The Worker was deployed before its migration.
+  await db.prepare("UPDATE system_metadata SET value='10' WHERE key='schema_version'").run();
+
+  assert.equal((await desktop()).status, 503);
+  assert.equal((await page()).status, 503);
+  assert.equal(await used(mac.refresh), null);
+  assert.equal(await used(web.refresh), null);
+
+  await db.prepare("UPDATE system_metadata SET value='11' WHERE key='schema_version'").run();
+  assert.equal((await desktop()).status, 200, 'the same isolate recovers once the migration lands');
+  assert.equal(((await (await page()).json()) as { data: { authenticated: boolean } }).data.authenticated, true);
+  db.close();
+});
+
+test('a family revocation never crosses accounts, even over a corrupted rotated_from edge', async () => {
+  const { db, mac } = await setup();
+  await seedAccount(db, 'other');
+  const other = await issueTokens(db, 'other', 'desktop');
+  const now = Date.now();
+  assert.ok(await rotateRefresh(db, mac.refresh, 'desktop', now));
+  await db.prepare('UPDATE refresh_tokens SET rotated_from=? WHERE id=?').bind(await idOf(db, mac.refresh), await idOf(db, other.refresh)).run();
+
+  assert.equal(await rotateRefresh(db, mac.refresh, 'desktop', now + 2 * GRACE_MS), null);
+
+  assert.ok(await sessionFor(db, other.session, 'desktop'), "the other account's session survives");
+  assert.ok(await rotateRefresh(db, other.refresh, 'desktop', now + 2 * GRACE_MS + 1000));
+  db.close();
+});
+
+test('reuse near the root of a chain over 50k tokens revokes the tip too', async () => {
+  const { db } = await setup();
+  const { hashToken } = await import('../src/crypto.js');
+  const now = Date.now();
+  const raw = 'r'.repeat(43);
+  await seedChain(db, 'chain-', 50_000, now - 2 * GRACE_MS);
+  await db.prepare("UPDATE refresh_tokens SET token_hash=? WHERE id='chain-100'").bind(await hashToken(raw)).run();
+
+  assert.equal(await rotateRefresh(db, raw, 'desktop', now), null);
+
+  const alive = await db.prepare("SELECT count(*) AS n FROM refresh_tokens WHERE id LIKE 'chain-%' AND revoked_at IS NULL").first<{ n: number }>();
+  assert.equal(alive?.n, 0, 'the newest token, chain-50000, is revoked with the rest');
+  db.close();
+});
+
+test('a web session without a valid CSRF gets a new CSRF for itself, never a new token pair', async () => {
+  const { db } = await setup();
+  const app = createApp();
+  const web = await issueTokens(db, 'user', 'web');
+  // Today's CSRF cookie attributes, from a web rotation, to compare with.
+  const rotation = await app.request('/v1/web/session', { headers: { Origin: SITE, Cookie: `__Host-nexus_refresh=${(await issueTokens(db, 'user', 'web')).refresh}` } }, environment(db));
+  const attributes = (cookie: string | undefined) => cookie?.split(';').slice(1).map(part => part.trim()).sort().join('; ');
+  const expected = attributes(rotation.headers.getSetCookie().find(cookie => cookie.startsWith('__Host-nexus_csrf=')));
+  assert.ok(expected);
+  const rows = async () => db.prepare('SELECT (SELECT count(*) FROM sessions) AS sessions, (SELECT count(*) FROM refresh_tokens) AS refresh').first();
+  const before = await rows();
+
+  const proofs: string[] = [];
+  for (const csrfCookie of ['', '; __Host-nexus_csrf=forged']) {
+    const page = await app.request('/v1/web/session', { headers: { Origin: SITE, Cookie: `__Host-nexus_session=${web.session}${csrfCookie}` } }, environment(db));
+    assert.equal(page.status, 200);
+    const body = await page.json() as { data: { authenticated: boolean; csrfToken?: string } };
+    assert.equal(body.data.authenticated, true);
+    const set = page.headers.getSetCookie();
+    assert.equal(set.length, 1, 'only the CSRF cookie is set: session and refresh stay the same');
+    assert.equal(set[0].split(';')[0], `__Host-nexus_csrf=${body.data.csrfToken}`);
+    assert.equal(attributes(set[0]), expected, 'same cookie attributes as today');
+    proofs.push(body.data.csrfToken!);
+  }
+  assert.deepEqual(await rows(), before, 'no session and no refresh token were created');
+
+  // The newest CSRF protects the same session on a mutable route; the one before it no longer does.
+  const logout = (csrf: string) => app.request('/v1/web/logout', { method: 'POST', headers: { Origin: SITE, Cookie: `__Host-nexus_session=${web.session}; __Host-nexus_csrf=${csrf}`, 'X-CSRF-Token': csrf } }, environment(db));
+  assert.equal((await logout(proofs[0])).status, 403);
+  assert.equal((await logout(proofs[1])).status, 200);
+  assert.equal(await sessionFor(db, web.session, 'web'), null);
+  db.close();
+});
+
+test('a stolen web refresh cannot mint a family of its own through /web/session', async () => {
+  const { db } = await setup();
+  const login = await issueTokens(db, 'user', 'web');
+  const now = Date.now();
+  // The attacker rotates the stolen refresh, then calls /web/session with that session alone.
+  const stolen = await rotateRefresh(db, login.refresh, 'web', now);
+  assert.ok(stolen);
+  const page = await createApp().request('/v1/web/session', { headers: { Origin: SITE, Cookie: `__Host-nexus_session=${stolen.tokens.session}` } }, environment(db));
+  assert.equal(page.status, 200);
+
+  // The legitimate browser presents the same refresh later: reuse, and the family dies.
+  assert.equal(await rotateRefresh(db, login.refresh, 'web', now + 2 * GRACE_MS), null);
+
+  const live = await db.prepare("SELECT (SELECT count(*) FROM refresh_tokens WHERE channel='web' AND revoked_at IS NULL) AS refresh, (SELECT count(*) FROM sessions WHERE channel='web' AND revoked_at IS NULL) AS sessions").first();
+  assert.deepEqual(live, { refresh: 0, sessions: 0 }, 'the attacker keeps nothing alive');
+  db.close();
+});
+
+test('a retry never revokes another account over a corrupted rotated_from edge', async () => {
+  const { db, mac } = await setup();
+  await seedAccount(db, 'other');
+  const other = await issueTokens(db, 'other', 'desktop');
+  const now = Date.now();
+  assert.ok(await rotateRefresh(db, mac.refresh, 'desktop', now));
+  // The other account's unused token now hangs under the rotated one.
+  await db.prepare('UPDATE refresh_tokens SET rotated_from=? WHERE id=?').bind(await idOf(db, mac.refresh), await idOf(db, other.refresh)).run();
+
+  assert.ok(await rotateRefresh(db, mac.refresh, 'desktop', now + 5_000), 'the retry inside the window still gets its pair');
+
+  assert.ok(await sessionFor(db, other.session, 'desktop'), "the other account's session survives");
+  assert.ok(await rotateRefresh(db, other.refresh, 'desktop', now + 6_000), 'and its token still rotates');
+  db.close();
+});
+
+test('a corrupted rotated_from cycle ends the family walk instead of hanging', async () => {
+  const { db, mac } = await setup();
+  const now = Date.now();
+  const first = await rotateRefresh(db, mac.refresh, 'desktop', now);
+  assert.ok(first);
+  // The root now points back at its own successor.
+  await db.prepare('UPDATE refresh_tokens SET rotated_from=? WHERE id=?').bind(await idOf(db, first.tokens.refresh), await idOf(db, mac.refresh)).run();
+
+  assert.equal(await rotateRefresh(db, mac.refresh, 'desktop', now + 2 * GRACE_MS), null);
+
+  assert.equal(await sessionFor(db, first.tokens.session, 'desktop'), null, 'the family still dies');
+  db.close();
+});
+
+/** Inserts refresh tokens `prefix`0..`last` of 'user', each rotated from the previous one, the last one unused. */
+async function seedChain(db: SqliteD1, prefix: string, last: number, usedAt: number): Promise<void> {
+  await db.prepare(`WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i+1 FROM n WHERE i<?)
+    INSERT INTO refresh_tokens(id,account_id,token_hash,rotated_from,used_at,expires_at,created_at,channel)
+    SELECT ?||i,'user',?||'-hash-'||i,CASE WHEN i>0 THEN ?||(i-1) END,CASE WHEN i<? THEN ? END,?,?,'desktop' FROM n`)
+    .bind(last, prefix, prefix, prefix, last, usedAt, usedAt + 30 * 24 * 60 * 60 * 1000, usedAt).run();
+}
+
+test('a rotated_from cycle with 500 leaves revokes exactly its family in milliseconds', async () => {
+  const { db, mac } = await setup();
+  const { hashToken } = await import('../src/crypto.js');
+  const now = Date.now();
+  const raw = 'x'.repeat(43);
+  await seedChain(db, 'x', 1, now - 2 * GRACE_MS);
+  // x0 and x1 point at each other, and 500 unused leaves hang off x0.
+  await db.prepare("UPDATE refresh_tokens SET rotated_from='x1', used_at=?, token_hash=? WHERE id='x0'").bind(now - 2 * GRACE_MS, await hashToken(raw)).run();
+  await db.prepare(`WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i+1 FROM n WHERE i<499)
+    INSERT INTO refresh_tokens(id,account_id,token_hash,rotated_from,expires_at,created_at,channel) SELECT 'leaf'||i,'user','leaf-hash-'||i,'x0',?,?,'desktop' FROM n`).bind(now + GRACE_MS * 1000, now).run();
+
+  const started = performance.now();
+  assert.equal(await rotateRefresh(db, raw, 'desktop', now), null);
+  const elapsed = performance.now() - started;
+
+  assert.ok(elapsed < 250, `family revocation took ${Math.round(elapsed)} ms`);
+  const alive = await db.prepare("SELECT count(*) AS n FROM refresh_tokens WHERE revoked_at IS NULL AND (id LIKE 'leaf%' OR id IN ('x0','x1'))").first<{ n: number }>();
+  assert.equal(alive?.n, 0, 'the whole cycle and its leaves are revoked');
+  assert.ok(await sessionFor(db, mac.session, 'desktop'), 'the other family is untouched');
+  db.close();
+});
+
+test('reuse near the tip of a 10.5k chain leaves no live token in the family', async () => {
+  const { db } = await setup();
+  const { hashToken } = await import('../src/crypto.js');
+  const now = Date.now();
+  const raw = 'c'.repeat(43);
+  // The prefix keeps the chain apart from the UUID ids of the tokens issued by setup().
+  await seedChain(db, 'chain-', 10_500, now - 2 * GRACE_MS);
+  await db.prepare("UPDATE refresh_tokens SET token_hash=? WHERE id='chain-10000'").bind(await hashToken(raw)).run();
+
+  assert.equal(await rotateRefresh(db, raw, 'desktop', now), null);
+
+  const alive = await db.prepare("SELECT count(*) AS n FROM refresh_tokens WHERE id LIKE 'chain-%' AND revoked_at IS NULL").first<{ n: number }>();
+  assert.equal(alive?.n, 0, 'the tip and every token up to the root are revoked');
+  db.close();
+});
+
+/** An exchange whose license read runs `stall` right after it starts, and whose token issue waits `issueMs` first. */
+async function exchangeStalled(t: { after: (fn: () => void) => void }, stall: () => Promise<unknown>, issueMs = 0): Promise<{ db: SqliteD1; pending: Promise<Response>; licenseStarted: Promise<void>; issueStarted: Promise<void> }> {
+  const { db } = await setup();
+  const { hashToken, pkceChallenge } = await import('../src/crypto.js');
+  const code = 'c'.repeat(43), verifier = 'v'.repeat(43);
+  await db.prepare('INSERT INTO auth_codes(code_hash,account_id,expires_at,created_at,code_challenge) VALUES(?,?,?,?,?)')
+    .bind(await hashToken(code), 'user', Date.now() + 60_000, Date.now(), await pkceChallenge(verifier)).run();
+  let licensed!: () => void, issued!: () => void;
+  const licenseStarted = new Promise<void>(resolve => { licensed = resolve; });
+  const issueStarted = new Promise<void>(resolve => { issued = resolve; });
+  const stalled = interleave(db, /^SELECT \* FROM accounts WHERE id=\?/, async () => { licensed(); await stall(); });
+  // The exchange's only batch is issueTokens.
+  const slowIssue = new Proxy(stalled, {
+    get(target, property) {
+      if (property === 'batch') return async (statements: D1PreparedStatement[]) => { issued(); if (issueMs) await new Promise(resolve => setTimeout(resolve, issueMs)); return target.batch(statements); };
+      const value = Reflect.get(target, property);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+  mock.timers.enable({ apis: ['setTimeout'] });
+  t.after(() => mock.timers.reset());
+  const pending = Promise.resolve(createApp().request('/v1/auth/exchange', { method: 'POST', headers: json, body: JSON.stringify({ code, code_verifier: verifier }) }, environment(slowIssue as SqliteD1)));
+  return { db, pending, licenseStarted, issueStarted };
+}
+
+/** `promise`'s value if it settles within `ms` of real time (setTimeout is mocked, Date and setImmediate are not). */
+async function settledWithin<T>(promise: Promise<T>, ms: number): Promise<T | undefined> {
+  let value: T | undefined;
+  let done = false;
+  void promise.then(result => { value = result; done = true; });
+  const deadline = Date.now() + ms;
+  while (!done && Date.now() < deadline) await new Promise(resolve => setImmediate(resolve));
+  return value;
+}
+
+test('/auth/exchange signs the license while it issues the pair: 7.5 s of license and a slow issue answer at 7.5 s', async (t) => {
+  const { db, pending, issueStarted } = await exchangeStalled(t, () => new Promise(resolve => setTimeout(resolve, 7_500)), 1_000);
+  await issueStarted;
+  mock.timers.tick(7_500);
+
+  const response = await settledWithin(pending, 2_000);
+
+  assert.ok(response, 'answered 7.5 s after the code was spent, inside the 10 s of released apps');
+  const body = await response.json() as { data: { session: string; licenca?: string } };
+  assert.equal(typeof body.data.licenca, 'string');
+  assert.ok(await sessionFor(db, body.data.session, 'desktop'));
+  db.close();
+});
+
+test('/auth/exchange waits up to 8 s for the license: one signed in 5 s is in the answer', async (t) => {
+  const { db, pending, licenseStarted } = await exchangeStalled(t, () => new Promise(resolve => setTimeout(resolve, 5_000)));
+  await licenseStarted;
+  mock.timers.tick(5_000);
+  const response = await pending;
+
+  assert.equal(response.status, 200);
+  const body = await response.json() as { data: { session: string; licenca?: string } };
+  assert.equal(typeof body.data.licenca, 'string', 'released apps refuse a login without it');
+  assert.ok(await sessionFor(db, body.data.session, 'desktop'));
+  db.close();
+});
+
+test('/auth/exchange releases a license that never signs at 8 s, still with the pair', async (t) => {
+  const { db, pending, licenseStarted } = await exchangeStalled(t, () => new Promise(() => {}));
+  await licenseStarted;
+  let settled = false;
+  void pending.then(() => { settled = true; });
+  mock.timers.tick(7_999);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(settled, false, 'still waiting just under 8 s');
+  mock.timers.tick(1);
+  const response = await pending;
+
+  assert.equal(response.status, 200);
+  const body = await response.json() as { data: { session: string; licenca?: string } };
+  assert.equal(body.data.licenca, undefined, 'the app fetches /v1/license itself');
+  assert.ok(await sessionFor(db, body.data.session, 'desktop'));
+  db.close();
+});
+
+test('cleanup keeps auth events for 90 days', async () => {
+  const { db } = await setup();
+  const now = Date.now();
+  const day = 24 * 60 * 60 * 1000;
+  for (const [id, age] of [['old', 91 * day], ['recent', 89 * day]] as const) {
+    await db.prepare("INSERT INTO auth_events(id,account_id,kind,family_root,created_at) VALUES(?,'user','refresh_reuse_grace','root',?)").bind(id, now - age).run();
+  }
+  await cleanupExpired(db, now);
+  assert.deepEqual((await db.prepare('SELECT id FROM auth_events').all<{ id: string }>()).results.map(row => row.id), ['recent']);
   db.close();
 });
