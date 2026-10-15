@@ -13,7 +13,8 @@ export class OwnedCommandProcesses {
   readonly #gone = new Map<string, string>();
   constructor(private readonly rootFor: (sessionId: string) => Root | null,
     private readonly capture: (pid: number) => Promise<DescendantSnapshot | null> = captureNativeHeavyProcessSnapshot,
-    private readonly watch?: (pid: number) => Promise<PhysicalCommandClaim | null>) {}
+    private readonly watch?: (pid: number) => Promise<PhysicalCommandClaim | null>,
+    private readonly clock: { now(): number; sleep(ms: number): Promise<void> } = { now: Date.now, sleep: (ms) => new Promise<void>((resolve) => { const timer = setTimeout(resolve, ms); timer.unref?.(); }) }) {}
   async claim(sessionId: string, pid: number, proof?: 'darwin-job'): Promise<string | null> {
     if (!Number.isSafeInteger(pid) || pid <= 0) return null;
     const root = this.rootFor(sessionId); if (!root || root.pid === pid) return null;
@@ -76,9 +77,23 @@ export class OwnedCommandProcesses {
       const borrowed = await claim.physical.borrow(pid);
       return borrowed && this.#claims.get(id) === claim && claim.physical.state() === 'live';
     }
-    const snapshot = await this.capture(claim.root.pid);
+    let snapshot = await this.capture(claim.root.pid);
     if (this.#claims.get(id) !== claim || !snapshot?.root || snapshot.root.startedAt !== claim.root.startedAt) return false;
-    const row = pid === claim.root.pid ? snapshot.root : snapshot.descendants.find((candidate) => candidate.pid === pid);
+    let row = pid === claim.root.pid ? snapshot.root : snapshot.descendants.find((candidate) => candidate.pid === pid);
+    // F-1544: o filho de um comando pesado pede o lease no primeiro segundo de
+    // vida (`node install.js`, `electron-forge`), quando a cerca de "mesmo
+    // segundo" ainda o chama de ambíguo — e a recusa virava exit 78. A cerca
+    // continua intacta: espera a virada do segundo e reamostra UMA vez; só então
+    // decide. Pid ausente, outro pai ou identidade ainda ambígua seguem negados.
+    if (row && !hasUnambiguousStartIdentity(row, snapshot.capturedAtMs)) {
+      const wait = Math.floor(snapshot.capturedAtMs / 1_000) * 1_000 + 1_000 - this.clock.now() + 25;
+      if (wait > 0 && wait <= 1_500) {
+        await this.clock.sleep(wait);
+        snapshot = await this.capture(claim.root.pid);
+        if (this.#claims.get(id) !== claim || !snapshot?.root || snapshot.root.startedAt !== claim.root.startedAt) return false;
+        row = pid === claim.root.pid ? snapshot.root : snapshot.descendants.find((candidate) => candidate.pid === pid);
+      }
+    }
     if (!row || !hasUnambiguousStartIdentity(row, snapshot.capturedAtMs)) return false;
     const merged = new Map(claim.rows);
     for (const member of [row, ...snapshot.descendants]) {

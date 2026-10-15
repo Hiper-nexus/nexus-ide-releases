@@ -161,3 +161,26 @@ it('F-1479 risco residual: na hora repetida o claim recusa o processo nascido no
    if (previous === undefined) delete process.env.TZ; else process.env.TZ = previous;
  }
 });
+
+// F-1544: o filho do comando pesado pede o lease no 1º segundo de vida.
+const winRow = (pid: number, ppid: number, startedAtUtcMs: number): ProcessTableRow => ({ pid, ppid, pgid: 0, sid: 0, tty: '?', startedAt: new Date(startedAtUtcMs).toISOString(), startedAtUtcMs });
+function freshChildFixture(childBornAtMs: number) {
+ const t0 = Date.parse('2026-10-15T12:00:02.500Z'); const identity = {};
+ let now = t0; let sleeps = 0;
+ const rows = [winRow(10, 1, t0 - 60_000), winRow(20, 10, t0 - 30_000), winRow(30, 20, childBornAtMs)];
+ const capture = async (pid: number): Promise<DescendantSnapshot> => ({ root: rows.find((r) => r.pid === pid) ?? null, descendants: rows.filter((r) => r.ppid === pid), inventory: rows, capturedAtMs: now });
+ const clock = { now: () => now, sleep: async (ms: number) => { sleeps += 1; now += ms; } };
+ const tracker = new OwnedCommandProcesses(() => ({ pid: 10, identity }), capture, undefined, clock);
+ return { tracker, sleeps: () => sleeps, t0 };
+}
+it('borrow espera a virada do segundo e reamostra quando o filho nasceu no segundo da captura', async () => {
+ const { tracker, sleeps, t0 } = freshChildFixture(Date.parse('2026-10-15T12:00:02.400Z'));
+ const id = (await tracker.claim('s', 20))!; expect(id).toBeTypeOf('string');
+ expect(await tracker.borrow('s', id, 30)).toBe(true); expect(sleeps()).toBe(1); expect(t0).toBeGreaterThan(0);
+});
+it('borrow ainda nega pid ausente e identidade que segue ambígua depois da reamostra', async () => {
+ const { tracker, sleeps } = freshChildFixture(Date.parse('2026-10-15T12:00:05.000Z'));
+ const id = (await tracker.claim('s', 20))!;
+ expect(await tracker.borrow('s', id, 999)).toBe(false);
+ expect(await tracker.borrow('s', id, 30)).toBe(false); expect(sleeps()).toBe(1);
+});
