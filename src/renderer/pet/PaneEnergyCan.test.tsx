@@ -73,6 +73,29 @@ afterEach(() => {
 });
 
 describe('PaneEnergyCan', () => {
+  it('does not start an opening animation outside the viewport or in sober mode', () => {
+    expect(render(false).host.querySelector('svg')).toBeNull();
+    act(() => useGamificationStore.setState({ sober: true }));
+    expect(render().host.querySelector('svg')).toBeNull();
+  });
+
+  it('dismisses an active scene when sober mode is enabled', () => {
+    const { host } = render();
+    expect(host.querySelector('svg')).not.toBeNull();
+    act(() => useGamificationStore.setState({ sober: true }));
+    expect(host.querySelector('svg')).toBeNull();
+    act(() => useGamificationStore.setState({ sober: false }));
+    expect(host.querySelector('svg')).toBeNull();
+  });
+
+  it('dismisses a scene when its pane leaves the viewport and does not replay it on return', () => {
+    const { host, root } = render();
+    act(() => root.render(<PaneEnergyCan visible={false} now={now} />));
+    expect(host.querySelector('svg')).toBeNull();
+    act(() => root.render(<PaneEnergyCan visible now={now} />));
+    expect(host.querySelector('svg')).toBeNull();
+  });
+
   it('abre com estalo ao ganhar foco e sai do DOM quando a cena acaba', () => {
     const { host } = render();
     const svg = host.querySelector('svg.spill-corner');
@@ -112,7 +135,6 @@ describe('PaneEnergyCan', () => {
 
   it('fica quieta em modo sóbrio, fora de vista e ao trocar de projeto', () => {
     const { host } = render(false);
-    finish(host);
     clock += SIP_COOLDOWN_MS;
     gain(20_000);
     expect(host.querySelector('svg.spill-corner')).toBeNull();

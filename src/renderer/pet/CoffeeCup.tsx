@@ -18,6 +18,9 @@ const POP_SPARKS: ReadonlyArray<{ x: number; y: number; r: number; dx: number; d
   { x: 47.6, y: 8.6, r: 0.9, dx: -7, dy: -6 },
   { x: 49.8, y: 7.8, r: 0.75, dx: 1, dy: -10 },
   { x: 51.6, y: 8.6, r: 0.85, dx: 7, dy: -5 },
+  { x: 46, y: 9.4, r: 0.6, dx: -10, dy: -2 },
+  { x: 53, y: 9.2, r: 0.55, dx: 10, dy: -1 },
+  { x: 49, y: 7.6, r: 0.5, dx: -4, dy: -13 },
 ];
 
 export type SpillCornerPhase = 'open' | 'sip';
@@ -50,7 +53,7 @@ export function CoffeeSpillCorner({
   return (
     <svg
       className={`spill-corner spill-corner--${phase}${className ? ` ${className}` : ''}`}
-      viewBox="0 0 64 76"
+      viewBox="26 -8 38 46"
       width="64"
       height="76"
       fill="none"
@@ -77,10 +80,13 @@ export function CoffeeSpillCorner({
       />
       <ellipse className="spill__pool" cx="47" cy="37.6" rx="8" ry="1.7" />
       <g className="spill__can">
-        <rect className="spill__can-body" x="43" y="10" width="13" height="26.4" rx="1.6" />
+        <path className="spill__can-body" d="M44.5 10H54.5L56 12V34.8L54.5 36.4H44.5L43 34.8V12Z" />
+        <ellipse className="spill__can-base" cx="49.5" cy="35.7" rx="5.5" ry="0.7" />
         <rect className="spill__can-shade" x="51.6" y="11.6" width="3" height="23.2" rx="1" />
         <rect className="spill__can-sheen" x="44.2" y="12" width="1.5" height="20.6" rx="0.6" />
         <path className="spill__can-band" d="M 43 17 L 56 24.6 L 56 28.4 L 43 20.8 Z" />
+        <path className="spill__can-bolt" d="M49.9 13.5L47.6 17.3H49.4L48.8 20L52 15.8H50.2Z" />
+        <text className="spill__can-mark" x="49.5" y="30.8" textAnchor="middle" textLength="10.5" lengthAdjust="spacingAndGlyphs">NEXUS</text>
         <ellipse className="spill__can-lid" cx="49.5" cy="10" rx="6.8" ry="2.15" />
         <ellipse className="spill__can-mouth" cx="48.6" cy="10.1" rx="2.6" ry="0.95" />
         <g className="spill__foam">
@@ -95,6 +101,7 @@ export function CoffeeSpillCorner({
         </g>
       </g>
       <circle className="spill__pop" cx="49.5" cy="8.6" r="4.2" strokeWidth="0.9" />
+      <path className="spill__pressure" d="M40 11C37 4 42-2 46-3M54-2C60 0 63 5 60 11" strokeWidth="0.7" strokeLinecap="round" />
       {POP_SPARKS.map((spark) => (
         <circle
           key={`${spark.dx}:${spark.dy}`}

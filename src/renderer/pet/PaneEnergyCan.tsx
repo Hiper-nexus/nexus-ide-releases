@@ -29,13 +29,32 @@ interface PaneEnergyCanProps {
 }
 
 export function PaneEnergyCan({ visible = true, now = Date.now }: PaneEnergyCanProps) {
-  const [scene, setScene] = useState<CanScene>({ phase: 'open', key: 0, xp: null });
+  const sober = useGamificationStore(state => state.sober);
+  const [documentVisible, setDocumentVisible] = useState(() => document.visibilityState !== 'hidden');
+  const [scene, setScene] = useState<CanScene>(() => ({
+    phase: visible && documentVisible && !sober ? 'open' : 'rest', key: 0, xp: null,
+  }));
   const visibleRef = useRef(visible);
   const lastSceneAt = useRef(0);
 
   useEffect(() => {
     visibleRef.current = visible;
+    if (!visible) setScene(current => ({ ...current, phase: 'rest' }));
   }, [visible]);
+
+  useEffect(() => {
+    if (sober) setScene(current => ({ ...current, phase: 'rest' }));
+  }, [sober]);
+
+  useEffect(() => {
+    const onVisibility = () => {
+      const isVisible = document.visibilityState !== 'hidden';
+      setDocumentVisible(isVisible);
+      if (!isVisible) setScene(current => ({ ...current, phase: 'rest' }));
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, []);
 
   useEffect(() => {
     // A abertura conta como cena: o primeiro gole espera o resfriamento.
@@ -52,7 +71,7 @@ export function PaneEnergyCan({ visible = true, now = Date.now }: PaneEnergyCanP
     });
   }, [now]);
 
-  if (scene.phase === 'rest') return null;
+  if (!visible || !documentVisible || sober || scene.phase === 'rest') return null;
   return (
     <CoffeeSpillCorner
       key={scene.key}

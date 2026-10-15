@@ -5,7 +5,7 @@ import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
 import { useTerminalGridDialogStore } from '../state/terminal-grid-dialog-store';
-import { CoffeeSpillCorner } from '../pet/CoffeeCup';
+import { PaneEnergyCan } from '../pet/PaneEnergyCan';
 import { ActionCard, EmptyState } from './ActionCard';
 import { PaneInteractionSurface } from './PaneInteractionSurface';
 import { PaneToolbar } from './PaneToolbar';
@@ -41,11 +41,8 @@ export function PaneVacancy({ pane }: { readonly pane: PaneModel }) {
     >
       <PaneToolbar pane={pane} isFocused={isFocused} />
       <PaneVacancyBody pane={pane} />
-      {/* Derrame — overlay decorativo no canto; só quando o pane tem foco.
-          Montado/desmontado com o foco → animação replays a cada visita.
-          position: absolute dentro de .pane (position: relative; overflow: hidden).
-          pointer-events: none — nunca rouba input do terminal ou do grid. */}
-      {isFocused && <CoffeeSpillCorner />}
+      {/* Mesmo ciclo finito e preferências dos panes com sessão. */}
+      {isFocused && <PaneEnergyCan />}
     </PaneInteractionSurface>
   );
 }
