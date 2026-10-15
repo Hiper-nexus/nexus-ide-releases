@@ -208,10 +208,11 @@ export function createAuthRoutes(fetchFn: typeof fetch = fetch): Hono<AppEnv> {
         const accountId = await consumeAuthCode(c.env.DB, body.code, body.code_verifier, pkceChallenge);
         if (!accountId)
             throw new HTTPException(400, { message: 'Código de login inválido ou já utilizado.' });
-        // The single-use code is spent: the pair is issued right away and a slow license only waits its budget.
+        // The single-use code is spent. The license is signed while the pair is issued, and its wait counts
+        // from now, so the answer stays inside the 10 s of released apps. licenseWithin never rejects.
+        const licenca = licenseWithin(c, accountId, 'exchange', EXCHANGE_LICENSE_WAIT_MS);
         const { session, refresh } = await issueTokens(c.env.DB, accountId, 'desktop');
-        const licenca = await licenseWithin(c, accountId, 'exchange', EXCHANGE_LICENSE_WAIT_MS);
-        return c.json({ ok: true, data: { session, refresh, licenca } });
+        return c.json({ ok: true, data: { session, refresh, licenca: await licenca } });
     });
     routes.post('/auth/refresh', async (c) => {
         const body = await jsonBody(c.req.raw, refreshSchema);
