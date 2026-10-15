@@ -221,6 +221,34 @@ describe('layout-store maximize vs foco programático', () => {
     ]);
   });
 
+  it('patchPaneRuntime grava conta, modelo, cwd e esforço juntos, sem refazer o grid', () => {
+    useLayoutStore.getState().setPanes([shell, orch, worker]);
+    useLayoutStore.getState().toggleMaximizePane(orch.id);
+
+    useLayoutStore.getState().patchPaneRuntime(orch.id, {
+      accountId: 'acct-sealed',
+      model: 'm-sealed',
+      cwd: '/sealed',
+      effort: 'high',
+    });
+
+    const s = useLayoutStore.getState();
+    const patched = listPanes(s.root).find((pane) => pane.id === orch.id);
+    expect(patched).toMatchObject({
+      accountId: 'acct-sealed',
+      model: 'm-sealed',
+      cwd: '/sealed',
+      effort: 'high',
+    });
+    // Nada de setPanes/buildGridTree: o maximize e os outros panes seguem.
+    expect(s.maximizedPaneId).toBe(orch.id);
+    expect(listPanes(s.root).map((pane) => pane.id)).toEqual([
+      shell.id,
+      orch.id,
+      worker.id,
+    ]);
+  });
+
   it('focar o próprio pane maximizado mantém o maximize', () => {
     useLayoutStore.getState().toggleMaximizePane(shell.id);
 

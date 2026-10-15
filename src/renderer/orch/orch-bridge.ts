@@ -796,29 +796,23 @@ export function useOrchBridge(): void {
               // authority fence rejects as `accountId[undefined != acct-…]`.
               // Only fields the grant actually sealed are applied — an absent
               // accountId is also sealed authority and must not be invented.
-              const layout = useLayoutStore.getState();
+              const patch: Parameters<
+                ReturnType<typeof useLayoutStore.getState>['patchPaneRuntime']
+              >[1] = {};
               if (
                 req.accountId !== undefined &&
                 existing.accountId !== req.accountId
               ) {
-                layout.setAccountId(existing.id, req.accountId);
+                patch.accountId = req.accountId;
               }
               if (req.model !== undefined && existing.model !== req.model) {
-                layout.setPaneModel(existing.id, req.model);
+                patch.model = req.model;
               }
-              if (req.cwd && existing.cwd !== req.cwd) {
-                layout.setPaneCwd(existing.id, req.cwd);
-              }
+              if (req.cwd && existing.cwd !== req.cwd) patch.cwd = req.cwd;
               if (req.effort !== undefined && existing.effort !== req.effort) {
-                const aligned: PaneModel = {
-                  ...existing,
-                  effort: req.effort,
-                };
-                const next = listPanes(layout.root).map((item) =>
-                  item.id === existing.id ? aligned : item,
-                );
-                layout.setPanes(next);
+                patch.effort = req.effort;
               }
+              useLayoutStore.getState().patchPaneRuntime(existing.id, patch);
             }
             paneId = existing?.id ??
               useLayoutStore.getState().spawnOrchPane({

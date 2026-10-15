@@ -272,32 +272,23 @@ function applySealedRestoreRuntime(
   const pane = listPanes(layout.root).find((item) => item.id === paneId);
   if (!pane || pane.kind !== 'cli-agent') return;
   // Same rule as alignPaneToSealedRecovery (orch-bridge.ts): sealed wins for
-  // runtime identity; only fields Main actually sealed are written.
+  // runtime identity; only fields Main actually sealed are written, in ONE
+  // atomic store update (sequential setters on a stale root undo each other).
+  const patch: Parameters<typeof layout.patchPaneRuntime>[1] = {};
   if (sealed.accountId !== undefined && pane.accountId !== sealed.accountId) {
-    layout.setAccountId(paneId, sealed.accountId);
+    patch.accountId = sealed.accountId;
   }
   if (sealed.model !== undefined && pane.model !== sealed.model) {
-    layout.setPaneModel(paneId, sealed.model);
+    patch.model = sealed.model;
   }
-  if (sealed.cwd && pane.cwd !== sealed.cwd) {
-    layout.setPaneCwd(paneId, sealed.cwd);
+  if (sealed.cwd && pane.cwd !== sealed.cwd) patch.cwd = sealed.cwd;
+  if (sealed.effort !== undefined && pane.effort !== sealed.effort) {
+    patch.effort = sealed.effort;
   }
-  if (
-    (sealed.effort !== undefined && pane.effort !== sealed.effort) ||
-    (sealed.adapterId !== undefined && pane.adapterId !== sealed.adapterId)
-  ) {
-    const aligned: PaneModel = {
-      ...pane,
-      ...(sealed.adapterId !== undefined
-        ? { adapterId: sealed.adapterId }
-        : {}),
-      ...(sealed.effort !== undefined ? { effort: sealed.effort } : {}),
-    };
-    const next = listPanes(layout.root).map((item) =>
-      item.id === paneId ? aligned : item,
-    );
-    layout.setPanes(next);
+  if (sealed.adapterId !== undefined && pane.adapterId !== sealed.adapterId) {
+    patch.adapterId = sealed.adapterId;
   }
+  layout.patchPaneRuntime(paneId, patch);
 }
 
 /**

@@ -21,6 +21,7 @@ const setAccountId = vi.fn();
 const setPaneModel = vi.fn();
 const setPaneCwd = vi.fn();
 const setPanes = vi.fn();
+const patchPaneRuntime = vi.fn();
 const layoutRoot = vi.hoisted(() => ({
   current: {
     kind: 'leaf' as const,
@@ -64,6 +65,7 @@ vi.mock('../state/layout-store', () => ({
       setPaneModel: (...args: unknown[]) => setPaneModel(...args),
       setPaneCwd: (...args: unknown[]) => setPaneCwd(...args),
       setPanes: (...args: unknown[]) => setPanes(...args),
+      patchPaneRuntime: (...args: unknown[]) => patchPaneRuntime(...args),
     }),
   },
 }));
@@ -143,6 +145,7 @@ describe('restore-agents-gate', () => {
     setPaneModel.mockReset();
     setPaneCwd.mockReset();
     setPanes.mockReset();
+    patchPaneRuntime.mockReset();
     orchGet.mockResolvedValue({ agentRestorePolicy: 'ask' });
     canRestoreMissionPane.mockResolvedValue(true);
     layoutRoot.current = {
@@ -277,8 +280,16 @@ describe('restore-agents-gate', () => {
     });
     await gateRestoredAgents([missionAgent('mission-orch', 'Orquestrador')]);
 
-    expect(setAccountId).toHaveBeenCalledWith('mission-orch', 'acct-sealed-1');
-    expect(setPaneModel).toHaveBeenCalledWith('mission-orch', 'gpt-5.6-sol');
+    // Uma única gravação atômica: setters em sequência sobre a root lida
+    // antes se desfaziam (conta/modelo/cwd voltavam ao valor velho).
+    expect(patchPaneRuntime).toHaveBeenCalledTimes(1);
+    expect(patchPaneRuntime).toHaveBeenCalledWith('mission-orch', {
+      accountId: 'acct-sealed-1',
+      model: 'gpt-5.6-sol',
+      effort: 'high',
+      cwd: '/workspace/sealed',
+    });
+    expect(setPanes).not.toHaveBeenCalled();
     expect(releaseHeldSpawns).toHaveBeenCalledWith(['mission-orch'], {
       resume: true,
     });
@@ -852,7 +863,10 @@ describe('restore-agents-gate', () => {
         resume: true,
       });
     });
-    expect(setAccountId).toHaveBeenCalledWith('held-revived', 'acct-nova');
+    expect(patchPaneRuntime).toHaveBeenCalledWith(
+      'held-revived',
+      expect.objectContaining({ accountId: 'acct-nova' }),
+    );
     expect(closePane).not.toHaveBeenCalled();
   });
 

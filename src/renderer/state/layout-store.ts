@@ -115,6 +115,16 @@ interface LayoutState {
   focus(paneId: string): void;
   setTitle(paneId: string, title: string): void;
   setPaneCwd(paneId: string, cwd: string): void;
+  /**
+   * Espelha a identidade de runtime selada pelo Main num único `set`: várias
+   * gravações em sequência sobre uma `root` lida antes se desfazem entre si.
+   */
+  patchPaneRuntime(
+    paneId: string,
+    patch: Partial<
+      Pick<PaneModel, 'accountId' | 'model' | 'cwd' | 'effort' | 'adapterId'>
+    >,
+  ): void;
   syncMissionSpaces(): void;
   /** User rename — pins the title so shell escapes stop overriding it. */
   renameTitle(paneId: string, title: string): void;
@@ -1395,6 +1405,16 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
 
   setPaneCwd: (paneId, cwd) => {
     const root = updatePane(get().root, paneId, { cwd });
+    set({ root });
+    persist();
+  },
+
+  patchPaneRuntime: (paneId, patch) => {
+    const defined = Object.fromEntries(
+      Object.entries(patch).filter(([, value]) => value !== undefined),
+    );
+    if (Object.keys(defined).length === 0) return;
+    const root = updatePane(get().root, paneId, defined);
     set({ root });
     persist();
   },
