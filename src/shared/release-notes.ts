@@ -10848,7 +10848,7 @@ export const RELEASE_076271: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076272: AppRelease = {
   version: '0.76.272',
   date: '2026-10-15',
   codename: 'Linux em dia com a retomada e os agentes',
@@ -10866,5 +10866,21 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Handoff cortado', detail: 'Colagem picotada é detectada pelo marcador do Codex e reentregue, sem Enter em texto truncado. Sem marcador, a detecção não ocorre.' },
     { title: 'node_modules da worktree', detail: 'A worktree isolada nasce com node_modules ligado. O contrato do worker proíbe apagar ou reinstalar esse diretório, porque a remoção recursiva atravessa o link.' },
     { title: 'Atualização do Linux', detail: 'As tags 0.76.270 e 0.76.271 não recebem pacotes Linux. A 0.76.271 é a candidata do Windows. O Linux sai na 0.76.272.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.273',
+  date: '2026-10-15',
+  codename: 'Mac em dia com a retomada e os agentes',
+  summary: 'O macOS recebe as melhorias da 0.76.270 e as correções da revisão 0.76.271: retomada com a especificação selada, agentes à vista, XP global e teclado sem tecla duplicada ao hibernar.',
+  highlights: RELEASE_076270.highlights,
+  fixes: [
+    { title: 'Retomada de missão', detail: 'O coordenador religa sem esperar workers sem sessão. A transferência preserva a conta e a conversa seladas, aposenta o pane antigo e tem prazo e erros visíveis.' },
+    { title: 'Teclado após hibernar', detail: 'O pane acompanha o estado vivo e mantém um único receptor de teclado ao acordar ou retomar.' },
+    { title: 'Spawn sem duplicatas', detail: 'O mesmo requestId da mesma sessão devolve o pane existente; recusa por carga não pune a CLI.' },
+    { title: 'Menu Mais sem corte', detail: 'As ações continuam acessíveis com o Quadro minimizado e em largura compacta.' },
+    { title: 'Recusa de religação', detail: 'A mensagem permite tentar novamente pelo Quadro, sem recomendar reinício local de um pane controlado pela missão.' },
+    { title: 'Ditado e comandos pesados', detail: 'Soltar a tecla durante a abertura do microfone encerra a captura. O medidor também reconhece comandos escapados pelo bash.' },
   ],
 };

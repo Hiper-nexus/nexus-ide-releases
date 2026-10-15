@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.76.273 — Mac em dia com a retomada e os agentes
+
+Saída macOS arm64, a partir da main `d8359c414a9bc71869bbaf6747c1a444c8fcb11d`.
+A última release Mac com DMG/ZIP público era a 0.76.264 (`3202b9712c2c5f353ede24a6cff281992a605c1b`).
+Inclui todos os commits até o Windows 0.76.270 (`469f852b95211e3e89fcc6799fc18b716ebafc85`) e a revisão 0.76.271.
+
+- Retomada com especificação e conta seladas, transferência com prazo, pane de origem aposentado, erros visíveis e religação do coordenador antes dos workers sem sessão.
+- Spawn idempotente por sessão/requestId e recusa por carga sem punir a CLI.
+- Agentes ativos no rail/abas/cabeçalho, Quadro com primária única e perfil com XP global.
+- Teclado vivo após hibernação sem receptor duplicado; ditado sem captura fantasma; medidor com leitura POSIX de comandos escapados.
+- F-388: menu Mais não é cortado pelo Quadro minimizado nem pela lateral em largura compacta.
+- F-389: recusa de religação orienta nova tentativa no Quadro, sem prometer reinício local recusado pelo runtime da missão.
+
+Exclusivos de outras plataformas: checkpoint tmp 8.3/ConPTY no Windows e links de dependências sem CoW no Windows/Linux. O Mac mantém CoW.
+Limites conhecidos: F-1536 só detecta colagem truncada em CLI com marcador (Codex), sem divisão em partes; XP global só soma projetos abertos desde a versão que o introduziu. A mitigação por contrato de remoção de junction no Windows (F-1543) não é trava mecânica.
+
 ## 0.76.272 — Linux em dia com a retomada e os agentes
 
 As tags 0.76.270 e 0.76.271 não recebem pacotes Linux. Esta versão leva o produto das duas, empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). A 0.76.271 é a candidata do instalador do Windows.
