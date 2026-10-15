@@ -6,7 +6,7 @@
    servida localmente para funcionar offline no Electron. */
 @font-face {
   font-family: 'VT323';
-  src: url('./fonts/VT323-Regular.ttf') format('truetype');
+  src: url('./fonts/VT323-Regular.woff2') format('woff2');
   font-weight: 400;
   font-style: normal;
   font-display: swap;
@@ -17,7 +17,7 @@
    três renders. Local para funcionar offline. */
 @font-face {
   font-family: 'Inter';
-  src: url('./fonts/Inter.var.ttf') format('truetype');
+  src: url('./fonts/Inter.var.woff2') format('woff2');
   font-weight: 100 900;
   font-style: normal;
   font-display: swap;
@@ -28,7 +28,7 @@
    idêntico nos 3 OSs. A paleta do xterm continua própria (terminal-theme). */
 @font-face {
   font-family: 'JetBrains Mono';
-  src: url('./fonts/JetBrainsMono.var.ttf') format('truetype');
+  src: url('./fonts/JetBrainsMono.var.woff2') format('woff2');
   font-weight: 100 800;
   font-style: normal;
   font-display: swap;
