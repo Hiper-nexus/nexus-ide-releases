@@ -201,6 +201,36 @@ function DockedTeamFixture({ compact = false }: { compact?: boolean }) {
   );
 }
 
+/** Mesma árvore de classes do DirectionComposer (DirectionComposer.tsx), sem dados. */
+function DirectionComposerFixture() {
+  return (
+    <form className="mission-board__direction-composer">
+      <div className="mission-board__direction-field mission-board__direction-field--target">
+        <label htmlFor="direction-target">Enviar para</label>
+        <select id="direction-target" className="mission-board__direction-target">
+          <option>@todos</option>
+        </select>
+      </div>
+      <div className="mission-board__direction-field mission-board__direction-field--draft">
+        <label id="direction-label" htmlFor="direction-draft">Orientação</label>
+        <div className="composer-tiptap mission-board__direction-editor">
+          <div
+            id="direction-draft"
+            role="textbox"
+            className="composer-tiptap__surface mission-board__direction-draft"
+          />
+        </div>
+        <span className="mission-board__direction-hint">
+          Enter envia. Shift+Enter adiciona uma nova linha.
+        </span>
+      </div>
+      <button type="submit" className="mission-board__direction-submit">
+        Enviar orientação
+      </button>
+    </form>
+  );
+}
+
 afterEach(() => {
   for (const { root } of mountedRoots.splice(0).reverse()) {
     act(() => root.unmount());
@@ -633,5 +663,75 @@ describe('Mission Setup and Mission Board style contracts', () => {
         activeCssomDeclaration(reducedStyle, selector, property),
       ).toBe('none');
     }
+  });
+});
+
+describe('Mission Board: compositor de orientação', () => {
+  // 1_400 = quadro lado a lado (inspetor 360–440px fixo); 900 = quadro empilhado.
+  // O container query do quadro nunca enxergou a largura do inspetor: a coluna
+  // única tem de valer na regra base, e não só quando o quadro empilha.
+  it.each([{ containerWidth: 1_400 }, { containerWidth: 900 }])(
+    'mantém o compositor do inspetor em UMA coluna num quadro de $containerWidth px',
+    ({ containerWidth }) => {
+      installStyleContract(missionStyles, { width: 1_400, containerWidth });
+      const host = render(
+        <section className="mission-board">
+          <div className="mission-inspector__conversation">
+            <DirectionComposerFixture />
+          </div>
+        </section>,
+      );
+      const form = host.querySelector<HTMLElement>('.mission-board__direction-composer')!;
+      const submit = host.querySelector<HTMLElement>('.mission-board__direction-submit')!;
+
+      expect(styleTracks(form, 'grid-template-columns')).toHaveLength(1);
+      for (const modifier of ['--target', '--draft']) {
+        expect(
+          computedCssValue(
+            host.querySelector<HTMLElement>(`.mission-board__direction-field${modifier}`)!,
+            'grid-column',
+          ),
+        ).toBe('1');
+      }
+      expect(computedCssValue(submit, 'grid-column')).toBe('1');
+      expect(computedCssValue(submit, 'width')).toBe('100%');
+      expect(styleLengthPx(submit, 'min-height')).toBeGreaterThanOrEqual(32); // DESIGN.md §6
+    },
+  );
+
+  it('mantém a barra fixa de direção como pílula de três colunas (alvo, editor, enviar)', () => {
+    installStyleContract(missionStyles, { width: 1_400, containerWidth: 1_400 });
+    const host = render(
+      <section className="mission-board">
+        <div className="mission-board__direct-bar">
+          <DirectionComposerFixture />
+        </div>
+      </section>,
+    );
+
+    expect(
+      styleTracks(
+        host.querySelector<HTMLElement>('.mission-board__direction-composer')!,
+        'grid-template-columns',
+      ),
+    ).toHaveLength(3);
+    expect(
+      computedCssValue(
+        host.querySelector<HTMLElement>('.mission-board__direction-field--target')!,
+        'grid-column',
+      ),
+    ).toBe('1');
+    expect(
+      computedCssValue(
+        host.querySelector<HTMLElement>('.mission-board__direction-field--draft')!,
+        'grid-column',
+      ),
+    ).toBe('2');
+    expect(
+      computedCssValue(
+        host.querySelector<HTMLElement>('.mission-board__direction-submit')!,
+        'grid-column',
+      ),
+    ).toBe('3');
   });
 });

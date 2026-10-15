@@ -84,4 +84,12 @@ describe('F-1005 (10) — flutuantes não tapam controles', () => {
       /padding-inline-end:[^;]*var\(--nexus-orb-safe-inline/,
     );
   });
+
+  it('a reserva do orbe no painel do inspetor tem teto (orbe parado + respiro = 72px)', () => {
+    // O HUD ativo/expandido publica 120–500px em --nexus-orb-safe-inline; sem teto, num
+    // inspetor de 360–440px a coluna útil encolhe até o editor e o botão se sobreporem.
+    expect(rules(css('mission-board.css'), '.mission-inspector__panel')).toMatch(
+      /padding-inline-end:\s*min\(\s*max\(var\(--space-4\),\s*var\(--nexus-orb-safe-inline,\s*0px\)\),\s*calc\(var\(--space-8\)\s*\+\s*var\(--space-2\)\)\s*\)/,
+    );
+  });
 });

@@ -1759,8 +1759,13 @@
   min-height: 0;
   padding: var(--space-4);
   /* F-1005: o inspetor encosta na borda direita (lado a lado ou empilhado):
-     o "#seq" e o chevron das linhas não rolam por baixo do orbe da Jarvis. */
-  padding-inline-end: max(var(--space-4), var(--nexus-orb-safe-inline, 0px));
+     o "#seq" e o chevron das linhas não rolam por baixo do orbe da Jarvis.
+     O teto (orbe parado + respiro = 72px) impede o HUD ativo/expandido, que publica
+     120–500px em --nexus-orb-safe-inline, de engolir a coluna de um inspetor de 360–440px. */
+  padding-inline-end: min(
+    max(var(--space-4), var(--nexus-orb-safe-inline, 0px)),
+    calc(var(--space-8) + var(--space-2))
+  );
   overflow: auto;
   scrollbar-gutter: stable;
 }
@@ -2352,18 +2357,19 @@
   padding-bottom: 0;
 }
 
+/* O inspetor lado a lado tem 360–440px e ainda perde a faixa do orbe do Jarvis (F-1005):
+   "campo | botão nowrap" nunca cabe, e o container query do quadro (<=1099px) não enxerga a
+   largura do inspetor. Uma coluna sempre; a barra fixa (.mission-board__direct-bar) redefine
+   colunas, campos e botão com seletores mais específicos, mais abaixo. */
 .mission-board__direction-composer {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   align-items: end;
   gap: var(--space-3);
   margin: 0;
 }
 
-.mission-board__direction-field--target {
-  grid-column: 1 / -1;
-}
-
+.mission-board__direction-field--target,
 .mission-board__direction-field--draft {
   grid-column: 1;
 }
@@ -2460,12 +2466,14 @@
 }
 
 .mission-board__direction-submit {
-  grid-column: 2;
+  grid-column: 1;
   align-self: end;
+  width: 100%;
+  justify-self: stretch;
 }
 
 .mission-board__direction-error {
-  grid-column: 1 / -1;
+  grid-column: 1;
 }
 
 .mission-inspector__question-slot .mission-board__question {
@@ -2603,18 +2611,6 @@
     gap: var(--space-1);
   }
 
-  .mission-board__direction-composer {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .mission-board__direction-field--target,
-  .mission-board__direction-field--draft,
-  .mission-board__direction-submit,
-  .mission-board__direction-error {
-    grid-column: 1;
-  }
-
-  .mission-board__direction-submit,
   .mission-board__question-submit {
     width: 100%;
     justify-self: stretch;
