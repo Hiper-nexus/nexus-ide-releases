@@ -245,11 +245,17 @@ import {
   planOperatorCompleteIpc,
 } from "./mission-operator-complete";
 import { onIpcGuarded } from '../runtime/git-ipc-guard';
+import { setCliSpawnOrchestrationGate } from '../pty/cli-spawn-orchestration-gate';
 
 /**
  * Renderer-facing IPC for the orchestration domain, plus the domain
  * bootstrap. Every renderer payload is zod-validated at this boundary.
  */
+
+// Corrida de 16/08 com o renderer paralelo: o funil de spawn de CLI espera
+// este flight (single-flight, fail-closed no closing) antes de tocar provider
+// e PTY. O gate mora num módulo-folha para não puxar orch → pty no bundle.
+setCliSpawnOrchestrationGate(() => initOrchestration());
 
 const missionStartSchema = missionReviewSchema
   .pick({ missionId: true, reviewSha256: true })

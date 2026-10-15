@@ -15,6 +15,10 @@ import {
 import type { SpawnResult, ProjectExecutionScope } from "../../shared/types";
 import { preparePaneSpaceWorktree } from './pane-space-worktree';
 import {
+  awaitCliSpawnOrchestration,
+  hasCliSpawnOrchestrationGate,
+} from './cli-spawn-orchestration-gate';
+import {
   spawnSession,
   spawnAgentSession,
   adoptMainOwnedAgentSession,
@@ -261,8 +265,27 @@ function spawnCliPtyAgentPane(
   authSpawnGated = false,
   spawnPermitAcquired = false,
   spawnTiming?: PhaseTimer,
+  orchestrationSettled = false,
 ): SpawnResult | Promise<SpawnResult> {
   try {
+    // Gate de orquestração (corrida de 16/08): com o renderer navegando em
+    // paralelo ao bootstrap, um pane restaurado chega aqui antes do
+    // MCP/coordinator. Espera ANTES de tocar provider, permissão ou PTY —
+    // rejeição fecha o spawn sem preparação parcial. Pane de shell nunca
+    // passa por esta função.
+    if (!orchestrationSettled && hasCliSpawnOrchestrationGate()) {
+      return awaitCliSpawnOrchestration().then(
+        () =>
+          spawnCliPtyAgentPane(
+            sender, adapter, spawn, authoritativePreparation,
+            authSpawnGated, spawnPermitAcquired, spawnTiming, true,
+          ),
+        (error: unknown): SpawnResult => ({
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    }
     // Recursões internas (prep → gate → permissão) compartilham o timer —
     // um spawn, um evento. Chamador sem timer mede sozinho.
     const timer = spawnTiming ?? startPhaseTimer();
@@ -328,7 +351,7 @@ function spawnCliPtyAgentPane(
         (preparation) => {
           timer.mark("provider-prep");
           return spawnCliPtyAgentPane(
-            sender, adapter, spawn, preparation, false, false, timer,
+            sender, adapter, spawn, preparation, false, false, timer, true,
           );
         },
         (error) => {
@@ -380,6 +403,7 @@ function spawnCliPtyAgentPane(
               true,
               false,
               timer,
+              true,
             );
           },
           (error) => {
@@ -507,7 +531,7 @@ function spawnCliPtyAgentPane(
             const proving = ensureNativeHeavyJobBase();
             if (proving) await proving;
             return await spawnCliPtyAgentPane(
-              sender, adapter, spawn, preparation, true, true, timer,
+              sender, adapter, spawn, preparation, true, true, timer, true,
             );
           } finally {
             release();
