@@ -1,3 +1,4 @@
+import { readTerminalTextTail } from './terminal-text-tail';
 import { useAccessStore } from '../state/access-store';
 import { reportLicenseDenial } from '../state/access-guard';
 import { Terminal, type ITheme } from '@xterm/xterm';
@@ -13,7 +14,6 @@ import type { PaneParkRequest } from '../../shared/orch-types';
 import { buildPtySpawnRequest } from './spawn-request';
 import type { TerminalSettings } from '../../shared/settings-types';
 import { DEFAULT_TERMINAL_SETTINGS } from '../../shared/settings-types';
-import { CSI_SEQUENCE_PATTERN } from '../../shared/ansi-escape-sequences';
 import { appearanceFontStack } from '../styles/appearance-fonts';
 import {
   setRestoredPanesHandler,
@@ -232,6 +232,8 @@ interface Host {
   spawnGeneration: number;
   opened: boolean;
   spawnStarted: boolean;
+  /** Main ended this session; presentation alone cannot restart it. */
+  automaticSpawnStopped?: boolean;
   /**
    * Sessão que o main avisou que vai encerrar para FECHAR o pane. O exit
    * dela não oferece shell nem religa: o closeRequest vem logo atrás.
@@ -731,26 +733,12 @@ export type RespawnMode =
 const CROSS_ACCOUNT_RESUME_FAILED_NOTICE =
   '[nexus] a conversa não pôde ser retomada na conta nova — abrindo sessão nova com o pacote de continuidade…';
 
-/**
- * Strip ANSI CSI/OSC sequences for continuity pack excerpts (best-effort).
- */
-function stripAnsiForExcerpt(text: string): string {
-  return text
-    // F-1406: CSI do padrão compartilhado — a classe [0-?]* cobre os
-    // parâmetros privados (ESC[>4;0m, ESC[>7u) que o Codex 0.162 emite.
-    .replace(CSI_SEQUENCE_PATTERN, '')
-    .replace(/\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g, '')
-    .replace(/\u001b./g, '');
-}
-
 /** Last N chars of xterm buffer for failover handoff (empty if host missing). */
 export function getScrollbackExcerpt(paneId: string, max = 2_400): string {
   const host = hosts.get(paneId);
   if (!host || host.disposed || !host.opened) return '';
   try {
-    flushTerminalOutput(host.term);
-    const raw = host.serialize.serialize().slice(-max * 2);
-    return stripAnsiForExcerpt(raw).slice(-max);
+    return readTerminalTextTail(host.term.buffer, max);
   } catch {
     return '';
   }
@@ -1194,6 +1182,7 @@ function handlePaneKeyboardInput(
   fallbackPane: PaneModel,
   data: string,
 ): void {
+  if (!host.sessionId && isTerminalReport(data)) return;
   const pane =
     listPanes(useLayoutStore.getState().root).find(
       (candidate) => candidate.id === fallbackPane.id,
@@ -1328,6 +1317,7 @@ function startSpawn(
   const generation = host.spawnGeneration + 1;
   host.spawnGeneration = generation;
   host.spawnStarted = true;
+  host.automaticSpawnStopped = false;
   host.hibernated = false;
   // Qualquer spawn novo (Acordar, Reiniciar, digitar no pane dormindo) supera
   // o "estacionado" — é o único ponto por onde todo respawn deste pane passa.
@@ -1695,6 +1685,7 @@ function startSpawn(
             reportPaneResumeIncident(pane, 'stale-exact-id', message, false);
             host.term.writeln(`\r\n\x1b[31m[nexus] ${message}\x1b[0m`);
           }
+          host.automaticSpawnStopped = Boolean(terminationOrigin);
           setHostSession(host, pane.id, null);
           // Latch solto: sem isto o host fica em exited eterno e o teclado
           // morre em silêncio (onData early-return quando sessionId=null).
@@ -2128,6 +2119,7 @@ function armDeferredSpawnRetry(host: Host, delayMs: number): void {
 
 function beginPaneSpawn(pane: PaneModel, host: Host): void {
   if (host.spawnStarted || host.hibernated || host.disposed) return;
+  if (host.automaticSpawnStopped && !firstSpawnIntent.has(pane.id)) return;
   // F-1002: remontagem, replay de apresentação e espera headless passam por
   // aqui. Depois de uma recusa, a próxima tentativa automática espera o
   // backoff; esgotado o orçamento, só uma ação explícita religa.
@@ -2975,7 +2967,8 @@ function wireTermInteractions(host: Host, sendJumpKeyOnScroll = false): void {
   // "Acordar". Listener persistente e independente do onData por-spawn (que
   // markPaneParked descarta): só dispara enquanto o pane está em
   // usePaneParkedStore, então nunca compete com a digitação normal.
-  term.onData(() => {
+  term.onData((data) => {
+    if (isTerminalReport(data)) return;
     if (!usePaneParkedStore.getState().parked.has(host.paneId)) return;
     const pane = listPanes(useLayoutStore.getState().root).find(
       (candidate) => candidate.id === host.paneId,
@@ -4494,6 +4487,7 @@ export function waitForSession(
               host.spawnStarted ||
               host.hibernated ||
               host.spawnGeneration !== generation ||
+              (host.automaticSpawnStopped && !firstSpawnIntent.has(pane.id)) ||
               heldSpawnPanes.has(pane.id) ||
               automaticSpawnDecision(pane.id, Date.now()) !== 'allow' ||
               !listPanes(useLayoutStore.getState().root).some(

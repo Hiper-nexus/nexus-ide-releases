@@ -64,9 +64,13 @@ it('F-1118: standard uses the normal explicit catalog/runtime profile and ordina
     expect(reviewer.allowedTools).toEqual(['nexus_file_read', 'nexus_handoff_submit']);
   } finally { window.removeEventListener(RUNTIME_DOM_REQUEST, ui); }
 });
-it.each(['identity', 'report-ready', 'missing-reviewer', 'ambiguous-reviewer', 'canonical-initial', 'canonical-recovered', 'canonical-reviewer', 'stale-session', 'stale-binding', 'foreign-snapshot', 'ambiguous-snapshot'])('F-1112/F-1117: selects current named canonical workers and preserves report causality (%s)', async stage => {
+it.each(['identity', 'report-ready', 'missing-reviewer', 'ambiguous-reviewer', 'canonical-initial', 'canonical-recovered', 'canonical-reviewer', 'stale-session', 'stale-binding', 'foreign-snapshot', 'ambiguous-snapshot',
+  'writer-pid-pending', 'reviewer-pid-pending', 'missing-pid', 'invalid-adapter', 'too-many-workers', 'duplicate-writer'])('F-1112/F-1117/F-395: selects current named canonical workers and preserves report causality (%s)', async stage => {
   const refusedJoin = ['stale-session', 'stale-binding', 'foreign-snapshot', 'ambiguous-snapshot'].includes(stage);
-  if (stage === 'missing-reviewer' || refusedJoin) vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+  const pendingPid = ['writer-pid-pending', 'reviewer-pid-pending'].includes(stage);
+  const invalidInventory = ['invalid-adapter', 'too-many-workers', 'duplicate-writer'].includes(stage);
+  const timed = stage === 'missing-reviewer' || refusedJoin || pendingPid || stage === 'missing-pid';
+  if (timed) vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
   const marker = '22222222-2222-4222-8222-222222222222';
   let question = false, opsStopped = false, prepared = 0, resumed = false, writeDirected = false, reportReady = false, standardReads = 0, recoveredReads = 0, reviewerReads = 0;
   const directions: Array<{ targetAgentId: string; text: string }> = [];
@@ -89,10 +93,16 @@ it.each(['identity', 'report-ready', 'missing-reviewer', 'ambiguous-reviewer', '
       { id: 'chief-id', paneId: chief.paneId, agentName: chief.agentName, category: 'orchestrator', cli: 'claude', state: 'waiting', terminalLive: true },
     ];
     if (stage === 'ambiguous-snapshot' && !writerPending) canonical.push({ ...canonical[1], id: 'competing-approved-id' });
+    const observedWriter = { ...currentWriter,
+      ...((stage === 'writer-pid-pending' && standardReads <= 3 || stage === 'missing-pid') ? { pid: null } : {}),
+      ...(stage === 'invalid-adapter' ? { adapterId: 'other' } : {}) };
+    const observedReviewer = { ...reviewer, ...(stage === 'reviewer-pid-pending' && standardReads <= 3 ? { pid: null } : {}) };
+    const extraWorkers = stage === 'too-many-workers' ? [{ ...reviewer, paneId: 'extra-pane', sessionId: 'extra-sid' }] :
+      stage === 'duplicate-writer' ? [{ ...writer, paneId: 'duplicate-pane', sessionId: 'duplicate-sid' }] : [];
     return request.operation !== 'observe' ? {} :
     request.missionId === 'ops' ? { agents: opsStopped ? [] : [chief], audit: [{ tool: 'nexus_terminal_run', result: 'ok' }],
       snapshot: { question: question ? { id: 'question', options: [{ id: 'proceed' }] } : undefined } } :
-    { missionId: 'std', agents: [...(stage === 'missing-reviewer' ? [] : stage === 'ambiguous-reviewer' && reportReady ? [reviewer, { ...reviewer, paneId: 'other-reviewer', sessionId: 'other-reviewer-sid' }] : [reviewer]), currentWriter, chief], handoffs: reportReady ? [{ sessionId: newWriter.sessionId, status: 'success', summary: `RT_WRITE_${marker}` }] : [],
+    { missionId: 'std', agents: [...(stage === 'missing-reviewer' || stage === 'duplicate-writer' ? [] : stage === 'ambiguous-reviewer' && reportReady ? [reviewer, { ...reviewer, paneId: 'other-reviewer', sessionId: 'other-reviewer-sid' }] : [observedReviewer]), observedWriter, ...extraWorkers, chief], handoffs: reportReady ? [{ sessionId: newWriter.sessionId, status: 'success', summary: `RT_WRITE_${marker}` }] : [],
       recovery: resumed ? { fromPaneId: writer.paneId, fromSessionId: writer.sessionId, paneId: newWriter.paneId, sessionId: newWriter.sessionId } : undefined,
       snapshot: { id: stage === 'foreign-snapshot' ? 'foreign-mission' : 'std', agents: canonical } };
   },
@@ -101,7 +111,7 @@ it.each(['identity', 'report-ready', 'missing-reviewer', 'ambiguous-reviewer', '
       if (value.kind === 'answer-question') question = false;
       if (value.kind === 'stop') opsStopped = true;
       if (value.text?.includes('RT_GATE QUESTION')) question = true;
-      if (value.text?.includes('RT_GATE IDLE')) { directions.push({ targetAgentId: value.targetAgentId!, text: value.text }); if (stage === 'identity' || stage === 'canonical-initial') throw new Error('private name-selection test ended'); }
+      if (value.text?.includes('RT_GATE IDLE')) { directions.push({ targetAgentId: value.targetAgentId!, text: value.text }); if (pendingPid) expect(standardReads).toBeGreaterThan(3); if (stage === 'identity' || stage === 'canonical-initial' || pendingPid) throw new Error('private name-selection test ended'); }
       if (value.text?.includes('RT_GATE RECOVER')) resumed = true;
       if (value.text?.includes('RT_GATE WRITE')) { writeDirected = true; if (stage === 'canonical-recovered') {
         directions.push({ targetAgentId: value.targetAgentId!, text: value.text }); throw new Error('private recovered canonical test ended'); } }
@@ -120,12 +130,15 @@ it.each(['identity', 'report-ready', 'missing-reviewer', 'ambiguous-reviewer', '
         { detail: { nonce: detail.nonce, request: detail.request, ok: false } })));
   };
   window.addEventListener(RUNTIME_DOM_REQUEST, ui);
-  const ended = new Promise<void>(resolve => ipc.once(RUNTIME_CHANNELS.result, () => resolve()));
+  const ended = new Promise<{ failed?: string }>(resolve => ipc.once(RUNTIME_CHANNELS.result, resolve));
   try {
     installRuntimeGatePreload(ipc as never, api as never, { isMainFrame: true });
     ipc.emit(RUNTIME_CHANNELS.run, null, { nonce: '11111111-1111-4111-8111-111111111111', gatewayNonce: marker, phase: 'exercise', workspacePath: '/private/runtime-fixture' });
-    if (stage === 'missing-reviewer' || refusedJoin) await vi.advanceTimersByTimeAsync(46000);
-    await ended; expect(directions).toEqual(refusedJoin ? [] : stage === 'canonical-recovered' ?
+    if (timed) await vi.advanceTimersByTimeAsync(46000);
+    const result = await ended;
+    if (stage === 'missing-pid') expect(result.failed).toMatch(/runtime observed blocker: actual standard writer/);
+    if (invalidInventory) { expect(result.failed).toBe('worker inventory invalid'); expect(standardReads).toBeLessThanOrEqual(2); }
+    expect(directions).toEqual(refusedJoin || invalidInventory || stage === 'missing-pid' ? [] : stage === 'canonical-recovered' ?
       [{ targetAgentId: 'writer-id', text: `RT_GATE IDLE ${marker}` }, { targetAgentId: 'writer-id', text: `RT_GATE WRITE ${marker}` }] :
       ['report-ready', 'canonical-reviewer'].includes(stage) ? [{ targetAgentId: 'writer-id', text: `RT_GATE IDLE ${marker}` }, { targetAgentId: 'reviewer-id', text: 'true' }] :
       [{ targetAgentId: 'writer-id', text: `RT_GATE IDLE ${marker}` }]);

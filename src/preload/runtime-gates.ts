@@ -109,7 +109,14 @@ export function installRuntimeGatePreload(ipc: Ipc, api: NexusApi, processInfo: 
         await shutdownMission(opsId);
         const standardId = await prepareStandard();
         let observed = await observe(standardId);
-        observed = await poll(() => observe(standardId), v => v.agents.some((a: any) => a.role === 'worker' && a.agentName === 'Runtime writer'), 'actual standard writer');
+        observed = await poll(() => observe(standardId), v => {
+          const workers = v.agents.filter((a: any) => a.role === 'worker');
+          const writers = workers.filter((a: any) => a.agentName === 'Runtime writer');
+          if (workers.length > 2 || writers.length > 1 || workers.some((a: any) => a.adapterId !== 'claude' ||
+              a.pid != null && (!Number.isSafeInteger(a.pid) || a.pid <= 0))) throw new Error('worker inventory invalid');
+          // Main may register a new session while the host's earlier process sample is in flight.
+          return writers.length === 1 && workers.every((a: any) => Number.isSafeInteger(a.pid) && a.pid > 0);
+        }, 'actual standard writer');
         const workers = observed.agents.filter((a: any) => a.role === 'worker');
         if (workers.length > 2 || workers.some((a: any) => a.adapterId !== 'claude' || !a.pid)) throw new Error('worker inventory invalid'); checks['standard-workers'] = true;
         const writer = workers.find((a: any) => a.agentName === 'Runtime writer');
