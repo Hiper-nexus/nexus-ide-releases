@@ -70,7 +70,7 @@ describe('polishCodePrompt — ditado CODE vira prompt em inglês', () => {
     });
   });
 
-  it('F-1435: rejeita reescrita que ecoa o português sem traduzir', async () => {
+  it('F-1530: rejeita reescrita que ecoa o português sem traduzir', async () => {
     // Modelo devolveu o mesmo texto em português dentro de JSON válido —
     // a maior parte das palavras é idêntica, overlap bem acima de 60%.
     const chat = vi.fn(async () =>
@@ -85,7 +85,7 @@ describe('polishCodePrompt — ditado CODE vira prompt em inglês', () => {
     });
   });
 
-  it('F-1435: reescrita real em inglês tem baixa sobreposição com a fonte', async () => {
+  it('F-1530: reescrita real em inglês tem baixa sobreposição com a fonte', async () => {
     const chat = vi.fn(async () =>
       JSON.stringify({ prompt: 'Commit the changes and open a pull request.' }),
     );

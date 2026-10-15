@@ -365,7 +365,7 @@ describe('runRegressionGate', () => {
     expect(exec).not.toHaveBeenCalled();
     expect(result.status).toBe('unavailable');
     expect(result.testsRun).toEqual([]);
-    // F-1443: com o prazo do mapa reservando o piso dos testes, o mapa é
+    // F-1533: com o prazo do mapa reservando o piso dos testes, o mapa é
     // CORTADO em vez de rodar até o fim — o indireto (distância 2, que só o
     // grafo de imports alcança) nem é descoberto; sobra o co-localizado do
     // diff. Nada roda nos dois casos e nada é certificado, então o contrato do
@@ -1730,10 +1730,10 @@ it('completion cannot approve when the import traversal budget omitted known imp
   } finally { spy.mockRestore(); }
 });
 
-// F-1443: o mapa de imports não tinha prazo — num repositório grande ele comia
+// F-1533: o mapa de imports não tinha prazo — num repositório grande ele comia
 // o orçamento inteiro do handoff (`testBudgetMs: 0`, 110 impactados sem rodar)
 // e segurava a resposta do `nexus_handoff_submit` até estourar o transporte MCP.
-describe('prazo do mapa de imports (F-1443)', () => {
+describe('prazo do mapa de imports (F-1533)', () => {
   it('mapa cortado pelo prazo ainda roda o teste co-localizado do diff e NÃO certifica', async () => {
     const { root, scope } = project();
     write(root, 'src/a.ts', 'export const a = 2;\n');

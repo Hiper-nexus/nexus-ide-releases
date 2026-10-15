@@ -27,11 +27,11 @@ describe('commandKind ignores tool names that are not the program being run', ()
   });
 });
 
-// F-1445: no Windows o separador é `\`, e o lexer tratava `\` como escape POSIX
+// F-1535: no Windows o separador é `\`, e o lexer tratava `\` como escape POSIX
 // incondicional — `node_modules\.bin\vitest` virava `node_modules.binvitest`,
 // saía do catálogo e o comando pesado nunca era medido. A barra do POSIX só
 // some antes de caractere especial ao shell (`echo a\b` imprime `a\b`).
-describe('commandKind reads Windows backslash launcher paths (F-1445)', () => {
+describe('commandKind reads Windows backslash launcher paths (F-1535)', () => {
   it.each([
     ['node_modules\\.bin\\vitest run src/x.test.ts', 'tests'],
     ['.\\node_modules\\.bin\\vitest.cmd run src/x.test.ts', 'tests'],

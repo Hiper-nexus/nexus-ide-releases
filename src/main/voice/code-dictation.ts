@@ -44,7 +44,7 @@ export async function finalizeCodeDictation(
     // é chave saudável (expirada, timeout, saída suspeita). Sem a reescrita o
     // CODE entregaria português: a STT transcreve o MESMO áudio pedindo
     // tradução. Só o caminho de falha paga esse tempo.
-    // F-1435: mesmo quando o request já pedia translate, tenta de novo —
+    // F-1530: mesmo quando o request já pedia translate, tenta de novo —
     // a primeira STT pode ter usado um provider transcription-only (xAI Grok)
     // que ignorou o translate. Uma segunda tentativa pode cair num provider
     // diferente da cadeia que de fato traduz.

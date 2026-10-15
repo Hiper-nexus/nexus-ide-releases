@@ -100,7 +100,7 @@ describe('finalizeCodeDictation', () => {
     expect(JSON.stringify(log.mock.calls)).not.toContain('Commit and open the pull request.');
   });
 
-  it('F-1435: reescrita falhou com request que já pedia translate — tenta a STT de novo (provider anterior pode ser transcription-only)', async () => {
+  it('F-1530: reescrita falhou com request que já pedia translate — tenta a STT de novo (provider anterior pode ser transcription-only)', async () => {
     const { ports: p } = ports();
     const out = await finalizeCodeDictation(
       { ...literalRequest, translate: true },
@@ -108,7 +108,7 @@ describe('finalizeCodeDictation', () => {
       900,
       p,
     );
-    // F-1435: mesmo com translate:true, a STT de socorro roda —
+    // F-1530: mesmo com translate:true, a STT de socorro roda —
     // o provider que atendeu a primeira transcrição pode ser
     // transcription-only (xAI Grok) e não traduziu de fato.
     expect(p.transcribe).toHaveBeenCalledOnce();

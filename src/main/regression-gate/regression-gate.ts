@@ -89,14 +89,14 @@ const MIN_RUN_BUDGET_MS = 3_000;
 /** F-246: comparação com a base só sobe runner com folga real de prazo. */
 const BASE_COMPARE_MIN_BUDGET_MS = 20_000;
 /**
- * F-1443: piso do orçamento que SOBRA para os testes. O mapa de imports lia
+ * F-1533: piso do orçamento que SOBRA para os testes. O mapa de imports lia
  * todo arquivo-fonte do projeto sem prazo nenhum (63 s medidos neste
  * repositório; 6-30 min no campo) e comia o orçamento inteiro do handoff:
  * `testBudgetMs: 0`, nenhum dos 110 impactados rodava e a resposta do
  * `nexus_handoff_submit` estourava o transporte MCP.
  */
 export const MIN_TEST_BUDGET_MS = 20_000;
-/** Teto de arquivos no cache incremental de imports (F-1443). */
+/** Teto de arquivos no cache incremental de imports (F-1533). */
 const IMPORT_FACT_CACHE_LIMIT = 40_000;
 
 export const DEFAULT_REGRESSION_TEST_TIMEOUT_MS = 120_000;
@@ -433,7 +433,7 @@ const cache = new Map<string, RegressionGateResult>();
 /** Execução em curso + o signal de quem a iniciou (o cancelamento é dele). */
 const inflight = new Map<string, { readonly promise: Promise<RegressionGateResult>; readonly signal?: AbortSignal }>();
 /**
- * F-1443: cache incremental do parse de imports, por arquivo. A evidência de
+ * F-1533: cache incremental do parse de imports, por arquivo. A evidência de
  * validade é a mesma do stat-refresh do índice do Git (tamanho + mtime): ler e
  * aplicar regex em 7 mil fontes (62 MB) custava ~64 s em CADA handoff; com o
  * cache quente só os arquivos que o diff tocou são relidos. Um acerto não
@@ -898,12 +898,12 @@ interface ImpactedTests {
   readonly untestedFiles: readonly string[];
   readonly e2eSkipped: readonly string[];
   readonly indexComplete: boolean;
-  /** F-1443: o mapa parou no prazo — seleção parcial nunca certifica. */
+  /** F-1533: o mapa parou no prazo — seleção parcial nunca certifica. */
   readonly mapDeadlineHit: boolean;
   readonly warnings: readonly string[];
 }
 
-/** Prazo do mapa de imports (F-1443): sem ele a fase não tem fim previsível. */
+/** Prazo do mapa de imports (F-1533): sem ele a fase não tem fim previsível. */
 export interface ImpactMapBudget {
   readonly deadline?: number;
   readonly now?: () => number;
@@ -930,7 +930,7 @@ async function buildReverseGraph(
   }
   for (const file of walk.files) {
     if (!file.isSource || !isOrientationImportSource(file.ext)) continue;
-    // F-1443: o mapa para no prazo em vez de comer o orçamento dos testes.
+    // F-1533: o mapa para no prazo em vez de comer o orçamento dos testes.
     // Cortado aqui o grafo fica parcial, mas os testes CO-LOCALIZADOS do diff
     // sobrevivem — eles vêm da lista de arquivos do walk, não das arestas de
     // import — e rodam com o piso reservado.
@@ -1024,7 +1024,7 @@ export async function computeImpactedTests(
   includeE2E = false,
   /** F-1224: os mesmos insumos, puxados só por WIP anterior ao spawn — rodam, mas não dão autoria. */
   wip: { readonly tests: readonly string[]; readonly dbConsumers: readonly string[] } = { tests: [], dbConsumers: [] },
-  /** F-1443: prazo do mapa; vencido, o grafo fica parcial e nada certifica. */
+  /** F-1533: prazo do mapa; vencido, o grafo fica parcial e nada certifica. */
   budget?: ImpactMapBudget,
 ): Promise<ImpactedTests> {
   const { reverse, files, truncated, deadlineHit } = await buildReverseGraph(scope, changedFiles, budget);
@@ -1106,7 +1106,7 @@ export async function computeImpactedTests(
     mapDeadlineHit: deadlineHit,
     warnings: [...(truncated ? ['índice do projeto truncado: o grafo de imports pode estar incompleto'] : []),
       ...(traversalIncomplete ? ['raio de imports truncado pelo limite de visitas'] : []),
-      // F-1443: diz que foi o PRAZO, não a config do projeto — e que os
+      // F-1533: diz que foi o PRAZO, não a config do projeto — e que os
       // co-localizados do diff continuam cobertos.
       ...(deadlineHit ? ['mapa de imports cortado pelo prazo: grafo parcial, testes co-localizados do diff mantidos'] : [])],
   };
@@ -1888,7 +1888,7 @@ async function evaluateMappedTests(
   const dbConsumers = radius?.dbConsumers ?? [];
   const ownConsumers = new Set(ownRadius?.dbConsumers ?? []);
 
-  // F-1443: o prazo é UM só (mapa + testes), e o mapa para antes de comer o
+  // F-1533: o prazo é UM só (mapa + testes), e o mapa para antes de comer o
   // piso dos testes. Antes ele não tinha prazo nenhum: num repositório grande
   // o submit ficava minutos no ar, estourava o transporte MCP e ainda devolvia
   // `testBudgetMs: 0` — o budget existia, só não era aplicado a esta fase.
@@ -2146,7 +2146,7 @@ async function evaluateMappedTests(
   return finish({
     // Nenhum teste executado de verdade nunca é aprovação.
     // Diff além do limite: a seleção não cobre tudo, então só falha ou NÃO verificado.
-    // F-1443: mapa cortado pelo prazo descobre MENOS testes, então "todos os
+    // F-1533: mapa cortado pelo prazo descobre MENOS testes, então "todos os
     // selecionados rodaram" não prova cobertura — nunca certifica.
     status:
       countedFailures.length > 0
