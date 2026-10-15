@@ -1,4 +1,6 @@
 /** @vitest-environment jsdom */
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -126,6 +128,16 @@ describe('PaneBirthOverlay', () => {
     // Sem animação em loop: o pulso é de progresso, e aqui nada progride.
     expect(host.querySelector('.pane-birth__pulse')).toBeNull();
     expect(host.querySelector('[role="alert"]')).not.toBeNull();
+    // O logo continua renderizado (identifica QUAL agente não subiu) e o grid
+    // do estado failed declara a área dele — sem ela o tile caía numa linha
+    // implícita fora do lugar.
+    expect(host.querySelector('.pane-birth__identity')).not.toBeNull();
+    const css = readFileSync(
+      resolve(process.cwd(), 'src/renderer/styles/base.css'),
+      'utf8',
+    ).replace(/\/\*[\s\S]*?\*\//g, '');
+    const failedRule = css.match(/\.pane-birth--failed\s*\{([^}]*)\}/)?.[1] ?? '';
+    expect(failedRule).toMatch(/grid-template-areas:[^;]*'identity headline'[^;]*'identity detail'/s);
     act(() => clearPaneSpawnError(PANE.id));
   });
 

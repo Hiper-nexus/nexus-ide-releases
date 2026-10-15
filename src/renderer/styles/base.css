@@ -1991,10 +1991,12 @@ body {
    Sem pulso e sem animação nova — não há nada em andamento. O marcador é um
    ponto fixo na cor de perigo, e o texto ganha o contraste cheio. */
 .pane-birth--failed {
-  grid-template-columns: 1fr;
+  /* A identidade (logo do agente) continua renderizada: sem a área dela o
+     tile de 40px caía numa linha implícita abaixo do texto. */
+  grid-template-columns: auto 1fr;
   grid-template-areas:
-    'headline'
-    'detail';
+    'identity headline'
+    'identity detail';
   border-color: color-mix(in srgb, var(--danger) 55%, var(--border));
   background: color-mix(in srgb, var(--bg-elevated) 92%, var(--danger) 6%);
 }
