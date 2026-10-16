@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.76.290 — Jarvis sem repetição, navegador sob menus, +Pane imediato e Kimi --auto
+
+- **+Pane imediato em aba nova**: `copyBuildCaches` (`worktree-cow.ts`) mantém apenas os `*.tsbuildinfo` e deixa de copiar `.nexus-cache/vitest` (~1,7 GB / 23 mil arquivos) na criação da worktree da aba.
+- **Jarvis com uma resposta por turno**: no Grok Voice 3.0 (`serverOwnsResponseCreation`) o fim de captura não envia `response.create` duplicado sobre o VAD do servidor; no OpenAI Realtime o turno envia `create_response: false` no VAD.
+- **Jarvis/companion sempre clicável**: reconciliação automática de `pet:setIgnoreMouseEvents(false)` quando controles da Jarvis estão visíveis ou a janela recupera foco/visibilidade, curando o click-through preso.
+- **Pane de navegador sob popovers, menus e modais**: `browser-occlusion.ts` detecta overlays abertos (`role="dialog"|"alertdialog"|"menu"|"listbox"` e popovers do cabeçalho) e oculta somente a `WebContentsView` nativa que cruza a área.
+- **Kimi em modo Never Ask (`--auto`)**: o modo autônomo/YOLO do Kimi Code 2.2.0 usa `--auto` em `kimi.json`, `tui-agent-permissions.ts` e na migração de overrides legados (`--yolo`/`-y`/vazio) em `adapter-registry.ts`.
+- **Catálogos e correções da madrugada**: alinhamento AGY 1.4.0, Grok e Codex 0.163.0 (`gpt-daybreak-blue-latest`) e correções F-1307, F-1545, F-1546, F-1547, F-1548, F-1550, F-1551, F-1552 e F-1553. No repositório companheiro `Hiper-nexus/nexus-shot`, painéis `NSPanel` não-ativadores passam a sobrepor janelas em tela cheia no macOS (`0f84baf`).
+
 ## 0.76.289 — macOS em dia com a Jarvis, Clef no Jev e Uso e custos
 
 A tag 0.76.285 não recebeu pacotes macOS porque o smoke empacotado ainda exigia que `nexus_file_write` do renderer fosse recusado (corrigido na 0.76.288). Este pacote publica o candidato macOS (`darwin-arm64`) assinado e notarizado com a Jarvis em tempo real e mãos-livres, o Clef autorizado em Somente Jev, o painel de Uso e custos com gasto mensal editável em USD, os handoffs sem travas burocráticas, a rolagem lateral das abas do painel direito e a renovação de contas da Reserva, além de excluir `.harvest/**` da coleta do Vitest.
