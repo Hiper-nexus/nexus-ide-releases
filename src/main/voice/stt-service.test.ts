@@ -6,7 +6,7 @@ import {
 } from '../../shared/voice-config';
 import type { TranscribeRequest } from '../../shared/voice-ipc';
 import type { ProviderProbes } from './provider-select';
-import { transcribe, cloudTimeoutForPayload, describeHttpFailure, resolveEndpoint, type SttDeps } from './stt-service';
+import { transcribe, audioFileNameForMime, cloudTimeoutForPayload, describeHttpFailure, resolveEndpoint, type SttDeps } from './stt-service';
 
 const REQ: TranscribeRequest = {
   audioBase64: Buffer.from('fake-wav').toString('base64'),
@@ -80,6 +80,36 @@ describe('resolveEndpoint', () => {
         false,
       ),
     ).toBe('https://x/openai/v1/audio/transcriptions');
+  });
+});
+
+describe('audioFileNameForMime', () => {
+  it('nomeia o multipart pelo container real (mp3 chamado .wav é recusado)', () => {
+    expect(audioFileNameForMime('audio/mpeg')).toBe('audio.mp3');
+    expect(audioFileNameForMime('audio/mp4')).toBe('audio.m4a');
+    expect(audioFileNameForMime('audio/flac')).toBe('audio.flac');
+    expect(audioFileNameForMime('audio/ogg')).toBe('audio.ogg');
+    expect(audioFileNameForMime('audio/wav')).toBe('audio.wav');
+    expect(audioFileNameForMime('audio/pcm')).toBe('audio.wav');
+    expect(audioFileNameForMime('audio/webm')).toBe('audio.webm');
+    expect(audioFileNameForMime('audio/bogus')).toBe('audio.wav');
+  });
+
+  it('mp3 chega ao Groq Whisper com nome e tipo do container', async () => {
+    const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = init?.body;
+      const file = (body as FormData).get('file') as File;
+      expect(file.name).toBe('audio.mp3');
+      expect(file.type).toBe('audio/mpeg');
+      return jsonResponse(200, { text: 'oi' });
+    }) as unknown as typeof fetch;
+    const r = await transcribe(
+      { ...REQ, mime: 'audio/mpeg' },
+      config(),
+      PROBES,
+      deps({ fetchImpl }),
+    );
+    expect(r.ok).toBe(true);
   });
 });
 

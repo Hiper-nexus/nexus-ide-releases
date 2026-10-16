@@ -32,6 +32,11 @@ vi.mock('electron', () => ({
   ipcMain: { handle: electronMock.handle },
 }));
 
+// O intake de anexo agenda transcrição em background; aqui o job real não roda.
+vi.mock('../voice/mission-attachment-transcript', () => ({
+  scheduleMissionAttachmentTranscript: vi.fn(),
+}));
+
 import { registerFilesIpc } from './files-ipc';
 
 type Renderer = WebContents & { id: number };

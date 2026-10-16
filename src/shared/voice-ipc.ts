@@ -17,9 +17,26 @@ import {
 // ── renderer → main payloads ─────────────────────────────────────────────────
 
 export const transcribeRequestSchema = z.object({
-  /** Base64-encoded audio (WAV or raw PCM16 depending on `mime`). */
+  /**
+   * Base64-encoded audio. Live capture sends WAV/PCM16/webm; mission audio
+   * attachments add the usual containers (mp3/m4a/flac/ogg/…), whose real
+   * mime travels so cloud STT and Gemini get the correct `mime_type`.
+   */
   audioBase64: z.string().min(1).max(50_000_000),
-  mime: z.enum(['audio/wav', 'audio/pcm', 'audio/webm']).default('audio/wav'),
+  mime: z
+    .enum([
+      'audio/wav',
+      'audio/pcm',
+      'audio/webm',
+      'audio/mpeg',
+      'audio/mp4',
+      'audio/flac',
+      'audio/ogg',
+      'audio/aac',
+      'audio/aiff',
+      'audio/x-ms-wma',
+    ])
+    .default('audio/wav'),
   sampleRate: z.number().int().positive().max(192_000).default(16_000),
   /** Override the plugin's translate flag (Jarvis mode wants raw PT, not EN). */
   translate: z.boolean().optional(),
