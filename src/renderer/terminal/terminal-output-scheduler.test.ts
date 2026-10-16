@@ -26,6 +26,7 @@ import {
   resetTerminalOutputSchedulerForTests,
   safeOutputSplitIndex,
   setTerminalOutputSchedulerDebug,
+  takeQueuedTerminalOutput,
   writeTerminalOutput,
   type TerminalOutputSink,
 } from './terminal-output-scheduler';
@@ -359,6 +360,63 @@ describe('terminal output scheduler', () => {
     discardTerminalOutput(terminal);
     vi.advanceTimersByTime(100);
     expect(terminal.write).not.toHaveBeenCalled();
+  });
+
+  it('takeQueuedTerminalOutput hands back the whole backlog in order without writing it', () => {
+    vi.useFakeTimers();
+    const terminal = createTerminal();
+    writeTerminalOutput(terminal, 'one ', { foreground: false });
+    writeTerminalOutput(terminal, 'two ', { foreground: false });
+    writeTerminalOutput(terminal, 'three', { foreground: false });
+
+    expect(takeQueuedTerminalOutput(terminal)).toBe('one two three');
+    expect(terminal.write).not.toHaveBeenCalled();
+    // Nada fica para trás: nem fila, nem entrada no scheduler, nem dreno futuro.
+    expect(getQueuedChars(terminal)).toBe(0);
+    expect(getQueuedRetainedChars(terminal)).toBe(0);
+    expect(getTerminalOutputRuntimeSnapshot().queuedTerminalCount).toBe(0);
+    vi.advanceTimersByTime(1_000);
+    expect(terminal.write).not.toHaveBeenCalled();
+    expect(takeQueuedTerminalOutput(terminal)).toBe('');
+  });
+
+  it('takeQueuedTerminalOutput returns only what no drain consumed yet (no loss, no duplicate)', () => {
+    vi.useFakeTimers();
+    const terminal = createTerminal();
+    const payload = Array.from({ length: 40_000 }, (_, index) =>
+      String.fromCharCode(97 + (index % 26)),
+    ).join('');
+    writeTerminalOutput(terminal, payload, { foreground: false });
+    // Um dreno escreve parte (chunk de 16 KiB) e deixa a cauda na fila.
+    vi.advanceTimersByTime(50);
+    const written = terminal.written.join('');
+    expect(written.length).toBeGreaterThan(0);
+    expect(getQueuedChars(terminal)).toBeGreaterThan(0);
+
+    const tail = takeQueuedTerminalOutput(terminal);
+    expect(tail.length).toBe(payload.length - written.length);
+    expect(written + tail).toBe(payload);
+    expect(getQueuedChars(terminal)).toBe(0);
+  });
+
+  it('takeQueuedTerminalOutput also takes a parked (paused) queue and clears its parse bookkeeping', () => {
+    vi.useFakeTimers();
+    const parseCallbacks: Array<() => void> = [];
+    const terminal: TerminalOutputSink = {
+      write: vi.fn((_data: string, callback?: () => void) => {
+        if (callback) parseCallbacks.push(callback);
+      }),
+    };
+    writeTerminalOutput(terminal, 'in-flight', { foreground: true, onParsed: () => {} });
+    expect(getPendingParseChars(terminal)).toBe('in-flight'.length);
+    writeTerminalOutput(terminal, 'parked', { foreground: false });
+    pauseTerminalOutput(terminal);
+
+    expect(takeQueuedTerminalOutput(terminal)).toBe('parked');
+    // O que já foi para o sink não volta: só a fila é devolvida.
+    expect(getPendingParseChars(terminal)).toBe(0);
+    vi.runAllTimers();
+    expect(terminal.write).toHaveBeenCalledTimes(1);
   });
 
   it('removeTransientCursorShowSequences keeps ANSI integrity', () => {

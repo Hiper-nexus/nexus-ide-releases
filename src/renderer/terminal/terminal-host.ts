@@ -107,6 +107,7 @@ import {
   getTerminalOutputRuntimeSnapshot,
   pauseTerminalOutput,
   resumeTerminalOutput,
+  takeQueuedTerminalOutput,
   writeTerminalOutput,
 } from './terminal-output-scheduler';
 import { TerminalInputVisibilityController } from './terminal-input-visibility';
@@ -2495,14 +2496,8 @@ function virtualizeHost(host: Host): void {
   }
   let snapshot = '';
   let cols = host.term.cols;
+  let queuedTail = '';
   try {
-    // Drena o backlog que o scheduler ainda segura (saída de fundo) para DENTRO
-    // do xterm antes de serializar — senão o snapshot perde o fim do output.
-    // Depois do dispose, `discardTerminalOutput` solta o estado do scheduler
-    // (fila + parse pendente + resync), que do contrário seguraria o term
-    // descartado e pinaria até 2 MB por pane hibernado.
-    resumeTerminalOutput(host.term);
-    flushTerminalOutput(host.term);
     const live = host.serialize.serialize().slice(-MAX_PERSISTED_SCROLLBACK);
     cols = host.term.cols;
     // A3: com a fita pendente por largura, o buffer só carrega o aviso de
@@ -2521,6 +2516,14 @@ function virtualizeHost(host: Host): void {
     } else {
       snapshot = live;
     }
+    // A cauda que o scheduler ainda segura (saída de fundo) NÃO é drenada para
+    // dentro deste xterm: o `write` dele parseia de forma assíncrona, então o
+    // serialize e o dispose síncronos a perderiam. Ela sai da fila como texto
+    // (depois de tudo que pode lançar) e abre o `pendingOutput`, regravado
+    // depois do snapshot na reidratação. Soltar o estado do scheduler (fila +
+    // parse pendente + resync) evita que ele segure o term descartado e pine
+    // até 2 MB por pane hibernado.
+    queuedTail = takeQueuedTerminalOutput(host.term);
     host.term.dispose();
     discardTerminalOutput(host.term);
   } catch {
@@ -2539,11 +2542,16 @@ function virtualizeHost(host: Host): void {
   host.opened = false;
   host.reportedGrid = null;
   host.hasFittedGrid = false;
+  // A cauda enfileirada passa pelo mesmo sanitizer da saída retida (sem
+  // queries, DSK-01) e a sequência cortada no fim fica nele para o próximo chunk.
+  const pendingSanitizer = createReplaySanitizer();
   host.virtualized = {
     cols,
     snapshot,
-    pendingOutput: '',
-    pendingSanitizer: createReplaySanitizer(),
+    pendingOutput: pendingSanitizer
+      .push(queuedTail)
+      .slice(-HIBERNATE_PENDING_OUTPUT_CHARS),
+    pendingSanitizer,
   };
 }
 

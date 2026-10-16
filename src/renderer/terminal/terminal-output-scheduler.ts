@@ -1141,6 +1141,23 @@ export function discardTerminalOutput(terminal: TerminalOutputSink): void {
   recordQueueDebugPressure();
 }
 
+/**
+ * Take everything still queued for a sink as text WITHOUT writing it, then
+ * drop the sink's scheduler state like `discardTerminalOutput`. For a terminal
+ * about to be disposed: `flushTerminalOutput` hands the tail to `write`, which
+ * xterm parses asynchronously, so a `serialize()` + `dispose()` right after
+ * loses it. Slots a drain already consumed were handed to the sink and are
+ * not returned.
+ */
+export function takeQueuedTerminalOutput(terminal: TerminalOutputSink): string {
+  const entry = queuedByTerminal.get(terminal);
+  const tail = entry
+    ? entry.chunks.slice(entry.chunkIndex).map((chunk) => chunk.data).join('')
+    : '';
+  discardTerminalOutput(terminal);
+  return tail;
+}
+
 /** Queued char count for a sink (tests / benchmarks). */
 export function getQueuedChars(terminal: TerminalOutputSink): number {
   return queuedByTerminal.get(terminal)?.queuedChars ?? 0;
