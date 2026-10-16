@@ -254,6 +254,42 @@ describe('managed-credentials', () => {
     expect(other).not.toBe(before);
   });
 
+  it('separa duas pessoas do mesmo workspace Codex (Team/Business compartilha o account_id)', () => {
+    const jwt = (claims: Record<string, unknown>) =>
+      `h.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.s`;
+    const codex = (email: string | null, workspace: string, refresh: string) => JSON.stringify({
+      tokens: {
+        id_token: jwt(email ? { email } : {}),
+        access_token: jwt({ exp: 4_102_444_800 }),
+        refresh_token: refresh,
+        account_id: workspace,
+      },
+    });
+    const admin = codex('admin@volarehost.example', 'ws-team', 'rt-admin');
+    const colleague = codex('retornoja@example.invalid', 'ws-team', 'rt-colleague');
+
+    expect(compareAuthBlobIdentity('codex', admin, colleague)).toBe('different');
+    expect(compareAuthBlobIdentity('codex', admin, codex('ADMIN@volarehost.example', 'ws-team', 'rt-2'))).toBe('same');
+    // Sem e-mail de um lado, o workspace segue decidindo (blobs antigos).
+    expect(compareAuthBlobIdentity('codex', admin, codex(null, 'ws-team', 'rt-3'))).toBe('same');
+    // Um e-mail em dois workspaces continua sendo duas contas.
+    expect(compareAuthBlobIdentity('codex', admin, codex('admin@volarehost.example', 'ws-pessoal', 'rt-4'))).toBe('different');
+
+    // A prova de login novo (fingerprint) também distingue as duas pessoas.
+    const home = tempHome();
+    fs.mkdirSync(path.join(home, '.codex'), { recursive: true });
+    const file = path.join(home, '.codex', 'auth.json');
+    fs.writeFileSync(file, admin);
+    const before = nativeAuthIdentity('codex', home).fingerprint;
+    fs.writeFileSync(file, codex('admin@volarehost.example', 'ws-team', 'rt-rotated'));
+    const rotated = nativeAuthIdentity('codex', home).fingerprint;
+    fs.writeFileSync(file, colleague);
+    const other = nativeAuthIdentity('codex', home).fingerprint;
+    expect(before).toMatch(/^[a-f0-9]{64}$/);
+    expect(rotated).toBe(before);
+    expect(other).not.toBe(before);
+  });
+
   it('does not invent an OpenCode email but emits an opaque session fingerprint', () => {
     const home = tempHome();
     const data = path.join(home, '.local', 'share', 'opencode');

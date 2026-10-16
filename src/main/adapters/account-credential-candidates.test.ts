@@ -56,6 +56,16 @@ it('requires the known workspace subject even when a native credential has the s
   expect(accountCredentialCandidates('codex', 'acct-a', vault)).toEqual([vault]);
 });
 
+it('never pulls a colleague of the same Codex workspace into the saved account', () => {
+  const member = (email: string, day: number) => JSON.stringify({
+    ...JSON.parse(auth('ws-team', day)),
+    tokens: { ...JSON.parse(auth('ws-team', day)).tokens, id_token: `h.${Buffer.from(JSON.stringify({ email })).toString('base64url')}.s` },
+  });
+  const vault = member('admin@volarehost.example', 10);
+  write('.codex/auth.json', member('retornoja@example.invalid', 21));
+  expect(accountCredentialCandidates('codex', 'acct-admin', vault)).toEqual([vault]);
+});
+
 it('ignores a newer native logout shell instead of erasing the saved login', () => {
   write('.codex/auth.json', JSON.stringify({ tokens: { account_id: 'a' }, last_refresh: '2026-09-21T00:00:00Z' }));
   expect(accountCredentialCandidates('codex', 'acct-a', auth('a', 10))).toEqual([auth('a', 10)]);

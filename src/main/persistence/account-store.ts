@@ -35,6 +35,7 @@ import {
   compareAuthBlobIdentity,
   identityFromAuthBlob,
   isFileAuthAdapter,
+  MANAGED_PROVIDER_SPECS,
   managedHomeEnv,
   materializeManagedHome,
   readBackFresherAuth,
@@ -42,6 +43,7 @@ import {
   setManagedAuthPersister,
   type FileAuthAdapterId,
 } from '../adapters/managed-credentials';
+import { compareAuthFreshness } from '../adapters/auth-freshness';
 import { chooseAccount } from './account-select';
 import { fullWindowsReopenAt, type HeadroomInput } from '../quota/account-headroom';
 import { initFailoverWaits } from './failover-waits';
@@ -1960,6 +1962,114 @@ export function restoreAgyNativeLogin(): boolean {
     }
     vacatedAgyNative = null;
     invalidateAgyWindowsKeyringCache();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+let vacatedCodexNative: {
+  authFile: string;
+  blob: string;
+  /** `auth.json` era um link (gerenciador de dotfiles): volta o link, não uma cópia. */
+  linkTarget?: string;
+} | null = null;
+
+function codexNativeAuthFile(): string | null {
+  const home = MANAGED_PROVIDER_SPECS.codex.systemHome();
+  return home ? path.join(home, 'auth.json') : null;
+}
+
+function readCodexNativeAuth(authFile: string): string | null {
+  try {
+    return fs.readFileSync(authFile, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+/**
+ * A conta salva dona da sessão nativa (mesma identidade) recebe a cópia mais
+ * fresca da linhagem no cofre e no home gerenciado, que passa a ser o único
+ * dono dela. Sessão sem dona no cofre não vira conta aqui: o cadastro já a
+ * preserva antes, com rótulo. Cofre ilegível falha fechado.
+ */
+function preserveCodexNativeLineage(blob: string): boolean {
+  if (!authBlobIsUsable('codex', blob)) return true;
+  for (const account of listAccounts('codex')) {
+    if (account.mode !== 'subscription') continue;
+    const key = CRED_PREFIX + account.id;
+    if (hasSecret(key) && getSecret(key) === null) return false;
+  }
+  const owner = credentialIdentityOwner('codex', blob);
+  return !owner || fileSubscriptionAuthEnv(owner) !== null;
+}
+
+/**
+ * O `codex login` (0.16x) revoga em auth.openai.com/oauth/revoke o login que
+ * encontra no auth.json e apaga o arquivo ANTES do device flow, mesmo que o
+ * login seja cancelado depois. O terminal de login roda no ~/.codex nativo, e
+ * o Nexus guarda essa mesma sessão (mesmo refresh token) no cofre e no home
+ * gerenciado: entrar na conta B revogava a conta A já salva. Com a vaga vazia
+ * a CLI não tem o que revogar. A sessão sai da vaga só depois de a conta dona
+ * ter a cópia mais fresca, e fica em memória para `restoreCodexNativeLogin`.
+ */
+export function prepareCodexNativeLogin(): { ok: boolean; error?: string } {
+  vacatedCodexNative = null;
+  const authFile = codexNativeAuthFile();
+  if (!authFile) return { ok: true };
+  const keepError = {
+    ok: false,
+    error: 'Não consegui guardar a sessão atual do Codex antes do novo login. O login não foi iniciado.',
+  };
+  try {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const entry = fs.lstatSync(authFile, { throwIfNoEntry: false });
+      if (!entry) return { ok: true };
+      const linkTarget = entry.isSymbolicLink() ? fs.readlinkSync(authFile) : undefined;
+      if (!linkTarget && !entry.isFile()) return keepError;
+      const blob = readCodexNativeAuth(authFile);
+      if (blob === null) return { ok: true };
+      if (!preserveCodexNativeLineage(blob)) return keepError;
+      // A CLI pode ter renovado a sessão enquanto o cofre gravava: preserva
+      // de novo em vez de apagar uma rotação que o cofre não viu.
+      if (readCodexNativeAuth(authFile) !== blob) continue;
+      fs.unlinkSync(authFile);
+      vacatedCodexNative = { authFile, blob, ...(linkTarget ? { linkTarget } : {}) };
+      return { ok: true };
+    }
+    return keepError;
+  } catch {
+    return keepError;
+  }
+}
+
+/**
+ * Login do Codex fechado sem sessão nova: a sessão anterior volta à vaga
+ * nativa. Se a conta dona renovou a linhagem nesse meio-tempo (pane ou sonda
+ * no home gerenciado), volta a cópia renovada, porque a guardada já estaria
+ * consumida. Uma sessão nova na vaga (login concluído) nunca é sobrescrita.
+ */
+export function restoreCodexNativeLogin(): boolean {
+  const vacated = vacatedCodexNative;
+  vacatedCodexNative = null;
+  if (!vacated) return false;
+  try {
+    if (fs.lstatSync(vacated.authFile, { throwIfNoEntry: false })) return true;
+    if (vacated.linkTarget) {
+      fs.symlinkSync(vacated.linkTarget, vacated.authFile);
+      return true;
+    }
+    let blob = vacated.blob;
+    const owner = authBlobIsUsable('codex', blob) ? credentialIdentityOwner('codex', blob) : null;
+    if (owner) {
+      const renewed = accountCredentialCandidates('codex', owner.id, getSecret(CRED_PREFIX + owner.id))[0];
+      if (renewed && compareAuthBlobIdentity('codex', renewed, blob) === 'same' &&
+          (compareAuthFreshness(renewed, blob) ?? 0) > 0) blob = renewed;
+    }
+    // `wx`: um login que terminou agora vence; nada segue link plantado.
+    fs.writeFileSync(vacated.authFile, blob, { mode: 0o600, flag: 'wx' });
     return true;
   } catch {
     return false;

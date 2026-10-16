@@ -268,6 +268,22 @@ saber isto antes de mexer:
   cadastro de uma segunda conta não consegue gravar a primeira, e quando o
   e-mail da sessão viva é de outra conta. Sessão `missing` não tem o que
   guardar e não bloqueia o login.
+- **O `codex login` revoga o login que encontra (medido no 0.162).** Antes do
+  device flow ele faz POST em `auth.openai.com/oauth/revoke` com o token do
+  `auth.json` e apaga o arquivo, mesmo se o login for cancelado; `codex
+  logout` e o `/logout` do pane também revogam. O terminal de login roda no
+  `~/.codex` nativo, onde mora a mesma linhagem que o Nexus guardou da conta
+  atual: entrar na conta B matava a conta A. Por isso `openCliLoginTerminal`
+  chama `accounts.prepareCodexLogin` antes de digitar o comando
+  (`prepareCodexNativeLogin`: a conta dona recebe a cópia mais fresca no cofre
+  e no home gerenciado e a vaga sai vazia; cofre ilegível falha fechado) e
+  `restoreCodexLogin` quando o login não conclui (volta a cópia mais fresca,
+  nunca por cima de um login novo). Nunca oriente logout para trocar de conta.
+- **Identidade Codex = workspace + pessoa.** O subject é o `tokens.account_id`
+  (workspace): duas pessoas de um workspace Team/Business o compartilham. Com
+  o mesmo subject, e-mails diferentes no id_token são contas diferentes
+  (`compareAuthBlobIdentity`, fingerprint da sessão, candidatos de read-back);
+  sem isso o login da segunda pessoa sobrescrevia a linha da primeira.
 - **Limite não confirmado não troca o pane (F-249).** Texto de PTY citado
   (handoff, `cat` de log, narração do Maestro) casa no detector de limite —
   `⎿ usage limit reached` não é prova de que a CONTA do pane atingiu nada.
@@ -1289,6 +1305,15 @@ saber isto antes de mexer:
   12s) e reusam o token. Sem git-lock no overlay.
 - Mitigante de operador: contas Codex distintas em spawn paralelo evitam
   a família; o picker já tem uma linha por conta.
+- A conta que É o login nativo tem duas cópias da mesma linhagem
+  (`~/.codex/auth.json` e o home gerenciado). O gate de família
+  (`withGrokAuthFamilyGate`) também casa blobs do Codex: subject = `user_id`
+  do id_token e o escopo inclui o `account_id` (mesmo usuário em outro
+  workspace nunca é copiado). Ele lembra cada cópia que entrou na família:
+  cópia velha que ia liderar a renovação adota antes a irmã que já girou o
+  refresh token (pane que renovou no meio da sessão), em vez de apresentar um
+  token consumido. A CLI externa (terminal do operador, app Codex) segue fora
+  do gate. O login pelo Nexus tira a conta anterior da vaga nativa.
 
 ## AGY/Gemini: o grant renovado volta para a linhagem da conta
 

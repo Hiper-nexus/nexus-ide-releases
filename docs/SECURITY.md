@@ -203,6 +203,15 @@ constantes fixas no código, nunca vêm de configuração nem do renderer.
   keyring do Windows é lida e nunca escrita.
 - **Kimi.** `persistKimiRotatedCreds` grava só no blob do cofre da conta, nunca no
   `~/.kimi-code` nativo.
+- **Codex: o login revoga o que encontra.** O `codex login` (0.162) faz POST em
+  `https://auth.openai.com/oauth/revoke` com o token do `~/.codex/auth.json` e o
+  apaga antes do device flow. Antes de digitar o login no terminal,
+  `prepareCodexNativeLogin` (`persistence/account-store.ts`) dá à conta dona a
+  cópia mais fresca no cofre e no home gerenciado e remove o arquivo nativo; a
+  sessão fica só em memória no Main, nunca vai ao renderer nem a disco extra.
+  Login não concluído: `restoreCodexNativeLogin` regrava com modo 0600 e `wx`
+  (não sobrescreve um login novo nem segue link plantado); se o `auth.json` era
+  um link, volta o mesmo link. Cofre ilegível falha fechado e o login não abre.
 - A gravação do grant da cota é best-effort: falhar não derruba a leitura daquele
   ciclo. Token e refresh token ficam no Main e no cofre; o renderer só recebe
   `AccountInfo` sem segredos e, para perceber a troca de conta, um

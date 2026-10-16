@@ -19,9 +19,11 @@ import {
   listAccountInfos,
   onAccountsChange,
   prepareAgyNativeLogin,
+  prepareCodexNativeLogin,
   removeAccount,
   renameAccount,
   restoreAgyNativeLogin,
+  restoreCodexNativeLogin,
   supportsSessionSnapshot,
 } from './account-store';
 import { listAccountQuota } from './account-quota';
@@ -78,6 +80,12 @@ export function registerAccountIpc(): void {
   handleTrusted(ACCOUNT_CHANNELS.prepareAgyLogin, () => prepareAgyNativeLogin());
   handleTrusted(ACCOUNT_CHANNELS.restoreAgyLogin, () => ({
     ok: restoreAgyNativeLogin(),
+  }));
+  // O `codex login` revoga o login que encontra no auth.json: a vaga nativa
+  // sai vazia (e volta se o login não concluir) para a conta salva não morrer.
+  handleTrusted(ACCOUNT_CHANNELS.prepareCodexLogin, () => prepareCodexNativeLogin());
+  handleTrusted(ACCOUNT_CHANNELS.restoreCodexLogin, () => ({
+    ok: restoreCodexNativeLogin(),
   }));
 
   handleTrusted(ACCOUNT_CHANNELS.add, (_e, raw) => {

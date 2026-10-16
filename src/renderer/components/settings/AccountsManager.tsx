@@ -750,13 +750,9 @@ export function AccountsManager({
                 {account.needsRelogin && (
                   <span
                     className="acct__warn"
-                    title={
-                      account.lastError
-                        ? `Erro: ${account.lastError} — entre novamente`
-                        : 'A renovação do token falhou — qualquer terminal novo nesta conta cai em 401'
-                    }
+                    title="O provedor recusou a sessão desta conta. Use Entrar novamente para refazer o login nela."
                   >
-                    sessão expirada — entre novamente
+                    sessão expirada
                   </span>
                 )}
                 {account.onCooldown && !account.needsRelogin && (
@@ -819,7 +815,7 @@ export function AccountsManager({
             ) : (
               <button
                 type="button"
-                className="settings-btn settings-btn--primary acct__action"
+                className={`settings-btn acct__action${account.needsRelogin ? '' : ' settings-btn--primary'}`}
                 onClick={() => void useAccount(account.id)}
                 disabled={
                   busy ||
@@ -829,7 +825,7 @@ export function AccountsManager({
                 }
                 title={
                   account.needsRelogin
-                    ? 'Sessão expirada — entre novamente antes de usar'
+                    ? 'Sessão expirada: entre novamente antes de usar'
                     : account.onCooldown
                       ? 'Em cooldown — indisponível até o limite passar'
                       : !account.hasCredential
@@ -1118,8 +1114,8 @@ export function AccountsManager({
             <p className="acct__form-title">
               Nomeie esta conta (ex.: <em>trabalho</em>, <em>pessoal</em>) e
               salve o login atual de <strong>{displayName}</strong> no Nexus.
-              Sem nome, o e-mail da sessão vira o nome. Depois troque de conta
-              no CLI e repita para juntar mais.
+              Sem nome, o e-mail da sessão vira o nome. Para juntar mais
+              contas, use Adicionar conta.
             </p>
             <div className="acct__add">
               <input

@@ -688,6 +688,116 @@ describe('openCliLoginTerminal — o que o watcher entrega ao fechar', () => {
 });
 
 /**
+ * O `codex login` revoga no servidor o login que encontra no ~/.codex antes do
+ * device flow. O terminal de login do Nexus roda nesse home, onde mora a mesma
+ * linhagem que o Nexus guardou da conta atual: sem esvaziar a vaga antes,
+ * entrar na conta B matava a conta A ("logar em uma conta, a outra expira").
+ */
+describe('openCliLoginTerminal — Codex não revoga a conta já salva', () => {
+  const codexBaseline = {
+    adapterId: 'codex',
+    state: 'ok' as const,
+    detail: 'sessão ChatGPT · admin@volarehost.example',
+    sessionFingerprint: 'fp-admin',
+  };
+  let current: Record<string, unknown> = codexBaseline;
+  let onData: ((chunk: string) => void) | undefined;
+  const order: string[] = [];
+  const prepareCodexLogin = vi.fn(async (): Promise<{ ok: boolean; error?: string }> => {
+    order.push('prepare');
+    return { ok: true };
+  });
+  const restoreCodexLogin = vi.fn(async () => ({ ok: true }));
+
+  beforeEach(() => {
+    order.length = 0;
+    current = codexBaseline;
+    onData = undefined;
+    panes.open = [{ id: 'pane-login' }];
+    layout.addShellPane.mockClear().mockReturnValue('pane-login');
+    layout.close.mockClear();
+    host.waitForSession.mockClear().mockResolvedValue('session-login');
+    host.writeToPane.mockReset().mockImplementation(() => {
+      order.push('write');
+    });
+    prepareCodexLogin.mockClear();
+    restoreCodexLogin.mockClear();
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        accounts: { prepareCodexLogin, restoreCodexLogin },
+        providers: { authStatus: vi.fn(async () => [current]) },
+        pty: {
+          onData: vi.fn((_id: string, cb: (chunk: string) => void) => {
+            onData = cb;
+            return () => undefined;
+          }),
+        },
+      },
+    });
+  });
+
+  afterEach(() => {
+    host.writeToPane.mockReset();
+    Reflect.deleteProperty(window, 'nexus');
+  });
+
+  it('esvazia a vaga do Codex antes de digitar o login e devolve a sessão se o pane fechar sem login novo', async () => {
+    const finished: CliLoginFinish[] = [];
+    const result = await openCliLoginTerminal({
+      command: 'codex login',
+      adapterId: 'codex',
+      baseline: codexBaseline,
+      onFinished: (finish) => finished.push(finish),
+    });
+
+    expect(result).toEqual({ ok: true, paneId: 'pane-login' });
+    expect(order).toEqual(['prepare', 'write']);
+    expect(host.writeToPane).toHaveBeenCalledWith('pane-login', 'codex login --device-auth\n');
+
+    // Operador fechou o pane sem concluir o device flow.
+    panes.open = [];
+    onData?.('\n');
+    await vi.waitFor(() => expect(finished).toHaveLength(1));
+    expect(finished[0]?.verified).toBe(false);
+    expect(restoreCodexLogin).toHaveBeenCalledOnce();
+  });
+
+  it('login comprovado na conta B não devolve a sessão anterior à vaga', async () => {
+    const finished: CliLoginFinish[] = [];
+    await openCliLoginTerminal({
+      command: 'codex login',
+      adapterId: 'codex',
+      baseline: codexBaseline,
+      onFinished: (finish) => finished.push(finish),
+    });
+    current = {
+      ...codexBaseline,
+      detail: 'sessão ChatGPT · retornoja@example.invalid',
+      sessionFingerprint: 'fp-retorno',
+    };
+    onData?.('Successfully logged in\n');
+    await vi.waitFor(() => expect(finished).toHaveLength(1));
+    expect(finished[0]?.verified).toBe(true);
+    expect(restoreCodexLogin).not.toHaveBeenCalled();
+  });
+
+  it('não digita o login quando a sessão atual não pôde ser guardada', async () => {
+    prepareCodexLogin.mockResolvedValueOnce({ ok: false, error: 'cofre indisponível' });
+    const result = await openCliLoginTerminal({
+      command: 'codex login',
+      adapterId: 'codex',
+      baseline: codexBaseline,
+      onFinished: () => undefined,
+    });
+
+    expect(result).toEqual({ ok: false, error: 'cofre indisponível' });
+    expect(host.writeToPane).not.toHaveBeenCalled();
+    expect(layout.close).toHaveBeenCalledWith('pane-login', 'cli-login-prepare-failed');
+  });
+});
+
+/**
  * O aviso de "CLI não encontrada" é TEXTO, não instrução: ele só pode aparecer
  * na tela. `provider.label` e `installCommand` são dados do catálogo, e o que
  * chega ao pane é um shell de verdade — então nada que venha dali pode ser

@@ -25,8 +25,10 @@ const AUTH_STALL_PATTERNS: ReadonlyArray<{
   },
   {
     re: /sign in with chatgpt/i,
+    // `codex login` num terminal revoga a conta salva que estiver no ~/.codex;
+    // o login pelo Nexus guarda essa conta antes.
     reason:
-      'Codex pediu login ChatGPT. Faça `codex login` e reinicie a missão.',
+      'Codex pediu login ChatGPT. Entre de novo em Configurações › Contas de IA e reinicie a missão.',
   },
   {
     re: /sign in with google/i,

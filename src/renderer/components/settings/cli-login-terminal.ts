@@ -265,16 +265,12 @@ export async function openCliLoginTerminal(input: {
         `printf '%s\\n%s\\n%s\\n\\n' ${posixSingleQuote(safeMsg)} ${posixSingleQuote(safeCmdMsg)} ${posixSingleQuote(tipMsg)}\n`,
       );
     } else {
-      if (input.adapterId === 'agy') {
-        const prep = await window.nexus?.accounts?.prepareAgyLogin?.();
+      const slot = nativeLoginSlot(input.adapterId);
+      if (slot) {
+        const prep = await slot.prepare?.();
         if (prep && !prep.ok) {
           useLayoutStore.getState().close(paneId, 'cli-login-prepare-failed');
-          return {
-            ok: false,
-            error:
-              prep.error ??
-              'Não foi possível preparar a vaga de login do Antigravity.',
-          };
+          return { ok: false, error: prep.error ?? slot.prepareError };
         }
       }
       writeToPane(
@@ -309,6 +305,36 @@ export async function openCliLoginTerminal(input: {
     });
   }
   return { ok: true, paneId };
+}
+
+/**
+ * CLIs cuja vaga nativa sai vazia antes do login: o Main guarda a sessão atual
+ * e a devolve se o login não concluir. AGY: o `/logout` do Google revogaria a
+ * conta anterior. Codex: o próprio `codex login` revoga, em
+ * auth.openai.com/oauth/revoke, o login que encontra no auth.json — a conta
+ * que o Nexus acabou de guardar morria ("logar em uma conta, a outra expira").
+ */
+function nativeLoginSlot(adapterId: string | undefined): {
+  readonly prepare?: () => Promise<{ ok: boolean; error?: string }>;
+  readonly restore?: () => Promise<{ ok: boolean }>;
+  readonly prepareError: string;
+} | null {
+  const accounts = window.nexus?.accounts;
+  if (adapterId === 'agy') {
+    return {
+      prepare: accounts?.prepareAgyLogin,
+      restore: accounts?.restoreAgyLogin,
+      prepareError: 'Não foi possível preparar a vaga de login do Antigravity.',
+    };
+  }
+  if (adapterId === 'codex') {
+    return {
+      prepare: accounts?.prepareCodexLogin,
+      restore: accounts?.restoreCodexLogin,
+      prepareError: 'Não consegui guardar a sessão atual do Codex. O login não foi iniciado.',
+    };
+  }
+  return null;
 }
 
 function adapterAuthReady(adapterId: string | undefined): boolean {
@@ -398,9 +424,10 @@ function watchLoginPane(input: {
       // visível alguns milissegundos depois da linha impressa; encerrar aqui
       // com `verified:false` perdia para sempre o login recém-concluído.
       if (verified || final) {
-        if (!verified && input.adapterId === 'agy') {
+        const slot = verified ? null : nativeLoginSlot(input.adapterId);
+        if (slot) {
           try {
-            await window.nexus?.accounts?.restoreAgyLogin?.();
+            await slot.restore?.();
             status = (await probe(false)) ?? status;
           } catch {
             // Best-effort restore.

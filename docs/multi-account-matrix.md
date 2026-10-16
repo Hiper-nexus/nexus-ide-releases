@@ -48,7 +48,7 @@ credenciais OAuth"; detalhes por provider em `AGENTS.md`).
 | Adapter | Quem renova | Onde o grant renovado fica |
 |---------|-------------|----------------------------|
 | **claude** | A CLI (login nativo no store nativo; escopo gerenciado no próprio escopo). Na Reserva (só cofre, sem CLI dona), `ensureFreshClaudeSubscription` renova por HTTP um access token vencido com refresh token vivo, se esse refresh token não estiver no login nativo nem em outra linha do cofre (F-639) | No cofre, depois de o token novo provar a conta. O login nativo nunca é renovado por fora (F-645) |
-| **codex** | A CLI do pane, uma renovação por conta (`managed-auth-spawn-gate.ts`) | `auth.json` da conta gerenciada |
+| **codex** | A CLI do pane, uma renovação por conta (`managed-auth-spawn-gate.ts`). O `codex login` revoga o `auth.json` que encontra: o terminal de login do Nexus esvazia a vaga nativa antes (`prepareCodexNativeLogin`) | `auth.json` da conta gerenciada |
 | **grok** | A CLI; a cota usa ACP com `cached_token` e nunca `grok models` (F-626) | Arquivo de auth da CLI |
 | **kimi** | A sonda de cota, no token endpoint do Kimi | Blob `acctcred:<id>` do cofre (`persistKimiRotatedCreds`), nunca o `~/.kimi-code` nativo |
 | **agy** | A sonda de cota (OAuth Google) ou a CLI do pane | Conta fixada: blob `acctcred:<id>`. Linha nativa: `~/.gemini/oauth_creds.json`, só numa rotação e só se o arquivo ainda guarda o refresh token usado (`persistGeminiRotatedCreds`) |

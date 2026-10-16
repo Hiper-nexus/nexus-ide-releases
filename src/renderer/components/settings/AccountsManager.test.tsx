@@ -641,6 +641,7 @@ describe('AccountsManager', () => {
           label: 'Trabalho',
           active: false,
           needsRelogin: true,
+          lastError: 'oauth session expired — sonda de quota',
         }),
       ],
     });
@@ -652,17 +653,24 @@ describe('AccountsManager', () => {
 
     const rows = [...host.querySelectorAll('.acct__row')];
     const row = rows.find((r) => r.textContent?.includes('Trabalho'));
-    expect(row?.textContent).toContain('sessão expirada — entre novamente');
+    const warn = row?.querySelector('.acct__warn');
+    // O botão ao lado já diz "Entrar novamente": o aviso nomeia o estado, sem
+    // travessão nem o erro interno em inglês no tooltip.
+    expect(warn?.textContent).toBe('sessão expirada');
+    expect(warn?.getAttribute('title')).not.toMatch(/oauth|sonda|—/i);
     expect(row?.getAttribute('data-state')).toBe('warn');
     const relogin = [...(row?.querySelectorAll('button') ?? [])].find((b) =>
       b.textContent?.includes('Entrar novamente'),
     );
     expect(relogin).toBeTruthy();
+    expect(relogin?.className).toContain('settings-btn--primary');
     const use = [...(row?.querySelectorAll('button') ?? [])].find(
       (b) => b.textContent === 'Usar',
     );
     expect(use?.disabled).toBe(true);
     expect(use?.title).toContain('entre novamente');
+    // Uma ação primária por linha: a recuperação, não o "Usar" bloqueado.
+    expect(use?.className).not.toContain('settings-btn--primary');
     act(() => root.unmount());
   });
 

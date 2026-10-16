@@ -362,9 +362,19 @@ export function authBlobIsUsable(adapterId: string, blob: string): boolean {
   return false;
 }
 
+function codexWorkspaceMembersDiffer(
+  adapterId: string,
+  left: ManagedAuthIdentity,
+  right: ManagedAuthIdentity,
+): boolean {
+  return adapterId === 'codex' && Boolean(left.email && right.email) &&
+    left.email!.trim().toLowerCase() !== right.email!.trim().toLowerCase();
+}
+
 /**
  * Compare provider identities without exposing their subject or credential.
  * A stable subject outranks email: one email can own two Codex workspaces.
+ * Codex also splits two people of one workspace by email (same subject).
  */
 export function compareAuthBlobIdentity(
   adapterId: string,
@@ -374,7 +384,10 @@ export function compareAuthBlobIdentity(
   const left = identityFromAuthBlob(adapterId, leftBlob);
   const right = identityFromAuthBlob(adapterId, rightBlob);
   if (left.subject && right.subject) {
-    return left.subject === right.subject ? 'same' : 'different';
+    if (left.subject !== right.subject) return 'different';
+    // Codex: o subject é o workspace (account_id). Num workspace Team/Business
+    // duas pessoas têm o mesmo; o e-mail do id_token separa as contas.
+    return codexWorkspaceMembersDiffer(adapterId, left, right) ? 'different' : 'same';
   }
   if (left.email && right.email) {
     return left.email.trim().toLowerCase() === right.email.trim().toLowerCase()
@@ -390,8 +403,12 @@ function authFingerprint(
   identity: ManagedAuthIdentity,
 ): string | undefined {
   if (!authBlobIsUsable(adapterId, blob)) return undefined;
+  // Mesma régua de compareAuthBlobIdentity: no Codex, workspace + pessoa.
+  const member = adapterId === 'codex' && identity.email
+    ? `\0email:${identity.email.trim().toLowerCase()}`
+    : '';
   const material = identity.subject
-    ? `subject:${identity.subject}`
+    ? `subject:${identity.subject}${member}`
     : identity.email
       ? `email:${identity.email.trim().toLowerCase()}`
       : `credential:${blob}`;
