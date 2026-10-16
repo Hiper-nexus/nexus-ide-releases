@@ -101,6 +101,7 @@ import {
 } from '../persistence/account-store';
 import { adapterCircuitBreakers, DEFAULT_CIRCUIT_CONFIG } from './circuit-breaker';
 import { activeCliLimit, isCliLimited } from './cli-limit-registry';
+import { hasRecentCredentialProbeFailure } from '../pty/pre-spawn-probe';
 import { workerMortalityCount } from './worker-mortality';
 import {
   missionCliFailureNote,
@@ -2057,6 +2058,11 @@ export async function routeTaskForCaller(
   // o caller que passou `tier` continua mandando. Fail-open: sem chave/serviço
   // → heurística e skillSuggestion null, como sempre.
   let jevRouting: JevRouteTaskBatch = { kind: 'skipped' };
+  // O aquecimento da auth de assinatura (Keychain do AGY, `kimi provider
+  // list`) não depende do Jev: corre junto em vez de somar ao caminho serial.
+  // O `catch` vazio só marca a rejeição como tratada; o `await` abaixo a relança.
+  const warmedSubscriptionAuth = missionId ? warmSquadRuntimeSubscriptionAuth() : null;
+  warmedSubscriptionAuth?.catch(() => undefined);
   try {
     // F-802: sugestão do hook (sem spawn) não gasta a chave do operador.
     if (internal.suggestOnly !== true) jevRouting = await classifyTaskWithSkillForRouting(classificationTask, {
@@ -2143,7 +2149,7 @@ export async function routeTaskForCaller(
     // O inventário síncrono lê apenas o cache quente de assinatura; aqueça
     // os providers keychain-only (AGY) para não ler uma sessão viva como
     // login-needed e derrubar o roteamento da missão.
-    await warmSquadRuntimeSubscriptionAuth();
+    await warmedSubscriptionAuth;
   }
   // F-1485: vale para a rota COM e SEM missão. `grokHasNoRenewableSession` não
   // decifra no caminho síncrono (boot), então com o cofre frio o veto deixava o
@@ -2187,12 +2193,21 @@ export async function routeTaskForCaller(
   const cliLimitExcluded = providers
     .map((a) => a.adapterId)
     .filter((id) => isCliLimited(id));
+  // Rota ≠ execução (16/10): o gate pré-spawn recusou a credencial desta CLI
+  // há pouco e o assento caiu em outra. Sem sair daqui, a CLI recusada seguia
+  // com "0 uso" no fair-share e vencia o desempate de novo (muse → claude em
+  // 22 de 23 spawns). A anotação expira sozinha (10 min) ou some no 1º probe
+  // que passar.
+  const credentialRefusedExcluded = providers
+    .map((a) => a.adapterId)
+    .filter((id) => !cliLimitExcluded.includes(id) && hasRecentCredentialProbeFailure(id));
   const quotaExcluded = providers
     .map((a) => a.adapterId)
     .filter(
       (id) =>
         !excluded.has(id) &&
         !cliLimitExcluded.includes(id) &&
+        !credentialRefusedExcluded.includes(id) &&
         !hasAvailableAccount(id),
     );
   const buildAdapters = (skip: ReadonlySet<string>) =>
@@ -2214,6 +2229,7 @@ export async function routeTaskForCaller(
       const unavailableReason = ((): string | undefined => {
         if (skip.has(a.adapterId)) {
           if (cliLimitExcluded.includes(a.adapterId)) return 'limite de uso';
+          if (credentialRefusedExcluded.includes(a.adapterId)) return 'credencial recusada no spawn';
           return quotaExcluded.includes(a.adapterId)
             ? 'todas as contas em cooldown'
             : 'excluído da rota';
@@ -2278,12 +2294,10 @@ export async function routeTaskForCaller(
         },
       };
     });
-  let adapters = buildAdapters(new Set([...excluded, ...quotaExcluded, ...cliLimitExcluded]));
+  const autoExcluded = [...quotaExcluded, ...cliLimitExcluded, ...credentialRefusedExcluded];
+  let adapters = buildAdapters(new Set([...excluded, ...autoExcluded]));
   let quotaFallbackNote = '';
-  if (
-    (quotaExcluded.length > 0 || cliLimitExcluded.length > 0) &&
-    !adapters.some((a) => a.installed)
-  ) {
+  if (autoExcluded.length > 0 && !adapters.some((a) => a.installed)) {
     // Fail-safe: the auto-exclude
     // emptied the routable pool → revert to the caller-provided list. A
     // spawn on a cooling account surfaces the real cooldown error; no route
@@ -2291,7 +2305,7 @@ export async function routeTaskForCaller(
     adapters = buildAdapters(excluded);
     quotaFallbackNote =
       `; quota auto-exclude reverted, all candidates cooling: ` +
-      [...quotaExcluded, ...cliLimitExcluded].join(',');
+      autoExcluded.join(',');
   }
   // F-802: helper somente leitura da mão do operador fora do Autopilot só vai
   // para CLI que confina leitura (o spawn recusa as demais).
@@ -2559,6 +2573,15 @@ export async function routeTaskForCaller(
     decision = {
       ...decision,
       reason: `${decision.reason}; fora da rota (limite de uso confirmado): ${cliLimitNote(cliLimitAuto)}`,
+    };
+  }
+  const credentialRefusedAuto = credentialRefusedExcluded.filter(
+    (id) => !adapters.some((a) => a.id === id && a.installed),
+  );
+  if (credentialRefusedAuto.length > 0) {
+    decision = {
+      ...decision,
+      reason: `${decision.reason}; fora da rota (credencial recusada no spawn recente): ${credentialRefusedAuto.join(',')}`,
     };
   }
   // F-1471: troca de conta na mesma CLI — o modelo que o pane rodava fica,

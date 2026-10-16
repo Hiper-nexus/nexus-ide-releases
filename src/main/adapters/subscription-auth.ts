@@ -1379,6 +1379,11 @@ export async function warmKeychainOnlySubscriptionAuth(
   keychainProbe?: () => Promise<boolean>,
 ): Promise<void> {
   if (cliId !== 'agy') return;
+  // Toda rota de missão passa aqui: um positivo fresco (<60 s) já é o que o
+  // gate síncrono vai ler, e reprovar custava um `security` por rota. Cache
+  // fria ou negativa segue autoritativa (login feito depois do "não" aparece);
+  // o spawn do AGY reprova o Keychain na hora de qualquer jeito.
+  if (cachedSubscriptionAuth('agy') === true) return;
   await refreshAgySubscriptionAuthCache(os.homedir(), keychainProbe, {
     authoritative: true,
   });

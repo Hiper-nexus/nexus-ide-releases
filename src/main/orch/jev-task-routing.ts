@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { decisionResultUsage } from '../decision-models/decision-usage';
 /**
  * Classificação de tarefa via TypeSafe Jev para o `nexus_route_task`
@@ -46,8 +47,10 @@ import {
 } from '../../shared/spawn-route';
 
 export const TASK_ROUTING_MIN_CONFIDENCE = 0.6;
-const TASK_ROUTING_TIMEOUT_MS = 5_000;
+const TASK_ROUTING_TIMEOUT_MS = 3_000;
 const TASK_MAX_CHARS = 3_000;
+const TASK_ROUTING_CACHE_TTL_MS = 60_000;
+const TASK_ROUTING_CACHE_MAX = 128;
 
 const TIERS: readonly TaskTier[] = ['trivial', 'easy', 'medium', 'hard', 'critical'];
 
@@ -215,6 +218,59 @@ export function parseTaskClassification(
 }
 
 /**
+ * Single-flight + cache curto do Jev da rota: p50 de 1,7 s no `route-resolve`
+ * (87% do spawn de leitor, 16/10) e o fan-out repete a mesma tarefa em
+ * paralelo. Pedidos iguais em voo dividem a MESMA chamada judge; só a
+ * classificação aceita fica 60 s — timeout, rede e resposta inválida tentam de
+ * novo no próximo pedido. Liga/desliga e chave são lidos antes, sempre.
+ */
+const taskRoutingCache = new Map<string, { readonly at: number; readonly value: Promise<{ readonly kind: string }> }>();
+
+function taskRoutingCacheKey(
+  kind: 'single' | 'batch',
+  task: string,
+  allowedSkills?: readonly string[] | null,
+  projectRoot?: string,
+): string {
+  return createHash('sha256')
+    .update(JSON.stringify([kind, task, allowedSkills ?? null, projectRoot ?? null]))
+    .digest('hex');
+}
+
+function memoizedTaskRouting<T extends { readonly kind: string }>(
+  key: string,
+  run: () => Promise<T>,
+): Promise<T> {
+  const now = Date.now();
+  const hit = taskRoutingCache.get(key);
+  if (hit && now - hit.at < TASK_ROUTING_CACHE_TTL_MS) return hit.value as Promise<T>;
+  const forget = () => {
+    if (taskRoutingCache.get(key)?.value === value) taskRoutingCache.delete(key);
+  };
+  const value = run().then(
+    (result) => {
+      if (result.kind !== 'classified') forget();
+      return result;
+    },
+    (error: unknown) => {
+      forget();
+      throw error;
+    },
+  );
+  taskRoutingCache.delete(key);
+  taskRoutingCache.set(key, { at: now, value });
+  if (taskRoutingCache.size > TASK_ROUTING_CACHE_MAX) {
+    const oldest = taskRoutingCache.keys().next().value;
+    if (oldest !== undefined) taskRoutingCache.delete(oldest);
+  }
+  return value;
+}
+
+export function clearTaskRoutingCacheForTests(): void {
+  taskRoutingCache.clear();
+}
+
+/**
  * Classificação para o roteador COM o motivo quando o Jev não respondeu — o
  * spawn da mão do operador mostra "sem Jev: <motivo>" em vez de cair calado na
  * heurística. `skipped` = tarefa em branco, nada a julgar e nada a avisar.
@@ -228,7 +284,15 @@ export async function classifyTaskForRouting(
   const hasKey = deps.hasKey ?? (() => hasDecisionCredential('taskRouting'));
   if (!enabled()) return { kind: 'unavailable', reason: 'disabled' };
   if (!hasKey()) return { kind: 'unavailable', reason: 'no-key' };
+  return memoizedTaskRouting(taskRoutingCacheKey('single', task), () =>
+    judgeTaskForRouting(task, deps),
+  );
+}
 
+async function judgeTaskForRouting(
+  task: string,
+  deps: ClassifyTaskDeps,
+): Promise<JevTaskRoutingResult> {
   let noAnswer: JevUnavailableReason | undefined;
   const judgeFn = deps.judge ?? judge;
   const result = await judgeFn({
@@ -317,7 +381,16 @@ export async function classifyTaskWithSkillForRouting(
   if (!hasKey()) {
     return { kind: 'unavailable', reason: 'no-key', skillSuggestion: null, batch: noBatch };
   }
+  return memoizedTaskRouting(
+    taskRoutingCacheKey('batch', task, opts.allowedSkills, opts.projectRoot),
+    () => judgeTaskWithSkillForRouting(task, opts),
+  );
+}
 
+async function judgeTaskWithSkillForRouting(
+  task: string,
+  opts: Parameters<typeof classifyTaskWithSkillForRouting>[1],
+): Promise<JevRouteTaskBatch> {
   // F-772 (G7a): o papel da tarefa restringe o catálogo ANTES do Jev julgar —
   // worker nunca vê oc-scout (o bug: scout em 20/108 sugestões da missão) e
   // pane read-only nunca vê builder/systematic-debugging.

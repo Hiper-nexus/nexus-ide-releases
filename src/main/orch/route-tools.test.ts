@@ -49,6 +49,10 @@ vi.mock('./task-router', async (importOriginal) => {
 import { rememberKimiSeatReadiness } from '../adapters/seat-auth-readiness';
 import { adapterCircuitBreakers } from './circuit-breaker';
 import { isCliLimited, noteCliLimit, resetCliLimits } from './cli-limit-registry';
+import {
+  clearRecentCredentialProbeFailuresForTests,
+  recordRecentCredentialProbeFailure,
+} from '../pty/pre-spawn-probe';
 import { buildDomainTools, routeTaskForCaller } from './tools-domain';
 import { clearRouteProvenance, hasRecentRouteMatch } from './route-provenance';
 import { clearRouteLog, recentRouteLog } from './route-log';
@@ -617,6 +621,33 @@ describe('nexus_route_task — exclude do caller só honra CLI doente', () => {
       expect(decision.reason).toContain('fora da rota (limite de uso confirmado): muse: usage limited');
     } finally {
       resetCliLimits();
+    }
+  });
+
+  // Rota ≠ execução (16/10): a rota lia o muse como pronto, o gate pré-spawn
+  // recusava a credencial e o assento caía no claude — 22 de 23 spawns, porque
+  // a rota reescolhia o muse a cada pedido. A recusa recente o tira da rota.
+  it('credencial recusada no spawn recente tira a CLI da rota, com motivo', async () => {
+    mocks.listProviderSettings.mockReturnValue([museProvider, codexProvider]);
+    recordRecentCredentialProbeFailure('muse');
+    try {
+      const decision = (await routeTaskForCaller(
+        { task: 'tarefa média', preferAdapters: ['muse'] },
+        context(),
+      )) as { adapterId: string; reason: string };
+      expect(decision.adapterId).not.toBe('muse');
+      expect(decision.reason).toContain('fora da rota (credencial recusada no spawn recente): muse');
+      const rows = mocks.routeTask.mock.calls.at(-1)?.[1] as Array<{
+        id: string;
+        installed: boolean;
+        unavailableReason?: string;
+      }>;
+      expect(rows.find((row) => row.id === 'muse')).toMatchObject({
+        installed: false,
+        unavailableReason: 'credencial recusada no spawn',
+      });
+    } finally {
+      clearRecentCredentialProbeFailuresForTests();
     }
   });
 

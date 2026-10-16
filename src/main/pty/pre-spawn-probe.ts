@@ -387,6 +387,40 @@ async function probe(
 }
 
 /**
+ * Rota ≠ execução (campo 16/10): a rota lia o `muse` como pronto
+ * (`authStrategy` sem `login-needed`), o gate daqui recusava a credencial
+ * delegada ao Keychain e o assento caía calado no `claude` — 22 de 23 spawns,
+ * porque nada lembrava a recusa e o fair-share via o muse com "0 uso". O
+ * spawn que remapeia o assento anota a recusa aqui; a rota tira a CLI enquanto
+ * ela vale. Memória do processo: partida fria = nenhuma recusa. O primeiro
+ * probe que passa para a CLI apaga a anotação (login refeito volta na hora).
+ */
+const RECENT_CREDENTIAL_FAILURE_TTL_MS = 10 * 60_000;
+const recentCredentialFailures = new Map<string, number>();
+
+export function recordRecentCredentialProbeFailure(
+  adapterId: string,
+  now = Date.now(),
+): void {
+  recentCredentialFailures.set(adapterId, now);
+}
+
+export function hasRecentCredentialProbeFailure(
+  adapterId: string,
+  now = Date.now(),
+): boolean {
+  const at = recentCredentialFailures.get(adapterId);
+  if (at === undefined) return false;
+  if (now - at < RECENT_CREDENTIAL_FAILURE_TTL_MS) return true;
+  recentCredentialFailures.delete(adapterId);
+  return false;
+}
+
+export function clearRecentCredentialProbeFailuresForTests(): void {
+  recentCredentialFailures.clear();
+}
+
+/**
  * Run the pre-spawn probe. `null` means "spawn may proceed" — either because
  * a credential was found or because the adapter is not judgeable here.
  */
@@ -395,13 +429,15 @@ export async function probePreSpawn(
   options: PreSpawnProbeOptions = {},
 ): Promise<PreSpawnProbeFailure | null> {
   try {
-    return await probe(
+    const failure = await probe(
       adapterId,
       options.model,
       options.deps ?? PRODUCTION_PROBE_DEPS,
       options.failClosed === true,
       options,
     );
+    if (!failure) recentCredentialFailures.delete(adapterId);
+    return failure;
   } catch (err) {
     if (options.failClosed) {
       console.warn(

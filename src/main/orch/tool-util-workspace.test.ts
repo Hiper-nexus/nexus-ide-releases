@@ -297,7 +297,12 @@ import {
 import { PASTE_INGEST_GRACE_MS, PASTE_INTERRUPTED_ERROR, PASTE_QUIESCE_MS } from './paste-ingest';
 import { startPhaseTimer } from '../observability/phase-timer';
 import { cliPromptAutoResponder } from './cli-prompt-autoresponder';
-import { PreSpawnProbeError } from '../pty/pre-spawn-probe';
+import {
+  clearRecentCredentialProbeFailuresForTests,
+  hasRecentCredentialProbeFailure,
+  PreSpawnProbeError,
+} from '../pty/pre-spawn-probe';
+import { missionCliFailureNote, missionCliFailures, resetMissionCliFailures } from './mission-cli-failures';
 import { getPaneAuthzInfo, pendingSpawnAttemptSession } from './pane-registry';
 import { onWorkerSpawnFailed } from './spawn-fail-events';
 import { adapterCircuitBreakers } from './circuit-breaker';
@@ -498,6 +503,32 @@ describe('agent pane workspace confinement', () => {
     await expect(spawnPaneAndMaybePrompt({ adapterId: 'codex', resume: true, resumeFromPaneId: 'pane-old', scope })).rejects.toBe(error);
     expect(stubs.preSpawnProbe).toHaveBeenCalledTimes(1);
     expect(stubs.requestPaneSpawn).not.toHaveBeenCalled();
+  });
+
+  // Rota ≠ execução (16/10): a recusa da credencial no gate pré-spawn era
+  // descartada — a rota reescolhia a CLI recusada a cada spawn (muse → claude
+  // 22 de 23). Agora ela vale para a rota, a missão e o disjuntor.
+  it('anota a credencial recusada no spawn para a rota, a missão e o disjuntor', async () => {
+    clearRecentCredentialProbeFailuresForTests();
+    resetMissionCliFailures();
+    adapterCircuitBreakers.reset('codex');
+    const error = new PreSpawnProbeError({ code: 'missing-credential', adapterId: 'codex', hint: 'fixture' });
+    stubs.preSpawnProbe.mockRejectedValueOnce(error);
+    try {
+      await expect(
+        spawnPaneAndMaybePrompt({ adapterId: 'codex', missionId: 'm1', resume: true, resumeFromPaneId: 'pane-old', scope }),
+      ).rejects.toBe(error);
+      expect(hasRecentCredentialProbeFailure('codex')).toBe(true);
+      expect(missionCliFailures('m1', 'codex')).toEqual([
+        expect.objectContaining({ cause: 'credential-remap', adapterId: 'codex' }),
+      ]);
+      expect(missionCliFailureNote('m1', 'codex')).toBe('codex (credencial recusada no spawn)');
+      expect(adapterCircuitBreakers.snapshot('codex').recentFailures).toBe(1);
+    } finally {
+      clearRecentCredentialProbeFailuresForTests();
+      resetMissionCliFailures();
+      adapterCircuitBreakers.reset('codex');
+    }
   });
 
   it('binds main-owned mission workers to the durable pane seal revision', async () => {

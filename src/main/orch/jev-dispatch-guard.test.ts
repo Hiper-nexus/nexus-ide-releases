@@ -466,7 +466,7 @@ describe('guardToolCall', () => {
     expect(judge).toHaveBeenCalledTimes(1);
     expect(judge.mock.calls[0][0]).toMatchObject({
       retryOnTimeout: false,
-      timeoutMs: 3_000,
+      timeoutMs: 1_500,
     });
   });
 
