@@ -3,6 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectExecutionScope } from '../../shared/types';
+import { summarizeUsage, usageWindowStartDay } from '../../shared/usage-analytics';
+import type { UsageAnalytics } from '../../shared/usage-types';
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import {
   UsageTelemetryService,
@@ -137,24 +139,30 @@ describe.skipIf(!sqliteAvailable)('UsageTelemetryService snapshots', () => {
     clock.mockReturnValue(start);
     const service = new UsageTelemetryService(registry);
 
+    // Os 30 dias que a tela mostra: o mesmo recorte, pela mesma conta.
+    const month = (analytics: UsageAnalytics | undefined) =>
+      summarizeUsage(analytics!, {
+        from: usageWindowStartDay(analytics!.today, 30),
+        to: analytics!.today,
+      });
     const first = service.snapshot(scope)?.analytics;
-    expect(first?.windows[30].totals).toMatchObject({
+    expect(month(first).totals).toMatchObject({
       cachedInputTokens: 100,
       uncachedInputTokens: 10,
       outputTokens: 2,
       sessions: 1,
     });
-    expect(first?.windows[30].byProvider.map((row) => row.provider)).toEqual(['claude']);
+    expect(month(first).byProvider.map((row) => row.provider)).toEqual(['claude']);
 
     // O broadcast de 1 s reaproveita o rollup dentro do minuto.
     record('b', 5);
     clock.mockReturnValue(start + 30_000);
     expect(service.snapshot(scope)?.global.outputTokens).toBe(7);
-    expect(service.snapshot(scope)?.analytics?.windows[30].totals.outputTokens).toBe(2);
+    expect(month(service.snapshot(scope)?.analytics).totals.outputTokens).toBe(2);
     expect(rollup).toHaveBeenCalledTimes(1);
 
     clock.mockReturnValue(start + 61_000);
-    expect(service.snapshot(scope)?.analytics?.windows[30].totals.outputTokens).toBe(7);
+    expect(month(service.snapshot(scope)?.analytics).totals.outputTokens).toBe(7);
     expect(rollup).toHaveBeenCalledTimes(2);
 
     // Falha no rollup não derruba o snapshot: segue com o último resumo.
@@ -165,7 +173,7 @@ describe.skipIf(!sqliteAvailable)('UsageTelemetryService snapshots', () => {
     clock.mockReturnValue(start + 125_000);
     const degraded = service.snapshot(scope);
     expect(degraded?.global.outputTokens).toBe(7);
-    expect(degraded?.analytics?.windows[30].totals.outputTokens).toBe(7);
+    expect(month(degraded?.analytics).totals.outputTokens).toBe(7);
     warn.mockRestore();
     clock.mockRestore();
     service.stop();

@@ -10,7 +10,7 @@ import { MonthlySpendCard } from '../usage/MonthlySpendCard';
 import { recentApiEquivalentUsd } from '../../../shared/monthly-spend';
 import { localDayKey, usageWindowStartDay } from '../../../shared/usage-analytics';
 import { MachineResourcesCard } from './MachineResourcesCard';
-import { fmtTokens, fmtUsd } from '../../lib/lifetime-format';
+import { formatTokenCount, formatUsdAmount } from '../../lib/usage-overview';
 import { useAccountStore } from '../../state/account-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import {
@@ -368,7 +368,7 @@ function EntryCard({
             <p className="quota-entry__plan">
               {entry.plan.label}
               {typeof entry.plan.monthlyUsd === 'number' &&
-                ` · ${fmtUsd(entry.plan.monthlyUsd)}/mês`}
+                ` · ${formatUsdAmount(entry.plan.monthlyUsd)}/mês`}
             </p>
           )}
         </div>
@@ -614,8 +614,9 @@ export function UsageQuotaSection() {
             Uso e cotas
           </SettingsSectionTitle>
           <p className="settings-detail__hint">
-            Veja quanto foi usado dos limites informados por cada serviço de IA.
-            Alguns serviços não disponibilizam todos os períodos.
+            Veja o consumo e o custo estimado das suas IAs e quanto já foi
+            usado dos limites de cada serviço. Alguns serviços não informam
+            todos os períodos.
           </p>
         </div>
         <button
@@ -624,7 +625,7 @@ export function UsageQuotaSection() {
           disabled={loading}
           onClick={() => void refresh()}
         >
-          {loading ? 'Consultando…' : 'Atualizar cotas'}
+          {loading ? 'Consultando cotas…' : 'Atualizar cotas'}
         </button>
       </header>
       <UsageOverview />
@@ -655,7 +656,7 @@ export function UsageQuotaSection() {
                     : 'Assinaturas detectadas pelos próprios serviços — some ao remover uma conta, cresce ao conectar outra.'
                 }
               >
-                <strong>{fmtUsd(snapshot.plans.monthlyUsd)}/mês</strong> em{' '}
+                <strong>{formatUsdAmount(snapshot.plans.monthlyUsd)}/mês</strong> em{' '}
                 {snapshot.plans.priced}{' '}
                 {snapshot.plans.priced === 1 ? 'plano com preço' : 'planos com preço'}
                 {snapshot.plans.connected > snapshot.plans.priced &&
@@ -691,11 +692,11 @@ export function UsageQuotaSection() {
             Consumo real acumulado
           </span>
           <span className="quota-panel__consumption-item">
-            <strong>{fmtTokens(lifetime.tokensBurned)}</strong>{' '}
+            <strong>{formatTokenCount(lifetime.tokensBurned)}</strong>{' '}
             {pluralWord(Math.floor(lifetime.tokensBurned), 'token', 'tokens')}
           </span>
           <span className="quota-panel__consumption-item">
-            <strong>{fmtUsd(lifetime.usdEquivalent)}</strong> em API
+            <strong>{formatUsdAmount(lifetime.usdEquivalent)}</strong> em API
           </span>
           <span className="quota-panel__consumption-item">
             <strong>{lifetime.panesServed}</strong>{' '}

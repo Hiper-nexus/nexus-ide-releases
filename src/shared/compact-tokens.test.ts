@@ -66,4 +66,12 @@ describe('formatCompactTokensPrecise', () => {
     expect(formatCompactTokensPrecise(1_100_000)).toBe('1.1M');
     expect(formatCompactTokensPrecise(null)).toBe('—');
   });
+
+  it('bilhões ganham a unidade B, nunca "2180M" nem "10900M"', () => {
+    expect(formatCompactTokensPrecise(999_949_999)).toBe('999.9M');
+    expect(formatCompactTokensPrecise(999_950_000)).toBe('1B');
+    expect(formatCompactTokensPrecise(1_000_000_000)).toBe('1B');
+    expect(formatCompactTokensPrecise(2_180_000_000)).toBe('2.2B');
+    expect(formatCompactTokensPrecise(10_900_000_000)).toBe('10.9B');
+  });
 });

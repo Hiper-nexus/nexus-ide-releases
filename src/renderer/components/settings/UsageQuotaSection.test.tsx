@@ -1052,6 +1052,11 @@ describe('UsageQuotaSection', () => {
   });
 
   describe('painel de Uso e custos (estilo T3)', () => {
+    /** `count` sessões distintas, todas com atividade no mesmo dia e modelo. */
+    function sessionsOn(provider: string, count: number, day: string, model: string) {
+      return Array.from({ length: count }, () => ({ provider, cells: [[day, model]] as [string, string][] }));
+    }
+
     function analyticsFixture() {
       const today = localDayKey(Date.now());
       const row = (daysAgo: number, provider: string, model: string, costUsd: number, cached: number) => ({
@@ -1066,6 +1071,7 @@ describe('UsageQuotaSection', () => {
         cacheSavingsUsd: cached / 1_000_000,
         turns: 1,
       });
+      const day = (daysAgo: number) => shiftDayKey(today, -daysAgo);
       return buildUsageAnalytics(
         [
           row(0, 'claude', 'claude-opus-5-5', 1_777.82, 2_000_000_000),
@@ -1074,9 +1080,10 @@ describe('UsageQuotaSection', () => {
           row(60, 'agy', 'gemini-3-pro', 41.65, 1_000_000),
         ],
         [
-          { provider: 'claude', sessions: { 7: 107, 30: 107, 90: 107 } },
-          { provider: 'codex', sessions: { 7: 40, 30: 71, 90: 71 } },
-          { provider: 'agy', sessions: { 7: 0, 30: 0, 90: 50 } },
+          ...sessionsOn('claude', 107, day(0), 'claude-opus-5-5'),
+          ...sessionsOn('codex', 40, day(2), 'gpt-6-astra'),
+          ...sessionsOn('codex', 31, day(20), 'gpt-6.1-sol'),
+          ...sessionsOn('agy', 50, day(60), 'gemini-3-pro'),
         ],
         today,
       );
@@ -1098,7 +1105,9 @@ describe('UsageQuotaSection', () => {
       });
       const panel = host.querySelector('.usage-overview')!;
       expect(panel.querySelector('.usage-overview__hero')?.textContent).toBe('$3,404.95');
-      expect(panel.querySelector('.usage-overview__hero-sub')?.textContent).toContain('178 sessões · estimativa de API em 30 dias');
+      expect(panel.querySelector('.usage-overview__hero-sub')?.textContent).toBe(
+        '7.05B tokens · 178 sessões · estimativa de API em 30 dias',
+      );
       const providers = [...panel.querySelectorAll('.usage-provider')];
       expect(providers.map((item) => item.querySelector('.usage-provider__name')?.textContent)).toEqual([
         'Claude Code107 sessões',
@@ -1140,8 +1149,9 @@ describe('UsageQuotaSection', () => {
       expect(panel.querySelector('.usage-overview__hero')?.textContent).toBe('$2,777.82');
       expect(panel.querySelector('.usage-overview__hero-sub')?.textContent).toContain('147 sessões');
 
-      await act(async () => pressed(host, 'Medida do gráfico', 'Tokens').click());
+      await act(async () => pressed(host, 'Medida', 'Tokens').click());
       expect(panel.querySelector('.usage-overview__chart h3')?.textContent).toBe('Tokens por dia');
+      expect(panel.querySelector('.usage-overview__hero')?.textContent).toBe('5B tokens');
       act(() => root.unmount());
     });
 
@@ -1170,9 +1180,10 @@ describe('UsageQuotaSection', () => {
 
     it('janela sem consumo ensina e oferece ver 90 dias', async () => {
       const today = localDayKey(Date.now());
+      const old = shiftDayKey(today, -60);
       const analytics = buildUsageAnalytics(
-        [{ day: shiftDayKey(today, -60), provider: 'agy', model: 'gemini-3', costUsd: 4, inputTokens: 1, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 1, cacheSavingsUsd: 0, turns: 1 }],
-        [{ provider: 'agy', sessions: { 7: 0, 30: 0, 90: 1 } }],
+        [{ day: old, provider: 'agy', model: 'gemini-3', costUsd: 4, inputTokens: 1, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 1, cacheSavingsUsd: 0, turns: 1 }],
+        [{ provider: 'agy', cells: [[old, 'gemini-3']] }],
         today,
       );
       useUsageStore.setState({ snapshot: { ...EMPTY_USAGE_SNAPSHOT, analytics } });
@@ -1198,6 +1209,26 @@ describe('UsageQuotaSection', () => {
       expect(panel.querySelector('.usage-overview__hero')).toBeNull();
       expect(panel.textContent).toContain('Abra um projeto para ver o custo');
       expect(panel.querySelector('button')?.textContent).toBe('Ver conexões de IA');
+      act(() => root.unmount());
+    });
+
+    it('a página usa as mesmas unidades no custo, no consumo acumulado e no histórico', async () => {
+      Object.assign(window.nexus, {
+        usage: {
+          lifetime: vi.fn(async () => ({ tokensBurned: 10_900_000_000, usdEquivalent: 7_064.7, panesServed: 3, turns: 40 })),
+          onChanged: () => () => {},
+        },
+      });
+      useUsageStore.setState({ snapshot: { ...EMPTY_USAGE_SNAPSHOT, analytics: analyticsFixture() } });
+      const { host, root } = mount();
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      const consumption = host.querySelector('.quota-panel__consumption')!;
+      // Bilhões em B e dólar com milhar, como no painel de custo — nunca "10900M" nem "$7064.70".
+      expect(consumption.textContent).toContain('10.9B tokens');
+      expect(consumption.textContent).toContain('$7,064.70 em API');
       act(() => root.unmount());
     });
   });

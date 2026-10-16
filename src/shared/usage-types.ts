@@ -76,65 +76,118 @@ export interface UsageSnapshot {
     costUsd: number;
   };
   /**
-   * Série diária por provedor (`days`) e, por janela de 7/30/90 dias, o
-   * agregado por provedor (`byProvider`), por modelo e os totais detalhados.
-   * Opcional: Mains antigos e o snapshot vazio não trazem; a tela some com o
-   * painel em vez de mostrar zero.
+   * Linhas do rollup (dia local × ferramenta × modelo) e as sessões, de onde
+   * a tela tira qualquer recorte: 7/30/90 dias, intervalo, um dia, uma
+   * ferramenta, um modelo. Opcional: Mains antigos e o snapshot vazio não
+   * trazem; a tela some com o painel em vez de mostrar zero.
    */
   analytics?: UsageAnalytics;
 }
 
 /**
- * Janelas do painel de Uso e custos (estilo "Usage" do T3). Cada janela é
- * contada em dias locais: 30 = hoje e os 29 dias anteriores.
+ * Presets do painel de Uso e custos (estilo "Usage" do T3). Cada preset é
+ * contado em dias locais: 30 = hoje e os 29 dias anteriores.
  */
 export const USAGE_WINDOW_OPTIONS = [7, 30, 90] as const;
 export type UsageWindowDays = (typeof USAGE_WINDOW_OPTIONS)[number];
 export const USAGE_DEFAULT_WINDOW: UsageWindowDays = 30;
-/** O rollup diário por provedor nunca passa da maior janela. */
+/** O rollup nunca passa da maior janela: é também o limite do seletor de datas. */
 export const USAGE_ANALYTICS_MAX_DAYS: UsageWindowDays = 90;
 
-/** Fatia de um provedor dentro de um dia. */
+/** Um dia local × ferramenta × modelo, somado no SQLite do projeto. */
+export interface UsageRollupRow {
+  readonly day: string;
+  readonly provider: string;
+  readonly model: string;
+  /** Equivalente de API pública — não é fatura nem débito do plano. */
+  readonly costUsd: number;
+  /** Input sem cache, como o store grava (`input_units`). */
+  readonly inputTokens: number;
+  readonly cachedInputTokens: number;
+  readonly cacheWriteTokens: number;
+  readonly outputTokens: number;
+  readonly cacheSavingsUsd: number;
+  readonly turns: number;
+}
+
+/**
+ * Uma sessão distinta (o id fica no main) com os pares [dia local, modelo] em
+ * que ela teve evento. Sessão não soma entre dias — uma que atravessa a
+ * meia-noite contaria duas vezes —, então o recorte conta "teve atividade em
+ * algum par que casa", exato para qualquer intervalo, ferramenta e modelo.
+ */
+export interface UsageSessionActivity {
+  readonly provider: string;
+  readonly cells: readonly (readonly [day: string, model: string])[];
+}
+
+/** Rollup dos últimos 90 dias do projeto: a única fonte de todos os recortes. */
+export interface UsageAnalytics {
+  /** Dia local de referência ("hoje") usado para cortar as janelas. */
+  readonly today: string;
+  /** Do dia mais antigo ao mais novo; só dias com consumo. */
+  readonly rows: readonly UsageRollupRow[];
+  readonly sessions: readonly UsageSessionActivity[];
+}
+
+/** Recorte pedido pela tela: intervalo de dias locais (inclusive) e filtros. */
+export interface UsageQuery {
+  /** Primeiro dia (YYYY-MM-DD). */
+  readonly from: string;
+  /** Último dia (YYYY-MM-DD), inclusive. */
+  readonly to: string;
+  /** Uma ferramenta; ausente/null = todas. */
+  readonly provider?: string | null;
+  /**
+   * Um modelo dessa ferramenta. O nome sozinho pode repetir entre ferramentas,
+   * então só vale junto com `provider`.
+   */
+  readonly model?: string | null;
+}
+
+/** Fatia de uma ferramenta dentro de um dia. */
 export interface UsageDayProviderSlice {
   readonly costUsd: number;
   /** cached + uncached input + output (tokens processados). */
   readonly totalTokens: number;
 }
 
-/** Um dia local (YYYY-MM-DD) com consumo, somado e por provedor. */
+/** Um dia local (YYYY-MM-DD) somado e por ferramenta; dia sem consumo vale zero. */
 export interface UsageDayPoint {
   readonly day: string;
-  /** Equivalente de API pública — não é fatura nem débito do plano. */
   readonly costUsd: number;
   readonly totalTokens: number;
   readonly byProvider: Readonly<Record<string, UsageDayProviderSlice>>;
 }
 
-/** Agregado de um provedor numa janela. */
+/** Agregado de uma ferramenta no recorte. */
 export interface UsageProviderAggregate {
   readonly provider: string;
-  /** Sessões distintas do provedor com atividade na janela. */
+  /** Sessões distintas da ferramenta com atividade no recorte. */
   readonly sessions: number;
   readonly costUsd: number;
-  /** Fração (0..1) do custo da janela; 0 quando a janela não tem custo. */
+  /** Fração (0..1) do custo do recorte; 0 quando o recorte não tem custo. */
   readonly costShare: number;
   readonly totalTokens: number;
+  /** Fração (0..1) dos tokens do recorte; 0 quando o recorte não tem tokens. */
+  readonly tokenShare: number;
   /** Input sem cache (inclui escrita de cache: foi cobrado como input novo). */
   readonly inputTokens: number;
   readonly cachedInputTokens: number;
   readonly outputTokens: number;
 }
 
-/** Agregado de um modelo numa janela (tabela "Detalhamento"). */
+/** Agregado de um modelo no recorte (tabela "Detalhamento"). */
 export interface UsageModelAggregate {
   readonly model: string;
   readonly provider: string;
   readonly costUsd: number;
   readonly costShare: number;
   readonly totalTokens: number;
+  readonly tokenShare: number;
 }
 
-/** Totais detalhados de uma janela (faixa "Totais"). */
+/** Totais detalhados do recorte (faixa "Totais"). */
 export interface UsageDetailedTotals {
   /** cachedInput + uncachedInput + output. */
   readonly processedTokens: number;
@@ -147,27 +200,36 @@ export interface UsageDetailedTotals {
    */
   readonly cacheSavingsUsd: number;
   readonly costUsd: number;
-  /** Sessões distintas na janela (todas as ferramentas). */
+  /** Sessões distintas no recorte (todas as ferramentas incluídas). */
   readonly sessions: number;
   readonly turns: number;
 }
 
-export interface UsageWindowSummary {
-  readonly windowDays: UsageWindowDays;
-  /** Primeiro dia local da janela (YYYY-MM-DD). */
-  readonly startDay: string;
+/** Tudo que a tela mostra de um recorte, calculado de uma vez só. */
+export interface UsageRangeSummary {
+  readonly from: string;
+  readonly to: string;
   /** Ordenado por custo, do maior ao menor. */
   readonly byProvider: readonly UsageProviderAggregate[];
   /** Ordenado por custo, do maior ao menor. */
   readonly byModel: readonly UsageModelAggregate[];
   readonly totals: UsageDetailedTotals;
+  /** Um ponto por dia local de `from` a `to`, do mais antigo ao mais novo. */
+  readonly days: readonly UsageDayPoint[];
 }
 
-/** Série diária + resumos por janela, do mesmo SQLite do projeto. */
-export interface UsageAnalytics {
-  /** Dia local de referência ("hoje") usado para cortar as janelas. */
-  readonly today: string;
-  /** Dias com consumo nos últimos 90, do mais antigo ao mais novo. */
-  readonly days: readonly UsageDayPoint[];
-  readonly windows: Readonly<Record<UsageWindowDays, UsageWindowSummary>>;
+export type UsageMetric = 'cost' | 'tokens';
+
+/** Destaques de uma série diária: total, pico e média por dia com uso. */
+export interface UsageDayStats {
+  readonly dayCount: number;
+  /** Dias com custo ou tokens. */
+  readonly activeDays: number;
+  readonly costUsd: number;
+  readonly totalTokens: number;
+  /** Média por dia COM uso (dia sem registro não dilui a média); 0 sem uso. */
+  readonly averageCostUsd: number;
+  readonly averageTokens: number;
+  /** Dia de maior valor da medida pedida; null sem uso. */
+  readonly peak: UsageDayPoint | null;
 }

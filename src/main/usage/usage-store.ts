@@ -17,6 +17,8 @@ import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import {
   USAGE_ANALYTICS_MAX_DAYS,
   type UsageAnalytics,
+  type UsageRollupRow,
+  type UsageSessionActivity,
 } from '../../shared/usage-types';
 import {
   buildUsageAnalytics,
@@ -24,8 +26,6 @@ import {
   localDayKey,
   shiftDayKey,
   usageWindowStartDay,
-  type UsageProviderSessions,
-  type UsageRollupRow,
 } from '../../shared/usage-analytics';
 import type { UsageEvent } from './claude-transcript';
 import { legacyCodexUsageMessageId } from './codex-transcript';
@@ -423,8 +423,11 @@ const TOTALS_SELECT = `
   FROM usage_events`;
 
 const UNKNOWN_MODEL = 'desconhecido';
+/** Modelo ausente vira o mesmo rótulo no rollup e nas sessões, ou não casariam. */
+function analyticsModel(model: unknown): string {
+  return typeof model === 'string' && model ? model : UNKNOWN_MODEL;
+}
 const analyticsDaySchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
-const analyticsCountSchema = z.number().int().nonnegative().safe();
 
 interface PaneOwnership {
   internalPaneId: string | null;
@@ -680,10 +683,11 @@ export class ScopedUsageStore {
   }
 
   /**
-   * Painel de Uso e custos: rollup por dia local × provedor × modelo e
-   * sessões distintas por janela (7/30/90), só dos últimos 90 dias. O dia
-   * local vem do SQLite (`localtime`), o mesmo fuso do processo que fatia a
-   * janela em `buildUsageAnalytics`.
+   * Painel de Uso e custos: rollup por dia local × provedor × modelo e as
+   * sessões distintas com os pares [dia, modelo] em que tiveram evento, só dos
+   * últimos 90 dias. É a única fonte da tela: 7/30/90 dias, intervalo, um dia,
+   * ferramenta e modelo saem daqui por `summarizeUsage`. O dia local vem do
+   * SQLite (`localtime`), o mesmo fuso do processo que fatia as janelas.
    */
   analytics(now: number = this.#binding.now()): UsageAnalytics {
     const today = localDayKey(now);
@@ -707,7 +711,7 @@ export class ScopedUsageStore {
     >;
     const rows: UsageRollupRow[] = rollup.map((row) => {
       const totals = toTotals(row);
-      const model = typeof row.model === 'string' && row.model ? row.model : UNKNOWN_MODEL;
+      const model = analyticsModel(row.model);
       return {
         day: analyticsDaySchema.parse(row.day),
         provider: usageProviderSchema.parse(row.provider),
@@ -721,39 +725,38 @@ export class ScopedUsageStore {
         turns: totals.turns,
       };
     });
-    // Sessão conta na janela se teve atividade nela: a última atividade de
-    // cada sessão decide, e o sessionId é lido do JSON uma vez por linha.
+    // Sessão tem atividade onde tem evento: o sessionId é lido do JSON uma vez
+    // por linha e o GROUP BY devolve um par [dia, modelo] por sessão, sem
+    // repetição. Evento sem sessionId conta no custo, mas não vira sessão.
     const sessionRows = prepareCached(
       db,
-      `WITH sessions AS (
-         SELECT provider,
-                json_extract(metadata_json, '$.sessionId') AS session_id,
-                MAX(occurred_at) AS last_at
-           FROM usage_events
-           WHERE event_type = ? AND occurred_at >= ? AND occurred_at < ?
-           GROUP BY provider, session_id
-       )
-       SELECT provider,
-              SUM(last_at >= ?) AS d7,
-              SUM(last_at >= ?) AS d30,
-              COUNT(*) AS d90
-         FROM sessions
-         WHERE session_id IS NOT NULL
-         GROUP BY provider`,
-    ).all(
-      TOKEN_EVENT_TYPE,
-      fromMs,
-      untilMs,
-      dayStartMs(usageWindowStartDay(today, 7)),
-      dayStartMs(usageWindowStartDay(today, 30)),
-    ) as Array<{ provider: unknown; d7: unknown; d30: unknown; d90: unknown }>;
-    const sessions: UsageProviderSessions[] = sessionRows.map((row) => ({
-      provider: usageProviderSchema.parse(row.provider),
-      sessions: {
-        7: analyticsCountSchema.parse(row.d7),
-        30: analyticsCountSchema.parse(row.d30),
-        90: analyticsCountSchema.parse(row.d90),
-      },
+      `SELECT provider,
+              json_extract(metadata_json, '$.sessionId') AS session_id,
+              strftime('%Y-%m-%d', occurred_at / 1000, 'unixepoch', 'localtime') AS day,
+              model
+         FROM usage_events
+         WHERE event_type = ? AND occurred_at >= ? AND occurred_at < ?
+         GROUP BY provider, session_id, day, model`,
+    ).all(TOKEN_EVENT_TYPE, fromMs, untilMs) as Array<{
+      provider: unknown;
+      session_id: unknown;
+      day: unknown;
+      model: unknown;
+    }>;
+    const bySession = new Map<string, { provider: string; cells: Map<string, [string, string]> }>();
+    for (const row of sessionRows) {
+      if (typeof row.session_id !== 'string' || row.session_id === '') continue;
+      const provider = usageProviderSchema.parse(row.provider);
+      const key = `${provider}\0${row.session_id}`;
+      const entry = bySession.get(key) ?? { provider, cells: new Map() };
+      const cell: [string, string] = [analyticsDaySchema.parse(row.day), analyticsModel(row.model)];
+      // Modelo vazio e nulo viram o mesmo "desconhecido": um par só.
+      entry.cells.set(`${cell[0]}\0${cell[1]}`, cell);
+      bySession.set(key, entry);
+    }
+    const sessions: UsageSessionActivity[] = [...bySession.values()].map((entry) => ({
+      provider: entry.provider,
+      cells: [...entry.cells.values()],
     }));
     return buildUsageAnalytics(rows, sessions, today);
   }

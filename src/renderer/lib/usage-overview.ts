@@ -1,4 +1,5 @@
 import type { CSSProperties } from 'react';
+import type { UsageMetric } from '../../shared/usage-types';
 
 /**
  * Apresentação do painel de Uso e custos (estilo "Usage" do T3): rótulos,
@@ -193,4 +194,34 @@ export function dayLongLabel(day: string): string {
     day: 'numeric',
     month: 'short',
   });
+}
+
+/** "8 out a 12 out" — um intervalo; um dia só vira "qua., 8 de out.". */
+export function formatRangeLabel(from: string, to: string): string {
+  return from === to ? dayLongLabel(from) : `${dayTickLabel(from)} a ${dayTickLabel(to)}`;
+}
+
+/** "2.18B tokens", mas "1 token": a unidade sempre escrita junto do número. */
+export function formatTokensWithUnit(value: number): string {
+  return `${formatTokenCount(value)} ${Math.round(value) === 1 ? 'token' : 'tokens'}`;
+}
+
+/**
+ * Custo e tokens do mesmo recorte, na ordem da medida escolhida: a primeira
+ * é o destaque, a outra fica ao lado — assim os tokens aparecem no modo Custo
+ * e o custo no modo Tokens, sempre com a unidade escrita.
+ */
+export function usageMeasureTexts(
+  metric: UsageMetric,
+  costUsd: number,
+  totalTokens: number,
+): { readonly primary: string; readonly secondary: string } {
+  const cost = formatUsdAmount(costUsd);
+  const tokens = formatTokensWithUnit(totalTokens);
+  return metric === 'cost' ? { primary: cost, secondary: tokens } : { primary: tokens, secondary: cost };
+}
+
+/** O número da medida sem a unidade (`$3,404.95` ou `2.18B`): a unidade vai escrita ao lado. */
+export function usageMeasureValue(metric: UsageMetric, costUsd: number, totalTokens: number): string {
+  return metric === 'cost' ? formatUsdAmount(costUsd) : formatTokenCount(totalTokens);
 }
