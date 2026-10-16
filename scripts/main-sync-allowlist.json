@@ -412,6 +412,22 @@
       "reason": "Existing native binary identity and signed-supervisor qualification probes; fixed safety envelope and bounded child execution."
     },
     {
+      "file": "src/main/pty/windows-user-env.ts",
+      "method": "execFileSync",
+      "kind": "call",
+      "fingerprint": "19a3529776d3049cb4c36d00aeb3e680f2c6780869dc74ff377f8d8e68f6abb4",
+      "count": 1,
+      "reason": "Bounded Windows HKCU\\Environment query via %SystemRoot%\\System32\\reg.exe (no shell, fixed argv, 2s timeout, 5s TTL cache, fill-only with blocked security prefixes)."
+    },
+    {
+      "file": "src/main/pty/windows-user-env.ts",
+      "method": "execFileSync",
+      "kind": "import",
+      "fingerprint": "05b667683ccb14c4169b2a4558abf9bf93132c9db1e21fc7a629c5a82b32509f",
+      "count": 1,
+      "reason": "Bounded Windows HKCU\\Environment query via %SystemRoot%\\System32\\reg.exe (no shell, fixed argv, 2s timeout, 5s TTL cache, fill-only with blocked security prefixes)."
+    },
+    {
       "file": "src/main/quota/agy-bridge.ts",
       "method": "spawnSync",
       "kind": "call",
