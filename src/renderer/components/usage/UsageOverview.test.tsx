@@ -394,6 +394,8 @@ describe('UsageOverview — filtros recalculam o painel inteiro', () => {
     expect(read(host).providers.map((item) => item.id)).toEqual(['codex']);
 
     await press(host, 'Detalhar por', 'Dia');
+    // O dia da tabela é clicável, e a tela diz isso.
+    expect(host.querySelector('.usage-breakdown__hint')?.textContent).toContain('Clique num dia');
     const picks = [...host.querySelectorAll('.usage-breakdown__pick')] as HTMLButtonElement[];
     const pressedPick = picks.find((item) => item.getAttribute('aria-pressed') === 'true');
     expect(pressedPick?.textContent).toBe(dayLongLabel(day(2)));

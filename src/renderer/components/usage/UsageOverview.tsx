@@ -670,6 +670,9 @@ function UsageOverviewPanel({ analytics, titleId }: { analytics: UsageAnalytics;
           </h3>
           <Segmented label="Detalhar por" options={BREAKDOWNS} value={breakdown} onChange={setBreakdown} />
         </div>
+        {breakdown === 'day' && breakdownRows.length > 0 ? (
+          <p className="usage-breakdown__hint">Clique num dia para ver só ele; clique de novo para voltar ao período.</p>
+        ) : null}
         <div className="usage-breakdown__scroll">
           <table className="usage-breakdown">
             <caption className="settings-visually-hidden">

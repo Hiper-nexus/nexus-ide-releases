@@ -513,6 +513,11 @@ select.usage-filter__control {
   text-overflow: ellipsis;
 }
 /* Em canvas estreito a tabela rola dentro do cartão, nunca o cartão para a direita. */
+.usage-breakdown__hint {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+}
 .usage-breakdown__scroll {
   min-width: 0;
   overflow-x: auto;
