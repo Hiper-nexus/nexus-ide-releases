@@ -144,6 +144,15 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
         { id: 'gpt-5.6-sol', availability: 'paid', costTier: 'high', source: 'bundled' },
         { id: 'gpt-5.6-terra', availability: 'paid', costTier: 'high', source: 'bundled' },
         { id: 'gpt-5.6-luna', availability: 'paid', costTier: 'medium', source: 'bundled' },
+        // Codex 0.163.0 (models_cache, 16/10): visível, especialidade cyber.
+        // Sem nota publicada — fica fora da tabela de rota.
+        {
+          id: 'gpt-daybreak-blue-latest',
+          availability: 'paid',
+          costTier: 'high',
+          source: 'bundled',
+          warning: 'Modelo cyber do Codex 0.163.0 (models_cache). Sem nota publicada — não entra na tabela de rota.',
+        },
       ],
     },
     'mimo-code': {
@@ -216,18 +225,18 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
         { id: 'gemini-3.8-flash-high', availability: 'cheap', costTier: 'high', source: 'bundled' },
         { id: 'gemini-3.8-flash-medium', availability: 'cheap', costTier: 'medium', source: 'bundled' },
         { id: 'gemini-3.8-flash-low', availability: 'cheap', costTier: 'low', source: 'bundled' },
+        // 3.7/3.6 saíram do `agy models` 1.4.0 e do catálogo publicado (o
+        // manifesto não oferece). Ficam aqui só para a chave de benchmark.
         { id: 'gemini-3.7-flash-low', availability: 'free', costTier: 'free', source: 'bundled' },
         { id: 'gemini-3.7-flash-medium', availability: 'cheap', costTier: 'low', source: 'bundled' },
         { id: 'gemini-3.7-flash-high', availability: 'cheap', costTier: 'low', source: 'bundled' },
         { id: 'gemini-3.6-flash-low', availability: 'free', costTier: 'free', source: 'bundled' },
         { id: 'gemini-3.6-flash-medium', availability: 'cheap', costTier: 'low', source: 'bundled' },
         { id: 'gemini-3.6-flash-high', availability: 'cheap', costTier: 'low', source: 'bundled' },
-        // Gemini 4 Argon (Google, 30/09): flagship de acesso restrito
-        // (Fairwind → Ultra → API paga), $2/M entrada. F-990: só METADADO —
-        // o `agy models` do AGY 1.3.1 não o lista, e o catálogo nunca
-        // acrescenta id a CLI que lista. Volta à oferta quando a CLI o listar.
+        // Gemini 4 Argon sem sufixo: F-990, metadado. O AGY 1.4.0 lista só
+        // as variantes com esforço; o catálogo não acrescenta id a CLI que lista.
         { id: 'gemini-4-argon', availability: 'paid', costTier: 'high', source: 'bundled' },
-        // AGY 1.3.4 (13/10) lista o Argon assim, com sufixo de esforço.
+        // AGY 1.4.0 (16/10) lista o Argon com sufixo de esforço.
         { id: 'gemini-4-argon-high', availability: 'paid', costTier: 'high', source: 'bundled' },
         { id: 'gemini-4-argon-medium', availability: 'paid', costTier: 'high', source: 'bundled' },
         { id: 'gemini-4-argon-low', availability: 'paid', costTier: 'high', source: 'bundled' },
