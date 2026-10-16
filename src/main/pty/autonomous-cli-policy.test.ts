@@ -801,7 +801,8 @@ describe('secureAutonomousCliArgs', () => {
     for (const flag of kimi.control.permission?.yolo ?? []) {
       expect(args).toContain(flag);
     }
-    expect(args).toContain('--yolo');
+    expect(args).toContain('--auto');
+    expect(args).not.toContain('--yolo');
   });
 
   it('preserves each built-in provider native yolo flag for writable workers', () => {

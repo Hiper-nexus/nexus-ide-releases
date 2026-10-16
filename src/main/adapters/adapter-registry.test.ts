@@ -498,8 +498,8 @@ describe('builtin adapters', () => {
     ]);
   });
 
-  it('declares Kimi Code native --yolo approval while preserving headless prompt mode', () => {
-    // Verified against kimi 1.50.0 --help: --yolo/--yes/--auto-approve.
+  it('declares Kimi Code native --auto (Never Ask) approval while preserving headless prompt mode', () => {
+    // Verified against current kimi --help: --yolo is only "Ask When Needed"; --auto is "Never Ask".
     expect(builtin('kimi')?.spawn?.headless).toEqual([
       'kimi',
       '--output-format',
@@ -508,7 +508,7 @@ describe('builtin adapters', () => {
       '{{PROMPT}}',
     ]);
     expect(builtin('kimi')?.spawn?.headless).not.toContain('--auto');
-    expect(builtin('kimi')?.control?.permission?.yolo).toEqual(['--yolo']);
+    expect(builtin('kimi')?.control?.permission?.yolo).toEqual(['--auto']);
   });
 
   it('separates declared MCP routes from operational orchestration evidence', () => {
