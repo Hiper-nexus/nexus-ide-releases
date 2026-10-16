@@ -538,13 +538,15 @@ export async function runFunctionalSmokeProbes(
         value.result.content === FUNCTIONAL_SMOKE_FILE_CONTENT,
     ],
     [
+      // file_write da mão do operador (renderer) agora é mãos-livres, sem missão.
+      // O que continua barrado é o push: sem missão ele não pode commitar efeito.
       'mcp-write-guard',
-      'nexus_file_write',
-      { path: 'must-not-exist.txt', content: 'blocked' },
+      'nexus_git_push',
+      {},
       (value) =>
         isRecord(value) &&
         value.ok === false &&
-        value.tool === 'nexus_file_write' &&
+        value.tool === 'nexus_git_push' &&
         value.effectMayHaveCommitted !== true &&
         (value.requiredConfirmation === true ||
           (value.denied === true &&

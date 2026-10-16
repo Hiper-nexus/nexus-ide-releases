@@ -155,7 +155,7 @@ function successfulApi(
             result: { path: 'smoke.txt', content: FUNCTIONAL_SMOKE_FILE_CONTENT },
           };
         }
-        if (tool === 'nexus_file_write') {
+        if (tool === 'nexus_git_push') {
           return { ok: false, tool, requiredConfirmation: true };
         }
         if (tool === 'nexus_ui_read') {
@@ -355,7 +355,7 @@ describe('runFunctionalSmokeProbes', () => {
     const api = successfulApi();
     const invoke = vi.mocked(api.mcp.invoke);
     invoke.mockImplementation(async (tool: string) => {
-      if (tool === 'nexus_file_write') {
+      if (tool === 'nexus_git_push') {
         return {
           ok: false,
           tool,
