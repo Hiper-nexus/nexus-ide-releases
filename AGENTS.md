@@ -1437,6 +1437,26 @@ saber isto antes de mexer:
   texto no ciclo estreita→alarga. Enquanto `gridReady` for falso, saída antiga
   E nova ficam retidas; visibilidade sozinha não autoriza drenar o PTY.
 
+## Navegador do pane não pinta sobre popover, menu ou modal (16/10)
+
+- A `WebContentsView` do navegador é irmã nativa do renderer: pinta acima de
+  QUALQUER DOM e `z-index` não a alcança. O `+ Pane` e o menu "Ações do painel"
+  abertos sobre um navegador ficavam atrás da página e sem clique. Só os modais
+  da store (`hardOverlayOpen` em `App.tsx`) escondiam a view.
+- `browser-host.ts` esconde só a view CRUZADA (`setBounds({ visible: false })`,
+  o mesmo contrato da supressão global) e a devolve quando a superfície some.
+  `browser-occlusion.ts` detecta pelo contrato de acessibilidade, sem registro
+  por componente: `role` `dialog`/`alertdialog`/`menu`/`listbox` ou
+  `aria-modal="true"` (modal cobre todas as views). Um `MutationObserver`
+  reavalia no mesmo tick em que a superfície monta, cresce ou sai.
+- Popover novo: dê o `role` certo e ele já é coberto; sem role volta a ficar
+  atrás do navegador. Superfície só-CSS (`display`/`class` sem montar nem trocar
+  `hidden`) só é vista no próximo sync de bounds. Toast (`role="status"`) não
+  esconde a view de propósito (piscaria a cada aviso). Pane de agente escondido
+  segue estacionado fora da tela, como já fazia.
+- Prova: `browser-host-bounds.test.ts` (host) e `BrowserPane.overlays.test.tsx`
+  (picker, menu Ações e modal portalado, componentes reais).
+
 ## Velocidade de geração por LLM (tok/s + TTFT)
 
 - Três medidores, três perguntas — não os confunda: `cost-tracker` diz QUANTO
