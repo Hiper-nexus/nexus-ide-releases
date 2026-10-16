@@ -11207,7 +11207,7 @@ export const RELEASE_076292: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076293: AppRelease = {
   version: '0.76.293',
   date: '2026-10-16',
   codename: 'Tela sem piscar e anexos que chegam',
@@ -11220,5 +11220,21 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: [
     { title: 'Abas do painel lateral', detail: 'Em painel estreito as abas ganham setas de rolagem, alvos de 44 px, teclado completo e o botão de fechar sempre visível.' },
     { title: 'Modos de permissão por CLI', detail: 'Grok, AGY e Qwen ganham os níveis reais de permissão (edições automáticas, plano) além do YOLO, com aviso de risco em Configurações. Os safeArgs de Claude e Codex continuam intactos.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.294',
+  date: '2026-10-16',
+  codename: 'Linux em dia com a tela sem piscar e os anexos',
+  summary: 'No Linux, o painel Git para de piscar, imagem e áudio chegam à missão e o início mostra "Preparando a missão". A tag 0.76.293 não recebe pacotes Linux.',
+  highlights: [
+    { title: 'Painel Git estável', detail: 'As releituras do git status não trocam mais "Mesa limpa" por "Lendo git status", então a tela para de piscar. Os botões Puxar, Enviar, Ver histórico e Trocar branch mantêm contraste ao clicar, inclusive no tema roxo.' },
+    { title: 'Anexos até a missão', detail: 'Imagem colada aparece no campo. Imagem e áudio chegam à worktree e ao prompt do coordenador e dos workers; o áudio é transcrito em segundo plano com o reconhecimento de voz do ditado. Iniciar espera o anexo que ainda está copiando.' },
+    { title: 'Iniciar missão mais claro', detail: 'O botão fica à vista, ⌘/Ctrl+Enter inicia, e o painel "Preparando a missão" acompanha as etapas reais. Em painel estreito as abas laterais ganham setas e o fechar sempre visível.' },
+  ],
+  fixes: [
+    { title: 'Modos de permissão por CLI', detail: 'Grok, AGY e Qwen ganham os níveis reais de permissão além do YOLO, com aviso de risco. Os safeArgs de Claude e Codex continuam intactos.' },
+    { title: 'Atualização do Linux', detail: 'A tag 0.76.293 não recebe pacotes Linux: é o candidato macOS. O Linux sai na 0.76.294.' },
   ],
 };

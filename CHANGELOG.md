@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.76.294 — Linux em dia com a tela sem piscar e os anexos
+
+A tag 0.76.293 não recebe pacotes Linux: é o candidato macOS. Este pacote leva o produto dela para o desktop Linux, empacotado a partir de Ubuntu 22.04 (glibc 2.35).
+
+No desktop Linux, em relação à 0.76.292:
+
+- **Painel Git estável**. As releituras não trocam mais "Mesa limpa" por "Lendo git status", então a tela para de piscar. Os botões Puxar, Enviar, Ver histórico e Trocar branch mantêm contraste ao clicar, inclusive no tema roxo.
+- **Anexos até a missão**. Imagem colada aparece no campo. Imagem e áudio chegam à worktree e ao prompt do coordenador e dos workers; o áudio é transcrito em segundo plano com o reconhecimento de voz do ditado. Iniciar espera o anexo que ainda está copiando.
+- **Iniciar missão mais claro**. O botão fica à vista, ⌘/Ctrl+Enter inicia, e o painel "Preparando a missão" acompanha as etapas reais.
+- **Abas do painel lateral**. Em painel estreito as abas ganham setas, alvos de 44 px e o fechar sempre visível.
+- **Modos de permissão por CLI**. Grok, AGY e Qwen ganham os níveis reais além do YOLO, com aviso de risco. Os safeArgs de Claude e Codex continuam intactos.
+
 ## 0.76.293 — Tela sem piscar e anexos que chegam
 
 O painel Git não pisca mais nas releituras e os botões primários voltam a ser legíveis ao clicar, inclusive no tema roxo. Imagem colada no campo da missão aparece como anexo; imagem e áudio chegam à worktree e ao prompt do coordenador e dos workers, e o áudio ganha transcrição em segundo plano com o STT do ditado. A tela de iniciar missão ganha dock fixo, ⌘/Ctrl+Enter, validação no campo e espera pelo anexo em cópia, além do painel "Preparando a missão". As abas do painel lateral cabem em largura estreita. Grok, AGY e Qwen ganham níveis de permissão reais com aviso de risco do YOLO.
