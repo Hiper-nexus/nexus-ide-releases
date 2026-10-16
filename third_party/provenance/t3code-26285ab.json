@@ -61,7 +61,7 @@
       "copyright": "Copyright (c) 2026 T3 Tools Inc.",
       "type": "adapted",
       "feature": "WEB-02 foco modal e IME",
-      "changeSummary": "Só o comportamento modal (aria-modal, foco preso com useFocusTrap do Nexus, devolução ao invocador no mesmo escopo); o restante do arquivo é do Nexus. O aviso de missão promovida passa o id da missão. F-392: destino renomeado para Missões e tarefas; busca preserva Quadro e encontra retomada.",
+      "changeSummary": "Só o comportamento modal (aria-modal, foco preso com useFocusTrap do Nexus, devolução ao invocador no mesmo escopo); o restante do arquivo é do Nexus. O aviso de missão promovida passa o id da missão. F-392: destino renomeado para Missões e tarefas; busca preserva Quadro e encontra retomada. WORKSPACE_OPEN_ACTION extraída do registro do Início para a linha \"Abrir projeto existente\" do rail.",
       "secondaryProvenance": [],
       "importDate": "2026-10-07",
       "status": "imported"
@@ -77,7 +77,7 @@
       "copyright": "Copyright (c) 2026 T3 Tools Inc.",
       "type": "adapted",
       "feature": "WEB-02 foco modal e IME",
-      "changeSummary": "Foco no input na montagem com cancelamento do quadro pendente no cleanup. O aviso de missão promovida passa o id da missão. F-392: destino renomeado para Missões e tarefas; busca preserva Quadro e encontra retomada.",
+      "changeSummary": "Foco no input na montagem com cancelamento do quadro pendente no cleanup. O aviso de missão promovida passa o id da missão. F-392: destino renomeado para Missões e tarefas; busca preserva Quadro e encontra retomada. WORKSPACE_OPEN_ACTION extraída do registro do Início para a linha \"Abrir projeto existente\" do rail.",
       "secondaryProvenance": [],
       "importDate": "2026-10-07",
       "status": "imported"
@@ -2082,12 +2082,12 @@
       "originalSha256": "5b54026f2de75a9fd8db849fd6403b1c037644a65b8564f7e6729be540668bf0",
       "originalPath": "apps/web/src/keybindings.ts",
       "nexusPath": "src/renderer/lib/action-names.ts",
-      "nexusSha256": "6f5a9fb82919b158a369b15b45feb7bdbfbc7ef19c3ecf392dd0225962fac028",
+      "nexusSha256": "c8a9f4bacdcbc84048364850d8fe047d8d468e8c46c1506ea9fa69dea1139d21",
       "license": "MIT",
       "copyright": "Copyright (c) 2026 T3 Tools Inc.",
       "type": "reference",
       "feature": "T3 paginação de handoffs e atalhos do launcher",
-      "changeSummary": "Sem código do upstream: contexto editableFocus inspira a supressão de atalhos em campos editáveis. Registro de nomes e teclas 1–6 próprio do Nexus. F-392: destino renomeado para Missões e tarefas; busca preserva Quadro e encontra retomada.",
+      "changeSummary": "Sem código do upstream: contexto editableFocus inspira a supressão de atalhos em campos editáveis. Registro de nomes e teclas 1–6 próprio do Nexus. F-392: destino renomeado para Missões e tarefas; busca preserva Quadro e encontra retomada. WORKSPACE_OPEN_ACTION extraída do registro do Início para a linha \"Abrir projeto existente\" do rail.",
       "secondaryProvenance": [],
       "importDate": "2026-10-08",
       "status": "imported"
