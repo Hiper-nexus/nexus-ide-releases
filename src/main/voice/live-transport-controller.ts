@@ -435,6 +435,9 @@ export class LiveTransportController {
     provider.resetTurn?.();
     if (this._inGrace) this.promoteGrace();
     else this.touchIdle();
+    // O soft-stop (onStop) parou o poller de perguntas dos panes; a conexão fria
+    // o religa em activateConnectedProvider, e o reuso precisa fazer o mesmo.
+    this.questionPoller.start();
     this.sendGreetingIfSafe(provider, options.greeting);
     this.flushPendingMic(provider);
     this._fsm.patchStatus({ status: 'listening', realtimeReady: true });

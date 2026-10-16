@@ -88,6 +88,7 @@ async function withController(
     session: JarvisLiveSession;
     HOT_SOCKET_PROBE_MS: number;
   }) => Promise<void>,
+  questionSource?: { poll(): Array<{ paneId: string; questionHash: string }> },
 ): Promise<void> {
   vi.resetModules();
   const providerId =
@@ -122,7 +123,7 @@ async function withController(
   const session = new JarvisLiveSession(() => {}, () => 1_000);
   session.setEnabled(true);
   session.start({ reason: 'manual' });
-  const controller = new LiveTransportController(() => {}, session);
+  const controller = new LiveTransportController(() => {}, session, Date.now, questionSource);
   try {
     await run({ controller, session, HOT_SOCKET_PROBE_MS });
   } finally {
@@ -156,6 +157,29 @@ describe('LiveTransportController — reuso do socket quente no wake', () => {
       expect(controller.inGrace).toBe(false);
       expect(session.getState()).toMatchObject({ status: 'listening', realtimeReady: true });
     });
+  });
+
+  it('o reuso religa o poller de perguntas que o soft-stop tinha parado', async () => {
+    const provider = fakeProvider();
+    const poll = vi.fn(() => []);
+    await withController(
+      provider,
+      'grok-realtime',
+      async ({ controller }) => {
+        await controller.onStart({ freshTurn: true });
+        await vi.waitFor(() => expect(poll).toHaveBeenCalled());
+        controller.onStop();
+        poll.mockClear();
+
+        await controller.onStart({ freshTurn: true });
+
+        // Sem religar, a Jarvis deixava de narrar a pergunta de um pane até a
+        // próxima conexão fria.
+        await vi.waitFor(() => expect(poll).toHaveBeenCalled());
+        expect(provider.connect).toHaveBeenCalledTimes(1);
+      },
+      { poll },
+    );
   });
 
   it('segura o mic na sonda e libera tudo no mesmo socket quando ele está vivo', async () => {
