@@ -9,12 +9,14 @@ import { AppShell } from './product/AppShell';
 import { ContextualPanel } from './ContextualPanel';
 import { GitPanelBody } from './GitPanelBody';
 import { useGitScmStore } from '../state/git-scm-store';
+import { PALETTES } from '../styles/ui-theme';
+import { contrastRatio, hexToSrgb, srgbToHex } from '../styles/palette-gen';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
 
 const stylesDir = path.resolve(process.cwd(), 'src/renderer/styles');
-const styles = ['base.css', 'app-shell.css', 'product-wave.css', 'git-scm.css'].map(
+const styles = ['base.css', 'app-shell.css', 'product-wave.css', 'contextual-panel.css', 'git-scm.css'].map(
   (file) => fs.readFileSync(path.join(stylesDir, file), 'utf8'),
 );
 
@@ -72,6 +74,26 @@ function el(host: HTMLElement, selector: string): HTMLElement {
 }
 
 describe('ContextualPanel inside the AppShell inspector slot', () => {
+  it.each(Object.entries(PALETTES))('keeps tab text at AA contrast in %s', (_name, palette) => {
+    const bar = hexToSrgb(palette.bgBar);
+    const bg = hexToSrgb(palette.bg);
+    const surface = srgbToHex([
+      bar[0] * 0.92 + bg[0] * 0.08,
+      bar[1] * 0.92 + bg[1] * 0.08,
+      bar[2] * 0.92 + bg[2] * 0.08,
+    ]);
+    const hover = hexToSrgb(palette.accent);
+    const resting = hexToSrgb(surface);
+    const hovered = srgbToHex([
+      hover[0] * 0.06 + resting[0] * 0.94,
+      hover[1] * 0.06 + resting[1] * 0.94,
+      hover[2] * 0.06 + resting[2] * 0.94,
+    ]);
+    expect(contrastRatio(palette.textDim, surface)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(palette.text, surface)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(palette.text, hovered)).toBeGreaterThanOrEqual(4.5);
+  });
+
   it('sizes the inspector column from the panel instead of a fixed 360–440px band', () => {
     const host = renderShell(560);
     const tracks = styleTracks(el(host, '.nexus-shell__body--with-inspector'), 'grid-template-columns');
@@ -158,6 +180,18 @@ describe('ContextualPanel inside the AppShell inspector slot', () => {
       expect(computedCssValue(tab, 'flex')).toBe('0 0 auto');
       expect(computedCssValue(tab, 'white-space')).toBe('nowrap');
     }
+  });
+
+  it('keeps navigation touch-sized and text stable without an animated mask', () => {
+    const host = renderShell(300);
+    for (const button of host.querySelectorAll<HTMLElement>('.ctx-panel__tabs button')) {
+      expect(computedCssValue(button, 'min-width')).toBe('44px');
+      expect(computedCssValue(button, 'min-height')).toBe('44px');
+      expect(computedCssValue(button, 'transition')).toBe('none');
+    }
+    expect(computedCssValue(el(host, '.ctx-panel__tablist'), 'mask-image')).toBe('none');
+    expect(computedCssValue(el(host, '.ctx-panel__tablist'), 'animation')).toBe('none');
+    expect(computedCssValue(el(host, '.ctx-panel__hide'), 'opacity')).toBe('1');
   });
 
   it('never narrows the inspector below 300px', () => {

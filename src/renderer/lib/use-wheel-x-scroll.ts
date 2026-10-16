@@ -18,14 +18,14 @@ export function wheelToScrollLeft(strip: HTMLElement, event: WheelEvent): boolea
  * Listener nativo não-passivo: o onWheel do React é passivo e não consegue
  * impedir a rolagem vertical do ancestral.
  */
-export function useWheelXScroll(ref: RefObject<HTMLElement | null>): void {
+export function useWheelXScroll(ref: RefObject<HTMLElement | null>, enabled = true): void {
   useEffect(() => {
     const strip = ref.current;
-    if (!strip) return;
+    if (!strip || !enabled) return;
     const onWheel = (event: WheelEvent) => {
       if (wheelToScrollLeft(strip, event)) event.preventDefault();
     };
     strip.addEventListener('wheel', onWheel, { passive: false });
     return () => strip.removeEventListener('wheel', onWheel);
-  }, [ref]);
+  }, [ref, enabled]);
 }
