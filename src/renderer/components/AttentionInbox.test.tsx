@@ -9,6 +9,7 @@ import { useAgentWaitingStore } from '../state/agent-waiting-store';
 import { useGitScmStore } from '../state/git-scm-store';
 import { useOrchStore } from '../state/orch-store';
 import { useProviderStore } from '../state/provider-store';
+import { useProductNavigationStore } from '../state/product-navigation-store';
 import { useLayoutStore } from '../state/layout-store';
 import { buildGridTree } from '../lib/split-tree';
 import { openCliLoginTerminal } from './settings/cli-login-terminal';
@@ -67,6 +68,17 @@ describe('AttentionInbox', () => {
     }
     document.body.replaceChildren();
     useAttentionInboxStore.setState({ open: false, count: 0 });
+  });
+
+  it('routes the optional Muse Claude host to API key settings without starting native login', () => {
+    useProviderStore.setState({ providers: [{ adapterId: 'muse-claude', label: 'Muse Spark (via Claude)', enabled: true, installed: true, authStrategy: 'login-needed', authMethod: 'api_key', authState: 'missing' }] } as never);
+    mount();
+    const button = [...document.querySelectorAll('button')].find((candidate) => candidate.getAttribute('aria-label') === 'Configurar chave de Muse Spark (via Claude)');
+    expect(button).toBeTruthy();
+    expect(document.body.textContent).toContain('Chave API');
+    act(() => button!.click());
+    expect(openCliLoginTerminal).not.toHaveBeenCalled();
+    expect(useProductNavigationStore.getState().destination).toEqual({ kind: 'settings', section: 'providers' });
   });
 
   it('mostra o nome da CLI por extenso, o que ela pede, e não esmaga o card em 22px', () => {

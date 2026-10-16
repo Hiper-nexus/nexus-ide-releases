@@ -25,7 +25,7 @@ import { ProviderLogo } from './ProviderLogo';
 import { openCliLoginTerminal } from './settings/cli-login-terminal';
 
 function kindIcon(kind: AttentionKind): PixelIconName {
-  if (kind === 'cli-login') return 'key';
+  if (kind === 'cli-login' || kind === 'provider-key') return 'key';
   if (kind === 'enter') return 'terminal';
   if (kind === 'mission-stuck') return 'mission';
   return 'files';
@@ -183,7 +183,7 @@ export function AttentionInbox() {
             {items.map((item) => (
               <li key={item.id} className="agent-notif__item agent-notif__item--unread">
                 <span className="agent-notif__status-icon" aria-hidden="true">
-                  {item.kind === 'cli-login' ? (
+                  {(item.kind === 'cli-login' || item.kind === 'provider-key') ? (
                     <ProviderLogo
                       adapterId={item.targetId}
                       label={item.title}
@@ -211,7 +211,7 @@ export function AttentionInbox() {
                         setOpen(false);
                       }}
                     >
-                      {item.kind === 'cli-login' ? 'Entrar' : 'Abrir'}
+                      {item.kind === 'provider-key' ? 'Configurar chave' : item.kind === 'cli-login' ? 'Entrar' : 'Abrir'}
                     </button>
                   </div>
                 </div>
