@@ -136,6 +136,14 @@ export interface IdlePaneCandidate {
   readonly idleForMs: number;
 }
 
+/** MB que a amostra do kernel ainda não vê e o gate já desconta do livre. */
+export interface AgentSpawnReservations {
+  /** Panes de agente que a amostra em cache ainda não mediu, 1.280 MB cada. */
+  readonly startingPanesMB: number;
+  /** Builds/testes com permit do pool de heavy-command (F-983). */
+  readonly heavyCommandsMB: number;
+}
+
 export interface PaneAdmissionInput {
   readonly liveAgentPanes: number;
   readonly limits: PaneAdmissionLimits;
@@ -143,6 +151,8 @@ export interface PaneAdmissionInput {
   readonly idleCandidates: readonly IdlePaneCandidate[];
   /** Main-owned mission worker; explicit operator panes keep warning-only policy. */
   readonly automaticWorker?: boolean;
+  /** O que `memory.freeMB` já desconta; só nomeia o número no aviso. */
+  readonly reservations?: AgentSpawnReservations;
 }
 
 export type PaneAdmissionVerdict =
@@ -291,7 +301,8 @@ export function mainPressureNow(
     // não há recusa por carga para culpar.
     if (!limits.enabled) return false;
     const now = deps.now ?? Date.now();
-    const memory = getMemoryAfterAgentReservations(now) ?? getCachedSystemMemory(now);
+    // A régua do gate: um build com permit que recusa o worker também é pressão.
+    const memory = getMemoryForAgentSpawn(now);
     if (isUnderMemoryPressure(memory, limits)) return true;
     const liveAgentPanes = deps.liveAgentPanes?.() ?? 0;
     const budget = parallelHelperBudget({ liveAgentPanes, limits, memory });
@@ -324,11 +335,28 @@ function describeIdleCandidates(candidates: readonly IdlePaneCandidate[]): strin
   );
 }
 
+/**
+ * O livre do aviso é a amostra MENOS estas reservas; sem nomeá-las o número
+ * não bate com nenhum monitor do sistema. Null = nada reservado.
+ */
+function describeReservations(reservations: AgentSpawnReservations | undefined): string | null {
+  if (!reservations) return null;
+  const parts: string[] = [];
+  if (reservations.startingPanesMB > 0) {
+    parts.push(`${Math.round(reservations.startingPanesMB)} MB de panes iniciando`);
+  }
+  if (reservations.heavyCommandsMB > 0) {
+    parts.push(`${Math.round(reservations.heavyCommandsMB)} MB de builds/testes em andamento`);
+  }
+  return parts.length > 0 ? parts.join(' e ') : null;
+}
+
 export function evaluatePaneAdmission(input: PaneAdmissionInput): PaneAdmissionVerdict {
   const { limits, memory } = input;
   if (!limits.enabled) return { ok: true };
 
   const idleHint = describeIdleCandidates(input.idleCandidates);
+  const reserved = describeReservations(input.reservations);
   const capMessage =
     `Teto de ${limits.maxAgentPanes} panes de agente atingido ` +
     `(${input.liveAgentPanes} vivos). ${idleHint} ` +
@@ -341,7 +369,8 @@ export function evaluatePaneAdmission(input: PaneAdmissionInput): PaneAdmissionV
         : memory?.freeMB !== null && memory
           ? `Memória RAM da máquina sem folga para outro worker: ${Math.round(memory.freeMB)} MB livres medidos ` +
             `< reserva de ${limits.minFreeMB} MB + ${AGENT_PANE_FOOTPRINT_MB} MB por worker ` +
-            `(folga de memória física, não limite do plano). ${idleHint}`
+            `(folga de memória física, não limite do plano${reserved ? `; os livres já descontam ${reserved}` : ''}). ` +
+            idleHint
           : `Memória sem folga para outro worker (${AGENT_PANE_FOOTPRINT_MB} MB acima da reserva de ${limits.minFreeMB} MB; ` +
             `memória física da máquina, não limite do plano). ${idleHint}`;
       return {
@@ -361,7 +390,8 @@ export function evaluatePaneAdmission(input: PaneAdmissionInput): PaneAdmissionV
     // O dano nomeado (freeze da máquina) continua escrito no aviso.
     if (memory.freeMB !== null && memory.freeMB < limits.minFreeMB) {
       const message =
-        `Memória livre baixa (${Math.round(memory.freeMB)} MB < ${limits.minFreeMB} MB): ` +
+        `Memória livre baixa (${Math.round(memory.freeMB)} MB < ${limits.minFreeMB} MB` +
+        `${reserved ? `; já descontados ${reserved}` : ''}): ` +
         `abrir mais um pane pode levar a máquina ao swap. ${idleHint}`;
       if (limits.hardBlocks) return { ok: false, reason: 'memory', message };
       return { ok: true, warning: message };
@@ -832,16 +862,53 @@ export function getCachedSystemMemory(now = Date.now()): SystemMemorySample | nu
   return memoryCache?.sample ?? null;
 }
 
-/** Shared by agent and heavy-command admission; never mutates the raw sample. */
-export function getMemoryAfterAgentReservations(now = Date.now()): SystemMemorySample | null {
-  const memory = getCachedSystemMemory(now);
-  if (!memory || memory.freeMB === null) return memory;
+/** MB of agent panes the cached sample has not measured yet (starting or born after it). */
+function unmeasuredAgentReservationMB(): number {
   const census = readAgentMemoryCensus();
-  if (!census) return memory;
+  if (!census) return 0;
   // A cached MB cannot fund multiple children. Pending startup stays reserved
   // across refreshes until a sample starts after startup has completed.
   const unmeasured = Math.max(census.pending, census.live - (memoryCache?.allocatedAgents ?? census.live));
-  return { ...memory, freeMB: memory.freeMB - unmeasured * AGENT_PANE_FOOTPRINT_MB };
+  return unmeasured * AGENT_PANE_FOOTPRINT_MB;
+}
+
+/**
+ * Heavy-command admission's view (agent spawns read `getMemoryForAgentSpawn`);
+ * never mutates the raw sample. A pane the sample already measured is never
+ * debited again, whatever its real RSS: the kernel's available memory
+ * already counts it (3c89462bf9).
+ */
+export function getMemoryAfterAgentReservations(now = Date.now()): SystemMemorySample | null {
+  const memory = getCachedSystemMemory(now);
+  if (!memory || memory.freeMB === null) return memory;
+  const reservedMB = unmeasuredAgentReservationMB();
+  return reservedMB === 0 ? memory : { ...memory, freeMB: memory.freeMB - reservedMB };
+}
+
+/**
+ * A memória que um spawn de agente pode gastar AGORA — uma régua só para o
+ * gate (humano e worker automático), o orçamento do leque e `mainPressureNow`:
+ * a amostra menos os panes que ela ainda não mediu e menos os builds/testes
+ * com permit. O pool de heavy-command NÃO lê isto: ele parte de
+ * `getMemoryAfterAgentReservations` e soma a própria reserva ao `neededMB`;
+ * descontá-la também lá contaria cada build duas vezes.
+ */
+function readAgentSpawnMemory(now: number): {
+  readonly memory: SystemMemorySample | null;
+  readonly reservations: AgentSpawnReservations;
+} {
+  const memory = getCachedSystemMemory(now);
+  const reservations: AgentSpawnReservations = {
+    startingPanesMB: unmeasuredAgentReservationMB(),
+    heavyCommandsMB: heavyCommandMemoryReservation?.() ?? 0,
+  };
+  if (!memory || memory.freeMB === null) return { memory, reservations };
+  const freeMB = memory.freeMB - reservations.startingPanesMB - reservations.heavyCommandsMB;
+  return { memory: { ...memory, freeMB }, reservations };
+}
+
+export function getMemoryForAgentSpawn(now = Date.now()): SystemMemorySample | null {
+  return readAgentSpawnMemory(now).memory;
 }
 
 export function primeSystemMemoryCacheForTest(
@@ -894,19 +961,17 @@ export function admitAgentSpawnSync(
     } catch {
       idleCandidates = [];
     }
-    let memory = request.automaticWorker ? getMemoryAfterAgentReservations(now) : getCachedSystemMemory(now);
-    if (request.automaticWorker && memory && memory.freeMB !== null) {
-      // The inverse race: a heavy job may have reserved the same cached MB
-      // before this spawn. Its pool already debits itself, so only agent
-      // admission applies this additional reservation.
-      memory = { ...memory, freeMB: memory.freeMB - (heavyCommandMemoryReservation?.() ?? 0) };
-    }
+    // Same yardstick for every spawn: panes still starting and heavy jobs
+    // holding a permit already own part of the cached MB. Only the policy
+    // differs — a human spawn is warned, never refused unless hard blocks.
+    const { memory, reservations } = readAgentSpawnMemory(now);
     const verdict = evaluatePaneAdmission({
       liveAgentPanes,
       limits,
       memory,
       idleCandidates,
       automaticWorker: request.automaticWorker,
+      reservations,
     });
     if (verdict.ok) {
       notePaneSpawnAdmitted(now);
