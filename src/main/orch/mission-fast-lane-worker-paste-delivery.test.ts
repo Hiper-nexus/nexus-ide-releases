@@ -209,7 +209,9 @@ describe('Via Rápida first-wave — entrega do briefing por colagem para o work
         expect(brief.indexOf('</business-model>')).toBeLessThan(brief.indexOf('2 + 2'));
       }
     } finally {
-      fs.rmSync(root, { recursive: true, force: true });
+      // No Windows o repositório do fixture pode seguir com handle aberto
+      // (git/indexer) por um instante — retry absorve o EBUSY transitório.
+      fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   });
 

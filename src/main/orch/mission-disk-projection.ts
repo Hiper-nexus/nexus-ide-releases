@@ -29,6 +29,12 @@ import {
 
 const DIRECTORY_MODE = 0o700;
 const FILE_MODE = 0o600;
+// No Windows o fs não expõe modo POSIX — um arquivo normal reporta 0o666 e o
+// chmod 0o600 só mexe no atributo read-only. O fast-path por fingerprint vale
+// pela identidade do arquivo, então basta o modo que o NTFS realmente reporta.
+const WINDOWS_FILE_MODE = 0o666;
+const fileModeMatches = (mode: number): boolean =>
+  (mode & 0o777) === (process.platform === "win32" ? WINDOWS_FILE_MODE : FILE_MODE);
 const EVENT_LIMIT = 100;
 const ORPHAN_TEMP_MAX_AGE_MS = 5 * 60 * 1_000;
 const PROJECTION_TEMP_PATTERN =
@@ -98,7 +104,7 @@ function writeFileAtomicSecure(
   }
   if (
     existing &&
-    (existing.mode & 0o777) === FILE_MODE &&
+    fileModeMatches(existing.mode) &&
     publishedFingerprints.get(filePath) === fingerprint
   ) {
     return;

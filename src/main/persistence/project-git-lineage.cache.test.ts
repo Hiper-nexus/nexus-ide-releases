@@ -136,7 +136,9 @@ describe('git repository proof cache', () => {
   // H1: o store não pode gravar {fingerprint novo, prova antiga} quando o
   // disco muda no meio da coleta — a leitura seguinte serviria o origin
   // velho ao F-107 por até 5 minutos.
-  it('origin trocado DURANTE a coleta não vira cache podre (TOCTOU do store)', () => {
+  // O shim que dispara a corrida é um script `#!/bin/sh` no PATH — o Windows
+  // não executa shebang nem tem /bin/sh, então a corrida nunca acontece lá.
+  it.skipIf(process.platform === 'win32')('origin trocado DURANTE a coleta não vira cache podre (TOCTOU do store)', () => {
     git(root, 'remote', 'add', 'origin', 'https://example.invalid/before.git');
     // Shim na frente do PATH: quando a prova chega ao rev-list (depois de ler
     // o origin), troca a URL no disco e delega ao git real. A prova prependa

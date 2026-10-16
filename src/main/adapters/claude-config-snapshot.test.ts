@@ -38,7 +38,10 @@ describe('claude config snapshot (#18)', () => {
     expect(await readClaudeConfigSnapshotAsync(file)).toBe(first);
   });
 
-  it('sees a same-size rewrite with a restored mtime (cp -p, rsync, coarse clocks) (M1)', async () => {
+  // No Windows o stamp (dev/ino/size/mtimeNs/ctimeNs) não denuncia a troca:
+  // ctime é a data de criação no NTFS e nunca avança numa reescrita — não há
+  // contador de mudança exposto pelo fs.stat para detectar cp -p/rsync.
+  it.skipIf(process.platform === 'win32')('sees a same-size rewrite with a restored mtime (cp -p, rsync, coarse clocks) (M1)', async () => {
     const file = path.join(dir, '.claude.json');
     const pinned = new Date('2026-10-14T12:00:00Z');
     writeConfig(file, 'aaa@x.com', pinned);

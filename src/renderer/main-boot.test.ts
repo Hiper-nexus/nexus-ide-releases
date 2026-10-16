@@ -25,7 +25,8 @@ vi.mock('./runtime-gates', () => ({
 }));
 vi.mock('./styles/global.css', () => ({}));
 
-const mainTsx = fs.readFileSync(new URL('./main.tsx', import.meta.url), 'utf8');
+// O checkout pode vir com CRLF (autocrlf): normaliza antes dos indexOf com \n.
+const mainTsx = fs.readFileSync(new URL('./main.tsx', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const errorBoundaryTsx = fs.readFileSync(
   new URL('./components/ErrorBoundary.tsx', import.meta.url),
   'utf8',
