@@ -7,6 +7,7 @@ import {
   paneBirthClockKey,
   paneBirthDisplay,
   paneBirthElapsedMs,
+  peekPaneBirthElapsedMs,
 } from '../lib/pane-birth-display';
 import { useSessionStateStore } from '../state/session-state-store';
 import {
@@ -29,10 +30,15 @@ import { ProviderLogo } from './ProviderLogo';
  */
 export function PaneBirthOverlay({ pane }: { pane: PaneModel }) {
   const sessionState = useSessionStateStore((s) => s.paneStates.get(pane.id));
+  const birthKey = paneBirthClockKey(pane.id, pane.adapterId);
   const [sessionId, setSessionId] = useState<string | null>(() =>
     getPaneSessionId(pane.id),
   );
-  const [elapsedMs, setElapsedMs] = useState(0);
+  // Um remount parte do relógio da geração: uma tentativa que já passou dos
+  // 90 s volta vencida, sem um quadro de "Preparando agente…" no meio.
+  const [elapsedMs, setElapsedMs] = useState(() =>
+    sessionId ? 0 : peekPaneBirthElapsedMs(birthKey),
+  );
   const [failureReason, setFailureReason] = useState<string | null>(() =>
     peekPaneSpawnError(pane.id),
   );
@@ -60,14 +66,17 @@ export function PaneBirthOverlay({ pane }: { pane: PaneModel }) {
     failureReason,
   });
 
-  const birthKey = paneBirthClockKey(pane.id, pane.adapterId);
   // O relógio vive fora do mount: remount por troca de aba/layout continua o
-  // elapsed da geração, e concluir o nascimento (sessão, pane escondido ou
-  // falha) limpa a entrada para um respawn começar do zero.
-  const birthing = display !== null && !display.failed;
+  // elapsed da geração. Concluir o nascimento (sessão vinculada, pane escondido
+  // ou recusa do Main) limpa a entrada e zera o estado, para um respawn
+  // começar do zero. Estourar os 90 s NÃO conclui nada: a tentativa segue
+  // vencida se remontar, até uma dessas saídas.
+  const hidden = display === null;
+  const refused = Boolean(failureReason?.trim());
   useEffect(() => {
-    if (sessionId || !birthing) {
+    if (sessionId || hidden || refused) {
       clearPaneBirthElapsed(birthKey);
+      setElapsedMs(0);
       return undefined;
     }
     const elapsed = paneBirthElapsedMs(birthKey);
@@ -96,7 +105,7 @@ export function PaneBirthOverlay({ pane }: { pane: PaneModel }) {
     return () => {
       for (const timer of timers) clearTimeout(timer);
     };
-  }, [birthKey, sessionId, birthing]);
+  }, [birthKey, sessionId, hidden, refused]);
 
   if (!display) return null;
 

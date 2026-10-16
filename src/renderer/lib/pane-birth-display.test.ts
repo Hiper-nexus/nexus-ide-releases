@@ -7,6 +7,7 @@ import {
   paneBirthDisplay,
   paneBirthElapsedMs,
   paneBirthFailureReason,
+  peekPaneBirthElapsedMs,
 } from './pane-birth-display';
 
 const BASE = {
@@ -28,6 +29,15 @@ describe('pane birth clock', () => {
     // O "remount" é só outra leitura: o elapsed não volta ao zero.
     expect(paneBirthElapsedMs(key, 12_000)).toBe(11_000);
     expect(paneBirthElapsedMs(key, 13_000)).toBe(12_000);
+  });
+
+  it('peeks the elapsed without seeding the clock (safe to call while rendering)', () => {
+    expect(peekPaneBirthElapsedMs(key, 1_000)).toBe(0);
+    // O peek não semeou: a primeira leitura real é que começa o relógio.
+    expect(paneBirthElapsedMs(key, 2_000)).toBe(0);
+    expect(peekPaneBirthElapsedMs(key, 5_000)).toBe(3_000);
+    clearPaneBirthElapsed(key);
+    expect(peekPaneBirthElapsedMs(key, 99_000)).toBe(0);
   });
 
   it('starts a fresh cycle after clearPaneBirthElapsed', () => {

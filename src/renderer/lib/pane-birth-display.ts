@@ -22,8 +22,10 @@ export const PANE_BIRTH_FAILED_AFTER_MS = 90_000;
  * maximização) zerava o cronômetro de 12s/90s: um pane a 89s de cold start
  * voltava a prometer "Preparando agente…" como se tivesse acabado de nascer.
  * A entrada é limpa quando o nascimento conclui — sessão vinculada, pane
- * escondido ou falha declarada — então uma retomada/respawn começa ciclo
- * novo em vez de herdar o elapsed da tentativa anterior.
+ * escondido ou recusa do Main — então uma retomada/respawn começa ciclo
+ * novo em vez de herdar o elapsed da tentativa anterior. O prazo de 90 s
+ * estourado NÃO conclui o nascimento: a tentativa segue vencida até uma
+ * dessas saídas, inclusive se o componente remontar.
  */
 const paneBirthStarts = new Map<string, number>();
 
@@ -45,6 +47,16 @@ export function paneBirthElapsedMs(key: string, now = Date.now()): number {
   if (startedAt !== undefined) return Math.max(0, now - startedAt);
   paneBirthStarts.set(key, now);
   return 0;
+}
+
+/**
+ * Lê o elapsed da geração SEM semear o relógio (seguro no render): 0 enquanto
+ * nenhum nascimento começou. Um remount parte daqui, então uma tentativa que
+ * já passou do prazo volta vencida, sem um quadro de "Preparando agente…".
+ */
+export function peekPaneBirthElapsedMs(key: string, now = Date.now()): number {
+  const startedAt = paneBirthStarts.get(key);
+  return startedAt === undefined ? 0 : Math.max(0, now - startedAt);
 }
 
 /** Esquece o relógio desta geração — o próximo nascimento começa do zero. */
