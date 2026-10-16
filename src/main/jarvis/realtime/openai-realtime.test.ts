@@ -57,7 +57,15 @@ describe('buildOpenAISessionUpdate', () => {
           input: {
             format: { type: 'audio/pcm', rate: 24_000 },
             transcription: { model: 'gpt-realtime-whisper', language: 'pt' },
-            turn_detection: { type: 'semantic_vad' },
+            turn_detection: {
+              type: 'semantic_vad',
+              // Bug "Jarvis repetindo o que fala": com `create_response` no
+              // default (true) o VAD do servidor abria uma resposta para cada
+              // segmento que ouvisse — inclusive a cauda de eco da própria voz
+              // dela (o mic fica aberto em full-duplex) — e a MESMA pergunta
+              // ganhava duas respostas completas, com palavras diferentes.
+              create_response: false,
+            },
           },
           output: {
             // rate é obrigatório no output também (erro da API sem ele).
@@ -240,7 +248,34 @@ describe('OpenAIRealtimeProvider', () => {
     ]);
   });
 
-  it('keeps endUserTurn as a no-op while semantic VAD owns turn end', async () => {
+  it('answers once per spoken segment when the server VAD only detects speech', async () => {
+    const ws = fakeWs();
+    const provider = new OpenAIRealtimeProvider({
+      apiKey: 'sk-test',
+      instructions: 'You are Jarvis.',
+      wsFactory: () => ws,
+      setTimeoutFn: (() => 0) as unknown as typeof setTimeout,
+      clearTimeoutFn: () => {},
+    });
+    const connected = provider.connect();
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ type: 'session.updated' }));
+    await connected;
+
+    provider.sendAudioChunk(new Int16Array([1, 2, 3]));
+    ws.fire('message', JSON.stringify({ type: 'input_audio_buffer.speech_stopped' }));
+    provider.endUserTurn();
+
+    // O segmento já foi commitado pelo VAD do servidor: pede a resposta SEM
+    // recommitar (commit repetido devolveria erro de buffer vazio).
+    expect(ws.sent.map((item) => JSON.parse(item).type)).toEqual([
+      'session.update',
+      'input_audio_buffer.append',
+      'response.create',
+    ]);
+  });
+
+  it('never opens a second answer while the turn is already being answered', async () => {
     const ws = fakeWs();
     const provider = new OpenAIRealtimeProvider({
       apiKey: 'sk-test',
@@ -255,9 +290,73 @@ describe('OpenAIRealtimeProvider', () => {
     await connected;
 
     ws.fire('message', JSON.stringify({ type: 'input_audio_buffer.speech_stopped' }));
-    expect(ws.sent.map((item) => JSON.parse(item).type)).toEqual(['session.update']);
-
+    provider.sendAudioChunk(new Int16Array([1, 2, 3]));
     provider.endUserTurn();
+    // Cauda de eco / fim de captura repetido: o VAD do servidor volta a
+    // fechar o segmento enquanto a Jarvis ainda está falando.
+    ws.fire('message', JSON.stringify({ type: 'input_audio_buffer.speech_stopped' }));
+    provider.endUserTurn();
+    provider.endUserTurn();
+
+    expect(
+      ws.sent
+        .map((item) => JSON.parse(item).type)
+        .filter((type) => type === 'response.create'),
+    ).toHaveLength(1);
+  });
+
+  it('never reopens the previous segment for a late end-of-capture', async () => {
+    const ws = fakeWs();
+    const provider = new OpenAIRealtimeProvider({
+      apiKey: 'sk-test',
+      instructions: 'You are Jarvis.',
+      wsFactory: () => ws,
+      setTimeoutFn: (() => 0) as unknown as typeof setTimeout,
+      clearTimeoutFn: () => {},
+    });
+    const connected = provider.connect();
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ type: 'session.updated' }));
+    await connected;
+
+    provider.sendAudioChunk(new Int16Array([1, 2, 3]));
+    ws.fire('message', JSON.stringify({ type: 'input_audio_buffer.speech_stopped' }));
+    provider.endUserTurn();
+    ws.fire('message', JSON.stringify({ type: 'response.created', response: { id: 'r1' } }));
+    ws.fire('message', JSON.stringify({ type: 'response.done', response: { id: 'r1' } }));
+
+    // A limpeza de turno que os caminhos Classic também chamam DEPOIS de a
+    // Jarvis já ter respondido não tem fala nova para responder: sem esta
+    // trava ela respondia o segmento anterior — repetindo o que acabou de
+    // dizer, exatamente o bug relatado.
+    provider.endUserTurn();
+    provider.endUserTurn();
+
+    expect(
+      ws.sent
+        .map((item) => JSON.parse(item).type)
+        .filter((type) => type === 'response.create'),
+    ).toHaveLength(1);
+  });
+
+  it('stays silent when a capture ends without the operator ever speaking', async () => {
+    const ws = fakeWs();
+    const provider = new OpenAIRealtimeProvider({
+      apiKey: 'sk-test',
+      instructions: 'You are Jarvis.',
+      wsFactory: () => ws,
+      setTimeoutFn: (() => 0) as unknown as typeof setTimeout,
+      clearTimeoutFn: () => {},
+    });
+    const connected = provider.connect();
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ type: 'session.updated' }));
+    await connected;
+
+    // Nem áudio nosso, nem segmento fechado pelo servidor: um fim de captura
+    // vazio (ruído/eco ouvido pelo VAD) não pode virar pergunta.
+    provider.endUserTurn();
+
     expect(ws.sent.map((item) => JSON.parse(item).type)).toEqual(['session.update']);
   });
 

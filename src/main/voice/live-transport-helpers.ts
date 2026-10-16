@@ -21,7 +21,13 @@ export function isIgnorableRealtimeError(message: string): boolean {
     m.includes('cancellation failed') ||
     m.includes('no active response') ||
     m.includes('response_cancel_not_active') ||
-    m.includes('nothing to cancel')
+    m.includes('nothing to cancel') ||
+    // O fim de captura do operador pode commitar um buffer que o VAD do
+    // servidor já fechou (a parada local por silêncio é mais rápida que a
+    // volta do frame de VAD). O commit vazio que volta disso é inofensivo —
+    // quem responde já foi pedido em seguida.
+    m.includes('input_audio_buffer_commit_empty') ||
+    (m.includes('buffer too small') && m.includes('audio buffer'))
   );
 }
 

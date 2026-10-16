@@ -85,8 +85,16 @@ export const buildGrokSessionUpdate: SessionUpdateBuilder = (opts) => {
       voice: opts.voice,
       // `manual` desliga o VAD do servidor para o push-to-talk decidir o turno,
       // exatamente como na rota OpenAI.
-      turn_detection:
-        turnDetection === 'manual' ? null : { type: 'server_vad' },
+      //
+      // Só `type` aqui: a xAI não documenta `turn_detection.create_response`
+      // (docs.x.ai/docs/guides/voice/agent lista apenas `type` e
+      // `idle_timeout_ms`) e, na prática, ACEITA E ECOA o campo sem mudar nada —
+      // ela responde sozinha quando o operador para de falar. Mandar
+      // `create_response: false` daria a falsa impressão de que nós criamos a
+      // resposta do turno; quem cria nesta rota é o VAD do servidor, e é o que o
+      // provider recebe em `serverOwnsResponseCreation` para nunca abrir a
+      // segunda resposta (bug "Jarvis repetindo o que fala").
+      turn_detection: turnDetection === 'manual' ? null : { type: 'server_vad' },
       audio: {
         input: {
           format: {
@@ -127,5 +135,9 @@ export function createGrokRealtimeProvider(
     voice: options.voice ?? DEFAULT_GROK_VOICE,
     realtimeUrl: GROK_REALTIME_URL,
     sessionUpdateBuilder: buildGrokSessionUpdate,
+    // Nesta rota o VAD do servidor cria a resposta do turno (a xAI ignora o
+    // `create_response`): o fim de captura não pode criar outra, senão a mesma
+    // pergunta ganha duas respostas completas — a Jarvis repetindo o que fala.
+    serverOwnsResponseCreation: true,
   });
 }

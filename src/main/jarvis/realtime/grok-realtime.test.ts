@@ -7,6 +7,7 @@ import {
   grokTranscriptionKeyterms,
 } from './grok-realtime';
 import type { RealtimeWsInit, RealtimeWsLike } from './openai-realtime';
+import type { OpenAIRealtimeProvider } from './openai-realtime';
 import {
   DEFAULT_GROK_VOICE,
   DEFAULT_GROK_VOICE_MODEL,
@@ -30,6 +31,10 @@ describe('buildGrokSessionUpdate', () => {
     // O dialeto diverge da OpenAI exatamente aqui: lá a voz mora em
     // `audio.output.voice` e o VAD em `audio.input.turn_detection`.
     expect(session.voice).toBe('eve');
+    // Só `type`: a xAI não documenta `turn_detection.create_response` e, na
+    // prática, aceita e ecoa o campo sem mudar nada — ela responde sozinha
+    // quando o operador para de falar. Mandá-lo aqui daria a falsa impressão
+    // de que o fim de captura é quem cria a resposta do turno.
     expect(session.turn_detection).toEqual({ type: 'server_vad' });
     expect(session.instructions).toBe('oi');
   });
@@ -243,5 +248,82 @@ describe('createGrokRealtimeProvider', () => {
 
   it('GROK_VOICES é a lista publicada pela xAI, sem ids inventados', () => {
     expect([...GROK_VOICES].sort()).toEqual(['ara', 'eve', 'leo', 'rex', 'sal']);
+  });
+
+  type FakeGrokWs = RealtimeWsLike & {
+    sent: string[];
+    fire(event: 'open' | 'message' | 'close' | 'error', payload?: unknown): void;
+  };
+
+  function fakeGrokWs(): FakeGrokWs {
+    const listeners = new Map<string, Array<(payload?: unknown) => void>>();
+    return {
+      sent: [],
+      readyState: 1,
+      send(data: string) {
+        this.sent.push(data);
+      },
+      close: () => {},
+      on(event, cb) {
+        const list = listeners.get(event) ?? [];
+        list.push(cb);
+        listeners.set(event, list);
+      },
+      fire(event, payload) {
+        for (const cb of listeners.get(event) ?? []) cb(payload);
+      },
+    };
+  }
+
+  async function connectedGrokProvider(ws: FakeGrokWs): Promise<OpenAIRealtimeProvider> {
+    const provider = createGrokRealtimeProvider({
+      apiKey: 'xai-chave',
+      instructions: 'oi',
+      wsFactory: () => ws,
+      setTimeoutFn: (() => 0) as unknown as typeof setTimeout,
+      clearTimeoutFn: () => {},
+    });
+    const connected = provider.connect();
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ type: 'session.updated' }));
+    await connected;
+    return provider;
+  }
+
+  it('nunca abre a própria resposta no fim de captura — na xAI quem responde é o servidor', async () => {
+    const ws = fakeGrokWs();
+    const provider = await connectedGrokProvider(ws);
+
+    provider.sendAudioChunk(new Int16Array([1, 2, 3]));
+    ws.fire('message', JSON.stringify({ type: 'input_audio_buffer.speech_stopped' }));
+    provider.endUserTurn();
+    // Cauda de eco / limpeza de turno depois de a Jarvis já ter respondido.
+    provider.endUserTurn();
+
+    // Bug "Jarvis repetindo o que fala": aqui a xAI ignora o
+    // `turn_detection.create_response` e cria sozinha a resposta do segmento.
+    // Um `response.create` nosso era a SEGUNDA resposta completa ao mesmo
+    // pedido — por isso o provider entra com `serverOwnsResponseCreation: true`.
+    expect(
+      ws.sent
+        .map((item) => JSON.parse(item).type)
+        .filter((type) => type === 'response.create'),
+    ).toHaveLength(0);
+  });
+
+  it('ainda cria a resposta dos turnos que nós mesmos injetamos (texto/tool)', async () => {
+    const ws = fakeGrokWs();
+    const provider = await connectedGrokProvider(ws);
+    const types = (): string[] => ws.sent.map((item) => JSON.parse(item).type);
+
+    provider.sendText('bom dia');
+    expect(types()).toEqual([
+      'session.update',
+      'conversation.item.create',
+      'response.create',
+    ]);
+
+    provider.sendToolResult('call-1', 'ok');
+    expect(types().filter((type) => type === 'response.create')).toHaveLength(2);
   });
 });
