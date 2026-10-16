@@ -16,6 +16,7 @@ import {
   decisionBudgetChargeForUsage, getDecisionBudgetLedger, type DecisionBudgetLedger, type DecisionBudgetReservation,
 } from './decision-budget';
 import { DECISION_ENGINE_POLICY, planAutoDecision } from './decision-engine';
+import { isDecisionProviderBlocked, recordDecisionProviderFailure, recordDecisionProviderSuccess } from './decision-health';
 import { readDecisionQualityTable, type DecisionQualityTable } from './decision-quality';
 import { missionDecisionBudgetUsd } from '../../shared/decision-models';
 
@@ -86,10 +87,19 @@ async function callMember(
 }
 
 async function performEnsemble(
-  input: JudgeInput, deps: DecisionJudgeDeps, settings: DecisionSettings, members: DecisionRoute[],
+  input: JudgeInput, deps: DecisionJudgeDeps, settings: DecisionSettings, requested: DecisionRoute[],
   /** v2 em surface reversível: falha parcial devolve quem respondeu. Juntos (v1) nunca. */
   options: { partialFallback?: boolean } = {},
 ): Promise<JevResult | null> {
+  const live = requested.filter(member => !isDecisionProviderBlocked(member.provider));
+  if (live.length === 0) {
+    const blocked = requested[0];
+    return noAnswer(input, blocked ? { ...blocked, model: 'ensemble',
+      reason: blocked.policyVersion === DECISION_ENGINE_POLICY ? blocked.reason : 'ensemble' } : null,
+      'network', NO_REQUEST_USAGE);
+  }
+  if (live.length === 1) return performRoute(input, deps, settings, live[0]);
+  const members = live;
   // v2 guarda o porquê legível; v1 mantém o rótulo que a tela já reconhece.
   const lead = { ...members[0], model: 'ensemble',
     reason: members[0].policyVersion === DECISION_ENGINE_POLICY ? members[0].reason : 'ensemble' };
@@ -116,21 +126,27 @@ async function performEnsemble(
     // Each member settles before the owner journals; one rejected member must not lose its peers' spend.
     const results = await Promise.all(members.map(async (member, index) => {
       let reported: DecisionUsageReceipt | undefined;
+      let memberReason: JevNoAnswerReason | undefined;
       receipts[index] = { inputTokens: null, usd: null, requestCount: 0, durationMs: 0, usageIncomplete: true };
       try {
         const result = await callMember({ ...currentInput, surface: undefined,
           onUsage: receipt => { reported = receipt; receipts[index] = receipt; },
-          onNoAnswer: reason => { firstFailure ??= reason; },
+          onNoAnswer: reason => { memberReason = reason; firstFailure ??= reason; },
         }, deps, member, settings);
         if (result) {
+          recordDecisionProviderSuccess(member.provider);
           const receipt = decisionResultUsage({ ...result, route: member });
           receipts[index] = reported ?? { inputTokens: receipt.inputTokens, usd: receipt.usd,
             requestCount: receipt.requestCount ?? 1, durationMs: receipt.durationMs ?? (deps.now ?? (() => performance.now()))() - started,
             usageIncomplete: Boolean(receipt.usageIncomplete) };
+          return result;
         }
-        return result;
+        recordDecisionProviderFailure(member.provider, memberReason ?? 'client-error');
+        return null;
       } catch (error) {
-        firstFailure ??= failureReason(error, currentInput, deps.now ?? Date.now);
+        const reason = failureReason(error, currentInput, deps.now ?? Date.now);
+        firstFailure ??= reason;
+        recordDecisionProviderFailure(member.provider, reason);
         return null;
       }
     }));
@@ -258,7 +274,7 @@ async function performAutoDecision(
   const partialFallback = Boolean(input.surface && REVERSIBLE_ENSEMBLE_SURFACES.has(input.surface));
   return runReserved(input, ledger, reservation, tracked => chosen.members
     ? performEnsemble(tracked, deps, settings, chosen.members, { partialFallback })
-    : performRoute(tracked, deps, settings, chosen.route));
+    : performFailover(tracked, deps, settings, [chosen.route, ...(chosen.fallbacks ?? [])]));
 }
 
 async function performDecision(input: JudgeInput, deps: DecisionJudgeDeps): Promise<JevResult | null> {
@@ -287,9 +303,18 @@ async function performDecision(input: JudgeInput, deps: DecisionJudgeDeps): Prom
   return runReserved(input, ledger, account([route]), tracked => performRoute(tracked, deps, settings, route));
 }
 
-async function performRoute(
+interface RouteFailure { ok: false; reason: JevNoAnswerReason; usage?: DecisionUsageReceipt }
+type RouteExecution = { ok: true; result: JevResult } | RouteFailure;
+
+/**
+ * `now` grava o diário na hora (rota única ou último fallback).
+ * `later` engole o aviso: a cadeia só publica quando todo mundo falhou.
+ * O Jev com surface grava no próprio cliente; Clef e Luna gravam aqui.
+ */
+async function executeRoute(
   input: JudgeInput, deps: DecisionJudgeDeps, settings: DecisionSettings, route: DecisionRoute,
-): Promise<JevResult | null> {
+  report: 'now' | 'later',
+): Promise<RouteExecution> {
   const configuration = deps.getConfigurationKey ?? decisionConfigurationKey;
   const before = configuration();
   const started = (deps.now ?? (() => performance.now()))();
@@ -297,34 +322,106 @@ async function performRoute(
   const unsubscribe = onDecisionConfigurationChanged(() => revoked.abort());
   const currentInput = { ...input, signal: input.signal ? AbortSignal.any([input.signal, revoked.signal]) : revoked.signal };
   let failureUsage: DecisionUsageReceipt | undefined;
+  let capturedReason: JevNoAnswerReason | undefined;
   try {
-    if (currentInput.signal.aborted) return noAnswer(input, route, 'aborted', NO_REQUEST_USAGE);
-    const watched = { ...currentInput, onUsage: (receipt: DecisionUsageReceipt) => { failureUsage = receipt; },
-      onNoAnswer: (reason: JevNoAnswerReason) => { noAnswer(input, route, reason, failureUsage); } };
+    if (currentInput.signal.aborted) {
+      if (report === 'now') noAnswer(input, route, 'aborted', NO_REQUEST_USAGE);
+      return { ok: false, reason: 'aborted', usage: NO_REQUEST_USAGE };
+    }
+    const watched: JudgeInput = {
+      ...currentInput,
+      ...(report === 'later' ? { surface: undefined } : {}),
+      onUsage: receipt => {
+        failureUsage = receipt;
+        // F-1548: falha de Luna/Clef publica o recibo via noAnswer; só o Jev repassa direto.
+        if (report === 'now' && route.provider === 'jev') input.onUsage?.(receipt);
+      },
+      onNoAnswer: reason => {
+        capturedReason = reason;
+        if (report !== 'now') return;
+        if (route.provider === 'jev') {
+          try { input.onNoAnswer?.(reason); }
+          catch { console.warn('[decision-models] no-answer callback failed'); }
+          return;
+        }
+        noAnswer(input, route, reason, failureUsage);
+      },
+    };
     const connection = route.provider === 'clef' ? (deps.getClefConnection ?? (() => getClefConnection(settings)))() : undefined;
     const lunaKey = route.provider === 'luna' ? (deps.resolveLunaKey ?? resolveLunaApiKey)()?.trim() : undefined;
-    const result = route.provider === 'jev'
-      ? await deps.nativeJudge({ ...currentInput, audio: undefined, model: route.model })
-      : route.provider === 'luna'
-        ? lunaKey ? await judgeLuna(watched, lunaKey, { fetch: deps.fetch, now: deps.now })
-          : noAnswer(input, route, 'client-error', NO_REQUEST_USAGE)
-        : connection ? await judgeClef(watched, { ...connection, model: route.model as ClefConnection['model'] }, { fetch: deps.fetch, now: deps.now })
-          : noAnswer(input, route, 'client-error', NO_REQUEST_USAGE);
-    if (!result) return null;
-    const elapsed = (): number => result.durationMs ?? (deps.now ?? (() => performance.now()))() - started;
+    let result: JevResult | null;
+    if (route.provider === 'jev') result = await deps.nativeJudge({ ...watched, audio: undefined, model: route.model });
+    else if (route.provider === 'luna') {
+      if (!lunaKey) {
+        if (report === 'now') noAnswer(input, route, 'client-error', NO_REQUEST_USAGE);
+        return { ok: false, reason: 'client-error', usage: NO_REQUEST_USAGE };
+      }
+      result = await judgeLuna(watched, lunaKey, { fetch: deps.fetch, now: deps.now });
+    } else if (!connection) {
+      if (report === 'now') noAnswer(input, route, 'client-error', NO_REQUEST_USAGE);
+      return { ok: false, reason: 'client-error', usage: NO_REQUEST_USAGE };
+    } else {
+      result = await judgeClef(watched, { ...connection, model: route.model as ClefConnection['model'] }, { fetch: deps.fetch, now: deps.now });
+    }
+    if (!result) return { ok: false, reason: capturedReason ?? 'client-error', usage: failureUsage };
+    const elapsed = result.durationMs ?? (deps.now ?? (() => performance.now()))() - started;
     if (currentInput.signal.aborted || configuration() !== before) {
       const receipt = decisionResultUsage({ ...result, route });
-      return noAnswer(input, route, 'aborted', {
+      const usage: DecisionUsageReceipt = {
         inputTokens: receipt.inputTokens, usd: receipt.usd,
         requestCount: receipt.requestCount ?? result.requestCount ?? 1,
-        durationMs: receipt.durationMs ?? elapsed(), usageIncomplete: Boolean(receipt.usageIncomplete),
-      });
+        durationMs: receipt.durationMs ?? elapsed, usageIncomplete: Boolean(receipt.usageIncomplete),
+      };
+      if (report === 'now') noAnswer(input, route, 'aborted', usage);
+      return { ok: false, reason: 'aborted', usage };
     }
     const actualRoute = { ...route, model: result.model };
-    return { ...result, route: actualRoute, requestCount: result.requestCount ?? 1, durationMs: elapsed(),
-      ...(result.usageMissing ? {} : { estimatedUsd: decisionResultCostUsd({ ...result, route: actualRoute }) }) };
-  } catch (error) { return noAnswer(input, route, failureReason(error, currentInput, deps.now ?? Date.now), failureUsage); }
-  finally { unsubscribe(); }
+    return { ok: true, result: { ...result, route: actualRoute, requestCount: result.requestCount ?? 1, durationMs: elapsed,
+      ...(result.usageMissing ? {} : { estimatedUsd: decisionResultCostUsd({ ...result, route: actualRoute }) }) } };
+  } catch (error) {
+    const reason = failureReason(error, currentInput, deps.now ?? Date.now);
+    if (report === 'now') noAnswer(input, route, reason, failureUsage);
+    return { ok: false, reason, usage: failureUsage };
+  } finally { unsubscribe(); }
+}
+
+async function performRoute(
+  input: JudgeInput, deps: DecisionJudgeDeps, settings: DecisionSettings, route: DecisionRoute,
+): Promise<JevResult | null> {
+  if (isDecisionProviderBlocked(route.provider)) return noAnswer(input, route, 'network', NO_REQUEST_USAGE);
+  const execution = await executeRoute(input, deps, settings, route, 'now');
+  if (execution.ok) {
+    recordDecisionProviderSuccess(route.provider);
+    return execution.result;
+  }
+  recordDecisionProviderFailure(route.provider, execution.reason);
+  return null;
+}
+
+/** Primário, depois `fallbacks`. Abort e orçamento param a cadeia. Aberto não conta falha nova. */
+async function performFailover(
+  input: JudgeInput, deps: DecisionJudgeDeps, settings: DecisionSettings, routes: readonly DecisionRoute[],
+): Promise<JevResult | null> {
+  const open = routes.filter(route => !isDecisionProviderBlocked(route.provider));
+  if (!open.length) return noAnswer(input, routes[0] ?? null, 'network', NO_REQUEST_USAGE);
+  const last = open.length - 1;
+  for (let index = 0; index < last; index++) {
+    const route = open[index];
+    const execution = await executeRoute(input, deps, settings, route, 'later');
+    if (execution.ok) {
+      recordDecisionProviderSuccess(route.provider);
+      if (execution.result.usageReceipt) {
+        try { input.onUsage?.(execution.result.usageReceipt); }
+        catch { console.warn('[decision-models] usage callback failed'); }
+      }
+      return execution.result;
+    }
+    if (execution.reason === 'aborted' || execution.reason === 'budget') {
+      return noAnswer(input, route, execution.reason, execution.usage ?? NO_REQUEST_USAGE);
+    }
+    recordDecisionProviderFailure(route.provider, execution.reason);
+  }
+  return performRoute(input, deps, settings, open[last]);
 }
 
 /** Configuration and credential failures cannot escape the advisory decision boundary. */

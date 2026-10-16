@@ -1,10 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../persistence/settings-store', () => ({ getOrchSettings: () => ({}) }));
 vi.mock('../persistence/secrets-store', () => ({ getSecret: () => null, hasSecret: () => false, setSecret: () => ({ ok: true }), isSecureStorageAvailable: () => true }));
 vi.mock('../jev/jev-decision-log', () => ({ recordJevNoAnswer: vi.fn(() => 'id'), recordJevDecision: vi.fn(() => 'id') }));
 import { recordJevDecision, recordJevNoAnswer } from '../jev/jev-decision-log';
 
 import { judgeDecision } from './decision-judge';
+import { isDecisionProviderBlocked, recordDecisionProviderFailure, resetDecisionHealthForTesting } from './decision-health';
 import { bumpDecisionCredentialRevision } from './decision-revision';
 import type { DecisionSettings } from '../../shared/decision-models';
 
@@ -13,7 +14,15 @@ const input = { state: 'choose a tool', questions: { q: { type: 'noul' as const,
 const nativeResult = { model: 'jev-1.13.0', answers: { q: { type: 'noul' as const, noul: 0.8 } }, usage: { input_tokens: 100, output_tokens: 0 } };
 const connection = { accountId: settings.cloudflareAccountId, token: 'synthetic-token', model: 'clef' as const };
 
+function openJevBreaker(): void {
+  const now = Date.now();
+  recordDecisionProviderFailure('jev', 'timeout', now);
+  recordDecisionProviderFailure('jev', 'timeout', now + 1);
+  recordDecisionProviderFailure('jev', 'timeout', now + 2);
+}
+
 describe('common decision service', () => {
+  beforeEach(() => resetDecisionHealthForTesting());
   it.each(['auto', 'luna', 'together'] as const)('%s: ausência de rota publica zero antes da falha, sem duplicar o diário', async mode => {
     vi.mocked(recordJevNoAnswer).mockClear();
     const onUsage = vi.fn();
@@ -313,5 +322,112 @@ describe('common decision service', () => {
     expect(JSON.stringify(recorded)).not.toContain('private brief');
     expect(recorded?.ensemblePeers?.pick.jev).toBe(0.4);
     expect(recorded?.ensemblePeers?.pick.luna).toBeGreaterThan(0.4);
+  });
+
+  it('fails open at once when the Jev breaker is open on a pinned surface', async () => {
+    openJevBreaker();
+    vi.mocked(recordJevNoAnswer).mockClear();
+    const nativeJudge = vi.fn(async () => nativeResult);
+    const onNoAnswer = vi.fn();
+    const started = Date.now();
+    const result = await judgeDecision({ ...input, surface: 'dispatchGuard', onNoAnswer }, {
+      nativeJudge, getSettings: () => settings,
+      getAvailability: () => ({ jev: true, clef: true, luna: true }),
+      getConfigurationKey: () => 'stable', getClefConnection: () => connection,
+      resolveLunaKey: () => 'sk-luna-secret',
+    });
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(result).toBeNull();
+    expect(nativeJudge).not.toHaveBeenCalled();
+    expect(onNoAnswer).toHaveBeenCalledTimes(1);
+    expect(onNoAnswer).toHaveBeenCalledWith('network');
+    expect(recordJevNoAnswer).toHaveBeenCalledTimes(1);
+    expect(recordJevNoAnswer).toHaveBeenCalledWith(expect.objectContaining({
+      reason: 'network', surface: 'dispatchGuard',
+      usage: expect.objectContaining({ requestCount: 0 }),
+    }));
+    expect(isDecisionProviderBlocked('jev')).toBe(true);
+  });
+
+  it('fails over to clef-flash when Jev times out on a calibrated surface', async () => {
+    vi.mocked(recordJevNoAnswer).mockClear();
+    const onNoAnswer = vi.fn();
+    const nativeJudge = vi.fn(async (watched) => {
+      watched.onNoAnswer?.('timeout');
+      return null;
+    });
+    let model = '';
+    const result = await judgeDecision({ ...input, surface: 'taskRouting', onNoAnswer }, {
+      nativeJudge, getSettings: () => settings,
+      getAvailability: () => ({ jev: true, clef: true, luna: true }),
+      getConfigurationKey: () => 'stable', getClefConnection: () => connection,
+      resolveLunaKey: () => 'sk-luna-secret',
+      fetch: (async (_url, options) => {
+        const body = JSON.parse(String(options?.body));
+        model = body.model;
+        return Response.json({ success: true, result: { ...nativeResult, model: body.model,
+          answers: Object.fromEntries(Object.keys(body.questions).map(id => [id, { type: 'noul', noul: 0.7 }])) } });
+      }) as typeof fetch,
+    });
+    expect(nativeJudge).toHaveBeenCalledTimes(1);
+    expect(model).toBe('clef-flash');
+    expect(result?.route).toMatchObject({ provider: 'clef', model: 'clef-flash' });
+    expect(onNoAnswer).not.toHaveBeenCalled();
+    expect(recordJevNoAnswer).not.toHaveBeenCalled();
+  });
+
+  it('does not fail over after an abort on a calibrated surface', async () => {
+    vi.mocked(recordJevNoAnswer).mockClear();
+    const fetchMock = vi.fn(async () => Response.json({}));
+    const onNoAnswer = vi.fn();
+    const result = await judgeDecision({ ...input, surface: 'taskRouting', onNoAnswer }, {
+      nativeJudge: async (watched) => { watched.onNoAnswer?.('aborted'); return null; },
+      getSettings: () => settings, getAvailability: () => ({ jev: true, clef: true, luna: true }),
+      getConfigurationKey: () => 'stable', getClefConnection: () => connection,
+      fetch: fetchMock as typeof fetch,
+    });
+    expect(result).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(onNoAnswer).toHaveBeenCalledTimes(1);
+    expect(onNoAnswer).toHaveBeenCalledWith('aborted');
+    expect(recordJevNoAnswer).toHaveBeenCalledTimes(1);
+    expect(recordJevNoAnswer).toHaveBeenCalledWith(expect.objectContaining({ reason: 'aborted' }));
+  });
+
+  it('fails over to clef when Jev reports a client error on a calibrated surface', async () => {
+    const nativeJudge = vi.fn(async (watched) => { watched.onNoAnswer?.('client-error'); return null; });
+    let model = '';
+    const result = await judgeDecision({ ...input, surface: 'taskRouting' }, {
+      nativeJudge, getSettings: () => settings,
+      getAvailability: () => ({ jev: true, clef: true, luna: false }),
+      getConfigurationKey: () => 'stable', getClefConnection: () => connection,
+      fetch: (async (_url, options) => {
+        const body = JSON.parse(String(options?.body));
+        model = body.model;
+        return Response.json({ success: true, result: { ...nativeResult, model: body.model,
+          answers: Object.fromEntries(Object.keys(body.questions).map(id => [id, { type: 'noul', noul: 0.8 }])) } });
+      }) as typeof fetch,
+    });
+    expect(nativeJudge).toHaveBeenCalledTimes(1);
+    expect(model).toBe('clef-flash');
+    expect(result?.route?.provider).toBe('clef');
+  });
+
+  it('keeps a missing Clef connection on toolPick as client-error, without calling Jev', async () => {
+    vi.mocked(recordJevNoAnswer).mockClear();
+    const nativeJudge = vi.fn(async () => nativeResult);
+    const result = await judgeDecision(input, {
+      nativeJudge, getSettings: () => settings,
+      getAvailability: () => ({ jev: true, clef: true, luna: true }),
+      getConfigurationKey: () => 'stable', getClefConnection: () => undefined,
+      resolveLunaKey: () => 'sk-luna-secret',
+    });
+    expect(result).toBeNull();
+    expect(nativeJudge).not.toHaveBeenCalled();
+    expect(recordJevNoAnswer).toHaveBeenCalledTimes(1);
+    expect(recordJevNoAnswer).toHaveBeenCalledWith(expect.objectContaining({
+      reason: 'client-error', provider: 'clef',
+      usage: expect.objectContaining({ requestCount: 0 }),
+    }));
   });
 });

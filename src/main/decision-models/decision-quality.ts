@@ -46,6 +46,27 @@ export interface DecisionQualityEstimate {
   quality: number; source: 'local-evaluation' | 'blended' | 'prior'; p50Ms: number | null; surfaceCases: number;
 }
 
+/** Peso máximo da latência medida no placar. Não altera `decisionQuality()`. */
+export const LATENCY_SCORE_WEIGHT = 0.02;
+/** Amostra local ainda fina: a penalidade some ao chegar aqui. */
+export const THIN_SAMPLE_CASES = 12;
+export const THIN_SAMPLE_PENALTY = 0.01;
+
+/** 0 quando não há p50 ou orçamento. Sobe com p50/orçamento e trava no peso. */
+export function decisionLatencyPenalty(p50Ms: number | null, latencyBudgetMs: number): number {
+  if (p50Ms === null || latencyBudgetMs <= 0) return 0;
+  return LATENCY_SCORE_WEIGHT * Math.min(1, p50Ms / latencyBudgetMs);
+}
+
+/**
+ * Só medição local entre o piso e 12 casos. No piso é a penalidade cheia;
+ * prior e mistura não pagam — o número de `decisionQuality()` fica igual.
+ */
+export function decisionThinSamplePenalty(source: DecisionQualityEstimate['source'], surfaceCases: number): number {
+  if (source !== 'local-evaluation' || surfaceCases < MIN_QUALITY_CASES || surfaceCases >= THIN_SAMPLE_CASES) return 0;
+  return THIN_SAMPLE_PENALTY * (THIN_SAMPLE_CASES - surfaceCases) / (THIN_SAMPLE_CASES - MIN_QUALITY_CASES);
+}
+
 /**
  * Peso do prior da surface (em "casos") ao misturar com a medição global: um
  * conjunto pequeno de calibração não apaga sozinho o conhecimento da surface.

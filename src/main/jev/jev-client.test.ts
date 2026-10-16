@@ -6,11 +6,13 @@ import {
   capText,
   getJevStats,
   judge,
+  judgeJevTransport,
   redactSecrets,
   redactState,
   resetJevStatsForTesting,
   testJevConnection,
 } from './jev-client';
+import { recordDecisionProviderFailure, resetDecisionHealthForTesting } from '../decision-models/decision-health';
 import {
   configureJevDecisionLog,
   listJevDecisions,
@@ -36,6 +38,8 @@ const okBody = {
   answers: { q: { type: 'noul', noul: 0.9 } },
   usage: { input_tokens: 100, output_tokens: 5 },
 };
+
+beforeEach(() => resetDecisionHealthForTesting());
 
 describe('judge', () => {
   it.each([401, 403, 400])('does not fall back on authentication or unrelated request errors (HTTP %s)', async status => {
@@ -252,6 +256,28 @@ describe('judge — registro central de consultas sem resposta', () => {
   function noAnswerLines() {
     return listJevDecisions({ dir: logDir, includeNoAnswer: true, limit: 500 });
   }
+
+  it('disjuntor aberto falha sem fetch, sem aviso e com uma linha network de zero requisições', async () => {
+    const now = Date.now();
+    recordDecisionProviderFailure('jev', 'timeout', now);
+    recordDecisionProviderFailure('jev', 'timeout', now + 1);
+    recordDecisionProviderFailure('jev', 'timeout', now + 2);
+    const warn = vi.spyOn(console, 'warn');
+    const mockFetch = vi.fn(async () => jsonResponse(200, okBody));
+    const onNoAnswer = vi.fn();
+    const result = await judgeJevTransport(
+      { state: 'x', questions: { q: question }, surface: 'taskRouting', model: 'jev-1.13.0', onNoAnswer },
+      { fetch: mockFetch as unknown as typeof fetch, resolveKey: () => 'k' },
+    );
+    expect(result).toBeNull();
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(onNoAnswer).toHaveBeenCalledTimes(1);
+    expect(onNoAnswer).toHaveBeenCalledWith('network');
+    expect(warn).not.toHaveBeenCalled();
+    const lines = noAnswerLines();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ kind: 'no-answer', reason: 'network', surface: 'taskRouting', requestCount: 0, provider: 'jev' });
+  });
 
   it('timeout com surface grava uma linha no-answer com motivo timeout', async () => {
     const mockFetch = vi.fn(async () => {

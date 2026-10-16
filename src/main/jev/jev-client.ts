@@ -1,6 +1,7 @@
 import type { DecisionAudio, DecisionImage, DecisionRoute, DecisionUsageReceipt } from '../../shared/decision-models';
 import { redactState, redactQuestions } from '../decision-models/decision-redaction';
 import { judgeDecision, type DecisionJudgeDeps } from '../decision-models/decision-judge';
+import { isDecisionProviderBlocked } from '../decision-models/decision-health';
 import { getDecisionAvailability, getDecisionSettings } from '../decision-models/decision-availability';
 import { jevModel } from '../decision-models/decision-routing';
 import { JEV_RESPONSE_POLICY, validateDecisionResponse } from '../decision-models/decision-response';
@@ -226,7 +227,10 @@ export async function judgeJevTransport(
   let lastFailure = 'unknown error';
   let lastReason: JevNoAnswerReason = 'network';
   let requestCount = 0;
-  for (let attempt = 0; attempt < 2; attempt++) {
+  // Aberto: nenhuma tentativa. Quem registra a falha é o juiz; aqui só não espera.
+  const circuitOpen = isDecisionProviderBlocked('jev', now());
+  const attemptLimit = circuitOpen ? 0 : 2;
+  for (let attempt = 0; attempt < attemptLimit; attempt++) {
     try {
       input.signal?.throwIfAborted();
       requestCount += 1;
@@ -339,7 +343,7 @@ export async function judgeJevTransport(
       budgetChargedUsd: input.budgetChargeFor?.(usage),
     });
   }
-  warnRateLimited(lastFailure, now);
+  if (!circuitOpen) warnRateLimited(lastFailure, now);
   return null;
 }
 

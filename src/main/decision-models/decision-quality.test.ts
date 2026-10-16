@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DECISION_EVAL_MODELS, decisionEvalModelId, evaluateDecisionCases, type DecisionEvalCase } from './decision-evaluation';
 import { calibrateDecisionQuality } from './decision-calibration';
 import {
-  buildDecisionQualityTable, mergeDecisionQualityTables, PRIOR_WEIGHT_CASES, decisionQualityPrior, MIN_QUALITY_CASES, configureDecisionQualityClock, configureDecisionQualityTable, QUALITY_TABLE_TTL_MS, decisionQuality, readDecisionQualityTable, writeDecisionQualityTable, type DecisionQualityTable,
+  buildDecisionQualityTable, mergeDecisionQualityTables, PRIOR_WEIGHT_CASES, decisionQualityPrior, MIN_QUALITY_CASES, configureDecisionQualityClock, configureDecisionQualityTable, QUALITY_TABLE_TTL_MS, decisionQuality, readDecisionQualityTable, writeDecisionQualityTable,
+  decisionLatencyPenalty, decisionThinSamplePenalty, LATENCY_SCORE_WEIGHT, THIN_SAMPLE_CASES, THIN_SAMPLE_PENALTY, type DecisionQualityTable,
 } from './decision-quality';
 
 let dir: string; let file: string;
@@ -183,5 +184,22 @@ describe('F-1167: mistura global + prior e mescla de calibrações', () => {
     const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
     expect(saved.models.jev.generatedAt).toBe(2);
     expect(saved.models.luna).toMatchObject({ accuracy: 1, generatedAt: 1 });
+  });
+});
+
+describe('penalidade leve de latência e de amostra fina', () => {
+  it('latência nula não penaliza; a penalidade cresce com o p50 e trava no peso', () => {
+    expect(decisionLatencyPenalty(null, 5_000)).toBe(0);
+    expect(decisionLatencyPenalty(2_500, 5_000)).toBeCloseTo(LATENCY_SCORE_WEIGHT / 2, 10);
+    expect(decisionLatencyPenalty(9_000, 5_000)).toBe(LATENCY_SCORE_WEIGHT);
+    expect(decisionLatencyPenalty(100, 0)).toBe(0);
+  });
+
+  it('amostra fina pesa no piso de 5 casos e some aos 12; prior e mistura não pagam', () => {
+    expect(decisionThinSamplePenalty('local-evaluation', MIN_QUALITY_CASES)).toBe(THIN_SAMPLE_PENALTY);
+    expect(decisionThinSamplePenalty('local-evaluation', 10)).toBeCloseTo(THIN_SAMPLE_PENALTY * 2 / 7, 10);
+    expect(decisionThinSamplePenalty('local-evaluation', THIN_SAMPLE_CASES)).toBe(0);
+    expect(decisionThinSamplePenalty('prior', 5)).toBe(0);
+    expect(decisionThinSamplePenalty('blended', 5)).toBe(0);
   });
 });

@@ -44,6 +44,16 @@ export const REVERSIBLE_ENSEMBLE_SURFACES: ReadonlySet<JevDecisionSurface> = new
   'taskRouting', 'missionPick', 'catalogPick',
 ]);
 
+/**
+ * Surfaces whose consumers apply probability thresholds calibrated on Jev.
+ * In auto mode the planner keeps Jev primary when it is eligible; the other
+ * providers are fallbacks. Health is enforced by the judge, not the planner.
+ * Recovery advice is consultive and stays on the normal score.
+ */
+export const CALIBRATED_THRESHOLD_SURFACES: ReadonlySet<JevDecisionSurface> = new Set<JevDecisionSurface>([
+  'taskRouting', 'missionKickoff', 'completionCheck', 'reviewTriage',
+]);
+
 /** Juntos: rótulos ficam no Jev. A imagem do navegador é outra chamada. */
 const LABEL_SURFACES: ReadonlySet<JevDecisionSurface> = new Set<JevDecisionSurface>([
   'computerTool', 'browserTool',
