@@ -8,19 +8,18 @@ export function DecisionModeControls({ settings, busy, onChange }: {
   const recipients = visionRecipientsForMode(settings.mode);
   const authorized = (['clef', 'luna'] as VisionRecipient[]).filter(recipient => hasVisionRecipientConsent(settings, recipient));
   const missing = recipients.filter(recipient => !authorized.includes(recipient));
-  const visualEnabled = settings.mode === 'auto' ? authorized.length > 0 : recipients.length > 0 && missing.length === 0;
+  // Somente Jev usa a rota de imagem do Automático: basta um destinatário autorizado.
+  const autoVision = settings.mode === 'auto' || settings.mode === 'jev';
+  const visualEnabled = autoVision ? authorized.length > 0 : recipients.length > 0 && missing.length === 0;
   // Áudio só existe com Clef-omni numa rota que aceita Cloudflare; fora disso o schema já derruba a autorização.
   const audioAvailable = settings.clefModel === CLEF_AUDIO_MODEL && settings.mode !== 'jev' && settings.mode !== 'luna';
-  const additionalConsent = settings.mode === 'auto' && visualEnabled && missing.length
+  const additionalConsent = autoVision && visualEnabled && missing.length
     ? `Autorizar também a ${missing[0] === 'luna' ? 'OpenAI' : 'Cloudflare'}` : undefined;
   return <>
     <div className="settings-form-grid">
       <label className="settings-field">Escolha do modelo
         <select className="settings-input" aria-label="Escolha do modelo" value={settings.mode} disabled={busy}
-          onChange={event => {
-            const mode = event.target.value as DecisionSettings['mode'];
-            onChange({ mode, ...(mode === 'jev' ? { visionEnabled: false, visionConsent: { version: 1, recipients: [] } } : {}) });
-          }}>
+          onChange={event => onChange({ mode: event.target.value as DecisionSettings['mode'] })}>
           <option value="auto">Automático</option><option value="jev">Somente Jev</option><option value="clef">Somente Clef</option>
           <option value="luna">Somente Luna (beta)</option>
           <option value="together">Luna junto com Jev e Clef</option>
@@ -57,6 +56,8 @@ export function DecisionModeControls({ settings, busy, onChange }: {
       {' '}A guarda de despacho, a revisão de handoff, a memória e os pilotos de navegador e desktop continuam só no Jev.</p>}
     {settings.mode === 'clef' && <p className="settings-field__note">Em Somente Clef, o texto de estados de panes, saídas de terminal, pedidos e candidatos de ferramentas pode ser enviado à Cloudflare.
       {' '}A guarda de despacho, a revisão de handoff, a memória e os pilotos de navegador e desktop ficam sem rota e sem julgamento do Jev.</p>}
+    {settings.mode === 'jev' && <p className="settings-field__note">Em Somente Jev, todas as decisões de texto ficam no Jev.
+      {' '}Com a análise de imagens ligada, só o julgamento visual do navegador vai ao Clef ou, sem a Cloudflare, à Luna.</p>}
     {(settings.mode === 'auto' || settings.mode === 'luna') && <p className="settings-field__note">A Luna (beta) é a Decisions API da OpenAI, modelo gpt-6-luna. No Automático ela só entra quando falta o provedor preferido.
       {' '}Em Somente Luna, o texto redigido vai à OpenAI, inclusive a guarda de despacho, a revisão de handoff, a memória e os pilotos. Sem a chave OpenAI nada disso cai no Jev.</p>}
     {settings.mode === 'together' && <p className="settings-field__note">Antes de ligar Juntos: com as três credenciais, o texto de segurança de dispatchGuard, handoffReview e memoryDistill também vai para o Clef.
@@ -66,8 +67,8 @@ export function DecisionModeControls({ settings, busy, onChange }: {
       Envio de imagens autorizado para {authorized.map(recipient => recipient === 'clef' ? 'Cloudflare' : 'OpenAI').join(' e ')}.
       {!visualEnabled && ' O modo escolhido precisa de uma nova autorização antes de enviar capturas.'}
     </p>}
-    <VisionConsentToggle enabled={visualEnabled} additionalConsent={additionalConsent} disabled={busy || settings.mode === 'jev'}
-      audience={settings.mode === 'luna' ? 'luna' : settings.mode === 'together' ? 'together' : settings.mode === 'auto' ? 'auto' : 'clef'}
+    <VisionConsentToggle enabled={visualEnabled} additionalConsent={additionalConsent} disabled={busy}
+      audience={settings.mode === 'luna' ? 'luna' : settings.mode === 'together' ? 'together' : autoVision ? 'auto' : 'clef'}
       onChange={visionEnabled => onChange({ visionEnabled, visionConsent: { version: 1,
         recipients: visionEnabled ? [...new Set([...authorized, ...recipients])] : [],
       } })} />

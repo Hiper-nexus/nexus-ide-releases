@@ -44,7 +44,8 @@ export const decisionSettingsSchema = z.object({
    */
   missionBudgetUsd: z.number().finite().min(0).max(MAX_MISSION_DECISION_BUDGET_USD).optional().catch(undefined),
 }).transform(settings => {
-  const vision = settings.mode === 'jev' || !settings.visionEnabled ? { ...settings, visionEnabled: false,
+  // Somente Jev mantém a análise de imagens: o texto fica no Jev e só a captura do navegador vai ao Clef/Luna autorizado.
+  const vision = !settings.visionEnabled ? { ...settings, visionEnabled: false,
     ...(settings.visionConsent ? { visionConsent: { version: 1 as const, recipients: [] } } : {}),
   } : settings;
   // Sem rota Cloudflare ou sem Clef-omni o áudio não tem destino: a autorização cai e não volta sozinha.
@@ -65,11 +66,16 @@ export type DecisionSettings = z.infer<typeof decisionSettingsSchema>;
 export type DecisionMode = DecisionSettings['mode'];
 export type VisionRecipient = 'clef' | 'luna';
 
-/** Legacy consent authorizes Cloudflare only, regardless of a later mode/key change. */
+/**
+ * Legacy consent authorizes Cloudflare only, regardless of a later mode/key change.
+ * Somente Jev nunca enviou imagem: um arquivo antigo com visionEnabled e sem registro
+ * de consentimento não passa a enviar sem uma autorização nova.
+ */
 export function hasVisionRecipientConsent(settings: DecisionSettings, recipient: VisionRecipient): boolean {
-  if (!settings.visionEnabled || settings.mode === 'jev') return false;
+  if (!settings.visionEnabled) return false;
   return settings.visionConsent
-    ? settings.visionConsent.version === 1 && settings.visionConsent.recipients.includes(recipient) : recipient === 'clef';
+    ? settings.visionConsent.version === 1 && settings.visionConsent.recipients.includes(recipient)
+    : recipient === 'clef' && settings.mode !== 'jev';
 }
 
 /** Áudio sai só com Clef-omni, numa rota que aceita Cloudflare e com a autorização versionada. */
@@ -78,8 +84,9 @@ export function hasAudioRecipientConsent(settings: DecisionSettings, recipient: 
   return settings.audioConsent?.version === 1 && settings.audioConsent.recipients.includes(recipient);
 }
 
+/** Somente Jev decide texto; o julgamento visual do navegador segue a rota de imagem do Automático. */
 export function visionRecipientsForMode(mode: DecisionMode): VisionRecipient[] {
-  return mode === 'jev' ? [] : mode === 'clef' ? ['clef'] : mode === 'luna' ? ['luna'] : ['clef', 'luna'];
+  return mode === 'clef' ? ['clef'] : mode === 'luna' ? ['luna'] : ['clef', 'luna'];
 }
 
 /** Orçamento efetivo da missão: 0, ausente ou inválido vira o padrão. */

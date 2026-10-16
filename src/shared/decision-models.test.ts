@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decisionSettingsSchema, hasAudioRecipientConsent, hasVisionRecipientConsent, testDecisionModelRequestSchema } from './decision-models';
+import { decisionSettingsSchema, hasAudioRecipientConsent, hasVisionRecipientConsent, testDecisionModelRequestSchema, visionRecipientsForMode } from './decision-models';
 import { orchSettingsSchema } from './settings-types';
 
 describe('decision model configuration', () => {
@@ -20,30 +20,39 @@ describe('decision model configuration', () => {
     expect(result.decisionModels).toMatchObject({ mode: 'auto', visionEnabled: false });
   });
 
-  it('drops the image-egress consent as soon as the mode can no longer send images', () => {
+  it('keeps image analysis in every mode and drops the consent only when it is turned off', () => {
     const account = '0123456789abcdef0123456789abcdef';
-    for (const mode of ['auto', 'clef'] as const) {
+    for (const mode of ['auto', 'clef', 'jev', 'luna', 'together'] as const) {
       expect(orchSettingsSchema.parse({ decisionModels: { mode, cloudflareAccountId: account, visionEnabled: true } }).decisionModels.visionEnabled).toBe(true);
     }
-    const jev = orchSettingsSchema.parse({ decisionModels: { mode: 'jev', cloudflareAccountId: account, visionEnabled: true } });
-    expect(jev.decisionModels.visionEnabled).toBe(false);
-    // Coming back to automatic never resurrects the old consent: it is not stored anywhere.
-    expect(orchSettingsSchema.parse({ decisionModels: { ...jev.decisionModels, mode: 'auto' } }).decisionModels.visionEnabled).toBe(false);
-    expect(orchSettingsSchema.parse({ decisionModels: { mode: 'luna', visionEnabled: true } }).decisionModels.visionEnabled).toBe(true);
-    expect(orchSettingsSchema.parse({ decisionModels: { mode: 'together', visionEnabled: true } }).decisionModels.visionEnabled).toBe(true);
+    const off = orchSettingsSchema.parse({ decisionModels: { mode: 'auto', cloudflareAccountId: account, visionEnabled: false,
+      visionConsent: { version: 1, recipients: ['clef', 'luna'] } } });
+    expect(off.decisionModels.visionConsent).toEqual({ version: 1, recipients: [] });
+    // Turning it back on never resurrects the old consent: it is not stored anywhere.
+    expect(hasVisionRecipientConsent({ ...off.decisionModels, visionEnabled: true }, 'clef')).toBe(false);
   });
 
-  it('requires explicit recipient-specific consent and clears it when Jev is selected', () => {
+  it('requires explicit recipient-specific consent, also in Somente Jev', () => {
     const old = decisionSettingsSchema.parse({ mode: 'auto', visionEnabled: true });
     expect(hasVisionRecipientConsent(old, 'clef')).toBe(true);
     expect(hasVisionRecipientConsent(old, 'luna')).toBe(false);
     const saved = decisionSettingsSchema.parse({ ...old, visionConsent: { version: 1, recipients: ['luna'] } });
     expect(hasVisionRecipientConsent(saved, 'luna')).toBe(true);
     expect(hasVisionRecipientConsent(saved, 'clef')).toBe(false);
-    const optedOut = decisionSettingsSchema.parse({ ...saved, mode: 'jev' });
-    expect(hasVisionRecipientConsent({ ...optedOut, mode: 'auto', visionEnabled: true }, 'luna')).toBe(false);
+    const jev = decisionSettingsSchema.parse({ ...saved, mode: 'jev' });
+    expect(hasVisionRecipientConsent(jev, 'luna')).toBe(true);
+    expect(hasVisionRecipientConsent(jev, 'clef')).toBe(false);
+    // Somente Jev nunca enviou imagem: o consentimento legado (sem registro) não vale nele.
+    expect(hasVisionRecipientConsent(decisionSettingsSchema.parse({ mode: 'jev', visionEnabled: true }), 'clef')).toBe(false);
     const disabled = decisionSettingsSchema.parse({ ...saved, visionEnabled: false });
     expect(hasVisionRecipientConsent({ ...disabled, visionEnabled: true }, 'luna')).toBe(false);
+  });
+
+  it('offers Somente Jev the same image recipients as Automatic', () => {
+    expect(visionRecipientsForMode('jev')).toEqual(['clef', 'luna']);
+    expect(visionRecipientsForMode('auto')).toEqual(['clef', 'luna']);
+    expect(visionRecipientsForMode('clef')).toEqual(['clef']);
+    expect(visionRecipientsForMode('luna')).toEqual(['luna']);
   });
 
   it('accepts clef-omni as a variant while keeping existing values and the default unchanged', () => {

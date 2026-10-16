@@ -57,8 +57,11 @@ production tolerance, measured against the real API).
 
 What can leave the machine for Cloudflare, by mode:
 
-- **Somente Jev:** nothing. `visionEnabled` is forced off in this mode, so
-  returning to Automatic never resurrects an old image consent.
+- **Somente Jev:** no text. Every text decision stays on Jev. With image
+  analysis switched on, only the masked `nexus_browser_judge_visual` capture
+  follows the Automatic image route (Clef, then Luna) to a recipient recorded in
+  `visionConsent`; the legacy unversioned Cloudflare consent does not count in
+  this mode, and a Clef or Luna vault is read only for a consented recipient.
 - **Automatic / Somente Clef (text):** the redacted state of pane screens,
   terminal output, requests and tool candidates (`paneState`, `terminalTriage`,
   `intake`, `taskRouting`, `delegation`, `toolPick`, `rank`, `researchTriage`,
@@ -114,8 +117,9 @@ What can leave the machine for Cloudflare, by mode:
   and/or `luna` (OpenAI). An absent field is legacy Cloudflare-only consent;
   `visionEnabled: true` alone never grants OpenAI pixels. Upgrade, credential
   fallback and mode changes do not add a recipient. The settings UI asks for
-  explicit confirmation to add one; turning vision off or selecting Jev
-  clears recipient grants. Text decisions do not use pixel consent.
+  explicit confirmation to add one; turning vision off clears recipient grants,
+  so switching it back on never resurrects them. Text decisions do not use pixel
+  consent.
 - **Images:** only `nexus_browser_judge_visual`, with the operator's explicit
   opt-in (a fresh confirmation each time it is switched on). Somente Luna names
   OpenAI in that confirmation; Automatic names Cloudflare and, as fallback, OpenAI.
@@ -464,8 +468,8 @@ de conta. Conta sem linha própria não recebe a escolha de outra. Livro vazio
 reivindica a projeção uma vez, para o primeiro login. Logout volta a projeção
 ao padrão Jev e não apaga as outras linhas. Sem conta (antes do login) a
 projeção legada continua valendo para o operador desta máquina. O schema
-continua desligando visão em Somente Jev; Somente Luna e Juntos podem manter o
-consentimento. Carregar uma cópia antiga de settings.json não reativa
+só derruba o consentimento visual quando a análise de imagens é desligada; todos
+os modos (Somente Jev incluído) podem manter o consentimento registrado. Carregar uma cópia antiga de settings.json não reativa
 consentimento. Migração só cria o arquivo ausente
 com uma seção legada validada; arquivo próprio válido prevalece sobre a cópia
 de compatibilidade em settings.json. Escritas de áudio, tema e demais opções

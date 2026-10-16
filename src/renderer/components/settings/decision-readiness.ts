@@ -51,7 +51,7 @@ export function decisionNotices(status: DecisionModelStatus): DecisionNotice[] {
   }
   const clefVision = clefReady && hasVisionRecipientConsent(status.settings, 'clef');
   const lunaVision = lunaReady && hasVisionRecipientConsent(status.settings, 'luna');
-  const visionReady = mode === 'luna' ? lunaVision : mode === 'together' ? clefVision && lunaVision : mode === 'auto' ? clefVision || lunaVision : clefVision;
+  const visionReady = mode === 'luna' ? lunaVision : mode === 'together' ? clefVision && lunaVision : mode === 'auto' || mode === 'jev' ? clefVision || lunaVision : clefVision;
   if (visionEnabled && !visionReady) {
     notices.push({ id: 'vision-not-ready', tone: 'warn', text: 'A análise de imagens está ligada, mas falta um provedor de visão autorizado e pronto: nenhuma captura é enviada.' });
   }

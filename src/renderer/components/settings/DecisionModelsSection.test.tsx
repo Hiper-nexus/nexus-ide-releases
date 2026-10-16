@@ -241,6 +241,30 @@ describe('complementary decision model settings', () => {
     expect(host.querySelector('[aria-label="Confirmar envio de imagens"]')).toBeNull();
   });
 
+  it('lets Somente Jev turn on browser image analysis with the Automatic consent, keeping text on Jev', async () => {
+    status = { ...status, hasStoredKey: true, isReady: true, lunaReady: true };
+    await mount();
+    expect(host.textContent).toContain('todas as decisões de texto ficam no Jev');
+    const toggle = () => host.querySelector<HTMLInputElement>('input[aria-label="Analisar imagens com Clef"]')!;
+    expect(toggle().disabled).toBe(false);
+    await act(async () => { toggle().click(); });
+    expect(orchSet()).not.toHaveBeenCalled();
+    expect(host.querySelector('[aria-label="Confirmar envio de imagens"]')?.textContent).toContain('OpenAI');
+    await act(async () => { button('Ativar análise de imagens').click(); });
+    expect(status.settings).toMatchObject({ mode: 'jev', visionEnabled: true, visionConsent: { version: 1, recipients: ['clef', 'luna'] } });
+    expect(toggle().checked).toBe(true);
+    expect(notices()).not.toContain('falta um provedor de visão');
+  });
+
+  it('keeps the image consent when Automatic switches to Somente Jev', async () => {
+    status = { ...status, settings: { ...status.settings, mode: 'auto', visionEnabled: true, visionConsent: { version: 1, recipients: ['clef'] } },
+      hasStoredKey: true, isReady: true };
+    await mount();
+    await act(async () => { choose('Escolha do modelo', 'jev'); });
+    expect(status.settings).toMatchObject({ mode: 'jev', visionEnabled: true, visionConsent: { version: 1, recipients: ['clef'] } });
+    expect(host.querySelector<HTMLInputElement>('input[aria-label="Analisar imagens com Clef"]')!.checked).toBe(true);
+  });
+
   it('says Somente Clef leaves the safeguards without a Jev judgment, and Juntos sends that security text to Clef', async () => {
     status = { ...status, settings: { ...status.settings, mode: 'clef' }, isReady: true, hasStoredKey: true };
     await mount();

@@ -1,4 +1,4 @@
-import { CLEF_MODELS, hasVisionRecipientConsent, LUNA_DECISION_MODEL, type DecisionProvider, type DecisionRoute, type DecisionSettings, type ClefModel } from '../../shared/decision-models';
+import { CLEF_MODELS, hasVisionRecipientConsent, LUNA_DECISION_MODEL, visionRecipientsForMode, type DecisionProvider, type DecisionRoute, type DecisionSettings, type ClefModel } from '../../shared/decision-models';
 import type { JudgeInput } from '../jev/jev-client';
 import type { JevDecisionSurface } from '../jev/jev-decision-log';
 
@@ -68,13 +68,24 @@ function route(provider: DecisionProvider, model: string, evidence: DecisionRout
   return { provider, model, evidence, reason, policyVersion: 'jev-clef-luna-v1' };
 }
 
+export type BrowserVisualBlocker = 'vision_disabled' | 'vision_consent_missing' | 'vision_provider_not_ready';
+
+/**
+ * Why the browser capture cannot leave the machine, or null when it can.
+ * Juntos needs both recipients; every other mode (Somente Jev included) needs one
+ * consented recipient of its image route with a ready credential.
+ */
+export function browserVisualBlocker(settings: DecisionSettings, available: DecisionAvailability): BrowserVisualBlocker | null {
+  if (!settings.visionEnabled) return 'vision_disabled';
+  const consented = visionRecipientsForMode(settings.mode).filter(recipient => hasVisionRecipientConsent(settings, recipient));
+  const ready = consented.filter(recipient => recipient === 'clef' ? available.clef : lunaReady(available));
+  const needed = settings.mode === 'together' ? 2 : 1;
+  return consented.length < needed ? 'vision_consent_missing' : ready.length < needed ? 'vision_provider_not_ready' : null;
+}
+
 /** Vision can leave the machine only for browserTool, and only to a provider that accepts images. */
 export function canRouteBrowserVisual(settings: DecisionSettings, available: DecisionAvailability): boolean {
-  if (!settings.visionEnabled || settings.mode === 'jev') return false;
-  if (settings.mode === 'luna') return hasVisionRecipientConsent(settings, 'luna') && lunaReady(available);
-  if (settings.mode === 'together') return hasVisionRecipientConsent(settings, 'clef') && hasVisionRecipientConsent(settings, 'luna') && available.clef && lunaReady(available);
-  if (settings.mode === 'clef') return hasVisionRecipientConsent(settings, 'clef') && available.clef;
-  return (hasVisionRecipientConsent(settings, 'clef') && available.clef) || (hasVisionRecipientConsent(settings, 'luna') && lunaReady(available));
+  return browserVisualBlocker(settings, available) === null;
 }
 
 /**
@@ -140,7 +151,8 @@ export function resolveDecisionRoute(input: RouteInput, settings: DecisionSettin
   if (input.images?.length) {
     // Imagem não contorna a fixação no Jev: só o julgamento visual do navegador sai da máquina.
     if (input.surface && input.surface !== 'browserTool' && JEV_PINNED_SURFACES.has(input.surface)) return null;
-    if (!settings.visionEnabled || settings.mode === 'jev' || pinned === 'jev') return null;
+    // Somente Jev decide o texto; só a imagem do navegador segue a rota visual do Automático (Clef, depois Luna).
+    if (!settings.visionEnabled || pinned === 'jev' || (settings.mode === 'jev' && input.surface !== 'browserTool')) return null;
     if (pinned === 'luna') {
       if (!hasVisionRecipientConsent(settings, 'luna') || !lunaReady(available)) return null;
       return route('luna', LUNA_DECISION_MODEL, 'capability', settings.mode === 'auto' ? 'explicit-model' : 'vision');

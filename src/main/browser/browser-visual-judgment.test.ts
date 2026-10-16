@@ -37,7 +37,21 @@ describe('scoped visual judgments', () => {
     }
     const deps = fixture(); deps.capture = vi.fn(async () => { throw new Error('private page detail'); });
     const generic = await judgeBrowserVisual({ paneId: 'pane', goal: 'Verify success', scope }, deps);
-    expect(generic).toEqual({ status: 'unavailable' });
+    expect(generic).toEqual({ status: 'unavailable', reason: 'judgment_failed' });
+  });
+  it('never answers a silent unavailable: names the missing setting before any capture', async () => {
+    for (const blocker of ['vision_disabled', 'vision_consent_missing', 'vision_provider_not_ready'] as const) {
+      const deps = fixture(); deps.available = () => false; deps.blocker = () => blocker;
+      const result = await judgeBrowserVisual({ paneId: 'pane', goal: 'Verify success', scope }, deps);
+      expect(result).toMatchObject({ status: 'unavailable', reason: blocker, message: expect.stringContaining('Nada foi capturado') });
+      expect(deps.capture).not.toHaveBeenCalled();
+    }
+    const deps = fixture(); deps.available = () => false;
+    expect(await judgeBrowserVisual({ paneId: 'pane', goal: 'Verify success', scope }, deps)).toEqual({ status: 'unavailable', reason: 'vision_unavailable' });
+    const controller = new AbortController(); controller.abort();
+    expect(await judgeBrowserVisual({ paneId: 'pane', goal: 'Verify success', scope, signal: controller.signal }, fixture())).toEqual({ status: 'unavailable', reason: 'aborted' });
+    const silent = fixture(); silent.judge = vi.fn(async () => null);
+    expect(await judgeBrowserVisual({ paneId: 'pane', goal: 'Verify success', scope }, silent)).toEqual({ status: 'unavailable', reason: 'provider_unavailable' });
   });
   it('stops egress after navigation, configuration change or abort and discards stale answers', async () => {
     for (const cause of ['navigation', 'configuration', 'abort']) {

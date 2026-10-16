@@ -97,7 +97,7 @@ it('keeps explicit Jev vision opt-out even if the compatibility settings are rep
   const wanted = { mode: 'auto', cloudflareAccountId: '0123456789abcdef0123456789abcdef', clefModel: 'clef', visionEnabled: true };
   const set = handlers.get(SETTINGS_CHANNELS.orchSet)!;
   set(null, { decisionModels: wanted });
-  set(null, { decisionModels: { ...wanted, mode: 'jev' } });
+  set(null, { decisionModels: { ...wanted, mode: 'jev', visionEnabled: false } });
   fs.writeFileSync(resolveSettingsFile(), JSON.stringify({ orch: { decisionModels: wanted } }));
   vi.resetModules();
   const reloaded = await import('./settings-store');

@@ -18,6 +18,7 @@ vi.mock('node:fs', async importOriginal => {
 import { bindTrustedMainWindow } from '../security/trusted-ipc';
 import { SETTINGS_CHANNELS } from '../../shared/settings-types';
 import { decisionCredentialRevision } from '../decision-models/decision-revision';
+import { hasVisionRecipientConsent } from '../../shared/decision-models';
 import { getOrchSettings, registerSettingsIpc, replaceOrchSettings } from './settings-store';
 
 const ACCOUNT = '0123456789abcdef0123456789abcdef';
@@ -54,11 +55,14 @@ describe('decision configuration revision (in-flight and cache authority)', () =
     expect(decisionCredentialRevision()).toBe(before + 1);
   });
 
-  it('persists no image consent once the mode can no longer send images', () => {
+  it('persists no image consent once image analysis is off, and Somente Jev never widens a legacy one', () => {
     const orchSet = handlers.get(SETTINGS_CHANNELS.orchSet)!;
     orchSet(trustedEvent(), { decisionModels: { mode: 'auto', clefModel: 'clef', cloudflareAccountId: ACCOUNT, visionEnabled: true } });
     expect(getOrchSettings().decisionModels.visionEnabled).toBe(true);
     orchSet(trustedEvent(), { decisionModels: { ...getOrchSettings().decisionModels, mode: 'jev' } });
+    expect(getOrchSettings().decisionModels.visionEnabled).toBe(true);
+    expect(hasVisionRecipientConsent(getOrchSettings().decisionModels, 'clef')).toBe(false);
+    orchSet(trustedEvent(), { decisionModels: { ...getOrchSettings().decisionModels, visionEnabled: false } });
     expect(getOrchSettings().decisionModels.visionEnabled).toBe(false);
     orchSet(trustedEvent(), { decisionModels: { ...getOrchSettings().decisionModels, mode: 'auto' } });
     expect(getOrchSettings().decisionModels.visionEnabled).toBe(false);

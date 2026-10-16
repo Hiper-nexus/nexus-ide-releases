@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { decisionSettingsSchema, hasAudioRecipientConsent, type DecisionSettings } from '../../shared/decision-models';
+import { decisionSettingsSchema, hasAudioRecipientConsent, hasVisionRecipientConsent, type DecisionSettings } from '../../shared/decision-models';
 import type { JevDecisionSurface } from '../jev/jev-decision-log';
 import { getOrchSettings } from '../persistence/settings-store';
 import { currentDecisionAccountId, decisionAccountBookFile, readDecisionAccountBook, resolveAccountSettings } from './decision-accounts';
@@ -24,11 +24,13 @@ export function getDecisionSettings(): DecisionSettings {
 
 export function getDecisionAvailability(settings = getDecisionSettings()): DecisionAvailability {
   // Modo fixo não lê cofre de provedor que não pode servir. Somente Luna não lê o Jev: sem chave OpenAI a rota é nula.
+  // Somente Jev só lê Clef/Luna para a imagem do navegador, e só o destinatário autorizado.
   const mode = settings.mode;
   return {
     jev: mode === 'clef' || mode === 'luna' ? false : hasJevCredential(),
-    clef: mode === 'jev' || mode === 'luna' ? false : hasClefCredential() && Boolean(resolveCloudflareAccountId(settings.cloudflareAccountId)),
-    luna: mode === 'jev' || mode === 'clef' ? false : hasLunaCredential(),
+    clef: (mode === 'jev' ? hasVisionRecipientConsent(settings, 'clef') : mode !== 'luna')
+      && hasClefCredential() && Boolean(resolveCloudflareAccountId(settings.cloudflareAccountId)),
+    luna: (mode === 'jev' ? hasVisionRecipientConsent(settings, 'luna') : mode !== 'clef') && hasLunaCredential(),
   };
 }
 
