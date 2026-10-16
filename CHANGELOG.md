@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.76.293 — Tela sem piscar e anexos que chegam
+
+O painel Git não pisca mais nas releituras e os botões primários voltam a ser legíveis ao clicar, inclusive no tema roxo. Imagem colada no campo da missão aparece como anexo; imagem e áudio chegam à worktree e ao prompt do coordenador e dos workers, e o áudio ganha transcrição em segundo plano com o STT do ditado. A tela de iniciar missão ganha dock fixo, ⌘/Ctrl+Enter, validação no campo e espera pelo anexo em cópia, além do painel "Preparando a missão". As abas do painel lateral cabem em largura estreita. Grok, AGY e Qwen ganham níveis de permissão reais com aviso de risco do YOLO.
+
 ## 0.76.292 — Linux em dia com a Jarvis, o navegador e o Kimi
 
 A tag 0.76.291 não recebe pacotes Linux: a suíte não fechou. O ledger de proveniência ainda apontava o hash antigo de `model-catalog.ts`, e o teto de IPC cru do preload do pet não contava a sonda de cursor. Os dois testes passam a dizer o que o código já faz. O desktop Linux é o da 0.76.291.

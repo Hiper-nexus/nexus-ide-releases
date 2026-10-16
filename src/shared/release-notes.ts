@@ -11192,7 +11192,7 @@ export const RELEASE_076291: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076292: AppRelease = {
   version: '0.76.292',
   date: '2026-10-16',
   codename: 'Linux em dia com a Jarvis, o navegador e o Kimi',
@@ -11204,5 +11204,21 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
   fixes: [
     { title: 'Atualização do Linux', detail: 'As tags 0.76.289, 0.76.290 e 0.76.291 não recebem pacotes Linux. A suíte da 0.76.291 não fechava. O Linux sai na 0.76.292.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.293',
+  date: '2026-10-16',
+  codename: 'Tela sem piscar e anexos que chegam',
+  summary: 'O painel Git deixa de piscar e os botões ficam legíveis no tema roxo. Imagem colada aparece no campo da missão, imagem e áudio chegam ao coordenador (com transcrição do áudio), iniciar missão ficou mais claro e mostra "Preparando a missão", e as abas laterais cabem em painel estreito.',
+  highlights: [
+    { title: 'Painel Git estável', detail: 'As releituras do git status não trocam mais "Mesa limpa" por "Lendo git status", então a tela para de piscar e o foco se mantém. Os botões Puxar, Enviar, Ver histórico e Trocar branch mantêm contraste AA em hover, clique e foco nas sete paletas.' },
+    { title: 'Anexos até a missão', detail: 'Imagem colada no campo aparece com miniatura, nome e estado. Imagem e áudio são copiados para a worktree da missão e listados com tipo no prompt do coordenador e dos workers; o áudio é transcrito em segundo plano com o mesmo reconhecimento de voz do ditado.' },
+    { title: 'Iniciar missão mais claro', detail: 'O botão "Iniciar criação" fica sempre à vista, ⌘/Ctrl+Enter inicia, os anexos ficam sob o pedido e o início espera o anexo que ainda está copiando. Enquanto a missão é preparada, um painel com mensagens de dev acompanha as etapas reais e permite tentar de novo se falhar.' },
+  ],
+  fixes: [
+    { title: 'Abas do painel lateral', detail: 'Em painel estreito as abas ganham setas de rolagem, alvos de 44 px, teclado completo e o botão de fechar sempre visível.' },
+    { title: 'Modos de permissão por CLI', detail: 'Grok, AGY e Qwen ganham os níveis reais de permissão (edições automáticas, plano) além do YOLO, com aviso de risco em Configurações. Os safeArgs de Claude e Codex continuam intactos.' },
   ],
 };
