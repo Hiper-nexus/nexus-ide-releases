@@ -257,7 +257,12 @@ function permissionSequences(adapter: CliPtyAdapter): string[][] {
   );
   if (permission.arg) {
     for (const mode of Object.values(permission.modes)) {
-      sequences.push([permission.arg, mode]);
+      if (mode) sequences.push([permission.arg, mode]);
+    }
+  } else {
+    for (const mode of Object.values(permission.modes)) {
+      const parts = mode.split(/\s+/).filter(Boolean);
+      if (parts.length > 0) sequences.push(parts);
     }
   }
   return sequences.sort((left, right) => right.length - left.length);
@@ -539,7 +544,17 @@ function requestedFullAutoSequence(
   ) {
     return permission.yolo;
   }
-  if (!permission.arg) return [];
+  if (!permission.arg) {
+    for (const mode of ['yolo', 'bypass'] as const) {
+      const value = permission.modes[mode];
+      if (!value) continue;
+      const parts = value.split(/\s+/).filter(Boolean);
+      if (parts.length > 0 && parts.every((part) => args.includes(part))) {
+        return parts;
+      }
+    }
+    return [];
+  }
   for (const mode of ['yolo', 'bypass'] as const) {
     const value = permission.modes[mode];
     if (!value) continue;
@@ -547,6 +562,32 @@ function requestedFullAutoSequence(
       (arg, offset) => arg === permission.arg && args[offset + 1] === value,
     );
     if (index >= 0) return [permission.arg, value];
+  }
+  return [];
+}
+
+function requestedModeSequence(
+  adapter: CliPtyAdapter,
+  args: readonly string[],
+): readonly string[] {
+  const permission = adapter.control?.permission;
+  if (!permission) return [];
+  if (permission.arg) {
+    for (const value of Object.values(permission.modes)) {
+      if (!value) continue;
+      const index = args.findIndex(
+        (arg, offset) => arg === permission.arg && args[offset + 1] === value,
+      );
+      if (index >= 0) return [permission.arg, value];
+    }
+  } else {
+    for (const value of Object.values(permission.modes)) {
+      if (!value) continue;
+      const parts = value.split(/\s+/).filter(Boolean);
+      if (parts.length > 0 && parts.every((part) => args.includes(part))) {
+        return parts;
+      }
+    }
   }
   return [];
 }
@@ -566,6 +607,7 @@ export function secureAutonomousCliArgs(
   const usesNexusOnlyTools = adapter.quirks.mcpAutoload;
   const safeArgs = permission?.safe ?? [];
   const requestedFullAuto = requestedFullAutoSequence(adapter, currentArgs);
+  const requestedMode = requestedModeSequence(adapter, currentArgs);
 
   /*
    * Read-only is an authority boundary, not a provider preference. Resolve it
@@ -688,7 +730,8 @@ export function secureAutonomousCliArgs(
   if (
     !usesNexusOnlyTools &&
     safeArgs.length === 0 &&
-    requestedFullAuto.length === 0
+    requestedFullAuto.length === 0 &&
+    requestedMode.length === 0
   ) {
     throw new Error(
       `adapter ${adapter.id} does not declare enforceable autonomous confinement`,
@@ -708,6 +751,9 @@ export function secureAutonomousCliArgs(
   if (requestedFullAuto.length > 0) {
     args = removeSequence(args, safeArgs);
     appendOnce(args, requestedFullAuto);
+  } else if (requestedMode.length > 0) {
+    args = removeSequence(args, safeArgs);
+    appendOnce(args, requestedMode);
   }
 
   // Product invariant (always): Claude-family shells (claude/glm/glm-flash/

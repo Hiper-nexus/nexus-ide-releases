@@ -45,6 +45,8 @@ export function buildControlArgs(
       out.push(...perm.yolo);
     } else if (perm.arg && perm.modes[mode]) {
       out.push(perm.arg, perm.modes[mode]);
+    } else if (!perm.arg && perm.modes[mode]) {
+      out.push(...perm.modes[mode].split(/\s+/).filter(Boolean));
     }
   }
 

@@ -258,4 +258,99 @@ describe('buildControlArgs', () => {
       }
     }
   });
+
+  it('maps permission modes (default, auto, yolo) to concrete argv across adapters', () => {
+    const byId = new Map(
+      BUILTIN_ADAPTERS
+        .map((raw) => adapterSchema.parse(raw))
+        .filter((item): item is CliPtyAdapter => item.kind === 'cli-pty')
+        .map((item) => [item.id, item]),
+    );
+
+    // Claude
+    const claude = byId.get('claude')!;
+    expect(buildControlArgs(claude, { permissionMode: 'default' })).toEqual(['--permission-mode', 'default']);
+    expect(buildControlArgs(claude, { permissionMode: 'auto' })).toEqual(['--permission-mode', 'acceptEdits']);
+    expect(buildControlArgs(claude, { permissionMode: 'yolo' })).toEqual([
+      '--allow-dangerously-skip-permissions',
+      '--dangerously-skip-permissions',
+    ]);
+
+    // Codex
+    const codex = byId.get('codex')!;
+    expect(buildControlArgs(codex, { permissionMode: 'default' })).toEqual([
+      '--ask-for-approval',
+      'on-request',
+      '-c',
+      'model_reasoning_effort=medium',
+    ]);
+    expect(buildControlArgs(codex, { permissionMode: 'auto' })).toEqual([
+      '--ask-for-approval',
+      'never',
+      '-c',
+      'model_reasoning_effort=medium',
+    ]);
+    expect(buildControlArgs(codex, { permissionMode: 'yolo' })).toEqual([
+      '--dangerously-bypass-approvals-and-sandbox',
+      '-c',
+      'model_reasoning_effort=medium',
+    ]);
+
+    // Kimi
+    const kimi = byId.get('kimi')!;
+    expect(buildControlArgs(kimi, { permissionMode: 'default' })).toEqual([]);
+    expect(buildControlArgs(kimi, { permissionMode: 'auto' })).toEqual(['-y']);
+    expect(buildControlArgs(kimi, { permissionMode: 'plan' })).toEqual(['--plan']);
+    expect(buildControlArgs(kimi, { permissionMode: 'yolo' })).toEqual(['--yolo']);
+
+    // Grok
+    const grok = byId.get('grok')!;
+    expect(buildControlArgs(grok, { permissionMode: 'default' })).toEqual(['--permission-mode', 'default']);
+    expect(buildControlArgs(grok, { permissionMode: 'auto' })).toEqual(['--permission-mode', 'acceptEdits']);
+    expect(buildControlArgs(grok, { permissionMode: 'yolo' })).toEqual(['--always-approve']);
+
+    // AGY
+    const agy = byId.get('agy')!;
+    expect(buildControlArgs(agy, { permissionMode: 'default' })).toEqual(['--mode', 'auto']);
+    expect(buildControlArgs(agy, { permissionMode: 'auto' })).toEqual(['--mode', 'accept-edits']);
+    expect(buildControlArgs(agy, { permissionMode: 'yolo' })).toEqual(['--dangerously-skip-permissions']);
+
+    // Qwen
+    const qwen = byId.get('qwen')!;
+    expect(buildControlArgs(qwen, { permissionMode: 'default' })).toEqual(['--approval-mode', 'default']);
+    expect(buildControlArgs(qwen, { permissionMode: 'auto' })).toEqual(['--approval-mode', 'auto-edit']);
+    expect(buildControlArgs(qwen, { permissionMode: 'yolo' })).toEqual(['--yolo']);
+
+    // Devin
+    const devin = byId.get('devin')!;
+    expect(buildControlArgs(devin, { permissionMode: 'default' })).toEqual(['--permission-mode', 'auto']);
+    expect(buildControlArgs(devin, { permissionMode: 'auto' })).toEqual(['--permission-mode', 'accept-edits']);
+    expect(buildControlArgs(devin, { permissionMode: 'yolo' })).toEqual(['--permission-mode', 'dangerous']);
+
+    // Muse
+    const muse = byId.get('muse')!;
+    expect(buildControlArgs(muse, { permissionMode: 'default' })).toEqual(['--approval-mode', 'on-request']);
+    expect(buildControlArgs(muse, { permissionMode: 'auto' })).toEqual(['--approval-mode', 'never']);
+    expect(buildControlArgs(muse, { permissionMode: 'yolo' })).toEqual(['--yolo']);
+
+    // MiMo
+    const mimo = byId.get('mimo-code')!;
+    expect(buildControlArgs(mimo, { permissionMode: 'default' })).toEqual([]);
+    expect(buildControlArgs(mimo, { permissionMode: 'yolo' })).toEqual(['--dangerously-skip-permissions']);
+
+    // OpenCode
+    const opencode = byId.get('opencode')!;
+    expect(buildControlArgs(opencode, { permissionMode: 'default' })).toEqual([]);
+    expect(buildControlArgs(opencode, { permissionMode: 'yolo' })).toEqual(['--auto']);
+
+    // Aider
+    const aider = byId.get('aider')!;
+    expect(buildControlArgs(aider, { permissionMode: 'default' })).toEqual([]);
+    expect(buildControlArgs(aider, { permissionMode: 'yolo' })).toEqual(['--yes-always']);
+
+    // Minimax Code (no CLI flag for yolo)
+    const minimax = byId.get('minimax-code')!;
+    expect(buildControlArgs(minimax, { permissionMode: 'default' })).toEqual([]);
+    expect(buildControlArgs(minimax, { permissionMode: 'yolo' })).toEqual([]);
+  });
 });

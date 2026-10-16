@@ -84,7 +84,9 @@
   "control": {
     "permission": {
       "arg": "",
-      "modes": {},
+      "modes": {
+        "default": ""
+      },
       "yolo": [
         "--auto"
       ],

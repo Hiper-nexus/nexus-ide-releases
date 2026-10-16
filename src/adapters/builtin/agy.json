@@ -96,8 +96,12 @@
       ]
     },
     "permission": {
-      "arg": "",
-      "modes": {},
+      "arg": "--mode",
+      "modes": {
+        "default": "auto",
+        "auto": "accept-edits",
+        "plan": "plan"
+      },
       "yolo": [
         "--dangerously-skip-permissions"
       ],

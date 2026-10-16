@@ -88,8 +88,13 @@
       ]
     },
     "permission": {
-      "arg": "",
-      "modes": {},
+      "arg": "--permission-mode",
+      "modes": {
+        "default": "default",
+        "auto": "acceptEdits",
+        "plan": "plan",
+        "bypass": "bypassPermissions"
+      },
       "yolo": [
         "--always-approve"
       ],

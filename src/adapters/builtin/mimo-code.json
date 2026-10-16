@@ -80,7 +80,9 @@
   "control": {
     "permission": {
       "arg": "",
-      "modes": {},
+      "modes": {
+        "default": ""
+      },
       "yolo": [
         "--dangerously-skip-permissions"
       ],

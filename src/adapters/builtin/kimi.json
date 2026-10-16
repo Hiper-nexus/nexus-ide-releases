@@ -90,7 +90,11 @@
   "control": {
     "permission": {
       "arg": "",
-      "modes": {},
+      "modes": {
+        "default": "",
+        "auto": "-y",
+        "plan": "--plan"
+      },
       "yolo": [
         "--yolo"
       ],
