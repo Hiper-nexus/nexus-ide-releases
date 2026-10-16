@@ -713,7 +713,8 @@ export function completePetStudioHandoff(
       validated.packageDir,
       handoff.summary ||
         `Pet Studio validado e instalado em ${validated.packageDir}.`,
-      handoff.evidenceIds,
+      // IDs citados sem vínculo do Nexus não entram no resultado da missão.
+      handoff.evidenceTrust === 'nexus-trusted' ? handoff.evidenceIds : [],
     );
     consume(stores, handoff.id, handoff.missionId);
     return { handled: true, completed: true, ...validated };

@@ -62,6 +62,7 @@ import {
 } from './briefing-warnings';
 import { harnessReceiptForTask } from './tools-harness';
 import {
+  findAgent,
   findAgentInAnySquad,
   findAgentInSquad,
   getSquad,
@@ -838,6 +839,32 @@ async function planFreshInWorktreeResume(
   return { prompt, worktreePath, executionScope: nestedScope, reason };
 }
 
+/**
+ * Mesma busca do ramo `agentName` do spawn (squad da missão, catálogo da mão
+ * do operador ou catálogo salvo). Ambíguo conta como agente do roster: o ramo
+ * recusa nomeando as opções. Falso só quando o nome não é de agente nenhum.
+ */
+function agentNameIsRosterAgent(
+  ctx: AgentGateContext,
+  requestedMissionId: string | undefined,
+  ref: string,
+): boolean {
+  const missionId = childMissionId(ctx, requestedMissionId);
+  const mission = missionId
+    ? getProjectDomainStores(ctx.scope).missions.get(missionId)
+    : null;
+  try {
+    const found = mission?.squadId
+      ? findAgentInSquad(mission.squadId, ref)
+      : mission && ctx.role !== 'user'
+        ? requireCatalogAgent(ref)
+        : findAgent(ref);
+    return found !== null;
+  } catch (error) {
+    return !(error instanceof Error && error.message.startsWith('unknown squad agent'));
+  }
+}
+
 export function childMissionId(
   ctx: AgentGateContext,
   requested?: string,
@@ -1413,7 +1440,19 @@ const paneSpawnAfterTabMission = {
     spawnTiming?: PaneSpawnTiming,
     startRecovery?: PaneStartRecovery,
   ): Promise<unknown> => {
-    const agentRef = str(args, 'agentName');
+    const requestedAgentName = str(args, 'agentName');
+    // Um agentName fora do roster que chega junto com adapterId/task é só o
+    // rótulo do worker (ex.: "Builder-Unshackle-Fences"): o spawn segue o
+    // caminho ad-hoc e o nome vira título. ponytail: o rótulo NÃO vira
+    // options.agentName, que tem semântica de assento do roster (meta-pane,
+    // dono da worktree da task).
+    const agentLabel =
+      requestedAgentName &&
+      (str(args, 'adapterId') || str(args, 'task')) &&
+      !agentNameIsRosterAgent(ctx, str(args, 'missionId'), requestedAgentName)
+        ? requestedAgentName
+        : undefined;
+    const agentRef = agentLabel ? undefined : requestedAgentName;
     // F-1320: a base só existe para quem aloca worktree própria — nunca é
     // ignorada em silêncio. A ref é validada no Main ao alocar (rev-parse).
     const baseRef = str(args, 'baseRef');
@@ -1933,7 +1972,7 @@ const paneSpawnAfterTabMission = {
         model: selectedAdHocModel,
         effort: selectedAdHocEffort,
         cwd: str(args, 'cwd'),
-        title: str(args, 'title'),
+        title: str(args, 'title') ?? agentLabel,
         missionId: adHocMissionId,
         contextRevision: ctx.contextRevision,
         // An MCP-initiated spawn is the orchestrator delegating: default to a

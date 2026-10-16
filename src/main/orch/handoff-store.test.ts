@@ -901,7 +901,7 @@ describe("scoped handoff store", () => {
     expect(handoffs.hasTrustedFromSession("session-a")).toBe(false);
   });
 
-  it("rejects missing, cross-mission and stale evidence IDs without persisting a claim", () => {
+  it("keeps missing, cross-mission and stale evidence IDs as unverified claims", () => {
     const runtimeManager = manager();
     const scope = testProjectScope();
     const missions = createScopedMissionStore(runtimeManager, scope);
@@ -960,17 +960,62 @@ describe("scoped handoff store", () => {
         evidenceIds,
       });
 
-    expect(() => submit(["missing-evidence"])).toThrow(
-      /trusted evidence.*not found/i,
-    );
-    expect(() => submit(["evidence-b"])).toThrow(/another mission/i);
-    expect(() => submit(["evidence-stale"])).toThrow(
-      /current workflow binding/i,
-    );
-    expect(() => submit(["evidence-old-context"])).toThrow(
-      /current workflow binding/i,
-    );
-    expect(handoffs.list({ includeDelivered: true })).toEqual([]);
+    for (const ids of [
+      ["missing-evidence"],
+      ["evidence-b"],
+      ["evidence-stale"],
+      ["evidence-old-context"],
+      ["evidence-a", "browser-capture-1"],
+    ]) {
+      const handoff = submit(ids);
+      expect(handoff).toMatchObject({
+        evidenceIds: ids,
+        evidenceTrust: "unverified",
+        evidenceBinding: undefined,
+      });
+      expect(handoffs.get(handoff.id)).toMatchObject({
+        evidenceIds: ids,
+        evidenceTrust: "unverified",
+      });
+    }
+    expect(submit(["evidence-a"]).evidenceTrust).toBe("nexus-trusted");
+    expect(
+      handoffs
+        .list({ includeDelivered: true })
+        .filter((handoff) => handoff.evidenceTrust === "unverified"),
+    ).toHaveLength(5);
+  });
+
+  it("keeps evidence IDs as unverified without missionId or a frozen workflow", () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    const missions = createScopedMissionStore(runtimeManager, scope);
+    const handoffs = createScopedHandoffStore(runtimeManager, scope);
+    const viaRapida = missions.create({ title: "Via Rapida" });
+
+    const loose = handoffs.submit({
+      status: "success",
+      summary: "Workspace helper cites its browser capture IDs.",
+      evidenceIds: ["capture-1"],
+    });
+    const unfrozen = handoffs.submit({
+      missionId: viaRapida.id,
+      sessionId: "session-a",
+      status: "success",
+      summary: "Worker cites capture IDs in a mission without PREVC.",
+      evidenceIds: ["capture-2", "capture-3"],
+    });
+
+    for (const [handoff, ids] of [
+      [loose, ["capture-1"]],
+      [unfrozen, ["capture-2", "capture-3"]],
+    ] as const) {
+      expect(handoffs.get(handoff.id)).toMatchObject({
+        evidenceIds: ids,
+        evidenceTrust: "unverified",
+        evidenceBinding: undefined,
+      });
+    }
     expect(handoffs.hasTrustedFromSession("session-a")).toBe(false);
   });
 

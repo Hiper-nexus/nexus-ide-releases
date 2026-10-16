@@ -242,7 +242,8 @@ const handoffSubmitTool: McpToolDef = {
     "boundary and mapped (done→success, error→failed). Always allowed " +
     "regardless of allowlists. Status and artifacts are untrusted delivery " +
     "metadata and never complete a mission. Only evidenceIds already issued " +
-    "and bound by Nexus can satisfy the worker stop receipt. summary: 1-2 " +
+    "and bound by Nexus can satisfy the worker stop receipt; other cited IDs " +
+    "(browser captures, artifacts) are kept as unverified. summary: 1-2 " +
     "sentences (<=280 chars ideal); above 400 chars it is auto-condensed at a " +
     "sentence boundary and the full text is kept as an overclock.fullText " +
     "artifact. If the pane was spawned with expect.schema, a success handoff " +

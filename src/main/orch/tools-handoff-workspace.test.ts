@@ -441,15 +441,17 @@ describe("workspace handoff", () => {
     ]);
   });
 
-  it("refuses mission evidence before persisting a workspace handoff", async () => {
+  it("keeps cited evidence IDs on a workspace handoff as unverified", async () => {
     caller("parent");
-    await expect(
-      tool("submit").handler(
-        { ...args, evidenceIds: ["evidence-mission"] },
-        caller("child"),
-      ),
-    ).rejects.toThrow(/requires missionId/);
-    expect(getProjectDomainStores(scope).handoffs.list()).toEqual([]);
+    await tool("submit").handler(
+      { ...args, evidenceIds: ["capture-1"] },
+      caller("child"),
+    );
+    expect(
+      getProjectDomainStores(scope).handoffs.list({ includeDelivered: true }),
+    ).toMatchObject([
+      { evidenceIds: ["capture-1"], evidenceTrust: "unverified" },
+    ]);
   });
 
   it("keeps the persisted handoff queued if physical delivery fails", async () => {

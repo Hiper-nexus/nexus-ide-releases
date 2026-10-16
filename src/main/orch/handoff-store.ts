@@ -435,31 +435,11 @@ function sameHandoffBinding(
   );
 }
 
-function assertEvidenceMatches(
-  evidenceId: string,
+function evidenceMatches(
   actual: EvidenceBinding,
   expected: EvidenceBinding,
-): void {
-  if (actual.missionId !== expected.missionId) {
-    throw new Error(
-      `trusted evidence "${evidenceId}" belongs to another mission`,
-    );
-  }
-  if (
-    actual.projectId !== expected.projectId ||
-    actual.checkoutId !== expected.checkoutId
-  ) {
-    throw new Error(
-      `trusted evidence "${evidenceId}" belongs to another project scope`,
-    );
-  }
-  const mismatch = BINDING_KEYS.find((key) => actual[key] !== expected[key]);
-  if (mismatch) {
-    throw new Error(
-      `trusted evidence "${evidenceId}" does not match the current ` +
-        `workflow binding (${mismatch})`,
-    );
-  }
+): boolean {
+  return BINDING_KEYS.every((key) => actual[key] === expected[key]);
 }
 
 export interface ScopedHandoffStoreOptions extends ScopedStoreOptions {
@@ -2705,15 +2685,14 @@ export class ScopedHandoffStore {
     evidenceIds: readonly string[],
   ): ResolvedEvidence {
     if (evidenceIds.length === 0) return { evidenceIds: [] };
-    if (!missionId) {
-      throw new Error("trusted handoff evidence requires missionId");
-    }
+    // Evidence IDs are always kept; only a frozen PREVC workflow whose
+    // sensor/review rows all match it earns the trusted binding. Anything else
+    // (Via Rapida missions, browser capture IDs, stale rows) stays "unverified"
+    // instead of rejecting the whole handoff.
+    const unverified: ResolvedEvidence = { evidenceIds: [...evidenceIds] };
+    if (!missionId) return unverified;
     const current = this.#currentBinding(db, missionId);
-    if (!current) {
-      throw new Error(
-        "handoff evidence requires a mission with a frozen current workflow",
-      );
-    }
+    if (!current) return unverified;
     for (const evidenceId of evidenceIds) {
       const sensorRow = db
         .prepare("SELECT evidence_json FROM sensor_evidence WHERE id = ?")
@@ -2727,7 +2706,7 @@ export class ScopedHandoffStore {
         if (evidence.id !== evidenceId) {
           throw new ScopedStoreCorruptionError("sensor evidence identity");
         }
-        assertEvidenceMatches(evidenceId, evidence, current.binding);
+        if (!evidenceMatches(evidence, current.binding)) return unverified;
         continue;
       }
 
@@ -2741,9 +2720,7 @@ export class ScopedHandoffStore {
             )
             .get(reviewId) as { report_json: string } | undefined)
         : undefined;
-      if (!reviewRow) {
-        throw new Error(`trusted evidence "${evidenceId}" not found`);
-      }
+      if (!reviewRow) return unverified;
       const report = asCorruption("review evidence", () =>
         parseReviewReport(
           parseBoundedJson(reviewRow.report_json, "review evidence"),
@@ -2752,7 +2729,7 @@ export class ScopedHandoffStore {
       if (`review:${report.reviewId}` !== evidenceId) {
         throw new ScopedStoreCorruptionError("review evidence identity");
       }
-      assertEvidenceMatches(evidenceId, report.binding, current.binding);
+      if (!evidenceMatches(report.binding, current.binding)) return unverified;
     }
     return {
       evidenceIds: [...evidenceIds],
@@ -2806,9 +2783,7 @@ export class ScopedHandoffStore {
         (!row.mission_id ||
           evidenceIds.length === 0 ||
           bindingFields.some((value) => value === null))) ||
-      (!wasTrusted &&
-        (evidenceIds.length > 0 ||
-          bindingFields.some((value) => value !== null)))
+      (!wasTrusted && bindingFields.some((value) => value !== null))
     ) {
       throw new ScopedStoreCorruptionError("handoff evidence binding");
     }

@@ -572,24 +572,42 @@ describe('pin de adapterId sem pedido do operador vira preferência (F-674 ampli
     });
   });
 
-  it('spawn de agente do roster nunca vira preferência (roster selado intacto)', async () => {
+  it('agentName fora do roster sem adapterId nem task segue recusado', async () => {
     const resolver = vi.fn(async () => ({ adapterId: 'codex' }));
     setOperatorRouteResolver(resolver);
-    await expect(paneSpawnTool.handler(
-      { agentName: 'Worker', adapterId: 'claude', task: 'olha o repo' }, ctx,
-    )).rejects.toThrow(/unknown squad agent/);
+    await expect(paneSpawnTool.handler({ agentName: 'Worker' }, ctx))
+      .rejects.toThrow(/unknown squad agent/);
     expect(resolver).not.toHaveBeenCalled();
+    expect(h.spawn).not.toHaveBeenCalled();
   });
 
-  it('F-1388: recusa do catálogo (agente desconhecido/ambíguo) é pré-efeito', async () => {
+  it('agentName livre com task é só o rótulo do worker: o spawn segue roteado', async () => {
+    // Campo 15/10: "Builder-Unshackle-Fences" + task caía em unknown squad agent.
+    const resolver = vi.fn(async () => ({ adapterId: 'codex', routeReservationId: 'rr-label' }));
+    setOperatorRouteResolver(resolver);
+    await paneSpawnTool.handler(
+      { agentName: 'Builder-Unshackle-Fences', task: 'remover cercas do handoff' }, ctx,
+    );
+    expect(resolver).toHaveBeenCalledTimes(1);
+    expect(h.spawn).toHaveBeenCalledTimes(1);
+    expect(h.spawn.mock.calls[0][0]).toMatchObject({
+      adapterId: 'codex', title: 'Builder-Unshackle-Fences', missionId: 'mission-a',
+    });
+    expect(h.spawn.mock.calls[0][0].agentName).toBeUndefined();
+  });
+
+  it.each([
+    ['desconhecido', 'unknown squad agent: Fantasma — nenhum squad salvo tem esse agente', {}],
+    ['ambíguo mesmo com task', 'agente ambíguo: Fantasma existe em mais de um squad salvo', { task: 'x' }],
+  ])('F-1388: recusa do catálogo (%s) é pré-efeito', async (_label, message, extra) => {
     // F-1334: nenhum efeito pode ter sido cometido — nada foi reservado/gravado.
     h.mission = { ...h.mission, squadId: undefined };
     h.catalogAgent.mockImplementation(() => {
-      throw new Error('unknown squad agent: Fantasma — nenhum squad salvo tem esse agente');
+      throw new Error(message);
     });
     const resolver = vi.fn(async () => ({ adapterId: 'codex' }));
     setOperatorRouteResolver(resolver);
-    await expect(paneSpawnTool.handler({ agentName: 'Fantasma', task: 'x' }, ctx))
+    await expect(paneSpawnTool.handler({ agentName: 'Fantasma', ...extra }, ctx))
       .rejects.toBeInstanceOf(PreEffectRefusalError);
     expect(h.spawn).not.toHaveBeenCalled();
     expect(resolver).not.toHaveBeenCalled();

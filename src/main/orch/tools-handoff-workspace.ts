@@ -57,12 +57,15 @@ export async function submitWorkspaceHandoff(
       "summary inválido: descreva de verdade o que foi feito (mínimo 20 caracteres, sem placeholders).",
     );
   }
-  // Mission evidence cannot become workspace authority, even if guessed correctly.
+  // Workspace evidence IDs are kept as cited references only: without a
+  // mission the store never binds them, so they stay "unverified".
+  const evidenceIds = args.evidenceIds;
   if (
-    args.evidenceIds !== undefined &&
-    (!Array.isArray(args.evidenceIds) || args.evidenceIds.length > 0)
+    evidenceIds !== undefined &&
+    (!Array.isArray(evidenceIds) ||
+      evidenceIds.some((id) => typeof id !== "string"))
   ) {
-    throw new Error("trusted handoff evidence requires missionId");
+    throw new Error("evidenceIds must be an array of Nexus evidence IDs");
   }
   const declaredStatus = handoffStatusSchema.parse(
     normalizeHandoffStatusInput(args.status),
@@ -215,6 +218,7 @@ export async function submitWorkspaceHandoff(
     status,
     summary: reviewedSummary,
     artifacts,
+    evidenceIds: evidenceIds as string[] | undefined,
     sessionId: ctx.sessionId,
     fromAgent: ctx.agentName ?? ctx.label,
     // F-1262: destinatário durável provado pelo Main no submit — a leitura

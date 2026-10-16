@@ -1449,9 +1449,9 @@ describe("handoff MCP stop receipt", () => {
     });
   });
 
-  it("does not mark or deliver a rejected evidence claim", async () => {
+  it("does not mark or deliver a handoff the store rejects", async () => {
     mocks.submit.mockImplementation(() => {
-      throw new Error('trusted evidence "missing" not found');
+      throw new Error("handoff store rejected the claim");
     });
 
     await expect(
@@ -1464,7 +1464,7 @@ describe("handoff MCP stop receipt", () => {
         context(),
         invocation(),
       ),
-    ).rejects.toThrow(/trusted evidence.*not found/i);
+    ).rejects.toThrow(/store rejected the claim/);
     expect(mocks.markHandoffSubmitted).not.toHaveBeenCalled();
     expect(mocks.onHandoffSubmitted).not.toHaveBeenCalled();
   });
