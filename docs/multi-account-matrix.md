@@ -39,6 +39,27 @@ O renderer não troca credenciais globais para abrir um pane. O fluxo canônico 
    `KIMI_CODE_HOME`, `XDG_DATA_HOME`, `GEMINI_CLI_HOME`); panes concorrentes não
    mudam a credencial uns dos outros.
 
+## Renovação de credencial: quem renova e onde o grant fica
+
+Refresh token rotaciona, então duas cópias dele não sobrevivem juntas: cada linhagem
+tem um dono, e o Nexus só grava onde é dono (`docs/SECURITY.md`, "Renovação de
+credenciais OAuth"; detalhes por provider em `AGENTS.md`).
+
+| Adapter | Quem renova | Onde o grant renovado fica |
+|---------|-------------|----------------------------|
+| **claude** | A CLI (login nativo no store nativo; escopo gerenciado no próprio escopo). Na Reserva (só cofre, sem CLI dona), `ensureFreshClaudeSubscription` renova por HTTP um access token vencido com refresh token vivo, se esse refresh token não estiver no login nativo nem em outra linha do cofre (F-639) | No cofre, depois de o token novo provar a conta. O login nativo nunca é renovado por fora (F-645) |
+| **codex** | A CLI do pane, uma renovação por conta (`managed-auth-spawn-gate.ts`) | `auth.json` da conta gerenciada |
+| **grok** | A CLI; a cota usa ACP com `cached_token` e nunca `grok models` (F-626) | Arquivo de auth da CLI |
+| **kimi** | A sonda de cota, no token endpoint do Kimi | Blob `acctcred:<id>` do cofre (`persistKimiRotatedCreds`), nunca o `~/.kimi-code` nativo |
+| **agy** | A sonda de cota (OAuth Google) ou a CLI do pane | Conta fixada: blob `acctcred:<id>`. Linha nativa: `~/.gemini/oauth_creds.json`, só numa rotação e só se o arquivo ainda guarda o refresh token usado (`persistGeminiRotatedCreds`) |
+
+Conta Claude na Reserva com access token vencido não some mais da cota nem da Redline
+e a sonda não carimba «sessão expirada» com refresh token vivo no cofre: o cofre é
+renovado e, quando ele é mais fresco que o escopo gerenciado que falhou, a cota lê o cofre.
+A credencial provada limpa a marca de renovação e o cooldown de auth. Conta AGY na Reserva volta ao cofre com
+access, expiry e refresh token em vigor, em vez de ficar com o access vencido e um
+refresh token que o Google pode ter trocado.
+
 ## Fluxos suportados (aceite)
 
 1. **Hot-swap (Orca)**  

@@ -3,6 +3,16 @@
 How NexusIDE handles startup, configuration and the multi-CLI
 provider model.
 
+> **Atenção (corte de produto V2, 08/08/2026).** `LaunchScreen`, `MissionWizard` e
+> `SettingsDrawer`, descritos em "Startup flow" e "Settings hub" abaixo, não existem mais.
+> A navegação vigente é declarada por `src/renderer/state/product-navigation-store.ts`
+> (launcher, terminal, projeto, configuração de missão em
+> `components/mission/MissionSetup.tsx`, missão, quadro de tarefas, memória e
+> configurações; ver `docs/ARCHITECTURE.md`, "Corte de produto V2"), e as seções de
+> Configurações são as de `components/settings/settings-nav.ts`. A parte de Providers
+> (`ProvidersPanel.tsx`) e o roteamento por upstream (`launcher-provider-manager.ts`)
+> seguem valendo.
+
 ## Startup flow
 
 1. **Launch screen** (`LaunchScreen.tsx`) — the first surface when no workspace
@@ -62,7 +72,7 @@ routing so a single Claude-compatible CLI can be pointed at another upstream:
 When a routable CLI is pointed at a non-native upstream, the spawn injects
 `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` (never `API_KEY` for third
 parties) plus the provider's extra env (e.g. GLM's `API_TIMEOUT_MS`,
-`ANTHROPIC_DEFAULT_SONNET_MODEL=glm-4.6`), exactly like the launcher's
+`ANTHROPIC_DEFAULT_SONNET_MODEL=glm-5.3[1m]`), exactly like the launcher's
 `provider_setup_env`. Token resolution order:
 
 1. Nexus vault (`~/.nexus/secrets.enc` / OS keychain)

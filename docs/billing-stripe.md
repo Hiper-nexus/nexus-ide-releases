@@ -2,9 +2,13 @@
 
 ## Oferta pública
 
-- **Teste de 15 dias:** começa no primeiro login verificado, com até 6 agentes simultâneos. Não há acesso
+- **Teste de 15 dias:** começa no primeiro login verificado, com até 6 agentes simultâneos, sem sync na
+  nuvem e sem execução remota por SSH/tmux (`remote-trial-unavailable`). Não há acesso
   permanente sem conta nem plano gratuito local. `plan: "pro"` com
-  `access: "trial"` significa teste, não pagamento.
+  `access: "trial"` significa teste, não pagamento. Os números vêm do `cloud-api`
+  (`TRIAL_DAYS` padrão 15, `TRIAL_MAX_AGENTS` padrão 6, `TRIAL_CLOUD_SYNC` padrão `false`), nunca do desktop.
+  Dos 6 agentes, o leque de helpers de uma missão ocupa no máximo 4: o Maestro e o revisor
+  independente ficam com 2 vagas (`parallelHelperBudget`, ver `AGENTS.md`, "Plano Trial").
 - **Pro promocional:** **R$ 59,99 por mês**, cobrança recorrente mensal em BRL.
   Permite agentes simultâneos ilimitados. É o único plano pago disponível para novos checkouts e é necessário após o teste.
 - **Team:** não aparece mais na oferta. Licenças assinadas legadas com
@@ -50,9 +54,11 @@ O registrador `warm-agent-spawner.ts` observa `onAccessChanged`: bloqueio drena
 somente filhos estacionados, preservando os adotados. `WarmPool.drain` invalida
 reposições em andamento; um filho que termina de iniciar depois da drenagem é
 encerrado. A reserva continua contando até a prova de finalização física.
-A adoção reaproveita o slot, sem permitir um terceiro agente no teste de dois
-slots. Cobertura: `pty-manager.test.ts`, `warm-pool.test.ts` e
-`license-lifecycle.test.tsx` (autoridade assinada real, host/IPC simulados).
+A adoção reaproveita o slot, sem ultrapassar o limite da licença. Os testes provam
+isso com `maxAgents` fixado em 2 (fixture: o teste real de 15 dias permite 6, e o
+limite era 2 só antes de 05/10/2026). Cobertura: `pty-manager.test.ts`,
+`warm-pool.test.ts` e `license-lifecycle.test.tsx` (autoridade assinada real,
+host/IPC simulados).
 
 O arquivo `~/.nexus/license.json` guarda somente `{ "version": 2, "token": "…" }`.
 Do formato antigo só o token é aproveitado. Campos externos nunca concedem

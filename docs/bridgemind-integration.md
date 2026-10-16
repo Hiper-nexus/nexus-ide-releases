@@ -22,7 +22,12 @@ O MCP expõe duas ferramentas somente leitura:
 
 As ferramentas nunca executam nem alteram o alvo. Entradas MCP são validadas
 com schema estrito; caminhos passam pelo mesmo limite de workspace usado pelas
-outras ferramentas; e a proveniência acompanha o resultado.
+outras ferramentas; e a proveniência acompanha o resultado. O parâmetro
+`provenance` aceita exatamente `unknown` (padrão), `user`, `repo-trusted`,
+`repo-untrusted`, `web-page`, `mcp-tool-result`, `mcp-tool-description` e
+`file-external` (`CONTENT_PROVENANCES`, `src/main/security/content-audit.ts`); qualquer
+outro valor é recusado com `unsupported content provenance`. As skills compactas citam
+esses mesmos valores.
 
 As skills compactas `bridgeward` e `bridgesecurity` também são espelhadas para
 os agentes quando a configuração de skills não usa uma allowlist explícita.

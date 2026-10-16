@@ -26,6 +26,11 @@ All external input validated with Zod at process boundaries.
 | Egress Reporte de problema | Reporte de problema: título/descrição/passos digitados + diagnóstico opt-in redigido → `api.nexuside.app` (`POST /v1/bug-reports`), por ação explícita do usuário. `bug-report/bug-report-ipc.ts` (`handleTrusted` + schema estrito; payload inválido é recusado), `bug-report/bug-report-service.ts` (prévia fiel: o envio usa o corpo exato que a prévia mostrou e recusa se o corpo mudou — digest sha-256; no máximo 10 tentativas por 10 min; timeout curto, `redirect: 'error'`, resposta validada, erros em pt-BR, nada em log), `bug-report/bug-report-diagnostics.ts` (lista de permissão: só `kind`, código curto e instante dos últimos eventos do trace, agente/modelo ativo, nº de panes e se há missão — nunca argumentos, caminhos, prompts, saída de terminal nem ambiente; só com `consent.diagnostics`, desligado por padrão), `bug-report/bug-report-redaction.ts` (chaves/JWT/Bearer, e-mails, HOME). A sessão fica no Main (`api-client.ts`) e nunca chega ao renderer. |
 | Aprovação estruturada de ferramenta (PRV-02/MOB-07, F-991) | `agent-hooks/approval-broker.ts` (CAS por requestId/revisão, recibo idempotente, prazo, teto por sessão), `orch/hook-permission-endpoint.ts` (`POST /hook/permission`, bearer per-pane; sem respondente responde `{}` na hora e a TUI decide; toda falha é `{}`; resumo redigido por `redactSecretText`), `agent-hooks/approval-ipc.ts` (`handleTrusted` + schema estrito), `remote/remote-bridge.ts` (`agentSession.respondToApproval`: decisão, nunca tecla no PTY; sem escrita no pane do pedido → `rejected`, pedido desconhecido dá a mesma recusa; aprovar comando de alto impacto pede o diálogo nativo do desktop; o snapshot só lista pedidos de panes que o escopo lê). Os hooks só existem nos settings por sessão dos panes do Nexus, nunca no `~/.claude`/`~/.codex` do operador |
 | Recibo da escolha de conta (IPC de leitura) | `persistence/account-choice-ipc.ts` (`accountChoice:get`: `handleTrusted` — só o frame principal da janela principal —, schema zod estrito `{ sessionId ≤ 128 }`, qualquer entrada inválida ou falha vira `null`, nunca lança; somente leitura, sem egress) devolve o recibo de `account-choice-receipts.ts` JÁ saneado por `parseAccountChoiceReceipt` (`shared/account-choice.ts`, lista de permissão: rótulos remascarados com `maskAccountLabel`, texto livre sem controle nem e-mail cru, chave desconhecida descartada) — nunca id de conta, fingerprint, e-mail cru nem token. O renderer o relê pela mesma lista antes de exibir (`renderer/lib/account-choice-receipt.ts`). |
+| Entrada do Nexus Shot (loopback) | `shot-bridge/shot-bridge-server.ts` (bind só em `127.0.0.1`, porta efêmera, token aleatório por sessão em `x-nexus-shot-token`, `endpoint.json` 0600; só caminho absoluto cujo realpath fica sob as raízes do Shot, arquivo regular, sem copiar nada: o renderer recebe metadados) e `shared/shot-bridge.ts` (`shotDestinationSchema`: `targetPaneId` estrito; `target` é `.nullish()` e `.strict()`, e `null` vale «sem alvo», nunca vira pane nem binding; o `ShotTargetBinding` é montado pelo Main e nunca vem do pedido). |
+| Escritor isolado: faixa de Git e salvaguarda | `orch/isolated-writer-policy.ts` e `orch/tools-git.ts` (só `add`, `commit`, `status`, `diff` e `log`, na branch `refs/heads/nexus/…` que o registro do Main alocou; `add` recusa argumento que comece com `-` ou `:`, `commit` aceita só `-m`; `nexus_terminal_run` traduz argv Git literal e não executa shell) e `orch/isolated-writer-salvage.ts` (alteração sem commit vira commit em `refs/nexus-salvage/`, com índice privado, nunca `git stash`). |
+| Veredito de revisão informativa | `orch/tools-domain.ts` (`nexus_review_verdict`), `orch/task-router.ts` (`informativeReviewSeat`, `securityCriticalGateJudge`) e `orch/gate.ts` (a marca `informativeReview` vive no token e vem do Main no spawn, nunca de argumento ou prompt): o veredito de uma revisão informativa fica registrado com `satisfiesGate: false` e nunca libera push, merge nem conclusão; em missão de segurança crítica só Claude/Codex satisfazem o portão. |
+| Limite de agentes da licença | `license-access.ts` (`maxAgents()` lido do JWT assinado), `license-enforcement.ts` (uma reserva síncrona por filho físico de agente, `license_agent_limit`; execução remota negada no teste) e `orch/pane-admission.ts` (o leque de helpers reserva 2 vagas para Maestro e revisor; só encolhe o leque, quem recusa é o gate da licença). |
+| Auditorias BridgeWard/BridgeSecurity | `orch/tools-security.ts` (`nexus_content_audit`, `nexus_security_audit`: somente leitura, caminho pelo mesmo limite de workspace; `provenance` fora do enum é recusado), `security/content-audit.ts` e `security/source-audit.ts`. |
 
 ## Error flow
 
@@ -170,6 +175,35 @@ MAC calculado pelo atacante, import/setKey e reinício; o acesso continua bloque
 `secrets-portability.test.ts` cobre rejeição sem escrita parcial e round-trip;
 `provider-config-spawn.test.ts` cobre o handler IPC; `provider-settings-types.test.ts`
 cobre a validação compartilhada.
+
+## Renovação de credenciais OAuth: onde o grant renovado é gravado
+
+Refresh token rotaciona, e duas cópias dele não sobrevivem juntas. Por isso cada
+linhagem tem UM dono, e o Nexus só grava onde é dono. Os endpoints de renovação são
+constantes fixas no código, nunca vêm de configuração nem do renderer.
+
+- **Claude na Reserva (F-639).** `ensureFreshClaudeSubscription`
+  (`persistence/account-store.ts`) renova por HTTP
+  (`https://console.anthropic.com/v1/oauth/token`) uma conta SECUNDÁRIA, sem prova
+  prévia de identidade, só se o refresh token não estiver no login nativo nem em
+  outra linha do cofre; o token novo prova a conta antes de entrar no cofre
+  (regra F-615). A conta que é o login nativo do Keychain nunca é renovada por
+  aqui, porque rotacionar a linhagem compartilhada derrubaria a sessão da CLI real.
+  Escopo gerenciado com a MESMA linhagem continua sendo renovado só pela CLI.
+- **AGY/Gemini.** `persistGeminiRotatedCreds` (`quota/provider-usage-auth.ts`)
+  grava o grant (`https://oauth2.googleapis.com/token`) no blob `acctcred:<id>` da
+  conta fixada. Na linha nativa só uma ROTAÇÃO volta ao `~/.gemini/oauth_creds.json`,
+  e só se o arquivo ainda guarda o refresh token usado: outro login ou o refresh
+  da própria CLI no meio do caminho vencem. A escrita é atômica, modo 0600, sem
+  seguir um temporário plantado (`writeJsonAtomic`). A vaga `gemini:antigravity` do
+  keyring do Windows é lida e nunca escrita.
+- **Kimi.** `persistKimiRotatedCreds` grava só no blob do cofre da conta, nunca no
+  `~/.kimi-code` nativo.
+- A gravação do grant da cota é best-effort: falhar não derruba a leitura daquele
+  ciclo. Token e refresh token ficam no Main e no cofre; o renderer só recebe
+  `AccountInfo` sem segredos e, para perceber a troca de conta, um
+  `sessionFingerprint` opaco que só serve para igualdade e nunca é exibido nem
+  persistido.
 
 ## Linux: identidade de desktop e backend do cofre (F-728 / F-729)
 

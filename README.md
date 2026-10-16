@@ -1,6 +1,6 @@
 # NexusIDE
 
-Terminal IDE multi-agente para macOS: um grid de panes de terminal reais rodando
+Terminal IDE multi-agente (macOS é o alvo primário; também para Windows e Linux): um grid de panes de terminal reais rodando
 CLIs de IA, adapters multi-CLI plugáveis e
 orquestração nativa de squads, missões e handoffs — tudo num único ambiente de
 desenvolvimento orientado a agentes.
@@ -11,13 +11,21 @@ desenvolvimento orientado a agentes.
 
 ## Instalar (usuário)
 
-Baixe o `.dmg` mais recente em **[Releases](https://github.com/cleofasvolarehost/nexus-ide/releases)**,
+Baixe o `.dmg` mais recente em **[Releases](https://github.com/Hiper-nexus/nexus-ide-releases/releases)**,
 abra e arraste para Aplicativos. O app é **assinado com Developer ID e
 notarizado pela Apple** — abre com um duplo-clique, sem avisos de segurança.
 
 As CLIs de IA que você já tem instaladas no Mac (`claude`, `codex`, `agy`,
 `kimi`, `grok`…) são **detectadas automaticamente** — o app lê o PATH do
 seu shell de login, então funciona já na primeira execução.
+
+## Acesso e plano
+
+O Nexus pede conta. O primeiro login verificado abre um **teste de 15 dias com até 6
+agentes simultâneos** (sem sync na nuvem e sem execução remota por SSH). Depois dele o
+acesso é o plano **Pro**, R$ 59,99 por mês, com agentes simultâneos ilimitados. O consumo
+de IA segue os limites e os preços das suas próprias assinaturas e chaves. O contrato da
+licença está em [`docs/billing-stripe.md`](docs/billing-stripe.md).
 
 ## O que funciona
 
@@ -35,7 +43,8 @@ seu shell de login, então funciona já na primeira execução.
 - **Auth subscription-first**: assinatura autenticada sempre vence; a API key é
   fallback; keys guardadas no **macOS Keychain** (nunca em plaintext).
 - **Orquestração**: servidor MCP embutido no namespace `nexus_*`, squads
-  (schema JSON portável), missões, handoffs (SQLite + IPC), skill-gate duplo e
+  (schema JSON portável), missões, handoffs (SQLite + IPC), acesso aberto às
+  ferramentas (bearer por pane, vínculo de missão e consentimento humano) e
   tools de preview/browser com screenshot.
 - **Marketplace real** (catálogo aitmpl: 423 agents + 872 skills, install para
   `~/.claude`), **file explorer** com editor, e **voz Jarvis** (Classic e Live,
@@ -69,6 +78,9 @@ Configurações → Sistema dentro do app.
 Electron + Electron Forge (Vite) · TypeScript · React 18 · `@lydell/node-pty` ·
 `@xterm/xterm` · `@xyflow/react` · better-sqlite3 · Zustand · zod.
 
-Disponível para macOS (arm64), Windows (x64) e Linux (x64, `.deb`/`.rpm`).
-Em Linux não há auto-update — instale o pacote novo por cima; o runtime exige
-`bubblewrap` (já declarado como dependência dos pacotes).
+Disponível para macOS (arm64), Windows (x64) e Linux (x64, `.deb`/`.rpm` e ZIP portátil).
+No macOS o app é assinado e notarizado. No Windows o instalador ainda não leva
+Authenticode (a versão assinada será a da Microsoft Store). Em Linux, `.deb` e `.rpm` não
+têm auto-update próprio: instale o pacote novo por cima ou use o repositório apt/dnf
+assinado (opt-in, `install-repo.sh`); o ZIP portátil se atualiza sozinho, com atualização
+assinada. O runtime exige `bubblewrap` (já declarado como dependência dos pacotes).

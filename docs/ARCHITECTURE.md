@@ -1,8 +1,8 @@
 # NexusIDE — Documento de Arquitetura
 
-> **Produto:** Terminal IDE multi-agente para macOS.
+> **Produto:** Terminal IDE multi-agente (macOS é o alvo primário; Windows e Linux têm empacotamento próprio).
 > **Status:** IMPLEMENTADO — decisões-base e corte de produto V2.
-> **Atualizado:** 2026-08-08
+> **Atualizado:** 2026-08-08; extensões de 2026-10-15 (sobre a v0.76.283) na seção própria abaixo.
 > **Audiência:** mantenedores de main, preload, renderer, PTY e MCP.
 > **Fontes:** implementação em `src/` e documentos de subsistemas citados abaixo.
 
@@ -21,6 +21,20 @@ Contratos e infraestrutura **feature-flagged** (default **off**), clean-room —
 
 Diagnóstico: `docs/analysis/2026-07-13-warp-bridgemind-phase0-diagnosis.md`.  
 PTY stream, effect policy, budgets e `event_ledger` **permanecem**; as novas camadas são laterais.
+
+### Extensões 2026-10-15 (sobre a v0.76.283)
+
+Comportamentos de produto, não as camadas feature-flagged de 13/07. O detalhe de cada linha está em `AGENTS.md` (seção citada) e o dono é o módulo da última coluna:
+
+| Capacidade | Detalhe | Dono no código |
+| --- | --- | --- |
+| Plano Trial: 15 dias, 6 agentes simultâneos, 2 vagas do leque para Maestro e revisor | `docs/billing-stripe.md`; `AGENTS.md` "Plano Trial" | `cloud-api/src/access.ts`, `license-access.ts`, `license-enforcement.ts`, `orch/pane-admission.ts` (`parallelHelperBudget`) |
+| Via Rápida: escritor isolado, revisão informativa, handoff em rodadas e sem missão | `AGENTS.md` "Via Rápida", "Revisão informativa e portão formal", "Handoff sem missão" | `orch/tools-panes.ts`, `orch/isolated-writer-*.ts`, `orch/tools-handoff.ts`, `orch/tools-domain.ts` (`nexus_review_verdict`) |
+| Windows: `HKCU\Environment` no pane e no hub MCP, folga de memória com a Standby List, título e resize do ConPTY | `AGENTS.md` "Windows: env do usuário, folga de memória e ConPTY" | `pty/windows-user-env.ts`, `orch/pane-admission.ts`, `renderer/lib/pane-title.ts`, `renderer/terminal/terminal-host.ts` |
+| Multi-conta: renovação de credencial na Reserva (Claude por HTTP, AGY/Gemini com write-back do grant) | `AGENTS.md` "Multi-conta" e "AGY/Gemini"; `docs/multi-account-matrix.md` | `persistence/account-store.ts` (`ensureFreshClaudeSubscription`), `quota/provider-usage-auth.ts` (`persistGeminiRotatedCreds`) |
+| Nexus Shot Bridge (entrega de capturas, `target: null` = sem pane) | `AGENTS.md` "Nexus Shot Bridge" | `shot-bridge/shot-bridge-server.ts`, `shared/shot-bridge.ts` |
+| Uso e custos no registro do T3 e gasto mensal real em USD (`settings.spend`) | `AGENTS.md` "Uso e custos no registro do T3" | `usage/usage-store.ts`, `usage/usage-service.ts`, `shared/monthly-spend.ts` |
+| Skills embutidas (papéis `oc-*`, `stack-advisor`, BridgeMind) | `docs/SKILLS.md` | `assets/skills/`, `scripts/bundle-skills.mjs`, `orch/bridge-mind-skills.ts` |
 
 ### Corte de produto V2 (2026-08-08)
 
@@ -254,19 +268,28 @@ Notas de design: `category` inclui **orchestrator** (não só os 4 worker roles)
 
 ### E.2 Servidor MCP embutido — namespace `nexus_*`
 
-Main hospeda MCP server (@modelcontextprotocol/sdk); cada CLI-agente conecta via stdio/socket local injetado no spawn. Tools principais:
+Main hospeda MCP server (@modelcontextprotocol/sdk); cada CLI-agente conecta via stdio/socket local injetado no spawn. A tabela é o mapa por família das ferramentas registradas (perto de 190); a fonte contratual é o `tools/list` do servidor, e `nexus_tool_pick` escolhe a ferramenta para uma necessidade. Tools principais:
 
 | Grupo                     | Tools                                                                                                                                                                                                                                                            |
 | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Panes (10)                | `nexus_pane_spawn`, `nexus_pane_list`, `nexus_pane_list_providers`, `nexus_pane_read`, `nexus_pane_read_many`, `nexus_pane_write`, `nexus_pane_write_many`, `nexus_pane_close`, `nexus_pane_wait_idle`, `nexus_pane_wait_many`                                   |
-| Handoffs (2)              | `nexus_handoff_submit`, `nexus_handoff_list`                                                                                                                                                                                                                     |
-| Agentes (3)               | `nexus_agent_invoke`, `nexus_agent_list`, `nexus_agent_get`                                                                                                                                                                                                      |
-| Missões (5)               | `nexus_mission_create`, `nexus_mission_get`, `nexus_mission_list`, `nexus_mission_set_status`, `nexus_mission_spawn_pane`                                                                                                                                        |
-| Squad/Catálogo/Task (3)   | `nexus_squad_save`, `nexus_catalog_install`, `nexus_task`                                                                                                                                                                                                        |
+| Panes (12) | `nexus_pane_spawn`, `nexus_pane_list`, `nexus_pane_list_providers`, `nexus_pane_read`, `nexus_pane_read_many`, `nexus_pane_write`, `nexus_pane_write_many`, `nexus_pane_close`, `nexus_pane_wait_idle`, `nexus_pane_wait_many`, `nexus_pane_ask`, `nexus_pane_whoami` |
+| Handoffs (3) | `nexus_handoff_submit`, `nexus_handoff_list`, `nexus_handoff_ack` |
+| Agentes (6) | `nexus_agent_invoke`, `nexus_agent_list`, `nexus_agent_get`, `nexus_agent_prompt`, `nexus_agent_wait`, `nexus_agent_spec_write` |
+| Missões (7) | `nexus_mission_create`, `nexus_mission_get`, `nexus_mission_list`, `nexus_mission_set_status`, `nexus_mission_spawn_pane`, `nexus_mission_control`, `nexus_mission_request_resume` |
+| Squad/Catálogo/Task (4) | `nexus_squad_save`, `nexus_catalog_install`, `nexus_catalog_overlay`, `nexus_task` |
 | Todos (1)                 | `nexus_todo_manager`                                                                                                                                                                                                                                             |
-| Roteamento (1)            | `nexus_route_task`                                                                                                                                                                                                                                               |
-| Preview/Browser/Perf (11) | `nexus_preview_start`, `nexus_preview_stop`, `nexus_browser_open`, `nexus_browser_navigate`, `nexus_browser_screenshot`, `nexus_browser_read`, `nexus_browser_inspect`, `nexus_browser_click`, `nexus_browser_fill`, `nexus_browser_wait`, `nexus_perf_snapshot` |
+| Roteamento (7) | `nexus_route_task`, `nexus_route_log`, `nexus_rank`, `nexus_model_ranking`, `nexus_pick_account`, `nexus_tool_pick`, `nexus_judge` |
+| Preview/Browser/Perf (20) | `nexus_preview_start`, `nexus_preview_stop`, `nexus_browser_open`, `nexus_browser_navigate`, `nexus_browser_screenshot`, `nexus_browser_read`, `nexus_browser_inspect`, `nexus_browser_click`, `nexus_browser_fill`, `nexus_browser_wait`, `nexus_browser_find`, `nexus_browser_extract`, `nexus_browser_hover`, `nexus_browser_press`, `nexus_browser_scroll`, `nexus_browser_do`, `nexus_browser_responsive`, `nexus_browser_judge_visual`, `nexus_perf_snapshot`, `nexus_perf_events` |
 | Design (1)                | `nexus_design_selection_get` — seleção visual redigida, hints de framework, candidatos de código e screenshot opcional                                                                                                                                           |
+| Git (11) | `nexus_git_status`, `nexus_git_sync`, `nexus_git_add`, `nexus_git_commit`, `nexus_git_push`, `nexus_git_pull`, `nexus_git_diff`, `nexus_git_log`, `nexus_git_branch_list`, `nexus_git_branch_create`, `nexus_git_branch_switch` — writer isolado só usa add, commit, status, diff e log |
+| Revisão, merge e PR (8) | `nexus_review_verdict`, `nexus_review_submit`, `nexus_merge_status`, `nexus_merge_review_submit`, `nexus_pr_create`, `nexus_pr_inspect`, `nexus_pr_enqueue`, `nexus_pr_auto_merge` |
+| Meta de longo prazo (6) | `nexus_goal_register`, `nexus_goal_status`, `nexus_goal_bind_pane`, `nexus_goal_control`, `nexus_goal_task_update`, `nexus_wave_advance` — Goal Governor |
+| Memória e contexto (20) | `nexus_code_map_blast_radius`, `nexus_code_map_get`, `nexus_code_map_query`, `nexus_code_map_refresh`, `nexus_context_commit`, `nexus_context_doctor`, `nexus_context_draft_apply`, `nexus_context_draft_get`, `nexus_context_draft_list`, `nexus_context_draft_propose`, `nexus_context_draft_review`, `nexus_context_draft_review_run`, `nexus_context_draft_supersede`, `nexus_context_scaffold`, `nexus_memory_backlinks`, `nexus_memory_orphans`, `nexus_memory_recall`, `nexus_memory_retain`, `nexus_memory_stats`, `nexus_memory_suggest_connections` |
+| Arquivos, editor e LSP (14) | `nexus_editor_apply_patch`, `nexus_editor_focus`, `nexus_editor_goto_line`, `nexus_editor_insert`, `nexus_editor_replace_selection`, `nexus_file_close`, `nexus_file_open`, `nexus_file_read`, `nexus_file_search`, `nexus_file_write`, `nexus_lsp_definition`, `nexus_lsp_diagnostics`, `nexus_lsp_references`, `nexus_lsp_symbols` |
+| Segurança (2) | `nexus_content_audit`, `nexus_security_audit` — auditorias somente leitura (BridgeWard/BridgeSecurity) |
+| Mídia e design system (11) | `nexus_media_providers`, `nexus_image_generate`, `nexus_video_generate`, `nexus_audio_generate`, `nexus_design_system_extract`, `nexus_design_system_get`, `nexus_design_system_import`, `nexus_design_system_local_import`, `nexus_design_system_local_list`, `nexus_design_system_publish`, `nexus_design_system_search` |
+| Skills, harness e receitas (12) | `nexus_skills`, `nexus_skills_inventory`, `nexus_harness`, `nexus_plugin_inventory`, `nexus_mcp_servers`, `nexus_cli_inventory`, `nexus_recipe_get`, `nexus_recipe_list`, `nexus_recipe_propose`, `nexus_recipe_save`, `nexus_recipes_format`, `nexus_recipes_lint` |
+| Operação e diagnóstico (36) | `nexus_account_windows`, `nexus_bg_kill`, `nexus_bg_list`, `nexus_bg_run`, `nexus_bg_wait`, `nexus_checkpoint_list`, `nexus_checkpoint_restore`, `nexus_clarify`, `nexus_computer_do`, `nexus_cron`, `nexus_cron_cancel`, `nexus_cron_list`, `nexus_cron_schedule`, `nexus_hunks_analyze`, `nexus_plan_read`, `nexus_plan_write`, `nexus_quota_status`, `nexus_remote_bridge_status`, `nexus_remote_cli_detect`, `nexus_remote_spawn`, `nexus_remote_tmux_list`, `nexus_sensor_run`, `nexus_session_lease_inspect`, `nexus_sync_status`, `nexus_system_doctor`, `nexus_terminal_kill`, `nexus_terminal_run`, `nexus_ui_action`, `nexus_ui_read`, `nexus_vault_list`, `nexus_worker_heartbeat`, `nexus_workflow_advance`, `nexus_workflow_get`, `nexus_workspace_list`, `nexus_worktree_create`, `nexus_worktree_get` |
 
 `nexus_handoff_submit` é uma fronteira física, não um status declarativo. O
 main consome uma capability one-shot emitida pelo transporte HTTP MCP ou pelo
@@ -332,6 +355,8 @@ Aliases curtos `pane_*`/`handoff_*` mantidos no registry (namespace duplo) para 
 ### E.3 Handoffs — mecanismo durável
 
 O worker chama `handoff_submit({status,summary,artifacts})`; o orquestrador coleta via `handoff_list`. Nos panes Claude o Nexus registra **um único hook `.mjs`**, só no `PreToolUse` do `nexus_handoff_submit` (F-1154): com o Main inalcançável, o relato vai para o spool assinado da sessão e o agente ouve "guardado" (F-795). Ele nunca bloqueia outra ferramenta. Os antigos PostToolUse/Stop/PreToolUse do gate em toda ferramenta saíram: custavam um processo Node por chamada (≈3 s com a admissão de carga) e não decidiam mais nada.
+
+O orquestrador responde cada entrega com `nexus_handoff_ack`: `accepted` (padrão) ou `rework` com `note`, que volta ao MESMO writer (`[NEXUS_REWORK]` no PTY ou `resume` na worktree dele), e o próximo `handoff_submit` do writer é a rodada seguinte (F-239). O ACK não conclui a missão sozinho, mas a conclusão verificada exige o recibo. O helper aberto por um agente do operador, sem missão, entrega ao agente pai como mensagem `unverified`, sem ACK nem recibo de missão (F-565). Writers isolados entregam arquivos tocados e diff; as branches não têm merge automático e o Maestro as integra. Detalhes em `AGENTS.md` ("Handoff sem missão", "Via Rápida").
 
 **Substrato durável:** em vez de marker files temporários no filesystem, o handoff é gravado numa tabela `handoffs` (SQLite) e um evento `orch:handoff.received` é emitido ao orquestrador; a entrega e o fechamento mecânico consultam o DB, não o filesystem (o Stop-gate antigo saiu no F-1154). Isso elimina corrida e lixo de arquivos e dá durabilidade + auditabilidade. Entrega automática quando o orquestrador fica ocioso. Como fallback de parsing no terminal, o marker `### NEXUS_HANDOFF v1` também é reconhecido. `outputSchema` valida `artifacts` no submit.
 
@@ -497,7 +522,7 @@ Temas (JSON, CSS custom properties `--color/*text/*space/*duration` — sem pale
 
 ### G.4 Empacotamento (.dmg)
 
-Electron Forge: maker-dmg (final) + ZIP (auto-update Squirrel.Mac). Signing `@electron/osx-sign` (Developer ID). Notarization `@electron/notarize`. Entitlements: microfone + hardened runtime + allow-jit (V8). Native rebuilds: @lydell/node-pty, better-sqlite3, onnxruntime-node, uiohook-napi, keytar (prebuilt multiarch; universal arm64+x64). macOS-only. URL scheme `nexus://`.
+Electron Forge: maker-dmg (final) + ZIP (auto-update Squirrel.Mac). Signing `@electron/osx-sign` (Developer ID). Notarization `@electron/notarize`. Entitlements: microfone + hardened runtime + allow-jit (V8). Native rebuilds: @lydell/node-pty, better-sqlite3, onnxruntime-node, uiohook-napi, keytar (prebuilt multiarch; universal arm64+x64). Este parágrafo descreve o empacotamento do macOS, que segue sendo o alvo primário. O Windows (x64, sem Authenticode até a Microsoft Store) e o Linux (x64: `.deb`, `.rpm` e ZIP portátil assinado com auto-update) têm release próprio; ver `AGENTS.md` ("Windows sem assinatura até a Microsoft Store", "Linux se atualiza sozinho") e `docs/SECURITY.md`. URL scheme `nexus://`.
 
 ---
 

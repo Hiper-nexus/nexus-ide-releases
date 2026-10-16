@@ -1,5 +1,12 @@
 # Publicação do backend no Railway
 
+> **Legado.** O host `api.nexuside.app` é roteado para o Worker `nexus-cloud-api`
+> (`cloud-api/wrangler.jsonc`, `routes[0].custom_domain`; `AGENTS.md`, "Site e API
+> vivem aqui"), que é o dono de licença, cobrança e teste (`docs/billing-stripe.md`).
+> Este roteiro descreve o servidor Express de `server/` no Railway e não vale para
+> essa API. O repositório canônico agora é `Hiper-nexus/nexus-ide`; o nome antigo
+> abaixo só continua funcionando por redirecionamento do GitHub.
+
 O NexusIDE usa o Railway somente para o backend Node.js e PostgreSQL. O domínio
 continua no Cloudflare, que aponta `api.nexuside.app` para o domínio público
 gerado pelo Railway.

@@ -40,6 +40,22 @@ nos gaps novos). Fail-closed: se nenhum settings existir, plano marca
 - Runtime tool calls: existing `mcp-dispatch.ts` / `mcp-server.ts`
 - Flag: `feature.mcp.hub` (writes/save/drift-input still gated)
 
+## Backend stdio compartilhado (env)
+
+O hub stdio compartilhado (`src/main/mcp-hub/mcp-stdio-bridge.ts`) sobe cada servidor stdio
+declarado em `~/.claude.json` UMA vez, sob demanda, e o multiplexa por HTTP (`/hub/<key>`)
+para os panes, cada um com o próprio bearer. O env do backend é montado em
+`backendEnv()`: só as chaves de `INHERITED_ENV_KEYS` do `process.env` do Main, e o `env` do
+descriptor sempre vence. No Windows o `process.env` do Main é congelado no boot, então as
+variáveis que o operador cria ou edita em `HKCU\Environment` (painel do Windows, `setx`)
+preenchem as lacunas por `mergeWindowsUserEnvironment` (`src/main/pty/windows-user-env.ts`).
+É o que faz um MCP de `~/.claude.json` que depende de `MARGEM_MCP_READ_URL` e
+`MARGEM_MCP_READ_TOKEN` subir com as credenciais do próprio operador, em vez de falhar sem
+dizer por quê. O merge só preenche: nunca sobrescreve, recusa `DYLD_`, `LD_`,
+`NODE_OPTIONS`, `ELECTRON_`, o namespace `NEXUS_` e as chaves de identidade, e é no-op fora do
+Windows. Detalhes e a decisão de não ampliar a herança do `process.env` em `AGENTS.md`
+("Windows: env do usuário, folga de memória e ConPTY") e `docs/SECURITY.md`.
+
 ## Error flow
 
 Flag off → writes throw. Drift report is non-destructive. Backup required before overwrite.

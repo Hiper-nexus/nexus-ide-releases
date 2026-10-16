@@ -17,8 +17,10 @@ are separate workspaces.
 | `shared/` | Shared contracts between server and client |
 | `scripts/` | Build, release, security, and dev-environment scripts |
 | `docs/` | Architecture, security, and design documentation |
-| `resources/` | Static resources and bundled assets (skills, shell integration) |
+| `resources/` | Static resources packaged with the app (shell integration, model catalog and ranking, pets, heavy-command and wake helpers, builtin-squad resources) |
 | `resources/agent-detection/` | Herdr (Apache-2.0) agent screen-state manifests; evaluated by `src/main/detect/` |
+| `assets/skills/` | Bundled skills, one `<name>/SKILL.md` each (`oc-pilot`, `oc-builder`, `oc-scout`, `oc-conveyor`, `stack-advisor`, `superpowers`, …). `scripts/bundle-skills.mjs` turns each into the tracked, generated `src/main/orch/<name>-manifest.ts`: edit the SKILL.md, rerun the script and commit both. `bridgeward` and `bridgesecurity` have no folder; they live in `src/main/orch/bridge-mind-skills.ts` |
+| `site/`, `cloud-api/` | Public site and cloud API Workers; independent npm projects (see "Site e API vivem aqui") |
 | `native/` | Native C code (darwin-pty-supervisor) |
 
 ## Security-Sensitive Core Boundary
@@ -52,6 +54,38 @@ empacotamento do app (`shouldPackageFile`, lista permitida) nunca as leva.
 - Ramos de trabalho que ficaram pendentes nos repositórios antigos estão preservados como
   `archive/site/*` e `archive/cloud-api/*` neste remoto (árvore na raiz; use `git subtree`/cherry-pick para trazer).
 
+## Plano Trial: 15 dias, 6 agentes simultâneos (05/10; vagas do leque 15/10)
+
+- **Oferta.** O primeiro login verificado abre um teste de 15 dias com até **6 agentes
+  simultâneos** e sem sync na nuvem; depois dele o app exige o Pro (agentes ilimitados). A fonte
+  única é o `cloud-api` (`cloud-api/src/access.ts`, `cloud-api/wrangler.jsonc`): `TRIAL_DAYS` (padrão 15),
+  `TRIAL_MAX_AGENTS` (padrão 6, de 1 a 20) e `TRIAL_CLOUD_SYNC` (padrão `false`). Assinatura paga e
+  admin autorizado saem com `maxAgents: null` (ilimitado); suspenso e inativo, `0`.
+- **O desktop não fixa número.** `maxAgents()` (`license-access.ts`) lê `limits.maxAgents` do JWT da
+  licença (`null` = ilimitado); `docs/billing-stripe.md` descreve o contrato. O limite era 2 antes de
+  05/10 (`148bec5c7c`, "teste com seis agentes"): doc, copy ou teste de produto novo nunca escreve "2
+  agentes no teste". O `maxAgents: 2` de `pty-manager.test.ts` e `license-lifecycle.test.tsx` é só fixture.
+- **Quem conta.** `license-enforcement.ts` reserva UMA vaga síncrona por filho físico de agente: PTY
+  por `spawnAgentSession` e ACP por `AcpClient.spawn`; shell e browser não passam por aí. A vaga só
+  solta com a prova física do fim do filho (ou de um spawn que nunca criou filho), e adotar um filho
+  warm reaproveita a reserva. A recusa é `license_agent_limit`; `TRIAL_AGENT_LIMIT_COPY`
+  (`access-guard.ts`) é só preflight de UX, quem decide é o Main. Os spawns por MCP chamam
+  `assertLicensedAgentCapacity` antes (`pane-registry.ts`, `tool-util.ts`).
+- **O teste não tem execução remota:** `assertRemoteLicenseAccess`
+  (`remote/remote-spawn.ts`, a sessão tmux por SSH) recusa com
+  `remote-trial-unavailable` enquanto `access === 'trial'`: «Execuções remotas estão
+  disponíveis com o Pro».
+- **O leque de helpers reserva 2 vagas.** `parallelHelperBudget` recebe `licenseMaxAgents`
+  (`currentParallelHelperBudget`, a camada do Main que lê `maxAgents()`; `pane-admission.ts`
+  continua puro e não importa a licença). Com teto, o leque nunca passa de
+  `max(1, licenseMaxAgents - LICENSE_RESERVED_AGENT_SEATS)` helpers, com `LICENSE_RESERVED_AGENT_SEATS = 2`:
+  uma vaga para o Maestro (e o relive dele) e outra para o revisor independente. Trial 6 → 4 helpers;
+  plano ilimitado → sem corte. Sem a reserva a primeira onda ocupava as 6 vagas e a missão travava
+  sem lugar para o revisor. O piso 1 só ENCOLHE o leque, nunca o zera (zero continua sendo da máquina:
+  memória, swap, guard) e quem recusa por licença segue sendo o gate `license_agent_limit`. O corte
+  chega ao Maestro como `limitedBy: 'license'` (`budgetCeilingNote`). O teto vale para a primeira onda
+  (só o Maestro vivo); nas reposições o gate da licença é o árbitro.
+
 ## Install and Rebuild
 
 ```bash
@@ -69,7 +103,11 @@ npm run rebuild:node           # rebuild native modules for Node (CI/tests)
 | `npm run test:changed` | Only tests affected by changed files (git-based) |
 | `npm run test:mission-e2e` | Missão inteira de ponta a ponta (Main real, PTY real, CLI falsa); fora de pane; roda no `release:candidate` — [docs/MISSION-E2E.md](docs/MISSION-E2E.md) |
 | `npm run security:renderer-sinks` | Static check for unsafe renderer IPC sinks |
-| `npm run lint` | Alias for `tsc --noEmit` |
+| `npm run lint` | `lint:main-sync` + oxlint (quiet) + `tsc --noEmit` |
+| `npm run lint:main-sync` | Static ratchet for synchronous process execution (`spawnSync`/`execSync`/`execFileSync`) in Main (F-764) |
+| `npm run lint:oxlint` | oxlint over `src server scripts` (`lint:oxlint:ratchet` caps the warning count) |
+| `npm run test:perf` | Performance-budget tests (terminal output scheduler, PTY wire, pane grid render, pane output digest) |
+| `node scripts/bundle-skills.mjs` | Regenerate `src/main/orch/*-manifest.ts` from `assets/skills/` (`premake` and `prepackage` also run it) |
 | `npm run start` | Dev server (hot reload) |
 | `npm run make` | Build and package with Electron Forge |
 | `npm run release:candidate` | Gate do candidato (assinatura, staple, smoke do ZIP, receipt) |
@@ -278,6 +316,45 @@ saber isto antes de mexer:
 - `operator-profile-style.test.ts` trava hex literal, animação em loop,
   eyebrow em caixa-alta e opacidade em conquista travada no CSS do perfil.
 
+## Uso e custos no registro do T3 e gasto mensal real em USD (15/10)
+
+- **Painel.** `UsageSnapshot.analytics` (opcional: Main antigo e snapshot vazio
+  não trazem, e a tela some com o painel em vez de mostrar zero) carrega a série
+  diária por provedor (até 90 dias) e, para as janelas de 7, 30 (padrão) e 90 dias
+  locais, o agregado por provedor (sessões distintas, custo, % do custo, tokens),
+  por modelo e os totais detalhados (processados, cache, sem cache, output,
+  economia de cache). O rollup mora em `ScopedUsageStore.analytics`; o
+  `UsageTelemetryService` o guarda por 1 min (`ANALYTICS_TTL_MS`) ou até virar o
+  dia, porque o broadcast sai a cada segundo, e falha no rollup não derruba o
+  snapshot. `UsageOverview` e `MonthlySpendCard` entram em `UsageQuotaSection`;
+  as cores de série são os tokens `--series-1..6` (`base.css`, DESIGN.md §17).
+- **`costUsd` do painel é o equivalente de API pública**, não fatura nem débito
+  do plano. Só os leitores de transcrito de `claude`, `codex` e `mimo-code`
+  gravam tokens (`usage-service.ts`); CLI sem leitor próprio não aparece no
+  gráfico, e isso não é gasto zero.
+- **Gasto mensal real.** `settings.spend` (`~/.nexus/settings.json`) guarda
+  `entries[]`: `id` (`plan:<linha de cota>` para conta detectada, `custom-…`
+  para avulsa), `label`, `kind` (`subscription` ou `api`), `provider` (logo),
+  `monthlyUsd` (0 a 100.000) e `active`. O preço de plano que o Nexus detecta é
+  preço de LISTA (`account-plan.ts`: só claude, codex e agy; Team/Enterprise e
+  tier novo ficam sem preço); o valor salvo é o que a pessoa paga e VENCE o
+  detectado. Máximo de 64 linhas; na leitura uma linha corrompida cai sozinha e
+  id repetido fica com a primeira.
+- **IPC.** `settings:spend:get`, `settings:spend:set` e `settings:spend:changed`
+  (`handleTrusted`). O renderer manda a lista INTEIRA, que substitui a salva
+  (duas abas não mesclam linhas); patch inválido (valor negativo, acima do teto,
+  id repetido) devolve a lista que já estava salva. No preload são
+  `settings.spendGet/spendSet/onSpendChanged`.
+- **Conta.** `shared/monthly-spend.ts` é puro: `computeMonthlySpend` soma as linhas
+  ativas (assinaturas + API), conta `unpricedCount` (total incompleto enquanto
+  houver linha ativa sem preço) e calcula a economia contra o equivalente de API
+  dos últimos 30 dias de TODOS os projetos (`recentApiEquivalentUsd`, do
+  `usage:history`); sem leitura a economia é `null`, nunca inventada, e negativa
+  quer dizer que a pessoa pagou mais do que a API custaria. Os atalhos do cartão
+  são US$ 20, 100, 200 e 500, e `PLAN_PRESETS` só tem plano com preço de lista
+  conhecido (Claude Pro/Max 5×/Max 20×, ChatGPT Plus/Pro): Cursor, Grok, GLM e Gemini
+  entram como linha livre. `parseUsdInput` aceita `$20`, `20,50` e `1.200,50`.
+
 ## Rail em lista plana, um grupo por projeto (15/10)
 
 - O rail é uma lista plana (DESIGN.md §16; guard em `workspace-rail-style.test.ts`):
@@ -337,7 +414,30 @@ saber isto antes de mexer:
 
 - `nexus_pane_spawn({ isolatedWriter: true })` sem contrato congelado cria
   uma worktree por spawn pelo `WorktreeManager` (GitRunner + CoW opcional).
-  `readOnly` explícito ou herdado prevalece e não aloca worktree.
+  Leitor (`readOnly` explícito ou herdado) sem `isolatedWriter` não aloca
+  worktree nem disputa a vez do checkout. F-1318: `isolatedWriter: true`
+  explícito vence o rótulo `readOnly` (no Autopilot ele é consultivo; o
+  "leitor" que pede worktree é writer e nasce `isolated_worktree`).
+- Writer comum que colidiria com outro ativo no mesmo checkout é auto-isolado
+  (`reason: auto-isolado: …`), na mão do operador e na missão, em vez de
+  recusado. Se o auto-isolamento falha (ex.: HEAD solto no checkout de
+  coordenação), o writer fica no checkout com o claim síncrono (F-981) e o
+  recibo traz `isolationFallback {reason, blockedBy}` com `executionMode:
+  same_checkout` e o contrato de checkout compartilhado, sem a promessa de
+  "único writer". Só o pedido explícito (`isolatedWriter: true`) recusa.
+  `isolatedWriter: false` explícito não auto-isola, e a colisão vira recusa
+  clara (`isolatedWriterDisabledRefusal`).
+- O recibo do spawn diz o que integrar: `isolatedWorktree {branch,
+  worktreePath, baseSha, note}` (mais `reason` e `cwdDiscarded` quando houver).
+  Não há merge automático: o Maestro integra as branches na ordem de
+  dependência, depois de ler o diff e rodar a prova.
+- Salvaguarda do writer (F-794): alteração sem commit na worktree vira um
+  commit filho do HEAD em `refs/nexus-salvage/<branch>/<carimbo>` quando o
+  writer entrega o handoff, quando o pane sai ou fecha e, como último recurso,
+  quando o escopo do projeto reabre depois de um encerramento do app
+  (`isolated-writer-salvage.ts`). Usa índice privado, nunca `git stash`, e não
+  toca branch, índice real nem arquivos; é idempotente e fica fora de
+  `refs/heads`. O writer declara no handoff que houve salvaguarda.
 - Registros `ownerKind: 'pane'` usam um taskId técnico, sem criar task de plano;
   a varredura de tasks órfãs deve preservá-los. Branches usam hashes curtos dos
   ids de missão/worker, derivados por `worktreeBranchRef` nos validadores também.
@@ -368,6 +468,26 @@ saber isto antes de mexer:
   = rodada nova (handoff novo, recibo novo); entrega ainda pendente =
   replay/recusa. A transição de dispatch só quando o dispatch está `running`;
   `handoff_ready` e além seguem pelo caminho de replay puro.
+- **A devolução abre a próxima rodada (F-782/F-1319/F-1388/F-1409).**
+  `nexus_handoff_ack({ handoffId, verdict, note })` é só do orquestrador físico
+  da missão (`accepted` é o padrão; `accept`/`approve`/`ok` = aceito,
+  `reject`/`redo` = `rework`). Com `rework` e `note`, o Nexus entrega
+  `[NEXUS_REWORK] …` ao MESMO writer: digitado no PTY se o pane vive; senão o
+  writer é reaberto com `resume` na própria worktree e a nota é o prompt; sem
+  conversa retomável nasce um pane novo na mesma worktree com o brief, a nota e
+  os commits já feitos (`resume.mode: 'fresh-in-worktree'`). Writer sem
+  worktree própria devolve `reworkDelivered: false` com o motivo, e o Maestro
+  abre outro writer com a nota. O novo `nexus_handoff_submit` do writer é a
+  rodada seguinte e pede outro ACK. O veredito vira rótulo: a revisão de
+  evidência é marcada certa ou errada e o `rework` conta como falha na taxa de
+  sucesso da CLI/modelo que a rota usa. ACK aceito de entrega não-success fecha
+  o worker armado; `rework` mantém o pane vivo para a nota. O ACK não conclui a
+  missão sozinho, mas a conclusão verificada exige o recibo.
+- O handoff sem missão não tem ACK: o pai (o agente do operador que abriu o
+  helper) recebe a entrega como mensagem `unverified` e verifica por conta
+  própria. As skills `oc-pilot`, `oc-builder`, `oc-scout` e `oc-conveyor`
+  (`assets/skills/`) descrevem esse contrato para os agentes; mudou o contrato
+  aqui, mude a skill e rode `node scripts/bundle-skills.mjs`.
 
 ## Uma missão nunca mistura workspace (F-634/F-635)
 
@@ -1024,6 +1144,39 @@ saber isto antes de mexer:
   o arquivo FOI copiado e pedindo para reabrir o agente — nunca reusar a
   mensagem de recusa de intake para esse caso.
 
+## Nexus Shot Bridge: arquivos do app de captura (F-1054/F-1135, `target: null` 15/10)
+
+- O Nexus Shot (app de captura separado, repositório próprio) entrega arquivos ao
+  IDE por um endpoint HTTP loopback do Main (`src/main/shot-bridge/shot-bridge-server.ts`,
+  contrato em `src/shared/shot-bridge.ts`). Bind só em `127.0.0.1`, porta
+  efêmera, token aleatório por sessão no header `x-nexus-shot-token`; o Shot
+  descobre `{ port, token }` em `<userData>/shot-bridge/endpoint.json` (0600).
+  Rotas: `POST /shot/ingest` e `GET /shot/targets`.
+- A fronteira é o caminho: absoluto, com realpath sob as raízes do Shot (`~/Pictures/Nexus Shot`
+  e `~/Movies/Nexus Shot`; no Windows `Pictures` e `Videos\Nexus Shot`; no Linux
+  `~/Videos/Nexus Shot`; mais pastas conhecidas redirecionadas, como OneDrive e
+  XDG; UNC é recusado), arquivo regular de até 512 MB, no máximo 320 arquivos e corpo de
+  até 64 KB. O arquivo não é copiado: o renderer recebe só os metadados em
+  `shot:files-received`.
+- **Destino.** Opcional: `{ "targetPaneId": "…" }` ou `{ "target": { "paneId": "…" } }`.
+  Alvo explícito indisponível é recusado (`target-unavailable`) e nunca cai no pane
+  padrão; sem alvo vale o foco padrão. O Main valida o destino e monta o
+  `ShotTargetBinding` (`paneId`, `sessionId`, `workspacePath`) antes de enfileirar o
+  evento (F-1135); esse binding é interno e nunca vem do pedido.
+- **`"target": null` é «nenhum pane escolhido».** O Shot o envia sempre que o seletor
+  fica sem pane. O schema tinha `target` só `.optional()`, então o `null` dava 400
+  `invalid-shape` e o Shot mostrava «O NexusIDE recusou os arquivos (fora das
+  pastas do Nexus Shot)» para uma captura válida e dentro das pastas. Agora
+  `target` é `.nullish()` e `null` equivale a ausente (entrega padrão, sem pane nem
+  binding inventados); `targetPaneId` segue estrito (ausente ou id válido, `null` ali
+  continua recusado) e `target` segue `.strict()` com `paneId` opaco.
+- Para diagnosticar uma recusa, rode `shotDestinationSchema` e
+  `validateShotIngestFiles` por tsx. Não faça POST na ponte viva: ela entrega os
+  arquivos ao pane do operador. Slugs estáveis do ack: `unauthorized`,
+  `invalid-json`, `invalid-shape`, `target-unavailable`, `too-many-files`,
+  `path-not-absolute`, `path-outside-allowed`, `path-not-found`, `not-a-file`,
+  `file-too-large`, `body-too-large`, `not-found`.
+
 ## Política de Git do fan-out isolado (F-563)
 
 - No MCP, writers com `executionScope` distinto usam apenas Git
@@ -1032,12 +1185,49 @@ saber isto antes de mexer:
 - `nexus_terminal_run` desses writers não executa shell: traduz somente argv
   Git literal para os mesmos handlers protegidos. Chains, subshells, scripts e
   `nexus_bg_run` são recusados. Não substitua isso por regex ou wrapper de PATH.
+- Caminho explícito (`parseIsolatedWriterGitCommand`, `isolated-writer-policy.ts`):
+  `git add [--] <caminhos>` recusa argumento que comece com `-` ou `:` (então
+  nada de `-A`, `-u`, `-p` nem pathspec mágico), e cada caminho tem de resolver
+  dentro do escopo; `git commit` aceita SÓ `-m`/`--message <mensagem>`, sem
+  pathspec, `-a` nem `--amend`; `status` aceita `--short`/`--branch`, `diff` só
+  `--cached`/`--staged` e `log` só `--oneline` e `-n <1..100>`. O que foi staged
+  é exatamente o que entra no commit: o writer faz `add` dos arquivos que
+  mudou, nunca `.` (o padrão sem caminho do guard é `.`, e a regra de nunca usá-lo
+  vive na skill `oc-builder`). `nexus_git_add` e `nexus_git_commit` ficam
+  recusados para pane `readOnly` na worktree isolada. A branch tem de estar em
+  `refs/heads/nexus/…`, nunca main/master.
 - Essa proteção cobre os processos lançados pelo MCP. A execução interna dos
   CLIs depende de seus próprios hooks/perfis; Autopilot não implica sandbox
   de kernel. Não declare que um guard MCP confina todas as ferramentas nativas.
 - Worker→worker write/close exige a mesma `executionScope.rootRealPath`.
   Read/wait continuam disponíveis dentro da missão. O handoff do writer deve
   listar arquivos tocados e diff; branches isoladas não têm merge automático.
+
+## Revisão informativa e portão formal (F-817/F-1477)
+
+- **Portão formal.** Push, merge e conclusão só aceitam `nexus_review_verdict`
+  com `approve` de juiz de ponta (Fable/Opus/Sonnet/Sol 6.1/Astra), no HEAD
+  exato e com a árvore limpa; é o `satisfiesGate` da resposta. `reject`
+  também fica registrado e bloqueia até o HEAD andar. `worktree`, `branch` ou
+  `headSha` amarram o commit revisado quando o cwd do pane é outro checkout
+  (F-1423); a ferramenta exige pane de missão (orquestrador ou worker). Numa
+  missão de segurança crítica (a classificação do roteador sobre o texto dela,
+  `securityCriticalGateJudge`) só Claude/Codex satisfazem o portão (F-817).
+- **Revisão informativa.** Spawn somente leitura e sem worktree de escrita
+  (`spawnRouteAuthority`: `isolatedWriter` vence `readOnly`, F-1318) usa a lane
+  de julgamento inteira, Argon/Grok incluídos, em tarefa de segurança crítica,
+  o que espalha o uso entre as CLIs. Quando a rota o põe fora de Claude/Codex
+  (`informativeReviewSeat`: tier `critical`, specialty `security`, adapter
+  fora dos dois), o spawn nasce marcado `informativeReview` e o
+  `nexus_review_verdict` dele fica registrado com `frontier: false` e
+  `satisfiesGate: false`, com a dica «veredito registrado como informativo».
+  O approve dele nunca vira portão, seja qual for a missão; o Maestro abre o
+  juiz por `nexus_route_task` "revisão" ou julga.
+- **A marca é do Main.** Ela nasce em `tools-panes.ts` a partir da rota provada
+  no spawn e viaja no metadado do pane e no token do gate
+  (`AgentGateContext.informativeReview`, `mintToken`). Nunca vem de argumento
+  MCP nem do texto do prompt. Revisor que não nasceu informativo segue as
+  regras de juiz de sempre.
 
 ## Checkpoint oculto do writer (ORC-03)
 
@@ -1099,6 +1289,38 @@ saber isto antes de mexer:
   12s) e reusam o token. Sem git-lock no overlay.
 - Mitigante de operador: contas Codex distintas em spawn paralelo evitam
   a família; o picker já tem uma linha por conta.
+
+## AGY/Gemini: o grant renovado volta para a linhagem da conta
+
+- `refreshGeminiAccessToken` (`quota/agy-usage.ts`) devolve um
+  `GeminiRefreshedGrant`: access token, `refreshToken` rotacionado (só quando o
+  Google o trocou), `expiryDate` (de `expires_in`) e `idToken`. Antes ele
+  devolvia só o access token e descartava o resto: a conta AGY na Reserva
+  ficava no cofre com o access vencido e um refresh token que o Google podia
+  ter trocado.
+- A sonda de cota (`fetchAgyUsageWindows`, que só renova com `allowRefresh`)
+  entrega o grant a `persistRefreshed`, ligado no `quota-service` a
+  `persistGeminiRotatedCreds` (`quota/provider-usage-auth.ts`), o mesmo desenho
+  do Kimi (`persistKimiRotatedCreds`). É best-effort: falha de gravação nunca
+  derruba a leitura de cota daquele ciclo.
+- **Conta fixada:** o blob do cofre `acctcred:<id>` recebe access, expiry,
+  `id_token` (se já existia) e o refresh token em vigor (o rotacionado ou o
+  usado), preservando o resto (e-mail, o envelope Go `{token:{expiry RFC 3339}}`
+  do AGY). Snapshot de diretório, blob sem token e conta de outro provider são
+  ignorados.
+- **Linha nativa:** `~/.gemini/oauth_creds.json` é da CLI. Só uma ROTAÇÃO volta
+  para lá, e só se o arquivo ainda guarda o refresh token usado (outro login ou
+  o refresh da própria CLI no meio do caminho vencem). A escrita é atômica, modo
+  0600 (`writeJsonAtomic`). A vaga `gemini:antigravity` do keyring do Windows é
+  lida de forma assíncrona e nunca escrita.
+- O `id_token` novo substitui o velho: `adapters/auth-freshness` compara o
+  `iat`, e um id_token velho ao lado do access novo faria o blob parecer mais
+  antigo que a cópia do managed home, e a cópia velha voltaria ao cofre.
+- `resolveGeminiOauthCreds(accountId)` é assíncrona e usa
+  `accountCredentialCandidates`: o managed home que a CLI do pane renovou vence o
+  cofre da mesma identidade, senão o refresh daqui usaria um refresh token já
+  trocado. No Claude a Reserva tem o desenho próprio do F-639
+  (`ensureFreshClaudeSubscription`), descrito na seção "Multi-conta".
 
 ## Devin spawn: colagem depois do boot (ciclo 5)
 
@@ -1681,6 +1903,61 @@ saber isto antes de mexer:
   orquestrador da composição e o respawn usa `resume: true` +
   `resumeFromPaneId` com a CLI, o modelo e a conta desse pane. Não volte a
   subir o Maestro do squad padrão para ela: vira um Claude vazio.
+
+## Windows: env do usuário, folga de memória e ConPTY (15/10)
+
+- **`HKCU\Environment` chega ao pane e ao hub MCP.** O env do pane nasce de um
+  allowlist fechado sobre o `process.env` do Main, que no Windows é congelado
+  no boot: variável criada ou editada no painel do Windows ou com `setx` nunca
+  chegava ao pane nem ao backend de um MCP stdio (um MCP de `~/.claude.json`
+  que depende de `MARGEM_MCP_READ_URL`/`MARGEM_MCP_READ_TOKEN` subia sem elas,
+  sem o operador ter como descobrir a causa). `src/main/pty/windows-user-env.ts`
+  lê `HKCU\Environment` por `%SystemRoot%\System32\reg.exe query` (caminho
+  absoluto, argv fixo, sem shell, timeout de 2 s, cache de 5 s;
+  `refreshWindowsUserEnvironment()` o descarta) e `mergeWindowsUserEnvironment`
+  só PREENCHE lacunas. Entram `REG_SZ` e `REG_EXPAND_SZ` (o `%VAR%` é expandido;
+  desconhecida ou em ciclo fica literal, com profundidade máxima 4); chave já
+  presente, em qualquer caixa, nunca é sobrescrita; `Path` entra por merge
+  aditivo de diretórios novos. Ficam recusados os prefixos `DYLD_`, `LD_`,
+  `NODE_OPTIONS`, `ELECTRON_`, o namespace `NEXUS_` e as chaves de identidade
+  (`HOME`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, `SystemRoot`, `COMSPEC`,
+  `TEMP`…). O merge roda em `baseChildEnv()` (`pty-manager.ts`, o ponto mais cedo
+  do env: `suppressEnv`/`envRemove` do spawn continuam vencendo) e em
+  `backendEnv()` (`mcp-hub/mcp-stdio-bridge.ts`: o `env` do descriptor continua
+  vencendo). É no-op fora do win32, e falha de leitura vira `{}`, nunca lança
+  no spawn. **Não amplie a herança de `process.env`**: o Main carrega chaves de
+  adapter de CLI e isso quebraria a fronteira de segurança.
+- **Standby List e folga de memória.** Num cliente Windows de 32 GB com 2 panes
+  vivos o 3º worker automático era recusado com «Memória sem folga», por três
+  causas: o `free` do Electron no win32 ignora a Standby List (cache reutilizável
+  na hora), a reserva de 15 % crescia sem teto (4,9 GB em 32 GB, 9,8 GB em 64 GB)
+  e panes cuja inicialização terminava dentro da janela assíncrona da amostra
+  eram debitados em dobro (1.280 MB cada). Agora `sampleSystemMemory` no win32
+  usa o MAIOR entre `info.free`, `os.freemem()` (`ullAvailPhys`, que inclui a
+  standby) e `info.available`, ou seja `Math.max(free, os.freemem(), available)`;
+  `limitsForMachine(totalMB, platform)` limita a reserva `minFreeMB` a 4 GB
+  (15 % da RAM, piso de 1 GB; a referência de 24 GB segue em 15 %) e, no win32, a
+  8 % com teto de 2 GB, onde o sinal medido ainda é o mais pessimista;
+  `refreshSystemMemorySample` conta `allocatedAgents` como o maior entre antes e
+  depois da leitura. A recusa de memória (`pane_admission_memory`, `reason:
+  'memory'`) agora diz os MB livres medidos contra a reserva e que é memória RAM da
+  máquina, não limite do plano (o limite do plano é o `license_agent_limit`, ver
+  "Plano Trial").
+- **ConPTY: título do console host e resize sincronizado.** O ConPTY escreve
+  sozinho um OSC 0/2 com o executável do console host
+  (`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`,
+  `C:\WINDOWS\system32\cmd.exe - agy.cmd`, com prefixo `Administrator:` ou
+  `Administrador:`, ou o título padrão `Windows PowerShell`/`Prompt de comando`).
+  `windowsConsoleHostName` e `isWindowsConsoleHostTitle` (`renderer/lib/pane-title.ts`)
+  o reconhecem: `cliPaneDisplayTitle` devolve só a família ("AGY") e limpa
+  títulos já gravados no layout ("AGY · C:\Windows\…"); no `terminal-host.ts` o
+  pane de agente ignora esse OSC e o de shell grava só o nome do executável. O
+  ConPTY mantém buffer próprio e rola uma linha ao encolher, então o
+  `bouncePtyGrid` no Windows espelha o par `rows-1`/`rows` no xterm junto do PTY (a
+  heurística `windowsPty` do xterm roda com a do ConPTY); `attachHost` não repete o
+  bounce quando `propagateHostSize` já mandou a grade real; e a adoção num ConPTY
+  faz um único `pty.resize` na grade real e NÃO regrava a fita headless de 120
+  colunas (pane ainda vazio: bounce espelhado).
 
 ## Disjuntor do adapter: sucesso é início provado (F-736)
 
