@@ -1,5 +1,6 @@
 import {
   isDestructive,
+  isJarvisOperatorHandCall,
   paneInputTexts,
   requiresConfirmation,
 } from '../jarvis/guardrails';
@@ -48,6 +49,28 @@ export function requiresExactConsentReceipt(
  */
 export function isJarvisVoiceDispatch(source: McpDispatchSource | undefined): boolean {
   return source === 'ipc-renderer' || source === 'jarvis-voice';
+}
+
+/**
+ * A Jarvis por voz é a mão do operador: sem missão, ela executa as ferramentas
+ * da lista mãos-livres (arquivos, git local, navegador, preview, panes…) com o
+ * mesmo papel `user` que um pane do operador já tem no modo vibe — e menos
+ * poder que ele, porque destrutivo/deploy/push, comando de shell e o que não
+ * está na lista seguem presos à autoridade de missão. O handler continua sendo
+ * a fronteira (contenção de caminho, sandbox) e o registro segue em auditoria.
+ */
+export function permitsJarvisOperatorEffect(
+  source: McpDispatchSource | undefined,
+  ctx: { readonly role: string; readonly missionId?: string },
+  toolName: string,
+  args: Readonly<Record<string, unknown>>,
+): boolean {
+  return (
+    isJarvisVoiceDispatch(source) &&
+    ctx.role === 'user' &&
+    !ctx.missionId &&
+    isJarvisOperatorHandCall(toolName, args)
+  );
 }
 
 export function requiresToolConfirmation(

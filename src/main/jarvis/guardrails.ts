@@ -207,6 +207,25 @@ export function requiresJarvisConfirmation(
   return paneInputTexts(toolName, args).some((text) => isDestructive(text));
 }
 
+/**
+ * A chamada cabe na "mão do operador" da Jarvis: ferramenta da lista mãos-livres
+ * E nada nos argumentos que peça confirmação (texto destrutivo em PTY). É o
+ * critério para a Jarvis agir SEM missão (mcp-consent-policy → mcp-dispatch):
+ * o dispatcher exigia autoridade de missão para quase todo efeito vindo do
+ * renderer, o que tornava inútil tirar o modal. terminal_run/bg_run ficam FORA
+ * de propósito: comando passa por `run_command` (pane de shell visível, com
+ * confirmação de destrutivo/deploy) e pelo send_to_pane com alvo terminal.
+ */
+export function isJarvisOperatorHandCall(
+  toolName: string,
+  args: Readonly<Record<string, unknown>>,
+): boolean {
+  return (
+    JARVIS_HANDS_FREE_TOOLS.has(canonicalToolName(toolName)) &&
+    !requiresJarvisConfirmation(toolName, args)
+  );
+}
+
 export interface ConfirmationOptions {
   /**
    * Chamada da Jarvis por voz (renderer IPC): aplica a política mãos-livres.

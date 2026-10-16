@@ -6,12 +6,14 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  isJarvisOperatorHandCall,
   paneInputTexts,
   requiresConfirmation,
   requiresJarvisConfirmation,
 } from './guardrails';
 import {
   isJarvisVoiceDispatch,
+  permitsJarvisOperatorEffect,
   requiresToolConfirmation,
 } from '../orch/mcp-consent-policy';
 import {
@@ -299,6 +301,56 @@ describe('roteamento por origem do despacho', () => {
     expect(requiresJarvisConfirmation('nexus_terminal_run', args)).toBe(
       requiresConfirmation('nexus_terminal_run', args, { handsFree: true }),
     );
+  });
+});
+
+describe('mão do operador por voz — autoridade SEM missão', () => {
+  it('isJarvisOperatorHandCall cobre a lista mãos-livres e nunca comando de shell', () => {
+    expect(isJarvisOperatorHandCall('nexus_file_write', { path: 'a.ts' })).toBe(true);
+    expect(isJarvisOperatorHandCall('nexus_git_commit', { message: 'x' })).toBe(true);
+    expect(isJarvisOperatorHandCall('nexus_browser_click', { ref: 'e1' })).toBe(true);
+    expect(isJarvisOperatorHandCall('nexus_pane_write', { text: 'npm test' })).toBe(true);
+    // Comando passa por run_command / send_to_pane com alvo terminal, não por aqui.
+    expect(isJarvisOperatorHandCall('nexus_terminal_run', { command: 'ls' })).toBe(false);
+    expect(isJarvisOperatorHandCall('nexus_bg_run', { command: 'npm run dev' })).toBe(false);
+    // Fora da lista: push, PR, cron, ui_action, tool desconhecida.
+    for (const tool of ['nexus_git_push', 'nexus_pr_create', 'nexus_cron', 'nexus_ui_action', 'nexus_future']) {
+      expect(isJarvisOperatorHandCall(tool, {})).toBe(false);
+    }
+  });
+
+  it('texto destrutivo em PTY tira a chamada da mão do operador (volta a confirmar)', () => {
+    expect(isJarvisOperatorHandCall('nexus_pane_write', { text: 'rm -rf /' })).toBe(false);
+    expect(isJarvisOperatorHandCall('nexus_agent_prompt', { text: 'git reset --hard' })).toBe(false);
+  });
+
+  const ctx = { role: 'user', missionId: undefined } as const;
+  const args = { path: 'a.ts', content: 'x' };
+
+  it('só a Jarvis (ipc-renderer / jarvis-voice) com papel user e sem missão', () => {
+    expect(permitsJarvisOperatorEffect('ipc-renderer', ctx, 'nexus_file_write', args)).toBe(true);
+    expect(permitsJarvisOperatorEffect('jarvis-voice', ctx, 'nexus_file_write', args)).toBe(true);
+    for (const source of ['http-mcp', 'acp-stdio', 'pty-stream', 'mission-shim'] as const) {
+      expect(permitsJarvisOperatorEffect(source, ctx, 'nexus_file_write', args)).toBe(false);
+    }
+    expect(permitsJarvisOperatorEffect(undefined, ctx, 'nexus_file_write', args)).toBe(false);
+  });
+
+  it('papel de agente ou missão presente nunca pegam este caminho', () => {
+    for (const role of ['worker', 'orchestrator', 'reviewer']) {
+      expect(permitsJarvisOperatorEffect('ipc-renderer', { role }, 'nexus_file_write', args)).toBe(false);
+    }
+    expect(
+      permitsJarvisOperatorEffect('ipc-renderer', { role: 'user', missionId: 'm1' }, 'nexus_file_write', args),
+    ).toBe(false);
+  });
+
+  it('o que pede confirmação continua preso à autoridade de missão', () => {
+    expect(permitsJarvisOperatorEffect('ipc-renderer', ctx, 'nexus_git_push', {})).toBe(false);
+    expect(permitsJarvisOperatorEffect('ipc-renderer', ctx, 'nexus_terminal_run', { command: 'ls' })).toBe(false);
+    expect(
+      permitsJarvisOperatorEffect('ipc-renderer', ctx, 'nexus_pane_write', { text: 'sudo reboot' }),
+    ).toBe(false);
   });
 });
 

@@ -1563,6 +1563,19 @@ saber isto antes de mexer:
   PR, catálogo, cron, `ui_action`, `computer_do`, mídia paga e `remote_*`
   seguem confirmando. Tool nova do registro precisa de decisão em
   `guardrails-hands-free.test.ts` (contrato com o registro real).
+- **Tirar o modal não bastava**: o dispatcher barrava quase todo efeito vindo
+  do renderer com `mission effect blocked` ANTES do modal (o renderer IPC não
+  tem missão). `permitsJarvisOperatorEffect` (`mcp-consent-policy.ts`, usado em
+  `permitsUnboundEffect` e `bindEffectAuthority` de `mcp-dispatch.ts`) dá à
+  Jarvis (origem `ipc-renderer`/`jarvis-voice`, papel `user`, sem missão) a
+  "mão do operador" SÓ para chamadas da lista mãos-livres que não pedem
+  confirmação. Fica de fora e continua preso à missão: `terminal_run`/`bg_run`
+  (comando = `run_command` ou `send_to_pane` com alvo terminal; a saída se lê
+  com `nexus_pane_read`), push/PR, `cron`, `ui_action` e texto destrutivo em
+  PTY. Mesma doutrina do modo vibe dos panes do operador, com menos poder que
+  ele. Provas: `src/main/jarvis/__tests__/mcp-ipc-hands-free.test.ts`
+  (despachante e handlers reais) e `src/main/orch/__tests__/mcp-ipc.test.ts`
+  (fail-closed, inalterado). Mudança de autoridade: Security revisa.
 - **`send_to_pane` endereça qualquer pane**: `sanitizeNexusActionArgs` só
   descarta `paneId` ilegível; `resolveSendToPaneTarget(..., { allowTerminal: true })`
   aceita shell como alvo EXPLÍCITO (`terminal: true`): uma linha e

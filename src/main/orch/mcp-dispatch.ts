@@ -79,6 +79,7 @@ import {
   RENDERER_EXACT_CONSENT_TOOLS,
   isDestructiveEffect,
   isDestructivePaneInput,
+  permitsJarvisOperatorEffect,
   requiresExactConsentReceipt,
   requiresPerActionConsent,
   requiresToolConfirmation,
@@ -450,6 +451,14 @@ function bindEffectAuthority(
   // era inconsistência, não fronteira.
   if (
     isOperatorVibeDispatch(source, ctx) &&
+    policy !== "renderer-authorized-effect"
+  ) {
+    return { contextRevision: ctx.contextRevision };
+  }
+  // Mão do operador por voz: a Jarvis executa a lista mãos-livres sem missão
+  // (permitsJarvisOperatorEffect); o que pediria confirmação fica de fora.
+  if (
+    permitsJarvisOperatorEffect(source, ctx, toolName, args) &&
     policy !== "renderer-authorized-effect"
   ) {
     return { contextRevision: ctx.contextRevision };
@@ -898,6 +907,8 @@ export async function dispatchToolCall(
     effectPolicy === "routine-local-operation" ||
     // Mão do operador: pane_spawn/write/ask/close sem missão (campo 09/09).
     permitsOperatorPaneEffect(ctx, tool.name) ||
+    // Mão do operador por voz: lista mãos-livres da Jarvis, sem missão.
+    permitsJarvisOperatorEffect(source, ctx, tool.name, args) ||
     (canonical === "handoff_submit" &&
       resolveWorkspaceHandoffParent(ctx) !== null) ||
     // Modo vibe (hardcoded): pane do operador sem missão não tem cabresto de
