@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { decisionEvalCasesSchema, evaluateDecisionCases, type DecisionEvalCase } from './decision-evaluation';
+import { judgeLuna } from './luna-client';
 
 const cases: DecisionEvalCase[] = [
   { id: 'dev-read', surface: 'toolPick', split: 'development', state: 'private development payload',
@@ -9,6 +10,48 @@ const cases: DecisionEvalCase[] = [
 ];
 
 describe('decision workload evaluation', () => {
+  it('retains paid refusal usage from the real Luna client', async () => {
+    const report = await evaluateDecisionCases([cases[0]], (_model, input) => judgeLuna(input, 'synthetic-key', {
+      fetch: (async () => Response.json({ model: 'gpt-6-luna', usage: { input_tokens: 1000 },
+        answers: [{ type: 'refusal', name: 'q0' }] })) as typeof fetch,
+    }), ['luna']);
+    expect(report.observations[0]).toMatchObject({ status: 'failed', failureReason: 'refusal',
+      inputTokens: 1000, usd: 0.0001, requestCount: 1, usageIncomplete: false });
+    expect(report.models.luna.usd).toBeCloseTo(0.0001, 10);
+  });
+
+  it('preserves the last usage receipt and reason when a judge throws afterwards', async () => {
+    const report = await evaluateDecisionCases([cases[0]], async (_model, input) => {
+      input.onUsage?.({ inputTokens: 100, usd: 0.001, requestCount: 2, durationMs: 20, usageIncomplete: true });
+      input.onNoAnswer?.('network');
+      throw new Error('synthetic provider error');
+    }, ['luna']);
+    expect(report.observations[0]).toMatchObject({ status: 'failed', failureReason: 'network',
+      inputTokens: 100, usd: 0.001, requestCount: 2, durationMs: 20, usageIncomplete: true });
+    expect(report.models.luna.usd).toBeNull();
+    expect(JSON.stringify(report)).not.toContain('synthetic provider error');
+  });
+
+  it('keeps the paid first batch as a lower bound when the second Luna batch fails', async () => {
+    const questions = Object.fromEntries(Array.from({ length: 65 }, (_, index) =>
+      [`p${index}`, { type: 'noul' as const, instructions: 'Is this ready?' }]));
+    const testCase: DecisionEvalCase = { ...cases[0], questions,
+      expected: Object.fromEntries(Object.keys(questions).map(id => [id, true])) };
+    let calls = 0;
+    const report = await evaluateDecisionCases([testCase], (_model, input) => judgeLuna(input, 'synthetic-key', {
+      fetch: (async (_url, init) => {
+        if (++calls === 2) return new Response('', { status: 403 });
+        const sent = JSON.parse(String(init?.body)) as { questions: { name: string }[] };
+        return Response.json({ model: 'gpt-6-luna', usage: { input_tokens: 1000 },
+          answers: sent.questions.map(question => ({ type: 'predicate', name: question.name, probability: 0.9 })) });
+      }) as typeof fetch,
+    }), ['luna']);
+    expect(calls).toBe(2);
+    expect(report.observations[0]).toMatchObject({ status: 'failed', inputTokens: 1000,
+      usd: 0.0001, requestCount: 2, usageIncomplete: true });
+    expect(report.models.luna.usd).toBeNull();
+  });
+
   it('scores an answered Jev observation while keeping omitted usage unknown', async () => {
     const report = await evaluateDecisionCases(cases, async model => ({ model,
       answers: { action: { type: 'choice', choice: 'read', probabilities: { read: 1, none: 0 }, confidence: 1 } },
