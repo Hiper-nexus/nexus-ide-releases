@@ -43,6 +43,11 @@ const api: NexusPetApi = {
   },
   setInteractive: (interactive) =>
     ipcRenderer.send(PET_CHANNELS.setInteractive, interactive === true),
+  onCursorProbe: (cb) => {
+    const listener = (_e: unknown, point: { x: number; y: number }) => cb(point);
+    ipcRenderer.on(PET_CHANNELS.cursorProbe, listener);
+    return () => ipcRenderer.removeListener(PET_CHANNELS.cursorProbe, listener);
+  },
   dragBegin: (offset) => ipcRenderer.send(PET_CHANNELS.dragBegin, offset),
   dragEnd: () => ipcRenderer.send(PET_CHANNELS.dragEnd),
   focusMain: () => ipcRenderer.send(PET_CHANNELS.focusMain),
