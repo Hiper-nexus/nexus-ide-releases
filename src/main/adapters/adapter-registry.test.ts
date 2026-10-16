@@ -839,13 +839,15 @@ describe('mergeAdapters', () => {
   });
 
   it('repairs legacy Kimi plugins and starts them in native automatic mode', () => {
-    const kimi = {
-      ...MINIMAL_CLI_PTY, id: 'kimi', bin: 'kimi',
-      control: { permission: { modes: {}, default: '', yolo: ['--auto'] } },
-    } as Adapter;
-    const loaded = mergeAdapters([], [kimi]).get('kimi');
-    expect(loaded?.kind === 'cli-pty' && buildControlArgs(loaded, {}))
-      .toEqual(['--yolo']);
+    for (const yolo of [['--yolo'], ['-y'], []]) {
+      const kimi = {
+        ...MINIMAL_CLI_PTY, id: 'kimi', bin: 'kimi',
+        control: { permission: { modes: {}, default: '', yolo } },
+      } as Adapter;
+      const loaded = mergeAdapters([], [kimi]).get('kimi');
+      expect(loaded?.kind === 'cli-pty' && buildControlArgs(loaded, {}))
+        .toEqual(['--auto']);
+    }
   });
 
   it('preserves explicit plugin approval sequences', () => {
