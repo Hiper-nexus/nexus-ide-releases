@@ -1845,9 +1845,6 @@
   color: var(--text);
   font-variant-numeric: tabular-nums;
 }
-.quota-panel__consumption-item:nth-child(3) strong {
-  color: var(--accent);
-}
 /* Resumo de assinaturas na barra da frota — soma real dos planos detectados. */
 .quota-panel__plans strong {
   color: var(--text);

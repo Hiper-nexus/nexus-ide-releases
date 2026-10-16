@@ -286,84 +286,84 @@ describe('summarizeUsage — every number on the page closes with the whole', ()
     ]),
   ];
 
-  for (const range of ranges) {
-    for (const filter of filters) {
-      it(`${range.name} · ${filter.name}: gráfico, totais, ferramentas, modelos e sessões fecham`, () => {
-        const query = { from: range.from, to: range.to, provider: filter.provider, model: filter.model };
-        const summary = summarizeUsage(analytics, query);
-        const { totals } = summary;
+  const cases = ranges.flatMap((range) =>
+    filters.map((filter) => ({ range, filter, name: `${range.name} · ${filter.name}` })),
+  );
 
-        // Régua de dias: contínua, do início ao fim, com zero onde não houve uso.
-        expect(summary.days[0]!.day).toBe(range.from);
-        expect(summary.days.at(-1)!.day).toBe(range.to);
-        summary.days.forEach((day, index) => expect(day.day).toBe(shiftDayKey(range.from, index)));
+  it.each(cases)('$name: gráfico, totais, ferramentas, modelos e sessões fecham', ({ range, filter }) => {
+    const query = { from: range.from, to: range.to, provider: filter.provider, model: filter.model };
+    const summary = summarizeUsage(analytics, query);
+    const { totals } = summary;
 
-        // Gráfico == totais == lista por ferramenta == detalhamento por modelo.
-        expect(sum(summary.days.map((day) => day.costUsd))).toBe(totals.costUsd);
-        expect(sum(summary.days.map((day) => day.totalTokens))).toBe(totals.processedTokens);
-        expect(sum(summary.byProvider.map((item) => item.costUsd))).toBe(totals.costUsd);
-        expect(sum(summary.byProvider.map((item) => item.totalTokens))).toBe(totals.processedTokens);
-        expect(sum(summary.byModel.map((item) => item.costUsd))).toBe(totals.costUsd);
-        expect(sum(summary.byModel.map((item) => item.totalTokens))).toBe(totals.processedTokens);
-        expect(totals.processedTokens).toBe(
-          totals.cachedInputTokens + totals.uncachedInputTokens + totals.outputTokens,
-        );
-        expect(sum(summary.byProvider.map((item) => item.sessions))).toBe(totals.sessions);
+    // Régua de dias: contínua, do início ao fim, com zero onde não houve uso.
+    expect(summary.days[0]!.day).toBe(range.from);
+    expect(summary.days.at(-1)!.day).toBe(range.to);
+    summary.days.forEach((day, index) => expect(day.day).toBe(shiftDayKey(range.from, index)));
 
-        // Cada dia fecha com as fatias das ferramentas dele.
-        for (const day of summary.days) {
-          const slices = Object.values(day.byProvider);
-          expect(sum(slices.map((slice) => slice.costUsd))).toBe(day.costUsd);
-          expect(sum(slices.map((slice) => slice.totalTokens))).toBe(day.totalTokens);
-        }
+    // Gráfico == totais == lista por ferramenta == detalhamento por modelo.
+    expect(sum(summary.days.map((day) => day.costUsd))).toBe(totals.costUsd);
+    expect(sum(summary.days.map((day) => day.totalTokens))).toBe(totals.processedTokens);
+    expect(sum(summary.byProvider.map((item) => item.costUsd))).toBe(totals.costUsd);
+    expect(sum(summary.byProvider.map((item) => item.totalTokens))).toBe(totals.processedTokens);
+    expect(sum(summary.byModel.map((item) => item.costUsd))).toBe(totals.costUsd);
+    expect(sum(summary.byModel.map((item) => item.totalTokens))).toBe(totals.processedTokens);
+    expect(totals.processedTokens).toBe(
+      totals.cachedInputTokens + totals.uncachedInputTokens + totals.outputTokens,
+    );
+    expect(sum(summary.byProvider.map((item) => item.sessions))).toBe(totals.sessions);
 
-        // Participações fecham em 100% quando há o que repartir.
-        if (totals.costUsd > 0) {
-          expect(sum(summary.byProvider.map((item) => item.costShare))).toBeCloseTo(1, 9);
-          expect(sum(summary.byModel.map((item) => item.costShare))).toBeCloseTo(1, 9);
-        }
-        if (totals.processedTokens > 0) {
-          expect(sum(summary.byProvider.map((item) => item.tokenShare))).toBeCloseTo(1, 9);
-          expect(sum(summary.byModel.map((item) => item.tokenShare))).toBeCloseTo(1, 9);
-        }
-
-        // O filtro é só um recorte do todo: bate com a linha do mesmo recorte sem filtro.
-        const wide = summarizeUsage(analytics, { from: range.from, to: range.to });
-        if (filter.provider !== null && filter.model === null) {
-          const line = wide.byProvider.find((item) => item.provider === filter.provider);
-          expect(totals.costUsd).toBe(line?.costUsd ?? 0);
-          expect(totals.processedTokens).toBe(line?.totalTokens ?? 0);
-          expect(totals.sessions).toBe(line?.sessions ?? 0);
-        }
-        if (filter.provider !== null && filter.model !== null) {
-          const line = wide.byModel.find(
-            (item) => item.provider === filter.provider && item.model === filter.model,
-          );
-          expect(totals.costUsd).toBe(line?.costUsd ?? 0);
-          expect(totals.processedTokens).toBe(line?.totalTokens ?? 0);
-        }
-
-        // Escolher UM dia do intervalo dá o mesmo número que o ponto dele no gráfico.
-        for (const day of summary.days) {
-          const single = summarizeUsage(analytics, { ...query, from: day.day, to: day.day });
-          expect(single.totals.costUsd).toBe(day.costUsd);
-          expect(single.totals.processedTokens).toBe(day.totalTokens);
-          expect(single.days).toHaveLength(1);
-        }
-
-        // Sessões: contagem de bruta força contra a lista de sessões da fixture.
-        const expectedSessions = sessions.filter(
-          (item) =>
-            (filter.provider === null || item.provider === filter.provider) &&
-            item.cells.some(
-              ([day, model]) =>
-                day >= range.from && day <= range.to && (filter.model === null || model === filter.model),
-            ),
-        ).length;
-        expect(totals.sessions).toBe(expectedSessions);
-      });
+    // Cada dia fecha com as fatias das ferramentas dele.
+    for (const day of summary.days) {
+      const slices = Object.values(day.byProvider);
+      expect(sum(slices.map((slice) => slice.costUsd))).toBe(day.costUsd);
+      expect(sum(slices.map((slice) => slice.totalTokens))).toBe(day.totalTokens);
     }
-  }
+
+    // Participações fecham em 100% quando há o que repartir.
+    if (totals.costUsd > 0) {
+      expect(sum(summary.byProvider.map((item) => item.costShare))).toBeCloseTo(1, 9);
+      expect(sum(summary.byModel.map((item) => item.costShare))).toBeCloseTo(1, 9);
+    }
+    if (totals.processedTokens > 0) {
+      expect(sum(summary.byProvider.map((item) => item.tokenShare))).toBeCloseTo(1, 9);
+      expect(sum(summary.byModel.map((item) => item.tokenShare))).toBeCloseTo(1, 9);
+    }
+
+    // O filtro é só um recorte do todo: bate com a linha do mesmo recorte sem filtro.
+    const wide = summarizeUsage(analytics, { from: range.from, to: range.to });
+    if (filter.provider !== null && filter.model === null) {
+      const line = wide.byProvider.find((item) => item.provider === filter.provider);
+      expect(totals.costUsd).toBe(line?.costUsd ?? 0);
+      expect(totals.processedTokens).toBe(line?.totalTokens ?? 0);
+      expect(totals.sessions).toBe(line?.sessions ?? 0);
+    }
+    if (filter.provider !== null && filter.model !== null) {
+      const line = wide.byModel.find(
+        (item) => item.provider === filter.provider && item.model === filter.model,
+      );
+      expect(totals.costUsd).toBe(line?.costUsd ?? 0);
+      expect(totals.processedTokens).toBe(line?.totalTokens ?? 0);
+    }
+
+    // Escolher UM dia do intervalo dá o mesmo número que o ponto dele no gráfico.
+    for (const day of summary.days) {
+      const single = summarizeUsage(analytics, { ...query, from: day.day, to: day.day });
+      expect(single.totals.costUsd).toBe(day.costUsd);
+      expect(single.totals.processedTokens).toBe(day.totalTokens);
+      expect(single.days).toHaveLength(1);
+    }
+
+    // Sessões: contagem de bruta força contra a lista de sessões da fixture.
+    const expectedSessions = sessions.filter(
+      (item) =>
+        (filter.provider === null || item.provider === filter.provider) &&
+        item.cells.some(
+          ([day, model]) =>
+            day >= range.from && day <= range.to && (filter.model === null || model === filter.model),
+        ),
+    ).length;
+    expect(totals.sessions).toBe(expectedSessions);
+  });
 
   it('sessions never add up across days: the whole range counts each session once', () => {
     const wide = summarizeUsage(analytics, { from: usageWindowStartDay(today, 90), to: today });

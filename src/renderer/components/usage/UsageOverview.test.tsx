@@ -13,6 +13,7 @@ import type {
   UsageQuery,
   UsageRollupRow,
   UsageSessionActivity,
+  UsageSnapshot,
 } from '../../../shared/usage-types';
 import { setActiveWorkspacePath } from '../../state/active-workspace';
 import { EMPTY_USAGE_SNAPSHOT, useUsageStore } from '../../state/usage-store';
@@ -599,5 +600,72 @@ describe('UsageOverview — virada do dia com a tela aberta', () => {
     expect(lastTick()).toBe('hoje');
     expect([...host.querySelectorAll('.usage-chart__tick')][0]?.textContent).toBe(dayTickLabel(usageWindowStartDay(tomorrow, 30)));
     act(() => root.unmount());
+  });
+});
+
+describe('UsageOverview — estados de leitura', () => {
+  const WORKSPACE = '/projeto/aberto';
+
+  afterEach(() => {
+    document.body.innerHTML = '';
+    useUsageStore.setState({ snapshot: EMPTY_USAGE_SNAPSHOT, status: 'idle' });
+    useWorkspaceStore.setState({ current: null });
+    setActiveWorkspacePath(null);
+    Reflect.deleteProperty(window, 'nexus');
+    vi.restoreAllMocks();
+  });
+
+  it('lendo mostra o estado e o esqueleto; falhou mostra o erro; "Tentar de novo" lê de novo e o painel chega', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 15, 12, 0, 0));
+    setActiveWorkspacePath(WORKSPACE);
+    useWorkspaceStore.setState({ current: { path: WORKSPACE, name: 'aberto', lastOpenedAt: 1 } });
+    const calls: Array<{ resolve: (value: UsageSnapshot | null) => void; reject: (error: unknown) => void }> = [];
+    const snapshot = vi.fn(
+      () =>
+        new Promise<UsageSnapshot | null>((resolve, reject) => {
+          calls.push({ resolve, reject });
+        }),
+    );
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: { usage: { snapshot, onChanged: () => () => {} } },
+    });
+    useUsageStore.setState({ snapshot: EMPTY_USAGE_SNAPSHOT, status: 'idle' });
+    const { host, root } = mount();
+    const panel = () => host.querySelector('.usage-overview')!;
+
+    // Antes de qualquer leitura: explica e oferece ler.
+    expect(panel().textContent).toContain('Ainda sem leitura de custo');
+    expect(panel().getAttribute('aria-busy')).toBe('false');
+
+    await act(async () => {
+      void useUsageStore.getState().hydrate(WORKSPACE);
+    });
+    expect(panel().querySelector('[role="status"]')?.textContent).toBe('Lendo o custo deste projeto…');
+    expect(panel().getAttribute('aria-busy')).toBe('true');
+    expect(panel().querySelector('.settings-skeleton')).not.toBeNull();
+    expect(panel().querySelector('.usage-overview__hero')).toBeNull();
+
+    // Falhou: erro anunciado, sem zero inventado, com ação.
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await act(async () => {
+      calls[0]!.reject(new Error('sqlite indisponível'));
+    });
+    expect(panel().getAttribute('aria-busy')).toBe('false');
+    expect(panel().querySelector('[role="alert"]')?.textContent).toContain('Não foi possível ler o custo');
+    expect(panel().querySelector('.usage-overview__hero')).toBeNull();
+
+    await act(async () => {
+      ([...panel().querySelectorAll('button')].find((b) => b.textContent === 'Tentar de novo') as HTMLButtonElement).click();
+    });
+    expect(snapshot).toHaveBeenCalledTimes(2);
+    expect(panel().querySelector('[role="status"]')?.textContent).toBe('Lendo o custo deste projeto…');
+    await act(async () => {
+      calls[1]!.resolve({ ...EMPTY_USAGE_SNAPSHOT, analytics });
+    });
+    expect(read(host).hero).toBe(usd(expectedFor({ from: usageWindowStartDay(TODAY, 30), to: TODAY }).summary.totals.costUsd));
+    act(() => root.unmount());
+    vi.useRealTimers();
   });
 });

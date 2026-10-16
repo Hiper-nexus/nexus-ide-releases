@@ -66,4 +66,63 @@ describe('useUsageStore', () => {
     await useUsageStore.getState().hydrate(WORKSPACE);
     expect(useUsageStore.getState().snapshot).toEqual(snap);
   });
+
+  it('status acompanha a leitura: lendo, pronto, e erro sem apagar o que já estava na tela', async () => {
+    expect(useUsageStore.getState().status).toBe('idle');
+    const withAnalytics: UsageSnapshot = {
+      ...EMPTY_USAGE_SNAPSHOT,
+      analytics: { today: '2026-10-15', rows: [], sessions: [] },
+    };
+    let release!: (value: UsageSnapshot | null) => void;
+    const first = vi.fn(
+      () =>
+        new Promise<UsageSnapshot | null>((resolve) => {
+          release = resolve;
+        }),
+    );
+    // @ts-expect-error test stub
+    window.nexus = { usage: { snapshot: first, onChanged: () => () => {} } };
+    const reading = useUsageStore.getState().hydrate(WORKSPACE);
+    expect(useUsageStore.getState().status).toBe('loading');
+    release(withAnalytics);
+    await reading;
+    expect(useUsageStore.getState().status).toBe('ready');
+    expect(useUsageStore.getState().snapshot).toEqual(withAnalytics);
+
+    // Falha depois de já ter dados: o status vira erro, o snapshot fica.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // @ts-expect-error test stub
+    window.nexus = { usage: { snapshot: vi.fn(async () => { throw new Error('sqlite'); }), onChanged: () => () => {} } };
+    await useUsageStore.getState().hydrate(WORKSPACE);
+    expect(useUsageStore.getState().status).toBe('error');
+    expect(useUsageStore.getState().snapshot).toEqual(withAnalytics);
+    warn.mockRestore();
+
+    // O main absorveu a identidade (null): nada a mostrar, mas também nenhum erro.
+    // @ts-expect-error test stub
+    window.nexus = { usage: { snapshot: vi.fn(async (): Promise<null> => null), onChanged: () => () => {} } };
+    await useUsageStore.getState().hydrate(WORKSPACE);
+    expect(useUsageStore.getState().status).toBe('ready');
+
+    // Troca de workspace: volta ao zero.
+    useUsageStore.getState().reset();
+    expect(useUsageStore.getState().status).toBe('idle');
+    expect(useUsageStore.getState().snapshot).toEqual(EMPTY_USAGE_SNAPSHOT);
+  });
+
+  it('ignora a resposta de um workspace que já não é o ativo', async () => {
+    let release!: (value: UsageSnapshot | null) => void;
+    // @ts-expect-error test stub
+    window.nexus = {
+      usage: {
+        snapshot: vi.fn(() => new Promise<UsageSnapshot | null>((resolve) => { release = resolve; })),
+        onChanged: () => () => {},
+      },
+    };
+    const reading = useUsageStore.getState().hydrate(WORKSPACE);
+    setActiveWorkspacePath('/outro/projeto');
+    release({ ...EMPTY_USAGE_SNAPSHOT, analytics: { today: '2026-10-15', rows: [], sessions: [] } });
+    await reading;
+    expect(useUsageStore.getState().snapshot).toEqual(EMPTY_USAGE_SNAPSHOT);
+  });
 });

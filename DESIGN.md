@@ -584,26 +584,64 @@ pulso de "ao vivo" repete).
 ## 17. Uso e custos (painel no registro do "Usage" do T3)
 
 Pedido do operador (15/10): ver o custo por ferramenta como no painel Usage do
-T3 e o gasto mensal real com planos. Código: `components/usage/UsageOverview.tsx`,
-`UsageDailyChart.tsx`, `MonthlySpendCard.tsx` e `styles/usage-overview.css`.
+T3 e o gasto mensal real com planos. Pedido de 16/10: filtrar por dia, intervalo,
+ferramenta e modelo, e destacar quantos tokens estamos usando no decorrer do
+tempo. Código: `components/usage/UsageOverview.tsx`, `UsageDailyChart.tsx`,
+`MonthlySpendCard.tsx`, `lib/usage-overview.ts`, `shared/usage-analytics.ts` (a
+conta) e `styles/usage-overview.css`.
 
-- **Composição.** No topo de Uso e cotas: à esquerda o custo estimado em
-  destaque e a lista de ferramentas (ponto de cor, `ProviderLogo`, nome,
-  sessões, custo e "% do custo · tokens"), que é a legenda do gráfico; à
-  direita o custo diário. Embaixo, Totais (cinco números) e Detalhamento
-  (Modelo | Dia). Período (7/30/90 dias) e medida (Custo | Tokens) valem para
-  o painel inteiro. Abaixo, o cartão Gasto mensal real.
+- **Composição.** No topo de Uso e cotas: o cabeçalho com a medida (Custo |
+  Tokens) e o período (7/30/90 dias | Personalizado); uma faixa de filtros (Dia,
+  Ferramenta, Modelo; De/Até no Personalizado; "Limpar filtros" só quando há
+  filtro); à esquerda o total em destaque e a lista de ferramentas (ponto de cor,
+  `ProviderLogo`, nome, sessões, valor e "% · o outro número"), que é a legenda
+  do gráfico; à direita o gráfico diário. Embaixo, Totais (cinco números) e
+  Detalhamento (Modelo | Dia). Abaixo, o cartão Gasto mensal real.
+- **Uma conta só, filtros que fecham.** Tudo sai de `summarizeUsage` sobre as
+  linhas do rollup (dia local × ferramenta × modelo) e as sessões que o main lê do
+  SQLite do projeto: 7/30/90 dias, intervalo, dia, ferramenta e modelo recalculam
+  total, lista, gráfico, Totais e Detalhamento pelas mesmas linhas, então a soma
+  das partes fecha com o todo (guard: `usage-analytics.test.ts`,
+  `UsageOverview.test.tsx`). Sessão não soma entre dias: uma que atravessa a
+  meia-noite conta uma vez no intervalo e uma vez em cada dia. Modelo só vale
+  junto com a ferramenta dele (o nome sozinho pode repetir). Filtro que ficou sem
+  dado no período novo some e a tela diz o que está valendo.
+- **Medida vale para o painel inteiro.** Em Custo, o destaque é o dólar e os
+  tokens ficam escritos ao lado (resumo, lista, pico e média do gráfico); em
+  Tokens, o destaque é a contagem e o custo vai ao lado. Lista e tabela ordenam
+  pela medida e "% do custo" vira "% dos tokens". Unidade sempre escrita junto do
+  número (`2.17B tokens`, nunca `2180M`), dólar com milhar (`$1,018.73`), em todas
+  as seções da página.
+- **Período e dia.** O período dá o eixo do gráfico e a janela dos números. O dia
+  fixado (clique no gráfico, na tabela por dia, no campo Dia, ou Enter no gráfico)
+  estreita os números para ele; o gráfico segue mostrando o período, com o dia
+  realçado em acento (é o item selecionado) e o botão "Ver o período inteiro".
+  Esc fecha a leitura e depois solta o dia. Dia sem consumo explica e oferece
+  "Limpar filtros"; nunca mostra zero. A tela relê o rollup quando o dia vira com
+  ela aberta.
+- **Gráfico.** Uma curva por ferramenta, sobrepostas; com mais de uma, um fio
+  neutro soma o dia. Acima: total, pico e média por dia COM uso do período (dia
+  sem registro não rebaixa a média), cada um com a outra medida escrita embaixo.
+  Sobre o desenho: ponto em cada dia com uso (o dado é diário), anel no pico, linha
+  pontilhada da média e a leitura do dia em texto. Sem hex: a cor da série chega
+  como `--usage-series`; o rótulo da média leva contorno na cor do cartão.
 - **Cor de série é identidade.** `--series-1..6` seguem a ferramenta, nunca a
   posição no ranking (Claude é sempre o mesmo matiz); acima de seis, "Outros"
   em `--text-faint`. A cor chega ao CSS como `--usage-series`; texto e
   números ficam nos tokens de texto. No tema claro três séries ficam abaixo de
   3:1 sobre branco: o rótulo escrito e a tabela compensam.
 - **Honestidade do número.** O custo é equivalente de API pública, não fatura,
-  e o texto diz isso. Sem leitura, o painel explica e oferece ação; nunca
-  mostra zero. Economia em `--gold` só quando é dinheiro poupado; quando os
-  planos custam mais que a API, o cartão diz "Acima da API" em tom neutro.
+  e o texto diz isso. Só Claude Code, Codex e MiMo Code registram tokens; a
+  cópia diz que as outras ferramentas não entram na conta. Sem leitura, o painel
+  explica e oferece ação; nunca mostra zero. Economia em `--gold` só quando é
+  dinheiro poupado; quando os planos custam mais que a API, o cartão diz "Acima
+  da API" em tom neutro.
+- **Acessibilidade.** Grupos com nome (Medida, Período, Filtros do painel,
+  Intervalo de datas, Detalhar por), campos com rótulo visível, `aria-pressed` nos
+  alternadores, total em região `aria-live`, gráfico focável com resumo em texto
+  (setas, Home/End, Enter, Esc) e tabela com legenda. A tabela rola dentro do
+  cartão em canvas estreito; o cartão nunca rola de lado.
 - **Edição inline.** Cada plano tem atalhos (`$20`, `$100`, `$200`, `$500`) e
   campo em USD na própria linha; Enter ou sair do campo grava, Esc desfaz, e
   valor inválido explica no lugar. Todo número usa `tabular-nums`; alvos de
   32px (44px em `pointer: coarse`).
-

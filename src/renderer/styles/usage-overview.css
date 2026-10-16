@@ -266,12 +266,14 @@ select.usage-filter__control {
   font-weight: 400;
   white-space: normal;
 }
+/* Duas linhas reservadas: ler um dia (ponteiro ou setas) não empurra o gráfico para baixo. */
 .usage-chart__readout-row {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-1) var(--space-3);
+  min-height: 3.2em;
 }
 .usage-chart__readout {
   display: flex;

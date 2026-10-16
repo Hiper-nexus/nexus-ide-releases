@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState, type ReactNode } from 'react';
 import '../../styles/usage-overview.css';
 import {
   USAGE_ANALYTICS_MAX_DAYS,
@@ -119,13 +119,39 @@ function Segmented<T extends string | number>({
 
 function UsageOverviewEmpty({ titleId }: { titleId: string }) {
   const workspacePath = useWorkspaceStore((state) => state.current?.path ?? null);
+  const status = useUsageStore((state) => state.status);
   const hydrate = useUsageStore((state) => state.hydrate);
   const openSettings = useProductNavigationStore((state) => state.openSettings);
-  return (
-    <section className="usage-overview" aria-labelledby={titleId}>
-      <h2 className="usage-overview__title" id={titleId}>
-        Custo e consumo por ferramenta
-      </h2>
+  const loading = workspacePath !== null && status === 'loading';
+  let content: ReactNode;
+  if (loading) {
+    content = (
+      <div className="usage-overview__loading">
+        <p role="status">Lendo o custo deste projeto…</p>
+        <div className="settings-skeleton" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </div>
+      </div>
+    );
+  } else if (workspacePath !== null && status === 'error') {
+    content = (
+      <EmptyState
+        icon="warn"
+        role="alert"
+        className="usage-overview__empty"
+        title="Não foi possível ler o custo"
+        body={<p>A leitura das sessões deste projeto falhou. Tente de novo; se continuar, reabra o projeto.</p>}
+        action={
+          <button type="button" className="settings-btn" onClick={() => void hydrate(workspacePath)}>
+            Tentar de novo
+          </button>
+        }
+      />
+    );
+  } else {
+    content = (
       <EmptyState
         icon="bolt"
         className="usage-overview__empty"
@@ -149,6 +175,14 @@ function UsageOverviewEmpty({ titleId }: { titleId: string }) {
           )
         }
       />
+    );
+  }
+  return (
+    <section className="usage-overview" aria-labelledby={titleId} aria-busy={loading}>
+      <h2 className="usage-overview__title" id={titleId}>
+        Custo e consumo por ferramenta
+      </h2>
+      {content}
     </section>
   );
 }
