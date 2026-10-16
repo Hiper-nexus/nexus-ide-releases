@@ -4,6 +4,12 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { HeicConvertResult } from '../../../shared/files-types';
 import { useWorkspaceStore } from '../../state/workspace-store';
+import {
+  beginPendingAttachment,
+  failPendingAttachment,
+  rememberAttachment,
+  useMissionAttachmentPresentation,
+} from '../../state/mission-attachment-presentation';
 import { MissionAttachmentPicker } from './MissionAttachmentPicker';
 
 (
@@ -373,5 +379,54 @@ describe('F-1005 — anexo mostra o nome que o operador escolheu e miniatura', (
     const item = host.querySelector('.mission-attachment-picker__list li')!;
     expect(item.querySelector('strong')?.textContent).toBe('foto-ruido-19MB.webp');
     expect(item.textContent).not.toContain(INTERNAL_TOKEN);
+  });
+});
+
+describe('anexo colado fora da zona (intake do shell)', () => {
+  function renderWith(paths: readonly string[]): HTMLElement {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    roots.add(root);
+    act(() =>
+      root.render(
+        <MissionAttachmentPicker
+          contextPaths={paths}
+          disabled={false}
+          onContextPathsChange={() => {}}
+        />,
+      ),
+    );
+    return host;
+  }
+
+  afterEach(() => {
+    useMissionAttachmentPresentation.setState({ presentation: new Map(), pending: [] });
+  });
+
+  it('mostra nome e miniatura do anexo registrado pelo shell', () => {
+    const path = '.nexus/attachments/mission-context/abc123-0123456789abcdef-x.png';
+    rememberAttachment(path, { name: 'print da tela.png', thumbnail: 'data:image/png;base64,AAAA' });
+    const host = renderWith([path]);
+    expect(host.querySelector('.mission-attachment-picker__thumb')?.getAttribute('src')).toBe(
+      'data:image/png;base64,AAAA',
+    );
+    expect(host.textContent).toContain('print da tela.png');
+    expect(host.querySelector('button[aria-label="Remover print da tela.png"]')).not.toBeNull();
+  });
+
+  it('mostra "anexando" enquanto copia e o erro com dispensar quando falha', () => {
+    const id = beginPendingAttachment('foto.png');
+    const host = renderWith([]);
+    expect(host.textContent).toContain('Anexando…');
+    expect(host.textContent).toContain('foto.png');
+    act(() => failPendingAttachment(id, 'Sem espaço em disco.'));
+    expect(text(host, 'alert')).toBe('Sem espaço em disco.');
+    act(() =>
+      host
+        .querySelector<HTMLButtonElement>('button[aria-label="Dispensar aviso de foto.png"]')!
+        .click(),
+    );
+    expect(host.querySelector('.mission-attachment-picker__list')).toBeNull();
   });
 });
