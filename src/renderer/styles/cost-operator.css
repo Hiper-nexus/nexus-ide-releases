@@ -59,7 +59,7 @@
   background: color-mix(in srgb, var(--danger) 10%, transparent);
   color: var(--danger);
   font-size: var(--text-xs);
-  line-height: var(--leading-normal);
+  line-height: 1.5;
 }
 
 /* ---- Cost tracker (badge por pane + resumo no topo) ---- */

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.76.295 — Linux em dia com a tela sem piscar e os anexos
+
+A tag 0.76.294 não recebe pacotes Linux: a suíte não fechou. O aviso de risco do YOLO usava `var(--leading-normal)`, um token que não existe, e a entrelinha era ignorada. O aviso passa a usar entrelinha 1.5. O desktop Linux é o da 0.76.293, com essa correção.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). A tag 0.76.293 também não recebe pacotes Linux.
+
+No desktop Linux, em relação à 0.76.292:
+
+- **Painel Git estável**. As releituras não trocam mais "Mesa limpa" por "Lendo git status", então a tela para de piscar. Os botões Puxar, Enviar, Ver histórico e Trocar branch mantêm contraste ao clicar, inclusive no tema roxo.
+- **Anexos até a missão**. Imagem colada aparece no campo. Imagem e áudio chegam à worktree e ao prompt do coordenador e dos workers; o áudio é transcrito em segundo plano com o reconhecimento de voz do ditado. Iniciar espera o anexo que ainda está copiando.
+- **Iniciar missão mais claro**. O botão fica à vista, ⌘/Ctrl+Enter inicia, e o painel "Preparando a missão" acompanha as etapas reais.
+- **Abas do painel lateral**. Em painel estreito as abas ganham setas, alvos de 44 px e o fechar sempre visível.
+- **Modos de permissão por CLI**. Grok, AGY e Qwen ganham os níveis reais além do YOLO, com aviso de risco. Os safeArgs de Claude e Codex continuam intactos.
+
 ## 0.76.294 — Linux em dia com a tela sem piscar e os anexos
 
 A tag 0.76.293 não recebe pacotes Linux: é o candidato macOS. Este pacote leva o produto dela para o desktop Linux, empacotado a partir de Ubuntu 22.04 (glibc 2.35).
