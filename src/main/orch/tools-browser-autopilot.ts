@@ -34,7 +34,7 @@ import type { ProjectExecutionScope } from '../../shared/types';
 const JUDGE_TIMEOUT_MS = 8_000;
 const READ_MAX_CHARS = 3_000;
 const READ_MAX_ELEMENTS = 120;
-const SETTLE_MS = 2_000;
+const SETTLE_MS = 150;
 const WAIT_MS = 3_000;
 const HISTORY_LEN = 5;
 

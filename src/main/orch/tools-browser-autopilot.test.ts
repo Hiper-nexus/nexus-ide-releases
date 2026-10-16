@@ -261,6 +261,7 @@ describe('nexus_browser_do', () => {
     };
     expect(out.status).toBe('done');
     expect(deps.click).toHaveBeenCalledWith('pane-1', scope, 'r1');
+    expect(deps.settle).toHaveBeenCalledWith(150);
     expect(out.steps).toHaveLength(2);
     expect(h.record).toHaveBeenCalledTimes(2);
   });

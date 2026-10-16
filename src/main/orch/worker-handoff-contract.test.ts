@@ -201,6 +201,8 @@ describe('evidência visual no handoff', () => {
   it.each(['Implemente o frontend.', 'Crie um jogo Phaser.'])('pede validação real da entrega: %s', (task) => {
     const prompt = withHandoffContract(task, adapter);
     expect(prompt).toContain('Validação visual de interface ou jogo');
+    expect(prompt).toContain('nexus_browser_do');
+    expect(prompt).toContain('nexus_browser_judge_visual');
     expect(prompt).toContain('URL/preview, viewport, ações');
     expect(prompt).toContain('não verificada');
     expect(prompt).toContain('partial');

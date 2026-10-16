@@ -90,8 +90,13 @@ export function hasNexusBrowserAlternative(subject: NexusBrowserSubject): boolea
 export const NEXUS_BROWSER_BRIEF_RULE =
   'Página web (documentação, artigo, site): use o navegador do Nexus — ' +
   'nexus_browser_open({url}) e nexus_browser_read({paneId, format: ' +
-  '"compact", focus}); outra URL na mesma aba: nexus_browser_navigate({paneId, ' +
-  'url, read: true}). Ele renderiza JavaScript e mantém a sessão da aba. ' +
+  '"compact", focus, judge: true}); outra URL na mesma aba: nexus_browser_navigate({paneId, ' +
+  'url, read: true}). Para objetivos de múltiplos passos na página (clicar, preencher, ' +
+  'rolar em velocidade de máquina), delegue ao autopilot Jev com ' +
+  'nexus_browser_do({paneId, goal, values}); para extrair campos tipados em uma chamada, ' +
+  'use nexus_browser_extract({paneId, fields}); para conferência visual da tela renderizada ' +
+  '(erro visível, bloqueio, layout quebrado, objetivo cumprido), use ' +
+  'nexus_browser_judge_visual({paneId, goal}). Ele renderiza JavaScript e mantém a sessão da aba. ' +
   'WebFetch, o fetch nativo da sua CLI e curl também estão liberados (curl ' +
   'serve bem para JSON de API, arquivo cru ou o fim de uma página longa demais ' +
   'para o read, truncated: true). A busca na web nativa continua valendo.';

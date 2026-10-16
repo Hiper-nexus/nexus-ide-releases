@@ -81,8 +81,17 @@ describe('F-781: o navegador do Nexus está ao alcance do pane?', () => {
 });
 
 describe('F-781: textos da regra', () => {
-  it('F-1157: a regra do brief recomenda o navegador e não proíbe WebFetch, fetch nativo nem curl', () => {
-    for (const piece of ['nexus_browser_open', 'nexus_browser_read', 'nexus_browser_navigate', 'truncated: true']) {
+  it('F-1157: a regra do brief recomenda o navegador (incluindo autopilot Jev e juiz visual Clef) e não proíbe WebFetch, fetch nativo nem curl', () => {
+    for (const piece of [
+      'nexus_browser_open',
+      'nexus_browser_read',
+      'nexus_browser_navigate',
+      'nexus_browser_do',
+      'nexus_browser_extract',
+      'nexus_browser_judge_visual',
+      'judge: true',
+      'truncated: true',
+    ]) {
       expect(NEXUS_BROWSER_BRIEF_RULE).toContain(piece);
     }
     expect(NEXUS_BROWSER_BRIEF_RULE).toContain('WebFetch, o fetch nativo da sua CLI e curl também estão liberados');

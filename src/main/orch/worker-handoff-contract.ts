@@ -140,7 +140,11 @@ export function withHandoffContract(
     [prompt, ...(hints.hints ?? [])].filter(Boolean).join('\n'),
   )
     ? 'Validação visual de interface ou jogo: abra e exercite a entrega com as ' +
-      'ferramentas de navegador disponíveis neste pane. Registre URL/preview, viewport, ações ' +
+      'ferramentas de navegador disponíveis neste pane (para fluxos de múltiplos passos ' +
+      'em alta velocidade, prefira nexus_browser_do({paneId, goal, values}); para sinais ' +
+      'visuais e semânticos de layout/erro/objetivo, use nexus_browser_judge_visual({paneId, goal}) ' +
+      'e nexus_browser_read({paneId, format: "compact", judge: true}) quando disponíveis). ' +
+      'Registre URL/preview, viewport, ações ' +
       'e o resultado observado; capture a tela com nexus_browser_screenshot ou nexus_browser_responsive ' +
       'quando disponíveis. O Nexus vincula essa captura ao worker e à tarefa; sem essa evidência, ' +
       'uma tarefa visual fica partial. Um caminho ou hash ' +
