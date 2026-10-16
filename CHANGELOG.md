@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.76.291 — Linux em dia com a Jarvis, o navegador e o Kimi
+
+A tag 0.76.290 não recebe pacotes Linux. Este pacote leva o produto dela para o desktop Linux, empacotado a partir de Ubuntu 22.04 (glibc 2.35). A tag 0.76.289 é só o carimbo do macOS.
+
+No desktop Linux, em relação à 0.76.288:
+
+- **Jarvis sem repetição**. No Grok Voice 3.0 o fim da captura não manda um `response.create` por cima do VAD do servidor; no OpenAI Realtime o turno usa `create_response: false`.
+- **Jarvis sempre clicável**. A janela da companion desfaz sozinha o click-through preso quando os controles estão visíveis ou a janela volta ao foco.
+- **Navegador sob menus**. Popovers, menus e modais escondem só a vista nativa do navegador que cruza a área.
+- **+Pane imediato**. A worktree da aba nova não copia mais o cache do Vitest (~1,7 GB).
+- **Kimi em Never Ask**. O modo autônomo usa `--auto` e migra `--yolo`, `-y` e o vazio.
+- **Catálogos**. AGY 1.4.0, Grok e Codex 0.163.0, com as correções F-1307 e F-1545 a F-1553.
+
 ## 0.76.290 — Jarvis sem repetição, navegador sob menus, +Pane imediato e Kimi --auto
 
 - **+Pane imediato em aba nova**: `copyBuildCaches` (`worktree-cow.ts`) mantém apenas os `*.tsbuildinfo` e deixa de copiar `.nexus-cache/vitest` (~1,7 GB / 23 mil arquivos) na criação da worktree da aba.

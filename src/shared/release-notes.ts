@@ -11158,7 +11158,7 @@ export const RELEASE_076289: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076290: AppRelease = {
   version: '0.76.290',
   date: '2026-10-16',
   codename: 'Jarvis sem repetição, navegador sob menus, +Pane imediato e Kimi --auto',
@@ -11174,5 +11174,20 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Self-heal do click-through', detail: 'O renderer reconcilia pet:setIgnoreMouseEvents ao abrir controles da Jarvis, montar ou recuperar foco.' },
     { title: 'Oclusão cirúrgica do navegador', detail: 'browser-occlusion observa popovers, menus e diálogos abertos e esconde apenas o navegador que intercepta o retângulo.' },
     { title: 'Kimi sem pedir permissão no YOLO', detail: 'kimi.json, tui-agent-permissions e a migração de overrides legados em adapter-registry usam --auto.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.291',
+  date: '2026-10-16',
+  codename: 'Linux em dia com a Jarvis, o navegador e o Kimi',
+  summary: 'No Linux, a Jarvis responde uma vez por turno e volta a ser clicável, o navegador se recolhe sob menus, abrir aba nova não copia o cache do Vitest e o Kimi autônomo usa --auto. As tags 0.76.289 e 0.76.290 não recebem pacotes Linux.',
+  highlights: [
+    { title: 'Jarvis sem repetição', detail: 'Em full-duplex a resposta nasce de um único lado: o VAD do servidor no Grok Voice 3.0 e create_response:false no OpenAI Realtime. A janela da companion desfaz sozinha o click-through preso.' },
+    { title: 'Navegador sob menus e +Pane imediato', detail: 'Popovers, menus e modais ocultam só a vista nativa do navegador que cruza a área. A worktree da aba nova deixa de copiar .nexus-cache/vitest.' },
+    { title: 'Kimi em --auto', detail: 'O modo YOLO do Kimi Code 2.2.0 passa --auto (Never Ask) e migra --yolo, -y e o vazio. Catálogos de AGY 1.4.0, Codex 0.163.0 e Grok entram em dia.' },
+  ],
+  fixes: [
+    { title: 'Atualização do Linux', detail: 'As tags 0.76.289 e 0.76.290 não recebem pacotes Linux. A 0.76.289 é o carimbo do macOS. O Linux sai na 0.76.291.' },
   ],
 };
