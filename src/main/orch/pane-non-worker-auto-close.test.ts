@@ -473,7 +473,7 @@ describe('pane guardian (0.76.44): reaper de emergência sob pressão de memóri
     return { deps, closed };
   }
 
-  it('sob pressão, fecha na hora o pane ocioso elegível mais antigo, sem esperar o TTL', async () => {
+  it('sob pressão, fecha na hora os panes ociosos elegíveis, os mais parados primeiro, sem esperar o TTL', async () => {
     const pressure = { on: false };
     const idle = new Set<string>(['pty-e1', 'pty-e2']);
     const h = pressureHarness(pressure, idle);
@@ -484,17 +484,19 @@ describe('pane guardian (0.76.44): reaper de emergência sob pressão de memóri
     expect(h.closed).toHaveLength(0);
     pressure.on = true;
     await vi.advanceTimersByTimeAsync(1_000);
-    // Um por tick, o mais parado primeiro: e1 (ou e2, mesma idade) antes de e3.
-    expect(h.closed).toHaveLength(1);
-    expect(['pane-pty-e1', 'pane-pty-e2']).toContain(h.closed[0]);
-    await vi.advanceTimersByTimeAsync(1_000);
+    // Até 2 por tick (pressão moderada), os mais parados primeiro: e1 e e2
+    // (mesma idade) antes de e3.
     expect(h.closed).toHaveLength(2);
+    expect(new Set(h.closed)).toEqual(new Set(['pane-pty-e1', 'pane-pty-e2']));
     expect(h.closed).not.toContain('pane-pty-e3');
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(h.closed).toHaveLength(3);
+    expect(h.closed).toContain('pane-pty-e3');
   });
 
-  it('pressão severa estaciona até 3 panes por tick (drena RAM antes do freeze)', async () => {
+  it('pressão severa estaciona até 4 panes por tick (drena RAM antes do freeze)', async () => {
     const pressure: { on: boolean; severe: boolean } = { on: false, severe: false };
-    const idle = new Set<string>(['pty-s1', 'pty-s2', 'pty-s3', 'pty-s4']);
+    const idle = new Set<string>(['pty-s1', 'pty-s2', 'pty-s3', 'pty-s4', 'pty-s5']);
     const h = pressureHarness(pressure, idle);
     const severeDeps = { ...h.deps, isSevereMemoryPressure: () => pressure.severe };
     initNonWorkerAutoClose(severeDeps);
@@ -502,14 +504,38 @@ describe('pane guardian (0.76.44): reaper de emergência sob pressão de memóri
     pressure.on = true;
     pressure.severe = true;
     await vi.advanceTimersByTimeAsync(1_000);
-    // Lote severo: 3 de uma vez, não 1 por tick.
-    expect(h.closed).toHaveLength(3);
-    await vi.advanceTimersByTimeAsync(1_000);
+    // Lote severo: 4 de uma vez, não 1 por tick.
     expect(h.closed).toHaveLength(4);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(h.closed).toHaveLength(5);
+  });
+
+  it('pressão crítica estaciona até 6 panes por tick', async () => {
+    const pressure: { on: boolean; severe: boolean; critical: boolean } = {
+      on: false,
+      severe: true,
+      critical: false,
+    };
+    const idle = new Set<string>(['pty-c1', 'pty-c2', 'pty-c3', 'pty-c4', 'pty-c5', 'pty-c6', 'pty-c7']);
+    const h = pressureHarness(pressure, idle);
+    const criticalDeps = {
+      ...h.deps,
+      isSevereMemoryPressure: () => pressure.severe,
+      isCriticalMemoryPressure: () => pressure.critical,
+    };
+    initNonWorkerAutoClose(criticalDeps);
+    await vi.advanceTimersByTimeAsync(1_000); // todos vistos idle
+    pressure.on = true;
+    pressure.critical = true;
+    await vi.advanceTimersByTimeAsync(1_000);
+    // Lote crítico: 6 de uma vez.
+    expect(h.closed).toHaveLength(6);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(h.closed).toHaveLength(7);
   });
 
   it('F-257: recusas e falhas não consomem o lote nem repetem o mesmo pane', async () => {
-    const idle = new Set(['cannot-resume', 'failed', 'ready-1', 'ready-2', 'ready-3', 'ready-4']);
+    const idle = new Set(['cannot-resume', 'failed', 'ready-1', 'ready-2', 'ready-3', 'ready-4', 'ready-5']);
     const h = pressureHarness({ on: true }, idle);
     const attempts: string[] = [];
     initNonWorkerAutoClose({ ...h.deps, isSevereMemoryPressure: () => true,
@@ -522,8 +548,8 @@ describe('pane guardian (0.76.44): reaper de emergência sob pressão de memóri
       },
     });
     await vi.advanceTimersByTimeAsync(1_000);
-    expect(attempts).toEqual(['pane-cannot-resume', 'pane-failed', 'pane-ready-1', 'pane-ready-2', 'pane-ready-3']);
-    expect(idle.has('ready-4')).toBe(true);
+    expect(attempts).toEqual(['pane-cannot-resume', 'pane-failed', 'pane-ready-1', 'pane-ready-2', 'pane-ready-3', 'pane-ready-4']);
+    expect(idle.has('ready-5')).toBe(true);
     expect(h.closed).toEqual([]);
   });
 
@@ -538,16 +564,20 @@ describe('pane guardian (0.76.44): reaper de emergência sob pressão de memóri
     expect(attempts).toEqual(['pane-blocked-1', 'pane-blocked-2']);
   });
 
-  it('sem pressão severa, mantém 1 por tick (comportamento antigo)', async () => {
+  it('pressão moderada (sem severa/crítica) estaciona até 2 panes por tick', async () => {
     const pressure: { on: boolean } = { on: true };
     const idle = new Set<string>(['pty-n1', 'pty-n2', 'pty-n3']);
     const h = pressureHarness(pressure, idle);
-    const mildDeps = { ...h.deps, isSevereMemoryPressure: () => false };
+    const mildDeps = {
+      ...h.deps,
+      isSevereMemoryPressure: () => false,
+      isCriticalMemoryPressure: () => false,
+    };
     initNonWorkerAutoClose(mildDeps);
     await vi.advanceTimersByTimeAsync(1_000);
-    expect(h.closed).toHaveLength(1);
-    await vi.advanceTimersByTimeAsync(1_000);
     expect(h.closed).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(h.closed).toHaveLength(3);
   });
 
   it('sem pressão, o TTL normal continua valendo', async () => {

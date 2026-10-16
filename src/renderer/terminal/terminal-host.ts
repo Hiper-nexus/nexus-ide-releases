@@ -2436,8 +2436,14 @@ useLayoutStore.subscribe((next, prev) => {
  * Abaixo deste número de hosts vivos NADA é hibernado: o custo por pane é
  * pequeno (medido 09/09: ~10-15MB/pane RSS, heap 53MB com 32 panes) e o
  * risco não se paga. Acima, panes OCULTOS trocam o xterm por snapshot.
+ *
+ * 16/10: 24 era alto demais para a realidade de 2 projetos abertos num Mac
+ * de 24 GB — 6 a 8 panes por projeto (12-16 hosts) nunca chegava a hibernar
+ * e o xterm/WebGL de cada pane do projeto em background segurava a RAM durante
+ * builds. 8 cobre esse cenário (12-16 hosts hibernam) sem hibernar grids
+ * pequenos onde o risco de reidratação não compensa.
  */
-export const HIBERNATE_MIN_LIVE_HOSTS = 24;
+export const HIBERNATE_MIN_LIVE_HOSTS = 8;
 
 /** Saída PTY retida enquanto o pane hiberna (chars; ~64KB por pane). */
 export const HIBERNATE_PENDING_OUTPUT_CHARS = 64_000;
@@ -2490,6 +2496,13 @@ function virtualizeHost(host: Host): void {
   let snapshot = '';
   let cols = host.term.cols;
   try {
+    // Drena o backlog que o scheduler ainda segura (saída de fundo) para DENTRO
+    // do xterm antes de serializar — senão o snapshot perde o fim do output.
+    // Depois do dispose, `discardTerminalOutput` solta o estado do scheduler
+    // (fila + parse pendente + resync), que do contrário seguraria o term
+    // descartado e pinaria até 2 MB por pane hibernado.
+    resumeTerminalOutput(host.term);
+    flushTerminalOutput(host.term);
     const live = host.serialize.serialize().slice(-MAX_PERSISTED_SCROLLBACK);
     cols = host.term.cols;
     // A3: com a fita pendente por largura, o buffer só carrega o aviso de
@@ -2509,6 +2522,7 @@ function virtualizeHost(host: Host): void {
       snapshot = live;
     }
     host.term.dispose();
+    discardTerminalOutput(host.term);
   } catch {
     return; // terminal em estado ímpar — não hibernar é seguro
   }
