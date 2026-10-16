@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   isAgentTargetPane,
   isOrchestratorPane,
+  isTerminalTargetPane,
   resolveSendToPaneTarget,
   resolveSyncRepoViaPaneTarget,
 } from './send-to-pane-target';
@@ -186,6 +187,82 @@ describe('resolveSyncRepoViaPaneTarget', () => {
     expect(resolveSyncRepoViaPaneTarget(undefined, [shell, orch], null)).toEqual({
       kind: 'delegation',
       orchestratorPaneId: 'p-orq',
+    });
+  });
+});
+
+describe('resolveSendToPaneTarget com allowTerminal (liberdade operacional do Jarvis)', () => {
+  const numbered = [
+    { ...shell, paneNumber: 1 },
+    { ...browser, paneNumber: 2 },
+    { ...agent, paneNumber: 7 },
+    { ...orch, paneNumber: 4 },
+  ];
+  const allow = { allowTerminal: true };
+
+  it('terminal pedido por id, número ou título vira alvo marcado terminal', () => {
+    const terminal = { kind: 'asking-pane', paneId: 'p-shell', terminal: true };
+    expect(resolveSendToPaneTarget('p-shell', numbered, null, allow)).toEqual(terminal);
+    for (const forma of ['1', '#1', 'pane 1', 'pane-1', 'pane um']) {
+      expect(resolveSendToPaneTarget(forma, numbered, null, allow)).toEqual(terminal);
+    }
+    expect(resolveSendToPaneTarget('zsh', numbered, null, allow)).toEqual(terminal);
+  });
+
+  it('agente e orquestrador seguem sem a marca terminal', () => {
+    expect(resolveSendToPaneTarget('pane 7', numbered, null, allow)).toEqual({
+      kind: 'asking-pane',
+      paneId: 'p-agent',
+    });
+    // O orquestrador é um shell por baixo, mas recebe prompt, não comando.
+    expect(resolveSendToPaneTarget('pane 4', numbered, null, allow)).toEqual({
+      kind: 'asking-pane',
+      paneId: 'p-orq',
+    });
+    expect(isTerminalTargetPane(orch)).toBe(false);
+    expect(isTerminalTargetPane(shell)).toBe(true);
+  });
+
+  it('navegador continua sem entrada de texto', () => {
+    expect(resolveSendToPaneTarget('pane 2', numbered, null, allow)).toEqual({
+      kind: 'asking-pane-not-agent',
+      title: 'docs',
+    });
+  });
+
+  it('número desconhecido e ambiguidade recusam igual — nunca chutam outro pane', () => {
+    expect(resolveSendToPaneTarget('pane 9', numbered, 'p-shell', allow)).toEqual({
+      kind: 'asking-pane-gone',
+      requestedNumber: 9,
+      validNumbers: [1, 2, 4, 7],
+    });
+    const colidindo = [
+      { id: 'p-a', title: 'zsh a', kind: 'shell', paneNumber: 3 },
+      { id: 'p-b', title: 'zsh b', kind: 'shell', paneNumber: 3 },
+    ];
+    expect(resolveSendToPaneTarget('pane 3', colidindo, null, allow)).toMatchObject({
+      kind: 'asking-pane-ambiguous',
+    });
+  });
+
+  it('sem paneId o fluxo de delegação não muda: shell focado NÃO recebe prosa', () => {
+    expect(resolveSendToPaneTarget(undefined, [shell, browser], 'p-shell', allow)).toEqual({
+      kind: 'no-agent-pane',
+    });
+    expect(resolveSendToPaneTarget(undefined, panes, 'p-shell', allow)).toEqual({
+      kind: 'delegation',
+      orchestratorPaneId: 'p-orq',
+    });
+  });
+
+  it('sem a opção o shell continua recusado (ask_pane e sync_repo_via_pane)', () => {
+    expect(resolveSendToPaneTarget('pane 1', numbered)).toEqual({
+      kind: 'asking-pane-not-agent',
+      title: 'zsh',
+    });
+    expect(resolveSyncRepoViaPaneTarget('pane 1', numbered)).toEqual({
+      kind: 'asking-pane-not-agent',
+      title: 'zsh',
     });
   });
 });

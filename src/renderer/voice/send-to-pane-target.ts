@@ -33,8 +33,28 @@ export function isAgentTargetPane(pane: SendToPanePaneLike): boolean {
   return pane.kind === 'cli-agent' || isOrchestratorPane(pane);
 }
 
+/** Terminal comum (shell), fora o do orquestrador: o texto entregue ali é comando. */
+export function isTerminalTargetPane(pane: SendToPanePaneLike): boolean {
+  return pane.kind === 'shell' && !isOrchestratorPane(pane);
+}
+
+export interface ResolveSendToPaneOptions {
+  /**
+   * Um alvo EXPLÍCITO (id, número ou título pedido pelo operador) pode ser um
+   * terminal. O resultado vem marcado `terminal: true` e o chamador trata o
+   * texto como comando (uma linha, confirmação de destrutivo/deploy). Só o
+   * send_to_pane liga isso; ask_pane e sync_repo_via_pane seguem só com agentes.
+   */
+  allowTerminal?: boolean;
+}
+
 export type SendToPaneTarget =
-  | { kind: 'asking-pane'; paneId: string }
+  | {
+      kind: 'asking-pane';
+      paneId: string;
+      /** Alvo é um terminal (shell): o texto é COMANDO, não prompt de agente. */
+      terminal?: true;
+    }
   | {
       kind: 'asking-pane-gone';
       /**
@@ -55,7 +75,15 @@ export function resolveSendToPaneTarget(
   requestedPaneId: string | undefined,
   panes: SendToPanePaneLike[],
   focusedPaneId?: string | null,
+  options: ResolveSendToPaneOptions = {},
 ): SendToPaneTarget {
+  const classify = (pane: SendToPanePaneLike): SendToPaneTarget => {
+    if (isAgentTargetPane(pane)) return { kind: 'asking-pane', paneId: pane.id };
+    if (options.allowTerminal && isTerminalTargetPane(pane)) {
+      return { kind: 'asking-pane', paneId: pane.id, terminal: true };
+    }
+    return { kind: 'asking-pane-not-agent', title: pane.title };
+  };
   if (requestedPaneId) {
     const exact = panes.find((p) => p.id === requestedPaneId);
     // NÚMERO ANTES DO TÍTULO, e sem cair no título depois.
@@ -83,9 +111,7 @@ export function resolveSendToPaneTarget(
             validNumbers: livePaneNumbersOf(panes),
           };
         }
-        return isAgentTargetPane(pane)
-          ? { kind: 'asking-pane', paneId: pane.id }
-          : { kind: 'asking-pane-not-agent', title: pane.title };
+        return classify(pane);
       }
     }
     const wanted = normalizePaneName(requestedPaneId);
@@ -104,8 +130,7 @@ export function resolveSendToPaneTarget(
     }
     const pane = candidates[0];
     if (!pane) return { kind: 'asking-pane-gone' };
-    if (!isAgentTargetPane(pane)) return { kind: 'asking-pane-not-agent', title: pane.title };
-    return { kind: 'asking-pane', paneId: pane.id };
+    return classify(pane);
   }
   const orchestrator = panes.find(isOrchestratorPane);
   if (orchestrator) return { kind: 'delegation', orchestratorPaneId: orchestrator.id };

@@ -67,6 +67,51 @@ export let lastRealtimeNativeToolAt = 0;
 export let lastRealtimeNativeToolCallId: string | null = null;
 export const turnExecution = new TurnExecutionOwner();
 
+/**
+ * Fotografia do fluxo de áudio do provider no ABRIR do turno (beginListening,
+ * logo depois de zerar os contadores). `finishAndProcess` só roda no FIM da
+ * captura: com `server_vad` o provider começa a responder antes disso — o
+ * endpoint local é mais lento que o VAD do servidor — e uma base lida no fim
+ * da captura ignorava essa resposta. O wait de evidência estourava, o turno
+ * degradava para o Classic com o Live já falando (voz dobrada) e o socket
+ * realtime era derrubado. Pareada ao token do turno: foto de outro turno
+ * nunca vale.
+ */
+export interface TurnAudioBaseline {
+  /** `turnExecution.currentToken` do turno a que a foto pertence. */
+  token: number;
+  played: number;
+  held: number;
+  startedAt: number;
+}
+export let turnAudioBaseline: TurnAudioBaseline = { token: 0, played: 0, held: 0, startedAt: 0 };
+
+/** Chamar logo após `turnExecution.beginTurn()` e do reset dos contadores. */
+export function markTurnAudioBaseline(now: number = Date.now()): TurnAudioBaseline {
+  turnAudioBaseline = {
+    token: turnExecution.currentToken,
+    played: realtimeAudioPlayedCounter.total,
+    held: realtimeAudioSuppressedCounter.total,
+    startedAt: now,
+  };
+  return turnAudioBaseline;
+}
+
+/**
+ * Base do turno `token`. Sem foto DESSE turno (captura aberta por um caminho
+ * que não passou por beginListening) cai nos totais de agora: o comportamento
+ * antigo, nunca uma base emprestada de outro turno.
+ */
+export function turnAudioBaselineFor(token: number, now: number = Date.now()): TurnAudioBaseline {
+  if (turnAudioBaseline.token === token) return turnAudioBaseline;
+  return {
+    token,
+    played: realtimeAudioPlayedCounter.total,
+    held: realtimeAudioSuppressedCounter.total,
+    startedAt: now,
+  };
+}
+
 export function setRealtimeTurnActive(v: boolean): void {
   realtimeTurnActive = v;
 }

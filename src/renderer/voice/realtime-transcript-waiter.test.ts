@@ -94,6 +94,54 @@ describe('RealtimeTranscriptWaiter (BUG A)', () => {
     expect(waiter.hasQueued()).toBe(false);
   });
 
+  it('settleEarly libera o wait SEM supersede e SEM texto — o formato do timeout', async () => {
+    const { deps, hasTimer } = fakeDeps();
+    const waiter = new RealtimeTranscriptWaiter(deps);
+    const p = waiter.wait(4_800, 'turn-1');
+    expect(hasTimer()).toBe(true);
+
+    expect(waiter.settleEarly('turn-1')).toBe(true);
+
+    await expect(p).resolves.toEqual({ text: null, superseded: false });
+    // O timer da janela foi limpo: nenhum timeout tardio pode disparar depois.
+    expect(hasTimer()).toBe(false);
+    expect(waiter.hasPending()).toBe(false);
+  });
+
+  it('settleEarly não toca no transcript enfileirado e um final tardio fica guardado', async () => {
+    const { deps } = fakeDeps();
+    const waiter = new RealtimeTranscriptWaiter(deps);
+    const p = waiter.wait(4_800, 'turn-1');
+    waiter.settleEarly('turn-1');
+    await p;
+
+    // Final que chega depois da saída antecipada: sem wait pendente, entra na
+    // fila (e morre na virada do turno), nunca resolve um wait alheio.
+    expect(waiter.deliver('chegou tarde', 'turn-1')).toBe(false);
+    expect(waiter.hasQueued()).toBe(true);
+    waiter.beginTurn('turn-2');
+    expect(waiter.hasQueued()).toBe(false);
+  });
+
+  it('settleEarly respeita o turno: chamador atrasado não encerra o wait do turno novo', async () => {
+    const { deps } = fakeDeps();
+    const waiter = new RealtimeTranscriptWaiter(deps);
+    const current = waiter.wait(4_800, 'turn-2');
+
+    expect(waiter.settleEarly('turn-1')).toBe(false);
+    expect(waiter.hasPending()).toBe(true);
+
+    expect(waiter.deliver('turno novo', 'turn-2')).toBe(true);
+    await expect(current).resolves.toEqual({ text: 'turno novo', superseded: false });
+  });
+
+  it('settleEarly sem wait pendente é no-op', () => {
+    const { deps } = fakeDeps();
+    const waiter = new RealtimeTranscriptWaiter(deps);
+    expect(waiter.settleEarly()).toBe(false);
+    expect(waiter.settleEarly('turn-1')).toBe(false);
+  });
+
   it('rejects a late final from the previous turn', async () => {
     const { deps } = fakeDeps();
     const waiter = new RealtimeTranscriptWaiter(deps);

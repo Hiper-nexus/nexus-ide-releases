@@ -1,8 +1,10 @@
 import {
   isDestructive,
+  paneInputTexts,
   requiresConfirmation,
 } from '../jarvis/guardrails';
 import { canonicalToolName } from './gate';
+import type { McpDispatchSource } from './mcp-dispatch-contract';
 
 export const RENDERER_EXACT_CONSENT_TOOLS: ReadonlySet<string> = new Set([
   'catalog_install',
@@ -39,11 +41,23 @@ export function requiresExactConsentReceipt(
   return EXACT_RECEIPT_TOOLS.has(canonical);
 }
 
+/**
+ * Origens que são a Jarvis por voz: o renderer do operador (`ipc-renderer`) e o
+ * executor de voz. Só elas ganham a política mãos-livres; agentes CLI
+ * (http-mcp, acp, pty-stream, mission-shim) seguem na política por efeito.
+ */
+export function isJarvisVoiceDispatch(source: McpDispatchSource | undefined): boolean {
+  return source === 'ipc-renderer' || source === 'jarvis-voice';
+}
+
 export function requiresToolConfirmation(
   toolName: string,
   args: Record<string, unknown>,
+  source?: McpDispatchSource,
 ): boolean {
-  return requiresConfirmation(toolName, args);
+  return requiresConfirmation(toolName, args, {
+    handsFree: isJarvisVoiceDispatch(source),
+  });
 }
 
 /** Destructive local shell effects always keep their per-action consent floor. */
@@ -72,28 +86,7 @@ export function isDestructivePaneInput(
   toolName: string,
   args: Readonly<Record<string, unknown>>,
 ): boolean {
-  const canonical = canonicalToolName(toolName);
-  const texts: string[] = [];
-  const pushText = (value: unknown): void => {
-    if (typeof value === 'string' && value.length > 0) texts.push(value);
-  };
-  if (canonical === 'pane_write' || canonical === 'agent_prompt') {
-    pushText(args.text);
-  } else if (canonical === 'pane_ask') {
-    pushText(args.question);
-  } else if (canonical === 'pane_write_many') {
-    const writes = args.writes;
-    if (Array.isArray(writes)) {
-      for (const entry of writes) {
-        if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
-          pushText((entry as Record<string, unknown>).text);
-        }
-      }
-    }
-  } else {
-    return false;
-  }
-  return texts.some((text) => isDestructive(text));
+  return paneInputTexts(toolName, args).some((text) => isDestructive(text));
 }
 
 /**

@@ -30,6 +30,7 @@ import {
   resolveSyncRepoViaPaneTarget,
 } from './send-to-pane-target';
 import { parsePaneNumberRef } from '../../shared/pane-number';
+import { deliverCommandToTerminalPane } from './send-to-terminal-pane';
 import { requestPaneClose } from '../terminal/pane-close-guard';
 import { sanitizeMcpResultOutput } from './mcp-result-output';
 import { currentViewNarration, currentViewToolOutput } from './current-view-read';
@@ -1112,12 +1113,18 @@ export async function executeJarvisAction(
     }
   } else if (action.type === 'send_to_pane') {
     const { root, focusedPaneId } = useLayoutStore.getState();
-    // NEW-B + C3 (follow-ups 2/4b): resposta roteada de pergunta pendente
-    // (paneId presente) escreve de volta SÓ em pane de agente/orquestrador
-    // vivo; pane sumido/inválido AVISA e re-pergunta — nunca vira comando em
-    // shell. Delegação rotineira segue direto; só destrutivo/deploy confirma.
-    const target = resolveSendToPaneTarget(action.paneId, listPanes(root), focusedPaneId);
-    if (target.kind === 'asking-pane') {
+    // NEW-B + C3 (follow-ups 2/4b): paneId presente (resposta roteada de pergunta
+    // pendente OU endereço explícito do operador: id, "pane 2", título) escreve
+    // só em pane vivo e resolvido sem ambiguidade; pane sumido/inválido AVISA e
+    // re-pergunta, nunca cai no gate de delegação. Terminal (shell) só como alvo
+    // EXPLÍCITO e o texto vira comando: uma linha, e só destrutivo/deploy
+    // confirma — igual ao run_command. Delegação rotineira segue direto.
+    const target = resolveSendToPaneTarget(action.paneId, listPanes(root), focusedPaneId, { allowTerminal: true });
+    if (target.kind === 'asking-pane' && target.terminal) {
+      const delivery = await deliverCommandToTerminalPane(target.paneId, action.text, sayText, control, revealPaneForUser);
+      sayText = delivery.sayText;
+      toolResult = { tool: action.type, ...delivery.toolResult };
+    } else if (target.kind === 'asking-pane') {
       const commandId = crypto.randomUUID();
       logVoiceEvent('info', 'pane.deliveryResolved', 'destino de pane resolvido', {
         commandId,
@@ -1146,15 +1153,16 @@ export async function executeJarvisAction(
     } else if (target.kind === 'asking-pane-gone') {
       sayText =
         paneNumberRefusal(target) ??
-        'O pane que tinha perguntado já fechou. Se ainda precisar, me diz de novo o que fazer.';
+        'Não achei esse pane — pode ter fechado. Me diz o número ou o nome dele de novo.';
       expectReply = true;
       toolResult = {
         tool: action.type,
         ok: false,
-        summary: 'pane da pergunta fechado — resposta não roteada',
+        summary: 'pane alvo não encontrado — nada enviado',
       };
     } else if (target.kind === 'asking-pane-not-agent') {
-      sayText = 'Esse pane não é de agente — não escrevo comando nele.';
+      // Com allowTerminal só sobra o navegador: não tem entrada de texto.
+      sayText = 'Esse pane não recebe texto. Escolha um agente ou um terminal.';
       toolResult = {
         tool: action.type,
         ok: false,

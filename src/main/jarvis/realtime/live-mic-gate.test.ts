@@ -1,5 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { shouldWithholdLiveMicFrame } from './live-mic-gate';
+import { isFullDuplexTransport, shouldWithholdLiveMicFrame } from './live-mic-gate';
+
+describe('isFullDuplexTransport', () => {
+  it('todo transporte realtime é full-duplex (barge-in no VAD do servidor)', () => {
+    expect(isFullDuplexTransport('gemini-live')).toBe(true);
+    expect(isFullDuplexTransport('grok-realtime')).toBe(true);
+    expect(isFullDuplexTransport('openai-realtime')).toBe(true);
+  });
+
+  it('classic e valores desconhecidos continuam half-duplex', () => {
+    expect(isFullDuplexTransport('classic')).toBe(false);
+    expect(isFullDuplexTransport('')).toBe(false);
+    expect(isFullDuplexTransport('grok')).toBe(false);
+  });
+});
 
 describe('shouldWithholdLiveMicFrame', () => {
   it('withholds mic while LOCAL TTS/ack is playing (speaking, not provider)', () => {

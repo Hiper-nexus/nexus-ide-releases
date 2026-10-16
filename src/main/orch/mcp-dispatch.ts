@@ -1281,7 +1281,7 @@ export async function dispatchToolCall(
   }
   const guardConfirm = jevGuard.kind === "confirm";
   const confirmationRequired =
-    requiresToolConfirmation(tool.name, args) || guardConfirm;
+    requiresToolConfirmation(tool.name, args, source) || guardConfirm;
   let userAuthorized = false;
 
   if (confirmationRequired) {

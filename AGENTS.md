@@ -1518,6 +1518,57 @@ saber isto antes de mexer:
   que "erra tudo" num PC e acerta no Mac: leia `stt.audioQuality` antes de
   trocar de provider — em 23/09 era fone na entrada rosa, não o modelo.
 
+## Voz: Jarvis operacional e Grok Voice em tempo real (15/10)
+
+- **Mic full-duplex em todo transporte realtime**: `isFullDuplexTransport`
+  (`src/main/jarvis/realtime/live-mic-gate.ts`) vale para `gemini-live`,
+  `grok-realtime` e `openai-realtime`. Antes só o Gemini contava e, com Grok (o
+  default), `micIn` segurava os frames enquanto a Jarvis falava: o VAD do
+  servidor nunca ouvia o barge-in. O eco segue tratado na origem (AEC do
+  Chromium + `liveMicFullDuplex` no renderer).
+- **Wake reaproveita o socket quente quando o provider prova a vida dele**
+  (`LiveTransportController.reuseHotSocketOrReconnect`). `probeLiveness`
+  (OpenAI/Grok) reenvia um `session.update` idempotente e aceita QUALQUER frame
+  do servidor em `HOT_SOCKET_PROBE_MS` (800 ms); o mic fica no buffer durante a
+  sonda. Zumbi: `hardStop` + reconexão com o áudio retido. Provider sem
+  `probeLiveness` (Gemini Live) continua reconectando a cada wake (guarda de
+  13/07, `live-grace-lifecycle.test.ts`). Ping/pong NÃO prova nada: o proxy de
+  borda responde pong com a origem morta.
+- **Transcrição do usuário no Grok**: a superfície da xAI é
+  `session.audio.input.transcription` com `language_hint` (variante regional:
+  `pt-BR`, o `pt` cru é ignorado) e `keyterms` (até 100 termos de até 50
+  caracteres). `input_audio_transcription: { model: 'whisper-…' }` é campo da
+  OpenAI e não existe na xAI: não mande. A xAI não emite
+  `conversation.item.done` e renomeia o delta para
+  `…transcription.updated` (cumulativo; só com `model: "grok-transcribe"`)
+  — docs.x.ai/docs/guides/voice/agent, conferido em 15/10/2026, sem sessão
+  real contra a API. `parseOpenAIRealtimeEvent` aceita a fala do usuário em
+  `conversation.item.created/added/done` SÓ por `content[].transcript` (nunca
+  `text`: é o `input_text` que o próprio Nexus injeta via `sendText`) e
+  deduplica por `item_id`.
+- **Resposta que o `server_vad` começa antes do fim da captura é evidência do
+  turno**: `markTurnAudioBaseline()` (`beginListening`, `voice-session-state.ts`)
+  e `waitForTranscriptOrProviderAnswer` (`live-answer-evidence.ts`). Tool nativa
+  encerra a espera do transcript na hora; áudio do provider dá 450 ms de
+  carência ao transcript. Sem evidência a janela inteira corre e o mute segue
+  degradando para o Classic (ANTI-MUTE intacto).
+- **Mãos livres da Jarvis**: `requiresConfirmation(tool, args, { handsFree: true })`
+  (`requiresJarvisConfirmation`, `src/main/jarvis/guardrails.ts`). Só as origens
+  `ipc-renderer` e `jarvis-voice` do dispatcher a recebem
+  (`isJarvisVoiceDispatch`, `mcp-consent-policy.ts`); agentes CLI,
+  `remote_spawn` e `agent_spec_write` seguem na política por efeito. Lista
+  explícita `JARVIS_HANDS_FREE_TOOLS`, default-deny. `terminal_run`/`bg_run`
+  decidem pelo comando (`requiresVoiceCommandConfirmation`; `sandboxProfile:
+  'yolo'` confirma); texto destrutivo em PTY (`paneInputTexts`) confirma. Push,
+  PR, catálogo, cron, `ui_action`, `computer_do`, mídia paga e `remote_*`
+  seguem confirmando. Tool nova do registro precisa de decisão em
+  `guardrails-hands-free.test.ts` (contrato com o registro real).
+- **`send_to_pane` endereça qualquer pane**: `sanitizeNexusActionArgs` só
+  descarta `paneId` ilegível; `resolveSendToPaneTarget(..., { allowTerminal: true })`
+  aceita shell como alvo EXPLÍCITO (`terminal: true`): uma linha e
+  `confirmCommand` (só destrutivo/deploy abre diálogo). `ask_pane` e
+  `sync_repo_via_pane` seguem só com agentes; navegador nunca recebe texto.
+
 ## TypeSafe / Jev (skill `typesafe-ai`)
 
 - Jev é um modelo de **julgamento tipado**, não de geração: `POST

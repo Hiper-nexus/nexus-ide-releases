@@ -2,6 +2,7 @@ import {
   DEFAULT_GROK_VOICE,
   DEFAULT_GROK_VOICE_MODEL,
 } from '../../../shared/voice-config';
+import { DICTATION_ENGINE_VOCABULARY } from '../../../shared/dictation-vocabulary';
 import {
   OpenAIRealtimeProvider,
   type OpenAIRealtimeProviderOptions,
@@ -23,9 +24,46 @@ import {
  *   `audio.output.voice` e `audio.input.turn_detection`.
  * - o VAD é `server_vad`; a OpenAI usa `semantic_vad`.
  * - não existe modelo de transcrição separado — o próprio modelo de voz
- *   transcreve (é justamente a aposta do Think Fast).
+ *   transcreve (é justamente a aposta do Think Fast). A xAI só aceita ajustar
+ *   a transcrição em `audio.input.transcription` (`language_hint`, `keyterms`);
+ *   `input_audio_transcription: { model: 'whisper-…' }` é campo da OpenAI e
+ *   NÃO existe na superfície da xAI (docs.x.ai/docs/guides/voice/agent,
+ *   conferido em 15/10/2026), então nunca vai no session.update.
  */
 export const GROK_REALTIME_URL = 'wss://api.x.ai/v1/realtime';
+
+/**
+ * A xAI só aceita variante regional para pt/es: o `pt` cru é ignorado em
+ * silêncio e cai na detecção automática (que erra comando curto em português).
+ */
+export const GROK_TRANSCRIPTION_LANGUAGE_HINT = 'pt-BR';
+/** Limites documentados: até 100 termos, 50 caracteres cada. */
+const GROK_KEYTERMS_MAX = 100;
+const GROK_KEYTERM_MAX_CHARS = 50;
+
+/**
+ * Vocabulário que o reconhecedor costuma mutilar quando o operador fala com a
+ * Jarvis (a mesma lista dos engines de ditado + os nomes da própria conversa).
+ */
+export function grokTranscriptionKeyterms(): string[] {
+  const seen = new Set<string>();
+  const terms: string[] = [];
+  for (const raw of [
+    'Jarvis',
+    'Nexus IDE',
+    'missão',
+    'orquestrador',
+    ...DICTATION_ENGINE_VOCABULARY,
+  ]) {
+    const term = raw.trim();
+    const key = term.toLowerCase();
+    if (!term || term.length > GROK_KEYTERM_MAX_CHARS || seen.has(key)) continue;
+    seen.add(key);
+    terms.push(term);
+    if (terms.length >= GROK_KEYTERMS_MAX) break;
+  }
+  return terms;
+}
 
 /**
  * Vozes publicadas pela xAI para a rota Grok Voice. Uma voz fora desta lista é
@@ -54,6 +92,13 @@ export const buildGrokSessionUpdate: SessionUpdateBuilder = (opts) => {
           format: {
             type: 'audio/pcm',
             rate: opts.inputRate ?? GROK_TARGET_RATE,
+          },
+          // Transcrição da fala do operador (evento
+          // `conversation.item.input_audio_transcription.completed`): o viés de
+          // idioma e de vocabulário melhora comando curto em português.
+          transcription: {
+            language_hint: GROK_TRANSCRIPTION_LANGUAGE_HINT,
+            keyterms: grokTranscriptionKeyterms(),
           },
         },
         output: {

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
+  classifyLiveRescueSnapshot,
   hasInsufficientLiveMicFrames,
   LIVE_RESCUE_RESPONSE_TIMEOUT_MS,
   liveMuteRescueCount,
@@ -119,6 +120,78 @@ describe('live mute rescue', () => {
         delay: async () => {},
       }),
     ).resolves.toBe('superseded');
+  });
+
+  it('classifica uma leitura do provider com a regra única do rescue e da espera do transcript', () => {
+    const base = { turnToken: 7, startedAt: 1_000, playedBaseline: 4, heldBaseline: 2 };
+    const idle = {
+      turnToken: 7,
+      playedAudioChunks: 4,
+      heldAudioChunks: 2,
+      toolInFlight: 0,
+      lastToolAt: 0,
+    };
+
+    expect(classifyLiveRescueSnapshot(idle, base)).toBeNull();
+    // Áudio acima da base do TURNO (tocado ou retido) é resposta do provider.
+    expect(classifyLiveRescueSnapshot({ ...idle, playedAudioChunks: 5 }, base)).toBe('audio');
+    expect(classifyLiveRescueSnapshot({ ...idle, heldAudioChunks: 3 }, base)).toBe('audio');
+    // Tool: em curso, disparada depois do início, ou ainda dona do turno.
+    expect(classifyLiveRescueSnapshot({ ...idle, toolInFlight: 1 }, base)).toBe('tool');
+    expect(classifyLiveRescueSnapshot({ ...idle, lastToolAt: 1_000 }, base)).toBe('tool');
+    expect(classifyLiveRescueSnapshot({ ...idle, lastToolAt: 999 }, base)).toBeNull();
+    expect(classifyLiveRescueSnapshot({ ...idle, toolOwnsTurn: true }, base)).toBe('tool');
+    expect(classifyLiveRescueSnapshot({ ...idle, toolOwnsTurn: false }, base)).toBeNull();
+    // Tool vence áudio (a tool é prova definitiva); outro turno vence tudo.
+    expect(
+      classifyLiveRescueSnapshot({ ...idle, playedAudioChunks: 9, toolInFlight: 1 }, base),
+    ).toBe('tool');
+    expect(
+      classifyLiveRescueSnapshot({ ...idle, turnToken: 8, toolInFlight: 1, playedAudioChunks: 9 }, base),
+    ).toBe('superseded');
+  });
+
+  it('o áudio que o provider tocou ANTES do fim da captura conta com a base do turno', async () => {
+    // Regressão: server_vad responde antes do endpoint local. Com a base lida
+    // no fim da captura (4 chunks já tocados), nenhum chunk novo chegava e o
+    // wait estourava em 'timeout' -> Classic. Com a base do turno (0) é áudio.
+    const read = () => ({
+      turnToken: 7,
+      playedAudioChunks: 4,
+      heldAudioChunks: 0,
+      toolInFlight: 0,
+      lastToolAt: 0,
+    });
+    let now = 5_000;
+    const fromCaptureEnd = await waitForLiveRescueEvidence({
+      turnToken: 7,
+      startedAt: 5_000,
+      playedBaseline: 4,
+      heldBaseline: 0,
+      read,
+      now: () => now,
+      delay: async (ms) => {
+        now += ms;
+      },
+      timeoutMs: 500,
+    });
+    expect(fromCaptureEnd).toBe('timeout');
+
+    now = 5_000;
+    const fromTurnStart = await waitForLiveRescueEvidence({
+      turnToken: 7,
+      startedAt: 5_000,
+      playedBaseline: 0,
+      heldBaseline: 0,
+      read,
+      now: () => now,
+      delay: async (ms) => {
+        now += ms;
+      },
+      timeoutMs: 500,
+    });
+    expect(fromTurnStart).toBe('audio');
+    expect(now).toBe(5_000); // evidência imediata, sem gastar o orçamento
   });
 
   it('bounds consecutive rescue attempts and tracks socket frames', () => {

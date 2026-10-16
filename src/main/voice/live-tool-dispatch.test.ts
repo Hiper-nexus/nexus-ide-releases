@@ -3,6 +3,7 @@ import {
   answerProviderWithoutSession,
   isExplicitEngineeringWorkIntent,
   isExplicitNewWorkspaceIntent,
+  isPlausiblePaneRef,
   sanitizeNexusActionArgs,
 } from './live-tool-dispatch';
 import type { NexusRealtimeActionArgs } from '../jarvis/realtime/nexus-realtime-tools';
@@ -55,16 +56,60 @@ describe('sanitizeNexusActionArgs (C3 follow-up 2)', () => {
     expect(out.strippedPaneId).toBeNull();
   });
 
-  it('REMOVE paneId inventado pelo modelo (sem pergunta pendente) — cai no gate de delegação', () => {
-    const args: NexusRealtimeActionArgs = {
-      action: 'send_to_pane',
-      text: 'rm -rf tudo',
-      paneId: 'pane-shell',
-    };
-    const out = sanitizeNexusActionArgs(args, hasQuestionOn('pane-42'));
+  it.each([
+    ['pane-mshi87ry-4', 'id canônico'],
+    ['1', 'número'],
+    ['2', 'número'],
+    ['pane 2', 'número falado'],
+    ['#2', 'número com hash'],
+    ['pane-2', 'número com hífen'],
+    ['pane dois', 'número por extenso'],
+    ['claude · worker', 'título falado'],
+  ])(
+    'MANTÉM paneId plausível sem pergunta pendente: %s (%s) — o operador endereça o pane',
+    (paneId) => {
+      const args: NexusRealtimeActionArgs = {
+        action: 'send_to_pane',
+        text: 'roda os testes',
+        paneId,
+      };
+      const out = sanitizeNexusActionArgs(args, () => false);
+      expect(out.args).toEqual(args);
+      expect(out.strippedPaneId).toBeNull();
+    },
+  );
+
+  it('apara espaços ao redor da referência para o renderer casar o id exato', () => {
+    const out = sanitizeNexusActionArgs(
+      { action: 'send_to_pane', text: 'oi', paneId: '  pane-9 \n' },
+      () => false,
+    );
+    expect(out.args).toEqual({ action: 'send_to_pane', text: 'oi', paneId: 'pane-9' });
+    expect(out.strippedPaneId).toBeNull();
+  });
+
+  it.each([
+    ['   ', 'só espaços'],
+    ['pane-1\nrm -rf /', 'quebra de linha'],
+    ['pane-1\u0000', 'caractere nulo'],
+    ['x'.repeat(81), 'gigante'],
+  ])('REMOVE paneId ilegível (%j, %s) — cai no gate de delegação', (paneId) => {
+    const out = sanitizeNexusActionArgs(
+      { action: 'send_to_pane', text: 'rm -rf tudo', paneId },
+      hasQuestionOn('pane-42'),
+    );
     expect(out.args).toEqual({ action: 'send_to_pane', text: 'rm -rf tudo' });
     expect('paneId' in out.args).toBe(false);
-    expect(out.strippedPaneId).toBe('pane-shell');
+    expect(out.strippedPaneId).toBe(paneId);
+  });
+
+  it('isPlausiblePaneRef aceita o que o renderer sabe resolver e barra o lixo', () => {
+    for (const ok of ['pane-1', '7', '#7', 'pane 7', 'orq · squad', 'a'.repeat(80)]) {
+      expect(isPlausiblePaneRef(ok)).toBe(true);
+    }
+    for (const bad of ['', '  ', 'a'.repeat(81), 'a\nb', 'a\tb']) {
+      expect(isPlausiblePaneRef(bad)).toBe(false);
+    }
   });
 
   it('não toca em send_to_pane sem paneId nem em outras ações', () => {

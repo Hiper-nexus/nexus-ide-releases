@@ -100,6 +100,27 @@ export class RealtimeTranscriptWaiter {
   }
 
   /**
+   * Encerra o wait pendente ANTES do timeout porque o turno já tem outra prova
+   * de resposta do provider (áudio ou tool). Resolve como `{ text: null,
+   * superseded: false }` — o mesmo formato do timeout — e deixa a leitura da
+   * evidência por conta de quem chamou: aqui não se decide mute nem supersede.
+   *
+   * Não toca em `queued`: um final que chegue depois fica guardado e morre na
+   * virada do turno (`beginTurn`/`supersede`/`resetQueued`). Quando `turnId` é
+   * informado, só libera o wait DESSE turno; um wait mais novo (outro turno
+   * já assumiu) nunca é encerrado por um chamador atrasado.
+   *
+   * Devolve true se havia um wait deste turno para liberar.
+   */
+  settleEarly(turnId?: string): boolean {
+    const pending = this.pending;
+    if (!pending) return false;
+    if (turnId && pending.turnId && turnId !== pending.turnId) return false;
+    this.settle({ text: null, superseded: false });
+    return true;
+  }
+
+  /**
    * Aguarda o transcript final por até `timeoutMs`. Um transcript já
    * enfileirado resolve na hora. Um wait anterior ainda pendente é SUPERSEDED
    * (o novo wait é de um turno mais recente) — jamais vira mute. O timeout é o

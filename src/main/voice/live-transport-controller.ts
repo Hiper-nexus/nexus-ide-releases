@@ -13,7 +13,10 @@ import {
   buildRealtimeEngageDecision,
   type EngageCandidate,
 } from '../jarvis/realtime/engage-decision';
-import { shouldWithholdLiveMicFrame } from '../jarvis/realtime/live-mic-gate';
+import {
+  isFullDuplexTransport,
+  shouldWithholdLiveMicFrame,
+} from '../jarvis/realtime/live-mic-gate';
 import type { JarvisLiveSession } from './jarvis-live';
 import type {
   JarvisLiveAudioPlaybackEvent,
@@ -95,6 +98,12 @@ const ACCEPTED_RESCUE_TURN_IDS_MAX = 32;
 const PENDING_RENDERER_AUDIO_MAX = 256;
 const PENDING_RENDERER_AUDIO_TTL_MS = 30_000;
 export const TOOL_FOLLOW_UP_COMPLETION_DEADLINE_MS = 3_000;
+/**
+ * Prazo da sonda de vida do socket quente num wake. Um RTT saudável (~100-300
+ * ms) cabe folgado; sem resposta o socket é tratado como zumbi e a conexão
+ * recomeça, custando só esse prazo a mais além do handshake de sempre.
+ */
+export const HOT_SOCKET_PROBE_MS = 800;
 
 interface RealtimeStartOptions {
   greeting?: string;
@@ -141,6 +150,8 @@ export class LiveTransportController {
   private pendingMicBytes = 0;
   /** User released PTT while the provider was still connecting. */
   private pendingEndUserTurn = false;
+  /** Sonda de vida do socket quente em curso: o mic fica no buffer até o veredito. */
+  private hotSocketProbe: Promise<void> | null = null;
   /** Controller-level identity survives provider/transport reconnects. */
   private readonly toolCalls: LiveToolCallCoordinator;
   private readonly pendingQuestionRouter: PendingQuestionRouter;
@@ -332,10 +343,16 @@ export class LiveTransportController {
       return Promise.resolve();
     }
 
-    // A locally-open Live socket can already be a server-side zombie. Actual
-    // wake/click turns reconnect and pendingMic bridges the setup latency;
-    // prewarm may still keep its idle socket.
+    // A locally-open Live socket can already be a server-side zombie. Um
+    // provider que sabe provar a vida da sessão (Grok Voice / OpenAI Realtime:
+    // `probeLiveness`) tem o socket quente REAPROVEITADO no wake — sem os
+    // 1,5-3 s de handshake frio a cada ativação, na mesma conversa. Quem não
+    // sabe provar (Gemini Live) reconecta, como antes; prewarm mantém o socket.
     if (this._provider?.isReady && options.freshTurn) {
+      const provider = this._provider;
+      if (typeof provider.probeLiveness === 'function') {
+        return this.reuseHotSocketOrReconnect(provider, options);
+      }
       logVoice('warn', 'live.hotReuseDisabled', 'descartando socket quente antes do wake', {
         inGrace: this._inGrace,
       });
@@ -353,6 +370,77 @@ export class LiveTransportController {
       return Promise.resolve();
     }
 
+    return this.startCold(options);
+  }
+
+  /**
+   * Wake sobre um socket quente de provider com prova de vida: o mic fica no
+   * buffer durante a sonda (se o socket for zumbi o áudio segue para a conexão
+   * nova em vez de morrer no socket morto) e, com o socket vivo, a conversa
+   * continua no mesmo WebSocket.
+   */
+  private reuseHotSocketOrReconnect(
+    provider: TurnManagedRealtimeProvider,
+    options: RealtimeStartOptions,
+  ): Promise<void> {
+    if (this.hotSocketProbe) return this.hotSocketProbe;
+    const probe = (async (): Promise<void> => {
+      let alive = false;
+      try {
+        alive = (await provider.probeLiveness?.(HOT_SOCKET_PROBE_MS)) === true;
+      } catch {
+        alive = false;
+      }
+      this.hotSocketProbe = null;
+      if (this._provider !== provider) {
+        // stop/hardStop/reconexão trocaram o provider durante a sonda: quem
+        // trocou é o dono do ciclo de vida; reconectar aqui ressuscitaria uma
+        // sessão que o usuário acabou de encerrar.
+        return;
+      }
+      if (alive && provider.isReady) {
+        this.adoptHotSocket(provider, options);
+        return;
+      }
+      logVoice('warn', 'live.hotReuseDisabled', 'socket quente não respondeu à sonda — reconectando', {
+        inGrace: this._inGrace,
+        probeMs: HOT_SOCKET_PROBE_MS,
+      });
+      const bufferedMic = {
+        chunks: this.pendingMic,
+        bytes: this.pendingMicBytes,
+        endUserTurn: this.pendingEndUserTurn,
+      };
+      this.hardStop();
+      this._fsm.start({ reason: 'wake' });
+      this.pendingMic = bufferedMic.chunks;
+      this.pendingMicBytes = bufferedMic.bytes;
+      this.pendingEndUserTurn = bufferedMic.endUserTurn;
+      if (bufferedMic.chunks.length > 0) {
+        this._fsm.patchStatus({ status: 'listening', pendingMic: true });
+      }
+      await this.startCold(options);
+    })();
+    this.hotSocketProbe = probe;
+    return probe;
+  }
+
+  private adoptHotSocket(
+    provider: TurnManagedRealtimeProvider,
+    options: RealtimeStartOptions,
+  ): void {
+    logVoice('info', 'live.hotReuse', 'socket quente reutilizado — sem reconexão', {
+      inGrace: this._inGrace,
+    });
+    provider.resetTurn?.();
+    if (this._inGrace) this.promoteGrace();
+    else this.touchIdle();
+    this.sendGreetingIfSafe(provider, options.greeting);
+    this.flushPendingMic(provider);
+    this._fsm.patchStatus({ status: 'listening', realtimeReady: true });
+  }
+
+  private startCold(options: RealtimeStartOptions): Promise<void> {
     this.clearGraceTimer();
     this._inGrace = false;
     this.touchIdle();
@@ -534,10 +622,13 @@ export class LiveTransportController {
   micIn(b64: string): void {
     const state = this._fsm.getState();
     if (!state.enabled || !state.sessionId) return;
-    // Gemini Live: full-duplex + activityHandling START_OF_ACTIVITY_INTERRUPTS.
-    // Mic frames must keep flowing while she speaks so barge-in is real-time.
+    // Full-duplex em TODO transporte realtime (Gemini Live, Grok Voice, OpenAI
+    // Realtime): o mic segue fluindo enquanto ela fala para o VAD do servidor
+    // ouvir o barge-in em tempo real. Só o Gemini estava na lista, e com Grok
+    // (o default) o gate calava o mic durante a resposta.
     const fullDuplex =
-      state.enabled && getVoiceConfig().jarvisLive.transport === 'gemini-live';
+      state.enabled &&
+      isFullDuplexTransport(getVoiceConfig().jarvisLive.transport);
     if (
       shouldWithholdLiveMicFrame({
         status: state.status,
@@ -559,7 +650,9 @@ export class LiveTransportController {
       return;
     }
     if (samples.length === 0) return;
-    if (!this._provider?.isReady) {
+    // Durante a sonda do socket quente o provider ainda parece pronto, mas pode
+    // ser um zumbi: o áudio fica no buffer até o veredito.
+    if (!this._provider?.isReady || this.hotSocketProbe) {
       this.bufferMicChunk(samples);
       return;
     }
@@ -719,7 +812,7 @@ export class LiveTransportController {
 
   endTurn(): void {
     const provider = this._provider;
-    if (provider?.isReady) {
+    if (provider?.isReady && !this.hotSocketProbe) {
       this.pendingEndUserTurn = false;
       provider.endUserTurn();
       return;

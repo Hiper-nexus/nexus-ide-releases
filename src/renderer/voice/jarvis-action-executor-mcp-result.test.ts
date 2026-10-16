@@ -454,6 +454,129 @@ describe('Jarvis MCP result propagation', () => {
     });
   });
 
+  describe('send_to_pane com terminal como alvo explícito', () => {
+    const shellTarget = { kind: 'asking-pane', paneId: 'pane-shell', terminal: true };
+
+    // `Once` de propósito: um mockReturnValue persistente vazaria o alvo shell
+    // para os testes seguintes do arquivo (clearAllMocks não limpa implementação).
+    const armShellTarget = () => resolveSendToPaneTarget.mockReturnValueOnce(shellTarget);
+
+    beforeEach(() => {
+      layoutState.panes = [{ id: 'pane-shell', kind: 'shell', title: 'zsh' }];
+      waitForSession.mockResolvedValue('session-shell');
+      writeToPane.mockReturnValue(true);
+      confirmCommand.mockResolvedValue(true);
+    });
+
+    it('pede ao resolvedor que aceite terminal só neste caminho', async () => {
+      armShellTarget();
+      await executeJarvisAction(
+        { say: '', action: { type: 'send_to_pane', text: 'npm test', paneId: '2' } },
+        context,
+      );
+
+      expect(resolveSendToPaneTarget).toHaveBeenCalledWith(
+        '2',
+        expect.anything(),
+        null,
+        { allowTerminal: true },
+      );
+    });
+
+    it('escreve o comando de uma linha no terminal pedido e revela o pane', async () => {
+      armShellTarget();
+      const execution = await executeJarvisAction(
+        { say: '', action: { type: 'send_to_pane', text: 'npm test', paneId: '2' } },
+        context,
+      );
+
+      expect(confirmCommand).toHaveBeenCalledWith('npm test');
+      expect(writeToPane).toHaveBeenCalledWith('pane-shell', 'npm test\n');
+      expect(submitPromptToPane).not.toHaveBeenCalled();
+      expect(focusPane).toHaveBeenCalledWith('pane-shell');
+      expect(execution.toolResult).toMatchObject({
+        tool: 'send_to_pane',
+        ok: true,
+        output: { paneId: 'pane-shell' },
+      });
+    });
+
+    it('comando destrutivo recusado pelo operador não chega ao terminal', async () => {
+      confirmCommand.mockResolvedValue(false);
+      armShellTarget();
+
+      const execution = await executeJarvisAction(
+        { say: '', action: { type: 'send_to_pane', text: 'rm -rf node_modules', paneId: '2' } },
+        context,
+      );
+
+      expect(confirmCommand).toHaveBeenCalledWith('rm -rf node_modules');
+      expect(writeToPane).not.toHaveBeenCalled();
+      expect(execution.toolResult).toMatchObject({ ok: false, summary: 'usuário recusou' });
+    });
+
+    it('bloqueia texto multilinha e vazio antes de pedir aprovação ou escrever', async () => {
+      for (const text of ['npm test\nrm -rf /', '   ']) {
+        armShellTarget();
+        const execution = await executeJarvisAction(
+          { say: '', action: { type: 'send_to_pane', text, paneId: '2' } },
+          context,
+        );
+        expect(execution.toolResult).toMatchObject({ ok: false });
+      }
+
+      expect(confirmCommand).not.toHaveBeenCalled();
+      expect(writeToPane).not.toHaveBeenCalled();
+    });
+
+    it('terminal sem sessão viva falha sem fingir sucesso', async () => {
+      waitForSession.mockResolvedValue(null);
+      armShellTarget();
+
+      const execution = await executeJarvisAction(
+        { say: '', action: { type: 'send_to_pane', text: 'npm test', paneId: '2' } },
+        context,
+      );
+
+      expect(writeToPane).not.toHaveBeenCalled();
+      expect(execution.toolResult).toMatchObject({
+        ok: false,
+        summary: 'falha ao escrever no terminal',
+      });
+    });
+
+    it('agente continua recebendo prompt (submitPromptToPane), nunca writeToPane', async () => {
+      resolveSendToPaneTarget.mockReturnValueOnce({ kind: 'asking-pane', paneId: 'pane-agent' });
+      submitPromptToPane.mockReturnValue(true);
+
+      await executeJarvisAction(
+        { say: '', action: { type: 'send_to_pane', text: 'rode os testes', paneId: '3' } },
+        context,
+      );
+
+      expect(submitPromptToPane).toHaveBeenCalledWith('pane-agent', 'rode os testes');
+      expect(writeToPane).not.toHaveBeenCalled();
+      expect(confirmCommand).not.toHaveBeenCalled();
+    });
+
+    it('pane inexistente recusa com mensagem neutra e não escreve em lugar nenhum', async () => {
+      resolveSendToPaneTarget.mockReturnValueOnce({
+        kind: 'asking-pane-gone',
+        requestedNumber: 9,
+        validNumbers: [1, 2],
+      });
+
+      const execution = await executeJarvisAction(
+        { say: '', action: { type: 'send_to_pane', text: 'npm test', paneId: '9' } },
+        context,
+      );
+
+      expect(execution.sayText).toBe('Não tem pane 9 aberto. Os panes abertos são: 1, 2.');
+      expect(writeToPane).not.toHaveBeenCalled();
+      expect(submitPromptToPane).not.toHaveBeenCalled();
+    });
+  });
+
   it('prefills canonical mission setup when delegation has no live agent pane', async () => {
     workspaceState.current = { path: '/tmp/nexus', name: 'Nexus' };
     resolveSendToPaneTarget.mockReturnValueOnce({ kind: 'no-agent-pane' });

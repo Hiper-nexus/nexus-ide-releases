@@ -60,6 +60,14 @@ export interface ParsedOpenAIRealtimeEvent {
   type?: string;
   audio?: Int16Array;
   transcript?: RealtimeTranscriptEvent;
+  /** Item de conversa a que a transcrição do usuário pertence (dedupe). */
+  itemId?: string;
+  /**
+   * True quando a transcrição do usuário veio do snapshot do item
+   * (`conversation.item.created/added/done`) e não do evento dedicado
+   * `input_audio_transcription.completed`. O evento dedicado tem prioridade.
+   */
+  transcriptFromItem?: boolean;
   speechStarted?: boolean;
   speechStopped?: boolean;
   responseCreated?: boolean;
@@ -79,6 +87,7 @@ const DEFAULT_REALTIME_URL = 'wss://api.openai.com/v1/realtime';
 const CONNECT_TIMEOUT_MS = 10_000;
 const PENDING_AUDIO_MAX_BYTES = 512 * 1024;
 const EMITTED_TOOL_CALL_IDS_MAX = 256;
+const USER_FINAL_ITEM_IDS_MAX = 64;
 const MAX_CONTEXT_CHARS = 1_200;
 const WS_OPEN = 1;
 
@@ -187,10 +196,13 @@ export function parseOpenAIRealtimeEvent(raw: string): ParsedOpenAIRealtimeEvent
     return { type, audio: delta ? base64ToInt16Array(delta) : new Int16Array() };
   }
 
+  // `response.text.*` é o nome beta/legado dos mesmos eventos de texto que o GA
+  // chama de `response.output_text.*`; os dois dialetos já apareceram em campo.
   if (
     type === 'response.output_audio_transcript.delta' ||
     type === 'response.audio_transcript.delta' ||
-    type === 'response.output_text.delta'
+    type === 'response.output_text.delta' ||
+    type === 'response.text.delta'
   ) {
     const delta = typeof event.delta === 'string' ? event.delta : '';
     return {
@@ -202,7 +214,8 @@ export function parseOpenAIRealtimeEvent(raw: string): ParsedOpenAIRealtimeEvent
   if (
     type === 'response.output_audio_transcript.done' ||
     type === 'response.audio_transcript.done' ||
-    type === 'response.output_text.done'
+    type === 'response.output_text.done' ||
+    type === 'response.text.done'
   ) {
     const text =
       typeof event.transcript === 'string'
@@ -228,11 +241,45 @@ export function parseOpenAIRealtimeEvent(raw: string): ParsedOpenAIRealtimeEvent
     const transcript = typeof event.transcript === 'string' ? event.transcript : '';
     return {
       type,
+      ...(typeof event.item_id === 'string' ? { itemId: event.item_id } : {}),
       transcript: { role: 'user', text: transcript, final: true },
     };
   }
 
+  // Rede de segurança: alguns servidores entregam a fala do usuário só no
+  // snapshot do item (`content[].transcript`) e nunca no evento dedicado.
+  // SÓ `transcript` (áudio reconhecido) vale — `content[].text` é o `input_text`
+  // que o próprio Nexus injeta via sendText ([wake], resultado interno de
+  // ação), e devolvê-lo como "fala do usuário" viraria comando fantasma.
+  if (
+    type === 'conversation.item.created' ||
+    type === 'conversation.item.added' ||
+    type === 'conversation.item.done'
+  ) {
+    const item = event.item as Record<string, unknown> | undefined;
+    const spoken = userItemSpokenTranscript(item);
+    if (!spoken) return { type };
+    return {
+      type,
+      ...(typeof item?.id === 'string' ? { itemId: item.id } : {}),
+      transcriptFromItem: true,
+      transcript: { role: 'user', text: spoken, final: true },
+    };
+  }
+
   return { type };
+}
+
+function userItemSpokenTranscript(
+  item: Record<string, unknown> | undefined,
+): string {
+  if (!item || item.role !== 'user' || !Array.isArray(item.content)) return '';
+  for (const part of item.content) {
+    if (!part || typeof part !== 'object') continue;
+    const transcript = (part as Record<string, unknown>).transcript;
+    if (typeof transcript === 'string' && transcript.trim()) return transcript;
+  }
+  return '';
 }
 
 function parseToolCallEvent(
@@ -316,6 +363,10 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
   private hasUncommittedAudio = false;
   private serverSpeechStopped = false;
   private activeTurnId: string | undefined;
+  /** Texto final do usuário já entregue por item — dedupe entre as duas fontes. */
+  private userFinalByItem = new Map<string, string>();
+  /** Sondas de vida do socket quente aguardando a próxima resposta do servidor. */
+  private livenessSettlers: Array<(alive: boolean) => void> = [];
   private readonly screenCoalescer: ScreenCoalescer;
 
   private readonly apiKey: string;
@@ -387,6 +438,7 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
         this.responseActive = false;
         this.pendingAudio = [];
         this.pendingAudioBytes = 0;
+        this.settleLiveness(false);
         if (!wasReady || runtimeDisconnectEmitted) return;
         runtimeDisconnectEmitted = true;
         this.emitDisconnected(err);
@@ -401,6 +453,9 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
       ws.on('message', (payload) => {
         const raw = payloadToString(payload);
         const parsed = parseOpenAIRealtimeEvent(raw);
+        // Qualquer frame do servidor prova que a sessão responde; um erro dele
+        // prova o contrário (sonda do socket quente).
+        this.settleLiveness(!parsed.error);
         this.handleParsedEvent(parsed);
         if (parsed.sessionReady) {
           this.ready = true;
@@ -450,6 +505,43 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
   beginUserTurn(turnId: string): void {
     const normalized = turnId.trim().slice(0, 128);
     if (normalized) this.activeTurnId = normalized;
+  }
+
+  /**
+   * Nova ativação no MESMO socket quente: zera só o estado local do turno
+   * anterior. Nada vai ao fio — o VAD do servidor já decide o fim do turno, e
+   * a xAI não documenta `input_audio_buffer.clear` (evento recusado vira
+   * `error` e derrubaria a sessão).
+   */
+  resetTurn(): void {
+    this.hasUncommittedAudio = false;
+    this.serverSpeechStopped = false;
+  }
+
+  /**
+   * Prova de vida do socket quente antes de reutilizá-lo. Um `session.update`
+   * idempotente (o mesmo que `sendContext` já manda) obriga o servidor a
+   * responder `session.updated`; qualquer frame de volta prova a sessão de
+   * aplicação, que um ping/pong não prova (o proxy de borda responde pong mesmo
+   * com a origem morta). Sem resposta em `timeoutMs` o socket é zumbi.
+   */
+  probeLiveness(timeoutMs: number): Promise<boolean> {
+    if (!this.isReady) return Promise.resolve(false);
+    return new Promise((resolve) => {
+      const settle = (alive: boolean): void => {
+        this.clearTimeoutFn(timer);
+        const at = this.livenessSettlers.indexOf(settle);
+        if (at >= 0) this.livenessSettlers.splice(at, 1);
+        resolve(alive);
+      };
+      const timer = this.setTimeoutFn(() => settle(false), timeoutMs);
+      this.livenessSettlers.push(settle);
+      this.sendSessionUpdate();
+    });
+  }
+
+  private settleLiveness(alive: boolean): void {
+    for (const settle of [...this.livenessSettlers]) settle(alive);
   }
 
   onTranscript(cb: (delta: string, final: boolean) => void): void {
@@ -570,7 +662,9 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
     this.activeTurnId = undefined;
     this.emittedToolCallIds.clear();
     this.emittedToolCallOrder = [];
+    this.userFinalByItem.clear();
     this.screenCoalescer.clear();
+    this.settleLiveness(false);
     if (!this.ws) return;
     try {
       this.ws.close();
@@ -650,9 +744,31 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
       this.responseActive = true;
       for (const cb of this.audioCallbacks) cb(event.audio);
     }
-    if (event.transcript) {
+    if (event.transcript && this.acceptTranscript(event)) {
       this.emitRoleTranscript(event.transcript);
     }
+  }
+
+  /**
+   * A fala final do usuário pode chegar por duas fontes (evento dedicado e
+   * snapshot do item). O evento dedicado sempre vale; o snapshot só quando o
+   * item ainda não foi entregue, e o dedicado repetido com o mesmo texto cai.
+   * Revisões do mesmo item (texto diferente) continuam passando.
+   */
+  private acceptTranscript(event: ParsedOpenAIRealtimeEvent): boolean {
+    const transcript = event.transcript;
+    if (!transcript || transcript.role !== 'user' || !transcript.final) return true;
+    if (!event.itemId) return true;
+    const previous = this.userFinalByItem.get(event.itemId);
+    if (event.transcriptFromItem ? previous !== undefined : previous === transcript.text) {
+      return false;
+    }
+    this.userFinalByItem.set(event.itemId, transcript.text);
+    if (this.userFinalByItem.size > USER_FINAL_ITEM_IDS_MAX) {
+      const oldest = this.userFinalByItem.keys().next().value;
+      if (oldest !== undefined) this.userFinalByItem.delete(oldest);
+    }
+    return true;
   }
 
   private emitRoleTranscript(event: RealtimeTranscriptEvent): void {

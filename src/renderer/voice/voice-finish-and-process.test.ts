@@ -1,6 +1,10 @@
 /**
  * F-371 — o ditado (Space na janela) espera 6 s em silêncio visual: o voice
  * store precisa expor `dictationPending`/`dictationFailed` para o chip do pane.
+ *
+ * Também cobre o ramo realtime: a resposta que o server_vad começa ANTES do fim
+ * da captura (áudio ou tool) tem de contar como evidência do turno — sem isso o
+ * turno degradava para o Classic com o Live já falando.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -8,8 +12,25 @@ import {
   type FinishAndProcessDeps,
 } from './voice-finish-and-process';
 import { useVoiceStore } from './voice-store';
-import { setActiveCaptureReason } from './voice-session-state';
-import { routeDictation } from './voice-run-jarvis-turn';
+import {
+  bumpRealtimeNativeToolInFlight,
+  markTurnAudioBaseline,
+  realtimeAudioPlayedCounter,
+  realtimeAudioSuppressedCounter,
+  realtimeTranscriptWaiter,
+  setActiveCaptureReason,
+  setLastRealtimeNativeToolAt,
+  setLastRealtimeNativeToolCallId,
+  setRealtimeTurnActive,
+  turnExecution,
+} from './voice-session-state';
+import {
+  markLiveMicFrameOffered,
+  resetLiveMuteRescues,
+  resetOfferedLiveMicFramesThisTurn,
+} from './live-mute-rescue';
+import { releaseAfterLiveProviderAnswer, releaseAfterLiveToolAnswer } from './live-followup';
+import { routeDictation, runJarvisTurn } from './voice-run-jarvis-turn';
 import type { VoiceCapture } from './voice-capture';
 import type {
   TranscribeResult,
@@ -19,8 +40,16 @@ import type {
 vi.mock('./voice-run-jarvis-turn', async (importOriginal) => {
   const actual =
     await importOriginal<typeof import('./voice-run-jarvis-turn')>();
-  return { ...actual, routeDictation: vi.fn() };
+  return { ...actual, routeDictation: vi.fn(), runJarvisTurn: vi.fn(async () => {}) };
 });
+
+// A continuidade pós-resposta agenda reabertura de mic por timers reais: os
+// testes só precisam saber QUE caminho o turno escolheu, não reabrir a escuta.
+vi.mock('./live-followup', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./live-followup')>()),
+  releaseAfterLiveProviderAnswer: vi.fn(),
+  releaseAfterLiveToolAnswer: vi.fn(),
+}));
 
 const hasPendingDictation = vi.hoisted(() => vi.fn(() => false));
 vi.mock('./dictation-delivery', async (importOriginal) => ({
@@ -498,3 +527,234 @@ describe('F-1424 — privacidade do ditado (nunca grava texto falado em log ou c
 });
 
 
+
+describe('ramo realtime — a resposta que o server_vad começa antes do fim da captura', () => {
+  const logVoice = vi.fn();
+  const liveQuiesce = vi.fn(async () => ({}));
+  const WAKE_WINDOW_MS = 4_800;
+  let token = 0;
+
+  const liveState = {
+    enabled: true,
+    sessionId: 'sess-1',
+    status: 'listening',
+    realtimeReady: true,
+    startedAt: 1,
+    lastActiveAt: 1,
+    turns: 0,
+    pendingMic: false,
+  };
+
+  function realtimeInfo(): VoiceRuntimeInfo {
+    return {
+      routing: 'jarvis',
+      dictationOutputMode: 'portuguese',
+      persona: { userName: 'Cleo' },
+      keys: [{ envVar: 'XAI_API_KEY', hasEnv: true, hasStoredKey: false }],
+      jarvisLive: { enabled: true, transport: 'grok-realtime' },
+    } as unknown as VoiceRuntimeInfo;
+  }
+
+  /** Espelha o que o beginListening faz ao abrir uma captura de wake. */
+  function openWakeTurn(): number {
+    realtimeTranscriptWaiter.supersede();
+    realtimeAudioPlayedCounter.reset();
+    realtimeAudioSuppressedCounter.reset();
+    resetOfferedLiveMicFramesThisTurn();
+    markLiveMicFrameOffered();
+    markLiveMicFrameOffered();
+    const opened = turnExecution.beginTurn();
+    markTurnAudioBaseline();
+    realtimeTranscriptWaiter.beginTurn(String(opened));
+    return opened;
+  }
+
+  /** O provider tocou `chunks` pedaços de áudio durante a fala do operador. */
+  function providerPlayedDuringCapture(chunks: number): void {
+    for (let i = 0; i < chunks; i += 1) realtimeAudioPlayedCounter.tick(Date.now());
+  }
+
+  function events(): string[] {
+    return logVoice.mock.calls.map(([payload]) => (payload as { event: string }).event);
+  }
+
+  /** Dispara o finishAndProcess sem esperá-lo: os timers do vitest são do teste. */
+  function startTurn() {
+    let finished = false;
+    const done = finishAndProcess(makeCapture(), { current: false }, makeDeps()).then(() => {
+      finished = true;
+    });
+    return { done, isFinished: () => finished };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    logVoice.mockReset();
+    liveQuiesce.mockClear();
+    transcribe.mockReset();
+    transcribe.mockResolvedValue(sttOk('abre o terminal'));
+    vi.stubGlobal('window', {
+      nexus: {
+        voice: {
+          transcribe,
+          logVoice,
+          liveStatus: vi.fn(async () => ({})),
+          liveInterrupt: vi.fn(async () => ({})),
+          liveEndTurn: vi.fn(async () => liveState),
+          liveEndUserAudio: vi.fn(async () => liveState),
+          liveQuiesce,
+          liveHardTeardown: vi.fn(async () => ({})),
+          liveRescueIn: vi.fn(async () => ({ accepted: false })),
+          recordEcho: vi.fn(async () => ({})),
+        },
+        mcp: { clearSession: vi.fn(async () => ({ ok: true })) },
+      },
+    });
+    useVoiceStore.setState({
+      status: 'idle',
+      error: null,
+      note: null,
+      dictationPending: null,
+      dictationFailed: false,
+      info: realtimeInfo(),
+      liveState,
+    } as never);
+    setActiveCaptureReason('wake');
+    setRealtimeTurnActive(true);
+    resetLiveMuteRescues();
+    bumpRealtimeNativeToolInFlight(-99);
+    setLastRealtimeNativeToolAt(0);
+    setLastRealtimeNativeToolCallId(null);
+    token = openWakeTurn();
+  });
+
+  afterEach(() => {
+    setActiveCaptureReason('manual');
+    setRealtimeTurnActive(false);
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it('áudio tocado ANTES do fim da captura + transcript: o provider é mantido, sem Classic', async () => {
+    providerPlayedDuringCapture(4);
+    realtimeTranscriptWaiter.deliver('abre o terminal', String(token));
+
+    const turn = startTurn();
+    // Evidência imediata: o turno fecha sem gastar o orçamento de 3,5 s.
+    await vi.advanceTimersByTimeAsync(200);
+    expect(turn.isFinished()).toBe(true);
+    await turn.done;
+
+    // Antes da correção a base era lida no fim da captura: nenhum chunk novo,
+    // o wait de evidência estourava em 3,5 s e o turno degradava para o Classic
+    // (runJarvisTurn + liveQuiesce) com o Live já falando.
+    expect(vi.mocked(runJarvisTurn)).not.toHaveBeenCalled();
+    expect(liveQuiesce).not.toHaveBeenCalled();
+    expect(vi.mocked(releaseAfterLiveProviderAnswer)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(releaseAfterLiveProviderAnswer)).toHaveBeenCalledWith(
+      expect.objectContaining({ armFollowUp: true }),
+    );
+    expect(events()).toContain('jarvis.liveProviderAnswer');
+    expect(events()).not.toContain('jarvis.liveProviderMuteDegraded');
+    expect(turnExecution.owner).toBe('realtime-audio');
+  });
+
+  it('só áudio, sem transcript: encerra a espera bem antes da janela do wake', async () => {
+    providerPlayedDuringCapture(2);
+    const turn = startTurn();
+
+    // Sondagem de 50 ms + carência de 450 ms: ~0,5 s, não os 4,8 s do wake.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(turn.isFinished()).toBe(true);
+    await turn.done;
+
+    expect(vi.mocked(runJarvisTurn)).not.toHaveBeenCalled();
+    expect(liveQuiesce).not.toHaveBeenCalled();
+    expect(vi.mocked(releaseAfterLiveProviderAnswer)).toHaveBeenCalledWith(
+      expect.objectContaining({ armFollowUp: true }),
+    );
+    expect(events()).toContain('jarvis.transcriptWaitEndedEarly');
+    const answer = logVoice.mock.calls
+      .map(([payload]) => payload as { event: string; msg?: string })
+      .find((payload) => payload.event === 'jarvis.liveProviderAnswer');
+    expect(answer?.msg).toContain('áudio sem transcript final');
+    expect(turnExecution.owner).toBe('realtime-audio');
+  });
+
+  it('o transcript que chega dentro da carência segue o caminho normal (sem saída antecipada)', async () => {
+    providerPlayedDuringCapture(2);
+    const turn = startTurn();
+
+    await vi.advanceTimersByTimeAsync(200);
+    realtimeTranscriptWaiter.deliver('abre o terminal', String(token));
+    await vi.advanceTimersByTimeAsync(300);
+    expect(turn.isFinished()).toBe(true);
+    await turn.done;
+
+    expect(events()).not.toContain('jarvis.transcriptWaitEndedEarly');
+    expect(events()).toContain('jarvis.realtimeTranscript');
+    expect(vi.mocked(runJarvisTurn)).not.toHaveBeenCalled();
+    expect(vi.mocked(releaseAfterLiveProviderAnswer)).toHaveBeenCalledTimes(1);
+  });
+
+  it('tool nativa durante a espera encerra o turno na hora, pelo caminho da tool', async () => {
+    const turn = startTurn();
+
+    await vi.advanceTimersByTimeAsync(120);
+    expect(turn.isFinished()).toBe(false); // sem evidência ainda: a espera segue
+    // O provider chama uma tool: o handler registra o instante e assume o turno.
+    setLastRealtimeNativeToolAt(Date.now());
+    bumpRealtimeNativeToolInFlight(1);
+    setLastRealtimeNativeToolCallId('call-1');
+    expect(turnExecution.claimRealtimeTool(token)).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(100);
+    expect(turn.isFinished()).toBe(true);
+    await turn.done;
+    bumpRealtimeNativeToolInFlight(-1);
+
+    expect(vi.mocked(releaseAfterLiveToolAnswer)).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'sess-1', callId: 'call-1' }),
+    );
+    expect(vi.mocked(runJarvisTurn)).not.toHaveBeenCalled();
+    expect(liveQuiesce).not.toHaveBeenCalled();
+    expect(events()).toContain('jarvis.transcriptWaitEndedEarly');
+  });
+
+  it('provider mudo (sem áudio nem tool): a janela inteira corre e o mute ainda degrada para o Classic', async () => {
+    const turn = startTurn();
+
+    // Nada de saída antecipada nem de degradação antes de esgotar a janela.
+    await vi.advanceTimersByTimeAsync(WAKE_WINDOW_MS - 200);
+    expect(events()).not.toContain('jarvis.transcriptWaitEndedEarly');
+    expect(events()).not.toContain('jarvis.realtimeMuteDegraded');
+    expect(vi.mocked(runJarvisTurn)).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(400);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(turn.isFinished()).toBe(true);
+    await turn.done;
+
+    expect(events()).toContain('jarvis.realtimeMuteDegraded');
+    expect(events()).not.toContain('jarvis.transcriptWaitEndedEarly');
+    expect(liveQuiesce).toHaveBeenCalledWith('classic-action-bridge-timeout');
+    expect(vi.mocked(runJarvisTurn)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(releaseAfterLiveProviderAnswer)).not.toHaveBeenCalled();
+  });
+
+  it('com o Classic podendo falar (Live não é dono) a espera nunca termina por áudio retido', async () => {
+    // Sessão não pronta: o Classic assume. O áudio do provider fica retido e
+    // não é prova de resposta ouvida — a janela curta do Classic segue valendo.
+    useVoiceStore.setState({
+      liveState: { ...liveState, realtimeReady: false },
+    } as never);
+    providerPlayedDuringCapture(3);
+
+    const turn = startTurn();
+    await vi.advanceTimersByTimeAsync(WAKE_WINDOW_MS + 4_000);
+    await turn.done;
+
+    expect(events()).not.toContain('jarvis.transcriptWaitEndedEarly');
+  });
+});

@@ -168,7 +168,9 @@ export async function confirmMcpTool(
     return { ok: true };
   }
 
-  if (!requiresConfirmation(tool.name, args)) {
+  // Mesma política mãos-livres do despacho `ipc-renderer`: o confirm do
+  // renderer não pode pedir modal para o que o dispatcher já libera.
+  if (!requiresConfirmation(tool.name, args, { handsFree: true })) {
     return { ok: true };
   }
 

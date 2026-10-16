@@ -133,19 +133,47 @@ export function handleCoarseVoiceToolCall(host: ToolDispatchHost, call: Realtime
   }
 }
 
+/** Teto de uma referência de pane (id, número, "pane 2" ou título falado). */
+const PANE_REF_MAX_CHARS = 80;
+
 /**
- * C3 defesa (follow-up 2): paneId em send_to_pane só é legítimo quando veio do
- * roteamento de pergunta pendente (PendingQuestionRouter). Um paneId inventado
- * pelo modelo (fora do schema) seria escrita direta SEM confirmação em qualquer
- * pane — aqui ele é removido, derrubando a ação no gate de confirmação de
- * delegação do renderer.
+ * A referência é algo que o renderer consegue resolver (id canônico, número do
+ * pane como "2" / "#2" / "pane 2", ou título falado)? Só barra o lixo óbvio:
+ * vazio, gigante ou com caracteres de controle. Quem decide se o pane existe é
+ * o renderer (`resolveSendToPaneTarget`), que RECUSA referência desconhecida —
+ * nunca chuta outro pane nem cai na delegação.
+ */
+export function isPlausiblePaneRef(value: string): boolean {
+  const ref = value.trim();
+  return (
+    ref.length > 0 &&
+    ref.length <= PANE_REF_MAX_CHARS &&
+    // eslint-disable-next-line no-control-regex -- barra \n, \r, NUL e afins na referência
+    !/[\u0000-\u001f\u007f]/.test(ref)
+  );
+}
+
+/**
+ * paneId em send_to_pane agora é endereço explícito do operador ("manda pro
+ * pane 2 rodar os testes"): fica quando a referência é plausível, vindo ou não
+ * de uma pergunta pendente do PendingQuestionRouter. O C3 (follow-up 2) removia
+ * QUALQUER paneId sem pergunta pendente — o que mandava "pane 2" para o
+ * orquestrador e tornava impossível endereçar um pane. A defesa saiu da
+ * remoção e foi para o destino: o renderer só entrega em pane vivo e resolvido
+ * sem ambiguidade, e texto para shell passa pela confirmação de comando
+ * destrutivo/deploy.
  */
 export function sanitizeNexusActionArgs(
   args: NexusRealtimeActionArgs,
   hasPendingQuestion: (paneId: string) => boolean,
 ): { args: NexusRealtimeActionArgs; strippedPaneId: string | null } {
-  if (args.action !== 'send_to_pane' || !args.paneId || hasPendingQuestion(args.paneId)) {
+  if (args.action !== 'send_to_pane' || !args.paneId) {
     return { args, strippedPaneId: null };
+  }
+  if (hasPendingQuestion(args.paneId)) return { args, strippedPaneId: null };
+  if (isPlausiblePaneRef(args.paneId)) {
+    const paneId = args.paneId.trim();
+    return { args: paneId === args.paneId ? args : { ...args, paneId }, strippedPaneId: null };
   }
   const { paneId, ...rest } = args;
   return { args: rest, strippedPaneId: paneId };
@@ -163,8 +191,8 @@ export function dispatchNexusAction(
     logVoice(
       'warn',
       'live.paneIdStripped',
-      'send_to_pane com paneId sem pergunta pendente — rebaixado pro gate de delegação',
-      { paneId: strippedPaneId },
+      'send_to_pane com paneId ilegível (vazio, gigante ou com controle) — rebaixado pro gate de delegação',
+      { chars: strippedPaneId.length },
     );
   }
   if (

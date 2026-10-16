@@ -64,6 +64,7 @@ import {
   resetPendingRealtimeAudioOut,
   setSuppressRealtimeAudioOut,
   setRealtimeTurnActive,
+  turnAudioBaselineFor,
   turnExecution,
   wakeMic,
   livePlayer,
@@ -92,7 +93,9 @@ import {
   resetLiveMuteRescues,
   shouldAttemptLiveMuteRescue,
   waitForLiveRescueEvidence,
+  type LiveRescueSnapshot,
 } from './live-mute-rescue';
+import { waitForTranscriptOrProviderAnswer } from './live-answer-evidence';
 import { shouldLetRealtimeProviderAnswer, shouldUseClassicActionBridge } from './realtime-bridge-policy';
 import {
   releaseAfterLiveProviderAnswer,
@@ -525,8 +528,14 @@ export async function finishAndProcess(
         captureReason: activeCaptureReason,
         isRealtimeLive: isRealtimeLive(),
       });
-      const heldChunksBaseline = realtimeAudioSuppressedCounter.total;
-      const playedChunksBaseline = realtimeAudioPlayedCounter.total;
+      // Base do TURNO (aberto em beginListening), não do fim da captura. Com
+      // server_vad o provider já responde antes de `tRealtime`: lendo a base
+      // aqui, esse áudio nunca contava como evidência e o turno degradava para
+      // o Classic (voz dobrada + socket realtime derrubado) mesmo com o Live
+      // falando. `tRealtime` fica só para a latência dos logs.
+      const turnBaseline = turnAudioBaselineFor(turnToken, tRealtime);
+      const heldChunksBaseline = turnBaseline.held;
+      const playedChunksBaseline = turnBaseline.played;
       realtimeHeldChunksBaseline = heldChunksBaseline;
       realtimePlayedChunksBaseline = playedChunksBaseline;
       const offeredFrames = offeredLiveMicFramesThisTurn();
@@ -557,14 +566,51 @@ export async function finishAndProcess(
       } else {
         openLiveAudioGate();
       }
-      const wait = await realtimeTranscriptWaiter.wait(
-        transcriptWaitMs,
-        String(turnToken),
-      );
+      // O final do transcript pode vir DEPOIS da resposta (ou nem vir, com a
+      // transcrição desligada no servidor). Quando o Live é o dono e o provider
+      // já respondeu — áudio ou tool —, a espera termina sem esgotar a janela
+      // inteira: a tool encerra na hora; o áudio dá uma carência curta ao
+      // transcript, que ainda filtra eco/lixo. Sem evidência, nada muda.
+      const readAnswerEvidence = (): LiveRescueSnapshot => ({
+        turnToken: turnExecution.currentToken,
+        playedAudioChunks: realtimeAudioPlayedCounter.total,
+        heldAudioChunks: realtimeAudioSuppressedCounter.total,
+        toolInFlight: realtimeNativeToolInFlight,
+        lastToolAt: lastRealtimeNativeToolAt,
+        toolOwnsTurn: turnExecution.isOwnedBy('realtime-tool', turnToken),
+      });
+      const wait = await waitForTranscriptOrProviderAnswer({
+        enabled: realtimeIsOwner,
+        wait: () => realtimeTranscriptWaiter.wait(transcriptWaitMs, String(turnToken)),
+        settleEarly: () => {
+          realtimeTranscriptWaiter.settleEarly(String(turnToken));
+        },
+        read: readAnswerEvidence,
+        turnToken,
+        startedAt: tRealtime,
+        playedBaseline: playedChunksBaseline,
+        heldBaseline: heldChunksBaseline,
+      });
       if (wait.superseded) {
         console.log('[voice] wait de transcript superseded por novo turno — sem mute');
         if (realtimeIsOwner) openLiveAudioGate();
         return;
+      }
+      if (wait.early) {
+        logVoiceEvent(
+          'info',
+          'jarvis.transcriptWaitEndedEarly',
+          'espera do transcript encerrada — provider já respondeu',
+          {
+            evidence: wait.early,
+            reason: activeCaptureReason,
+            waitedMs: Date.now() - tRealtime,
+            windowMs: transcriptWaitMs,
+            // Quanto do turno já tinha passado: separa "o provider respondeu
+            // junto da fala" de "respondeu só depois do fim da captura".
+            sinceTurnStartMs: Date.now() - turnBaseline.startedAt,
+          },
+        );
       }
       const liveTranscript = wait.text;
       if (

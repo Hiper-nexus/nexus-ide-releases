@@ -4,6 +4,7 @@ import {
   createGrokRealtimeProvider,
   GROK_REALTIME_URL,
   GROK_VOICES,
+  grokTranscriptionKeyterms,
 } from './grok-realtime';
 import type { RealtimeWsInit, RealtimeWsLike } from './openai-realtime';
 import {
@@ -116,6 +117,55 @@ describe('buildGrokSessionUpdate', () => {
     );
 
     expect(JSON.stringify(session)).not.toContain('whisper');
+  });
+
+  it('biases the transcription via audio.input.transcription, the only field xAI documents', () => {
+    const session = sessionOf(
+      buildGrokSessionUpdate({
+        model: DEFAULT_GROK_VOICE_MODEL,
+        voice: DEFAULT_GROK_VOICE,
+        instructions: '',
+      }),
+    );
+    const input = (session.audio as { input: Record<string, unknown> }).input;
+    const transcription = input.transcription as {
+      language_hint: string;
+      keyterms: string[];
+      model?: string;
+    };
+
+    // `pt` cru é ignorado em silêncio pela xAI: precisa da variante regional.
+    expect(transcription.language_hint).toBe('pt-BR');
+    expect(transcription.keyterms).toEqual(expect.arrayContaining(['Jarvis', 'Nexus IDE']));
+    // `input_audio_transcription` (OpenAI) não existe na superfície da xAI.
+    expect(session).not.toHaveProperty('input_audio_transcription');
+    expect(transcription).not.toHaveProperty('model');
+  });
+
+  it('keeps keyterms inside the documented limits (100 terms, 50 chars, unique)', () => {
+    const terms = grokTranscriptionKeyterms();
+
+    expect(terms.length).toBeGreaterThan(0);
+    expect(terms.length).toBeLessThanOrEqual(100);
+    for (const term of terms) {
+      expect(term.length).toBeGreaterThan(0);
+      expect(term.length).toBeLessThanOrEqual(50);
+    }
+    expect(new Set(terms.map((term) => term.toLowerCase())).size).toBe(terms.length);
+  });
+
+  it('keeps the transcription bias in manual (push-to-talk) mode too', () => {
+    const session = sessionOf(
+      buildGrokSessionUpdate({
+        model: DEFAULT_GROK_VOICE_MODEL,
+        voice: DEFAULT_GROK_VOICE,
+        instructions: '',
+        turnDetection: 'manual',
+      }),
+    );
+    const input = (session.audio as { input: { transcription: unknown } }).input;
+
+    expect(input.transcription).toMatchObject({ language_hint: 'pt-BR' });
   });
 });
 

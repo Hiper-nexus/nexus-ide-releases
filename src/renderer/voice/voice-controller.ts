@@ -83,6 +83,7 @@ import {
   realtimeAudioSuppressedCounter,
   lastRealtimeNativeToolCallId,
   setLastRealtimeNativeToolCallId,
+  markTurnAudioBaseline,
   REALTIME_ACTION_BRIDGE_ENABLED,
   REALTIME_PROVIDER_AUDIO_ENABLED,
 } from './voice-session-state';
@@ -1636,6 +1637,9 @@ async function beginListening(
     setRealtimeTurnActive(false);
     setLastRealtimeNativeToolCallId(null);
     const turnId = String(turnExecution.beginTurn());
+    // Base de áudio do turno (contadores recém-zerados): o finishAndProcess a
+    // usa para enxergar a resposta que o server_vad iniciou antes do fim da captura.
+    markTurnAudioBaseline();
     realtimeTranscriptWaiter.beginTurn(turnId);
     // Ditado não tem turno Live — não notifica o transporte realtime.
     if (!dictation) window.nexus.voice.liveTurnBegin(turnId);

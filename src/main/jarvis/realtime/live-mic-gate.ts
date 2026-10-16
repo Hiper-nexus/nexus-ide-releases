@@ -18,6 +18,24 @@ export type LiveFsmStatus =
   | 'interrupted'
   | 'error';
 
+/**
+ * Transportes realtime com VAD no servidor e barge-in nativo. Antes só o
+ * Gemini Live contava como full-duplex: com Grok Voice (default do produto) e
+ * OpenAI Realtime o gate segurava o mic enquanto ela falava, então o servidor
+ * nunca ouvia o operador interrompendo e a conversa virava turnos de walkie-
+ * talkie. O eco continua tratado na origem (AEC do Chromium + gate do
+ * renderer `liveMicFullDuplex`), igual ao Gemini.
+ */
+const FULL_DUPLEX_TRANSPORTS: ReadonlySet<string> = new Set([
+  'gemini-live',
+  'grok-realtime',
+  'openai-realtime',
+]);
+
+export function isFullDuplexTransport(transport: string): boolean {
+  return FULL_DUPLEX_TRANSPORTS.has(transport);
+}
+
 export function shouldWithholdLiveMicFrame(opts: {
   status: LiveFsmStatus;
   providerSpeaking: boolean;

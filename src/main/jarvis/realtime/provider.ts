@@ -41,6 +41,18 @@ export interface TurnManagedRealtimeProvider extends RoleAwareRealtimeProvider {
   readonly supportsPassiveContextUpdates?: boolean;
   /** Binds subsequent transcript callbacks to one renderer conversation turn. */
   beginUserTurn?(turnId: string): void;
+  /**
+   * Nova ativação reaproveitando o socket quente: zera só o estado local do
+   * turno anterior (nada vai ao fio).
+   */
+  resetTurn?(): void;
+  /**
+   * Prova de vida do socket quente: resolve true se o servidor respondeu dentro
+   * de `timeoutMs`. Um provider sem ela (Gemini Live) nunca é reutilizado no
+   * wake: o controller reconecta, porque um socket aberto localmente pode estar
+   * morto no servidor.
+   */
+  probeLiveness?(timeoutMs: number): Promise<boolean>;
   endUserTurn(): void;
   /** Force commit + response for a locally-ended turn even with server VAD. */
   forceEndUserTurn?(): void;

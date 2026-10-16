@@ -55,6 +55,49 @@ export interface LiveRescueSnapshot {
   heldAudioChunks: number;
   toolInFlight: number;
   lastToolAt: number;
+  /**
+   * A tool realtime JÁ É a dona deste turno (turnExecution 'realtime-tool').
+   * Cobre a tool que começou e terminou antes da leitura: `lastToolAt` e
+   * `toolInFlight` sozinhos não a veem. Opcional — quem não informa mantém a
+   * regra antiga.
+   */
+  toolOwnsTurn?: boolean;
+}
+
+export interface LiveRescueBaselines {
+  turnToken: number;
+  /** Instante de referência para provas de tool (`lastToolAt >= startedAt`). */
+  startedAt: number;
+  playedBaseline: number;
+  heldBaseline: number;
+}
+
+/**
+ * Uma leitura do estado do provider vira evidência — ou `null` (ainda sem
+ * prova). Regra ÚNICA: o wait de evidência (`waitForLiveRescueEvidence`) e o
+ * wait do transcript (`waitForTranscriptOrProviderAnswer`) leem pelo mesmo
+ * critério, senão um dos dois declararia "mudo" um turno que o outro viu
+ * respondendo.
+ */
+export function classifyLiveRescueSnapshot(
+  snapshot: LiveRescueSnapshot,
+  opts: LiveRescueBaselines,
+): Exclude<LiveRescueEvidence, 'timeout'> | null {
+  if (snapshot.turnToken !== opts.turnToken) return 'superseded';
+  if (
+    snapshot.toolOwnsTurn === true ||
+    snapshot.toolInFlight > 0 ||
+    snapshot.lastToolAt >= opts.startedAt
+  ) {
+    return 'tool';
+  }
+  if (
+    snapshot.playedAudioChunks > opts.playedBaseline ||
+    snapshot.heldAudioChunks > opts.heldBaseline
+  ) {
+    return 'audio';
+  }
+  return null;
 }
 
 export async function waitForLiveRescueEvidence(opts: {
@@ -71,15 +114,8 @@ export async function waitForLiveRescueEvidence(opts: {
   const delay = opts.delay ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
   const deadline = now() + (opts.timeoutMs ?? LIVE_RESCUE_RESPONSE_TIMEOUT_MS);
   while (now() < deadline) {
-    const snapshot = opts.read();
-    if (snapshot.turnToken !== opts.turnToken) return 'superseded';
-    if (snapshot.toolInFlight > 0 || snapshot.lastToolAt >= opts.startedAt) return 'tool';
-    if (
-      snapshot.playedAudioChunks > opts.playedBaseline ||
-      snapshot.heldAudioChunks > opts.heldBaseline
-    ) {
-      return 'audio';
-    }
+    const evidence = classifyLiveRescueSnapshot(opts.read(), opts);
+    if (evidence) return evidence;
     await delay(LIVE_RESCUE_POLL_MS);
   }
   return 'timeout';

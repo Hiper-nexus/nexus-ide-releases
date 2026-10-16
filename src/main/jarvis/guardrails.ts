@@ -9,6 +9,7 @@
  * Destructive actions (write, delete, force push, etc.) require confirmation.
  */
 
+import { canonicalToolName } from '../orch/gate';
 import { requiresHumanConfirmationForTool } from '../orch/mcp-effect-policy';
 
 /**
@@ -90,15 +91,144 @@ export function requiresVoiceCommandConfirmation(command: string): boolean {
 }
 
 /**
+ * Ferramentas do Nexus que a Jarvis por voz executa SEM modal (mãos livres): a
+ * fala do operador é a autorização, e o Nexus já audita cada chamada. Lista
+ * explícita de propósito (default-deny): o que não está aqui, e a política por
+ * efeito exige confirmar, continua pedindo — push/PR/merge remoto, instalar do
+ * catálogo, mídia paga, cron, ui_action, computer_do, restore de checkpoint,
+ * remote_*, skills/harness e o que for criado depois.
+ *
+ * `terminal_run` e `bg_run` ficam fora do conjunto: o comando decide (abaixo).
+ */
+const JARVIS_HANDS_FREE_TOOLS: ReadonlySet<string> = new Set([
+  // panes e agentes
+  'pane_write',
+  'pane_write_many',
+  'pane_ask',
+  'pane_close',
+  'agent_prompt',
+  // missões, tasks e planos
+  'mission_control',
+  'plan_write',
+  'workspace_list',
+  // navegador
+  'browser_open',
+  'browser_navigate',
+  'browser_click',
+  'browser_fill',
+  'browser_press',
+  'browser_hover',
+  'browser_scroll',
+  'browser_find',
+  'browser_extract',
+  'browser_responsive',
+  'browser_do',
+  // arquivos e editor do workspace
+  'file_write',
+  'editor_insert',
+  'editor_replace_selection',
+  'editor_apply_patch',
+  // git local (push e PR continuam confirmando)
+  'git_add',
+  'git_commit',
+  'git_branch_create',
+  'git_branch_switch',
+  'git_pull',
+  // preview local
+  'preview_start',
+  'preview_stop',
+  // leitura de goal em andamento
+  'goal_status',
+]);
+
+/** Ferramentas cujo `command` é uma linha de shell: o comando decide. */
+const JARVIS_SHELL_COMMAND_TOOLS: ReadonlySet<string> = new Set([
+  'terminal_run',
+  'bg_run',
+]);
+
+/** Ferramentas que escrevem texto num PTY: texto destrutivo volta a confirmar. */
+const PANE_TEXT_TOOLS: ReadonlySet<string> = new Set([
+  'pane_write',
+  'pane_write_many',
+  'pane_ask',
+  'agent_prompt',
+]);
+
+/**
+ * Texto que a mão do operador mandaria para um PTY, extraído dos argumentos da
+ * ferramenta. Fonte única do que `isDestructivePaneInput` (mcp-consent-policy)
+ * e a política mãos-livres da Jarvis examinam.
+ */
+export function paneInputTexts(
+  toolName: string,
+  args: Readonly<Record<string, unknown>>,
+): string[] {
+  const canonical = canonicalToolName(toolName);
+  if (!PANE_TEXT_TOOLS.has(canonical)) return [];
+  const texts: string[] = [];
+  const pushText = (value: unknown): void => {
+    if (typeof value === 'string' && value.length > 0) texts.push(value);
+  };
+  if (canonical === 'pane_write' || canonical === 'agent_prompt') {
+    pushText(args.text);
+  } else if (canonical === 'pane_ask') {
+    pushText(args.question);
+  } else if (Array.isArray(args.writes)) {
+    for (const entry of args.writes) {
+      if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+        pushText((entry as Record<string, unknown>).text);
+      }
+    }
+  }
+  return texts;
+}
+
+/**
+ * Política mãos-livres da Jarvis por voz. Tudo que a política por efeito já
+ * libera continua liberado; o que ela confirma só deixa de pedir modal quando a
+ * ferramenta está em JARVIS_HANDS_FREE_TOOLS E nada nos argumentos é destrutivo:
+ * - terminal_run/bg_run: comando rotineiro (dev, test, build, git local) roda;
+ *   `isDestructive` e deploy/push/ssh (REMOTE_OR_DEPLOY_PATTERNS) confirmam, e
+ *   `sandboxProfile: 'yolo'` (sandbox mais frouxo) também;
+ * - texto escrito em PTY (pane_write/ask, agent_prompt): destrutivo confirma.
+ */
+export function requiresJarvisConfirmation(
+  toolName: string,
+  args: Readonly<Record<string, unknown>>,
+): boolean {
+  const canonical = canonicalToolName(toolName);
+  if (JARVIS_SHELL_COMMAND_TOOLS.has(canonical)) {
+    const command = typeof args.command === 'string' ? args.command : '';
+    return requiresVoiceCommandConfirmation(command) || args.sandboxProfile === 'yolo';
+  }
+  if (!requiresHumanConfirmationForTool(toolName)) return false;
+  if (!JARVIS_HANDS_FREE_TOOLS.has(canonical)) return true;
+  return paneInputTexts(toolName, args).some((text) => isDestructive(text));
+}
+
+export interface ConfirmationOptions {
+  /**
+   * Chamada da Jarvis por voz (renderer IPC): aplica a política mãos-livres.
+   * Agentes CLI, remote_spawn e agent_spec_write NÃO passam isso e seguem na
+   * política por efeito — afrouxar o modal para eles seria outra decisão.
+   */
+  readonly handsFree?: boolean;
+}
+
+/**
  * Determines whether a given MCP tool invocation requires user confirmation.
  *
- * Effect classification is centralized in mcp-effect-policy. Arguments are
- * used only to explain the risk, never to weaken the policy decision.
+ * Effect classification is centralized in mcp-effect-policy. Sem `handsFree`,
+ * os argumentos servem só para explicar o risco, nunca para enfraquecer a
+ * decisão. Com `handsFree` (Jarvis por voz) vale `requiresJarvisConfirmation`.
  */
 export function requiresConfirmation(
   toolName: string,
-  _args: Record<string, unknown>,
+  args: Record<string, unknown>,
+  options: ConfirmationOptions = {},
 ): boolean {
+  if (options.handsFree) return requiresJarvisConfirmation(toolName, args);
   return requiresHumanConfirmationForTool(toolName);
 }
 
