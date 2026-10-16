@@ -16,6 +16,7 @@ import {
 import { MissionAttachmentPicker } from './MissionAttachmentPicker';
 import { isMissionContextAttachmentPath } from '../../lib/mission-attachments';
 import { useObjectiveDictation } from './use-objective-dictation';
+import { PixelIcon } from '../PixelIcon';
 import {
   ComposerTiptapEditor,
   plainTextToMarkdown,
@@ -473,11 +474,15 @@ export function MissionStep({
                     : 'Fale o objetivo — o Nexus transcreve aqui (ou segure Espaço fora dos campos de texto)'
                 }
               >
+                <PixelIcon
+                  name={dictation.state === 'listening' ? 'stop' : 'mic'}
+                  size={12}
+                />
                 {dictation.state === 'listening'
-                  ? '◼ Parar e transcrever'
+                  ? 'Parar e transcrever'
                   : dictation.state === 'busy'
                     ? 'Transcrevendo…'
-                    : '🎙 Ditar objetivo'}
+                    : 'Ditar objetivo'}
               </button>
             )}
           </div>

@@ -343,8 +343,10 @@ export function MissionAttachmentPicker({
     >
       <div className="mission-setup__section-heading">
         <div>
-          <h2>Anexos do cliente</h2>
-          {compact ? null : (
+          <h2>Anexos</h2>
+          {compact ? (
+            <p>Imagem, áudio, PDF ou texto.</p>
+          ) : (
           <p>
             Áudio, imagem, documento (PDF/Office) ou texto — mesmo de fora da
             pasta do projeto. O Nexus copia o arquivo para dentro da missão.
@@ -362,6 +364,8 @@ export function MissionAttachmentPicker({
           dropActive ? ' mission-attachment-picker__drop--active' : ''
         }`}
         tabIndex={0}
+        role="group"
+        aria-label="Anexar arquivos: solte, cole ou escolha no disco"
         onDragOver={(event) => {
           if (disabled) return;
           event.preventDefault();
@@ -424,6 +428,7 @@ export function MissionAttachmentPicker({
           ref={inputRef}
           className="mission-setup__sr-only"
           type="file"
+          tabIndex={-1}
           accept={FILE_ACCEPT}
           multiple
           disabled={disabled || busy}
