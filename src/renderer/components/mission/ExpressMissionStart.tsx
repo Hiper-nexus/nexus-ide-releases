@@ -13,8 +13,6 @@ import type { MissionSetupDraft } from '../../state/mission-setup-store';
 import type { DirectAnswer } from '../../lib/direct-answer';
 import { ExpressTerminalOptions } from './ExpressTerminalOptions';
 import { FirstStepsGuide } from '../onboarding/FirstStepsGuide';
-import { useMissionAttachmentPresentation } from '../../state/mission-attachment-presentation';
-import { isMissionContextAttachmentPath } from '../../lib/mission-attachments';
 import { MissionAttachmentPicker } from './MissionAttachmentPicker';
 import { MissionSetupRosterRow } from './MissionSetupRosterRow';
 import { issueForAgent, type MissionTeamInventory } from './TeamStep';
@@ -156,18 +154,6 @@ export function ExpressMissionStart({
   const disabledReason =
     'Resolva o carregamento do rascunho antes de preencher os dados da missão.';
   const needsWorkspace = !workspace;
-
-  // O anexo colado no campo de texto vive dentro de "detalhes": sem abrir o
-  // painel, a imagem colada não aparecia em lugar nenhum.
-  const deliveryDetailsRef = useRef<HTMLDetailsElement>(null);
-  const attachmentCount =
-    draft.contextPaths.filter(isMissionContextAttachmentPath).length +
-    useMissionAttachmentPresentation((state) => state.pending.length);
-  useEffect(() => {
-    if (attachmentCount > 0 && deliveryDetailsRef.current) {
-      deliveryDetailsRef.current.open = true;
-    }
-  }, [attachmentCount]);
 
   useEffect(() => {
     if (!suppressHeadingAutofocus) headingRef.current?.focus();
@@ -589,7 +575,6 @@ export function ExpressMissionStart({
 
         <details
           id="express-delivery-details"
-          ref={deliveryDetailsRef}
           className="mission-setup__disclosure mission-setup__express-options"
         >
           <summary>
