@@ -1,11 +1,12 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   prepareCheckoutProviderHome,
   authBlobIsUsable,
   captureNativeAuth,
+  supportsNativeSessionSnapshot,
   devinDataHome,
   compareAuthBlobIdentity,
   identityFromAuthBlob,
@@ -30,12 +31,60 @@ function tempHome(): string {
 }
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const dir of tempRoots.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
 describe('managed-credentials', () => {
+  it('does not snapshot a Muse identity as a credential or portable Keychain session', () => {
+    const home = tempHome();
+    const authPath = path.join(home, 'custom-auth.json');
+    vi.stubEnv('MUSE_AUTH_PATH', authPath);
+    const metadata = JSON.stringify({ schema_version: 2, providers: { meta: { mechanism: 'oauth', storage: 'keychain', user_email: 'native@example.test' } } });
+    fs.writeFileSync(authPath, metadata);
+    expect(authBlobIsUsable('muse', metadata)).toBe(false);
+    expect(captureNativeAuth('muse', home)).toBeNull();
+    expect(supportsNativeSessionSnapshot('muse', home)).toBe(false);
+    expect(nativeAuthIdentity('muse', home)).toEqual({ email: 'native@example.test' });
+    const emailOnly = JSON.stringify({ providers: { meta: { email: 'native@example.test' } } });
+    expect(authBlobIsUsable('muse', emailOnly)).toBe(false);
+  });
+
+  it.each([
+    { meta: { mechanism: 'oauth', storage: 'keychain' }, other: { mechanism: 'api_key', storage: 'file', api_key: 'synthetic-other' } },
+    { other: { mechanism: 'api_key', storage: 'file', api_key: 'synthetic-other' } },
+    { meta: { mechanism: 'api_key', storage: 'unknown', api_key: 'synthetic-meta' } },
+    { meta: { mechanism: 'unknown', storage: 'file', api_key: 'synthetic-meta' } },
+    { meta: { mechanism: 'oauth', storage: 'file', api_key: 'synthetic-not-oauth' } },
+    { meta: { mechanism: 'api_key', storage: 'file', refresh_token: 'synthetic-not-key' } },
+    { meta: { mechanism: 'api_key', storage: 'file', api_key: 'synthetic-meta' }, other: { mechanism: 'api_key', storage: 'file', api_key: 'synthetic-other' } },
+  ])('rejects Muse snapshots without an unambiguous portable Meta credential (%j)', (providers) => {
+    const home = tempHome();
+    const authPath = path.join(home, 'auth.json');
+    vi.stubEnv('MUSE_AUTH_PATH', authPath);
+    const blob = JSON.stringify({ schema_version: 2, providers });
+    fs.writeFileSync(authPath, blob);
+    expect(authBlobIsUsable('muse', blob)).toBe(false);
+    expect(supportsNativeSessionSnapshot('muse', home)).toBe(false);
+    expect(captureNativeAuth('muse', home)).toBeNull();
+  });
+
+  it('captures and restores Muse inline credentials at its explicit native auth path', () => {
+    const home = tempHome();
+    const authPath = path.join(home, 'custom-auth.json');
+    vi.stubEnv('MUSE_AUTH_PATH', authPath);
+    const blob = JSON.stringify({ schema_version: 2, providers: { meta: { mechanism: 'api_key', storage: 'file', api_key: 'synthetic-meta-key', user_email: 'native@example.test' } } });
+    fs.writeFileSync(authPath, blob);
+    expect(supportsNativeSessionSnapshot('muse', home)).toBe(true);
+    expect(captureNativeAuth('muse', home)).toMatchObject({ blob, email: 'native@example.test', authRelativePath: path.join('muse', 'auth.json') });
+    const managed = materializeManagedHome('muse', 'synthetic-account', blob, { home, systemHome: null });
+    expect(fs.readFileSync(path.join(managed, 'muse', 'auth.json'), 'utf8')).toBe(blob);
+    expect(managedHomeEnv('muse', managed)).toMatchObject({ XDG_CONFIG_HOME: managed, MUSE_AUTH_PATH: path.join(managed, 'muse', 'auth.json') });
+    expect(authBlobIsUsable('muse', fs.readFileSync(path.join(managed, 'muse', 'auth.json'), 'utf8'))).toBe(true);
+  });
+
   it.each([1, 1000])('keeps a fresh Kimi login and later CLI refresh (expiry scale %s)', (scale) => {
     const home = tempHome();
     const blob = (token: string, expires: number) => JSON.stringify({

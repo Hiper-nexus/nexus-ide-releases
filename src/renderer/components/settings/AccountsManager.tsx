@@ -335,12 +335,23 @@ export function AccountsManager({
         await refreshAuth();
       }
       await hydrate();
+      // Login may change the credential backend while auth remains `ok`.
+      // Query the current capability instead of the terminal's stale closure.
+      const snapshotSupported = await supportsSnapshot(adapterId);
+      setCanSnapshot(snapshotSupported);
+      const nativeSessionHint = 'A sessão continua na CLI desta máquina. ' +
+        'Para salvar contas independentes no Nexus, adicione uma chave de API.';
       if (!finish.verified) {
         showNotice(
-          `Não deu para confirmar um login novo em ${displayName}. Se você ` +
-            'entrou em outra conta, use Salvar esta conta.',
+          `Não deu para confirmar um login novo em ${displayName}. ` +
+            (snapshotSupported ? 'Verifique a sessão na CLI antes de tentar novamente.' : nativeSessionHint),
           'info',
         );
+        return;
+      }
+      if (!snapshotSupported) {
+        showNotice(`Login nativo de ${displayName} confirmado. ${nativeSessionHint}`, 'ok');
+        onLoginActivity?.('ok');
         return;
       }
       const name = defaultAccountLabel({
@@ -421,7 +432,7 @@ export function AccountsManager({
     return () => {
       alive = false;
     };
-  }, [adapterId, supportsSnapshot]);
+  }, [adapterId, supportsSnapshot, auth]);
 
   useEffect(() => {
     if (renamingId) renameInputRef.current?.focus();
@@ -1005,6 +1016,11 @@ export function AccountsManager({
       <div className="acct__add-zone" data-open={addMode !== null ? 'true' : 'false'}>
         {addMode === null && (
           <>
+            {adapterId === 'muse' && auth?.state === 'ok' && !canSnapshot && (
+              <p className="acct__add-sub">
+                A sessão continua na CLI desta máquina. O Nexus não consegue guardá-la como conta independente. Para salvar outras contas, adicione uma chave de API da Meta.
+              </p>
+            )}
             {hasUnsavedSession && (
               <p className="acct__add-sub">
                 Esta sessão ainda não está salva no Nexus. Salve antes de trocar de conta.
