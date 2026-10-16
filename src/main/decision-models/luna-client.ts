@@ -123,9 +123,9 @@ export async function judgeLuna(input: JudgeInput, token: string, deps: LunaDeps
   let measuredBatches = 0;
   try {
     input.signal?.throwIfAborted();
-    if (!token.trim() || (input.images !== undefined && !validateDecisionImages(input.images))) return notifyFailure(input, 'client-error');
+    if (!token.trim() || (input.images !== undefined && !validateDecisionImages(input.images))) throw new LunaFailure('client-error');
     const batches = buildBatches(input.questions);
-    if (!batches?.length) return notifyFailure(input, 'client-error');
+    if (!batches?.length) throw new LunaFailure('client-error');
     const timeout = AbortSignal.timeout(input.timeoutMs ?? DEFAULT_TIMEOUT_MS);
     signal = input.signal ? AbortSignal.any([input.signal, timeout]) : timeout;
     const answers = new Map<string, JevAnswer>();
@@ -152,13 +152,13 @@ export async function judgeLuna(input: JudgeInput, token: string, deps: LunaDeps
       usageIncomplete: measuredBatches !== requestCount };
     return usageMissing || measuredBatches !== requestCount ? result : { ...result, estimatedUsd: decisionResultCostUsd(result) };
   } catch (error) {
-    if (requestCount) {
-      try { input.onUsage?.({ inputTokens: measuredBatches ? inputTokens : null, requestCount, durationMs: now() - started,
-        usd: measuredBatches ? decisionResultCostUsd({ model: LUNA_DECISION_MODEL, answers: {},
-          usage: { input_tokens: inputTokens, output_tokens: outputTokens } }) : null,
-        usageIncomplete: requestCount > measuredBatches }); }
-      catch { console.warn('[decision-models] usage callback failed'); }
-    }
+    // Antes do primeiro envio o custo é zero medido, não gasto desconhecido.
+    const hasMeasurement = measuredBatches > 0 || requestCount === 0;
+    try { input.onUsage?.({ inputTokens: hasMeasurement ? inputTokens : null, requestCount, durationMs: now() - started,
+      usd: hasMeasurement ? decisionResultCostUsd({ model: LUNA_DECISION_MODEL, answers: {},
+        usage: { input_tokens: inputTokens, output_tokens: outputTokens } }) : null,
+      usageIncomplete: requestCount > measuredBatches }); }
+    catch { console.warn('[decision-models] usage callback failed'); }
     return notifyFailure(input, failureReason(error, input, signal));
   }
 }
