@@ -943,9 +943,14 @@ export function agentPrompt(
               `${index + 1}. [${kind}] ${shown}${absolute ? ` (absoluto: ${absolute})` : ''}`,
             ];
             if (kind === 'áudio') {
-              const transcript = absolute
-                ? readMissionAttachmentTranscript(absolute)
-                : null;
+              // A transcrição roda em background: se ela terminou DEPOIS do
+              // staging (ou o worker nem tem attachmentRoot), o sidecar do
+              // intake fonte ainda conta — o texto chega ao prompt mesmo assim.
+              const transcript =
+                (absolute ? readMissionAttachmentTranscript(absolute) : null) ??
+                (snapshot.sourcePath
+                  ? readMissionAttachmentTranscript(snapshot.sourcePath)
+                  : null);
               lines.push(
                 transcript
                   ? `   Transcrição do áudio: ${transcript}`

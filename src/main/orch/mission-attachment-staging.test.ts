@@ -19,7 +19,9 @@ afterEach(() => {
 });
 
 function snapshotFor(coordRoot: string, sealedDir: string, name: string, bytes: Buffer) {
-  const sealed = path.join(sealedDir, `${name}.sealed`);
+  // O selo real (safeSealedExtension) guarda a extensão original do anexo —
+  // é ela que faz o prompt classificar o selo como [áudio].
+  const sealed = path.join(sealedDir, `seal-${name}`);
   fs.writeFileSync(sealed, bytes);
   return {
     path: sealed,
@@ -98,6 +100,26 @@ describe('anexos da missão até o prompt', () => {
     const prompt = agentPrompt(coordinator, missionWith([audio]), ['Coord'], false, '', null, [], exec);
     expect(prompt).toContain('[áudio] .nexus/attachments/mission-context/voz.opus');
     expect(prompt).toContain('Sem transcrição disponível');
+  });
+
+  it('transcrição que termina depois do staging chega pelo sidecar do intake (orquestrador e worker)', () => {
+    const coord = tmp();
+    const exec = tmp();
+    const audio = snapshotFor(coord, tmp(), 'tarde.m4a', Buffer.from('x'));
+    fs.mkdirSync(path.dirname(audio.sourcePath), { recursive: true });
+    // O job de transcrição ainda roda quando o staging copia os bytes…
+    stageMissionAttachmentsIntoExecutionScope({ rootRealPath: exec }, [audio]);
+    // …e só termina depois: o sidecar existe só no intake, não no escopo.
+    fs.writeFileSync(audio.sourcePath + '.transcript.txt', 'transcrição atrasada');
+    const mission = missionWith([audio]);
+
+    const orchestrator = agentPrompt(coordinator, mission, ['Coord'], false, '', null, [], exec);
+    expect(orchestrator).toContain('Transcrição do áudio: transcrição atrasada');
+
+    // Worker real não recebe attachmentRoot (a cópia é do orquestrador).
+    const workerPrompt = agentPrompt(worker, mission, ['Coord'], false, '', null, []);
+    expect(workerPrompt).toContain('Transcrição do áudio: transcrição atrasada');
+    expect(workerPrompt).not.toContain('Sem transcrição disponível');
   });
 
   it('recusa copiar bytes selados adulterados', () => {

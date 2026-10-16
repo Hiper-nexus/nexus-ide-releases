@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { scheduleMissionAttachmentTranscript } from '../voice/mission-attachment-transcript';
 import {
   DROPPED_ATTACHMENT_MAX_BYTES,
   droppedFileName,
@@ -19,6 +20,12 @@ import {
   validateDroppedAttachmentPaths,
   workspaceRootAuthorityFromScope,
 } from './dropped-files';
+
+// O intake agenda transcrição em background; aqui só o AGENDAMENTO interessa —
+// o job real morre em mission-attachment-transcript.test.ts.
+vi.mock('../voice/mission-attachment-transcript', () => ({
+  scheduleMissionAttachmentTranscript: vi.fn(),
+}));
 
 let tempRoot = '';
 let homeDir = '';
@@ -309,6 +316,40 @@ describe('workspace mission-context import', () => {
 
     expect(result.ok).toBe(false);
     expect(fs.existsSync(path.join(outside, 'attachments'))).toBe(false);
+  });
+
+  it('agenda a transcrição em background ao importar áudio', async () => {
+    const root = workspace();
+    vi.mocked(scheduleMissionAttachmentTranscript).mockClear();
+
+    const result = await importWorkspaceMissionAttachment(
+      root,
+      'nota.mp3',
+      Buffer.from('audio-bytes').toString('base64'),
+      { token: () => 'tok-audio' },
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(scheduleMissionAttachmentTranscript).toHaveBeenCalledTimes(1);
+    expect(scheduleMissionAttachmentTranscript).toHaveBeenCalledWith(
+      result.absolutePath ?? '',
+    );
+  });
+
+  it('não agenda transcrição para anexo que não é áudio', async () => {
+    const root = workspace();
+    vi.mocked(scheduleMissionAttachmentTranscript).mockClear();
+
+    const result = await importWorkspaceMissionAttachment(
+      root,
+      'print.png',
+      Buffer.from('png-bytes').toString('base64'),
+      { token: () => 'tok-png' },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(scheduleMissionAttachmentTranscript).not.toHaveBeenCalled();
   });
 });
 
