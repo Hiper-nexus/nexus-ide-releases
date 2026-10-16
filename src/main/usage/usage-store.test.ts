@@ -668,3 +668,71 @@ describe.skipIf(!sqliteAvailable)('token snapshot hot path', () => {
     }
   });
 });
+
+describe.skipIf(!sqliteAvailable)('ScopedUsageStore.analytics', () => {
+  const DAY = 86_400_000;
+  // Meio-dia local: nenhum fuso empurra o evento para outro dia.
+  const noon = (daysAgo: number, now: number) => {
+    const date = new Date(now);
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate() - daysAgo, 12).getTime();
+  };
+
+  it('rolls up local days by provider and model, with distinct sessions per window', () => {
+    const { baseDir, scope } = fixture();
+    const store = createScopedUsageStore(manager(baseDir), scope);
+    const now = new Date(2026, 9, 15, 18, 30).getTime();
+    store.record('claude', usage({ messageId: 'c-today', sessionId: 'claude-1', timestamp: noon(0, now), inputTokens: 1_000, outputTokens: 500, cacheReadTokens: 10_000, cacheWrite5mTokens: 200, cacheWrite1hTokens: 0, model: 'claude-opus-5' }));
+    store.record('claude', usage({ messageId: 'c-old', sessionId: 'claude-1', timestamp: noon(20, now), inputTokens: 2_000, outputTokens: 100, cacheReadTokens: 0, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, model: 'claude-opus-5' }));
+    store.record('claude', usage({ messageId: 'c-80', sessionId: 'claude-2', timestamp: noon(80, now), inputTokens: 5, outputTokens: 5, cacheReadTokens: 0, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0 }));
+    store.record('codex', usage({ messageId: 'x-3', sessionId: 'codex-1', timestamp: noon(3, now), inputTokens: 300, outputTokens: 30, cacheReadTokens: 3_000, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, model: 'gpt-5.6-sol' }));
+    // Fora dos 90 dias e no futuro: não entram.
+    store.record('codex', usage({ messageId: 'x-old', sessionId: 'codex-old', timestamp: noon(120, now) }));
+    store.record('codex', usage({ messageId: 'x-future', sessionId: 'codex-future', timestamp: noon(0, now) + 2 * DAY }));
+
+    const analytics = store.analytics(now);
+    expect(analytics.today).toBe('2026-10-15');
+    expect(analytics.days.map((day) => day.day)).toEqual(['2026-07-27', '2026-09-25', '2026-10-12', '2026-10-15']);
+    const today = analytics.days.at(-1)!;
+    expect(today.totalTokens).toBe(1_000 + 500 + 10_000 + 200);
+    expect(Object.keys(today.byProvider)).toEqual(['claude']);
+
+    const week = analytics.windows[7];
+    expect(week.startDay).toBe('2026-10-09');
+    expect(week.byProvider.map((row) => [row.provider, row.sessions])).toEqual(
+      expect.arrayContaining([['claude', 1], ['codex', 1]]),
+    );
+    expect(week.totals).toMatchObject({
+      cachedInputTokens: 13_000,
+      uncachedInputTokens: 1_000 + 200 + 300,
+      outputTokens: 530,
+      processedTokens: 13_000 + 1_500 + 530,
+      sessions: 2,
+      turns: 2,
+    });
+    // Opus 5: input $5/M, leitura de cache $0.50/M → 10k tokens poupam $0.045.
+    expect(week.totals.cacheSavingsUsd).toBeGreaterThan(0.045);
+    const shares = week.byProvider.reduce((sum, row) => sum + row.costShare, 0);
+    expect(shares).toBeCloseTo(1, 6);
+    expect(week.byModel.map((row) => row.model)).toEqual(expect.arrayContaining(['claude-opus-5', 'gpt-5.6-sol']));
+
+    // A sessão claude-1 atravessa 20 dias: conta UMA vez em 30d, nunca duas.
+    const month = analytics.windows[30];
+    expect(month.byProvider.find((row) => row.provider === 'claude')).toMatchObject({ sessions: 1 });
+    expect(month.totals.turns).toBe(3);
+    const quarter = analytics.windows[90];
+    expect(quarter.byProvider.find((row) => row.provider === 'claude')).toMatchObject({ sessions: 2 });
+    expect(quarter.totals.sessions).toBe(3);
+    expect(quarter.totals.costUsd).toBeCloseTo(
+      analytics.days.reduce((sum, day) => sum + day.costUsd, 0),
+      9,
+    );
+  });
+
+  it('returns empty windows for a project without telemetry', () => {
+    const { baseDir, scope } = fixture();
+    const store = createScopedUsageStore(manager(baseDir), scope);
+    const analytics = store.analytics(new Date(2026, 9, 15, 9).getTime());
+    expect(analytics.days).toEqual([]);
+    expect(analytics.windows[30]).toMatchObject({ byProvider: [], byModel: [], totals: { processedTokens: 0, costUsd: 0, sessions: 0 } });
+  });
+});

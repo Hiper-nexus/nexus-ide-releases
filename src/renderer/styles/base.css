@@ -272,6 +272,18 @@
   --role-architect: #38bdf8;
   --role-reviewer: #fbbf24;
   --role-executor: #34d399;
+
+  /* Séries categóricas de gráfico — IDENTIDADE de ferramenta no painel de
+     Uso e custos (codex, claude, antigravity, grok, mimo, cursor), nunca
+     estado. Ordem fixa validada (dataviz validate_palette): CVD adjacente
+     ≥ 8.4, visão normal ≥ 19.3 e ≥ 3:1 sobre --bg-elevated. Tema claro
+     redefine abaixo. Texto nunca usa estas cores. */
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #9085e9;
 }
 
 /* Per-theme fallbacks for values that previously inherited from the Nexus
@@ -307,6 +319,15 @@
   --live: #08783f;
   --warn: #9a6b00;
   --gold: #8a6d00;
+  /* Séries no claro: mesmos matizes, passo do fundo branco. 3 delas ficam
+     abaixo de 3:1 (aqua, amarelo, magenta) — o painel compensa com rótulo
+     escrito ao lado e a tabela de Detalhamento. */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #6250d6;
   /* Terceiro nível de texto re-escurecido para AA sobre fundo claro: ≥4.5:1
      sobre --bg, --bg-elevated E --bg-bar (4.63 na barra, onde pousam o rail e o
      cabeçalho; o #6b7080 anterior media 4.36 ali). Espelho de ui-theme.ts. */

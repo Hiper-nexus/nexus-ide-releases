@@ -6,6 +6,9 @@ import type { ProviderQuotaEntry, QuotaFleetSnapshot } from '../../../shared/quo
 import { useAccountStore } from '../../state/account-store';
 import { useQuotaStore } from '../../state/quota-store';
 import { useToastStore } from '../../state/toast-store';
+import { EMPTY_USAGE_SNAPSHOT, useUsageStore } from '../../state/usage-store';
+import { buildUsageAnalytics, localDayKey, shiftDayKey } from '../../../shared/usage-analytics';
+import type { SpendEntry, SpendSettingsPatch } from '../../../shared/settings-types';
 import { UsageQuotaSection } from './UsageQuotaSection';
 import { openCliLoginTerminal } from './cli-login-terminal';
 
@@ -146,6 +149,7 @@ describe('UsageQuotaSection', () => {
 
   afterEach(() => {
     useQuotaStore.getState().reset();
+    useUsageStore.setState({ snapshot: EMPTY_USAGE_SNAPSHOT });
     Reflect.deleteProperty(window, 'nexus');
     document.body.innerHTML = '';
     vi.restoreAllMocks();
@@ -1046,4 +1050,291 @@ describe('UsageQuotaSection', () => {
     expect(host.querySelector('details.quota-panel__unreported')).toBeNull();
     act(() => root.unmount());
   });
+
+  describe('painel de Uso e custos (estilo T3)', () => {
+    function analyticsFixture() {
+      const today = localDayKey(Date.now());
+      const row = (daysAgo: number, provider: string, model: string, costUsd: number, cached: number) => ({
+        day: shiftDayKey(today, -daysAgo),
+        provider,
+        model,
+        costUsd,
+        inputTokens: 1_000,
+        cachedInputTokens: cached,
+        cacheWriteTokens: 0,
+        outputTokens: 500,
+        cacheSavingsUsd: cached / 1_000_000,
+        turns: 1,
+      });
+      return buildUsageAnalytics(
+        [
+          row(0, 'claude', 'claude-opus-5-5', 1_777.82, 2_000_000_000),
+          row(2, 'codex', 'gpt-6-astra', 1_000, 3_000_000_000),
+          row(20, 'codex', 'gpt-6.1-sol', 627.13, 2_050_000_000),
+          row(60, 'agy', 'gemini-3-pro', 41.65, 1_000_000),
+        ],
+        [
+          { provider: 'claude', sessions: { 7: 107, 30: 107, 90: 107 } },
+          { provider: 'codex', sessions: { 7: 40, 30: 71, 90: 71 } },
+          { provider: 'agy', sessions: { 7: 0, 30: 0, 90: 50 } },
+        ],
+        today,
+      );
+    }
+
+    function pressed(host: HTMLElement, group: string, label: string) {
+      const button = [...host.querySelectorAll(`[aria-label="${group}"] button`)].find(
+        (candidate) => candidate.textContent === label,
+      ) as HTMLButtonElement | undefined;
+      expect(button, `${group} → ${label}`).toBeDefined();
+      return button!;
+    }
+
+    it('mostra total estimado, ferramentas, custo diário, Totais e Detalhamento', async () => {
+      useUsageStore.setState({ snapshot: { ...EMPTY_USAGE_SNAPSHOT, analytics: analyticsFixture() } });
+      const { host, root } = mount();
+      await act(async () => {
+        await Promise.resolve();
+      });
+      const panel = host.querySelector('.usage-overview')!;
+      expect(panel.querySelector('.usage-overview__hero')?.textContent).toBe('$3,404.95');
+      expect(panel.querySelector('.usage-overview__hero-sub')?.textContent).toContain('178 sessões · estimativa de API em 30 dias');
+      const providers = [...panel.querySelectorAll('.usage-provider')];
+      expect(providers.map((item) => item.querySelector('.usage-provider__name')?.textContent)).toEqual([
+        'Claude Code107 sessões',
+        'Codex71 sessões',
+      ]);
+      expect(providers[0].querySelector('.usage-provider__cost')?.textContent).toBe('$1,777.82');
+      expect(providers[0].querySelector('.usage-provider__meta')?.textContent).toBe('52,2% do custo · 2B tokens');
+      expect(providers[0].querySelector('[aria-label="Logo Claude Code"]')).not.toBeNull();
+      // A cor vem do token da ferramenta, nunca de hex no componente.
+      expect((providers[0].querySelector('.usage-provider__dot') as HTMLElement).style.getPropertyValue('--usage-series')).toBe('var(--series-2)');
+      expect(panel.querySelector('.usage-overview__chart h3')?.textContent).toBe('Custo diário');
+      expect(panel.querySelectorAll('.usage-chart__series')).toHaveLength(2);
+
+      const totals = Object.fromEntries(
+        [...panel.querySelectorAll('.usage-totals__item')].map((item) => [
+          item.querySelector('dt')?.textContent,
+          item.querySelector('dd')?.textContent,
+        ]),
+      );
+      expect(totals).toEqual({
+        'Tokens processados': '7.05B',
+        'Input em cache': '7.05B',
+        'Input sem cache': '3k',
+        Output: '1.5k',
+        'Economia de cache': '$7,050.00',
+      });
+      const models = [...panel.querySelectorAll('.usage-breakdown tbody tr')].map((tr) =>
+        [...tr.querySelectorAll('th, td')].map((cell) => cell.textContent),
+      );
+      expect(models[0]).toEqual(['claude-opus-5-5', '$1,777.82', '52,2%', '2B']);
+      expect(models).toHaveLength(3);
+
+      await act(async () => pressed(host, 'Detalhar por', 'Dia').click());
+      const firstDay = panel.querySelector('.usage-breakdown tbody tr');
+      expect(panel.querySelector('.usage-breakdown thead th')?.textContent).toBe('Dia');
+      expect(firstDay?.querySelector('td')?.textContent).toBe('$1,777.82');
+
+      await act(async () => pressed(host, 'Período', '7 dias').click());
+      expect(panel.querySelector('.usage-overview__hero')?.textContent).toBe('$2,777.82');
+      expect(panel.querySelector('.usage-overview__hero-sub')?.textContent).toContain('147 sessões');
+
+      await act(async () => pressed(host, 'Medida do gráfico', 'Tokens').click());
+      expect(panel.querySelector('.usage-overview__chart h3')?.textContent).toBe('Tokens por dia');
+      act(() => root.unmount());
+    });
+
+    it('o gráfico lê um dia pelas setas, com a ferramenta escrita ao lado do valor', async () => {
+      useUsageStore.setState({ snapshot: { ...EMPTY_USAGE_SNAPSHOT, analytics: analyticsFixture() } });
+      const { host, root } = mount();
+      await act(async () => {
+        await Promise.resolve();
+      });
+      const svg = host.querySelector('.usage-chart__svg') as SVGSVGElement;
+      expect(svg.getAttribute('aria-describedby')).toBeTruthy();
+      expect(host.querySelector('.usage-chart__summary')?.textContent).toContain('total $3,404.95');
+      await act(async () => {
+        svg.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+      });
+      const readout = host.querySelector('.usage-chart__readout')!;
+      expect(readout.textContent).toContain('Claude Code $1,777.82');
+      expect(readout.textContent).toContain('Codex $0.00');
+      expect(host.querySelectorAll('.usage-chart__cursor circle')).toHaveLength(2);
+      await act(async () => {
+        svg.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      });
+      expect(host.querySelector('.usage-chart__cursor')).toBeNull();
+      act(() => root.unmount());
+    });
+
+    it('janela sem consumo ensina e oferece ver 90 dias', async () => {
+      const today = localDayKey(Date.now());
+      const analytics = buildUsageAnalytics(
+        [{ day: shiftDayKey(today, -60), provider: 'agy', model: 'gemini-3', costUsd: 4, inputTokens: 1, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 1, cacheSavingsUsd: 0, turns: 1 }],
+        [{ provider: 'agy', sessions: { 7: 0, 30: 0, 90: 1 } }],
+        today,
+      );
+      useUsageStore.setState({ snapshot: { ...EMPTY_USAGE_SNAPSHOT, analytics } });
+      const { host, root } = mount();
+      await act(async () => {
+        await Promise.resolve();
+      });
+      const panel = host.querySelector('.usage-overview')!;
+      expect(panel.textContent).toContain('Sem consumo nos últimos 30 dias neste projeto');
+      await act(async () => {
+        [...panel.querySelectorAll('button')].find((button) => button.textContent === 'Ver 90 dias')!.click();
+      });
+      expect(panel.querySelector('.usage-overview__hero')?.textContent).toBe('$4.00');
+      act(() => root.unmount());
+    });
+
+    it('sem leitura de custo mostra o motivo e uma ação, nunca zero', async () => {
+      const { host, root } = mount();
+      await act(async () => {
+        await Promise.resolve();
+      });
+      const panel = host.querySelector('.usage-overview')!;
+      expect(panel.querySelector('.usage-overview__hero')).toBeNull();
+      expect(panel.textContent).toContain('Abra um projeto para ver o custo');
+      expect(panel.querySelector('button')?.textContent).toBe('Ver conexões de IA');
+      act(() => root.unmount());
+    });
+  });
+
+  describe('Gasto mensal real (USD)', () => {
+    function setInput(input: HTMLInputElement, value: string) {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+      setter.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+
+    function withSpendBridge(initial: SpendEntry[] = [], usdEquivalent = 1_840.4) {
+      const saved: { entries: SpendEntry[] } = { entries: initial };
+      const spendSet = vi.fn(async (patch: SpendSettingsPatch) => {
+        saved.entries = patch.entries ?? saved.entries;
+        return { entries: saved.entries };
+      });
+      const today = localDayKey(Date.now());
+      Object.assign(window.nexus, {
+        settings: { spendGet: vi.fn(async () => ({ entries: saved.entries })), spendSet, onSpendChanged: () => () => {} },
+        usage: {
+          history: vi.fn(async () => ({
+            since: 1,
+            updatedAt: Date.now(),
+            days: [
+              { day: today, tokens: 1, usdEquivalent: usdEquivalent, turns: 1 },
+              { day: shiftDayKey(today, -45), tokens: 1, usdEquivalent: 9_999, turns: 1 },
+            ],
+          })),
+          onChanged: () => () => {},
+        },
+      });
+      const planned = {
+        ...sampleSnapshot,
+        entries: [
+          { ...sampleEntries[0], id: 'claude:acc-max', accountId: 'acc-max', label: 'Trabalho', plan: { source: 'detected' as const, tier: 'default_claude_max_20x', label: 'Claude Max 20×', monthlyUsd: 200 } },
+          ...sampleEntries.slice(1),
+        ],
+      };
+      vi.mocked(window.nexus.quota.snapshot).mockResolvedValue(planned);
+      vi.mocked(window.nexus.quota.refresh).mockResolvedValue(planned);
+      return { spendSet, saved };
+    }
+
+    async function settle() {
+      await act(async () => {
+        for (let i = 0; i < 4; i += 1) await Promise.resolve();
+      });
+    }
+
+    it('lista o plano detectado, corrige o valor inline e mostra o total contra a API', async () => {
+      const { spendSet } = withSpendBridge();
+      const { host, root } = mount();
+      await settle();
+      const card = host.querySelector('.spend-card')!;
+      expect(card).not.toBeNull();
+      const row = card.querySelector('.spend-row')!;
+      expect(row.querySelector('.spend-row__label')?.textContent).toBe('Claude Max 20× · Trabalho');
+      expect(row.querySelector('.spend-row__origin')?.textContent).toContain('preço de lista');
+      const values = () => [...card.querySelectorAll('.spend-card__total-value')].map((node) => node.textContent);
+      expect(values()).toEqual(['$200.00', '$1,840.40', '$1,640.40']);
+
+      const input = row.querySelector('input.spend-row__input') as HTMLInputElement;
+      expect(input.value).toBe('200.00');
+      await act(async () => {
+        setInput(input, '216,50');
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      });
+      await settle();
+      expect(spendSet).toHaveBeenLastCalledWith({
+        entries: [{ id: 'plan:claude:acc-max', label: 'Claude Max 20× · Trabalho', kind: 'subscription', provider: 'claude', monthlyUsd: 216.5, active: true }],
+      });
+      expect(values()[0]).toBe('$216.50');
+      expect(card.querySelector('.spend-row__origin')?.textContent).toContain('valor informado por você');
+
+      await act(async () => {
+        [...card.querySelectorAll('button')].find((button) => button.textContent === 'Usar preço de lista ($200.00)')!.click();
+      });
+      await settle();
+      expect(spendSet).toHaveBeenLastCalledWith({ entries: [] });
+      act(() => root.unmount());
+    });
+
+    it('presets gravam o valor; valor inválido explica e não grava', async () => {
+      const { spendSet } = withSpendBridge();
+      const { host, root } = mount();
+      await settle();
+      const row = host.querySelector('.spend-card .spend-row')!;
+      await act(async () => {
+        [...row.querySelectorAll('.spend-chip')].find((chip) => chip.textContent === '$100')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+      await settle();
+      expect(spendSet).toHaveBeenCalledTimes(1);
+      expect(spendSet.mock.calls[0][0].entries?.[0]).toMatchObject({ id: 'plan:claude:acc-max', monthlyUsd: 100 });
+
+      const input = row.querySelector('input.spend-row__input') as HTMLInputElement;
+      await act(async () => {
+        setInput(input, 'vinte');
+        input.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+      });
+      expect(row.querySelector('[role="alert"]')?.textContent).toContain('Use um valor em dólar');
+      expect(input.getAttribute('aria-invalid')).toBe('true');
+      expect(spendSet).toHaveBeenCalledTimes(1);
+      act(() => root.unmount());
+    });
+
+    it('adiciona gasto de API em dólar e soma ao total do mês', async () => {
+      const { spendSet } = withSpendBridge();
+      const { host, root } = mount();
+      await settle();
+      const card = host.querySelector('.spend-card')!;
+      await act(async () => {
+        [...card.querySelectorAll('button')].find((button) => button.textContent === 'Adicionar assinatura ou API')!.click();
+      });
+      const form = card.querySelector('form.spend-add') as HTMLFormElement;
+      await act(async () => {
+        [...form.querySelectorAll('[aria-label="Tipo de gasto"] button')].find((button) => button.textContent === 'Gasto de API')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+      const [nameInput, valueInput] = [...form.querySelectorAll('input')] as HTMLInputElement[];
+      await act(async () => {
+        setInput(nameInput, 'OpenRouter');
+        setInput(valueInput, '35');
+      });
+      await act(async () => {
+        form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      });
+      await settle();
+      const entries = spendSet.mock.calls.at(-1)![0].entries!;
+      expect(entries).toHaveLength(1);
+      expect(entries[0]).toMatchObject({ label: 'OpenRouter', kind: 'api', provider: 'claude', monthlyUsd: 35, active: true });
+      expect(entries[0].id).toMatch(/^custom-/);
+      expect(card.querySelector('form.spend-add')).toBeNull();
+      const totals = [...card.querySelectorAll('.spend-card__total-value')].map((node) => node.textContent);
+      expect(totals[0]).toBe('$235.00');
+      expect(card.querySelector('.spend-card__total-sub')?.textContent).toContain('planos $200.00 · API $35.00');
+      act(() => root.unmount());
+    });
+  });
 });
+

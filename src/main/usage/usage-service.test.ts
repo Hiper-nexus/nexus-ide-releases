@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import {
@@ -104,6 +104,70 @@ describe.skipIf(!sqliteAvailable)('UsageTelemetryService snapshots', () => {
       global: { inputTokens: 99, outputTokens: 7, turns: 1 },
     });
     expect(service.snapshot(scopeA)?.byPane).not.toHaveProperty('pane-b');
+    service.stop();
+  });
+
+  it('carries the cost panel rollup and recomputes it at most once a minute', () => {
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'usage-analytics-'));
+    roots.push(parent);
+    const scope = scopeFixture(parent, 'project-a', 'checkout-a');
+    const runtimeManager = new ProjectRuntimeManager({
+      baseDir: path.join(parent, 'runtime'),
+      appVersion: 'usage-service-test',
+    });
+    managers.push(runtimeManager);
+    const registry = new ProjectUsageStoreRegistry(runtimeManager);
+    const usage = registry.forScope(scope).usage;
+    const record = (messageId: string, outputTokens: number) =>
+      usage.record('claude', {
+        sessionId: 'session-a',
+        messageId,
+        model: 'claude-sonnet-4-5',
+        inputTokens: 10,
+        outputTokens,
+        cacheReadTokens: 100,
+        cacheWrite5mTokens: 0,
+        cacheWrite1hTokens: 0,
+        timestamp: Date.now(),
+      });
+    record('a', 2);
+    const rollup = vi.spyOn(usage, 'analytics');
+    const clock = vi.spyOn(Date, 'now');
+    const start = Date.now();
+    clock.mockReturnValue(start);
+    const service = new UsageTelemetryService(registry);
+
+    const first = service.snapshot(scope)?.analytics;
+    expect(first?.windows[30].totals).toMatchObject({
+      cachedInputTokens: 100,
+      uncachedInputTokens: 10,
+      outputTokens: 2,
+      sessions: 1,
+    });
+    expect(first?.windows[30].byProvider.map((row) => row.provider)).toEqual(['claude']);
+
+    // O broadcast de 1 s reaproveita o rollup dentro do minuto.
+    record('b', 5);
+    clock.mockReturnValue(start + 30_000);
+    expect(service.snapshot(scope)?.global.outputTokens).toBe(7);
+    expect(service.snapshot(scope)?.analytics?.windows[30].totals.outputTokens).toBe(2);
+    expect(rollup).toHaveBeenCalledTimes(1);
+
+    clock.mockReturnValue(start + 61_000);
+    expect(service.snapshot(scope)?.analytics?.windows[30].totals.outputTokens).toBe(7);
+    expect(rollup).toHaveBeenCalledTimes(2);
+
+    // Falha no rollup não derruba o snapshot: segue com o último resumo.
+    rollup.mockImplementation(() => {
+      throw new Error('rollup indisponível');
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    clock.mockReturnValue(start + 125_000);
+    const degraded = service.snapshot(scope);
+    expect(degraded?.global.outputTokens).toBe(7);
+    expect(degraded?.analytics?.windows[30].totals.outputTokens).toBe(7);
+    warn.mockRestore();
+    clock.mockRestore();
     service.stop();
   });
 

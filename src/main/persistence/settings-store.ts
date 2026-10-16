@@ -9,6 +9,7 @@ import {
   DEFAULT_AUDIO_SETTINGS,
   DEFAULT_INTEGRATIONS_SETTINGS,
   DEFAULT_ORCH_SETTINGS,
+  DEFAULT_SPEND_SETTINGS,
   DEFAULT_TERMINAL_SETTINGS,
   DEFAULT_UI_SETTINGS,
   DEFAULT_VISION_SETTINGS,
@@ -18,6 +19,8 @@ import {
   integrationsSettingsSchema,
   mergeOrchSettingsPatch,
   orchSettingsSchema,
+  spendSettingsPatchSchema,
+  spendSettingsSchema,
   terminalSettingsPatchSchema,
   terminalSettingsSchema,
   uiSettingsPatchSchema,
@@ -26,6 +29,7 @@ import {
   type AudioSettings,
   type IntegrationsSettings,
   type OrchSettings,
+  type SpendSettings,
   type TerminalSettings,
   type UiSettings,
   type VisionSettings,
@@ -113,10 +117,12 @@ let audioSettings: AudioSettings = DEFAULT_AUDIO_SETTINGS;
 let visionSettings: VisionSettings = DEFAULT_VISION_SETTINGS;
 let uiSettings: UiSettings = DEFAULT_UI_SETTINGS;
 let integrationsSettings: IntegrationsSettings = DEFAULT_INTEGRATIONS_SETTINGS;
+let spendSettings: SpendSettings = DEFAULT_SPEND_SETTINGS;
 let productMigrations: ProductMigrations = {};
 const listeners = new Set<WebContents>();
 const audioListeners = new Set<WebContents>();
 const uiListeners = new Set<WebContents>();
+const spendListeners = new Set<WebContents>();
 
 function load(): void {
   let floorChanged = false;
@@ -155,6 +161,8 @@ function load(): void {
       raw?.integrations ?? {},
     );
     if (integrationsParsed.success) integrationsSettings = integrationsParsed.data;
+    const spendParsed = spendSettingsSchema.safeParse(raw?.spend ?? {});
+    if (spendParsed.success) spendSettings = spendParsed.data;
     if (
       raw?.productMigrations &&
       typeof raw.productMigrations === 'object' &&
@@ -214,6 +222,7 @@ interface SettingsSnapshot {
   vision: VisionSettings;
   ui: UiSettings;
   integrations: IntegrationsSettings;
+  spend: SpendSettings;
   productMigrations: ProductMigrations;
 }
 
@@ -225,6 +234,7 @@ function snapshot(overrides: Partial<SettingsSnapshot> = {}): SettingsSnapshot {
     vision: visionSettings,
     ui: uiSettings,
     integrations: integrationsSettings,
+    spend: spendSettings,
     productMigrations,
     ...overrides,
   };
@@ -261,6 +271,12 @@ function broadcast(): void {
 function broadcastUi(): void {
   for (const wc of uiListeners) {
     if (!wc.isDestroyed()) wc.send(SETTINGS_CHANNELS.uiChanged, uiSettings);
+  }
+}
+
+function broadcastSpend(): void {
+  for (const wc of spendListeners) {
+    if (!wc.isDestroyed()) wc.send(SETTINGS_CHANNELS.spendChanged, spendSettings);
   }
 }
 
@@ -384,12 +400,14 @@ export function registerSettingsListener(wc: WebContents): void {
   listeners.add(wc);
   audioListeners.add(wc);
   uiListeners.add(wc);
+  spendListeners.add(wc);
 }
 
 export function unregisterSettingsListener(wc: WebContents): void {
   listeners.delete(wc);
   audioListeners.delete(wc);
   uiListeners.delete(wc);
+  spendListeners.delete(wc);
 }
 
 /** A preferência de julgamento segue a conta logada. Logout não apaga as outras linhas. */
@@ -492,5 +510,18 @@ export function registerSettingsIpc(): void {
     uiSettings = next;
     broadcastUi();
     return uiSettings;
+  });
+
+  handleTrusted(SETTINGS_CHANNELS.spendGet, () => spendSettings);
+
+  // A lista vem inteira (o cartão é a única tela que edita): substitui, não mescla.
+  handleTrusted(SETTINGS_CHANNELS.spendSet, (_event, raw) => {
+    const parsed = spendSettingsPatchSchema.safeParse(raw);
+    if (!parsed.success) return spendSettings;
+    const next = spendSettingsSchema.parse({ ...spendSettings, ...parsed.data });
+    persist(snapshot({ spend: next }));
+    spendSettings = next;
+    broadcastSpend();
+    return spendSettings;
   });
 }

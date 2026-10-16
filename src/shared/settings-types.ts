@@ -600,6 +600,67 @@ export type IntegrationsSettings = z.infer<typeof integrationsSettingsSchema>;
 export const DEFAULT_INTEGRATIONS_SETTINGS: IntegrationsSettings =
   integrationsSettingsSchema.parse({});
 
+/**
+ * Gasto mensal real com IA, em USD, editado pelo operador em Uso e custos.
+ * Uma linha por assinatura (plano de uma conta) ou gasto avulso de API. O
+ * preço de plano muda e o detectado é preço de lista: o valor salvo aqui é o
+ * que a pessoa paga, e vence o detectado. Persistido em
+ * ~/.nexus/settings.json → `spend`.
+ */
+const SPEND_ENTRY_KINDS = ['subscription', 'api'] as const;
+export type SpendEntryKind = (typeof SPEND_ENTRY_KINDS)[number];
+/** Teto por linha: um plano corporativo cabe, um dígito a mais por engano não. */
+export const MAX_SPEND_ENTRY_USD = 100_000;
+const MAX_SPEND_ENTRIES = 64;
+
+const spendEntrySchema = z.object({
+  /** `plan:<id da linha de cota>` para conta detectada; `custom-…` para avulsa. */
+  id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$/),
+  label: z.string().trim().min(1).max(64),
+  kind: z.enum(SPEND_ENTRY_KINDS),
+  /** adapter/provedor para o logo (`claude`, `codex`, `cursor-agent`…); '' = sem logo. */
+  provider: z.string().max(64).default(''),
+  monthlyUsd: z.number().finite().min(0).max(MAX_SPEND_ENTRY_USD),
+  /** Desligada = guardada mas fora do total (plano pausado/cancelado). */
+  active: z.boolean().default(true),
+});
+export type SpendEntry = z.infer<typeof spendEntrySchema>;
+
+export const spendSettingsSchema = z.object({
+  /**
+   * Leitura tolerante: uma linha corrompida no arquivo cai sozinha, sem
+   * levar as outras; id repetido fica com a primeira.
+   */
+  entries: z
+    .array(z.unknown())
+    .catch([])
+    .transform((items) => {
+      const seen = new Set<string>();
+      return items
+        .flatMap((item) => {
+          const parsed = spendEntrySchema.safeParse(item);
+          if (!parsed.success || seen.has(parsed.data.id)) return [];
+          seen.add(parsed.data.id);
+          return [parsed.data];
+        })
+        .slice(0, MAX_SPEND_ENTRIES);
+    }),
+});
+export type SpendSettings = z.infer<typeof spendSettingsSchema>;
+export const DEFAULT_SPEND_SETTINGS: SpendSettings = spendSettingsSchema.parse({});
+
+/** O renderer sempre manda a lista inteira: duas abas não mesclam linhas. */
+export const spendSettingsPatchSchema = z.object({
+  entries: z
+    .array(spendEntrySchema)
+    .max(MAX_SPEND_ENTRIES)
+    .refine((entries) => new Set(entries.map((entry) => entry.id)).size === entries.length, {
+      message: 'spend entry ids must be unique',
+    })
+    .optional(),
+});
+export type SpendSettingsPatch = z.infer<typeof spendSettingsPatchSchema>;
+
 export const SETTINGS_CHANNELS = {
   get: 'settings:get',
   set: 'settings:set',
@@ -613,4 +674,7 @@ export const SETTINGS_CHANNELS = {
   uiGet: 'settings:ui:get',
   uiSet: 'settings:ui:set',
   uiChanged: 'settings:ui:changed',
+  spendGet: 'settings:spend:get',
+  spendSet: 'settings:spend:set',
+  spendChanged: 'settings:spend:changed',
 } as const;

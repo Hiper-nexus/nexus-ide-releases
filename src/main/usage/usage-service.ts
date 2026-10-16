@@ -8,8 +8,10 @@ import {
   USAGE_CHANNELS,
   type AccountUsage,
   type PaneUsage,
+  type UsageAnalytics,
   type UsageSnapshot,
 } from '../../shared/usage-types';
+import { localDayKey } from '../../shared/usage-analytics';
 import { requireGamificationService } from '../gamification/gamification-service';
 import {
   executionScopeFor,
@@ -93,6 +95,8 @@ interface ScopeTelemetryState {
   >;
   watcher: ClaudeTranscriptWatcher | null;
   broadcastTimer: ReturnType<typeof setTimeout> | null;
+  /** Último rollup do painel de Uso e custos (ver ANALYTICS_TTL_MS). */
+  analytics: { readonly value: UsageAnalytics; readonly computedAt: number } | null;
 }
 
 const SESSION_CLOCK_SKEW_MS = 5 * 60_000;
@@ -220,6 +224,14 @@ export function isUsageCwdAuthorized(
   return isInside(executionScopeFor(ctx).rootRealPath, cwd);
 }
 
+/**
+ * O rollup de 90 dias por provedor/modelo custa algumas vezes o snapshot de
+ * pane (agrupa por dia e lê o sessionId do JSON). O broadcast sai a cada
+ * segundo de streaming; o painel de custo tolera um minuto de atraso, então o
+ * rollup é recalculado no máximo uma vez por minuto (ou na virada do dia).
+ */
+const ANALYTICS_TTL_MS = 60_000;
+
 function paneUsage(row: ReturnType<ProjectUsageStoreSuite['usage']['totalsByPane']>[number]): PaneUsage {
   return {
     paneId: row.paneId,
@@ -333,6 +345,7 @@ export class UsageTelemetryService {
           turns: global.turns,
         },
         media: state.stores.media.totals(),
+        ...this.#analyticsFor(state),
       };
     } catch (error) {
       console.warn(
@@ -340,6 +353,30 @@ export class UsageTelemetryService {
         error instanceof Error ? error.message : String(error),
       );
       return null;
+    }
+  }
+
+  /** Rollup do painel, do cache quando ainda vale; falha não derruba o snapshot. */
+  #analyticsFor(state: ScopeTelemetryState): { analytics?: UsageAnalytics } {
+    const now = Date.now();
+    const cached = state.analytics;
+    if (
+      cached &&
+      now - cached.computedAt < ANALYTICS_TTL_MS &&
+      cached.value.today === localDayKey(now)
+    ) {
+      return { analytics: cached.value };
+    }
+    try {
+      const value = state.stores.usage.analytics(now);
+      state.analytics = { value, computedAt: now };
+      return { analytics: value };
+    } catch (error) {
+      console.warn(
+        '[usage] analytics rollup failed; snapshot segue sem o painel de custo',
+        error instanceof Error ? error.message : String(error),
+      );
+      return cached ? { analytics: cached.value } : {};
     }
   }
 
@@ -438,6 +475,7 @@ export class UsageTelemetryService {
       pendingLaunches: new Map(),
       watcher: null,
       broadcastTimer: null,
+      analytics: null,
     };
     this.#states.set(key, state);
     this.#rootOwners.set(root, key);

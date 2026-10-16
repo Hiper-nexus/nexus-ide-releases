@@ -33,6 +33,7 @@ nunca SaaS de cards brancos, nunca IDE corporativo de 40 ícones na toolbar.
 | `--status-success` / `--status-danger` / `--status-warning` / `--status-merged` | `#6cb17b` / `#d8847b` / `#c09664` / `#a890d5` | status calmos em badges/textos (croma 55-60%) |
 | `--status-dot-success` / `--status-dot-danger` / `--status-dot-warning` | `#35c264` / `#f7796d` / `#db932e` | status dots operacionais 6pt (croma 90%, WCAG 3:1) |
 | `--diff-addition` / `--diff-deletion` | `#4ade80` / `#ef4444` | realce de adições e deleções em diff |
+| `--series-1` / `--series-2` / `--series-3` / `--series-4` / `--series-5` / `--series-6` | `#3987e5` / `#d95926` / `#199e70` / `#c98500` / `#d55181` / `#9085e9` | séries categóricas de gráfico: identidade de ferramenta (Uso e custos); nunca estado nem texto |
 
 A base é **near-black neutra**, não azul-negro nem rosa tingido. Cor é sinal,
 nunca wallpaper. As bordas são branco translúcido de propósito: um fio de
@@ -544,3 +545,30 @@ pulso de "ao vivo" repete).
   caminho, atividade, contador): o faint do `nexus-light` não passa sobre a
   tinta (4,27). O guard mede os três degraus sobre essa linha, em repouso e no
   hover, nos sete temas, sem lista de exceção.
+
+## 17. Uso e custos (painel no registro do "Usage" do T3)
+
+Pedido do operador (15/10): ver o custo por ferramenta como no painel Usage do
+T3 e o gasto mensal real com planos. Código: `components/usage/UsageOverview.tsx`,
+`UsageDailyChart.tsx`, `MonthlySpendCard.tsx` e `styles/usage-overview.css`.
+
+- **Composição.** No topo de Uso e cotas: à esquerda o custo estimado em
+  destaque e a lista de ferramentas (ponto de cor, `ProviderLogo`, nome,
+  sessões, custo e "% do custo · tokens"), que é a legenda do gráfico; à
+  direita o custo diário. Embaixo, Totais (cinco números) e Detalhamento
+  (Modelo | Dia). Período (7/30/90 dias) e medida (Custo | Tokens) valem para
+  o painel inteiro. Abaixo, o cartão Gasto mensal real.
+- **Cor de série é identidade.** `--series-1..6` seguem a ferramenta, nunca a
+  posição no ranking (Claude é sempre o mesmo matiz); acima de seis, "Outros"
+  em `--text-faint`. A cor chega ao CSS como `--usage-series`; texto e
+  números ficam nos tokens de texto. No tema claro três séries ficam abaixo de
+  3:1 sobre branco: o rótulo escrito e a tabela compensam.
+- **Honestidade do número.** O custo é equivalente de API pública, não fatura,
+  e o texto diz isso. Sem leitura, o painel explica e oferece ação; nunca
+  mostra zero. Economia em `--gold` só quando é dinheiro poupado; quando os
+  planos custam mais que a API, o cartão diz "Acima da API" em tom neutro.
+- **Edição inline.** Cada plano tem atalhos (`$20`, `$100`, `$200`, `$500`) e
+  campo em USD na própria linha; Enter ou sair do campo grava, Esc desfaz, e
+  valor inválido explica no lugar. Todo número usa `tabular-nums`; alvos de
+  32px (44px em `pointer: coarse`).
+

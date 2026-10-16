@@ -5,6 +5,10 @@ import { useQuotaStore } from '../../state/quota-store';
 import { useLifetimeUsage } from '../../state/lifetime-usage';
 import { useUsageHistory } from '../../state/usage-history';
 import { UsageHistoryChart } from './UsageHistoryChart';
+import { UsageOverview } from '../usage/UsageOverview';
+import { MonthlySpendCard } from '../usage/MonthlySpendCard';
+import { recentApiEquivalentUsd } from '../../../shared/monthly-spend';
+import { localDayKey, usageWindowStartDay } from '../../../shared/usage-analytics';
 import { MachineResourcesCard } from './MachineResourcesCard';
 import { fmtTokens, fmtUsd } from '../../lib/lifetime-format';
 import { useAccountStore } from '../../state/account-store';
@@ -577,6 +581,13 @@ export function UsageQuotaSection() {
   // Contas sem percentual nenhum não competem com as que têm consumo medido:
   // ficam num grupo recolhido no fim. Quem pede ação (login, pausa) continua à vista.
   const { visibleEntries, collapsedEntries } = splitUnreportedEntries(entries, accounts);
+  // Equivalente de API dos últimos 30 dias em TODOS os projetos — o mesmo
+  // rollup do Histórico de uso; sem leitura, o cartão não inventa economia.
+  const today = localDayKey(now);
+  const apiEquivalent30d =
+    usageHistory.status === 'ready' && usageHistory.history
+      ? recentApiEquivalentUsd(usageHistory.history.days, usageWindowStartDay(today, 30), today)
+      : null;
   const renderEntry = (entry: ProviderQuotaEntry) => {
     const account = accounts.find((candidate) => candidate.id === entry.accountId);
     return (
@@ -616,6 +627,8 @@ export function UsageQuotaSection() {
           {loading ? 'Consultando…' : 'Atualizar cotas'}
         </button>
       </header>
+      <UsageOverview />
+      <MonthlySpendCard quotaEntries={entries} apiEquivalentUsd={apiEquivalent30d} />
       <div className="quota-panel__fleet" role="status">
         {status !== 'error' && entries.length > 0 && (
           <>

@@ -122,6 +122,8 @@ import type {
   TerminalSettings,
   OrchSettings,
   OrchSettingsPatch,
+  SpendSettings,
+  SpendSettingsPatch,
   TerminalSettingsPatch,
   UiSettings,
   UiSettingsPatch,
@@ -1102,6 +1104,11 @@ export interface NexusApi {
     uiGet(): Promise<UiSettings>;
     uiSet(patch: UiSettingsPatch): Promise<UiSettings>;
     onUiChanged(cb: (ui: UiSettings) => void): Unsubscribe;
+    /** Gasto mensal real (USD) editado em Uso e custos. */
+    spendGet(): Promise<SpendSettings>;
+    /** A lista `entries` substitui a salva por inteiro. */
+    spendSet(patch: SpendSettingsPatch): Promise<SpendSettings>;
+    onSpendChanged(cb: (spend: SpendSettings) => void): Unsubscribe;
   };
   workspace: {
     get(): Promise<WorkspaceState>;

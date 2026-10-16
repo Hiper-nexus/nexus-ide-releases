@@ -48,6 +48,7 @@ import { REMOTE_CHANNELS } from '../shared/remote-channels';
 import { SETTINGS_CHANNELS } from '../shared/settings-types';
 import type {
   AudioSettings,
+  SpendSettings,
   TerminalSettings,
   UiSettings,
 } from '../shared/settings-types';
@@ -631,6 +632,11 @@ ipcRenderer.on(SETTINGS_CHANNELS.audioChanged, (_e, audio: AudioSettings) =>
 const uiSettingsChangedListeners = new Set<(ui: UiSettings) => void>();
 ipcRenderer.on(SETTINGS_CHANNELS.uiChanged, (_e, ui: UiSettings) =>
   emitToListeners(uiSettingsChangedListeners, 'uiSettingsChangedListeners', ui),
+);
+
+const spendSettingsChangedListeners = new Set<(spend: SpendSettings) => void>();
+ipcRenderer.on(SETTINGS_CHANNELS.spendChanged, (_e, spend: SpendSettings) =>
+  emitToListeners(spendSettingsChangedListeners, 'spendSettingsChangedListeners', spend),
 );
 
 const workspaceChangedListeners = new Set<(state: WorkspaceState) => void>();
@@ -1274,6 +1280,9 @@ const api: NexusApi = {
     uiGet: () => ipcRenderer.invoke(SETTINGS_CHANNELS.uiGet),
     uiSet: (patch) => ipcRenderer.invoke(SETTINGS_CHANNELS.uiSet, patch),
     onUiChanged: (cb) => addListener(uiSettingsChangedListeners, cb),
+    spendGet: () => ipcRenderer.invoke(SETTINGS_CHANNELS.spendGet),
+    spendSet: (patch) => ipcRenderer.invoke(SETTINGS_CHANNELS.spendSet, patch),
+    onSpendChanged: (cb) => addListener(spendSettingsChangedListeners, cb),
   },
   workspace: {
     get: () => ipcRenderer.invoke(WORKSPACE_CHANNELS.get),

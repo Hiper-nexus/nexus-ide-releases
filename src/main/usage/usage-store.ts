@@ -14,6 +14,19 @@ import {
   type ScopedStoreOptions,
 } from '../orch/scoped-store';
 import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
+import {
+  USAGE_ANALYTICS_MAX_DAYS,
+  type UsageAnalytics,
+} from '../../shared/usage-types';
+import {
+  buildUsageAnalytics,
+  dayStartMs,
+  localDayKey,
+  shiftDayKey,
+  usageWindowStartDay,
+  type UsageProviderSessions,
+  type UsageRollupRow,
+} from '../../shared/usage-analytics';
 import type { UsageEvent } from './claude-transcript';
 import { legacyCodexUsageMessageId } from './codex-transcript';
 
@@ -194,6 +207,20 @@ export function computeRealCost(ev: UsageEvent): number {
     (parsed.cacheWrite1hTokens / MICROS_PER_USD) * cacheWrite1hPrice;
   if (!Number.isFinite(cost) || cost < 0) throw new Error('invalid usage cost');
   return cost;
+}
+
+/**
+ * O que a leitura do cache poupou frente ao input cheio, pela mesma tabela
+ * de preços de `computeRealCost`. Estimativa: nunca é fatura.
+ */
+function cacheSavingsUsd(model: string, cacheReadTokens: number): number {
+  if (!Number.isFinite(cacheReadTokens) || cacheReadTokens <= 0) return 0;
+  const price = priceForModel(model);
+  const cacheReadPrice =
+    price.cacheReadPerM !== undefined
+      ? price.cacheReadPerM
+      : price.inputPerM * CACHE_READ_RATIO;
+  return (cacheReadTokens / MICROS_PER_USD) * Math.max(0, price.inputPerM - cacheReadPrice);
 }
 
 function deterministicUsageId(
@@ -394,6 +421,10 @@ const TOTALS_SELECT = `
          COALESCE(SUM(cost_micros), 0) AS cost_micros,
          COUNT(*) AS turns
   FROM usage_events`;
+
+const UNKNOWN_MODEL = 'desconhecido';
+const analyticsDaySchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const analyticsCountSchema = z.number().int().nonnegative().safe();
 
 interface PaneOwnership {
   internalPaneId: string | null;
@@ -646,6 +677,85 @@ export class ScopedUsageStore {
       const model = z.string().min(1).max(256).parse(row.model);
       return { model, ...toTotals(row) };
     });
+  }
+
+  /**
+   * Painel de Uso e custos: rollup por dia local × provedor × modelo e
+   * sessões distintas por janela (7/30/90), só dos últimos 90 dias. O dia
+   * local vem do SQLite (`localtime`), o mesmo fuso do processo que fatia a
+   * janela em `buildUsageAnalytics`.
+   */
+  analytics(now: number = this.#binding.now()): UsageAnalytics {
+    const today = localDayKey(now);
+    const fromMs = dayStartMs(usageWindowStartDay(today, USAGE_ANALYTICS_MAX_DAYS));
+    const untilMs = dayStartMs(shiftDayKey(today, 1));
+    const db = this.#binding.readDatabase();
+    // Dia local pelo SQLite (`localtime`, o fuso do processo, com horário de
+    // verão): o mesmo relógio de `localDayKey`, que corta as janelas.
+    const rollup = prepareCached(
+      db,
+      `${TOTALS_SELECT.replace(
+        'SELECT',
+        `SELECT strftime('%Y-%m-%d', occurred_at / 1000, 'unixepoch', 'localtime') AS day,
+             provider,
+             model,`,
+      )}
+         WHERE event_type = ? AND occurred_at >= ? AND occurred_at < ?
+         GROUP BY day, provider, model`,
+    ).all(TOKEN_EVENT_TYPE, fromMs, untilMs) as Array<
+      TotalsRow & { day: unknown; provider: unknown; model: unknown }
+    >;
+    const rows: UsageRollupRow[] = rollup.map((row) => {
+      const totals = toTotals(row);
+      const model = typeof row.model === 'string' && row.model ? row.model : UNKNOWN_MODEL;
+      return {
+        day: analyticsDaySchema.parse(row.day),
+        provider: usageProviderSchema.parse(row.provider),
+        model,
+        costUsd: totals.costUsd,
+        inputTokens: totals.inputTokens,
+        cachedInputTokens: totals.cacheReadTokens,
+        cacheWriteTokens: totals.cacheWriteTokens,
+        outputTokens: totals.outputTokens,
+        cacheSavingsUsd: cacheSavingsUsd(model, totals.cacheReadTokens),
+        turns: totals.turns,
+      };
+    });
+    // Sessão conta na janela se teve atividade nela: a última atividade de
+    // cada sessão decide, e o sessionId é lido do JSON uma vez por linha.
+    const sessionRows = prepareCached(
+      db,
+      `WITH sessions AS (
+         SELECT provider,
+                json_extract(metadata_json, '$.sessionId') AS session_id,
+                MAX(occurred_at) AS last_at
+           FROM usage_events
+           WHERE event_type = ? AND occurred_at >= ? AND occurred_at < ?
+           GROUP BY provider, session_id
+       )
+       SELECT provider,
+              SUM(last_at >= ?) AS d7,
+              SUM(last_at >= ?) AS d30,
+              COUNT(*) AS d90
+         FROM sessions
+         WHERE session_id IS NOT NULL
+         GROUP BY provider`,
+    ).all(
+      TOKEN_EVENT_TYPE,
+      fromMs,
+      untilMs,
+      dayStartMs(usageWindowStartDay(today, 7)),
+      dayStartMs(usageWindowStartDay(today, 30)),
+    ) as Array<{ provider: unknown; d7: unknown; d30: unknown; d90: unknown }>;
+    const sessions: UsageProviderSessions[] = sessionRows.map((row) => ({
+      provider: usageProviderSchema.parse(row.provider),
+      sessions: {
+        7: analyticsCountSchema.parse(row.d7),
+        30: analyticsCountSchema.parse(row.d30),
+        90: analyticsCountSchema.parse(row.d90),
+      },
+    }));
+    return buildUsageAnalytics(rows, sessions, today);
   }
 
   totalsByPane(): PaneUsageTotals[] {
