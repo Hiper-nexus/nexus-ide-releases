@@ -2,6 +2,12 @@ import { assertMcpInvocationCurrent, type McpToolInvocation } from './mcp-protoc
 import { runPeriodicTask, stopPeriodicTask, type PeriodicTaskContext } from '../observability/periodic-task';
 import { AsyncProcessGitRunner } from '../runtime/git-command';
 import { missionExecutionScope } from './mission-execution-scope';
+import {
+  missionAttachmentPromptKind,
+  missionContextRelativePath,
+  readMissionAttachmentTranscript,
+  stageMissionAttachmentsIntoExecutionScope,
+} from './mission-attachment-staging';
 import { resolveWorkspaceDesignContract } from './design-system-reader';
 import { isPaneMetaTask, extractMetaPaneQuestion } from '../../shared/pane-meta-task';
 import { getMissionRoutingHints } from '../../shared/mission-routing-advice';
@@ -809,23 +815,7 @@ export function readableMissionAttachmentPath(snapshot: {
   readonly path: string;
   readonly sourcePath?: string;
 }): string {
-  const source = (snapshot.sourcePath ?? '').replaceAll('\\', '/');
-  const marker = '/.nexus/attachments/mission-context/';
-  const indexed = source.indexOf(marker);
-  const relative =
-    indexed >= 0
-      ? source.slice(indexed + 1)
-      : source.startsWith('.nexus/attachments/mission-context/')
-        ? source
-        : '';
-  if (
-    relative.length > 0 &&
-    !relative.includes('..') &&
-    !relative.startsWith('/')
-  ) {
-    return relative;
-  }
-  return snapshot.path;
+  return missionContextRelativePath(snapshot) ?? snapshot.path;
 }
 
 /**
@@ -852,6 +842,7 @@ export function agentPrompt(
   designContext = '',
   squad: Squad | null = null,
   sealedPlanTitles: readonly string[] = [],
+  attachmentRoot?: string,
 ): string {
   const objective = mission.description ?? '';
   const title = mission.title ?? objectivePlainText(objective).slice(0, 80);
@@ -935,9 +926,33 @@ export function agentPrompt(
     mission.intentContract?.attachmentSnapshots?.length
       ? [
           '### Anexos da missão',
-          'PRIMEIRO ATO: abra cada arquivo abaixo com a ferramenta Read ANTES de planejar ou delegar. São os anexos autorizados pelo operador; use os caminhos indicados:',
+          'PRIMEIRO ATO: abra cada arquivo abaixo com a ferramenta Read ANTES de planejar ou delegar. São os anexos autorizados pelo operador; use os caminhos indicados (workers em outra worktree usam o caminho absoluto):',
           ...mission.intentContract.attachmentSnapshots.map((snapshot, index) => {
-            return `${index + 1}. ${mission.intentContract?.workspaceBinding?.spaceId ? snapshot.path : readableMissionAttachmentPath(snapshot)}`;
+            const relative = missionContextRelativePath(snapshot);
+            // Sem cópia no escopo de execução, a pasta isolada da aba não tem
+            // o caminho relativo: o selo absoluto é o único legível.
+            const staged =
+              relative !== null &&
+              (attachmentRoot !== undefined ||
+                !mission.intentContract?.workspaceBinding?.spaceId);
+            const shown = staged ? relative : snapshot.path;
+            const absolute =
+              staged && attachmentRoot ? join(attachmentRoot, relative) : '';
+            const kind = missionAttachmentPromptKind(shown);
+            const lines = [
+              `${index + 1}. [${kind}] ${shown}${absolute ? ` (absoluto: ${absolute})` : ''}`,
+            ];
+            if (kind === 'áudio') {
+              const transcript = absolute
+                ? readMissionAttachmentTranscript(absolute)
+                : null;
+              lines.push(
+                transcript
+                  ? `   Transcrição do áudio: ${transcript}`
+                  : '   Sem transcrição disponível: o arquivo de áudio acima é a fonte.',
+              );
+            }
+            return lines.join('\n');
           }),
         ].join('\n')
       : '';
@@ -1027,6 +1042,18 @@ export function agentPrompt(
   ]
     .filter(Boolean)
     .join('\n');
+}
+
+/** Copia os anexos selados para a worktree da missão; devolve a raiz onde ficaram. */
+function stageMissionAttachments(
+  scope: ProjectExecutionScope,
+  mission: Mission,
+): string | undefined {
+  const snapshots = mission.intentContract?.attachmentSnapshots;
+  if (!snapshots?.length) return undefined;
+  const execution = missionExecutionScope(scope, mission);
+  stageMissionAttachmentsIntoExecutionScope(execution, snapshots);
+  return execution.rootRealPath;
 }
 
 function sealFastLanePlanTitles(
@@ -2343,6 +2370,7 @@ async function respawnFastLaneOrchestrator(
         missionDesignContext(missionExecutionScope(scope, live).rootRealPath),
         squad,
         sealedPlanTitles,
+        stageMissionAttachments(scope, live),
       ),
       awaitingAdjustment: missionAwaitsAdjustment(live),
       note: options.note,
@@ -3094,7 +3122,7 @@ export async function fastLaneBootstrap(
       current();
       const designContext=missionDesignContext(missionExecutionScope(scope,owned).rootRealPath,undefined,mission.description ?? '');
       const sealedPlanTitles=sealFastLanePlanTitles(stores,owned,squad);
-      const prompt=agentPrompt(orchestrator,owned,roster.map(agent=>agent.agentName),false,designContext,squad,sealedPlanTitles);
+      const prompt=agentPrompt(orchestrator,owned,roster.map(agent=>agent.agentName),false,designContext,squad,sealedPlanTitles,stageMissionAttachments(scope,owned));
       const adoption=await adoptOrchestratorPane(scope,owned,prompt,invocation,captureRuntime);
       if (adoption.adopted) {
         if (adoption.briefingError) throw new Error('bootstrap_adopted_briefing_unaccepted');
