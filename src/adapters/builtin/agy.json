@@ -93,8 +93,11 @@
       ]
     },
     "permission": {
-      "arg": "",
-      "modes": {},
+      "arg": "--mode",
+      "modes": {
+        "auto": "accept-edits",
+        "plan": "plan"
+      },
       "yolo": [
         "--dangerously-skip-permissions"
       ],

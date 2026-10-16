@@ -88,8 +88,12 @@
   },
   "control": {
     "permission": {
-      "arg": "",
-      "modes": {},
+      "arg": "--approval-mode",
+      "modes": {
+        "default": "default",
+        "auto": "auto-edit",
+        "plan": "plan"
+      },
       "yolo": [
         "--yolo"
       ],
