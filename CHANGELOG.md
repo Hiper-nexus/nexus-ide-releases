@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.292 — Linux em dia com a Jarvis, o navegador e o Kimi
+
+A tag 0.76.291 não recebe pacotes Linux: a suíte não fechou. O ledger de proveniência ainda apontava o hash antigo de `model-catalog.ts`, e o teto de IPC cru do preload do pet não contava a sonda de cursor. Os dois testes passam a dizer o que o código já faz. O desktop Linux é o da 0.76.291.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). As tags 0.76.289 e 0.76.290 também não recebem pacotes Linux.
+
 ## 0.76.291 — Linux em dia com a Jarvis, o navegador e o Kimi
 
 A tag 0.76.290 não recebe pacotes Linux. Este pacote leva o produto dela para o desktop Linux, empacotado a partir de Ubuntu 22.04 (glibc 2.35). A tag 0.76.289 é só o carimbo do macOS.
