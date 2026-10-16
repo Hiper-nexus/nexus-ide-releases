@@ -206,6 +206,43 @@ describe('nexus_route_task wiring', () => {
     expect(decision.skillSuggestion).toBeNull();
   });
 
+  it.each(['.claude/skills/api-review/SKILL.md', '.nexus/skills/api-review/SKILL.md'])(
+    'preserva a skill de projeto %s quando a rota escolhe CLI sem superfície bundled',
+    async (skillPath) => {
+      mocks.listProviderSettings.mockReturnValue([
+        { adapterId: 'muse', enabled: true, installed: true, authStrategy: 'oauth', models: ['muse-wonder-1.0'] },
+      ]);
+      mocks.classifyTaskWithSkillForRouting.mockResolvedValue({
+        kind: 'unavailable',
+        reason: 'invalid-answer',
+        skillSuggestion: { name: 'api-review', pkg: 'project', path: skillPath, confidence: 0.9 },
+      });
+
+      const decision = await routeTaskForCaller({ task: 'tarefa de complexidade média' }, context());
+
+      expect(decision.adapterId).toBe('muse');
+      expect(decision.skillSuggestion).toEqual({
+        name: 'api-review', pkg: 'project', path: skillPath, confidence: 0.9,
+      });
+    },
+  );
+
+  it('omite skill bundled quando a rota escolhe CLI sem sua superfície de entrega', async () => {
+    mocks.listProviderSettings.mockReturnValue([
+      { adapterId: 'muse', enabled: true, installed: true, authStrategy: 'oauth', models: ['muse-wonder-1.0'] },
+    ]);
+    mocks.classifyTaskWithSkillForRouting.mockResolvedValue({
+      kind: 'unavailable',
+      reason: 'invalid-answer',
+      skillSuggestion: { name: 'ponytail', pkg: 'ponytail', confidence: 0.9 },
+    });
+
+    const decision = await routeTaskForCaller({ task: 'tarefa de complexidade média' }, context());
+
+    expect(decision.adapterId).toBe('muse');
+    expect(decision.skillSuggestion).toBeNull();
+  });
+
   it('lança quando não há adapter roteável', async () => {
     mocks.listProviderSettings.mockReturnValue([]);
     await expect(
