@@ -11122,7 +11122,7 @@ export const RELEASE_076287: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076288: AppRelease = {
   version: '0.76.288',
   date: '2026-10-16',
   codename: 'Linux em dia com a Jarvis e o uso',
@@ -11137,5 +11137,23 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Abas que rolam de lado', detail: 'A roda do mouse rola as abas do painel direito e as sub-abas do Git. A largura mínima do painel fica em 300 px.' },
     { title: 'Arquivo pela mão do operador', detail: 'A Jarvis grava arquivo no workspace sem missão e sem modal. O push remoto continua exigindo missão.' },
     { title: 'Atualização do Linux', detail: 'As tags 0.76.285, 0.76.286 e 0.76.287 não recebem pacotes Linux. O Linux sai na 0.76.288.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.289',
+  date: '2026-10-16',
+  codename: 'macOS em dia com a Jarvis, Clef no Jev e Uso e custos',
+  summary: 'No macOS, a Jarvis conversa em tempo real em full-duplex e opera o Nexus sem modais bloqueantes, o modo Somente Jev envia a captura do navegador ao Clef e as Configurações ganham Uso e custos com gasto mensal real em USD.',
+  highlights: [
+    { title: 'Jarvis em tempo real', detail: 'O microfone opera em full-duplex no Grok Voice 3.0 e no OpenAI Realtime. O socket quente é reaproveitado, e a voz entrega texto em qualquer pane ou terminal e executa a lista operacional sem modal bloqueante.' },
+    { title: 'Clef no navegador', detail: 'Em Somente Jev o texto continua no Jev e a captura do navegador vai ao Clef ou Luna autorizados, inclusive quando a visão já estava ligada sem uma lista de consentimento. O piloto do navegador espera 150 ms entre ações.' },
+    { title: 'Uso e custos', detail: 'As Configurações mostram a série diária de 90 dias, recortes de 7, 30 e 90 dias por provedor e modelo, e o gasto mensal real em USD editável na linha.' },
+  ],
+  fixes: [
+    { title: 'Handoff que não cai', detail: 'evidenceIds sem workflow congelado, ou IDs de captura, gravam o handoff como não verificado em vez de recusar a entrega. Um nome livre no spawn vira título do pane.' },
+    { title: 'Abas que rolam de lado', detail: 'A roda do mouse rola as abas do painel direito e as sub-abas do Git. A largura mínima do painel fica em 300 px.' },
+    { title: 'Conta da Reserva renovada', detail: 'Contas AGY/Gemini e Claude com access token vencido renovam pelo refresh token e gravam a credencial nova.' },
+    { title: 'Vagas do Trial e Nexus Shot', detail: 'O leque de helpers no Trial reserva duas vagas para o Maestro e o revisor, e a ponte do Nexus Shot aceita target nulo na entrega padrão.' },
   ],
 };

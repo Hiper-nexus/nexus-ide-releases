@@ -19,6 +19,7 @@ export default defineConfig({
       // Collecting them runs stale suites multiple times and may load native
       // modules built for another Node/Electron ABI.
       '.nexus/worktrees/**',
+      '.harvest/**',
       '.dev-user-data/**',
       '.dev-user-data.bak-*/**',
       '.dev-user-data-qa/**',

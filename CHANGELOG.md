@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.76.289 — macOS em dia com a Jarvis, Clef no Jev e Uso e custos
+
+A tag 0.76.285 não recebeu pacotes macOS porque o smoke empacotado ainda exigia que `nexus_file_write` do renderer fosse recusado (corrigido na 0.76.288). Este pacote publica o candidato macOS (`darwin-arm64`) assinado e notarizado com a Jarvis em tempo real e mãos-livres, o Clef autorizado em Somente Jev, o painel de Uso e custos com gasto mensal editável em USD, os handoffs sem travas burocráticas, a rolagem lateral das abas do painel direito e a renovação de contas da Reserva, além de excluir `.harvest/**` da coleta do Vitest.
+
 ## 0.76.288 — Linux em dia com a Jarvis e o uso
 
 A tag 0.76.287 não recebe pacotes Linux: o smoke empacotado ainda exigia que `nexus_file_write` do renderer fosse recusado. A mão do operador por voz grava arquivo sem missão; o smoke passa a provar que o push continua barrado. O desktop Linux é o da 0.76.286.
