@@ -1,4 +1,4 @@
-import { useId, useMemo, useState, type KeyboardEvent } from 'react';
+import { useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import type { UsageDayPoint, UsageMetric } from '../../../shared/usage-types';
 import { usageDayStats } from '../../../shared/usage-analytics';
 import { niceCeiling } from '../../lib/usage-history-chart';
@@ -134,6 +134,7 @@ export interface UsageDailyChartProps {
 
 export function UsageDailyChart({ days, today, metric, series, selectedDay, onSelectDay, titleId }: UsageDailyChartProps) {
   const summaryId = useId();
+  const svgRef = useRef<SVGSVGElement>(null);
   /** Ponteiro ou setas: leitura passageira; o dia fixado é a escolha que fica. */
   const [cursor, setCursor] = useState<number | null>(null);
   const points = days;
@@ -259,12 +260,21 @@ export function UsageDailyChart({ days, today, metric, series, selectedDay, onSe
           )}
         </p>
         {selectedDay !== null && pinnedIndex >= 0 ? (
-          <button type="button" className="settings-btn settings-btn--sm" onClick={() => onSelectDay(null)}>
+          <button
+            type="button"
+            className="settings-btn"
+            onClick={() => {
+              onSelectDay(null);
+              // O botão some com o dia solto: o foco volta ao gráfico, não ao body.
+              svgRef.current?.focus();
+            }}
+          >
             Ver o período inteiro
           </button>
         ) : null}
       </div>
       <svg
+        ref={svgRef}
         className="usage-chart__svg"
         viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
         role="img"
@@ -378,7 +388,9 @@ export function UsageDailyChart({ days, today, metric, series, selectedDay, onSe
             className="usage-chart__tick"
             x={x(index)}
             y={LABEL_Y}
-            textAnchor={index === 0 ? 'start' : index === points.length - 1 ? 'end' : 'middle'}
+            textAnchor={
+              points.length === 1 ? 'middle' : index === 0 ? 'start' : index === points.length - 1 ? 'end' : 'middle'
+            }
           >
             {points[index].day === today ? 'hoje' : dayTickLabel(points[index].day)}
           </text>

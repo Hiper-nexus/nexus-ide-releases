@@ -19,6 +19,25 @@ function usageApi(): UsageApi | undefined {
   return (window.nexus as unknown as { usage?: UsageApi }).usage;
 }
 
+/**
+ * O main reenvia o mesmo rollup (em cache) a cada broadcast de ~1 s; cada IPC o
+ * desserializa como objeto novo. Se o conteúdo é o mesmo, mantém o objeto de
+ * antes: o painel de custo não recalcula os cortes nem redesenha o gráfico à toa.
+ */
+function keepAnalyticsIdentity(previous: UsageSnapshot, next: UsageSnapshot): UsageSnapshot {
+  const before = previous.analytics;
+  const after = next.analytics;
+  if (!before || !after || before === after) return next;
+  if (
+    before.today !== after.today ||
+    before.rows.length !== after.rows.length ||
+    before.sessions.length !== after.sessions.length
+  ) {
+    return next;
+  }
+  return JSON.stringify(before) === JSON.stringify(after) ? { ...next, analytics: before } : next;
+}
+
 export const EMPTY_USAGE_SNAPSHOT: UsageSnapshot = {
   byPane: {},
   byAccount: {},
@@ -50,7 +69,11 @@ export const useUsageStore = create<UsageStore>((set) => ({
       const snapshot = await api.snapshot();
       if (getActiveWorkspacePath() !== workspacePath) return;
       // `null`: o main absorveu a identidade do escopo — não há o que mostrar, mas também não há erro.
-      set(snapshot === null ? { status: 'ready' } : { snapshot, status: 'ready' });
+      set((state) =>
+        snapshot === null
+          ? { status: 'ready' }
+          : { snapshot: keepAnalyticsIdentity(state.snapshot, snapshot), status: 'ready' },
+      );
     } catch (err) {
       if (getActiveWorkspacePath() === workspacePath) {
         console.warn('[usage] hydrate failed:', err);
@@ -60,7 +83,8 @@ export const useUsageStore = create<UsageStore>((set) => ({
     }
   },
 
-  receive: (snapshot) => set({ snapshot, status: 'ready' }),
+  receive: (snapshot) =>
+    set((state) => ({ snapshot: keepAnalyticsIdentity(state.snapshot, snapshot), status: 'ready' })),
   reset: () => set({ snapshot: EMPTY_USAGE_SNAPSHOT, status: 'idle' }),
 }));
 

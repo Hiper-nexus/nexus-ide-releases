@@ -53,6 +53,17 @@
   font-weight: 600;
 }
 
+/* Lendo o custo: frase curta no tom do texto de apoio, com o esqueleto da casa. */
+.usage-overview__loading {
+  display: grid;
+  gap: var(--space-3);
+}
+.usage-overview__loading p {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--text-md);
+}
+
 /* Filtros: período personalizado, dia, ferramenta e modelo. Controles nativos
    com o idioma de `.settings-input`; quebram de linha em canvas estreito. */
 .usage-overview__filters {
@@ -525,8 +536,11 @@ select.usage-filter__control {
 .usage-breakdown__pick:hover {
   background: var(--surface-2);
 }
+/* Dia fixado: peso e a tinta da linha dizem "selecionado"; texto em acento não passa de
+   4,5:1 sobre a tinta de 6% em todos os temas (solarized-dark media 4,27). */
 .usage-breakdown__pick[aria-pressed='true'] {
-  color: var(--accent);
+  color: var(--text);
+  font-weight: 600;
 }
 .usage-breakdown__pick:focus-visible {
   outline: 2px solid var(--accent);

@@ -124,6 +124,13 @@ async function setField(el: HTMLInputElement | HTMLSelectElement, value: string)
   });
 }
 
+/** O React escuta `focusout` para o onBlur. */
+async function blur(el: Element): Promise<void> {
+  await act(async () => {
+    el.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+  });
+}
+
 async function clickSvg(el: Element): Promise<void> {
   await act(async () => {
     el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -284,15 +291,70 @@ describe('UsageOverview — filtros recalculam o painel inteiro', () => {
     expect(ticks[0]).toBe(dayTickLabel(range.from));
     expect(ticks).not.toContain('hoje');
 
-    // "De" depois de "Até": "Até" acompanha. Fora dos 90 dias: encosta no limite.
-    await setField(control(host, 'De'), day(1));
-    expect((control(host, 'Até') as HTMLInputElement).value).toBe(day(1));
-    await setField(control(host, 'De'), '2025-01-01');
-    expect((control(host, 'De') as HTMLInputElement).value).toBe(usageWindowStartDay(TODAY, 90));
+    // De nunca passa de Até: fora do limite o valor não sobe para o painel, o campo marca
+    // erro e, ao sair, volta ao valor que vale. Fora dos 90 dias, a mesma regra.
+    const from = control(host, 'De') as HTMLInputElement;
+    await setField(from, day(1));
+    expect(read(host).points).toBe(8);
+    expect(from.value).toBe(day(1));
+    expect(from.getAttribute('aria-invalid')).toBe('true');
+    await blur(from);
+    expect(from.value).toBe(day(10));
+    expect(from.hasAttribute('aria-invalid')).toBe(false);
+    await setField(from, '2025-01-01');
+    expect(read(host).points).toBe(8);
+    await blur(from);
+    expect(from.value).toBe(day(10));
     // Campo apagado pela metade não muda nada.
     const before = read(host).hero;
     await setField(control(host, 'Até'), '');
     expect(read(host).hero).toBe(before);
+  });
+
+  it('digitar a data tecla a tecla não mexe no painel até a data ficar completa e dentro do limite', async () => {
+    const host = open();
+    await press(host, 'Período', 'Personalizado');
+    await setField(control(host, 'De'), day(10));
+    await setField(control(host, 'Até'), day(3));
+    const until = control(host, 'Até') as HTMLInputElement;
+    const heroBefore = read(host).hero;
+    // Segmento apagado, dia intermediário antes do "De" e ano com um dígito só: nada sobe.
+    const monthPrefix = day(3).slice(0, 8);
+    const yearTail = day(3).slice(4);
+    for (const typed of ['', `${monthPrefix}01`, `0002${yearTail}`]) {
+      await setField(until, typed);
+      expect(read(host).hero).toBe(heroBefore);
+      expect((control(host, 'De') as HTMLInputElement).value).toBe(day(10));
+    }
+    // O campo guarda o que a pessoa digitou: o React não o reescreve no meio da digitação.
+    expect(until.value).toBe(`0002${yearTail}`);
+    // Completa e dentro do limite: aí sim, e o "De" fica onde estava.
+    await setField(until, day(5));
+    expect(read(host).points).toBe(6);
+    expect((control(host, 'De') as HTMLInputElement).value).toBe(day(10));
+  });
+
+  it('o campo Dia só fixa uma data completa do período e o resto volta ao sair do campo', async () => {
+    const host = open();
+    const field = control(host, 'Dia') as HTMLInputElement;
+    const total = read(host).hero;
+    const target = day(4);
+    for (const typed of [`0002${target.slice(4)}`, `0020${target.slice(4)}`, `0202${target.slice(4)}`]) {
+      await setField(field, typed);
+      expect(read(host).hero).toBe(total);
+      expect(read(host).pinned).toBe(false);
+    }
+    expect(field.value).toBe(`0202${target.slice(4)}`);
+    await setField(field, target);
+    expect(read(host).hero).toBe('$340.00');
+    // Fora do período (e fora do limite do campo): não fixa, e ao sair volta ao dia fixado.
+    await setField(field, day(40));
+    expect(read(host).hero).toBe('$340.00');
+    await blur(field);
+    expect(field.value).toBe(target);
+    // Apagar o campo é uma escolha: solta o dia.
+    await setField(field, '');
+    expect(read(host).hero).toBe(total);
   });
 
   it('fixar um dia no gráfico mostra só ele no painel e mantém o período no gráfico', async () => {
@@ -528,6 +590,81 @@ describe('UsageOverview — filtros recalculam o painel inteiro', () => {
     expect(document.getElementById(summaryId)?.textContent).toContain('6 de 30 dias com uso');
   });
 
+  it('voltar ao período antigo não ressuscita a ferramenta nem o dia que tinham saído', async () => {
+    const host = open();
+    await press(host, 'Período', '90 dias');
+    const all90 = read(host).hero;
+    await setField(control(host, 'Ferramenta'), 'mimo-code');
+    expect(read(host).providers.map((item) => item.id)).toEqual(['mimo-code']);
+    await press(host, 'Período', '7 dias');
+    expect((control(host, 'Ferramenta') as HTMLSelectElement).value).toBe('');
+    await press(host, 'Período', '90 dias');
+    // O filtro foi solto de verdade: não volta sozinho com o período.
+    expect((control(host, 'Ferramenta') as HTMLSelectElement).value).toBe('');
+    expect(read(host).hero).toBe(all90);
+
+    await press(host, 'Período', '30 dias');
+    const all30 = read(host).hero;
+    await setField(control(host, 'Dia'), day(20));
+    expect(read(host).hero).not.toBe(all30);
+    await press(host, 'Período', '7 dias');
+    await press(host, 'Período', '30 dias');
+    expect((control(host, 'Dia') as HTMLInputElement).value).toBe('');
+    expect(read(host).hero).toBe(all30);
+    expect([...host.querySelectorAll('button')].some((b) => b.textContent === 'Limpar filtros')).toBe(false);
+  });
+
+  it('editar De/Até até o intervalo ficar sem consumo mantém os campos montados e o foco neles', async () => {
+    const host = open();
+    await press(host, 'Período', 'Personalizado');
+    const until = control(host, 'Até') as HTMLInputElement;
+    const from = control(host, 'De') as HTMLInputElement;
+    until.focus();
+    await setField(from, day(8));
+    expect(host.querySelector('.usage-overview__hero')).not.toBeNull();
+    // [dia 8, dia 7] não teve consumo: o painel troca de ramo, os campos não.
+    await setField(until, day(7));
+    expect(host.querySelector('.usage-overview__hero')).toBeNull();
+    expect(host.querySelector('.usage-overview')!.textContent).toContain('Sem consumo de');
+    expect(control(host, 'Até')).toBe(until);
+    expect(control(host, 'De')).toBe(from);
+    expect(document.activeElement).toBe(until);
+  });
+
+  it('o foco não cai no body quando o botão que o tinha some: Limpar filtros → Dia; Ver o período inteiro → gráfico', async () => {
+    const host = open();
+    await setField(control(host, 'Dia'), day(2));
+    const labelled = (text: string) =>
+      [...host.querySelectorAll('button')].find((b) => b.textContent === text) as HTMLButtonElement;
+    await act(async () => labelled('Limpar filtros').click());
+    expect(document.activeElement).toBe(control(host, 'Dia'));
+
+    await clickSvg([...host.querySelectorAll('.usage-chart__hit')][30 - 1 - 4]!);
+    await act(async () => labelled('Ver o período inteiro').click());
+    expect(read(host).pinned).toBe(false);
+    expect(document.activeElement).toBe(host.querySelector('.usage-chart__svg'));
+  });
+
+  it('a lista por ferramenta se chama pela medida escolhida', async () => {
+    const host = open();
+    expect(host.querySelector('ul.usage-overview__providers')?.getAttribute('aria-label')).toBe('Custo por ferramenta');
+    await press(host, 'Medida', 'Tokens');
+    expect(host.querySelector('ul.usage-overview__providers')?.getAttribute('aria-label')).toBe('Tokens por ferramenta');
+  });
+
+  it('um intervalo de um dia rotula o eixo no centro e não chama de "hoje" o que não é hoje', async () => {
+    const host = open();
+    await press(host, 'Período', 'Personalizado');
+    await setField(control(host, 'De'), day(4));
+    await setField(control(host, 'Até'), day(4));
+    expect(read(host).points).toBe(1);
+    const ticks = [...host.querySelectorAll('.usage-chart__tick')];
+    expect(ticks).toHaveLength(1);
+    expect(ticks[0]!.getAttribute('text-anchor')).toBe('middle');
+    expect(ticks[0]!.textContent).toBe(dayTickLabel(day(4)));
+    expect(read(host).hero).toBe('$340.00');
+  });
+
   it('rotina de acessibilidade: grupos, campos e gráfico têm nome e estado', async () => {
     const host = open();
     for (const group of ['Medida', 'Período', 'Filtros do painel', 'Detalhar por']) {
@@ -555,6 +692,55 @@ describe('UsageOverview — filtros recalculam o painel inteiro', () => {
     // Ids únicos: nenhum aria-labelledby/describedby aponta para dois nós.
     const ids = [...host.querySelectorAll('[id]')].map((node) => node.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+describe('UsageOverview — dados fora do comum', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+    useUsageStore.setState({ snapshot: EMPTY_USAGE_SNAPSHOT, status: 'idle' });
+    vi.useRealTimers();
+  });
+
+  it('uso sem custo (plano grátis) ainda tem pico: o dia de mais tokens, com o dólar zerado escrito', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 15, 12, 0, 0));
+    const free = buildUsageAnalytics(
+      [
+        { ...row(2, 'mimo-code', 'mimo-v2', 0, 3_000_000), cachedInputTokens: 3_000_000 },
+        { ...row(5, 'mimo-code', 'mimo-v2', 0, 9_000_000), cachedInputTokens: 9_000_000 },
+      ],
+      [{ provider: 'mimo-code', cells: [[day(2), 'mimo-v2'], [day(5), 'mimo-v2']] }],
+      TODAY,
+    );
+    seed(free);
+    const { host, root } = mount();
+    const screen = read(host);
+    expect(screen.stats['Pico em um dia']![0]).toBe('$0.00');
+    expect(screen.stats['Pico em um dia']![1]).toBe(
+      `${dayLongLabel(day(5))} · ${tokens(summarizeUsage(free, { from: day(5), to: day(5) }).totals.processedTokens)} tokens`,
+    );
+    expect(screen.stats['Média por dia com uso']![1]).toContain('2 de 30 dias com uso');
+    act(() => root.unmount());
+  });
+
+  it('modelo que só tem evento sem consumo (mensagem sintética) não vira opção nem linha de tabela', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 15, 12, 0, 0));
+    const withSynthetic = buildUsageAnalytics(
+      [
+        row(1, 'claude', 'claude-opus-5-5', 10, 5_000_000),
+        { ...row(1, 'claude', '<synthetic>', 0, 0), inputTokens: 0, cacheWriteTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheSavingsUsd: 0 },
+      ],
+      [{ provider: 'claude', cells: [[day(1), 'claude-opus-5-5'], [day(1), '<synthetic>']] }],
+      TODAY,
+    );
+    seed(withSynthetic);
+    const { host, root } = mount();
+    const options = [...(control(host, 'Modelo') as HTMLSelectElement).options].map((o) => o.textContent);
+    expect(options).toEqual(['Todos', 'claude-opus-5-5']);
+    expect(read(host).rows.map((cells) => cells[0])).toEqual(['claude-opus-5-5']);
+    act(() => root.unmount());
   });
 });
 

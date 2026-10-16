@@ -128,4 +128,44 @@ describe('useUsageStore', () => {
     await reading;
     expect(useUsageStore.getState().snapshot).toEqual(EMPTY_USAGE_SNAPSHOT);
   });
+
+  it('mantém o mesmo objeto de rollup quando o main reenvia o mesmo conteúdo', () => {
+    const rollup = () => ({
+      today: '2026-10-15',
+      rows: [
+        {
+          day: '2026-10-15',
+          provider: 'claude',
+          model: 'opus',
+          costUsd: 1,
+          inputTokens: 1,
+          cachedInputTokens: 1,
+          cacheWriteTokens: 0,
+          outputTokens: 1,
+          cacheSavingsUsd: 0,
+          turns: 1,
+        },
+      ],
+      sessions: [{ provider: 'claude', cells: [['2026-10-15', 'opus']] as [string, string][] }],
+    });
+    useUsageStore.getState().receive({ ...EMPTY_USAGE_SNAPSHOT, analytics: rollup() });
+    const first = useUsageStore.getState().snapshot.analytics;
+    // Broadcast seguinte: o resto do snapshot muda, o rollup não (objeto novo, conteúdo igual).
+    useUsageStore.getState().receive({
+      ...EMPTY_USAGE_SNAPSHOT,
+      global: { costUsd: 9, inputTokens: 9, outputTokens: 9, turns: 9 },
+      analytics: rollup(),
+    });
+    expect(useUsageStore.getState().snapshot.global.turns).toBe(9);
+    expect(useUsageStore.getState().snapshot.analytics).toBe(first);
+    // Conteúdo diferente: objeto novo.
+    const changed = rollup();
+    changed.rows[0]!.costUsd = 2;
+    useUsageStore.getState().receive({ ...EMPTY_USAGE_SNAPSHOT, analytics: changed });
+    expect(useUsageStore.getState().snapshot.analytics).not.toBe(first);
+    expect(useUsageStore.getState().snapshot.analytics?.rows[0]?.costUsd).toBe(2);
+    // Sem rollup no novo snapshot: não inventa o de antes.
+    useUsageStore.getState().receive(EMPTY_USAGE_SNAPSHOT);
+    expect(useUsageStore.getState().snapshot.analytics).toBeUndefined();
+  });
 });

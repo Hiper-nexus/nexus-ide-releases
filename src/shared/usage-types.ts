@@ -230,6 +230,6 @@ export interface UsageDayStats {
   /** Média por dia COM uso (dia sem registro não dilui a média); 0 sem uso. */
   readonly averageCostUsd: number;
   readonly averageTokens: number;
-  /** Dia de maior valor da medida pedida; null sem uso. */
+  /** Dia de maior valor da medida pedida (sem valor nela, o de mais tokens); null sem uso. */
   readonly peak: UsageDayPoint | null;
 }

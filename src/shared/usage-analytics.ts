@@ -178,6 +178,12 @@ export function summarizeUsage(
     const uncached = finite(row.inputTokens) + finite(row.cacheWriteTokens);
     const output = finite(row.outputTokens);
     const total = cached + uncached + output;
+    // Evento sem consumo (mensagem sintética, erro de API): conta o turno, mas não
+    // vira ferramenta nem modelo na lista — "$0.00 · 0,0% · 0" não diz nada a ninguém.
+    if (cost === 0 && total === 0) {
+      turns += finite(row.turns);
+      continue;
+    }
     costUsd += cost;
     cachedInputTokens += cached;
     uncachedInputTokens += uncached;
@@ -275,7 +281,8 @@ export function summarizeUsage(
 /**
  * Total, pico e média de uma série diária. A média divide pelos dias COM uso:
  * dia sem registro (antes de o histórico começar, fim de semana parado) não
- * rebaixa o "quanto gastamos num dia de trabalho".
+ * rebaixa o "quanto gastamos num dia de trabalho". O pico é do dia de maior
+ * valor da medida pedida; sem valor nela (custo zero com tokens), o de mais tokens.
  */
 export function usageDayStats(days: readonly UsageDayPoint[], metric: UsageMetric): UsageDayStats {
   const valueOf = (day: UsageDayPoint) => (metric === 'cost' ? day.costUsd : day.totalTokens);
@@ -283,11 +290,15 @@ export function usageDayStats(days: readonly UsageDayPoint[], metric: UsageMetri
   let totalTokens = 0;
   let activeDays = 0;
   let peak: UsageDayPoint | null = null;
+  // Uso sem custo (plano grátis, preço desconhecido): o pico em dólar não existe,
+  // mas o dia de mais tokens segue sendo o dia a destacar.
+  let tokenPeak: UsageDayPoint | null = null;
   for (const day of days) {
     costUsd += day.costUsd;
     totalTokens += day.totalTokens;
     if (day.costUsd > 0 || day.totalTokens > 0) activeDays += 1;
     if (valueOf(day) > 0 && (peak === null || valueOf(day) > valueOf(peak))) peak = day;
+    if (day.totalTokens > 0 && (tokenPeak === null || day.totalTokens > tokenPeak.totalTokens)) tokenPeak = day;
   }
   return {
     dayCount: days.length,
@@ -296,6 +307,6 @@ export function usageDayStats(days: readonly UsageDayPoint[], metric: UsageMetri
     totalTokens,
     averageCostUsd: activeDays > 0 ? costUsd / activeDays : 0,
     averageTokens: activeDays > 0 ? totalTokens / activeDays : 0,
-    peak,
+    peak: peak ?? tokenPeak,
   };
 }

@@ -170,6 +170,24 @@ describe('summarizeUsage — presets', () => {
     ]);
   });
 
+  it('a row without consumption (synthetic message) never becomes a tool or a model, but its turns still count', () => {
+    const quiet = { costUsd: 0, inputTokens: 0, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 0, cacheSavingsUsd: 0 };
+    const data = buildUsageAnalytics(
+      [
+        row(today, 'claude', '<synthetic>', { ...quiet, turns: 4 }),
+        row(today, 'claude', 'claude-opus-5'),
+        row(today, 'grok', 'grok-build', { ...quiet, turns: 1 }),
+      ],
+      [],
+      today,
+    );
+    const summary = summarizeUsage(data, { from: today, to: today });
+    expect(summary.byModel.map((item) => item.model)).toEqual(['claude-opus-5']);
+    expect(summary.byProvider.map((item) => item.provider)).toEqual(['claude']);
+    expect(summary.totals.turns).toBe(4 + 2 + 1);
+    expect(summary.totals.processedTokens).toBe(1_160);
+  });
+
   it('ignores non-finite and negative numbers instead of propagating NaN', () => {
     const dirty = buildUsageAnalytics(
       [row(today, 'claude', 'opus', { costUsd: Number.NaN, inputTokens: -5, outputTokens: Number.POSITIVE_INFINITY })],
@@ -398,6 +416,15 @@ describe('usageDayStats', () => {
     expect(cost.peak?.day).toBe('2026-10-12');
     // O pico depende da medida: o dia mais caro não é o de mais tokens.
     expect(usageDayStats(days, 'tokens').peak?.day).toBe('2026-10-14');
+  });
+
+  it('free usage (tokens without cost) still has a peak: the day with the most tokens', () => {
+    const free = [day('2026-10-10', 0, 500), day('2026-10-11', 0, 1_500), day('2026-10-12', 0, 0)];
+    expect(usageDayStats(free, 'cost').peak?.day).toBe('2026-10-11');
+    expect(usageDayStats(free, 'tokens').peak?.day).toBe('2026-10-11');
+    // Com custo de verdade, o pico em dólar segue sendo o dia mais caro.
+    const paid = [day('2026-10-10', 9, 100), day('2026-10-11', 1, 1_500)];
+    expect(usageDayStats(paid, 'cost').peak?.day).toBe('2026-10-10');
   });
 
   it('has no peak and a zero average when nothing was used', () => {

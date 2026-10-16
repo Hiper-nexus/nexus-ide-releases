@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode, type Ref } from 'react';
 import '../../styles/usage-overview.css';
 import {
   USAGE_ANALYTICS_MAX_DAYS,
@@ -117,6 +117,56 @@ function Segmented<T extends string | number>({
   );
 }
 
+/**
+ * Campo de data nativo com rascunho. O Chromium dispara `input` a cada dígito
+ * digitado (o 1º dígito do ano vira 0002-10-14), então o valor cru fica no
+ * campo e só uma data COMPLETA e dentro de [min, max] sobe para o painel; ao
+ * sair do campo, o que não valeu volta para o valor que está valendo.
+ */
+function DateField({
+  label,
+  value,
+  min,
+  max,
+  allowClear = false,
+  onCommit,
+  inputRef,
+}: {
+  label: string;
+  value: string;
+  min: string;
+  max: string;
+  /** Campo vazio é uma escolha ("sem dia fixado"), não um dígito que falta. */
+  allowClear?: boolean;
+  onCommit: (day: string) => void;
+  inputRef?: Ref<HTMLInputElement>;
+}) {
+  const [draft, setDraft] = useState(value);
+  // O painel mudou o valor por outro caminho (preset, gráfico, limpar): o campo acompanha.
+  useEffect(() => setDraft(value), [value]);
+  const valid = (day: string) => DAY_VALUE.test(day) && day >= min && day <= max;
+  return (
+    <label className="usage-filter">
+      <span className="usage-filter__label">{label}</span>
+      <input
+        ref={inputRef}
+        type="date"
+        className="settings-input usage-filter__control"
+        min={min}
+        max={max}
+        value={draft}
+        aria-invalid={draft !== '' && !valid(draft) ? true : undefined}
+        onChange={(event) => {
+          const next = event.target.value;
+          setDraft(next);
+          if (next === '' ? allowClear : valid(next)) onCommit(next);
+        }}
+        onBlur={() => setDraft(value)}
+      />
+    </label>
+  );
+}
+
 function UsageOverviewEmpty({ titleId }: { titleId: string }) {
   const workspacePath = useWorkspaceStore((state) => state.current?.path ?? null);
   const status = useUsageStore((state) => state.status);
@@ -159,7 +209,7 @@ function UsageOverviewEmpty({ titleId }: { titleId: string }) {
         body={
           <p>
             {workspacePath
-              ? 'O custo é lido das sessões registradas neste projeto. Se o Nexus acabou de abrir, a primeira leitura chega em instantes.'
+              ? 'O custo é lido das sessões registradas neste projeto. Se o Nexus acabou de abrir, a primeira leitura chega em instantes; se não chegar, leia de novo.'
               : 'O custo por ferramenta é lido das sessões registradas em cada projeto.'}
           </p>
         }
@@ -220,6 +270,7 @@ function UsageOverviewPanel({ analytics, titleId }: { analytics: UsageAnalytics;
   const [provider, setProvider] = useState<string | null>(null);
   const [model, setModel] = useState<string | null>(null);
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  const dayFieldRef = useRef<HTMLInputElement>(null);
 
   const earliestDay = usageWindowStartDay(today, USAGE_ANALYTICS_MAX_DAYS);
   const range = useMemo(
@@ -242,6 +293,13 @@ function UsageOverviewPanel({ analytics, titleId }: { analytics: UsageAnalytics;
       : null;
   const activeDay = day !== null && day >= range.from && day <= range.to ? day : null;
   const filtered = activeDay !== null || activeProvider !== null || activeModel !== null;
+  // O que ficou sem dado no período novo não só some da tela: sai do estado, senão
+  // voltaria sozinho ao revisitar o período antigo, sem "Limpar filtros" para soltá-lo.
+  useEffect(() => {
+    if (provider !== activeProvider) setProvider(null);
+    if (model !== activeModel) setModel(null);
+    if (day !== activeDay) setDay(null);
+  }, [provider, activeProvider, model, activeModel, day, activeDay]);
 
   // Slots pelo conjunto dos 90 dias: trocar período ou filtro não repinta ninguém.
   const slots = useMemo(
@@ -292,19 +350,15 @@ function UsageOverviewPanel({ analytics, titleId }: { analytics: UsageAnalytics;
         : { kind: 'preset', days: key },
     );
   };
-  // Mexer numa ponta do intervalo empurra a outra: "de" nunca passa de "até".
-  const setCustomFrom = (value: string) => {
-    if (!DAY_VALUE.test(value)) return;
-    setPeriod({ kind: 'custom', ...clampUsageRange(today, value, value > range.to ? value : range.to) });
-  };
-  const setCustomTo = (value: string) => {
-    if (!DAY_VALUE.test(value)) return;
-    setPeriod({ kind: 'custom', ...clampUsageRange(today, value < range.from ? value : range.from, value) });
-  };
+  // De e Até se limitam entre si por min/max: "de" nunca passa de "até".
+  const setCustomFrom = (value: string) => setPeriod({ kind: 'custom', from: value, to: range.to });
+  const setCustomTo = (value: string) => setPeriod({ kind: 'custom', from: range.from, to: value });
   const clearFilters = () => {
     setDay(null);
     setProvider(null);
     setModel(null);
+    // O botão some junto com o último filtro: o foco vai para o campo mais perto, não para o body.
+    dayFieldRef.current?.focus();
   };
 
   const header = (
@@ -316,7 +370,8 @@ function UsageOverviewPanel({ analytics, titleId }: { analytics: UsageAnalytics;
         <p className="usage-overview__hint">
           Estimativa em preço de API pública, lida das sessões deste projeto (Claude Code, Codex e
           MiMo Code registram tokens; as outras ferramentas ainda não entram na conta). Não é
-          fatura: a assinatura cobre o uso dentro do plano. Atualiza a cada minuto.
+          fatura: a assinatura cobre o uso dentro do plano. Atualiza com o uso, no máximo uma vez
+          por minuto.
         </p>
       </div>
       <div className="usage-overview__controls">
@@ -329,60 +384,10 @@ function UsageOverviewPanel({ analytics, titleId }: { analytics: UsageAnalytics;
   const rangeFields =
     period.kind === 'custom' ? (
       <div className="usage-filters" role="group" aria-label="Intervalo de datas">
-        <label className="usage-filter">
-          <span className="usage-filter__label">De</span>
-          <input
-            type="date"
-            className="settings-input usage-filter__control"
-            min={earliestDay}
-            max={today}
-            value={range.from}
-            onChange={(event) => setCustomFrom(event.target.value)}
-          />
-        </label>
-        <label className="usage-filter">
-          <span className="usage-filter__label">Até</span>
-          <input
-            type="date"
-            className="settings-input usage-filter__control"
-            min={earliestDay}
-            max={today}
-            value={range.to}
-            onChange={(event) => setCustomTo(event.target.value)}
-          />
-        </label>
+        <DateField label="De" value={range.from} min={earliestDay} max={range.to} onCommit={setCustomFrom} />
+        <DateField label="Até" value={range.to} min={range.from} max={today} onCommit={setCustomTo} />
       </div>
     ) : null;
-
-  if (scopeEmpty) {
-    return (
-      <section className="usage-overview" aria-labelledby={titleId}>
-        {header}
-        {rangeFields}
-        <EmptyState
-          icon="bolt"
-          className="usage-overview__empty"
-          title={
-            period.kind === 'preset'
-              ? `Sem consumo nos últimos ${period.days} dias neste projeto`
-              : `Sem consumo de ${formatRangeLabel(range.from, range.to)} neste projeto`
-          }
-          body={<p>Cada turno das IAs entra no dia em que aconteceu e aparece aqui com o custo estimado.</p>}
-          action={
-            periodKey !== 90 ? (
-              <button type="button" className="settings-btn" onClick={() => selectPeriod(90)}>
-                Ver 90 dias
-              </button>
-            ) : (
-              <button type="button" className="settings-btn" onClick={() => openSettings('providers')}>
-                Ver conexões de IA
-              </button>
-            )
-          }
-        />
-      </section>
-    );
-  }
 
   // Modelos do período; sem ferramenta escolhida e com mais de uma, agrupados por ela.
   const modelGroups = (
@@ -410,54 +415,22 @@ function UsageOverviewPanel({ analytics, titleId }: { analytics: UsageAnalytics;
       ? [heroTexts.secondary, sessionsText, `estimativa de API ${periodPhrase}`]
       : [`${heroTexts.secondary} em API (estimativa)`, sessionsText, periodText];
 
-  const rangeTotal = metric === 'cost' ? chart.totals.costUsd : chart.totals.processedTokens;
-  const dayRows = chart.days.filter((point) => point.costUsd > 0 || point.totalTokens > 0);
-  const breakdownRows =
-    breakdown === 'model'
-      ? byMetric(view.byModel).map((row) => ({
-          key: `${row.provider}/${row.model}`,
-          provider: row.provider,
-          day: null as string | null,
-          label: row.model,
-          costUsd: row.costUsd,
-          share: metric === 'cost' ? row.costShare : row.tokenShare,
-          totalTokens: row.totalTokens,
-        }))
-      : [...dayRows].reverse().map((point) => ({
-          key: point.day,
-          provider: null,
-          day: point.day as string | null,
-          label: dayLongLabel(point.day),
-          costUsd: point.costUsd,
-          share: rangeTotal > 0 ? (metric === 'cost' ? point.costUsd : point.totalTokens) / rangeTotal : 0,
-          totalTokens: point.totalTokens,
-        }));
-  const tableKey = [breakdown, range.from, range.to, activeDay, activeProvider, activeModel, metric].join('|');
-  const showAll = expandedKey === tableKey;
-  const visibleRows = showAll ? breakdownRows : breakdownRows.slice(0, BREAKDOWN_PREVIEW);
-  const shareHeader = metric === 'cost' ? '% do custo' : '% dos tokens';
-
-  return (
-    <section className="usage-overview" aria-labelledby={titleId}>
-      {header}
-      <div className="usage-overview__filters">
-        {rangeFields}
+  // Mesma estrutura nos dois ramos (cabeçalho + faixa de filtros): o React mantém os
+  // campos De/Até montados, e o foco não se perde quando o intervalo fica sem consumo.
+  const filtersBar = (
+    <div className="usage-overview__filters">
+      {rangeFields}
+      {scopeEmpty ? null : (
         <div className="usage-filters" role="group" aria-label="Filtros do painel">
-          <label className="usage-filter">
-            <span className="usage-filter__label">Dia</span>
-            <input
-              type="date"
-              className="settings-input usage-filter__control"
-              min={range.from}
-              max={range.to}
-              value={activeDay ?? ''}
-              onChange={(event) => {
-                const value = event.target.value;
-                if (value === '') setDay(null);
-                else if (DAY_VALUE.test(value)) setDay(value < range.from ? range.from : value > range.to ? range.to : value);
-              }}
-            />
-          </label>
+          <DateField
+            label="Dia"
+            value={activeDay ?? ''}
+            min={range.from}
+            max={range.to}
+            allowClear
+            inputRef={dayFieldRef}
+            onCommit={(next) => setDay(next === '' ? null : next)}
+          />
           <label className="usage-filter">
             <span className="usage-filter__label">Ferramenta</span>
             <select
@@ -510,7 +483,71 @@ function UsageOverviewPanel({ analytics, titleId }: { analytics: UsageAnalytics;
             </button>
           ) : null}
         </div>
-      </div>
+      )}
+    </div>
+  );
+
+  const rangeTotal = metric === 'cost' ? chart.totals.costUsd : chart.totals.processedTokens;
+  const dayRows = chart.days.filter((point) => point.costUsd > 0 || point.totalTokens > 0);
+  const breakdownRows =
+    breakdown === 'model'
+      ? byMetric(view.byModel).map((row) => ({
+          key: `${row.provider}/${row.model}`,
+          provider: row.provider,
+          day: null as string | null,
+          label: row.model,
+          costUsd: row.costUsd,
+          share: metric === 'cost' ? row.costShare : row.tokenShare,
+          totalTokens: row.totalTokens,
+        }))
+      : [...dayRows].reverse().map((point) => ({
+          key: point.day,
+          provider: null,
+          day: point.day as string | null,
+          label: dayLongLabel(point.day),
+          costUsd: point.costUsd,
+          share: rangeTotal > 0 ? (metric === 'cost' ? point.costUsd : point.totalTokens) / rangeTotal : 0,
+          totalTokens: point.totalTokens,
+        }));
+  const tableKey = [breakdown, range.from, range.to, activeDay, activeProvider, activeModel, metric].join('|');
+  const showAll = expandedKey === tableKey;
+  const visibleRows = showAll ? breakdownRows : breakdownRows.slice(0, BREAKDOWN_PREVIEW);
+  const shareHeader = metric === 'cost' ? '% do custo' : '% dos tokens';
+
+  if (scopeEmpty) {
+    return (
+      <section className="usage-overview" aria-labelledby={titleId}>
+        {header}
+        {filtersBar}
+        <EmptyState
+          icon="bolt"
+          className="usage-overview__empty"
+          title={
+            period.kind === 'preset'
+              ? `Sem consumo nos últimos ${period.days} dias neste projeto`
+              : `Sem consumo de ${formatRangeLabel(range.from, range.to)} neste projeto`
+          }
+          body={<p>Cada turno das IAs entra no dia em que aconteceu e aparece aqui com o custo estimado.</p>}
+          action={
+            periodKey !== 90 ? (
+              <button type="button" className="settings-btn" onClick={() => selectPeriod(90)}>
+                Ver 90 dias
+              </button>
+            ) : (
+              <button type="button" className="settings-btn" onClick={() => openSettings('providers')}>
+                Ver conexões de IA
+              </button>
+            )
+          }
+        />
+      </section>
+    );
+  }
+
+  return (
+    <section className="usage-overview" aria-labelledby={titleId}>
+      {header}
+      {filtersBar}
       <div className="usage-overview__top">
         <div className="usage-overview__summary">
           {viewEmpty ? (
@@ -541,7 +578,10 @@ function UsageOverviewPanel({ analytics, titleId }: { analytics: UsageAnalytics;
                 </p>
                 <p className="usage-overview__hero-sub">{heroSub.filter(Boolean).join(' · ')}</p>
               </div>
-              <ul className="usage-overview__providers" aria-label="Custo por ferramenta">
+              <ul
+                className="usage-overview__providers"
+                aria-label={metric === 'cost' ? 'Custo por ferramenta' : 'Tokens por ferramenta'}
+              >
                 {byMetric(view.byProvider).map((row) => {
                   const label = usageProviderLabel(row.provider);
                   const other = usageMeasureTexts(metric, row.costUsd, row.totalTokens).secondary;

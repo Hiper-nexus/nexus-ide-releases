@@ -695,7 +695,10 @@ export class ScopedUsageStore {
     const untilMs = dayStartMs(shiftDayKey(today, 1));
     const db = this.#binding.readDatabase();
     // Dia local pelo SQLite (`localtime`, o fuso do processo, com horário de
-    // verão): o mesmo relógio de `localDayKey`, que corta as janelas.
+    // verão): o mesmo relógio de `localDayKey`, que corta as janelas, enquanto o
+    // tzdata do SO e a ICU do runtime concordarem. Limitação conhecida: em fuso com
+    // regra recente que os dois conhecem diferente (ex.: Africa/Casablanca em 2026),
+    // o evento da 1ª hora do dia cai no dia anterior no SQLite.
     const rollup = prepareCached(
       db,
       `${TOTALS_SELECT.replace(
