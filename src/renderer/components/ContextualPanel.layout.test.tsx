@@ -149,6 +149,40 @@ describe('ContextualPanel inside the AppShell inspector slot', () => {
     expect(computedCssValue(main as HTMLElement, 'min-width')).toBe('0px');
   });
 
+  it('scrolls the top tab strip sideways and keeps the × outside it', () => {
+    const host = renderShell(300);
+    const strip = el(host, '.ctx-panel__tablist');
+    expect(computedCssValue(strip, 'overflow-x')).toBe('auto');
+    expect(strip.contains(el(host, '.ctx-panel__hide'))).toBe(false);
+    for (const tab of Array.from(strip.querySelectorAll('button'))) {
+      expect(computedCssValue(tab, 'flex')).toBe('0 0 auto');
+      expect(computedCssValue(tab, 'white-space')).toBe('nowrap');
+    }
+  });
+
+  it('never narrows the inspector below 300px', () => {
+    const host = renderShell(200);
+    expect(el(host, '[data-testid="contextual-panel"]').style.width).toBe('300px');
+  });
+
+  it('turns the mouse wheel into horizontal scroll on both tab strips', () => {
+    const host = renderShell(300);
+    for (const selector of ['.ctx-panel__tablist', '.git-scm__tabs']) {
+      const strip = el(host, selector);
+      Object.defineProperty(strip, 'scrollWidth', { configurable: true, value: 600 });
+      Object.defineProperty(strip, 'clientWidth', { configurable: true, value: 200 });
+      strip.scrollLeft = 0;
+      const wheel = new WheelEvent('wheel', { deltaY: 80, bubbles: true, cancelable: true });
+      strip.dispatchEvent(wheel);
+      expect(strip.scrollLeft).toBe(80);
+      expect(wheel.defaultPrevented).toBe(true);
+      const sideways = new WheelEvent('wheel', { deltaX: 30, deltaY: 5, bubbles: true, cancelable: true });
+      strip.dispatchEvent(sideways);
+      expect(strip.scrollLeft).toBe(80);
+      expect(sideways.defaultPrevented).toBe(false);
+    }
+  });
+
   it('reveals the active tab by scrolling only the tab strip, not the layout', () => {
     const scrollIntoView = vi.fn();
     Object.defineProperty(Element.prototype, 'scrollIntoView', {

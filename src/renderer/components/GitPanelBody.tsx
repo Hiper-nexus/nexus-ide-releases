@@ -10,6 +10,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type Dispatch,
   type SetStateAction,
@@ -38,6 +39,7 @@ import { useWorkspaceStore } from '../state/workspace-store';
 import { CoffeeCup } from '../pet/CoffeeCup';
 import { gitErrorCopy } from '../lib/git-error-copy';
 import { setVisibleInterval } from '../lib/visible-interval';
+import { useWheelXScroll } from '../lib/use-wheel-x-scroll';
 import { DiffFileTree } from './diffs/DiffFileTree';
 import { PixelIcon } from './PixelIcon';
 import type { DiffCommentAnchor, DiffCommentTarget } from './diffs/AnnotatableCodeView';
@@ -595,6 +597,8 @@ function IssueCard({ issue }: { issue: ExternalIssue }) {
 }
 
 export function GitPanelBody() {
+  const tabsRef = useRef<HTMLDivElement>(null);
+  useWheelXScroll(tabsRef);
   const workspacePath = useWorkspaceStore((s) => s.current?.path);
   const tab = useGitScmStore((s) => s.tab);
   const branch = useGitScmStore((s) => s.branch);
@@ -863,7 +867,7 @@ export function GitPanelBody() {
       )}
 
 
-      <div className="git-scm__tabs" role="tablist" aria-label="Git">
+      <div ref={tabsRef} className="git-scm__tabs" role="tablist" aria-label="Git">
         <button
           type="button"
           role="tab"

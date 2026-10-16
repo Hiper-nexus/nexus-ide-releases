@@ -24,9 +24,13 @@ import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import { usePanelExiting } from '../lib/panel-presence';
 import { useContextualPanelNavStore } from '../state/contextual-panel-nav-store';
 import { useRailWidthStore } from '../state/rail-width-store';
+import { useWheelXScroll } from '../lib/use-wheel-x-scroll';
 import { PixelIcon } from './PixelIcon';
 
-const MIN_PANEL_WIDTH = 200;
+/** Abaixo disso as 8 abas do topo e as sub-abas do Git ficam mutiladas. */
+const MIN_PANEL_WIDTH = 300;
+/** Gaveta compacta (janela estreita) pode ser menor que o mínimo da coluna. */
+const MIN_DRAWER_WIDTH = 200;
 const MAX_PANEL_WIDTH = 900;
 const MIN_STAGE_WIDTH = 320;
 const COMPACT_PANEL_BREAKPOINT = 900;
@@ -38,7 +42,7 @@ function clampPanelWidth(
   widthPx: number,
   maximum = MAX_PANEL_WIDTH,
 ): number {
-  return Math.min(maximum, Math.max(MIN_PANEL_WIDTH, widthPx));
+  return Math.min(maximum, Math.max(Math.min(MIN_PANEL_WIDTH, maximum), widthPx));
 }
 
 export type ContextualPanelFocusTarget = 'show-control' | 'active-tab';
@@ -159,6 +163,8 @@ export function ContextualPanel({
   const handledRequestId = useRef(0);
   const showButtonRef = useRef<HTMLButtonElement>(null);
   const tabRefs = useRef(new Map<ContextualTab, HTMLButtonElement>());
+  const tablistRef = useRef<HTMLDivElement>(null);
+  useWheelXScroll(tablistRef);
   const generatedId = useId().replaceAll(':', '');
   const panelDomId = `ctx-panel-${generatedId}`;
   const panelBodyId = `${panelDomId}-body`;
@@ -167,7 +173,7 @@ export function ContextualPanel({
   // rail real (ajustável) para o palco nunca ficar abaixo do mínimo.
   const railWidth = useRailWidthStore((rail) => rail.width);
   const responsiveMaximum = compactPresentation
-    ? Math.min(MAX_PANEL_WIDTH, Math.max(MIN_PANEL_WIDTH, viewportWidth - 16))
+    ? Math.min(MAX_PANEL_WIDTH, Math.max(MIN_DRAWER_WIDTH, viewportWidth - 16))
     : Math.min(
         MAX_PANEL_WIDTH,
         Math.max(
@@ -416,6 +422,7 @@ export function ContextualPanel({
     >
       <div className="ctx-panel__tabs">
         <div
+          ref={tablistRef}
           className="ctx-panel__tablist"
           role="tablist"
           aria-label="Abas do painel"
@@ -477,7 +484,7 @@ export function ContextualPanel({
         aria-orientation="vertical"
         aria-label="Redimensionar painel de contexto"
         aria-controls={panelBodyId}
-        aria-valuemin={MIN_PANEL_WIDTH}
+        aria-valuemin={Math.min(MIN_PANEL_WIDTH, responsiveMaximum)}
         aria-valuemax={responsiveMaximum}
         aria-valuenow={renderedWidth}
         aria-valuetext={`${renderedWidth} pixels`}

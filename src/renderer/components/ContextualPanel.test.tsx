@@ -182,7 +182,7 @@ describe("ContextualPanel renderer navigation", () => {
     const panel = host.querySelector<HTMLElement>('[data-testid="contextual-panel"]');
     const splitter = host.querySelector<HTMLElement>('[role="separator"]');
     expect(splitter?.tabIndex).toBe(0);
-    expect(splitter?.getAttribute("aria-valuemin")).toBe("200");
+    expect(splitter?.getAttribute("aria-valuemin")).toBe("300");
     expect(splitter?.getAttribute("aria-valuemax")).toBe("900");
     expect(splitter?.getAttribute("aria-valuenow")).toBe("360");
 
@@ -202,7 +202,7 @@ describe("ContextualPanel renderer navigation", () => {
         new KeyboardEvent("keydown", { key: "Home", bubbles: true }),
       );
     });
-    expect(panel?.style.width).toBe("200px");
+    expect(panel?.style.width).toBe("300px");
 
     act(() => {
       splitter?.dispatchEvent(
