@@ -11,7 +11,7 @@ import { contrastRatio } from '../src/renderer/styles/palette-gen';
 async function main() {
   const repo = process.cwd();
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-git-contrast-'));
-  const evidence = path.join(repo, 'docs/qa/evidence/F-1546');
+  const evidence = path.join(repo, 'docs/qa/evidence/F-1555');
   const suffix = process.argv.includes('--before') ? 'before' : 'after';
   fs.mkdirSync(evidence, { recursive: true });
   await build({

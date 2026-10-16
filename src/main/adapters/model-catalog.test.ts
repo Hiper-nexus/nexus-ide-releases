@@ -292,6 +292,20 @@ describe('published catalog JSON', () => {
     );
   });
 
+  it('ships gpt-daybreak-blue-latest from the Codex 0.163.0 cache (2026-10-16)', () => {
+    for (const catalog of [BUILTIN_MODEL_CATALOG, PUBLISHED_MODEL_CATALOG]) {
+      expect(modelCatalogInfo(catalog, 'codex', 'gpt-daybreak-blue-latest')).toMatchObject({
+        id: 'gpt-daybreak-blue-latest',
+        availability: 'paid',
+        costTier: 'high',
+      });
+    }
+    expect(PUBLISHED_MODEL_CATALOG.updatedAt?.startsWith('2026-10-16')).toBe(true);
+    expect(isModelBlockedForAutoRouting(
+      modelCatalogInfo(BUILTIN_MODEL_CATALOG, 'codex', 'gpt-daybreak-blue-latest'),
+    )).toBe(false);
+  });
+
   it('keeps the AGY published default on the newest pro generation (3.8 high)', () => {
     const agy = PUBLISHED_MODEL_CATALOG.adapters?.agy;
     const ids = agy?.models?.map((model) => model.id) ?? [];
@@ -304,23 +318,21 @@ describe('published catalog JSON', () => {
         'gemini-3.8-flash-high',
         'gemini-3.8-flash-medium',
         'gemini-3.8-flash-low',
-        'gemini-3.7-flash-high',
-        'gemini-3.7-flash-medium',
-        'gemini-3.7-flash-low',
-        'gemini-3.6-flash-high',
-        'gemini-3.6-flash-medium',
-        'gemini-3.6-flash-low',
+        'gemini-4-argon-high',
+        'gemini-4-argon-medium',
+        'gemini-4-argon-low',
       ]),
     );
+    expect(ids.some((id) => /^gemini-3\.[67]-flash-/.test(id))).toBe(false);
     expect(
-      modelCatalogInfo(PUBLISHED_MODEL_CATALOG, 'agy', 'gemini-3.7-flash-high'),
+      modelCatalogInfo(PUBLISHED_MODEL_CATALOG, 'agy', 'gemini-3.8-flash-low'),
     ).toMatchObject({
-      id: 'gemini-3.7-flash-high',
+      id: 'gemini-3.8-flash-low',
       availability: 'cheap',
       costTier: 'low',
     });
     expect(
-      modelCatalogInfo(PUBLISHED_MODEL_CATALOG, 'agy', 'gemini-3.7-flash-high')
+      modelCatalogInfo(PUBLISHED_MODEL_CATALOG, 'agy', 'gemini-3.8-flash-low')
         ?.quality,
     ).toBeUndefined();
     expect(BUILTIN_MODEL_CATALOG.adapters?.agy?.default).toBe(

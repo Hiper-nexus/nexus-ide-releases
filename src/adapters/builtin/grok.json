@@ -49,7 +49,6 @@
       "grok-4.7",
       "grok-4.7-build-fast",
       "grok-4.6",
-      "grok-composer-2.5-fast",
       "grok-4.5"
     ],
     "default": "grok-4.7"

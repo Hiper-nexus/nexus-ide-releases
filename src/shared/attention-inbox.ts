@@ -4,7 +4,8 @@ export type AttentionKind =
   | 'enter'
   | 'pr-queue'
   | 'mission-stuck'
-  | 'cli-login';
+  | 'cli-login'
+  | 'provider-key';
 
 export type AttentionItem = {
   id: string;
@@ -18,6 +19,7 @@ export type AttentionItem = {
 };
 
 export function attentionKindBadge(kind: AttentionKind): string {
+  if (kind === 'provider-key') return 'Chave API';
   if (kind === 'cli-login') return 'Login';
   if (kind === 'enter') return 'Enter';
   if (kind === 'mission-stuck') return 'Missão';
@@ -56,6 +58,8 @@ export type AttentionInboxInput = {
     enabled: boolean;
     installed: boolean;
     authStrategy: string;
+    authMethod?: string;
+    loginCommand?: string;
     authState?: 'ok' | 'missing' | 'unknown';
   }>;
 };
@@ -114,13 +118,18 @@ export function collectAttentionItems(
     ) {
       continue;
     }
+    const needsApiKey = provider.authMethod === 'api_key' && !provider.loginCommand?.trim();
     items.push({
       id: `cli:${provider.adapterId}`,
-      kind: 'cli-login',
+      kind: needsApiKey ? 'provider-key' : 'cli-login',
       title: provider.label,
-      detail: `${provider.label} precisa do seu login. Sem isso os agentes desta CLI não sobem.`,
+      detail: needsApiKey
+        ? `${provider.label} precisa de uma chave de API própria para abrir agentes por este provider.`
+        : `${provider.label} precisa do seu login. Sem isso os agentes desta CLI não sobem.`,
       targetId: provider.adapterId,
-      actionLabel: `Entrar no ${provider.label}`,
+      actionLabel: needsApiKey
+        ? `Configurar chave de ${provider.label}`
+        : `Entrar no ${provider.label}`,
     });
   }
   return items;

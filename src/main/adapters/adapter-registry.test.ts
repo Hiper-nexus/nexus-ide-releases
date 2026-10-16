@@ -310,11 +310,11 @@ describe('builtin adapters', () => {
     const models = agy?.models?.list ?? [];
 
     expect(agy?.models?.default).toBe('gemini-3.8-flash-high');
-    // F-990: a lista bundled (fallback até a CLI responder) é o que o
-    // `agy models` do AGY 1.3.1 imprime — sem Argon, sem Claude 4-6 — menos
-    // o que o operador tirou da oferta (3.1 Pro, 2026-09-27): esses ids
-    // migram em RETIRED_MODEL_MIGRATIONS e não podem ser oferecidos.
-    const fixture = fs.readFileSync(path.join(__dirname, '__fixtures__', 'agy-models-1.3.1.stdout.txt'), 'utf8');
+    // A lista bundled (fallback até a CLI responder) é o que o `agy models`
+    // do AGY 1.4.0 imprime (16/10/2026): Argon só com sufixo de esforço e
+    // 3.8 Flash. 3.7/3.6 saíram. O id sem sufixo `gemini-4-argon` e o 3.1 Pro
+    // continuam fora (F-990 / RETIRED_MODEL_MIGRATIONS).
+    const fixture = fs.readFileSync(path.join(__dirname, '__fixtures__', 'agy-models-1.4.0.stdout.txt'), 'utf8');
     expect(models).toEqual(parseAgyModelsOutput(fixture).filter((id) => migrateModelId(id) === id));
     expect(models).not.toContain('gemini-3.1-pro-high');
     for (const ghost of ['gemini-4-argon', 'claude-opus-4-6-thinking', 'claude-sonnet-4-6']) {
@@ -498,8 +498,8 @@ describe('builtin adapters', () => {
     ]);
   });
 
-  it('declares Kimi Code native --yolo approval while preserving headless prompt mode', () => {
-    // Verified against kimi 1.50.0 --help: --yolo/--yes/--auto-approve.
+  it('declares Kimi Code native --auto (Never Ask) approval while preserving headless prompt mode', () => {
+    // Verified against current kimi --help: --yolo is only "Ask When Needed"; --auto is "Never Ask".
     expect(builtin('kimi')?.spawn?.headless).toEqual([
       'kimi',
       '--output-format',
@@ -508,7 +508,7 @@ describe('builtin adapters', () => {
       '{{PROMPT}}',
     ]);
     expect(builtin('kimi')?.spawn?.headless).not.toContain('--auto');
-    expect(builtin('kimi')?.control?.permission?.yolo).toEqual(['--yolo']);
+    expect(builtin('kimi')?.control?.permission?.yolo).toEqual(['--auto']);
   });
 
   it('separates declared MCP routes from operational orchestration evidence', () => {
@@ -839,13 +839,15 @@ describe('mergeAdapters', () => {
   });
 
   it('repairs legacy Kimi plugins and starts them in native automatic mode', () => {
-    const kimi = {
-      ...MINIMAL_CLI_PTY, id: 'kimi', bin: 'kimi',
-      control: { permission: { modes: {}, default: '', yolo: ['--auto'] } },
-    } as Adapter;
-    const loaded = mergeAdapters([], [kimi]).get('kimi');
-    expect(loaded?.kind === 'cli-pty' && buildControlArgs(loaded, {}))
-      .toEqual(['--yolo']);
+    for (const yolo of [['--yolo'], ['-y'], []]) {
+      const kimi = {
+        ...MINIMAL_CLI_PTY, id: 'kimi', bin: 'kimi',
+        control: { permission: { modes: {}, default: '', yolo } },
+      } as Adapter;
+      const loaded = mergeAdapters([], [kimi]).get('kimi');
+      expect(loaded?.kind === 'cli-pty' && buildControlArgs(loaded, {}))
+        .toEqual(['--auto']);
+    }
   });
 
   it('preserves explicit plugin approval sequences', () => {

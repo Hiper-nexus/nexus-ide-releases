@@ -14,6 +14,28 @@ const nativeResult = { model: 'jev-1.13.0', answers: { q: { type: 'noul' as cons
 const connection = { accountId: settings.cloudflareAccountId, token: 'synthetic-token', model: 'clef' as const };
 
 describe('common decision service', () => {
+  it.each(['auto', 'luna', 'together'] as const)('%s: ausência de rota publica zero antes da falha, sem duplicar o diário', async mode => {
+    vi.mocked(recordJevNoAnswer).mockClear();
+    const onUsage = vi.fn();
+    const onNoAnswer = vi.fn();
+    const nativeJudge = vi.fn(async () => nativeResult);
+    const fetcher = vi.fn(async () => Response.json({}));
+
+    const result = await judgeDecision({ ...input, onUsage, onNoAnswer }, {
+      nativeJudge, fetch: fetcher as typeof fetch, getSettings: () => ({ ...settings, mode }),
+      getAvailability: () => ({ jev: false, clef: false, luna: mode === 'together' }),
+      getQualityTable: () => null, getConfigurationKey: () => 'stable',
+    });
+
+    expect(result).toBeNull();
+    expect(nativeJudge).not.toHaveBeenCalled();
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(onUsage).toHaveBeenCalledExactlyOnceWith({ inputTokens: 0, usd: 0, requestCount: 0, durationMs: 0, usageIncomplete: false });
+    expect(onNoAnswer).toHaveBeenCalledExactlyOnceWith('client-error');
+    expect(onUsage.mock.invocationCallOrder[0]).toBeLessThan(onNoAnswer.mock.invocationCallOrder[0]);
+    expect(recordJevNoAnswer).toHaveBeenCalledTimes(mode === 'luna' ? 0 : 1);
+  });
+
   it('preserves the no-throw contract when configuration cannot be read', async () => {
     const onNoAnswer = vi.fn();
     const result = await judgeDecision({ ...input, onNoAnswer }, {
@@ -42,16 +64,20 @@ describe('common decision service', () => {
   });
   it('records a failure before any HTTP request as a measured zero, not an unknown count', async () => {
     const controller = new AbortController(); controller.abort();
-    await judgeDecision({ ...input, signal: controller.signal }, {
+    const onUsage = vi.fn();
+    await judgeDecision({ ...input, signal: controller.signal, onUsage }, {
       nativeJudge: async () => nativeResult, getSettings: () => settings,
       getAvailability: () => ({ jev: true, clef: true }), getConfigurationKey: () => 'stable',
     });
     expect(recordJevNoAnswer).toHaveBeenLastCalledWith(expect.objectContaining({ reason: 'aborted',
       usage: expect.objectContaining({ requestCount: 0, usageIncomplete: false }) }));
-    await judgeDecision(input, { nativeJudge: async () => nativeResult, getSettings: () => settings,
+    expect(onUsage).toHaveBeenCalledExactlyOnceWith({ inputTokens: 0, usd: 0, requestCount: 0, durationMs: 0, usageIncomplete: false });
+    onUsage.mockClear();
+    await judgeDecision({ ...input, onUsage }, { nativeJudge: async () => nativeResult, getSettings: () => settings,
       getAvailability: () => ({ jev: true, clef: true }), getConfigurationKey: () => 'stable', getClefConnection: () => undefined });
     expect(recordJevNoAnswer).toHaveBeenLastCalledWith(expect.objectContaining({ reason: 'client-error',
       usage: expect.objectContaining({ requestCount: 0 }) }));
+    expect(onUsage).toHaveBeenCalledExactlyOnceWith({ inputTokens: 0, usd: 0, requestCount: 0, durationMs: 0, usageIncomplete: false });
   });
   it('calls the selected Cloudflare endpoint and attaches the actual provider receipt', async () => {
     let endpoint = ''; let nativeCalls = 0;
@@ -95,8 +121,9 @@ describe('common decision service', () => {
     let revision = 'before'; let requests = 0;
     vi.mocked(recordJevNoAnswer).mockClear();
     const onNoAnswer = vi.fn();
+    const onUsage = vi.fn();
     const questions = Object.fromEntries(Array.from({ length: 65 }, (_, index) => [`q${index}`, input.questions.q]));
-    const result = await judgeDecision({ ...input, surface: 'intake', questions, onNoAnswer }, {
+    const result = await judgeDecision({ ...input, surface: 'intake', questions, onNoAnswer, onUsage }, {
       nativeJudge: async () => { throw new Error('Luna-only must not call the native transport'); },
       getSettings: () => ({ ...settings, mode: 'luna' }), getAvailability: () => ({ jev: false, clef: false, luna: true }),
       getConfigurationKey: () => revision, resolveLunaKey: () => 'synthetic-luna', now: () => 100,
@@ -113,6 +140,8 @@ describe('common decision service', () => {
     expect(recordJevNoAnswer).toHaveBeenCalledOnce();
     expect(recordJevNoAnswer).toHaveBeenCalledWith(expect.objectContaining({ reason: 'aborted',
       usage: { inputTokens: 1_000, usd: 0.0001, requestCount: 2, durationMs: 0, usageIncomplete: true } }));
+    expect(onUsage).toHaveBeenCalledExactlyOnceWith({ inputTokens: 1_000, usd: 0.0001, requestCount: 2, durationMs: 0, usageIncomplete: true });
+    expect(onUsage.mock.invocationCallOrder[0]).toBeLessThan(onNoAnswer.mock.invocationCallOrder[0]);
   });
 
   it('does not fall back to Jev after a Clef request is revoked', async () => {
@@ -150,14 +179,18 @@ describe('common decision service', () => {
 
   it('records a Luna refusal without turning it into a negative predicate or keeping the input', async () => {
     const onNoAnswer = vi.fn();
-    const result = await judgeDecision({ ...input, surface: 'intake', state: 'private brief', onNoAnswer }, {
+    const onUsage = vi.fn();
+    const result = await judgeDecision({ ...input, surface: 'intake', state: 'private brief', onNoAnswer, onUsage }, {
       nativeJudge: async () => nativeResult,
       getSettings: () => ({ ...settings, mode: 'luna' }), getAvailability: () => ({ jev: true, clef: true, luna: true }),
       getConfigurationKey: () => 'stable', resolveLunaKey: () => 'sk-luna-secret',
-      fetch: (async () => Response.json({ answers: [{ type: 'refusal', name: 'q0' }] })) as typeof fetch,
+      fetch: (async () => Response.json({ usage: { input_tokens: 1_000 }, answers: [{ type: 'refusal', name: 'q0' }] })) as typeof fetch,
     });
     expect(result).toBeNull();
     expect(onNoAnswer).toHaveBeenCalledWith('refusal');
+    expect(onUsage).toHaveBeenCalledOnce();
+    expect(onUsage).toHaveBeenCalledWith(expect.objectContaining({ requestCount: 1, inputTokens: 1_000, usd: 0.0001 }));
+    expect(onUsage.mock.invocationCallOrder[0]).toBeLessThan(onNoAnswer.mock.invocationCallOrder[0]);
     expect(recordJevNoAnswer).toHaveBeenLastCalledWith(expect.objectContaining({ reason: 'refusal', provider: 'luna' }));
     const recorded = vi.mocked(recordJevNoAnswer).mock.calls.at(-1)?.[0];
     expect(JSON.stringify(recorded)).not.toContain('private brief');
@@ -199,9 +232,11 @@ describe('common decision service', () => {
   it('records one ensemble failure, keeping the first reason', async () => {
     vi.mocked(recordJevNoAnswer).mockClear();
     const onNoAnswer = vi.fn();
-    const result = await judgeDecision({ ...input, surface: 'dispatchGuard', state: 'private brief', onNoAnswer, questions: { injected: input.questions.q } }, {
+    const onUsage = vi.fn();
+    const result = await judgeDecision({ ...input, surface: 'dispatchGuard', state: 'private brief', onNoAnswer, onUsage, questions: { injected: input.questions.q } }, {
       nativeJudge: async (watched) => {
         await new Promise(resolve => setTimeout(resolve, 20));
+        watched.onUsage?.({ inputTokens: null, usd: null, requestCount: 1, durationMs: 20, usageIncomplete: true });
         watched.onNoAnswer?.('timeout');
         return null;
       },
@@ -212,6 +247,9 @@ describe('common decision service', () => {
     expect(result).toBeNull();
     expect(onNoAnswer).toHaveBeenCalledTimes(1);
     expect(onNoAnswer).toHaveBeenCalledWith('refusal');
+    expect(onUsage).toHaveBeenCalledOnce();
+    expect(onUsage).toHaveBeenCalledWith(expect.objectContaining({ requestCount: 2, usageIncomplete: true }));
+    expect(onUsage.mock.invocationCallOrder[0]).toBeLessThan(onNoAnswer.mock.invocationCallOrder[0]);
     expect(recordJevNoAnswer).toHaveBeenCalledTimes(1);
     expect(recordJevNoAnswer).toHaveBeenCalledWith(expect.objectContaining({ reason: 'refusal' }));
     expect(JSON.stringify(vi.mocked(recordJevNoAnswer).mock.calls[0]?.[0])).not.toContain('private brief');

@@ -1695,6 +1695,11 @@ describe('LiveTransportController', () => {
     vi.doUnmock('../jarvis/realtime/factory');
   });
 
+  // Custo de partida a frio, não latência da feature: `vi.resetModules()` reimporta
+  // o grafo do controller E o catálogo MCP real é lido do disco em
+  // `dynamicImportSettled()`. Medido: 4,2–8,5s já com tudo quente, contra o
+  // testTimeout global de 15s — sob os workers paralelos do gate o estouro
+  // acusava este arquivo como regressão alheia ao diff. Asserções idênticas.
   it('bridges exact Gemini MCP declarations through the audited Jarvis executor path', async () => {
     vi.resetModules();
     const provider = fakeProvider(async () => {});
@@ -1765,7 +1770,7 @@ describe('LiveTransportController', () => {
     vi.doUnmock('./voice-secrets');
     vi.doUnmock('./jarvis-memory');
     vi.doUnmock('../jarvis/realtime/factory');
-  });
+  }, 30_000);
 
   it('marks realtime not ready and reconnects after a post-setup disconnect', async () => {
     vi.useFakeTimers();

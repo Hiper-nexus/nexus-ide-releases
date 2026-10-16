@@ -121,6 +121,17 @@ describe('live-transport-helpers', () => {
     expect(isIgnorableRealtimeError('OpenAI realtime socket closed')).toBe(false);
   });
 
+  it('ignores the empty commit that follows an already-closed VAD segment', () => {
+    expect(isIgnorableRealtimeError('input_audio_buffer_commit_empty')).toBe(true);
+    expect(
+      isIgnorableRealtimeError(
+        'Error committing input audio buffer: buffer too small. Expected at least 100ms of audio.',
+      ),
+    ).toBe(true);
+    // Sem a marca de buffer vazio, erro de verdade continua visível.
+    expect(isIgnorableRealtimeError('invalid session.update: unknown field')).toBe(false);
+  });
+
   it('trims complete user turns and never starts resume history with assistant', () => {
     const history = [
       { role: 'assistant' as const, text: 'orphan' },

@@ -12,6 +12,8 @@ vi.mock('../jev/jev-autopilot', () => ({ isJevSurfaceEnabled: vi.fn(() => true) 
 vi.mock('../decision-models/decision-availability', () => ({ hasDecisionCredential: vi.fn(() => true) }));
 
 import type { JevResult, JudgeInput } from '../jev/jev-client';
+import { judgeClef } from '../decision-models/clef-client';
+import { judgeLuna } from '../decision-models/luna-client';
 import { recordJevDecision } from '../jev/jev-decision-log';
 import {
   adviseCompletionCheck, adviseMissionKickoff, adviseRecovery, adviseReviewTriage, missionKickoffFacts,
@@ -63,6 +65,32 @@ const mission = (id: string, maxWorkers = 3) => ({
 });
 
 describe('missionKickoff (F-1166)', () => {
+  it.each(['clef', 'luna'] as const)('%s: missão de um worker recebe dica válida sem escolha impossível', async provider => {
+    const probabilities = { standard: 1, consult: 0, plan: 0, ops: 0 };
+    const scoreProbabilities = { '0': 0, '1': 0, '2': 1, '3': 0 };
+    const usage = { input_tokens: 100, output_tokens: 0 };
+    const fetcher = (async () => Response.json(provider === 'clef'
+      ? { success: true, result: { model: 'clef', usage, answers: {
+        q0: { type: 'score', score: 2, confidence: 1, probabilities: scoreProbabilities,
+          legend: { '0': 'trivial', '1': 'small', '2': 'medium', '3': 'large' } },
+        q1: { type: 'choice', choice: 'standard', confidence: 1, probabilities },
+      } } }
+      : { model: 'gpt-6-luna', usage, answers: [
+        { type: 'score', name: 'q0', score: 2, confidence: 1,
+          probabilities: [0, 1, 2, 3].map(value => ({ value, probability: value === 2 ? 1 : 0 })) },
+        { type: 'choice', name: 'q1', choice: 'standard', confidence: 1,
+          probabilities: Object.entries(probabilities).map(([value, probability]) => ({ value, probability })) },
+      ] })) as typeof fetch;
+    const judge = (input: JudgeInput) => provider === 'clef'
+      ? judgeClef(input, { accountId: '0123456789abcdef0123456789abcdef', token: 'synthetic-token', model: 'clef' }, { fetch: fetcher })
+      : judgeLuna(input, 'synthetic-token', { fetch: fetcher });
+
+    const hint = await adviseMissionKickoff(missionKickoffFacts(mission(`m-single-${provider}`, 1), 'pane'), { judge });
+
+    expect(hint).toMatchObject({ workers: 1, maxWorkers: 1, complexityLevel: 'medium', lane: 'standard' });
+    expect(getMissionDecisionHints(`m-single-${provider}`)?.kickoff).toEqual(hint);
+  });
+
   it('convencional: grava a dica com rota, custo e workers dentro de maxWorkers; passa o missionId', async () => {
     const judge = vi.fn(async (_input: JudgeInput) => result(kickoffAnswers('2')));
     const hint = await adviseMissionKickoff(missionKickoffFacts(mission('m-conv'), 'conventional'), { judge });

@@ -136,7 +136,7 @@ export async function judgeClef(input: JudgeInput, connection: ClefConnection, d
   let inputTokens = 0; let outputTokens = 0; let requestCount = 0; let measuredBatches = 0;
   try {
     input.signal?.throwIfAborted();
-    if (!inputIsValid(input, connection)) return notifyFailure(input, 'client-error');
+    if (!inputIsValid(input, connection)) throw new ClefFailure('client-error');
     const timeout = AbortSignal.timeout(input.timeoutMs ?? DEFAULT_TIMEOUT_MS);
     signal = input.signal ? AbortSignal.any([input.signal, timeout]) : timeout;
     const answers = new Map<string, JevAnswer>();
@@ -165,12 +165,12 @@ export async function judgeClef(input: JudgeInput, connection: ClefConnection, d
       usageIncomplete: measuredBatches !== requestCount };
     return { ...result, estimatedUsd: decisionResultCostUsd(result) };
   } catch (error) {
-    if (requestCount) {
-      try { input.onUsage?.({ inputTokens: measuredBatches ? inputTokens : null, requestCount, durationMs: now() - started,
-        usd: measuredBatches ? decisionResultCostUsd({ model: connection.model, answers: {}, usage: { input_tokens: inputTokens, output_tokens: outputTokens } }) : null,
-        usageIncomplete: requestCount > measuredBatches }); }
-      catch { console.warn('[decision-models] usage callback failed'); }
-    }
+    // Antes do primeiro envio o custo é zero medido, não gasto desconhecido.
+    const hasMeasurement = measuredBatches > 0 || requestCount === 0;
+    try { input.onUsage?.({ inputTokens: hasMeasurement ? inputTokens : null, requestCount, durationMs: now() - started,
+      usd: hasMeasurement ? decisionResultCostUsd({ model: connection.model, answers: {}, usage: { input_tokens: inputTokens, output_tokens: outputTokens } }) : null,
+      usageIncomplete: requestCount > measuredBatches }); }
+    catch { console.warn('[decision-models] usage callback failed'); }
     return notifyFailure(input, failureReason(error, input, signal));
   }
 }

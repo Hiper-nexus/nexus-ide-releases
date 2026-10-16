@@ -84,19 +84,20 @@ export function decisionQualityPrior(surface: string | undefined, model: Decisio
  * Sem ela, a medição global do modelo (só texto) é MISTURADA ao prior da
  * surface, ponderada pelo nº de casos (o prior pesa PRIOR_WEIGHT_CASES): poucos
  * casos de outras surfaces não decidem sozinhos esta. Imagem/áudio só usam
- * medição da surface. Acurácia medida 0 é suspeita (credencial, endpoint): ignorada.
+ * medição da surface. Zero acertos também é evidência; indisponibilidade é
+ * excluída antes de construir a célula por `isQualityObservation`.
  */
 export function decisionQuality(
   table: DecisionQualityTable | null, surface: string | undefined, model: DecisionModelKey, modality: QualityModality,
 ): DecisionQualityEstimate {
   const local = surface ? table?.surfaces[surface]?.[model] : undefined;
-  const surfaceCases = local && local.accuracy > 0 ? local.cases : 0;
-  if (local && local.cases >= MIN_QUALITY_CASES && local.accuracy > 0) {
+  const surfaceCases = local?.cases ?? 0;
+  if (local && local.cases >= MIN_QUALITY_CASES) {
     return { quality: local.accuracy, source: 'local-evaluation', p50Ms: local.p50Ms ?? null, surfaceCases };
   }
   const prior = decisionQualityPrior(surface, model, modality);
   const global = modality === 'text' ? table?.models[model] : undefined;
-  if (global && global.cases >= MIN_QUALITY_CASES && global.accuracy > 0) {
+  if (global && global.cases >= MIN_QUALITY_CASES) {
     const quality = (prior * PRIOR_WEIGHT_CASES + global.accuracy * global.cases) / (PRIOR_WEIGHT_CASES + global.cases);
     return { quality, source: 'blended', p50Ms: global.p50Ms ?? null, surfaceCases };
   }

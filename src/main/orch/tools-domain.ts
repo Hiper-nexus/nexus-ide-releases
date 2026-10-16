@@ -2661,11 +2661,10 @@ export async function routeTaskForCaller(
     ...(routing.confidence ? { confidence: routing.confidence } : {}),
     ...(ruleChoice ? { ruleChoice } : {}),
   };
-  // F-772 (G7a): a sugestão foi julgada antes da rota existir — agora que a
-  // CLI escolhida é conhecida, a dica só sai quando a sessão dela recebe
-  // SKILL.md (worker muse/minimax/aider não recebe e leria instrução morta).
+  // A rota precisa da superfície nativa só para skills bundled. Skills de
+  // projeto (F-1307) já têm SKILL.md no workspace, legível por qualquer CLI.
   const routedSkillSuggestion =
-    skillSuggestion && cliSupportsSkillSurface(decision.adapterId)
+    skillSuggestion && (skillSuggestion.path || cliSupportsSkillSurface(decision.adapterId))
       ? skillSuggestion
       : null;
   // F-233: sem nenhum modelo de ponta para julgar, o Maestro é avisado de

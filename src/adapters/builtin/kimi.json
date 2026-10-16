@@ -92,7 +92,7 @@
       "arg": "",
       "modes": {},
       "yolo": [
-        "--yolo"
+        "--auto"
       ],
       "default": ""
     }

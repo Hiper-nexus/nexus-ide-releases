@@ -41,13 +41,17 @@ export function recordCalibrationUsage(report: DecisionEvalReport, record: typeo
     const rows = report.observations.filter(row => row.requestedModel === model && row.status !== 'unsupported');
     if (!rows.length) continue;
     const answered = rows.filter(row => row.status === 'answered');
-    const unknownUsd = rows.some(row => row.usd === null);
+    const sumMeasured = (field: 'inputTokens' | 'usd'): number | null => {
+      const known = rows.flatMap(row => row[field] === null ? [] : [row[field]!]);
+      return known.length ? known.reduce((sum, value) => sum + value, 0) : null;
+    };
+    const requestsMeasured = rows.every(row => row.requestCount !== undefined);
     try {
       record({ surface: 'calibration', provider: providerOf(model), model: decisionEvalModelId(model),
         questions: [], probabilities: {}, decision: `calibration:${answered.length}/${rows.length}`,
-        inputTokens: rows.reduce((sum, row) => sum + (row.inputTokens ?? 0), 0),
-        usd: rows.reduce((sum, row) => sum + (row.usd ?? 0), 0),
-        requestCount: rows.length, usageIncomplete: unknownUsd,
+        inputTokens: sumMeasured('inputTokens'), usd: sumMeasured('usd'),
+        requestCount: requestsMeasured ? rows.reduce((sum, row) => sum + row.requestCount!, 0) : undefined,
+        usageIncomplete: !requestsMeasured || rows.some(row => row.usageIncomplete || row.usd === null || row.inputTokens === null),
         durationMs: rows.reduce((sum, row) => sum + (row.durationMs ?? 0), 0) });
     } catch { /* o diário nunca derruba a calibração */ }
   }

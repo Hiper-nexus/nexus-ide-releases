@@ -1,0 +1,36 @@
+{
+  "synthetic": true,
+  "realComponents": true,
+  "realCss": true,
+  "installedApp": false,
+  "probes": [
+    {
+      "stage": "before",
+      "text": "Fixture sintética · componentes e CSS reais do NexusIDE\nMuse Spark\n\nConexão e contas\n\nConexão e contas\n\nA sessão desta ferramenta foi verificada nesta máquina.\n\nconectado\nSessão nativa de Muse Spark\nEm uso\n\nSessão nativa de Muse Spark nesta máquina.\n\nAdicionar conta\nAdicionar chave de API\nAtenção\n1\n×\nMuse Spark (via Claude)\nLOGIN\n\nMuse Spark (via Claude) precisa do seu login. Sem isso os agentes desta CLI não sobem.\n\nEntrar",
+      "buttons": [
+        " Adicionar conta",
+        " Adicionar chave de API",
+        "×",
+        "Entrar"
+      ]
+    },
+    {
+      "stage": "after",
+      "text": "Fixture sintética · componentes e CSS reais do NexusIDE\nMuse Spark\n\nConexão e contas\n\nConexão e contas\n\nA sessão desta ferramenta foi verificada nesta máquina.\n\nconectado\nSessão nativa de Muse Spark\nEm uso\n\nSessão nativa de Muse Spark nesta máquina.\n\nA sessão continua na CLI desta máquina. O Nexus não consegue guardá-la como conta independente. Para salvar outras contas, adicione uma chave de API da Meta.\n\nAdicionar conta\nAdicionar chave de API\nAtenção\n1\n×\nMuse Spark (via Claude)\nCHAVE API\n\nMuse Spark (via Claude) precisa de uma chave de API própria para abrir agentes por este provider.\n\nConfigurar chave",
+      "buttons": [
+        " Adicionar conta",
+        " Adicionar chave de API",
+        "×",
+        "Configurar chave"
+      ]
+    },
+    {
+      "action": "configure-key",
+      "destination": {
+        "kind": "settings",
+        "section": "providers"
+      }
+    }
+  ],
+  "errors": []
+}

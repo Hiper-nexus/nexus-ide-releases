@@ -136,7 +136,8 @@ export function missionKickoffQuestions(maxWorkers: number): Record<string, JevQ
       plan: 'produce a plan or document before any code', ops: 'operate, deploy or run commands' } },
   };
   const cap = Math.min(Math.max(0, Math.floor(maxWorkers)), MAX_WORKER_CHOICES);
-  if (cap >= 1) {
+  // Zero/um worker já é determinado pelo teto; choice exige ao menos duas opções.
+  if (cap >= 2) {
     questions.workers = { type: 'choice', instructions:
       `How many parallel workers should the orchestrator open at first (at most ${cap})? More only when the pieces are independent.`,
     criteria: Object.fromEntries(Array.from({ length: cap }, (_, index) => [String(index + 1),
