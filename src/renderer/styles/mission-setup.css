@@ -600,6 +600,15 @@
   background: var(--surface-0);
 }
 
+.mission-attachment-picker__item--failed {
+  border-color: var(--danger, var(--border-strong));
+}
+
+.mission-attachment-picker__item--failed .mission-attachment-picker__kind,
+.mission-attachment-picker__item--failed small {
+  color: var(--danger, var(--text));
+}
+
 .mission-attachment-picker__file {
   display: grid;
   flex: 1;

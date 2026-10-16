@@ -47,6 +47,13 @@ import {
   terminalInUse,
 } from './lib/keybindings';
 import { overlayModeForCommand } from './lib/command-palette-logic';
+import {
+  beginPendingAttachment,
+  failPendingAttachment,
+  finishPendingAttachment,
+  rememberAttachment,
+  rememberAttachmentThumbnail,
+} from './state/mission-attachment-presentation';
 import { useWorkspaceController, useWorkspaceStore } from './state/workspace-store';
 import { useProviderController } from './state/provider-store';
 import { useAdapterController } from './state/adapter-store';
@@ -766,23 +773,34 @@ export function App() {
             .join(', ')} — use imagem, áudio, documento (PDF/Office) ou texto/código.`,
         );
       }
-      const imported: string[] = [];
       for (const file of split.toImport) {
+        const name = file.name.trim() || 'anexo';
+        const pendingId = beginPendingAttachment(name);
         try {
-          imported.push((await stageMissionAttachment(file)).path);
+          const staged = await stageMissionAttachment(file);
+          // Sem isto a imagem colada fora da zona do picker entrava na lista
+          // só como token interno, sem nome nem miniatura.
+          rememberAttachment(staged.path, { name });
+          if (staged.kind === 'image') {
+            rememberAttachmentThumbnail(staged.path, file);
+          }
+          // Anexa já: a linha "anexando" dá lugar ao anexo sem piscar vazio.
+          appendContextPaths([staged.path]);
+          finishPendingAttachment(pendingId);
         } catch (error) {
-          useToastStore.getState().push(
-            'warn',
-            'Não foi possível anexar',
+          const message =
             error instanceof Error
               ? error.message
-              : `Falha ao importar ${file.name}.`,
-          );
+              : `Falha ao importar ${file.name}.`;
+          failPendingAttachment(pendingId, message);
+          useToastStore
+            .getState()
+            .push('warn', 'Não foi possível anexar', message);
         }
       }
       // Rejeitados e falhas de import já ganharam toast específico acima — um
       // segundo aviso genérico aqui era só ruído.
-      appendContextPaths([...split.inProject, ...imported]);
+      appendContextPaths(split.inProject);
     };
 
     /** Leva o operador ao wizard quando o destino é o launcher. */
