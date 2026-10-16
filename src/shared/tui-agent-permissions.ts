@@ -19,7 +19,8 @@ export const YOLO_TUI_AGENT_ARGS: Partial<Record<TuiAgent, string>> = {
   'command-code': '--yolo',
   continue: '--allow "*"',
   cursor: '--yolo',
-  kimi: '--yolo',
+  // Why: in kimi-code `--yolo` is only "Ask When Needed" (risky actions still prompt); `--auto` is "Never Ask".
+  kimi: '--auto',
   'mistral-vibe': '--agent auto-approve',
   'qwen-code': '--approval-mode yolo',
   rovo: '--yolo',

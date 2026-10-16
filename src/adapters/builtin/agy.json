@@ -98,7 +98,6 @@
     "permission": {
       "arg": "--mode",
       "modes": {
-        "default": "auto",
         "auto": "accept-edits",
         "plan": "plan"
       },

@@ -566,32 +566,6 @@ function requestedFullAutoSequence(
   return [];
 }
 
-function requestedModeSequence(
-  adapter: CliPtyAdapter,
-  args: readonly string[],
-): readonly string[] {
-  const permission = adapter.control?.permission;
-  if (!permission) return [];
-  if (permission.arg) {
-    for (const value of Object.values(permission.modes)) {
-      if (!value) continue;
-      const index = args.findIndex(
-        (arg, offset) => arg === permission.arg && args[offset + 1] === value,
-      );
-      if (index >= 0) return [permission.arg, value];
-    }
-  } else {
-    for (const value of Object.values(permission.modes)) {
-      if (!value) continue;
-      const parts = value.split(/\s+/).filter(Boolean);
-      if (parts.length > 0 && parts.every((part) => args.includes(part))) {
-        return parts;
-      }
-    }
-  }
-  return [];
-}
-
 /**
  * Apply provider permission flags without silently downgrading an explicit
  * full-auto choice. Squad role/read-only metadata scopes Nexus MCP authority;
@@ -607,7 +581,6 @@ export function secureAutonomousCliArgs(
   const usesNexusOnlyTools = adapter.quirks.mcpAutoload;
   const safeArgs = permission?.safe ?? [];
   const requestedFullAuto = requestedFullAutoSequence(adapter, currentArgs);
-  const requestedMode = requestedModeSequence(adapter, currentArgs);
 
   /*
    * Read-only is an authority boundary, not a provider preference. Resolve it
@@ -730,8 +703,7 @@ export function secureAutonomousCliArgs(
   if (
     !usesNexusOnlyTools &&
     safeArgs.length === 0 &&
-    requestedFullAuto.length === 0 &&
-    requestedMode.length === 0
+    requestedFullAuto.length === 0
   ) {
     throw new Error(
       `adapter ${adapter.id} does not declare enforceable autonomous confinement`,
@@ -751,9 +723,6 @@ export function secureAutonomousCliArgs(
   if (requestedFullAuto.length > 0) {
     args = removeSequence(args, safeArgs);
     appendOnce(args, requestedFullAuto);
-  } else if (requestedMode.length > 0) {
-    args = removeSequence(args, safeArgs);
-    appendOnce(args, requestedMode);
   }
 
   // Product invariant (always): Claude-family shells (claude/glm/glm-flash/

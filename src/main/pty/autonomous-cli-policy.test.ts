@@ -779,6 +779,41 @@ describe('secureAutonomousCliArgs', () => {
     expect(args).toEqual(['--dangerously-bypass-approvals-and-sandbox']);
   });
 
+  it('keeps safeArgs for plan/auto modes — only explicit full-auto may strip them', () => {
+    // Codex declares safeArgs plus a non-full-auto "auto" mode; a bare
+    // `--ask-for-approval never` must keep the sandbox baseline (regression:
+    // requestedModeSequence used to strip safeArgs here for any mode).
+    const codex = builtinCli('codex');
+    expect(
+      secureAutonomousCliArgs(codex, ['--ask-for-approval', 'never']),
+    ).toEqual([
+      '--sandbox',
+      'workspace-write',
+      '--ask-for-approval',
+      'on-request',
+    ]);
+
+    // AGY declares safeArgs (--sandbox) plus plan/auto modes; neither drops it.
+    const agy = builtinCli('agy');
+    expect(secureAutonomousCliArgs(agy, ['--mode', 'accept-edits'])).toEqual([
+      '--sandbox',
+    ]);
+    expect(secureAutonomousCliArgs(agy, ['--mode', 'plan'])).toEqual([
+      '--sandbox',
+    ]);
+
+    // Claude-family keeps its explicit plan confinement (manual is the floor)
+    // and is never upgraded to full-auto by a plan/auto input.
+    const claude = builtinCli('claude');
+    const planArgs = secureAutonomousCliArgs(claude, [
+      '--permission-mode',
+      'plan',
+    ]);
+    expect(planArgs).toContain('plan');
+    expect(planArgs).not.toContain('--dangerously-skip-permissions');
+    expect(planArgs).not.toContain('--allow-dangerously-skip-permissions');
+  });
+
   it('rejects adapters with no enforceable autonomous confinement', () => {
     expect(() => secureAutonomousCliArgs(adapter({ id: 'kimi' }), [])).toThrow(
       /does not declare enforceable autonomous confinement/i,
@@ -801,7 +836,8 @@ describe('secureAutonomousCliArgs', () => {
     for (const flag of kimi.control.permission?.yolo ?? []) {
       expect(args).toContain(flag);
     }
-    expect(args).toContain('--yolo');
+    expect(args).toContain('--auto');
+    expect(args).not.toContain('--yolo');
   });
 
   it('preserves each built-in provider native yolo flag for writable workers', () => {

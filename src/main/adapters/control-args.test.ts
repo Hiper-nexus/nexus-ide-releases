@@ -299,9 +299,9 @@ describe('buildControlArgs', () => {
     // Kimi
     const kimi = byId.get('kimi')!;
     expect(buildControlArgs(kimi, { permissionMode: 'default' })).toEqual([]);
-    expect(buildControlArgs(kimi, { permissionMode: 'auto' })).toEqual(['-y']);
-    expect(buildControlArgs(kimi, { permissionMode: 'plan' })).toEqual(['--plan']);
-    expect(buildControlArgs(kimi, { permissionMode: 'yolo' })).toEqual(['--yolo']);
+    expect(buildControlArgs(kimi, { permissionMode: 'auto' })).toEqual([]);
+    expect(buildControlArgs(kimi, { permissionMode: 'plan' })).toEqual([]);
+    expect(buildControlArgs(kimi, { permissionMode: 'yolo' })).toEqual(['--auto']);
 
     // Grok
     const grok = byId.get('grok')!;
@@ -311,7 +311,7 @@ describe('buildControlArgs', () => {
 
     // AGY
     const agy = byId.get('agy')!;
-    expect(buildControlArgs(agy, { permissionMode: 'default' })).toEqual(['--mode', 'auto']);
+    expect(buildControlArgs(agy, { permissionMode: 'default' })).toEqual([]);
     expect(buildControlArgs(agy, { permissionMode: 'auto' })).toEqual(['--mode', 'accept-edits']);
     expect(buildControlArgs(agy, { permissionMode: 'yolo' })).toEqual(['--dangerously-skip-permissions']);
 

@@ -4608,7 +4608,7 @@ describe("cli-agent spawn argv hardening", () => {
   });
 
   it.each([
-    ["kimi", "--yolo"],
+    ["kimi", "--auto"],
     ["agy", "--dangerously-skip-permissions"],
     ["codex", "--dangerously-bypass-approvals-and-sandbox"],
   ])(
