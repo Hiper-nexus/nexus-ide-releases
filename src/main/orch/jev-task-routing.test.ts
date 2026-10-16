@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../jev/jev-decision-log', () => ({
   recordJevDecision: vi.fn(() => 'id'),
@@ -9,6 +9,7 @@ vi.mock('../jev/jev-autopilot', () => ({ isJevSurfaceEnabled: vi.fn(() => true) 
 vi.mock('../jev/jev-secrets', () => ({ hasJevCredential: vi.fn(() => true) }));
 
 import { recordJevDecision } from '../jev/jev-decision-log';
+import { bumpDecisionCredentialRevision } from '../decision-models/decision-revision';
 import type { JevResult, JudgeInput } from '../jev/jev-client';
 import {
   classifyTaskForRouting,
@@ -450,5 +451,55 @@ describe('single-flight + cache curto do Jev da rota', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// Revisão independente (16/10): a chave do cache ignorava a configuração de decisão, então uma
+// rotação de credencial ou troca de modelo devolvia a classificação de quem já não está configurado.
+describe('o cache do Jev da rota obedece à configuração de decisão', () => {
+  const on = { enabled: () => true, hasKey: () => true };
+  const savedModel = process.env.NEXUS_JEV_MODEL;
+  afterEach(() => {
+    if (savedModel === undefined) delete process.env.NEXUS_JEV_MODEL;
+    else process.env.NEXUS_JEV_MODEL = savedModel;
+  });
+
+  it('rotação de credencial não reaproveita a classificação em cache', async () => {
+    const judge = vi.fn<JudgeMock>(async () => answer('easy', 0.9, 'doc', 0.9));
+    await classifyTaskForRouting('revisar a rotação', { judge, ...on });
+    await classifyTaskForRouting('revisar a rotação', { judge, ...on });
+    expect(judge).toHaveBeenCalledTimes(1);
+    bumpDecisionCredentialRevision();
+    judge.mockImplementation(async () => answer('hard', 0.9, 'bug', 0.9));
+    expect(await classifyTaskForRouting('revisar a rotação', { judge, ...on })).toMatchObject({
+      kind: 'classified',
+      classification: { tier: 'hard' },
+    });
+    expect(judge).toHaveBeenCalledTimes(2);
+  });
+
+  it('troca de modelo do Jev não reaproveita a classificação, nem no lote com skills', async () => {
+    process.env.NEXUS_JEV_MODEL = 'jev-a';
+    const judge = vi.fn<JudgeMock>(async () => answer('easy', 0.9, 'doc', 0.9));
+    const opts = { allowedSkills: null, deps: { judge, ...on } };
+    await classifyTaskWithSkillForRouting('trocar o modelo', opts);
+    await classifyTaskWithSkillForRouting('trocar o modelo', opts);
+    expect(judge).toHaveBeenCalledTimes(1);
+    process.env.NEXUS_JEV_MODEL = 'jev-b';
+    await classifyTaskWithSkillForRouting('trocar o modelo', opts);
+    expect(judge).toHaveBeenCalledTimes(2);
+  });
+
+  it('classificação que termina depois de a configuração mudar não entra no cache', async () => {
+    process.env.NEXUS_JEV_MODEL = 'jev-a';
+    const judge = vi.fn<JudgeMock>(async () => {
+      process.env.NEXUS_JEV_MODEL = 'jev-b';
+      return answer('easy', 0.9, 'doc', 0.9);
+    });
+    await classifyTaskForRouting('mudar no meio da chamada', { judge, ...on });
+    // De volta à configuração da chave original: a resposta dada sob a outra não pode ser servida.
+    process.env.NEXUS_JEV_MODEL = 'jev-a';
+    await classifyTaskForRouting('mudar no meio da chamada', { judge, ...on });
+    expect(judge).toHaveBeenCalledTimes(2);
   });
 });

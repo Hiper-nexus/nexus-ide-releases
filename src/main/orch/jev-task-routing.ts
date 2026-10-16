@@ -19,7 +19,8 @@ import {
   type JevResult,
 } from '../jev/jev-client';
 import { isJevSurfaceEnabled } from '../jev/jev-autopilot';
-import { hasDecisionCredential } from '../decision-models/decision-availability';
+import { decisionConfigurationKey, hasDecisionCredential } from '../decision-models/decision-availability';
+import { onDecisionConfigurationChanged } from '../decision-models/decision-revision';
 import {
   jevAnswerConfidences,
   jevAnswerProbabilities,
@@ -223,8 +224,11 @@ export function parseTaskClassification(
  * paralelo. Pedidos iguais em voo dividem a MESMA chamada judge; só a
  * classificação aceita fica 60 s — timeout, rede e resposta inválida tentam de
  * novo no próximo pedido. Liga/desliga e chave são lidos antes, sempre.
+ * A configuração de decisão (modo, provedor, credencial) faz parte da chave e
+ * uma troca dela esvazia o cache: nenhuma classificação sobrevive a quem a deu.
  */
 const taskRoutingCache = new Map<string, { readonly at: number; readonly value: Promise<{ readonly kind: string }> }>();
+onDecisionConfigurationChanged(() => taskRoutingCache.clear());
 
 function taskRoutingCacheKey(
   kind: 'single' | 'batch',
@@ -233,7 +237,7 @@ function taskRoutingCacheKey(
   projectRoot?: string,
 ): string {
   return createHash('sha256')
-    .update(JSON.stringify([kind, task, allowedSkills ?? null, projectRoot ?? null]))
+    .update(JSON.stringify([kind, task, allowedSkills ?? null, projectRoot ?? null, decisionConfigurationKey()]))
     .digest('hex');
 }
 
@@ -247,9 +251,14 @@ function memoizedTaskRouting<T extends { readonly kind: string }>(
   const forget = () => {
     if (taskRoutingCache.get(key)?.value === value) taskRoutingCache.delete(key);
   };
+  // Configuração que mudou durante a chamada: a resposta é de outro provedor/credencial e não vale para a chave.
+  const configBefore = decisionConfigurationKey();
+  const configChanged = (): boolean => {
+    try { return decisionConfigurationKey() !== configBefore; } catch { return true; }
+  };
   const value = run().then(
     (result) => {
-      if (result.kind !== 'classified') forget();
+      if (result.kind !== 'classified' || configChanged()) forget();
       return result;
     },
     (error: unknown) => {
