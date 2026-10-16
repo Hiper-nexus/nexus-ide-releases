@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { NativeHeavyCommands } from './native-heavy-command';
 import { nestedHeavyJobBaseCommand, supervisedPtyCommand } from '../pty/darwin-pty-supervisor';
-import { skipUnderNexusPtySupervisor } from '../../test/nested-pty-supervisor';
+import { hostDenied, realpathOrSkip, skipUnderNexusPtySupervisor } from '../../test/nested-pty-supervisor';
 import { watchDarwinHeavyCommand, type PhysicalCommandClaim } from '../pty/darwin-heavy-command';
 import { OwnedCommandProcesses } from '../pty/owned-command-process';
 import { HeavyCommandPermitPool } from './heavy-command-permit';
@@ -113,14 +113,27 @@ function openaiStream(res: http.ServerResponse, model: string, tool: { name: str
   res.end('data: [DONE]\n\n');
 }
 
-async function actualControl(kind: 'qwen' | 'minimax' | 'mimo') {
+async function actualControl(kind: 'qwen' | 'minimax' | 'mimo', testContext?: { readonly skip: (note?: string) => never }) {
   const evidence = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `nexus-c6-${kind}-control-`)));
-  const entry = fs.realpathSync(installed[kind]), entrySha256 = sha(entry);
-  const nativeBinary = kind === 'mimo' ? fs.realpathSync(path.join(path.dirname(entry), '../node_modules/@mimo-ai/mimocode-darwin-arm64/bin/mimo')) : null;
+  const entry = testContext ? realpathOrSkip(testContext, installed[kind], kind) : fs.realpathSync(installed[kind]);
+  const entrySha256 = sha(entry);
+  const nativeBinary = kind === 'mimo'
+    ? (testContext ? realpathOrSkip(testContext, path.join(path.dirname(entry), '../node_modules/@mimo-ai/mimocode-darwin-arm64/bin/mimo'), 'mimo-native') : fs.realpathSync(path.join(path.dirname(entry), '../node_modules/@mimo-ai/mimocode-darwin-arm64/bin/mimo')))
+    : null;
   const nativeSha256 = nativeBinary ? sha(nativeBinary) : null;
-  const cliNode = kind === 'minimax' ? fs.realpathSync('/opt/homebrew/bin/node') : process.execPath;
+  const cliNode = kind === 'minimax'
+    ? (testContext ? realpathOrSkip(testContext, '/opt/homebrew/bin/node', 'node') : fs.realpathSync('/opt/homebrew/bin/node'))
+    : process.execPath;
   const cliRuntime = JSON.parse(execFileSync(cliNode, ['-p', 'JSON.stringify({version:process.version,modules:process.versions.modules})'], { encoding: 'utf8', timeout: 5000 }));
-  const sourceSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: process.cwd(), encoding: 'utf8', timeout: 5000 }).trim();
+  let sourceSha = '';
+  try {
+    sourceSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: process.cwd(), encoding: 'utf8', timeout: 5000 }).trim();
+  } catch (error) {
+    if (testContext && (hostDenied(error) || (error as { message?: string })?.message?.includes('Operation not permitted'))) {
+      testContext.skip(`AMBIENTE-SANDBOX (F-1217): git rev-parse HEAD recusado pelo sandbox do portão (${(error as { message?: string })?.message})`);
+    }
+    throw error;
+  }
   const fixtureSha256 = sha(path.join(process.cwd(), 'src/main/orch/native-heavy-node-clis.test.ts'));
   const adapterId = kind === 'mimo' ? 'mimo-code' : kind === 'minimax' ? 'minimax-code' : kind;
   const adapter = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'src/adapters/builtin', `${adapterId}.json`), 'utf8')) as CliPtyAdapter;
@@ -327,6 +340,6 @@ describe('F-1144 — C6 terminal completion proof', () => {
   });
 });
 
-it.runIf(process.platform === 'darwin' && selected === 'qwen' && fs.existsSync(installed.qwen))('actual Qwen ordinary ACP shell: baseline and scoped Native A+B scheduling use unchanged normal approval', (testContext) => { skipUnderNexusPtySupervisor(testContext); return actualControl('qwen'); }, 85000);
-it.runIf(process.platform === 'darwin' && selected === 'minimax' && fs.existsSync(installed.minimax))('actual MiniMax ordinary ACP shell: baseline and scoped Native A+B scheduling use unchanged normal approval', (testContext) => { skipUnderNexusPtySupervisor(testContext); return actualControl('minimax'); }, 85000);
-it.runIf(process.platform === 'darwin' && selected === 'mimo' && fs.existsSync(installed.mimo))('actual MiMo native ordinary ACP shell: baseline and scoped Native A+B scheduling use unchanged normal approval', (testContext) => { skipUnderNexusPtySupervisor(testContext); return actualControl('mimo'); }, 85000);
+it.runIf(process.platform === 'darwin' && selected === 'qwen' && fs.existsSync(installed.qwen))('actual Qwen ordinary ACP shell: baseline and scoped Native A+B scheduling use unchanged normal approval', (testContext) => { skipUnderNexusPtySupervisor(testContext); return actualControl('qwen', testContext); }, 85000);
+it.runIf(process.platform === 'darwin' && selected === 'minimax' && fs.existsSync(installed.minimax))('actual MiniMax ordinary ACP shell: baseline and scoped Native A+B scheduling use unchanged normal approval', (testContext) => { skipUnderNexusPtySupervisor(testContext); return actualControl('minimax', testContext); }, 85000);
+it.runIf(process.platform === 'darwin' && selected === 'mimo' && fs.existsSync(installed.mimo))('actual MiMo native ordinary ACP shell: baseline and scoped Native A+B scheduling use unchanged normal approval', (testContext) => { skipUnderNexusPtySupervisor(testContext); return actualControl('mimo', testContext); }, 85000);
