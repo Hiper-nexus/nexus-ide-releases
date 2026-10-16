@@ -47,6 +47,10 @@ export interface MaterializeWorktreeResult {
   gitWorktreeMs: number;
   /** CoW copy of heavy dirs — the dominant step before the JXA clonefile. */
   cowMs: number;
+  /** F-1386: semeadura dos caches de build — fora de `cowMs`, sem tempo residual. */
+  buildCacheMs: number;
+  /** Caches de build pulados (teto de entradas/bytes, timeout ou cópia falha). */
+  buildCacheSkipped: readonly { readonly rel: string; readonly reason: string }[];
 }
 
 /** Default bulky trees that git worktree does not share but CoW can. */
@@ -808,10 +812,21 @@ export async function materializeGitWorktree(
   const cowMs = Date.now() - cowStart;
 
   // F-1386: caches de build portáteis — melhor esforço, nunca bloqueia o spawn.
+  // Fora de `cowMs`: com o orçamento acima o tempo fica visível como
+  // `buildCacheMs`, sem folga residual entre as métricas.
+  const buildCacheStart = Date.now();
   const buildCaches = await copyBuildCaches(input.repositoryRoot, input.worktreePath);
+  const buildCacheMs = Date.now() - buildCacheStart;
   if (buildCaches.copied.length > 0) {
     console.info(
       `[worktree-cow] caches de build copiados: ${buildCaches.copied.join(', ')}`,
+    );
+  }
+  if (buildCaches.skipped.length > 0) {
+    console.info(
+      `[worktree-cow] caches de build pulados: ${
+        buildCaches.skipped.map((s) => `${s.rel} (${s.reason})`).join(', ')
+      }`,
     );
   }
 
@@ -824,6 +839,8 @@ export async function materializeGitWorktree(
     linkedDirs,
     gitWorktreeMs,
     cowMs,
+    buildCacheMs,
+    buildCacheSkipped: buildCaches.skipped,
   };
 }
 

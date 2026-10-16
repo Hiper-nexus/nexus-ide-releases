@@ -113,6 +113,10 @@ describe('worktree-cow', () => {
     expect(result.gitWorktreeMs).toBeGreaterThanOrEqual(0);
     expect(typeof result.cowMs).toBe('number');
     expect(result.cowMs).toBeGreaterThanOrEqual(0);
+    // F-1386: caches de build fora de cowMs, sem folga residual invisível.
+    expect(typeof result.buildCacheMs).toBe('number');
+    expect(result.buildCacheMs).toBeGreaterThanOrEqual(0);
+    expect(result.buildCacheSkipped).toEqual([]);
   });
 
   it('cowCopyHeavyDirs returns empty when CoW disabled', async () => {

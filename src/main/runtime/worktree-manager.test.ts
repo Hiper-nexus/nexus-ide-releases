@@ -20,7 +20,11 @@ import {
   type WorktreeStateStore,
 } from "./worktree-manager";
 import { rollbackIntegrationCheckout } from "./merge-integration-rollback";
-import { AsyncProcessGitRunner } from "./git-command";
+import { AsyncProcessGitRunner, type AsyncGitRunner } from "./git-command";
+import {
+  readRepositorySnapshot,
+  readRepositorySnapshotAsync,
+} from "./worktree-manager-git";
 
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 
@@ -1819,5 +1823,78 @@ describe("WorktreeManager re-anchor of a stale read_only worktree", () => {
         "advisor-read-only",
       ),
     ).toBeNull();
+  });
+});
+
+class RecordingAsyncGitRunner implements AsyncGitRunner {
+  readonly calls: Array<{ cwd: string; args: readonly string[] }> = [];
+  readonly #delegate = new AsyncProcessGitRunner();
+
+  async run(
+    cwd: string,
+    args: readonly string[],
+    options?: Parameters<GitRunner["run"]>[2],
+  ): Promise<GitResult> {
+    this.calls.push({ cwd, args: [...args] });
+    return this.#delegate.run(cwd, args, options);
+  }
+}
+
+describe("readRepositorySnapshot status budget", () => {
+  const statusCalls = (runner: RecordingAsyncGitRunner) =>
+    runner.calls.filter((call) => call.args[0] === "status");
+
+  it("async: requireClean=false não roda git status (caminho quente do spawn)", async () => {
+    const runner = new RecordingAsyncGitRunner();
+    const snapshot = await readRepositorySnapshotAsync(
+      runner,
+      projectScope(),
+      false,
+    );
+    expect(statusCalls(runner)).toEqual([]);
+    expect(snapshot.clean).toBe(false); // não verificado — sentinela conservador
+    expect(snapshot.headSha).toBe(git(root, "rev-parse", "HEAD"));
+  });
+
+  it("async: requireClean=true roda status e passa com o checkout limpo", async () => {
+    const runner = new RecordingAsyncGitRunner();
+    const snapshot = await readRepositorySnapshotAsync(
+      runner,
+      projectScope(),
+      true,
+    );
+    expect(statusCalls(runner)).toHaveLength(1);
+    expect(statusCalls(runner)[0]!.args).toContain("--untracked-files=all");
+    expect(snapshot.clean).toBe(true);
+  });
+
+  it("async: requireClean=true lança quando há sujeira", async () => {
+    write("src/sujeira.ts", "export const x = 1;\n");
+    const runner = new RecordingAsyncGitRunner();
+    await expect(
+      readRepositorySnapshotAsync(runner, projectScope(), true),
+    ).rejects.toThrow(/primary checkout must be clean/);
+    expect(statusCalls(runner)).toHaveLength(1);
+  });
+
+  it("sync: requireClean=false usa --untracked-files=normal (sem descer untracked)", () => {
+    const runner = new RecordingGitRunner();
+    const snapshot = readRepositorySnapshot(runner, projectScope(), false);
+    const calls = runner.calls.filter((call) => call.args[0] === "status");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.args).toContain("--untracked-files=normal");
+    expect(calls[0]!.args).not.toContain("--untracked-files=all");
+    // O booleano clean continua correto: repo limpo → true.
+    expect(snapshot.clean).toBe(true);
+  });
+
+  it("sync: requireClean=true mantém --untracked-files=all e detecta sujeira", () => {
+    write("src/sujeira.ts", "export const x = 1;\n");
+    const runner = new RecordingGitRunner();
+    expect(() =>
+      readRepositorySnapshot(runner, projectScope(), true),
+    ).toThrow(/primary checkout must be clean/);
+    const calls = runner.calls.filter((call) => call.args[0] === "status");
+    expect(calls[0]!.args).toContain("--untracked-files=all");
   });
 });

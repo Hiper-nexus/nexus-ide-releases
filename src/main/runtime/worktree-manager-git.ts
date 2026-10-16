@@ -125,12 +125,18 @@ export function readRepositorySnapshot(
     ]),
     "integration HEAD",
   );
+  // `--untracked-files=all` é o passo caro (varre untracked em árvores
+  // grandes). O booleano `clean` não muda com `=normal` (qualquer untracked
+  // file/dir aparece); `=all` só seria necessário para listar os arquivos.
+  // Quando `requireClean` é false o chamador não pode querer lançar — mas
+  // `inspectIntegration` lê `clean` mesmo assim, então o status continua,
+  // só sem descer em diretórios untracked.
   const clean =
     git.run(rootRealPath, [
       "status",
       "--porcelain=v1",
       "-z",
-      "--untracked-files=all",
+      requireClean ? "--untracked-files=all" : "--untracked-files=normal",
     ]).stdout.length === 0;
   if (requireClean && !clean) {
     throw new Error("primary checkout must be clean");
@@ -287,15 +293,26 @@ export async function readRepositorySnapshotAsync(
     ]),
     "integration HEAD",
   );
-  const clean =
-    (await git.run(rootRealPath, [
-      "status",
-      "--porcelain=v1",
-      "-z",
-      "--untracked-files=all",
-    ])).stdout.length === 0;
-  if (requireClean && !clean) {
-    throw new Error("primary checkout must be clean");
+  // F-980/spawn: `status --untracked-files=all` é o passo mais caro da
+  // inspeção e roda em todo spawn de writer. Quando `requireClean` é false
+  // nenhum chamador lê `clean` (create, assertRepositoryUnchangedAsync,
+  // readLinkedBaseSnapshotAsync, claimPooledPaneWriter e o pool usam só
+  // raiz/branch/SHA) — pula a varredura inteira. `clean: false` é o
+  // sentinela conservador ("não verificado") para quem ler no futuro.
+  // Invariantes de segurança (raiz canônica, top-level, config segura,
+  // branch, SHA e o CAS de realpath pós-await) ficam exatamente como antes.
+  let clean = false;
+  if (requireClean) {
+    clean =
+      (await git.run(rootRealPath, [
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=all",
+      ])).stdout.length === 0;
+    if (!clean) {
+      throw new Error("primary checkout must be clean");
+    }
   }
   if (fs.realpathSync(expectedRoot) !== rootRealPath) {
     throw new WorktreeStateConflictError("scope root changed during Git inspection");
