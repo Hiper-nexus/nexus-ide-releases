@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.76.285 — Jarvis em tempo real, Clef no Jev e Uso e custos
+
+- **Jarvis em tempo real e mãos-livres**. O microfone opera em full-duplex no Grok Voice 3.0 e no OpenAI Realtime, o socket quente é reaproveitado entre ativações com sonda de vida, a transcrição do Grok usa `session.audio.input.transcription` (`pt-BR`) e a resposta não espera transcrição atrasada quando o provedor já falou ou chamou ferramenta. O `send_to_pane` entrega em qualquer pane ou terminal pedido e a lista operacional do Nexus roda sem modais bloqueantes por voz.
+- **Clef em Somente Jev e navegador rápido**. O modo Somente Jev mantém todas as decisões de texto no Jev e envia apenas a captura do navegador ao Clef ou Luna autorizados, com motivo explícito quando indisponível. O `nexus_browser_do` reduz a espera entre ações para 150 ms.
+- **Handoffs sem travas burocráticas**. Passar `evidenceIds` em missão sem workflow PREVC congelado ou citar IDs de captura grava o handoff normalmente como `unverified` em vez de recusar a entrega; `agentName` livre em `nexus_pane_spawn` vira título do pane.
+- **Painel de Uso e custos e gasto mensal real**. Série diária de 90 dias, janelas de 7/30/90 dias por provedor e modelo, e cartão de gasto mensal real em USD editável na linha.
+- **Multi-conta, Trial, Windows e Nexus Shot**. Contas AGY/Gemini e Claude na Reserva renovam pelo `refreshToken` no cofre; o leque de helpers do Trial reserva 2 vagas (Maestro e revisor); Windows 32 GB desconta cache Standby na admissão de workers, lê `HKCU\Environment` ao vivo e sincroniza título/resize do ConPTY; a ponte do Nexus Shot aceita `target: null`.
+
 ## 0.76.284 — Linux em dia com a projeção
 
 A tag 0.76.283 já tem pacotes Linux. Este pacote acompanha o commit seguinte: no Windows, o atalho da projeção de missão aceita o modo 0666 que o NTFS reporta, em vez de regravar um arquivo que não mudou. No Linux o atalho continua exigindo o modo 0600; o comportamento do desktop não muda. Testes de stat, ctime e shim que dependem de POSIX continuam só no POSIX.
