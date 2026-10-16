@@ -50,6 +50,40 @@ describe('git-scm-store runPrimaryAction', () => {
     });
   });
 
+  it('tracks the first successful status separately from refresh activity and resets it per workspace', async () => {
+    const store = useGitScmStore.getState();
+    expect(store.hasStatus).toBe(false);
+    const firstRead = store.refresh();
+    expect(useGitScmStore.getState()).toMatchObject({ loading: true, hasStatus: false });
+    await firstRead;
+    expect(useGitScmStore.getState()).toMatchObject({ loading: false, hasStatus: true, clean: true });
+
+    const reread = store.refresh();
+    expect(useGitScmStore.getState()).toMatchObject({ loading: true, hasStatus: true, clean: true });
+    await reread;
+    store.reset();
+    expect(useGitScmStore.getState().hasStatus).toBe(false);
+  });
+
+  it('recognizes a detached HEAD as loaded and clears readiness when status fails', async () => {
+    vi.mocked(window.nexus.integrations.gitStatus).mockResolvedValueOnce(okStatus({ branch: null }));
+    await useGitScmStore.getState().refresh();
+    expect(useGitScmStore.getState()).toMatchObject({ branch: null, hasStatus: true });
+    vi.mocked(window.nexus.integrations.gitStatus).mockResolvedValueOnce({ ok: false, error: 'not a repository' });
+    await useGitScmStore.getState().refresh();
+    expect(useGitScmStore.getState()).toMatchObject({ hasStatus: false, error: 'not a repository', loading: false });
+  });
+
+  it('does not let an old workspace response restore its status after reset', async () => {
+    let finish!: (value: ReturnType<typeof okStatus>) => void;
+    vi.mocked(window.nexus.integrations.gitStatus).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const refresh = useGitScmStore.getState().refresh();
+    useGitScmStore.getState().reset();
+    finish(okStatus());
+    await refresh;
+    expect(useGitScmStore.getState()).toMatchObject({ hasStatus: false, branch: null });
+  });
+
   it('faz stage all quando o verbo é Adicionar tudo', async () => {
     useGitScmStore.setState({
       unstaged: [{ path: 'a.ts', status: 'M' }],
