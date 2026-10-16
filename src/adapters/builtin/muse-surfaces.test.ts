@@ -6,6 +6,7 @@ import { shouldUseEphemeralHome } from '../../main/orch/spawn-home-policy';
 import { accountLoginCommandFor } from '../../shared/account-login-commands';
 import { resolveCliLoginCommand } from '../../shared/cli-login';
 import { BUILTIN_ADAPTERS } from './index';
+import { primaryKeyEnvVar } from '../../main/adapters/adapter-registry';
 
 function museAdapter(): CliPtyAdapter {
   const parsed = adapterSchema.parse(
@@ -29,6 +30,11 @@ describe('Muse CLI spawn contract (F-596)', () => {
         interactive: adapter.spawn.interactive,
       }),
     ).toBe('muse login');
+  });
+
+  it('exposes the native Meta API key for saved accounts and OAuth suppression', () => {
+    expect(primaryKeyEnvVar(adapter)).toBe('META_API_KEY');
+    expect(adapter.env.passthrough).toContain('META_API_KEY');
   });
 
   it('does not claim Claude --mcp-config autoload (unknown flags dump --help and exit 2)', () => {

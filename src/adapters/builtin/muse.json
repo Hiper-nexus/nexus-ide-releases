@@ -11,7 +11,8 @@
     "command": "brew install --cask muse-code"
   },
   "auth": {
-    "method": "oauth",
+    "method": "api_key",
+    "envVarFallback": "META_API_KEY",
     "loginHint": "Rode `muse login` (conta Meta) ou cole META_API_KEY. Esta é a CLI própria. Para usar Muse Spark dentro do Claude Code, abra o provider “Muse Spark (via Claude)”.",
     "loginCommand": "muse login"
   },
@@ -25,7 +26,7 @@
   },
   "env": {
     "static": {},
-    "passthrough": [],
+    "passthrough": ["META_API_KEY"],
     "ephemeralHome": false
   },
   "models": {
