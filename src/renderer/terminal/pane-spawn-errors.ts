@@ -1,3 +1,5 @@
+import { clearPaneBirthElapsedForPane } from '../lib/pane-birth-display';
+
 /**
  * Último erro concreto de spawn de cada pane (ex.: a cerca do pty-manager
  * "exclusive auth family ... physical exit proof"). O orch-bridge só vê o
@@ -10,6 +12,7 @@ const listeners = new Set<() => void>();
 
 export function recordPaneSpawnError(paneId: string, error: string): void {
   paneSpawnErrors.set(paneId, error);
+  clearPaneBirthElapsedForPane(paneId);
   for (const listener of listeners) listener();
 }
 

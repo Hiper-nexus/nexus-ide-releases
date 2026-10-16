@@ -64,6 +64,13 @@ export function clearPaneBirthElapsed(key: string): void {
   paneBirthStarts.delete(key);
 }
 
+/** Esquece todo relógio do pane (qualquer adapter), mesmo com o overlay desmontado. */
+export function clearPaneBirthElapsedForPane(paneId: string): void {
+  for (const key of [...paneBirthStarts.keys()]) {
+    if (key === paneId || key.startsWith(`${paneId}:`)) paneBirthStarts.delete(key);
+  }
+}
+
 export interface PaneBirthDisplay {
   readonly headline: string;
   readonly detail: string;

@@ -625,6 +625,20 @@ describe('o failover soma o gasto de todas as tentativas', () => {
     }));
   });
 
+  it('tentativa que lança sem relatar uso + fallback sem credencial não reembolsa o estimado', async () => {
+    vi.mocked(recordJevNoAnswer).mockClear();
+    const ledger = new DecisionBudgetLedger();
+    const result = await judgeDecision({ ...input, surface: 'taskRouting', missionId: 'mission-unknown-usage' }, {
+      ...failoverDeps, nativeJudge: async () => { throw new Error('boom'); },
+      getClefConnection: () => undefined, budgetLedger: ledger,
+    });
+    const estimated = estimateDecisionCostUsd(estimateDecisionInputTokens(input), 'jev', 'jev-latest');
+    expect(result).toBeNull();
+    expect(ledger.snapshot('mission-unknown-usage', missionDecisionBudgetUsd(settings)).spentUsd).toBeGreaterThanOrEqual(estimated);
+    const recorded = vi.mocked(recordJevNoAnswer).mock.calls.at(-1)?.[0] as { budgetChargedUsd?: number };
+    expect(recorded.budgetChargedUsd).toBeGreaterThanOrEqual(estimated);
+  });
+
   it('o livro de orçamento acerta pelo total: custo desconhecido mantém o estimado', async () => {
     const ledger = new DecisionBudgetLedger();
     const result = await judgeDecision({ ...input, surface: 'taskRouting', missionId: 'mission-failover-budget' },

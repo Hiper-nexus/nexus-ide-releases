@@ -211,7 +211,7 @@ function settleReservation(
   }
   const usage = tracker.noAnswerUsage ?? tracker.usage;
   if (!usage) return ledger.settle(reservation, null);
-  if (usage.requestCount === 0) return ledger.settle(reservation, 0);
+  if (usage.requestCount === 0 && !usage.usageIncomplete) return ledger.settle(reservation, 0);
   return ledger.settle(reservation, usage.usd, usage.usageIncomplete);
 }
 

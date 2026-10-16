@@ -21,6 +21,7 @@ import {
   useLayoutStore,
 } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
+import { clearPaneBirthElapsedForPane } from '../lib/pane-birth-display';
 import { usePaneParkedStore } from '../state/pane-parked-store';
 import { useOrchStore } from '../state/orch-store';
 import { adapterAcceptsBracketedPaste } from '../state/adapter-store';
@@ -577,7 +578,10 @@ function setHostSession(
   reportedGrid?: { cols: number; rows: number },
 ): void {
   host.sessionId = sessionId;
-  if (sessionId) host.awaitingDeliberateClose = false;
+  if (sessionId) {
+    host.awaitingDeliberateClose = false;
+    clearPaneBirthElapsedForPane(paneId);
+  }
   host.reportedGrid = sessionId
     ? (reportedGrid ?? { cols: host.term.cols, rows: host.term.rows })
     : null;

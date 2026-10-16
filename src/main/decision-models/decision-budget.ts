@@ -49,7 +49,7 @@ export function decisionBudgetCharge(estimatedUsd: number, actualUsd: number | n
 /** Cobrança de uma consulta sem resposta: nenhuma requisição devolve tudo; sem recibo fica o estimado. */
 export function decisionBudgetChargeForUsage(estimatedUsd: number, usage: DecisionUsageReceipt | undefined): number {
   if (!usage) return estimatedUsd;
-  if (usage.requestCount === 0) return 0;
+  if (usage.requestCount === 0 && !usage.usageIncomplete) return 0;
   return decisionBudgetCharge(estimatedUsd, usage.usd, usage.usageIncomplete);
 }
 

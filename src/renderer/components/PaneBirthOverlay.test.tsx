@@ -278,6 +278,23 @@ describe('PaneBirthOverlay', () => {
       }
     });
 
+    it('transições com o overlay desmontado encerram a tentativa vencida', () => {
+      vi.useFakeTimers();
+      try {
+        spawning();
+        const host = mount();
+        act(() => { vi.advanceTimersByTime(PANE_BIRTH_FAILED_AFTER_MS); });
+        expect(host.textContent).toContain('Não subiu');
+        act(() => { for (const root of roots.splice(0)) root.unmount(); });
+        act(() => { useSessionStateStore.getState().setPaneState(PANE.id, 'idle'); });
+        act(() => { useSessionStateStore.getState().setPaneState(PANE.id, 'exited'); });
+        spawning();
+        expect(mount().textContent).toContain('Preparando agente…');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('a recusa do Main também encerra a tentativa: o retry não herda o prazo vencido', () => {
       vi.useFakeTimers();
       try {
