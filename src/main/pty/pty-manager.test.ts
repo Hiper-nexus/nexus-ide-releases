@@ -31,6 +31,7 @@ import {
   PET_STUDIO_SQUAD_ID,
 } from "../../shared/pet-studio";
 import { snapshotSquadAuthority } from "../orch/squad-authority-snapshot";
+import { setWindowsUserEnvDepsForTests } from "./windows-user-env";
 import {
   isThirdPartyClaudeFamily,
   shouldUseEphemeralHome,
@@ -987,6 +988,60 @@ describe("agentEnv linker-injection guard (plugin trust boundary)", () => {
     } finally {
       delete process.env.NEXUS_TEST_TOKEN;
     }
+  });
+});
+
+// No Windows o operador declara a variável no painel do Windows (ou com
+// `setx`): ela vai para `HKCU\Environment` e o `process.env` do Main — congelado
+// no boot — nunca a vê. Este é o caso relatado pelo cliente (MCP `mercadolivre`
+// sem MARGEM_MCP_READ_URL/MARGEM_MCP_READ_TOKEN dentro do pane).
+describe("agentEnv Windows user env (HKCU\\Environment)", () => {
+  afterEach(() => setWindowsUserEnvDepsForTests(null));
+
+  const REG_OUTPUT = [
+    "HKEY_CURRENT_USER\\Environment",
+    "    MARGEM_MCP_READ_URL    REG_SZ    https://margem.example/mcp",
+    "    MARGEM_MCP_READ_TOKEN    REG_SZ    tok-123",
+    "    NODE_OPTIONS    REG_SZ    --require /tmp/evil.js",
+    "    NEXUS_MCP_TOKEN    REG_SZ    roubado",
+    "",
+  ].join("\r\n");
+
+  it("entrega a variável do operador ao pane, sem reiniciar o app", () => {
+    setWindowsUserEnvDepsForTests({
+      platform: "win32",
+      execFile: () => REG_OUTPUT,
+    });
+    const env = agentEnv(
+      makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }),
+      null,
+    );
+    expect(env.MARGEM_MCP_READ_URL).toBe("https://margem.example/mcp");
+    expect(env.MARGEM_MCP_READ_TOKEN).toBe("tok-123");
+  });
+
+  it("não dá ao registro do usuário a injeção de Node nem a autoridade NEXUS_", () => {
+    setWindowsUserEnvDepsForTests({
+      platform: "win32",
+      execFile: () => REG_OUTPUT,
+    });
+    const env = agentEnv(
+      makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }),
+      null,
+    );
+    expect(env.NODE_OPTIONS).toBeUndefined();
+    expect(env.NEXUS_MCP_TOKEN).toBeUndefined();
+  });
+
+  it("fora do Windows não consulta o registro", () => {
+    const execFile = vi.fn(() => REG_OUTPUT);
+    setWindowsUserEnvDepsForTests({ platform: "darwin", execFile });
+    const env = agentEnv(
+      makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }),
+      null,
+    );
+    expect(env.MARGEM_MCP_READ_TOKEN).toBeUndefined();
+    expect(execFile).not.toHaveBeenCalled();
   });
 });
 

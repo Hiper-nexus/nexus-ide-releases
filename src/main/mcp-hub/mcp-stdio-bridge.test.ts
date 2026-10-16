@@ -12,6 +12,7 @@ import {
   resolveNativeStdioServerDescriptor,
   type McpStdioServerDescriptor,
 } from './mcp-stdio-bridge';
+import { setWindowsUserEnvDepsForTests } from '../pty/windows-user-env';
 
 // ── pure classifier / projector tests (no process spawned) ────────────────
 
@@ -472,5 +473,111 @@ describe('McpStdioBridge (real fake stdio backend)', () => {
       method: 'notifications/initialized',
     });
     expect(notified).toBeNull();
+  });
+});
+
+// ── Windows user env (HKCU\Environment) reaching the backend ──────────────
+
+/**
+ * Saída de `reg query HKCU\Environment` de um operador que declara o MCP
+ * `mercadolivre`: a variável vive no registro do usuário, nunca no
+ * `process.env` do Main (congelado no boot).
+ */
+const REG_USER_ENV_OUTPUT = [
+  'HKEY_CURRENT_USER\\Environment',
+  '    MARGEM_MCP_READ_URL    REG_SZ    https://margem.example/mcp',
+  '    MARGEM_MCP_READ_TOKEN    REG_SZ    tok-hub',
+  '',
+].join('\r\n');
+
+/** Backend mínimo que devolve o env que recebeu em `serverInfo.name`. */
+const ENV_ECHO_SERVER_SOURCE = String.raw`
+'use strict';
+const readline = require('node:readline');
+const rl = readline.createInterface({ input: process.stdin, terminal: false });
+rl.on('line', (line) => {
+  const trimmed = line.trim();
+  if (!trimmed) return;
+  let message;
+  try { message = JSON.parse(trimmed); } catch { return; }
+  if (message.method !== 'initialize') return;
+  process.stdout.write(JSON.stringify({
+    jsonrpc: '2.0',
+    id: message.id,
+    result: {
+      protocolVersion: '2025-06-18',
+      capabilities: {},
+      serverInfo: {
+        name: String(process.env.MARGEM_MCP_READ_TOKEN || 'ausente'),
+        version: '1',
+      },
+    },
+  }) + '\n');
+});
+`;
+
+describe('McpStdioBridge backend env (Windows user env)', () => {
+  const roots: string[] = [];
+  const bridges: McpStdioBridge[] = [];
+
+  afterEach(() => {
+    for (const bridge of bridges.splice(0)) bridge.disposeAll();
+    for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+    setWindowsUserEnvDepsForTests(null);
+  });
+
+  function envEchoDescriptor(
+    env: Readonly<Record<string, string>> = {},
+  ): McpStdioServerDescriptor {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-hub-env-'));
+    roots.push(root);
+    const scriptPath = path.join(root, 'env-server.cjs');
+    fs.writeFileSync(scriptPath, ENV_ECHO_SERVER_SOURCE);
+    return { key: 'env-echo', command: process.execPath, args: [scriptPath], env };
+  }
+
+  async function initialize(descriptor: McpStdioServerDescriptor) {
+    const bridge = new McpStdioBridge();
+    bridges.push(bridge);
+    return bridge.handle(descriptor, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: { protocolVersion: '2025-06-18' },
+    });
+  }
+
+  it('hands the backend a variable the operator set in HKCU\\Environment', async () => {
+    setWindowsUserEnvDepsForTests({
+      platform: 'win32',
+      execFile: () => REG_USER_ENV_OUTPUT,
+    });
+    const init = await initialize(envEchoDescriptor());
+    expect(init?.result).toMatchObject({ serverInfo: { name: 'tok-hub' } });
+  });
+
+  it('keeps the descriptor env in front of the registry value', async () => {
+    setWindowsUserEnvDepsForTests({
+      platform: 'win32',
+      execFile: () => REG_USER_ENV_OUTPUT,
+    });
+    const init = await initialize(
+      envEchoDescriptor({ MARGEM_MCP_READ_TOKEN: 'do-descriptor' }),
+    );
+    expect(init?.result).toMatchObject({ serverInfo: { name: 'do-descriptor' } });
+  });
+
+  it('never reads the registry off Windows', async () => {
+    let reads = 0;
+    setWindowsUserEnvDepsForTests({
+      platform: 'darwin',
+      execFile: () => {
+        reads += 1;
+        return REG_USER_ENV_OUTPUT;
+      },
+    });
+    const init = await initialize(envEchoDescriptor());
+    expect(init?.result).toMatchObject({ serverInfo: { name: 'ausente' } });
+    expect(reads).toBe(0);
   });
 });

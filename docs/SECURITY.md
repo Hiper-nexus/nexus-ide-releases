@@ -12,7 +12,7 @@ All external input validated with Zod at process boundaries.
 | Surface | Module |
 |---------|--------|
 | MCP effects | `mcp-effect-policy.ts`, `mcp-dispatch.ts` |
-| PTY env / ownership | `pty-manager.ts` |
+| PTY env / ownership | `pty-manager.ts` — o env do filho é allowlist fechado; em `win32` o único ingresso extra é `windows-user-env.ts` (leitura de `HKCU\Environment` por `reg.exe` do System32, argv fixo e sem shell, filtrada: recusa injeção de linker/Node/Electron e o namespace `NEXUS_`, só preenche lacunas — nunca sobrescreve o allowlist nem o env declarado pelo operador no MCP hub). O mesmo módulo alimenta `mcp-hub/mcp-stdio-bridge.ts` (`backendEnv`) |
 | Workspace paths | `renderer-workspace-scope.ts`, `workspace-path` |
 | Audit + redaction | `jarvis/audit-log.ts`, `command-redaction.ts` |
 | Autonomy | `autonomy/autonomy-profiles.ts` |

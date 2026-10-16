@@ -31,6 +31,7 @@ import {
 } from "../../shared/cli-initial-prompt";
 import { ensureUtf8Locale } from "./pty-env-locale";
 import { applyProjectNodeToWorkerPath } from "./node-version-path";
+import { mergeWindowsUserEnvironment } from "./windows-user-env";
 import { createExactResumeHealth, exactResumeScreenSaysConversationMissing, type ExactResumeAttempt } from "./exact-resume-health";
 import { materializeProviderState, providerStateEnvFor } from "./provider-state-env";
 import { applyPaneTerminalIdentity } from "./pane-terminal-identity";
@@ -1010,6 +1011,13 @@ function baseChildEnv(): NodeJS.ProcessEnv {
     if (value === undefined) continue;
     if (isAllowedChildEnvKey(key)) env[key] = value;
   }
+  // Windows: o `process.env` do Main é congelado no boot, então uma variável
+  // que o operador cria/edita em `HKCU\Environment` (painel do Windows, `setx`)
+  // — inclusive MCPs que dependem dela — nunca chegava ao pane. O merge
+  // PREENCHE lacunas (nunca sobrescreve o allowlist) e é no-op fora do win32;
+  // ele roda aqui, antes de tudo, para que `suppressEnv`/`envRemove` do spawn
+  // (que rodam depois) continuem vencendo.
+  mergeWindowsUserEnvironment(env);
   env.TERM = "xterm-256color";
   env.COLORTERM = "truecolor";
   // App GUI (Finder) não herda locale do shell: sem isto o CLI filho roda em

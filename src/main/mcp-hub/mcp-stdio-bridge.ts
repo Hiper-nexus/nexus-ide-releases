@@ -4,6 +4,7 @@ import path from 'node:path';
 import { readJsonObject } from '../orch/cli-mcp-session-artifacts';
 import { splitQuotedArgv } from './mcp-hub-core';
 import { MCP_PROTOCOL_VERSION, type JsonRpcRequest, type JsonRpcResponse } from '../orch/mcp-protocol';
+import { mergeWindowsUserEnvironment } from '../pty/windows-user-env';
 
 /**
  * Shared MCP stdio hub (07645-mcp-hub-compartilhado): every operator-hand
@@ -193,6 +194,13 @@ function backendEnv(descriptorEnv: Readonly<Record<string, string>>): Record<str
       base[key] = value;
     }
   }
+  // Windows: o backend de um MCP stdio declarado em `~/.claude.json` muitas
+  // vezes depende de variáveis do PRÓPRIO operador (ex.: MARGEM_MCP_READ_URL /
+  // MARGEM_MCP_READ_TOKEN). Elas vivem em `HKCU\Environment` e o `process.env`
+  // do Main não as vê; sem isto o hub subia o servidor sem credencial e falhava
+  // em silêncio. Preenche lacunas — o `env` declarado no descriptor continua
+  // vencendo (spread abaixo) e o INHERITED_ENV_KEYS acima tem precedência.
+  mergeWindowsUserEnvironment(base);
   return { ...base, ...descriptorEnv };
 }
 
