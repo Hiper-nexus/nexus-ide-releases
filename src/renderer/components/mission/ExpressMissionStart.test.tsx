@@ -443,3 +443,32 @@ describe('ExpressMissionStart — teclado e contexto da ação', () => {
   });
 });
 
+describe('ExpressMissionStart — ordem do Tab e anexos acessíveis', () => {
+  it('o editor é o primeiro controle do formulário e o botão de iniciar o último do dock', () => {
+    const host = render();
+    const editor = editorOf(host);
+    const dictation = button(host, 'Ditar pedido');
+    const firstExample = host.querySelector<HTMLElement>('.mission-setup__example')!;
+    const cta = button(host, 'Iniciar criação');
+    const before = (a: Node, b: Node) =>
+      Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+    // Quem chega pelo teclado cai no campo, não no microfone; o ditado e os
+    // exemplos vêm depois, e a ação principal fecha o formulário.
+    expect(before(editor, dictation)).toBe(true);
+    expect(before(dictation, firstExample)).toBe(true);
+    expect(before(firstExample, cta)).toBe(true);
+    const controls = [...host.querySelectorAll<HTMLElement>('button, a[href], input, select, summary, [tabindex="0"]')]
+      .filter((node) => node.tabIndex >= 0 && !(node as HTMLButtonElement).disabled);
+    expect(controls.at(-1)).toBe(cta);
+  });
+
+  it('o campo de arquivo escondido sai do Tab e a zona de soltar tem nome', () => {
+    const host = render();
+    const fileInput = host.querySelector<HTMLInputElement>('input[type="file"]')!;
+    expect(fileInput.tabIndex).toBe(-1);
+    const zone = host.querySelector<HTMLElement>('.mission-attachment-picker__drop')!;
+    expect(zone.getAttribute('role')).toBe('group');
+    expect(zone.getAttribute('aria-label')).toMatch(/anexar arquivos/i);
+  });
+});
+
