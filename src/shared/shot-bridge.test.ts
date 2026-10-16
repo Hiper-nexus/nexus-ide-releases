@@ -13,6 +13,21 @@ describe('Shot destination trust boundary', () => {
       expect(shotDestinationSchema.safeParse(value).success).toBe(false);
     }
   });
+  it('treats `target: null` (no pane chosen in the Shot selector) as no target, not as a malformed one', () => {
+    // O Nexus Shot manda `"target": null` quando nenhum pane foi escolhido.
+    for (const value of [{ target: null }, { targetPaneId: 'pane-1', target: null }]) {
+      expect(shotDestinationSchema.safeParse(value).success).toBe(true);
+    }
+    // Sem alvo: o servidor lê `target?.paneId`, que fica undefined (entrega padrão).
+    const parsed = shotDestinationSchema.parse({ type: 'ingest', target: null });
+    expect(parsed.target?.paneId).toBeUndefined();
+    expect(parsed.targetPaneId).toBeUndefined();
+    // `targetPaneId` continua estrito (ausente ou id válido) e o resto de `target` também.
+    for (const value of [{ targetPaneId: null }, { targetPaneId: null, target: null },
+      { target: 'pane-1' }, { target: [] }, { target: 0 }]) {
+      expect(shotDestinationSchema.safeParse(value).success).toBe(false);
+    }
+  });
   it('bounds opaque IDs and refuses paths, whitespace and controls', () => {
     expect(shotTargetIdSchema.safeParse('p'.repeat(128)).success).toBe(true);
     for (const value of ['', 'p'.repeat(129), '/tmp/pane', ' pane-1 ', 'pane\n1', 'pane\u0000']) {

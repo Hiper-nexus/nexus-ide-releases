@@ -8,6 +8,7 @@
  *   header: x-nexus-shot-token: <token aleatório por sessão>
  *   body:   { "type": "ingest", "files": ["<abs path>", ...], "source": "nexus-shot" }
  *   destino opcional: { "targetPaneId": "pane-..." } ou { "target": { "paneId": "pane-..." } }
+ *   (`"target": null` = nenhum pane escolhido, entrega padrão)
  *   GET /shot/targets (mesmo token): { "ok": true, "data": { "missions": [...] } }
  *   Alvo explícito indisponível é recusado; sem alvo conserva o foco padrão.
  *   ack:    200 { "ok": true, "received": N }
@@ -41,8 +42,12 @@ export type ShotTargetBinding = z.infer<typeof shotTargetBindingSchema>;
 
 export const shotDestinationSchema = z.object({
   targetPaneId: shotTargetIdSchema.optional(),
-  // Compatibilidade com o seletor do Shot do PR106.
-  target: z.object({ paneId: shotTargetIdSchema }).strict().optional(),
+  // Compatibilidade com o seletor do Shot do PR106. O Shot manda `"target": null`
+  // quando nenhum pane foi escolhido: null = sem alvo (entrega padrão), igual a
+  // ausente. Recusar virava `invalid-shape` e o Shot mostrava "O NexusIDE recusou
+  // os arquivos (fora das pastas do Nexus Shot)". `targetPaneId` segue estrito:
+  // só ausente ou um id válido, `null` ali continua recusado.
+  target: z.object({ paneId: shotTargetIdSchema }).strict().nullish(),
 }).passthrough().refine(
   value => !value.targetPaneId || !value.target || value.targetPaneId === value.target.paneId,
 );

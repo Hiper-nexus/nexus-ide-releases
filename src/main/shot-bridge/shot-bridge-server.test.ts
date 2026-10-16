@@ -327,6 +327,43 @@ describe('explicit Shot destination (F-1054)', () => {
     expect(received).toHaveLength(3);
   });
 
+  it('accepts the Shot `target: null` (no pane chosen) as the default delivery, HTTP 200', async () => {
+    const received: Array<{ files: ShotFileMeta[]; targetPaneId?: string; targetBinding?: import('../../shared/shot-bridge').ShotTargetBinding }> = [];
+    handle = await startShotBridgeServer({
+      userDataPath: userData, homeDir: home,
+      listTargets: () => ({ missions: [{ id: 'operator', title: 'Panes', panes: [
+        { id: 'pane-selected', title: 'Codex', focused: false },
+      ] }] }),
+      resolveTargetBinding: paneId => ({ paneId, sessionId: 'session-selected', workspacePath: '/fixture-workspace' }),
+      onFiles: (files, targetPaneId, targetBinding) => received.push({ files, targetPaneId, targetBinding }),
+    });
+    const url = `http://127.0.0.1:${handle.port}`;
+    const headers = { 'x-nexus-shot-token': handle.token, 'content-type': 'application/json' };
+    const png = makeFile(picturesDir, 'sem-alvo.png');
+    const ingest = (destination: Record<string, unknown>) => fetch(`${url}/shot/ingest`, { method: 'POST', headers,
+      body: JSON.stringify({ type: 'ingest', source: 'nexus-shot', files: [png], ...destination }) });
+    // Antes: invalid-shape (400) e o Shot mostrava "O NexusIDE recusou os arquivos
+    // (fora das pastas do Nexus Shot)" para uma captura perfeitamente válida.
+    const generic = await ingest({ target: null });
+    expect(generic.status).toBe(200);
+    expect(await generic.json()).toEqual({ ok: true, received: 1 });
+    expect(received).toHaveLength(1);
+    // Sem alvo explícito: entrega padrão, nada de pane nem binding inventados.
+    expect(received[0].targetPaneId).toBeUndefined();
+    expect(received[0].targetBinding).toBeUndefined();
+    // `target: null` não apaga um alvo explícito vindo do outro campo.
+    const explicit = await ingest({ targetPaneId: 'pane-selected', target: null });
+    expect(explicit.status).toBe(200);
+    expect(received).toHaveLength(2);
+    expect(received[1].targetPaneId).toBe('pane-selected');
+    expect(received[1].targetBinding).toEqual({ paneId: 'pane-selected', sessionId: 'session-selected', workspacePath: '/fixture-workspace' });
+    // `targetPaneId: null` segue recusado, mesmo ao lado de `target: null`.
+    const malformed = await ingest({ targetPaneId: null, target: null });
+    expect(malformed.status).toBe(400);
+    expect(await malformed.json()).toEqual({ ok: false, reason: 'invalid-shape' });
+    expect(received).toHaveLength(2);
+  });
+
   it('bounds and sanitizes target IDs/titles/counts without exposing extra fields', async () => {
     handle = await startShotBridgeServer({ userDataPath: userData, homeDir: home, onFiles: () => {},
       listTargets: () => ({ missions: Array.from({ length: 30 }, (_, i) => ({
