@@ -183,3 +183,28 @@ it('F-1164: missionBudgetUsd fora da faixa no arquivo vira o padrão e preserva 
     mode: 'auto', clefModel: 'clef', cloudflareAccountId: '', visionEnabled: false, missionBudgetUsd: 2 } });
   expect(store.getOrchSettings().decisionModels.missionBudgetUsd).toBe(2);
 });
+
+it('gasto mensal (spend): grava a lista inteira, recusa patch inválido e sobrevive ao reload', async () => {
+  const before = operatorFileState();
+  vi.resetModules();
+  const store = await import('./settings-store');
+  store.registerSettingsIpc();
+  const get = handlers.get(SETTINGS_CHANNELS.spendGet)!;
+  const set = handlers.get(SETTINGS_CHANNELS.spendSet)!;
+  const max = { id: 'plan:claude:acc-1', label: 'Claude Max 20×', kind: 'subscription', provider: 'claude', monthlyUsd: 216.5, active: true };
+  const api = { id: 'custom-api', label: 'API OpenRouter', kind: 'api', provider: '', monthlyUsd: 35, active: false };
+  expect(set(null, { entries: [max, api] }).entries).toEqual([max, api]);
+  // Negativo, id repetido e valor acima do teto não entram: a lista salva fica.
+  expect(set(null, { entries: [{ ...max, monthlyUsd: -1 }] }).entries).toEqual([max, api]);
+  expect(set(null, { entries: [max, max] }).entries).toEqual([max, api]);
+  expect(set(null, { entries: [{ ...api, monthlyUsd: 100_001 }] }).entries).toEqual([max, api]);
+  expect(set(null, { entries: [api] }).entries).toEqual([api]);
+  expect(JSON.parse(fs.readFileSync(resolveSettingsFile(), 'utf8')).spend).toEqual({ entries: [api] });
+
+  vi.resetModules();
+  const reloaded = await import('./settings-store');
+  reloaded.registerSettingsIpc();
+  expect(handlers.get(SETTINGS_CHANNELS.spendGet)!()).toEqual({ entries: [api] });
+  expect(get()).toEqual({ entries: [api] });
+  expect(operatorFileState()).toBe(before);
+});
