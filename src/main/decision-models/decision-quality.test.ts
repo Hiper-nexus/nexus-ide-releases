@@ -52,8 +52,8 @@ describe('tabela de qualidade (F-1165)', () => {
     expect(decisionQuality(table, 'judgeTool', 'clef-flash', 'text')).toMatchObject({ source: 'prior' });
     // Resposta malformada é erro de qualidade: entra no denominador.
     expect(table?.surfaces.judgeTool['clef-omni']).toMatchObject({ accuracy: 0, cases: 6 });
-    // Acurácia medida 0 é suspeita: cai no prior em vez de enterrar o modelo.
-    expect(decisionQuality(table, 'judgeTool', 'jev', 'text')).toMatchObject({ source: 'prior', quality: 0.8 });
+    // Seis respostas válidas erradas são evidência negativa, não falta de evidência.
+    expect(decisionQuality(table, 'judgeTool', 'jev', 'text')).toMatchObject({ source: 'local-evaluation', quality: 0, surfaceCases: 6 });
     expect(decisionQuality(table, 'judgeTool', 'luna', 'text')).toMatchObject({ source: 'local-evaluation', quality: 1 });
     expect(fs.readFileSync(file, 'utf8')).not.toContain('private payload');
   });
@@ -132,6 +132,18 @@ describe('P3: cache da tabela com TTL', () => {
 describe('F-1167: mistura global + prior e mescla de calibrações', () => {
   const table = (models: DecisionQualityTable['models'], surfaces: DecisionQualityTable['surfaces'] = {}): DecisionQualityTable =>
     ({ version: 1, generatedAt: 1, source: 'evaluateDecisionCases', models, surfaces });
+
+  it('zero acertos globais com amostra suficiente reduz o prior de outra surface', () => {
+    const estimate = decisionQuality(table({ jev: { accuracy: 0, cases: 6 } }), 'judgeTool', 'jev', 'text');
+    expect(estimate).toMatchObject({ source: 'blended', surfaceCases: 0 });
+    expect(estimate.quality).toBeCloseTo(2 / 3, 10);
+  });
+
+  it.each([0, MIN_QUALITY_CASES - 1])('zero acertos com apenas %i casos preserva o prior', cases => {
+    const estimate = decisionQuality(table({ jev: { accuracy: 0, cases } },
+      { judgeTool: { jev: { accuracy: 0, cases } } }), 'judgeTool', 'jev', 'text');
+    expect(estimate).toMatchObject({ source: 'prior', quality: 0.8, surfaceCases: cases });
+  });
 
   it('P2-2a: global (texto) é ponderada com o prior da surface pelo nº de casos', () => {
     const prior = decisionQualityPrior('taskRouting', 'jev', 'text');
