@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 interface CliReport {
@@ -38,7 +39,8 @@ function evaluateWithCredentials(credentials: Record<string, string>) {
       throw Error('Unexpected endpoint; network disabled in this fixture');
     };`);
   try {
-    const result = spawnSync(process.execPath, ['--import', mock, '--import', 'tsx',
+    // `--import` só aceita file:// no Windows — caminho C:\ cru vira scheme 'c:'.
+    const result = spawnSync(process.execPath, ['--import', pathToFileURL(mock).href, '--import', 'tsx',
       'scripts/evaluate-decision-models.mjs', '--cases', cases, '--out', output], {
       encoding: 'utf8', timeout: 10_000,
       env: { ...process.env, TYPESAFE_API_KEY: '', NEXUS_CLEF_API_TOKEN: '', NEXUS_CLEF_ACCOUNT_ID: '',
