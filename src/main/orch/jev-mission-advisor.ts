@@ -126,6 +126,20 @@ const COMPLEXITY_LEVELS = ['trivial', 'small', 'medium', 'large'] as const;
 const LANES = ['standard', 'consult', 'plan', 'ops'] as const;
 const MAX_WORKER_CHOICES = 6;
 
+/**
+ * "+ Pane" promovido sem objetivo digitado: o goal efetivo cai no título da
+ * aba ("Missão · Meus terminais 3", padrão de tabMissionTitle). Consultar o
+ * modelo com isso só devolve small/1 worker inútil e polui as dicas — a
+ * consulta espera um objetivo real chegar.
+ */
+const PLACEHOLDER_TAB_GOAL =
+  /^(?:missão|mission)\s*·\s*(?:meus\s+terminais|terminais)?\s*\d*\s*$|^missão da aba$/i;
+
+/** O goal é só o nome automático da aba, sem descrição real da missão? */
+export function isTabPlaceholderGoal(goal: string): boolean {
+  return PLACEHOLDER_TAB_GOAL.test(goal.trim());
+}
+
 export function missionKickoffQuestions(maxWorkers: number): Record<string, JevQuestion> {
   const questions: Record<string, JevQuestion> = {
     complexity: { type: 'score', instructions: 'How complex is this mission to deliver well?',
@@ -147,6 +161,8 @@ export function missionKickoffQuestions(maxWorkers: number): Record<string, JevQ
 }
 
 export async function adviseMissionKickoff(facts: MissionKickoffFacts, deps: AdvisoryDeps = {}): Promise<MissionKickoffHint | null> {
+  // Goal placeholder de aba não tem o que aconselhar: nada de chamada ao modelo.
+  if (isTabPlaceholderGoal(facts.goal)) return null;
   const maxWorkers = Math.max(0, Math.floor(facts.maxWorkers));
   const questions = missionKickoffQuestions(maxWorkers);
   const state = {
@@ -175,9 +191,14 @@ export async function adviseMissionKickoff(facts: MissionKickoffFacts, deps: Adv
 
 const kickoffStarted = new Set<string>();
 
-/** Uma vez por missão por processo (retry de bootstrap não repete a consulta). */
+/**
+ * Uma vez por missão por processo (retry de bootstrap não repete a consulta).
+ * Goal ainda placeholder de aba NÃO marca a missão como consultada: quando o
+ * objetivo real chegar, a próxima chamada dispara a consulta.
+ */
 export function scheduleMissionKickoffAdvice(facts: MissionKickoffFacts, deps: AdvisoryDeps = {}): void {
   if (!facts.missionId || kickoffStarted.has(facts.missionId)) return;
+  if (isTabPlaceholderGoal(facts.goal)) return;
   kickoffStarted.add(facts.missionId);
   fireAndForget(() => adviseMissionKickoff(facts, deps));
 }

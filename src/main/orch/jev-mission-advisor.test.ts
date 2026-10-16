@@ -16,7 +16,8 @@ import { judgeClef } from '../decision-models/clef-client';
 import { judgeLuna } from '../decision-models/luna-client';
 import { recordJevDecision } from '../jev/jev-decision-log';
 import {
-  adviseCompletionCheck, adviseMissionKickoff, adviseRecovery, adviseReviewTriage, missionKickoffFacts,
+  adviseCompletionCheck, adviseMissionKickoff, adviseRecovery, adviseReviewTriage, isTabPlaceholderGoal,
+  missionKickoffFacts,
   missionKickoffQuestions, resetMissionAdvisorForTesting, reviewTriageContextLine, scheduleCompletionCheck,
   scheduleMissionKickoffAdvice, scheduleRecoveryAdvice, scheduleReviewTriageAdvice, withReviewTriageLines, type AdvisoryDeps,
   auditCompletionAtDone, completionContextLine, completionSignature, recoveryTriggerClass, settleCompletionChecksForTesting,
@@ -128,6 +129,44 @@ describe('missionKickoff (F-1166)', () => {
     expect(sent).toContain('Contexto da varredura s240.');
     expect(sent).toContain(ask);
     expect(sent.length).toBeLessThan(1_600);
+  });
+});
+
+describe('+ Pane promovido sem objetivo: goal placeholder de aba não consulta o modelo', () => {
+  const paneFacts = (goal: string) => ({ missionId: 'm-tab', origin: 'pane' as const, goal, maxWorkers: 4 });
+
+  it('"Missão · Meus terminais 3" e variantes são placeholders; nome de feature não', () => {
+    for (const goal of ['Missão · Meus terminais 3', 'Missão · Meus terminais', 'Missão · Terminais',
+      'Missão ·', 'Mission · Meus terminais 7', 'Missão da aba', '  Missão · Meus terminais 2  ']) {
+      expect(isTabPlaceholderGoal(goal)).toBe(true);
+    }
+    for (const goal of ['Missão · Checkout', 'Missão · Meus terminais: refatorar o login',
+      'corrigir o bug do checkout', 'objetivo de m-tab']) {
+      expect(isTabPlaceholderGoal(goal)).toBe(false);
+    }
+  });
+
+  it('advise com goal placeholder: nenhuma chamada, nenhuma dica', async () => {
+    const judge = vi.fn(async () => result(kickoffAnswers()));
+    expect(await adviseMissionKickoff(paneFacts('Missão · Meus terminais 3'), { judge })).toBeNull();
+    expect(judge).not.toHaveBeenCalled();
+    expect(getMissionDecisionHints('m-tab')).toBeUndefined();
+  });
+
+  it('schedule com placeholder não consome a missão: o objetivo real dispara depois', async () => {
+    const judge = vi.fn(async () => result(kickoffAnswers('2')));
+    scheduleMissionKickoffAdvice(paneFacts('Missão · Meus terminais 3'), { judge });
+    await tick(); await tick();
+    expect(judge).not.toHaveBeenCalled();
+    // O objetivo real chegou (descrição/meta editada): a consulta acontece uma vez.
+    scheduleMissionKickoffAdvice(paneFacts('refatorar o login do admin'), { judge });
+    await tick(); await tick();
+    expect(judge).toHaveBeenCalledTimes(1);
+    expect(getMissionDecisionHints('m-tab')?.kickoff).toMatchObject({ origin: 'pane', workers: 2 });
+    // Depois de consultada, a missão não consulta de novo.
+    scheduleMissionKickoffAdvice(paneFacts('novo objetivo'), { judge });
+    await tick(); await tick();
+    expect(judge).toHaveBeenCalledTimes(1);
   });
 });
 
