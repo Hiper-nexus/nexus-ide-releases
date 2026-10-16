@@ -1081,7 +1081,7 @@ describe('MissionSetup', () => {
       'Quero um sistema de agendamento para minha barbearia',
     );
     expect(
-      button(host, 'Escolher pasta e iniciar').disabled,
+      button(host, 'Escolher pasta para iniciar').disabled,
     ).toBe(false);
   });
 
@@ -1123,7 +1123,7 @@ describe('MissionSetup', () => {
       'ao iniciar, você escolhe a pasta e o texto acompanha',
     );
     expect(
-      button(host, 'Escolher pasta e iniciar').disabled,
+      button(host, 'Escolher pasta para iniciar').disabled,
     ).toBe(false);
 
     enterText(objective, 'Quero um sistema de agendamento');
@@ -2424,7 +2424,7 @@ describe('Caminho Expresso', () => {
     expect(isObjectiveDisabled(objective)).toBe(false);
     expect(button(host, 'Iniciar criação').type).toBe('submit');
     expect(button(host, 'Mais papéis e tamanho').type).toBe('button');
-    expect(button(host, 'Ditar objetivo').type).toBe('button');
+    expect(button(host, 'Ditar pedido').type).toBe('button');
     await flush();
     await flush();
     expect(host.textContent).toContain('Quem faz o quê');
@@ -2436,7 +2436,12 @@ describe('Caminho Expresso', () => {
     expect(
       host.querySelectorAll('select[aria-label^="Ferramenta de IA"]').length,
     ).toBeGreaterThanOrEqual(2);
-    expect(host.textContent).toContain('Anexos do cliente');
+    // Anexos ficam à vista (não dentro de um recolher) e dizem o que aceitam.
+    expect(host.textContent).toContain('Anexos');
+    expect(host.textContent).toContain('Imagem, áudio, PDF ou texto.');
+    expect(
+      host.querySelector('.mission-attachment-picker')?.closest('details'),
+    ).toBeNull();
     expect(
       host.querySelector('input[type="file"][accept*="audio"]'),
     ).not.toBeNull();
@@ -3069,7 +3074,7 @@ describe('Caminho Expresso', () => {
     const host = render(<MissionSetup />);
     await flush();
 
-    expect(host.textContent).toContain('Anexos do cliente');
+    expect(host.textContent).toContain('Anexos');
     expect(
       host.querySelector('input[type="file"][accept*="audio"]'),
     ).not.toBeNull();
@@ -3361,7 +3366,7 @@ describe('Caminho Expresso', () => {
       'Construir uma landing page',
     );
 
-    act(() => button(host, 'Escolher pasta e iniciar').click());
+    act(() => button(host, 'Escolher pasta para iniciar').click());
     await flush();
 
     expect(pick).toHaveBeenCalledTimes(1);

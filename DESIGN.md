@@ -412,6 +412,41 @@ sem usar “Subindo” como única explicação.
   técnicas obrigatórias; estados de execução, revisão e entrega continuam
   baseados no motor. Um redesign não certifica sozinho a qualidade do código.
 
+### Início: ação ancorada, atalho e anexos à vista (pedido do operador, 16/10)
+
+Código: `ExpressMissionStart.tsx`, `MissionAttachmentPicker.tsx` e
+`mission-setup.css`; o guard é `ExpressMissionStart.test.tsx`.
+
+- **A ação nunca sai da tela.** `Iniciar criação` mora no dock (§15), irmão da
+  área rolável, e não no fim da página: o apoio (terminais, primeiros passos)
+  rola por cima dele. O dock leva a pasta e a equipe ("confeitaria-da-ana · 4
+  agentes · Claude · Codex") e a dica do atalho. Pré-requisito sem IA conectada,
+  resposta direta e erro moram juntos, acima do botão que respondem. Sem pasta o
+  botão diz "Escolher pasta para iniciar", porque só abre o seletor.
+- **⌘/Ctrl+Enter inicia de qualquer ponto do formulário; Enter nunca inicia.** O
+  editor lê Mod-Enter como quebra de linha, então o `<form>` captura a tecla
+  antes dele (`onKeyDownCapture`, nunca durante o IME). Enter e Shift+Enter
+  seguem quebrando linha, e Enter no critério de pronto não envia o formulário.
+  O rótulo vem de `formatShortcut('mod', 'enter')`.
+- **Validação junto do campo.** Pedido vazio explica logo abaixo do campo
+  (`role="alert"`, `aria-invalid`, `aria-describedby`), leva o foco para ele e
+  some quando a pessoa escreve. O rótulo "Seu pedido" foca o editor (um
+  contenteditable não é rotulável). A dica de como escrever é visível, não só
+  para leitor de tela.
+- **Exemplos ensinam sem apagar.** Quatro pedidos (criar, corrigir, entender o
+  projeto, publicar) sob a legenda "Comece por um exemplo:". Clicar troca o
+  texto (contrato F-1170), mas, se havia texto digitado, "Desfazer" o devolve.
+  "Entender o projeto" cai na lane de leitura (`consult`): conferido por teste.
+- **Anexos à vista.** O `MissionAttachmentPicker` compacto fica logo abaixo do
+  pedido, fora de qualquer recolher, e diz o que aceita ("Imagem, áudio, PDF ou
+  texto."). É a superfície de miniaturas e anexos pendentes: não duplique outra
+  faixa de anexos perto do campo.
+- **Um botão branco só.** Os atalhos do checklist de primeiros passos descem para
+  neutro elevado nesta tela (a ação primária é a coisa mais clara, §2). Títulos,
+  alvos (32px) e texto do apoio seguem a escala do restante da tela.
+- **Foco inicial segue no título.** Mover para o editor quebraria os atalhos 1 a 6
+  do Início (valem com o foco fora de campos); decisão do operador pendente.
+
 ## 14. Sala de racks da missão (grafo do Quadro)
 
 Pedido do operador (02/10): cada CLI/LLM é um rack e as relações são cabos
