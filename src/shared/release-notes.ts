@@ -11034,7 +11034,7 @@ export const RELEASE_076282: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076283: AppRelease = {
   version: '0.76.283',
   date: '2026-10-15',
   codename: 'Linux em dia com a voz e a lateral',
@@ -11051,5 +11051,19 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Conversa do Quadro', detail: 'A aba Conversa cabe em painéis estreitos. Orientação a um coordenador ocupado é recusada na hora, as orientações não somem e o foco volta ao editor depois do envio.' },
     { title: 'Mensagens claras', detail: 'Respostas aguardam a sua confirmação com "Aguardando confirmação…", a linha do tempo detalhada mostra o quadro correto e as recusas aparecem em português.' },
     { title: 'Atualização do Linux', detail: 'A tag 0.76.282 não recebe pacotes Linux. A suíte dela não fechava. O Linux sai na 0.76.283.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.284',
+  date: '2026-10-15',
+  codename: 'Linux em dia com a projeção',
+  summary: 'O pacote Linux acompanha a correção da projeção de missão no Windows. No Linux o atalho da projeção continua exigindo o modo 0600.',
+  highlights: [
+    { title: 'Mesmo atalho no Linux', detail: 'A projeção de missão no Linux segue reconhecendo o arquivo pelo modo 0600. O desktop Linux não muda de comportamento nesta versão.' },
+  ],
+  fixes: [
+    { title: 'Projeção no Windows', detail: 'No Windows o atalho da projeção aceita o modo 0666 que o NTFS reporta, em vez de regravar um arquivo que não mudou.' },
+    { title: 'Atualização do Linux', detail: 'A tag 0.76.283 já tem pacotes Linux. Esta versão publica o commit seguinte, que não altera o comportamento no Linux.' },
   ],
 };

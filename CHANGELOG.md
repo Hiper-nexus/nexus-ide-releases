@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.284 — Linux em dia com a projeção
+
+A tag 0.76.283 já tem pacotes Linux. Este pacote acompanha o commit seguinte: no Windows, o atalho da projeção de missão aceita o modo 0666 que o NTFS reporta, em vez de regravar um arquivo que não mudou. No Linux o atalho continua exigindo o modo 0600; o comportamento do desktop não muda. Testes de stat, ctime e shim que dependem de POSIX continuam só no POSIX.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35).
+
 ## 0.76.283 — Linux em dia com a voz e a lateral
 
 A tag 0.76.282 não recebe pacotes Linux: a suíte não fechava (hashes de proveniência desatualizados e o mock do aquecimento da conta Grok). Esta versão corrige isso e leva o produto da 0.76.281, empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). A 0.76.281 é a candidata do Windows. O ConPTY do Qwen e a admissão de comando pesado no Windows não são o motivo deste pacote.
