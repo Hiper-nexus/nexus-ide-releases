@@ -55,13 +55,13 @@ describe('decision configuration revision (in-flight and cache authority)', () =
     expect(decisionCredentialRevision()).toBe(before + 1);
   });
 
-  it('persists no image consent once image analysis is off, and Somente Jev never widens a legacy one', () => {
+  it('persists no image consent once image analysis is off, and Somente Jev keeps a legacy visionEnabled grant for Clef', () => {
     const orchSet = handlers.get(SETTINGS_CHANNELS.orchSet)!;
     orchSet(trustedEvent(), { decisionModels: { mode: 'auto', clefModel: 'clef', cloudflareAccountId: ACCOUNT, visionEnabled: true } });
     expect(getOrchSettings().decisionModels.visionEnabled).toBe(true);
     orchSet(trustedEvent(), { decisionModels: { ...getOrchSettings().decisionModels, mode: 'jev' } });
     expect(getOrchSettings().decisionModels.visionEnabled).toBe(true);
-    expect(hasVisionRecipientConsent(getOrchSettings().decisionModels, 'clef')).toBe(false);
+    expect(hasVisionRecipientConsent(getOrchSettings().decisionModels, 'clef')).toBe(true);
     orchSet(trustedEvent(), { decisionModels: { ...getOrchSettings().decisionModels, visionEnabled: false } });
     expect(getOrchSettings().decisionModels.visionEnabled).toBe(false);
     orchSet(trustedEvent(), { decisionModels: { ...getOrchSettings().decisionModels, mode: 'auto' } });

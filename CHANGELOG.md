@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.287 — Linux em dia com a Jarvis e o uso
+
+A tag 0.76.286 não recebe pacotes Linux: a suíte não fechava. O teste da configuração ainda esperava que Somente Jev recusasse o Clef quando a análise de imagem já estava ligada e não havia lista de consentimento. O produto já autoriza esse Clef; o teste passa a dizer o mesmo. O desktop Linux é o da 0.76.286.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). A tag 0.76.285 também não recebe pacotes Linux.
+
 ## 0.76.286 — Linux em dia com a Jarvis e o uso
 
 A tag 0.76.285 não recebe pacotes Linux. Este pacote leva o produto dela para o desktop Linux, empacotado a partir de Ubuntu 22.04 (glibc 2.35). O ConPTY, a leitura de `HKCU\Environment` e a admissão de memória do Windows não são o motivo deste pacote.

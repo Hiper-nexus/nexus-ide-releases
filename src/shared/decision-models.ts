@@ -67,9 +67,9 @@ export type DecisionMode = DecisionSettings['mode'];
 export type VisionRecipient = 'clef' | 'luna';
 
 /**
- * Legacy consent authorizes Cloudflare only, regardless of a later mode/key change.
- * Somente Jev nunca enviou imagem: um arquivo antigo com visionEnabled e sem registro
- * de consentimento não passa a enviar sem uma autorização nova.
+ * Legacy consent (visionEnabled, no visionConsent record) authorizes Clef only,
+ * in every mode, including Somente Jev. An explicit visionConsent list is never
+ * widened by a later mode change.
  */
 export function hasVisionRecipientConsent(settings: DecisionSettings, recipient: VisionRecipient): boolean {
   if (!settings.visionEnabled) return false;
