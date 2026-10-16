@@ -3,7 +3,10 @@ import type { PaneModel } from '../../shared/types';
 import {
   PANE_BIRTH_FAILED_AFTER_MS,
   PANE_BIRTH_SLOW_AFTER_MS,
+  clearPaneBirthElapsed,
+  paneBirthClockKey,
   paneBirthDisplay,
+  paneBirthElapsedMs,
 } from '../lib/pane-birth-display';
 import { useSessionStateStore } from '../state/session-state-store';
 import {
@@ -47,23 +50,6 @@ export function PaneBirthOverlay({ pane }: { pane: PaneModel }) {
     return subscribePaneSpawnErrors(refresh);
   }, [pane.id]);
 
-  useEffect(() => {
-    if (sessionId) return undefined;
-    setElapsedMs(0);
-    const slow = setTimeout(
-      () => setElapsedMs(PANE_BIRTH_SLOW_AFTER_MS),
-      PANE_BIRTH_SLOW_AFTER_MS,
-    );
-    const failed = setTimeout(
-      () => setElapsedMs(PANE_BIRTH_FAILED_AFTER_MS),
-      PANE_BIRTH_FAILED_AFTER_MS,
-    );
-    return () => {
-      clearTimeout(slow);
-      clearTimeout(failed);
-    };
-  }, [pane.id, sessionId]);
-
   const display = paneBirthDisplay({
     sessionState,
     sessionId,
@@ -73,6 +59,45 @@ export function PaneBirthOverlay({ pane }: { pane: PaneModel }) {
     elapsedMs,
     failureReason,
   });
+
+  const birthKey = paneBirthClockKey(pane.id, pane.adapterId);
+  // O relógio vive fora do mount: remount por troca de aba/layout continua o
+  // elapsed da geração, e concluir o nascimento (sessão, pane escondido ou
+  // falha) limpa a entrada para um respawn começar do zero.
+  const birthing = display !== null && !display.failed;
+  useEffect(() => {
+    if (sessionId || !birthing) {
+      clearPaneBirthElapsed(birthKey);
+      return undefined;
+    }
+    const elapsed = paneBirthElapsedMs(birthKey);
+    setElapsedMs(elapsed);
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    if (elapsed < PANE_BIRTH_SLOW_AFTER_MS) {
+      timers.push(
+        setTimeout(
+          () => setElapsedMs(PANE_BIRTH_SLOW_AFTER_MS),
+          PANE_BIRTH_SLOW_AFTER_MS - elapsed,
+        ),
+      );
+    } else {
+      setElapsedMs(PANE_BIRTH_SLOW_AFTER_MS);
+    }
+    if (elapsed < PANE_BIRTH_FAILED_AFTER_MS) {
+      timers.push(
+        setTimeout(
+          () => setElapsedMs(PANE_BIRTH_FAILED_AFTER_MS),
+          PANE_BIRTH_FAILED_AFTER_MS - elapsed,
+        ),
+      );
+    } else {
+      setElapsedMs(PANE_BIRTH_FAILED_AFTER_MS);
+    }
+    return () => {
+      for (const timer of timers) clearTimeout(timer);
+    };
+  }, [birthKey, sessionId, birthing]);
+
   if (!display) return null;
 
   const tone = display.failed

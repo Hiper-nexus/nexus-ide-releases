@@ -1,8 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   PANE_BIRTH_FAILED_AFTER_MS,
   PANE_BIRTH_SLOW_AFTER_MS,
+  clearPaneBirthElapsed,
+  paneBirthClockKey,
   paneBirthDisplay,
+  paneBirthElapsedMs,
   paneBirthFailureReason,
 } from './pane-birth-display';
 
@@ -14,6 +17,32 @@ const BASE = {
   model: 'gpt-5.6-sol',
   elapsedMs: 0,
 };
+
+describe('pane birth clock', () => {
+  const key = paneBirthClockKey('pane-clock', 'codex');
+
+  afterEach(() => clearPaneBirthElapsed(key));
+
+  it('seeds once and keeps elapsed across reads, like a remount would', () => {
+    expect(paneBirthElapsedMs(key, 1_000)).toBe(0);
+    // O "remount" é só outra leitura: o elapsed não volta ao zero.
+    expect(paneBirthElapsedMs(key, 12_000)).toBe(11_000);
+    expect(paneBirthElapsedMs(key, 13_000)).toBe(12_000);
+  });
+
+  it('starts a fresh cycle after clearPaneBirthElapsed', () => {
+    expect(paneBirthElapsedMs(key, 1_000)).toBe(0);
+    clearPaneBirthElapsed(key);
+    expect(paneBirthElapsedMs(key, 91_000)).toBe(0);
+  });
+
+  it('keys generations by pane + adapter', () => {
+    expect(paneBirthClockKey('p1', 'codex')).toBe('p1:codex');
+    expect(paneBirthClockKey('p1', ' claude ')).toBe('p1:claude');
+    expect(paneBirthClockKey('p1')).toBe('p1');
+    expect(paneBirthClockKey('p1', '  ')).toBe('p1');
+  });
+});
 
 describe('paneBirthDisplay', () => {
   it('names who is coming up while the PTY has no session yet', () => {
