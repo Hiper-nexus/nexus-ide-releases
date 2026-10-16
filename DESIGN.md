@@ -604,8 +604,16 @@ conta) e `styles/usage-overview.css`.
   das partes fecha com o todo (guard: `usage-analytics.test.ts`,
   `UsageOverview.test.tsx`). Sessão não soma entre dias: uma que atravessa a
   meia-noite conta uma vez no intervalo e uma vez em cada dia. Modelo só vale
-  junto com a ferramenta dele (o nome sozinho pode repetir). Filtro que ficou sem
-  dado no período novo some e a tela diz o que está valendo.
+  junto com a ferramenta dele (o nome sozinho pode repetir). Filtro ou dia que
+  ficou sem dado no período novo sai do estado (não volta sozinho depois). Evento
+  sem consumo (mensagem sintética) não vira ferramenta nem modelo.
+- **Campos de data.** O campo nativo dispara `input` a cada dígito (o 1º dígito do
+  ano vira `0002-…`): o valor cru fica no campo e só uma data completa e dentro de
+  [min, max] sobe para o painel; De e Até se limitam entre si por `min`/`max` (nunca
+  empurram a outra ponta no meio da digitação) e, ao sair, o que não valeu volta ao
+  valor que vale. A faixa de filtros tem a mesma estrutura com e sem consumo, para
+  editar o intervalo não desmontar o campo nem perder o foco; botão que some leva o
+  foco para o campo mais perto (Dia ou gráfico), nunca para o body.
 - **Medida vale para o painel inteiro.** Em Custo, o destaque é o dólar e os
   tokens ficam escritos ao lado (resumo, lista, pico e média do gráfico); em
   Tokens, o destaque é a contagem e o custo vai ao lado. Lista e tabela ordenam
@@ -618,7 +626,10 @@ conta) e `styles/usage-overview.css`.
   realçado em acento (é o item selecionado) e o botão "Ver o período inteiro".
   Esc fecha a leitura e depois solta o dia. Dia sem consumo explica e oferece
   "Limpar filtros"; nunca mostra zero. A tela relê o rollup quando o dia vira com
-  ela aberta.
+  ela aberta; o rollup do main também é relido ao fim do minuto quando chegou
+  evento depois do último cálculo ("atualiza com o uso, no máximo uma vez por
+  minuto"). O mesmo conteúdo reenviado a cada ~1 s mantém o mesmo objeto no
+  store: a tela não recalcula nem redesenha à toa.
 - **Gráfico.** Uma curva por ferramenta, sobrepostas; com mais de uma, um fio
   neutro soma o dia. Acima: total, pico e média por dia COM uso do período (dia
   sem registro não rebaixa a média), cada um com a outra medida escrita embaixo.
