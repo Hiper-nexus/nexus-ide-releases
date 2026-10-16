@@ -11068,7 +11068,7 @@ export const RELEASE_076284: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076285: AppRelease = {
   version: '0.76.285',
   date: '2026-10-15',
   codename: 'Jarvis em tempo real, Clef no Jev e Uso e custos',
@@ -11083,5 +11083,23 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Multi-conta na Reserva', detail: 'Contas AGY/Gemini e Claude na Reserva com access token vencido renovam pelo refresh token e gravam a nova credencial no cofre da conta.' },
     { title: 'Windows 32 GB, ConPTY e ambiente ao vivo', detail: 'A admissão de workers no Windows considera memória disponível (Standby), os panes e o hub MCP leem HKCU\\Environment ao vivo e o cabeçalho filtra o caminho do console host.' },
     { title: 'Vagas do Trial e Nexus Shot', detail: 'O leque de helpers no Trial reserva duas vagas para o Maestro e o revisor, e a ponte do Nexus Shot aceita target nulo na entrega padrão.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.286',
+  date: '2026-10-16',
+  codename: 'Linux em dia com a Jarvis e o uso',
+  summary: 'No Linux, a Jarvis conversa em tempo real e opera o Nexus sem modais bloqueantes, o modo Somente Jev manda a captura do navegador ao Clef e as Configurações ganham Uso e custos. A tag 0.76.285 não recebe pacotes Linux.',
+  highlights: [
+    { title: 'Jarvis em tempo real', detail: 'O microfone opera em full-duplex no Grok Voice 3.0 e no OpenAI Realtime. O socket quente é reaproveitado, e a voz entrega texto em qualquer pane ou terminal e executa a lista operacional sem modal bloqueante.' },
+    { title: 'Clef no navegador', detail: 'Em Somente Jev o texto continua no Jev e a captura do navegador vai ao Clef ou Luna autorizados. O piloto do navegador espera 150 ms entre ações.' },
+    { title: 'Uso e custos', detail: 'As Configurações mostram a série diária de 90 dias, recortes de 7, 30 e 90 dias por provedor e modelo, e o gasto mensal real em USD editável na linha.' },
+  ],
+  fixes: [
+    { title: 'Handoff que não cai', detail: 'evidenceIds sem workflow congelado, ou IDs de captura, gravam o handoff como não verificado em vez de recusar a entrega. Um nome livre no spawn vira título do pane.' },
+    { title: 'Abas que rolam de lado', detail: 'A roda do mouse rola as abas do painel direito e as sub-abas do Git. A largura mínima do painel fica em 300 px.' },
+    { title: 'Conta da Reserva renovada', detail: 'Contas AGY/Gemini e Claude com access token vencido renovam pelo refresh token e gravam a credencial nova.' },
+    { title: 'Atualização do Linux', detail: 'A tag 0.76.285 não recebe pacotes Linux. O ConPTY e a admissão de memória do Windows não são o motivo deste pacote. O Linux sai na 0.76.286.' },
   ],
 };

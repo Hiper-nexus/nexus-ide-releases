@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.76.286 — Linux em dia com a Jarvis e o uso
+
+A tag 0.76.285 não recebe pacotes Linux. Este pacote leva o produto dela para o desktop Linux, empacotado a partir de Ubuntu 22.04 (glibc 2.35). O ConPTY, a leitura de `HKCU\Environment` e a admissão de memória do Windows não são o motivo deste pacote.
+
+No desktop Linux, em relação à 0.76.284:
+
+- **Jarvis em tempo real e mãos-livres**. O microfone opera em full-duplex no Grok Voice 3.0 e no OpenAI Realtime, o socket quente é reaproveitado entre ativações com sonda de vida, e a resposta não espera transcrição atrasada quando o provedor já falou ou chamou ferramenta. O `send_to_pane` entrega em qualquer pane ou terminal pedido, e a lista operacional do Nexus roda por voz sem modais bloqueantes.
+- **Clef em Somente Jev e navegador rápido**. O modo Somente Jev mantém as decisões de texto no Jev e envia a captura do navegador ao Clef ou Luna autorizados, inclusive quando a visão já estava ligada. O `nexus_browser_do` reduz a espera entre ações para 150 ms.
+- **Handoffs sem travas burocráticas**. Passar `evidenceIds` sem workflow PREVC congelado, ou citar IDs de captura, grava o handoff como `unverified` em vez de recusar a entrega. Um `agentName` livre em `nexus_pane_spawn` vira título do pane.
+- **Painel de Uso e custos**. Série diária de 90 dias, janelas de 7/30/90 dias por provedor e modelo, e cartão de gasto mensal real em USD editável na linha.
+- **Abas do painel**. A roda do mouse rola de lado as abas do painel direito e as sub-abas do Git. A largura mínima do painel fica em 300 px.
+- **Multi-conta na Reserva**. Contas AGY/Gemini e Claude com access token vencido renovam pelo refresh token e gravam a credencial nova no cofre da conta.
+- **Nexus Shot e Trial**. A ponte do Nexus Shot aceita `target: null` na entrega padrão. O leque de helpers do Trial reserva duas vagas, o Maestro e o revisor.
+
 ## 0.76.285 — Jarvis em tempo real, Clef no Jev e Uso e custos
 
 - **Jarvis em tempo real e mãos-livres**. O microfone opera em full-duplex no Grok Voice 3.0 e no OpenAI Realtime, o socket quente é reaproveitado entre ativações com sonda de vida, a transcrição do Grok usa `session.audio.input.transcription` (`pt-BR`) e a resposta não espera transcrição atrasada quando o provedor já falou ou chamou ferramenta. O `send_to_pane` entrega em qualquer pane ou terminal pedido e a lista operacional do Nexus roda sem modais bloqueantes por voz.
