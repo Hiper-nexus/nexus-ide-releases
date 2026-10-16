@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const resend = vi.hoisted(() =>
   vi.fn(async (_text: string, ..._hooks: unknown[]) => ({ ok: true, paneId: 'pane-focused' })),
 );
+const setConfig = vi.hoisted(() => vi.fn());
 vi.mock('../voice/voice-run-jarvis-turn', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../voice/voice-run-jarvis-turn')>()),
   routeDictation: resend,
@@ -28,7 +29,8 @@ describe('F-1393 — HUD do ditado legível', () => {
   let root: Root;
 
   beforeEach(() => {
-    vi.stubGlobal('nexus', { voice: {}, settings: {} });
+    setConfig.mockReset();
+    vi.stubGlobal('nexus', { voice: { setConfig }, settings: {} });
     vi.stubGlobal('matchMedia', (query: string) => ({
       matches: false,
       media: query,
@@ -107,7 +109,8 @@ describe('F-1419 — refúgio do ditado que ficou sem destino', () => {
   const writeText = vi.fn(async () => {});
 
   beforeEach(() => {
-    vi.stubGlobal('nexus', { voice: {}, settings: {} });
+    setConfig.mockReset();
+    vi.stubGlobal('nexus', { voice: { setConfig }, settings: {} });
     vi.stubGlobal('matchMedia', (query: string) => ({
       matches: false,
       media: query,
@@ -255,5 +258,104 @@ describe('F-1419 — refúgio do ditado que ficou sem destino', () => {
     seed('pending-cancelled');
     render();
     expect(refugeText()).not.toContain('Confira o pane');
+  });
+});
+
+describe('HUD da JARVIS desativada', () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  const disabledInfo = {
+    enabled: false,
+    speakMode: 'off',
+    wakeWordEnabled: false,
+    jarvisLive: { enabled: false },
+    dictationOutputMode: 'portuguese',
+  };
+
+  beforeEach(() => {
+    setConfig.mockReset();
+    vi.stubGlobal('nexus', { voice: { setConfig }, settings: {} });
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: false,
+      media: query,
+      addEventListener() {},
+      removeEventListener() {},
+      addListener() {},
+      removeListener() {},
+    }));
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+    useVoiceStore.setState({
+      status: 'idle',
+      error: null,
+      lastTranscript: '',
+      micHealth: 'ok',
+      dictationDelivery: null,
+      responseMuted: false,
+      hud: { mode: 'mini', corner: 'br', dx: 16, dy: 16, width: 300 },
+      info: disabledInfo as never,
+    } as never);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    host.remove();
+    vi.unstubAllGlobals();
+  });
+
+  const render = () => act(() => root.render(<VoiceHud />));
+
+  it('permanece visível, pode ser aberto por botão e explica as flags desligadas', () => {
+    render();
+    const trigger = host.querySelector(
+      'button[aria-label="Abrir controles da JARVIS: desativada"]',
+    ) as HTMLButtonElement;
+    expect(trigger).toBeTruthy();
+    expect(host.querySelector('.voice-hud__mini-label')?.textContent).toBe('desativada');
+    act(() => trigger.click());
+    expect(host.querySelector('.voice-hud--expanded')).toBeTruthy();
+    expect(host.textContent).toContain('A JARVIS está desativada nas configurações.');
+    expect(host.textContent).toContain('Respostas faladas estão desativadas nas configurações.');
+  });
+
+  it('ativa a flag principal pelo HUD e atualiza o estado exibido', async () => {
+    setConfig.mockResolvedValueOnce({ ...disabledInfo, enabled: true });
+    render();
+    const trigger = host.querySelector('button[aria-label*="desativada"]') as HTMLButtonElement;
+    act(() => trigger.click());
+    const enable = [...host.querySelectorAll('.voice-hud__action')].find(
+      (button) => button.textContent === 'Ativar JARVIS',
+    ) as HTMLButtonElement;
+    await act(async () => enable.click());
+    expect(setConfig).toHaveBeenCalledWith({ enabled: true });
+    expect(useVoiceStore.getState().info?.enabled).toBe(true);
+  });
+
+  it('move pelo mesmo botão compacto sem disparar a ação de abrir', () => {
+    vi.stubGlobal('innerWidth', 1_000);
+    vi.stubGlobal('innerHeight', 800);
+    render();
+    const shell = host.querySelector('.voice-hud') as HTMLDivElement;
+    vi.spyOn(shell, 'getBoundingClientRect').mockReturnValue({
+      left: 20,
+      top: 20,
+      width: 120,
+      height: 32,
+      bottom: 52,
+      right: 140,
+      x: 20,
+      y: 20,
+      toJSON: () => ({}),
+    });
+    const trigger = host.querySelector('button[aria-label*="desativada"]') as HTMLButtonElement;
+    act(() => {
+      trigger.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, clientX: 40, clientY: 30 }));
+      window.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 160, clientY: 100 }));
+      window.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, clientX: 160, clientY: 100 }));
+    });
+    expect(useVoiceStore.getState().hud.corner).toBe('tl');
+    expect(host.querySelector('.voice-hud--expanded')).toBeNull();
   });
 });

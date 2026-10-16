@@ -92,11 +92,15 @@ export function VoiceHud() {
   const setHudMode = useVoiceStore((s) => s.setHudMode);
   const setHudAnchor = useVoiceStore((s) => s.setHudAnchor);
   const setHudWidth = useVoiceStore((s) => s.setHudWidth);
+  const setInfo = useVoiceStore((s) => s.setInfo);
 
   // Posição transitória durante o drag (left/top absolutos); null = ancorado.
   const [dragPos, setDragPos] = useState<{ left: number; top: number } | null>(null);
+  const [configuring, setConfiguring] = useState<'enabled' | 'speech' | null>(null);
+  const [configurationError, setConfigurationError] = useState<string | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
+  const miniPointerActivationRef = useRef(false);
   const dragCleanupRef = useRef<(() => void) | null>(null);
   const resizeRef = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(
     null,
@@ -161,18 +165,15 @@ export function VoiceHud() {
   const wakeBlockedPid = info?.wakeLockHolderPid ?? null;
   const wakeBlocked = info?.wakeWordEnabled === true && wakeBlockedPid !== null;
   const canClickWake = status === 'idle' && info?.enabled === true && !wakeBlocked;
+  const jarvisDisabled = info?.enabled === false;
+  const captureDisabled = info?.captureAllowed === false;
+  const speechDisabled = responseMuted || info?.speakMode === 'off';
   const missingRealtimeKey =
     info?.jarvisLive.enabled === true &&
     info.jarvisLive.transport !== 'classic' &&
     !canAttemptRealtime(info)
       ? realtimeMissingCredentialMessage(info.jarvisLive.transport)
       : null;
-  const liveVisible =
-    info?.jarvisLive.enabled === true &&
-    liveState?.enabled !== false &&
-    liveStatus !== 'off' &&
-    (liveStatus !== 'dormant' || status === 'idle');
-
   // Amplitude do mic → CSS var no orb, imperativo (sem re-render por frame).
   const orbRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -225,17 +226,6 @@ export function VoiceHud() {
   }, []);
 
   if (hud.mode === 'hidden') return null; // só-áudio: zero visual
-  if (
-    status === 'idle' &&
-    !liveVisible &&
-    !wakeBlocked &&
-    !canClickWake &&
-    !missingRealtimeKey &&
-    !dictationDelivery
-  ) {
-    return null;
-  }
-
   const liveLabel = LIVE_LABEL[liveStatus] ?? liveStatus;
   const label = missingRealtimeKey
     ? 'Sem chave realtime'
@@ -245,14 +235,54 @@ export function VoiceHud() {
         ? dictationDelivery === 'pending'
           ? 'Ditado aguardando'
           : 'Ditado na fila'
-        : canClickWake
-          ? 'Jarvis pronta'
-          : status === 'idle'
-            ? `Jarvis ${liveLabel}`
-            : PHASE_LABEL[status];
+        : !info
+          ? 'Jarvis carregando'
+          : jarvisDisabled
+            ? 'Jarvis desativada'
+            : captureDisabled
+              ? 'Captura desativada'
+              : canClickWake
+                ? 'Jarvis pronta'
+                : status === 'idle'
+                  ? `Jarvis ${liveLabel}`
+                  : PHASE_LABEL[status];
   const isError = status === 'error' || Boolean(missingRealtimeKey);
   const visibleError = error ?? missingRealtimeKey;
   const isMini = isHudMini(hud.mode);
+
+  /** Atualização pontual de flag do runtime, com erro visível no próprio HUD. */
+  const updateVoiceConfig = async (
+    patch: Parameters<typeof window.nexus.voice.setConfig>[0],
+    kind: 'enabled' | 'speech',
+  ) => {
+    setConfiguring(kind);
+    setConfigurationError(null);
+    try {
+      const next = await window.nexus.voice.setConfig(patch);
+      setInfo(next);
+      if (patch.enabled === false) await powerOffJarvis();
+    } catch (err) {
+      setConfigurationError(
+        err instanceof Error ? err.message : 'Não consegui atualizar a configuração da JARVIS.',
+      );
+    } finally {
+      setConfiguring(null);
+    }
+  };
+
+  const toggleJarvisEnabled = () => {
+    if (!info || configuring) return;
+    void updateVoiceConfig({ enabled: !info.enabled }, 'enabled');
+  };
+
+  const enableSpeech = () => {
+    if (configuring === 'speech') return;
+    if (responseMuted) {
+      setResponseMuted(false);
+      return;
+    }
+    void updateVoiceConfig({ speakMode: 'summary' }, 'speech');
+  };
 
   // In toggle mode the send edge is a SECOND keypress — say so, or users
   // hold-release and think voice broke.
@@ -262,6 +292,16 @@ export function VoiceHud() {
         ? `solte ${info.shortcut} para enviar`
         : `pressione ${info.shortcut} de novo para enviar`
       : null;
+
+  const activateHud = () => {
+    if (missingRealtimeKey || status === 'error') {
+      useVoiceStore.getState().openSettings();
+    } else if (canClickWake) {
+      requestJarvisWake();
+    } else if (isMini) {
+      setHudMode('expanded');
+    }
+  };
 
   const finishDrag = (pointerId: number) => {
     const drag = dragRef.current;
@@ -282,12 +322,17 @@ export function VoiceHud() {
           { width: window.innerWidth, height: window.innerHeight },
         ),
       );
-    } else if (missingRealtimeKey || status === 'error') {
-      useVoiceStore.getState().openSettings();
-    } else if (canClickWake) {
-      requestJarvisWake();
-    } else if (isMini) {
-      setHudMode('expanded');
+    } else {
+      if (isMini) {
+        // Pointer input já executa a ação no pointerup. O clique de
+        // compatibilidade que alguns browsers emitem em seguida não pode
+        // acordar a JARVIS duas vezes.
+        miniPointerActivationRef.current = true;
+        window.setTimeout(() => {
+          miniPointerActivationRef.current = false;
+        }, 0);
+      }
+      activateHud();
     }
     setDragPos(null);
   };
@@ -390,40 +435,66 @@ export function VoiceHud() {
   );
 
   if (isMini) {
+    const miniLabel = missingRealtimeKey
+      ? 'sem chave'
+      : !info
+        ? 'carregando'
+        : status === 'idle' && dictationDelivery
+          ? dictationDelivery === 'pending'
+            ? 'ditado aguardando'
+            : 'ditado na fila'
+          : jarvisDisabled
+            ? 'desativada'
+            : captureDisabled
+              ? 'captura bloqueada'
+              : speechDisabled
+                ? 'fala desligada'
+                : wakeBlocked
+                  ? 'wake ocupado'
+                  : isError
+                    ? 'erro'
+                    : canClickWake
+                      ? 'pronta'
+                      : status === 'idle'
+                        ? liveLabel
+                        : PHASE_LABEL[status];
     return (
       <div
         ref={shellRef}
-        className={`voice-hud voice-hud--mini voice-hud--${isError ? 'error' : status} ${dragPos ? 'voice-hud--dragging' : ''}`}
+        className={`voice-hud voice-hud--mini voice-hud--${isError ? 'error' : status} ${jarvisDisabled || captureDisabled ? 'voice-hud--disabled' : ''} ${dragPos ? 'voice-hud--dragging' : ''}`}
         style={positionStyle}
-        role="status"
         aria-live="polite"
-        title={
-          visibleError
-            ? `${visibleError} — clique para abrir as configurações, arraste para mover`
-            : canClickWake
-              ? 'JARVIS — clique para acordar, arraste para mover'
-              : 'JARVIS — clique para expandir, arraste para mover'
-        }
-        onPointerDown={beginDrag}
       >
-        {orb}
-        <VoiceLevelBars visible={status === 'listening'} />
-        <span className="voice-hud__mini-label">
-          {missingRealtimeKey
-            ? 'sem chave'
-            : wakeBlocked
-              ? 'wake ocupado'
-              : isError
-                ? 'erro'
-                : responseMuted
-                  ? 'muda'
-                  : canClickWake
-                    ? 'pronta'
-                    : status === 'idle'
-                      ? liveLabel
-                      : PHASE_LABEL[status]}
-        </span>
-        <span className="voice-hud__ctls" onPointerDown={(e) => e.stopPropagation()}>
+        <button
+          type="button"
+          className="voice-hud__mini-trigger"
+          aria-label={`Abrir controles da JARVIS: ${miniLabel}`}
+          aria-expanded={false}
+          title={
+            visibleError
+              ? `${visibleError} — clique para abrir as configurações; arraste para mover`
+              : canClickWake
+                ? 'JARVIS pronta — clique para acordar; arraste para mover'
+                : 'JARVIS — clique para abrir os controles; arraste para mover'
+          }
+          onPointerDown={beginDrag}
+          onClick={() => {
+            if (miniPointerActivationRef.current) {
+              miniPointerActivationRef.current = false;
+              return;
+            }
+            activateHud();
+          }}
+        >
+          {orb}
+          <VoiceLevelBars visible={status === 'listening'} />
+          <span className="voice-hud__mini-label">{miniLabel}</span>
+        </button>
+        <span
+          className="voice-hud__ctls"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+        >
           <button
             className={`voice-hud__ctl ${responseMuted ? 'voice-hud__ctl--active' : ''}`}
             title={
@@ -566,6 +637,77 @@ export function VoiceHud() {
             <span className="voice-hud__detail voice-hud__detail--error">{visibleError}</span>
           ) : (
             <>
+              {!info && (
+                <span className="voice-hud__detail voice-hud__detail--state">
+                  Carregando as configurações da JARVIS…
+                </span>
+              )}
+              {jarvisDisabled && (
+                <span className="voice-hud__detail voice-hud__detail--state">
+                  A JARVIS está desativada nas configurações.
+                  <button
+                    type="button"
+                    className="voice-hud__action"
+                    disabled={configuring === 'enabled'}
+                    onClick={toggleJarvisEnabled}
+                  >
+                    {configuring === 'enabled' ? 'Ativando…' : 'Ativar JARVIS'}
+                  </button>
+                </span>
+              )}
+              {info?.enabled && (
+                <span className="voice-hud__detail voice-hud__detail--state">
+                  JARVIS ativa.
+                  <button
+                    type="button"
+                    className="voice-hud__action"
+                    disabled={configuring === 'enabled'}
+                    onClick={toggleJarvisEnabled}
+                  >
+                    {configuring === 'enabled' ? 'Desativando…' : 'Desativar JARVIS'}
+                  </button>
+                </span>
+              )}
+              {captureDisabled && (
+                <span className="voice-hud__detail voice-hud__detail--state">
+                  A captura de voz está bloqueada nesta sessão. A JARVIS não pode ouvir comandos.
+                </span>
+              )}
+              {info?.speakMode === 'off' && (
+                <span className="voice-hud__detail voice-hud__detail--state">
+                  Respostas faladas estão desativadas nas configurações.
+                  <button
+                    type="button"
+                    className="voice-hud__action"
+                    disabled={configuring === 'speech'}
+                    onClick={enableSpeech}
+                  >
+                    {configuring === 'speech' ? 'Ativando…' : 'Ativar fala'}
+                  </button>
+                </span>
+              )}
+              {responseMuted && (
+                <span className="voice-hud__detail voice-hud__detail--state">
+                  As respostas estão silenciadas neste computador.
+                  <button
+                    type="button"
+                    className="voice-hud__action"
+                    onClick={enableSpeech}
+                  >
+                    Ativar áudio
+                  </button>
+                </span>
+              )}
+              {info?.enabled && !info.wakeWordEnabled && (
+                <span className="voice-hud__detail voice-hud__detail--state">
+                  Wake word desativada — clique na JARVIS ou use {info.shortcut} para falar.
+                </span>
+              )}
+              {configurationError && (
+                <span className="voice-hud__detail voice-hud__detail--error">
+                  Não consegui atualizar a JARVIS: {configurationError}
+                </span>
+              )}
               {wakeBlocked && (
                 <span className="voice-hud__detail voice-hud__detail--error">
                   Outra instância do NexusIDE está ouvindo “Hey Jarvis” (PID {wakeBlockedPid}).

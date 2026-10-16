@@ -104,8 +104,8 @@
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
   line-height: 1;
-  width: 20px;
-  height: 18px;
+  width: 24px;
+  height: 24px;
   padding: 0;
   cursor: pointer;
 }
@@ -119,6 +119,13 @@
   color: var(--text);
   border-color: color-mix(in srgb, var(--accent) 60%, transparent);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.voice-hud__ctl:focus-visible,
+.voice-hud__mini-trigger:focus-visible,
+.voice-hud__action:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
 }
 
 .voice-hud__ctl--active {
@@ -219,6 +226,24 @@
   touch-action: none;
 }
 
+.voice-hud__mini-trigger {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--space-2);
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  cursor: grab;
+  touch-action: none;
+}
+
+.voice-hud__mini-trigger:active {
+  cursor: grabbing;
+}
+
 .voice-hud__mini-label {
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
@@ -236,11 +261,11 @@
    voltam no hover ou no foco de teclado. Erro e fases ativas seguem
    inteiros — só o repouso encolhe. */
 .voice-hud--mini.voice-hud--idle:not(:hover):not(:focus-within) .voice-hud__ctls,
-.voice-hud--mini.voice-hud--idle:not(:hover):not(:focus-within) .voice-hud__mini-label {
+.voice-hud--mini.voice-hud--idle:not(.voice-hud--disabled):not(:hover):not(:focus-within) .voice-hud__mini-label {
   display: none;
 }
 
-.voice-hud--mini.voice-hud--idle:not(:hover):not(:focus-within) {
+.voice-hud--mini.voice-hud--idle:not(.voice-hud--disabled):not(:hover):not(:focus-within) {
   padding: var(--space-1);
   gap: 0;
 }
@@ -257,8 +282,8 @@
 }
 
 /* Barrinhas de nível do mic — prova explícita de captura durante o ditado
-   (o orb sozinho é sutil demais segurando Space). Alturas via style inline
-   pelo componente (sem re-render por frame); a transição suaviza a queda. */
+   (o orb sozinho é sutil demais segurando Space). A escala chega por variável
+   inline (sem re-render ou relayout por frame); a transição suaviza a queda. */
 .voice-levelbars {
   display: inline-flex;
   align-items: flex-end;
@@ -270,11 +295,14 @@
 
 .voice-levelbars__bar {
   width: 3px;
-  min-height: 2px;
+  height: 20px;
   border-radius: 2px;
   background: currentColor;
   opacity: 0.9;
-  transition: height 90ms ease-out;
+  transform: scaleY(var(--voice-level-scale, 0.1));
+  transform-origin: bottom;
+  transition: transform 90ms ease-out;
+  will-change: transform;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -500,6 +528,12 @@
   white-space: normal;
 }
 
+.voice-hud__detail--state {
+  color: var(--text-dim);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .voice-hud__action {
   font: inherit;
   font-size: var(--text-xs);
@@ -517,6 +551,11 @@
 .voice-hud__action:hover {
   background: var(--accent);
   color: var(--bg);
+}
+
+.voice-hud__action:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 
 /* F-1419: refúgio do ditado não entregue. O texto falado é o que o operador

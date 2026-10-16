@@ -30,9 +30,9 @@ function mount(visible: boolean): HTMLElement {
   return host;
 }
 
-function barHeights(host: HTMLElement): number[] {
+function barScales(host: HTMLElement): number[] {
   return [...host.querySelectorAll('.voice-levelbars__bar')].map((el) =>
-    Number.parseFloat((el as HTMLElement).style.height),
+    Number.parseFloat((el as HTMLElement).style.getPropertyValue('--voice-level-scale')),
   );
 }
 
@@ -78,9 +78,9 @@ describe('VoiceLevelBars', () => {
     act(() => {
       useVoiceStore.getState().setLevel(0.9);
     });
-    const heights = barHeights(host);
-    expect(Math.max(...heights)).toBe(100);
-    expect(Math.min(...heights)).toBeGreaterThan(6);
+    const scales = barScales(host);
+    expect(Math.max(...scales)).toBe(1);
+    expect(Math.min(...scales)).toBeGreaterThan(0.1);
   });
 
   it('acompanha o nível em tempo real (fala → silêncio)', () => {
@@ -88,11 +88,11 @@ describe('VoiceLevelBars', () => {
     act(() => {
       useVoiceStore.getState().setLevel(0.7);
     });
-    const speaking = barHeights(host);
+    const speaking = barScales(host);
     act(() => {
       useVoiceStore.getState().setLevel(0);
     });
-    const silent = barHeights(host);
+    const silent = barScales(host);
     expect(Math.max(...speaking)).toBeGreaterThan(Math.max(...silent));
   });
 });
