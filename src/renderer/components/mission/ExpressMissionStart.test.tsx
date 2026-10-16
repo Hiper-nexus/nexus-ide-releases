@@ -10,6 +10,12 @@ import type { ProviderSettingsInfo } from '../../../shared/provider-settings-typ
 import { DEFAULT_ORCH_SETTINGS } from '../../../shared/settings-types';
 import { suggestMissionLaneFromGoal } from '../../../shared/mission-intent';
 import {
+  beginPendingAttachment,
+  failPendingAttachment,
+  finishPendingAttachment,
+  useMissionAttachmentPresentation,
+} from '../../state/mission-attachment-presentation';
+import {
   createEmptyMissionSetupDraft,
   type MissionSetupDraft,
 } from '../../state/mission-setup-store';
@@ -123,6 +129,10 @@ beforeEach(() => {
 afterEach(() => {
   for (const root of roots.splice(0)) act(() => root.unmount());
   document.body.replaceChildren();
+  useMissionAttachmentPresentation.setState({
+    presentation: new Map(),
+    pending: [],
+  });
   for (const [name, descriptor] of geometry) {
     if (descriptor) Object.defineProperty(Range.prototype, name, descriptor);
     else Reflect.deleteProperty(Range.prototype, name);
@@ -440,6 +450,96 @@ describe('ExpressMissionStart — teclado e contexto da ação', () => {
     expect(host.querySelector('.mission-setup__step-dock [role="status"]:not(.mission-setup__undo)')?.textContent).toContain(
       'Preparando a missão',
     );
+  });
+});
+
+describe('ExpressMissionStart — anexo a caminho segura o início', () => {
+  it('clique, submit e ⌘/Ctrl+Enter esperam a cópia: o dock explica e o botão solta sozinho', () => {
+    const onStart = vi.fn();
+    const host = render({
+      onStart,
+      draft: { objective: 'Crie uma página de contato' },
+    });
+    let pendingId = '';
+    act(() => {
+      pendingId = beginPendingAttachment('imagem.png');
+    });
+
+    const start = button(host, 'Iniciar criação');
+    const note = host.querySelector<HTMLElement>(
+      '.mission-setup__dock-note',
+    )!;
+    expect(start.disabled).toBe(true);
+    expect(note.textContent).toContain('Aguarde: anexando imagem.png');
+    // A própria nota é a região viva — nenhum aviso sr-only duplicado.
+    expect(note.getAttribute('role')).toBe('status');
+    expect(
+      host.querySelectorAll('.mission-setup__step-dock [role="status"]'),
+    ).toHaveLength(1);
+
+    pressModEnter(editorOf(host));
+    const form = host.querySelector('form')!;
+    act(() => {
+      form.dispatchEvent(
+        new Event('submit', { bubbles: true, cancelable: true }),
+      );
+    });
+    expect(onStart).not.toHaveBeenCalled();
+
+    act(() => finishPendingAttachment(pendingId));
+    const released = button(host, 'Iniciar criação');
+    expect(released.disabled).toBe(false);
+    expect(
+      host.querySelector('.mission-setup__dock-note')?.textContent,
+    ).not.toContain('Aguarde');
+    act(() => released.click());
+    expect(onStart).toHaveBeenCalledTimes(1);
+  });
+
+  it('vários anexos a caminho contam o total; com falha o início não trava', () => {
+    const onStart = vi.fn();
+    const host = render({
+      onStart,
+      draft: { objective: 'Crie uma página' },
+    });
+    act(() => {
+      beginPendingAttachment('imagem.png');
+      beginPendingAttachment('audio.m4a');
+      failPendingAttachment(
+        beginPendingAttachment('doc.pdf'),
+        'Sem espaço em disco.',
+      );
+    });
+    expect(button(host, 'Iniciar criação').disabled).toBe(true);
+    expect(
+      host.querySelector('.mission-setup__dock-note')?.textContent,
+    ).toContain('Aguarde: anexando 2 arquivos');
+
+    // Falha não trava: restam só erros, o início segue e o aviso é dispensável.
+    act(() => {
+      useMissionAttachmentPresentation.setState((state) => ({
+        pending: state.pending.filter((item) => item.error !== undefined),
+      }));
+    });
+    const start = button(host, 'Iniciar criação');
+    expect(start.disabled).toBe(false);
+    expect(host.textContent).toContain('Sem espaço em disco.');
+    act(() => start.click());
+    expect(onStart).toHaveBeenCalledTimes(1);
+  });
+
+  it('com a criação já em voo o dock fala da missão, não do anexo', () => {
+    const host = render({
+      props: { busy: true },
+      draft: { objective: 'Crie uma página' },
+    });
+    act(() => {
+      beginPendingAttachment('imagem.png');
+    });
+    expect(
+      host.querySelector('.mission-setup__dock-note')?.textContent,
+    ).toContain('Preparando a missão');
+    expect(button(host, 'Iniciando criação').disabled).toBe(true);
   });
 });
 

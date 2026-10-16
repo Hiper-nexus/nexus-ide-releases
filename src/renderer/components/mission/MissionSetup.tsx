@@ -34,6 +34,7 @@ import {
   toUserFacingMissionError,
   toUserFacingMissionRecovery,
 } from '../../lib/user-facing-mission-error';
+import { useMissionAttachmentPresentation } from '../../state/mission-attachment-presentation';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { usePendingOrchestratorAdoptionStore } from '../../state/pending-orchestrator-adoption-store';
 import { reflectAdoptedOrchestratorWithToast } from '../../orch/adopted-orchestrator-reflect';
@@ -969,6 +970,17 @@ export function MissionSetup({
 
   const startExpress = async (): Promise<void> => {
     if (expressBusyRef.current) return;
+    // Mesma régua do requestStart, na trincheira: o bypass "Criar missão
+    // mesmo assim" e a corrida entre o clique e a render não passam pelo
+    // botão. Despachar com anexo ainda copiando perderia o arquivo — o dock
+    // já mostra o motivo e o botão destrava quando a cópia termina.
+    if (
+      useMissionAttachmentPresentation
+        .getState()
+        .pending.some((item) => !item.error)
+    ) {
+      return;
+    }
     const setupState = useMissionSetupStore.getState();
     const capturedDestination = home ? 'launcher' : 'mission-setup';
     const capturedEntryRevision = setupState.entryAuthorityRevision;

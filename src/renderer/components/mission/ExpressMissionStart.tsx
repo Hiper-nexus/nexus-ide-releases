@@ -20,6 +20,7 @@ import { useObjectiveDictation } from './use-objective-dictation';
 import { PixelIcon } from '../PixelIcon';
 import { launcherShortcutHint } from '../../lib/action-names';
 import { formatShortcut } from '../../lib/platform';
+import { useMissionAttachmentPresentation } from '../../state/mission-attachment-presentation';
 import { usePendingOrchestratorAdoptionStore } from '../../state/pending-orchestrator-adoption-store';
 import {
   ComposerTiptapEditor,
@@ -188,12 +189,20 @@ export function ExpressMissionStart({
   const startBlocked = Boolean(maestroIssue);
   const providerMissing =
     !inventoryLoading && !inventoryReady && !maestroIssue;
+  // Anexo a caminho (a store é a dona: picker e intake do shell gravam nela).
+  // Iniciar agora gravaria a missão SEM o arquivo e o operador juraria que
+  // ele entrou. Falha não trava — a linha com erro tem "Dispensar". Quando a
+  // cópia termina a store avisa e o botão destrava sozinho, sem polling.
+  const attaching = useMissionAttachmentPresentation(
+    (state) => state.pending,
+  ).filter((item) => !item.error);
+  const startDisabled = busy || startBlocked || attaching.length > 0;
 
   // Um só caminho para clique, Enter em campo de uma linha e ⌘/Ctrl+Enter.
   // Sem pasta, iniciar vira "escolher a pasta" (o pedido espera no rascunho);
   // com pasta, pedido vazio é explicado no próprio campo.
   const requestStart = (): void => {
-    if (busy || startBlocked) return;
+    if (startDisabled) return;
     if (!needsWorkspace && !draft.objective.trim()) {
       errorSequenceRef.current += 1;
       setObjectiveError({
@@ -293,6 +302,14 @@ export function ExpressMissionStart({
   // risco da tela não pode ser um botão sem contexto.
   const dockNote: ReactNode = busy ? (
     'Preparando a missão…'
+  ) : attaching.length === 1 ? (
+    <>
+      Aguarde: anexando <strong>{attaching[0]!.name}</strong>…
+    </>
+  ) : attaching.length > 1 ? (
+    <>
+      Aguarde: anexando <strong>{attaching.length} arquivos</strong>…
+    </>
   ) : workspace ? (
     <>
       <strong>{workspace.name}</strong>
@@ -756,7 +773,7 @@ export function ExpressMissionStart({
               type="button"
               className="mission-setup__button mission-setup__button--quiet"
               onClick={onStartMissionAnyway}
-              disabled={busy}
+              disabled={busy || attaching.length > 0}
             >
               Criar missão mesmo assim
             </button>
@@ -789,7 +806,11 @@ export function ExpressMissionStart({
         ) : null}
 
         <footer className="mission-setup__step-actions">
-          <p className="mission-setup__dock-note">{dockNote}</p>
+          {/* Nota viva do dock: uma única região de status cobre "aguarde o
+              anexo" e "preparando a missão" — sem aviso sr-only duplicado. */}
+          <p className="mission-setup__dock-note" role="status">
+            {dockNote}
+          </p>
           <div className="mission-setup__dock-actions">
             <span className="mission-setup__dock-shortcut" aria-hidden="true">
               <kbd className="launcher-action__shortcut">{submitShortcut}</kbd>
@@ -798,7 +819,7 @@ export function ExpressMissionStart({
         <button
           type="submit"
           className="mission-setup__button mission-setup__button--primary mission-setup__button--start"
-          disabled={busy || startBlocked}
+          disabled={startDisabled}
               aria-keyshortcuts="Control+Enter Meta+Enter"
           aria-describedby={
             startBlocked && !error ? 'express-maestro-login' : undefined
@@ -812,9 +833,6 @@ export function ExpressMissionStart({
         </button>
           </div>
       </footer>
-        <span className="mission-setup__sr-only" role="status">
-          {busy ? 'Preparando a missão. Aguarde.' : ''}
-        </span>
       </div>
     </form>
   );

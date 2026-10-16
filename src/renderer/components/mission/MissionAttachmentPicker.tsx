@@ -26,6 +26,7 @@ import {
 import { useWorkspaceStore } from '../../state/workspace-store';
 import {
   attachmentDisplayName,
+  beginPendingAttachment,
   finishPendingAttachment,
   rememberAttachment,
   rememberAttachmentThumbnail,
@@ -113,6 +114,17 @@ function fileSignature(file: File): string {
   ].join('\0');
 }
 
+/** Nome da linha "anexando…" para um URI solto (file:// ou link): a cauda. */
+function droppedUriName(uri: string): string {
+  const tail = uri.split('/').pop()?.trim() ?? '';
+  if (!tail) return 'anexo';
+  try {
+    return decodeURIComponent(tail);
+  } catch {
+    return tail;
+  }
+}
+
 export function MissionAttachmentPicker({
   contextPaths,
   disabled,
@@ -161,6 +173,10 @@ export function MissionAttachmentPicker({
     const failures: string[] = [];
     const notices: string[] = [];
     let stopReason: string | null = null;
+    // A cópia do picker também é "anexando…" na store compartilhada (antes só
+    // o intake do shell marcava): a fileira mostra o progresso por arquivo e
+    // o Iniciar espera a cópia em vez de gravar a missão sem o anexo.
+    const stagedPendingIds: string[] = [];
     try {
       for (const original of files) {
         // A chave é do ORIGINAL: o mesmo HEIC colado de novo não reconverte.
@@ -179,6 +195,10 @@ export function MissionAttachmentPicker({
         }
         importingFileKeysRef.current.add(signature);
         importingFileKeysRef.current.add(contentKey);
+        const pendingId = beginPendingAttachment(
+          original.name.trim() || 'anexo',
+        );
+        let keepPending = false;
         try {
           let file = original;
           if (classifyMissionAttachment(original) === 'image') {
@@ -236,9 +256,15 @@ export function MissionAttachmentPicker({
             nextPathSet.add(staged.path);
             next.push(staged.path);
           }
+          // A linha "anexando" sai só depois do path entrar no rascunho
+          // (mesma sequência do intake do shell — não pisca vazio).
+          keepPending = true;
+          stagedPendingIds.push(pendingId);
         } finally {
           importingFileKeysRef.current.delete(signature);
           importingFileKeysRef.current.delete(contentKey);
+          // Falha/inválido sai já — o erro inline do picker explica por quê.
+          if (!keepPending) finishPendingAttachment(pendingId);
         }
       }
       if (next.length !== contextPaths.length) {
@@ -255,6 +281,7 @@ export function MissionAttachmentPicker({
       );
     } finally {
       setBusy(false);
+      for (const id of stagedPendingIds) finishPendingAttachment(id);
     }
   };
 
@@ -273,27 +300,37 @@ export function MissionAttachmentPicker({
     setNotice(null);
     const next = [...contextPaths];
     const nextPathSet = new Set(next);
+    const stagedPendingIds: string[] = [];
     try {
       const failures: string[] = [];
       for (const dropped of uris) {
-        const result = await importDroppedUriForMission(dropped.uri);
-        if (currentWorkspacePath() !== workspaceAtStart) {
-          setError(WORKSPACE_CHANGED_MESSAGE);
-          return;
-        }
-        if (!result.ok) {
-          failures.push(result.message);
-          continue;
-        }
-        if (!nextPathSet.has(result.path)) {
-          nextPathSet.add(result.path);
-          next.push(result.path);
+        const pendingId = beginPendingAttachment(droppedUriName(dropped.uri));
+        let keepPending = false;
+        try {
+          const result = await importDroppedUriForMission(dropped.uri);
+          if (currentWorkspacePath() !== workspaceAtStart) {
+            setError(WORKSPACE_CHANGED_MESSAGE);
+            return;
+          }
+          if (!result.ok) {
+            failures.push(result.message);
+            continue;
+          }
+          if (!nextPathSet.has(result.path)) {
+            nextPathSet.add(result.path);
+            next.push(result.path);
+          }
+          keepPending = true;
+          stagedPendingIds.push(pendingId);
+        } finally {
+          if (!keepPending) finishPendingAttachment(pendingId);
         }
       }
       if (next.length !== contextPaths.length) onContextPathsChange(next);
       if (failures.length > 0) setError(failures.join(' '));
     } finally {
       setBusy(false);
+      for (const id of stagedPendingIds) finishPendingAttachment(id);
     }
   };
 
