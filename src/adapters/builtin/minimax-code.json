@@ -77,6 +77,7 @@
   "control": {
     "permission": {
       "arg": "",
+      "modes": {},
       "yolo": [],
       "default": ""
     }
