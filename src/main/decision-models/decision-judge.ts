@@ -41,6 +41,8 @@ const usageTrackers = new WeakMap<object, UsageTracker>();
 
 /** Nothing was sent: a measured zero, so the journal never reads it as an unknown count. */
 const NO_REQUEST_USAGE: DecisionUsageReceipt = { inputTokens: 0, usd: 0, requestCount: 0, durationMs: 0, usageIncomplete: false };
+/** A failure that reported no receipt (it threw): the spend is unknown, never zero. */
+const UNKNOWN_USAGE: DecisionUsageReceipt = { inputTokens: null, usd: null, requestCount: 0, durationMs: 0, usageIncomplete: true };
 const INTERNAL_WARN_INTERVAL_MS = 60_000;
 let lastInternalWarnAt = -Infinity;
 
@@ -86,23 +88,24 @@ async function callMember(
   return connection ? judgeClef(input, { ...connection, model: member.model as ClefConnection['model'] }, { fetch: deps.fetch, now: deps.now }) : null;
 }
 
+/** v2 guarda o porquê legível; v1 mantém o rótulo que a tela já reconhece. */
+function ensembleLead(member: DecisionRoute): DecisionRoute {
+  return { ...member, model: 'ensemble', reason: member.policyVersion === DECISION_ENGINE_POLICY ? member.reason : 'ensemble' };
+}
+
 async function performEnsemble(
   input: JudgeInput, deps: DecisionJudgeDeps, settings: DecisionSettings, requested: DecisionRoute[],
   /** v2 em surface reversível: falha parcial devolve quem respondeu. Juntos (v1) nunca. */
   options: { partialFallback?: boolean } = {},
 ): Promise<JevResult | null> {
-  const live = requested.filter(member => !isDecisionProviderBlocked(member.provider));
-  if (live.length === 0) {
-    const blocked = requested[0];
-    return noAnswer(input, blocked ? { ...blocked, model: 'ensemble',
-      reason: blocked.policyVersion === DECISION_ENGINE_POLICY ? blocked.reason : 'ensemble' } : null,
-      'network', NO_REQUEST_USAGE);
+  const blocked = requested.filter(member => isDecisionProviderBlocked(member.provider));
+  const members = requested.filter(member => !blocked.includes(member));
+  // Um membro com o disjuntor aberto recusa o conjunto escolhido: um provedor sozinho nunca responde por
+  // ele (docs/SECURITY.md), senão o veto do conjunto some. Só o parcial reversível segue com quem restou.
+  if (!members.length || (blocked.length > 0 && !options.partialFallback)) {
+    return noAnswer(input, requested[0] ? ensembleLead(requested[0]) : null, 'network', NO_REQUEST_USAGE);
   }
-  if (live.length === 1) return performRoute(input, deps, settings, live[0]);
-  const members = live;
-  // v2 guarda o porquê legível; v1 mantém o rótulo que a tela já reconhece.
-  const lead = { ...members[0], model: 'ensemble',
-    reason: members[0].policyVersion === DECISION_ENGINE_POLICY ? members[0].reason : 'ensemble' };
+  const lead = ensembleLead(members[0]);
   const configuration = deps.getConfigurationKey ?? decisionConfigurationKey;
   const before = configuration();
   const started = (deps.now ?? (() => performance.now()))();
@@ -152,16 +155,19 @@ async function performEnsemble(
     }));
     const usage = aggregateUsageReceipts(receipts);
     const answeredIndex = results.findIndex(Boolean);
-    if (results.some(result => !result)) {
+    const unanswered = members.filter((_, index) => !results[index]);
+    // Quem restou sozinho porque os pares estão com o disjuntor aberto não é conjunto: segue como parcial.
+    if (unanswered.length > 0 || (blocked.length > 0 && members.length === 1)) {
       if (!options.partialFallback || answeredIndex < 0) return finishNoAnswer(firstFailure ?? 'client-error');
       if (currentInput.signal.aborted || configuration() !== before) return finishNoAnswer('aborted');
-      // Reversível: a resposta válida de um membro não se perde porque o outro caiu (429, timeout).
+      // Reversível: a resposta válida de um membro não se perde porque o outro caiu (429, timeout, disjuntor aberto).
       const member = members[answeredIndex];
       const survivor = results[answeredIndex]!;
-      const silent = members.filter((_, index) => !results[index]).map(peer => peer.model).join(', ');
+      const silent = [...blocked, ...unanswered].map(peer => peer.model).join(', ');
+      const silentReason = firstFailure ?? (unanswered.length > 0 ? 'client-error' : 'network');
       const elapsedPartial = (deps.now ?? (() => performance.now()))() - started;
       return {
-        ...survivor, route: { ...member, reason: `${member.reason} · parcial: ${silent} sem resposta (${firstFailure ?? 'client-error'})` },
+        ...survivor, route: { ...member, reason: `${member.reason} · parcial: ${silent} sem resposta (${silentReason})` },
         diverged: undefined, ensemblePeers: undefined,
         requestCount: usage.requestCount, durationMs: usage.durationMs ?? elapsedPartial,
         usage: { input_tokens: usage.inputTokens ?? 0, output_tokens: 0 }, usageReceipt: usage,
@@ -303,12 +309,23 @@ async function performDecision(input: JudgeInput, deps: DecisionJudgeDeps): Prom
   return runReserved(input, ledger, account([route]), tracked => performRoute(tracked, deps, settings, route));
 }
 
+/** `usage` ausente = a rota lançou sem reportar: o gasto é desconhecido, não zero. */
 interface RouteFailure { ok: false; reason: JevNoAnswerReason; usage?: DecisionUsageReceipt }
 type RouteExecution = { ok: true; result: JevResult } | RouteFailure;
 
+/** O recibo de um resultado: o do cliente quando ele mediu um; senão o que o resultado informa. */
+function resultReceipt(result: JevResult, route: DecisionRoute, elapsed: number): DecisionUsageReceipt {
+  const receipt = decisionResultUsage({ ...result, route });
+  return {
+    inputTokens: receipt.inputTokens, usd: receipt.usd,
+    requestCount: receipt.requestCount ?? result.requestCount ?? 1,
+    durationMs: receipt.durationMs ?? elapsed, usageIncomplete: Boolean(receipt.usageIncomplete),
+  };
+}
+
 /**
- * `now` grava o diário na hora (rota única ou último fallback).
- * `later` engole o aviso: a cadeia só publica quando todo mundo falhou.
+ * `now` grava o diário na hora (rota única).
+ * `later` engole o aviso: a cadeia soma o recibo de cada tentativa e publica uma vez só.
  * O Jev com surface grava no próprio cliente; Clef e Luna gravam aqui.
  */
 async function executeRoute(
@@ -363,15 +380,11 @@ async function executeRoute(
     } else {
       result = await judgeClef(watched, { ...connection, model: route.model as ClefConnection['model'] }, { fetch: deps.fetch, now: deps.now });
     }
-    if (!result) return { ok: false, reason: capturedReason ?? 'client-error', usage: failureUsage };
+    // Os clientes só reportam o recibo quando enviaram algo: sem relatório = nenhuma requisição saiu.
+    if (!result) return { ok: false, reason: capturedReason ?? 'client-error', usage: failureUsage ?? NO_REQUEST_USAGE };
     const elapsed = result.durationMs ?? (deps.now ?? (() => performance.now()))() - started;
     if (currentInput.signal.aborted || configuration() !== before) {
-      const receipt = decisionResultUsage({ ...result, route });
-      const usage: DecisionUsageReceipt = {
-        inputTokens: receipt.inputTokens, usd: receipt.usd,
-        requestCount: receipt.requestCount ?? result.requestCount ?? 1,
-        durationMs: receipt.durationMs ?? elapsed, usageIncomplete: Boolean(receipt.usageIncomplete),
-      };
+      const usage = resultReceipt(result, route, elapsed);
       if (report === 'now') noAnswer(input, route, 'aborted', usage);
       return { ok: false, reason: 'aborted', usage };
     }
@@ -398,30 +411,47 @@ async function performRoute(
   return null;
 }
 
-/** Primário, depois `fallbacks`. Abort e orçamento param a cadeia. Aberto não conta falha nova. */
+/**
+ * Primário, depois `fallbacks`. Abort e orçamento param a cadeia. Aberto não conta falha nova.
+ * Toda tentativa gasta de verdade: o recibo de quem falhou soma ao de quem responde (ou ao da
+ * falha final), e a cadeia reporta e grava o diário uma vez só.
+ */
 async function performFailover(
   input: JudgeInput, deps: DecisionJudgeDeps, settings: DecisionSettings, routes: readonly DecisionRoute[],
 ): Promise<JevResult | null> {
   const open = routes.filter(route => !isDecisionProviderBlocked(route.provider));
   if (!open.length) return noAnswer(input, routes[0] ?? null, 'network', NO_REQUEST_USAGE);
   const last = open.length - 1;
-  for (let index = 0; index < last; index++) {
+  // Sem fallback não há o que somar: a rota única segue o caminho de sempre.
+  if (!last) return performRoute(input, deps, settings, open[0]);
+  const failed: DecisionUsageReceipt[] = [];
+  const total = (receipts: readonly DecisionUsageReceipt[]): DecisionUsageReceipt => {
+    const usage = aggregateUsageReceipts(receipts);
+    try { input.onUsage?.(usage); }
+    catch { console.warn('[decision-models] usage callback failed'); }
+    return usage;
+  };
+  for (let index = 0; index <= last; index++) {
     const route = open[index];
+    // A última rota confere o disjuntor de novo: ele pode ter aberto durante as tentativas anteriores.
+    if (index === last && isDecisionProviderBlocked(route.provider)) {
+      return noAnswer(input, route, 'network', total([...failed, NO_REQUEST_USAGE]));
+    }
     const execution = await executeRoute(input, deps, settings, route, 'later');
     if (execution.ok) {
       recordDecisionProviderSuccess(route.provider);
-      if (execution.result.usageReceipt) {
-        try { input.onUsage?.(execution.result.usageReceipt); }
-        catch { console.warn('[decision-models] usage callback failed'); }
-      }
-      return execution.result;
+      const usage = total([...failed, resultReceipt(execution.result, route, execution.result.durationMs ?? 0)]);
+      return { ...execution.result, requestCount: usage.requestCount, durationMs: usage.durationMs, usageReceipt: usage,
+        ...(usage.usageIncomplete ? { usageMissing: true as const } : {}),
+        ...(usage.usd === null ? { estimatedUsd: undefined } : { estimatedUsd: usage.usd }) };
     }
-    if (execution.reason === 'aborted' || execution.reason === 'budget') {
-      return noAnswer(input, route, execution.reason, execution.usage ?? NO_REQUEST_USAGE);
-    }
-    recordDecisionProviderFailure(route.provider, execution.reason);
+    failed.push(execution.usage ?? UNKNOWN_USAGE);
+    const stopped = execution.reason === 'aborted' || execution.reason === 'budget';
+    // Abort e orçamento de uma rota que não é a última encerram a cadeia sem mexer no disjuntor dela.
+    if (index === last || !stopped) recordDecisionProviderFailure(route.provider, execution.reason);
+    if (index === last || stopped) return noAnswer(input, route, execution.reason, total(failed));
   }
-  return performRoute(input, deps, settings, open[last]);
+  return null;
 }
 
 /** Configuration and credential failures cannot escape the advisory decision boundary. */
