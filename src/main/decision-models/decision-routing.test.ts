@@ -264,6 +264,6 @@ describe('complementary decision routing', () => {
     expect(browserVisualBlocker({ ...consented, mode: 'jev' }, { jev: true, clef: false, luna: true })).toBeNull();
     expect(browserVisualBlocker({ ...consented, mode: 'together' }, { jev: true, clef: false, luna: true })).toBe('vision_provider_not_ready');
     expect(browserVisualBlocker({ ...consented, mode: 'together', visionConsent: { version: 1, recipients: ['clef'] } }, lunaOn)).toBe('vision_consent_missing');
-    expect(browserVisualBlocker({ ...consented, mode: 'jev', visionConsent: undefined }, lunaOn)).toBe('vision_consent_missing');
+    expect(browserVisualBlocker({ ...consented, mode: 'jev', visionConsent: undefined }, lunaOn)).toBeNull();
   });
 });

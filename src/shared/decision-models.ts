@@ -75,7 +75,7 @@ export function hasVisionRecipientConsent(settings: DecisionSettings, recipient:
   if (!settings.visionEnabled) return false;
   return settings.visionConsent
     ? settings.visionConsent.version === 1 && settings.visionConsent.recipients.includes(recipient)
-    : recipient === 'clef' && settings.mode !== 'jev';
+    : recipient === 'clef';
 }
 
 /** Áudio sai só com Clef-omni, numa rota que aceita Cloudflare e com a autorização versionada. */

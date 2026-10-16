@@ -42,8 +42,7 @@ describe('decision model configuration', () => {
     const jev = decisionSettingsSchema.parse({ ...saved, mode: 'jev' });
     expect(hasVisionRecipientConsent(jev, 'luna')).toBe(true);
     expect(hasVisionRecipientConsent(jev, 'clef')).toBe(false);
-    // Somente Jev nunca enviou imagem: o consentimento legado (sem registro) não vale nele.
-    expect(hasVisionRecipientConsent(decisionSettingsSchema.parse({ mode: 'jev', visionEnabled: true }), 'clef')).toBe(false);
+    expect(hasVisionRecipientConsent(decisionSettingsSchema.parse({ mode: 'jev', visionEnabled: true }), 'clef')).toBe(true);
     const disabled = decisionSettingsSchema.parse({ ...saved, visionEnabled: false });
     expect(hasVisionRecipientConsent({ ...disabled, visionEnabled: true }, 'luna')).toBe(false);
   });
