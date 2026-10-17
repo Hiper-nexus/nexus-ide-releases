@@ -91,6 +91,7 @@ vi.mock('./project-domain-store-registry', () => ({
 import {
   clearRouteProvenance,
   configureMissionlessPersistence,
+  flushRouteProvenance,
   listDurableRouteUses,
   recordAgentSpawn,
 } from './route-provenance';
@@ -234,6 +235,7 @@ describe('contador durável de uso e fair-share de rotas (F-232 / F-1291)', () =
     recordAgentSpawn({ adapterId: 'claude', sessionId: 'persisted-1' }, now - 1000);
     recordAgentSpawn({ adapterId: 'claude', sessionId: 'persisted-2' }, now - 500);
 
+    await flushRouteProvenance();
     // Simula reinício do processo (limpando estado em memória e reconfigurando persistência)
     configureMissionlessPersistence(tmpDir);
 

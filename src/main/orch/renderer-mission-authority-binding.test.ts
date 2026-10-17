@@ -827,6 +827,7 @@ describe("renderer mission authority", () => {
       const tabMission = {
         ...approvedMission,
         id: "mission-tab",
+        squadId: undefined,
         title: "Missão · Meus terminais 2",
         intentContract: {
           ...approvedMission.intentContract,
