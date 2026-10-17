@@ -56,6 +56,7 @@ export function RecipesSection() {
     systemPrompt: '',
   });
   const [agentSpecResult, setAgentSpecResult] = useState<string | null>(null);
+  const [stacksResult, setStacksResult] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
 
@@ -89,13 +90,19 @@ export function RecipesSection() {
   );
 
   async function saveStacks() {
-    await window.nexus.orch.saveCatalogOverlay({
-      stacks: manualStacks
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean),
-    });
-    setRefreshTick((tick) => tick + 1);
+    setStacksResult(null);
+    try {
+      await window.nexus.orch.saveCatalogOverlay({
+        stacks: manualStacks
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean),
+      });
+      setRefreshTick((tick) => tick + 1);
+      setStacksResult('Tecnologias salvas.');
+    } catch (err) {
+      setStacksResult(err instanceof Error ? err.message : 'Não consegui salvar as tecnologias.');
+    }
   }
 
   async function saveAgentSpec() {
@@ -266,8 +273,9 @@ export function RecipesSection() {
           className="settings-input"
           value={manualStacks}
           placeholder="react, electron, rust"
-          onChange={(e) => setManualStacks(e.target.value)}
+          onChange={(e) => { setManualStacks(e.target.value); setStacksResult(null); }}
         />
+        {stacksResult && <p className="settings-list__detail" role="status">{stacksResult}</p>}
       </div>
 
       </details>
