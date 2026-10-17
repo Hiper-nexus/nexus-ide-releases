@@ -18,8 +18,8 @@ export const LARGE_MISSION_STORY_THRESHOLD = 6;
 export const FIRST_WAVE_WRITER_SEATS = 15;
 
 /**
- * CLIs oferecidas além do roster quando AuthReadiness=present.
- * Claude fica no Maestro; LongCat/unauth nunca entram por aqui.
+ * Ordem preferida da oferta além do roster; o inventário instalado completa
+ * o leque. Só AuthReadiness=present senta, sem assento extra para o Maestro.
  */
 export const FIRST_WAVE_OFFER_CLIS = [
   'codex',

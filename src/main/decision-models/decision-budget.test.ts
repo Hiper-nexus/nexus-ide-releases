@@ -18,7 +18,7 @@ const nativeResult: JevResult = { model: 'jev-1.13.0', answers: { q: { type: 'no
 const ACTUAL = 100 * 0.042 / 1_000_000;
 /** Qualidade medida localmente (o ensemble do v2 nunca liga só com prior). */
 const MEASURED: DecisionQualityTable = { version: 1, generatedAt: 1, source: 'evaluateDecisionCases', models: {},
-  surfaces: { taskRouting: { jev: { accuracy: 0.8, cases: 10 }, 'clef-flash': { accuracy: 0.8, cases: 10 } } } };
+  surfaces: { missionPick: { jev: { accuracy: 0.8, cases: 20 }, 'clef-flash': { accuracy: 0.8, cases: 20 } } } };
 
 function settings(over: Partial<DecisionSettings> = {}): DecisionSettings {
   return { mode: 'auto', clefModel: 'clef', cloudflareAccountId: ACCOUNT, visionEnabled: false, ...over };
@@ -165,7 +165,7 @@ describe('orçamento por missão no judge (F-1164)', () => {
     const common = { nativeJudge, fetch: fetchMock, getAvailability: () => ({ jev: true, clef: true, luna: false }),
       getClefConnection: () => ({ accountId: ACCOUNT, token: 'synthetic', model: 'clef' as const }) };
     // Normal: reversível, 2 provedores e qualidade MEDIDA → "usar várias" (Jev + Flash).
-    const normal = await judgeDecision({ ...input, surface: 'taskRouting', missionId: 'm-normal' },
+    const normal = await judgeDecision({ ...input, surface: 'missionPick', missionId: 'm-normal' },
       deps({ ledger: new DecisionBudgetLedger(), ...common, getQualityTable: () => MEASURED }));
     expect(normal?.model).toBe('ensemble');
     expect(nativeJudge).toHaveBeenCalledTimes(1);
@@ -173,7 +173,7 @@ describe('orçamento por missão no judge (F-1164)', () => {
     nativeJudge.mockClear(); endpoints.length = 0;
     const softLedger = new DecisionBudgetLedger(() => ({ 'm-soft': 0.45 }));
     await softLedger.warm();
-    const soft = await judgeDecision({ ...input, surface: 'taskRouting', missionId: 'm-soft' },
+    const soft = await judgeDecision({ ...input, surface: 'missionPick', missionId: 'm-soft' },
       deps({ ledger: softLedger, ...common, getQualityTable: () => MEASURED }));
     expect(soft?.route).toMatchObject({ provider: 'clef', model: 'clef-flash', policyVersion: 'decision-engine-v2' });
     expect(nativeJudge).not.toHaveBeenCalled();
@@ -231,7 +231,7 @@ describe('revisão da Fase 1 (F-1164/F-1165)', () => {
 
   it('P1: ensemble reversível com falha parcial devolve o membro que respondeu', async () => {
     const ledger = new DecisionBudgetLedger();
-    const result = await judgeDecision({ ...input, surface: 'taskRouting', missionId: 'm-partial' },
+    const result = await judgeDecision({ ...input, surface: 'missionPick', missionId: 'm-partial' },
       deps({ ledger, ...withClef(clefAnswer(400)) }));
     expect(result?.model).toBe('jev-1.13.0');
     expect(result?.answers.q).toMatchObject({ noul: 0.8 });
@@ -267,7 +267,7 @@ describe('revisão da Fase 1 (F-1164/F-1165)', () => {
   it('P3: recusa por orçamento de plano ensemble grava o modelo "ensemble"', async () => {
     const ledger = new DecisionBudgetLedger();
     const tiny = settings({ missionBudgetUsd: ESTIMATE / 4 });
-    await judgeDecision({ ...input, surface: 'taskRouting', missionId: 'm-ens' }, deps({ ledger, settings: tiny, ...withClef(clefAnswer()) }));
+    await judgeDecision({ ...input, surface: 'missionPick', missionId: 'm-ens' }, deps({ ledger, settings: tiny, ...withClef(clefAnswer()) }));
     expect(recordJevNoAnswer).toHaveBeenLastCalledWith(expect.objectContaining({ reason: 'budget', model: 'ensemble' }));
   });
 

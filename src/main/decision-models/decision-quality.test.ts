@@ -33,7 +33,7 @@ describe('tabela de qualidade (F-1165)', () => {
     }
   });
 
-  it('grava a partir de evaluateDecisionCases e o roteador lê a medição local', async () => {
+  it('grava a medição pequena sem substituir o prior do roteador', async () => {
     const report = await evaluateDecisionCases(cases, async (model, input) => {
       // Flash indisponível (rede/limite); Omni responde lixo (falha de qualidade).
       if (model === 'clef-flash') { input.onNoAnswer?.(Number(String(input.state).slice(-1)) % 2 ? 'rate-limited' : 'network'); return null; }
@@ -54,7 +54,7 @@ describe('tabela de qualidade (F-1165)', () => {
     expect(table?.surfaces.judgeTool['clef-omni']).toMatchObject({ accuracy: 0, cases: 6 });
     // Acurácia medida 0 é suspeita: cai no prior em vez de enterrar o modelo.
     expect(decisionQuality(table, 'judgeTool', 'jev', 'text')).toMatchObject({ source: 'prior', quality: 0.8 });
-    expect(decisionQuality(table, 'judgeTool', 'luna', 'text')).toMatchObject({ source: 'local-evaluation', quality: 1 });
+    expect(decisionQuality(table, 'judgeTool', 'luna', 'text')).toMatchObject({ source: 'prior', quality: 0.8, surfaceCases: 6 });
     expect(fs.readFileSync(file, 'utf8')).not.toContain('private payload');
   });
 
@@ -132,6 +132,22 @@ describe('P3: cache da tabela com TTL', () => {
 describe('F-1167: mistura global + prior e mescla de calibrações', () => {
   const table = (models: DecisionQualityTable['models'], surfaces: DecisionQualityTable['surfaces'] = {}): DecisionQualityTable =>
     ({ version: 1, generatedAt: 1, source: 'evaluateDecisionCases', models, surfaces });
+
+  it.each([5, 19])('menos de 20 casos por surface/modelo não equalizam os priors (%i casos)', cases => {
+    for (const model of ['jev', 'clef-flash'] as const) {
+      const estimate = decisionQuality(table({ [model]: { accuracy: 1, cases } },
+        { missionPick: { [model]: { accuracy: 1, cases } } }), 'missionPick', model, 'text');
+      expect(estimate).toMatchObject({ source: 'prior', quality: decisionQualityPrior('missionPick', model, 'text'), surfaceCases: cases });
+    }
+  });
+
+  it('20 casos da própria surface bastam; 19 com global suficiente ainda preservam o prior na mistura', () => {
+    const estimate = (cases: number) => decisionQuality(table({ jev: { accuracy: 1, cases: 55 } },
+      { missionPick: { jev: { accuracy: 1, cases } } }), 'missionPick', 'jev', 'text');
+    expect(estimate(19)).toMatchObject({ source: 'blended', surfaceCases: 19 });
+    expect(estimate(19).quality).toBeLessThan(1);
+    expect(estimate(20)).toMatchObject({ source: 'local-evaluation', quality: 1, surfaceCases: 20 });
+  });
 
   it('P2-2a: global (texto) é ponderada com o prior da surface pelo nº de casos', () => {
     const prior = decisionQualityPrior('taskRouting', 'jev', 'text');

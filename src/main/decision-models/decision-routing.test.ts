@@ -41,7 +41,7 @@ describe('complementary decision routing', () => {
 
 
   describe('effect-bearing surfaces stay on Jev (no Clef evaluation exists for their thresholds)', () => {
-    const pinned = ['dispatchGuard', 'handoffReview', 'memoryDistill', 'computerTool', 'browserTool'] as const;
+    const pinned = ['dispatchGuard', 'handoffReview', 'memoryDistill', 'computerTool', 'browserTool', 'taskRouting'] as const;
     it('routes them to Jev in automatic and Jev-only modes', () => {
       for (const surface of pinned) {
         expect(resolveDecisionRoute({ surface }, settings, both)).toMatchObject({ provider: 'jev' });
@@ -165,7 +165,7 @@ describe('complementary decision routing', () => {
   });
 
   it('sends pinned surfaces to Luna when the operator chose Luna, and does not fall back to Jev', () => {
-    for (const surface of ['dispatchGuard', 'handoffReview', 'memoryDistill', 'computerTool', 'browserTool'] as const) {
+    for (const surface of ['dispatchGuard', 'handoffReview', 'memoryDistill', 'computerTool', 'browserTool', 'taskRouting'] as const) {
       expect(resolveDecisionRoute({ surface }, lunaMode, lunaOn)).toMatchObject({ provider: 'luna', model: 'gpt-6-luna', reason: 'operator-override' });
       expect(resolveDecisionRoute({ surface }, lunaMode, { jev: true, clef: true, luna: false })).toBeNull();
       expect(resolveDecisionRoute({ surface, model: 'gpt-6-luna' }, settings, lunaOn)).toBeNull();
