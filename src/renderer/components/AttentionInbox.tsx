@@ -20,6 +20,7 @@ import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
 import { useProviderStore } from '../state/provider-store';
+import { useToastStore } from '../state/toast-store';
 import { PixelIcon, type PixelIconName } from './PixelIcon';
 import { ProviderLogo } from './ProviderLogo';
 import { openCliLoginTerminal } from './settings/cli-login-terminal';
@@ -45,6 +46,15 @@ function jump(item: AttentionItem): void {
         onFinished: () => {
           void useProviderStore.getState().hydrate();
         },
+      }).then((result) => {
+        // Login recusado (ex.: outro login do Codex em andamento) diz o porquê;
+        // sem isto o pane abria e sumia sem explicação.
+        if (!result.ok && !result.cancelled) {
+          useToastStore.getState().push('warn', `Login ${provider?.label ?? item.targetId}`, {
+            detail: result.error,
+            dedupeKey: `cli-login:${item.targetId}`,
+          });
+        }
       });
       return;
     }

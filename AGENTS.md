@@ -273,17 +273,42 @@ saber isto antes de mexer:
   `auth.json` e apaga o arquivo, mesmo se o login for cancelado; `codex
   logout` e o `/logout` do pane também revogam. O terminal de login roda no
   `~/.codex` nativo, onde mora a mesma linhagem que o Nexus guardou da conta
-  atual: entrar na conta B matava a conta A. Por isso `openCliLoginTerminal`
-  chama `accounts.prepareCodexLogin` antes de digitar o comando
-  (`prepareCodexNativeLogin`: a conta dona recebe a cópia mais fresca no cofre
-  e no home gerenciado e a vaga sai vazia; cofre ilegível falha fechado) e
-  `restoreCodexLogin` quando o login não conclui (volta a cópia mais fresca,
-  nunca por cima de um login novo). Nunca oriente logout para trocar de conta.
+  atual: entrar na conta B matava a conta A. Contrato do login Codex
+  (`openCliLoginTerminal` + `prepareCodexNativeLogin`/`restoreCodexNativeLogin`):
+  - **Um login por vez.** `prepareCodexLogin` recusa um segundo enquanto houver
+    um pendente com menos de 16 min ("Já há um login do Codex em andamento");
+    pendente mais velho é terminal abandonado (o device code vence em 15 min):
+    a sessão dele volta e o novo login segue.
+  - **Nada sai da vaga sem dono.** Sessão usável sem conta dona vira conta
+    (`addActiveSessionAccount`) antes; sem conseguir salvar, a vaga fica e o
+    login não abre. Cofre ilegível diz qual conta travou e o login não abre.
+  - **Saída atômica.** A vaga sai por `rename` para um temporário no próprio
+    `~/.codex`; a conta dona recebe a cópia movida (uma renovação que caia
+    nesse instante vai junto); qualquer falha devolve a vaga como estava. A
+    leitura é só de arquivo comum até 1 MB, num descritor `O_NONBLOCK`
+    (`readRegularFileCapped`): FIFO e `/dev/zero` travavam o Main.
+  - **O pane morre com a CLI.** No POSIX o login é digitado como
+    `exec env -u CODEX_HOME codex login --device-auth`: ↑ + Enter no mesmo pane
+    rodaria outro `codex login` e revogaria a conta recém-salva, e um
+    CODEX_HOME do rc do shell desviaria a gravação para fora da vaga. A morte do
+    pane é desfecho final (Ctrl+C devolve a sessão na hora). Windows não tem
+    `exec`: o pane fecha quando o watcher solta, e CODEX_HOME do perfil do
+    shell não é limpo (limitação conhecida).
+  - **Devolução em todo desfecho.** O renderer chama `restoreCodexLogin` ao
+    soltar, verificado ou não: vaga ocupada por login novo só encerra o
+    pendente; vaga vazia recebe a cópia mais fresca (0600, `wx`, link volta
+    link). Falha mantém a cópia no Main e vira aviso (toast); se o comando nem
+    foi digitado, a sessão volta antes de o pane fechar. O shutdown do Main
+    também devolve. Sem a ponte de preparo no preload, o login falha fechado.
+  - Nunca oriente logout para trocar de conta; o `/logout` do menu do Codex
+    avisa que revoga a sessão da conta no provedor.
 - **Identidade Codex = workspace + pessoa.** O subject é o `tokens.account_id`
   (workspace): duas pessoas de um workspace Team/Business o compartilham. Com
-  o mesmo subject, e-mails diferentes no id_token são contas diferentes
-  (`compareAuthBlobIdentity`, fingerprint da sessão, candidatos de read-back);
-  sem isso o login da segunda pessoa sobrescrevia a linha da primeira.
+  o mesmo subject, o `chatgpt_user_id`/`user_id` do claim
+  `https://api.openai.com/auth` (id_token, depois access_token) separa as
+  pessoas; o e-mail só decide quando nenhum dos dois lados traz user id, porque
+  uma renovação da mesma linhagem pode trazer outro e-mail
+  (`compareAuthBlobIdentity`, fingerprint da sessão, candidatos de read-back).
 - **Limite não confirmado não troca o pane (F-249).** Texto de PTY citado
   (handoff, `cat` de log, narração do Maestro) casa no detector de limite —
   `⎿ usage limit reached` não é prova de que a CONTA do pane atingiu nada.

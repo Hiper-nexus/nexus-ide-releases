@@ -362,19 +362,57 @@ export function authBlobIsUsable(adapterId: string, blob: string): boolean {
   return false;
 }
 
+const CODEX_AUTH_CLAIM = 'https://api.openai.com/auth';
+
+/**
+ * Quem é a pessoa num auth.json do Codex: `chatgpt_user_id`/`user_id` do claim
+ * de auth (id_token primeiro, depois access_token), na ordem de preferência.
+ * Estável numa linhagem: uma renovação pode trazer outro e-mail, nunca outro id.
+ */
+function codexPersonIds(blob: string): string[] {
+  const parsed = parsedAuthBlob(blob);
+  const tokens = parsed?.tokens && typeof parsed.tokens === 'object' && !Array.isArray(parsed.tokens)
+    ? parsed.tokens as Record<string, unknown>
+    : parsed;
+  const ids: string[] = [];
+  for (const key of ['id_token', 'access_token']) {
+    const token = tokens?.[key];
+    const auth = typeof token === 'string' ? decodeJwtPayload(token)?.[CODEX_AUTH_CLAIM] : undefined;
+    if (!auth || typeof auth !== 'object' || Array.isArray(auth)) continue;
+    for (const field of ['chatgpt_user_id', 'user_id']) {
+      const value = (auth as Record<string, unknown>)[field];
+      if (typeof value === 'string' && value.trim() && !ids.includes(value.trim())) ids.push(value.trim());
+    }
+  }
+  return ids;
+}
+
+/**
+ * Codex: o subject é o workspace (account_id), que duas pessoas de um
+ * workspace Team/Business compartilham. O user id do id_token as separa; o
+ * e-mail só entra quando nenhum dos dois lados traz user id (ele pode mudar
+ * numa renovação da mesma linhagem).
+ */
 function codexWorkspaceMembersDiffer(
   adapterId: string,
+  leftBlob: string,
+  rightBlob: string,
   left: ManagedAuthIdentity,
   right: ManagedAuthIdentity,
 ): boolean {
-  return adapterId === 'codex' && Boolean(left.email && right.email) &&
+  if (adapterId !== 'codex') return false;
+  const leftIds = codexPersonIds(leftBlob);
+  const rightIds = codexPersonIds(rightBlob);
+  if (leftIds.length > 0 && rightIds.length > 0) return !leftIds.some((id) => rightIds.includes(id));
+  if (leftIds.length > 0 || rightIds.length > 0) return false;
+  return Boolean(left.email && right.email) &&
     left.email!.trim().toLowerCase() !== right.email!.trim().toLowerCase();
 }
 
 /**
  * Compare provider identities without exposing their subject or credential.
  * A stable subject outranks email: one email can own two Codex workspaces.
- * Codex also splits two people of one workspace by email (same subject).
+ * Codex also splits two people of one workspace (same subject) by user id.
  */
 export function compareAuthBlobIdentity(
   adapterId: string,
@@ -385,9 +423,7 @@ export function compareAuthBlobIdentity(
   const right = identityFromAuthBlob(adapterId, rightBlob);
   if (left.subject && right.subject) {
     if (left.subject !== right.subject) return 'different';
-    // Codex: o subject é o workspace (account_id). Num workspace Team/Business
-    // duas pessoas têm o mesmo; o e-mail do id_token separa as contas.
-    return codexWorkspaceMembersDiffer(adapterId, left, right) ? 'different' : 'same';
+    return codexWorkspaceMembersDiffer(adapterId, leftBlob, rightBlob, left, right) ? 'different' : 'same';
   }
   if (left.email && right.email) {
     return left.email.trim().toLowerCase() === right.email.trim().toLowerCase()
@@ -403,10 +439,14 @@ function authFingerprint(
   identity: ManagedAuthIdentity,
 ): string | undefined {
   if (!authBlobIsUsable(adapterId, blob)) return undefined;
-  // Mesma régua de compareAuthBlobIdentity: no Codex, workspace + pessoa.
-  const member = adapterId === 'codex' && identity.email
-    ? `\0email:${identity.email.trim().toLowerCase()}`
-    : '';
+  // Mesma régua de compareAuthBlobIdentity: no Codex, workspace + pessoa
+  // (user id; e-mail só quando o blob não traz user id).
+  const person = adapterId === 'codex' ? codexPersonIds(blob)[0] : undefined;
+  const member = person
+    ? `\0user:${person}`
+    : adapterId === 'codex' && identity.email
+      ? `\0email:${identity.email.trim().toLowerCase()}`
+      : '';
   const material = identity.subject
     ? `subject:${identity.subject}${member}`
     : identity.email

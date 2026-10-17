@@ -26,6 +26,10 @@ const COMMON_COMMANDS: readonly SlashCommandSuggestion[] = [
   { name: 'help', description: 'Show available commands' }
 ]
 
+/** Descrição honesta do `/logout` do Codex: vence a que a sessão relata. */
+export const CODEX_LOGOUT_WARNING =
+  'Sai e revoga a sessão desta conta no provedor; a conta salva no Nexus deixa de funcionar'
+
 const CLAUDE_COMMANDS: readonly SlashCommandSuggestion[] = [
   { name: 'clear', description: 'Clear conversation history' },
   { name: 'compact', description: 'Summarize and compact the conversation' },
@@ -72,7 +76,9 @@ const CODEX_COMMANDS: readonly SlashCommandSuggestion[] = [
   { name: 'pets', description: 'Choose or hide the terminal pet' },
   { name: 'mcp', description: 'List configured MCP tools' },
   { name: 'plugins', description: 'Browse plugins' },
-  { name: 'logout', description: 'Log out of Codex' },
+  // `codex logout` revoga o token no provedor (auth.openai.com/oauth/revoke):
+  // a conta que o Nexus guardou com essa sessão para de funcionar.
+  { name: 'logout', description: CODEX_LOGOUT_WARNING },
   { name: 'exit', description: 'Exit Codex' },
   { name: 'feedback', description: 'Send logs to maintainers' },
   { name: 'ps', description: 'List background terminals' },
@@ -109,7 +115,10 @@ export function sessionSlashCommandSuggestions(
   return reported
     .filter((entry) => entry.kind === 'command')
     .map((entry) => {
-      const description = entry.description ?? described.get(entry.name)
+      // O aviso de revogação não pode ser trocado pela descrição neutra da sessão.
+      const description = agent === 'codex' && entry.name === 'logout'
+        ? CODEX_LOGOUT_WARNING
+        : entry.description ?? described.get(entry.name)
       return {
         name: entry.name,
         ...(description ? { description } : {}),

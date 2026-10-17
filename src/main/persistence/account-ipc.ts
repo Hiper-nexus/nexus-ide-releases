@@ -83,9 +83,10 @@ export function registerAccountIpc(): void {
   }));
   // O `codex login` revoga o login que encontra no auth.json: a vaga nativa
   // sai vazia (e volta se o login não concluir) para a conta salva não morrer.
+  // O renderer chama a devolução em todo desfecho; só falha real vira `ok:false`.
   handleTrusted(ACCOUNT_CHANNELS.prepareCodexLogin, () => prepareCodexNativeLogin());
   handleTrusted(ACCOUNT_CHANNELS.restoreCodexLogin, () => ({
-    ok: restoreCodexNativeLogin(),
+    ok: restoreCodexNativeLogin() !== 'failed',
   }));
 
   handleTrusted(ACCOUNT_CHANNELS.add, (_e, raw) => {

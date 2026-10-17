@@ -205,13 +205,28 @@ constantes fixas no código, nunca vêm de configuração nem do renderer.
   `~/.kimi-code` nativo.
 - **Codex: o login revoga o que encontra.** O `codex login` (0.162) faz POST em
   `https://auth.openai.com/oauth/revoke` com o token do `~/.codex/auth.json` e o
-  apaga antes do device flow. Antes de digitar o login no terminal,
-  `prepareCodexNativeLogin` (`persistence/account-store.ts`) dá à conta dona a
-  cópia mais fresca no cofre e no home gerenciado e remove o arquivo nativo; a
-  sessão fica só em memória no Main, nunca vai ao renderer nem a disco extra.
-  Login não concluído: `restoreCodexNativeLogin` regrava com modo 0600 e `wx`
-  (não sobrescreve um login novo nem segue link plantado); se o `auth.json` era
-  um link, volta o mesmo link. Cofre ilegível falha fechado e o login não abre.
+  apaga antes do device flow; `codex logout` e o `/logout` da TUI também
+  revogam. Antes de digitar o login, `prepareCodexNativeLogin`
+  (`persistence/account-store.ts`):
+  - recusa um segundo login com outro pendente há menos de 16 min; pendente
+    mais velho é devolvido e liberado;
+  - lê a vaga só como arquivo comum até 1 MB, por descritor `O_NONBLOCK`
+    (FIFO, dispositivo ou arquivo gigante não travam o Main);
+  - transforma em conta (cofre) a sessão usável que não tem dona, ou não abre
+    o login; cofre indecifrável também não abre, com o nome da conta travada;
+  - move a vaga por `rename` atômico para `.auth.json.nexus-login-<uuid>` no
+    próprio `~/.codex` (0600; link segue link), grava no cofre da dona a
+    cópia mais fresca entre a movida, o home gerenciado e o cofre, e só então
+    apaga o temporário; qualquer falha faz o `rename` de volta, nunca por cima
+    de um arquivo que tenha surgido na vaga.
+  A sessão movida fica só em memória no Main, nunca vai ao renderer. O
+  renderer chama `restoreCodexNativeLogin` em todo desfecho: vaga ocupada só
+  encerra o pendente; vaga vazia recebe a cópia mais fresca com modo 0600 e
+  `wx` (não sobrescreve nem segue link plantado), link volta link; falha
+  mantém a cópia e vira aviso. O shutdown do Main também devolve. No POSIX o
+  login roda como `exec env -u CODEX_HOME …`: o pane morre com a CLI (nada de
+  segundo `codex login` no mesmo shell) e CODEX_HOME herdado não desvia a
+  gravação. Sem a ponte `prepareCodexLogin` no preload, o login falha fechado.
 - A gravação do grant da cota é best-effort: falhar não derruba a leitura daquele
   ciclo. Token e refresh token ficam no Main e no cofre; o renderer só recebe
   `AccountInfo` sem segredos e, para perceber a troca de conta, um

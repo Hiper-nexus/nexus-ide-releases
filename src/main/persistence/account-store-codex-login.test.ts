@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -56,6 +57,9 @@ vi.mock('../quota/claude-native-account', () => ({
 
 import {
   addActiveSessionAccount,
+  CODEX_LOGIN_PENDING_TTL_MS,
+  fileSubscriptionAuthEnv,
+  getAccount,
   initAccountStore,
   listAccounts,
   prepareCodexNativeLogin,
@@ -69,11 +73,18 @@ function jwt(claims: Record<string, unknown>): string {
 }
 
 /** auth.json do Codex com a forma real; `issuedAt` é o `last_refresh`. */
-function codexAuth(email: string, accountId: string, refreshToken: string, issuedAt: number): string {
+function codexAuth(
+  email: string,
+  accountId: string,
+  refreshToken: string,
+  issuedAt: number,
+  userId?: string,
+): string {
+  const auth = { chatgpt_account_id: accountId, ...(userId ? { chatgpt_user_id: userId, user_id: userId } : {}) };
   return JSON.stringify({
     OPENAI_API_KEY: null,
     tokens: {
-      id_token: jwt({ email, 'https://api.openai.com/auth': { chatgpt_account_id: accountId } }),
+      id_token: jwt({ email, 'https://api.openai.com/auth': auth }),
       access_token: jwt({ exp: Math.floor(issuedAt / 1000) + 3600 }),
       refresh_token: refreshToken,
       account_id: accountId,
@@ -108,6 +119,15 @@ function refreshTokenOf(blob: string): string {
   return (JSON.parse(blob) as { tokens: { refresh_token: string } }).tokens.refresh_token;
 }
 
+/** Nenhum temporário da vaga pode sobrar no ~/.codex. */
+function codexDirEntries(): string[] {
+  try {
+    return fs.readdirSync(path.dirname(nativeAuthFile()));
+  } catch {
+    return [];
+  }
+}
+
 /**
  * O que o `codex login` faz no ~/.codex (comportamento medido do 0.162):
  * revoga no servidor e apaga o login que encontrar, depois grava o novo.
@@ -130,13 +150,9 @@ function saveNativeAs(blob: string, label: string): string {
   return account.id;
 }
 
-beforeEach(() => {
-  home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-codex-login-'));
-  vi.spyOn(os, 'homedir').mockReturnValue(home);
-  deps.secrets.clear();
-  deps.unreadable.clear();
-  db = new Database(':memory:');
-  db.exec(`
+function openDb(): Database.Database {
+  const database = new Database(':memory:');
+  database.exec(`
     CREATE TABLE accounts (
       id             TEXT PRIMARY KEY,
       adapter_id     TEXT NOT NULL,
@@ -150,12 +166,27 @@ beforeEach(() => {
       created_at     INTEGER NOT NULL
     );
   `);
+  return database;
+}
+
+beforeEach(() => {
+  home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-codex-login-'));
+  vi.spyOn(os, 'homedir').mockReturnValue(home);
+  deps.secrets.clear();
+  deps.unreadable.clear();
+  db = openDb();
   initAccountStore(db as unknown as Db);
-  // Estado de módulo de um teste anterior não pode vazar para este.
+  // Estado de módulo de um teste anterior não pode vazar para este: um
+  // pendente velho é devolvido (melhor esforço) e liberado.
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(Date.now() + CODEX_LOGIN_PENDING_TTL_MS * 10);
+  prepareCodexNativeLogin();
   restoreCodexNativeLogin();
+  vi.useRealTimers();
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   try {
     db?.close();
@@ -186,13 +217,13 @@ describe('login de outra conta Codex no terminal do Nexus', () => {
     const retornoId = addActiveSessionAccount('codex', 'retornoja@example.invalid')!.id;
     expect(retornoId).not.toBe(adminId);
     expect(listAccounts('codex')).toHaveLength(2);
-    expect(refreshTokenOf(deps.secrets.get(CRED + adminId)!)).toBe('rt-admin-1');
-    expect(refreshTokenOf(fs.readFileSync(managedAuthFile(adminId), 'utf8'))).toBe('rt-admin-1');
     expect(refreshTokenOf(deps.secrets.get(CRED + retornoId)!)).toBe('rt-retorno-0');
 
-    // Login concluído: a devolução nunca sobrescreve a sessão nova.
-    expect(restoreCodexNativeLogin()).toBe(true);
+    // Login concluído: a devolução só encerra o pendente, nunca sobrescreve.
+    expect(restoreCodexNativeLogin()).toBe('slot-taken');
     expect(fs.readFileSync(nativeAuthFile(), 'utf8')).toBe(B0);
+    expect(restoreCodexNativeLogin()).toBe('none');
+    expect(codexDirEntries()).toEqual(['auth.json']);
   });
 
   it('login cancelado devolve a sessão anterior à vaga nativa, com permissão 0600', () => {
@@ -200,13 +231,13 @@ describe('login de outra conta Codex no terminal do Nexus', () => {
     expect(prepareCodexNativeLogin()).toEqual({ ok: true });
     expect(fs.existsSync(nativeAuthFile())).toBe(false);
 
-    expect(restoreCodexNativeLogin()).toBe(true);
+    expect(restoreCodexNativeLogin()).toBe('restored');
     expect(fs.readFileSync(nativeAuthFile(), 'utf8')).toBe(A0);
     if (process.platform !== 'win32') {
       expect(fs.statSync(nativeAuthFile()).mode & 0o777).toBe(0o600);
     }
     // Uma devolução só: a segunda chamada não tem o que fazer.
-    expect(restoreCodexNativeLogin()).toBe(false);
+    expect(restoreCodexNativeLogin()).toBe('none');
   });
 
   it('se a conta renovou no home gerenciado durante o login, volta a cópia renovada, não a consumida', () => {
@@ -215,37 +246,137 @@ describe('login de outra conta Codex no terminal do Nexus', () => {
     // Pane ou sonda de cota renovou a linhagem no home gerenciado.
     fs.writeFileSync(managedAuthFile(adminId), A2, { mode: 0o600 });
 
-    expect(restoreCodexNativeLogin()).toBe(true);
+    expect(restoreCodexNativeLogin()).toBe('restored');
     expect(refreshTokenOf(fs.readFileSync(nativeAuthFile(), 'utf8'))).toBe('rt-admin-2');
   });
 
-  it('sessão nativa sem conta salva sai da vaga sem virar conta e volta no cancelamento', () => {
-    saveNativeAs(B0, 'retornoja@example.invalid');
-    writeNative(A0);
-
+  it('sem login nativo não há o que preparar nem devolver', () => {
     expect(prepareCodexNativeLogin()).toEqual({ ok: true });
+    expect(restoreCodexNativeLogin()).toBe('none');
     expect(fs.existsSync(nativeAuthFile())).toBe(false);
-    expect(listAccounts('codex').map((account) => account.email)).toEqual([
-      'retornoja@example.invalid',
-    ]);
+  });
+});
 
-    expect(restoreCodexNativeLogin()).toBe(true);
+describe('um login do Codex por vez', () => {
+  it('um segundo login com o primeiro pendente é recusado e não perde a sessão guardada', () => {
+    saveNativeAs(A0, 'admin@volarehost.example');
+    expect(prepareCodexNativeLogin()).toEqual({ ok: true });
+
+    const second = prepareCodexNativeLogin();
+    expect(second.ok).toBe(false);
+    expect(second.error).toMatch(/já há um login do Codex em andamento/i);
+
+    // O primeiro terminal fecha sem login: a sessão volta.
+    expect(restoreCodexNativeLogin()).toBe('restored');
     expect(fs.readFileSync(nativeAuthFile(), 'utf8')).toBe(A0);
   });
 
-  it('cofre ilegível falha fechado: a sessão nativa fica onde está e o login não abre', () => {
+  it('pendente com mais de 16 min é terminal abandonado: devolve a sessão e libera o novo login', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    saveNativeAs(A0, 'admin@volarehost.example');
+    expect(prepareCodexNativeLogin()).toEqual({ ok: true });
+    expect(fs.existsSync(nativeAuthFile())).toBe(false);
+
+    vi.setSystemTime(Date.now() + CODEX_LOGIN_PENDING_TTL_MS + 1_000);
+    // O novo login devolve a sessão abandonada e a tira da vaga de novo.
+    expect(prepareCodexNativeLogin()).toEqual({ ok: true });
+    expect(fs.existsSync(nativeAuthFile())).toBe(false);
+    expect(restoreCodexNativeLogin()).toBe('restored');
+    expect(fs.readFileSync(nativeAuthFile(), 'utf8')).toBe(A0);
+  });
+
+  it('devolução que falha mantém a cópia; a tentativa seguinte devolve', () => {
+    saveNativeAs(A0, 'admin@volarehost.example');
+    expect(prepareCodexNativeLogin()).toEqual({ ok: true });
+    fs.rmSync(path.dirname(nativeAuthFile()), { recursive: true, force: true });
+
+    expect(restoreCodexNativeLogin()).toBe('failed'); // ~/.codex sumiu
+    fs.mkdirSync(path.dirname(nativeAuthFile()), { recursive: true });
+    expect(restoreCodexNativeLogin()).toBe('restored');
+    expect(fs.readFileSync(nativeAuthFile(), 'utf8')).toBe(A0);
+  });
+});
+
+describe('sessão nativa sem conta dona', () => {
+  it('vira conta antes de sair da vaga e volta no cancelamento', () => {
+    saveNativeAs(B0, 'retornoja@example.invalid');
+    writeNative(A0); // a Atenção abre o login sem guardar nada antes
+
+    expect(prepareCodexNativeLogin()).toEqual({ ok: true });
+    expect(fs.existsSync(nativeAuthFile())).toBe(false);
+    const admin = listAccounts('codex').find((account) => account.email === 'admin@volarehost.example');
+    expect(admin).toBeTruthy();
+    expect(deps.secrets.get(CRED + admin!.id)).toBe(A0);
+
+    expect(restoreCodexNativeLogin()).toBe('restored');
+    expect(fs.readFileSync(nativeAuthFile(), 'utf8')).toBe(A0);
+  });
+
+  it('sem conseguir salvar a sessão como conta, a vaga não é esvaziada e o login não abre', () => {
+    saveNativeAs(B0, 'retornoja@example.invalid');
+    writeNative(A0);
+    db?.close(); // gravação de conta falha (persistência fora do ar)
+    initAccountStore(null);
+
+    const result = prepareCodexNativeLogin();
+    expect(result.ok).toBe(false);
+    expect(fs.readFileSync(nativeAuthFile(), 'utf8')).toBe(A0);
+    expect(restoreCodexNativeLogin()).toBe('none');
+  });
+
+  it('cofre ilegível diz qual conta travou e não toca a vaga', () => {
     const adminId = saveNativeAs(A0, 'admin@volarehost.example');
     writeNative(A1);
     deps.unreadable.add(CRED + adminId);
 
     const result = prepareCodexNativeLogin();
     expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/sessão atual do Codex/);
+    expect(result.error).toMatch(/cofre do Nexus não liberou a credencial salva de “admin@volarehost.example”/);
     expect(fs.readFileSync(nativeAuthFile(), 'utf8')).toBe(A1);
-    expect(restoreCodexNativeLogin()).toBe(false);
+    expect(restoreCodexNativeLogin()).toBe('none');
+  });
+});
+
+describe('a vaga sai num passo atômico', () => {
+  it('renovação que cai no instante da troca chega ao cofre, sem sobrar temporário', () => {
+    const adminId = saveNativeAs(A0, 'admin@volarehost.example');
+    writeNative(A1);
+    const realRename = fs.renameSync.bind(fs);
+    vi.spyOn(fs, 'renameSync').mockImplementation(((from: fs.PathLike, to: fs.PathLike) => {
+      // A CLI (ou um pane) renova bem na hora em que a vaga é movida.
+      if (String(from) === nativeAuthFile()) fs.writeFileSync(nativeAuthFile(), A2);
+      return realRename(from, to);
+    }) as typeof fs.renameSync);
+
+    expect(prepareCodexNativeLogin()).toEqual({ ok: true });
+    vi.mocked(fs.renameSync).mockRestore();
+    expect(deps.secrets.get(CRED + adminId)).toBe(A2);
+    expect(codexDirEntries()).toEqual([]);
+    expect(restoreCodexNativeLogin()).toBe('restored');
+    expect(fs.readFileSync(nativeAuthFile(), 'utf8')).toBe(A2);
   });
 
-  it('auth.json que é link (dotfiles) sai como link e volta como o mesmo link', () => {
+  it('falha depois da troca devolve a vaga como estava', () => {
+    saveNativeAs(A0, 'admin@volarehost.example');
+    // auth.json frouxo do operador: o temporário que guarda o segredo é 0600.
+    if (process.platform !== 'win32') fs.chmodSync(nativeAuthFile(), 0o644);
+    const realUnlink = fs.unlinkSync.bind(fs);
+    vi.spyOn(fs, 'unlinkSync').mockImplementation(((target: fs.PathLike) => {
+      if (path.basename(String(target)).startsWith('.auth.json.nexus-login-')) throw new Error('EIO');
+      return realUnlink(target);
+    }) as typeof fs.unlinkSync);
+
+    expect(prepareCodexNativeLogin().ok).toBe(false);
+    vi.mocked(fs.unlinkSync).mockRestore();
+    expect(fs.readFileSync(nativeAuthFile(), 'utf8')).toBe(A0);
+    if (process.platform !== 'win32') expect(fs.statSync(nativeAuthFile()).mode & 0o777).toBe(0o600);
+    expect(codexDirEntries()).toEqual(['auth.json']);
+    expect(restoreCodexNativeLogin()).toBe('none');
+  });
+});
+
+describe('a vaga só é lida como arquivo comum e pequeno', () => {
+  it('auth.json que é link para arquivo comum (dotfiles) sai como link e volta como o mesmo link', () => {
     if (process.platform === 'win32') return;
     const target = path.join(home, 'dotfiles', 'codex-auth.json');
     fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -257,23 +388,51 @@ describe('login de outra conta Codex no terminal do Nexus', () => {
     expect(fs.lstatSync(nativeAuthFile(), { throwIfNoEntry: false })).toBeUndefined();
     expect(fs.readFileSync(target, 'utf8')).toBe(A0);
 
-    expect(restoreCodexNativeLogin()).toBe(true);
+    expect(restoreCodexNativeLogin()).toBe('restored');
     expect(fs.lstatSync(nativeAuthFile()).isSymbolicLink()).toBe(true);
     expect(fs.readlinkSync(nativeAuthFile())).toBe(target);
   });
 
-  it('sem login nativo não há o que preparar nem devolver', () => {
-    expect(prepareCodexNativeLogin()).toEqual({ ok: true });
-    expect(restoreCodexNativeLogin()).toBe(false);
-    expect(fs.existsSync(nativeAuthFile())).toBe(false);
+  it.each([
+    ['diretório', (file: string) => fs.mkdirSync(file)],
+    ['FIFO', (file: string) => execFileSync('mkfifo', [file])],
+    ['/dev/zero', (file: string) => fs.symlinkSync('/dev/zero', file)],
+    ['arquivo acima de 1 MB', (file: string) => fs.writeFileSync(file, Buffer.alloc(1024 * 1024 + 1, 0x7b))],
+  ])('link para %s não trava o Main nem esvazia a vaga', (_label, create) => {
+    if (process.platform === 'win32') return;
+    fs.mkdirSync(path.dirname(nativeAuthFile()), { recursive: true });
+    const odd = path.join(home, 'odd-target');
+    create(odd);
+    fs.symlinkSync(odd, nativeAuthFile());
+
+    expect(prepareCodexNativeLogin().ok).toBe(false);
+    expect(fs.lstatSync(nativeAuthFile()).isSymbolicLink()).toBe(true);
+    expect(restoreCodexNativeLogin()).toBe('none');
   });
 });
 
-describe('duas pessoas do mesmo workspace Codex (Team/Business)', () => {
-  it('entrar na segunda pessoa cria a conta dela e não sobrescreve a primeira', () => {
-    // O account_id é o workspace: as duas pessoas o compartilham.
-    const admin = codexAuth('admin@volarehost.example', 'ws-team', 'rt-admin', T0);
-    const colleague = codexAuth('retornoja@example.invalid', 'ws-team', 'rt-colleague', T0 + 60_000);
+describe('identidade Codex: workspace + pessoa', () => {
+  const OLD = codexAuth('old@volarehost.example', 'acct-admin', 'rt-0', T0, 'user-admin');
+  const ROTATED = codexAuth('new@volarehost.example', 'acct-admin', 'rt-1', T0 + 60_000, 'user-admin');
+
+  it('e-mail que muda numa renovação com o mesmo user id: adota a cópia renovada e mantém uma linha', () => {
+    const id = saveNativeAs(OLD, 'admin');
+    fs.rmSync(nativeAuthFile());
+    // Um pane renovou no home gerenciado; o id_token novo traz outro e-mail.
+    fs.writeFileSync(managedAuthFile(id), ROTATED, { mode: 0o600 });
+
+    expect(fileSubscriptionAuthEnv(getAccount(id)!)?.CODEX_HOME).toBeTruthy();
+    expect(deps.secrets.get(CRED + id)).toBe(ROTATED);
+    expect(fs.readFileSync(managedAuthFile(id), 'utf8')).toBe(ROTATED);
+
+    writeNative(ROTATED);
+    expect(addActiveSessionAccount('codex', 'admin de novo')!.id).toBe(id);
+    expect(listAccounts('codex')).toHaveLength(1);
+  });
+
+  it('duas pessoas do mesmo workspace (user ids diferentes) viram duas contas', () => {
+    const admin = codexAuth('admin@volarehost.example', 'ws-team', 'rt-admin', T0, 'user-admin');
+    const colleague = codexAuth('retornoja@example.invalid', 'ws-team', 'rt-colleague', T0 + 60_000, 'user-colleague');
     const adminId = saveNativeAs(admin, 'admin@volarehost.example');
 
     expect(prepareCodexNativeLogin()).toEqual({ ok: true });
@@ -281,10 +440,6 @@ describe('duas pessoas do mesmo workspace Codex (Team/Business)', () => {
     const colleagueId = addActiveSessionAccount('codex', 'retornoja@example.invalid')!.id;
 
     expect(colleagueId).not.toBe(adminId);
-    expect(listAccounts('codex').map((account) => account.email).sort()).toEqual([
-      'admin@volarehost.example',
-      'retornoja@example.invalid',
-    ]);
     expect(refreshTokenOf(deps.secrets.get(CRED + adminId)!)).toBe('rt-admin');
     expect(refreshTokenOf(fs.readFileSync(managedAuthFile(adminId), 'utf8'))).toBe('rt-admin');
     expect(refreshTokenOf(deps.secrets.get(CRED + colleagueId)!)).toBe('rt-colleague');

@@ -373,6 +373,7 @@ import {
   isAuthCooldownReason,
   listAccountInfos,
   listAccounts,
+  restoreCodexNativeLogin,
   setCooldown,
   startClaudeSubscriptionFreshness,
   stopClaudeSubscriptionFreshness,
@@ -1750,6 +1751,13 @@ function shutdown(): Promise<void> {
       },
       recordQuitIncident,
     );
+    // Login do Codex aberto no quit: com os PTYs já encerrados, a sessão que
+    // saiu da vaga nativa volta (vaga ocupada por login novo não é tocada).
+    try {
+      restoreCodexNativeLogin();
+    } catch {
+      // Melhor esforço: a conta dona segue guardada no cofre.
+    }
     // F-764: a projeção da memória (vault markdown) anda fora do caminho da
     // gravação; com os agentes já encerrados, ela tem um teto curto para
     // alcançar o SQLite antes de o processo sair.
