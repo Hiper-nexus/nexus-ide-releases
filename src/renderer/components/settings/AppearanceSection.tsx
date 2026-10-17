@@ -7,6 +7,7 @@ import {
 } from '../../styles/appearance-fonts';
 import {
   TERMINAL_THEME_IDS,
+  type ImportedTheme,
   type TerminalThemeId,
 } from '../../../shared/settings-types';
 import { TERMINAL_THEMES } from '../../styles/terminal-theme';
@@ -108,6 +109,7 @@ export function AppearanceSection() {
   const updateUi = useSettingsStore((s) => s.updateUi);
   const fileRef = useRef<HTMLInputElement>(null);
   const [importError, setImportError] = useState<string | null>(null);
+  const [themeSaved, setThemeSaved] = useState(false);
   const [editingTheme, setEditingTheme] = useState(false);
   const activeImported = ui.importedThemes.find(
     (theme) => theme.id === ui.activeImportedThemeId,
@@ -121,6 +123,7 @@ export function AppearanceSection() {
   const importThemeFile = async (file: File | undefined) => {
     if (!file) return;
     setImportError(null);
+    setThemeSaved(false);
     try {
       if (file.size > MAX_VSCODE_THEME_CHARS) {
         throw new Error('Arquivo grande demais para um tema de cores (máximo de 2 MB).');
@@ -133,6 +136,25 @@ export function AppearanceSection() {
     } catch (error) {
       setImportError(
         error instanceof Error ? error.message : 'Não foi possível importar esse tema.',
+      );
+    }
+  };
+
+  const saveTheme = async (theme: ImportedTheme) => {
+    setImportError(null);
+    setThemeSaved(false);
+    try {
+      // `upsertImportedTheme` lança no limite de temas, por isso fica dentro do try.
+      await updateUi({
+        importedThemes: upsertImportedTheme(ui.importedThemes, theme),
+        activeImportedThemeId: theme.id,
+      });
+      setEditingTheme(false);
+      setThemeSaved(true);
+    } catch (error) {
+      // O editor segue aberto: quem editou não perde as cores.
+      setImportError(
+        error instanceof Error ? error.message : 'Não foi possível salvar esse tema.',
       );
     }
   };
@@ -197,7 +219,10 @@ export function AppearanceSection() {
           <button
             type="button"
             className="settings-btn"
-            onClick={() => setEditingTheme((v) => !v)}
+            onClick={() => {
+              setEditingTheme((v) => !v);
+              setThemeSaved(false);
+            }}
           >
             {editingTheme ? 'Fechar editor' : 'Criar tema…'}
           </button>
@@ -226,12 +251,7 @@ export function AppearanceSection() {
           <ThemeEditorPanel
             themeId={terminal.themeId}
             activeImported={activeImported ?? null}
-            onSave={(theme) => {
-              void updateUi({
-                importedThemes: upsertImportedTheme(ui.importedThemes, theme),
-                activeImportedThemeId: theme.id,
-              }).then(() => setEditingTheme(false));
-            }}
+            onSave={(theme) => void saveTheme(theme)}
             onClose={() => {
               setEditingTheme(false);
               applyUiTheme(
@@ -248,6 +268,11 @@ export function AppearanceSection() {
         {importError ? (
           <p className="settings-error" role="alert">
             {importError}
+          </p>
+        ) : null}
+        {themeSaved ? (
+          <p className="settings-field__note settings-appearance__note" role="status">
+            Tema salvo.
           </p>
         ) : null}
       </div>

@@ -5,9 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_TERMINAL_SETTINGS,
   DEFAULT_UI_SETTINGS,
+  MAX_IMPORTED_THEMES,
   type UiSettingsPatch,
 } from '../../../shared/settings-types';
 import { useSettingsStore } from '../../state/settings-store';
+import { parseVsCodeThemeFile } from '../../styles/vscode-theme-import';
 import { AppearanceSection } from './AppearanceSection';
 
 vi.mock('../../terminal/terminal-host', () => ({ applyTerminalSettings: vi.fn() }));
@@ -53,6 +55,19 @@ async function pickFile(container: HTMLElement, file: File): Promise<void> {
 
 function radio(container: HTMLElement, label: string): HTMLButtonElement {
   return container.querySelector<HTMLButtonElement>(`[role="radio"][aria-label="${label}"]`)!;
+}
+
+function button(container: HTMLElement, label: string): HTMLButtonElement {
+  return Array.from(container.querySelectorAll('button')).find(
+    (candidate) => candidate.textContent === label,
+  )!;
+}
+
+async function clickAndSettle(target: HTMLElement): Promise<void> {
+  await act(async () => {
+    target.click();
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  });
 }
 
 beforeEach(() => {
@@ -130,5 +145,89 @@ describe('Aparência → importar tema do VS Code', () => {
     await act(async () => radio(container, 'Paleta Dracula').click());
     expect(update).toHaveBeenCalledWith({ themeId: 'dracula' });
     expect(updateUi).toHaveBeenCalledWith({ activeImportedThemeId: '' });
+  });
+});
+
+describe('Aparência → criar tema (Salvar tema)', () => {
+  const editor = (container: HTMLElement) => container.querySelector('[role="dialog"]');
+  const status = (container: HTMLElement) => container.querySelector('[role="status"]');
+  const alert = (container: HTMLElement) => container.querySelector('[role="alert"]');
+  const openEditor = (container: HTMLElement) =>
+    clickAndSettle(button(container, 'Criar tema…'));
+  const saveTheme = (container: HTMLElement) =>
+    clickAndSettle(button(container, 'Salvar tema'));
+
+  it('persiste o tema, fecha o editor e confirma com role="status"', async () => {
+    const container = mount();
+    await openEditor(container);
+    expect(editor(container)).not.toBeNull();
+    await saveTheme(container);
+
+    expect(updateUi).toHaveBeenCalledOnce();
+    const patch = updateUi.mock.calls[0]![0];
+    expect(patch.activeImportedThemeId).toBe('custom-meu-tema');
+    expect(patch.importedThemes?.map((theme) => theme.label)).toEqual(['Meu tema']);
+    expect(editor(container)).toBeNull();
+    expect(status(container)?.textContent).toBe('Tema salvo.');
+    expect(alert(container)).toBeNull();
+  });
+
+  it('reabrir o editor apaga a confirmação anterior', async () => {
+    const container = mount();
+    await openEditor(container);
+    await saveTheme(container);
+    expect(status(container)).not.toBeNull();
+
+    await openEditor(container);
+    expect(editor(container)).not.toBeNull();
+    expect(status(container)).toBeNull();
+  });
+
+  it('se a gravação falha, mantém o editor aberto e mostra o motivo; tentar de novo confirma', async () => {
+    updateUi.mockRejectedValueOnce(new Error('Não consegui gravar as configurações.'));
+    const container = mount();
+    await openEditor(container);
+    await saveTheme(container);
+
+    expect(alert(container)?.textContent).toBe('Não consegui gravar as configurações.');
+    expect(editor(container)).not.toBeNull();
+    expect(status(container)).toBeNull();
+
+    await saveTheme(container);
+    expect(updateUi).toHaveBeenCalledTimes(2);
+    expect(alert(container)).toBeNull();
+    expect(editor(container)).toBeNull();
+    expect(status(container)?.textContent).toBe('Tema salvo.');
+  });
+
+  it('uma falha sem mensagem usa o texto padrão', async () => {
+    updateUi.mockRejectedValueOnce('ipc fechado');
+    const container = mount();
+    await openEditor(container);
+    await saveTheme(container);
+
+    expect(alert(container)?.textContent).toBe('Não foi possível salvar esse tema.');
+    expect(editor(container)).not.toBeNull();
+    expect(status(container)).toBeNull();
+  });
+
+  it('no limite de temas o erro do upsert (síncrono) aparece e nada é gravado', async () => {
+    const themes = Array.from({ length: MAX_IMPORTED_THEMES }, (_, index) =>
+      parseVsCodeThemeFile({
+        name: `Tema ${index}`,
+        colors: { 'editor.background': '#101014', 'editor.foreground': '#f0f0f0' },
+      }),
+    );
+    useSettingsStore.setState({ ui: { ...DEFAULT_UI_SETTINGS, importedThemes: themes } });
+    const container = mount();
+    await openEditor(container);
+    await saveTheme(container);
+
+    expect(updateUi).not.toHaveBeenCalled();
+    expect(alert(container)?.textContent).toMatch(
+      new RegExp(`Limite de ${MAX_IMPORTED_THEMES} temas importados`),
+    );
+    expect(editor(container)).not.toBeNull();
+    expect(status(container)).toBeNull();
   });
 });
