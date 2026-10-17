@@ -5,16 +5,20 @@ import { useVoiceStore, type VoiceUiStatus } from '../voice/voice-store';
  * JARVIS como humano de partículas — "forma e desfaz".
  *
  * Substitui o orb no modo expandido (ampliado) do HUD: em vez do disco de
- * anéis, um campo de partículas que coalesce num contorno humano quando a voz
- * está viva e se dissolve num vórtice solto em repouso. Cada fase do pipeline
- * lê como um estado PRÓPRIO (`figureMotionForStatus`):
+ * anéis, um campo de partículas que coalesce num contorno humano. Cada fase do
+ * pipeline lê como um estado PRÓPRIO (`figureMotionForStatus`):
  *
+ *  - ocioso: a silhueta fica RECONHECÍVEL o tempo todo e respira (peito e
+ *    ombros sobem e abrem, `breathingOffset`). Num ciclo de ~9 s a coesão cai
+ *    do pico (~0,9) a um vale parcial (~0,6) e volta (`idleCohesion`): o
+ *    núcleo só fica um pouco poroso, enquanto mãos e pés se soltam em poeira
+ *    e se refazem (`idleParticleCohesion`, dissolução LOCAL — nunca a nuvem
+ *    espalhada pelo canvas inteiro);
  *  - ouvindo: corpo inteiro puxado para dentro, pulsando com o nível do mic;
  *  - falando: ondas (ripples) saindo da cabeça/peito, boca e torso vibrando
  *    com a energia da fala (`speakingEnergy` — nível real quando há, pulso
  *    base quando não há);
  *  - transcrevendo/roteando: órbita/vórtice ao redor do centro;
- *  - ocioso: respiração lenta, a forma se desfaz e refaz (`idleCohesion`);
  *  - erro: cor `--danger` e dispersão.
  *
  * O mouse participa sem quebrar nada: o canvas é decorativo
@@ -25,12 +29,19 @@ import { useVoiceStore, type VoiceUiStatus } from '../voice/voice-store';
  * Geometria, física e mapeamento de estado ficam em funções puras exportadas:
  * testáveis sem canvas. O desenho é um loop `rAF` imperativo no próprio
  * canvas (sem re-render por frame), pausado quando a aba está oculta.
- * `prefers-reduced-motion` pinta um único quadro estático e não anima.
+ * `prefers-reduced-motion` pinta um quadro estático com a silhueta FORMADA na
+ * posição de repouso e o repinta quando o estado ou o tamanho mudam.
  */
 
 export interface Particle2 {
   x: number;
   y: number;
+}
+
+/** Ponto da silhueta + o quanto ele está na ponta de um membro. */
+export interface SilhouettePoint extends Particle2 {
+  /** 0 = núcleo do corpo (cabeça, pescoço, tronco) … 1 = ponta (mão, pé). */
+  tip: number;
 }
 
 /** PRNG determinístico (mulberry32) — silhueta estável entre renders e testes. */
@@ -50,13 +61,16 @@ function circlePoint(
   cx: number,
   cy: number,
   r: number,
-): Particle2 {
+): SilhouettePoint {
   const angle = rng() * Math.PI * 2;
   const radius = Math.sqrt(rng()) * r;
-  return { x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius };
+  return { x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius, tip: 0 };
 }
 
-/** Ponto num segmento-capsula (membro): linha central + offset perpendicular. */
+/**
+ * Ponto num segmento-capsula (membro): linha central + offset perpendicular.
+ * `tipPower` > 0 faz a ponta (t → 1) soltar-se mais que a raiz do membro.
+ */
 function capsulePoint(
   rng: () => number,
   x1: number,
@@ -64,7 +78,8 @@ function capsulePoint(
   x2: number,
   y2: number,
   r: number,
-): Particle2 {
+  tipPower = 0,
+): SilhouettePoint {
   const t = rng();
   const dx = x2 - x1;
   const dy = y2 - y1;
@@ -74,6 +89,7 @@ function capsulePoint(
   return {
     x: x1 + dx * t + (-dy / len) * off,
     y: y1 + dy * t + (dx / len) * off,
+    tip: tipPower > 0 ? t ** tipPower : 0,
   };
 }
 
@@ -85,19 +101,20 @@ function trapezoidPoint(
   bottomY: number,
   topHalf: number,
   bottomHalf: number,
-): Particle2 {
+): SilhouettePoint {
   const y = topY + (bottomY - topY) * rng();
   const progress = (y - topY) / (bottomY - topY);
   const half = topHalf + (bottomHalf - topHalf) * progress;
-  return { x: cx + (rng() * 2 - 1) * half, y };
+  return { x: cx + (rng() * 2 - 1) * half, y, tip: 0 };
 }
 
 /**
  * Contorno humano em coordenadas normalizadas [0,1] (x: esquerda→direita,
  * y: topo→base). Cabeça + pescoço + tronco + dois braços + duas pernas.
  * Orçamento por região para a densidade ler como figura inteira, não varetas.
+ * Mãos e pés carregam `tip` alto: são eles que se soltam no ocioso.
  */
-export function buildHumanSilhouette(count: number, seed = 0x9e3779b9): Particle2[] {
+export function buildHumanSilhouette(count: number, seed = 0x9e3779b9): SilhouettePoint[] {
   const n = Math.max(0, Math.floor(count));
   if (n === 0) return [];
   const rng = mulberry32(seed);
@@ -108,18 +125,18 @@ export function buildHumanSilhouette(count: number, seed = 0x9e3779b9): Particle
   const arms = Math.round(n * 0.16);
   const legs = n - head - neck - torso - arms;
 
-  const pts: Particle2[] = [];
+  const pts: SilhouettePoint[] = [];
   for (let i = 0; i < head; i += 1) pts.push(circlePoint(rng, 0.5, 0.155, 0.09));
   for (let i = 0; i < neck; i += 1) pts.push(capsulePoint(rng, 0.5, 0.24, 0.5, 0.29, 0.028));
   for (let i = 0; i < torso; i += 1) pts.push(trapezoidPoint(rng, 0.5, 0.29, 0.52, 0.16, 0.14));
 
   const leftArm = Math.floor(arms / 2);
-  for (let i = 0; i < leftArm; i += 1) pts.push(capsulePoint(rng, 0.35, 0.31, 0.3, 0.55, 0.026));
-  for (let i = 0; i < arms - leftArm; i += 1) pts.push(capsulePoint(rng, 0.65, 0.31, 0.7, 0.55, 0.026));
+  for (let i = 0; i < leftArm; i += 1) pts.push(capsulePoint(rng, 0.35, 0.31, 0.3, 0.55, 0.026, 1.3));
+  for (let i = 0; i < arms - leftArm; i += 1) pts.push(capsulePoint(rng, 0.65, 0.31, 0.7, 0.55, 0.026, 1.3));
 
   const leftLeg = Math.floor(legs / 2);
-  for (let i = 0; i < leftLeg; i += 1) pts.push(capsulePoint(rng, 0.44, 0.52, 0.43, 0.96, 0.042));
-  for (let i = 0; i < legs - leftLeg; i += 1) pts.push(capsulePoint(rng, 0.56, 0.52, 0.57, 0.96, 0.042));
+  for (let i = 0; i < leftLeg; i += 1) pts.push(capsulePoint(rng, 0.44, 0.52, 0.43, 0.96, 0.042, 1.6));
+  for (let i = 0; i < legs - leftLeg; i += 1) pts.push(capsulePoint(rng, 0.56, 0.52, 0.57, 0.96, 0.042, 1.6));
 
   return pts;
 }
@@ -133,7 +150,9 @@ export function buildHumanSilhouette(count: number, seed = 0x9e3779b9): Particle
  *  - `wander`: deriva solta da nuvem dissolvida (ocioso, acentuado no erro);
  *  - `jitter`: vibração de alta frequência (boca/torso falando, tremor no erro);
  *  - `ripple`: ondas por segundo saindo da cabeça/peito (falando);
- *  - `breathe`: amplitude da respiração lenta (ocioso/ouvindo).
+ *  - `breathe`: amplitude da respiração (ocioso/ouvindo);
+ *  - `calm`: 1 = dissolução LOCAL (poeira ao redor da casa, só as pontas se
+ *    soltam — ocioso); 0 = dissolução GLOBAL (as partículas vão para a nuvem).
  */
 export interface FigureMotion {
   cohesion: number;
@@ -143,15 +162,43 @@ export interface FigureMotion {
   jitter: number;
   ripple: number;
   breathe: number;
+  calm: number;
 }
 
+/** Coesão-base do ocioso: figura inteira o bastante para ser reconhecida. */
+export const IDLE_COHESION_MID = 0.76;
+const IDLE_COHESION_SWING = 0.15;
+/** rad/s: um ciclo de formar → soltar → refazer leva ~9 s. */
+const IDLE_CYCLE_RATE = 0.7;
+export const IDLE_CYCLE_S = (Math.PI * 2) / IDLE_CYCLE_RATE;
+/** As pontas atrasam até este tanto (s) em relação ao núcleo. */
+const IDLE_TIP_LAG_S = 0.6;
+/** O quanto as pontas se soltam além do núcleo no vale do ciclo. */
+const IDLE_TIP_LOOSEN = 0.85;
+/** Expoente da dissolução: fica nítida no pico e só abre de fato no vale. */
+const IDLE_EASE = 1.5;
+/** Alcance máximo da poeira (fração do canvas até a nuvem): núcleo e pontas. */
+const IDLE_CORE_SCATTER = 0.1;
+const IDLE_TIP_SCATTER = 0.32;
+/** Respiração de repouso: ~4,2 s por ciclo (12 a 15 respirações por minuto). */
+const BREATH_RATE = 1.5;
+
 const MOTION: Record<VoiceUiStatus, FigureMotion> = {
-  idle: { cohesion: 0, inward: 0, orbit: 0, wander: 0.34, jitter: 0, ripple: 0, breathe: 1 },
-  listening: { cohesion: 1, inward: 1, orbit: 0, wander: 0, jitter: 0, ripple: 0, breathe: 0.6 },
-  transcribing: { cohesion: 0.62, inward: 0, orbit: 0.55, wander: 0.18, jitter: 0, ripple: 0, breathe: 0.3 },
-  routing: { cohesion: 0.5, inward: 0, orbit: 1, wander: 0.22, jitter: 0, ripple: 0, breathe: 0.2 },
-  speaking: { cohesion: 1, inward: 0, orbit: 0, wander: 0, jitter: 1, ripple: 1.1, breathe: 0.2 },
-  error: { cohesion: 0.2, inward: 0, orbit: 0, wander: 0.5, jitter: 0.5, ripple: 0, breathe: 0 },
+  idle: {
+    cohesion: IDLE_COHESION_MID,
+    inward: 0,
+    orbit: 0,
+    wander: 0.34,
+    jitter: 0,
+    ripple: 0,
+    breathe: 1,
+    calm: 1,
+  },
+  listening: { cohesion: 1, inward: 1, orbit: 0, wander: 0, jitter: 0, ripple: 0, breathe: 0.6, calm: 0 },
+  transcribing: { cohesion: 0.62, inward: 0, orbit: 0.55, wander: 0.18, jitter: 0, ripple: 0, breathe: 0.3, calm: 0 },
+  routing: { cohesion: 0.5, inward: 0, orbit: 1, wander: 0.22, jitter: 0, ripple: 0, breathe: 0.2, calm: 0 },
+  speaking: { cohesion: 1, inward: 0, orbit: 0, wander: 0, jitter: 1, ripple: 1.1, breathe: 0.2, calm: 0 },
+  error: { cohesion: 0.2, inward: 0, orbit: 0, wander: 0.5, jitter: 0.5, ripple: 0, breathe: 0, calm: 0 },
 };
 
 export function figureMotionForStatus(status: VoiceUiStatus): FigureMotion {
@@ -160,18 +207,68 @@ export function figureMotionForStatus(status: VoiceUiStatus): FigureMotion {
 
 /**
  * Quanto o humano está "formado" (0 = dissolvido, 1 = inteiro) para cada fase
- * do pipeline. Repouso é vórtice solto; falando/ouvindo é corpo inteiro.
+ * do pipeline. Repouso é figura reconhecível e porosa; falando/ouvindo é o
+ * corpo inteiro; transcrever/rotear/erro se desfazem em vórtice.
  */
 export function cohesionForStatus(status: VoiceUiStatus): number {
   return MOTION[status].cohesion;
 }
 
 /**
- * Coesão-alvo no ocioso: a forma se desfaz e refaz num ciclo lento (~11s),
- * nunca chega a inteira nem some de vez — respiração da própria figura.
+ * Coesão-alvo no ocioso, em função do tempo (s): sobe até o pico (~0,91, figura
+ * inteira) e cai a um vale parcial (~0,61, figura porosa) num ciclo de ~9 s.
+ * Nunca some nem fica inteira: é a respiração da própria figura.
  */
 export function idleCohesion(t: number): number {
-  return 0.16 + 0.15 * Math.sin(t * 0.55);
+  return IDLE_COHESION_MID + IDLE_COHESION_SWING * Math.sin(t * IDLE_CYCLE_RATE);
+}
+
+/**
+ * Coesão de UMA partícula no ocioso. O núcleo (`tip` 0) segue o ciclo global;
+ * mãos e pés (`tip` → 1) atrasam um pouco e se soltam mais no vale, então se
+ * desfazem e refazem a cada ciclo enquanto cabeça e tronco ficam legíveis.
+ */
+export function idleParticleCohesion(t: number, tip: number): number {
+  const base = idleCohesion(t - IDLE_TIP_LAG_S * tip);
+  const loosened = clamp01(base - tip * IDLE_TIP_LOOSEN * (1 - base));
+  return 1 - (1 - loosened) ** IDLE_EASE;
+}
+
+/** Alcance da poeira no ocioso: o núcleo mal sai do lugar, as pontas voam mais. */
+export function idleScatter(tip: number): number {
+  return lerp(IDLE_CORE_SCATTER, IDLE_TIP_SCATTER, clamp01(tip));
+}
+
+/**
+ * Posição de repouso (normalizada) de uma partícula: a casa na silhueta quando
+ * coesa, a nuvem quando dissolvida. `scatter` limita até onde a dissolução
+ * leva: 1 = a nuvem inteira; menos que isso = só uma poeira ao redor da casa.
+ */
+export function restPoint(
+  home: Particle2,
+  cloud: Particle2,
+  cohesion: number,
+  scatter = 1,
+): Particle2 {
+  const k = scatter * (1 - clamp01(cohesion));
+  return { x: home.x + (cloud.x - home.x) * k, y: home.y + (cloud.y - home.y) * k };
+}
+
+/**
+ * Respiração COERENTE (deslocamento normalizado, positivo = direita/baixo):
+ * peito e ombros sobem e a caixa torácica abre ao inspirar; a cabeça acompanha
+ * de leve e as pernas ficam. Substitui o tremor por partícula, que lia como
+ * ruído e não como respiração.
+ */
+export function breathingOffset(x: number, y: number, t: number): Particle2 {
+  const zone = Math.exp(-(((y - 0.4) / 0.2) ** 2));
+  const wave = Math.sin(t * BREATH_RATE);
+  return { x: (x - 0.5) * 0.05 * zone * wave, y: -0.01 * zone * wave };
+}
+
+/** Quantas partículas desenham a figura num canvas de `size` px de lado. */
+export function particleCountForSize(size: number): number {
+  return Math.round(clamp((size * size) / 85, 120, 360));
 }
 
 /**
@@ -285,6 +382,10 @@ interface Particle {
   vel: Particle2;
   r: number;
   phase: number;
+  /** 0 = núcleo … 1 = ponta de membro: quem se solta primeiro no ocioso. */
+  tip: number;
+  /** Coesão efetiva neste quadro (alpha: a ponta solta fica mais tênue). */
+  form: number;
 }
 
 interface Ripple {
@@ -307,10 +408,13 @@ export function JarvisParticleFigure({ status }: { status: VoiceUiStatus }) {
   const levelRef = useRef(0);
   const statusRef = useRef<VoiceUiStatus>(status);
   const motionRef = useRef<FigureMotion>(figureMotionForStatus(status));
+  /** Movimento reduzido: não há loop, então o estado novo pede repintura. */
+  const repaintRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     statusRef.current = status;
     motionRef.current = figureMotionForStatus(status);
+    repaintRef.current?.();
   }, [status]);
 
   useEffect(() => {
@@ -327,13 +431,17 @@ export function JarvisParticleFigure({ status }: { status: VoiceUiStatus }) {
       canvas.width = Math.round(cssSize * dpr);
       canvas.height = Math.round(cssSize * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      // Mexer em width/height zera TODO o estado do contexto, composição
+      // inclusa: sem isto o resize voltava ao 'source-over' e a figura perdia
+      // o brilho aditivo.
+      ctx.globalCompositeOperation = 'lighter'; // acúmulo de brilho sobre fundo escuro
     };
     applySize();
 
     const accent = readToken(canvas, '--jarvis-particle', DEFAULT_ACCENT);
     const danger = readToken(canvas, '--jarvis-particle-error', DEFAULT_DANGER);
 
-    const count = Math.round(clamp((cssSize * cssSize) / 85, 120, 360));
+    const count = particleCountForSize(cssSize);
     const scatter = mulberry32(0xc0ffee);
     const particles: Particle[] = buildHumanSilhouette(count).map((p) => ({
       home: { x: p.x, y: p.y },
@@ -342,13 +450,13 @@ export function JarvisParticleFigure({ status }: { status: VoiceUiStatus }) {
       vel: { x: 0, y: 0 },
       r: 0.8 + scatter() * 1.5,
       phase: scatter() * Math.PI * 2,
+      tip: p.tip,
+      form: 0,
     }));
 
     const unsub = useVoiceStore.subscribe((s) => {
       levelRef.current = s.level;
     });
-
-    ctx.globalCompositeOperation = 'lighter'; // acúmulo de brilho sobre fundo escuro
 
     // Cursor: ouvido em `window` (o canvas é pointer-events:none e o clique do
     // botão/alça de arraste do HUD nunca pode ser bloqueado). "Dentro" é
@@ -369,30 +477,36 @@ export function JarvisParticleFigure({ status }: { status: VoiceUiStatus }) {
     window.addEventListener('pointermove', onPointerMove, { passive: true });
 
     let form = cohesionForStatus(statusRef.current);
+    let calm = figureMotionForStatus(statusRef.current).calm;
     let ripples: Ripple[] = [];
     let rippleAcc = 0;
     let rippleToggle = 0;
     let raf = 0;
     let running = false;
     let last = performance.now();
+    // Valores por quadro que o pincel lê (física e desenho são separados).
+    const frame = { level: 0, energy: 0, breath: 0 };
 
-    const draw = (now: number, dtMs: number) => {
+    /** Avança a física um quadro. Não toca no canvas. */
+    const step = (now: number, dtMs: number) => {
       const motion = motionRef.current;
       const st = statusRef.current;
       const size = cssSize;
       const cx = size / 2;
       const cy = size / 2;
       const level = levelRef.current;
+      const t = now * 0.001;
 
       // Alvo de coesão: no ocioso a forma respira (desfaz e refaz devagar).
-      const target = st === 'idle' ? idleCohesion(now * 0.001) : motion.cohesion;
+      const target = st === 'idle' ? idleCohesion(t) : motion.cohesion;
       // Easing suave para formar/desfazer — o "fazendo e desfazendo" da figura.
       form = lerp(form, target, clamp(dtMs * 0.0045, 0, 1));
+      calm = lerp(calm, motion.calm, clamp(dtMs * 0.004, 0, 1));
 
-      const error = st === 'error';
-      const color = error ? danger : accent;
-      const energy = st === 'speaking' ? speakingEnergy(level, now * 0.001) : 0;
-      const breath = form * motion.breathe * (0.35 + level * 0.65); // pulsa com a voz
+      const energy = st === 'speaking' ? speakingEnergy(level, t) : 0;
+      frame.level = level;
+      frame.energy = energy;
+      frame.breath = form * motion.breathe * (0.35 + level * 0.65); // pulsa com a voz
 
       // Cursor com easing: entra/sai suave (amt → 0/1), posição perseguida.
       smooth.amt = lerp(smooth.amt, mouse.inside ? 1 : 0, clamp(dtMs * 0.006, 0, 1));
@@ -402,14 +516,25 @@ export function JarvisParticleFigure({ status }: { status: VoiceUiStatus }) {
       gaze.x *= smooth.amt;
       gaze.y *= smooth.amt;
 
-      ctx.clearRect(0, 0, size, size);
-      const t = now * 0.001;
       const wander = motion.wander * (1 - form * 0.75); // nuvem solta quando dissolvida
 
       for (const p of particles) {
+        // Coesão efetiva: no ocioso cada ponto segue o ciclo da sua região
+        // (as pontas se soltam mais); fora dele, a coesão global do estado.
+        const pf = calm > 0.001 ? lerp(form, idleParticleCohesion(t, p.tip), calm) : form;
+        p.form = pf;
+
         // Casa/nuvem normalizadas → px; repouso intermediado pela coesão.
-        let restX = lerp(p.cloud.x, p.home.x, form) * size;
-        let restY = lerp(p.cloud.y, p.home.y, form) * size;
+        const rest = restPoint(p.home, p.cloud, pf, lerp(1, idleScatter(p.tip), calm));
+        let restX = rest.x * size;
+        let restY = rest.y * size;
+
+        // Respiração coerente do corpo (peito sobe e abre).
+        if (motion.breathe > 0) {
+          const b = breathingOffset(p.home.x, p.home.y, t);
+          restX += b.x * size * motion.breathe;
+          restY += b.y * size * motion.breathe;
+        }
 
         // Ouvindo: corpo inteiro puxado para dentro, mais com o nível do mic.
         if (motion.inward > 0) {
@@ -452,27 +577,16 @@ export function JarvisParticleFigure({ status }: { status: VoiceUiStatus }) {
 
         p.vel.x *= 0.86;
         p.vel.y *= 0.86;
-        p.pos.x += p.vel.x + Math.sin(t * 0.8 + p.phase) * wander;
-        p.pos.y += p.vel.y + Math.cos(t * 0.7 + p.phase) * wander;
+        // A poeira das pontas soltas treme mais que o núcleo.
+        const drift = wander * (1 + p.tip * 1.5 * calm);
+        p.pos.x += p.vel.x + Math.sin(t * 0.8 + p.phase) * drift;
+        p.pos.y += p.vel.y + Math.cos(t * 0.7 + p.phase) * drift;
 
         // Vibração: boca/torso quando fala (peso por zona), tremor no erro.
         const jitter =
           motion.jitter *
           (st === 'speaking' ? speakingZoneWeight(p.home.y) * (0.4 + energy) : 0.6);
         p.pos.x += Math.sin(t * 23 + p.phase * 7) * jitter * 0.5;
-        p.pos.y += Math.sin(t * 3.1 + p.phase) * breath * 0.6;
-
-        ctx.globalAlpha = clamp(0.28 + form * 0.38 + level * 0.2 + energy * 0.12, 0, 1);
-        ctx.fillStyle = color;
-        ctx.beginPath();
-        ctx.arc(
-          p.pos.x,
-          p.pos.y,
-          p.r * (0.85 + breath * 0.35 + energy * 0.25),
-          0,
-          Math.PI * 2,
-        );
-        ctx.fill();
       }
 
       // Ondas ao falar: anéis que nascem na boca/peito, expandem e somem.
@@ -490,36 +604,80 @@ export function JarvisParticleFigure({ status }: { status: VoiceUiStatus }) {
         }
       }
       if (ripples.length > 0) {
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 1;
         const next: Ripple[] = [];
         for (const rp of ripples) {
           rp.radius += size * 0.5 * dtMs * 0.001;
           rp.alpha -= dtMs * 0.0011;
-          if (rp.alpha <= 0) continue;
-          ctx.globalAlpha = rp.alpha;
-          ctx.beginPath();
-          ctx.arc(rp.x, rp.y, rp.radius, 0, Math.PI * 2);
-          ctx.stroke();
-          next.push(rp);
+          if (rp.alpha > 0) next.push(rp);
         }
         ripples = next;
       }
     };
 
-    const step = (now: number) => {
+    /** Pinta o estado atual das partículas no canvas. */
+    const paint = () => {
+      const size = cssSize;
+      const color = statusRef.current === 'error' ? danger : accent;
+      ctx.clearRect(0, 0, size, size);
+      ctx.fillStyle = color;
+      for (const p of particles) {
+        ctx.globalAlpha = clamp(0.28 + p.form * 0.38 + frame.level * 0.2 + frame.energy * 0.12, 0, 1);
+        ctx.beginPath();
+        ctx.arc(
+          p.pos.x,
+          p.pos.y,
+          p.r * (0.85 + frame.breath * 0.35 + frame.energy * 0.25),
+          0,
+          Math.PI * 2,
+        );
+        ctx.fill();
+      }
+      if (ripples.length > 0) {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1;
+        for (const rp of ripples) {
+          ctx.globalAlpha = rp.alpha;
+          ctx.beginPath();
+          ctx.arc(rp.x, rp.y, rp.radius, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+      }
+    };
+
+    /**
+     * Movimento reduzido: sem física nem relógio. As partículas vão direto à
+     * posição de repouso (silhueta formada) e o quadro é pintado uma vez; só a
+     * cor acompanha o estado (erro em `--danger`).
+     */
+    const paintStatic = () => {
+      ripples = [];
+      frame.level = 0;
+      frame.energy = 0;
+      frame.breath = 0;
+      for (const p of particles) {
+        p.form = 1;
+        p.pos.x = p.home.x * cssSize;
+        p.pos.y = p.home.y * cssSize;
+        p.vel.x = 0;
+        p.vel.y = 0;
+      }
+      paint();
+    };
+
+    const tick = (now: number) => {
       const dt = Math.min(50, now - last);
       last = now;
-      draw(now, dt);
-      raf = requestAnimationFrame(step);
+      step(now, dt);
+      paint();
+      raf = requestAnimationFrame(tick);
     };
 
     if (reduced) {
-      // Sem animação: um único quadro estático do estado-alvo da figura.
-      draw(performance.now(), 16);
+      repaintRef.current = paintStatic;
+      paintStatic();
     } else {
       running = true;
-      raf = requestAnimationFrame(step);
+      raf = requestAnimationFrame(tick);
     }
 
     // Custo de CPU: aba oculta pausa o loop (e zera o backlog de dt).
@@ -530,12 +688,13 @@ export function JarvisParticleFigure({ status }: { status: VoiceUiStatus }) {
         raf = 0;
       } else if (!raf) {
         last = performance.now();
-        raf = requestAnimationFrame(step);
+        raf = requestAnimationFrame(tick);
       }
     };
     document.addEventListener('visibilitychange', onVisibility);
 
-    // O tamanho do canvas é CSS (clamp de viewport): reescala sem re-scatter.
+    // O tamanho do canvas é CSS (segue o container do HUD): reescala sem
+    // re-scatter. Redimensionar apaga o canvas — sem loop, repinta na hora.
     let ro: ResizeObserver | null = null;
     if (typeof ResizeObserver !== 'undefined') {
       ro = new ResizeObserver(() => {
@@ -548,12 +707,14 @@ export function JarvisParticleFigure({ status }: { status: VoiceUiStatus }) {
           p.pos.x *= ratio;
           p.pos.y *= ratio;
         }
+        if (reduced) paintStatic();
       });
       ro.observe(canvas);
     }
 
     return () => {
       if (raf) cancelAnimationFrame(raf);
+      repaintRef.current = null;
       unsub();
       window.removeEventListener('pointermove', onPointerMove);
       document.removeEventListener('visibilitychange', onVisibility);

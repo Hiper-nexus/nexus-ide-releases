@@ -212,16 +212,18 @@
 
 /* ---- Presença ampliada: corpo humano de partículas -------------------- */
 .voice-figure {
-  --figure-ink: color-mix(in srgb, var(--accent) 82%, var(--text));
   appearance: none;
   position: relative;
-  width: min(100%, 180px);
-  aspect-ratio: 0.74;
+  display: block;
+  /* Quadrado que segue o container do HUD (a largura é redimensionável): o
+     canvas e a linha de chão moram nele e escalam juntos. Com o canvas menor
+     que o botão, a linha de chão ficava ~90px abaixo dos pés. */
+  width: min(100%, 220px);
+  aspect-ratio: 1;
   padding: 0;
   border: 0;
   border-radius: var(--radius-lg);
   background: transparent;
-  color: var(--figure-ink);
   cursor: pointer;
   isolation: isolate;
 }
@@ -235,11 +237,13 @@
   outline-offset: 4px;
 }
 
+/* Os pés fecham em y = 0,96 do quadrado (buildHumanSilhouette): a linha assenta
+   aí e cobre só a largura das pernas, em % do mesmo quadrado do canvas. */
 .voice-figure__ground {
   position: absolute;
-  right: 18%;
-  bottom: var(--space-1);
-  left: 18%;
+  top: 97%;
+  right: 30%;
+  left: 30%;
   height: 1px;
   background: color-mix(in srgb, var(--accent) 48%, transparent);
   opacity: 0.64;
