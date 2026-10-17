@@ -7,7 +7,8 @@
  * 15 min e o pane fazia ping-pong A↔B. Sem leitura, fica o teto curto.
  * Nada aqui encurta um cooldown: vale sempre o maior.
  */
-import { anthropicTierScope, type LimitHit } from './limit-detector';
+import type { LimitHit } from './limit-detector';
+import { windowScope } from './window-scope';
 import type { QuotaFleetSnapshot } from '../../shared/quota-types';
 import { requireQuotaService } from '../quota/quota-service';
 import { getAccount, setCooldown } from '../persistence/account-store';
@@ -34,17 +35,6 @@ interface ConfirmedLimitInput {
   readonly adapterId: string;
   readonly accountId: string;
   readonly hit: LimitHit;
-}
-
-/**
- * Janela por modelo ("Semanal (Opus)") vira bloco escopado do tier; janela
- * geral da conta (sessão, 5 h, semanal) devolve undefined; modelo sem tier
- * conhecido devolve null (não autoriza bloco nenhum).
- */
-function windowScope(label: string): string | null | undefined {
-  const model = /\(([^)]+)\)\s*$/u.exec(label)?.[1];
-  if (!model) return undefined;
-  return anthropicTierScope(model) ?? null;
 }
 
 /** Devolve o novo fim do cooldown GLOBAL, ou null quando ele não mudou. Nunca lança. */

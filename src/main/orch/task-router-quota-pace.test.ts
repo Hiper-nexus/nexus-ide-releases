@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BUILTIN_MODEL_CATALOG } from '../adapters/model-catalog';
+import type { SpecialtyBenchmark } from '../../shared/mission-route-specialty';
 import { DEFAULT_ROUTING_TABLE, routeTask, type AdapterAvailability, type RouteContext } from './task-router';
 import type { QuotaPace } from './quota-pace';
 import { scoreRouteCandidate } from './route-pipeline';
@@ -16,27 +17,25 @@ describe('ritmo de cota no roteamento', () => {
   const route = (context: RouteContext = {}) =>
     routeTask(WRITE, fleet, DEFAULT_ROUTING_TABLE, 'medium', false, BUILTIN_MODEL_CATALOG, context)!;
 
-  for (const multiScore of [false, true]) {
-    describe(`multiScore=${multiScore}`, () => {
-      it('sem quotaPace a decisão é a de antes', () => {
-        const before = route({ multiScore });
-        expect(route({ multiScore, quotaPace: new Map() })).toMatchObject({
-          adapterId: before.adapterId,
-          model: before.model,
-        });
-      });
-
-      it('assinatura com sobra que expira (grok 2,5×) vence o writer medium', () => {
-        const before = route({ multiScore });
-        expect(before.adapterId).not.toBe('grok');
-        const decision = route({
-          multiScore,
-          quotaPace: new Map([['grok', pace(2.5)], ['glm', pace(0.5)], ['kimi', pace(0)]]),
-        });
-        expect(decision.adapterId).toBe('grok');
+  describe.each([false, true])('multiScore=%s', (multiScore) => {
+    it('sem quotaPace a decisão é a de antes', () => {
+      const before = route({ multiScore });
+      expect(route({ multiScore, quotaPace: new Map() })).toMatchObject({
+        adapterId: before.adapterId,
+        model: before.model,
       });
     });
-  }
+
+    it('assinatura com sobra que expira (grok 2,5×) vence o writer medium', () => {
+      const before = route({ multiScore });
+      expect(before.adapterId).not.toBe('grok');
+      const decision = route({
+        multiScore,
+        quotaPace: new Map([['grok', pace(2.5)], ['glm', pace(0.5)], ['kimi', pace(0)]]),
+      });
+      expect(decision.adapterId).toBe('grok');
+    });
+  });
 
   it('o recibo do multi-score cita o termo de cota do líder', () => {
     const decision = route({ multiScore: true, quotaPace: new Map([['grok', pace(2.5)]]) });
@@ -96,12 +95,14 @@ describe('custo de assinatura no multi-score', () => {
     routeTask(easy, fleet, DEFAULT_ROUTING_TABLE, 'easy', false, BUILTIN_MODEL_CATALOG,
       { multiScore: true, ...(quotaPace ? { quotaPace } : {}) })!;
   const grokEntry = { c: { adapterId: 'grok', model: 'grok-4.7' }, fromTier: 'easy' as const };
-  const cost = (ratio?: number) =>
+  const score = (ratio?: number, measuredPolicy?: boolean) =>
     scoreRouteCandidate(grokEntry, 0, {
       tier: 'easy',
       modelCatalog: BUILTIN_MODEL_CATALOG,
       context: ratio === undefined ? {} : { quotaPace: new Map([['grok', pace(ratio)]]) },
-    }).cost;
+      ...(measuredPolicy ? { measuredPolicy } : {}),
+    });
+  const cost = (ratio?: number) => score(ratio).cost;
 
   it('com ritmo >= 1 o custo marginal é cota (teto 1), com menos ou sem leitura é o do catálogo', () => {
     expect(cost()).toBe(-16);
@@ -113,5 +114,75 @@ describe('custo de assinatura no multi-score', () => {
   it('grok com ritmo 2,5 vence o easy que perdia por custo; sem leitura segue perdendo', () => {
     expect(route().adapterId).toBe('glm-flash');
     expect(route(new Map([['grok', pace(2.5)]])).adapterId).toBe('grok');
+  });
+
+  it('política medida: nem o teto de custo de assinatura nem o termo de cota se aplicam (N3)', () => {
+    expect(score(2.5, true).cost).toBe(-16);
+    expect(score(2.5, true).quota).toBe(0);
+    expect(score(2.5, true).total).toBe(score(undefined, true).total);
+    expect(score(2.5).quota).toBeGreaterThan(0);
+  });
+});
+
+describe('rotas protegidas não cedem ao ritmo de cota (N3)', () => {
+  const fleet: AdapterAvailability[] = [
+    { id: 'glm', installed: true, models: ['glm-5.3'] },
+    { id: 'grok', installed: true, models: ['grok-4.7'] },
+    { id: 'kimi', installed: true, models: ['kimi-code/k3'] },
+  ];
+  const spareGrok = new Map([['grok', pace(2.5)], ['glm', pace(0.5)], ['kimi', pace(0)]]);
+  const same = (after: { adapterId: string; model?: string }, before: { adapterId: string; model?: string }) =>
+    expect(after).toMatchObject({ adapterId: before.adapterId, model: before.model });
+
+  it('benchmark medido: a ordem medida vale, o ritmo não muda a rota nem aparece no recibo', () => {
+    const route = (extra: RouteContext = {}) =>
+      routeTask(WRITE, fleet, DEFAULT_ROUTING_TABLE, 'medium', false, BUILTIN_MODEL_CATALOG, { multiScore: true, ...extra })!;
+    const specialty = route().specialty!;
+    const specialtyBenchmark: SpecialtyBenchmark = {
+      schemaVersion: 1,
+      source: 'nexus-benchmark/2026-10-03',
+      specialties: {
+        [specialty]: [
+          { adapterId: 'glm', model: 'glm-5.3', score: 92 },
+          { adapterId: 'kimi', model: 'kimi-code/k3', score: 88 },
+        ],
+      },
+    };
+    const before = route({ specialtyBenchmark });
+    expect(before.policySource).toBe('benchmark');
+    expect(before.adapterId).not.toBe('grok');
+    const after = route({ specialtyBenchmark, quotaPace: spareGrok });
+    same(after, before);
+    expect(after.reason).not.toContain('cota:');
+    // Controle: a heurística (sem benchmark) cede ao mesmo ritmo.
+    expect(route({ quotaPace: spareGrok }).adapterId).toBe('grok');
+  });
+
+  it('critical + security: o topo não cede à cota de uma assinatura mais barata', () => {
+    const claudeFleet: AdapterAvailability[] = [
+      { id: 'claude', installed: true, models: ['claude-opus-5-5', 'claude-sonnet-5-5'] },
+      { id: 'codex', installed: true, models: ['gpt-6.1-sol'] },
+      ...fleet,
+    ];
+    const task = 'Corrija a vulnerabilidade de injeção de SQL na autenticação do pagamento em produção';
+    const route = (quotaPace?: Map<string, QuotaPace>) =>
+      routeTask(task, claudeFleet, DEFAULT_ROUTING_TABLE, 'critical', false, BUILTIN_MODEL_CATALOG,
+        { multiScore: true, ...(quotaPace ? { quotaPace } : {}) })!;
+    const before = route();
+    expect(before.specialty).toBe('security');
+    same(
+      route(new Map([['claude', pace(0.3)], ['codex', pace(0.3)], ['kimi', pace(2.5)], ['grok', pace(2.5)], ['glm', pace(2.5)]])),
+      before,
+    );
+  });
+
+  it('menção explícita de modelo no texto vence o ritmo de cota', () => {
+    const route = (quotaPace?: Map<string, QuotaPace>) =>
+      routeTask(`${WRITE} com o glm-5.3`, fleet, DEFAULT_ROUTING_TABLE, 'medium', false, BUILTIN_MODEL_CATALOG,
+        { multiScore: true, ...(quotaPace ? { quotaPace } : {}) })!;
+    const before = route();
+    expect(before.reason).toContain('modelo pedido no texto: glm:glm-5.3');
+    same(route(spareGrok), before);
+    expect(before.adapterId).toBe('glm');
   });
 });

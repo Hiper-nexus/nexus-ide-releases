@@ -2194,6 +2194,7 @@ export function routeTask(
       modelCatalog,
       circuitOpen: (id) => adapterCircuitBreakers.isOpen(id),
       missionUseCounts: context.missionUseCounts,
+      measuredPolicy: policy.source === 'benchmark',
     });
     ranked = scored.ranked;
     multiScoreNote = scored.note;
@@ -2808,6 +2809,7 @@ export function routeTask(
       const score = scoreRouteCandidate({ c, fromTier: tier }, 0, {
         tier, context, modelCatalog, missionUseCounts: context.missionUseCounts,
         circuitOpen: id => adapterCircuitBreakers.isOpen(id),
+        measuredPolicy: policy.source === 'benchmark',
       }).total;
       return { c, score };
     });

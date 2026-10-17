@@ -55,6 +55,7 @@ vi.mock('./task-router', async (importOriginal) => {
 import { rememberKimiSeatReadiness } from '../adapters/seat-auth-readiness';
 import { adapterCircuitBreakers } from './circuit-breaker';
 import { isCliLimited, noteCliLimit, resetCliLimits } from './cli-limit-registry';
+import { QUOTA_ENTRY_MAX_AGE_MS } from './quota-pace';
 import { buildDomainTools, routeTaskForCaller } from './tools-domain';
 import { clearRouteProvenance, hasRecentRouteMatch } from './route-provenance';
 import { clearRouteLog, recentRouteLog } from './route-log';
@@ -291,6 +292,30 @@ describe('nexus_route_task quota auto-exclude', () => {
     )) as { adapterId: string; reason: string };
     expect(decision.adapterId).toBe('kimi');
     expect(decision.reason).not.toMatch(/cooling/);
+  });
+
+  const routedIds = async () => {
+    const decision = (await tool('nexus_route_task').handler(
+      { task: 'tarefa de complexidade média' },
+      context(),
+    )) as { adapterId: string; alternatives: Array<{ adapterId: string }> };
+    return [decision.adapterId, ...decision.alternatives.map((a) => a.adapterId)];
+  };
+
+  it('N4: leitura com mais de 15 min não exclui a CLI (o snapshot em memória não expira sozinho)', async () => {
+    mocks.listProviderSettings.mockReturnValue([kimiProvider, codexProvider]);
+    const snapshot = fullKimiSnapshot(1);
+    snapshot.entries[0].updatedAt = Date.now() - QUOTA_ENTRY_MAX_AGE_MS - 60_000;
+    mocks.quotaSnapshot.mockReturnValue(snapshot);
+    expect(await routedIds()).toContain('kimi');
+  });
+
+  it('B1: janela por modelo a 100% ("Semanal (Fable)") não tira a CLI da rota', async () => {
+    mocks.listProviderSettings.mockReturnValue([kimiProvider, codexProvider]);
+    const snapshot = fullKimiSnapshot(0.3);
+    snapshot.entries[0].windows.push({ ...snapshot.entries[0].windows[0], label: 'Semanal (Fable)', usedRatio: 1 });
+    mocks.quotaSnapshot.mockReturnValue(snapshot);
+    expect(await routedIds()).toContain('kimi');
   });
 
   it('fail-safe: janela cheia que esvaziaria a rota é revertida', async () => {

@@ -144,6 +144,11 @@ export interface MultiScoreInput {
   circuitOpen?: ReadonlyMap<string, boolean> | ((adapterId: string) => boolean);
   /** How many times each adapter already appears in the mission. */
   missionUseCounts?: ReadonlyMap<string, number>;
+  /**
+   * Política da rota medida (benchmark de especialidade): a ordem medida manda,
+   * então o ritmo de cota não entra no custo nem no termo `quota`.
+   */
+  measuredPolicy?: boolean;
 }
 
 function isCircuitOpen(
@@ -203,13 +208,15 @@ export function scoreRouteCandidate(
   const quality =
     2 * Math.min(24, Math.max(6, Number(qualityRaw) || NEUTRAL_UNPUBLISHED_QUALITY));
 
+  // Política medida: o ritmo de cota não vale (rotação, fair-share e custo do
+  // escritor também deixam o benchmark em paz no roteador).
+  const pace = input.measuredPolicy ? undefined : input.context?.quotaPace?.get(c.adapterId);
   // Assinatura medida e não escassa (ritmo >= 1): o custo marginal é cota, não
   // o preço de API do catálogo; a escassez já pesa no termo `quota`. Modelo
   // bloqueado (Infinity) continua bloqueado.
   const catalogRank = modelRoutingRank(info);
-  const subscriptionPace = input.context?.quotaPace?.get(c.adapterId);
   const costRank =
-    subscriptionPace && subscriptionPace.ratio >= 1 && Number.isFinite(catalogRank)
+    pace && pace.ratio >= 1 && Number.isFinite(catalogRank)
       ? Math.min(catalogRank, 1)
       : catalogRank;
   // Hard pesa o custo quase como medium (×1.5): com 26 dos 71 spawns pinados
@@ -240,9 +247,7 @@ export function scoreRouteCandidate(
   const success = outcome ? (outcome.rate - 0.5) * ROUTE_OUTCOME_WEIGHT : 0;
 
   // Cota de assinatura que expira no reset: sobra sobe, esgotamento desce.
-  const quota =
-    quotaPaceScore(input.context?.quotaPace?.get(c.adapterId)) *
-    (input.tier === 'critical' ? 0.5 : 1);
+  const quota = quotaPaceScore(pace) * (input.tier === 'critical' ? 0.5 : 1);
 
   const open = isCircuitOpen(c.adapterId, input.circuitOpen);
   const circuit = open ? -10_000 : 0;
