@@ -11239,7 +11239,7 @@ export const RELEASE_076294: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076295: AppRelease = {
   version: '0.76.295',
   date: '2026-10-16',
   codename: 'Linux em dia com a tela sem piscar e os anexos',
@@ -11254,4 +11254,16 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Modos de permissão por CLI', detail: 'Grok, AGY e Qwen ganham os níveis reais de permissão além do YOLO, com aviso de risco. Os safeArgs de Claude e Codex continuam intactos.' },
     { title: 'Atualização do Linux', detail: 'As tags 0.76.293 e 0.76.294 não recebem pacotes Linux. A 0.76.293 é o candidato macOS. A suíte da 0.76.294 não fechava. O Linux sai na 0.76.295.' },
   ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.296',
+  date: '2026-10-17',
+  codename: 'Linux em dia com o DeepSeek Flash e o diálogo de início',
+  summary: 'No Linux, o DeepSeek Flash entra no menu do Claude, do Qwen Code e do DeepSeek sem trocar o modelo padrão. O rodapé do diálogo de início deixa de ser cortado quando a janela é baixa.',
+  highlights: [
+    { title: 'DeepSeek Flash', detail: 'O modelo entra no fim do menu do Claude, do Qwen Code e do DeepSeek. O padrão de cada CLI não muda. No Qwen Code o Flash só aparece quando o endpoint efetivo é a API direta da DeepSeek (api.deepseek.com); DashScope e o Token Plan continuam sem ele. O alias deepseek-v4-flash aponta para o id canônico.' },
+    { title: 'Diálogo de início', detail: 'O rodapé, inclusive Cancelar, deixa de sair da tela quando a janela é baixa. O painel cabe no container, o rodapé não encolhe, a divisória fica mais forte e as ações secundárias do rodapé ganham contorno.' },
+  ],
+  fixes: [],
 };

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.76.296 — Linux em dia com o DeepSeek Flash e o diálogo de início
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35).
+
+No desktop Linux, em relação à 0.76.295:
+
+- **DeepSeek Flash**. O modelo entra no fim do menu do Claude, do Qwen Code e do DeepSeek. O padrão de cada CLI não muda. No Qwen Code o Flash só aparece quando o endpoint efetivo é a API direta da DeepSeek (`api.deepseek.com`); DashScope e o Token Plan continuam sem ele. O alias `deepseek-v4-flash` aponta para o id canônico.
+- **Diálogo de início**. O rodapé, inclusive Cancelar, deixa de sair da tela quando a janela é baixa. O painel cabe no container, o rodapé não encolhe, a divisória fica mais forte e as ações secundárias do rodapé ganham contorno.
+
 ## 0.76.295 — Linux em dia com a tela sem piscar e os anexos
 
 A tag 0.76.294 não recebe pacotes Linux: a suíte não fechou. O aviso de risco do YOLO usava `var(--leading-normal)`, um token que não existe, e a entrelinha era ignorada. O aviso passa a usar entrelinha 1.5. O desktop Linux é o da 0.76.293, com essa correção.
