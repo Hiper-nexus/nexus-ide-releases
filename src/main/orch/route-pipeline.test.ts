@@ -425,7 +425,7 @@ describe('termo de sucesso 14d (F-773)', () => {
     expect(note).toContain('agy:gemini-4-argon 0,14 (7, CLI)');
   });
 
-  it('taxa alta soma; o termo fica entre −5 e +5', () => {
+  it('taxa alta soma; o termo fica entre −35 e +5 (rota falha: −30 de penalidade)', () => {
     const best = scoreRouteCandidate(entry('kimi', 'kimi-code/k3'), 0, {
       tier: 'medium',
       modelCatalog: flat,
@@ -437,10 +437,10 @@ describe('termo de sucesso 14d (F-773)', () => {
       context: { routeOutcomes: outcomes([['kimi', 'kimi-code/k3', 0, 10]]) },
     });
     expect(best.success).toBe(5);
-    expect(worst.success).toBe(-5);
+    expect(worst.success).toBe(-35);
   });
 
-  it('não domina: taxa 0 no tier certo ainda vence 100% a um degrau de distância', () => {
+  it('rota comprovadamente falha perde o degrau de tier: 0% no tier certo não vence 100% a um degrau', () => {
     const { ranked: out } = multiScoreRerank({
       ranked: [entry('grok', 'grok-4.7', 'medium'), entry('kimi', 'kimi-code/k3', 'hard')],
       tier: 'medium',
@@ -448,6 +448,21 @@ describe('termo de sucesso 14d (F-773)', () => {
       context: {
         routeOutcomes: outcomes([
           ['grok', 'grok-4.7', 0, 10],
+          ['kimi', 'kimi-code/k3', 10, 10],
+        ]),
+      },
+    });
+    expect(out[0]?.c.adapterId).toBe('kimi');
+  });
+
+  it('taxa ruim acima do piso (0,3) não é rota falha: ainda vence a um degrau de distância', () => {
+    const { ranked: out } = multiScoreRerank({
+      ranked: [entry('grok', 'grok-4.7', 'medium'), entry('kimi', 'kimi-code/k3', 'hard')],
+      tier: 'medium',
+      modelCatalog: flat,
+      context: {
+        routeOutcomes: outcomes([
+          ['grok', 'grok-4.7', 3, 10],
           ['kimi', 'kimi-code/k3', 10, 10],
         ]),
       },

@@ -38,6 +38,16 @@ export const ROUTE_OUTCOME_MIN_SAMPLES = 5;
  * disputa apertada; não passa por cima de tier, diversidade nem menção.
  */
 export const ROUTE_OUTCOME_WEIGHT = 10;
+/**
+ * "Comprovadamente falha": com amostra mínima e taxa <= 0,2 a rota já provou
+ * que falha (campo 17/10: muse 0/7 liderava writer e lane de julgamento e
+ * todo spawn morria em credencial recusada → failover). A penalidade (−30)
+ * perde para menção explícita só pela ordem de aplicação (a menção remonta
+ * o ranking depois do multi-score); com uma única opção ela segue elegível
+ * (fail-open — a penalidade move o placar, nunca exclui).
+ */
+export const ROUTE_FAILING_MAX_RATE = 0.2;
+export const ROUTE_FAILING_PENALTY = -30;
 
 export interface RouteOutcomeCount {
   readonly adapterId: string;
@@ -115,6 +125,20 @@ export function routeSuccessRate(
 /** "0,82 (17)" — vírgula decimal, como o resto do recibo da rota. */
 export function formatRouteSuccessRate(rate: RouteSuccessRate): string {
   return `${rate.rate.toFixed(2).replace('.', ',')} (${rate.samples}${rate.scope === 'cli' ? ', CLI' : ''})`;
+}
+
+/**
+ * A rota já provou que falha: taxa com a amostra mínima exigida por
+ * {@link routeSuccessRate} e <= {@link ROUTE_FAILING_MAX_RATE}. Devolve a
+ * taxa medida (para o recibo) ou null — sem amostra, sem veredito.
+ */
+export function routeProvenFailure(
+  index: RouteSuccessIndex | undefined,
+  adapterId: string,
+  model: string | undefined,
+): RouteSuccessRate | null {
+  const rate = routeSuccessRate(index, adapterId, model);
+  return rate && rate.rate <= ROUTE_FAILING_MAX_RATE ? rate : null;
 }
 
 export interface ScoreBreakdown {
@@ -244,7 +268,10 @@ export function scoreRouteCandidate(
 
   // F-773 (G4): o que o (CLI, modelo) entregou de verdade nos últimos 14 dias.
   const outcome = routeSuccessRate(input.context?.routeOutcomes, c.adapterId, c.model);
-  const success = outcome ? (outcome.rate - 0.5) * ROUTE_OUTCOME_WEIGHT : 0;
+  const success = outcome
+    ? (outcome.rate - 0.5) * ROUTE_OUTCOME_WEIGHT +
+      (outcome.rate <= ROUTE_FAILING_MAX_RATE ? ROUTE_FAILING_PENALTY : 0)
+    : 0;
 
   // Cota de assinatura que expira no reset: sobra sobe, esgotamento desce.
   const quota = quotaPaceScore(pace) * (input.tier === 'critical' ? 0.5 : 1);
@@ -340,6 +367,30 @@ export function multiScoreRerank(input: MultiScoreInput): {
   if (outcomes.length > 0) {
     noteParts.push(
       `; sucesso 14d: ${outcomes
+        .map(({ entry, rate }) =>
+          `${entry.c.adapterId}${entry.c.model ? `:${entry.c.model}` : ''} ${formatRouteSuccessRate(rate)}`,
+        )
+        .join(', ')}`,
+    );
+  }
+  // Rota comprovadamente falha perdeu para alguém: o recibo diz quem foi
+  // evitado. Se a líder também falha (única opção / todas falham), nada foi
+  // evitado — fail-open, sem nota.
+  const avoidedFailing = sorted
+    .slice(1)
+    .map((entry) => ({
+      entry,
+      rate: routeProvenFailure(input.context?.routeOutcomes, entry.c.adapterId, entry.c.model),
+    }))
+    .filter((item): item is { entry: ScoredRouteEntry; rate: RouteSuccessRate } => item.rate !== null)
+    .slice(0, 3);
+  if (
+    head &&
+    avoidedFailing.length > 0 &&
+    routeProvenFailure(input.context?.routeOutcomes, head.c.adapterId, head.c.model) === null
+  ) {
+    noteParts.push(
+      `; evitou rota falha: ${avoidedFailing
         .map(({ entry, rate }) =>
           `${entry.c.adapterId}${entry.c.model ? `:${entry.c.model}` : ''} ${formatRouteSuccessRate(rate)}`,
         )

@@ -54,7 +54,9 @@ import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import { adapterSchema } from '../../shared/adapter-types';
 import { adapterCircuitBreakers } from './circuit-breaker';
 import {
+  formatRouteSuccessRate,
   multiScoreRerank,
+  routeProvenFailure,
   routeSuccessRate,
   scoreRouteCandidate,
   tieBreakByUse,
@@ -2259,6 +2261,20 @@ export function routeTask(
     context.globalUseCounts?.get(entry.c.adapterId) ?? 0;
   let preferredLaneSeat: string | undefined;
   let appliedLaneEntries: ReadonlySet<RankedRouteEntry> | undefined;
+  // Rotas comprovadamente falhas que esta decisão deixou para trás (lane de
+  // topo, escritor econômico) — vão ao recibo como "evitou rota falha: …".
+  const avoidedFailingRoutes = new Map<string, string>();
+  const provenFailure = (adapterId: string, model: string | undefined) =>
+    routeProvenFailure(context.routeOutcomes, adapterId, model);
+  const markAvoidedFailing = (adapterId: string, model: string | undefined) => {
+    const rate = provenFailure(adapterId, model);
+    if (rate) {
+      avoidedFailingRoutes.set(
+        `${adapterId}${model ? `:${model}` : ''}`,
+        `${adapterId}${model ? `:${model}` : ''} ${formatRouteSuccessRate(rate)}`,
+      );
+    }
+  };
   const applyFrontierLane = (
     lane: ReadonlyArray<{ adapterId: string; model: string; preferenceOnly?: true; effort?: RouteEffort | 'max' }>,
   ): boolean => {
@@ -2314,6 +2330,20 @@ export function routeTask(
     const set = new Set(inLane);
     const used = (entry: RankedRouteEntry) =>
       context.missionUseCounts?.get(entry.c.adapterId) ?? 0;
+    // Rota comprovadamente falha não é promovida pela lane enquanto houver
+    // outro assento pronto nela (fail-open: se todo assento falha, a ordem
+    // fica como está). Muse 0/7 liderava a lane de julgamento e cada spawn
+    // morria em credencial recusada → failover em cadeia.
+    const laneFailing = (entry: RankedRouteEntry) =>
+      provenFailure(entry.c.adapterId, entry.c.model) !== null;
+    const laneHasReadySeat = inLane.some((entry) => !laneFailing(entry));
+    if (laneHasReadySeat) {
+      for (const entry of inLane) {
+        if (laneFailing(entry)) markAvoidedFailing(entry.c.adapterId, entry.c.model);
+      }
+    }
+    const failingRank = (entry: RankedRouteEntry): number =>
+      laneHasReadySeat && laneFailing(entry) ? 1 : 0;
     // Só assento de preferência pronto (Kimi sem Opus/Sonnet/Sol): a lane não
     // fica exclusiva. Ele lidera enquanto nenhum outro candidato da rota tem
     // menos assentos na missão; senão vale a ordem do multi-score, e a rotação
@@ -2325,7 +2355,7 @@ export function routeTask(
       );
       const pick = inLane
         .filter((entry) => used(entry) <= minUse)
-        .sort((a, b) => laneRank(a) - laneRank(b))[0];
+        .sort((a, b) => failingRank(a) - failingRank(b) || laneRank(a) - laneRank(b))[0];
       if (pick) {
         ranked = [pick, ...ranked.filter((entry) => entry !== pick)];
         preferredLaneSeat = pick.c.adapterId;
@@ -2333,11 +2363,11 @@ export function routeTask(
       return false;
     }
     ranked = [
-      ...inLane.sort((a, b) => lane === VISUAL_FRONTIER_LANE
+      ...inLane.sort((a, b) => failingRank(a) - failingRank(b) || (lane === VISUAL_FRONTIER_LANE
         ? (visualCount(a.c.adapterId, a.c.model) !== undefined
           ? visualRecentUse(a) - visualRecentUse(b)
           : used(a) - used(b) || visualRecentUse(a) - visualRecentUse(b)) || laneRank(a) - laneRank(b)
-        : used(a) - used(b) || laneRank(a) - laneRank(b)),
+        : used(a) - used(b) || laneRank(a) - laneRank(b))),
       ...ranked.filter((entry) => !set.has(entry)),
     ];
     if (lane === VISUAL_FRONTIER_LANE && nextOrGame) {
@@ -2550,6 +2580,13 @@ export function routeTask(
       const knownEconomic = spareQuota || (info && (['free', 'low', 'medium'].includes(info.costTier ?? '') ||
         info.availability === 'free' || info.availability === 'cheap'));
       if (!knownEconomic) return false;
+      // Rota comprovadamente falha nunca é escritor econômico — grátis que
+      // falha todo spawn sai caro em failover (muse 0/7, 17/10). Sem a
+      // amostra mínima a candidata segue (routeProvenFailure devolve null).
+      if (provenFailure(entry.c.adapterId, entry.c.model)) {
+        markAvoidedFailing(entry.c.adapterId, entry.c.model);
+        return false;
+      }
       const outcome = routeSuccessRate(context.routeOutcomes, entry.c.adapterId, entry.c.model);
       return !baselineOutcome || !outcome || outcome.rate >= baselineOutcome.rate;
     });
@@ -2730,6 +2767,19 @@ export function routeTask(
       skippedRisk.length > 0
         ? `; evitou ${[...new Set(skippedRisk)].slice(0, 3).join(', ')}`
         : '';
+    // Fail-open honesto: se o pick final também é rota falha (única opção),
+    // nada foi evitado — sem nota. O que o multi-score já anunciou no
+    // próprio recibo não repete aqui.
+    const avoidedFailing =
+      provenFailure(pick.adapterId, pick.model) === null
+        ? [...avoidedFailingRoutes]
+            .filter(([, text]) => !multiScoreNote.includes(text))
+            .map(([, text]) => text)
+        : [];
+    const failingAvoidedNote =
+      avoidedFailing.length > 0
+        ? `; evitou rota falha: ${avoidedFailing.slice(0, 3).join(', ')}`
+        : '';
     const pickServed = [...new Set(providerServed)].filter((entry) =>
       entry.startsWith(`${pick.adapterId}:`) && entry.endsWith(`→${pick.model}`),
     );
@@ -2742,7 +2792,7 @@ export function routeTask(
       adapterId: pick.adapterId,
       model: pick.model,
       effort,
-      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${capabilityNote}${visionNote}${contextNote}${mentionNote}${costNote}${evaluationNote}${riskNote}${missingNote}${accessProofNote}${liveCatalogDropNote}${lineUpgradeNote}${servedNote}${bandNote}${multiScoreNote}${tieBreakNote}${crossCliNote}${visualNote}${visionLaneNote}${ownTierGuardNote}${judgeNote}${rotationNote}${fairShareNote}${preferNote}${preferenceYieldNote}${writerCostNote}${pick.adapterId === 'muse' && pick.model?.endsWith('-contributor') ? '; contributor (conteúdo pode ser usado pela Meta)' : ''}${effortNoteFor(pick.adapterId, pick.model)}`,
+      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${capabilityNote}${visionNote}${contextNote}${mentionNote}${costNote}${evaluationNote}${riskNote}${missingNote}${accessProofNote}${liveCatalogDropNote}${lineUpgradeNote}${servedNote}${bandNote}${multiScoreNote}${failingAvoidedNote}${tieBreakNote}${crossCliNote}${visualNote}${visionLaneNote}${ownTierGuardNote}${judgeNote}${rotationNote}${fairShareNote}${preferNote}${preferenceYieldNote}${writerCostNote}${pick.adapterId === 'muse' && pick.model?.endsWith('-contributor') ? '; contributor (conteúdo pode ser usado pela Meta)' : ''}${effortNoteFor(pick.adapterId, pick.model)}`,
       alternatives: ranked.filter((r) => r.c !== pick).map(({ c }) => ({ ...c, effort: effortFor(c.adapterId, c.model) })),
       specialty: specialtyVerdict.specialty,
       policySource,
