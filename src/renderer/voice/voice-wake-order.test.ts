@@ -217,5 +217,9 @@ describe('queued narrations', () => {
     expect(source).toContain("if (state.status === 'idle' && !isJarvisNarrationHalted())");
     expect(source).toContain('narrationQueue.kick()');
     expect(source).not.toContain('narração pulada (ocupado)');
+    // F-1545: o relato só começa com a voz livre e é revalidado após a síntese.
+    expect(source).toContain('canPlay: () => canStartNarration(narrationVoiceState())');
+    expect(source).toContain('narrationStillOwnsVoice(');
+    expect(source).toContain('narrationQueue.requeue(text)');
   });
 });

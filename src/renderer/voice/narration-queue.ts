@@ -1,6 +1,60 @@
 const DEFAULT_MAX_PENDING = 12;
 const MAX_NARRATION_CHARS = 2_000;
 
+/** Snapshot of everything that can already own the voice when a narration wants it. */
+export interface NarrationVoiceState {
+  status: string;
+  /** `busy.current` do controller: um turno (wake/ditado/ferramenta) está em voo. */
+  turnBusy: boolean;
+  /** `handleWake` ainda abrindo o turno (status passa por `idle` no meio). */
+  wakeOpening: boolean;
+  listening: boolean;
+  realtimeTurnActive: boolean;
+  /** Áudio do Live tocando ou represado para tocar. */
+  liveAudioPending: boolean;
+  localAudioAudible: boolean;
+  halted: boolean;
+}
+
+/**
+ * F-1545: `status === 'idle'` não prova voz livre. `handleWake` passa por `idle`
+ * antes de a captura abrir (e o `subscribe` do store reage a esse blip), então
+ * a narração de handoffs começava junto com o wake e falava por cima do turno.
+ */
+export function canStartNarration(s: NarrationVoiceState): boolean {
+  return (
+    !s.halted &&
+    s.status === 'idle' &&
+    !s.turnBusy &&
+    !s.wakeOpening &&
+    !s.listening &&
+    !s.realtimeTurnActive &&
+    !s.liveAudioPending &&
+    !s.localAudioAudible
+  );
+}
+
+/**
+ * A síntese leva segundos. `play` marca `speaking` antes dela; se ao voltar o
+ * status deixou de ser esse (wake pôs `idle`/`listening`) ou um turno abriu, o
+ * áudio já nasceu velho: não toca, a fala volta para a fila.
+ */
+export function narrationStillOwnsVoice(
+  s: NarrationVoiceState,
+  localAudioPlaying = false,
+): boolean {
+  return (
+    !s.halted &&
+    s.status === 'speaking' &&
+    !s.turnBusy &&
+    !s.wakeOpening &&
+    !s.listening &&
+    !s.realtimeTurnActive &&
+    !s.liveAudioPending &&
+    !localAudioPlaying
+  );
+}
+
 export interface NarrationQueueOptions {
   canPlay(): boolean;
   play(text: string): Promise<void>;
@@ -27,6 +81,15 @@ export class NarrationQueue {
     if (this.pending.length >= this.maxPending) this.pending.shift();
     this.pending.push(text);
     this.kick();
+  }
+
+  /** Devolve uma fala interrompida à frente da fila (turno abriu durante a síntese). */
+  requeue(rawText: string): void {
+    if (this.disposed) return;
+    const text = rawText.replace(/\s+/g, ' ').trim().slice(0, MAX_NARRATION_CHARS);
+    if (!text || this.pending.includes(text)) return;
+    this.pending.unshift(text);
+    if (this.pending.length > this.maxPending) this.pending.pop();
   }
 
   kick(): void {
