@@ -139,6 +139,43 @@ export function tabMissionTitle(tabTitle: string): string {
 }
 
 /**
+ * A aba renomeada leva a missão que mora nela: o rótulo automático
+ * ("Missão · <nome da aba>") acompanha o novo nome na sidebar, no Quadro e nos
+ * cabeçalhos. Só entra a missão cujo título AINDA é o derivado do nome antigo
+ * — rótulo que veio de outro lugar (resumo do pedido, edição) é do operador e
+ * não é sobrescrito. Falha silenciosa: rótulo é cosmético, renomear a aba
+ * nunca pode travar por causa dele.
+ */
+export async function renameMissionsOfRenamedTab(
+  scope: {
+    readonly key: string;
+    readonly id?: string;
+    readonly missions: ReadonlyArray<{ readonly id: string; readonly title: string }>;
+  },
+  previousTabTitle: string,
+  nextTabTitle: string,
+): Promise<void> {
+  const rename = window.nexus?.orch?.renameTabMission;
+  if (!rename) return;
+  const fromTitle = tabMissionTitle(previousTabTitle);
+  const nextTitle = uniqueMissionTitle(tabMissionTitle(nextTabTitle));
+  if (nextTitle === fromTitle) return;
+  await Promise.all(
+    scope.missions
+      .filter((mission) => mission.title === fromTitle)
+      .map((mission) =>
+        rename({
+          missionId: mission.id,
+          tabKey: scope.key,
+          ...(scope.id ? { spaceId: scope.id } : {}),
+          fromTitle,
+          title: nextTitle,
+        }).catch(() => undefined),
+      ),
+  );
+}
+
+/**
  * Estado de sessão que ainda pode receber a coroa: o processo existe e atende.
  * `exited`/`hibernated`/ausente é transcript morto — coroá-lo daria um
  * `pane_unavailable` do Main (ou um orquestrador fantasma).

@@ -1003,6 +1003,62 @@ export class RendererMissionAuthority {
   }
 
   /**
+   * A aba foi renomeada: a missão leve que mora nela troca o rótulo JUNTO.
+   *
+   * O título da missão da aba é derivado do nome dela ("Missão · <aba>"), mas
+   * ficava congelado na criação — renomear a aba para "roteamento" deixava a
+   * sidebar e o Quadro apontando "Missão · Meus terminais 2" para sempre. O
+   * renderer (que sabe o nome antigo) pede a troca com CAS de título: só entra
+   * a missão cujo rótulo AINDA é o automático da aba antiga. Rótulo que
+   * divergiu (resumo do pedido, edição em outro lugar) é do operador e nunca
+   * é sobrescrito — a mesma regra do `nextPaneSpaceTitle` no renderer.
+   *
+   * O vínculo (`workspaceBinding.tabKey`/`spaceId`) é o que autoriza: a missão
+   * tem que MORAR na aba renomeada. A imutabilidade do título aprovado
+   * (`updateMissionFromRenderer`) não vale aqui — o rótulo da missão leve é
+   * nome de aba, não kickoff canônico.
+   */
+  renameTabMissionFromRenderer(
+    owner: WebContents,
+    input: {
+      readonly missionId: string;
+      readonly tabKey?: string;
+      readonly spaceId?: string;
+      readonly fromTitle: string;
+      readonly title: string;
+    },
+  ): { ok: boolean; error?: string } {
+    const title = input.title.replace(/\s+/gu, " ").trim().slice(0, 120);
+    const fromTitle = input.fromTitle.replace(/\s+/gu, " ").trim();
+    if (!title || !fromTitle || (!input.tabKey && !input.spaceId)) {
+      return { ok: false, error: "invalid_payload" };
+    }
+    try {
+      assertMissionAuthorityTitle(title);
+    } catch {
+      return { ok: false, error: "invalid_payload" };
+    }
+    const scope = requireRendererWorkspaceScope(owner);
+    const suite = this.#stores.forScope(scope);
+    const mission = suite.missions.get(input.missionId);
+    if (!mission) return { ok: false, error: "mission_not_found" };
+    if (mission.status === "done") {
+      return { ok: false, error: "mission_completed" };
+    }
+    const binding = mission.intentContract?.workspaceBinding;
+    const boundToTab =
+      (input.tabKey !== undefined && binding?.tabKey === input.tabKey) ||
+      (input.spaceId !== undefined && binding?.spaceId === input.spaceId);
+    if (!boundToTab) return { ok: false, error: "mission_not_in_tab" };
+    if (mission.title !== fromTitle) {
+      return { ok: false, error: "mission_title_diverged" };
+    }
+    if (mission.title === title) return { ok: true };
+    suite.missions.update(mission.id, { title });
+    return { ok: true };
+  }
+
+  /**
    * Missão SOB DEMANDA: o primeiro helper que um pane do "+ Pane" abre cria a
    * missão leve DESTE pane e o adota — o mesmo caminho do "Tornar
    * orquestrador", achando a janela dona pela sessão (autoridade do Main).

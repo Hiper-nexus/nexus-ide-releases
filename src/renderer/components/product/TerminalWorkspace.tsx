@@ -9,6 +9,7 @@ import { selectMissionTerminalPanes } from '../../lib/mission-terminal-panes';
 import {
   ALL_SCOPES_KEY,
   LOOSE_SCOPE_KEY,
+  LOOSE_SCOPE_TITLE,
   listPaneScopes,
   looseHomeScopeKey,
   missionScopeKey,
@@ -26,6 +27,7 @@ import { useSessionStateStore } from '../../state/session-state-store';
 import { useToastStore } from '../../state/toast-store';
 import {
   pickTabMissionLeader,
+  renameMissionsOfRenamedTab,
   startTabMissionFor,
   toastPromoted,
 } from '../../lib/pane-mission-promote';
@@ -437,7 +439,14 @@ export function TerminalWorkspace({
     const scope = scopes.find((entry) => entry.key === current.key);
     if (!scope) return;
     if (scope.kind === 'space' && scope.id) {
+      // O carimbo real antes da troca — é dele que o rótulo automático da
+      // missão da aba foi derivado (o rótulo da aba pode ter sufixo "#2").
+      const previousTitle =
+        panes.find((pane) => pane.spaceId === scope.id && pane.spaceTitle)
+          ?.spaceTitle ?? scope.title;
       renamePaneSpace(scope.id, current.draft);
+      // A missão leve que mora na aba troca o rótulo junto (sidebar, Quadro).
+      void renameMissionsOfRenamedTab(scope, previousTitle, current.draft);
       return;
     }
     if (scope.kind === 'loose') {
@@ -447,6 +456,7 @@ export function TerminalWorkspace({
       const spaceId = newPaneSpaceId();
       if (useLayoutStore.getState().nameLooseSpace(spaceId, clean)) {
         focusScope(spaceScopeKey(spaceId));
+        void renameMissionsOfRenamedTab(scope, LOOSE_SCOPE_TITLE, clean);
       }
     }
   };

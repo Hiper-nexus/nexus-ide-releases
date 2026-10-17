@@ -884,6 +884,19 @@ export interface NexusApi {
       error?: string;
     }>;
     /**
+     * Aba renomeada: a missão leve que mora nela troca o rótulo junto.
+     * `fromTitle` é CAS — rótulo que divergiu do automático da aba (resumo do
+     * pedido, edição em outro lugar) nunca é sobrescrito. `tabKey`/`spaceId`
+     * provam o vínculo com a aba renomeada; não autorizam mais nada.
+     */
+    renameTabMission(input: {
+      missionId: string;
+      tabKey?: string;
+      spaceId?: string;
+      fromTitle: string;
+      title: string;
+    }): Promise<{ ok: boolean; error?: string }>;
+    /**
      * F-231 — "+ Pane" numa aba de missão com destino "Nesta missão": abre um
      * worker `operatorOpened` pelo caminho Main-owned. Escopo, status da
      * missão, adapter instalado/cli-pty e roster selado são conferidos no

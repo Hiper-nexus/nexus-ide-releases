@@ -822,6 +822,112 @@ describe("renderer mission authority", () => {
     });
   });
 
+  describe("renameTabMissionFromRenderer (o rótulo da missão segue a aba)", () => {
+    function wireTabMissionStore(missionOverride: Record<string, unknown> = {}) {
+      const tabMission = {
+        ...approvedMission,
+        id: "mission-tab",
+        title: "Missão · Meus terminais 2",
+        intentContract: {
+          ...approvedMission.intentContract,
+          workspaceBinding: {
+            version: 1,
+            adoptedPaneId: "pane-b",
+            tabKey: "space:space-1",
+            spaceId: "space-1",
+          },
+        },
+        ...missionOverride,
+      };
+      const update = vi.fn((_id: string, patch: Record<string, unknown>) => ({
+        ...tabMission,
+        ...patch,
+      }));
+      deps.getMission.mockImplementation(
+        (id: string) => (id === "mission-tab" ? tabMission : null),
+      );
+      deps.forScope.mockReturnValue({
+        missions: { get: deps.getMission, update },
+        missionPanes: {
+          findByPaneId: vi.fn(),
+          list: () => [],
+          remove: vi.fn(),
+          promotePaneToOrchestrator: vi.fn(),
+        },
+      });
+      return { update };
+    }
+
+    it("renomeia a missão da aba junto com a aba (CAS pelo título antigo)", () => {
+      const { update } = wireTabMissionStore();
+      expect(
+        authority.renameTabMissionFromRenderer(owner, {
+          missionId: "mission-tab",
+          tabKey: "space:space-1",
+          spaceId: "space-1",
+          fromTitle: "Missão · Meus terminais 2",
+          title: "Missão · roteamento",
+        }),
+      ).toEqual({ ok: true });
+      expect(update).toHaveBeenCalledWith("mission-tab", { title: "Missão · roteamento" });
+    });
+
+    it("nunca sobrescreve rótulo que divergiu do automático da aba", () => {
+      const { update } = wireTabMissionStore({ title: "Missão · corrige o roteamento" });
+      expect(
+        authority.renameTabMissionFromRenderer(owner, {
+          missionId: "mission-tab",
+          tabKey: "space:space-1",
+          fromTitle: "Missão · Meus terminais 2",
+          title: "Missão · roteamento",
+        }),
+      ).toEqual({ ok: false, error: "mission_title_diverged" });
+      expect(update).not.toHaveBeenCalled();
+    });
+
+    it("recusa missão que não mora na aba renomeada", () => {
+      const { update } = wireTabMissionStore({
+        intentContract: {
+          ...approvedMission.intentContract,
+          workspaceBinding: { version: 1, adoptedPaneId: "pane-b", tabKey: "space:space-outro", spaceId: "space-outro" },
+        },
+      });
+      expect(
+        authority.renameTabMissionFromRenderer(owner, {
+          missionId: "mission-tab",
+          tabKey: "space:space-1",
+          spaceId: "space-1",
+          fromTitle: "Missão · Meus terminais 2",
+          title: "Missão · roteamento",
+        }),
+      ).toEqual({ ok: false, error: "mission_not_in_tab" });
+      expect(update).not.toHaveBeenCalled();
+    });
+
+    it("missão concluída e payload sem vínculo de aba são recusados", () => {
+      const done = wireTabMissionStore({ status: "done" as const });
+      expect(
+        authority.renameTabMissionFromRenderer(owner, {
+          missionId: "mission-tab",
+          tabKey: "space:space-1",
+          fromTitle: "Missão · Meus terminais 2",
+          title: "Missão · roteamento",
+        }),
+      ).toEqual({ ok: false, error: "mission_completed" });
+      expect(done.update).not.toHaveBeenCalled();
+
+      const noBinding = wireTabMissionStore();
+      expect(
+        authority.renameTabMissionFromRenderer(owner, {
+          missionId: "mission-tab",
+          fromTitle: "Missão · Meus terminais 2",
+          title: "Missão · roteamento",
+        }),
+      ).toEqual({ ok: false, error: "invalid_payload" });
+      expect(noBinding.update).not.toHaveBeenCalled();
+    });
+  });
+
   it("lists reopen specs only inside the renderer main-owned scope", () => {
     const spec = {
       id: "mpane-a",
