@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.76.298 — Retomada após reiniciar e uso com filtros
+
+Abas isoladas e panes de missões em Dormindo ou encerradas reabrem após reiniciar o Mac, com pasta e anexos preservados. A retomada do coordenador aceita a mudança de st_dev entre boots e o link "Abrir para retomar" fica alinhado ao título.
+
+A Jarvis ganha HUD clicável e arrastável, estado visível das opções de entrega e voz e barras de nível sonoro refinadas. DeepSeek Flash entra na Visual Frontier Lane e nas especialidades frontend/ui/ux dos adaptadores DeepSeek, Claude e Qwen Code.
+
+Filtros por dia, intervalo, ferramenta e modelo recalculam todo o painel de uso e custos, inclusive ao clicar no dia na tabela. Novo login Codex preserva a sessão irmã (F-1560). Colar ou soltar arquivo sem projeto destaca e foca o seletor de pasta; abas de missão aposentada voltam a fechar. "Abrir projeto existente" aparece abaixo de "Novo pedido".
+
+Em Configurações, "Salvar tema" confirma com "Tema salvo." só depois de o tema voltar na lista e, se falhar, mantém o editor aberto e mostra o motivo. Salvar as tecnologias do projeto confirma com "Tecnologias salvas." ou mostra o erro. Em Configurações → Uso, a página não rola mais além do fim da seção.
+
+Spawn de panes fica mais leve: a pasta isolada do writer não copia mais o cache do Vitest e a admissão usa uma única régua de memória para spawn humano, leque e pressão. Sob pressão de build, o orquestrador libera RAM mais rápido e hiberna panes de até dois projetos sem perder a saída que o terminal ainda segurava. O relógio de nascimento do pane sobrevive a remontagens e uma tentativa vencida recomeça do zero. As decisões ficam no Jev nas superfícies calibradas e passam para o próximo provedor quando um cai, somando o gasto de todas as tentativas; uso desconhecido mantém o custo estimado no orçamento.
+
 ## 0.76.297 — Linux em dia com o DeepSeek Flash e o diálogo de início
 
 A tag 0.76.296 não recebe pacotes Linux: a suíte não fechou. O ledger de proveniência ainda apontava o hash antigo de `model-catalog.ts`. O hash passa a ser o do arquivo. O desktop Linux é o da 0.76.296.
