@@ -1,0 +1,25 @@
+/* JARVIS como humano de partículas (modo expandido do HUD).
+ *
+ * O canvas desenha o campo de partículas (JarvisParticleFigure.tsx); o CSS só
+ * entrega o token de cor para o loop ler via getComputedStyle e o tamanho do
+ * alvo. Quadrado (aspect-ratio 1): o contorno humano ocupa o eixo vertical
+ * inteiro e a largura natural de braços/pernas — sem distorção.
+ *
+ * O tamanho vem do CONTAINER: o canvas preenche o botão `.voice-figure`, que
+ * acompanha a largura do HUD (redimensionável). O ResizeObserver do componente
+ * reescala as partículas sem re-dispersar.
+ *
+ * Acento vivo = --accent (Pink City); erro troca para --danger. Ambas as
+ * variáveis são consumidas no JS — nunca hex solto no componente.
+ */
+
+.jarvis-particle-figure {
+  --jarvis-particle: var(--accent);
+  --jarvis-particle-error: var(--danger);
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  /* Decorativo (aria-hidden): nunca rouba clique/arraste do HUD expandido. */
+  pointer-events: none;
+  user-select: none;
+}

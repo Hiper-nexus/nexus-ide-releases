@@ -217,5 +217,22 @@ describe('queued narrations', () => {
     expect(source).toContain("if (state.status === 'idle' && !isJarvisNarrationHalted())");
     expect(source).toContain('narrationQueue.kick()');
     expect(source).not.toContain('narração pulada (ocupado)');
+    // F-1563: o relato só começa com a voz livre e é revalidado após a síntese.
+    expect(source).toContain('canPlay: () => canStartNarration(narrationVoiceState())');
+    expect(source).toContain('play: createNarrationPlayer({');
+    expect(source).toContain('requeue: (text) => narrationQueue.requeue(text)');
+  });
+
+  it('a posse da voz usa o token do turno e a síntese tem deadline e vale como progresso', () => {
+    // Posse sem `status`: o HUD volta a idle sem takeover (watchdog, Live dormant).
+    expect(source).toContain('turnToken: turnExecution.currentToken');
+    // A síntese passa pelo helper com deadline de 40 s, nunca o speak() solto.
+    expect(source).toContain("synthesize: (text) => speakSegment(text, 'TTS do relato')");
+    expect(source).not.toContain("window.nexus.voice.speak({ text, speakMode: 'full' })");
+    // O watchdog de status preso enxerga a síntese como progresso.
+    expect(source).toContain('setSynthesizing: (active) => {');
+    expect(source).toContain('narrationSynthesizing,');
+    // Relato que a voz tomada devolve à fila sem parar é descartado, não repetido.
+    expect(source).toContain('onDrop: (_text, attempts) =>');
   });
 });
