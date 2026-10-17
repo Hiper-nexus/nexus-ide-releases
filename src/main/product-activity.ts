@@ -1,25 +1,41 @@
+import { randomUUID } from 'node:crypto';
 import type { ApiRequestInit, ApiResult } from './api-client';
 import type { AppEvent } from './connectors/app-events';
 
+interface ActivitySnapshot {
+  agentPresent: boolean;
+  agentWorking: boolean;
+  /** Authoritative "a mission is running now". Left out, the observed `mission.state` events decide. */
+  missionRunning?: boolean;
+}
 /** Account-level flags only. No event payload, provider identity or project content crosses the network. */
 interface ActivityDeps {
   sessionKey: () => string | null;
-  snapshot: () => { agentPresent: boolean; agentWorking: boolean };
+  snapshot: () => ActivitySnapshot;
   api: (path: string, init: ApiRequestInit) => Promise<ApiResult>;
 }
 const FLAGS = ['agentStarted', 'agentWorking', 'missionCompleted'] as const;
-type Flag = typeof FLAGS[number];
-const empty = (): Record<Flag, number> => ({ agentStarted: 0, agentWorking: 0, missionCompleted: 0 });
+const COUNTERS = ['missionsStarted', 'missionsCompleted'] as const;
+/** The API accepts 0..50 per request; the rest stays unacknowledged for the next flush. */
+const MAX_COUNT = 50;
+type Flag = typeof FLAGS[number] | typeof COUNTERS[number];
+const empty = (): Record<Flag, number> => ({ agentStarted: 0, agentWorking: 0, missionCompleted: 0, missionsStarted: 0, missionsCompleted: 0 });
 
 export function createProductActivity(deps: ActivityDeps) {
   let identity: string | null = null;
+  // Names this client's counter stream, so the API can tell a retry of a delivery from a new one (never identifies anyone).
+  let streamId = '';
   let versions = empty(), acknowledged = empty();
+  // Missions currently running, and missions already counted as started, by app id (kept only in memory, never sent).
+  // `startedMissions` outlives `running`, so running -> blocked -> running is still one start.
+  let running = new Set<string>();
+  let startedMissions = new Set<string>();
   let stopped = false;
   let flight: Promise<void> | null = null;
   const abort = new AbortController();
   function current(): string | null {
     const key = deps.sessionKey();
-    if (key !== identity) { identity = key; versions = empty(); acknowledged = empty(); }
+    if (key !== identity) { identity = key; streamId = randomUUID().replace(/-/g, '').slice(0, 16); versions = empty(); acknowledged = empty(); running = new Set(); startedMissions = new Set(); }
     return key;
   }
   function mark(flag: Flag): void {
@@ -33,19 +49,47 @@ export function createProductActivity(deps: ActivityDeps) {
     },
     observe(event: Pick<AppEvent, 'kind' | 'payload'>): void {
       // `done` is the app's mission status, not a claim that a diff passed review.
-      if (event.kind === 'mission.completed') mark('missionCompleted');
+      const id = String((event.payload as { missionId?: unknown } | undefined)?.missionId ?? '');
+      if (event.kind === 'mission.completed') {
+        if (!current()) return;
+        running.delete(id);
+        mark('missionCompleted');
+        mark('missionsCompleted');
+      } else if (event.kind === 'mission.state') {
+        if (!current()) return;
+        const status = (event.payload as { status?: unknown } | undefined)?.status;
+        if (status !== 'running') running.delete(id);
+        else {
+          running.add(id);
+          if (!startedMissions.has(id)) { startedMissions.add(id); mark('missionsStarted'); }
+        }
+      }
     },
     flush(): Promise<void> {
       if (stopped || flight) return flight ?? Promise.resolve();
       const key = current();
       if (!key) return Promise.resolve();
+      let sampledRunning: boolean | undefined;
       try {
         const sample = deps.snapshot();
         if (sample.agentPresent) mark('agentStarted');
         if (sample.agentWorking) mark('agentWorking');
+        if (typeof sample.missionRunning === 'boolean') {
+          sampledRunning = sample.missionRunning;
+          // A lifecycle change that emitted no `mission.state` must not leave a mission running forever.
+          if (!sampledRunning) running.clear();
+        }
       } catch { return Promise.resolve(); }
       const sent = { ...versions };
-      const body = Object.fromEntries(FLAGS.map(flag => [flag, sent[flag] > acknowledged[flag]]));
+      for (const counter of COUNTERS) sent[counter] = Math.min(sent[counter], acknowledged[counter] + MAX_COUNT);
+      const body = {
+        ...Object.fromEntries(FLAGS.map(flag => [flag, sent[flag] > acknowledged[flag]])),
+        missionRunning: sampledRunning ?? running.size > 0,
+        missionsStarted: sent.missionsStarted - acknowledged.missionsStarted,
+        missionsCompleted: sent.missionsCompleted - acknowledged.missionsCompleted,
+        // Identifies this client's stream on every flush (live flags + counter range [acknowledged, sent]): a retry never double counts.
+        deliveryId: `${streamId}:${acknowledged.missionsStarted}-${sent.missionsStarted}:${acknowledged.missionsCompleted}-${sent.missionsCompleted}`,
+      };
       flight = (async () => {
         try {
           const result = await deps.api('/v1/activity', {
@@ -62,12 +106,22 @@ export function createProductActivity(deps: ActivityDeps) {
   };
 }
 
+/** True/false when the project stores say whether any mission is `running`; undefined when they are not up (events decide). */
+export function sampleMissionRunning(
+  registry: () => { listSuites(): ReadonlyArray<{ missions: { list(status: 'running'): unknown[] } }> },
+): boolean | undefined {
+  try {
+    return registry().listSuites().some(suite => suite.missions.list('running').length > 0);
+  } catch { return undefined; }
+}
+
 /** Start after boot/login restoration; send once a minute, not once per tool or token. */
 export function startProductActivity(): () => Promise<void> {
   const { apiFetch } = require('./api-client') as typeof import('./api-client');
   const auth = require('./auth-client') as typeof import('./auth-client');
   const pty = require('./pty/pty-manager') as typeof import('./pty/pty-manager');
   const acp = require('./acp/acp-harness-driver') as typeof import('./acp/acp-harness-driver');
+  const { requireProjectDomainStoreRegistry } = require('./orch/project-domain-store-registry') as typeof import('./orch/project-domain-store-registry');
   const { subscribeAppEvents } = require('./connectors/app-events') as typeof import('./connectors/app-events');
   const service = createProductActivity({
     api: apiFetch,
@@ -78,7 +132,9 @@ export function startProductActivity(): () => Promise<void> {
     snapshot: () => {
       const terminals = pty.listLiveSessionLocations().filter(({ sessionId }) => pty.getAgentSessionInfo(sessionId));
       const clients = acp.listAcpDriverAgentSessions();
+      const missionRunning = sampleMissionRunning(requireProjectDomainStoreRegistry);
       return {
+        ...(missionRunning === undefined ? {} : { missionRunning }),
         agentPresent: terminals.length + clients.length > 0,
         agentWorking: terminals.some(({ sessionId }) => pty.getSessionState(sessionId) === 'busy')
           || clients.some(({ sessionId }) => acp.getAcpDriverSemanticStatus(sessionId) === 'working'),
