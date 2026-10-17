@@ -1684,6 +1684,14 @@ function shutdown(): Promise<void> {
   if (shutdownPromise) return shutdownPromise;
   shutdownPromise = (async () => {
     shutdownProgress.startedAt = Date.now();
+    // N1: o contador durável de rotas sem missão grava coalescido no runtime.
+    // Flush PRIMEIRO: a admissão de spawn já foi selada no before-quit, então
+    // nenhum registro novo entra, e o teto inarredável do quit pode cortar o
+    // teardown de PTY mais adiante sem levar os últimos spawns junto.
+    await trackShutdownPhase("flushRouteProvenance", async () => {
+      const { flushRouteProvenance } = await import('./orch/route-provenance');
+      await flushRouteProvenance();
+    });
     await trackShutdownPhase("stopPostBootIdleQueue", () => stopPostBootIdleQueue());
     nativeHeavyCommands.stopAdmission();
     stopMacOSDockWatchdog();
@@ -1756,12 +1764,6 @@ function shutdown(): Promise<void> {
     await trackShutdownPhase("flushMemoryProjections", () =>
       flushWorkspaceMemoryProjections(),
     );
-    // N1: o contador durável de rotas sem missão grava coalescido no runtime;
-    // no shutdown forçamos o flush para não perder os últimos spawns.
-    await trackShutdownPhase("flushRouteProvenance", async () => {
-      const { flushRouteProvenance } = await import('./orch/route-provenance');
-      await flushRouteProvenance();
-    });
     await trackShutdownPhase("rest", async () => {
       stopRemoteBridge();
       // `tailscale serve off` da bridge publicada no tailnet, com teto curto;

@@ -286,6 +286,31 @@ describe('macOS activate lifecycle', () => {
     expect(shutdownBody).not.toContain('app.exit(');
   });
 
+  it('persists the missionless route counter first, before any PTY teardown that could wedge the quit', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'main.ts'), 'utf-8');
+    const beforeQuit = source.indexOf('app.on("before-quit"');
+    const shutdownStart = source.indexOf('function shutdown(): Promise<void>');
+    const flush = source.indexOf('await flushRouteProvenance();', shutdownStart);
+    const firstTeardown = source.indexOf('"stopPostBootIdleQueue"', shutdownStart);
+    const physicalFence = source.indexOf(
+      'await shutdownOrchestrationRuntimesRecordingStragglers(',
+      shutdownStart,
+    );
+    // Sem spawn novo depois do selo, o flush do início já enxerga todo registro.
+    const seal = source.indexOf(
+      'sealRuntimeProcessAdmissionForShutdown();',
+      source.indexOf('if (!shutdownComplete) {', beforeQuit),
+    );
+    const shutdownCall = source.indexOf('void shutdown()', beforeQuit);
+
+    expect(shutdownStart).toBeGreaterThanOrEqual(0);
+    expect(flush).toBeGreaterThan(shutdownStart);
+    expect(flush).toBeLessThan(firstTeardown);
+    expect(flush).toBeLessThan(physicalFence);
+    expect(seal).toBeGreaterThan(beforeQuit);
+    expect(seal).toBeLessThan(shutdownCall);
+  });
+
   // TOMBSTONE (06/08): o backstop era cancelado pelo próprio caminho de erro
   // que ele cobria — o .catch limpava o timer de app.exit. O teto agora é
   // INARREDÁVEL: armado antes do shutdown e sem nenhuma API de clear; só a

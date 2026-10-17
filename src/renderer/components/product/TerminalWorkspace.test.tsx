@@ -1189,6 +1189,87 @@ describe('TerminalWorkspace — renomear espaço pelo chip', () => {
     expect(spaceChipLabel(host).textContent).toBe('Meus terminais 2');
   });
 
+  describe('missão leve que mora na aba (N7)', () => {
+    const renameTabMission = vi.fn(async () => ({ ok: true }));
+
+    // A aba hospeda a missão cujo rótulo automático é "Missão · <nome da aba>".
+    function seedHostedTab(): void {
+      (window as unknown as { nexus: Record<string, unknown> }).nexus.orch = { renameTabMission };
+      useLayoutStore.setState({
+        root: buildGridTree([
+          {
+            id: 'pane-host',
+            kind: 'cli-agent',
+            title: 'Claude',
+            adapterId: 'claude',
+            role: 'orchestrator',
+            spaceId: 'space-novo',
+            spaceTitle: 'Meus terminais 2',
+            missionId: 'mission-tab',
+            missionHost: true,
+          },
+          { id: 'pane-shell', kind: 'shell', title: 'shell', spaceId: 'space-novo', spaceTitle: 'Meus terminais 2' },
+        ]),
+        focusedPaneId: 'pane-host',
+        maximizedPaneId: null,
+      });
+      useOrchStore.setState({
+        paneMissions: {},
+        missions: [],
+        missionSummaries: [
+          {
+            id: 'mission-tab',
+            title: 'Missão · Meus terminais 2',
+            state: 'running',
+            progress: { completed: 0, total: 1 },
+            needsAttention: false,
+            updatedAt: 1,
+          },
+        ],
+      });
+    }
+
+    function renameChipTo(host: HTMLElement, name: string): void {
+      act(() => {
+        spaceChipLabel(host).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      });
+      const input = host.querySelector<HTMLInputElement>('.workspace-tab__rename');
+      expect(input).not.toBeNull();
+      act(() => {
+        setInputValue(input!, name);
+        input!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      });
+    }
+
+    it('Enter com o nome da aba trocado renomeia a missão leve junto', () => {
+      seedHostedTab();
+      const { host } = mount(<TerminalWorkspace />);
+
+      renameChipTo(host, 'Build da API');
+
+      expect(spaceChipLabel(host).textContent).toBe('Build da API');
+      expect(renameTabMission).toHaveBeenCalledTimes(1);
+      expect(renameTabMission).toHaveBeenCalledWith({
+        missionId: 'mission-tab',
+        tabKey: 'space:space-novo',
+        spaceId: 'space-novo',
+        fromTitle: 'Missão · Meus terminais 2',
+        title: 'Missão · Build da API',
+      });
+    });
+
+    it('Enter com o rascunho em branco mantém a aba e não chama renameTabMission', () => {
+      seedHostedTab();
+      const { host } = mount(<TerminalWorkspace />);
+
+      renameChipTo(host, '   ');
+
+      expect(host.querySelector('.workspace-tab__rename')).toBeNull();
+      expect(spaceChipLabel(host).textContent).toBe('Meus terminais 2');
+      expect(renameTabMission).not.toHaveBeenCalled();
+    });
+  });
+
   it('chip de missão não entra em edição', () => {
     seedSpaceScope();
     const { host } = mount(<TerminalWorkspace />);
