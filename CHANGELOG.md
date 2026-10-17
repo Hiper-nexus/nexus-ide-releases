@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.76.300 — Todas as LLMs no roteamento
+
+O roteador passa a usar a cota real de cada assinatura para repartir o trabalho entre todas as LLMs instaladas, em qualquer combinação de CLIs. Candidato macOS (`darwin-arm64`) assinado e notarizado.
+
+- **Cota entre CLIs**. Cada CLI ganha um ritmo de cota (folga ÷ tempo até o reset): assinatura com sobra que vai expirar no reset puxa trabalho, a que está perto do limite cede. A CLI de assinatura com sobra conta como escritor econômico mesmo com preço de API alto (Grok, GLM, Codex, AGY, MiniMax, Devin). Janela por modelo ("Semanal (Fable)") não derruba a CLI inteira; leitura com mais de 15 min, cadência desconhecida e benchmark medido não viram folga.
+- **Cota medida cheia sai da rota**. CLI com janela medida em 100% em todas as contas não recebe worker até o reset (antes só o cooldown tirava); se o pool esvaziar, a exclusão é desfeita.
+- **Rota que só falha não lidera**. Modelo com 5+ tentativas e até 20% de sucesso em 14 dias perde o assento no escritor econômico, nas lanes de topo, no revezamento e no fair-share; continua elegível quando é a única opção ou é pedido pelo nome.
+- **Fair-share com memória**. A contagem de uso por CLI sobrevive à limpeza de missões, conta todo pane de IA aberto (inclusive o Claude do Maestro) uma vez só e grava em disco de forma coalescida, sem travar o processo principal.
+- **Qualquer conjunto de CLIs**. Sem CLI da tabela instalada, a rota escolhe por qualidade e custo em vez do "menos usado"; a primeira onda da missão completa a oferta com todas as CLIs prontas.
+- **Nome da missão acompanha a aba**. Renomear a aba renomeia a missão leve dela na barra lateral e no Quadro; título dado pelo operador e missão de squad aprovada nunca são sobrescritos.
+
 ## 0.76.299 — Linux em dia com a retomada, o uso e a Jarvis
 
 A tag 0.76.298 não recebe pacotes Linux: é o candidato macOS e a release do Windows. Este pacote leva o produto dela para o desktop Linux.

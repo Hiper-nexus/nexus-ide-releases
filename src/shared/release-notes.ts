@@ -11310,7 +11310,7 @@ export const RELEASE_076298: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076299: AppRelease = {
   version: '0.76.299',
   date: '2026-10-17',
   codename: 'Linux em dia com a retomada, o uso e a Jarvis',
@@ -11333,5 +11333,22 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Relógio de nascimento do pane', detail: 'O tempo de nascimento sobrevive a remontagens; uma tentativa vencida após 90 s continua vencida e o novo spawn recomeça do zero.' },
     { title: 'Rolagem em Configurações → Uso', detail: 'A página não rola mais além do fim da seção.' },
     { title: 'Confirmação ao salvar tema e tecnologias', detail: '"Salvar tema" confirma com "Tema salvo." só depois de o tema voltar na lista; se falhar, o editor continua aberto e mostra o motivo. Salvar as tecnologias do projeto confirma com "Tecnologias salvas." ou mostra o erro.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.300',
+  date: '2026-10-17',
+  codename: 'Todas as LLMs no roteamento',
+  summary: 'O roteador reparte o trabalho entre todas as LLMs instaladas pela cota real de cada assinatura: sobra que vai expirar puxa worker, cota no limite cede e rota que só falha deixa de liderar.',
+  highlights: [
+    { title: 'Cota entre CLIs', detail: 'Cada CLI ganha um ritmo de cota (folga ÷ tempo até o reset). Assinatura com sobra que vai expirar puxa trabalho e conta como escritor econômico mesmo com preço de API alto; a que está perto do limite cede.' },
+    { title: 'Rota que só falha não lidera', detail: 'Modelo com cinco tentativas ou mais e até 20% de sucesso em 14 dias perde o assento no escritor econômico, nas lanes de topo, no revezamento e no fair-share, e só volta quando é a única opção ou pedido pelo nome.' },
+    { title: 'Qualquer conjunto de CLIs', detail: 'Sem CLI da tabela instalada, a rota escolhe por qualidade e custo. A primeira onda da missão completa a oferta com todas as CLIs prontas.' },
+  ],
+  fixes: [
+    { title: 'Cota medida cheia sai da rota', detail: 'CLI com janela medida em 100% em todas as contas não recebe worker até o reset; janela por modelo, leitura velha e cadência desconhecida não derrubam nem inventam folga.' },
+    { title: 'Fair-share com memória', detail: 'A contagem de uso por CLI sobrevive à limpeza de missões, conta cada pane de IA uma vez e grava em disco sem travar o processo principal.' },
+    { title: 'Nome da missão acompanha a aba', detail: 'Renomear a aba renomeia a missão leve dela na barra lateral e no Quadro. Título do operador e missão de squad aprovada não são sobrescritos.' },
   ],
 };
