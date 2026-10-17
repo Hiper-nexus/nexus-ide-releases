@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.300 — Jarvis com corpo de partículas, fala sem laço e janela à mão
+
+A Jarvis ganhou um corpo no HUD ampliado: um humano de partículas que se forma e se desfaz, muda de estado sozinho, mostra o cursor e desenha ondas enquanto fala. Clicar nele acorda a Jarvis, e a barra de título é a alça para arrastar o HUD. Parada, só as mãos e os pés se soltam; as pernas continuam legíveis, e com movimento reduzido a figura fica estática.
+
+O atalho global recupera a janela do Nexus mesmo minimizada, só ao abrir a captura, conferindo o foco e registrando o que fez. O relato de handoff não fala por cima do despertar, não segura o microfone e não entra em laço de re-síntese quando a voz local é lenta. O CSS morto das partículas por DOM foi removido.
+
 ## 0.76.299 — Linux em dia com a retomada, o uso e a Jarvis
 
 A tag 0.76.298 não recebe pacotes Linux: é o candidato macOS e a release do Windows. Este pacote leva o produto dela para o desktop Linux.

@@ -11310,7 +11310,7 @@ export const RELEASE_076298: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076299: AppRelease = {
   version: '0.76.299',
   date: '2026-10-17',
   codename: 'Linux em dia com a retomada, o uso e a Jarvis',
@@ -11333,5 +11333,21 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Relógio de nascimento do pane', detail: 'O tempo de nascimento sobrevive a remontagens; uma tentativa vencida após 90 s continua vencida e o novo spawn recomeça do zero.' },
     { title: 'Rolagem em Configurações → Uso', detail: 'A página não rola mais além do fim da seção.' },
     { title: 'Confirmação ao salvar tema e tecnologias', detail: '"Salvar tema" confirma com "Tema salvo." só depois de o tema voltar na lista; se falhar, o editor continua aberto e mostra o motivo. Salvar as tecnologias do projeto confirma com "Tecnologias salvas." ou mostra o erro.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.300',
+  date: '2026-10-17',
+  codename: 'Jarvis com corpo de partículas, fala sem laço e janela à mão',
+  summary: 'A Jarvis ganha um humano de partículas no HUD ampliado, que acorda ao clique, com alça própria para arrastar. O atalho global recupera a janela minimizada sem roubar o foco, e o relato de handoff não fala por cima do despertar nem entra em laço quando a síntese é lenta.',
+  highlights: [
+    { title: 'Corpo de partículas no HUD', detail: 'O humano de partículas se forma e se desfaz, muda de estado sozinho, mostra o cursor e desenha ondas enquanto fala. Clicar nele acorda a Jarvis, e a barra de título serve de alça para arrastar o HUD.' },
+    { title: 'Janela sempre à mão', detail: 'O atalho global recupera a janela do Nexus mesmo minimizada. Ele só age ao abrir a captura, confere o foco e registra o que fez, sem roubar quem está digitando em outro lugar.' },
+    { title: 'Voz sem laço', detail: 'O relato de handoff espera o despertar e o turno da voz terminarem, não segura o microfone e não entra em laço de re-síntese quando a voz local é lenta.' },
+  ],
+  fixes: [
+    { title: 'Figura legível no ocioso', detail: 'Parada, só as mãos e os pés se soltam; as duas pernas continuam legíveis. Com movimento reduzido, a figura fica estática e formada.' },
+    { title: 'CSS morto das partículas', detail: 'O CSS antigo das partículas por DOM foi removido e a suíte de tokens religada.' },
   ],
 };
