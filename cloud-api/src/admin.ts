@@ -2,7 +2,8 @@ import { Hono, type Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { z } from 'zod';
 import type { AppEnv } from './context.js';
-import type { AccountRow, AdminAuditAction, LicenseCodeRow } from './db/schema.js';
+import type { AccountActivityRow, AccountRow, AdminAuditAction, LicenseCodeRow } from './db/schema.js';
+import { brazilDay } from './activity.js';
 import { jsonBody } from './http.js';
 import { emailConfigured } from './config.js';
 import { CLASSIFIED, LIVE, adminEmails } from './classified.js';
@@ -10,14 +11,20 @@ import { disableCoupon, insertCoupon, listCoupons } from './coupons.js';
 import { mintLicenseCode } from './license-codes.js';
 import { requireAdmin, requireCsrf, requireWebAuth } from './middleware.js';
 import { decodeAccountCursor, encodeAccountCursor } from './admin-cursor.js';
+import { buildFinance, parseFinancePeriod } from './admin-finance.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+type EngagementStage = 'mission_active' | 'using_system' | 'app_only' | 'web_only' | 'never_seen';
+const iso = (ms: number | null | undefined) => ms == null ? null : new Date(ms).toISOString();
+const online = (row: { last_app_seen_at?: number | null }, now: number) => row.last_app_seen_at != null && row.last_app_seen_at >= now - 300_000 && row.last_app_seen_at <= now;
+
 const SITUATIONS = ['trial', 'active', 'suspended', 'expired'] as const;
 type Situation = typeof SITUATIONS[number];
 const listSchema = z.strictObject({
   status: z.enum(['all', ...SITUATIONS]).default('all'),
   limit: z.coerce.number().int().min(1).max(50).default(50),
   email: z.string().trim().max(200).optional(),
+  engagement: z.enum(['all', 'mission_active', 'using_system', 'app_only', 'web_only', 'inactive']).default('all'),
   cursor: z.string().regex(/^[A-Za-z0-9_-]{1,160}$/).optional(),
 });
 const suspendSchema = z.strictObject({ reason: z.string().trim().min(1).max(500) });
@@ -49,10 +56,27 @@ const STALE = 'A situação desta conta mudou. Atualize a lista e tente novament
 export const adminRoutes = new Hono<AppEnv>();
 adminRoutes.use('/admin/*', async (c, next) => { c.header('Cache-Control', 'no-store'); await next(); }, requireWebAuth, requireAdmin);
 
+const invalidPeriod = (c: Context<AppEnv>) => c.json({ ok: false, error: 'invalid_query', message: 'Período financeiro inválido.' }, 400);
+
 adminRoutes.get('/admin/overview', async (c) => {
+  // O financeiro é opt-in: sem ?include=finance a resposta continua exatamente a contagem de contas.
+  const withFinance = c.req.query('include') === 'finance';
+  const period = withFinance ? parseFinancePeriod(c.req.query('period')) : '30d';
+  if (period === null) return invalidPeriod(c);
+  const now = Date.now();
   const counts = SITUATIONS.map(name => `count(CASE WHEN situation='${name}' THEN 1 END) AS ${name}`).join(',');
-  const row = await c.env.DB.prepare(`${CLASSIFIED} SELECT count(*) AS accounts,${counts} FROM classified`).bind(Date.now(), adminEmails(c.get('config'))).first<Record<'accounts' | Situation, number>>();
-  return c.json({ ok: true, data: row ?? { accounts: 0, trial: 0, active: 0, suspended: 0, expired: 0 } });
+  const [row, finance] = await Promise.all([
+    c.env.DB.prepare(`${CLASSIFIED} SELECT count(*) AS accounts,${counts} FROM classified`).bind(now, adminEmails(c.get('config'))).first<Record<'accounts' | Situation, number>>(),
+    withFinance ? buildFinance(c.env.DB, adminEmails(c.get('config')), period, now) : undefined,
+  ]);
+  const data = row ?? { accounts: 0, trial: 0, active: 0, suspended: 0, expired: 0 };
+  return c.json({ ok: true, data: finance ? { ...data, finance } : data });
+});
+
+adminRoutes.get('/admin/finance', async (c) => {
+  const period = parseFinancePeriod(c.req.query('period'));
+  if (period === null) return invalidPeriod(c);
+  return c.json({ ok: true, data: await buildFinance(c.env.DB, adminEmails(c.get('config')), period, Date.now()) });
 });
 
 adminRoutes.get('/admin/accounts', async (c) => {
@@ -62,16 +86,28 @@ adminRoutes.get('/admin/accounts', async (c) => {
   if (query.data.cursor !== undefined && cursor === null) throw new HTTPException(400, { message: 'Cursor inválido.' });
   // last_seen_at é a última entrada real: findOrCreateAccount grava no login OAuth (conta nova, vínculo por e-mail e retorno).
   // sessions.last_used_at não é preenchido e a sessão expira; a lista não deriva dali.
-  type Row = Pick<AccountRow, 'id' | 'email' | 'name' | 'trial_expires_at' | 'last_seen_at' | 'created_at'> & { is_admin: number; situation: Situation; subscription_status: string | null; last_app_seen_at: number | null };
-  const rows = await c.env.DB.prepare(`${CLASSIFIED} SELECT id,email,name,trial_expires_at,last_seen_at,created_at,is_admin,situation,
-      (SELECT t.last_app_seen_at FROM account_activity t WHERE t.account_id=classified.id) AS last_app_seen_at,
-      (SELECT s.status FROM subscriptions s WHERE (s.owner_type='account' AND s.account_id=classified.id)
-        OR (s.owner_type='team' AND s.team_id IN (SELECT team_id FROM team_members WHERE account_id=classified.id)) ORDER BY ${LIVE} DESC,s.updated_at DESC LIMIT 1) AS subscription_status
-    FROM classified WHERE (?3='all' OR situation=?3)
+  type Row = Pick<AccountRow, 'id' | 'email' | 'name' | 'trial_started_at' | 'trial_expires_at' | 'suspended_at' | 'suspension_reason' | 'last_seen_at' | 'created_at'> & { is_admin: number; situation: Situation; subscription_status: string | null }
+    & Partial<Pick<AccountActivityRow, 'first_app_seen_at' | 'last_app_seen_at' | 'first_agent_at' | 'first_mission_at' | 'last_active_at' | 'last_mission_at' | 'missions_started_count' | 'missions_completed_count' | 'last_agent_working' | 'last_mission_running'>>
+    & { active_days_7d: number; active_days_30d: number; stage: EngagementStage };
+  const now = Date.now(), today = brazilDay(now);
+  const rows = await c.env.DB.prepare(`${CLASSIFIED}, enriched AS (
+      SELECT c.id,c.email,c.name,c.trial_started_at,c.trial_expires_at,c.suspended_at,c.suspension_reason,c.last_seen_at,c.created_at,c.is_admin,c.situation,
+        t.first_app_seen_at,t.last_app_seen_at,t.first_agent_at,t.first_mission_at,t.last_active_at,t.last_mission_at,t.missions_started_count,t.missions_completed_count,t.last_agent_working,t.last_mission_running,
+        (SELECT count(*) FROM account_activity_days d WHERE d.account_id=c.id AND d.day>=?10 AND d.day<=?9) AS active_days_7d,
+        (SELECT count(*) FROM account_activity_days d WHERE d.account_id=c.id AND d.day>=?11 AND d.day<=?9) AS active_days_30d,
+        CASE WHEN t.first_mission_at IS NOT NULL OR t.missions_started_count>0 OR t.missions_completed_count>0 THEN 'mission_active'
+          WHEN t.first_agent_at IS NOT NULL OR t.last_active_at IS NOT NULL THEN 'using_system'
+          WHEN t.account_id IS NOT NULL THEN 'app_only' WHEN c.last_seen_at IS NOT NULL THEN 'web_only' ELSE 'never_seen' END AS stage,
+        (SELECT s.status FROM subscriptions s WHERE (s.owner_type='account' AND s.account_id=c.id)
+          OR (s.owner_type='team' AND s.team_id IN (SELECT team_id FROM team_members WHERE account_id=c.id)) ORDER BY ${LIVE} DESC,s.updated_at DESC LIMIT 1) AS subscription_status
+      FROM classified c LEFT JOIN account_activity t ON t.account_id=c.id
+    ) SELECT * FROM enriched WHERE (?3='all' OR situation=?3)
       AND (?5 IS NULL OR instr(lower(email), lower(?5))>0)
+      AND (?8='all' OR (?8='inactive' AND active_days_7d=0) OR stage=?8)
       AND (?6 IS NULL OR created_at<?6 OR (created_at=?6 AND id>?7))
     ORDER BY created_at DESC, id LIMIT ?4`)
-    .bind(Date.now(), adminEmails(c.get('config')), query.data.status, query.data.limit + 1, query.data.email ? query.data.email : null, cursor?.createdAt ?? null, cursor?.id ?? null).all<Row>();
+    .bind(now, adminEmails(c.get('config')), query.data.status, query.data.limit + 1, query.data.email ? query.data.email : null, cursor?.createdAt ?? null, cursor?.id ?? null,
+      query.data.engagement, today, brazilDay(now - 6 * DAY_MS), brazilDay(now - 29 * DAY_MS)).all<Row>();
   const page = rows.results.slice(0, query.data.limit);
   const last = rows.results.length > query.data.limit ? page.at(-1) : undefined;
   return c.json({ ok: true, data: {
@@ -80,7 +116,14 @@ adminRoutes.get('/admin/accounts', async (c) => {
       access: row.situation === 'active' ? 'pro' : row.situation, trialEndsAt: row.trial_expires_at === null ? null : new Date(row.trial_expires_at).toISOString(),
       subscriptionStatus: row.subscription_status ?? 'none',
       lastSeenAt: row.last_seen_at === null ? null : new Date(row.last_seen_at).toISOString(),
-      lastAppSeenAt: row.last_app_seen_at === null ? null : new Date(row.last_app_seen_at).toISOString(),
+      lastAppSeenAt: iso(row.last_app_seen_at),
+      createdAt: new Date(row.created_at).toISOString(), trialStartedAt: iso(row.trial_started_at),
+      suspendedAt: iso(row.suspended_at), suspensionReason: row.suspension_reason,
+      firstAppSeenAt: iso(row.first_app_seen_at), lastActiveAt: iso(row.last_active_at), firstAgentAt: iso(row.first_agent_at),
+      firstMissionAt: iso(row.first_mission_at), lastMissionAt: iso(row.last_mission_at),
+      missionsStartedCount: row.missions_started_count ?? 0, missionsCompletedCount: row.missions_completed_count ?? 0,
+      onlineNow: online(row, now), agentWorkingNow: online(row, now) && row.last_agent_working === 1, missionRunningNow: online(row, now) && row.last_mission_running === 1,
+      activeDays7d: row.active_days_7d, activeDays30d: row.active_days_30d, engagementStage: row.stage,
     })),
     nextCursor: last ? encodeAccountCursor({ createdAt: last.created_at, id: last.id }) : null,
   } });
