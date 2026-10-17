@@ -27,6 +27,8 @@ const state = vi.hoisted(() => ({
   spawnPrompts: [] as Array<string | undefined>,
   tasks: [] as Array<{ title: string; status: string }>,
   adapters: new Map<string, unknown>(),
+  inventory: [] as Array<{ id: string; kind: string; installed: boolean }>,
+  readyClis: null as Set<string> | null,
 }));
 
 // Registro vazio, como o harness sempre rodou (o boot é quem carrega os
@@ -34,6 +36,7 @@ const state = vi.hoisted(() => ({
 vi.mock('../adapters/adapter-registry', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../adapters/adapter-registry')>()),
   getAdapter: (id: string) => state.adapters.get(id) ?? null,
+  listAdapterInfos: () => state.inventory,
 }));
 
 vi.mock('./squad-store', () => ({ getSquad: () => state.squad, listSquads: () => [] }));
@@ -47,11 +50,14 @@ vi.mock('../pty/pty-manager', () => ({
 }));
 vi.mock('../acp/acp-harness-driver', () => ({ getAcpDriverSession: () => null }));
 vi.mock('../persistence/provider-config-store', () => ({
-  hasRuntimeKey: () => true,
+  hasRuntimeKey: (id: string) => state.readyClis?.has(id) ?? true,
   providerAuthStrategy: () => 'api-key',
   listProviderSettings: () => [],
 }));
-vi.mock('../adapters/subscription-auth', () => ({ detectSubscriptionAuthReadiness: () => 'present' }));
+vi.mock('../adapters/subscription-auth', () => ({
+  detectSubscriptionAuthReadiness: (id: string) =>
+    state.readyClis === null || state.readyClis.has(id) ? 'present' : 'missing',
+}));
 vi.mock('./squad-runtime-inventory', () => ({ warmSquadRuntimeSubscriptionAuth: async () => undefined }));
 vi.mock('../pty/warm-pool', () => ({ warmPool: { take: () => null } }));
 vi.mock('../observability/main-trace', () => ({ trace: () => undefined }));
@@ -124,12 +130,16 @@ import { agentPrompt, dispatchFastLaneFirstWave } from './mission-fast-lane';
 import { NEXUS_BROWSER_BRIEF_RULE } from './nexus-browser-policy';
 import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import { adapterSchema } from '../../shared/adapter-types';
+import { writerCircuitBreakers } from './writer-circuit-break';
 
 afterEach(() => {
   state.physical.clear();
   state.spawnPrompts.length = 0;
   state.tasks.length = 0;
   state.adapters.clear();
+  state.inventory.length = 0;
+  state.readyClis = null;
+  writerCircuitBreakers.reset();
   deliverAgentPromptMock.mockClear();
   terminateMock.mockClear();
 });
@@ -271,6 +281,38 @@ describe('Via Rápida first-wave — regra do navegador do Nexus no briefing (F-
     );
     state.adapters.set('kimi', adapterSchema.parse(kimi));
   }
+
+  it('sem CLIs preferidas, espalha a onda entre as demais instaladas e prontas sem linha de provider', async () => {
+    const { scope, mission } = prepareWriterMission();
+    state.tasks.push({ title: 'Adicionar validação do cliente', status: 'pending' });
+    state.inventory.push(
+      { id: 'blocked-custom', kind: 'cli-pty', installed: true },
+      { id: 'opencode', kind: 'cli-pty', installed: true },
+      { id: 'aider', kind: 'cli-pty', installed: true },
+      { id: 'missing-auth', kind: 'cli-pty', installed: true },
+      { id: 'not-installed', kind: 'cli-pty', installed: false },
+      { id: 'api-only', kind: 'api-provider', installed: true },
+      { id: 'shell', kind: 'cli-pty', installed: true },
+    );
+    state.readyClis = new Set(['blocked-custom', 'opencode', 'aider', 'not-installed', 'api-only', 'shell']);
+    writerCircuitBreakers.trip({ missionId: mission.id, adapterId: 'blocked-custom', role: 'worker' });
+
+    expect(await dispatchFastLaneFirstWave(scope, mission.id)).toBe(2);
+    expect([...state.physical.values()].map((info) => info.adapterId)).toEqual(['opencode', 'aider']);
+  });
+
+  it('a ordem preferida continua antes das demais instaladas', async () => {
+    const { scope, mission } = prepareWriterMission();
+    state.tasks.push({ title: 'Adicionar validação do cliente', status: 'pending' });
+    state.inventory.push(
+      { id: 'opencode', kind: 'cli-pty', installed: true },
+      { id: 'codex', kind: 'cli-pty', installed: true },
+    );
+    state.readyClis = new Set(['opencode', 'codex']);
+
+    expect(await dispatchFastLaneFirstWave(scope, mission.id)).toBe(2);
+    expect([...state.physical.values()].map((info) => info.adapterId)).toEqual(['codex', 'opencode']);
+  });
 
   it('writer da 1ª onda com o navegador ao alcance (Kimi, allowlist livre) recebe a regra', async () => {
     seedBuiltinKimi();

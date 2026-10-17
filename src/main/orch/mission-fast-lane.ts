@@ -56,7 +56,7 @@ import {
   registeredOrchestratorSessionsForMission,
 } from '../pty/pty-manager';
 import { getAcpDriverSession, listAcpDriverAgentSessions } from '../acp/acp-harness-driver';
-import { getAdapter } from '../adapters/adapter-registry';
+import { getAdapter, listAdapterInfos } from '../adapters/adapter-registry';
 import { deliverAgentPrompt, proveNativeArgvBriefAccepted, withProjectContextBlocksAsync } from './tool-util';
 import { canUseNexusMcp } from './cli-mcp-inject';
 import {
@@ -3168,13 +3168,6 @@ export async function dispatchFastLaneFirstWave(
       missionId,
       writerIsConnectedAndWritable,
     );
-    const blockedAdapterIds = [
-      ...new Set(
-        squad.agents
-          .map((agent) => agent.cli)
-          .filter((cli) => writerCliIsCircuitDead(missionId, cli)),
-      ),
-    ];
     const orchestratorCli =
       squad.agents.find((agent) => agent.category === 'orchestrator')?.cli ??
       '';
@@ -3182,8 +3175,17 @@ export async function dispatchFastLaneFirstWave(
       ...new Set([
         ...FIRST_WAVE_OFFER_CLIS,
         ...listProviderSettings().map((provider) => provider.adapterId),
+        ...listAdapterInfos()
+          .filter((adapter) => adapter.kind === 'cli-pty' && adapter.installed)
+          .map((adapter) => adapter.id),
       ]),
     ].filter((cli) => cli !== 'shell');
+    const blockedAdapterIds = [
+      ...new Set([
+        ...squad.agents.map((agent) => agent.cli),
+        ...extraPresentClis,
+      ]),
+    ].filter((cli) => writerCliIsCircuitDead(missionId, cli));
     await warmSquadRuntimeSubscriptionAuth([
       ...squad.agents.map((agent) => agent.cli),
       ...extraPresentClis,
