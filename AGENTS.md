@@ -434,6 +434,18 @@ saber isto antes de mexer:
   `--text-dim` (o faint do `nexus-light` dá 4,27 sobre a tinta). O guard exige
   4,5:1 de text/dim/faint nos 7 temas sobre essa linha, em repouso e no hover,
   sem catraca de dívida. Tinta maior ou o reapontamento removido reprovam lá.
+- Abrir projeto no rail (16/10): "Abrir projeto existente" é uma LINHA com texto
+  logo abaixo do Novo pedido (`.workspace-rail__actions`, coluna única), não
+  mais um ícone de pasta sem rótulo ao lado dele (ninguém o achava). Nome,
+  tooltip e atalho vêm de `WORKSPACE_OPEN_ACTION` (`lib/action-names.ts`), o
+  registro do Início, onde "Trocar pasta" leva o mesmo `title`. Pegadinhas:
+  "Abrir pasta" já é "mostrar no Finder" (toast de captura, `AccessBoundary`) e
+  "Abrir Projeto" é a visão geral do projeto, então nenhum dos dois serve de
+  rótulo e o nome acessível não pode colidir (`WorkspaceRail.test.tsx`). O
+  tooltip promete "pasta nova" porque o seletor do main usa `createDirectory`
+  (`workspace-store.ts`; `action-names.test.ts` lê o fonte). O seletor não é
+  modal no Windows (`owned-open-dialog.ts`) e `pickWorkspace` do App não tem
+  guarda de clique duplo: dois cliques rápidos podem abrir dois diálogos.
 
 ## Conventions
 

@@ -178,6 +178,18 @@ describe('rail: contrato visual da lista plana', () => {
     expect(rule('.workspace-rail__fixed-item--wide')).toBeUndefined();
   });
 
+  it('as entradas de trabalho (Novo pedido e Abrir projeto) são uma coluna de linhas, sem ícone solto', () => {
+    const actions = rulesFor('.workspace-rail__actions')
+      .map((candidate) => candidate.body)
+      .join('\n');
+    expect(actions).toMatch(/display:\s*grid;/);
+    expect(actions).toMatch(/grid-template-columns:\s*minmax\(0, 1fr\);/);
+    expect(actions).not.toMatch(/display:\s*flex|repeat\(2/);
+    // O ícone de pasta sem rótulo ao lado do Novo pedido não volta: ninguém o
+    // achava como "abrir projeto". A ação é uma linha com texto (`.workspace-rail__row`).
+    expect(railRules.filter((candidate) => /open-project/.test(candidate.selector))).toEqual([]);
+  });
+
   it('a seleção usa o toque de acento só no fundo, sem borda', () => {
     const selected = rule('.workspace-rail__row--selected')?.body ?? '';
     expect(selected).toMatch(/background:\s*color-mix\(in srgb, var\(--accent\)/);

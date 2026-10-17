@@ -176,6 +176,9 @@ function missionIsParkedOrClosed(stateReasonCode: string | undefined): boolean {
  * forma durável (Dormindo/Parou) não conta — o trabalho dela já está morto.
  */
 export function workspaceTabIsClosable(scope: PaneScopeEntry): boolean {
+  // Sem sessão viva não há trabalho a proteger: a aba não pode ficar presa
+  // por um estado de missão que o renderer não sabe (ou não vai) fechar.
+  if (scope.retired) return true;
   const closable = (mission: {
     readonly state?: string;
     readonly stateReasonCode?: string;

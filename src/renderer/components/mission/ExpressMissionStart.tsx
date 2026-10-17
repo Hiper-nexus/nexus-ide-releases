@@ -10,6 +10,7 @@ import { MISSION_INTENT_GOAL_MAX_CHARS } from '../../../shared/mission-intent';
 import type { SquadAgent } from '../../../shared/orch-types';
 import type { WorkspaceInfo } from '../../../shared/workspace-types';
 import type { MissionSetupDraft } from '../../state/mission-setup-store';
+import { useWorkspaceRequiredStore } from '../../state/workspace-required-store';
 import type { DirectAnswer } from '../../lib/direct-answer';
 import { ExpressTerminalOptions } from './ExpressTerminalOptions';
 import { FirstStepsGuide } from '../onboarding/FirstStepsGuide';
@@ -18,7 +19,10 @@ import { MissionSetupRosterRow } from './MissionSetupRosterRow';
 import { issueForAgent, type MissionTeamInventory } from './TeamStep';
 import { useObjectiveDictation } from './use-objective-dictation';
 import { PixelIcon } from '../PixelIcon';
-import { launcherShortcutHint } from '../../lib/action-names';
+import {
+  WORKSPACE_OPEN_ACTION,
+  launcherShortcutHint,
+} from '../../lib/action-names';
 import { formatShortcut } from '../../lib/platform';
 import { useMissionAttachmentPresentation } from '../../state/mission-attachment-presentation';
 import { usePendingOrchestratorAdoptionStore } from '../../state/pending-orchestrator-adoption-store';
@@ -155,6 +159,22 @@ export function ExpressMissionStart({
   const disabledReason =
     'Resolva o carregamento do rascunho antes de preencher os dados da missão.';
   const needsWorkspace = !workspace;
+
+  // Paste/drop sem projeto: realça e foca o seletor de pasta, com aviso fixo.
+  const workspaceRequiredNonce = useWorkspaceRequiredStore((s) => s.nonce);
+  const [workspaceNeeded, setWorkspaceNeeded] = useState(false);
+  const pickButtonRef = useRef<HTMLButtonElement>(null);
+  const lastNonceRef = useRef(workspaceRequiredNonce);
+  useEffect(() => {
+    if (workspaceRequiredNonce === lastNonceRef.current) return;
+    lastNonceRef.current = workspaceRequiredNonce;
+    if (workspace) return;
+    setWorkspaceNeeded(true);
+    pickButtonRef.current?.focus();
+  }, [workspaceRequiredNonce, workspace]);
+  useEffect(() => {
+    if (workspace) setWorkspaceNeeded(false);
+  }, [workspace]);
 
   useEffect(() => {
     if (!suppressHeadingAutofocus) headingRef.current?.focus();
@@ -548,8 +568,12 @@ export function ExpressMissionStart({
             )}
             <button
               type="button"
-              className="mission-setup__button mission-setup__button--secondary"
+              ref={pickButtonRef}
+              className={`mission-setup__button mission-setup__button--secondary${
+                workspaceNeeded ? ' mission-setup__button--needs-attention' : ''
+              }`}
               data-launcher-action="workspace"
+              title={WORKSPACE_OPEN_ACTION.description}
               onClick={onPickWorkspace}
               disabled={pickingWorkspace || busy}
               aria-describedby={
@@ -566,6 +590,15 @@ export function ExpressMissionStart({
               </kbd>
             </button>
           </div>
+          {workspaceNeeded && !workspace && (
+            <p
+              id="express-workspace-needed"
+              className="mission-setup__inline-error mission-setup__focus-message"
+              role="alert"
+            >
+              Escolha a pasta do projeto antes de anexar uma imagem ou arquivo.
+            </p>
+          )}
           {workspaceActionError && (
             <p
               id="express-workspace-error"

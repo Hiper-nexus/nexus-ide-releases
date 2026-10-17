@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { useWorkspaceRequiredStore } from '../../state/workspace-required-store';
 import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import type { Editor } from '@tiptap/core';
@@ -32,6 +33,7 @@ import {
 } from '../../../shared/settings-types';
 import type { AdapterInfo } from '../../../shared/types';
 import { missionRuntimeReadiness } from '../../orch/mission-runtime-readiness';
+import { WORKSPACE_OPEN_ACTION } from '../../lib/action-names';
 import * as missionAttachments from '../../lib/mission-attachments';
 import { planRemoveRosterAgent } from '../../orch/mission-roster-customize';
 import {
@@ -1092,6 +1094,37 @@ describe('MissionSetup', () => {
     expect(
       button(host, 'Escolher pasta para iniciar').disabled,
     ).toBe(false);
+  });
+
+  it('colar imagem sem pasta destaca, foca e avisa no seletor de pasta', async () => {
+    useWorkspaceStore.setState({ current: null });
+    useMissionSetupStore.setState({
+      workspacePath: null,
+      draft: {
+        objective: '',
+        title: '',
+        contextPaths: [],
+        roster: [],
+        advanced: { lane: 'standard' },
+        step: 'express',
+        revision: 0,
+      },
+    });
+    const host = render(<MissionSetup />);
+    await flush();
+    const pick = host.querySelector<HTMLButtonElement>(
+      '[data-launcher-action="workspace"]',
+    )!;
+    expect(host.querySelector('#express-workspace-needed')).toBeNull();
+
+    act(() => useWorkspaceRequiredStore.getState().request());
+    await flush();
+
+    expect(document.activeElement).toBe(pick);
+    expect(pick.className).toContain('mission-setup__button--needs-attention');
+    expect(
+      host.querySelector('#express-workspace-needed')?.getAttribute('role'),
+    ).toBe('alert');
   });
 
   it('permite escrever a ideia antes da pasta e pede a pasta ao iniciar', async () => {
@@ -2523,6 +2556,16 @@ describe('Caminho Expresso', () => {
     expect(button(host, 'Iniciar criação').className).toContain(
       'mission-setup__button--primary',
     );
+  });
+
+  it('a troca de pasta explica a mesma ação da linha "Abrir projeto existente" do rail', async () => {
+    const host = await renderAtExpress();
+
+    const pick = button(host, 'Trocar pasta');
+    // Uma ação, uma explicação: o rail e o Início leem o mesmo registro, e o
+    // texto diz que dá para criar a pasta nova na janela de escolha.
+    expect(pick.title).toBe(WORKSPACE_OPEN_ACTION.description);
+    expect(pick.title).toMatch(/pasta nova/);
   });
 
   it('atalhos 1–6 disparam na tela real de início, não só no Launcher órfão', async () => {

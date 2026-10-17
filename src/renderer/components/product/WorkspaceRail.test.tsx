@@ -19,6 +19,7 @@ import { useSessionStateStore } from '../../state/session-state-store';
 import { usePaneParkedStore } from '../../state/pane-parked-store';
 import type { PaneModel, PaneSessionState } from '../../../shared/types';
 import { buildGridTree, createLeaf, createPane } from '../../lib/split-tree';
+import { WORKSPACE_OPEN_ACTION } from '../../lib/action-names';
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -224,6 +225,92 @@ describe('WorkspaceRail', () => {
     act(() => host.querySelector<HTMLButtonElement>('[aria-label="Abrir projeto existente"]')!.click());
     expect(onOpenWorkspace).toHaveBeenCalledOnce();
     expect(handlers.onCreateNew).not.toHaveBeenCalled();
+  });
+
+  describe('abrir projeto existente: ação à vista, com rótulo escrito', () => {
+    const openRow = (host: ParentNode) =>
+      host.querySelector<HTMLButtonElement>('[data-testid="rail-open-workspace"]')!;
+
+    it('é uma linha com o rótulo na tela logo abaixo do Novo pedido, não um ícone solto', () => {
+      const { host } = renderRail({ onOpenWorkspace: vi.fn() });
+      const open = openRow(host);
+      const create = host.querySelector('[data-testid="rail-new-mission"]')!;
+      const actions = host.querySelector('.workspace-rail__actions')!;
+      const destinations = host.querySelector('[aria-label="Destinos fixos"]')!;
+
+      // Texto escrito e o mesmo do registro do launcher (uma ação, um nome).
+      expect(open.textContent?.trim()).toBe(WORKSPACE_OPEN_ACTION.label);
+      expect(open.getAttribute('aria-label')).toBe(WORKSPACE_OPEN_ACTION.label);
+      // Criar e abrir, nessa ordem, na mesma área, antes dos destinos e do histórico.
+      expect([...actions.children]).toEqual([create, open]);
+      expect(
+        open.compareDocumentPosition(destinations) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      // É a linha-base do rail (mesma tipografia, hover, foco e alvo de 32px).
+      expect(open.classList.contains('workspace-rail__row')).toBe(true);
+      // O ícone de pasta sem rótulo ao lado do Novo pedido não existe mais.
+      expect(host.querySelector('.workspace-rail__open-project')).toBeNull();
+      // DESIGN.md §6: a ação não se repete em outro lugar do rail.
+      expect(host.querySelectorAll(`[aria-label="${WORKSPACE_OPEN_ACTION.label}"]`)).toHaveLength(1);
+    });
+
+    it('explica no tooltip o que faz, com a mesma frase do Início', () => {
+      const { host } = renderRail({ onOpenWorkspace: vi.fn() });
+      const open = openRow(host);
+
+      expect(open.title).toBe(WORKSPACE_OPEN_ACTION.description);
+      expect(open.title).toMatch(/pasta do computador/);
+      expect(open.title).toMatch(/pasta nova/);
+    });
+
+    it('é botão nativo, fica logo depois do Novo pedido na ordem de Tab e abre o seletor ao clique', () => {
+      const onOpenWorkspace = vi.fn();
+      const { host, handlers } = renderRail({ onOpenWorkspace });
+      const open = openRow(host);
+      const create = host.querySelector<HTMLButtonElement>('[data-testid="rail-new-mission"]')!;
+
+      expect(open.tagName).toBe('BUTTON');
+      expect(open.type).toBe('button');
+      expect(open.disabled).toBe(false);
+      expect(open.tabIndex).toBeGreaterThanOrEqual(0);
+      const tabStops = [...host.querySelectorAll<HTMLElement>('button')].filter(
+        (button) => !(button as HTMLButtonElement).disabled && button.tabIndex >= 0,
+      );
+      expect(tabStops.indexOf(open)).toBe(tabStops.indexOf(create) + 1);
+
+      open.focus();
+      expect(document.activeElement).toBe(open);
+      act(() => open.click());
+      expect(onOpenWorkspace).toHaveBeenCalledOnce();
+      expect(handlers.onCreateNew).not.toHaveBeenCalled();
+    });
+
+    it('não divide o nome acessível com nenhuma outra ação ou destino (Abrir Projeto abre a visão geral)', () => {
+      const { host } = renderRail({
+        onOpenWorkspace: vi.fn(),
+        onOpenLauncher: vi.fn(),
+        projectEnabled: true,
+        onOpenProject: vi.fn(),
+        attentionCount: 2,
+        onOpenAttention: vi.fn(),
+      });
+      const names = [
+        ...host.querySelectorAll<HTMLElement>(
+          '.workspace-rail__actions button, [aria-label="Destinos fixos"] button',
+        ),
+      ].map((control) => (control.getAttribute('aria-label') ?? control.textContent ?? '').trim().toLowerCase());
+
+      expect(names).toContain(WORKSPACE_OPEN_ACTION.label.toLowerCase());
+      expect(names).toContain('abrir projeto');
+      expect(names.filter((name, index) => names.indexOf(name) !== index)).toEqual([]);
+    });
+
+    it('sem o handler a linha não existe e o Novo pedido fica sozinho', () => {
+      const { host } = renderRail();
+
+      expect(openRow(host)).toBeNull();
+      expect(host.querySelector('.workspace-rail__actions')!.children).toHaveLength(1);
+    });
   });
 
   it('keeps destinations and settings outside the scrollable mission history', () => {

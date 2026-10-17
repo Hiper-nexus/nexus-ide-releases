@@ -398,9 +398,10 @@ sem usar “Subindo” como única explicação.
 - **Pedido protagonista.** Campo confortável para descrever a ideia; projeto
   pelo nome humano, caminho disponível para inspeção. Equipe resumida e
   detalhes/referências recolhidos. Expandir opções não muda nem apaga o pedido.
-- **Uma entrada persistente.** `Novo pedido` aparece uma vez na rail. Início,
-  abertura de projeto e demais destinos precedem o histórico rolável. Limpeza
-  permanece recolhida junto às utilidades do projeto.
+- **Uma entrada persistente.** `Novo pedido` aparece uma vez na rail; logo
+  abaixo dele, `Abrir projeto existente`, uma linha com rótulo escrito (§16).
+  Início e demais destinos precedem o histórico rolável. Limpeza permanece
+  recolhida junto às utilidades do projeto.
 - **Hierarquia legível.** Títulos dos trabalhos em 13px, numa linha só; o
   estado vai no glifo e, quando o trabalho pede algo da pessoa, em 12px numa
   linha própria (§16). Não repetir o nome do projeto nem a branch em cada
@@ -525,6 +526,19 @@ pulso de "ao vivo" repete).
   Sem grade de duas colunas e sem fio entre as faixas; só o rodapé tem fio em
   cima. O contador de panes dos Terminais é número solto; selo âmbar fica para
   o que pede a pessoa.
+- **Abrir projeto é uma linha com texto.** Era um ícone de pasta sem rótulo ao
+  lado do "Novo pedido" (pedido do operador, 16/10: a opção de abrir um
+  workspace "deve ter e não tem"): ninguém o achava, e ele repetia o glifo de
+  "Projeto". Agora é a linha "Abrir projeto existente" logo abaixo do "Novo
+  pedido", na mesma coluna e com a linha-base do rail (`--text-dim`, hover e
+  foco por teclado iguais aos destinos). O tooltip diz que a pessoa escolhe uma
+  pasta do computador e que dá para criar uma pasta nova na janela de escolha
+  (o seletor do main usa `createDirectory`). Nome, tooltip e atalho vêm de
+  `WORKSPACE_OPEN_ACTION` (`lib/action-names.ts`), o mesmo registro do Início,
+  cujo "Trocar pasta" leva o mesmo `title`. Não use "Abrir pasta" (já quer dizer
+  "mostrar no Finder") nem "Abrir projeto" sozinho (colide com a linha
+  "Projeto", que abre a visão geral). Guards: `WorkspaceRail.test.tsx` e
+  `workspace-rail-style.test.ts`.
 - **Em andamento é todo projeto com trabalho vivo, ao mesmo tempo.** O aberto
   agora e cada vizinho com missão ativa (`projectRailWorkspaces`) têm
   cabeçalho próprio, com as missões embaixo. O nome é texto de 12px/600 em

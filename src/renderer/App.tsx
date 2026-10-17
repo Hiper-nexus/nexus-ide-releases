@@ -54,6 +54,7 @@ import {
   rememberAttachment,
   rememberAttachmentThumbnail,
 } from './state/mission-attachment-presentation';
+import { useWorkspaceRequiredStore } from './state/workspace-required-store';
 import { useWorkspaceController, useWorkspaceStore } from './state/workspace-store';
 import { useProviderController } from './state/provider-store';
 import { useAdapterController } from './state/adapter-store';
@@ -744,6 +745,23 @@ export function App() {
       useToastStore.getState().push('warn', 'Nada foi anexado à missão', message);
     };
 
+    /**
+     * Sem projeto não há onde guardar o anexo. Além do toast, leva o operador à
+     * tela de criação e pede o destaque do seletor de pasta (F-1561 paste sem
+     * workspace falhava só na voz).
+     */
+    const requireWorkspaceFirst = (
+      destination: ProductDestination,
+      verb: 'colar' | 'soltar',
+    ): void => {
+      warnNothingAttached(`Escolha a pasta do projeto antes de ${verb} arquivos.`);
+      if (destination.kind === 'launcher') {
+        useMissionSetupStore.getState().setStep('express');
+        useProductNavigationStore.getState().openMissionSetup();
+      }
+      useWorkspaceRequiredStore.getState().request();
+    };
+
     /** Anexa caminhos ao rascunho sem repetir o que já está lá. */
     const appendContextPaths = (paths: readonly string[]): void => {
       if (paths.length === 0) return;
@@ -877,7 +895,7 @@ export function App() {
 
       const workspace = useWorkspaceStore.getState().current;
       if (!workspace) {
-        warnNothingAttached('Abra um projeto antes de soltar arquivos.');
+        requireWorkspaceFirst(destination, 'soltar');
         return;
       }
       enterMissionSetup(destination, workspace.path);
@@ -935,7 +953,7 @@ export function App() {
 
       const workspace = useWorkspaceStore.getState().current;
       if (!workspace) {
-        warnNothingAttached('Abra um projeto antes de colar arquivos.');
+        requireWorkspaceFirst(destination, 'colar');
         return;
       }
       // Sem `clearEntryContext`: apagar o rascunho digitado num ⌘V acidental
