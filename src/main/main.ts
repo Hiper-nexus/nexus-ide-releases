@@ -1756,6 +1756,12 @@ function shutdown(): Promise<void> {
     await trackShutdownPhase("flushMemoryProjections", () =>
       flushWorkspaceMemoryProjections(),
     );
+    // N1: o contador durável de rotas sem missão grava coalescido no runtime;
+    // no shutdown forçamos o flush para não perder os últimos spawns.
+    await trackShutdownPhase("flushRouteProvenance", async () => {
+      const { flushRouteProvenance } = await import('./orch/route-provenance');
+      await flushRouteProvenance();
+    });
     await trackShutdownPhase("rest", async () => {
       stopRemoteBridge();
       // `tailscale serve off` da bridge publicada no tailnet, com teto curto;

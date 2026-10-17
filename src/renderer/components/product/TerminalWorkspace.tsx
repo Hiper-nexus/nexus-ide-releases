@@ -444,9 +444,11 @@ export function TerminalWorkspace({
       const previousTitle =
         panes.find((pane) => pane.spaceId === scope.id && pane.spaceTitle)
           ?.spaceTitle ?? scope.title;
-      renamePaneSpace(scope.id, current.draft);
+      const clean = current.draft.trim();
+      if (!clean) return;
+      renamePaneSpace(scope.id, clean);
       // A missão leve que mora na aba troca o rótulo junto (sidebar, Quadro).
-      void renameMissionsOfRenamedTab(scope, previousTitle, current.draft);
+      void renameMissionsOfRenamedTab(scope, previousTitle, clean);
       return;
     }
     if (scope.kind === 'loose') {

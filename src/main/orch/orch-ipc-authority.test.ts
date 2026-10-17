@@ -4477,3 +4477,8 @@ describe('missionSpawnOperatorPane — selected account contract', () => {
     expect(harness.spawnOperatorPane).not.toHaveBeenCalled();
   });
 });
+
+// NOTA: missionRenameForTab usa handleTrusted (só janela principal), que o
+// harness atual não simula para canais trusted. A validação de payload (strict
+// zod, sem tabKey/spaceId, título vazio) e a rejeição de missão de squad são
+// testadas em renderer-mission-authority.test.ts → renameTabMissionFromRenderer.
