@@ -11140,7 +11140,7 @@ export const RELEASE_076288: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076289: AppRelease = {
   version: '0.76.289',
   date: '2026-10-16',
   codename: 'macOS em dia com a Jarvis, Clef no Jev e Uso e custos',
@@ -11155,5 +11155,22 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Abas que rolam de lado', detail: 'A roda do mouse rola as abas do painel direito e as sub-abas do Git. A largura mínima do painel fica em 300 px.' },
     { title: 'Conta da Reserva renovada', detail: 'Contas AGY/Gemini e Claude com access token vencido renovam pelo refresh token e gravam a credencial nova.' },
     { title: 'Vagas do Trial e Nexus Shot', detail: 'O leque de helpers no Trial reserva duas vagas para o Maestro e o revisor, e a ponte do Nexus Shot aceita target nulo na entrega padrão.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.290',
+  date: '2026-10-17',
+  codename: 'Jarvis com corpo de partículas, fala sem laço e janela à mão',
+  summary: 'A Jarvis ganha um humano de partículas no HUD, com estados próprios, ondas ao falar e alça de arraste. O atalho global recupera a janela minimizada sem roubar o foco, e o relato de handoff não fala por cima do despertar nem entra em laço quando a síntese é lenta.',
+  highlights: [
+    { title: 'Corpo de partículas no HUD', detail: 'O humano de partículas se forma e se desfaz, muda de estado sozinho, mostra o cursor e desenha ondas enquanto fala. Dá para clicar nele e arrastar pela alça para reposicionar o HUD sem cobrir o resto da tela.' },
+    { title: 'Janela sempre à mão', detail: 'O atalho global recupera a janela do Nexus mesmo quando ela está minimizada. Ele só age ao abrir a captura, confere o foco e registra o atalho sem roubar quem está digitando em outro lugar.' },
+    { title: 'Voz sem laço', detail: 'O relato de handoff não fala por cima do despertar nem segura o microfone. Quando a síntese de voz é lenta, o relato não entra em laço de re-síntese e entrega o texto normalmente.' },
+  ],
+  fixes: [
+    { title: 'Figura legível no ocioso', detail: 'No ocioso só as mãos e os pés se soltam; as duas pernas continuam legíveis no vale da figura.' },
+    { title: 'Movimento reduzido respeitado', detail: 'A figura respeita a preferência de movimento reduzido do sistema e mantém um quadro estático formado.' },
+    { title: 'CSS morto das partículas', detail: 'O CSS antigo das partículas por DOM foi removido e a suíte de tokens religada.' },
   ],
 };

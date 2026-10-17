@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.76.290 — Jarvis com corpo de partículas, fala sem laço e janela à mão
+
+A Jarvis ganhou um corpo no HUD: um humano de partículas que se forma e se desfaz, muda de estado sozinho, mostra o cursor e desenha ondas enquanto fala. Dá para clicar nele e arrastar pela alça para reposicionar o HUD sem atrapalhar o resto da tela. O atalho global recupera a janela do Nexus mesmo quando ela está minimizada, sem roubar o foco de quem está digitando. O relato de handoff deixou de falar por cima do despertar nem de segurar o microfone, e quando a síntese de voz é lenta o relato não entra em laço de re-síntese. No modo ocioso, só as mãos e os pés se soltam; as pernas continuam legíveis.
+
 ## 0.76.289 — macOS em dia com a Jarvis, Clef no Jev e Uso e custos
 
 A tag 0.76.285 não recebeu pacotes macOS porque o smoke empacotado ainda exigia que `nexus_file_write` do renderer fosse recusado (corrigido na 0.76.288). Este pacote publica o candidato macOS (`darwin-arm64`) assinado e notarizado com a Jarvis em tempo real e mãos-livres, o Clef autorizado em Somente Jev, o painel de Uso e custos com gasto mensal editável em USD, os handoffs sem travas burocráticas, a rolagem lateral das abas do painel direito e a renovação de contas da Reserva, além de excluir `.harvest/**` da coleta do Vitest.
