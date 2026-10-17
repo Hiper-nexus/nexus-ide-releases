@@ -11256,14 +11256,31 @@ export const RELEASE_076295: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076296: AppRelease = {
   version: '0.76.296',
   date: '2026-10-17',
   codename: 'Linux em dia com o DeepSeek Flash e o diálogo de início',
-  summary: 'No Linux, o DeepSeek Flash entra no menu do Claude, do Qwen Code e do DeepSeek sem trocar o modelo padrão. O rodapé do diálogo de início deixa de ser cortado quando a janela é baixa.',
+  summary: 'No Linux, o DeepSeek Flash entra no menu do Claude, do Qwen Code e do DeepSeek sem trocar o modelo padrão. O rodapé do diálogo de início deixa de ser cortado quando a janela é baixa. A suíte desta tag não fechou.',
   highlights: [
     { title: 'DeepSeek Flash', detail: 'O modelo entra no fim do menu do Claude, do Qwen Code e do DeepSeek. O padrão de cada CLI não muda. No Qwen Code o Flash só aparece quando o endpoint efetivo é a API direta da DeepSeek (api.deepseek.com); DashScope e o Token Plan continuam sem ele. O alias deepseek-v4-flash aponta para o id canônico.' },
     { title: 'Diálogo de início', detail: 'O rodapé, inclusive Cancelar, deixa de sair da tela quando a janela é baixa. O painel cabe no container, o rodapé não encolhe, a divisória fica mais forte e as ações secundárias do rodapé ganham contorno.' },
   ],
-  fixes: [],
+  fixes: [
+    { title: 'Atualização do Linux', detail: 'A suíte da 0.76.296 não fechou: o ledger de proveniência ainda tinha o hash antigo de model-catalog.ts. O Linux sai na 0.76.297.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.297',
+  date: '2026-10-17',
+  codename: 'Linux em dia com o DeepSeek Flash e o diálogo de início',
+  summary: 'No Linux, o DeepSeek Flash entra no menu do Claude, do Qwen Code e do DeepSeek sem trocar o modelo padrão. O rodapé do diálogo de início deixa de ser cortado quando a janela é baixa. A tag 0.76.296 não recebe pacotes Linux.',
+  highlights: [
+    { title: 'DeepSeek Flash', detail: 'O modelo entra no fim do menu do Claude, do Qwen Code e do DeepSeek. O padrão de cada CLI não muda. No Qwen Code o Flash só aparece quando o endpoint efetivo é a API direta da DeepSeek (api.deepseek.com); DashScope e o Token Plan continuam sem ele. O alias deepseek-v4-flash aponta para o id canônico.' },
+    { title: 'Diálogo de início', detail: 'O rodapé, inclusive Cancelar, deixa de sair da tela quando a janela é baixa. O painel cabe no container, o rodapé não encolhe, a divisória fica mais forte e as ações secundárias do rodapé ganham contorno.' },
+  ],
+  fixes: [
+    { title: 'Ledger do catálogo', detail: 'O hash de model-catalog.ts no ledger de proveniência passa a ser o do arquivo, com o DeepSeek Flash classificado como barato no Claude e no Qwen Code.' },
+    { title: 'Atualização do Linux', detail: 'A tag 0.76.296 não recebe pacotes Linux. A suíte não fechava porque o ledger ainda tinha o hash antigo de model-catalog.ts. O Linux sai na 0.76.297.' },
+  ],
 };

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.76.297 — Linux em dia com o DeepSeek Flash e o diálogo de início
+
+A tag 0.76.296 não recebe pacotes Linux: a suíte não fechou. O ledger de proveniência ainda apontava o hash antigo de `model-catalog.ts`. O hash passa a ser o do arquivo. O desktop Linux é o da 0.76.296.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35).
+
+No desktop Linux, em relação à 0.76.295:
+
+- **DeepSeek Flash**. O modelo entra no fim do menu do Claude, do Qwen Code e do DeepSeek. O padrão de cada CLI não muda. No Qwen Code o Flash só aparece quando o endpoint efetivo é a API direta da DeepSeek (`api.deepseek.com`); DashScope e o Token Plan continuam sem ele. O alias `deepseek-v4-flash` aponta para o id canônico.
+- **Diálogo de início**. O rodapé, inclusive Cancelar, deixa de sair da tela quando a janela é baixa. O painel cabe no container, o rodapé não encolhe, a divisória fica mais forte e as ações secundárias do rodapé ganham contorno.
+
 ## 0.76.296 — Linux em dia com o DeepSeek Flash e o diálogo de início
 
 Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35).
