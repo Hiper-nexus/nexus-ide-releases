@@ -130,13 +130,15 @@ export function buildHumanSilhouette(count: number, seed = 0x9e3779b9): Silhouet
   for (let i = 0; i < neck; i += 1) pts.push(capsulePoint(rng, 0.5, 0.24, 0.5, 0.29, 0.028));
   for (let i = 0; i < torso; i += 1) pts.push(trapezoidPoint(rng, 0.5, 0.29, 0.52, 0.16, 0.14));
 
+  // `tipPower` alto concentra o "solto" na ponta: só a mão e o pé se esfiapam,
+  // antebraço e canela seguem legíveis (as duas pernas não se fundem).
   const leftArm = Math.floor(arms / 2);
-  for (let i = 0; i < leftArm; i += 1) pts.push(capsulePoint(rng, 0.35, 0.31, 0.3, 0.55, 0.026, 1.3));
-  for (let i = 0; i < arms - leftArm; i += 1) pts.push(capsulePoint(rng, 0.65, 0.31, 0.7, 0.55, 0.026, 1.3));
+  for (let i = 0; i < leftArm; i += 1) pts.push(capsulePoint(rng, 0.35, 0.31, 0.3, 0.55, 0.026, 1.6));
+  for (let i = 0; i < arms - leftArm; i += 1) pts.push(capsulePoint(rng, 0.65, 0.31, 0.7, 0.55, 0.026, 1.6));
 
   const leftLeg = Math.floor(legs / 2);
-  for (let i = 0; i < leftLeg; i += 1) pts.push(capsulePoint(rng, 0.44, 0.52, 0.43, 0.96, 0.042, 1.6));
-  for (let i = 0; i < legs - leftLeg; i += 1) pts.push(capsulePoint(rng, 0.56, 0.52, 0.57, 0.96, 0.042, 1.6));
+  for (let i = 0; i < leftLeg; i += 1) pts.push(capsulePoint(rng, 0.44, 0.52, 0.43, 0.96, 0.042, 2));
+  for (let i = 0; i < legs - leftLeg; i += 1) pts.push(capsulePoint(rng, 0.56, 0.52, 0.57, 0.96, 0.042, 2));
 
   return pts;
 }
@@ -179,7 +181,7 @@ const IDLE_TIP_LOOSEN = 0.85;
 const IDLE_EASE = 1.5;
 /** Alcance máximo da poeira (fração do canvas até a nuvem): núcleo e pontas. */
 const IDLE_CORE_SCATTER = 0.1;
-const IDLE_TIP_SCATTER = 0.32;
+const IDLE_TIP_SCATTER = 0.22;
 /** Respiração de repouso: ~4,2 s por ciclo (12 a 15 respirações por minuto). */
 const BREATH_RATE = 1.5;
 

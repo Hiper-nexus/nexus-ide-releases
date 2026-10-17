@@ -702,11 +702,11 @@ describe('JarvisParticleFigure — o ocioso é uma silhueta reconhecível', () =
     const within = samples.map((s) => s.within);
     const mean = samples.map((s) => s.mean);
     // Reconhecível o tempo todo: a antiga nuvem tinha ~0% perto da casa.
-    expect(Math.min(...within)).toBeGreaterThanOrEqual(0.85);
+    expect(Math.min(...within)).toBeGreaterThanOrEqual(0.93);
     // Pico: a figura fecha (quase todas as partículas na casa).
     expect(Math.max(...within)).toBeGreaterThanOrEqual(0.98);
     // Dissolução parcial periódica: o vale é mensuravelmente mais poroso que o pico.
-    expect(Math.max(...mean)).toBeGreaterThan(Math.min(...mean) * 1.5);
+    expect(Math.max(...mean)).toBeGreaterThan(Math.min(...mean) * 3);
     // E o corpo continua em pé em TODO quadro: bem mais alto que largo.
     expect(Math.min(...samples.map((s) => s.aspect))).toBeGreaterThan(1.4);
   });
