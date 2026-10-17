@@ -19,13 +19,14 @@ describe('F-1167: conjunto rotulado embutido', () => {
     expect(new Set(bySurface.keys())).toEqual(new Set(['toolPick', 'paneState', 'intake', 'researchTriage', 'taskRouting', 'missionPick',
       'catalogPick', 'missionKickoff', 'reviewTriage', 'recoveryAdvice', 'completionCheck']));
     for (const [, rows] of bySurface) {
-      expect(rows.length).toBeGreaterThanOrEqual(MIN_QUALITY_CASES);
+      expect(rows.length).toBeGreaterThanOrEqual(5);
+      expect(rows.length).toBeLessThan(MIN_QUALITY_CASES);
       expect(new Set(rows.map(row => row.split))).toEqual(new Set(['development', 'heldout']));
     }
-    // As 3 reversíveis (únicas com ensemble no Automático) estão cobertas.
-    for (const surface of REVERSIBLE_ENSEMBLE_SURFACES) expect(bySurface.get(surface)?.length ?? 0).toBeGreaterThanOrEqual(MIN_QUALITY_CASES);
-    // Fixas no Jev no Automático: medir não muda a rota; ficam fora (custo).
-    for (const surface of JEV_PINNED_SURFACES) expect(bySurface.has(surface)).toBe(false);
+    // As reversíveis estão cobertas pelo smoke, ainda sem amostra para ensemble.
+    for (const surface of REVERSIBLE_ENSEMBLE_SURFACES) expect(bySurface.get(surface)?.length ?? 0).toBeGreaterThanOrEqual(5);
+    // taskRouting preserva seus casos históricos; o pino no Jev vence a medição.
+    for (const surface of JEV_PINNED_SURFACES) expect(bySurface.has(surface)).toBe(surface === 'taskRouting');
     const types = new Set(DECISION_CALIBRATION_CASES.flatMap(testCase => Object.values(testCase.questions).map(question => question.type)));
     expect([...types].sort()).toEqual(['choice', 'noul', 'score']);
   });

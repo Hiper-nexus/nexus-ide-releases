@@ -1,12 +1,12 @@
 /**
  * F-1167: conjunto rotulado EMBUTIDO do botão "Calibrar modelos". Curado e
  * barato: só texto sintético (nenhum dado de usuário, caminho real, chave ou
- * segredo), 5 casos por surface que o Automático roteia de fato — o bastante
- * para cada surface ganhar a sua própria célula de qualidade
- * (MIN_QUALITY_CASES) em vez de herdar uma média global.
+ * segredo), 5 casos por surface: um smoke que grava a célula, mas ainda não
+ * atinge MIN_QUALITY_CASES para substituir o prior de cada surface.
  *
  * Fora daqui: dispatchGuard, handoffReview, memoryDistill, computerTool e
  * browserTool ficam fixos no Jev no Automático; medir não muda a rota deles.
+ * taskRouting também é fixo; seus casos históricos continuam no smoke.
  *
  * Cobre sim/não, escolha e escala; 3 casos de desenvolvimento e 2 de validação
  * por surface. O rótulo nunca sai do processo: `evaluateDecisionCases` só

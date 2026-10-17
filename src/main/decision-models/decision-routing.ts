@@ -17,7 +17,7 @@ type RouteInput = Pick<JudgeInput, 'surface' | 'model' | 'images'>;
  * Sem a chave da Luna a rota é nula — não volta ao Jev em silêncio.
  */
 export const JEV_PINNED_SURFACES: ReadonlySet<JevDecisionSurface> = new Set<JevDecisionSurface>([
-  'dispatchGuard', 'handoffReview', 'memoryDistill', 'computerTool', 'browserTool',
+  'dispatchGuard', 'handoffReview', 'memoryDistill', 'computerTool', 'browserTool', 'taskRouting',
 ]);
 
 /**
@@ -37,11 +37,11 @@ export const SECURITY_ENSEMBLE_SURFACES: ReadonlySet<JevDecisionSurface> = new S
 ]);
 
 /**
- * Juntos: divergência reversível fica com a confiança maior. A skill sugerida
- * viaja na superfície taskRouting; não há superfície própria.
+ * Automático: superfícies reversíveis elegíveis ao ensemble por qualidade.
+ * Juntos inclui taskRouting pela escolha explícita do operador, mesmo fixo no Jev.
  */
 export const REVERSIBLE_ENSEMBLE_SURFACES: ReadonlySet<JevDecisionSurface> = new Set<JevDecisionSurface>([
-  'taskRouting', 'missionPick', 'catalogPick',
+  'missionPick', 'catalogPick',
 ]);
 
 /** Juntos: rótulos ficam no Jev. A imagem do navegador é outra chamada. */

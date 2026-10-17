@@ -15,7 +15,7 @@ export type DecisionModelKey = typeof DECISION_MODEL_KEYS[number];
 
 export const DECISION_QUALITY_TABLE_VERSION = 1;
 /** Abaixo disto a medição local não substitui o prior. */
-export const MIN_QUALITY_CASES = 5;
+export const MIN_QUALITY_CASES = 20;
 
 const cellSchema = z.object({
   accuracy: z.number().finite().min(0).max(1),
