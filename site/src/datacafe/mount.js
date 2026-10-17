@@ -49,8 +49,8 @@ function hudMarkup(id) {
   <div class="dc-panel-head"><strong>Missões do turno</strong><span class="mono">RECORDE <span class="dc-best">0</span> PTS</span></div>
   <ol class="dc-mission-list"></ol>
   <div class="dc-panel-head"><strong>Tickets do NOC</strong><span class="mono"><span class="dc-xp">0</span> XP · M</span></div>
-  <ol class="dc-ticket-list"></ol>
-  <div class="dc-badges" aria-label="Selos"></div>
+  <div class="dc-tickets"><ol class="dc-ticket-list" hidden></ol><div class="dc-empty">${CUP}<div><strong>Nenhum ticket pendente</strong><p>Tudo em ordem por aqui. Explore o café e acompanhe as próximas missões.</p></div></div></div>
+  <div class="dc-badges" aria-label="Selos"><div class="dc-badge-list" hidden></div><div class="dc-empty">${RACK}<div><strong>Seu primeiro selo começa na doca</strong><p>Pegue uma GPU e instale em um rack para conquistar o primeiro selo.</p></div></div></div>
   <label class="dc-volume"><span class="mono">VOLUME</span><input type="range" min="0" max="100" step="5" aria-label="Volume do jogo"></label>
   <div class="dc-panel-actions"><button type="button" data-act="mute">Som ligado</button><button type="button" data-act="pause">Pausar</button><button type="button" data-act="reset">Recomeçar</button></div>
   <small class="dc-footnote">XP, recorde e progresso ficam só neste navegador e não contam para o sorteio.</small>
@@ -60,8 +60,8 @@ function hudMarkup(id) {
 <button class="dc-prompt" type="button" hidden><kbd class="dc-key">E</kbd><span class="dc-prompt-text"></span><span class="dc-hold" aria-hidden="true"><span></span></span></button>
 <div class="dc-joystick" aria-hidden="true"><span class="dc-ring"></span><span class="dc-knob"></span></div>
 <div class="dc-hints"><span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> anda</span><span>segure <kbd>E</kbd> para interagir</span><span><kbd>M</kbd> tickets</span><span>arraste gira, a roda aproxima</span></div>
-<div class="dc-toast" role="status" aria-live="polite"></div>
-<aside class="dc-station" id="${id}-station" hidden aria-labelledby="${id}-station-title"><button type="button" class="dc-close" aria-label="Fechar">✕</button><span class="mono dc-station-kicker"></span><h3 id="${id}-station-title" class="dc-station-title"></h3><ol class="dc-station-prizes" hidden></ol><p class="dc-station-copy"></p><a class="button dc-station-link" target="_blank" rel="noopener noreferrer"></a><p class="dc-station-note" hidden></p></aside>`;
+<div class="dc-toast" role="status" aria-live="polite" tabindex="-1"></div>
+<aside class="dc-station" id="${id}-station" hidden aria-labelledby="${id}-station-title"><button type="button" class="dc-close" aria-label="Fechar"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button><span class="mono dc-station-kicker"></span><h3 id="${id}-station-title" class="dc-station-title"></h3><ol class="dc-station-prizes" hidden></ol><p class="dc-station-copy"></p><a class="button dc-station-link" target="_blank" rel="noopener noreferrer"></a><p class="dc-station-note" hidden></p></aside>`;
 }
 
 /**
@@ -88,7 +88,9 @@ export function mountDataCafe(stage, { host, variant = 'full', startButtons = []
   const prizeChip = $('.dc-prize');
   prizeChip.setAttribute('aria-label', `${chip.label}. Abrir o painel do sorteio.`);
   [$('.dc-prize-tag'), $('.dc-prize-name'), $('.dc-prize-goal')].forEach((node, index) => { node.textContent = chip.parts[index]; });
-  let toastTimer;
+  let toastTimer = null;
+  let toastRemaining = 0;
+  let toastStarted = 0;
   let disposed = false;
   const aborter = new AbortController();
   const listen = { signal: aborter.signal };
@@ -98,12 +100,36 @@ export function mountDataCafe(stage, { host, variant = 'full', startButtons = []
   /** O relógio do turno chega várias vezes por segundo: só escreve no DOM o que mudou. */
   const shown = { clock: '', score: -1, best: -1, boost: -1 };
 
-  function toast(text) {
+  const toastBox = $('.dc-toast');
+  function resumeToast() {
+    if (disposed || toastTimer !== null || !toastBox.classList.contains('visible') || toastBox.matches(':hover, :focus-within')) return;
+    toastStarted = performance.now();
+    toastTimer = setTimeout(() => {
+      toastTimer = null;
+      toastBox.classList.remove('visible');
+      toastBox.tabIndex = -1;
+    }, toastRemaining);
+  }
+  function pauseToast() {
+    if (toastTimer === null) return;
     clearTimeout(toastTimer);
-    const box = $('.dc-toast');
-    box.textContent = text;
-    box.classList.add('visible');
-    toastTimer = setTimeout(() => box.classList.remove('visible'), 3200);
+    toastTimer = null;
+    toastRemaining = Math.max(0, toastRemaining - (performance.now() - toastStarted));
+  }
+  for (const event of ['pointerenter', 'focusin']) toastBox.addEventListener(event, pauseToast, listen);
+  toastBox.addEventListener('pointerleave', resumeToast, listen);
+  // focusout precede a troca de activeElement: confira o foco depois dela.
+  toastBox.addEventListener('focusout', () => queueMicrotask(resumeToast), listen);
+
+  function toast(text) {
+    if (disposed) return;
+    clearTimeout(toastTimer);
+    toastTimer = null;
+    toastRemaining = 3200;
+    toastBox.textContent = text;
+    toastBox.classList.add('visible');
+    toastBox.tabIndex = 0;
+    resumeToast();
   }
 
   function togglePanel(force) {
@@ -142,7 +168,7 @@ export function mountDataCafe(stage, { host, variant = 'full', startButtons = []
     box.hidden = false;
   }
 
-  const world = createWorld(host, {
+  const worldOptions = {
     reducedMotion,
     audio,
     progress: loadProgress(),
@@ -167,6 +193,8 @@ export function mountDataCafe(stage, { host, variant = 'full', startButtons = []
         $('.dc-ticket-now').dataset.kind = goal?.kind ?? 'ok';
       },
       tickets(list) {
+        $('.dc-tickets .dc-empty').hidden = list.length > 0;
+        $('.dc-ticket-list').hidden = list.length === 0;
         $('.dc-ticket-list').replaceChildren(...list.slice(0, 6).map(ticket => {
           const item = document.createElement('li');
           item.dataset.kind = ticket.kind;
@@ -189,7 +217,9 @@ export function mountDataCafe(stage, { host, variant = 'full', startButtons = []
         $('.dc-title').textContent = titleFor(progress.level);
         $('.dc-xp').textContent = progress.xp;
         $('.dc-xpbar>span').style.transform = `scaleX(${levelProgress(progress.xp).toFixed(3)})`;
-        $('.dc-badges').replaceChildren(...progress.badges.map(badge => {
+        $('.dc-badges .dc-empty').hidden = progress.badges.length > 0;
+        $('.dc-badge-list').hidden = progress.badges.length === 0;
+        $('.dc-badge-list').replaceChildren(...progress.badges.map(badge => {
           const chip = document.createElement('span');
           chip.className = 'dc-badge mono';
           chip.textContent = BADGES[badge];
@@ -249,7 +279,18 @@ export function mountDataCafe(stage, { host, variant = 'full', startButtons = []
         onError?.();
       },
     },
-  });
+  };
+  let world;
+  try {
+    world = createWorld(host, worldOptions);
+  } catch (error) {
+    aborter.abort();
+    clearTimeout(toastTimer);
+    audio.dispose();
+    hud.remove();
+    stage.classList.remove('dc-stage');
+    throw error;
+  }
 
   function start() {
     if (disposed || world.playing) return;

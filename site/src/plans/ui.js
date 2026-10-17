@@ -11,6 +11,7 @@ const COPY_TARGETS = {
 export function renderPlans(section, view) {
   const copy = planCopy(view);
   section.dataset.state = view.state;
+  section.removeAttribute('aria-busy');
   for (const [key, id] of Object.entries(COPY_TARGETS)) document.getElementById(id).textContent = copy[key];
   document.getElementById('plans-price').dataset.unavailable = view.price ? 'false' : 'true';
 }
@@ -18,6 +19,7 @@ export function renderPlans(section, view) {
 export async function initializePlans(fetchImpl = globalThis.fetch, timeoutMs = 8000) {
   const section = document.getElementById('planos');
   if (!section) return null;
+  section.setAttribute('aria-busy', 'true');
   let view;
   try {
     const response = await fetchImpl(STATUS_URL, {

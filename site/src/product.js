@@ -60,6 +60,37 @@ audio.addEventListener('click',()=>{video.muted=!video.muted;audio.ariaPressed=S
 if('IntersectionObserver' in window){const observer=new IntersectionObserver(entries=>{for(const entry of entries)if(entry.isIntersecting){entry.target.classList.add('visible');observer.unobserve(entry.target);}},{threshold:.08});document.querySelectorAll('.reveal').forEach(el=>{if(!reduced)el.classList.add('reveal-ready');observer.observe(el);});const videoObserver=new IntersectionObserver(entries=>{if(!entries[0].isIntersecting)video.pause();else if(!reduced&&video.muted)video.play().catch(()=>{});});videoObserver.observe(video);}
 window.addEventListener('pagehide',()=>{stop();video.pause();});
 
+// Manifesto: as palavras acendem uma a uma, na ordem de leitura, quando a seção entra na tela.
+// Com redução de movimento ou modo calmo o texto já nasce inteiro (CSS cobre os dois casos).
+(() => {
+  const text = document.querySelector('.manifesto-text');
+  if (!text || reduced || calmMotion || !('IntersectionObserver' in window)) return;
+  let index = 0;
+  const wrapWords = node => {
+    for (const child of [...node.childNodes]) {
+      if (child.nodeType === Node.TEXT_NODE) {
+        const frag = document.createDocumentFragment();
+        for (const part of child.textContent.split(/(\s+)/)) {
+          if (!part.trim()) { frag.append(document.createTextNode(part)); continue; }
+          const word = document.createElement('span');
+          word.className = 'mw';
+          word.style.setProperty('--mw-delay', `${Math.min(index * 90, 1800)}ms`);
+          word.textContent = part;
+          index += 1;
+          frag.append(word);
+        }
+        node.replaceChild(frag, child);
+      } else if (child.nodeType === Node.ELEMENT_NODE && child.tagName !== 'BR') wrapWords(child);
+    }
+  };
+  wrapWords(text);
+  const section = text.closest('.manifesto');
+  const observer = new IntersectionObserver(entries => {
+    if (entries[0].isIntersecting) { section.classList.add('mw-in'); observer.disconnect(); }
+  }, { threshold: 0.35 });
+  observer.observe(section);
+})();
+
 // Nexus Data Café: o módulo 3D só baixa quando o visitante decide jogar.
 (() => {
   const play = byId('datacafe-play'), stage = byId('datacafe-stage');

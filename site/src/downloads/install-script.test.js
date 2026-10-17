@@ -2,10 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { RELEASE_REPOSITORY } from './releases.js';
 
 const script = readFileSync(new URL('../../public/install.sh', import.meta.url), 'utf8');
-const scriptPath = new URL('../../public/install.sh', import.meta.url).pathname;
+// fileURLToPath decodifica %20 etc.: `.pathname` quebrava o sh em caminhos com espaço (Application Support).
+const scriptPath = fileURLToPath(new URL('../../public/install.sh', import.meta.url));
 
 test('o instalador é um script sh válido e para na primeira falha', () => {
   assert.match(script, /^#!\/bin\/sh\n/);

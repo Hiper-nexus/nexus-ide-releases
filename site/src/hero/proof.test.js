@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { formatOffer, formatRelease, newestRelease, relativeTime } from './proof.js';
+import { PROOF_FALLBACK, formatOffer, formatRelease, initializeHeroProof, newestRelease, relativeTime } from './proof.js';
 
 const NOW = Date.parse('2026-10-02T12:00:00Z');
 const HOUR = 3_600_000;
@@ -39,3 +39,34 @@ test('a linha da release diz a versão e quando saiu', () => {
   assert.equal(formatRelease({ version: '0.76.160', publishedAt: '2026-08-01T10:00:00Z' }, NOW), 'v0.76.160');
   assert.equal(formatRelease(null, NOW), null);
 });
+
+function fakeElement() {
+  const nodes = [];
+  return { nodes, hidden: true, replaceChildren(...items) { nodes.push(...items); } };
+}
+
+function withFakeDocument(fn) {
+  const real = globalThis.document;
+  globalThis.document = { createElement: tag => ({ tagName: tag }) };
+  return Promise.resolve().then(fn).finally(() => {
+    if (real === undefined) delete globalThis.document;
+    else globalThis.document = real;
+  });
+}
+
+test('sem nada confirmado, a linha do hero mostra a prova estática do produto', () => withFakeDocument(async () => {
+  const element = fakeElement();
+  await initializeHeroProof({ status: Promise.reject(new Error('offline')), releases: Promise.resolve(null), element });
+  assert.equal(element.hidden, false, 'a linha aparece mesmo sem as duas APIs');
+  const text = element.nodes.filter(node => node.tagName === 'span').map(node => node.textContent).join(' · ');
+  assert.equal(text, PROOF_FALLBACK.join(' · '));
+}));
+
+test('com algo confirmado, a linha mostra a prova viva e não o fallback', () => withFakeDocument(async () => {
+  const element = fakeElement();
+  const status = Promise.resolve({ state: 'disponivel', price: 'R$ 59,99 / mês', trial: { days: 15, maxAgents: 2, cloudSync: false } });
+  await initializeHeroProof({ status, releases: Promise.resolve(null), element });
+  const text = element.nodes.filter(node => node.tagName === 'span').map(node => node.textContent).join(' ');
+  assert.match(text, /15 dias de teste, sem cartão/);
+  assert.doesNotMatch(text, /adaptadores de IA/);
+}));

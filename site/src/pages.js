@@ -25,6 +25,8 @@ function initializeBenchmarkTable() {
   const rows = [...body.rows];
   const count = document.getElementById('bench-count');
   const state = { sort: { id: 'deepSWE', direction: 'desc' }, vendor: '' };
+  const scroll = table.closest('.bench-scroll');
+  const empty = document.getElementById('bench-empty');
   const valueOf = (row, id) => {
     const cell = row.querySelector(`td[data-benchmark="${id}"]`);
     const parsed = cell ? Number.parseFloat(cell.dataset.value ?? '') : NaN;
@@ -45,6 +47,13 @@ function initializeBenchmarkTable() {
       else header.removeAttribute('aria-sort');
     }
     if (count) count.textContent = `${visible} ${visible === 1 ? 'modelo' : 'modelos'}`;
+    if (scroll) scroll.hidden = visible === 0;
+    if (empty) empty.hidden = visible !== 0;
+  };
+  const clearVendor = () => {
+    state.vendor = '';
+    for (const other of document.querySelectorAll('[data-vendor-filter]')) other.setAttribute('aria-pressed', String(other.dataset.vendorFilter === ''));
+    render();
   };
   table.tHead.addEventListener('click', event => {
     const button = event.target.closest('button[data-sort]');
@@ -52,6 +61,7 @@ function initializeBenchmarkTable() {
     state.sort = nextSort(state.sort, button.dataset.sort);
     render();
   });
+  empty?.querySelector('[data-bench-reset]')?.addEventListener('click', clearVendor);
   document.querySelector('.bench-filters')?.addEventListener('click', event => {
     const chip = event.target.closest('button[data-vendor-filter]');
     if (!chip) return;

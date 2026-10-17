@@ -14,25 +14,40 @@ const id = name => document.getElementById(name);
 async function boot() {
   const stage = document.querySelector('.game-stage');
   const start = id('start-game');
+  const clear = id('clear-progress');
+  let game;
+  const showError = () => {
+    const restoreFocus = id('world').contains(document.activeElement) || start === document.activeElement || Boolean(document.activeElement?.closest('.dc-hud'));
+    game?.dispose();
+    id('world-loading').hidden = true;
+    stage.classList.add('game-unavailable');
+    start.hidden = true;
+    clear.disabled = true;
+    clear.title = 'O jogo precisa estar disponível para recomeçar.';
+    id('world-error').hidden = false;
+    if (restoreFocus) id('world-error').querySelector('a').focus({ preventScroll: true });
+  };
+  start.disabled = true;
+  clear.disabled = true;
   try {
     // VT323 pinta os letreiros e telões do data center: precisa estar pronta antes da cena.
     try { await document.fonts.load('80px VT323'); } catch { /* cai na monoespaçada do sistema */ }
     const { mountDataCafe } = await import('./datacafe/mount.js');
-    const game = mountDataCafe(stage, {
+    game = mountDataCafe(stage, {
       host: id('world'),
       variant: 'full',
       startButtons: [start],
-      onError: () => { start.disabled = true; },
+      onError: showError,
     });
     id('world-loading').hidden = true;
-    id('clear-progress')?.addEventListener('click', () => { game.resetProgress(); id('clear-progress').textContent = 'Progresso recomeçado'; });
+    start.disabled = false;
+    clear.disabled = false;
+    clear.addEventListener('click', () => { game.resetProgress(); id('clear-progress').textContent = 'Progresso recomeçado'; });
     // O bfcache mantém a página viva: só um descarregamento de verdade descarta o mundo.
     window.addEventListener('pagehide', event => { if (!event.persisted) game.dispose(); });
   } catch (error) {
     console.warn('Nexus Data Café:', error.message);
-    id('world-loading').hidden = true;
-    start.textContent = 'Jogo 3D indisponível neste navegador';
-    start.disabled = true;
+    showError();
   }
 }
 

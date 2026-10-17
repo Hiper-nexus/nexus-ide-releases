@@ -116,6 +116,9 @@ export async function initializeDownloads() {
   const device = await browserPlatform(navigator);
   renderDownloads(snapshot.catalog, device);
   const status = document.getElementById('catalog-status');
+  const downloads = document.querySelector('.downloads');
+  downloads?.setAttribute('data-state', 'consultando');
+  status?.setAttribute('data-state', 'consultando');
   try {
     const response = await fetch('/api/releases', { signal: AbortSignal.timeout(6000), headers: { Accept: 'application/json' } });
     if (!response.ok) throw new Error('catalog-unavailable');
@@ -129,5 +132,8 @@ export async function initializeDownloads() {
   } catch {
     status.textContent = 'A consulta ao vivo está indisponível. Mostrando o último catálogo verificado; confira novas versões no GitHub.';
     return snapshot.catalog;
+  } finally {
+    downloads?.setAttribute('data-state', 'pronto');
+    status?.setAttribute('data-state', 'pronto');
   }
 }

@@ -33,7 +33,7 @@
 .vox-bars{display:flex;align-items:flex-end;gap:4px;height:36px;color:var(--pink)}
 .vox-bars i{width:4px;height:100%;border-radius:4px;background:currentColor;transform:scaleY(.06);transform-origin:bottom;transition:transform 90ms ease-out}
 
-.vox-phase{font-family:VT323,monospace;font-size:32px;line-height:1;color:var(--ink);text-align:center;min-height:32px}
+.vox-phase{font-family:VT323,var(--mono,ui-monospace,SFMono-Regular,Menlo,monospace);font-size:32px;line-height:1;color:var(--ink);text-align:center;min-height:32px}
 .vox-stage.playing .vox-phase{color:var(--pink)}
 .vox-steps{list-style:none;display:grid;grid-template-columns:auto auto;justify-content:center;gap:8px 20px;margin:0;padding:0;font-size:11px;color:var(--faint)}
 .vox-steps li{display:flex;align-items:center;gap:6px}
@@ -114,7 +114,7 @@
   .vox-head p{margin-top:var(--s3);font-size:14px}
   .vox-bar{padding:12px;gap:8px;font-size:10px;flex-wrap:wrap}
   .vox-bar .demo-badge{flex-basis:100%;margin-left:0;font-size:9px}
-  .vox-body{grid-template-columns:1fr;min-height:0}
+  .vox-body{grid-template-columns:minmax(0,1fr);min-height:0}
   .vox-hud{gap:var(--s2);padding:var(--s3) var(--s2);border-right:0;border-bottom:1px solid var(--line)}
   .vox-orb{width:88px}
   .vox-phase{font-size:28px}
@@ -128,6 +128,8 @@
   .vox-facts{grid-template-columns:1fr;margin-top:var(--s4)}
   .vox-facts>div,.vox-facts>div+div{padding:var(--s3) 0;border-left:0}
 }
+/* Os quatro passos do ditado somam ~300px: em janelas de até 480px viram 2x2 em vez de empurrar o palco. */
+@media(max-width:480px){.vox-steps{grid-template-columns:repeat(2,auto)}}
 @media(prefers-reduced-motion:reduce){
   .vox-word{opacity:1}
 }

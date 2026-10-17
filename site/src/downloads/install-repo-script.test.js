@@ -2,9 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 const script = readFileSync(new URL('../../public/install-repo.sh', import.meta.url), 'utf8');
-const scriptPath = new URL('../../public/install-repo.sh', import.meta.url).pathname;
+// fileURLToPath decodifica %20 etc.: `.pathname` quebrava o sh em caminhos com espaço (Application Support).
+const scriptPath = fileURLToPath(new URL('../../public/install-repo.sh', import.meta.url));
 const key = readFileSync(new URL('../../public/linux/nexus-ide.asc', import.meta.url), 'utf8');
 const repoFile = readFileSync(new URL('../../public/linux/nexus-ide.repo', import.meta.url), 'utf8');
 
