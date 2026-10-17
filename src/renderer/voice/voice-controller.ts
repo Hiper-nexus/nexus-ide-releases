@@ -112,9 +112,10 @@ import {
 import {
   NarrationQueue,
   canStartNarration,
-  narrationStillOwnsVoice,
+  createNarrationPlayer,
   type NarrationVoiceState,
 } from './narration-queue';
+import { speakSegment } from './voice-speak-pipeline';
 import { useToastStore } from '../state/toast-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
 import {
@@ -1047,6 +1048,11 @@ export function useVoiceController(active = true): void {
     // deadline da etapa — STT falho não pode deixar 'transcribing' eterno.
     let watchedStatus = useVoiceStore.getState().status;
     let watchedStatusAt = Date.now();
+    // Relato de handoff em síntese (TTS local lento, 14-28 s): o HUD fica em
+    // `speaking` sem nenhum áudio audível ainda. É progresso, não travamento —
+    // senão o watchdog forçava `idle` aos 6 s e o relato era sintetizado de novo
+    // em laço. O deadline da própria síntese (speakSegment) limita o sinal.
+    let narrationSynthesizing = false;
     const unsubStatusWatchdog = useVoiceStore.subscribe((s) => {
       if (s.status !== watchedStatus) {
         watchedStatus = s.status;
@@ -1064,6 +1070,7 @@ export function useVoiceController(active = true): void {
           liveRemainingMs: livePlayer?.remainingMs() ?? 0,
           pendingLiveChunks: pendingRealtimeAudioOut.length,
           localAudioAudible: isLocalAudioAudible(Date.now()),
+          narrationSynthesizing,
         })
       ) {
         watchedStatusAt = Date.now();
@@ -1333,6 +1340,7 @@ export function useVoiceController(active = true): void {
 
     const narrationVoiceState = (): NarrationVoiceState => ({
       status: useVoiceStore.getState().status,
+      turnToken: turnExecution.currentToken,
       turnBusy: busy.current,
       wakeOpening: wakeOpenInProgress,
       listening: isListening(capture.current),
@@ -1342,39 +1350,37 @@ export function useVoiceController(active = true): void {
       localAudioAudible: isLocalAudioAudible(Date.now()),
       halted: isJarvisNarrationHalted(),
     });
-    const narrationQueue = new NarrationQueue({
+    const narrationQueue: NarrationQueue = new NarrationQueue({
       canPlay: () => canStartNarration(narrationVoiceState()),
-      play: async (text) => {
-        if (isResponseMuted() || isJarvisNarrationHalted()) return;
-        const storeNarrate = useVoiceStore.getState();
-        storeNarrate.setStatus('speaking');
-        stopAllPlayback();
-        try {
-          const spoken = await window.nexus.voice.speak({ text, speakMode: 'full' });
-          if (isJarvisNarrationHalted() || isResponseMuted()) return;
-          // A síntese leva segundos: se um wake/turno assumiu a voz nesse meio
-          // tempo, o relato volta para a fila em vez de falar por cima dele.
-          const state = narrationVoiceState();
-          if (!narrationStillOwnsVoice({ ...state, localAudioAudible: false })) {
-            narrationQueue.requeue(text);
-            logVoiceEvent(
-              'info',
-              'jarvis.narrationDeferred',
-              'relato adiado: um turno assumiu a voz durante a síntese',
-              { status: state.status, turnBusy: state.turnBusy },
-            );
-            return;
-          }
-          if (spoken.ok && spoken.mode === 'audio') {
-            await playAudioBase64(spoken.audioBase64, spoken.format);
-          }
-        } finally {
-          if (useVoiceStore.getState().status === 'speaking') {
-            useVoiceStore.getState().setStatus('idle');
-          }
-        }
-      },
+      play: createNarrationPlayer({
+        isMuted: isResponseMuted,
+        isHalted: isJarvisNarrationHalted,
+        voiceState: narrationVoiceState,
+        setStatus: (status) => useVoiceStore.getState().setStatus(status),
+        stopPlayback: () => stopAllPlayback(),
+        // Com deadline (40 s): a síntese nunca segura o watchdog para sempre.
+        synthesize: (text) => speakSegment(text, 'TTS do relato'),
+        playAudio: (audioBase64, format) => playAudioBase64(audioBase64, format),
+        setSynthesizing: (active) => {
+          narrationSynthesizing = active;
+        },
+        requeue: (text) => narrationQueue.requeue(text),
+        onDeferred: (state) =>
+          logVoiceEvent(
+            'info',
+            'jarvis.narrationDeferred',
+            'relato adiado: um turno assumiu a voz durante a síntese',
+            { status: state.status, turnBusy: state.turnBusy },
+          ),
+      }),
       onError: (error) => console.warn('[voice] narração falhou:', error),
+      onDrop: (_text, attempts) =>
+        logVoiceEvent(
+          'warn',
+          'jarvis.narrationDropped',
+          'relato descartado: a voz foi tomada em todas as tentativas',
+          { attempts },
+        ),
     });
     registerNarrationControl({
       clear: () => narrationQueue.clear(),

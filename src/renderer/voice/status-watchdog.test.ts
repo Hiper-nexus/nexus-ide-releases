@@ -54,6 +54,26 @@ describe('speakingHasAudioProgress (follow-up 5)', () => {
       speakingHasAudioProgress({ liveRemainingMs: 0, pendingLiveChunks: 0, localAudioAudible: false }),
     ).toBe(false);
   });
+
+  it('síntese de relato em curso = progresso: a TTS lenta (14-28 s) não é travamento', () => {
+    const silent = { liveRemainingMs: 0, pendingLiveChunks: 0, localAudioAudible: false };
+    expect(speakingHasAudioProgress({ ...silent, narrationSynthesizing: true })).toBe(true);
+    expect(speakingHasAudioProgress({ ...silent, narrationSynthesizing: false })).toBe(false);
+    // Sinal omitido (chamadores antigos) = nenhuma síntese: o deadline segue valendo.
+    expect(speakingHasAudioProgress(silent)).toBe(false);
+  });
+
+  it('enquanto o relato sintetiza o watchdog re-arma o relógio em vez de forçar idle', () => {
+    // Mesmo contrato do tick do controller: progresso → re-arma e NÃO consulta o deadline.
+    const silent = { liveRemainingMs: 0, pendingLiveChunks: 0, localAudioAudible: false };
+    const stuckMs = STATUS_STUCK_DEADLINES_MS.speaking! + 20_000; // bem além dos 6 s
+    const tick = (narrationSynthesizing: boolean) =>
+      speakingHasAudioProgress({ ...silent, narrationSynthesizing })
+        ? 'rearm'
+        : statusWatchdogAction('speaking', stuckMs);
+    expect(tick(true)).toBe('rearm');
+    expect(tick(false)).toBe('force-idle'); // sem síntese, o travamento real continua pego
+  });
 });
 
 describe('wiring do watchdog no voice-controller (follow-up 3iii)', () => {
@@ -62,6 +82,16 @@ describe('wiring do watchdog no voice-controller (follow-up 3iii)', () => {
   it('o tick usa speakingHasAudioProgress com os 3 sinais (Live + clássico)', () => {
     expect(source).toContain('speakingHasAudioProgress({');
     expect(source).toContain('localAudioAudible: isLocalAudioAudible(Date.now())');
+  });
+
+  it('o tick também passa o sinal de síntese do relato (TTS lenta não é status preso)', () => {
+    const tickStart = source.indexOf('speakingHasAudioProgress({');
+    const tickEnd = source.indexOf('})', tickStart);
+    expect(tickStart).toBeGreaterThanOrEqual(0);
+    expect(source.slice(tickStart, tickEnd)).toContain('narrationSynthesizing,');
+    // O sinal nasce na criação da fila de relatos e a síntese tem deadline.
+    expect(source).toContain('let narrationSynthesizing = false;');
+    expect(source).toContain("speakSegment(text, 'TTS do relato')");
   });
 
   it('force-idle LIBERA busy antes de setar idle (pipeline nunca fica preso)', () => {
