@@ -44,6 +44,11 @@ export function clearRouteProvenance(): void {
  * Limitação herdada do ring acima: memória do processo main, sem escopo por
  * checkout. Para o fair-share (gap 2 em 7 dias) o sinal entre checkouts é
  * desprezível; a alternativa seria não contar nada — o bug.
+ *
+ * F-232 (2ª rodada): a mesma pane passava a contar DUAS vezes — a decisão sem
+ * missão do `nexus_route_task` e o spawn físico registrado em
+ * `spawnAgentSession`. Agora o spawn consome a decisão pendente do mesmo adapter
+ * (`kind`), e uma decisão que nunca virou pane para de contar depois da validade.
  */
 export interface DurableRouteUse {
   adapterId: string;
@@ -51,9 +56,21 @@ export interface DurableRouteUse {
   specialty?: string;
   sessionId?: string;
   at: number;
+  /**
+   * `decision` = nexus_route_task sem missão (ainda sem pane físico);
+   * `spawn` = pane de agente CLI nascido de verdade. Ausente = arquivo escrito
+   * antes do campo existir, desfeito por `entryKind` a partir do sessionId.
+   */
+  kind?: 'decision' | 'spawn';
 }
 
-const MISSIONLESS_CAP = 128;
+/**
+ * Capacidade medida (F-232): o teto de 128 came de um ring de processo, mas o
+ * armazenamento é durável e o uso real é ~350 spawns em 7 dias com retenção de
+ * 30 — o ceiling antigo descartava uso recente e subestimava o fair-share.
+ * 4096 cabe folgado nos 30 dias de retenção mesmo com o JSON indentado.
+ */
+export const MISSIONLESS_CAP = 4096;
 
 let missionlessUses: DurableRouteUse[] = [];
 
@@ -63,7 +80,14 @@ let missionlessUses: DurableRouteUse[] = [];
 // na carga e na gravação; consultas de fair-share filtram pela janela ativa (7 dias).
 export const MISSIONLESS_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 export const ROUTE_USE_PRUNE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
-const MISSIONLESS_MAX_FILE_BYTES = 64 * 1024;
+/**
+ * Validade de uma decisão sem pane: dentro dela a decisão conta (provisória, o
+ * spawn pode estar a caminho) e o spawn que chegar consome a linha; depois
+ * dela some da contagem, porque uma consulta ao router que nunca virou pane não
+ * pode inflar o fair-share para sempre.
+ */
+export const DECISION_GRACE_MS = 120_000;
+const MISSIONLESS_MAX_FILE_BYTES = 1024 * 1024;
 const MISSIONLESS_FILENAME = 'missionless-route-uses.json';
 
 let missionlessLoaded = false;
@@ -97,10 +121,26 @@ function validUse(u: unknown, floor: number): u is DurableRouteUse {
     (r.model === undefined || typeof r.model === 'string') &&
     (r.specialty === undefined || typeof r.specialty === 'string') &&
     (r.sessionId === undefined || typeof r.sessionId === 'string') &&
+    (r.kind === undefined || r.kind === 'decision' || r.kind === 'spawn') &&
     typeof r.at === 'number' &&
     Number.isFinite(r.at) &&
     r.at >= floor
   );
+}
+
+/** `kind` ausente = arquivo anterior ao campo: a linha com sessionId É um spawn, a sem sessionId é uma decisão. */
+function entryKind(use: DurableRouteUse): 'decision' | 'spawn' {
+  return use.kind ?? (use.sessionId ? 'spawn' : 'decision');
+}
+
+function persist(): void {
+  const file = missionlessFile();
+  if (!file) return;
+  try {
+    writeJsonAtomic(file, missionlessUses);
+  } catch {
+    // persistência é melhor-esforço: a memória do processo continua valendo.
+  }
 }
 
 function ensureMissionlessLoaded(): void {
@@ -124,6 +164,11 @@ function ensureMissionlessLoaded(): void {
  * Registra o nascimento físico de um pane de agente CLI de IA no contador durável.
  * Ocorre no ponto único de spawn de agente (spawnAgentSession), independente
  * do ciclo de vida da missão.
+ *
+ * Consome a decisão pendente do MESMO adapter quando ela existe (F-232): o
+ * `nexus_route_task` sem missão e o spawn físico do mesmo pane contavam 2×. A
+ * linha absorve o sessionId e o instante do spawn, guarda a specialty da
+ * decisão (revezamento visual por modelo) e vira `spawn` — um pane, uma linha.
  */
 export function recordAgentSpawn(
   spawn: { adapterId: string; model?: string; specialty?: string; sessionId?: string },
@@ -131,30 +176,69 @@ export function recordAgentSpawn(
 ): void {
   ensureMissionlessLoaded();
   const floor = Date.now() - ROUTE_USE_PRUNE_WINDOW_MS;
+  const kept = missionlessUses.filter((u) => u.at >= floor);
+  const pending = findPendingDecision(kept, spawn.adapterId, at);
+  if (pending >= 0) {
+    const decision = kept[pending];
+    kept[pending] = {
+      ...decision,
+      adapterId: spawn.adapterId,
+      model: spawn.model ?? decision.model,
+      sessionId: spawn.sessionId ?? decision.sessionId,
+      at,
+      kind: 'spawn',
+    };
+    missionlessUses = kept.slice(-MISSIONLESS_CAP);
+    persist();
+    return;
+  }
   missionlessUses = [
-    ...missionlessUses.filter((u) => u.at >= floor).slice(-(MISSIONLESS_CAP - 1)),
+    ...kept.slice(-(MISSIONLESS_CAP - 1)),
     {
       adapterId: spawn.adapterId,
       model: spawn.model,
       specialty: spawn.specialty,
       sessionId: spawn.sessionId,
       at,
+      kind: 'spawn',
     },
   ];
-  const file = missionlessFile();
-  if (!file) return;
-  try {
-    writeJsonAtomic(file, missionlessUses);
-  } catch {
-    // persistência é melhor-esforço: a memória do processo continua valendo.
+  persist();
+}
+
+/** Índice da decisão pendente (sem sessionId, dentro da validade) mais recente do adapter, ou -1. */
+function findPendingDecision(
+  uses: readonly DurableRouteUse[],
+  adapterId: string,
+  at: number,
+): number {
+  for (let i = uses.length - 1; i >= 0; i -= 1) {
+    const use = uses[i];
+    if (!use || use.adapterId !== adapterId || use.sessionId) continue;
+    if (entryKind(use) !== 'decision') continue;
+    if (at - use.at > DECISION_GRACE_MS) continue;
+    return i;
   }
+  return -1;
 }
 
 export function recordMissionlessRouteDecision(
   decision: { adapterId: string; model?: string; specialty?: string },
   at: number = Date.now(),
 ): void {
-  recordAgentSpawn(decision, at);
+  ensureMissionlessLoaded();
+  const floor = Date.now() - ROUTE_USE_PRUNE_WINDOW_MS;
+  missionlessUses = [
+    ...missionlessUses.filter((u) => u.at >= floor).slice(-(MISSIONLESS_CAP - 1)),
+    {
+      adapterId: decision.adapterId,
+      model: decision.model,
+      specialty: decision.specialty,
+      at,
+      kind: 'decision',
+    },
+  ];
+  persist();
 }
 
 /**
@@ -177,9 +261,14 @@ export function missionlessRouteCountsByAdapterSince(
 ): Map<string, number> {
   ensureMissionlessLoaded();
   const counts = new Map<string, number>([['visual:', 0]]);
+  const now = Date.now();
   for (const use of missionlessUses) {
     if (use.at < sinceMs) continue;
     if (use.sessionId && excludeSessionIds?.has(use.sessionId)) continue;
+    // Decisão sem pane confirmado é provisória: vale enquanto a validade não
+    // expira (o spawn pode estar a caminho) e some depois — uma consulta ao
+    // router que nunca virou pane não conta para sempre.
+    if (entryKind(use) === 'decision' && now - use.at > DECISION_GRACE_MS) continue;
     counts.set(use.adapterId, (counts.get(use.adapterId) ?? 0) + 1);
     if (use.specialty === 'visual' && use.model) {
       const key = `visual:${use.adapterId}:${use.model}`;
