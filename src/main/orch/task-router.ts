@@ -2296,6 +2296,23 @@ export function routeTask(
     for (const entry of entries) if (isFailing(entry)) markAvoidedFailing(entry.c.adapterId, entry.c.model);
     return ready;
   };
+  // O rerank multi-score pode coroar a própria rota falha (muse 0/7 ainda
+  // lidera o hard quando a diversidade −36 come Opus e Sol). Lane, rotação
+  // e fair-share só tiram a falha do pool — não trocam esse líder. A
+  // primeira pronta do mesmo tier assume o topo; só falhas, ou circuito
+  // aberto, não muda nada. Menção explícita continua depois e vence.
+  // Fica depois do desempate e do topo high-risk: os dois reordenam e
+  // devolveriam a falha antes da lane ver a ordem corrigida.
+  if (runMultiScore && ranked.length > 1 && ranked[0] && isFailing(ranked[0])) {
+    const ready = ranked.find((entry) =>
+      entry.fromTier === tier &&
+      !adapterCircuitBreakers.isOpen(entry.c.adapterId) &&
+      !isFailing(entry));
+    if (ready && ready !== ranked[0]) {
+      markAvoidedFailing(ranked[0].c.adapterId, ranked[0].c.model);
+      ranked = [ready, ...ranked.filter((entry) => entry !== ready)];
+    }
+  }
   const applyFrontierLane = (
     lane: ReadonlyArray<{ adapterId: string; model: string; preferenceOnly?: true; effort?: RouteEffort | 'max' }>,
   ): boolean => {
@@ -2797,10 +2814,18 @@ export function routeTask(
     // Fail-open honesto: se o pick final também é rota falha (única opção),
     // nada foi evitado — sem nota. O que o multi-score já anunciou no
     // próprio recibo não repete aqui.
+    // O multi-score só anuncia "evitou rota falha" quando o líder dele não
+    // falha. A cláusula "sucesso 14d" usa o mesmo texto da taxa, então o
+    // filtro tem de olhar a nota de evitação — senão a promoção do líder
+    // falho some do recibo.
+    const multiScoreAvoidedAt = multiScoreNote.indexOf('evitou rota falha: ');
+    const multiScoreAlreadyAvoided = (text: string) =>
+      multiScoreAvoidedAt >= 0 &&
+      multiScoreNote.slice(multiScoreAvoidedAt + 'evitou rota falha: '.length).includes(text);
     const avoidedFailing =
       provenFailure(pick.adapterId, pick.model) === null
         ? [...avoidedFailingRoutes]
-            .filter(([, text]) => !multiScoreNote.includes(text))
+            .filter(([, text]) => !multiScoreAlreadyAvoided(text))
             .map(([, text]) => text)
         : [];
     const failingAvoidedNote =
