@@ -40,6 +40,7 @@ import {
   applyGatewayCredential,
   gatewayForwardsProviderCredential,
 } from "./gateway-env";
+import { listDurableRouteUses } from "../orch/route-provenance";
 
 const windowsNpmShimLaunch = vi.hoisted(() => ({
   launch: null as
@@ -7578,3 +7579,32 @@ describe('F-1143 — actual physical manual adoption and return', () => {
     }
   });
 });
+
+describe("F-232 / F-1291 registro de spawn durável em spawnAgentSession", () => {
+  it("registra spawn de agente e ignora resume:true", () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pty-spawn-durable-")));
+    const adapter = makeAdapter(
+      { static: {}, passthrough: [], ephemeralHome: false },
+      { resumeArgs: [], resumeIdArgs: ["--resume"], sessionIdArg: "--session-id" },
+    );
+    const authority = trustedSpawn(root);
+    setPtyHost(fakeHost().host);
+    const beforeCount = listDurableRouteUses().filter((u) => u.adapterId === "test-cli").length;
+
+    // 1. Spawn frio registra
+    const first = spawnAgentSession(fakeWc(), { kind: "cli-agent", paneId: "pane-spawn-dur-1", cols: 80, rows: 24 }, adapter, {}, authority);
+    const afterFirst = listDurableRouteUses().filter((u) => u.adapterId === "test-cli");
+    expect(afterFirst.length).toBe(beforeCount + 1);
+    expect(afterFirst.at(-1)?.sessionId).toBe(first.sessionId);
+
+    // 2. Resume não registra de novo
+    const resumed = spawnAgentSession(fakeWc(), { kind: "cli-agent", paneId: "pane-spawn-dur-1", resume: true, cols: 80, rows: 24 }, adapter, {}, authority);
+    const afterResumed = listDurableRouteUses().filter((u) => u.adapterId === "test-cli");
+    expect(afterResumed.length).toBe(beforeCount + 1);
+
+    orchKillSession(first.sessionId);
+    orchKillSession(resumed.sessionId);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+});
+

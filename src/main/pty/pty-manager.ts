@@ -62,6 +62,7 @@ import { isAdvisoryUnconfinedCli } from "../../shared/mission-advisory";
 import type { CliPtyAdapter } from "../../shared/adapter-types";
 import { resolvePlaceholders } from "../../shared/adapter-types";
 import type { BoundSpawnAuthority } from "../orch/spawn-authority";
+import { recordAgentSpawn } from "../orch/route-provenance";
 import {
   WorkspaceRootMissingError,
   isMissingPathError,
@@ -1975,6 +1976,18 @@ export function spawnAgentSession(
       if (warm) {
         console.warn(`[warm-pool] adotado pane=${warm.sessionId} cli=${adapter.id}`);
         assertLicenseAccess();
+        if (!req.resume) {
+          try {
+            const warmSession = sessions.get(warm.sessionId);
+            recordAgentSpawn({
+              adapterId: adapter.id,
+              model: warmSession?.agent?.model || req.model || undefined,
+              sessionId: warm.sessionId,
+            });
+          } catch (recordErr) {
+            console.warn('[route-provenance] recordAgentSpawn failed on warm adoption:', recordErr);
+          }
+        }
         return warm;
       }
     } catch (err) {
@@ -3381,6 +3394,17 @@ export function spawnAgentSession(
     if (!readiness) overrides.onNativeBirthAuthorized?.();
     proc = host.spawn(spec, handlers, readiness);
     licenseChildSpawned = true;
+    if (!req.resume && !warmSpawnInProgress()) {
+      try {
+        recordAgentSpawn({
+          adapterId: adapter.id,
+          model: model || undefined,
+          sessionId,
+        });
+      } catch (recordErr) {
+        console.warn('[route-provenance] recordAgentSpawn failed:', recordErr);
+      }
+    }
   } catch (err) {
     // The host itself is unavailable (never initialized / failed to fork), so
     // no session will exist — free the minted token + on-disk artifacts here,
