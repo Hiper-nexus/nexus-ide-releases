@@ -1,3 +1,4 @@
+import { quotaPaceByAdapter } from './quota-pace';
 import { withMissionDecisionHints } from './mission-decision-hints';
 import { isFindingCorrectionTask, matchesReviewedFinding } from './routing-cost-policy';
 import { captureMissionCodeBaseline } from './mission-code-baseline-ledger';
@@ -2444,6 +2445,19 @@ export async function routeTaskForCaller(
       reviewedFindingFix = await isCurrentCodeCompletionFindingFix(ctx.scope, missionId, task).catch(() => false);
     }
   }
+  // Ritmo de cota por CLI (sobra que vai expirar no reset). Fail-open: sem
+  // serviço, sem snapshot ou erro, a rota fica idêntica à de antes.
+  let quotaPace: ReturnType<typeof quotaPaceByAdapter> | undefined;
+  try {
+    const { requireQuotaService } = await import('../quota/quota-service');
+    const snapshot = requireQuotaService().lastSnapshot();
+    if (snapshot) {
+      const pace = quotaPaceByAdapter(snapshot.entries, Date.now());
+      if (pace.size > 0) quotaPace = pace;
+    }
+  } catch {
+    quotaPace = undefined;
+  }
   // Contexto da REGRA: tudo que o roteador sabe, menos o que o Jev decidiu.
   // O contrafactual do recibo (`ruleChoice`, abaixo) reusa este objeto como
   // está — por construção ele não carrega especialidade nem esforço do Jev.
@@ -2464,6 +2478,7 @@ export async function routeTaskForCaller(
     preferAdapters: preferAdapters.length > 0 ? preferAdapters : undefined,
     ...(globalUseCounts ? { globalUseCounts } : {}),
     ...(routeOutcomes ? { routeOutcomes } : {}),
+    ...(quotaPace ? { quotaPace } : {}),
     // Uso geral: o multi-score (benchmark oficial + diversidade + custo)
     // vale também para o fan-out do operador sem missão — a ordem crua da
     // tabela não é medida de capacidade.

@@ -1,0 +1,92 @@
+/**
+ * Ritmo de cota por CLI: quanto da assinatura sobra em relação ao tempo que
+ * falta para o reset. Puro (sem electron).
+ *
+ * A cota de uma assinatura que expira no reset é custo ZERO se ficar sem uso e
+ * custo real se faltar antes dele. O roteador só EXCLUÍA CLI sem conta
+ * disponível; entre as com conta, Claude a 80% semanal e Grok a 37% com reset
+ * em 1,7 dia pesavam igual. `ratio` = folga restante ÷ fração de tempo
+ * restante: > 1 sobra cota que vai expirar, < 1 gasta mais rápido que o
+ * tempo, 0 não há como atender agora.
+ *
+ * Desconhecido NUNCA vira folga nem zero: sem janela medida o adapter fica
+ * AUSENTE do mapa e o roteador segue como antes.
+ */
+import { headroomReadings, isHeadroomExhausted } from '../quota/account-headroom';
+import type { ProviderQuotaEntry } from '../../shared/quota-types';
+
+export interface QuotaPace {
+  /** folga ÷ fração de tempo restante da janela que limita (0 = sem folga). */
+  readonly ratio: number;
+  /** Rótulo da janela que limita. */
+  readonly window: string;
+  readonly resetsInMs?: number;
+}
+
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+
+/** Duração nominal por cadência. `credits`/`local`/rótulo livre: sem ritmo. */
+const WINDOW_DURATION_MS: Readonly<Record<string, number>> = {
+  hours: 5 * HOUR_MS,
+  session: DAY_MS,
+  weekly: 7 * DAY_MS,
+  monthly: 30 * DAY_MS,
+};
+
+/** Piso de tempo restante: evita ratio explodir a segundos do reset. */
+const MIN_TIME_LEFT_FRAC = 0.02;
+
+function accountPace(entry: ProviderQuotaEntry, now: number): QuotaPace | null {
+  const readings = headroomReadings(entry);
+  if (entry.onCooldown || isHeadroomExhausted(entry)) {
+    // Rótulo da janela cheia; nunca o da conta (pode ser e-mail).
+    const full = [...readings.values()].find((reading) => reading.available <= 1e-6);
+    return { ratio: 0, window: full?.label ?? 'cooldown' };
+  }
+  let binding: QuotaPace | null = null;
+  for (const [key, reading] of readings) {
+    const duration = WINDOW_DURATION_MS[key];
+    const resetsInMs =
+      reading.resetsAt === null ? undefined : Math.max(0, reading.resetsAt - now);
+    const timeLeftFrac =
+      duration === undefined || resetsInMs === undefined
+        ? 1
+        : Math.min(1, Math.max(MIN_TIME_LEFT_FRAC, resetsInMs / duration));
+    const ratio = reading.available / timeLeftFrac;
+    if (binding === null || ratio < binding.ratio) {
+      binding = {
+        ratio,
+        window: reading.label,
+        ...(resetsInMs !== undefined ? { resetsInMs } : {}),
+      };
+    }
+  }
+  return binding;
+}
+
+/**
+ * Ritmo por adapter: MIN entre as janelas medidas de cada conta (a que
+ * limita), MAX entre as contas (o spawn escolhe a de maior folga). Adapter
+ * sem nenhuma janela medida não entra no mapa.
+ */
+export function quotaPaceByAdapter(
+  entries: readonly ProviderQuotaEntry[],
+  now: number,
+): Map<string, QuotaPace> {
+  const out = new Map<string, QuotaPace>();
+  for (const entry of entries) {
+    const pace = accountPace(entry, now);
+    if (!pace) continue;
+    const previous = out.get(entry.adapterId);
+    if (!previous || pace.ratio > previous.ratio) out.set(entry.adapterId, pace);
+  }
+  return out;
+}
+
+/** Termo do multi-score: 0 se desconhecido; senão 6·log2(ratio) preso em ±10. */
+export function quotaPaceScore(pace: QuotaPace | undefined): number {
+  if (!pace) return 0;
+  const score = 6 * Math.log2(Math.max(pace.ratio, 0.01));
+  return Math.min(10, Math.max(-10, score));
+}

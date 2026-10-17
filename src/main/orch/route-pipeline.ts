@@ -15,6 +15,7 @@ import {
 import { TIER_ORDER } from './task-router';
 import type { RankedRouteEntry, RouteContext, TaskTier } from './task-router';
 import { publishedCodingQuality } from './published-benchmarks';
+import { quotaPaceScore } from './quota-pace';
 
 /**
  * Nota neutra (6..24 → midpoint 15) para modelo sem nexus-eval nem benchmark
@@ -124,6 +125,8 @@ export interface ScoreBreakdown {
   preference: number;
   /** F-773: (taxa de sucesso 14d − 0,5) × 10; 0 sem amostra mínima. */
   success: number;
+  /** Ritmo de cota da CLI (±10; ×0,5 no critical); 0 sem leitura. */
+  quota: number;
   circuit: number;
   total: number;
 }
@@ -228,11 +231,16 @@ export function scoreRouteCandidate(
   const outcome = routeSuccessRate(input.context?.routeOutcomes, c.adapterId, c.model);
   const success = outcome ? (outcome.rate - 0.5) * ROUTE_OUTCOME_WEIGHT : 0;
 
+  // Cota de assinatura que expira no reset: sobra sobe, esgotamento desce.
+  const quota =
+    quotaPaceScore(input.context?.quotaPace?.get(c.adapterId)) *
+    (input.tier === 'critical' ? 0.5 : 1);
+
   const open = isCircuitOpen(c.adapterId, input.circuitOpen);
   const circuit = open ? -10_000 : 0;
 
-  const total = table + quality + cost + diversity + preference + success + circuit;
-  return { table, quality, cost, diversity, preference, success, circuit, total };
+  const total = table + quality + cost + diversity + preference + success + quota + circuit;
+  return { table, quality, cost, diversity, preference, success, quota, circuit, total };
 }
 
 /** Origem da nota de qualidade do candidato: nexus-eval > benchmark oficial > neutro. */
@@ -297,6 +305,16 @@ export function multiScoreRerank(input: MultiScoreInput): {
   }
   if (anyClosed && filtered.length < scored.length) {
     noteParts.push(' circuit-open skipped');
+  }
+  if (head && head.score.quota !== 0) {
+    const pace = input.context?.quotaPace?.get(head.c.adapterId);
+    if (pace) {
+      const sign = head.score.quota > 0 ? '+' : '';
+      noteParts.push(
+        `; cota: ${head.c.adapterId} ritmo ${pace.ratio.toFixed(1).replace('.', ',')}× ` +
+          `(${sign}${Math.round(head.score.quota)})`,
+      );
+    }
   }
   // F-773: o termo aparece no recibo — quem liderou e quem perdeu por ele.
   const outcomes = sorted

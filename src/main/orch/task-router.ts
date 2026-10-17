@@ -61,6 +61,7 @@ import {
 } from './route-pipeline';
 import { modelAccessQuarantine } from './model-access-quarantine';
 import { isAstraModel, routingPurpose } from './routing-cost-policy';
+import { quotaPaceScore, type QuotaPace } from './quota-pace';
 import { modelListAuthority, resolveOfferedModels } from '../adapters/model-availability';
 import { readMuseContributorConsent } from '../adapters/cli-model-discovery';
 
@@ -75,6 +76,9 @@ export type TaskTier = 'trivial' | 'easy' | 'medium' | 'hard' | 'critical';
  * zero reservas.
  */
 export const GLOBAL_USE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Ritmo de cota a partir do qual a CLI conta como econômica para escrita. */
+export const SPARE_QUOTA_PACE = 1.5;
 
 /** Gap mínimo para o fair-share trocar o líder — evita pingue-pongue. */
 export const FAIR_SHARE_GAP = 2;
@@ -153,6 +157,12 @@ export interface RouteContext {
    * menção explícita vêm depois e continuam mandando.
    */
   routeOutcomes?: RouteSuccessIndex;
+  /**
+   * Ritmo de cota por CLI (folga ÷ tempo até o reset). Assinatura com sobra
+   * que vai expirar sobe; a que esgota antes do reset desce. Ausente = sem
+   * leitura: rota idêntica à de antes. Never MCP input.
+   */
+  quotaPace?: ReadonlyMap<string, QuotaPace>;
 }
 
 export type RankedRouteEntry = {
@@ -2520,22 +2530,29 @@ export function routeTask(
       rotationNote === '' && fairShareNote === '' && mention.model === undefined && policy.source !== 'benchmark') {
     const baseline = ranked[0];
     const baselineOutcome = baseline && routeSuccessRate(context.routeOutcomes, baseline.c.adapterId, baseline.c.model);
+    const quotaTerm = (entry: RankedRouteEntry) => quotaPaceScore(context.quotaPace?.get(entry.c.adapterId));
     const economic = ranked.filter(entry => {
       if (!writerTierKeys.has(`${entry.c.adapterId}:${entry.c.model ?? ''}`) || adapterCircuitBreakers.isOpen(entry.c.adapterId)) return false;
       const info = modelCatalogInfo(modelCatalog, entry.c.adapterId, entry.c.model);
-      const knownEconomic = info && (['free', 'low', 'medium'].includes(info.costTier ?? '') ||
-        info.availability === 'free' || info.availability === 'cheap');
+      // Assinatura com sobra que vai expirar no reset: o custo marginal é
+      // cota, não o preço de API do catálogo.
+      const spareQuota = (context.quotaPace?.get(entry.c.adapterId)?.ratio ?? 0) >= SPARE_QUOTA_PACE;
+      const knownEconomic = spareQuota || (info && (['free', 'low', 'medium'].includes(info.costTier ?? '') ||
+        info.availability === 'free' || info.availability === 'cheap'));
       if (!knownEconomic) return false;
       const outcome = routeSuccessRate(context.routeOutcomes, entry.c.adapterId, entry.c.model);
       return !baselineOutcome || !outcome || outcome.rate >= baselineOutcome.rate;
     });
+    // Estável: mais sobra de cota primeiro; sem quotaPace todos valem 0 e a ordem não muda.
+    economic.sort((a, b) => quotaTerm(b) - quotaTerm(a));
     if (economic.length > 0) {
       // Pedido do operador (Devin SWE-2, 12/10): o fair-share acima só olha o
       // líder ANTES do custo — no hard é o Opus, que este passo sempre tira,
       // então nunca acumula uso e o 1º econômico (Wonder Full) levava toda
       // rota de writer. O espalhamento por uso 7d vale entre os econômicos,
       // com as mesmas exclusões do fair-share (F-821: segurança fora).
-      if (context.globalUseCounts !== undefined && tier !== 'critical' && frontier === null &&
+      if (context.globalUseCounts !== undefined && tier !== 'critical' &&
+          (frontier === null || frontier.policy === 'high-risk') &&
           evaluated.length === 0 && !securityWork) {
         const use = (entry: RankedRouteEntry) => context.globalUseCounts!.get(entry.c.adapterId) ?? 0;
         const minUse = Math.min(...economic.map(use));
