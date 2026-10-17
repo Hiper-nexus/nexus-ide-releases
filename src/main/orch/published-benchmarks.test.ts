@@ -158,4 +158,23 @@ describe('benchmarks oficiais publicados (F-675)', () => {
     expect(publishedScoreHint('opencode', 'opencode/deepseek-v4-flash')).toBeNull();
     expect(publishedScoreHint('nope', 'nope-1')).toBeNull();
   });
+
+  it('deepseek-flash no Claude e no Qwen herdam o benchmark oficial da DeepSeek', () => {
+    const direct = publishedBenchmarkFor('deepseek', 'deepseek-flash');
+    expect(direct).toMatchObject({ deepSWE: 74.2, terminalBench21: 90.6 });
+
+    const claudeFlash = publishedBenchmarkFor('claude', 'deepseek-flash');
+    expect(claudeFlash).toEqual(direct);
+
+    const qwenFlash = publishedBenchmarkFor('qwen', 'deepseek-flash');
+    expect(qwenFlash).toEqual(direct);
+
+    expect(publishedCodingQuality('claude', 'deepseek-flash')).toBe(
+      publishedCodingQuality('deepseek', 'deepseek-flash'),
+    );
+    expect(publishedCodingQuality('qwen', 'deepseek-flash')).toBe(
+      publishedCodingQuality('deepseek', 'deepseek-flash'),
+    );
+  });
 });
+

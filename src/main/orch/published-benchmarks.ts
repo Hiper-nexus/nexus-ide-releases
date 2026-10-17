@@ -67,6 +67,8 @@ export const PUBLISHED_BENCHMARKS: Readonly<Record<string, PublishedBenchmark>> 
   'devin:swe-2': { deepSWE: 73.0, terminalBench21: 92.8, source: 'https://cognition.com/blog/swe-2' },
   'longcat:LongCat-2.0': { terminalBench21: 70.8, source: 'https://huggingface.co/meituan-longcat/LongCat-2.0' },
   'deepseek:deepseek-flash': { deepSWE: 74.2, terminalBench21: 90.6, source: 'https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash' },
+  'claude:deepseek-flash': { sameModelAs: 'deepseek:deepseek-flash', source: 'DeepSeek Flash no Claude' },
+  'qwen:deepseek-flash': { sameModelAs: 'deepseek:deepseek-flash', source: 'DeepSeek Flash no Qwen Code' },
   'deepseek:deepseek-v4-pro': { deepSWE: 62.7, terminalBench21: 87.9, source: 'https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro-0813' },
   'muse:muse-spark-1.3': { deepSWE: 75.4, terminalBench21: 88.8, source: 'https://dev.meta.ai/models/muse-spark/' },
   // F-1391: tabela oficial da Meta (12/10), mesma DeepSWE das linhas Opus 5.5

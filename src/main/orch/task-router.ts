@@ -34,7 +34,9 @@ import {
   SECURITY_DEFECT_SIGNALS,
   classifyRouteSpecialty,
   decisiveSignals,
+  isRouteSpecialty,
   matchSignals,
+  normalizeRouteSpecialty,
   preferAdapterOrder,
   resolveSpecialtyPolicy,
   type RoutePolicySource,
@@ -131,7 +133,7 @@ export interface RouteContext {
    * Especialidade já julgada pelo chamador (Jev via jev-task-routing) —
    * substitui só a heurística de palavras-chave; política/benchmark seguem.
    */
-  specialtyOverride?: RouteSpecialty;
+  specialtyOverride?: RouteSpecialty | string;
   /** Reasoning per turn judged independently of model rank and specialty. */
   effortOverride?: RouteEffort;
   /**
@@ -246,6 +248,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'glm', model: 'glm-5.3', effort: 'medium' },
     { adapterId: 'longcat', model: 'LongCat-2.0', effort: 'medium' },
     { adapterId: 'deepseek', model: 'deepseek-v4-pro', effort: 'medium' },
+    { adapterId: 'deepseek', model: 'deepseek-flash', effort: 'medium' },
     { adapterId: 'qwen', model: 'qwen3.8-max', effort: 'medium' },
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-flash' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3.1-Flash-Preview' },
@@ -754,7 +757,9 @@ export const FRONTIER_ORDER: Readonly<Record<FrontierRoutePolicy, readonly strin
 
 /**
  * F-1400 ADD2: front alterna entre Opus max, Sonnet high, Wonder Full max,
- * Kimi, Sol 6.1 e Devin SWE-2 high pelo uso visual recente de cada modelo.
+ * Kimi, Sol 6.1, Devin SWE-2 high e DeepSeek Flash pelo uso visual recente
+ * de cada modelo. DeepSeek Flash (DeepSWE 74,2 / TerminalBench 2.1 90,6):
+ * excelente em frontend, rápido e barato nas CLIs deepseek, claude e qwen.
  * Empate segue esta ordem. Next.js/jogos usam Opus quando elegível; sem ele,
  * vale o pool. Devin (pedido do operador, 12/10): "muito massa até em front",
  * limites e custo bons (plano Devin; DeepSWE 73,0 — cognition.com/blog/swe-2).
@@ -772,6 +777,9 @@ export const VISUAL_FRONTIER_LANE: ReadonlyArray<{
   { adapterId: 'kimi', model: 'kimi-code/k3' },
   { adapterId: 'codex', model: 'gpt-6.1-sol' },
   { adapterId: 'devin', model: 'swe-2-high' },
+  { adapterId: 'deepseek', model: 'deepseek-flash' },
+  { adapterId: 'claude', model: 'deepseek-flash' },
+  { adapterId: 'qwen', model: 'deepseek-flash' },
   { adapterId: 'codex', model: 'gpt-6-astra' },
 ]);
 
@@ -1900,10 +1908,15 @@ export function routeTask(
   // Revisão Fable R1: só o texto da TASK — o classificationText traz os briefs
   // .md referenciados, e um "Next steps" num brief mandava a missão ao Opus max.
   const nextOrGame = heuristicSpecialty.specialty !== 'security' && isNextOrGameTask(taskText);
-  const specialtyVerdict = context.specialtyOverride
+  const explicitSpecialty = context.specialtyOverride
+    ? normalizeRouteSpecialty(context.specialtyOverride) ?? (
+        isRouteSpecialty(context.specialtyOverride) ? context.specialtyOverride : undefined
+      )
+    : undefined;
+  const specialtyVerdict = explicitSpecialty
     ? {
         ...heuristicSpecialty,
-        specialty: context.specialtyOverride,
+        specialty: explicitSpecialty,
         reason: `especialidade julgada pelo Jev (heurística: ${heuristicSpecialty.specialty})`,
       }
     : nextOrGame ? { ...heuristicSpecialty, specialty: 'visual' as const } : heuristicSpecialty;
