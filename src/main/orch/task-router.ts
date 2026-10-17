@@ -2286,6 +2286,16 @@ export function routeTask(
       );
     }
   };
+  // Pools de rotação/fair-share/preferência escolhem o MENOS usado — e a rota
+  // falha é justamente a menos usada. Tira-a do pool enquanto houver outra
+  // pronta (fail-open: se só sobra rota falha, o pool fica como está).
+  const isFailing = (entry: RankedRouteEntry) => provenFailure(entry.c.adapterId, entry.c.model) !== null;
+  const healthyPool = (entries: RankedRouteEntry[]): RankedRouteEntry[] => {
+    const ready = entries.filter((entry) => !isFailing(entry));
+    if (ready.length === 0 || ready.length === entries.length) return entries;
+    for (const entry of entries) if (isFailing(entry)) markAvoidedFailing(entry.c.adapterId, entry.c.model);
+    return ready;
+  };
   const applyFrontierLane = (
     lane: ReadonlyArray<{ adapterId: string; model: string; preferenceOnly?: true; effort?: RouteEffort | 'max' }>,
   ): boolean => {
@@ -2345,8 +2355,7 @@ export function routeTask(
     // outro assento pronto nela (fail-open: se todo assento falha, a ordem
     // fica como está). Muse 0/7 liderava a lane de julgamento e cada spawn
     // morria em credencial recusada → failover em cadeia.
-    const laneFailing = (entry: RankedRouteEntry) =>
-      provenFailure(entry.c.adapterId, entry.c.model) !== null;
+    const laneFailing = isFailing;
     const laneHasReadySeat = inLane.some((entry) => !laneFailing(entry));
     if (laneHasReadySeat) {
       for (const entry of inLane) {
@@ -2514,12 +2523,16 @@ export function routeTask(
     // Só rotaciona para um candidato do MESMO tier da tarefa — um assento
     // "fresco" emprestado de tier mais fraco derrubaria o trabalho (achado
     // da revisão: task hard → glm-flash[1m]).
-    const fresh = ranked.find(
+    const freshPool = ranked.filter(
       (entry) =>
         entry.fromTier === tier &&
         !usedInMission.has(entry.c.adapterId) &&
         !adapterCircuitBreakers.isOpen(entry.c.adapterId),
     );
+    // Assento fresco que só tem rota falha não rotaciona quando o líder está
+    // pronto (fail-open só se o líder também falha).
+    const fresh = healthyPool(freshPool).find((entry) => !isFailing(entry)) ??
+      (isFailing(ranked[0]!) ? freshPool[0] : undefined);
     if (fresh) {
       ranked = [fresh, ...ranked.filter((entry) => entry !== fresh)];
       rotationNote = `; rotação garantida: ${fresh.c.adapterId} ainda sem assento na missão`;
@@ -2545,11 +2558,11 @@ export function routeTask(
     mention.model === undefined
   ) {
     const use = (id: string) => context.globalUseCounts!.get(id) ?? 0;
-    const pool = ranked.filter(
+    const pool = healthyPool(ranked.filter(
       (entry) =>
         entry.fromTier === tier &&
         !adapterCircuitBreakers.isOpen(entry.c.adapterId),
-    );
+    ));
     const leader = ranked[0];
     if (leader && pool.length > 1) {
       const minUse = Math.min(...pool.map((entry) => use(entry.c.adapterId)));
@@ -2639,9 +2652,9 @@ export function routeTask(
   if (!nextGameOpusApplied && context.preferAdapters?.length && tier !== 'critical' && !securityWork &&
       frontier === null && purpose !== 'finding-fix' && evaluated.length === 0 &&
       policy.source !== 'benchmark' && mention.model === undefined) {
-    const pool = ranked.filter(entry =>
+    const pool = healthyPool(ranked.filter(entry =>
       (visualLaneEntries ? visualLaneEntries.has(entry) : entry.fromTier === tier) &&
-      !adapterCircuitBreakers.isOpen(entry.c.adapterId));
+      !adapterCircuitBreakers.isOpen(entry.c.adapterId)));
     const seats = (id: string) => context.missionUseCounts?.get(id) ?? (usedInMission.has(id) ? 1 : 0);
     const globalUse = (id: string) => context.globalUseCounts?.get(id) ?? 0;
     const minSeats = Math.min(...pool.map(entry => seats(entry.c.adapterId)));
@@ -2725,13 +2738,16 @@ export function routeTask(
       TIER_ORDER.indexOf(chosen.fromTier) < tierIndex &&
       !appliedLaneEntries?.has(chosen)
     ) {
-      const ownTier = ranked.find(
+      const ownTiers = ranked.filter(
         (r) =>
           r.fromTier === tier &&
           r.c !== chosen.c &&
           !adapterCircuitBreakers.isOpen(r.c.adapterId) &&
           !(reserveClaude && r.c.adapterId === 'claude'),
       );
+      // Rota falha não é opção "pronta": só entra se o escolhido também falha.
+      const ownTier = healthyPool(ownTiers).find((r) => !isFailing(r)) ??
+        (isFailing(chosen) ? ownTiers[0] : undefined);
       if (ownTier) {
         chosen = ownTier;
         ownTierGuardNote =
