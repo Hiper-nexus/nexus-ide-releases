@@ -21,6 +21,14 @@ function rules(source: string, selector: string): string {
   return Array.from(matches, (match) => match[1]).join('\n');
 }
 
+describe('Configurações — sem rolagem vazia após o fim da seção', () => {
+  it('o workspace contém filhos absolutos (position:relative + overflow:hidden)', () => {
+    const body = rules(css('settings.css'), '.settings-workspace');
+    expect(body).toMatch(/position:\s*relative/);
+    expect(body).toMatch(/overflow:\s*hidden/);
+  });
+});
+
 describe('F-1005 (6) — rodapé do terminal segue o tema', () => {
   it('o viewport do xterm pinta o fundo do tema do terminal, nunca o #000 do xterm.css', () => {
     const body = rules(css('base.css'), '.term-host .xterm .xterm-viewport');
