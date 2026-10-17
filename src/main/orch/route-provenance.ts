@@ -45,22 +45,24 @@ export function clearRouteProvenance(): void {
  * checkout. Para o fair-share (gap 2 em 7 dias) o sinal entre checkouts é
  * desprezível; a alternativa seria não contar nada — o bug.
  */
-interface MissionlessUse {
+export interface DurableRouteUse {
   adapterId: string;
   model?: string;
   specialty?: string;
+  sessionId?: string;
   at: number;
 }
 
 const MISSIONLESS_CAP = 128;
 
-let missionlessUses: MissionlessUse[] = [];
+let missionlessUses: DurableRouteUse[] = [];
 
-// F-1421: a contagem sobrevive a reinícios (o operador reinicia várias vezes
-// por dia e o revezamento zerava). JSON em userData, escrita atômica, arquivo
-// corrompido/gigante vira lista vazia, janela de 7 dias podada na carga e na
-// gravação. Fora do Electron (vitest) não há userData: fica só em memória.
+// F-1421 / F-232: a contagem sobrevive a reinícios (o operador reinicia várias
+// vezes por dia e o revezamento zerava). JSON em userData, escrita atômica,
+// arquivo corrompido/gigante vira lista vazia. Janela de retenção/prune de 30 dias
+// na carga e na gravação; consultas de fair-share filtram pela janela ativa (7 dias).
 export const MISSIONLESS_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+export const ROUTE_USE_PRUNE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const MISSIONLESS_MAX_FILE_BYTES = 64 * 1024;
 const MISSIONLESS_FILENAME = 'missionless-route-uses.json';
 
@@ -86,7 +88,7 @@ function missionlessFile(): string | null {
   }
 }
 
-function validUse(u: unknown, floor: number): u is MissionlessUse {
+function validUse(u: unknown, floor: number): u is DurableRouteUse {
   if (!u || typeof u !== 'object') return false;
   const r = u as Record<string, unknown>;
   return (
@@ -94,6 +96,7 @@ function validUse(u: unknown, floor: number): u is MissionlessUse {
     r.adapterId.length > 0 &&
     (r.model === undefined || typeof r.model === 'string') &&
     (r.specialty === undefined || typeof r.specialty === 'string') &&
+    (r.sessionId === undefined || typeof r.sessionId === 'string') &&
     typeof r.at === 'number' &&
     Number.isFinite(r.at) &&
     r.at >= floor
@@ -109,26 +112,32 @@ function ensureMissionlessLoaded(): void {
     if (fs.statSync(file).size > MISSIONLESS_MAX_FILE_BYTES) return;
     const parsed: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
     if (!Array.isArray(parsed)) return;
-    const floor = Date.now() - MISSIONLESS_WINDOW_MS;
-    const loaded = parsed.filter((u): u is MissionlessUse => validUse(u, floor));
+    const floor = Date.now() - ROUTE_USE_PRUNE_WINDOW_MS;
+    const loaded = parsed.filter((u): u is DurableRouteUse => validUse(u, floor));
     missionlessUses = [...loaded, ...missionlessUses].slice(-MISSIONLESS_CAP);
   } catch {
     // ausente ou corrompido: começa vazio; a próxima gravação sobrescreve.
   }
 }
 
-export function recordMissionlessRouteDecision(
-  decision: { adapterId: string; model?: string; specialty?: string },
+/**
+ * Registra o nascimento físico de um pane de agente CLI de IA no contador durável.
+ * Ocorre no ponto único de spawn de agente (spawnAgentSession), independente
+ * do ciclo de vida da missão.
+ */
+export function recordAgentSpawn(
+  spawn: { adapterId: string; model?: string; specialty?: string; sessionId?: string },
   at: number = Date.now(),
 ): void {
   ensureMissionlessLoaded();
-  const floor = Date.now() - MISSIONLESS_WINDOW_MS;
+  const floor = Date.now() - ROUTE_USE_PRUNE_WINDOW_MS;
   missionlessUses = [
     ...missionlessUses.filter((u) => u.at >= floor).slice(-(MISSIONLESS_CAP - 1)),
     {
-      adapterId: decision.adapterId,
-      model: decision.model,
-      specialty: decision.specialty,
+      adapterId: spawn.adapterId,
+      model: spawn.model,
+      specialty: spawn.specialty,
+      sessionId: spawn.sessionId,
       at,
     },
   ];
@@ -141,17 +150,36 @@ export function recordMissionlessRouteDecision(
   }
 }
 
+export function recordMissionlessRouteDecision(
+  decision: { adapterId: string; model?: string; specialty?: string },
+  at: number = Date.now(),
+): void {
+  recordAgentSpawn(decision, at);
+}
+
 /**
- * Usos sem missão desde `sinceMs` — insumo do fair-share. F-1400 (parte 2): a
- * forma espelha `consumedCountsByAdapterSince` do ledger (marcador `visual:`,
- * totais por adapter e `visual:adapter:model` para especialidade visual), para
- * o revezamento de front por modelo valer também fora de missão.
+ * Lista entradas do contador durável para inspeção/testes.
  */
-export function missionlessRouteCountsByAdapterSince(sinceMs: number): Map<string, number> {
+export function listDurableRouteUses(sinceMs: number = 0): readonly DurableRouteUse[] {
+  ensureMissionlessLoaded();
+  return missionlessUses.filter((u) => u.at >= sinceMs);
+}
+
+/**
+ * Usos desde `sinceMs` — insumo do fair-share. F-1400 (parte 2): a forma espelha
+ * `consumedCountsByAdapterSince` do ledger (marcador `visual:`, totais por adapter
+ * e `visual:adapter:model` para especialidade visual).
+ * Opcionalmente exclui sessionIds já computados por outros ledgers para evitar contagem dupla.
+ */
+export function missionlessRouteCountsByAdapterSince(
+  sinceMs: number,
+  excludeSessionIds?: ReadonlySet<string>,
+): Map<string, number> {
   ensureMissionlessLoaded();
   const counts = new Map<string, number>([['visual:', 0]]);
   for (const use of missionlessUses) {
     if (use.at < sinceMs) continue;
+    if (use.sessionId && excludeSessionIds?.has(use.sessionId)) continue;
     counts.set(use.adapterId, (counts.get(use.adapterId) ?? 0) + 1);
     if (use.specialty === 'visual' && use.model) {
       const key = `visual:${use.adapterId}:${use.model}`;

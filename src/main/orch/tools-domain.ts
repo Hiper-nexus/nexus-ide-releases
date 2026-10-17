@@ -2328,7 +2328,11 @@ export async function routeTaskForCaller(
       if (missionless.size > 0) {
         const merged = new Map(globalUseCounts);
         for (const [adapterId, n] of missionless) {
-          merged.set(adapterId, (merged.get(adapterId) ?? 0) + n);
+          if (adapterId === 'visual:') {
+            merged.set('visual:', 0);
+          } else {
+            merged.set(adapterId, Math.max(merged.get(adapterId) ?? 0, n));
+          }
         }
         globalUseCounts = merged;
       }
@@ -2371,6 +2375,30 @@ export async function routeTaskForCaller(
         );
     } catch {
       globalUseCounts = undefined;
+    }
+    // F-232 / F-1291: contador durável de uso por adapter (7 dias), sobrevivendo
+    // à exclusão de missões e registrando todo spawn real.
+    try {
+      const durable = missionlessRouteCountsByAdapterSince(
+        Date.now() - GLOBAL_USE_WINDOW_MS,
+      );
+      const hasDurableUses = Array.from(durable.keys()).some((k) => k !== 'visual:');
+      if (hasDurableUses) {
+        const hasVisualEntry = Array.from(durable.keys()).some(
+          (k) => k.startsWith('visual:') && k !== 'visual:',
+        );
+        const merged = new Map(globalUseCounts);
+        for (const [adapterId, n] of durable) {
+          if (adapterId === 'visual:') {
+            if (globalUseCounts?.has('visual:') || hasVisualEntry) merged.set('visual:', 0);
+          } else {
+            merged.set(adapterId, Math.max(merged.get(adapterId) ?? 0, n));
+          }
+        }
+        globalUseCounts = merged;
+      }
+    } catch {
+      // Sem memória durável, segue como antes.
     }
   }
   // F-773 (G4): laço de resultado — o que cada (CLI, modelo) entregou de
