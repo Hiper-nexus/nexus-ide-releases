@@ -2,6 +2,7 @@ import { assertLicenseAccess } from '../license-enforcement';
 import { licenseFailure } from '../../shared/license-errors';
 import { observePrivateMissionCommand } from '../private-mission-command-probe';
 import { registerMissionCheckpointIpc } from "./mission-checkpoint-ipc";
+import { handleTrusted } from "../security/trusted-ipc";
 import { BrowserWindow, dialog, ipcMain } from "electron";
 import { showOwnedOpenDialog } from "../dialog/owned-open-dialog";
 import type { WebContents } from "electron";
@@ -2274,6 +2275,33 @@ export function registerOrchIpc(): void {
       }
       requireLiveRendererWorkspaceScope(event.sender, requestedScope);
       redeliverPendingHandoffs(scope, mission.id);
+    }
+    return result;
+  });
+
+  // Aba renomeada: o rótulo da missão leve que mora nela acompanha o novo
+  // nome. Rótulo é cosmético — não há gate de política nem confirmação nativa;
+  // o Main valida o vínculo com a aba e o CAS do título antigo. Canal por
+  // handleTrusted (só a janela principal, frame principal).
+  const missionRenameForTabSchema = z
+    .object({
+      missionId: z.string().min(1).max(128),
+      tabKey: z.string().min(1).max(256).optional(),
+      spaceId: z.string().min(1).max(256).optional(),
+      fromTitle: z.string().min(1).max(120),
+      title: z.string().trim().min(1).max(120),
+    })
+    .strict()
+    .refine((value) => Boolean(value.tabKey ?? value.spaceId));
+  handleTrusted(ORCH_CHANNELS.missionRenameForTab, (event, raw) => {
+    const parsed = missionRenameForTabSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false, error: "invalid_payload" };
+    const result = requireMissionAuthority().renameTabMissionFromRenderer(
+      event.sender,
+      parsed.data,
+    );
+    if (result.ok) {
+      broadcastProjectStore(requireRendererWorkspaceScope(event.sender), "missions");
     }
     return result;
   });

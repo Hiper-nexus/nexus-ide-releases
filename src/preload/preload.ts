@@ -1148,6 +1148,13 @@ const api: NexusApi = {
       ownGroup?: boolean;
     }) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionCreateForPane, input),
+    renameTabMission: (input: {
+      missionId: string;
+      tabKey?: string;
+      spaceId?: string;
+      fromTitle: string;
+      title: string;
+    }) => ipcRenderer.invoke(ORCH_CHANNELS.missionRenameForTab, input),
     // F-231: "+ Pane" → "Nesta missão" — worker `operatorOpened` via Main.
     spawnOperatorPane: (input: {
       missionId: string;

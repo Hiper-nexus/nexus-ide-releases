@@ -43,6 +43,12 @@ export const ORCH_CHANNELS = {
   missionPromoteOrchestrator: 'orch:mission.promoteOrchestrator',
   /** "Tornar orquestrador" num pane solto: missão leve da aba, liderada por ele. */
   missionCreateForPane: 'orch:mission.createForPane',
+  /**
+   * Aba renomeada: a missão leve que mora nela troca o rótulo junto. O CAS
+   * (`fromTitle`) e o vínculo da aba são validados no Main — o renderer não
+   * renomeia missão de aba alheia nem rótulo dado pelo operador.
+   */
+  missionRenameForTab: 'orch:mission.renameForTab',
   /** F-231: "+ Pane" → "Nesta missão" — worker aberto pela mão do operador. */
   missionSpawnOperatorPane: 'orch:mission.spawnOperatorPane',
   missionUpdate: 'orch:missions.update',

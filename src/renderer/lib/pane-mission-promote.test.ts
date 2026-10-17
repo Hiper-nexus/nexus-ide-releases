@@ -1174,3 +1174,68 @@ describe('toastPromoted — atalho para o mapa da equipe (14/10)', () => {
     useToastStore.setState({ toasts: [] });
   });
 });
+
+// ── Aba renomeada: o rótulo da missão leve acompanha o novo nome ─────────────
+
+describe('renameMissionsOfRenamedTab — o rótulo da missão segue a aba', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  async function setupRenamedTab(bridge: Record<string, unknown>) {
+    const mod = await import('./pane-mission-promote');
+    const { useOrchStore } = await import('../state/orch-store');
+    useOrchStore.setState({ missions: [], paneMissions: {} });
+    Object.defineProperty(window, 'nexus', { configurable: true, value: { orch: bridge } });
+    return mod;
+  }
+
+  it('renomeia a missão cujo título ainda é o automático da aba antiga', async () => {
+    const renameTabMission = vi.fn(async () => ({ ok: true }));
+    const { renameMissionsOfRenamedTab } = await setupRenamedTab({ renameTabMission });
+
+    await renameMissionsOfRenamedTab(
+      {
+        key: 'space:space-1',
+        id: 'space-1',
+        missions: [
+          { id: 'mTab', title: 'Missão · Meus terminais 2' },
+          { id: 'mPedido', title: 'Missão · corrige o roteamento' },
+        ],
+      },
+      'Meus terminais 2',
+      'roteamento',
+    );
+
+    expect(renameTabMission).toHaveBeenCalledTimes(1);
+    expect(renameTabMission).toHaveBeenCalledWith({
+      missionId: 'mTab',
+      tabKey: 'space:space-1',
+      spaceId: 'space-1',
+      fromTitle: 'Missão · Meus terminais 2',
+      title: 'Missão · roteamento',
+    });
+  });
+
+  it('aba sem bridge ou sem missão automática não pede nada; falha do IPC é silenciosa', async () => {
+    const { renameMissionsOfRenamedTab } = await setupRenamedTab({});
+
+    await renameMissionsOfRenamedTab(
+      { key: 'space:space-1', id: 'space-1', missions: [{ id: 'mPedido', title: 'Missão · pedido' }] },
+      'Meus terminais 2',
+      'roteamento',
+    );
+
+    const failing = vi.fn(async () => {
+      throw new Error('ipc down');
+    });
+    const mod = await setupRenamedTab({ renameTabMission: failing });
+    await expect(
+      mod.renameMissionsOfRenamedTab(
+        { key: 'space:space-1', id: 'space-1', missions: [{ id: 'mTab', title: 'Missão · Meus terminais 2' }] },
+        'Meus terminais 2',
+        'roteamento',
+      ),
+    ).resolves.toBeUndefined();
+  });
+});
