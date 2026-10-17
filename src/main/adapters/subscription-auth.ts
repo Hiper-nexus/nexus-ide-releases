@@ -9,7 +9,7 @@ import {
 } from './claude-credential';
 import { readClaudeConfigSnapshot } from './claude-config-snapshot';
 import { realUserHome, resolveCliBinary } from '../path-resolver';
-import { hasNativeFileAuth, captureNativeAuth } from './managed-credentials';
+import { hasNativeFileAuth, captureNativeAuth, museNativeAuthPath } from './managed-credentials';
 import { mimoCredentialSupportsModel } from './mimo-auth';
 import { minimaxCodeHasCredential } from './minimax-code-auth';
 import {
@@ -918,17 +918,11 @@ export function museKeychainSessionExists(
   return museKeychainDelegatedProviders(blob).some((account) => probe(account));
 }
 
-function museAuthPath(home: string): string {
-  return process.env.MUSE_AUTH_PATH?.trim() || path.join(
-    process.env.XDG_CONFIG_HOME?.trim() || path.join(home, '.config'), 'muse', 'auth.json',
-  );
-}
-
 /** Missing local proof is not logout when the CLI delegates tokens to Keychain. */
 export function subscriptionAuthStatusIsUnknown(adapterId: string, home = os.homedir()): boolean {
   if (adapterId === 'muse') {
     try {
-      const blob = fs.readFileSync(museAuthPath(home), 'utf8');
+      const blob = fs.readFileSync(museNativeAuthPath(home), 'utf8');
       // Delegado ao Keychain E sem item confirmável: só aí a sessão é
       // indeterminada. Com o item presente, `hasSubscriptionAuth` já provou a
       // sessão e devolver «unknown» aqui deixaria a UI em «não verificado»
@@ -1104,7 +1098,7 @@ export function detectSubscriptionAuth(
       return cursorCliConfigHasSession(home);
     case 'muse': {
       try {
-        const blob = fs.readFileSync(museAuthPath(home), 'utf8');
+        const blob = fs.readFileSync(museNativeAuthPath(home), 'utf8');
         // Token no próprio arquivo, ou delegado ao Keychain com item presente.
         return (
           museAuthBlobIsUsable(blob) || museKeychainSessionExists(blob, options)

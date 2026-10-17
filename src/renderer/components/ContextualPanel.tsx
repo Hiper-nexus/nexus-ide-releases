@@ -35,7 +35,7 @@ const MAX_PANEL_WIDTH = 900;
 const MIN_STAGE_WIDTH = 320;
 const COMPACT_PANEL_BREAKPOINT = 900;
 const PANEL_KEYBOARD_STEP = 16;
-/** Folga ao revelar uma aba: a largura da borda esmaecida da faixa (--space-5). */
+/** Folga ao revelar uma aba, sem encostar o texto nos controles. */
 const TAB_REVEAL_MARGIN = 24;
 
 function clampPanelWidth(
@@ -164,7 +164,19 @@ export function ContextualPanel({
   const showButtonRef = useRef<HTMLButtonElement>(null);
   const tabRefs = useRef(new Map<ContextualTab, HTMLButtonElement>());
   const tablistRef = useRef<HTMLDivElement>(null);
-  useWheelXScroll(tablistRef);
+  useWheelXScroll(tablistRef, state.visible && flagEnabled);
+  const [tabOverflow, setTabOverflow] = useState({ before: false, after: false });
+  const measureTabOverflow = useCallback(() => {
+    const strip = tablistRef.current;
+    if (!strip) return;
+    const before = strip.scrollLeft > 1;
+    const after = strip.scrollLeft + strip.clientWidth < strip.scrollWidth - 1;
+    setTabOverflow((previous) =>
+      previous.before === before && previous.after === after
+        ? previous
+        : { before, after },
+    );
+  }, []);
   const generatedId = useId().replaceAll(':', '');
   const panelDomId = `ctx-panel-${generatedId}`;
   const panelBodyId = `${panelDomId}-body`;
@@ -317,19 +329,37 @@ export function ContextualPanel({
   // navigation or a launcher request — scrolling ONLY the strip.
   // `scrollIntoView` also scrolled every ancestor (inspector, shell) and
   // dragged the whole layout sideways whenever a tab was activated.
-  useEffect(() => {
-    if (!state.visible) return;
-    const tab = tabRefs.current.get(state.activeTab);
-    const strip = tab?.parentElement;
-    if (!tab || !strip) return;
-    const stripBox = strip.getBoundingClientRect();
-    const tabBox = tab.getBoundingClientRect();
-    if (tabBox.left < stripBox.left + TAB_REVEAL_MARGIN) {
-      strip.scrollLeft -= stripBox.left + TAB_REVEAL_MARGIN - tabBox.left;
-    } else if (tabBox.right > stripBox.right - TAB_REVEAL_MARGIN) {
-      strip.scrollLeft += tabBox.right - (stripBox.right - TAB_REVEAL_MARGIN);
-    }
-  }, [state.activeTab, state.visible]);
+  useLayoutEffect(() => {
+    if (!state.visible || !flagEnabled || exiting) return;
+    const strip = tablistRef.current;
+    if (!strip) return;
+    const reveal = () => {
+      const tab = tabRefs.current.get(state.activeTab);
+      if (!tab) return;
+      const stripBox = strip.getBoundingClientRect();
+      const tabBox = tab.getBoundingClientRect();
+      if (tabBox.left < stripBox.left + TAB_REVEAL_MARGIN) {
+        strip.scrollLeft -= stripBox.left + TAB_REVEAL_MARGIN - tabBox.left;
+      } else if (tabBox.right > stripBox.right - TAB_REVEAL_MARGIN) {
+        strip.scrollLeft += tabBox.right - (stripBox.right - TAB_REVEAL_MARGIN);
+      }
+      measureTabOverflow();
+    };
+    reveal();
+    // Observe the strip, not the window: the inspector can shrink independently.
+    const observer = typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver(reveal);
+    observer?.observe(strip);
+    return () => observer?.disconnect();
+  }, [state.activeTab, state.visible, flagEnabled, exiting, renderedWidth, relevantTabs, measureTabOverflow]);
+
+  const scrollTabs = (direction: number) => {
+    const strip = tablistRef.current;
+    if (!strip) return;
+    strip.scrollLeft += direction * strip.clientWidth * 0.8;
+    measureTabOverflow();
+  };
 
   if (!flagEnabled) {
     return (
@@ -420,9 +450,23 @@ export function ContextualPanel({
       style={{ width: renderedWidth }}
       aria-label="Painel contextual"
     >
-      <div className="ctx-panel__tabs">
+      <div
+        className="ctx-panel__tabs"
+        data-overflow={tabOverflow.before || tabOverflow.after}
+      >
+        <button
+          type="button"
+          className="ctx-panel__scroll"
+          aria-label="Abas anteriores"
+          title="Abas anteriores"
+          disabled={!tabOverflow.before}
+          onClick={() => scrollTabs(-1)}
+        >
+          <PixelIcon name="chevron" size={12} />
+        </button>
         <div
           ref={tablistRef}
+          onScroll={measureTabOverflow}
           className="ctx-panel__tablist"
           role="tablist"
           aria-label="Abas do painel"
@@ -449,6 +493,16 @@ export function ContextualPanel({
             </button>
           ))}
         </div>
+        <button
+          type="button"
+          className="ctx-panel__scroll ctx-panel__scroll--next"
+          aria-label="Próximas abas"
+          title="Próximas abas"
+          disabled={!tabOverflow.after}
+          onClick={() => scrollTabs(1)}
+        >
+          <PixelIcon name="chevron" size={12} />
+        </button>
         <button
           type="button"
           className="ctx-panel__hide"

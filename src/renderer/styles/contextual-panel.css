@@ -1,0 +1,46 @@
+/* Intrinsic overflow follows the inspector width, including compact drawers. */
+.ctx-panel__tabs .ctx-panel__scroll {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  padding: 0;
+  color: var(--text);
+}
+
+.ctx-panel__tabs[data-overflow='false'] .ctx-panel__scroll {
+  display: none;
+}
+
+.ctx-panel__scroll:not(.ctx-panel__scroll--next) svg {
+  transform: rotate(180deg);
+}
+
+.ctx-panel__tabs .ctx-panel__scroll:disabled {
+  color: var(--text-dim);
+  cursor: default;
+  background: transparent;
+}
+
+.ctx-panel__tabs button {
+  min-width: 44px;
+  min-height: 44px;
+  transition: none;
+}
+
+.ctx-panel__tabs button.is-active {
+  color: var(--text);
+  background: transparent;
+}
+
+.ctx-panel__tabs .ctx-panel__hide {
+  width: 44px;
+  padding-inline: 0 !important;
+  opacity: 1;
+}
+
+/* Explicit controls replace the animated mask: labels never fade or blink. */
+.ctx-panel__tablist {
+  mask-image: none;
+  animation: none;
+  scroll-behavior: auto;
+}

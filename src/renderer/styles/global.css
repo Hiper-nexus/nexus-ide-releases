@@ -7,6 +7,7 @@
 @import './app-shell.css';
 @import './quota-overview.css';
 @import './mission-setup.css';
+@import './mission-prep-overlay.css';
 @import './mission-board.css';
 @import './agent-avatar.css';
 @import './operator-sprite.css';
@@ -34,6 +35,7 @@
 @import './integrations.css';
 @import './media-studio.css';
 @import './product-wave.css';
+@import './contextual-panel.css';
 @import './product-workspaces.css';
 @import './git-scm.css';
 @import './coffee-cup.css';

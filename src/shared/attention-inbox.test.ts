@@ -2,6 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { collectAttentionItems } from './attention-inbox';
 
 describe('collectAttentionItems', () => {
+  it('asks API-only Claude hosts for their own key rather than native CLI login', () => {
+    const items = collectAttentionItems({ notifications: [], missions: [], pr: null, providers: [
+      { adapterId: 'muse', label: 'Muse Code', enabled: true, installed: true, authStrategy: 'subscription', authState: 'ok' },
+      { adapterId: 'muse-claude', label: 'Muse Spark (via Claude)', enabled: true, installed: true, authStrategy: 'login-needed', authState: 'missing', authMethod: 'api_key' },
+    ] });
+    expect(items).toEqual([expect.objectContaining({ kind: 'provider-key', targetId: 'muse-claude', actionLabel: 'Configurar chave de Muse Spark (via Claude)' })]);
+    expect(items[0].detail).toContain('chave de API');
+    expect(items[0].detail).not.toContain('login');
+  });
+
   it('requires confirmed missing auth when the provider supplies a diagnostic state', () => {
     const base = { enabled: true, installed: true, authStrategy: 'login-needed' };
     const items = collectAttentionItems({ notifications: [], missions: [], pr: null, providers: [

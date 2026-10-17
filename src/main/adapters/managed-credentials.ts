@@ -345,12 +345,19 @@ export function authBlobIsUsable(adapterId: string, blob: string): boolean {
     );
   }
   if (adapterId === 'muse') {
-    return hasNonEmptyClaim(parsed, [
-      'access_token',
-      'refresh_token',
-      'api_key',
-      'email',
-    ]);
+    const providers = parsed.providers;
+    if (parsed.schema_version !== 2 || !providers || typeof providers !== 'object' || Array.isArray(providers)) return false;
+    // No selected-provider proof is captured with the file. Only the single
+    // native Meta provider can be restored without an ambient Keychain slot.
+    const entries = Object.entries(providers);
+    if (entries.length !== 1 || entries[0][0] !== 'meta') return false;
+    const provider = entries[0][1];
+    if (!provider || typeof provider !== 'object' || Array.isArray(provider)) return false;
+    const credential = provider as Record<string, unknown>;
+    if (credential.storage !== 'file') return false;
+    const has = (key: string) => typeof credential[key] === 'string' && credential[key].trim().length > 0;
+    if (credential.mechanism === 'api_key') return has('api_key');
+    return credential.mechanism === 'oauth' && (has('access_token') || has('refresh_token'));
   }
   return false;
 }
@@ -895,6 +902,12 @@ export function managedHomeEnv(
   managedHome: string,
 ): Record<string, string> {
   const spec = MANAGED_PROVIDER_SPECS[adapterId];
+  if (adapterId === 'muse') {
+    return {
+      XDG_CONFIG_HOME: managedHome,
+      MUSE_AUTH_PATH: path.join(managedHome, spec.authRelativePath),
+    };
+  }
   if (adapterId === 'opencode') {
     // XDG_DATA_HOME must parent the `opencode/` directory.
     return { XDG_DATA_HOME: managedHome };
@@ -906,6 +919,20 @@ export function managedHomeEnv(
     };
   }
   return { [spec.homeEnvVar]: managedHome };
+}
+
+/** The CLI's explicit auth path takes precedence over XDG_CONFIG_HOME. */
+export function museNativeAuthPath(home = os.homedir()): string {
+  return process.env.MUSE_AUTH_PATH?.trim() || path.join(
+    process.env.XDG_CONFIG_HOME?.trim() || path.join(home, '.config'), 'muse', 'auth.json',
+  );
+}
+
+/** Keychain metadata cannot restore an independent Muse account. */
+export function supportsNativeSessionSnapshot(adapterId: string, home = os.homedir()): boolean {
+  if (adapterId !== 'muse') return adapterId === 'claude' || isFileAuthAdapter(adapterId);
+  const blob = readText(museNativeAuthPath(home));
+  return Boolean(blob && authBlobIsUsable('muse', blob));
 }
 
 /** Capture the currently active native session into a vault-ready blob. */
@@ -927,7 +954,7 @@ export function captureNativeAuth(
   const spec = MANAGED_PROVIDER_SPECS[adapterId];
   const systemHome = spec.systemHome(home);
   if (!systemHome) return null;
-  const candidatePaths = [...new Set([
+  const candidatePaths = adapterId === 'muse' ? [museNativeAuthPath(home)] : [...new Set([
     spec.authRelativePath,
     ...(spec.authCandidates ?? []),
   ])].map((rel) => path.join(systemHome, rel));
@@ -942,7 +969,7 @@ export function captureNativeAuth(
     } catch {
       continue;
     }
-    let authRelativePath = path.relative(systemHome, candidate);
+    let authRelativePath = adapterId === 'muse' ? spec.authRelativePath : path.relative(systemHome, candidate);
     if (
       blob &&
       adapterId === 'agy' &&
@@ -1212,7 +1239,23 @@ export function nativeAuthIdentity(
   home = os.homedir(),
 ): { email?: string; fingerprint?: string; revision?: string } {
   const capture = captureNativeAuth(adapterId, home);
-  if (!capture) return {};
+  if (!capture) {
+    if (adapterId !== 'muse') return {};
+    // Identity for display only. Never manufacture a login fingerprint from
+    // metadata: a same-account reauthentication needs a changed credential.
+    const blob = readText(museNativeAuthPath(home));
+    const parsed = blob ? parsedAuthBlob(blob) : null;
+    const providers = parsed?.providers;
+    if (!providers || typeof providers !== 'object' || Array.isArray(providers)) return {};
+    for (const provider of Object.values(providers)) {
+      if (!provider || typeof provider !== 'object' || Array.isArray(provider)) continue;
+      const metadata = provider as Record<string, unknown>;
+      if (metadata.storage !== 'keychain' || metadata.mechanism !== 'oauth') continue;
+      const email = identityFromAuthBlob('muse', JSON.stringify(metadata)).email;
+      if (email) return { email };
+    }
+    return {};
+  }
   const parsedIdentity = identityFromAuthBlob(adapterId, capture.blob);
   const identity: ManagedAuthIdentity = {
     ...parsedIdentity,

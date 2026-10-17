@@ -4,7 +4,7 @@ vi.mock('../persistence/secrets-store', () => ({ getSecret: () => null, hasSecre
 vi.mock('../jev/jev-decision-log', () => ({ recordJevNoAnswer: vi.fn(() => 'id'), recordJevDecision: vi.fn(() => 'id') }));
 import { recordJevNoAnswer } from '../jev/jev-decision-log';
 
-import type { JevResult } from '../jev/jev-client';
+import type { JevResult, JudgeInput } from '../jev/jev-client';
 import { decisionSettingsSchema, missionDecisionBudgetUsd, type DecisionSettings } from '../../shared/decision-models';
 import { DecisionBudgetLedger } from './decision-budget';
 import { judgeDecision, type DecisionJudgeDeps } from './decision-judge';
@@ -41,6 +41,67 @@ function deferred<T>() {
   const promise = new Promise<T>(r => { resolve = r; });
   return { promise, resolve };
 }
+
+describe('recibo de falha dos clientes e orçamento da missão', () => {
+  beforeEach(() => vi.mocked(recordJevNoAnswer).mockClear());
+
+  function clientDeps(provider: 'clef' | 'luna', ledger: DecisionBudgetLedger, fetchImpl: typeof fetch) {
+    return deps({ ledger, settings: settings({ mode: provider }), fetch: fetchImpl,
+      getAvailability: () => ({ jev: false, clef: provider === 'clef', luna: provider === 'luna' }),
+      getClefConnection: () => ({ accountId: ACCOUNT, token: 'synthetic', model: 'clef' as const }),
+      resolveLunaKey: () => 'synthetic-luna',
+    });
+  }
+
+  for (const provider of ['clef', 'luna'] as const) {
+    it.each(['choice singleton', 'corpo excessivo'])('%s no ' + provider + ': zero requisições devolve toda a reserva', async failure => {
+      const ledger = new DecisionBudgetLedger();
+      const fetcher = vi.fn(async () => new Response('{}', { status: 400 }));
+      const request: JudgeInput = { ...input, missionId: 'm-local', ...(failure === 'choice singleton'
+        ? { questions: { q: { type: 'choice' as const, instructions: 'Choose.', criteria: { only: 'Only' } } } }
+        : { state: 'x'.repeat(14 * 1024 * 1024) }) };
+
+      const result = await judgeDecision(request, clientDeps(provider, ledger, fetcher as typeof fetch));
+
+      expect(result).toBeNull();
+      expect(fetcher).not.toHaveBeenCalled();
+      expect(ledger.snapshot('m-local', 1)).toMatchObject({ spentUsd: 0, reservedUsd: 0 });
+      expect(recordJevNoAnswer).toHaveBeenLastCalledWith(expect.objectContaining({ reason: 'client-error', budgetChargedUsd: 0,
+        usage: expect.objectContaining({ requestCount: 0, inputTokens: 0, usd: 0, usageIncomplete: false }) }));
+    });
+
+    it(provider + ': falha depois do envio conserva o gasto desconhecido estimado', async () => {
+      const ledger = new DecisionBudgetLedger();
+      const fetcher = vi.fn(async () => new Response('{}', { status: 400 }));
+
+      await judgeDecision({ ...input, missionId: 'm-sent' }, clientDeps(provider, ledger, fetcher as typeof fetch));
+
+      expect(fetcher).toHaveBeenCalledOnce();
+      expect(ledger.snapshot('m-sent', 1).reservedUsd).toBe(0);
+      const expectedUsd = provider === 'clef' ? 0.000048 : 0.00002;
+      expect(ledger.snapshot('m-sent', 1).spentUsd).toBeCloseTo(expectedUsd, 12);
+      expect(recordJevNoAnswer).toHaveBeenLastCalledWith(expect.objectContaining({ budgetChargedUsd: expectedUsd,
+        usage: expect.objectContaining({ requestCount: 1, inputTokens: null, usd: null, usageIncomplete: true }) }));
+    });
+
+    it(provider + ': resposta inválida depois do envio conserva a medição paga', async () => {
+      const ledger = new DecisionBudgetLedger();
+      const usage = { input_tokens: 1_000, output_tokens: 0 };
+      const fetcher = vi.fn(async () => Response.json(provider === 'clef'
+        ? { success: true, result: { model: 'clef', usage, answers: {} } }
+        : { model: 'gpt-6-luna', usage, answers: [{ name: 'q0', type: 'refusal' }] }));
+
+      await judgeDecision({ ...input, missionId: 'm-paid' }, clientDeps(provider, ledger, fetcher as typeof fetch));
+
+      expect(fetcher).toHaveBeenCalledOnce();
+      const expectedUsd = provider === 'clef' ? 0.00024 : 0.0001;
+      expect(ledger.snapshot('m-paid', 1).spentUsd).toBeCloseTo(expectedUsd, 12);
+      expect(ledger.snapshot('m-paid', 1).reservedUsd).toBe(0);
+      expect(recordJevNoAnswer).toHaveBeenLastCalledWith(expect.objectContaining({ budgetChargedUsd: expectedUsd,
+        usage: expect.objectContaining({ requestCount: 1, inputTokens: 1_000, usd: expectedUsd, usageIncomplete: false }) }));
+    });
+  }
+});
 
 describe('DecisionBudgetLedger (F-1164)', () => {
   it('reserva o estimado e acerta pelo recibo real', () => {

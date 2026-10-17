@@ -45,6 +45,18 @@ export interface OpenAIRealtimeProviderOptions {
    * OpenAI aninha em `audio.output.voice` / `audio.input.turn_detection`.
    */
   sessionUpdateBuilder?: SessionUpdateBuilder;
+  /**
+   * Quem cria a resposta de um turno de fala: NÓS ou o VAD do servidor.
+   *
+   * A OpenAI honra `turn_detection.create_response: false` e então a resposta
+   * do turno é nossa (`endUserTurn`), uma por captura. A xAI aceita e ecoa o
+   * campo, mas continua respondendo sozinha quando o operador para de falar
+   * (comportamento do `server_vad` dela) — criar a resposta dos dois lados é
+   * justamente o que fazia a Jarvis responder DUAS vezes ao mesmo pedido, e
+   * ela repetia o que tinha acabado de dizer. Com esta opção em `true` o fim
+   * de captura não cria resposta nenhuma: o servidor já criou a dele.
+   */
+  serverOwnsResponseCreation?: boolean;
 }
 
 export type SessionUpdateBuilder = (opts: {
@@ -123,7 +135,17 @@ export function buildOpenAISessionUpdate(opts: {
             language: DEFAULT_TRANSCRIPTION_LANGUAGE,
           },
           turn_detection:
-            turnDetection === 'manual' ? null : { type: 'semantic_vad' },
+            turnDetection === 'manual'
+              ? null
+              : {
+                  type: 'semantic_vad',
+                  // Quem cria a resposta é o fim de captura do operador
+                  // (`endUserTurn`), nunca o VAD do servidor: com o servidor
+                  // respondendo sozinho, qualquer segmento que ele ouvisse —
+                  // eco da própria Jarvis, ruído — virava uma SEGUNDA resposta
+                  // ao mesmo pedido (ela repetindo o que acabou de dizer).
+                  create_response: false,
+                },
         },
         output: {
           format: {
@@ -362,6 +384,14 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
   private responseActive = false;
   private hasUncommittedAudio = false;
   private serverSpeechStopped = false;
+  /**
+   * Houve fala nova do operador desde a última resposta. Uma resposta só
+   * existe quando há o que responder: um fim de captura atrasado — a limpeza
+   * de fim de turno de um caminho Classic que também é chamada depois de a
+   * Jarvis já ter respondido — não pode abrir uma resposta para o segmento
+   * ANTERIOR (era isso que fazia ela repetir o que acabou de dizer).
+   */
+  private audioSinceResponse = false;
   private activeTurnId: string | undefined;
   /** Texto final do usuário já entregue por item — dedupe entre as duas fontes. */
   private userFinalByItem = new Map<string, string>();
@@ -374,6 +404,7 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
   private readonly model: string;
   private readonly voice: string;
   private readonly turnDetection: OpenAIRealtimeTurnDetection;
+  private readonly serverOwnsResponseCreation: boolean;
   private readonly sourceRate: number;
   private readonly targetRate: number;
   private readonly tools: RealtimeToolDefinition[];
@@ -392,6 +423,7 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
     this.model = options.model ?? DEFAULT_MODEL;
     this.voice = options.voice ?? DEFAULT_VOICE;
     this.turnDetection = options.turnDetection ?? 'semantic_vad';
+    this.serverOwnsResponseCreation = options.serverOwnsResponseCreation === true;
     this.sourceRate = options.inputSourceRate ?? DEFAULT_SOURCE_RATE;
     this.targetRate = options.inputTargetRate ?? DEFAULT_TARGET_RATE;
     this.tools = options.tools ?? [];
@@ -500,6 +532,7 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
     });
     this.hasUncommittedAudio = true;
     this.serverSpeechStopped = false;
+    this.audioSinceResponse = true;
   }
 
   beginUserTurn(turnId: string): void {
@@ -516,6 +549,7 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
   resetTurn(): void {
     this.hasUncommittedAudio = false;
     this.serverSpeechStopped = false;
+    this.audioSinceResponse = false;
   }
 
   /**
@@ -581,26 +615,65 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
   }
 
   endUserTurn(): void {
-    if (!this.isReady || !this.hasUncommittedAudio) return;
-    if (
-      this.turnDetection !== 'manual' &&
-      (this.serverSpeechStopped || this.responseActive)
-    ) {
+    if (!this.isReady) return;
+    // O servidor não cria mais resposta sozinho (`turn_detection.create_response:
+    // false`): quem responde é o fim de captura do operador. Três travas
+    // garantem UMA resposta por pedido — era a segunda resposta ao mesmo
+    // pedido que fazia a Jarvis repetir o que acabou de dizer:
+    //  - `create_response: false` na sessão: o VAD do servidor só DETECTA a
+    //    fala; ele não abre mais uma resposta por conta própria para cada
+    //    segmento que ouve (cauda de eco da própria voz dela incluída);
+    //  - `responseActive`: a volta já está sendo respondida (fim de captura
+    //    repetido, ou eco que continuou chegando depois do commit);
+    //  - `audioSinceResponse`: só há o que responder se o operador falou
+    //    depois da resposta anterior.
+    if (this.responseActive) {
       this.hasUncommittedAudio = false;
       return;
     }
+    // Rota em que o VAD do servidor já cria a resposta do segmento (xAI: o
+    // `create_response` é aceito e ecoado mas não muda nada). Criar a nossa aqui
+    // era a SEGUNDA resposta ao mesmo pedido — é o que fazia a Jarvis repetir o
+    // que acabou de dizer.
+    if (this.turnDetection !== 'manual' && this.serverOwnsResponseCreation) {
+      this.hasUncommittedAudio = false;
+      return;
+    }
+    // Nada foi falado desde a última resposta: um fim de captura atrasado (a
+    // limpeza de turno que vários caminhos Classic também chamam DEPOIS de a
+    // Jarvis já ter respondido) não pode responder ao segmento anterior.
+    if (!this.audioSinceResponse) return;
+    // O VAD do servidor já fechou o segmento: o buffer está commitado por ele,
+    // então falta só pedir a resposta (commit repetido viraria erro de buffer
+    // vazio). Sem esse fechamento — a parada local por silêncio é mais rápida
+    // que a volta do frame de VAD — a volta é fechada por nós, senão a Jarvis
+    // ficaria muda.
+    if (this.turnDetection !== 'manual' && this.serverSpeechStopped) {
+      this.createResponse();
+      return;
+    }
+    if (!this.hasUncommittedAudio) return;
     this.forceEndUserTurn();
   }
 
   forceEndUserTurn(): void {
     if (!this.isReady) return;
     this.sendEvent({ type: 'input_audio_buffer.commit' });
+    this.createResponse();
+  }
+
+  /**
+   * Pede a resposta SEM recommitar o buffer: com o VAD do servidor o segmento
+   * já foi commitado por ele, e repetir o commit devolve erro de buffer vazio.
+   */
+  private createResponse(): void {
     this.sendEvent({
       type: 'response.create',
       response: { output_modalities: ['audio'] },
     });
     this.responseActive = true;
     this.hasUncommittedAudio = false;
+    this.audioSinceResponse = false;
   }
 
   sendContext(text: string): void {
@@ -625,11 +698,7 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
         content: [{ type: 'input_text', text: trimmed }],
       },
     });
-    this.sendEvent({
-      type: 'response.create',
-      response: { output_modalities: ['audio'] },
-    });
-    this.responseActive = true;
+    this.createResponse();
   }
 
   sendToolResult(callId: string, output: unknown): void {
@@ -645,11 +714,7 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
         output: outputText.slice(0, 20_000),
       },
     });
-    this.sendEvent({
-      type: 'response.create',
-      response: { output_modalities: ['audio'] },
-    });
-    this.responseActive = true;
+    this.createResponse();
   }
 
   close(): void {
@@ -659,6 +724,7 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
     this.pendingAudioBytes = 0;
     this.hasUncommittedAudio = false;
     this.serverSpeechStopped = false;
+    this.audioSinceResponse = false;
     this.activeTurnId = undefined;
     this.emittedToolCallIds.clear();
     this.emittedToolCallOrder = [];

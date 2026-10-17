@@ -257,7 +257,12 @@ function permissionSequences(adapter: CliPtyAdapter): string[][] {
   );
   if (permission.arg) {
     for (const mode of Object.values(permission.modes)) {
-      sequences.push([permission.arg, mode]);
+      if (mode) sequences.push([permission.arg, mode]);
+    }
+  } else {
+    for (const mode of Object.values(permission.modes)) {
+      const parts = mode.split(/\s+/).filter(Boolean);
+      if (parts.length > 0) sequences.push(parts);
     }
   }
   return sequences.sort((left, right) => right.length - left.length);
@@ -539,7 +544,17 @@ function requestedFullAutoSequence(
   ) {
     return permission.yolo;
   }
-  if (!permission.arg) return [];
+  if (!permission.arg) {
+    for (const mode of ['yolo', 'bypass'] as const) {
+      const value = permission.modes[mode];
+      if (!value) continue;
+      const parts = value.split(/\s+/).filter(Boolean);
+      if (parts.length > 0 && parts.every((part) => args.includes(part))) {
+        return parts;
+      }
+    }
+    return [];
+  }
   for (const mode of ['yolo', 'bypass'] as const) {
     const value = permission.modes[mode];
     if (!value) continue;

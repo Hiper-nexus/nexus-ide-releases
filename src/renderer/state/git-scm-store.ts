@@ -38,6 +38,8 @@ interface GitScmStore {
   selected: SelectedGitFile | null;
   diffText: string;
   loading: boolean;
+  /** A successful status exists for this workspace, including detached HEAD. */
+  hasStatus: boolean;
   mutating: boolean;
   committing: boolean;
   error: string | null;
@@ -75,6 +77,7 @@ interface GitScmStore {
 
 function emptyLists() {
   return {
+    hasStatus: false,
     staged: [] as GitFileChange[],
     unstaged: [] as GitFileChange[],
     untracked: [] as GitFileChange[],
@@ -141,6 +144,7 @@ export const useGitScmStore = create<GitScmStore>((set, get) => ({
       const selected = get().selected;
       set({
         loading: false,
+        hasStatus: true,
         branch: status.branch,
         remote: status.remote,
         staged: status.staged ?? [],

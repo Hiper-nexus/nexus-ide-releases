@@ -187,9 +187,8 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     // ($0,10/$0,50, 161 tok/s) e o 3.8 Flash ($0,75/$3,75, 306 tok/s) custam
     // ~1/20 do grok-4.7 ($2/$6) que liderava só por ordem de tabela.
     { adapterId: 'codex', model: 'gpt-6-luna', effort: 'low' },
-    // O mais novo primeiro (regra do operador, 29/09); o 3.7 fica de reserva.
+    // AGY 1.4.0 não lista mais 3.7/3.6; a reserva free saiu com eles.
     { adapterId: 'agy', model: 'gemini-3.8-flash-low', effort: 'low' },
-    { adapterId: 'agy', model: 'gemini-3.7-flash-low', effort: 'low' },
     { adapterId: 'grok', model: GROK_FRONTIER_MODEL, effort: 'low' },
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'low' },
     { adapterId: 'glm-flash', model: 'glm-5.3-flash[1m]', effort: 'low' },
@@ -221,8 +220,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
   easy: [
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'low' },
     { adapterId: 'grok', model: GROK_FRONTIER_MODEL, effort: 'low' },
-    // 3.8 Flash supera o 3.7 no mesmo preço (TB4.0 19,1% × 11,2%, model
-    // cards Google 2026-08/09); o trivial segue no 3.7-low (free no agy).
+    // AGY 1.4.0: 3.8 Flash low. O 3.7-low (free) saiu do `agy models`.
     { adapterId: 'agy', model: 'gemini-3.8-flash-low', effort: 'low' },
     // gpt-5.4-mini saiu (migrava p/ 5.6-luna). GPT-6 Luna: geração nova e
     // mais barata ($0,10/$0,50 × $0,20/$1,20) — docs/models/estudo-2026-09.md.

@@ -346,7 +346,7 @@ describe('pane-admission: swap do Windows é commit, não swap (F-574)', () => {
 describe('pane-admission: limites proporcionais à RAM da máquina (0.76.44)', () => {
   it('num Mac de 24 GB o mínimo disponível é 15 % (3,6 GB), o swap nasce sem gate e o teto 12', async () => {
     const { limitsForMachine } = await import('./pane-admission');
-    const limits = limitsForMachine(24 * 1024);
+    const limits = limitsForMachine(24 * 1024, 'darwin');
     expect(limits.minFreeMB).toBe(Math.round(0.15 * 24 * 1024));
     expect(limits.maxSwapUsedMB).toBe(0);
     expect(limits.maxAgentPanes).toBe(12);
@@ -374,14 +374,14 @@ describe('pane-admission: limites proporcionais à RAM da máquina (0.76.44)', (
 
   it('env continua sobrepondo os defaults proporcionais', async () => {
     const { readPaneAdmissionLimits } = await import('./pane-admission');
-    const limits = readPaneAdmissionLimits({ NEXUS_PANE_CAP: '3' }, 24 * 1024);
+    const limits = readPaneAdmissionLimits({ NEXUS_PANE_CAP: '3' }, 24 * 1024, 'darwin');
     expect(limits.maxAgentPanes).toBe(3);
     expect(limits.minFreeMB).toBe(Math.round(0.15 * 24 * 1024));
   });
 
   it('isUnderMemoryPressure usa os mesmos limiares do gate', async () => {
     const { isUnderMemoryPressure, limitsForMachine } = await import('./pane-admission');
-    const limits = limitsForMachine(24 * 1024);
+    const limits = limitsForMachine(24 * 1024, 'darwin');
     expect(isUnderMemoryPressure({ freeMB: 10_000, swapUsedMB: 100 }, limits)).toBe(false);
     expect(isUnderMemoryPressure({ freeMB: 2_000, swapUsedMB: 100 }, limits)).toBe(true);
     // Swap não é sinal de pressão sem o gate armado pela máquina (0.76.47).
@@ -414,7 +414,9 @@ describe('pane-admission: limites proporcionais à RAM da máquina (0.76.44)', (
 });
 
 describe('pane-admission: orçamento de paralelismo da delegação (F-784)', () => {
-  const mac24 = DEFAULT_PANE_ADMISSION_LIMITS; // teto 12, mínimo livre 3.686 MB
+  // Régua do Mac de referência: no Windows a reserva é menor por design
+  // (o `free` não vê toda a Standby List), então o platform é explícito.
+  const mac24 = limitsForMachine(24 * 1024, 'darwin'); // teto 12, mínimo livre 3.686 MB
 
   it('o leque inicial abre todas as partes independentes quando a máquina tem folga', async () => {
     const { helpersToOpenNow, parallelHelperBudget } = await import('./pane-admission');
@@ -711,10 +713,12 @@ describe('pane-admission: recusa de capacidade no caminho MCP (F-1270)', () => {
 describe('pane-admission: Windows 32 GB (cliente 15/10) — standby/cache não trava o 3º worker', () => {
   it('a reserva padrão para de crescer linearmente: 32/64 GB não exigem 4,9/9,8 GB livres', async () => {
     const { limitsForMachine } = await import('./pane-admission');
-    expect(limitsForMachine(32 * 1024).minFreeMB).toBe(4096);
-    expect(limitsForMachine(64 * 1024).minFreeMB).toBe(4096);
+    // Régua não-win32 (POSIX): a reserva win32 é menor por design, então os
+    // asserts POSIX passam a plataforma explícita — sem isso herdam o win32 real.
+    expect(limitsForMachine(32 * 1024, 'darwin').minFreeMB).toBe(4096);
+    expect(limitsForMachine(64 * 1024, 'darwin').minFreeMB).toBe(4096);
     // 24 GB (referência Mac) segue em 15 %: abaixo do teto, nada muda.
-    expect(limitsForMachine(24 * 1024).minFreeMB).toBe(Math.round(0.15 * 24 * 1024));
+    expect(limitsForMachine(24 * 1024, 'darwin').minFreeMB).toBe(Math.round(0.15 * 24 * 1024));
     // win32: `free` não vê toda a Standby List → reserva (e percentual) menores.
     expect(limitsForMachine(32 * 1024, 'win32').minFreeMB).toBe(2048);
     expect(limitsForMachine(64 * 1024, 'win32').minFreeMB).toBe(2048);

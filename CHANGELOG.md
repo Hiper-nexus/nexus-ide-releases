@@ -1,5 +1,63 @@
 # Changelog
 
+## 0.76.295 — Linux em dia com a tela sem piscar e os anexos
+
+A tag 0.76.294 não recebe pacotes Linux: a suíte não fechou. O aviso de risco do YOLO usava `var(--leading-normal)`, um token que não existe, e a entrelinha era ignorada. O aviso passa a usar entrelinha 1.5. O desktop Linux é o da 0.76.293, com essa correção.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). A tag 0.76.293 também não recebe pacotes Linux.
+
+No desktop Linux, em relação à 0.76.292:
+
+- **Painel Git estável**. As releituras não trocam mais "Mesa limpa" por "Lendo git status", então a tela para de piscar. Os botões Puxar, Enviar, Ver histórico e Trocar branch mantêm contraste ao clicar, inclusive no tema roxo.
+- **Anexos até a missão**. Imagem colada aparece no campo. Imagem e áudio chegam à worktree e ao prompt do coordenador e dos workers; o áudio é transcrito em segundo plano com o reconhecimento de voz do ditado. Iniciar espera o anexo que ainda está copiando.
+- **Iniciar missão mais claro**. O botão fica à vista, ⌘/Ctrl+Enter inicia, e o painel "Preparando a missão" acompanha as etapas reais.
+- **Abas do painel lateral**. Em painel estreito as abas ganham setas, alvos de 44 px e o fechar sempre visível.
+- **Modos de permissão por CLI**. Grok, AGY e Qwen ganham os níveis reais além do YOLO, com aviso de risco. Os safeArgs de Claude e Codex continuam intactos.
+
+## 0.76.294 — Linux em dia com a tela sem piscar e os anexos
+
+A tag 0.76.293 não recebe pacotes Linux: é o candidato macOS. Este pacote leva o produto dela para o desktop Linux, empacotado a partir de Ubuntu 22.04 (glibc 2.35).
+
+No desktop Linux, em relação à 0.76.292:
+
+- **Painel Git estável**. As releituras não trocam mais "Mesa limpa" por "Lendo git status", então a tela para de piscar. Os botões Puxar, Enviar, Ver histórico e Trocar branch mantêm contraste ao clicar, inclusive no tema roxo.
+- **Anexos até a missão**. Imagem colada aparece no campo. Imagem e áudio chegam à worktree e ao prompt do coordenador e dos workers; o áudio é transcrito em segundo plano com o reconhecimento de voz do ditado. Iniciar espera o anexo que ainda está copiando.
+- **Iniciar missão mais claro**. O botão fica à vista, ⌘/Ctrl+Enter inicia, e o painel "Preparando a missão" acompanha as etapas reais.
+- **Abas do painel lateral**. Em painel estreito as abas ganham setas, alvos de 44 px e o fechar sempre visível.
+- **Modos de permissão por CLI**. Grok, AGY e Qwen ganham os níveis reais além do YOLO, com aviso de risco. Os safeArgs de Claude e Codex continuam intactos.
+
+## 0.76.293 — Tela sem piscar e anexos que chegam
+
+O painel Git não pisca mais nas releituras e os botões primários voltam a ser legíveis ao clicar, inclusive no tema roxo. Imagem colada no campo da missão aparece como anexo; imagem e áudio chegam à worktree e ao prompt do coordenador e dos workers, e o áudio ganha transcrição em segundo plano com o STT do ditado. A tela de iniciar missão ganha dock fixo, ⌘/Ctrl+Enter, validação no campo e espera pelo anexo em cópia, além do painel "Preparando a missão". As abas do painel lateral cabem em largura estreita. Grok, AGY e Qwen ganham níveis de permissão reais com aviso de risco do YOLO.
+
+## 0.76.292 — Linux em dia com a Jarvis, o navegador e o Kimi
+
+A tag 0.76.291 não recebe pacotes Linux: a suíte não fechou. O ledger de proveniência ainda apontava o hash antigo de `model-catalog.ts`, e o teto de IPC cru do preload do pet não contava a sonda de cursor. Os dois testes passam a dizer o que o código já faz. O desktop Linux é o da 0.76.291.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). As tags 0.76.289 e 0.76.290 também não recebem pacotes Linux.
+
+## 0.76.291 — Linux em dia com a Jarvis, o navegador e o Kimi
+
+A tag 0.76.290 não recebe pacotes Linux. Este pacote leva o produto dela para o desktop Linux, empacotado a partir de Ubuntu 22.04 (glibc 2.35). A tag 0.76.289 é só o carimbo do macOS.
+
+No desktop Linux, em relação à 0.76.288:
+
+- **Jarvis sem repetição**. No Grok Voice 3.0 o fim da captura não manda um `response.create` por cima do VAD do servidor; no OpenAI Realtime o turno usa `create_response: false`.
+- **Jarvis sempre clicável**. A janela da companion desfaz sozinha o click-through preso quando os controles estão visíveis ou a janela volta ao foco.
+- **Navegador sob menus**. Popovers, menus e modais escondem só a vista nativa do navegador que cruza a área.
+- **+Pane imediato**. A worktree da aba nova não copia mais o cache do Vitest (~1,7 GB).
+- **Kimi em Never Ask**. O modo autônomo usa `--auto` e migra `--yolo`, `-y` e o vazio.
+- **Catálogos**. AGY 1.4.0, Grok e Codex 0.163.0, com as correções F-1307 e F-1545 a F-1553.
+
+## 0.76.290 — Jarvis sem repetição, navegador sob menus, +Pane imediato e Kimi --auto
+
+- **+Pane imediato em aba nova**: `copyBuildCaches` (`worktree-cow.ts`) mantém apenas os `*.tsbuildinfo` e deixa de copiar `.nexus-cache/vitest` (~1,7 GB / 23 mil arquivos) na criação da worktree da aba.
+- **Jarvis com uma resposta por turno**: no Grok Voice 3.0 (`serverOwnsResponseCreation`) o fim de captura não envia `response.create` duplicado sobre o VAD do servidor; no OpenAI Realtime o turno envia `create_response: false` no VAD.
+- **Jarvis/companion sempre clicável**: reconciliação automática de `pet:setIgnoreMouseEvents(false)` quando controles da Jarvis estão visíveis ou a janela recupera foco/visibilidade, curando o click-through preso.
+- **Pane de navegador sob popovers, menus e modais**: `browser-occlusion.ts` detecta overlays abertos (`role="dialog"|"alertdialog"|"menu"|"listbox"` e popovers do cabeçalho) e oculta somente a `WebContentsView` nativa que cruza a área.
+- **Kimi em modo Never Ask (`--auto`)**: o modo autônomo/YOLO do Kimi Code 2.2.0 usa `--auto` em `kimi.json`, `tui-agent-permissions.ts` e na migração de overrides legados (`--yolo`/`-y`/vazio) em `adapter-registry.ts`.
+- **Catálogos e correções da madrugada**: alinhamento AGY 1.4.0, Grok e Codex 0.163.0 (`gpt-daybreak-blue-latest`) e correções F-1307, F-1545, F-1546, F-1547, F-1548, F-1550, F-1551, F-1552 e F-1553. No repositório companheiro `Hiper-nexus/nexus-shot`, painéis `NSPanel` não-ativadores passam a sobrepor janelas em tela cheia no macOS (`0f84baf`).
+
 ## 0.76.289 — macOS em dia com a Jarvis, Clef no Jev e Uso e custos
 
 A tag 0.76.285 não recebeu pacotes macOS porque o smoke empacotado ainda exigia que `nexus_file_write` do renderer fosse recusado (corrigido na 0.76.288). Este pacote publica o candidato macOS (`darwin-arm64`) assinado e notarizado com a Jarvis em tempo real e mãos-livres, o Clef autorizado em Somente Jev, o painel de Uso e custos com gasto mensal editável em USD, os handoffs sem travas burocráticas, a rolagem lateral das abas do painel direito e a renovação de contas da Reserva, além de excluir `.harvest/**` da coleta do Vitest.

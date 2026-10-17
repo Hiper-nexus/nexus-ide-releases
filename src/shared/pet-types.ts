@@ -52,6 +52,12 @@ export const PET_CHANNELS = {
   placement: 'pet:placement',
   /** send: janela do pet → main. Cursor entrou/saiu de área interativa. */
   setInteractive: 'pet:setInteractive',
+  /**
+   * event: main → janela do pet. Sonda de hit-test (coords cliente) enviada
+   * quando o main revive o forward do ignore-mouse (Bug 7: “de vidro”) ou o
+   * cursor entra nos bounds — cursor parado não gera mousemove encaminhado.
+   */
+  cursorProbe: 'pet:cursorProbe',
   /** send: janela do pet → main. Começa a arrastar (offset do cursor). */
   dragBegin: 'pet:dragBegin',
   /** send: janela do pet → main. Solta o arrasto (snap + persiste). */
@@ -524,6 +530,12 @@ export interface NexusPetApi {
   /** Ancoragem visual dentro da janela transparente segura. */
   onPlacement(cb: (placement: PetPlacement) => void): () => void;
   setInteractive(interactive: boolean): void;
+  /**
+   * Sonda do main (Bug 7): hit-test das coords do cursor do SO quando o
+   * forward do click-through pode ter morrido — o renderer decide se está
+   * sobre zona interativa e re-arma a interatividade via setInteractive.
+   */
+  onCursorProbe(cb: (point: { x: number; y: number }) => void): () => void;
   dragBegin(offset: { x: number; y: number }): void;
   dragEnd(): void;
   /** Foca a janela principal (clique no balão) — sem abrir Settings. */

@@ -328,11 +328,14 @@ function CustomModels({ provider }: { provider: ProviderSettingsInfo }) {
 }
 
 const PERMISSION_LABEL: Record<string, string> = {
-  default: 'Default',
-  auto: 'Auto',
-  plan: 'Plan',
-  bypass: 'Bypass',
+  default: 'Pedir tudo',
+  auto: 'Edições automáticas',
+  plan: 'Plano (leitura)',
+  bypass: 'YOLO (bypass)',
   yolo: 'YOLO',
+  smart: 'Inteligente',
+  manual: 'Manual',
+  dontAsk: 'Não perguntar',
 };
 
 function ControlFlags({
@@ -346,34 +349,43 @@ function ControlFlags({
   const hasEffort = provider.efforts.length > 0;
   if (!hasPerm && !hasEffort && !provider.supportsVerbose) return null;
 
+  const isYoloSelected = provider.permissionMode === 'yolo' || provider.permissionMode === 'bypass';
+
   return (
     <div className="prov__control">
       {hasPerm && (
-        <div className="prov__ctl-row">
-          <span
-            className="prov__ctl-label"
-            title="Como o agente pede permissão. Seguro Nexus força sandbox/aprovação; Auto/YOLO/Bypass exigem confirmação nativa."
-          >
-            Permissão
-          </span>
-          <div className="prov__ctl-btns">
-            <button
-              className={`prov__ctl-btn ${provider.permissionMode === '' ? 'prov__ctl-btn--on' : ''}`}
-              onClick={() => patch({ permissionMode: '' })}
+        <>
+          <div className="prov__ctl-row">
+            <span
+              className="prov__ctl-label"
+              title="Como o agente pede permissão. Padrão Nexus mantém o comportamento padrão; Auto/YOLO executam ferramentas sem confirmação interativa."
             >
-              Seguro Nexus
-            </button>
-            {provider.permissionModes.map((m) => (
+              Permissão
+            </span>
+            <div className="prov__ctl-btns">
               <button
-                key={m}
-                className={`prov__ctl-btn ${provider.permissionMode === m ? 'prov__ctl-btn--on' : ''} ${m === 'yolo' || m === 'bypass' || m === 'auto' ? 'prov__ctl-btn--danger' : ''}`}
-                onClick={() => patch({ permissionMode: m })}
+                className={`prov__ctl-btn ${provider.permissionMode === '' ? 'prov__ctl-btn--on' : ''}`}
+                onClick={() => patch({ permissionMode: '' })}
               >
-                {PERMISSION_LABEL[m] ?? m}
+                Padrão Nexus
               </button>
-            ))}
+              {provider.permissionModes.map((m) => (
+                <button
+                  key={m}
+                  className={`prov__ctl-btn ${provider.permissionMode === m ? 'prov__ctl-btn--on' : ''} ${m === 'yolo' || m === 'bypass' || m === 'auto' ? 'prov__ctl-btn--danger' : ''}`}
+                  onClick={() => patch({ permissionMode: m })}
+                >
+                  {PERMISSION_LABEL[m] ?? m}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+          {isYoloSelected && (
+            <div className="prov__ctl-warning">
+              Aviso de segurança: o modo YOLO executa comandos e ferramentas sem confirmação do operador. Confinamentos Hardened, modo somente-leitura e a worktree isolada permanecem ativos.
+            </div>
+          )}
+        </>
       )}
       {hasEffort && (
         <div className="prov__ctl-row">

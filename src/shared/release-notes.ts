@@ -11140,7 +11140,7 @@ export const RELEASE_076288: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076289: AppRelease = {
   version: '0.76.289',
   date: '2026-10-16',
   codename: 'macOS em dia com a Jarvis, Clef no Jev e Uso e custos',
@@ -11155,5 +11155,103 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Abas que rolam de lado', detail: 'A roda do mouse rola as abas do painel direito e as sub-abas do Git. A largura mínima do painel fica em 300 px.' },
     { title: 'Conta da Reserva renovada', detail: 'Contas AGY/Gemini e Claude com access token vencido renovam pelo refresh token e gravam a credencial nova.' },
     { title: 'Vagas do Trial e Nexus Shot', detail: 'O leque de helpers no Trial reserva duas vagas para o Maestro e o revisor, e a ponte do Nexus Shot aceita target nulo na entrega padrão.' },
+  ],
+};
+
+export const RELEASE_076290: AppRelease = {
+  version: '0.76.290',
+  date: '2026-10-16',
+  codename: 'Jarvis sem repetição, navegador sob menus, +Pane imediato e Kimi --auto',
+  summary: 'A Jarvis responde uma única vez por turno e cura sozinha o click-through da janela, o pane de navegador se recolhe sob popovers, menus e modais, abrir aba nova no +Pane não copia mais o cache do Vitest, o modo YOLO do Kimi usa --auto (Never Ask) e os catálogos AGY 1.4.0, Grok e Codex 0.163.0 entram em dia.',
+  highlights: [
+    { title: 'Jarvis sem repetição e sempre clicável', detail: 'Em full-duplex, a resposta do turno nasce de um único lado (VAD do servidor no Grok Voice 3.0 e create_response:false no OpenAI Realtime), eliminando a fala duplicada. A janela da Jarvis/companion detecta e desfaz sozinha o estado preso em ignoreMouseEvents.' },
+    { title: 'Navegador sob menus e +Pane imediato', detail: 'Popovers, menus e modais ocultam apenas a WebContentsView nativa com que cruzam, sem cobrir controles da interface. Abrir uma aba nova com worktree não copia mais .nexus-cache/vitest (~1,7 GB), destravando o nascimento do pane.' },
+    { title: 'Kimi em --auto e catálogos atualizados', detail: 'O modo YOLO do Kimi Code 2.2.0 passa --auto (Never Ask), migrando também flags legadas (--yolo/-y). Catálogos atualizados para AGY 1.4.0, Codex 0.163.0 (gpt-daybreak-blue-latest) e Grok, além das correções F-1307 e F-1545..F-1553.' },
+  ],
+  fixes: [
+    { title: ' +Pane sem espera de cache', detail: 'copyBuildCaches mantém os *.tsbuildinfo e deixa de copiar .nexus-cache/vitest ao materializar a worktree da aba.' },
+    { title: 'Uma resposta por turno na Jarvis', detail: 'endUserTurn não dispara response.create duplicado quando o VAD do servidor já é dono do turno.' },
+    { title: 'Self-heal do click-through', detail: 'O renderer reconcilia pet:setIgnoreMouseEvents ao abrir controles da Jarvis, montar ou recuperar foco.' },
+    { title: 'Oclusão cirúrgica do navegador', detail: 'browser-occlusion observa popovers, menus e diálogos abertos e esconde apenas o navegador que intercepta o retângulo.' },
+    { title: 'Kimi sem pedir permissão no YOLO', detail: 'kimi.json, tui-agent-permissions e a migração de overrides legados em adapter-registry usam --auto.' },
+  ],
+};
+
+export const RELEASE_076291: AppRelease = {
+  version: '0.76.291',
+  date: '2026-10-16',
+  codename: 'Linux em dia com a Jarvis, o navegador e o Kimi',
+  summary: 'No Linux, a Jarvis responde uma vez por turno e volta a ser clicável, o navegador se recolhe sob menus, abrir aba nova não copia o cache do Vitest e o Kimi autônomo usa --auto. A suíte desta tag não fechou.',
+  highlights: [
+    { title: 'Jarvis sem repetição', detail: 'Em full-duplex a resposta nasce de um único lado: o VAD do servidor no Grok Voice 3.0 e create_response:false no OpenAI Realtime. A janela da companion desfaz sozinha o click-through preso.' },
+    { title: 'Navegador sob menus e +Pane imediato', detail: 'Popovers, menus e modais ocultam só a vista nativa do navegador que cruza a área. A worktree da aba nova deixa de copiar .nexus-cache/vitest.' },
+    { title: 'Kimi em --auto', detail: 'O modo YOLO do Kimi Code 2.2.0 passa --auto (Never Ask) e migra --yolo, -y e o vazio. Catálogos de AGY 1.4.0, Codex 0.163.0 e Grok entram em dia.' },
+  ],
+  fixes: [
+    { title: 'Atualização do Linux', detail: 'As tags 0.76.289 e 0.76.290 não recebem pacotes Linux. A suíte da 0.76.291 não fechou. O Linux sai na 0.76.292.' },
+  ],
+};
+
+export const RELEASE_076292: AppRelease = {
+  version: '0.76.292',
+  date: '2026-10-16',
+  codename: 'Linux em dia com a Jarvis, o navegador e o Kimi',
+  summary: 'No Linux, a Jarvis responde uma vez por turno e volta a ser clicável, o navegador se recolhe sob menus, abrir aba nova não copia o cache do Vitest e o Kimi autônomo usa --auto. A suíte da 0.76.291 não fechou; o Linux sai nesta versão.',
+  highlights: [
+    { title: 'Jarvis sem repetição', detail: 'Em full-duplex a resposta nasce de um único lado: o VAD do servidor no Grok Voice 3.0 e create_response:false no OpenAI Realtime. A janela da companion desfaz sozinha o click-through preso.' },
+    { title: 'Navegador sob menus e +Pane imediato', detail: 'Popovers, menus e modais ocultam só a vista nativa do navegador que cruza a área. A worktree da aba nova deixa de copiar .nexus-cache/vitest.' },
+    { title: 'Kimi em --auto', detail: 'O modo YOLO do Kimi Code 2.2.0 passa --auto (Never Ask) e migra --yolo, -y e o vazio. Catálogos de AGY 1.4.0, Codex 0.163.0 e Grok entram em dia.' },
+  ],
+  fixes: [
+    { title: 'Atualização do Linux', detail: 'As tags 0.76.289, 0.76.290 e 0.76.291 não recebem pacotes Linux. A suíte da 0.76.291 não fechava. O Linux sai na 0.76.292.' },
+  ],
+};
+
+export const RELEASE_076293: AppRelease = {
+  version: '0.76.293',
+  date: '2026-10-16',
+  codename: 'Tela sem piscar e anexos que chegam',
+  summary: 'O painel Git deixa de piscar e os botões ficam legíveis no tema roxo. Imagem colada aparece no campo da missão, imagem e áudio chegam ao coordenador (com transcrição do áudio), iniciar missão ficou mais claro e mostra "Preparando a missão", e as abas laterais cabem em painel estreito.',
+  highlights: [
+    { title: 'Painel Git estável', detail: 'As releituras do git status não trocam mais "Mesa limpa" por "Lendo git status", então a tela para de piscar e o foco se mantém. Os botões Puxar, Enviar, Ver histórico e Trocar branch mantêm contraste AA em hover, clique e foco nas sete paletas.' },
+    { title: 'Anexos até a missão', detail: 'Imagem colada no campo aparece com miniatura, nome e estado. Imagem e áudio são copiados para a worktree da missão e listados com tipo no prompt do coordenador e dos workers; o áudio é transcrito em segundo plano com o mesmo reconhecimento de voz do ditado.' },
+    { title: 'Iniciar missão mais claro', detail: 'O botão "Iniciar criação" fica sempre à vista, ⌘/Ctrl+Enter inicia, os anexos ficam sob o pedido e o início espera o anexo que ainda está copiando. Enquanto a missão é preparada, um painel com mensagens de dev acompanha as etapas reais e permite tentar de novo se falhar.' },
+  ],
+  fixes: [
+    { title: 'Abas do painel lateral', detail: 'Em painel estreito as abas ganham setas de rolagem, alvos de 44 px, teclado completo e o botão de fechar sempre visível.' },
+    { title: 'Modos de permissão por CLI', detail: 'Grok, AGY e Qwen ganham os níveis reais de permissão (edições automáticas, plano) além do YOLO, com aviso de risco em Configurações. Os safeArgs de Claude e Codex continuam intactos.' },
+  ],
+};
+
+export const RELEASE_076294: AppRelease = {
+  version: '0.76.294',
+  date: '2026-10-16',
+  codename: 'Linux em dia com a tela sem piscar e os anexos',
+  summary: 'No Linux, o painel Git para de piscar, imagem e áudio chegam à missão e o início mostra "Preparando a missão". A tag 0.76.293 não recebe pacotes Linux. A suíte desta tag não fechou.',
+  highlights: [
+    { title: 'Painel Git estável', detail: 'As releituras do git status não trocam mais "Mesa limpa" por "Lendo git status", então a tela para de piscar. Os botões Puxar, Enviar, Ver histórico e Trocar branch mantêm contraste ao clicar, inclusive no tema roxo.' },
+    { title: 'Anexos até a missão', detail: 'Imagem colada aparece no campo. Imagem e áudio chegam à worktree e ao prompt do coordenador e dos workers; o áudio é transcrito em segundo plano com o reconhecimento de voz do ditado. Iniciar espera o anexo que ainda está copiando.' },
+    { title: 'Iniciar missão mais claro', detail: 'O botão fica à vista, ⌘/Ctrl+Enter inicia, e o painel "Preparando a missão" acompanha as etapas reais. Em painel estreito as abas laterais ganham setas e o fechar sempre visível.' },
+  ],
+  fixes: [
+    { title: 'Modos de permissão por CLI', detail: 'Grok, AGY e Qwen ganham os níveis reais de permissão além do YOLO, com aviso de risco. Os safeArgs de Claude e Codex continuam intactos.' },
+    { title: 'Atualização do Linux', detail: 'A tag 0.76.293 não recebe pacotes Linux: é o candidato macOS. A suíte da 0.76.294 não fechou. O Linux sai na 0.76.295.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.295',
+  date: '2026-10-16',
+  codename: 'Linux em dia com a tela sem piscar e os anexos',
+  summary: 'No Linux, o painel Git para de piscar, imagem e áudio chegam à missão e o início mostra "Preparando a missão". O aviso de risco do YOLO usa entrelinha 1.5. As tags 0.76.293 e 0.76.294 não recebem pacotes Linux.',
+  highlights: [
+    { title: 'Painel Git estável', detail: 'As releituras do git status não trocam mais "Mesa limpa" por "Lendo git status", então a tela para de piscar. Os botões Puxar, Enviar, Ver histórico e Trocar branch mantêm contraste ao clicar, inclusive no tema roxo.' },
+    { title: 'Anexos até a missão', detail: 'Imagem colada aparece no campo. Imagem e áudio chegam à worktree e ao prompt do coordenador e dos workers; o áudio é transcrito em segundo plano com o reconhecimento de voz do ditado. Iniciar espera o anexo que ainda está copiando.' },
+    { title: 'Iniciar missão mais claro', detail: 'O botão fica à vista, ⌘/Ctrl+Enter inicia, e o painel "Preparando a missão" acompanha as etapas reais. Em painel estreito as abas laterais ganham setas e o fechar sempre visível.' },
+  ],
+  fixes: [
+    { title: 'Aviso de risco do YOLO', detail: 'O aviso deixou de citar o token inexistente --leading-normal. A entrelinha agora é 1.5, então a declaração vale.' },
+    { title: 'Modos de permissão por CLI', detail: 'Grok, AGY e Qwen ganham os níveis reais de permissão além do YOLO, com aviso de risco. Os safeArgs de Claude e Codex continuam intactos.' },
+    { title: 'Atualização do Linux', detail: 'As tags 0.76.293 e 0.76.294 não recebem pacotes Linux. A 0.76.293 é o candidato macOS. A suíte da 0.76.294 não fechava. O Linux sai na 0.76.295.' },
   ],
 };

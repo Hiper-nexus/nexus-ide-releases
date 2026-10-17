@@ -94,6 +94,14 @@ describe('roteador v2: variante Cloudflare pela necessidade', () => {
 });
 
 describe('roteador v2: orçamento e "usar várias"', () => {
+  it('modelo com seis respostas erradas não vence o modelo com metade dos casos corretos', () => {
+    const quality: DecisionQualityTable = { version: 1, generatedAt: 1, source: 'evaluateDecisionCases', models: {},
+      surfaces: { judgeTool: { jev: { accuracy: 0, cases: 6 }, luna: { accuracy: 0.5, cases: 6 } } } };
+    const plan = planAutoDecision(text('judgeTool'), auto, { jev: true, clef: false, luna: true },
+      { budgetLevel: 'normal', quality });
+    expect(plan?.route).toMatchObject({ provider: 'luna', evidence: 'local-evaluation' });
+  });
+
   it('reversível, orçamento normal, 2+ provedores e qualidade medida: ensemble paralelo', () => {
     const plan = planAutoDecision(text('taskRouting'), auto, all, measured);
     expect(plan?.members?.map(member => member.provider)).toEqual(['jev', 'clef']);

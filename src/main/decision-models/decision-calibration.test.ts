@@ -43,7 +43,7 @@ describe('F-1167: conjunto rotulado embutido', () => {
 
 describe('F-1167: calibração só nos modelos com credencial', () => {
   const answer = (input: JudgeInput): JevResult => ({
-    model: String(input.model), usage: { input_tokens: 300, output_tokens: 0 }, durationMs: 120,
+    model: String(input.model), usage: { input_tokens: 300, output_tokens: 0 }, durationMs: 120, requestCount: 1,
     answers: Object.fromEntries(Object.entries(input.questions).map(([id, question]) => [id,
       question.type === 'noul' ? { type: 'noul', noul: 0.9 }
         : question.type === 'choice' ? { type: 'choice', choice: Object.keys(question.criteria)[0]!, probabilities: {}, confidence: 0.9 }
@@ -139,6 +139,28 @@ describe('F-1167: calibração só nos modelos com credencial', () => {
     expect(jev).toMatchObject({ surface: 'calibration', decision: 'calibration:6/6', requestCount: 6, questions: [], probabilities: {} });
     expect(record.mock.calls.find(([entry]) => entry.provider === 'clef')![0]).toMatchObject({ model: 'clef-flash' });
     expect(JSON.stringify(record.mock.calls)).not.toContain('terminal');
+  });
+
+  it('soma requisições reais e preserva custo conhecido de resposta recusada', async () => {
+    let call = 0;
+    const report = await evaluateDecisionCases(DECISION_CALIBRATION_CASES.slice(0, 2), async (_model, input) => {
+      if (call++ === 0) return { ...answer(input), requestCount: 2 };
+      input.onUsage?.({ inputTokens: 100, usd: 0.001, requestCount: 1, durationMs: 30, usageIncomplete: false });
+      input.onNoAnswer?.('refusal');
+      return null;
+    }, ['luna']);
+    const record = vi.fn();
+    recordCalibrationUsage(report, record);
+    expect(record.mock.calls[0][0]).toMatchObject({ requestCount: 3, inputTokens: 400, durationMs: 150, usageIncomplete: false });
+    expect(record.mock.calls[0][0].usd).toBeCloseTo(report.observations[0].usd! + 0.001, 10);
+  });
+
+  it('ausência de recibos não inventa zero gasto nem uma requisição por caso', async () => {
+    const report = await evaluateDecisionCases(DECISION_CALIBRATION_CASES.slice(0, 2), async () => null, ['luna']);
+    const record = vi.fn();
+    recordCalibrationUsage(report, record);
+    expect(record.mock.calls[0][0]).toMatchObject({ inputTokens: null, usd: null, usageIncomplete: true });
+    expect(record.mock.calls[0][0].requestCount).toBeUndefined();
   });
 
   it('indisponibilidade não conta como erro na acurácia mostrada', async () => {

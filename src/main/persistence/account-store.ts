@@ -31,6 +31,7 @@ import {
 import {
   authBlobIsUsable,
   captureNativeAuth,
+  supportsNativeSessionSnapshot,
   compareAuthBlobIdentity,
   identityFromAuthBlob,
   isFileAuthAdapter,
@@ -2133,7 +2134,7 @@ export function activateAccount(id: string): boolean {
 
 /** Adapters that support "save active session" subscription snapshots. */
 export function supportsSessionSnapshot(adapterId: string): boolean {
-  return adapterId === 'claude' || isFileAuthAdapter(adapterId);
+  return supportsNativeSessionSnapshot(adapterId);
 }
 
 /** Grava/atualiza um bloco (SQLite primeiro, cache depois; fail-closed). */

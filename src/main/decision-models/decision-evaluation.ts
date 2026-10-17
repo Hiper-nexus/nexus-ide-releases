@@ -1,4 +1,4 @@
-import { LUNA_DECISION_MODEL, type DecisionImage } from '../../shared/decision-models';
+import { LUNA_DECISION_MODEL, type DecisionImage, type DecisionUsageReceipt } from '../../shared/decision-models';
 import type { JevNoAnswerReason } from '../jev/jev-decision-log';
 import type { JudgeInput, JevAnswer, JevQuestion, JevResult } from '../jev/jev-client';
 import type { JevDecisionSurface } from '../jev/jev-decision-log';
@@ -53,6 +53,9 @@ export interface EvalObservation {
   /** Motivo categórico da falha (onNoAnswer); ausente = sem motivo (exceção, sem chave). */
   failureReason?: JevNoAnswerReason;
   consequential: boolean; durationMs: number | null; usd: number | null; inputTokens: number | null;
+  /** Absent means unmeasured, not one HTTP request per evaluation case. */
+  requestCount?: number;
+  usageIncomplete?: boolean;
 }
 interface SplitScore { cases: number; correct: number; accuracy: number | null; consequentialErrors: number }
 interface ModelScore {
@@ -78,16 +81,21 @@ async function observe(testCase: DecisionEvalCase, requestedModel: DecisionEvalM
   if (requestedModel === 'jev' && testCase.images?.length) return { ...base, status: 'unsupported' };
   const started = performance.now();
   let failureReason: JevNoAnswerReason | undefined;
+  let failureUsage: DecisionUsageReceipt | undefined;
+  const failed = (): EvalObservation => ({ ...base, status: 'failed',
+    durationMs: performance.now() - started, usageIncomplete: true,
+    ...failureUsage, ...(failureReason ? { failureReason } : {}) });
   try {
     const result = await judge(requestedModel, { state: testCase.state, questions: testCase.questions, images: testCase.images,
-      onNoAnswer: reason => { failureReason ??= reason; } });
-    if (!result) return { ...base, status: 'failed', ...(failureReason ? { failureReason } : {}) };
+      onNoAnswer: reason => { failureReason ??= reason; }, onUsage: receipt => { failureUsage = receipt; } });
+    if (!result) return failed();
     const correct = Object.entries(testCase.expected).every(([id, expected]) => matches(result.answers[id], expected));
     const measured = decisionResultUsage(result);
     return { ...base, status: 'answered', correct, model: result.model,
-      durationMs: result.durationMs ?? performance.now() - started,
-      inputTokens: measured.inputTokens, usd: measured.usd };
-  } catch { return { ...base, status: 'failed' }; }
+      durationMs: measured.durationMs ?? performance.now() - started,
+      inputTokens: measured.inputTokens, usd: measured.usd,
+      requestCount: measured.requestCount, usageIncomplete: measured.usageIncomplete ?? false };
+  } catch { return failed(); }
 }
 
 function splitScore(rows: readonly EvalObservation[], split: DecisionEvalCase['split']): SplitScore {
@@ -108,7 +116,7 @@ function modelScore(rows: readonly EvalObservation[]): ModelScore {
   const answered = eligible.filter(row => row.status === 'answered');
   const durations = answered.flatMap(row => row.durationMs === null ? [] : [row.durationMs]);
   return { answered: answered.length, failures: eligible.length - answered.length, unsupported: rows.length - eligible.length,
-    usd: eligible.some(row => row.usd === null) ? null : eligible.reduce((sum, row) => sum + row.usd!, 0),
+    usd: eligible.some(row => row.usd === null || row.usageIncomplete) ? null : eligible.reduce((sum, row) => sum + row.usd!, 0),
     p50Ms: percentile(durations, 0.5), p95Ms: percentile(durations, 0.95),
     development: splitScore(rows, 'development'), heldout: splitScore(rows, 'heldout') };
 }

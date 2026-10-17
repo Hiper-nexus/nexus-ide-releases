@@ -18,7 +18,7 @@
  * linker são recusadas antes de qualquer merge (BLOCKED_* abaixo).
  */
 
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import path from 'node:path';
 
 export const WINDOWS_USER_ENV_KEY = 'HKCU\\Environment';
@@ -138,6 +138,7 @@ export function setWindowsUserEnvDepsForTests(
 ): void {
   testDeps = deps;
   cache = null;
+  cacheGeneration++;
 }
 
 /** `reg.exe` do System32: caminho absoluto, nunca resolvido pelo PATH do filho. */
@@ -284,10 +285,45 @@ function applyPathEntries(
 
 let cache: { readonly at: number; readonly entries: readonly WindowsUserEnvEntry[] } | null =
   null;
+let refreshInFlight = false;
+/** Invalida um refresh ainda em voo quando o cache é limpo (teste/reset). */
+let cacheGeneration = 0;
+
+/**
+ * Revalidação fora da rota quente: `execFileSync` na Main segura o event loop
+ * por dezenas de ms — e o merge roda a CADA spawn de pane/bridge MCP. Cache
+ * presente mas vencido dispara este execFile assíncrono e serve o dado atual
+ * em vez de travar o spawn. Só produção passa por aqui (o seam de teste tem
+ * `execFile` próprio e segue síncrono e determinístico).
+ */
+function scheduleBackgroundRefresh(deps: WindowsUserEnvDeps | undefined): void {
+  if (refreshInFlight) return;
+  refreshInFlight = true;
+  const generation = cacheGeneration;
+  execFile(
+    deps?.regExe ?? defaultWindowsRegExe(),
+    ['query', WINDOWS_USER_ENV_KEY],
+    {
+      encoding: 'utf8',
+      timeout: REG_QUERY_TIMEOUT_MS,
+      maxBuffer: REG_QUERY_MAX_BUFFER,
+      windowsHide: true,
+    },
+    (error, stdout) => {
+      refreshInFlight = false;
+      // Falha (sem reg.exe, política, timeout) ou cache já invalidado por um
+      // reset: mantém o dado atual, nunca zera — o filho segue com o último
+      // env conhecido.
+      if (error || generation !== cacheGeneration) return;
+      cache = { at: Date.now(), entries: parseWindowsUserEnvQuery(String(stdout)) };
+    },
+  );
+}
 
 /** Descarta o cache (próxima leitura vai ao registro). */
 export function refreshWindowsUserEnvironment(): void {
   cache = null;
+  cacheGeneration++;
 }
 
 function queryRegisteredEntries(
@@ -311,6 +347,13 @@ function registeredEntries(
   const now = deps?.now?.() ?? Date.now();
   const ttl = deps?.ttlMs ?? DEFAULT_TTL_MS;
   if (cache && now - cache.at < ttl) return cache.entries;
+  // Produção com cache vencido: revalida em background sem segurar o Main e
+  // serve a leitura atual — a variável nova aparece no próximo spawn (TTL +
+  // ~30 ms), nunca custa um execFileSync na Main fora da partida a frio.
+  if (cache && deps?.execFile === undefined) {
+    scheduleBackgroundRefresh(deps);
+    return cache.entries;
+  }
   const entries = queryRegisteredEntries(deps);
   cache = { at: now, entries };
   return entries;
@@ -374,4 +417,5 @@ export function mergeWindowsUserEnvironment(
 /** Só para teste: limpa o cache entre casos. */
 export function resetWindowsUserEnvCacheForTests(): void {
   cache = null;
+  cacheGeneration++;
 }

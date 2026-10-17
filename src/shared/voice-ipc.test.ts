@@ -51,6 +51,15 @@ describe('transcribeRequestSchema', () => {
       transcribeRequestSchema.safeParse({ audioBase64: audio, purpose: 'arbitrary-provider' }).success,
     ).toBe(false);
   });
+
+  it('accepts the container mimes of mission audio attachments', () => {
+    for (const mime of ['audio/mpeg', 'audio/mp4', 'audio/ogg', 'audio/flac'] as const) {
+      expect(transcribeRequestSchema.safeParse({ audioBase64: audio, mime }).success).toBe(true);
+    }
+    expect(
+      transcribeRequestSchema.safeParse({ audioBase64: audio, mime: 'video/mp4' }).success,
+    ).toBe(false);
+  });
 });
 
 describe('jarvisLiveToolResultInputSchema', () => {

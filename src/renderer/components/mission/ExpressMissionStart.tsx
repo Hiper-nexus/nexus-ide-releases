@@ -1,4 +1,11 @@
-import { useEffect, useRef, type FormEvent } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+} from 'react';
 import { MISSION_INTENT_GOAL_MAX_CHARS } from '../../../shared/mission-intent';
 import type { SquadAgent } from '../../../shared/orch-types';
 import type { WorkspaceInfo } from '../../../shared/workspace-types';
@@ -12,11 +19,14 @@ import { issueForAgent, type MissionTeamInventory } from './TeamStep';
 import { useObjectiveDictation } from './use-objective-dictation';
 import { PixelIcon } from '../PixelIcon';
 import { launcherShortcutHint } from '../../lib/action-names';
+import { formatShortcut } from '../../lib/platform';
+import { useMissionAttachmentPresentation } from '../../state/mission-attachment-presentation';
 import { usePendingOrchestratorAdoptionStore } from '../../state/pending-orchestrator-adoption-store';
 import {
   ComposerTiptapEditor,
   plainTextToMarkdown,
   truncateMarkdown,
+  type ComposerTiptapEditorHandle,
 } from '../ComposerTiptapEditor';
 
 interface ExpressMissionStartProps {
@@ -52,25 +62,26 @@ interface ExpressMissionStartProps {
 }
 
 /**
- * Objetivo primeiro; equipe e referências podem ser personalizadas sem
- * mudar o rascunho ao abrir opções. Reusa prepare+start com o roster salvo.
- */
-/**
- * Três pedidos reais, de tamanhos diferentes: uma correção pequena, uma tela
- * nova e uma publicação. Cobrem as três formas mais comuns de trabalho e
- * mostram o nível de detalhe que ajuda a equipe.
+ * Pedidos de exemplo, de tamanhos e riscos diferentes: criar uma tela, corrigir
+ * algo, só entender o projeto (leitura, a lane `consult`) e publicar. Cobrem as
+ * formas mais comuns de trabalho e mostram o nível de detalhe que ajuda a
+ * equipe. Cada texto é conferido contra `suggestMissionLaneFromGoal` no teste.
  */
 const OBJECTIVE_EXAMPLES: ReadonlyArray<{
   readonly label: string;
   readonly text: string;
 }> = [
   {
+    label: 'Criar uma tela',
+    text: 'crie uma página de contato simples com nome, e-mail e mensagem, no mesmo estilo do resto do site',
+  },
+  {
     label: 'Corrigir algo',
     text: 'o botão de enviar do formulário não funciona no celular; corrija e confirme que dá para enviar do começo ao fim',
   },
   {
-    label: 'Criar uma tela',
-    text: 'crie uma página de contato simples com nome, e-mail e mensagem, no mesmo estilo do resto do site',
+    label: 'Entender o projeto',
+    text: 'me explique como este projeto funciona e o que dá para melhorar; só me diga, sem alterar nada',
   },
   {
     label: 'Publicar',
@@ -78,6 +89,22 @@ const OBJECTIVE_EXAMPLES: ReadonlyArray<{
   },
 ];
 
+const OBJECTIVE_REQUIRED_MESSAGE =
+  'Escreva o que você quer criar para poder começar.';
+
+interface ObjectiveError {
+  readonly message: string;
+  readonly sequence: number;
+}
+
+/**
+ * Objetivo primeiro; equipe e referências podem ser personalizadas sem
+ * mudar o rascunho ao abrir opções. Reusa prepare+start com o roster salvo.
+ *
+ * A ação "Iniciar criação" mora no dock (irmão da área rolável, mesma receita
+ * da Equipe e da Revisão): sempre à vista, com o atalho ⌘/Ctrl+Enter ao lado,
+ * por mais longa que fique a página de apoio embaixo do formulário.
+ */
 export function ExpressMissionStart({
   workspace,
   draft,
@@ -103,6 +130,19 @@ export function ExpressMissionStart({
   onRosterChange,
 }: ExpressMissionStartProps) {
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const objectiveRef = useRef<ComposerTiptapEditorHandle>(null);
+  const errorSequenceRef = useRef(0);
+  // Exemplo aplicado sobre um texto do operador: guarda o texto trocado para
+  // oferecer "Desfazer". `appliedExampleRef` diz qual exemplo está na tela; se
+  // o operador digitar por cima, a chance de desfazer some junto.
+  const appliedExampleRef = useRef<string | null>(null);
+  const focusAfterChangeRef = useRef(false);
+  const [objectiveError, setObjectiveError] = useState<ObjectiveError | null>(
+    null,
+  );
+  const [replacedObjective, setReplacedObjective] = useState<string | null>(
+    null,
+  );
   // Adoção pendente (F-561): o operador chegou aqui clicando "Tornar
   // orquestrador" num terminal. Sem este aviso ele cai numa tela de criação de
   // missão sem entender por quê.
@@ -120,6 +160,25 @@ export function ExpressMissionStart({
     if (!suppressHeadingAutofocus) headingRef.current?.focus();
   }, [suppressHeadingAutofocus]);
 
+  // O erro do pedido vazio já está na tela quando o foco chega ao campo.
+  useEffect(() => {
+    if (objectiveError) objectiveRef.current?.focus();
+  }, [objectiveError]);
+
+  useEffect(() => {
+    if (focusAfterChangeRef.current) {
+      focusAfterChangeRef.current = false;
+      objectiveRef.current?.focusEnd();
+    }
+    if (
+      appliedExampleRef.current !== null &&
+      draft.objective !== appliedExampleRef.current
+    ) {
+      appliedExampleRef.current = null;
+      setReplacedObjective(null);
+    }
+  }, [draft.objective]);
+
   const maestro = draft.roster.find(
     (agent) => agent.category === 'orchestrator',
   );
@@ -128,10 +187,81 @@ export function ExpressMissionStart({
       ? issueForAgent(maestro, inventory)
       : null;
   const startBlocked = Boolean(maestroIssue);
+  const providerMissing =
+    !inventoryLoading && !inventoryReady && !maestroIssue;
+  // Anexo a caminho (a store é a dona: picker e intake do shell gravam nela).
+  // Iniciar agora gravaria a missão SEM o arquivo e o operador juraria que
+  // ele entrou. Falha não trava — a linha com erro tem "Dispensar". Quando a
+  // cópia termina a store avisa e o botão destrava sozinho, sem polling.
+  const attaching = useMissionAttachmentPresentation(
+    (state) => state.pending,
+  ).filter((item) => !item.error);
+  const startDisabled = busy || startBlocked || attaching.length > 0;
+
+  // Um só caminho para clique, Enter em campo de uma linha e ⌘/Ctrl+Enter.
+  // Sem pasta, iniciar vira "escolher a pasta" (o pedido espera no rascunho);
+  // com pasta, pedido vazio é explicado no próprio campo.
+  const requestStart = (): void => {
+    if (startDisabled) return;
+    if (!needsWorkspace && !draft.objective.trim()) {
+      errorSequenceRef.current += 1;
+      setObjectiveError({
+        message: OBJECTIVE_REQUIRED_MESSAGE,
+        sequence: errorSequenceRef.current,
+      });
+      return;
+    }
+    onStart();
+  };
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
-    if (!busy && !startBlocked) onStart();
+    requestStart();
+  };
+
+  // O Tiptap lê ⌘/Ctrl+Enter como quebra de linha. Em CAPTURA, antes de o
+  // editor ver a tecla, ela vira "iniciar" (Enter e Shift+Enter seguem
+  // quebrando linha). Nunca durante a composição do IME.
+  const handleKeyDownCapture = (
+    event: ReactKeyboardEvent<HTMLFormElement>,
+  ): void => {
+    if (event.key !== 'Enter' || event.shiftKey || event.altKey) return;
+    if (!(event.metaKey || event.ctrlKey) || event.nativeEvent.isComposing) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    requestStart();
+  };
+
+  const applyExample = (text: string): void => {
+    const previous = draft.objective;
+    if (text === previous) {
+      objectiveRef.current?.focusEnd();
+      return;
+    }
+    const hasText = previous.trim().length > 0;
+    const typedByOperator =
+      hasText &&
+      !OBJECTIVE_EXAMPLES.some((example) => example.text === previous.trim());
+    // Trocar de um exemplo para outro não pode perder o texto que a pessoa
+    // escreveu antes do primeiro exemplo: o "Desfazer" segue apontando para ele.
+    setReplacedObjective(
+      typedByOperator ? previous : hasText ? replacedObjective : null,
+    );
+    appliedExampleRef.current = text;
+    focusAfterChangeRef.current = true;
+    setObjectiveError(null);
+    onObjectiveChange(text);
+  };
+
+  const undoExample = (): void => {
+    if (replacedObjective === null) return;
+    const restored = replacedObjective;
+    appliedExampleRef.current = null;
+    focusAfterChangeRef.current = true;
+    setReplacedObjective(null);
+    onObjectiveChange(restored);
   };
 
   const teamSize = draft.roster.length;
@@ -155,24 +285,62 @@ export function ExpressMissionStart({
         current.trim().length > 0
           ? `${current.replace(/\s+$/u, '')} ${spoken}`
           : spoken;
+      if (spoken.trim()) setObjectiveError(null);
       // Revisão P3: corte por unidades seguras (nunca no meio de um escape).
       onObjectiveChange(truncateMarkdown(next, MISSION_INTENT_GOAL_MAX_CHARS));
     },
   });
 
+  const submitShortcut = formatShortcut('mod', 'enter');
+  const objectiveDescribedBy = [
+    'express-objective-hint',
+    objectiveError ? 'express-objective-error' : null,
+  ]
+    .filter(Boolean)
+    .join(' ');
+  // Quem vai trabalhar e onde, à vista no momento de decidir: o clique de maior
+  // risco da tela não pode ser um botão sem contexto.
+  const dockNote: ReactNode = busy ? (
+    'Preparando a missão…'
+  ) : attaching.length === 1 ? (
+    <>
+      Aguarde: anexando <strong>{attaching[0]!.name}</strong>…
+    </>
+  ) : attaching.length > 1 ? (
+    <>
+      Aguarde: anexando <strong>{attaching.length} arquivos</strong>…
+    </>
+  ) : workspace ? (
+    <>
+      <strong>{workspace.name}</strong>
+      {teamSize > 0 ? (
+        <span>
+          {' · '}
+          {teamSize} {teamSize === 1 ? 'agente' : 'agentes'} ·{' '}
+          {teamTools.join(' · ')}
+        </span>
+      ) : null}
+    </>
+  ) : (
+    'Escolha a pasta do projeto para poder iniciar.'
+  );
+
   return (
     <form
-      className="mission-setup__step mission-setup__step--express"
+      className="mission-setup__step mission-setup__step--express mission-setup__step--docked"
       aria-labelledby="express-mission-title"
+      aria-busy={busy || undefined}
       onSubmit={handleSubmit}
+      onKeyDownCapture={handleKeyDownCapture}
     >
+      <div className="mission-setup__step-scroll">
       <header className="mission-setup__step-header">
         <h1 id="express-mission-title" ref={headingRef} tabIndex={-1}>
           O que você quer criar?
         </h1>
         <p>
-          Conte sua ideia ou o que precisa melhorar. O Nexus organiza a equipe
-          para trabalhar no seu projeto.
+            Conte sua ideia ou o que precisa melhorar. O Nexus organiza a
+            equipe para trabalhar no seu projeto.
         </p>
       </header>
 
@@ -183,8 +351,8 @@ export function ExpressMissionStart({
             <strong>
               {pendingAdoption.paneTitle?.trim() || 'O painel escolhido'}
             </strong>{' '}
-            vai coordenar esta missão. Nenhum terminal novo é aberto — falta só
-            dizer o que ela deve entregar.
+              vai coordenar esta missão. Nenhum terminal novo é aberto — falta
+              só dizer o que ela deve entregar.
           </span>
         </p>
       ) : null}
@@ -192,8 +360,14 @@ export function ExpressMissionStart({
       <div className="mission-setup__continuous-section">
         <div className="mission-setup__field mission-setup__objective-field">
           <div className="mission-setup__objective-label-row">
-            {/* F-1170: editor rich-text nomeado por aria-labelledby. */}
-            <label id="express-objective-label" htmlFor="express-objective">
+              {/* F-1170: editor rich-text nomeado por aria-labelledby. O rótulo
+                  aponta para um contenteditable, que o navegador não foca
+                  sozinho: clicar no rótulo foca o campo. */}
+              <label
+                id="express-objective-label"
+                htmlFor="express-objective"
+                onClick={() => objectiveRef.current?.focus()}
+              >
               Seu pedido
             </label>
             <kbd
@@ -203,6 +377,31 @@ export function ExpressMissionStart({
             >
               {launcherShortcutHint('mission')}
             </kbd>
+            </div>
+            <ComposerTiptapEditor
+              ref={objectiveRef}
+              id="express-objective"
+              className="mission-setup__objective-editor"
+              surfaceClassName="mission-setup__objective-draft mission-setup__objective-draft--express"
+              toolbar={false}
+              value={draft.objective}
+              maxLength={MISSION_INTENT_GOAL_MAX_CHARS}
+              placeholder="Exemplo: quero um site para a minha confeitaria, com cardápio e botão de WhatsApp. Tem que abrir bem no celular."
+              editable={!(draftEditingDisabled || busy)}
+              ariaLabelledBy="express-objective-label"
+              ariaInvalid={Boolean(objectiveError)}
+              ariaDescribedBy={objectiveDescribedBy}
+              onChange={(markdown) => {
+                if (draftEditingDisabled) return;
+                if (markdown.trim()) setObjectiveError(null);
+                onObjectiveChange(markdown);
+              }}
+            />
+            <div className="mission-setup__objective-help">
+              <p id="express-objective-hint" className="mission-setup__hint">
+                Diga o que você quer, para quem é e como vai saber que ficou
+                pronto. Pode começar simples e pedir ajustes depois.
+              </p>
             <button
               type="button"
               className={`mission-setup__button mission-setup__button--secondary mission-setup__dictation-button${
@@ -211,6 +410,9 @@ export function ExpressMissionStart({
                   : ''
               }`}
               aria-pressed={dictation.state === 'listening'}
+                aria-describedby={
+                  dictation.available ? undefined : 'express-dictation-reason'
+                }
               disabled={
                 !dictation.available ||
                 draftEditingDisabled ||
@@ -220,62 +422,101 @@ export function ExpressMissionStart({
               onClick={dictation.toggle}
               title={
                 !dictation.available
-                  ? 'Ligue o microfone em Configurações › Voz para ditar o objetivo'
+                    ? 'Ligue o microfone em Configurações › Voz para ditar o pedido'
                   : dictation.state === 'listening'
-                    ? 'Clique para parar e transcrever no objetivo'
-                    : 'Fale o objetivo — o Nexus transcreve aqui (ou segure Espaço fora dos campos de texto)'
+                      ? 'Clique para parar e transcrever no pedido'
+                      : 'Fale o pedido — o Nexus transcreve aqui (ou segure Espaço fora dos campos de texto)'
               }
             >
+                <PixelIcon
+                  name={dictation.state === 'listening' ? 'stop' : 'mic'}
+                  size={12}
+                />
               {dictation.state === 'listening'
-                ? '◼ Parar e transcrever'
+                  ? 'Parar e transcrever'
                 : dictation.state === 'busy'
                   ? 'Transcrevendo…'
-                  : 'Ditar objetivo'}
+                    : 'Ditar pedido'}
             </button>
-          </div>
-          <ComposerTiptapEditor
-            id="express-objective"
-            className="mission-setup__objective-editor"
-            surfaceClassName="mission-setup__objective-draft mission-setup__objective-draft--express"
-            toolbar={false}
-            value={draft.objective}
-            maxLength={MISSION_INTENT_GOAL_MAX_CHARS}
-            placeholder="Exemplo: refaça o fluxo de cadastro para ficar simples no celular e confirme que ele funciona do início ao fim."
-            editable={!(draftEditingDisabled || busy)}
-            ariaLabelledBy="express-objective-label"
-            ariaDescribedBy="express-objective-hint"
-            onChange={(markdown) => {
-              if (draftEditingDisabled) return;
-              onObjectiveChange(markdown);
-            }}
-          />
-          <span id="express-objective-hint" className="mission-setup__sr-only">
-            Escreva em linguagem comum. Você pode começar com uma ideia e pedir
-            ajustes depois.
+              {!dictation.available ? (
+                <span
+                  id="express-dictation-reason"
+                  className="mission-setup__sr-only"
+                >
+                  Para ditar, ligue o microfone em Configurações, Voz.
           </span>
-          {/* O produto nunca mostrava um objetivo que FUNCIONOU. Quem não
-              programa trava na folha em branco: não sabe o tamanho, o nível de
-              detalhe, nem o tipo de pedido que cabe. Os exemplos continuam na
-              tela depois da primeira tecla — servem de régua, não só de
-              partida. */}
+              ) : null}
+            </div>
+            {objectiveError && (
+              <p
+                key={objectiveError.sequence}
+                id="express-objective-error"
+                className="mission-setup__inline-error"
+                role="alert"
+                aria-atomic="true"
+              >
+                {objectiveError.message}
+              </p>
+            )}
+            {/* O produto nunca mostrava um pedido que FUNCIONOU. Quem não
+                programa trava na folha em branco: não sabe o tamanho, o nível
+                de detalhe, nem o tipo de pedido que cabe. Os exemplos ficam na
+                tela depois da primeira tecla; clicar num deles troca o texto
+                (e "Desfazer" devolve o que foi digitado). */}
           <div
             className="mission-setup__examples"
             role="group"
-            aria-label="Exemplos de objetivo"
+              aria-labelledby="express-examples-caption"
           >
+              <span
+                id="express-examples-caption"
+                className="mission-setup__examples-caption"
+              >
+                Comece por um exemplo:
+              </span>
             {OBJECTIVE_EXAMPLES.map((example) => (
               <button
                 key={example.label}
                 type="button"
                 className="mission-setup__example"
                 disabled={draftEditingDisabled || busy}
-                onClick={() => onObjectiveChange(example.text)}
+                  onClick={() => applyExample(example.text)}
                 title={example.text}
               >
                 {example.label}
               </button>
             ))}
           </div>
+            <p
+              className="mission-setup__hint mission-setup__undo"
+              role="status"
+              aria-live="polite"
+            >
+              {replacedObjective !== null ? (
+                <>
+                  O exemplo entrou no lugar do seu texto.{' '}
+                  <button
+                    type="button"
+                    className="mission-setup__button mission-setup__button--quiet"
+                    onClick={undoExample}
+                  >
+                    Desfazer
+                  </button>
+                </>
+              ) : null}
+            </p>
+          </div>
+
+          {/* Anexos fora do recolher: imagem, áudio e arquivo são parte do
+              pedido, e a miniatura de uma imagem colada precisa aparecer aqui,
+              logo abaixo do campo, não dentro de um bloco fechado. */}
+          <div className="mission-setup__express-attachments">
+            <MissionAttachmentPicker
+              contextPaths={draft.contextPaths}
+              disabled={draftEditingDisabled || busy}
+              compact
+              onContextPathsChange={onContextPathsChange}
+            />
         </div>
 
         <div
@@ -354,7 +595,7 @@ export function ExpressMissionStart({
           className="mission-setup__disclosure mission-setup__express-options"
         >
           <summary>
-            Adicionar detalhes e referências{' '}
+              Definir quando está pronto{' '}
             <span className="mission-setup__option-action">Opcional</span>
           </summary>
           <div className="mission-setup__option-content">
@@ -374,21 +615,26 @@ export function ExpressMissionStart({
                   if (draftEditingDisabled) return;
                   onAcceptanceChange(event.target.value);
                 }}
+                  // Enter num campo de uma linha enviaria o formulário e
+                  // iniciaria o trabalho sem querer: iniciar é ⌘/Ctrl+Enter
+                  // ou o botão.
+                  onKeyDown={(event) => {
+                    if (
+                      event.key === 'Enter' &&
+                      !event.nativeEvent.isComposing
+                    ) {
+                      event.preventDefault();
+                    }
+                  }}
               />
               <span
                 id="express-acceptance-hint"
                 className="mission-setup__hint"
               >
-                Opcional, mas é o que a equipe usa para conferir a entrega antes
-                de dizer que terminou.
+                  Opcional, mas é o que a equipe usa para conferir a entrega
+                  antes de dizer que terminou.
               </span>
             </div>
-            <MissionAttachmentPicker
-              contextPaths={draft.contextPaths}
-              disabled={draftEditingDisabled || busy}
-              compact
-              onContextPathsChange={onContextPathsChange}
-            />
           </div>
         </details>
 
@@ -459,16 +705,26 @@ export function ExpressMissionStart({
         ) : null}
 
         {/* O caminho manual fica VISÍVEL, não atrás de disclosure: o operador
-            tinha que sair para Terminais só para achar um terminal. Não é passo
-            intermediário no caminho padrão — dá para ignorar e apertar
+              tinha que sair para Terminais só para achar um terminal. Não é
+              passo intermediário no caminho padrão — dá para ignorar e apertar
             "Iniciar criação" — mas esconder foi o que incomodou. */}
+          <div className="mission-setup__express-support">
         <ExpressTerminalOptions />
         <FirstStepsGuide />
+          </div>
+        </div>
+      </div>
 
+      {/* Dock irmão da área rolável (mesma receita da Equipe e da Revisão, §15):
+          a ação principal e tudo o que responde a ela (pré-requisito, resposta
+          direta, erro) ficam juntos e sempre à vista. */}
+      <div className="mission-setup__step-dock">
+        {providerMissing || directAnswer || error || maestroIssue ? (
+          <div className="mission-setup__dock-feedback">
         {/* A pendência específica abaixo já oferece a ação de conexão. */}
-        {!inventoryLoading && !inventoryReady && !maestroIssue ? (
+            {providerMissing ? (
           <div
-            className="mission-setup__section-heading"
+                className="mission-setup__section-heading mission-setup__provider-notice"
             id="express-provider-block"
           >
             <div>
@@ -488,7 +744,6 @@ export function ExpressMissionStart({
             </button>
           </div>
         ) : null}
-      </div>
 
       {directAnswer && (
         <div
@@ -518,7 +773,7 @@ export function ExpressMissionStart({
               type="button"
               className="mission-setup__button mission-setup__button--quiet"
               onClick={onStartMissionAnyway}
-              disabled={busy}
+              disabled={busy || attaching.length > 0}
             >
               Criar missão mesmo assim
             </button>
@@ -547,12 +802,25 @@ export function ExpressMissionStart({
           )}
         </div>
       )}
+          </div>
+        ) : null}
 
-      <footer className="mission-setup__step-actions mission-setup__step-actions--end mission-setup__step-actions--after-content">
+        <footer className="mission-setup__step-actions">
+          {/* Nota viva do dock: uma única região de status cobre "aguarde o
+              anexo" e "preparando a missão" — sem aviso sr-only duplicado. */}
+          <p className="mission-setup__dock-note" role="status">
+            {dockNote}
+          </p>
+          <div className="mission-setup__dock-actions">
+            <span className="mission-setup__dock-shortcut" aria-hidden="true">
+              <kbd className="launcher-action__shortcut">{submitShortcut}</kbd>
+              iniciar
+            </span>
         <button
           type="submit"
           className="mission-setup__button mission-setup__button--primary mission-setup__button--start"
-          disabled={busy || startBlocked}
+          disabled={startDisabled}
+              aria-keyshortcuts="Control+Enter Meta+Enter"
           aria-describedby={
             startBlocked && !error ? 'express-maestro-login' : undefined
           }
@@ -560,10 +828,12 @@ export function ExpressMissionStart({
           {busy
             ? 'Iniciando criação…'
             : needsWorkspace
-              ? 'Escolher pasta e iniciar'
+                  ? 'Escolher pasta para iniciar'
               : 'Iniciar criação'}
         </button>
+          </div>
       </footer>
+      </div>
     </form>
   );
 }

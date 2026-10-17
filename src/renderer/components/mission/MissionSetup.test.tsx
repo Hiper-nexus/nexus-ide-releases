@@ -38,6 +38,11 @@ import {
   missionSetupStorageKey,
   useMissionSetupStore,
 } from '../../state/mission-setup-store';
+import {
+  beginPendingAttachment,
+  finishPendingAttachment,
+  useMissionAttachmentPresentation,
+} from '../../state/mission-attachment-presentation';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { useProviderStore } from '../../state/provider-store';
 import { useWorkspaceStore } from '../../state/workspace-store';
@@ -508,6 +513,10 @@ beforeEach(() => {
     settingsReturnDestination: null,
   });
   useProviderStore.setState({ providers: [] });
+  useMissionAttachmentPresentation.setState({
+    presentation: new Map(),
+    pending: [],
+  });
 });
 
 afterEach(() => {
@@ -1081,7 +1090,7 @@ describe('MissionSetup', () => {
       'Quero um sistema de agendamento para minha barbearia',
     );
     expect(
-      button(host, 'Escolher pasta e iniciar').disabled,
+      button(host, 'Escolher pasta para iniciar').disabled,
     ).toBe(false);
   });
 
@@ -1123,7 +1132,7 @@ describe('MissionSetup', () => {
       'ao iniciar, você escolhe a pasta e o texto acompanha',
     );
     expect(
-      button(host, 'Escolher pasta e iniciar').disabled,
+      button(host, 'Escolher pasta para iniciar').disabled,
     ).toBe(false);
 
     enterText(objective, 'Quero um sistema de agendamento');
@@ -2424,7 +2433,7 @@ describe('Caminho Expresso', () => {
     expect(isObjectiveDisabled(objective)).toBe(false);
     expect(button(host, 'Iniciar criação').type).toBe('submit');
     expect(button(host, 'Mais papéis e tamanho').type).toBe('button');
-    expect(button(host, 'Ditar objetivo').type).toBe('button');
+    expect(button(host, 'Ditar pedido').type).toBe('button');
     await flush();
     await flush();
     expect(host.textContent).toContain('Quem faz o quê');
@@ -2436,7 +2445,12 @@ describe('Caminho Expresso', () => {
     expect(
       host.querySelectorAll('select[aria-label^="Ferramenta de IA"]').length,
     ).toBeGreaterThanOrEqual(2);
-    expect(host.textContent).toContain('Anexos do cliente');
+    // Anexos ficam à vista (não dentro de um recolher) e dizem o que aceitam.
+    expect(host.textContent).toContain('Anexos');
+    expect(host.textContent).toContain('Imagem, áudio, PDF ou texto.');
+    expect(
+      host.querySelector('.mission-attachment-picker')?.closest('details'),
+    ).toBeNull();
     expect(
       host.querySelector('input[type="file"][accept*="audio"]'),
     ).not.toBeNull();
@@ -3069,7 +3083,7 @@ describe('Caminho Expresso', () => {
     const host = render(<MissionSetup />);
     await flush();
 
-    expect(host.textContent).toContain('Anexos do cliente');
+    expect(host.textContent).toContain('Anexos');
     expect(
       host.querySelector('input[type="file"][accept*="audio"]'),
     ).not.toBeNull();
@@ -3361,7 +3375,7 @@ describe('Caminho Expresso', () => {
       'Construir uma landing page',
     );
 
-    act(() => button(host, 'Escolher pasta e iniciar').click());
+    act(() => button(host, 'Escolher pasta para iniciar').click());
     await flush();
 
     expect(pick).toHaveBeenCalledTimes(1);
@@ -3550,6 +3564,146 @@ describe('Caminho Expresso', () => {
     expect(sent.objective).toBe(atBorder);
     expect(missionPrepareRequestSchema.safeParse(sent).success).toBe(true);
     expect(missionPrepareRequestSchema.safeParse({ ...sent, objective: `${atBorder}d` }).success).toBe(false);
+  });
+
+  it('segura o início enquanto o anexo copia: dock explica, submit não despacha e libera sozinho', async () => {
+    const host = await renderAtExpress();
+    enterText(
+      objectiveField(host, 'Seu pedido'),
+      'Construir uma landing page com formulário de contato',
+    );
+    await flush();
+    await flush();
+
+    let pendingId = '';
+    act(() => {
+      pendingId = beginPendingAttachment('imagem.png');
+    });
+    expect(button(host, 'Iniciar criação').disabled).toBe(true);
+    expect(
+      host.querySelector('.mission-setup__dock-note')?.textContent,
+    ).toContain('Aguarde: anexando imagem.png');
+
+    // O submit nativo obedece a mesma trava — nada chega ao Main.
+    const form = host.querySelector<HTMLFormElement>(
+      '.mission-setup__step--express',
+    )!;
+    act(() => {
+      form.dispatchEvent(
+        new Event('submit', { bubbles: true, cancelable: true }),
+      );
+    });
+    await flush();
+    expect(api.prepare).not.toHaveBeenCalled();
+
+    // Cópia concluída: a store avisa e o mesmo clique despacha de verdade.
+    act(() => finishPendingAttachment(pendingId));
+    act(() => button(host, 'Iniciar criação').click());
+    await flush();
+    await flush();
+    expect(api.prepare).toHaveBeenCalledTimes(1);
+    expect(api.start).toHaveBeenCalledTimes(1);
+  });
+
+  it('"Criar missão mesmo assim" também espera o anexo terminar', async () => {
+    const missionApi = window.nexus.mission as unknown as {
+      routeIntent?: () => Promise<unknown>;
+      answerDirect?: () => Promise<string>;
+    };
+    missionApi.routeIntent = async () => ({
+      kind: 'direct-answer',
+      question: 'quanto é 1+1?',
+    });
+    missionApi.answerDirect = async () => '2';
+    const host = await renderAtExpress();
+    enterText(objectiveField(host, 'Seu pedido'), 'quanto é 1+1?');
+    await flush();
+    await flush();
+
+    act(() => button(host, 'Iniciar criação').click());
+    await flush();
+    await flush();
+    expect(api.prepare).not.toHaveBeenCalled();
+    expect(host.textContent).toContain('Resposta direta');
+
+    let pendingId = '';
+    act(() => {
+      pendingId = beginPendingAttachment('imagem.png');
+    });
+    const anyway = button(host, 'Criar missão mesmo assim');
+    expect(anyway.disabled).toBe(true);
+    act(() => anyway.click());
+    await flush();
+    expect(api.prepare).not.toHaveBeenCalled();
+
+    act(() => finishPendingAttachment(pendingId));
+    act(() => button(host, 'Criar missão mesmo assim').click());
+    await flush();
+    await flush();
+    expect(api.prepare).toHaveBeenCalledTimes(1);
+  });
+
+  it('dock e overlay contam o mesmo estado: botão preso, formulário ocupado, uma região viva, sem flash entre fases', async () => {
+    const pendingReview = deferred<MissionReview>();
+    api.prepare.mockReturnValueOnce(pendingReview.promise);
+    const pendingStart = deferred<MissionSnapshot>();
+    api.start.mockReturnValueOnce(pendingStart.promise);
+    const host = await renderAtExpress();
+    enterText(
+      objectiveField(host, 'Seu pedido'),
+      'Construir uma página de contato com formulário funcionando',
+    );
+    await flush();
+    await flush();
+
+    act(() => button(host, 'Iniciar criação').click());
+    await flush();
+
+    // O overlay acende atrasado (anti-flicker); o dock já carrega o estado.
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(button(host, 'Iniciando criação').disabled).toBe(true);
+    expect(host.querySelector('form')?.getAttribute('aria-busy')).toBe('true');
+    const note = host.querySelector('.mission-setup__dock-note')!;
+    expect(note.getAttribute('role')).toBe('status');
+    expect(note.textContent).toContain('Preparando a missão');
+    // Uma região viva no dock — o aviso sr-only duplicado não existe mais.
+    expect(
+      host.querySelectorAll('.mission-setup__step-dock [role="status"]'),
+    ).toHaveLength(1);
+
+    await vi.waitFor(() => {
+      expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    });
+    const dialog = document.querySelector('[role="dialog"]')!;
+    expect(dialog.textContent).toContain('Preparando a missão');
+    expect(dialog.getAttribute('aria-busy')).toBe('true');
+    expect(button(host, 'Iniciando criação').disabled).toBe(true);
+
+    // prepare → start: o mesmo diálogo segue montado, sem remontar nem piscar.
+    await act(async () => {
+      pendingReview.resolve(REVIEW);
+      await pendingReview.promise;
+    });
+    await vi.waitFor(() => {
+      expect(api.start).toHaveBeenCalledTimes(1);
+    });
+    await flush();
+    expect(document.querySelector('[role="dialog"]')).toBe(dialog);
+    expect(dialog.textContent).toContain('acordando o coordenador');
+    expect(button(host, 'Iniciando criação').disabled).toBe(true);
+
+    await act(async () => {
+      pendingStart.resolve(SNAPSHOT);
+      await pendingStart.promise;
+    });
+    await flush();
+    await flush();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(useProductNavigationStore.getState().destination).toEqual({
+      kind: 'mission',
+      missionId: SNAPSHOT.id,
+      surface: 'board',
+    });
   });
 
 });

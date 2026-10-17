@@ -8,6 +8,8 @@ import type {
   MissionAttachmentSnapshot,
 } from '../../shared/mission-intent';
 import type { ProjectExecutionScope } from '../../shared/types';
+import { missionAttachmentPromptKind } from '../orch/mission-attachment-staging';
+import { scheduleMissionAttachmentTranscript } from '../voice/mission-attachment-transcript';
 
 const IS_WINDOWS = process.platform === 'win32';
 
@@ -576,6 +578,13 @@ async function stageMissionContextFile(
       payload.writeInto,
       MISSION_CONTEXT_LABELS,
     );
+
+    // Áudio anexado à missão ganha `<arquivo>.transcript.txt` ao lado em
+    // background: o job não pode segurar o import nem o início da missão, e a
+    // falha dele é silenciosa (o prompt já tem o texto "Sem transcrição").
+    if (missionAttachmentPromptKind(storedName) === 'áudio') {
+      scheduleMissionAttachmentTranscript(canonical);
+    }
 
     // Espelho de conveniência em ~/.nexus/attachments/mission-context/:
     // Agentes de linha de comando (como Claude Code, Kimi, etc.) frequentemente deduzem

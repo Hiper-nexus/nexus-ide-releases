@@ -612,6 +612,7 @@ export function GitPanelBody() {
   const diffText = useGitScmStore((s) => s.diffText);
   const selected = useGitScmStore((s) => s.selected);
   const loading = useGitScmStore((s) => s.loading);
+  const hasStatus = useGitScmStore((s) => s.hasStatus);
   const mutating = useGitScmStore((s) => s.mutating);
   const committing = useGitScmStore((s) => s.committing);
   const remoteBusy = useGitScmStore((s) => s.remoteBusy);
@@ -958,7 +959,7 @@ export function GitPanelBody() {
           Lista truncada — há muitas mudanças no working tree.
         </p>
       )}
-      {loading && !error && (
+      {loading && !hasStatus && !error && (
         <p className="product-pane__meta">Lendo git status…</p>
       )}
 
@@ -969,7 +970,8 @@ export function GitPanelBody() {
           aria-labelledby="git-scm-tab-changes"
           className="git-scm__tabpanel"
         >
-          {clean && !loading ? (
+          {/* Polling keeps the last status mounted, preserving layout and focus. */}
+          {clean && hasStatus ? (
             <div className="git-scm__empty" data-testid="git-scm-clean">
               <div className="git-scm__empty-coffee" aria-hidden>
                 <CoffeeCup size={56} celebrating={!decision.disabled} />

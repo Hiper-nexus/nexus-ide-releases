@@ -61,6 +61,11 @@ function failureReason(error: unknown, input: JudgeInput, now: () => number): Je
 function noAnswer(input: JudgeInput, route: DecisionRoute | null, reason: JevNoAnswerReason, usage?: DecisionUsageReceipt): null {
   const tracker = usageTrackers.get(input);
   if (tracker && usage) tracker.noAnswerUsage = usage;
+  // O dono da falha publica um recibo lógico, inclusive quando revoga uma resposta paga.
+  if (usage) {
+    try { input.onUsage?.(usage); }
+    catch { console.warn('[decision-models] usage callback failed'); }
+  }
   const budgetChargedUsd = input.budgetChargeFor?.(usage ?? tracker?.usage);
   if (input.surface && route) recordJevNoAnswer({ surface: input.surface, model: route.model,
     sessionId: input.sessionId, missionId: input.missionId, reason, provider: route.provider, route, usage,
@@ -97,7 +102,6 @@ async function performEnsemble(
   const receipts: DecisionUsageReceipt[] = members.map(() => ({ ...NO_REQUEST_USAGE }));
   const finishNoAnswer = (reason: JevNoAnswerReason): null => {
     const usage = aggregateUsageReceipts(receipts);
-    try { input.onUsage?.(usage); } catch { console.warn('[decision-models] usage callback failed'); }
     return noAnswer(input, lead, reason, usage);
   };
   try {
@@ -235,7 +239,7 @@ async function performAutoDecision(
     // Nem v2 nem v1 têm rota: a consulta ainda deixa a sua linha no diário.
     if (input.surface) recordJevNoAnswer({ surface: input.surface, model: 'unrouted', reason,
       sessionId: input.sessionId, missionId: input.missionId, requestCount: 0 });
-    return noAnswer(input, null, reason);
+    return noAnswer(input, null, reason, NO_REQUEST_USAGE);
   }
   let reservation: DecisionBudgetReservation | null = null;
   if (missionId) {
@@ -271,15 +275,14 @@ async function performDecision(input: JudgeInput, deps: DecisionJudgeDeps): Prom
     if (input.surface && !(input.surface === 'computerTool' || input.surface === 'browserTool') || input.images?.length) {
       if (input.surface) recordJevNoAnswer({ surface: input.surface, model: 'ensemble', reason: 'client-error',
         sessionId: input.sessionId, missionId: input.missionId, requestCount: 0 });
-      try { input.onNoAnswer?.('client-error'); } catch { /* o aviso da superfície é opcional */ }
-      return null;
+      return noAnswer(input, null, 'client-error', NO_REQUEST_USAGE);
     }
   }
   const route = resolveDecisionRoute(input, settings, available);
   if (!route) {
     // Preserve the native client's no-key accounting without ever sending it images.
     if (settings.mode === 'jev' && !available.jev && !input.images?.length) return deps.nativeJudge({ ...input, audio: undefined });
-    return noAnswer(input, null, input.signal?.aborted ? 'aborted' : 'client-error');
+    return noAnswer(input, null, input.signal?.aborted ? 'aborted' : 'client-error', NO_REQUEST_USAGE);
   }
   return runReserved(input, ledger, account([route]), tracked => performRoute(tracked, deps, settings, route));
 }
@@ -296,7 +299,7 @@ async function performRoute(
   let failureUsage: DecisionUsageReceipt | undefined;
   try {
     if (currentInput.signal.aborted) return noAnswer(input, route, 'aborted', NO_REQUEST_USAGE);
-    const watched = { ...currentInput, onUsage: (receipt: DecisionUsageReceipt) => { failureUsage = receipt; input.onUsage?.(receipt); },
+    const watched = { ...currentInput, onUsage: (receipt: DecisionUsageReceipt) => { failureUsage = receipt; },
       onNoAnswer: (reason: JevNoAnswerReason) => { noAnswer(input, route, reason, failureUsage); } };
     const connection = route.provider === 'clef' ? (deps.getClefConnection ?? (() => getClefConnection(settings)))() : undefined;
     const lunaKey = route.provider === 'luna' ? (deps.resolveLunaKey ?? resolveLunaApiKey)()?.trim() : undefined;
@@ -320,7 +323,7 @@ async function performRoute(
     const actualRoute = { ...route, model: result.model };
     return { ...result, route: actualRoute, requestCount: result.requestCount ?? 1, durationMs: elapsed(),
       ...(result.usageMissing ? {} : { estimatedUsd: decisionResultCostUsd({ ...result, route: actualRoute }) }) };
-  } catch (error) { return noAnswer(input, route, failureReason(error, currentInput, deps.now ?? Date.now)); }
+  } catch (error) { return noAnswer(input, route, failureReason(error, currentInput, deps.now ?? Date.now), failureUsage); }
   finally { unsubscribe(); }
 }
 
