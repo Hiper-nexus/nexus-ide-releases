@@ -56,6 +56,7 @@ import { adapterCircuitBreakers } from './circuit-breaker';
 import {
   multiScoreRerank,
   routeSuccessRate,
+  scoreRouteCandidate,
   tieBreakByUse,
   type RouteSuccessIndex,
 } from './route-pipeline';
@@ -2723,11 +2724,8 @@ export function routeTask(
     };
   }
 
-  // No table adapter installed at all — degrade to whatever exists.
-  // F-525: "whatever exists" não pode ser sempre o primeiro (concentrava a
-  // missão num único CLI, tipicamente Codex). Escolhe o MENOS USADO da missão
-  // entre os disponíveis — o mesmo sinal de diversidade do multi-score, agora
-  // no degrau final.
+  // Sem candidato da tabela: o mesmo score do pipeline compara qualidade,
+  // custo e diversidade dos modelos elegíveis; uso desempata.
   // F-912: no degrau final ainda prefere quem tem ALGUM modelo com janela
   // suficiente (ou sem lista/janela documentada); se ninguém cabe, segue com
   // todos — a rota nunca fica sem destino.
@@ -2735,9 +2733,10 @@ export function routeTask(
     contextRequirement === null
       ? []
       : [...available.keys()].filter((id) => {
-          const models = available.get(id)?.models;
-          if (models === undefined) return true;
-          return models.some((model) => {
+          const adapter = available.get(id)!;
+          if (adapter.models === undefined) return true;
+          return eligibleModels(adapter).some((model) => {
+            if (!permitsAutomaticAstra && isAstraModel(id, model)) return false;
             const maxContext = effectiveMaxContext(id, model);
             return maxContext === undefined || maxContext >= contextRequirement;
           });
@@ -2771,15 +2770,33 @@ export function routeTask(
   const finalFallbackPool = visionFallbackPool.length > 0 ? visionFallbackPool : fallbackPool;
   const useCount = (id: string): number =>
     context.missionUseCounts?.get(id) ?? 0;
-  const fallback = finalFallbackPool.reduce((least, id) =>
-    useCount(id) < useCount(least) ? id : least,
-  finalFallbackPool[0]!);
+  const candidates = finalFallbackPool.flatMap(id => {
+    const adapter = available.get(id)!;
+    const pinned = safeFallbackModels.get(id);
+    const models: readonly (string | undefined)[] = pinned ? [pinned] :
+      adapter.models?.length ? eligibleModels(adapter).filter(model =>
+        (permitsAutomaticAstra || !isAstraModel(id, model)) &&
+        (contextFitFallbacks.length === 0 || fitsContext(id, model))) : [undefined];
+    return models.map(model => {
+      const c: RouteCandidate = { adapterId: id, ...(model ? { model } : {}) };
+      // Sem posição de tabela: todos partem do mesmo índice e tier.
+      const score = scoreRouteCandidate({ c, fromTier: tier }, 0, {
+        tier, context, modelCatalog, missionUseCounts: context.missionUseCounts,
+        circuitOpen: id => adapterCircuitBreakers.isOpen(id),
+      }).total;
+      return { c, score };
+    });
+  });
+  const fallback = candidates.reduce<typeof candidates[number] | undefined>((best, candidate) =>
+    !best || candidate.score > best.score ||
+      (candidate.score === best.score && useCount(candidate.c.adapterId) < useCount(best.c.adapterId))
+      ? candidate : best, undefined)?.c;
+  if (!fallback) return null;
   return {
     tier,
-    adapterId: fallback,
-    ...(safeFallbackModels.has(fallback) ? { model: safeFallbackModels.get(fallback)! } : {}),
-    effort: effortFor(fallback),
-    reason: `${tier}; specialty=${specialtyVerdict.specialty} source=${policy.source}; ${why}; nenhum candidato da tabela instalado — usando ${fallback} (menos usado na missão)${capabilityNote}${visionNote}${contextNote}${missingNote}${accessProofNote}${liveCatalogDropNote}${effortNoteFor(fallback)}`,
+    ...fallback,
+    effort: effortFor(fallback.adapterId, fallback.model),
+    reason: `${tier}; specialty=${specialtyVerdict.specialty} source=${policy.source}; ${why}; nenhum candidato da tabela instalado — usando ${fallback.adapterId} (qualidade, custo e diversidade; uso desempata)${capabilityNote}${visionNote}${contextNote}${missingNote}${accessProofNote}${liveCatalogDropNote}${effortNoteFor(fallback.adapterId, fallback.model)}`,
     alternatives: [],
     specialty: specialtyVerdict.specialty,
     policySource: policy.source,

@@ -1629,3 +1629,73 @@ describe('F-1313 — preferência explícita e espalhamento', () => {
     expect(decision!.reason).toContain('rotação garantida');
   });
 });
+
+describe('fallback genérico fora da tabela', () => {
+  const catalog: ModelCatalog = { adapters: {
+    custom: { models: [
+      { id: 'weak', costTier: 'medium', quality: { coding: 6, overall: 6, source: 'nexus-eval/v1/test', evaluatedAt: '2026-10-17' } },
+      { id: 'strong', costTier: 'medium', quality: { coding: 24, overall: 24, source: 'nexus-eval/v1/test', evaluatedAt: '2026-10-17' } },
+    ] },
+  } };
+  const pool: AdapterAvailability[] = [
+    { id: 'unknown', installed: true, models: ['plain'] },
+    { id: 'custom', installed: true, models: ['weak', 'strong'] },
+  ];
+
+  it('com cobertura parcial pontua modelos elegíveis e escolhe o melhor mesmo sem linha na tabela', () => {
+    const decision = routeTask('tarefa', pool, DEFAULT_ROUTING_TABLE, 'medium', false, catalog);
+    expect(decision?.reason).toContain('nenhum candidato da tabela instalado');
+    expect(decision).toMatchObject({ adapterId: 'custom', model: 'strong' });
+  });
+
+  it('a diversidade pode superar a vantagem de qualidade', () => {
+    const decision = routeTask('tarefa', pool, DEFAULT_ROUTING_TABLE, 'medium', false, catalog,
+      { missionUseCounts: new Map([['custom', 2]]) });
+    expect(decision).toMatchObject({ adapterId: 'unknown', model: 'plain' });
+  });
+
+  it('custo diferencia modelos com qualidade próxima', () => {
+    const priced: ModelCatalog = { adapters: { custom: { models: [
+      { ...catalog.adapters!.custom!.models![0]!, costTier: 'free', quality: { coding: 23, overall: 23, source: 'nexus-eval/v1/test', evaluatedAt: '2026-10-17' } },
+      { ...catalog.adapters!.custom!.models![1]!, costTier: 'high' },
+    ] } } };
+    expect(routeTask('tarefa', pool, DEFAULT_ROUTING_TABLE, 'easy', false, priced))
+      .toMatchObject({ adapterId: 'custom', model: 'weak' });
+  });
+
+  it('empate de score entre capacidade e diversidade cede ao menos usado', () => {
+    const tied: ModelCatalog = { adapters: {
+      unknown: { models: [{ id: 'plain', costTier: 'high' }] },
+      busy: { models: [{ ...catalog.adapters!.custom!.models![1]!, id: 'strong' }] },
+      fresh: { models: [{ ...catalog.adapters!.custom!.models![0]!, id: 'balanced',
+        quality: { coding: 15, overall: 15, source: 'nexus-eval/v1/test', evaluatedAt: '2026-10-17' } }] },
+    } };
+    const decision = routeTask('tarefa', [
+      { id: 'busy', installed: true, models: ['strong'] },
+      { id: 'fresh', installed: true, models: ['balanced'] },
+      pool[0]!, // Cobertura parcial: exercita o degrau final.
+    ], DEFAULT_ROUTING_TABLE, 'medium', false, tied, { missionUseCounts: new Map([['busy', 1]]) });
+    expect(decision?.reason).toContain('nenhum candidato da tabela instalado');
+    expect(decision?.adapterId).toBe('fresh');
+  });
+
+  it('modelo bloqueado com contexto grande não elimina o fail-open dos elegíveis pequenos', () => {
+    const contextCatalog: ModelCatalog = { adapters: { custom: { models: [
+      { id: 'blocked-large', availability: 'api-only', maxContext: 500_000 },
+      { id: 'small', maxContext: 8_000 },
+    ] } } };
+    const decision = routeTask('tarefa com contexto de 100k tokens', [
+      { id: 'custom', installed: true, models: ['blocked-large', 'small'] },
+    ], DEFAULT_ROUTING_TABLE, 'medium', false, contextCatalog);
+    expect(decision).toMatchObject({ adapterId: 'custom', model: 'small' });
+  });
+
+  it('sem qualidade conhecida continua escolhendo o adapter menos usado', () => {
+    const decision = routeTask('tarefa', [
+      { id: 'busy', installed: true }, { id: 'fresh', installed: true },
+    ], DEFAULT_ROUTING_TABLE, 'medium', false, { adapters: {} }, {
+      missionUseCounts: new Map([['busy', 1]]),
+    });
+    expect(decision?.adapterId).toBe('fresh');
+  });
+});
