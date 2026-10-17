@@ -99,6 +99,8 @@ export function configureMissionlessPersistence(dir?: string): void {
   injectedDir = dir;
   missionlessUses = [];
   missionlessLoaded = false;
+  // A memória zerou: gravação pendente de antes gravaria a lista vazia por cima do arquivo.
+  resetRouteProvenancePersistence();
 }
 
 function missionlessFile(): string | null {
@@ -136,64 +138,74 @@ function entryKind(use: DurableRouteUse): 'decision' | 'spawn' {
 
 // F-764 / N1: a persistência síncrona com fsync a cada spawn bloqueava o main
 // ~13 ms por chamada. Agora marcamos sujo e a gravação assíncrona (writeFileAtomicAsync)
-// roda coalescida com debounce de ~1.5 s (timer.unref). O flush síncrono no
-// before-quit/shutdown garante que nada se perde. A contagem em memória continua
+// roda coalescida com debounce de ~1.5 s (timer.unref). O flush no início do
+// shutdown garante que nada se perde. A contagem em memória continua
 // autoritativa — consultas de fair-share não esperam disco.
+//
+// Invariante: sujo ⇒ o contador foi carregado (só os writers marcam sujo, e
+// depois de ensureMissionlessLoaded). Por isso flush sem sujeira não grava: a
+// memória de uma sessão que nunca carregou o contador (só retomou panes) é a
+// lista vazia, e gravá-la apagaria o arquivo.
 const PERSIST_DEBOUNCE_MS = 1500;
 let persistDirty = false;
 let persistTimer: ReturnType<typeof setTimeout> | undefined;
-let persistFlight: Promise<void> | undefined;
+// Fila única: duas gravações nunca correm juntas, então a do snapshot mais novo publica por último.
+let persistChain: Promise<void> = Promise.resolve();
+// Sobe a cada reset: gravação enfileirada ou em voo de antes do reset desiste e não recria o arquivo.
+// ponytail: a cerca fica antes do rename; um rename já despachado ao pool não se cancela (só testes resetam).
+let persistEpoch = 0;
+
+/** Tira o snapshot agora (a sujeira vai junto com ele) e o põe na fila; não espera o disco. */
+function persistSnapshotNow(): void {
+  persistDirty = false;
+  const file = missionlessFile();
+  if (!file) return;
+  const body = JSON.stringify(missionlessUses, null, 2);
+  const epoch = persistEpoch;
+  const stillCurrent = (): void => {
+    if (epoch !== persistEpoch) throw new Error('route-provenance: gravação obsoleta');
+  };
+  persistChain = persistChain
+    .then(() => {
+      stillCurrent();
+      return writeFileAtomicAsync(file, body, undefined, { beforeCommit: stillCurrent });
+    })
+    // persistência é melhor-esforço: a memória do processo continua valendo.
+    .catch(() => undefined);
+}
 
 function persistSchedule(): void {
   persistDirty = true;
   if (persistTimer !== undefined) return;
   persistTimer = setTimeout(() => {
     persistTimer = undefined;
-    const snapshot = missionlessUses;
-    const file = missionlessFile();
-    if (!file) { persistDirty = false; return; }
-    const promise = writeFileAtomicAsync(file, JSON.stringify(snapshot, null, 2))
-      .catch(() => undefined)
-      .finally(() => {
-        if (persistFlight === promise) persistFlight = undefined;
-        if (persistDirty) {
-          // Mais sujeira chegou durante o voo: agenda de novo.
-          persistDirty = false;
-          persistSchedule();
-        }
-      });
-    persistFlight = promise;
+    persistSnapshotNow();
   }, PERSIST_DEBOUNCE_MS);
   persistTimer.unref();
 }
 
 /**
- * Grava o estado corrente em disco sem esperar o debounce. Chamado no shutdown
- * do app (before-quit) e em testes que simulam reinício.
+ * Grava o que estiver sujo sem esperar o debounce e aguarda a fila esvaziar.
+ * Chamado no início do shutdown do app (a admissão de spawn já está selada, não
+ * entra registro novo) e em testes que simulam reinício.
  */
 export async function flushRouteProvenance(): Promise<void> {
   if (persistTimer !== undefined) {
     clearTimeout(persistTimer);
     persistTimer = undefined;
   }
-  persistDirty = false;
-  const file = missionlessFile();
-  if (!file) return;
-  try {
-    await writeFileAtomicAsync(file, JSON.stringify(missionlessUses, null, 2));
-  } catch {
-    // persistência é melhor-esforço: a memória do processo continua valendo.
-  }
+  if (persistDirty) persistSnapshotNow();
+  await persistChain;
 }
 
-/** Para testes: reseta o estado de debounce sem tocar no disco. */
+/** Descarta o que está pendente (timer, sujeira, gravações na fila ou em voo) sem tocar no disco. */
 export function resetRouteProvenancePersistence(): void {
   if (persistTimer !== undefined) {
     clearTimeout(persistTimer);
     persistTimer = undefined;
   }
   persistDirty = false;
-  persistFlight = undefined;
+  persistEpoch += 1;
 }
 
 function ensureMissionlessLoaded(): void {
