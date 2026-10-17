@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.76.299 — Linux em dia com a retomada, o uso e a Jarvis
+
+A tag 0.76.298 não recebe pacotes Linux: é o candidato macOS e a release do Windows. Este pacote leva o produto dela para o desktop Linux.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35).
+
+No desktop Linux, em relação à 0.76.297:
+
+- Abas isoladas e panes de missões em Dormindo ou encerradas reabrem depois de reiniciar, com pasta e anexos preservados. A retomada do coordenador aceita a mudança de st_dev entre boots. "Abrir para retomar" fica alinhado ao título.
+- A Jarvis ganha HUD clicável e arrastável, com o estado das opções de entrega e voz visível e barras de nível mais claras.
+- DeepSeek Flash entra na Visual Frontier Lane e nas especialidades frontend, ui e ux (DeepSeek, Claude e Qwen Code).
+- Filtros por dia, intervalo, ferramenta e modelo recalculam o painel de uso e custos inteiro, inclusive ao clicar no dia na tabela.
+- Novo login Codex não revoga a sessão da conta irmã (F-1560). Colar ou soltar arquivo sem projeto destaca e foca o seletor de pasta. Abas de missão aposentada voltam a fechar. "Abrir projeto existente" aparece abaixo de "Novo pedido".
+- "Salvar tema" só confirma com "Tema salvo." depois que o tema volta na lista; se falhar, o editor continua aberto e mostra o motivo. Salvar tecnologias confirma com "Tecnologias salvas." ou mostra o erro. Em Configurações → Uso, a página não rola além do fim da seção.
+- O spawn fica mais leve: a pasta isolada do writer não copia o cache do Vitest, e a admissão usa uma única régua de memória. Sob pressão de build, o orquestrador libera RAM mais rápido e hiberna panes de até dois projetos sem perder a saída que o terminal ainda segurava. O relógio de nascimento do pane sobrevive a remontagens; uma tentativa vencida (90 s) continua vencida e o respawn recomeça do zero.
+- As superfícies de decisão calibradas ficam no Jev e, quando um provedor cai, passam para o próximo somando o gasto de todas as tentativas. Uso desconhecido mantém o custo estimado.
+
 ## 0.76.298 — Retomada após reiniciar e uso com filtros
 
 Abas isoladas e panes de missões em Dormindo ou encerradas reabrem após reiniciar o Mac, com pasta e anexos preservados. A retomada do coordenador aceita a mudança de st_dev entre boots e o link "Abrir para retomar" fica alinhado ao título.

@@ -11285,7 +11285,7 @@ export const RELEASE_076297: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076298: AppRelease = {
   version: '0.76.298',
   date: '2026-10-17',
   codename: 'Retomada após reiniciar e uso com filtros',
@@ -11299,6 +11299,32 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Decisões com failover', detail: 'As superfícies calibradas ficam no Jev e, quando um provedor cai, a decisão passa para o próximo e soma o gasto de todas as tentativas. Uso desconhecido mantém o custo estimado no orçamento.' },
   ],
   fixes: [
+    { title: 'Contas Codex preservadas', detail: 'Entrar em uma nova conta Codex não revoga a sessão da conta irmã (F-1560).' },
+    { title: 'Arquivo sem projeto aberto', detail: 'Colar ou soltar um arquivo sem projeto aberto destaca e foca o seletor de pasta, indicando onde continuar.' },
+    { title: 'Abas e retomada de missão', detail: 'Abas de missão aposentada voltam a poder ser fechadas. Na barra lateral, "Abrir para retomar" fica alinhado na coluna do título.' },
+    { title: 'Abrir projeto existente', detail: 'A ação "Abrir projeto existente" ganha rótulo visível abaixo de "Novo pedido".' },
+    { title: 'Terminal hibernado sem perder saída', detail: 'Hibernar um pane guarda a saída que o terminal ainda tinha na fila, e o pane segue vivo se o descarte do terminal falhar.' },
+    { title: 'Relógio de nascimento do pane', detail: 'O tempo de nascimento sobrevive a remontagens; uma tentativa vencida após 90 s continua vencida e o novo spawn recomeça do zero.' },
+    { title: 'Rolagem em Configurações → Uso', detail: 'A página não rola mais além do fim da seção.' },
+    { title: 'Confirmação ao salvar tema e tecnologias', detail: '"Salvar tema" confirma com "Tema salvo." só depois de o tema voltar na lista; se falhar, o editor continua aberto e mostra o motivo. Salvar as tecnologias do projeto confirma com "Tecnologias salvas." ou mostra o erro.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.299',
+  date: '2026-10-17',
+  codename: 'Linux em dia com a retomada, o uso e a Jarvis',
+  summary: 'O desktop Linux recebe a retomada de abas e panes, a Jarvis clicável, o DeepSeek Flash no frontend e os filtros de uso. A tag 0.76.298 não recebe pacotes Linux.',
+  highlights: [
+    { title: 'Retomada depois de reiniciar', detail: 'Abas isoladas e panes de missões em "Dormindo" ou encerradas reabrem com pasta e anexos preservados. A retomada do coordenador aceita a mudança de st_dev entre boots.' },
+    { title: 'Jarvis clicável e arrastável', detail: 'O HUD de voz responde ao clique e pode ser arrastado. Os controles mostram o estado das opções de entrega e voz, e as barras de nível sonoro ficam mais claras.' },
+    { title: 'DeepSeek Flash no frontend', detail: 'O DeepSeek Flash entra na Visual Frontier Lane e no roteamento das especialidades frontend, ui e ux, nos adaptadores DeepSeek, Claude e Qwen Code.' },
+    { title: 'Uso e custos com filtros', detail: 'Filtrar por dia, intervalo, ferramenta ou modelo recalcula o painel inteiro. Clicar no dia diretamente na tabela aplica o recorte aos totais e gráficos.' },
+    { title: 'Panes mais leves sob pressão', detail: 'A pasta isolada do writer nasce sem copiar o cache do Vitest, a admissão usa uma régua de memória só e, sob pressão de build, o Nexus libera RAM mais rápido e hiberna panes de até dois projetos.' },
+    { title: 'Decisões com failover', detail: 'As superfícies calibradas ficam no Jev e, quando um provedor cai, a decisão passa para o próximo e soma o gasto de todas as tentativas. Uso desconhecido mantém o custo estimado no orçamento.' },
+  ],
+  fixes: [
+    { title: 'Atualização do Linux', detail: 'A tag 0.76.298 não recebe pacotes Linux: é o candidato macOS e a release do Windows. O desktop Linux sai na 0.76.299.' },
     { title: 'Contas Codex preservadas', detail: 'Entrar em uma nova conta Codex não revoga a sessão da conta irmã (F-1560).' },
     { title: 'Arquivo sem projeto aberto', detail: 'Colar ou soltar um arquivo sem projeto aberto destaca e foca o seletor de pasta, indicando onde continuar.' },
     { title: 'Abas e retomada de missão', detail: 'Abas de missão aposentada voltam a poder ser fechadas. Na barra lateral, "Abrir para retomar" fica alinhado na coluna do título.' },
