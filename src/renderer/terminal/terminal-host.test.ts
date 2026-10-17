@@ -2694,6 +2694,29 @@ describe('DSK-01 — saída antiga regravada não responde queries de terminal',
     expect(host.virtualized!.pendingOutput).toBe('CAUDA-NA-FILA depois');
   });
 
+  it('xterm que falha ao ser descartado não hiberna e não perde a cauda da fila', async () => {
+    const host = openAgent();
+    expect(await waitForSession(agent.id, 1000)).toBe('pty-hidden');
+    for (let i = 0; i < 24; i++) {
+      getOrCreateHost({ id: `filler-${i}`, kind: 'shell', title: `t${i}` });
+    }
+    const hibernating = host.term;
+    terminalOutputScheduler.writeTerminalOutput(hibernating, 'CAUDA-NA-FILA', { foreground: false });
+    const queued = terminalOutputScheduler.getQueuedChars(hibernating);
+    expect(queued).toBeGreaterThan(0);
+    vi.spyOn(hibernating, 'dispose').mockImplementationOnce(() => { throw new Error('xterm ímpar'); });
+
+    setHostVisibility(agent.id, false);
+    await vi.advanceTimersByTimeAsync(20);
+
+    // Não hibernou: o pane segue com o xterm vivo...
+    expect(host.virtualized).toBeNull();
+    expect(host.term).toBe(hibernating);
+    // ...e a cauda que ele não chegou a retirar continua inteira no scheduler.
+    expect(terminalOutputScheduler.getQueuedChars(hibernating)).toBe(queued);
+    expect(terminalOutputScheduler.takeQueuedTerminalOutput(hibernating)).toBe('CAUDA-NA-FILA');
+  });
+
   it('replay de adoção e repaint local chegam sem queries; saída ao vivo segue crua', async () => {
     spawn.mockResolvedValueOnce({ ok: true, sessionId: 'pty-adopted', adopted: true });
     vi.mocked(window.nexus.pty.replay).mockImplementation(async (sessionId) => {

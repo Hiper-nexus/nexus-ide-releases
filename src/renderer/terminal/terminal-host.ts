@@ -2500,7 +2500,7 @@ function virtualizeHost(host: Host): void {
   }
   let snapshot = '';
   let cols = host.term.cols;
-  let queuedTail = '';
+  let usedPendingScrollback = false;
   try {
     const live = host.serialize.serialize().slice(-MAX_PERSISTED_SCROLLBACK);
     cols = host.term.cols;
@@ -2514,25 +2514,31 @@ function virtualizeHost(host: Host): void {
     ) {
       snapshot = host.pendingScrollback.slice(-MAX_PERSISTED_SCROLLBACK);
       cols = host.pendingScrollbackCols ?? cols;
-      delete host.pendingScrollback;
-      delete host.pendingScrollbackCols;
-      delete host.scrollbackMismatchNoticed;
+      usedPendingScrollback = true;
     } else {
       snapshot = live;
     }
-    // A cauda que o scheduler ainda segura (saída de fundo) NÃO é drenada para
-    // dentro deste xterm: o `write` dele parseia de forma assíncrona, então o
-    // serialize e o dispose síncronos a perderiam. Ela sai da fila como texto
-    // (depois de tudo que pode lançar) e abre o `pendingOutput`, regravado
-    // depois do snapshot na reidratação. Soltar o estado do scheduler (fila +
-    // parse pendente + resync) evita que ele segure o term descartado e pine
-    // até 2 MB por pane hibernado.
-    queuedTail = takeQueuedTerminalOutput(host.term);
     host.term.dispose();
-    discardTerminalOutput(host.term);
   } catch {
-    return; // terminal em estado ímpar — não hibernar é seguro
+    // Terminal em estado ímpar: nada foi retirado da fila e a fita pendente
+    // continua de pé, então o pane segue vivo sem hibernar.
+    return;
   }
+  if (usedPendingScrollback) {
+    delete host.pendingScrollback;
+    delete host.pendingScrollbackCols;
+    delete host.scrollbackMismatchNoticed;
+  }
+  // A cauda que o scheduler ainda segura (saída de fundo) NÃO é drenada para
+  // dentro deste xterm: o `write` dele parseia de forma assíncrona, então o
+  // serialize e o dispose síncronos a perderiam. Ela sai da fila como texto
+  // DEPOIS que serialize() e dispose() já sucederam (se dispose() lançar, a
+  // cauda continua intacta no scheduler) e abre o `pendingOutput`, regravado
+  // depois do snapshot na reidratação. `takeQueuedTerminalOutput` só usa o
+  // term como chave e já chama `discardTerminalOutput` — soltar o estado do
+  // scheduler (fila + parse pendente + resync) evita que ele segure o term
+  // descartado e pine até 2 MB por pane hibernado.
+  const queuedTail = takeQueuedTerminalOutput(host.term);
   webglPool.suspend(host.paneId);
   const built = buildTerminal(host.kind);
   host.term = built.term;

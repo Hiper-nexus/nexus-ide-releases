@@ -307,12 +307,47 @@ describe('revisão da Fase 1 (F-1164/F-1165)', () => {
     expect(ledger.snapshot('m-partial', 0.5).spentUsd).toBeCloseTo(result!.budgetChargedUsd!, 12);
   });
 
-  it('P1: Juntos (v1) mantém a regra: falha parcial não devolve resposta', async () => {
+  it('P1: Junto (v1) mantém a regra: falha parcial não devolve resposta', async () => {
     const result = await judgeDecision({ ...input, surface: 'taskRouting' }, deps({ ledger: new DecisionBudgetLedger(),
       settings: settings({ mode: 'together' }), ...withClef(clefAnswer(400)), getAvailability: () => ({ jev: true, clef: true, luna: true }),
       resolveLunaKey: () => 'sk-synthetic', fetch: (async (url: string, options?: RequestInit) => String(url).includes('openai')
         ? new Response('{}', { status: 400 }) : clefAnswer(400)(url, options)) as typeof fetch }));
     expect(result).toBeNull();
+  });
+
+  // O recibo de cada membro do conjunto é escrito depois da chamada dele: cliente que
+  // responde `null` sem relatar uso não fez requisição nenhuma (o Jev sem chave), e um
+  // ensemble com esse membro não pode virar gasto desconhecido — que segura o estimado
+  // inteiro no orçamento da missão sem nenhuma requisição ter saído.
+  const fatInput = { ...input, state: 'contexto da decisão '.repeat(400) };
+  const CLEF_MEASURED = 50 * 0.038 / 1_000_000;
+
+  it('P1: membro que devolve null sem relatar uso é "nenhuma requisição" — só se cobra quem pediu', async () => {
+    const ledger = new DecisionBudgetLedger();
+    const result = await judgeDecision({ ...fatInput, surface: 'missionPick', missionId: 'm-no-request' },
+      deps({ ledger, ...withClef(clefAnswer()), nativeJudge: async () => null }));
+    const estimated = estimateDecisionCostUsd(estimateDecisionInputTokens(fatInput), 'jev', 'jev');
+    // Só o Clef pediu: a requisição dele e o custo medido dele, com o recibo completo.
+    expect(result?.usageReceipt).toMatchObject({ requestCount: 1, usageIncomplete: false });
+    expect(result?.usageMissing).toBeUndefined();
+    expect(estimated).toBeGreaterThan(CLEF_MEASURED);
+    expect(result?.budgetChargedUsd).toBeCloseTo(CLEF_MEASURED, 12);
+    expect(ledger.snapshot('m-no-request', 0.5)).toMatchObject({ reservedUsd: 0 });
+    expect(ledger.snapshot('m-no-request', 0.5).spentUsd).toBeCloseTo(CLEF_MEASURED, 12);
+  });
+
+  it('P1: membro que lança sem relatar uso é gasto desconhecido — o estimado fica', async () => {
+    const ledger = new DecisionBudgetLedger();
+    const result = await judgeDecision({ ...fatInput, surface: 'missionPick', missionId: 'm-ensemble-unknown' },
+      deps({ ledger, ...withClef(clefAnswer()), nativeJudge: async () => { throw new Error('transport boom'); } }));
+    const estimated = estimateDecisionCostUsd(estimateDecisionInputTokens(fatInput), 'jev', 'jev');
+    expect(result?.usageReceipt).toMatchObject({ requestCount: 1, usageIncomplete: true });
+    expect(result?.usageMissing).toBe(true);
+    // Custo desconhecido nunca vira zero: o livro segura um estimado acima do medido.
+    expect(result?.budgetChargedUsd).toBeGreaterThan(CLEF_MEASURED);
+    expect(result?.budgetChargedUsd).toBeGreaterThanOrEqual(estimated);
+    expect(ledger.snapshot('m-ensemble-unknown', 0.5)).toMatchObject({ reservedUsd: 0 });
+    expect(ledger.snapshot('m-ensemble-unknown', 0.5).spentUsd).toBeCloseTo(result!.budgetChargedUsd!, 12);
   });
 
   it('P2-5: surface fixa no Jev nunca é recusada pelo orçamento; só contabiliza', async () => {

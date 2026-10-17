@@ -130,7 +130,6 @@ async function performEnsemble(
     const results = await Promise.all(members.map(async (member, index) => {
       let reported: DecisionUsageReceipt | undefined;
       let memberReason: JevNoAnswerReason | undefined;
-      receipts[index] = { inputTokens: null, usd: null, requestCount: 0, durationMs: 0, usageIncomplete: true };
       try {
         const result = await callMember({ ...currentInput, surface: undefined,
           onUsage: receipt => { reported = receipt; receipts[index] = receipt; },
@@ -144,9 +143,14 @@ async function performEnsemble(
             usageIncomplete: Boolean(receipt.usageIncomplete) };
           return result;
         }
+        // Os clientes só reportam o recibo quando enviaram algo: sem relatório
+        // = nenhuma requisição saiu, e a reserva do orçamento volta inteira.
+        receipts[index] = reported ?? NO_REQUEST_USAGE;
         recordDecisionProviderFailure(member.provider, memberReason ?? 'client-error');
         return null;
       } catch (error) {
+        // Lançou: o gasto é desconhecido, nunca zero — mesmo sem relatório.
+        receipts[index] = reported ?? UNKNOWN_USAGE;
         const reason = failureReason(error, currentInput, deps.now ?? Date.now);
         firstFailure ??= reason;
         recordDecisionProviderFailure(member.provider, reason);
