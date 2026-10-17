@@ -2005,3 +2005,16 @@ describe('WorkspaceRail — agentes trabalhando agora', () => {
     }
   });
 });
+
+describe('WorkspaceRail recovery link layout', () => {
+  it('spans the mission grid text columns instead of the 16px icon column', async () => {
+    const { readFileSync } = await import('node:fs');
+    const css = readFileSync(
+      'src/renderer/styles/app-shell.css',
+      'utf8',
+    );
+    const rule = /\.workspace-rail__recovery-link\s*\{([^}]*)\}/.exec(css)?.[1];
+    expect(rule).toMatch(/grid-column:\s*2\s*\/\s*-1/);
+    expect(rule).toMatch(/justify-self:\s*start/);
+  });
+});

@@ -13,7 +13,7 @@ import {
   ptyRecoverSchema,
 } from "../../shared/ipc";
 import type { SpawnResult, ProjectExecutionScope } from "../../shared/types";
-import { preparePaneSpaceWorktree } from './pane-space-worktree';
+import { findPaneSpaceIdByWorktreeCwd, preparePaneSpaceWorktree } from './pane-space-worktree';
 import {
   awaitCliSpawnOrchestration,
   hasCliSpawnOrchestrationGate,
@@ -766,8 +766,14 @@ export function registerPtyIpc(): void {
           reportTiming(false, `unknown adapter: ${adapterId}`);
           return { ok: false, error: `unknown adapter: ${adapterId}` };
         }
-        const isolatedTab = req.worktreeSpaceId && !envelope.pending &&
-          !envelope.persistedPane && !req.missionId;
+        // Bug 4: o pedido canônico decide (o Main pode ter descartado um
+        // missionId órfão do layout), e o cwd da worktree de aba retida no
+        // reinício reencontra o espaço mesmo sem `worktreeSpaceId`.
+        const direct = !envelope.pending && !envelope.persistedPane && !envelope.request.missionId;
+        const worktreeSpaceId = envelope.request.worktreeSpaceId ?? (direct && envelope.request.cwd
+          ? findPaneSpaceIdByWorktreeCwd(requireRendererWorkspaceScope(event.sender), envelope.request.cwd)
+          : undefined);
+        const isolatedTab = direct && worktreeSpaceId !== undefined;
         const spawn = resolveMainOwnedAgentSpawn(
           event.sender,
           isolatedTab ? { ...envelope, request: { ...envelope.request, cwd: undefined } } : envelope,
@@ -781,13 +787,15 @@ export function registerPtyIpc(): void {
             error: `adapter ${adapterId} is not a cli-pty adapter`,
           };
         }
-        if (isolatedTab && spawn.authority.source !== 'direct-user') {
+        // Só o pedido explícito da aba recusa; o espaço deduzido do cwd não
+        // muda a pasta de um grant do Nexus (ela vem do grant, não do cwd).
+        if (isolatedTab && envelope.request.worktreeSpaceId && spawn.authority.source !== 'direct-user') {
           reportTiming(false);
           return { ok: false, error: 'Esta abertura já tem uma pasta definida pelo Nexus. Abra um novo pane comum na aba isolada.' };
         }
         if (isolatedTab && spawn.authority.source === 'direct-user') {
           const coordinationScope = spawn.authority.scope;
-          return preparePaneSpaceWorktree(coordinationScope, req.worktreeSpaceId!, req.cwd)
+          return preparePaneSpaceWorktree(coordinationScope, worktreeSpaceId!, envelope.request.cwd)
             .then(async (worktree): Promise<SpawnResult> => {
               // F-790: Codex com a versão ainda em sondagem espera (teto curto)
               // ANTES do preparo e da checagem de escopo, para o gate de hooks
@@ -857,6 +865,7 @@ export function registerPtyIpc(): void {
         getTerminalSettings().shell,
         listAvailableShells(),
       );
+      const worktreeSpaceId = req.worktreeSpaceId ?? findPaneSpaceIdByWorktreeCwd(scope, req.cwd);
       const startShell = (executionScope: ProjectExecutionScope, cwd: string): SpawnResult => {
         const { sessionId } = spawnSession(
           event.sender,
@@ -872,10 +881,10 @@ export function registerPtyIpc(): void {
           cwd,
           projectRoot: executionScope.rootRealPath,
         });
-        return { ok: true, sessionId, ...(req.worktreeSpaceId ? { cwd } : {}) };
+        return { ok: true, sessionId, ...(worktreeSpaceId ? { cwd } : {}) };
       };
-      if (req.worktreeSpaceId) {
-        return preparePaneSpaceWorktree(scope, req.worktreeSpaceId, req.cwd)
+      if (worktreeSpaceId) {
+        return preparePaneSpaceWorktree(scope, worktreeSpaceId, req.cwd)
           .then((worktree) => {
             requireLiveRendererWorkspaceScope(event.sender, scope);
             return startShell(worktree.scope, worktree.cwd);

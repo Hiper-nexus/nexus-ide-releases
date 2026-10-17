@@ -8,7 +8,7 @@ import path from "node:path";
 import { PTY_CHANNELS } from "../../shared/channels";
 import { hasPendingPaneSpawns } from "../orch/pane-admission";
 
-const tabDeps = vi.hoisted(() => ({ prepare: vi.fn(), requireLive: vi.fn() }));
+const tabDeps = vi.hoisted(() => ({ prepare: vi.fn(), requireLive: vi.fn(), findByCwd: vi.fn((_scope: unknown, _cwd?: string): string | undefined => undefined) }));
 // F-790: a espera do Codex pela sonda de versão (o helper real tem testes próprios).
 const settleDeps = vi.hoisted(() => ({
   settle: vi.fn((_adapter: unknown): Promise<void> | null => null),
@@ -16,7 +16,7 @@ const settleDeps = vi.hoisted(() => ({
 }));
 vi.mock('../orch/native-heavy-preload', () => ({ ensureNativeHeavyJobBase: settleDeps.proveHeavyBase }));
 vi.mock('../orch/codex-cli-version', () => ({ settleCodexCliVersionForSpawn: settleDeps.settle }));
-vi.mock('./pane-space-worktree', () => ({ preparePaneSpaceWorktree: tabDeps.prepare }));
+vi.mock('./pane-space-worktree', () => ({ preparePaneSpaceWorktree: tabDeps.prepare, findPaneSpaceIdByWorktreeCwd: tabDeps.findByCwd }));
 
 const ipcDeps = vi.hoisted(() => {
   const handlers = new Map<string, (...args: unknown[]) => unknown>();
@@ -61,7 +61,7 @@ const authorityDeps = vi.hoisted(() => {
   return {
     scope,
     requireRendererWorkspaceScope: vi.fn(() => scope),
-    resolveCwdForScope: vi.fn(() => "/workspace/a"),
+    resolveCwdForScope: vi.fn((_scope: unknown, _cwd?: string) => "/workspace/a"),
     claimPendingSpawnMeta: vi.fn(
       (_requestId: string, _owner: unknown): unknown => null,
     ),
@@ -145,7 +145,8 @@ vi.mock("../persistence/renderer-workspace-scope", () => ({
   requireLiveRendererWorkspaceScope: tabDeps.requireLive,
 }));
 
-vi.mock("../orch/workspace-path", () => ({
+vi.mock("../orch/workspace-path", async (importOriginal) => ({
+  isInsidePath: (await importOriginal<typeof import("../orch/workspace-path")>()).isInsidePath,
   resolveCwdForScope: authorityDeps.resolveCwdForScope,
   // Classe real fica fora: aqui só interessa que o `instanceof` não exploda.
   WorkspaceRootMissingError: class WorkspaceRootMissingError extends Error {},
@@ -397,6 +398,7 @@ describe("registerPtyIpc account fail-fast", () => {
     settleDeps.proveHeavyBase.mockReset();
     tabDeps.prepare.mockReset();
     tabDeps.requireLive.mockReset();
+    tabDeps.findByCwd.mockReset().mockReturnValue(undefined);
     authGateDeps.wait.mockReset().mockResolvedValue("fresh");
     providerDeps.prepareProviderSpawn.mockReset();
     providerDeps.prepareProviderSpawnAuthoritative.mockReset().mockImplementation(
@@ -636,6 +638,64 @@ describe("registerPtyIpc account fail-fast", () => {
     });
     expect(result).toMatchObject({ ok: true, cwd: '/private/tab-a' });
     expect(tabDeps.prepare).toHaveBeenCalledTimes(1);
+  });
+
+  describe('Bug 4: retomada depois do reinício não escapa do workspace', () => {
+    const tab = { ...authorityDeps.scope, rootRealPath: '/private/tab-a' };
+    beforeEach(() => {
+      providerDeps.prepareProviderSpawn.mockReturnValue({ ok: true, overrides: {} });
+      tabDeps.prepare.mockResolvedValue({ scope: tab, cwd: tab.rootRealPath });
+      // O resolvedor real: cwd fora da raiz da coordenação é recusado.
+      authorityDeps.resolveCwdForScope.mockImplementation((_scope: unknown, cwd?: string) => {
+        if (cwd && !cwd.startsWith('/workspace/a')) throw new Error(`cwd escapes workspace: ${cwd}`);
+        return '/workspace/a';
+      });
+    });
+
+    it.each(['shell', 'cli-agent'] as const)('%s restaurado só com o cwd da aba retida reabre na aba', async (kind) => {
+      tabDeps.findByCwd.mockImplementation((_scope, cwd) => (cwd === tab.rootRealPath ? 'space-a' : undefined));
+      const result = await ipcDeps.handlers.get(PTY_CHANNELS.spawn)!({ sender: { id: 7 } }, {
+        kind, adapterId: kind === 'cli-agent' ? 'claude' : undefined, paneId: 'pane-tab',
+        resume: kind === 'cli-agent', cwd: tab.rootRealPath, cols: 80, rows: 24,
+      });
+      expect(result).toMatchObject({ ok: true, cwd: tab.rootRealPath });
+      expect(tabDeps.findByCwd).toHaveBeenCalledWith(authorityDeps.scope, tab.rootRealPath);
+      expect(tabDeps.prepare).toHaveBeenCalledWith(authorityDeps.scope, 'space-a', tab.rootRealPath);
+      if (kind === 'cli-agent') expect(ptyDeps.spawnAgentSession).toHaveBeenCalledWith(
+        expect.anything(), expect.anything(), expect.anything(), expect.anything(),
+        expect.objectContaining({ scope: tab, coordinationScope: authorityDeps.scope, cwd: tab.rootRealPath, source: 'direct-user' }));
+      else expect(ptyDeps.spawnSession).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ scope: tab, cwd: tab.rootRealPath }));
+    });
+
+    it('pane da aba com missionId órfão (descartado pelo Main) ainda abre na aba isolada', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      tabDeps.findByCwd.mockImplementation((_scope, cwd) => (cwd === tab.rootRealPath ? 'space-a' : undefined));
+      const result = await ipcDeps.handlers.get(PTY_CHANNELS.spawn)!({ sender: { id: 7 } }, {
+        kind: 'cli-agent', adapterId: 'claude', paneId: 'pane-tab', missionId: 'mission-removed',
+        worktreeSpaceId: 'space-a', cwd: tab.rootRealPath, cols: 80, rows: 24,
+      });
+      expect(result).toMatchObject({ ok: true, cwd: tab.rootRealPath });
+      expect(tabDeps.prepare).toHaveBeenCalledWith(authorityDeps.scope, 'space-a', tab.rootRealPath);
+      expect(ptyDeps.spawnAgentSession).toHaveBeenCalledWith(
+        expect.anything(), expect.anything(), expect.anything(), expect.anything(),
+        expect.objectContaining({ scope: tab, cwd: tab.rootRealPath, source: 'direct-user' }));
+      warn.mockRestore();
+    });
+
+    it('pane de missão removida com cwd na worktree antiga (sem aba) reabre no checkout', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const result = await ipcDeps.handlers.get(PTY_CHANNELS.spawn)!({ sender: { id: 7 } }, {
+        kind: 'cli-agent', adapterId: 'claude', paneId: 'pane-worker', missionId: 'mission-removed',
+        cwd: '/runtime/worktrees.noindex/task-old', cols: 80, rows: 24,
+      });
+      expect(result).toMatchObject({ ok: true, sessionId: 'pty-created' });
+      expect(tabDeps.prepare).not.toHaveBeenCalled();
+      expect(authorityDeps.resolveCwdForScope).toHaveBeenCalledWith(authorityDeps.scope, undefined);
+      expect(ptyDeps.spawnAgentSession).toHaveBeenCalledWith(
+        expect.anything(), expect.anything(), expect.anything(), expect.anything(),
+        expect.objectContaining({ scope: authorityDeps.scope, cwd: '/workspace/a', source: 'direct-user' }));
+      warn.mockRestore();
+    });
   });
 
   it('rechecks tab authority after provider authentication waits, immediately before physical spawn', async () => {

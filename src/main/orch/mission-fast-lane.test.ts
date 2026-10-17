@@ -16,7 +16,10 @@ import {
   isSecurityMissionText,
   readableMissionAttachmentPath,
   SECURITY_DOCTRINE_NOTE,
+  sameExecutionScopeAcrossBoots,
+  persistedOrchestratorRuntimeDivergence,
 } from './mission-fast-lane';
+import type { ProjectExecutionScope } from '../../shared/project-identity-types';
 
 function mission(overrides: Partial<Mission> = {}): Mission {
   return {
@@ -797,5 +800,57 @@ describe('doutrina de segurança — a missão que o classificador não vê', ()
     expect(SECURITY_DOCTRINE_NOTE.length).toBeLessThan(600);
     expect(SECURITY_DOCTRINE_NOTE).toContain('segredo');
     expect(SECURITY_DOCTRINE_NOTE).toContain('valide no servidor');
+  });
+});
+
+describe('orchestrator resume scope across reboots', () => {
+  const scope: ProjectExecutionScope = {
+    version: 1,
+    installationId: 'install-a',
+    projectId: 'project-a',
+    checkoutId: 'checkout-a',
+    rootRealPath: '/work/root',
+    identitySource: 'manifest',
+    workspaceRootDevice: '16777232',
+    workspaceRootInode: '4242',
+  };
+
+  it('accepts a persisted scope whose boot-local device was renumbered', () => {
+    expect(sameExecutionScopeAcrossBoots({ ...scope, workspaceRootDevice: '16777999' }, scope)).toBe(true);
+  });
+
+  it('still refuses a different path, inode, checkout or a missing scope', () => {
+    expect(sameExecutionScopeAcrossBoots(undefined, scope)).toBe(false);
+    expect(sameExecutionScopeAcrossBoots({ ...scope, rootRealPath: '/other' }, scope)).toBe(false);
+    expect(sameExecutionScopeAcrossBoots({ ...scope, workspaceRootInode: '1' }, scope)).toBe(false);
+    expect(sameExecutionScopeAcrossBoots({ ...scope, checkoutId: 'checkout-b' }, scope)).toBe(false);
+  });
+
+  describe('persisted orchestrator row × approved runtime', () => {
+    const approved = { adapterId: 'claude', model: 'claude-opus-5-5', effort: 'medium', readOnly: false, nativeReadOnly: false } as const;
+    const row = {
+      id: 'row-a', missionId: 'mission-a', adapterId: 'claude', model: 'claude-opus-5-5', effort: 'medium',
+      cwd: scope.rootRealPath, title: 'Maestro', role: 'orchestrator' as const, paneId: 'pane-a',
+      scope, executionScope: scope, createdAt: 1,
+    };
+
+    it('accepts the sealed row, a row without cwd (its execution root) and a renumbered device', () => {
+      expect(persistedOrchestratorRuntimeDivergence(row, approved, scope)).toEqual([]);
+      expect(persistedOrchestratorRuntimeDivergence({ ...row, cwd: undefined }, approved, scope)).toEqual([]);
+      expect(persistedOrchestratorRuntimeDivergence(
+        { ...row, executionScope: { ...scope, workspaceRootDevice: '16777999' } }, approved, scope)).toEqual([]);
+    });
+
+    it('still names every tampered field', () => {
+      expect(persistedOrchestratorRuntimeDivergence({ ...row, adapterId: 'codex' }, approved, scope)).toEqual(['adapter']);
+      expect(persistedOrchestratorRuntimeDivergence({ ...row, model: 'other' }, approved, scope)).toEqual(['model']);
+      expect(persistedOrchestratorRuntimeDivergence({ ...row, effort: 'max' }, approved, scope)).toEqual(['effort']);
+      expect(persistedOrchestratorRuntimeDivergence({ ...row, readOnly: true }, approved, scope)).toEqual(['readOnly']);
+      expect(persistedOrchestratorRuntimeDivergence({ ...row, cwd: '/other' }, approved, scope)).toEqual(['cwd']);
+      expect(persistedOrchestratorRuntimeDivergence({ ...row, cwd: undefined, executionScope: { ...scope, rootRealPath: '/other' } },
+        approved, scope)).toEqual(['cwd', 'scope']);
+      expect(persistedOrchestratorRuntimeDivergence({ ...row, executionScope: { ...scope, workspaceRootInode: '1' } },
+        approved, scope)).toEqual(['scope']);
+    });
   });
 });

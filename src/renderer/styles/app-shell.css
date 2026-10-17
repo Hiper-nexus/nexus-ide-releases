@@ -657,6 +657,10 @@
   align-items: center;
   gap: var(--space-1);
   margin-top: var(--space-1);
+  /* Filho do grid de 3 colunas da missão: sem isto cai na coluna de 16px. */
+  grid-column: 2 / -1;
+  justify-self: start;
+  align-self: flex-start;
   color: var(--text);
   font-size: var(--text-sm);
   font-weight: 500;

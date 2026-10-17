@@ -109,7 +109,7 @@ import {
 } from './orchestrator-adoption';
 import { waitOutBootPrompts } from './boot-prompt-hold';
 import { maestroKickoffBlockReason } from './maestro-boot-gate';
-import { missionBlockPatch, type MissionBlockPatch } from '../../shared/mission-intent';
+import { missionBlockPatch, type MissionBlockPatch, type MissionOrchestratorRuntimeSnapshot } from '../../shared/mission-intent';
 import { detectSubscriptionAuthReadiness } from '../adapters/subscription-auth';
 import {
   decideWriterCircuitAction,
@@ -1274,6 +1274,43 @@ interface BootstrapRuntime {
   readonly phase: 'created' | 'bound' | 'cleanup-handled';
 }
 
+/**
+ * `st_dev` is boot-local (APFS can renumber volumes across a Mac reboot), so a
+ * row persisted before the reboot must not be refused for the device alone.
+ * Path and inode stay compared.
+ */
+export function sameExecutionScopeAcrossBoots(
+  persisted: ProjectExecutionScope | undefined,
+  current: ProjectExecutionScope,
+): boolean {
+  if (!persisted) return false;
+  const { workspaceRootDevice: _a, ...left } = persisted;
+  const { workspaceRootDevice: _b, ...right } = current;
+  return isDeepStrictEqual(left, right);
+}
+
+/**
+ * Campos em que a linha durável do orquestrador diverge da autoridade
+ * aprovada. cwd ausente na linha é a raiz da execução dela — a mesma regra do
+ * spawn persistido (`canonicalizePersistedSpawnRequest`) — e não diverge.
+ */
+export function persistedOrchestratorRuntimeDivergence(
+  previous: ScopedMissionPaneSpec,
+  approvedRuntime: MissionOrchestratorRuntimeSnapshot,
+  executionScope: ProjectExecutionScope,
+): string[] {
+  const previousCwd = previous.cwd ?? previous.executionScope?.rootRealPath ?? previous.scope.rootRealPath;
+  return [
+    previous.adapterId !== approvedRuntime.adapterId && 'adapter',
+    previous.model !== undefined && previous.model !== approvedRuntime.model && 'model',
+    previous.effort !== undefined && previous.effort !== approvedRuntime.effort && 'effort',
+    previous.accountId !== undefined && !missionOrchestratorAccountAllowed(approvedRuntime, previous.accountId) && 'account',
+    (previous.readOnly === true) !== approvedRuntime.readOnly && 'readOnly',
+    previousCwd !== executionScope.rootRealPath && 'cwd',
+    !sameExecutionScopeAcrossBoots(previous.executionScope, executionScope) && 'scope',
+  ].filter((field): field is string => typeof field === 'string');
+}
+
 async function spawnAgentPane(
   scope: ProjectExecutionScope,
   mission: Mission,
@@ -1315,14 +1352,11 @@ async function spawnAgentPane(
   const priorLeaders = approvedRuntime ? stores.missionPanes.list(mission.id).filter(pane => pane.role === 'orchestrator') : [];
   if (priorLeaders.length > 1) return { error: 'orchestrator pane authority is ambiguous' };
   const previous = approvedRuntime ? priorLeaders[0] : spawnOpts?.replaceOrchestratorRow;
-  if (previous && approvedRuntime && (previous.adapterId !== approvedRuntime.adapterId ||
-    previous.model !== undefined && previous.model !== approvedRuntime.model ||
-    previous.effort !== undefined && previous.effort !== approvedRuntime.effort ||
-    previous.accountId !== undefined && !missionOrchestratorAccountAllowed(approvedRuntime, previous.accountId) ||
-    (previous.readOnly === true) !== approvedRuntime.readOnly ||
-    previous.cwd !== executionScope.rootRealPath ||
-    !isDeepStrictEqual(previous.executionScope, executionScope))) {
-    return { error: 'persisted orchestrator runtime differs from approved authority' };
+  if (previous && approvedRuntime) {
+    const diverged = persistedOrchestratorRuntimeDivergence(previous, approvedRuntime, executionScope);
+    if (diverged.length > 0) {
+      return { error: `persisted orchestrator runtime differs from approved authority (${diverged.join(', ')})` };
+    }
   }
   // F-1470: o Maestro volta na conta da linha (o failover F-995 pode tê-la
   // trocado) ou na aprovada enquanto ela serve; esgotada, numa irmã do mesmo
