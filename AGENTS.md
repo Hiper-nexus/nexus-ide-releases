@@ -1518,6 +1518,28 @@ saber isto antes de mexer:
   que "erra tudo" num PC e acerta no Mac: leia `stt.audioQuality` antes de
   trocar de provider — em 23/09 era fone na entrada rosa, não o modelo.
 
+## Voz: humano de partículas com estados próprios e cursor (17/10)
+
+- Cada `VoiceUiStatus` tem assinatura de movimento própria
+  (`figureMotionForStatus`, `src/renderer/components/JarvisParticleFigure.tsx`):
+  ouvindo puxa as partículas para dentro e pulsa com `voice-store.level`;
+  falando emite ondas concêntricas da cabeça/peito e vibra boca/torso
+  (`speakingEnergy`/`speakingZoneWeight`); transcrever/rotear orbita em
+  vórtice; ocioso respira desfazendo e refazendo a forma (`idleCohesion`);
+  erro dispersa na cor `--danger`.
+- Cursor: repulsão com queda quadrática (`cursorForce`), olhar da cabeça com
+  easing (`gazeOffset`) e parallax por profundidade (`parallaxOffset`). O
+  canvas continua decorativo (`pointer-events: none`): o mouse é ouvido em
+  `window` (`pointermove` passivo com teste geométrico de retângulo), então o
+  clique do botão e o arraste do HUD nunca são roubados e um arraste que sai
+  da figura não deixa estado preso.
+- Toda a física é função pura exportada e testada em
+  `JarvisParticleFigure.test.tsx`; o loop é rAF imperativo (efeito com deps
+  `[]`, status via ref — sem re-render nem re-dispersão por frame/estado),
+  pausa em `visibilitychange`, desenha um frame único em
+  `prefers-reduced-motion`, trava dpr em [1,2] e o `ResizeObserver` reescala
+  sem re-dispersar as partículas.
+
 ## Voz: Jarvis operacional e Grok Voice em tempo real (15/10)
 
 - **Mic full-duplex em todo transporte realtime**: `isFullDuplexTransport`
