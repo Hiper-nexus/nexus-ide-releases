@@ -7,7 +7,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { writeJsonAtomic } from '../util/atomic-write';
+import { writeFileAtomicAsync } from '../util/atomic-write';
 
 export interface RouteProvenanceEntry {
   adapterId: string;
@@ -30,6 +30,7 @@ export function clearRouteProvenance(): void {
   recentDecisions = [];
   missionlessUses = [];
   missionlessLoaded = false;
+  resetRouteProvenancePersistence();
   const file = missionlessFile();
   if (file) fs.rmSync(file, { force: true });
 }
@@ -133,14 +134,66 @@ function entryKind(use: DurableRouteUse): 'decision' | 'spawn' {
   return use.kind ?? (use.sessionId ? 'spawn' : 'decision');
 }
 
-function persist(): void {
+// F-764 / N1: a persistência síncrona com fsync a cada spawn bloqueava o main
+// ~13 ms por chamada. Agora marcamos sujo e a gravação assíncrona (writeFileAtomicAsync)
+// roda coalescida com debounce de ~1.5 s (timer.unref). O flush síncrono no
+// before-quit/shutdown garante que nada se perde. A contagem em memória continua
+// autoritativa — consultas de fair-share não esperam disco.
+const PERSIST_DEBOUNCE_MS = 1500;
+let persistDirty = false;
+let persistTimer: ReturnType<typeof setTimeout> | undefined;
+let persistFlight: Promise<void> | undefined;
+
+function persistSchedule(): void {
+  persistDirty = true;
+  if (persistTimer !== undefined) return;
+  persistTimer = setTimeout(() => {
+    persistTimer = undefined;
+    const snapshot = missionlessUses;
+    const file = missionlessFile();
+    if (!file) { persistDirty = false; return; }
+    const promise = writeFileAtomicAsync(file, JSON.stringify(snapshot, null, 2))
+      .catch(() => undefined)
+      .finally(() => {
+        if (persistFlight === promise) persistFlight = undefined;
+        if (persistDirty) {
+          // Mais sujeira chegou durante o voo: agenda de novo.
+          persistDirty = false;
+          persistSchedule();
+        }
+      });
+    persistFlight = promise;
+  }, PERSIST_DEBOUNCE_MS);
+  persistTimer.unref();
+}
+
+/**
+ * Grava o estado corrente em disco sem esperar o debounce. Chamado no shutdown
+ * do app (before-quit) e em testes que simulam reinício.
+ */
+export async function flushRouteProvenance(): Promise<void> {
+  if (persistTimer !== undefined) {
+    clearTimeout(persistTimer);
+    persistTimer = undefined;
+  }
+  persistDirty = false;
   const file = missionlessFile();
   if (!file) return;
   try {
-    writeJsonAtomic(file, missionlessUses);
+    await writeFileAtomicAsync(file, JSON.stringify(missionlessUses, null, 2));
   } catch {
     // persistência é melhor-esforço: a memória do processo continua valendo.
   }
+}
+
+/** Para testes: reseta o estado de debounce sem tocar no disco. */
+export function resetRouteProvenancePersistence(): void {
+  if (persistTimer !== undefined) {
+    clearTimeout(persistTimer);
+    persistTimer = undefined;
+  }
+  persistDirty = false;
+  persistFlight = undefined;
 }
 
 function ensureMissionlessLoaded(): void {
@@ -189,7 +242,7 @@ export function recordAgentSpawn(
       kind: 'spawn',
     };
     missionlessUses = kept.slice(-MISSIONLESS_CAP);
-    persist();
+    persistSchedule();
     return;
   }
   missionlessUses = [
@@ -203,7 +256,7 @@ export function recordAgentSpawn(
       kind: 'spawn',
     },
   ];
-  persist();
+  persistSchedule();
 }
 
 /** Índice da decisão pendente (sem sessionId, dentro da validade) mais recente do adapter, ou -1. */
@@ -238,7 +291,7 @@ export function recordMissionlessRouteDecision(
       kind: 'decision',
     },
   ];
-  persist();
+  persistSchedule();
 }
 
 /**

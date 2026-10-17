@@ -514,3 +514,99 @@ describe("renderer mission authority", () => {
   });
 
 });
+
+describe("renameTabMissionFromRenderer", () => {
+  const tabKey = "tab-a";
+  const spaceId = "space-a";
+
+  const tabMission: Mission = {
+    ...mission,
+    squadId: undefined,
+    title: "Missão · Meus terminais",
+    intentContract: {
+      ...approvedMission.intentContract!,
+      workspaceBinding: {
+        version: 1 as const,
+        tabKey,
+        spaceId,
+        adoptedPaneId: "pane-leader",
+      },
+    },
+  };
+
+  const squadMission: Mission = {
+    ...mission,
+    squadId: "review-squad",
+    title: "Missão · Meus terminais",
+    intentContract: {
+      ...approvedMission.intentContract!,
+      workspaceBinding: {
+        version: 1 as const,
+        tabKey,
+        spaceId,
+        adoptedPaneId: undefined,
+      },
+    },
+  };
+
+  it("missão de squad no mesmo espaço é recusada (isOperatorTabMission)", () => {
+    deps.getMission.mockReturnValue(squadMission);
+    const result = authority.renameTabMissionFromRenderer(owner, {
+      missionId: "mission-a",
+      tabKey,
+      fromTitle: "Missão · Meus terminais",
+      title: "Missão · Novo nome",
+    });
+    expect(result).toEqual({ ok: false, error: "mission_not_tab_mission" });
+    expect(deps.updateMission).not.toHaveBeenCalled();
+  });
+
+  it("missão leve da aba com adoptedPaneId renomeia", () => {
+    deps.getMission.mockReturnValue(tabMission);
+    deps.updateMission.mockImplementation((_id: string, patch: Partial<Mission>) => ({
+      ...tabMission,
+      ...patch,
+    }));
+    const result = authority.renameTabMissionFromRenderer(owner, {
+      missionId: "mission-a",
+      tabKey,
+      fromTitle: "Missão · Meus terminais",
+      title: "Missão · Novo nome",
+    });
+    expect(result).toEqual({ ok: true });
+    expect(deps.updateMission).toHaveBeenCalledWith("mission-a", {
+      title: "Missão · Novo nome",
+    });
+  });
+
+  it("título divergido recusa mesmo sendo missão da aba", () => {
+    deps.getMission.mockReturnValue({ ...tabMission, title: "Título editado" });
+    const result = authority.renameTabMissionFromRenderer(owner, {
+      missionId: "mission-a",
+      tabKey,
+      fromTitle: "Missão · Meus terminais",
+      title: "Missão · Novo nome",
+    });
+    expect(result).toEqual({ ok: false, error: "mission_title_diverged" });
+  });
+
+  it("payload sem tabKey nem spaceId é recusado", () => {
+    const result = authority.renameTabMissionFromRenderer(owner, {
+      missionId: "mission-a",
+      fromTitle: "X",
+      title: "Y",
+    });
+    expect(result).toEqual({ ok: false, error: "invalid_payload" });
+  });
+
+  it("missão completed é recusada", () => {
+    deps.getMission.mockReturnValue({ ...tabMission, status: "done" });
+    const result = authority.renameTabMissionFromRenderer(owner, {
+      missionId: "mission-a",
+      tabKey,
+      fromTitle: "Missão · Meus terminais",
+      title: "Missão · Novo nome",
+    });
+    expect(result).toEqual({ ok: false, error: "mission_completed" });
+  });
+});

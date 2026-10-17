@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import type { WebContents } from "electron";
 import { adoptedMissionWorkspaceBinding, missionExecutionScope } from './mission-execution-scope';
 import { operatorHandMissionContract } from './operator-hand-mission';
-import { isOperatorTabResumeTransferSource } from './operator-tab-mission-resume';
+import { isOperatorTabMission, isOperatorTabResumeTransferSource } from './operator-tab-mission-resume';
 import { reconcilePreparedWorkerContinuation } from './mission-pane-resume-ownership';
 import {
   hasCurrentApprovedDispatchContract,
@@ -1050,6 +1050,9 @@ export class RendererMissionAuthority {
       (input.tabKey !== undefined && binding?.tabKey === input.tabKey) ||
       (input.spaceId !== undefined && binding?.spaceId === input.spaceId);
     if (!boundToTab) return { ok: false, error: "mission_not_in_tab" };
+    if (!isOperatorTabMission(mission)) {
+      return { ok: false, error: "mission_not_tab_mission" };
+    }
     if (mission.title !== fromTitle) {
       return { ok: false, error: "mission_title_diverged" };
     }

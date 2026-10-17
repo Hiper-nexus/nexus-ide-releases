@@ -1,15 +1,18 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   DECISION_GRACE_MS,
   MISSIONLESS_CAP,
   adHocSpawnGateError,
   clearRouteProvenance,
+  configureMissionlessPersistence,
+  flushRouteProvenance,
   hasRecentRouteMatch,
   listDurableRouteUses,
   missionlessRouteCountsByAdapterSince,
   recordAgentSpawn,
   recordMissionlessRouteDecision,
   recordRouteDecision,
+  resetRouteProvenancePersistence,
 } from './route-provenance';
 
 const WARNED = { warning: 'New xAI model; verify tier/pricing before making it the default.' };
@@ -194,5 +197,76 @@ describe('adHocSpawnGateError', () => {
 
   it('spawn sem model explícito não é gateado aqui', () => {
     expect(adHocSpawnGateError('grok', undefined, WARNED)).toBeNull();
+  });
+});
+
+describe('persistência assíncrona debounced (N1)', () => {
+  // Usa diretório temporário injetado para não tocar no userData real;
+  // simula reinício com configureMissionlessPersistence.
+
+  let tmpDir: string;
+
+  beforeEach(() => {
+    const os = require('node:os') as typeof import('node:os');
+    const path = require('node:path') as typeof import('node:path');
+    const fs = require('node:fs') as typeof import('node:fs');
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'route-prov-test-'));
+    resetRouteProvenancePersistence();
+    configureMissionlessPersistence(tmpDir);
+  });
+
+  afterEach(() => {
+    resetRouteProvenancePersistence();
+    configureMissionlessPersistence(undefined);
+    try {
+      const fs = require('node:fs') as typeof import('node:fs');
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch { /* cleanup */ }
+  });
+
+  it('várias gravações seguidas coalescem — flush grava tudo', async () => {
+    const now = Date.now();
+    for (let i = 0; i < 10; i += 1) {
+      recordAgentSpawn({ adapterId: 'claude', sessionId: `s-${i}` }, now + i);
+    }
+    // As 10 entradas estão em memória, mesma sem disco (debounce 1.5s).
+    expect(listDurableRouteUses()).toHaveLength(10);
+
+    // Força o flush.
+    await flushRouteProvenance();
+
+    // Simula reinício: reseta memória e força recarga do disco.
+    configureMissionlessPersistence(tmpDir);
+    expect(missionlessRouteCountsByAdapterSince(0).get('claude')).toBe(10);
+  });
+
+  it('leitura após flush sobrevive a reinício simulado', async () => {
+    const now = Date.now();
+    recordMissionlessRouteDecision({ adapterId: 'kimi', specialty: 'general' }, now);
+    recordAgentSpawn({ adapterId: 'kimi', sessionId: 's-kimi', specialty: 'general' }, now + 1);
+    // A decisão é consumida pelo spawn → 1 entrada final.
+    expect(listDurableRouteUses()).toHaveLength(1);
+    expect(listDurableRouteUses()[0]?.kind).toBe('spawn');
+
+    await flushRouteProvenance();
+
+    // Reinício simulado.
+    configureMissionlessPersistence(tmpDir);
+    const reloaded = listDurableRouteUses();
+    expect(reloaded).toHaveLength(1);
+    expect(reloaded[0]?.kind).toBe('spawn');
+    expect(reloaded[0]?.sessionId).toBe('s-kimi');
+    expect(missionlessRouteCountsByAdapterSince(0).get('kimi')).toBe(1);
+  });
+
+  it('a contagem em memória é autoritativa mesmo sem flush', () => {
+    recordAgentSpawn({ adapterId: 'claude', sessionId: 's-live' }, Date.now());
+    // Sem flush: a contagem de fair-share lê da memória, não do disco.
+    expect(missionlessRouteCountsByAdapterSince(0).get('claude')).toBe(1);
+
+    // Outro processo (simulado) não veria nada, mas a contagem em memória
+    // está certa — é o que o fair-share usa.
+    configureMissionlessPersistence(tmpDir);
+    expect(missionlessRouteCountsByAdapterSince(0).get('claude')).toBeUndefined();
   });
 });
