@@ -12,7 +12,7 @@
  * Desconhecido NUNCA vira folga nem zero: sem janela medida o adapter fica
  * AUSENTE do mapa e o roteador segue como antes.
  */
-import { headroomReadings, isHeadroomExhausted } from '../quota/account-headroom';
+import { fullWindowsReopenAt, headroomReadings, isHeadroomExhausted } from '../quota/account-headroom';
 import type { ProviderQuotaEntry } from '../../shared/quota-types';
 
 export interface QuotaPace {
@@ -89,4 +89,24 @@ export function quotaPaceScore(pace: QuotaPace | undefined): number {
   if (!pace) return 0;
   const score = 6 * Math.log2(Math.max(pace.ratio, 0.01));
   return Math.min(10, Math.max(-10, score));
+}
+
+/**
+ * Adapters cujas contas TODAS têm janela medida cheia e ainda fechada (sem
+ * cooldown: o store é a autoridade dele). Conta sem leitura é desconhecida e
+ * mantém o adapter; janela cujo reset já passou não conta (snapshot velho).
+ */
+export function quotaExhaustedAdapters(
+  entries: readonly ProviderQuotaEntry[],
+  now: number,
+): Set<string> {
+  const total = new Map<string, number>();
+  const full = new Map<string, number>();
+  for (const entry of entries) {
+    total.set(entry.adapterId, (total.get(entry.adapterId) ?? 0) + 1);
+    if (fullWindowsReopenAt(entry, now, 1) !== undefined) {
+      full.set(entry.adapterId, (full.get(entry.adapterId) ?? 0) + 1);
+    }
+  }
+  return new Set([...full].filter(([id, n]) => n === total.get(id)).map(([id]) => id));
 }

@@ -61,7 +61,7 @@ import {
 } from './route-pipeline';
 import { modelAccessQuarantine } from './model-access-quarantine';
 import { isAstraModel, routingPurpose } from './routing-cost-policy';
-import { quotaPaceScore, type QuotaPace } from './quota-pace';
+import type { QuotaPace } from './quota-pace';
 import { modelListAuthority, resolveOfferedModels } from '../adapters/model-availability';
 import { readMuseContributorConsent } from '../adapters/cli-model-discovery';
 
@@ -79,6 +79,8 @@ export const GLOBAL_USE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Ritmo de cota a partir do qual a CLI conta como econômica para escrita. */
 export const SPARE_QUOTA_PACE = 1.5;
+/** Abaixo disto a assinatura gasta mais rápido que o tempo: escassa. */
+export const SCARCE_QUOTA_PACE = 0.67;
 
 /** Gap mínimo para o fair-share trocar o líder — evita pingue-pongue. */
 export const FAIR_SHARE_GAP = 2;
@@ -2530,7 +2532,13 @@ export function routeTask(
       rotationNote === '' && fairShareNote === '' && mention.model === undefined && policy.source !== 'benchmark') {
     const baseline = ranked[0];
     const baselineOutcome = baseline && routeSuccessRate(context.routeOutcomes, baseline.c.adapterId, baseline.c.model);
-    const quotaTerm = (entry: RankedRouteEntry) => quotaPaceScore(context.quotaPace?.get(entry.c.adapterId));
+    // Baldes de cota: sobra que expira (>= 1,5) > desconhecido/normal > escasso
+    // (< 0,67). O termo contínuo não serve aqui: +0,5 de um GLM passaria por
+    // cima de 30 pontos de qualidade. Dentro do balde vale a ordem atual.
+    const quotaBucket = (entry: RankedRouteEntry) => {
+      const ratio = context.quotaPace?.get(entry.c.adapterId)?.ratio;
+      return ratio === undefined ? 1 : ratio >= SPARE_QUOTA_PACE ? 2 : ratio < SCARCE_QUOTA_PACE ? 0 : 1;
+    };
     const economic = ranked.filter(entry => {
       if (!writerTierKeys.has(`${entry.c.adapterId}:${entry.c.model ?? ''}`) || adapterCircuitBreakers.isOpen(entry.c.adapterId)) return false;
       const info = modelCatalogInfo(modelCatalog, entry.c.adapterId, entry.c.model);
@@ -2543,8 +2551,8 @@ export function routeTask(
       const outcome = routeSuccessRate(context.routeOutcomes, entry.c.adapterId, entry.c.model);
       return !baselineOutcome || !outcome || outcome.rate >= baselineOutcome.rate;
     });
-    // Estável: mais sobra de cota primeiro; sem quotaPace todos valem 0 e a ordem não muda.
-    economic.sort((a, b) => quotaTerm(b) - quotaTerm(a));
+    // Estável: sem quotaPace todos caem no balde 1 e a ordem não muda.
+    economic.sort((a, b) => quotaBucket(b) - quotaBucket(a));
     if (economic.length > 0) {
       // Pedido do operador (Devin SWE-2, 12/10): o fair-share acima só olha o
       // líder ANTES do custo — no hard é o Opus, que este passo sempre tira,

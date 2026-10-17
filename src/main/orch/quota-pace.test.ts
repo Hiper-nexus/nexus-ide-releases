@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ProviderQuotaEntry, QuotaWindow } from '../../shared/quota-types';
-import { quotaPaceByAdapter, quotaPaceScore } from './quota-pace';
+import { quotaExhaustedAdapters, quotaPaceByAdapter, quotaPaceScore } from './quota-pace';
 
 const NOW = 1_800_000_000_000;
 const DAY = 24 * 60 * 60 * 1000;
@@ -125,5 +125,24 @@ describe('quotaPaceByAdapter', () => {
 describe('quotaPaceScore', () => {
   it('ausente = 0', () => {
     expect(quotaPaceScore(undefined)).toBe(0);
+  });
+});
+
+describe('quotaExhaustedAdapters', () => {
+  const full = (id: string, over: Partial<ProviderQuotaEntry> = {}) =>
+    entry('kimi', [win({ usedRatio: 1, resetsAt: NOW + DAY })], { id, ...over });
+
+  it('exclui o adapter quando TODAS as contas têm janela medida cheia', () => {
+    expect([...quotaExhaustedAdapters([full('kimi:1'), full('kimi:2')], NOW)]).toEqual(['kimi']);
+  });
+
+  it('uma conta livre ou sem leitura mantém o adapter', () => {
+    expect(quotaExhaustedAdapters([full('kimi:1'), entry('kimi', [win({ usedRatio: 0.2 })], { id: 'kimi:2' })], NOW).size).toBe(0);
+    expect(quotaExhaustedAdapters([full('kimi:1'), entry('kimi', [win({ usedRatio: null })], { id: 'kimi:2' })], NOW).size).toBe(0);
+  });
+
+  it('cooldown sozinho não exclui (o store decide) e janela já reaberta não conta', () => {
+    expect(quotaExhaustedAdapters([entry('a', [win({ usedRatio: 0.1 })], { onCooldown: true })], NOW).size).toBe(0);
+    expect(quotaExhaustedAdapters([entry('a', [win({ usedRatio: 1, resetsAt: NOW - 1000 })])], NOW).size).toBe(0);
   });
 });

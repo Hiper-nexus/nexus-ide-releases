@@ -1,4 +1,5 @@
-import { quotaPaceByAdapter } from './quota-pace';
+import type { ProviderQuotaEntry } from '../../shared/quota-types';
+import { quotaExhaustedAdapters, quotaPaceByAdapter } from './quota-pace';
 import { withMissionDecisionHints } from './mission-decision-hints';
 import { isFindingCorrectionTask, matchesReviewedFinding } from './routing-cost-policy';
 import { captureMissionCodeBaseline } from './mission-code-baseline-ledger';
@@ -2188,13 +2189,26 @@ export async function routeTaskForCaller(
   const cliLimitExcluded = providers
     .map((a) => a.adapterId)
     .filter((id) => isCliLimited(id));
+  // `hasAvailableAccount` só olha cooldown: conta com janela MEDIDA em 100%
+  // (sem cooldown) seguia elegível e o spawn falhava. O snapshot de cota
+  // cobre isso; fail-open — sem snapshot, só vale o cooldown.
+  let quotaEntries: ProviderQuotaEntry[] | undefined;
+  try {
+    const { requireQuotaService } = await import('../quota/quota-service');
+    quotaEntries = requireQuotaService().lastSnapshot()?.entries;
+  } catch {
+    quotaEntries = undefined;
+  }
+  const quotaWindowFull = quotaEntries
+    ? quotaExhaustedAdapters(quotaEntries, Date.now())
+    : new Set<string>();
   const quotaExcluded = providers
     .map((a) => a.adapterId)
     .filter(
       (id) =>
         !excluded.has(id) &&
         !cliLimitExcluded.includes(id) &&
-        !hasAvailableAccount(id),
+        (!hasAvailableAccount(id) || quotaWindowFull.has(id)),
     );
   const buildAdapters = (skip: ReadonlySet<string>) =>
     providers.map((a) => {
@@ -2216,7 +2230,9 @@ export async function routeTaskForCaller(
         if (skip.has(a.adapterId)) {
           if (cliLimitExcluded.includes(a.adapterId)) return 'limite de uso';
           return quotaExcluded.includes(a.adapterId)
-            ? 'todas as contas em cooldown'
+            ? quotaWindowFull.has(a.adapterId) && hasAvailableAccount(a.adapterId)
+              ? 'cota medida esgotada'
+              : 'todas as contas em cooldown'
             : 'excluído da rota';
         }
         if (!a.enabled) return 'desabilitado em Providers';
@@ -2445,19 +2461,9 @@ export async function routeTaskForCaller(
       reviewedFindingFix = await isCurrentCodeCompletionFindingFix(ctx.scope, missionId, task).catch(() => false);
     }
   }
-  // Ritmo de cota por CLI (sobra que vai expirar no reset). Fail-open: sem
-  // serviço, sem snapshot ou erro, a rota fica idêntica à de antes.
-  let quotaPace: ReturnType<typeof quotaPaceByAdapter> | undefined;
-  try {
-    const { requireQuotaService } = await import('../quota/quota-service');
-    const snapshot = requireQuotaService().lastSnapshot();
-    if (snapshot) {
-      const pace = quotaPaceByAdapter(snapshot.entries, Date.now());
-      if (pace.size > 0) quotaPace = pace;
-    }
-  } catch {
-    quotaPace = undefined;
-  }
+  // Ritmo de cota por CLI (sobra que vai expirar no reset); leitura única
+  // acima, fail-open: sem snapshot a rota fica idêntica à de antes.
+  const quotaPace = quotaEntries ? quotaPaceByAdapter(quotaEntries, Date.now()) : undefined;
   // Contexto da REGRA: tudo que o roteador sabe, menos o que o Jev decidiu.
   // O contrafactual do recibo (`ruleChoice`, abaixo) reusa este objeto como
   // está — por construção ele não carrega especialidade nem esforço do Jev.

@@ -203,7 +203,15 @@ export function scoreRouteCandidate(
   const quality =
     2 * Math.min(24, Math.max(6, Number(qualityRaw) || NEUTRAL_UNPUBLISHED_QUALITY));
 
-  const costRank = modelRoutingRank(info);
+  // Assinatura medida e não escassa (ritmo >= 1): o custo marginal é cota, não
+  // o preço de API do catálogo; a escassez já pesa no termo `quota`. Modelo
+  // bloqueado (Infinity) continua bloqueado.
+  const catalogRank = modelRoutingRank(info);
+  const subscriptionPace = input.context?.quotaPace?.get(c.adapterId);
+  const costRank =
+    subscriptionPace && subscriptionPace.ratio >= 1 && Number.isFinite(catalogRank)
+      ? Math.min(catalogRank, 1)
+      : catalogRank;
   // Hard pesa o custo quase como medium (×1.5): com 26 dos 71 spawns pinados
   // no mesmo provider caro, o hard barato com nota próxima deve ganhar.
   // Critical continua leve (×0.5) — ali a capacidade manda.

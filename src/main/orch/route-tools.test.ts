@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   isProviderEnabled: vi.fn(() => true),
   providerReadiness: vi.fn(() => ({ ready: true, reason: 'ready' })),
   hasAvailableAccount: vi.fn(),
+  quotaSnapshot: vi.fn((): unknown => null),
   classifyTaskWithSkillForRouting: vi.fn(async (_task: string): Promise<unknown> => ({ kind: 'skipped' })),
   // Espião do motor: passa a chamada para o routeTask real, só conta e lê os
   // argumentos (o contrafactual da regra é uma SEGUNDA chamada e não pode herdar
@@ -34,6 +35,11 @@ vi.mock('../persistence/account-store', async () => {
   );
   return { ...actual, hasAvailableAccount: mocks.hasAvailableAccount };
 });
+
+// Snapshot de cota dirigido por teste; null = sem leitura (fail-open).
+vi.mock('../quota/quota-service', () => ({
+  requireQuotaService: () => ({ lastSnapshot: mocks.quotaSnapshot }),
+}));
 
 vi.mock('./jev-task-routing', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./jev-task-routing')>()),
@@ -91,6 +97,8 @@ beforeEach(() => {
   mocks.providerReadiness.mockReturnValue({ ready: true, reason: 'ready' });
   mocks.hasAvailableAccount.mockReset();
   mocks.hasAvailableAccount.mockReturnValue(true);
+  mocks.quotaSnapshot.mockReset();
+  mocks.quotaSnapshot.mockReturnValue(null);
   mocks.classifyTaskWithSkillForRouting.mockReset();
   mocks.classifyTaskWithSkillForRouting.mockResolvedValue({ kind: 'skipped' });
   mocks.routeTask.mockClear();
@@ -250,6 +258,50 @@ describe('nexus_route_task quota auto-exclude', () => {
     expect(rerouted.alternatives.map((a) => a.adapterId)).not.toContain(
       natural.adapterId,
     );
+  });
+
+  const fullKimiSnapshot = (usedRatio: number) => ({
+    updatedAt: Date.now(),
+    entries: [{
+      id: 'kimi', adapterId: 'kimi', label: 'kimi', installed: true, onCooldown: false, updatedAt: Date.now(),
+      windows: [{
+        kind: 'weekly', label: 'Semanal', usedRatio, resetsAt: Date.now() + 86_400_000,
+        source: 'provider-api', confidence: 'high',
+      }],
+    }],
+  });
+
+  it('conta com janela medida em 100% (sem cooldown) sai da rota', async () => {
+    mocks.listProviderSettings.mockReturnValue([kimiProvider, codexProvider]);
+    mocks.quotaSnapshot.mockReturnValue(fullKimiSnapshot(1));
+    const decision = (await tool('nexus_route_task').handler(
+      { task: 'tarefa de complexidade média' },
+      context(),
+    )) as { adapterId: string; alternatives: Array<{ adapterId: string }> };
+    expect(decision.adapterId).toBe('codex');
+    expect(decision.alternatives.map((a) => a.adapterId)).not.toContain('kimi');
+  });
+
+  it('a mesma CLI com folga na janela continua elegível', async () => {
+    mocks.listProviderSettings.mockReturnValue([kimiProvider]);
+    mocks.quotaSnapshot.mockReturnValue(fullKimiSnapshot(0.3));
+    const decision = (await tool('nexus_route_task').handler(
+      { task: 'tarefa de complexidade média' },
+      context(),
+    )) as { adapterId: string; reason: string };
+    expect(decision.adapterId).toBe('kimi');
+    expect(decision.reason).not.toMatch(/cooling/);
+  });
+
+  it('fail-safe: janela cheia que esvaziaria a rota é revertida', async () => {
+    mocks.listProviderSettings.mockReturnValue([kimiProvider]);
+    mocks.quotaSnapshot.mockReturnValue(fullKimiSnapshot(1));
+    const decision = (await tool('nexus_route_task').handler(
+      { task: 'tarefa de complexidade média' },
+      context(),
+    )) as { adapterId: string; reason: string };
+    expect(decision.adapterId).toBe('kimi');
+    expect(decision.reason).toMatch(/cooling/);
   });
 
   it('fail-safe: auto-exclude que esvaziaria a rota é revertido e registrado no reason/log', async () => {
