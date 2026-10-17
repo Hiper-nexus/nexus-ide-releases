@@ -73,6 +73,12 @@
           "availability": "cheap",
           "costTier": "low",
           "source": "nexus-eval"
+        },
+        {
+          "id": "deepseek-flash",
+          "availability": "cheap",
+          "costTier": "free",
+          "source": "bundled"
         }
       ]
     },
@@ -407,6 +413,12 @@
         },
         {
           "id": "qwen3.6-flash",
+          "availability": "cheap",
+          "costTier": "free",
+          "source": "bundled"
+        },
+        {
+          "id": "deepseek-flash",
           "availability": "cheap",
           "costTier": "free",
           "source": "bundled"

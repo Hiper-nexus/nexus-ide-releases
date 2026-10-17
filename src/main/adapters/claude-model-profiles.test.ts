@@ -40,6 +40,9 @@ describe('F-992: esforço do Claude por modelo', () => {
       'claude-opus-4-6': ['--effort high', '--effort max'],
       'claude-sonnet-4-5': ['', ''],
       'claude-opus-4-5': ['--effort high', '--effort high'],
+      // DeepSeek Flash não é modelo Anthropic: o id vai intacto no `--model`
+      // e o esforço também, para o endpoint compatível decidir.
+      'deepseek-flash': ['--effort xhigh', '--effort max'],
     });
   });
 

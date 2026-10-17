@@ -120,6 +120,10 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
         // 81 turnos reais na 2.1.293 dos panes. Abaixo disso só avisa (F-992).
         { id: 'claude-haiku-5-5', availability: 'cheap', costTier: 'low', source: 'bundled' },
         { id: 'claude-haiku-4-5', availability: 'cheap', costTier: 'low', source: 'bundled' },
+        // DeepSeek Flash (2026-10-17) também pelo `claude`: o id vai no
+        // `--model` e só resolve com um endpoint Anthropic-compatible da
+        // DeepSeek (adapter `deepseek` ou upstream `deepseek` no pane).
+        { id: 'deepseek-flash', availability: 'cheap', costTier: 'free', source: 'bundled' },
       ],
     },
     codex: {
@@ -278,6 +282,9 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
         { id: 'qwen3.7-plus', availability: 'cheap', costTier: 'low', source: 'bundled' },
         { id: 'qwen3.6-plus', availability: 'cheap', costTier: 'low', source: 'bundled' },
         { id: 'qwen3.6-flash', availability: 'cheap', costTier: 'free', source: 'bundled' },
+        // DeepSeek Flash pela CLI do Qwen Code quando o operador aponta o
+        // `model.baseUrl`/provider para o host direto da DeepSeek (F-724).
+        { id: 'deepseek-flash', availability: 'cheap', costTier: 'free', source: 'bundled' },
       ],
     },
     muse: {

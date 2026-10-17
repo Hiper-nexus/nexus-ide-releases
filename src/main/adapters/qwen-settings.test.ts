@@ -89,6 +89,7 @@ describe('readQwenSettingsSummary (F-238)', () => {
           { id: 'qwen3.6-plus' },
           { id: 'qwen3.6-flash' },
           { id: 'deepseek-v4-pro' },
+          { id: 'deepseek-flash' },
           { id: 'not a model!!' },
         ],
       },
@@ -107,6 +108,29 @@ describe('readQwenSettingsSummary (F-238)', () => {
       'qwen3.6-flash',
     ]);
     expect(summary.modelIds).not.toContain('deepseek-v4-pro');
+    // DashScope não serve o Flash: nem com o id listado no settings.
+    expect(summary.modelIds).not.toContain('deepseek-flash');
+  });
+
+  it('DeepSeek Flash entra quando o endpoint é a DeepSeek direta', () => {
+    const home = tempHome();
+    const direct = 'https://api.deepseek.com/anthropic';
+    writeSettings(home, {
+      modelProviders: {
+        openai: [
+          { id: 'qwen3.8-max', baseUrl: direct },
+          { id: 'deepseek-flash', baseUrl: direct },
+          // Mesmo modelo pelo alias: vira o id canônico do menu, uma vez só.
+          { id: 'deepseek-v4-flash', baseUrl: direct },
+          { id: 'deepseek-chat', baseUrl: direct },
+        ],
+      },
+      security: { auth: { selectedType: 'openai', baseUrl: direct } },
+      model: { name: 'deepseek-flash', baseUrl: direct },
+    });
+    const summary = readQwenSettingsSummary(home);
+    expect(summary.tokenPlan).toBe(false);
+    expect(summary.modelIds).toEqual(['qwen3.8-max', 'deepseek-flash']);
   });
 
   it('F-724: auth no Token Plan põe o deepseek-v4-pro no catálogo — e só ele', () => {
