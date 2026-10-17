@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   DEFAULT_PANE_ADMISSION_LIMITS,
@@ -7,8 +7,13 @@ import {
   evaluatePaneAdmission,
   readPaneAdmissionLimits,
   registerAgentMemoryCensus,
+  registerHeavyCommandMemoryReservation,
+  registerPaneAdmissionAdvisor,
+  admitAgentSpawnSync,
+  parallelHelperBudget,
   getCachedSystemMemory,
   getMemoryAfterAgentReservations,
+  getMemoryForAgentSpawn,
   primeSystemMemoryCacheForTest,
   hasPendingPaneSpawns,
   trackPaneSpawnEntry,
@@ -48,6 +53,100 @@ it('combines PTY and ACP pending startups without doubling their shared physical
     primeSystemMemoryCacheForTest(sample);
     expect(getMemoryAfterAgentReservations()).toEqual(sample);
   } finally { undoPty(); undoAcp(); primeSystemMemoryCacheForTest(null); }
+});
+
+describe('uma régua de memória para todo spawn de agente: panes iniciando + builds com permit', () => {
+  // Limites explícitos: o padrão escala com a RAM do host de teste.
+  const env = { NEXUS_PANE_GUARD: '', NEXUS_PANE_CAP: '12', NEXUS_PANE_MIN_FREE_MB: '4000' };
+  let heavyMB = 0;
+  let live = 0;
+  let pending = 0;
+  let undoCensus = () => {};
+
+  beforeEach(() => {
+    heavyMB = 0;
+    live = 0;
+    pending = 0;
+    registerHeavyCommandMemoryReservation(() => heavyMB);
+    undoCensus = registerAgentMemoryCensus(() => ({ live, pending }), 'test-yardstick');
+    registerPaneAdmissionAdvisor(null);
+  });
+
+  afterEach(() => {
+    registerHeavyCommandMemoryReservation(() => 0);
+    undoCensus();
+    primeSystemMemoryCacheForTest(null);
+  });
+
+  it('spawn humano: o build com permit entra no aviso, que nomeia o que já foi reservado, sem recusar', () => {
+    const now = Date.now();
+    // Um pane ainda iniciando: a amostra (7000 MB) não o mediu.
+    live = 1;
+    pending = 1;
+    primeSystemMemoryCacheForTest({ freeMB: 7_000, swapUsedMB: 0 }, now);
+    // Sem build: 7000 - 1280 = 5720, acima do mínimo de 4000 → silêncio.
+    expect(admitAgentSpawnSync(1, now, env)).toEqual({ ok: true });
+
+    // Um build pega permit: 2048 MB do mesmo livre já têm dono.
+    heavyMB = 2_048;
+    const warned = admitAgentSpawnSync(1, now, env);
+    expect(warned.ok).toBe(true);
+    expect(warned.ok && warned.warning).toContain(
+      'Memória livre baixa (3672 MB < 4000 MB; já descontados 1280 MB de panes iniciando ' +
+        'e 2048 MB de builds/testes em andamento)',
+    );
+    // A trava dura é opt-in do operador e recusa pela mesma régua.
+    expect(admitAgentSpawnSync(1, now, { ...env, NEXUS_PANE_CAP_HARD: '1' })).toMatchObject({
+      ok: false,
+      reason: 'memory',
+    });
+
+    // A amostra crua fica intacta; o pool de heavy-command lê a visão SEM a
+    // própria reserva (ele a soma ao `neededMB`) — descontar lá seria em dobro.
+    expect(getCachedSystemMemory(now)?.freeMB).toBe(7_000);
+    expect(getMemoryAfterAgentReservations(now)?.freeMB).toBe(7_000 - AGENT_PANE_FOOTPRINT_MB);
+    expect(getMemoryForAgentSpawn(now)?.freeMB).toBe(7_000 - AGENT_PANE_FOOTPRINT_MB - 2_048);
+
+    // Permit solto e amostra nova depois do startup: nada a descontar.
+    heavyMB = 0;
+    pending = 0;
+    primeSystemMemoryCacheForTest({ freeMB: 5_720, swapUsedMB: 0 }, now);
+    expect(getMemoryForAgentSpawn(now)?.freeMB).toBe(5_720);
+    expect(admitAgentSpawnSync(1, now, env)).toEqual({ ok: true });
+  });
+
+  it('orçamento do leque, gate do worker automático e mainPressureNow leem a mesma memória', () => {
+    const now = Date.now();
+    const limits = readPaneAdmissionLimits(env);
+    live = 1;
+    pending = 1;
+    primeSystemMemoryCacheForTest({ freeMB: 4_000 + 3 * AGENT_PANE_FOOTPRINT_MB, swapUsedMB: 0 }, now);
+    const read = () => ({
+      budget: parallelHelperBudget({ liveAgentPanes: 1, limits, memory: getMemoryForAgentSpawn(now) }),
+      verdict: admitAgentSpawnSync(1, now, env, { automaticWorker: true }),
+      pressure: mainPressureNow({ limits, liveAgentPanes: () => 1, now }),
+    });
+
+    // 7840 - 1280 (pane iniciando) = 6560 → 2 vagas, e o gate admite.
+    const roomy = read();
+    expect(roomy.budget).toMatchObject({ slots: 2, limitedBy: 'memory', freeMB: 6_560 });
+    expect(roomy.verdict.ok).toBe(true);
+    expect(roomy.pressure).toBe(false);
+
+    // Build com permit: 4512 MB não cabem mais um worker acima de 4000. O leque
+    // não anuncia a vaga que o gate recusaria.
+    for (const heavy of [2_048, 4_096]) {
+      heavyMB = heavy;
+      const tight = read();
+      expect(tight.budget).toMatchObject({ slots: 0, limitedBy: 'memory' });
+      expect(tight.verdict).toMatchObject({ ok: false, reason: 'memory' });
+      expect(tight.pressure).toBe(true);
+      if (tight.verdict.ok) return;
+      expect(tight.verdict.message).toContain(
+        `os livres já descontam 1280 MB de panes iniciando e ${heavy} MB de builds/testes em andamento`,
+      );
+    }
+  });
 });
 
 describe('automatic mission worker admission', () => {
@@ -346,7 +445,7 @@ describe('pane-admission: swap do Windows é commit, não swap (F-574)', () => {
 describe('pane-admission: limites proporcionais à RAM da máquina (0.76.44)', () => {
   it('num Mac de 24 GB o mínimo disponível é 15 % (3,6 GB), o swap nasce sem gate e o teto 12', async () => {
     const { limitsForMachine } = await import('./pane-admission');
-    const limits = limitsForMachine(24 * 1024);
+    const limits = limitsForMachine(24 * 1024, 'darwin');
     expect(limits.minFreeMB).toBe(Math.round(0.15 * 24 * 1024));
     expect(limits.maxSwapUsedMB).toBe(0);
     expect(limits.maxAgentPanes).toBe(12);
@@ -374,14 +473,14 @@ describe('pane-admission: limites proporcionais à RAM da máquina (0.76.44)', (
 
   it('env continua sobrepondo os defaults proporcionais', async () => {
     const { readPaneAdmissionLimits } = await import('./pane-admission');
-    const limits = readPaneAdmissionLimits({ NEXUS_PANE_CAP: '3' }, 24 * 1024);
+    const limits = readPaneAdmissionLimits({ NEXUS_PANE_CAP: '3' }, 24 * 1024, 'darwin');
     expect(limits.maxAgentPanes).toBe(3);
     expect(limits.minFreeMB).toBe(Math.round(0.15 * 24 * 1024));
   });
 
   it('isUnderMemoryPressure usa os mesmos limiares do gate', async () => {
     const { isUnderMemoryPressure, limitsForMachine } = await import('./pane-admission');
-    const limits = limitsForMachine(24 * 1024);
+    const limits = limitsForMachine(24 * 1024, 'darwin');
     expect(isUnderMemoryPressure({ freeMB: 10_000, swapUsedMB: 100 }, limits)).toBe(false);
     expect(isUnderMemoryPressure({ freeMB: 2_000, swapUsedMB: 100 }, limits)).toBe(true);
     // Swap não é sinal de pressão sem o gate armado pela máquina (0.76.47).
@@ -414,7 +513,9 @@ describe('pane-admission: limites proporcionais à RAM da máquina (0.76.44)', (
 });
 
 describe('pane-admission: orçamento de paralelismo da delegação (F-784)', () => {
-  const mac24 = DEFAULT_PANE_ADMISSION_LIMITS; // teto 12, mínimo livre 3.686 MB
+  // Régua do Mac de referência: no Windows a reserva é menor por design
+  // (o `free` não vê toda a Standby List), então o platform é explícito.
+  const mac24 = limitsForMachine(24 * 1024, 'darwin'); // teto 12, mínimo livre 3.686 MB
 
   it('o leque inicial abre todas as partes independentes quando a máquina tem folga', async () => {
     const { helpersToOpenNow, parallelHelperBudget } = await import('./pane-admission');
@@ -711,10 +812,12 @@ describe('pane-admission: recusa de capacidade no caminho MCP (F-1270)', () => {
 describe('pane-admission: Windows 32 GB (cliente 15/10) — standby/cache não trava o 3º worker', () => {
   it('a reserva padrão para de crescer linearmente: 32/64 GB não exigem 4,9/9,8 GB livres', async () => {
     const { limitsForMachine } = await import('./pane-admission');
-    expect(limitsForMachine(32 * 1024).minFreeMB).toBe(4096);
-    expect(limitsForMachine(64 * 1024).minFreeMB).toBe(4096);
+    // Régua não-win32 (POSIX): a reserva win32 é menor por design, então os
+    // asserts POSIX passam a plataforma explícita — sem isso herdam o win32 real.
+    expect(limitsForMachine(32 * 1024, 'darwin').minFreeMB).toBe(4096);
+    expect(limitsForMachine(64 * 1024, 'darwin').minFreeMB).toBe(4096);
     // 24 GB (referência Mac) segue em 15 %: abaixo do teto, nada muda.
-    expect(limitsForMachine(24 * 1024).minFreeMB).toBe(Math.round(0.15 * 24 * 1024));
+    expect(limitsForMachine(24 * 1024, 'darwin').minFreeMB).toBe(Math.round(0.15 * 24 * 1024));
     // win32: `free` não vê toda a Standby List → reserva (e percentual) menores.
     expect(limitsForMachine(32 * 1024, 'win32').minFreeMB).toBe(2048);
     expect(limitsForMachine(64 * 1024, 'win32').minFreeMB).toBe(2048);

@@ -138,6 +138,32 @@ export function isSharedPaneSpaceWorktree(scope: ProjectExecutionScope, executio
   return sharedPaneSpaceId(scope, execution) !== undefined;
 }
 
+/**
+ * Pane restaurado depois do reinício pode chegar só com o cwd da worktree da
+ * aba (layout sem `worktreeSpaceId`, ou missão órfã descartada pelo Main).
+ * Só um registro de aba do Main responde com o espaço — inclusive com a pasta
+ * removida, para a recusa dizer "aba" e nunca cair no checkout principal. A
+ * prova de identidade continua em `preparePaneSpaceWorktree`.
+ */
+export function findPaneSpaceIdByWorktreeCwd(scope: ProjectExecutionScope, cwd: string | undefined): string | undefined {
+  if (!cwd || !path.isAbsolute(cwd)) return undefined;
+  let registry: ReturnType<typeof requireWorktreeRuntimeRegistry>;
+  try { registry = requireWorktreeRuntimeRegistry(); }
+  catch (error) {
+    if (error instanceof Error && error.message === 'worktree runtime registry is not initialized') return undefined;
+    throw error;
+  }
+  if (isInsidePath(scope.rootRealPath, cwd)) return undefined;
+  const candidates = [path.resolve(cwd)];
+  try { candidates.push(fs.realpathSync(cwd)); } catch { /* pasta removida: vale o caminho gravado */ }
+  const runtime = registry.forScope(scope);
+  const records = runtime.worktreeState.read(runtime.worktrees.scopeKey(scope)).records
+    .filter(record => record.taskId === 'tab' && record.ownerKind === 'pane' && record.workerId === record.missionId &&
+      candidates.some(candidate => isInsidePath(record.worktreePath, candidate)));
+  const spaceId = records.length === 1 ? records[0]!.missionId : undefined;
+  return spaceId && /^space-[a-z0-9-]{1,120}$/.test(spaceId) ? spaceId : undefined;
+}
+
 /** Resolve only: recovery must never replace a missing tab with a fresh checkout. */
 export function resolvePaneSpaceWorktree(scope: ProjectExecutionScope, spaceId: string): ProjectExecutionScope {
   const record = requireWorktreeRuntimeRegistry().get(scope, spaceId, 'tab');

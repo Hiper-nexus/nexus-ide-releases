@@ -9,7 +9,9 @@ import { useAgentWaitingStore } from '../state/agent-waiting-store';
 import { useGitScmStore } from '../state/git-scm-store';
 import { useOrchStore } from '../state/orch-store';
 import { useProviderStore } from '../state/provider-store';
+import { useProductNavigationStore } from '../state/product-navigation-store';
 import { useLayoutStore } from '../state/layout-store';
+import { useToastStore } from '../state/toast-store';
 import { buildGridTree } from '../lib/split-tree';
 import { openCliLoginTerminal } from './settings/cli-login-terminal';
 
@@ -69,6 +71,17 @@ describe('AttentionInbox', () => {
     useAttentionInboxStore.setState({ open: false, count: 0 });
   });
 
+  it('routes the optional Muse Claude host to API key settings without starting native login', () => {
+    useProviderStore.setState({ providers: [{ adapterId: 'muse-claude', label: 'Muse Spark (via Claude)', enabled: true, installed: true, authStrategy: 'login-needed', authMethod: 'api_key', authState: 'missing' }] } as never);
+    mount();
+    const button = [...document.querySelectorAll('button')].find((candidate) => candidate.getAttribute('aria-label') === 'Configurar chave de Muse Spark (via Claude)');
+    expect(button).toBeTruthy();
+    expect(document.body.textContent).toContain('Chave API');
+    act(() => button!.click());
+    expect(openCliLoginTerminal).not.toHaveBeenCalled();
+    expect(useProductNavigationStore.getState().destination).toEqual({ kind: 'settings', section: 'providers' });
+  });
+
   it('mostra o nome da CLI por extenso, o que ela pede, e não esmaga o card em 22px', () => {
     mount();
     const panel = document.querySelector('.agent-notif__panel');
@@ -105,6 +118,26 @@ describe('AttentionInbox', () => {
         adapterId: 'claude',
       }),
     );
+  });
+
+  it('login recusado pelo Main (outro login do Codex em andamento) diz o porquê em vez de sumir', async () => {
+    const push = vi.spyOn(useToastStore.getState(), 'push');
+    vi.mocked(openCliLoginTerminal).mockResolvedValueOnce({
+      ok: false,
+      error: 'Já há um login do Codex em andamento. Conclua ou feche o terminal dele antes de abrir outro.',
+    });
+    mount();
+    const claudeBtn = [...document.querySelectorAll('button')].find((button) =>
+      (button.getAttribute('aria-label') ?? '') === 'Entrar no Claude Code',
+    );
+    await act(async () => {
+      claudeBtn!.click();
+      await Promise.resolve();
+    });
+    expect(push).toHaveBeenCalledWith('warn', 'Login Claude Code', expect.objectContaining({
+      detail: expect.stringMatching(/login do Codex em andamento/),
+    }));
+    push.mockRestore();
   });
 
   it('drops waiting entries for removed missions and closed panes while retaining global login and live standalone attention', () => {

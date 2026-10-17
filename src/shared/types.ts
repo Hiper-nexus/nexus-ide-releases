@@ -1316,6 +1316,9 @@ export interface NexusApi {
     ): Promise<{ ok: boolean; supported?: boolean }>;
     prepareAgyLogin(): Promise<{ ok: boolean; error?: string }>;
     restoreAgyLogin(): Promise<{ ok: boolean }>;
+    /** Esvazia a vaga do `~/.codex/auth.json` antes do login (o `codex login` revoga o login que encontra). */
+    prepareCodexLogin(): Promise<{ ok: boolean; error?: string }>;
+    restoreCodexLogin(): Promise<{ ok: boolean }>;
     rename(id: string, label: string): Promise<{ ok: boolean }>;
     remove(id: string): Promise<{ ok: boolean }>;
     activate(id: string): Promise<{ ok: boolean; error?: string; needsRestart?: boolean }>;

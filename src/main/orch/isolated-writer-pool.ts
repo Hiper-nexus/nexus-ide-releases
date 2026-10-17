@@ -142,6 +142,15 @@ export class IsolatedWriterPoolOrchestrator {
     const scopeKey = this.#backend.scopeKey(scope);
     this.#scopes.set(scopeKey, scope);
     void this.#ensureBootCleanup(scope, scopeKey);
+    // Pool sem entrada desta base: nada a adotar nem a marcar como stale.
+    // `resolveBase` roda Git (vários comandos) e não pode custar isso num
+    // spawn que já sabe que vai cair no caminho atual.
+    const hasMatchable = this.#pool.entriesFor(scopeKey).some(
+      (entry) =>
+        entry.baseRootRealPath === request.baseRootRealPath &&
+        entry.baseRef === request.baseRef,
+    );
+    if (!hasMatchable) return null;
     const base = await this.#backend.resolveBase(scope, request);
     const reservation = this.#pool.reserve(scopeKey, request, base.headSha);
     for (const stale of reservation.stale) {

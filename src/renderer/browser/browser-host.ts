@@ -1,5 +1,11 @@
 import type { BrowserPaneState, PaneModel } from '../../shared/types';
 import { useLayoutStore } from '../state/layout-store';
+import {
+  collectFloatingSurfaces,
+  isCoveredByFloatingSurface,
+  watchFloatingSurfaces,
+  type FloatingSurface,
+} from './browser-occlusion';
 import { applyViewportOverride } from './viewport-override';
 
 interface BrowserHost {
@@ -17,6 +23,9 @@ const CREATE_TIMEOUT_MS = 25_000;
 const hosts = new Map<string, BrowserHost>();
 const attachedSlots = new Map<string, HTMLElement>();
 const suppressionReasons = new Set<string>();
+/** Panes whose native view is hidden only because a popover/menu/modal crosses it. */
+const coveredPanes = new Set<string>();
+let stopSurfaceWatch: (() => void) | null = null;
 /** Breakpoint preview widths per pane (F4); null/absent = full slot. */
 const viewportOverrides = new Map<string, number>();
 const lastStates = new Map<string, BrowserPaneState>();
@@ -71,22 +80,69 @@ export function boundsOf(slot: HTMLElement): {
   };
 }
 
-function suppressedBounds(slot: HTMLElement): ReturnType<typeof boundsOf> {
+/**
+ * The native view hides while the app suppresses it (other destination, hard
+ * modal) OR while a floating surface crosses it: the page would paint over the
+ * surface and swallow its clicks. Only the view that is crossed hides, so a
+ * menu elsewhere on screen never blanks a page the operator is reading.
+ */
+function suppressedBounds(
+  paneId: string,
+  slot: HTMLElement,
+  surfaces?: readonly FloatingSurface[],
+): ReturnType<typeof boundsOf> {
   const bounds = boundsOf(slot);
+  const suppressed = suppressionReasons.size > 0;
+  const covered =
+    !suppressed &&
+    bounds.visible &&
+    isCoveredByFloatingSurface(bounds, slot, surfaces ?? collectFloatingSurfaces());
+  if (covered) coveredPanes.add(paneId);
+  else coveredPanes.delete(paneId);
   return {
     ...bounds,
-    visible: bounds.visible && suppressionReasons.size === 0,
+    visible: bounds.visible && !suppressed && !covered,
   };
 }
 
-function syncPaneBounds(paneId: string, slot: HTMLElement): void {
+function syncPaneBounds(
+  paneId: string,
+  slot: HTMLElement,
+  surfaces?: readonly FloatingSurface[],
+): void {
   window.nexus.browser.setBounds(
     paneId,
     applyViewportOverride(
-      suppressedBounds(slot),
+      suppressedBounds(paneId, slot, surfaces),
       viewportOverrides.get(paneId) ?? null,
     ),
   );
+}
+
+/** One DOM scan shared by every slot of the batch. */
+function syncAllPaneBounds(): void {
+  const surfaces =
+    suppressionReasons.size === 0 ? collectFloatingSurfaces() : undefined;
+  for (const [paneId, slot] of attachedSlots) {
+    syncPaneBounds(paneId, slot, surfaces);
+  }
+}
+
+/**
+ * A floating surface appeared, went away or changed: resync only the panes
+ * whose covered state flips (the common case is none, so no IPC).
+ */
+function refreshOcclusion(): void {
+  if (suppressionReasons.size > 0) return;
+  const surfaces = collectFloatingSurfaces();
+  for (const [paneId, slot] of attachedSlots) {
+    const bounds = boundsOf(slot);
+    const covered =
+      bounds.visible && isCoveredByFloatingSurface(bounds, slot, surfaces);
+    if (covered !== coveredPanes.has(paneId)) {
+      syncPaneBounds(paneId, slot, surfaces);
+    }
+  }
 }
 
 /**
@@ -99,9 +155,7 @@ export function scheduleBrowserPaneBoundsSync(): void {
   if (pendingBoundsFrame !== null) return;
   pendingBoundsFrame = requestAnimationFrame(() => {
     pendingBoundsFrame = null;
-    for (const [paneId, slot] of attachedSlots) {
-      syncPaneBounds(paneId, slot);
-    }
+    syncAllPaneBounds();
   });
 }
 
@@ -256,6 +310,7 @@ export function attachBrowserPane(
     // Scroll does not bubble. Capture also covers ancestors introduced by a
     // reparent without installing one listener for every scroll container.
     window.addEventListener('scroll', scheduleBrowserPaneBoundsSync, { capture: true, passive: true });
+    stopSurfaceWatch = watchFloatingSurfaces(refreshOcclusion);
   }
   attachedSlots.set(pane.id, slot);
   ro.observe(slot);
@@ -271,8 +326,13 @@ export function attachBrowserPane(
     ro.disconnect();
     window.removeEventListener('resize', syncBounds);
     slot.removeEventListener('mousedown', focusPane);
-    if (attachedSlots.get(pane.id) === slot) attachedSlots.delete(pane.id);
+    if (attachedSlots.get(pane.id) === slot) {
+      attachedSlots.delete(pane.id);
+      coveredPanes.delete(pane.id);
+    }
     if (attachedSlots.size === 0) {
+      stopSurfaceWatch?.();
+      stopSurfaceWatch = null;
       window.removeEventListener('scroll', scheduleBrowserPaneBoundsSync, true);
       if (pendingBoundsFrame !== null) cancelAnimationFrame(pendingBoundsFrame);
       pendingBoundsFrame = null;
@@ -310,7 +370,5 @@ export function setBrowserPaneSuppression(reason: string, active: boolean): void
     suppressionReasons.delete(reason);
   }
   if (suppressionReasons.size === before) return;
-  for (const [paneId, slot] of attachedSlots) {
-    syncPaneBounds(paneId, slot);
-  }
+  syncAllPaneBounds();
 }

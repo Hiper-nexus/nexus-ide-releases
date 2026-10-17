@@ -1,6 +1,6 @@
-import { useId, useMemo, useState, type KeyboardEvent } from 'react';
-import type { UsageDayPoint, UsageWindowDays } from '../../../shared/usage-types';
-import { fillUsageWindow, type UsageFilledDay } from '../../../shared/usage-analytics';
+import { useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import type { UsageDayPoint, UsageMetric } from '../../../shared/usage-types';
+import { usageDayStats } from '../../../shared/usage-analytics';
 import { niceCeiling } from '../../lib/usage-history-chart';
 import {
   dayLongLabel,
@@ -8,18 +8,22 @@ import {
   formatTokenCount,
   formatUsdAmount,
   formatUsdAxis,
+  pluralize,
+  usageMeasureTexts,
   usageProviderLabel,
   usageSeriesStyle,
 } from '../../lib/usage-overview';
 
 /**
- * "Custo diário": uma curva por ferramenta, sobrepostas (não empilhadas), no
- * registro do Fleet Pulse — fios de borda no grid, cor só na série. A cor é a
- * da ferramenta (um dos `--series-1..6`), a mesma do ponto na lista ao lado, que é a
- * legenda. A leitura do dia (ponteiro ou setas) diz os valores em texto.
+ * "Custo diário" / "Tokens por dia": uma curva por ferramenta, sobrepostas
+ * (não empilhadas), no registro do Fleet Pulse — fios de borda no grid, cor só
+ * na série. A cor é a da ferramenta (um dos `--series-1..6`), a mesma do ponto
+ * na lista ao lado, que é a legenda. Com mais de uma ferramenta, um fio neutro
+ * soma o dia. Acima do desenho, total, pico e média do período; sobre ele, o
+ * pico, a média por dia com uso e o dia fixado (acento: é o item selecionado).
+ * A leitura do dia (ponteiro ou setas) diz os valores em texto; clique ou
+ * Enter fixa o dia e o painel inteiro passa a mostrar só ele.
  */
-
-export type UsageChartMetric = 'cost' | 'tokens';
 
 /** Uma série do gráfico: uma ferramenta, ou "Outros" dobrando as sem slot. */
 export interface UsageChartSeries {
@@ -38,8 +42,10 @@ const PLOT_TOP = 12;
 const PLOT_BOTTOM = 190;
 const LABEL_Y = 210;
 const GRID_STEPS = 4;
+/** Até aqui cada dia com uso ganha um ponto: o dado é diário, não contínuo. */
+const MAX_DOTTED_DAYS = 31;
 
-function seriesValue(point: UsageFilledDay, series: UsageChartSeries, metric: UsageChartMetric): number {
+function seriesValue(point: UsageDayPoint, series: UsageChartSeries, metric: UsageMetric): number {
   let total = 0;
   for (const provider of series.providers) {
     const slice = point.byProvider[provider];
@@ -49,11 +55,15 @@ function seriesValue(point: UsageFilledDay, series: UsageChartSeries, metric: Us
   return total;
 }
 
-function formatValue(value: number, metric: UsageChartMetric): string {
+function dayValue(point: UsageDayPoint, metric: UsageMetric): number {
+  return metric === 'cost' ? point.costUsd : point.totalTokens;
+}
+
+function formatValue(value: number, metric: UsageMetric): string {
   return metric === 'cost' ? formatUsdAmount(value) : formatTokenCount(value);
 }
 
-function formatAxis(value: number, metric: UsageChartMetric): string {
+function formatAxis(value: number, metric: UsageMetric): string {
   return metric === 'cost' ? formatUsdAxis(value) : formatTokenCount(value);
 }
 
@@ -109,96 +119,162 @@ function tickIndexes(length: number): number[] {
 }
 
 export interface UsageDailyChartProps {
+  /** Um ponto por dia do período, já com os filtros aplicados. */
   readonly days: readonly UsageDayPoint[];
+  /** Dia local de hoje: só ele é rotulado "hoje" no eixo. */
   readonly today: string;
-  readonly windowDays: UsageWindowDays;
-  readonly metric: UsageChartMetric;
-  /** Da maior para a menor no custo da janela; a maior é desenhada por cima. */
+  readonly metric: UsageMetric;
+  /** Da maior para a menor no custo do período; a maior é desenhada por cima. */
   readonly series: readonly UsageChartSeries[];
+  /** Dia fixado (YYYY-MM-DD): realçado aqui; o resto do painel mostra só ele. */
+  readonly selectedDay: string | null;
+  readonly onSelectDay: (day: string | null) => void;
   readonly titleId: string;
 }
 
-export function UsageDailyChart({ days, today, windowDays, metric, series, titleId }: UsageDailyChartProps) {
+export function UsageDailyChart({ days, today, metric, series, selectedDay, onSelectDay, titleId }: UsageDailyChartProps) {
   const summaryId = useId();
-  const [selected, setSelected] = useState<number | null>(null);
-  const points = useMemo(() => fillUsageWindow(days, windowDays, today), [days, windowDays, today]);
-  const peak = Math.max(
-    0,
-    ...points.flatMap((point) => series.map((item) => seriesValue(point, item, metric))),
-  );
+  const svgRef = useRef<SVGSVGElement>(null);
+  /** Ponteiro ou setas: leitura passageira; o dia fixado é a escolha que fica. */
+  const [cursor, setCursor] = useState<number | null>(null);
+  const points = days;
+  const stats = useMemo(() => usageDayStats(points, metric), [points, metric]);
+  const peak = Math.max(0, ...points.map((point) => dayValue(point, metric)));
   const top = niceCeiling(peak);
   const plotW = VIEW_W - PLOT_LEFT - PLOT_RIGHT;
   const x = (index: number) =>
     PLOT_LEFT + (points.length <= 1 ? plotW / 2 : (index / (points.length - 1)) * plotW);
   const y = (value: number) => PLOT_BOTTOM - (Math.max(0, value) / top) * (PLOT_BOTTOM - PLOT_TOP);
   const slot = points.length <= 1 ? plotW : plotW / (points.length - 1);
-  const selectedPoint = selected === null ? null : (points[selected] ?? null);
+  const pinnedIndex = selectedDay === null ? -1 : points.findIndex((point) => point.day === selectedDay);
+  const focusIndex = cursor ?? (pinnedIndex >= 0 ? pinnedIndex : null);
+  const focusPoint = focusIndex === null ? null : (points[focusIndex] ?? null);
   // A maior por último: fica por cima das outras.
   const drawOrder = [...series].reverse();
+  const showTotal = series.length > 1;
+  const average = metric === 'cost' ? stats.averageCostUsd : stats.averageTokens;
+  const peakIndex = stats.peak ? points.findIndex((point) => point.day === stats.peak!.day) : -1;
+  const dotted = points.length <= MAX_DOTTED_DAYS;
+  const totalCoords = points.map((point, index) => [x(index), y(dayValue(point, metric))] as const);
+  const bandLeft = (index: number) => Math.max(PLOT_LEFT, x(index) - slot / 2);
+  const bandRight = (index: number) => Math.min(VIEW_W - PLOT_RIGHT, x(index) + slot / 2);
 
   const onKeyDown = (event: KeyboardEvent<SVGSVGElement>) => {
     const last = points.length - 1;
+    if (event.key === 'Escape') {
+      // Primeiro some a leitura; com ela já fechada, Esc solta o dia fixado.
+      if (cursor !== null) setCursor(null);
+      else onSelectDay(null);
+      return;
+    }
+    if (event.key === 'Enter' || event.key === ' ') {
+      const target = focusPoint;
+      if (!target) return;
+      event.preventDefault();
+      onSelectDay(target.day === selectedDay ? null : target.day);
+      return;
+    }
     const step: ((current: number | null) => number) | null =
       event.key === 'ArrowLeft'
-        ? (current) => Math.max(0, (current ?? last + 1) - 1)
+        ? (current) => Math.max(0, (current ?? (pinnedIndex >= 0 ? pinnedIndex : last + 1)) - 1)
         : event.key === 'ArrowRight'
-          ? (current) => Math.min(last, (current ?? -1) + 1)
+          ? (current) => Math.min(last, (current ?? (pinnedIndex >= 0 ? pinnedIndex : -1)) + 1)
           : event.key === 'Home'
             ? () => 0
             : event.key === 'End'
               ? () => last
               : null;
-    if (event.key === 'Escape') {
-      setSelected(null);
-      return;
-    }
     if (!step) return;
     event.preventDefault();
-    setSelected(step);
+    setCursor(step);
   };
 
-  const windowTotal = points.reduce(
-    (sum, point) => sum + (metric === 'cost' ? point.costUsd : point.totalTokens),
-    0,
-  );
-  const peakPoint = points.reduce<UsageFilledDay | null>((best, point) => {
-    const value = metric === 'cost' ? point.costUsd : point.totalTokens;
-    const bestValue = best ? (metric === 'cost' ? best.costUsd : best.totalTokens) : -1;
-    return value > bestValue ? point : best;
-  }, null);
-  const summary = `${windowDays} dias, ${series.length} ${series.length === 1 ? 'ferramenta' : 'ferramentas'}: total ${formatValue(windowTotal, metric)}${
-    peakPoint && (metric === 'cost' ? peakPoint.costUsd : peakPoint.totalTokens) > 0
-      ? `; maior dia ${dayLongLabel(peakPoint.day)} com ${formatValue(metric === 'cost' ? peakPoint.costUsd : peakPoint.totalTokens, metric)}`
+  const totalTexts = usageMeasureTexts(metric, stats.costUsd, stats.totalTokens);
+  const peakTexts = stats.peak ? usageMeasureTexts(metric, stats.peak.costUsd, stats.peak.totalTokens) : null;
+  const averageTexts = usageMeasureTexts(metric, stats.averageCostUsd, stats.averageTokens);
+  const activeLabel = `${stats.activeDays} de ${pluralize(stats.dayCount, 'dia', 'dias')} com uso`;
+  const summary = `${pluralize(stats.dayCount, 'dia', 'dias')}, ${series.length} ${series.length === 1 ? 'ferramenta' : 'ferramentas'}: total ${totalTexts.primary} (${totalTexts.secondary})${
+    peakTexts && stats.peak
+      ? `; maior dia ${dayLongLabel(stats.peak.day)} com ${peakTexts.primary} (${peakTexts.secondary})`
       : ''
-  }. Use as setas para ler dia a dia.`;
+  }; média ${averageTexts.primary} (${averageTexts.secondary}) por dia com uso, ${activeLabel}. Use as setas para ler dia a dia e Enter para ver só um dia.`;
 
   return (
     <div className="usage-chart">
-      <p className="usage-chart__readout" aria-live="polite">
-        {selectedPoint ? (
-          <>
-            <span className="usage-chart__readout-day">{dayLongLabel(selectedPoint.day)}</span>
-            {series.map((item) => {
-              const value = seriesValue(selectedPoint, item, metric);
-              return (
-                <span key={item.key} className="usage-chart__readout-item">
-                  <span
-                    className="usage-chart__swatch"
-                    style={usageSeriesStyle(item.slot)}
-                    aria-hidden="true"
-                  />
-                  {item.label} <strong>{formatValue(value, metric)}</strong>
+      <dl className="usage-chart__stats">
+        <div className="usage-chart__stat">
+          <dt>Total do período</dt>
+          <dd>{totalTexts.primary}</dd>
+          <dd className="usage-chart__stat-sub">{totalTexts.secondary}</dd>
+        </div>
+        <div className="usage-chart__stat">
+          <dt>Pico em um dia</dt>
+          <dd>{peakTexts ? peakTexts.primary : '—'}</dd>
+          <dd className="usage-chart__stat-sub">
+            {stats.peak && peakTexts ? `${dayLongLabel(stats.peak.day)} · ${peakTexts.secondary}` : 'sem uso'}
+          </dd>
+        </div>
+        <div className="usage-chart__stat">
+          <dt>Média por dia com uso</dt>
+          <dd>{stats.activeDays > 0 ? averageTexts.primary : '—'}</dd>
+          <dd className="usage-chart__stat-sub">
+            {stats.activeDays > 0 ? `${activeLabel} · ${averageTexts.secondary}` : 'sem uso'}
+          </dd>
+        </div>
+      </dl>
+      <div className="usage-chart__readout-row">
+        <p className="usage-chart__readout" aria-live="polite">
+          {focusPoint ? (
+            <>
+              <span className="usage-chart__readout-day">
+                {dayLongLabel(focusPoint.day)}
+                {focusPoint.day === selectedDay ? ' · dia fixado' : ''}
+              </span>
+              {showTotal ? (
+                <span className="usage-chart__readout-item">
+                  Total{' '}
+                  <strong>{usageMeasureTexts(metric, focusPoint.costUsd, focusPoint.totalTokens).primary}</strong>
+                  <span className="usage-chart__readout-other">
+                    {usageMeasureTexts(metric, focusPoint.costUsd, focusPoint.totalTokens).secondary}
+                  </span>
                 </span>
-              );
-            })}
-          </>
-        ) : (
-          <span className="usage-chart__readout-hint">
-            Passe o ponteiro ou use as setas para ler um dia.
-          </span>
-        )}
-      </p>
+              ) : null}
+              {series.map((item) => {
+                const value = seriesValue(focusPoint, item, metric);
+                return (
+                  <span key={item.key} className="usage-chart__readout-item">
+                    <span
+                      className="usage-chart__swatch"
+                      style={usageSeriesStyle(item.slot)}
+                      aria-hidden="true"
+                    />
+                    {item.label} <strong>{formatValue(value, metric)}</strong>
+                  </span>
+                );
+              })}
+            </>
+          ) : (
+            <span className="usage-chart__readout-hint">
+              Passe o ponteiro ou use as setas para ler um dia. Clique ou aperte Enter para ver só ele.
+            </span>
+          )}
+        </p>
+        {selectedDay !== null && pinnedIndex >= 0 ? (
+          <button
+            type="button"
+            className="settings-btn"
+            onClick={() => {
+              onSelectDay(null);
+              // O botão some com o dia solto: o foco volta ao gráfico, não ao body.
+              svgRef.current?.focus();
+            }}
+          >
+            Ver o período inteiro
+          </button>
+        ) : null}
+      </div>
       <svg
+        ref={svgRef}
         className="usage-chart__svg"
         viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
         role="img"
@@ -206,8 +282,8 @@ export function UsageDailyChart({ days, today, windowDays, metric, series, title
         aria-describedby={summaryId}
         tabIndex={0}
         onKeyDown={onKeyDown}
-        onMouseLeave={() => setSelected(null)}
-        onBlur={() => setSelected(null)}
+        onMouseLeave={() => setCursor(null)}
+        onBlur={() => setCursor(null)}
       >
         {Array.from({ length: GRID_STEPS + 1 }, (_, index) => {
           const value = (top / GRID_STEPS) * index;
@@ -220,6 +296,20 @@ export function UsageDailyChart({ days, today, windowDays, metric, series, title
             </g>
           );
         })}
+        {pinnedIndex >= 0 ? (
+          <g className="usage-chart__pin" aria-hidden="true">
+            <rect
+              x={bandLeft(pinnedIndex)}
+              y={PLOT_TOP}
+              width={bandRight(pinnedIndex) - bandLeft(pinnedIndex)}
+              height={PLOT_BOTTOM - PLOT_TOP}
+            />
+            <line x1={x(pinnedIndex)} x2={x(pinnedIndex)} y1={PLOT_TOP} y2={PLOT_BOTTOM} />
+          </g>
+        ) : null}
+        {showTotal ? (
+          <path className="usage-chart__total" d={monotonePath(totalCoords)} />
+        ) : null}
         {drawOrder.map((item) => {
           const coords = points.map(
             (point, index) => [x(index), y(seriesValue(point, item, metric))] as const,
@@ -245,14 +335,47 @@ export function UsageDailyChart({ days, today, windowDays, metric, series, title
           y1={PLOT_BOTTOM}
           y2={PLOT_BOTTOM}
         />
-        {selectedPoint && selected !== null ? (
+        {stats.activeDays > 0 ? (
+          <g className="usage-chart__average" aria-hidden="true">
+            <line x1={PLOT_LEFT} x2={VIEW_W - PLOT_RIGHT} y1={y(average)} y2={y(average)} />
+            <text x={PLOT_LEFT + 4} y={y(average) - 4} textAnchor="start">
+              {`média ${formatValue(average, metric)}`}
+            </text>
+          </g>
+        ) : null}
+        {dotted ? (
+          <g className="usage-chart__dots" aria-hidden="true">
+            {points.map((point, index) =>
+              dayValue(point, metric) > 0 ? (
+                <circle
+                  key={point.day}
+                  data-day={point.day}
+                  cx={x(index)}
+                  cy={y(dayValue(point, metric))}
+                  r={2.5}
+                  style={series.length === 1 ? usageSeriesStyle(series[0]!.slot) : undefined}
+                />
+              ) : null,
+            )}
+          </g>
+        ) : null}
+        {peakIndex >= 0 ? (
+          <circle
+            className="usage-chart__peak"
+            aria-hidden="true"
+            cx={x(peakIndex)}
+            cy={y(dayValue(points[peakIndex]!, metric))}
+            r={5}
+          />
+        ) : null}
+        {focusPoint && focusIndex !== null ? (
           <g className="usage-chart__cursor" aria-hidden="true">
-            <line x1={x(selected)} x2={x(selected)} y1={PLOT_TOP} y2={PLOT_BOTTOM} />
+            <line x1={x(focusIndex)} x2={x(focusIndex)} y1={PLOT_TOP} y2={PLOT_BOTTOM} />
             {series.map((item) => (
               <circle
                 key={item.key}
-                cx={x(selected)}
-                cy={y(seriesValue(selectedPoint, item, metric))}
+                cx={x(focusIndex)}
+                cy={y(seriesValue(focusPoint, item, metric))}
                 r={4}
                 style={usageSeriesStyle(item.slot)}
               />
@@ -265,21 +388,25 @@ export function UsageDailyChart({ days, today, windowDays, metric, series, title
             className="usage-chart__tick"
             x={x(index)}
             y={LABEL_Y}
-            textAnchor={index === 0 ? 'start' : index === points.length - 1 ? 'end' : 'middle'}
+            textAnchor={
+              points.length === 1 ? 'middle' : index === 0 ? 'start' : index === points.length - 1 ? 'end' : 'middle'
+            }
           >
-            {index === points.length - 1 ? 'hoje' : dayTickLabel(points[index].day)}
+            {points[index].day === today ? 'hoje' : dayTickLabel(points[index].day)}
           </text>
         ))}
-        {/* Alvo do ponteiro na altura toda: o dia sem uso também se lê. */}
+        {/* Alvo do ponteiro na altura toda: o dia sem uso também se lê e se fixa.
+            O teclado age no gráfico inteiro (setas, Enter), então o alvo é só do mouse e do toque. */}
         {points.map((point, index) => (
           <rect
             key={point.day}
             className="usage-chart__hit"
-            x={x(index) - slot / 2}
+            x={bandLeft(index)}
             y={PLOT_TOP}
-            width={slot}
+            width={bandRight(index) - bandLeft(index)}
             height={PLOT_BOTTOM - PLOT_TOP}
-            onMouseEnter={() => setSelected(index)}
+            onMouseEnter={() => setCursor(index)}
+            onClick={() => onSelectDay(point.day === selectedDay ? null : point.day)}
           />
         ))}
       </svg>
@@ -290,7 +417,7 @@ export function UsageDailyChart({ days, today, windowDays, metric, series, title
   );
 }
 
-/** Ferramentas da janela → séries do gráfico, com "Outros" no fim. */
+/** Ferramentas do período → séries do gráfico, com "Outros" no fim. */
 export function chartSeriesFor(
   providers: readonly string[],
   slots: ReadonlyMap<string, number | null>,

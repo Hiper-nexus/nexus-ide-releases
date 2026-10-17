@@ -129,11 +129,16 @@ export interface NonWorkerAutoCloseDeps {
    */
   readonly isMemorySampleMissing?: () => boolean;
   /**
-   * Otimização multi-pane (06/10): pressão severa (livre < 50 % do mínimo)
-   * estaciona até 3 panes por tick. Ausente = só 1 por tick (comportamento
-   * antigo).
+   * Otimização multi-pane (06/10): pressão severa (livre < 60 % do mínimo)
+   * estaciona até 4 panes por tick. Ausente = pressão moderada (até 2).
    */
   readonly isSevereMemoryPressure?: () => boolean;
+  /**
+   * 16/10: pressão crítica (livre < 30 % do mínimo OU swap acima do teto que
+   * a máquina armou) estaciona até 6 panes por tick — o degrau mais agressivo
+   * do reaper de emergência. Ausente = nunca crítica.
+   */
+  readonly isCriticalMemoryPressure?: () => boolean;
 }
 
 /** Carência pós-acordar antes de o reaper de emergência poder estacionar de novo. */
@@ -141,14 +146,21 @@ export const PANE_WAKE_GRACE_MS = 5 * 60_000;
 /** Ticks seguidos sem amostra de memória antes de avisar que o gate está cego. */
 const MEMORY_SAMPLE_BLIND_TICKS = 3;
 /**
- * Otimização multi-pane (06/10): sob pressão severa o reaper estaciona vários
+ * Otimização multi-pane (06/10, 16/10): sob pressão o reaper estaciona vários
  * panes ociosos por tick, não apenas um. Um pane por minuto não drena RAM
  * rápido o suficiente quando 4-6 CLIs + validadores já empurraram a máquina
- * para o swap — o freeze acontece antes do segundo tick.
+ * para o swap — o freeze acontece antes do segundo tick. Três degraus:
+ * - moderada (livre < minFreeMB): 2 por tick;
+ * - severa (livre < 60 % do mínimo): 4 por tick;
+ * - crítica (livre < 30 % do mínimo OU swap alto): 6 por tick.
  */
-const SEVERE_PRESSURE_PARKS_PER_TICK = 3;
+const MODERATE_PRESSURE_PARKS_PER_TICK = 2;
+const SEVERE_PRESSURE_PARKS_PER_TICK = 4;
+const CRITICAL_PRESSURE_PARKS_PER_TICK = 6;
 /** Fração do mínimo livre abaixo da qual a pressão é considerada severa. */
-const SEVERE_PRESSURE_RATIO = 0.5;
+const SEVERE_PRESSURE_RATIO = 0.6;
+/** Fração do mínimo livre abaixo da qual a pressão é considerada crítica. */
+const CRITICAL_PRESSURE_RATIO = 0.3;
 
 function productionDeps(): NonWorkerAutoCloseDeps {
   return {
@@ -232,6 +244,7 @@ function productionDeps(): NonWorkerAutoCloseDeps {
       isUnderMemoryPressure(getCachedSystemMemory(), readPaneAdmissionLimits()),
     isMemorySampleMissing: () => getCachedSystemMemory() === null,
     isSevereMemoryPressure: productionSevereMemoryPressure,
+    isCriticalMemoryPressure: productionCriticalMemoryPressure,
     registerAdvisor: () =>
       registerPaneAdmissionAdvisor({
         idleCandidates: (now) =>
@@ -457,14 +470,20 @@ export async function sweepIdlePanes(deps: NonWorkerAutoCloseDeps, context?: Per
     // The broader parking policy below requires actual memory pressure.
   }
   // 0.76.44 / F-588 — reaper de emergência: com a máquina sob pressão (mesmos
-  // limiares do gate de spawn), não espera o TTL. Estaciona UM pane ocioso
-  // elegível por tick, o mais parado primeiro; os vetos (orquestrador,
-  // entrega armada, awaiting-input) continuam. Otimização multi-pane (06/10):
-  // sob pressão severa (abaixo de 50 % do mínimo livre) estaciona até 3 por
-  // tick — um por minuto não drena RAM antes do freeze.
+  // limiares do gate de spawn), não espera o TTL. Estaciona panes ociosos
+  // elegíveis por tick, os mais parados primeiro; os vetos (orquestrador,
+  // entrega armada, awaiting-input) continuam. Otimização multi-pane (06/10,
+  // 16/10): 2 por tick na pressão moderada, 4 na severa (< 60 % do mínimo
+  // livre) e 6 na crítica (< 30 % ou swap alto) — um por minuto não drena RAM
+  // antes do freeze.
   if (deps.isUnderMemoryPressure?.()) {
     const severe = deps.isSevereMemoryPressure?.() ?? false;
-    const parksThisTick = severe ? SEVERE_PRESSURE_PARKS_PER_TICK : 1;
+    const critical = deps.isCriticalMemoryPressure?.() ?? false;
+    const parksThisTick = critical
+      ? CRITICAL_PRESSURE_PARKS_PER_TICK
+      : severe
+        ? SEVERE_PRESSURE_PARKS_PER_TICK
+        : MODERATE_PRESSURE_PARKS_PER_TICK;
     let parked = 0;
     const candidatesThisTick = new Set(idleSince.keys());
     const attempted = new Set<string>();
@@ -493,10 +512,11 @@ export async function sweepIdlePanes(deps: NonWorkerAutoCloseDeps, context?: Per
       if (!deps.isUnderMemoryPressure?.()) break;
       const verb = deps.parkPane ? 'estacionando' : 'fechando';
       const roleLabel = parkRef.role ?? 'none';
+      const tierLabel = critical ? ' crítica' : severe ? ' severa' : '';
       deps.log(
-        `pressão de memória${severe ? ' severa' : ''}: ${verb} o pane ocioso mais antigo sem esperar o TTL ` +
+        `pressão de memória${tierLabel}: ${verb} o pane ocioso mais antigo sem esperar o TTL ` +
           `(pane=${parkRef.paneId}, role=${roleLabel}, ocioso há ${Math.round((now - (idleSince.get(sessionId) ?? now)) / 1000)} s)` +
-          (severe ? ` [lote ${parked + 1}/${parksThisTick}]` : ''),
+          (severe || critical ? ` [lote ${parked + 1}/${parksThisTick}]` : ''),
       );
       const closed = await closeIdlePane(deps, parkRef, sessionId, 'varredura', 'memory-pressure');
       context?.assertCurrent();
@@ -505,12 +525,37 @@ export async function sweepIdlePanes(deps: NonWorkerAutoCloseDeps, context?: Per
   }
 }
 
-/** Pressão severa: memória livre abaixo de 50 % do mínimo do gate. */
+/** Pressão severa: memória livre abaixo de 60 % do mínimo do gate. */
 function productionSevereMemoryPressure(): boolean {
   try {
     const sample = getCachedSystemMemory();
+    if (!sample || sample.freeMB === null) return false;
     const limits = readPaneAdmissionLimits();
-    return sample?.freeMB !== null && sample !== null && sample.freeMB < limits.minFreeMB * SEVERE_PRESSURE_RATIO;
+    return sample.freeMB < limits.minFreeMB * SEVERE_PRESSURE_RATIO;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Pressão crítica: memória livre abaixo de 30 % do mínimo do gate OU swap em
+ * uso acima do teto que a máquina armou (`maxSwapUsedMB > 0`). É o degrau mais
+ * agressivo do reaper — só drena 6 panes/tick quando a máquina está de fato à
+ * beira do freeze.
+ */
+function productionCriticalMemoryPressure(): boolean {
+  try {
+    const sample = getCachedSystemMemory();
+    if (!sample) return false;
+    const limits = readPaneAdmissionLimits();
+    if (sample.freeMB !== null && sample.freeMB < limits.minFreeMB * CRITICAL_PRESSURE_RATIO) {
+      return true;
+    }
+    return (
+      limits.maxSwapUsedMB > 0 &&
+      sample.swapUsedMB !== null &&
+      sample.swapUsedMB > limits.maxSwapUsedMB
+    );
   } catch {
     return false;
   }

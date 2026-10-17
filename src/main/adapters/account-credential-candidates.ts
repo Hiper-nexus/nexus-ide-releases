@@ -12,7 +12,11 @@ import {
 
 function matchesSavedIdentity(adapterId: FileAuthAdapterId, saved: string, candidate: string): boolean {
   const subject = identityFromAuthBlob(adapterId, saved).subject;
-  if (subject) return identityFromAuthBlob(adapterId, candidate).subject === subject;
+  // Same subject is not enough for two people of one Codex workspace.
+  if (subject) {
+    return identityFromAuthBlob(adapterId, candidate).subject === subject &&
+      compareAuthBlobIdentity(adapterId, saved, candidate) !== 'different';
+  }
   return compareAuthBlobIdentity(adapterId, saved, candidate) === 'same';
 }
 

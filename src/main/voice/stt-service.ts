@@ -162,6 +162,28 @@ function base64ToBuffer(b64: string): Buffer {
   return Buffer.from(b64, 'base64');
 }
 
+/**
+ * Nome do arquivo multipart por mime. Whisper-compatíveis decidem o decoder
+ * pelo nome anexado — mp3 chamado `audio.wav` é recusado — e `audio/pcm` fica
+ * `audio.wav` como sempre (o corpo cru não muda, só o container manda extensão).
+ */
+const AUDIO_EXT_BY_MIME: Readonly<Record<string, string>> = {
+  'audio/wav': 'wav',
+  'audio/pcm': 'wav',
+  'audio/webm': 'webm',
+  'audio/mpeg': 'mp3',
+  'audio/mp4': 'm4a',
+  'audio/flac': 'flac',
+  'audio/ogg': 'ogg',
+  'audio/aac': 'aac',
+  'audio/aiff': 'aiff',
+  'audio/x-ms-wma': 'wma',
+};
+
+export function audioFileNameForMime(mime: string): string {
+  return `audio.${AUDIO_EXT_BY_MIME[mime] ?? 'wav'}`;
+}
+
 async function attemptCloud(
   plugin: VoicePlugin,
   req: TranscribeRequest,
@@ -199,8 +221,11 @@ async function attemptCloud(
   }
   const language = req.language ?? plugin.language;
   if (!translate && language) form.append('language', language);
-  const ext = req.mime === 'audio/webm' ? 'webm' : 'wav';
-  form.append('file', new Blob([new Uint8Array(audio)], { type: req.mime }), `audio.${ext}`);
+  form.append(
+    'file',
+    new Blob([new Uint8Array(audio)], { type: req.mime }),
+    audioFileNameForMime(req.mime),
+  );
 
   let res: Response;
   try {
@@ -638,7 +663,7 @@ async function attemptXai(
     form.append('keyterm', term);
   }
   const audio = base64ToBuffer(req.audioBase64);
-  let fileName = 'audio.wav';
+  let fileName = audioFileNameForMime(req.mime);
   let fileType: string = req.mime;
   if (req.mime === 'audio/pcm') {
     const rate = req.sampleRate;
@@ -654,8 +679,6 @@ async function attemptXai(
     form.append('sample_rate', String(rate));
     fileName = 'audio.pcm';
     fileType = 'application/octet-stream';
-  } else if (req.mime === 'audio/webm') {
-    fileName = 'audio.webm';
   }
   form.append('file', new Blob([new Uint8Array(audio)], { type: fileType }), fileName);
 

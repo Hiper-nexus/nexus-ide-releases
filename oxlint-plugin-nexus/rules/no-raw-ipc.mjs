@@ -59,9 +59,9 @@ export const RAW_IPC_ALLOWLIST = {
     reason: 'é o wrapper `onIpcGuarded` (proteção contra falha de git); quem chama decide a autoridade.',
   },
   // Pontes do preload.
-  'src/preload/preload.ts': { max: 433, reason: PRELOAD_BRIDGE },
+  'src/preload/preload.ts': { max: 435, reason: PRELOAD_BRIDGE },
   'src/preload/integrations-bridge.ts': { max: 33, reason: PRELOAD_BRIDGE },
-  'src/preload/pet-preload.ts': { max: 18, reason: `${PRELOAD_BRIDGE} Janela do pet.` },
+  'src/preload/pet-preload.ts': { max: 19, reason: `${PRELOAD_BRIDGE} Janela do pet, inclusive a sonda de cursor.` },
   'src/preload/browser-preload.ts': { max: 5, reason: `${PRELOAD_BRIDGE} Páginas das abas do navegador.` },
   // Remetentes que não são só a janela principal, ou guarda com resposta própria.
   'src/main/pet/pet-window.ts': {

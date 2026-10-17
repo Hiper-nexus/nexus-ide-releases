@@ -3,6 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';;
 import type { ProjectExecutionScope } from '../../shared/types';
+import { shiftDayKey, summarizeUsage, usageWindowStartDay } from '../../shared/usage-analytics';
+import type { UsageAnalytics } from '../../shared/usage-types';
 import { createScopedMissionPaneStore } from '../orch/mission-pane-store';
 import { createScopedMissionStore } from '../orch/mission-store';
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
@@ -676,6 +678,8 @@ describe.skipIf(!sqliteAvailable)('ScopedUsageStore.analytics', () => {
     const date = new Date(now);
     return new Date(date.getFullYear(), date.getMonth(), date.getDate() - daysAgo, 12).getTime();
   };
+  const windowOf = (analytics: UsageAnalytics, days: number) =>
+    summarizeUsage(analytics, { from: usageWindowStartDay(analytics.today, days), to: analytics.today });
 
   it('rolls up local days by provider and model, with distinct sessions per window', () => {
     const { baseDir, scope } = fixture();
@@ -691,13 +695,23 @@ describe.skipIf(!sqliteAvailable)('ScopedUsageStore.analytics', () => {
 
     const analytics = store.analytics(now);
     expect(analytics.today).toBe('2026-10-15');
-    expect(analytics.days.map((day) => day.day)).toEqual(['2026-07-27', '2026-09-25', '2026-10-12', '2026-10-15']);
-    const today = analytics.days.at(-1)!;
-    expect(today.totalTokens).toBe(1_000 + 500 + 10_000 + 200);
-    expect(Object.keys(today.byProvider)).toEqual(['claude']);
+    expect([...new Set(analytics.rows.map((item) => item.day))]).toEqual(['2026-07-27', '2026-09-25', '2026-10-12', '2026-10-15']);
+    const todayRow = analytics.rows.find((item) => item.day === '2026-10-15')!;
+    expect(todayRow).toMatchObject({
+      provider: 'claude',
+      model: 'claude-opus-5',
+      inputTokens: 1_000,
+      outputTokens: 500,
+      cachedInputTokens: 10_000,
+      cacheWriteTokens: 200,
+      turns: 1,
+    });
+    const todaySummary = summarizeUsage(analytics, { from: '2026-10-15', to: '2026-10-15' });
+    expect(todaySummary.totals.processedTokens).toBe(1_000 + 500 + 10_000 + 200);
+    expect(todaySummary.byProvider.map((item) => item.provider)).toEqual(['claude']);
 
-    const week = analytics.windows[7];
-    expect(week.startDay).toBe('2026-10-09');
+    const week = windowOf(analytics, 7);
+    expect(week.from).toBe('2026-10-09');
     expect(week.byProvider.map((row) => [row.provider, row.sessions])).toEqual(
       expect.arrayContaining([['claude', 1], ['codex', 1]]),
     );
@@ -716,23 +730,85 @@ describe.skipIf(!sqliteAvailable)('ScopedUsageStore.analytics', () => {
     expect(week.byModel.map((row) => row.model)).toEqual(expect.arrayContaining(['claude-opus-5', 'gpt-5.6-sol']));
 
     // A sessão claude-1 atravessa 20 dias: conta UMA vez em 30d, nunca duas.
-    const month = analytics.windows[30];
+    const month = windowOf(analytics, 30);
     expect(month.byProvider.find((row) => row.provider === 'claude')).toMatchObject({ sessions: 1 });
     expect(month.totals.turns).toBe(3);
-    const quarter = analytics.windows[90];
+    // ...e aparece inteira nos dois dias em que teve evento, um por um.
+    expect(summarizeUsage(analytics, { from: '2026-09-25', to: '2026-09-25' }).totals.sessions).toBe(1);
+    expect(summarizeUsage(analytics, { from: '2026-10-15', to: '2026-10-15' }).totals.sessions).toBe(1);
+    expect(summarizeUsage(analytics, { from: '2026-10-13', to: '2026-10-14' }).totals.sessions).toBe(0);
+    const quarter = windowOf(analytics, 90);
     expect(quarter.byProvider.find((row) => row.provider === 'claude')).toMatchObject({ sessions: 2 });
     expect(quarter.totals.sessions).toBe(3);
     expect(quarter.totals.costUsd).toBeCloseTo(
-      analytics.days.reduce((sum, day) => sum + day.costUsd, 0),
+      quarter.days.reduce((sum, day) => sum + day.costUsd, 0),
       9,
     );
   });
 
-  it('returns empty windows for a project without telemetry', () => {
+  it('feeds every cut of the panel from the stored events and closes with the store totals', () => {
+    const { baseDir, scope } = fixture();
+    const store = createScopedUsageStore(manager(baseDir), scope);
+    const now = new Date(2026, 9, 15, 18, 30).getTime();
+    const events: Array<['claude' | 'codex' | 'mimo-code', number, ReturnType<typeof usage>]> = [
+      ['claude', 0, usage({ messageId: 'a', sessionId: 'claude-1', model: 'claude-opus-5', inputTokens: 120, outputTokens: 40, cacheReadTokens: 9_000, cacheWrite5mTokens: 60, cacheWrite1hTokens: 20 })],
+      ['claude', 0, usage({ messageId: 'b', sessionId: 'claude-1', model: 'claude-sonnet-4-5', inputTokens: 80, outputTokens: 10, cacheReadTokens: 500, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0 })],
+      ['claude', 2, usage({ messageId: 'c', sessionId: 'claude-1', model: 'claude-opus-5', inputTokens: 300, outputTokens: 90, cacheReadTokens: 4_000, cacheWrite5mTokens: 10, cacheWrite1hTokens: 5 })],
+      ['codex', 2, usage({ messageId: 'd', sessionId: 'codex-1', model: 'gpt-5.6-sol', inputTokens: 700, outputTokens: 70, cacheReadTokens: 7_000, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0 })],
+      ['codex', 11, usage({ messageId: 'e', sessionId: 'codex-2', model: 'gpt-5.6-sol', inputTokens: 50, outputTokens: 5, cacheReadTokens: 600, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0 })],
+      ['mimo-code', 11, usage({ messageId: 'f', sessionId: 'mimo-1', model: 'xiaomi/mimo-v2.6-flash', inputTokens: 30, outputTokens: 3, cacheReadTokens: 0, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, reportedCostUsd: 0.25 })],
+    ];
+    for (const [provider, daysAgo, event] of events) {
+      store.record(provider, { ...event, timestamp: noon(daysAgo, now) });
+    }
+    const analytics = store.analytics(now);
+    const all = windowOf(analytics, 90);
+    const totals = store.totals();
+
+    // O painel inteiro fecha com os totais que o resto do app lê do mesmo SQLite.
+    expect(all.totals.costUsd).toBeCloseTo(totals.costUsd, 9);
+    expect(all.totals.cachedInputTokens).toBe(totals.cacheReadTokens);
+    expect(all.totals.uncachedInputTokens).toBe(totals.inputTokens + totals.cacheWriteTokens);
+    expect(all.totals.outputTokens).toBe(totals.outputTokens);
+    expect(all.totals.turns).toBe(totals.turns);
+    expect(all.totals.sessions).toBe(4);
+    // Por modelo: o mesmo que o GROUP BY model independente do store.
+    const perModel = store.breakdownByModel();
+    expect(all.byModel).toHaveLength(perModel.length);
+    for (const line of perModel) {
+      const model = all.byModel.find((item) => item.model === line.model);
+      expect(model?.costUsd, line.model).toBeCloseTo(line.costUsd, 9);
+      expect(model?.totalTokens, line.model).toBe(
+        line.inputTokens + line.outputTokens + line.cacheReadTokens + line.cacheWriteTokens,
+      );
+    }
+
+    // Um dia, uma ferramenta, um modelo: exatamente o que foi gravado ali.
+    const day2 = shiftDayKey(analytics.today, -2);
+    const dayOnly = summarizeUsage(analytics, { from: day2, to: day2 });
+    expect(dayOnly.totals.processedTokens).toBe(300 + 90 + 4_000 + 10 + 5 + (700 + 70 + 7_000));
+    expect(dayOnly.byProvider.map((item) => [item.provider, item.sessions])).toEqual(
+      expect.arrayContaining([['claude', 1], ['codex', 1]]),
+    );
+    const sol = summarizeUsage(analytics, { from: day2, to: analytics.today, provider: 'codex', model: 'gpt-5.6-sol' });
+    expect(sol.totals).toMatchObject({ processedTokens: 700 + 70 + 7_000, turns: 1, sessions: 1 });
+    expect(sol.days.at(-1)).toMatchObject({ day: analytics.today, totalTokens: 0 });
+    // A sessão claude-1 usou dois modelos hoje: cada um a enxerga, sem duplicar.
+    const today = (model?: string) =>
+      summarizeUsage(analytics, { from: analytics.today, to: analytics.today, provider: 'claude', ...(model ? { model } : {}) });
+    expect(today().totals.sessions).toBe(1);
+    expect(today('claude-opus-5').totals.sessions).toBe(1);
+    expect(today('claude-sonnet-4-5').totals.sessions).toBe(1);
+    expect(today('claude-opus-5').totals.turns + today('claude-sonnet-4-5').totals.turns).toBe(today().totals.turns);
+    // Custo relatado pela CLI (MiMo) vira custo, não é recalculado.
+    expect(summarizeUsage(analytics, { from: shiftDayKey(analytics.today, -11), to: shiftDayKey(analytics.today, -11), provider: 'mimo-code' }).totals.costUsd).toBe(0.25);
+  });
+
+  it('returns an empty rollup for a project without telemetry', () => {
     const { baseDir, scope } = fixture();
     const store = createScopedUsageStore(manager(baseDir), scope);
     const analytics = store.analytics(new Date(2026, 9, 15, 9).getTime());
-    expect(analytics.days).toEqual([]);
-    expect(analytics.windows[30]).toMatchObject({ byProvider: [], byModel: [], totals: { processedTokens: 0, costUsd: 0, sessions: 0 } });
+    expect(analytics).toEqual({ today: '2026-10-15', rows: [], sessions: [] });
+    expect(windowOf(analytics, 30)).toMatchObject({ byProvider: [], byModel: [], totals: { processedTokens: 0, costUsd: 0, sessions: 0 } });
   });
 });

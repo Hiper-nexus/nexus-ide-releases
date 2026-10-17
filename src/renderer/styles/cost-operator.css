@@ -51,6 +51,16 @@
   border-color: var(--danger);
   background: color-mix(in srgb, var(--danger) 10%, transparent);
 }
+.prov__ctl-warning {
+  margin-top: var(--space-1-5);
+  padding: var(--space-1-5) var(--space-2);
+  border-radius: var(--radius-md);
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--danger);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
 
 /* ---- Cost tracker (badge por pane + resumo no topo) ---- */
 .cost-badge {

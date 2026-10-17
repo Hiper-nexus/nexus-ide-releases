@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../jev/jev-decision-log', () => ({
   recordJevDecision: vi.fn(() => 'id'),
@@ -9,14 +9,19 @@ vi.mock('../jev/jev-autopilot', () => ({ isJevSurfaceEnabled: vi.fn(() => true) 
 vi.mock('../jev/jev-secrets', () => ({ hasJevCredential: vi.fn(() => true) }));
 
 import { recordJevDecision } from '../jev/jev-decision-log';
+import { bumpDecisionCredentialRevision } from '../decision-models/decision-revision';
 import type { JevResult, JudgeInput } from '../jev/jev-client';
 import {
   classifyTaskForRouting,
   classifyTaskWithJev,
   classifyTaskWithSkillForRouting,
+  clearTaskRoutingCacheForTests,
   routingOverridesFrom,
   type JevTaskClassification,
 } from './jev-task-routing';
+
+// O cache curto do Jev da rota é do processo: cada caso começa frio.
+beforeEach(() => clearTaskRoutingCacheForTests());
 
 type JudgeMock = (input: JudgeInput) => Promise<JevResult | null>;
 
@@ -67,7 +72,7 @@ describe('classifyTaskWithJev', () => {
     expect(state.task).toContain('race condition');
     // Rota no caminho crítico do spawn: sem retry de transporte no timeout.
     expect(judge.mock.calls[0]![0].retryOnTimeout).toBe(false);
-    expect(judge.mock.calls[0]![0].timeoutMs).toBeLessThanOrEqual(5_000);
+    expect(judge.mock.calls[0]![0].timeoutMs).toBeLessThanOrEqual(3_000);
   });
 
   it('returns null when disabled, without a key, on empty task, or when the judge fails', async () => {
@@ -385,5 +390,116 @@ describe('F-1346 (parte 2): tarefa longa chega ao Jev com o pedido do FIM', () =
       expect(task).toContain(ask);
       expect(task.length).toBeLessThan(3_100);
     }
+  });
+});
+
+// route-resolve p50 1,7 s (16/10): pedidos iguais em voo dividem a mesma chamada
+// judge e a classificação aceita fica 60 s; falha não fica no cache.
+describe('single-flight + cache curto do Jev da rota', () => {
+  const on = { enabled: () => true, hasKey: () => true };
+
+  it('pedidos iguais em voo dividem uma chamada; o repetido em 60 s não chama de novo', async () => {
+    let release!: () => void;
+    const judge = vi.fn<JudgeMock>(async () => answer('easy', 0.9, 'doc', 0.9));
+    judge.mockImplementationOnce(
+      () => new Promise((resolve) => {
+        release = () => resolve(answer('hard', 0.8, 'bug', 0.7));
+      }),
+    );
+    const opts = { allowedSkills: null, deps: { judge, ...on } };
+    const first = classifyTaskWithSkillForRouting('corrigir race no supervisor', opts);
+    const second = classifyTaskWithSkillForRouting('corrigir race no supervisor', opts);
+    release();
+    const [a, b] = await Promise.all([first, second]);
+    expect(a).toEqual(b);
+    expect(a).toMatchObject({ kind: 'classified' });
+    await classifyTaskWithSkillForRouting('corrigir race no supervisor', opts);
+    expect(judge).toHaveBeenCalledTimes(1);
+    // Outra tarefa, outra chave.
+    await classifyTaskWithSkillForRouting('corrigir typo no README', opts);
+    expect(judge).toHaveBeenCalledTimes(2);
+  });
+
+  it('timeout não fica no cache e o próximo pedido tenta de novo', async () => {
+    const judge = vi.fn<JudgeMock>(async (input) => {
+      input.onNoAnswer?.('timeout');
+      return null;
+    });
+    expect(await classifyTaskForRouting('mapear o módulo', { judge, ...on })).toEqual({
+      kind: 'unavailable',
+      reason: 'timeout',
+    });
+    judge.mockImplementation(async () => answer('medium', 0.8, 'general', 0.8));
+    expect(await classifyTaskForRouting('mapear o módulo', { judge, ...on })).toMatchObject({
+      kind: 'classified',
+    });
+    expect(judge).toHaveBeenCalledTimes(2);
+  });
+
+  it('cache vencido (60 s) chama o Jev de novo; desligar vale na hora', async () => {
+    vi.useFakeTimers();
+    try {
+      const judge = vi.fn<JudgeMock>(async () => answer('easy', 0.9, 'doc', 0.9));
+      await classifyTaskWithJev('atualizar doc', { judge, ...on });
+      expect(await classifyTaskWithJev('atualizar doc', { judge, ...on, enabled: () => false })).toBeNull();
+      vi.advanceTimersByTime(59_000);
+      await classifyTaskWithJev('atualizar doc', { judge, ...on });
+      expect(judge).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(2_000);
+      await classifyTaskWithJev('atualizar doc', { judge, ...on });
+      expect(judge).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// Revisão independente (16/10): a chave do cache ignorava a configuração de decisão, então uma
+// rotação de credencial ou troca de modelo devolvia a classificação de quem já não está configurado.
+describe('o cache do Jev da rota obedece à configuração de decisão', () => {
+  const on = { enabled: () => true, hasKey: () => true };
+  const savedModel = process.env.NEXUS_JEV_MODEL;
+  afterEach(() => {
+    if (savedModel === undefined) delete process.env.NEXUS_JEV_MODEL;
+    else process.env.NEXUS_JEV_MODEL = savedModel;
+  });
+
+  it('rotação de credencial não reaproveita a classificação em cache', async () => {
+    const judge = vi.fn<JudgeMock>(async () => answer('easy', 0.9, 'doc', 0.9));
+    await classifyTaskForRouting('revisar a rotação', { judge, ...on });
+    await classifyTaskForRouting('revisar a rotação', { judge, ...on });
+    expect(judge).toHaveBeenCalledTimes(1);
+    bumpDecisionCredentialRevision();
+    judge.mockImplementation(async () => answer('hard', 0.9, 'bug', 0.9));
+    expect(await classifyTaskForRouting('revisar a rotação', { judge, ...on })).toMatchObject({
+      kind: 'classified',
+      classification: { tier: 'hard' },
+    });
+    expect(judge).toHaveBeenCalledTimes(2);
+  });
+
+  it('troca de modelo do Jev não reaproveita a classificação, nem no lote com skills', async () => {
+    process.env.NEXUS_JEV_MODEL = 'jev-a';
+    const judge = vi.fn<JudgeMock>(async () => answer('easy', 0.9, 'doc', 0.9));
+    const opts = { allowedSkills: null, deps: { judge, ...on } };
+    await classifyTaskWithSkillForRouting('trocar o modelo', opts);
+    await classifyTaskWithSkillForRouting('trocar o modelo', opts);
+    expect(judge).toHaveBeenCalledTimes(1);
+    process.env.NEXUS_JEV_MODEL = 'jev-b';
+    await classifyTaskWithSkillForRouting('trocar o modelo', opts);
+    expect(judge).toHaveBeenCalledTimes(2);
+  });
+
+  it('classificação que termina depois de a configuração mudar não entra no cache', async () => {
+    process.env.NEXUS_JEV_MODEL = 'jev-a';
+    const judge = vi.fn<JudgeMock>(async () => {
+      process.env.NEXUS_JEV_MODEL = 'jev-b';
+      return answer('easy', 0.9, 'doc', 0.9);
+    });
+    await classifyTaskForRouting('mudar no meio da chamada', { judge, ...on });
+    // De volta à configuração da chave original: a resposta dada sob a outra não pode ser servida.
+    process.env.NEXUS_JEV_MODEL = 'jev-a';
+    await classifyTaskForRouting('mudar no meio da chamada', { judge, ...on });
+    expect(judge).toHaveBeenCalledTimes(2);
   });
 });

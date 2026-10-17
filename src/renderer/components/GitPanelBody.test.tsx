@@ -32,6 +32,9 @@ afterEach(() => {
 describe('GitPanelBody', () => {
   beforeEach(() => {
     useGitScmStore.setState({
+      tab: 'changes',
+      hasStatus: true,
+      clean: false,
       branch: 'main',
       unstaged: [
         { path: 'src/app.ts', status: 'M' },
@@ -44,6 +47,48 @@ describe('GitPanelBody', () => {
       refresh: vi.fn().mockResolvedValue(undefined),
       reset: vi.fn(),
     });
+  });
+
+  it('keeps the clean content and keyboard focus during repeated background refreshes', () => {
+    useGitScmStore.setState({ clean: true, staged: [], unstaged: [], untracked: [] });
+    const host = render(<GitPanelBody />);
+    const cleanPanel = host.querySelector('[data-testid="git-scm-clean"]');
+    const history = Array.from(host.querySelectorAll('button')).find((b) => b.textContent === 'Ver histórico')!;
+    history.focus();
+
+    for (let i = 0; i < 3; i++) {
+      act(() => useGitScmStore.setState({ loading: true }));
+      expect(host.querySelector('[data-testid="git-scm-clean"]')).toBe(cleanPanel);
+      expect(document.activeElement).toBe(history);
+      expect(host.textContent).not.toContain('Lendo git status…');
+      expect(host.querySelector('.git-scm__lists')).toBeNull();
+      act(() => useGitScmStore.setState({ loading: false }));
+      expect(host.querySelector('[data-testid="git-scm-clean"]')).toBe(cleanPanel);
+    }
+  });
+
+  it('shows loading only before the first status, including after a workspace reset', () => {
+    useGitScmStore.setState({ hasStatus: false, clean: true, loading: true, branch: null });
+    const host = render(<GitPanelBody />);
+    expect(host.textContent).toContain('Lendo git status…');
+    expect(host.querySelector('[data-testid="git-scm-clean"]')).toBeNull();
+
+    act(() => useGitScmStore.setState({ hasStatus: true, loading: false }));
+    expect(host.querySelector('[data-testid="git-scm-clean"]')).not.toBeNull();
+    act(() => useGitScmStore.setState({ hasStatus: false, loading: true }));
+    expect(host.querySelector('[data-testid="git-scm-clean"]')).toBeNull();
+    expect(host.textContent).toContain('Lendo git status…');
+  });
+
+  it('keeps the file list stable while refreshing and replaces it when the worktree becomes clean', () => {
+    const host = render(<GitPanelBody />);
+    const list = host.querySelector('.git-scm__lists');
+    act(() => useGitScmStore.setState({ loading: true }));
+    expect(host.querySelector('.git-scm__lists')).toBe(list);
+    expect(host.textContent).not.toContain('Lendo git status…');
+    act(() => useGitScmStore.setState({ loading: false, clean: true, unstaged: [] }));
+    expect(host.querySelector('.git-scm__lists')).toBeNull();
+    expect(host.querySelector('[data-testid="git-scm-clean"]')).not.toBeNull();
   });
 
   function setTextareaValue(element: HTMLTextAreaElement, value: string): void {

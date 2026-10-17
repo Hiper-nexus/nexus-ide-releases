@@ -62,6 +62,33 @@ vi.mock('./cli-mcp-session-muse', async (orig) => ({
   prepareMuseMcpSession: cliRegistration.muse,
 }));
 
+// Missão simulada só para o teste de anexos selados; `undefined` = registro real.
+const parkedMission = vi.hoisted(() => ({
+  current: undefined as Record<string, unknown> | undefined,
+}));
+
+vi.mock('./project-domain-store-registry', async (orig) => {
+  const real = await orig<typeof import('./project-domain-store-registry')>();
+  return {
+    ...real,
+    getProjectDomainStores: (...args: Parameters<typeof real.getProjectDomainStores>) =>
+      parkedMission.current
+        ? ({ missions: { get: () => parkedMission.current } } as unknown as ReturnType<
+            typeof real.getProjectDomainStores
+          >)
+        : real.getProjectDomainStores(...args),
+  };
+});
+
+vi.mock('../../shared/mission-intent', async (orig) => {
+  const real = await orig<typeof import('../../shared/mission-intent')>();
+  return {
+    ...real,
+    hasCurrentApprovedDispatchContract: (mission: unknown) =>
+      parkedMission.current ? true : real.hasCurrentApprovedDispatchContract(mission as never),
+  };
+});
+
 import {
   buildArmsRuntimeDescriptor,
   hasApprovedMissionProjectTrust,
@@ -1961,6 +1988,65 @@ describe('mcp-server governed CLI profile wiring', () => {
     expect(decoration.extraArgs).not.toContain('--no-subagents');
     expect(decoration.env.HOME).toBeUndefined();
     decoration.onSpawnFailed?.();
+  });
+});
+
+describe('anexos selados no reabrir de pane persistido', () => {
+  function parkedAuthority(cwd: string): BoundSpawnAuthority {
+    const base = petAuthority(cwd, {
+      source: 'persisted-pane',
+      squadId: 'squad-comum',
+    });
+    const { authoritySeal: _seal, ...context } = base.context!;
+    return { ...base, context };
+  }
+
+  function parkMission(status: string): void {
+    parkedMission.current = {
+      id: 'mission-pet-wiring',
+      status,
+      squadId: 'squad-comum',
+      intentContract: {
+        attachmentSnapshots: [
+          { sourcePath: '/x/a.png', sealId: 's', device: 1, inode: 2 },
+        ],
+      },
+    };
+  }
+
+  afterEach(() => {
+    parkedMission.current = undefined;
+  });
+
+  it('missão estacionada sem selo reabre sem o grant em vez de lançar', () => {
+    const cwd = fs.realpathSync(tempRoot());
+    vi.stubEnv('HOME', path.join(cwd, 'home'));
+    parkMission('blocked');
+
+    const decoration = prepareAgentSpawnDecoration(
+      adapter('codex'),
+      { kind: 'cli-agent', cols: 80, rows: 24 },
+      parkedAuthority(cwd),
+      undefined,
+    );
+    if (!decoration) throw new Error('expected decoration');
+    expect(decoration.attachmentReadPaths).toBeUndefined();
+    decoration.onSpawnFailed?.();
+  });
+
+  it('missão em execução sem selo continua recusando', () => {
+    const cwd = fs.realpathSync(tempRoot());
+    vi.stubEnv('HOME', path.join(cwd, 'home'));
+    parkMission('running');
+
+    expect(() =>
+      prepareAgentSpawnDecoration(
+        adapter('codex'),
+        { kind: 'cli-agent', cols: 80, rows: 24 },
+        parkedAuthority(cwd),
+        undefined,
+      ),
+    ).toThrow(/mission pane authority seal is unavailable/);
   });
 });
 

@@ -284,7 +284,9 @@ describe('worker-handoff-ttl (paridade Overclock: worker fecha ~30s pós-handoff
     expect(h.closed).toHaveLength(0);
   });
 
-  it('missão fora de running pertence à máquina de encerramento da missão', () => {
+  it('missão fora de running é do reconciliador de autoridade (F-253) ou do done-teardown, não do TTL', () => {
+    // blocked/failed/pending: `terminateUnauthorizedMissionRuntimes` já encerra
+    // todos os workers em 1 s e preserva o pane; o TTL fecharia o pane também.
     for (const status of ['done', 'failed', 'blocked', 'pending']) {
       const h = harness({ status });
       initWorkerHandoffTtl(h.deps);

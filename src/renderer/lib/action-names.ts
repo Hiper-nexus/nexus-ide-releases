@@ -25,6 +25,19 @@ export interface ActionNameEntry {
   readonly description?: string;
 }
 
+/**
+ * Abrir um projeto: o seletor de pastas do sistema (que também cria pasta).
+ * O launcher e a linha do rail leem o mesmo nome e a mesma explicação.
+ */
+export const WORKSPACE_OPEN_ACTION: ActionNameEntry = {
+  id: 'workspace',
+  label: 'Abrir projeto existente',
+  accessibleName: 'Abrir projeto existente: escolher uma pasta do computador',
+  shortcut: '3',
+  description:
+    'Escolha uma pasta do computador para continuar de onde parou. Para começar do zero, crie uma pasta nova na própria janela de escolha.',
+};
+
 /** Ações do launcher de entrada (ordem = ordem de tab/atalho). */
 export const LAUNCHER_ACTIONS: readonly ActionNameEntry[] = [
   {
@@ -41,13 +54,7 @@ export const LAUNCHER_ACTIONS: readonly ActionNameEntry[] = [
     shortcut: '2',
     description: 'Conte sua ideia e prepare uma missão.',
   },
-  {
-    id: 'workspace',
-    label: 'Abrir projeto existente',
-    accessibleName: 'Abrir projeto existente: escolher uma pasta do computador',
-    shortcut: '3',
-    description: 'Escolha uma pasta do computador para continuar de onde parou.',
-  },
+  WORKSPACE_OPEN_ACTION,
   {
     id: 'shell',
     label: 'Terminal sem IA',

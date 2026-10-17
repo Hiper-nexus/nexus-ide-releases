@@ -15,7 +15,7 @@ export type DecisionModelKey = typeof DECISION_MODEL_KEYS[number];
 
 export const DECISION_QUALITY_TABLE_VERSION = 1;
 /** Abaixo disto a medição local não substitui o prior. */
-export const MIN_QUALITY_CASES = 20;
+export const MIN_QUALITY_CASES = 5;
 
 const cellSchema = z.object({
   accuracy: z.number().finite().min(0).max(1),
@@ -44,6 +44,27 @@ export type DecisionQualityTable = z.infer<typeof decisionQualityTableSchema>;
  */
 export interface DecisionQualityEstimate {
   quality: number; source: 'local-evaluation' | 'blended' | 'prior'; p50Ms: number | null; surfaceCases: number;
+}
+
+/** Peso máximo da latência medida no placar. Não altera `decisionQuality()`. */
+export const LATENCY_SCORE_WEIGHT = 0.02;
+/** Amostra local ainda fina: a penalidade some ao chegar aqui. */
+export const THIN_SAMPLE_CASES = 12;
+export const THIN_SAMPLE_PENALTY = 0.01;
+
+/** 0 quando não há p50 ou orçamento. Sobe com p50/orçamento e trava no peso. */
+export function decisionLatencyPenalty(p50Ms: number | null, latencyBudgetMs: number): number {
+  if (p50Ms === null || latencyBudgetMs <= 0) return 0;
+  return LATENCY_SCORE_WEIGHT * Math.min(1, p50Ms / latencyBudgetMs);
+}
+
+/**
+ * Só medição local entre o piso e 12 casos. No piso é a penalidade cheia;
+ * prior e mistura não pagam — o número de `decisionQuality()` fica igual.
+ */
+export function decisionThinSamplePenalty(source: DecisionQualityEstimate['source'], surfaceCases: number): number {
+  if (source !== 'local-evaluation' || surfaceCases < MIN_QUALITY_CASES || surfaceCases >= THIN_SAMPLE_CASES) return 0;
+  return THIN_SAMPLE_PENALTY * (THIN_SAMPLE_CASES - surfaceCases) / (THIN_SAMPLE_CASES - MIN_QUALITY_CASES);
 }
 
 /**
@@ -84,19 +105,20 @@ export function decisionQualityPrior(surface: string | undefined, model: Decisio
  * Sem ela, a medição global do modelo (só texto) é MISTURADA ao prior da
  * surface, ponderada pelo nº de casos (o prior pesa PRIOR_WEIGHT_CASES): poucos
  * casos de outras surfaces não decidem sozinhos esta. Imagem/áudio só usam
- * medição da surface. Acurácia medida 0 é suspeita (credencial, endpoint): ignorada.
+ * medição da surface. Zero acertos também é evidência; indisponibilidade é
+ * excluída antes de construir a célula por `isQualityObservation`.
  */
 export function decisionQuality(
   table: DecisionQualityTable | null, surface: string | undefined, model: DecisionModelKey, modality: QualityModality,
 ): DecisionQualityEstimate {
   const local = surface ? table?.surfaces[surface]?.[model] : undefined;
-  const surfaceCases = local && local.accuracy > 0 ? local.cases : 0;
-  if (local && local.cases >= MIN_QUALITY_CASES && local.accuracy > 0) {
+  const surfaceCases = local?.cases ?? 0;
+  if (local && local.cases >= MIN_QUALITY_CASES) {
     return { quality: local.accuracy, source: 'local-evaluation', p50Ms: local.p50Ms ?? null, surfaceCases };
   }
   const prior = decisionQualityPrior(surface, model, modality);
   const global = modality === 'text' ? table?.models[model] : undefined;
-  if (global && global.cases >= MIN_QUALITY_CASES && global.accuracy > 0) {
+  if (global && global.cases >= MIN_QUALITY_CASES) {
     const quality = (prior * PRIOR_WEIGHT_CASES + global.accuracy * global.cases) / (PRIOR_WEIGHT_CASES + global.cases);
     return { quality, source: 'blended', p50Ms: global.p50Ms ?? null, surfaceCases };
   }

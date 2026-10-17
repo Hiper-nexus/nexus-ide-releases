@@ -1,8 +1,8 @@
 /* Uso e custos — painel no registro do "Usage" do T3 (custo por ferramenta,
    custo diário, Totais, Detalhamento) e o cartão de Gasto mensal real.
    Só tokens: a cor de série chega como --usage-series (um dos --series-1..6), o
-   ouro marca só dinheiro economizado, o acento só foco. Todo número é
-   tabular-nums. */
+   ouro marca só dinheiro economizado, o acento só foco e o dia fixado (item
+   selecionado). Todo número é tabular-nums. */
 
 .usage-overview,
 .spend-card {
@@ -51,6 +51,54 @@
   color: var(--text);
   font-size: var(--text-md);
   font-weight: 600;
+}
+
+/* Lendo o custo: frase curta no tom do texto de apoio, com o esqueleto da casa. */
+.usage-overview__loading {
+  display: grid;
+  gap: var(--space-3);
+}
+.usage-overview__loading p {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--text-md);
+}
+
+/* Filtros: período personalizado, dia, ferramenta e modelo. Controles nativos
+   com o idioma de `.settings-input`; quebram de linha em canvas estreito. */
+.usage-overview__filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-2) var(--space-4);
+}
+.usage-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-2) var(--space-3);
+  min-width: 0;
+}
+.usage-filter {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+}
+.usage-filter__control {
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+.usage-filter__control[type='date'] {
+  inline-size: 10.5rem;
+}
+select.usage-filter__control {
+  inline-size: 12rem;
+  max-inline-size: 100%;
+}
+.usage-filters__clear {
+  align-self: flex-end;
 }
 
 /* Alternador segmentado: o mesmo idioma do Histórico de uso, alvo de 32px. */
@@ -109,6 +157,12 @@
   line-height: 1.05;
   letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
+}
+.usage-overview__hero-unit {
+  color: var(--text-dim);
+  font-size: var(--text-xl);
+  font-weight: 500;
+  letter-spacing: 0;
 }
 .usage-overview__hero-sub {
   margin: var(--space-1) 0 var(--space-3);
@@ -188,8 +242,53 @@
   display: grid;
   gap: var(--space-1);
 }
+/* Total, pico e média do período: o destaque de "quanto estamos usando". A
+   medida escolhida vai em cima; a outra, escrita, na linha de baixo. */
+.usage-chart__stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: var(--space-2) var(--space-4);
+  margin: 0 0 var(--space-1);
+}
+.usage-chart__stat {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.usage-chart__stat dt {
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+}
+.usage-chart__stat dd {
+  margin: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--text-xl);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A linha de baixo quebra em vez de cortar: "136M tokens" não pode virar "136M t…". */
+.usage-chart__stat dd.usage-chart__stat-sub {
+  overflow: visible;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  font-weight: 400;
+  white-space: normal;
+}
+/* Duas linhas reservadas: ler um dia (ponteiro ou setas) não empurra o gráfico para baixo. */
+.usage-chart__readout-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-3);
+  min-height: 3.2em;
+}
 .usage-chart__readout {
   display: flex;
+  flex: 1 1 18rem;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-1) var(--space-3);
@@ -198,6 +297,10 @@
   color: var(--text-dim);
   font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
+}
+.usage-chart__readout-other {
+  margin-left: var(--space-1);
+  color: var(--text-faint);
 }
 .usage-chart__readout-day {
   color: var(--text);
@@ -261,6 +364,50 @@
 }
 .usage-chart__hit {
   fill: transparent;
+  cursor: pointer;
+}
+/* Dia fixado: banda e fio em acento (é o item selecionado) atrás das curvas. */
+.usage-chart__pin rect {
+  fill: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.usage-chart__pin line {
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
+/* Soma do dia quando há mais de uma ferramenta: fio neutro, sem área. */
+.usage-chart__total {
+  fill: none;
+  stroke: var(--text-dim);
+  stroke-width: 1.25;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  opacity: 0.75;
+}
+.usage-chart__average line {
+  stroke: var(--text-faint);
+  stroke-width: 1;
+  stroke-dasharray: 2 4;
+}
+/* Rótulo da média com contorno na cor do cartão: segue legível por cima de uma curva. */
+.usage-chart__average text {
+  fill: var(--text-dim);
+  stroke: var(--bg-elevated);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  paint-order: stroke;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.usage-chart__dots circle {
+  fill: var(--bg-elevated);
+  stroke: var(--usage-series, var(--text-dim));
+  stroke-width: 1.5;
+}
+.usage-chart__peak {
+  fill: none;
+  stroke: var(--text);
+  stroke-width: 1.5;
 }
 .usage-chart__cursor line {
   stroke: var(--border-strong);
@@ -364,6 +511,50 @@
 .usage-breakdown__name {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* Em canvas estreito a tabela rola dentro do cartão, nunca o cartão para a direita. */
+.usage-breakdown__hint {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+}
+.usage-breakdown__scroll {
+  min-width: 0;
+  overflow-x: auto;
+}
+.usage-breakdown tbody tr[data-selected='true'] {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.usage-breakdown__pick {
+  min-height: 32px;
+  max-width: 100%;
+  padding: 0 var(--space-1);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 150ms var(--ease-out-quart);
+}
+.usage-breakdown__pick:hover {
+  background: var(--surface-2);
+}
+/* Dia fixado: peso e a tinta da linha dizem "selecionado"; texto em acento não passa de
+   4,5:1 sobre a tinta de 6% em todos os temas (solarized-dark media 4,27). */
+.usage-breakdown__pick[aria-pressed='true'] {
+  color: var(--text);
+  font-weight: 600;
+}
+.usage-breakdown__pick:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.usage-breakdown td.usage-breakdown__none {
+  color: var(--text-dim);
+  text-align: left;
+  white-space: normal;
 }
 .usage-overview__more {
   justify-self: start;
@@ -610,6 +801,7 @@
 }
 
 @media (pointer: coarse) {
+  .usage-breakdown__pick,
   .usage-segmented__btn,
   .spend-chip,
   .spend-row__toggle,
@@ -624,6 +816,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .usage-segmented__btn,
+  .usage-breakdown__pick,
   .spend-chip {
     transition: none;
   }

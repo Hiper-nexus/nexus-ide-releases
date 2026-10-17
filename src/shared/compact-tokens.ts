@@ -10,6 +10,9 @@
 /** Limiar em que `round(n/1000)` chegaria a 1000k e vira `M`. */
 export const COMPACT_TOKENS_K_TO_M = 999_500;
 
+/** Idem para `M` → `B`: a 1 casa, 999_950_000 já imprimiria "1000M". */
+export const COMPACT_TOKENS_M_TO_B = 999_950_000;
+
 /**
  * Compacta uma contagem de tokens: `900` → `"900"`, `12_400` → `"12.4k"`,
  * `999_499` → `"999k"`, `999_500` → `"1.0m"`, `1_100_000` → `"1.1m"`.
@@ -47,8 +50,9 @@ export function formatCompactTokensUpperM(
 }
 
 /**
- * Variante com 1 casa decimal em k e M (totais de vida útil, telemetria de
- * missão — "42.1k", "1.2M"). Mesma fronteira 999_500 → 1m.
+ * Variante com 1 casa decimal em k, M e B (totais de vida útil, telemetria de
+ * missão — "42.1k", "1.2M", "2.2B"). Mesma fronteira 999_500 → 1M; a partir de
+ * 999_950_000 vira B, nunca "2180M".
  */
 export function formatCompactTokensPrecise(
   value: number | null | undefined,
@@ -62,5 +66,8 @@ export function formatCompactTokensPrecise(
   if (n < COMPACT_TOKENS_K_TO_M) {
     return `${(n / 1_000).toFixed(1).replace(/\.0$/, '')}k`;
   }
-  return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+  if (n < COMPACT_TOKENS_M_TO_B) {
+    return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+  }
+  return `${(n / 1_000_000_000).toFixed(1).replace(/\.0$/, '')}B`;
 }

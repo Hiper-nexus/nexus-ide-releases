@@ -19,6 +19,25 @@ function usageApi(): UsageApi | undefined {
   return (window.nexus as unknown as { usage?: UsageApi }).usage;
 }
 
+/**
+ * O main reenvia o mesmo rollup (em cache) a cada broadcast de ~1 s; cada IPC o
+ * desserializa como objeto novo. Se o conteúdo é o mesmo, mantém o objeto de
+ * antes: o painel de custo não recalcula os cortes nem redesenha o gráfico à toa.
+ */
+function keepAnalyticsIdentity(previous: UsageSnapshot, next: UsageSnapshot): UsageSnapshot {
+  const before = previous.analytics;
+  const after = next.analytics;
+  if (!before || !after || before === after) return next;
+  if (
+    before.today !== after.today ||
+    before.rows.length !== after.rows.length ||
+    before.sessions.length !== after.sessions.length
+  ) {
+    return next;
+  }
+  return JSON.stringify(before) === JSON.stringify(after) ? { ...next, analytics: before } : next;
+}
+
 export const EMPTY_USAGE_SNAPSHOT: UsageSnapshot = {
   byPane: {},
   byAccount: {},
@@ -26,8 +45,12 @@ export const EMPTY_USAGE_SNAPSHOT: UsageSnapshot = {
   media: { generations: 0, costUsd: 0 },
 };
 
+/** Leitura do snapshot: a tela distingue "lendo", "falhou" e "ainda sem dados". */
+export type UsageStatus = 'idle' | 'loading' | 'ready' | 'error';
+
 interface UsageStore {
   snapshot: UsageSnapshot;
+  status: UsageStatus;
   hydrate(workspacePath: string): Promise<void>;
   receive(snapshot: UsageSnapshot): void;
   reset(): void;
@@ -35,24 +58,34 @@ interface UsageStore {
 
 export const useUsageStore = create<UsageStore>((set) => ({
   snapshot: EMPTY_USAGE_SNAPSHOT,
+  status: 'idle',
 
   hydrate: async (workspacePath) => {
     if (getActiveWorkspacePath() !== workspacePath) return;
     const api = usageApi();
     if (!api) return;
+    set({ status: 'loading' });
     try {
       const snapshot = await api.snapshot();
-      if (snapshot === null) return;
-      if (getActiveWorkspacePath() === workspacePath) set({ snapshot });
+      if (getActiveWorkspacePath() !== workspacePath) return;
+      // `null`: o main absorveu a identidade do escopo — não há o que mostrar, mas também não há erro.
+      set((state) =>
+        snapshot === null
+          ? { status: 'ready' }
+          : { snapshot: keepAnalyticsIdentity(state.snapshot, snapshot), status: 'ready' },
+      );
     } catch (err) {
       if (getActiveWorkspacePath() === workspacePath) {
         console.warn('[usage] hydrate failed:', err);
+        // Leitura que falha com dados já na tela não apaga o painel: só a tela vazia mostra o erro.
+        set({ status: 'error' });
       }
     }
   },
 
-  receive: (snapshot) => set({ snapshot }),
-  reset: () => set({ snapshot: EMPTY_USAGE_SNAPSHOT }),
+  receive: (snapshot) =>
+    set((state) => ({ snapshot: keepAnalyticsIdentity(state.snapshot, snapshot), status: 'ready' })),
+  reset: () => set({ snapshot: EMPTY_USAGE_SNAPSHOT, status: 'idle' }),
 }));
 
 /** Mount once — rehydrates per authorized workspace and keeps one listener. */

@@ -24,6 +24,7 @@ import { useOrchStore } from '../../state/orch-store';
 import { useSessionStateStore } from '../../state/session-state-store';
 import { usePaneParkedStore } from '../../state/pane-parked-store';
 import { formatShortcut } from '../../lib/platform';
+import { WORKSPACE_OPEN_ACTION } from '../../lib/action-names';
 import { useQuotaStore } from '../../state/quota-store';
 import { useLifetimeUsage } from '../../state/lifetime-usage';
 import { useAdapterStore } from '../../state/adapter-store';
@@ -1073,16 +1074,22 @@ export function WorkspaceRail({
             </span>
           </span>
         </button>
-        {/* As duas entradas de trabalho lado a lado: criar ou abrir o que já existe. */}
+        {/* As duas entradas de trabalho, uma linha cada: criar, ou abrir o que já
+            existe. Era um ícone de pasta sem rótulo ao lado do Novo pedido, e
+            ninguém o achava como "abrir projeto" (DESIGN.md §16). */}
         {onOpenWorkspace ? (
           <button
             type="button"
-            className="workspace-rail__open-project"
-            aria-label="Abrir projeto existente"
-            title="Abrir projeto"
+            className="workspace-rail__row workspace-rail__fixed-row"
+            aria-label={WORKSPACE_OPEN_ACTION.label}
+            title={WORKSPACE_OPEN_ACTION.description}
+            data-testid="rail-open-workspace"
             onClick={onOpenWorkspace}
           >
             <PixelIcon name="files" size={12} />
+            <span className="workspace-rail__row-label">
+              {WORKSPACE_OPEN_ACTION.label}
+            </span>
           </button>
         ) : null}
       </div>

@@ -1,5 +1,8 @@
 import { memo, useEffect, useState } from 'react';
-import type { PaneActivitySummary } from '../../shared/orch-types';
+import type {
+  MissionPaneSpec,
+  PaneActivitySummary,
+} from '../../shared/orch-types';
 import {
   paneActivityDisplay,
   resolvePaneActivity,
@@ -7,6 +10,54 @@ import {
 import { useOrchStore } from '../state/orch-store';
 
 const REFRESH_MS = 30_000;
+
+/**
+ * Janela em que uma resposta de `listMissionPanes` serve a todos os panes da
+ * mesma missão. Cada strip pedia o MESMO IPC por pane — 8 panes eram 8
+ * chamadas idênticas por rodada (~16/min) contra o Main. Single-flight +
+ * cache curto por missionId: uma rodada vira uma chamada só.
+ */
+const MISSION_PANES_CACHE_MS = 3_000;
+
+interface MissionPanesEntry {
+  inflight?: Promise<MissionPaneSpec[]>;
+  specs?: MissionPaneSpec[];
+  cachedAt?: number;
+}
+
+const missionPanesEntries = new Map<string, MissionPanesEntry>();
+
+function listMissionPanesCoalesced(
+  missionId: string,
+): Promise<MissionPaneSpec[]> {
+  const entry = missionPanesEntries.get(missionId) ?? {};
+  missionPanesEntries.set(missionId, entry);
+  if (entry.inflight) return entry.inflight;
+  if (
+    entry.specs !== undefined &&
+    entry.cachedAt !== undefined &&
+    Date.now() - entry.cachedAt < MISSION_PANES_CACHE_MS
+  ) {
+    return Promise.resolve(entry.specs);
+  }
+  const inflight = window.nexus.orch
+    .listMissionPanes(missionId)
+    .then((specs) => {
+      entry.specs = specs;
+      entry.cachedAt = Date.now();
+      return specs;
+    })
+    .finally(() => {
+      entry.inflight = undefined;
+    });
+  entry.inflight = inflight;
+  return inflight;
+}
+
+/** Test hook: esvazia o cache/inflight compartilhado entre cenários. */
+export function resetMissionPanesCacheForTests(): void {
+  missionPanesEntries.clear();
+}
 
 export const PaneActivityStrip = memo(function PaneActivityStrip({ paneId }: { paneId: string }) {
   const missionId = useOrchStore((state) => state.paneMissions[paneId]);
@@ -30,7 +81,7 @@ export const PaneActivityStrip = memo(function PaneActivityStrip({ paneId }: { p
 
     const refresh = async () => {
       try {
-        const specs = await window.nexus.orch.listMissionPanes(missionId);
+        const specs = await listMissionPanesCoalesced(missionId);
         if (!disposed) setActivity(resolvePaneActivity(specs, paneId));
       } catch {
         if (!disposed) setActivity(null);

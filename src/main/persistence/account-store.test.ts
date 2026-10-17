@@ -178,6 +178,7 @@ import {
   activateAccount,
   activeClaudeAuthEnv,
   addActiveSessionAccount,
+  addAccount,
   addActiveSessionAccountAuthoritative,
   clearClaudeRefreshFailure,
   clearRefutedAuthCooldown,
@@ -265,6 +266,24 @@ afterEach(() => {
     // DB já fechado pelo próprio teste.
   }
   openDb = null;
+});
+
+describe('Muse API account persistence', () => {
+  it('reads a saved Meta API account back after registry reload and prepares that exact key', () => {
+    const account = addAccount({ adapterId: 'muse', label: 'Meta API', mode: 'api-key', key: 'synthetic-meta-key' });
+    expect(deps.secrets.get(`acctkey:${account.id}`)).toBe('synthetic-meta-key');
+    initAccountStore(openDb);
+    expect(listAccountInfos().find((entry) => entry.id === account.id)).toMatchObject({ hasCredential: true, active: true });
+    expect(prepareAccountForSpawn('muse', account.id)).toMatchObject({ ok: true, apiKey: 'synthetic-meta-key' });
+    expect(deps.keychainWrites).toEqual([]);
+  });
+
+  it('does not create a Muse account or report saved when the vault refuses persistence', () => {
+    deps.failSecretWrites = true;
+    expect(() => addAccount({ adapterId: 'muse', label: 'Meta API', mode: 'api-key', key: 'synthetic-meta-key' })).toThrow('vault indisponível');
+    expect(listAccounts('muse')).toEqual([]);
+    expect(deps.secrets.size).toBe(0);
+  });
 });
 
 describe('read-back Keychain → vault (linhagem Claude nativa)', () => {

@@ -2,6 +2,9 @@ import { useMemo } from 'react';
 import type { PaneModel } from '../../../shared/types';
 import { workingNowLabel, workingSignature } from '../../lib/agent-roster';
 import {
+  isDeadPaneState,
+  retiredScopeKeys,
+  withRetiredScopes,
   withWorkingCounts,
   workingCountsByScope,
 } from '../../lib/pane-spaces';
@@ -33,6 +36,32 @@ function useWorkingPaneIds(panes: readonly PaneModel[]): ReadonlySet<string> {
   );
 }
 
+/** Abas só com panes mortos; assina a assinatura do conjunto, não cada estado. */
+function useRetiredScopeKeys(
+  panes: readonly PaneModel[],
+  scopeOf: (pane: PaneModel) => string,
+): ReadonlySet<string> {
+  const signature = useSessionStateStore((state) =>
+    [
+      ...retiredScopeKeys(
+        panes,
+        scopeOf,
+        new Set(
+          panes
+            .filter((pane) => isDeadPaneState(state.paneStates.get(pane.id)))
+            .map((pane) => pane.id),
+        ),
+      ),
+    ]
+      .sort()
+      .join('\n'),
+  );
+  return useMemo(
+    () => new Set(signature === '' ? [] : signature.split('\n')),
+    [signature],
+  );
+}
+
 export interface LiveWorkspaceTabsProps extends WorkspaceTabsProps {
   readonly panes: readonly PaneModel[];
   /** A aba de cada pane, com a casa das missões hospedadas já resolvida. */
@@ -47,10 +76,14 @@ export function LiveWorkspaceTabs({
   ...tabs
 }: LiveWorkspaceTabsProps) {
   const working = useWorkingPaneIds(panes);
+  const retired = useRetiredScopeKeys(panes, scopeOf);
   const liveScopes = useMemo(
     () =>
-      withWorkingCounts(scopes, workingCountsByScope(panes, scopeOf, working)),
-    [scopes, panes, scopeOf, working],
+      withRetiredScopes(
+        withWorkingCounts(scopes, workingCountsByScope(panes, scopeOf, working)),
+        retired,
+      ),
+    [scopes, panes, scopeOf, working, retired],
   );
   return <WorkspaceTabs {...tabs} scopes={liveScopes} />;
 }

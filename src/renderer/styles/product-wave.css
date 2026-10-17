@@ -308,11 +308,13 @@
   font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
+  /* Keep ink and surface changes atomic; interpolating them can hide labels. */
+  transition: none;
 }
 
-.product-pane__btn:hover:not(:disabled) {
+.product-pane__btn:is(:hover, :active, :focus-visible, [aria-pressed='true']):not(:disabled) {
   border-color: color-mix(in srgb, var(--accent, #ff4f8b) 45%, var(--border-strong, rgb(255 255 255 / 0.16)));
-  color: var(--accent, #ff4f8b);
+  color: var(--text);
 }
 
 .product-pane__btn:disabled {
@@ -482,13 +484,16 @@
 }
 
 .product-pane__btn--primary {
-  background: var(--accent, #ff4f8b);
-  color: #fff;
+  background: var(--btn-primary);
+  border-color: var(--btn-primary);
+  color: var(--btn-primary-ink);
   font-weight: 600;
 }
 
-.product-pane__btn--primary:hover:not(:disabled) {
-  filter: brightness(1.1);
+.product-pane__btn--primary:is(:hover, :active, :focus-visible, [aria-pressed='true']):not(:disabled) {
+  background: var(--btn-primary-hover);
+  border-color: var(--btn-primary-hover);
+  color: var(--btn-primary-ink);
 }
 
 

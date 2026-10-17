@@ -221,6 +221,8 @@ export const ACCOUNT_CHANNELS = {
   supportsSnapshot: 'account:supportsSnapshot',
   prepareAgyLogin: 'account:prepareAgyLogin',
   restoreAgyLogin: 'account:restoreAgyLogin',
+  prepareCodexLogin: 'account:prepareCodexLogin',
+  restoreCodexLogin: 'account:restoreCodexLogin',
   quota: 'account:quota',
   changed: 'account:changed',
   activated: 'account:activated',

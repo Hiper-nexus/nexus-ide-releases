@@ -32,6 +32,8 @@ import { configureHandoffDeliveryRuntimeRecovery } from './idle-delivery';
 import { recoverHandoffDeliveryRuntime } from './handoff-delivery-runtime-recovery';
 import { terminateUnauthorizedMissionRuntimes } from './mission-runtime-termination';
 import { requireProjectDomainStoreRegistry } from './project-domain-store-registry';
+import type { ProjectDomainStoreSuite } from './project-domain-store-registry';
+import type { PeriodicTaskContext } from '../observability/periodic-task';
 import {
   GOAL_GOVERNOR_RECONCILE_CADENCE_MS,
   reconcileGoalGovernor,
@@ -55,6 +57,46 @@ let unregisterCheckpointHandler: (() => void) | null = null;
 const MISSION_RUNTIME_AUTHORITY_RECONCILE_MS = 1_000;
 /** ORC-01: dreno do outbox de efeitos no mesmo relógio do coordinator. */
 const EFFECT_OUTBOX_DRAIN_MS = 1_000;
+
+type MissionRuntimeTerminator = typeof terminateUnauthorizedMissionRuntimes;
+
+interface SuiteListing {
+  listSuites(): readonly ProjectDomainStoreSuite[];
+}
+
+/**
+ * Reconcilia o mission-runtime-authority em TODAS as suites abertas. Uma suite
+ * que lança (ou cujo encerramento não foi provado) não pode impedir a
+ * reconciliação das outras: com dois projetos abertos, o erro do primeiro
+ * deixaria workers órfãos vivos no segundo consumindo RAM. O primeiro erro é
+ * guardado e relançado só depois da última suite.
+ */
+export async function reconcileMissionRuntimeAuthority(
+  registry: SuiteListing,
+  context?: PeriodicTaskContext,
+  terminate: MissionRuntimeTerminator = terminateUnauthorizedMissionRuntimes,
+): Promise<void> {
+  let firstFailure: unknown = null;
+  for (const suite of registry.listSuites()) {
+    try {
+      await context?.checkpoint();
+      const results = await terminate(suite.scope, suite, context);
+      const failure = results.find((result) => !result.ok);
+      if (failure && firstFailure === null) {
+        firstFailure = new Error(
+          failure.error ??
+            'unauthorized mission runtime termination was not proven',
+        );
+      }
+    } catch (error) {
+      // Abort/supersede do próprio passe encerra o laço na hora; só a falha de
+      // UMA suite é que não pode encerrar as outras.
+      if (context?.signal.aborted) throw error;
+      if (firstFailure === null) firstFailure = error;
+    }
+  }
+  if (firstFailure !== null) throw firstFailure;
+}
 
 /**
  * ORC-06: recupera efeitos órfãos ANTES de qualquer trabalho novo.
@@ -115,22 +157,10 @@ export function startOrchestrationCoordinator(): void {
       id: 'mission-runtime-authority',
       cadenceMs: MISSION_RUNTIME_AUTHORITY_RECONCILE_MS,
       run: async (_now, _signal, context) => {
-        const registry = requireProjectDomainStoreRegistry();
-        for (const suite of registry.listSuites()) {
-          await context?.checkpoint();
-          const results = await terminateUnauthorizedMissionRuntimes(
-            suite.scope,
-            suite,
-            context,
-          );
-          const failure = results.find((result) => !result.ok);
-          if (failure) {
-            throw new Error(
-              failure.error ??
-                'unauthorized mission runtime termination was not proven',
-            );
-          }
-        }
+        await reconcileMissionRuntimeAuthority(
+          requireProjectDomainStoreRegistry(),
+          context,
+        );
       },
     },
     {

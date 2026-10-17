@@ -9,6 +9,11 @@
   min-block-size: 0;
   container: settings-page / inline-size;
   display: block;
+  /* Contenção: sem ancestral posicionado aqui, um filho absoluto (sr-only,
+     input escondido) dentro da rolagem de .settings-detail tem o bloco de
+     contenção em main.product-canvas (overflow:auto) e empurra a rolagem
+     dele além do fim do conteúdo — tela vazia depois da seção. */
+  position: relative;
   overflow: hidden;
   background: var(--bg);
 }
@@ -1844,9 +1849,6 @@
 .quota-panel__consumption-item strong {
   color: var(--text);
   font-variant-numeric: tabular-nums;
-}
-.quota-panel__consumption-item:nth-child(3) strong {
-  color: var(--accent);
 }
 /* Resumo de assinaturas na barra da frota — soma real dos planos detectados. */
 .quota-panel__plans strong {

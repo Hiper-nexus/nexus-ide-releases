@@ -3,8 +3,15 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
+import { renderToString } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PaneBirthOverlay } from './PaneBirthOverlay';
+import {
+  PANE_BIRTH_FAILED_AFTER_MS,
+  PANE_BIRTH_SLOW_AFTER_MS,
+  clearPaneBirthElapsed,
+  paneBirthClockKey,
+} from '../lib/pane-birth-display';
 import { useSessionStateStore } from '../state/session-state-store';
 import {
   clearPaneSpawnError,
@@ -50,6 +57,7 @@ function mount(): HTMLElement {
 
 beforeEach(() => {
   liveSessionId = null;
+  clearPaneBirthElapsed(paneBirthClockKey(PANE.id, PANE.adapterId));
   sessionListeners.clear();
   useSessionStateStore.setState({
     paneStates: new Map(),
@@ -86,6 +94,61 @@ describe('PaneBirthOverlay', () => {
       for (const cb of sessionListeners) cb(PANE.id, 'session-1');
     });
     expect(host.textContent).toBe('');
+  });
+
+  it('keeps the birth clock across a remount — the 12s warning lands on the original start', () => {
+    vi.useFakeTimers();
+    try {
+      act(() => {
+        useSessionStateStore.getState().setPaneState(PANE.id, 'spawning');
+      });
+      const first = mount();
+      expect(first.textContent).toContain('Preparando agente…');
+      act(() => {
+        vi.advanceTimersByTime(PANE_BIRTH_SLOW_AFTER_MS - 1_000);
+      });
+      expect(first.textContent).toContain('Preparando agente…');
+      // Remount (troca de aba, layout, maximização): antes o cronômetro
+      // zerava e o aviso de 12s nunca chegava num cold start real.
+      act(() => {
+        for (const root of roots.splice(0)) root.unmount();
+      });
+      const second = mount();
+      expect(second.textContent).toContain('Preparando agente…');
+      act(() => {
+        vi.advanceTimersByTime(1_000);
+      });
+      expect(second.textContent).toContain('A abertura está demorando');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('dismisses immediately when the session binds, even after going slow', () => {
+    vi.useFakeTimers();
+    try {
+      act(() => {
+        useSessionStateStore.getState().setPaneState(PANE.id, 'spawning');
+      });
+      const host = mount();
+      act(() => {
+        vi.advanceTimersByTime(PANE_BIRTH_SLOW_AFTER_MS);
+      });
+      expect(host.textContent).toContain('A abertura está demorando');
+      act(() => {
+        liveSessionId = 'session-late';
+        for (const cb of sessionListeners) cb(PANE.id, 'session-late');
+      });
+      expect(host.textContent).toBe('');
+      // O relógio foi limpo: um nascimento depois deste começa do zero.
+      act(() => {
+        liveSessionId = null;
+        for (const cb of sessionListeners) cb(PANE.id, null);
+      });
+      expect(host.textContent).toContain('Preparando agente…');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('ignores a session event addressed to another pane', () => {
@@ -149,5 +212,103 @@ describe('PaneBirthOverlay', () => {
     const host = mount();
     expect(host.textContent).toContain('A CLI não está instalada');
     act(() => clearPaneSpawnError(PANE.id));
+  });
+
+  // Revisão independente (16/10): estourar os 90 s apagava o relógio persistido, e o estado local
+  // ficava em 90 s. Remontar voltava a "Preparando agente…"; um respawn depois de sessão tardia
+  // herdava o "Não subiu" do ciclo anterior.
+  describe('tentativa vencida (90 s)', () => {
+    const spawning = () => act(() => {
+      useSessionStateStore.getState().setPaneState(PANE.id, 'spawning');
+    });
+    const bind = (id: string | null) => act(() => {
+      liveSessionId = id;
+      for (const cb of sessionListeners) cb(PANE.id, id);
+    });
+
+    it('continua vencida quando o componente remonta, sem um novo spawn', () => {
+      vi.useFakeTimers();
+      try {
+        spawning();
+        const first = mount();
+        act(() => { vi.advanceTimersByTime(PANE_BIRTH_FAILED_AFTER_MS); });
+        expect(first.textContent).toContain('Não subiu');
+        act(() => { for (const root of roots.splice(0)) root.unmount(); });
+        expect(mount().textContent).toContain('Não subiu');
+        // Já no primeiro quadro, antes de qualquer efeito: nada de "Preparando agente…" piscando.
+        expect(renderToString(<PaneBirthOverlay pane={PANE} />)).toContain('Não subiu');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('timeout, sessão tardia e respawn: o novo ciclo conta do zero', () => {
+      vi.useFakeTimers();
+      try {
+        spawning();
+        const host = mount();
+        act(() => { vi.advanceTimersByTime(PANE_BIRTH_FAILED_AFTER_MS); });
+        expect(host.textContent).toContain('Não subiu');
+        bind('session-late');
+        expect(host.textContent).toBe('');
+        bind(null);
+        expect(host.textContent).toContain('Preparando agente…');
+        act(() => { vi.advanceTimersByTime(PANE_BIRTH_SLOW_AFTER_MS - 1_000); });
+        expect(host.textContent).toContain('Preparando agente…');
+        act(() => { vi.advanceTimersByTime(1_000); });
+        expect(host.textContent).toContain('A abertura está demorando');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('o pane que sai encerra a tentativa: o próximo spawn começa limpo', () => {
+      vi.useFakeTimers();
+      try {
+        spawning();
+        const host = mount();
+        act(() => { vi.advanceTimersByTime(PANE_BIRTH_FAILED_AFTER_MS); });
+        expect(host.textContent).toContain('Não subiu');
+        act(() => { useSessionStateStore.getState().setPaneState(PANE.id, 'exited'); });
+        expect(host.textContent).toBe('');
+        spawning();
+        expect(host.textContent).toContain('Preparando agente…');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('transições com o overlay desmontado encerram a tentativa vencida', () => {
+      vi.useFakeTimers();
+      try {
+        spawning();
+        const host = mount();
+        act(() => { vi.advanceTimersByTime(PANE_BIRTH_FAILED_AFTER_MS); });
+        expect(host.textContent).toContain('Não subiu');
+        act(() => { for (const root of roots.splice(0)) root.unmount(); });
+        act(() => { useSessionStateStore.getState().setPaneState(PANE.id, 'idle'); });
+        act(() => { useSessionStateStore.getState().setPaneState(PANE.id, 'exited'); });
+        spawning();
+        expect(mount().textContent).toContain('Preparando agente…');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('a recusa do Main também encerra a tentativa: o retry não herda o prazo vencido', () => {
+      vi.useFakeTimers();
+      try {
+        spawning();
+        const host = mount();
+        act(() => { vi.advanceTimersByTime(PANE_BIRTH_FAILED_AFTER_MS); });
+        expect(host.textContent).toContain('não respondeu no prazo');
+        act(() => recordPaneSpawnError(PANE.id, 'cli_missing: provider binary unavailable'));
+        expect(host.textContent).toContain('A CLI não está instalada');
+        act(() => clearPaneSpawnError(PANE.id));
+        expect(host.textContent).toContain('Preparando agente…');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 });

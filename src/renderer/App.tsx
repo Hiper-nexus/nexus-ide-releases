@@ -47,6 +47,14 @@ import {
   terminalInUse,
 } from './lib/keybindings';
 import { overlayModeForCommand } from './lib/command-palette-logic';
+import {
+  beginPendingAttachment,
+  failPendingAttachment,
+  finishPendingAttachment,
+  rememberAttachment,
+  rememberAttachmentThumbnail,
+} from './state/mission-attachment-presentation';
+import { useWorkspaceRequiredStore } from './state/workspace-required-store';
 import { useWorkspaceController, useWorkspaceStore } from './state/workspace-store';
 import { useProviderController } from './state/provider-store';
 import { useAdapterController } from './state/adapter-store';
@@ -737,6 +745,23 @@ export function App() {
       useToastStore.getState().push('warn', 'Nada foi anexado à missão', message);
     };
 
+    /**
+     * Sem projeto não há onde guardar o anexo. Além do toast, leva o operador à
+     * tela de criação e pede o destaque do seletor de pasta (F-1561 paste sem
+     * workspace falhava só na voz).
+     */
+    const requireWorkspaceFirst = (
+      destination: ProductDestination,
+      verb: 'colar' | 'soltar',
+    ): void => {
+      warnNothingAttached(`Escolha a pasta do projeto antes de ${verb} arquivos.`);
+      if (destination.kind === 'launcher') {
+        useMissionSetupStore.getState().setStep('express');
+        useProductNavigationStore.getState().openMissionSetup();
+      }
+      useWorkspaceRequiredStore.getState().request();
+    };
+
     /** Anexa caminhos ao rascunho sem repetir o que já está lá. */
     const appendContextPaths = (paths: readonly string[]): void => {
       if (paths.length === 0) return;
@@ -766,23 +791,34 @@ export function App() {
             .join(', ')} — use imagem, áudio, documento (PDF/Office) ou texto/código.`,
         );
       }
-      const imported: string[] = [];
       for (const file of split.toImport) {
+        const name = file.name.trim() || 'anexo';
+        const pendingId = beginPendingAttachment(name);
         try {
-          imported.push((await stageMissionAttachment(file)).path);
+          const staged = await stageMissionAttachment(file);
+          // Sem isto a imagem colada fora da zona do picker entrava na lista
+          // só como token interno, sem nome nem miniatura.
+          rememberAttachment(staged.path, { name });
+          if (staged.kind === 'image') {
+            rememberAttachmentThumbnail(staged.path, file);
+          }
+          // Anexa já: a linha "anexando" dá lugar ao anexo sem piscar vazio.
+          appendContextPaths([staged.path]);
+          finishPendingAttachment(pendingId);
         } catch (error) {
-          useToastStore.getState().push(
-            'warn',
-            'Não foi possível anexar',
+          const message =
             error instanceof Error
               ? error.message
-              : `Falha ao importar ${file.name}.`,
-          );
+              : `Falha ao importar ${file.name}.`;
+          failPendingAttachment(pendingId, message);
+          useToastStore
+            .getState()
+            .push('warn', 'Não foi possível anexar', message);
         }
       }
       // Rejeitados e falhas de import já ganharam toast específico acima — um
       // segundo aviso genérico aqui era só ruído.
-      appendContextPaths([...split.inProject, ...imported]);
+      appendContextPaths(split.inProject);
     };
 
     /** Leva o operador ao wizard quando o destino é o launcher. */
@@ -859,7 +895,7 @@ export function App() {
 
       const workspace = useWorkspaceStore.getState().current;
       if (!workspace) {
-        warnNothingAttached('Abra um projeto antes de soltar arquivos.');
+        requireWorkspaceFirst(destination, 'soltar');
         return;
       }
       enterMissionSetup(destination, workspace.path);
@@ -917,7 +953,7 @@ export function App() {
 
       const workspace = useWorkspaceStore.getState().current;
       if (!workspace) {
-        warnNothingAttached('Abra um projeto antes de colar arquivos.');
+        requireWorkspaceFirst(destination, 'colar');
         return;
       }
       // Sem `clearEntryContext`: apagar o rascunho digitado num ⌘V acidental

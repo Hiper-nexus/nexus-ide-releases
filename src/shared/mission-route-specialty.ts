@@ -411,6 +411,27 @@ export function isRouteSpecialty(value: unknown): value is RouteSpecialty {
 }
 
 /**
+ * Normaliza rótulos de especialidade comuns (frontend, ui, ux) para a
+ * especialidade canônica de rota do Nexus ('visual'), preservando os valores já
+ * canônicos ('visual', 'security', 'bug', 'feature', 'doc', 'ops', 'general').
+ */
+export function normalizeRouteSpecialty(value: unknown): RouteSpecialty | null {
+  if (typeof value !== 'string') return null;
+  const canonical = value.trim().toLowerCase();
+  if (isRouteSpecialty(canonical)) return canonical;
+  if (
+    canonical === 'frontend' ||
+    canonical === 'front-end' ||
+    canonical === 'ui' ||
+    canonical === 'ux'
+  ) {
+    return 'visual';
+  }
+  return null;
+}
+
+
+/**
  * Rows only count as a measured prior when the table source is not a
  * placeholder or fixture dump. `unpublished` / `fixture` / `estimate` fall
  * through to the heuristic — otherwise Settings estimates would start

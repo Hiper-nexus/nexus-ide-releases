@@ -43,6 +43,12 @@ if [ "$STAGE" = root ]; then
   # a fila de merge não tem `git merge-tree --write-tree`.
   if ! timeout 25 add-apt-repository -y ppa:git-core/ppa >/dev/null; then
     log "Launchpad API fora; o PPA do Git entra pelo arquivo e pelo keyserver"
+    # add-apt-repository pode ter gravado a origem sem Signed-By antes de falhar.
+    rm -f /etc/apt/sources.list.d/*git-core*
+    if [ -f /etc/apt/sources.list ]; then
+      grep -v 'git-core/ppa' /etc/apt/sources.list > /tmp/sources.list.nogit || true
+      cat /tmp/sources.list.nogit > /etc/apt/sources.list
+    fi
     install -d -m 0755 /etc/apt/keyrings
     {
       curl -fsSL --retry 3 'https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xF911AB184317630C59970973E363C90F8F1B6217'

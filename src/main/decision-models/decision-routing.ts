@@ -17,7 +17,7 @@ type RouteInput = Pick<JudgeInput, 'surface' | 'model' | 'images'>;
  * Sem a chave da Luna a rota é nula — não volta ao Jev em silêncio.
  */
 export const JEV_PINNED_SURFACES: ReadonlySet<JevDecisionSurface> = new Set<JevDecisionSurface>([
-  'dispatchGuard', 'handoffReview', 'memoryDistill', 'computerTool', 'browserTool', 'taskRouting',
+  'dispatchGuard', 'handoffReview', 'memoryDistill', 'computerTool', 'browserTool',
 ]);
 
 /**
@@ -37,11 +37,21 @@ export const SECURITY_ENSEMBLE_SURFACES: ReadonlySet<JevDecisionSurface> = new S
 ]);
 
 /**
- * Automático: superfícies reversíveis elegíveis ao ensemble por qualidade.
- * Juntos inclui taskRouting pela escolha explícita do operador, mesmo fixo no Jev.
+ * Juntos: divergência reversível fica com a confiança maior. A skill sugerida
+ * viaja na superfície taskRouting; não há superfície própria.
  */
 export const REVERSIBLE_ENSEMBLE_SURFACES: ReadonlySet<JevDecisionSurface> = new Set<JevDecisionSurface>([
-  'missionPick', 'catalogPick',
+  'taskRouting', 'missionPick', 'catalogPick',
+]);
+
+/**
+ * Surfaces whose consumers apply probability thresholds calibrated on Jev.
+ * In auto mode the planner keeps Jev primary when it is eligible; the other
+ * providers are fallbacks. Health is enforced by the judge, not the planner.
+ * Recovery advice is consultive and stays on the normal score.
+ */
+export const CALIBRATED_THRESHOLD_SURFACES: ReadonlySet<JevDecisionSurface> = new Set<JevDecisionSurface>([
+  'taskRouting', 'missionKickoff', 'completionCheck', 'reviewTriage',
 ]);
 
 /** Juntos: rótulos ficam no Jev. A imagem do navegador é outra chamada. */

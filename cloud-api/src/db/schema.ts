@@ -186,6 +186,23 @@ export interface SyncProjectRow {
   readonly updated_at: EpochMilliseconds;
 }
 
+export interface AccountActivityRow {
+  readonly account_id: string;
+  readonly first_app_seen_at: EpochMilliseconds;
+  readonly last_app_seen_at: EpochMilliseconds;
+  readonly first_agent_at: EpochMilliseconds | null;
+  readonly first_mission_at: EpochMilliseconds | null;
+  readonly first_usage_day: string | null;
+  readonly returned_at: EpochMilliseconds | null;
+  readonly last_active_at: EpochMilliseconds | null;
+  readonly last_mission_at: EpochMilliseconds | null;
+  readonly missions_started_count: number;
+  readonly missions_completed_count: number;
+  readonly last_agent_working: 0 | 1;
+  readonly last_mission_running: 0 | 1;
+  readonly delivery_streams: string;
+}
+
 export interface SystemMetadataRow {
   readonly key: string;
   readonly value: string;

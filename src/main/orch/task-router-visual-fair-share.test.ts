@@ -203,6 +203,81 @@ describe('F-1400 ADD2: revezamento por modelo e exceção Next/jogo', () => {
     });
     expect(decision).toMatchObject({ adapterId: 'claude', model: 'claude-sonnet-5-5' });
   });
+
+  it('DeepSeek Flash participa da lane visual e do revezamento quando deepseek está instalado', () => {
+    const withDeepSeek: AdapterAvailability[] = [
+      ...everyone,
+      { id: 'deepseek', installed: true, models: ['deepseek-v4-pro', 'deepseek-flash'] },
+    ];
+    const visualUseCounts = new Map<string, number>();
+    const picks: string[] = [];
+    for (let index = 0; index < 6; index++) {
+      const decision = route('implementar a tela responsiva de cadastro com estados vazios', withDeepSeek, { visualUseCounts });
+      const key = `${decision.adapterId}:${decision.model}`;
+      picks.push(key);
+      visualUseCounts.set(key, (visualUseCounts.get(key) ?? 0) + 1);
+    }
+    expect(picks).toContain('deepseek:deepseek-flash');
+  });
+
+  it('DeepSeek Flash é escolhido para tarefa frontend com preferAdapters deepseek', () => {
+    const withDeepSeek: AdapterAvailability[] = [
+      ...everyone,
+      { id: 'deepseek', installed: true, models: ['deepseek-v4-pro', 'deepseek-flash'] },
+    ];
+    const decision = route('criar componente front-end em React com CSS', withDeepSeek, {
+      preferAdapters: ['deepseek'],
+    });
+    expect(decision).toMatchObject({
+      adapterId: 'deepseek',
+      model: 'deepseek-flash',
+      specialty: 'visual',
+    });
+  });
+
+  it('DeepSeek Flash no Claude e no Qwen também são elegíveis na visual frontier lane', () => {
+    const poolClaudeFlash: AdapterAvailability[] = [
+      { id: 'claude', installed: true, models: ['deepseek-flash'] },
+      ...pool,
+    ];
+    const decisionClaude = route('implementar UI do dashboard em React', poolClaudeFlash, {
+      preferAdapters: ['claude'],
+    });
+    expect(decisionClaude).toMatchObject({
+      adapterId: 'claude',
+      model: 'deepseek-flash',
+      specialty: 'visual',
+    });
+
+    const poolQwenFlash: AdapterAvailability[] = [
+      { id: 'qwen', installed: true, models: ['deepseek-flash'] },
+      ...pool,
+    ];
+    const decisionQwen = route('implementar layout responsivo e estilização', poolQwenFlash, {
+      preferAdapters: ['qwen'],
+    });
+    expect(decisionQwen).toMatchObject({
+      adapterId: 'qwen',
+      model: 'deepseek-flash',
+      specialty: 'visual',
+    });
+  });
+
+  it('specialtyOverride: frontend normaliza para visual e explora DeepSeek Flash', () => {
+    const withDeepSeek: AdapterAvailability[] = [
+      { id: 'deepseek', installed: true, models: ['deepseek-flash'] },
+      ...pool,
+    ];
+    const decision = route('ajustar fluxo da aplicação', withDeepSeek, {
+      specialtyOverride: 'frontend',
+      preferAdapters: ['deepseek'],
+    });
+    expect(decision).toMatchObject({
+      adapterId: 'deepseek',
+      model: 'deepseek-flash',
+      specialty: 'visual',
+    });
+  });
 });
 
 

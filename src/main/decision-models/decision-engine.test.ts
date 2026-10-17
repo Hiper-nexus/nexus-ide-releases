@@ -13,22 +13,12 @@ const image = [{ content_type: 'image/png' as const, base64: 'AAAA' }];
 const audio = [{ content_type: 'audio/wav' as const, base64: 'AAAA' }];
 const normal = { budgetLevel: 'normal' as const, quality: null };
 const MEASURED: DecisionQualityTable = { version: 1, generatedAt: 1, source: 'evaluateDecisionCases', models: {},
-  surfaces: { missionPick: { jev: { accuracy: 0.85, cases: 20 }, 'clef-flash': { accuracy: 0.8, cases: 20 } } } };
+  surfaces: { taskRouting: { jev: { accuracy: 0.85, cases: 10 }, 'clef-flash': { accuracy: 0.8, cases: 10 } } } };
 const measured = { budgetLevel: 'normal' as const, quality: MEASURED };
 
 describe('roteador v2 (F-1165): só no Automático', () => {
-  it('taskRouting fica no Jev mesmo com empate local perfeito e o Flash mais barato', () => {
-    const quality: DecisionQualityTable = { ...MEASURED, surfaces: { taskRouting: {
-      jev: { accuracy: 1, cases: 20 }, 'clef-flash': { accuracy: 1, cases: 20 },
-    } } };
-    for (const budgetLevel of ['normal', 'soft'] as const) {
-      expect(planAutoDecision(text('taskRouting'), auto, all, { budgetLevel, quality })?.route)
-        .toMatchObject({ provider: 'jev', reason: 'jev-pinned', policyVersion: 'jev-clef-luna-v1' });
-      expect(planAutoDecision(text('taskRouting'), auto, { jev: false, clef: true, luna: true }, { budgetLevel, quality })).toBeNull();
-    }
-  });
   it('routes auto Jev candidates to the selected preview without reusing stable measurements', () => {
-    const plan = planAutoDecision(text('missionPick'), { ...auto, jevModel: 'jev-1.14.0' },
+    const plan = planAutoDecision(text('taskRouting'), { ...auto, jevModel: 'jev-1.14.0' },
       { jev: true, clef: false, luna: false }, measured);
     expect(plan?.route).toMatchObject({ model: 'jev-1.14.0', evidence: 'prior' });
     expect(plan?.members).toBeUndefined();
@@ -40,7 +30,7 @@ describe('roteador v2 (F-1165): só no Automático', () => {
   });
 
   it('surfaces fixas no Jev continuam na rota v1, inclusive no limiar suave', () => {
-    for (const surface of ['dispatchGuard', 'handoffReview', 'memoryDistill', 'computerTool', 'browserTool', 'taskRouting']) {
+    for (const surface of ['dispatchGuard', 'handoffReview', 'memoryDistill', 'computerTool', 'browserTool']) {
       for (const budgetLevel of ['normal', 'soft'] as const) {
         const plan = planAutoDecision(text(surface), auto, all, { budgetLevel, quality: null });
         expect(plan?.route).toEqual(resolveDecisionRoute(text(surface), auto, all));
@@ -104,12 +94,26 @@ describe('roteador v2: variante Cloudflare pela necessidade', () => {
 });
 
 describe('roteador v2: orçamento e "usar várias"', () => {
+  it('modelo com seis respostas erradas não vence o modelo com metade dos casos corretos', () => {
+    const quality: DecisionQualityTable = { version: 1, generatedAt: 1, source: 'evaluateDecisionCases', models: {},
+      surfaces: { judgeTool: { jev: { accuracy: 0, cases: 6 }, luna: { accuracy: 0.5, cases: 6 } } } };
+    const plan = planAutoDecision(text('judgeTool'), auto, { jev: true, clef: false, luna: true },
+      { budgetLevel: 'normal', quality });
+    expect(plan?.route).toMatchObject({ provider: 'luna', evidence: 'local-evaluation' });
+  });
+
   it('reversível, orçamento normal, 2+ provedores e qualidade medida: ensemble paralelo', () => {
-    const plan = planAutoDecision(text('missionPick'), auto, all, measured);
+    const missionPick: DecisionQualityTable = { ...MEASURED, surfaces: { missionPick: MEASURED.surfaces.taskRouting } };
+    const plan = planAutoDecision(text('missionPick'), auto, all, { budgetLevel: 'normal', quality: missionPick });
     expect(plan?.members?.map(member => member.provider)).toEqual(['jev', 'clef']);
     expect(plan?.members?.[1].model).toBe('clef-flash');
     expect(plan?.route.reason).toContain('usar várias');
     expect(plan!.estimatedUsd).toBeGreaterThan(planAutoDecision(text('judgeTool'), auto, all, normal)!.estimatedUsd);
+    // O mesmo par em taskRouting não mistura: o limiar foi calibrado no Jev.
+    const routed = planAutoDecision(text('taskRouting'), auto, all, measured);
+    expect(routed?.members).toBeUndefined();
+    expect(routed?.route.provider).toBe('jev');
+    expect(routed?.fallbacks?.map(item => item.model)).toEqual(['clef-flash', 'gpt-6-luna']);
   });
 
   it('só com prior nunca liga o ensemble (todo prior fica abaixo do teto)', () => {
@@ -118,20 +122,22 @@ describe('roteador v2: orçamento e "usar várias"', () => {
       expect(plan?.members).toBeUndefined();
       expect(plan?.route.provider).toBe('jev');
     }
+    expect(planAutoDecision(text('taskRouting'), auto, all, normal)?.fallbacks?.map(item => item.provider)).toEqual(['clef', 'luna']);
+    expect(planAutoDecision(text('missionPick'), auto, all, normal)?.fallbacks).toBeUndefined();
     // Um membro medido e o outro só com prior também não basta.
-    const half: DecisionQualityTable = { ...MEASURED, surfaces: { missionPick: { jev: { accuracy: 0.8, cases: 20 } } } };
-    expect(planAutoDecision(text('missionPick'), auto, all, { budgetLevel: 'normal', quality: half })?.members).toBeUndefined();
+    const half: DecisionQualityTable = { ...MEASURED, surfaces: { taskRouting: { jev: { accuracy: 0.8, cases: 10 } } } };
+    expect(planAutoDecision(text('taskRouting'), auto, all, { budgetLevel: 'normal', quality: half })?.members).toBeUndefined();
   });
 
   it('sem ensemble: surface normal, um só provedor, limiar suave ou modelo confiável', () => {
     expect(planAutoDecision(text('judgeTool'), auto, all, normal)?.members).toBeUndefined();
     expect(planAutoDecision(text('judgeTool'), auto, all, { budgetLevel: 'normal', quality: { ...MEASURED,
-      surfaces: { judgeTool: MEASURED.surfaces.missionPick } } })?.members).toBeUndefined();
-    expect(planAutoDecision(text('missionPick'), auto, { jev: true, clef: false, luna: false }, measured)?.members).toBeUndefined();
-    expect(planAutoDecision(text('missionPick'), auto, all, { budgetLevel: 'soft', quality: MEASURED })?.members).toBeUndefined();
+      surfaces: { judgeTool: MEASURED.surfaces.taskRouting } } })?.members).toBeUndefined();
+    expect(planAutoDecision(text('taskRouting'), auto, { jev: true, clef: false, luna: false }, measured)?.members).toBeUndefined();
+    expect(planAutoDecision(text('taskRouting'), auto, all, { budgetLevel: 'soft', quality: MEASURED })?.members).toBeUndefined();
     const trusted: DecisionQualityTable = { version: 1, generatedAt: 1, source: 'evaluateDecisionCases', models: {},
-      surfaces: { missionPick: { jev: { accuracy: 0.97, cases: 20 } } } };
-    expect(planAutoDecision(text('missionPick'), auto, all, { budgetLevel: 'normal', quality: trusted })?.members).toBeUndefined();
+      surfaces: { taskRouting: { jev: { accuracy: 0.97, cases: 20 } } } };
+    expect(planAutoDecision(text('taskRouting'), auto, all, { budgetLevel: 'normal', quality: trusted })?.members).toBeUndefined();
   });
 
   it('acima de 80%: só o mais barato elegível', () => {
@@ -144,24 +150,15 @@ describe('roteador v2: orçamento e "usar várias"', () => {
   it('avaliação local substitui o prior só com casos suficientes', () => {
     const table = (cases: number): DecisionQualityTable => ({ version: 1, generatedAt: 1, source: 'evaluateDecisionCases', models: {},
       surfaces: { judgeTool: { clef: { accuracy: 0.99, cases } } } });
-    expect(planAutoDecision(text('judgeTool'), auto, all, { budgetLevel: 'normal', quality: table(20) })?.route)
+    expect(planAutoDecision(text('judgeTool'), auto, all, { budgetLevel: 'normal', quality: table(10) })?.route)
       .toMatchObject({ model: 'clef', evidence: 'local-evaluation' });
     expect(planAutoDecision(text('judgeTool'), auto, all, { budgetLevel: 'normal', quality: table(2) })?.route)
       .toMatchObject({ provider: 'jev', evidence: 'prior' });
   });
 
-  it('cinco acertos locais não deixam o preço desempatar modelos de priors diferentes', () => {
-    const cells = { jev: { accuracy: 1, cases: 5 }, 'clef-flash': { accuracy: 1, cases: 5 } };
-    const quality: DecisionQualityTable = { ...MEASURED, models: {
-      jev: { accuracy: 1, cases: 55 }, 'clef-flash': { accuracy: 1, cases: 55 },
-    }, surfaces: { missionPick: cells } };
-    expect(planAutoDecision(text('missionPick'), auto, { jev: true, clef: true }, { budgetLevel: 'normal', quality })?.route)
-      .toMatchObject({ provider: 'jev', evidence: 'blended' });
-  });
-
   it('latência medida acima do orçamento da surface tira o candidato', () => {
     const slow: DecisionQualityTable = { version: 1, generatedAt: 1, source: 'evaluateDecisionCases', models: {},
-      surfaces: { judgeTool: { clef: { accuracy: 0.99, cases: 20, p50Ms: 9_000 } } } };
+      surfaces: { judgeTool: { clef: { accuracy: 0.99, cases: 10, p50Ms: 9_000 } } } };
     expect(planAutoDecision(text('judgeTool'), auto, all, { budgetLevel: 'normal', quality: slow })?.route.provider).toBe('jev');
   });
 });
@@ -175,13 +172,17 @@ describe('F-1166: perfis e priors das surfaces consultivas', () => {
   });
 
   it('julgamento sobre entrega (triagem, conclusão) prefere raciocínio; kickoff e recuperação ficam no Jev', () => {
-    expect(planAutoDecision(text('reviewTriage'), auto, all, normal)?.route.provider).toBe('luna');
-    expect(planAutoDecision(text('completionCheck'), auto, all, normal)?.route.provider).toBe('luna');
+    expect(planAutoDecision(text('reviewTriage'), auto, all, normal)?.route.provider).toBe('jev');
+    expect(planAutoDecision(text('reviewTriage'), auto, all, normal)?.route.reason).toContain('limiar calibrado no Jev');
+    expect(planAutoDecision(text('reviewTriage'), auto, all, normal)?.fallbacks?.map(item => item.model)).toEqual(['clef-flash', 'gpt-6-luna']);
+    expect(planAutoDecision(text('completionCheck'), auto, all, normal)?.route.provider).toBe('jev');
     expect(planAutoDecision(text('completionCheck'), auto, { jev: true, clef: true, luna: false }, normal)?.route.provider).toBe('jev');
     expect(planAutoDecision(text('missionKickoff'), auto, all, normal)?.route.provider).toBe('jev');
     expect(planAutoDecision(text('recoveryAdvice'), auto, all, normal)?.route.provider).toBe('jev');
     // Acima de 80% do orçamento: o mais barato, como em qualquer surface.
-    expect(planAutoDecision(text('reviewTriage'), auto, all, { budgetLevel: 'soft', quality: null })?.route.model).toBe('clef-flash');
+    const softReview = planAutoDecision(text('reviewTriage'), auto, all, { budgetLevel: 'soft', quality: null });
+    expect(softReview?.route.model).toBe('clef-flash');
+    expect(softReview?.fallbacks?.map(item => item.provider)).toEqual(['jev', 'luna']);
   });
 });
 
@@ -192,22 +193,54 @@ describe('F-1167 P2-2: medição global não domina e não liga ensemble', () =>
     surfaces: { toolPick: { jev: { accuracy: 0.6, cases: 5 } } } };
 
   it('sem célula da própria surface, a global é misturada ao prior (evidence blended), nunca "avaliação local"', () => {
-    const plan = planAutoDecision(text('missionPick'), auto, { jev: true, clef: false, luna: false }, { budgetLevel: 'normal', quality: GLOBAL_ONLY });
+    const plan = planAutoDecision(text('taskRouting'), auto, { jev: true, clef: false, luna: false }, { budgetLevel: 'normal', quality: GLOBAL_ONLY });
     expect(plan?.route.evidence).toBe('blended');
     expect(plan?.route.reason).toContain('prior + medição global');
   });
 
-  it('ensemble v2 exige ≥20 casos medidos NA PRÓPRIA surface nos dois membros', () => {
-    // Só global (mesmo com muitos casos e qualidade baixa): sem ensemble nas reversíveis ou na surface fixada.
+  it('ensemble v2 exige ≥5 casos medidos NA PRÓPRIA surface nos dois membros', () => {
+    // Só global (mesmo com muitos casos e qualidade baixa): sem ensemble em taskRouting/missionPick/catalogPick.
     for (const surface of ['taskRouting', 'missionPick', 'catalogPick']) {
       expect(planAutoDecision(text(surface), auto, all, { budgetLevel: 'normal', quality: GLOBAL_ONLY })?.members).toBeUndefined();
     }
-    // Um membro com 4 casos na surface: sem ensemble.
-    const thin: DecisionQualityTable = { ...GLOBAL_ONLY, surfaces: { missionPick: { jev: { accuracy: 0.85, cases: 20 }, 'clef-flash': { accuracy: 0.8, cases: 4 },
+    // Um membro com 4 casos na surface: sem ensemble. O portão mora em missionPick; taskRouting não mistura.
+    const thin: DecisionQualityTable = { ...GLOBAL_ONLY, surfaces: { missionPick: { jev: { accuracy: 0.85, cases: 10 }, 'clef-flash': { accuracy: 0.8, cases: 4 },
       luna: { accuracy: 0.8, cases: 4 } } } };
     expect(planAutoDecision(text('missionPick'), auto, all, { budgetLevel: 'normal', quality: thin })?.members).toBeUndefined();
-    // Os dois com ≥20 na surface: ensemble.
-    const both: DecisionQualityTable = { ...GLOBAL_ONLY, surfaces: { missionPick: { jev: { accuracy: 0.85, cases: 20 }, 'clef-flash': { accuracy: 0.8, cases: 20 } } } };
+    // Os dois com ≥5 na surface: ensemble.
+    const both: DecisionQualityTable = { ...GLOBAL_ONLY, surfaces: { missionPick: { jev: { accuracy: 0.85, cases: 5 }, 'clef-flash': { accuracy: 0.8, cases: 5 } } } };
     expect(planAutoDecision(text('missionPick'), auto, all, { budgetLevel: 'normal', quality: both })?.members).toHaveLength(2);
+    const bothRouting: DecisionQualityTable = { ...GLOBAL_ONLY, surfaces: { taskRouting: { jev: { accuracy: 0.85, cases: 5 }, 'clef-flash': { accuracy: 0.8, cases: 5 } } } };
+    const routed = planAutoDecision(text('taskRouting'), auto, all, { budgetLevel: 'normal', quality: bothRouting });
+    expect(routed?.members).toBeUndefined();
+    expect(routed?.route.provider).toBe('jev');
+  });
+});
+
+describe('limiar calibrado no Jev e penalidade no placar', () => {
+  it('taskRouting é interativo (5 s) e continua reversível', () => {
+    expect(decisionSurfaceProfile(text('taskRouting'), auto, all)).toEqual({ modality: 'text', criticality: 'reversible', latencyBudgetMs: 5_000 });
+  });
+
+  it('empate local 1.00 em taskRouting fica no Jev, com fallbacks e sem ensemble', () => {
+    const tie: DecisionQualityTable = { version: 1, generatedAt: 1, source: 'evaluateDecisionCases', models: {},
+      surfaces: { taskRouting: { jev: { accuracy: 1, cases: 5 }, 'clef-flash': { accuracy: 1, cases: 5 } } } };
+    const plan = planAutoDecision(text('taskRouting'), auto, all, { budgetLevel: 'normal', quality: tie });
+    expect(plan?.route.provider).toBe('jev');
+    expect(plan?.route.reason).toContain('limiar calibrado no Jev');
+    expect(plan?.members).toBeUndefined();
+    expect(plan?.fallbacks?.map(item => item.model)).toEqual(['clef-flash', 'gpt-6-luna']);
+  });
+
+  it('penalidade de latência faz o flash lento perder o empate em judgeTool', () => {
+    const table: DecisionQualityTable = { version: 1, generatedAt: 1, source: 'evaluateDecisionCases', models: {},
+      surfaces: { judgeTool: { jev: { accuracy: 0.8, cases: 12, p50Ms: 200 }, 'clef-flash': { accuracy: 0.8, cases: 12, p50Ms: 4_000 } } } };
+    expect(planAutoDecision(text('judgeTool'), auto, all, { budgetLevel: 'normal', quality: table })?.route.provider).toBe('jev');
+  });
+
+  it('amostra fina não deixa o flash local vencer o prior do Jev em judgeTool', () => {
+    const table: DecisionQualityTable = { version: 1, generatedAt: 1, source: 'evaluateDecisionCases', models: {},
+      surfaces: { judgeTool: { 'clef-flash': { accuracy: 0.805, cases: 5 } } } };
+    expect(planAutoDecision(text('judgeTool'), auto, all, { budgetLevel: 'normal', quality: table })?.route.provider).toBe('jev');
   });
 });

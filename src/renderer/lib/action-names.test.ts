@@ -1,6 +1,10 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   LAUNCHER_ACTIONS,
+  WORKSPACE_OPEN_ACTION,
+  launcherAction,
   launcherActionIdForKey,
   launcherShortcutHint,
   requireAccessibleName,
@@ -50,5 +54,32 @@ describe('action names + launcher shortcuts (T3)', () => {
   it('shortcut hint is exposed for each action', () => {
     expect(launcherShortcutHint('pane')).toBe('1');
     expect(launcherShortcutHint('nope')).toBeNull();
+  });
+});
+
+describe('abrir projeto: o rail e o Início leem o mesmo nome e a mesma explicação', () => {
+  it('é a entrada "workspace" do registro, com atalho 3 e nome acessível que começa pelo rótulo visível', () => {
+    expect(launcherAction('workspace')).toBe(WORKSPACE_OPEN_ACTION);
+    expect(LAUNCHER_ACTIONS).toContain(WORKSPACE_OPEN_ACTION);
+    expect(WORKSPACE_OPEN_ACTION.shortcut).toBe('3');
+    // WCAG 2.5.3: quem fala o rótulo que lê na tela precisa acertar o nome.
+    expect(
+      WORKSPACE_OPEN_ACTION.accessibleName.startsWith(WORKSPACE_OPEN_ACTION.label),
+    ).toBe(true);
+  });
+
+  it('a explicação promete pasta nova só enquanto o seletor do main aceita criar pasta', () => {
+    expect(WORKSPACE_OPEN_ACTION.description).toMatch(/pasta do computador/);
+    expect(WORKSPACE_OPEN_ACTION.description).toMatch(/pasta nova/);
+    const source = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/main/persistence/workspace-store.ts'),
+      'utf8',
+    );
+    const start = source.indexOf('WORKSPACE_CHANNELS.pick,');
+    const end = source.indexOf('WORKSPACE_CHANNELS.pickPath');
+    expect(start, 'handler de WORKSPACE_CHANNELS.pick não encontrado').toBeGreaterThan(-1);
+    expect(end, 'handler de WORKSPACE_CHANNELS.pickPath não encontrado').toBeGreaterThan(start);
+    // Sem 'createDirectory' o diálogo não oferece "Nova pasta" e o tooltip mentiria.
+    expect(source.slice(start, end)).toContain("'createDirectory'");
   });
 });

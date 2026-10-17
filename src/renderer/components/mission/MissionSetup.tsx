@@ -34,12 +34,17 @@ import {
   toUserFacingMissionError,
   toUserFacingMissionRecovery,
 } from '../../lib/user-facing-mission-error';
+import { useMissionAttachmentPresentation } from '../../state/mission-attachment-presentation';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { usePendingOrchestratorAdoptionStore } from '../../state/pending-orchestrator-adoption-store';
 import { reflectAdoptedOrchestratorWithToast } from '../../orch/adopted-orchestrator-reflect';
 import { useProviderStore } from '../../state/provider-store';
 import { useWorkspaceStore } from '../../state/workspace-store';
 import { ExpressMissionStart } from './ExpressMissionStart';
+import {
+  MissionPrepOverlay,
+  type MissionPrepPhase,
+} from './MissionPrepOverlay';
 import {
   openExpressBareShell,
   openExpressTerminalGrid,
@@ -319,6 +324,14 @@ export function MissionSetup({
   const [directAnswer, setDirectAnswer] = useState<DirectAnswer | null>(null);
   /** Bypass de 1 clique: "criar missão mesmo assim" não reclassifica. */
   const bypassDirectAnswerRef = useRef(false);
+  /** Overlay “preparando missão”: do clique em iniciar até rodar ou falhar.
+   *  Fase REAL do motor quando o fluxo conhece (prepare → start); o erro
+   *  humanizado vira o estado de erro do overlay, com tentar de novo. */
+  const [prepOverlay, setPrepOverlay] = useState<{
+    phase: MissionPrepPhase;
+    error: string | null;
+  } | null>(null);
+  const [prepDismissed, setPrepDismissed] = useState(false);
 
   const pickingWorkspaceRef = useRef(false);
   const authorityGenerationRef = useRef(0);
@@ -756,6 +769,8 @@ export function MissionSetup({
     setPrepareStatus('idle');
     setStartStatus('idle');
     setReviewError(null);
+    setPrepOverlay(null);
+    setPrepDismissed(false);
     if (entryContext?.kind === 'pet-studio') {
       clearEntryContext();
       useProductNavigationStore
@@ -768,7 +783,31 @@ export function MissionSetup({
 
   const retryPrepare = (): void => {
     if (!authorityKey) return;
+    setPrepOverlay(null);
     void runPrepare(authorityKey);
+  };
+
+  /** Overlay “preparando missão”: dispensar deixa o start correr no fundo
+   *  (a tela continua mostrando o estado de loading do próprio fluxo). */
+  const dismissPrepOverlay = (): void => {
+    setPrepDismissed(true);
+  };
+
+  /** Tentar de novo fecha o estado de erro e reentra pelo mesmo caminho que
+   *  falhou; se a validação barrar antes de despachar, o erro volta a ser
+   *  inline no formulário (overlay fechado, nada órfão na tela). */
+  const retryPrepOverlay = (): void => {
+    setPrepDismissed(false);
+    setPrepOverlay(null);
+    if (draft.step === 'express') {
+      void startExpress();
+      return;
+    }
+    if (visibleReview && prepareStatus === 'ready') {
+      void startMission();
+      return;
+    }
+    retryPrepare();
   };
 
   const startMission = async (): Promise<void> => {
@@ -803,6 +842,8 @@ export function MissionSetup({
     startedReviewMissionIdRef.current = capturedReview.missionId;
     setStartStatus('loading');
     setReviewError(null);
+    setPrepOverlay({ phase: 'start', error: null });
+    setPrepDismissed(false);
 
     let startSucceeded = false;
     try {
@@ -848,6 +889,7 @@ export function MissionSetup({
       // o Expresso pré-preenchido com o objetivo da missão em execução, a um
       // clique de despachar uma duplicata na mesma pasta.
       clearDraft();
+      setPrepOverlay(null);
       useProductNavigationStore.getState().openMission(snapshot.id);
     } catch (error) {
       const rawMessage =
@@ -883,6 +925,11 @@ export function MissionSetup({
       if (startSucceeded) {
         setPrepareStatus('error');
         setStartStatus('error');
+        setPrepOverlay({
+          phase: 'start',
+          error:
+            'A missão iniciou, mas a substituição da missão anterior não pôde ser concluída.',
+        });
         setReviewError(
           'A missão iniciou, mas a substituição da missão anterior não pôde ser concluída.',
         );
@@ -891,6 +938,11 @@ export function MissionSetup({
       if (staleReview) {
         setPrepareStatus('error');
         setStartStatus('error');
+        setPrepOverlay({
+          phase: 'start',
+          error:
+            'A revisão pode ter ficado desatualizada e foi descartada. Prepare uma nova revisão antes de iniciar a missão.',
+        });
         setReviewError(
           'A revisão pode ter ficado desatualizada e foi descartada. Prepare uma nova revisão antes de iniciar a missão.',
         );
@@ -898,6 +950,9 @@ export function MissionSetup({
       }
       setPrepareStatus('idle');
       setStartStatus('error');
+      // Erro genérico navega para a missão bloqueada logo abaixo: o overlay
+      // desmonta junto, então não há estado de erro para segurar aqui.
+      setPrepOverlay(null);
       setReviewError(humanizeMissionStartError(rawMessage));
       useProductNavigationStore
         .getState()
@@ -915,6 +970,17 @@ export function MissionSetup({
 
   const startExpress = async (): Promise<void> => {
     if (expressBusyRef.current) return;
+    // Mesma régua do requestStart, na trincheira: o bypass "Criar missão
+    // mesmo assim" e a corrida entre o clique e a render não passam pelo
+    // botão. Despachar com anexo ainda copiando perderia o arquivo — o dock
+    // já mostra o motivo e o botão destrava quando a cópia termina.
+    if (
+      useMissionAttachmentPresentation
+        .getState()
+        .pending.some((item) => !item.error)
+    ) {
+      return;
+    }
     const setupState = useMissionSetupStore.getState();
     const capturedDestination = home ? 'launcher' : 'mission-setup';
     const capturedEntryRevision = setupState.entryAuthorityRevision;
@@ -1044,6 +1110,8 @@ export function MissionSetup({
     expressBusyRef.current = true;
     setExpressStatus('loading');
     setExpressError(null);
+    setPrepOverlay({ phase: 'prepare', error: null });
+    setPrepDismissed(false);
 
     try {
       const review = await window.nexus.mission.prepare({
@@ -1066,6 +1134,8 @@ export function MissionSetup({
         return;
       }
       const adopted = usePendingOrchestratorAdoptionStore.getState().take() ?? (review.workspaceBinding?.adoptedPaneId ? { paneId: review.workspaceBinding.adoptedPaneId, paneTitle: null } : null);
+      // Fase real do motor: a revisão voltou, agora é o start.
+      setPrepOverlay({ phase: 'start', error: null });
       const snapshot = await window.nexus.mission.start({
         missionId: review.missionId,
         reviewSha256: review.reviewSha256,
@@ -1095,6 +1165,7 @@ export function MissionSetup({
       // o Expresso pré-preenchido com o objetivo da missão em execução, a um
       // clique de despachar uma duplicata na mesma pasta.
       clearDraft();
+      setPrepOverlay(null);
       useProductNavigationStore.getState().openMission(snapshot.id);
     } catch (error) {
       if (generation !== startGenerationRef.current) return;
@@ -1106,6 +1177,10 @@ export function MissionSetup({
             : '';
       if (!isCurrentCreationEntry()) return;
       setExpressStatus('idle');
+      setPrepOverlay({
+        phase: 'start',
+        error: humanizeMissionStartError(rawMessage),
+      });
       setExpressError(humanizeMissionStartError(rawMessage));
     } finally {
       if (generation === startGenerationRef.current) {
@@ -1342,6 +1417,16 @@ export function MissionSetup({
           />
         )}
       </div>
+
+      {prepOverlay && (
+        <MissionPrepOverlay
+          open={!prepDismissed}
+          phase={prepOverlay.phase}
+          error={prepOverlay.error}
+          onDismiss={dismissPrepOverlay}
+          onRetry={retryPrepOverlay}
+        />
+      )}
     </div>
   );
 }

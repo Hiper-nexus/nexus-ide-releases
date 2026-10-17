@@ -42,26 +42,36 @@ export type CliLoginOutcome =
   | { readonly ok: false; readonly error: string; readonly cancelled?: boolean };
 
 /**
+ * O renderer roda sandboxed (contextIsolation + nodeIntegration:false): não
+ * existe `process` na página e ler `process.platform` derrubava TODO login de
+ * CLI com "Não foi possível abrir o terminal de login." (F-355). A plataforma
+ * vem da ponte `window.nexus.platform` do preload; `process` só entra como
+ * fallback fora do Electron (testes).
+ */
+function rendererPlatform(): NodeJS.Platform | undefined {
+  return (typeof window === 'undefined' ? undefined : window.nexus?.platform) ??
+    (typeof process === 'undefined' ? undefined : process.platform);
+}
+
+/**
  * What the login pane types into the PTY. Kimi `exec`s the CLI so the pane
  * IS `kimi login` (device-code TUI + URL), not a raw shell that happens to
- * run the command (F-354). Other CLIs stay typed into the surviving shell.
+ * run the command (F-354). Codex too: o pane morre junto com a CLI, então ↑ +
+ * Enter não roda um segundo `codex login` (que revogaria a conta recém-salva),
+ * e `env -u CODEX_HOME` impede que um CODEX_HOME do rc do shell desvie a
+ * gravação para fora da vaga que o Main esvaziou. Other CLIs stay typed into
+ * the surviving shell.
  */
 export function cliLoginTypeLine(input: {
   readonly command: string;
   readonly adapterId?: string;
   readonly platform?: NodeJS.Platform;
 }): string {
-  // O renderer roda sandboxed (contextIsolation + nodeIntegration:false): não
-  // existe `process` na página e ler `process.platform` aqui derrubava TODO
-  // login de CLI com "Não foi possível abrir o terminal de login." (F-355). A
-  // plataforma vem da ponte `window.nexus.platform` do preload; `process` só
-  // entra como fallback fora do Electron (testes).
-  const platform =
-    input.platform ??
-    (typeof window === 'undefined' ? undefined : window.nexus?.platform) ??
-    (typeof process === 'undefined' ? undefined : process.platform);
-  const replaceShell = input.adapterId === 'kimi' && platform !== 'win32';
-  return replaceShell ? `exec ${input.command}\n` : `${input.command}\n`;
+  const platform = input.platform ?? rendererPlatform();
+  if (platform === 'win32') return `${input.command}\n`;
+  if (input.adapterId === 'codex') return `exec env -u CODEX_HOME ${input.command}\n`;
+  if (input.adapterId === 'kimi') return `exec ${input.command}\n`;
+  return `${input.command}\n`;
 }
 
 /**
@@ -252,6 +262,8 @@ export async function openCliLoginTerminal(input: {
         .providers.find((candidate) => candidate.adapterId === input.adapterId)
     : undefined;
   const isInstalled = provider ? provider.installed : true;
+  const slot = isInstalled || !provider ? nativeLoginSlot(input.adapterId) : null;
+  let slotPrepared = false;
   try {
     if (!isInstalled && provider) {
       const installCmd =
@@ -265,17 +277,20 @@ export async function openCliLoginTerminal(input: {
         `printf '%s\\n%s\\n%s\\n\\n' ${posixSingleQuote(safeMsg)} ${posixSingleQuote(safeCmdMsg)} ${posixSingleQuote(tipMsg)}\n`,
       );
     } else {
-      if (input.adapterId === 'agy') {
-        const prep = await window.nexus?.accounts?.prepareAgyLogin?.();
+      if (slot) {
+        // Codex sem a ponte de preparo: digitar o login revogaria a conta salva.
+        if (!slot.prepare && slot.failClosed) {
+          useLayoutStore.getState().close(paneId, 'cli-login-prepare-failed');
+          return { ok: false, error: slot.prepareError };
+        }
+        const prep = await slot.prepare?.();
         if (prep && !prep.ok) {
           useLayoutStore.getState().close(paneId, 'cli-login-prepare-failed');
-          return {
-            ok: false,
-            error:
-              prep.error ??
-              'Não foi possível preparar a vaga de login do Antigravity.',
-          };
+          return { ok: false, error: prep.error ?? slot.prepareError };
         }
+        // Só a vaga que ESTE login esvaziou volta no erro abaixo; um preparo
+        // recusado ou que falhou nunca devolve a sessão de outro login.
+        slotPrepared = Boolean(prep?.ok);
       }
       writeToPane(
         paneId,
@@ -285,7 +300,9 @@ export async function openCliLoginTerminal(input: {
   } catch (err) {
     // Sem o comando digitado o pane é um shell órfão chamado "Login X":
     // fecha e devolve erro honesto em vez de propagar para o catch genérico.
+    // A sessão que saiu da vaga volta antes de o pane fechar.
     console.warn('[cli-login] comando de login não foi digitado:', err);
+    if (slot && slotPrepared) await restoreNativeLoginSlot(slot);
     useLayoutStore.getState().close(paneId, 'cli-login-write-failed');
     return {
       ok: false,
@@ -305,10 +322,75 @@ export async function openCliLoginTerminal(input: {
       authReadyAtStart,
       baseline: input.baseline ?? null,
       reauthenticate: input.reauthenticate,
+      closePaneOnRelease: input.adapterId === 'codex' && rendererPlatform() === 'win32',
       onFinished: input.onFinished,
     });
   }
   return { ok: true, paneId };
+}
+
+interface NativeLoginSlot {
+  readonly prepare?: () => Promise<{ ok: boolean; error?: string }>;
+  readonly restore?: () => Promise<{ ok: boolean }>;
+  readonly prepareError: string;
+  /** Sem a ponte de preparo o login não abre. */
+  readonly failClosed?: boolean;
+  /** A devolução roda em todo desfecho (com login novo na vaga ela só encerra o pendente). */
+  readonly restoreOnEveryOutcome?: boolean;
+  /** Aviso quando a devolução falha (`ok:false`), em vez de calar. */
+  readonly restoreFailure?: { readonly title: string; readonly detail: string };
+}
+
+/**
+ * CLIs cuja vaga nativa sai vazia antes do login: o Main guarda a sessão atual
+ * e a devolve se o login não concluir. AGY: o `/logout` do Google revogaria a
+ * conta anterior. Codex: o próprio `codex login` revoga, em
+ * auth.openai.com/oauth/revoke, o login que encontra no auth.json — a conta
+ * que o Nexus acabou de guardar morria ("logar em uma conta, a outra expira").
+ */
+function nativeLoginSlot(adapterId: string | undefined): NativeLoginSlot | null {
+  const accounts = window.nexus?.accounts;
+  if (adapterId === 'agy') {
+    return {
+      prepare: accounts?.prepareAgyLogin,
+      restore: accounts?.restoreAgyLogin,
+      prepareError: 'Não foi possível preparar a vaga de login do Antigravity.',
+    };
+  }
+  if (adapterId === 'codex') {
+    return {
+      prepare: accounts?.prepareCodexLogin,
+      restore: accounts?.restoreCodexLogin,
+      prepareError: 'Não consegui guardar a sessão atual do Codex. O login não foi iniciado.',
+      failClosed: true,
+      restoreOnEveryOutcome: true,
+      restoreFailure: {
+        title: 'Login Codex',
+        detail:
+          'A sessão anterior não voltou para o ~/.codex desta máquina. A conta continua ' +
+          'salva no Nexus; para usar o codex fora do Nexus, entre de novo.',
+      },
+    };
+  }
+  return null;
+}
+
+/** Devolve a vaga ao fim do login; falha vira aviso, nunca silêncio. */
+async function restoreNativeLoginSlot(slot: NativeLoginSlot): Promise<void> {
+  let ok = true;
+  try {
+    const result = await slot.restore?.();
+    ok = result ? result.ok : !slot.failClosed;
+  } catch {
+    ok = false;
+  }
+  if (!ok && slot.restoreFailure) {
+    useToastStore.getState().push('warn', slot.restoreFailure.title, {
+      detail: slot.restoreFailure.detail,
+      dedupeKey: 'cli-login-restore-failed',
+      ttlMs: 20_000,
+    });
+  }
 }
 
 function adapterAuthReady(adapterId: string | undefined): boolean {
@@ -330,6 +412,8 @@ function watchLoginPane(input: {
   readonly authReadyAtStart: boolean;
   readonly baseline: AdapterAuthStatus | null;
   readonly reauthenticate?: boolean;
+  /** Sem `exec` (Windows) o pane segue um shell depois do login: fecha ao soltar. */
+  readonly closePaneOnRelease?: boolean;
   readonly onFinished: (finish: CliLoginFinish) => void;
 }): void {
   let done = false;
@@ -350,6 +434,8 @@ function watchLoginPane(input: {
     unsubscribeLayout();
     unsubscribeData?.();
     input.onFinished(finish);
+    // Repetir o `codex login` nesse shell revogaria a conta recém-salva.
+    if (input.closePaneOnRelease) useLayoutStore.getState().close(input.paneId, 'cli-login-finished');
   };
 
   /** Sonda desta CLI, ou null quando ela não responde. */
@@ -398,13 +484,10 @@ function watchLoginPane(input: {
       // visível alguns milissegundos depois da linha impressa; encerrar aqui
       // com `verified:false` perdia para sempre o login recém-concluído.
       if (verified || final) {
-        if (!verified && input.adapterId === 'agy') {
-          try {
-            await window.nexus?.accounts?.restoreAgyLogin?.();
-            status = (await probe(false)) ?? status;
-          } catch {
-            // Best-effort restore.
-          }
+        const slot = nativeLoginSlot(input.adapterId);
+        if (slot && (!verified || slot.restoreOnEveryOutcome)) {
+          await restoreNativeLoginSlot(slot);
+          if (!verified) status = (await probe(false)) ?? status;
         }
         release({ verified, status });
       }

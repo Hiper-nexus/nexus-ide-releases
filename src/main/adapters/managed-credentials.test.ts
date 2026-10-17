@@ -1,11 +1,12 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   prepareCheckoutProviderHome,
   authBlobIsUsable,
   captureNativeAuth,
+  supportsNativeSessionSnapshot,
   devinDataHome,
   compareAuthBlobIdentity,
   identityFromAuthBlob,
@@ -30,12 +31,60 @@ function tempHome(): string {
 }
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const dir of tempRoots.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
 describe('managed-credentials', () => {
+  it('does not snapshot a Muse identity as a credential or portable Keychain session', () => {
+    const home = tempHome();
+    const authPath = path.join(home, 'custom-auth.json');
+    vi.stubEnv('MUSE_AUTH_PATH', authPath);
+    const metadata = JSON.stringify({ schema_version: 2, providers: { meta: { mechanism: 'oauth', storage: 'keychain', user_email: 'native@example.test' } } });
+    fs.writeFileSync(authPath, metadata);
+    expect(authBlobIsUsable('muse', metadata)).toBe(false);
+    expect(captureNativeAuth('muse', home)).toBeNull();
+    expect(supportsNativeSessionSnapshot('muse', home)).toBe(false);
+    expect(nativeAuthIdentity('muse', home)).toEqual({ email: 'native@example.test' });
+    const emailOnly = JSON.stringify({ providers: { meta: { email: 'native@example.test' } } });
+    expect(authBlobIsUsable('muse', emailOnly)).toBe(false);
+  });
+
+  it.each([
+    { meta: { mechanism: 'oauth', storage: 'keychain' }, other: { mechanism: 'api_key', storage: 'file', api_key: 'synthetic-other' } },
+    { other: { mechanism: 'api_key', storage: 'file', api_key: 'synthetic-other' } },
+    { meta: { mechanism: 'api_key', storage: 'unknown', api_key: 'synthetic-meta' } },
+    { meta: { mechanism: 'unknown', storage: 'file', api_key: 'synthetic-meta' } },
+    { meta: { mechanism: 'oauth', storage: 'file', api_key: 'synthetic-not-oauth' } },
+    { meta: { mechanism: 'api_key', storage: 'file', refresh_token: 'synthetic-not-key' } },
+    { meta: { mechanism: 'api_key', storage: 'file', api_key: 'synthetic-meta' }, other: { mechanism: 'api_key', storage: 'file', api_key: 'synthetic-other' } },
+  ])('rejects Muse snapshots without an unambiguous portable Meta credential (%j)', (providers) => {
+    const home = tempHome();
+    const authPath = path.join(home, 'auth.json');
+    vi.stubEnv('MUSE_AUTH_PATH', authPath);
+    const blob = JSON.stringify({ schema_version: 2, providers });
+    fs.writeFileSync(authPath, blob);
+    expect(authBlobIsUsable('muse', blob)).toBe(false);
+    expect(supportsNativeSessionSnapshot('muse', home)).toBe(false);
+    expect(captureNativeAuth('muse', home)).toBeNull();
+  });
+
+  it('captures and restores Muse inline credentials at its explicit native auth path', () => {
+    const home = tempHome();
+    const authPath = path.join(home, 'custom-auth.json');
+    vi.stubEnv('MUSE_AUTH_PATH', authPath);
+    const blob = JSON.stringify({ schema_version: 2, providers: { meta: { mechanism: 'api_key', storage: 'file', api_key: 'synthetic-meta-key', user_email: 'native@example.test' } } });
+    fs.writeFileSync(authPath, blob);
+    expect(supportsNativeSessionSnapshot('muse', home)).toBe(true);
+    expect(captureNativeAuth('muse', home)).toMatchObject({ blob, email: 'native@example.test', authRelativePath: path.join('muse', 'auth.json') });
+    const managed = materializeManagedHome('muse', 'synthetic-account', blob, { home, systemHome: null });
+    expect(fs.readFileSync(path.join(managed, 'muse', 'auth.json'), 'utf8')).toBe(blob);
+    expect(managedHomeEnv('muse', managed)).toMatchObject({ XDG_CONFIG_HOME: managed, MUSE_AUTH_PATH: path.join(managed, 'muse', 'auth.json') });
+    expect(authBlobIsUsable('muse', fs.readFileSync(path.join(managed, 'muse', 'auth.json'), 'utf8'))).toBe(true);
+  });
+
   it.each([1, 1000])('keeps a fresh Kimi login and later CLI refresh (expiry scale %s)', (scale) => {
     const home = tempHome();
     const blob = (token: string, expires: number) => JSON.stringify({
@@ -202,6 +251,51 @@ describe('managed-credentials', () => {
     expect(rotated).toBe(before);
     expect(beforeIdentity.revision).toMatch(/^[a-f0-9]{64}$/);
     expect(rotatedIdentity.revision).not.toBe(beforeIdentity.revision);
+    expect(other).not.toBe(before);
+  });
+
+  it('separa duas pessoas do mesmo workspace Codex pelo user id do id_token (Team/Business compartilha o account_id)', () => {
+    const jwt = (claims: Record<string, unknown>) =>
+      `h.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.s`;
+    const codex = (email: string | null, workspace: string, refresh: string, userId?: string) => JSON.stringify({
+      tokens: {
+        id_token: jwt({
+          ...(email ? { email } : {}),
+          ...(userId ? { 'https://api.openai.com/auth': { chatgpt_account_id: workspace, chatgpt_user_id: userId, user_id: userId } } : {}),
+        }),
+        access_token: jwt({ exp: 4_102_444_800 }),
+        refresh_token: refresh,
+        account_id: workspace,
+      },
+    });
+    const admin = codex('admin@volarehost.example', 'ws-team', 'rt-admin', 'user-admin');
+    const colleague = codex('retornoja@example.invalid', 'ws-team', 'rt-colleague', 'user-colleague');
+
+    expect(compareAuthBlobIdentity('codex', admin, colleague)).toBe('different');
+    // A renovação pode trazer outro e-mail na mesma linhagem: o user id manda.
+    expect(compareAuthBlobIdentity('codex', admin, codex('novo@volarehost.example', 'ws-team', 'rt-2', 'user-admin'))).toBe('same');
+    // Mesmo e-mail com outro user id no mesmo workspace: outra pessoa.
+    expect(compareAuthBlobIdentity('codex', admin, codex('admin@volarehost.example', 'ws-team', 'rt-3', 'user-outro'))).toBe('different');
+    // Só um lado com user id: o e-mail não entra e o workspace decide.
+    expect(compareAuthBlobIdentity('codex', admin, codex('outro@volarehost.example', 'ws-team', 'rt-4'))).toBe('same');
+    // Nenhum lado com user id: o e-mail é o último recurso.
+    expect(compareAuthBlobIdentity('codex', codex('a@x.example', 'ws-team', 'rt-5'), codex('b@x.example', 'ws-team', 'rt-6'))).toBe('different');
+    expect(compareAuthBlobIdentity('codex', codex('a@x.example', 'ws-team', 'rt-5'), codex(null, 'ws-team', 'rt-7'))).toBe('same');
+    // Um e-mail em dois workspaces continua sendo duas contas.
+    expect(compareAuthBlobIdentity('codex', admin, codex('admin@volarehost.example', 'ws-pessoal', 'rt-8', 'user-admin'))).toBe('different');
+
+    // A prova de login novo (fingerprint) distingue as pessoas e sobrevive à troca de e-mail.
+    const home = tempHome();
+    fs.mkdirSync(path.join(home, '.codex'), { recursive: true });
+    const file = path.join(home, '.codex', 'auth.json');
+    fs.writeFileSync(file, admin);
+    const before = nativeAuthIdentity('codex', home).fingerprint;
+    fs.writeFileSync(file, codex('novo@volarehost.example', 'ws-team', 'rt-rotated', 'user-admin'));
+    const rotated = nativeAuthIdentity('codex', home).fingerprint;
+    fs.writeFileSync(file, colleague);
+    const other = nativeAuthIdentity('codex', home).fingerprint;
+    expect(before).toMatch(/^[a-f0-9]{64}$/);
+    expect(rotated).toBe(before);
     expect(other).not.toBe(before);
   });
 

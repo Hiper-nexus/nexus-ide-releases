@@ -88,17 +88,35 @@ vi.mock('../../state/provider-store', () => ({
   ),
 }));
 
+/** Estado de sessão dos panes: o teste marca `exited` para simular a CLI saindo. */
+const sessionStates = vi.hoisted(() => ({
+  map: new Map<string, string>(),
+  listeners: new Set<() => void>(),
+}));
+
 vi.mock('../../state/session-state-store', () => ({
   useSessionStateStore: Object.assign(
-    () => ({ paneStates: new Map() }),
+    () => ({ paneStates: sessionStates.map }),
     {
-      getState: () => ({ paneStates: new Map() }),
-      subscribe: () => () => undefined,
+      getState: () => ({ paneStates: sessionStates.map }),
+      subscribe: (listener: () => void) => {
+        sessionStates.listeners.add(listener);
+        return () => sessionStates.listeners.delete(listener);
+      },
     },
   ),
 }));
 
 const toastPush = vi.hoisted(() => vi.fn());
+
+/**
+ * Ponte do Main que esvazia e devolve a vaga do Codex. Sem ela o login do
+ * Codex falha fechado; os testes do watcher que não olham a vaga a recebem.
+ */
+const codexSlotBridge = vi.hoisted(() => ({
+  prepareCodexLogin: vi.fn(async () => ({ ok: true })),
+  restoreCodexLogin: vi.fn(async () => ({ ok: true })),
+}));
 vi.mock('../../state/toast-store', () => ({
   useToastStore: Object.assign(() => ({}), {
     getState: () => ({ push: (...args: unknown[]) => toastPush(...args) }),
@@ -246,6 +264,19 @@ describe('cliLoginTypeLine — F-354', () => {
         platform: 'win32',
       }),
     ).toBe('kimi login --region global\n');
+  });
+
+  it('Codex no POSIX vira o próprio pane e ignora um CODEX_HOME herdado do shell', () => {
+    // Com `exec`, a CLI saindo mata o pane: ↑ + Enter não roda um segundo
+    // `codex login`, que revogaria a conta recém-salva.
+    for (const platform of ['darwin', 'linux'] as const) {
+      expect(
+        cliLoginTypeLine({ command: 'codex login --device-auth', adapterId: 'codex', platform }),
+      ).toBe('exec env -u CODEX_HOME codex login --device-auth\n');
+    }
+    expect(
+      cliLoginTypeLine({ command: 'codex login --device-auth', adapterId: 'codex', platform: 'win32' }),
+    ).toBe('codex login --device-auth\n');
   });
 
   /**
@@ -435,6 +466,7 @@ describe('openCliLoginTerminal - CLI ja logada orienta sem provar nada', () => {
     Object.defineProperty(window, 'nexus', {
       configurable: true,
       value: {
+        accounts: codexSlotBridge,
         providers: { authStatus: vi.fn(async () => [{ ...baseline }]) },
         pty: {
           onData: vi.fn((_sessionId: string, cb: (chunk: string) => void) => {
@@ -492,6 +524,7 @@ describe('openCliLoginTerminal — o que o watcher entrega ao fechar', () => {
     Object.defineProperty(window, 'nexus', {
       configurable: true,
       value: {
+        accounts: codexSlotBridge,
         providers: { authStatus: vi.fn(async () => (status ? [status] : [])) },
         pty: { onData: vi.fn(() => () => undefined) },
       },
@@ -559,6 +592,7 @@ describe('openCliLoginTerminal — o que o watcher entrega ao fechar', () => {
     const before = { ...baseline, sessionRevision: 'old' };
     let onData: ((chunk: string) => void) | undefined;
     Object.defineProperty(window, 'nexus', { configurable: true, value: {
+      accounts: codexSlotBridge,
       providers: { authStatus: vi.fn(async () => [{ ...before, sessionRevision: revision }]) },
       pty: { onData: (_id: string, cb: (text: string) => void) => { onData = cb; return () => undefined; } },
     } });
@@ -577,6 +611,7 @@ describe('openCliLoginTerminal — o que o watcher entrega ao fechar', () => {
     let current = { ...before };
     let onData: ((chunk: string) => void) | undefined;
     Object.defineProperty(window, 'nexus', { configurable: true, value: {
+      accounts: codexSlotBridge,
       providers: { authStatus: vi.fn(async () => [current]) },
       pty: { onData: (_id: string, cb: (text: string) => void) => { onData = cb; return () => undefined; } },
     } });
@@ -600,6 +635,7 @@ describe('openCliLoginTerminal — o que o watcher entrega ao fechar', () => {
     Object.defineProperty(window, 'nexus', {
       configurable: true,
       value: {
+        accounts: codexSlotBridge,
         providers: {
           authStatus: vi.fn(async () => [current]),
         },
@@ -684,6 +720,242 @@ describe('openCliLoginTerminal — o que o watcher entrega ao fechar', () => {
     await vi.waitFor(() => expect(finished).toHaveLength(1));
     expect(restoreAgyLogin).toHaveBeenCalledOnce();
     expect(finished[0]?.verified).toBe(false);
+  });
+});
+
+/**
+ * O `codex login` revoga no servidor o login que encontra no ~/.codex antes do
+ * device flow. O terminal de login do Nexus roda nesse home, onde mora a mesma
+ * linhagem que o Nexus guardou da conta atual: sem esvaziar a vaga antes,
+ * entrar na conta B matava a conta A ("logar em uma conta, a outra expira").
+ */
+describe('openCliLoginTerminal — Codex não revoga a conta já salva', () => {
+  const codexBaseline = {
+    adapterId: 'codex',
+    state: 'ok' as const,
+    detail: 'sessão ChatGPT · admin@volarehost.example',
+    sessionFingerprint: 'fp-admin',
+  };
+  let current: Record<string, unknown> = codexBaseline;
+  let onData: ((chunk: string) => void) | undefined;
+  const order: string[] = [];
+  const prepareCodexLogin = vi.fn(async (): Promise<{ ok: boolean; error?: string }> => {
+    order.push('prepare');
+    return { ok: true };
+  });
+  const restoreCodexLogin = vi.fn(async (): Promise<{ ok: boolean }> => {
+    order.push('restore');
+    return { ok: true };
+  });
+  const typedLogin = cliLoginTypeLine({ command: 'codex login --device-auth', adapterId: 'codex' });
+
+  function installBridge(
+    accounts: Record<string, unknown> = { prepareCodexLogin, restoreCodexLogin },
+    platform?: NodeJS.Platform,
+  ): void {
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        ...(platform ? { platform } : {}),
+        accounts,
+        providers: { authStatus: vi.fn(async () => [current]) },
+        pty: {
+          onData: vi.fn((_id: string, cb: (chunk: string) => void) => {
+            onData = cb;
+            return () => undefined;
+          }),
+        },
+      },
+    });
+  }
+
+  beforeEach(() => {
+    order.length = 0;
+    current = codexBaseline;
+    onData = undefined;
+    panes.open = [{ id: 'pane-login' }];
+    sessionStates.map.clear();
+    sessionStates.listeners.clear();
+    layout.addShellPane.mockClear().mockReturnValue('pane-login');
+    layout.close.mockClear();
+    host.waitForSession.mockClear().mockResolvedValue('session-login');
+    host.writeToPane.mockReset().mockImplementation(() => {
+      order.push('write');
+    });
+    prepareCodexLogin.mockClear();
+    restoreCodexLogin.mockClear();
+    toastPush.mockClear();
+    installBridge();
+  });
+
+  afterEach(() => {
+    host.writeToPane.mockReset();
+    sessionStates.map.clear();
+    sessionStates.listeners.clear();
+    Reflect.deleteProperty(window, 'nexus');
+  });
+
+  it('esvazia a vaga do Codex antes de digitar o login e devolve a sessão se o pane fechar sem login novo', async () => {
+    const finished: CliLoginFinish[] = [];
+    const result = await openCliLoginTerminal({
+      command: 'codex login',
+      adapterId: 'codex',
+      baseline: codexBaseline,
+      onFinished: (finish) => finished.push(finish),
+    });
+
+    expect(result).toEqual({ ok: true, paneId: 'pane-login' });
+    expect(order).toEqual(['prepare', 'write']);
+    expect(host.writeToPane).toHaveBeenCalledWith('pane-login', typedLogin);
+
+    // Operador fechou o pane sem concluir o device flow.
+    panes.open = [];
+    onData?.('\n');
+    await vi.waitFor(() => expect(finished).toHaveLength(1));
+    expect(finished[0]?.verified).toBe(false);
+    expect(restoreCodexLogin).toHaveBeenCalledOnce();
+  });
+
+  it('no POSIX digita o login com exec: o pane morre junto com a CLI e não sobra shell para repetir o login', async () => {
+    installBridge(undefined, 'darwin');
+    await openCliLoginTerminal({
+      command: 'codex login',
+      adapterId: 'codex',
+      baseline: codexBaseline,
+      onFinished: () => undefined,
+    });
+    expect(host.writeToPane).toHaveBeenCalledWith(
+      'pane-login',
+      'exec env -u CODEX_HOME codex login --device-auth\n',
+    );
+  });
+
+  it('a CLI saiu (Ctrl+C no device flow) e o pane morreu: devolve a sessão na hora, sem esperar o tempo limite', async () => {
+    const finished: CliLoginFinish[] = [];
+    await openCliLoginTerminal({
+      command: 'codex login',
+      adapterId: 'codex',
+      baseline: codexBaseline,
+      onFinished: (finish) => finished.push(finish),
+    });
+    current = { adapterId: 'codex', state: 'missing', detail: 'sem sessão' };
+    sessionStates.map.set('pane-login', 'exited');
+    for (const listener of [...sessionStates.listeners]) listener();
+
+    await vi.waitFor(() => expect(finished).toHaveLength(1));
+    expect(finished[0]?.verified).toBe(false);
+    expect(restoreCodexLogin).toHaveBeenCalledOnce();
+  });
+
+  it('login comprovado na conta B também encerra o pendente no Main (a vaga ocupada não é tocada)', async () => {
+    const finished: CliLoginFinish[] = [];
+    await openCliLoginTerminal({
+      command: 'codex login',
+      adapterId: 'codex',
+      baseline: codexBaseline,
+      onFinished: (finish) => {
+        order.push('finished');
+        finished.push(finish);
+      },
+    });
+    current = {
+      ...codexBaseline,
+      detail: 'sessão ChatGPT · retornoja@example.invalid',
+      sessionFingerprint: 'fp-retorno',
+    };
+    onData?.('Successfully logged in\n');
+    await vi.waitFor(() => expect(finished).toHaveLength(1));
+    expect(finished[0]?.verified).toBe(true);
+    expect(restoreCodexLogin).toHaveBeenCalledOnce();
+    expect(order).toEqual(['prepare', 'write', 'restore', 'finished']);
+  });
+
+  it('não digita o login quando a sessão atual não pôde ser guardada (ou outro login está em andamento)', async () => {
+    prepareCodexLogin.mockResolvedValueOnce({
+      ok: false,
+      error: 'Já há um login do Codex em andamento. Conclua ou feche o terminal dele antes de abrir outro.',
+    });
+    const result = await openCliLoginTerminal({
+      command: 'codex login',
+      adapterId: 'codex',
+      baseline: codexBaseline,
+      onFinished: () => undefined,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: 'Já há um login do Codex em andamento. Conclua ou feche o terminal dele antes de abrir outro.',
+    });
+    expect(host.writeToPane).not.toHaveBeenCalled();
+    expect(restoreCodexLogin).not.toHaveBeenCalled();
+    expect(layout.close).toHaveBeenCalledWith('pane-login', 'cli-login-prepare-failed');
+  });
+
+  it('o comando não foi digitado: a sessão volta para a vaga antes de o pane fechar', async () => {
+    host.writeToPane.mockImplementation(() => {
+      throw new Error('pty gone');
+    });
+    layout.close.mockImplementation(() => order.push('close'));
+    const result = await openCliLoginTerminal({
+      command: 'codex login',
+      adapterId: 'codex',
+      baseline: codexBaseline,
+      onFinished: () => undefined,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(order).toEqual(['prepare', 'restore', 'close']);
+    expect(layout.close).toHaveBeenCalledWith('pane-login', 'cli-login-write-failed');
+    layout.close.mockReset();
+  });
+
+  it('sem a ponte de preparo do Main o login do Codex não abre (falha fechada)', async () => {
+    installBridge({ restoreCodexLogin });
+    const result = await openCliLoginTerminal({
+      command: 'codex login',
+      adapterId: 'codex',
+      baseline: codexBaseline,
+      onFinished: () => undefined,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(host.writeToPane).not.toHaveBeenCalled();
+    expect(layout.close).toHaveBeenCalledWith('pane-login', 'cli-login-prepare-failed');
+  });
+
+  it('devolução que falha vira aviso, não silêncio', async () => {
+    restoreCodexLogin.mockResolvedValueOnce({ ok: false });
+    const finished: CliLoginFinish[] = [];
+    await openCliLoginTerminal({
+      command: 'codex login',
+      adapterId: 'codex',
+      baseline: codexBaseline,
+      onFinished: (finish) => finished.push(finish),
+    });
+    panes.open = [];
+    onData?.('\n');
+    await vi.waitFor(() => expect(finished).toHaveLength(1));
+    expect(toastPush).toHaveBeenCalledWith(
+      'warn',
+      'Login Codex',
+      expect.objectContaining({ detail: expect.stringMatching(/não voltou para o ~\/\.codex/) }),
+    );
+  });
+
+  it('no Windows (sem exec) o pane de login fecha quando o login termina', async () => {
+    installBridge(undefined, 'win32');
+    const finished: CliLoginFinish[] = [];
+    await openCliLoginTerminal({
+      command: 'codex login',
+      adapterId: 'codex',
+      baseline: codexBaseline,
+      onFinished: (finish) => finished.push(finish),
+    });
+    expect(host.writeToPane).toHaveBeenCalledWith('pane-login', 'codex login --device-auth\n');
+    current = { ...codexBaseline, sessionFingerprint: 'fp-retorno' };
+    onData?.('Successfully logged in\n');
+    await vi.waitFor(() => expect(finished).toHaveLength(1));
+    expect(layout.close).toHaveBeenCalledWith('pane-login', 'cli-login-finished');
   });
 });
 

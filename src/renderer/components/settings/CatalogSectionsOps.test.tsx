@@ -23,6 +23,7 @@ it('keeps workflow requirements available while advanced project editing starts 
     expect(host.querySelector('label[for="recipe-project-stacks"]')).not.toBeNull();
     await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Salvar')!.click());
     expect(save).toHaveBeenCalledWith({ stacks: ['react'] });
+    expect(host.querySelector('[role="status"]')?.textContent).toBe('Tecnologias salvas.');
   } finally {
     act(() => root.unmount()); host.remove(); Reflect.deleteProperty(window, 'nexus');
   }

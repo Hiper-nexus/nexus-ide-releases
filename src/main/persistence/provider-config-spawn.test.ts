@@ -2,6 +2,7 @@ import fsp from 'node:fs/promises';
 import fs from 'node:fs';
 import * as periodicFileRead from '../redline/redline-safe-read';
 import mimoRaw from '../../adapters/builtin/mimo-code.json';
+import museRaw from '../../adapters/builtin/muse.json';
 import type { ChildProcess } from 'node:child_process';
 import { PROVIDER_CHANNELS } from '../../shared/provider-settings-types';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -226,12 +227,7 @@ const claudeHostAdapter = (id: string, extra: string[]) => ({
   env: { passthrough: ['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', ...extra] },
 });
 
-const museAdapter = {
-  ...kimiAdapter,
-  id: 'muse', label: 'Muse Code', bin: 'muse',
-  auth: { method: 'file', loginHint: 'muse login' },
-  env: { passthrough: [] },
-};
+const museAdapter = { ...kimiAdapter, ...museRaw };
 
 const agyAdapter = {
   ...kimiAdapter,
@@ -1475,6 +1471,17 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
     spawnDeps.ensureSubscriptionActive.mockReturnValue(true);
     spawnDeps.activeClaudeAuthEnv.mockReturnValue({
       CLAUDE_CODE_OAUTH_TOKEN: 'oauth-active',
+    });
+  });
+
+  it('injects the saved native Muse account key and suppresses inherited keys for OAuth', () => {
+    const account = { id: 'muse-key', adapterId: 'muse', label: 'Meta API', mode: 'api-key', upstream: 'anthropic', createdAt: 1 };
+    spawnDeps.prepareAccount.mockReturnValueOnce({ ok: true, account, apiKey: 'synthetic-meta-key', authEnv: {} });
+    expect(prepareProviderSpawn('muse', { accountId: account.id })).toMatchObject({
+      ok: true, overrides: { keyEnv: { META_API_KEY: 'synthetic-meta-key' }, suppressEnv: [] },
+    });
+    expect(prepareProviderSpawn('muse')).toMatchObject({
+      ok: true, overrides: { keyEnv: {}, suppressEnv: ['META_API_KEY'] },
     });
   });
 

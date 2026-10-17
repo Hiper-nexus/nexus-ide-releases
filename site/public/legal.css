@@ -1,1 +1,57 @@
-:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#080709;color:#faf7f9;font-family:system-ui,sans-serif;font-size:16px;line-height:1.7}.legal{max-width:760px;margin:64px auto;padding:0 24px}a{color:#ff4f8b;text-underline-offset:4px}a:focus-visible{outline:2px solid #ff4f8b;outline-offset:6px}.brand{text-decoration:none;font-size:24px;font-weight:600;color:#faf7f9}h1{font-size:48px;line-height:1.1;letter-spacing:-.04em;margin:40px 0 24px}h2{font-size:24px;margin:32px 0 16px}p{color:#aaa2a8;text-wrap:pretty}.button{display:inline-block;background:#faf7f9;color:#080709;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;margin:32px 0}.error{min-height:80vh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px}.error>span{font-family:monospace;font-size:96px;color:#ff4f8b}.error h1{font-size:36px}@media(max-width:600px){h1{font-size:36px}.legal{margin:40px auto}}
+/* Páginas estáticas (legais e 404): fora do bundle Vite, então a Geist entra por @font-face
+   do mesmo pacote @fontsource-variable/geist usado no app (cópia em /fonts/). */
+@font-face{font-family:'Geist Variable';font-style:normal;font-display:swap;font-weight:100 900;src:url('/fonts/geist-latin-wght-normal.woff2') format('woff2-variations');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2215,U+FEFF,U+FFFD}
+@font-face{font-family:VT323;src:url('/fonts/VT323-Regular.ttf') format('truetype');font-display:swap}
+:root{color-scheme:dark;--bg:#080709;--surface:#111013;--bar:#0d0b0f;--lift:#201e25;--ink:#faf7f9;--muted:#aaa2a8;--faint:#928b90;--pink:#ff4f8b;--line:rgb(255 255 255 / .1);--strong:rgb(255 255 255 / .2);--ease:cubic-bezier(.22,.8,.2,1)}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:'Geist Variable',system-ui,sans-serif;-webkit-font-smoothing:antialiased;font-size:16px;line-height:1.7}
+a{color:var(--pink);text-underline-offset:4px}
+a:hover{color:#ff7aa8}
+a:focus-visible{outline:2px solid var(--pink);outline-offset:5px;border-radius:2px}
+::selection{color:var(--bg);background:var(--pink)}
+.skip{position:fixed;z-index:100;left:16px;top:16px;padding:12px 24px;border-radius:8px;background:var(--ink);color:var(--bg);font-weight:600;text-decoration:none;transform:translateY(-200%);transition:transform .22s var(--ease)}
+.skip:focus{transform:none}
+.brand{display:inline-flex;align-items:center;gap:12px;text-decoration:none;font-size:24px;font-weight:600;letter-spacing:-.03em;color:var(--ink)}
+.brand:hover{color:var(--ink)}
+.brand img{width:32px;height:32px;display:block}
+.brand-ide{font-size:12px;font-weight:400;color:var(--muted);letter-spacing:.06em;margin-left:-8px}
+.legal{max-width:760px;margin:0 auto;padding:32px 24px 96px}
+.legal-top{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-bottom:32px;border-bottom:1px solid var(--line)}
+.legal-nav{display:flex;gap:24px;font-size:14px}
+.legal-nav a{color:var(--muted);text-decoration:none;transition:color .2s var(--ease)}
+.legal-nav a:hover{color:var(--ink)}
+h1{font-size:48px;line-height:1.05;letter-spacing:-.04em;font-weight:550;margin:48px 0 8px;text-wrap:balance}
+.legal>h1+p{color:var(--faint);font-size:14px;margin-bottom:16px}
+h2{font-size:24px;line-height:1.2;letter-spacing:-.02em;font-weight:550;margin:0;padding-top:40px;margin-top:40px;border-top:1px solid var(--line);text-wrap:balance}
+h2+p{margin-top:16px}
+p{color:var(--muted);text-wrap:pretty;max-width:68ch;margin:16px 0 0}
+p a{text-decoration:underline}
+.button{display:inline-flex;gap:16px;align-items:center;justify-content:center;border:1px solid transparent;border-radius:8px;padding:12px 24px;min-height:48px;font-size:14px;font-weight:600;text-decoration:none;transition:transform .22s var(--ease),background .22s var(--ease),border-color .22s var(--ease)}
+.button:hover{transform:translateY(-3px)}
+.button:active{transform:scale(.98)}
+.button-white{background:var(--ink);color:var(--bg)}
+.button-white:hover{background:#e5dde2}
+.button-outline{border-color:var(--strong);background:var(--surface);color:var(--ink)}
+.button-outline:hover{background:var(--lift)}
+
+/* 404: sinal VT323 como no HUD, retorno claro para a home e para a comunidade. */
+.error{position:relative;min-height:100svh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:64px 24px}
+.error-brand{position:absolute;top:24px;left:40px}
+.error-code{font-family:VT323,monospace;font-weight:400;font-size:128px;line-height:.9;color:var(--pink);margin:0;text-shadow:0 0 40px rgb(255 79 139/.3)}
+.error h1{font-size:36px;margin:24px 0 0}
+.error>.error-copy{margin-top:16px;max-width:46ch}
+.error-actions{display:flex;flex-wrap:wrap;justify-content:center;gap:12px;margin-top:40px}
+.error-links{display:flex;flex-wrap:wrap;justify-content:center;gap:8px 24px;margin-top:48px;padding-top:32px;border-top:1px solid var(--line);font-size:14px}
+.error-links a{color:var(--muted);text-decoration:none;transition:color .2s var(--ease)}
+.error-links a:hover{color:var(--ink)}
+
+@media(max-width:600px){
+  .legal{padding-top:24px}
+  .legal-top{flex-wrap:wrap}
+  h1{font-size:36px}
+  h2{font-size:20px;padding-top:32px;margin-top:32px}
+  .error-code{font-size:88px}
+  .error h1{font-size:30px}
+  .error-brand{left:24px}
+}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.button{transition:none}}

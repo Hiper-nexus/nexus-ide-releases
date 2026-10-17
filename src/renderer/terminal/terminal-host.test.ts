@@ -2666,6 +2666,57 @@ describe('DSK-01 — saída antiga regravada não responde queries de terminal',
     expect(host.virtualized!.pendingOutput).toBe('antes meio \x1b[32mok\x1b[0m');
   });
 
+  it('hibernar guarda a cauda que o scheduler ainda segura, em vez de perdê-la no xterm descartado', async () => {
+    const host = openAgent();
+    expect(await waitForSession(agent.id, 1000)).toBe('pty-hidden');
+    for (let i = 0; i < 24; i++) {
+      getOrCreateHost({ id: `filler-${i}`, kind: 'shell', title: `t${i}` });
+    }
+    const hibernating = host.term;
+    const termWrite = vi.spyOn(hibernating, 'write');
+    // Saída de fundo que o scheduler ainda não drenou quando o pane sai da tela.
+    terminalOutputScheduler.writeTerminalOutput(hibernating, 'CAUDA-NA-FILA \x1b[6n', { foreground: false });
+    expect(terminalOutputScheduler.getQueuedChars(hibernating)).toBeGreaterThan(0);
+
+    setHostVisibility(agent.id, false);
+    await vi.advanceTimersByTimeAsync(20);
+
+    expect(host.virtualized).not.toBeNull();
+    expect(host.term).not.toBe(hibernating);
+    // O write do xterm é assíncrono: escrever a cauda nele e descartá-lo em seguida a perde.
+    expect(termWrite).not.toHaveBeenCalled();
+    // O scheduler também não segura mais o term velho (nem pina a fila dele).
+    expect(terminalOutputScheduler.getQueuedChars(hibernating)).toBe(0);
+    // A cauda vira o começo da saída retida, sem queries (DSK-01), pronta para a reidratação...
+    expect(host.virtualized!.pendingOutput).toBe('CAUDA-NA-FILA ');
+    // ...e a saída que chega depois entra atrás dela, na ordem.
+    ptyDataListeners.get('pty-hidden')!('depois');
+    expect(host.virtualized!.pendingOutput).toBe('CAUDA-NA-FILA depois');
+  });
+
+  it('xterm que falha ao ser descartado não hiberna e não perde a cauda da fila', async () => {
+    const host = openAgent();
+    expect(await waitForSession(agent.id, 1000)).toBe('pty-hidden');
+    for (let i = 0; i < 24; i++) {
+      getOrCreateHost({ id: `filler-${i}`, kind: 'shell', title: `t${i}` });
+    }
+    const hibernating = host.term;
+    terminalOutputScheduler.writeTerminalOutput(hibernating, 'CAUDA-NA-FILA', { foreground: false });
+    const queued = terminalOutputScheduler.getQueuedChars(hibernating);
+    expect(queued).toBeGreaterThan(0);
+    vi.spyOn(hibernating, 'dispose').mockImplementationOnce(() => { throw new Error('xterm ímpar'); });
+
+    setHostVisibility(agent.id, false);
+    await vi.advanceTimersByTimeAsync(20);
+
+    // Não hibernou: o pane segue com o xterm vivo...
+    expect(host.virtualized).toBeNull();
+    expect(host.term).toBe(hibernating);
+    // ...e a cauda que ele não chegou a retirar continua inteira no scheduler.
+    expect(terminalOutputScheduler.getQueuedChars(hibernating)).toBe(queued);
+    expect(terminalOutputScheduler.takeQueuedTerminalOutput(hibernating)).toBe('CAUDA-NA-FILA');
+  });
+
   it('replay de adoção e repaint local chegam sem queries; saída ao vivo segue crua', async () => {
     spawn.mockResolvedValueOnce({ ok: true, sessionId: 'pty-adopted', adopted: true });
     vi.mocked(window.nexus.pty.replay).mockImplementation(async (sessionId) => {

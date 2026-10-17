@@ -1,0 +1,22 @@
+{
+  "surface": "GitPanelBody / Alterações / Mesa limpa",
+  "method": "Nexus browser; real component and global.css, mocked status matching attachment; 3 cycles loading true/false; sampling at 180ms",
+  "before": {
+    "revision": "HEAD before fix",
+    "cycles": 3,
+    "contentReplacements": 3
+  },
+  "after": {
+    "cycles": 3,
+    "contentReplacements": 0,
+    "sameTop": true
+  },
+  "limitations": [
+    "Visual harness uses simulated status, not the packaged Electron application.",
+    "Nexus screenshots were cropped to the narrow pane; the after capture missed the centered content. No complete visual validation claimed."
+  ],
+  "artifacts": {
+    "beforeScreenshot": "browser-cf49b21c-ac73-44c4-83be-0472c5693d9d",
+    "afterScreenshot": "browser-5fdf466c-b458-46b1-9eca-fa652d7d8ee7"
+  }
+}

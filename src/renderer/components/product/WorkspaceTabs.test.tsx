@@ -2,7 +2,11 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { PaneScopeEntry } from '../../lib/pane-spaces';
+import {
+  isDeadPaneState,
+  retiredScopeKeys,
+  type PaneScopeEntry,
+} from '../../lib/pane-spaces';
 import {
   WorkspaceTabs,
   workspaceTabIsClosable,
@@ -565,6 +569,28 @@ describe('workspaceTabIsClosable / workspaceTabTone', () => {
         space({ key: 'mission:d', kind: 'mission', title: 'Feita', state: 'completed' }),
       ),
     ).toBe(true);
+  });
+
+  it('aba aposentada (sem sessão viva) fecha mesmo com missão em estado não terminal', () => {
+    const alive = space({ key: 'mission:r', kind: 'mission', title: 'R', state: 'blocked_user' });
+    expect(workspaceTabIsClosable(alive)).toBe(false);
+    expect(workspaceTabIsClosable({ ...alive, retired: true })).toBe(true);
+    expect(
+      workspaceTabIsClosable(
+        space({ key: '__loose__', kind: 'loose', title: 'T', retired: true, missions: [{ id: 'x', title: 'X' }] }),
+      ),
+    ).toBe(true);
+  });
+
+  it('retiredScopeKeys: só abas com todos os panes mortos', () => {
+    const mk = (id: string) => ({ id }) as never;
+    const scopeOf = (p: { id: string }) => (p.id.startsWith('a') ? 'A' : 'B');
+    const keys = retiredScopeKeys([mk('a1'), mk('a2'), mk('b1')], scopeOf as never, new Set(['a1', 'b1']));
+    expect([...keys]).toEqual(['B']);
+    expect(isDeadPaneState('exited')).toBe(true);
+    expect(isDeadPaneState('hibernated')).toBe(true);
+    expect(isDeadPaneState(undefined)).toBe(false);
+    expect(isDeadPaneState('busy')).toBe(false);
   });
 
   it('um estado, um tom — o mesmo mapa das superfícies de missão', () => {

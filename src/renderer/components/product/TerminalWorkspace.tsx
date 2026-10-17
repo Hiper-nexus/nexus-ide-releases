@@ -10,6 +10,7 @@ import {
   ALL_SCOPES_KEY,
   LOOSE_SCOPE_KEY,
   LOOSE_SCOPE_TITLE,
+  isDeadPaneState,
   listPaneScopes,
   looseHomeScopeKey,
   missionScopeKey,
@@ -396,13 +397,17 @@ export function TerminalWorkspace({
 
   const closeTab = useCallback(
     async (scope: PaneScopeEntry) => {
-      if (!workspaceTabIsClosable(scope)) return;
       const members = selectScopePanes(
         listPanes(useLayoutStore.getState().root),
         scope.key,
         useOrchStore.getState().paneMissions,
       ).filter((pane) => !pane.isStructuralPlaceholder);
       if (members.length === 0) return;
+      const paneStates = useSessionStateStore.getState().paneStates;
+      const retired = members.every(
+        (pane) => isDeadPaneState(paneStates.get(pane.id)),
+      );
+      if (!retired && !workspaceTabIsClosable(scope)) return;
       const confirmed = await askConfirm({
         title: `Fechar a aba “${scope.title}”?`,
         body:

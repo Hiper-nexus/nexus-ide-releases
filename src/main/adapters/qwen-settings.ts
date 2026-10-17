@@ -13,7 +13,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { MODEL_ID_PATTERN } from '../../shared/model-id';
 import {
+  DEEPSEEK_DIRECT_HOST,
   DEEPSEEK_TOKEN_PLAN_MODEL,
+  httpsHostOf,
   isAlibabaTokenPlanUrl,
 } from './deepseek-provider';
 
@@ -29,12 +31,20 @@ export interface QwenSettingsSummary {
   readonly tokenPlan: boolean;
   /**
    * Ids `qwen*` do catálogo `modelProviders.*[]` (outros providers não
-   * entram) e, só no Token Plan, o `deepseek-v4-pro` que o plano serve.
+   * entram), o `deepseek-flash` quando o endpoint é o da DeepSeek direta
+   * (o id não é servido por DashScope) e, só no Token Plan, o
+   * `deepseek-v4-pro` que o plano serve.
    */
   readonly modelIds: readonly string[];
 }
 
 const QWEN_MODEL_ID = /^qwen[0-9a-z.-]*$/i;
+/** Menu canônico do Flash: o `deepseek-v4-flash` é o mesmo modelo, via alias. */
+const DEEPSEEK_FLASH_MODEL = 'deepseek-flash';
+const DEEPSEEK_FLASH_ALIASES: ReadonlySet<string> = new Set([
+  DEEPSEEK_FLASH_MODEL,
+  'deepseek-v4-flash',
+]);
 
 function objectField(value: unknown, key: string): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -63,6 +73,15 @@ function nonEmptyString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0
     ? value.trim()
     : null;
+}
+
+/** Primeiro valor não vazio — a base URL da linha vence a do modelo/auth. */
+function firstNonEmptyString(...values: unknown[]): string | null {
+  for (const value of values) {
+    const text = nonEmptyString(value);
+    if (text) return text;
+  }
+  return null;
 }
 
 export function qwenSettingsPath(home: string = os.homedir()): string {
@@ -101,6 +120,13 @@ function parseQwenSettingsSummary(raw: unknown): QwenSettingsSummary {
     }
   }
 
+  const auth = objectField(objectField(settings, 'security'), 'auth');
+  const model = objectField(settings, 'model');
+  const baseUrl = nonEmptyString(model?.baseUrl);
+  // F-724: o Token Plan serve o deepseek-v4-pro pelo mesmo endpoint do Qwen
+  // (sonda 02/10: v4-pro 200, v4-flash 403). Só ele entra no plano.
+  const tokenPlan = settingsUseTokenPlan(settings);
+
   const modelIds = new Set<string>();
   const providers = settings.modelProviders;
   if (providers && typeof providers === 'object' && !Array.isArray(providers)) {
@@ -120,27 +146,25 @@ function parseQwenSettingsSummary(raw: unknown): QwenSettingsSummary {
         ) {
           hasCredential = true;
         }
-        if (
-          id &&
-          QWEN_MODEL_ID.test(id) &&
-          MODEL_ID_PATTERN.test(id)
-        ) {
+        if (!id || !MODEL_ID_PATTERN.test(id)) continue;
+        if (QWEN_MODEL_ID.test(id)) {
           modelIds.add(id);
+          continue;
+        }
+        // DeepSeek Flash também roda pelo Qwen Code quando o endpoint da
+        // linha (ou o do modelo/auth) é o da DeepSeek direta. No Token Plan
+        // e no DashScope o id não é servido, então continua fora.
+        if (
+          DEEPSEEK_FLASH_ALIASES.has(id) &&
+          httpsHostOf(firstNonEmptyString(entry.baseUrl, model?.baseUrl, auth?.baseUrl)) ===
+            DEEPSEEK_DIRECT_HOST
+        ) {
+          modelIds.add(DEEPSEEK_FLASH_MODEL);
         }
       }
     }
   }
 
-  const model = settings.model;
-  const baseUrl =
-    model && typeof model === 'object' && !Array.isArray(model)
-      ? nonEmptyString((model as Record<string, unknown>).baseUrl)
-      : null;
-
-  // F-724: o Token Plan serve o DeepSeek V4 Pro pelo mesmo endpoint do Qwen
-  // (sonda 02/10: v4-pro 200, v4-flash 403). Só ele entra, e só no plano —
-  // outros `deepseek-*` do settings continuam fora.
-  const tokenPlan = settingsUseTokenPlan(settings);
   if (tokenPlan) modelIds.add(DEEPSEEK_TOKEN_PLAN_MODEL);
 
   return { hasCredential, baseUrl, tokenPlan, modelIds: [...modelIds] };

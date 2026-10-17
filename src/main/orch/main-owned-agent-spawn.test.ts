@@ -64,6 +64,9 @@ vi.mock("../../shared/mission-intent", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../shared/mission-intent")>()),
   hasCurrentDispatchAuthority: () => true,
 }));
+// Registro de abas do Main (Bug 4): a prova real mora em pane-space-worktree.
+const tabDeps = vi.hoisted(() => ({ findByCwd: vi.fn((_scope: unknown, _cwd?: string): string | undefined => undefined) }));
+vi.mock("../pty/pane-space-worktree", () => ({ findPaneSpaceIdByWorktreeCwd: tabDeps.findByCwd }));
 // Selo atual da missão para o caminho do pane persistido (F-721): o resto da
 // comparação de selo é o código real.
 const sealDeps = vi.hoisted(() => ({ current: null as unknown }));
@@ -164,6 +167,7 @@ describe("main-owned agent spawn boundary", () => {
     registryDeps.hasLivePaneSession.mockReturnValue(false);
     registryDeps.bindPendingSpawnSession.mockReturnValue(true);
     registryDeps.bindPendingRecoverySpawnSession.mockReturnValue(true);
+    tabDeps.findByCwd.mockReset().mockReturnValue(undefined);
   });
 
   it("restores the main-sealed pending authority when presentation loses its token", () => {
@@ -265,6 +269,29 @@ describe("main-owned agent spawn boundary", () => {
     expect(authorized.request.missionId).toBeUndefined();
     expect(authorized.request.orchRequestId).toBeUndefined();
     expect(warn).toHaveBeenCalled();
+  });
+
+  it("Bug 4: missão removida com cwd na worktree antiga reabre o pane direto no checkout", () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const stale = {
+      kind: "cli-agent" as const, cols: 80, rows: 24, adapterId: "claude",
+      paneId: "pane-from-deleted-mission", missionId: "mission-deleted",
+    };
+    const orphan = authorizeMainOwnedAgentSpawn(owner as never,
+      { ...stale, cwd: "/runtime/worktrees.noindex/task-old" }, {} as never);
+    expect(orphan.request).toMatchObject({ missionId: undefined, cwd: undefined });
+    expect(tabDeps.findByCwd).toHaveBeenCalledWith(scope, "/runtime/worktrees.noindex/task-old");
+
+    // A worktree de aba registrada fica: o preparo da aba decide (e recusa pasta removida).
+    tabDeps.findByCwd.mockReturnValue("space-a");
+    const tab = authorizeMainOwnedAgentSpawn(owner as never,
+      { ...stale, cwd: "/runtime/worktrees.noindex/task-tab" }, {} as never);
+    expect(tab.request).toMatchObject({ missionId: undefined, cwd: "/runtime/worktrees.noindex/task-tab" });
+
+    // Dentro do checkout nada muda.
+    const inside = authorizeMainOwnedAgentSpawn(owner as never,
+      { ...stale, cwd: `${scope.rootRealPath}/src` }, {} as never);
+    expect(inside.request.cwd).toBe(`${scope.rootRealPath}/src`);
   });
 
   it("derives persisted squad identity only from the current scoped mission", () => {

@@ -3,6 +3,7 @@ import {
   EMPTY_SPECIALTY_BENCHMARK,
   applyEffortFloor,
   classifyRouteSpecialty,
+  normalizeRouteSpecialty,
   preferAdapterOrder,
   resolveSpecialtyPolicy,
   specialtyBenchmarkIsMeasured,
@@ -177,3 +178,31 @@ describe('F-1289 (revisão de ponta): overlay de segurança com flexão inglesa'
     expect(classifyRouteSpecialty('corrigir a cobrança do worker que não entrega').specialty).not.toBe('security');
   });
 });
+
+describe('normalizeRouteSpecialty', () => {
+  it('normaliza frontend, ui e ux para visual', () => {
+    expect(normalizeRouteSpecialty('frontend')).toBe('visual');
+    expect(normalizeRouteSpecialty('front-end')).toBe('visual');
+    expect(normalizeRouteSpecialty('FRONTEND')).toBe('visual');
+    expect(normalizeRouteSpecialty('ui')).toBe('visual');
+    expect(normalizeRouteSpecialty('ux')).toBe('visual');
+  });
+
+  it('preserva especialidades canônicas válidas', () => {
+    expect(normalizeRouteSpecialty('visual')).toBe('visual');
+    expect(normalizeRouteSpecialty('security')).toBe('security');
+    expect(normalizeRouteSpecialty('bug')).toBe('bug');
+    expect(normalizeRouteSpecialty('feature')).toBe('feature');
+    expect(normalizeRouteSpecialty('doc')).toBe('doc');
+    expect(normalizeRouteSpecialty('ops')).toBe('ops');
+    expect(normalizeRouteSpecialty('general')).toBe('general');
+  });
+
+  it('retorna null para entradas desconhecidas ou inválidas', () => {
+    expect(normalizeRouteSpecialty('unknown')).toBeNull();
+    expect(normalizeRouteSpecialty('')).toBeNull();
+    expect(normalizeRouteSpecialty(null)).toBeNull();
+    expect(normalizeRouteSpecialty(undefined)).toBeNull();
+  });
+});
+

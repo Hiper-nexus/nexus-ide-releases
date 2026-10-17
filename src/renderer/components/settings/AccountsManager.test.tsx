@@ -641,6 +641,7 @@ describe('AccountsManager', () => {
           label: 'Trabalho',
           active: false,
           needsRelogin: true,
+          lastError: 'oauth session expired — sonda de quota',
         }),
       ],
     });
@@ -652,17 +653,24 @@ describe('AccountsManager', () => {
 
     const rows = [...host.querySelectorAll('.acct__row')];
     const row = rows.find((r) => r.textContent?.includes('Trabalho'));
-    expect(row?.textContent).toContain('sessão expirada — entre novamente');
+    const warn = row?.querySelector('.acct__warn');
+    // O botão ao lado já diz "Entrar novamente": o aviso nomeia o estado, sem
+    // travessão nem o erro interno em inglês no tooltip.
+    expect(warn?.textContent).toBe('sessão expirada');
+    expect(warn?.getAttribute('title')).not.toMatch(/oauth|sonda|—/i);
     expect(row?.getAttribute('data-state')).toBe('warn');
     const relogin = [...(row?.querySelectorAll('button') ?? [])].find((b) =>
       b.textContent?.includes('Entrar novamente'),
     );
     expect(relogin).toBeTruthy();
+    expect(relogin?.className).toContain('settings-btn--primary');
     const use = [...(row?.querySelectorAll('button') ?? [])].find(
       (b) => b.textContent === 'Usar',
     );
     expect(use?.disabled).toBe(true);
     expect(use?.title).toContain('entre novamente');
+    // Uma ação primária por linha: a recuperação, não o "Usar" bloqueado.
+    expect(use?.className).not.toContain('settings-btn--primary');
     act(() => root.unmount());
   });
 
@@ -1004,13 +1012,56 @@ describe('AccountsManager', () => {
     act(() => root.unmount());
   });
 
+  it.each([true, false])('completes a native-only login honestly (verified=%s)', async (verified) => {
+    const snapshot = vi.mocked(window.nexus.accounts.supportsSnapshot);
+    snapshot.mockResolvedValue({ ok: true, supported: true });
+    vi.mocked(window.nexus.providers.authStatus).mockResolvedValue([{ adapterId: 'muse', state: 'ok', detail: 'sessão nativa' }]);
+    const { host, root } = mount('muse');
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="acct-add-account"]')!.click(); });
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="acct-add-account-login"]')!.click(); });
+    vi.mocked(useAccountStore.getState().addActiveSession).mockClear();
+    snapshot.mockResolvedValue({ ok: true, supported: false });
+    await act(async () => {
+      finishLogin({ verified, status: { adapterId: 'muse', state: 'ok', detail: 'sessão nativa nova' } });
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    });
+    expect(useAccountStore.getState().addActiveSession).not.toHaveBeenCalled();
+    expect(host.textContent).not.toContain('Salvar esta conta');
+    expect(host.textContent).not.toContain('salva no Nexus');
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    expect(host.textContent).toContain('chave de API');
+    if (verified) expect(host.textContent).toContain('Login nativo de muse confirmado');
+    else {
+      expect(host.textContent).toMatch(/não deu para confirmar um login novo/i);
+      expect(host.textContent).not.toContain('Login nativo de muse confirmado');
+    }
+    act(() => root.unmount());
+  });
+
+  it('refreshes snapshot capability when the auth source changes while remaining connected', async () => {
+    const snapshot = vi.mocked(window.nexus.accounts.supportsSnapshot);
+    snapshot.mockResolvedValue({ ok: true, supported: true });
+    const host = document.createElement('div'); document.body.appendChild(host);
+    const root = createRoot(host);
+    const render = (detail: string) => root.render(<AccountsManager adapterId="muse" adapterLabel="Muse" authStatus={{ adapterId: 'muse', state: 'ok', detail }} />);
+    await act(async () => { render('sessão portátil'); });
+    expect(host.textContent).toContain('Salvar esta conta');
+    snapshot.mockResolvedValue({ ok: true, supported: false });
+    await act(async () => { render('sessão nativa sem snapshot'); });
+    expect(host.textContent).not.toContain('Salvar esta conta');
+    expect(host.textContent).toContain('A sessão continua na CLI desta máquina');
+    expect(host.textContent).not.toContain('Keychain');
+    act(() => root.unmount());
+  });
+
   it('CLI sem snapshot diz a verdade em vez de prometer contas paralelas', async () => {
     Object.defineProperty(window, 'nexus', {
       configurable: true,
       value: {
         providers: {
           authStatus: vi.fn(async () => [
-            { adapterId: 'muse', state: 'ok', detail: 'sessão viva' },
+            { adapterId: 'muse', state: 'ok', detail: 'sessão nativa sem e-mail' },
           ]),
         },
         accounts: {
@@ -1032,6 +1083,9 @@ describe('AccountsManager', () => {
       await Promise.resolve();
     });
 
+    expect(host.textContent).toContain('A sessão continua na CLI desta máquina');
+    expect(host.textContent).not.toContain('Salvar esta conta');
+    expect(host.textContent).toContain('Adicionar chave de API');
     await act(async () => {
       host.querySelector<HTMLButtonElement>('[data-testid="acct-add-account"]')!.click();
     });

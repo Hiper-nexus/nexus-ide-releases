@@ -56,6 +56,10 @@ import { rememberKimiSeatReadiness } from '../adapters/seat-auth-readiness';
 import { adapterCircuitBreakers } from './circuit-breaker';
 import { isCliLimited, noteCliLimit, resetCliLimits } from './cli-limit-registry';
 import { QUOTA_ENTRY_MAX_AGE_MS } from './quota-pace';
+import {
+  clearRecentCredentialProbeFailuresForTests,
+  recordRecentCredentialProbeFailure,
+} from '../pty/pre-spawn-probe';
 import { buildDomainTools, routeTaskForCaller } from './tools-domain';
 import { clearRouteProvenance, hasRecentRouteMatch } from './route-provenance';
 import { clearRouteLog, recentRouteLog } from './route-log';
@@ -212,6 +216,43 @@ describe('nexus_route_task wiring', () => {
       { task: 'tarefa de complexidade média' },
       context(),
     )) as { skillSuggestion?: unknown };
+    expect(decision.skillSuggestion).toBeNull();
+  });
+
+  it.each(['.claude/skills/api-review/SKILL.md', '.nexus/skills/api-review/SKILL.md'])(
+    'preserva a skill de projeto %s quando a rota escolhe CLI sem superfície bundled',
+    async (skillPath) => {
+      mocks.listProviderSettings.mockReturnValue([
+        { adapterId: 'muse', enabled: true, installed: true, authStrategy: 'oauth', models: ['muse-wonder-1.0'] },
+      ]);
+      mocks.classifyTaskWithSkillForRouting.mockResolvedValue({
+        kind: 'unavailable',
+        reason: 'invalid-answer',
+        skillSuggestion: { name: 'api-review', pkg: 'project', path: skillPath, confidence: 0.9 },
+      });
+
+      const decision = await routeTaskForCaller({ task: 'tarefa de complexidade média' }, context());
+
+      expect(decision.adapterId).toBe('muse');
+      expect(decision.skillSuggestion).toEqual({
+        name: 'api-review', pkg: 'project', path: skillPath, confidence: 0.9,
+      });
+    },
+  );
+
+  it('omite skill bundled quando a rota escolhe CLI sem sua superfície de entrega', async () => {
+    mocks.listProviderSettings.mockReturnValue([
+      { adapterId: 'muse', enabled: true, installed: true, authStrategy: 'oauth', models: ['muse-wonder-1.0'] },
+    ]);
+    mocks.classifyTaskWithSkillForRouting.mockResolvedValue({
+      kind: 'unavailable',
+      reason: 'invalid-answer',
+      skillSuggestion: { name: 'ponytail', pkg: 'ponytail', confidence: 0.9 },
+    });
+
+    const decision = await routeTaskForCaller({ task: 'tarefa de complexidade média' }, context());
+
+    expect(decision.adapterId).toBe('muse');
     expect(decision.skillSuggestion).toBeNull();
   });
 
@@ -657,6 +698,33 @@ describe('nexus_route_task — exclude do caller só honra CLI doente', () => {
       expect(decision.reason).toContain('fora da rota (limite de uso confirmado): muse: usage limited');
     } finally {
       resetCliLimits();
+    }
+  });
+
+  // Rota ≠ execução (16/10): a rota lia o muse como pronto, o gate pré-spawn
+  // recusava a credencial e o assento caía no claude — 22 de 23 spawns, porque
+  // a rota reescolhia o muse a cada pedido. A recusa recente o tira da rota.
+  it('credencial recusada no spawn recente tira a CLI da rota, com motivo', async () => {
+    mocks.listProviderSettings.mockReturnValue([museProvider, codexProvider]);
+    recordRecentCredentialProbeFailure('muse');
+    try {
+      const decision = (await routeTaskForCaller(
+        { task: 'tarefa média', preferAdapters: ['muse'] },
+        context(),
+      )) as { adapterId: string; reason: string };
+      expect(decision.adapterId).not.toBe('muse');
+      expect(decision.reason).toContain('fora da rota (credencial recusada no spawn recente): muse');
+      const rows = mocks.routeTask.mock.calls.at(-1)?.[1] as Array<{
+        id: string;
+        installed: boolean;
+        unavailableReason?: string;
+      }>;
+      expect(rows.find((row) => row.id === 'muse')).toMatchObject({
+        installed: false,
+        unavailableReason: 'credencial recusada no spawn',
+      });
+    } finally {
+      clearRecentCredentialProbeFailuresForTests();
     }
   });
 

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { PaneSessionState } from '../../shared/types';
+import { clearPaneBirthElapsedForPane } from '../lib/pane-birth-display';
 
 /**
  * Tracks idle/busy state per pane, keyed by pane id. Updated by the terminal
@@ -37,6 +38,8 @@ export const useSessionStateStore = create<SessionStateStore>((set, get) => ({
   setPaneState: (paneId, state) => {
     const prev = get().paneStates.get(paneId);
     if (prev === state) return;
+    // O relógio de nascimento vive fora do React: encerra com o estado, mesmo sem overlay montado.
+    if (state !== 'spawning' || prev !== 'spawning') clearPaneBirthElapsedForPane(paneId);
 
     // Busy → idle: publish truth now, hold the chip/fleet/border until the
     // quiet gap is real (or more output cancels the hold).
@@ -76,6 +79,7 @@ export const useSessionStateStore = create<SessionStateStore>((set, get) => ({
   },
 
   clearPaneState: (paneId) => {
+    clearPaneBirthElapsedForPane(paneId);
     clearIdleDisplayTimer(paneId);
     set((s) => {
       const paneStates = new Map(s.paneStates);

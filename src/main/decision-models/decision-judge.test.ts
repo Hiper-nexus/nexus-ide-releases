@@ -1,19 +1,58 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../persistence/settings-store', () => ({ getOrchSettings: () => ({}) }));
 vi.mock('../persistence/secrets-store', () => ({ getSecret: () => null, hasSecret: () => false, setSecret: () => ({ ok: true }), isSecureStorageAvailable: () => true }));
 vi.mock('../jev/jev-decision-log', () => ({ recordJevNoAnswer: vi.fn(() => 'id'), recordJevDecision: vi.fn(() => 'id') }));
 import { recordJevDecision, recordJevNoAnswer } from '../jev/jev-decision-log';
 
 import { judgeDecision } from './decision-judge';
+import { DecisionBudgetLedger } from './decision-budget';
+import { isDecisionProviderBlocked, recordDecisionProviderFailure, resetDecisionHealthForTesting } from './decision-health';
+import { estimateDecisionCostUsd, estimateDecisionInputTokens } from './decision-pricing';
+import type { DecisionQualityTable } from './decision-quality';
 import { bumpDecisionCredentialRevision } from './decision-revision';
-import type { DecisionSettings } from '../../shared/decision-models';
+import type { JudgeInput } from '../jev/jev-client';
+import { missionDecisionBudgetUsd, type DecisionSettings } from '../../shared/decision-models';
 
 const settings: DecisionSettings = { mode: 'auto', clefModel: 'clef', cloudflareAccountId: '0123456789abcdef0123456789abcdef', visionEnabled: false };
 const input = { state: 'choose a tool', questions: { q: { type: 'noul' as const, instructions: 'Is it relevant?' } }, surface: 'toolPick' as const };
 const nativeResult = { model: 'jev-1.13.0', answers: { q: { type: 'noul' as const, noul: 0.8 } }, usage: { input_tokens: 100, output_tokens: 0 } };
 const connection = { accountId: settings.cloudflareAccountId, token: 'synthetic-token', model: 'clef' as const };
 
+function openBreaker(provider: 'jev' | 'clef' | 'luna'): void {
+  const now = Date.now();
+  recordDecisionProviderFailure(provider, 'timeout', now);
+  recordDecisionProviderFailure(provider, 'timeout', now + 1);
+  recordDecisionProviderFailure(provider, 'timeout', now + 2);
+}
+
+function openJevBreaker(): void {
+  openBreaker('jev');
+}
+
 describe('common decision service', () => {
+  beforeEach(() => resetDecisionHealthForTesting());
+  it.each(['auto', 'luna', 'together'] as const)('%s: ausência de rota publica zero antes da falha, sem duplicar o diário', async mode => {
+    vi.mocked(recordJevNoAnswer).mockClear();
+    const onUsage = vi.fn();
+    const onNoAnswer = vi.fn();
+    const nativeJudge = vi.fn(async () => nativeResult);
+    const fetcher = vi.fn(async () => Response.json({}));
+
+    const result = await judgeDecision({ ...input, onUsage, onNoAnswer }, {
+      nativeJudge, fetch: fetcher as typeof fetch, getSettings: () => ({ ...settings, mode }),
+      getAvailability: () => ({ jev: false, clef: false, luna: mode === 'together' }),
+      getQualityTable: () => null, getConfigurationKey: () => 'stable',
+    });
+
+    expect(result).toBeNull();
+    expect(nativeJudge).not.toHaveBeenCalled();
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(onUsage).toHaveBeenCalledExactlyOnceWith({ inputTokens: 0, usd: 0, requestCount: 0, durationMs: 0, usageIncomplete: false });
+    expect(onNoAnswer).toHaveBeenCalledExactlyOnceWith('client-error');
+    expect(onUsage.mock.invocationCallOrder[0]).toBeLessThan(onNoAnswer.mock.invocationCallOrder[0]);
+    expect(recordJevNoAnswer).toHaveBeenCalledTimes(mode === 'luna' ? 0 : 1);
+  });
+
   it('preserves the no-throw contract when configuration cannot be read', async () => {
     const onNoAnswer = vi.fn();
     const result = await judgeDecision({ ...input, onNoAnswer }, {
@@ -42,16 +81,20 @@ describe('common decision service', () => {
   });
   it('records a failure before any HTTP request as a measured zero, not an unknown count', async () => {
     const controller = new AbortController(); controller.abort();
-    await judgeDecision({ ...input, signal: controller.signal }, {
+    const onUsage = vi.fn();
+    await judgeDecision({ ...input, signal: controller.signal, onUsage }, {
       nativeJudge: async () => nativeResult, getSettings: () => settings,
       getAvailability: () => ({ jev: true, clef: true }), getConfigurationKey: () => 'stable',
     });
     expect(recordJevNoAnswer).toHaveBeenLastCalledWith(expect.objectContaining({ reason: 'aborted',
       usage: expect.objectContaining({ requestCount: 0, usageIncomplete: false }) }));
-    await judgeDecision(input, { nativeJudge: async () => nativeResult, getSettings: () => settings,
+    expect(onUsage).toHaveBeenCalledExactlyOnceWith({ inputTokens: 0, usd: 0, requestCount: 0, durationMs: 0, usageIncomplete: false });
+    onUsage.mockClear();
+    await judgeDecision({ ...input, onUsage }, { nativeJudge: async () => nativeResult, getSettings: () => settings,
       getAvailability: () => ({ jev: true, clef: true }), getConfigurationKey: () => 'stable', getClefConnection: () => undefined });
     expect(recordJevNoAnswer).toHaveBeenLastCalledWith(expect.objectContaining({ reason: 'client-error',
       usage: expect.objectContaining({ requestCount: 0 }) }));
+    expect(onUsage).toHaveBeenCalledExactlyOnceWith({ inputTokens: 0, usd: 0, requestCount: 0, durationMs: 0, usageIncomplete: false });
   });
   it('calls the selected Cloudflare endpoint and attaches the actual provider receipt', async () => {
     let endpoint = ''; let nativeCalls = 0;
@@ -95,8 +138,9 @@ describe('common decision service', () => {
     let revision = 'before'; let requests = 0;
     vi.mocked(recordJevNoAnswer).mockClear();
     const onNoAnswer = vi.fn();
+    const onUsage = vi.fn();
     const questions = Object.fromEntries(Array.from({ length: 65 }, (_, index) => [`q${index}`, input.questions.q]));
-    const result = await judgeDecision({ ...input, surface: 'intake', questions, onNoAnswer }, {
+    const result = await judgeDecision({ ...input, surface: 'intake', questions, onNoAnswer, onUsage }, {
       nativeJudge: async () => { throw new Error('Luna-only must not call the native transport'); },
       getSettings: () => ({ ...settings, mode: 'luna' }), getAvailability: () => ({ jev: false, clef: false, luna: true }),
       getConfigurationKey: () => revision, resolveLunaKey: () => 'synthetic-luna', now: () => 100,
@@ -113,6 +157,8 @@ describe('common decision service', () => {
     expect(recordJevNoAnswer).toHaveBeenCalledOnce();
     expect(recordJevNoAnswer).toHaveBeenCalledWith(expect.objectContaining({ reason: 'aborted',
       usage: { inputTokens: 1_000, usd: 0.0001, requestCount: 2, durationMs: 0, usageIncomplete: true } }));
+    expect(onUsage).toHaveBeenCalledExactlyOnceWith({ inputTokens: 1_000, usd: 0.0001, requestCount: 2, durationMs: 0, usageIncomplete: true });
+    expect(onUsage.mock.invocationCallOrder[0]).toBeLessThan(onNoAnswer.mock.invocationCallOrder[0]);
   });
 
   it('does not fall back to Jev after a Clef request is revoked', async () => {
@@ -150,14 +196,18 @@ describe('common decision service', () => {
 
   it('records a Luna refusal without turning it into a negative predicate or keeping the input', async () => {
     const onNoAnswer = vi.fn();
-    const result = await judgeDecision({ ...input, surface: 'intake', state: 'private brief', onNoAnswer }, {
+    const onUsage = vi.fn();
+    const result = await judgeDecision({ ...input, surface: 'intake', state: 'private brief', onNoAnswer, onUsage }, {
       nativeJudge: async () => nativeResult,
       getSettings: () => ({ ...settings, mode: 'luna' }), getAvailability: () => ({ jev: true, clef: true, luna: true }),
       getConfigurationKey: () => 'stable', resolveLunaKey: () => 'sk-luna-secret',
-      fetch: (async () => Response.json({ answers: [{ type: 'refusal', name: 'q0' }] })) as typeof fetch,
+      fetch: (async () => Response.json({ usage: { input_tokens: 1_000 }, answers: [{ type: 'refusal', name: 'q0' }] })) as typeof fetch,
     });
     expect(result).toBeNull();
     expect(onNoAnswer).toHaveBeenCalledWith('refusal');
+    expect(onUsage).toHaveBeenCalledOnce();
+    expect(onUsage).toHaveBeenCalledWith(expect.objectContaining({ requestCount: 1, inputTokens: 1_000, usd: 0.0001 }));
+    expect(onUsage.mock.invocationCallOrder[0]).toBeLessThan(onNoAnswer.mock.invocationCallOrder[0]);
     expect(recordJevNoAnswer).toHaveBeenLastCalledWith(expect.objectContaining({ reason: 'refusal', provider: 'luna' }));
     const recorded = vi.mocked(recordJevNoAnswer).mock.calls.at(-1)?.[0];
     expect(JSON.stringify(recorded)).not.toContain('private brief');
@@ -199,9 +249,11 @@ describe('common decision service', () => {
   it('records one ensemble failure, keeping the first reason', async () => {
     vi.mocked(recordJevNoAnswer).mockClear();
     const onNoAnswer = vi.fn();
-    const result = await judgeDecision({ ...input, surface: 'dispatchGuard', state: 'private brief', onNoAnswer, questions: { injected: input.questions.q } }, {
+    const onUsage = vi.fn();
+    const result = await judgeDecision({ ...input, surface: 'dispatchGuard', state: 'private brief', onNoAnswer, onUsage, questions: { injected: input.questions.q } }, {
       nativeJudge: async (watched) => {
         await new Promise(resolve => setTimeout(resolve, 20));
+        watched.onUsage?.({ inputTokens: null, usd: null, requestCount: 1, durationMs: 20, usageIncomplete: true });
         watched.onNoAnswer?.('timeout');
         return null;
       },
@@ -212,6 +264,9 @@ describe('common decision service', () => {
     expect(result).toBeNull();
     expect(onNoAnswer).toHaveBeenCalledTimes(1);
     expect(onNoAnswer).toHaveBeenCalledWith('refusal');
+    expect(onUsage).toHaveBeenCalledOnce();
+    expect(onUsage).toHaveBeenCalledWith(expect.objectContaining({ requestCount: 2, usageIncomplete: true }));
+    expect(onUsage.mock.invocationCallOrder[0]).toBeLessThan(onNoAnswer.mock.invocationCallOrder[0]);
     expect(recordJevNoAnswer).toHaveBeenCalledTimes(1);
     expect(recordJevNoAnswer).toHaveBeenCalledWith(expect.objectContaining({ reason: 'refusal' }));
     expect(JSON.stringify(vi.mocked(recordJevNoAnswer).mock.calls[0]?.[0])).not.toContain('private brief');
@@ -275,5 +330,324 @@ describe('common decision service', () => {
     expect(JSON.stringify(recorded)).not.toContain('private brief');
     expect(recorded?.ensemblePeers?.pick.jev).toBe(0.4);
     expect(recorded?.ensemblePeers?.pick.luna).toBeGreaterThan(0.4);
+  });
+
+  it('fails open at once when the Jev breaker is open on a pinned surface', async () => {
+    openJevBreaker();
+    vi.mocked(recordJevNoAnswer).mockClear();
+    const nativeJudge = vi.fn(async () => nativeResult);
+    const onNoAnswer = vi.fn();
+    const started = Date.now();
+    const result = await judgeDecision({ ...input, surface: 'dispatchGuard', onNoAnswer }, {
+      nativeJudge, getSettings: () => settings,
+      getAvailability: () => ({ jev: true, clef: true, luna: true }),
+      getConfigurationKey: () => 'stable', getClefConnection: () => connection,
+      resolveLunaKey: () => 'sk-luna-secret',
+    });
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(result).toBeNull();
+    expect(nativeJudge).not.toHaveBeenCalled();
+    expect(onNoAnswer).toHaveBeenCalledTimes(1);
+    expect(onNoAnswer).toHaveBeenCalledWith('network');
+    expect(recordJevNoAnswer).toHaveBeenCalledTimes(1);
+    expect(recordJevNoAnswer).toHaveBeenCalledWith(expect.objectContaining({
+      reason: 'network', surface: 'dispatchGuard',
+      usage: expect.objectContaining({ requestCount: 0 }),
+    }));
+    expect(isDecisionProviderBlocked('jev')).toBe(true);
+  });
+
+  it('fails over to clef-flash when Jev times out on a calibrated surface', async () => {
+    vi.mocked(recordJevNoAnswer).mockClear();
+    const onNoAnswer = vi.fn();
+    const nativeJudge = vi.fn(async (watched) => {
+      watched.onNoAnswer?.('timeout');
+      return null;
+    });
+    let model = '';
+    const result = await judgeDecision({ ...input, surface: 'taskRouting', onNoAnswer }, {
+      nativeJudge, getSettings: () => settings,
+      getAvailability: () => ({ jev: true, clef: true, luna: true }),
+      getConfigurationKey: () => 'stable', getClefConnection: () => connection,
+      resolveLunaKey: () => 'sk-luna-secret',
+      fetch: (async (_url, options) => {
+        const body = JSON.parse(String(options?.body));
+        model = body.model;
+        return Response.json({ success: true, result: { ...nativeResult, model: body.model,
+          answers: Object.fromEntries(Object.keys(body.questions).map(id => [id, { type: 'noul', noul: 0.7 }])) } });
+      }) as typeof fetch,
+    });
+    expect(nativeJudge).toHaveBeenCalledTimes(1);
+    expect(model).toBe('clef-flash');
+    expect(result?.route).toMatchObject({ provider: 'clef', model: 'clef-flash' });
+    expect(onNoAnswer).not.toHaveBeenCalled();
+    expect(recordJevNoAnswer).not.toHaveBeenCalled();
+  });
+
+  it('does not fail over after an abort on a calibrated surface', async () => {
+    vi.mocked(recordJevNoAnswer).mockClear();
+    const fetchMock = vi.fn(async () => Response.json({}));
+    const onNoAnswer = vi.fn();
+    const result = await judgeDecision({ ...input, surface: 'taskRouting', onNoAnswer }, {
+      nativeJudge: async (watched) => { watched.onNoAnswer?.('aborted'); return null; },
+      getSettings: () => settings, getAvailability: () => ({ jev: true, clef: true, luna: true }),
+      getConfigurationKey: () => 'stable', getClefConnection: () => connection,
+      fetch: fetchMock as typeof fetch,
+    });
+    expect(result).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(onNoAnswer).toHaveBeenCalledTimes(1);
+    expect(onNoAnswer).toHaveBeenCalledWith('aborted');
+    expect(recordJevNoAnswer).toHaveBeenCalledTimes(1);
+    expect(recordJevNoAnswer).toHaveBeenCalledWith(expect.objectContaining({ reason: 'aborted' }));
+  });
+
+  it('fails over to clef when Jev reports a client error on a calibrated surface', async () => {
+    const nativeJudge = vi.fn(async (watched) => { watched.onNoAnswer?.('client-error'); return null; });
+    let model = '';
+    const result = await judgeDecision({ ...input, surface: 'taskRouting' }, {
+      nativeJudge, getSettings: () => settings,
+      getAvailability: () => ({ jev: true, clef: true, luna: false }),
+      getConfigurationKey: () => 'stable', getClefConnection: () => connection,
+      fetch: (async (_url, options) => {
+        const body = JSON.parse(String(options?.body));
+        model = body.model;
+        return Response.json({ success: true, result: { ...nativeResult, model: body.model,
+          answers: Object.fromEntries(Object.keys(body.questions).map(id => [id, { type: 'noul', noul: 0.8 }])) } });
+      }) as typeof fetch,
+    });
+    expect(nativeJudge).toHaveBeenCalledTimes(1);
+    expect(model).toBe('clef-flash');
+    expect(result?.route?.provider).toBe('clef');
+  });
+
+  it('keeps a missing Clef connection on toolPick as client-error, without calling Jev', async () => {
+    vi.mocked(recordJevNoAnswer).mockClear();
+    const nativeJudge = vi.fn(async () => nativeResult);
+    const result = await judgeDecision(input, {
+      nativeJudge, getSettings: () => settings,
+      getAvailability: () => ({ jev: true, clef: true, luna: true }),
+      getConfigurationKey: () => 'stable', getClefConnection: () => undefined,
+      resolveLunaKey: () => 'sk-luna-secret',
+    });
+    expect(result).toBeNull();
+    expect(nativeJudge).not.toHaveBeenCalled();
+    expect(recordJevNoAnswer).toHaveBeenCalledTimes(1);
+    expect(recordJevNoAnswer).toHaveBeenCalledWith(expect.objectContaining({
+      reason: 'client-error', provider: 'clef',
+      usage: expect.objectContaining({ requestCount: 0 }),
+    }));
+  });
+});
+
+describe('Juntos fecha com o conjunto escolhido quando um disjuntor está aberto', () => {
+  beforeEach(() => { resetDecisionHealthForTesting(); vi.mocked(recordJevNoAnswer).mockClear(); });
+  const lunaAnswer = (probability: number) => Response.json({ usage: { input_tokens: 20 },
+    answers: [{ type: 'predicate', name: 'q0', probability }] });
+
+  it.each(['jev', 'luna', 'clef'] as const)(
+    'recusa o conjunto de segurança inteiro com o disjuntor do %s aberto, sem chamar ninguém',
+    async provider => {
+      openBreaker(provider);
+      const nativeJudge = vi.fn(async () => nativeResult);
+      const fetchMock = vi.fn(async () => lunaAnswer(0.1));
+      const onNoAnswer = vi.fn();
+      const result = await judgeDecision({ ...input, surface: 'dispatchGuard', onNoAnswer }, {
+        nativeJudge, getSettings: () => ({ ...settings, mode: 'together' }),
+        getAvailability: () => ({ jev: true, clef: true, luna: true }),
+        getConfigurationKey: () => 'stable', getClefConnection: () => connection,
+        resolveLunaKey: () => 'sk-luna-secret', fetch: fetchMock as typeof fetch,
+      });
+      // Sem o veto do conjunto, uma resposta solo de quem sobrou afrouxaria o guard.
+      expect(result).toBeNull();
+      expect(nativeJudge).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(onNoAnswer).toHaveBeenCalledTimes(1);
+      expect(onNoAnswer).toHaveBeenCalledWith('network');
+      expect(recordJevNoAnswer).toHaveBeenCalledTimes(1);
+      expect(recordJevNoAnswer).toHaveBeenCalledWith(expect.objectContaining({
+        reason: 'network', surface: 'dispatchGuard', model: 'ensemble',
+        route: expect.objectContaining({ model: 'ensemble' }),
+        usage: expect.objectContaining({ requestCount: 0, usageIncomplete: false }),
+      }));
+    },
+  );
+
+  it('Juntos explícito não aceita resposta solo nem em surface reversível', async () => {
+    openJevBreaker();
+    const fetchMock = vi.fn(async () => lunaAnswer(0.9));
+    const result = await judgeDecision({ ...input, surface: 'missionPick' }, {
+      nativeJudge: async () => nativeResult, getSettings: () => ({ ...settings, mode: 'together' }),
+      getAvailability: () => ({ jev: true, clef: false, luna: true }),
+      getConfigurationKey: () => 'stable', resolveLunaKey: () => 'sk-luna-secret', fetch: fetchMock as typeof fetch,
+    });
+    expect(result).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(recordJevNoAnswer).toHaveBeenLastCalledWith(expect.objectContaining({ reason: 'network', model: 'ensemble' }));
+  });
+
+  // Medição local dos DOIS membros na surface: é o que liga o "usar várias" do Automático (v2).
+  const ensembleTable: DecisionQualityTable = { version: 1, generatedAt: 0, source: 'evaluateDecisionCases', models: {},
+    surfaces: { missionPick: { jev: { accuracy: 0.6, cases: 10 }, luna: { accuracy: 0.55, cases: 10 } } } };
+  const v2Deps = (extra: Partial<Parameters<typeof judgeDecision>[1]> = {}): Parameters<typeof judgeDecision>[1] => ({
+    nativeJudge: vi.fn(async () => nativeResult), getSettings: () => settings,
+    getAvailability: () => ({ jev: true, clef: false, luna: true }), getConfigurationKey: () => 'stable',
+    resolveLunaKey: () => 'sk-luna-secret', getQualityTable: () => ensembleTable, ...extra,
+  });
+
+  it('v2 reversível segue com o membro que restou e diz quem ficou calado', async () => {
+    openJevBreaker();
+    const nativeJudge = vi.fn(async () => nativeResult);
+    const onNoAnswer = vi.fn();
+    const result = await judgeDecision({ ...input, surface: 'missionPick', onNoAnswer },
+      v2Deps({ nativeJudge, fetch: (async () => lunaAnswer(0.7)) as typeof fetch }));
+    expect(nativeJudge).not.toHaveBeenCalled();
+    expect(result?.route).toMatchObject({ provider: 'luna', policyVersion: 'decision-engine-v2' });
+    expect(result?.route?.reason).toMatch(/ · parcial: \S+ sem resposta \(network\)$/);
+    expect(result?.ensemblePeers).toBeUndefined();
+    expect(result?.requestCount).toBe(1);
+    expect(result?.usageReceipt).toMatchObject({ requestCount: 1, usageIncomplete: false });
+    expect(onNoAnswer).not.toHaveBeenCalled();
+    expect(recordJevNoAnswer).not.toHaveBeenCalled();
+  });
+
+  it('v2 reversível: se o sobrevivente também falha, registra UMA falha do conjunto', async () => {
+    openJevBreaker();
+    const onNoAnswer = vi.fn();
+    const result = await judgeDecision({ ...input, surface: 'missionPick', onNoAnswer },
+      v2Deps({ fetch: (async () => Response.json({ answers: [{ type: 'refusal', name: 'q0' }] })) as typeof fetch }));
+    expect(result).toBeNull();
+    expect(onNoAnswer).toHaveBeenCalledTimes(1);
+    expect(onNoAnswer).toHaveBeenCalledWith('refusal');
+    expect(recordJevNoAnswer).toHaveBeenCalledTimes(1);
+    expect(recordJevNoAnswer).toHaveBeenCalledWith(expect.objectContaining({
+      reason: 'refusal', model: 'ensemble', route: expect.objectContaining({ provider: 'luna', model: 'ensemble' }),
+    }));
+  });
+
+  it('v2 reversível com todos os membros bloqueados recusa sem requisição', async () => {
+    openBreaker('jev'); openBreaker('luna');
+    const fetchMock = vi.fn(async () => lunaAnswer(0.7));
+    const result = await judgeDecision({ ...input, surface: 'missionPick' }, v2Deps({ fetch: fetchMock as typeof fetch }));
+    expect(result).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(recordJevNoAnswer).toHaveBeenCalledTimes(1);
+    expect(recordJevNoAnswer).toHaveBeenCalledWith(expect.objectContaining({
+      reason: 'network', model: 'ensemble', usage: expect.objectContaining({ requestCount: 0 }),
+    }));
+  });
+});
+
+describe('o failover soma o gasto de todas as tentativas', () => {
+  beforeEach(() => { resetDecisionHealthForTesting(); vi.mocked(recordJevNoAnswer).mockClear(); });
+  const clefAnswer = (async (_url, request) => {
+    const body = JSON.parse(String(request?.body));
+    return Response.json({ success: true, result: { ...nativeResult, model: body.model,
+      answers: Object.fromEntries(Object.keys(body.questions).map(id => [id, { type: 'noul', noul: 0.8 }])) } });
+  }) as typeof fetch;
+  /** O Jev gastou 2 requisições de custo desconhecido e estourou o prazo. */
+  const jevTimesOutAfterTwoRequests = async (watched: JudgeInput) => {
+    watched.onUsage?.({ inputTokens: null, usd: null, requestCount: 2, durationMs: 100, usageIncomplete: true });
+    watched.onNoAnswer?.('timeout');
+    return null;
+  };
+  const failoverDeps = {
+    nativeJudge: jevTimesOutAfterTwoRequests, getSettings: () => settings,
+    getAvailability: () => ({ jev: true, clef: true, luna: false }), getConfigurationKey: () => 'stable',
+    getClefConnection: () => connection,
+  };
+
+  it('quem responde leva também as requisições e o custo desconhecido de quem falhou antes', async () => {
+    const onUsage = vi.fn();
+    const result = await judgeDecision({ ...input, surface: 'taskRouting', onUsage },
+      { ...failoverDeps, fetch: clefAnswer });
+    expect(result?.route).toMatchObject({ provider: 'clef', model: 'clef-flash' });
+    // 2 do Jev + 1 do Clef; o custo do Jev é desconhecido, então o total não é "completo".
+    expect(result?.requestCount).toBe(3);
+    expect(result?.usageReceipt).toMatchObject({ requestCount: 3, inputTokens: 100, usageIncomplete: true });
+    expect(result?.usageReceipt?.usd).toBeCloseTo(100 * 0.038 / 1_000_000, 12);
+    expect(result?.usageMissing).toBe(true);
+    expect(result?.estimatedUsd).toBeCloseTo(100 * 0.038 / 1_000_000, 12);
+    expect(onUsage).toHaveBeenCalledTimes(1);
+    expect(onUsage).toHaveBeenCalledWith(expect.objectContaining({ requestCount: 3, usageIncomplete: true }));
+  });
+
+  it('falha sem recibo é "nenhuma requisição": o failover limpo continua completo', async () => {
+    const result = await judgeDecision({ ...input, surface: 'taskRouting' }, {
+      ...failoverDeps, nativeJudge: async watched => { watched.onNoAnswer?.('timeout'); return null; },
+      fetch: clefAnswer,
+    });
+    expect(result?.usageReceipt).toMatchObject({ requestCount: 1, usageIncomplete: false });
+    expect(result?.usageMissing).toBeUndefined();
+  });
+
+  it('falha que lança sem relatar nada deixa o gasto desconhecido, não zero', async () => {
+    const result = await judgeDecision({ ...input, surface: 'taskRouting' }, {
+      ...failoverDeps, nativeJudge: async () => { throw new Error('transport exploded'); }, fetch: clefAnswer,
+    });
+    expect(result?.route?.provider).toBe('clef');
+    expect(result?.usageReceipt).toMatchObject({ requestCount: 1, usageIncomplete: true });
+  });
+
+  it('cadeia que acaba em falha grava UMA linha com a soma de todas as tentativas', async () => {
+    const onNoAnswer = vi.fn(); const onUsage = vi.fn();
+    const fetchMock = vi.fn(async () => Response.json({}, { status: 400 }));
+    const result = await judgeDecision({ ...input, surface: 'taskRouting', onNoAnswer, onUsage },
+      { ...failoverDeps, fetch: fetchMock as typeof fetch });
+    expect(result).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(onNoAnswer).toHaveBeenCalledTimes(1);
+    expect(onNoAnswer).toHaveBeenCalledWith('client-error');
+    expect(recordJevNoAnswer).toHaveBeenCalledTimes(1);
+    expect(recordJevNoAnswer).toHaveBeenCalledWith(expect.objectContaining({
+      reason: 'client-error', provider: 'clef', surface: 'taskRouting',
+      usage: expect.objectContaining({ requestCount: 3, usd: null, usageIncomplete: true }),
+    }));
+    expect(onUsage).toHaveBeenCalledTimes(1);
+    expect(onUsage).toHaveBeenCalledWith(expect.objectContaining({ requestCount: 3 }));
+  });
+
+  it('abort no meio da cadeia para sem chamar o próximo e mantém o gasto já feito', async () => {
+    const controller = new AbortController();
+    const urls: string[] = [];
+    const result = await judgeDecision({ ...input, surface: 'taskRouting', signal: controller.signal }, {
+      ...failoverDeps, getAvailability: () => ({ jev: true, clef: true, luna: true }),
+      resolveLunaKey: () => 'sk-luna-secret',
+      fetch: (async (url: unknown) => { urls.push(String(url)); controller.abort(); throw new DOMException('aborted', 'AbortError'); }) as typeof fetch,
+    });
+    expect(result).toBeNull();
+    // Jev (2) + Clef (1); a Luna, a próxima da cadeia, nunca é chamada.
+    expect(urls).toHaveLength(1);
+    expect(urls[0]).toMatch(/\/ai\/run\/@cf\/cloudflare\/clef-flash$/);
+    expect(recordJevNoAnswer).toHaveBeenCalledTimes(1);
+    expect(recordJevNoAnswer).toHaveBeenCalledWith(expect.objectContaining({
+      reason: 'aborted', provider: 'clef', usage: expect.objectContaining({ requestCount: 3, usageIncomplete: true }),
+    }));
+  });
+
+  it('tentativa que lança sem relatar uso + fallback sem credencial não reembolsa o estimado', async () => {
+    vi.mocked(recordJevNoAnswer).mockClear();
+    const ledger = new DecisionBudgetLedger();
+    const result = await judgeDecision({ ...input, surface: 'taskRouting', missionId: 'mission-unknown-usage' }, {
+      ...failoverDeps, nativeJudge: async () => { throw new Error('boom'); },
+      getClefConnection: () => undefined, budgetLedger: ledger,
+    });
+    const estimated = estimateDecisionCostUsd(estimateDecisionInputTokens(input), 'jev', 'jev-latest');
+    expect(result).toBeNull();
+    expect(ledger.snapshot('mission-unknown-usage', missionDecisionBudgetUsd(settings)).spentUsd).toBeGreaterThanOrEqual(estimated);
+    const recorded = vi.mocked(recordJevNoAnswer).mock.calls.at(-1)?.[0] as { budgetChargedUsd?: number };
+    expect(recorded.budgetChargedUsd).toBeGreaterThanOrEqual(estimated);
+  });
+
+  it('o livro de orçamento acerta pelo total: custo desconhecido mantém o estimado', async () => {
+    const ledger = new DecisionBudgetLedger();
+    const result = await judgeDecision({ ...input, surface: 'taskRouting', missionId: 'mission-failover-budget' },
+      { ...failoverDeps, fetch: clefAnswer, budgetLedger: ledger });
+    const estimated = estimateDecisionCostUsd(estimateDecisionInputTokens(input), 'jev', 'jev-latest');
+    const measuredClef = 100 * 0.038 / 1_000_000;
+    // Só o recibo do Clef (o bug) cobraria 3,8e-6; o do Jev é desconhecido, então fica o estimado.
+    expect(estimated).toBeGreaterThan(measuredClef);
+    expect(result?.budgetChargedUsd).toBeCloseTo(estimated, 12);
+    expect(ledger.snapshot('mission-failover-budget', missionDecisionBudgetUsd(settings)).spentUsd).toBeCloseTo(estimated, 12);
   });
 });

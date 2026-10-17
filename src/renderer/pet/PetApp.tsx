@@ -283,6 +283,16 @@ export function PetApp() {
       else markInteractive(false);
     };
     window.addEventListener('mousemove', onWinMove);
+    // Bug 7 (“de vidro”): quando o main revive o forward do click-through
+    // (ou o cursor entra nos bounds parado), nenhum mousemove encaminhado
+    // chega — a sonda traz as coords do cursor do SO e o hit-test roda aqui.
+    const offProbe = window.nexusPet.onCursorProbe((point) => {
+      if (drag.current?.dragging) return;
+      const under = document.elementFromPoint(point.x, point.y);
+      const over = Boolean(under?.closest?.(PET_INTERACTIVE_SELECTOR));
+      if (over) markInteractive(true);
+      else markInteractive(false);
+    });
     return () => {
       cancelled = true;
       window.clearTimeout(readyTimer);
@@ -291,6 +301,7 @@ export function PetApp() {
       offRoam();
       offStats();
       offEvents();
+      offProbe();
       window.removeEventListener('mousemove', onWinMove);
       if (celebrateTimer.current) window.clearTimeout(celebrateTimer.current);
       if (cafeinadoTimer.current) window.clearTimeout(cafeinadoTimer.current);

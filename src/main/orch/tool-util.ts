@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { SystemInputWriter } from './operator-input-receipts';
 import { commitWorkerContinuation, workerContinuationBirthState, type WorkerContinuationBirthState } from './mission-pane-resume-ownership';
 import { createVisualTaskRequirement, visualTaskRequirement } from './visual-handoff-gate';
@@ -72,7 +73,11 @@ import {
 import { waitOutBootPrompts } from './boot-prompt-hold';
 import { cliPromptAutoResponder } from './cli-prompt-autoresponder';
 import { adapterCircuitBreakers } from './circuit-breaker';
-import { assertPreSpawnProbe } from '../pty/pre-spawn-probe';
+import {
+  assertPreSpawnProbe,
+  recordRecentCredentialProbeFailure,
+} from '../pty/pre-spawn-probe';
+import { noteMissionCliFailure } from './mission-cli-failures';
 import { classifySeatAuth } from '../adapters/seat-auth-readiness';
 import { detectSubscriptionAuthReadiness } from '../adapters/subscription-auth';
 import {
@@ -1738,6 +1743,29 @@ function cliHasPresentAuth(cli: string): boolean {
   }
 }
 
+/**
+ * O gate pré-spawn recusou a credencial do assento pedido: a recusa vale para
+ * a rota (memória de 10 min do probe), para a missão (`credential-remap`,
+ * honra o `exclude` e entra como falha no sucesso 14d) e para o disjuntor.
+ */
+export function noteCredentialSeatRefusal(
+  adapterId: string,
+  missionId: string | undefined,
+  model: string | undefined,
+): void {
+  recordRecentCredentialProbeFailure(adapterId);
+  adapterCircuitBreakers.recordFailure(adapterId);
+  if (missionId) {
+    noteMissionCliFailure({
+      missionId,
+      adapterId,
+      ...(model ? { model } : {}),
+      cause: 'credential-remap',
+      attemptKey: `credential-remap:${randomUUID()}`,
+    });
+  }
+}
+
 export async function spawnPaneAndMaybePrompt(
   options: SpawnToolOptions,
   hooks: SpawnPaneHooks = {},
@@ -1878,6 +1906,10 @@ export async function spawnPaneAndMaybePrompt(
     // (shared/seat-chains, mesma regra do remint do revisor) em vez de morrer
     // silencioso e prender a missão num pane que nunca nasce.
     if (!isCredentialProbeFailure(error)) throw error;
+    // Rota ≠ execução (16/10): sem esta anotação a CLI recusada seguia com
+    // "0 uso" no fair-share e a rota a reescolhia a cada spawn (muse → claude
+    // 22 de 23). A rota lê a recusa recente; a missão e o disjuntor contam.
+    noteCredentialSeatRefusal(activeAdapterId, options.missionId, effectiveModel);
     // A successor CLI has no authority over the original conversation.
     if (preservingResume) throw error;
     const successor = await settleSeatAfterCredentialFailure({

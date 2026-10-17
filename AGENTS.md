@@ -268,6 +268,47 @@ saber isto antes de mexer:
   cadastro de uma segunda conta não consegue gravar a primeira, e quando o
   e-mail da sessão viva é de outra conta. Sessão `missing` não tem o que
   guardar e não bloqueia o login.
+- **O `codex login` revoga o login que encontra (medido no 0.162).** Antes do
+  device flow ele faz POST em `auth.openai.com/oauth/revoke` com o token do
+  `auth.json` e apaga o arquivo, mesmo se o login for cancelado; `codex
+  logout` e o `/logout` do pane também revogam. O terminal de login roda no
+  `~/.codex` nativo, onde mora a mesma linhagem que o Nexus guardou da conta
+  atual: entrar na conta B matava a conta A. Contrato do login Codex
+  (`openCliLoginTerminal` + `prepareCodexNativeLogin`/`restoreCodexNativeLogin`):
+  - **Um login por vez.** `prepareCodexLogin` recusa um segundo enquanto houver
+    um pendente com menos de 16 min ("Já há um login do Codex em andamento");
+    pendente mais velho é terminal abandonado (o device code vence em 15 min):
+    a sessão dele volta e o novo login segue.
+  - **Nada sai da vaga sem dono.** Sessão usável sem conta dona vira conta
+    (`addActiveSessionAccount`) antes; sem conseguir salvar, a vaga fica e o
+    login não abre. Cofre ilegível diz qual conta travou e o login não abre.
+  - **Saída atômica.** A vaga sai por `rename` para um temporário no próprio
+    `~/.codex`; a conta dona recebe a cópia movida (uma renovação que caia
+    nesse instante vai junto); qualquer falha devolve a vaga como estava. A
+    leitura é só de arquivo comum até 1 MB, num descritor `O_NONBLOCK`
+    (`readRegularFileCapped`): FIFO e `/dev/zero` travavam o Main.
+  - **O pane morre com a CLI.** No POSIX o login é digitado como
+    `exec env -u CODEX_HOME codex login --device-auth`: ↑ + Enter no mesmo pane
+    rodaria outro `codex login` e revogaria a conta recém-salva, e um
+    CODEX_HOME do rc do shell desviaria a gravação para fora da vaga. A morte do
+    pane é desfecho final (Ctrl+C devolve a sessão na hora). Windows não tem
+    `exec`: o pane fecha quando o watcher solta, e CODEX_HOME do perfil do
+    shell não é limpo (limitação conhecida).
+  - **Devolução em todo desfecho.** O renderer chama `restoreCodexLogin` ao
+    soltar, verificado ou não: vaga ocupada por login novo só encerra o
+    pendente; vaga vazia recebe a cópia mais fresca (0600, `wx`, link volta
+    link). Falha mantém a cópia no Main e vira aviso (toast); se o comando nem
+    foi digitado, a sessão volta antes de o pane fechar. O shutdown do Main
+    também devolve. Sem a ponte de preparo no preload, o login falha fechado.
+  - Nunca oriente logout para trocar de conta; o `/logout` do menu do Codex
+    avisa que revoga a sessão da conta no provedor.
+- **Identidade Codex = workspace + pessoa.** O subject é o `tokens.account_id`
+  (workspace): duas pessoas de um workspace Team/Business o compartilham. Com
+  o mesmo subject, o `chatgpt_user_id`/`user_id` do claim
+  `https://api.openai.com/auth` (id_token, depois access_token) separa as
+  pessoas; o e-mail só decide quando nenhum dos dois lados traz user id, porque
+  uma renovação da mesma linhagem pode trazer outro e-mail
+  (`compareAuthBlobIdentity`, fingerprint da sessão, candidatos de read-back).
 - **Limite não confirmado não troca o pane (F-249).** Texto de PTY citado
   (handoff, `cat` de log, narração do Maestro) casa no detector de limite —
   `⎿ usage limit reached` não é prova de que a CONTA do pane atingiu nada.
@@ -393,6 +434,18 @@ saber isto antes de mexer:
   `--text-dim` (o faint do `nexus-light` dá 4,27 sobre a tinta). O guard exige
   4,5:1 de text/dim/faint nos 7 temas sobre essa linha, em repouso e no hover,
   sem catraca de dívida. Tinta maior ou o reapontamento removido reprovam lá.
+- Abrir projeto no rail (16/10): "Abrir projeto existente" é uma LINHA com texto
+  logo abaixo do Novo pedido (`.workspace-rail__actions`, coluna única), não
+  mais um ícone de pasta sem rótulo ao lado dele (ninguém o achava). Nome,
+  tooltip e atalho vêm de `WORKSPACE_OPEN_ACTION` (`lib/action-names.ts`), o
+  registro do Início, onde "Trocar pasta" leva o mesmo `title`. Pegadinhas:
+  "Abrir pasta" já é "mostrar no Finder" (toast de captura, `AccessBoundary`) e
+  "Abrir Projeto" é a visão geral do projeto, então nenhum dos dois serve de
+  rótulo e o nome acessível não pode colidir (`WorkspaceRail.test.tsx`). O
+  tooltip promete "pasta nova" porque o seletor do main usa `createDirectory`
+  (`workspace-store.ts`; `action-names.test.ts` lê o fonte). O seletor não é
+  modal no Windows (`owned-open-dialog.ts`) e `pickWorkspace` do App não tem
+  guarda de clique duplo: dois cliques rápidos podem abrir dois diálogos.
 
 ## Conventions
 
@@ -1289,6 +1342,15 @@ saber isto antes de mexer:
   12s) e reusam o token. Sem git-lock no overlay.
 - Mitigante de operador: contas Codex distintas em spawn paralelo evitam
   a família; o picker já tem uma linha por conta.
+- A conta que É o login nativo tem duas cópias da mesma linhagem
+  (`~/.codex/auth.json` e o home gerenciado). O gate de família
+  (`withGrokAuthFamilyGate`) também casa blobs do Codex: subject = `user_id`
+  do id_token e o escopo inclui o `account_id` (mesmo usuário em outro
+  workspace nunca é copiado). Ele lembra cada cópia que entrou na família:
+  cópia velha que ia liderar a renovação adota antes a irmã que já girou o
+  refresh token (pane que renovou no meio da sessão), em vez de apresentar um
+  token consumido. A CLI externa (terminal do operador, app Codex) segue fora
+  do gate. O login pelo Nexus tira a conta anterior da vaga nativa.
 
 ## AGY/Gemini: o grant renovado volta para a linhagem da conta
 
@@ -1436,6 +1498,26 @@ saber isto antes de mexer:
   de colunas e só então faz um único resize. `fit.fit()` antes do clamp apaga
   texto no ciclo estreita→alarga. Enquanto `gridReady` for falso, saída antiga
   E nova ficam retidas; visibilidade sozinha não autoriza drenar o PTY.
+
+## Navegador do pane não pinta sobre popover, menu ou modal (16/10)
+
+- A `WebContentsView` do navegador é irmã nativa do renderer: pinta acima de
+  QUALQUER DOM e `z-index` não a alcança. O `+ Pane` e o menu "Ações do painel"
+  abertos sobre um navegador ficavam atrás da página e sem clique. Só os modais
+  da store (`hardOverlayOpen` em `App.tsx`) escondiam a view.
+- `browser-host.ts` esconde só a view CRUZADA (`setBounds({ visible: false })`,
+  o mesmo contrato da supressão global) e a devolve quando a superfície some.
+  `browser-occlusion.ts` detecta pelo contrato de acessibilidade, sem registro
+  por componente: `role` `dialog`/`alertdialog`/`menu`/`listbox` ou
+  `aria-modal="true"` (modal cobre todas as views). Um `MutationObserver`
+  reavalia no mesmo tick em que a superfície monta, cresce ou sai.
+- Popover novo: dê o `role` certo e ele já é coberto; sem role volta a ficar
+  atrás do navegador. Superfície só-CSS (`display`/`class` sem montar nem trocar
+  `hidden`) só é vista no próximo sync de bounds. Toast (`role="status"`) não
+  esconde a view de propósito (piscaria a cada aviso). Pane de agente escondido
+  segue estacionado fora da tela, como já fazia.
+- Prova: `browser-host-bounds.test.ts` (host) e `BrowserPane.overlays.test.tsx`
+  (picker, menu Ações e modal portalado, componentes reais).
 
 ## Velocidade de geração por LLM (tok/s + TTFT)
 

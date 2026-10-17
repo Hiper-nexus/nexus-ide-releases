@@ -1,45 +1,32 @@
 import {
   USAGE_ANALYTICS_MAX_DAYS,
-  USAGE_WINDOW_OPTIONS,
   type UsageAnalytics,
   type UsageDayPoint,
   type UsageDayProviderSlice,
+  type UsageDayStats,
   type UsageDetailedTotals,
+  type UsageMetric,
   type UsageModelAggregate,
   type UsageProviderAggregate,
-  type UsageWindowDays,
-  type UsageWindowSummary,
+  type UsageQuery,
+  type UsageRangeSummary,
+  type UsageRollupRow,
+  type UsageSessionActivity,
 } from './usage-types';
 
 /**
- * Aritmética pura do painel de Uso e custos: o store do Main entrega o rollup
- * (dia local × provedor × modelo) e as sessões distintas por janela; daqui
- * saem a série diária e os resumos de 7/30/90 dias. Sem I/O, sem relógio
- * implícito: "hoje" chega pronto, então a mesma entrada dá o mesmo resumo.
+ * Aritmética pura do painel de Uso e custos. O store do Main entrega o rollup
+ * (dia local × ferramenta × modelo) e as sessões; daqui sai TUDO que a tela
+ * mostra — 7/30/90 dias, intervalo, um dia, uma ferramenta, um modelo — pela
+ * mesma conta (`summarizeUsage`), então gráfico, totais, lista por ferramenta
+ * e detalhamento nunca divergem entre si. Sem I/O, sem relógio implícito:
+ * "hoje" chega pronto, então a mesma entrada dá o mesmo resumo.
  */
 
-/** Um dia local × provedor × modelo, somado no SQLite do projeto. */
-export interface UsageRollupRow {
-  readonly day: string;
-  readonly provider: string;
-  readonly model: string;
-  readonly costUsd: number;
-  /** Input sem cache, como o store grava (`input_units`). */
-  readonly inputTokens: number;
-  readonly cachedInputTokens: number;
-  readonly cacheWriteTokens: number;
-  readonly outputTokens: number;
-  readonly cacheSavingsUsd: number;
-  readonly turns: number;
-}
-
-/** Sessões distintas de um provedor com atividade em cada janela. */
-export interface UsageProviderSessions {
-  readonly provider: string;
-  readonly sessions: Readonly<Record<UsageWindowDays, number>>;
-}
-
 const DAY_KEY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Teto de dias de um recorte: o rollup tem 90; a folga só protege de entrada inválida. */
+const MAX_RANGE_DAYS = 366;
 
 function pad(value: number): string {
   return String(value).padStart(2, '0');
@@ -71,21 +58,28 @@ export function usageWindowStartDay(today: string, windowDays: number): string {
   return shiftDayKey(today, -(Math.max(1, Math.floor(windowDays)) - 1));
 }
 
+/**
+ * Intervalo que o seletor de datas pode pedir: dentro dos 90 dias do rollup e
+ * com `from <= to` (extremos trocados viram o intervalo certo, nunca vazio).
+ */
+export function clampUsageRange(
+  today: string,
+  from: string,
+  to: string,
+): { readonly from: string; readonly to: string } {
+  const min = usageWindowStartDay(today, USAGE_ANALYTICS_MAX_DAYS);
+  const clamp = (day: string) => (day < min ? min : day > today ? today : day);
+  const a = clamp(from);
+  const b = clamp(to);
+  return a <= b ? { from: a, to: b } : { from: b, to: a };
+}
+
 function finite(value: number): number {
   return Number.isFinite(value) && value > 0 ? value : 0;
 }
 
 function share(part: number, whole: number): number {
   return whole > 0 ? Math.min(1, Math.max(0, part / whole)) : 0;
-}
-
-function rowTotalTokens(row: UsageRollupRow): number {
-  return (
-    finite(row.inputTokens) +
-    finite(row.cachedInputTokens) +
-    finite(row.cacheWriteTokens) +
-    finite(row.outputTokens)
-  );
 }
 
 function byCostThenTokens<T extends { costUsd: number; totalTokens: number }>(
@@ -97,6 +91,37 @@ function byCostThenTokens<T extends { costUsd: number; totalTokens: number }>(
     key(a).localeCompare(key(b));
 }
 
+function compareRows(a: UsageRollupRow, b: UsageRollupRow): number {
+  return (
+    a.day.localeCompare(b.day) ||
+    a.provider.localeCompare(b.provider) ||
+    a.model.localeCompare(b.model)
+  );
+}
+
+/**
+ * Empacota o que o store leu do SQLite: só os últimos 90 dias até `today`, em
+ * ordem estável, e sem sessão que ficou sem nenhum dia dentro da janela.
+ */
+export function buildUsageAnalytics(
+  rows: readonly UsageRollupRow[],
+  sessions: readonly UsageSessionActivity[],
+  today: string,
+): UsageAnalytics {
+  const firstDay = usageWindowStartDay(today, USAGE_ANALYTICS_MAX_DAYS);
+  const inWindow = (day: string) => day >= firstDay && day <= today;
+  return {
+    today,
+    rows: rows.filter((row) => inWindow(row.day)).sort(compareRows),
+    sessions: sessions
+      .map((session) => ({
+        provider: session.provider,
+        cells: session.cells.filter(([day]) => inWindow(day)),
+      }))
+      .filter((session) => session.cells.length > 0),
+  };
+}
+
 interface MutableProvider {
   provider: string;
   costUsd: number;
@@ -106,13 +131,36 @@ interface MutableProvider {
   outputTokens: number;
 }
 
-function summarizeWindow(
-  rows: readonly UsageRollupRow[],
-  sessions: readonly UsageProviderSessions[],
-  today: string,
-  windowDays: UsageWindowDays,
-): UsageWindowSummary {
-  const startDay = usageWindowStartDay(today, windowDays);
+interface MutableDay {
+  costUsd: number;
+  totalTokens: number;
+  byProvider: Map<string, UsageDayProviderSlice>;
+}
+
+/** Cada dia local de `from` a `to`, inclusive. */
+function daysInRange(from: string, to: string): string[] {
+  const days: string[] = [];
+  for (let day = from; day <= to && days.length < MAX_RANGE_DAYS; day = shiftDayKey(day, 1)) {
+    days.push(day);
+  }
+  return days;
+}
+
+/**
+ * Tudo que a tela mostra de um recorte, calculado de uma vez. Filtros valem
+ * para todos os números: totais, ferramentas, modelos, dias e sessões saem das
+ * mesmas linhas, então a soma das partes sempre fecha com o todo.
+ */
+export function summarizeUsage(
+  data: Pick<UsageAnalytics, 'rows' | 'sessions'>,
+  query: UsageQuery,
+): UsageRangeSummary {
+  const { from, to } = query;
+  const provider = query.provider ?? null;
+  // O nome do modelo sozinho pode repetir entre ferramentas: só vale com ela.
+  const model = provider === null ? null : (query.model ?? null);
+
+  const byDay = new Map<string, MutableDay>();
   const providers = new Map<string, MutableProvider>();
   const models = new Map<string, { model: string; provider: string; costUsd: number; totalTokens: number }>();
   let costUsd = 0;
@@ -121,20 +169,39 @@ function summarizeWindow(
   let outputTokens = 0;
   let cacheSavingsUsd = 0;
   let turns = 0;
-  for (const row of rows) {
-    if (row.day < startDay || row.day > today) continue;
+  for (const row of data.rows) {
+    if (row.day < from || row.day > to) continue;
+    if (provider !== null && row.provider !== provider) continue;
+    if (model !== null && row.model !== model) continue;
     const cost = finite(row.costUsd);
     const cached = finite(row.cachedInputTokens);
     const uncached = finite(row.inputTokens) + finite(row.cacheWriteTokens);
     const output = finite(row.outputTokens);
     const total = cached + uncached + output;
+    // Evento sem consumo (mensagem sintética, erro de API): conta o turno, mas não
+    // vira ferramenta nem modelo na lista — "$0.00 · 0,0% · 0" não diz nada a ninguém.
+    if (cost === 0 && total === 0) {
+      turns += finite(row.turns);
+      continue;
+    }
     costUsd += cost;
     cachedInputTokens += cached;
     uncachedInputTokens += uncached;
     outputTokens += output;
     cacheSavingsUsd += finite(row.cacheSavingsUsd);
     turns += finite(row.turns);
-    const provider = providers.get(row.provider) ?? {
+
+    const day = byDay.get(row.day) ?? { costUsd: 0, totalTokens: 0, byProvider: new Map() };
+    day.costUsd += cost;
+    day.totalTokens += total;
+    const slice = day.byProvider.get(row.provider) ?? { costUsd: 0, totalTokens: 0 };
+    day.byProvider.set(row.provider, {
+      costUsd: slice.costUsd + cost,
+      totalTokens: slice.totalTokens + total,
+    });
+    byDay.set(row.day, day);
+
+    const entry = providers.get(row.provider) ?? {
       provider: row.provider,
       costUsd: 0,
       totalTokens: 0,
@@ -142,113 +209,104 @@ function summarizeWindow(
       cachedInputTokens: 0,
       outputTokens: 0,
     };
-    provider.costUsd += cost;
-    provider.totalTokens += total;
-    provider.inputTokens += uncached;
-    provider.cachedInputTokens += cached;
-    provider.outputTokens += output;
-    providers.set(row.provider, provider);
+    entry.costUsd += cost;
+    entry.totalTokens += total;
+    entry.inputTokens += uncached;
+    entry.cachedInputTokens += cached;
+    entry.outputTokens += output;
+    providers.set(row.provider, entry);
+
     const modelKey = `${row.provider}\0${row.model}`;
-    const model = models.get(modelKey) ?? {
+    const modelEntry = models.get(modelKey) ?? {
       model: row.model,
       provider: row.provider,
       costUsd: 0,
       totalTokens: 0,
     };
-    model.costUsd += cost;
-    model.totalTokens += total;
-    models.set(modelKey, model);
+    modelEntry.costUsd += cost;
+    modelEntry.totalTokens += total;
+    models.set(modelKey, modelEntry);
   }
-  const sessionsFor = (provider: string) =>
-    finite(sessions.find((entry) => entry.provider === provider)?.sessions[windowDays] ?? 0);
+
+  // Sessão conta uma vez por ferramenta se algum par [dia, modelo] casa.
+  const sessionsByProvider = new Map<string, number>();
+  for (const session of data.sessions) {
+    if (provider !== null && session.provider !== provider) continue;
+    const active = session.cells.some(
+      ([day, cellModel]) => day >= from && day <= to && (model === null || cellModel === model),
+    );
+    if (active) sessionsByProvider.set(session.provider, (sessionsByProvider.get(session.provider) ?? 0) + 1);
+  }
+
+  const processedTokens = cachedInputTokens + uncachedInputTokens + outputTokens;
   const byProvider: UsageProviderAggregate[] = [...providers.values()]
-    .map((provider) => ({
-      ...provider,
-      sessions: sessionsFor(provider.provider),
-      costShare: share(provider.costUsd, costUsd),
+    .map((entry) => ({
+      ...entry,
+      sessions: sessionsByProvider.get(entry.provider) ?? 0,
+      costShare: share(entry.costUsd, costUsd),
+      tokenShare: share(entry.totalTokens, processedTokens),
     }))
     .sort(byCostThenTokens((item) => item.provider));
   const byModel: UsageModelAggregate[] = [...models.values()]
-    .map((model) => ({ ...model, costShare: share(model.costUsd, costUsd) }))
+    .map((entry) => ({
+      ...entry,
+      costShare: share(entry.costUsd, costUsd),
+      tokenShare: share(entry.totalTokens, processedTokens),
+    }))
     .sort(byCostThenTokens((item) => `${item.provider}/${item.model}`));
   const totals: UsageDetailedTotals = {
-    processedTokens: cachedInputTokens + uncachedInputTokens + outputTokens,
+    processedTokens,
     cachedInputTokens,
     uncachedInputTokens,
     outputTokens,
     cacheSavingsUsd,
     costUsd,
-    sessions: byProvider.reduce((sum, provider) => sum + provider.sessions, 0),
+    sessions: byProvider.reduce((sum, entry) => sum + entry.sessions, 0),
     turns,
   };
-  return { windowDays, startDay, byProvider, byModel, totals };
-}
-
-/**
- * Série diária (só dias com consumo, dentro dos últimos 90) e um resumo por
- * janela. Sessões não se somam entre dias — uma sessão que atravessa a
- * meia-noite contaria duas vezes —, então chegam já distintas por janela.
- */
-export function buildUsageAnalytics(
-  rows: readonly UsageRollupRow[],
-  sessions: readonly UsageProviderSessions[],
-  today: string,
-): UsageAnalytics {
-  const firstDay = usageWindowStartDay(today, USAGE_ANALYTICS_MAX_DAYS);
-  const byDay = new Map<string, { costUsd: number; totalTokens: number; byProvider: Map<string, UsageDayProviderSlice> }>();
-  for (const row of rows) {
-    if (row.day < firstDay || row.day > today) continue;
-    const day = byDay.get(row.day) ?? { costUsd: 0, totalTokens: 0, byProvider: new Map() };
-    const cost = finite(row.costUsd);
-    const tokens = rowTotalTokens(row);
-    day.costUsd += cost;
-    day.totalTokens += tokens;
-    const slice = day.byProvider.get(row.provider) ?? { costUsd: 0, totalTokens: 0 };
-    day.byProvider.set(row.provider, {
-      costUsd: slice.costUsd + cost,
-      totalTokens: slice.totalTokens + tokens,
-    });
-    byDay.set(row.day, day);
-  }
-  const days: UsageDayPoint[] = [...byDay.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([day, value]) => ({
-      day,
-      costUsd: value.costUsd,
-      totalTokens: value.totalTokens,
-      byProvider: Object.fromEntries(value.byProvider),
-    }));
-  const windows = Object.fromEntries(
-    USAGE_WINDOW_OPTIONS.map((windowDays) => [
-      windowDays,
-      summarizeWindow(rows, sessions, today, windowDays),
-    ]),
-  ) as Record<UsageWindowDays, UsageWindowSummary>;
-  return { today, days, windows };
-}
-
-/** Um dia da janela já preenchido (dia sem consumo vale zero). */
-export interface UsageFilledDay {
-  readonly day: string;
-  readonly costUsd: number;
-  readonly totalTokens: number;
-  readonly byProvider: Readonly<Record<string, UsageDayProviderSlice>>;
-}
-
-/**
- * A janela inteira, um ponto por dia local, do mais antigo a `today`: o
- * gráfico precisa dos dias sem consumo para não ligar picos distantes.
- */
-export function fillUsageWindow(
-  days: readonly UsageDayPoint[],
-  windowDays: UsageWindowDays,
-  today: string,
-): UsageFilledDay[] {
-  const known = new Map(days.map((day) => [day.day, day]));
-  const start = usageWindowStartDay(today, windowDays);
-  return Array.from({ length: windowDays }, (_, index) => {
-    const day = shiftDayKey(start, index);
-    const point = known.get(day);
-    return point ?? { day, costUsd: 0, totalTokens: 0, byProvider: {} };
+  const days: UsageDayPoint[] = daysInRange(from, to).map((day) => {
+    const value = byDay.get(day);
+    return value
+      ? {
+          day,
+          costUsd: value.costUsd,
+          totalTokens: value.totalTokens,
+          byProvider: Object.fromEntries(value.byProvider),
+        }
+      : { day, costUsd: 0, totalTokens: 0, byProvider: {} };
   });
+  return { from, to, byProvider, byModel, totals, days };
+}
+
+/**
+ * Total, pico e média de uma série diária. A média divide pelos dias COM uso:
+ * dia sem registro (antes de o histórico começar, fim de semana parado) não
+ * rebaixa o "quanto gastamos num dia de trabalho". O pico é do dia de maior
+ * valor da medida pedida; sem valor nela (custo zero com tokens), o de mais tokens.
+ */
+export function usageDayStats(days: readonly UsageDayPoint[], metric: UsageMetric): UsageDayStats {
+  const valueOf = (day: UsageDayPoint) => (metric === 'cost' ? day.costUsd : day.totalTokens);
+  let costUsd = 0;
+  let totalTokens = 0;
+  let activeDays = 0;
+  let peak: UsageDayPoint | null = null;
+  // Uso sem custo (plano grátis, preço desconhecido): o pico em dólar não existe,
+  // mas o dia de mais tokens segue sendo o dia a destacar.
+  let tokenPeak: UsageDayPoint | null = null;
+  for (const day of days) {
+    costUsd += day.costUsd;
+    totalTokens += day.totalTokens;
+    if (day.costUsd > 0 || day.totalTokens > 0) activeDays += 1;
+    if (valueOf(day) > 0 && (peak === null || valueOf(day) > valueOf(peak))) peak = day;
+    if (day.totalTokens > 0 && (tokenPeak === null || day.totalTokens > tokenPeak.totalTokens)) tokenPeak = day;
+  }
+  return {
+    dayCount: days.length,
+    activeDays,
+    costUsd,
+    totalTokens,
+    averageCostUsd: activeDays > 0 ? costUsd / activeDays : 0,
+    averageTokens: activeDays > 0 ? totalTokens / activeDays : 0,
+    peak: peak ?? tokenPeak,
+  };
 }

@@ -59,6 +59,18 @@ td.empty span{font-family:ui-monospace,monospace}
 .bench-notes{margin:var(--s3) 0 0;padding:0;list-style:none;display:grid;gap:8px;font-size:13px;color:var(--muted)}
 .bench-notes strong{color:var(--ink);font-weight:600}
 
+/* Filtro sem resultado: painel composto no lugar da tabela, com saída de um clique. */
+.bench-empty{padding:var(--s5) var(--s4);text-align:center;border:1px dashed var(--strong);border-radius:12px;background:var(--surface)}
+.bench-empty p{margin:8px auto 0;color:var(--muted);font-size:14px;max-width:52ch}
+.bench-empty .bench-empty-title{margin:0;color:var(--ink);font-size:18px;font-weight:550}
+.bench-empty .chip{margin-top:var(--s3)}
+
+/* Rodapé: links quietos que acendem no hover e no foco (mesma regra do product.css). */
+.footer a{color:var(--muted);transition:color .2s var(--ease)}
+.footer a:hover,.footer a:focus-visible{color:var(--ink)}
+.footer .brand{color:var(--ink)}
+.footer a[aria-current="page"]{color:var(--ink)}
+
 /* Como o Nexus usa e o radar */
 .doc-steps{margin:var(--s4) 0 0;padding:0;list-style:none;display:grid;grid-template-columns:1.3fr 1fr 1fr;gap:var(--s4);counter-reset:step}
 .doc-steps li{counter-increment:step;padding-top:var(--s3);border-top:1px solid var(--strong)}
@@ -76,5 +88,13 @@ td.empty span{font-family:ui-monospace,monospace}
 
 @media(max-width:1000px){.doc-steps{grid-template-columns:1fr}.radar{padding:var(--s4)}}
 @media(max-width:760px){.doc-main{padding:var(--s5) var(--s3) var(--s6)}.doc-note{padding:var(--s3)}.doc-section{margin-top:var(--s6)}.doc-cta{margin-top:var(--s6);padding-top:var(--s5)}.doc-lede{font-size:16px}}
+/* Janelas de 300–480px: 16px de margem lateral, painéis mais justos e títulos que quebram em vez de cortar. A tabela segue rolando na horizontal por desenho. */
+@media(max-width:480px){
+  .doc-main{padding:var(--s4) var(--s2) var(--s5)}
+  .doc-intro h1,.doc-section h2,.doc-cta h2{overflow-wrap:anywhere}
+  .doc-note{padding:var(--s2)}
+  .radar{padding:var(--s3) var(--s2)}
+  .bench-empty{padding:var(--s4) var(--s2)}
+}
 @media(prefers-reduced-motion:reduce){.chip{transition:none}}
 

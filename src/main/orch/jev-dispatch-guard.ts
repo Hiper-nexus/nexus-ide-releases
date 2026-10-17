@@ -50,7 +50,9 @@ export const GUARD_INJECTED_DENY_MIN = 0.8;
 export const GUARD_INCOHERENT_MAX = 0.35;
 export const GUARD_DESTRUCTIVE_CONFIRM_MIN = 0.6;
 
-const GUARD_TIMEOUT_MS = 3_000;
+// p99 respondido 1,4 s (16/10); 6,1% estouravam os 3 s antigos e seguravam o
+// despacho em série. Estourou → `skipped` (fail-open), como sempre.
+const GUARD_TIMEOUT_MS = 1_500;
 const GUARD_CACHE_TTL_MS = 60_000;
 const GUARD_CACHE_MAX = 256;
 const RECENT_TOOLS_MAX = 8;

@@ -21,6 +21,7 @@ import {
   useLayoutStore,
 } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
+import { clearPaneBirthElapsedForPane } from '../lib/pane-birth-display';
 import { usePaneParkedStore } from '../state/pane-parked-store';
 import { useOrchStore } from '../state/orch-store';
 import { adapterAcceptsBracketedPaste } from '../state/adapter-store';
@@ -107,6 +108,7 @@ import {
   getTerminalOutputRuntimeSnapshot,
   pauseTerminalOutput,
   resumeTerminalOutput,
+  takeQueuedTerminalOutput,
   writeTerminalOutput,
 } from './terminal-output-scheduler';
 import { TerminalInputVisibilityController } from './terminal-input-visibility';
@@ -576,7 +578,10 @@ function setHostSession(
   reportedGrid?: { cols: number; rows: number },
 ): void {
   host.sessionId = sessionId;
-  if (sessionId) host.awaitingDeliberateClose = false;
+  if (sessionId) {
+    host.awaitingDeliberateClose = false;
+    clearPaneBirthElapsedForPane(paneId);
+  }
   host.reportedGrid = sessionId
     ? (reportedGrid ?? { cols: host.term.cols, rows: host.term.rows })
     : null;
@@ -2436,8 +2441,14 @@ useLayoutStore.subscribe((next, prev) => {
  * Abaixo deste número de hosts vivos NADA é hibernado: o custo por pane é
  * pequeno (medido 09/09: ~10-15MB/pane RSS, heap 53MB com 32 panes) e o
  * risco não se paga. Acima, panes OCULTOS trocam o xterm por snapshot.
+ *
+ * 16/10: 24 era alto demais para a realidade de 2 projetos abertos num Mac
+ * de 24 GB — 6 a 8 panes por projeto (12-16 hosts) nunca chegava a hibernar
+ * e o xterm/WebGL de cada pane do projeto em background segurava a RAM durante
+ * builds. 8 cobre esse cenário (12-16 hosts hibernam) sem hibernar grids
+ * pequenos onde o risco de reidratação não compensa.
  */
-export const HIBERNATE_MIN_LIVE_HOSTS = 24;
+export const HIBERNATE_MIN_LIVE_HOSTS = 8;
 
 /** Saída PTY retida enquanto o pane hiberna (chars; ~64KB por pane). */
 export const HIBERNATE_PENDING_OUTPUT_CHARS = 64_000;
@@ -2489,6 +2500,7 @@ function virtualizeHost(host: Host): void {
   }
   let snapshot = '';
   let cols = host.term.cols;
+  let usedPendingScrollback = false;
   try {
     const live = host.serialize.serialize().slice(-MAX_PERSISTED_SCROLLBACK);
     cols = host.term.cols;
@@ -2502,16 +2514,31 @@ function virtualizeHost(host: Host): void {
     ) {
       snapshot = host.pendingScrollback.slice(-MAX_PERSISTED_SCROLLBACK);
       cols = host.pendingScrollbackCols ?? cols;
-      delete host.pendingScrollback;
-      delete host.pendingScrollbackCols;
-      delete host.scrollbackMismatchNoticed;
+      usedPendingScrollback = true;
     } else {
       snapshot = live;
     }
     host.term.dispose();
   } catch {
-    return; // terminal em estado ímpar — não hibernar é seguro
+    // Terminal em estado ímpar: nada foi retirado da fila e a fita pendente
+    // continua de pé, então o pane segue vivo sem hibernar.
+    return;
   }
+  if (usedPendingScrollback) {
+    delete host.pendingScrollback;
+    delete host.pendingScrollbackCols;
+    delete host.scrollbackMismatchNoticed;
+  }
+  // A cauda que o scheduler ainda segura (saída de fundo) NÃO é drenada para
+  // dentro deste xterm: o `write` dele parseia de forma assíncrona, então o
+  // serialize e o dispose síncronos a perderiam. Ela sai da fila como texto
+  // DEPOIS que serialize() e dispose() já sucederam (se dispose() lançar, a
+  // cauda continua intacta no scheduler) e abre o `pendingOutput`, regravado
+  // depois do snapshot na reidratação. `takeQueuedTerminalOutput` só usa o
+  // term como chave e já chama `discardTerminalOutput` — soltar o estado do
+  // scheduler (fila + parse pendente + resync) evita que ele segure o term
+  // descartado e pine até 2 MB por pane hibernado.
+  const queuedTail = takeQueuedTerminalOutput(host.term);
   webglPool.suspend(host.paneId);
   const built = buildTerminal(host.kind);
   host.term = built.term;
@@ -2525,11 +2552,16 @@ function virtualizeHost(host: Host): void {
   host.opened = false;
   host.reportedGrid = null;
   host.hasFittedGrid = false;
+  // A cauda enfileirada passa pelo mesmo sanitizer da saída retida (sem
+  // queries, DSK-01) e a sequência cortada no fim fica nele para o próximo chunk.
+  const pendingSanitizer = createReplaySanitizer();
   host.virtualized = {
     cols,
     snapshot,
-    pendingOutput: '',
-    pendingSanitizer: createReplaySanitizer(),
+    pendingOutput: pendingSanitizer
+      .push(queuedTail)
+      .slice(-HIBERNATE_PENDING_OUTPUT_CHARS),
+    pendingSanitizer,
   };
 }
 

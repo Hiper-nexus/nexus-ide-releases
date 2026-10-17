@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { browserVisualBlocker, canRouteBrowserVisual, clefModel, ensembleMembers, resolveDecisionRoute } from './decision-routing';
+import { browserVisualBlocker, CALIBRATED_THRESHOLD_SURFACES, canRouteBrowserVisual, clefModel, ensembleMembers, resolveDecisionRoute } from './decision-routing';
 import { decisionSettingsSchema, type DecisionSettings } from '../../shared/decision-models';
 
 const settings: DecisionSettings = { mode: 'auto', clefModel: 'clef', cloudflareAccountId: '0123456789abcdef0123456789abcdef', visionEnabled: false };
@@ -41,7 +41,7 @@ describe('complementary decision routing', () => {
 
 
   describe('effect-bearing surfaces stay on Jev (no Clef evaluation exists for their thresholds)', () => {
-    const pinned = ['dispatchGuard', 'handoffReview', 'memoryDistill', 'computerTool', 'browserTool', 'taskRouting'] as const;
+    const pinned = ['dispatchGuard', 'handoffReview', 'memoryDistill', 'computerTool', 'browserTool'] as const;
     it('routes them to Jev in automatic and Jev-only modes', () => {
       for (const surface of pinned) {
         expect(resolveDecisionRoute({ surface }, settings, both)).toMatchObject({ provider: 'jev' });
@@ -165,7 +165,7 @@ describe('complementary decision routing', () => {
   });
 
   it('sends pinned surfaces to Luna when the operator chose Luna, and does not fall back to Jev', () => {
-    for (const surface of ['dispatchGuard', 'handoffReview', 'memoryDistill', 'computerTool', 'browserTool', 'taskRouting'] as const) {
+    for (const surface of ['dispatchGuard', 'handoffReview', 'memoryDistill', 'computerTool', 'browserTool'] as const) {
       expect(resolveDecisionRoute({ surface }, lunaMode, lunaOn)).toMatchObject({ provider: 'luna', model: 'gpt-6-luna', reason: 'operator-override' });
       expect(resolveDecisionRoute({ surface }, lunaMode, { jev: true, clef: true, luna: false })).toBeNull();
       expect(resolveDecisionRoute({ surface, model: 'gpt-6-luna' }, settings, lunaOn)).toBeNull();
@@ -265,5 +265,14 @@ describe('complementary decision routing', () => {
     expect(browserVisualBlocker({ ...consented, mode: 'together' }, { jev: true, clef: false, luna: true })).toBe('vision_provider_not_ready');
     expect(browserVisualBlocker({ ...consented, mode: 'together', visionConsent: { version: 1, recipients: ['clef'] } }, lunaOn)).toBe('vision_consent_missing');
     expect(browserVisualBlocker({ ...consented, mode: 'jev', visionConsent: undefined }, lunaOn)).toBeNull();
+  });
+
+  it('names the surfaces whose thresholds were calibrated on Jev', () => {
+    for (const surface of ['taskRouting', 'missionKickoff', 'completionCheck', 'reviewTriage'] as const) {
+      expect(CALIBRATED_THRESHOLD_SURFACES.has(surface)).toBe(true);
+    }
+    expect(CALIBRATED_THRESHOLD_SURFACES.has('recoveryAdvice')).toBe(false);
+    expect(CALIBRATED_THRESHOLD_SURFACES.has('dispatchGuard')).toBe(false);
+    expect(CALIBRATED_THRESHOLD_SURFACES.has('toolPick')).toBe(false);
   });
 });

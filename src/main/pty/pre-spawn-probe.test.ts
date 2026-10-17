@@ -3,7 +3,10 @@ import {
   PRODUCTION_PROBE_DEPS,
   PreSpawnProbeError,
   assertPreSpawnProbe,
+  clearRecentCredentialProbeFailuresForTests,
+  hasRecentCredentialProbeFailure,
   probePreSpawn,
+  recordRecentCredentialProbeFailure,
   type PreSpawnProbeDeps,
   type ProbeAdapterView,
 } from './pre-spawn-probe';
@@ -510,5 +513,31 @@ describe('assertPreSpawnProbe', () => {
 
   it('resolves when the probe passes', async () => {
     await expect(runAssert('shell', makeDeps())).resolves.toBeUndefined();
+  });
+});
+
+// Rota ≠ execução (16/10): o spawn que remapeia o assento anota a recusa e a
+// rota tira a CLI enquanto ela vale — sem isso o muse vencia o desempate de
+// novo e caía no claude em 22 de 23 spawns.
+describe('recusa recente de credencial', () => {
+  it('vale por 10 min e expira sozinha', () => {
+    clearRecentCredentialProbeFailuresForTests();
+    recordRecentCredentialProbeFailure('muse', 1_000);
+    expect(hasRecentCredentialProbeFailure('muse', 1_000 + 9 * 60_000)).toBe(true);
+    expect(hasRecentCredentialProbeFailure('claude', 1_000)).toBe(false);
+    expect(hasRecentCredentialProbeFailure('muse', 1_000 + 10 * 60_000)).toBe(false);
+  });
+
+  it('some no primeiro probe que passa (login refeito volta na hora)', async () => {
+    clearRecentCredentialProbeFailuresForTests();
+    recordRecentCredentialProbeFailure('codex');
+    recordRecentCredentialProbeFailure('grok');
+    expect(
+      await runProbe('codex', makeDeps({ getAdapter: () => codexAdapter, hasNativeFileAuth: () => true })),
+    ).toBeNull();
+    expect(await runProbe('grok', makeDeps({ getAdapter: () => grokAdapter }))).not.toBeNull();
+    expect(hasRecentCredentialProbeFailure('codex')).toBe(false);
+    expect(hasRecentCredentialProbeFailure('grok')).toBe(true);
+    clearRecentCredentialProbeFailuresForTests();
   });
 });

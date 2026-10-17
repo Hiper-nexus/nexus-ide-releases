@@ -1000,6 +1000,17 @@ function missionAttachmentReadPathsForSpawn(
   ) {
     throw new Error("mission attachment authority is not current");
   }
+  // A persisted pane reopening in a parked mission (e.g. after a reboot) has no
+  // live dispatch authority to seal against; it reopens without the grant and
+  // the resumed mission re-grants through a fresh spawn.
+  if (
+    authority.source === "persisted-pane" &&
+    !hasPetStudioAuthority &&
+    !authority.context?.authoritySeal &&
+    mission.status !== "running"
+  ) {
+    return undefined;
+  }
   assertMissionSpawnAuthorityCurrent({
     missionId,
     scope: authority.coordinationScope ?? authority.scope,
@@ -1008,7 +1019,7 @@ function missionAttachmentReadPathsForSpawn(
   });
   const snapshots = revalidateSealedAttachmentSnapshots(attachments, {
     workspaceRootAuthority: workspaceRootAuthorityFromScope(authority.coordinationScope ?? authority.scope),
-    checkoutId: authority.scope.checkoutId,
+    checkoutId: (authority.coordinationScope ?? authority.scope).checkoutId,
   });
   if (
     snapshots.length !== attachments.length ||
@@ -1727,7 +1738,8 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
     cleanupAgyMcpConfig(ctx.token);
     cleanupCliMcpSession(ctx.token);
     cleanupSessionArtifacts(ctx.token);
-    throw new Error("failed to bind sealed mission attachments", {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`failed to bind sealed mission attachments (${detail})`, {
       cause: error,
     });
   }

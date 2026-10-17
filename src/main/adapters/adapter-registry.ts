@@ -267,15 +267,16 @@ function withNativeApprovalDefaults(adapter: Adapter): Adapter {
   // Qwen CLI advertises --yolo; the API provider with the same id is unrelated.
   const missingQwen = adapter.id === 'qwen' && adapter.bin === 'qwen'
     && !permission?.yolo.length;
-  // Older Nexus Kimi manifests used --auto, which is not its approval flag.
+  // Kimi Code 2.2.0: --yolo is only "Ask When Needed"; --auto is the real "Never Ask".
+  const kimiYolo = permission?.yolo.join(' ');
   const legacyKimi = adapter.id === 'kimi' && adapter.bin === 'kimi'
-    && (!permission?.yolo.length || permission.yolo.join(' ') === '--auto');
+    && (!permission?.yolo.length || kimiYolo === '--yolo' || kimiYolo === '-y');
   if (!missingQwen && !legacyKimi) return adapter;
   return {
     ...adapter,
     control: {
       ...adapter.control,
-      permission: { modes: {}, default: '', ...permission, yolo: ['--yolo'] },
+      permission: { modes: {}, default: '', ...permission, yolo: [adapter.id === 'kimi' ? '--auto' : '--yolo'] },
     },
   };
 }

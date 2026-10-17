@@ -40,6 +40,13 @@ export interface PaneScopeEntry {
    * que os callbacks do grid usam. Presente só quando maior que zero.
    */
   readonly workingCount?: number;
+  /**
+   * Todos os panes da aba têm sessão provadamente morta (exited/hibernated).
+   * Acrescentado como `workingCount`, pelo estado vivo. A aba não segura mais
+   * trabalho nenhum: fechar só descarta histórico, mesmo com a missão ainda
+   * num estado não terminal na projeção (ex.: aposentada por pergunta aberta).
+   */
+  readonly retired?: true;
   /** Estado da missão, quando o renderer já conhece a projeção. */
   readonly state?: string;
   /**
@@ -398,6 +405,40 @@ export function withWorkingCounts(
     const workingCount = counts.get(scope.key);
     return workingCount ? { ...scope, workingCount } : scope;
   });
+}
+
+/** Sessão provadamente morta (encerrada/hibernada); sem estado ainda não prova nada. */
+export function isDeadPaneState(state: string | undefined): boolean {
+  return state === 'exited' || state === 'hibernated';
+}
+
+/** Abas cujos panes estão TODOS com sessão provadamente morta. */
+export function retiredScopeKeys(
+  panes: readonly PaneModel[],
+  scopeOf: (pane: PaneModel) => string,
+  deadPaneIds: ReadonlySet<string>,
+): ReadonlySet<string> {
+  const retired = new Set<string>();
+  const notRetired = new Set<string>();
+  for (const pane of panes) {
+    if (pane.isStructuralPlaceholder) continue;
+    const key = scopeOf(pane);
+    if (deadPaneIds.has(pane.id)) retired.add(key);
+    else notRetired.add(key);
+  }
+  for (const key of notRetired) retired.delete(key);
+  return retired;
+}
+
+/** Marca `retired` nas abas sem sessão viva; sem nenhuma devolve o MESMO array. */
+export function withRetiredScopes(
+  scopes: readonly PaneScopeEntry[],
+  retired: ReadonlySet<string>,
+): readonly PaneScopeEntry[] {
+  if (retired.size === 0) return scopes;
+  return scopes.map((scope) =>
+    retired.has(scope.key) ? { ...scope, retired: true as const } : scope,
+  );
 }
 
 function scopeEntryFor(

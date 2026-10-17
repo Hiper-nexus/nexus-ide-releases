@@ -37,13 +37,17 @@ export function formatRelease(release, nowMs) {
   return when ? `v${release.version} · publicada ${when}` : `v${release.version}`;
 }
 
-/** Preenche #hero-proof com o que conseguir confirmar; sem nada confirmado, a linha continua escondida. */
+/** Quando nem a API de status nem a de releases respondem, a linha mostra o que o produto é
+ *  (fixo, sem promessa de oferta) em vez de deixar um vazio acima da dobra. */
+export const PROOF_FALLBACK = ['17 adaptadores de IA', 'worktrees isoladas', 'macOS, Linux e Windows'];
+
+/** Preenche #hero-proof com o que conseguir confirmar; sem nada confirmado, mostra a prova estática. */
 export async function initializeHeroProof({ status, releases, now = Date.now(), element = globalThis.document?.getElementById('hero-proof') } = {}) {
   if (!element) return;
   const [view, catalog] = await Promise.all([Promise.resolve(status).catch(() => null), Promise.resolve(releases).catch(() => null)]);
   const parts = [formatOffer(view), formatRelease(newestRelease(catalog), now)].filter(Boolean);
-  if (parts.length === 0) return;
-  element.replaceChildren(...parts.flatMap((text, index) => {
+  const lines = parts.length === 0 ? PROOF_FALLBACK : parts;
+  element.replaceChildren(...lines.flatMap((text, index) => {
     const item = Object.assign(globalThis.document.createElement('span'), { textContent: text });
     return index === 0 ? [item] : [Object.assign(globalThis.document.createElement('i'), { ariaHidden: 'true', className: 'hero-proof-sep' }), item];
   }));

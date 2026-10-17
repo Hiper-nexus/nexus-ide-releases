@@ -6,8 +6,15 @@
  * contexto visual. Aqui, um worker da missão que entregou TODOS os seus
  * handoffs (delivery_state='consumed') e ficou idle é encerrado após
  * WORKER_POST_HANDOFF_TTL_MS — a menos que volte a trabalhar (qualquer
- * transição busy cancela o timer) ou que a missão saia de 'running' (a
- * máquina de encerramento da missão passa a ser a dona).
+ * transição busy cancela o timer) ou que a missão saia de 'running'.
+ *
+ * Fora de 'running' o dono é outro, e mais estrito. blocked/failed/pending
+ * perdem a autoridade de despacho: o reconciliador `mission-runtime-authority`
+ * (1 s, por projeto aberto) encerra TODOS os workers da missão, com handoff
+ * consumido ou não, e preserva o pane com o scrollback (F-253,
+ * `terminateUnauthorizedMissionRuntimes`); done é do `mission-done-teardown`.
+ * Missão não tem status 'paused' (`missionStatusSchema`). Fechar aqui também
+ * seria um segundo dono que tira da tela o pane que a demoção mantém.
  *
  * Fail-safe por construção:
  * - gate feature.mission.workerHandoffTtl, DEFAULT-ON desde 568c1324 (flag
@@ -150,7 +157,8 @@ function workerIsClosable(
   if (authority.operatorOpened === true) return null;
   if (!authority.missionId || !authority.scope) return null;
   if (authority.sessionId !== sessionId) return null;
-  // Missão fora de 'running' pertence à máquina de encerramento da missão.
+  // Fora de 'running' o reconciliador de autoridade (F-253) ou o done-teardown
+  // é o dono do encerramento — ver o cabeçalho.
   if (deps.missionStatus(authority.scope, authority.missionId) !== 'running') {
     return null;
   }

@@ -1255,6 +1255,31 @@ describe('warmKeychainOnlySubscriptionAuth', () => {
     expect(hasSubscriptionAuthForStatus('agy')).toBe(true);
   });
 
+  // route-resolve (16/10): toda rota de missão aquece a auth, e o warm
+  // autoritativo chamava o `security` do Keychain mesmo com um positivo fresco.
+  it('reaproveita o positivo fresco (<60 s) em vez de sondar o Keychain de novo', async () => {
+    vi.stubEnv('HOME', tempHome());
+    const firstProbe = vi.fn(async () => true);
+    await warmKeychainOnlySubscriptionAuth('agy', firstProbe);
+    expect(firstProbe).toHaveBeenCalledTimes(1);
+
+    const secondProbe = vi.fn(async () => true);
+    await warmKeychainOnlySubscriptionAuth('agy', secondProbe);
+    expect(secondProbe).not.toHaveBeenCalled();
+    expect(hasSubscriptionAuthForStatus('agy')).toBe(true);
+  });
+
+  it('cache negativo continua autoritativo: login feito depois do "não" aparece', async () => {
+    vi.stubEnv('HOME', tempHome());
+    await warmKeychainOnlySubscriptionAuth('agy', vi.fn(async () => false));
+    expect(hasSubscriptionAuthForStatus('agy')).toBe(false);
+
+    const loggedIn = vi.fn(async () => true);
+    await warmKeychainOnlySubscriptionAuth('agy', loggedIn);
+    expect(loggedIn).toHaveBeenCalledTimes(1);
+    expect(hasSubscriptionAuthForStatus('agy')).toBe(true);
+  });
+
   it('leaves file/token providers out of the keychain warm', async () => {
     const asyncKeychainProbe = vi.fn(async () => true);
 

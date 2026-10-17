@@ -23,6 +23,8 @@ function database(t) {
   db.exec(readFileSync(new URL('../migrations/0009_account_activity.sql', import.meta.url), 'utf8'));
   db.exec(readFileSync(new URL('../migrations/0010_refresh_families.sql', import.meta.url), 'utf8'));
   db.exec(readFileSync(new URL('../migrations/0011_refresh_superseded.sql', import.meta.url), 'utf8'));
+  db.exec(readFileSync(new URL('../migrations/0012_trial_engagement.sql', import.meta.url), 'utf8'));
+  db.exec(readFileSync(new URL('../migrations/0013_activity_delivery_streams.sql', import.meta.url), 'utf8'));
   return db;
 }
 
@@ -47,7 +49,7 @@ function project(db, accountId, projectId = 'same-project') {
 
 test('schema metadata records version without claiming PostgreSQL import', (t) => {
   const db = database(t);
-  assert.equal(db.prepare("SELECT value FROM system_metadata WHERE key = 'schema_version'").get().value, '11');
+  assert.equal(db.prepare("SELECT value FROM system_metadata WHERE key = 'schema_version'").get().value, '13');
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM system_metadata WHERE key LIKE 'import%'").get().n, 0);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM accounts").get().n, 0);
 });
@@ -417,5 +419,47 @@ test('a migração 0007 só acrescenta: contas e auditoria que já existiam em b
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM accounts').get().n, 1);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM admin_audit WHERE id = 'old'").get().n, 1);
   assert.equal(db.prepare("SELECT value FROM system_metadata WHERE key = 'schema_version'").get().value, '7');
+  db.close();
+});
+
+test('a migração 0012 estima last_active_at pelo último sinal do app e só conta missão onde já havia conclusão', () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec('PRAGMA foreign_keys = ON');
+  for (const file of ['0001_core.sql', '0002_trial_admin.sql', '0003_checkout_reservation.sql', '0004_oauth_client.sql', '0005_license_codes.sql', '0006_account_notices.sql', '0007_bug_reports.sql', '0008_billing_intervals_coupons.sql', '0009_account_activity.sql', '0010_refresh_families.sql', '0011_refresh_superseded.sql']) db.exec(readFileSync(new URL(`../migrations/${file}`, import.meta.url), 'utf8'));
+  const day = (n) => NOW + (n - 1) * DAY;
+  const legacy = (name, { agent = null, mission = null, usageDay = null } = {}) => {
+    const id = account(db, `${name}@example.test`);
+    db.prepare(`INSERT INTO account_activity (account_id, first_app_seen_at, last_app_seen_at, first_agent_at, first_mission_at, first_usage_day)
+      VALUES (?, ?, ?, ?, ?, ?)`).run(id, day(1), day(10), agent, mission, usageDay);
+    return id;
+  };
+  const completed = legacy('completed', { agent: day(1), mission: day(3), usageDay: '2026-10-01' });
+  const agentOnly = legacy('agent-only', { agent: day(1) });
+  const usageOnly = legacy('usage-only', { usageDay: '2026-10-01' });
+  const presenceOnly = legacy('presence-only');
+  db.exec(readFileSync(new URL('../migrations/0012_trial_engagement.sql', import.meta.url), 'utf8'));
+  const read = (id) => ({ ...db.prepare(`SELECT last_active_at, last_mission_at, missions_started_count AS started,
+    missions_completed_count AS completed, last_agent_working AS working, last_mission_running AS running FROM account_activity WHERE account_id = ?`).get(id) });
+  // first_agent_at (day 1) is the FIRST signal; the backfill must land on the latest one (day 10).
+  assert.deepEqual(read(completed), { last_active_at: day(10), last_mission_at: day(3), started: 1, completed: 1, working: 0, running: 0 });
+  assert.deepEqual(read(agentOnly), { last_active_at: day(10), last_mission_at: null, started: 0, completed: 0, working: 0, running: 0 });
+  // Usage recorded only as a usage day (no agent or mission milestone) is still real use.
+  assert.deepEqual(read(usageOnly), { last_active_at: day(10), last_mission_at: null, started: 0, completed: 0, working: 0, running: 0 });
+  // Presence alone never becomes activity.
+  assert.deepEqual(read(presenceOnly), { last_active_at: null, last_mission_at: null, started: 0, completed: 0, working: 0, running: 0 });
+  assert.equal(db.prepare("SELECT value FROM system_metadata WHERE key = 'schema_version'").get().value, '12');
+  db.close();
+});
+
+test('a migração 0013 adiciona delivery_streams com default {} a um banco já na 0012', () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec('PRAGMA foreign_keys = ON');
+  for (const file of ['0001_core.sql', '0002_trial_admin.sql', '0003_checkout_reservation.sql', '0004_oauth_client.sql', '0005_license_codes.sql', '0006_account_notices.sql', '0007_bug_reports.sql', '0008_billing_intervals_coupons.sql', '0009_account_activity.sql', '0010_refresh_families.sql', '0011_refresh_superseded.sql', '0012_trial_engagement.sql']) db.exec(readFileSync(new URL(`../migrations/${file}`, import.meta.url), 'utf8'));
+  const id = account(db);
+  db.prepare('INSERT INTO account_activity (account_id, first_app_seen_at, last_app_seen_at) VALUES (?, ?, ?)').run(id, NOW, NOW);
+  assert.equal(db.prepare("SELECT value FROM system_metadata WHERE key = 'schema_version'").get().value, '12');
+  db.exec(readFileSync(new URL('../migrations/0013_activity_delivery_streams.sql', import.meta.url), 'utf8'));
+  assert.equal(db.prepare('SELECT delivery_streams AS d FROM account_activity WHERE account_id = ?').get(id).d, '{}');
+  assert.equal(db.prepare("SELECT value FROM system_metadata WHERE key = 'schema_version'").get().value, '13');
   db.close();
 });

@@ -10,11 +10,9 @@ import {
   validateMissionAttachment,
   filesFromClipboardData,
   missionAttachmentContentKey,
-  missionAttachmentDisplayName,
   type MissionAttachment,
 } from '../../lib/mission-attachments';
 import {
-  createImageThumbnailDataUrl,
   imageNeedsPreparation,
   isHeicImageFile,
   prepareImageForAttachment,
@@ -26,6 +24,14 @@ import {
   type DroppedUri,
 } from '../../lib/mission-shell-file-intake';
 import { useWorkspaceStore } from '../../state/workspace-store';
+import {
+  attachmentDisplayName,
+  beginPendingAttachment,
+  finishPendingAttachment,
+  rememberAttachment,
+  rememberAttachmentThumbnail,
+  useMissionAttachmentPresentation,
+} from '../../state/mission-attachment-presentation';
 
 const FILE_ACCEPT =
   'audio/*,image/*,.heic,.heif,application/pdf,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.odt,.rtf,' +
@@ -78,32 +84,7 @@ function importedPaths(contextPaths: readonly string[]): string[] {
   return contextPaths.filter(isMissionContextAttachmentPath);
 }
 
-/**
- * F-1005: o que a tela sabe de cada anexo copiado nesta sessão — o nome que o
- * operador escolheu (com a extensão final, se a imagem foi convertida) e a
- * miniatura. Chave = caminho na missão (único por token). Fica no módulo para
- * sobreviver ao picker remontar (recolher/abrir "detalhes"); teto pequeno.
- */
-interface AttachmentPresentation {
-  readonly name: string;
-  readonly thumbnail?: string;
-}
-const ATTACHMENT_PRESENTATION_LIMIT = 48;
-const attachmentPresentation = new Map<string, AttachmentPresentation>();
-
-function rememberAttachment(path: string, presentation: AttachmentPresentation): void {
-  attachmentPresentation.delete(path);
-  attachmentPresentation.set(path, presentation);
-  while (attachmentPresentation.size > ATTACHMENT_PRESENTATION_LIMIT) {
-    const oldest = attachmentPresentation.keys().next().value;
-    if (oldest === undefined) break;
-    attachmentPresentation.delete(oldest);
-  }
-}
-
-function displayName(path: string): string {
-  return attachmentPresentation.get(path)?.name ?? missionAttachmentDisplayName(path);
-}
+const displayName = attachmentDisplayName;
 
 /** Nome escolhido pelo operador com a extensão do arquivo que foi anexado. */
 function chosenName(original: File, attached: File): string {
@@ -133,6 +114,17 @@ function fileSignature(file: File): string {
   ].join('\0');
 }
 
+/** Nome da linha "anexando…" para um URI solto (file:// ou link): a cauda. */
+function droppedUriName(uri: string): string {
+  const tail = uri.split('/').pop()?.trim() ?? '';
+  if (!tail) return 'anexo';
+  try {
+    return decodeURIComponent(tail);
+  } catch {
+    return tail;
+  }
+}
+
 export function MissionAttachmentPicker({
   contextPaths,
   disabled,
@@ -145,8 +137,8 @@ export function MissionAttachmentPicker({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [dropActive, setDropActive] = useState(false);
-  // Miniatura chega depois da cópia: só força a lista a redesenhar.
-  const [, setPresentationVersion] = useState(0);
+  const presentation = useMissionAttachmentPresentation((s) => s.presentation);
+  const pending = useMissionAttachmentPresentation((s) => s.pending);
   const dropRef = useRef<HTMLDivElement>(null);
   const importingFileKeysRef = useRef(new Set<string>());
   const importedContentKeysRef = useRef(new Map<string, string>());
@@ -181,6 +173,10 @@ export function MissionAttachmentPicker({
     const failures: string[] = [];
     const notices: string[] = [];
     let stopReason: string | null = null;
+    // A cópia do picker também é "anexando…" na store compartilhada (antes só
+    // o intake do shell marcava): a fileira mostra o progresso por arquivo e
+    // o Iniciar espera a cópia em vez de gravar a missão sem o anexo.
+    const stagedPendingIds: string[] = [];
     try {
       for (const original of files) {
         // A chave é do ORIGINAL: o mesmo HEIC colado de novo não reconverte.
@@ -199,6 +195,10 @@ export function MissionAttachmentPicker({
         }
         importingFileKeysRef.current.add(signature);
         importingFileKeysRef.current.add(contentKey);
+        const pendingId = beginPendingAttachment(
+          original.name.trim() || 'anexo',
+        );
+        let keepPending = false;
         try {
           let file = original;
           if (classifyMissionAttachment(original) === 'image') {
@@ -250,21 +250,21 @@ export function MissionAttachmentPicker({
           // token interno do Main) e, para imagem, uma miniatura.
           rememberAttachment(staged.path, { name: chosenName(original, file) });
           if (staged.kind === 'image') {
-            const stagedPath = staged.path;
-            void createImageThumbnailDataUrl(file).then((thumbnail) => {
-              const known = attachmentPresentation.get(stagedPath);
-              if (!thumbnail || !known) return;
-              rememberAttachment(stagedPath, { ...known, thumbnail });
-              setPresentationVersion((version) => version + 1);
-            });
+            rememberAttachmentThumbnail(staged.path, file);
           }
           if (!nextPathSet.has(staged.path)) {
             nextPathSet.add(staged.path);
             next.push(staged.path);
           }
+          // A linha "anexando" sai só depois do path entrar no rascunho
+          // (mesma sequência do intake do shell — não pisca vazio).
+          keepPending = true;
+          stagedPendingIds.push(pendingId);
         } finally {
           importingFileKeysRef.current.delete(signature);
           importingFileKeysRef.current.delete(contentKey);
+          // Falha/inválido sai já — o erro inline do picker explica por quê.
+          if (!keepPending) finishPendingAttachment(pendingId);
         }
       }
       if (next.length !== contextPaths.length) {
@@ -281,6 +281,7 @@ export function MissionAttachmentPicker({
       );
     } finally {
       setBusy(false);
+      for (const id of stagedPendingIds) finishPendingAttachment(id);
     }
   };
 
@@ -299,27 +300,37 @@ export function MissionAttachmentPicker({
     setNotice(null);
     const next = [...contextPaths];
     const nextPathSet = new Set(next);
+    const stagedPendingIds: string[] = [];
     try {
       const failures: string[] = [];
       for (const dropped of uris) {
-        const result = await importDroppedUriForMission(dropped.uri);
-        if (currentWorkspacePath() !== workspaceAtStart) {
-          setError(WORKSPACE_CHANGED_MESSAGE);
-          return;
-        }
-        if (!result.ok) {
-          failures.push(result.message);
-          continue;
-        }
-        if (!nextPathSet.has(result.path)) {
-          nextPathSet.add(result.path);
-          next.push(result.path);
+        const pendingId = beginPendingAttachment(droppedUriName(dropped.uri));
+        let keepPending = false;
+        try {
+          const result = await importDroppedUriForMission(dropped.uri);
+          if (currentWorkspacePath() !== workspaceAtStart) {
+            setError(WORKSPACE_CHANGED_MESSAGE);
+            return;
+          }
+          if (!result.ok) {
+            failures.push(result.message);
+            continue;
+          }
+          if (!nextPathSet.has(result.path)) {
+            nextPathSet.add(result.path);
+            next.push(result.path);
+          }
+          keepPending = true;
+          stagedPendingIds.push(pendingId);
+        } finally {
+          if (!keepPending) finishPendingAttachment(pendingId);
         }
       }
       if (next.length !== contextPaths.length) onContextPathsChange(next);
       if (failures.length > 0) setError(failures.join(' '));
     } finally {
       setBusy(false);
+      for (const id of stagedPendingIds) finishPendingAttachment(id);
     }
   };
 
@@ -343,8 +354,10 @@ export function MissionAttachmentPicker({
     >
       <div className="mission-setup__section-heading">
         <div>
-          <h2>Anexos do cliente</h2>
-          {compact ? null : (
+          <h2>Anexos</h2>
+          {compact ? (
+            <p>Imagem, áudio, PDF ou texto.</p>
+          ) : (
           <p>
             Áudio, imagem, documento (PDF/Office) ou texto — mesmo de fora da
             pasta do projeto. O Nexus copia o arquivo para dentro da missão.
@@ -362,6 +375,8 @@ export function MissionAttachmentPicker({
           dropActive ? ' mission-attachment-picker__drop--active' : ''
         }`}
         tabIndex={0}
+        role="group"
+        aria-label="Anexar arquivos: solte, cole ou escolha no disco"
         onDragOver={(event) => {
           if (disabled) return;
           event.preventDefault();
@@ -424,6 +439,7 @@ export function MissionAttachmentPicker({
           ref={inputRef}
           className="mission-setup__sr-only"
           type="file"
+          tabIndex={-1}
           accept={FILE_ACCEPT}
           multiple
           disabled={disabled || busy}
@@ -448,14 +464,42 @@ export function MissionAttachmentPicker({
         </p>
       )}
 
-      {currentImported.length > 0 && (
+      {(currentImported.length > 0 || pending.length > 0) && (
         <ul className="mission-attachment-picker__list" aria-label="Anexos importados">
+          {pending.map((item) => (
+            <li
+              key={item.id}
+              className={
+                item.error ? 'mission-attachment-picker__item--failed' : undefined
+              }
+            >
+              <span className="mission-attachment-picker__kind">
+                {item.error ? 'Falhou' : 'Anexando…'}
+              </span>
+              <span className="mission-attachment-picker__file">
+                <strong>{item.name}</strong>
+                <small role={item.error ? 'alert' : 'status'}>
+                  {item.error ?? 'Copiando para a missão'}
+                </small>
+              </span>
+              {item.error && (
+                <button
+                  type="button"
+                  className="mission-setup__button mission-setup__button--quiet"
+                  aria-label={`Dispensar aviso de ${item.name}`}
+                  onClick={() => finishPendingAttachment(item.id)}
+                >
+                  Dispensar
+                </button>
+              )}
+            </li>
+          ))}
           {currentImported.map((path) => (
             <li key={path}>
-              {attachmentPresentation.get(path)?.thumbnail ? (
+              {presentation.get(path)?.thumbnail ? (
                 <img
                   className="mission-attachment-picker__thumb"
-                  src={attachmentPresentation.get(path)?.thumbnail}
+                  src={presentation.get(path)?.thumbnail}
                   alt=""
                   width={48}
                   height={48}

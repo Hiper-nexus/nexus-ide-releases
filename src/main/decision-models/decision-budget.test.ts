@@ -4,9 +4,10 @@ vi.mock('../persistence/secrets-store', () => ({ getSecret: () => null, hasSecre
 vi.mock('../jev/jev-decision-log', () => ({ recordJevNoAnswer: vi.fn(() => 'id'), recordJevDecision: vi.fn(() => 'id') }));
 import { recordJevNoAnswer } from '../jev/jev-decision-log';
 
-import type { JevResult } from '../jev/jev-client';
+import type { JevResult, JudgeInput } from '../jev/jev-client';
 import { decisionSettingsSchema, missionDecisionBudgetUsd, type DecisionSettings } from '../../shared/decision-models';
 import { DecisionBudgetLedger } from './decision-budget';
+import { resetDecisionHealthForTesting } from './decision-health';
 import { judgeDecision, type DecisionJudgeDeps } from './decision-judge';
 import { estimateDecisionCostUsd, estimateDecisionInputTokens } from './decision-pricing';
 import type { DecisionQualityTable } from './decision-quality';
@@ -18,7 +19,9 @@ const nativeResult: JevResult = { model: 'jev-1.13.0', answers: { q: { type: 'no
 const ACTUAL = 100 * 0.042 / 1_000_000;
 /** Qualidade medida localmente (o ensemble do v2 nunca liga só com prior). */
 const MEASURED: DecisionQualityTable = { version: 1, generatedAt: 1, source: 'evaluateDecisionCases', models: {},
-  surfaces: { missionPick: { jev: { accuracy: 0.8, cases: 20 }, 'clef-flash': { accuracy: 0.8, cases: 20 } } } };
+  surfaces: { missionPick: { jev: { accuracy: 0.8, cases: 10 }, 'clef-flash': { accuracy: 0.8, cases: 10 } } } };
+
+beforeEach(() => resetDecisionHealthForTesting());
 
 function settings(over: Partial<DecisionSettings> = {}): DecisionSettings {
   return { mode: 'auto', clefModel: 'clef', cloudflareAccountId: ACCOUNT, visionEnabled: false, ...over };
@@ -41,6 +44,67 @@ function deferred<T>() {
   const promise = new Promise<T>(r => { resolve = r; });
   return { promise, resolve };
 }
+
+describe('recibo de falha dos clientes e orçamento da missão', () => {
+  beforeEach(() => vi.mocked(recordJevNoAnswer).mockClear());
+
+  function clientDeps(provider: 'clef' | 'luna', ledger: DecisionBudgetLedger, fetchImpl: typeof fetch) {
+    return deps({ ledger, settings: settings({ mode: provider }), fetch: fetchImpl,
+      getAvailability: () => ({ jev: false, clef: provider === 'clef', luna: provider === 'luna' }),
+      getClefConnection: () => ({ accountId: ACCOUNT, token: 'synthetic', model: 'clef' as const }),
+      resolveLunaKey: () => 'synthetic-luna',
+    });
+  }
+
+  for (const provider of ['clef', 'luna'] as const) {
+    it.each(['choice singleton', 'corpo excessivo'])('%s no ' + provider + ': zero requisições devolve toda a reserva', async failure => {
+      const ledger = new DecisionBudgetLedger();
+      const fetcher = vi.fn(async () => new Response('{}', { status: 400 }));
+      const request: JudgeInput = { ...input, missionId: 'm-local', ...(failure === 'choice singleton'
+        ? { questions: { q: { type: 'choice' as const, instructions: 'Choose.', criteria: { only: 'Only' } } } }
+        : { state: 'x'.repeat(14 * 1024 * 1024) }) };
+
+      const result = await judgeDecision(request, clientDeps(provider, ledger, fetcher as typeof fetch));
+
+      expect(result).toBeNull();
+      expect(fetcher).not.toHaveBeenCalled();
+      expect(ledger.snapshot('m-local', 1)).toMatchObject({ spentUsd: 0, reservedUsd: 0 });
+      expect(recordJevNoAnswer).toHaveBeenLastCalledWith(expect.objectContaining({ reason: 'client-error', budgetChargedUsd: 0,
+        usage: expect.objectContaining({ requestCount: 0, inputTokens: 0, usd: 0, usageIncomplete: false }) }));
+    });
+
+    it(provider + ': falha depois do envio conserva o gasto desconhecido estimado', async () => {
+      const ledger = new DecisionBudgetLedger();
+      const fetcher = vi.fn(async () => new Response('{}', { status: 400 }));
+
+      await judgeDecision({ ...input, missionId: 'm-sent' }, clientDeps(provider, ledger, fetcher as typeof fetch));
+
+      expect(fetcher).toHaveBeenCalledOnce();
+      expect(ledger.snapshot('m-sent', 1).reservedUsd).toBe(0);
+      const expectedUsd = provider === 'clef' ? 0.000048 : 0.00002;
+      expect(ledger.snapshot('m-sent', 1).spentUsd).toBeCloseTo(expectedUsd, 12);
+      expect(recordJevNoAnswer).toHaveBeenLastCalledWith(expect.objectContaining({ budgetChargedUsd: expectedUsd,
+        usage: expect.objectContaining({ requestCount: 1, inputTokens: null, usd: null, usageIncomplete: true }) }));
+    });
+
+    it(provider + ': resposta inválida depois do envio conserva a medição paga', async () => {
+      const ledger = new DecisionBudgetLedger();
+      const usage = { input_tokens: 1_000, output_tokens: 0 };
+      const fetcher = vi.fn(async () => Response.json(provider === 'clef'
+        ? { success: true, result: { model: 'clef', usage, answers: {} } }
+        : { model: 'gpt-6-luna', usage, answers: [{ name: 'q0', type: 'refusal' }] }));
+
+      await judgeDecision({ ...input, missionId: 'm-paid' }, clientDeps(provider, ledger, fetcher as typeof fetch));
+
+      expect(fetcher).toHaveBeenCalledOnce();
+      const expectedUsd = provider === 'clef' ? 0.00024 : 0.0001;
+      expect(ledger.snapshot('m-paid', 1).spentUsd).toBeCloseTo(expectedUsd, 12);
+      expect(ledger.snapshot('m-paid', 1).reservedUsd).toBe(0);
+      expect(recordJevNoAnswer).toHaveBeenLastCalledWith(expect.objectContaining({ budgetChargedUsd: expectedUsd,
+        usage: expect.objectContaining({ requestCount: 1, inputTokens: 1_000, usd: expectedUsd, usageIncomplete: false }) }));
+    });
+  }
+});
 
 describe('DecisionBudgetLedger (F-1164)', () => {
   it('reserva o estimado e acerta pelo recibo real', () => {
@@ -164,7 +228,7 @@ describe('orçamento por missão no judge (F-1164)', () => {
     const nativeJudge = vi.fn(async () => nativeResult);
     const common = { nativeJudge, fetch: fetchMock, getAvailability: () => ({ jev: true, clef: true, luna: false }),
       getClefConnection: () => ({ accountId: ACCOUNT, token: 'synthetic', model: 'clef' as const }) };
-    // Normal: reversível, 2 provedores e qualidade MEDIDA → "usar várias" (Jev + Flash).
+    // Normal: missionPick é reversível e não tem limiar calibrado — qualidade MEDIDA liga "usar várias".
     const normal = await judgeDecision({ ...input, surface: 'missionPick', missionId: 'm-normal' },
       deps({ ledger: new DecisionBudgetLedger(), ...common, getQualityTable: () => MEASURED }));
     expect(normal?.model).toBe('ensemble');
@@ -173,7 +237,7 @@ describe('orçamento por missão no judge (F-1164)', () => {
     nativeJudge.mockClear(); endpoints.length = 0;
     const softLedger = new DecisionBudgetLedger(() => ({ 'm-soft': 0.45 }));
     await softLedger.warm();
-    const soft = await judgeDecision({ ...input, surface: 'missionPick', missionId: 'm-soft' },
+    const soft = await judgeDecision({ ...input, surface: 'taskRouting', missionId: 'm-soft' },
       deps({ ledger: softLedger, ...common, getQualityTable: () => MEASURED }));
     expect(soft?.route).toMatchObject({ provider: 'clef', model: 'clef-flash', policyVersion: 'decision-engine-v2' });
     expect(nativeJudge).not.toHaveBeenCalled();
@@ -243,12 +307,47 @@ describe('revisão da Fase 1 (F-1164/F-1165)', () => {
     expect(ledger.snapshot('m-partial', 0.5).spentUsd).toBeCloseTo(result!.budgetChargedUsd!, 12);
   });
 
-  it('P1: Juntos (v1) mantém a regra: falha parcial não devolve resposta', async () => {
+  it('P1: Junto (v1) mantém a regra: falha parcial não devolve resposta', async () => {
     const result = await judgeDecision({ ...input, surface: 'taskRouting' }, deps({ ledger: new DecisionBudgetLedger(),
       settings: settings({ mode: 'together' }), ...withClef(clefAnswer(400)), getAvailability: () => ({ jev: true, clef: true, luna: true }),
       resolveLunaKey: () => 'sk-synthetic', fetch: (async (url: string, options?: RequestInit) => String(url).includes('openai')
         ? new Response('{}', { status: 400 }) : clefAnswer(400)(url, options)) as typeof fetch }));
     expect(result).toBeNull();
+  });
+
+  // O recibo de cada membro do conjunto é escrito depois da chamada dele: cliente que
+  // responde `null` sem relatar uso não fez requisição nenhuma (o Jev sem chave), e um
+  // ensemble com esse membro não pode virar gasto desconhecido — que segura o estimado
+  // inteiro no orçamento da missão sem nenhuma requisição ter saído.
+  const fatInput = { ...input, state: 'contexto da decisão '.repeat(400) };
+  const CLEF_MEASURED = 50 * 0.038 / 1_000_000;
+
+  it('P1: membro que devolve null sem relatar uso é "nenhuma requisição" — só se cobra quem pediu', async () => {
+    const ledger = new DecisionBudgetLedger();
+    const result = await judgeDecision({ ...fatInput, surface: 'missionPick', missionId: 'm-no-request' },
+      deps({ ledger, ...withClef(clefAnswer()), nativeJudge: async () => null }));
+    const estimated = estimateDecisionCostUsd(estimateDecisionInputTokens(fatInput), 'jev', 'jev');
+    // Só o Clef pediu: a requisição dele e o custo medido dele, com o recibo completo.
+    expect(result?.usageReceipt).toMatchObject({ requestCount: 1, usageIncomplete: false });
+    expect(result?.usageMissing).toBeUndefined();
+    expect(estimated).toBeGreaterThan(CLEF_MEASURED);
+    expect(result?.budgetChargedUsd).toBeCloseTo(CLEF_MEASURED, 12);
+    expect(ledger.snapshot('m-no-request', 0.5)).toMatchObject({ reservedUsd: 0 });
+    expect(ledger.snapshot('m-no-request', 0.5).spentUsd).toBeCloseTo(CLEF_MEASURED, 12);
+  });
+
+  it('P1: membro que lança sem relatar uso é gasto desconhecido — o estimado fica', async () => {
+    const ledger = new DecisionBudgetLedger();
+    const result = await judgeDecision({ ...fatInput, surface: 'missionPick', missionId: 'm-ensemble-unknown' },
+      deps({ ledger, ...withClef(clefAnswer()), nativeJudge: async () => { throw new Error('transport boom'); } }));
+    const estimated = estimateDecisionCostUsd(estimateDecisionInputTokens(fatInput), 'jev', 'jev');
+    expect(result?.usageReceipt).toMatchObject({ requestCount: 1, usageIncomplete: true });
+    expect(result?.usageMissing).toBe(true);
+    // Custo desconhecido nunca vira zero: o livro segura um estimado acima do medido.
+    expect(result?.budgetChargedUsd).toBeGreaterThan(CLEF_MEASURED);
+    expect(result?.budgetChargedUsd).toBeGreaterThanOrEqual(estimated);
+    expect(ledger.snapshot('m-ensemble-unknown', 0.5)).toMatchObject({ reservedUsd: 0 });
+    expect(ledger.snapshot('m-ensemble-unknown', 0.5).spentUsd).toBeCloseTo(result!.budgetChargedUsd!, 12);
   });
 
   it('P2-5: surface fixa no Jev nunca é recusada pelo orçamento; só contabiliza', async () => {

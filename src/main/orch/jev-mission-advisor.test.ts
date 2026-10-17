@@ -12,9 +12,12 @@ vi.mock('../jev/jev-autopilot', () => ({ isJevSurfaceEnabled: vi.fn(() => true) 
 vi.mock('../decision-models/decision-availability', () => ({ hasDecisionCredential: vi.fn(() => true) }));
 
 import type { JevResult, JudgeInput } from '../jev/jev-client';
+import { judgeClef } from '../decision-models/clef-client';
+import { judgeLuna } from '../decision-models/luna-client';
 import { recordJevDecision } from '../jev/jev-decision-log';
 import {
-  adviseCompletionCheck, adviseMissionKickoff, adviseRecovery, adviseReviewTriage, missionKickoffFacts,
+  adviseCompletionCheck, adviseMissionKickoff, adviseRecovery, adviseReviewTriage, isTabPlaceholderGoal,
+  missionKickoffFacts,
   missionKickoffQuestions, resetMissionAdvisorForTesting, reviewTriageContextLine, scheduleCompletionCheck,
   scheduleMissionKickoffAdvice, scheduleRecoveryAdvice, scheduleReviewTriageAdvice, withReviewTriageLines, type AdvisoryDeps,
   auditCompletionAtDone, completionContextLine, completionSignature, recoveryTriggerClass, settleCompletionChecksForTesting,
@@ -63,6 +66,32 @@ const mission = (id: string, maxWorkers = 3) => ({
 });
 
 describe('missionKickoff (F-1166)', () => {
+  it.each(['clef', 'luna'] as const)('%s: missão de um worker recebe dica válida sem escolha impossível', async provider => {
+    const probabilities = { standard: 1, consult: 0, plan: 0, ops: 0 };
+    const scoreProbabilities = { '0': 0, '1': 0, '2': 1, '3': 0 };
+    const usage = { input_tokens: 100, output_tokens: 0 };
+    const fetcher = (async () => Response.json(provider === 'clef'
+      ? { success: true, result: { model: 'clef', usage, answers: {
+        q0: { type: 'score', score: 2, confidence: 1, probabilities: scoreProbabilities,
+          legend: { '0': 'trivial', '1': 'small', '2': 'medium', '3': 'large' } },
+        q1: { type: 'choice', choice: 'standard', confidence: 1, probabilities },
+      } } }
+      : { model: 'gpt-6-luna', usage, answers: [
+        { type: 'score', name: 'q0', score: 2, confidence: 1,
+          probabilities: [0, 1, 2, 3].map(value => ({ value, probability: value === 2 ? 1 : 0 })) },
+        { type: 'choice', name: 'q1', choice: 'standard', confidence: 1,
+          probabilities: Object.entries(probabilities).map(([value, probability]) => ({ value, probability })) },
+      ] })) as typeof fetch;
+    const judge = (input: JudgeInput) => provider === 'clef'
+      ? judgeClef(input, { accountId: '0123456789abcdef0123456789abcdef', token: 'synthetic-token', model: 'clef' }, { fetch: fetcher })
+      : judgeLuna(input, 'synthetic-token', { fetch: fetcher });
+
+    const hint = await adviseMissionKickoff(missionKickoffFacts(mission(`m-single-${provider}`, 1), 'pane'), { judge });
+
+    expect(hint).toMatchObject({ workers: 1, maxWorkers: 1, complexityLevel: 'medium', lane: 'standard' });
+    expect(getMissionDecisionHints(`m-single-${provider}`)?.kickoff).toEqual(hint);
+  });
+
   it('convencional: grava a dica com rota, custo e workers dentro de maxWorkers; passa o missionId', async () => {
     const judge = vi.fn(async (_input: JudgeInput) => result(kickoffAnswers('2')));
     const hint = await adviseMissionKickoff(missionKickoffFacts(mission('m-conv'), 'conventional'), { judge });
@@ -100,6 +129,44 @@ describe('missionKickoff (F-1166)', () => {
     expect(sent).toContain('Contexto da varredura s240.');
     expect(sent).toContain(ask);
     expect(sent.length).toBeLessThan(1_600);
+  });
+});
+
+describe('+ Pane promovido sem objetivo: goal placeholder de aba não consulta o modelo', () => {
+  const paneFacts = (goal: string) => ({ missionId: 'm-tab', origin: 'pane' as const, goal, maxWorkers: 4 });
+
+  it('"Missão · Meus terminais 3" e variantes são placeholders; nome de feature não', () => {
+    for (const goal of ['Missão · Meus terminais 3', 'Missão · Meus terminais', 'Missão · Terminais',
+      'Missão ·', 'Mission · Meus terminais 7', 'Missão da aba', '  Missão · Meus terminais 2  ']) {
+      expect(isTabPlaceholderGoal(goal)).toBe(true);
+    }
+    for (const goal of ['Missão · Checkout', 'Missão · Meus terminais: refatorar o login',
+      'corrigir o bug do checkout', 'objetivo de m-tab']) {
+      expect(isTabPlaceholderGoal(goal)).toBe(false);
+    }
+  });
+
+  it('advise com goal placeholder: nenhuma chamada, nenhuma dica', async () => {
+    const judge = vi.fn(async () => result(kickoffAnswers()));
+    expect(await adviseMissionKickoff(paneFacts('Missão · Meus terminais 3'), { judge })).toBeNull();
+    expect(judge).not.toHaveBeenCalled();
+    expect(getMissionDecisionHints('m-tab')).toBeUndefined();
+  });
+
+  it('schedule com placeholder não consome a missão: o objetivo real dispara depois', async () => {
+    const judge = vi.fn(async () => result(kickoffAnswers('2')));
+    scheduleMissionKickoffAdvice(paneFacts('Missão · Meus terminais 3'), { judge });
+    await tick(); await tick();
+    expect(judge).not.toHaveBeenCalled();
+    // O objetivo real chegou (descrição/meta editada): a consulta acontece uma vez.
+    scheduleMissionKickoffAdvice(paneFacts('refatorar o login do admin'), { judge });
+    await tick(); await tick();
+    expect(judge).toHaveBeenCalledTimes(1);
+    expect(getMissionDecisionHints('m-tab')?.kickoff).toMatchObject({ origin: 'pane', workers: 2 });
+    // Depois de consultada, a missão não consulta de novo.
+    scheduleMissionKickoffAdvice(paneFacts('novo objetivo'), { judge });
+    await tick(); await tick();
+    expect(judge).toHaveBeenCalledTimes(1);
   });
 });
 

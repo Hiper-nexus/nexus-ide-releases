@@ -1,5 +1,6 @@
 import { runPeriodicTask, stopPeriodicTask } from '../observability/periodic-task';
 import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -31,9 +32,11 @@ import {
 import {
   authBlobIsUsable,
   captureNativeAuth,
+  supportsNativeSessionSnapshot,
   compareAuthBlobIdentity,
   identityFromAuthBlob,
   isFileAuthAdapter,
+  MANAGED_PROVIDER_SPECS,
   managedHomeEnv,
   materializeManagedHome,
   readBackFresherAuth,
@@ -41,6 +44,8 @@ import {
   setManagedAuthPersister,
   type FileAuthAdapterId,
 } from '../adapters/managed-credentials';
+import { compareAuthFreshness } from '../adapters/auth-freshness';
+import { readRegularFileCapped } from '../redline/redline-safe-read';
 import { chooseAccount } from './account-select';
 import { fullWindowsReopenAt, type HeadroomInput } from '../quota/account-headroom';
 import { initFailoverWaits } from './failover-waits';
@@ -1965,6 +1970,195 @@ export function restoreAgyNativeLogin(): boolean {
   }
 }
 
+/**
+ * O device code do Codex vence em 15 min. Um login pendente além disso é um
+ * terminal abandonado (renderer recarregado, janela fechada): o próximo
+ * preparo devolve a sessão dele e libera a vaga.
+ */
+export const CODEX_LOGIN_PENDING_TTL_MS = 16 * 60_000;
+/** Um auth.json real tem poucos KB; FIFO, /dev/zero ou arquivo gigante travariam o Main. */
+const CODEX_AUTH_MAX_BYTES = 1024 * 1024;
+const CODEX_LOGIN_STASH_PREFIX = '.auth.json.nexus-login-';
+
+interface VacatedCodexNative {
+  authFile: string;
+  blob: string;
+  /** `auth.json` era um link (gerenciador de dotfiles): volta o link, não uma cópia. */
+  linkTarget?: string;
+  at: number;
+}
+
+/** Sessão que saiu da vaga nativa para um login em andamento (só no Main, nunca no renderer). */
+let vacatedCodexNative: VacatedCodexNative | null = null;
+
+export type CodexLoginRestore = 'none' | 'restored' | 'slot-taken' | 'failed';
+
+function codexNativeAuthFile(): string | null {
+  const home = MANAGED_PROVIDER_SPECS.codex.systemHome();
+  return home ? path.join(home, 'auth.json') : null;
+}
+
+type CodexSlot =
+  | { kind: 'absent' }
+  | { kind: 'file'; blob: string; linkTarget?: string }
+  | { kind: 'refused' };
+
+/**
+ * Lê a vaga só como arquivo comum e pequeno, num descritor aberto uma vez com
+ * O_NONBLOCK (link para arquivo comum é seguido: dotfiles). Link pendurado não
+ * tem sessão a proteger.
+ */
+function readCodexSlot(file: string): CodexSlot {
+  const entry = fs.lstatSync(file, { throwIfNoEntry: false });
+  if (!entry) return { kind: 'absent' };
+  const linkTarget = entry.isSymbolicLink() ? fs.readlinkSync(file) : undefined;
+  const read = readRegularFileCapped(file, CODEX_AUTH_MAX_BYTES);
+  if (read.kind === 'text') {
+    return { kind: 'file', blob: read.text, ...(linkTarget ? { linkTarget } : {}) };
+  }
+  if (linkTarget && !fs.existsSync(file)) return { kind: 'absent' };
+  return { kind: 'refused' };
+}
+
+/** A conta dona recebe no cofre a cópia mais fresca da linhagem: a da vaga, a do home gerenciado ou a do cofre. */
+function keepFreshestCodexLineage(owner: Account, blob: string): boolean {
+  const key = CRED_PREFIX + owner.id;
+  const saved = getSecret(key);
+  if (saved === null && hasSecret(key)) return false;
+  const freshest = [blob, ...accountCredentialCandidates('codex', owner.id, saved)]
+    .filter((candidate) => compareAuthBlobIdentity('codex', candidate, blob) !== 'different')
+    .sort((left, right) => -(compareAuthFreshness(left, right) ?? 0))[0] ?? blob;
+  return freshest === saved || setSecret(key, freshest).ok;
+}
+
+/**
+ * O `codex login` (0.16x) revoga em auth.openai.com/oauth/revoke o login que
+ * encontra no auth.json e apaga o arquivo ANTES do device flow, mesmo que o
+ * login seja cancelado depois. O terminal de login roda no ~/.codex nativo, e
+ * o Nexus guarda essa mesma sessão (mesmo refresh token) no cofre e no home
+ * gerenciado: entrar na conta B revogava a conta A já salva. Com a vaga vazia
+ * a CLI não tem o que revogar.
+ *
+ * Contrato: um login do Codex por vez (pendente com menos de
+ * `CODEX_LOGIN_PENDING_TTL_MS` recusa o segundo); sessão usável sem conta dona
+ * vira conta antes de sair da vaga; a vaga sai por rename atômico e a conta
+ * dona recebe a cópia movida, que fica em memória até `restoreCodexNativeLogin`.
+ * Qualquer falha devolve a vaga como estava e o login não abre.
+ */
+export function prepareCodexNativeLogin(): { ok: boolean; error?: string } {
+  if (vacatedCodexNative) {
+    if (Date.now() - vacatedCodexNative.at < CODEX_LOGIN_PENDING_TTL_MS) {
+      return {
+        ok: false,
+        error: 'Já há um login do Codex em andamento. Conclua ou feche o terminal dele antes de abrir outro.',
+      };
+    }
+    // Terminal abandonado: devolve a sessão dele (melhor esforço) e libera.
+    restoreCodexNativeLogin();
+    vacatedCodexNative = null;
+  }
+  const authFile = codexNativeAuthFile();
+  if (!authFile) return { ok: true };
+  const keepError = {
+    ok: false,
+    error: 'Não consegui guardar a sessão atual do Codex antes do novo login. O login não foi iniciado.',
+  };
+  let owner: Account | null = null;
+  try {
+    const current = readCodexSlot(authFile);
+    if (current.kind === 'absent') return { ok: true };
+    if (current.kind === 'refused') return keepError;
+    if (authBlobIsUsable('codex', current.blob)) {
+      const locked = listAccounts('codex').find((account) => account.mode === 'subscription' &&
+        hasSecret(CRED_PREFIX + account.id) && getSecret(CRED_PREFIX + account.id) === null);
+      if (locked) {
+        return {
+          ok: false,
+          error: `O cofre do Nexus não liberou a credencial salva de “${locked.label}”. ` +
+            'O login do Codex não foi aberto para não perder a sessão atual: destrave o cofre ou remova essa conta.',
+        };
+      }
+      // Sem conta dona (a Atenção não guarda antes): a sessão vira conta, ou não sai da vaga.
+      owner = credentialIdentityOwner('codex', current.blob) ??
+        addActiveSessionAccount('codex', identityFromAuthBlob('codex', current.blob).email ?? 'Codex');
+      if (!owner) return keepError;
+    }
+  } catch {
+    return keepError;
+  }
+  // A vaga sai num passo atômico: o que estiver nela nesse instante (inclusive
+  // uma renovação que acabou de cair) é o que a conta dona recebe.
+  const stash = path.join(path.dirname(authFile), `${CODEX_LOGIN_STASH_PREFIX}${randomUUID()}`);
+  try {
+    fs.renameSync(authFile, stash);
+  } catch {
+    return keepError;
+  }
+  try {
+    // O temporário guarda um segredo: 0600 (link não, senão mudaria o alvo do operador).
+    if (!fs.lstatSync(stash).isSymbolicLink()) fs.chmodSync(stash, 0o600);
+    const moved = readCodexSlot(stash);
+    if (moved.kind !== 'file') throw new Error('codex login stash unreadable');
+    if (authBlobIsUsable('codex', moved.blob)) {
+      owner = credentialIdentityOwner('codex', moved.blob);
+      if (!owner || !keepFreshestCodexLineage(owner, moved.blob)) throw new Error('codex session not kept');
+    }
+    fs.unlinkSync(stash);
+    vacatedCodexNative = {
+      authFile,
+      blob: moved.blob,
+      ...(moved.linkTarget ? { linkTarget: moved.linkTarget } : {}),
+      at: Date.now(),
+    };
+  } catch {
+    // Devolve a vaga como estava, nunca por cima de algo que surgiu nela.
+    try {
+      if (!fs.lstatSync(authFile, { throwIfNoEntry: false })) fs.renameSync(stash, authFile);
+    } catch {
+      // O temporário fica no ~/.codex (0600): perder a sessão seria pior.
+    }
+    return keepError;
+  }
+  // Fora da janela do temporário: o home gerenciado da dona recebe a cópia guardada.
+  if (owner) fileSubscriptionAuthEnv(owner);
+  return { ok: true };
+}
+
+/**
+ * Fim de um login do Codex, com ou sem sessão nova. Vaga ocupada (login
+ * concluído) nunca é sobrescrita: só encerra o pendente. Vaga vazia recebe a
+ * sessão anterior; se a conta dona renovou a linhagem nesse meio-tempo (pane ou
+ * sonda no home gerenciado), volta a cópia renovada, porque a guardada já
+ * estaria consumida. Falha mantém a cópia em memória para uma nova tentativa.
+ */
+export function restoreCodexNativeLogin(): CodexLoginRestore {
+  const vacated = vacatedCodexNative;
+  if (!vacated) return 'none';
+  try {
+    if (fs.lstatSync(vacated.authFile, { throwIfNoEntry: false })) {
+      vacatedCodexNative = null;
+      return 'slot-taken';
+    }
+    if (vacated.linkTarget) {
+      fs.symlinkSync(vacated.linkTarget, vacated.authFile);
+    } else {
+      let blob = vacated.blob;
+      const owner = authBlobIsUsable('codex', blob) ? credentialIdentityOwner('codex', blob) : null;
+      if (owner) {
+        const renewed = accountCredentialCandidates('codex', owner.id, getSecret(CRED_PREFIX + owner.id))[0];
+        if (renewed && compareAuthBlobIdentity('codex', renewed, blob) === 'same' &&
+            (compareAuthFreshness(renewed, blob) ?? 0) > 0) blob = renewed;
+      }
+      // `wx`: um login que terminou agora vence; nada segue link plantado.
+      fs.writeFileSync(vacated.authFile, blob, { mode: 0o600, flag: 'wx' });
+    }
+    vacatedCodexNative = null;
+    return 'restored';
+  } catch {
+    return 'failed';
+  }
+}
+
 /** @deprecated Prefer addActiveSessionAccount('claude', label). */
 export function addActiveClaudeAccount(label: string): Account | null {
   return addActiveSessionAccount('claude', label);
@@ -2133,7 +2327,7 @@ export function activateAccount(id: string): boolean {
 
 /** Adapters that support "save active session" subscription snapshots. */
 export function supportsSessionSnapshot(adapterId: string): boolean {
-  return adapterId === 'claude' || isFileAuthAdapter(adapterId);
+  return supportsNativeSessionSnapshot(adapterId);
 }
 
 /** Grava/atualiza um bloco (SQLite primeiro, cache depois; fail-closed). */

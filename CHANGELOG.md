@@ -1,5 +1,112 @@
 # Changelog
 
+## 0.76.299 — Linux em dia com a retomada, o uso e a Jarvis
+
+A tag 0.76.298 não recebe pacotes Linux: é o candidato macOS e a release do Windows. Este pacote leva o produto dela para o desktop Linux.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35).
+
+No desktop Linux, em relação à 0.76.297:
+
+- Abas isoladas e panes de missões em Dormindo ou encerradas reabrem depois de reiniciar, com pasta e anexos preservados. A retomada do coordenador aceita a mudança de st_dev entre boots. "Abrir para retomar" fica alinhado ao título.
+- A Jarvis ganha HUD clicável e arrastável, com o estado das opções de entrega e voz visível e barras de nível mais claras.
+- DeepSeek Flash entra na Visual Frontier Lane e nas especialidades frontend, ui e ux (DeepSeek, Claude e Qwen Code).
+- Filtros por dia, intervalo, ferramenta e modelo recalculam o painel de uso e custos inteiro, inclusive ao clicar no dia na tabela.
+- Novo login Codex não revoga a sessão da conta irmã (F-1560). Colar ou soltar arquivo sem projeto destaca e foca o seletor de pasta. Abas de missão aposentada voltam a fechar. "Abrir projeto existente" aparece abaixo de "Novo pedido".
+- "Salvar tema" só confirma com "Tema salvo." depois que o tema volta na lista; se falhar, o editor continua aberto e mostra o motivo. Salvar tecnologias confirma com "Tecnologias salvas." ou mostra o erro. Em Configurações → Uso, a página não rola além do fim da seção.
+- O spawn fica mais leve: a pasta isolada do writer não copia o cache do Vitest, e a admissão usa uma única régua de memória. Sob pressão de build, o orquestrador libera RAM mais rápido e hiberna panes de até dois projetos sem perder a saída que o terminal ainda segurava. O relógio de nascimento do pane sobrevive a remontagens; uma tentativa vencida (90 s) continua vencida e o respawn recomeça do zero.
+- As superfícies de decisão calibradas ficam no Jev e, quando um provedor cai, passam para o próximo somando o gasto de todas as tentativas. Uso desconhecido mantém o custo estimado.
+
+## 0.76.298 — Retomada após reiniciar e uso com filtros
+
+Abas isoladas e panes de missões em Dormindo ou encerradas reabrem após reiniciar o Mac, com pasta e anexos preservados. A retomada do coordenador aceita a mudança de st_dev entre boots e o link "Abrir para retomar" fica alinhado ao título.
+
+A Jarvis ganha HUD clicável e arrastável, estado visível das opções de entrega e voz e barras de nível sonoro refinadas. DeepSeek Flash entra na Visual Frontier Lane e nas especialidades frontend/ui/ux dos adaptadores DeepSeek, Claude e Qwen Code.
+
+Filtros por dia, intervalo, ferramenta e modelo recalculam todo o painel de uso e custos, inclusive ao clicar no dia na tabela. Novo login Codex preserva a sessão irmã (F-1560). Colar ou soltar arquivo sem projeto destaca e foca o seletor de pasta; abas de missão aposentada voltam a fechar. "Abrir projeto existente" aparece abaixo de "Novo pedido".
+
+Em Configurações, "Salvar tema" confirma com "Tema salvo." só depois de o tema voltar na lista e, se falhar, mantém o editor aberto e mostra o motivo. Salvar as tecnologias do projeto confirma com "Tecnologias salvas." ou mostra o erro. Em Configurações → Uso, a página não rola mais além do fim da seção.
+
+Spawn de panes fica mais leve: a pasta isolada do writer não copia mais o cache do Vitest e a admissão usa uma única régua de memória para spawn humano, leque e pressão. Sob pressão de build, o orquestrador libera RAM mais rápido e hiberna panes de até dois projetos sem perder a saída que o terminal ainda segurava. O relógio de nascimento do pane sobrevive a remontagens e uma tentativa vencida recomeça do zero. As decisões ficam no Jev nas superfícies calibradas e passam para o próximo provedor quando um cai, somando o gasto de todas as tentativas; uso desconhecido mantém o custo estimado no orçamento.
+
+## 0.76.297 — Linux em dia com o DeepSeek Flash e o diálogo de início
+
+A tag 0.76.296 não recebe pacotes Linux: a suíte não fechou. O ledger de proveniência ainda apontava o hash antigo de `model-catalog.ts`. O hash passa a ser o do arquivo. O desktop Linux é o da 0.76.296.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35).
+
+No desktop Linux, em relação à 0.76.295:
+
+- **DeepSeek Flash**. O modelo entra no fim do menu do Claude, do Qwen Code e do DeepSeek. O padrão de cada CLI não muda. No Qwen Code o Flash só aparece quando o endpoint efetivo é a API direta da DeepSeek (`api.deepseek.com`); DashScope e o Token Plan continuam sem ele. O alias `deepseek-v4-flash` aponta para o id canônico.
+- **Diálogo de início**. O rodapé, inclusive Cancelar, deixa de sair da tela quando a janela é baixa. O painel cabe no container, o rodapé não encolhe, a divisória fica mais forte e as ações secundárias do rodapé ganham contorno.
+
+## 0.76.296 — Linux em dia com o DeepSeek Flash e o diálogo de início
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35).
+
+No desktop Linux, em relação à 0.76.295:
+
+- **DeepSeek Flash**. O modelo entra no fim do menu do Claude, do Qwen Code e do DeepSeek. O padrão de cada CLI não muda. No Qwen Code o Flash só aparece quando o endpoint efetivo é a API direta da DeepSeek (`api.deepseek.com`); DashScope e o Token Plan continuam sem ele. O alias `deepseek-v4-flash` aponta para o id canônico.
+- **Diálogo de início**. O rodapé, inclusive Cancelar, deixa de sair da tela quando a janela é baixa. O painel cabe no container, o rodapé não encolhe, a divisória fica mais forte e as ações secundárias do rodapé ganham contorno.
+
+## 0.76.295 — Linux em dia com a tela sem piscar e os anexos
+
+A tag 0.76.294 não recebe pacotes Linux: a suíte não fechou. O aviso de risco do YOLO usava `var(--leading-normal)`, um token que não existe, e a entrelinha era ignorada. O aviso passa a usar entrelinha 1.5. O desktop Linux é o da 0.76.293, com essa correção.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). A tag 0.76.293 também não recebe pacotes Linux.
+
+No desktop Linux, em relação à 0.76.292:
+
+- **Painel Git estável**. As releituras não trocam mais "Mesa limpa" por "Lendo git status", então a tela para de piscar. Os botões Puxar, Enviar, Ver histórico e Trocar branch mantêm contraste ao clicar, inclusive no tema roxo.
+- **Anexos até a missão**. Imagem colada aparece no campo. Imagem e áudio chegam à worktree e ao prompt do coordenador e dos workers; o áudio é transcrito em segundo plano com o reconhecimento de voz do ditado. Iniciar espera o anexo que ainda está copiando.
+- **Iniciar missão mais claro**. O botão fica à vista, ⌘/Ctrl+Enter inicia, e o painel "Preparando a missão" acompanha as etapas reais.
+- **Abas do painel lateral**. Em painel estreito as abas ganham setas, alvos de 44 px e o fechar sempre visível.
+- **Modos de permissão por CLI**. Grok, AGY e Qwen ganham os níveis reais além do YOLO, com aviso de risco. Os safeArgs de Claude e Codex continuam intactos.
+
+## 0.76.294 — Linux em dia com a tela sem piscar e os anexos
+
+A tag 0.76.293 não recebe pacotes Linux: é o candidato macOS. Este pacote leva o produto dela para o desktop Linux, empacotado a partir de Ubuntu 22.04 (glibc 2.35).
+
+No desktop Linux, em relação à 0.76.292:
+
+- **Painel Git estável**. As releituras não trocam mais "Mesa limpa" por "Lendo git status", então a tela para de piscar. Os botões Puxar, Enviar, Ver histórico e Trocar branch mantêm contraste ao clicar, inclusive no tema roxo.
+- **Anexos até a missão**. Imagem colada aparece no campo. Imagem e áudio chegam à worktree e ao prompt do coordenador e dos workers; o áudio é transcrito em segundo plano com o reconhecimento de voz do ditado. Iniciar espera o anexo que ainda está copiando.
+- **Iniciar missão mais claro**. O botão fica à vista, ⌘/Ctrl+Enter inicia, e o painel "Preparando a missão" acompanha as etapas reais.
+- **Abas do painel lateral**. Em painel estreito as abas ganham setas, alvos de 44 px e o fechar sempre visível.
+- **Modos de permissão por CLI**. Grok, AGY e Qwen ganham os níveis reais além do YOLO, com aviso de risco. Os safeArgs de Claude e Codex continuam intactos.
+
+## 0.76.293 — Tela sem piscar e anexos que chegam
+
+O painel Git não pisca mais nas releituras e os botões primários voltam a ser legíveis ao clicar, inclusive no tema roxo. Imagem colada no campo da missão aparece como anexo; imagem e áudio chegam à worktree e ao prompt do coordenador e dos workers, e o áudio ganha transcrição em segundo plano com o STT do ditado. A tela de iniciar missão ganha dock fixo, ⌘/Ctrl+Enter, validação no campo e espera pelo anexo em cópia, além do painel "Preparando a missão". As abas do painel lateral cabem em largura estreita. Grok, AGY e Qwen ganham níveis de permissão reais com aviso de risco do YOLO.
+
+## 0.76.292 — Linux em dia com a Jarvis, o navegador e o Kimi
+
+A tag 0.76.291 não recebe pacotes Linux: a suíte não fechou. O ledger de proveniência ainda apontava o hash antigo de `model-catalog.ts`, e o teto de IPC cru do preload do pet não contava a sonda de cursor. Os dois testes passam a dizer o que o código já faz. O desktop Linux é o da 0.76.291.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). As tags 0.76.289 e 0.76.290 também não recebem pacotes Linux.
+
+## 0.76.291 — Linux em dia com a Jarvis, o navegador e o Kimi
+
+A tag 0.76.290 não recebe pacotes Linux. Este pacote leva o produto dela para o desktop Linux, empacotado a partir de Ubuntu 22.04 (glibc 2.35). A tag 0.76.289 é só o carimbo do macOS.
+
+No desktop Linux, em relação à 0.76.288:
+
+- **Jarvis sem repetição**. No Grok Voice 3.0 o fim da captura não manda um `response.create` por cima do VAD do servidor; no OpenAI Realtime o turno usa `create_response: false`.
+- **Jarvis sempre clicável**. A janela da companion desfaz sozinha o click-through preso quando os controles estão visíveis ou a janela volta ao foco.
+- **Navegador sob menus**. Popovers, menus e modais escondem só a vista nativa do navegador que cruza a área.
+- **+Pane imediato**. A worktree da aba nova não copia mais o cache do Vitest (~1,7 GB).
+- **Kimi em Never Ask**. O modo autônomo usa `--auto` e migra `--yolo`, `-y` e o vazio.
+- **Catálogos**. AGY 1.4.0, Grok e Codex 0.163.0, com as correções F-1307 e F-1545 a F-1553.
+
+## 0.76.290 — Jarvis sem repetição, navegador sob menus, +Pane imediato e Kimi --auto
+
+- **+Pane imediato em aba nova**: `copyBuildCaches` (`worktree-cow.ts`) mantém apenas os `*.tsbuildinfo` e deixa de copiar `.nexus-cache/vitest` (~1,7 GB / 23 mil arquivos) na criação da worktree da aba.
+- **Jarvis com uma resposta por turno**: no Grok Voice 3.0 (`serverOwnsResponseCreation`) o fim de captura não envia `response.create` duplicado sobre o VAD do servidor; no OpenAI Realtime o turno envia `create_response: false` no VAD.
+- **Jarvis/companion sempre clicável**: reconciliação automática de `pet:setIgnoreMouseEvents(false)` quando controles da Jarvis estão visíveis ou a janela recupera foco/visibilidade, curando o click-through preso.
+- **Pane de navegador sob popovers, menus e modais**: `browser-occlusion.ts` detecta overlays abertos (`role="dialog"|"alertdialog"|"menu"|"listbox"` e popovers do cabeçalho) e oculta somente a `WebContentsView` nativa que cruza a área.
+- **Kimi em modo Never Ask (`--auto`)**: o modo autônomo/YOLO do Kimi Code 2.2.0 usa `--auto` em `kimi.json`, `tui-agent-permissions.ts` e na migração de overrides legados (`--yolo`/`-y`/vazio) em `adapter-registry.ts`.
+- **Catálogos e correções da madrugada**: alinhamento AGY 1.4.0, Grok e Codex 0.163.0 (`gpt-daybreak-blue-latest`) e correções F-1307, F-1545, F-1546, F-1547, F-1548, F-1550, F-1551, F-1552 e F-1553. No repositório companheiro `Hiper-nexus/nexus-shot`, painéis `NSPanel` não-ativadores passam a sobrepor janelas em tela cheia no macOS (`0f84baf`).
+
 ## 0.76.289 — macOS em dia com a Jarvis, Clef no Jev e Uso e custos
 
 A tag 0.76.285 não recebeu pacotes macOS porque o smoke empacotado ainda exigia que `nexus_file_write` do renderer fosse recusado (corrigido na 0.76.288). Este pacote publica o candidato macOS (`darwin-arm64`) assinado e notarizado com a Jarvis em tempo real e mãos-livres, o Clef autorizado em Somente Jev, o painel de Uso e custos com gasto mensal editável em USD, os handoffs sem travas burocráticas, a rolagem lateral das abas do painel direito e a renovação de contas da Reserva, além de excluir `.harvest/**` da coleta do Vitest.

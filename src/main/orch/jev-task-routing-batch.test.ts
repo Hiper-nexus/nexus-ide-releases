@@ -24,12 +24,17 @@ import {
 } from '../jev/jev-client';
 import {
   classifyTaskWithSkillForRouting,
+  clearTaskRoutingCacheForTests,
   routingOverridesFrom,
 } from './jev-task-routing';
 
 type JudgeMock = (input: JudgeInput) => Promise<JevResult | null>;
 
-beforeEach(() => vi.mocked(recordJevDecision).mockClear());
+beforeEach(() => {
+  vi.mocked(recordJevDecision).mockClear();
+  // O cache curto do Jev da rota é do processo: cada caso começa frio.
+  clearTaskRoutingCacheForTests();
+});
 
 function batchAnswer(skill: JevAnswer, overrides?: Partial<Record<'tier' | 'specialty' | 'effort' | 'escalate', JevAnswer>>): JevResult {
   return {

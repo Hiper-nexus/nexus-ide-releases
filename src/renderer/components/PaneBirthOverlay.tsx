@@ -3,7 +3,11 @@ import type { PaneModel } from '../../shared/types';
 import {
   PANE_BIRTH_FAILED_AFTER_MS,
   PANE_BIRTH_SLOW_AFTER_MS,
+  clearPaneBirthElapsed,
+  paneBirthClockKey,
   paneBirthDisplay,
+  paneBirthElapsedMs,
+  peekPaneBirthElapsedMs,
 } from '../lib/pane-birth-display';
 import { useSessionStateStore } from '../state/session-state-store';
 import {
@@ -26,10 +30,15 @@ import { ProviderLogo } from './ProviderLogo';
  */
 export function PaneBirthOverlay({ pane }: { pane: PaneModel }) {
   const sessionState = useSessionStateStore((s) => s.paneStates.get(pane.id));
+  const birthKey = paneBirthClockKey(pane.id, pane.adapterId);
   const [sessionId, setSessionId] = useState<string | null>(() =>
     getPaneSessionId(pane.id),
   );
-  const [elapsedMs, setElapsedMs] = useState(0);
+  // Um remount parte do relógio da geração: uma tentativa que já passou dos
+  // 90 s volta vencida, sem um quadro de "Preparando agente…" no meio.
+  const [elapsedMs, setElapsedMs] = useState(() =>
+    sessionId ? 0 : peekPaneBirthElapsedMs(birthKey),
+  );
   const [failureReason, setFailureReason] = useState<string | null>(() =>
     peekPaneSpawnError(pane.id),
   );
@@ -47,23 +56,6 @@ export function PaneBirthOverlay({ pane }: { pane: PaneModel }) {
     return subscribePaneSpawnErrors(refresh);
   }, [pane.id]);
 
-  useEffect(() => {
-    if (sessionId) return undefined;
-    setElapsedMs(0);
-    const slow = setTimeout(
-      () => setElapsedMs(PANE_BIRTH_SLOW_AFTER_MS),
-      PANE_BIRTH_SLOW_AFTER_MS,
-    );
-    const failed = setTimeout(
-      () => setElapsedMs(PANE_BIRTH_FAILED_AFTER_MS),
-      PANE_BIRTH_FAILED_AFTER_MS,
-    );
-    return () => {
-      clearTimeout(slow);
-      clearTimeout(failed);
-    };
-  }, [pane.id, sessionId]);
-
   const display = paneBirthDisplay({
     sessionState,
     sessionId,
@@ -73,6 +65,48 @@ export function PaneBirthOverlay({ pane }: { pane: PaneModel }) {
     elapsedMs,
     failureReason,
   });
+
+  // O relógio vive fora do mount: remount por troca de aba/layout continua o
+  // elapsed da geração. Concluir o nascimento (sessão vinculada, pane escondido
+  // ou recusa do Main) limpa a entrada e zera o estado, para um respawn
+  // começar do zero. Estourar os 90 s NÃO conclui nada: a tentativa segue
+  // vencida se remontar, até uma dessas saídas.
+  const hidden = display === null;
+  const refused = Boolean(failureReason?.trim());
+  useEffect(() => {
+    if (sessionId || hidden || refused) {
+      clearPaneBirthElapsed(birthKey);
+      setElapsedMs(0);
+      return undefined;
+    }
+    const elapsed = paneBirthElapsedMs(birthKey);
+    setElapsedMs(elapsed);
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    if (elapsed < PANE_BIRTH_SLOW_AFTER_MS) {
+      timers.push(
+        setTimeout(
+          () => setElapsedMs(PANE_BIRTH_SLOW_AFTER_MS),
+          PANE_BIRTH_SLOW_AFTER_MS - elapsed,
+        ),
+      );
+    } else {
+      setElapsedMs(PANE_BIRTH_SLOW_AFTER_MS);
+    }
+    if (elapsed < PANE_BIRTH_FAILED_AFTER_MS) {
+      timers.push(
+        setTimeout(
+          () => setElapsedMs(PANE_BIRTH_FAILED_AFTER_MS),
+          PANE_BIRTH_FAILED_AFTER_MS - elapsed,
+        ),
+      );
+    } else {
+      setElapsedMs(PANE_BIRTH_FAILED_AFTER_MS);
+    }
+    return () => {
+      for (const timer of timers) clearTimeout(timer);
+    };
+  }, [birthKey, sessionId, hidden, refused]);
+
   if (!display) return null;
 
   const tone = display.failed

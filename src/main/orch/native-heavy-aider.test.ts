@@ -11,7 +11,7 @@ import { HeavyCommandPermitPool } from './heavy-command-permit';
 import { OwnedCommandProcesses } from '../pty/owned-command-process';
 import { watchDarwinHeavyCommand } from '../pty/darwin-heavy-command';
 import { supervisedPtyCommand, nestedHeavyJobBaseCommand } from '../pty/darwin-pty-supervisor';
-import { skipUnderNexusPtySupervisor } from '../../test/nested-pty-supervisor';
+import { hostDenied, realpathOrSkip, skipUnderNexusPtySupervisor } from '../../test/nested-pty-supervisor';
 import { darwinNodePtyBootstrapLaunch } from '../pty/darwin-node-pty-bootstrap';
 import { buildControlArgs } from '../adapters/control-args';
 import type { CliPtyAdapter } from '../../shared/adapter-types';
@@ -23,9 +23,18 @@ const sha = (file: string) => createHash('sha256').update(fs.readFileSync(file))
 
 it.runIf(process.platform === 'darwin' && fs.existsSync(aider))('actual installed Aider owned-PTY default guard or exact normal one-time tool approval', async (testContext) => {
   skipUnderNexusPtySupervisor(testContext);
+  realpathOrSkip(testContext, aider, 'aider');
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-c6-aider-pty-'))), phases: unknown[] = [];
   console.log(`owned Aider evidence: ${root}`);
-  const sourceSha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  let sourceSha = '';
+  try {
+    sourceSha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  } catch (error) {
+    if (hostDenied(error) || (error as { message?: string })?.message?.includes('Operation not permitted')) {
+      testContext.skip(`AMBIENTE-SANDBOX (F-1217): git rev-parse HEAD recusado pelo sandbox do portão (${(error as { message?: string })?.message})`);
+    }
+    throw error;
+  }
   const fixtureSha256 = sha(path.join(process.cwd(), 'src/main/orch/native-heavy-aider.test.ts'));
   const helper = path.join(root, 'resources/native/darwin/nexus-pty-supervisor');
   execFileSync(process.execPath, ['scripts/build-darwin-pty-supervisor.mjs', '--output', helper], { stdio: 'ignore' });

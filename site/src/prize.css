@@ -1,5 +1,5 @@
 /* Peças do sorteio que a home e a comunidade dividem: o letreiro corrido e o bilhete horizontal. */
-.prize-marquee{overflow:hidden;max-width:100%;border-block:1px solid var(--strong);background:var(--bar);padding:12px 0}
+.prize-marquee{--ease:cubic-bezier(0.32, 0.72, 0, 1);overflow:hidden;max-width:100%;border-block:1px solid var(--strong);background:var(--bar);padding:12px 0}
 .prize-marquee:empty{display:none}
 .prize-marquee-track{display:flex;width:max-content;max-width:none;animation:prize-marquee 42s linear infinite;will-change:transform}
 .prize-marquee:hover .prize-marquee-track{animation-play-state:paused}
@@ -10,10 +10,12 @@
 
 /* Bilhete horizontal da home: corpo com o prêmio e canhoto picotado com o letreiro do ganhador. */
 .prize-band{max-width:1440px;margin:auto;padding:var(--s6) 40px}
-.prize-ticket{position:relative;display:flex;flex-direction:column;border:1px solid var(--strong);border-radius:12px;overflow:hidden;background:radial-gradient(70% 120% at 100% 0,rgb(255 111 145/.2),transparent 62%),radial-gradient(45% 80% at 0 100%,rgb(255 178 122/.07),transparent 70%),var(--surface);box-shadow:0 24px 70px rgb(0 0 0/.35)}
-.prize-ticket-main{display:grid;grid-template-columns:1.45fr .55fr;align-items:center;gap:40px;padding:56px 56px 48px}
+.prize-ticket{--ease:cubic-bezier(0.32, 0.72, 0, 1);position:relative;display:flex;flex-direction:column;border:1px solid var(--strong);border-radius:12px;overflow:hidden;background:radial-gradient(70% 120% at 100% 0,rgb(255 111 145/.2),transparent 62%),radial-gradient(45% 80% at 0 100%,rgb(255 178 122/.07),transparent 70%),var(--surface);transition:border-color .3s var(--ease)}
+.prize-ticket:focus-within{border-color:var(--pink)}
+.prize-ticket-main{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(0,.55fr);align-items:center;gap:40px;padding:56px 56px 48px}
 .prize-ticket h2{font-size:clamp(2.25rem,1.2rem + 3.4vw,4.5rem);line-height:1.02}
 .prize-ticket h2 span{color:var(--pink)}
+.prize-ticket-copy{min-width:0}
 .prize-ticket-copy>p{max-width:52ch;margin-top:24px;color:var(--muted)}
 .prize-ticket-actions{display:flex;align-items:center;gap:20px 28px;flex-wrap:wrap;margin-top:32px}
 .prize-ticket-art{position:relative;display:flex;justify-content:center;align-items:center;min-height:240px}
@@ -45,6 +47,8 @@
  * min-width:0 + max-width:100% nos itens — VT323 é largo; sem isso o flex
  * mantém a frase inteira e o overflow:hidden do letreiro corta "C" de CONTA. */
 @media(prefers-reduced-motion:reduce){
+  .prize-marquee-track,.prize-ticket-art img{animation:none;will-change:auto}
+  .prize-ticket{transition:none}
   .prize-marquee{padding:12px 16px}
   .prize-marquee-track{display:block;width:100%;max-width:100%;margin:0;transform:none}
   .prize-marquee-group{display:flex;flex-wrap:wrap;justify-content:center;gap:8px 24px;width:100%;min-width:0}

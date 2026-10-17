@@ -398,9 +398,10 @@ sem usar “Subindo” como única explicação.
 - **Pedido protagonista.** Campo confortável para descrever a ideia; projeto
   pelo nome humano, caminho disponível para inspeção. Equipe resumida e
   detalhes/referências recolhidos. Expandir opções não muda nem apaga o pedido.
-- **Uma entrada persistente.** `Novo pedido` aparece uma vez na rail. Início,
-  abertura de projeto e demais destinos precedem o histórico rolável. Limpeza
-  permanece recolhida junto às utilidades do projeto.
+- **Uma entrada persistente.** `Novo pedido` aparece uma vez na rail; logo
+  abaixo dele, `Abrir projeto existente`, uma linha com rótulo escrito (§16).
+  Início e demais destinos precedem o histórico rolável. Limpeza permanece
+  recolhida junto às utilidades do projeto.
 - **Hierarquia legível.** Títulos dos trabalhos em 13px, numa linha só; o
   estado vai no glifo e, quando o trabalho pede algo da pessoa, em 12px numa
   linha própria (§16). Não repetir o nome do projeto nem a branch em cada
@@ -411,6 +412,41 @@ sem usar “Subindo” como única explicação.
 - **Autonomia deve corresponder ao mecanismo.** A interface remove decisões
   técnicas obrigatórias; estados de execução, revisão e entrega continuam
   baseados no motor. Um redesign não certifica sozinho a qualidade do código.
+
+### Início: ação ancorada, atalho e anexos à vista (pedido do operador, 16/10)
+
+Código: `ExpressMissionStart.tsx`, `MissionAttachmentPicker.tsx` e
+`mission-setup.css`; o guard é `ExpressMissionStart.test.tsx`.
+
+- **A ação nunca sai da tela.** `Iniciar criação` mora no dock (§15), irmão da
+  área rolável, e não no fim da página: o apoio (terminais, primeiros passos)
+  rola por cima dele. O dock leva a pasta e a equipe ("confeitaria-da-ana · 4
+  agentes · Claude · Codex") e a dica do atalho. Pré-requisito sem IA conectada,
+  resposta direta e erro moram juntos, acima do botão que respondem. Sem pasta o
+  botão diz "Escolher pasta para iniciar", porque só abre o seletor.
+- **⌘/Ctrl+Enter inicia de qualquer ponto do formulário; Enter nunca inicia.** O
+  editor lê Mod-Enter como quebra de linha, então o `<form>` captura a tecla
+  antes dele (`onKeyDownCapture`, nunca durante o IME). Enter e Shift+Enter
+  seguem quebrando linha, e Enter no critério de pronto não envia o formulário.
+  O rótulo vem de `formatShortcut('mod', 'enter')`.
+- **Validação junto do campo.** Pedido vazio explica logo abaixo do campo
+  (`role="alert"`, `aria-invalid`, `aria-describedby`), leva o foco para ele e
+  some quando a pessoa escreve. O rótulo "Seu pedido" foca o editor (um
+  contenteditable não é rotulável). A dica de como escrever é visível, não só
+  para leitor de tela.
+- **Exemplos ensinam sem apagar.** Quatro pedidos (criar, corrigir, entender o
+  projeto, publicar) sob a legenda "Comece por um exemplo:". Clicar troca o
+  texto (contrato F-1170), mas, se havia texto digitado, "Desfazer" o devolve.
+  "Entender o projeto" cai na lane de leitura (`consult`): conferido por teste.
+- **Anexos à vista.** O `MissionAttachmentPicker` compacto fica logo abaixo do
+  pedido, fora de qualquer recolher, e diz o que aceita ("Imagem, áudio, PDF ou
+  texto."). É a superfície de miniaturas e anexos pendentes: não duplique outra
+  faixa de anexos perto do campo.
+- **Um botão branco só.** Os atalhos do checklist de primeiros passos descem para
+  neutro elevado nesta tela (a ação primária é a coisa mais clara, §2). Títulos,
+  alvos (32px) e texto do apoio seguem a escala do restante da tela.
+- **Foco inicial segue no título.** Mover para o editor quebraria os atalhos 1 a 6
+  do Início (valem com o foco fora de campos); decisão do operador pendente.
 
 ## 14. Sala de racks da missão (grafo do Quadro)
 
@@ -490,6 +526,19 @@ pulso de "ao vivo" repete).
   Sem grade de duas colunas e sem fio entre as faixas; só o rodapé tem fio em
   cima. O contador de panes dos Terminais é número solto; selo âmbar fica para
   o que pede a pessoa.
+- **Abrir projeto é uma linha com texto.** Era um ícone de pasta sem rótulo ao
+  lado do "Novo pedido" (pedido do operador, 16/10: a opção de abrir um
+  workspace "deve ter e não tem"): ninguém o achava, e ele repetia o glifo de
+  "Projeto". Agora é a linha "Abrir projeto existente" logo abaixo do "Novo
+  pedido", na mesma coluna e com a linha-base do rail (`--text-dim`, hover e
+  foco por teclado iguais aos destinos). O tooltip diz que a pessoa escolhe uma
+  pasta do computador e que dá para criar uma pasta nova na janela de escolha
+  (o seletor do main usa `createDirectory`). Nome, tooltip e atalho vêm de
+  `WORKSPACE_OPEN_ACTION` (`lib/action-names.ts`), o mesmo registro do Início,
+  cujo "Trocar pasta" leva o mesmo `title`. Não use "Abrir pasta" (já quer dizer
+  "mostrar no Finder") nem "Abrir projeto" sozinho (colide com a linha
+  "Projeto", que abre a visão geral). Guards: `WorkspaceRail.test.tsx` e
+  `workspace-rail-style.test.ts`.
 - **Em andamento é todo projeto com trabalho vivo, ao mesmo tempo.** O aberto
   agora e cada vizinho com missão ativa (`projectRailWorkspaces`) têm
   cabeçalho próprio, com as missões embaixo. O nome é texto de 12px/600 em
@@ -549,26 +598,75 @@ pulso de "ao vivo" repete).
 ## 17. Uso e custos (painel no registro do "Usage" do T3)
 
 Pedido do operador (15/10): ver o custo por ferramenta como no painel Usage do
-T3 e o gasto mensal real com planos. Código: `components/usage/UsageOverview.tsx`,
-`UsageDailyChart.tsx`, `MonthlySpendCard.tsx` e `styles/usage-overview.css`.
+T3 e o gasto mensal real com planos. Pedido de 16/10: filtrar por dia, intervalo,
+ferramenta e modelo, e destacar quantos tokens estamos usando no decorrer do
+tempo. Código: `components/usage/UsageOverview.tsx`, `UsageDailyChart.tsx`,
+`MonthlySpendCard.tsx`, `lib/usage-overview.ts`, `shared/usage-analytics.ts` (a
+conta) e `styles/usage-overview.css`.
 
-- **Composição.** No topo de Uso e cotas: à esquerda o custo estimado em
-  destaque e a lista de ferramentas (ponto de cor, `ProviderLogo`, nome,
-  sessões, custo e "% do custo · tokens"), que é a legenda do gráfico; à
-  direita o custo diário. Embaixo, Totais (cinco números) e Detalhamento
-  (Modelo | Dia). Período (7/30/90 dias) e medida (Custo | Tokens) valem para
-  o painel inteiro. Abaixo, o cartão Gasto mensal real.
+- **Composição.** No topo de Uso e cotas: o cabeçalho com a medida (Custo |
+  Tokens) e o período (7/30/90 dias | Personalizado); uma faixa de filtros (Dia,
+  Ferramenta, Modelo; De/Até no Personalizado; "Limpar filtros" só quando há
+  filtro); à esquerda o total em destaque e a lista de ferramentas (ponto de cor,
+  `ProviderLogo`, nome, sessões, valor e "% · o outro número"), que é a legenda
+  do gráfico; à direita o gráfico diário. Embaixo, Totais (cinco números) e
+  Detalhamento (Modelo | Dia). Abaixo, o cartão Gasto mensal real.
+- **Uma conta só, filtros que fecham.** Tudo sai de `summarizeUsage` sobre as
+  linhas do rollup (dia local × ferramenta × modelo) e as sessões que o main lê do
+  SQLite do projeto: 7/30/90 dias, intervalo, dia, ferramenta e modelo recalculam
+  total, lista, gráfico, Totais e Detalhamento pelas mesmas linhas, então a soma
+  das partes fecha com o todo (guard: `usage-analytics.test.ts`,
+  `UsageOverview.test.tsx`). Sessão não soma entre dias: uma que atravessa a
+  meia-noite conta uma vez no intervalo e uma vez em cada dia. Modelo só vale
+  junto com a ferramenta dele (o nome sozinho pode repetir). Filtro ou dia que
+  ficou sem dado no período novo sai do estado (não volta sozinho depois). Evento
+  sem consumo (mensagem sintética) não vira ferramenta nem modelo.
+- **Campos de data.** O campo nativo dispara `input` a cada dígito (o 1º dígito do
+  ano vira `0002-…`): o valor cru fica no campo e só uma data completa e dentro de
+  [min, max] sobe para o painel; De e Até se limitam entre si por `min`/`max` (nunca
+  empurram a outra ponta no meio da digitação) e, ao sair, o que não valeu volta ao
+  valor que vale. A faixa de filtros tem a mesma estrutura com e sem consumo, para
+  editar o intervalo não desmontar o campo nem perder o foco; botão que some leva o
+  foco para o campo mais perto (Dia ou gráfico), nunca para o body.
+- **Medida vale para o painel inteiro.** Em Custo, o destaque é o dólar e os
+  tokens ficam escritos ao lado (resumo, lista, pico e média do gráfico); em
+  Tokens, o destaque é a contagem e o custo vai ao lado. Lista e tabela ordenam
+  pela medida e "% do custo" vira "% dos tokens". Unidade sempre escrita junto do
+  número (`2.17B tokens`, nunca `2180M`), dólar com milhar (`$1,018.73`), em todas
+  as seções da página.
+- **Período e dia.** O período dá o eixo do gráfico e a janela dos números. O dia
+  fixado (clique no gráfico, na tabela por dia, no campo Dia, ou Enter no gráfico)
+  estreita os números para ele; o gráfico segue mostrando o período, com o dia
+  realçado em acento (é o item selecionado) e o botão "Ver o período inteiro".
+  Esc fecha a leitura e depois solta o dia. Dia sem consumo explica e oferece
+  "Limpar filtros"; nunca mostra zero. A tela relê o rollup quando o dia vira com
+  ela aberta; o rollup do main também é relido ao fim do minuto quando chegou
+  evento depois do último cálculo ("atualiza com o uso, no máximo uma vez por
+  minuto"). O mesmo conteúdo reenviado a cada ~1 s mantém o mesmo objeto no
+  store: a tela não recalcula nem redesenha à toa.
+- **Gráfico.** Uma curva por ferramenta, sobrepostas; com mais de uma, um fio
+  neutro soma o dia. Acima: total, pico e média por dia COM uso do período (dia
+  sem registro não rebaixa a média), cada um com a outra medida escrita embaixo.
+  Sobre o desenho: ponto em cada dia com uso (o dado é diário), anel no pico, linha
+  pontilhada da média e a leitura do dia em texto. Sem hex: a cor da série chega
+  como `--usage-series`; o rótulo da média leva contorno na cor do cartão.
 - **Cor de série é identidade.** `--series-1..6` seguem a ferramenta, nunca a
   posição no ranking (Claude é sempre o mesmo matiz); acima de seis, "Outros"
   em `--text-faint`. A cor chega ao CSS como `--usage-series`; texto e
   números ficam nos tokens de texto. No tema claro três séries ficam abaixo de
   3:1 sobre branco: o rótulo escrito e a tabela compensam.
 - **Honestidade do número.** O custo é equivalente de API pública, não fatura,
-  e o texto diz isso. Sem leitura, o painel explica e oferece ação; nunca
-  mostra zero. Economia em `--gold` só quando é dinheiro poupado; quando os
-  planos custam mais que a API, o cartão diz "Acima da API" em tom neutro.
+  e o texto diz isso. Só Claude Code, Codex e MiMo Code registram tokens; a
+  cópia diz que as outras ferramentas não entram na conta. Sem leitura, o painel
+  explica e oferece ação; nunca mostra zero. Economia em `--gold` só quando é
+  dinheiro poupado; quando os planos custam mais que a API, o cartão diz "Acima
+  da API" em tom neutro.
+- **Acessibilidade.** Grupos com nome (Medida, Período, Filtros do painel,
+  Intervalo de datas, Detalhar por), campos com rótulo visível, `aria-pressed` nos
+  alternadores, total em região `aria-live`, gráfico focável com resumo em texto
+  (setas, Home/End, Enter, Esc) e tabela com legenda. A tabela rola dentro do
+  cartão em canvas estreito; o cartão nunca rola de lado.
 - **Edição inline.** Cada plano tem atalhos (`$20`, `$100`, `$200`, `$500`) e
   campo em USD na própria linha; Enter ou sair do campo grava, Esc desfaz, e
   valor inválido explica no lugar. Todo número usa `tabular-nums`; alvos de
   32px (44px em `pointer: coarse`).
-

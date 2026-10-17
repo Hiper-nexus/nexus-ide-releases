@@ -106,6 +106,34 @@ describe('IsolatedWriterPoolOrchestrator', () => {
     expect(await orchestrator.tryAdopt(SCOPE, 'operator-hand', {})).toBeNull();
   });
 
+  it('short-circuits an empty pool before resolveBase (no Git on the hot path)', async () => {
+    const { backend, resolveBase, claim, remove } = makeBackend();
+    const orchestrator = new IsolatedWriterPoolOrchestrator(backend, { enabled: () => true });
+    expect(await orchestrator.tryAdopt(SCOPE, 'operator-hand', {})).toBeNull();
+    // resolveBase roda vários comandos Git — pool vazio não pode pagá-los.
+    expect(resolveBase).not.toHaveBeenCalled();
+    expect(claim).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it('short-circuits when the pool only holds entries of another base', async () => {
+    const { backend, resolveBase, materialize, claim } = makeBackend();
+    const orchestrator = new IsolatedWriterPoolOrchestrator(backend, { enabled: () => true });
+    await orchestrator.preallocate(SCOPE, { baseRef: 'main' });
+    expect(orchestrator.size).toBe(1);
+    resolveBase.mockClear();
+
+    // Pedido de OUTRA base: nada a adotar nem a marcar stale.
+    expect(
+      await orchestrator.tryAdopt(SCOPE, 'operator-hand', { baseRef: 'develop' }),
+    ).toBeNull();
+    expect(resolveBase).not.toHaveBeenCalled();
+    expect(claim).not.toHaveBeenCalled();
+    // A entrada da base correta permanece intacta.
+    expect(orchestrator.size).toBe(1);
+    expect(materialize).toHaveBeenCalled();
+  });
+
   it('discards an obsolete entry (HEAD moved) and falls through', async () => {
     const { backend, remove, resolveBase } = makeBackend();
     const orchestrator = new IsolatedWriterPoolOrchestrator(backend, { enabled: () => true });

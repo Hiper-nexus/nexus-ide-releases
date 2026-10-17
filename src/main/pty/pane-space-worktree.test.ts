@@ -4,9 +4,9 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
-import { configureWorktreeRuntimeRegistry, disposeWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
+import { configureWorktreeRuntimeRegistry, disposeWorktreeRuntimeRegistry, requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 import { testProjectScope } from '../orch/__tests__/scope-fixture';
-import { preparePaneSpaceWorktree, isSharedPaneSpaceWorktree, tabGitProofStats, clearTabGitProofCache } from './pane-space-worktree';
+import { preparePaneSpaceWorktree, isSharedPaneSpaceWorktree, tabGitProofStats, clearTabGitProofCache, findPaneSpaceIdByWorktreeCwd } from './pane-space-worktree';
 
 let temp: string;
 let manager: ProjectRuntimeManager;
@@ -65,6 +65,25 @@ it('shares one durable worktree within a tab and isolates simultaneous tabs from
   expect(resumed.cwd).toBe(a.cwd);
   expect(isSharedPaneSpaceWorktree(scope, resumed.scope)).toBe(true);
   expect(fs.readFileSync(path.join(resumed.cwd, 'file.txt'), 'utf8')).toBe('tab A');
+});
+
+it('Bug 4: o cwd da worktree retida no reinício reencontra a aba; checkout e pasta sem registro não', async () => {
+  const a = await preparePaneSpaceWorktree(scope, 'space-a');
+  fs.mkdirSync(path.join(a.cwd, 'pkg'));
+  // Reinício: o registro da aba vira `failed` mas a pasta e o espaço ficam.
+  disposeWorktreeRuntimeRegistry();
+  configureWorktreeRuntimeRegistry(manager);
+  expect(requireWorktreeRuntimeRegistry().get(scope, 'space-a', 'tab')?.status).toBe('failed');
+  expect(findPaneSpaceIdByWorktreeCwd(scope, a.cwd)).toBe('space-a');
+  expect(findPaneSpaceIdByWorktreeCwd(scope, path.join(a.cwd, 'pkg'))).toBe('space-a');
+  expect(findPaneSpaceIdByWorktreeCwd(scope, scope.rootRealPath)).toBeUndefined();
+  expect(findPaneSpaceIdByWorktreeCwd(scope, temp)).toBeUndefined();
+  expect(findPaneSpaceIdByWorktreeCwd(scope, undefined)).toBeUndefined();
+  expect((await preparePaneSpaceWorktree(scope, 'space-a', a.cwd)).cwd).toBe(a.cwd);
+  // Pasta removida continua sendo da aba: o preparo recusa, nunca cai no checkout.
+  fs.rmSync(a.cwd, { recursive: true, force: true });
+  expect(findPaneSpaceIdByWorktreeCwd(scope, a.cwd)).toBe('space-a');
+  await expect(preparePaneSpaceWorktree(scope, 'space-a', a.cwd)).rejects.toThrow(/aba/);
 });
 
 it.each(['main', 'sibling'])('rejects a .git pointer replaced with %s HEAD/index', async (target) => {

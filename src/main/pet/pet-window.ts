@@ -50,6 +50,10 @@ import {
 import type { ProjectExecutionScope } from '../../shared/types';
 import { computeLookDir } from './pet-look';
 import {
+  createForwardHealTracker,
+  cursorInsideBounds,
+} from './pet-forward-heal';
+import {
   nextRoamDelayMs,
   pickRoamDestination,
   roamStep,
@@ -137,6 +141,17 @@ let lookLastCursor = { x: 0, y: 0 };
 let lookLastMoveAt = 0;
 /** Cache: setIgnoreMouseEvents é caro e a alternar no canto pisca o compositor. */
 let petIgnoresMouse = true;
+/**
+ * Bug 7 (“de vidro”): self-heal do forward do click-through. Se o AppKit
+ * perde o flag, nenhum mousemove encaminhado chega ao renderer e o pet nunca
+ * mais fica clicável. O look loop já faz poll do cursor do SO — o tracker
+ * nota o humano apontando para a janela e pede revive + sonda (pet-forward-heal).
+ */
+const forwardHeal = createForwardHealTracker({
+  // 4 ticks × 180 ms ≈ 0,7 s apontando → revive (humano, não passagem).
+  reviveAfterTicks: 4,
+  minReviveIntervalMs: 1_500,
+});
 /**
  * Silêncio de fullscreen no macOS: hide() sem desligar o pin ainda deixa o
  * pet (visibleOnAllWorkspaces + alwaysOnTop) na coleção de Spaces. Latch
@@ -510,6 +525,27 @@ function applyIgnoreMouseEvents(ignore: boolean, force = false): void {
 }
 
 /**
+ * Bug 7: sonda de hit-test para o renderer — coords cliente do cursor do SO
+ * (cursor − origem da janela; ambos DIP). Enviada ao reviver o forward e na
+ * entrada do cursor nos bounds: substitui o mouseenter/mousemove que o
+ * click-through deveria ter encaminhado (cursor parado não gera evento).
+ */
+function sendCursorProbe(
+  cursor: { x: number; y: number },
+  bounds: { x: number; y: number; width: number; height: number },
+): void {
+  if (!petWindow || petWindow.isDestroyed() || !petReady) return;
+  try {
+    petWindow.webContents.send(PET_CHANNELS.cursorProbe, {
+      x: Math.round(cursor.x - bounds.x),
+      y: Math.round(cursor.y - bounds.y),
+    });
+  } catch {
+    // janela fechando — a próxima sonda tenta de novo
+  }
+}
+
+/**
  * Mantém o pet acima de outras janelas (cross-OS).
  *
  * Senior notes:
@@ -854,6 +890,24 @@ function startLookLoop(): void {
     if (!petWindow || petWindow.isDestroyed()) {
       stopLookLoop();
       return;
+    }
+    // Bug 7 self-heal — ANTES dos early-returns (dormindo/roam/borda também
+    // precisa de clique): o poll do cursor do SO independe do forward morto.
+    const healBounds = petWindow.getBounds();
+    const healCursor = screen.getCursorScreenPoint();
+    const heal = forwardHeal.observe({
+      cursorInside: cursorInsideBounds(healCursor, healBounds),
+      ignoresMouse: petIgnoresMouse,
+      dragging: Boolean(dragTimer),
+      windowVisible: petWindow.isVisible(),
+    });
+    if (heal.revive) {
+      // Re-aplica ignore+forward com force: se o AppKit tinha dropado o
+      // forward, os mousemove encaminhados voltam a fluir para o renderer.
+      applyIgnoreMouseEvents(true, true);
+    }
+    if (heal.revive || heal.probe) {
+      sendCursorProbe(healCursor, healBounds);
     }
     if (
       getPrefs().sleeping ||

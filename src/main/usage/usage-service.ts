@@ -97,6 +97,9 @@ interface ScopeTelemetryState {
   broadcastTimer: ReturnType<typeof setTimeout> | null;
   /** Último rollup do painel de Uso e custos (ver ANALYTICS_TTL_MS). */
   analytics: { readonly value: UsageAnalytics; readonly computedAt: number } | null;
+  /** Houve evento depois do último rollup: o painel precisa de uma releitura ao fim do TTL. */
+  analyticsStale: boolean;
+  analyticsTimer: ReturnType<typeof setTimeout> | null;
 }
 
 const SESSION_CLOCK_SKEW_MS = 5 * 60_000;
@@ -365,11 +368,18 @@ export class UsageTelemetryService {
       now - cached.computedAt < ANALYTICS_TTL_MS &&
       cached.value.today === localDayKey(now)
     ) {
+      // Evento chegou depois deste rollup e a atividade pode parar antes do próximo
+      // broadcast: sem isto o último minuto de uso ficaria fora do painel até o
+      // próximo evento. Uma releitura ao fim do TTL fecha a conta.
+      if (state.analyticsStale) {
+        this.#scheduleAnalyticsRefresh(state, cached.computedAt + ANALYTICS_TTL_MS - now);
+      }
       return { analytics: cached.value };
     }
     try {
       const value = state.stores.usage.analytics(now);
       state.analytics = { value, computedAt: now };
+      state.analyticsStale = false;
       return { analytics: value };
     } catch (error) {
       console.warn(
@@ -378,6 +388,16 @@ export class UsageTelemetryService {
       );
       return cached ? { analytics: cached.value } : {};
     }
+  }
+
+  /** Broadcast de releitura do rollup quando o TTL vence com evento pendente. */
+  #scheduleAnalyticsRefresh(state: ScopeTelemetryState, delayMs: number): void {
+    if (this.#stopped || state.analyticsTimer) return;
+    state.analyticsTimer = setTimeout(() => {
+      state.analyticsTimer = null;
+      this.#scheduleBroadcast(state);
+    }, Math.max(0, delayMs) + 50);
+    state.analyticsTimer.unref?.();
   }
 
   notifyMediaGenerated(scope: ProjectExecutionScope): void {
@@ -427,6 +447,8 @@ export class UsageTelemetryService {
     for (const state of this.#states.values()) {
       if (state.broadcastTimer) clearTimeout(state.broadcastTimer);
       state.broadcastTimer = null;
+      if (state.analyticsTimer) clearTimeout(state.analyticsTimer);
+      state.analyticsTimer = null;
       if (state.watcher) stop(() => state.watcher!.stop());
     }
     if (this.#codexScanner) stop(() => this.#codexScanner!.stop());
@@ -476,6 +498,8 @@ export class UsageTelemetryService {
       watcher: null,
       broadcastTimer: null,
       analytics: null,
+      analyticsStale: false,
+      analyticsTimer: null,
     };
     this.#states.set(key, state);
     this.#rootOwners.set(root, key);
@@ -1138,6 +1162,8 @@ export class UsageTelemetryService {
 
   #scheduleBroadcast(state: ScopeTelemetryState): void {
     if (this.#stopped) return;
+    // Qualquer evento que pede broadcast também deixa o rollup do painel para trás.
+    state.analyticsStale = true;
     if (state.broadcastTimer) return;
     state.broadcastTimer = setTimeout(() => {
       state.broadcastTimer = null;

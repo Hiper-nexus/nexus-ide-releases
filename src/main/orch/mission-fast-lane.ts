@@ -2,6 +2,12 @@ import { assertMcpInvocationCurrent, type McpToolInvocation } from './mcp-protoc
 import { runPeriodicTask, stopPeriodicTask, type PeriodicTaskContext } from '../observability/periodic-task';
 import { AsyncProcessGitRunner } from '../runtime/git-command';
 import { missionExecutionScope } from './mission-execution-scope';
+import {
+  missionAttachmentPromptKind,
+  missionContextRelativePath,
+  readMissionAttachmentTranscript,
+  stageMissionAttachmentsIntoExecutionScope,
+} from './mission-attachment-staging';
 import { resolveWorkspaceDesignContract } from './design-system-reader';
 import { isPaneMetaTask, extractMetaPaneQuestion } from '../../shared/pane-meta-task';
 import { getMissionRoutingHints } from '../../shared/mission-routing-advice';
@@ -103,7 +109,7 @@ import {
 } from './orchestrator-adoption';
 import { waitOutBootPrompts } from './boot-prompt-hold';
 import { maestroKickoffBlockReason } from './maestro-boot-gate';
-import { missionBlockPatch, type MissionBlockPatch } from '../../shared/mission-intent';
+import { missionBlockPatch, type MissionBlockPatch, type MissionOrchestratorRuntimeSnapshot } from '../../shared/mission-intent';
 import { detectSubscriptionAuthReadiness } from '../adapters/subscription-auth';
 import {
   decideWriterCircuitAction,
@@ -809,23 +815,7 @@ export function readableMissionAttachmentPath(snapshot: {
   readonly path: string;
   readonly sourcePath?: string;
 }): string {
-  const source = (snapshot.sourcePath ?? '').replaceAll('\\', '/');
-  const marker = '/.nexus/attachments/mission-context/';
-  const indexed = source.indexOf(marker);
-  const relative =
-    indexed >= 0
-      ? source.slice(indexed + 1)
-      : source.startsWith('.nexus/attachments/mission-context/')
-        ? source
-        : '';
-  if (
-    relative.length > 0 &&
-    !relative.includes('..') &&
-    !relative.startsWith('/')
-  ) {
-    return relative;
-  }
-  return snapshot.path;
+  return missionContextRelativePath(snapshot) ?? snapshot.path;
 }
 
 /**
@@ -852,6 +842,7 @@ export function agentPrompt(
   designContext = '',
   squad: Squad | null = null,
   sealedPlanTitles: readonly string[] = [],
+  attachmentRoot?: string,
 ): string {
   const objective = mission.description ?? '';
   const title = mission.title ?? objectivePlainText(objective).slice(0, 80);
@@ -935,9 +926,38 @@ export function agentPrompt(
     mission.intentContract?.attachmentSnapshots?.length
       ? [
           '### Anexos da missão',
-          'PRIMEIRO ATO: abra cada arquivo abaixo com a ferramenta Read ANTES de planejar ou delegar. São os anexos autorizados pelo operador; use os caminhos indicados:',
+          'PRIMEIRO ATO: abra cada arquivo abaixo com a ferramenta Read ANTES de planejar ou delegar. São os anexos autorizados pelo operador; use os caminhos indicados (workers em outra worktree usam o caminho absoluto):',
           ...mission.intentContract.attachmentSnapshots.map((snapshot, index) => {
-            return `${index + 1}. ${mission.intentContract?.workspaceBinding?.spaceId ? snapshot.path : readableMissionAttachmentPath(snapshot)}`;
+            const relative = missionContextRelativePath(snapshot);
+            // Sem cópia no escopo de execução, a pasta isolada da aba não tem
+            // o caminho relativo: o selo absoluto é o único legível.
+            const staged =
+              relative !== null &&
+              (attachmentRoot !== undefined ||
+                !mission.intentContract?.workspaceBinding?.spaceId);
+            const shown = staged ? relative : snapshot.path;
+            const absolute =
+              staged && attachmentRoot ? join(attachmentRoot, relative) : '';
+            const kind = missionAttachmentPromptKind(shown);
+            const lines = [
+              `${index + 1}. [${kind}] ${shown}${absolute ? ` (absoluto: ${absolute})` : ''}`,
+            ];
+            if (kind === 'áudio') {
+              // A transcrição roda em background: se ela terminou DEPOIS do
+              // staging (ou o worker nem tem attachmentRoot), o sidecar do
+              // intake fonte ainda conta — o texto chega ao prompt mesmo assim.
+              const transcript =
+                (absolute ? readMissionAttachmentTranscript(absolute) : null) ??
+                (snapshot.sourcePath
+                  ? readMissionAttachmentTranscript(snapshot.sourcePath)
+                  : null);
+              lines.push(
+                transcript
+                  ? `   Transcrição do áudio: ${transcript}`
+                  : '   Sem transcrição disponível: o arquivo de áudio acima é a fonte.',
+              );
+            }
+            return lines.join('\n');
           }),
         ].join('\n')
       : '';
@@ -1027,6 +1047,18 @@ export function agentPrompt(
   ]
     .filter(Boolean)
     .join('\n');
+}
+
+/** Copia os anexos selados para a worktree da missão; devolve a raiz onde ficaram. */
+function stageMissionAttachments(
+  scope: ProjectExecutionScope,
+  mission: Mission,
+): string | undefined {
+  const snapshots = mission.intentContract?.attachmentSnapshots;
+  if (!snapshots?.length) return undefined;
+  const execution = missionExecutionScope(scope, mission);
+  stageMissionAttachmentsIntoExecutionScope(execution, snapshots);
+  return execution.rootRealPath;
 }
 
 function sealFastLanePlanTitles(
@@ -1242,6 +1274,43 @@ interface BootstrapRuntime {
   readonly phase: 'created' | 'bound' | 'cleanup-handled';
 }
 
+/**
+ * `st_dev` is boot-local (APFS can renumber volumes across a Mac reboot), so a
+ * row persisted before the reboot must not be refused for the device alone.
+ * Path and inode stay compared.
+ */
+export function sameExecutionScopeAcrossBoots(
+  persisted: ProjectExecutionScope | undefined,
+  current: ProjectExecutionScope,
+): boolean {
+  if (!persisted) return false;
+  const { workspaceRootDevice: _a, ...left } = persisted;
+  const { workspaceRootDevice: _b, ...right } = current;
+  return isDeepStrictEqual(left, right);
+}
+
+/**
+ * Campos em que a linha durável do orquestrador diverge da autoridade
+ * aprovada. cwd ausente na linha é a raiz da execução dela — a mesma regra do
+ * spawn persistido (`canonicalizePersistedSpawnRequest`) — e não diverge.
+ */
+export function persistedOrchestratorRuntimeDivergence(
+  previous: ScopedMissionPaneSpec,
+  approvedRuntime: MissionOrchestratorRuntimeSnapshot,
+  executionScope: ProjectExecutionScope,
+): string[] {
+  const previousCwd = previous.cwd ?? previous.executionScope?.rootRealPath ?? previous.scope.rootRealPath;
+  return [
+    previous.adapterId !== approvedRuntime.adapterId && 'adapter',
+    previous.model !== undefined && previous.model !== approvedRuntime.model && 'model',
+    previous.effort !== undefined && previous.effort !== approvedRuntime.effort && 'effort',
+    previous.accountId !== undefined && !missionOrchestratorAccountAllowed(approvedRuntime, previous.accountId) && 'account',
+    (previous.readOnly === true) !== approvedRuntime.readOnly && 'readOnly',
+    previousCwd !== executionScope.rootRealPath && 'cwd',
+    !sameExecutionScopeAcrossBoots(previous.executionScope, executionScope) && 'scope',
+  ].filter((field): field is string => typeof field === 'string');
+}
+
 async function spawnAgentPane(
   scope: ProjectExecutionScope,
   mission: Mission,
@@ -1283,14 +1352,11 @@ async function spawnAgentPane(
   const priorLeaders = approvedRuntime ? stores.missionPanes.list(mission.id).filter(pane => pane.role === 'orchestrator') : [];
   if (priorLeaders.length > 1) return { error: 'orchestrator pane authority is ambiguous' };
   const previous = approvedRuntime ? priorLeaders[0] : spawnOpts?.replaceOrchestratorRow;
-  if (previous && approvedRuntime && (previous.adapterId !== approvedRuntime.adapterId ||
-    previous.model !== undefined && previous.model !== approvedRuntime.model ||
-    previous.effort !== undefined && previous.effort !== approvedRuntime.effort ||
-    previous.accountId !== undefined && !missionOrchestratorAccountAllowed(approvedRuntime, previous.accountId) ||
-    (previous.readOnly === true) !== approvedRuntime.readOnly ||
-    previous.cwd !== executionScope.rootRealPath ||
-    !isDeepStrictEqual(previous.executionScope, executionScope))) {
-    return { error: 'persisted orchestrator runtime differs from approved authority' };
+  if (previous && approvedRuntime) {
+    const diverged = persistedOrchestratorRuntimeDivergence(previous, approvedRuntime, executionScope);
+    if (diverged.length > 0) {
+      return { error: `persisted orchestrator runtime differs from approved authority (${diverged.join(', ')})` };
+    }
   }
   // F-1470: o Maestro volta na conta da linha (o failover F-995 pode tê-la
   // trocado) ou na aprovada enquanto ela serve; esgotada, numa irmã do mesmo
@@ -2343,6 +2409,7 @@ async function respawnFastLaneOrchestrator(
         missionDesignContext(missionExecutionScope(scope, live).rootRealPath),
         squad,
         sealedPlanTitles,
+        stageMissionAttachments(scope, live),
       ),
       awaitingAdjustment: missionAwaitsAdjustment(live),
       note: options.note,
@@ -3094,7 +3161,7 @@ export async function fastLaneBootstrap(
       current();
       const designContext=missionDesignContext(missionExecutionScope(scope,owned).rootRealPath,undefined,mission.description ?? '');
       const sealedPlanTitles=sealFastLanePlanTitles(stores,owned,squad);
-      const prompt=agentPrompt(orchestrator,owned,roster.map(agent=>agent.agentName),false,designContext,squad,sealedPlanTitles);
+      const prompt=agentPrompt(orchestrator,owned,roster.map(agent=>agent.agentName),false,designContext,squad,sealedPlanTitles,stageMissionAttachments(scope,owned));
       const adoption=await adoptOrchestratorPane(scope,owned,prompt,invocation,captureRuntime);
       if (adoption.adopted) {
         if (adoption.briefingError) throw new Error('bootstrap_adopted_briefing_unaccepted');

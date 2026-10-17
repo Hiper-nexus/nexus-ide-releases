@@ -34,7 +34,9 @@ import {
   SECURITY_DEFECT_SIGNALS,
   classifyRouteSpecialty,
   decisiveSignals,
+  isRouteSpecialty,
   matchSignals,
+  normalizeRouteSpecialty,
   preferAdapterOrder,
   resolveSpecialtyPolicy,
   type RoutePolicySource,
@@ -140,7 +142,7 @@ export interface RouteContext {
    * Especialidade já julgada pelo chamador (Jev via jev-task-routing) —
    * substitui só a heurística de palavras-chave; política/benchmark seguem.
    */
-  specialtyOverride?: RouteSpecialty;
+  specialtyOverride?: RouteSpecialty | string;
   /** Reasoning per turn judged independently of model rank and specialty. */
   effortOverride?: RouteEffort;
   /**
@@ -202,9 +204,8 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     // ($0,10/$0,50, 161 tok/s) e o 3.8 Flash ($0,75/$3,75, 306 tok/s) custam
     // ~1/20 do grok-4.7 ($2/$6) que liderava só por ordem de tabela.
     { adapterId: 'codex', model: 'gpt-6-luna', effort: 'low' },
-    // O mais novo primeiro (regra do operador, 29/09); o 3.7 fica de reserva.
+    // AGY 1.4.0 não lista mais 3.7/3.6; a reserva free saiu com eles.
     { adapterId: 'agy', model: 'gemini-3.8-flash-low', effort: 'low' },
-    { adapterId: 'agy', model: 'gemini-3.7-flash-low', effort: 'low' },
     { adapterId: 'grok', model: GROK_FRONTIER_MODEL, effort: 'low' },
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'low' },
     { adapterId: 'glm-flash', model: 'glm-5.3-flash[1m]', effort: 'low' },
@@ -236,8 +237,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
   easy: [
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'low' },
     { adapterId: 'grok', model: GROK_FRONTIER_MODEL, effort: 'low' },
-    // 3.8 Flash supera o 3.7 no mesmo preço (TB4.0 19,1% × 11,2%, model
-    // cards Google 2026-08/09); o trivial segue no 3.7-low (free no agy).
+    // AGY 1.4.0: 3.8 Flash low. O 3.7-low (free) saiu do `agy models`.
     { adapterId: 'agy', model: 'gemini-3.8-flash-low', effort: 'low' },
     // gpt-5.4-mini saiu (migrava p/ 5.6-luna). GPT-6 Luna: geração nova e
     // mais barata ($0,10/$0,50 × $0,20/$1,20) — docs/models/estudo-2026-09.md.
@@ -263,6 +263,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'glm', model: 'glm-5.3', effort: 'medium' },
     { adapterId: 'longcat', model: 'LongCat-2.0', effort: 'medium' },
     { adapterId: 'deepseek', model: 'deepseek-v4-pro', effort: 'medium' },
+    { adapterId: 'deepseek', model: 'deepseek-flash', effort: 'medium' },
     { adapterId: 'qwen', model: 'qwen3.8-max', effort: 'medium' },
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-flash' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3.1-Flash-Preview' },
@@ -771,7 +772,9 @@ export const FRONTIER_ORDER: Readonly<Record<FrontierRoutePolicy, readonly strin
 
 /**
  * F-1400 ADD2: front alterna entre Opus max, Sonnet high, Wonder Full max,
- * Kimi, Sol 6.1 e Devin SWE-2 high pelo uso visual recente de cada modelo.
+ * Kimi, Sol 6.1, Devin SWE-2 high e DeepSeek Flash pelo uso visual recente
+ * de cada modelo. DeepSeek Flash (DeepSWE 74,2 / TerminalBench 2.1 90,6):
+ * excelente em frontend, rápido e barato nas CLIs deepseek, claude e qwen.
  * Empate segue esta ordem. Next.js/jogos usam Opus quando elegível; sem ele,
  * vale o pool. Devin (pedido do operador, 12/10): "muito massa até em front",
  * limites e custo bons (plano Devin; DeepSWE 73,0 — cognition.com/blog/swe-2).
@@ -789,6 +792,9 @@ export const VISUAL_FRONTIER_LANE: ReadonlyArray<{
   { adapterId: 'kimi', model: 'kimi-code/k3' },
   { adapterId: 'codex', model: 'gpt-6.1-sol' },
   { adapterId: 'devin', model: 'swe-2-high' },
+  { adapterId: 'deepseek', model: 'deepseek-flash' },
+  { adapterId: 'claude', model: 'deepseek-flash' },
+  { adapterId: 'qwen', model: 'deepseek-flash' },
   { adapterId: 'codex', model: 'gpt-6-astra' },
 ]);
 
@@ -1917,10 +1923,15 @@ export function routeTask(
   // Revisão Fable R1: só o texto da TASK — o classificationText traz os briefs
   // .md referenciados, e um "Next steps" num brief mandava a missão ao Opus max.
   const nextOrGame = heuristicSpecialty.specialty !== 'security' && isNextOrGameTask(taskText);
-  const specialtyVerdict = context.specialtyOverride
+  const explicitSpecialty = context.specialtyOverride
+    ? normalizeRouteSpecialty(context.specialtyOverride) ?? (
+        isRouteSpecialty(context.specialtyOverride) ? context.specialtyOverride : undefined
+      )
+    : undefined;
+  const specialtyVerdict = explicitSpecialty
     ? {
         ...heuristicSpecialty,
-        specialty: context.specialtyOverride,
+        specialty: explicitSpecialty,
         reason: `especialidade julgada pelo Jev (heurística: ${heuristicSpecialty.specialty})`,
       }
     : nextOrGame ? { ...heuristicSpecialty, specialty: 'visual' as const } : heuristicSpecialty;

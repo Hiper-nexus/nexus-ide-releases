@@ -335,12 +335,23 @@ export function AccountsManager({
         await refreshAuth();
       }
       await hydrate();
+      // Login may change the credential backend while auth remains `ok`.
+      // Query the current capability instead of the terminal's stale closure.
+      const snapshotSupported = await supportsSnapshot(adapterId);
+      setCanSnapshot(snapshotSupported);
+      const nativeSessionHint = 'A sessão continua na CLI desta máquina. ' +
+        'Para salvar contas independentes no Nexus, adicione uma chave de API.';
       if (!finish.verified) {
         showNotice(
-          `Não deu para confirmar um login novo em ${displayName}. Se você ` +
-            'entrou em outra conta, use Salvar esta conta.',
+          `Não deu para confirmar um login novo em ${displayName}. ` +
+            (snapshotSupported ? 'Verifique a sessão na CLI antes de tentar novamente.' : nativeSessionHint),
           'info',
         );
+        return;
+      }
+      if (!snapshotSupported) {
+        showNotice(`Login nativo de ${displayName} confirmado. ${nativeSessionHint}`, 'ok');
+        onLoginActivity?.('ok');
         return;
       }
       const name = defaultAccountLabel({
@@ -421,7 +432,7 @@ export function AccountsManager({
     return () => {
       alive = false;
     };
-  }, [adapterId, supportsSnapshot]);
+  }, [adapterId, supportsSnapshot, auth]);
 
   useEffect(() => {
     if (renamingId) renameInputRef.current?.focus();
@@ -739,13 +750,9 @@ export function AccountsManager({
                 {account.needsRelogin && (
                   <span
                     className="acct__warn"
-                    title={
-                      account.lastError
-                        ? `Erro: ${account.lastError} — entre novamente`
-                        : 'A renovação do token falhou — qualquer terminal novo nesta conta cai em 401'
-                    }
+                    title="O provedor recusou a sessão desta conta. Use Entrar novamente para refazer o login nela."
                   >
-                    sessão expirada — entre novamente
+                    sessão expirada
                   </span>
                 )}
                 {account.onCooldown && !account.needsRelogin && (
@@ -808,7 +815,7 @@ export function AccountsManager({
             ) : (
               <button
                 type="button"
-                className="settings-btn settings-btn--primary acct__action"
+                className={`settings-btn acct__action${account.needsRelogin ? '' : ' settings-btn--primary'}`}
                 onClick={() => void useAccount(account.id)}
                 disabled={
                   busy ||
@@ -818,7 +825,7 @@ export function AccountsManager({
                 }
                 title={
                   account.needsRelogin
-                    ? 'Sessão expirada — entre novamente antes de usar'
+                    ? 'Sessão expirada: entre novamente antes de usar'
                     : account.onCooldown
                       ? 'Em cooldown — indisponível até o limite passar'
                       : !account.hasCredential
@@ -1005,6 +1012,11 @@ export function AccountsManager({
       <div className="acct__add-zone" data-open={addMode !== null ? 'true' : 'false'}>
         {addMode === null && (
           <>
+            {adapterId === 'muse' && auth?.state === 'ok' && !canSnapshot && (
+              <p className="acct__add-sub">
+                A sessão continua na CLI desta máquina. O Nexus não consegue guardá-la como conta independente. Para salvar outras contas, adicione uma chave de API da Meta.
+              </p>
+            )}
             {hasUnsavedSession && (
               <p className="acct__add-sub">
                 Esta sessão ainda não está salva no Nexus. Salve antes de trocar de conta.
@@ -1102,8 +1114,8 @@ export function AccountsManager({
             <p className="acct__form-title">
               Nomeie esta conta (ex.: <em>trabalho</em>, <em>pessoal</em>) e
               salve o login atual de <strong>{displayName}</strong> no Nexus.
-              Sem nome, o e-mail da sessão vira o nome. Depois troque de conta
-              no CLI e repita para juntar mais.
+              Sem nome, o e-mail da sessão vira o nome. Para juntar mais
+              contas, use Adicionar conta.
             </p>
             <div className="acct__add">
               <input

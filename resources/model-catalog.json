@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-07T00:00:00.000Z",
+  "updatedAt": "2026-10-16T00:00:00.000Z",
   "adapters": {
     "claude": {
       "default": "claude-sonnet-5-5",
@@ -73,6 +73,12 @@
           "availability": "cheap",
           "costTier": "low",
           "source": "nexus-eval"
+        },
+        {
+          "id": "deepseek-flash",
+          "availability": "cheap",
+          "costTier": "free",
+          "source": "bundled"
         }
       ]
     },
@@ -122,6 +128,13 @@
           "availability": "paid",
           "costTier": "medium",
           "source": "remote"
+        },
+        {
+          "id": "gpt-daybreak-blue-latest",
+          "availability": "paid",
+          "costTier": "high",
+          "source": "remote",
+          "warning": "Modelo cyber do Codex 0.163.0 (models_cache). Sem nota publicada — não entra na tabela de rota."
         }
       ]
     },
@@ -153,13 +166,6 @@
           "costTier": "high",
           "source": "remote",
           "warning": "Modelo novo da xAI — confirme pricing/tier antes de tornar default."
-        },
-        {
-          "id": "grok-composer-2.5-fast",
-          "availability": "deprecated",
-          "costTier": "low",
-          "source": "remote",
-          "warning": "Aposentado nas CLIs atuais (fora do models_cache do Grok) — fora da rota automática; só custo histórico."
         }
       ]
     },
@@ -255,39 +261,21 @@
           "source": "remote"
         },
         {
-          "id": "gemini-3.7-flash-low",
-          "availability": "free",
-          "costTier": "free",
+          "id": "gemini-4-argon-high",
+          "availability": "paid",
+          "costTier": "high",
           "source": "remote"
         },
         {
-          "id": "gemini-3.7-flash-high",
-          "availability": "cheap",
-          "costTier": "low",
+          "id": "gemini-4-argon-medium",
+          "availability": "paid",
+          "costTier": "high",
           "source": "remote"
         },
         {
-          "id": "gemini-3.7-flash-medium",
-          "availability": "cheap",
-          "costTier": "low",
-          "source": "remote"
-        },
-        {
-          "id": "gemini-3.6-flash-low",
-          "availability": "free",
-          "costTier": "free",
-          "source": "remote"
-        },
-        {
-          "id": "gemini-3.6-flash-high",
-          "availability": "cheap",
-          "costTier": "low",
-          "source": "remote"
-        },
-        {
-          "id": "gemini-3.6-flash-medium",
-          "availability": "cheap",
-          "costTier": "low",
+          "id": "gemini-4-argon-low",
+          "availability": "paid",
+          "costTier": "high",
           "source": "remote"
         }
       ]
@@ -407,6 +395,12 @@
         },
         {
           "id": "qwen3.6-flash",
+          "availability": "cheap",
+          "costTier": "free",
+          "source": "bundled"
+        },
+        {
+          "id": "deepseek-flash",
           "availability": "cheap",
           "costTier": "free",
           "source": "bundled"

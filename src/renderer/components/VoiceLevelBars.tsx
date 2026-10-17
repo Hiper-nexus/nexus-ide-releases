@@ -40,7 +40,12 @@ export function VoiceLevelBars({ visible }: { visible: boolean }) {
       const bars = barsRef.current;
       for (let i = 0; i < bars.length; i += 1) {
         const el = bars[i];
-        if (el) el.style.height = `${voiceLevelBarHeight(level, i)}%`;
+        // A altura era atualizada a cada frame de áudio, forçando layout para
+        // cada barra. A barra tem altura fixa e o nível escala só o compositor.
+        if (el) {
+          const scale = Math.max(0.1, voiceLevelBarHeight(level, i) / 100);
+          el.style.setProperty('--voice-level-scale', scale.toFixed(3));
+        }
       }
     };
     paint(useVoiceStore.getState().level);

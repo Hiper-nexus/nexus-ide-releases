@@ -1,0 +1,1405 @@
+{
+  "rows": [
+    {
+      "theme": "nexus-pink-city",
+      "state": "rest",
+      "label": "Puxar 91 commit(s)",
+      "ink": "#080709",
+      "background": "#faf7f9",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 18.893225461848402
+    },
+    {
+      "theme": "nexus-pink-city",
+      "state": "hover",
+      "label": "Puxar 91 commit(s)",
+      "ink": "#080709",
+      "background": "#fffafd",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 19.474847258157343
+    },
+    {
+      "theme": "nexus-pink-city",
+      "state": "active",
+      "label": "Puxar 91 commit(s)",
+      "ink": "#080709",
+      "background": "#fffafd",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 19.474847258157343
+    },
+    {
+      "theme": "nexus-pink-city",
+      "state": "focus-visible",
+      "label": "Puxar 91 commit(s)",
+      "ink": "#080709",
+      "background": "#fffafd",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 19.474847258157343
+    },
+    {
+      "theme": "nexus-pink-city",
+      "state": "pressed",
+      "label": "Puxar 91 commit(s)",
+      "ink": "#080709",
+      "background": "#fffafd",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 19.474847258157343
+    },
+    {
+      "theme": "nexus-pink-city",
+      "state": "rest",
+      "label": "Enviar 1191 commit(s)",
+      "ink": "#080709",
+      "background": "#faf7f9",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 18.893225461848402
+    },
+    {
+      "theme": "nexus-pink-city",
+      "state": "hover",
+      "label": "Enviar 1191 commit(s)",
+      "ink": "#080709",
+      "background": "#fffafd",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 19.474847258157343
+    },
+    {
+      "theme": "nexus-pink-city",
+      "state": "active",
+      "label": "Enviar 1191 commit(s)",
+      "ink": "#080709",
+      "background": "#fffafd",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 19.474847258157343
+    },
+    {
+      "theme": "nexus-pink-city",
+      "state": "focus-visible",
+      "label": "Enviar 1191 commit(s)",
+      "ink": "#080709",
+      "background": "#fffafd",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 19.474847258157343
+    },
+    {
+      "theme": "nexus-pink-city",
+      "state": "pressed",
+      "label": "Enviar 1191 commit(s)",
+      "ink": "#080709",
+      "background": "#fffafd",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 19.474847258157343
+    },
+    {
+      "theme": "nexus-pink-city",
+      "state": "rest",
+      "label": "Ver histórico",
+      "ink": "#faf7f9",
+      "background": "#2e1822",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 15.541927745337231
+    },
+    {
+      "theme": "nexus-pink-city",
+      "state": "hover",
+      "label": "Ver histórico",
+      "ink": "#faf7f9",
+      "background": "#2e1822",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 15.541927745337231
+    },
+    {
+      "theme": "nexus-pink-city",
+      "state": "active",
+      "label": "Ver histórico",
+      "ink": "#faf7f9",
+      "background": "#2e1822",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 15.541927745337231
+    },
+    {
+      "theme": "nexus-pink-city",
+      "state": "focus-visible",
+      "label": "Ver histórico",
+      "ink": "#faf7f9",
+      "background": "#2e1822",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 15.541927745337231
+    },
+    {
+      "theme": "nexus-pink-city",
+      "state": "pressed",
+      "label": "Ver histórico",
+      "ink": "#faf7f9",
+      "background": "#2e1822",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 15.541927745337231
+    },
+    {
+      "theme": "nexus-pink-city",
+      "state": "rest",
+      "label": "Trocar branch",
+      "ink": "#faf7f9",
+      "background": "#2e1822",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 15.541927745337231
+    },
+    {
+      "theme": "nexus-pink-city",
+      "state": "hover",
+      "label": "Trocar branch",
+      "ink": "#faf7f9",
+      "background": "#2e1822",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 15.541927745337231
+    },
+    {
+      "theme": "nexus-pink-city",
+      "state": "active",
+      "label": "Trocar branch",
+      "ink": "#faf7f9",
+      "background": "#2e1822",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 15.541927745337231
+    },
+    {
+      "theme": "nexus-pink-city",
+      "state": "focus-visible",
+      "label": "Trocar branch",
+      "ink": "#faf7f9",
+      "background": "#2e1822",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 15.541927745337231
+    },
+    {
+      "theme": "nexus-pink-city",
+      "state": "pressed",
+      "label": "Trocar branch",
+      "ink": "#faf7f9",
+      "background": "#2e1822",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 15.541927745337231
+    },
+    {
+      "theme": "nexus-dark",
+      "state": "rest",
+      "label": "Puxar 91 commit(s)",
+      "ink": "#0b0b0c",
+      "background": "#fafafa",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 18.848914616750907
+    },
+    {
+      "theme": "nexus-dark",
+      "state": "hover",
+      "label": "Puxar 91 commit(s)",
+      "ink": "#0b0b0c",
+      "background": "#ffffff",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 19.673841542285896
+    },
+    {
+      "theme": "nexus-dark",
+      "state": "active",
+      "label": "Puxar 91 commit(s)",
+      "ink": "#0b0b0c",
+      "background": "#ffffff",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 19.673841542285896
+    },
+    {
+      "theme": "nexus-dark",
+      "state": "focus-visible",
+      "label": "Puxar 91 commit(s)",
+      "ink": "#0b0b0c",
+      "background": "#ffffff",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 19.673841542285896
+    },
+    {
+      "theme": "nexus-dark",
+      "state": "pressed",
+      "label": "Puxar 91 commit(s)",
+      "ink": "#0b0b0c",
+      "background": "#ffffff",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 19.673841542285896
+    },
+    {
+      "theme": "nexus-dark",
+      "state": "rest",
+      "label": "Enviar 1191 commit(s)",
+      "ink": "#0b0b0c",
+      "background": "#fafafa",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 18.848914616750907
+    },
+    {
+      "theme": "nexus-dark",
+      "state": "hover",
+      "label": "Enviar 1191 commit(s)",
+      "ink": "#0b0b0c",
+      "background": "#ffffff",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 19.673841542285896
+    },
+    {
+      "theme": "nexus-dark",
+      "state": "active",
+      "label": "Enviar 1191 commit(s)",
+      "ink": "#0b0b0c",
+      "background": "#ffffff",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 19.673841542285896
+    },
+    {
+      "theme": "nexus-dark",
+      "state": "focus-visible",
+      "label": "Enviar 1191 commit(s)",
+      "ink": "#0b0b0c",
+      "background": "#ffffff",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 19.673841542285896
+    },
+    {
+      "theme": "nexus-dark",
+      "state": "pressed",
+      "label": "Enviar 1191 commit(s)",
+      "ink": "#0b0b0c",
+      "background": "#ffffff",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 19.673841542285896
+    },
+    {
+      "theme": "nexus-dark",
+      "state": "rest",
+      "label": "Ver histórico",
+      "ink": "#fafafa",
+      "background": "#191a2a",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 16.457293570660312
+    },
+    {
+      "theme": "nexus-dark",
+      "state": "hover",
+      "label": "Ver histórico",
+      "ink": "#fafafa",
+      "background": "#191a2a",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 16.457293570660312
+    },
+    {
+      "theme": "nexus-dark",
+      "state": "active",
+      "label": "Ver histórico",
+      "ink": "#fafafa",
+      "background": "#191a2a",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 16.457293570660312
+    },
+    {
+      "theme": "nexus-dark",
+      "state": "focus-visible",
+      "label": "Ver histórico",
+      "ink": "#fafafa",
+      "background": "#191a2a",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 16.457293570660312
+    },
+    {
+      "theme": "nexus-dark",
+      "state": "pressed",
+      "label": "Ver histórico",
+      "ink": "#fafafa",
+      "background": "#191a2a",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 16.457293570660312
+    },
+    {
+      "theme": "nexus-dark",
+      "state": "rest",
+      "label": "Trocar branch",
+      "ink": "#fafafa",
+      "background": "#191a2a",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 16.457293570660312
+    },
+    {
+      "theme": "nexus-dark",
+      "state": "hover",
+      "label": "Trocar branch",
+      "ink": "#fafafa",
+      "background": "#191a2a",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 16.457293570660312
+    },
+    {
+      "theme": "nexus-dark",
+      "state": "active",
+      "label": "Trocar branch",
+      "ink": "#fafafa",
+      "background": "#191a2a",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 16.457293570660312
+    },
+    {
+      "theme": "nexus-dark",
+      "state": "focus-visible",
+      "label": "Trocar branch",
+      "ink": "#fafafa",
+      "background": "#191a2a",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 16.457293570660312
+    },
+    {
+      "theme": "nexus-dark",
+      "state": "pressed",
+      "label": "Trocar branch",
+      "ink": "#fafafa",
+      "background": "#191a2a",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 16.457293570660312
+    },
+    {
+      "theme": "nexus-gray",
+      "state": "rest",
+      "label": "Puxar 91 commit(s)",
+      "ink": "#141518",
+      "background": "#e4e6ea",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 14.611042633449776
+    },
+    {
+      "theme": "nexus-gray",
+      "state": "hover",
+      "label": "Puxar 91 commit(s)",
+      "ink": "#141518",
+      "background": "#f5f6f8",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 16.88424693966265
+    },
+    {
+      "theme": "nexus-gray",
+      "state": "active",
+      "label": "Puxar 91 commit(s)",
+      "ink": "#141518",
+      "background": "#f5f6f8",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 16.88424693966265
+    },
+    {
+      "theme": "nexus-gray",
+      "state": "focus-visible",
+      "label": "Puxar 91 commit(s)",
+      "ink": "#141518",
+      "background": "#f5f6f8",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 16.88424693966265
+    },
+    {
+      "theme": "nexus-gray",
+      "state": "pressed",
+      "label": "Puxar 91 commit(s)",
+      "ink": "#141518",
+      "background": "#f5f6f8",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 16.88424693966265
+    },
+    {
+      "theme": "nexus-gray",
+      "state": "rest",
+      "label": "Enviar 1191 commit(s)",
+      "ink": "#141518",
+      "background": "#e4e6ea",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 14.611042633449776
+    },
+    {
+      "theme": "nexus-gray",
+      "state": "hover",
+      "label": "Enviar 1191 commit(s)",
+      "ink": "#141518",
+      "background": "#f5f6f8",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 16.88424693966265
+    },
+    {
+      "theme": "nexus-gray",
+      "state": "active",
+      "label": "Enviar 1191 commit(s)",
+      "ink": "#141518",
+      "background": "#f5f6f8",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 16.88424693966265
+    },
+    {
+      "theme": "nexus-gray",
+      "state": "focus-visible",
+      "label": "Enviar 1191 commit(s)",
+      "ink": "#141518",
+      "background": "#f5f6f8",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 16.88424693966265
+    },
+    {
+      "theme": "nexus-gray",
+      "state": "pressed",
+      "label": "Enviar 1191 commit(s)",
+      "ink": "#141518",
+      "background": "#f5f6f8",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 16.88424693966265
+    },
+    {
+      "theme": "nexus-gray",
+      "state": "rest",
+      "label": "Ver histórico",
+      "ink": "#e4e6ea",
+      "background": "#2b2e33",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 10.903400414886042
+    },
+    {
+      "theme": "nexus-gray",
+      "state": "hover",
+      "label": "Ver histórico",
+      "ink": "#e4e6ea",
+      "background": "#2b2e33",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 10.903400414886042
+    },
+    {
+      "theme": "nexus-gray",
+      "state": "active",
+      "label": "Ver histórico",
+      "ink": "#e4e6ea",
+      "background": "#2b2e33",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 10.903400414886042
+    },
+    {
+      "theme": "nexus-gray",
+      "state": "focus-visible",
+      "label": "Ver histórico",
+      "ink": "#e4e6ea",
+      "background": "#2b2e33",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 10.903400414886042
+    },
+    {
+      "theme": "nexus-gray",
+      "state": "pressed",
+      "label": "Ver histórico",
+      "ink": "#e4e6ea",
+      "background": "#2b2e33",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 10.903400414886042
+    },
+    {
+      "theme": "nexus-gray",
+      "state": "rest",
+      "label": "Trocar branch",
+      "ink": "#e4e6ea",
+      "background": "#2b2e33",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 10.903400414886042
+    },
+    {
+      "theme": "nexus-gray",
+      "state": "hover",
+      "label": "Trocar branch",
+      "ink": "#e4e6ea",
+      "background": "#2b2e33",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 10.903400414886042
+    },
+    {
+      "theme": "nexus-gray",
+      "state": "active",
+      "label": "Trocar branch",
+      "ink": "#e4e6ea",
+      "background": "#2b2e33",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 10.903400414886042
+    },
+    {
+      "theme": "nexus-gray",
+      "state": "focus-visible",
+      "label": "Trocar branch",
+      "ink": "#e4e6ea",
+      "background": "#2b2e33",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 10.903400414886042
+    },
+    {
+      "theme": "nexus-gray",
+      "state": "pressed",
+      "label": "Trocar branch",
+      "ink": "#e4e6ea",
+      "background": "#2b2e33",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 10.903400414886042
+    },
+    {
+      "theme": "nexus-red",
+      "state": "rest",
+      "label": "Puxar 91 commit(s)",
+      "ink": "#120c0d",
+      "background": "#f2e6e7",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 15.909749617352228
+    },
+    {
+      "theme": "nexus-red",
+      "state": "hover",
+      "label": "Puxar 91 commit(s)",
+      "ink": "#120c0d",
+      "background": "#faf0f1",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 17.340337922823625
+    },
+    {
+      "theme": "nexus-red",
+      "state": "active",
+      "label": "Puxar 91 commit(s)",
+      "ink": "#120c0d",
+      "background": "#faf0f1",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 17.340337922823625
+    },
+    {
+      "theme": "nexus-red",
+      "state": "focus-visible",
+      "label": "Puxar 91 commit(s)",
+      "ink": "#120c0d",
+      "background": "#faf0f1",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 17.340337922823625
+    },
+    {
+      "theme": "nexus-red",
+      "state": "pressed",
+      "label": "Puxar 91 commit(s)",
+      "ink": "#120c0d",
+      "background": "#faf0f1",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 17.340337922823625
+    },
+    {
+      "theme": "nexus-red",
+      "state": "rest",
+      "label": "Enviar 1191 commit(s)",
+      "ink": "#120c0d",
+      "background": "#f2e6e7",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 15.909749617352228
+    },
+    {
+      "theme": "nexus-red",
+      "state": "hover",
+      "label": "Enviar 1191 commit(s)",
+      "ink": "#120c0d",
+      "background": "#faf0f1",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 17.340337922823625
+    },
+    {
+      "theme": "nexus-red",
+      "state": "active",
+      "label": "Enviar 1191 commit(s)",
+      "ink": "#120c0d",
+      "background": "#faf0f1",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 17.340337922823625
+    },
+    {
+      "theme": "nexus-red",
+      "state": "focus-visible",
+      "label": "Enviar 1191 commit(s)",
+      "ink": "#120c0d",
+      "background": "#faf0f1",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 17.340337922823625
+    },
+    {
+      "theme": "nexus-red",
+      "state": "pressed",
+      "label": "Enviar 1191 commit(s)",
+      "ink": "#120c0d",
+      "background": "#faf0f1",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 17.340337922823625
+    },
+    {
+      "theme": "nexus-red",
+      "state": "rest",
+      "label": "Ver histórico",
+      "ink": "#f2e6e7",
+      "background": "#361c1c",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 12.874356654169224
+    },
+    {
+      "theme": "nexus-red",
+      "state": "hover",
+      "label": "Ver histórico",
+      "ink": "#f2e6e7",
+      "background": "#361c1c",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 12.874356654169224
+    },
+    {
+      "theme": "nexus-red",
+      "state": "active",
+      "label": "Ver histórico",
+      "ink": "#f2e6e7",
+      "background": "#361c1c",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 12.874356654169224
+    },
+    {
+      "theme": "nexus-red",
+      "state": "focus-visible",
+      "label": "Ver histórico",
+      "ink": "#f2e6e7",
+      "background": "#361c1c",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 12.874356654169224
+    },
+    {
+      "theme": "nexus-red",
+      "state": "pressed",
+      "label": "Ver histórico",
+      "ink": "#f2e6e7",
+      "background": "#361c1c",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 12.874356654169224
+    },
+    {
+      "theme": "nexus-red",
+      "state": "rest",
+      "label": "Trocar branch",
+      "ink": "#f2e6e7",
+      "background": "#361c1c",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 12.874356654169224
+    },
+    {
+      "theme": "nexus-red",
+      "state": "hover",
+      "label": "Trocar branch",
+      "ink": "#f2e6e7",
+      "background": "#361c1c",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 12.874356654169224
+    },
+    {
+      "theme": "nexus-red",
+      "state": "active",
+      "label": "Trocar branch",
+      "ink": "#f2e6e7",
+      "background": "#361c1c",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 12.874356654169224
+    },
+    {
+      "theme": "nexus-red",
+      "state": "focus-visible",
+      "label": "Trocar branch",
+      "ink": "#f2e6e7",
+      "background": "#361c1c",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 12.874356654169224
+    },
+    {
+      "theme": "nexus-red",
+      "state": "pressed",
+      "label": "Trocar branch",
+      "ink": "#f2e6e7",
+      "background": "#361c1c",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 12.874356654169224
+    },
+    {
+      "theme": "nexus-light",
+      "state": "rest",
+      "label": "Puxar 91 commit(s)",
+      "ink": "#fafafa",
+      "background": "#16181d",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 17.01420629189376
+    },
+    {
+      "theme": "nexus-light",
+      "state": "hover",
+      "label": "Puxar 91 commit(s)",
+      "ink": "#fafafa",
+      "background": "#23262e",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 14.493605621962384
+    },
+    {
+      "theme": "nexus-light",
+      "state": "active",
+      "label": "Puxar 91 commit(s)",
+      "ink": "#fafafa",
+      "background": "#23262e",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 14.493605621962384
+    },
+    {
+      "theme": "nexus-light",
+      "state": "focus-visible",
+      "label": "Puxar 91 commit(s)",
+      "ink": "#fafafa",
+      "background": "#23262e",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 14.493605621962384
+    },
+    {
+      "theme": "nexus-light",
+      "state": "pressed",
+      "label": "Puxar 91 commit(s)",
+      "ink": "#fafafa",
+      "background": "#23262e",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 14.493605621962384
+    },
+    {
+      "theme": "nexus-light",
+      "state": "rest",
+      "label": "Enviar 1191 commit(s)",
+      "ink": "#fafafa",
+      "background": "#16181d",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 17.01420629189376
+    },
+    {
+      "theme": "nexus-light",
+      "state": "hover",
+      "label": "Enviar 1191 commit(s)",
+      "ink": "#fafafa",
+      "background": "#23262e",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 14.493605621962384
+    },
+    {
+      "theme": "nexus-light",
+      "state": "active",
+      "label": "Enviar 1191 commit(s)",
+      "ink": "#fafafa",
+      "background": "#23262e",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 14.493605621962384
+    },
+    {
+      "theme": "nexus-light",
+      "state": "focus-visible",
+      "label": "Enviar 1191 commit(s)",
+      "ink": "#fafafa",
+      "background": "#23262e",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 14.493605621962384
+    },
+    {
+      "theme": "nexus-light",
+      "state": "pressed",
+      "label": "Enviar 1191 commit(s)",
+      "ink": "#fafafa",
+      "background": "#23262e",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 14.493605621962384
+    },
+    {
+      "theme": "nexus-light",
+      "state": "rest",
+      "label": "Ver histórico",
+      "ink": "#2a3040",
+      "background": "#dae8f2",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 10.534877357029838
+    },
+    {
+      "theme": "nexus-light",
+      "state": "hover",
+      "label": "Ver histórico",
+      "ink": "#2a3040",
+      "background": "#dae8f2",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 10.534877357029838
+    },
+    {
+      "theme": "nexus-light",
+      "state": "active",
+      "label": "Ver histórico",
+      "ink": "#2a3040",
+      "background": "#dae8f2",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 10.534877357029838
+    },
+    {
+      "theme": "nexus-light",
+      "state": "focus-visible",
+      "label": "Ver histórico",
+      "ink": "#2a3040",
+      "background": "#dae8f2",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 10.534877357029838
+    },
+    {
+      "theme": "nexus-light",
+      "state": "pressed",
+      "label": "Ver histórico",
+      "ink": "#2a3040",
+      "background": "#dae8f2",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 10.534877357029838
+    },
+    {
+      "theme": "nexus-light",
+      "state": "rest",
+      "label": "Trocar branch",
+      "ink": "#2a3040",
+      "background": "#dae8f2",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 10.534877357029838
+    },
+    {
+      "theme": "nexus-light",
+      "state": "hover",
+      "label": "Trocar branch",
+      "ink": "#2a3040",
+      "background": "#dae8f2",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 10.534877357029838
+    },
+    {
+      "theme": "nexus-light",
+      "state": "active",
+      "label": "Trocar branch",
+      "ink": "#2a3040",
+      "background": "#dae8f2",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 10.534877357029838
+    },
+    {
+      "theme": "nexus-light",
+      "state": "focus-visible",
+      "label": "Trocar branch",
+      "ink": "#2a3040",
+      "background": "#dae8f2",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 10.534877357029838
+    },
+    {
+      "theme": "nexus-light",
+      "state": "pressed",
+      "label": "Trocar branch",
+      "ink": "#2a3040",
+      "background": "#dae8f2",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 10.534877357029838
+    },
+    {
+      "theme": "dracula",
+      "state": "rest",
+      "label": "Puxar 91 commit(s)",
+      "ink": "#0b0b0c",
+      "background": "#fafafa",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 18.848914616750907
+    },
+    {
+      "theme": "dracula",
+      "state": "hover",
+      "label": "Puxar 91 commit(s)",
+      "ink": "#0b0b0c",
+      "background": "#ffffff",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 19.673841542285896
+    },
+    {
+      "theme": "dracula",
+      "state": "active",
+      "label": "Puxar 91 commit(s)",
+      "ink": "#0b0b0c",
+      "background": "#ffffff",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 19.673841542285896
+    },
+    {
+      "theme": "dracula",
+      "state": "focus-visible",
+      "label": "Puxar 91 commit(s)",
+      "ink": "#0b0b0c",
+      "background": "#ffffff",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 19.673841542285896
+    },
+    {
+      "theme": "dracula",
+      "state": "pressed",
+      "label": "Puxar 91 commit(s)",
+      "ink": "#0b0b0c",
+      "background": "#ffffff",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 19.673841542285896
+    },
+    {
+      "theme": "dracula",
+      "state": "rest",
+      "label": "Enviar 1191 commit(s)",
+      "ink": "#0b0b0c",
+      "background": "#fafafa",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 18.848914616750907
+    },
+    {
+      "theme": "dracula",
+      "state": "hover",
+      "label": "Enviar 1191 commit(s)",
+      "ink": "#0b0b0c",
+      "background": "#ffffff",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 19.673841542285896
+    },
+    {
+      "theme": "dracula",
+      "state": "active",
+      "label": "Enviar 1191 commit(s)",
+      "ink": "#0b0b0c",
+      "background": "#ffffff",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 19.673841542285896
+    },
+    {
+      "theme": "dracula",
+      "state": "focus-visible",
+      "label": "Enviar 1191 commit(s)",
+      "ink": "#0b0b0c",
+      "background": "#ffffff",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 19.673841542285896
+    },
+    {
+      "theme": "dracula",
+      "state": "pressed",
+      "label": "Enviar 1191 commit(s)",
+      "ink": "#0b0b0c",
+      "background": "#ffffff",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 19.673841542285896
+    },
+    {
+      "theme": "dracula",
+      "state": "rest",
+      "label": "Ver histórico",
+      "ink": "#f8f8f2",
+      "background": "#3a374d",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 10.744422865995354
+    },
+    {
+      "theme": "dracula",
+      "state": "hover",
+      "label": "Ver histórico",
+      "ink": "#f8f8f2",
+      "background": "#3a374d",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 10.744422865995354
+    },
+    {
+      "theme": "dracula",
+      "state": "active",
+      "label": "Ver histórico",
+      "ink": "#f8f8f2",
+      "background": "#3a374d",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 10.744422865995354
+    },
+    {
+      "theme": "dracula",
+      "state": "focus-visible",
+      "label": "Ver histórico",
+      "ink": "#f8f8f2",
+      "background": "#3a374d",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 10.744422865995354
+    },
+    {
+      "theme": "dracula",
+      "state": "pressed",
+      "label": "Ver histórico",
+      "ink": "#f8f8f2",
+      "background": "#3a374d",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 10.744422865995354
+    },
+    {
+      "theme": "dracula",
+      "state": "rest",
+      "label": "Trocar branch",
+      "ink": "#f8f8f2",
+      "background": "#3a374d",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 10.744422865995354
+    },
+    {
+      "theme": "dracula",
+      "state": "hover",
+      "label": "Trocar branch",
+      "ink": "#f8f8f2",
+      "background": "#3a374d",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 10.744422865995354
+    },
+    {
+      "theme": "dracula",
+      "state": "active",
+      "label": "Trocar branch",
+      "ink": "#f8f8f2",
+      "background": "#3a374d",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 10.744422865995354
+    },
+    {
+      "theme": "dracula",
+      "state": "focus-visible",
+      "label": "Trocar branch",
+      "ink": "#f8f8f2",
+      "background": "#3a374d",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 10.744422865995354
+    },
+    {
+      "theme": "dracula",
+      "state": "pressed",
+      "label": "Trocar branch",
+      "ink": "#f8f8f2",
+      "background": "#3a374d",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 10.744422865995354
+    },
+    {
+      "theme": "solarized-dark",
+      "state": "rest",
+      "label": "Puxar 91 commit(s)",
+      "ink": "#0b0b0c",
+      "background": "#fafafa",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 18.848914616750907
+    },
+    {
+      "theme": "solarized-dark",
+      "state": "hover",
+      "label": "Puxar 91 commit(s)",
+      "ink": "#0b0b0c",
+      "background": "#ffffff",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 19.673841542285896
+    },
+    {
+      "theme": "solarized-dark",
+      "state": "active",
+      "label": "Puxar 91 commit(s)",
+      "ink": "#0b0b0c",
+      "background": "#ffffff",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 19.673841542285896
+    },
+    {
+      "theme": "solarized-dark",
+      "state": "focus-visible",
+      "label": "Puxar 91 commit(s)",
+      "ink": "#0b0b0c",
+      "background": "#ffffff",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 19.673841542285896
+    },
+    {
+      "theme": "solarized-dark",
+      "state": "pressed",
+      "label": "Puxar 91 commit(s)",
+      "ink": "#0b0b0c",
+      "background": "#ffffff",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 19.673841542285896
+    },
+    {
+      "theme": "solarized-dark",
+      "state": "rest",
+      "label": "Enviar 1191 commit(s)",
+      "ink": "#0b0b0c",
+      "background": "#fafafa",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 18.848914616750907
+    },
+    {
+      "theme": "solarized-dark",
+      "state": "hover",
+      "label": "Enviar 1191 commit(s)",
+      "ink": "#0b0b0c",
+      "background": "#ffffff",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 19.673841542285896
+    },
+    {
+      "theme": "solarized-dark",
+      "state": "active",
+      "label": "Enviar 1191 commit(s)",
+      "ink": "#0b0b0c",
+      "background": "#ffffff",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 19.673841542285896
+    },
+    {
+      "theme": "solarized-dark",
+      "state": "focus-visible",
+      "label": "Enviar 1191 commit(s)",
+      "ink": "#0b0b0c",
+      "background": "#ffffff",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 19.673841542285896
+    },
+    {
+      "theme": "solarized-dark",
+      "state": "pressed",
+      "label": "Enviar 1191 commit(s)",
+      "ink": "#0b0b0c",
+      "background": "#ffffff",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 19.673841542285896
+    },
+    {
+      "theme": "solarized-dark",
+      "state": "rest",
+      "label": "Ver histórico",
+      "ink": "#93a1a1",
+      "background": "#053a4b",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 4.583733804599374
+    },
+    {
+      "theme": "solarized-dark",
+      "state": "hover",
+      "label": "Ver histórico",
+      "ink": "#93a1a1",
+      "background": "#053a4b",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 4.583733804599374
+    },
+    {
+      "theme": "solarized-dark",
+      "state": "active",
+      "label": "Ver histórico",
+      "ink": "#93a1a1",
+      "background": "#053a4b",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 4.583733804599374
+    },
+    {
+      "theme": "solarized-dark",
+      "state": "focus-visible",
+      "label": "Ver histórico",
+      "ink": "#93a1a1",
+      "background": "#053a4b",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 4.583733804599374
+    },
+    {
+      "theme": "solarized-dark",
+      "state": "pressed",
+      "label": "Ver histórico",
+      "ink": "#93a1a1",
+      "background": "#053a4b",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 4.583733804599374
+    },
+    {
+      "theme": "solarized-dark",
+      "state": "rest",
+      "label": "Trocar branch",
+      "ink": "#93a1a1",
+      "background": "#053a4b",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 4.583733804599374
+    },
+    {
+      "theme": "solarized-dark",
+      "state": "hover",
+      "label": "Trocar branch",
+      "ink": "#93a1a1",
+      "background": "#053a4b",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 4.583733804599374
+    },
+    {
+      "theme": "solarized-dark",
+      "state": "active",
+      "label": "Trocar branch",
+      "ink": "#93a1a1",
+      "background": "#053a4b",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 4.583733804599374
+    },
+    {
+      "theme": "solarized-dark",
+      "state": "focus-visible",
+      "label": "Trocar branch",
+      "ink": "#93a1a1",
+      "background": "#053a4b",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 4.583733804599374
+    },
+    {
+      "theme": "solarized-dark",
+      "state": "pressed",
+      "label": "Trocar branch",
+      "ink": "#93a1a1",
+      "background": "#053a4b",
+      "transition": "0s",
+      "filter": "none",
+      "contrast": 4.583733804599374
+    }
+  ],
+  "failures": []
+}

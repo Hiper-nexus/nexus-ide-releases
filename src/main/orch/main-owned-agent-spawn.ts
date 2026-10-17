@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import type { WebContents } from "electron";
 import type { z } from "zod";
@@ -37,6 +38,8 @@ import {
 import { isOperatorTabResumeTransferSource } from "./operator-tab-mission-resume";
 import { listSquads } from "./squad-store";
 import { assertWorkerContinuationTarget, reconcilePreparedWorkerContinuation } from './mission-pane-resume-ownership';
+import { isInsidePath } from './workspace-path';
+import { findPaneSpaceIdByWorktreeCwd } from '../pty/pane-space-worktree';
 import {
   bindSpawnAuthority,
   consumeImmediateSquadSpawnGrant,
@@ -593,10 +596,18 @@ export function authorizeMainOwnedAgentSpawn(
       canonicalRequest.missionId,
       "sem spec persistido — segue como pane direto",
     );
+    // Bug 4: o cwd ainda aponta a worktree da missão apagada. Fora da raiz e
+    // sem registro de aba, o pane direto reabre no checkout; a aba registrada
+    // segue para o preparo dela, que recusa pasta removida.
+    const cwd = canonicalRequest.cwd;
+    const orphanWorktreeCwd = cwd !== undefined && path.isAbsolute(cwd) &&
+      !isInsidePath(rendererScope.rootRealPath, cwd) &&
+      !findPaneSpaceIdByWorktreeCwd(rendererScope, cwd);
     canonicalRequest = {
       ...canonicalRequest,
       missionId: undefined,
       orchRequestId: undefined,
+      ...(orphanWorktreeCwd ? { cwd: undefined } : {}),
     };
   }
   if (

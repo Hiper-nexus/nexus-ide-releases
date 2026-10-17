@@ -1,6 +1,6 @@
 import { useId, useMemo, useState, type KeyboardEvent } from 'react';
 import type { UsageHistory } from '../../../shared/usage-types';
-import { fmtTokens, fmtUsd } from '../../lib/lifetime-format';
+import { formatTokenCount, formatUsdAmount } from '../../lib/usage-overview';
 import {
   USAGE_HISTORY_SPAN_DAYS,
   buildUsageHistorySeries,
@@ -33,7 +33,7 @@ const METRICS: readonly { key: UsageHistoryMetric; label: string }[] = [
 ];
 
 function formatMetric(value: number, metric: UsageHistoryMetric): string {
-  return metric === 'tokens' ? fmtTokens(value) : fmtUsd(value);
+  return metric === 'tokens' ? formatTokenCount(value) : formatUsdAmount(value);
 }
 
 function tokensWord(value: number): string {
@@ -49,7 +49,7 @@ function pointReadout(point: UsageHistoryPoint): string {
   if (point.tokens === 0 && point.usdEquivalent === 0 && point.turns === 0) {
     return `${point.longLabel}: sem consumo`;
   }
-  return `${point.longLabel}: ${fmtTokens(point.tokens)} ${tokensWord(point.tokens)} · ${fmtUsd(point.usdEquivalent)} em API · ${point.turns} ${turnsWord(point.turns)}`;
+  return `${point.longLabel}: ${formatTokenCount(point.tokens)} ${tokensWord(point.tokens)} · ${formatUsdAmount(point.usdEquivalent)} em API · ${point.turns} ${turnsWord(point.turns)}`;
 }
 
 function sinceLabel(since: number): string {
@@ -198,7 +198,7 @@ export function UsageHistoryChart({ status, history, now, onRetry }: UsageHistor
     );
   }
 
-  const summary = `Total em ${USAGE_HISTORY_SPAN_DAYS} dias: ${fmtTokens(totals.tokens)} ${tokensWord(totals.tokens)}, ${fmtUsd(totals.usdEquivalent)} em API, ${totals.turns} ${turnsWord(totals.turns)}; ${activeDays} ${activeDays === 1 ? 'dia' : 'dias'} com uso${peak && metricValue(peak, metric) > 0 ? `; maior dia ${peak.longLabel} com ${formatMetric(metricValue(peak, metric), metric)}` : ''}.`;
+  const summary = `Total em ${USAGE_HISTORY_SPAN_DAYS} dias: ${formatTokenCount(totals.tokens)} ${tokensWord(totals.tokens)}, ${formatUsdAmount(totals.usdEquivalent)} em API, ${totals.turns} ${turnsWord(totals.turns)}; ${activeDays} ${activeDays === 1 ? 'dia' : 'dias'} com uso${peak && metricValue(peak, metric) > 0 ? `; maior dia ${peak.longLabel} com ${formatMetric(metricValue(peak, metric), metric)}` : ''}.`;
   const tickEvery = points.length > 14 ? 7 : 1;
 
   return (
@@ -209,8 +209,8 @@ export function UsageHistoryChart({ status, history, now, onRetry }: UsageHistor
           pointReadout(selectedPoint)
         ) : (
           <>
-            <strong>{fmtTokens(totals.tokens)}</strong> {tokensWord(totals.tokens)} ·{' '}
-            <strong>{fmtUsd(totals.usdEquivalent)}</strong> em API ·{' '}
+            <strong>{formatTokenCount(totals.tokens)}</strong> {tokensWord(totals.tokens)} ·{' '}
+            <strong>{formatUsdAmount(totals.usdEquivalent)}</strong> em API ·{' '}
             <strong>{totals.turns}</strong> {turnsWord(totals.turns)} em {USAGE_HISTORY_SPAN_DAYS}{' '}
             dias
           </>
@@ -312,8 +312,8 @@ export function UsageHistoryChart({ status, history, now, onRetry }: UsageHistor
               .map((point) => (
                 <tr key={point.day}>
                   <th scope="row">{point.longLabel}</th>
-                  <td>{fmtTokens(point.tokens)}</td>
-                  <td>{fmtUsd(point.usdEquivalent)}</td>
+                  <td>{formatTokenCount(point.tokens)}</td>
+                  <td>{formatUsdAmount(point.usdEquivalent)}</td>
                   <td>{point.turns}</td>
                 </tr>
               ))}
