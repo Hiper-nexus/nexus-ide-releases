@@ -109,7 +109,12 @@ import {
   markLiveMicFrameOffered,
   resetOfferedLiveMicFramesThisTurn,
 } from './live-mute-rescue';
-import { NarrationQueue } from './narration-queue';
+import {
+  NarrationQueue,
+  canStartNarration,
+  narrationStillOwnsVoice,
+  type NarrationVoiceState,
+} from './narration-queue';
 import { useToastStore } from '../state/toast-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
 import {
@@ -1326,15 +1331,19 @@ export function useVoiceController(active = true): void {
     // disabled; WakeMic owns the hot stream when wake word is enabled.
     wakeMic.setUtteranceFrameTap(streamLiveMicFrame);
 
+    const narrationVoiceState = (): NarrationVoiceState => ({
+      status: useVoiceStore.getState().status,
+      turnBusy: busy.current,
+      wakeOpening: wakeOpenInProgress,
+      listening: isListening(capture.current),
+      realtimeTurnActive,
+      liveAudioPending:
+        (livePlayer?.remainingMs() ?? 0) > 0 || pendingRealtimeAudioOut.length > 0,
+      localAudioAudible: isLocalAudioAudible(Date.now()),
+      halted: isJarvisNarrationHalted(),
+    });
     const narrationQueue = new NarrationQueue({
-      canPlay: () =>
-        !isJarvisNarrationHalted() &&
-        useVoiceStore.getState().status === 'idle' &&
-        !isListening(capture.current) &&
-        !realtimeTurnActive &&
-        (livePlayer?.remainingMs() ?? 0) === 0 &&
-        pendingRealtimeAudioOut.length === 0 &&
-        !isLocalAudioAudible(Date.now()),
+      canPlay: () => canStartNarration(narrationVoiceState()),
       play: async (text) => {
         if (isResponseMuted() || isJarvisNarrationHalted()) return;
         const storeNarrate = useVoiceStore.getState();
@@ -1343,6 +1352,19 @@ export function useVoiceController(active = true): void {
         try {
           const spoken = await window.nexus.voice.speak({ text, speakMode: 'full' });
           if (isJarvisNarrationHalted() || isResponseMuted()) return;
+          // A síntese leva segundos: se um wake/turno assumiu a voz nesse meio
+          // tempo, o relato volta para a fila em vez de falar por cima dele.
+          const state = narrationVoiceState();
+          if (!narrationStillOwnsVoice({ ...state, localAudioAudible: false })) {
+            narrationQueue.requeue(text);
+            logVoiceEvent(
+              'info',
+              'jarvis.narrationDeferred',
+              'relato adiado: um turno assumiu a voz durante a síntese',
+              { status: state.status, turnBusy: state.turnBusy },
+            );
+            return;
+          }
           if (spoken.ok && spoken.mode === 'audio') {
             await playAudioBase64(spoken.audioBase64, spoken.format);
           }
