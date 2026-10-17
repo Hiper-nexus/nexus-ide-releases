@@ -429,6 +429,7 @@ async function performFailover(
   // Sem fallback não há o que somar: a rota única segue o caminho de sempre.
   if (!last) return performRoute(input, deps, settings, open[0]);
   const failed: DecisionUsageReceipt[] = [];
+  // Só o acerto publica aqui; na falha o noAnswer publica o recibo somado (F-1548).
   const total = (receipts: readonly DecisionUsageReceipt[]): DecisionUsageReceipt => {
     const usage = aggregateUsageReceipts(receipts);
     try { input.onUsage?.(usage); }
@@ -439,7 +440,7 @@ async function performFailover(
     const route = open[index];
     // A última rota confere o disjuntor de novo: ele pode ter aberto durante as tentativas anteriores.
     if (index === last && isDecisionProviderBlocked(route.provider)) {
-      return noAnswer(input, route, 'network', total([...failed, NO_REQUEST_USAGE]));
+      return noAnswer(input, route, 'network', aggregateUsageReceipts([...failed, NO_REQUEST_USAGE]));
     }
     const execution = await executeRoute(input, deps, settings, route, 'later');
     if (execution.ok) {
@@ -453,7 +454,7 @@ async function performFailover(
     const stopped = execution.reason === 'aborted' || execution.reason === 'budget';
     // Abort e orçamento de uma rota que não é a última encerram a cadeia sem mexer no disjuntor dela.
     if (index === last || !stopped) recordDecisionProviderFailure(route.provider, execution.reason);
-    if (index === last || stopped) return noAnswer(input, route, execution.reason, total(failed));
+    if (index === last || stopped) return noAnswer(input, route, execution.reason, aggregateUsageReceipts(failed));
   }
   return null;
 }
