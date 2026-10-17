@@ -200,12 +200,43 @@ describe('Aparência → criar tema (Salvar tema)', () => {
     expect(status(container)?.textContent).toBe('Tema salvo.');
   });
 
-  it('uma falha sem mensagem usa o texto padrão', async () => {
-    updateUi.mockRejectedValueOnce('ipc fechado');
+  it('tira o envelope do Electron e mostra só a mensagem do main', async () => {
+    updateUi.mockRejectedValueOnce(
+      new Error(
+        "Error invoking remote method 'settings:ui-set': Error: Não foi possível salvar as configurações do Nexus.",
+      ),
+    );
     const container = mount();
     await openEditor(container);
     await saveTheme(container);
 
+    expect(alert(container)?.textContent).toBe('Não foi possível salvar as configurações do Nexus.');
+    expect(editor(container)).not.toBeNull();
+    expect(status(container)).toBeNull();
+  });
+
+  it.each([
+    ['uma rejeição que não é Error', 'ipc fechado'],
+    ['um Error sem mensagem', new Error('')],
+    ['um Error só com o envelope', new Error("Error invoking remote method 'settings:ui-set': Error: ")],
+  ])('%s usa o texto padrão', async (_label, rejection) => {
+    updateUi.mockRejectedValueOnce(rejection);
+    const container = mount();
+    await openEditor(container);
+    await saveTheme(container);
+
+    expect(alert(container)?.textContent).toBe('Não foi possível salvar esse tema.');
+    expect(editor(container)).not.toBeNull();
+    expect(status(container)).toBeNull();
+  });
+
+  it('não confirma quando o main ignora o patch e devolve as configurações antigas', async () => {
+    updateUi.mockImplementationOnce(async () => {});
+    const container = mount();
+    await openEditor(container);
+    await saveTheme(container);
+
+    expect(updateUi).toHaveBeenCalledOnce();
     expect(alert(container)?.textContent).toBe('Não foi possível salvar esse tema.');
     expect(editor(container)).not.toBeNull();
     expect(status(container)).toBeNull();

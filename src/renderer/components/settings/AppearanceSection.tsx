@@ -102,6 +102,10 @@ function ThemeCard({
   );
 }
 
+const SAVE_THEME_ERROR = 'Não foi possível salvar esse tema.';
+/** Envelope que o Electron põe na mensagem de um erro vindo do main. */
+const IPC_ENVELOPE = /^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/;
+
 export function AppearanceSection() {
   const terminal = useSettingsStore((s) => s.terminal);
   const ui = useSettingsStore((s) => s.ui);
@@ -149,13 +153,17 @@ export function AppearanceSection() {
         importedThemes: upsertImportedTheme(ui.importedThemes, theme),
         activeImportedThemeId: theme.id,
       });
+      // O main ignora em silêncio um patch inválido e devolve as configurações
+      // antigas: só confirma se o tema voltou na lista.
+      if (!useSettingsStore.getState().ui.importedThemes.some((entry) => entry.id === theme.id)) {
+        throw new Error(SAVE_THEME_ERROR);
+      }
       setEditingTheme(false);
       setThemeSaved(true);
     } catch (error) {
       // O editor segue aberto: quem editou não perde as cores.
-      setImportError(
-        error instanceof Error ? error.message : 'Não foi possível salvar esse tema.',
-      );
+      const reason = error instanceof Error ? error.message.replace(IPC_ENVELOPE, '').trim() : '';
+      setImportError(reason || SAVE_THEME_ERROR);
     }
   };
 
