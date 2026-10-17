@@ -14,10 +14,12 @@ import {
 // mínima, taxa <= 0,2) não é promovida por lane nem vira escritor econômico,
 // e toma −30 no multi-score. Nunca excluída quando é a única opção e a
 // menção explícita do operador continua vencendo.
+// Só o modelo com amostra própria: a demoção dura não vale para um irmão que
+// apenas herda a taxa da CLI (task-router-failing-pools.test.ts).
 const MUSE: AdapterAvailability = {
   id: 'muse',
   installed: true,
-  models: ['muse-wonder-full-1.0', 'muse-wonder-1.0', 'muse-spark-1.3'],
+  models: ['muse-wonder-full-1.0'],
 };
 const CLAUDE: AdapterAvailability = {
   id: 'claude',

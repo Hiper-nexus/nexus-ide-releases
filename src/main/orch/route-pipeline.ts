@@ -131,6 +131,8 @@ export function formatRouteSuccessRate(rate: RouteSuccessRate): string {
  * A rota já provou que falha: taxa com a amostra mínima exigida por
  * {@link routeSuccessRate} e <= {@link ROUTE_FAILING_MAX_RATE}. Devolve a
  * taxa medida (para o recibo) ou null — sem amostra, sem veredito.
+ * A demoção DURA exige amostra do próprio (CLI, modelo): a taxa herdada da CLI
+ * só alimenta o termo contínuo — um modelo irmão sem amostra não paga pela CLI.
  */
 export function routeProvenFailure(
   index: RouteSuccessIndex | undefined,
@@ -138,7 +140,7 @@ export function routeProvenFailure(
   model: string | undefined,
 ): RouteSuccessRate | null {
   const rate = routeSuccessRate(index, adapterId, model);
-  return rate && rate.rate <= ROUTE_FAILING_MAX_RATE ? rate : null;
+  return rate && rate.scope === 'model' && rate.rate <= ROUTE_FAILING_MAX_RATE ? rate : null;
 }
 
 export interface ScoreBreakdown {
@@ -270,7 +272,7 @@ export function scoreRouteCandidate(
   const outcome = routeSuccessRate(input.context?.routeOutcomes, c.adapterId, c.model);
   const success = outcome
     ? (outcome.rate - 0.5) * ROUTE_OUTCOME_WEIGHT +
-      (outcome.rate <= ROUTE_FAILING_MAX_RATE ? ROUTE_FAILING_PENALTY : 0)
+      (routeProvenFailure(input.context?.routeOutcomes, c.adapterId, c.model) ? ROUTE_FAILING_PENALTY : 0)
     : 0;
 
   // Cota de assinatura que expira no reset: sobra sobe, esgotamento desce.
