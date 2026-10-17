@@ -243,8 +243,14 @@ function resolvePttTarget(): WebContents | null {
  * owns focus. In that situation there is no focused Nexus renderer for
  * `resolvePttTarget()` to return. Recover exactly one scoped Nexus window,
  * rather than guessing between projects or broadcasting a voice command.
+ *
+ * A recuperação só vale se a janela de fato ficou visível e focada depois de
+ * `focus()`: um PTT entregue a uma janela escondida abre o microfone sem nenhum
+ * sinal visual, e o `stop` correspondente (que só acha a janela focada) nunca a
+ * alcançaria. Se não ficou, o gesto é descartado e o motivo vai para o voice.log.
+ * Quem chama decide QUANDO recuperar (ver `sendPttAction`: nunca no `stop`).
  */
-function restoreSingleAuthorizedPttTarget(): WebContents | null {
+function restoreSingleAuthorizedPttTarget(channel: string): WebContents | null {
   const candidates = BrowserWindow.getAllWindows().filter((win) => {
     const wc = win.webContents;
     return (
@@ -256,25 +262,71 @@ function restoreSingleAuthorizedPttTarget(): WebContents | null {
   if (candidates.length !== 1) return null;
 
   const targetWindow = candidates[0]!;
+  let wasMinimized = false;
+  let wasVisible = true;
+  let stoleFocus = false;
   try {
-    if (targetWindow.isMinimized()) targetWindow.restore();
+    wasMinimized = targetWindow.isMinimized();
+    wasVisible = targetWindow.isVisible();
+    if (wasMinimized) targetWindow.restore();
     if (!targetWindow.isVisible()) targetWindow.show();
     targetWindow.focus();
+    if (!targetWindow.isFocused()) {
+      // macOS: `focus()` não ativa um app em segundo plano. `app.focus({ steal })`
+      // é o caminho que o resto do app usa para trazer a janela à frente (ver
+      // window.ts), e aqui o atalho global é um gesto explícito do operador.
+      stoleFocus = true;
+      app.focus?.({ steal: true });
+      targetWindow.focus();
+    }
+    const visible = targetWindow.isVisible();
+    const minimized = targetWindow.isMinimized();
+    const focused = targetWindow.isFocused();
+    if (!visible || minimized || !focused) {
+      logVoice(
+        "warn",
+        "voice.pttWindowRecoveryFailed",
+        "janela do Nexus não ficou visível e focada: atalho global descartado",
+        { channel, visible, minimized, focused, stoleFocus },
+      );
+      return null;
+    }
   } catch {
     // A window can disappear while the OS is restoring it. The checks below
     // make this a harmless no-op instead of delivering to a stale renderer.
+    logVoice(
+      "warn",
+      "voice.pttWindowRecoveryFailed",
+      "janela do Nexus sumiu durante a recuperação: atalho global descartado",
+      { channel, reason: "window-gone", stoleFocus },
+    );
     return null;
   }
 
   const target = targetWindow.webContents;
   if (target.isDestroyed() || target.isCrashed()) return null;
-  return getRendererWorkspaceScope(target) ? target : null;
+  if (!getRendererWorkspaceScope(target)) return null;
+  logVoice(
+    "info",
+    "voice.pttWindowRecovered",
+    "janela única do Nexus recuperada pelo atalho global",
+    { channel, wasMinimized, wasVisible, stoleFocus },
+  );
+  return target;
 }
 
 function sendPttAction(channel: string): void {
   if (!voiceCaptureAllowed()) return;
   const resolvedTarget = resolvePttTarget();
-  const target = resolvedTarget ?? restoreSingleAuthorizedPttTarget();
+  // Só o gesto que ABRE a captura (start/toggle) recupera a janela. O `stop` é
+  // o keyup da tecla do atalho em QUALQUER app (uiohook, modo hold): soltar a
+  // tecla fora do Nexus nunca pode trazê-lo para a frente, senão cada espaço
+  // digitado em outro app roubaria o foco.
+  const target =
+    resolvedTarget ??
+    (channel === VOICE_CHANNELS.pttStop
+      ? null
+      : restoreSingleAuthorizedPttTarget(channel));
   if (!target) return;
   if (target.isDestroyed() || target.isCrashed()) return;
 
@@ -287,8 +339,8 @@ function sendPttAction(channel: string): void {
   }
 
   // Re-read scope immediately before send (fail closed on race). A target we
-  // recovered above is already unique and authorized; macOS may take a moment
-  // to reflect `focus()` in `getFocusedWindow()`, so do not discard that press.
+  // recovered above is already unique, authorized and verified visible+focused
+  // (restoreSingleAuthorizedPttTarget), so do not discard that press.
   const focused = BrowserWindow.getFocusedWindow()?.webContents;
   if (resolvedTarget && (!focused || focused !== target)) return;
   const scopedTarget = resolvedTarget ? focused : target;
