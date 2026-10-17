@@ -5,7 +5,9 @@
   .voice-orb,
   .voice-orb__ring,
   .voice-orb__core,
-  .voice-orb__scan {
+  .voice-orb__scan,
+  .voice-figure__particle,
+  .voice-figure__ground {
     animation: none;
   }
 }
@@ -207,6 +209,105 @@
   align-items: center;
   gap: var(--space-2-5);
   padding: var(--space-3) var(--space-4) var(--space-3);
+}
+
+/* ---- Presença ampliada: corpo humano de partículas -------------------- */
+.voice-figure {
+  --figure-ink: color-mix(in srgb, var(--accent) 82%, var(--text));
+  appearance: none;
+  position: relative;
+  width: min(100%, 180px);
+  aspect-ratio: 0.74;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--figure-ink);
+  cursor: pointer;
+  isolation: isolate;
+}
+
+.voice-figure:disabled {
+  cursor: default;
+}
+
+.voice-figure:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+
+.voice-figure__field {
+  position: absolute;
+  inset: var(--space-2) var(--space-4) var(--space-3);
+  display: block;
+}
+
+.voice-figure__particle {
+  position: absolute;
+  left: var(--particle-x);
+  top: var(--particle-y);
+  width: var(--particle-size);
+  height: var(--particle-size);
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.78;
+  transform: translate(-50%, -50%);
+}
+
+.voice-figure__particle:nth-child(4n) {
+  background: var(--text);
+  opacity: 0.9;
+}
+
+.voice-figure__particle:nth-child(7n) {
+  opacity: 0.38;
+}
+
+.voice-figure__ground {
+  position: absolute;
+  right: 18%;
+  bottom: var(--space-1);
+  left: 18%;
+  height: 1px;
+  background: color-mix(in srgb, var(--accent) 48%, transparent);
+  opacity: 0.64;
+}
+
+.voice-figure:hover:not(:disabled) .voice-figure__particle {
+  opacity: 1;
+}
+
+.voice-figure--active .voice-figure__particle {
+  animation: voice-figure-assemble 2.8s var(--ease-out-quart) infinite;
+  animation-delay: var(--particle-delay);
+  will-change: transform, opacity;
+}
+
+.voice-figure--active .voice-figure__ground {
+  animation: voice-figure-ground 2.8s var(--ease-out-quart) infinite;
+}
+
+@keyframes voice-figure-assemble {
+  0%,
+  100% {
+    opacity: 0.22;
+    transform: translate(
+        calc(-50% + var(--particle-drift-x)),
+        calc(-50% + var(--particle-drift-y))
+      )
+      scale(0.68);
+  }
+  46%,
+  62% {
+    opacity: 0.92;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+@keyframes voice-figure-ground {
+  0%,
+  100% { opacity: 0.3; transform: scaleX(0.56); }
+  52% { opacity: 0.78; transform: scaleX(1); }
 }
 
 /* ---- Modo mini: pill orb + fase ---- */
@@ -447,7 +548,9 @@
   .voice-hud .voice-orb,
   .voice-hud .voice-orb__ring,
   .voice-hud .voice-orb__core,
-  .voice-hud .voice-orb__scan {
+  .voice-hud .voice-orb__scan,
+  .voice-hud .voice-figure__particle,
+  .voice-hud .voice-figure__ground {
     animation: none;
   }
 }

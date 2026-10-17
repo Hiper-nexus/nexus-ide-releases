@@ -409,6 +409,23 @@ class TestRenderer extends EventEmitter {
   }
 }
 
+function testBrowserWindow(
+  webContents: TestRenderer,
+  options: { minimized?: boolean; visible?: boolean } = {},
+) {
+  const window = {
+    webContents,
+    isMinimized: vi.fn(() => options.minimized ?? false),
+    isVisible: vi.fn(() => options.visible ?? true),
+    restore: vi.fn(),
+    show: vi.fn(),
+    focus: vi.fn(() => {
+      electronDeps.focusedWindow = window;
+    }),
+  };
+  return window;
+}
+
 const scopeA: ProjectExecutionScope = Object.freeze({
   version: 1,
   installationId: "install-a",
@@ -1099,13 +1116,48 @@ describe("Voice PTT and wake multi-window isolation", () => {
     hotkeyDeps.callbacks?.onStart();
     expect(dead.send).not.toHaveBeenCalled();
 
-    // No focused window at all.
+    // A single authorized window can be recovered when Nexus is unfocused.
     electronDeps.focusedWindow = null;
     const orphan = new TestRenderer(724);
     scopeDeps.scopes.set(orphan.id, scopeA);
-    electronDeps.windows.push({ webContents: orphan });
+    const recovered = testBrowserWindow(orphan);
+    electronDeps.windows.push(recovered);
     hotkeyDeps.callbacks?.onStart();
-    expect(orphan.send).not.toHaveBeenCalled();
+    expect(orphan.send).toHaveBeenCalledWith(VOICE_CHANNELS.pttStart);
+    expect(recovered.focus).toHaveBeenCalledOnce();
+  });
+
+  it("restores one authorized Nexus window for the global shortcut", () => {
+    const windowA = new TestRenderer(725);
+    scopeDeps.scopes.set(windowA.id, scopeA);
+    const hidden = testBrowserWindow(windowA, { minimized: true, visible: false });
+    electronDeps.windows.push(hidden);
+    electronDeps.focusedWindow = null;
+
+    hotkeyDeps.callbacks?.onToggle();
+
+    expect(hidden.restore).toHaveBeenCalledOnce();
+    expect(hidden.show).toHaveBeenCalledOnce();
+    expect(hidden.focus).toHaveBeenCalledOnce();
+    expect(windowA.send).toHaveBeenCalledWith(VOICE_CHANNELS.pttToggle);
+  });
+
+  it("keeps a global shortcut fail-closed when several project windows are available", () => {
+    const windowA = new TestRenderer(726);
+    const windowB = new TestRenderer(727);
+    scopeDeps.scopes.set(windowA.id, scopeA);
+    scopeDeps.scopes.set(windowB.id, scopeB);
+    const candidateA = testBrowserWindow(windowA);
+    const candidateB = testBrowserWindow(windowB);
+    electronDeps.windows.push(candidateA, candidateB);
+    electronDeps.focusedWindow = null;
+
+    hotkeyDeps.callbacks?.onStart();
+
+    expect(candidateA.focus).not.toHaveBeenCalled();
+    expect(candidateB.focus).not.toHaveBeenCalled();
+    expect(windowA.send).not.toHaveBeenCalled();
+    expect(windowB.send).not.toHaveBeenCalled();
   });
 
   it("rejects project-B wake frames once project A owns the engine", () => {

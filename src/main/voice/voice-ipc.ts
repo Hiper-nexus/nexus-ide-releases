@@ -238,9 +238,43 @@ function resolvePttTarget(): WebContents | null {
   return focused;
 }
 
+/**
+ * A global shortcut can arrive while Nexus is minimized or another macOS app
+ * owns focus. In that situation there is no focused Nexus renderer for
+ * `resolvePttTarget()` to return. Recover exactly one scoped Nexus window,
+ * rather than guessing between projects or broadcasting a voice command.
+ */
+function restoreSingleAuthorizedPttTarget(): WebContents | null {
+  const candidates = BrowserWindow.getAllWindows().filter((win) => {
+    const wc = win.webContents;
+    return (
+      !wc.isDestroyed() &&
+      !wc.isCrashed() &&
+      getRendererWorkspaceScope(wc) !== null
+    );
+  });
+  if (candidates.length !== 1) return null;
+
+  const targetWindow = candidates[0]!;
+  try {
+    if (targetWindow.isMinimized()) targetWindow.restore();
+    if (!targetWindow.isVisible()) targetWindow.show();
+    targetWindow.focus();
+  } catch {
+    // A window can disappear while the OS is restoring it. The checks below
+    // make this a harmless no-op instead of delivering to a stale renderer.
+    return null;
+  }
+
+  const target = targetWindow.webContents;
+  if (target.isDestroyed() || target.isCrashed()) return null;
+  return getRendererWorkspaceScope(target) ? target : null;
+}
+
 function sendPttAction(channel: string): void {
   if (!voiceCaptureAllowed()) return;
-  const target = resolvePttTarget();
+  const resolvedTarget = resolvePttTarget();
+  const target = resolvedTarget ?? restoreSingleAuthorizedPttTarget();
   if (!target) return;
   if (target.isDestroyed() || target.isCrashed()) return;
 
@@ -252,16 +286,19 @@ function sendPttAction(channel: string): void {
     return;
   }
 
-  // Re-read focus + scope immediately before send (fail closed on race).
+  // Re-read scope immediately before send (fail closed on race). A target we
+  // recovered above is already unique and authorized; macOS may take a moment
+  // to reflect `focus()` in `getFocusedWindow()`, so do not discard that press.
   const focused = BrowserWindow.getFocusedWindow()?.webContents;
-  if (!focused || focused !== target) return;
-  if (focused.isDestroyed() || focused.isCrashed()) return;
-  const scopeBefore = getRendererWorkspaceScope(focused);
+  if (resolvedTarget && (!focused || focused !== target)) return;
+  const scopedTarget = resolvedTarget ? focused : target;
+  if (!scopedTarget || scopedTarget.isDestroyed() || scopedTarget.isCrashed()) return;
+  const scopeBefore = getRendererWorkspaceScope(scopedTarget);
   if (!scopeBefore) return;
-  if (focused.isDestroyed() || focused.isCrashed()) return;
-  const scopeAfter = getRendererWorkspaceScope(focused);
+  if (scopedTarget.isDestroyed() || scopedTarget.isCrashed()) return;
+  const scopeAfter = getRendererWorkspaceScope(scopedTarget);
   if (!scopeAfter || !sameProjectScope(scopeBefore, scopeAfter)) return;
-  focused.send(channel);
+  scopedTarget.send(channel);
 }
 
 // ── Wake ownership (one renderer + ProjectExecutionScope per generation) ──

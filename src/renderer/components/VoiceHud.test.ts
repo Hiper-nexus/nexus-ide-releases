@@ -12,6 +12,13 @@ describe('VoiceHud drag and mute-key copy', () => {
     expect(source).not.toContain('onPointerMove={moveDrag}');
   });
 
+  it('keeps activation separate from the expanded-panel drag grip', () => {
+    expect(source).toContain('className={`voice-figure');
+    expect(source).toContain('onClick={onActivate}');
+    expect(source).toContain('onActivate={activateHud}');
+    expect(source).toContain('onPointerDown={beginDrag}');
+  });
+
   it('shows a visible missing-key message instead of staying mute', () => {
     expect(source).toContain('realtimeMissingCredentialMessage');
     expect(source).toContain('sem chave');

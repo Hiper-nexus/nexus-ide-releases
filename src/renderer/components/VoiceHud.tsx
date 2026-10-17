@@ -24,6 +24,7 @@ import {
 } from '../voice/response-output-gate';
 import { PixelIcon } from './PixelIcon';
 import { VoiceLevelBars } from './VoiceLevelBars';
+import { JarvisParticleFigure } from './JarvisParticleFigure';
 
 /**
  * HUD flutuante da JARVIS: fase do pipeline ao vivo (ouvindo → transcrevendo →
@@ -57,6 +58,34 @@ const LIVE_LABEL: Record<string, string> = {
 
 /** Movimento menor que isto no pointerup = clique, não drag. */
 const CLICK_SLOP_PX = 4;
+
+function ParticleFigure({
+  status,
+  active,
+  interactive,
+  actionLabel,
+  onActivate,
+}: {
+  status: VoiceUiStatus;
+  active: boolean;
+  interactive: boolean;
+  actionLabel: string;
+  onActivate: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`voice-figure ${active ? 'voice-figure--active' : ''}`}
+      aria-label={actionLabel}
+      title={actionLabel}
+      onClick={onActivate}
+      disabled={!interactive}
+    >
+      <JarvisParticleFigure status={status} />
+      <span className="voice-figure__ground" aria-hidden="true" />
+    </button>
+  );
+}
 
 function prefersReducedMotion(): boolean {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -253,6 +282,11 @@ export function VoiceHud() {
   const isError = status === 'error' || Boolean(missingRealtimeKey);
   const visibleError = error ?? missingRealtimeKey;
   const isMini = isHudMini(hud.mode);
+  const particleFigureActionLabel = visibleError
+    ? 'Abrir configurações da JARVIS'
+    : canClickWake
+      ? 'Acordar JARVIS'
+      : 'JARVIS em atividade';
 
   // In toggle mode the send edge is a SECOND keypress — say so, or users
   // hold-release and think voice broke.
@@ -290,6 +324,15 @@ export function VoiceHud() {
       setHudMode('expanded');
     }
     setDragPos(null);
+  };
+
+  /** A click on the expanded presence is distinct from the dedicated drag grip. */
+  const activateHud = () => {
+    if (visibleError) {
+      useVoiceStore.getState().openSettings();
+      return;
+    }
+    if (canClickWake) requestJarvisWake();
   };
 
   const beginDrag = (e: React.PointerEvent<HTMLElement>) => {
@@ -480,7 +523,7 @@ export function VoiceHud() {
     >
       <div
         className="voice-hud__titlebar"
-        title="Arraste para mover — solte perto de um canto para ancorar"
+        title="Arraste pelo controle para mover — solte perto de um canto para ancorar"
         onPointerDown={beginDrag}
       >
         <span className="voice-hud__grip" aria-hidden="true">
@@ -558,7 +601,13 @@ export function VoiceHud() {
         </span>
       </div>
       <div className="voice-hud__shell">
-        {orb}
+        <ParticleFigure
+          status={status}
+          active={status !== 'idle' || (liveVisible && liveStatus !== 'dormant')}
+          interactive={Boolean(visibleError || canClickWake)}
+          actionLabel={particleFigureActionLabel}
+          onActivate={activateHud}
+        />
         <VoiceLevelBars visible={status === 'listening'} />
         <div className="voice-hud__body">
           <span className="voice-hud__label">{label}</span>
