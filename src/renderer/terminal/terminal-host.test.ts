@@ -549,11 +549,11 @@ describe('F-1002 — recusa determinística do spawn não vira laço', () => {
     expect(spawn).toHaveBeenCalledTimes(3);
 
     const lines = writeln.mock.calls.map(([line]) => String(line));
-    expect(lines.filter((line) => line.includes('failed to start'))).toHaveLength(1);
+    expect(lines.filter((line) => line.includes('A sessão salva não corresponde à missão atual.'))).toHaveLength(1);
     const exhausted = lines.filter((line) => line.includes('parou de tentar sozinho'));
     expect(exhausted).toHaveLength(1);
-    expect(exhausted[0]).toContain('accountId[acct-mrqvpdwz-1 != undefined]');
-    expect(exhausted[0]).toContain('Reiniciar');
+    expect(lines.join('\n')).not.toMatch(/accountId\[|main-sealed|Reiniciar|failed to start/);
+    expect(exhausted[0]).toContain('Use “Retomar missão” no topo deste painel.');
 
     // Ação explícita do operador volta a tentar.
     markResumeOnSpawn(operator.id);

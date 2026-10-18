@@ -104,6 +104,7 @@ const missionAuthorityChecks = new Map<
 const orphanPrunesInFlight = new Set<string>();
 const MISSION_AUTHORITY_INITIAL_RETRY_DELAY_MS = 100;
 const MISSION_AUTHORITY_MAX_RETRY_DELAY_MS = 400;
+const MISSION_AUTHORITY_NOTICE_DELAY_MS = 20_000;
 let restoreWorkspacePath: string | null | undefined;
 let restoreWorkspaceEpoch = 0;
 let restoreWorkspaceAbortController = new AbortController();
@@ -244,7 +245,20 @@ function confirmMissionPaneAuthority(
   const key = missionAuthorityKey(pane, generation);
   const existing = missionAuthorityChecks.get(key);
   if (existing) return existing;
+  // Rechecking the same pending request must not overwrite its delayed notice.
+  setHeldPaneNotice(pane.id, MISSION_AUTHORITY_PENDING_NOTICE);
+  const noticeTimer = setTimeout(() => {
+    if (!isCurrentRestoreWorkspaceGeneration(generation) || !isSpawnHeld(pane.id)) return;
+    setHeldPaneNotice(
+      pane.id,
+      'O Nexus ainda não confirmou a retomada. Use “Retomar missão” no topo deste painel',
+    );
+  }, MISSION_AUTHORITY_NOTICE_DELAY_MS);
+  const clearNoticeTimer = () => clearTimeout(noticeTimer);
+  generation.signal.addEventListener('abort', clearNoticeTimer, { once: true });
   const check = requestMissionPaneAuthority(pane, generation).finally(() => {
+    clearNoticeTimer();
+    generation.signal.removeEventListener('abort', clearNoticeTimer);
     if (missionAuthorityChecks.get(key) === check) {
       missionAuthorityChecks.delete(key);
     }
@@ -435,9 +449,6 @@ export async function gateRestoredAgents(
   const missionAgents = agents.filter(looksLikeMissionAgent);
   const missionRestores = missionAgents.map(async (pane) => {
     try {
-      // A4: enquanto o Main confere, o pane anuncia a conferência — um attach
-      // precoce nunca mostra o "use Retomar" genérico de missão.
-      setHeldPaneNotice(pane.id, MISSION_AUTHORITY_PENDING_NOTICE);
       const authority = await confirmMissionPaneAuthority(
         pane,
         restoreGeneration,

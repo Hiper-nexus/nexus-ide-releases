@@ -17,9 +17,9 @@ describe("user-facing mission errors", () => {
     const modelChanged =
       "O coordenador não voltou porque o modelo ou o esforço aprovado mudou. Revise a equipe e aprove a missão de novo.";
     const otherLive =
-      "Já há outro coordenador rodando nesta missão. Feche os panes antigos do coordenador e use Retomar o coordenador.";
+      "Já há outro coordenador rodando nesta missão. Use “Retomar missão” no topo deste painel.";
     const generic =
-      "O coordenador não voltou. Use Retomar o coordenador; se repetir, use Reportar bug.";
+      "O coordenador não voltou. Use “Retomar missão” no topo deste painel.";
     const cases: Array<[string, string]> = [
       [`${refused}: account[diferente]`, accountChanged],
       [`${refused}: account[ausente], cwd[diferente]`, accountChanged],
@@ -249,7 +249,7 @@ describe("user-facing mission errors", () => {
       ],
       [
         "mission direct requires a live worker in the fast-lane squad",
-        "Nenhum agente da equipe está rodando agora. Use Retomar no Quadro e envie de novo.",
+        "Nenhum agente da equipe está rodando agora. Use “Retomar missão” no topo deste painel.",
       ],
       [
         "mission direct target worker is not live",
@@ -292,12 +292,12 @@ describe("user-facing mission errors", () => {
       [
         "mission direct requires a live orchestrator session",
         "O Maestro desta missão não está rodando. " +
-          "Use Retomar no Quadro para religá-lo.",
+          "Use “Retomar missão” no topo deste painel.",
       ],
       [
         "mission direct orchestrator session is not live",
         "O Maestro desta missão não está rodando. " +
-          "Use Retomar no Quadro para religá-lo.",
+          "Use “Retomar missão” no topo deste painel.",
       ],
       [
         "mission direct orchestrator authority is incomplete",
@@ -327,7 +327,7 @@ describe("user-facing mission errors", () => {
       ],
       [
         "mission direct requires live current dispatch authority",
-        "A missão está parada. Use Retomar no Quadro antes de orientar a equipe.",
+        "A missão está parada. Use “Retomar missão” no topo deste painel.",
       ],
       [
         "mission direct target is busy",
@@ -343,4 +343,9 @@ describe("user-facing mission errors", () => {
       ).toBe(expected);
     }
   });
+});
+
+
+it('oculta códigos crus de saída na recuperação', () => {
+  expect(toUserFacingMissionRecovery('process exited (code 129)')).toBe('A sessão foi interrompida.');
 });

@@ -48,12 +48,12 @@ const VIEWS: Record<PaneSessionState, Omit<PaneSessionView, 'state'>> = {
   },
   exited: {
     chip: 'Encerrado',
-    tip: 'Sessão encerrada — reinicie somente se ainda houver trabalho',
+    tip: 'Sessão encerrada',
     mod: 'exited',
   },
   hibernated: {
     chip: 'Dorme',
-    tip: 'Agente hibernado — use Acordar',
+    tip: 'Agente em pausa. O histórico está preservado.',
     mod: 'hibernated',
   },
 };

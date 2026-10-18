@@ -177,7 +177,7 @@ function StateIndicator({
     return (
       <span
         className="toolbar__state toolbar__state--chip toolbar__state--hibernated"
-        data-tip="Pane estacionado (guardian) — sessão encerrada, buffer preservado. Use Acordar."
+        data-tip="Agente em pausa. A sessão encerrou e o histórico está preservado."
         aria-label="Dormindo"
         style={compact ? { minWidth: 14 } : undefined}
       >

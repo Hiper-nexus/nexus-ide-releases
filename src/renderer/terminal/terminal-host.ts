@@ -1,3 +1,4 @@
+import { toUserFacingMissionRecovery } from '../lib/user-facing-mission-error';
 import { readTerminalTextTail } from './terminal-text-tail';
 import { useAccessStore } from '../state/access-store';
 import { reportLicenseDenial } from '../state/access-guard';
@@ -797,14 +798,9 @@ export function shouldAttemptDeadPaneRevive(
 }
 
 function missionReviveRecoveryCopy(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  if (/pergunta do operador exige resposta/i.test(message)) {
-    return 'A missão aguarda uma resposta. Responda no board da missão para continuar.';
-  }
-  if (/encerrada pelo operador/i.test(message)) {
-    return 'Use Retomar no rail.';
-  }
-  return 'Use Retomar no rail.';
+  const recovery = toUserFacingMissionRecovery(error, 'Não foi possível retomar a missão.');
+  const instruction = 'Use “Retomar missão” no topo deste painel.';
+  return recovery.includes(instruction) ? recovery : `${recovery} ${instruction}`;
 }
 
 async function requestMissionRuntimeResume(
@@ -1045,10 +1041,8 @@ async function runDeadMissionPaneRevive(
     }
   } catch (error) {
     if (!operatorInitiated) return;
-    const message = error instanceof Error ? error.message : String(error);
     host.term.writeln(
-      `\r\n\x1b[31m[nexus] revival da missão falhou: ${message}. ` +
-        `${missionReviveRecoveryCopy(error)}\x1b[0m`,
+      `\r\n\x1b[31m[nexus] ${missionReviveRecoveryCopy(error)}\x1b[0m`,
     );
   }
 }
@@ -1084,7 +1078,7 @@ async function routeBlockedMissionToResume(
     if (!current()) return false;
     if (!resumed.ok) {
       host.term.writeln(
-        `\r\n\x1b[31m[nexus] retomada recusada: ${resumed.error ?? 'motivo desconhecido'}\x1b[0m`,
+        `\r\n\x1b[31m[nexus] ${missionReviveRecoveryCopy(resumed.error)}\x1b[0m`,
       );
       return false;
     }
@@ -1508,8 +1502,9 @@ function startSpawn(
             return null;
           }
           host.term.writeln(
-            '\r\n\x1b[33m[nexus] token de spawn expirado limpo — Reiniciar ' +
-              'já usa autoridade nova.\x1b[0m',
+            missionId
+              ? '\r\n\x1b[33m[nexus] autorização da sessão expirou. Use “Retomar missão” no topo deste painel.\x1b[0m'
+              : '\r\n\x1b[33m[nexus] autorização da sessão expirou. Use Reiniciar.\x1b[0m',
           );
           useSessionStateStore.getState().setPaneState(pane.id, 'exited');
           return null;
@@ -1518,12 +1513,16 @@ function startSpawn(
         // uma parede de linhas) e o esgotamento diz o que fazer, uma vez.
         if (!failure.repeated) {
           host.term.writeln(
-            `\r\n\x1b[31m[nexus] failed to start: ${res.error}\x1b[0m`,
+            missionId
+              ? `\r\n\x1b[31m[nexus] ${missionReviveRecoveryCopy(res.error)}\x1b[0m`
+              : `\r\n\x1b[31m[nexus] failed to start: ${res.error}\x1b[0m`,
           );
         }
         if (failure.exhaustedNow) {
           host.term.writeln(
-            `\r\n\x1b[33m${automaticSpawnExhaustedNotice(res.error)}\x1b[0m`,
+            missionId
+              ? '\r\n\x1b[33m[nexus] o Nexus parou de tentar sozinho. Use “Retomar missão” no topo deste painel.\x1b[0m'
+              : `\r\n\x1b[33m${automaticSpawnExhaustedNotice(res.error)}\x1b[0m`,
           );
         }
         useSessionStateStore.getState().setPaneState(pane.id, 'exited');
@@ -1689,7 +1688,7 @@ function startSpawn(
             host.term.writeln(`\r\n\x1b[33m${CROSS_ACCOUNT_RESUME_FAILED_NOTICE}\x1b[0m`);
           } else if (failedExactResume) {
             const message = missionId
-              ? 'Falha ao retomar a sessão desta missão. Retome a missão pelo card.'
+              ? 'Falha ao retomar a sessão desta missão. Use “Retomar missão” no topo deste painel.'
               : 'Falha ao retomar a sessão. Abra + Pane e selecione o agente para iniciar uma nova conversa.';
             reportPaneResumeIncident(pane, 'stale-exact-id', message, false);
             host.term.writeln(`\r\n\x1b[31m[nexus] ${message}\x1b[0m`);
@@ -1779,7 +1778,7 @@ function startSpawn(
               const terminal = await missionTerminalAuthoritative(missionId);
               if (host.disposed || terminal) return;
               host.term.writeln(
-                `\r\n\x1b[90m[nexus] process exited (code ${exitCode})\x1b[0m`,
+                `\r\n\x1b[90m${missionId ? missionOwnedExitNotice(exitCode, terminationOrigin) : '[nexus] sessão encerrada.'}\x1b[0m`,
               );
               host.term.writeln(
                 '\x1b[36m[nexus] sessão encerrada. Digite qualquer tecla para abrir um shell neste pane.\x1b[0m',
@@ -1787,7 +1786,7 @@ function startSpawn(
             })();
           } else {
             host.term.writeln(
-              `\r\n\x1b[90m[nexus] process exited (code ${exitCode})\x1b[0m`,
+              `\r\n\x1b[90m${missionId ? missionOwnedExitNotice(exitCode, terminationOrigin) : '[nexus] sessão encerrada.'}\x1b[0m`,
             );
             host.term.writeln(
               '\x1b[36m[nexus] sessão encerrada. Digite qualquer tecla para abrir um shell neste pane.\x1b[0m',
@@ -3311,8 +3310,8 @@ export function attachHost(pane: PaneModel, slot: HTMLElement): void {
  * panes de uma vez e CADA um imprimia "process exited" + "a missão ainda é
  * dona deste pane" (+ toasts de incidente) — uma parede de avisos sem
  * informação nova. No shutdown o grid inteiro recebe UM aviso calmo e os
- * banners por pane ficam suprimidos: a missão continua no rail e o boot
- * seguinte ressuscita (resurrection, 0.32.24).
+ * banners por pane ficam suprimidos: no próximo boot a missão fica pronta
+ * para retomada explícita pelo operador.
  */
 let terminalShutdownNoticeMode = false;
 
@@ -3320,8 +3319,8 @@ export function setTerminalShutdownNoticeMode(): void {
   if (terminalShutdownNoticeMode) return;
   terminalShutdownNoticeMode = true;
   const message =
-    '\r\n\x1b[36m[nexus] encerrando o app — as missões continuam no rail ' +
-    'e retomam sozinhas no próximo boot.\x1b[0m';
+    '\r\n\x1b[36m[nexus] encerrando o app. As missões ficam prontas para retomar com um clique ' +
+    'quando você abrir o Nexus. Use “Retomar missão” no topo deste painel.\x1b[0m';
   for (const host of hosts.values()) {
     if (host.disposed || host.virtualized) continue;
     try {
@@ -4399,7 +4398,7 @@ export function hibernateHost(paneId: string): boolean {
   setHostSession(host, paneId, null);
   try {
     host.term.writeln(
-      '\r\n\x1b[36m[nexus] pane dormindo — processo encerrado, buffer preservado. Use ☀ para acordar.\x1b[0m',
+      '\r\n\x1b[36m[nexus] painel em pausa. Processo encerrado e histórico preservado.\x1b[0m',
     );
   } catch {
     // Terminal may not be open yet.
@@ -4457,7 +4456,7 @@ export function markPaneParked(request: PaneParkRequest): void {
   try {
     host.term.writeln(
       `\r\n\x1b[36m[nexus] pane estacionado (${reasonLabel}) — processo encerrado, ` +
-        'buffer preservado. Use ☀ ou digite para acordar.\x1b[0m',
+        'histórico preservado. Digite para continuar.\x1b[0m',
     );
   } catch {
     // Terminal pode não estar aberto ainda.

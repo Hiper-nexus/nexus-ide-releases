@@ -307,7 +307,7 @@ export const DEAD_PANE_REVIVE_ATTEMPT_NOTICE =
 export const DEAD_PANE_REVIVE_CHECK_NOTICE =
   '[nexus] tecla recebida — verificando a missão deste pane…';
 export const DEAD_PANE_REVIVE_COOLDOWN_NOTICE =
-  '[nexus] tentativa recente em curso — aguarde concluir ou use Reiniciar na toolbar.';
+  '[nexus] tentativa recente em curso. Use “Retomar missão” no topo deste painel.';
 
 /**
  * Worker morto com Maestro VIVO: religar a missão respawnaria coordenação
@@ -401,13 +401,13 @@ export function missionOwnedExitNotice(
   }
   if (terminationOrigin) {
     return (
-      `[nexus] processo encerrado pelo Nexus (code ${exitCode}). ` +
-      'A missão continua no rail — retome por lá.'
+      `[nexus] processo encerrado pelo Nexus. ` +
+      'Use “Retomar missão” no topo deste painel.'
     );
   }
   return (
-    `[nexus] processo caiu (code ${exitCode}). ` +
-    'Digite para religar — a missão continua no rail.'
+    `[nexus] processo caiu. ` +
+    'Use “Retomar missão” no topo deste painel.'
   );
 }
 
@@ -435,14 +435,14 @@ export const STALE_AUTHORITY_SYNC_NOTICE =
   '[nexus] contexto antigo detectado — sincronizando a missão uma vez pela autoridade principal…';
 
 export const STALE_AUTHORITY_UNLOCK_NOTICE =
-  '[nexus] este pane não tem mais sessão. Digite para um shell aqui — a missão continua no rail.';
+  '[nexus] este painel não tem mais sessão. Use “Retomar missão” no topo deste painel.';
 
 export const BLOCKED_RESUME_NOTICE =
   '[nexus] missão bloqueada — retomando pela autoridade principal…';
 
 export const MISSION_HOLD_NOTICE =
   '[Nexus] Agente em pausa — a sessão anterior NÃO foi reiniciada automaticamente.\r\n' +
-  '  Clique a missão no rail e use Retomar.\r\n';
+  '  Use “Retomar missão” no topo deste painel.\r\n';
 
 export const STANDALONE_HOLD_NOTICE =
   '[Nexus] Agente em pausa — a sessão anterior NÃO foi reiniciada automaticamente.\r\n' +
@@ -453,7 +453,7 @@ export const STANDALONE_HOLD_NOTICE =
  * Main — o pane nunca mostra o "use Retomar" genérico nessa janela.
  */
 export const MISSION_AUTHORITY_PENDING_NOTICE =
-  '[Nexus] Agente em pausa — conferindo a retomada desta sessão no Main…\r\n';
+  '[Nexus] Agente em pausa — conferindo a retomada desta sessão…\r\n';
 
 /**
  * A4: uma linha específica por motivo de recusa. O gate aposenta o pane com
@@ -472,17 +472,17 @@ export function missionPaneRestoreHoldNotice(
     case 'mission-blocked-question':
       return (
         '[Nexus] Agente aposentado — a missão parou numa pergunta aberta.\r\n' +
-        '  Responda pela missão no rail para retomar.\r\n'
+        '  Responda à pergunta na missão para continuar.\r\n'
       );
     case 'runtime-closed':
       return (
         '[Nexus] Agente aposentado — a execução foi encerrada pelo operador.\r\n' +
-        '  Inicie uma nova missão no rail.\r\n'
+        '  Inicie uma nova missão.\r\n'
       );
     case 'stale-seal':
       return (
         '[Nexus] Agente aposentado — a retomada desta sessão não bate com a missão atual.\r\n' +
-        '  A conversa segue com o líder vivo no rail.\r\n'
+        '  A conversa segue com o líder vivo da missão.\r\n'
       );
     case 'transfer-in-flight':
       return (
@@ -497,7 +497,7 @@ export function missionPaneRestoreHoldNotice(
     case 'mission-terminal':
       return (
         '[Nexus] Agente aposentado — a missão encerrou.\r\n' +
-        '  O relatório final está na aba da missão no rail.\r\n'
+        '  O relatório final está na aba da missão.\r\n'
       );
     default:
       return MISSION_HOLD_NOTICE;

@@ -37,3 +37,10 @@ describe('paneSessionView', () => {
     );
   });
 });
+
+
+it('dicas compartilhadas não indicam controles ocultos em missões', () => {
+  for (const state of ['exited', 'hibernated'] as const) {
+    expect(paneSessionView(state).tip).not.toMatch(/reinici|acordar|☀/i);
+  }
+});

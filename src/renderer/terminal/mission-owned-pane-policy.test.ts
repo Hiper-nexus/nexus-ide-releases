@@ -384,7 +384,7 @@ describe('pruneWouldLeaveOperatorMute', () => {
 describe('copy alinhada ao caminho real', () => {
   it('missão em pausa não pede um diálogo que não existe', () => {
     expect(MISSION_HOLD_NOTICE).toMatch(/Retomar/);
-    expect(MISSION_HOLD_NOTICE).toMatch(/rail/);
+    expect(MISSION_HOLD_NOTICE).toMatch(/Retomar missão/);
     expect(MISSION_HOLD_NOTICE).not.toMatch(/Digite para retomar o teclado/);
     expect(MISSION_HOLD_NOTICE).not.toMatch(/Confirme o diálogo/);
   });
@@ -398,7 +398,7 @@ describe('copy alinhada ao caminho real', () => {
     expect(MISSION_OWNED_EXIT_NOTICE).toMatch(/não encerrou/);
     expect(MISSION_OWNED_EXIT_NOTICE).not.toMatch(/ctrl/i);
     expect(STALE_AUTHORITY_SYNC_NOTICE).toMatch(/uma vez/);
-    expect(STALE_AUTHORITY_UNLOCK_NOTICE).toMatch(/Digite para um shell/);
+    expect(STALE_AUTHORITY_UNLOCK_NOTICE).toMatch(/Retomar missão/);
     expect(BLOCKED_RESUME_NOTICE).toMatch(/autoridade principal/);
   });
 
@@ -481,9 +481,9 @@ describe('copy alinhada ao caminho real', () => {
 
   it('processo que CAIU (code ≠ 0) mantém a instrução acionável', () => {
     const crashed = missionOwnedExitNotice(1);
-    expect(crashed).toMatch(/code 1/);
-    expect(crashed).toMatch(/Digite para religar/);
-    expect(crashed).toMatch(/rail/);
+    expect(crashed).not.toMatch(/code 1/);
+    expect(crashed).toMatch(/Retomar missão/);
+    expect(crashed).toMatch(/Retomar missão/);
   });
 
   it('encerramento PEDIDO pelo Nexus não é "caiu" — nem com o 129 do ConPTY (F-680/Windows)', () => {
@@ -495,7 +495,7 @@ describe('copy alinhada ao caminho real', () => {
       const notice = missionOwnedExitNotice(exitCode, 'mission-termination');
       expect(notice).toMatch(/encerrado pelo Nexus/);
       expect(notice).not.toMatch(/caiu/);
-      expect(notice).toMatch(/rail/);
+      expect(notice).toMatch(/Retomar missão/);
     }
     const orchLines = orchestratorOwnedExitLines({
       exitCode: 129,
@@ -800,7 +800,7 @@ describe('avisos de revive — nenhuma tecla pós-done cai no silêncio', () => 
 
   it('o cooldown repetido orienta em vez de engolir a tecla', () => {
     expect(DEAD_PANE_REVIVE_COOLDOWN_NOTICE).toContain('[nexus]');
-    expect(DEAD_PANE_REVIVE_COOLDOWN_NOTICE).toContain('Reiniciar');
+    expect(DEAD_PANE_REVIVE_COOLDOWN_NOTICE).toContain('Retomar missão');
   });
 
   it('helper morto não promete religar o Maestro NESTE pane (F-368)', () => {
@@ -826,10 +826,10 @@ describe('avisos de revive — nenhuma tecla pós-done cai no silêncio', () => 
 });
 
 describe('missionPaneRestoreHoldNotice — A4: uma linha por motivo', () => {
-  it('pergunta aberta aponta o rail, nunca o Retomar', () => {
+  it('pergunta aberta pede resposta, nunca o Retomar', () => {
     const notice = missionPaneRestoreHoldNotice('mission-blocked-question');
     expect(notice).toContain('pergunta aberta');
-    expect(notice).toContain('Responda pela missão no rail');
+    expect(notice).toContain('Responda à pergunta na missão');
     expect(notice).not.toContain('use Retomar');
   });
 
@@ -879,5 +879,32 @@ describe('missionPaneRestoreHoldNotice — A4: uma linha por motivo', () => {
   it('a conferência em curso nunca mostra o genérico', () => {
     expect(MISSION_AUTHORITY_PENDING_NOTICE).toContain('conferindo');
     expect(MISSION_AUTHORITY_PENDING_NOTICE).not.toContain('use Retomar');
+  });
+});
+
+
+describe('avisos de missão não apontam controles ocultos', () => {
+  it('varre os avisos de pausa, saída, retomada e aposentadoria', () => {
+    const notices = [
+      MISSION_HOLD_NOTICE, MISSION_AUTHORITY_PENDING_NOTICE,
+      DEAD_PANE_REVIVE_COOLDOWN_NOTICE, STALE_AUTHORITY_UNLOCK_NOTICE,
+      MISSION_OWNED_EXIT_NOTICE, DEAD_PANE_REVIVE_ATTEMPT_NOTICE,
+      DEAD_PANE_REVIVE_CHECK_NOTICE, DEAD_PANE_MISSION_RELIVED_NOTICE,
+      STALE_AUTHORITY_SYNC_NOTICE, BLOCKED_RESUME_NOTICE,
+      deadHelperPaneHistoryNotice(), ...orchestratorOwnedExitLines({ exitCode: 0 }),
+      ...[0, 1, 129, -1073741510].flatMap(code => [
+        missionOwnedExitNotice(code), missionOwnedExitNotice(code, 'mission-termination'),
+      ]),
+      ...([undefined, 'mission-blocked-question', 'runtime-closed', 'stale-seal',
+        'transfer-in-flight', 'spec-missing', 'mission-terminal'] as const)
+        .map(reason => missionPaneRestoreHoldNotice(reason)),
+    ];
+    for (const notice of notices) {
+      expect(notice).not.toMatch(/Reiniciar|Acordar|☀|\bcard\b|\brail\b|\bMain\b|revival|process exited|code -?\d+/i);
+    }
+    for (const notice of [MISSION_HOLD_NOTICE, DEAD_PANE_REVIVE_COOLDOWN_NOTICE,
+      STALE_AUTHORITY_UNLOCK_NOTICE, missionOwnedExitNotice(1)]) {
+      expect(notice).toContain('Use “Retomar missão” no topo deste painel.');
+    }
   });
 });

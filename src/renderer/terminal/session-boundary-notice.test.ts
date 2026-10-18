@@ -1,3 +1,4 @@
+import { MISSION_HOLD_NOTICE, missionPaneRestoreHoldNotice } from './mission-owned-pane-policy';
 import { describe, expect, it } from 'vitest';
 import {
   SESSION_BOUNDARY_NOTICE,
@@ -112,4 +113,23 @@ describe('TERMINAL_INPUT_MODE_RESET', () => {
       expect(TERMINAL_INPUT_MODE_RESET).toContain(`\x1b[${mode}`);
     }
   });
+});
+
+
+it('todos os avisos de pausa atuais preservam o histórico anterior', () => {
+  const notices = [MISSION_HOLD_NOTICE,
+    ...(['mission-blocked-question', 'runtime-closed', 'stale-seal',
+      'transfer-in-flight', 'spec-missing', 'mission-terminal'] as const)
+      .map(reason => missionPaneRestoreHoldNotice(reason)),
+  ];
+  for (const notice of notices) {
+    expect(terminalBufferIsNoticeOnly(bufferOf(notice.split('\r\n')))).toBe(true);
+  }
+});
+
+
+it('aviso de demora da autoridade não substitui o histórico salvo', () => {
+  expect(terminalBufferIsNoticeOnly(bufferOf([
+    'O Nexus ainda não confirmou a retomada. Use “Retomar missão” no topo deste painel',
+  ]))).toBe(true);
 });

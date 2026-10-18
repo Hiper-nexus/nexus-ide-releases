@@ -56,7 +56,7 @@ function refusedCoordinatorBindRecovery(raw: string): string | null {
   const labels = match[1] ?? "";
   const retry = "Revise a equipe e aprove a missão de novo.";
   if (/\bother-orchestrator\[/i.test(labels)) {
-    return "Já há outro coordenador rodando nesta missão. Feche os panes antigos do coordenador e use Retomar o coordenador.";
+    return "Já há outro coordenador rodando nesta missão. Use “Retomar missão” no topo deste painel.";
   }
   if (/\baccount\[/i.test(labels)) {
     return `O coordenador não voltou porque a conta aprovada para ele mudou. ${retry}`;
@@ -67,17 +67,23 @@ function refusedCoordinatorBindRecovery(raw: string): string | null {
   if (/\b(?:seal|intent|adapter)\b/i.test(labels)) {
     return `O coordenador não voltou porque a equipe aprovada mudou. ${retry}`;
   }
-  return "O coordenador não voltou. Use Retomar o coordenador; se repetir, use Reportar bug.";
+  return "O coordenador não voltou. Use “Retomar missão” no topo deste painel.";
 }
 
 function knownMissionRecovery(raw: string): string | null {
+  if (/renderer payload does not match main-sealed persisted pane request/i.test(raw)) {
+    return "A sessão salva não corresponde à missão atual.";
+  }
+  if (/process exited|\bcode -?\d+\b/i.test(raw)) {
+    return "A sessão foi interrompida.";
+  }
   const refusedGoal = refusedGoalRecovery(raw);
   if (refusedGoal) return refusedGoal;
   const refusedCoordinator = refusedCoordinatorBindRecovery(raw);
   if (refusedCoordinator) return refusedCoordinator;
   // F-245: retry-kickoff com o pane do coordenador fechado pelo operador.
   if (/orchestrator_operator_dismissed/i.test(raw)) {
-    return "Você fechou o pane do coordenador. Clique em Retomar para reabrir a missão.";
+    return "Você fechou o pane do coordenador. Use “Retomar missão” no topo deste painel.";
   }
   if (/guided_plan_unborn_with_files/i.test(raw)) {
     return "Esta pasta já tem arquivos sem histórico. Faça o primeiro commit e tente novamente.";
@@ -168,7 +174,7 @@ function knownMissionRecovery(raw: string): string | null {
       raw,
     )
   ) {
-    return "O Maestro desta missão não está rodando. Use Retomar no Quadro para religá-lo.";
+    return "O Maestro desta missão não está rodando. Use “Retomar missão” no topo deste painel.";
   }
   if (
     /mission direct orchestrator authority (?:is incomplete|mismatch)/i.test(
@@ -185,7 +191,7 @@ function knownMissionRecovery(raw: string): string | null {
     return "O agente escolhido não faz parte desta missão. Envie para @todos.";
   }
   if (/mission direct requires live current dispatch authority/i.test(raw)) {
-    return "A missão está parada. Use Retomar no Quadro antes de orientar a equipe.";
+    return "A missão está parada. Use “Retomar missão” no topo deste painel.";
   }
   // D1: o Main recusa na hora um alvo em turno (a entrega esperaria 30 s e mentiria
   // "o Nexus encerrou a execução"). Nada foi escrito; o rascunho segue no campo.
@@ -201,7 +207,7 @@ function knownMissionRecovery(raw: string): string | null {
     return "Há mais de um agente rodando e @todos não escolhe um deles. Escolha o agente em «Enviar para» e envie de novo.";
   }
   if (/mission direct requires a live worker in the fast-lane squad/i.test(raw)) {
-    return "Nenhum agente da equipe está rodando agora. Use Retomar no Quadro e envie de novo.";
+    return "Nenhum agente da equipe está rodando agora. Use “Retomar missão” no topo deste painel.";
   }
   if (/mission direct target worker is not live/i.test(raw)) {
     return "O agente escolhido não está rodando agora. Escolha outro em «Enviar para» ou envie para @todos.";
