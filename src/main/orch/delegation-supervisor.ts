@@ -640,14 +640,20 @@ export function delegationRecoveryStage(
       now - item.createdAt < RECOVERY_QUEUED_TTL_MS,
   );
   if (freshQueued) return 0;
-  const deliveredRecoveries = progress.recoveries.filter(
-    (item) => item.deliveryState !== 'queued',
-  );
-  if (deliveredRecoveries.length >= 2) return 0;
-
   // Idempotency: if stage key already present in summaries, do not re-fire.
   const stage1Key = recoveryHandoffIdempotencyKey(progress.mission.id, 1);
   const stage2Key = recoveryHandoffIdempotencyKey(progress.mission.id, 2);
+  // The budget counts only handoffs that carried a bounded recovery
+  // instruction. The queued-TTL expiry marks stale rows 'submitted' without
+  // any PTY delivery — counting every non-queued row let two expired rows
+  // (a stale stage-1 plus a momentum nudge) exhaust the two-attempt budget
+  // and the real stage-2 remount never fired.
+  const deliveredRecoveries = progress.recoveries.filter(
+    (item) =>
+      item.deliveryState !== 'queued' &&
+      (item.summary.includes(stage1Key) || item.summary.includes(stage2Key)),
+  );
+  if (deliveredRecoveries.length >= 2) return 0;
   const hasStage1 = deliveredRecoveries.some((h) =>
     h.summary.includes(stage1Key),
   );
@@ -1687,6 +1693,49 @@ async function scanSuite(suite: ProjectDomainStoreSuite, now: number, context: P
       mission.orchestratorSessionId ||
         panes.some((pane) => pane.role === 'orchestrator'),
     );
+    // Restart seeding: zero-delivery dedups and the momentum ready clock live
+    // only in memory — after a boot the poke/escalate repeated and the ready
+    // nudge lost its dwell reference. The ledger is the truth: seed the maps
+    // from the durable markers this supervisor itself wrote (same pattern as
+    // the [momentum:]/lastNudgeAt seed below). Escalation implies the poke.
+    // The zero-delivery seed only applies while the worker-handoff reset
+    // cannot have fired: once a worker delivers, the watchdog starts a fresh
+    // cycle and an old ledger marker must not resurrect the closed one.
+    let workerHandoffCount = 0;
+    try {
+      workerHandoffCount = handoffs
+        .filter(
+          (handoff) =>
+            handoff.fromAgent !== DELEGATION_SUPERVISOR_AGENT &&
+            !String(handoff.fromAgent ?? '').startsWith('nexus-'),
+        ).length;
+    } catch {
+      workerHandoffCount = 0;
+    }
+    {
+      let sawZeroDeliveryPoke = false;
+      let sawZeroDeliveryEscalate = false;
+      let lastReadyNudge: Handoff | undefined;
+      for (const row of recoveries) {
+        if (row.summary.includes(`[zero-delivery-escalate:${mission.id}]`)) {
+          sawZeroDeliveryEscalate = true;
+          sawZeroDeliveryPoke = true;
+        } else if (row.summary.includes(`[zero-delivery:${mission.id}]`)) {
+          sawZeroDeliveryPoke = true;
+        }
+        if (row.summary.includes('[momentum-ready:')) lastReadyNudge = row;
+      }
+      if (workerHandoffCount === 0) {
+        if (sawZeroDeliveryPoke) zeroDeliveryPoked.add(mission.id);
+        if (sawZeroDeliveryEscalate) zeroDeliveryEscalated.add(mission.id);
+      }
+      if (lastReadyNudge) {
+        const momentumKey = `${scopeKey(suite)}\0${mission.id}`;
+        if (!momentumReadySince.has(momentumKey)) {
+          momentumReadySince.set(momentumKey, lastReadyNudge.createdAt);
+        }
+      }
+    }
     const workerPaneCount = panes.filter((pane) => pane.role === 'worker').length;
     const orchestratorPaneState = panes.find(
       (pane) => pane.role === 'orchestrator',
@@ -1750,17 +1799,6 @@ async function scanSuite(suite: ProjectDomainStoreSuite, now: number, context: P
     // Zero-entrega: workers vivos, 0 handoffs de worker, Maestro não busy —
     // o caso saas-waitlist (pull-model deadlock). Poke curto; escalate depois.
     {
-      let workerHandoffCount = 0;
-      try {
-        workerHandoffCount = handoffs
-          .filter(
-            (handoff) =>
-              handoff.fromAgent !== DELEGATION_SUPERVISOR_AGENT &&
-              !String(handoff.fromAgent ?? '').startsWith('nexus-'),
-          ).length;
-      } catch {
-        workerHandoffCount = 0;
-      }
       if (workerHandoffCount > 0) {
         zeroDeliveryPoked.delete(mission.id);
         zeroDeliveryEscalated.delete(mission.id);

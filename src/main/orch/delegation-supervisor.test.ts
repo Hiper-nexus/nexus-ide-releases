@@ -10,6 +10,7 @@ import {
   delegationRecoveryStage,
   isDelegationSupervisable,
   pendingDeliverableHandoffs,
+  RECOVERY_QUEUED_TTL_MS,
   shouldRearmHandoffDelivery,
   WORKER_HUNG_AFTER_MS,
   WORKER_HUNG_RENOTIFY_MS,
@@ -473,6 +474,53 @@ describe('delegation supervisor policy', () => {
         recoveries: [first, second],
       }),
     ).toBe(true);
+  });
+
+  it('does not count TTL-expired queued recoveries as delivered budget (remount stage-2 still fires)', () => {
+    const dispatchAt = dispatchedEmpty.intentContract!.dispatchedAt!;
+    const expiredStage1 = recovery(
+      dispatchAt + DELEGATION_SLA_MS,
+      `recover [recovery:${dispatchedEmpty.id}:stage_1]`,
+    );
+    // Ficou queued além do TTL e a expiração marcou submitted sem nunca
+    // chegar a um PTY (markSubmitted do TTL).
+    const expiredNudge = recovery(
+      dispatchAt + DELEGATION_SLA_MS * 2,
+      `[momentum:${dispatchedEmpty.id}] Esteira parada: a missão está sem nenhum worker há 25 min.`,
+    );
+    const afterTtl = expiredNudge.createdAt + RECOVERY_QUEUED_TTL_MS;
+    // Duas rows expiradas não podem exaurir o orçamento de duas tentativas:
+    // o estágio real (e o remount do stage 2) continua permitido.
+    expect(
+      delegationRecoveryStage(
+        {
+          mission: dispatchedEmpty,
+          expectedWorkers: 3,
+          workerPanes: 0,
+          tasks: 0,
+          recoveries: [expiredStage1, expiredNudge],
+          hasBoundOrchestrator: true,
+        },
+        afterTtl,
+      ),
+    ).toBe(2);
+    // Boundário: row ainda queued e já vencida (antes do markSubmitted do
+    // TTL) também não congela o estágio.
+    expect(
+      delegationRecoveryStage(
+        {
+          mission: dispatchedEmpty,
+          expectedWorkers: 3,
+          workerPanes: 0,
+          tasks: 0,
+          recoveries: [
+            { ...expiredStage1, deliveryState: 'queued' as const, delivered: false },
+          ],
+          hasBoundOrchestrator: true,
+        },
+        afterTtl,
+      ),
+    ).toBe(1);
   });
 
   it('does not reinterpret an operator-blocked mission as a technical recovery', () => {
