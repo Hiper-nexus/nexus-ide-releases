@@ -11368,7 +11368,7 @@ export const RELEASE_076301: AppRelease = {
   ],
 };
 
-export const RELEASE_076302: AppRelease = {
+export const CURRENT_RELEASE: AppRelease = {
   version: '0.76.302',
   date: '2026-10-17',
   codename: 'Todas as LLMs no roteamento',
@@ -11382,20 +11382,5 @@ export const RELEASE_076302: AppRelease = {
     { title: 'Cota medida cheia sai da rota', detail: 'CLI com janela medida em 100% em todas as contas não recebe worker até o reset; janela por modelo, leitura velha e cadência desconhecida não derrubam nem inventam folga.' },
     { title: 'Fair-share com memória', detail: 'A contagem de uso por CLI sobrevive à limpeza de missões, conta cada pane de IA uma vez e grava em disco sem travar o processo principal.' },
     { title: 'Nome da missão acompanha a aba', detail: 'Renomear a aba renomeia a missão leve dela na barra lateral e no Quadro. Título do operador e missão de squad aprovada não são sobrescritos.' },
-  ],
-};
-
-export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.303',
-  date: '2026-10-18',
-  codename: 'Reserva sem rota falha e esteira em silêncio',
-  summary: 'A reserva do Claude passa a trocar para uma alternativa que funciona: não cai em rota que só falha, não reabre circuito aberto e não sai da lane de modelos de ponta. O vigia de esteira para de cobrar workers enquanto a missão espera a verificação de conclusão.',
-  highlights: [
-    { title: 'Reserva do Claude sem rota falha', detail: 'Quando o Claude fica reservado ao Maestro, o worker vai para a primeira alternativa saudável. Rota com cinco tentativas ou mais e até 20% de sucesso, como uma CLI com credencial recusada, deixa de herdar a vaga.' },
-    { title: 'Esteira em silêncio na verificação', detail: 'Depois que o Maestro pede a conclusão, o lembrete "Esteira parada" deixa de chegar a cada hora enquanto a verificação não responde. Se a verificação recusar a entrega, o lembrete volta.' },
-  ],
-  fixes: [
-    { title: 'Circuito aberto fica fora da reserva', detail: 'A troca da reserva não escolhe CLI com circuito aberto enquanto houver alternativa fechada; sem nenhuma, o Claude é mantido.' },
-    { title: 'Lane de segurança respeitada', detail: 'Em auditoria de segurança crítica, a troca fica entre Claude e Codex, como o recibo diz, e não escapa para outra CLI.' },
   ],
 };
