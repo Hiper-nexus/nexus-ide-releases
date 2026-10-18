@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.76.305 — Linux em dia com a chave do Qwen
+
+A tag 0.76.304 no espelho público ficou com o candidato Windows. Este pacote leva o desktop Linux, incluindo o ajuste que entrou depois da 0.76.304.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35).
+
+No desktop Linux, em relação à 0.76.303:
+
+- A chave do Qwen configurada no Nexus chega ao pane. O overlay grava os `modelProviders` na base URL que a chave aceita: a chave `sk-sp-` do Token Plan só fala com a URL exclusiva do plano; no DashScope ela morria em 401.
+- O settings do operador não viaja junto. A cópia mesclada do overlay tira as credenciais Alibaba dele, e o que o Nexus impõe fica num settings de sistema à parte. A entrada só aponta uma variável de ambiente, com nome novo a cada spawn.
+- Em Providers › Qwen › Avançado dá para fixar a Base URL. Vazio continua automático pela chave. Endereço novo pede confirmação, como o binário, e precisa ser https sem usuário nem senha.
+- A sonda de prontidão prova o mesmo par chave e URL que o pane vai usar. 401 ou 403 é credencial recusada, não limite de cota.
+- O aviso de failover do Qwen fala de chave ou base URL incompatível. Claude, Codex e AGY com login expirado continuam com o texto de sessão. A frase solta "Invalid API-key" com hífen não troca a conta: ela aparece em prosa, log e diff.
+- Overlay de Qwen que um processo morto deixou com a cópia do settings é limpo no boot.
+- A credencial que o administrador provisionou no settings de sistema não é apagada. O descarte de uma entrada que interpola `$` deixa rastro só com o caminho, nunca com o valor.
+
 ## 0.76.304 — Linux em dia com a chave do Qwen
 
 Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35).
