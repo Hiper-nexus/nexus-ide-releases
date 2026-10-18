@@ -6,6 +6,7 @@
  * pessoa não via NENHUM sinal de que algo estava acontecendo, e a missão
  * parecia travada. Aqui a contagem vem dos agentes, que existem sempre.
  */
+import type { MissionEvent } from '../../shared/mission-events';
 import type { MissionAgentSnapshot } from '../../shared/mission-engine-contract';
 
 /** Estados de agente que contam como "trabalhando agora". */
@@ -71,3 +72,26 @@ export function elapsedLabel(
 /** A frase que tira a ansiedade: o trabalho não depende da tela aberta. */
 export const MISSION_BACKGROUND_NOTICE =
   'Pode fechar esta tela — a missão continua e aparece no rail quando terminar.';
+
+/** O aviso registra a duração medida pelo Main, sem inventar um relógio na UI. */
+export function momentumStalledLabel(idleMinutes: unknown): string | null {
+  if (typeof idleMinutes !== 'number' || !Number.isFinite(idleMinutes) || idleMinutes < 1) return null;
+  return `Equipe parada há ${Math.round(idleMinutes)} min; o Maestro foi avisado`;
+}
+
+/** Entrega, nova execução ou equipe nova tornam o aviso anterior histórico. */
+export function currentMomentumNotice(events: readonly MissionEvent[], missionId: string): string | null {
+  let sequence = 0;
+  let notice: string | null = null;
+  for (const event of events) {
+    if (event.missionId !== missionId || event.sequence <= sequence) continue;
+    if (event.type === 'handoff.submitted' || event.type === 'mission.run_started' || event.type === 'agent.spawned') {
+      sequence = event.sequence;
+      notice = null;
+    } else if (event.type === 'custom' && event.origin === 'main' && event.payload.kind === 'momentum-stalled') {
+      sequence = event.sequence;
+      notice = momentumStalledLabel(event.payload.idleMinutes);
+    }
+  }
+  return notice;
+}

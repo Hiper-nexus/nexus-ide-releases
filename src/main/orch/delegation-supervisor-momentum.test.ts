@@ -14,6 +14,7 @@ const h = vi.hoisted(() => ({
     (_sessionId: string): { status: string; updatedAt: number } | null => null,
   ),
   delivered: vi.fn(),
+  event: vi.fn(),
   judge: vi.fn(),
 }));
 vi.mock('./jev-mission-momentum', async (importOriginal) => ({
@@ -55,7 +56,7 @@ vi.mock('./idle-delivery', () => ({
 vi.mock('./squad-store', () => ({ getSquad: () => null }));
 vi.mock('./mission-event-emit', () => ({
   emitChefIdleAwaitingWorkers: () => {},
-  emitMissionEvent: () => {},
+  emitMissionEvent: h.event,
 }));
 vi.mock('./mission-intent-events', () => ({
   emitMissionIntentEvent: () => {},
@@ -95,6 +96,7 @@ beforeEach(async () => {
   h.panes = [];
   h.semantic.mockReset();
   h.delivered.mockClear();
+  h.event.mockClear();
   h.judge.mockReset().mockResolvedValue({ kind: 'skipped' });
   clock = NOW;
   directory = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-momentum-'));
@@ -234,6 +236,7 @@ describe('real supervisor momentum queue', () => {
     await stopped;
     expect(c.notices()).toHaveLength(0);
     expect(h.delivered).not.toHaveBeenCalled();
+    expect(h.event).not.toHaveBeenCalled();
   });
 
   it('a completion request recorded during the judgment await discards the nudge', async () => {
@@ -248,6 +251,7 @@ describe('real supervisor momentum queue', () => {
     clearCompletionRequest(c.suite.scope, c.mission.id);
     expect(c.notices()).toHaveLength(0);
     expect(h.delivered).not.toHaveBeenCalled();
+    expect(h.event).not.toHaveBeenCalled();
   });
 
   it('registered ready task and idle helper cause a directive after thirty seconds, not twenty minutes', async () => {
@@ -368,6 +372,7 @@ describe('real supervisor momentum queue', () => {
     await c.scan(30000);
     expect(c.notices()).toHaveLength(0);
     expect(h.delivered).not.toHaveBeenCalled();
+    expect(h.event).not.toHaveBeenCalled();
   });
 
   // Bug7 (B), justificativa do escopo: registrar cada pedido de chat como
@@ -388,6 +393,14 @@ describe('real supervisor momentum queue', () => {
     expect(c.notices()).toHaveLength(1);
     expect(c.notices()[0].summary).toContain('Esteira parada');
     expect(c.notices()[0].summary).toContain('20 min');
+    expect(h.event).toHaveBeenCalledWith(c.suite.scope, {
+      missionId: c.mission.id,
+      runId: 'delegation-supervisor',
+      type: 'custom',
+      origin: 'main',
+      idempotencyKey: `momentum-stalled:${c.notices()[0].id}`,
+      payload: { kind: 'momentum-stalled', idleMinutes: 20 },
+    });
     expect(c.notices()[0].summary).not.toContain('tarefas registradas prontas');
     await c.scan(21 * 60_000);
     expect(c.notices()).toHaveLength(1);

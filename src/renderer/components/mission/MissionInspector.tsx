@@ -4,6 +4,7 @@ import type {
 } from '../../../shared/mission-engine-contract';
 import type { MissionEvent } from '../../../shared/mission-events';
 import { useMissionInspectorStore, type InspectorTab } from '../../state/mission-inspector-store';
+import { momentumStalledLabel } from '../../lib/mission-progress-line';
 import { projectChangedFiles } from '../../lib/mission-changed-files';
 import { useFilesStore } from '../../state/files-store';
 import { useOrchStore } from '../../state/orch-store';
@@ -642,7 +643,7 @@ function observerActivityLabel(event: MissionEvent): string | null {
     case 'observer.provider_error':
       if (observer.kind === 'quota') return 'Cota esgotada; rota alternativa acionada';
       if (observer.kind === 'rate-limit') return 'Limite de uso; rota alternativa acionada';
-      if (observer.kind === 'auth') return 'Credencial inválida; rota alternativa acionada';
+      if (observer.kind === 'auth') return 'Credencial recusada. Confira a sessão em Configurações → Providers.';
       if (observer.kind === 'transient') {
         return 'Indisponibilidade temporária; rota alternativa acionada';
       }
@@ -709,6 +710,10 @@ function customActivity(
       return { label: 'Worker encerrou sem entregar' };
     case 'worker-prompt-delivery-failed':
       return { label: 'Brief não chegou ao worker' };
+    case 'auth-credential-refused':
+      return { label: 'Credencial recusada. Nenhuma credencial alternativa está pronta. Entre novamente em Configurações → Providers.' };
+    case 'momentum-stalled':
+      return { label: momentumStalledLabel(payload.idleMinutes) ?? 'Equipe sem progresso registrado; o Maestro foi avisado' };
     case 'worker-hung':
       return {
         label: `Worker travado há ${customPayloadNumber(payload.hungMinutes)} min`,

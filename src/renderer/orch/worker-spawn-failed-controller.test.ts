@@ -1,5 +1,10 @@
+/** @vitest-environment jsdom */
+import { act, createElement } from 'react';
+import { createRoot } from 'react-dom/client';
+import { useToastStore } from '../state/toast-store';
+import { useProductNavigationStore } from '../state/product-navigation-store';
 import { describe, expect, it } from 'vitest';
-import { workerSpawnFailedNotice } from './worker-spawn-failed-controller';
+import { workerSpawnFailedNotice, useWorkerSpawnFailedController } from './worker-spawn-failed-controller';
 
 const base = {
   missionId: '',
@@ -43,4 +48,30 @@ describe('workerSpawnFailedNotice', () => {
     expect(notice.title).toBe('kimi não subiu');
     expect(notice.detail).toBe('rode `kimi login`');
   });
+});
+
+
+it('oferece Abrir Providers também quando nenhum CLI abriu', async () => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  let notify!: (event: Parameters<typeof workerSpawnFailedNotice>[0]) => void;
+  Object.defineProperty(window, 'nexus', { configurable: true, value: { orch: {
+    onWorkerSpawnFailed: (callback: typeof notify) => { notify = callback; return () => {}; },
+  } } });
+  function Harness() { useWorkerSpawnFailedController(); return null; }
+  const host = document.createElement('div');
+  const root = createRoot(host);
+  const navigation = useProductNavigationStore.getState();
+  try {
+    await act(async () => root.render(createElement(Harness)));
+    notify(base);
+    const toast = useToastStore.getState().toasts.at(-1);
+    expect(toast?.kind).toBe('error');
+    expect(toast?.action?.label).toBe('Abrir Providers');
+    toast?.action?.onClick();
+    expect(useProductNavigationStore.getState().destination).toEqual({ kind: 'settings', section: 'providers' });
+  } finally {
+    await act(async () => root.unmount());
+    useProductNavigationStore.setState(navigation);
+    for (const toast of useToastStore.getState().toasts) useToastStore.getState().dismiss(toast.id);
+  }
 });

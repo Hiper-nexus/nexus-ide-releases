@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   elapsedLabel,
+  currentMomentumNotice,
+  momentumStalledLabel,
   qualitativeProgress,
   MISSION_BACKGROUND_NOTICE,
 } from './mission-progress-line';
@@ -51,5 +53,24 @@ describe('a frase que tira a ansiedade', () => {
   it('diz que o trabalho não depende da tela aberta', () => {
     expect(MISSION_BACKGROUND_NOTICE).toContain('Pode fechar esta tela');
     expect(MISSION_BACKGROUND_NOTICE).toContain('continua');
+  });
+});
+
+
+describe('aviso de momentum', () => {
+  const event = (sequence: number, type: string, payload = {}, missionId = 'mission') =>
+    ({ sequence, type, payload, missionId, origin: 'main' }) as never;
+  const stalled = event(2, 'custom', { kind: 'momentum-stalled', idleMinutes: 7 });
+  it('usa só minutos finitos e positivos', () => {
+    expect(momentumStalledLabel(7)).toBe('Equipe parada há 7 min; o Maestro foi avisado');
+    for (const value of [NaN, Infinity, -1, 0, '7', null]) expect(momentumStalledLabel(value)).toBeNull();
+  });
+  it('isola missão, ordena por sequência e limpa depois de progresso concreto', () => {
+    expect(currentMomentumNotice([stalled, event(1, 'agent.spawned')], 'mission')).toContain('7 min');
+    expect(currentMomentumNotice([stalled], 'outra')).toBeNull();
+    for (const type of ['handoff.submitted', 'mission.run_started', 'agent.spawned']) {
+      expect(currentMomentumNotice([event(3, type), stalled], 'mission')).toBeNull();
+    }
+    expect(currentMomentumNotice([stalled, event(3, 'driver.tick')], 'mission')).toContain('7 min');
   });
 });

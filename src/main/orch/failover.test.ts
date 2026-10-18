@@ -18,6 +18,9 @@ const ptyMocks = vi.hoisted(() => ({
   shuttingDown: false,
 }));
 
+const missionEvent = vi.hoisted(() => vi.fn());
+vi.mock('./mission-event-emit', () => ({ emitMissionEvent: missionEvent }));
+
 const toolMocks = vi.hoisted(() => ({
   injectPrompt: vi.fn(async (_sessionId: string, _prompt: string) => undefined),
 }));
@@ -286,6 +289,7 @@ async function settleFailover(): Promise<void> {
 }
 
 beforeEach(() => {
+  missionEvent.mockClear();
   vi.useFakeTimers();
   vi.setSystemTime(100_000);
   // Como o pick real: nunca devolve a conta excluída nem as já tentadas.
@@ -461,6 +465,7 @@ describe('account failover authority and lifecycle', () => {
     ptyMocks.dataTaps[0]('session-717', 'LIMIT');
 
     // Healthy provider-api → no cooldown, no switch event.
+    expect(missionEvent).not.toHaveBeenCalled();
     expect(accountMocks.setCooldown).not.toHaveBeenCalled();
     expect(owner.send).not.toHaveBeenCalledWith(
       ACCOUNT_CHANNELS.failover,
@@ -647,6 +652,14 @@ describe('account failover authority and lifecycle', () => {
 
   it('F-1567: 401 não confirmado no Qwen fala de credencial recusada e leva a CLI no evento (o toast decide por ela)', async () => {
     const owner = await unconfirmedAuthHit(730, 'qwen');
+    expect(missionEvent).toHaveBeenCalledWith(testProjectScope(), expect.objectContaining({
+      missionId: 'mission-730',
+      runId: 'account-failover',
+      type: 'custom',
+      origin: 'main',
+      idempotencyKey: expect.stringMatching(/^auth-credential-refused:[a-f0-9]{64}$/),
+      payload: { kind: 'auth-credential-refused', reasonKind: 'auth', paneId: 'pane-730', adapterId: 'qwen' },
+    }));
     expect(accountMocks.setCooldown).toHaveBeenCalledWith(
       'account-a',
       100_000 + 15 * 60 * 1000,
@@ -823,6 +836,7 @@ describe('account failover authority and lifecycle', () => {
     // A sonda rodou e a leitura provider-api fresca prova a credencial aceita:
     // o sinal de auth é refutado — sem cooldown, sem troca, missão intacta.
     expect(probed).toBe(true);
+    expect(missionEvent).not.toHaveBeenCalled();
     expect(accountMocks.setCooldown).not.toHaveBeenCalled();
     expect(owner.send).not.toHaveBeenCalledWith(
       ACCOUNT_CHANNELS.failover,
@@ -909,6 +923,7 @@ describe('account failover authority and lifecycle', () => {
         confidence: 'high',
       }],
     });
+    expect(missionEvent).not.toHaveBeenCalled();
     expect(accountMocks.setCooldown).not.toHaveBeenCalled();
     expect(owner.send).not.toHaveBeenCalledWith(
       ACCOUNT_CHANNELS.failover,

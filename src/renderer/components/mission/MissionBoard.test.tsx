@@ -1947,6 +1947,38 @@ describe('cabeçalho do Quadro: primária única, menu Mais e minimizar', () => 
     expect(moreButton(host).getAttribute('aria-expanded')).toBe('false');
   });
 
+  it('anuncia Retomando enquanto o comando está pendente em uma região viva', async () => {
+    api.snapshot.mockResolvedValue(resumeSnapshot());
+    const pending = deferred<MissionSnapshot>();
+    api.command.mockReturnValue(pending.promise);
+    const { host } = mount();
+    await flush();
+    await click(buttonByName(host, 'Retomar'));
+    const status = host.querySelector('.mission-board__announcement');
+    expect(status?.getAttribute('role')).toBe('status');
+    expect(status?.getAttribute('aria-live')).toBe('polite');
+    expect(status?.closest('[aria-busy="true"]')).toBeNull();
+    expect(status?.textContent).toContain('Retomando…');
+    expect(status?.hasAttribute('hidden')).toBe(false);
+    pending.resolve(canonicalSnapshot({ state: 'running', allowedActions: ['stop'] }));
+    await flush();
+    expect(status?.textContent).not.toContain('Retomando…');
+  });
+
+  it('mostra equipe parada no progresso, sem pedir ação ao operador', async () => {
+    api.snapshot.mockResolvedValue(canonicalSnapshot({ state: 'running', allowedActions: ['stop'] }));
+    api.missionEventsRecent.mockResolvedValue({ events: [missionEventSchema.parse({
+      missionId: 'mission-alpha', sequence: 1, id: 'momentum', runId: 'delegation-supervisor',
+      type: 'custom', payload: { kind: 'momentum-stalled', idleMinutes: 7 },
+      idempotencyKey: 'momentum-notice', occurredAt: 1_786_080_000_000, origin: 'main', deliveryStatus: 'delivered',
+    })] });
+    const { host } = mount();
+    await flush();
+    const status = host.querySelector('.mission-board__status-group');
+    expect(status?.textContent).toContain('Equipe parada há 7 min; o Maestro foi avisado');
+    expect(status?.querySelector('button')).toBeNull();
+  });
+
   it('minimizar recolhe o corpo, mantém estado e primária, e persiste', async () => {
     api.snapshot.mockResolvedValue(resumeSnapshot());
     const { host } = mount();

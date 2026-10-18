@@ -1,6 +1,8 @@
 import { analysisClient, flushPtyAnalysis, isPtyAnalysisEnabled, subscribePtyAnalysis } from '../pty/pty-analysis-runtime';
 import type { FailoverTextProposal } from './failover-text-core';
 import type { WebContents } from 'electron';
+import { createHash } from 'node:crypto';
+import { emitMissionEvent } from './mission-event-emit';
 import {
   ACCOUNT_CHANNELS,
   type Account,
@@ -488,6 +490,23 @@ function emitFailover(
   event: FailoverEvent,
 ): void {
   if (!isCurrentAuthority(authority)) return;
+  if (event.kind === 'auth' && !event.switched && authority.missionId) {
+    emitMissionEvent(authority.scope, {
+      missionId: authority.missionId,
+      runId: 'account-failover',
+      type: 'custom',
+      origin: 'main',
+      idempotencyKey: `auth-credential-refused:${createHash('sha256').update(authority.sessionId).digest('hex')}`,
+      // Persist the structured failure only. Provider text and account labels
+      // may contain secrets and are unnecessary to explain the next step.
+      payload: {
+        kind: 'auth-credential-refused',
+        reasonKind: 'auth',
+        paneId: authority.paneId,
+        ...(event.fromAdapterId ? { adapterId: event.fromAdapterId } : {}),
+      },
+    });
+  }
   broadcastToProject(
     // Main-owned não tem renderer dono: notifica qualquer listener no escopo.
     authority.owner ? [authority.owner] : listeners,

@@ -23,6 +23,7 @@ import { missionBoardHeading } from '../../lib/mission-board-heading';
 import { missionAwaitsOperatorReview } from '../../../shared/mission-recovery-policy';
 import {
   MISSION_BACKGROUND_NOTICE,
+  currentMomentumNotice,
   qualitativeProgress,
 } from '../../lib/mission-progress-line';
 import { MISSION_AWAITING_INSTRUCTION_REASON_CODE } from '../../../shared/session-restore-liveness';
@@ -1404,6 +1405,10 @@ export function MissionBoard({
     )
   ) : null;
 
+  const momentumNotice = MISSION_LIVE_STATES.has(currentSnapshot.state)
+    ? currentMomentumNotice(events, missionId)
+    : null;
+
   return (
     <article
       className={
@@ -1412,7 +1417,7 @@ export function MissionBoard({
       data-board-collapsed={boardCollapsed}
       data-state={currentSnapshot.state}
       aria-labelledby={headingId}
-      aria-busy={loading || pendingAction !== null}
+      aria-busy={loading}
       style={boardStyle}
     >
       <header
@@ -1463,6 +1468,11 @@ export function MissionBoard({
                   'A equipe está começando'}
               </span>
             )}
+          {momentumNotice && (
+            <span className="mission-board__progress-line">
+              {momentumNotice}
+            </span>
+          )}
           {currentSnapshot.progress.total > 0 && (
             <div className="mission-board__progress">
               <span>
@@ -1706,21 +1716,21 @@ export function MissionBoard({
         </p>
       )}
 
-      {actionAnnouncement && (
-        <p
-          className="mission-board__announcement"
-          role="status"
-          aria-live="polite"
-          aria-atomic="true"
-        >
-          {actionAnnouncement}
-        </p>
-      )}
+      <p
+        hidden={pendingAction !== 'resume' && !actionAnnouncement}
+        className="mission-board__announcement"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      >
+        {pendingAction === 'resume' ? 'Retomando…' : actionAnnouncement}
+      </p>
 
       <div
         id={boardBodyId}
         className="mission-board__body"
         hidden={boardCollapsed}
+        aria-busy={pendingAction !== null}
       >
       {question && (
         <section

@@ -878,10 +878,23 @@ describe('MissionInspector', () => {
       'Possível travamento: 3 min sem atividade',
       'Cota esgotada; rota alternativa acionada',
       'Limite de uso; rota alternativa acionada',
-      'Credencial inválida; rota alternativa acionada',
+      'Credencial recusada. Confira a sessão em Configurações → Providers.',
       'Indisponibilidade temporária; rota alternativa acionada',
     ]);
     expect(panel.textContent).not.toMatch(/\b(?:Driver|Turn|stall|failover)\b/i);
+  });
+
+  it('mantém a recusa de credencial e o aviso de equipe parada na atividade', () => {
+    const host = mount({ events: [
+      event({ sequence: 1, type: 'custom', payload: { kind: 'auth-credential-refused', reasonKind: 'auth' } }),
+      event({ sequence: 2, id: 'momentum', type: 'custom', payload: { kind: 'momentum-stalled', idleMinutes: 7 } }),
+      event({ sequence: 3, id: 'invalid', type: 'custom', payload: { kind: 'momentum-stalled', idleMinutes: '<script>' } }),
+    ] });
+    const panel = selectTab(host, 'Atividade');
+    expect(panel.textContent).toContain('Credencial recusada. Nenhuma credencial alternativa está pronta. Entre novamente em Configurações → Providers.');
+    expect(panel.textContent).toContain('Equipe parada há 7 min; o Maestro foi avisado');
+    expect(panel.textContent).not.toContain('<script>');
+    expect(panel.textContent).not.toContain('rota alternativa acionada');
   });
 
   it('projects the complete canonical team roster with each live state', () => {

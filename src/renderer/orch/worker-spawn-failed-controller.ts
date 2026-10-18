@@ -55,9 +55,7 @@ export function useWorkerSpawnFailedController(): void {
         useProductNavigationStore.getState().openSettings('providers');
       useToastStore.getState().push(notice.kind, notice.title, {
         detail: notice.detail,
-        ...(notice.kind === 'warn'
-          ? { action: { label: 'Abrir Providers', onClick: openProviders } }
-          : {}),
+        action: { label: 'Abrir Providers', onClick: openProviders },
       });
     });
   }, []);

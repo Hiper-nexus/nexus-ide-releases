@@ -87,6 +87,7 @@ import {
 import { emitMissionIntentEvent } from './mission-intent-events';
 import {
   emitChefIdleAwaitingWorkers,
+  emitMissionEvent,
 } from './mission-event-emit';
 import {
   decideZeroDeliveryWatchdog,
@@ -2002,6 +2003,17 @@ async function scanSuite(suite: ProjectDomainStoreSuite, now: number, context: P
           // Failed submission cannot consume the only opportunity to resume work.
           momentumNudgedAt.set(key, { at: now, backlogKey: momentum.backlogKey });
           onHandoffSubmitted(handoff, suite.scope);
+          emitMissionEvent(suite.scope, {
+            missionId: mission.id,
+            runId: 'delegation-supervisor',
+            type: 'custom',
+            origin: 'main',
+            idempotencyKey: `momentum-stalled:${handoff.id}`,
+            payload: {
+              kind: 'momentum-stalled',
+              idleMinutes: Math.max(1, Math.round(momentum.soloForMs / 60_000)),
+            },
+          });
           console.warn(`[delegation-supervisor] momentum nudge for ${mission.id}`);
         } catch (error) {
           context.assertCurrent();
