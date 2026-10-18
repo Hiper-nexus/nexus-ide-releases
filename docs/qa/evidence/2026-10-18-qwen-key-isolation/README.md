@@ -12,7 +12,16 @@ da CLI continuam como o operador as conhece. Cada cenário sobe `qwen -p` com um
 A chave de cada cenário é única; vazamento é qualquer requisição à EVIL (URL,
 cabeçalho ou corpo) que a contenha. Os arquivos do overlay também são varridos
 atrás da chave e de um segredo velho do operador. O nome da variável do cofre é
-entregue ao atacante nos cenários de "nome conhecido": é o pior caso.
+entregue ao atacante nos cenários de "nome conhecido": é o pior caso do modelo
+de ameaça de um settings reescrito. Residual exato (F-5ª revisão, L3): com nome
+conhecido (o nome aleatório vaza por outro canal), um provider customizado do
+workspace que aponte a linha para o atacante ainda recebe a chave. Sem o nome, 0
+vazamentos. Hooks/MCP/filhos do pane enxergam a env do pane: item F-1568.
+
+O catálogo de modelos do workspace (`modelProviders.openai`) é SUBSTITUÍDO pelo
+overlay: o layer de sistema gerado leva as linhas do admin (ou as do operador já
+saneadas) mais as do Nexus, então linhas do `.qwen/settings.json` do projeto não
+aparecem no pane.
 
 ## Rodar
 

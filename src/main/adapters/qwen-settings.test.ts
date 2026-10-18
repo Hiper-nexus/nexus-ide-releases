@@ -496,6 +496,27 @@ describe('F-1567: mergeQwenSettingsForInjection', () => {
     expect(JSON.stringify(merged)).not.toMatch(/BAILIAN_TOKEN_PLAN_API_KEY|evil\.example|old-key/);
   });
 
+  it('L2: o descarte por "$" é registrado em log só com caminhos, sem valores', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      mergeQwenSettingsForInjection({
+        env: { BAD: 'segredo-$HOME-valor', OK: 'x' },
+        modelProviders: { openai: [{ id: 'a', baseUrl: '${PROXY}/v1' }] },
+        security: { auth: { baseUrl: '$P' } },
+      }, options());
+      const logged = warn.mock.calls.map((call) => call.join(' ')).join('\n');
+      expect(logged).toContain('env.BAD');
+      expect(logged).toContain('modelProviders.openai[0].baseUrl');
+      expect(logged).toContain('security.auth.baseUrl');
+      expect(logged).not.toMatch(/segredo|PROXY|\$HOME/);
+      warn.mockClear();
+      mergeQwenSettingsForInjection({ env: { OK: 'x' } }, options());
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   describe('F4: a interpolação descarta a entrada, nunca o bloco', () => {
     it.each([
       ['${VAR:-padrão}', '${UNRELATED:-fallback}'],
@@ -901,13 +922,25 @@ describe('F-1567 F2/F3: layer de SISTEMA — só o que o Nexus impõe, por cima 
     expect(admin.security).not.toHaveProperty('auth.selectedType');
   });
 
-  it('onde colidem, vence o que o Nexus impõe (auth fixada, apiKey e OPENAI_API_KEY vazios)', () => {
+  it('sem credencial do admin, o pino zera apiKey e OPENAI_API_KEY e fixa a auth', () => {
+    const layer = system({
+      security: { auth: { selectedType: 'qwen-oauth' } },
+      env: { KEEP: '1' },
+    });
+    expect(layer.security).toEqual({ auth: { selectedType: 'openai', apiKey: '' } });
+    expect(layer.env).toEqual({ OPENAI_API_KEY: '', KEEP: '1' });
+  });
+
+  it('L1: a credencial provisionada pelo admin é preservada; a auth continua fixada e a chave do cofre não aparece', () => {
     const layer = system({
       security: { auth: { selectedType: 'qwen-oauth', apiKey: 'sk-do-admin' } },
       env: { OPENAI_API_KEY: 'sk-do-admin', KEEP: '1' },
     });
-    expect(layer.security).toEqual({ auth: { selectedType: 'openai', apiKey: '' } });
-    expect(layer.env).toEqual({ OPENAI_API_KEY: '', KEEP: '1' });
+    expect(layer.security).toEqual({ auth: { selectedType: 'openai', apiKey: 'sk-do-admin' } });
+    expect(layer.env).toEqual({ OPENAI_API_KEY: 'sk-do-admin', KEEP: '1' });
+    // O cofre só viaja pela variável aleatória: a linha gerada aponta para ela e para o destino conhecido.
+    expect(openaiOf(layer)).toEqual([expect.objectContaining({ baseUrl: PLAN, envKey: OURS })]);
+    expect(JSON.stringify(layer)).not.toMatch(/sk-sp-/);
   });
 
   it('catálogo sem admin: as linhas do operador (saneadas) mais as do Nexus', () => {

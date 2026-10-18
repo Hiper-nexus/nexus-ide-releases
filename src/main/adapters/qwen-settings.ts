@@ -351,6 +351,14 @@ function interpolatedNames(value: string): string[] {
     .filter((name) => !RUNTIME_PLACEHOLDER.test(name));
 }
 
+/** Caminhos (só nomes de chave/índices, nunca valores) das strings que interpolam. */
+function interpolationPaths(value: unknown, at: string): string[] {
+  if (typeof value === 'string') return interpolatedNames(value).length > 0 ? [at] : [];
+  if (Array.isArray(value)) return value.flatMap((item, i) => interpolationPaths(item, `${at}[${i}]`));
+  if (!value || typeof value !== 'object') return [];
+  return Object.entries(value).flatMap(([key, item]) => interpolationPaths(item, `${at}.${key}`));
+}
+
 /** Alguma string do valor, em qualquer profundidade, interpola uma variável. */
 function containsInterpolation(value: unknown): boolean {
   if (typeof value === 'string') return interpolatedNames(value).length > 0;
@@ -519,6 +527,15 @@ export function mergeQwenSettingsForInjection(
     ...(objectField(settings, 'security') ?? {}),
     auth: operatorAuthFields(objectField(objectField(rawSettings, 'security'), 'auth')),
   };
+  // L2: o descarte por `$` não é silencioso — só caminhos, nunca valores.
+  const dropped = [
+    ...interpolationPaths(rawSettings.env, 'env'),
+    ...interpolationPaths(rawSettings.modelProviders, 'modelProviders'),
+    ...interpolationPaths(objectField(rawSettings, 'security')?.auth, 'security.auth'),
+  ];
+  if (dropped.length > 0) {
+    console.warn(`[qwen-settings] entradas com interpolação "$" descartadas da cópia do pane: ${dropped.join(', ')}`);
+  }
   const rawEnv = objectField(rawSettings, 'env');
   if (rawEnv) settings.env = operatorEnvEntries(rawEnv);
   else delete settings.env;
@@ -596,8 +613,9 @@ function readableSystemSettings(text: string): Record<string, unknown> | null {
  *    um layer mais alto SUBSTITUI a de baixo, então o catálogo imposto carrega as
  *    linhas que a CLI mostraria sem nós: as do admin, ou as do operador já
  *    saneadas) — um `modelProviders` do workspace não tira a linha da chave;
- *  - endurecimento: a auth fixada na OpenAI-compatible, sem `apiKey`, e
- *    `OPENAI_API_KEY` vazia em `env`. Um modelo fora do catálogo cai nesses
+ *  - endurecimento: a auth fixada na OpenAI-compatible, com `apiKey` e
+ *    `OPENAI_API_KEY` de `env` vazias (a credencial que o ADMIN provisionou é
+ *    preservada: não é do Nexus apagá-la). Um modelo fora do catálogo cai nesses
  *    caminhos de ambiente/auth, e o settings de um workspace (que pode
  *    interpolar a variável do cofre se souber o nome) não pode abastecê-los.
  *    Sem pino de `OPENAI_BASE_URL`: sem chave ele não leva nada, e a CLI exporta
@@ -624,13 +642,17 @@ export function mergeQwenSystemSettingsForInjection(
       ? userOpenai
       : appendInjectedRows([], options);
   const security = objectField(system, 'security') ?? {};
+  const adminAuth = objectField(security, 'auth') ?? {};
+  const adminEnv = objectField(system, 'env') ?? {};
+  // L1: credencial provisionada pelo ADMIN fica (ela já vence o workspace, e a
+  // chave do cofre só viaja pelo nome aleatório). O pino zera só o que está vazio.
   return {
     ...system,
     security: {
       ...security,
-      auth: { ...(objectField(security, 'auth') ?? {}), selectedType: 'openai', apiKey: '' },
+      auth: { ...adminAuth, selectedType: 'openai', apiKey: nonEmptyString(adminAuth.apiKey) ?? '' },
     },
-    env: { ...(objectField(system, 'env') ?? {}), OPENAI_API_KEY: '' },
+    env: { ...adminEnv, OPENAI_API_KEY: nonEmptyString(adminEnv.OPENAI_API_KEY) ?? '' },
     modelProviders: { ...providers, openai },
   };
 }
