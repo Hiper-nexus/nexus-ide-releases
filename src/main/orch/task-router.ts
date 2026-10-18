@@ -2774,7 +2774,13 @@ export function routeTask(
     if (reserveClaude && chosen.c.adapterId === 'claude') {
       // O bloco do líder falho estaciona a falha logo atrás do pronto: a
       // reserva pega a 1ª alternativa que não falha (fail-open: só falhas ⇒ a 1ª).
-      const others = ranked.filter((r) => r.c.adapterId !== 'claude');
+      // ponytail: limita à lane exclusiva se aplicada (F-817/F-1477) e não
+      // ressuscita circuito aberto sobre candidato fechado.
+      const laneEntries = appliedLaneEntries;
+      const pool = laneEntries ? ranked.filter((r) => laneEntries.has(r)) : ranked;
+      const others = pool.filter(
+        (r) => r.c.adapterId !== 'claude' && !adapterCircuitBreakers.isOpen(r.c.adapterId),
+      );
       const alt = healthyPool(others).find((r) => !isFailing(r)) ?? others[0];
       // ponytail: só claude instalado → sem alternativa, mantém claude (o
       // orquestrador serializa os workers claude nesse caso raro).

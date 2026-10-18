@@ -39,6 +39,10 @@ const failing = (...routes: ReadonlyArray<readonly [adapterId: string, model: st
     routes.map(([adapterId, model]) => ({ adapterId, model, successes: 0, total: 7 })),
   );
 
+const trip = (...ids: string[]) => {
+  for (const id of ids) for (let i = 0; i < 3; i += 1) adapterCircuitBreakers.recordFailure(id);
+};
+
 /** 2 assentos em claude e em codex (−36 cada): com isso o muse 0/7 lidera o rerank. */
 const SEATED = new Map([['claude', 2], ['codex', 2]]);
 
@@ -75,6 +79,18 @@ describe('reserveClaude: a reserva não devolve a rota falha', () => {
     const decision = route(WRITER, [MUSE, CLAUDE], ctx, 'hard', true);
     expect(pick(decision)).toBe(`muse:${MUSE_FULL}`);
   });
+
+  it('não ressuscita circuito aberto: com Codex aberto após 3 falhas e Muse 0/7 fechado, escolhe Muse fechado', () => {
+    trip('codex');
+    const decision = route(
+      'Revise o diff do worker e dê o veredito',
+      [MUSE, CLAUDE, CODEX],
+      ctx,
+      'hard',
+      true,
+    );
+    expect(pick(decision)).toBe(`muse:${MUSE_FULL}`);
+  });
 });
 
 describe('critical: o líder frontier falho cede ao próximo frontier pronto', () => {
@@ -102,12 +118,18 @@ describe('critical: o líder frontier falho cede ao próximo frontier pronto', (
 describe('auditoria de segurança crítica com assento falho (F-817/F-1477)', () => {
   // Grok e Muse prontos e com assento na lane geral: se a troca do líder falho
   // vazasse, um deles assumiria a auditoria.
-  const audit = (routeOutcomes: RouteContext['routeOutcomes']) =>
-    route(SECURITY_AUDIT, [CLAUDE, CODEX, GROK, MUSE], {
-      multiScore: true,
-      missionUseCounts: SEATED,
-      routeOutcomes,
-    });
+  const audit = (routeOutcomes: RouteContext['routeOutcomes'], reserveClaude = false) =>
+    route(
+      SECURITY_AUDIT,
+      [CLAUDE, CODEX, GROK, MUSE],
+      {
+        multiScore: true,
+        missionUseCounts: SEATED,
+        routeOutcomes,
+      },
+      undefined,
+      reserveClaude,
+    );
 
   it('fable 0/7 (1º da lane) cede ao opus; Grok e Muse não herdam a auditoria', () => {
     const decision = audit(failing(['claude', 'claude-fable-5-1']));
@@ -130,6 +152,12 @@ describe('auditoria de segurança crítica com assento falho (F-817/F-1477)', ()
     expect(['claude', 'codex']).toContain(decision.adapterId);
     expect(decision.reason).toContain('lane de julgamento (segurança crítica: Claude/Codex)');
     expect(decision.judgeUnavailable).toBeUndefined();
+  });
+
+  it('reserveClaude=true: Codex Sol 0/7 falho cede dentro da lane restrita e não escapa para Grok/Muse', () => {
+    const decision = audit(failing(['codex', 'gpt-6.1-sol']), true);
+    expect(pick(decision)).toBe('codex:gpt-6.1-sol');
+    expect(decision.reason).toContain('lane de julgamento (segurança crítica: Claude/Codex)');
   });
 });
 
