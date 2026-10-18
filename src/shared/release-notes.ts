@@ -11385,7 +11385,7 @@ export const RELEASE_076302: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076303: AppRelease = {
   version: '0.76.303',
   date: '2026-10-18',
   codename: 'Linux em dia com todas as LLMs no roteamento',
@@ -11400,5 +11400,22 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Cota medida cheia sai da rota', detail: 'CLI com janela medida em 100% em todas as contas não recebe worker até o reset; janela por modelo, leitura velha e cadência desconhecida não derrubam nem inventam folga.' },
     { title: 'Fair-share com memória', detail: 'A contagem de uso por CLI sobrevive à limpeza de missões, conta cada pane de IA uma vez e grava em disco ao sair, sem travar o processo principal.' },
     { title: 'Nome da missão acompanha a aba', detail: 'Renomear a aba renomeia a missão leve dela na barra lateral e no Quadro. Título do operador e missão de squad aprovada não são sobrescritos.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.304',
+  date: '2026-10-18',
+  codename: 'Linux em dia com a chave do Qwen',
+  summary: 'A chave do Qwen configurada no Nexus chega ao pane, isolada do settings do operador, na base URL que a chave aceita. 401 de chave inválida deixa de ser tratado como limite.',
+  highlights: [
+    { title: 'Chave do Qwen no pane', detail: 'O overlay grava os modelProviders na base URL que a chave aceita. A chave sk-sp- do Token Plan só fala com a URL exclusiva do plano; no DashScope ela morria em 401.' },
+    { title: 'Settings do operador fica de fora', detail: 'A cópia mesclada do overlay não leva as credenciais Alibaba do operador. O que o Nexus impõe fica num settings de sistema à parte, e a entrada só aponta uma variável de ambiente nova a cada spawn.' },
+    { title: 'Base URL em Providers', detail: 'Em Qwen › Avançado dá para fixar a Base URL. Vazio continua automático pela chave. Endereço novo pede confirmação e precisa ser https, sem usuário nem senha.' },
+  ],
+  fixes: [
+    { title: 'Sonda no mesmo par', detail: 'A prontidão prova a mesma chave e a mesma URL que o pane vai usar. 401 ou 403 é credencial recusada, não cota.' },
+    { title: 'Aviso só do Qwen', detail: 'O failover do Qwen fala de chave ou base URL incompatível. Login expirado de Claude, Codex e AGY continua com o texto de sessão.' },
+    { title: 'Prosa não troca a conta', detail: 'A frase solta "Invalid API-key" com hífen não arma o failover: ela aparece em texto, log e diff. Overlay de Qwen deixado por processo morto é limpo no boot.' },
   ],
 };
