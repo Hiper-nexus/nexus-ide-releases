@@ -63,6 +63,15 @@ describe('vigia de esteira (F-714)', () => {
     }
   });
 
+  it('conclusão solicitada e pendente de verificação silencia o nudge; sem o pedido ele volta', () => {
+    expect(
+      decideMomentumNudge({ ...base, completionRequested: true }),
+    ).toEqual({ action: 'none' });
+    expect(
+      decideMomentumNudge({ ...base, completionRequested: false }),
+    ).toEqual({ action: 'nudge', soloForMs: MOMENTUM_SOLO_MS });
+  });
+
   it('o lembrete diz há quanto tempo e manda adiantar as próximas unidades sem paralelizar o gate', () => {
     const text = momentumNudgeSummary('mission-1', 95 * 60_000);
     expect(text).toContain('[momentum:mission-1]');
