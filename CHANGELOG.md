@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.76.304 — Linux em dia com a chave do Qwen
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35).
+
+No desktop Linux, em relação à 0.76.303:
+
+- A chave do Qwen configurada no Nexus chega ao pane. O overlay grava os `modelProviders` na base URL que a chave aceita: a chave `sk-sp-` do Token Plan só fala com a URL exclusiva do plano; no DashScope ela morria em 401.
+- O settings do operador não viaja junto. A cópia mesclada do overlay tira as credenciais Alibaba dele, e o que o Nexus impõe fica num settings de sistema à parte. A entrada só aponta uma variável de ambiente, com nome novo a cada spawn.
+- Em Providers › Qwen › Avançado dá para fixar a Base URL. Vazio continua automático pela chave. Endereço novo pede confirmação, como o binário, e precisa ser https sem usuário nem senha.
+- A sonda de prontidão prova o mesmo par chave e URL que o pane vai usar. 401 ou 403 é credencial recusada, não limite de cota.
+- O aviso de failover do Qwen fala de chave ou base URL incompatível. Claude, Codex e AGY com login expirado continuam com o texto de sessão. A frase solta "Invalid API-key" com hífen não troca a conta: ela aparece em prosa, log e diff.
+- Overlay de Qwen que um processo morto deixou com a cópia do settings é limpo no boot.
+
+## 0.76.303 — Linux em dia com todas as LLMs no roteamento
+
+A tag 0.76.302 não recebe pacotes Linux: é o candidato macOS. Este pacote leva o produto dela para o desktop Linux.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35).
+
+No desktop Linux, em relação à 0.76.301:
+
+- O roteador reparte o trabalho entre todas as LLMs instaladas pela cota real de cada assinatura. Cada CLI ganha um ritmo (folga ÷ tempo até o reset): sobra que vai expirar puxa worker e conta como escritor econômico mesmo com preço de API alto; a que está perto do limite cede. Janela por modelo, leitura com mais de 15 min, cadência desconhecida e benchmark medido não viram folga.
+- CLI com janela medida em 100% em todas as contas não recebe worker até o reset. Se o pool esvaziar, a exclusão é desfeita.
+- Modelo com 5 tentativas ou mais e até 20% de sucesso em 14 dias perde o assento no escritor econômico, nas lanes de topo, no revezamento e no fair-share, e cede a liderança à primeira rota pronta do mesmo tier. Continua elegível quando é a única opção do tier ou é pedido pelo nome.
+- A contagem de uso por CLI sobrevive à limpeza de missões, conta cada pane de IA uma vez e grava em disco ao sair, sem travar o processo principal.
+- Sem CLI da tabela instalada, a rota escolhe por qualidade e custo. A primeira onda da missão completa a oferta com todas as CLIs prontas.
+- Renomear a aba renomeia a missão leve dela na barra lateral e no Quadro. Título dado pelo operador e missão de squad aprovada não são sobrescritos.
+
 ## 0.76.302 — Todas as LLMs no roteamento
 
 O roteador passa a usar a cota real de cada assinatura para repartir o trabalho entre todas as LLMs instaladas, em qualquer combinação de CLIs. Candidato macOS (`darwin-arm64`) assinado e notarizado.

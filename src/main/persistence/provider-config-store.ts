@@ -1,10 +1,18 @@
 import fsp from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { runPeriodicTask, stopPeriodicTask, type PeriodicTaskContext } from '../observability/periodic-task';
 import { readRegularFileCappedAsync } from '../redline/redline-safe-read';
 import { mimoCredentialSupportsModel } from '../adapters/mimo-auth';
-import { qwenSettingsHasCredential } from '../adapters/qwen-settings';
+import {
+  normalizeHttpsBaseUrl,
+  QWEN_INJECTED_KEY_ENV_PREFIX,
+  QWEN_DASHSCOPE_DEFAULT_BASE_URL,
+  qwenSettingsHasCredential,
+  readQwenSettingsSummary,
+  resolveQwenInjectionBaseUrl,
+} from '../adapters/qwen-settings';
 import { requestQwenReadiness, peekQwenReadiness, invalidateQwenReadiness } from '../adapters/qwen-readiness-cache';
+import { setQwenProbeConfiguredBaseUrlLookup } from '../adapters/qwen-readiness';
 import { migrateModelId } from '../../shared/model-defaults';
 import fs from 'node:fs';
 import { z } from 'zod';
@@ -281,6 +289,7 @@ function defaultConfigFor(adapterId: string): ProviderConfig {
     defaultModel: '',
     extraArgs: [],
     upstream: defaultUpstream,
+    baseUrl: '',
     permissionMode: defaultPermissionModeFor(adapterId),
     effort: adapterId === 'agy' ? 'high' : '',
     verbose: false,
@@ -302,6 +311,7 @@ function load(): void {
         defaultModel: cfg.defaultModel ?? defaults.defaultModel,
         extraArgs: Array.isArray(cfg.extraArgs) ? cfg.extraArgs : defaults.extraArgs,
         upstream: cfg.upstream ?? defaults.upstream,
+        baseUrl: cfg.baseUrl ?? defaults.baseUrl,
         permissionMode: cfg.permissionMode ?? defaults.permissionMode,
         effort: adapterId === 'agy' && cfg.effort === 'max'
           ? 'high' : (cfg.effort ?? defaults.effort),
@@ -322,6 +332,8 @@ function load(): void {
  * ordinary IPC registration remains the owner of channel wiring.
  */
 export function initializeProviderConfigStore(): void {
+  // F-1567: a sonda do Qwen testa o mesmo par chave+base URL que o spawn usa.
+  setQwenProbeConfiguredBaseUrlLookup(() => configFor('qwen').baseUrl || null);
   if (!isProviderConfigInitialized) load();
 }
 
@@ -405,6 +417,14 @@ export interface ProviderSpawnOverrides {
   keyEnv: Record<string, string>;
   /** Env vars to strip so nothing hijacks an active subscription session. */
   suppressEnv: string[];
+  /**
+   * F-1567: quando o Nexus injeta a chave do Qwen (vault ou conta), o overlay
+   * do QWEN_HOME precisa gravar entradas `modelProviders` com
+   * `envKey` aleatória por spawn + esta base URL — sem elas a CLI
+   * ignora a env e usa o `security.auth.apiKey` embutido no settings do
+   * operador (o 401 do incidente) ou não autentica. Nunca carrega segredo.
+   */
+  qwenSettingsInjection?: QwenSettingsInjection;
   /** Recibo da escolha de conta (pinada/regra/ativa/nativa/legada). */
   accountChoice?: AccountChoiceReceipt;
   /** Main-only account binding for the physical session; never part of the receipt. */
@@ -472,6 +492,70 @@ function nativeKeyEnv(
   }
   const envVar = keyInjectionEnvVar(adapterId);
   return envVar ? { [envVar]: key } : {};
+}
+
+/**
+ * F-1567: instrução para o overlay do QWEN_HOME (sem segredo): a base URL que
+ * as entradas `modelProviders` geradas devem usar e os modelos cobertos. O
+ * Qwen Code só honra uma chave do env quando uma entrada a referencia via
+ * `envKey`; sem isto o pane ignorava a chave configurada no
+ * Nexus e morria em 401 com o `security.auth.apiKey` velho do settings.
+ */
+export interface QwenSettingsInjection {
+  readonly baseUrl: string;
+  readonly models: readonly string[];
+  /** A chave injetada é do Token Plan (`sk-sp-`). */
+  readonly tokenPlanKey: boolean;
+  /** Name unknown to operator settings before this physical spawn. */
+  readonly envKey: string;
+}
+
+/**
+ * Monta a injeção do Qwen quando o spawn vai levar a chave configurada. A base
+ * URL vem de Providers › Qwen › Avançado (a única que abre um host fora da
+ * lista), depois do settings.json do operador SÓ se for host conhecido (DashScope,
+ * planos Alibaba, DeepSeek direta; chave sk-sp- só em host de plano), depois do
+ * padrão do plano para sk-sp-, senão o DashScope. Ver resolveQwenInjectionBaseUrl.
+ */
+function qwenSettingsInjection(
+  key: string,
+  modelOverride?: string,
+): QwenSettingsInjection {
+  const cfg = configFor('qwen');
+  const summary = readQwenSettingsSummary();
+  const settingsBaseUrl = summary.authBaseUrl ?? summary.baseUrl;
+  const baseUrl =
+    resolveQwenInjectionBaseUrl({
+      configured: cfg.baseUrl,
+      settingsBaseUrl,
+      key,
+    }) ?? QWEN_DASHSCOPE_DEFAULT_BASE_URL;
+  // A URL do settings.json que não serviu (host fora da lista de destinos da
+  // chave, ou o DashScope padrão com chave sk-sp-) some em silêncio para quem
+  // usava um proxy ali: deixa o rastro, sem a URL inteira (pode carregar token).
+  if (settingsBaseUrl && !cfg.baseUrl && normalizeHttpsBaseUrl(settingsBaseUrl) !== baseUrl) {
+    console.warn(
+      `[provider-config] qwen: a base URL do settings.json (${httpsHostOf(settingsBaseUrl) ?? 'inválida'}) ` +
+        `não é destino da chave do Nexus; usando ${httpsHostOf(baseUrl)}. Para usar um proxy, ` +
+        'preencha Providers › Qwen › Avançado › Base URL da API.',
+    );
+  }
+  const models = new Set<string>();
+  for (const id of [
+    modelOverride,
+    cfg.defaultModel,
+    ...getAdapter('qwen')?.models.list ?? [],
+    ...getCustomModels('qwen'),
+  ]) {
+    const trimmed = id?.trim();
+    if (trimmed) models.add(trimmed);
+  }
+  return {
+    baseUrl,
+    models: [...models],
+    tokenPlanKey: isAlibabaPlanKey(key),
+    envKey: `${QWEN_INJECTED_KEY_ENV_PREFIX}${randomBytes(16).toString('hex')}`,
+  };
 }
 
 /**
@@ -1288,8 +1372,13 @@ function buildProviderSpawnOverrides(
       }
       return { ...base, keyEnv, suppressEnv: [] };
     }
-    const keyEnv = accKey
-      ? nativeKeyEnv(adapterId, accKey, perSpawn.model)
+    const qwenInjection = adapterId === 'qwen' && accKey
+      ? qwenSettingsInjection(accKey, perSpawn.model)
+      : undefined;
+    const keyEnv = qwenInjection
+      ? { [qwenInjection.envKey]: accKey! }
+      : accKey
+        ? nativeKeyEnv(adapterId, accKey, perSpawn.model)
       : {};
     if (preparedAccount && (!accKey || Object.keys(keyEnv).length === 0)) {
       throw new Error(
@@ -1300,6 +1389,10 @@ function buildProviderSpawnOverrides(
       ...base,
       keyEnv,
       suppressEnv: [],
+      // F-1567: a chave da conta 'a' também precisa das entradas no overlay.
+      ...(qwenInjection
+        ? { qwenSettingsInjection: qwenInjection }
+        : {}),
     };
   }
 
@@ -1359,9 +1452,14 @@ function buildProviderSpawnOverrides(
   const key = decision.injectKey
     ? resolveApiKey(adapterId, cfg.upstream)
     : null;
+  const qwenInjection = adapterId === 'qwen' && decision.injectKey && key
+    ? qwenSettingsInjection(key, perSpawn.model)
+    : undefined;
   const keyEnv =
-    decision.injectKey && adapter && key
-      ? nativeKeyEnv(adapterId, key, perSpawn.model)
+    qwenInjection
+      ? { [qwenInjection.envKey]: key! }
+      : decision.injectKey && adapter && key
+        ? nativeKeyEnv(adapterId, key, perSpawn.model)
       : decision.strategy === 'subscription' && adapterId === 'claude'
         ? nativeClaudeSubscriptionEnv(perSpawn.isolatedHome === true)
         : {};
@@ -1371,6 +1469,11 @@ function buildProviderSpawnOverrides(
     suppressEnv: decision.suppressKeyEnv
       ? subscriptionSuppressEnvVars(adapterId)
       : [],
+    // F-1567: chave do cofre injetada no Qwen — o overlay precisa das
+    // entradas modelProviders para a CLI realmente usar a env.
+    ...(qwenInjection
+      ? { qwenSettingsInjection: qwenInjection }
+      : {}),
   };
 }
 
@@ -2093,6 +2196,8 @@ function toInfo(
     authState: strategy !== 'login-needed' ? 'ok' :
       subscriptionAuthStatusIsUnknown(adapterId) ? 'unknown' : 'missing',
     upstream: deepseekSelected ?? (cfg.upstream || 'anthropic'),
+    // F-1567: base URL configurável do Qwen (vazia = automática pela chave).
+    ...(adapterId === 'qwen' && cfg.baseUrl ? { baseUrl: cfg.baseUrl } : {}),
     routable: isRoutable(adapterId),
     upstreams: listUpstreamProviders().map((p) => ({
       id: p.id,
@@ -3224,6 +3329,27 @@ async function confirmExecConfig(
   if (change.permissionMode !== undefined) {
     lines.push(`Permissões: ${change.permissionMode} (FULL AUTO)`);
   }
+  if (change.baseUrl !== undefined) {
+    lines.push(`Base URL da API: ${change.baseUrl}`);
+  }
+  // Cada aviso só aparece para a mudança a que ele se refere: FULL AUTO é de
+  // permissão, EXECUTAR é de binário/argumentos/permissão e a Base URL recebe
+  // a chave do provider.
+  const notes: string[] = [];
+  if (
+    change.binPath !== undefined ||
+    change.extraArgs !== undefined ||
+    change.permissionMode !== undefined
+  ) {
+    notes.push('O NexusIDE passará a EXECUTAR exatamente isto ao abrir este provider.');
+  }
+  if (change.permissionMode !== undefined) {
+    notes.push('FULL AUTO remove confirmações e pode reduzir ou desativar o sandbox.');
+  }
+  if (change.baseUrl !== undefined) {
+    notes.push('A chave configurada deste provider passará a ser ENVIADA para esta Base URL.');
+  }
+  notes.push('Confirme apenas se você entende e aceita esse alcance.');
   const opts = {
     type: 'warning' as const,
     buttons: ['Cancelar', 'Confiar e salvar'],
@@ -3231,11 +3357,7 @@ async function confirmExecConfig(
     cancelId: 0,
     title: 'Confirmar configuração de execução',
     message: `Confiar nesta configuração de alto impacto para ${label}?`,
-    detail:
-      `${lines.join('\n')}\n\n` +
-      'O NexusIDE passará a EXECUTAR exatamente isto ao abrir este provider. ' +
-      'FULL AUTO remove confirmações e pode reduzir ou desativar o sandbox. ' +
-      'Confirme apenas se você entende e aceita esse alcance.',
+    detail: `${lines.join('\n')}\n\n${notes.join(' ')}`,
     noLink: true,
   };
   const win = BrowserWindow.getFocusedWindow();
@@ -3243,6 +3365,23 @@ async function confirmExecConfig(
     ? await dialog.showMessageBox(win, opts)
     : await dialog.showMessageBox(opts);
   return result.response === 1;
+}
+
+/** F-1567: a URL digitada em Providers › Qwen foi descartada — o operador precisa ver por quê. */
+async function warnInvalidBaseUrl(adapterId: string, baseUrl: string): Promise<void> {
+  const opts = {
+    type: 'error' as const,
+    buttons: ['OK'],
+    title: 'Base URL inválida',
+    message: `URL rejeitada para ${getAdapter(adapterId)?.label ?? adapterId}`,
+    detail:
+      `${baseUrl}\n\nA Base URL da API precisa começar com https:// e não pode ` +
+      'ter usuário nem senha. O valor anterior foi mantido.',
+    noLink: true,
+  };
+  const win = BrowserWindow.getFocusedWindow();
+  if (win) await dialog.showMessageBox(win, opts);
+  else await dialog.showMessageBox(opts);
 }
 
 async function warnInvalidBin(
@@ -3687,6 +3826,26 @@ export function registerProviderIpc(): void {
       if (allowed) patch.upstream = upstream;
       else delete patch.upstream;
     }
+    if (patch.baseUrl !== undefined) {
+      // F-1567: a base URL configurável é do Qwen (endpoint OpenAI-compatible
+      // da chave). '' limpa; o valor precisa ser https sem credencial embutida
+      // e é salvo normalizado (new URL().href), o mesmo que a confirmação
+      // mostra. Uma URL descartada nunca some em silêncio: o operador vê o erro.
+      const typed = patch.baseUrl.trim();
+      if (adapterId !== 'qwen') {
+        delete patch.baseUrl;
+      } else if (typed === '') {
+        patch.baseUrl = '';
+      } else {
+        const baseUrl = normalizeHttpsBaseUrl(typed);
+        if (baseUrl) {
+          patch.baseUrl = baseUrl;
+        } else {
+          await warnInvalidBaseUrl(adapterId, typed);
+          delete patch.baseUrl;
+        }
+      }
+    }
 
     // SEC#4: binPath/extraArgs become the executed binary + argv at spawn. A
     // NEW value must pass validation AND an explicit native confirmation the
@@ -3707,6 +3866,7 @@ export function registerProviderIpc(): void {
         delete patch.binPath;
         delete patch.extraArgs;
         delete patch.permissionMode;
+        delete patch.baseUrl;
       }
     }
 
@@ -3716,6 +3876,7 @@ export function registerProviderIpc(): void {
     if (patch.defaultModel !== undefined) merged.defaultModel = patch.defaultModel;
     if (patch.extraArgs !== undefined) merged.extraArgs = patch.extraArgs;
     if (patch.upstream !== undefined) merged.upstream = patch.upstream;
+    if (patch.baseUrl !== undefined) merged.baseUrl = patch.baseUrl;
     if (patch.permissionMode !== undefined) merged.permissionMode = patch.permissionMode;
     if (patch.effort !== undefined) merged.effort = patch.effort;
     if (patch.verbose !== undefined) merged.verbose = patch.verbose;

@@ -1,16 +1,41 @@
 /** Bounded credential probe. The key is used in memory only at a trusted provider endpoint. */
 import { createHash } from 'node:crypto';
 import os from 'node:os';
-import { qwenSettingsPath } from './qwen-settings';
-import { ALIBABA_TOKEN_PLAN_HOST, TOKEN_PLAN_KEY_ENV_VARS } from './deepseek-provider';
+import {
+  parseQwenOperatorSettingsText,
+  QWEN_DASHSCOPE_DEFAULT_BASE_URL,
+  qwenOpenAiModelsEndpoint,
+  qwenSettingsPath,
+  resolveQwenInjectionBaseUrl,
+} from './qwen-settings';
+import { TOKEN_PLAN_KEY_ENV_VARS } from './deepseek-provider';
 import { readRegularFileCappedAsync } from '../redline/redline-safe-read';
 
 export type QwenReadinessState = 'present' | 'no-credential' | 'invalid-credential' | 'unknown';
 export interface QwenReadinessResult { readonly state: QwenReadinessState; readonly detail?: string }
 export const QWEN_PROBE_TIMEOUT_MS = 4_000;
+/**
+ * F-1567: 401/403 aqui é a CREDENCIAL recusada — nunca limite/cota. A chave
+ * sk-sp-… do Token Plan só vale na URL exclusiva do plano; uma base URL
+ * DashScope com ela dá exatamente este erro.
+ */
 export const QWEN_INVALID_CREDENTIAL_MESSAGE =
-  'Chave do Token Plan recusada (401/403) — renove em ModelStudio › Token Plan e cole em Providers › Qwen';
-const DEFAULT_BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+  'Chave inválida ou base URL incompatível com a chave (401/403) — chave ' +
+  'sk-sp-… do Token Plan só vale na URL exclusiva do plano. Confira a chave ' +
+  'e Avançado › Base URL em Providers › Qwen';
+const DEFAULT_BASE_URL = QWEN_DASHSCOPE_DEFAULT_BASE_URL;
+
+/**
+ * F-1567: a base URL configurada em Providers › Qwen › Avançado. O dono do
+ * providers.json é o provider-config-store, que registra este lookup no init
+ * (este módulo é folha do grafo — importá-lo de lá criaria um ciclo).
+ */
+let configuredBaseUrlLookup: () => string | null = () => null;
+export function setQwenProbeConfiguredBaseUrlLookup(
+  lookup: (() => string | null) | null,
+): void {
+  configuredBaseUrlLookup = lookup ?? (() => null);
+}
 
 type FetchLike = (input: string, init?: { method?: string; headers?: Record<string, string>; signal?: AbortSignal; redirect?: 'error' }) =>
   Promise<{ status: number; body?: { cancel(): Promise<void> } | null }>;
@@ -27,19 +52,13 @@ const object = (value: unknown): Record<string, unknown> => value && typeof valu
 const text = (value: unknown): string | null => typeof value === 'string' && value.trim() && value.length <= 8192 ? value.trim() : null;
 
 function probeEndpoint(base: string): string | null {
-  try {
-    const url = new URL(base);
-    if (url.protocol !== 'https:' || url.username || url.password || url.port && url.port !== '443' ||
-        url.search || url.hash || !['dashscope.aliyuncs.com', ALIBABA_TOKEN_PLAN_HOST].includes(url.hostname) ||
-        url.pathname.replace(/\/+$/, '') !== '/compatible-mode/v1') return null;
-    return `${url.origin}/compatible-mode/v1/models`;
-  } catch { return null; }
+  return qwenOpenAiModelsEndpoint(base);
 }
 
 async function resolveProbe(options: QwenProbeOptions) {
   const file = await readRegularFileCappedAsync(qwenSettingsPath(options.home ?? os.homedir()), 1024 * 1024);
   let settings: Record<string, unknown> = {};
-  try { if (file.kind === 'text') settings = object(JSON.parse(file.text)); } catch { /* Unknown config is not an auth rejection. */ }
+  try { if (file.kind === 'text') settings = object(parseQwenOperatorSettingsText(file.text)); } catch { /* Unknown config is not an auth rejection. */ }
   const model = object(settings.model);
   const auth = object(object(settings.security).auth);
   const env = object(settings.env);
@@ -50,17 +69,29 @@ async function resolveProbe(options: QwenProbeOptions) {
   const explicitKey = text(options.key);
   const openaiAuth = !text(auth.selectedType) || auth.selectedType === 'openai';
   // Match the CLI's provider selection and env-before-settings resolution.
-  // Nexus injects a configured key as BAILIAN_TOKEN_PLAN_API_KEY.
+  // An explicit key is authoritative for the readiness probe.
   const envValue = (name: string) => name === 'BAILIAN_TOKEN_PLAN_API_KEY' && explicitKey
     ? explicitKey : text(process.env[name]) ?? text(env[name]);
   const selectedKey = envKey ? envValue(envKey) : null;
   const environmentBase = text(process.env.OPENAI_BASE_URL);
   // An unrelated OPENAI_API_KEY must never be sent to Alibaba by fallback.
   const environmentKey = environmentBase && probeEndpoint(environmentBase) ? text(process.env.OPENAI_API_KEY) : null;
-  const key = openaiAuth ? selectedKey ?? explicitKey ?? environmentKey ?? text(auth.apiKey) ??
+  const key = openaiAuth ? explicitKey ?? selectedKey ?? environmentKey ?? text(auth.apiKey) ??
     TOKEN_PLAN_KEY_ENV_VARS.map(envValue).find(Boolean) ?? null : explicitKey;
-  const base = text(options.baseUrl) ?? text(selected?.baseUrl) ?? text(process.env.OPENAI_BASE_URL) ??
-    text(auth.baseUrl) ?? text(model.baseUrl) ?? DEFAULT_BASE_URL;
+  // F-1567: com a chave configurada (explicitKey), o spawn a torna
+  // autoritativa pelas entradas modelProviders do overlay, na base URL
+  // resolvida pela mesma regra (resolveQwenInjectionBaseUrl). A sonda testa
+  // o MESMO par chave+base URL que vai ao fio — antes ela provava a chave
+  // nova contra a URL padrão enquanto o pane usava o apiKey velho embutido
+  // no settings (ou a URL do DashScope com chave sk-sp-): o 401 do incidente.
+  const base = explicitKey
+    ? text(options.baseUrl) ?? resolveQwenInjectionBaseUrl({
+        configured: configuredBaseUrlLookup(),
+        settingsBaseUrl: text(auth.baseUrl) ?? text(model.baseUrl),
+        key: explicitKey,
+      }) ?? DEFAULT_BASE_URL
+    : text(options.baseUrl) ?? text(selected?.baseUrl) ?? text(process.env.OPENAI_BASE_URL) ??
+      text(auth.baseUrl) ?? text(model.baseUrl) ?? DEFAULT_BASE_URL;
   const identity = createHash('sha256').update(JSON.stringify([key, base, text(model.name), text(auth.selectedType)])).digest('hex');
   return { key, base, identity, nativeAuth: !openaiAuth && !explicitKey };
 }

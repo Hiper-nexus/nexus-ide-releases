@@ -1399,17 +1399,28 @@ describe('purgeStaleCliMcpSessions', () => {
       'f'.repeat(32),
       'keep.txt',
     );
+    // F-1567: o overlay do Qwen também guarda cópia do settings do operador.
+    const outsideQwenMarker = path.join(
+      outside,
+      'qwen',
+      'e'.repeat(32),
+      'keep.txt',
+    );
     const linkedArtifacts = path.join(root, 'linked-artifacts');
     write(outsideMarker, 'never-delete');
+    write(outsideQwenMarker, 'never-delete');
     fs.symlinkSync(outside, linkedArtifacts);
 
     const result = purgeStaleCliMcpSessions({
       artifactRoot: linkedArtifacts,
     });
 
-    expect(result.failed).toBe(6);
+    // Uma recusa por raiz de provider: kimi, grok, codex, opencode, mimo-code,
+    // muse e qwen.
+    expect(result.failed).toBe(7);
     expect(result.removed).toBe(0);
     expect(fs.readFileSync(outsideMarker, 'utf8')).toBe('never-delete');
+    expect(fs.readFileSync(outsideQwenMarker, 'utf8')).toBe('never-delete');
   });
 });
 
