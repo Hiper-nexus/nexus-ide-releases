@@ -99,13 +99,13 @@ export function qwenSettingsPath(home: string = os.homedir()): string {
 }
 
 export function readQwenSettingsSummary(home: string = os.homedir()): QwenSettingsSummary {
-  try { return parseQwenSettingsSummary(JSON.parse(fs.readFileSync(qwenSettingsPath(home), 'utf8'))); }
+  try { return parseQwenSettingsSummary(parseOperatorSettingsText(fs.readFileSync(qwenSettingsPath(home), 'utf8'))); }
   catch { return parseQwenSettingsSummary(null); }
 }
 
 export async function readQwenSettingsSummaryAsync(home: string = os.homedir()): Promise<QwenSettingsSummary> {
   const result = await readRegularFileCappedAsync(qwenSettingsPath(home), 1024 * 1024);
-  try { return parseQwenSettingsSummary(result.kind === 'text' ? JSON.parse(result.text) : null); }
+  try { return parseQwenSettingsSummary(result.kind === 'text' ? parseOperatorSettingsText(result.text) : null); }
   catch { return parseQwenSettingsSummary(null); }
 }
 
@@ -196,25 +196,44 @@ export const QWEN_DASHSCOPE_DEFAULT_BASE_URL =
   'https://dashscope.aliyuncs.com/compatible-mode/v1';
 
 /**
- * Hosts onde a chave do Qwen pode seguir SEM o operador ter escolhido a URL:
- * DashScope em qualquer região (inclui o Coding Plan) e a API direta da
- * DeepSeek. A lista é a que a própria CLI 0.25.2 conhece (dashscope[-intl|-us],
- * cn-hongkong, coding[-intl], token-plan.<região>.maas) — nunca "qualquer
- * *.aliyuncs.com", onde OSS e Function Compute de cliente também vivem.
+ * Destinos onde a chave do Qwen pode seguir SEM o operador ter escolhido a URL:
+ * lista FECHADA de autoridade + caminho exatos, extraída do bundle da Qwen Code
+ * 0.25.2 (DashScope por região, Coding Plan, Token Plan Pequim/Singapura) mais
+ * a API direta da DeepSeek. Nada de regex de subdomínio: `*.dashscope.aliyuncs.com`
+ * ou `*.aliyuncs.com` abrigam hosts de terceiros. `plan` = host de plano, o
+ * único onde a chave `sk-sp-` vale.
  */
-const ALIBABA_DASHSCOPE_HOST = /^(?:[a-z0-9-]+\.)?dashscope(?:-(?:intl|us))?\.aliyuncs\.com$/;
-/** Planos dedicados (Token Plan por região, Coding Plan): único lugar onde a chave `sk-sp-` vale. */
-const ALIBABA_PLAN_HOST = /^(?:token-plan\.[a-z0-9-]+\.maas|coding(?:-intl)?\.dashscope)\.aliyuncs\.com$/;
+const KNOWN_KEY_DESTINATIONS: ReadonlyMap<string, { readonly paths: readonly string[]; readonly plan: boolean }> =
+  new Map([
+    ['dashscope.aliyuncs.com', { paths: ['/compatible-mode/v1'], plan: false }],
+    ['dashscope-intl.aliyuncs.com', { paths: ['/compatible-mode/v1'], plan: false }],
+    ['dashscope-us.aliyuncs.com', { paths: ['/compatible-mode/v1'], plan: false }],
+    ['cn-hongkong.dashscope.aliyuncs.com', { paths: ['/compatible-mode/v1'], plan: false }],
+    ['coding.dashscope.aliyuncs.com', { paths: ['/v1'], plan: true }],
+    ['coding-intl.dashscope.aliyuncs.com', { paths: ['/v1'], plan: true }],
+    ['token-plan.cn-beijing.maas.aliyuncs.com', { paths: ['/compatible-mode/v1', '/apps/anthropic'], plan: true }],
+    ['token-plan.ap-southeast-1.maas.aliyuncs.com', { paths: ['/compatible-mode/v1', '/apps/anthropic'], plan: true }],
+    [DEEPSEEK_DIRECT_HOST, { paths: ['', '/v1'], plan: false }],
+  ]);
 
-function isAlibabaPlanHost(host: string | null): boolean {
-  return host !== null && ALIBABA_PLAN_HOST.test(host);
-}
-
-function isKnownKeyHost(host: string | null): boolean {
-  return (
-    host !== null &&
-    (host === DEEPSEEK_DIRECT_HOST || ALIBABA_DASHSCOPE_HOST.test(host) || isAlibabaPlanHost(host))
-  );
+/**
+ * A URL canônica se (e só se) for destino conhecido da chave: https, sem
+ * userinfo, porta 443 implícita, sem query/fragmento e caminho exato da lista.
+ * `new URL` já resolve punycode/maiúsculas; o `Map` compara a forma ASCII.
+ */
+function knownKeyDestination(raw: string | null | undefined): { href: string; plan: boolean } | null {
+  const text = raw?.trim();
+  if (!text || text.includes('#') || text.includes('?')) return null;
+  try {
+    const url = new URL(text);
+    if (url.protocol !== 'https:' || url.username || url.password || url.port) return null;
+    const entry = KNOWN_KEY_DESTINATIONS.get(url.hostname);
+    const pathname = url.pathname.replace(/\/+$/, '');
+    if (!entry || !entry.paths.includes(pathname)) return null;
+    return { href: `https://${url.hostname}${pathname}`, plan: entry.plan };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -251,11 +270,8 @@ export function resolveQwenInjectionBaseUrl(input: {
   const configured = normalizeHttpsBaseUrl(input.configured);
   if (configured) return configured;
   const planKey = isAlibabaPlanKey(input.key);
-  const settings = normalizeHttpsBaseUrl(input.settingsBaseUrl);
-  const host = httpsHostOf(settings);
-  if (settings && isKnownKeyHost(host) && (!planKey || isAlibabaPlanHost(host))) {
-    return settings;
-  }
+  const settings = knownKeyDestination(input.settingsBaseUrl);
+  if (settings && (!planKey || settings.plan)) return settings.href;
   return planKey ? ALIBABA_TOKEN_PLAN_OPENAI_BASE_URL : null;
 }
 
@@ -273,18 +289,25 @@ const QWEN_SETTINGS_MAX_BYTES = 1024 * 1024;
 export function readQwenOperatorSettings(file: string): Record<string, unknown> {
   const read = readRegularFileCapped(file, QWEN_SETTINGS_MAX_BYTES);
   if (read.kind !== 'text') return {};
-  const text = read.text.replace(/^\uFEFF/, '');
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
+    return asRecord(parseOperatorSettingsText(read.text)) ?? {};
   } catch {
-    try {
-      parsed = parseJsonc(text);
-    } catch {
-      return {};
-    }
+    return {};
   }
-  return asRecord(parsed) ?? {};
+}
+
+/**
+ * Mesmo parser do leitor do overlay e dos resumos (BOM + comentários + vírgula
+ * final, como a CLI): a decisão da base URL e o overlay enxergam o mesmo
+ * arquivo. Estrito primeiro; JSONC só se falhar. Lança se nenhum dos dois lê.
+ */
+function parseOperatorSettingsText(raw: string): unknown {
+  const text = raw.replace(/^\uFEFF/, '');
+  try {
+    return JSON.parse(text);
+  } catch {
+    return parseJsonc(text);
+  }
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -339,12 +362,12 @@ export function mergeQwenSettingsForInjection(
     );
   }
 
-  const injectedHost = httpsHostOf(options.baseUrl);
+  const injectedUrl = normalizeHttpsBaseUrl(options.baseUrl);
   const destinationOk = (entry: Record<string, unknown>): boolean => {
-    const host = httpsHostOf(nonEmptyString(entry.baseUrl));
-    if (!host) return false;
-    if (host === injectedHost) return true;
-    return isKnownKeyHost(host) && (!options.tokenPlanKey || isAlibabaPlanHost(host));
+    const url = nonEmptyString(entry.baseUrl);
+    if (injectedUrl && normalizeHttpsBaseUrl(url) === injectedUrl) return true;
+    const known = knownKeyDestination(url);
+    return known !== null && (!options.tokenPlanKey || known.plan);
   };
   const providers = objectField(settings, 'modelProviders') ?? {};
   // fromEntries (e não `providers[type] = …`): uma chave `__proto__` vinda do

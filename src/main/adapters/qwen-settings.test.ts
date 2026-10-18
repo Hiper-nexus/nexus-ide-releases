@@ -7,6 +7,7 @@ import {
   qwenSettingsHasCredential,
   readQwenOperatorSettings,
   readQwenSettingsSummary,
+  readQwenSettingsSummaryAsync,
   resolveQwenInjectionBaseUrl,
 } from './qwen-settings';
 
@@ -451,7 +452,7 @@ describe('F-1565: mergeQwenSettingsForInjection', () => {
     expect(rowsOf(merged, 'anthropic')[0]).toEqual(planRow);
   });
 
-  it('o proxy escolhido no campo (base URL da injeção) vale também para a linha do operador no mesmo host', () => {
+  it('o proxy escolhido no campo (base URL da injeção) vale só para a linha com a MESMA URL', () => {
     const proxy = 'https://proxy.da.empresa.example/v1';
     const merged = mergeQwenSettingsForInjection(
       {
@@ -465,7 +466,7 @@ describe('F-1565: mergeQwenSettingsForInjection', () => {
       options({ baseUrl: proxy, tokenPlanKey: false }),
     );
     expect(rowsOf(merged).map((row) => row.baseUrl)).toEqual([
-      'https://proxy.da.empresa.example/v2',
+      proxy,
       proxy,
     ]);
   });
@@ -484,6 +485,103 @@ describe('F-1565: mergeQwenSettingsForInjection', () => {
       baseUrl: PLAN, models: ['qwen3.8-max'], tokenPlanKey: true,
     });
     expect(rowsOf(merged)).toHaveLength(1);
+  });
+});
+
+describe('F-1565 A1: destino da chave só por autoridade/porta/caminho canônicos', () => {
+  const PLAN_CN = 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1';
+  const PLAN_SG = 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1';
+  const OURS = 'BAILIAN_TOKEN_PLAN_API_KEY';
+  const resolve = (settingsBaseUrl: string, key: string) =>
+    resolveQwenInjectionBaseUrl({ configured: null, settingsBaseUrl, key });
+
+  it.each([
+    ['https://dashscope.aliyuncs.com/compatible-mode/v1', 'sk-x'],
+    ['https://dashscope-intl.aliyuncs.com/compatible-mode/v1/', 'sk-x'],
+    ['https://dashscope-us.aliyuncs.com/compatible-mode/v1', 'sk-x'],
+    ['https://cn-hongkong.dashscope.aliyuncs.com/compatible-mode/v1', 'sk-x'],
+    ['https://api.deepseek.com', 'sk-x'],
+    ['https://API.DeepSeek.com/v1', 'sk-x'],
+    ['https://coding.dashscope.aliyuncs.com/v1', 'sk-sp-x'],
+    ['https://coding-intl.dashscope.aliyuncs.com/v1', 'sk-sp-x'],
+    [PLAN_CN, 'sk-sp-x'],
+    [PLAN_SG, 'sk-sp-x'],
+    ['https://dashscope.aliyuncs.com:443/compatible-mode/v1', 'sk-x'],
+  ])('canônica %s é aceita', (url, key) => {
+    const got = resolve(url, key);
+    expect(got).toBe(new URL(url).href.replace(/\/+$/, '').replace(':443', ''));
+  });
+
+  it.each([
+    'https://token-plan.ap-southeast-1.maas.aliyuncs.com:8443/unexpected-path',
+    'https://token-plan.ap-southeast-1.maas.aliyuncs.com:8443/compatible-mode/v1',
+    'https://token-plan.eu-west-9.maas.aliyuncs.com/compatible-mode/v1',
+    'https://token-plan.ap-southeast-1.maas.aliyuncs.com/unexpected-path',
+    'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/extra',
+    'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1?x=1',
+    'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1#frag',
+  ])('plano com porta/caminho/query/região fora da lista (%s) → padrão do plano', (url) => {
+    expect(resolve(url, 'sk-sp-x')).toBe(PLAN_SG);
+  });
+
+  it.each([
+    'https://dashscope.aliyuncs.com:8443/attacker',
+    'https://dashscope.aliyuncs.com/unexpected-path',
+    'https://dashscope.aliyuncs.com/compatible-mode/v1?k=1',
+    'https://dashscope.aliyuncs.com/compatible-mode/v1#f',
+    'https://attacker.dashscope.aliyuncs.com/v1',
+    'https://attacker.dashscope.aliyuncs.com/compatible-mode/v1',
+    'https://xn--ttacker-r3a.dashscope.aliyuncs.com/compatible-mode/v1',
+    'https://dashscope.aliyuncs.com.evil.example/compatible-mode/v1',
+    'https://aliyuncs.com.evil/compatible-mode/v1',
+    'https://api.deepseek.com:444',
+    'https://api.deepseek.com/anything',
+    'http://dashscope.aliyuncs.com/compatible-mode/v1',
+    'https://user:pw@dashscope.aliyuncs.com/compatible-mode/v1',
+    'ftp://dashscope.aliyuncs.com/compatible-mode/v1',
+    'não é url',
+  ])('chave comum nunca vai para %s', (url) => {
+    expect(resolve(url, 'sk-x')).toBeNull();
+  });
+
+  it('a mescla descarta linha do operador com a nossa envKey em destino fora da lista exata', () => {
+    const bad = [
+      'https://token-plan.ap-southeast-1.maas.aliyuncs.com:8443/unexpected-path',
+      'https://attacker.dashscope.aliyuncs.com/v1',
+      'https://dashscope.aliyuncs.com/attacker',
+    ];
+    const merged = mergeQwenSettingsForInjection(
+      {
+        modelProviders: {
+          openai: [
+            ...bad.map((baseUrl, i) => ({ id: `x${i}`, baseUrl, envKey: OURS })),
+            { id: 'ok', baseUrl: PLAN_CN, envKey: OURS },
+          ],
+        },
+      },
+      { baseUrl: PLAN_SG, models: [], tokenPlanKey: true },
+    );
+    const rows = (merged.modelProviders as { openai: Array<{ id: string; baseUrl: string }> }).openai;
+    expect(rows.find((r) => r.id === 'ok')?.baseUrl).toBe(PLAN_CN);
+    for (const i of [0, 1, 2]) expect(rows.find((r) => r.id === `x${i}`)?.baseUrl).toBe(PLAN_SG);
+  });
+});
+
+describe('F-1565 M5: o resumo lê o settings com o mesmo parser tolerante do overlay', () => {
+  it('BOM + comentário: security.auth.baseUrl chega ao resumo e ao resolvedor (sync e async)', async () => {
+    const home = tempHome();
+    const dir = path.join(home, '.qwen');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'settings.json'),
+      '\uFEFF// operador\n{ "security": { "auth": { "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1", }, }, }\n',
+    );
+    for (const summary of [readQwenSettingsSummary(home), await readQwenSettingsSummaryAsync(home)]) {
+      expect(summary.authBaseUrl).toBe('https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1');
+      expect(
+        resolveQwenInjectionBaseUrl({ configured: null, settingsBaseUrl: summary.authBaseUrl, key: 'sk-sp-x' }),
+      ).toBe('https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1');
+    }
   });
 });
 
