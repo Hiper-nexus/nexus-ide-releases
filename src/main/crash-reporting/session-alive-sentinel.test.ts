@@ -59,6 +59,62 @@ describe('session-alive-sentinel', () => {
     sentinel.dispose();
   });
 
+  it('onPriorCrashDetected callback receives prior crash PID and activePane count when expectedExit is false', () => {
+    const priorMarker: SessionAliveMarker = {
+      schemeVersion: 1,
+      pid: 99999,
+      startTime: Date.now() - 120_000,
+      lastPulse: Date.now() - 5_000,
+      rssMb: 256,
+      activePanes: 7,
+      expectedExit: false,
+    };
+    writeSessionAliveMarker(tempDir, priorMarker);
+
+    let capturedMarker: SessionAliveMarker | undefined;
+    const sentinel = new SessionAliveSentinel({
+      userDataPath: tempDir,
+      intervalMs: 100,
+      onPriorCrashDetected: (marker) => {
+        capturedMarker = marker;
+      },
+    });
+
+    sentinel.start();
+    expect(capturedMarker).toBeDefined();
+    expect(capturedMarker!.pid).toBe(99999);
+    expect(capturedMarker!.activePanes).toBe(7);
+    expect(capturedMarker!.rssMb).toBe(256);
+    sentinel.dispose();
+  });
+
+  it('onPriorCrashDetected does NOT fire when expectedExit is true (clean shutdown)', () => {
+    const cleanMarker: SessionAliveMarker = {
+      schemeVersion: 1,
+      pid: 11111,
+      startTime: Date.now() - 60_000,
+      lastPulse: Date.now() - 1_000,
+      rssMb: 100,
+      activePanes: 2,
+      expectedExit: true,
+    };
+    writeSessionAliveMarker(tempDir, cleanMarker);
+
+    let fired = false;
+    const sentinel = new SessionAliveSentinel({
+      userDataPath: tempDir,
+      intervalMs: 100,
+      onPriorCrashDetected: () => {
+        fired = true;
+      },
+    });
+
+    const { priorCrash } = sentinel.start();
+    expect(priorCrash).toBeNull();
+    expect(fired).toBe(false);
+    sentinel.dispose();
+  });
+
   it('marks expectedExit after any asynchronous pulse on graceful shutdown', async () => {
     const sentinel = new SessionAliveSentinel({
       userDataPath: tempDir,

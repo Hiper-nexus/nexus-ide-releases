@@ -1279,6 +1279,15 @@ if (squirrelStartupEvent || !wireDeepLinks()) {
               console.warn(
                 `[nexus] detected ungraceful exit from prior session (pid ${prior.pid}, rss ${prior.rssMb}MB, uptime ${Math.round((prior.lastPulse - prior.startTime) / 1000)}s)`,
               );
+              trace({
+                kind: 'prior-crash-detected',
+                pid: prior.pid,
+                rssMb: prior.rssMb,
+                uptimeSec: Math.round(
+                  (prior.lastPulse - prior.startTime) / 1000,
+                ),
+                activePanes: prior.activePanes,
+              });
             },
           });
           sessionAliveSentinel.start();

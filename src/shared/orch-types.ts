@@ -366,6 +366,9 @@ export interface Mission {
    * missão; ausente em missões antigas. Nunca autoridade.
    */
   decisionHints?: MissionDecisionHints;
+  /** Durably set when this process kicks off the mission. Absent for rows
+   *  parked before boot or started by a previous process. */
+  start?: number;
   createdAt: number;
   updatedAt: number;
 }
@@ -489,6 +492,7 @@ export const missionPatchSchema = z
     intentState: missionIntentStateSchema.optional(),
     intentContract: missionIntentContractSchema.nullable().optional(),
     intentVersion: z.number().int().nonnegative().max(1_000_000).optional(),
+    start: z.number().int().nonnegative().optional(),
   })
   .strict();
 export type MissionPatch = z.infer<typeof missionPatchSchema>;
