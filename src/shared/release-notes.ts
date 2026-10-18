@@ -11455,7 +11455,7 @@ export const RELEASE_076306: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076307: AppRelease = {
   version: '0.76.307',
   date: '2026-10-18',
   codename: 'Reserva sem rota falha no Linux',
@@ -11468,5 +11468,19 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: [
     { title: 'Circuito aberto fica fora da reserva', detail: 'A troca da reserva não escolhe CLI com circuito aberto; sem alternativa com o circuito fechado ou meio aberto, o Claude é mantido.' },
     { title: 'Lane de segurança respeitada', detail: 'Em auditoria de segurança crítica, a troca fica entre Claude e Codex, como o recibo diz, e não escapa para outra CLI.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.308',
+  date: '2026-10-18',
+  codename: 'Recibo fiel e esteira sem corrida no Mac',
+  summary: 'O recibo de rota deixa de dizer que evitou a rota falha quando o fail-open acabou escolhendo justamente ela, e o vigia de esteira relê o pedido de conclusão antes de mandar o lembrete. O smoke do macOS fica estável sob carga.',
+  highlights: [
+    { title: 'Recibo de rota fiel', detail: 'Quando todas as alternativas fora do Claude são falhas provadas e a primeira delas herda a vaga, o recibo não cita mais "evitou rota falha". O resto do recibo continua igual.' },
+    { title: 'Esteira sem corrida na conclusão', detail: 'O vigia confere de novo o pedido de conclusão depois da análise do Jev e antes de enviar o lembrete "Esteira parada". Um pedido feito nesse intervalo pelo Maestro atual cala o lembrete; pedido de outra sessão, versão ou missão não cala.' },
+  ],
+  fixes: [
+    { title: 'Smoke do macOS estável sob carga', detail: 'A sonda de PTY do smoke espera a prova de assinatura do boot antes de abrir o terminal. Se a prova falhar ou travar, o smoke falha de forma visível no timeout normal, sem prender o gate.' },
   ],
 };

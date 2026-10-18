@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.76.308 — Recibo fiel e esteira sem corrida no Mac
+
+Candidato macOS (`darwin-arm64`) assinado e notarizado. Em relação à 0.76.306 (último macOS):
+
+- **Recibo de rota fiel**. Quando todas as alternativas fora do Claude são falhas provadas e a primeira delas herda a vaga, o recibo não cita mais "evitou rota falha". O resto do recibo continua igual.
+- **Esteira sem corrida na conclusão**. O vigia relê o pedido de conclusão depois da análise do Jev e antes de enviar o lembrete "Esteira parada". Só o pedido do Maestro atual, na versão atual da missão, cala o lembrete.
+- **Smoke do macOS estável sob carga**. A sonda de PTY do smoke espera a prova de assinatura do boot; se ela falhar ou travar, o smoke falha de forma visível no timeout normal.
+
 ## 0.76.307 — Reserva sem rota falha no Linux
 
 A tag 0.76.306 é o candidato macOS. Este pacote leva o desktop Linux.
