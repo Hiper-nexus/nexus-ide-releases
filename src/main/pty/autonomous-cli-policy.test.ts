@@ -855,4 +855,35 @@ describe('secureAutonomousCliArgs', () => {
       }
     }
   });
+  it('boots every Claude-family mission worker in bypass without plan mode', () => {
+    const family = BUILTIN_ADAPTERS
+      .map((raw) => adapterSchema.parse(raw))
+      .filter((item): item is CliPtyAdapter =>
+        item.kind === 'cli-pty' &&
+        item.quirks.mcpAutoload === true &&
+        item.control.permission?.arg === '--permission-mode');
+    expect(family.map((item) => item.id)).toEqual(
+      expect.arrayContaining(['claude', 'deepseek', 'glm', 'glm-flash', 'longcat', 'openclaude']),
+    );
+    for (const item of family) {
+      for (const lane of [{}, { operatorChoiceParticipation: true }]) {
+        const args = secureAutonomousCliArgs(
+          item,
+          [...item.spawn.extraArgs, '--permission-mode', 'plan'],
+          false,
+          { ...lane, missionWorker: true },
+        );
+        for (const flag of item.control.permission?.yolo ?? []) {
+          expect(args, item.id).toContain(flag);
+        }
+        expect(args, item.id).not.toContain('plan');
+        expect(args, item.id).not.toContain('acceptEdits');
+        expect(args.slice(0, 3), item.id).toEqual([
+          '--disallowedTools',
+          'EnterPlanMode',
+          'ExitPlanMode',
+        ]);
+      }
+    }
+  });
 });

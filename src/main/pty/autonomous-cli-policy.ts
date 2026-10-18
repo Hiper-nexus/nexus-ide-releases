@@ -20,6 +20,13 @@ const CLAUDE_MUTATING_NATIVE_TOOLS = [
   'NotebookEdit',
 ] as const;
 const CLAUDE_FAMILY_ADAPTERS = new Set(['claude', 'glm', 'glm-flash', 'longcat', 'deepseek']);
+/**
+ * Claude Code built-ins that park an unattended worker on a human screen: the
+ * model enters plan mode by itself (auto-approved under bypass) and
+ * ExitPlanMode always waits for "Would you like to proceed?" (field 18/10,
+ * DeepSeek worker).
+ */
+const CLAUDE_PLAN_MODE_TOOLS = ['EnterPlanMode', 'ExitPlanMode'] as const;
 
 export interface NativeEffectAuthority {
   readonly source: SpawnAuthoritySource;
@@ -92,6 +99,8 @@ export interface AutonomousCliPolicyOptions {
    * mission. Per-session Nexus authority and the Main-owned merge still apply.
    */
   readonly operatorChoiceParticipation?: boolean;
+  /** Writable mission worker: nobody answers plan approval on its pane. */
+  readonly missionWorker?: boolean;
 }
 
 function sameCanonicalCapabilityList(
@@ -566,6 +575,34 @@ function requestedFullAutoSequence(
   return [];
 }
 
+function missionWorkerBypassArgs(
+  adapter: CliPtyAdapter,
+  args: string[],
+  options: AutonomousCliPolicyOptions,
+): string[] {
+  const permission = adapter.control?.permission;
+  if (
+    !options.missionWorker ||
+    !adapter.quirks.mcpAutoload ||
+    permission?.arg !== '--permission-mode'
+  ) {
+    return args;
+  }
+  // Workers boot in bypass even when the adapter pins a restricted mode
+  // (deepseek/glm ship `--permission-mode acceptEdits`): Bash would prompt.
+  let result = removeSequence([...args], permission.yolo);
+  for (let index = 0; index < result.length; ) {
+    if (result[index] === permission.arg && result[index + 1] !== undefined) {
+      result.splice(index, 2);
+      continue;
+    }
+    index += 1;
+  }
+  result = [...result, ...permission.yolo];
+  // Variadic flag first: a trailing positional prompt is never read as a tool.
+  return ['--disallowedTools', ...CLAUDE_PLAN_MODE_TOOLS, ...result];
+}
+
 /**
  * Apply provider permission flags without silently downgrading an explicit
  * full-auto choice. Squad role/read-only metadata scopes Nexus MCP authority;
@@ -697,7 +734,7 @@ export function secureAutonomousCliArgs(
     if ((permission?.yolo?.length ?? 0) > 0) {
       appendOnce(advisorArgs, permission!.yolo);
     }
-    return advisorArgs;
+    return missionWorkerBypassArgs(adapter, advisorArgs, options);
   }
 
   if (
@@ -775,5 +812,5 @@ export function secureAutonomousCliArgs(
   if (usesNexusOnlyTools) {
     args.push('--allowedTools', 'mcp__nexus__*');
   }
-  return args;
+  return missionWorkerBypassArgs(adapter, args, options);
 }

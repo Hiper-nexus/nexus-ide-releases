@@ -2742,6 +2742,7 @@ export function spawnAgentSession(
       advisoryUnconfinedParticipation,
       operatorChoiceWorkspaceWrite,
       operatorChoiceParticipation: executionPolicy.isFrictionless,
+      missionWorker: writableWorkerIntent,
     });
     if (safeNativeInitialPrompt !== undefined) {
       // Append after governed reconstruction: Codex/Claude rebuild argv from

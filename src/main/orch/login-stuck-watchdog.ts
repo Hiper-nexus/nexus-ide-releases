@@ -58,8 +58,10 @@ interface StuckPattern {
    * `mcp-auth` = third-party MCP server hung on boot (handoff fail-fast; do
    * not clear just because the semantic hook reports `working` — the CLI can
    * look "busy" while stuck in an MCP handshake loop).
+   * `human-prompt` = mid-turn approval screen nobody answers on a mission
+   * pane (handoff `blocked` to the Maestro; also kept under `working`).
    */
-  kind: 'cli-login' | 'mcp-auth';
+  kind: 'cli-login' | 'mcp-auth' | 'human-prompt';
 }
 
 // Curated, deliberately short heuristics: every entry costs one RegExp.test
@@ -94,6 +96,13 @@ const STUCK_PATTERNS: StuckPattern[] = [
     label: 'mcp auth failure',
     kind: 'mcp-auth',
   },
+  // Claude Code ExitPlanMode approval (DeepSeek worker parked on it, 18/10).
+  {
+    flavor: '*',
+    re: /has written up a plan and is ready to execute/i,
+    label: 'plan approval prompt',
+    kind: 'human-prompt',
+  },
 ];
 
 export function isMcpAuthStuckPattern(label: string): boolean {
@@ -127,9 +136,9 @@ export interface LoginStuckWatchdogDeps {
   emit(event: PaneLoginStuckEvent): void;
   log?(message: string): void;
   /**
-   * Optional side-effect for mission workers stuck on MCP auth (fail-fast
-   * handoff). Never called for ordinary CLI login screens — those stay UI-only
-   * so the operator can complete OAuth.
+   * Optional side-effect for mission workers stuck on MCP auth or on a
+   * human-prompt screen (handoff to the Maestro). Never called for ordinary
+   * CLI login screens — those stay UI-only so the operator can complete OAuth.
    */
   onMcpAuthStuck?(event: PaneLoginStuckEvent): void;
 }
@@ -169,11 +178,11 @@ export function createLoginStuckWatchdog(
       adapterId: watch.adapterId,
       stuck,
       pattern: watch.matchedPattern?.label ?? '',
-      // MCP-auth hangs are not cured by opening the CLI login flow.
+      // Only CLI-login screens are cured by opening the CLI login flow.
       canOpenLogin:
-        watch.matchedPattern?.kind === 'mcp-auth'
-          ? false
-          : deps.canOpenLogin(watch.adapterId),
+        watch.matchedPattern?.kind === 'cli-login'
+          ? deps.canOpenLogin(watch.adapterId)
+          : false,
       at: deps.now(),
     };
   }
@@ -188,7 +197,8 @@ export function createLoginStuckWatchdog(
     const event = buildEvent(watch, true);
     deps.emit(event);
     if (
-      watch.matchedPattern?.kind === 'mcp-auth' &&
+      watch.matchedPattern &&
+      watch.matchedPattern.kind !== 'cli-login' &&
       deps.onMcpAuthStuck
     ) {
       try {
@@ -220,7 +230,7 @@ export function createLoginStuckWatchdog(
         // can keep the semantic status on `working` while the quietKey is
         // frozen (handshake loop), so those patterns are NOT cleared here.
         if (
-          pattern?.kind !== 'mcp-auth' &&
+          (!pattern || pattern.kind === 'cli-login') &&
           deps.getSemanticStatus(watch.paneId)?.status === 'working'
         ) {
           clearProgress(watch);
@@ -417,15 +427,24 @@ export function installLoginStuckWatchdog(
         return;
       }
       mcpAuthHandoffSubmitted.add(event.sessionId);
+      const worker = `o worker "${pane.agentName ?? pane.title}" (${pane.paneId})`;
+      const quiet = `sem progresso por ${LOGIN_STUCK_REQUIRED_WINDOWS}×${LOGIN_STUCK_WINDOW_MS / 1000}s.`;
       const handoff = getProjectDomainStores(pane.scope).handoffs.submit({
-        status: 'failed',
-        summary:
-          `watchdog: o worker "${pane.agentName ?? pane.title}" (${pane.paneId}) ` +
-          `travou no bootstrap de MCP ("${event.pattern}") sem progresso por ` +
-          `${LOGIN_STUCK_REQUIRED_WINDOWS}×${LOGIN_STUCK_WINDOW_MS / 1000}s. ` +
-          `Os servidores MCP ambient do perfil do CLI não estão autenticados ` +
-          `ou falharam o handshake. Reautentique-os fora da missão, ou rode ` +
-          `sem eles — o Nexus já isola MCP ambient em workers Codex gated.`,
+        ...(isMcpAuthStuckPattern(event.pattern)
+          ? {
+            status: 'failed' as const,
+            summary:
+              `watchdog: ${worker} travou no bootstrap de MCP ("${event.pattern}") ${quiet} ` +
+              `Os servidores MCP ambient do perfil do CLI não estão autenticados ` +
+              `ou falharam o handshake. Reautentique-os fora da missão, ou rode ` +
+              `sem eles — o Nexus já isola MCP ambient em workers Codex gated.`,
+          }
+          : {
+            status: 'blocked' as const,
+            summary:
+              `watchdog: ${worker} parou numa tela que espera um humano ("${event.pattern}") ${quiet} ` +
+              `Leia o pane (nexus_pane_read) e responda a tela, ou feche e reabra o worker.`,
+          }),
         missionId: pane.missionId,
         sessionId: pane.sessionId,
         workerIncarnationId: pane.workerIncarnationId,
@@ -433,7 +452,7 @@ export function installLoginStuckWatchdog(
       });
       onHandoffSubmitted(handoff, pane.scope);
       console.warn(
-        `[login-stuck] mcp-auth fail-fast handoff: ${pane.paneId} (${event.pattern})`,
+        `[login-stuck] fail-fast handoff: ${pane.paneId} (${event.pattern})`,
       );
     },
   });

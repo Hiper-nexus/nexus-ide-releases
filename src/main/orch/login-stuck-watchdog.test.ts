@@ -325,6 +325,26 @@ describe('createLoginStuckWatchdog', () => {
     expect(mcpCalls[0].pattern).toBe('mcp handshake failed');
   });
 
+  it('escalates a worker parked on the plan approval screen even under a working hook', async () => {
+    const calls: PaneLoginStuckEvent[] = [];
+    const { watchdog, rig } = makeFactoryRig({
+      onMcpAuthStuck: (event) => calls.push(event),
+    });
+    watchdog.trackSession('s1', 'p1', 'deepseek');
+    rig.tails.set(
+      's1',
+      'Claude has written up a plan and is ready to execute. Would you like to proceed?\n' +
+        '❯ 1. Yes, and switch to BYPASS PERMISSIONS (no further prompts) for this session',
+    );
+    rig.statuses.set('p1', 'working');
+    for (let t = 5_000; t <= 40_000; t += 5_000) {
+      rig.setNow(t);
+      watchdog.tick();
+    }
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ paneId: 'p1', pattern: 'plan approval prompt', canOpenLogin: false });
+  });
+
   it('still clears CLI-login stuck when the working hook fires', async () => {
     const mcpCalls: PaneLoginStuckEvent[] = [];
     const { watchdog, rig } = makeFactoryRig({
@@ -434,6 +454,28 @@ describe('installLoginStuckWatchdog (wiring)', () => {
     disposeB();
     expect(harness.stateTap).not.toBeNull();
     disposeA();
+  });
+
+  it('hands the Maestro a blocked handoff for a worker parked on plan approval', async () => {
+    const scope = testProjectScope();
+    harness.agentInfo.mockReturnValue({ paneId: 'p1', adapterId: 'deepseek' });
+    harness.ownedPane.mockReturnValue({
+      paneId: 'p1', sessionId: 's1', kind: 'cli-agent', role: 'worker',
+      missionId: 'mission-1', workerIncarnationId: 'w1', scope,
+      owner: {} as OwnedPaneAuthzInfo['owner'],
+    });
+    harness.rendererScope.mockReturnValue(scope);
+    harness.tail.mockReturnValue('Claude has written up a plan and is ready to execute. Would you like to proceed?');
+    const dispose = installLoginStuckWatchdog();
+    try {
+      harness.stateTap?.('s1', 'busy');
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(harness.submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        fromAgent: 'nexus-watchdog', status: 'blocked', missionId: 'mission-1', workerIncarnationId: 'w1',
+      }));
+    } finally {
+      await dispose();
+    }
   });
 
   it.each(['current-worker-incarnation', undefined])('requires the current pane nonce for synthetic failure (%s)', async (workerIncarnationId) => {
