@@ -43,11 +43,9 @@ export interface CliMcpSessionOptions extends GovernedCliProfileOptions {
   mimoCustomConfigDir?: string;
   /**
    * F-1565: o Nexus injetou a chave do Qwen neste spawn — o overlay grava um
-   * settings.json de USUÁRIO MESCLADO (o do operador + entradas `modelProviders`
-   * com `envKey` aleatório por spawn e esta base URL) em vez de ligar o
-   * arquivo real, e um settings de SISTEMA separado só com o que o Nexus impõe
-   * (o catálogo gerado + endurecimento) por cima do settings de sistema real do
-   * admin. Sem segredo: a entrada só referencia a variável de ambiente.
+   * settings.json MESCLADO (o do operador + entradas `modelProviders` com
+   * `envKey` aleatório por spawn e esta base URL) em vez de ligar o
+   * arquivo real. Sem segredo: a entrada só referencia a variável de ambiente.
    */
   qwenSettingsInjection?: {
     readonly baseUrl: string;
@@ -55,14 +53,6 @@ export interface CliMcpSessionOptions extends GovernedCliProfileOptions {
     readonly tokenPlanKey: boolean;
     readonly envKey: string;
   };
-  /**
-   * Onde a Qwen Code leria o settings de SISTEMA e os defaults de sistema deste
-   * pane se o Nexus não os redirecionasse (`QWEN_CODE_SYSTEM_SETTINGS_PATH` /
-   * `QWEN_CODE_SYSTEM_DEFAULTS_PATH` do env já preparado). Ausentes: o padrão
-   * da plataforma. Só a injeção do F-1565 os lê; o admin do operador não se perde.
-   */
-  qwenSystemSettingsPath?: string;
-  qwenSystemDefaultsPath?: string;
 }
 
 export interface CliMcpSessionResult {

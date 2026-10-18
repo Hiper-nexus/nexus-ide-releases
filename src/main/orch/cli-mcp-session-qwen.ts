@@ -90,6 +90,17 @@ const QWEN_AUTH_ENTRIES = ['settings.json', 'installation_id'];
 /** Layer de SISTEMA do pane com injeção (F2/F3): só o que o Nexus impõe. */
 const QWEN_SYSTEM_SETTINGS_FILE = 'system-settings.json';
 
+interface QwenMcpSessionOptions extends CliMcpSessionOptions {
+  /**
+   * Onde a Qwen Code leria o settings de SISTEMA e os defaults de sistema deste
+   * pane se o Nexus não os redirecionasse (`QWEN_CODE_SYSTEM_SETTINGS_PATH` /
+   * `QWEN_CODE_SYSTEM_DEFAULTS_PATH` do env já preparado). Ausentes: o padrão da
+   * plataforma. Só a injeção do F-1565 os lê; o admin do operador não se perde.
+   */
+  qwenSystemSettingsPath?: string;
+  qwenSystemDefaultsPath?: string;
+}
+
 function qwenAuthGrantPaths(providerHome: string): string[] {
   const found: string[] = [];
   for (const name of QWEN_AUTH_ENTRIES) {
@@ -112,7 +123,7 @@ function qwenAuthGrantPaths(providerHome: string): string[] {
 export function prepareQwenMcpSession(
   url: string,
   token: string,
-  options: CliMcpSessionOptions = {},
+  options: QwenMcpSessionOptions = {},
 ): CliMcpSessionResult {
   validateCliMcpInputs(url, token);
   const home = path.resolve(options.home ?? os.homedir());
