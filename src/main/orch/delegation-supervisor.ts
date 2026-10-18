@@ -1902,7 +1902,8 @@ async function scanSuite(suite: ProjectDomainStoreSuite, now: number, context: P
           } catch {
             // Jev indisponível: decisão mecânica vale.
           }
-          if (!current() || workStamp() !== initialWorkStamp) continue missions;
+          if (!current() || workStamp() !== initialWorkStamp ||
+            hasCurrentCompletionRequest(suite.scope, mission)) continue missions;
           const handoff = suite.handoffs.submit({
             missionId: mission.id, status: 'progress',
             summary: nudgeText,

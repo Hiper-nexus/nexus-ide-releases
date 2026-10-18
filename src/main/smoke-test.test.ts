@@ -7,14 +7,16 @@ import { WINDOW_CHANNELS } from '../shared/channels';
 import { FUNCTIONAL_SMOKE_REQUIRED_PROBES, FUNCTIONAL_SMOKE_MIN_ADAPTERS, FUNCTIONAL_SMOKE_MIN_TOOLS } from '../shared/smoke-types';
 
 const seam = vi.hoisted(() => ({ userData: '', windowCreated: null as ((e: unknown, win: unknown) => void) | null,
-  quit: vi.fn(), ipc: new Map<string, (event: unknown, raw: unknown) => void>() }));
+  quit: vi.fn(), ipc: new Map<string, (event: unknown, raw: unknown) => void>(),
+  proveDarwinPty: vi.fn(async () => false), heavyJobBase: undefined as Promise<void> | undefined }));
 vi.mock('electron', () => ({ app: { isPackaged: true, getPath: () => seam.userData, getVersion: () => '0.76.192',
   quit: seam.quit, on: (event: string, listener: never) => { if (event === 'browser-window-created') seam.windowCreated = listener; } },
   ipcMain: { on: (channel: string, listener: never) => seam.ipc.set(channel, listener),
     removeListener: (channel: string) => seam.ipc.delete(channel) } }));
 vi.mock('./smoke-core', async () => ({ ...await vi.importActual('./smoke-core'), isCurrentProcessSmokeTest: () => true }));
 vi.mock('./pty/pty-host-client', () => ({ createRealPtyHost: () => ({}) }));
-vi.mock('./pty/darwin-pty-smoke', () => ({ proveDarwinPtyPipelineForSmoke: async () => false }));
+vi.mock('./pty/darwin-pty-smoke', () => ({ proveDarwinPtyPipelineForSmoke: seam.proveDarwinPty }));
+vi.mock('./orch/native-heavy-preload', () => ({ ensureNativeHeavyJobBase: () => seam.heavyJobBase }));
 vi.mock('./hang-watchdog/smoke-busy-banner', () => ({ isSmokeBusyBannerProbeRequested: () => false, proveMountedBusyBannerForSmoke: async () => {} }));
 vi.mock('./persistence/workspace-store', () => ({ grantWorkspacePathFromTrustedMain: (_wc: unknown, value: string) => value }));
 vi.mock('./smoke-owned-command', () => ({ proveMainOwnedCommandForSmoke: async () => ({ status: 'unavailable', reason: 'ad-hoc' }) }));
@@ -74,5 +76,28 @@ it.each(['uncaught-exception', 'timeout'])('real smoke caller arms FAIL physical
     if (timerHandle) clearTimeout(timerHandle);
     timerSpy.mockRestore(); vi.unstubAllEnvs(); process.exitCode = priorExitCode;
     await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+it('starts the Darwin PTY probe only after the boot native-heavy proof leaves the PTY host', async () => {
+  vi.resetModules(); seam.quit.mockClear(); seam.ipc.clear(); seam.proveDarwinPty.mockClear();
+  let settleJobBase!: () => void;
+  seam.heavyJobBase = new Promise<void>(resolve => { settleJobBase = resolve; });
+  const timerSpy = vi.spyOn(globalThis, 'setTimeout');
+  try {
+    const { initSmokeTest } = await import('./smoke-test');
+    initSmokeTest();
+    const wc = Object.assign(new EventEmitter(), { mainFrame: {}, isDestroyed: () => false, send: vi.fn() });
+    seam.windowCreated!(null, Object.assign(new EventEmitter(), { webContents: wc }));
+    await new Promise(resolve => setImmediate(resolve));
+    // The proof runs synchronous codesign in the same host: a probe overlapping
+    // it loses its receipt when macOS discards the unread PTY output.
+    expect(seam.proveDarwinPty).not.toHaveBeenCalled();
+    settleJobBase();
+    await vi.waitFor(() => expect(seam.proveDarwinPty).toHaveBeenCalledOnce());
+  } finally {
+    seam.heavyJobBase = undefined;
+    for (const call of timerSpy.mock.results) clearTimeout(call.value as ReturnType<typeof setTimeout>);
+    timerSpy.mockRestore();
   }
 });

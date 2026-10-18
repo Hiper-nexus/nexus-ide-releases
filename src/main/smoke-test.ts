@@ -17,6 +17,7 @@ import {
 import { grantWorkspacePathFromTrustedMain } from "./persistence/workspace-store";
 import { createRealPtyHost } from "./pty/pty-host-client";
 import { proveDarwinPtyPipelineForSmoke } from "./pty/darwin-pty-smoke";
+import { ensureNativeHeavyJobBase } from "./orch/native-heavy-preload";
 import { isSmokeBusyBannerProbeRequested, proveMountedBusyBannerForSmoke } from './hang-watchdog/smoke-busy-banner';
 import { SMOKE_HANG_PROBE_BLOCK_MS } from './hang-watchdog/smoke-hang-probe';
 import { isSoakSmokeRequested, proveSoakForSmoke } from './soak-smoke';
@@ -97,12 +98,17 @@ export function initSmokeTest(): void {
     // The utility-process pipeline below is the production path and subsumes
     // the direct helper self-probe. Running both trace-exec proofs inside the
     // Electron process can deadlock Security.framework during AppKit startup.
-    const darwinPtyPipelineProof = proveDarwinPtyPipelineForSmoke(
-      createRealPtyHost(),
-      {
+    // The boot native-heavy proof runs synchronous `codesign --verify --deep`
+    // on the same PTY host thread. Overlapping it, the host cannot read the
+    // probe receipt before the chain's last slave close, and macOS discards
+    // unread PTY output: exit 0 with no receipt on a loaded machine.
+    const darwinPtyPipelineProof = Promise.resolve(
+      ensureNativeHeavyJobBase(),
+    ).then(() =>
+      proveDarwinPtyPipelineForSmoke(createRealPtyHost(), {
         cwd: process.cwd(),
         environment: process.env,
-      },
+      }),
     );
     void darwinPtyPipelineProof
       .then((ready) => {
