@@ -197,6 +197,17 @@ export const LIMIT_SIGNAL_PATTERNS: readonly LimitSignalPattern[] = [
   { kind: 'auth', cooldownMs: 15 * 60 * 1000, re: /oauth token (?:expired|revoked)/i },
   { kind: 'auth', cooldownMs: 15 * 60 * 1000, re: /(?:error|failed|unable).{0,40}(?:not logged in|session expired)/i },
   { kind: 'auth', cooldownMs: 15 * 60 * 1000, re: /refresh token (?:expired|invalid|revoked)/i },
+  // F-1569: Claude Code 2.1.302 com o refresh OAuth recusado imprime só
+  // "● Login expired · Please run /login" (string do binário; a variante de
+  // perfil Anthropic termina em "Run /login to sign in again") — sem 401 nem
+  // authentication_error. Nenhum padrão casava: o Maestro parou em 18/10 com
+  // outra conta pronta. Célula da TUI ancorada no começo da linha (brancos e
+  // glifos ●⎿│), grafia exata: a frase no meio de prosa ou handoff não casa.
+  {
+    kind: 'auth',
+    cooldownMs: 15 * 60 * 1000,
+    re: /^(?:[^\S\r\n\u2028\u2029]|[●⎿│])*Login expired[^\S\r\n\u2028\u2029]*·[^\S\r\n\u2028\u2029]*(?:Please run \/login|Run \/login to sign in again)/m,
+  },
   // Kimi Code / Claude-family CLI: refresh rotacionado por outro ator
   // (sonda de cota, overlay) — o pane ecoa isto e pede /login.
   {

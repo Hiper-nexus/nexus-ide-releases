@@ -200,7 +200,8 @@ export interface ObserverProviderErrorPayload {
   scope?: string;
   /**
    * F-1484: o provedor declarou o limite de forma estruturada (StopFailure
-   * `rate_limit`), não prosa: o failover o trata como confirmado.
+   * `rate_limit`; F-1569: também `auth`), não prosa: o failover o trata como
+   * confirmado.
    */
   confirmed?: true;
   /** Adapter da sessão que declarou (o failover só confia no do próprio pane). */

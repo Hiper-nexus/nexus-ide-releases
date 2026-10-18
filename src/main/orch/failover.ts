@@ -3558,8 +3558,12 @@ function handleLimitHit(
   // no PTY parou uma missão com a conta operacional. A sonda decide: leitura
   // provider-api medida refuta (a credencial foi aceita para produzi-la),
   // `auth-expired` confirma, sem dados vira pausa capada na mesma conta.
+  // F-1569: o auth que a PRÓPRIA CLI declarou (StopFailure, `confirmedAt`) não
+  // passa pela sonda — a leitura da conta prova a credencial do cofre, nunca a
+  // sessão deste pane, que só volta com outra conta ou com novo /login.
+  const providerDeclaredAuth = hit.kind === 'auth' && hit.confirmedAt !== undefined;
   if (
-    (longCooldownNeedsFreshProviderApi(hit) || hit.kind === 'auth') &&
+    (longCooldownNeedsFreshProviderApi(hit) || (hit.kind === 'auth' && !providerDeclaredAuth)) &&
     !hasFreshProviderApiWindowForLimit(quotaEntry, hit, now) &&
     !providerApiExhaustsAccount(quotaEntry, hit, now) &&
     !providerApiConfirmsAuth(quotaEntry, hit, now)
