@@ -76,6 +76,12 @@ interface VoiceStore {
   info: VoiceRuntimeInfo | null;
   /** Nível de mic ao vivo [0,1] — visualizador de amplitude do orb. */
   level: number;
+  /**
+   * RMS suavizado do áudio de SAÍDA (a voz da Jarvis) [0,1], publicado pelo
+   * medidor de `voice-output-level` enquanto `status === 'speaking'` — a
+   * figura de partículas pulsa com a própria fala. Zero fora dela.
+   */
+  outputLevel: number;
   lastTranscript: string;
   lastSpoken: string;
   /** Transient fallback note, e.g. "groq throttled (429) → openai". */
@@ -124,6 +130,7 @@ interface VoiceStore {
   setStatus: (status: VoiceUiStatus) => void;
   setInfo: (info: VoiceRuntimeInfo) => void;
   setLevel: (level: number) => void;
+  setOutputLevel: (level: number) => void;
   setTranscript: (text: string) => void;
   setSpoken: (text: string) => void;
   setNote: (note: string | null) => void;
@@ -161,6 +168,7 @@ export const useVoiceStore = create<VoiceStore>((set) => ({
   status: 'idle',
   info: null,
   level: 0,
+  outputLevel: 0,
   lastTranscript: '',
   lastSpoken: '',
   note: null,
@@ -182,6 +190,7 @@ export const useVoiceStore = create<VoiceStore>((set) => ({
   setStatus: (status) => set({ status, ...(status !== 'error' ? { error: null } : {}) }),
   setInfo: (info) => set({ info }),
   setLevel: (level) => set({ level }),
+  setOutputLevel: (outputLevel) => set({ outputLevel }),
   setTranscript: (lastTranscript) => set({ lastTranscript }),
   setSpoken: (lastSpoken) => set({ lastSpoken }),
   setNote: (note) => set({ note }),

@@ -16,8 +16,8 @@ import { useVoiceStore, type VoiceUiStatus } from '../voice/voice-store';
  *    espalhada pelo canvas inteiro);
  *  - ouvindo: corpo inteiro puxado para dentro, pulsando com o nível do mic;
  *  - falando: ondas (ripples) saindo da cabeça/peito, boca e torso vibrando
- *    com a energia da fala (`speakingEnergy` — nível real quando há, pulso
- *    base quando não há);
+ *    com a energia da própria voz (`speakingEnergy` sobre o RMS da SAÍDA em
+ *    `voice-store.outputLevel`; pulso base quando não há nível);
  *  - transcrevendo/roteando: órbita/vórtice ao redor do centro;
  *  - erro: cor `--danger` e dispersão.
  *
@@ -283,6 +283,21 @@ export function speakingEnergy(level: number, t: number): number {
 }
 
 /**
+ * Nível que move a figura em cada estado: a PRÓPRIA voz (`outputLevel`, o RMS
+ * da saída medido por `voice-output-level`) quando fala; o microfone quando
+ * ouve; silêncio nos demais — eles já têm o próprio movimento base do estado.
+ */
+export function figureLevel(
+  status: VoiceUiStatus,
+  micLevel: number,
+  outputLevel: number,
+): number {
+  if (status === 'speaking') return clamp01(outputLevel);
+  if (status === 'listening') return clamp01(micLevel);
+  return 0;
+}
+
+/**
  * Peso da vibração por região do corpo enquanto fala: peito/torso vibram mais,
  * cabeça (boca) um pouco, pernas quase nada.
  */
@@ -408,6 +423,7 @@ const MAX_RIPPLES = 24;
 export function JarvisParticleFigure({ status }: { status: VoiceUiStatus }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const levelRef = useRef(0);
+  const outputRef = useRef(0);
   const statusRef = useRef<VoiceUiStatus>(status);
   const motionRef = useRef<FigureMotion>(figureMotionForStatus(status));
   /** Movimento reduzido: não há loop, então o estado novo pede repintura. */
@@ -458,6 +474,7 @@ export function JarvisParticleFigure({ status }: { status: VoiceUiStatus }) {
 
     const unsub = useVoiceStore.subscribe((s) => {
       levelRef.current = s.level;
+      outputRef.current = s.outputLevel;
     });
 
     // Cursor: ouvido em `window` (o canvas é pointer-events:none e o clique do
@@ -496,7 +513,8 @@ export function JarvisParticleFigure({ status }: { status: VoiceUiStatus }) {
       const size = cssSize;
       const cx = size / 2;
       const cy = size / 2;
-      const level = levelRef.current;
+      // Falando: o nível da PRÓPRIA voz (saída); ouvindo: o microfone.
+      const level = figureLevel(st, levelRef.current, outputRef.current);
       const t = now * 0.001;
 
       // Alvo de coesão: no ocioso a forma respira (desfaz e refaz devagar).
@@ -585,9 +603,10 @@ export function JarvisParticleFigure({ status }: { status: VoiceUiStatus }) {
         p.pos.y += p.vel.y + Math.cos(t * 0.7 + p.phase) * drift;
 
         // Vibração: boca/torso quando fala (peso por zona), tremor no erro.
+        // O raio cresce com a energia da própria voz — fala alta, corpo mais.
         const jitter =
           motion.jitter *
-          (st === 'speaking' ? speakingZoneWeight(p.home.y) * (0.4 + energy) : 0.6);
+          (st === 'speaking' ? speakingZoneWeight(p.home.y) * (0.3 + energy * 1.3) : 0.6);
         p.pos.x += Math.sin(t * 23 + p.phase * 7) * jitter * 0.5;
       }
 

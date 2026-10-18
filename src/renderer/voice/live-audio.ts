@@ -102,6 +102,12 @@ export class LiveAudioPlayer {
   constructor(
     private readonly contextFactory: () => AudioContext = () =>
       new AudioContext({ sampleRate: OUTPUT_SAMPLE_RATE }),
+    /**
+     * Intercepta a conexão de cada fonte à saída (source → … → destination) e
+     * devolve a soltura. O medidor de `voice-output-level` usa para publicar o
+     * nível da fala Live; sem nada, conecta direto ao destination.
+     */
+    private readonly tapOutput: ((ctx: AudioContext, source: AudioNode) => () => void) | null = null,
   ) {}
 
   private context(): AudioContext {
@@ -148,12 +154,18 @@ export class LiveAudioPlayer {
       buffer.getChannelData(0).set(floats);
       const source = ctx.createBufferSource();
       source.buffer = buffer;
-      source.connect(ctx.destination);
+      let untapOutput: (() => void) | null = null;
+      if (this.tapOutput) {
+        untapOutput = this.tapOutput(ctx, source);
+      } else {
+        source.connect(ctx.destination);
+      }
       const startAt = Math.max(ctx.currentTime, this.nextStartAt);
       source.start(startAt);
       this.nextStartAt = startAt + buffer.duration;
       this.active.push(source);
       source.onended = () => {
+        untapOutput?.();
         this.active = this.active.filter((item) => item !== source);
       };
       return scheduledTailMs(this.nextStartAt, ctx.currentTime);

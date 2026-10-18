@@ -1,4 +1,5 @@
 import { useVoiceStore } from './voice-store';
+import { jarvisOutputMeter } from './voice-output-level';
 import { playbackWakeSuppressionMs } from './voice-suppression-window';
 import {
   clearLocalAudioGate,
@@ -86,6 +87,9 @@ export async function playAudioBase64(
   if (!options.ignoreMute && isResponseMuted()) return 0;
   const gen = playbackGen;
   const genPreview = previewGen;
+  // Solta o medidor de saída no fim DAQUILO que tocou (caminhos de saída
+  // antecipada nunca chegaram a tapar nada).
+  let untapOutput: (() => void) | null = null;
   const bytes = base64ToBytes(base64);
   const ctx = new AudioContext();
   try {
@@ -116,7 +120,9 @@ export async function playAudioBase64(
     const source = ctx.createBufferSource();
     (options.preview ? previewSources : liveSources).push(source);
     source.buffer = audioBuffer;
-    source.connect(ctx.destination);
+    // A saída passa pelo medidor (source → analyser → destination): a figura
+    // de partículas ganha o nível REAL da fala em `voice-store.outputLevel`.
+    untapOutput = jarvisOutputMeter.tap(ctx, source);
     await new Promise<void>((resolve) => {
       source.onended = () => resolve();
       source.start();
@@ -130,6 +136,7 @@ export async function playAudioBase64(
     previewSources = previewSources.filter((s) => s !== source);
     return durationMs;
   } finally {
+    untapOutput?.();
     void ctx.close();
   }
 }
