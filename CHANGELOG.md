@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.76.307 — Reserva sem rota falha no Linux
+
+A tag 0.76.306 é o candidato macOS. Este pacote leva o desktop Linux.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35).
+
+No desktop Linux, em relação à 0.76.305:
+
+- **Reserva do Claude prefere rota saudável**. Com o Claude reservado ao Maestro, o worker vai para a primeira alternativa que não é falha provada (5+ tentativas e até 20% de sucesso, ex.: CLI com credencial recusada). Se todas as alternativas fora do Claude forem falhas provadas, a primeira delas ainda herda a vaga.
+- **Circuito aberto fora da reserva**. A troca não escolhe CLI com circuito aberto; sem alternativa com circuito fechado ou meio aberto, mantém o Claude.
+- **Lane de segurança respeitada**. Em auditoria de segurança crítica, a troca fica entre Claude e Codex e não escapa para outra CLI.
+- **Esteira em silêncio na verificação**. Com a conclusão pedida pelo Maestro atual e ainda sem resposta da verificação, o lembrete "Esteira parada" deixa de chegar a cada hora; se a verificação recusar, ele volta.
+
 ## 0.76.306 — Reserva sem rota falha e chave do Qwen no Mac
 
 Candidato macOS (`darwin-arm64`) assinado e notarizado. Em relação à 0.76.302 (último macOS), leva também o que a 0.76.304 e a 0.76.305 entregaram no Linux.

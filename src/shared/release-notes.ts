@@ -11438,7 +11438,7 @@ export const RELEASE_076305: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076306: AppRelease = {
   version: '0.76.306',
   date: '2026-10-18',
   codename: 'Reserva sem rota falha e chave do Qwen no Mac',
@@ -11452,5 +11452,21 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Circuito aberto fica fora da reserva', detail: 'A troca da reserva não escolhe CLI com circuito aberto; sem alternativa com o circuito fechado ou meio aberto, o Claude é mantido.' },
     { title: 'Lane de segurança respeitada', detail: 'Em auditoria de segurança crítica, a troca fica entre Claude e Codex, como o recibo diz, e não escapa para outra CLI.' },
     { title: 'Qwen: sonda e aviso certos', detail: 'A prontidão prova a mesma chave e URL que o pane vai usar, 401 ou 403 é credencial recusada e não cota, e o failover do Qwen fala de chave ou base URL incompatível.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.307',
+  date: '2026-10-18',
+  codename: 'Reserva sem rota falha no Linux',
+  summary: 'O desktop Linux recebe a reserva do Claude que prefere a primeira alternativa saudável, sem reabrir circuito aberto, e o vigia de esteira para de cobrar workers enquanto a missão espera a verificação de conclusão. A tag 0.76.306 ficou no macOS.',
+  highlights: [
+    { title: 'Reserva do Claude prefere rota saudável', detail: 'Quando o Claude fica reservado ao Maestro, o worker vai para a primeira alternativa que não é falha provada (cinco tentativas ou mais e até 20% de sucesso, como uma CLI com credencial recusada). Se todas as alternativas fora do Claude forem falhas provadas, a primeira delas ainda herda a vaga.' },
+    { title: 'Esteira em silêncio na verificação', detail: 'Depois que o Maestro atual pede a conclusão, o lembrete "Esteira parada" deixa de chegar a cada hora enquanto a verificação não responde. Se a verificação recusar a entrega, o lembrete volta.' },
+    { title: 'Pacote Linux', detail: 'A tag 0.76.306 é o candidato macOS e não recebe pacotes Linux. O desktop Linux sai na 0.76.307.' },
+  ],
+  fixes: [
+    { title: 'Circuito aberto fica fora da reserva', detail: 'A troca da reserva não escolhe CLI com circuito aberto; sem alternativa com o circuito fechado ou meio aberto, o Claude é mantido.' },
+    { title: 'Lane de segurança respeitada', detail: 'Em auditoria de segurança crítica, a troca fica entre Claude e Codex, como o recibo diz, e não escapa para outra CLI.' },
   ],
 };
