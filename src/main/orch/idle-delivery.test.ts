@@ -1621,7 +1621,7 @@ describe('idle delivery authority and lifecycle', { timeout: 60_000 }, () => {
     delivery.shutdownIdleDelivery();
   });
 
-  it('F-925 revisão: a sexta rodada liberada estaciona a entrega — delivery-needs-operator e retomada só com prova de mudança', async () => {
+  it('F-925 revisão: a sexta rodada estaciona com aviso e a borda busy→idle retoma na hora', async () => {
     const delivery = await import('./idle-delivery');
     const scope = testProjectScope();
     authorizeTarget(scope);
@@ -1661,8 +1661,8 @@ describe('idle delivery authority and lifecycle', { timeout: 60_000 }, () => {
         ?.status,
     ).toBe('running');
 
-    // Estacionada não tem timer: outbox, caixa durável e re-publish de idle
-    // não colam mais — 30 min parados de verdade.
+    // Sem o sweep do supervisor, outbox, caixa durável e re-publish de idle
+    // não reabrem o parque — 30 min parados de verdade.
     delivery.redeliverPendingHandoffs(scope, 'mission-a');
     ptyMocks.stateTaps[0]('orchestrator-session', 'idle');
     await vi.advanceTimersByTimeAsync(30 * 60_000);
@@ -1681,6 +1681,52 @@ describe('idle delivery authority and lifecycle', { timeout: 60_000 }, () => {
     ptyMocks.state = 'busy';
     ptyMocks.stateTaps[0]('orchestrator-session', 'busy');
     expect(storeMocks.delivered).toEqual([{ scope, id: 'handoff-a' }]);
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('entrega estacionada volta à fila no sweep depois do TTL, sem repetir aviso', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    const current = handoff();
+    storeMocks.handoffs.set(current.id, current);
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+    const pastes = () =>
+      ptyMocks.writes.mock.calls.filter((call) =>
+        String(call[1]).includes('completed the requested work'),
+      ).length;
+    const parkEventKeys = () => {
+      const calls = missionEventMocks.emitMissionEvent.mock.calls as unknown as Array<
+        Parameters<typeof import('./mission-event-emit').emitMissionEvent>
+      >;
+      return calls
+        .filter(([, event]) => event.payload?.kind === 'delivery-needs-operator')
+        .map(([, event]) => event.idempotencyKey);
+    };
+
+    delivery.onHandoffSubmitted(current, scope);
+    await vi.advanceTimersByTimeAsync(50 * 60_000);
+    const parkedPastes = 3 + delivery.IDLE_RELEASE_PARK_ROUNDS;
+    expect(pastes()).toBe(parkedPastes);
+    expect(parkEventKeys()).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(delivery.IDLE_RELEASE_RETRY_MAX_MS);
+    expect(pastes()).toBe(parkedPastes);
+    delivery.redeliverPendingHandoffs(
+      scope,
+      'mission-a',
+      undefined,
+      { requeueExpiredParks: true },
+    );
+    await advanceUntilPasted(delivery);
+    expect(pastes()).toBe(parkedPastes + 1);
+
+    await vi.advanceTimersByTimeAsync(
+      delivery.HANDOFF_PROMPT_SETTLE_MS + delivery.SUBMIT_ACCEPTANCE_WINDOW_MS + 1_000,
+    );
+    expect(parkEventKeys()).toHaveLength(2);
+    expect(new Set(parkEventKeys())).toHaveProperty('size', 1);
     delivery.shutdownIdleDelivery();
   });
 

@@ -16,6 +16,7 @@ const h = vi.hoisted(() => ({
     (_sessionId: string): { status: string; updatedAt: number } | null => null,
   ),
   onHandoffSubmitted: vi.fn(),
+  redeliverPendingHandoffs: vi.fn(),
   submit: vi.fn(),
   blockTechnical: vi.fn(),
 }));
@@ -39,7 +40,10 @@ vi.mock('./agent-status', async (importOriginal) => ({
 }));
 vi.mock('./idle-delivery', () => ({
   onHandoffSubmitted: h.onHandoffSubmitted,
-  redeliverPendingHandoffs: vi.fn(),
+  redeliverPendingHandoffs: h.redeliverPendingHandoffs,
+  handoffDeliveryEligible: (handoff: { status?: string; fromAgent?: string }) =>
+    handoff.fromAgent === 'nexus-delegation-supervisor' ||
+    (handoff.status !== 'stalled' && handoff.fromAgent !== 'nexus-mission-driver'),
 }));
 vi.mock('./squad-store', () => ({ getSquad: vi.fn(() => null) }));
 vi.mock('./mission-event-emit', () => ({
@@ -126,6 +130,36 @@ describe('F-242: worker travado no meio do turno acorda o Maestro', () => {
     vi.clearAllMocks();
     await shutdownDelegationSupervisor();
     prepareDelegationSupervisor();
+  });
+
+  it('scan do supervisor reavalia parques expirados no re-arm', async () => {
+    const mission = runningMission();
+    const stores = suite(mission);
+    stores.handoffs.list.mockReturnValue([{
+      id: 'handoff-parked',
+      missionId: mission.id,
+      sessionId: 'session-worker',
+      fromAgent: 'worker-a',
+      status: 'success',
+      summary: 'entrega estacionada',
+      delivered: false,
+      deliveryState: 'queued',
+      createdAt: NOW - 60 * 60_000,
+    }] as never);
+    h.onScope!(SCOPE, stores);
+    h.listPaneSnapshots.mockReturnValue([
+      { paneId: 'leader', sessionId: 'session-orch', kind: 'cli-agent', role: 'orchestrator', state: 'idle', missionId: mission.id },
+    ]);
+    h.getSemantic.mockReturnValue({ status: 'idle', updatedAt: NOW });
+
+    await reconcileDelegationSupervisor(NOW);
+
+    expect(h.redeliverPendingHandoffs).toHaveBeenCalledExactlyOnceWith(
+      SCOPE,
+      mission.id,
+      undefined,
+      { requeueExpiredParks: true },
+    );
   });
 
   it('F-252: an hour awaiting workers warns the leader without revoking mission authority', async () => {

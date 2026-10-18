@@ -170,6 +170,24 @@ describe('worker-handoff-ttl (paridade Overclock: worker fecha ~30s pós-handoff
     expect(h.closed[0]!.sessionId).toBe('pty-w1');
   });
 
+  it('stalled diagnóstico próprio não impede o TTL nem deixa pane zumbi', () => {
+    const h = harness({
+      handoffs: [{
+        ...handoffFor('pty-w1', 'queued'),
+        status: 'stalled',
+        fromAgent: 'worker-a',
+        delivered: false,
+      }],
+    });
+    initWorkerHandoffTtl(h.deps);
+    emitStatus('pty-w1', 'idle');
+
+    vi.advanceTimersByTime(WORKER_POST_HANDOFF_TTL_MS - 1);
+    expect(h.closed).toHaveLength(0);
+    vi.advanceTimersByTime(1);
+    expect(h.closed).toHaveLength(1);
+  });
+
   it('F-231: worker aberto pelo operador nunca expira (a mão é dele)', () => {
     const h = harness({
       authority: authorityFor('pty-w1', { operatorOpened: true }),

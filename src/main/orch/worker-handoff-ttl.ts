@@ -39,6 +39,7 @@ import {
   type PaneRuntimeAuthority,
 } from './pane-registry';
 import { getProjectDomainStores } from './project-domain-store-registry';
+import { handoffDeliveryEligible } from './handoff-delivery-policy';
 import {
   isSessionInjectableIdle,
   tapAgentSemanticStatus,
@@ -118,10 +119,11 @@ function noteWorkStarted(sessionId: string, at: number): void {
 }
 
 /**
- * "Handoff limpo": o worker entregou ao menos um handoff, NENHUM segue
- * pendente de consumo e ele não começou trabalho depois do último consumo.
- * Um handoff ainda queued/submitted significa que o orquestrador ainda não
- * processou o resultado. F-690: o Maestro reaproveita o helper que entregou
+ * "Handoff limpo": o worker entregou ao menos um handoff, NENHUM entregável
+ * segue pendente de consumo e ele não começou trabalho depois do último consumo.
+ * Diagnósticos que nunca são colados no Maestro não seguram o TTL. Um handoff
+ * entregável queued/submitted significa que o orquestrador ainda não processou
+ * o resultado. F-690: o Maestro reaproveita o helper que entregou
  * (`nexus_pane_write` segundos depois do consumo); o handoff antigo continua
  * `consumed`, e na primeira pausa do trabalho novo o TTL o matava — "encerrou
  * sem entregar", três vezes em 29/09. Reaproveitado, ele só fecha depois de
@@ -133,7 +135,11 @@ function hasCleanHandoff(
 ): boolean {
   const mine = workerHandoffs(deps, authority);
   if (mine.length === 0) return false;
-  if (!mine.every((handoff) => handoff.deliveryState === 'consumed')) return false;
+  if (
+    !mine.filter(handoffDeliveryEligible).every(
+      (handoff) => handoff.deliveryState === 'consumed',
+    )
+  ) return false;
   const settledAt = Math.max(
     ...mine.map((handoff) => handoff.consumedAt ?? handoff.createdAt),
   );
