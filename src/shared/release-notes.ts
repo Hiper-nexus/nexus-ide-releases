@@ -11336,7 +11336,7 @@ export const RELEASE_076299: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076300: AppRelease = {
   version: '0.76.300',
   date: '2026-10-17',
   codename: 'Jarvis com corpo de partículas, fala sem laço e janela à mão',
@@ -11349,5 +11349,21 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: [
     { title: 'Figura legível no ocioso', detail: 'Parada, só as mãos e os pés se soltam; as duas pernas continuam legíveis. Com movimento reduzido, a figura fica estática e formada.' },
     { title: 'CSS morto das partículas', detail: 'O CSS antigo das partículas por DOM foi removido e a suíte de tokens religada.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.301',
+  date: '2026-10-17',
+  codename: 'Linux em dia com a Jarvis de partículas',
+  summary: 'O desktop Linux recebe o humano de partículas da Jarvis, o atalho que recupera a janela e o relato de handoff sem laço. A tag 0.76.300 não recebe pacotes Linux.',
+  highlights: [
+    { title: 'Corpo de partículas no HUD', detail: 'O humano de partículas se forma e se desfaz, muda de estado sozinho, mostra o cursor e desenha ondas enquanto fala. Clicar nele acorda a Jarvis, e a barra de título serve de alça para arrastar o HUD.' },
+    { title: 'Janela sempre à mão', detail: 'O atalho global recupera a janela do Nexus mesmo minimizada. Ele só age ao abrir a captura, confere o foco e registra o que fez, sem roubar quem está digitando em outro lugar.' },
+    { title: 'Voz sem laço', detail: 'O relato de handoff espera o despertar e o turno da voz terminarem, não segura o microfone e não entra em laço de re-síntese quando a voz local é lenta.' },
+  ],
+  fixes: [
+    { title: 'Atualização do Linux', detail: 'A tag 0.76.300 não recebe pacotes Linux: é o candidato macOS. O desktop Linux sai na 0.76.301.' },
+    { title: 'Figura legível no ocioso', detail: 'Parada, só as mãos e os pés se soltam; as duas pernas continuam legíveis. Com movimento reduzido, a figura fica estática e formada.' },
   ],
 };
