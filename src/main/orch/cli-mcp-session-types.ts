@@ -41,6 +41,17 @@ export interface CliMcpSessionOptions extends GovernedCliProfileOptions {
   /** Main's active loopback status listener. Never persisted in the hook source. */
   mimoHookEndpoint?: { port: number; token: string };
   mimoCustomConfigDir?: string;
+  /**
+   * F-1565: o Nexus injetou a chave do Qwen neste spawn — o overlay grava um
+   * settings.json MESCLADO (o do operador + entradas `modelProviders` com
+   * `envKey: BAILIAN_TOKEN_PLAN_API_KEY` e esta base URL) em vez de ligar o
+   * arquivo real. Sem segredo: a entrada só referencia a variável de ambiente.
+   */
+  qwenSettingsInjection?: {
+    readonly baseUrl: string;
+    readonly models: readonly string[];
+    readonly tokenPlanKey: boolean;
+  };
 }
 
 export interface CliMcpSessionResult {

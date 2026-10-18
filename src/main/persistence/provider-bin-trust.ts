@@ -45,6 +45,12 @@ export interface SensitiveChange {
   extraArgs?: string[];
   /** Explicit full-auto/bypass selection that weakens the safe baseline. */
   permissionMode?: string;
+  /**
+   * F-1565: nova base URL do provider (Qwen) — ela decide o endpoint que
+   * recebe a chave configurada, então uma URL nova exige a mesma confirmação
+   * nativa que o binário.
+   */
+  baseUrl?: string;
 }
 
 /**
@@ -53,8 +59,8 @@ export interface SensitiveChange {
  * (→ '' / []) or re-saving the same value never prompts.
  */
 export function sensitiveChanges(
-  patch: { binPath?: string; extraArgs?: string[]; permissionMode?: string },
-  current: { binPath: string; extraArgs: string[]; permissionMode?: string },
+  patch: { binPath?: string; extraArgs?: string[]; permissionMode?: string; baseUrl?: string },
+  current: { binPath: string; extraArgs: string[]; permissionMode?: string; baseUrl?: string },
 ): SensitiveChange {
   const change: SensitiveChange = {};
   if (
@@ -78,6 +84,13 @@ export function sensitiveChanges(
   ) {
     change.permissionMode = patch.permissionMode;
   }
+  if (
+    patch.baseUrl !== undefined &&
+    patch.baseUrl.trim() !== '' &&
+    patch.baseUrl !== (current.baseUrl ?? '')
+  ) {
+    change.baseUrl = patch.baseUrl;
+  }
   return change;
 }
 
@@ -85,6 +98,7 @@ export function hasSensitiveChange(change: SensitiveChange): boolean {
   return (
     change.binPath !== undefined ||
     change.extraArgs !== undefined ||
-    change.permissionMode !== undefined
+    change.permissionMode !== undefined ||
+    change.baseUrl !== undefined
   );
 }

@@ -29,10 +29,12 @@ export function blockedFailoverToastCopy(
   switch (effectiveKind(event)) {
     case 'auth':
       return {
-        title: `Sessão expirada em "${event.fromAccountLabel}"`,
+        title: `Credencial recusada em "${event.fromAccountLabel}"`,
         detail:
-          `${event.reason}. Nenhuma credencial alternativa está pronta. ` +
-          `Entre novamente em Configurações → Providers.${retryNote}`,
+          `${event.reason}. Chave inválida/expirada ou base URL incompatível ` +
+          `com a chave (uma chave sk-sp-… de plano dedicado só vale na URL ` +
+          `exclusiva do plano); sessão de login pede entrar novamente. ` +
+          `Resolva em Configurações → Providers.${retryNote}`,
       };
     case 'quota':
       return {

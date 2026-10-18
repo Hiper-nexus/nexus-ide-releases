@@ -28,9 +28,12 @@ describe('blockedFailoverToastCopy', () => {
     const copy = blockedFailoverToastCopy(
       event('auth', 'HTTP 401: OAuth token expired'),
     );
-    expect(copy.title).toMatch(/Sessão expirada/);
+    // F-1565: 401 é credencial recusada (chave inválida/expirada ou base URL
+    // incompatível), nunca limite/cota.
+    expect(copy.title).toMatch(/Credencial recusada/);
     expect(copy.title).not.toMatch(/Limite|Cota/);
-    expect(copy.detail).toMatch(/Entre novamente/);
+    expect(copy.detail).toMatch(/base URL incompatível/);
+    expect(copy.detail).toMatch(/Configurações → Providers/);
   });
 
   it('gives distinct recovery copy for quota, rate limit and transients', () => {

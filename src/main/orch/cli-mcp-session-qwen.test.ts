@@ -167,3 +167,81 @@ describe('prepareQwenMcpSession (F-238)', () => {
     }
   });
 });
+
+describe('prepareQwenMcpSession — injeção de chave do Nexus (F-1565)', () => {
+  const PLAN = 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1';
+
+  it('com injeção, o overlay ESCREVE um settings mesclado (sem segredo) em vez de ligar', () => {
+    const fx = fixture();
+    const result = prepareQwenMcpSession(URL, TOKEN, {
+      home: fx.home,
+      providerHome: fx.providerHome,
+      userDataPath: fx.userDataPath,
+      artifactRoot: fx.artifactRoot,
+      checkoutId: 'checkout-3',
+      cwd: fx.workspace,
+      workspaceRoot: fx.workspace,
+      qwenSettingsInjection: {
+        baseUrl: PLAN,
+        models: ['qwen3.8-max'],
+        tokenPlanKey: true,
+      },
+    });
+    try {
+      const artifactDir = result.artifactDir!;
+      const written = path.join(artifactDir, 'settings.json');
+      // Não é link para o perfil real: é a cópia mesclada efêmera.
+      if (process.platform !== 'win32') {
+        expect(fs.lstatSync(written).isSymbolicLink()).toBe(false);
+      }
+      const merged = JSON.parse(fs.readFileSync(written, 'utf8')) as {
+        security: { auth: { selectedType: string } };
+        modelProviders: { openai: Array<Record<string, unknown>> };
+        env?: Record<string, string>;
+      };
+      expect(merged.security.auth.selectedType).toBe('openai');
+      expect(merged.modelProviders.openai[0]).toMatchObject({
+        id: 'qwen3.8-max',
+        baseUrl: PLAN,
+        envKey: 'BAILIAN_TOKEN_PLAN_API_KEY',
+      });
+      // O settings do operador (com o env.BAILIAN… dele) é preservado na
+      // mescla, mas o arquivo real nunca é tocado.
+      expect(merged.env?.BAILIAN_TOKEN_PLAN_API_KEY).toBe('fixture-settings-secret');
+      expect(fs.readFileSync(path.join(fx.providerHome, 'settings.json'), 'utf8'))
+        .not.toContain('modelProviders');
+      // MCP ambiente continua lido do settings do operador (blender entra).
+      expect(readMcpConfig(artifactDir).mcpServers.blender).toEqual({ command: 'blender-mcp' });
+    } finally {
+      cleanupCliMcpSession(TOKEN);
+    }
+  });
+
+  it('governado com injeção: o grant de escrita no settings.json REAL sai', () => {
+    const fx = fixture();
+    const result = prepareQwenMcpSession(URL, TOKEN, {
+      home: fx.home,
+      providerHome: fx.providerHome,
+      userDataPath: fx.userDataPath,
+      artifactRoot: fx.artifactRoot,
+      checkoutId: 'checkout-4',
+      cwd: fx.workspace,
+      workspaceRoot: fx.workspace,
+      governed: true,
+      allowedSkills: [],
+      allowedTools: [],
+      qwenSettingsInjection: { baseUrl: PLAN, models: ['qwen3.8-max'], tokenPlanKey: true },
+    });
+    try {
+      expect(result.providerStateWritePaths ?? []).not.toContain(
+        path.join(fx.providerHome, 'settings.json'),
+      );
+      const written = path.join(result.artifactDir!, 'settings.json');
+      if (process.platform !== 'win32') {
+        expect(fs.lstatSync(written).isSymbolicLink()).toBe(false);
+      }
+    } finally {
+      cleanupCliMcpSession(TOKEN);
+    }
+  });
+});

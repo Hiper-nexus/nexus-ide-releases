@@ -333,6 +333,14 @@ describe('detectLimit', () => {
   it('detects auth errors', () => {
     expect(detectLimit('401 authentication_error')?.kind).toBe('auth');
     expect(detectLimit('invalid api key provided')?.kind).toBe('auth');
+    // F-1565: a string EXATA do Qwen Code no incidente (hífen em "API-key") —
+    // é credencial recusada (auth), nunca quota/rate-limit.
+    const qwen401 = detectLimit(
+      '[API Error: 401 Invalid API-key provided. For details, see: ' +
+        'https://www.alibabacloud.com/help/en/model-studio/error-code#apikey-error (request_id: abc)]',
+    );
+    expect(qwen401?.kind).toBe('auth');
+    expect(detectLimit('Invalid API-key provided.')?.kind).toBe('auth');
     expect(
       detectLimit(
         'Error: [internal] Stored token for "kimi-code" was rejected; re-login required.',

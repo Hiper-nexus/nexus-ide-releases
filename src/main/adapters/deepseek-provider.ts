@@ -30,6 +30,14 @@ export const ALIBABA_TOKEN_PLAN_HOST =
   'token-plan.ap-southeast-1.maas.aliyuncs.com';
 export const ALIBABA_TOKEN_PLAN_ANTHROPIC_BASE_URL =
   `https://${ALIBABA_TOKEN_PLAN_HOST}/apps/anthropic`;
+/**
+ * Endpoint OpenAI-compatible do mesmo Token Plan (o `/auth` do Qwen Code e a
+ * doc oficial do Model Studio gravam este em `settings.json` ›
+ * `modelProviders.openai[].baseUrl`). Chave `sk-sp-` só vale nele: no endpoint
+ * padrão do DashScope ela morre em 401 "Invalid API-key".
+ */
+export const ALIBABA_TOKEN_PLAN_OPENAI_BASE_URL =
+  `https://${ALIBABA_TOKEN_PLAN_HOST}/compatible-mode/v1`;
 
 /** Único DeepSeek que o Token Plan serve (o flash responde 403). */
 export const DEEPSEEK_TOKEN_PLAN_MODEL = 'deepseek-v4-pro';

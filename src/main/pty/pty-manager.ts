@@ -744,6 +744,14 @@ export type AgentSpawnHook = (
   preparedEnv?: Readonly<Record<string, string>>,
   /** Main-owned actual transport snapshot after gateway routing; never use it as provider identity. */
   transportEnv?: Readonly<Record<string, string>>,
+  /** F-1565: descritor sem segredo decidido pelo hub de providers (Qwen). */
+  providerSpawnHints?: {
+    readonly qwenSettingsInjection?: {
+      readonly baseUrl: string;
+      readonly models: readonly string[];
+      readonly tokenPlanKey: boolean;
+    };
+  },
 ) => AgentSpawnDecoration | null;
 
 let agentSpawnHook: AgentSpawnHook | null = null;
@@ -1764,6 +1772,12 @@ export interface AgentSpawnOverrides {
    * o spawn só troca o `--model` — nunca inventa um id.
    */
   modelAliases?: Readonly<Record<string, string>>;
+  /**
+   * F-1565: Qwen com chave injetada pelo Nexus — o overlay do QWEN_HOME grava
+   * entradas `modelProviders` (envKey + baseUrl, sem segredo) para a CLI usar
+   * a env de verdade. Definido pelo hub de providers; ausente = sem injeção.
+   */
+  qwenSettingsInjection?: { readonly baseUrl: string; readonly models: readonly string[]; readonly tokenPlanKey: boolean };
 }
 
 /** Modelo que o provedor escolhido realmente serve para o id pedido. */
@@ -2382,7 +2396,10 @@ export function spawnAgentSession(
   // Pass prepared env so MCP overlays (Grok/Kimi) can source managed-account homes.
   const preparedEnvSnapshot = cleanEnv(identityEnv);
   const decoration = agentSpawnHook
-    ? agentSpawnHook(adapter, req, authority, preparedEnvSnapshot, Object.freeze(cleanEnv(env)))
+    ? agentSpawnHook(adapter, req, authority, preparedEnvSnapshot, Object.freeze(cleanEnv(env)),
+        overrides.qwenSettingsInjection
+          ? { qwenSettingsInjection: overrides.qwenSettingsInjection }
+          : undefined)
     : null;
   const trustedWorkspaceConfigOverrides =
     adapter.id === "codex" && decoration

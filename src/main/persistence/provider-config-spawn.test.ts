@@ -476,6 +476,15 @@ vi.mock('./agy-keyring-activation', () => ({
 const qwenSettingsProbe = vi.hoisted(() => ({
   hasCredential: vi.fn<() => boolean>(() => false),
   readiness: 'unknown' as 'unknown' | 'present' | 'invalid-credential',
+  // F-1565: o spawn lê o resumo do settings para resolver a base URL da
+  // injeção; o padrão é "sem settings.json" para o teste ser hermético.
+  summary: {
+    hasCredential: false,
+    baseUrl: null,
+    authBaseUrl: null,
+    tokenPlan: false,
+    modelIds: [],
+  } as unknown as import('../adapters/qwen-settings').QwenSettingsSummary,
 }));
 vi.mock('../adapters/qwen-readiness-cache', () => ({
   peekQwenReadiness: () => ({ state: qwenSettingsProbe.readiness }),
@@ -483,8 +492,10 @@ vi.mock('../adapters/qwen-readiness-cache', () => ({
   invalidateQwenReadiness: vi.fn(),
   verifyQwenReadiness: vi.fn(async () => ({ state: qwenSettingsProbe.readiness })),
 }));
-vi.mock('../adapters/qwen-settings', () => ({
+vi.mock('../adapters/qwen-settings', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../adapters/qwen-settings')>()),
   qwenSettingsHasCredential: qwenSettingsProbe.hasCredential,
+  readQwenSettingsSummary: () => qwenSettingsProbe.summary,
 }));
 
 const minimaxRuntime = vi.hoisted(() => ({
@@ -3147,5 +3158,110 @@ describe('N1: fronteira IPC de keys de providers', () => {
     expect(handler({}, { adapterId: 'claude', key: 'key-test' })).toEqual({ ok: true });
     expect(handler({}, { adapterId: 'claude', key: '' })).toEqual({ ok: true });
     expect(spawnDeps.setKey.mock.calls).toEqual([['claude', 'key-test'], ['claude', '']]);
+  });
+});
+
+describe('F-1565: spawn do Qwen carrega o descritor de injeção do overlay', () => {
+  const PLAN = 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1';
+  const noSettings = {
+    hasCredential: false, baseUrl: null, authBaseUrl: null, tokenPlan: false, modelIds: [],
+  } as never;
+
+  beforeAll(() => initializeProviderConfigStore());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    spawnDeps.runtimeKey.mockReturnValue(null);
+    spawnDeps.hasSecret.mockReturnValue(false);
+    spawnDeps.hasCachedSecret.mockReturnValue(false);
+    spawnDeps.launcherKey.mockReturnValue(null);
+    spawnDeps.listAccounts.mockReturnValue([]);
+    qwenSettingsProbe.hasCredential.mockReturnValue(false);
+    qwenSettingsProbe.readiness = 'unknown';
+    qwenSettingsProbe.summary = noSettings;
+    spawnDeps.resolveAuthStrategy.mockReturnValue({ strategy: 'api-key', injectKey: true, suppressKeyEnv: false });
+    vi.stubEnv('BAILIAN_TOKEN_PLAN_API_KEY', '');
+    vi.stubEnv('DASHSCOPE_API_KEY', '');
+    vi.stubEnv('OPENAI_API_KEY', '');
+    vi.stubEnv('OPENAI_BASE_URL', '');
+  });
+  afterEach(() => { vi.unstubAllEnvs(); qwenSettingsProbe.readiness = 'unknown'; });
+
+  it('chave sk-sp- do cofre: keyEnv BAILIAN + descritor com a URL exclusiva do plano', () => {
+    spawnDeps.runtimeKey.mockReturnValue('sk-sp-fixture-cofre');
+    const result = prepareProviderSpawn('qwen', { model: 'qwen3.8-max' });
+    expect(result).toMatchObject({ ok: true });
+    if (!result.ok) return;
+    expect(result.overrides.keyEnv).toEqual({ BAILIAN_TOKEN_PLAN_API_KEY: 'sk-sp-fixture-cofre' });
+    expect(result.overrides.qwenSettingsInjection).toMatchObject({
+      baseUrl: PLAN,
+      tokenPlanKey: true,
+    });
+    expect(result.overrides.qwenSettingsInjection?.models).toContain('qwen3.8-max');
+  });
+
+  it('chave padrão (sk-) com settings no dashscope-intl: a base do settings vence; sem settings, o padrão DashScope', () => {
+    qwenSettingsProbe.summary = {
+      hasCredential: true, baseUrl: null,
+      authBaseUrl: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+      tokenPlan: false, modelIds: [],
+    } as never;
+    spawnDeps.runtimeKey.mockReturnValue('sk-fixture-padrao');
+    const withSettings = prepareProviderSpawn('qwen', {});
+    if (!withSettings.ok) throw new Error('spawn falhou');
+    expect(withSettings.overrides.qwenSettingsInjection).toMatchObject({
+      baseUrl: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+      tokenPlanKey: false,
+    });
+    qwenSettingsProbe.summary = noSettings;
+    const semSettings = prepareProviderSpawn('qwen', {});
+    if (!semSettings.ok) throw new Error('spawn falhou');
+    expect(semSettings.overrides.qwenSettingsInjection?.baseUrl).toBe(
+      'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    );
+  });
+
+  it('a base URL de Providers › Qwen › Avançado vence o settings (e pede confirmação nativa)', async () => {
+    spawnDeps.runtimeKey.mockReturnValue('sk-sp-fixture-cofre');
+    const setConfig = spawnDeps.trustedHandlers.get('provider:setConfig')!;
+    try {
+      await setConfig(null, { adapterId: 'qwen', baseUrl: 'https://proxy.da.empresa.example/v1' });
+      expect(spawnDeps.confirmInstall).toHaveBeenCalled();
+      const result = prepareProviderSpawn('qwen', {});
+      if (!result.ok) throw new Error('spawn falhou');
+      expect(result.overrides.qwenSettingsInjection?.baseUrl).toBe('https://proxy.da.empresa.example/v1');
+      // a listagem expõe o campo salvo para o renderer
+      expect(listProviderSettings().find((p) => p.adapterId === 'qwen')?.baseUrl)
+        .toBe('https://proxy.da.empresa.example/v1');
+    } finally {
+      spawnDeps.confirmInstall.mockClear();
+      await setConfig(null, { adapterId: 'qwen', baseUrl: '' });
+    }
+  });
+
+  it('baseUrl inválida (não-https) ou de outro adapter é recusada', async () => {
+    const setConfig = spawnDeps.trustedHandlers.get('provider:setConfig')!;
+    await setConfig(null, { adapterId: 'qwen', baseUrl: 'ftp://nao-vale' });
+    expect(listProviderSettings().find((p) => p.adapterId === 'qwen')?.baseUrl).toBeUndefined();
+    await setConfig(null, { adapterId: 'kimi', baseUrl: PLAN });
+    expect(listProviderSettings().find((p) => p.adapterId === 'kimi')?.baseUrl).toBeUndefined();
+  });
+
+  it('conta api-key pinada (a conta "a" do incidente): a chave da conta também ganha o descritor', () => {
+    const account = { id: 'acct-a', label: 'a', adapterId: 'qwen', mode: 'api-key', upstream: 'anthropic' };
+    spawnDeps.getAccount.mockReturnValue(account);
+    spawnDeps.prepareAccount.mockReturnValueOnce({ ok: true, account, apiKey: 'sk-sp-da-conta-a', authEnv: {} });
+    const result = prepareProviderSpawn('qwen', { accountId: 'acct-a', model: 'qwen3.7-plus' });
+    if (!result.ok) throw new Error('spawn falhou');
+    expect(result.overrides.keyEnv).toEqual({ BAILIAN_TOKEN_PLAN_API_KEY: 'sk-sp-da-conta-a' });
+    expect(result.overrides.qwenSettingsInjection).toMatchObject({ baseUrl: PLAN, tokenPlanKey: true });
+    expect(result.overrides.qwenSettingsInjection?.models).toContain('qwen3.7-plus');
+  });
+
+  it('sem chave configurada não há descritor (settings do operador segue ligado)', () => {
+    // api-key sem chave em nenhuma fonte: keyEnv vazio → sem injeção.
+    const result = prepareProviderSpawn('qwen', {});
+    if (!result.ok) throw new Error('spawn falhou');
+    expect(result.overrides.qwenSettingsInjection).toBeUndefined();
+    expect(result.overrides.keyEnv).toEqual({});
   });
 });

@@ -1057,6 +1057,22 @@ saber isto antes de mexer:
   auth OpenAI-compatible no Alibaba Token Plan entra o `deepseek-v4-pro`
   (e só ele). Um `OPENAI_API_KEY` solto só vale para qwen com
   `OPENAI_BASE_URL` em `*.aliyuncs.com` — mesmo gate de host do ANTHROPIC_*.
+- **F-1565: a env `BAILIAN_TOKEN_PLAN_API_KEY` sozinha NÃO autentica.** A CLI
+  (0.25.2) só a lê quando um `modelProviders.openai[]` aponta para ela via
+  `envKey`; `security.auth.apiKey` embutido no settings VENCE a env (medido
+  com servidor local). Por isso, quando o Nexus injeta a chave (cofre ou conta
+  pinada), o spawn leva `qwenSettingsInjection` {baseUrl, models, tokenPlanKey}
+  e o overlay grava um settings.json MESCLADO (os campos do operador +
+  entradas `modelProviders` geradas, que só referenciam a env — a chave nunca
+  entra no arquivo) em vez de ligar o arquivo. A cópia é 0600, efêmera e
+  apagada no teardown; sync-back continua off (escritas da TUI nela não
+  voltam ao perfil real). Sem injeção, o link de sempre. A base URL vem de
+  `resolveQwenInjectionBaseUrl`: campo "Base URL da API" (Providers › Qwen ›
+  Avançado, mudança sensível com confirmação nativa) › settings do operador
+  (exceto sk-sp- com URL Alibaba fora do plano) › URL exclusiva do Token Plan
+  para chave `sk-sp-` › padrão DashScope. A sonda do Testar resolve o MESMO
+  par chave+base URL (`setQwenProbeConfiguredBaseUrlLookup`); o 401 dela diz
+  "chave inválida ou base URL incompatível", nunca limite/cota.
 
 ## DeepSeek: API direta ou Alibaba Token Plan (F-724)
 

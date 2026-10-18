@@ -28,6 +28,7 @@ describe('provider config format', () => {
       defaultModel: '',
       extraArgs: [],
       upstream: 'anthropic',
+      baseUrl: '',
       permissionMode: 'yolo',
       effort: '',
       verbose: false,

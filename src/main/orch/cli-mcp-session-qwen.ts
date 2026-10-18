@@ -3,8 +3,12 @@
  *
  * Qwen é fork do Gemini CLI: `QWEN_HOME` aponta o home da CLI (settings,
  * sessões, MCP). A credencial do operador vive em `settings.json`
- * (`env.BAILIAN_TOKEN_PLAN_API_KEY` + `modelProviders`) — o overlay LIGA o
- * arquivo, nunca copia o segredo para outro lugar. O MCP da sessão chega por
+ * (`env.BAILIAN_TOKEN_PLAN_API_KEY` + `modelProviders`) — sem injeção do
+ * Nexus o overlay LIGA o arquivo, nunca copia o segredo para outro lugar.
+ * F-1565: quando o spawn injeta a chave configurada (vault/conta), a CLI só a
+ * honra se um `modelProviders[].envKey` apontar para ela — então o overlay
+ * grava um settings.json MESCLADO (o do operador + as entradas com envKey e a
+ * base URL resolvida, sem segredo) em vez de ligar. O MCP da sessão chega por
  * um arquivo JSON privado (`{"mcpServers": …}`) referenciado por
  * `--mcp-config`; a ponte stdio compartilhada (`~/.nexus/mcp-bridge`) recebe
  * URL e bearer só por ENV (`NEXUS_MCP_URL`/`NEXUS_MCP_TOKEN`), como MiniMax
@@ -19,6 +23,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { mergeQwenSettingsForInjection } from '../adapters/qwen-settings';
 import {
   activateArtifact,
   linkDirectoryEntries,
@@ -106,10 +111,34 @@ export function prepareQwenMcpSession(
   return withCliMcpArtifactTransaction('qwen', token, artifactRoot, (artifactDir) => {
     const serverName = runtimeServerName(token);
     const policy = resolveGovernedCliProfile(token, options);
+    const operatorSettings = readJsonObject(path.join(providerHome, 'settings.json'));
+    // F-1565: com chave injetada pelo Nexus o settings.json do overlay é
+    // ESCRITO (mescla o do operador com as entradas modelProviders que
+    // apontam a env para a base URL certa) em vez de ligado — a CLI ignora a
+    // env BAILIAN sem essas entradas e usava o apiKey velho embutido (401).
+    const injection = options.qwenSettingsInjection;
+    if (injection) {
+      const merged = mergeQwenSettingsForInjection(operatorSettings, injection);
+      writePrivateFileAtomic(
+        path.join(artifactDir, 'settings.json'),
+        `${JSON.stringify(merged, null, 2)}\n`,
+      );
+    }
+    const linkExclusions = new Set(
+      injection ? [...QWEN_SESSION_ENTRIES, 'settings.json'] : QWEN_SESSION_ENTRIES,
+    );
     if (policy.governed) {
-      linkSelectedEntries(providerHome, artifactDir, new Set(QWEN_AUTH_ENTRIES));
+      linkSelectedEntries(
+        providerHome,
+        artifactDir,
+        new Set(
+          injection
+            ? QWEN_AUTH_ENTRIES.filter((name) => name !== 'settings.json')
+            : QWEN_AUTH_ENTRIES,
+        ),
+      );
     } else {
-      linkDirectoryEntries(providerHome, artifactDir, new Set(QWEN_SESSION_ENTRIES));
+      linkDirectoryEntries(providerHome, artifactDir, linkExclusions);
     }
     const providerSessionHome = linkProviderSessionState(
       'qwen',
@@ -126,7 +155,7 @@ export function prepareQwenMcpSession(
     // preserva; worker governado nunca recebe (política Codex gated).
     const ambient = policy.governed
       ? {}
-      : objectValue(readJsonObject(path.join(providerHome, 'settings.json')).mcpServers);
+      : objectValue(operatorSettings.mcpServers);
     const servers = {
       ...ambient,
       ...hub,
@@ -150,15 +179,24 @@ export function prepareQwenMcpSession(
     activateArtifact(token, {
       artifactDir,
       providerHome,
-      // settings.json é symlink para o perfil real — sync-back é sempre off:
-      // nem conversas nem o arquivo de credencial voltam por cópia.
+      // settings.json é symlink para o perfil real (ou, com injeção F-1565,
+      // uma cópia mesclada efêmera) — sync-back é sempre off: nem conversas
+      // nem o arquivo de credencial voltam por cópia.
       configFiles: [],
       syncBack: false,
     });
     const allowed = policy.governed
       ? [serverName, ...Object.keys(hub)]
       : Object.keys(servers);
-    const authGrantPaths = policy.governed ? qwenAuthGrantPaths(providerHome) : [];
+    // Com injeção o settings.json real não é ligado: o grant de escrita nele
+    // sai, e a cópia do overlay vive dentro do artifactDir (gravável pelo pane).
+    const authGrantPaths = policy.governed
+      ? injection
+        ? qwenAuthGrantPaths(providerHome).filter(
+            (grant) => path.basename(grant) !== 'settings.json',
+          )
+        : qwenAuthGrantPaths(providerHome)
+      : [];
     return {
       env: {
         QWEN_HOME: artifactDir,

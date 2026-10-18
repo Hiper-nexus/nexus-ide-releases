@@ -13,9 +13,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { MODEL_ID_PATTERN } from '../../shared/model-id';
 import {
+  ALIBABA_TOKEN_PLAN_OPENAI_BASE_URL,
   DEEPSEEK_DIRECT_HOST,
   DEEPSEEK_TOKEN_PLAN_MODEL,
   httpsHostOf,
+  isAlibabaPlanKey,
   isAlibabaTokenPlanUrl,
 } from './deepseek-provider';
 
@@ -24,6 +26,11 @@ export interface QwenSettingsSummary {
   readonly hasCredential: boolean;
   /** `model.baseUrl` — endpoint OpenAI-compatible configurado. */
   readonly baseUrl: string | null;
+  /**
+   * `security.auth.baseUrl` — endpoint da auth OpenAI-compatible. F-1565: a
+   * resolução da base URL do spawn lê os dois (a auth vence o `model`).
+   */
+  readonly authBaseUrl: string | null;
   /**
    * F-724: a autenticação OpenAI-compatible do Qwen Code aponta para o
    * Alibaba Model Studio Token Plan.
@@ -103,6 +110,7 @@ function parseQwenSettingsSummary(raw: unknown): QwenSettingsSummary {
   const empty: QwenSettingsSummary = {
     hasCredential: false,
     baseUrl: null,
+    authBaseUrl: null,
     tokenPlan: false,
     modelIds: [],
   };
@@ -167,7 +175,128 @@ function parseQwenSettingsSummary(raw: unknown): QwenSettingsSummary {
 
   if (tokenPlan) modelIds.add(DEEPSEEK_TOKEN_PLAN_MODEL);
 
-  return { hasCredential, baseUrl, tokenPlan, modelIds: [...modelIds] };
+  return {
+    hasCredential,
+    baseUrl,
+    authBaseUrl: nonEmptyString(auth?.baseUrl),
+    tokenPlan,
+    modelIds: [...modelIds],
+  };
+}
+
+/**
+ * Endpoint padrão do Qwen Code sem configuração (o `DEFAULT_BASE_URL` da
+ * própria CLI): DashScope compatível com OpenAI. Chave `sk-sp-` (Token Plan)
+ * NÃO é aceita ali — só na URL exclusiva do plano.
+ */
+export const QWEN_DASHSCOPE_DEFAULT_BASE_URL =
+  'https://dashscope.aliyuncs.com/compatible-mode/v1';
+
+function isAliyunHost(url: string): boolean {
+  const host = httpsHostOf(url);
+  return host === 'aliyuncs.com' || (host?.endsWith('.aliyuncs.com') ?? false);
+}
+
+/**
+ * F-1565: a base URL que o pane do Qwen usa quando o Nexus injeta a chave
+ * configurada (vault ou conta). Ordem:
+ *  1. `configured` — o campo "Base URL da API" de Providers › Qwen › Avançado
+ *     (escolha explícita do operador; validada como https sem credencial).
+ *  2. A base URL do `~/.qwen/settings.json` — EXCETO quando a chave é do
+ *     Token Plan (`sk-sp-`) e ela aponta para outro host Alibaba (DashScope):
+ *     essa combinação é o 401 do incidente, então a URL exclusiva do plano
+ *     vence. Um host fora da Alibaba (proxy do operador) é respeitado.
+ *  3. Chave `sk-sp-` sem nenhuma base configurada → a URL do Token Plan.
+ *  4. Demais casos → `null` (a CLI usa o padrão DashScope dela).
+ */
+export function resolveQwenInjectionBaseUrl(input: {
+  readonly configured?: string | null;
+  readonly settingsBaseUrl?: string | null;
+  readonly key?: string | null;
+}): string | null {
+  const configured = input.configured?.trim();
+  if (configured && httpsHostOf(configured)) return configured;
+  const settings = input.settingsBaseUrl?.trim() || null;
+  const planKey = isAlibabaPlanKey(input.key);
+  if (settings) {
+    if (planKey && isAliyunHost(settings) && !isAlibabaTokenPlanUrl(settings)) {
+      return ALIBABA_TOKEN_PLAN_OPENAI_BASE_URL;
+    }
+    return settings;
+  }
+  return planKey ? ALIBABA_TOKEN_PLAN_OPENAI_BASE_URL : null;
+}
+
+/**
+ * F-1565: mescla as entradas do Nexus no `settings.json` do OVERLAY do pane
+ * (o arquivo do operador nunca é tocado). O Qwen Code só honra a variável
+ * `BAILIAN_TOKEN_PLAN_API_KEY` quando um `modelProviders.openai[]` aponta para
+ * ela via `envKey` — sem a entrada, a chave injetada morria no env e a CLI
+ * usava o `security.auth.apiKey` embutido (velho) ou caía em "No auth type".
+ * A entrada NUNCA carrega o segredo: só `envKey` + `baseUrl` (a forma oficial
+ * da doc do Model Studio). Entrada do operador com o mesmo id vence a nossa —
+ * exceto quando ela é alimentada pela NOSSA env (`envKey` igual) com uma base
+ * URL Alibaba incompatível com a chave do plano: aí a base URL é corrigida na
+ * cópia do overlay.
+ */
+export function mergeQwenSettingsForInjection(
+  raw: unknown,
+  options: {
+    readonly baseUrl: string;
+    readonly models: readonly string[];
+    /** A chave injetada é do Token Plan (`sk-sp-`). */
+    readonly tokenPlanKey: boolean;
+  },
+): Record<string, unknown> {
+  const settings =
+    raw && typeof raw === 'object' && !Array.isArray(raw)
+      ? ({ ...(raw as Record<string, unknown>) } as Record<string, unknown>)
+      : {};
+  const security = objectField(settings, 'security') ?? {};
+  const auth = objectField(security, 'auth') ?? {};
+  // A chave injetada é a credencial deste pane: a auth tem de ser a
+  // OpenAI-compatible, mesmo que o perfil diga qwen-oauth (a cópia é efêmera).
+  settings.security = { ...security, auth: { ...auth, selectedType: 'openai' } };
+
+  const providers = objectField(settings, 'modelProviders') ?? {};
+  const rows = Array.isArray(providers.openai) ? [...providers.openai] : [];
+  const fixRow = (row: unknown): unknown => {
+    const entry = row && typeof row === 'object' && !Array.isArray(row)
+      ? (row as Record<string, unknown>)
+      : null;
+    if (!entry) return row;
+    if (nonEmptyString(entry.envKey) !== 'BAILIAN_TOKEN_PLAN_API_KEY') return row;
+    if (!options.tokenPlanKey) return row;
+    const base = nonEmptyString(entry.baseUrl);
+    if (base && isAliyunHost(base) && !isAlibabaTokenPlanUrl(base)) {
+      return { ...entry, baseUrl: options.baseUrl };
+    }
+    return row;
+  };
+  const merged = rows.map(fixRow);
+  const known = new Set(
+    merged
+      .map((row) =>
+        row && typeof row === 'object' && !Array.isArray(row)
+          ? nonEmptyString((row as Record<string, unknown>).id)?.toLowerCase()
+          : null,
+      )
+      .filter((id): id is string => Boolean(id)),
+  );
+  const tokenPlan = isAlibabaTokenPlanUrl(options.baseUrl);
+  for (const id of options.models) {
+    const model = id.trim();
+    if (!model || known.has(model.toLowerCase())) continue;
+    known.add(model.toLowerCase());
+    merged.push({
+      id: model,
+      ...(tokenPlan ? { name: `[ModelStudio Token Plan] ${model}` } : {}),
+      baseUrl: options.baseUrl,
+      envKey: 'BAILIAN_TOKEN_PLAN_API_KEY',
+    });
+  }
+  settings.modelProviders = { ...providers, openai: merged };
+  return settings;
 }
 
 /** Prontidão: a chave em settings conta como `present` — nunca lida p/ fora. */

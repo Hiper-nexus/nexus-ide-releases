@@ -635,4 +635,50 @@ describe('ProvidersPanel hub', () => {
       act(() => root.unmount());
     });
   });
+describe('F-1565: base URL configurável do Qwen', () => {
+  it('o campo fica em Avançado, mostra a URL salva e persiste pelo setConfig', async () => {
+    const setConfig = vi.fn(async () => undefined);
+    useProviderStore.setState({
+      providers: [provider('qwen', 'Qwen Code', {
+        authMethod: 'api_key',
+        authStrategy: 'api-key',
+        hasKey: true,
+        keyMasked: 'sk-…tuzw',
+        baseUrl: 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1',
+      })],
+      setConfig,
+    } as never);
+    const { host, root } = mount();
+    await act(async () => { await Promise.resolve(); });
+
+    // Escondido até expandir o Avançado.
+    expect(host.textContent).not.toContain('Base URL da API');
+    await act(async () => host.querySelector<HTMLButtonElement>('.prov-advanced__toggle')!.click());
+    const input = [...host.querySelectorAll<HTMLInputElement>('.prov-advanced input')]
+      .find((i) => i.closest('label')?.textContent?.includes('Base URL da API'));
+    expect(input).toBeTruthy();
+    expect(input!.value).toBe('https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1');
+
+    await act(async () => {
+      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+      setValue.call(input, 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1');
+      input!.dispatchEvent(new Event('input', { bubbles: true }));
+      input!.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+    });
+    expect(setConfig).toHaveBeenCalledWith({
+      adapterId: 'qwen',
+      baseUrl: 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
+    });
+    act(() => root.unmount());
+  });
+
+  it('outros providers não veem o campo', async () => {
+    useProviderStore.setState({ providers: [provider('codex', 'Codex')] });
+    const { host, root } = mount();
+    await act(async () => host.querySelector<HTMLButtonElement>('.prov-advanced__toggle')!.click());
+    expect(host.textContent).not.toContain('Base URL da API');
+    act(() => root.unmount());
+  });
+});
+
 });

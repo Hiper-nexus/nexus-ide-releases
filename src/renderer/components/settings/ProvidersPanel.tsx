@@ -532,6 +532,7 @@ function ProviderDetail({
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [binDraft, setBinDraft] = useState(provider.binPath);
   const [argsDraft, setArgsDraft] = useState(provider.extraArgs.join(' '));
+  const [baseUrlDraft, setBaseUrlDraft] = useState(provider.baseUrl ?? '');
   const [installBusy, setInstallBusy] = useState(false);
   const [installError, setInstallError] = useState<string | null>(null);
   const [cliJob, setCliJob] = useState<ProviderOpFeedback | null>(null);
@@ -623,7 +624,8 @@ function ProviderDetail({
   useEffect(() => {
     setBinDraft(provider.binPath);
     setArgsDraft(provider.extraArgs.join(' '));
-  }, [provider.adapterId, provider.binPath, extraArgsKey, provider.extraArgs]);
+    setBaseUrlDraft(provider.baseUrl ?? '');
+  }, [provider.adapterId, provider.binPath, extraArgsKey, provider.extraArgs, provider.baseUrl]);
   useEffect(() => {
     setCliJob(null);
     setInstallError(null);
@@ -875,6 +877,24 @@ function ProviderDetail({
                     }
                   />
                 </label>
+                {provider.adapterId === 'qwen' && (
+                  <label className="prov__field prov__field--wide">
+                    Base URL da API (vazio = automático pela chave)
+                    <input
+                      className="settings-input"
+                      autoComplete="off"
+                      value={baseUrlDraft}
+                      placeholder="https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
+                      onChange={(e) => setBaseUrlDraft(e.target.value)}
+                      onBlur={() => patch({ baseUrl: baseUrlDraft.trim() })}
+                    />
+                    <span className="prov__block-hint">
+                      Endpoint OpenAI-compatible que recebe a chave configurada.
+                      Chave sk-sp-… (Token Plan) só vale na URL exclusiva do
+                      plano da sua região — uma URL nova pede confirmação.
+                    </span>
+                  </label>
+                )}
                 {provider.routable && !provider.providerChoice && (
                   <label className="prov__field prov__field--wide">
                     Roteamento (upstream)

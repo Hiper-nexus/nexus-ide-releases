@@ -189,7 +189,9 @@ export const LIMIT_SIGNAL_PATTERNS: readonly LimitSignalPattern[] = [
     cooldownMs: 15 * 60 * 1000,
     re: /(?:http(?:\/\d(?:\.\d)?)?\s*|status(?: code)?\s*(?:[:=]\s*)?|error\s*(?:[:=]\s*)?)401\b|401\s+unauthorized|authentication[_\s]?error/i,
   },
-  { kind: 'auth', cooldownMs: 15 * 60 * 1000, re: /invalid[_\s]?(?:api[_\s]?key|x-api-key)/i },
+  // F-1565: "Invalid API-key provided" (Qwen/DashScope, com hífen) também é
+  // credencial recusada — nunca cota.
+  { kind: 'auth', cooldownMs: 15 * 60 * 1000, re: /invalid[_\s]?(?:api[_\s-]?key|x-api-key)/i },
   { kind: 'auth', cooldownMs: 15 * 60 * 1000, re: /oauth token (?:expired|revoked)/i },
   { kind: 'auth', cooldownMs: 15 * 60 * 1000, re: /(?:error|failed|unable).{0,40}(?:not logged in|session expired)/i },
   { kind: 'auth', cooldownMs: 15 * 60 * 1000, re: /refresh token (?:expired|invalid|revoked)/i },
