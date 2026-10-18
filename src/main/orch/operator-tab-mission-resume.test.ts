@@ -7,6 +7,8 @@ vi.mock('../observability/main-trace', () => ({ trace: traceMock }));
 import {
   OPERATOR_TAB_RESUME_LOST_NOTE,
   OPERATOR_TAB_RESUME_NOTE,
+  buildOrphanedDispatchTaskNote,
+  listOrphanedDispatchTasks,
   planOperatorTabResume,
   OPERATOR_TAB_RESUME_TRANSFER_TTL_MS,
   beginOperatorTabResumeTransfer,
@@ -102,6 +104,99 @@ describe('transferência da conversa da aba (F-721)', () => {
     first!();
     expect(isOperatorTabResumeTransferSource('mission-a', 'pane-antigo')).toBe(true);
     second!();
+  });
+});
+
+describe('worker morto com dispatch ativo na nota de retomada', () => {
+  const dispatch = (extra: Partial<Record<string, unknown>> = {}) => ({
+    taskId: 'task-1',
+    missionId: 'm',
+    state: 'running',
+    paneId: 'pty-worker-9',
+    sessionId: 'session-worker',
+    adapterId: 'claude',
+    ...extra,
+  }) as never;
+
+  const workerPane = (extra: Partial<MissionPaneSpec> = {}) =>
+    spec('pty-worker-9', 'worker', { adapterId: 'claude', accountId: 'acct-1', ...extra });
+
+  it('task despachada cujo pane morreu entra na nota com o paneId', () => {
+    const orphans = listOrphanedDispatchTasks({
+      dispatches: [dispatch()],
+      panes: [workerPane()],
+      taskTitle: (taskId) => (taskId === 'task-1' ? 'Ajustar login do Codex' : undefined),
+      paneAlive: () => false,
+      resumablePane: () => true,
+    });
+    expect(orphans).toEqual([
+      {
+        taskId: 'task-1',
+        title: 'Ajustar login do Codex',
+        state: 'running',
+        paneId: 'pty-worker-9',
+        adapterId: 'claude',
+        resumable: true,
+      },
+    ]);
+    const note = buildOrphanedDispatchTaskNote(orphans);
+    expect(note).toContain('Ajustar login do Codex');
+    expect(note).toContain('task-1');
+    expect(note).toContain('pty-worker-9');
+    // Sessão gravada: o caminho preferencial é retomar o pane antigo, não abrir outro.
+    expect(note).toContain("nexus_pane_spawn({resume:'pty-worker-9'");
+    expect(note).not.toContain('re-despache');
+  });
+
+  it('pane vivo, dispatch encerrado ou pane do operador não entram na nota', () => {
+    expect(listOrphanedDispatchTasks({
+      dispatches: [dispatch()],
+      panes: [workerPane()],
+      taskTitle: () => 'x',
+      paneAlive: () => true,
+      resumablePane: () => true,
+    })).toEqual([]);
+    for (const state of ['completed', 'failed', 'superseded', 'handoff_ready', 'blocked']) {
+      expect(listOrphanedDispatchTasks({
+        dispatches: [dispatch({ state })],
+        panes: [workerPane()],
+        taskTitle: () => 'x',
+        paneAlive: () => false,
+        resumablePane: () => true,
+      })).toEqual([]);
+    }
+    // F-231: pane aberto pelo operador é mão dele, nunca entra na lista.
+    expect(listOrphanedDispatchTasks({
+      dispatches: [dispatch()],
+      panes: [workerPane({ operatorOpened: true })],
+      taskTitle: () => 'x',
+      paneAlive: () => false,
+      resumablePane: () => true,
+    })).toEqual([]);
+    expect(buildOrphanedDispatchTaskNote([])).toBe('');
+  });
+
+  it('sem sessão gravada a nota manda re-despachar em vez de retomar', () => {
+    const note = buildOrphanedDispatchTaskNote(listOrphanedDispatchTasks({
+      dispatches: [dispatch()],
+      panes: [workerPane()],
+      taskTitle: () => 'Ajustar login do Codex',
+      paneAlive: () => false,
+      resumablePane: () => false,
+    }));
+    expect(note).toContain('pty-worker-9');
+    expect(note).not.toContain('resume:');
+    expect(note).toContain('re-despache');
+  });
+
+  it('dispatch ativo sem paneId nenhum não vira órfã inventada', () => {
+    expect(listOrphanedDispatchTasks({
+      dispatches: [dispatch({ paneId: undefined })],
+      panes: [],
+      taskTitle: () => 'x',
+      paneAlive: () => false,
+      resumablePane: () => true,
+    })).toEqual([]);
   });
 });
 

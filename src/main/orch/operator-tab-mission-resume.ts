@@ -1,6 +1,7 @@
 import { TAB_COMPLETION_INSTRUCTION } from './operator-tab-completion';
 import { trace } from '../observability/main-trace';
 import type { Mission, MissionPaneSpec, SquadAgent } from '../../shared/orch-types';
+import type { TaskDispatchRecord } from './task-dispatch-codec';
 import { awaitingAdjustmentSince } from '../../shared/mission-recovery-policy';
 
 /**
@@ -51,6 +52,86 @@ export interface OperatorTabResumePlan {
   /** A linha do orquestrador vai para o pane novo sem copiar conversa. */
   readonly replaceRow: boolean;
   readonly conversationLost: boolean;
+}
+
+/**
+ * Worker morto com dispatch ATIVO: a task fica `dispatched` sem ninguém
+ * executando e ninguém a reabre — `requestMissionPaneRecovery` recusa worker
+ * por desenho (o despacho é o dono), então o Maestro retomado só consegue
+ * reencontrar esse trabalho se a nota disser que ele existe, em qual pane e
+ * se há conversa para retomar.
+ */
+export interface OrphanedDispatchTask {
+  readonly taskId: string;
+  readonly title?: string;
+  readonly state: string;
+  readonly paneId: string;
+  readonly adapterId?: string;
+  /** Sessão gravada do pane: `resume` com o pane antigo reconecta worker E task. */
+  readonly resumable: boolean;
+}
+
+/** Dispatch que ainda manda em alguém — o mesmo trio da projeção de execução. */
+const ACTIVE_DISPATCH_STATES: readonly string[] = ['routed', 'spawning', 'running'];
+
+/** Puro: a lista objetiva de tasks órfãs (o Main injeta vida do pane e sessão). */
+export function listOrphanedDispatchTasks(input: {
+  readonly dispatches: readonly TaskDispatchRecord[];
+  readonly panes: readonly MissionPaneSpec[];
+  readonly taskTitle: (taskId: string) => string | undefined;
+  /** O pane ainda está rodando (registrado e não exited)? */
+  readonly paneAlive: (paneId: string) => boolean;
+  readonly resumablePane: (pane: MissionPaneSpec) => boolean;
+}): readonly OrphanedDispatchTask[] {
+  const byPaneId = new Map(
+    input.panes.filter((pane) => pane.paneId).map((pane) => [pane!.paneId!, pane]),
+  );
+  const orphanByTask = new Map<string, { readonly revision: number; readonly task: OrphanedDispatchTask }>();
+  for (const dispatch of input.dispatches) {
+    const paneId = dispatch.paneId;
+    if (!paneId || !ACTIVE_DISPATCH_STATES.includes(dispatch.state)) continue;
+    const pane = byPaneId.get(paneId);
+    // F-231: pane aberto pelo operador é mão dele — a máquina nunca o reabre.
+    if (pane?.operatorOpened === true) continue;
+    if (pane && input.paneAlive(paneId)) continue;
+    const title = input.taskTitle(dispatch.taskId);
+    const orphan: OrphanedDispatchTask = {
+      taskId: dispatch.taskId,
+      ...(title !== undefined ? { title } : {}),
+      state: dispatch.state,
+      paneId,
+      ...(dispatch.adapterId ? { adapterId: dispatch.adapterId } : {}),
+      resumable: pane ? input.resumablePane(pane) : false,
+    };
+    // Uma task, uma linha: numa tentativa nova o dispatch mais recente é o dono.
+    const previous = orphanByTask.get(orphan.taskId);
+    if (!previous || dispatch.revision > previous.revision) {
+      orphanByTask.set(orphan.taskId, { revision: dispatch.revision, task: orphan });
+    }
+  }
+  return [...orphanByTask.values()].map((entry) => entry.task);
+}
+
+/** A lista vira texto de nota: curta, com paneId e o caminho preferencial. */
+export function buildOrphanedDispatchTaskNote(
+  tasks: readonly OrphanedDispatchTask[],
+): string {
+  if (!tasks.length) return '';
+  const lines = tasks.map((task) => {
+    const name = task.title ?? task.taskId;
+    const who =
+      `"${name}" (${task.taskId}, dispatch ${task.state}, pane ${task.paneId}` +
+      `${task.adapterId ? `, ${task.adapterId}` : ''})`;
+    return task.resumable
+      ? `${who} — sessão gravada: retome com nexus_pane_spawn({resume:'${task.paneId}', ` +
+        `task:"${name}"}); o resume devolve o worker e a task ao mesmo pane.`
+      : `${who} — sem conversa gravada: re-despache a task com ` +
+        `nexus_pane_spawn({task:"${name}"}); não há o que retomar.`;
+  });
+  return (
+    `WORKERS MORTOS COM DISPATCH ATIVO (${tasks.length}) — trabalho despachado ` +
+    `sem executor; trate antes de seguir: ${lines.join(' ')}`
+  );
 }
 
 export function planOperatorTabResume(input: {

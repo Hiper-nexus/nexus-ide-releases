@@ -120,6 +120,59 @@ describe('decideWorkerHung — worker travado no meio do turno (F-242)', () => {
       ).toBe('none');
     }
   });
+
+  it('CLI sem telemetria: calado acima do limiar vira notify, com o relógio próprio', () => {
+    // `semanticStatus: undefined` sozinho não basta: quem mede o silêncio é o
+    // supervisor (varreduras anteriores), então `silentSince` é a prova.
+    expect(
+      decideWorkerHung({
+        ...working,
+        semanticStatus: undefined,
+        semanticUpdatedAt: undefined,
+        silentSince: now - WORKER_HUNG_AFTER_MS - 5 * 60_000,
+      }),
+    ).toBe('notify');
+    expect(
+      decideWorkerHung({
+        ...working,
+        semanticStatus: undefined,
+        semanticUpdatedAt: undefined,
+        silentSince: now - 10 * 60_000,
+      }),
+    ).toBe('none');
+    // Sem relógio nenhum (primeira varredura) e pane ocupado: nada ainda.
+    expect(
+      decideWorkerHung({ ...working, semanticStatus: undefined, semanticUpdatedAt: undefined }),
+    ).toBe('none');
+    expect(
+      decideWorkerHung({
+        ...working,
+        semanticStatus: undefined,
+        semanticUpdatedAt: undefined,
+        silentSince: now - WORKER_HUNG_AFTER_MS - 60_000,
+        paneState: 'busy',
+      }),
+    ).toBe('none');
+    // Status presente e não-trabalhando continua sendo caso dos outros watchdogs.
+    expect(
+      decideWorkerHung({
+        ...working,
+        semanticStatus: 'idle',
+        semanticUpdatedAt: now - WORKER_HUNG_AFTER_MS - 5 * 60_000,
+        silentSince: now - WORKER_HUNG_AFTER_MS - 5 * 60_000,
+      }),
+    ).toBe('none');
+    // Renotificação no mesmo relógio de silêncio.
+    expect(
+      decideWorkerHung({
+        ...working,
+        semanticStatus: undefined,
+        semanticUpdatedAt: undefined,
+        silentSince: now - WORKER_HUNG_AFTER_MS - 5 * 60_000,
+        notifiedAt: now - WORKER_HUNG_RENOTIFY_MS - 60_000,
+      }),
+    ).toBe('renotify');
+  });
 });
 
 describe('delegation supervisor policy', () => {

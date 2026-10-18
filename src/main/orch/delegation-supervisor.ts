@@ -190,12 +190,35 @@ function hungWorkerNotifiedAtFor(
  */
 const hungWorkerOutputSeenAt = new Map<string, Map<string, number>>();
 
+/**
+ * Silêncio por sessão de worker SEM status semântico (CLI sem hook), POR suite
+ * (mesmo motivo do F-725). `silentSince` é a primeira varredura que a viu sem
+ * ferramenta e sem saída; ferramenta nova ou PTY produzindo recomeça o relógio.
+ */
+const hungWorkerSilentSeenAt = new Map<
+  string,
+  Map<string, { readonly silentSince: number; readonly toolCount: number }>
+>();
+
 /** Última atividade do worker: o status semântico ou a última saída vista. */
 export function workerLastActivityAt(
   semanticUpdatedAt: number,
   outputSeenAt: number | undefined,
 ): number {
   return Math.max(semanticUpdatedAt, outputSeenAt ?? semanticUpdatedAt);
+}
+
+/**
+ * Worker SEM telemetria (CLI sem hook de status): a única datação possível é o
+ * relógio de silêncio que o supervisor mede entre varreduras — a primeira
+ * leitura que o viu sem ferramenta e sem saída. Mesma regra do caminho com
+ * status, outra fonte de prova.
+ */
+function silentWorkerLastActivityAt(
+  silentSince: number,
+  outputSeenAt: number | undefined,
+): number {
+  return Math.max(silentSince, outputSeenAt ?? silentSince);
 }
 
 export function decideWorkerHung(input: {
@@ -206,9 +229,18 @@ export function decideWorkerHung(input: {
   readonly paneState: PaneRuntimeState | undefined;
   readonly notifiedAt: number | null;
   readonly now: number;
+  /**
+   * CLI sem status semântico: desde quando esta sessão está sem ferramenta e
+   * sem saída. Ausente = ainda sem prova de silêncio (primeira varredura).
+   */
+  readonly silentSince?: number;
 }): 'none' | 'notify' | 'renotify' {
-  if (input.semanticStatus !== 'working') return 'none';
-  if (input.semanticUpdatedAt === undefined) return 'none';
+  // CLI sem hook não publica `working`: sem este caminho o worker calado
+  // nunca era marcado como travado e a task esperava umPane morto.
+  const telemetryLess = input.semanticStatus === undefined;
+  if (!telemetryLess && input.semanticStatus !== 'working') return 'none';
+  if (!telemetryLess && input.semanticUpdatedAt === undefined) return 'none';
+  if (telemetryLess && input.silentSince === undefined) return 'none';
   // PTY ocupado/spawnando pode estar produzindo saída que o status não viu
   // ainda; morto/estacionado já é coberto por outros watchdogs.
   if (
@@ -220,10 +252,10 @@ export function decideWorkerHung(input: {
   ) {
     return 'none';
   }
-  if (
-    input.now - workerLastActivityAt(input.semanticUpdatedAt, input.outputSeenAt) <
-    WORKER_HUNG_AFTER_MS
-  ) {
+  const lastActivityAt = telemetryLess
+    ? silentWorkerLastActivityAt(input.silentSince!, input.outputSeenAt)
+    : workerLastActivityAt(input.semanticUpdatedAt!, input.outputSeenAt);
+  if (input.now - lastActivityAt < WORKER_HUNG_AFTER_MS) {
     return 'none';
   }
   if (input.notifiedAt === null) return 'notify';
@@ -659,6 +691,8 @@ async function notifyHungWorkerPanes(
   const notifiedAt = hungWorkerNotifiedAtFor(suite);
   const outputSeenAt = hungWorkerOutputSeenAt.get(scopeKey(suite)) ?? new Map<string, number>();
   hungWorkerOutputSeenAt.set(scopeKey(suite), outputSeenAt);
+  const silentSeenAt = hungWorkerSilentSeenAt.get(scopeKey(suite)) ?? new Map();
+  hungWorkerSilentSeenAt.set(scopeKey(suite), silentSeenAt);
   for (const hint of panes) {
     await context.checkpoint();
     if (!current()) return;
@@ -666,8 +700,18 @@ async function notifyHungWorkerPanes(
       live.sessionId === hint.sessionId && live.missionId === mission.id);
     if (!pane) continue;
     if (pane.role !== 'worker' || !pane.sessionId) continue;
-    if (pane.state === 'busy' || pane.state === 'spawning') outputSeenAt.set(pane.sessionId, now);
+    const producing = pane.state === 'busy' || pane.state === 'spawning';
+    if (producing) outputSeenAt.set(pane.sessionId, now);
     const semantic = getAgentSemanticStatusBySession(pane.sessionId);
+    // Sem status semântico: mede-se o silêncio entre varreduras. Ferramenta
+    // nova ou PTY produzindo é trabalho e recomeça o relógio.
+    let silentSince: number | undefined;
+    if (!semantic) {
+      const toolCount = getAgentToolActivityCount(pane.sessionId);
+      const seen = silentSeenAt.get(pane.sessionId);
+      silentSince = !seen || producing || toolCount > seen.toolCount ? now : seen.silentSince;
+      silentSeenAt.set(pane.sessionId, { silentSince, toolCount });
+    }
     const decision = decideWorkerHung({
       semanticStatus: semantic?.status,
       semanticUpdatedAt: semantic?.updatedAt,
@@ -675,10 +719,13 @@ async function notifyHungWorkerPanes(
       paneState: pane.state,
       notifiedAt: notifiedAt.get(pane.sessionId) ?? null,
       now,
+      ...(silentSince !== undefined ? { silentSince } : {}),
     });
     if (decision === 'none') continue;
     notifiedAt.set(pane.sessionId, now);
-    const updatedAt = workerLastActivityAt(semantic!.updatedAt!, outputSeenAt.get(pane.sessionId));
+    const updatedAt = silentSince !== undefined
+      ? silentWorkerLastActivityAt(silentSince, outputSeenAt.get(pane.sessionId))
+      : workerLastActivityAt(semantic!.updatedAt!, outputSeenAt.get(pane.sessionId));
     const hungMinutes = Math.max(1, Math.floor((now - updatedAt) / 60_000));
     const last = new Date(updatedAt);
     const hhmm =
@@ -2064,6 +2111,12 @@ async function scanSuite(suite: ProjectDomainStoreSuite, now: number, context: P
       if (!liveSessionIds.has(sessionId)) outputSeenAt.delete(sessionId);
     }
   }
+  const silentSeenAt = hungWorkerSilentSeenAt.get(scopeKey(suite));
+  if (silentSeenAt) {
+    for (const sessionId of [...silentSeenAt.keys()]) {
+      if (!liveSessionIds.has(sessionId)) silentSeenAt.delete(sessionId);
+    }
+  }
 }
 
 const suites = new Map<string, ProjectDomainStoreSuite>();
@@ -2141,6 +2194,7 @@ export async function shutdownDelegationSupervisor(): Promise<void> {
   handoffRearmLastRun.clear();
   hungWorkerNotifiedAt.clear();
   hungWorkerOutputSeenAt.clear();
+  hungWorkerSilentSeenAt.clear();
   momentumSoloSince.clear();
   momentumNudgedAt.clear();
   momentumReadySince.clear();
