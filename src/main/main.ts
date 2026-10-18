@@ -532,6 +532,8 @@ import {
   startShotBridgeServer,
   stopShotBridgeServer,
 } from './shot-bridge/shot-bridge-server';
+import { ensureShotMinVersion } from './shot-bridge/shot-installer';
+import { createShotInstallerDeps } from './shot-bridge/shot-installer-node';
 import { listPaneSnapshots } from './orch/pane-registry';
 import { getRendererWorkspaceScope } from './persistence/renderer-workspace-scope';
 import { SHOT_BRIDGE_CHANNELS } from '../shared/shot-bridge';
@@ -1378,6 +1380,12 @@ if (squirrelStartupEvent || !wireDeepLinks()) {
         } catch (err) {
           console.warn("[main] shot-bridge bootstrap failed:", err);
         }
+
+        // O Shot 0.1.14 crasha antes do 1º check do updater dele (10 s): o
+        // Nexus garante a versão mínima pelo feed oficial, com assinatura e Team ID.
+        void ensureShotMinVersion(createShotInstallerDeps((m) => console.warn(m))).catch((err) =>
+          console.warn('[main] shot-installer failed:', err),
+        );
 
         // Limpeza dos hooks de handoff da 0.32.x (port do Overclock que nunca
         // rodou no Nexus — ver docstring do handoff-hook-installer). O
