@@ -8,7 +8,9 @@ import { readRegularFileCapped, readRegularFileCappedAsync } from '../redline/re
  * valor da chave — só presença, baseUrl e ids de modelo. Sem chave do Nexus o
  * overlay F-566 liga o arquivo sem copiá-lo; com a chave do Nexus (F-1565) ele
  * grava uma cópia mesclada SEM as credenciais Alibaba do operador
- * (`mergeQwenSettingsForInjection`).
+ * (`mergeQwenSettingsForInjection`, layer de usuário) e um settings de SISTEMA à
+ * parte, só com o que o Nexus impõe por cima do workspace e do admin real
+ * (`mergeQwenSystemSettingsForInjection`).
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -325,23 +327,40 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 /** Per-spawn secret variable names must be unpredictable to operator settings. */
 export const QWEN_INJECTED_KEY_ENV_PREFIX = 'NEXUS_QWEN_KEY_';
 const INJECTED_KEY_ENV = new RegExp(`^${QWEN_INJECTED_KEY_ENV_PREFIX}[a-f0-9]{32}$`, 'i');
+/** Nomes de credencial que o `env` do operador não leva para a cópia: a injetada e as velhas. */
 const OPERATOR_NEXUS_KEY_ENV = /^(?:BAILIAN_|DASHSCOPE_|OPENAI_API_KEY$|OPENAI_BASE_URL$|NEXUS_QWEN_KEY_)/i;
-const VARIABLE_INTERPOLATION = /\$(?:\{([^}]+)\}|(\w+))/;
+/** O mesmo conjunto em qualquer ponto de um nome interpolado (`${X:-$BAILIAN_…}`). */
+const PROTECTED_ENV_TOKEN = /BAILIAN_|DASHSCOPE_|OPENAI_API_KEY|OPENAI_BASE_URL|NEXUS_QWEN_KEY_/i;
+/**
+ * A sintaxe que a Qwen Code 0.25.2 expande em QUALQUER string de um settings:
+ * `\$(?:(\w+)|{([^}]+)})`, numa passada. Não há escape (`$$X` ainda expande o
+ * `$X`) nem `:-padrão` (`${X:-d}` procura uma variável chamada `X:-d`). Este
+ * detector é de propósito um SUPERCONJUNTO dessas formas.
+ */
+const INTERPOLATION = /\$(?:\{([^}]+)\}|(\w+))/g;
+/** Placeholders de runtime que a CLI deixa literais: não consultam o ambiente. */
+const RUNTIME_PLACEHOLDER = /^(?:session_id|qwen_code_session_id)$/i;
 
 function isNexusKeyEnv(name: string): boolean {
   return OPERATOR_NEXUS_KEY_ENV.test(name);
 }
 
+function interpolatedNames(value: string): string[] {
+  return [...value.matchAll(INTERPOLATION)]
+    .map((match) => match[1] ?? match[2] ?? '')
+    .filter((name) => !RUNTIME_PLACEHOLDER.test(name));
+}
+
+/** Alguma string do valor, em qualquer profundidade, interpola uma variável. */
 function containsInterpolation(value: unknown): boolean {
-  if (typeof value === 'string') return VARIABLE_INTERPOLATION.test(value);
+  if (typeof value === 'string') return interpolatedNames(value).length > 0;
   if (Array.isArray(value)) return value.some(containsInterpolation);
   return Boolean(value && typeof value === 'object' && Object.values(value).some(containsInterpolation));
 }
 
 function containsNexusInterpolation(value: unknown): boolean {
   if (typeof value === 'string') {
-    return [...value.matchAll(new RegExp(VARIABLE_INTERPOLATION, 'g'))]
-      .some((match) => isNexusKeyEnv(match[1] ?? match[2] ?? ''));
+    return interpolatedNames(value).some((name) => PROTECTED_ENV_TOKEN.test(name));
   }
   if (Array.isArray(value)) return value.some(containsNexusInterpolation);
   return Boolean(value && typeof value === 'object' && Object.values(value).some(containsNexusInterpolation));
@@ -366,98 +385,83 @@ function sameEnvKey(a: string | null, b: string): boolean {
   return a !== null && a.toUpperCase() === b.toUpperCase();
 }
 
-/**
- * F-1565: mescla as entradas do Nexus no `settings.json` do OVERLAY do pane
- * (o arquivo do operador nunca é tocado). O Qwen Code só honra a variável
- * a chave injetada quando um `modelProviders.openai[]` aponta para ela via
- * `envKey` — sem a entrada, a chave injetada morria no env e a CLI
- * usava o `security.auth.apiKey` embutido (velho) ou caía em "No auth type".
- * A entrada NUNCA carrega o segredo: só `envKey` + `baseUrl` (a forma oficial
- * da doc do Model Studio). Entrada do operador com o mesmo id vence a nossa.
- *
- * A cópia é a única credencial Alibaba do pane: sai o `security.auth.apiKey`
- * (venceria a env para um modelo fora de `models` e ficaria em disco) e as
- * `env.BAILIAN_*`/`DASHSCOPE_*`/OpenAI do operador. A variável injetada tem um
- * sufixo aleatório por spawn, e blocos de autenticação que interpolam `$` são
- * descartados: um settings que o operador possa reescrever não descobre nem
- * redireciona a chave do cofre. Uma coincidência de nome (inclusive por caixa
- * no Windows) é normalizada para o destino injetado conhecido.
- */
-export function mergeQwenSettingsForInjection(
-  raw: unknown,
-  options: {
-    readonly baseUrl: string;
-    readonly models: readonly string[];
-    /** A chave injetada é do Token Plan (`sk-sp-`). */
-    readonly tokenPlanKey: boolean;
-    /** Per-spawn random variable that is the only path to the vault key. */
-    readonly envKey: string;
-  },
-): Record<string, unknown> {
-  if (!INJECTED_KEY_ENV.test(options.envKey)) {
+/** Instrução do Nexus para os dois arquivos do overlay (sem segredo). */
+interface QwenInjectionOptions {
+  readonly baseUrl: string;
+  readonly models: readonly string[];
+  /** A chave injetada é do Token Plan (`sk-sp-`). */
+  readonly tokenPlanKey: boolean;
+  /** Per-spawn random variable that is the only path to the vault key. */
+  readonly envKey: string;
+}
+
+function assertInjectedKeyEnv(envKey: string): void {
+  if (!INJECTED_KEY_ENV.test(envKey)) {
     throw new Error('invalid Qwen injected key environment name');
   }
-  const rawSettings = asRecord(raw) ?? {};
-  const rawEnv = objectField(rawSettings, 'env');
-  const rawProviders = objectField(rawSettings, 'modelProviders');
-  const rawSecurity = objectField(rawSettings, 'security') ?? {};
-  const rawAuth = objectField(rawSecurity, 'auth');
-  const settings = { ...(asRecord(redactNexusInterpolations(rawSettings)) ?? {}) };
-  const security = objectField(settings, 'security') ?? {};
-  // A chave injetada é a credencial deste pane: a auth tem de ser a
-  // OpenAI-compatible, mesmo que o perfil diga qwen-oauth (a cópia é efêmera).
-  const auth: Record<string, unknown> = {
-    ...(containsInterpolation(rawAuth) ? {} : objectField(security, 'auth')),
-    selectedType: 'openai',
-  };
-  delete auth.apiKey;
-  settings.security = { ...security, auth };
-  const env = containsInterpolation(rawEnv) ? null : objectField(settings, 'env');
-  if (rawEnv && env) {
-    settings.env = Object.fromEntries(
-      Object.entries(env).filter(([name, value]) =>
-        !isNexusKeyEnv(name) && !containsNexusInterpolation(value),
-      ),
-    );
-  } else {
-    delete settings.env;
-  }
+}
 
+/** Destino que uma linha do operador alimentada pela NOSSA variável pode manter. */
+function safeRowDestination(entry: Record<string, unknown>, options: QwenInjectionOptions): string | null {
   const injectedUrl = normalizeHttpsBaseUrl(options.baseUrl);
-  const safeDestination = (entry: Record<string, unknown>): string | null => {
-    const url = nonEmptyString(entry.baseUrl);
-    if (injectedUrl && normalizeHttpsBaseUrl(url) === injectedUrl) return injectedUrl;
-    const known = knownKeyDestination(url);
-    return known !== null && (!options.tokenPlanKey || known.plan) ? known.href : null;
-  };
-  const providers = containsInterpolation(rawProviders)
-    ? {}
-    : objectField(settings, 'modelProviders') ?? {};
-  // fromEntries (e não `providers[type] = …`): uma chave `__proto__` vinda do
-  // JSON do operador vira propriedade própria, nunca troca o protótipo.
-  const guarded = Object.fromEntries(
-    Object.entries(providers).map(([authType, rows]): [string, unknown] => [
-      authType,
-      Array.isArray(rows)
-        ? rows.flatMap((row): unknown[] => {
-            const entry = asRecord(row);
-            if (!entry) return [row];
-            const envKey = nonEmptyString(entry.envKey);
-            if (sameEnvKey(envKey, options.envKey)) {
-              const baseUrl = safeDestination(entry) ?? options.baseUrl;
-              return authType === 'openai'
-                ? [{ ...entry, baseUrl, envKey: options.envKey }]
-                : [];
-            }
-            if (!envKey || !isNexusKeyEnv(envKey)) {
-              return [row];
-            }
-            return [];
-          })
-        : rows,
-    ]),
+  const url = nonEmptyString(entry.baseUrl);
+  if (injectedUrl && normalizeHttpsBaseUrl(url) === injectedUrl) return injectedUrl;
+  const known = knownKeyDestination(url);
+  return known !== null && (!options.tokenPlanKey || known.plan) ? known.href : null;
+}
+
+/**
+ * F4: a mescla descarta a ENTRADA que interpola, nunca o bloco. Um `$` perdido em
+ * uma variável, em uma linha do catálogo ou em um campo da auth tira só aquela
+ * peça; o resto da config legítima do operador atravessa intacto.
+ */
+function operatorEnvEntries(env: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(env).filter(([name, value]) => !isNexusKeyEnv(name) && !containsInterpolation(value)),
   );
-  const merged = Array.isArray(guarded.openai) ? [...guarded.openai] : [];
+}
+
+/** A auth da cópia: o que o operador tinha, sem a chave embutida e sem campo que interpole. */
+function operatorAuthFields(auth: Record<string, unknown> | null): Record<string, unknown> {
+  const kept = Object.fromEntries(
+    Object.entries(auth ?? {}).filter(([, value]) => !containsInterpolation(value)),
+  );
+  delete kept.apiKey;
+  return { ...kept, selectedType: 'openai' };
+}
+
+/**
+ * Linhas de `modelProviders.<authType>`: sai a que interpola (F4: só ela); fica
+ * a que tem outra `envKey`, inclusive os nomes legados `BAILIAN_*`, `DASHSCOPE_*`
+ * e `OPENAI_*` (F1: credencial do próprio operador, que a cópia deixou sem
+ * valor, então a linha falha às claras em vez de usar a chave velha); a que usa
+ * a NOSSA variável (caixa à parte, como no Windows) vai para um destino conhecido
+ * ou para a URL resolvida. Uma linha legada de um modelo que o Nexus cobre é
+ * RELIGADA à nossa variável (os campos do operador, como `generationConfig`,
+ * ficam): ela leria justo a variável que a cópia esvaziou, e deixá-la sombrear a
+ * nossa (mesmo id) devolveria o pane ao "chave salva que nunca chega ao fio".
+ */
+function guardOperatorRows(authType: string, rows: unknown, options: QwenInjectionOptions): unknown {
+  if (!Array.isArray(rows)) return containsInterpolation(rows) ? undefined : rows;
+  const covered = new Set(options.models.map((model) => model.trim().toLowerCase()));
+  return rows.flatMap((row): unknown[] => {
+    if (containsInterpolation(row)) return [];
+    const entry = asRecord(row);
+    if (!entry) return [row];
+    const envKey = nonEmptyString(entry.envKey);
+    const id = nonEmptyString(entry.id)?.toLowerCase();
+    const legacyForCoveredModel =
+      authType === 'openai' && envKey !== null && isNexusKeyEnv(envKey) && id !== undefined && covered.has(id);
+    if (!sameEnvKey(envKey, options.envKey) && !legacyForCoveredModel) return [row];
+    // Outro protocolo nunca recebe a chave OpenAI-compatible do cofre.
+    if (authType !== 'openai') return [];
+    return [{ ...entry, baseUrl: safeRowDestination(entry, options) ?? options.baseUrl, envKey: options.envKey }];
+  });
+}
+
+/** Acrescenta ao catálogo as linhas do Nexus (id ainda não definido), sem segredo. */
+function appendInjectedRows(rows: readonly unknown[], options: QwenInjectionOptions): unknown[] {
+  const merged = [...rows];
   const known = new Set(
     merged
       .map((row) => nonEmptyString(asRecord(row)?.id)?.toLowerCase())
@@ -475,8 +479,160 @@ export function mergeQwenSettingsForInjection(
       envKey: options.envKey,
     });
   }
-  settings.modelProviders = { ...guarded, openai: merged };
+  return merged;
+}
+
+/**
+ * F-1565: mescla as entradas do Nexus no `settings.json` de USUÁRIO do overlay
+ * do pane (o arquivo do operador nunca é tocado). O Qwen Code só honra a variável
+ * da chave injetada quando um `modelProviders.openai[]` aponta para ela via
+ * `envKey` — sem a entrada, a chave injetada morria no env e a CLI usava o
+ * `security.auth.apiKey` embutido (velho) ou caía em "No auth type".
+ * A entrada NUNCA carrega o segredo: só `envKey` + `baseUrl` (a forma oficial
+ * da doc do Model Studio). Entrada do operador com o mesmo id vence a nossa,
+ * salvo a que lê uma credencial legada, que é religada à nossa variável (ver
+ * `guardOperatorRows`).
+ *
+ * A cópia é a única credencial Alibaba do pane: sai o `security.auth.apiKey`
+ * (venceria a env para um modelo fora de `models` e ficaria em disco) e as
+ * `env.BAILIAN_*`/`DASHSCOPE_*`/OpenAI do operador. A variável injetada tem um
+ * sufixo aleatório por spawn, e a entrada de `env`/`modelProviders`/`security.auth`
+ * que interpola `$` é descartada (só ela, F4): um settings que o operador possa
+ * reescrever não descobre nem redireciona a chave do cofre. Uma coincidência
+ * de nome (inclusive por caixa no Windows) é normalizada para o destino
+ * injetado conhecido.
+ *
+ * Este é o layer de USUÁRIO: a precedência user<workspace da CLI fica como o
+ * operador a conhece. O que o Nexus IMPÕE por cima do workspace vai à parte, em
+ * `mergeQwenSystemSettingsForInjection`.
+ */
+export function mergeQwenSettingsForInjection(
+  raw: unknown,
+  options: QwenInjectionOptions,
+): Record<string, unknown> {
+  assertInjectedKeyEnv(options.envKey);
+  const rawSettings = asRecord(raw) ?? {};
+  const settings = { ...(asRecord(redactNexusInterpolations(rawSettings)) ?? {}) };
+  // A chave injetada é a credencial deste pane: a auth tem de ser a
+  // OpenAI-compatible, mesmo que o perfil diga qwen-oauth (a cópia é efêmera).
+  settings.security = {
+    ...(objectField(settings, 'security') ?? {}),
+    auth: operatorAuthFields(objectField(objectField(rawSettings, 'security'), 'auth')),
+  };
+  const rawEnv = objectField(rawSettings, 'env');
+  if (rawEnv) settings.env = operatorEnvEntries(rawEnv);
+  else delete settings.env;
+
+  // fromEntries (e não `providers[type] = …`): uma chave `__proto__` vinda do
+  // JSON do operador vira propriedade própria, nunca troca o protótipo.
+  const guarded = Object.fromEntries(
+    Object.entries(objectField(rawSettings, 'modelProviders') ?? {}).flatMap(
+      ([authType, rows]): Array<[string, unknown]> => {
+        const kept = guardOperatorRows(authType, rows, options);
+        return kept === undefined ? [] : [[authType, kept]];
+      },
+    ),
+  );
+  settings.modelProviders = {
+    ...guarded,
+    openai: appendInjectedRows(Array.isArray(guarded.openai) ? guarded.openai : [], options),
+  };
   return settings;
+}
+
+/**
+ * Caminhos de settings de SISTEMA (admin) que a Qwen Code leria neste pane se o
+ * Nexus não os redirecionasse — espelho do `getSystemSettingsPath` /
+ * `getSystemDefaultsPath` da 0.25.2. Os defaults andam junto do arquivo de
+ * sistema (`system-defaults.json` ao lado), então redirecionar um sem fixar o
+ * outro também derruba os defaults do admin.
+ */
+export function qwenSystemSettingsPaths(
+  env: Readonly<Record<string, string | undefined>>,
+  platform: NodeJS.Platform = process.platform,
+): { readonly settings: string; readonly defaults: string } {
+  const flavor = platform === 'win32' ? path.win32 : path.posix;
+  const settings = env.QWEN_CODE_SYSTEM_SETTINGS_PATH
+    || (platform === 'darwin'
+      ? '/Library/Application Support/QwenCode/settings.json'
+      : platform === 'win32'
+        ? 'C:\\ProgramData\\qwen-code\\settings.json'
+        : '/etc/qwen-code/settings.json');
+  const defaults = env.QWEN_CODE_SYSTEM_DEFAULTS_PATH
+    || flavor.join(flavor.dirname(settings), 'system-defaults.json');
+  return { settings, defaults };
+}
+
+/**
+ * Lê o settings de SISTEMA do operador/admin (política, não preferência), com o
+ * mesmo critério da CLI (`existsSync` e depois a leitura): o que ela não enxerga
+ * (ausente, link pendurado, diretório pai sem acesso) é `{}`; o que ela enxerga e
+ * não consegue ler (sem permissão, grande demais, não regular, inválido) LANÇA. A
+ * CLI nativa também recusa subir com um arquivo de sistema quebrado, e ignorá-lo
+ * em silêncio soltaria o pane sem a política que o admin pôs.
+ */
+export function readQwenSystemSettings(file: string): Record<string, unknown> {
+  if (!fs.existsSync(file)) return {};
+  const read = readRegularFileCapped(file, QWEN_SETTINGS_MAX_BYTES);
+  const parsed = read.kind === 'text' ? readableSystemSettings(read.text) : null;
+  if (!parsed) {
+    throw new Error(`Qwen system settings at ${file} are unreadable or invalid; fix or remove the file`);
+  }
+  return parsed;
+}
+
+function readableSystemSettings(text: string): Record<string, unknown> | null {
+  try {
+    return asRecord(parseQwenOperatorSettingsText(text));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * F2/F3: o layer de SISTEMA do pane (`QWEN_CODE_SYSTEM_SETTINGS_PATH`). Na CLI
+ * ele vence o workspace e o usuário, então leva SÓ o que o Nexus impõe:
+ *  - o catálogo `modelProviders.openai` com as linhas geradas (na CLI a lista de
+ *    um layer mais alto SUBSTITUI a de baixo, então o catálogo imposto carrega as
+ *    linhas que a CLI mostraria sem nós: as do admin, ou as do operador já
+ *    saneadas) — um `modelProviders` do workspace não tira a linha da chave;
+ *  - endurecimento: a auth fixada na OpenAI-compatible, sem `apiKey`, e
+ *    `OPENAI_API_KEY` vazia em `env`. Um modelo fora do catálogo cai nesses
+ *    caminhos de ambiente/auth, e o settings de um workspace (que pode
+ *    interpolar a variável do cofre se souber o nome) não pode abastecê-los.
+ *    Sem pino de `OPENAI_BASE_URL`: sem chave ele não leva nada, e a CLI exporta
+ *    todo valor de `env` ao pane e aos filhos (o `OPENAI_API_KEY=` vazio já é o
+ *    custo mínimo; um dotenv sem override não o preenche).
+ * O resto das chaves do operador (model, ui, env, …) fica no layer de USUÁRIO,
+ * então a precedência user<workspace não muda. O settings de sistema REAL do
+ * admin entra por baixo, intacto, e as chaves impostas vencem só onde colidem.
+ * Não impomos `folderTrust` (ignoraria o `.qwen/settings.json` do projeto) nem
+ * `disableAllHooks` (desligaria os hooks do operador): ver docs/qa/items/F-1565.md.
+ */
+export function mergeQwenSystemSettingsForInjection(
+  rawSystem: unknown,
+  userLayer: Record<string, unknown>,
+  options: QwenInjectionOptions,
+): Record<string, unknown> {
+  assertInjectedKeyEnv(options.envKey);
+  const system = asRecord(rawSystem) ?? {};
+  const providers = objectField(system, 'modelProviders') ?? {};
+  const userOpenai = objectField(userLayer, 'modelProviders')?.openai;
+  const openai = Array.isArray(providers.openai)
+    ? appendInjectedRows(providers.openai, options)
+    : Array.isArray(userOpenai)
+      ? userOpenai
+      : appendInjectedRows([], options);
+  const security = objectField(system, 'security') ?? {};
+  return {
+    ...system,
+    security: {
+      ...security,
+      auth: { ...(objectField(security, 'auth') ?? {}), selectedType: 'openai', apiKey: '' },
+    },
+    env: { ...(objectField(system, 'env') ?? {}), OPENAI_API_KEY: '' },
+    modelProviders: { ...providers, openai },
+  };
 }
 
 /** Prontidão: a chave em settings conta como `present` — nunca lida p/ fora. */

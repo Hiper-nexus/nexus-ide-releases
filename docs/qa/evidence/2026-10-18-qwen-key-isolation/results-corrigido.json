@@ -1,0 +1,677 @@
+[
+  {
+    "id": "c01-legit",
+    "group": "control",
+    "expect": "safe-key",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "c02-operator-rows",
+    "group": "control",
+    "expect": "safe-key",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "c03-ws-benign",
+    "group": "control",
+    "expect": "safe-key",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "c04-user-jsonc-bom",
+    "group": "control",
+    "expect": "safe-key",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "c05-governed",
+    "group": "control",
+    "expect": "safe-key",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "c06-admin-system",
+    "group": "control",
+    "expect": "safe-key",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "c07-ws-model-listed",
+    "group": "control",
+    "expect": "safe-key",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "e01-ws-env-base-user-interp",
+    "group": "dotenv",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 0,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "e02-ws-qwen-env-base",
+    "group": "dotenv",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 0,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "e03-home-env",
+    "group": "dotenv",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 0,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "e04-ws-env-key-name",
+    "group": "dotenv",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "p01-ws-over-user",
+    "group": "prec",
+    "expect": "safe-key",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "probe": {
+      "ok": true,
+      "missing": [],
+      "unexpected": []
+    },
+    "exit": 1
+  },
+  {
+    "id": "p02-admin-over-all",
+    "group": "prec",
+    "expect": "safe-key",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "probe": {
+      "ok": true,
+      "missing": [],
+      "unexpected": []
+    },
+    "exit": 1
+  },
+  {
+    "id": "p03-admin-defaults",
+    "group": "prec",
+    "expect": "safe-key",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "probe": {
+      "ok": true,
+      "missing": [],
+      "unexpected": []
+    },
+    "exit": 1
+  },
+  {
+    "id": "p04-defaults-below-user",
+    "group": "prec",
+    "expect": "safe-key",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "probe": {
+      "ok": true,
+      "missing": [],
+      "unexpected": []
+    },
+    "exit": 1
+  },
+  {
+    "id": "p05-admin-catalog-row",
+    "group": "prec",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 0,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "probe": {
+      "ok": true,
+      "missing": [],
+      "unexpected": []
+    },
+    "exit": 1
+  },
+  {
+    "id": "p06-admin-catalog-injected-model",
+    "group": "prec",
+    "expect": "safe-key",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "p07-legacy-row-same-id",
+    "group": "prec",
+    "expect": "safe-key",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "p08-legacy-row-other-id-kept",
+    "group": "prec",
+    "expect": "safe-key",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "s01-sanity-leak",
+    "group": "sanity",
+    "expect": "leak-expected",
+    "leak": true,
+    "safeKeyHits": 0,
+    "evilHits": 1,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "u01-row-known-evil",
+    "group": "user",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "u02-row-known-evil-http",
+    "group": "user",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "u03-row-known-otherid",
+    "group": "user",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "u04-row-known-lowercase",
+    "group": "user",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "u05-row-known-mixedcase",
+    "group": "user",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "u06-row-known-nobase",
+    "group": "user",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "u07-row-known-anthropic",
+    "group": "user",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "u08-row-known-gemini",
+    "group": "user",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "u09-row-known-custom",
+    "group": "user",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "u10-row-header-interp",
+    "group": "user",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "u11-env-interp-braces",
+    "group": "user",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 0,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "u12-env-interp-bare",
+    "group": "user",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 0,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "u13-env-default-syntax",
+    "group": "user",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 0,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "u14-env-dollar-dollar-bare",
+    "group": "user",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 0,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "u15-env-dollar-dollar-braces",
+    "group": "user",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 0,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "u16-env-chained",
+    "group": "user",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 0,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "u17-env-interp-lowercase",
+    "group": "user",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 0,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "u18-openai-env-interp-unlisted",
+    "group": "user",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "u19-auth-apikey-interp-unlisted",
+    "group": "user",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 0,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "u20-model-baseurl-listed",
+    "group": "user",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "u21-envkey-interp-bare",
+    "group": "user",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "u22-envkey-interp-braces",
+    "group": "user",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "u23-legacy-names-envkey",
+    "group": "user",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "w01-row-known-evil",
+    "group": "workspace",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "w02-row-known-evil-http",
+    "group": "workspace",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "w03-row-known-otherid",
+    "group": "workspace",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "w04-row-known-anthropic",
+    "group": "workspace",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "w05-row-known-custom",
+    "group": "workspace",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "w06-model-baseurl-evil",
+    "group": "workspace",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "w07-env-openai-interp-unlisted",
+    "group": "workspace",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 0,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "w08-env-dashscope-interp-unlisted",
+    "group": "workspace",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 0,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "w09-auth-apikey-interp-unlisted",
+    "group": "workspace",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 0,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "w10-env-row-chain",
+    "group": "workspace",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "w11-row-header-interp",
+    "group": "workspace",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "w12-selectedtype-oauth",
+    "group": "workspace",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "w13-catalog-replace-empty",
+    "group": "workspace",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "w14-row-sameid-otherenv",
+    "group": "workspace",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "w15-env-default-syntax",
+    "group": "workspace",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 0,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "w16-env-dollar-dollar",
+    "group": "workspace",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 0,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "w17-auth-baseurl-only",
+    "group": "workspace",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 0,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "w18-ws-env-and-envfile",
+    "group": "workspace",
+    "expect": "safe-only",
+    "leak": false,
+    "safeKeyHits": 0,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "x01-ws-hook-command",
+    "group": "exec",
+    "expect": "exec-class",
+    "leak": true,
+    "safeKeyHits": 1,
+    "evilHits": 1,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "x02-ws-hook-http",
+    "group": "exec",
+    "expect": "exec-class",
+    "leak": true,
+    "safeKeyHits": 1,
+    "evilHits": 1,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "x03-ws-mcp-stdio",
+    "group": "exec",
+    "expect": "exec-class",
+    "leak": false,
+    "safeKeyHits": 1,
+    "evilHits": 0,
+    "secretsOnDisk": [],
+    "exit": 1
+  },
+  {
+    "id": "x04-user-mcp-stdio",
+    "group": "exec",
+    "expect": "exec-class",
+    "leak": true,
+    "safeKeyHits": 1,
+    "evilHits": 1,
+    "secretsOnDisk": [],
+    "exit": 1
+  }
+]

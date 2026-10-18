@@ -2,7 +2,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { readQwenOperatorSettings } from '../adapters/qwen-settings';
+import {
+  qwenSystemSettingsPaths,
+  readQwenOperatorSettings,
+  readQwenSystemSettings,
+} from '../adapters/qwen-settings';
 import { cleanupCliMcpSession, purgeStaleCliMcpSessions } from './cli-mcp-session-artifacts';
 import { prepareQwenMcpSession } from './cli-mcp-session-qwen';
 
@@ -10,13 +14,18 @@ import { prepareQwenMcpSession } from './cli-mcp-session-qwen';
 // espião conta as leituras sem trocar o comportamento real.
 vi.mock('../adapters/qwen-settings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../adapters/qwen-settings')>();
-  return { ...actual, readQwenOperatorSettings: vi.fn(actual.readQwenOperatorSettings) };
+  return {
+    ...actual,
+    readQwenOperatorSettings: vi.fn(actual.readQwenOperatorSettings),
+    readQwenSystemSettings: vi.fn(actual.readQwenSystemSettings),
+  };
 });
 
 const tempDirs: string[] = [];
 
 beforeEach(() => {
   vi.mocked(readQwenOperatorSettings).mockClear();
+  vi.mocked(readQwenSystemSettings).mockClear();
 });
 
 afterEach(() => {
@@ -223,7 +232,13 @@ describe('prepareQwenMcpSession — injeção de chave do Nexus (F-1565)', () =>
       // vai para a cópia: a injetada é a única credencial do pane e nenhum
       // segredo velho fica em disco. O arquivo real nunca é tocado.
       expect(merged.env?.BAILIAN_TOKEN_PLAN_API_KEY).toBeUndefined();
-      expect(result.env.QWEN_CODE_SYSTEM_SETTINGS_PATH).toBe(written);
+      // F2/F3: o layer de SISTEMA é um arquivo À PARTE (só o que o Nexus impõe),
+      // nunca a cópia do operador; os defaults de sistema do admin ficam onde estavam.
+      expect(result.env.QWEN_CODE_SYSTEM_SETTINGS_PATH)
+        .toBe(path.join(artifactDir, 'system-settings.json'));
+      expect(result.env.QWEN_CODE_SYSTEM_SETTINGS_PATH).not.toBe(written);
+      expect(result.env.QWEN_CODE_SYSTEM_DEFAULTS_PATH)
+        .toBe(qwenSystemSettingsPaths({}, process.platform).defaults);
       expect(fs.readFileSync(written, 'utf8')).not.toContain('fixture-settings-secret');
       expect(fs.readFileSync(path.join(fx.providerHome, 'settings.json'), 'utf8'))
         .toContain('fixture-settings-secret');
@@ -412,6 +427,197 @@ describe('prepareQwenMcpSession — settings do operador sob demanda e tolerante
       expect(merged.security.auth).not.toHaveProperty('apiKey');
       expect(merged.env).toEqual({ OUTRA: 'fica' });
       expect(merged.model?.name).toBe('qwen-modelo-que-so-o-operador-tem');
+    } finally {
+      cleanupCliMcpSession(TOKEN);
+    }
+  });
+});
+
+describe('prepareQwenMcpSession — layer de sistema separado e settings do admin (F-1565 F2/F3)', () => {
+  const PLAN = 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1';
+  const injection = { baseUrl: PLAN, models: ['qwen3.8-max'], tokenPlanKey: true, envKey: INJECTED_ENV };
+
+  function start(fx: Fixture, checkoutId: string, extra: Partial<Parameters<typeof prepareQwenMcpSession>[2]> = {}) {
+    return prepareQwenMcpSession(URL, TOKEN, {
+      home: fx.home,
+      providerHome: fx.providerHome,
+      userDataPath: fx.userDataPath,
+      artifactRoot: fx.artifactRoot,
+      checkoutId,
+      cwd: fx.workspace,
+      workspaceRoot: fx.workspace,
+      qwenSettingsInjection: injection,
+      ...extra,
+    });
+  }
+
+  function readJson(file: string): Record<string, unknown> {
+    return JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
+  }
+
+  function adminFiles(fx: Fixture, system: unknown, defaults?: unknown): { settings: string; defaults: string } {
+    const dir = path.join(path.dirname(fx.home), 'admin');
+    fs.mkdirSync(dir, { recursive: true });
+    const settings = path.join(dir, 'settings.json');
+    const defaultsFile = path.join(dir, 'system-defaults.json');
+    fs.writeFileSync(settings, typeof system === 'string' ? system : JSON.stringify(system));
+    if (defaults !== undefined) fs.writeFileSync(defaultsFile, JSON.stringify(defaults));
+    return { settings, defaults: defaultsFile };
+  }
+
+  it('escreve DOIS arquivos: o operador fica no layer de usuário e o de sistema leva só o que o Nexus impõe', () => {
+    const fx = fixture();
+    fs.writeFileSync(
+      path.join(fx.providerHome, 'settings.json'),
+      JSON.stringify({
+        model: { name: 'qwen3.8-max' },
+        ui: { theme: 'Dracula' },
+        mcpServers: { blender: { command: 'blender-mcp' } },
+        context: { fileName: 'USER.md' },
+      }),
+    );
+    const result = start(fx, 'c-sys-1');
+    try {
+      const dir = result.artifactDir!;
+      const userLayer = readJson(path.join(dir, 'settings.json'));
+      const systemLayer = readJson(path.join(dir, 'system-settings.json'));
+      expect(userLayer).toMatchObject({
+        model: { name: 'qwen3.8-max' },
+        ui: { theme: 'Dracula' },
+        context: { fileName: 'USER.md' },
+      });
+      // O layer de sistema vence o workspace: nada do que o operador escolheu pode ir para lá.
+      expect(Object.keys(systemLayer).filter((key) => key !== '$version').sort())
+        .toEqual(['env', 'modelProviders', 'security']);
+      for (const key of ['model', 'ui', 'mcpServers', 'context']) expect(systemLayer).not.toHaveProperty(key);
+      expect(JSON.stringify(systemLayer)).not.toMatch(/Dracula|blender|USER\.md/);
+      expect(systemLayer.env).toEqual({ OPENAI_API_KEY: '' });
+      expect((systemLayer.modelProviders as { openai: Array<Record<string, unknown>> }).openai[0])
+        .toMatchObject({ id: 'qwen3.8-max', baseUrl: PLAN, envKey: INJECTED_ENV });
+      // Ambos privados e fora do perfil real.
+      for (const file of ['settings.json', 'system-settings.json']) {
+        const full = path.join(dir, file);
+        expect(fs.lstatSync(full).isSymbolicLink()).toBe(false);
+        if (process.platform !== 'win32') expect(fs.statSync(full).mode & 0o077).toBe(0);
+      }
+    } finally {
+      cleanupCliMcpSession(TOKEN);
+    }
+  });
+
+  it('o settings de sistema do admin entra por baixo, intacto no disco, e os defaults dele seguem fixados', () => {
+    const fx = fixture();
+    const admin = {
+      general: { disableAutoUpdate: true },
+      permissions: { deny: ['run_shell_command(rm -rf *)'] },
+      security: { folderTrust: { enabled: true } },
+    };
+    const files = adminFiles(fx, admin, { ui: { theme: 'from-defaults' } });
+    const before = fs.readFileSync(files.settings, 'utf8');
+    const result = start(fx, 'c-sys-2', {
+      qwenSystemSettingsPath: files.settings,
+      qwenSystemDefaultsPath: files.defaults,
+    });
+    try {
+      const systemLayer = readJson(path.join(result.artifactDir!, 'system-settings.json'));
+      expect(systemLayer).toMatchObject({
+        general: admin.general,
+        permissions: admin.permissions,
+        security: { folderTrust: { enabled: true }, auth: { selectedType: 'openai', apiKey: '' } },
+      });
+      expect(result.env.QWEN_CODE_SYSTEM_SETTINGS_PATH).toBe(path.join(result.artifactDir!, 'system-settings.json'));
+      expect(result.env.QWEN_CODE_SYSTEM_DEFAULTS_PATH).toBe(files.defaults);
+      // O arquivo do admin é só lido: nada do Nexus volta para ele.
+      expect(fs.readFileSync(files.settings, 'utf8')).toBe(before);
+      expect(fs.readFileSync(files.defaults, 'utf8')).toBe(JSON.stringify({ ui: { theme: 'from-defaults' } }));
+    } finally {
+      cleanupCliMcpSession(TOKEN);
+    }
+  });
+
+  it('só o caminho de sistema informado: os defaults andam ao lado dele, como na CLI', () => {
+    const fx = fixture();
+    const files = adminFiles(fx, {});
+    const result = start(fx, 'c-sys-3', { qwenSystemSettingsPath: files.settings });
+    try {
+      expect(result.env.QWEN_CODE_SYSTEM_DEFAULTS_PATH).toBe(files.defaults);
+    } finally {
+      cleanupCliMcpSession(TOKEN);
+    }
+  });
+
+  it('sem nenhum caminho informado vale o padrão da plataforma (o arquivo ausente é só "sem política")', () => {
+    const fx = fixture();
+    const result = start(fx, 'c-sys-4');
+    try {
+      const defaults = qwenSystemSettingsPaths({}, process.platform);
+      expect(result.env.QWEN_CODE_SYSTEM_DEFAULTS_PATH).toBe(defaults.defaults);
+      expect(vi.mocked(readQwenSystemSettings)).toHaveBeenCalledWith(defaults.settings);
+    } finally {
+      cleanupCliMcpSession(TOKEN);
+    }
+  });
+
+  it('settings de sistema ilegível: o spawn é recusado (a CLI nativa também recusa) e nenhum overlay fica', () => {
+    const fx = fixture();
+    const files = adminFiles(fx, '{not json');
+    expect(() => start(fx, 'c-sys-5', { qwenSystemSettingsPath: files.settings }))
+      .toThrow(/Qwen system settings .* unreadable or invalid/);
+    const leftovers = fs.existsSync(path.join(fx.artifactRoot, 'qwen'))
+      ? fs.readdirSync(path.join(fx.artifactRoot, 'qwen'))
+      : [];
+    expect(leftovers).toEqual([]);
+  });
+
+  it('um system-settings.json no perfil do operador não é ligado por cima do arquivo do Nexus', () => {
+    const fx = fixture();
+    fs.writeFileSync(path.join(fx.providerHome, 'system-settings.json'), '{"operator":"planted"}');
+    const result = start(fx, 'c-sys-6');
+    try {
+      const written = path.join(result.artifactDir!, 'system-settings.json');
+      expect(fs.lstatSync(written).isSymbolicLink()).toBe(false);
+      expect(fs.readFileSync(written, 'utf8')).not.toContain('planted');
+      expect(fs.readFileSync(written, 'utf8')).toContain(INJECTED_ENV);
+    } finally {
+      cleanupCliMcpSession(TOKEN);
+    }
+  });
+
+  it('worker governado com injeção também ganha o layer de sistema, e o admin real não entra nos grants', () => {
+    const fx = fixture();
+    const files = adminFiles(fx, { general: { disableAutoUpdate: true } });
+    const result = start(fx, 'c-sys-7', {
+      governed: true,
+      allowedSkills: [],
+      allowedTools: [],
+      qwenSystemSettingsPath: files.settings,
+    });
+    try {
+      expect(readJson(path.join(result.artifactDir!, 'system-settings.json')).general)
+        .toEqual({ disableAutoUpdate: true });
+      expect(result.providerStateReadPaths ?? []).not.toContain(files.settings);
+      expect(result.providerStateWritePaths ?? []).not.toContain(files.settings);
+    } finally {
+      cleanupCliMcpSession(TOKEN);
+    }
+  });
+
+  it('sem injeção nada muda: o settings segue ligado, sem QWEN_CODE_SYSTEM_* e sem ler o admin', () => {
+    const fx = fixture();
+    const result = prepareQwenMcpSession(URL, TOKEN, {
+      home: fx.home,
+      providerHome: fx.providerHome,
+      userDataPath: fx.userDataPath,
+      artifactRoot: fx.artifactRoot,
+      checkoutId: 'c-sys-8',
+      cwd: fx.workspace,
+      workspaceRoot: fx.workspace,
+    });
+    try {
+      expect(result.env).not.toHaveProperty('QWEN_CODE_SYSTEM_SETTINGS_PATH');
+      expect(result.env).not.toHaveProperty('QWEN_CODE_SYSTEM_DEFAULTS_PATH');
+      expect(fs.existsSync(path.join(result.artifactDir!, 'system-settings.json'))).toBe(false);
+      expect(readQwenSystemSettings).not.toHaveBeenCalled();
     } finally {
       cleanupCliMcpSession(TOKEN);
     }

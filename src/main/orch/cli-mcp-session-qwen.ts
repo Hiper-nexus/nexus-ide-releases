@@ -7,8 +7,12 @@
  * Nexus o overlay LIGA o arquivo, nunca copia o segredo para outro lugar.
  * F-1565: quando o spawn injeta a chave configurada (vault/conta), a CLI só a
  * honra se um `modelProviders[].envKey` apontar para ela — então o overlay
- * grava um settings.json MESCLADO (o do operador SEM as credenciais Alibaba
- * dele + as entradas com envKey e a base URL resolvida) em vez de ligar. O MCP
+ * grava um settings.json de usuário MESCLADO (o do operador SEM as credenciais
+ * Alibaba dele + as entradas com envKey e a base URL resolvida) em vez de
+ * ligar, e um settings de SISTEMA à parte (`system-settings.json`) com SÓ o que
+ * o Nexus impõe por cima do workspace (o catálogo gerado + endurecimento),
+ * sobre o settings de sistema real do admin. O resto do operador fica no layer
+ * de usuário, então a precedência user<workspace da CLI não muda. O MCP
  * da sessão chega por
  * um arquivo JSON privado (`{"mcpServers": …}`) referenciado por
  * `--mcp-config`; a ponte stdio compartilhada (`~/.nexus/mcp-bridge`) recebe
@@ -26,7 +30,10 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   mergeQwenSettingsForInjection,
+  mergeQwenSystemSettingsForInjection,
+  qwenSystemSettingsPaths,
   readQwenOperatorSettings,
+  readQwenSystemSettings,
 } from '../adapters/qwen-settings';
 import {
   activateArtifact,
@@ -80,6 +87,9 @@ const QWEN_SESSION_ENTRIES = [
  */
 const QWEN_AUTH_ENTRIES = ['settings.json', 'installation_id'];
 
+/** Layer de SISTEMA do pane com injeção (F2/F3): só o que o Nexus impõe. */
+const QWEN_SYSTEM_SETTINGS_FILE = 'system-settings.json';
+
 function qwenAuthGrantPaths(providerHome: string): string[] {
   const found: string[] = [];
   for (const name of QWEN_AUTH_ENTRIES) {
@@ -128,15 +138,34 @@ export function prepareQwenMcpSession(
     // ESCRITO (mescla o do operador com as entradas modelProviders que
     // apontam a env para a base URL certa) em vez de ligado — a CLI ignora a
     // env BAILIAN sem essas entradas e usava o apiKey velho embutido (401).
+    // O que o Nexus IMPÕE por cima do workspace vai num arquivo de SISTEMA à
+    // parte, sobre o settings de sistema real do admin (F2/F3): apontar
+    // `QWEN_CODE_SYSTEM_SETTINGS_PATH` para a cópia inteira do operador
+    // invertia a precedência user<workspace e derrubava a política do admin.
+    const systemSettingsFile = path.join(artifactDir, QWEN_SYSTEM_SETTINGS_FILE);
+    let systemDefaultsPath: string | null = null;
     if (injection) {
       const merged = mergeQwenSettingsForInjection(operatorSettings, injection);
       writePrivateFileAtomic(
         path.join(artifactDir, 'settings.json'),
         `${JSON.stringify(merged, null, 2)}\n`,
       );
+      const adminPaths = qwenSystemSettingsPaths({
+        QWEN_CODE_SYSTEM_SETTINGS_PATH: options.qwenSystemSettingsPath,
+        QWEN_CODE_SYSTEM_DEFAULTS_PATH: options.qwenSystemDefaultsPath,
+      });
+      systemDefaultsPath = adminPaths.defaults;
+      writePrivateFileAtomic(
+        systemSettingsFile,
+        `${JSON.stringify(
+          mergeQwenSystemSettingsForInjection(readQwenSystemSettings(adminPaths.settings), merged, injection),
+          null,
+          2,
+        )}\n`,
+      );
     }
     const linkExclusions = new Set(
-      injection ? [...QWEN_SESSION_ENTRIES, 'settings.json'] : QWEN_SESSION_ENTRIES,
+      injection ? [...QWEN_SESSION_ENTRIES, 'settings.json', QWEN_SYSTEM_SETTINGS_FILE] : QWEN_SESSION_ENTRIES,
     );
     if (policy.governed) {
       linkSelectedEntries(
@@ -211,8 +240,13 @@ export function prepareQwenMcpSession(
     return {
       env: {
         QWEN_HOME: artifactDir,
-        ...(injection
-          ? { QWEN_CODE_SYSTEM_SETTINGS_PATH: path.join(artifactDir, 'settings.json') }
+        // Os defaults de sistema andam ao lado do arquivo de sistema: redirecionar
+        // um sem fixar o outro derrubaria o `system-defaults.json` do admin.
+        ...(systemDefaultsPath
+          ? {
+              QWEN_CODE_SYSTEM_SETTINGS_PATH: systemSettingsFile,
+              QWEN_CODE_SYSTEM_DEFAULTS_PATH: systemDefaultsPath,
+            }
           : {}),
         NEXUS_MCP_URL: url,
         NEXUS_MCP_TOKEN: token,

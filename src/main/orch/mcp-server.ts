@@ -1602,7 +1602,13 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
             workspaceRoot: authority.scope.rootRealPath,
             hubServers,
             ...(providerSpawnHints?.qwenSettingsInjection
-              ? { qwenSettingsInjection: providerSpawnHints.qwenSettingsInjection }
+              ? {
+                  qwenSettingsInjection: providerSpawnHints.qwenSettingsInjection,
+                  // F2/F3: com a injeção o overlay redireciona o settings de
+                  // sistema da CLI; o que ela leria sem isso entra por baixo.
+                  qwenSystemSettingsPath: preparedEnv?.QWEN_CODE_SYSTEM_SETTINGS_PATH,
+                  qwenSystemDefaultsPath: preparedEnv?.QWEN_CODE_SYSTEM_DEFAULTS_PATH,
+                }
               : {}),
           });
           Object.assign(env, prepared.env);
