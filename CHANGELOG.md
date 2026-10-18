@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.76.309 — Recibo fiel e esteira sem corrida no Linux
+
+A tag 0.76.308 é o candidato macOS. Este pacote leva o desktop Linux.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35).
+
+No desktop Linux, em relação à 0.76.307:
+
+- **Recibo de rota fiel**. Quando todas as alternativas fora do Claude são falhas provadas e a primeira delas herda a vaga, o recibo não cita mais "evitou rota falha". O resto do recibo continua igual.
+- **Esteira sem corrida na conclusão**. O vigia relê o pedido de conclusão depois da análise do Jev e antes de enviar o lembrete "Esteira parada". Só o pedido do Maestro atual, na versão atual da missão, cala o lembrete.
+
 ## 0.76.308 — Recibo fiel e esteira sem corrida no Mac
 
 Candidato macOS (`darwin-arm64`) assinado e notarizado. Em relação à 0.76.306 (último macOS):
