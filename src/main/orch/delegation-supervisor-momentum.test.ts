@@ -73,6 +73,7 @@ vi.mock('./nexus-task-fail-closed-recovery', () => ({
 vi.mock('../observability/main-trace', () => ({ trace: () => {} }));
 
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
+import { clearCompletionRequest, recordOperatorTabCompletionRequest } from './operator-tab-completion';
 import { createScopedMissionStore } from './mission-store';
 import { createScopedTaskStore } from './task-store';
 import { createTaskDispatchStore } from './task-dispatch-store';
@@ -231,6 +232,20 @@ describe('real supervisor momentum queue', () => {
     resolveJudge({ kind: 'skipped' });
     await scan;
     await stopped;
+    expect(c.notices()).toHaveLength(0);
+    expect(h.delivered).not.toHaveBeenCalled();
+  });
+
+  it('a completion request recorded during the judgment await discards the nudge', async () => {
+    const c = setup();
+    c.tasks.create({ missionId: c.mission.id, title: 'Independent work' });
+    await c.scan(0);
+    h.judge.mockImplementationOnce(async () => {
+      recordOperatorTabCompletionRequest(c.suite.scope, c.mission);
+      return { kind: 'skipped' };
+    });
+    await c.scan(30_000);
+    clearCompletionRequest(c.suite.scope, c.mission.id);
     expect(c.notices()).toHaveLength(0);
     expect(h.delivered).not.toHaveBeenCalled();
   });
