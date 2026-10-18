@@ -221,7 +221,7 @@ describe('task-board-projection — fallback da linha legada (hidratação)', ()
     expect(entry?.stateLabel).toBe('Parou');
   });
 
-  it('linha legada leftover-park lê Dormindo em Precisa de você', () => {
+  it('linha legada leftover-park lê Interrompida em Precisa de você', () => {
     const [entry] = missionEntries({
       missions: [
         mission({
@@ -232,7 +232,7 @@ describe('task-board-projection — fallback da linha legada (hidratação)', ()
       todoLists: [],
     });
     expect(entry?.lane).toBe('needs_you');
-    expect(entry?.stateLabel).toBe('Dormindo');
+    expect(entry?.stateLabel).toBe('Interrompida');
   });
 
   it('o snapshot vence a linha legada pelo id e não duplica o card', () => {

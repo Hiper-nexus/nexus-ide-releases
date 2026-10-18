@@ -9,6 +9,7 @@
 @import './mission-setup.css';
 @import './mission-prep-overlay.css';
 @import './mission-board.css';
+@import './mission-interrupted.css';
 @import './agent-avatar.css';
 @import './operator-sprite.css';
 @import './provider-logo.css';

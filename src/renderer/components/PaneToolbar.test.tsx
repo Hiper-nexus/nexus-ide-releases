@@ -12,7 +12,11 @@ import { useProductNavigationStore } from '../state/product-navigation-store';
 import { useToastStore } from '../state/toast-store';
 
 const reopen = vi.hoisted(() => vi.fn());
-vi.mock('../orch/confirm-reopen-mission', () => ({ confirmAndReopenMission: reopen }));
+const report = vi.hoisted(() => vi.fn());
+vi.mock('../orch/confirm-reopen-mission', () => ({
+  confirmAndReopenMission: reopen,
+  reportMissionReopen: report,
+}));
 
 const close = vi.hoisted(() => vi.fn());
 vi.mock('../terminal/pane-close-guard', () => ({ requestPaneClose: close }));
@@ -119,7 +123,10 @@ describe('PaneToolbar narrow controls', () => {
     expect(reopen).toHaveBeenCalledTimes(1);
     expect(host.querySelector('[aria-busy="true"]')).not.toBeNull();
     await act(async () => finish({ ok: false, error: 'Conversa indisponível' }));
-    expect(useToastStore.getState().toasts.some(toast => toast.kind === 'error')).toBe(true);
+    expect(report).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'mission-a' }),
+      { ok: false, error: 'Conversa indisponível' },
+    );
     expect(host.querySelector('[aria-label="Retomar missão"]:disabled')).toBeNull();
   });
 

@@ -13,6 +13,7 @@ import {
   RUNTIME_CLOSED_REASON_CODE,
   SESSION_SLEEPING_REASON_CODE,
   isIsolationStopReasonCode,
+  isMissionInterruptedReasonCode,
 } from '../../../shared/session-restore-liveness';
 import { missionLifecycleLabel } from '../../lib/mission-lifecycle-copy';
 import { workingNowLabel } from '../../lib/agent-roster';
@@ -89,6 +90,7 @@ export type WorkspaceTabTone =
   | 'repair'
   | 'done'
   | 'failed'
+  | 'interrupted'
   | 'idle';
 
 /** Um estado, uma cor — o mesmo mapa das superfícies de missão (`--state-*`). */
@@ -96,6 +98,9 @@ export function workspaceTabTone(
   state: string | undefined,
   stateReasonCode?: string,
 ): WorkspaceTabTone | null {
+  // O app fechou com a missão em andamento: interrompida, não hibernada por
+  // escolha — ganha o tom de bloqueio e o glifo próprio.
+  if (isMissionInterruptedReasonCode(stateReasonCode)) return 'interrupted';
   // Espera no prompt e paradas duráveis não são trabalho vivo — o glifo fica
   // quieto como o de uma aba comum.
   if (
@@ -192,6 +197,13 @@ export function workspaceTabIsClosable(scope: PaneScopeEntry): boolean {
 }
 
 function tabGlyph(scope: PaneScopeEntry): PixelIconName {
+  // Missão interrompida (o app fechou com ela em andamento) ganha o glifo
+  // próprio — o tom já a distingue, mas estado nunca viaja só em cor.
+  const reasonCodes =
+    scope.kind === 'mission'
+      ? [scope.stateReasonCode]
+      : scope.missions.map((mission) => mission.stateReasonCode);
+  if (reasonCodes.some(isMissionInterruptedReasonCode)) return 'interrupted';
   if (scope.orchestrator) return 'orch';
   if (scope.kind === 'mission' || scope.missions.length > 0) return 'mission';
   return 'terminal';

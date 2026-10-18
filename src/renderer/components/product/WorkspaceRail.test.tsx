@@ -599,7 +599,7 @@ describe('WorkspaceRail', () => {
     expect(row?.classList.contains('workspace-rail__mission--done')).toBe(true);
   });
 
-  it('leftover isolado e Encerrar pintam Dormindo/Parou, nunca Precisa de você', () => {
+  it('leftover isolado e Encerrar pintam Interrompida/Parou, nunca Precisa de você', () => {
     const { host } = renderRail({
       activeWorkspaces: [
         {
@@ -611,7 +611,7 @@ describe('WorkspaceRail', () => {
               title: 'Waitlist',
               status: 'blocked_user',
               needsAttention: false,
-              stateReason: { code: 'session-sleeping', label: 'Dormindo' },
+              stateReason: { code: 'session-sleeping', label: 'Interrompida' },
             },
             {
               id: 'mission-encerrar',
@@ -638,7 +638,7 @@ describe('WorkspaceRail', () => {
 
     expect(
       host.querySelector('[data-mission-id="mission-parked"]')?.textContent,
-    ).toContain('Dormindo');
+    ).toContain('Interrompida');
     expect(
       host.querySelector('[data-mission-id="mission-parked"]')?.textContent,
     ).not.toContain('Parou');

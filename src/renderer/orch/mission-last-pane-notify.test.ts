@@ -11,7 +11,10 @@ const confirmAndReopenMission = vi.hoisted(() =>
   vi.fn(async () => ({ ok: true as const, panes: 1 })),
 );
 
-vi.mock('./confirm-reopen-mission', () => ({ confirmAndReopenMission }));
+vi.mock('./confirm-reopen-mission', () => ({
+  confirmAndReopenMission,
+  reportMissionReopen: vi.fn(),
+}));
 
 const closeMissionRuntimeAndPanes = vi.hoisted(() =>
   vi.fn(async () => ({

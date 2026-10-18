@@ -30,6 +30,7 @@ export type PixelIconName =
   | 'status-exited'
   | 'status-hibernated'
   | 'status-spawning'
+  | 'interrupted'
   | 'scroll-bottom'
   | 'restart'
   | 'maximize'
@@ -332,6 +333,11 @@ const ICONS: Record<PixelIconName, Rect[]> = {
     [3, 5, 1, 1], [7, 5, 1, 1],
     [3, 6, 1, 1], [7, 6, 1, 1],
     [4, 7, 3, 1],
+  ],
+  // interrompida: duas barras de pausa — o app fechou com a missão em curso
+  interrupted: [
+    [3, 2, 2, 7],
+    [6, 2, 2, 7],
   ],
   // seta para o fim do scroll
   'scroll-bottom': [

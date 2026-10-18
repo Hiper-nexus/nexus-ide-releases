@@ -44,7 +44,10 @@ import { useProductNavigationStore } from '../state/product-navigation-store';
 import { useToastStore } from '../state/toast-store';
 import { missionOwnsItsPanes, wasMissionRuntimeClosedByOperator } from '../../shared/mission-recovery-policy';
 import { wasMissionLeftoverParked } from '../../shared/mission-leftover-isolation';
-import { confirmAndReopenMission } from '../orch/confirm-reopen-mission';
+import {
+  confirmAndReopenMission,
+  reportMissionReopen,
+} from '../orch/confirm-reopen-mission';
 import {
   promotePaneWithMissionChoice,
   toastPromoted,
@@ -579,7 +582,7 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
           recoveryInFlight.current = true;
           setRecoveringMission(true);
           void confirmAndReopenMission(mission).then((result) => {
-            if (!result.ok) useToastStore.getState().push('error', 'Não foi possível retomar a missão', result.error);
+            reportMissionReopen(mission, result);
           }).catch((error: unknown) => {
             useToastStore.getState().push('error', 'Não foi possível retomar a missão', error instanceof Error ? error.message : String(error));
           }).finally(() => {

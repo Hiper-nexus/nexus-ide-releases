@@ -79,6 +79,10 @@ import {
   MissionQuestion,
   type MissionQuestionState,
 } from './MissionQuestion';
+import {
+  MissionInterruptedCard,
+  missionIsInterrupted,
+} from './MissionInterruptedCard';
 
 /** Tamanho da janela recente E de cada página anterior pedida ao Main. */
 const RECENT_EVENT_LIMIT = 40;
@@ -1110,6 +1114,11 @@ export function MissionBoard({
         await executeCommand({ kind: action, missionId });
         if (action === 'resume' && isCurrentBoardAction(attempt)) {
           useMissionInspectorStore.getState().selectTab('chat');
+          if (!reopenForAdjustment) {
+            setActionAnnouncement(
+              'Retomada em andamento — os agentes voltam em instantes.',
+            );
+          }
           if (reopenForAdjustment) {
             setActionAnnouncement(
               'Diga o ajuste embaixo. A missão não fecha até você orientar.',
@@ -1404,6 +1413,43 @@ export function MissionBoard({
     )
   ) : null;
 
+  // Interrompida: o card nomeia o motivo e devolve a equipe — reaproveita a
+  // primária do cabeçalho, sem criar uma segunda. Com pergunta pendente o
+  // caminho continua sendo "Responder", nunca "Retomar".
+  const interruptedCard =
+    currentMission != null &&
+    currentSnapshot.question == null &&
+    missionIsInterrupted(
+      currentMission,
+      currentSnapshot.stateReason?.code,
+      currentSnapshot.state,
+    );
+  const primaryButton =
+    primaryAction === 'leader-drift-rebind' ? (
+      <button
+        type="button"
+        className="mission-board__button"
+        data-mission-command="leader-drift-rebind"
+        disabled={pendingAction !== null}
+        aria-busy={pendingAction === 'leader-drift-rebind'}
+        onClick={(event) => runLeaderDriftRebind(event.currentTarget)}
+      >
+        Religar a missão ao Maestro
+      </button>
+    ) : primaryAction === 'resume' || primaryAction === 'retry-kickoff' ? (
+      <button
+        type="button"
+        className="mission-board__button"
+        disabled={pendingAction !== null}
+        aria-busy={pendingAction === primaryAction}
+        onClick={(event) =>
+          runHeaderAction(primaryAction, event.currentTarget)
+        }
+      >
+        {headerActionLabel(primaryAction, currentSnapshot.state)}
+      </button>
+    ) : null;
+
   return (
     <article
       className={
@@ -1496,47 +1542,33 @@ export function MissionBoard({
           )}
         </div>
 
-        {currentSnapshot.stateReason && (
-          <p className="mission-board__reason">
-            <strong>{currentSnapshot.stateReason.label}</strong>
-            {currentSnapshot.stateReason.detail && (
-              <span>{currentSnapshot.stateReason.detail}</span>
-            )}
-          </p>
+        {interruptedCard ? (
+          <MissionInterruptedCard
+            missionId={missionId}
+            focusAction
+            action={primaryButton}
+            onOpenWhy={() =>
+              useMissionInspectorStore
+                .getState()
+                .selectMissionTab(missionId, 'activity')
+            }
+          />
+        ) : (
+          currentSnapshot.stateReason && (
+            <p className="mission-board__reason">
+              <strong>{currentSnapshot.stateReason.label}</strong>
+              {currentSnapshot.stateReason.detail && (
+                <span>{currentSnapshot.stateReason.detail}</span>
+              )}
+            </p>
+          )
         )}
 
         <div className="mission-board__actions" aria-label="Ações da missão">
           {/* leader-drift: o terminal do Maestro está vivo numa sessão nova e
               a missão ainda aponta a que morreu — a ação primária aqui é
               religar, não parar. */}
-          {primaryAction === 'leader-drift-rebind' && (
-            <button
-              type="button"
-              className="mission-board__button"
-              data-mission-command="leader-drift-rebind"
-              disabled={pendingAction !== null}
-              aria-busy={pendingAction === 'leader-drift-rebind'}
-              onClick={(event) =>
-                runLeaderDriftRebind(event.currentTarget)
-              }
-            >
-              Religar a missão ao Maestro
-            </button>
-          )}
-          {(primaryAction === 'resume' ||
-            primaryAction === 'retry-kickoff') && (
-            <button
-              type="button"
-              className="mission-board__button"
-              disabled={pendingAction !== null}
-              aria-busy={pendingAction === primaryAction}
-              onClick={(event) =>
-                runHeaderAction(primaryAction, event.currentTarget)
-              }
-            >
-              {headerActionLabel(primaryAction, currentSnapshot.state)}
-            </button>
-          )}
+          {!interruptedCard && primaryButton}
           <div className="mission-board__more">
             <button
               ref={moreButtonRef}

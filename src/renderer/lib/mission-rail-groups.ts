@@ -11,7 +11,7 @@ import {
 import { wasMissionLeftoverParked } from '../../shared/mission-leftover-isolation';
 import {
   SESSION_DEAD_REASON_LABEL,
-  SESSION_SLEEPING_REASON_LABEL,
+  SESSION_INTERRUPTED_REASON_LABEL,
 } from '../../shared/session-restore-liveness';
 import type { RailSectionId } from './mission-rail-prefs';
 
@@ -258,7 +258,7 @@ export function railStatusDisplay(
     return { label: SESSION_DEAD_REASON_LABEL, tone: 'blocked' };
   }
   if (evidence.leftoverParked) {
-    return { label: SESSION_SLEEPING_REASON_LABEL, tone: 'blocked' };
+    return { label: SESSION_INTERRUPTED_REASON_LABEL, tone: 'blocked' };
   }
   // Espera humana merece pill própria: "Na fila" esconde que a missão está
   // parada esperando VOCÊ (aprovar, dar objetivo, retomar) — o glance mais

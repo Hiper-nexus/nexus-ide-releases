@@ -285,7 +285,7 @@ describe('TerminalWorkspace contracts', () => {
     expect(host.textContent).toContain('Ver missão');
   });
 
-  it('missão dormindo tem rótulo e retomada coerentes', () => {
+  it('missão interrompida tem rótulo e retomada coerentes', () => {
     seedLayout();
     useOrchStore.setState({
       missions: [{ id: 'sleeping', title: 'Feature', status: 'blocked', intentState: 'blocked_user',
@@ -295,7 +295,7 @@ describe('TerminalWorkspace contracts', () => {
         progress: { completed: 0, total: 1 }, needsAttention: false, updatedAt: 2 }],
     });
     const { host } = mount(<TerminalWorkspace missionId="sleeping" />);
-    expect(host.querySelector('.product-workspace__context')?.textContent).toBe('Missão · Dormindo');
+    expect(host.querySelector('.product-workspace__context')?.textContent).toBe('Missão · Interrompida');
     expect(host.textContent).toContain('Retomar missão');
     expect(host.textContent).not.toContain('Precisa de você');
     expect(ptySpawn).not.toHaveBeenCalled();

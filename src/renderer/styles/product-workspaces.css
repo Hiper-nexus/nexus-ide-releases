@@ -1708,7 +1708,8 @@
   animation: workspace-tab-live 2.4s var(--ease-out-quart) infinite;
 }
 
-.workspace-tab[data-tone='attention'] .workspace-tab__glyph {
+.workspace-tab[data-tone='attention'] .workspace-tab__glyph,
+.workspace-tab[data-tone='interrupted'] .workspace-tab__glyph {
   color: var(--state-blocked);
 }
 

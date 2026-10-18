@@ -11,7 +11,20 @@ import { MissionTerminalRecovery } from './MissionTerminalRecovery';
 const reopen = vi.hoisted(() => vi.fn());
 vi.mock('../../orch/confirm-reopen-mission', () => ({
   confirmAndReopenMission: reopen,
+  reportMissionReopen: vi.fn(),
 }));
+vi.mock('../../terminal/terminal-host', () => ({
+  getPaneSessionId: vi.fn(() => null),
+}));
+vi.mock('../../lib/mission-attention-route', () => ({
+  routeMissionAttention: vi.fn(),
+}));
+const listMissionPanes = vi.hoisted(() => vi.fn(() => Promise.resolve([])));
+(globalThis as Record<string, unknown>).window = globalThis;
+Object.defineProperty(globalThis, 'nexus', {
+  value: { orch: { listMissionPanes } },
+  configurable: true,
+});
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
@@ -49,11 +62,13 @@ afterEach(() => {
 describe('mission terminal recovery', () => {
   it('parked + Pane mission resumes explicitly, without a squad or automatic spawn', async () => {
     render();
-    expect(host.textContent).toContain('dormindo');
-    expect(button().textContent).toBe('Retomar missão');
+    expect(host.textContent).toContain('interrompida');
+    expect(host.textContent).toContain('O Nexus fechou com a missão em andamento');
+    expect(button().textContent).toContain('Retomar missão');
     expect(reopen).not.toHaveBeenCalled();
     await act(async () => button().click());
-    expect(reopen).toHaveBeenCalledExactlyOnceWith(mission);
+    expect(reopen).toHaveBeenCalledTimes(1);
+    expect(reopen.mock.calls[0]?.[0]).toEqual(mission);
   });
   it('prevents duplicate requests and exposes failures with a working retry', async () => {
     let finish!: (r: { ok: boolean; error: string }) => void;
@@ -104,6 +119,7 @@ describe('mission terminal recovery', () => {
     async (status) => {
       render({ status });
       expect(host.textContent).not.toContain('dormindo');
+      expect(host.querySelector('.mission-interrupted')).toBeNull();
       expect(button().textContent).toBe('Ver missão');
       await act(async () => button().click());
       expect(reopen).not.toHaveBeenCalled();

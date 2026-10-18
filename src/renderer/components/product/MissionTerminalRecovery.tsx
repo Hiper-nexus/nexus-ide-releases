@@ -1,15 +1,25 @@
 import { useRef, useState } from 'react';
 import { wasMissionLeftoverParked } from '../../../shared/mission-leftover-isolation';
 import { wasMissionRuntimeClosedByOperator } from '../../../shared/mission-recovery-policy';
-import { confirmAndReopenMission } from '../../orch/confirm-reopen-mission';
+import {
+  confirmAndReopenMission,
+  reportMissionReopen,
+} from '../../orch/confirm-reopen-mission';
 import { useOrchStore } from '../../state/orch-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { ActionCard, EmptyState } from '../ActionCard';
+import {
+  MissionInterruptedCard,
+  missionIsInterrupted,
+} from '../mission/MissionInterruptedCard';
 
 /** Navigation never starts work. The operator explicitly restores this mission. */
 export function MissionTerminalRecovery({ missionId }: { missionId: string }) {
   const mission = useOrchStore((state) =>
     state.missions.find((m) => m.id === missionId),
+  );
+  const summary = useOrchStore((state) =>
+    state.missionSummaries.find((m) => m.id === missionId),
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -39,7 +49,8 @@ export function MissionTerminalRecovery({ missionId }: { missionId: string }) {
     setError(null);
     try {
       const result = await confirmAndReopenMission(current);
-      if (!result.ok)
+      if (result.ok) reportMissionReopen(current, result);
+      else
         setError(
           result.error ??
             'Não foi possível reabrir o terminal. Tente novamente.',
@@ -55,6 +66,17 @@ export function MissionTerminalRecovery({ missionId }: { missionId: string }) {
       setBusy(false);
     }
   };
+
+  if (
+    mission != null &&
+    missionIsInterrupted(
+      mission,
+      summary?.stateReason?.code,
+      summary?.state,
+    )
+  ) {
+    return <MissionInterruptedCard missionId={missionId} focusAction />;
+  }
 
   return (
     <EmptyState
