@@ -11403,7 +11403,7 @@ export const RELEASE_076303: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076304: AppRelease = {
   version: '0.76.304',
   date: '2026-10-18',
   codename: 'Linux em dia com a chave do Qwen',
@@ -11417,5 +11417,22 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Sonda no mesmo par', detail: 'A prontidão prova a mesma chave e a mesma URL que o pane vai usar. 401 ou 403 é credencial recusada, não cota.' },
     { title: 'Aviso só do Qwen', detail: 'O failover do Qwen fala de chave ou base URL incompatível. Login expirado de Claude, Codex e AGY continua com o texto de sessão.' },
     { title: 'Prosa não troca a conta', detail: 'A frase solta "Invalid API-key" com hífen não arma o failover: ela aparece em texto, log e diff. Overlay de Qwen deixado por processo morto é limpo no boot.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.305',
+  date: '2026-10-18',
+  codename: 'Reserva sem rota falha e chave do Qwen no Mac',
+  summary: 'A reserva do Claude passa a preferir a primeira alternativa saudável, sem reabrir circuito aberto, e o vigia de esteira para de cobrar workers enquanto a missão espera a verificação de conclusão. O macOS recebe também a chave do Qwen isolada do settings do operador.',
+  highlights: [
+    { title: 'Reserva do Claude prefere rota saudável', detail: 'Quando o Claude fica reservado ao Maestro, o worker vai para a primeira alternativa que não é falha provada (cinco tentativas ou mais e até 20% de sucesso, como uma CLI com credencial recusada). Se todas as alternativas fora do Claude forem falhas provadas, a primeira delas ainda herda a vaga.' },
+    { title: 'Esteira em silêncio na verificação', detail: 'Depois que o Maestro atual pede a conclusão, o lembrete "Esteira parada" deixa de chegar a cada hora enquanto a verificação não responde. Se a verificação recusar a entrega, o lembrete volta.' },
+    { title: 'Chave do Qwen no pane', detail: 'O overlay grava os modelProviders na base URL que a chave aceita, e a cópia mesclada não leva as credenciais Alibaba do operador. Em Qwen › Avançado dá para fixar a Base URL; vazio continua automático pela chave.' },
+  ],
+  fixes: [
+    { title: 'Circuito aberto fica fora da reserva', detail: 'A troca da reserva não escolhe CLI com circuito aberto; sem alternativa com o circuito fechado ou meio aberto, o Claude é mantido.' },
+    { title: 'Lane de segurança respeitada', detail: 'Em auditoria de segurança crítica, a troca fica entre Claude e Codex, como o recibo diz, e não escapa para outra CLI.' },
+    { title: 'Qwen: sonda e aviso certos', detail: 'A prontidão prova a mesma chave e URL que o pane vai usar, 401 ou 403 é credencial recusada e não cota, e o failover do Qwen fala de chave ou base URL incompatível.' },
   ],
 };

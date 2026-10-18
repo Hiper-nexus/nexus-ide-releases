@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.76.305 — Reserva sem rota falha e chave do Qwen no Mac
+
+Candidato macOS (`darwin-arm64`) assinado e notarizado. Em relação à 0.76.302 (último macOS), leva também o que a 0.76.304 entregou no Linux.
+
+- **Reserva do Claude prefere rota saudável**. Com o Claude reservado ao Maestro, o worker vai para a primeira alternativa que não é falha provada (5+ tentativas e até 20% de sucesso, ex.: CLI com credencial recusada). Se todas as alternativas fora do Claude forem falhas provadas, a primeira delas ainda herda a vaga.
+- **Circuito aberto fora da reserva**. A troca não escolhe CLI com circuito aberto; sem alternativa com circuito fechado ou meio aberto, mantém o Claude.
+- **Lane de segurança respeitada**. Em auditoria de segurança crítica, a troca fica entre Claude e Codex e não escapa para outra CLI.
+- **Esteira em silêncio na verificação**. Com a conclusão pedida pelo Maestro atual e ainda sem resposta da verificação, o lembrete "Esteira parada" deixa de chegar a cada hora; se a verificação recusar, ele volta.
+- **Chave do Qwen no pane**. O overlay grava os `modelProviders` na base URL que a chave aceita (a `sk-sp-` do Token Plan só fala com a URL do plano), sem levar as credenciais Alibaba do settings do operador. Em Providers › Qwen › Avançado dá para fixar a Base URL. A sonda de prontidão prova o mesmo par chave e URL do pane, e 401 ou 403 é credencial recusada, não cota.
+
 ## 0.76.304 — Linux em dia com a chave do Qwen
 
 Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35).
