@@ -11,7 +11,7 @@ vi.mock('../observability/main-trace', () => ({ trace: (event: Record<string, un
 import { testProjectScope } from './__tests__/scope-fixture';
 import { HeavyCommandPermitPool } from './heavy-command-permit';
 import { NativeHeavyCommands } from './native-heavy-command';
-import { sameRepositoryExecutionRoot } from './nested-worktree-execution';
+import { heavyCommandExecutionRoot, sameRepositoryExecutionRoot } from './nested-worktree-execution';
 import type { AgentGateContext } from './gate';
 
 // F-1229: um pane rodou 7 subagentes, cada um na SUA worktree do mesmo repo.
@@ -52,7 +52,7 @@ function harness(waitMs: number) {
   const native = new NativeHeavyCommands({ current: () => true, claim: async (_session, pid) => `claim-${pid}`,
     probe: async (_session, claim) => closing || gone.has(claim) ? 'gone' : 'live',
     acquire: (request) => { lanes.push(request.scope.rootRealPath); return pool.acquire(request); },
-    executionRoot: sameRepositoryExecutionRoot });
+    executionRoot: heavyCommandExecutionRoot });
   return { pool, native, gone, lanes, close: async () => { closing = true; await native.drain(); pool.close(); } };
 }
 async function until(check: () => boolean): Promise<void> {
@@ -118,16 +118,29 @@ describe('F-1229: a fila de comando pesado é a raiz Git real do job', () => {
     } finally { await h.close(); }
   });
 
-  it('raiz fora do repositório (outro repo, pasta sem Git, inexistente, relativa) cai na lane do token; o 74 diz que foi fila', async () => {
+  it('pasta sem Git, inexistente ou relativa cai na lane do token; o 74 diz que foi fila', async () => {
     const h = harness(300); const ctx = pane();
     try {
       expect((await h.native.admit(ctx, { pid: 301, kind: 'tests', cwd: root })).allow).toBe(true);
-      const outside = [foreign, plain, path.join(temp, 'missing'), 'relative/dir'];
+      const outside = [plain, path.join(temp, 'missing'), 'relative/dir'];
       const results = await Promise.all(outside.map((cwd, index) => h.native.admit(ctx, { pid: 310 + index, kind: 'tests', cwd })));
-      expect(h.lanes).toEqual([root, root, root, root, root]);
+      expect(h.lanes).toEqual([root, root, root, root]);
       for (const result of results) expect(result).toMatchObject({ allow: false, reason: 'heavy_command_wait_timeout' });
       expect(results[0]!.message).toMatch(/^nexus-heavy: gave up after \d+ s in the admission queue of .+: 1 job\(s\) running there, \d+ more waiting \(one job per root at a time\); machine 1\/4 heavy jobs running\.$/);
       expect(results[0]!.message).toContain(root);
+    } finally { await h.close(); }
+  });
+});
+
+describe('18/10: build de outro repositório não prende a fila do root do Maestro', () => {
+  it('o cargo de um repo de fora roda na lane dele e o teste do Maestro entra no root', async () => {
+    const h = harness(400); const ctx = pane();
+    try {
+      // Worker same_checkout no cwd do Maestro, `cd` para o repo de fora.
+      expect((await h.native.admit(ctx, { pid: 701, kind: 'build', cwd: foreign })).allow).toBe(true);
+      expect((await h.native.admit(ctx, { pid: 702, kind: 'tests', cwd: root })).allow).toBe(true);
+      expect(h.lanes).toEqual([foreign, root]);
+      expect(await sameRepositoryExecutionRoot(testProjectScope({ rootRealPath: root }), foreign)).toBeUndefined();
     } finally { await h.close(); }
   });
 });

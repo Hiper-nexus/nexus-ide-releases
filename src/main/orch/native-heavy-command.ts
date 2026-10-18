@@ -4,7 +4,7 @@ import type { AgentGateContext } from './gate';
 import { executionScopeFor, isCurrentGateContext, gateContextAbortSignal } from './gate';
 import { handleHookJsonPost } from './hook-http';
 import { acquireHeavyCommandPermit, type HeavyCommandPermit, type HeavyCommandQueueWait, type HeavyCommandRequest } from './heavy-command-permit';
-import { sameRepositoryExecutionRoot } from './nested-worktree-execution';
+import { heavyCommandExecutionRoot } from './nested-worktree-execution';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { claimSessionCommandProcess, probeSessionCommandProcess, borrowSessionCommandProcess, stopSessionCommandProcess } from '../pty/pty-manager';
 import type { CommandProcessState } from '../pty/owned-command-process';
@@ -171,7 +171,7 @@ export class NativeHeavyCommands {
 export const nativeHeavyCommands = new NativeHeavyCommands({ current: isCurrentGateContext, claim: claimSessionCommandProcess,
   probe: probeSessionCommandProcess, stop: stopSessionCommandProcess, borrow: borrowSessionCommandProcess, acquire: acquireHeavyCommandPermit,
   executorLive: heavyExecutorIsLive,
-  executionRoot: (scope, cwd) => sameRepositoryExecutionRoot(scope, cwd),
+  executionRoot: (scope, cwd) => heavyCommandExecutionRoot(scope, cwd),
   afterDrain: async () => { const { drainNativeHeavyLocalChannels } = await import('./native-heavy-local-channel'); await drainNativeHeavyLocalChannels(); } });
 export async function handleNativeHeavyCommandHttp(req: http.IncomingMessage, res: http.ServerResponse, ctx: AgentGateContext | null): Promise<void> {
   const abort = new AbortController();

@@ -97,6 +97,31 @@ export async function sameRepositoryExecutionRoot(
 }
 
 /**
+ * Fila de comando pesado (18/10): um worker aberto no cwd do Maestro que faz
+ * `cd` para um repositório de FORA (`cargo`/`tauri` em outro repo) ocupava a
+ * vaga única do root do Maestro por mais de 1 h, e todo teste/typecheck dele
+ * desistia após 300 s. Repositório Git de fora, com a raiz fora da execução,
+ * não divide saídas nem caches com ela: ganha a própria lane. Pasta sem Git
+ * ou qualquer dúvida fica no escopo do token, como antes. Um cwd falso só
+ * troca de fila; RAM/CPU e o teto de jobs seguem limites da máquina.
+ */
+export async function heavyCommandExecutionRoot(
+  execution: ProjectExecutionScope,
+  cwd: string,
+  git: AsyncGitRunner = (sharedGit ??= new AsyncProcessGitRunner()),
+): Promise<ProjectExecutionScope | undefined> {
+  const linked = await sameRepositoryExecutionRoot(execution, cwd, git);
+  if (linked) return linked;
+  const real = path.isAbsolute(cwd) ? realpathOrNull(cwd) : null;
+  if (!real || isInsidePath(execution.rootRealPath, real)) return undefined;
+  const topLevel = await gitPath(git, real, ['rev-parse', '--show-toplevel']);
+  if (!topLevel || isInsidePath(execution.rootRealPath, topLevel) || isInsidePath(topLevel, execution.rootRealPath)) return undefined;
+  const commonArgs = ['rev-parse', '--path-format=absolute', '--git-common-dir'];
+  const [ours, theirs] = await Promise.all([gitPath(git, execution.rootRealPath, commonArgs), gitPath(git, topLevel, commonArgs)]);
+  return ours && theirs && ours !== theirs ? rootScope(execution, topLevel) : undefined;
+}
+
+/**
  * F-981: o worker de missão no checkout descartava o `cwd` pedido em silêncio
  * (rodava na raiz e editava lá). Pasta real dentro da raiz é honrada; o resto
  * é recusado dizendo que o cwd foi descartado e qual é a saída.
