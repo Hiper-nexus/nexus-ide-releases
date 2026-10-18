@@ -74,6 +74,8 @@ import {
   OPERATOR_TAB_RESUME_LOST_NOTE,
   OPERATOR_TAB_RESUME_NOTE,
   beginOperatorTabResumeTransfer,
+  buildOrphanedDispatchTaskNote,
+  listOrphanedDispatchTasks,
   planOperatorTabResume,
   operatorTabMissionLeader,
   operatorTabMissionResumeSpec,
@@ -2313,6 +2315,42 @@ function resolveFastLaneSquad(squadId?: string): import('../../shared/orch-types
   );
 }
 
+/**
+ * Tasks despachadas cujo worker físico morreu: órfãs que ninguém reabre
+ * (`requestMissionPaneRecovery` recusa worker por desenho). A nota diz quais
+ * são, em qual pane e se há conversa gravada — aí o Maestro retoma com `resume`
+ * em vez de abrir um worker novo. Falha de leitura NÃO pode derrubar o respawn
+ * do orquestrador: a lista é informação, não autoridade.
+ */
+function orphanedDispatchNote(scope: ProjectExecutionScope, missionId: string): string {
+  try {
+    const stores = getProjectDomainStores(scope);
+    const snapshots = new Map(listPaneSnapshots().map((pane) => [pane.paneId, pane.state]));
+    const titles = new Map(stores.tasks.list(missionId).map((task) => [task.id, task.title]));
+    return buildOrphanedDispatchTaskNote(
+      listOrphanedDispatchTasks({
+        dispatches: stores.taskDispatches.list(missionId),
+        panes: stores.missionPanes.list(missionId),
+        taskTitle: (taskId) => titles.get(taskId),
+        // Sem registro na tela ou já `exited`: o processo do worker não existe.
+        paneAlive: (paneId) => {
+          const state = snapshots.get(paneId);
+          return state !== undefined && state !== 'exited';
+        },
+        resumablePane: (pane) => Boolean(
+          pane.paneId && getProviderPaneSession(scope, pane.paneId, pane.adapterId, pane.accountId),
+        ),
+      }),
+    );
+  } catch (error) {
+    console.warn(
+      '[fast-lane] lista de workers mortos com dispatch ativo indisponível:',
+      error instanceof Error ? error.message : error,
+    );
+    return '';
+  }
+}
+
 async function respawnFastLaneOrchestrator(
   scope: ProjectExecutionScope,
   mission: Mission,
@@ -2356,6 +2394,7 @@ async function respawnFastLaneOrchestrator(
   // conversa nova com o aviso; sem irmã utilizável, segue a conta da linha.
   let resumeAccountId = operatorResume?.accountId;
   let resumePlan: ReturnType<typeof planOperatorTabResume> | undefined;
+  const orphanedNote = orphanedDispatchNote(scope, live.id);
   if (operatorResume) {
     orchestrator = operatorTabResumeAgent(
       operatorResume,
@@ -2386,7 +2425,8 @@ async function respawnFastLaneOrchestrator(
     prompt = buildRespawnPrompt({
       basePrompt: OPERATOR_TAB_RESUME_NOTE,
       awaitingAdjustment: operatorTabResumeAwaitsAdjustment(live),
-      note: [options.note, accountNote, resumePlan.conversationLost ? OPERATOR_TAB_RESUME_LOST_NOTE : undefined]
+      note: [options.note, accountNote, resumePlan.conversationLost ? OPERATOR_TAB_RESUME_LOST_NOTE : undefined,
+        orphanedNote || undefined]
         .filter(Boolean).join(' ') || undefined,
     });
   } else {
@@ -2412,7 +2452,7 @@ async function respawnFastLaneOrchestrator(
         stageMissionAttachments(scope, live),
       ),
       awaitingAdjustment: missionAwaitsAdjustment(live),
-      note: options.note,
+      note: [options.note, orphanedNote || undefined].filter(Boolean).join(' ') || undefined,
     });
   }
 

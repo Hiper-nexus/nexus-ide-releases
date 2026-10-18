@@ -271,6 +271,44 @@ describe('F-242: worker travado no meio do turno acorda o Maestro', () => {
     expect(h.submit.mock.calls[0]![0].summary).toContain('há 20 min');
   });
 
+  it('CLI sem telemetria: worker calado com PTY parado também vira [travado]', async () => {
+    // Sem hook de status, `decideWorkerHung` exigia `semanticStatus==='working'`
+    // e nenhuma CLI sem telemetria era detectada: o pane ficava calado para
+    // sempre e a task waitava um worker que já tinha morrido no meio do turno.
+    const mission = runningMission();
+    h.onScope!(SCOPE, suite(mission));
+    const panes = (workerState: string) => [
+      { paneId: 'pane-orch', sessionId: 'session-orch', title: 'Maestro', kind: 'cli-agent',
+        role: 'orchestrator', state: 'busy', missionId: mission.id },
+      { paneId: 'pane-silent', sessionId: 'session-silent', title: 'worker sem hook', kind: 'cli-agent',
+        role: 'worker', state: workerState, adapterId: 'kimi', missionId: mission.id },
+    ];
+    h.getSemantic.mockImplementation((sessionId: string) =>
+      sessionId === 'session-orch' ? { status: 'working', updatedAt: NOW - 10_000 } : null,
+    );
+
+    // PTY produzindo saída ainda é trabalho: o relógio de silêncio reinicia.
+    h.listPaneSnapshots.mockReturnValue(panes('busy') as never);
+    await reconcileDelegationSupervisor(NOW);
+    h.listPaneSnapshots.mockReturnValue(panes('idle') as never);
+    await reconcileDelegationSupervisor(NOW + WORKER_HUNG_AFTER_MS - 15_000);
+    expect(h.submit).not.toHaveBeenCalled();
+
+    // 20 min sem ferramenta, sem saída e sem status: aí é travado, e só uma vez.
+    await reconcileDelegationSupervisor(NOW + WORKER_HUNG_AFTER_MS + 15_000);
+    expect(h.submit).toHaveBeenCalledTimes(1);
+    expect(h.submit).toHaveBeenCalledWith(expect.objectContaining({
+      missionId: mission.id,
+      status: 'stalled',
+      fromAgent: 'nexus-delegation-supervisor',
+      summary: expect.stringContaining('[travado]'),
+    }));
+    expect(h.submit.mock.calls[0]![0].summary).toContain('pane-silent');
+    h.submit.mockClear();
+    await reconcileDelegationSupervisor(NOW + WORKER_HUNG_AFTER_MS + 60_000);
+    expect(h.submit).not.toHaveBeenCalled();
+  });
+
   it('F-725: com dois projetos abertos o worker travado é avisado uma vez, não a cada varredura', async () => {
     // Campo 02/10: "[travado] worker DeepSeek … há 45/46 min" saiu a cada
     // 15 s. A limpeza do aviso usava as sessões vivas de UMA suite e apagava
