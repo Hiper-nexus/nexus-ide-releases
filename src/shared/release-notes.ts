@@ -11420,8 +11420,26 @@ export const RELEASE_076304: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076305: AppRelease = {
   version: '0.76.305',
+  date: '2026-10-18',
+  codename: 'Linux em dia com a chave do Qwen',
+  summary: 'O desktop Linux recebe a chave do Qwen isolada do settings do operador, na base URL que a chave aceita. A tag 0.76.304 no espelho público ficou com o candidato Windows.',
+  highlights: [
+    { title: 'Chave do Qwen no pane', detail: 'O overlay grava os modelProviders na base URL que a chave aceita. A chave sk-sp- do Token Plan só fala com a URL exclusiva do plano; no DashScope ela morria em 401.' },
+    { title: 'Settings do operador fica de fora', detail: 'A cópia mesclada do overlay não leva as credenciais Alibaba do operador. O que o Nexus impõe fica num settings de sistema à parte, e a entrada só aponta uma variável de ambiente nova a cada spawn.' },
+    { title: 'Base URL em Providers', detail: 'Em Qwen › Avançado dá para fixar a Base URL. Vazio continua automático pela chave. Endereço novo pede confirmação e precisa ser https, sem usuário nem senha.' },
+  ],
+  fixes: [
+    { title: 'Credencial do admin fica', detail: 'A chave que o administrador provisionou no settings de sistema não é apagada. O descarte de uma entrada que interpola $ deixa rastro só com o caminho, nunca com o valor.' },
+    { title: 'Sonda no mesmo par', detail: 'A prontidão prova a mesma chave e a mesma URL que o pane vai usar. 401 ou 403 é credencial recusada, não cota.' },
+    { title: 'Aviso só do Qwen', detail: 'O failover do Qwen fala de chave ou base URL incompatível. Login expirado de Claude, Codex e AGY continua com o texto de sessão. A frase solta "Invalid API-key" não troca a conta.' },
+    { title: 'Atualização do Linux', detail: 'A tag 0.76.304 no espelho público não recebe pacotes Linux: é o candidato Windows. O desktop Linux sai na 0.76.305.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.306',
   date: '2026-10-18',
   codename: 'Reserva sem rota falha e chave do Qwen no Mac',
   summary: 'A reserva do Claude passa a preferir a primeira alternativa saudável, sem reabrir circuito aberto, e o vigia de esteira para de cobrar workers enquanto a missão espera a verificação de conclusão. O macOS recebe também a chave do Qwen isolada do settings do operador.',

@@ -1,14 +1,30 @@
 # Changelog
 
-## 0.76.305 — Reserva sem rota falha e chave do Qwen no Mac
+## 0.76.306 — Reserva sem rota falha e chave do Qwen no Mac
 
-Candidato macOS (`darwin-arm64`) assinado e notarizado. Em relação à 0.76.302 (último macOS), leva também o que a 0.76.304 entregou no Linux.
+Candidato macOS (`darwin-arm64`) assinado e notarizado. Em relação à 0.76.302 (último macOS), leva também o que a 0.76.304 e a 0.76.305 entregaram no Linux.
 
 - **Reserva do Claude prefere rota saudável**. Com o Claude reservado ao Maestro, o worker vai para a primeira alternativa que não é falha provada (5+ tentativas e até 20% de sucesso, ex.: CLI com credencial recusada). Se todas as alternativas fora do Claude forem falhas provadas, a primeira delas ainda herda a vaga.
 - **Circuito aberto fora da reserva**. A troca não escolhe CLI com circuito aberto; sem alternativa com circuito fechado ou meio aberto, mantém o Claude.
 - **Lane de segurança respeitada**. Em auditoria de segurança crítica, a troca fica entre Claude e Codex e não escapa para outra CLI.
 - **Esteira em silêncio na verificação**. Com a conclusão pedida pelo Maestro atual e ainda sem resposta da verificação, o lembrete "Esteira parada" deixa de chegar a cada hora; se a verificação recusar, ele volta.
 - **Chave do Qwen no pane**. O overlay grava os `modelProviders` na base URL que a chave aceita (a `sk-sp-` do Token Plan só fala com a URL do plano), sem levar as credenciais Alibaba do settings do operador. Em Providers › Qwen › Avançado dá para fixar a Base URL. A sonda de prontidão prova o mesmo par chave e URL do pane, e 401 ou 403 é credencial recusada, não cota.
+
+## 0.76.305 — Linux em dia com a chave do Qwen
+
+A tag 0.76.304 no espelho público ficou com o candidato Windows. Este pacote leva o desktop Linux, incluindo o ajuste que entrou depois da 0.76.304.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35).
+
+No desktop Linux, em relação à 0.76.303:
+
+- A chave do Qwen configurada no Nexus chega ao pane. O overlay grava os `modelProviders` na base URL que a chave aceita: a chave `sk-sp-` do Token Plan só fala com a URL exclusiva do plano; no DashScope ela morria em 401.
+- O settings do operador não viaja junto. A cópia mesclada do overlay tira as credenciais Alibaba dele, e o que o Nexus impõe fica num settings de sistema à parte. A entrada só aponta uma variável de ambiente, com nome novo a cada spawn.
+- Em Providers › Qwen › Avançado dá para fixar a Base URL. Vazio continua automático pela chave. Endereço novo pede confirmação, como o binário, e precisa ser https sem usuário nem senha.
+- A sonda de prontidão prova o mesmo par chave e URL que o pane vai usar. 401 ou 403 é credencial recusada, não limite de cota.
+- O aviso de failover do Qwen fala de chave ou base URL incompatível. Claude, Codex e AGY com login expirado continuam com o texto de sessão. A frase solta "Invalid API-key" com hífen não troca a conta: ela aparece em prosa, log e diff.
+- Overlay de Qwen que um processo morto deixou com a cópia do settings é limpo no boot.
+- A credencial que o administrador provisionou no settings de sistema não é apagada. O descarte de uma entrada que interpola `$` deixa rastro só com o caminho, nunca com o valor.
 
 ## 0.76.304 — Linux em dia com a chave do Qwen
 
