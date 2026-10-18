@@ -750,6 +750,7 @@ export type AgentSpawnHook = (
       readonly baseUrl: string;
       readonly models: readonly string[];
       readonly tokenPlanKey: boolean;
+      readonly envKey: string;
     };
   },
 ) => AgentSpawnDecoration | null;
@@ -1777,7 +1778,7 @@ export interface AgentSpawnOverrides {
    * entradas `modelProviders` (envKey + baseUrl, sem segredo) para a CLI usar
    * a env de verdade. Definido pelo hub de providers; ausente = sem injeção.
    */
-  qwenSettingsInjection?: { readonly baseUrl: string; readonly models: readonly string[]; readonly tokenPlanKey: boolean };
+  qwenSettingsInjection?: { readonly baseUrl: string; readonly models: readonly string[]; readonly tokenPlanKey: boolean; readonly envKey: string };
 }
 
 /** Modelo que o provedor escolhido realmente serve para o id pedido. */

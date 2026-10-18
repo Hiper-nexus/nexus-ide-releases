@@ -41,6 +41,7 @@ function expectSameFile(linked: string, source: string): void {
 
 const URL = 'http://127.0.0.1:43210/mcp';
 const TOKEN = 'fixture-session-token';
+const INJECTED_ENV = 'NEXUS_QWEN_KEY_0123456789abcdef0123456789abcdef';
 
 interface Fixture {
   home: string;
@@ -197,6 +198,7 @@ describe('prepareQwenMcpSession — injeção de chave do Nexus (F-1565)', () =>
         baseUrl: PLAN,
         models: ['qwen3.8-max'],
         tokenPlanKey: true,
+        envKey: INJECTED_ENV,
       },
     });
     try {
@@ -215,12 +217,13 @@ describe('prepareQwenMcpSession — injeção de chave do Nexus (F-1565)', () =>
       expect(merged.modelProviders.openai[0]).toMatchObject({
         id: 'qwen3.8-max',
         baseUrl: PLAN,
-        envKey: 'BAILIAN_TOKEN_PLAN_API_KEY',
+        envKey: INJECTED_ENV,
       });
       // M2: a chave Alibaba do operador (env.BAILIAN… do settings dele) não
       // vai para a cópia: a injetada é a única credencial do pane e nenhum
       // segredo velho fica em disco. O arquivo real nunca é tocado.
       expect(merged.env?.BAILIAN_TOKEN_PLAN_API_KEY).toBeUndefined();
+      expect(result.env.QWEN_CODE_SYSTEM_SETTINGS_PATH).toBe(written);
       expect(fs.readFileSync(written, 'utf8')).not.toContain('fixture-settings-secret');
       expect(fs.readFileSync(path.join(fx.providerHome, 'settings.json'), 'utf8'))
         .toContain('fixture-settings-secret');
@@ -246,7 +249,7 @@ describe('prepareQwenMcpSession — injeção de chave do Nexus (F-1565)', () =>
       governed: true,
       allowedSkills: [],
       allowedTools: [],
-      qwenSettingsInjection: { baseUrl: PLAN, models: ['qwen3.8-max'], tokenPlanKey: true },
+      qwenSettingsInjection: { baseUrl: PLAN, models: ['qwen3.8-max'], tokenPlanKey: true, envKey: INJECTED_ENV },
     });
     try {
       expect(result.providerStateWritePaths ?? []).not.toContain(
@@ -264,7 +267,7 @@ describe('prepareQwenMcpSession — injeção de chave do Nexus (F-1565)', () =>
 
 describe('prepareQwenMcpSession — settings do operador sob demanda e tolerante (F-1565)', () => {
   const PLAN = 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1';
-  const injection = { baseUrl: PLAN, models: ['qwen3.8-max'], tokenPlanKey: true };
+  const injection = { baseUrl: PLAN, models: ['qwen3.8-max'], tokenPlanKey: true, envKey: INJECTED_ENV };
   const governed = { governed: true, allowedSkills: [], allowedTools: [] } as const;
 
   function start(
@@ -328,7 +331,7 @@ describe('prepareQwenMcpSession — settings do operador sob demanda e tolerante
       expect(merged.modelProviders.openai[0]).toMatchObject({
         id: 'qwen3.8-max',
         baseUrl: PLAN,
-        envKey: 'BAILIAN_TOKEN_PLAN_API_KEY',
+        envKey: INJECTED_ENV,
       });
     } finally {
       cleanupCliMcpSession(TOKEN);
@@ -347,7 +350,7 @@ describe('prepareQwenMcpSession — settings do operador sob demanda e tolerante
       const merged = readMerged(result.artifactDir!);
       expect(merged.model).toBeUndefined();
       expect(merged.modelProviders.openai).toHaveLength(1);
-      expect(merged.modelProviders.openai[0]).toMatchObject({ id: 'qwen3.8-max', envKey: 'BAILIAN_TOKEN_PLAN_API_KEY' });
+      expect(merged.modelProviders.openai[0]).toMatchObject({ id: 'qwen3.8-max', envKey: INJECTED_ENV });
       expect(Object.keys(readMcpConfig(result.artifactDir!).mcpServers)).toEqual([result.serverName]);
     } finally {
       cleanupCliMcpSession(TOKEN);
@@ -430,6 +433,7 @@ describe('purgeStaleCliMcpSessions — overlay qwen órfão (F-1565)', () => {
         baseUrl: 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1',
         models: ['qwen3.8-max'],
         tokenPlanKey: true,
+        envKey: INJECTED_ENV,
       },
     });
     try {

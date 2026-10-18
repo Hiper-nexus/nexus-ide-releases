@@ -3186,17 +3186,28 @@ describe('F-1565: spawn do Qwen carrega o descritor de injeção do overlay', ()
   });
   afterEach(() => { vi.unstubAllEnvs(); qwenSettingsProbe.readiness = 'unknown'; });
 
-  it('chave sk-sp- do cofre: keyEnv BAILIAN + descritor com a URL exclusiva do plano', () => {
+  it('chave sk-sp- do cofre: keyEnv aleatório por spawn + descritor com a URL exclusiva do plano', () => {
     spawnDeps.runtimeKey.mockReturnValue('sk-sp-fixture-cofre');
     const result = prepareProviderSpawn('qwen', { model: 'qwen3.8-max' });
     expect(result).toMatchObject({ ok: true });
     if (!result.ok) return;
-    expect(result.overrides.keyEnv).toEqual({ BAILIAN_TOKEN_PLAN_API_KEY: 'sk-sp-fixture-cofre' });
     expect(result.overrides.qwenSettingsInjection).toMatchObject({
       baseUrl: PLAN,
       tokenPlanKey: true,
     });
+    const envKey = result.overrides.qwenSettingsInjection?.envKey;
+    expect(envKey).toMatch(/^NEXUS_QWEN_KEY_[a-f0-9]{32}$/i);
+    expect(result.overrides.keyEnv).toEqual({ [envKey!]: 'sk-sp-fixture-cofre' });
     expect(result.overrides.qwenSettingsInjection?.models).toContain('qwen3.8-max');
+  });
+
+  it('N1: dois spawns não reutilizam o nome da variável do cofre', () => {
+    spawnDeps.runtimeKey.mockReturnValue('sk-sp-fixture-cofre');
+    const first = prepareProviderSpawn('qwen', {});
+    const second = prepareProviderSpawn('qwen', {});
+    if (!first.ok || !second.ok) throw new Error('spawn falhou');
+    expect(first.overrides.qwenSettingsInjection?.envKey)
+      .not.toBe(second.overrides.qwenSettingsInjection?.envKey);
   });
 
   it('chave padrão (sk-) com settings no dashscope-intl: a base do settings vence; sem settings, o padrão DashScope', () => {
@@ -3381,8 +3392,10 @@ describe('F-1565: spawn do Qwen carrega o descritor de injeção do overlay', ()
     spawnDeps.prepareAccount.mockReturnValueOnce({ ok: true, account, apiKey: 'sk-sp-da-conta-a', authEnv: {} });
     const result = prepareProviderSpawn('qwen', { accountId: 'acct-a', model: 'qwen3.7-plus' });
     if (!result.ok) throw new Error('spawn falhou');
-    expect(result.overrides.keyEnv).toEqual({ BAILIAN_TOKEN_PLAN_API_KEY: 'sk-sp-da-conta-a' });
     expect(result.overrides.qwenSettingsInjection).toMatchObject({ baseUrl: PLAN, tokenPlanKey: true });
+    expect(result.overrides.keyEnv).toEqual({
+      [result.overrides.qwenSettingsInjection!.envKey]: 'sk-sp-da-conta-a',
+    });
     expect(result.overrides.qwenSettingsInjection?.models).toContain('qwen3.7-plus');
   });
 

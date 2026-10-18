@@ -2,11 +2,13 @@
 import { createHash } from 'node:crypto';
 import os from 'node:os';
 import {
+  parseQwenOperatorSettingsText,
   QWEN_DASHSCOPE_DEFAULT_BASE_URL,
+  qwenOpenAiModelsEndpoint,
   qwenSettingsPath,
   resolveQwenInjectionBaseUrl,
 } from './qwen-settings';
-import { ALIBABA_TOKEN_PLAN_HOST, TOKEN_PLAN_KEY_ENV_VARS } from './deepseek-provider';
+import { TOKEN_PLAN_KEY_ENV_VARS } from './deepseek-provider';
 import { readRegularFileCappedAsync } from '../redline/redline-safe-read';
 
 export type QwenReadinessState = 'present' | 'no-credential' | 'invalid-credential' | 'unknown';
@@ -50,19 +52,13 @@ const object = (value: unknown): Record<string, unknown> => value && typeof valu
 const text = (value: unknown): string | null => typeof value === 'string' && value.trim() && value.length <= 8192 ? value.trim() : null;
 
 function probeEndpoint(base: string): string | null {
-  try {
-    const url = new URL(base);
-    if (url.protocol !== 'https:' || url.username || url.password || url.port && url.port !== '443' ||
-        url.search || url.hash || !['dashscope.aliyuncs.com', ALIBABA_TOKEN_PLAN_HOST].includes(url.hostname) ||
-        url.pathname.replace(/\/+$/, '') !== '/compatible-mode/v1') return null;
-    return `${url.origin}/compatible-mode/v1/models`;
-  } catch { return null; }
+  return qwenOpenAiModelsEndpoint(base);
 }
 
 async function resolveProbe(options: QwenProbeOptions) {
   const file = await readRegularFileCappedAsync(qwenSettingsPath(options.home ?? os.homedir()), 1024 * 1024);
   let settings: Record<string, unknown> = {};
-  try { if (file.kind === 'text') settings = object(JSON.parse(file.text)); } catch { /* Unknown config is not an auth rejection. */ }
+  try { if (file.kind === 'text') settings = object(parseQwenOperatorSettingsText(file.text)); } catch { /* Unknown config is not an auth rejection. */ }
   const model = object(settings.model);
   const auth = object(object(settings.security).auth);
   const env = object(settings.env);
@@ -73,7 +69,7 @@ async function resolveProbe(options: QwenProbeOptions) {
   const explicitKey = text(options.key);
   const openaiAuth = !text(auth.selectedType) || auth.selectedType === 'openai';
   // Match the CLI's provider selection and env-before-settings resolution.
-  // Nexus injects a configured key as BAILIAN_TOKEN_PLAN_API_KEY.
+  // An explicit key is authoritative for the readiness probe.
   const envValue = (name: string) => name === 'BAILIAN_TOKEN_PLAN_API_KEY' && explicitKey
     ? explicitKey : text(process.env[name]) ?? text(env[name]);
   const selectedKey = envKey ? envValue(envKey) : null;

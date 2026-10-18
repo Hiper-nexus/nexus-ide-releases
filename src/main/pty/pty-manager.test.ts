@@ -940,6 +940,7 @@ describe("gateway de IA local (OmniRoute-like)", () => {
       baseUrl: 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1',
       models: ['qwen3.8-max'],
       tokenPlanKey: true,
+      envKey: 'NEXUS_QWEN_KEY_0123456789abcdef0123456789abcdef',
     } as const;
     let sessionId: string | undefined;
     try {

@@ -203,6 +203,22 @@ describe('F-1565: a sonda testa o mesmo par chave+base URL que o pane usa', () =
     expect(fetchImpl).toHaveBeenCalledWith(`${PLAN}/models`, expect.anything());
   });
 
+  it('N3: JSONC com BOM preserva o Token Plan de Pequim na sonda', async () => {
+    const home = tempHome();
+    const dir = path.join(home, '.qwen');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'settings.json'),
+      '\uFEFF// perfil\n{ "security": { "auth": { "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1", }, }, }',
+    );
+    const fetchImpl = vi.fn(async () => ({ status: 200 }));
+    expect((await probeQwenCredential({ home, key: 'sk-sp-fixture', fetchImpl })).state).toBe('present');
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/models',
+      expect.anything(),
+    );
+  });
+
   it('401/403 diz chave inválida ou base URL incompatível — nunca limite/cota', async () => {
     const result = await probeQwenCredential({
       home: tempHome(),

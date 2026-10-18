@@ -1,10 +1,11 @@
 import fsp from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { runPeriodicTask, stopPeriodicTask, type PeriodicTaskContext } from '../observability/periodic-task';
 import { readRegularFileCappedAsync } from '../redline/redline-safe-read';
 import { mimoCredentialSupportsModel } from '../adapters/mimo-auth';
 import {
   normalizeHttpsBaseUrl,
+  QWEN_INJECTED_KEY_ENV_PREFIX,
   QWEN_DASHSCOPE_DEFAULT_BASE_URL,
   qwenSettingsHasCredential,
   readQwenSettingsSummary,
@@ -419,7 +420,7 @@ export interface ProviderSpawnOverrides {
   /**
    * F-1565: quando o Nexus injeta a chave do Qwen (vault ou conta), o overlay
    * do QWEN_HOME precisa gravar entradas `modelProviders` com
-   * `envKey: BAILIAN_TOKEN_PLAN_API_KEY` + esta base URL — sem elas a CLI
+   * `envKey` aleatória por spawn + esta base URL — sem elas a CLI
    * ignora a env e usa o `security.auth.apiKey` embutido no settings do
    * operador (o 401 do incidente) ou não autentica. Nunca carrega segredo.
    */
@@ -496,8 +497,8 @@ function nativeKeyEnv(
 /**
  * F-1565: instrução para o overlay do QWEN_HOME (sem segredo): a base URL que
  * as entradas `modelProviders` geradas devem usar e os modelos cobertos. O
- * Qwen Code só honra `BAILIAN_TOKEN_PLAN_API_KEY` do env quando uma entrada o
- * referencia via `envKey`; sem isto o pane ignorava a chave configurada no
+ * Qwen Code só honra uma chave do env quando uma entrada a referencia via
+ * `envKey`; sem isto o pane ignorava a chave configurada no
  * Nexus e morria em 401 com o `security.auth.apiKey` velho do settings.
  */
 export interface QwenSettingsInjection {
@@ -505,6 +506,8 @@ export interface QwenSettingsInjection {
   readonly models: readonly string[];
   /** A chave injetada é do Token Plan (`sk-sp-`). */
   readonly tokenPlanKey: boolean;
+  /** Name unknown to operator settings before this physical spawn. */
+  readonly envKey: string;
 }
 
 /**
@@ -547,7 +550,12 @@ function qwenSettingsInjection(
     const trimmed = id?.trim();
     if (trimmed) models.add(trimmed);
   }
-  return { baseUrl, models: [...models], tokenPlanKey: isAlibabaPlanKey(key) };
+  return {
+    baseUrl,
+    models: [...models],
+    tokenPlanKey: isAlibabaPlanKey(key),
+    envKey: `${QWEN_INJECTED_KEY_ENV_PREFIX}${randomBytes(16).toString('hex')}`,
+  };
 }
 
 /**
@@ -1364,8 +1372,13 @@ function buildProviderSpawnOverrides(
       }
       return { ...base, keyEnv, suppressEnv: [] };
     }
-    const keyEnv = accKey
-      ? nativeKeyEnv(adapterId, accKey, perSpawn.model)
+    const qwenInjection = adapterId === 'qwen' && accKey
+      ? qwenSettingsInjection(accKey, perSpawn.model)
+      : undefined;
+    const keyEnv = qwenInjection
+      ? { [qwenInjection.envKey]: accKey! }
+      : accKey
+        ? nativeKeyEnv(adapterId, accKey, perSpawn.model)
       : {};
     if (preparedAccount && (!accKey || Object.keys(keyEnv).length === 0)) {
       throw new Error(
@@ -1377,8 +1390,8 @@ function buildProviderSpawnOverrides(
       keyEnv,
       suppressEnv: [],
       // F-1565: a chave da conta 'a' também precisa das entradas no overlay.
-      ...(adapterId === 'qwen' && accKey
-        ? { qwenSettingsInjection: qwenSettingsInjection(accKey, perSpawn.model) }
+      ...(qwenInjection
+        ? { qwenSettingsInjection: qwenInjection }
         : {}),
     };
   }
@@ -1439,9 +1452,14 @@ function buildProviderSpawnOverrides(
   const key = decision.injectKey
     ? resolveApiKey(adapterId, cfg.upstream)
     : null;
+  const qwenInjection = adapterId === 'qwen' && decision.injectKey && key
+    ? qwenSettingsInjection(key, perSpawn.model)
+    : undefined;
   const keyEnv =
-    decision.injectKey && adapter && key
-      ? nativeKeyEnv(adapterId, key, perSpawn.model)
+    qwenInjection
+      ? { [qwenInjection.envKey]: key! }
+      : decision.injectKey && adapter && key
+        ? nativeKeyEnv(adapterId, key, perSpawn.model)
       : decision.strategy === 'subscription' && adapterId === 'claude'
         ? nativeClaudeSubscriptionEnv(perSpawn.isolatedHome === true)
         : {};
@@ -1453,8 +1471,8 @@ function buildProviderSpawnOverrides(
       : [],
     // F-1565: chave do cofre injetada no Qwen — o overlay precisa das
     // entradas modelProviders para a CLI realmente usar a env.
-    ...(adapterId === 'qwen' && decision.injectKey && key
-      ? { qwenSettingsInjection: qwenSettingsInjection(key, perSpawn.model) }
+    ...(qwenInjection
+      ? { qwenSettingsInjection: qwenInjection }
       : {}),
   };
 }

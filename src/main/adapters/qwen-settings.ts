@@ -99,13 +99,13 @@ export function qwenSettingsPath(home: string = os.homedir()): string {
 }
 
 export function readQwenSettingsSummary(home: string = os.homedir()): QwenSettingsSummary {
-  try { return parseQwenSettingsSummary(parseOperatorSettingsText(fs.readFileSync(qwenSettingsPath(home), 'utf8'))); }
+  try { return parseQwenSettingsSummary(parseQwenOperatorSettingsText(fs.readFileSync(qwenSettingsPath(home), 'utf8'))); }
   catch { return parseQwenSettingsSummary(null); }
 }
 
 export async function readQwenSettingsSummaryAsync(home: string = os.homedir()): Promise<QwenSettingsSummary> {
   const result = await readRegularFileCappedAsync(qwenSettingsPath(home), 1024 * 1024);
-  try { return parseQwenSettingsSummary(result.kind === 'text' ? parseOperatorSettingsText(result.text) : null); }
+  try { return parseQwenSettingsSummary(result.kind === 'text' ? parseQwenOperatorSettingsText(result.text) : null); }
   catch { return parseQwenSettingsSummary(null); }
 }
 
@@ -211,8 +211,8 @@ const KNOWN_KEY_DESTINATIONS: ReadonlyMap<string, { readonly paths: readonly str
     ['cn-hongkong.dashscope.aliyuncs.com', { paths: ['/compatible-mode/v1'], plan: false }],
     ['coding.dashscope.aliyuncs.com', { paths: ['/v1'], plan: true }],
     ['coding-intl.dashscope.aliyuncs.com', { paths: ['/v1'], plan: true }],
-    ['token-plan.cn-beijing.maas.aliyuncs.com', { paths: ['/compatible-mode/v1', '/apps/anthropic'], plan: true }],
-    ['token-plan.ap-southeast-1.maas.aliyuncs.com', { paths: ['/compatible-mode/v1', '/apps/anthropic'], plan: true }],
+    ['token-plan.cn-beijing.maas.aliyuncs.com', { paths: ['/compatible-mode/v1'], plan: true }],
+    ['token-plan.ap-southeast-1.maas.aliyuncs.com', { paths: ['/compatible-mode/v1'], plan: true }],
     [DEEPSEEK_DIRECT_HOST, { paths: ['', '/v1'], plan: false }],
   ]);
 
@@ -234,6 +234,12 @@ function knownKeyDestination(raw: string | null | undefined): { href: string; pl
   } catch {
     return null;
   }
+}
+
+/** Exact OpenAI-compatible endpoint for the bounded readiness probe. */
+export function qwenOpenAiModelsEndpoint(raw: string | null | undefined): string | null {
+  const destination = knownKeyDestination(raw);
+  return destination ? `${destination.href}/models` : null;
 }
 
 /**
@@ -290,7 +296,7 @@ export function readQwenOperatorSettings(file: string): Record<string, unknown> 
   const read = readRegularFileCapped(file, QWEN_SETTINGS_MAX_BYTES);
   if (read.kind !== 'text') return {};
   try {
-    return asRecord(parseOperatorSettingsText(read.text)) ?? {};
+    return asRecord(parseQwenOperatorSettingsText(read.text)) ?? {};
   } catch {
     return {};
   }
@@ -301,7 +307,7 @@ export function readQwenOperatorSettings(file: string): Record<string, unknown> 
  * final, como a CLI): a decisão da base URL e o overlay enxergam o mesmo
  * arquivo. Estrito primeiro; JSONC só se falhar. Lança se nenhum dos dois lê.
  */
-function parseOperatorSettingsText(raw: string): unknown {
+export function parseQwenOperatorSettingsText(raw: string): unknown {
   const text = raw.replace(/^\uFEFF/, '');
   try {
     return JSON.parse(text);
@@ -316,28 +322,66 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-/** Variável que o Nexus injeta com a chave do cofre; as entradas geradas a referenciam. */
-const INJECTED_KEY_ENV = 'BAILIAN_TOKEN_PLAN_API_KEY';
-/** Credenciais Alibaba do operador em `env`: na cópia, a injetada é a única. */
-const OPERATOR_ALIBABA_KEY_ENV = /^(?:BAILIAN|DASHSCOPE)_/i;
+/** Per-spawn secret variable names must be unpredictable to operator settings. */
+export const QWEN_INJECTED_KEY_ENV_PREFIX = 'NEXUS_QWEN_KEY_';
+const INJECTED_KEY_ENV = new RegExp(`^${QWEN_INJECTED_KEY_ENV_PREFIX}[a-f0-9]{32}$`, 'i');
+const OPERATOR_NEXUS_KEY_ENV = /^(?:BAILIAN_|DASHSCOPE_|OPENAI_API_KEY$|OPENAI_BASE_URL$|NEXUS_QWEN_KEY_)/i;
+const VARIABLE_INTERPOLATION = /\$(?:\{([^}]+)\}|(\w+))/;
+
+function isNexusKeyEnv(name: string): boolean {
+  return OPERATOR_NEXUS_KEY_ENV.test(name);
+}
+
+function containsInterpolation(value: unknown): boolean {
+  if (typeof value === 'string') return VARIABLE_INTERPOLATION.test(value);
+  if (Array.isArray(value)) return value.some(containsInterpolation);
+  return Boolean(value && typeof value === 'object' && Object.values(value).some(containsInterpolation));
+}
+
+function containsNexusInterpolation(value: unknown): boolean {
+  if (typeof value === 'string') {
+    return [...value.matchAll(new RegExp(VARIABLE_INTERPOLATION, 'g'))]
+      .some((match) => isNexusKeyEnv(match[1] ?? match[2] ?? ''));
+  }
+  if (Array.isArray(value)) return value.some(containsNexusInterpolation);
+  return Boolean(value && typeof value === 'object' && Object.values(value).some(containsNexusInterpolation));
+}
+
+/** Drop protected interpolations from unrelated settings without mutating operator data. */
+function redactNexusInterpolations(value: unknown): unknown {
+  if (typeof value === 'string') return containsNexusInterpolation(value) ? undefined : value;
+  if (Array.isArray(value)) return value
+    .map(redactNexusInterpolations)
+    .filter((item) => item !== undefined);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value).flatMap(([key, item]) => {
+      const redacted = redactNexusInterpolations(item);
+      return redacted === undefined ? [] : [[key, redacted]];
+    }),
+  );
+}
+
+function sameEnvKey(a: string | null, b: string): boolean {
+  return a !== null && a.toUpperCase() === b.toUpperCase();
+}
 
 /**
  * F-1565: mescla as entradas do Nexus no `settings.json` do OVERLAY do pane
  * (o arquivo do operador nunca é tocado). O Qwen Code só honra a variável
- * `BAILIAN_TOKEN_PLAN_API_KEY` quando um `modelProviders.openai[]` aponta para
- * ela via `envKey` — sem a entrada, a chave injetada morria no env e a CLI
+ * a chave injetada quando um `modelProviders.openai[]` aponta para ela via
+ * `envKey` — sem a entrada, a chave injetada morria no env e a CLI
  * usava o `security.auth.apiKey` embutido (velho) ou caía em "No auth type".
  * A entrada NUNCA carrega o segredo: só `envKey` + `baseUrl` (a forma oficial
  * da doc do Model Studio). Entrada do operador com o mesmo id vence a nossa.
  *
  * A cópia é a única credencial Alibaba do pane: sai o `security.auth.apiKey`
  * (venceria a env para um modelo fora de `models` e ficaria em disco) e as
- * `env.BAILIAN_*`/`DASHSCOPE_*` do operador. E toda linha do operador
- * alimentada pela NOSSA env (`envKey` igual) só fica se o host dela for destino
- * conhecido da chave (ou o da própria injeção): senão o settings.json, que
- * qualquer processo do operador reescreve, mandaria a chave do cofre para onde
- * quisesse. Linha OpenAI vai para a base URL resolvida (o mesmo vale para chave
- * `sk-sp-` fora de host de plano); linha de outro protocolo é descartada.
+ * `env.BAILIAN_*`/`DASHSCOPE_*`/OpenAI do operador. A variável injetada tem um
+ * sufixo aleatório por spawn, e blocos de autenticação que interpolam `$` são
+ * descartados: um settings que o operador possa reescrever não descobre nem
+ * redireciona a chave do cofre. Uma coincidência de nome (inclusive por caixa
+ * no Windows) é normalizada para o destino injetado conhecido.
  */
 export function mergeQwenSettingsForInjection(
   raw: unknown,
@@ -346,30 +390,49 @@ export function mergeQwenSettingsForInjection(
     readonly models: readonly string[];
     /** A chave injetada é do Token Plan (`sk-sp-`). */
     readonly tokenPlanKey: boolean;
+    /** Per-spawn random variable that is the only path to the vault key. */
+    readonly envKey: string;
   },
 ): Record<string, unknown> {
-  const settings = { ...asRecord(raw) };
+  if (!INJECTED_KEY_ENV.test(options.envKey)) {
+    throw new Error('invalid Qwen injected key environment name');
+  }
+  const rawSettings = asRecord(raw) ?? {};
+  const rawEnv = objectField(rawSettings, 'env');
+  const rawProviders = objectField(rawSettings, 'modelProviders');
+  const rawSecurity = objectField(rawSettings, 'security') ?? {};
+  const rawAuth = objectField(rawSecurity, 'auth');
+  const settings = { ...(asRecord(redactNexusInterpolations(rawSettings)) ?? {}) };
   const security = objectField(settings, 'security') ?? {};
   // A chave injetada é a credencial deste pane: a auth tem de ser a
   // OpenAI-compatible, mesmo que o perfil diga qwen-oauth (a cópia é efêmera).
-  const auth: Record<string, unknown> = { ...objectField(security, 'auth'), selectedType: 'openai' };
+  const auth: Record<string, unknown> = {
+    ...(containsInterpolation(rawAuth) ? {} : objectField(security, 'auth')),
+    selectedType: 'openai',
+  };
   delete auth.apiKey;
   settings.security = { ...security, auth };
-  const env = objectField(settings, 'env');
-  if (env) {
+  const env = containsInterpolation(rawEnv) ? null : objectField(settings, 'env');
+  if (rawEnv && env) {
     settings.env = Object.fromEntries(
-      Object.entries(env).filter(([name]) => !OPERATOR_ALIBABA_KEY_ENV.test(name)),
+      Object.entries(env).filter(([name, value]) =>
+        !isNexusKeyEnv(name) && !containsNexusInterpolation(value),
+      ),
     );
+  } else {
+    delete settings.env;
   }
 
   const injectedUrl = normalizeHttpsBaseUrl(options.baseUrl);
-  const destinationOk = (entry: Record<string, unknown>): boolean => {
+  const safeDestination = (entry: Record<string, unknown>): string | null => {
     const url = nonEmptyString(entry.baseUrl);
-    if (injectedUrl && normalizeHttpsBaseUrl(url) === injectedUrl) return true;
+    if (injectedUrl && normalizeHttpsBaseUrl(url) === injectedUrl) return injectedUrl;
     const known = knownKeyDestination(url);
-    return known !== null && (!options.tokenPlanKey || known.plan);
+    return known !== null && (!options.tokenPlanKey || known.plan) ? known.href : null;
   };
-  const providers = objectField(settings, 'modelProviders') ?? {};
+  const providers = containsInterpolation(rawProviders)
+    ? {}
+    : objectField(settings, 'modelProviders') ?? {};
   // fromEntries (e não `providers[type] = …`): uma chave `__proto__` vinda do
   // JSON do operador vira propriedade própria, nunca troca o protótipo.
   const guarded = Object.fromEntries(
@@ -378,10 +441,18 @@ export function mergeQwenSettingsForInjection(
       Array.isArray(rows)
         ? rows.flatMap((row): unknown[] => {
             const entry = asRecord(row);
-            if (!entry || nonEmptyString(entry.envKey) !== INJECTED_KEY_ENV || destinationOk(entry)) {
+            if (!entry) return [row];
+            const envKey = nonEmptyString(entry.envKey);
+            if (sameEnvKey(envKey, options.envKey)) {
+              const baseUrl = safeDestination(entry) ?? options.baseUrl;
+              return authType === 'openai'
+                ? [{ ...entry, baseUrl, envKey: options.envKey }]
+                : [];
+            }
+            if (!envKey || !isNexusKeyEnv(envKey)) {
               return [row];
             }
-            return authType === 'openai' ? [{ ...entry, baseUrl: options.baseUrl }] : [];
+            return [];
           })
         : rows,
     ]),
@@ -401,7 +472,7 @@ export function mergeQwenSettingsForInjection(
       id: model,
       ...(tokenPlan ? { name: `[ModelStudio Token Plan] ${model}` } : {}),
       baseUrl: options.baseUrl,
-      envKey: INJECTED_KEY_ENV,
+      envKey: options.envKey,
     });
   }
   settings.modelProviders = { ...guarded, openai: merged };

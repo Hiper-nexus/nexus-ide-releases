@@ -211,6 +211,9 @@ export function prepareQwenMcpSession(
     return {
       env: {
         QWEN_HOME: artifactDir,
+        ...(injection
+          ? { QWEN_CODE_SYSTEM_SETTINGS_PATH: path.join(artifactDir, 'settings.json') }
+          : {}),
         NEXUS_MCP_URL: url,
         NEXUS_MCP_TOKEN: token,
       },
