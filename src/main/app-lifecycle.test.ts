@@ -290,7 +290,7 @@ describe('macOS activate lifecycle', () => {
     const source = fs.readFileSync(path.join(__dirname, 'main.ts'), 'utf-8');
     const beforeQuit = source.indexOf('app.on("before-quit"');
     const shutdownStart = source.indexOf('function shutdown(): Promise<void>');
-    const flush = source.indexOf('await flushRouteProvenance();', shutdownStart);
+    const flush = source.indexOf('"flushRouteProvenance", () => flushRouteProvenance()', shutdownStart);
     const firstTeardown = source.indexOf('"stopPostBootIdleQueue"', shutdownStart);
     const physicalFence = source.indexOf(
       'await shutdownOrchestrationRuntimesRecordingStragglers(',

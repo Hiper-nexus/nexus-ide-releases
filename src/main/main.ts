@@ -4,6 +4,7 @@ import { cliUpdateKey } from './adapters/cli-auto-update';
 import { stopOrientationForWorkspace } from './context/orientation/orientation-bootstrap';
 import { stopQwenReadiness } from './adapters/qwen-readiness-cache';
 import { stopPaneSessionOutputGc } from './orch/pane-session-output';
+import { flushRouteProvenance } from './orch/route-provenance';
 import { stopPetPeriodicWork } from './pet/pet-window';
 import { stopPreGoneCrashSampling } from './crash-reporting/process-gone-diagnostics';
 import { stopManagedAuthSpawnGateWatchers } from './adapters/managed-auth-spawn-gate';
@@ -1689,10 +1690,10 @@ function shutdown(): Promise<void> {
     // Flush PRIMEIRO: a admissão de spawn já foi selada no before-quit, então
     // nenhum registro novo entra, e o teto inarredável do quit pode cortar o
     // teardown de PTY mais adiante sem levar os últimos spawns junto.
-    await trackShutdownPhase("flushRouteProvenance", async () => {
-      const { flushRouteProvenance } = await import('./orch/route-provenance');
-      await flushRouteProvenance();
-    });
+    // Import estático: o import() dinâmico de um módulo que o main já importa
+    // estaticamente fazia o Rolldown entrar em pânico no build de release
+    // ("MISSIONLESS_CAP is not in any chunk") e o main.js não era gerado.
+    await trackShutdownPhase("flushRouteProvenance", () => flushRouteProvenance());
     await trackShutdownPhase("stopPostBootIdleQueue", () => stopPostBootIdleQueue());
     nativeHeavyCommands.stopAdmission();
     stopMacOSDockWatchdog();
