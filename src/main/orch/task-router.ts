@@ -2772,7 +2772,10 @@ export function routeTask(
       }
     }
     if (reserveClaude && chosen.c.adapterId === 'claude') {
-      const alt = ranked.find((r) => r.c.adapterId !== 'claude');
+      // O bloco do líder falho estaciona a falha logo atrás do pronto: a
+      // reserva pega a 1ª alternativa que não falha (fail-open: só falhas ⇒ a 1ª).
+      const others = ranked.filter((r) => r.c.adapterId !== 'claude');
+      const alt = healthyPool(others).find((r) => !isFailing(r)) ?? others[0];
       // ponytail: só claude instalado → sem alternativa, mantém claude (o
       // orquestrador serializa os workers claude nesse caso raro).
       if (alt) chosen = alt;
