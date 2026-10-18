@@ -31,13 +31,13 @@ describe('missionLifecycleLabel', () => {
 
   it('leftover isolado e Encerrar não herdam Precisa de você', () => {
     expect(missionLifecycleLabel('blocked_user', false, 'session-sleeping')).toBe(
-      'Dormindo',
+      'Interrompida',
     );
     expect(missionLifecycleLabel('blocked_user', false, 'runtime-closed')).toBe(
       'Parou',
     );
     expect(missionLifecycleLabel('blocked_user', false, 'session-dead')).toBe(
-      'Dormindo',
+      'Interrompida',
     );
   });
 

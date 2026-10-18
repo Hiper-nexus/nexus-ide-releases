@@ -23,7 +23,7 @@ export function missionRecoveryNavigationLabel(
  * Never surface engine tokens (executing, intent_state, kickoff).
  *
  * blocked_user is a real operator ask ("Precisa de você"). Leftover
- * isolation / Encerrar persist the same intent_state but are Dormindo/Parou.
+ * isolation / Encerrar persist the same intent_state but are Interrompida/Parou.
  */
 export const MISSION_LIFECYCLE_LABELS: Readonly<
   Record<MissionLifecycleState, string>

@@ -188,10 +188,10 @@ describe('restore grid / rail / pet gates', () => {
 });
 
 describe('session-dead copy', () => {
-  it('Parou-as-stop é Encerrar; leftover session-dead é Dormindo', () => {
+  it('Parou-as-stop é Encerrar; leftover session-dead é Interrompida', () => {
     expect(sessionDeadReason()).toEqual({
       code: 'session-dead',
-      label: 'Dormindo',
+      label: 'Interrompida',
     });
     expect(isSessionDeadReasonCode('session-dead')).toBe(true);
     expect(isSessionDeadReasonCode('restore-failed')).toBe(true);
@@ -205,9 +205,9 @@ describe('session-dead copy', () => {
     expect(isIsolationStopReasonCode('session-sleeping')).toBe(true);
     expect(isIsolationStopReasonCode('session-dead')).toBe(true);
     expect(isIsolationStopReasonCode('open-question')).toBe(false);
-    expect(isolationStopLabel('session-sleeping')).toBe('Dormindo');
+    expect(isolationStopLabel('session-sleeping')).toBe('Interrompida');
     expect(isolationStopLabel('runtime-closed')).toBe('Parou');
-    expect(isolationStopLabel('session-dead')).toBe('Dormindo');
+    expect(isolationStopLabel('session-dead')).toBe('Interrompida');
     expect(isolationStopLabel('open-question')).toBeNull();
   });
 
@@ -339,10 +339,10 @@ describe('dead recovered pane + Dormindo', () => {
     ).toBe(false);
   });
 
-  it('Dormindo is a stopped rail class, not Trabalhando', () => {
+  it('Interrompida is a stopped rail class, not Trabalhando', () => {
     expect(sessionSleepingReason()).toEqual({
       code: 'session-sleeping',
-      label: 'Dormindo',
+      label: 'Interrompida',
     });
     expect(isSessionDeadReasonCode('session-sleeping')).toBe(true);
     expect(shouldShowRailWorking('dead-idle')).toBe(false);

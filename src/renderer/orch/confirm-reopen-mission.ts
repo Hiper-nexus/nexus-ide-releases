@@ -2,6 +2,7 @@ import type { Mission } from '../../shared/orch-types';
 import { useMissionSetupStore } from '../state/mission-setup-store';
 import { useOrchStore } from '../state/orch-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
+import { useToastStore } from '../state/toast-store';
 import { useWorkspaceStore } from '../state/workspace-store';
 import {
   hardReopenWouldDisplaceLayout,
@@ -91,15 +92,23 @@ export function resumeIntentFirstMissionShell(
  * Intent-first shells with no pane evidence enter canonical replacement
  * Review instead of failing with "sem panes".
  */
+export interface ConfirmReopenOptions {
+  /** Progresso real por pane — o card de retomada marca quem já voltou. */
+  readonly onPaneReady?: (paneId: string, sessionId: string | null) => void;
+}
+
 export async function confirmAndReopenMission(
   mission: Mission,
+  options?: ConfirmReopenOptions,
 ): Promise<MissionReopenResult> {
   // Blocked missions are owned by Main's bootstrap recovery. Renderer pane
   // inspection is both stale and misleading here: between retry attempts no
   // PTY may exist, and a persisted exclusive-login pane must not trigger an
   // "Encerrar e retomar" prompt before Main has adopted or retired it.
   if (mission.status === 'blocked') {
-    const result = await reopenMission(mission);
+    const result = options
+      ? await reopenMission(mission, options)
+      : await reopenMission(mission);
     return result.intentShell
       ? resumeIntentFirstMissionShell(mission)
       : result;
@@ -159,9 +168,67 @@ export async function confirmAndReopenMission(
     }
   }
 
-  const result = await reopenMission(mission);
+  const result = options
+    ? await reopenMission(mission, options)
+    : await reopenMission(mission);
   if (result.intentShell) {
     return resumeIntentFirstMissionShell(mission);
   }
   return result;
+}
+
+/**
+ * Feedback depois do clique em Retomar — uma regra só para os três pontos que
+ * chamam `confirmAndReopenMission` (barra do pane, superfície vazia, toast do
+ * último pane). O sucesso era silencioso e o resultado parcial era
+ * descartado; agora tudo vira toast acionável.
+ */
+export function reportMissionReopen(
+  mission: Mission,
+  result: MissionReopenResult,
+): void {
+  const toast = useToastStore.getState();
+  const dedupeKey = `mission-reopen:${mission.id}`;
+  if (!result.ok) {
+    toast.push('error', 'Não foi possível retomar a missão', {
+      detail: result.error,
+      dedupeKey,
+    });
+    return;
+  }
+  // A Revisão do Setup é o próprio feedback — um toast competiria com ela.
+  if (result.intentShell) return;
+  if (result.soft) {
+    toast.push('info', 'A missão já estava aberta', { dedupeKey });
+    return;
+  }
+  const total = result.panes ?? 0;
+  const partial = result.partialPanes ?? [];
+  if (partial.length > 0) {
+    const back = total - partial.length;
+    const failedNames = partial
+      .map((pane) => pane.title || pane.paneId)
+      .join(', ');
+    toast.push('warn', `${back} de ${total} voltaram`, {
+      detail: `${failedNames}: não confirmou a sessão`,
+      dedupeKey,
+      action: {
+        label: 'Tentar de novo',
+        onClick: async () => {
+          const fresh = useOrchStore
+            .getState()
+            .missions.find((entry) => entry.id === mission.id);
+          if (!fresh) return;
+          reportMissionReopen(fresh, await confirmAndReopenMission(fresh));
+        },
+      },
+    });
+    return;
+  }
+  const count = result.sessionIds?.length ?? total;
+  toast.push(
+    'success',
+    `Missão retomada · ${count} ${count === 1 ? 'agente' : 'agentes'} de volta`,
+    { dedupeKey },
+  );
 }

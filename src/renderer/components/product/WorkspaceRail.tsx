@@ -234,10 +234,10 @@ function missionStatusDisplay(
   ) {
     return { label, icon: 'status-idle', tone: 'ready' };
   }
-  if (label === 'Dormindo' || label === 'Parou') {
+  if (label === 'Interrompida' || label === 'Parou') {
     return {
       label,
-      icon: label === 'Dormindo' ? 'status-idle' : 'stop',
+      icon: label === 'Interrompida' ? 'interrupted' : 'stop',
       tone: 'blocked',
     };
   }

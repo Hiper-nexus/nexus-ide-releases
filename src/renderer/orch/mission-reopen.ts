@@ -49,7 +49,12 @@ export interface MissionReopenResult {
    * orquestrador já foi religado. Cada entrada nomeia o pane, o motivo e a
    * ação sugerida.
    */
-  partialPanes?: Array<{ paneId: string; reason: string; action: string }>;
+  partialPanes?: Array<{
+    paneId: string;
+    title: string;
+    reason: string;
+    action: string;
+  }>;
 }
 
 function reopenAckId(missionId: string): string {
@@ -162,9 +167,15 @@ function specsToPanes(
  * Soft focus when the mission is already open; otherwise reopen with
  * multi-mission merge. Another live Maestro is kept, never stolen.
  */
+export interface MissionReopenOptions {
+  readonly forceHard?: boolean;
+  /** Chamado quando cada pane confirma (ou não) a sessão — progresso real. */
+  readonly onPaneReady?: (paneId: string, sessionId: string | null) => void;
+}
+
 export async function reopenMission(
   mission: Mission,
-  options?: { forceHard?: boolean },
+  options?: MissionReopenOptions,
 ): Promise<MissionReopenResult> {
   // Legacy hard reopen is no longer supported: reject before bootstrap,
   // persistence, pane construction or any spawn-capable renderer operation.
@@ -327,7 +338,12 @@ export async function reopenMission(
   // sessions exist. A7: o orquestrador é aguardado PRIMEIRO e religado assim
   // que a sessão DELE confirma — um worker que não sobe vira resultado
   // parcial nomeado, sem derrubar o ack da missão nem impedir o rebind.
-  const sessionWaits = panes.map((pane) => waitForSession(pane.id, 10_000));
+  const sessionWaits = panes.map((pane) =>
+    waitForSession(pane.id, 10_000).then((sessionId) => {
+      options?.onPaneReady?.(pane.id, sessionId);
+      return sessionId;
+    }),
+  );
   // Quem lidera é o MAIN. Duas leituras dele, nesta ordem: a sessão durável
   // (A) que alguma pane restaurada carrega, e a composição que ele registrou
   // em `listMissionPanes` (C). O `Math.max(0, findIndex(...))` antigo promovia
@@ -391,6 +407,7 @@ export async function reopenMission(
     .filter((entry) => !entry.sessionId)
     .map((entry) => ({
       paneId: entry.pane.id,
+      title: entry.pane.title,
       reason: 'não confirmou uma sessão ativa no prazo',
       action: 'use Retomar novamente para recriar este pane',
     }));

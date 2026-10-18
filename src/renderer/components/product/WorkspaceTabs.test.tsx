@@ -601,11 +601,15 @@ describe('workspaceTabIsClosable / workspaceTabTone', () => {
     expect(workspaceTabTone(undefined)).toBeNull();
   });
 
-  it('o código do motivo vence o estado: espera e paradas são idle', () => {
+  it('o código do motivo vence o estado: espera é idle, interrompida tem tom próprio', () => {
     expect(workspaceTabTone('running', 'awaiting-instruction')).toBe('idle');
-    expect(workspaceTabTone('blocked_user', 'session-sleeping')).toBe('idle');
+    expect(workspaceTabTone('blocked_user', 'session-sleeping')).toBe(
+      'interrupted',
+    );
     expect(workspaceTabTone('blocked_user', 'runtime-closed')).toBe('idle');
-    expect(workspaceTabTone('blocked_technical', 'session-dead')).toBe('idle');
+    expect(workspaceTabTone('blocked_technical', 'session-dead')).toBe(
+      'interrupted',
+    );
     // Motivo que não é parada não muda o tom.
     expect(workspaceTabTone('blocked_user', 'open-question')).toBe('attention');
   });

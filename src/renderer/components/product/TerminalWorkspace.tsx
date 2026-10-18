@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { Group, Panel, Separator } from 'react-resizable-panels';
 import { PaneGrid } from '../PaneGrid';
 import { MissionTerminalRecovery } from './MissionTerminalRecovery';
+import { MissionInterruptedCard } from '../mission/MissionInterruptedCard';
 import { useLayoutStore } from '../../state/layout-store';
 import { useOrchStore } from '../../state/orch-store';
 import { listPanes } from '../../lib/split-tree';
@@ -662,6 +663,7 @@ export function TerminalWorkspace({
       )}
 
       <div className="terminal-workspace__surface">
+        {inMission ? <MissionInterruptedCard missionId={missionId} /> : null}
         {inMission && visiblePaneIds?.size === 0 ? (
           <PaneGrid
             visiblePaneIds={visiblePaneIds}

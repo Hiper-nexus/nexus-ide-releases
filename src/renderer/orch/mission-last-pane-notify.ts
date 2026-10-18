@@ -182,19 +182,13 @@ export function notifyIfLastMissionPaneClosed(
       label: 'Reabrir panes',
       onClick: async () => {
         // Import dinâmico: quebra o ciclo layout-store → reopen → layout-store.
-        const { confirmAndReopenMission } = await import(
-          './confirm-reopen-mission'
-        );
+        const { confirmAndReopenMission, reportMissionReopen } =
+          await import('./confirm-reopen-mission');
         const fresh = useOrchStore
           .getState()
           .missions.find((entry) => entry.id === missionId);
         if (!fresh) return;
-        const result = await confirmAndReopenMission(fresh);
-        if (!result.ok && result.error) {
-          useToastStore
-            .getState()
-            .push('error', 'Não deu pra reabrir os panes', result.error);
-        }
+        reportMissionReopen(fresh, await confirmAndReopenMission(fresh));
       },
     },
   });

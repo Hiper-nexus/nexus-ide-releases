@@ -20,6 +20,12 @@ export const SESSION_DEAD_REASON_LABEL = 'Parou';
 export const SESSION_SLEEPING_REASON_CODE = 'session-sleeping' as const;
 export const SESSION_SLEEPING_REASON_LABEL = 'Dormindo';
 
+/**
+ * Missão parada pelo fechamento do Nexus (restart, crash, quit), não pela
+ * hibernação que o operador escolheu — essa continua "Dormindo" no pane.
+ */
+export const SESSION_INTERRUPTED_REASON_LABEL = 'Interrompida';
+
 /** Encerrar persistido: blocked + blocked_user + runtime-closed. */
 export const RUNTIME_CLOSED_REASON_CODE = 'runtime-closed' as const;
 
@@ -210,22 +216,22 @@ export function leftoverRunningOrPendingIsDead(input: {
 
 export function sessionDeadReason(): {
   readonly code: typeof SESSION_DEAD_REASON_CODE;
-  readonly label: typeof SESSION_SLEEPING_REASON_LABEL;
+  readonly label: typeof SESSION_INTERRUPTED_REASON_LABEL;
 } {
   // Leftover cadáver sem Encerrar. Parou-as-stop is runtime-closed only.
   return {
     code: SESSION_DEAD_REASON_CODE,
-    label: SESSION_SLEEPING_REASON_LABEL,
+    label: SESSION_INTERRUPTED_REASON_LABEL,
   };
 }
 
 export function sessionSleepingReason(): {
   readonly code: typeof SESSION_SLEEPING_REASON_CODE;
-  readonly label: typeof SESSION_SLEEPING_REASON_LABEL;
+  readonly label: typeof SESSION_INTERRUPTED_REASON_LABEL;
 } {
   return {
     code: SESSION_SLEEPING_REASON_CODE,
-    label: SESSION_SLEEPING_REASON_LABEL,
+    label: SESSION_INTERRUPTED_REASON_LABEL,
   };
 }
 
@@ -262,13 +268,23 @@ export function isIsolationStopReasonCode(code: string | undefined): boolean {
   );
 }
 
-/** Rótulo civil do chip: Dormindo (park / leftover) ou Parou (Encerrar). */
+/**
+ * A missão parou porque o Nexus fechou com ela em andamento — reinício,
+ * crash ou quit. Não é a hibernação que o operador escolheu no pane.
+ */
+export function isMissionInterruptedReasonCode(
+  code: string | undefined,
+): boolean {
+  return (
+    code === SESSION_DEAD_REASON_CODE ||
+    code === SESSION_SLEEPING_REASON_CODE
+  );
+}
+
+/** Rótulo civil do chip: Interrompida (park / leftover) ou Parou (Encerrar). */
 export function isolationStopLabel(code: string | undefined): string | null {
-  if (
-    code === SESSION_SLEEPING_REASON_CODE ||
-    code === SESSION_DEAD_REASON_CODE
-  ) {
-    return SESSION_SLEEPING_REASON_LABEL;
+  if (isMissionInterruptedReasonCode(code)) {
+    return SESSION_INTERRUPTED_REASON_LABEL;
   }
   if (code === RUNTIME_CLOSED_REASON_CODE) {
     return SESSION_DEAD_REASON_LABEL;
