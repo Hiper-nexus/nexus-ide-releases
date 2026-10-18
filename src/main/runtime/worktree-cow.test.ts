@@ -105,7 +105,7 @@ describe('worktree-cow', () => {
       'nexus/task-1',
       expect.stringContaining('nexus-cow-test'),
       'abc123',
-    ]);
+    ], { timeoutMs: 180_000 });
     expect(result.method).toBe('git-worktree');
     expect(result.cowCopied).toEqual([]);
     // F-215: tempos por etapa — ids/números apenas.
@@ -733,7 +733,7 @@ describe('worktree-cow', () => {
       'nexus/task-1',
       expect.stringContaining('nexus-cow-test'),
       'abc123',
-    ]);
+    ], { timeoutMs: 180_000 });
     expect(result.method).toBe('git-worktree');
     expect(result.cowCopied).toEqual([]);
   });

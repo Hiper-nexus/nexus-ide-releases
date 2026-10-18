@@ -499,6 +499,8 @@ export function cowCopyHeavyDirsSync(
 // Share the queue across managers/checkouts of the same physical repository.
 const worktreeAddTails = new Map<string, Promise<void>>();
 
+const WORKTREE_ADD_TIMEOUT_MS = 3 * 60_000;
+
 async function withWorktreeAddLock<T>(input: MaterializeWorktreeInput, add: () => Promise<T>): Promise<T> {
   const common = await input.git.run(input.repositoryRoot, [
     'rev-parse', '--path-format=absolute', '--git-common-dir',
@@ -761,7 +763,8 @@ export async function materializeGitWorktree(
     branch,
     input.worktreePath,
     input.headSha,
-  ]));
+    // Checking out a large tree under a heavy build outlived the 30 s default.
+  ], { timeoutMs: WORKTREE_ADD_TIMEOUT_MS }));
   if (result.status !== 0) {
     throw new GitCommandError(
       'Git could not create the task worktree',

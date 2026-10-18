@@ -8,8 +8,11 @@ import {
   assertSafeLocalGitConfigAsync,
   AsyncProcessGitRunner,
   createPrivateGitIndex,
+  GitCommandError,
   isExecutableGitConfigEntry,
   ProcessGitRunner,
+  retryTransientGit,
+  type AsyncGitRunner,
   type GitRunner,
 } from './git-command';
 
@@ -356,5 +359,80 @@ describe('assertPrivateIndexPath (F-1442)', () => {
     expect(() => assertPrivateIndexPath(path.join(foreign, 'index'))).toThrow(
       'unsafe private Git index path',
     );
+  });
+});
+
+describe('Git transitório no spawn do isolatedWriter', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('diz o subcomando, o prazo e o stderr sem a credencial', async () => {
+    const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-fake-git-'));
+    try {
+      fs.writeFileSync(
+        path.join(bin, 'git'),
+        '#!/bin/sh\necho "fatal: could not read https://bot:ghp_secret@example.test/r" >&2\nsleep 5\n',
+        { mode: 0o755 },
+      );
+      vi.stubEnv('PATH', `${bin}${path.delimiter}${process.env.PATH ?? ''}`);
+      for (const run of [
+        () => new ProcessGitRunner().run(process.cwd(), ['worktree', 'add', '-b', 'x', '/tmp/x'], { timeoutMs: 1_000 }),
+        () => new AsyncProcessGitRunner().run(process.cwd(), ['worktree', 'add', '-b', 'x', '/tmp/x'], { timeoutMs: 1_000 }),
+      ]) {
+        const error = await Promise.resolve().then(run).then(() => null, (failure: unknown) => failure);
+        expect(error).toBeInstanceOf(GitCommandError);
+        const message = (error as Error).message;
+        expect(message).toMatch(/^Git process could not complete: git worktree add \(timeout de 1s\)/);
+        expect(message).toContain('stderr: fatal: could not read https://***@example.test/r');
+        expect(message).not.toContain('ghp_secret');
+      }
+    } finally {
+      fs.rmSync(bin, { recursive: true, force: true });
+    }
+  });
+
+  it('repete com backoff um git que falha 1 vez e depois funciona', async () => {
+    let calls = 0;
+    const git: AsyncGitRunner = {
+      run: async (_cwd, args) => {
+        calls += 1;
+        if (calls === 1) {
+          throw new GitCommandError('Git process could not complete: git worktree add (timeout de 30s)', args, { status: 1 });
+        }
+        return { status: 0, stdout: 'ok', stderr: '' };
+      },
+    };
+    const sleeps: number[] = [];
+    const result = await retryTransientGit(() => git.run('/repo', ['worktree', 'add']), {
+      sleep: async (ms) => { sleeps.push(ms); },
+    });
+    expect(result.stdout).toBe('ok');
+    expect(calls).toBe(2);
+    expect(sleeps).toEqual([1_000]);
+  });
+
+  it('repete lock concorrente e não repete erro definitivo', async () => {
+    const lock = new GitCommandError('Git command failed with exit 128', ['worktree', 'add'], {
+      status: 128,
+      stderr: "fatal: Unable to create '/repo/.git/index.lock': File exists.",
+    });
+    let lockCalls = 0;
+    await expect(retryTransientGit(async () => {
+      lockCalls += 1;
+      throw lock;
+    }, { sleep: async () => {} })).rejects.toBe(lock);
+    expect(lockCalls).toBe(3);
+
+    let fatalCalls = 0;
+    const fatal = new GitCommandError('Git command failed with exit 128', ['worktree', 'add'], {
+      status: 128,
+      stderr: "fatal: invalid reference: nope",
+    });
+    await expect(retryTransientGit(async () => {
+      fatalCalls += 1;
+      throw fatal;
+    }, { sleep: async () => {} })).rejects.toBe(fatal);
+    expect(fatalCalls).toBe(1);
   });
 });

@@ -19,7 +19,7 @@ import { getProjectDomainStores } from './project-domain-store-registry';
 import { scheduleWorktreeSalvage } from './isolated-writer-salvage';
 import { KeyedCoalescingWorker } from '../util/keyed-coalescing-worker';
 import { requireIsolatedWriterPool } from './isolated-writer-pool';
-import { AsyncProcessGitRunner, type AsyncGitRunner } from '../runtime/git-command';
+import { AsyncProcessGitRunner, retryTransientGit, type AsyncGitRunner } from '../runtime/git-command';
 
 /**
  * Chave do registry para writers isolados da mão do operador (sem missão).
@@ -234,7 +234,6 @@ export async function allocateIsolatedWriterWorktree(
 ): Promise<IsolatedWriterAllocation> {
   authority.assertCurrentAuthority?.();
   authority.signal?.throwIfAborted();
-  const workerId = randomUUID();
   const registryKey = missionId ?? OPERATOR_HAND_WORKTREE_KEY;
   schedulePaneWriterGc(scope, registryKey);
   const poolRequest = {
@@ -262,7 +261,10 @@ export async function allocateIsolatedWriterWorktree(
   }
 
   let materialize: MaterializeWorktreeResult | undefined;
-  const record = await requireWorktreeRuntimeRegistry().create({
+  // Transient Git (deadline under load, concurrent lock): a fresh workerId per
+  // attempt derives a new path/branch, so a half-made attempt never collides.
+  let workerId = randomUUID();
+  const record = await retryTransientGit(() => requireWorktreeRuntimeRegistry().create({
     ...authority,
     scope,
     missionId: registryKey,
@@ -273,6 +275,13 @@ export async function allocateIsolatedWriterWorktree(
     ownership: { files: [], symbols: [], domains: [`pane-${workerId}`] },
     onMaterialized: (result) => {
       materialize = result;
+    },
+  }), {
+    onRetry: (error, attempt) => {
+      authority.assertCurrentAuthority?.();
+      authority.signal?.throwIfAborted();
+      workerId = randomUUID();
+      console.warn(`[isolated-writer] tentativa ${attempt + 1} de criar a worktree: ${error instanceof Error ? error.message : String(error)}`);
     },
   });
   const tracked = trackAllocation(scope, missionId, registryKey, record);

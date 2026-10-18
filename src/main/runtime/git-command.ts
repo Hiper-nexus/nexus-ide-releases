@@ -136,6 +136,75 @@ export class GitCommandError extends Error {
   }
 }
 
+/** Secrets never leave in an error: credentials in a remote URL are masked. */
+function stderrTail(stderr: string): string {
+  const line = stderr.trim().split(/\r?\n/).filter(Boolean).at(-1) ?? '';
+  return line.replace(/\/\/[^/@\s]+@/g, '//***@').slice(0, 200);
+}
+
+/**
+ * "Git process could not complete" alone hid the cause (F-spawn 18/10: three
+ * isolatedWriter spawns under a heavy build). Name the subcommand, the reason
+ * (deadline, errno, signal) and the last stderr line.
+ */
+function incompleteGitMessage(
+  args: readonly string[],
+  error: unknown,
+  timeoutMs: number,
+  stderr: string,
+): string {
+  const failure = error as
+    | (Error & { code?: unknown; killed?: boolean; signal?: unknown })
+    | undefined;
+  const reason =
+    failure?.code === 'ETIMEDOUT' || failure?.killed
+      ? `timeout de ${Math.round(timeoutMs / 1000)}s`
+      : typeof failure?.code === 'string'
+        ? failure.code
+        : typeof failure?.signal === 'string'
+          ? failure.signal
+          : 'sinal ou saída sem status';
+  const tail = stderrTail(stderr);
+  return (
+    `Git process could not complete: git ${args.filter((arg) => !arg.startsWith('-')).slice(0, 2).join(' ')} (${reason})` +
+    (tail ? `; stderr: ${tail}` : '')
+  );
+}
+
+const TRANSIENT_GIT_STDERR =
+  /index\.lock|\.lock': File exists|could not lock|cannot lock ref|unable to create .*\.lock/i;
+
+/** Deadline, spawn pressure (EAGAIN) or a lock held by a concurrent Git. */
+export function isTransientGitFailure(error: unknown): boolean {
+  return (
+    error instanceof GitCommandError &&
+    (error.message.startsWith('Git process could not complete') ||
+      TRANSIENT_GIT_STDERR.test(error.stderr))
+  );
+}
+
+/** Retries `operation` on transient Git failures with backoff (1 s, 3 s). */
+export async function retryTransientGit<T>(
+  operation: () => Promise<T>,
+  options: {
+    readonly delaysMs?: readonly number[];
+    readonly sleep?: (ms: number) => Promise<void>;
+    readonly onRetry?: (error: unknown, attempt: number) => void;
+  } = {},
+): Promise<T> {
+  const delays = options.delaysMs ?? [1_000, 3_000];
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (attempt >= delays.length || !isTransientGitFailure(error)) throw error;
+      options.onRetry?.(error, attempt + 1);
+      await sleep(delays[attempt]!);
+    }
+  }
+}
+
 export class ProcessGitRunner implements GitRunner {
   run(
     cwd: string,
@@ -167,7 +236,7 @@ export class ProcessGitRunner implements GitRunner {
     const stderr = result.stderr ?? '';
     if (result.error || result.status === null) {
       throw new GitCommandError(
-        'Git process could not complete',
+        incompleteGitMessage(args, result.error ?? { signal: result.signal }, options.timeoutMs ?? 30_000, stderr),
         args,
         { stdout, stderr },
         result.error,
@@ -298,7 +367,7 @@ export class AsyncProcessGitRunner implements AsyncGitRunner {
           if (status === null) {
             reject(
               new GitCommandError(
-                'Git process could not complete',
+                incompleteGitMessage(args, error, options.timeoutMs ?? 30_000, result.stderr),
                 args,
                 result,
                 error,
