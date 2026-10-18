@@ -1,16 +1,19 @@
-import { readRegularFileCappedAsync } from '../redline/redline-safe-read';
+import { readRegularFileCapped, readRegularFileCappedAsync } from '../redline/redline-safe-read';
 /**
  * Leitor somente-leitura do `~/.qwen/settings.json` (F-238).
  *
  * O Qwen Code não tem `qwen auth`: a credencial e o catálogo de modelos vivem
  * no settings do operador (`env.BAILIAN_TOKEN_PLAN_API_KEY`,
  * `modelProviders.openai[].id`, `model.baseUrl`). Este módulo nunca devolve o
- * valor da chave — só presença, baseUrl e ids de modelo. O spawn deixa a
- * própria CLI ler o settings; o overlay F-566 liga o arquivo sem copiá-lo.
+ * valor da chave — só presença, baseUrl e ids de modelo. Sem chave do Nexus o
+ * overlay F-566 liga o arquivo sem copiá-lo; com a chave do Nexus (F-1565) ele
+ * grava uma cópia mesclada SEM as credenciais Alibaba do operador
+ * (`mergeQwenSettingsForInjection`).
  */
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { parseJsonc } from '../../shared/jsonc';
 import { MODEL_ID_PATTERN } from '../../shared/model-id';
 import {
   ALIBABA_TOKEN_PLAN_OPENAI_BASE_URL,
@@ -192,21 +195,52 @@ function parseQwenSettingsSummary(raw: unknown): QwenSettingsSummary {
 export const QWEN_DASHSCOPE_DEFAULT_BASE_URL =
   'https://dashscope.aliyuncs.com/compatible-mode/v1';
 
-function isAliyunHost(url: string): boolean {
-  const host = httpsHostOf(url);
-  return host === 'aliyuncs.com' || (host?.endsWith('.aliyuncs.com') ?? false);
+/**
+ * Hosts onde a chave do Qwen pode seguir SEM o operador ter escolhido a URL:
+ * DashScope em qualquer região (inclui o Coding Plan) e a API direta da
+ * DeepSeek. A lista é a que a própria CLI 0.25.2 conhece (dashscope[-intl|-us],
+ * cn-hongkong, coding[-intl], token-plan.<região>.maas) — nunca "qualquer
+ * *.aliyuncs.com", onde OSS e Function Compute de cliente também vivem.
+ */
+const ALIBABA_DASHSCOPE_HOST = /^(?:[a-z0-9-]+\.)?dashscope(?:-(?:intl|us))?\.aliyuncs\.com$/;
+/** Planos dedicados (Token Plan por região, Coding Plan): único lugar onde a chave `sk-sp-` vale. */
+const ALIBABA_PLAN_HOST = /^(?:token-plan\.[a-z0-9-]+\.maas|coding(?:-intl)?\.dashscope)\.aliyuncs\.com$/;
+
+function isAlibabaPlanHost(host: string | null): boolean {
+  return host !== null && ALIBABA_PLAN_HOST.test(host);
+}
+
+function isKnownKeyHost(host: string | null): boolean {
+  return (
+    host !== null &&
+    (host === DEEPSEEK_DIRECT_HOST || ALIBABA_DASHSCOPE_HOST.test(host) || isAlibabaPlanHost(host))
+  );
+}
+
+/**
+ * URL https sem credenciais embutidas, na forma canônica de `new URL().href`
+ * (host minúsculo, porta padrão fora); qualquer outra coisa é `null`.
+ */
+export function normalizeHttpsBaseUrl(raw: string | null | undefined): string | null {
+  const text = raw?.trim();
+  return text && httpsHostOf(text) ? new URL(text).href : null;
 }
 
 /**
  * F-1565: a base URL que o pane do Qwen usa quando o Nexus injeta a chave
  * configurada (vault ou conta). Ordem:
  *  1. `configured` — o campo "Base URL da API" de Providers › Qwen › Avançado
- *     (escolha explícita do operador; validada como https sem credencial).
- *  2. A base URL do `~/.qwen/settings.json` — EXCETO quando a chave é do
- *     Token Plan (`sk-sp-`) e ela aponta para outro host Alibaba (DashScope):
- *     essa combinação é o 401 do incidente, então a URL exclusiva do plano
- *     vence. Um host fora da Alibaba (proxy do operador) é respeitado.
- *  3. Chave `sk-sp-` sem nenhuma base configurada → a URL do Token Plan.
+ *     (escolha explícita do operador, confirmada por diálogo nativo; https sem
+ *     credencial). É o ÚNICO jeito de mandar a chave a um host fora da lista
+ *     de hosts conhecidos (proxy da empresa, por exemplo).
+ *  2. A base URL do `~/.qwen/settings.json`, só se for host conhecido
+ *     (DashScope, planos Alibaba, DeepSeek direta). O settings é um arquivo que
+ *     outro processo do operador pode ter reescrito: uma URL dele fora da lista
+ *     (http, userinfo, host qualquer, lixo) nunca vira destino da chave. Chave
+ *     `sk-sp-` só aceita host de plano — URL regional válida do plano (Token
+ *     Plan de Pequim, Coding Plan) fica; DashScope padrão (o 401 do incidente)
+ *     e DeepSeek direta não.
+ *  3. Chave `sk-sp-` sem base aproveitável → a URL do Token Plan (Singapura).
  *  4. Demais casos → `null` (a CLI usa o padrão DashScope dela).
  */
 export function resolveQwenInjectionBaseUrl(input: {
@@ -214,18 +248,55 @@ export function resolveQwenInjectionBaseUrl(input: {
   readonly settingsBaseUrl?: string | null;
   readonly key?: string | null;
 }): string | null {
-  const configured = input.configured?.trim();
-  if (configured && httpsHostOf(configured)) return configured;
-  const settings = input.settingsBaseUrl?.trim() || null;
+  const configured = normalizeHttpsBaseUrl(input.configured);
+  if (configured) return configured;
   const planKey = isAlibabaPlanKey(input.key);
-  if (settings) {
-    if (planKey && isAliyunHost(settings) && !isAlibabaTokenPlanUrl(settings)) {
-      return ALIBABA_TOKEN_PLAN_OPENAI_BASE_URL;
-    }
+  const settings = normalizeHttpsBaseUrl(input.settingsBaseUrl);
+  const host = httpsHostOf(settings);
+  if (settings && isKnownKeyHost(host) && (!planKey || isAlibabaPlanHost(host))) {
     return settings;
   }
   return planKey ? ALIBABA_TOKEN_PLAN_OPENAI_BASE_URL : null;
 }
+
+const QWEN_SETTINGS_MAX_BYTES = 1024 * 1024;
+
+/**
+ * Lê o `settings.json` do operador para o overlay do pane. A CLI aceita
+ * comentários, vírgula final e BOM (strip-json-comments), então um settings
+ * válido para ela não pode derrubar o spawn do Nexus: qualquer falha (ausente,
+ * EACCES, não-regular, grande demais, JSON inválido, raiz que não é objeto)
+ * vira `{}`. JSON estrito primeiro, para os valores saírem exatos; JSONC só se
+ * o estrito falhar (o removedor de vírgula final dele não distingue vírgula
+ * dentro de string).
+ */
+export function readQwenOperatorSettings(file: string): Record<string, unknown> {
+  const read = readRegularFileCapped(file, QWEN_SETTINGS_MAX_BYTES);
+  if (read.kind !== 'text') return {};
+  const text = read.text.replace(/^\uFEFF/, '');
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    try {
+      parsed = parseJsonc(text);
+    } catch {
+      return {};
+    }
+  }
+  return asRecord(parsed) ?? {};
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+/** Variável que o Nexus injeta com a chave do cofre; as entradas geradas a referenciam. */
+const INJECTED_KEY_ENV = 'BAILIAN_TOKEN_PLAN_API_KEY';
+/** Credenciais Alibaba do operador em `env`: na cópia, a injetada é a única. */
+const OPERATOR_ALIBABA_KEY_ENV = /^(?:BAILIAN|DASHSCOPE)_/i;
 
 /**
  * F-1565: mescla as entradas do Nexus no `settings.json` do OVERLAY do pane
@@ -234,10 +305,16 @@ export function resolveQwenInjectionBaseUrl(input: {
  * ela via `envKey` — sem a entrada, a chave injetada morria no env e a CLI
  * usava o `security.auth.apiKey` embutido (velho) ou caía em "No auth type".
  * A entrada NUNCA carrega o segredo: só `envKey` + `baseUrl` (a forma oficial
- * da doc do Model Studio). Entrada do operador com o mesmo id vence a nossa —
- * exceto quando ela é alimentada pela NOSSA env (`envKey` igual) com uma base
- * URL Alibaba incompatível com a chave do plano: aí a base URL é corrigida na
- * cópia do overlay.
+ * da doc do Model Studio). Entrada do operador com o mesmo id vence a nossa.
+ *
+ * A cópia é a única credencial Alibaba do pane: sai o `security.auth.apiKey`
+ * (venceria a env para um modelo fora de `models` e ficaria em disco) e as
+ * `env.BAILIAN_*`/`DASHSCOPE_*` do operador. E toda linha do operador
+ * alimentada pela NOSSA env (`envKey` igual) só fica se o host dela for destino
+ * conhecido da chave (ou o da própria injeção): senão o settings.json, que
+ * qualquer processo do operador reescreve, mandaria a chave do cofre para onde
+ * quisesse. Linha OpenAI vai para a base URL resolvida (o mesmo vale para chave
+ * `sk-sp-` fora de host de plano); linha de outro protocolo é descartada.
  */
 export function mergeQwenSettingsForInjection(
   raw: unknown,
@@ -248,39 +325,48 @@ export function mergeQwenSettingsForInjection(
     readonly tokenPlanKey: boolean;
   },
 ): Record<string, unknown> {
-  const settings =
-    raw && typeof raw === 'object' && !Array.isArray(raw)
-      ? ({ ...(raw as Record<string, unknown>) } as Record<string, unknown>)
-      : {};
+  const settings = { ...asRecord(raw) };
   const security = objectField(settings, 'security') ?? {};
-  const auth = objectField(security, 'auth') ?? {};
   // A chave injetada é a credencial deste pane: a auth tem de ser a
   // OpenAI-compatible, mesmo que o perfil diga qwen-oauth (a cópia é efêmera).
-  settings.security = { ...security, auth: { ...auth, selectedType: 'openai' } };
+  const auth: Record<string, unknown> = { ...objectField(security, 'auth'), selectedType: 'openai' };
+  delete auth.apiKey;
+  settings.security = { ...security, auth };
+  const env = objectField(settings, 'env');
+  if (env) {
+    settings.env = Object.fromEntries(
+      Object.entries(env).filter(([name]) => !OPERATOR_ALIBABA_KEY_ENV.test(name)),
+    );
+  }
 
-  const providers = objectField(settings, 'modelProviders') ?? {};
-  const rows = Array.isArray(providers.openai) ? [...providers.openai] : [];
-  const fixRow = (row: unknown): unknown => {
-    const entry = row && typeof row === 'object' && !Array.isArray(row)
-      ? (row as Record<string, unknown>)
-      : null;
-    if (!entry) return row;
-    if (nonEmptyString(entry.envKey) !== 'BAILIAN_TOKEN_PLAN_API_KEY') return row;
-    if (!options.tokenPlanKey) return row;
-    const base = nonEmptyString(entry.baseUrl);
-    if (base && isAliyunHost(base) && !isAlibabaTokenPlanUrl(base)) {
-      return { ...entry, baseUrl: options.baseUrl };
-    }
-    return row;
+  const injectedHost = httpsHostOf(options.baseUrl);
+  const destinationOk = (entry: Record<string, unknown>): boolean => {
+    const host = httpsHostOf(nonEmptyString(entry.baseUrl));
+    if (!host) return false;
+    if (host === injectedHost) return true;
+    return isKnownKeyHost(host) && (!options.tokenPlanKey || isAlibabaPlanHost(host));
   };
-  const merged = rows.map(fixRow);
+  const providers = objectField(settings, 'modelProviders') ?? {};
+  // fromEntries (e não `providers[type] = …`): uma chave `__proto__` vinda do
+  // JSON do operador vira propriedade própria, nunca troca o protótipo.
+  const guarded = Object.fromEntries(
+    Object.entries(providers).map(([authType, rows]): [string, unknown] => [
+      authType,
+      Array.isArray(rows)
+        ? rows.flatMap((row): unknown[] => {
+            const entry = asRecord(row);
+            if (!entry || nonEmptyString(entry.envKey) !== INJECTED_KEY_ENV || destinationOk(entry)) {
+              return [row];
+            }
+            return authType === 'openai' ? [{ ...entry, baseUrl: options.baseUrl }] : [];
+          })
+        : rows,
+    ]),
+  );
+  const merged = Array.isArray(guarded.openai) ? [...guarded.openai] : [];
   const known = new Set(
     merged
-      .map((row) =>
-        row && typeof row === 'object' && !Array.isArray(row)
-          ? nonEmptyString((row as Record<string, unknown>).id)?.toLowerCase()
-          : null,
-      )
+      .map((row) => nonEmptyString(asRecord(row)?.id)?.toLowerCase())
       .filter((id): id is string => Boolean(id)),
   );
   const tokenPlan = isAlibabaTokenPlanUrl(options.baseUrl);
@@ -292,10 +378,10 @@ export function mergeQwenSettingsForInjection(
       id: model,
       ...(tokenPlan ? { name: `[ModelStudio Token Plan] ${model}` } : {}),
       baseUrl: options.baseUrl,
-      envKey: 'BAILIAN_TOKEN_PLAN_API_KEY',
+      envKey: INJECTED_KEY_ENV,
     });
   }
-  settings.modelProviders = { ...providers, openai: merged };
+  settings.modelProviders = { ...guarded, openai: merged };
   return settings;
 }
 

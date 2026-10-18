@@ -334,18 +334,28 @@ describe('detectLimit', () => {
     expect(detectLimit('401 authentication_error')?.kind).toBe('auth');
     expect(detectLimit('invalid api key provided')?.kind).toBe('auth');
     // F-1565: a string EXATA do Qwen Code no incidente (hífen em "API-key") —
-    // é credencial recusada (auth), nunca quota/rate-limit.
+    // é credencial recusada (auth), nunca quota/rate-limit. Quem a reconhece é
+    // a moldura "Error: 401" (padrão de 401 acima), não a frase solta.
     const qwen401 = detectLimit(
       '[API Error: 401 Invalid API-key provided. For details, see: ' +
         'https://www.alibabacloud.com/help/en/model-studio/error-code#apikey-error (request_id: abc)]',
     );
     expect(qwen401?.kind).toBe('auth');
-    expect(detectLimit('Invalid API-key provided.')?.kind).toBe('auth');
     expect(
       detectLimit(
         'Error: [internal] Stored token for "kimi-code" was rejected; re-login required.',
       )?.kind,
     ).toBe('auth');
+  });
+
+  it('F-249: "Invalid API-key" com hífen sem a moldura de erro é prosa, log ou cat do código — não arma failover', () => {
+    // A frase solta aparece na doc do provider, em log colado, em diff e no
+    // `cat` deste próprio detector; só a moldura "Error: 401"/"[API Error: 401"
+    // (acima) a transforma em credencial recusada.
+    expect(detectLimit('Invalid API-key provided.')).toBeNull();
+    expect(detectLimit('o provider devolve "Invalid API-key provided" quando a chave expira')).toBeNull();
+    expect(detectLimit("+    expect(detectLimit('Invalid API-key provided.')?.kind).toBe('auth');")).toBeNull();
+    expect(detectLimit('grep -rn "Invalid API-key" src/')).toBeNull();
   });
 
   it('does not treat Claude CLI client retry ticker as provider retry-after', () => {

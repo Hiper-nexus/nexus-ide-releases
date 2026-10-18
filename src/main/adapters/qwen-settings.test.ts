@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   mergeQwenSettingsForInjection,
   qwenSettingsHasCredential,
+  readQwenOperatorSettings,
   readQwenSettingsSummary,
   resolveQwenInjectionBaseUrl,
 } from './qwen-settings';
@@ -188,77 +189,118 @@ describe('readQwenSettingsSummary (F-238)', () => {
 
 describe('F-1565: resolveQwenInjectionBaseUrl', () => {
   const PLAN = 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1';
+  const PLAN_CN = 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1';
+  const CODING_INTL = 'https://coding-intl.dashscope.aliyuncs.com/v1';
   const DASH = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+  const PLAN_KEY = 'sk-sp-fixture';
+  const STD_KEY = 'sk-fixture';
+  const fromSettings = (settingsBaseUrl: string | null, key: string) =>
+    resolveQwenInjectionBaseUrl({ configured: null, settingsBaseUrl, key });
 
-  it('o campo configurado (Providers › Qwen › Avançado) sempre vence', () => {
+  it('o campo configurado (Providers › Qwen › Avançado) sempre vence e sai normalizado', () => {
     expect(resolveQwenInjectionBaseUrl({
       configured: 'https://proxy.da.empresa.example/v1',
       settingsBaseUrl: PLAN,
-      key: 'sk-sp-fixture',
+      key: PLAN_KEY,
     })).toBe('https://proxy.da.empresa.example/v1');
+    expect(resolveQwenInjectionBaseUrl({
+      configured: '  HTTPS://Proxy.Da.Empresa.Example  ',
+      settingsBaseUrl: null,
+      key: STD_KEY,
+    })).toBe('https://proxy.da.empresa.example/');
   });
 
-  it('configurado inválido (não-https) é ignorado', () => {
+  it('configurado inválido (não-https, userinfo, lixo) é ignorado', () => {
     expect(resolveQwenInjectionBaseUrl({
       configured: 'http://inseguro.example/v1',
       settingsBaseUrl: PLAN,
-      key: 'sk-sp-fixture',
+      key: PLAN_KEY,
+    })).toBe(PLAN);
+    expect(resolveQwenInjectionBaseUrl({
+      configured: 'https://u:p@proxy.example/v1',
+      settingsBaseUrl: null,
+      key: PLAN_KEY,
     })).toBe(PLAN);
     expect(resolveQwenInjectionBaseUrl({
       configured: 'not a url',
       settingsBaseUrl: null,
-      key: 'sk-fixture',
+      key: STD_KEY,
     })).toBeNull();
   });
 
   it('chave sk-sp- com settings no DashScope (o 401 do incidente) → URL exclusiva do plano', () => {
-    expect(resolveQwenInjectionBaseUrl({
-      configured: null,
-      settingsBaseUrl: DASH,
-      key: 'sk-sp-fixture',
-    })).toBe(PLAN);
+    expect(fromSettings(DASH, PLAN_KEY)).toBe(PLAN);
+    expect(fromSettings('https://dashscope-intl.aliyuncs.com/compatible-mode/v1', PLAN_KEY)).toBe(PLAN);
   });
 
-  it('chave sk-sp- com settings já no Token Plan → mantém a do settings', () => {
-    expect(resolveQwenInjectionBaseUrl({
-      configured: null,
-      settingsBaseUrl: PLAN,
-      key: 'sk-sp-fixture',
-    })).toBe(PLAN);
+  it('chave sk-sp- com settings já num host de plano → mantém a do settings', () => {
+    expect(fromSettings(PLAN, PLAN_KEY)).toBe(PLAN);
+  });
+
+  it('M5: URL regional válida do plano (Token Plan de Pequim, Coding Plan) não é sobrescrita', () => {
+    expect(fromSettings(PLAN_CN, PLAN_KEY)).toBe(PLAN_CN);
+    expect(fromSettings(CODING_INTL, PLAN_KEY)).toBe(CODING_INTL);
+    expect(fromSettings('https://coding.dashscope.aliyuncs.com/v1', PLAN_KEY))
+      .toBe('https://coding.dashscope.aliyuncs.com/v1');
   });
 
   it('chave sk-sp- sem nenhuma base configurada → URL exclusiva do plano', () => {
-    expect(resolveQwenInjectionBaseUrl({
-      configured: null,
-      settingsBaseUrl: null,
-      key: 'sk-sp-fixture',
-    })).toBe(PLAN);
+    expect(fromSettings(null, PLAN_KEY)).toBe(PLAN);
   });
 
-  it('chave sk-sp- com proxy fora da Alibaba no settings → respeita o proxy', () => {
-    expect(resolveQwenInjectionBaseUrl({
-      configured: null,
-      settingsBaseUrl: 'https://proxy.da.empresa.example/v1',
-      key: 'sk-sp-fixture',
-    })).toBe('https://proxy.da.empresa.example/v1');
+  it('chave padrão (sk-) mantém a base de host conhecido do settings; sem settings → null (padrão da CLI)', () => {
+    for (const known of [
+      'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+      'https://dashscope-us.aliyuncs.com/compatible-mode/v1',
+      'https://cn-hongkong.dashscope.aliyuncs.com/compatible-mode/v1',
+      'https://api.deepseek.com/v1',
+    ]) {
+      expect(fromSettings(known, STD_KEY)).toBe(known);
+    }
+    expect(fromSettings(null, STD_KEY)).toBeNull();
   });
 
-  it('chave padrão (sk-) mantém a base do settings; sem settings → null (padrão da CLI)', () => {
-    expect(resolveQwenInjectionBaseUrl({
-      configured: null,
-      settingsBaseUrl: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
-      key: 'sk-fixture',
-    })).toBe('https://dashscope-intl.aliyuncs.com/compatible-mode/v1');
-    expect(resolveQwenInjectionBaseUrl({
-      configured: null,
-      settingsBaseUrl: null,
-      key: 'sk-fixture',
-    })).toBeNull();
+  it('chave sk-sp- nunca vai à DeepSeek direta (hosts disjuntos)', () => {
+    expect(fromSettings('https://api.deepseek.com/v1', PLAN_KEY)).toBe(PLAN);
+  });
+
+  // A1: o settings.json é um arquivo que outro processo do operador pode ter
+  // reescrito; a chave do cofre não pode seguir a URL que ele mandar. Só o
+  // campo "Base URL da API" (com confirmação nativa) abre um destino novo.
+  it.each([
+    ['http (sem TLS)', 'http://attacker.test/v1'],
+    ['host desconhecido', 'https://attacker.test/v1'],
+    ['proxy da empresa', 'https://proxy.da.empresa.example/v1'],
+    ['userinfo', 'https://user:pass@dashscope.aliyuncs.com/compatible-mode/v1'],
+    ['userinfo disfarçada de host', 'https://dashscope.aliyuncs.com@attacker.test/v1'],
+    ['ftp', 'ftp://dashscope.aliyuncs.com/v1'],
+    ['string inválida', 'not a url'],
+    ['sufixo falso', 'https://dashscope.aliyuncs.com.attacker.test/v1'],
+    ['prefixo falso', 'https://attacker-dashscope.aliyuncs.com/v1'],
+    ['bucket aliyuncs de cliente (OSS)', 'https://bucket.oss-cn-hangzhou.aliyuncs.com/v1'],
+    ['Function Compute de cliente', 'https://acct.cn-hangzhou.fc.aliyuncs.com/v1'],
+    ['Token Plan falso', 'https://token-plan.attacker.test/compatible-mode/v1'],
+    ['DeepSeek com sufixo falso', 'https://api.deepseek.com.attacker.test/v1'],
+  ])('A1: base URL do settings (%s) nunca vira destino da chave', (_label, url) => {
+    expect(fromSettings(url, STD_KEY)).toBeNull();
+    expect(fromSettings(url, PLAN_KEY)).toBe(PLAN);
   });
 });
 
 describe('F-1565: mergeQwenSettingsForInjection', () => {
   const PLAN = 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1';
+  const PLAN_CN = 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1';
+  const DASH = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+  const OURS = 'BAILIAN_TOKEN_PLAN_API_KEY';
+  type Row = Record<string, unknown>;
+  const rowsOf = (merged: Record<string, unknown>, type = 'openai'): Row[] =>
+    (merged.modelProviders as Record<string, Row[]>)[type] ?? [];
+  const options = (over: Partial<Parameters<typeof mergeQwenSettingsForInjection>[1]> = {}) => ({
+    baseUrl: PLAN,
+    models: [] as string[],
+    tokenPlanKey: true,
+    ...over,
+  });
 
   it('gera as entradas modelProviders com envKey + baseUrl, sem segredo, e força auth openai', () => {
     const merged = mergeQwenSettingsForInjection(null, {
@@ -266,17 +308,17 @@ describe('F-1565: mergeQwenSettingsForInjection', () => {
       models: ['qwen3.8-max', 'qwen3.7-plus'],
       tokenPlanKey: true,
     });
-    const rows = (merged.modelProviders as { openai: Array<Record<string, unknown>> }).openai;
+    const rows = rowsOf(merged);
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({
       id: 'qwen3.8-max',
       baseUrl: PLAN,
-      envKey: 'BAILIAN_TOKEN_PLAN_API_KEY',
+      envKey: OURS,
     });
     expect(
       (merged.security as { auth: { selectedType: string } }).auth.selectedType,
     ).toBe('openai');
-    // A entrada nunca carrega a chave — só referencia a variável.
+    // A entrada nunca carrega a chave: só referencia a variável.
     expect(JSON.stringify(merged)).not.toContain('sk-sp');
   });
 
@@ -289,47 +331,216 @@ describe('F-1565: mergeQwenSettingsForInjection', () => {
           openai: [{ id: 'qwen3.8-max', baseUrl: PLAN, envKey: 'OUTRA_ENV' }],
         },
       },
-      { baseUrl: PLAN, models: ['qwen3.8-max', 'qwen3.7-plus'], tokenPlanKey: true },
+      options({ models: ['qwen3.8-max', 'qwen3.7-plus'] }),
     );
-    const rows = (merged.modelProviders as { openai: Array<Record<string, unknown>> }).openai;
+    const rows = rowsOf(merged);
     expect(rows).toHaveLength(2);
     // A entrada do operador fica intacta (envKey próprio) e a nossa cobre o id que faltava.
     expect(rows[0]).toMatchObject({ id: 'qwen3.8-max', envKey: 'OUTRA_ENV' });
-    expect(rows[1]).toMatchObject({ id: 'qwen3.7-plus', envKey: 'BAILIAN_TOKEN_PLAN_API_KEY' });
-    // O apiKey embutido do operador não sai do arquivo (a cópia é do overlay).
-    expect(
-      (merged.security as { auth: { apiKey: string } }).auth.apiKey,
-    ).toBe('sk-sp-VELHA');
+    expect(rows[1]).toMatchObject({ id: 'qwen3.7-plus', envKey: OURS });
     expect((merged.ui as { autoModeAcknowledged: boolean }).autoModeAcknowledged).toBe(true);
   });
 
-  it('corrige na cópia a entrada alimentada pela NOSSA env com URL Alibaba fora do plano (só sk-sp-)', () => {
-    const settings = {
-      modelProviders: {
-        openai: [{ id: 'qwen3.8-max', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', envKey: 'BAILIAN_TOKEN_PLAN_API_KEY' }],
+  it('M2: tira da cópia as credenciais Alibaba do operador (apiKey embutido, env.BAILIAN_*/DASHSCOPE_*) e mantém o resto', () => {
+    const merged = mergeQwenSettingsForInjection(
+      {
+        security: { auth: { selectedType: 'openai', apiKey: 'sk-sp-VELHA', baseUrl: PLAN } },
+        env: {
+          BAILIAN_TOKEN_PLAN_API_KEY: 'sk-sp-VELHA-ENV',
+          BAILIAN_CODING_PLAN_API_KEY: 'sk-sp-VELHA-CODING',
+          DASHSCOPE_API_KEY: 'sk-velha-dash',
+          GITHUB_TOKEN: 'outra-coisa',
+        },
+        model: { name: 'qwen-fora-da-lista', baseUrl: PLAN },
       },
-    };
-    const planKey = mergeQwenSettingsForInjection(settings, {
-      baseUrl: PLAN, models: [], tokenPlanKey: true,
-    });
-    expect(
-      (planKey.modelProviders as { openai: Array<{ baseUrl: string }> }).openai[0].baseUrl,
-    ).toBe(PLAN);
-    // Chave padrão: a entrada do operador nunca é tocada.
-    const standard = mergeQwenSettingsForInjection(settings, {
-      baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', models: [], tokenPlanKey: false,
-    });
-    expect(
-      (standard.modelProviders as { openai: Array<{ baseUrl: string }> }).openai[0].baseUrl,
-    ).toBe('https://dashscope.aliyuncs.com/compatible-mode/v1');
+      options({ models: ['qwen3.8-max'] }),
+    );
+    const auth = (merged.security as { auth: Record<string, unknown> }).auth;
+    expect(auth).not.toHaveProperty('apiKey');
+    expect(auth).toMatchObject({ selectedType: 'openai', baseUrl: PLAN });
+    // Só as chaves Alibaba saem: a env de outras ferramentas do operador fica.
+    expect(merged.env).toEqual({ GITHUB_TOKEN: 'outra-coisa' });
+    expect((merged.model as Row).name).toBe('qwen-fora-da-lista');
+  });
+
+  it('M2: modelo fora de injection.models não acha chave velha — nenhum byte dela sobra no arquivo', () => {
+    const merged = mergeQwenSettingsForInjection(
+      {
+        security: { auth: { apiKey: 'sk-sp-VELHA' } },
+        env: { DASHSCOPE_API_KEY: 'sk-velha-dash' },
+        model: { name: 'qwen-modelo-novo-do-operador' },
+        modelProviders: { openai: [{ id: 'outro', baseUrl: DASH, envKey: 'DASHSCOPE_API_KEY' }] },
+      },
+      options({ tokenPlanKey: false, baseUrl: DASH, models: ['qwen3.8-max'] }),
+    );
+    expect(JSON.stringify(merged)).not.toMatch(/sk-sp-VELHA|sk-velha-dash/);
+    // A linha do operador que dependia da env removida continua lá, sem chave
+    // para ela: falha clara em vez de usar a credencial velha.
+    expect(rowsOf(merged).map((row) => row.id)).toEqual(['outro', 'qwen3.8-max']);
+  });
+
+  it.each([
+    ['host desconhecido', 'https://attacker.test/v1'],
+    ['http (sem TLS)', 'http://attacker.test/v1'],
+    ['userinfo', 'https://u:p@dashscope.aliyuncs.com/compatible-mode/v1'],
+    ['sem baseUrl (herdaria o security.auth.baseUrl)', undefined],
+    ['baseUrl inválida', 'not a url'],
+    ['DeepSeek direta com chave do plano', 'https://api.deepseek.com/v1'],
+    ['DashScope padrão com chave do plano', DASH],
+  ])('A1: linha do operador alimentada pela NOSSA env (%s) é redirecionada para a base URL resolvida', (_label, baseUrl) => {
+    const merged = mergeQwenSettingsForInjection(
+      {
+        security: { auth: { baseUrl: 'https://attacker.test/auth' } },
+        modelProviders: {
+          openai: [{ id: 'm', ...(baseUrl === undefined ? {} : { baseUrl }), envKey: OURS }],
+        },
+      },
+      options(),
+    );
+    expect(rowsOf(merged)[0]).toMatchObject({ id: 'm', baseUrl: PLAN, envKey: OURS });
+  });
+
+  it('linha do operador em host conhecido continua intacta (chave padrão: DashScope e DeepSeek direta)', () => {
+    const merged = mergeQwenSettingsForInjection(
+      {
+        modelProviders: {
+          openai: [
+            { id: 'a', baseUrl: DASH, envKey: OURS },
+            { id: 'b', baseUrl: 'https://api.deepseek.com/v1', envKey: OURS },
+          ],
+        },
+      },
+      options({ tokenPlanKey: false, baseUrl: DASH }),
+    );
+    expect(rowsOf(merged).map((row) => row.baseUrl)).toEqual([DASH, 'https://api.deepseek.com/v1']);
+  });
+
+  it('M5: linha do plano regional (Token Plan de Pequim) não é sobrescrita pela URL de Singapura', () => {
+    const merged = mergeQwenSettingsForInjection(
+      { modelProviders: { openai: [{ id: 'qwen3.7-plus', baseUrl: PLAN_CN, envKey: OURS }] } },
+      options({ baseUrl: PLAN }),
+    );
+    expect(rowsOf(merged)[0]).toMatchObject({ id: 'qwen3.7-plus', baseUrl: PLAN_CN });
+  });
+
+  it('linha com OUTRA envKey nunca é tocada, mesmo com host estranho (não recebe a chave do cofre)', () => {
+    const row = { id: 'x', baseUrl: 'https://proxy.da.empresa.example/v1', envKey: 'MINHA_CHAVE' };
+    const merged = mergeQwenSettingsForInjection(
+      { modelProviders: { openai: [row] } },
+      options(),
+    );
+    expect(rowsOf(merged)[0]).toEqual(row);
+  });
+
+  it('A1: linha de outro protocolo alimentada pela nossa env em host não confiável é descartada; em host de plano fica', () => {
+    const planRow = { id: 'p', baseUrl: 'https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic', envKey: OURS };
+    const merged = mergeQwenSettingsForInjection(
+      {
+        modelProviders: {
+          anthropic: [
+            { id: 'ruim', baseUrl: 'https://attacker.test/anthropic', envKey: OURS },
+            { id: 'sem-url', envKey: OURS },
+            planRow,
+            { id: 'outra-env', baseUrl: 'https://attacker.test/anthropic', envKey: 'OUTRA' },
+          ],
+        },
+      },
+      options(),
+    );
+    expect(rowsOf(merged, 'anthropic').map((row) => row.id)).toEqual(['p', 'outra-env']);
+    expect(rowsOf(merged, 'anthropic')[0]).toEqual(planRow);
+  });
+
+  it('o proxy escolhido no campo (base URL da injeção) vale também para a linha do operador no mesmo host', () => {
+    const proxy = 'https://proxy.da.empresa.example/v1';
+    const merged = mergeQwenSettingsForInjection(
+      {
+        modelProviders: {
+          openai: [
+            { id: 'a', baseUrl: 'https://proxy.da.empresa.example/v2', envKey: OURS },
+            { id: 'b', baseUrl: 'https://outro.example/v1', envKey: OURS },
+          ],
+        },
+      },
+      options({ baseUrl: proxy, tokenPlanKey: false }),
+    );
+    expect(rowsOf(merged).map((row) => row.baseUrl)).toEqual([
+      'https://proxy.da.empresa.example/v2',
+      proxy,
+    ]);
+  });
+
+  it('não escreve a chave __proto__ de modelProviders como protótipo', () => {
+    const merged = mergeQwenSettingsForInjection(
+      JSON.parse('{"modelProviders":{"__proto__":[{"id":"z","envKey":"BAILIAN_TOKEN_PLAN_API_KEY","baseUrl":"https://attacker.test"}]}}'),
+      options({ models: ['qwen3.8-max'] }),
+    );
+    expect(Object.getPrototypeOf(merged.modelProviders)).toBe(Object.prototype);
+    expect(rowsOf(merged).map((row) => row.id)).toEqual(['qwen3.8-max']);
   });
 
   it('settings quebrado (não-objeto) vira base vazia', () => {
     const merged = mergeQwenSettingsForInjection('lixo', {
       baseUrl: PLAN, models: ['qwen3.8-max'], tokenPlanKey: true,
     });
-    expect(
-      (merged.modelProviders as { openai: Array<unknown> }).openai,
-    ).toHaveLength(1);
+    expect(rowsOf(merged)).toHaveLength(1);
   });
+});
+
+describe('A2: readQwenOperatorSettings tolera o que a CLI aceita', () => {
+  function settingsFile(content: string | Buffer, name = 'settings.json'): string {
+    const dir = tempHome();
+    const file = path.join(dir, name);
+    fs.writeFileSync(file, content);
+    return file;
+  }
+
+  it('JSON puro sai exato, inclusive texto que parece vírgula final dentro de string', () => {
+    const file = settingsFile('{"a":"x,}","u":"https://h.example//p"}');
+    expect(readQwenOperatorSettings(file)).toEqual({ a: 'x,}', u: 'https://h.example//p' });
+  });
+
+  it('BOM no começo do arquivo', () => {
+    expect(readQwenOperatorSettings(settingsFile('\uFEFF{"model":{"name":"qwen3.8-max"}}')))
+      .toEqual({ model: { name: 'qwen3.8-max' } });
+  });
+
+  it('comentários e vírgula final (JSONC), com BOM', () => {
+    const file = settingsFile(
+      '\uFEFF// perfil do operador\n{\n  /* modelo */ "model": { "name": "qwen3.8-max", },\n  "u": "https://h.example//p", // fim\n}\n',
+    );
+    expect(readQwenOperatorSettings(file)).toEqual({
+      model: { name: 'qwen3.8-max' },
+      u: 'https://h.example//p',
+    });
+  });
+
+  it.each([
+    ['JSON quebrado', '{not json'],
+    ['raiz array', '[1,2]'],
+    ['raiz string', '"settings"'],
+    ['vazio', ''],
+  ])('%s → {} (nunca lança)', (_label, content) => {
+    expect(readQwenOperatorSettings(settingsFile(content))).toEqual({});
+  });
+
+  it('ausente, diretório e arquivo grande demais → {}', () => {
+    const dir = tempHome();
+    expect(readQwenOperatorSettings(path.join(dir, 'nao-existe.json'))).toEqual({});
+    expect(readQwenOperatorSettings(dir)).toEqual({});
+    expect(readQwenOperatorSettings(settingsFile(Buffer.alloc(1024 * 1024 + 1, 0x20)))).toEqual({});
+  });
+
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+    'sem permissão de leitura (EACCES) → {}',
+    () => {
+      const file = settingsFile('{"a":1}');
+      fs.chmodSync(file, 0o000);
+      try {
+        expect(readQwenOperatorSettings(file)).toEqual({});
+      } finally {
+        fs.chmodSync(file, 0o600);
+      }
+    },
+  );
 });

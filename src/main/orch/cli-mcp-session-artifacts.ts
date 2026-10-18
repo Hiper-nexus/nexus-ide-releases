@@ -364,6 +364,13 @@ export function purgeStaleCliMcpSessions(
       active,
       trustedBoundary,
     ),
+    // F-1565: com a chave do Nexus injetada o overlay guarda uma cópia do
+    // settings.json do operador; o que um processo morto deixou sai no boot.
+    purgeOwnedSessionRoot(
+      path.join(artifactRoot, 'qwen'),
+      active,
+      trustedBoundary,
+    ),
   );
 }
 

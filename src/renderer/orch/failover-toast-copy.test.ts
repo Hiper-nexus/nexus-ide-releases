@@ -8,6 +8,7 @@ import {
 function event(
   kind: FailoverEvent['kind'],
   reason: string,
+  fromAdapterId?: string,
 ): FailoverEvent {
   return {
     paneId: 'pane-a',
@@ -16,6 +17,7 @@ function event(
     reason,
     kind,
     switched: false,
+    ...(fromAdapterId ? { fromAdapterId } : {}),
   };
 }
 
@@ -28,12 +30,34 @@ describe('blockedFailoverToastCopy', () => {
     const copy = blockedFailoverToastCopy(
       event('auth', 'HTTP 401: OAuth token expired'),
     );
-    // F-1565: 401 é credencial recusada (chave inválida/expirada ou base URL
-    // incompatível), nunca limite/cota.
-    expect(copy.title).toMatch(/Credencial recusada/);
+    expect(copy.title).toMatch(/Sessão expirada/);
     expect(copy.title).not.toMatch(/Limite|Cota/);
+    expect(copy.detail).toMatch(/Entre novamente/);
+  });
+
+  // F-1565: a orientação de chave/base URL é do Qwen (chave sk-sp- de plano
+  // dedicado). Quem tem login por sessão expirada continua com o texto de
+  // sessão: falar de "base URL" para um OAuth do Claude/Codex/AGY desorienta.
+  it('F-1565: 401 do Qwen vira credencial recusada, com a orientação de chave e base URL', () => {
+    const copy = blockedFailoverToastCopy(
+      event('auth', 'Error: 401 Invalid API-key provided', 'qwen'),
+    );
+    expect(copy.title).toMatch(/Credencial recusada/);
+    expect(copy.title).not.toMatch(/Limite|Cota|Sessão expirada/);
     expect(copy.detail).toMatch(/base URL incompatível/);
     expect(copy.detail).toMatch(/Configurações → Providers/);
+  });
+
+  it.each([
+    ['claude', 'HTTP 401: OAuth token expired'],
+    ['codex', 'refresh token expired'],
+    ['agy', '401 authentication_error'],
+    [undefined, 'HTTP 401'],
+  ])('F-1565: 401 de login expirado em %s mantém o texto de sessão, sem base URL nem sk-sp-', (adapterId, reason) => {
+    const copy = blockedFailoverToastCopy(event('auth', reason, adapterId));
+    expect(copy.title).toMatch(/Sessão expirada/);
+    expect(copy.detail).toMatch(/Entre novamente em Configurações → Providers/);
+    expect(`${copy.title} ${copy.detail}`).not.toMatch(/base URL|sk-sp-|Credencial recusada/i);
   });
 
   it('gives distinct recovery copy for quota, rate limit and transients', () => {

@@ -28,13 +28,23 @@ export function blockedFailoverToastCopy(
 
   switch (effectiveKind(event)) {
     case 'auth':
+      // F-1565: a orientação de chave/base URL é do Qwen (chave sk-sp- de plano
+      // dedicado). Claude/Codex/AGY com login expirado seguem com o texto de
+      // sessão: falar de base URL para um OAuth desorienta.
+      if (event.fromAdapterId === 'qwen') {
+        return {
+          title: `Credencial recusada em "${event.fromAccountLabel}"`,
+          detail:
+            `${event.reason}. Chave inválida/expirada ou base URL incompatível ` +
+            `com a chave (uma chave sk-sp-… de plano dedicado só vale na URL ` +
+            `exclusiva do plano). Resolva em Configurações → Providers.${retryNote}`,
+        };
+      }
       return {
-        title: `Credencial recusada em "${event.fromAccountLabel}"`,
+        title: `Sessão expirada em "${event.fromAccountLabel}"`,
         detail:
-          `${event.reason}. Chave inválida/expirada ou base URL incompatível ` +
-          `com a chave (uma chave sk-sp-… de plano dedicado só vale na URL ` +
-          `exclusiva do plano); sessão de login pede entrar novamente. ` +
-          `Resolva em Configurações → Providers.${retryNote}`,
+          `${event.reason}. Nenhuma credencial alternativa está pronta. ` +
+          `Entre novamente em Configurações → Providers.${retryNote}`,
       };
     case 'quota':
       return {

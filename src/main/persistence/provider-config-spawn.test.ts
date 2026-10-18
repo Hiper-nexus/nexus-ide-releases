@@ -3163,9 +3163,9 @@ describe('N1: fronteira IPC de keys de providers', () => {
 
 describe('F-1565: spawn do Qwen carrega o descritor de injeção do overlay', () => {
   const PLAN = 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1';
-  const noSettings = {
+  const noSettings: import('../adapters/qwen-settings').QwenSettingsSummary = {
     hasCredential: false, baseUrl: null, authBaseUrl: null, tokenPlan: false, modelIds: [],
-  } as never;
+  };
 
   beforeAll(() => initializeProviderConfigStore());
   beforeEach(() => {
@@ -3220,12 +3220,83 @@ describe('F-1565: spawn do Qwen carrega o descritor de injeção do overlay', ()
     );
   });
 
-  it('a base URL de Providers › Qwen › Avançado vence o settings (e pede confirmação nativa)', async () => {
+  it('A1: base URL do settings fora dos hosts conhecidos (http, userinfo, host qualquer) nunca vira destino da chave, e o descarte deixa rastro sem a URL', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    spawnDeps.runtimeKey.mockReturnValue('sk-sp-fixture-cofre');
+    for (const url of [
+      'http://attacker.test/v1',
+      'https://attacker.test/v1',
+      'https://user:pass@dashscope.aliyuncs.com/compatible-mode/v1',
+      'ftp://dashscope.aliyuncs.com/v1',
+      'not a url',
+    ]) {
+      warn.mockClear();
+      qwenSettingsProbe.summary = { ...noSettings, authBaseUrl: url };
+      const result = prepareProviderSpawn('qwen', {});
+      if (!result.ok) throw new Error('spawn falhou');
+      expect(result.overrides.qwenSettingsInjection?.baseUrl).toBe(PLAN);
+      // O rastro diz onde configurar o proxy e nunca repete a URL (pode ter token).
+      expect(warn).toHaveBeenCalledTimes(1);
+      const line = String(warn.mock.calls[0]![0]);
+      expect(line).toContain('Providers › Qwen › Avançado › Base URL da API');
+      expect(line).not.toMatch(/user:pass|\/v1/);
+    }
+    warn.mockRestore();
+    // Chave padrão: sem destino aproveitável, a CLI usa o padrão DashScope dela.
+    spawnDeps.runtimeKey.mockReturnValue('sk-fixture-padrao');
+    qwenSettingsProbe.summary = { ...noSettings, baseUrl: 'https://attacker.test/v1' };
+    const standard = prepareProviderSpawn('qwen', {});
+    if (!standard.ok) throw new Error('spawn falhou');
+    expect(standard.overrides.qwenSettingsInjection?.baseUrl).toBe(
+      'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    );
+  });
+
+  it('M5: URL regional válida do plano no settings (Token Plan de Pequim) não é sobrescrita pela de Singapura', () => {
+    const PLAN_CN = 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1';
+    qwenSettingsProbe.summary = { ...noSettings, authBaseUrl: PLAN_CN };
+    spawnDeps.runtimeKey.mockReturnValue('sk-sp-fixture-cofre');
+    const result = prepareProviderSpawn('qwen', {});
+    if (!result.ok) throw new Error('spawn falhou');
+    expect(result.overrides.qwenSettingsInjection).toMatchObject({ baseUrl: PLAN_CN, tokenPlanKey: true });
+  });
+
+  it('URL do settings aproveitada (host conhecido) não gera rastro de descarte', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      qwenSettingsProbe.summary = {
+        ...noSettings,
+        authBaseUrl: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+      };
+      spawnDeps.runtimeKey.mockReturnValue('sk-fixture-padrao');
+      const result = prepareProviderSpawn('qwen', {});
+      if (!result.ok) throw new Error('spawn falhou');
+      expect(result.overrides.qwenSettingsInjection?.baseUrl).toBe(
+        'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+      );
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  const dialogs = () =>
+    spawnDeps.confirmInstall.mock.calls.map(
+      (call) => call[0] as { type?: string; title?: string; message?: string; detail?: string },
+    );
+
+  it('a base URL de Providers › Qwen › Avançado vence o settings; a confirmação nativa fala de enviar a chave, não de FULL AUTO', async () => {
     spawnDeps.runtimeKey.mockReturnValue('sk-sp-fixture-cofre');
     const setConfig = spawnDeps.trustedHandlers.get('provider:setConfig')!;
     try {
       await setConfig(null, { adapterId: 'qwen', baseUrl: 'https://proxy.da.empresa.example/v1' });
-      expect(spawnDeps.confirmInstall).toHaveBeenCalled();
+      expect(spawnDeps.confirmInstall).toHaveBeenCalledTimes(1);
+      const [confirm] = dialogs();
+      expect(confirm!.type).toBe('warning');
+      expect(confirm!.detail).toContain('Base URL da API: https://proxy.da.empresa.example/v1');
+      expect(confirm!.detail).toMatch(/chave configurada deste provider passará a ser ENVIADA/);
+      // O texto de FULL AUTO / execução é de permissão e binário, não de URL.
+      expect(confirm!.detail).not.toMatch(/FULL AUTO|EXECUTAR|sandbox/);
       const result = prepareProviderSpawn('qwen', {});
       if (!result.ok) throw new Error('spawn falhou');
       expect(result.overrides.qwenSettingsInjection?.baseUrl).toBe('https://proxy.da.empresa.example/v1');
@@ -3238,12 +3309,70 @@ describe('F-1565: spawn do Qwen carrega o descritor de injeção do overlay', ()
     }
   });
 
-  it('baseUrl inválida (não-https) ou de outro adapter é recusada', async () => {
+  it('a confirmação de permissão FULL AUTO segue falando de FULL AUTO e de execução', async () => {
     const setConfig = spawnDeps.trustedHandlers.get('provider:setConfig')!;
-    await setConfig(null, { adapterId: 'qwen', baseUrl: 'ftp://nao-vale' });
+    try {
+      await setConfig(null, { adapterId: 'qwen', permissionMode: 'yolo' });
+      const [confirm] = dialogs();
+      expect(confirm!.detail).toMatch(/FULL AUTO remove confirmações/);
+      expect(confirm!.detail).toMatch(/EXECUTAR/);
+      expect(confirm!.detail).not.toMatch(/ENVIADA/);
+    } finally {
+      spawnDeps.confirmInstall.mockClear();
+      await setConfig(null, { adapterId: 'qwen', permissionMode: 'auto' });
+      spawnDeps.confirmInstall.mockClear();
+    }
+  });
+
+  it('a base URL salva sai normalizada (new URL().href): host minúsculo, porta padrão fora', async () => {
+    const setConfig = spawnDeps.trustedHandlers.get('provider:setConfig')!;
+    try {
+      await setConfig(null, { adapterId: 'qwen', baseUrl: '  HTTPS://Proxy.Da.Empresa.Example:443/v1  ' });
+      expect(listProviderSettings().find((p) => p.adapterId === 'qwen')?.baseUrl)
+        .toBe('https://proxy.da.empresa.example/v1');
+      // A confirmação mostra o valor que será salvo, não o digitado.
+      expect(dialogs()[0]!.detail).toContain('Base URL da API: https://proxy.da.empresa.example/v1');
+    } finally {
+      spawnDeps.confirmInstall.mockClear();
+      await setConfig(null, { adapterId: 'qwen', baseUrl: '' });
+    }
+  });
+
+  it('recusar a confirmação mantém a URL anterior e não mostra erro de URL inválida', async () => {
+    const setConfig = spawnDeps.trustedHandlers.get('provider:setConfig')!;
+    spawnDeps.confirmInstall.mockResolvedValueOnce({ response: 0 });
+    await setConfig(null, { adapterId: 'qwen', baseUrl: 'https://proxy.da.empresa.example/v1' });
     expect(listProviderSettings().find((p) => p.adapterId === 'qwen')?.baseUrl).toBeUndefined();
+    expect(dialogs().map((d) => d.type)).toEqual(['warning']);
+    spawnDeps.confirmInstall.mockClear();
+  });
+
+  it.each([
+    ['ftp', 'ftp://nao-vale'],
+    ['http (sem TLS)', 'http://proxy.da.empresa.example/v1'],
+    ['userinfo', 'https://user:senha@proxy.da.empresa.example/v1'],
+    ['string inválida', 'isto nao e uma url'],
+  ])('B1: base URL descartada (%s) mostra o erro e mantém a anterior', async (_label, url) => {
+    const setConfig = spawnDeps.trustedHandlers.get('provider:setConfig')!;
+    spawnDeps.confirmInstall.mockClear();
+    await setConfig(null, { adapterId: 'qwen', baseUrl: url });
+    expect(listProviderSettings().find((p) => p.adapterId === 'qwen')?.baseUrl).toBeUndefined();
+    // Sem confirmação de destino (nada foi aceito) e com o erro à vista.
+    expect(dialogs().map((d) => d.type)).toEqual(['error']);
+    const [error] = dialogs();
+    expect(error!.title).toBe('Base URL inválida');
+    expect(error!.detail).toContain(url);
+    expect(error!.detail).toMatch(/https/);
+    spawnDeps.confirmInstall.mockClear();
+  });
+
+  it('limpar a base URL (vazio) não pede confirmação nem mostra erro; patch de outro adapter é ignorado em silêncio', async () => {
+    const setConfig = spawnDeps.trustedHandlers.get('provider:setConfig')!;
+    spawnDeps.confirmInstall.mockClear();
+    await setConfig(null, { adapterId: 'qwen', baseUrl: '' });
     await setConfig(null, { adapterId: 'kimi', baseUrl: PLAN });
     expect(listProviderSettings().find((p) => p.adapterId === 'kimi')?.baseUrl).toBeUndefined();
+    expect(spawnDeps.confirmInstall).not.toHaveBeenCalled();
   });
 
   it('conta api-key pinada (a conta "a" do incidente): a chave da conta também ganha o descritor', () => {

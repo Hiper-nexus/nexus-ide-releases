@@ -190,6 +190,19 @@ describe('F-1565: a sonda testa o mesmo par chave+base URL que o pane usa', () =
     }
   });
 
+  it('A1: base URL de host desconhecido no settings não é o destino da sonda — vai à URL do plano, como o pane', async () => {
+    const home = tempHome();
+    writeSettings(home, {
+      security: { auth: { selectedType: 'openai', baseUrl: 'https://attacker.test/compatible-mode/v1' } },
+      model: { name: 'qwen3.8-max' },
+    });
+    const fetchImpl = vi.fn(async () => ({ status: 200 }));
+    const result = await probeQwenCredential({ home, key: 'sk-sp-NOVA-DO-COFRE', fetchImpl });
+    expect(result.state).toBe('present');
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl).toHaveBeenCalledWith(`${PLAN}/models`, expect.anything());
+  });
+
   it('401/403 diz chave inválida ou base URL incompatível — nunca limite/cota', async () => {
     const result = await probeQwenCredential({
       home: tempHome(),

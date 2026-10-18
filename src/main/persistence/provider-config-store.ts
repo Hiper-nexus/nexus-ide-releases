@@ -4,6 +4,7 @@ import { runPeriodicTask, stopPeriodicTask, type PeriodicTaskContext } from '../
 import { readRegularFileCappedAsync } from '../redline/redline-safe-read';
 import { mimoCredentialSupportsModel } from '../adapters/mimo-auth';
 import {
+  normalizeHttpsBaseUrl,
   QWEN_DASHSCOPE_DEFAULT_BASE_URL,
   qwenSettingsHasCredential,
   readQwenSettingsSummary,
@@ -475,7 +476,8 @@ function nativeKeyEnv(
   adapterId: string,
   key: string,
   modelOverride?: string,
-): Record<string, string> {  if (adapterId === 'mimo-code' && key.startsWith('tp-')) {
+): Record<string, string> {
+  if (adapterId === 'mimo-code' && key.startsWith('tp-')) {
     throw new Error('Use o login oficial da CLI MiMo para vincular o Token Plan e sua região.');
   }
   if (adapterId === 'kimi') {
@@ -507,9 +509,10 @@ export interface QwenSettingsInjection {
 
 /**
  * Monta a injeção do Qwen quando o spawn vai levar a chave configurada. A base
- * URL vem de Providers › Qwen › Avançado, depois do settings.json do operador
- * (exceto chave sk-sp- com URL Alibaba fora do Token Plan — o 401 do
- * incidente), depois do padrão do plano para sk-sp-, senão o DashScope.
+ * URL vem de Providers › Qwen › Avançado (a única que abre um host fora da
+ * lista), depois do settings.json do operador SÓ se for host conhecido (DashScope,
+ * planos Alibaba, DeepSeek direta; chave sk-sp- só em host de plano), depois do
+ * padrão do plano para sk-sp-, senão o DashScope. Ver resolveQwenInjectionBaseUrl.
  */
 function qwenSettingsInjection(
   key: string,
@@ -517,12 +520,23 @@ function qwenSettingsInjection(
 ): QwenSettingsInjection {
   const cfg = configFor('qwen');
   const summary = readQwenSettingsSummary();
+  const settingsBaseUrl = summary.authBaseUrl ?? summary.baseUrl;
   const baseUrl =
     resolveQwenInjectionBaseUrl({
       configured: cfg.baseUrl,
-      settingsBaseUrl: summary.authBaseUrl ?? summary.baseUrl,
+      settingsBaseUrl,
       key,
     }) ?? QWEN_DASHSCOPE_DEFAULT_BASE_URL;
+  // A URL do settings.json que não serviu (host fora da lista de destinos da
+  // chave, ou o DashScope padrão com chave sk-sp-) some em silêncio para quem
+  // usava um proxy ali: deixa o rastro, sem a URL inteira (pode carregar token).
+  if (settingsBaseUrl && !cfg.baseUrl && normalizeHttpsBaseUrl(settingsBaseUrl) !== baseUrl) {
+    console.warn(
+      `[provider-config] qwen: a base URL do settings.json (${httpsHostOf(settingsBaseUrl) ?? 'inválida'}) ` +
+        `não é destino da chave do Nexus; usando ${httpsHostOf(baseUrl)}. Para usar um proxy, ` +
+        'preencha Providers › Qwen › Avançado › Base URL da API.',
+    );
+  }
   const models = new Set<string>();
   for (const id of [
     modelOverride,
@@ -3300,6 +3314,24 @@ async function confirmExecConfig(
   if (change.baseUrl !== undefined) {
     lines.push(`Base URL da API: ${change.baseUrl}`);
   }
+  // Cada aviso só aparece para a mudança a que ele se refere: FULL AUTO é de
+  // permissão, EXECUTAR é de binário/argumentos/permissão e a Base URL recebe
+  // a chave do provider.
+  const notes: string[] = [];
+  if (
+    change.binPath !== undefined ||
+    change.extraArgs !== undefined ||
+    change.permissionMode !== undefined
+  ) {
+    notes.push('O NexusIDE passará a EXECUTAR exatamente isto ao abrir este provider.');
+  }
+  if (change.permissionMode !== undefined) {
+    notes.push('FULL AUTO remove confirmações e pode reduzir ou desativar o sandbox.');
+  }
+  if (change.baseUrl !== undefined) {
+    notes.push('A chave configurada deste provider passará a ser ENVIADA para esta Base URL.');
+  }
+  notes.push('Confirme apenas se você entende e aceita esse alcance.');
   const opts = {
     type: 'warning' as const,
     buttons: ['Cancelar', 'Confiar e salvar'],
@@ -3307,14 +3339,7 @@ async function confirmExecConfig(
     cancelId: 0,
     title: 'Confirmar configuração de execução',
     message: `Confiar nesta configuração de alto impacto para ${label}?`,
-    detail:
-      `${lines.join('\n')}\n\n` +
-      'O NexusIDE passará a EXECUTAR exatamente isto ao abrir este provider. ' +
-      'FULL AUTO remove confirmações e pode reduzir ou desativar o sandbox. ' +
-      (change.baseUrl !== undefined
-        ? 'A Base URL passa a RECEBER a chave configurada deste provider. ' 
-        : '') +
-      'Confirme apenas se você entende e aceita esse alcance.',
+    detail: `${lines.join('\n')}\n\n${notes.join(' ')}`,
     noLink: true,
   };
   const win = BrowserWindow.getFocusedWindow();
@@ -3322,6 +3347,23 @@ async function confirmExecConfig(
     ? await dialog.showMessageBox(win, opts)
     : await dialog.showMessageBox(opts);
   return result.response === 1;
+}
+
+/** F-1565: a URL digitada em Providers › Qwen foi descartada — o operador precisa ver por quê. */
+async function warnInvalidBaseUrl(adapterId: string, baseUrl: string): Promise<void> {
+  const opts = {
+    type: 'error' as const,
+    buttons: ['OK'],
+    title: 'Base URL inválida',
+    message: `URL rejeitada para ${getAdapter(adapterId)?.label ?? adapterId}`,
+    detail:
+      `${baseUrl}\n\nA Base URL da API precisa começar com https:// e não pode ` +
+      'ter usuário nem senha. O valor anterior foi mantido.',
+    noLink: true,
+  };
+  const win = BrowserWindow.getFocusedWindow();
+  if (win) await dialog.showMessageBox(win, opts);
+  else await dialog.showMessageBox(opts);
 }
 
 async function warnInvalidBin(
@@ -3768,12 +3810,22 @@ export function registerProviderIpc(): void {
     }
     if (patch.baseUrl !== undefined) {
       // F-1565: a base URL configurável é do Qwen (endpoint OpenAI-compatible
-      // da chave). '' limpa; valor precisa ser https sem credencial embutida.
-      const baseUrl = patch.baseUrl.trim();
-      if (adapterId === 'qwen' && (baseUrl === '' || httpsHostOf(baseUrl))) {
-        patch.baseUrl = baseUrl;
-      } else {
+      // da chave). '' limpa; o valor precisa ser https sem credencial embutida
+      // e é salvo normalizado (new URL().href), o mesmo que a confirmação
+      // mostra. Uma URL descartada nunca some em silêncio: o operador vê o erro.
+      const typed = patch.baseUrl.trim();
+      if (adapterId !== 'qwen') {
         delete patch.baseUrl;
+      } else if (typed === '') {
+        patch.baseUrl = '';
+      } else {
+        const baseUrl = normalizeHttpsBaseUrl(typed);
+        if (baseUrl) {
+          patch.baseUrl = baseUrl;
+        } else {
+          await warnInvalidBaseUrl(adapterId, typed);
+          delete patch.baseUrl;
+        }
       }
     }
 

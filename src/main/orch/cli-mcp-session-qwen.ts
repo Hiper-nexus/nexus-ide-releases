@@ -7,8 +7,9 @@
  * Nexus o overlay LIGA o arquivo, nunca copia o segredo para outro lugar.
  * F-1565: quando o spawn injeta a chave configurada (vault/conta), a CLI só a
  * honra se um `modelProviders[].envKey` apontar para ela — então o overlay
- * grava um settings.json MESCLADO (o do operador + as entradas com envKey e a
- * base URL resolvida, sem segredo) em vez de ligar. O MCP da sessão chega por
+ * grava um settings.json MESCLADO (o do operador SEM as credenciais Alibaba
+ * dele + as entradas com envKey e a base URL resolvida) em vez de ligar. O MCP
+ * da sessão chega por
  * um arquivo JSON privado (`{"mcpServers": …}`) referenciado por
  * `--mcp-config`; a ponte stdio compartilhada (`~/.nexus/mcp-bridge`) recebe
  * URL e bearer só por ENV (`NEXUS_MCP_URL`/`NEXUS_MCP_TOKEN`), como MiniMax
@@ -23,14 +24,16 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { mergeQwenSettingsForInjection } from '../adapters/qwen-settings';
+import {
+  mergeQwenSettingsForInjection,
+  readQwenOperatorSettings,
+} from '../adapters/qwen-settings';
 import {
   activateArtifact,
   linkDirectoryEntries,
   linkProviderSessionState,
   linkSelectedEntries,
   objectValue,
-  readJsonObject,
   runtimeServerName,
   validateCliMcpInputs,
   withCliMcpArtifactTransaction,
@@ -72,7 +75,8 @@ const QWEN_SESSION_ENTRIES = [
 /**
  * Único material de credencial do Qwen: `settings.json` guarda
  * `env.BAILIAN_TOKEN_PLAN_API_KEY` e o catálogo `modelProviders`. Ligado,
- * nunca copiado — a própria CLI lê/atualiza no lugar.
+ * nunca copiado — a própria CLI lê/atualiza no lugar. (Com a chave do Nexus
+ * injetada o overlay não liga: grava a cópia mesclada, sem essas credenciais.)
  */
 const QWEN_AUTH_ENTRIES = ['settings.json', 'installation_id'];
 
@@ -111,12 +115,19 @@ export function prepareQwenMcpSession(
   return withCliMcpArtifactTransaction('qwen', token, artifactRoot, (artifactDir) => {
     const serverName = runtimeServerName(token);
     const policy = resolveGovernedCliProfile(token, options);
-    const operatorSettings = readJsonObject(path.join(providerHome, 'settings.json'));
+    const injection = options.qwenSettingsInjection;
+    // O settings do operador só é lido onde alguém precisa dele: a mescla da
+    // injeção e o MCP ambiente de pane não-governado. Worker governado sem
+    // injeção só LIGA o arquivo e nunca o abre; e a leitura tolera o que a CLI
+    // aceita (comentários, BOM) ou não deixa abrir (EACCES) — vira `{}`.
+    const operatorSettings =
+      injection || !policy.governed
+        ? readQwenOperatorSettings(path.join(providerHome, 'settings.json'))
+        : {};
     // F-1565: com chave injetada pelo Nexus o settings.json do overlay é
     // ESCRITO (mescla o do operador com as entradas modelProviders que
     // apontam a env para a base URL certa) em vez de ligado — a CLI ignora a
     // env BAILIAN sem essas entradas e usava o apiKey velho embutido (401).
-    const injection = options.qwenSettingsInjection;
     if (injection) {
       const merged = mergeQwenSettingsForInjection(operatorSettings, injection);
       writePrivateFileAtomic(

@@ -606,6 +606,86 @@ describe('account failover authority and lifecycle', () => {
     }
   });
 
+  /**
+   * F-1565: 401 lido no PTY de um pane `adapterId` com a sonda no ar, mas sem
+   * leitura nenhuma sobre a conta (a «sonda sem resposta» do F-249).
+   */
+  async function unconfirmedAuthHit(paneNo: number, adapterId: string) {
+    const { detectLimit } = await import('./limit-detector');
+    vi.mocked(detectLimit).mockImplementationOnce((buffer: string) =>
+      buffer.includes('LIMIT')
+        ? { kind: 'auth' as const, reason: 'Error: 401 invalid api key', cooldownMs: 15 * 60 * 1000 }
+        : null,
+    );
+    const { requireQuotaService } = await import('../quota/quota-service');
+    const empty = { updatedAt: 100_000, worstUsedRatio: 0, highUsageCount: 0, unknownCount: 0, entries: [] };
+    let probed = false;
+    vi.mocked(requireQuotaService).mockImplementation(() => ({
+      refreshForLimitHit: async () => {
+        probed = true;
+        return empty;
+      },
+      lastSnapshot: () => (probed ? empty : undefined),
+    }) as unknown as ReturnType<typeof requireQuotaService>);
+    const scope = testProjectScope();
+    const owner = renderer(paneNo);
+    renderers.push(owner);
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerFailoverListener(owner);
+    addPane({
+      owner,
+      paneId: `pane-${paneNo}`,
+      sessionId: `session-${paneNo}`,
+      missionId: `mission-${paneNo}`,
+      scope,
+      adapterId,
+    });
+    ptyMocks.dataTaps[0](`session-${paneNo}`, 'LIMIT');
+    await settleFailover();
+    return owner;
+  }
+
+  it('F-1565: 401 não confirmado no Qwen fala de credencial recusada e leva a CLI no evento (o toast decide por ela)', async () => {
+    const owner = await unconfirmedAuthHit(730, 'qwen');
+    expect(accountMocks.setCooldown).toHaveBeenCalledWith(
+      'account-a',
+      100_000 + 15 * 60 * 1000,
+      'Error: 401 invalid api key (recusa de credencial não confirmada pela API do provider)',
+      undefined,
+    );
+    expect(owner.send).toHaveBeenCalledWith(
+      ACCOUNT_CHANNELS.failover,
+      expect.objectContaining({
+        paneId: 'pane-730',
+        kind: 'auth',
+        switched: false,
+        fromAdapterId: 'qwen',
+        reason: expect.stringContaining('credencial recusada (401): chave inválida ou base URL incompatível'),
+      }),
+    );
+  });
+
+  it.each(['claude', 'codex', 'agy'])(
+    'F-1565: 401 não confirmado em %s (login expirado) mantém a redação de sempre, sem base URL',
+    async (adapterId) => {
+      const paneNo = 731 + ['claude', 'codex', 'agy'].indexOf(adapterId);
+      const owner = await unconfirmedAuthHit(paneNo, adapterId);
+      expect(accountMocks.setCooldown).toHaveBeenCalledWith(
+        'account-a',
+        100_000 + 15 * 60 * 1000,
+        'Error: 401 invalid api key (limite não confirmado pela API do provider)',
+        undefined,
+      );
+      const sent = owner.send.mock.calls
+        .filter((call) => call[0] === ACCOUNT_CHANNELS.failover)
+        .map((call) => call[1] as { reason: string; fromAdapterId?: string });
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toMatchObject({ fromAdapterId: adapterId });
+      expect(sent[0]!.reason).toContain('a API do provider não confirmou o limite');
+      expect(sent[0]!.reason).not.toMatch(/credencial recusada|base URL/);
+    },
+  );
+
   /** F-1483: a sonda não traz a conta do pane, mas traz a irmã medida agora. */
   async function limitWithFreshSibling(paneNo: number, siblingUsedRatio: number, probe: () => void = () => undefined) {
     const { detectLimit } = await import('./limit-detector');

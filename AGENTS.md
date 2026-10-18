@@ -1062,17 +1062,43 @@ saber isto antes de mexer:
   `envKey`; `security.auth.apiKey` embutido no settings VENCE a env (medido
   com servidor local). Por isso, quando o Nexus injeta a chave (cofre ou conta
   pinada), o spawn leva `qwenSettingsInjection` {baseUrl, models, tokenPlanKey}
-  e o overlay grava um settings.json MESCLADO (os campos do operador +
-  entradas `modelProviders` geradas, que só referenciam a env — a chave nunca
-  entra no arquivo) em vez de ligar o arquivo. A cópia é 0600, efêmera e
-  apagada no teardown; sync-back continua off (escritas da TUI nela não
-  voltam ao perfil real). Sem injeção, o link de sempre. A base URL vem de
+  e o overlay grava um settings.json MESCLADO em vez de ligar o arquivo: os
+  campos do operador, SEM as credenciais Alibaba dele (`security.auth.apiKey`,
+  `env.BAILIAN_*`/`DASHSCOPE_*`: a injetada é a única do pane e nada velho fica
+  em disco, nem para um modelo fora de `models`) e com as entradas
+  `modelProviders` geradas, que só referenciam a env. A cópia é 0600, efêmera,
+  apagada no teardown e no boot (`purgeStaleCliMcpSessions` cobre `qwen`);
+  sync-back continua off (escritas da TUI nela não voltam ao perfil real). Sem
+  injeção, o link de sempre. O settings do operador é lido só onde alguém
+  precisa dele (a mescla e o MCP ambiente de pane não-governado; worker
+  governado sem injeção só liga o arquivo) e por `readQwenOperatorSettings`,
+  que tolera o que a CLI aceita (BOM, comentários, vírgula final) e vira `{}`
+  em qualquer falha (EACCES, JSON inválido…).
+- **A chave do cofre só vai a host conhecido ou ao que o operador escolheu.**
   `resolveQwenInjectionBaseUrl`: campo "Base URL da API" (Providers › Qwen ›
-  Avançado, mudança sensível com confirmação nativa) › settings do operador
-  (exceto sk-sp- com URL Alibaba fora do plano) › URL exclusiva do Token Plan
-  para chave `sk-sp-` › padrão DashScope. A sonda do Testar resolve o MESMO
-  par chave+base URL (`setQwenProbeConfiguredBaseUrlLookup`); o 401 dela diz
-  "chave inválida ou base URL incompatível", nunca limite/cota.
+  Avançado; https sem usuário/senha, salvo normalizado por `new URL().href`,
+  mudança sensível com confirmação nativa; URL recusada aparece como erro junto
+  do campo e, se o Main a descartar, também como diálogo nativo) ›
+  base URL do settings do operador SÓ se o host for conhecido (DashScope em
+  qualquer região, planos Alibaba, `api.deepseek.com`; nunca "qualquer
+  `*.aliyuncs.com`", onde OSS e Function Compute de cliente também vivem) ›
+  URL do Token Plan (Singapura) para chave `sk-sp-` › padrão DashScope. Chave
+  `sk-sp-` só aceita host de PLANO (`token-plan.<região>.maas`, `coding[-intl].
+  dashscope`): a URL regional válida (Pequim, Coding Plan) fica; DashScope
+  padrão (o 401 do incidente) e DeepSeek direta não. O mesmo vale para toda
+  linha do operador alimentada pela NOSSA env (`envKey` igual) em qualquer
+  `modelProviders.*`: host fora disso vira a base URL resolvida (linha OpenAI)
+  ou a linha sai (outro protocolo). Qualquer outro destino (proxy da empresa)
+  só pelo campo, nunca pelo settings (a URL do settings que não serviu deixa
+  um `console.warn` com o host, sem a URL inteira). A sonda do Testar resolve o
+  MESMO par chave+base URL (`setQwenProbeConfiguredBaseUrlLookup`); o 401 dela
+  diz "chave inválida ou base URL incompatível", nunca limite/cota.
+- O toast "Credencial recusada… base URL… sk-sp-" e a redação "recusa de
+  credencial" do failover são só do Qwen (`fromAdapterId === 'qwen'`;
+  `emitNoSwitch` agora leva o `fromAdapterId`). Claude/Codex/AGY com login
+  expirado mantêm "Sessão expirada… Entre novamente". A frase "Invalid API-key"
+  com hífen NÃO é sinal de limite: o erro real do Qwen já casa pela moldura
+  "Error: 401", e a frase solta aparece em prosa, log e `cat` do código (F-249).
 
 ## DeepSeek: API direta ou Alibaba Token Plan (F-724)
 
@@ -1103,8 +1129,9 @@ saber isto antes de mexer:
 - MCP do Nexus chega por `--mcp-config <arquivo por sessão>` +
   `--allowed-mcp-server-names`; worker de missão fica restrito ao `nexus`+hub
   (o MCP ambiente do operador, ex.: blender, não entra). `QWEN_HOME` aponta
-  o overlay da sessão: `settings.json` ligado (nunca copiado), conversas em
-  `<userData>/provider-state/qwen/<checkoutId>`.
+  o overlay da sessão: `settings.json` ligado (nunca copiado) quando o Nexus
+  não injeta chave — com injeção (F-1565) é a cópia mesclada acima —, conversas
+  em `<userData>/provider-state/qwen/<checkoutId>`.
 
 ## HOME efêmero da família Claude: o pane escreve como o operador (F-579/F-580)
 

@@ -672,6 +672,88 @@ describe('F-1565: base URL configurável do Qwen', () => {
     act(() => root.unmount());
   });
 
+  const SAVED = 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1';
+  async function mountQwenField(setConfig: ReturnType<typeof vi.fn>) {
+    useProviderStore.setState({
+      providers: [provider('qwen', 'Qwen Code', {
+        authMethod: 'api_key',
+        authStrategy: 'api-key',
+        hasKey: true,
+        keyMasked: 'sk-…tuzw',
+        baseUrl: SAVED,
+      })],
+      setConfig,
+    } as never);
+    const mounted = mount();
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => mounted.host.querySelector<HTMLButtonElement>('.prov-advanced__toggle')!.click());
+    const input = [...mounted.host.querySelectorAll<HTMLInputElement>('.prov-advanced input')]
+      .find((i) => i.closest('label')?.textContent?.includes('Base URL da API'))!;
+    const type = async (value: string) => {
+      await act(async () => {
+        const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+        setValue.call(input, value);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+    };
+    const blur = async () => {
+      await act(async () => { input.dispatchEvent(new FocusEvent('focusout', { bubbles: true })); });
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    };
+    return { ...mounted, input, type, blur };
+  }
+
+  it('B1: o Main recusou a URL válida (confirmação negada: a lista não mudou): o campo volta ao valor salvo', async () => {
+    const setConfig = vi.fn(async () => undefined);
+    const { root, input, type, blur } = await mountQwenField(setConfig);
+    await type('https://proxy.da.empresa.example/v1');
+    await blur();
+    expect(setConfig).toHaveBeenCalledWith({ adapterId: 'qwen', baseUrl: 'https://proxy.da.empresa.example/v1' });
+    expect(input.value).toBe(SAVED);
+    act(() => root.unmount());
+  });
+
+  it.each([
+    ['http (sem TLS)', 'http://inseguro.example/v1', /comece com https/],
+    ['userinfo', 'https://usuario:senha@proxy.example/v1', /Remova usuário e senha/],
+    ['texto que não é URL', 'isto nao e uma url', /Endereço inválido/],
+  ])('B1: URL inválida (%s) mostra o erro junto do campo, não vai ao Main e o rascunho fica para corrigir', async (_label, typed, message) => {
+    const setConfig = vi.fn(async () => undefined);
+    const { host, root, input, type, blur } = await mountQwenField(setConfig);
+    await type(typed);
+    await blur();
+    expect(setConfig).not.toHaveBeenCalled();
+    const alert = host.querySelector('[role="alert"]#prov-qwen-base-url-error');
+    expect(alert?.textContent).toMatch(message);
+    expect(alert?.textContent).toMatch(/O valor anterior foi mantido/);
+    expect(input.value).toBe(typed);
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+    expect(input.getAttribute('aria-describedby')).toBe('prov-qwen-base-url-error prov-qwen-base-url-hint');
+    // Voltar a digitar tira o erro; uma URL válida segue para o Main.
+    await type('https://proxy.da.empresa.example/v1');
+    expect(host.querySelector('#prov-qwen-base-url-error')).toBeNull();
+    expect(input.hasAttribute('aria-invalid')).toBe(false);
+    await blur();
+    expect(setConfig).toHaveBeenCalledWith({ adapterId: 'qwen', baseUrl: 'https://proxy.da.empresa.example/v1' });
+    act(() => root.unmount());
+  });
+
+  it('limpar o campo (vazio) vai ao Main sem erro; a dica fica fora do nome acessível do campo', async () => {
+    const setConfig = vi.fn(async () => undefined);
+    const { host, root, input, type, blur } = await mountQwenField(setConfig);
+    // A dica descreve o campo (aria-describedby), não entra no <label>.
+    const label = input.closest('label')!;
+    expect(label.textContent).toContain('Base URL da API');
+    expect(label.textContent).not.toContain('OpenAI-compatible');
+    expect(host.querySelector('#prov-qwen-base-url-hint')?.textContent).toContain('OpenAI-compatible');
+    expect(input.getAttribute('aria-describedby')).toBe('prov-qwen-base-url-hint');
+    await type('');
+    await blur();
+    expect(setConfig).toHaveBeenCalledWith({ adapterId: 'qwen', baseUrl: '' });
+    expect(host.querySelector('[role="alert"]#prov-qwen-base-url-error')).toBeNull();
+    act(() => root.unmount());
+  });
+
   it('outros providers não veem o campo', async () => {
     useProviderStore.setState({ providers: [provider('codex', 'Codex')] });
     const { host, root } = mount();
