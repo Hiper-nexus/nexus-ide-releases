@@ -83,6 +83,9 @@ describe('patchConoutConnectionSource', () => {
     expect(patched).toContain('{ detach: this._conoutPipeName }');
     expect(patched).not.toContain('workerData');
     expect(patched).not.toContain('this._worker.terminate()');
+    // Each pending connection holds a 'message' listener on the shared
+    // worker; >10 panes must not trip the default listener cap.
+    expect(patched).toContain('worker.setMaxListeners(0)');
   });
 
   it('is idempotent', () => {

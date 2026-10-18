@@ -188,6 +188,9 @@ function sharedConoutWorker(scriptPath) {
     if (_sharedConoutWorker === null) {
         (function () {
             var worker = new worker_threads_1.Worker(path_1.join(scriptPath, 'worker/conoutSocketWorker.js'));
+            // One 'message' listener per connection pending its READY is by
+            // design; >10 panes would trip the default listener cap.
+            worker.setMaxListeners(0);
             _sharedConoutWorker = worker;
             _sharedConoutWorkerReady = new Promise(function (resolve) {
                 var onReady = function (message) {
