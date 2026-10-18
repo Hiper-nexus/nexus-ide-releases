@@ -11368,7 +11368,7 @@ export const RELEASE_076301: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076302: AppRelease = {
   version: '0.76.302',
   date: '2026-10-17',
   codename: 'Todas as LLMs no roteamento',
@@ -11381,6 +11381,24 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: [
     { title: 'Cota medida cheia sai da rota', detail: 'CLI com janela medida em 100% em todas as contas não recebe worker até o reset; janela por modelo, leitura velha e cadência desconhecida não derrubam nem inventam folga.' },
     { title: 'Fair-share com memória', detail: 'A contagem de uso por CLI sobrevive à limpeza de missões, conta cada pane de IA uma vez e grava em disco sem travar o processo principal.' },
+    { title: 'Nome da missão acompanha a aba', detail: 'Renomear a aba renomeia a missão leve dela na barra lateral e no Quadro. Título do operador e missão de squad aprovada não são sobrescritos.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.303',
+  date: '2026-10-18',
+  codename: 'Linux em dia com todas as LLMs no roteamento',
+  summary: 'O desktop Linux recebe o roteador que reparte o trabalho entre todas as LLMs instaladas pela cota real de cada assinatura. A tag 0.76.302 não recebe pacotes Linux.',
+  highlights: [
+    { title: 'Cota entre CLIs', detail: 'Cada CLI ganha um ritmo de cota (folga ÷ tempo até o reset). Assinatura com sobra que vai expirar puxa trabalho e conta como escritor econômico mesmo com preço de API alto; a que está perto do limite cede.' },
+    { title: 'Rota que só falha não lidera', detail: 'Modelo com cinco tentativas ou mais e até 20% de sucesso em 14 dias perde o assento no escritor econômico, nas lanes de topo, no revezamento e no fair-share, e cede a liderança à primeira rota pronta do mesmo tier. Só volta quando é a única opção do tier ou pedido pelo nome.' },
+    { title: 'Qualquer conjunto de CLIs', detail: 'Sem CLI da tabela instalada, a rota escolhe por qualidade e custo. A primeira onda da missão completa a oferta com todas as CLIs prontas.' },
+  ],
+  fixes: [
+    { title: 'Atualização do Linux', detail: 'A tag 0.76.302 não recebe pacotes Linux: é o candidato macOS. O desktop Linux sai na 0.76.303.' },
+    { title: 'Cota medida cheia sai da rota', detail: 'CLI com janela medida em 100% em todas as contas não recebe worker até o reset; janela por modelo, leitura velha e cadência desconhecida não derrubam nem inventam folga.' },
+    { title: 'Fair-share com memória', detail: 'A contagem de uso por CLI sobrevive à limpeza de missões, conta cada pane de IA uma vez e grava em disco ao sair, sem travar o processo principal.' },
     { title: 'Nome da missão acompanha a aba', detail: 'Renomear a aba renomeia a missão leve dela na barra lateral e no Quadro. Título do operador e missão de squad aprovada não são sobrescritos.' },
   ],
 };
