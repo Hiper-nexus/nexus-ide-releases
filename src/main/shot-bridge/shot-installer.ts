@@ -41,7 +41,7 @@ export interface ShotInstallerDeps {
   appPath: string;
   appExists(path: string): boolean;
   /** CFBundleShortVersionString do bundle, ou null se ilegível. */
-  readBundleVersion(appPath: string): string | null;
+  readBundleVersion(appPath: string): Promise<string | null>;
   isShotRunning(): Promise<boolean>;
   /** Há nexus-shot-*.ips recente em ~/Library/Logs/DiagnosticReports? */
   hasRecentShotCrash(): boolean;
@@ -100,7 +100,7 @@ async function verifyShotBundle(deps: ShotInstallerDeps, bundle: string): Promis
 export async function ensureShotMinVersion(deps: ShotInstallerDeps): Promise<ShotEnsureResult> {
   if (deps.platform !== 'darwin') return { status: 'skipped', reason: 'not-darwin' };
   if (!deps.appExists(deps.appPath)) return { status: 'skipped', reason: 'not-installed' };
-  const installed = deps.readBundleVersion(deps.appPath);
+  const installed = await deps.readBundleVersion(deps.appPath);
   if (!installed || !isValidAppVersion(installed)) return { status: 'skipped', reason: 'unreadable-version' };
   // Abaixo do mínimo: atualiza. Já no mínimo mas com crash recente: atualiza só se o feed tiver algo mais novo.
   const belowMin = !hasReachedAppVersion(installed, SHOT_MIN_VERSION);
@@ -133,7 +133,7 @@ export async function ensureShotMinVersion(deps: ShotInstallerDeps): Promise<Sho
     const bundle = `${staging}/Nexus Shot.app`;
     const refusal = await verifyShotBundle(deps, bundle);
     if (refusal) return fail(refusal);
-    const extracted = deps.readBundleVersion(bundle);
+    const extracted = await deps.readBundleVersion(bundle);
     if (!extracted || !acceptable(extracted)) {
       return fail(`bundle baixado em ${extracted ?? 'versão ilegível'}`);
     }

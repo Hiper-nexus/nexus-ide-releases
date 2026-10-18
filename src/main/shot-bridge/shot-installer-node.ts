@@ -1,10 +1,12 @@
 /** Borda real (fs, processos, rede) do shot-installer; a lógica vive em shot-installer.ts. */
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 import { SHOT_APP_PATH, type ShotInstallerDeps } from './shot-installer';
 
+const execFileAsync = promisify(execFile);
 const DOWNLOAD_MAX_BYTES = 100 * 1024 * 1024;
 const NETWORK_TIMEOUT_MS = 60_000;
 const RECENT_CRASH_MS = 7 * 24 * 60 * 60 * 1000;
@@ -25,15 +27,15 @@ export function createShotInstallerDeps(log: (msg: string) => void): ShotInstall
     arch: process.arch,
     appPath: SHOT_APP_PATH,
     appExists: existsSync,
-    readBundleVersion: (appPath) => {
+    readBundleVersion: async (appPath) => {
       try {
-        // plutil é síncrono e local; o plist do bundle é binário ou XML.
-        const out = execFileSync(
+        // plutil é assíncrono e local; o plist do bundle é binário ou XML.
+        const { stdout } = await execFileAsync(
           '/usr/bin/plutil',
           ['-extract', 'CFBundleShortVersionString', 'raw', '-o', '-', join(appPath, 'Contents', 'Info.plist')],
           { encoding: 'utf8', timeout: 5000 },
-        ) as string;
-        return out.trim() || null;
+        );
+        return stdout.trim() || null;
       } catch {
         return null;
       }
