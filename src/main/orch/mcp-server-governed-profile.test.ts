@@ -156,7 +156,8 @@ function adapter(
     | 'opencode'
     | 'mimo-code'
     | 'kimi'
-    | 'grok',
+    | 'grok'
+    | 'qwen',
 ): CliPtyAdapter {
   const claudeFamily = id === 'claude' || id === 'glm';
   return {
@@ -337,6 +338,32 @@ describe('mcp-server governed CLI profile wiring', () => {
       expect(decoration.env.NEXUS_HEAVY_ORIG_ZDOTDIR).toBe(prepared.ZDOTDIR);
       expect(prepared).toMatchObject({ GROK_SHELL: '/opt/homebrew/bin/bash', PATH: '/opt/homebrew/bin:/usr/bin:/bin', SHELL: '/bin/zsh', HOME: home });
       expect(decoration.env.NEXUS_GATE_TOKEN).toBe(decoration.authorityToken);
+    } finally { decoration.onSpawnFailed?.(); }
+  });
+
+  it('F-1567 F2/F3: Main entrega ao overlay do Qwen os caminhos de sistema do env preparado e o layer de sistema separado', () => {
+    const root = tempRoot(), home = path.join(root, 'home'), cwd = path.join(root, 'workspace'); fs.mkdirSync(cwd);
+    privateRuntimePaths.userData = root; vi.stubEnv('HOME', home);
+    const adminSettings = path.join(root, 'admin', 'policy.json'), adminDefaults = path.join(root, 'admin', 'defaults.json');
+    write(adminSettings, JSON.stringify({ general: { disableAutoUpdate: true } }));
+    write(adminDefaults, JSON.stringify({ ui: { theme: 'from-defaults' } }));
+    const injection = {
+      baseUrl: 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1',
+      models: ['qwen3.8-max'], tokenPlanKey: true, envKey: 'NEXUS_QWEN_KEY_0123456789abcdef0123456789abcdef',
+    };
+    const decoration = prepareAgentSpawnDecoration(
+      adapter('qwen'), { kind: 'cli-agent', cols: 80, rows: 24 }, authority(cwd, false),
+      { HOME: home, QWEN_HOME: path.join(home, '.qwen'), QWEN_CODE_SYSTEM_SETTINGS_PATH: adminSettings, QWEN_CODE_SYSTEM_DEFAULTS_PATH: adminDefaults },
+      undefined, { qwenSettingsInjection: injection },
+    )!;
+    try {
+      const systemFile = decoration.env.QWEN_CODE_SYSTEM_SETTINGS_PATH!;
+      expect(path.basename(systemFile)).toBe('system-settings.json');
+      expect(systemFile).not.toBe(adminSettings);
+      expect(decoration.env.QWEN_CODE_SYSTEM_DEFAULTS_PATH).toBe(adminDefaults);
+      const layer = JSON.parse(fs.readFileSync(systemFile, 'utf8')) as Record<string, unknown>;
+      expect(layer.general).toEqual({ disableAutoUpdate: true });
+      expect((layer.modelProviders as { openai: Array<{ envKey: string }> }).openai[0].envKey).toBe(injection.envKey);
     } finally { decoration.onSpawnFailed?.(); }
   });
 

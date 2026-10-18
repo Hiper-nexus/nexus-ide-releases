@@ -510,6 +510,25 @@ function ProviderRow({
   );
 }
 
+/**
+ * F-1567: conferência da Base URL do Qwen antes de ir ao Main, para o erro
+ * aparecer junto do campo (o Main segue sendo a autoridade e, se descartar, avisa
+ * por diálogo nativo). Vazio limpa; o resto precisa ser https sem usuário/senha.
+ */
+function baseUrlProblem(raw: string): string | null {
+  if (!raw) return null;
+  const kept = ' O valor anterior foi mantido.';
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return `Endereço inválido. Use o formato https://servidor/caminho.${kept}`;
+  }
+  if (url.protocol !== 'https:') return `Use um endereço que comece com https://.${kept}`;
+  if (url.username || url.password) return `Remova usuário e senha do endereço.${kept}`;
+  return null;
+}
+
 function ProviderDetail({
   provider,
   authStatus,
@@ -532,6 +551,8 @@ function ProviderDetail({
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [binDraft, setBinDraft] = useState(provider.binPath);
   const [argsDraft, setArgsDraft] = useState(provider.extraArgs.join(' '));
+  const [baseUrlDraft, setBaseUrlDraft] = useState(provider.baseUrl ?? '');
+  const [baseUrlError, setBaseUrlError] = useState<string | null>(null);
   const [installBusy, setInstallBusy] = useState(false);
   const [installError, setInstallError] = useState<string | null>(null);
   const [cliJob, setCliJob] = useState<ProviderOpFeedback | null>(null);
@@ -623,7 +644,9 @@ function ProviderDetail({
   useEffect(() => {
     setBinDraft(provider.binPath);
     setArgsDraft(provider.extraArgs.join(' '));
-  }, [provider.adapterId, provider.binPath, extraArgsKey, provider.extraArgs]);
+    setBaseUrlDraft(provider.baseUrl ?? '');
+    setBaseUrlError(null);
+  }, [provider.adapterId, provider.binPath, extraArgsKey, provider.extraArgs, provider.baseUrl]);
   useEffect(() => {
     setCliJob(null);
     setInstallError(null);
@@ -634,6 +657,25 @@ function ProviderDetail({
     void setConfig({ adapterId: provider.adapterId, ...p }).catch((err) => {
       console.warn('[providers] setConfig failed:', err);
     });
+  };
+
+  const commitBaseUrl = () => {
+    const typed = baseUrlDraft.trim();
+    const problem = baseUrlProblem(typed);
+    if (problem) {
+      setBaseUrlError(problem);
+      return;
+    }
+    // O Main normaliza, pede confirmação e pode recusar: depois da resposta o
+    // campo mostra o que ficou salvo, nunca um valor que não vale.
+    void setConfig({ adapterId: provider.adapterId, baseUrl: typed })
+      .catch((err) => console.warn('[providers] setConfig failed:', err))
+      .finally(() =>
+        setBaseUrlDraft(
+          useProviderStore.getState().providers.find((p) => p.adapterId === provider.adapterId)
+            ?.baseUrl ?? '',
+        ),
+      );
   };
 
   const modelValue = selectModelValue(provider);
@@ -875,6 +917,42 @@ function ProviderDetail({
                     }
                   />
                 </label>
+                {provider.adapterId === 'qwen' && (
+                  <div className="prov__field prov__field--wide">
+                    <label className="prov__field">
+                      Base URL da API (vazio = automático pela chave)
+                      <input
+                        className="settings-input"
+                        autoComplete="off"
+                        value={baseUrlDraft}
+                        placeholder="https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
+                        aria-invalid={baseUrlError ? true : undefined}
+                        aria-describedby={
+                          baseUrlError
+                            ? 'prov-qwen-base-url-error prov-qwen-base-url-hint'
+                            : 'prov-qwen-base-url-hint'
+                        }
+                        onChange={(e) => {
+                          setBaseUrlDraft(e.target.value);
+                          setBaseUrlError(null);
+                        }}
+                        onBlur={commitBaseUrl}
+                      />
+                    </label>
+                    {baseUrlError && (
+                      <p id="prov-qwen-base-url-error" className="prov-detail__install-error" role="alert">
+                        <PixelIcon name="warn" size={11} /> {baseUrlError}
+                      </p>
+                    )}
+                    <span id="prov-qwen-base-url-hint" className="prov__block-hint">
+                      Endereço da API OpenAI-compatible que recebe a chave
+                      configurada. Vazio usa o endereço conhecido da chave (a
+                      chave sk-sp-… do Token Plan só vale na URL do plano da sua
+                      região). Um proxy ou outro endereço só vale se for
+                      digitado aqui, e uma URL nova pede confirmação.
+                    </span>
+                  </div>
+                )}
                 {provider.routable && !provider.providerChoice && (
                   <label className="prov__field prov__field--wide">
                     Roteamento (upstream)

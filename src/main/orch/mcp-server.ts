@@ -1067,6 +1067,7 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
   authority,
   preparedEnv,
   transportEnv,
+  providerSpawnHints,
 ) => {
     const meta = authority.context;
     const gated = requiresSpawnGate(meta);
@@ -1590,7 +1591,8 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           advisoryProviderStateWritePaths = prepared.providerStateWritePaths ?? [];
         } else if (flavor === "qwen") {
           // F-238: QWEN_HOME aponta um overlay por sessão (settings.json
-          // ligado, conversas no provider-state do checkout); o MCP chega por
+          // ligado — ou mesclado quando o Nexus injeta a chave, F-1567 — e
+          // conversas no provider-state do checkout); o MCP chega por
           // --mcp-config + --allowed-mcp-server-names (worker: só o Nexus).
           const prepared = prepareQwenMcpSession(mcpUrl(), ctx.token, {
             userDataPath: app.getPath("userData"),
@@ -1599,6 +1601,15 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
             cwd: authority.cwd,
             workspaceRoot: authority.scope.rootRealPath,
             hubServers,
+            ...(providerSpawnHints?.qwenSettingsInjection
+              ? {
+                  qwenSettingsInjection: providerSpawnHints.qwenSettingsInjection,
+                  // F2/F3: com a injeção o overlay redireciona o settings de
+                  // sistema da CLI; o que ela leria sem isso entra por baixo.
+                  qwenSystemSettingsPath: preparedEnv?.QWEN_CODE_SYSTEM_SETTINGS_PATH,
+                  qwenSystemDefaultsPath: preparedEnv?.QWEN_CODE_SYSTEM_DEFAULTS_PATH,
+                }
+              : {}),
           });
           Object.assign(env, prepared.env);
           extraArgs.push(...prepared.extraArgs);

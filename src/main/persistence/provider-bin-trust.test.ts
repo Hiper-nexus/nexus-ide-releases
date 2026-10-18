@@ -86,3 +86,19 @@ describe('sensitiveChanges', () => {
     ).toBe(false);
   });
 });
+
+describe('F-1567: baseUrl é mudança sensível', () => {
+  const current = { binPath: '', extraArgs: [], permissionMode: 'auto', baseUrl: '' };
+  it('base URL nova (o endpoint que recebe a chave) exige confirmação nativa', () => {
+    const c = sensitiveChanges(
+      { baseUrl: 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1' },
+      current,
+    );
+    expect(c.baseUrl).toBeDefined();
+    expect(hasSensitiveChange(c)).toBe(true);
+  });
+  it('limpar ou regravar a mesma URL não pede confirmação', () => {
+    expect(hasSensitiveChange(sensitiveChanges({ baseUrl: '' }, { ...current, baseUrl: 'https://x' }))).toBe(false);
+    expect(hasSensitiveChange(sensitiveChanges({ baseUrl: 'https://x' }, { ...current, baseUrl: 'https://x' }))).toBe(false);
+  });
+});

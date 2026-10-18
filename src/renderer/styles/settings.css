@@ -4149,6 +4149,12 @@
   grid-column: 1 / -1;
 }
 
+/* Campo recusado na conferência (ex.: Base URL do Qwen): mesma convenção dos
+   demais formulários, borda no token de perigo; o anel de foco continua. */
+.prov__field .settings-input[aria-invalid='true'] {
+  border-color: var(--danger);
+}
+
 .prov__key {
   border-top: 1px solid var(--border);
   padding-top: var(--space-2-5);

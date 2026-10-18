@@ -150,3 +150,83 @@ describe('probeQwenCredential (F-238)', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
+
+describe('F-1567: a sonda testa o mesmo par chave+base URL que o pane usa', () => {
+  const PLAN = 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1';
+  const DASH = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+
+  it('chave sk-sp- configurada + settings com baseUrl DashScope → sonda vai à URL exclusiva do plano', async () => {
+    const home = tempHome();
+    writeSettings(home, {
+      security: { auth: { selectedType: 'openai', apiKey: 'sk-sp-VELHA-EMBUTIDA', baseUrl: DASH } },
+      model: { name: 'qwen3.8-max' },
+    });
+    const fetchImpl = vi.fn(async () => ({ status: 200 }));
+    const result = await probeQwenCredential({ home, key: 'sk-sp-NOVA-DO-COFRE', fetchImpl });
+    expect(result.state).toBe('present');
+    expect(fetchImpl).toHaveBeenCalledWith(
+      `${PLAN}/models`,
+      expect.objectContaining({ headers: { authorization: 'Bearer sk-sp-NOVA-DO-COFRE' } }),
+    );
+  });
+
+  it('chave sk-sp- sem settings nenhum → URL do plano (nunca o padrão DashScope)', async () => {
+    const fetchImpl = vi.fn(async () => ({ status: 200 }));
+    await probeQwenCredential({ home: tempHome(), key: 'sk-sp-fixture', fetchImpl });
+    expect(fetchImpl).toHaveBeenCalledWith(`${PLAN}/models`, expect.anything());
+  });
+
+  it('a base URL configurada em Providers › Qwen vence o settings', async () => {
+    const home = tempHome();
+    writeSettings(home, { security: { auth: { selectedType: 'openai', baseUrl: DASH } } });
+    const { setQwenProbeConfiguredBaseUrlLookup } = await import('./qwen-readiness');
+    setQwenProbeConfiguredBaseUrlLookup(() => PLAN);
+    try {
+      const fetchImpl = vi.fn(async () => ({ status: 200 }));
+      await probeQwenCredential({ home, key: 'sk-fixture-padrao', fetchImpl });
+      expect(fetchImpl).toHaveBeenCalledWith(`${PLAN}/models`, expect.anything());
+    } finally {
+      setQwenProbeConfiguredBaseUrlLookup(null);
+    }
+  });
+
+  it('A1: base URL de host desconhecido no settings não é o destino da sonda — vai à URL do plano, como o pane', async () => {
+    const home = tempHome();
+    writeSettings(home, {
+      security: { auth: { selectedType: 'openai', baseUrl: 'https://attacker.test/compatible-mode/v1' } },
+      model: { name: 'qwen3.8-max' },
+    });
+    const fetchImpl = vi.fn(async () => ({ status: 200 }));
+    const result = await probeQwenCredential({ home, key: 'sk-sp-NOVA-DO-COFRE', fetchImpl });
+    expect(result.state).toBe('present');
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl).toHaveBeenCalledWith(`${PLAN}/models`, expect.anything());
+  });
+
+  it('N3: JSONC com BOM preserva o Token Plan de Pequim na sonda', async () => {
+    const home = tempHome();
+    const dir = path.join(home, '.qwen');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'settings.json'),
+      '\uFEFF// perfil\n{ "security": { "auth": { "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1", }, }, }',
+    );
+    const fetchImpl = vi.fn(async () => ({ status: 200 }));
+    expect((await probeQwenCredential({ home, key: 'sk-sp-fixture', fetchImpl })).state).toBe('present');
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/models',
+      expect.anything(),
+    );
+  });
+
+  it('401/403 diz chave inválida ou base URL incompatível — nunca limite/cota', async () => {
+    const result = await probeQwenCredential({
+      home: tempHome(),
+      key: 'sk-sp-fixture',
+      fetchImpl: async () => ({ status: 401 }),
+    });
+    expect(result.state).toBe('invalid-credential');
+    expect(result.detail).toContain('base URL incompatível');
+    expect(result.detail).not.toMatch(/cota|limite de uso/i);
+  });
+});

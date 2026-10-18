@@ -928,6 +928,36 @@ describe("gateway de IA local (OmniRoute-like)", () => {
       gatewayForwardsProviderCredential(claudeLike(), GATEWAY, "gw-key"),
     ).toBe(false);
   });
+
+  it("F-1567: repassa o descritor de injeção do Qwen ao hook de spawn (6º arg)", async () => {
+    const host = fakeHost();
+    setPtyHost(host.host);
+    let hints: unknown;
+    setAgentSpawnHook((_a, _r, _auth, _prepared, _transport, providerSpawnHints) => {
+      hints = providerSpawnHints;
+      return null;
+    });
+    const injection = {
+      baseUrl: 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1',
+      models: ['qwen3.8-max'],
+      tokenPlanKey: true,
+      envKey: 'NEXUS_QWEN_KEY_0123456789abcdef0123456789abcdef',
+    } as const;
+    let sessionId: string | undefined;
+    try {
+      sessionId = spawnAgentSession(
+        fakeWc(),
+        { kind: "cli-agent", cols: 80, rows: 24 },
+        claudeLike(),
+        { qwenSettingsInjection: injection },
+        trustedSpawn(),
+      ).sessionId;
+      expect(hints).toEqual({ qwenSettingsInjection: injection });
+    } finally {
+      if (sessionId) await orchTerminateSession(sessionId);
+      setAgentSpawnHook(null);
+    }
+  });
 });
 
 describe("agentEnv linker-injection guard (plugin trust boundary)", () => {

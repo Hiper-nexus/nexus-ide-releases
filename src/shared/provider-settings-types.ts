@@ -17,6 +17,12 @@ export const providerConfigPatchSchema = z.object({
   extraArgs: z.array(z.string().max(512)).max(64).optional(),
   /** Upstream routing (ai-launcher port): anthropic|glm|sakana|… */
   upstream: z.string().max(32).optional(),
+  /**
+   * F-1567: base URL explícita do provider (hoje só o Qwen usa: o endpoint
+   * OpenAI-compatible que a chave configurada deve falar — ex.: a URL
+   * exclusiva do Alibaba Token Plan). '' limpa. https sem credencial.
+   */
+  baseUrl: z.string().max(512).optional(),
   /** Permission mode key ('' = CLI default; 'yolo'|'bypass'|'auto'|'plan'…). */
   permissionMode: z.string().max(32).optional(),
   /** Reasoning effort level ('' = CLI default). */
@@ -33,6 +39,12 @@ export interface ProviderConfig {
   extraArgs: string[];
   /** Which upstream this Claude-compatible CLI routes to (default anthropic). */
   upstream: string;
+  /**
+   * F-1567: base URL explícita do provider ('' = automática). Hoje só o Qwen
+   * consome: com chave configurada, o pane injeta a chave contra ESTA URL
+   * (a do Token Plan para chaves sk-sp-…, salvo escolha do operador).
+   */
+  baseUrl: string;
   /** Auto-operation flags (bypass/yolo/auto/plan), reasoning effort, verbose. */
   permissionMode: string;
   effort: string;
@@ -131,6 +143,8 @@ export interface ProviderSettingsInfo {
     | 'login-needed';
   /** Active upstream routing (ai-launcher port). */
   upstream: string;
+  /** F-1567: base URL explícita salva (Qwen; '' = automática). */
+  baseUrl?: string;
   /** Whether this adapter is Claude-compatible and can be routed. */
   routable: boolean;
   /** Available upstreams to route to. */

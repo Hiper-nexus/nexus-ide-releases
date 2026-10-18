@@ -2746,6 +2746,9 @@ function emitNoSwitch(
     kind: hit.kind,
     switched: false,
     fromAccountId: current?.id,
+    // F-1567: o toast escolhe a orientação pela CLI que parou (chave/base URL é
+    // do Qwen; login expirado de Claude/Codex/AGY segue com o texto de sessão).
+    fromAdapterId: pane.adapterId,
     missionId: authority.missionId,
     ...(transientPhase ? { transientPhase } : {}),
     ...extra,
@@ -3747,13 +3750,19 @@ async function confirmLimitByProbe(
     });
     return;
   }
+  // F-1567: só o Qwen (chave sk-sp- de plano dedicado + base URL) fala de
+  // "credencial recusada"; o 401 de login expirado das outras CLIs mantém a
+  // redação de sempre.
+  const qwenCredentialRefused = hit.kind === 'auth' && adapterId === 'qwen';
   setCooldown(
     current.id,
     // F-1484: a pausa não confirmada nunca encurta um cooldown maior vigente.
     hit.scope
       ? now + CAPPED_COOLDOWN_WITHOUT_PROVIDER_API_MS
       : Math.max(now + CAPPED_COOLDOWN_WITHOUT_PROVIDER_API_MS, getAccount(current.id)?.cooldownUntil ?? 0),
-    `${hit.reason} (limite não confirmado pela API do provider)`,
+    qwenCredentialRefused
+      ? `${hit.reason} (recusa de credencial não confirmada pela API do provider)`
+      : `${hit.reason} (limite não confirmado pela API do provider)`,
     hit.scope,
   );
   noteQuotaLimitHit(adapterId, hit, current.id);
@@ -3769,10 +3778,16 @@ async function confirmLimitByProbe(
     pane,
     current,
     hit,
-    `${hit.reason} — a API do provider não confirmou o limite; ` +
-      `a conta fica em pausa curta e o pane tenta de novo em ~${Math.round(
-        CAPPED_COOLDOWN_WITHOUT_PROVIDER_API_MS / 60_000,
-      )} min sem trocar de conta`,
+    qwenCredentialRefused
+      ? `${hit.reason} — credencial recusada (401): chave inválida ou base ` +
+        `URL incompatível com a chave; a conta fica em pausa curta e o pane ` +
+        `tenta de novo em ~${Math.round(
+          CAPPED_COOLDOWN_WITHOUT_PROVIDER_API_MS / 60_000,
+        )} min sem trocar de conta`
+      : `${hit.reason} — a API do provider não confirmou o limite; ` +
+        `a conta fica em pausa curta e o pane tenta de novo em ~${Math.round(
+          CAPPED_COOLDOWN_WITHOUT_PROVIDER_API_MS / 60_000,
+        )} min sem trocar de conta`,
     undefined,
     {
       scheduledRetryAtMs,
