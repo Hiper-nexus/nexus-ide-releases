@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.76.303 — Reserva sem rota falha e esteira em silêncio
+
+A reserva do Claude passa a trocar para uma alternativa que funciona, e o vigia de esteira para de cobrar workers durante a verificação de conclusão. Candidato macOS (`darwin-arm64`) assinado e notarizado.
+
+- **Reserva do Claude sem rota falha**. Com o Claude reservado ao Maestro, o worker vai para a primeira alternativa saudável; rota com 5+ tentativas e até 20% de sucesso (ex.: CLI com credencial recusada) não herda a vaga.
+- **Circuito aberto fora da reserva**. A troca não escolhe CLI com circuito aberto enquanto houver alternativa fechada; sem nenhuma, mantém o Claude.
+- **Lane de segurança respeitada**. Em auditoria de segurança crítica, a troca fica entre Claude e Codex e não escapa para outra CLI.
+- **Esteira em silêncio na verificação**. Com a conclusão pedida pelo Maestro atual e ainda sem resposta da verificação, o lembrete "Esteira parada" deixa de chegar a cada hora; se a verificação recusar, ele volta.
+
 ## 0.76.302 — Todas as LLMs no roteamento
 
 O roteador passa a usar a cota real de cada assinatura para repartir o trabalho entre todas as LLMs instaladas, em qualquer combinação de CLIs. Candidato macOS (`darwin-arm64`) assinado e notarizado.
