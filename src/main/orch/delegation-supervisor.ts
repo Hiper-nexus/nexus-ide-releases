@@ -97,6 +97,7 @@ import {
 } from './zero-delivery-watchdog';
 import { flushAllNexusTaskFailClosedRetries } from './nexus-task-fail-closed-recovery';
 import { decideMomentumNudge, momentumNudgeSummary, momentumReadyBacklog } from './mission-momentum-watchdog';
+import { hasCurrentCompletionRequest } from './operator-tab-completion';
 import { getContextBySession } from './gate';
 import { judgeMissionMomentum, momentumNudgeFromJudgment } from './jev-mission-momentum';
 import {
@@ -1858,6 +1859,7 @@ async function scanSuite(suite: ProjectDomainStoreSuite, now: number, context: P
         workerPanes: workerPaneCount, orchestratorAlive, dispatchAuthorized: authorized,
         readOnly: leader?.readOnly === true, readyTaskIds, availableSlots, usefulWorkingWorkers,
         soloNudgeWhenNoBacklog,
+        completionRequested: hasCurrentCompletionRequest(suite.scope, mission),
         readySinceMs: momentumReadySince.get(key) ?? null,
         soloSinceMs: momentumSoloSince.get(key) ?? null,
         lastNudgeAtMs: lastNotice?.at ?? null, backlogKey, lastBacklogKey: lastNotice?.backlogKey,

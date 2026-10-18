@@ -54,8 +54,15 @@ export function decideMomentumNudge(input: {
    * inventar trabalho para missão selada/plano).
    */
   readonly soloNudgeWhenNoBacklog?: boolean;
+  /**
+   * O líder atual pediu done e a verificação ainda não respondeu. Abrir
+   * workers agora não tem trabalho para eles e só gasta tokens; se a
+   * verificação recusar (clearCompletionRequest), o nudge volta a valer.
+   */
+  readonly completionRequested?: boolean;
 }): MomentumDecision {
   if (input.missionStatus !== 'running') return { action: 'none' };
+  if (input.completionRequested === true) return { action: 'none' };
   if (input.lane === 'plan' || input.lane === 'consult')
     return { action: 'none' };
   if (input.maxWorkers === 0) return { action: 'none' };
