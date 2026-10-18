@@ -65,7 +65,7 @@ vi.mock('./project-domain-store-registry', () => ({
         harness.missions.set(id, next as Mission);
         return next;
       },
-      hasCurrentKickoffAcceptance: () => harness.hasKickoffReceipt,
+      hasCurrentKickoffAcceptance: (_missionId: string) => harness.hasKickoffReceipt,
     },
     tasks: {
       hasPlan: () => false,
@@ -87,6 +87,7 @@ vi.mock('./mission-engine-registry', () => ({
 
 vi.mock('./squad-store', () => ({
   getSquad: () => null,
+  listSquads: () => [],
 }));
 
 import {
@@ -318,5 +319,26 @@ describe('persist leftover + reopen não remonta', () => {
     expect(harness.missions.get(fresh.id)?.description).not.toContain(
       NEXUS_LEFTOVER_PARKED_MARKER,
     );
+  });
+
+  it('missão sem start deste processo é leftover — não é nova iniciar (Bug C)', async () => {
+    const stale = leftoverRunning({
+      id: 'mission-stale',
+      title: 'Missão antiga sem start',
+      // updatedAt pós-boot — isFreshIniciarKickoff sem start marker NUNCA
+      // deve classificar a missão como nova iniciar.
+      updatedAt: Date.now(),
+      // start NÃO está presente — a missão NÃO foi kickstarted neste processo
+    });
+    harness.missions.set(stale.id, stale);
+
+    await resurrectRunningMissionsForScope(scope);
+
+    // A missão DEVE ser estacionada como leftover — isThisProcessFreshKickoff
+    // retorna false quando typeof start !== 'number'.
+    const persisted = harness.missions.get(stale.id);
+    expect(persisted?.status).toBe('blocked');
+    expect(persisted?.intentState).toBe('blocked_user');
+    expect(persisted?.description).toContain(NEXUS_LEFTOVER_PARKED_MARKER);
   });
 });

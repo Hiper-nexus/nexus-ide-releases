@@ -529,6 +529,35 @@ export class ProjectRuntimeManager {
     return true;
   }
 
+  /**
+   * List all persisted checkout runtime database paths. Each path is an
+   * absolute *.sqlite3 file that may contain running missions from a previous
+   * session. Callers should open each file read-only via better-sqlite3 to
+   * avoid schema migrations on orphaned checkouts.
+   */
+  listAllCheckoutRuntimePaths(): string[] {
+    if (!fs.existsSync(this.projectsDirectory)) return [];
+    const paths: string[] = [];
+    for (const projectDir of fs.readdirSync(this.projectsDirectory, {
+      withFileTypes: true,
+    })) {
+      if (!projectDir.isDirectory()) continue;
+      const projectPath = path.join(this.projectsDirectory, projectDir.name);
+      for (const checkoutDir of fs.readdirSync(projectPath, {
+        withFileTypes: true,
+      })) {
+        if (!checkoutDir.isDirectory()) continue;
+        const dbPath = path.join(
+          projectPath,
+          checkoutDir.name,
+          'runtime.sqlite3',
+        );
+        if (fs.existsSync(dbPath)) paths.push(dbPath);
+      }
+    }
+    return paths;
+  }
+
   closeAll(): void {
     // Process shutdown is the explicit force-close boundary; ordinary LRU and
     // close(scope) preserve every active lease.

@@ -123,6 +123,7 @@ const missionRowSchema = z
     intent_version: z.number().int().nonnegative().default(0),
     created_at: z.number().int().nonnegative(),
     updated_at: z.number().int().nonnegative(),
+    start: z.number().int().nonnegative().nullable().optional(),
   })
   .strict();
 
@@ -748,7 +749,7 @@ export class ScopedMissionStore {
       .prepare(
         `SELECT id, title, description, status, squad_id, milestones_json,
                 learnings, result_json, orch_session_id, intent_state,
-                intent_contract_json, intent_version, created_at, updated_at
+                intent_contract_json, intent_version, start, created_at, updated_at
          FROM missions WHERE id = ?`,
       )
       .get(id);
@@ -1876,7 +1877,7 @@ export class ScopedMissionStore {
           `UPDATE missions
            SET title = ?, description = ?, status = ?, milestones_json = ?,
                result_json = ?, intent_state = ?, intent_contract_json = ?,
-               intent_version = ?, updated_at = ?
+               intent_version = ?, start = ?, updated_at = ?
            WHERE id = ?`,
         )
         .run(
@@ -1888,6 +1889,7 @@ export class ScopedMissionStore {
           next.intentState ?? 'legacy',
           serializeIntentContract(next.intentContract),
           next.intentVersion ?? 0,
+          next.start ?? null,
           next.updatedAt,
           id,
         );
@@ -2126,6 +2128,7 @@ export class ScopedMissionStore {
       ...(intentContract ? { intentContract } : {}),
       intentVersion: row.intent_version,
       orchestratorSessionId: row.orch_session_id ?? undefined,
+      ...(row.start != null ? { start: row.start } : {}),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       ...this.#binding.coordinates,

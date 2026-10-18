@@ -540,6 +540,7 @@ import {
 } from './crash-reporting/gpu-fallback-marker';
 import { readCrashReportPending } from './crash-reporting/crash-report-pending';
 import { SessionAliveSentinel } from './crash-reporting/session-alive-sentinel';
+import { parkOrphanedRunningMissions } from './orch/mission-fast-lane';
 import {
   authorizeAppQuit,
   closeNeedsConfirmation,
@@ -1276,6 +1277,24 @@ if (squirrelStartupEvent || !wireDeepLinks()) {
             onPriorCrashDetected: (prior) => {
               console.warn(
                 `[nexus] detected ungraceful exit from prior session (pid ${prior.pid}, rss ${prior.rssMb}MB, uptime ${Math.round((prior.lastPulse - prior.startTime) / 1000)}s)`,
+              );
+              trace({
+                kind: 'prior-crash-detected',
+                pid: prior.pid,
+                rssMb: prior.rssMb,
+                uptimeSec: Math.round(
+                  (prior.lastPulse - prior.startTime) / 1000,
+                ),
+                activePanes: prior.activePanes,
+              });
+              // Schedule orphaned-mission sweep after orchestration is
+              // initialized (registry, runtime manager, and store facades
+              // must be ready before the sweep can read/write missions).
+              enqueuePostBootIdleTask(
+                'crash-sweep-orphaned-missions',
+                async () => {
+                  await parkOrphanedRunningMissions('crash');
+                },
               );
             },
           });
