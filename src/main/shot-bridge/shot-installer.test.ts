@@ -24,7 +24,7 @@ function makeDeps(over: Partial<ShotInstallerDeps> & { installed?: string; fresh
     arch: 'arm64',
     appPath: SHOT_APP_PATH,
     appExists: () => true,
-    readBundleVersion: (p) => (p === SHOT_APP_PATH ? (over.installed ?? '0.1.14') : (over.fresh ?? '0.1.15')),
+    readBundleVersion: async (p) => (p === SHOT_APP_PATH ? (over.installed ?? '0.1.14') : (over.fresh ?? '0.1.15')),
     isShotRunning: async () => false,
     hasRecentShotCrash: () => false,
     fetchText: async () => feed(),

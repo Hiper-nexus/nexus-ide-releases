@@ -326,7 +326,11 @@ export function verifyResumableGitHubDraft(
   return release;
 }
 
-export function verifyRemoteMain(raw, expectedCommitSha, { root = process.cwd(), isAncestor } = {}) {
+export function verifyRemoteMain(
+  raw,
+  expectedCommitSha,
+  { root = process.cwd(), isAncestor, fetch } = {},
+) {
   const matches = String(raw)
     .trim()
     .split(/\r?\n/)
@@ -342,13 +346,27 @@ export function verifyRemoteMain(raw, expectedCommitSha, { root = process.cwd(),
   if (remoteSha === expectedCommitSha) {
     return expectedCommitSha;
   }
-  const check = isAncestor
+  let check = isAncestor
     ? isAncestor(expectedCommitSha, remoteSha)
     : spawnSync(
         'git',
         ['merge-base', '--is-ancestor', expectedCommitSha, remoteSha],
         { cwd: root },
       ).status === 0;
+  if (!check && fetch) {
+    try {
+      fetch();
+      check = isAncestor
+        ? isAncestor(expectedCommitSha, remoteSha)
+        : spawnSync(
+            'git',
+            ['merge-base', '--is-ancestor', expectedCommitSha, remoteSha],
+            { cwd: root },
+          ).status === 0;
+    } catch {
+      // best effort
+    }
+  }
   if (!check) {
     throw new Error('origin/main does not match the verified release commit');
   }
@@ -1094,7 +1112,113 @@ async function assertPublicationStillMonotonic(github, repositories, version) {
   }
 }
 
-export function createRepositoryPublisher(root, canonicalRepo) {
+export function pushReleaseWithRetry(
+  { commitSha, tag, tagObjectSha },
+  options = {},
+) {
+  const root = options.root ?? process.cwd();
+  const maxAttempts = options.maxAttempts ?? 3;
+  const getRemoteMain =
+    options.getRemoteMain ??
+    (() =>
+      runCapture(
+        'git',
+        ['ls-remote', '--exit-code', 'origin', 'refs/heads/main'],
+        root,
+      )
+        .trim()
+        .split(/\s+/)[0]);
+  const isAncestor =
+    options.isAncestor ??
+    ((ancestor, descendant) =>
+      spawnSync(
+        'git',
+        ['merge-base', '--is-ancestor', ancestor, descendant],
+        { cwd: root },
+      ).status === 0);
+  const fetch =
+    options.fetch ??
+    (() => {
+      run('git', ['fetch', 'origin', 'refs/heads/main'], root);
+    });
+  const push =
+    options.push ??
+    ((args) => {
+      run('git', args, root);
+    });
+  const log =
+    options.log ??
+    ((msg) => {
+      process.stdout.write(`${msg}\n`);
+    });
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    let remoteMain = getRemoteMain();
+
+    const alreadyContains =
+      remoteMain === commitSha || isAncestor(commitSha, remoteMain);
+
+    if (alreadyContains) {
+      log(
+        `[release-publish] origin/main (${remoteMain}) already contains ${commitSha}; pushing release tag only`,
+      );
+      push(['push', 'origin', `${tagObjectSha}:refs/tags/${tag}`]);
+      return { pushed: 'tag-only', remoteMain, attempt };
+    }
+
+    try {
+      push(
+        buildAtomicReleasePushArgs({
+          commitSha,
+          tag,
+          tagObjectSha,
+        }),
+      );
+      return { pushed: 'atomic', remoteMain, attempt };
+    } catch (pushError) {
+      log(
+        `[release-publish] push rejected on attempt ${attempt}/${maxAttempts}: ${pushError instanceof Error ? pushError.message : String(pushError)}`,
+      );
+      // Quando o push for rejeitado porque main avançou, faça git fetch
+      log(`[release-publish] fetching origin to reconcile remote main...`);
+      fetch();
+      remoteMain = getRemoteMain();
+
+      // Se a tag/commit da release ainda for ancestral de origin/main:
+      // segue sem reescrever o histórico. Se o remoto tiver só commits de
+      // release de outra plataforma, aceite sem push forçado. Nunca use --force.
+      if (remoteMain === commitSha || isAncestor(commitSha, remoteMain)) {
+        log(
+          `[release-publish] after fetch, origin/main (${remoteMain}) contains ${commitSha}; pushing release tag only`,
+        );
+        push(['push', 'origin', `${tagObjectSha}:refs/tags/${tag}`]);
+        return { pushed: 'tag-only', remoteMain, attempt };
+      }
+
+      // Se só falta o fast-forward (remoteMain é ancestral de commitSha):
+      if (isAncestor(remoteMain, commitSha)) {
+        log(
+          `[release-publish] origin/main (${remoteMain}) is an ancestor of ${commitSha} (fast-forward); retrying`,
+        );
+        if (attempt === maxAttempts) {
+          throw new Error(
+            `push rejected after ${maxAttempts} attempts: fast-forward to ${commitSha} was not accepted by remote`,
+          );
+        }
+        continue;
+      }
+
+      // Divergente -> falha clara
+      throw new Error(
+        `push rejected: origin/main (${remoteMain}) and release commit (${commitSha}) have diverged; refusing to push`,
+      );
+    }
+  }
+
+  throw new Error(`push rejected: exceeded maximum attempts (${maxAttempts})`);
+}
+
+export function createRepositoryPublisher(root, canonicalRepo, seams = {}) {
   const verifyOrigin = () =>
     verifyCanonicalOrigin(
       runCapture(
@@ -1112,27 +1236,10 @@ export function createRepositoryPublisher(root, canonicalRepo) {
   return {
     push({ commitSha, tag, tagObjectSha }) {
       verifyOrigin();
-      const remoteMain = runCapture(
-        'git',
-        ['ls-remote', '--exit-code', 'origin', 'refs/heads/main'],
-        root,
-      ).trim().split(/\s+/)[0];
-      const mainContainsCommit =
-        remoteMain === commitSha ||
-        spawnSync(
-          'git',
-          ['merge-base', '--is-ancestor', commitSha, remoteMain],
-          { cwd: root },
-        ).status === 0;
-      if (mainContainsCommit) {
-        run('git', ['push', 'origin', `${tagObjectSha}:refs/tags/${tag}`], root);
-      } else {
-        run('git', buildAtomicReleasePushArgs({
-          commitSha,
-          tag,
-          tagObjectSha,
-        }), root);
-      }
+      return pushReleaseWithRetry(
+        { commitSha, tag, tagObjectSha },
+        { root, ...seams },
+      );
     },
     verify({ commitSha, tag, tagObjectSha }) {
       verifyOrigin();
@@ -1143,7 +1250,13 @@ export function createRepositoryPublisher(root, canonicalRepo) {
           root,
         ),
         commitSha,
-        { root },
+        {
+          root,
+          isAncestor: seams.isAncestor,
+          fetch: seams.fetch ?? (() => {
+            run('git', ['fetch', 'origin', 'refs/heads/main'], root);
+          }),
+        },
       );
       verifyRemoteTag(
         runCapture(

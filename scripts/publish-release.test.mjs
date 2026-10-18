@@ -24,6 +24,7 @@ import {
   publishMacosRelease,
   publishManualRelease,
   publishManualReleaseTestCore,
+  pushReleaseWithRetry,
   resolveSecurityAssets,
   stageReleaseAssets,
   verifyRemoteMain,
@@ -475,6 +476,121 @@ describe('manual GitHub release publication', () => {
       `${tagObjectSha}\trefs/tags/v1.2.3\n${'b'.repeat(40)}\trefs/tags/v1.2.3^{}\n`,
       { tag: 'v1.2.3', expectedCommitSha: sha, expectedTagObjectSha: tagObjectSha },
     )).toThrow(/release tag/);
+  });
+
+  it('handles remote main race: rejeitado -> fetch -> ancestral -> segue', () => {
+    const commitSha = 'a'.repeat(40);
+    const remoteSha = 'b'.repeat(40);
+    const tagObjectSha = 'c'.repeat(40);
+    let fetchCalled = false;
+    const pushedArgs = [];
+
+    const result = pushReleaseWithRetry(
+      { commitSha, tag: 'v1.2.3', tagObjectSha },
+      {
+        getRemoteMain: () => remoteSha,
+        // Before fetch, local doesn't know remoteSha is ancestor; after fetch, it is ancestor.
+        isAncestor: (ancestor, descendant) => fetchCalled && ancestor === commitSha && descendant === remoteSha,
+        fetch: () => {
+          fetchCalled = true;
+        },
+        push: (args) => {
+          if (!fetchCalled) {
+            throw new Error('Updates were rejected because the remote contains work that you do not have locally.');
+          }
+          pushedArgs.push(args);
+        },
+        log: () => {},
+      },
+    );
+
+    expect(fetchCalled).toBe(true);
+    expect(result).toEqual({ pushed: 'tag-only', remoteMain: remoteSha, attempt: 1 });
+    expect(pushedArgs).toEqual([
+      ['push', 'origin', `${tagObjectSha}:refs/tags/v1.2.3`],
+    ]);
+  });
+
+  it('fails with clear error when histories are divergent: rejeitado -> fetch -> divergente -> falha clara', () => {
+    const commitSha = 'a'.repeat(40);
+    const remoteSha = 'd'.repeat(40);
+    const tagObjectSha = 'c'.repeat(40);
+    let fetchCalled = false;
+
+    expect(() =>
+      pushReleaseWithRetry(
+        { commitSha, tag: 'v1.2.3', tagObjectSha },
+        {
+          getRemoteMain: () => remoteSha,
+          isAncestor: () => false, // neither is ancestor
+          fetch: () => {
+            fetchCalled = true;
+          },
+          push: () => {
+            throw new Error('Updates were rejected because the remote contains work that you do not have locally.');
+          },
+          log: () => {},
+        },
+      ),
+    ).toThrow(/diverged/);
+
+    expect(fetchCalled).toBe(true);
+  });
+
+  it('retries fast-forward when rejected: rejeitado -> fetch -> fast-forward -> segue na proxima tentativa', () => {
+    const commitSha = 'a'.repeat(40);
+    const remoteSha = 'b'.repeat(40);
+    const tagObjectSha = 'c'.repeat(40);
+    let fetchCount = 0;
+    let pushAttempts = 0;
+    const pushedArgs = [];
+
+    const result = pushReleaseWithRetry(
+      { commitSha, tag: 'v1.2.3', tagObjectSha },
+      {
+        getRemoteMain: () => remoteSha,
+        // commitSha is ahead of remoteSha (fast-forward)
+        isAncestor: (ancestor, descendant) => ancestor === remoteSha && descendant === commitSha,
+        fetch: () => {
+          fetchCount += 1;
+        },
+        push: (args) => {
+          pushAttempts += 1;
+          if (pushAttempts === 1) {
+            throw new Error('Updates were rejected');
+          }
+          pushedArgs.push(args);
+        },
+        log: () => {},
+      },
+    );
+
+    expect(fetchCount).toBe(1);
+    expect(pushAttempts).toBe(2);
+    expect(result).toEqual({ pushed: 'atomic', remoteMain: remoteSha, attempt: 2 });
+    expect(pushedArgs).toEqual([
+      buildAtomicReleasePushArgs({ commitSha, tag: 'v1.2.3', tagObjectSha }),
+    ]);
+  });
+
+  it('reconciles origin/main via fetch in verifyRemoteMain when remote commit is ancestor after fetch', () => {
+    const sha = 'a'.repeat(40);
+    const remoteSha = 'b'.repeat(40);
+    let fetched = false;
+
+    const verified = verifyRemoteMain(
+      `${remoteSha}\trefs/heads/main\n`,
+      sha,
+      {
+        isAncestor: (expected, remote) => fetched && expected === sha && remote === remoteSha,
+        fetch: () => {
+          fetched = true;
+        },
+      },
+    );
+
+    expect(fetched).toBe(true);
+    expect(verified).toBe(sha);
   });
 
   it('proves fetch and push origin are the canonical GitHub repository', () => {
