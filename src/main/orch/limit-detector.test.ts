@@ -348,6 +348,28 @@ describe('detectLimit', () => {
     ).toBe('auth');
   });
 
+  it('F-1569: "Login expired · Please run /login" do Claude 2.1.302 é auth', () => {
+    // Tela do Maestro em 18/10 18:32: a CLI imprime só esta célula, sem 401.
+    for (const screen of [
+      '● Login expired · Please run /login',
+      'Brewed for 3m\n  ⎿  Login expired · Please run /login\n',
+      'Login expired · Run /login to sign in again, or re-authenticate your Anthropic profile',
+    ]) {
+      const hit = detectLimit(screen);
+      expect(hit?.kind).toBe('auth');
+      expect(hit?.cooldownMs).toBe(15 * 60 * 1000);
+    }
+  });
+
+  it('F-1569: a frase citada em prosa, handoff ou pack de continuidade não arma failover', () => {
+    expect(detectLimit('o Maestro mostrou "Login expired · Please run /login" e parou')).toBeNull();
+    expect(detectLimit('> ● Login expired · Please run /login')).toBeNull();
+    expect(detectLimit('login expired · please run /login')).toBeNull();
+    expect(
+      detectLimit(sanitizeHandoffExcerptForDetector('● Login expired · Please run /login')),
+    ).toBeNull();
+  });
+
   it('F-249: "Invalid API-key" com hífen sem a moldura de erro é prosa, log ou cat do código — não arma failover', () => {
     // A frase solta aparece na doc do provider, em log colado, em diff e no
     // `cat` deste próprio detector; só a moldura "Error: 401"/"[API Error: 401"

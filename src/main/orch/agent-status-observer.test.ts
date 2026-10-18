@@ -26,6 +26,8 @@ import {
   __resetAgentStatusForTests,
   applyCanonicalHookEvent,
   resetAgentStatusOnExit,
+  STOP_FAILURE_AUTH_COOLDOWN_MS,
+  STOP_FAILURE_AUTH_REASON,
   STOP_FAILURE_RATE_LIMIT_COOLDOWN_MS,
   STOP_FAILURE_RATE_LIMIT_REASON,
 } from './agent-status';
@@ -173,14 +175,16 @@ describe('turn lifecycle emission', () => {
     });
 
     const frames = snapshotObserverFrames('pty-1');
+    // F-1569: o StopFailure `auth` também publica o provider_error (abaixo).
     expect(frames.map((f) => f.kind)).toEqual([
       'turn_started',
       'status_changed',
+      'provider_error',
       'status_changed',
       'turn_ended',
     ]);
-    expect(frames[2]).toMatchObject({ payload: { status: 'completed' } });
-    expect(frames[3]).toMatchObject({
+    expect(frames[3]).toMatchObject({ payload: { status: 'completed' } });
+    expect(frames[4]).toMatchObject({
       kind: 'turn_ended',
       payload: { turnId: 'turn-1', outcome: 'error' },
     });
@@ -253,8 +257,33 @@ describe('turn lifecycle emission', () => {
     expect(detectLimit(frame.payload.reason)).toBeNull();
   });
 
+  it('F-1569: StopFailure auth (login expirado) vira provider_error confirmado de auth', () => {
+    applyCanonicalHookEvent({ sessionId: 'pty-1', event: userSubmit, now: 800 });
+    applyCanonicalHookEvent({
+      sessionId: 'pty-1',
+      event: { kind: 'status', type: 'stop', stopFailure: 'auth' },
+      now: 900,
+    });
+
+    const [frame] = snapshotObserverFrames('pty-1').filter((f) => f.kind === 'provider_error');
+    expect(frame).toMatchObject({
+      at: 900,
+      payload: {
+        source: 'provider-hook',
+        kind: 'auth',
+        reason: STOP_FAILURE_AUTH_REASON,
+        cooldownMs: STOP_FAILURE_AUTH_COOLDOWN_MS,
+        confirmed: true,
+      },
+    });
+    if (frame?.kind !== 'provider_error') throw new Error('unreachable');
+    // Sem adapterId: a CLI inteira não entra no registro de limite.
+    expect(frame.payload.adapterId).toBeUndefined();
+    expect(detectLimit(frame.payload.reason)).toBeNull();
+  });
+
   it('F-1484: outra StopFailure ou Stop normal nunca viram provider_error', () => {
-    for (const stopFailure of ['auth', 'billing', 'invalid_request', 'other'] as const) {
+    for (const stopFailure of ['billing', 'invalid_request', 'other'] as const) {
       applyCanonicalHookEvent({
         sessionId: 'pty-1',
         event: { kind: 'status', type: 'stop', stopFailure },

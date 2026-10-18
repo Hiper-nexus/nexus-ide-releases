@@ -135,14 +135,18 @@ import {
 import {
   initFailover,
   registerFailoverListener,
+  resetInstantAuthDeaths,
   shutdownFailover,
   unregisterFailoverListener,
 } from './failover';
 import {
   __resetAgentStatusForTests,
   applyCanonicalHookEvent,
+  STOP_FAILURE_AUTH_COOLDOWN_MS,
+  STOP_FAILURE_AUTH_REASON,
   STOP_FAILURE_RATE_LIMIT_COOLDOWN_MS,
 } from './agent-status';
+import { switchRendererOrchestratorAccount } from './failover-orchestrator-respawn';
 import { __resetObserverBusForTests } from './observer-bus';
 
 type Renderer = WebContents & EventEmitter & { send: ReturnType<typeof vi.fn> };
@@ -488,5 +492,78 @@ describe('F-1484: StopFailure rate_limit troca de conta na hora', () => {
     expect(switched()).toHaveLength(1);
     expect(accountMocks.clearCooldown).not.toHaveBeenCalled();
     expect(accountMocks.cooldowns.get('account-a')).toBeGreaterThanOrEqual(confirmedUntil);
+  });
+});
+
+/**
+ * F-1569: Maestro em conta Claude gerenciada, 18/10 18:32 — a CLI 2.1.302
+ * imprimiu "● Login expired · Please run /login" e disparou StopFailure
+ * `authentication_failed`. Nenhum dos dois sinais chegava ao failover: o pane
+ * parou e o operador rodou /login à mão. Com outra conta pronta, o Main religa
+ * o MESMO pane na conta irmã (F-995) levando a conversa (resume nativo).
+ */
+describe('F-1569: login expirado do Claude no Maestro', () => {
+  const orchestratorSwitch = vi.mocked(switchRendererOrchestratorAccount);
+
+  beforeEach(() => {
+    resetInstantAuthDeaths('claude');
+    orchestratorSwitch.mockReset();
+    orchestratorSwitch.mockImplementation(async () => ({ handled: true, ok: true, sessionId: 'session-a2' }));
+    const pane = { paneId: 'pane-a', sessionId: 'session-a', kind: 'cli-agent', adapterId: 'claude', accountId: 'account-a' };
+    paneMocks.authorities.set('session-a', { owner, ...pane, missionId: 'mission-maestro', scope: testProjectScope() });
+  });
+
+  afterEach(() => {
+    orchestratorSwitch.mockReset();
+    orchestratorSwitch.mockImplementation(async () => ({ handled: false }));
+  });
+
+  function expectMaestroSwitchedWithResume(): void {
+    expect(orchestratorSwitch).toHaveBeenCalledOnce();
+    const input = orchestratorSwitch.mock.calls[0]![0];
+    expect(input).toMatchObject({
+      missionId: 'mission-maestro', paneId: 'pane-a', sessionId: 'session-a', toAccountId: 'account-b',
+    });
+    expect(input.buildResumeNote).toBeTypeOf('function');
+    expect(failoverEvents()).toEqual([
+      expect.objectContaining({
+        paneId: 'pane-a', kind: 'auth', switched: true, toAccountId: 'account-b', respawnedByMain: true,
+      }),
+    ]);
+  }
+
+  it('StopFailure auth troca a conta do Maestro na hora; leitura de cota em cache não refuta a CLI', async () => {
+    const cached = snapshot(T0 - 60_000, [
+      { kind: 'session', label: 'Sessão', usedRatio: 0.1, source: 'provider-api', confidence: 'high' },
+    ]);
+    quotaMocks.service = { lastSnapshot: () => cached, refreshForLimitHit: async () => cached };
+    hook({ kind: 'status', type: 'stop', stopFailure: 'auth' });
+    await settleFailover();
+
+    expectMaestroSwitchedWithResume();
+    expect(accountMocks.setCooldown).toHaveBeenCalledWith(
+      'account-a', T0 + STOP_FAILURE_AUTH_COOLDOWN_MS, STOP_FAILURE_AUTH_REASON, undefined,
+    );
+    expect(traceMocks.trace).not.toHaveBeenCalledWith(expect.objectContaining({ outcome: 'suppressed' }));
+  });
+
+  it('o texto "● Login expired · Please run /login" no PTY do Maestro também troca', async () => {
+    for (const tap of [...ptyMocks.dataTaps]) tap('session-a', '\n● Login expired · Please run /login\n');
+    await settleFailover();
+
+    expectMaestroSwitchedWithResume();
+  });
+
+  it('sem conta pronta: aviso claro de auth, sem troca e sem religar o pane', async () => {
+    accountMocks.siblingFree = false;
+    hook({ kind: 'status', type: 'stop', stopFailure: 'auth' });
+    await settleFailover();
+
+    expect(orchestratorSwitch).not.toHaveBeenCalled();
+    expect(failoverEvents()).toEqual([
+      expect.objectContaining({
+        paneId: 'pane-a', kind: 'auth', switched: false, reason: expect.stringContaining(STOP_FAILURE_AUTH_REASON),
+      }),
+    ]);
   });
 });

@@ -444,6 +444,16 @@ export const STOP_FAILURE_RATE_LIMIT_COOLDOWN_MS = 15 * 60_000;
 export const STOP_FAILURE_RATE_LIMIT_REASON = 'Claude StopFailure (limite de uso)';
 
 /**
+ * F-1569: StopFailure `authentication_failed`/`oauth_org_not_allowed` (categoria
+ * `auth`). No Claude 2.1.302 é o que a CLI dispara junto com "Login expired ·
+ * Please run /login" (refresh OAuth recusado): a sessão DESTE pane morreu e só
+ * outra credencial a religa. Mesmo teto curto do cooldown de auth da tabela.
+ */
+export const STOP_FAILURE_AUTH_COOLDOWN_MS = 15 * 60_000;
+/** Motivo fixo e inerte, como o de limite de uso (nunca o texto do provedor). */
+export const STOP_FAILURE_AUTH_REASON = 'Claude StopFailure (login expirado ou credencial recusada)';
+
+/**
  * Publish the frames one applied hook event implies. Frame order within the
  * event: turn_started (turn opens) → tool_call/tool_result (the action) →
  * status_changed (always) → turn_ended (turn closes). Total function.
@@ -559,6 +569,26 @@ function publishHookObserverFrames(args: {
         // Sem modelo/tier no StopFailure: bloqueio da conta inteira.
         scope: 'account',
       });
+    }
+
+    // F-1569: login expirado/credencial recusada encerrou o turno. Antes só o
+    // `rate_limit` atravessava: o `auth` era descartado aqui e o Maestro ficava
+    // parado em "Please run /login" com outra conta pronta. Confirmado como o
+    // limite acima, mas sem `adapterId`: não marca a CLI inteira como limitada.
+    if (event.type === 'stop' && event.stopFailure === 'auth') {
+      publishObserverFrame({
+        ...observerFrameScope(sessionId, paneId),
+        at,
+        kind: 'provider_error',
+        payload: {
+          source: 'provider-hook',
+          kind: 'auth',
+          reason: STOP_FAILURE_AUTH_REASON,
+          cooldownMs: STOP_FAILURE_AUTH_COOLDOWN_MS,
+          confirmed: true,
+        },
+      });
+      trace({ kind: 'provider-stop-failure-auth', sessionId, paneId, category: 'auth' });
     }
 
     publishObserverFrame({
