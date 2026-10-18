@@ -540,7 +540,6 @@ import {
 } from './crash-reporting/gpu-fallback-marker';
 import { readCrashReportPending } from './crash-reporting/crash-report-pending';
 import { SessionAliveSentinel } from './crash-reporting/session-alive-sentinel';
-import { parkOrphanedRunningMissions } from './orch/mission-fast-lane';
 import {
   authorizeAppQuit,
   closeNeedsConfirmation,
@@ -1287,15 +1286,6 @@ if (squirrelStartupEvent || !wireDeepLinks()) {
                 ),
                 activePanes: prior.activePanes,
               });
-              // Schedule orphaned-mission sweep after orchestration is
-              // initialized (registry, runtime manager, and store facades
-              // must be ready before the sweep can read/write missions).
-              enqueuePostBootIdleTask(
-                'crash-sweep-orphaned-missions',
-                async () => {
-                  await parkOrphanedRunningMissions('crash');
-                },
-              );
             },
           });
           sessionAliveSentinel.start();

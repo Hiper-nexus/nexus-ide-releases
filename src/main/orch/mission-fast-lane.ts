@@ -32,7 +32,6 @@ import {
 } from '../../shared/mission-recovery-policy';
 import {
   AGENT_STATUS_BLOCK_MARKER,
-  appendMissionVerdict,
   stripMissionVerdictParagraph,
 } from '../../shared/mission-block-cause';
 import { resolveOpenMissionQuestion } from './mission-open-question';
@@ -43,7 +42,6 @@ import {
   type InitialPromptChannel,
 } from '../../shared/cli-initial-prompt';
 import {
-  leftoverIsolationPatch,
   persistLeftoverIsolation,
   pickFocusedRunningMission,
   shouldSkipLeftoverRemount,
@@ -85,7 +83,6 @@ import {
 } from './operator-tab-mission-resume';
 import {
   getProjectDomainStores,
-  requireProjectDomainStoreRegistry,
   type ProjectDomainStoreSuite,
 } from './project-domain-store-registry';
 import { getSquad, listSquads } from './squad-store';
@@ -577,18 +574,6 @@ function isThisProcessFreshKickoff(
   mission: Mission,
   liveMaestroSessionId: string | null,
 ): boolean {
-  // Bug C: apenas missões kickstartadas por este processo (marcador durável
-  // `start`) podem ser kickoffs frescos. Linhas pré-migração (start = null)
-  // nunca são, EXCETO quando há recibo de kickoff desta sessão — o recibo
-  // pré-data a coluna `start` e garante que o kickoff pertence a este processo.
-  const kickstartedByThisProcess =
-    typeof mission.start === 'number' &&
-    mission.start >= NEXUS_PROCESS_STARTED_AT;
-  const hasReceiptFromThisSession =
-    stores.missions.hasCurrentKickoffAcceptance?.(mission.id) === true;
-  if (!kickstartedByThisProcess && !hasReceiptFromThisSession) {
-    return false;
-  }
   const sealedCount = stores.tasks?.list?.(mission.id)?.length ?? 0;
   const paneCount = listPaneSnapshots().filter(
     (pane) => pane.missionId === mission.id,
@@ -3009,6 +2994,8 @@ export async function fastLaneBootstrap(
     }
     if (action === 'respawn') {
       await respawnFastLaneOrchestrator(scope, mission, { invocation: options?.invocation });
+      // Bug C: marcador durável de kickoff para re-spawn deste processo.
+      stores.missions.update(missionId, { start: Date.now() });
       return;
     }
     return;
@@ -3194,10 +3181,17 @@ export async function fastLaneBootstrap(
     }
   };
   if (options?.waitForFirstPane===false) {
-    void finishFirstPane().catch(()=>console.warn('[fast-lane] owned coordinator setup did not complete'));
+    void finishFirstPane().then(() => {
+      // Bug C: marcador durável de kickoff. Escrito DEPOIS do
+      // finishFirstPane para não invalidar o CAS da cadeia de transições.
+      stores.missions.update(missionId, { start: Date.now() });
+    }).catch(()=>console.warn('[fast-lane] owned coordinator setup did not complete'));
     return;
   }
   await finishFirstPane();
+  // Bug C: marcador durável de kickoff. Escrito DEPOIS do finishFirstPane
+  // para não invalidar o CAS da cadeia de transições.
+  stores.missions.update(missionId, { start: Date.now() });
 }
 
 
@@ -3564,6 +3558,8 @@ export async function resumeFastLaneMission(
       note: options.note,
       invocation,
     });
+    // Bug C: marcador durável de kickoff para re-spawn deste processo.
+    stores.missions.update(missionId, { start: Date.now() });
     return { kind: 'mounted', sessionId: spawned.sessionId };
   }
 
@@ -3623,9 +3619,6 @@ export async function resumeFastLaneMission(
     assertNoOpenOperatorQuestion(mission);
     try {
       attemptTechnicalResume(mission);
-      // Durable kickoff marker: replaces the fragile `isNewIniciar` heuristic
-      // (sealedCount≥20 ∧ paneCount=0 ∧ !wasUpdatedBeforeThisProcess).
-      stores.missions.update(missionId, { start: Date.now() });
     } catch (firstError) {
       // A5: a linha pode ter mudado entre a leitura acima e o CAS (watcher ou
       // outro comando concorrente). Relê UMA vez e retenta com os valores
@@ -3643,13 +3636,11 @@ export async function resumeFastLaneMission(
       if (alreadyResumed) {
         // Outro caminho reabriu a missão entre a leitura e o CAS: o objetivo
         // já foi alcançado, segue para o bootstrap.
-        stores.missions.update(missionId, { start: Date.now() });
         trace({ kind: 'fast-lane-resume-cas-retry', missionId, status: 'already-running' });
       } else {
         assertNoOpenOperatorQuestion(latest);
         try {
           attemptTechnicalResume(latest);
-          stores.missions.update(missionId, { start: Date.now() });
           trace({ kind: 'fast-lane-resume-cas-retry', missionId, status: 'recovered' });
         } catch (retryError) {
           throw new Error(
@@ -3668,99 +3659,6 @@ export async function resumeFastLaneMission(
   // Outros estados: re-spawna do zero.
   await fastLaneBootstrap(scope, missionId, { invocation });
   return processedOutcome();
-}
-
-// ── Boot-time orphan sweep ───────────────────────────────────────────────
-
-/**
- * Boot-time sweep: parks running missions in checkouts whose renderer never
- * reopened. Called once per process from `enqueuePostBootIdleTask`.
- *
- * Uses raw SQLite for orphaned scopes whose project/checkout identity cannot
- * be recovered from the filesystem hash. Known scopes (already opened by a
- * renderer) are skipped — `resurrectRunningMissionsForScope` handles those.
- */
-export async function parkOrphanedRunningMissions(
-  cause: 'crash' | 'restart',
-): Promise<void> {
-  const registry = requireProjectDomainStoreRegistry();
-  const runtimeManager = registry.runtimeManager();
-  const paths = runtimeManager.listAllCheckoutRuntimePaths();
-  const knownScopes = registry.listSuites();
-  const knownPaths = new Set(
-    knownScopes.map(
-      (suite) => runtimeManager.locationFor(suite.scope).databasePath,
-    ),
-  );
-  // Lazy-load better-sqlite3 so the module loading overhead only fires when
-  // orphan scopes actually exist.
-  const Database = require('better-sqlite3') as new (
-    path: string,
-    opts?: { readonly?: boolean; fileMustExist?: boolean },
-  ) => import('better-sqlite3').Database;
-  for (const dbPath of paths) {
-    if (knownPaths.has(dbPath)) continue;
-    let db: import('better-sqlite3').Database | null = null;
-    try {
-      db = new Database(dbPath, { readonly: false, fileMustExist: true });
-      const now = Date.now();
-      const missions = db
-        .prepare(
-          `SELECT id, description, status FROM missions
-           WHERE status = 'running'
-             AND (start IS NULL OR start < ?)`,
-        )
-        .all(NEXUS_PROCESS_STARTED_AT) as Array<{
-        id: string;
-        description: string;
-        status: string;
-      }>;
-      for (const mission of missions) {
-        const patch = leftoverIsolationPatch(
-          {
-            id: mission.id,
-            status: mission.status,
-            description: mission.description,
-          },
-          cause,
-        );
-        // Append crash interruption marker for UI visibility.
-        const description = appendMissionVerdict(
-          patch.description,
-          '<!-- nexus:crash-interruption -->',
-          '[NEXUS_CRASH_INTERRUPTED]',
-          `Sessão anterior caiu (${cause}). A missão foi estacionada automaticamente.`,
-        );
-        db.prepare(
-          `UPDATE missions
-           SET status = ?, intent_state = ?, description = ?,
-               updated_at = MAX(updated_at, ?)
-           WHERE id = ?`,
-        ).run(
-          patch.status,
-          patch.intentState,
-          description,
-          now,
-          mission.id,
-        );
-        trace({
-          kind: 'orphaned-mission-parked',
-          missionId: mission.id,
-          cause,
-          dbPath: dbPath.slice(dbPath.lastIndexOf('/') + 1),
-        });
-      }
-    } catch (err) {
-      console.warn(
-        `[fast-lane] orphan sweep failed for ${dbPath}:`,
-        err instanceof Error ? err.message : err,
-      );
-    } finally {
-      try {
-        db?.close();
-      } catch {}
-    }
-  }
 }
 
 // ── UI helpers ───────────────────────────────────────────────────────────

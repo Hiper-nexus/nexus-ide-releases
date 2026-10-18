@@ -321,24 +321,31 @@ describe('persist leftover + reopen não remonta', () => {
     );
   });
 
-  it('missão sem start deste processo é leftover — não é nova iniciar (Bug C)', async () => {
-    const stale = leftoverRunning({
-      id: 'mission-stale',
-      title: 'Missão antiga sem start',
-      // updatedAt pós-boot — isFreshIniciarKickoff sem start marker NUNCA
-      // deve classificar a missão como nova iniciar.
+  it('missão com start deste processo e 20+ tasks NÃO vira leftover (Bug C)', async () => {
+    // Bug C: a antiga heurística (sealedCount≥20 ∧ paneCount=0 ∧
+    // !wasUpdatedBeforeThisProcess) classificava qualquer missão grande como
+    // nova iniciar. Com o marcador durável `start`, uma missão kickstarted
+    // neste processo (start >= NEXUS_PROCESS_STARTED_AT) é corretamente
+    // identificada como nova iniciar, mesmo com 20+ tasks e 0 panes.
+    const { NEXUS_PROCESS_STARTED_AT } = await import(
+      '../../shared/session-restore-liveness'
+    );
+    const fresh = leftoverRunning({
+      id: 'mission-fresh-kickoff',
+      title: 'Time de 20+ stories — kickoff deste processo',
       updatedAt: Date.now(),
-      // start NÃO está presente — a missão NÃO foi kickstarted neste processo
+      start: NEXUS_PROCESS_STARTED_AT + 5000,
     });
-    harness.missions.set(stale.id, stale);
+    harness.missions.set(fresh.id, fresh);
 
     await resurrectRunningMissionsForScope(scope);
 
-    // A missão DEVE ser estacionada como leftover — isThisProcessFreshKickoff
-    // retorna false quando typeof start !== 'number'.
-    const persisted = harness.missions.get(stale.id);
-    expect(persisted?.status).toBe('blocked');
-    expect(persisted?.intentState).toBe('blocked_user');
-    expect(persisted?.description).toContain(NEXUS_LEFTOVER_PARKED_MARKER);
+    // A missão NÃO deve ser estacionada — `start` prova que o kickoff
+    // pertence a este processo, substituindo a heurística antiga.
+    const persisted = harness.missions.get(fresh.id);
+    expect(persisted?.status).toBe('running');
+    expect(persisted?.description).not.toContain(
+      NEXUS_LEFTOVER_PARKED_MARKER,
+    );
   });
 });

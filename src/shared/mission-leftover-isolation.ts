@@ -29,8 +29,7 @@ export type LeftoverIsolationReason =
   | 'unfocus'
   | 'leftover'
   | 'encerrar'
-  | 'crash'
-  | 'restart';
+  | 'crash';
 
 export type LeftoverRemountKind = 'automatic' | 'operator';
 
@@ -93,8 +92,6 @@ export const LEFTOVER_REASON_COPY: Readonly<
     'Execução encerrada; leftover isolado para reopen não remountar o runtime.',
   crash:
     'Sessão anterior caiu (crash). A missão foi estacionada automaticamente para evitar remount zumbi.',
-  restart:
-    'Sessão reiniciada. A missão foi estacionada automaticamente para evitar remount zumbi.',
 });
 
 function recoverableMission(
