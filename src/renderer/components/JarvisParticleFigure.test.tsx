@@ -5,11 +5,13 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { VoiceUiStatus } from '../voice/voice-store';
+import { useVoiceStore } from '../voice/voice-store';
 import {
   buildHumanSilhouette,
   breathingOffset,
   cohesionForStatus,
   cursorForce,
+  figureLevel,
   figureMotionForStatus,
   gazeOffset,
   IDLE_COHESION_MID,
@@ -299,12 +301,37 @@ describe('speakingEnergy', () => {
     expect(speakingEnergy(1, 1)).toBe(1);
   });
 
+  it('cresce monotonicamente com o nível real da voz', () => {
+    const at = (level: number) => speakingEnergy(level, 4.2);
+    expect(at(0.05)).toBeLessThan(at(0.3));
+    expect(at(0.3)).toBeLessThan(at(0.6));
+    expect(at(0.6)).toBeLessThan(at(0.95));
+  });
+
   it('sem nível, mantém um pulso base (nunca negativo, nunca parado em 0)', () => {
     for (let i = 0; i < 100; i += 1) {
       const v = speakingEnergy(0, i * 0.13);
       expect(v).toBeGreaterThan(0);
       expect(v).toBeLessThan(0.6);
     }
+  });
+});
+
+describe('figureLevel', () => {
+  it('falando usa o nível da própria voz (saída); ouvindo usa o microfone', () => {
+    expect(figureLevel('speaking', 0.9, 0.2)).toBe(0.2);
+    expect(figureLevel('listening', 0.9, 0.2)).toBe(0.9);
+  });
+
+  it('os demais estados ficam em silêncio (só o movimento base do estado)', () => {
+    for (const status of ['idle', 'transcribing', 'routing', 'error'] as VoiceUiStatus[]) {
+      expect(figureLevel(status, 0.9, 0.8)).toBe(0);
+    }
+  });
+
+  it('trava em [0,1]', () => {
+    expect(figureLevel('speaking', 0, 1.7)).toBe(1);
+    expect(figureLevel('listening', -3, 0)).toBe(0);
   });
 });
 
@@ -743,5 +770,58 @@ describe('JarvisParticleFigure — o ocioso é uma silhueta reconhecível', () =
     expect(Math.min(...tipMean)).toBeLessThan(0.02);
     // O núcleo (cabeça/tronco) nunca se desfaz a ponto de perder o contorno.
     expect(Math.max(...coreMean)).toBeLessThan(0.03);
+  });
+});
+
+describe('JarvisParticleFigure — o nível que move a figura vem da fonte certa', () => {
+  let figure: ReturnType<typeof mountFigure> | null = null;
+
+  afterEach(() => {
+    figure?.unmount();
+    figure = null;
+    act(() => {
+      useVoiceStore.setState({ status: 'idle', level: 0, outputLevel: 0 });
+    });
+  });
+
+  /** Alpha médio das partículas nos últimos `frames` quadros pintados. */
+  const meanAlphaOf = (fig: ReturnType<typeof mountFigure>, frames: number) => {
+    const recent = fig.frames.slice(-frames);
+    const alphas = recent.flatMap((arcs) => painted(arcs).map((a) => a.alpha));
+    return alphas.reduce((a, b) => a + b, 0) / alphas.length;
+  };
+
+  it('falando: o brilho segue o nível da própria voz (saída), não o microfone', () => {
+    figure = mountFigure('speaking', { size: 180 });
+    act(() => {
+      useVoiceStore.setState({ level: 0, outputLevel: 0.03 });
+    });
+    figure.advance(1200);
+    const quiet = meanAlphaOf(figure, 30);
+
+    act(() => {
+      useVoiceStore.setState({ outputLevel: 1 });
+    });
+    figure.advance(1200);
+    const loud = meanAlphaOf(figure, 30);
+
+    expect(loud).toBeGreaterThan(quiet + 0.05); // alpha soma level*0.2 + energia*0.12
+  });
+
+  it('ouvindo: o nível vem do microfone, ainda que a saída esteja alta', () => {
+    figure = mountFigure('listening', { size: 180 });
+    act(() => {
+      useVoiceStore.setState({ level: 0.02, outputLevel: 1 });
+    });
+    figure.advance(1200);
+    const quiet = meanAlphaOf(figure, 30);
+
+    act(() => {
+      useVoiceStore.setState({ level: 0.95 });
+    });
+    figure.advance(1200);
+    const loud = meanAlphaOf(figure, 30);
+
+    expect(loud).toBeGreaterThan(quiet + 0.05); // alpha soma level*0.2 (mic)
   });
 });

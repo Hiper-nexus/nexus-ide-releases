@@ -9,7 +9,9 @@ import {
 import { isResponseMuted } from './response-output-gate';
 
 vi.mock('./voice-store', () => ({
-  useVoiceStore: { getState: () => ({ info: null, status: 'idle' }) },
+  useVoiceStore: {
+    getState: () => ({ info: null, status: 'idle', setOutputLevel: vi.fn() }),
+  },
 }));
 vi.mock('./response-output-gate', () => ({ isResponseMuted: vi.fn(() => false) }));
 vi.mock('./audio-device-preferences', () => ({
@@ -51,6 +53,17 @@ describe('playAudioBase64', () => {
       destination = {};
       async resume() {}
       close() {}
+      // O medidor de saída (voice-output-level) insere um AnalyserNode aqui.
+      createAnalyser() {
+        return {
+          fftSize: 512,
+          connect() {},
+          disconnect() {},
+          getFloatTimeDomainData(buf: Float32Array) {
+            buf.fill(0);
+          },
+        };
+      }
       createBufferSource() {
         return new FakeAudioBufferSource();
       }
@@ -120,6 +133,16 @@ describe('playAudioBase64', () => {
       destination = {};
       async resume() {}
       close() {}
+      createAnalyser() {
+        return {
+          fftSize: 512,
+          connect() {},
+          disconnect() {},
+          getFloatTimeDomainData(buf: Float32Array) {
+            buf.fill(0);
+          },
+        };
+      }
       createBufferSource() {
         return new ManualSource();
       }

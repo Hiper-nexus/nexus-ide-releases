@@ -3,6 +3,7 @@
  * Kept in one module so voice-controller stays under the 800-line Akita limit.
  */
 import { LiveAudioPlayer } from './live-audio';
+import { jarvisOutputMeter } from './voice-output-level';
 import { WakeMic } from './wake-mic';
 import { RealtimeTranscriptWaiter } from './realtime-transcript-waiter';
 import { TurnExecutionOwner } from './turn-execution-owner';
@@ -22,7 +23,11 @@ bindWakeSuppressor((ms) => wakeMic.suppressWakeDetection(ms));
 
 export let livePlayer: LiveAudioPlayer | null = null;
 export function ensureLivePlayer(): LiveAudioPlayer {
-  return (livePlayer ??= new LiveAudioPlayer());
+  // A fala Live passa pelo medidor de saída: `voice-store.outputLevel` segue
+  // o PCM realtime (a figura de partículas pulsa com a própria voz).
+  return (livePlayer ??= new LiveAudioPlayer(undefined, (ctx, source) =>
+    jarvisOutputMeter.tap(ctx, source),
+  ));
 }
 
 subscribeAudioDevicePreferences((next, previous) => {
