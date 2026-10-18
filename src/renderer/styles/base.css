@@ -1247,22 +1247,28 @@ body {
   align-items: center;
   gap: 4px;
   flex: 0 0 auto;
-  /* Sete ícones acesos em todo pane, o tempo todo, competiam com o conteúdo do
-     terminal. Recuados até o pane receber ponteiro, foco ou teclado, eles
-     continuam LEGÍVEIS (opacidade, nunca display:none — some do mouse mas
-     também do leitor de tela e do Tab) e param de gritar. */
+}
+
+/* Sete ícones acesos em todo pane, o tempo todo, competiam com o conteúdo do
+   terminal. Recuados até o pane receber ponteiro, foco ou teclado, eles
+   continuam LEGÍVEIS (opacidade, nunca display:none — some do mouse mas
+   também do leitor de tela e do Tab) e param de gritar.
+   A opacidade mora em cada grupo, não no contêiner: "Retomar missão" é a
+   ação que o operador precisa achar numa missão interrompida e fica a 100%
+   mesmo sem foco (um filho não passa da opacidade do pai). */
+.toolbar__actions > :not(.toolbar__group--resume) {
   opacity: 0.5;
   transition: opacity 140ms var(--ease-out-quart);
 }
 
-.pane:hover .toolbar__actions,
-.pane:focus-within .toolbar__actions,
-.pane--focused .toolbar__actions {
+.pane:hover .toolbar__actions > *,
+.pane:focus-within .toolbar__actions > *,
+.pane--focused .toolbar__actions > * {
   opacity: 1;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .toolbar__actions {
+  .toolbar__actions > * {
     transition: none;
   }
 }
@@ -1371,6 +1377,16 @@ body {
   }
   .toolbar__badge--agent .toolbar__badge-text {
     display: none !important;
+  }
+}
+
+/* A palavra inteira só cabe com folga em barra larga: o meta divide a linha com
+   Retomar, rótulos de layout e telemetria, e um chip que não cabe vai para a
+   linha recortada e some. Abaixo disso fica a coroa (nome acessível e dica
+   seguem no chip). */
+@container pane-toolbar (max-width: 1099px) {
+  .toolbar__badge--orch .toolbar__badge-word {
+    display: none;
   }
 }
 
@@ -1617,6 +1633,42 @@ body {
 .toolbar__btn--active {
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+/* Retomar missão: a ação primária do pane interrompido. CTA branco neutro
+   (--btn-primary), nunca acento (DESIGN §2) — o rótulo fica visível também
+   em densidade 'icons'; só o 'compact' o reduz ao glifo. */
+.toolbar__btn--resume,
+.toolbar__btn--resume:focus-visible {
+  padding: 3px 8px;
+  background: var(--btn-primary);
+  color: var(--btn-primary-ink);
+  font-weight: 650;
+}
+
+.toolbar__btn--resume:hover {
+  background: var(--btn-primary-hover);
+  color: var(--btn-primary-ink);
+}
+
+.toolbar__btn--resume:disabled {
+  cursor: progress;
+}
+
+.toolbar[data-density='icons'] .toolbar__btn--resume .toolbar__btn-label {
+  display: inline;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toolbar__btn--resume {
+    transition: none;
+  }
+}
+
+/* Com o Retomar em cena, o Fechar não pode pesar mais que ele: perde o filete
+   forte e volta ao fio de divisória. */
+.toolbar[data-resume='true'] .toolbar__close:not(:hover, :focus-visible) {
+  border-color: color-mix(in srgb, var(--border) 70%, transparent);
 }
 
 .toolbar__btn--close {

@@ -1,4 +1,5 @@
 import type { PaneModel } from '../../shared/types';
+import type { Mission } from '../../shared/orch-types';
 import { missionAwaitsAdjustment } from '../../shared/mission-recovery-policy';
 import { useOrchStore } from '../state/orch-store';
 import { useToastStore } from '../state/toast-store';
@@ -74,6 +75,42 @@ function missionIdOfPane(
 }
 
 /**
+ * A missão `running` que perde o ÚLTIMO pane visível com o fechamento de
+ * `closedPane`, ou `undefined`. Predicado único do aviso pós-fechamento e do
+ * texto do Fechar na toolbar.
+ */
+function runningMissionLosingLastPane(
+  closedPane: PaneModel,
+  remainingPanes: PaneModel[],
+  missions: Mission[],
+  paneMissions: Record<string, string>,
+): Mission | undefined {
+  const missionId = missionIdOfPane(closedPane, paneMissions);
+  if (!missionId) return undefined;
+  const mission = missions.find((entry) => entry.id === missionId);
+  if (!mission || mission.status !== 'running') return undefined;
+  const stillOpen = remainingPanes.some(
+    (pane) => missionIdOfPane(pane, paneMissions) === missionId,
+  );
+  return stillOpen ? undefined : mission;
+}
+
+/**
+ * Fechar `closedPane` pelo ✕ do operador encerra a missão (ordem de 20/08)?
+ * Verdadeiro só para o último pane de uma missão `running` que não espera o
+ * humano — o mesmo caminho de `notifyIfLastMissionPaneClosed`.
+ */
+export function closingPaneEndsMission(
+  closedPane: PaneModel,
+  remainingPanes: PaneModel[],
+  missions: Mission[],
+  paneMissions: Record<string, string>,
+): boolean {
+  const mission = runningMissionLosingLastPane(closedPane, remainingPanes, missions, paneMissions);
+  return mission !== undefined && !missionAwaitsAdjustment(mission);
+}
+
+/**
  * Chamado pelo layout-store.close DEPOIS da remoção. Dispara o toast somente
  * quando o pane fechado era o último visível de uma missão ainda `running`.
  */
@@ -93,12 +130,13 @@ export function notifyIfLastMissionPaneClosed(
   const missionId = missionIdOfPane(closedPane, orch.paneMissions);
   if (!missionId) return;
   if (pendingRuntimeCloses.has(closeNotificationKey(missionId))) return;
-  const mission = orch.missions.find((entry) => entry.id === missionId);
-  if (!mission || mission.status !== 'running') return;
-  const stillOpen = remainingPanes.some(
-    (pane) => missionIdOfPane(pane, orch.paneMissions) === missionId,
+  const mission = runningMissionLosingLastPane(
+    closedPane,
+    remainingPanes,
+    orch.missions,
+    orch.paneMissions,
   );
-  if (stillOpen) return;
+  if (!mission) return;
 
   if (reason && OPERATOR_CLOSE_REASONS.has(reason)) {
     // ✕ num pane de missão que AINDA espera o humano (Aguardando você /

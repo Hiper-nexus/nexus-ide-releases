@@ -415,7 +415,7 @@ describe('a SOLITARY structural placeholder is a vacancy, not a session', () => 
   });
 
   /**
-   * Same lie, smaller: "Fim", "Dormir" and "Cmds" are SESSION operations on a
+   * Same lie, smaller: "Ir ao fim", "Dormir" and "Cmds" are SESSION operations on a
    * pane that has no session. The layout group stays — splitting a vacancy is
    * one of the ways the operator claims it.
    */
@@ -427,7 +427,7 @@ describe('a SOLITARY structural placeholder is a vacancy, not a session', () => 
     const labels = [...host.querySelectorAll('button')].map(
       (button) => button.textContent ?? '',
     );
-    expect(labels).not.toContain('Fim');
+    expect(labels).not.toContain('Ir ao fim');
     expect(labels).not.toContain('Dormir');
     expect(labels).not.toContain('Cmds');
     expect(buttonWith('Dividir à direita')).toBeTruthy();

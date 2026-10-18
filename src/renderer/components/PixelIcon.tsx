@@ -32,6 +32,8 @@ export type PixelIconName =
   | 'status-spawning'
   | 'scroll-bottom'
   | 'restart'
+  | 'resume'
+  | 'blocks'
   | 'maximize'
   | 'split-right'
   | 'split-down'
@@ -351,6 +353,26 @@ const ICONS: Record<PixelIconName, Rect[]> = {
     [3, 8, 5, 1],
     [3, 5, 1, 3],
     [4, 6, 1, 1],
+  ],
+  // ▸ play parado numa barra: "continuar de onde parou". Distinto do ⟲ de
+  // restart (recomeçar) e do ▸ solto de 'mission'.
+  resume: [
+    [2, 2, 1, 7],
+    [4, 2, 1, 7],
+    [5, 3, 1, 5],
+    [6, 4, 1, 3],
+    [7, 5, 1, 1],
+  ],
+  // dois blocos de comando empilhados (histórico de comandos)
+  blocks: [
+    [1, 1, 9, 1],
+    [1, 4, 9, 1],
+    [1, 2, 1, 2],
+    [9, 2, 1, 2],
+    [1, 6, 9, 1],
+    [1, 9, 9, 1],
+    [1, 7, 1, 2],
+    [9, 7, 1, 2],
   ],
   // cantos expandindo para tela cheia
   maximize: [
