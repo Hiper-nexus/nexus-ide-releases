@@ -1,15 +1,34 @@
 # Changelog
 
-## 0.76.300 — Todas as LLMs no roteamento
+## 0.76.302 — Todas as LLMs no roteamento
 
 O roteador passa a usar a cota real de cada assinatura para repartir o trabalho entre todas as LLMs instaladas, em qualquer combinação de CLIs. Candidato macOS (`darwin-arm64`) assinado e notarizado.
 
 - **Cota entre CLIs**. Cada CLI ganha um ritmo de cota (folga ÷ tempo até o reset): assinatura com sobra que vai expirar no reset puxa trabalho, a que está perto do limite cede. A CLI de assinatura com sobra conta como escritor econômico mesmo com preço de API alto (Grok, GLM, Codex, AGY, MiniMax, Devin). Janela por modelo ("Semanal (Fable)") não derruba a CLI inteira; leitura com mais de 15 min, cadência desconhecida e benchmark medido não viram folga.
 - **Cota medida cheia sai da rota**. CLI com janela medida em 100% em todas as contas não recebe worker até o reset (antes só o cooldown tirava); se o pool esvaziar, a exclusão é desfeita.
-- **Rota que só falha não lidera**. Modelo com 5+ tentativas e até 20% de sucesso em 14 dias perde o assento no escritor econômico, nas lanes de topo, no revezamento e no fair-share; continua elegível quando é a única opção ou é pedido pelo nome.
+- **Rota que só falha não lidera**. Modelo com 5+ tentativas e até 20% de sucesso em 14 dias perde o assento no escritor econômico, nas lanes de topo, no revezamento e no fair-share, e cede a liderança à primeira rota pronta do mesmo tier; continua elegível quando é a única opção do tier ou é pedido pelo nome.
 - **Fair-share com memória**. A contagem de uso por CLI sobrevive à limpeza de missões, conta todo pane de IA aberto (inclusive o Claude do Maestro) uma vez só e grava em disco de forma coalescida, sem travar o processo principal.
 - **Qualquer conjunto de CLIs**. Sem CLI da tabela instalada, a rota escolhe por qualidade e custo em vez do "menos usado"; a primeira onda da missão completa a oferta com todas as CLIs prontas.
 - **Nome da missão acompanha a aba**. Renomear a aba renomeia a missão leve dela na barra lateral e no Quadro; título dado pelo operador e missão de squad aprovada nunca são sobrescritos.
+
+## 0.76.301 — Linux em dia com a Jarvis de partículas
+
+A tag 0.76.300 não recebe pacotes Linux: é o candidato macOS. Este pacote leva o produto dela para o desktop Linux.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35).
+
+No desktop Linux, em relação à 0.76.299:
+
+- A Jarvis ganha um humano de partículas no HUD ampliado. Ele se forma e se desfaz, muda de estado sozinho, mostra o cursor e desenha ondas enquanto fala. Clicar nele acorda a Jarvis, e a barra de título é a alça para arrastar o HUD.
+- Parada, só as mãos e os pés se soltam; as duas pernas continuam legíveis. Com movimento reduzido, a figura fica estática e formada. O CSS antigo das partículas por DOM saiu.
+- O atalho global recupera a janela do Nexus mesmo minimizada, só ao abrir a captura, conferindo o foco e registrando o que fez.
+- O relato de handoff não fala por cima do despertar, não segura o microfone e não entra em laço de re-síntese quando a voz local é lenta.
+
+## 0.76.300 — Jarvis com corpo de partículas, fala sem laço e janela à mão
+
+A Jarvis ganhou um corpo no HUD ampliado: um humano de partículas que se forma e se desfaz, muda de estado sozinho, mostra o cursor e desenha ondas enquanto fala. Clicar nele acorda a Jarvis, e a barra de título é a alça para arrastar o HUD. Parada, só as mãos e os pés se soltam; as pernas continuam legíveis, e com movimento reduzido a figura fica estática.
+
+O atalho global recupera a janela do Nexus mesmo minimizada, só ao abrir a captura, conferindo o foco e registrando o que fez. O relato de handoff não fala por cima do despertar, não segura o microfone e não entra em laço de re-síntese quando a voz local é lenta. O CSS morto das partículas por DOM foi removido.
 
 ## 0.76.299 — Linux em dia com a retomada, o uso e a Jarvis
 

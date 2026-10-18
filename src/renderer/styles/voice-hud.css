@@ -5,7 +5,8 @@
   .voice-orb,
   .voice-orb__ring,
   .voice-orb__core,
-  .voice-orb__scan {
+  .voice-orb__scan,
+  .voice-figure__ground {
     animation: none;
   }
 }
@@ -214,6 +215,55 @@
   align-items: center;
   gap: var(--space-2-5);
   padding: var(--space-3) var(--space-4) var(--space-3);
+}
+
+/* ---- Presença ampliada: corpo humano de partículas -------------------- */
+.voice-figure {
+  appearance: none;
+  position: relative;
+  display: block;
+  /* Quadrado que segue o container do HUD (a largura é redimensionável): o
+     canvas e a linha de chão moram nele e escalam juntos. Com o canvas menor
+     que o botão, a linha de chão ficava ~90px abaixo dos pés. */
+  width: min(100%, 220px);
+  aspect-ratio: 1;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  cursor: pointer;
+  isolation: isolate;
+}
+
+.voice-figure:disabled {
+  cursor: default;
+}
+
+.voice-figure:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+
+/* Os pés fecham em y = 0,96 do quadrado (buildHumanSilhouette): a linha assenta
+   aí e cobre só a largura das pernas, em % do mesmo quadrado do canvas. */
+.voice-figure__ground {
+  position: absolute;
+  top: 97%;
+  right: 30%;
+  left: 30%;
+  height: 1px;
+  background: color-mix(in srgb, var(--accent) 48%, transparent);
+  opacity: 0.64;
+}
+
+.voice-figure--active .voice-figure__ground {
+  animation: voice-figure-ground 2.8s var(--ease-out-quart) infinite;
+}
+
+@keyframes voice-figure-ground {
+  0%,
+  100% { opacity: 0.3; transform: scaleX(0.56); }
+  52% { opacity: 0.78; transform: scaleX(1); }
 }
 
 /* ---- Modo mini: pill orb + fase ---- */
@@ -475,7 +525,8 @@
   .voice-hud .voice-orb,
   .voice-hud .voice-orb__ring,
   .voice-hud .voice-orb__core,
-  .voice-hud .voice-orb__scan {
+  .voice-hud .voice-orb__scan,
+  .voice-hud .voice-figure__ground {
     animation: none;
   }
 }

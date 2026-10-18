@@ -10,10 +10,12 @@ const resend = vi.hoisted(() =>
   vi.fn(async (_text: string, ..._hooks: unknown[]) => ({ ok: true, paneId: 'pane-focused' })),
 );
 const setConfig = vi.hoisted(() => vi.fn());
+const wakeJarvis = vi.hoisted(() => vi.fn());
 vi.mock('../voice/voice-run-jarvis-turn', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../voice/voice-run-jarvis-turn')>()),
   routeDictation: resend,
 }));
+vi.mock('../voice/manual-wake', () => ({ requestJarvisWake: wakeJarvis }));
 
 import { VoiceHud } from './VoiceHud';
 import { useVoiceStore } from '../voice/voice-store';
@@ -42,6 +44,7 @@ describe('F-1393 — HUD do ditado legível', () => {
     host = document.createElement('div');
     document.body.appendChild(host);
     root = createRoot(host);
+    wakeJarvis.mockClear();
     useVoiceStore.setState({
       status: 'idle',
       error: null,
@@ -91,6 +94,15 @@ describe('F-1393 — HUD do ditado legível', () => {
     } as never);
     render();
     expect(label()).toBe('Ditado aguardando');
+  });
+
+  it('o corpo de partículas ampliado acorda a Jarvis por clique, sem iniciar arrasto', () => {
+    render();
+    const figure = host.querySelector('.voice-figure') as HTMLButtonElement;
+    expect(figure).toBeTruthy();
+    expect(figure.getAttribute('aria-label')).toBe('Acordar JARVIS');
+    act(() => figure.click());
+    expect(wakeJarvis).toHaveBeenCalledOnce();
   });
 
   it('a nota quebra linha em vez de cortar com reticências; tema claro sem fundo escurecido', () => {

@@ -35,17 +35,25 @@ export interface SpeakingProgressSignals {
   pendingLiveChunks: number;
   /** TTS/ack CLÁSSICO ainda audível (janela do live-local-audio-gate). */
   localAudioAudible: boolean;
+  /**
+   * Relato de handoff sintetizando: `speaking` sem áudio audível ainda (a TTS
+   * local leva 14-28 s). A síntese tem deadline próprio (SPEAK_DEADLINE_MS), então
+   * o sinal nunca segura o status para sempre.
+   */
+  narrationSynthesizing?: boolean;
 }
 
 /**
  * Follow-up 5: fala longa é progresso, não travamento — e isso vale para o
  * playback CLÁSSICO também, não só o Live. Um TTS clássico >90s não pode ser
- * force-idled no meio da frase.
+ * force-idled no meio da frase. A SÍNTESE de um relato conta igual: forçar
+ * `idle` no meio dela derrubava o relato e o fazia voltar à fila em laço.
  */
 export function speakingHasAudioProgress(signals: SpeakingProgressSignals): boolean {
   return (
     signals.liveRemainingMs > 0 ||
     signals.pendingLiveChunks > 0 ||
-    signals.localAudioAudible
+    signals.localAudioAudible ||
+    signals.narrationSynthesizing === true
   );
 }

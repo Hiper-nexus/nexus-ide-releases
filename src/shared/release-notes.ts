@@ -11336,14 +11336,46 @@ export const RELEASE_076299: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076300: AppRelease = {
   version: '0.76.300',
+  date: '2026-10-17',
+  codename: 'Jarvis com corpo de partículas, fala sem laço e janela à mão',
+  summary: 'A Jarvis ganha um humano de partículas no HUD ampliado, que acorda ao clique, com alça própria para arrastar. O atalho global recupera a janela minimizada sem roubar o foco, e o relato de handoff não fala por cima do despertar nem entra em laço quando a síntese é lenta.',
+  highlights: [
+    { title: 'Corpo de partículas no HUD', detail: 'O humano de partículas se forma e se desfaz, muda de estado sozinho, mostra o cursor e desenha ondas enquanto fala. Clicar nele acorda a Jarvis, e a barra de título serve de alça para arrastar o HUD.' },
+    { title: 'Janela sempre à mão', detail: 'O atalho global recupera a janela do Nexus mesmo minimizada. Ele só age ao abrir a captura, confere o foco e registra o que fez, sem roubar quem está digitando em outro lugar.' },
+    { title: 'Voz sem laço', detail: 'O relato de handoff espera o despertar e o turno da voz terminarem, não segura o microfone e não entra em laço de re-síntese quando a voz local é lenta.' },
+  ],
+  fixes: [
+    { title: 'Figura legível no ocioso', detail: 'Parada, só as mãos e os pés se soltam; as duas pernas continuam legíveis. Com movimento reduzido, a figura fica estática e formada.' },
+    { title: 'CSS morto das partículas', detail: 'O CSS antigo das partículas por DOM foi removido e a suíte de tokens religada.' },
+  ],
+};
+
+export const RELEASE_076301: AppRelease = {
+  version: '0.76.301',
+  date: '2026-10-17',
+  codename: 'Linux em dia com a Jarvis de partículas',
+  summary: 'O desktop Linux recebe o humano de partículas da Jarvis, o atalho que recupera a janela e o relato de handoff sem laço. A tag 0.76.300 não recebe pacotes Linux.',
+  highlights: [
+    { title: 'Corpo de partículas no HUD', detail: 'O humano de partículas se forma e se desfaz, muda de estado sozinho, mostra o cursor e desenha ondas enquanto fala. Clicar nele acorda a Jarvis, e a barra de título serve de alça para arrastar o HUD.' },
+    { title: 'Janela sempre à mão', detail: 'O atalho global recupera a janela do Nexus mesmo minimizada. Ele só age ao abrir a captura, confere o foco e registra o que fez, sem roubar quem está digitando em outro lugar.' },
+    { title: 'Voz sem laço', detail: 'O relato de handoff espera o despertar e o turno da voz terminarem, não segura o microfone e não entra em laço de re-síntese quando a voz local é lenta.' },
+  ],
+  fixes: [
+    { title: 'Atualização do Linux', detail: 'A tag 0.76.300 não recebe pacotes Linux: é o candidato macOS. O desktop Linux sai na 0.76.301.' },
+    { title: 'Figura legível no ocioso', detail: 'Parada, só as mãos e os pés se soltam; as duas pernas continuam legíveis. Com movimento reduzido, a figura fica estática e formada.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.302',
   date: '2026-10-17',
   codename: 'Todas as LLMs no roteamento',
   summary: 'O roteador reparte o trabalho entre todas as LLMs instaladas pela cota real de cada assinatura: sobra que vai expirar puxa worker, cota no limite cede e rota que só falha deixa de liderar.',
   highlights: [
     { title: 'Cota entre CLIs', detail: 'Cada CLI ganha um ritmo de cota (folga ÷ tempo até o reset). Assinatura com sobra que vai expirar puxa trabalho e conta como escritor econômico mesmo com preço de API alto; a que está perto do limite cede.' },
-    { title: 'Rota que só falha não lidera', detail: 'Modelo com cinco tentativas ou mais e até 20% de sucesso em 14 dias perde o assento no escritor econômico, nas lanes de topo, no revezamento e no fair-share, e só volta quando é a única opção ou pedido pelo nome.' },
+    { title: 'Rota que só falha não lidera', detail: 'Modelo com cinco tentativas ou mais e até 20% de sucesso em 14 dias perde o assento no escritor econômico, nas lanes de topo, no revezamento e no fair-share, e cede a liderança à primeira rota pronta do mesmo tier. Só volta quando é a única opção do tier ou pedido pelo nome.' },
     { title: 'Qualquer conjunto de CLIs', detail: 'Sem CLI da tabela instalada, a rota escolhe por qualidade e custo. A primeira onda da missão completa a oferta com todas as CLIs prontas.' },
   ],
   fixes: [

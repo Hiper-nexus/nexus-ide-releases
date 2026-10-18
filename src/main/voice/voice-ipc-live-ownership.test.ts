@@ -13,6 +13,8 @@ const electronDeps = vi.hoisted(() => {
     listeners,
     windows: [] as Array<{ webContents: unknown }>,
     focusedWindow: null as null | { webContents: unknown },
+    /** `app.focus({ steal })`: ativa o app no macOS quando `win.focus()` não basta. */
+    appFocus: vi.fn((_options?: { steal?: boolean }) => {}),
     handle: vi.fn((channel: string, handler: IpcHandler) => {
       handlers.set(channel, handler);
     }),
@@ -222,6 +224,7 @@ vi.mock("electron", () => ({
     getVersion: () => "0.12.0-test",
     relaunch: vi.fn(),
     exit: vi.fn(),
+    focus: electronDeps.appFocus,
   },
 }));
 
@@ -407,6 +410,65 @@ class TestRenderer extends EventEmitter {
     this.destroyed = true;
     this.emit("destroyed");
   }
+}
+
+interface TestBrowserWindow {
+  webContents: TestRenderer;
+  /** O que a janela "faz" de verdade: os testes de falha desligam cada passo. */
+  state: {
+    minimized: boolean;
+    visible: boolean;
+    restoreWorks: boolean;
+    showWorks: boolean;
+    focusWorks: boolean;
+  };
+  isMinimized: ReturnType<typeof vi.fn>;
+  isVisible: ReturnType<typeof vi.fn>;
+  isFocused: ReturnType<typeof vi.fn>;
+  restore: ReturnType<typeof vi.fn>;
+  show: ReturnType<typeof vi.fn>;
+  focus: ReturnType<typeof vi.fn>;
+}
+
+/**
+ * BrowserWindow com estado: `restore()` desminimiza, `show()` mostra e `focus()`
+ * foca — a menos que o teste diga que aquele passo não funciona (macOS recusando
+ * a ativação, por exemplo). `isFocused()` lê o mesmo foco que o resto do módulo.
+ */
+function testBrowserWindow(
+  webContents: TestRenderer,
+  options: {
+    minimized?: boolean;
+    visible?: boolean;
+    restoreWorks?: boolean;
+    showWorks?: boolean;
+    focusWorks?: boolean;
+  } = {},
+): TestBrowserWindow {
+  const state = {
+    minimized: options.minimized ?? false,
+    visible: options.visible ?? true,
+    restoreWorks: options.restoreWorks ?? true,
+    showWorks: options.showWorks ?? true,
+    focusWorks: options.focusWorks ?? true,
+  };
+  const window: TestBrowserWindow = {
+    webContents,
+    state,
+    isMinimized: vi.fn(() => state.minimized),
+    isVisible: vi.fn(() => state.visible),
+    isFocused: vi.fn(() => electronDeps.focusedWindow === window),
+    restore: vi.fn(() => {
+      if (state.restoreWorks) state.minimized = false;
+    }),
+    show: vi.fn(() => {
+      if (state.showWorks) state.visible = true;
+    }),
+    focus: vi.fn(() => {
+      if (state.focusWorks) electronDeps.focusedWindow = window;
+    }),
+  };
+  return window;
 }
 
 const scopeA: ProjectExecutionScope = Object.freeze({
@@ -1099,13 +1161,232 @@ describe("Voice PTT and wake multi-window isolation", () => {
     hotkeyDeps.callbacks?.onStart();
     expect(dead.send).not.toHaveBeenCalled();
 
-    // No focused window at all.
+    // A single authorized window can be recovered when Nexus is unfocused.
     electronDeps.focusedWindow = null;
     const orphan = new TestRenderer(724);
     scopeDeps.scopes.set(orphan.id, scopeA);
-    electronDeps.windows.push({ webContents: orphan });
+    const recovered = testBrowserWindow(orphan);
+    electronDeps.windows.push(recovered);
     hotkeyDeps.callbacks?.onStart();
-    expect(orphan.send).not.toHaveBeenCalled();
+    expect(orphan.send).toHaveBeenCalledWith(VOICE_CHANNELS.pttStart);
+    expect(recovered.focus).toHaveBeenCalledOnce();
+  });
+
+  it("restores one authorized Nexus window for the global shortcut", () => {
+    const windowA = new TestRenderer(725);
+    scopeDeps.scopes.set(windowA.id, scopeA);
+    const hidden = testBrowserWindow(windowA, { minimized: true, visible: false });
+    electronDeps.windows.push(hidden);
+    electronDeps.focusedWindow = null;
+
+    hotkeyDeps.callbacks?.onToggle();
+
+    expect(hidden.restore).toHaveBeenCalledOnce();
+    expect(hidden.show).toHaveBeenCalledOnce();
+    expect(hidden.focus).toHaveBeenCalledOnce();
+    expect(windowA.send).toHaveBeenCalledWith(VOICE_CHANNELS.pttToggle);
+  });
+
+  it("keeps a global shortcut fail-closed when several project windows are available", () => {
+    const windowA = new TestRenderer(726);
+    const windowB = new TestRenderer(727);
+    scopeDeps.scopes.set(windowA.id, scopeA);
+    scopeDeps.scopes.set(windowB.id, scopeB);
+    const candidateA = testBrowserWindow(windowA);
+    const candidateB = testBrowserWindow(windowB);
+    electronDeps.windows.push(candidateA, candidateB);
+    electronDeps.focusedWindow = null;
+
+    hotkeyDeps.callbacks?.onStart();
+
+    expect(candidateA.focus).not.toHaveBeenCalled();
+    expect(candidateB.focus).not.toHaveBeenCalled();
+    expect(electronDeps.appFocus).not.toHaveBeenCalled();
+    expect(windowA.send).not.toHaveBeenCalled();
+    expect(windowB.send).not.toHaveBeenCalled();
+  });
+
+  describe("global shortcut window recovery", () => {
+    /** Um renderer autorizado e uma única janela candidata, sem foco no Nexus. */
+    function singleWindow(
+      id: number,
+      options: Parameters<typeof testBrowserWindow>[1] = {},
+    ) {
+      const renderer = new TestRenderer(id);
+      scopeDeps.scopes.set(renderer.id, scopeA);
+      const win = testBrowserWindow(renderer, options);
+      electronDeps.windows.push(win);
+      electronDeps.focusedWindow = null;
+      return { renderer, win };
+    }
+    const recovered = (data: Record<string, unknown>) =>
+      expect(logVoice).toHaveBeenCalledWith(
+        "info",
+        "voice.pttWindowRecovered",
+        expect.any(String),
+        data,
+      );
+
+    it("never raises the window when the shortcut key is released (stop)", () => {
+      // O `stop` do modo hold é o keyup da tecla em QUALQUER app (uiohook): cada
+      // espaço solto fora do Nexus puxaria a janela para a frente.
+      const { renderer, win } = singleWindow(741, { minimized: true, visible: false });
+
+      for (let i = 0; i < 5; i += 1) hotkeyDeps.callbacks?.onStop();
+
+      expect(win.restore).not.toHaveBeenCalled();
+      expect(win.show).not.toHaveBeenCalled();
+      expect(win.focus).not.toHaveBeenCalled();
+      expect(electronDeps.appFocus).not.toHaveBeenCalled();
+      expect(renderer.send).not.toHaveBeenCalled();
+      expect(logVoice).not.toHaveBeenCalledWith(
+        expect.anything(),
+        "voice.pttWindowRecovered",
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    it("still delivers the release to the focused window, so a recovered hold can end", () => {
+      const renderer = new TestRenderer(742);
+      scopeDeps.scopes.set(renderer.id, scopeA);
+      const win = testBrowserWindow(renderer);
+      electronDeps.windows.push(win);
+      electronDeps.focusedWindow = win;
+
+      hotkeyDeps.callbacks?.onStop();
+
+      expect(renderer.send).toHaveBeenCalledWith(VOICE_CHANNELS.pttStop);
+      expect(win.focus).not.toHaveBeenCalled();
+    });
+
+    it("start restores a minimized, hidden window, checks it and logs the recovery", () => {
+      const { renderer, win } = singleWindow(743, { minimized: true, visible: false });
+
+      hotkeyDeps.callbacks?.onStart();
+
+      expect(win.restore).toHaveBeenCalledOnce();
+      expect(win.show).toHaveBeenCalledOnce();
+      expect(win.focus).toHaveBeenCalledOnce();
+      expect(electronDeps.appFocus).not.toHaveBeenCalled(); // focus() bastou
+      expect(renderer.send).toHaveBeenCalledWith(VOICE_CHANNELS.pttStart);
+      recovered({
+        channel: VOICE_CHANNELS.pttStart,
+        wasMinimized: true,
+        wasVisible: false,
+        stoleFocus: false,
+      });
+    });
+
+    it("activates the app when focus() alone does not take the focus (macOS background app)", () => {
+      const { renderer, win } = singleWindow(744, { focusWorks: false });
+      // O app em segundo plano só ganha o foco depois de app.focus({ steal }).
+      electronDeps.appFocus.mockImplementationOnce(() => {
+        win.state.focusWorks = true;
+      });
+
+      hotkeyDeps.callbacks?.onToggle();
+
+      expect(electronDeps.appFocus).toHaveBeenCalledWith({ steal: true });
+      expect(win.focus).toHaveBeenCalledTimes(2);
+      expect(renderer.send).toHaveBeenCalledWith(VOICE_CHANNELS.pttToggle);
+      recovered({
+        channel: VOICE_CHANNELS.pttToggle,
+        wasMinimized: false,
+        wasVisible: true,
+        stoleFocus: true,
+      });
+    });
+
+    it("fails closed and logs when the window never becomes focused", () => {
+      const { renderer } = singleWindow(745, { focusWorks: false });
+
+      hotkeyDeps.callbacks?.onStart();
+
+      expect(electronDeps.appFocus).toHaveBeenCalledWith({ steal: true });
+      // Nada de PTT para uma janela sem foco: o `stop` correspondente nunca a acharia.
+      expect(renderer.send).not.toHaveBeenCalled();
+      expect(logVoice).toHaveBeenCalledWith(
+        "warn",
+        "voice.pttWindowRecoveryFailed",
+        expect.any(String),
+        {
+          channel: VOICE_CHANNELS.pttStart,
+          visible: true,
+          minimized: false,
+          focused: false,
+          stoleFocus: true,
+        },
+      );
+      expect(logVoice).not.toHaveBeenCalledWith(
+        "info",
+        "voice.pttWindowRecovered",
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    it.each([
+      ["still hidden after show()", { visible: false, showWorks: false }, { visible: false }],
+      [
+        "still minimized after restore()",
+        { minimized: true, restoreWorks: false },
+        { minimized: true },
+      ],
+    ])("fails closed and logs when the window is %s", (_label, options, seen) => {
+      const { renderer } = singleWindow(746, options);
+
+      hotkeyDeps.callbacks?.onStart();
+
+      expect(renderer.send).not.toHaveBeenCalled();
+      expect(logVoice).toHaveBeenCalledWith(
+        "warn",
+        "voice.pttWindowRecoveryFailed",
+        expect.any(String),
+        expect.objectContaining({ channel: VOICE_CHANNELS.pttStart, ...seen }),
+      );
+    });
+
+    it("a window that disappears while it is being restored is a logged no-op", () => {
+      const { renderer, win } = singleWindow(747, { minimized: true });
+      win.restore.mockImplementation(() => {
+        throw new Error("Object has been destroyed");
+      });
+
+      hotkeyDeps.callbacks?.onStart();
+
+      expect(renderer.send).not.toHaveBeenCalled();
+      expect(logVoice).toHaveBeenCalledWith(
+        "warn",
+        "voice.pttWindowRecoveryFailed",
+        expect.any(String),
+        expect.objectContaining({ reason: "window-gone" }),
+      );
+    });
+
+    it("does not touch the window when the Live owner or the focused window already resolves the target", () => {
+      const renderer = new TestRenderer(748);
+      scopeDeps.scopes.set(renderer.id, scopeA);
+      const win = testBrowserWindow(renderer);
+      electronDeps.windows.push(win);
+      electronDeps.focusedWindow = win;
+
+      hotkeyDeps.callbacks?.onStart();
+      hotkeyDeps.callbacks?.onToggle();
+
+      expect(renderer.send).toHaveBeenCalledWith(VOICE_CHANNELS.pttStart);
+      expect(renderer.send).toHaveBeenCalledWith(VOICE_CHANNELS.pttToggle);
+      expect(win.restore).not.toHaveBeenCalled();
+      expect(win.show).not.toHaveBeenCalled();
+      expect(win.focus).not.toHaveBeenCalled();
+      expect(electronDeps.appFocus).not.toHaveBeenCalled();
+      expect(logVoice).not.toHaveBeenCalledWith(
+        expect.anything(),
+        "voice.pttWindowRecovered",
+        expect.anything(),
+        expect.anything(),
+      );
+    });
   });
 
   it("rejects project-B wake frames once project A owns the engine", () => {

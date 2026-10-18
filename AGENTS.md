@@ -1600,6 +1600,76 @@ saber isto antes de mexer:
   que "erra tudo" num PC e acerta no Mac: leia `stt.audioQuality` antes de
   trocar de provider — em 23/09 era fone na entrada rosa, não o modelo.
 
+## Voz: humano de partículas com estados próprios e cursor (17/10)
+
+- Cada `VoiceUiStatus` tem assinatura de movimento própria
+  (`figureMotionForStatus`, `src/renderer/components/JarvisParticleFigure.tsx`):
+  ouvindo puxa as partículas para dentro e pulsa com `voice-store.level`;
+  falando emite ondas concêntricas da cabeça/peito e vibra boca/torso
+  (`speakingEnergy`/`speakingZoneWeight`); transcrever/rotear orbita em
+  vórtice; erro dispersa na cor `--danger`.
+- **Ocioso = silhueta reconhecível, nunca nuvem.** Antes a coesão ia só até
+  ~0,31 e a figura jamais se formava (no Chrome só ~40% dos pixels acesos
+  ficavam perto do corpo). Agora `idleCohesion` cicla de ~0,91 (pico) a ~0,61
+  (vale parcial) em ~9 s e a dissolução é LOCAL (`FigureMotion.calm`): o
+  núcleo (cabeça/tronco, `tip` 0) só fica poroso e mãos/pés (`tip` → 1,
+  gerado em `buildHumanSilhouette`) se soltam em poeira e se refazem
+  (`idleParticleCohesion`/`idleScatter`/`restPoint`), com a respiração
+  coerente do peito (`breathingOffset`). Os demais estados continuam indo à
+  nuvem global (`calm` 0). Régua de ajuste: no Chrome, ≥ 99,9% dos pixels
+  perto da silhueta nos 16 quadros do ciclo e as duas pernas seguem duas no
+  vale; o pior ponto do ciclo é ~0,6 s DEPOIS do vale do núcleo (a ponta
+  atrasa), então amostre o ciclo inteiro, não só o `c` mínimo.
+- Cursor: repulsão com queda quadrática (`cursorForce`), olhar da cabeça com
+  easing (`gazeOffset`) e parallax por profundidade (`parallaxOffset`). O
+  canvas continua decorativo (`pointer-events: none`): o mouse é ouvido em
+  `window` (`pointermove` passivo com teste geométrico de retângulo), então o
+  clique do botão e o arraste do HUD nunca são roubados e um arraste que sai
+  da figura não deixa estado preso.
+- Toda a física é função pura exportada e testada em
+  `JarvisParticleFigure.test.tsx`; o loop é rAF imperativo (efeito com deps
+  `[]`, status via ref — sem re-render nem re-dispersão por frame/estado),
+  pausa em `visibilitychange`, trava dpr em [1,2] e o `ResizeObserver`
+  reescala sem re-dispersar as partículas. Física (`step`) e pincel (`paint`)
+  são separados; o teste monta o componente num canvas 2D simulado com
+  relógio manual e mede a silhueta pintada de verdade.
+- **Movimento reduzido**: sem loop. `paintStatic` põe cada partícula na posição
+  de repouso (silhueta FORMADA, não a nuvem aleatória do nascimento) e o
+  quadro é repintado na troca de estado (`repaintRef`, erro em `--danger`) e
+  no resize. `applySize` re-seta `globalCompositeOperation = 'lighter'`:
+  mudar `canvas.width/height` zera o estado do contexto e a figura perdia o
+  brilho aditivo depois de qualquer resize.
+- **Layout**: o canvas preenche o botão `.voice-figure` (quadrado que segue a
+  largura do HUD, teto 220px), sem `vw`; a linha de chão fica em `top: 97%`
+  desse mesmo quadrado (os pés fecham em y = 0,96). Validar com o
+  `VoiceHud` real num Chrome (hit-test do centro da figura = o botão, clique
+  acorda, só a alça arrasta), não só com teste de CSS.
+
+## Voz: relato de handoff e atalho global (17/10)
+
+- **Relato com TTS lenta não pode virar laço de re-síntese.** A TTS local leva
+  14-28 s com o HUD em `speaking` e sem áudio audível; o watchdog de status
+  preso (6 s) forçava `idle` no meio e, como a posse da voz exigia
+  `status === 'speaking'`, o relato voltava à fila e era sintetizado de novo,
+  sem nunca falar (um evento `dormant` do Live também zera o HUD sem takeover).
+  Hoje (`src/renderer/voice/narration-queue.ts`): (1) a síntese conta como
+  progresso para o watchdog (`narrationSynthesizing` em
+  `speakingHasAudioProgress`) e passa por `speakSegment` (deadline de 40 s);
+  (2) `narrationStillOwnsVoice` compara o token do turno
+  (`turnExecution.currentToken`) e os sinais de turno, NUNCA o `status` do HUD;
+  (3) `NarrationQueue` limita as tentativas por relato (3) e descarta com
+  `onDrop`. O `play` mora em `createNarrationPlayer` (testável; o controller
+  só injeta as dependências).
+- **O `stop` do atalho global NÃO recupera a janela.** No modo hold o `onStop`
+  é o keyup da tecla em QUALQUER app (uiohook): recuperar a janela nele puxava
+  o Nexus à frente a cada espaço digitado fora dele. `sendPttAction` só
+  recupera em start/toggle (`restoreSingleAuthorizedPttTarget`), confere
+  visível + desminimizada + focada depois de `focus()` (no macOS um app em
+  segundo plano só ganha foco com `app.focus({ steal })`, que é tentado uma
+  vez) e registra `voice.pttWindowRecovered` / `voice.pttWindowRecoveryFailed`
+  no voice.log. Janela que não ficou focada descarta o gesto: o `stop`
+  correspondente só acha a janela focada e nunca alcançaria uma escondida.
+
 ## Voz: Jarvis operacional e Grok Voice em tempo real (15/10)
 
 - **Mic full-duplex em todo transporte realtime**: `isFullDuplexTransport`
