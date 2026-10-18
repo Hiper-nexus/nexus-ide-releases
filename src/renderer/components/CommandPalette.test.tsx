@@ -7,6 +7,11 @@ vi.mock('../lib/cli-history-import', () => ({
   importCliHistoryWithToast: cliHistory.importWithToast,
 }));
 
+const reopen = vi.hoisted(() => ({ confirm: vi.fn(async (_mission: unknown) => ({ ok: true })) }));
+vi.mock('../orch/confirm-reopen-mission', () => ({
+  confirmAndReopenMission: reopen.confirm,
+}));
+
 import { CommandPalette } from './CommandPalette';
 import { useCommandPaletteStore } from '../state/command-palette-store';
 import { useContextualPanelNavStore } from '../state/contextual-panel-nav-store';
@@ -221,6 +226,35 @@ describe('CommandPalette product navigation', () => {
       missionId: 'mission-release',
       surface: 'terminals',
     });
+  });
+});
+
+describe('CommandPalette Retomar missão', () => {
+  const mission = (over: Record<string, unknown> = {}) =>
+    ({ id: 'm1', title: 'Entrega', description: '', status: 'running', milestones: [], learnings: '', createdAt: 1, updatedAt: 1, ...over }) as never;
+
+  beforeEach(() => reopen.confirm.mockClear());
+
+  it('lista "Retomar missão: <título>" e reabre a missão pelo mesmo caminho da toolbar', () => {
+    useOrchStore.setState({ missions: [mission()], paneMissions: {} } as never);
+    const host = render(<CommandPalette />);
+    act(() => actionButton(host, 'Retomar missão: Entrega').click());
+    expect(reopen.confirm).toHaveBeenCalledOnce();
+    expect(reopen.confirm.mock.calls[0]![0]).toMatchObject({ id: 'm1' });
+    expect(useCommandPaletteStore.getState().open).toBe(false);
+  });
+
+  it('não oferece retomada com sessão viva nem quando a missão espera resposta', () => {
+    useOrchStore.setState({
+      missions: [
+        mission(),
+        mission({ id: 'm2', title: 'Pergunta', status: 'blocked', intentState: 'blocked_user' }),
+      ],
+      paneMissions: { 'pane-1': 'm1' },
+    } as never);
+    useSessionStateStore.setState({ paneStates: new Map([['pane-1', 'busy']]) } as never);
+    const host = render(<CommandPalette />);
+    expect(host.textContent).not.toContain('Retomar missão:');
   });
 });
 

@@ -386,7 +386,7 @@ export function CommandBlockMenu({
           setOpen(!open);
         }}
       >
-        <PixelIcon name="scroll-bottom" size={11} />
+        <PixelIcon name="blocks" size={11} />
         {density === 'full' && <span className="toolbar__btn-label">Cmds</span>}
       </button>
       {open && (

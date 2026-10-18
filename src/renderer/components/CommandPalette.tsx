@@ -12,6 +12,9 @@ import { useContextualPanelNavStore } from '../state/contextual-panel-nav-store'
 import { useFilesStore } from '../state/files-store';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
+import { useToastStore } from '../state/toast-store';
+import { confirmAndReopenMission } from '../orch/confirm-reopen-mission';
+import { missionIsResumable } from '../lib/mission-resumable';
 import { useSessionStateStore } from '../state/session-state-store';
 import { useSettingsStore } from '../state/settings-store';
 import { useMissionSetupStore } from '../state/mission-setup-store';
@@ -333,6 +336,36 @@ export function CommandPalette() {
         keywords: `missao ${mission.state}`,
         run: () =>
           useProductNavigationStore.getState().openMission(mission.id),
+      });
+    }
+
+    // Retomar pelo teclado: missão retomável cujos panes visíveis estão todos
+    // sem sessão (mesma regra do botão da toolbar do pane).
+    const orchState = useOrchStore.getState();
+    const liveStates = new Set<string>(['spawning', 'busy', 'idle']);
+    for (const mission of orchState.missions) {
+      if (!missionIsResumable(mission)) continue;
+      const hasLivePane = listPanes(root).some(
+        (pane) =>
+          (pane.missionId ?? orchState.paneMissions[pane.id]) === mission.id &&
+          liveStates.has(paneStates.get(pane.id) ?? ''),
+      );
+      if (hasLivePane) continue;
+      out.push({
+        id: `mission-resume:${mission.id}`,
+        group: 'Missões',
+        label: `Retomar missão: ${missionChromeTitle(mission.title)}`,
+        icon: 'resume',
+        keywords: 'retomar continuar missao interrompida reiniciar travada',
+        run: () => {
+          const fail = (detail: string) =>
+            useToastStore.getState().push('error', 'Não foi possível retomar a missão', detail);
+          void confirmAndReopenMission(mission)
+            .then((result) => {
+              if (!result.ok) fail(result.error ?? 'Tente novamente.');
+            })
+            .catch((error: unknown) => fail(error instanceof Error ? error.message : String(error)));
+        },
       });
     }
 

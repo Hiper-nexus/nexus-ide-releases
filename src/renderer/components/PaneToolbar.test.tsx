@@ -27,7 +27,7 @@ vi.mock('./DevServerChip', () => ({ DevServerChip: () => null }));
 vi.mock('./CommandBlockMenu', () => ({ CommandBlockMenu: () => null }));
 vi.mock('./AgentAvatar', () => ({ AgentAvatar: () => null, resolveAgentCategory: () => undefined }));
 vi.mock('./ProviderLogo', () => ({ ProviderLogo: () => null }));
-vi.mock('./PixelIcon', () => ({ PixelIcon: () => null }));
+vi.mock('./PixelIcon', () => ({ PixelIcon: ({ name }: { name: string }) => <i data-icon={name} /> }));
 
 import { PaneToolbar } from './PaneToolbar';
 import { getPaneSessionId, repaintPaneTui } from '../terminal/terminal-host';
@@ -121,6 +121,92 @@ describe('PaneToolbar narrow controls', () => {
     await act(async () => finish({ ok: false, error: 'Conversa indisponível' }));
     expect(useToastStore.getState().toasts.some(toast => toast.kind === 'error')).toBe(true);
     expect(host.querySelector('[aria-label="Retomar missão"]:disabled')).toBeNull();
+  });
+
+  describe('Retomar missão como ação primária do pane', () => {
+    it('em 600 px mostra o rótulo, a classe de CTA e um glifo próprio (não o ⟲ de Reiniciar)', () => {
+      seedMission();
+      const host = mount(600, missionPane);
+      const toolbar = host.querySelector<HTMLElement>('.toolbar')!;
+      expect(toolbar.dataset.density).toBe('icons');
+      expect(toolbar.dataset.resume).toBe('true');
+      const resume = host.querySelector<HTMLButtonElement>('[aria-label="Retomar missão"]')!;
+      expect(resume.classList.contains('toolbar__btn--resume')).toBe(true);
+      expect(resume.closest('.toolbar__group')?.classList.contains('toolbar__group--resume')).toBe(true);
+      expect(resume.querySelector('.toolbar__btn-label')?.textContent).toBe('Retomar missão');
+      const icon = resume.querySelector('[data-icon]')?.getAttribute('data-icon');
+      expect(icon).toBe('resume');
+      expect(icon).not.toBe('restart');
+    });
+
+    it('em 340 px (compacto) o botão fica fora do menu "…"', () => {
+      seedMission();
+      const host = mount(340, missionPane);
+      expect(host.querySelector<HTMLElement>('.toolbar')!.dataset.density).toBe('compact');
+      const inline = host.querySelector<HTMLButtonElement>('.toolbar__actions [aria-label="Retomar missão"]');
+      expect(inline).not.toBeNull();
+      expect(inline!.classList.contains('toolbar__btn--resume')).toBe(true);
+      act(() => host.querySelector<HTMLButtonElement>('[aria-label="Mais ações do pane"]')!.click());
+      const menu = document.querySelector('[role="menu"]')!;
+      expect(menu).not.toBeNull();
+      expect(menu.querySelector('[aria-label="Retomar missão"]')).toBeNull();
+      expect(menu.querySelector('[aria-label="Dividir à direita"]')).not.toBeNull();
+    });
+
+    it('sem retomada possível o botão da missão segue no menu do compacto e sem a classe', () => {
+      seedMission();
+      vi.mocked(getPaneSessionId).mockReturnValue('live-session');
+      const host = mount(340, missionPane);
+      expect(host.querySelector('.toolbar__actions [aria-label="Abrir missão"]')).toBeNull();
+      expect(host.querySelector('.toolbar__btn--resume')).toBeNull();
+      expect(host.querySelector<HTMLElement>('.toolbar')!.dataset.resume).toBeUndefined();
+    });
+  });
+
+  describe('Fechar no último pane de uma missão', () => {
+    it('avisa que encerra a missão running quando é o último pane', () => {
+      seedMission();
+      const host = mount(1000, missionPane);
+      const closeButton = host.querySelector<HTMLButtonElement>('[aria-label="Fechar este pane encerra a missão"]');
+      expect(closeButton).not.toBeNull();
+      expect(closeButton!.getAttribute('data-tip')).toContain('Fechar este pane encerra a missão');
+      expect(host.querySelector('[aria-label="Fechar este pane"]')).toBeNull();
+    });
+
+    it('mantém o texto simples quando outro pane da missão continua aberto', () => {
+      seedMission();
+      const sibling: PaneModel = { id: 'worker', kind: 'cli-agent', title: 'Worker', adapterId: 'claude', missionId: 'mission-a' };
+      useLayoutStore.setState({ root: buildGridTree([missionPane, sibling]) });
+      const host = mount(1000, missionPane);
+      expect(host.querySelector('[aria-label="Fechar este pane"]')).not.toBeNull();
+      expect(host.querySelector('[aria-label="Fechar este pane encerra a missão"]')).toBeNull();
+    });
+
+    it('não promete encerramento para missão que não está running', () => {
+      seedMission();
+      useOrchStore.setState((state) => ({ missions: state.missions.map(mission => ({ ...mission, status: 'done' as const })) }));
+      const host = mount(1000, missionPane);
+      expect(host.querySelector('[aria-label="Fechar este pane"]')).not.toBeNull();
+    });
+  });
+
+  it('usa palavras inteiras: "Ir ao fim" no grupo de layout e "orquestrador" no selo', () => {
+    seedMission();
+    vi.mocked(getPaneSessionId).mockReturnValue('live-session');
+    const host = mount(1000, missionPane);
+    const layout = host.querySelector('[role="group"][aria-label="Layout"]')!;
+    expect(layout.querySelector('[aria-label="Ir ao fim"]')?.textContent).toBe('Ir ao fim');
+    expect(host.querySelector('[aria-label="Fim"]')).toBeNull();
+    expect(host.querySelector('.toolbar__badge--orch')?.textContent).toBe('orquestrador');
+  });
+
+  it('o tooltip de "Ações" lista o que o menu contém naquela densidade', () => {
+    const host = mount(120);
+    const trigger = host.querySelector<HTMLElement>('[aria-label="Mais ações do pane"]')!;
+    act(() => trigger.click());
+    const menuLabels = [...document.querySelectorAll('[role="menu"] .toolbar__menu-item-label')].map((el) => el.textContent);
+    expect(menuLabels.length).toBeGreaterThan(0);
+    for (const label of menuLabels) expect(trigger.getAttribute('data-tip')).toContain(label!);
   });
 
   it('F-717: pane largo cuja barra cheia transborda desce para ícones e mantém o Fechar', () => {

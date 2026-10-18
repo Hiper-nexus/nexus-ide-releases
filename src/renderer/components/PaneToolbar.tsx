@@ -42,9 +42,10 @@ import { askConfirm } from '../state/confirm-store';
 import { useOrchStore } from '../state/orch-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
 import { useToastStore } from '../state/toast-store';
-import { missionOwnsItsPanes, wasMissionRuntimeClosedByOperator } from '../../shared/mission-recovery-policy';
-import { wasMissionLeftoverParked } from '../../shared/mission-leftover-isolation';
+import { missionOwnsItsPanes } from '../../shared/mission-recovery-policy';
+import { missionIsResumable } from '../lib/mission-resumable';
 import { confirmAndReopenMission } from '../orch/confirm-reopen-mission';
+import { closingPaneEndsMission } from '../orch/mission-last-pane-notify';
 import {
   promotePaneWithMissionChoice,
   toastPromoted,
@@ -135,8 +136,10 @@ interface ToolbarAction {
   icon: PixelIconName;
   danger?: boolean;
   active?: boolean;
-  /** Keep visible even in compact mode (not buried in ⋯). */
+  /** Keep visible even in compact mode (not buried in ⋯). Hoje só o Retomar missão. */
   primary?: boolean;
+  /** Retomar missão: CTA da barra, opacidade cheia e rótulo também em 'icons'. */
+  resume?: boolean;
   busy?: boolean;
   run: () => void;
 }
@@ -378,6 +381,7 @@ function ToolbarBtn({
         'nodrag',
         action.danger ? 'toolbar__btn--close' : '',
         action.active ? 'toolbar__btn--active' : '',
+        action.resume && !menu ? 'toolbar__btn--resume' : '',
         isLeader ? 'toolbar__btn--leader-active' : '',
       ]
         .filter(Boolean)
@@ -400,7 +404,7 @@ function ToolbarBtn({
           <span className="toolbar__menu-item-label">{action.label}</span>
           <span className="toolbar__menu-item-detail" id={detailId}>{action.detail}</span>
         </span>
-      ) : density === 'full' ? <span className="toolbar__btn-label">{action.label}</span> : null}
+      ) : density === 'full' || (action.resume && density === 'icons') ? <span className="toolbar__btn-label">{action.label}</span> : null}
       {menu && action.shortcut && (
         <span className="toolbar__menu-item-kbd">{action.shortcut}</span>
       )}
@@ -444,11 +448,14 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
       agentCategory: resolveAgentCategory(s.squads, pane.agentName, pane.role),
       missionId: mission?.id,
       missionOwned: Boolean(mission && missionOwnsItsPanes(mission)),
-      missionCanResume: Boolean(mission && (mission.status === 'running' ||
-        (mission.status === 'blocked' && (mission.intentState !== 'blocked_user' ||
-          wasMissionRuntimeClosedByOperator(mission) || wasMissionLeftoverParked(mission))))),
+      missionCanResume: Boolean(mission && missionIsResumable(mission)),
     };
   }));
+  // Fechar o último pane de uma missão `running` a encerra (ordem de 20/08):
+  // o mesmo predicado de mission-last-pane-notify decide o aviso do Fechar.
+  const { missions, paneMissions } = useOrchStore(useShallow((s) => ({ missions: s.missions, paneMissions: s.paneMissions })));
+  const otherPanes = useLayoutStore(useShallow((s) => s.root ? listPanes(s.root).filter((p) => p.id !== pane.id) : []));
+  const closeEndsMission = closingPaneEndsMission(pane, otherPanes, missions, paneMissions);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(pane.title);
   const [density, setDensity] = useState<Density>('full');
@@ -565,8 +572,11 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
         id: 'mission-controls',
         label: recoveringMission ? 'Retomando…' : canResume ? 'Retomar missão' : 'Abrir missão',
         detail: canResume ? 'Continuar esta missão com a conversa e o trabalho preservados' : 'Ver andamento, retomada e ações desta missão',
-        icon: canResume ? 'restart' : 'crown-outline',
-        primary: true,
+        icon: canResume ? 'resume' : 'crown-outline',
+        // Sem sessão e com missão retomável é a ação que o operador procura:
+        // fica fora do menu "…" mesmo no modo compacto.
+        primary: canResume || recoveringMission,
+        resume: canResume || recoveringMission,
         busy: recoveringMission,
         run: () => {
           if (recoveryInFlight.current) return;
@@ -598,7 +608,6 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
           detail: 'Orquestrador atual (coordena tarefas e recebe delegações)',
           icon: 'crown',
           active: true,
-          primary: true,
           run: () => {},
         });
       } else if (pane.role !== 'orchestrator') {
@@ -627,7 +636,7 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
       }
     }
 
-    // A vacancy has no session, so "Fim" and "Dormir" would operate on
+    // A vacancy has no session, so "Ir ao fim" and "Dormir" would operate on
     // nothing. Offering them is the same lie as rendering a prompt: controls
     // that imply a process behind the pane. Layout actions stay — splitting a
     // vacancy is one of the ways the operator claims it.
@@ -638,7 +647,7 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
     ) {
       list.push({
         id: 'scroll-end',
-        label: 'Fim',
+        label: 'Ir ao fim',
         detail: 'Ir para o fim do terminal (última saída)',
         icon: 'scroll-bottom',
         run: () => scrollPaneToBottom(pane.id, pane.kind === 'cli-agent'),
@@ -689,7 +698,6 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
         label: 'Reiniciar',
         detail: 'Reabre o agente e tenta continuar a conversa anterior',
         icon: 'restart',
-        primary: true,
         run: () => {
           const state = useSessionStateStore.getState().paneStates.get(pane.id);
           if (state !== 'busy') {
@@ -714,7 +722,6 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
         label: 'Ir ao Palco',
         detail: 'Trazer este pane para o palco principal',
         icon: 'sparkle',
-        primary: true,
         run: () => setStagePane(pane.id),
       });
     }
@@ -727,7 +734,6 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
       shortcut: formatShortcut('mod', 'shift', 'F'),
       icon: stageFocusMode ? 'grid' : 'sparkle',
       active: stageFocusMode,
-      primary: true,
       run: () => toggleStageFocus(pane.id),
     });
     list.push({
@@ -738,10 +744,9 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
         : 'Amplia este pane sem fechar os outros',
       icon: isMaximized ? 'grid' : 'maximize',
       active: isMaximized,
-      primary: true,
       run: () => toggleMaximizePane(pane.id),
     });
-    // Splits NÃO são primary: em pane estreito empurravam o Fechar para fora
+    // Splits ficam no menu em pane estreito: empurravam o Fechar para fora
     // da toolbar e o utilizador ficava sem forma de fechar a janela.
     list.push({
       id: 'split-right',
@@ -789,11 +794,10 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
   const closeAction: ToolbarAction = {
     id: 'close',
     label: 'Fechar',
-    detail: `Fecha este pane (${formatShortcut('mod', 'W')})`,
+    detail: `${closeEndsMission ? 'Fechar este pane encerra a missão' : 'Fecha este pane'} (${formatShortcut('mod', 'W')})`,
     shortcut: formatShortcut('mod', 'W'),
     icon: 'close',
     danger: true,
-    primary: true,
     run: () =>
       void requestPaneClose(pane.id, undefined, {
         hasLiveSession: getPaneSessionId(pane.id) !== null,
@@ -807,16 +811,19 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
       ? false
       : density === 'icons'
         ? a.id === 'restart'
-        : a.id === 'scroll-end' ||
-          a.id === 'hibernate' ||
+        : a.id === 'hibernate' ||
           a.id === 'repaint' ||
           a.id === 'restart',
   );
-  const missionVisible = density === 'compact' ? [] : actions.filter(
-    (a) => a.id === 'mission-leader' || a.id === 'mission-controls',
+  // Compacto: só o que é `primary` (Retomar missão) sai do menu "…".
+  const missionVisible = actions.filter(
+    (a) => density === 'compact'
+      ? a.primary
+      : a.id === 'mission-leader' || a.id === 'mission-controls',
   );
   const layoutVisible = density === 'compact' ? [] : actions.filter(
     (a) =>
+      (a.id === 'scroll-end' && density === 'full') ||
       a.id === 'stage-focus' ||
       a.id === 'maximize' ||
       a.id === 'split-right' ||
@@ -824,7 +831,7 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
   );
   const overflowActions =
     density === 'compact'
-      ? actions
+      ? actions.filter((a) => !a.primary)
       : density === 'icons'
         ? actions.filter(
             (a) =>
@@ -844,6 +851,8 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
   const overflow = overflowActions.filter((a) => a.id !== ROLE_CHANGE_ACTION_ID);
   const overflowRole = overflowActions.filter((a) => a.id === ROLE_CHANGE_ACTION_ID);
   const hasOverflow = overflowActions.length > 0;
+  // O tooltip lista o que o menu contém NESTA densidade, não um resumo fixo.
+  const moreTip = `Mais ações: ${overflowActions.map((a) => a.label).join(', ')}`;
 
   useLayoutEffect(() => {
     if (!menuOpen || !menuRef.current || !menuTriggerRef.current) return;
@@ -883,7 +892,11 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
   function renderGroup(items: ToolbarAction[], aria: string) {
     if (items.length === 0) return null;
     return (
-      <div className="toolbar__group" role="group" aria-label={aria}>
+      <div
+        className={`toolbar__group${items.some((a) => a.resume) ? ' toolbar__group--resume' : ''}`}
+        role="group"
+        aria-label={aria}
+      >
         {items.map((a) => (
           <ToolbarBtn key={a.id} action={a} density={density} />
         ))}
@@ -896,6 +909,7 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
       className="toolbar"
       data-focused={isFocused}
       data-density={density}
+      data-resume={actions.some((a) => a.resume) || undefined}
       ref={rootRef}
     >
       {/* Meta shrinks first — never steal space from the close pin. */}
@@ -1016,9 +1030,10 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
           <span
             className="toolbar__badge toolbar__badge--orch"
             data-tip="Orquestrador — coordena e delega para os workers"
+            aria-label="Orquestrador"
           >
             <PixelIcon name="crown" size={10} className="toolbar__badge-crown" />
-            <span>orq</span>
+            <span className="toolbar__badge-word">orquestrador</span>
           </span>
         )}
         {pane.role === 'worker' && pane.agentName && (
@@ -1121,8 +1136,8 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
               aria-label="Mais ações do pane"
               aria-haspopup="menu"
               aria-expanded={menuOpen}
-              data-tip="Mais ações (dormir, dividir, fim…)"
-              title="Ações deste painel"
+              data-tip={moreTip}
+              title={moreTip}
               onClick={(e) => {
                 e.stopPropagation();
                 if (!menuOpen && menuTriggerRef.current) {
@@ -1162,9 +1177,9 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
       <button
         type="button"
         className="toolbar__close nodrag"
-        aria-label="Fechar este pane"
+        aria-label={closeEndsMission ? 'Fechar este pane encerra a missão' : 'Fechar este pane'}
         data-tip={closeAction.detail}
-        title={`Fechar pane (${formatShortcut('mod', 'W')})`}
+        title={closeEndsMission ? closeAction.detail : `Fechar pane (${formatShortcut('mod', 'W')})`}
         onClick={(e) => {
           e.stopPropagation();
           closeAction.run();
