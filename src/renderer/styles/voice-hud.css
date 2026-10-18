@@ -20,6 +20,10 @@
   position: fixed;
   z-index: var(--z-voice-hud);
   pointer-events: auto;
+  /* O header do mac é drag region: no Electron ela engole o mouse acima de
+     qualquer z-index. Sem no-drag, o HUD arrastado sobre o header não
+     arrasta nem clica. */
+  -webkit-app-region: no-drag;
   user-select: none;
   border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
   /* Fundo SÓLIDO no lugar do glassmorphism (blur 14px removido) — o color-mix
