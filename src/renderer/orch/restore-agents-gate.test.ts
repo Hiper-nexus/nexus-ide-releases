@@ -406,7 +406,7 @@ describe('restore-agents-gate', () => {
 
     const last = setHeldPaneNotice.mock.calls.at(-1);
     expect(last?.[0]).toBe('legacy-denial');
-    expect(last?.[1]).toContain('use Retomar');
+    expect(last?.[1]).toContain('Use “Retomar missão” no topo deste painel.');
   });
 
   it('nunca deixa o operador mudo: o último pane também é aposentado, não apagado', async () => {
@@ -541,6 +541,86 @@ describe('restore-agents-gate', () => {
       vi.useRealTimers();
     }
   });
+
+  it('offers the visible resume action after 20 seconds without releasing the hold', async () => {
+    vi.useFakeTimers();
+    let confirm!: (value: boolean) => void;
+    canRestoreMissionPane.mockReturnValue(new Promise<boolean>((resolve) => { confirm = resolve; }));
+    try {
+      const restoring = gateRestoredAgents([missionAgent('waiting-pane', 'Missão')]);
+      await vi.advanceTimersByTimeAsync(19_999);
+      expect(setHeldPaneNotice).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(setHeldPaneNotice).toHaveBeenLastCalledWith(
+        'waiting-pane',
+        'O Nexus ainda não confirmou a retomada. Use “Retomar missão” no topo deste painel',
+      );
+      expect(releaseHeldSpawns).not.toHaveBeenCalled();
+      expect(discardPaneSpawnState).not.toHaveBeenCalled();
+      expect(closePane).not.toHaveBeenCalled();
+      confirm(true);
+      await restoring;
+      expect(releaseHeldSpawns).toHaveBeenCalledWith(['waiting-pane'], { resume: true });
+    } finally {
+      resetRestoredAgentsGate();
+      vi.useRealTimers();
+    }
+  });
+
+  it('preserves the delayed notice when another gate shares the pending authority check', async () => {
+    vi.useFakeTimers();
+    let confirm!: (value: boolean) => void;
+    canRestoreMissionPane.mockReturnValue(new Promise<boolean>((resolve) => { confirm = resolve; }));
+    try {
+      const pane = missionAgent('waiting-pane', 'Missão');
+      const first = gateRestoredAgents([pane]);
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(setHeldPaneNotice).toHaveBeenLastCalledWith(
+        pane.id,
+        'O Nexus ainda não confirmou a retomada. Use “Retomar missão” no topo deste painel',
+      );
+      setHeldPaneNotice.mockClear();
+      const second = gateRestoredAgents([pane]);
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(canRestoreMissionPane).toHaveBeenCalledOnce();
+      expect(setHeldPaneNotice).not.toHaveBeenCalled();
+      expect(releaseHeldSpawns).not.toHaveBeenCalled();
+      confirm(true);
+      await Promise.all([first, second]);
+    } finally {
+      resetRestoredAgentsGate();
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(['confirmed', 'workspace changed'] as const)(
+    'cancels the delayed notice when authority is %s',
+    async (outcome) => {
+      vi.useFakeTimers();
+      let confirm!: (value: boolean) => void;
+      canRestoreMissionPane.mockReturnValue(new Promise<boolean>((resolve) => { confirm = resolve; }));
+      try {
+        const restoring = gateRestoredAgents([missionAgent('waiting-pane', 'Missão')]);
+        if (outcome === 'workspace changed') {
+          setActiveWorkspacePath('/workspace-b');
+          resetRestoredAgentsGate();
+        } else {
+          confirm(true);
+          await restoring;
+        }
+        await vi.advanceTimersByTimeAsync(20_000);
+        expect(setHeldPaneNotice).toHaveBeenCalledTimes(1);
+        if (outcome === 'workspace changed') {
+          confirm(true);
+          await restoring;
+          expect(releaseHeldSpawns).not.toHaveBeenCalled();
+        }
+      } finally {
+        resetRestoredAgentsGate();
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it('retries a transient authority failure and releases the pane when Main recovers', async () => {
     vi.useFakeTimers();

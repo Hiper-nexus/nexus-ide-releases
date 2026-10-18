@@ -78,6 +78,13 @@ export function terminalBufferHasContent(buffer: TerminalBufferProbe): boolean {
 // linha entra aqui — sem ela o buffer de um pane retido deixa de ser "só
 // aviso" e o snapshot volta a sobrescrever a fita salva.
 const NOTICE_CONTINUATION_LINES = new Set([
+  'O Nexus ainda não confirmou a retomada. Use “Retomar missão” no topo deste painel',
+  'Use “Retomar missão” no topo deste painel.',
+  'Responda à pergunta na missão para continuar.',
+  'Inicie uma nova missão.',
+  'A conversa segue com o líder vivo da missão.',
+  'O relatório final está na aba da missão.',
+  // Avisos antigos persistidos no histórico também não são saída de agente.
   'Clique a missão no rail e use Retomar.',
   'Confirme o diálogo ou retome a missão no rail quando quiser.',
   'Responda pela missão no rail para retomar.',

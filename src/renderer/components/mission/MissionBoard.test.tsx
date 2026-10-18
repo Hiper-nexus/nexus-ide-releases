@@ -2099,7 +2099,7 @@ describe('F — leader-drift: Religar a missão ao Maestro', () => {
     await flush();
 
     expect(normalizedText(host)).toContain(
-      'O terminal do Maestro não está vivo — abra Terminais e use Retomar.',
+      'O terminal do Maestro não está ativo. Use “Retomar missão” no topo deste painel.',
     );
   });
 
