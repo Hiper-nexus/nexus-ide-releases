@@ -103,7 +103,12 @@ import {
 } from '../persistence/account-store';
 import { adapterCircuitBreakers, DEFAULT_CIRCUIT_CONFIG } from './circuit-breaker';
 import { activeCliLimit, isCliLimited } from './cli-limit-registry';
-import { hasRecentCredentialProbeFailure } from '../pty/pre-spawn-probe';
+import {
+  hasRecentCredentialProbeFailure,
+  probePreSpawn,
+  recordRecentCredentialProbeFailure,
+} from '../pty/pre-spawn-probe';
+import { CREDENTIAL_FAILURE_CODES } from './spawn-seat-fallback';
 import { workerMortalityCount } from './worker-mortality';
 import {
   missionCliFailureNote,
@@ -2536,7 +2541,7 @@ export async function routeTaskForCaller(
       ? { tieBreakUseCounts: internal.tieBreakUseCounts }
       : {}),
   };
-  let decision = routeTask(
+  const routeOnce = () => routeTask(
     task,
     adapters,
     undefined,
@@ -2549,6 +2554,34 @@ export async function routeTaskForCaller(
       effortOverride: routing.effortOverride,
     },
   );
+  let decision = routeOnce();
+  // Rota ≠ execução (18/10): a recusa só era aprendida no spawn, com o pane
+  // já nascendo (writer visual no muse). A mesma sonda local do gate roda na
+  // CLI escolhida antes do recibo; recusada, sai do pool e a próxima vence.
+  // ponytail: sonda só a escolhida (até 3 trocas), não o pool inteiro.
+  for (let attempt = 0; decision && attempt < 3; attempt += 1) {
+    const refusedId = decision.adapterId;
+    const failure = await probePreSpawn(refusedId, {
+      model: decision.model,
+      silentRemint: true,
+    });
+    if (!failure || !CREDENTIAL_FAILURE_CODES.has(failure.code)) break;
+    recordRecentCredentialProbeFailure(refusedId);
+    const chosen = adapters;
+    adapters = adapters.map((a) =>
+      a.id === refusedId
+        ? { ...a, installed: false, unavailableReason: 'credencial recusada no spawn' }
+        : a,
+    );
+    const next = routeOnce();
+    if (!next) {
+      // Sem alternativa: a escolha fica e o spawn caminha a cadeia de sucessão.
+      adapters = chosen;
+      break;
+    }
+    credentialRefusedExcluded.push(refusedId);
+    decision = next;
+  }
   if (!decision) {
     if (missionId) {
       throw new Error(

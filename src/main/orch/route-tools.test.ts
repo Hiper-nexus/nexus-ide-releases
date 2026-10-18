@@ -16,6 +16,12 @@ const mocks = vi.hoisted(() => ({
   // argumentos (o contrafactual da regra é uma SEGUNDA chamada e não pode herdar
   // nada do Jev).
   routeTask: vi.fn(),
+  probePreSpawn: vi.fn(async (_adapterId: string): Promise<unknown> => null),
+}));
+
+vi.mock('../pty/pre-spawn-probe', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../pty/pre-spawn-probe')>()),
+  probePreSpawn: mocks.probePreSpawn,
 }));
 
 vi.mock('../persistence/provider-config-store', () => ({
@@ -58,6 +64,7 @@ import { isCliLimited, noteCliLimit, resetCliLimits } from './cli-limit-registry
 import { QUOTA_ENTRY_MAX_AGE_MS } from './quota-pace';
 import {
   clearRecentCredentialProbeFailuresForTests,
+  hasRecentCredentialProbeFailure,
   recordRecentCredentialProbeFailure,
 } from '../pty/pre-spawn-probe';
 import { buildDomainTools, routeTaskForCaller } from './tools-domain';
@@ -107,6 +114,8 @@ beforeEach(() => {
   mocks.classifyTaskWithSkillForRouting.mockReset();
   mocks.classifyTaskWithSkillForRouting.mockResolvedValue({ kind: 'skipped' });
   mocks.routeTask.mockClear();
+  mocks.probePreSpawn.mockReset();
+  mocks.probePreSpawn.mockResolvedValue(null);
 });
 
 afterEach(() => {
@@ -723,6 +732,40 @@ describe('nexus_route_task — exclude do caller só honra CLI doente', () => {
         installed: false,
         unavailableReason: 'credencial recusada no spawn',
       });
+    } finally {
+      clearRecentCredentialProbeFailuresForTests();
+    }
+  });
+
+  // 18/10: o writer visual nasceu no muse e só o recibo SEGUINTE dizia que a
+  // credencial dele foi recusada. A sonda roda na escolhida antes do recibo.
+  it('credencial recusada pela sonda antes da escolha leva à próxima rota', async () => {
+    mocks.listProviderSettings.mockReturnValue([museProvider, codexProvider]);
+    mocks.probePreSpawn.mockImplementation(async (adapterId: string) =>
+      adapterId === 'muse'
+        ? { code: 'missing-credential', adapterId, hint: 'login' }
+        : null,
+    );
+    try {
+      const decision = (await routeTaskForCaller(
+        { task: 'tarefa média', preferAdapters: ['muse'] },
+        context(),
+      )) as { adapterId: string; reason: string };
+      expect(decision.adapterId).not.toBe('muse');
+      expect(decision.reason).toContain('fora da rota (credencial recusada no spawn recente): muse');
+      expect(mocks.probePreSpawn).toHaveBeenCalledWith('muse', expect.objectContaining({ silentRemint: true }));
+      expect(hasRecentCredentialProbeFailure('muse')).toBe(true);
+    } finally {
+      clearRecentCredentialProbeFailuresForTests();
+    }
+  });
+
+  it('sem alternativa, a sonda recusada mantém a escolha para a cadeia do spawn', async () => {
+    mocks.listProviderSettings.mockReturnValue([museProvider]);
+    mocks.probePreSpawn.mockResolvedValue({ code: 'missing-credential', adapterId: 'muse', hint: 'login' });
+    try {
+      const decision = (await routeTaskForCaller({ task: 'tarefa média' }, context())) as { adapterId: string };
+      expect(decision.adapterId).toBe('muse');
     } finally {
       clearRecentCredentialProbeFailuresForTests();
     }
