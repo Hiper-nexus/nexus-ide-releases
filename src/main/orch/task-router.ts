@@ -2827,6 +2827,13 @@ export function routeTask(
     // falha. A cláusula "sucesso 14d" usa o mesmo texto da taxa, então o
     // filtro tem de olhar a nota de evitação — senão a promoção do líder
     // falho some do recibo.
+    // O pick final pode ser a rota falha (fail-open: única opção, reserva ou
+    // lane crítica): a nota do multi-score, escrita quando o líder era outro,
+    // nunca pode citá-lo como evitado. A nota é sempre o último trecho.
+    if (provenFailure(pick.adapterId, pick.model) !== null) {
+      const stale = multiScoreNote.indexOf('; evitou rota falha: ');
+      if (stale >= 0) multiScoreNote = multiScoreNote.slice(0, stale);
+    }
     const multiScoreAvoidedAt = multiScoreNote.indexOf('evitou rota falha: ');
     const multiScoreAlreadyAvoided = (text: string) =>
       multiScoreAvoidedAt >= 0 &&

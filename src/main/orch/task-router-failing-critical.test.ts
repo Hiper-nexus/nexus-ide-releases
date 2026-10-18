@@ -80,6 +80,16 @@ describe('reserveClaude: a reserva não devolve a rota falha', () => {
     expect(pick(decision)).toBe(`muse:${MUSE_FULL}`);
   });
 
+  it('fail-open na reserva: o recibo não diz que evitou a rota falha que escolheu', () => {
+    const decision = route(WRITER, [CLAUDE, { ...CODEX, models: ['gpt-6.1-sol'] }], {
+      multiScore: true,
+      missionUseCounts: SEATED,
+      routeOutcomes: failing(['codex', 'gpt-6.1-sol']),
+    }, 'hard', true);
+    expect(pick(decision)).toBe('codex:gpt-6.1-sol');
+    expect(decision.reason).not.toContain('evitou rota falha: codex:gpt-6.1-sol');
+  });
+
   it('não ressuscita circuito aberto: com Codex aberto após 3 falhas e Muse 0/7 fechado, escolhe Muse fechado', () => {
     trip('codex');
     const decision = route(
