@@ -735,8 +735,9 @@ describe('MissionBoard canonical controller', () => {
     );
     const remount = mount();
     await flush();
+    // Sono deixado por reinício/crash é missão interrompida, não hibernação.
     expect(remount.host.querySelector('.mission-board__status')?.textContent).toBe(
-      'Dormindo',
+      'Interrompida',
     );
   });
 
