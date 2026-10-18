@@ -31,6 +31,7 @@ import { hasCurrentCompletionRequest } from './operator-tab-completion';
 import {
   HANDOFF_DELIVERY_RETRY_BACKOFF_MS,
   MAX_HANDOFF_DELIVERY_ATTEMPTS,
+  handoffDeliveryEligible,
 } from './handoff-delivery-policy';
 import { emitAppEvent } from '../connectors/app-events';
 import { emitMissionEvent } from './mission-event-emit';
@@ -43,8 +44,8 @@ import {
 
 const announcedHandoffSubmits = new Set<string>();
 
-/** Re-exportado para testes e políticas de re-arm calendarem pelo mesmo valor. */
-export { HANDOFF_DELIVERY_RETRY_BACKOFF_MS };
+/** Re-exportados para testes e políticas de re-arm calendarem pela mesma regra. */
+export { HANDOFF_DELIVERY_RETRY_BACKOFF_MS, handoffDeliveryEligible };
 import {
   getAgentSemanticStatusBySession,
   getAgentTurnStartSequence,
@@ -184,10 +185,9 @@ export const IDLE_RELEASE_RETRY_MAX_MS = 15 * 60_000;
  * Cada tentativa além do orçamento por sessão é uma rodada reaberta por
  * `releaseFailedDeliveryAttempts`. Sem teto o re-drive ficava ~4 colagens/h
  * para sempre contra um Maestro que não aceita. Na sexta rodada a entrega
- * ESTACIONA: o handoff segue `queued`, um evento de missão
- * `delivery-needs-operator` avisa o operador, e só uma prova de mudança —
- * borda busy→idle real, sessão nova (rebind) ou ação do operador/list-ack —
- * volta a colar. Sem kill, sem rebind do Maestro.
+ * ESTACIONA: o handoff segue `queued` e `delivery-needs-operator` avisa o
+ * operador. Uma borda busy→idle real retoma na hora; sem ela, o sweep do
+ * supervisor reavalia depois de IDLE_RELEASE_RETRY_MAX_MS. Sem kill/rebind.
  */
 export const IDLE_RELEASE_PARK_ROUNDS = 6;
 
@@ -573,10 +573,11 @@ const retryBackoffTimers = new Set<ReturnType<typeof setTimeout>>();
 interface RetryBackoffWait {
   readonly authority: DeliveryAuthority;
   readonly sessionId: string;
-  /** Ausente na espera estacionada (só a borda busy→idle a dispara). */
+  /** Ausente na espera estacionada, reavaliada pelo sweep do supervisor. */
   readonly timer?: ReturnType<typeof setTimeout>;
   readonly redeliver: () => void;
   readonly earliestFireAt: number;
+  readonly parkedAt?: number;
   sawBusy: boolean;
 }
 const retryBackoffPending = new Map<string, RetryBackoffWait>();
@@ -614,12 +615,10 @@ function trackRetryBackoff(
 }
 
 /**
- * F-925 (revisão de 899138577): espera ESTACIONADA — sem timer. Depois de
- * IDLE_RELEASE_PARK_ROUNDS rodadas liberadas sem aceite o handoff para de
- * consumir a janela do PTY: a única saída é a prova de mudança (borda
- * busy→idle real, via sawBusy + earliestFireAt=0) ou a saída da sessão.
- * O handoff continua `queued` no ledger e a autoridade é revalidada no
- * re-drive, como qualquer outra espera.
+ * F-925 (revisão de 899138577): espera ESTACIONADA — sem timer próprio. Depois
+ * de IDLE_RELEASE_PARK_ROUNDS rodadas liberadas sem aceite o handoff para de
+ * consumir a janela do PTY. A borda busy→idle real dispara na hora; sem ela,
+ * o sweep do supervisor reabre a entrega depois do TTL do parque.
  */
 function parkRetryBackoff(
   authority: DeliveryAuthority,
@@ -638,8 +637,27 @@ function parkRetryBackoff(
     timer: undefined,
     redeliver,
     earliestFireAt: 0,
+    parkedAt: Date.now(),
     sawBusy: false,
   });
+}
+
+function requeueExpiredParkedHandoffs(
+  scope: ProjectExecutionScope,
+  missionId: string,
+): void {
+  const now = Date.now();
+  for (const [key, wait] of [...retryBackoffPending]) {
+    if (
+      wait.timer ||
+      wait.parkedAt === undefined ||
+      now - wait.parkedAt < IDLE_RELEASE_RETRY_MAX_MS ||
+      wait.authority.missionId !== missionId ||
+      !sameProjectScope(wait.authority.scope, scope)
+    ) continue;
+    retryBackoffPending.delete(key);
+    wait.redeliver();
+  }
 }
 
 /**
@@ -855,41 +873,12 @@ function acceptPendingEnters(sessionId: string): void {
   }
 }
 
-/** Mesmo id do supervisor (delegation-supervisor importa este módulo). */
-const DELEGATION_SUPERVISOR_AGENT = 'nexus-delegation-supervisor';
-
-function isDiagnosticDriverHandoff(handoff: Handoff): boolean {
-  // F-727: o "[travado]" do F-242 vem do supervisor de delegação e existe para
-  // ACORDAR o Maestro. Barrado aqui junto com os diagnósticos, ele só chegava
-  // ao ledger e nenhum Maestro ficava sabendo do worker pendurado.
-  if (handoff.fromAgent === DELEGATION_SUPERVISOR_AGENT) return false;
-  // mission-driver "stalled / no progress" signals are ledger/UI diagnostics.
-  // Pasting them into a busy orchestrator and then demoting the mission to
-  // blocked after two failed CR attempts can kill a fully completed guided
-  // run (executor+reviewer+QA already done).
-  return (
-    handoff.status === 'stalled' ||
-    handoff.fromAgent === 'nexus-mission-driver'
-  );
-}
-
-/**
- * F-925: predicado único do "handoff que a entrega tentaria colar". O
- * supervisor usa o MESMO critério para decidir se ainda existe pendência
- * real na fila — contar diagnóstico que nunca chega ao PTY segurava o
- * re-arm; contar só success/blocked deixava progress/failed queued para
- * sempre (o wedge de 119 min do campo 05/10).
- */
-export function handoffDeliveryEligible(handoff: Handoff): boolean {
-  return !isDiagnosticDriverHandoff(handoff);
-}
-
 /**
  * F-925 (revisão de 899138577): sinal de atenção da missão quando a entrega
  * estaciona no teto de rodadas. Vai pelo journal durável de eventos da
- * missão — o canal existente que o renderer/operador lê — com a chave de
- * idempotência incluindo o número da rodada para que cada estacionada nova
- * (depois de uma retomada) gere aviso próprio sem spam.
+ * missão — o canal existente que o renderer/operador lê. A chave por
+ * handoff+sessão deduplica os re-parques do sweep, sem esconder o aviso
+ * quando uma sessão nova encontra o mesmo problema.
  */
 function emitDeliveryNeedsOperator(
   authority: DeliveryAuthority,
@@ -904,7 +893,7 @@ function emitDeliveryNeedsOperator(
       origin: 'system',
       idempotencyKey:
         `delivery_needs_operator:${handoffId.slice(0, 40)}:` +
-        `${authority.sessionId.slice(0, 40)}:${sessionAttempts}`,
+        authority.sessionId.slice(0, 40),
       payload: {
         kind: 'delivery-needs-operator',
         handoffId,
@@ -913,8 +902,8 @@ function emitDeliveryNeedsOperator(
         releasedRounds: sessionAttempts - MAX_DELIVERY_ATTEMPTS,
         reason:
           'Maestro idle não aceitou a entrega depois das rodadas ' +
-          'liberadas — entrega estacionada até prova de mudança ' +
-          '(borda busy→idle, sessão nova ou list-ack)',
+          'liberadas — entrega estacionada; o supervisor reavalia após ' +
+          'o TTL, e uma borda busy→idle retoma na hora',
       },
     });
   } catch (error) {
@@ -968,11 +957,10 @@ function blockDeliveryFailure(
     // F-925 (revisão de 899138577): cada tentativa além do orçamento por
     // sessão só existe porque uma liberação a reabriu — `sessionAttempts -
     // MAX` conta as rodadas já liberadas. Na sexta sem aceite a entrega
-    // ESTACIONA: sem timer, sem liberação nova — só a borda busy→idle real
-    // (prova de mudança no PTY), uma sessão nova (rebind) ou a ação do
-    // operador/list-ack volta a colar. O handoff segue `queued`, nunca é
-    // descartado, e o operador recebe o evento `delivery-needs-operator`
-    // no journal da missão. Sem kill e sem rebind do Maestro.
+    // ESTACIONA sem timer próprio: a borda busy→idle real retoma na hora;
+    // sem ela, o sweep do supervisor reabre depois do TTL do parque. O
+    // handoff segue `queued`, nunca é descartado, e o operador recebe
+    // `delivery-needs-operator` no journal. Sem kill e sem rebind do Maestro.
     if (
       sessionAttempts - MAX_DELIVERY_ATTEMPTS >=
       IDLE_RELEASE_PARK_ROUNDS
@@ -998,8 +986,8 @@ function blockDeliveryFailure(
       console.warn(
         '[idle-delivery] entrega estacionada: Maestro idle não aceitou ' +
           `depois de ${IDLE_RELEASE_PARK_ROUNDS} rodadas liberadas ` +
-          '(handoff segue queued; retoma só com prova de mudança — borda ' +
-          `busy→idle, sessão nova ou list-ack; mission=${authority.missionId}, ` +
+          '(handoff segue queued; sweep reavalia após o TTL e borda ' +
+          `busy→idle retoma na hora; mission=${authority.missionId}, ` +
           `handoff=${handoffId}, session=${authority.sessionId}, ` +
           `attempts=${sessionAttempts})`,
       );
@@ -1623,8 +1611,8 @@ export function initIdleDelivery(): void {
         clearPendingDeliveryStart(pending);
       }
       // Esperas represadas (armadas ou estacionadas) do escopo antigo saem
-      // junto — a estacionada não tem timer e ficaria viva para sempre
-      // segurando o gate de taxa da sessão.
+      // junto para não segurar o gate de taxa da sessão nem chegar ao sweep
+      // do supervisor com uma autoridade que já mudou de workspace.
       for (const [waitKey, wait] of [...retryBackoffPending]) {
         if (
           wait.authority.owner?.id !== owner.id ||
@@ -1855,7 +1843,7 @@ export function onHandoffSubmitted(
       );
     });
   }
-  if (isDiagnosticDriverHandoff(handoff)) return null;
+  if (!handoffDeliveryEligible(handoff)) return null;
   // Um evento por handoff: onHandoffSubmitted também roda a cada re-arm da
   // entrega (F-112) e o feed Arms ficava repetindo o mesmo submit 17×.
   if (!announcedHandoffSubmits.has(handoff.id)) {
@@ -1889,7 +1877,11 @@ export function redeliverPendingHandoffs(
   scope: ProjectExecutionScope,
   missionId: string,
   overrideStores?: ProjectDomainStoreSuite,
+  options: { requeueExpiredParks?: boolean } = {},
 ): number {
+  if (options.requeueExpiredParks) {
+    requeueExpiredParkedHandoffs(scope, missionId);
+  }
   const stores = overrideStores ?? getProjectDomainStores(scope);
   const pending = stores.handoffs.list({
     missionId,

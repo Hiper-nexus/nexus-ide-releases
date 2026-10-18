@@ -438,7 +438,12 @@ function rearmStuckHandoffDelivery(
   }
   handoffRearmLastRun.set(mission.id, now);
   try {
-    const rearmed = redeliverPendingHandoffs(suite.scope, mission.id);
+    const rearmed = redeliverPendingHandoffs(
+      suite.scope,
+      mission.id,
+      undefined,
+      { requeueExpiredParks: true },
+    );
     if (rearmed > 0) {
       console.warn(
         `[delegation-supervisor] re-arm de ${rearmed} handoff(s) pendente(s) ` +

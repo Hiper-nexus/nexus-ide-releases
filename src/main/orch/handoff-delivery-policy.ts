@@ -1,3 +1,5 @@
+import type { Handoff } from '../../shared/orch-types';
+
 /** Durable handoff delivery limits shared by rebind recovery and idle delivery. */
 export const MAX_HANDOFF_DELIVERY_ATTEMPTS = 3;
 
@@ -9,6 +11,32 @@ export const MAX_HANDOFF_DELIVERY_ATTEMPTS = 3;
  * da próxima colagem.
  */
 export const HANDOFF_DELIVERY_RETRY_BACKOFF_MS = 15_000;
+
+const DELEGATION_SUPERVISOR_AGENT = 'nexus-delegation-supervisor';
+
+function isDiagnosticDriverHandoff(handoff: Handoff): boolean {
+  // F-727: o "[travado]" do F-242 vem do supervisor de delegação e existe para
+  // ACORDAR o Maestro. Barrado junto com os diagnósticos, ele só chegava ao
+  // ledger e nenhum Maestro ficava sabendo do worker pendurado.
+  if (handoff.fromAgent === DELEGATION_SUPERVISOR_AGENT) return false;
+  // mission-driver "stalled / no progress" signals are ledger/UI diagnostics.
+  // Pasting them into a busy orchestrator and then demoting the mission to
+  // blocked after two failed CR attempts can kill a fully completed guided
+  // run (executor+reviewer+QA already done).
+  return (
+    handoff.status === 'stalled' ||
+    handoff.fromAgent === 'nexus-mission-driver'
+  );
+}
+
+/**
+ * F-925: predicado único do handoff entregável. Diagnóstico que nunca chega
+ * ao PTY não segura re-arm nem o TTL do worker; success/blocked não são os
+ * únicos entregáveis — progress/failed também voltam à fila.
+ */
+export function handoffDeliveryEligible(handoff: Handoff): boolean {
+  return !isDiagnosticDriverHandoff(handoff);
+}
 
 export const HANDOFF_REBIND_BLOCK_MARKER =
   '[NEXUS_HANDOFF_REBIND_BLOCKED]';
