@@ -867,6 +867,7 @@ async function injectWithBusyProof(
   invocation?: McpToolInvocation,
   requireTurnStartProof = false,
   canSubmit?: () => boolean,
+  inputWriter: SystemInputWriter = 'nexus',
 ): Promise<PromptInjectOutcome> {
   // Never interleave a brief with boot or a turn already in progress. The
   // caller may retry only after an actual idle snapshot/edge.
@@ -976,7 +977,7 @@ async function injectWithBusyProof(
     if (!isSessionInjectableIdle(sessionId)) return 'not-written';
     assertMcpInvocationCurrent(invocation);
     const ingest = armPasteIngest(sessionId, safePrompt);
-    if (!orchWriteSession(sessionId, input, { markInputBusy: false })) {
+    if (!orchWriteSession(sessionId, input, { markInputBusy: false, inputWriter })) {
       ingest?.cancel();
       return 'not-written';
     }
@@ -988,7 +989,7 @@ async function injectWithBusyProof(
       if (input.length === 0) return;
       if (getSessionState(sessionId) === null) return;
       try {
-        orchWriteSession(sessionId, '\x15', { markInputBusy: false });
+        orchWriteSession(sessionId, '\x15', { markInputBusy: false, inputWriter });
       } catch {
         // Best-effort: sessão pode ter morrido entre o check e o write.
       }
@@ -1006,6 +1007,7 @@ async function injectWithBusyProof(
       },
       true,
       ingest,
+      inputWriter,
     ).catch((error: unknown) => {
       if (
         error instanceof Error &&
@@ -1062,6 +1064,63 @@ async function injectWithBusyProof(
     untapData();
     untapExit();
     untapTurnStart();
+  }
+}
+
+/** Recibo do `nexus_pane_write`: turno provado, só bytes, ou sessão encerrada. */
+export type PaneWriteDelivery = 'entregue' | 'sem-prova-de-turno' | 'pane-finalizado';
+
+function paneWriteSessionEnded(sessionId: string): boolean {
+  const state = getSessionState(sessionId);
+  return state === null || state === 'exited';
+}
+
+function rememberPaneWrite(sessionId: string, prompt: string, inputWriter: SystemInputWriter): void {
+  if (inputWriter !== 'failover') rememberInFlightRequest(sessionId, prompt);
+}
+
+/**
+ * `nexus_pane_write` com Enter. Pane injetável-idle passa por
+ * `injectWithBusyProof` (a prova de turno que `injectPrompt` não faz).
+ * Fora disso continua o caminho de bytes. Autoridade revogada segue lançando.
+ */
+export async function injectSubmittedPaneWrite(
+  sessionId: string,
+  prompt: string,
+  invocation?: McpToolInvocation,
+  inputWriter: SystemInputWriter = 'nexus',
+  windowMs = PROMPT_ACCEPTANCE_WINDOW_MS,
+): Promise<PaneWriteDelivery> {
+  try {
+    if (isSessionInjectableIdle(sessionId)) {
+      const outcome = await injectWithBusyProof(
+        sessionId,
+        prompt,
+        windowMs,
+        invocation,
+        requiresClaudeFamilyTurnProof(getAgentSessionInfo(sessionId)?.adapterId),
+        undefined,
+        inputWriter,
+      );
+      if (paneWriteSessionEnded(sessionId)) return 'pane-finalizado';
+      if (outcome === 'accepted') {
+        rememberPaneWrite(sessionId, prompt, inputWriter);
+        return 'entregue';
+      }
+      if (outcome === 'written-unconfirmed') {
+        rememberPaneWrite(sessionId, prompt, inputWriter);
+        return 'sem-prova-de-turno';
+      }
+      if (paneWriteSessionEnded(sessionId)) return 'pane-finalizado';
+      await injectPrompt(sessionId, prompt, invocation, inputWriter);
+      return paneWriteSessionEnded(sessionId) ? 'pane-finalizado' : 'sem-prova-de-turno';
+    }
+    await injectPrompt(sessionId, prompt, invocation, inputWriter);
+    return paneWriteSessionEnded(sessionId) ? 'pane-finalizado' : 'sem-prova-de-turno';
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('session_authority_revoked')) throw error;
+    if (paneWriteSessionEnded(sessionId)) return 'pane-finalizado';
+    throw error;
   }
 }
 
