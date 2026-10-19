@@ -9,6 +9,7 @@ import {
   assertSafeLocalGitConfig,
   assertSafeLocalGitConfigAsync,
   type AsyncGitRunner,
+  type GitResult,
   type GitRunner,
 } from "./git-command";
 import {
@@ -233,6 +234,121 @@ export async function gitOutputAsync(
   args: readonly string[],
 ): Promise<string> {
   return (await runner.run(cwd, args)).stdout.trim();
+}
+
+/** Atraso do checkout contra o upstream `origin`, medido após um fetch. */
+export interface UpstreamDrift {
+  /** "origin/main", ou null quando a branch não rastreia um upstream origin. */
+  readonly upstream: string | null;
+  /** Commits atrás de @{upstream} após o fetch (0 quando o ff-only foi feito). */
+  readonly behind: number;
+  /** Commits locais à frente (divergência: nunca ff). */
+  readonly ahead: number;
+  /** false = fetch falhou (offline/rede): a medição é desconhecida, não zero. */
+  readonly fetched: boolean;
+  /** true quando a raiz limpa e estritamente atrás recebeu merge --ff-only. */
+  readonly fastForwarded: boolean;
+}
+
+const UPSTREAM_FETCH_TIMEOUT_MS = 20_000;
+
+/**
+ * Refresh do upstream da raiz de coordenação antes de congelar a base de uma
+ * worktree: a base era sempre o HEAD local, N commits atrás de origin/main,
+ * porque só o nexus_git_sync manual buscava. O fetch só toca
+ * refs/remotes/origin/* e o banco de objetos, então é seguro com WIP; o
+ * ff-only exige a árvore comprovadamente limpa (arquivos rastreados) e o
+ * histórico estritamente atrás — um untracked que o merge fosse sobrescrever
+ * o faz falhar sem tocar em nada. Toda falha de fetch/rede é absorvida
+ * (`fetched: false`): a criação da worktree nunca morre por causa do refresh.
+ */
+export async function refreshUpstreamDriftAsync(
+  git: AsyncGitRunner,
+  rootRealPath: string,
+): Promise<UpstreamDrift> {
+  const stationary: UpstreamDrift = {
+    upstream: null,
+    behind: 0,
+    ahead: 0,
+    fetched: false,
+    fastForwarded: false,
+  };
+  let upstreamResult: GitResult;
+  try {
+    upstreamResult = await git.run(
+      rootRealPath,
+      ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+      { allowFailure: true },
+    );
+  } catch {
+    // Runner em timeout/erro de processo já na sonda: segue com o HEAD local.
+    return stationary;
+  }
+  const upstream = upstreamResult.stdout.trim();
+  if (upstreamResult.status !== 0 || !upstream.startsWith("origin/")) {
+    return stationary;
+  }
+  let fetchStatus: number;
+  try {
+    fetchStatus = (
+      await git.run(rootRealPath, ["fetch", "--prune", "origin"], {
+        allowFailure: true,
+        timeoutMs: UPSTREAM_FETCH_TIMEOUT_MS,
+      })
+    ).status;
+  } catch {
+    // Timeout/erro de processo no fetch: segue com o HEAD local.
+    return { ...stationary, upstream };
+  }
+  if (fetchStatus !== 0) {
+    return { ...stationary, upstream };
+  }
+  let ahead = 0;
+  let behind = 0;
+  try {
+    const divergence = (
+      await git.run(rootRealPath, [
+        "rev-list",
+        "--left-right",
+        "--count",
+        "HEAD...@{upstream}",
+      ])
+    ).stdout
+      .trim()
+      .split(/\s+/)
+      .map((value) => Number.parseInt(value, 10));
+    ahead = divergence[0] ?? 0;
+    behind = divergence[1] ?? 0;
+    if (!Number.isInteger(ahead) || !Number.isInteger(behind)) {
+      return { ...stationary, upstream, fetched: true };
+    }
+  } catch {
+    // Fetch saiu mas a medição falhou: atraso desconhecido, sem ff.
+    return { ...stationary, upstream, fetched: true };
+  }
+  if (ahead > 0 || behind === 0) {
+    return { upstream, behind, ahead, fetched: true, fastForwarded: false };
+  }
+  let ff: GitResult | null = null;
+  try {
+    const trackedStatus = await git.run(
+      rootRealPath,
+      ["status", "--porcelain=v1", "--untracked-files=no"],
+      { allowFailure: true },
+    );
+    if (trackedStatus.status === 0 && trackedStatus.stdout.length === 0) {
+      ff = await git.run(rootRealPath, ["merge", "--ff-only", "@{upstream}"], {
+        allowFailure: true,
+      });
+    }
+  } catch {
+    // Status/merge rejeitado pelo runner: preserva o atraso medido, sem ff.
+    return { upstream, behind, ahead, fetched: true, fastForwarded: false };
+  }
+  if (ff === null || ff.status !== 0) {
+    return { upstream, behind, ahead, fetched: true, fastForwarded: false };
+  }
+  return { upstream, behind: 0, ahead, fetched: true, fastForwarded: true };
 }
 
 export async function readRepositorySnapshotAsync(

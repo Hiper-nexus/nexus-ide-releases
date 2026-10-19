@@ -59,6 +59,7 @@ import {
   assertTaskWorktreeAsync,
   readRepositorySnapshotAsync,
   readLinkedBaseSnapshotAsync,
+  refreshUpstreamDriftAsync,
   resolveBaseRefAsync,
   assertTaskWorktree,
   ensureDirectory,
@@ -356,6 +357,18 @@ export class WorktreeManager {
     const requireClean = input.ownerKind !== "pane";
     if (input.baseRootRealPath !== undefined && input.ownerKind !== "pane") {
       throw new Error("only pane writers may start from another worktree");
+    }
+    // A base congela o HEAD local; sem refresh ela nasce N commits atrás de
+    // origin/main (só o nexus_git_sync manual buscava). O fetch só toca
+    // refs/remotes/origin/* e é absorvido em falha de rede; o ff-only exige
+    // árvore limpa e histórico estritamente atrás. Nunca destrói WIP.
+    const drift = await refreshUpstreamDriftAsync(this.#asyncGit, input.scope.rootRealPath);
+    assertCurrentAuthority();
+    if (drift.fetched && drift.upstream !== null && drift.behind > 0) {
+      console.warn(
+        `[worktree-runtime] checkout ${drift.behind} commits atrás de ${drift.upstream}; ` +
+          "a base do writer nasce do HEAD local. Sincronize com nexus_git_sync.",
+      );
     }
     const repository = await readRepositorySnapshotAsync(this.#asyncGit, input.scope, requireClean);
     assertCurrentAuthority();

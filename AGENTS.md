@@ -496,6 +496,12 @@ saber isto antes de mexer:
   ids de missão/worker, derivados por `worktreeBranchRef` nos validadores também.
 - A base é HEAD do escopo; WIP do checkout de coordenação não é copiado nem
   exige limpeza. O caminho selado mantém a exigência de checkout limpo.
+- Antes de congelar a base, `WorktreeManager.create()` refresca o upstream da
+  raiz de coordenação (`refreshUpstreamDriftAsync`): `fetch --prune origin`
+  (só toca `refs/remotes/origin/*`, fail-open em falha de rede) e
+  `merge --ff-only @{upstream}` SÓ com a árvore comprovadamente limpa
+  (rastreados) e o histórico estritamente atrás; sem isso, avisa quantos
+  commits atrás e segue com o HEAD local. Nunca destrói WIP.
 - `isolated-writer-worktree.ts` libera a reserva por `markFailed` no tap de
   saída física do PTY, inclusive fechamento/teardown de missão, ou em falha
   de spawn sem pane vivo. ACK pendente mantém a reserva de worktree.
