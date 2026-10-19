@@ -13,6 +13,11 @@ import {
   type ProbeAdapterView,
 } from './pre-spawn-probe';
 import {
+  noteMissionCliFailure,
+  resetMissionCliFailures,
+  routeFailureOutcomeRows,
+} from '../orch/mission-cli-failures';
+import {
   SILENT_REMINT_HINT,
   rememberKimiSeatReadiness,
 } from '../adapters/seat-auth-readiness';
@@ -86,6 +91,23 @@ function runAssert(
 ) {
   return assertPreSpawnProbe(adapterId, { deps, model });
 }
+
+describe('probe que passa limpa a rota da CLI', () => {
+  it('recusas de assento antigas deixam de pesar no sucesso 14d', async () => {
+    // Campo 19/10: Muse logado seguia "evitou rota falha" pelas recusas da
+    // véspera; o probe passando é a prova de que a credencial voltou.
+    resetMissionCliFailures();
+    noteMissionCliFailure({ missionId: 'm', adapterId: 'claude', model: 'claude-opus-5-5', cause: 'credential-remap', attemptKey: 'old', at: 1_000 });
+    expect(routeFailureOutcomeRows(0)).toHaveLength(1);
+    const deps = makeDeps({
+      getAdapter: () => claudeAdapter,
+      readClaudeCredentialsFile: () => '{"tok":1}',
+    });
+    expect(await runProbe('claude', deps)).toBeNull();
+    expect(routeFailureOutcomeRows(0)).toEqual([]);
+    resetMissionCliFailures();
+  });
+});
 
 describe('probePreSpawn — claude family', () => {
   const withClaude = (overrides: Partial<PreSpawnProbeDeps> = {}) =>

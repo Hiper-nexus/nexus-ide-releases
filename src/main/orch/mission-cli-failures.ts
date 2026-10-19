@@ -124,6 +124,23 @@ export function routeFailureOutcomeRows(sinceMs: number): RouteOutcomeCount[] {
   return [...rows.values()].map((row) => ({ ...row, successes: 0 }));
 }
 
+/**
+ * Campo 19/10: o probe da credencial voltou a passar — as recusas de assento
+ * (`credential-remap`) daquela CLI deixam de pesar no sucesso 14d. Sem isso o
+ * Muse, já logado, seguia "rota falha" (0,00) e o roteador desviava dele até
+ * o processo reiniciar. Falhas de entrega de verdade continuam contando.
+ */
+export function clearCredentialRouteFailures(adapterId: string): number {
+  let cleared = 0;
+  for (const [key, failure] of failures) {
+    if (failure.adapterId === adapterId && failure.cause === 'credential-remap') {
+      failures.delete(key);
+      cleared += 1;
+    }
+  }
+  return cleared;
+}
+
 export function resetMissionCliFailures(missionId?: string): void {
   if (!missionId) {
     failures.clear();

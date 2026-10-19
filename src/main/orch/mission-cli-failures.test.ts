@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  clearCredentialRouteFailures,
   closedWorkerFailure,
   missionCliFailureNote,
   missionCliFailures,
@@ -76,6 +77,20 @@ describe('F-1427: registro por (missão, CLI)', () => {
     expect(missionCliFailureNote('m', 'qwen')).toBe('qwen (ocioso sem entrega)');
     expect(routeFailureOutcomeRows(500)).toEqual([
       { adapterId: 'qwen', successes: 0, total: 1 },
+    ]);
+  });
+
+  it('probe da credencial passando apaga só as recusas de assento daquela CLI', () => {
+    // Campo 19/10: Muse logado seguia 0,00 (5) e "evitou rota falha".
+    for (const key of ['r1', 'r2', 'r3']) {
+      noteMissionCliFailure({ missionId: 'm', adapterId: 'muse', model: 'muse-wonder-full-1.0', cause: 'credential-remap', attemptKey: key, at: 1_000 });
+    }
+    noteMissionCliFailure({ missionId: 'm', adapterId: 'muse', model: 'muse-wonder-full-1.0', cause: 'closed-without-delivery', attemptKey: 'real', at: 1_000 });
+    noteMissionCliFailure({ missionId: 'm', adapterId: 'kimi', cause: 'credential-remap', attemptKey: 'k', at: 1_000 });
+    expect(clearCredentialRouteFailures('muse')).toBe(3);
+    expect(routeFailureOutcomeRows(500)).toEqual([
+      { adapterId: 'muse', model: 'muse-wonder-full-1.0', successes: 0, total: 1 },
+      { adapterId: 'kimi', successes: 0, total: 1 },
     ]);
   });
 });

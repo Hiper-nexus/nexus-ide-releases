@@ -15,6 +15,7 @@ import {
   type AuthStrategy,
 } from '../adapters/subscription-auth';
 import { trace } from '../observability/main-trace';
+import { clearCredentialRouteFailures } from '../orch/mission-cli-failures';
 import { isCredentiallessOpenCodeModel } from '../adapters/model-auth-readiness';
 import { refreshKimiSeatReadiness } from '../adapters/kimi-seat-probe';
 import {
@@ -532,7 +533,10 @@ export async function probePreSpawn(
         return { ...failure, hint: `${detail}; ${failure.hint}` };
       }
     }
-    if (!failure) recentCredentialFailures.delete(adapterId);
+    if (!failure) {
+      recentCredentialFailures.delete(adapterId);
+      clearCredentialRouteFailures(adapterId);
+    }
     return failure;
   } catch (err) {
     if (options.failClosed) {
