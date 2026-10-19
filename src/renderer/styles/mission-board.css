@@ -1893,6 +1893,14 @@
   min-width: 0;
 }
 
+/* F-1578: onde se escolhe outra equipe (a equipe é da missão, não do projeto). */
+.mission-inspector__team-note {
+  margin: var(--space-4) 0 0;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
 .mission-inspector__empty,
 .mission-inspector__missing-result {
   margin: 0;

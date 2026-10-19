@@ -2,10 +2,11 @@ import { useEffect, useState } from 'react';
 import { useSettingsStore } from '../../state/settings-store';
 import { askConfirm } from '../../state/confirm-store';
 import { useOrchStore } from '../../state/orch-store';
+import { useMissionSetupStore } from '../../state/mission-setup-store';
 import {
-  MISSION_SETUP_MAX_ROSTER,
-  useMissionSetupStore,
-} from '../../state/mission-setup-store';
+  applySavedSquadMembers,
+  orderSavedSquads,
+} from '../../orch/saved-squad-members';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { useWorkspaceStore } from '../../state/workspace-store';
 import { useToastStore } from '../../state/toast-store';
@@ -17,10 +18,7 @@ import type {
   DesignDirection,
   OrchSettings,
 } from '../../../shared/settings-types';
-import {
-  isMissionRuntimeSquadId,
-  type Squad,
-} from '../../../shared/orch-types';
+import type { Squad } from '../../../shared/orch-types';
 import { UpdateReadinessPanel } from './ObservabilitySections';
 import { AudioDeviceControls } from './AudioDeviceControls';
 import { OrchestratorDefaults } from './OrchestratorDefaults';
@@ -385,9 +383,7 @@ function squadCopyLabel(squad: Squad, ordinal: number): string {
 
 export function SquadsSection() {
   const squads = useOrchStore((s) => s.squads);
-  const visibleSquads = squads
-    .filter((squad) => !isMissionRuntimeSquadId(squad.id))
-    .sort((a, b) => Number(a.builtin ?? false) - Number(b.builtin ?? false));
+  const visibleSquads = orderSavedSquads(squads);
   const [editing, setEditing] = useState<Squad | null>(null);
   const [feedback, setFeedback] = useState<SquadFeedback | null>(null);
   const [operation, setOperation] = useState<SquadOperation | null>(null);
@@ -494,16 +490,9 @@ export function SquadsSection() {
     const setup = useMissionSetupStore.getState();
     setup.clearEntryContext();
     setup.setWorkspace(workspacePath);
-    if (!setup.setRoster(squad.agents)) {
-      // F-1496: o tamanho é a única causa que o usuário consegue ver; a outra
-      // é um integrante com dado que a missão não aceita.
-      setFeedback({
-        tone: 'error',
-        message:
-          squad.agents.length > MISSION_SETUP_MAX_ROSTER
-            ? `Não foi possível aplicar os integrantes: esta equipe tem ${squad.agents.length} pessoas e a missão aceita até ${MISSION_SETUP_MAX_ROSTER}. Remova alguns no editor e tente de novo.`
-            : 'Não foi possível aplicar os integrantes: um deles tem um dado que a missão não aceita. Abra a equipe no editor, salve de novo e tente outra vez.',
-      });
+    const applied = applySavedSquadMembers(squad, setup.setRoster);
+    if (!applied.ok) {
+      setFeedback({ tone: 'error', message: applied.message });
       return;
     }
     const { draft } = useMissionSetupStore.getState();

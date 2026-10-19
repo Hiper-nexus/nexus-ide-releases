@@ -1000,28 +1000,44 @@ function ActivityProjection({
   );
 }
 
+/**
+ * F-1578: a equipe é da MISSÃO, não do projeto. Quem reabre o projeto e vê o
+ * mesmo Maestro precisa saber onde se escolhe outra equipe.
+ */
+const TEAM_IS_PER_MISSION_NOTE =
+  'A equipe é desta missão e não muda enquanto ela existir. Para trabalhar com outra equipe, crie uma Nova missão e escolha uma equipe salva na etapa Equipe.';
+
 function TeamProjection({ snapshot }: { readonly snapshot: MissionSnapshot }) {
+  const note = (
+    <p className="mission-inspector__team-note">{TEAM_IS_PER_MISSION_NOTE}</p>
+  );
   if (snapshot.agents.length === 0) {
     return (
-      <p className="mission-inspector__empty" role="status">
-        Nenhum agente foi persistido na equipe desta missão.
-      </p>
+      <>
+        <p className="mission-inspector__empty" role="status">
+          Nenhum agente foi persistido na equipe desta missão.
+        </p>
+        {note}
+      </>
     );
   }
 
   return (
-    <ul className="mission-inspector__team-list">
-      {snapshot.agents.map((agent) => (
-        <li key={agent.id}>
-          <article className="mission-inspector__team-member">
-            <header className="mission-inspector__projection-header">
-              <h2>{agent.agentName}</h2>
-            </header>
-            <AgentCanonicalDetails agent={agent} units={snapshot.units} />
-          </article>
-        </li>
-      ))}
-    </ul>
+    <>
+      <ul className="mission-inspector__team-list">
+        {snapshot.agents.map((agent) => (
+          <li key={agent.id}>
+            <article className="mission-inspector__team-member">
+              <header className="mission-inspector__projection-header">
+                <h2>{agent.agentName}</h2>
+              </header>
+              <AgentCanonicalDetails agent={agent} units={snapshot.units} />
+            </article>
+          </li>
+        ))}
+      </ul>
+      {note}
+    </>
   );
 }
 

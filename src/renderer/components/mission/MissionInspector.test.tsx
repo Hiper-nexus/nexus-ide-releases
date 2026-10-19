@@ -954,6 +954,22 @@ describe('MissionInspector', () => {
     expect(text).toMatch(/(na fila|enfileirad[ao])/i);
   });
 
+  it('F-1578: diz que a equipe é da missão e que outra equipe se escolhe numa Nova missão', () => {
+    const host = mount();
+    const panel = selectTab(host, 'Equipe');
+    const note = panel.querySelector('.mission-inspector__team-note');
+
+    expect(note?.textContent).toBe(
+      'A equipe é desta missão e não muda enquanto ela existir. Para trabalhar com outra equipe, crie uma Nova missão e escolha uma equipe salva na etapa Equipe.',
+    );
+    // Depois da lista de integrantes, nunca no lugar dela.
+    const list = panel.querySelector('.mission-inspector__team-list');
+    expect(list).not.toBeNull();
+    expect(
+      list!.compareDocumentPosition(note!) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it('renders the complete canonical result including every evidence and artifact reference', () => {
     const host = mount({ snapshot: RESULT_SNAPSHOT, question: null });
     const panel = selectTab(host, 'Resultado');

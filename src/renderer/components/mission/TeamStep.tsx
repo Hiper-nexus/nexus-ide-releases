@@ -7,6 +7,7 @@ import {
 } from '../../../shared/mission-engine-contract';
 import {
   strictSquadAgentSchema,
+  type Squad,
   type SquadAgent,
 } from '../../../shared/orch-types';
 import type { ProviderSettingsInfo } from '../../../shared/provider-settings-types';
@@ -30,6 +31,11 @@ import {
   recommendMissionRosterRoles,
   type CustomizableWorkerCategory,
 } from '../../orch/mission-roster-customize';
+import {
+  applySavedSquadMembers,
+  savedSquadsForMissionTeam,
+} from '../../orch/saved-squad-members';
+import { useOrchStore } from '../../state/orch-store';
 import {
   MissionSetupRosterRow,
   readyModelForAdapter,
@@ -68,7 +74,8 @@ interface TeamStepProps {
   revision: number;
   inventory: MissionTeamInventory;
   entryContext?: MissionSetupEntryContext | null;
-  onRosterChange(roster: readonly SquadAgent[]): void;
+  /** `false` quando o rascunho recusa o roster (ex.: equipe salva grande demais). */
+  onRosterChange(roster: readonly SquadAgent[]): boolean | void;
   onBack(): void;
   onContinue(): void;
   onRetryInventory(): void;
@@ -350,6 +357,14 @@ export function TeamStep({
   const addRoleControlRef = useRef<HTMLButtonElement>(null);
   const pendingRemovalIndexRef = useRef<number | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
+  // F-1578: equipe salva como ponto de partida (as do usuário antes das
+  // originais). O Pet Studio tem fluxo próprio e fica de fora.
+  const squads = useOrchStore((state) => state.squads);
+  const savedSquads =
+    entryContext?.kind === 'pet-studio' ? [] : savedSquadsForMissionTeam(squads);
+  const ownSavedSquads = savedSquads.filter((squad) => !squad.builtin);
+  const builtinSavedSquads = savedSquads.filter((squad) => squad.builtin);
+  const [appliedSquadName, setAppliedSquadName] = useState<string | null>(null);
 
   useEffect(() => {
     headingRef.current?.focus();
@@ -382,6 +397,19 @@ export function TeamStep({
       : inventory.status === 'error'
         ? inventory.error ?? 'Não foi possível conferir a equipe.'
         : 'A equipe ainda está sendo conferida.';
+
+  /** Mesma conversão do "Usar integrantes" de Ajustes → Equipes. */
+  const startFromSavedSquad = (squad: Squad): void => {
+    const applied = applySavedSquadMembers(squad, onRosterChange);
+    if (!applied.ok) {
+      setAppliedSquadName(null);
+      setEditError(applied.message);
+      queueMicrotask(() => errorRef.current?.focus());
+      return;
+    }
+    setEditError(null);
+    setAppliedSquadName(squad.name);
+  };
 
   const updateAgent = (nextAgent: SquadAgent): void => {
     setEditError(null);
@@ -619,6 +647,59 @@ export function TeamStep({
               {roster.length} {roster.length === 1 ? 'integrante' : 'integrantes'}
             </span>
           </div>
+
+          {savedSquads.length > 0 && (
+            <div className="mission-setup__presets mission-setup__saved-squad">
+              <label
+                className="mission-setup__presets-label"
+                htmlFor="mission-saved-squad"
+              >
+                Começar de uma equipe salva
+              </label>
+              <div className="mission-setup__field">
+                <select
+                  id="mission-saved-squad"
+                  value=""
+                  aria-describedby="mission-saved-squad-hint"
+                  onChange={(event) => {
+                    const squad = savedSquads.find(
+                      (candidate) => candidate.id === event.target.value,
+                    );
+                    if (squad) startFromSavedSquad(squad);
+                  }}
+                >
+                  <option value="">Escolha uma equipe…</option>
+                  {ownSavedSquads.length > 0 && (
+                    <optgroup label="Suas equipes">
+                      {ownSavedSquads.map((squad) => (
+                        <option key={squad.id} value={squad.id}>
+                          {squad.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {builtinSavedSquads.length > 0 && (
+                    <optgroup label="Originais">
+                      {builtinSavedSquads.map((squad) => (
+                        <option key={squad.id} value={squad.id}>
+                          {squad.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                </select>
+              </div>
+              <p id="mission-saved-squad-hint" className="mission-setup__hint">
+                Troca os papéis abaixo pelos integrantes da equipe escolhida.
+                Depois ajuste o que quiser.
+              </p>
+              {appliedSquadName && (
+                <p className="mission-setup__hint" role="status">
+                  Integrantes de “{appliedSquadName}” aplicados.
+                </p>
+              )}
+            </div>
+          )}
 
           {inventory.status === 'ready' &&
             inventory.readiness.hasOperationalRoute && (

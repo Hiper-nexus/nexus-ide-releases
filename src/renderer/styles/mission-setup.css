@@ -2327,6 +2327,11 @@
   font-weight: 600;
 }
 
+/* F-1578: "Começar de uma equipe salva" usa a largura da fileira de tamanhos. */
+.mission-setup__saved-squad .mission-setup__field {
+  max-width: 460px;
+}
+
 .mission-setup__preset-row {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

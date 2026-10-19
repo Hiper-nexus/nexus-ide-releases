@@ -703,9 +703,11 @@ export function MissionSetup({
     }
   };
 
-  const changeRoster = (roster: readonly SquadAgent[]): void => {
+  // F-1578: devolve a recusa do rascunho para a etapa Equipe avisar quando
+  // uma equipe salva não cabe na missão.
+  const changeRoster = (roster: readonly SquadAgent[]): boolean => {
     automaticRosterFingerprintRef.current = null;
-    setRoster(roster);
+    return setRoster(roster);
   };
 
   const refreshRecommendedRoster = (): void => {
