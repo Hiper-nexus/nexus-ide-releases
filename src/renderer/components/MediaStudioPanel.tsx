@@ -58,7 +58,8 @@ function formatUsd(usd: number): string {
 }
 
 function basename(p: string): string {
-  return p.split('/').filter(Boolean).pop() ?? p;
+  // O caminho absoluto do resultado usa \ no Windows.
+  return p.split(/[\\/]/u).filter(Boolean).pop() ?? p;
 }
 
 /** Junta provider+modelo num valor único para o <select> (optgroup por provider). */
@@ -68,7 +69,7 @@ function selValue(providerId: string, model: string): string {
 
 interface StudioResult {
   res: MediaGenerationResult;
-  /** storageKey do artifact mais recente do mesmo kind (para reveal/preview). */
+  /** storageKey do artifact deste resultado (para reveal/preview); F-1586. */
   storageKey: string | null;
   dataUrl: string | null;
 }
@@ -258,11 +259,16 @@ export function MediaStudioPanel({
     setCopied(false);
     try {
       const res = await window.nexus.media.generate(request);
-      if (res.ok) {        // Sucesso: recarrega a galeria e usa o artifact mais novo do kind
-        // (a lista vem newest-first) para preview + "Mostrar no Finder".
+      if (res.ok) {
+        // Sucesso: recarrega a galeria e usa o artifact DESTE resultado para a
+        // prévia e o "Mostrar no Explorador" (F-1586). "O mais novo do mesmo
+        // tipo" podia ser o de um agente que gerou no mesmo projeto ao mesmo
+        // tempo. Sem o id, não há prévia — nunca o arquivo de outro.
         const arts = (await window.nexus.media.listArtifacts()) ?? [];
         setArtifacts(arts);
-        const newest = arts.find((a) => a.kind === res.kind) ?? null;
+        const newest = res.artifactId
+          ? (arts.find((a) => a.id === res.artifactId) ?? null)
+          : null;
         let dataUrl: string | null = null;
         if (newest) {
           const d = await window.nexus.media.readArtifactDataUrl(newest.storageKey);

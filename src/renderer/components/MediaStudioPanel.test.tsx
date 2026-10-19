@@ -406,3 +406,107 @@ describe('MediaStudioPanel: vídeo com as opções do modelo (F-1585)', () => {
     expect(option.textContent).toContain('precisa de imagem inicial');
   });
 });
+
+describe('MediaStudioPanel: prévia do arquivo gerado (F-1586)', () => {
+  it('mostra o arquivo deste resultado, não o mais novo do mesmo tipo', async () => {
+    const media = (window.nexus as unknown as {
+      media: Record<string, ReturnType<typeof vi.fn>>;
+    }).media;
+    media.listProviders.mockResolvedValue([
+      {
+        id: 'openai-image',
+        kind: 'image',
+        label: 'OpenAI',
+        envVar: 'OPENAI_API_KEY',
+        defaultModel: 'gpt-image-2',
+        models: ['gpt-image-2'],
+        hasKey: true,
+        maskedKey: null,
+      },
+    ]);
+    media.generate.mockResolvedValue({
+      ok: true,
+      path: 'C:\\proj\\generated-2.png',
+      provider: 'openai-image',
+      model: 'gpt-image-2',
+      kind: 'image',
+      estimatedCostUsd: 0.07,
+      durationMs: 10,
+      artifactId: 'media-mine',
+    });
+    // Um agente gerou outra imagem no mesmo projeto logo depois: ela é a
+    // "mais nova do mesmo tipo" na galeria.
+    const galleryAfter = [
+      { id: 'media-agent', kind: 'image', provider: 'google-image', model: 'g', storageKey: 'agente.png', costUsd: 0.04, durationMs: 1, createdAt: 2 },
+      { id: 'media-mine', kind: 'image', provider: 'openai-image', model: 'gpt-image-2', storageKey: 'generated-2.png', costUsd: 0.07, durationMs: 1, createdAt: 1 },
+    ];
+    media.listArtifacts.mockResolvedValueOnce([]).mockResolvedValue(galleryAfter);
+    media.readArtifactDataUrl.mockImplementation(async (key: string) => ({
+      ok: true,
+      dataUrl: `data:image/png;base64,${key === 'generated-2.png' ? 'TUlORQ==' : 'QUdFTlRF'}`,
+    }));
+
+    const dialog = await openFrom(renderHarness());
+    const prompt = dialog.querySelector<HTMLTextAreaElement>('textarea')!;
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+      setter.call(prompt, 'um gato astronauta');
+      prompt.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      dialog.querySelector<HTMLButtonElement>('.ms-generate')!.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const preview = dialog.querySelector<HTMLImageElement>('.ms-result__preview img')!;
+    expect(preview.getAttribute('src')).toBe('data:image/png;base64,TUlORQ==');
+    expect(dialog.querySelector('.ms-result__name')?.textContent).toBe('generated-2.png');
+  });
+
+  it('sem o id da criação não mostra o arquivo de outro; o nome sai sem o caminho do Windows', async () => {
+    const media = (window.nexus as unknown as {
+      media: Record<string, ReturnType<typeof vi.fn>>;
+    }).media;
+    media.listProviders.mockResolvedValue([
+      {
+        id: 'openai-image',
+        kind: 'image',
+        label: 'OpenAI',
+        envVar: 'OPENAI_API_KEY',
+        defaultModel: 'gpt-image-2',
+        models: ['gpt-image-2'],
+        hasKey: true,
+        maskedKey: null,
+      },
+    ]);
+    media.generate.mockResolvedValue({
+      ok: true,
+      path: 'C:\\proj\\generated-3.png',
+      provider: 'openai-image',
+      model: 'gpt-image-2',
+      kind: 'image',
+      estimatedCostUsd: 0.07,
+      durationMs: 10,
+    });
+    media.listArtifacts.mockResolvedValueOnce([]).mockResolvedValue([
+      { id: 'media-agent', kind: 'image', provider: 'google-image', model: 'g', storageKey: 'agente.png', costUsd: 0.04, durationMs: 1, createdAt: 2 },
+    ]);
+    const dialog = await openFrom(renderHarness());
+    const prompt = dialog.querySelector<HTMLTextAreaElement>('textarea')!;
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+      setter.call(prompt, 'outro gato');
+      prompt.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      dialog.querySelector<HTMLButtonElement>('.ms-generate')!.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(dialog.querySelector('.ms-result__preview img')).toBeNull();
+    expect(dialog.querySelector('.ms-result__name')?.textContent).toBe('generated-3.png');
+  });
+});

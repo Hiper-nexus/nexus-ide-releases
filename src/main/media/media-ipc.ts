@@ -172,7 +172,7 @@ export function registerMediaIpc(runtimeManager: ProjectRuntimeManager): void {
                 assertCurrentAuthority: assertStudioAuthority,
               });
         assertStudioAuthority();
-        await recordStudioUsage(
+        const artifactId = await recordStudioUsage(
           result,
           {
             agentName: 'media-studio',
@@ -185,7 +185,7 @@ export function registerMediaIpc(runtimeManager: ProjectRuntimeManager): void {
           },
         );
         assertStudioAuthority();
-        return result;
+        return { ...result, artifactId };
       } catch (err) {
         if (err instanceof MediaAbortError) {
           return { ok: false, error: 'geração cancelada', canceled: true };

@@ -111,7 +111,11 @@ export type MediaErrorKind =
   | 'invalid-request';
 
 export type MediaStudioResponse =
-  | MediaGenerationResult
+  /**
+   * F-1586: `artifactId` é a linha da galeria gravada para ESTE resultado —
+   * a prévia mostra o arquivo gerado, não "o mais novo do mesmo tipo".
+   */
+  | (MediaGenerationResult & { artifactId?: string })
   | {
       ok: false;
       error: string;
