@@ -35,7 +35,7 @@ import {
   stripMissionVerdictParagraph,
 } from '../../shared/mission-block-cause';
 import { resolveOpenMissionQuestion } from './mission-open-question';
-import { NEXUS_PROCESS_STARTED_AT, wasUpdatedBeforeThisProcess } from '../../shared/session-restore-liveness';
+import { wasUpdatedBeforeThisProcess } from '../../shared/session-restore-liveness';
 import {
   initialPromptChannel,
   nativeInitialPromptForRole,
@@ -2746,11 +2746,16 @@ export async function resurrectRunningMissionsForScope(
       liveMaestroSessionId,
     );
     const ageMs = Date.now() - (mission.createdAt ?? mission.updatedAt ?? 0);
+    const sealedCount = stores.tasks.list(mission.id).length;
+    const paneCount = listPaneSnapshots().filter(
+      (pane) => pane.missionId === mission.id,
+    ).length;
     const isNewIniciar =
       ageMs < 1000 ||
       freshKickoff ||
-      (typeof mission.start === 'number' &&
-        mission.start >= NEXUS_PROCESS_STARTED_AT);
+      (sealedCount >= 20 &&
+        paneCount === 0 &&
+        !wasUpdatedBeforeThisProcess(mission.updatedAt));
     if (
       shouldSkipLeftoverRemount({
         mission,
@@ -3034,8 +3039,6 @@ export async function fastLaneBootstrap(
     }
     if (action === 'respawn') {
       await respawnFastLaneOrchestrator(scope, mission, { invocation: options?.invocation });
-      // Bug C: marcador durável de kickoff para re-spawn deste processo.
-      stores.missions.update(missionId, { start: Date.now() });
       return;
     }
     return;
@@ -3221,17 +3224,10 @@ export async function fastLaneBootstrap(
     }
   };
   if (options?.waitForFirstPane===false) {
-    void finishFirstPane().then(() => {
-      // Bug C: marcador durável de kickoff. Escrito DEPOIS do
-      // finishFirstPane para não invalidar o CAS da cadeia de transições.
-      stores.missions.update(missionId, { start: Date.now() });
-    }).catch(()=>console.warn('[fast-lane] owned coordinator setup did not complete'));
+    void finishFirstPane().catch(()=>console.warn('[fast-lane] owned coordinator setup did not complete'));
     return;
   }
   await finishFirstPane();
-  // Bug C: marcador durável de kickoff. Escrito DEPOIS do finishFirstPane
-  // para não invalidar o CAS da cadeia de transições.
-  stores.missions.update(missionId, { start: Date.now() });
 }
 
 
@@ -3598,8 +3594,6 @@ export async function resumeFastLaneMission(
       note: options.note,
       invocation,
     });
-    // Bug C: marcador durável de kickoff para re-spawn deste processo.
-    stores.missions.update(missionId, { start: Date.now() });
     return { kind: 'mounted', sessionId: spawned.sessionId };
   }
 

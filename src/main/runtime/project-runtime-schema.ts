@@ -1250,12 +1250,4 @@ CREATE INDEX IF NOT EXISTS usage_events_token_snapshot_idx ON usage_events(
   pane_id, json_extract(metadata_json, '$.displayPaneId'), occurred_at, id
 );`,
     }),
-    // Durable kickoff marker so the resurrection heuristic never confuses a
-    // large sealed mission (sealedCount≥20 ∧ paneCount=0) touched after boot
-    // with a fresh one. The `start` column replaces the fragile heuristic.
-    createProjectMigration({
-      id: '057-mission-kickoff-start', schemaVersion: 57, appVersion: '0.76.308',
-      sql: `ALTER TABLE missions ADD COLUMN start INTEGER
-        CHECK (start IS NULL OR (typeof(start) = 'integer' AND start >= 0));`,
-    }),
   ]);

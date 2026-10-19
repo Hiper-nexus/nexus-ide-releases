@@ -10,15 +10,6 @@ export const MISSION_RUNTIME_CLOSED_MARKER =
   '<!-- nexus:runtime-closed -->';
 
 /**
- * Crash interruption marker. The prior session exited without marking
- * `expectedExit: true`. Missions still running in the orphaned scope
- * get this marker added to their description so the UI can show
- * "Crashou" instead of "Dormindo".
- */
-export const MISSION_CRASH_INTERRUPTION_MARKER =
-  '<!-- nexus:crash-interruption -->';
-
-/**
  * O humano aprovou a entrega.
  *
  * O motor concluir NÃO encerra a missão: a entrega ainda precisa passar pela

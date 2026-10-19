@@ -28,8 +28,7 @@ export type LeftoverIsolationReason =
   | 'park'
   | 'unfocus'
   | 'leftover'
-  | 'encerrar'
-  | 'crash';
+  | 'encerrar';
 
 export type LeftoverRemountKind = 'automatic' | 'operator';
 
@@ -80,7 +79,7 @@ export interface LeftoverIsolationWriter<T extends LeftoverIsolationMission> {
   ): T | null;
 }
 
-export const LEFTOVER_REASON_COPY: Readonly<
+const LEFTOVER_REASON_COPY: Readonly<
   Record<LeftoverIsolationReason, string>
 > = Object.freeze({
   park: 'Missão estacionada na rail; sem PTY. Restart restaura o card, não a equipe.',
@@ -90,8 +89,6 @@ export const LEFTOVER_REASON_COPY: Readonly<
     'Missão leftover: card na rail, sem PTY. Reopen não remonta o time.',
   encerrar:
     'Execução encerrada; leftover isolado para reopen não remountar o runtime.',
-  crash:
-    'Sessão anterior caiu (crash). A missão foi estacionada automaticamente para evitar remount zumbi.',
 });
 
 function recoverableMission(

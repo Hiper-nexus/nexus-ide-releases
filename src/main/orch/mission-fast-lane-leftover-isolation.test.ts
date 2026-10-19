@@ -65,7 +65,7 @@ vi.mock('./project-domain-store-registry', () => ({
         harness.missions.set(id, next as Mission);
         return next;
       },
-      hasCurrentKickoffAcceptance: (_missionId: string) => harness.hasKickoffReceipt,
+      hasCurrentKickoffAcceptance: () => harness.hasKickoffReceipt,
     },
     tasks: {
       hasPlan: () => false,
@@ -87,7 +87,6 @@ vi.mock('./mission-engine-registry', () => ({
 
 vi.mock('./squad-store', () => ({
   getSquad: () => null,
-  listSquads: () => [],
 }));
 
 import {
@@ -317,34 +316,6 @@ describe('persist leftover + reopen não remonta', () => {
     // e tentar retomar (spawn não ocorre porque o roster está vazio).
     expect(harness.missions.get(fresh.id)?.status).toBe('running');
     expect(harness.missions.get(fresh.id)?.description).not.toContain(
-      NEXUS_LEFTOVER_PARKED_MARKER,
-    );
-  });
-
-  it('missão com start deste processo e 20+ tasks NÃO vira leftover (Bug C)', async () => {
-    // Bug C: a antiga heurística (sealedCount≥20 ∧ paneCount=0 ∧
-    // !wasUpdatedBeforeThisProcess) classificava qualquer missão grande como
-    // nova iniciar. Com o marcador durável `start`, uma missão kickstarted
-    // neste processo (start >= NEXUS_PROCESS_STARTED_AT) é corretamente
-    // identificada como nova iniciar, mesmo com 20+ tasks e 0 panes.
-    const { NEXUS_PROCESS_STARTED_AT } = await import(
-      '../../shared/session-restore-liveness'
-    );
-    const fresh = leftoverRunning({
-      id: 'mission-fresh-kickoff',
-      title: 'Time de 20+ stories — kickoff deste processo',
-      updatedAt: Date.now(),
-      start: NEXUS_PROCESS_STARTED_AT + 5000,
-    });
-    harness.missions.set(fresh.id, fresh);
-
-    await resurrectRunningMissionsForScope(scope);
-
-    // A missão NÃO deve ser estacionada — `start` prova que o kickoff
-    // pertence a este processo, substituindo a heurística antiga.
-    const persisted = harness.missions.get(fresh.id);
-    expect(persisted?.status).toBe('running');
-    expect(persisted?.description).not.toContain(
       NEXUS_LEFTOVER_PARKED_MARKER,
     );
   });
