@@ -11553,7 +11553,7 @@ export const RELEASE_076311: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076312: AppRelease = {
   version: '0.76.312',
   date: '2026-10-19',
   codename: 'Retomada no Linux',
@@ -11576,5 +11576,34 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Git mais seguro e sem travar', detail: 'O supervisor usa o runner git seguro do Nexus, o diff do gate ignora textconv/ext-diff e as buscas do gate rodam assíncronas e com teto de tempo. A mensagem de fila pesada fica curta o bastante para chegar ao terminal.' },
     { title: 'Esteira parada não insiste com o operador', detail: 'Enquanto o Maestro espera uma decisão sua, o aviso de esteira parada fica em silêncio; depois de 6 h sai um único lembrete no inspector. Uma segunda onda de tarefas prontas espera os 30 s de novo em vez de herdar o carimbo antigo.' },
     { title: 'Fila pesada por repositório', detail: 'Build de outro repositório não segura mais typecheck e testes do Nexus.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.313',
+  date: '2026-10-19',
+  codename: 'Retomada à vista no Mac',
+  summary: 'O macOS recebe tudo da 0.76.310 a 0.76.312: retomada de missão à vista, troca de conta quando o login expira, workers sem plan mode, a assinatura antes da API key, a voz do JARVIS nas partículas e missões mais rápidas. O Muse logado volta a ser escolhido pela rota e o pane reaberto atende pelo próprio id. A tag 0.76.310 não foi publicada.',
+  highlights: [
+    { title: 'Retomar missão à vista', detail: 'Depois de reinício, crash ou travamento, a missão aparece como Interrompida num cartão único, com Retomar missão em destaque na barra do pane e na paleta de comandos. Os avisos do terminal apontam para esse botão, Fechar avisa quando é o último pane da missão, e depois de 20 s restaurando os agentes o Nexus diz o que está esperando.' },
+    { title: 'Retomada mais confiável', detail: 'A entrega de handoff depois do reinício não se perde nem duplica, a equipe parada há muito tempo aparece no quadro e worker travado sem telemetria é detectado. Um clique duplo em Retomar reabre a missão uma vez só, e o cartão de interrompida não corta mais o grid de panes.' },
+    { title: 'Login expirado troca de conta', detail: 'Quando o Claude mostra "Login expired · Please run /login", o Nexus troca a conta do pane para outra pronta em vez de deixar o Maestro parado.' },
+    { title: 'Workers sem tela de plano', detail: 'Workers da família Claude nascem em modo direto, sem plan mode: não param mais em "aprovar plano".' },
+    { title: 'JARVIS reage à própria voz', detail: 'As partículas se mexem com a voz ao falar e com o microfone ao ouvir, e a voz continua audível mesmo se o medidor falhar.' },
+    { title: 'Assinatura antes de API key', detail: 'Quando o mesmo modelo chega por duas rotas, como o DeepSeek pelo Qwen Code no plano do operador e pelo adapter DeepSeek com API key, o Nexus prefere a rota da assinatura. A API key fica de reserva para quando a assinatura estiver sem credencial, em cooldown ou falhando.' },
+    { title: 'Missões mais rápidas', detail: 'Comandos de leitura pesados (typecheck, testes) rodam em paralelo e só build e instalação ficam exclusivos. Um pedido espera na fila com ticket em vez de falhar. O gate de regressão guarda o mapa de imports em disco e escolhe os testes pelo nome do arquivo, e worker parado é reaberto uma vez em vez de segurar a esteira.' },
+    { title: 'Pacote macOS', detail: 'A 0.76.313 leva ao Mac o que saiu no Linux na 0.76.312 e as correções abaixo. A tag 0.76.310 não foi publicada: o gate do candidato caiu e as correções desta versão entraram antes.' },
+  ],
+  fixes: [
+    { title: 'Spawn de worker resiste a Git transitório', detail: 'A criação da worktree repete falhas passageiras do Git e diz a causa quando desiste.' },
+    { title: 'Rota confere a credencial', detail: 'O Nexus testa a credencial da CLI escolhida antes de abrir o worker e evita CLI com login recusado. A checagem de login do spawn é a mesma da tela e da rota; se as duas discordarem, o Nexus avisa em vez de trocar de CLI escondido.' },
+    { title: 'Recibo diz a CLI que subiu', detail: 'Quando a credencial de uma CLI é recusada e o assento passa para outra, o recibo do spawn, o título do pane e a lista de panes mostram a CLI e o modelo reais, com o motivo da troca. A segunda recusa dentro de 1 h liga de fato a saída da rota até a credencial voltar. A sonda de recuperação roda no máximo uma vez por CLI a cada 10 min.' },
+    { title: 'Queda de rede troca de CLI', detail: 'Uma CLI presa no contador "check your network" não conta mais como trabalhando: esgotada a espera, o Nexus marca falha do provedor e reabre a tarefa em outra CLI.' },
+    { title: 'Git mais seguro e sem travar', detail: 'O supervisor usa o runner git seguro do Nexus, o diff do gate ignora textconv/ext-diff e as buscas do gate rodam assíncronas e com teto de tempo. A mensagem de fila pesada fica curta o bastante para chegar ao terminal.' },
+    { title: 'Esteira parada não insiste com o operador', detail: 'Enquanto o Maestro espera uma decisão sua, o aviso de esteira parada fica em silêncio; depois de 6 h sai um único lembrete no inspector. Uma segunda onda de tarefas prontas espera os 30 s de novo em vez de herdar o carimbo antigo.' },
+    { title: 'Fila pesada por repositório', detail: 'Build de outro repositório não segura mais typecheck e testes do Nexus.' },
+    { title: 'Muse logado volta à rota', detail: 'Recusas de credencial antigas deixavam o Muse como "rota falha" mesmo depois do login, e o Nexus desviava dele. Quando o teste da credencial volta a passar, essas recusas deixam de contar no histórico de sucesso da CLI. Falhas de entrega reais continuam contando.' },
+    { title: 'Pane reaberto atende pelo id', detail: 'Depois de reabrir o CLI de um pane, ler ou escrever nele pelo id respondia "unknown pane" listando o próprio pane. O Nexus agora escolhe a sessão viva desse pane; com duas sessões vivas continua recusando.' },
+    { title: 'Gate do candidato diz o que caiu', detail: 'Quando uma etapa do gate de release falha, a mensagem nomeia o script e mostra o fim da saída, onde está o motivo, em vez do caminho do executável.' },
   ],
 };

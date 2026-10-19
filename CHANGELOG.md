@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.76.313 — Retomada à vista no Mac
+
+A tag 0.76.310 não foi publicada: o gate do candidato caiu e as correções abaixo entraram antes. Este pacote leva ao macOS tudo o que a 0.76.312 levou ao Linux, mais:
+
+- **Muse logado volta à rota**. Recusas de credencial antigas deixavam o Muse como "rota falha" mesmo depois do login, e o Nexus desviava dele. Quando o teste da credencial volta a passar, essas recusas deixam de contar no histórico de sucesso da CLI. Falhas de entrega reais continuam contando.
+- **Pane reaberto atende pelo id**. Depois de reabrir o CLI de um pane, ler ou escrever nele pelo id respondia "unknown pane" listando o próprio pane. O Nexus agora escolhe a sessão viva desse pane; com duas sessões vivas continua recusando.
+- **Gate do candidato diz o que caiu**. Quando uma etapa do gate de release falha, a mensagem nomeia o script e mostra o fim da saída, onde está o motivo, em vez do caminho do executável.
+
 ## 0.76.312 — Retomada no Linux
 
 A tag 0.76.311 não foi publicada: a suíte não fechou. A tag 0.76.310 é o candidato macOS. Este pacote leva o desktop Linux.
