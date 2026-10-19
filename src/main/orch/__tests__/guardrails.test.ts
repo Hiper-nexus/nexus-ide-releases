@@ -328,6 +328,12 @@ describe('confirmationReason', () => {
     expect(reason).toContain('promo/renders/v1.mp4');
   });
 
+  it('paid media shows its estimated cost in the modal (F-1606)', () => {
+    expect(confirmationReason('nexus_audio_generate', { text: 'a'.repeat(1_000) })).toContain('estimated cost: US$ 0,08');
+    expect(confirmationReason('nexus_music_generate', { prompt: 'lofi', lengthMs: 60_000 })).toContain('estimated cost: US$ 0,15');
+    expect(confirmationReason('nexus_voiceover_generate', { scriptPath: 'roteiro.txt', voiceId: 'v1' })).toContain('estimated cost: unknown');
+  });
+
   it('names every network and the variant count (F-1605)', () => {
     expect(confirmationReason('nexus_video_export', { input: 'promo/renders/a.mp4', presets: ['vertical-9x16', 'youtube-16x9'] })).toContain(
       'for vertical-9x16, youtube-16x9',

@@ -25,6 +25,7 @@ vi.mock('../../media/music-generation', () => ({
   MUSIC_MIN_MS: 3_000,
   MUSIC_MAX_MS: 600_000,
   MUSIC_MODELS: ['music_v2_5', 'music_v2', 'music_v1'],
+  musicCostUsd: (lengthMs: number) => Number(((lengthMs / 60_000) * 0.15).toFixed(4)),
 }));
 vi.mock('../../media/elevenlabs-voices', () => ({ listElevenLabsVoices: mocks.listVoices }));
 vi.mock('../../media/media-keys', () => ({ resolveMediaKey: mocks.resolveKey }));
@@ -91,7 +92,9 @@ describe('ferramentas de voz', () => {
       { script: 'Olá.', voiceId: 'v1', outDir: 'promo', voiceSettings: { speed: 1.1 } },
       ctx,
     );
-    expect(mocks.generateVoiceover.mock.calls[0][0]).toMatchObject({
+    // F-1606: first the price (dryRun, no network), then the paid call.
+    expect(mocks.generateVoiceover.mock.calls[0][0]).toMatchObject({ script: 'Olá.', dryRun: true });
+    expect(mocks.generateVoiceover.mock.calls[1][0]).toMatchObject({
       script: 'Olá.',
       voiceId: 'v1',
       outDir: 'promo',
@@ -172,5 +175,28 @@ describe('ferramentas de voz', () => {
     expect(result).toMatchObject({ ok: false, promptSuggestion: 'synth pop' });
     expect(mocks.recordUsage).not.toHaveBeenCalled();
     await expect(tool('nexus_music_generate').handler({ prompt: 'x' }, ctx)).rejects.toThrow(/lengthMs/u);
+  });
+});
+
+describe('teto de gasto na narração e na música (F-1606)', () => {
+  it('a narração é precificada (dryRun) e recusada pelo teto antes da chamada paga', async () => {
+    const { MediaBudget, configureMediaBudget } = await import('../../media/media-budget');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-voice-budget-'));
+    const budget = new MediaBudget(dir);
+    budget.setLimits({ perDayUsd: 0.01, perMissionUsd: null });
+    configureMediaBudget(budget);
+    try {
+      mocks.generateVoiceover.mockResolvedValue({ ok: true, dryRun: true, model: 'eleven_v4', estimatedCostUsd: 0.05 });
+      const refused = await tool('nexus_voiceover_generate').handler({ script: 'Olá.', voiceId: 'v1' }, ctx);
+      expect(refused).toMatchObject({ ok: false, budget: { limit: 'day', requestUsd: 0.05 } });
+      expect(mocks.generateVoiceover).toHaveBeenCalledTimes(1);
+      expect(mocks.generateVoiceover.mock.calls[0][0]).toMatchObject({ dryRun: true });
+      const music = await tool('nexus_music_generate').handler({ prompt: 'lofi', lengthMs: 60_000 }, ctx);
+      expect(music).toMatchObject({ ok: false, budget: { limit: 'day', requestUsd: 0.15 } });
+      expect(mocks.generateMusic).not.toHaveBeenCalled();
+    } finally {
+      configureMediaBudget(null);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

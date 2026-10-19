@@ -12,6 +12,7 @@ import { ProviderLogo } from '../ProviderLogo';
 import { ActionCard, EmptyState } from '../ActionCard';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
 import { MyVoiceCard } from './MyVoiceCard';
+import { MediaBudgetCard } from './MediaBudgetCard';
 import { useProductFlags } from '../../lib/use-product-flags';
 import { FEATURE_FLAG_IDS } from '../../../shared/feature-flags';
 import { useCatalogResource } from './use-catalog-resource';
@@ -343,6 +344,8 @@ export function MediaSection() {
           canCreate={productFlags[FEATURE_FLAG_IDS.mediaVideoStudio] === true}
         />
       )}
+      {/* F-1606: o teto entra junto com o estúdio (chave interna). */}
+      {!error && !loading && productFlags[FEATURE_FLAG_IDS.mediaVideoStudio] === true && <MediaBudgetCard />}
     </section>
   );
 }

@@ -220,3 +220,46 @@ function fakeCtx() {
     scope: testProjectScope({ rootRealPath: '/authorized/workspace' }),
   };
 }
+
+describe('teto de gasto de mídia nas ferramentas (F-1606)', () => {
+  let dir: string;
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    mocks.workspaceRoot.mockReturnValue('/authorized/workspace');
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-tools-media-budget-'));
+  });
+
+  async function withBudget(limits: { perDayUsd: number | null; perMissionUsd: number | null }, run: (budget: import('../../media/media-budget').MediaBudget) => Promise<void>) {
+    const { MediaBudget, configureMediaBudget } = await import('../../media/media-budget');
+    const budget = new MediaBudget(dir);
+    budget.setLimits(limits);
+    configureMediaBudget(budget);
+    try {
+      await run(budget);
+    } finally {
+      configureMediaBudget(null);
+      (await import('node:fs')).rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it('com teto ligado e custo que não dá para estimar, recusa sem chamar o provedor', async () => {
+    await withBudget({ perDayUsd: 5, perMissionUsd: null }, async () => {
+      const image = buildMediaTools().find((tool) => tool.name === 'nexus_image_generate')!;
+      const refused = await image.handler({ prompt: 'logo' }, fakeCtx());
+      expect(refused).toMatchObject({ ok: false, budget: { limit: 'unknown-cost' } });
+      expect(mocks.generateImage).not.toHaveBeenCalled();
+    });
+  });
+
+  it('falha do provedor devolve a reserva: nada fica contado', async () => {
+    await withBudget({ perDayUsd: null, perMissionUsd: null }, async (budget) => {
+      mocks.generateVideo.mockRejectedValue(new Error('HTTP 500'));
+      const video = buildMediaTools().find((tool) => tool.name === 'nexus_video_generate')!;
+      await expect(video.handler({ prompt: 'b-roll' }, fakeCtx())).rejects.toThrow('HTTP 500');
+      expect(budget.spentToday()).toBe(0);
+    });
+  });
+});

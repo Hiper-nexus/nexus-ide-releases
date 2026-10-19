@@ -467,6 +467,7 @@ import { registerRemoteIpc } from "./remote/remote-ipc";
 import { registerIntegrationsIpc } from "./integrations/integrations-ipc";
 import { registerMediaIpc } from "./media/media-ipc";
 import { registerVoiceCloneIpc } from "./media/voice-clone-ipc";
+import { registerMediaBudgetIpc } from "./media/media-budget-ipc";
 import { MEDIA_STREAM_SCHEME_DEF } from "./video/media-stream-protocol";
 import { registerVideoStudioIpc } from "./video/video-studio-ipc";
 import {
@@ -849,6 +850,8 @@ async function bootstrap(userPathReady: Promise<void>): Promise<void> {
   bootStep('registerCostIpc', () => registerCostIpc());
   bootStep('registerTokenSpeedIpc', () => registerTokenSpeedIpc());
   bootStep('registerMediaIpc', () => registerMediaIpc(runtimeManager));
+  // F-1606: teto de gasto de mídia antes de qualquer ferramenta paga.
+  bootStep('registerMediaBudgetIpc', () => registerMediaBudgetIpc());
   // F-1593: "Minha voz" só pela janela principal (handleTrusted), nunca por MCP.
   bootStep('registerVoiceCloneIpc', () => registerVoiceCloneIpc());
   // F-1596: Vídeos do projeto (render, export, player por nexus-media:).

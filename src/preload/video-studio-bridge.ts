@@ -5,6 +5,7 @@
  */
 import type { IpcRenderer } from 'electron';
 import { VOICE_CLONE_CHANNELS, type VoiceCloneApi } from '../shared/voice-clone-types';
+import { MEDIA_BUDGET_CHANNELS, type MediaBudgetApi } from '../shared/media-budget-types';
 import {
   VIDEO_STUDIO_CHANNELS,
   type VideoRenderProgressEvent,
@@ -41,5 +42,13 @@ export function createVideoStudioBridge(ipcRenderer: IpcRenderer): VideoStudioAp
         ipcRenderer.removeListener(VIDEO_STUDIO_CHANNELS.progress, listener);
       };
     },
+  };
+}
+
+/** Teto de gasto de mídia (F-1606). */
+export function createMediaBudgetBridge(ipcRenderer: IpcRenderer): MediaBudgetApi {
+  return {
+    get: () => ipcRenderer.invoke(MEDIA_BUDGET_CHANNELS.get),
+    set: (limits) => ipcRenderer.invoke(MEDIA_BUDGET_CHANNELS.set, limits),
   };
 }

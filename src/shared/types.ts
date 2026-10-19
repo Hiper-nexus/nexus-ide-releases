@@ -220,6 +220,7 @@ import type {
 import type { IntegrationsApi } from './integrations-api';
 import type { VoiceCloneApi } from './voice-clone-types';
 import type { VideoStudioApi } from './video-studio-types';
+import type { MediaBudgetApi } from './media-budget-types';
 import type { ProductApi } from './product-api';
 import type {
   AgentSpecWriteRequest,
@@ -1310,6 +1311,8 @@ export interface NexusApi {
   voiceClone: VoiceCloneApi;
   /** Estúdio → Vídeos do projeto (F-1596). */
   videoStudio: VideoStudioApi;
+  /** Teto de gasto de mídia (F-1606). */
+  mediaBudget: MediaBudgetApi;
   accounts: {
     list(): Promise<AccountInfo[]>;
     quota(): Promise<AccountQuotaInfo[]>;

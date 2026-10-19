@@ -11,6 +11,7 @@
 
 import { canonicalToolName } from '../orch/gate';
 import { requiresHumanConfirmationForTool } from '../orch/mcp-effect-policy';
+import { costPhrase, estimateMediaToolUsd } from '../media/media-budget';
 
 /**
  * Âncora chain-aware: início do comando OU logo após `;`, `&`, `|`. Sem ela,
@@ -329,14 +330,15 @@ export function confirmationReason(
   if (toolName === 'nexus_preview_start' || toolName === 'preview_start') {
     return `serve preview directory ${safeMediaArg(args.dir, 'unknown')}`;
   }
+  // F-1606: paid media shows its estimated cost in the modal.
   if (toolName === 'nexus_image_generate' || toolName === 'image_generate') {
-    return mediaConfirmation('image', args);
+    return mediaConfirmation('image', args) + costPhrase(estimateMediaToolUsd('image_generate', args));
   }
   if (toolName === 'nexus_video_generate' || toolName === 'video_generate') {
-    return mediaConfirmation('video', args);
+    return mediaConfirmation('video', args) + costPhrase(estimateMediaToolUsd('video_generate', args));
   }
   if (toolName === 'nexus_audio_generate' || toolName === 'audio_generate') {
-    return mediaConfirmation('audio', args);
+    return mediaConfirmation('audio', args) + costPhrase(estimateMediaToolUsd('audio_generate', args));
   }
   if (toolName === 'nexus_video_export' || toolName === 'video_export') {
     return (
@@ -376,7 +378,8 @@ export function confirmationReason(
     const mode = args.dryRun === true ? 'price only (dryRun, no charge)' : 'paid music';
     return (
       `${mode} via elevenlabs, ${seconds} s, ${args.instrumental === false ? 'with vocals' : 'instrumental'}; ` +
-      `input: prompt (${textLength(args.prompt)} chars); output: ${safeMediaArg(args.outPath, 'music/music-<timestamp>.mp3')}`
+      `input: prompt (${textLength(args.prompt)} chars); output: ${safeMediaArg(args.outPath, 'music/music-<timestamp>.mp3')}` +
+      costPhrase(estimateMediaToolUsd('music_generate', args))
     );
   }
   if (toolName === 'nexus_voiceover_generate' || toolName === 'voiceover_generate') {
@@ -387,7 +390,8 @@ export function confirmationReason(
     const mode = args.dryRun === true ? 'price only (dryRun, no charge)' : 'paid narration';
     return (
       `${mode} via elevenlabs voice ${safeMediaArg(args.voiceId, 'unset')}; input: ${source}; ` +
-      `output: ${safeMediaArg(args.outDir, 'narration')}/${safeMediaArg(args.baseName, 'narration')}.mp3 + timeline/srt/vtt`
+      `output: ${safeMediaArg(args.outDir, 'narration')}/${safeMediaArg(args.baseName, 'narration')}.mp3 + timeline/srt/vtt` +
+      costPhrase(estimateMediaToolUsd('voiceover_generate', args))
     );
   }
   if (toolName === 'nexus_catalog_install' || toolName === 'catalog_install') {

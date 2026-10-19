@@ -8,6 +8,8 @@ import { generateVoiceover, VOICEOVER_MAX_CHARS } from '../media/voiceover';
 import { generateMusic, MUSIC_MAX_MS, MUSIC_MIN_MS, MUSIC_MODELS } from '../media/music-generation';
 import { isNexusClonedVoice } from '../media/voice-origin';
 import { recordMediaUsage } from '../usage/media-usage-recorder';
+import { reserveMediaSpend } from '../media/media-budget';
+import { musicCostUsd } from '../media/music-generation';
 import { num, str } from './tool-util';
 import { resolveCwdForScope } from './workspace-path';
 import { executionScopeFor, type AgentGateContext } from './gate';
@@ -127,7 +129,7 @@ const voiceoverGenerateTool: McpToolDef = {
   handler: async (args, ctx, invocation) => {
     assertMcpInvocationCurrent(invocation);
     const baseDir = baseDirFor(ctx);
-    const result = await generateVoiceover({
+    const request = {
       script: readScript(args, baseDir),
       voiceId: str(args, 'voiceId'),
       model: str(args, 'model'),
@@ -135,11 +137,23 @@ const voiceoverGenerateTool: McpToolDef = {
       baseName: str(args, 'baseName'),
       languageCode: str(args, 'languageCode'),
       voiceSettings: voiceSettingsFrom(args),
-      dryRun: args.dryRun === true,
       baseDir,
       signal: invocation?.signal,
       assertCurrentAuthority: invocation?.assertCurrentAuthority,
-    });
+    };
+    if (args.dryRun === true) return generateVoiceover({ ...request, dryRun: true });
+    // F-1606: price what is NOT in the cache, then reserve it under the media cap.
+    const priced = await generateVoiceover({ ...request, dryRun: true });
+    const spend = reserveMediaSpend({ provider: 'elevenlabs', usd: priced.estimatedCostUsd }, ctx.missionId, 'voiceover_generate');
+    if (!spend.ok) return spend;
+    let result: Awaited<ReturnType<typeof generateVoiceover>>;
+    try {
+      result = await generateVoiceover({ ...request, dryRun: false });
+    } catch (error) {
+      spend.release();
+      throw error;
+    }
+    spend.settle(result.estimatedCostUsd);
     assertMcpInvocationCurrent(invocation);
     // Only a paid synthesis is a new generation; a full cache hit is not.
     if (!result.dryRun && result.files && (result.estimatedCostUsd ?? 0) > 0) {
@@ -195,7 +209,14 @@ const musicGenerateTool: McpToolDef = {
     if (lengthMs === undefined) throw new Error('missing required argument: lengthMs');
     const prompt = str(args, 'prompt');
     if (!prompt) throw new Error('missing required argument: prompt');
-    const result = await generateMusic({
+    const spend =
+      args.dryRun === true
+        ? null
+        : reserveMediaSpend({ provider: 'elevenlabs', usd: musicCostUsd(Math.round(lengthMs)) }, ctx.missionId, 'music_generate');
+    if (spend && !spend.ok) return spend;
+    let result: Awaited<ReturnType<typeof generateMusic>>;
+    try {
+      result = await generateMusic({
       prompt,
       lengthMs: Math.round(lengthMs),
       instrumental: args.instrumental !== false,
@@ -206,6 +227,12 @@ const musicGenerateTool: McpToolDef = {
       signal: invocation?.signal,
       assertCurrentAuthority: invocation?.assertCurrentAuthority,
     });
+    } catch (error) {
+      spend?.release();
+      throw error;
+    }
+    if (result.ok) spend?.settle(result.estimatedCostUsd);
+    else spend?.release();
     assertMcpInvocationCurrent(invocation);
     if (result.ok && !result.dryRun && result.path) {
       await recordMediaUsage(

@@ -23,6 +23,7 @@ import {
   MediaJobTimeoutError,
 } from './media-generation';
 import { resolveMediaOutputPath } from './media-path-policy';
+import { estimateMediaToolUsd, reserveMediaSpend } from './media-budget';
 import { createScopedMediaUsageStore } from '../usage/media-usage-store';
 import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import {
@@ -126,6 +127,23 @@ export function registerMediaIpc(runtimeManager: ProjectRuntimeManager): void {
       const req = parsed.data;
       const scope = getRendererWorkspaceScope(event.sender);
       if (!scope) return { ok: false, error: MEDIA_NO_PROJECT_ERROR };
+      // F-1606: the media spend cap also holds for the Estúdio's own Gerar.
+      const spend = reserveMediaSpend(
+        estimateMediaToolUsd(
+          req.kind === 'image' ? 'image_generate' : 'video_generate',
+          {
+            provider: req.providerId,
+            model: req.model,
+            durationSeconds: req.durationSeconds,
+            resolution: req.resolution,
+            recoverJobId: req.recoverJobId,
+          },
+          hasMediaKey,
+        ),
+        null,
+        'media-studio',
+      );
+      if (!spend.ok) return { ok: false, error: spend.error };
       const controller = new AbortController();
       const jobKey = studioJobKey(event.sender.id, req.clientJobId);
       studioJobs.set(jobKey, controller);
@@ -171,6 +189,7 @@ export function registerMediaIpc(runtimeManager: ProjectRuntimeManager): void {
                 signal: controller.signal,
                 assertCurrentAuthority: assertStudioAuthority,
               });
+        spend.settle(result.estimatedCostUsd);
         assertStudioAuthority();
         const artifactId = await recordStudioUsage(
           result,
@@ -187,6 +206,9 @@ export function registerMediaIpc(runtimeManager: ProjectRuntimeManager): void {
         assertStudioAuthority();
         return { ...result, artifactId };
       } catch (err) {
+        // A timed-out job keeps running at the provider: its cost stays reserved.
+        if (err instanceof MediaJobTimeoutError) spend.settle();
+        else spend.release();
         if (err instanceof MediaAbortError) {
           return { ok: false, error: 'geração cancelada', canceled: true };
         }

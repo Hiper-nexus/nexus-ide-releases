@@ -13,6 +13,7 @@ import {
 import { listMediaModelAliases } from '../media/media-model-aliases';
 import { hasMediaKey, maskedMediaKey } from '../media/media-keys';
 import { recordMediaUsage } from '../usage/media-usage-recorder';
+import { estimateMediaToolUsd, reserveMediaSpend } from '../media/media-budget';
 import { num, requireStr, str, strArray } from './tool-util';
 import { resolveCwdForScope } from './workspace-path';
 import type { AgentGateContext } from './gate';
@@ -85,6 +86,9 @@ const imageGenerateTool: McpToolDef = {
   requiresConfirm: true,
   handler: async (args, ctx, invocation) => {
     assertMcpInvocationCurrent(invocation);
+    // F-1606: the media spend cap is checked before the provider is called.
+    const spend = reserveMediaSpend(estimateMediaToolUsd('image_generate', args, hasMediaKey), ctx.missionId, 'image_generate');
+    if (!spend.ok) return spend;
     try {
       const result = await generateImage({
         prompt: requireStr(args, 'prompt'),
@@ -99,11 +103,13 @@ const imageGenerateTool: McpToolDef = {
         signal: invocation?.signal,
         assertCurrentAuthority: invocation?.assertCurrentAuthority,
       });
+      spend.settle(result.estimatedCostUsd);
       assertMcpInvocationCurrent(invocation);
       await recordMediaUsage(result, ctx, invocation);
       assertMcpInvocationCurrent(invocation);
       return result;
     } catch (err) {
+      spend.release();
       if (err instanceof MediaProviderUnavailableError) {
         return {
           ok: false,
@@ -164,6 +170,8 @@ const videoGenerateTool: McpToolDef = {
     if (!recoverJobId && !prompt) {
       throw new Error('missing required argument: prompt (or recoverJobId)');
     }
+    const spend = reserveMediaSpend(estimateMediaToolUsd('video_generate', args, hasMediaKey), ctx.missionId, 'video_generate');
+    if (!spend.ok) return spend;
     try {
       const result = await generateVideo({
         prompt: prompt ?? '',
@@ -181,11 +189,15 @@ const videoGenerateTool: McpToolDef = {
         signal: invocation?.signal,
         assertCurrentAuthority: invocation?.assertCurrentAuthority,
       });
+      spend.settle(result.estimatedCostUsd);
       assertMcpInvocationCurrent(invocation);
       await recordMediaUsage(result, ctx, invocation);
       assertMcpInvocationCurrent(invocation);
       return result;
     } catch (err) {
+      // A timed-out job keeps running at the provider: its cost stays reserved.
+      if (err instanceof MediaJobTimeoutError) spend.settle();
+      else spend.release();
       assertMcpInvocationCurrent(invocation);
       if (err instanceof MediaJobTimeoutError) {
         return {
@@ -233,6 +245,8 @@ const audioGenerateTool: McpToolDef = {
   requiresConfirm: true,
   handler: async (args, ctx, invocation) => {
     assertMcpInvocationCurrent(invocation);
+    const spend = reserveMediaSpend(estimateMediaToolUsd('audio_generate', args, hasMediaKey), ctx.missionId, 'audio_generate');
+    if (!spend.ok) return spend;
     try {
       const result = await generateAudio({
         text: requireStr(args, 'text'),
@@ -244,11 +258,13 @@ const audioGenerateTool: McpToolDef = {
         signal: invocation?.signal,
         assertCurrentAuthority: invocation?.assertCurrentAuthority,
       });
+      spend.settle(result.estimatedCostUsd);
       assertMcpInvocationCurrent(invocation);
       await recordMediaUsage(result, ctx, invocation);
       assertMcpInvocationCurrent(invocation);
       return result;
     } catch (err) {
+      spend.release();
       if (err instanceof MediaProviderUnavailableError) {
         return {
           ok: false,

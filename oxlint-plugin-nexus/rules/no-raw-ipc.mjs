@@ -61,7 +61,7 @@ export const RAW_IPC_ALLOWLIST = {
   // Pontes do preload.
   'src/preload/preload.ts': { max: 436, reason: PRELOAD_BRIDGE },
   'src/preload/integrations-bridge.ts': { max: 33, reason: PRELOAD_BRIDGE },
-  'src/preload/video-studio-bridge.ts': { max: 16, reason: `${PRELOAD_BRIDGE} Estúdio de vídeo: Minha voz, Vídeos do projeto e a prévia ao vivo.` },
+  'src/preload/video-studio-bridge.ts': { max: 18, reason: `${PRELOAD_BRIDGE} Estúdio de vídeo: Minha voz, Vídeos do projeto, a prévia ao vivo e o teto de gasto de mídia.` },
   'src/preload/pet-preload.ts': { max: 19, reason: `${PRELOAD_BRIDGE} Janela do pet, inclusive a sonda de cursor.` },
   'src/preload/browser-preload.ts': { max: 5, reason: `${PRELOAD_BRIDGE} Páginas das abas do navegador.` },
   // Remetentes que não são só a janela principal, ou guarda com resposta própria.
