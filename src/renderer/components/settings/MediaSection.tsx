@@ -11,6 +11,7 @@ import { useProductNavigationStore } from '../../state/product-navigation-store'
 import { ProviderLogo } from '../ProviderLogo';
 import { ActionCard, EmptyState } from '../ActionCard';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
+import { MyVoiceCard } from './MyVoiceCard';
 import { useCatalogResource } from './use-catalog-resource';
 
 /**
@@ -329,6 +330,12 @@ export function MediaSection() {
           </div>
         </div>
       ))}
+
+      {!error && !loading && (
+        <MyVoiceCard
+          elevenLabsConnected={providers.some((provider) => provider.id === 'elevenlabs' && provider.hasKey)}
+        />
+      )}
     </section>
   );
 }

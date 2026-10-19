@@ -465,6 +465,7 @@ import {
 import { registerRemoteIpc } from "./remote/remote-ipc";
 import { registerIntegrationsIpc } from "./integrations/integrations-ipc";
 import { registerMediaIpc } from "./media/media-ipc";
+import { registerVoiceCloneIpc } from "./media/voice-clone-ipc";
 import {
   broadcastGamificationToProject,
   registerGamificationIpc,
@@ -845,6 +846,8 @@ async function bootstrap(userPathReady: Promise<void>): Promise<void> {
   bootStep('registerCostIpc', () => registerCostIpc());
   bootStep('registerTokenSpeedIpc', () => registerTokenSpeedIpc());
   bootStep('registerMediaIpc', () => registerMediaIpc(runtimeManager));
+  // F-1593: "Minha voz" só pela janela principal (handleTrusted), nunca por MCP.
+  bootStep('registerVoiceCloneIpc', () => registerVoiceCloneIpc());
   bootStep('registerGamificationIpc', () => registerGamificationIpc(gamificationService));
   bootStep('registerMcpIpc', () => registerMcpIpc());
   bootStep('registerOpsIpc', () => registerOpsIpc());

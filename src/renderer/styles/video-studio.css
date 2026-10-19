@@ -1,0 +1,143 @@
+/* Estúdio de vídeo (F-1593, F-1596): "Minha voz" em Serviços de mídia e
+   "Vídeos do projeto" no Estúdio de Mídia. Só tokens (DESIGN.md §2), card da
+   casa (§5), estado com palavra e não só cor. */
+
+/* ---- Minha voz ---- */
+.my-voice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+  border: 1px solid var(--border);
+}
+
+.my-voice__head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.my-voice__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.my-voice__item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1-5);
+  padding: var(--space-2-5) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+}
+
+.my-voice__item-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.my-voice__item-name {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.my-voice__item-meta {
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+}
+
+.my-voice__actions,
+.my-voice__error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.my-voice__step {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2-5);
+}
+
+.my-voice__step-title {
+  margin: 0;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.my-voice__points {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1-5);
+  margin: 0;
+  padding-inline-start: var(--space-4);
+  color: var(--text-dim);
+}
+
+.my-voice__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+}
+
+.my-voice__check {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-height: 32px;
+  color: var(--text);
+}
+
+.my-voice__check input {
+  margin-top: var(--space-1);
+}
+
+.my-voice__script {
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+  color: var(--text);
+  font-size: var(--text-md);
+  line-height: 1.6;
+}
+
+.my-voice__script--long {
+  max-height: 14rem;
+  overflow-y: auto;
+}
+
+.my-voice__meter {
+  position: relative;
+  display: inline-block;
+  width: 96px;
+  height: 6px;
+  overflow: hidden;
+  border-radius: var(--radius-round);
+  background: var(--surface-3);
+}
+
+.my-voice__meter-fill {
+  position: absolute;
+  inset: 0;
+  background: var(--accent);
+  transform-origin: left center;
+  transition: transform 80ms linear;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .my-voice__meter-fill {
+    transition: none;
+  }
+}

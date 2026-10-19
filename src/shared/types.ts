@@ -215,6 +215,7 @@ import type {
   TeamInfo,
 } from './billing-types';
 import type { IntegrationsApi } from './integrations-api';
+import type { VoiceCloneApi } from './voice-clone-types';
 import type { ProductApi } from './product-api';
 import type {
   AgentSpecWriteRequest,
@@ -1301,6 +1302,8 @@ export interface NexusApi {
   };
   /** GitHub / Linear / git SCM / SSH (see integrations-api.ts). */
   integrations: IntegrationsApi;
+  /** "Minha voz" (F-1593): clonar a própria voz, só pela mão humana. */
+  voiceClone: VoiceCloneApi;
   accounts: {
     list(): Promise<AccountInfo[]>;
     quota(): Promise<AccountQuotaInfo[]>;

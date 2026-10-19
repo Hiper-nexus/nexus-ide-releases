@@ -69,6 +69,7 @@ import { PROVIDER_CHANNELS } from '../shared/provider-settings-types';
 import type { ProviderSettingsInfo } from '../shared/provider-settings-types';
 import { FILES_CHANNELS } from '../shared/files-types';
 import { createIntegrationsBridge } from './integrations-bridge';
+import { createVoiceCloneBridge } from './video-studio-bridge';
 import { ACCOUNT_CHANNELS } from '../shared/account-types';
 import type {
   AccountActivatedEvent,
@@ -1452,6 +1453,7 @@ const api: NexusApi = {
       ipcRenderer.invoke(MODEL_CHANNELS.richMetadata, { adapterId, modelId }),
   },
   integrations: createIntegrationsBridge(ipcRenderer),
+  voiceClone: createVoiceCloneBridge(ipcRenderer),
   accounts: {
     list: () => ipcRenderer.invoke(ACCOUNT_CHANNELS.list),
     quota: () => ipcRenderer.invoke(ACCOUNT_CHANNELS.quota) as Promise<AccountQuotaInfo[]>,
