@@ -410,7 +410,7 @@ describe('runRegressionGate', () => {
     expect(result.notRun?.byDistance.map((tier) => tier.causes)).toEqual([['test-deadline'], ['test-deadline']]);
   });
 
-  it('F-1348: 1 direto + 40 indiretos no prazo do handoff — o direto roda primeiro e passa; os indiretos ficam em notRun por prazo', async () => {
+  it('F-1571: 1 direto + 40 indiretos no prazo do handoff — a faixa vira lotes, o que TERMINA conta e o resto fica notRun', async () => {
     const { scope } = directAndIndirectProject();
     const clock = { now: 0 };
     const { exec, launched } = slowVitest(clock);
@@ -420,23 +420,49 @@ describe('runRegressionGate', () => {
       { exec, now: () => clock.now, extensions: slowMap(clock) },
     );
 
-    // Lote único (antes): 8 s de mapa + 41 s de runner > 45 s — nada terminava.
-    expect(result.testsRun).toEqual(['src/a.test.ts']);
+    // Antes (F-1348): a faixa indireta (40 arquivos) ia num processo só, vencia
+    // o prazo e o portão reportava ZERO indíretos rodados.
     // Nunca os 41 de uma vez: primeiro só o direto, num processo próprio.
     expect(launched[0]).toEqual(['src/a.test.ts']);
-    expect(Math.max(...launched.map((files) => files.length))).toBeLessThanOrEqual(40);
+    expect(launched.length).toBeGreaterThan(2);
+    expect(Math.max(...launched.map((files) => files.length))).toBeLessThan(40);
+    // O lote que TERMINOU conta como rodado — os diretos primeiro.
+    expect(result.testsRun[0]).toBe('src/a.test.ts');
+    expect(result.testsRun.length).toBeGreaterThan(1);
+    // O que o prazo não alcançou continua notRun, com a causa honesta.
+    expect(result.testsNotRun.length).toBeGreaterThan(0);
+    expect(result.testsNotRun.length).toBeLessThan(40);
+    expect(result.notRun?.causes).toEqual(['test-deadline']);
     expect(result.failures).toEqual([]);
     expect(result.runner).toBe('vitest');
     expect(clock.now).toBeLessThanOrEqual(HANDOFF_REGRESSION_BUDGET_MS);
     // Parcial com os diretos verdes não é aprovação completa.
     expect(result.status).not.toBe('passed');
-    expect(result.testsNotRun).toHaveLength(40);
-    expect(result.notRun?.causes).toEqual(['test-deadline']);
-    expect(result.notRun?.byDistance).toEqual([
-      { distance: 1, run: 1, notRun: 0, causes: [] },
-      { distance: 2, run: 0, notRun: 40, causes: ['test-deadline'] },
-    ]);
-    expect(formatRegressionGateReport(result)).toContain('1 de 41');
+    expect(result.notRun?.byDistance[0]).toEqual({ distance: 1, run: 1, notRun: 0, causes: [] });
+    expect(formatRegressionGateReport(result)).toContain('rodaram (diretos primeiro)');
+  });
+
+  it('F-1571: faixa que cabe no prazo continua toda verde depois de virar lotes', async () => {
+    const { scope } = directAndIndirectProject();
+    const clock = { now: 0 };
+    const vitest = fakeVitest();
+    // Runner rápido: a faixa inteira cabe nos 45 s mesmo dividida em lotes.
+    const exec = vi.fn<RegressionExec>(async (file, args, options) => {
+      clock.now += args.filter((arg) => arg.endsWith('.test.ts')).length * 100;
+      return vitest.exec(file, args, options);
+    });
+
+    const result = await runRegressionGate(
+      { scope, timeoutMs: HANDOFF_REGRESSION_BUDGET_MS },
+      { exec, now: () => clock.now },
+    );
+
+    // A faixa virou lotes e mesmo assim TODOS rodaram: dividir não pode
+    // transformar um diff verde em "não verificado".
+    expect(result.status).toBe('passed');
+    expect(result.testsRun).toHaveLength(41);
+    expect(result.testsNotRun).toEqual([]);
+    expect(result.notRun).toBeNull();
   });
 
   it('falha de arquivo que o portão não pediu (filtro por substring do vitest) não bloqueia', async () => {
@@ -1557,12 +1583,15 @@ describe('evaluateHandoffRegressionGate', () => {
     expect(launched.slice(0, 2)).toEqual([['src/a.test.ts'], ['src/a.test.ts']]);
     const payload = verdict.kind === 'accepted' ? verdict.artifact?.payload : undefined;
     expect(payload?.failures).toEqual([]);
-    expect(payload?.testsRun).toEqual(['src/a.test.ts']);
+    expect(payload?.testsRun[0]).toBe('src/a.test.ts');
     expect(payload?.warnings.join(' ')).toContain('instável(is), passaram na 2ª tentativa: src/a.test.ts');
-    expect(payload?.notRun?.byDistance).toEqual([
-      { distance: 1, run: 1, notRun: 0, causes: [] },
-      { distance: 2, run: 0, notRun: 40, causes: ['test-deadline'] },
-    ]);
+    // F-1571: a faixa indireta são lotes — os que terminaram rodaram, os que o
+    // prazo não alcançou ficaram notRun (nunca "aprovados").
+    expect(payload?.testsRun.length).toBeGreaterThan(1);
+    const band = payload?.notRun?.byDistance[1]!;
+    expect(band.run).toBeGreaterThan(0);
+    expect(band.run + band.notRun).toBe(40);
+    expect(band.causes).toEqual(['test-deadline']);
     expect(clock.now).toBeLessThanOrEqual(HANDOFF_REGRESSION_BUDGET_MS);
   });
 });
