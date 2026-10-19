@@ -68,6 +68,12 @@ export interface VideoModelSpec {
    * anúncio, aproximada; o custo real sai do `usage` da resposta.
    */
   readonly tokenPricingUsdPerMillion?: GeminiOmniTokenPricing;
+  /**
+   * Cada imagem de entrada (inicial, final, referência) cobrada à parte
+   * (Grok Imagine: «Image» em INPUT PRICING de cada modelo em docs.x.ai,
+   * lido em 19/10/2026; revisão do PR #145).
+   */
+  readonly inputImageUsd?: number;
   /** Dia (AAAA-MM-DD, UTC) em que o fornecedor desliga o modelo. */
   readonly retiresOn?: string;
   /** Modelo que segue funcionando, para a frase de desligamento. */
@@ -285,6 +291,7 @@ export const VIDEO_MODEL_SPECS: Readonly<Record<string, VideoModelSpec>> = Objec
     defaultResolution: '720p',
     aspectRatios: XAI_VIDEO_ASPECTS,
     pricing: { kind: 'per-second', usd: { '480p': 0.08, '720p': 0.14, '1080p': 0.25 } },
+    inputImageUsd: 0.01,
   },
   'grok-imagine-video-1.5-lite': {
     durations: range(1, 15),
@@ -294,6 +301,7 @@ export const VIDEO_MODEL_SPECS: Readonly<Record<string, VideoModelSpec>> = Objec
     defaultResolution: '720p',
     aspectRatios: XAI_VIDEO_ASPECTS,
     pricing: { kind: 'per-second', usd: { '480p': 0.02, '720p': 0.03, '1080p': 0.14 } },
+    inputImageUsd: 0.01,
   },
   'grok-imagine-video': {
     durations: range(1, 15),
@@ -302,6 +310,7 @@ export const VIDEO_MODEL_SPECS: Readonly<Record<string, VideoModelSpec>> = Objec
     defaultResolution: '720p',
     aspectRatios: XAI_VIDEO_ASPECTS,
     pricing: { kind: 'per-second', usd: { '480p': 0.05, '720p': 0.07 } },
+    inputImageUsd: 0.002,
   },
 });
 
@@ -448,19 +457,21 @@ export function videoCostPerSecondUsd(model: string, resolution?: string): numbe
  */
 export function estimateVideoCostUsd(
   model: string,
-  options: { seconds?: number; resolution?: string },
+  options: { seconds?: number; resolution?: string; inputImages?: number },
 ): number | null {
   const spec = videoModelSpec(model);
   if (!spec) return null;
   const seconds = options.seconds && options.seconds > 0 ? options.seconds : spec.defaultDuration;
   if (seconds === undefined) return null;
   const resolution = options.resolution ?? spec.defaultResolution ?? '*';
+  // Imagens de entrada cobradas à parte (Grok Imagine), somadas ao vídeo.
+  const inputs = (options.inputImages ?? 0) * (spec.inputImageUsd ?? 0);
   if (spec.pricing.kind === 'per-video') {
     const usd = spec.pricing.usd[resolution]?.[seconds];
-    return typeof usd === 'number' ? usd : null;
+    return typeof usd === 'number' ? Number((usd + inputs).toFixed(4)) : null;
   }
   const perSecond = videoCostPerSecondUsd(model, options.resolution);
-  return perSecond === null ? null : Number((perSecond * seconds).toFixed(4));
+  return perSecond === null ? null : Number((perSecond * seconds + inputs).toFixed(4));
 }
 
 function formatListUsd(usd: number): string {
@@ -515,6 +526,8 @@ export type VideoModelPriceCard =
       readonly byResolution?: Readonly<Record<string, number>>;
       /** Gemini Omni: cobra por token (US$ por milhão); a tabela por segundo é aproximada. */
       readonly billedByTokensUsdPerMillion?: GeminiOmniTokenPricing;
+      /** Cada imagem de entrada (inicial, final, referência), somada ao vídeo. */
+      readonly inputImageUsd?: number;
     }
   | {
       readonly unit: 'usd-per-video';
@@ -575,6 +588,7 @@ function videoPriceCard(model: string, spec: VideoModelSpec): VideoModelPriceCar
     ...(spec.tokenPricingUsdPerMillion
       ? { billedByTokensUsdPerMillion: { ...spec.tokenPricingUsdPerMillion } }
       : {}),
+    ...(spec.inputImageUsd !== undefined ? { inputImageUsd: spec.inputImageUsd } : {}),
   };
 }
 

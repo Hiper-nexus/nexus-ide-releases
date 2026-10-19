@@ -167,6 +167,19 @@ describe('videoModelSummary (F-1585)', () => {
     expect(videoModelSummary('modelo/novo')).toBeNull();
   });
 
+  it('revisão #145: imagens de entrada do Grok Imagine somam ao custo e aparecem no cartão', () => {
+    // INPUT PRICING de cada modelo em docs.x.ai (19/10/2026): 1.5 e lite US$ 0,01, clássico US$ 0,002.
+    expect(estimateVideoCostUsd('grok-imagine-video-1.5', { seconds: 8, resolution: '720p' })).toBe(1.12);
+    expect(
+      estimateVideoCostUsd('grok-imagine-video-1.5', { seconds: 8, resolution: '720p', inputImages: 14 }),
+    ).toBe(1.26);
+    expect(estimateVideoCostUsd('grok-imagine-video', { seconds: 8, inputImages: 2 })).toBe(0.564);
+    // Modelo sem cobrança por imagem de entrada não muda.
+    expect(estimateVideoCostUsd('google/veo-3.1', { seconds: 8, inputImages: 3 })).toBe(3.2);
+    expect(videoModelCard('grok-imagine-video-1.5-lite')?.price).toMatchObject({ inputImageUsd: 0.01 });
+    expect(videoModelCard('google/veo-3.1')?.price).not.toHaveProperty('inputImageUsd');
+  });
+
   it('F-1599: Grok Imagine com o preço por resolução da página de preços da xAI', () => {
     expect(videoModelSummary('grok-imagine-video-1.5', BEFORE)).toBe(
       '1–15 s · 480p, 720p, 1080p · a partir de $0.08/s',

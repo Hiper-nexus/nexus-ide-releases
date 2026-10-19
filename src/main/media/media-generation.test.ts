@@ -1635,6 +1635,32 @@ describe('F-1599: Grok Imagine (xAI) pelo motor', () => {
     expect(getVideoJob(dir, 'req-failed')?.status).toBe('failed');
   });
 
+  it('revisão #145: vídeo só com imagem (sem prompt) vai à xAI e cobra a imagem de entrada', async () => {
+    fs.writeFileSync(path.join(dir, 'start.png'), Buffer.from('png-start'));
+    const { deps, calls } = fakeDeps([
+      { json: { request_id: 'req-img' } },
+      { json: { status: 'done', video: { url: VIDEO_URL, respect_moderation: true } } },
+      { body: Buffer.from('mp4') },
+    ]);
+    const res = await generateVideo(
+      { prompt: '', provider: 'xai-video', imagePath: 'start.png', baseDir: dir },
+      xaiOnly(deps),
+    );
+    const body = JSON.parse(String(calls[0]?.init?.body)) as Record<string, unknown>;
+    expect(body).not.toHaveProperty('prompt');
+    expect(body.image).toBeDefined();
+    // 8 s × US$ 0,14/s (720p) + 1 imagem de entrada × US$ 0,01.
+    expect(res.estimatedCostUsd).toBe(1.13);
+    expect(getVideoJob(dir, 'req-img')).toMatchObject({ inputImages: 1 });
+
+    // Os outros serviços exigem texto: recusa antes de chamar.
+    const replicate = fakeDeps([]);
+    await expect(
+      generateVideo({ prompt: '  ', provider: 'replicate-video', imagePath: 'start.png', baseDir: dir }, replicate.deps),
+    ).rejects.toThrow('informe o texto do vídeo (prompt)');
+    expect(replicate.calls).toHaveLength(0);
+  });
+
   it('vídeo: o job guarda resolução e duração; retomar só com o id cobra o que foi pedido', async () => {
     const create = fakeDeps([
       { json: { request_id: 'req-hd' } },

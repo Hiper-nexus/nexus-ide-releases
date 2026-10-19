@@ -176,7 +176,9 @@ const videoGenerateTool: McpToolDef = {
     'grok-imagine-video; durationSeconds 1–15; resolution 480p|720p|1080p, ' +
     'grok-imagine-video up to 720p; aspectRatio 16:9|9:16|1:1|4:3|3:4|3:2|' +
     '2:3|21:9|5:2, ignored with imagePath (the clip follows the image); ' +
-    'references or endImagePath cap at 720p). The native Veo 3.1 previews ' +
+    'references or endImagePath cap at 720p; prompt is optional when an ' +
+    'image input is given; each input image is billed: see inputImageUsd). ' +
+    'The native Veo 3.1 previews ' +
     '(veo-3.1-*-generate-preview) retire on 2026-10-22: use Omni, or ' +
     'google/veo-3.1 via Replicate. ' +
     'Friendly model aliases work: seedance, veo, omni, kling, sora, runway, ' +
@@ -217,8 +219,15 @@ const videoGenerateTool: McpToolDef = {
     assertMcpInvocationCurrent(invocation);
     const recoverJobId = str(args, 'recoverJobId');
     const prompt = str(args, 'prompt');
-    if (!recoverJobId && !prompt) {
-      throw new Error('missing required argument: prompt (or recoverJobId)');
+    // xai-video aceita vídeo só a partir de imagem (prompt opcional com
+    // imagePath/endImagePath/referenceImagePaths); o motor recusa os demais.
+    const hasImageInput = Boolean(
+      str(args, 'imagePath') ||
+        str(args, 'endImagePath') ||
+        (strArray(args, 'referenceImagePaths') ?? []).length > 0,
+    );
+    if (!recoverJobId && !prompt && !hasImageInput) {
+      throw new Error('missing required argument: prompt (or recoverJobId, or an image input on xai-video)');
     }
     try {
       const result = await generateVideo({

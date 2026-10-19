@@ -57,6 +57,7 @@ import {
   savedJobBilling,
   saveVideoJob,
   settleVideoJob,
+  videoInputImageCount,
   type MediaVideoJobRecord,
 } from './media-video-jobs';
 import {
@@ -1477,7 +1478,16 @@ async function finishXaiVideo(
     const seconds =
       poll.durationSeconds ?? billing.seconds ?? req.durationSeconds ?? spec?.defaultDuration;
     const resolution = billing.resolution ?? req.resolution ?? spec?.defaultResolution;
-    const base = result(def, job.model, outPath, startedAt, deps, { seconds, resolution }, job.jobId);
+    const inputImages = billing.inputImages ?? videoInputImageCount(req);
+    const base = result(
+      def,
+      job.model,
+      outPath,
+      startedAt,
+      deps,
+      { seconds, resolution, inputImages },
+      job.jobId,
+    );
     return poll.costUsd !== undefined ? { ...base, estimatedCostUsd: poll.costUsd } : base;
   });
 }
@@ -1568,6 +1578,13 @@ export async function generateVideo(
     ? (getVideoJob(req.baseDir, req.recoverJobId)?.model ??
       resolveMediaModel(def, req.model))
     : resolveMediaModel(def, req.model);
+  // Só o Grok Imagine gera vídeo sem texto (a partir de imagem; o contrato da
+  // xAI decide). Os outros recusam aqui, antes de chamar o serviço.
+  if (!req.recoverJobId && !req.prompt?.trim() && def.id !== 'xai-video') {
+    throw new Error(
+      `${def.label}: informe o texto do vídeo (prompt). Só o Grok Imagine (xai-video) gera vídeo sem texto, a partir de imagem.`,
+    );
+  }
   // F-1585: o que o modelo recusa é recusado aqui, antes de qualquer chamada
   // paga, com a frase do que ele aceita; o que não veio usa o padrão DELE.
   let effective = req;

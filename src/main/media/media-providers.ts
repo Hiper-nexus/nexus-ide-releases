@@ -55,8 +55,8 @@ const SEEDREAM_IMAGE_USD: Record<string, number> = {
  * `shared/media-video-models.ts` — a mesma tabela que valida o pedido e que
  * o Estúdio mostra antes de gerar. Combinação sem preço conhecido = null.
  */
-const videoEstimate: MediaProviderDef['estimateCost'] = ({ model, seconds, resolution }) =>
-  estimateVideoCostUsd(model, { seconds, resolution });
+const videoEstimate: MediaProviderDef['estimateCost'] = ({ model, seconds, resolution, inputImages }) =>
+  estimateVideoCostUsd(model, { seconds, resolution, inputImages });
 
 export const MEDIA_PROVIDERS: MediaProviderDef[] = [
   {

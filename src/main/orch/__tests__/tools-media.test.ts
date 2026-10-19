@@ -192,6 +192,18 @@ describe('tier degrade UX — P2-3', () => {
     expect((response as { error?: unknown }).error).toBeTruthy();
   });
 
+  it('revisão #145: nexus_video_generate aceita pedido só com imagem (xai-video); sem nada, recusa', async () => {
+    mocks.generateVideo.mockResolvedValueOnce({ ok: true, path: '/authorized/workspace/v.mp4' });
+    const video = buildMediaTools().find((t) => t.name === 'nexus_video_generate')!;
+    await video.handler({ provider: 'xai-video', imagePath: 'start.png' }, fakeCtx());
+    expect(mocks.generateVideo).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: '', provider: 'xai-video', imagePath: 'start.png' }),
+    );
+    await expect(video.handler({ provider: 'xai-video' }, fakeCtx())).rejects.toThrow(
+      'missing required argument: prompt',
+    );
+  });
+
   it('nexus_video_generate NÃO chama generateImage — sem fallback silencioso', async () => {
     mocks.generateVideo.mockRejectedValueOnce(
       new mocks.MediaProviderUnavailableError(

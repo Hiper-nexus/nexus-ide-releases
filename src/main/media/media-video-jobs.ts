@@ -37,6 +37,8 @@ export interface MediaVideoJobRecord {
    */
   resolution?: string;
   durationSeconds?: number;
+  /** Imagens de entrada do pedido (cobradas à parte no Grok Imagine). */
+  inputImages?: number;
   /** Tokens que o Google cobrou (Gemini Omni). */
   usage?: GeminiOmniUsage;
 }
@@ -88,20 +90,42 @@ export function getVideoJob(
 export function jobBilling(req: {
   resolution?: string;
   durationSeconds?: number;
-}): Pick<MediaVideoJobRecord, 'resolution' | 'durationSeconds'> {
+  imagePath?: string;
+  endImagePath?: string;
+  referenceImagePaths?: string[];
+}): Pick<MediaVideoJobRecord, 'resolution' | 'durationSeconds' | 'inputImages'> {
+  const inputImages = videoInputImageCount(req);
   return {
     ...(req.resolution ? { resolution: req.resolution } : {}),
     ...(req.durationSeconds !== undefined ? { durationSeconds: req.durationSeconds } : {}),
+    ...(inputImages > 0 ? { inputImages } : {}),
   };
+}
+
+/** Imagens que o pedido manda ao serviço: inicial, final e referências. */
+export function videoInputImageCount(req: {
+  imagePath?: string;
+  endImagePath?: string;
+  referenceImagePaths?: string[];
+}): number {
+  return (req.imagePath ? 1 : 0) + (req.endImagePath ? 1 : 0) + (req.referenceImagePaths?.length ?? 0);
 }
 
 /**
  * Resolução e duração salvas no job, só quando o modelo as aceita: o arquivo
  * de jobs mora no workspace e não é confiável.
  */
-export function savedJobBilling(saved: MediaVideoJobRecord): { resolution?: string; seconds?: number } {
+export function savedJobBilling(saved: MediaVideoJobRecord): {
+  resolution?: string;
+  seconds?: number;
+  inputImages?: number;
+} {
   const spec = videoModelSpec(saved.model);
   return {
+    inputImages:
+      Number.isInteger(saved.inputImages) && (saved.inputImages ?? 0) >= 0 && (saved.inputImages ?? 0) <= 32
+        ? saved.inputImages
+        : undefined,
     resolution:
       spec && typeof saved.resolution === 'string' && spec.resolutions.includes(saved.resolution)
         ? saved.resolution
