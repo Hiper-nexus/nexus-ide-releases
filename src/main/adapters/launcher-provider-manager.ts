@@ -76,10 +76,12 @@ const GLM_FLASH_EXTRA: Record<string, string> = {
   ANTHROPIC_DEFAULT_OPUS_MODEL: GLM_FLASH_MODEL,
 };
 
-// Id estável da API Anthropic (platform.minimax.io, 19/10/2026). A CLI
-// `mcode` 0.6.2 ainda só conhece o Preview — esse id não vai no argv dela.
-// A doc recusa thinking.type=disabled (400) e aceita effort
-// low|medium|high|xhigh|max. Este env não desliga o thinking.
+// Id da API Anthropic compatível da MiniMax (platform.minimax.io, conferido em
+// 19/10/2026). O `mcode` (0.6.12) só lista o Preview do Flash: esse id não vai
+// no argv dele. Sem o sufixo `[1m]`, o Claude Code 2.1.303 mede a janela em
+// 200000 mesmo com CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000. A doc diz que o
+// modelo sempre pensa e recusa thinking.type=disabled (400); este env não
+// define chave de thinking.
 const MINIMAX_MODEL = 'MiniMax-M3.1-Flash';
 
 const THIRD_PARTY_EXTRA: Record<string, string> = {

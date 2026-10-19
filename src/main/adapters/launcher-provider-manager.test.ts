@@ -74,7 +74,7 @@ describe('launcher provider routing (ported from ~/ai-launcher)', () => {
     expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('mimo-v2.6-flash');
   });
 
-  it('routes MiniMax through the stable Anthropic model without disabling thinking', () => {
+  it('routes MiniMax through the MiniMax-M3.1-Flash id with no [1m] suffix and no thinking key in the env', () => {
     const env = buildProviderRoutingEnv('minimax', 'sk-minimax-fixture');
     expect(env.ANTHROPIC_BASE_URL).toBe('https://api.minimax.io/anthropic');
     expect(UPSTREAM_PROVIDERS.minimax.defaultModel).toBe('MiniMax-M3.1-Flash');
@@ -83,6 +83,8 @@ describe('launcher provider routing (ported from ~/ai-launcher)', () => {
       expect(env[slot]).not.toContain('[1m]');
     }
     expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1000000');
+    // O teste só enxerga o env, não o payload HTTP que a CLI monta.
+    expect(Object.keys(env).filter((key) => /thinking/i.test(key))).toEqual([]);
     expect(JSON.stringify(env)).not.toMatch(/thinking.*disabled/i);
   });
 

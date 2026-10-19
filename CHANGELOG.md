@@ -1,11 +1,13 @@
 # Changelog
 
-## 0.76.317 — MiniMax estável na rota Anthropic
+## 0.76.317 — MiniMax-M3.1-Flash na rota Anthropic
 
-A tag 0.76.315 é o pacote macOS e 0.76.316 é o pacote Linux; nenhum dos dois recebe arquivos novos nesta versão. Este pacote leva a troca do id estável da MiniMax para a rota Anthropic do `claude` (`upstream` `minimax`):
+A tag 0.76.315 é o pacote macOS e 0.76.316 é o pacote Linux; nenhum dos dois recebe arquivos novos nesta versão. Este pacote troca o modelo que o Nexus pede à MiniMax quando o `claude` é roteado pelo upstream `minimax`:
 
-- **MiniMax GA no lugar do `claude` Token Plan**. O slot upstream da MiniMax no Nexus passa de `MiniMax-M3[1m]` (Preview em produção) para `MiniMax-M3.1-Flash` (id estável da API Anthropic, `platform.minimax.io`, 19/10/2026). A janela de 1M contexto e os quatro slots (`ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL`) seguem todos no id novo. O CLI `mcode` (rota do `minimax-code`) continua com o Preview (`minimax/MiniMax-M3.1-Flash-Preview`) intacto em `model-catalog`, `task-router`, `published-benchmarks` e no `adapters/builtin/minimax-code.json`. A doc da MiniMax recusa `thinking.type=disabled` com HTTP 400 e aceita `effort` `low|medium|high|xhigh|max`: este env não desliga o thinking.
-- **Teste do upstream trava o contrato**. O caso passa a afirmar que o id não contém `[1m]`, que os quatro slots batem com o `defaultModel` e que o env serializado não casa `thinking.*disabled`.
+- **Modelo novo na rota `claude` com MiniMax**. O `MINIMAX_MODEL` (`src/main/adapters/launcher-provider-manager.ts`) deixa de ser `MiniMax-M3[1m]`, que é o `MiniMax-M3` com o sufixo `[1m]` do Claude Code, e passa a ser `MiniMax-M3.1-Flash`. Os quatro slots (`ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL`) e o `defaultModel` do upstream apontam para o id novo, e o endpoint continua `https://api.minimax.io/anthropic`. O teste do upstream trava o id, os quatro slots e a ausência de `[1m]`.
+- **Janela de contexto: sem promessa de 1M no cliente**. A documentação da MiniMax lista 1M de contexto para o `MiniMax-M3.1-Flash` na API compatível com Anthropic, mas o cliente aplica outra janela: o sufixo `[1m]` era o que fazia o Claude Code tratar o modelo antigo como 1M. Numa sonda local com o Claude Code 2.1.303 (servidor de teste em loopback, sem inferência autenticada), o id novo reportou `modelUsage.contextWindow=200000`, com ou sem `CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000`, e o id antigo reportou 1000000. O upstream continua mandando `CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000` como configuração, sem garantia de janela efetiva de 1M.
+- **O `mcode` continua no Preview**. O `mcode` (rota do `minimax-code`) segue com `minimax/MiniMax-M3.1-Flash-Preview` como padrão e `minimax/MiniMax-M3` como secundário em `src/adapters/builtin/minimax-code.json`; `model-catalog`, `task-router` e `published-benchmarks` não mudam. A versão 0.6.12 do `mcode`, conferida em 19/10/2026, só lista o Preview do Flash e não o id `MiniMax-M3.1-Flash`.
+- **Thinking: sem promessa universal**. O env do upstream `minimax` não define nenhuma chave de thinking, e o teste trava isso no env, não no payload HTTP. A documentação da MiniMax diz que o `MiniMax-M3.1-Flash` sempre pensa e responde HTTP 400 a `thinking.type=disabled`. Esta versão não promete o que cada versão ou configuração do cliente envia.
 
 ## 0.76.316 — Dono pelo terminal do pane
 

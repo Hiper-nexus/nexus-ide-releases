@@ -11652,17 +11652,28 @@ export const RELEASE_076315: AppRelease = {
   ],
 };
 
-export const RELEASE_076317: AppRelease = {
-  version: '0.76.317',
+export const RELEASE_076316: AppRelease = {
+  version: '0.76.316',
   date: '2026-10-19',
-  codename: 'MiniMax estável na rota Anthropic',
-  summary: 'A rota upstream `minimax` no `claude` passa do id Preview `MiniMax-M3[1m]` para o id estável `MiniMax-M3.1-Flash` (API Anthropic, `platform.minimax.io`, 19/10/2026), com janela de 1M contexto preservada. O CLI `mcode` do `minimax-code` continua no Preview (`minimax/MiniMax-M3.1-Flash-Preview`).',
+  codename: 'Dono pelo terminal do pane',
+  summary: 'No desktop Linux, a fila de comandos pesados aceita o processo do pane mesmo quando o intermediário já saiu, e continua recusando processo de fora. A tag 0.76.315 ficou no macOS.',
   highlights: [
-    { title: 'MiniMax GA no `claude` Token Plan', detail: 'O `MINIMAX_MODEL` (`src/main/adapters/launcher-provider-manager.ts`) deixa de ser `MiniMax-M3[1m]` e vira `MiniMax-M3.1-Flash`; os quatro slots (`ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL`) e a janela `CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000` seguem no id novo. O endpoint Anthropic continua `https://api.minimax.io/anthropic`.' },
-    { title: 'Preview preservado na rota do `mcode`', detail: 'Catálogo (`src/main/adapters/model-catalog.ts`), `task-router`, `published-benchmarks` e o adapter embutido `adapters/builtin/minimax-code.json` continuam com `minimax/MiniMax-M3.1-Flash-Preview` como default e `minimax/MiniMax-M3` como secundário; nada no argv do `mcode` muda nesta versão.' },
-    { title: 'Sem `thinking.type=disabled`', detail: 'A doc da MiniMax recusa `thinking.type=disabled` com HTTP 400 e aceita `effort` em `low|medium|high|xhigh|max`. O env do upstream continua sem chave de thinking; o teste novo trava o contrato (id sem `[1m]`, slots batem com `defaultModel`, JSON do env não casa `thinking.*disabled`).' },
+    { title: 'Testes dos workers voltam a rodar', detail: 'A fila de comandos pesados recusava o vitest de workers com "pid fora da árvore do terminal" quando um processo intermediário já tinha saído. A prova de dono agora aceita também o terminal do pane, e processo de fora continua recusado.' },
+    { title: 'Pacote Linux', detail: 'A tag 0.76.315 é o pacote macOS e não recebe arquivos Linux. O desktop Linux sai na 0.76.316.' },
   ],
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = RELEASE_076317;
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.317',
+  date: '2026-10-19',
+  codename: 'MiniMax-M3.1-Flash na rota Anthropic',
+  summary: 'A rota `minimax` do `claude` passa a pedir `MiniMax-M3.1-Flash` no lugar de `MiniMax-M3[1m]`. Sem o sufixo `[1m]`, o Claude Code 2.1.303 mediu a janela do id novo em 200 mil tokens, e esta versão não promete 1M de contexto no cliente. O `mcode` continua no Preview.',
+  highlights: [
+    { title: 'Modelo novo na rota `claude` com MiniMax', detail: 'O `MINIMAX_MODEL` (`src/main/adapters/launcher-provider-manager.ts`) deixa de ser `MiniMax-M3[1m]`, que é o `MiniMax-M3` com o sufixo `[1m]` do Claude Code, e passa a ser `MiniMax-M3.1-Flash`. Os quatro slots (`ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL`) e o `defaultModel` do upstream apontam para o id novo, e o endpoint continua `https://api.minimax.io/anthropic`. O teste do upstream trava o id, os quatro slots e a ausência de `[1m]`.' },
+    { title: 'Janela de contexto: sem promessa de 1M no cliente', detail: 'A documentação da MiniMax lista 1M de contexto para o `MiniMax-M3.1-Flash` na API compatível com Anthropic, mas o cliente aplica outra janela: o sufixo `[1m]` era o que fazia o Claude Code tratar o modelo antigo como 1M. Numa sonda local com o Claude Code 2.1.303 (servidor de teste em loopback, sem inferência autenticada), o id novo reportou `modelUsage.contextWindow=200000`, com ou sem `CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000`, e o id antigo reportou 1000000. O upstream continua mandando `CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000` como configuração, sem garantia de janela efetiva de 1M.' },
+    { title: 'O `mcode` continua no Preview', detail: 'O `mcode` (rota do `minimax-code`) segue com `minimax/MiniMax-M3.1-Flash-Preview` como padrão e `minimax/MiniMax-M3` como secundário em `src/adapters/builtin/minimax-code.json`; `model-catalog`, `task-router` e `published-benchmarks` não mudam. A versão 0.6.12 do `mcode`, conferida em 19/10/2026, só lista o Preview do Flash e não o id `MiniMax-M3.1-Flash`.' },
+    { title: 'Thinking: sem promessa universal', detail: 'O env do upstream `minimax` não define nenhuma chave de thinking, e o teste trava isso no env, não no payload HTTP. A documentação da MiniMax diz que o `MiniMax-M3.1-Flash` sempre pensa e responde HTTP 400 a `thinking.type=disabled`. Esta versão não promete o que cada versão ou configuração do cliente envia.' },
+  ],
+  fixes: [],
+};
