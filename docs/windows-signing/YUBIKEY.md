@@ -126,8 +126,9 @@ o motor `engine.cs`, compilado em memória num `powershell.exe` 5.1, que assina
 por `SignerSignEx2` (SHA-256, carimbo RFC 3161) e confere cada arquivo
 (`WinVerifyTrust` + assinante = certificado fixado). A janela de PIN é a do
 próprio Windows, presa à janela que estava à frente quando o agente subiu, e o
-PIN fica no cache do provedor do cartão, dentro do motor. **Ninguém digita, lê,
-grava ou repassa o PIN, nem este código:** só o operador, na janela do Windows.
+PIN fica no cache do provedor do cartão, dentro do motor. Nesse modo **ninguém
+lê, grava ou repassa o PIN, nem este código:** só o operador o digita, na janela
+do Windows. Para zero janela, o operador pode guardar o PIN (seção seguinte).
 
 ```powershell
 npm run windows-signer -- start    # abre a janela de PIN do Windows; vale 24 h
@@ -183,6 +184,49 @@ npm run windows-signer -- stop     # encerra (o PIN some com ele)
 - Coletor (`collect-windows-release.ps1`) com `RUNNER_TEMP` de caminho longo (o
   scratchpad do Claude) falha no smoke do app extraído do nupkg; use uma pasta
   curta, como `$env:TEMP\nxrt`.
+
+## PIN guardado: zero janela (decisão do operador, 19/10)
+
+O operador pediu zero pedido de PIN nesta máquina (builds remotos) e aceitou,
+por escrito, o risco de guardar o PIN. Ele fica cifrado pelo DPAPI do usuário
+do Windows (`%LOCALAPPDATA%\NexusIDE\windows-signer\pin.dpapi`), e o agente
+destranca sozinho com ele.
+
+```powershell
+npm run windows-signer -- save-pin          # janela "NexusIDE — PIN do YubiKey": o operador digita, o cartão confere, só então guarda
+npm run windows-signer -- install-logon     # agente sobe sozinho no logon (só com PIN guardado)
+npm run windows-signer -- status            # agente, PIN guardado, logon
+npm run windows-signer -- forget-pin        # apaga o PIN guardado e encerra o agente
+npm run windows-signer -- uninstall-logon   # tira o início no logon
+```
+
+- **Quem vê o PIN.** Só o operador digita, na janela do motor (`engine.cs`, não no
+  chat nem no terminal). O motor entrega o PIN ao cartão (`SmartCardPin` + uma
+  assinatura silenciosa) e só depois o cifra com `ProtectedData`
+  (`CurrentUser`). Ele nunca vai a stdout, log, argumento ou variável de ambiente,
+  e o agente só entrega o PIN depois de conferir thumbprint e SPKI do
+  certificado aberto. Nenhum agente, Claude ou humano deve pedir ou receber o PIN.
+- **Primeira recusa apaga.** Com `pin.dpapi`, todo agente novo (build, `start`,
+  logon) destranca sem janela e nunca cai para a janela do Windows. Se o cartão
+  recusar o PIN guardado (errado, bloqueado) ou o arquivo não decifrar, o motor
+  apaga o arquivo na hora: um PIN guardado errado gasta uma tentativa, nunca duas.
+  YubiKey ausente (`SCARD_E_NO_SMARTCARD` e afins) não é recusa: o PIN fica. Depois
+  de uma recusa, o próximo build volta a pedir o PIN na janela do Windows; rode
+  `save-pin` de novo.
+- **Logon.** `install-logon` copia `agent.cjs`, `client.cjs`, `engine.cs` e a
+  identidade para `...\windows-signer\bin` (não depende de checkout nenhum) e grava
+  `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` "NexusIDE Windows Signer"
+  com `conhost.exe --headless` (Node sem janela, sem admin). Sem PIN guardado ele
+  não faz nada. Ele espera o YubiKey por até 3 min e para na hora se o PIN for
+  recusado; o resultado fica no `agent.log`. Depois de mudar o código do agente,
+  rode `install-logon` de novo.
+- **O risco aceito.** Qualquer programa rodando como este usuário do Windows
+  consegue decifrar o `pin.dpapi`. Com o YubiKey espetado, ele pode assinar como
+  HIPERSEND sem prazo e levar o PIN embora. Quem roubar só o YubiKey continua
+  precisando do PIN. Para endurecer: rodar os builds e o agente num usuário do
+  Windows só para isso, e tirar o YubiKey quando não houver build.
+- **Saindo disso:** `forget-pin` + `uninstall-logon` voltam ao agente com a janela
+  do Windows (um PIN por dia).
 
 ## O que recusa
 

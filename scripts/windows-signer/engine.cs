@@ -129,6 +129,19 @@ namespace NexusWindowsSigner
         [DllImport("user32.dll")]
         static extern IntPtr GetForegroundWindow();
 
+        [DllImport("user32.dll")]
+        static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+        [DllImport("user32.dll")]
+        static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        sealed class OwnerWindow : IWin32Window
+        {
+            readonly IntPtr handle;
+            public OwnerWindow(IntPtr handle) { this.handle = handle; }
+            public IntPtr Handle { get { return handle; } }
+        }
+
         static readonly Guid GENERIC_VERIFY_V2 = new Guid("00AAC56B-CD44-11d0-8CC2-00C04FC295EE");
 
         static X509Certificate2 certificate;
@@ -359,12 +372,22 @@ namespace NexusWindowsSigner
 
         // Janela deste motor (não a do provedor do cartão), porque o PIN precisa
         // ser guardado. Fica por cima das outras janelas e só aceita texto.
+        //
+        // O agente abre o motor com a janela oculta (windowsHide), e o Windows
+        // aplica esse SW_HIDE do STARTUPINFO à PRIMEIRA ShowWindow do processo: a
+        // caixa de PIN nascia invisível (19/10, save-pin esperou 5 min sem janela).
+        // Uma janela vazia consome essa primeira chamada antes da caixa.
         static byte[] PromptPin()
         {
             byte[] result = null;
+            IntPtr foreground = GetForegroundWindow();
             Thread thread = new Thread(delegate ()
             {
                 Application.EnableVisualStyles();
+                using (Form spent = new Form())
+                {
+                    ShowWindow(spent.Handle, 10); // SW_SHOWDEFAULT: recebe o SW_HIDE do STARTUPINFO
+                }
                 using (Form form = new Form())
                 {
                     form.Text = "NexusIDE — PIN do YubiKey";
@@ -396,8 +419,16 @@ namespace NexusWindowsSigner
                     form.AcceptButton = ok;
                     form.CancelButton = cancel;
                     form.Controls.AddRange(new Control[] { label, box, ok, cancel });
-                    form.Shown += delegate { form.Activate(); box.Focus(); };
-                    if (form.ShowDialog() == DialogResult.OK && box.Text.Length > 0)
+                    form.Shown += delegate
+                    {
+                        form.Activate();
+                        SetForegroundWindow(form.Handle);
+                        box.Focus();
+                    };
+                    DialogResult answer = foreground != IntPtr.Zero
+                        ? form.ShowDialog(new OwnerWindow(foreground))
+                        : form.ShowDialog();
+                    if (answer == DialogResult.OK && box.Text.Length > 0)
                     {
                         result = Encoding.UTF8.GetBytes(box.Text);
                     }

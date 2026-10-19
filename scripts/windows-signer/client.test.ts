@@ -105,6 +105,22 @@ describe('PIN guardado e início no logon', () => {
     expect(readFileSync(path.join(directory, 'pin.dpapi'), 'utf8')).toBe('sealed');
   }, 60_000);
 
+  it('save-pin que falha não derruba o agente que já funciona', async () => {
+    const testAgent = await startTestAgent();
+    // O motor real não acha o certificado de teste: o save falha antes da janela.
+    await expect(client.ensureAgent({
+      thumbprint: TEST_THUMBPRINT,
+      spkiSha256: TEST_SPKI,
+      hours: 24,
+      pinMode: 'save',
+      directory: testAgent.directory,
+      log: () => undefined,
+    })).rejects.toThrow();
+    expect(await client.agentStatus(testAgent.directory)).toMatchObject({ unlocked: true, pid: process.pid });
+    await client.stopAgent(testAgent.directory);
+    await testAgent.stopped;
+  }, 60_000);
+
   it('logon sem PIN guardado não faz nada (nunca abre janela no logon)', async () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), 'nexus-signer-logon-'));
     const logs: string[] = [];

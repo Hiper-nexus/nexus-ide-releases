@@ -149,15 +149,25 @@ npm run rebuild:node           # rebuild native modules for Node (CI/tests)
   prazo, dito no runbook. O `@electron/windows-sign` engole erro de hook; o hook
   marca saída 1 e o `postPackage` confere cada executável pelo agente. Não volte a
   passar `signWithParams`/SignTool ao Forge.
+- **Zero PIN nesta máquina (decisão do operador, 19/10, risco aceito por
+  escrito).** `npm run windows-signer -- save-pin` abre a janela do motor, o
+  cartão confere o PIN e só então ele fica cifrado pelo DPAPI do usuário
+  (`%LOCALAPPDATA%\NexusIDE\windows-signer\pin.dpapi`). Daí em diante todo agente
+  destranca sem janela, e `install-logon` (HKCU Run, `conhost --headless`, cópia
+  dos scripts em `...\bin`) o sobe no logon. Primeira recusa do cartão apaga o
+  arquivo; YubiKey ausente não. O PIN só passa pelo motor: nunca o peça, receba,
+  logue ou passe por argv/env, e não troque DPAPI por variável, `/kc` ou
+  Credential Manager. Qualquer programa deste usuário pode decifrar o PIN:
+  `forget-pin` + `uninstall-logon` desfazem.
 - **Certificado fixado em 19/10**: série `0FF90DF6…` (ECC P-384, intermediária
   `SSL.com Code Signing Intermediate CA ECC R2`, vence 22/07/2027), thumbprint
   `41BB4AFD0B69AA7B8B88F732E66808A2A5B93560`. O baixável antigo (série 7538CB4E…,
   RSA 3072) é o do eSigner e não combina com a chave. O PC que assina precisa do
   **YubiKey Smart Card Minidriver**: o driver PIV nativo do Windows (`msclmd.dll`)
   não expõe a chave ECC P-384 (`NTE_BAD_KEYSET`, certificado fora da loja do
-  usuário). Runbook: `docs/windows-signing/YUBIKEY.md`. Nunca peça, receba,
-  digite ou grave o PIN ou o PUK pelo operador (nem se ele pedir): ele digita na
-  janela do Windows que o agente abre.
+  usuário). Runbook: `docs/windows-signing/YUBIKEY.md`. Nunca peça, receba ou
+  digite o PIN ou o PUK pelo operador (nem se ele pedir): ele digita na janela que
+  o agente abre (a do Windows ou a do `save-pin`).
 - O JSON é a fonte única: o coletor (`collect-windows-release.ps1`) grava
   `signing: 'yubikey'` só com Setup, app, Update.exe e stub assinados e carimbados
   pelo certificado fixado (thumbprint e SPKI conferidos); nenhum assinado vira

@@ -247,10 +247,15 @@ async function ensureAgent({
       continue;
     }
     try {
-      if (status) await stopAgent(directory);
       const mode = chooseUnlockMode(pinMode, directory);
+      // Guardar o PIN não derruba um agente que funciona: o antigo só sai
+      // depois que o novo estiver pronto (19/10: um save-pin sem janela visível
+      // deixou o operador sem agente nenhum).
+      const replaced = mode === 'save' && usable(status, thumbprint, now()) ? readAgentInfo(directory) : undefined;
+      if (status && !replaced) await stopAgent(directory);
       log(UNLOCK_MESSAGES[mode](hours));
       await launchAgent({ thumbprint, spkiSha256, hours, parentPid, pinMode: mode, directory, nodePath, env });
+      if (replaced) await request(replaced, { op: 'stop' }, STATUS_TIMEOUT_MS).catch(() => undefined);
     } finally {
       release();
     }
