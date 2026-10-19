@@ -14,18 +14,33 @@ assinar não gera cobrança.
 | SHA-256 do SPKI | `cc695904302f57c37532f709c25a9f25710bb04a2f23d1f89b42cf7430c4e3d0` |
 | Atestação | `C:\Users\Administrador\Documents\yubikey-ssl\` (atestação do slot 9a + intermediário Yubico), aceita no pedido |
 | Pedido SSL.com | `co-f01l53ldh43`, OV, HIPERSEND TECNOLOGIA INTERNET & SOFTWARES LTDA |
-| Certificado | **ainda não reemitido** (19/10). O baixável hoje (série 7538CB4E…, RSA 3072) é o do eSigner e não combina com a chave; o `ykman --verify` o recusa |
-| `build/windows-signing-identity.json` | `certificateSha1: null`: o modo recusa e a build sai sem assinatura |
+| Certificado | série `0FF90DF65ACAABCE88CF75190F9E2DE0`, ECC P-384, emitido em 19/10/2026 pela `SSL.com Code Signing Intermediate CA ECC R2`, válido até 22/07/2027; importado no slot 9a (cópia em `yubikey-ssl\codesign-0FF90DF6.crt`, com a cadeia ECC) |
+| Thumbprint fixado | `41BB4AFD0B69AA7B8B88F732E66808A2A5B93560` |
+| Driver | **YubiKey Smart Card Minidriver** (5.0.4.273). O driver PIV nativo do Windows (`msclmd.dll`) não expõe a chave ECC P-384: o `certutil -scinfo` dava `NTE_BAD_KEYSET` e o certificado nunca chegava à loja do usuário |
 
 O SSL.com não emite sozinho para um pedido cadastrado no eSigner: a reemissão foi
-pedida por ticket no chat. A assinatura do eSigner continua cobrando até o
-operador cancelá-la em Orders.
+pedida por ticket no chat e saiu como um segundo certificado no mesmo pedido. O
+baixável antigo (série 7538CB4E…, RSA 3072) é o do eSigner e não combina com a
+chave. O e-mail da emissão é o modelo do eSigner ("set your PIN", "issue
+certificate"): ignore, o YubiKey não usa nada disso. A assinatura do eSigner
+continua cobrando até o operador cancelá-la em Orders.
 
-## Quando o certificado sair (uma vez)
+Prova de 19/10: `signtool sign /sha1 41BB4AFD… /fd sha256 /tr
+http://timestamp.sectigo.com /td sha256` numa cópia do `StubExecutable.exe` deu
+`Get-AuthenticodeSignature` = `Valid`, cadeia até a `SSL.com Root Certification
+Authority ECC` e carimbo da Sectigo. Um artigo da Yubico diz que a Microsoft não
+aceita certificado ECC para code signing; para Authenticode de modo usuário o
+Windows aceitou. Assinatura de driver de kernel é outra regra e não é o caso do
+Nexus.
 
-1. Em secure.ssl.com, Orders → `co-f01l53ldh43` → END ENTITY CERTIFICATES precisa
-   ter uma segunda entrada, ECC, que não é a série 7538CB4E…. O operador baixa o
-   `.crt` dela.
+## Quando um certificado novo sair (renovação; feito uma vez em 19/10)
+
+0. No PC que assina, instale o **YubiKey Smart Card Minidriver** x64
+   (downloads.yubico.com, confira o `.sha256` publicado e a assinatura Authenticode
+   da Yubico AB no MSI). Sem ele o Windows não enxerga a chave ECC.
+1. Em secure.ssl.com, Orders → `co-f01l53ldh43` → END ENTITY CERTIFICATES, baixe o
+   `.zip` da entrada ECC (traz o certificado e a cadeia ECC). A entrada 7538CB4E…
+   é a do eSigner.
 2. Confira que o certificado é da chave do slot 9a (precisa imprimir o SPKI da
    tabela acima):
 
@@ -48,9 +63,12 @@ operador cancelá-la em Orders.
    certutil -scinfo -silent
    ```
 
-   `HasPrivateKey` precisa ser `True`. Se o certificado não aparecer, tire e
-   recoloque o YubiKey; o serviço Propagação de Certificado (`CertPropSvc`) tem de
-   estar rodando.
+   `HasPrivateKey` precisa ser `True`, e o `certutil` precisa mostrar a placa como
+   "YubiKey Smart Card" (não "Identity Device (NIST SP 800-73 [PIV])", o driver
+   nativo) com "Teste de correspondência de chave pública bem-sucedido". O Windows
+   só propaga o certificado quando o cartão é conectado: depois de importar ou de
+   instalar o minidriver, tire e recoloque o YubiKey. O serviço Propagação de
+   Certificado (`CertPropSvc`) sobe sozinho com o cartão.
 5. Prove a assinatura à mão numa cópia de qualquer executável (o Windows pede o
    PIN):
 
