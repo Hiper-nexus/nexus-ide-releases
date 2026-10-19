@@ -1,12 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('./account-store', () => ({
+vi.mock('./account-store', async (importOriginal) => ({
+  isAuthCooldownReason: (await importOriginal<typeof import('./account-store')>()).isAuthCooldownReason,
   agyAccountCredentialBlob: vi.fn(),
   preserveAgyKeyringSession: vi.fn(),
+  setCooldown: vi.fn(),
 }));
 
+import { isAuthCooldownReason } from './account-store';
 import {
   AGY_KEYRING_SETTLE_MS,
+  AGY_WINDOWS_FORMAT_ERROR,
+  AGY_WINDOWS_FORMAT_RELOGIN_REASON,
   activateAgyAccountForSpawn,
   resetAgyKeyringActivationForTests,
   type AgyKeyringActivationDeps,
@@ -28,6 +33,7 @@ function harness(initialSlot: string | null, vault: Record<string, string>) {
     writes: string[];
     preserved: string[];
     slept: number[];
+    relogin: string[];
   } = {
     platform: 'win32',
     now: () => clock,
@@ -45,9 +51,13 @@ function harness(initialSlot: string | null, vault: Record<string, string>) {
     preserve: (blob) => {
       deps.preserved.push(blob);
     },
+    markNeedsRelogin: (accountId) => {
+      deps.relogin.push(accountId);
+    },
     writes: [],
     preserved: [],
     slept: [],
+    relogin: [],
   };
   return { deps, slot: () => slot, advance: (ms: number) => { clock += ms; } };
 }
@@ -111,6 +121,30 @@ describe('conta AGY por pane no Windows (F-677)', () => {
   it('conta salva no formato do Gemini CLI (sem id_token) pede novo login em vez de gravar lixo', async () => {
     const h = harness(session('A'), { b: JSON.stringify({ access_token: 'x', refresh_token: 'y' }) });
     await expect(activateAgyAccountForSpawn('b', h.deps)).resolves.toMatchObject({ ok: false });
+    expect(h.deps.writes).toEqual([]);
+  });
+
+  it('o erro diz o que resolve e a conta passa a oferecer "Entrar novamente" (F-1580)', async () => {
+    const h = harness(session('A'), { b: JSON.stringify({ access_token: 'x', refresh_token: 'y' }) });
+    const result = await activateAgyAccountForSpawn('b', h.deps);
+    expect(result).toEqual({ ok: false, error: AGY_WINDOWS_FORMAT_ERROR });
+    expect(AGY_WINDOWS_FORMAT_ERROR).toContain('Entrar novamente');
+    expect(AGY_WINDOWS_FORMAT_ERROR).not.toMatch(/salve a conta de novo/);
+    expect(h.deps.relogin).toEqual(['b']);
+    // A linha da conta só mostra "Entrar novamente" para motivo de autenticação.
+    expect(isAuthCooldownReason(AGY_WINDOWS_FORMAT_RELOGIN_REASON)).toBe(true);
+    expect(h.slot()).toBe(session('A'));
+  });
+
+  it('falha ao marcar a conta não troca a recusa por sucesso (F-1580)', async () => {
+    const h = harness(session('A'), { b: JSON.stringify({ access_token: 'x', refresh_token: 'y' }) });
+    h.deps.markNeedsRelogin = () => {
+      throw new Error('banco somente leitura');
+    };
+    await expect(activateAgyAccountForSpawn('b', h.deps)).resolves.toEqual({
+      ok: false,
+      error: AGY_WINDOWS_FORMAT_ERROR,
+    });
     expect(h.deps.writes).toEqual([]);
   });
 

@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { ensurePrivateDirectory, linkFile, linkProviderSessionState } from '../orch/cli-mcp-session-artifacts';
 import { compareAuthFreshness } from './auth-freshness';
-import { decodeAgyKeyringPayload, readAgyWindowsKeyringBlob } from './agy-windows-keyring';
+import { decodeAgyKeyringPayload, isAgyKeyringBlob, readAgyWindowsKeyringBlob } from './agy-windows-keyring';
 import { parseMimoAuth, readMimoNativeAuthBlob } from './mimo-auth';
 import {
   isFileAuthAdapter,
@@ -992,10 +992,24 @@ export function supportsNativeSessionSnapshot(adapterId: string, home = os.homed
   return Boolean(blob && authBlobIsUsable('muse', blob));
 }
 
+/** A sessão que está na vaga `gemini:antigravity` do Windows (F-677), ou null. */
+function captureAgyWindowsKeyringSlot(
+  spec: ManagedProviderSpec,
+): ManagedAuthCapture | null {
+  const keyringBlob = readAgyWindowsKeyringBlob();
+  if (!keyringBlob || !authBlobIsUsable('agy', keyringBlob)) return null;
+  return {
+    blob: keyringBlob,
+    email: identityFromAuthBlob('agy', keyringBlob).email,
+    authRelativePath: spec.authRelativePath,
+  };
+}
+
 /** Capture the currently active native session into a vault-ready blob. */
 export function captureNativeAuth(
   adapterId: string,
   home = os.homedir(),
+  options: { readonly platform?: NodeJS.Platform } = {},
 ): ManagedAuthCapture | null {
   if (adapterId === 'claude') {
     // Claude is keychain-backed — caller uses claude-credential.ts.
@@ -1011,6 +1025,17 @@ export function captureNativeAuth(
   const spec = MANAGED_PROVIDER_SPECS[adapterId];
   const systemHome = spec.systemHome(home);
   if (!systemHome) return null;
+  const operatorHome = path.resolve(home) === path.resolve(os.homedir());
+  // F-1580: o AGY do Windows (1.2+, F-677) autentica pela vaga do Gerenciador
+  // de Credenciais. Arquivo em ~/.gemini é sobra de versão antiga — ou a sessão
+  // do Gemini CLI (`oauth_creds.json`) — e capturá-lo primeiro gravava no cofre
+  // uma conta AGY que o Windows não lê ("Salvar conta" repetia o erro). A vaga
+  // vem primeiro; arquivo só serve no formato da própria vaga.
+  const agyOnWindows = adapterId === 'agy' && (options.platform ?? process.platform) === 'win32';
+  if (agyOnWindows && operatorHome) {
+    const fromSlot = captureAgyWindowsKeyringSlot(spec);
+    if (fromSlot) return fromSlot;
+  }
   const candidatePaths = adapterId === 'muse' ? [museNativeAuthPath(home)] : [...new Set([
     spec.authRelativePath,
     ...(spec.authCandidates ?? []),
@@ -1027,7 +1052,11 @@ export function captureNativeAuth(
       continue;
     }
     let authRelativePath = adapterId === 'muse' ? spec.authRelativePath : path.relative(systemHome, candidate);
-    if (
+    if (agyOnWindows) {
+      // Sem desembrulhar: o `{token, id_token}` inteiro é o formato da vaga.
+      if (!blob || !isAgyKeyringBlob(blob)) continue;
+      authRelativePath = spec.authRelativePath;
+    } else if (
       blob &&
       adapterId === 'agy' &&
       authRelativePath !== spec.authRelativePath
@@ -1063,17 +1092,14 @@ export function captureNativeAuth(
       authRelativePath,
     };
   }
-  if (adapterId === 'agy' && path.resolve(home) === path.resolve(os.homedir())) {
+  if (adapterId === 'agy' && operatorHome) {
     // F-677: AGY 1.2 no Windows não grava arquivo — a sessão mora só na vaga
     // `gemini:antigravity` do Gerenciador de Credenciais. Sem isto "Salvar
-    // conta" e a adoção do login nativo no failover voltavam null.
-    const keyringBlob = readAgyWindowsKeyringBlob();
-    if (keyringBlob && authBlobIsUsable('agy', keyringBlob)) {
-      return {
-        blob: keyringBlob,
-        email: identityFromAuthBlob('agy', keyringBlob).email,
-        authRelativePath: spec.authRelativePath,
-      };
+    // conta" e a adoção do login nativo no failover voltavam null. No Windows
+    // a vaga já foi lida antes dos arquivos (F-1580).
+    if (!agyOnWindows) {
+      const fromSlot = captureAgyWindowsKeyringSlot(spec);
+      if (fromSlot) return fromSlot;
     }
     const macBlob = readAgyMacKeychainBlob(home);
     if (macBlob && authBlobIsUsable('agy', macBlob)) {
@@ -1085,6 +1111,33 @@ export function captureNativeAuth(
     }
   }
   return null;
+}
+
+/** F-1580: o que dizer quando no Windows só sobrou arquivo de outro formato. */
+export const AGY_WINDOWS_LEFTOVER_SESSION_REASON =
+  'A sessão do AGY não está no Gerenciador de Credenciais do Windows, e o arquivo que sobrou em ' +
+  '.gemini (do Gemini CLI ou de um AGY antigo) não é lido pelo AGY do Windows. Em Configurações → ' +
+  'Providers → AGY, use Conectar minha conta e entre no AGY: o Nexus limpa a sessão antiga e guarda ' +
+  'a nova no formato do Windows.';
+
+/**
+ * F-1580: por que não há sessão AGY para salvar neste Windows. A vaga está
+ * vazia e sobrou arquivo de token em ~/.gemini que a vaga não aceita — antes
+ * ele virava uma conta que nunca abria. Null quando há sessão ou nada sobrou.
+ */
+export function agyWindowsUnreadableSessionReason(
+  home = os.homedir(),
+  options: { readonly platform?: NodeJS.Platform } = {},
+): string | null {
+  if ((options.platform ?? process.platform) !== 'win32') return null;
+  if (captureNativeAuth('agy', home, options) !== null) return null;
+  const spec = MANAGED_PROVIDER_SPECS.agy;
+  const systemHome = spec.systemHome(home);
+  if (!systemHome) return null;
+  const leftover = [spec.authRelativePath, ...(spec.authCandidates ?? [])].some(
+    (relative) => Boolean(readText(path.join(systemHome, relative))?.trim()),
+  );
+  return leftover ? AGY_WINDOWS_LEFTOVER_SESSION_REASON : null;
 }
 
 function readAgyMacKeychainBlob(home: string): string | null {

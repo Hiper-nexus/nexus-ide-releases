@@ -15,6 +15,8 @@ const authMocks = vi.hoisted(() => ({
   grokHasKey: false,
   warmGrok: vi.fn(),
   kimiReadiness: 'missing' as 'missing' | 'present',
+  // F-1580: a sonda real lê ~/.gemini da máquina; o teste decide o motivo.
+  agyUnreadable: vi.fn((): string | null => null),
   filePresent: new Map<string, boolean>([
     ['codex', true],
     ['grok', true],
@@ -78,6 +80,7 @@ vi.mock('./managed-credentials', async () => {
     hasNativeFileAuth: (adapterId: string) =>
       authMocks.filePresent.get(adapterId) === true,
     nativeAuthIdentity: authMocks.identity,
+    agyWindowsUnreadableSessionReason: authMocks.agyUnreadable,
   };
 });
 
@@ -92,6 +95,16 @@ vi.mock('./kimi-seat-probe', () => ({
 import { probeAdapterAuth } from './auth-probe';
 
 describe('probeAdapterAuth provider-specific diagnostics', () => {
+  it('no Windows, sobra de outro formato em ~/.gemini não conta como sessão AGY (F-1580)', async () => {
+    authMocks.agyUnreadable.mockReturnValueOnce('A sessão do AGY não está no Gerenciador de Credenciais do Windows…');
+    const result = await probeAdapterAuth();
+    expect(result.find((entry) => entry.adapterId === 'agy')).toMatchObject({
+      state: 'missing',
+      detail: expect.stringContaining('Gerenciador de Credenciais do Windows'),
+    });
+    expect(result.find((entry) => entry.adapterId === 'agy')?.sessionFingerprint).toBeUndefined();
+  });
+
   it('shares refreshed Claude proof with snapshots and recognizes OpenClaude native auth', async () => {
     const result = await probeAdapterAuth();
     expect(result.find((entry) => entry.adapterId === 'openclaude')?.state).toBe('ok');

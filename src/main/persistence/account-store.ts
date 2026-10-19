@@ -30,6 +30,7 @@ import {
   refreshClaudeOauthBlob,
 } from '../quota/claude-oauth-refresh';
 import {
+  agyWindowsUnreadableSessionReason,
   authBlobIsUsable,
   captureNativeAuth,
   supportsNativeSessionSnapshot,
@@ -1625,6 +1626,11 @@ export function addActiveSessionAccount(
     if (capture) {
       blob = capture.blob;
       email = capture.email;
+    } else if (adapterId === 'agy') {
+      // F-1580: no Windows a sobra de outro formato em ~/.gemini não vira
+      // conta (ela nunca abriria); diga o que fazer em vez de "rode agy".
+      const unreadable = agyWindowsUnreadableSessionReason();
+      if (unreadable) throw new Error(unreadable);
     }
   } else {
     return null;
@@ -1857,6 +1863,18 @@ let vacatedAgyNative: {
 } | null = null;
 
 /**
+ * F-1580: no Windows a captura lê a vaga e só aceita arquivo no formato dela;
+ * a sobra de outro formato (o `oauth_creds.json` do Gemini CLI, o arquivo do
+ * AGY 1.1) não vai para o cofre, mas o preparo do login ainda a apaga. Se o
+ * login for cancelado ela volta, como voltava quando era capturada.
+ */
+let vacatedAgyLeftover: {
+  home: string;
+  platform: NodeJS.Platform;
+  files: { file: string; contents: string }[];
+} | null = null;
+
+/**
  * Prepara a vaga nativa do Antigravity (`agy`) para um novo login sem chamar
  * `/logout` no servidor do Google (que revogaria o refresh_token da Conta 1).
  *
@@ -1868,10 +1886,12 @@ let vacatedAgyNative: {
  */
 export function prepareAgyNativeLogin(
   home = os.homedir(),
+  platform: NodeJS.Platform = process.platform,
 ): { ok: boolean; error?: string } {
   invalidateAgyWindowsKeyringCache();
   resetAgyKeychainCache();
-  const current = captureNativeAuth('agy', home);
+  vacatedAgyLeftover = null;
+  const current = captureNativeAuth('agy', home, { platform });
   if (current) {
     try {
       const preserved = preserveAgyKeyringSession(current.blob);
@@ -1926,15 +1946,38 @@ export function prepareAgyNativeLogin(
     path.join(geminiDir, 'jetski-standalone-oauth-token'),
     path.join(geminiDir, 'google_accounts.json'),
   ];
+  const leftover: { file: string; contents: string }[] = [];
   for (const file of nativeTokenFiles) {
+    if (platform === 'win32') {
+      try {
+        leftover.push({ file, contents: fs.readFileSync(file, 'utf8') });
+      } catch {
+        // Ausente: nada a devolver.
+      }
+    }
     try {
       fs.unlinkSync(file);
     } catch {
       // Ignora arquivo ausente.
     }
   }
+  if (leftover.length > 0) vacatedAgyLeftover = { home, platform, files: leftover };
   invalidateAgyWindowsKeyringCache();
   return { ok: true };
+}
+
+/** F-1580: devolve a sobra apagada pelo preparo, sem sobrescrever arquivo novo. */
+function restoreAgyLeftoverFiles(
+  files: readonly { readonly file: string; readonly contents: string }[],
+): void {
+  for (const { file, contents } of files) {
+    try {
+      fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+      fs.writeFileSync(file, contents, { mode: 0o600, flag: 'wx' });
+    } catch {
+      // Já existe (o login escreveu) ou o disco recusou: segue.
+    }
+  }
 }
 
 /**
@@ -1943,11 +1986,21 @@ export function prepareAgyNativeLogin(
  */
 export function restoreAgyNativeLogin(): boolean {
   const vacated = vacatedAgyNative;
-  if (!vacated) return false;
+  const leftover = vacatedAgyLeftover;
+  if (!vacated && !leftover) return false;
   invalidateAgyWindowsKeyringCache();
   resetAgyKeychainCache();
-  if (captureNativeAuth('agy', vacated.home) !== null) {
+  const home = vacated?.home ?? leftover!.home;
+  if (captureNativeAuth('agy', home, leftover ? { platform: leftover.platform } : {}) !== null) {
+    // Login concluído: a sessão nova fica e a sobra continua apagada.
     vacatedAgyNative = null;
+    vacatedAgyLeftover = null;
+    return true;
+  }
+  vacatedAgyLeftover = null;
+  if (leftover) restoreAgyLeftoverFiles(leftover.files);
+  if (!vacated) {
+    invalidateAgyWindowsKeyringCache();
     return true;
   }
   try {

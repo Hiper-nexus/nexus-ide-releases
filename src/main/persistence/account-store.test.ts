@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import type { Db } from './db';
@@ -140,6 +143,8 @@ vi.mock('../adapters/managed-credentials', async () => {
     ...actual,
     materializeManagedHome: vi.fn(() => '/tmp/managed/test'),
     captureNativeAuth: vi.fn(() => null),
+    // F-1580: a real lê ~/.gemini da máquina de quem roda o teste.
+    agyWindowsUnreadableSessionReason: vi.fn(() => null),
     removeManagedHome: vi.fn(),
   };
 });
@@ -192,12 +197,18 @@ import {
   listAccountInfos,
   onAccountsChange,
   prepareAccountForSpawn,
+  prepareAgyNativeLogin,
   removeAccount,
+  restoreAgyNativeLogin,
   setCooldown,
   startClaudeSubscriptionFreshness,
   verifyManagedClaudeAccountForSpawn,
 } from './account-store';
-import { captureNativeAuth } from '../adapters/managed-credentials';
+import {
+  AGY_WINDOWS_LEFTOVER_SESSION_REASON,
+  agyWindowsUnreadableSessionReason,
+  captureNativeAuth,
+} from '../adapters/managed-credentials';
 import type { Account } from '../../shared/account-types';
 
 function makeDb(): Db {
@@ -688,6 +699,15 @@ describe('addActiveSessionAccount não duplica o mesmo assinante', () => {
     });
     addActiveSessionAccount('agy', 'AGY');
     expect(order).toEqual(['invalidate', 'capture']);
+  });
+
+  it('AGY no Windows com sobra de outro formato recusa salvar e diz o que fazer (F-1580)', () => {
+    vi.mocked(captureNativeAuth).mockReturnValueOnce(null);
+    vi.mocked(agyWindowsUnreadableSessionReason).mockReturnValueOnce(
+      AGY_WINDOWS_LEFTOVER_SESSION_REASON,
+    );
+    expect(() => addActiveSessionAccount('agy', 'AGY')).toThrow(/Conectar minha conta/);
+    expect(listAccounts('agy')).toEqual([]);
   });
 
   it('reautenticação direcionada recusa accountId de outro provider', () => {
@@ -1377,5 +1397,51 @@ describe('renovação morta veta failover no escuro', () => {
     const info = listAccountInfos().find((i) => i.id === adm.id);
     expect(info?.onCooldown).toBe(false);
     expect(info?.needsRelogin).toBe(false);
+  });
+});
+
+describe('F-1580: login AGY no Windows devolve a sobra de ~/.gemini se for cancelado', () => {
+  const homes: string[] = [];
+  function homeWithLeftover(): { home: string; file: string } {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-agy-login-'));
+    homes.push(home);
+    const file = path.join(home, '.gemini', 'oauth_creds.json');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, '{"access_token":"gemini-cli"}');
+    return { home, file };
+  }
+
+  afterEach(() => {
+    vi.mocked(captureNativeAuth).mockReset().mockReturnValue(null);
+    for (const home of homes.splice(0)) fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it('a sobra não vai para o cofre, sai para o login e volta no cancelamento', () => {
+    const { home, file } = homeWithLeftover();
+    expect(prepareAgyNativeLogin(home, 'win32')).toEqual({ ok: true });
+    expect(fs.existsSync(file)).toBe(false);
+    expect(listAccounts('agy')).toEqual([]);
+    expect(restoreAgyNativeLogin()).toBe(true);
+    expect(fs.readFileSync(file, 'utf8')).toBe('{"access_token":"gemini-cli"}');
+    // Devolvida uma vez: o próximo cancelamento não tem o que devolver.
+    expect(restoreAgyNativeLogin()).toBe(false);
+  });
+
+  it('login concluído (sessão nova na vaga) deixa a sobra apagada', () => {
+    const { home, file } = homeWithLeftover();
+    prepareAgyNativeLogin(home, 'win32');
+    vi.mocked(captureNativeAuth).mockReturnValueOnce({
+      blob: '{"token":{"refresh_token":"r"},"id_token":"h.e.s"}',
+      authRelativePath: 'oauth_creds.json',
+    });
+    expect(restoreAgyNativeLogin()).toBe(true);
+    expect(fs.existsSync(file)).toBe(false);
+  });
+
+  it('fora do Windows o preparo segue como antes (sem guardar sobra)', () => {
+    const { home, file } = homeWithLeftover();
+    expect(prepareAgyNativeLogin(home, 'darwin')).toEqual({ ok: true });
+    expect(fs.existsSync(file)).toBe(false);
+    expect(restoreAgyNativeLogin()).toBe(false);
   });
 });

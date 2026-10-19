@@ -23,10 +23,23 @@ import {
   readAgyWindowsKeyringBlob,
   writeAgyWindowsKeyringBlob,
 } from '../adapters/agy-windows-keyring';
-import { agyAccountCredentialBlob, preserveAgyKeyringSession } from './account-store';
+import { agyAccountCredentialBlob, preserveAgyKeyringSession, setCooldown } from './account-store';
 
 /** Folga para o AGY recém-aberto ler a vaga antes de outra conta ocupá-la. */
 export const AGY_KEYRING_SETTLE_MS = 6_000;
+
+/**
+ * F-1580: a conta salva fora do formato da vaga fica marcada para novo login
+ * (o motivo casa `isAuthCooldownReason`: a linha mostra "Entrar novamente" e a
+ * rotação para de escolhê-la). Mesma janela da identidade trocada do Claude.
+ */
+export const AGY_WINDOWS_FORMAT_RELOGIN_MS = 12 * 60 * 60 * 1000;
+export const AGY_WINDOWS_FORMAT_RELOGIN_REASON =
+  'Antigravity não autenticado neste Windows: a sessão salva tem outro formato — entre novamente';
+export const AGY_WINDOWS_FORMAT_ERROR =
+  'A sessão salva desta conta AGY não tem o formato que o AGY do Windows lê. Em Configurações → ' +
+  'Providers → AGY, use Entrar novamente nesta conta (o Nexus limpa a sessão antiga e guarda a ' +
+  'nova no formato do Windows).';
 
 export interface AgyKeyringActivationDeps {
   platform: NodeJS.Platform;
@@ -36,6 +49,8 @@ export interface AgyKeyringActivationDeps {
   writeSlot(blob: string): boolean;
   accountBlob(accountId: string): string | null;
   preserve(blob: string): unknown;
+  /** Marca a conta para "Entrar novamente" (F-1580). */
+  markNeedsRelogin(accountId: string): void;
 }
 
 export type AgyKeyringActivation =
@@ -50,6 +65,12 @@ const defaultDeps: AgyKeyringActivationDeps = {
   writeSlot: (blob) => writeAgyWindowsKeyringBlob(blob),
   accountBlob: (accountId) => agyAccountCredentialBlob(accountId),
   preserve: (blob) => preserveAgyKeyringSession(blob),
+  markNeedsRelogin: (accountId) =>
+    setCooldown(
+      accountId,
+      Date.now() + AGY_WINDOWS_FORMAT_RELOGIN_MS,
+      AGY_WINDOWS_FORMAT_RELOGIN_REASON,
+    ),
 };
 
 let queue: Promise<unknown> = Promise.resolve();
@@ -87,12 +108,15 @@ async function activate(
     };
   }
   if (!isAgyKeyringBlob(target)) {
-    return {
-      ok: false,
-      error:
-        'A sessão salva desta conta AGY não tem o formato que o AGY do Windows lê — ' +
-        'entre com ela no AGY e salve a conta de novo em Configurações → Providers.',
-    };
+    // F-1580: "salve de novo" recapturava o mesmo formato (o arquivo de
+    // ~/.gemini vinha antes da vaga) e o erro voltava em laço. O login pela
+    // linha da conta limpa vaga e arquivos e guarda a sessão nova da vaga.
+    try {
+      deps.markNeedsRelogin(accountId);
+    } catch {
+      /* metadado que não gravou não muda a recusa: nada vai para a vaga */
+    }
+    return { ok: false, error: AGY_WINDOWS_FORMAT_ERROR };
   }
 
   let slot = deps.readSlot();

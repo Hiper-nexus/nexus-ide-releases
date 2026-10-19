@@ -397,7 +397,8 @@ describe('managed-credentials', () => {
       JSON.stringify({ active: 'agy@example.test' }),
     );
 
-    const capture = captureNativeAuth('agy', home);
+    // F-1580: caminho de arquivo do macOS/Linux; no Windows a vaga vem antes.
+    const capture = captureNativeAuth('agy', home, { platform: 'linux' });
     expect(capture).toMatchObject({
       email: 'agy@example.test',
       authRelativePath: 'oauth_creds.json',
@@ -429,7 +430,8 @@ describe('managed-credentials', () => {
       JSON.stringify({ active: 'agy@example.test' }),
     );
 
-    const capture = captureNativeAuth('agy', home);
+    // F-1580: caminho de arquivo do macOS/Linux; no Windows a vaga vem antes.
+    const capture = captureNativeAuth('agy', home, { platform: 'linux' });
     expect(capture).toMatchObject({
       email: 'agy@example.test',
       authRelativePath: 'oauth_creds.json',

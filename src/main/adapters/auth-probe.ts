@@ -21,6 +21,7 @@ import {
 } from './subscription-auth';
 import { refreshKimiSeatReadiness } from './kimi-seat-probe';
 import {
+  agyWindowsUnreadableSessionReason,
   hasNativeFileAuth,
   isFileAuthAdapter,
   nativeAuthIdentity,
@@ -140,16 +141,23 @@ const OAUTH_PROBES: Record<
     invalidateAgyWindowsKeyringCache();
     // Delegate to the shared detector (like grok/kimi) so a managed AGY account
     // under $GEMINI_CLI_HOME is recognized, not just ~/.gemini in the real home.
-    return (await refreshAgySubscriptionAuthCache(
+    if (!(await refreshAgySubscriptionAuthCache(
       HOME,
       undefined,
       { authoritative: true },
-    )).value
-      ? { state: 'ok', detail: 'sessão AGY local' }
-      : {
-          state: 'missing',
-          detail: 'sem sessão — rode `agy` e conclua o OAuth',
-        };
+    )).value) {
+      return {
+        state: 'missing',
+        detail: 'sem sessão — rode `agy` e conclua o OAuth',
+      };
+    }
+    // F-1580: no Windows um arquivo que sobrou em ~/.gemini (Gemini CLI, AGY
+    // antigo) não é sessão do AGY. Contado como "ok", a tela oferecia "Salvar
+    // esta conta" e guardava uma conta que nunca abria; e o cadastro de outra
+    // conta parava ao tentar guardar essa sobra antes do login.
+    const unreadable = agyWindowsUnreadableSessionReason();
+    if (unreadable) return { state: 'missing', detail: unreadable };
+    return { state: 'ok', detail: 'sessão AGY local' };
   },
   grok: async () => {
     if (!hasNativeFileAuth('grok')) {
