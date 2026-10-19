@@ -31,6 +31,26 @@ export const HANDOFF_REGRESSION_BUDGET_MS = 45_000;
 export const REGRESSION_UNVERIFIED_PREFIX = '[testes impactados não verificados]';
 const MAX_TRACKED_SESSIONS = 512;
 
+export interface RegressionGateSummary {
+  readonly affected: number;
+  readonly run: number;
+  readonly passed: number;
+  readonly failed: number;
+  readonly notRun: number;
+}
+
+export function summarizeRegressionGate(result: RegressionGateResult): RegressionGateSummary {
+  const failedFiles = new Set(result.failures.map((failure) => failure.file));
+  const failed = result.testsRun.filter((test) => failedFiles.has(test)).length;
+  return {
+    affected: new Set([...result.testsRun, ...result.testsNotRun]).size,
+    run: result.testsRun.length,
+    passed: result.testsRun.length - failed,
+    failed,
+    notRun: result.testsNotRun.length,
+  };
+}
+
 export interface RegressionGateArtifact {
   readonly kind: 'nexus.regressionGate';
   readonly payload: {
@@ -41,6 +61,8 @@ export interface RegressionGateArtifact {
     readonly runner: RegressionGateResult['runner'];
     /** F-1348: causa do que não rodou — fora do corte de `warnings`. */
     readonly notRun?: RegressionNotRun | null;
+    /** Contagem honesta: afetados, rodados, passaram, falharam e não rodaram. */
+    readonly summary?: RegressionGateSummary;
     readonly testsRun: readonly string[];
     readonly testsNotRun: readonly string[];
     readonly failures: RegressionGateResult['failures'];
@@ -79,6 +101,7 @@ function artifactOf(result: RegressionGateResult): RegressionGateArtifact {
       baseSha: result.baseSha,
       runner: result.runner,
       notRun: result.notRun ?? null,
+      summary: summarizeRegressionGate(result),
       testsRun: result.testsRun.slice(0, 64),
       testsNotRun: result.testsNotRun.slice(0, 64),
       failures: result.failures.slice(0, 16),
