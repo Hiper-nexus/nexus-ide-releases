@@ -365,3 +365,63 @@ it('queues Main-owned loose helpers without a mission, including direct assistan
   await Promise.resolve(); expect(admitted).toBe(false);
   helper.release(); (await assistant).release();
 });
+
+// Ghost lock: the native watcher releases a slot only through its own cohort
+// proof. A caller that dies while executor/authority processes are re-parented
+// to a daemon never delivers that proof, and the exclusive lease outlives the
+// job — every other worker of the root waits forever.
+it('expires a ghost exclusive lease whose executor pid is gone and admits the queued reader', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(0);
+  const value = new HeavyCommandPermitPool({ memory: () => ({ freeMB: 100_000, swapUsedMB: 0 }),
+    limits: () => ({ minFreeMB: 1000, maxSwapUsedMB: 0 }), refreshMemory: async () => {},
+    pollMs: 10, waitMs: 10_000, maxActive: 2, staleExclusiveMs: 1_000,
+    executorLive: (pid) => pid !== 4242, sessionLive: () => true });
+  pools.push(value);
+  const ghost = await value.acquire({ ...request(), kind: 'build', sessionId: 'pty-ghost', executorPid: 4242 });
+  let admitted = false;
+  const reader = value.acquire({ ...request(), kind: 'typescript', sessionId: 'reader' }).then((permit) => { admitted = true; return permit; });
+  await vi.advanceTimersByTimeAsync(500);
+  expect(admitted).toBe(false); // the executor is dead but the TTL has not elapsed
+  await vi.advanceTimersByTimeAsync(600);
+  expect(admitted).toBe(true);
+  ghost.release(); // a late release after expiry is a harmless no-op
+  (await reader).release();
+  expect(value.snapshot()).toMatchObject({ active: 0, waiting: 0 });
+});
+
+it('does not expire a live exclusive lease; expiry follows the executor pid death', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(0);
+  let executorLive = true;
+  const value = new HeavyCommandPermitPool({ memory: () => ({ freeMB: 100_000, swapUsedMB: 0 }),
+    limits: () => ({ minFreeMB: 1000, maxSwapUsedMB: 0 }), refreshMemory: async () => {},
+    pollMs: 10, waitMs: 10_000, maxActive: 2, staleExclusiveMs: 1_000,
+    executorLive: () => executorLive, sessionLive: () => true });
+  pools.push(value);
+  const holder = await value.acquire({ ...request(), kind: 'build', sessionId: 'pty-holder', executorPid: 111 });
+  let admitted = false;
+  const reader = value.acquire({ ...request(), kind: 'tests', sessionId: 'reader' }).then((permit) => { admitted = true; return permit; });
+  await vi.advanceTimersByTimeAsync(3_000);
+  expect(admitted).toBe(false); // a job with a live executor keeps its lease
+  executorLive = false;
+  await vi.advanceTimersByTimeAsync(1_050);
+  expect(admitted).toBe(true);
+  holder.release(); (await reader).release();
+  expect(value.snapshot()).toMatchObject({ active: 0, waiting: 0 });
+});
+
+it('expires a ghost exclusive lease whose executor survives re-parenting but its session closed', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(0);
+  const sessions = new Set(['pty-open']);
+  const value = new HeavyCommandPermitPool({ memory: () => ({ freeMB: 100_000, swapUsedMB: 0 }),
+    limits: () => ({ minFreeMB: 1000, maxSwapUsedMB: 0 }), refreshMemory: async () => {},
+    pollMs: 10, waitMs: 10_000, maxActive: 2, staleExclusiveMs: 1_000,
+    executorLive: () => true, sessionLive: (id) => sessions.has(id) });
+  pools.push(value);
+  const ghost = await value.acquire({ ...request(), kind: 'build', sessionId: 'pty-closed', executorPid: 501 });
+  let admitted = false;
+  const reader = value.acquire({ ...request(), kind: 'typescript', sessionId: 'reader' }).then((permit) => { admitted = true; return permit; });
+  await vi.advanceTimersByTimeAsync(1_100);
+  expect(admitted).toBe(true);
+  ghost.release(); (await reader).release();
+  expect(value.snapshot()).toMatchObject({ active: 0, waiting: 0 });
+});
