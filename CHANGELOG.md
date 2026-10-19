@@ -10,6 +10,7 @@ Melhorias de usabilidade no Quadro da missão e otimizações de robustez e velo
 - **Motor: portão de regressão em lotes**. A faixa de testes impactados no handoff é dividida em lotes sequenciais calibrados pelo orçamento de tempo restante. Os testes concluídos reportam resultado e veredito imediatamente, impedindo que estouros de prazo resultem em 0 testes computados.
 - **Motor: pane_write com recibo de entrega**. A escrita em panes comprova entrega com recibo estruturado de prova de turno e aceite de bytes, rejeitando confirmações falsas quando o pane não está pronto.
 - **Motor: esforço do revisor proporcional**. O roteamento de tarefas e as regras de conformidade reservam o esforço máximo do revisor para tarefas críticas, alocando esforço proporcional nos demais níveis de severidade.
+- **Motor: fila de comandos pesados se liberta sozinha**. Um lease exclusivo cujo executor ou sessão dona morreu passa a ser liberado pela própria fila após 60 s (antes ficava preso e travava novos comandos), e a recusa da fila agora diz qual comando segura o lease. O conserto no supervisor nativo (`native/darwin-pty-supervisor/main.c`) não está nesta build: fica para o próximo rebuild nativo.
 
 ## 0.76.321 — Piloto para todas as CLIs no Linux
 

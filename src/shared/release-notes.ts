@@ -11762,6 +11762,8 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'pane_write com recibo de entrega', detail: 'A ferramenta de escrita em terminais (nexus_pane_write) agora emite prova de turno e confirmação de recebimento apenas quando os bytes chegam e o pane está apto a aceitar entrada.' },
     { title: 'Esforço do revisor proporcional', detail: 'O roteador de tarefas e as regras de modelo reservam o nível de esforço máximo no revisor para tarefas críticas, usando esforço proporcional nos demais níveis para evitar latência desnecessária.' },
   ],
-  fixes: [],
+  fixes: [
+    { title: 'Fila de comandos pesados se liberta sozinha', detail: 'Um lease exclusivo cujo executor ou sessão dona morreu passa a ser liberado pela própria fila após 60 s — antes ficava preso e travava novos comandos —, e a recusa da fila diz qual comando segura o lease. O conserto no supervisor nativo (native/darwin-pty-supervisor/main.c) não está nesta build: fica para o próximo rebuild nativo.' },
+  ],
 };
 
