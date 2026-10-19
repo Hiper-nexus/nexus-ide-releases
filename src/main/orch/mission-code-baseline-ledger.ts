@@ -8,9 +8,6 @@ import { ScopedStoreBinding, ScopedStoreCorruptionError } from './scoped-store';
 
 const KEY = 'nexus:mission-code-baseline:v1';
 const RUN_ID = 'nexus-code-baseline';
-/** A distinct run_id so an upstream head row is never mistaken for a baseline row. */
-const UPSTREAM_RUN_ID = 'nexus-code-baseline-upstream';
-const UPSTREAM_KEY = 'nexus:mission-code-baseline-upstream:v1';
 const hashSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const headSchema = z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/);
 const timestampSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
@@ -21,24 +18,6 @@ const captureSchema = z.discriminatedUnion('status', [
 export type MissionCodeBaseline = Readonly<z.infer<typeof captureSchema>>;
 /** In-memory provenance only: serialized agent input cannot mint a Main capture. */
 const captures = new WeakSet<object>();
-/** In-memory provenance only: only a Main-fetched upstream head (minted below) can advance a baseline. */
-const upstreamHeads = new WeakSet<object>();
-const upstreamHeadSchema = z.object({ headSha: headSchema }).strict();
-const upstreamPayloadSchema = z.object({
-  kind: z.literal('nexus.mission-code-upstream'), version: z.literal(1),
-  scopeHash: hashSchema, executionRootHash: hashSchema, headSha: headSchema,
-}).strict();
-const upstreamRowSchema = z.object({
-  event_type: z.literal('custom'), origin: z.literal('main'), run_id: z.literal(UPSTREAM_RUN_ID),
-  payload_json: z.string().max(2_048), occurred_at: timestampSchema,
-}).strict();
-
-/** Main-only: mint the upstream head Main itself fetched — never a worker-supplied ref. */
-export function captureMissionCodeUpstreamHead(headSha: string): Readonly<{ headSha: string }> {
-  const minted = Object.freeze(upstreamHeadSchema.parse({ headSha: headSha.toLowerCase() }));
-  upstreamHeads.add(minted);
-  return minted;
-}
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 function executionRootHash(root: string): string {
   if (!path.isAbsolute(root) || root.includes('\0')) throw new Error('mission code baseline requires an absolute execution root');
@@ -122,109 +101,6 @@ export class MissionCodeBaselineLedger {
     return baseline;
   }
 
-  /**
-   * Main-only: record the upstream head Main itself fetched while synchronizing
-   * the worktree. `advance` below only moves the baseline to exactly this head,
-   * so a worker's own commits (which also descend from the baseline and are
-   * reachable from HEAD) can never become the new review boundary. The worker
-   * cannot mint an upstream head (`upstreamHeads` WeakSet), and refs/remotes/
-   * origin/* are never read here — the sha comes from Main's own fetch.
-   */
-  registerUpstream(missionId: string, executionRoot: string, upstream: Readonly<{ headSha: string }>): void {
-    z.string().min(1).max(128).parse(missionId);
-    if (!upstreamHeads.has(upstream)) throw new Error('mission code baseline upstream requires a Main fetch');
-    const rootHash = executionRootHash(executionRoot);
-    const db = this.#binding.writeDatabase();
-    const now = this.#binding.now();
-    let inserted = false;
-    db.transaction(() => {
-      if (!db.prepare('SELECT id FROM missions WHERE id = ?').get(missionId)) throw new Error('mission code baseline mission not found');
-      const key = `${UPSTREAM_KEY}:${upstream.headSha}`;
-      if (db.prepare('SELECT id FROM mission_events WHERE mission_id = ? AND idempotency_key = ?').get(missionId, key)) return;
-      const sequence = (db.prepare('SELECT COALESCE(MAX(sequence), 0) + 1 AS value FROM mission_events WHERE mission_id = ?').get(missionId) as { value: number }).value;
-      const id = z.string().min(1).max(128).parse(this.#binding.makeId('code-baseline-upstream'));
-      db.prepare(`INSERT INTO mission_events (sequence, id, mission_id, run_id, parent_run_id, event_type,
-        payload_json, idempotency_key, occurred_at, origin, delivery_status)
-        VALUES (?, ?, ?, ?, NULL, 'custom', ?, ?, ?, 'main', 'pending')`).run(
-        sequence, id, missionId, UPSTREAM_RUN_ID,
-        JSON.stringify({ kind: 'nexus.mission-code-upstream', version: 1, scopeHash: scopeHash(this.#binding.scope), executionRootHash: rootHash, headSha: upstream.headSha }),
-        key, now,
-      );
-      inserted = true;
-    }).immediate();
-    if (inserted) this.#binding.emitChange();
-  }
-
-  /** The most recent upstream head Main recorded at a sync (null until Main fetches). */
-  readUpstream(missionId: string, executionRoot: string): Readonly<{ headSha: string }> | null {
-    z.string().min(1).max(128).parse(missionId);
-    const rootHash = executionRootHash(executionRoot);
-    const raw = this.#binding.readDatabase().prepare(`SELECT event_type, origin, run_id, payload_json, occurred_at FROM mission_events
-      WHERE mission_id = ? AND run_id = ? ORDER BY sequence DESC LIMIT 1`).get(missionId, UPSTREAM_RUN_ID);
-    if (raw === undefined) return null;
-    try {
-      const row = upstreamRowSchema.parse(raw);
-      const payload = upstreamPayloadSchema.parse(JSON.parse(row.payload_json));
-      if (payload.scopeHash !== scopeHash(this.#binding.scope) || payload.executionRootHash !== rootHash) throw new Error('mission code baseline upstream binding mismatch');
-      return Object.freeze({ headSha: payload.headSha });
-    } catch (cause) { throw new ScopedStoreCorruptionError('mission code baseline upstream', { cause }); }
-  }
-
-  /**
-   * Main-owned forward-only re-baseline. The target is EXACTLY the upstream head
-   * Main recorded via `registerUpstream` — never the worker's own commit — and
-   * must descend from the previous baseline and be part of the worktree history.
-   * Provenance is Main-only on both ends: `upstreamHeads` admits only a
-   * Main-minted upstream head, and the ancestor proof is verified with Git here.
-   */
-  async advance(
-    missionId: string,
-    executionRoot: string,
-    upstream: Readonly<{ headSha: string }>,
-    options: { readonly git?: AsyncGitRunner } = {},
-  ): Promise<MissionCodeBaseline> {
-    z.string().min(1).max(128).parse(missionId);
-    if (!upstreamHeads.has(upstream)) throw new Error('mission code baseline advance requires a Main upstream head');
-    const registered = this.readUpstream(missionId, executionRoot);
-    if (!registered || registered.headSha !== upstream.headSha) throw new Error('mission code baseline advance requires the Main-fetched upstream head');
-    const root = await fs.realpath(executionRoot);
-    const rootHash = executionRootHash(root);
-    const db = this.#binding.writeDatabase();
-    const existing = this.readFromDatabase(db, missionId, rootHash);
-    if (!existing || existing.status !== 'known') throw new Error('mission code baseline advance requires a known baseline');
-    if (existing.headSha === upstream.headSha) return existing;
-    const runner = options.git ?? new AsyncProcessGitRunner();
-    const bounded: AsyncGitRunner = { run: (cwd, args, runOptions) => runner.run(cwd, args, { ...runOptions, timeoutMs: 5_000 }) };
-    await assertSafeLocalGitConfigAsync(bounded, root);
-    const descendant = await bounded.run(root, ['merge-base', '--is-ancestor', existing.headSha, upstream.headSha], { allowFailure: true });
-    if (descendant.status !== 0) throw new Error('mission code baseline advance is not a descendant of the current baseline');
-    const head = await bounded.run(root, ['rev-parse', '--verify', 'HEAD^{commit}'], { allowFailure: true });
-    const headSha = headSchema.safeParse(head.stdout.trim().toLowerCase());
-    if (head.status !== 0 || !headSha.success) throw new Error('mission code baseline advance could not read the worktree HEAD');
-    const synced = await bounded.run(root, ['merge-base', '--is-ancestor', upstream.headSha, headSha.data], { allowFailure: true });
-    if (synced.status !== 0) throw new Error('mission code baseline advance requires the worktree to include the new baseline');
-    const advanced = captureSchema.parse({ status: 'known' as const, headSha: upstream.headSha, executionRootHash: rootHash, observedAt: this.#binding.now() });
-    let inserted = false;
-    const result = db.transaction(() => {
-      const latest = this.readFromDatabase(db, missionId, rootHash);
-      if (!latest || latest.status !== 'known') throw new Error('mission code baseline advance requires a known baseline');
-      if (latest.headSha === upstream.headSha) return latest;
-      const sequence = (db.prepare('SELECT COALESCE(MAX(sequence), 0) + 1 AS value FROM mission_events WHERE mission_id = ?').get(missionId) as { value: number }).value;
-      const id = z.string().min(1).max(128).parse(this.#binding.makeId('code-baseline-advance'));
-      db.prepare(`INSERT INTO mission_events (sequence, id, mission_id, run_id, parent_run_id, event_type,
-        payload_json, idempotency_key, occurred_at, origin, delivery_status)
-        VALUES (?, ?, ?, ?, NULL, 'custom', ?, ?, ?, 'main', 'pending')`).run(
-        sequence, id, missionId, RUN_ID,
-        JSON.stringify({ kind: 'nexus.mission-code-baseline', version: 1, scopeHash: scopeHash(this.#binding.scope), baseline: advanced }),
-        `${KEY}:advance:${upstream.headSha}`, advanced.observedAt,
-      );
-      inserted = true;
-      return Object.freeze(advanced);
-    }).immediate();
-    if (inserted) this.#binding.emitChange();
-    return result;
-  }
-
   /** executionRoot is the current Main-authoritative canonical execution root. */
   read(missionId: string, executionRoot: string): MissionCodeBaseline | null {
     z.string().min(1).max(128).parse(missionId);
@@ -232,10 +108,8 @@ export class MissionCodeBaselineLedger {
   }
 
   private readFromDatabase(db: ReturnType<ScopedStoreBinding['readDatabase']>, missionId: string, rootHash: string): MissionCodeBaseline | null {
-    // A baseline may be advanced by Main (advance below) which appends a newer
-    // row under the same run_id. The newest row is the authoritative boundary.
     const raw = db.prepare(`SELECT event_type, origin, run_id, payload_json, occurred_at FROM mission_events
-      WHERE mission_id = ? AND run_id = ? ORDER BY sequence DESC LIMIT 1`).get(missionId, RUN_ID);
+      WHERE mission_id = ? AND idempotency_key = ?`).get(missionId, KEY);
     if (raw === undefined) return null;
     try {
       const row = rowSchema.parse(raw);

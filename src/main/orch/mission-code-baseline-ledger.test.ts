@@ -2,11 +2,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it } from 'vitest';
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { createScopedMissionStore } from './mission-store';
 import { testProjectScope } from './__tests__/scope-fixture';
-import { captureMissionCodeBaseline, captureMissionCodeUpstreamHead } from './mission-code-baseline-ledger';
+import { captureMissionCodeBaseline } from './mission-code-baseline-ledger';
 
 let root: string;
 let repo: string;
@@ -118,85 +118,4 @@ it('root replacement during asynchronous capture produces unknown', async () => 
     return { status: 0, stdout: sha, stderr: '' };
   } } });
   expect(captured).toMatchObject({ status: 'unknown', reason: 'root-changed' });
-});
-
-describe('Main-owned baseline advance', () => {
-  const commit = (message: string) => git('-c', 'user.name=Nexus Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--allow-empty', '-qm', message);
-
-  it('advances a baseline only to the Main-fetched upstream head and reads the latest', async () => {
-    const captured = await captureMissionCodeBaseline(repo);
-    const missions = store(); const mission = missions.create({ title: 'advance' });
-    missions.codeBaseline.record(mission.id, captured);
-    commit('upstream'); // HEAD moves to the upstream tip U
-    const upstreamSha = git('rev-parse', 'HEAD');
-    missions.codeBaseline.registerUpstream(mission.id, repo, captureMissionCodeUpstreamHead(upstreamSha));
-    const advanced = await missions.codeBaseline.advance(mission.id, repo, captureMissionCodeUpstreamHead(upstreamSha));
-    expect(advanced).toMatchObject({ status: 'known', headSha: upstreamSha });
-    expect(missions.codeBaseline.read(mission.id, repo)).toEqual(advanced);
-    // Idempotent: re-advancing to the same upstream returns the existing baseline.
-    expect(await missions.codeBaseline.advance(mission.id, repo, captureMissionCodeUpstreamHead(upstreamSha))).toEqual(advanced);
-  });
-
-  it('rejects advancing to the worker’s own commit instead of the registered upstream', async () => {
-    const captured = await captureMissionCodeBaseline(repo);
-    const baseSha = git('rev-parse', 'HEAD');
-    const missions = store(); const mission = missions.create({ title: 'reject-worker-head' });
-    missions.codeBaseline.record(mission.id, captured);
-    commit('upstream'); // U
-    const upstreamSha = git('rev-parse', 'HEAD');
-    missions.codeBaseline.registerUpstream(mission.id, repo, captureMissionCodeUpstreamHead(upstreamSha));
-    commit('worker'); // W — the worker's commit on top of U
-    const workerSha = git('rev-parse', 'HEAD');
-    // W descends from B and is reachable from HEAD, but is NOT the registered upstream U.
-    await expect(missions.codeBaseline.advance(mission.id, repo, captureMissionCodeUpstreamHead(workerSha))).rejects.toThrow(/Main-fetched upstream head/);
-    // The baseline must remain at the original boundary, not the worker's HEAD.
-    expect(missions.codeBaseline.read(mission.id, repo)).toMatchObject({ status: 'known', headSha: baseSha });
-  });
-
-  it('advance requires a registered upstream head', async () => {
-    const captured = await captureMissionCodeBaseline(repo);
-    const missions = store(); const mission = missions.create({ title: 'advance-no-upstream' });
-    missions.codeBaseline.record(mission.id, captured);
-    commit('forward');
-    await expect(missions.codeBaseline.advance(mission.id, repo, captureMissionCodeUpstreamHead(git('rev-parse', 'HEAD')))).rejects.toThrow(/Main-fetched upstream head/);
-  });
-
-  it('rejects a copied/agent-authored upstream head on register and advance', async () => {
-    const captured = await captureMissionCodeBaseline(repo);
-    const missions = store(); const mission = missions.create({ title: 'forged-upstream' });
-    missions.codeBaseline.record(mission.id, captured);
-    commit('forward');
-    const minted = captureMissionCodeUpstreamHead(git('rev-parse', 'HEAD'));
-    expect(() => missions.codeBaseline.registerUpstream(mission.id, repo, { headSha: minted.headSha })).toThrow(/Main fetch/);
-    await expect(missions.codeBaseline.advance(mission.id, repo, { headSha: minted.headSha })).rejects.toThrow(/Main upstream head/);
-  });
-
-  it('refuses to advance to a descendant that is not part of the worktree history', async () => {
-    const captured = await captureMissionCodeBaseline(repo);
-    const baseSha = git('rev-parse', 'HEAD');
-    const missions = store(); const mission = missions.create({ title: 'reject-unsynced' });
-    missions.codeBaseline.record(mission.id, captured);
-    commit('forward'); // HEAD = C, descendant of the baseline
-    git('checkout', '-qb', 'side', baseSha);
-    commit('side sibling'); // D: descendant of B, not merged into HEAD
-    const sideSha = git('rev-parse', 'HEAD');
-    git('checkout', '-q', '-');
-    missions.codeBaseline.registerUpstream(mission.id, repo, captureMissionCodeUpstreamHead(sideSha));
-    await expect(missions.codeBaseline.advance(mission.id, repo, captureMissionCodeUpstreamHead(sideSha))).rejects.toThrow(/worktree to include/);
-  });
-
-  it('a row sharing the baseline run_id with a non-baseline payload is never read as a baseline', async () => {
-    const captured = await captureMissionCodeBaseline(repo);
-    const missions = store(); const mission = missions.create({ title: 'run-id-exclusive' });
-    missions.codeBaseline.record(mission.id, captured);
-    const db = manager.open(scope()).db;
-    const sequence = (db.prepare('SELECT COALESCE(MAX(sequence), 0) + 1 AS value FROM mission_events WHERE mission_id = ?').get(mission.id) as { value: number }).value;
-    db.prepare(`INSERT INTO mission_events (sequence, id, mission_id, run_id, parent_run_id, event_type, payload_json, idempotency_key, occurred_at, origin, delivery_status)
-      VALUES (?, ?, ?, 'nexus-code-baseline', NULL, 'custom', ?, ?, ?, 'main', 'pending')`).run(
-      sequence, 'forged-run-id-row', mission.id,
-      JSON.stringify({ kind: 'not-a-baseline', version: 1, scopeHash: 'f'.repeat(64), baseline: { status: 'known', headSha: 'a'.repeat(40), executionRootHash: 'e'.repeat(64), observedAt: 1 } }),
-      'forged-run-id-key', 1,
-    );
-    expect(() => missions.codeBaseline.read(mission.id, repo)).toThrow(/baseline/);
-  });
 });
