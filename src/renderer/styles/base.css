@@ -425,6 +425,17 @@ select optgroup {
   color: var(--text);
 }
 
+/* F-1579: the chosen row needs its own pair too. Without it the Windows popup
+   paints the selected row with the system highlight while the row keeps the
+   theme's near-white ink ("Grok Voice (principal)" vanished in "Transporte
+   realtime"). Solid accent + accent ink is the CTA pair, AA in every theme.
+   Disabled rows keep the legible disabled pair below. */
+select option:checked:not(:disabled),
+select option:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
 /* Disabled is still readable: use secondary ink rather than fading the row.
    Cover inherited disabled states too, since options have their own ink above. */
 select option:disabled,

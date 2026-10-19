@@ -706,7 +706,8 @@ describe('intake de arrastar/soltar/colar no shell', () => {
     setMissionSetupDestination();
     fire('drop', window, { types: ['Files'] });
 
-    expect(toastDetails()).toContain('Finder');
+    // F-1579: o gerenciador de arquivos citado depende do sistema.
+    expect(toastDetails()).toContain('no disco e arraste do');
   });
 
   it('não acende o overlay nem importa no arraste interno de skill', () => {
@@ -717,7 +718,7 @@ describe('intake de arrastar/soltar/colar no shell', () => {
 
     fire('drop', window, { types: [PANE_SKILL_DRAG_TYPE] });
     expect(window.nexus.files.importDroppedUri).not.toHaveBeenCalled();
-    expect(toastDetails()).not.toContain('Finder');
+    expect(toastDetails()).not.toContain('no disco e arraste do');
   });
 
   it('não reivindica arraste de texto puro (a textarea mantém a inserção nativa)', () => {
@@ -729,7 +730,7 @@ describe('intake de arrastar/soltar/colar no shell', () => {
     });
 
     expect(event.defaultPrevented).toBe(false);
-    expect(toastDetails()).not.toContain('Finder');
+    expect(toastDetails()).not.toContain('no disco e arraste do');
   });
 
   it('anexa imagem colada mesmo sem o wizard montado', async () => {

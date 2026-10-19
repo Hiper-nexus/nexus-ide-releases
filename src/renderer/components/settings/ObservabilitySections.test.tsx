@@ -144,4 +144,46 @@ describe('Observability settings sections', () => {
 
     act(() => root.unmount());
   });
+
+  it('no Windows os botões de microfone e som abrem os Ajustes do Windows, sem citar o macOS (F-1579)', async () => {
+    const openMicSettings = vi.fn();
+    const openSoundSettings = vi.fn();
+    setNexusApi({
+      platform: 'win32',
+      vision: { checkPermission: vi.fn(async () => 'granted') },
+      voice: { openMicSettings, openSoundSettings },
+    });
+
+    const { host, root } = mount(<DiagnosticsSection />);
+    await act(async () => {});
+
+    expect(host.textContent).not.toContain('macOS');
+    const byLabel = (label: string) =>
+      [...host.querySelectorAll<HTMLButtonElement>('button')].find(
+        (button) => button.textContent === label,
+      );
+    act(() => byLabel('Abrir privacidade do mic')!.click());
+    act(() => byLabel('Abrir som')!.click());
+    expect(openMicSettings).toHaveBeenCalledTimes(1);
+    expect(openSoundSettings).toHaveBeenCalledTimes(1);
+
+    act(() => root.unmount());
+  });
+
+  it('no Linux esconde os botões de Ajustes que não abririam nada (F-1579)', async () => {
+    setNexusApi({
+      platform: 'linux',
+      vision: { checkPermission: vi.fn(async () => 'granted') },
+      voice: { openMicSettings: vi.fn(), openSoundSettings: vi.fn() },
+    });
+
+    const { host, root } = mount(<DiagnosticsSection />);
+    await act(async () => {});
+
+    expect(host.textContent).not.toContain('Abrir privacidade do mic');
+    expect(host.textContent).not.toContain('Abrir som');
+    expect(host.textContent).toContain('Atualizar diagnóstico');
+
+    act(() => root.unmount());
+  });
 });

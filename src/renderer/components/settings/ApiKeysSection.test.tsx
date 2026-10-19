@@ -24,6 +24,7 @@ describe('ApiKeysSection', () => {
     Object.defineProperty(window, 'nexus', {
       configurable: true,
       value: {
+        platform: 'darwin',
         voice: {
           getInfo: vi.fn(async () => ({
             keys: [
@@ -165,6 +166,47 @@ describe('ApiKeysSection', () => {
       c.textContent?.includes('Grok (xAI)'),
     );
     expect(grokCard?.textContent).toContain('Não configurada');
+  });
+
+  it('no Windows o cofre é o do Windows, nunca o Keychain (F-1579)', async () => {
+    (window.nexus as { platform?: string }).platform = 'win32';
+    const host = mount(<ApiKeysSection />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const geminiCard = [...host.querySelectorAll('.api-key-card')].find((c) =>
+      c.textContent?.includes('Google Gemini'),
+    );
+    expect(geminiCard?.textContent).toContain('Salva no cofre do Windows');
+    expect(host.textContent).toContain('Cofre do Windows');
+    expect(host.textContent).toContain('cifrado pelo cofre do Windows de cada máquina');
+    expect(host.textContent).not.toMatch(/Keychain|macOS|\bMac\b|Reajustar Para Padrões/);
+  });
+
+  it('no Windows a confirmação de salvar diz o cofre do Windows (F-1579)', async () => {
+    (window.nexus as { platform?: string }).platform = 'win32';
+    const host = mount(<ApiKeysSection />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const grokCard = [...host.querySelectorAll('.api-key-card')].find((c) =>
+      c.textContent?.includes('Grok (xAI)'),
+    );
+    const input = grokCard?.querySelector<HTMLInputElement>('input[type="password"]');
+    act(() => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
+        ?.call(input, 'xai-test-key-123');
+      input!.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const saveBtn = [...(grokCard?.querySelectorAll('button') ?? [])].find((b) =>
+      b.textContent?.includes('Salvar chave'),
+    );
+    await act(async () => {
+      saveBtn!.click();
+      await Promise.resolve();
+    });
+    expect(host.textContent).toContain('Chave salva com sucesso no cofre do Windows.');
   });
 
   it('saves new key and updates voice, providers, and media stores', async () => {

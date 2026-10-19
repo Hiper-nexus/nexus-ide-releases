@@ -634,6 +634,30 @@ describe('ProvidersPanel hub', () => {
       expect(testKey).toHaveBeenCalledWith('qwen');
       act(() => root.unmount());
     });
+
+    it('no Windows a chave vai para o cofre do Windows, nunca para o Keychain (F-1579)', async () => {
+      (window.nexus as { platform?: string }).platform = 'win32';
+      const setKey = vi.fn(async () => ({ ok: true }));
+      useProviderStore.setState({
+        providers: [{ ...deepseek('deepseek'), secureStorageAvailable: false }], setKey,
+      } as never);
+      const { host, root } = mount();
+      await act(async () => { await Promise.resolve(); });
+
+      expect(host.textContent).toContain('Cofre do Windows indisponível nesta máquina');
+      const input = host.querySelector<HTMLInputElement>('input[aria-label="Chave da DeepSeek"]');
+      await act(async () => {
+        const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+        setValue.call(input, 'sk-direta');
+        input!.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      const save = [...host.querySelectorAll<HTMLButtonElement>('button')]
+        .find((button) => button.textContent?.includes('Salvar key'));
+      await act(async () => { save!.click(); await Promise.resolve(); });
+      expect(host.textContent).toContain('key salva no cofre do Windows');
+      expect(host.textContent).not.toContain('Keychain');
+      act(() => root.unmount());
+    });
   });
 describe('F-1567: base URL configurável do Qwen', () => {
   it('o campo fica em Avançado, mostra a URL salva e persiste pelo setConfig', async () => {

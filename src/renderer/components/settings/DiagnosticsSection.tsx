@@ -19,6 +19,7 @@ import { ContextDraftsSection } from './ContextDraftsSection';
 import { TerminalPerformanceStatus } from './TerminalPerformanceStatus';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
 import { TokenSpeedMonitor } from '../TokenSpeedMonitor';
+import { platformCopy } from '../../lib/platform-copy';
 
 function useDiagnosticsSnapshot() {
   const [micPermission, setMicPermission] =
@@ -94,6 +95,7 @@ function liveStatusLabel(value: string | undefined): string {
 }
 
 export function DiagnosticsSection() {
+  const copy = platformCopy();
   const info = useVoiceStore((s) => s.info);
   const level = useVoiceStore((s) => s.level);
   const micHealth = useVoiceStore((s) => s.micHealth);
@@ -162,7 +164,7 @@ export function DiagnosticsSection() {
           label="Microfone selecionado"
           value={devices.activeLabel ?? (devices.count > 0 ? 'sem rótulo' : 'não detectado')}
           tone={devices.count > 0 ? 'ok' : 'warn'}
-          detail="macOS só libera nomes após consentimento de microfone."
+          detail="Os nomes dos dispositivos só aparecem depois da permissão de microfone."
         />
         <MetricTile
           label="Nível do microfone"
@@ -241,12 +243,17 @@ export function DiagnosticsSection() {
         <button className="settings-btn" type="button" onClick={() => void refresh()}>
           Atualizar diagnóstico
         </button>
-        <button className="settings-btn" type="button" onClick={() => window.nexus.voice.openMicSettings()}>
-          Abrir privacidade do mic
-        </button>
-        <button className="settings-btn" type="button" onClick={() => window.nexus.voice.openSoundSettings()}>
-          Abrir som
-        </button>
+        {/* F-1579: só onde o Main sabe abrir a tela (macOS e Windows). */}
+        {copy.canOpenSoundSettings && (
+          <>
+            <button className="settings-btn" type="button" onClick={() => window.nexus.voice.openMicSettings()}>
+              Abrir privacidade do mic
+            </button>
+            <button className="settings-btn" type="button" onClick={() => window.nexus.voice.openSoundSettings()}>
+              Abrir som
+            </button>
+          </>
+        )}
         <span className="sys-actions__sep" aria-hidden="true" />
         <button
           className="settings-btn"

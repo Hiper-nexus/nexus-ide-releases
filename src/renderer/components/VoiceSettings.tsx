@@ -845,7 +845,7 @@ export function VoiceSettings({ onClose, embedded = false }: VoiceSettingsProps 
                     <label className="voice-settings__toggle">
                       <span>
                         <strong>Wake word</strong>
-                        <span>Diga “Hey Jarvis”; detecção local no Mac.</span>
+                        <span>Diga “Hey Jarvis”; detecção local neste computador.</span>
                       </span>
                       <input
                         type="checkbox"

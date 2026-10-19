@@ -2937,7 +2937,8 @@ describe('Caminho Expresso', () => {
     });
 
     const error = host.querySelector('.mission-setup__inline-error');
-    expect(error?.textContent).toContain('Finder');
+    // F-1579: o gerenciador de arquivos citado depende do sistema.
+    expect(error?.textContent).toContain('no disco e arraste do');
     expect(api.importDroppedUri).not.toHaveBeenCalled();
   });
 
@@ -3079,7 +3080,7 @@ describe('Caminho Expresso', () => {
 
     expect(
       host.querySelector('.mission-setup__inline-error')?.textContent,
-    ).toMatch(/Finder/);
+    ).toMatch(/no disco e arraste do /);
   });
 
   it('colar dentro da zona de anexos não vaza para o shell', async () => {

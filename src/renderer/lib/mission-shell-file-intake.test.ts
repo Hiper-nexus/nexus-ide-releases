@@ -29,6 +29,11 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+
+/** F-1579: o texto do gerenciador de arquivos depende do sistema. */
+function setUiPlatform(platform: NodeJS.Platform): void {
+  Object.defineProperty(window, 'nexus', { configurable: true, value: { platform } });
+}
 describe('shellClaimsMissionFileDrop', () => {
   it('only the launcher and the setup wizard claim a shell file drop', () => {
     expect(shellClaimsMissionFileDrop('launcher')).toBe(true);
@@ -226,9 +231,25 @@ describe('describeDropWithoutFiles', () => {
     // Arrastar mídia de um app nativo (WhatsApp, Fotos) põe uma PROMESSA de
     // arquivo no pasteboard. Quando o Chromium não a materializa, `files` vem
     // vazia e o drop não fazia absolutamente nada — nem um aviso.
+    setUiPlatform('darwin');
     const message = describeDropWithoutFiles(transfer(['Files']));
     expect(message).toContain('arquivo');
     expect(message).toContain('Finder');
+  });
+
+  it('no Windows manda arrastar do Explorador de Arquivos, nunca do Finder (F-1579)', () => {
+    setUiPlatform('win32');
+    for (const message of [
+      describeDropWithoutFiles(transfer(['Files'])),
+      describeDropWithoutFiles(null),
+      describeDropWithoutFiles(transfer([])),
+      describePasteWithoutFiles(transfer(['Files'])),
+      describePasteWithoutFiles(null),
+      describePasteWithoutFiles(transfer([])),
+    ]) {
+      expect(message).toContain('Explorador de Arquivos');
+      expect(message).not.toContain('Finder');
+    }
   });
 
   it('says it got a link when the drag carries only a web address', () => {
@@ -381,6 +402,7 @@ describe('describeShellDrop', () => {
   });
 
   it('explica o que chegou quando não há arquivo nem endereço aproveitável', () => {
+    setUiPlatform('darwin');
     const plan = describeShellDrop(transfer(['Files']));
     expect(plan.action).toBe('warn');
     expect(plan.action === 'warn' && plan.message).toContain('Finder');
@@ -607,6 +629,7 @@ describe('describePasteWithoutFiles (F-582)', () => {
   ) => ({ types, getData: (type: string) => data[type] ?? '' });
 
   it('names the file-promise case with paste wording', () => {
+    setUiPlatform('darwin');
     const message = describePasteWithoutFiles(transfer(['Files']));
     expect(message).toContain('arquivo');
     expect(message).toContain('Finder');

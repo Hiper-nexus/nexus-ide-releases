@@ -17,6 +17,7 @@ import { reportLicenseDenial } from '../../state/access-guard';
 import { waitForSession, writeToPane } from '../../terminal/terminal-host';
 import { formatDecisionTime } from '../../lib/decision-format';
 import { openExternalFromAnchor } from '../../lib/open-external';
+import { platformCopy } from '../../lib/platform-copy';
 import { ActionCard } from '../ActionCard';
 import { AccountsManager } from './AccountsManager';
 import { ProviderLogo } from '../ProviderLogo';
@@ -99,6 +100,7 @@ function providerRiskWarning(provider: ProviderSettingsInfo): string | null {
 }
 
 function KeyField({ provider }: { provider: ProviderSettingsInfo }) {
+  const copy = platformCopy();
   const setKey = useProviderStore((s) => s.setKey);
   const testKey = useProviderStore((s) => s.testKey);
   const [draft, setDraft] = useState('');
@@ -126,7 +128,7 @@ function KeyField({ provider }: { provider: ProviderSettingsInfo }) {
     try {
       const result = await setKey(keyAdapterId, draft);
       setDraft('');
-      setStatus(result.ok ? 'key salva no Keychain' : result.error ?? 'falhou');
+      setStatus(result.ok ? `key salva no ${copy.vault}` : result.error ?? 'falhou');
     } catch (err) {
       setStatus(err instanceof Error ? err.message : 'falhou ao salvar key');
     } finally {
@@ -204,7 +206,7 @@ function KeyField({ provider }: { provider: ProviderSettingsInfo }) {
         <ActionCard
           icon="key"
           title="Salvar key"
-          subtitle="Keychain seguro"
+          subtitle={copy.vaultChip}
           variant="primary"
           size="sm"
           onClick={() => void save()}
@@ -232,7 +234,7 @@ function KeyField({ provider }: { provider: ProviderSettingsInfo }) {
       </div>
       {!provider.secureStorageAvailable && (
         <p className="prov__warn">
-          <PixelIcon name="warn" size={11} /> Keychain indisponível nesta máquina — a key não será persistida em
+          <PixelIcon name="warn" size={11} /> {copy.vaultTitle} indisponível nesta máquina — a key não será persistida em
           disco (só nesta sessão). Nunca gravamos em plaintext.
         </p>
       )}

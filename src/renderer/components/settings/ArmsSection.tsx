@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type React from 'react';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
+import { platformCopy } from '../../lib/platform-copy';
 
 /**
  * Nexus Arms — conector externo (Settings › Conectores). Paridade Overclock
@@ -21,6 +22,8 @@ interface ArmsBridge {
     lastUsedAt: number | null;
     instance: 'prod' | 'dev';
     descriptorPath: string;
+    /** F-1579: caminho real do nexus-arms.mjs nesta instalação (Main). */
+    binPath?: string;
   }>;
   generate(): Promise<{ token: string; createdAt: number }>;
   rotate(): Promise<{ token: string; createdAt: number }>;
@@ -33,10 +36,28 @@ function bridge(): ArmsBridge | null {
   return arms ?? null;
 }
 
-const SNIPPET_BIN =
-  '/Applications/NexusIDE.app/Contents/Resources/nexus-arms.mjs';
+/**
+ * Config MCP do cliente externo. `JSON.stringify` escapa a barra invertida
+ * dos caminhos do Windows; a interpolação crua gerava JSON inválido lá.
+ */
+export function armsMcpSnippet(binPath: string, descriptorPath: string): string {
+  return JSON.stringify(
+    {
+      mcpServers: {
+        'nexus-arms': {
+          command: 'node',
+          args: [binPath, '--descriptor', descriptorPath],
+          env: { NEXUS_ARMS_TOKEN: '<cole o token aqui>' },
+        },
+      },
+    },
+    null,
+    2,
+  );
+}
 
 export function ArmsSection(): React.ReactElement {
+  const copy = platformCopy();
   const [status, setStatus] = useState<
     Awaited<ReturnType<ArmsBridge['status']>> | null
   >(null);
@@ -190,15 +211,15 @@ export function ArmsSection(): React.ReactElement {
               <p className="settings-detail__hint">
                 Na config MCP do cliente externo:
               </p>
-              <pre className="arms__snippet">{`{
-  "mcpServers": {
-    "nexus-arms": {
-      "command": "node",
-      "args": ["${SNIPPET_BIN}", "--descriptor", "${status.descriptorPath}"],
-      "env": { "NEXUS_ARMS_TOKEN": "<cole o token aqui>" }
-    }
-  }
-}`}</pre>
+              <pre className="arms__snippet">
+                {armsMcpSnippet(
+                  status.binPath ?? '<caminho do nexus-arms.mjs na pasta resources do Nexus>',
+                  status.descriptorPath,
+                )}
+              </pre>
+              {copy.armsPathCaution && (
+                <p className="settings-detail__hint">{copy.armsPathCaution}</p>
+              )}
             </div>
           )}
 

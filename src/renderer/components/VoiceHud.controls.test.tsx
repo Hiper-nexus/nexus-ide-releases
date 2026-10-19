@@ -206,3 +206,94 @@ describe('VoiceHud — controles clicáveis em qualquer estado (Bug 7)', () => {
     expect(useVoiceStore.getState().hud.mode).toBe('hidden');
   });
 });
+
+describe('VoiceHud — Ajustes de microfone por sistema (F-1579)', () => {
+  let host: HTMLDivElement;
+  let root: Root;
+  const openMicSettings = vi.fn();
+  const openSoundSettings = vi.fn();
+  const resetMicPermission = vi.fn(async () => ({ ok: true }));
+
+  const mountWith = (platform: NodeJS.Platform, micHealth: string) => {
+    vi.stubGlobal('nexus', {
+      platform,
+      voice: { openMicSettings, openSoundSettings, resetMicPermission },
+      settings: {},
+    });
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: false,
+      media: query,
+      addEventListener() {},
+      removeEventListener() {},
+      addListener() {},
+      removeListener() {},
+    }));
+    useVoiceStore.setState({
+      status: 'idle',
+      error: null,
+      lastTranscript: '',
+      micHealth,
+      dictationDelivery: null,
+      lastUndeliveredDictation: null,
+      hud: { mode: 'expanded', corner: 'br', dx: 16, dy: 16, width: 300 },
+      info: {
+        enabled: true,
+        wakeWordEnabled: true,
+        jarvisLive: { enabled: false },
+        dictationOutputMode: 'portuguese',
+      } as never,
+    } as never);
+    act(() => root.render(<VoiceHud />));
+  };
+  const buttonNamed = (label: string) =>
+    [...host.querySelectorAll<HTMLButtonElement>('.voice-hud__action')].find(
+      (button) => button.textContent === label,
+    );
+
+  beforeEach(() => {
+    openMicSettings.mockClear();
+    openSoundSettings.mockClear();
+    resetMicPermission.mockClear();
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    host.remove();
+    vi.unstubAllGlobals();
+  });
+
+  it('no Windows o "Ajustes de som" abre a tela do Windows', async () => {
+    mountWith('win32', 'silent');
+    const button = buttonNamed('Ajustes de som');
+    expect(button).toBeTruthy();
+    await realClick(button!);
+    expect(openSoundSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it('no Windows a permissão fantasma não cita o macOS e leva à privacidade do microfone', async () => {
+    mountWith('win32', 'phantomGrant');
+    expect(host.textContent).toContain('O Windows diz que o mic está liberado');
+    expect(host.textContent).not.toContain('macOS');
+    expect(buttonNamed('Resetar e reiniciar')).toBeUndefined();
+    await realClick(buttonNamed('Ajustes')!);
+    expect(openMicSettings).toHaveBeenCalledTimes(1);
+    expect(resetMicPermission).not.toHaveBeenCalled();
+  });
+
+  it('no Linux esconde os botões que não abririam nada', () => {
+    mountWith('linux', 'silent');
+    expect(buttonNamed('Ajustes de som')).toBeUndefined();
+    act(() => useVoiceStore.setState({ micHealth: 'needsPermission' } as never));
+    expect(buttonNamed('Ajustes')).toBeUndefined();
+    expect(buttonNamed('Permitir')).toBeTruthy();
+  });
+
+  it('no Mac mantém o reset guiado da permissão fantasma', () => {
+    mountWith('darwin', 'phantomGrant');
+    expect(host.textContent).toContain('o macOS diz OK mas entrega silêncio');
+    expect(buttonNamed('Resetar e reiniciar')).toBeTruthy();
+  });
+});

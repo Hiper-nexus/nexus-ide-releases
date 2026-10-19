@@ -107,6 +107,19 @@ describe("Native form control theme", () => {
     expect(popup).not.toMatch(/#[0-9a-f]{3,8}\b/i);
   });
 
+  it("paints the chosen and hovered option with the accent pair, legible in every theme (F-1579)", () => {
+    const chosen = ruleBody(baseCss, [
+      "select option:checked:not(:disabled)",
+      "select option:hover:not(:disabled)",
+    ].join(",\n"));
+    expect(chosen).toContain("background: var(--accent)");
+    expect(chosen).toContain("color: var(--accent-ink)");
+    expect(chosen).not.toMatch(/#[0-9a-f]{3,8}\b/i);
+    for (const [name, palette] of Object.entries(PALETTES)) {
+      expect(contrast(palette.accentInk, palette.accent), `${name}: chosen option`).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
   it("keeps disabled options legible, including disabled groups and selects", () => {
     const disabled = ruleBody(baseCss, [
       "select option:disabled",

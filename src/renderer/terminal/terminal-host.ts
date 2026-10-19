@@ -163,6 +163,7 @@ import {
 import { notifyPaneWorkspaceReveal } from '../lib/pane-intersection';
 import { tuiWheelPageSequence } from './tui-wheel';
 import { xtermWindowsPty } from '../lib/platform';
+import { platformCopy } from '../lib/platform-copy';
 
 /**
  * Persistent terminal manager.
@@ -2981,7 +2982,7 @@ async function pasteFromSystemClipboard(
     useToastStore.getState().push(
       'warn',
       'Nada foi colado no terminal',
-      'Não foi possível consultar a área de transferência do sistema. Salve a mídia no disco e copie/arraste do Finder.',
+      `Não foi possível consultar a área de transferência do sistema. Salve a mídia no disco e copie/arraste do ${platformCopy().fileManager}.`,
     );
   }
 }

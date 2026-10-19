@@ -4,6 +4,7 @@ import type { VoiceApiKeyStatus, VoiceRuntimeInfo } from '../../../shared/voice-
 import type { JevStatus } from '../../../shared/jev-ipc';
 import { credentialLinkForEnv } from '../../../shared/credential-links';
 import { openExternalFromAnchor } from '../../lib/open-external';
+import { platformCopy } from '../../lib/platform-copy';
 import { useProviderStore } from '../../state/provider-store';
 import { useVoiceStore } from '../../voice/voice-store';
 import { ProviderLogo } from '../ProviderLogo';
@@ -215,6 +216,7 @@ interface KeyCardState {
 }
 
 export function ApiKeysSection() {
+  const copy = platformCopy();
   const providers = useProviderStore((s) => s.providers);
   const voiceInfoFromStore = useVoiceStore((s) => s.info);
   const setVoiceInfoStore = useVoiceStore((s) => s.setInfo);
@@ -346,7 +348,7 @@ export function ApiKeysSection() {
       setFeedback({
         id: def.id,
         ok: true,
-        message: value ? 'Chave salva com sucesso no Keychain do sistema.' : 'Chave removida.',
+        message: value ? `Chave salva com sucesso no ${copy.vault}.` : 'Chave removida.',
       });
     } catch (err) {
       setFeedback({
@@ -447,7 +449,7 @@ export function ApiKeysSection() {
               ) : state.hasKey ? (
                 <span className="settings-chip settings-chip--ok api-key-card__chip">
                   <span className="api-key-card__dot" data-tone="ok" aria-hidden />
-                  Salva no Keychain
+                  Salva no {copy.vault}
                 </span>
               ) : (
                 <span className="settings-chip api-key-card__chip api-key-card__chip--dim">
@@ -579,7 +581,7 @@ export function ApiKeysSection() {
           <SettingsSectionTitle>Chaves de API</SettingsSectionTitle>
           <p className="settings-detail__hint">
             Gerencie e configure em um só lugar as chaves dos provedores de IA usados no NexusIDE
-            (Gemini, Grok, Groq, OpenAI, Claude e outros). Salvas de forma segura no Keychain local.
+            (Gemini, Grok, Groq, OpenAI, Claude e outros). Salvas de forma segura, cifradas pelo {copy.vault}.
           </p>
         </div>
         <div className="api-keys-section__stats">
@@ -587,8 +589,8 @@ export function ApiKeysSection() {
             <PixelIcon name="check" size={10} />
             {configuredCount} de {SYSTEM_API_KEYS.length} configuradas
           </span>
-          <span className="settings-chip" title="Armazenamento seguro pelo macOS Keychain">
-            <PixelIcon name="key" size={12} /> Keychain Seguro
+          <span className="settings-chip" title={`Armazenamento cifrado pelo ${copy.vaultDetail}`}>
+            <PixelIcon name="key" size={12} /> {copy.vaultChip}
           </span>
         </div>
       </header>
@@ -657,15 +659,15 @@ export function ApiKeysSection() {
         <header className="api-keys-group__head">
           <h3 className="api-keys-group__title">Multi-PC</h3>
           <p className="api-keys-group__hint">
-            O cofre de keys é cifrado pelo Keychain de cada Mac. Para levar as
+            O cofre de keys é cifrado pelo {copy.vault} de cada máquina. Para levar as
             keys para outra máquina: exporte aqui com uma passphrase, importe lá.
-            Nunca clique “Reajustar Para Padrões” no diálogo do macOS.
+            {copy.vaultCaution ? ` ${copy.vaultCaution}` : null}
           </p>
         </header>
         {vaultState === 'foreign-or-locked' && (
           <p className="settings-detail__hint" role="status">
             Este cofre parece vir de outra máquina — os blobs não abrem neste
-            Keychain. Importe o export (ou re-insira as keys); nada foi perdido
+            {' '}{copy.vault}. Importe o export (ou re-insira as keys); nada foi perdido
             na máquina de origem.
           </p>
         )}

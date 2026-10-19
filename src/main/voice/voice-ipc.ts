@@ -3,6 +3,7 @@ import {
   BrowserWindow,
   dialog,
   app,
+  shell,
   type WebContents,
 } from "electron";
 import { showMessageBoxWithoutBlocking } from "../native-confirm";
@@ -56,7 +57,10 @@ import {
   DICTATION_SESSION_EVENT,
   dictationSessionTraceEvent,
 } from "./dictation-session-trace";
-import { spawn } from "node:child_process";
+import {
+  openSystemSoundSettings,
+  type SystemSoundSettingsTarget,
+} from "./system-sound-settings";
 import { transcribe } from "./stt-service";
 import { speak, speakPreview, stopSystemSpeech } from "./tts-service";
 import { echoSuppressor } from "./echo-suppress";
@@ -1165,17 +1169,27 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
     }
   });
 
-  // Deep-links pra Ajustes do macOS: o renderer pede quando a JARVIS detecta
-  // que tá sem permissão de mic (Privacy → Microfone) ou com input mudo (Som).
+  // Deep-links pros Ajustes do sistema: o renderer pede quando a JARVIS
+  // detecta que tá sem permissão de mic (Privacidade → Microfone) ou com input
+  // mudo (Som). F-1579: URL fixa por sistema (macOS e Windows), nunca `spawn`.
+  const openSoundSettingsFor = (
+    target: SystemSoundSettingsTarget,
+    event: string,
+    label: string,
+  ): void => {
+    void openSystemSoundSettings(target, {
+      platform: process.platform,
+      openExternal: (url) => shell.openExternal(url),
+    }).then((result) => {
+      if (result.ok) logVoice("info", event, `abriu Ajustes → ${label}`);
+      else logVoice("warn", event, `Ajustes → ${label} não abriu (${result.reason})`);
+    });
+  };
   onIpcGuarded(VOICE_CHANNELS.openMicSettings, () => {
-    spawn("open", [
-      "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
-    ]);
-    logVoice("info", "mic.openMicSettings", "abriu Ajustes → Microfone");
+    openSoundSettingsFor("microphone", "mic.openMicSettings", "Microfone");
   });
   onIpcGuarded(VOICE_CHANNELS.openSoundSettings, () => {
-    spawn("open", ["x-apple.systempreferences:com.apple.preference.sound"]);
-    logVoice("info", "mic.openSoundSettings", "abriu Ajustes → Som");
+    openSoundSettingsFor("sound", "mic.openSoundSettings", "Som");
   });
 
   // Grant TCC fantasma (WAKE-BROKEN-001 Rank 1): macOS diz 'granted' mas

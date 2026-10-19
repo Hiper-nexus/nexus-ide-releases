@@ -8,6 +8,7 @@ import type {
 import { useProductNavigationStore } from '../state/product-navigation-store';
 import { CloseButton } from './CloseButton';
 import { PixelIcon } from './PixelIcon';
+import { platformCopy } from '../lib/platform-copy';
 
 /**
  * Estúdio de Mídia — geração de imagem/vídeo para quem não fala com agente:
@@ -81,6 +82,7 @@ export function MediaStudioPanel({
   open: boolean;
   onClose: () => void;
 }) {
+  const copy = platformCopy();
   const [tab, setTab] = useState<StudioKind>('image');
   const [providers, setProviders] = useState<MediaProviderInfo[] | null>(null);
   const [prompt, setPrompt] = useState('');
@@ -563,7 +565,7 @@ export function MediaStudioPanel({
                       }
                     }}
                   >
-                    Mostrar no Finder
+                    {copy.revealInFileManager}
                   </button>
                   <button
                     type="button"
@@ -603,7 +605,7 @@ export function MediaStudioPanel({
                     key={a.id}
                     type="button"
                     className="ms-card"
-                    title="Mostrar no Finder"
+                    title={copy.revealInFileManager}
                     onClick={() => void window.nexus.media.revealArtifact(a.storageKey)}
                   >
                     <span className="ms-card__thumb">

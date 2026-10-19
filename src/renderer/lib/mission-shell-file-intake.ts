@@ -6,6 +6,7 @@ import {
   stageMissionAttachmentWithLocation,
 } from './mission-attachments';
 import { hasSkillDragType } from './pane-interactions';
+import { platformCopy } from './platform-copy';
 
 /**
  * Shell-wide file drop is only for starting or filling the setup wizard.
@@ -137,7 +138,7 @@ export type DroppedPathResolution =
 function intakeErrorMessage(file: Pick<File, 'name'>, error: unknown): string {
   const name = file.name.trim() || 'anexo';
   if (error instanceof DOMException) {
-    return `"${name}" não pôde ser lido pelo Nexus (${error.name}): salve no disco e arraste do Finder.`;
+    return `"${name}" não pôde ser lido pelo Nexus (${error.name}): salve no disco e arraste do ${platformCopy().fileManager}.`;
   }
   const reason = error instanceof Error ? error.message : String(error);
   return `"${name}" não pôde ser copiado: ${reason}`;
@@ -331,7 +332,7 @@ export function describePasteWithoutFiles(
   transfer: DroppedPayload | null | undefined,
 ): string {
   if (!transfer) {
-    return 'A área de transferência chegou vazia. Salve o arquivo no disco e copie/cole do Finder.';
+    return `A área de transferência chegou vazia. Salve o arquivo no disco e copie/cole do ${platformCopy().fileManager}.`;
   }
   const types = Array.from(transfer.types ?? []);
   const uri = firstUri(transfer);
@@ -348,13 +349,13 @@ export function describePasteWithoutFiles(
   if (uri !== '') return `Veio um link, não um arquivo: ${uri}`;
 
   if (types.includes('Files')) {
-    return `O app de origem prometeu um arquivo que o Nexus não recebeu (tipos: ${types.join(', ')}). Salve a mídia no disco e copie/arraste do Finder.`;
+    return `O app de origem prometeu um arquivo que o Nexus não recebeu (tipos: ${types.join(', ')}). Salve a mídia no disco e copie/arraste do ${platformCopy().fileManager}.`;
   }
 
   const text = transfer.getData?.('text/plain')?.trim() ?? '';
   if (text !== '') return 'Veio só texto na colagem, sem arquivo.';
 
-  return 'A colagem não trouxe arquivo. Salve a mídia no disco e copie/arraste do Finder.';
+  return `A colagem não trouxe arquivo. Salve a mídia no disco e copie/arraste do ${platformCopy().fileManager}.`;
 }
 
 /** Motivo genérico quando o main recusa sem explicar (não deveria acontecer). */
@@ -376,7 +377,7 @@ export function describeDropWithoutFiles(
   transfer: DroppedPayload | null | undefined,
 ): string {
   if (!transfer) {
-    return 'O arraste chegou vazio. Salve o arquivo no disco e arraste do Finder.';
+    return `O arraste chegou vazio. Salve o arquivo no disco e arraste do ${platformCopy().fileManager}.`;
   }
   const types = Array.from(transfer.types ?? []);
   const uri = firstUri(transfer);
@@ -393,13 +394,13 @@ export function describeDropWithoutFiles(
   if (uri !== '') return `Veio um link, não um arquivo: ${uri}`;
 
   if (types.includes('Files')) {
-    return `O app de origem prometeu um arquivo que o Nexus não recebeu (tipos: ${types.join(', ')}). Salve a mídia no disco e arraste do Finder.`;
+    return `O app de origem prometeu um arquivo que o Nexus não recebeu (tipos: ${types.join(', ')}). Salve a mídia no disco e arraste do ${platformCopy().fileManager}.`;
   }
 
   const text = transfer.getData?.('text/plain')?.trim() ?? '';
   if (text !== '') return 'Veio só texto no arraste, sem arquivo.';
 
-  return 'O arraste não trouxe arquivo. Salve a mídia no disco e arraste do Finder.';
+  return `O arraste não trouxe arquivo. Salve a mídia no disco e arraste do ${platformCopy().fileManager}.`;
 }
 
 /**

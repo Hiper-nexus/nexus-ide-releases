@@ -1,3 +1,4 @@
+import { app } from 'electron';
 import { ARMS_CHANNELS } from '../../shared/channels';
 import { handleTrusted } from '../security/trusted-ipc';
 import {
@@ -8,6 +9,7 @@ import {
 } from './arms-token-store';
 import { emitAppEvent } from './app-events';
 import { getArmsRuntimeDescriptorInfo } from '../orch/mcp-server';
+import { armsBinPath } from './arms-bin-path';
 
 /**
  * IPC do conector Arms (Settings › Conectores). O plaintext do token cruza a
@@ -24,6 +26,11 @@ export function registerArmsIpc(): void {
   handleTrusted(ARMS_CHANNELS.status, () => ({
     ...armsStatus(),
     ...getArmsRuntimeDescriptorInfo(),
+    binPath: armsBinPath({
+      isPackaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+      appPath: app.getAppPath(),
+    }),
   }));
 
   handleTrusted(ARMS_CHANNELS.generate, () => {

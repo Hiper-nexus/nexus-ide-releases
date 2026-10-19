@@ -23,6 +23,7 @@ import {
   stopJarvisSpeech,
 } from '../voice/response-output-gate';
 import { PixelIcon } from './PixelIcon';
+import { platformCopy } from '../lib/platform-copy';
 import { VoiceLevelBars } from './VoiceLevelBars';
 import { JarvisParticleFigure } from './JarvisParticleFigure';
 
@@ -113,6 +114,7 @@ export function VoiceHud() {
   const setNote = useVoiceStore((s) => s.setNote);
   const error = useVoiceStore((s) => s.error);
   const micHealth = useVoiceStore((s) => s.micHealth);
+  const copy = platformCopy();
   const info = useVoiceStore((s) => s.info);
   const liveState = useVoiceStore((s) => s.liveState);
   const liveTool = useVoiceStore((s) => s.liveTool);
@@ -814,45 +816,61 @@ export function VoiceHud() {
                   >
                     Permitir
                   </button>
-                  <button
-                    type="button"
-                    className="voice-hud__action"
-                    onClick={() => window.nexus.voice.openMicSettings()}
-                  >
-                    Ajustes
-                  </button>
+                  {copy.canOpenSoundSettings && (
+                    <button
+                      type="button"
+                      className="voice-hud__action"
+                      onClick={() => window.nexus.voice.openMicSettings()}
+                    >
+                      Ajustes
+                    </button>
+                  )}
                 </span>
               )}
               {micHealth === 'phantomGrant' && (
                 <span className="voice-hud__detail voice-hud__detail--error">
-                  Permissão de mic fantasma — o macOS diz OK mas entrega silêncio.
-                  <button
-                    type="button"
-                    className="voice-hud__action"
-                    onClick={() => {
-                      void window.nexus.voice.resetMicPermission().then((r) => {
-                        if (!r.ok) {
-                          useVoiceStore
-                            .getState()
-                            .setNote(`Reset falhou: ${r.error ?? 'erro desconhecido'}`);
-                        }
-                      });
-                    }}
-                  >
-                    Resetar e reiniciar
-                  </button>
+                  {copy.phantomMicNotice}
+                  {/* F-1579: o reset guiado (tccutil) só existe no macOS; no
+                      Windows a saída é a tela de privacidade do microfone. */}
+                  {copy.canResetMicPermission ? (
+                    <button
+                      type="button"
+                      className="voice-hud__action"
+                      onClick={() => {
+                        void window.nexus.voice.resetMicPermission().then((r) => {
+                          if (!r.ok) {
+                            useVoiceStore
+                              .getState()
+                              .setNote(`Reset falhou: ${r.error ?? 'erro desconhecido'}`);
+                          }
+                        });
+                      }}
+                    >
+                      Resetar e reiniciar
+                    </button>
+                  ) : copy.canOpenSoundSettings ? (
+                    <button
+                      type="button"
+                      className="voice-hud__action"
+                      onClick={() => window.nexus.voice.openMicSettings()}
+                    >
+                      Ajustes
+                    </button>
+                  ) : null}
                 </span>
               )}
               {micHealth === 'silent' && (
                 <span className="voice-hud__detail voice-hud__detail--error">
                   Não estou ouvindo nada — mic mudo ou dispositivo errado.
-                  <button
-                    type="button"
-                    className="voice-hud__action"
-                    onClick={() => window.nexus.voice.openSoundSettings()}
-                  >
-                    Ajustes de som
-                  </button>
+                  {copy.canOpenSoundSettings && (
+                    <button
+                      type="button"
+                      className="voice-hud__action"
+                      onClick={() => window.nexus.voice.openSoundSettings()}
+                    >
+                      Ajustes de som
+                    </button>
+                  )}
                 </span>
               )}
             </>

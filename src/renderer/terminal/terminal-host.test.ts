@@ -1533,6 +1533,8 @@ describe('drop sem File — text/uri-list vira anexo digitado no PTY', () => {
 
   it('sem URI aproveitável mantém o diagnóstico honesto e não chama o main', async () => {
     const host = await openLiveHost();
+    // F-1579: no Windows o texto aponta o Explorador de Arquivos.
+    Object.assign(window.nexus, { platform: 'win32' });
 
     dropWithoutFiles(host.element, { Files: '' });
     await vi.advanceTimersByTimeAsync(10);
@@ -1542,7 +1544,8 @@ describe('drop sem File — text/uri-list vira anexo digitado no PTY', () => {
     const toast = useToastStore
       .getState()
       .toasts.find((item) => item.title === 'Nada foi solto no terminal');
-    expect(toast?.detail).toContain('Finder');
+    expect(toast?.detail).toContain('Explorador de Arquivos');
+    expect(toast?.detail).not.toContain('Finder');
   });
 
   it('esquema recusado no renderer (data:) também cai no diagnóstico, sem IPC', async () => {
@@ -1904,6 +1907,7 @@ describe('paste de mídia no pane (F-582)', () => {
 
   it('payload Files sem arquivo e sem URI no sistema vira toast explicado', async () => {
     const host = await openLiveHost();
+    Object.assign(window.nexus, { platform: 'win32' });
     clipboardFileUris.mockResolvedValue({ uris: [] });
 
     const event = pasteEvent(host.element, { types: ['Files'], files: [] });
@@ -1916,12 +1920,13 @@ describe('paste de mídia no pane (F-582)', () => {
       .toasts.find((item) => item.title === 'Nada foi colado no terminal');
     expect(toast).toBeDefined();
     expect(toast?.detail).toContain('prometeu um arquivo');
-    expect(toast?.detail).toContain('Finder');
+    expect(toast?.detail).toContain('Explorador de Arquivos');
     expect(write).not.toHaveBeenCalled();
   });
 
   it('falha ao consultar o pasteboard do sistema vira toast, nunca silêncio', async () => {
     const host = await openLiveHost();
+    Object.assign(window.nexus, { platform: 'win32' });
     clipboardFileUris.mockRejectedValue(new Error('ipc morto'));
 
     const event = pasteEvent(host.element, { types: ['Files'], files: [] });
@@ -1932,7 +1937,8 @@ describe('paste de mídia no pane (F-582)', () => {
       .getState()
       .toasts.find((item) => item.title === 'Nada foi colado no terminal');
     expect(toast?.detail).toContain('área de transferência do sistema');
-    expect(toast?.detail).toContain('Finder');
+    expect(toast?.detail).toContain('Explorador de Arquivos');
+    expect(toast?.detail).not.toContain('Finder');
     expect(write).not.toHaveBeenCalled();
   });
 

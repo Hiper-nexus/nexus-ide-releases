@@ -121,6 +121,23 @@ afterEach(() => {
   }
 });
 
+describe('MediaStudioPanel: revelar arquivo por sistema (F-1579)', () => {
+  it('no Windows a galeria mostra no Explorador de Arquivos, nunca no Finder', async () => {
+    const nexus = window.nexus as unknown as {
+      platform?: string;
+      media: { listArtifacts: ReturnType<typeof vi.fn> };
+    };
+    nexus.platform = 'win32';
+    nexus.media.listArtifacts.mockResolvedValue([
+      { id: 'a1', kind: 'image', storageKey: 'media/foto.png', costUsd: null, createdAt: 1 },
+    ]);
+    const dialog = await openFrom(renderHarness());
+    const card = dialog.querySelector<HTMLButtonElement>('.ms-card');
+    expect(card?.title).toBe('Mostrar no Explorador de Arquivos');
+    expect(dialog.textContent).not.toContain('Finder');
+  });
+});
+
 describe('MediaStudioPanel behavioral contract', () => {
   it('uses its rendered title and description for the dialog name and moves initial focus inside', async () => {
     const invoker = renderHarness();
