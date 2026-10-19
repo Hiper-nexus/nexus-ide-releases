@@ -1,8 +1,24 @@
 # Changelog
 
+## 0.76.325 — Velocidade e detalhes da missão
+
+A tag 0.76.323 é o pacote macOS e não recebe arquivos Linux. A tag 0.76.324 não foi publicada: a suíte Ubuntu falhou em `tool-util-workspace.test.ts` (F-742), porque o recibo de escrita passou a levar `inputWriter` e o teste ainda exigia o objeto antigo. Este pacote leva o desktop Linux.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+No desktop Linux, em relação à 0.76.322:
+
+- **Quadro: botão "Ver o que aconteceu" e Atividade ampliada**. Ao encerrar uma missão (sucesso, falha ou interrupção), o botão "Ver o que aconteceu" abre a visão de Atividade ampliada para inspeção detalhada. O estado do Quadro mantém coerência com a barra lateral e o layout se adapta a janelas estreitas sem quebra de elementos.
+- **Motor: base da worktree com aviso e refresh**. O upstream do origin é atualizado antes de congelar a base do writer isolado (com throttle de 60 s por raiz de repositório no fetch) e emite aviso explícito se a branch não rastreia origin/*.
+- **Motor: entregáveis preservados no corte de 512 arquivos**. O snapshot de arquivos candidatos lê e gera fingerprint de arquivos declarados como entregáveis mesmo que estejam alfabeticamente além do limite de 512 arquivos.
+- **Motor: portão de regressão em lotes**. A faixa de testes impactados no handoff é dividida em lotes sequenciais calibrados pelo orçamento de tempo restante. Os testes concluídos reportam resultado e veredito imediatamente, impedindo que estouros de prazo resultem em 0 testes computados.
+- **Motor: pane_write com recibo de entrega**. A escrita em panes comprova entrega com recibo estruturado de prova de turno e aceite de bytes, rejeitando confirmações falsas quando o pane não está pronto.
+- **Motor: esforço do revisor proporcional**. O roteamento de tarefas e as regras de conformidade reservam o esforço máximo do revisor para tarefas críticas, alocando esforço proporcional nos demais níveis de severidade.
+- **Motor: fila de comandos pesados se liberta sozinha**. Um lease exclusivo cujo executor ou sessão dona morreu passa a ser liberado pela própria fila após 60 s (antes ficava preso e travava novos comandos), e a recusa da fila agora diz qual comando segura o lease. O conserto no supervisor nativo (`native/darwin-pty-supervisor/main.c`) não está nesta build: fica para o próximo rebuild nativo.
+
 ## 0.76.324 — Velocidade e detalhes da missão
 
-A tag 0.76.323 é o pacote macOS e não recebe arquivos Linux. Este pacote leva o desktop Linux.
+A tag 0.76.323 é o pacote macOS e não recebe arquivos Linux. Esta tag não foi publicada: a suíte Ubuntu falhou no teste de retomada do MiMo.
 
 Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
 

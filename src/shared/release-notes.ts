@@ -11770,11 +11770,11 @@ export const RELEASE_076323: AppRelease = {
 
 export const CURRENT_RELEASE: AppRelease = {
   ...RELEASE_076323,
-  version: '0.76.324',
-  summary: 'No desktop Linux, o Quadro ganha "Ver o que aconteceu", a base da worktree avisa e atualiza com throttle de 60 s, o portão de regressão roda em lotes, o pane_write prova a entrega e a fila de comandos pesados se libera em 60 s. A tag 0.76.323 é o pacote macOS e não recebe arquivos Linux.',
+  version: '0.76.325',
+  summary: 'No desktop Linux, o Quadro ganha "Ver o que aconteceu", a base da worktree avisa e atualiza com throttle de 60 s, o portão de regressão roda em lotes, o pane_write prova a entrega e a fila de comandos pesados se libera em 60 s. A tag 0.76.323 é o pacote macOS. A 0.76.324 não foi publicada: a suíte Ubuntu falhou num teste do MiMo.',
   highlights: [
     ...RELEASE_076323.highlights,
-    { title: 'Pacote Linux', detail: 'A tag 0.76.323 é o pacote macOS e não recebe arquivos Linux. O desktop Linux sai na 0.76.324.' },
+    { title: 'Pacote Linux', detail: 'A tag 0.76.323 é o pacote macOS e não recebe arquivos Linux. A tag 0.76.324 não foi publicada porque a suíte Ubuntu falhou no teste de retomada do MiMo (o recibo de escrita agora leva inputWriter). O desktop Linux sai na 0.76.325.' },
   ],
 };
 
