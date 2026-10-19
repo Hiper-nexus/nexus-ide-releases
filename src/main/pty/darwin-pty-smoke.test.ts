@@ -117,6 +117,47 @@ describe("Darwin packaged PTY smoke proof", () => {
     ).rejects.toThrow(/exited 0/);
   });
 
+  it("retries a clean exit with no output and still demands the receipt", async () => {
+    // Campo 19/10: candidato 0.76.313 sob carga — macOS descartou a saída não
+    // lida do PTY e o smoke caiu com "exited 0 signal=0" sem output.
+    let calls = 0;
+    const spawn = vi.fn((_spec: PtySpawnSpec, handlers: PtySessionHandlers) => {
+      calls += 1;
+      const lucky = calls === 2;
+      queueMicrotask(() => {
+        if (lucky) handlers.onData(`${DARWIN_PTY_PROVIDER_PROBE_RECEIPT}\r\n`);
+        handlers.onExit(0, 0);
+      });
+      return fakeHandle();
+    });
+    await expect(
+      proveDarwinPtyPipelineForSmoke({ spawn }, {
+        platform: "darwin",
+        resolveProviderSeal: () => sealedSmokeProvider,
+      }),
+    ).resolves.toBe(true);
+    expect(spawn).toHaveBeenCalledTimes(2);
+  });
+
+  it("never retries output without the receipt, nonzero exits or signals", async () => {
+    for (const [data, code, signal] of [["intruso\r\n", 0, 0], ["", 76, 0], ["", 0, 9]] as const) {
+      const spawn = vi.fn((_spec: PtySpawnSpec, handlers: PtySessionHandlers) => {
+        queueMicrotask(() => {
+          if (data) handlers.onData(data);
+          handlers.onExit(code, signal);
+        });
+        return fakeHandle();
+      });
+      await expect(
+        proveDarwinPtyPipelineForSmoke({ spawn }, {
+          platform: "darwin",
+          resolveProviderSeal: () => sealedSmokeProvider,
+        }),
+      ).rejects.toThrow(/exited/);
+      expect(spawn).toHaveBeenCalledTimes(1);
+    }
+  });
+
   it("awaits physical tree proof after timeout and never raw-kills", async () => {
     let resolveTermination!: (proof: PtyProcessTreeTerminationProof) => void;
     const termination = new Promise<PtyProcessTreeTerminationProof>(
