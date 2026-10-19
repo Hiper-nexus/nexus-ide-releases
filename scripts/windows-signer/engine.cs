@@ -2,31 +2,47 @@
 //
 // Roda dentro de um powershell.exe 5.1 que o agente abre, compilado em memória
 // pelo CodeDom do .NET Framework (C# 5: sem interpolação, sem `?.`). Ele segura o
-// certificado fixado da loja do usuário e a chave do slot 9a: a janela de PIN é a
-// do próprio Windows (o provedor de chaves do cartão), uma vez por processo, e o
-// PIN fica no cache do provedor, nunca neste código. Assina em processo por
-// SignerSignEx2 (SHA-256, carimbo RFC 3161) e confere a assinatura de cada arquivo.
+// certificado fixado da loja do usuário e a chave do slot 9a e assina em processo
+// por SignerSignEx2 (SHA-256, carimbo RFC 3161), conferindo cada arquivo.
+//
+// Três jeitos de destrancar a chave, um por processo:
+// - UNLOCK: a janela de PIN do próprio Windows (o provedor de chaves do cartão).
+//   O PIN fica no cache do provedor; este código nunca o vê.
+// - UNLOCK_SAVE: a janela deste motor pede o PIN, o cartão o confere e só então
+//   ele é guardado cifrado pelo DPAPI do usuário (decisão do operador, 19/10:
+//   zero janela de PIN nesta máquina, aceitando o risco).
+// - UNLOCK_STORED: lê o PIN guardado e o entrega ao cartão sem janela. Na primeira
+//   recusa (PIN errado, bloqueado, guardado ilegível) o arquivo é apagado na hora:
+//   um PIN errado guardado nunca gasta uma segunda tentativa do YubiKey.
+// O PIN só passa pela memória deste processo, a caminho do cartão e do DPAPI:
+// nunca vai a stdout, log, argumento ou variável de ambiente.
 //
 // Protocolo de linhas UTF-8 com o agente (texto livre sempre em base64):
-//   início         -> CERT <der> <0|1 chave privada>   ou   FATAL <msg>
-//   UNLOCK         -> UNLOCKED                        ou   ERR <msg>
-//   PROBE          -> OK                              ou   LOCKED <msg>
-//   SIGN <arq> <url> -> OK                            ou   LOCKED <msg> | ERR <msg>
-//   VERIFY <arq>   -> OK                              ou   ERR <msg>
-// Fim do stdin encerra o processo (e o cache do PIN morre com ele). Sem caminho
-// de arquivo, segredo ou certificado alternativo: a política mora no agente.
+//   início              -> CERT <der> <0|1 chave privada>   ou   FATAL <msg>
+//   UNLOCK              -> UNLOCKED                        ou   ERR <msg>
+//   UNLOCK_SAVE <arq>   -> UNLOCKED                        ou   ERR <msg>
+//   UNLOCK_STORED <arq> -> UNLOCKED                        ou   ERR <msg>
+//   PROBE               -> OK                              ou   LOCKED <msg>
+//   SIGN <arq> <url>    -> OK                              ou   LOCKED <msg> | ERR <msg>
+//   VERIFY <arq>        -> OK                              ou   ERR <msg>
+// Fim do stdin encerra o processo (e o cache do PIN morre com ele). Sem
+// certificado alternativo: a política de arquivos mora no agente.
 using System;
+using System.Drawing;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Threading;
+using System.Windows.Forms;
 
 namespace NexusWindowsSigner
 {
     public static class Engine
     {
         const uint CRYPT_ACQUIRE_CACHE_FLAG = 0x1;
+        const uint CRYPT_ACQUIRE_SILENT_FLAG = 0x40;
         const uint CRYPT_ACQUIRE_WINDOW_HANDLE_FLAG = 0x80;
         const uint CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG = 0x40000;
         const uint CERT_NCRYPT_KEY_SPEC = 0xFFFFFFFF;
@@ -40,6 +56,25 @@ namespace NexusWindowsSigner
         const uint SPC_EXC_PE_PAGE_HASHES_FLAG = 0x10;
         const string OID_SHA256 = "2.16.840.1.101.3.4.2.1";
         const string USE_CONTEXT = "NexusIDE: assinar o build do Windows (um PIN para o agente de assinatura)";
+        const string PIN_PROPERTY = "SmartCardPin";
+        static readonly byte[] PIN_ENTROPY = Encoding.UTF8.GetBytes("NexusIDE windows-signer YubiKey PIN v1");
+
+        // Falhas em que o cartão não chegou a julgar o PIN: YubiKey fora da porta,
+        // leitor ou serviço de cartão parado. Só nelas o PIN guardado fica.
+        static readonly int[] CARD_ABSENT = new int[] {
+            unchecked((int)0x8010000A), // SCARD_E_TIMEOUT
+            unchecked((int)0x8010000B), // SCARD_E_SHARING_VIOLATION
+            unchecked((int)0x8010000C), // SCARD_E_NO_SMARTCARD
+            unchecked((int)0x80100017), // SCARD_E_READER_UNAVAILABLE
+            unchecked((int)0x8010001D), // SCARD_E_NO_SERVICE
+            unchecked((int)0x8010001E), // SCARD_E_SERVICE_STOPPED
+            unchecked((int)0x8010002E), // SCARD_E_NO_READERS_AVAILABLE
+            unchecked((int)0x80100066), // SCARD_W_UNRESPONSIVE_CARD
+            unchecked((int)0x80100067), // SCARD_W_UNPOWERED_CARD
+            unchecked((int)0x80100069), // SCARD_W_REMOVED_CARD
+            unchecked((int)0x80090030), // NTE_DEVICE_NOT_READY
+            unchecked((int)0x80090035), // NTE_DEVICE_NOT_FOUND
+        };
 
         [StructLayout(LayoutKind.Sequential)]
         struct SIGNER_FILE_INFO { public uint cbSize; public IntPtr pwszFileName; public IntPtr hFile; }
@@ -140,6 +175,14 @@ namespace NexusWindowsSigner
                 case "UNLOCK":
                     Unlock();
                     return "UNLOCKED";
+                case "UNLOCK_SAVE":
+                    if (parts.Length != 2) throw new ArgumentException("UNLOCK_SAVE needs the PIN file");
+                    UnlockAndSavePin(FromB64(parts[1]));
+                    return "UNLOCKED";
+                case "UNLOCK_STORED":
+                    if (parts.Length != 2) throw new ArgumentException("UNLOCK_STORED needs the PIN file");
+                    UnlockWithStoredPin(FromB64(parts[1]));
+                    return "UNLOCKED";
                 case "PROBE":
                     {
                         string locked = Probe();
@@ -179,48 +222,202 @@ namespace NexusWindowsSigner
             }
         }
 
-        // A única janela de PIN: dona da janela que estava à frente (o terminal que
-        // abriu o build), com a descrição do Nexus. A chave fica no cache do
-        // contexto do certificado, que o SignerSignEx2 reaproveita.
+        // A janela de PIN do Windows: dona da janela que estava à frente (o
+        // terminal que abriu o build), com a descrição do Nexus. A chave fica no
+        // cache do contexto do certificado, que o SignerSignEx2 reaproveita.
         static void Unlock()
         {
-            if (key == IntPtr.Zero)
-            {
-                IntPtr owner = GetForegroundWindow();
-                uint flags = CRYPT_ACQUIRE_CACHE_FLAG | CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG;
-                IntPtr ownerBox = IntPtr.Zero;
-                try
-                {
-                    if (owner != IntPtr.Zero)
-                    {
-                        flags |= CRYPT_ACQUIRE_WINDOW_HANDLE_FLAG;
-                        ownerBox = Marshal.AllocHGlobal(IntPtr.Size);
-                        Marshal.WriteIntPtr(ownerBox, owner);
-                    }
-                    IntPtr acquired;
-                    uint keySpec;
-                    bool callerFrees;
-                    if (!CryptAcquireCertificatePrivateKey(certificate.Handle, flags, ownerBox, out acquired, out keySpec, out callerFrees))
-                    {
-                        throw new InvalidOperationException("private key unavailable (0x" + Marshal.GetLastWin32Error().ToString("X8") + ")");
-                    }
-                    if (keySpec != CERT_NCRYPT_KEY_SPEC)
-                    {
-                        throw new InvalidOperationException("the signing key is not a CNG key");
-                    }
-                    // Com CRYPT_ACQUIRE_CACHE_FLAG a chave pertence ao contexto do
-                    // certificado e vive com o processo.
-                    key = acquired;
-                }
-                finally
-                {
-                    if (ownerBox != IntPtr.Zero) Marshal.FreeHGlobal(ownerBox);
-                }
-                byte[] context = Encoding.Unicode.GetBytes(USE_CONTEXT + "\0");
-                NCryptSetProperty(key, "Use Context", context, context.Length, 0);
-            }
+            AcquireKey(GetForegroundWindow(), false);
+            byte[] context = Encoding.Unicode.GetBytes(USE_CONTEXT + "\0");
+            NCryptSetProperty(key, "Use Context", context, context.Length, 0);
             int status = SignDummy(0);
             if (status != 0) throw new InvalidOperationException("the YubiKey did not unlock (0x" + status.ToString("X8") + ")");
+        }
+
+        static void AcquireKey(IntPtr owner, bool silent)
+        {
+            if (key != IntPtr.Zero) return;
+            uint flags = CRYPT_ACQUIRE_CACHE_FLAG | CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG | (silent ? CRYPT_ACQUIRE_SILENT_FLAG : 0);
+            IntPtr ownerBox = IntPtr.Zero;
+            try
+            {
+                if (owner != IntPtr.Zero)
+                {
+                    flags |= CRYPT_ACQUIRE_WINDOW_HANDLE_FLAG;
+                    ownerBox = Marshal.AllocHGlobal(IntPtr.Size);
+                    Marshal.WriteIntPtr(ownerBox, owner);
+                }
+                IntPtr acquired;
+                uint keySpec;
+                bool callerFrees;
+                if (!CryptAcquireCertificatePrivateKey(certificate.Handle, flags, ownerBox, out acquired, out keySpec, out callerFrees))
+                {
+                    throw new CardException(Marshal.GetLastWin32Error(), "private key unavailable");
+                }
+                if (keySpec != CERT_NCRYPT_KEY_SPEC)
+                {
+                    throw new InvalidOperationException("the signing key is not a CNG key");
+                }
+                // Com CRYPT_ACQUIRE_CACHE_FLAG a chave pertence ao contexto do
+                // certificado e vive com o processo.
+                key = acquired;
+            }
+            finally
+            {
+                if (ownerBox != IntPtr.Zero) Marshal.FreeHGlobal(ownerBox);
+            }
+        }
+
+        // Entrega o PIN ao provedor do cartão e prova com uma assinatura
+        // silenciosa: 0 = destrancado. Os buffers com o PIN são zerados aqui.
+        static int PresentPin(byte[] pinUtf8)
+        {
+            byte[] wide = null;
+            try
+            {
+                byte[] text = Encoding.Convert(Encoding.UTF8, Encoding.Unicode, pinUtf8);
+                wide = new byte[text.Length + 2];
+                Buffer.BlockCopy(text, 0, wide, 0, text.Length);
+                Array.Clear(text, 0, text.Length);
+                int status = NCryptSetProperty(key, PIN_PROPERTY, wide, wide.Length, NCRYPT_SILENT_FLAG);
+                return status != 0 ? status : SignDummy(NCRYPT_SILENT_FLAG);
+            }
+            finally
+            {
+                if (wide != null) Array.Clear(wide, 0, wide.Length);
+            }
+        }
+
+        static bool CardAbsent(int status)
+        {
+            return Array.IndexOf(CARD_ABSENT, status) >= 0;
+        }
+
+        static void UnlockAndSavePin(string file)
+        {
+            AcquireKey(IntPtr.Zero, true);
+            byte[] pin = PromptPin();
+            if (pin == null) throw new InvalidOperationException("PIN entry was cancelled; nothing was saved");
+            try
+            {
+                int status = PresentPin(pin);
+                if (status != 0)
+                {
+                    throw new InvalidOperationException(CardAbsent(status)
+                        ? "the YubiKey is not available (0x" + status.ToString("X8") + "); nothing was saved"
+                        : "the YubiKey refused the PIN (0x" + status.ToString("X8") + "): it used one PIN attempt and nothing was saved");
+                }
+                byte[] sealedPin = ProtectedData.Protect(pin, PIN_ENTROPY, DataProtectionScope.CurrentUser);
+                string temporary = file + ".tmp";
+                File.WriteAllBytes(temporary, sealedPin);
+                if (File.Exists(file)) File.Delete(file);
+                File.Move(temporary, file);
+            }
+            finally
+            {
+                Array.Clear(pin, 0, pin.Length);
+            }
+        }
+
+        static void UnlockWithStoredPin(string file)
+        {
+            if (!File.Exists(file)) throw new InvalidOperationException("no YubiKey PIN is saved");
+            byte[] pin;
+            try
+            {
+                pin = ProtectedData.Unprotect(File.ReadAllBytes(file), PIN_ENTROPY, DataProtectionScope.CurrentUser);
+            }
+            catch (CryptographicException)
+            {
+                File.Delete(file);
+                throw new InvalidOperationException("the saved PIN could not be read by this Windows user; it was deleted");
+            }
+            try
+            {
+                try
+                {
+                    AcquireKey(IntPtr.Zero, true);
+                }
+                catch (CardException error)
+                {
+                    throw new InvalidOperationException("the YubiKey is not available (0x" + error.Status.ToString("X8") + "); the saved PIN was kept");
+                }
+                int status = PresentPin(pin);
+                if (status == 0) return;
+                if (CardAbsent(status))
+                {
+                    throw new InvalidOperationException("the YubiKey is not available (0x" + status.ToString("X8") + "); the saved PIN was kept");
+                }
+                File.Delete(file);
+                throw new InvalidOperationException("the YubiKey refused the saved PIN (0x" + status.ToString("X8") + "): it was deleted, save it again");
+            }
+            finally
+            {
+                Array.Clear(pin, 0, pin.Length);
+            }
+        }
+
+        // Janela deste motor (não a do provedor do cartão), porque o PIN precisa
+        // ser guardado. Fica por cima das outras janelas e só aceita texto.
+        static byte[] PromptPin()
+        {
+            byte[] result = null;
+            Thread thread = new Thread(delegate ()
+            {
+                Application.EnableVisualStyles();
+                using (Form form = new Form())
+                {
+                    form.Text = "NexusIDE — PIN do YubiKey";
+                    form.FormBorderStyle = FormBorderStyle.FixedDialog;
+                    form.MaximizeBox = false;
+                    form.MinimizeBox = false;
+                    form.StartPosition = FormStartPosition.CenterScreen;
+                    form.TopMost = true;
+                    form.ShowInTaskbar = true;
+                    form.Font = SystemFonts.MessageBoxFont;
+                    form.ClientSize = new Size(460, 200);
+                    Label label = new Label();
+                    label.Text = "Digite o PIN do YubiKey (PIV) que assina os builds da HIPERSEND.\n\n" +
+                        "Ele fica guardado neste usuário do Windows, cifrado pelo DPAPI, e o agente " +
+                        "assina sem perguntar de novo. Se o YubiKey recusar o PIN, nada é guardado.";
+                    label.SetBounds(16, 14, 428, 100);
+                    TextBox box = new TextBox();
+                    box.UseSystemPasswordChar = true;
+                    box.MaxLength = 64;
+                    box.SetBounds(16, 120, 428, 24);
+                    Button ok = new Button();
+                    ok.Text = "Guardar";
+                    ok.DialogResult = DialogResult.OK;
+                    ok.SetBounds(268, 158, 84, 28);
+                    Button cancel = new Button();
+                    cancel.Text = "Cancelar";
+                    cancel.DialogResult = DialogResult.Cancel;
+                    cancel.SetBounds(360, 158, 84, 28);
+                    form.AcceptButton = ok;
+                    form.CancelButton = cancel;
+                    form.Controls.AddRange(new Control[] { label, box, ok, cancel });
+                    form.Shown += delegate { form.Activate(); box.Focus(); };
+                    if (form.ShowDialog() == DialogResult.OK && box.Text.Length > 0)
+                    {
+                        result = Encoding.UTF8.GetBytes(box.Text);
+                    }
+                    box.Text = "";
+                }
+            });
+            thread.SetApartmentState(ApartmentState.STA);
+            thread.Start();
+            thread.Join();
+            return result;
+        }
+
+        sealed class CardException : Exception
+        {
+            public readonly int Status;
+            public CardException(int status, string message)
+                : base(message + " (0x" + status.ToString("X8") + ")")
+            {
+                Status = status;
+            }
         }
 
         // Assinatura silenciosa de um resumo aleatório: prova que o PIN continua no

@@ -34,7 +34,7 @@ export interface TestAgent {
   checkout: string;
   localAppData: string;
   engineLog: () => string[];
-  info: { pid: number; pipe: string; thumbprint: string; startedAt: number; expiresAt: number | null };
+  info: { pid: number; pipe: string; thumbprint: string; startedAt: number; expiresAt: number | null; pinMode: string };
   stopped: Promise<string>;
 }
 
@@ -57,6 +57,10 @@ export async function startTestAgent({
   expectedSpki = TEST_SPKI,
   thumbprint = TEST_THUMBPRINT,
   hasPrivateKey = true,
+  pinMode,
+  savedPin = false,
+  fakeEnv = {},
+  root = mkdtempSync(path.join(os.tmpdir(), 'nexus-signer-test-')),
   now,
 }: {
   hours?: number;
@@ -64,10 +68,16 @@ export async function startTestAgent({
   expectedSpki?: string;
   thumbprint?: string;
   hasPrivateKey?: boolean;
+  pinMode?: 'prompt' | 'save' | 'stored';
+  /** Cria o pin.dpapi falso antes de subir o agente. */
+  savedPin?: boolean;
+  fakeEnv?: Record<string, string>;
+  root?: string;
   now?: () => number;
 } = {}): Promise<TestAgent> {
-  const root = mkdtempSync(path.join(os.tmpdir(), 'nexus-signer-test-'));
   const directory = path.join(root, 'agent');
+  mkdirSync(directory, { recursive: true });
+  if (savedPin) writeFileSync(agent.pinFilePath(directory), 'sealed-by-dpapi');
   const localAppData = path.join(root, 'local');
   mkdirSync(path.join(localAppData, 'SquirrelTemp'), { recursive: true });
   const checkout = makeCheckout(root);
@@ -79,6 +89,7 @@ export async function startTestAgent({
     thumbprint,
     expectedSpkiSha256: expectedSpki,
     hours,
+    pinMode,
     directory,
     env: { ...process.env, LOCALAPPDATA: localAppData },
     now,
@@ -89,6 +100,7 @@ export async function startTestAgent({
         FAKE_ENGINE_HAS_KEY: hasPrivateKey ? '1' : '0',
         FAKE_ENGINE_LOG: logFile,
         ...(lockAfter === undefined ? {} : { FAKE_ENGINE_LOCK_AFTER: String(lockAfter) }),
+        ...fakeEnv,
       },
       stdio: ['pipe', 'pipe', 'pipe'],
     }),

@@ -168,6 +168,61 @@ describe('signing agent', () => {
   });
 });
 
+describe('PIN guardado (decisão do operador de 19/10: zero janela)', () => {
+  const pinFile = (testAgent: TestAgent) => agent.pinFilePath(testAgent.directory);
+
+  it('o motor recebe o caminho do PIN guardado, nunca o PIN', () => {
+    expect(agent.unlockCommand('prompt', 'C:\\a\\pin.dpapi')).toBe('UNLOCK');
+    expect(agent.unlockCommand('save', 'C:\\a\\pin.dpapi')).toBe(`UNLOCK_SAVE ${agent.b64('C:\\a\\pin.dpapi')}`);
+    expect(agent.unlockCommand('stored', 'C:\\a\\pin.dpapi')).toBe(`UNLOCK_STORED ${agent.b64('C:\\a\\pin.dpapi')}`);
+  });
+
+  it('save-pin: destranca e deixa o PIN cifrado no diretório do agente', async () => {
+    const testAgent = await startTestAgent({ pinMode: 'save' });
+    expect(readFileSync(pinFile(testAgent), 'utf8')).toBe('sealed-by-dpapi');
+    expect(testAgent.engineLog()).toEqual([`UNLOCK_SAVE`]);
+    expect(await ask(testAgent, { op: 'status' })).toMatchObject({ unlocked: true, pinMode: 'save' });
+    await ask(testAgent, { op: 'stop' });
+    await testAgent.stopped;
+  });
+
+  it('save-pin cancelado ou recusado não guarda nada e não sobe agente', async () => {
+    for (const outcome of ['cancel', 'refuse']) {
+      const root = mkdtempSync(path.join(os.tmpdir(), 'nexus-signer-save-'));
+      await expect(startTestAgent({ pinMode: 'save', root, fakeEnv: { FAKE_ENGINE_SAVE: outcome } }))
+        .rejects.toThrow(/nothing was saved/u);
+      expect(() => readFileSync(agent.pinFilePath(path.join(root, 'agent')))).toThrow();
+      expect(() => readFileSync(path.join(root, 'agent', 'agent.json'))).toThrow();
+    }
+  });
+
+  it('PIN guardado destranca sem janela', async () => {
+    const testAgent = await startTestAgent({ pinMode: 'stored', savedPin: true });
+    expect(testAgent.engineLog()).toEqual(['UNLOCK_STORED']);
+    expect(testAgent.info.pinMode).toBe('stored');
+    await ask(testAgent, { op: 'stop' });
+    await testAgent.stopped;
+  });
+
+  it('PIN guardado recusado é apagado na primeira recusa; YubiKey ausente não apaga', async () => {
+    const refused = mkdtempSync(path.join(os.tmpdir(), 'nexus-signer-refused-'));
+    await expect(startTestAgent({ pinMode: 'stored', savedPin: true, root: refused, fakeEnv: { FAKE_ENGINE_STORED: 'refuse' } }))
+      .rejects.toThrow(/refused the saved PIN.*deleted/u);
+    expect(() => readFileSync(agent.pinFilePath(path.join(refused, 'agent')))).toThrow();
+    const absent = mkdtempSync(path.join(os.tmpdir(), 'nexus-signer-absent-'));
+    await expect(startTestAgent({ pinMode: 'stored', savedPin: true, root: absent, fakeEnv: { FAKE_ENGINE_STORED: 'absent' } }))
+      .rejects.toThrow(/not available.*kept/u);
+    expect(readFileSync(agent.pinFilePath(path.join(absent, 'agent')), 'utf8')).toBe('sealed-by-dpapi');
+  });
+
+  it('nunca entrega o PIN guardado a um certificado que não é o fixado', async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'nexus-signer-wrongcert-'));
+    await expect(startTestAgent({ pinMode: 'stored', savedPin: true, root, expectedSpki: '0'.repeat(64) }))
+      .rejects.toThrow(/slot 9a/u);
+    expect(readFileSync(path.join(root, 'engine.log'), 'utf8')).toBe('');
+  });
+});
+
 describe.runIf(process.platform === 'win32')('real engine (engine.cs no powershell.exe 5.1)', () => {
   it('compila e recusa um certificado que não está na loja, sem pedir PIN', async () => {
     const engine = agent.startEngine({ thumbprint: '0123456789ABCDEF0123456789ABCDEF01234567' });

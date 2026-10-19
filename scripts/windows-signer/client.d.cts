@@ -21,6 +21,8 @@ declare namespace signFile {
     /** 0 = só este build; 1 a 168 horas. */
     hours: number;
     parentPid?: number;
+    /** `save` pede o PIN para guardá-lo; sem isto, PIN guardado ou a janela do Windows. */
+    pinMode?: 'save';
     directory?: string;
     nodePath?: string;
     env?: NodeJS.ProcessEnv;

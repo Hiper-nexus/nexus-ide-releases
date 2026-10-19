@@ -2,10 +2,12 @@
 
 /**
  * Agente de assinatura do YubiKey (Windows). Um processo por usuário que abre o
- * motor (`engine.cs`, num powershell.exe 5.1), faz o Windows pedir o PIN UMA vez
- * e assina os builds seguintes sem pedir de novo até o prazo vencer. O PIN é
- * digitado na janela do próprio Windows e fica no cache do provedor de chaves do
- * cartão, dentro do processo do motor: este código nunca o vê, nunca o grava.
+ * motor (`engine.cs`, num powershell.exe 5.1), destranca a chave UMA vez e assina
+ * os builds seguintes sem pedir de novo até o prazo vencer. Destrava pela janela
+ * de PIN do próprio Windows (`prompt`) ou, por decisão do operador em 19/10 (zero
+ * janela nesta máquina), pelo PIN que ele guardou cifrado pelo DPAPI do usuário
+ * (`save` grava, `stored` usa; recusa do cartão apaga o arquivo). O PIN só passa
+ * pelo motor: este processo nunca o vê, nunca o grava.
  *
  * O agente morre (e o cache com ele) quando o prazo vence, quando alguém pede
  * `stop`, quando o motor sai, quando o YubiKey perde o PIN (removido, sono que
@@ -45,6 +47,9 @@ const ENGINE_BOOTSTRAP = [
   '$parameters = [System.CodeDom.Compiler.CompilerParameters]::new()',
   '$parameters.GenerateInMemory = $true',
   "[void]$parameters.ReferencedAssemblies.Add('System.dll')",
+  "[void]$parameters.ReferencedAssemblies.Add('System.Security.dll')",
+  "[void]$parameters.ReferencedAssemblies.Add('System.Drawing.dll')",
+  "[void]$parameters.ReferencedAssemblies.Add('System.Windows.Forms.dll')",
   '$source = [System.IO.File]::ReadAllText($env:NEXUS_SIGNER_ENGINE, $utf8)',
   '$compiled = [Microsoft.CSharp.CSharpCodeProvider]::new().CompileAssemblyFromSource($parameters, $source)',
   'if ($compiled.Errors.HasErrors) { foreach ($problem in $compiled.Errors) { [Console]::Error.WriteLine($problem.ToString()) }; exit 2 }',
@@ -56,6 +61,20 @@ function defaultAgentDirectory(env = process.env) {
   if (env.NEXUS_WINDOWS_SIGNER_DIR) return path.resolve(env.NEXUS_WINDOWS_SIGNER_DIR);
   const base = env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
   return path.join(base, 'NexusIDE', 'windows-signer');
+}
+
+/** PIN guardado pelo DPAPI do usuário (`save-pin`); só o motor o lê ou escreve. */
+function pinFilePath(directory) {
+  return path.join(directory, 'pin.dpapi');
+}
+
+const PIN_MODES = new Set(['prompt', 'save', 'stored']);
+
+/** Comando de destrave do motor: janela do Windows, salvar o PIN, ou o PIN guardado. */
+function unlockCommand(pinMode, pinFile) {
+  if (pinMode === 'save') return `UNLOCK_SAVE ${b64(pinFile)}`;
+  if (pinMode === 'stored') return `UNLOCK_STORED ${b64(pinFile)}`;
+  return 'UNLOCK';
 }
 
 /** Horas de vida do agente: 24 por padrão, 1 a 168 (uma semana), ou 0 = só este build. */
@@ -284,12 +303,14 @@ async function runAgent({
   expectedSpkiSha256,
   hours,
   parentPid,
+  pinMode = 'prompt',
   directory = defaultAgentDirectory(),
   env = process.env,
   spawnEngine,
   now = () => Date.now(),
   onReady = () => undefined,
 }) {
+  if (!PIN_MODES.has(pinMode)) throw new Error(`unknown PIN mode ${pinMode}`);
   fs.mkdirSync(directory, { recursive: true });
   const logFile = path.join(directory, 'agent.log');
   const log = (message) => {
@@ -342,8 +363,15 @@ async function runAgent({
     }
     if (first.rest[1] !== '1') throw new Error('Windows has no private key for the certificate (YubiKey unplugged?)');
 
-    log('unlocking: Windows asks for the YubiKey PIN');
-    const unlocked = engineAnswer(await engine.command('UNLOCK', UNLOCK_TIMEOUT_MS));
+    log({
+      prompt: 'unlocking: Windows asks for the YubiKey PIN',
+      save: 'unlocking: the signer asks for the YubiKey PIN to save it (DPAPI)',
+      stored: 'unlocking with the saved PIN (DPAPI), no window',
+    }[pinMode]);
+    const unlocked = engineAnswer(await engine.command(
+      unlockCommand(pinMode, pinFilePath(directory)),
+      pinMode === 'stored' ? ENGINE_START_TIMEOUT_MS : UNLOCK_TIMEOUT_MS,
+    ));
     if (unlocked.kind !== 'UNLOCKED') throw new Error(unlocked.message || 'the YubiKey did not unlock');
 
     const token = crypto.randomBytes(32).toString('hex');
@@ -367,6 +395,7 @@ async function runAgent({
         certificate: der.toString('base64'),
         startedAt,
         expiresAt,
+        pinMode,
       };
     };
 
@@ -457,7 +486,7 @@ async function runAgent({
       }, 5_000);
     }
     log(`ready until ${expiresAt === null ? 'the build ends' : new Date(expiresAt).toISOString()}`);
-    onReady({ pid: process.pid, pipe, thumbprint, startedAt, expiresAt });
+    onReady({ pid: process.pid, pipe, thumbprint, startedAt, expiresAt, pinMode });
   } catch (error) {
     shutdown(`failed to start: ${error instanceof Error ? error.message : String(error)}`);
     throw error;
@@ -496,6 +525,7 @@ async function main(argv) {
       expectedSpkiSha256: options.spki,
       hours: parseAgentHours(options.hours),
       parentPid: options['parent-pid'] ? Number(options['parent-pid']) : undefined,
+      pinMode: options['pin-mode'] ?? 'prompt',
       onReady: (info) => say(`READY ${JSON.stringify(info)}`),
     });
     process.exitCode = reason === 'expired' || reason === 'stop requested' ? 0 : 1;
@@ -517,6 +547,8 @@ module.exports = {
   MAX_HOURS,
   ENGINE_BOOTSTRAP,
   defaultAgentDirectory,
+  pinFilePath,
+  unlockCommand,
   parseAgentHours,
   isTimestampUrl,
   temporaryBuildRoots,

@@ -79,6 +79,82 @@ describe('hook do @electron/windows-sign', () => {
   }, 30_000);
 });
 
+describe('PIN guardado e início no logon', () => {
+  it('com PIN guardado o próximo agente destranca sem janela; save-pin só quando pedido', () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), 'nexus-signer-mode-'));
+    expect(client.chooseUnlockMode(undefined, directory)).toBe('prompt');
+    expect(client.chooseUnlockMode('save', directory)).toBe('save');
+    writeFileSync(path.join(directory, 'pin.dpapi'), 'sealed');
+    expect(client.chooseUnlockMode(undefined, directory)).toBe('stored');
+    expect(client.chooseUnlockMode('save', directory)).toBe('save');
+  });
+
+  it('build com PIN guardado não abre janela: avisa e sobe o agente no modo stored', async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), 'nexus-signer-stored-'));
+    writeFileSync(path.join(directory, 'pin.dpapi'), 'sealed');
+    const logs: string[] = [];
+    // O motor real não acha o certificado de teste na loja: falha antes de tocar no PIN.
+    await expect(client.ensureAgent({
+      thumbprint: TEST_THUMBPRINT,
+      spkiSha256: TEST_SPKI,
+      hours: 24,
+      directory,
+      log: (message) => logs.push(message),
+    })).rejects.toThrow();
+    expect(logs).toEqual([expect.stringMatching(/PIN guardado \(DPAPI\), sem janela/u)]);
+    expect(readFileSync(path.join(directory, 'pin.dpapi'), 'utf8')).toBe('sealed');
+  }, 60_000);
+
+  it('logon sem PIN guardado não faz nada (nunca abre janela no logon)', async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), 'nexus-signer-logon-'));
+    const logs: string[] = [];
+    await expect(client.startFromCli({
+      identity: { certificateSha1: TEST_THUMBPRINT, spkiSha256: TEST_SPKI },
+      directory,
+      ifPinSaved: true,
+      waitCard: true,
+      log: (message: string) => logs.push(message),
+    })).resolves.toBeUndefined();
+    expect(logs).toEqual([]);
+  });
+
+  it('a entrada Run sobe o Node sem janela, da cópia em bin, só com PIN guardado', () => {
+    const line = client.logonCommandLine({
+      nodePath: 'C:\\node\\node.exe',
+      binDirectory: 'C:\\Users\\x\\AppData\\Local\\NexusIDE\\windows-signer\\bin',
+      env: { SystemRoot: 'C:\\Windows' },
+    });
+    expect(line).toBe([
+      '"C:\\Windows\\System32\\conhost.exe" --headless "C:\\node\\node.exe"',
+      '"C:\\Users\\x\\AppData\\Local\\NexusIDE\\windows-signer\\bin\\client.cjs" start --if-pin-saved --wait-card',
+      '--identity "C:\\Users\\x\\AppData\\Local\\NexusIDE\\windows-signer\\bin\\identity.json"',
+    ].join(' '));
+  });
+
+  it('install-logon copia agente, cliente, motor e identidade e grava só a chave Run do usuário', async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), 'nexus-signer-install-'));
+    const identityFile = path.join(directory, 'identity-source.json');
+    writeFileSync(identityFile, JSON.stringify({ certificateSha1: TEST_THUMBPRINT }));
+    const calls: Array<[string, string[]]> = [];
+    const run = async (file: string, args: string[]) => { calls.push([file, args]); return ''; };
+    const line = await client.installLogon({ directory, nodePath: 'C:\\node\\node.exe', identityFile, run, env: { SystemRoot: 'C:\\Windows' } });
+    for (const file of ['agent.cjs', 'client.cjs', 'engine.cs']) {
+      expect(readFileSync(path.join(directory, 'bin', file), 'utf8')).toBe(readFileSync(path.join(__dirname, file), 'utf8'));
+    }
+    expect(JSON.parse(readFileSync(path.join(directory, 'bin', 'identity.json'), 'utf8'))).toEqual({ certificateSha1: TEST_THUMBPRINT });
+    expect(calls).toEqual([[
+      'C:\\Windows\\System32\\reg.exe',
+      ['add', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run', '/v', 'NexusIDE Windows Signer', '/t', 'REG_SZ', '/d', line, '/f'],
+    ]]);
+    await client.uninstallLogon({ directory, run, env: { SystemRoot: 'C:\\Windows' } });
+    expect(calls[1]).toEqual([
+      'C:\\Windows\\System32\\reg.exe',
+      ['delete', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run', '/v', 'NexusIDE Windows Signer', '/f'],
+    ]);
+    expect(() => readFileSync(path.join(directory, 'bin', 'client.cjs'))).toThrow();
+  });
+});
+
 describe('ensureAgent', () => {
   it('reaproveita o agente destrancado: nenhum PIN no segundo build', async () => {
     const testAgent = await startTestAgent();

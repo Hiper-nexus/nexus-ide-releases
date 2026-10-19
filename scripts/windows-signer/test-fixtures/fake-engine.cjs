@@ -31,6 +31,29 @@ readline.createInterface({ input: process.stdin })
     if (command === 'UNLOCK') {
       unlocked = true;
       say('UNLOCKED');
+    } else if (command === 'UNLOCK_SAVE') {
+      // FAKE_ENGINE_SAVE: ok (padrão) | cancel | refuse
+      const outcome = process.env.FAKE_ENGINE_SAVE ?? 'ok';
+      if (outcome === 'cancel') say(`ERR ${b64('PIN entry was cancelled; nothing was saved')}`);
+      else if (outcome === 'refuse') say(`ERR ${b64('the YubiKey refused the PIN (0x8010006B): it used one PIN attempt and nothing was saved')}`);
+      else {
+        fs.writeFileSync(fromB64(first), 'sealed-by-dpapi');
+        unlocked = true;
+        say('UNLOCKED');
+      }
+    } else if (command === 'UNLOCK_STORED') {
+      // FAKE_ENGINE_STORED: ok (padrão) | refuse | absent
+      const file = fromB64(first);
+      const outcome = process.env.FAKE_ENGINE_STORED ?? 'ok';
+      if (!fs.existsSync(file)) say(`ERR ${b64('no YubiKey PIN is saved')}`);
+      else if (outcome === 'refuse') {
+        fs.rmSync(file);
+        say(`ERR ${b64('the YubiKey refused the saved PIN (0x8010006B): it was deleted, save it again')}`);
+      } else if (outcome === 'absent') say(`ERR ${b64('the YubiKey is not available (0x8010000C); the saved PIN was kept')}`);
+      else {
+        unlocked = true;
+        say('UNLOCKED');
+      }
     } else if (command === 'PROBE') {
       say(unlocked && signs < lockAfter ? 'OK' : `LOCKED ${b64('the YubiKey PIN is no longer cached')}`);
     } else if (command === 'SIGN') {
