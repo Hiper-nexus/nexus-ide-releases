@@ -11850,7 +11850,7 @@ export const RELEASE_076330: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076331: AppRelease = {
   version: '0.76.331',
   date: '2026-10-19',
   codename: 'Memória e contas no Linux',
@@ -11861,4 +11861,18 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Pacote Linux', detail: 'A tag 0.76.329 é o pacote macOS e não recebe arquivos Linux. A tag 0.76.330 não recebe arquivos Linux. O desktop Linux sai na 0.76.331, com o comparador e a mídia da 0.76.328, o freio de memória e a rotação de contas.' },
   ],
   fixes: [...RELEASE_076329.fixes, ...RELEASE_076330.fixes],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.332',
+  date: '2026-10-19',
+  codename: 'As contas se revezam sozinhas (macOS)',
+  summary: 'Pacote macOS do revezamento de contas. Quem tem várias contas da mesma IA usava só a primeira: quando a cota acabava, o pane simplesmente parava. Agora o Nexus mede a cota e tira o trabalho NOVO da conta que está chegando ao fim antes de ela acabar, sem interromper quem já trabalha; o pane que emudece por cota esgotada continua na conta seguinte; e quando todas acabam o trabalho segue em outra IA. Inclui a pressão crítica de memória da 0.76.329 e o pacote Linux da 0.76.331.',
+  highlights: [
+    ...RELEASE_076331.highlights,
+  ],
+  fixes: [
+    { title: 'O resgate não trava mais por status preso', detail: 'Quando a cota esgota, o pedido ao provedor pode travar antes do aviso de parada, e a IA ficava marcada como "trabalhando" para sempre — o que impedia o próprio resgate que essa trava deveria proteger. Agora esse estado vale por tempo limitado, e depois disso o pane é religado na conta seguinte.' },
+    { title: 'O orquestrador não troca de conta à toa', detail: 'Algumas IAs têm cota separada por família de modelo. O orquestrador era tirado da conta quando a cota de uma família que ele nem usa enchia, e a missão recomeçava a conversa noutra conta sem precisar. Agora só a cota do modelo que ele realmente usa conta para essa decisão.' },
+  ],
 };
