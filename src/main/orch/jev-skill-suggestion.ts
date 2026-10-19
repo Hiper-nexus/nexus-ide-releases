@@ -24,6 +24,7 @@ import {
 } from '../jev/jev-decision-log';
 import {
   BUNDLED_MANIFESTS,
+  isBundledSkillAvailable,
   GENERATED_INLINE_SKILL_BODIES,
 } from './skill-mirror';
 import type { SkillAsset } from './impeccable-manifest';
@@ -289,7 +290,10 @@ export function allowedSkillCatalog(
   allowedSkills: string[] | null,
   manifests?: Record<string, Record<string, SkillAsset>>,
 ): BundledSkillCatalogEntry[] {
-  return filterByGrants(listBundledSkillCatalog(manifests), allowedSkills);
+  return filterByGrants(
+    listBundledSkillCatalog(manifests).filter((entry) => isBundledSkillAvailable(entry.pkg)),
+    allowedSkills,
+  );
 }
 
 /**

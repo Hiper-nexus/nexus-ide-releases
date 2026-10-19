@@ -17,6 +17,9 @@ vi.mock('../../video/video-render', () => ({ renderVideo: mocks.render }));
 vi.mock('../../video/video-doctor', () => ({ runVideoDoctor: mocks.doctor }));
 
 import { buildVideoTools } from '../tools-video';
+import { buildVoiceTools } from '../tools-voice';
+import { FEATURE_FLAG_IDS } from '../../../shared/feature-flags';
+import { getFeatureFlagRegistry, resetFeatureFlagRegistryForTests } from '../../feature-flags/feature-flag-registry';
 
 const ctx = { scope: { rootRealPath: '/workspace' }, role: 'worker', missionId: 'm1', sessionId: 's1' } as never;
 
@@ -27,6 +30,29 @@ function tool(name: string) {
 }
 
 describe('ferramentas de vídeo', () => {
+  it('voz, música e vídeo só aparecem com o estúdio ligado (F-1600)', () => {
+    resetFeatureFlagRegistryForTests();
+    try {
+      const tools = [...buildVoiceTools(), ...buildVideoTools()];
+      expect(tools.map((item) => item.name).sort()).toEqual([
+        'nexus_music_generate',
+        'nexus_video_doctor',
+        'nexus_video_export',
+        'nexus_video_render',
+        'nexus_voice_list',
+        'nexus_voiceover_generate',
+      ]);
+      for (const item of tools) {
+        expect(item.available?.(), item.name).toBe(false);
+        expect(item.unavailableReason, item.name).toMatch(/Ajustes → Experimental/u);
+      }
+      getFeatureFlagRegistry().setOverride(FEATURE_FLAG_IDS.mediaVideoStudio, true);
+      for (const item of tools) expect(item.available?.(), item.name).toBe(true);
+    } finally {
+      resetFeatureFlagRegistryForTests();
+    }
+  });
+
   it('diagnóstico é leitura; render é efeito de execução com confirmação', () => {
     expect(effectPolicyForTool('nexus_video_doctor')).toBe('read-only');
     expect(isToolAllowedForReadOnlyContext('nexus_video_doctor')).toBe(true);

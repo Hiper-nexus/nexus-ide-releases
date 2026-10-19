@@ -127,7 +127,17 @@ function VoiceRow({ receipt, onRemoved }: { receipt: VoiceCloneReceiptView; onRe
   );
 }
 
-export function MyVoiceCard({ elevenLabsConnected }: { elevenLabsConnected: boolean }) {
+/**
+ * `canCreate` follows the video studio internal key: with it off the card only
+ * appears when voices already exist, so they can always be deleted.
+ */
+export function MyVoiceCard({
+  elevenLabsConnected,
+  canCreate = true,
+}: {
+  elevenLabsConnected: boolean;
+  canCreate?: boolean;
+}) {
   const bridge = typeof window !== 'undefined' ? window.nexus?.voiceClone : undefined;
   const [receipts, setReceipts] = useState<VoiceCloneReceiptView[]>([]);
   const [step, setStep] = useState<Step>('list');
@@ -290,6 +300,8 @@ export function MyVoiceCard({ elevenLabsConnected }: { elevenLabsConnected: bool
   const declaration = session ? voiceDeclarationText(speakerName, session.code) : '';
   const readingOk = reading !== null && reading.durationSec >= VOICE_SAMPLE_MIN_SEC;
 
+  if (!canCreate && receipts.length === 0) return null;
+
   return (
     <section className="media-card my-voice" aria-labelledby="my-voice-title">
       <header className="my-voice__head">
@@ -310,7 +322,13 @@ export function MyVoiceCard({ elevenLabsConnected }: { elevenLabsConnected: bool
         </ul>
       )}
 
-      {step === 'list' && (
+      {!canCreate && (
+        <p className="settings-detail__hint">
+          O estúdio de vídeo está desligado em Ajustes → Experimental. Você ainda pode apagar as suas vozes.
+        </p>
+      )}
+
+      {canCreate && step === 'list' && (
         <div className="settings-row">
           <button
             type="button"

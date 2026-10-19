@@ -15,6 +15,7 @@ import {
 import type { ProjectExecutionScope } from '../../shared/types';
 import { requireRendererWorkspaceScope } from '../persistence/renderer-workspace-scope';
 import { handleTrusted } from '../security/trusted-ipc';
+import { assertVideoStudioEnabled } from './video-studio-flag';
 import { createMediaStreamHandler, grantMediaStreamUrl, MEDIA_STREAM_SCHEME } from './media-stream-protocol';
 import { detectVideoProject, videoEnginePaths } from './video-engine';
 import { runVideoDoctor } from './video-doctor';
@@ -104,10 +105,18 @@ function relativeFile(root: string, file: string): string {
 const jobId = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/u);
 const workspacePath = z.string().min(1).max(1024);
 
+/** Every studio channel but "cancel" needs the internal key on (Ajustes → Experimental). */
+function handleStudio(channel: string, handler: Parameters<typeof handleTrusted>[1]): void {
+  handleTrusted(channel, (event, ...args) => {
+    assertVideoStudioEnabled();
+    return handler(event, ...args);
+  });
+}
+
 export function registerVideoStudioIpc(): void {
   protocol.handle(MEDIA_STREAM_SCHEME, createMediaStreamHandler());
 
-  handleTrusted(VIDEO_STUDIO_CHANNELS.listProjects, (event): VideoStudioListResult => {
+  handleStudio(VIDEO_STUDIO_CHANNELS.listProjects, (event): VideoStudioListResult => {
     try {
       return { ok: true, projects: listVideoProjects(scopeOf(event).rootRealPath) };
     } catch (error) {
@@ -115,7 +124,7 @@ export function registerVideoStudioIpc(): void {
     }
   });
 
-  handleTrusted(VIDEO_STUDIO_CHANNELS.doctor, async (event): Promise<VideoDoctorView> => {
+  handleStudio(VIDEO_STUDIO_CHANNELS.doctor, async (event): Promise<VideoDoctorView> => {
     try {
       const deps = videoRenderDeps();
       const report = await runVideoDoctor({
@@ -132,7 +141,7 @@ export function registerVideoStudioIpc(): void {
     }
   });
 
-  handleTrusted(VIDEO_STUDIO_CHANNELS.render, async (event, raw): Promise<VideoRenderView> => {
+  handleStudio(VIDEO_STUDIO_CHANNELS.render, async (event, raw): Promise<VideoRenderView> => {
     const parsed = z
       .object({ projectPath: workspacePath, quality: z.enum(['draft', 'final']), jobId })
       .safeParse(raw);
@@ -180,7 +189,7 @@ export function registerVideoStudioIpc(): void {
     return { ok: true };
   });
 
-  handleTrusted(VIDEO_STUDIO_CHANNELS.exportVideo, async (event, raw): Promise<VideoExportView> => {
+  handleStudio(VIDEO_STUDIO_CHANNELS.exportVideo, async (event, raw): Promise<VideoExportView> => {
     const parsed = z
       .object({
         inputPath: workspacePath,
@@ -233,7 +242,7 @@ export function registerVideoStudioIpc(): void {
     }
   });
 
-  handleTrusted(VIDEO_STUDIO_CHANNELS.mediaUrl, (event, raw) => {
+  handleStudio(VIDEO_STUDIO_CHANNELS.mediaUrl, (event, raw) => {
     const parsed = z.object({ path: workspacePath }).safeParse(raw);
     if (!parsed.success) return { ok: false, error: 'pedido inválido' };
     try {
@@ -249,7 +258,7 @@ export function registerVideoStudioIpc(): void {
     }
   });
 
-  handleTrusted(VIDEO_STUDIO_CHANNELS.reveal, (event, raw) => {
+  handleStudio(VIDEO_STUDIO_CHANNELS.reveal, (event, raw) => {
     const parsed = z.object({ path: workspacePath }).safeParse(raw);
     if (!parsed.success) return { ok: false, error: 'pedido inválido' };
     try {

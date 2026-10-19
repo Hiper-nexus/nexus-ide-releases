@@ -30,6 +30,16 @@ vi.mock('./video-render', async (importOriginal) => ({
   renderVideo: state.render,
 }));
 vi.mock('./video-runtime-deps', () => ({ videoRenderDeps: () => ({ userData: '/ud' }) }));
+const studio = vi.hoisted(() => ({ on: true }));
+vi.mock('./video-studio-flag', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./video-studio-flag')>();
+  return {
+    ...actual,
+    assertVideoStudioEnabled: () => {
+      if (!studio.on) throw new Error(actual.VIDEO_STUDIO_DISABLED_REASON);
+    },
+  };
+});
 
 import { listVideoProjects, registerVideoStudioIpc } from './video-studio-ipc';
 
@@ -112,5 +122,21 @@ describe('Vídeos do projeto — Main', () => {
     expect(signal?.aborted).toBe(false);
     await state.trusted.get(VIDEO_STUDIO_CHANNELS.cancel)!(event, { jobId: 'job3' });
     expect(await running).toMatchObject({ canceled: true });
+  });
+
+  it('com o estúdio desligado só o cancelar responde', async () => {
+    studio.on = false;
+    try {
+      expect(state.trusted.size).toBe(7);
+      for (const [channel, handler] of state.trusted) {
+        if (channel === VIDEO_STUDIO_CHANNELS.cancel) continue;
+        await expect(Promise.resolve().then(() => handler(event, {}))).rejects.toThrow(
+          /estúdio de vídeo está desligado/u,
+        );
+      }
+      expect(await state.trusted.get(VIDEO_STUDIO_CHANNELS.cancel)!(event, { jobId: 'nenhum' })).toEqual({ ok: true });
+    } finally {
+      studio.on = true;
+    }
   });
 });

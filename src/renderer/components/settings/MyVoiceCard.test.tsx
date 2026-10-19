@@ -62,9 +62,9 @@ function type(input: HTMLInputElement, value: string) {
   });
 }
 
-async function render(connected = true) {
+async function render(connected = true, canCreate = true) {
   await act(async () => {
-    root.render(<MyVoiceCard elevenLabsConnected={connected} />);
+    root.render(<MyVoiceCard elevenLabsConnected={connected} canCreate={canCreate} />);
   });
 }
 
@@ -214,5 +214,22 @@ describe('Minha voz', () => {
     Object.defineProperty(window, 'nexus', { configurable: true, value: {} });
     await render();
     expect(host.innerHTML).toBe('');
+  });
+
+  it('com o estúdio desligado: some sem vozes, e com vozes só deixa apagar (F-1600)', async () => {
+    await render(true, false);
+    expect(host.innerHTML).toBe('');
+    api.list.mockResolvedValue([
+      { id: 'r'.repeat(24), provider: 'elevenlabs', voiceId: 'v1', voiceName: 'Voz de Ana', createdAt: '2026-10-19T12:00:00Z', requiresVerification: false },
+    ]);
+    await act(async () => {
+      root.unmount();
+      root = createRoot(host);
+    });
+    await render(true, false);
+    expect(host.textContent).toContain('Voz de Ana');
+    expect(host.textContent).toContain('Ajustes → Experimental');
+    expect(host.textContent).not.toContain('Criar minha voz');
+    expect(button('Apagar')).toBeTruthy();
   });
 });

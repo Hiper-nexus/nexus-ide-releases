@@ -17,6 +17,7 @@ import { OC_CONVEYOR_MANIFEST } from './oc-conveyor-manifest';
 import { STACK_ADVISOR_MANIFEST } from './stack-advisor-manifest';
 import { NEXUS_VIDEO_MANIFEST } from './nexus-video-manifest';
 import { hasJevCredential } from '../jev/jev-secrets';
+import { isVideoStudioEnabled } from '../video/video-studio-flag';
 import { mimoNativePaths } from '../adapters/mimo-auth';
 import type { SkillAsset } from './impeccable-manifest';
 import {
@@ -208,6 +209,17 @@ export interface SkillMirrorOptions {
    * Default drops bundled `typesafe-ai` when no TypeSafe credential exists.
    */
   bundledSkillFilter?: (name: string) => boolean;
+}
+
+/**
+ * Bundled skills that depend on something outside the skill itself: the
+ * TypeSafe credential (typesafe-ai) and the video studio internal key
+ * (nexus-video). An unavailable skill is neither mirrored nor suggested.
+ */
+export function isBundledSkillAvailable(name: string): boolean {
+  if (name === 'typesafe-ai') return hasJevCredential();
+  if (name === 'nexus-video') return isVideoStudioEnabled();
+  return true;
 }
 
 function skillName(name: string): string {
@@ -857,11 +869,10 @@ export function ensureSkillsForCli(
     options.sourceDirs ?? defaultSourceDirs(home),
   );
   // Bundled (raiz gerada) tem precedência sobre a cópia do usuário — exceto
-  // quando o filtro o derruba (ex.: typesafe-ai sem credencial TypeSafe);
+  // quando o filtro o derruba (typesafe-ai sem credencial TypeSafe, nexus-video
+  // com o estúdio desligado);
   // nesse caso a cópia do próprio usuário continua valendo e nunca é tocada.
-  const bundledSkillFilter =
-    options.bundledSkillFilter ??
-    ((name: string) => name !== 'typesafe-ai' || hasJevCredential());
+  const bundledSkillFilter = options.bundledSkillFilter ?? isBundledSkillAvailable;
   for (const [name, source] of readSkillSources([generatedDir])) {
     if (
       bundledManifestFor(source, generatedRoot) === undefined ||

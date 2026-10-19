@@ -12,6 +12,8 @@ import { ProviderLogo } from '../ProviderLogo';
 import { ActionCard, EmptyState } from '../ActionCard';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
 import { MyVoiceCard } from './MyVoiceCard';
+import { useProductFlags } from '../../lib/use-product-flags';
+import { FEATURE_FLAG_IDS } from '../../../shared/feature-flags';
 import { useCatalogResource } from './use-catalog-resource';
 
 /**
@@ -152,6 +154,7 @@ export function MediaSection() {
   );
   const providers = data?.providers ?? EMPTY_PROVIDERS;
   const totals = data?.totals ?? EMPTY_TOTALS;
+  const productFlags = useProductFlags();
 
   const withKey = providers.filter((p) => p.hasKey).length;
   const byKind = useMemo(() => {
@@ -334,6 +337,7 @@ export function MediaSection() {
       {!error && !loading && (
         <MyVoiceCard
           elevenLabsConnected={providers.some((provider) => provider.id === 'elevenlabs' && provider.hasKey)}
+          canCreate={productFlags[FEATURE_FLAG_IDS.mediaVideoStudio] === true}
         />
       )}
     </section>

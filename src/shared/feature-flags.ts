@@ -96,6 +96,11 @@ export const FEATURE_FLAG_IDS = {
   /** Portão de regressão: testes impactados pelo diff antes de aceitar escrita (0.76.110). */
   regressionGate: 'feature.orch.regressionGate',
   dependencyFreshness: 'feature.context.dependencyFreshness',
+  /**
+   * Estúdio de vídeo (F-1590..F-1606): narração, música, Minha voz, render,
+   * export e "Vídeos do projeto". Desligado até a validação nos três sistemas.
+   */
+  mediaVideoStudio: 'feature.media.videoStudio',
 } as const;
 
 export type FeatureFlagId =
@@ -380,6 +385,18 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     killSwitch: false,
     telemetry: false,
     defaultEnabled: true,
+  },
+  {
+    id: FEATURE_FLAG_IDS.mediaVideoStudio,
+    owner: 'media',
+    description:
+      'Estúdio de vídeo: narração com legenda, música, Minha voz, render e export por rede. Fica desligado até a entrega completa ser validada no Windows, no macOS e no Linux.',
+    channel: 'dev',
+    createdAt: '2026-10-19',
+    removeAfter: '2027-04-30',
+    killSwitch: false,
+    telemetry: false,
+    defaultEnabled: false,
   },
 ] as const;
 

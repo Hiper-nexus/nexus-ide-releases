@@ -1,4 +1,5 @@
 import { assertMcpInvocationCurrent, type McpToolDef } from './mcp-protocol';
+import { isVideoStudioEnabled, VIDEO_STUDIO_DISABLED_REASON } from '../video/video-studio-flag';
 import { findMediaProvider } from '../media/media-providers';
 import { resolveMediaKey } from '../media/media-keys';
 import { readMediaInput } from '../media/media-path-policy';
@@ -54,6 +55,8 @@ function voiceSettingsFrom(args: Record<string, unknown>) {
 
 const voiceListTool: McpToolDef = {
   name: 'nexus_voice_list',
+  available: isVideoStudioEnabled,
+  unavailableReason: VIDEO_STUDIO_DISABLED_REASON,
   description:
     'List the voices of the ElevenLabs account configured in the Nexus. Each ' +
     'voice has an origin: library (premade or shared), designed, nexus-clone ' +
@@ -84,6 +87,8 @@ const voiceListTool: McpToolDef = {
 
 const voiceoverGenerateTool: McpToolDef = {
   name: 'nexus_voiceover_generate',
+  available: isVideoStudioEnabled,
+  unavailableReason: VIDEO_STUDIO_DISABLED_REASON,
   description:
     'Narrate a video script with an ElevenLabs voice and write, inside the ' +
     'workspace: <outDir>/<baseName>.mp3, .timeline.json (every word, sentence ' +
@@ -159,6 +164,8 @@ const voiceoverGenerateTool: McpToolDef = {
 
 const musicGenerateTool: McpToolDef = {
   name: 'nexus_music_generate',
+  available: isVideoStudioEnabled,
+  unavailableReason: VIDEO_STUDIO_DISABLED_REASON,
   description:
     'Compose background music (Eleven Music, the user ElevenLabs key) and save ' +
     'an mp3 plus <name>.provenance.json inside the workspace. Instrumental by ' +

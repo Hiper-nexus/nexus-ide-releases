@@ -78,6 +78,9 @@ describe('feature flags', () => {
       // a Via Rápida supervisiona os workers e completa por observação — o
       // enforcement brigava com essa conclusão (B1, dossiê 2026-08-11).
       'feature.mission.workerHandoffEnforcement',
+      // Estúdio de vídeo: entrega de 17 passos que só liga depois da validação
+      // nos três sistemas (docs/analysis/2026-10-19-estudio-de-video.md §5.3).
+      'feature.media.videoStudio',
     ]);
     for (const flag of BUILTIN_FEATURE_FLAGS) {
       expect(

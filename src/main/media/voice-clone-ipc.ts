@@ -10,6 +10,7 @@ import {
   type VoiceDeclarationResult,
 } from '../../shared/voice-clone-types';
 import { handleTrusted } from '../security/trusted-ipc';
+import { assertVideoStudioEnabled } from '../video/video-studio-flag';
 import { resolveMediaKey } from './media-keys';
 import {
   beginVoiceClone,
@@ -79,15 +80,22 @@ export function registerVoiceCloneIpc(): void {
     store.list().map(receiptView),
   );
 
-  handleTrusted(VOICE_CLONE_CHANNELS.begin, (): VoiceCloneSessionView => beginVoiceClone(deps()));
+  // Criar voz só com o estúdio ligado; listar, cancelar e apagar ficam sempre
+  // disponíveis: a pessoa apaga a própria voz mesmo com a chave desligada.
+  handleTrusted(VOICE_CLONE_CHANNELS.begin, (): VoiceCloneSessionView => {
+    assertVideoStudioEnabled();
+    return beginVoiceClone(deps());
+  });
 
   handleTrusted(VOICE_CLONE_CHANNELS.verifyDeclaration, async (_event, raw): Promise<VoiceDeclarationResult> => {
+    assertVideoStudioEnabled();
     const parsed = verifySchema.safeParse(raw);
     if (!parsed.success) return { ok: false, missing: [], error: 'Gravação inválida ou grande demais.' };
     return verifyVoiceDeclaration(parsed.data, deps());
   });
 
   handleTrusted(VOICE_CLONE_CHANNELS.create, async (_event, raw): Promise<VoiceCloneCreateResult> => {
+    assertVideoStudioEnabled();
     const parsed = createSchema.safeParse(raw);
     if (!parsed.success) return { ok: false, error: 'Gravações inválidas ou grandes demais.' };
     return createVoiceClone(parsed.data, deps());

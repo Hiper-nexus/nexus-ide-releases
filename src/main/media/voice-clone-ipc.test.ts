@@ -20,6 +20,16 @@ vi.mock('../security/trusted-ipc', () => ({
   },
 }));
 vi.mock('./media-keys', () => ({ resolveMediaKey: () => undefined }));
+const studio = vi.hoisted(() => ({ on: true }));
+vi.mock('../video/video-studio-flag', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../video/video-studio-flag')>();
+  return {
+    ...actual,
+    assertVideoStudioEnabled: () => {
+      if (!studio.on) throw new Error(actual.VIDEO_STUDIO_DISABLED_REASON);
+    },
+  };
+});
 
 import { registerVoiceCloneIpc } from './voice-clone-ipc';
 import { isNexusClonedVoice } from './voice-origin';
@@ -65,5 +75,19 @@ describe('IPC de Minha voz', () => {
     expect(await create({}, { sessionId: 'a'.repeat(32), voiceName: 'v', samples: [] })).toMatchObject({ ok: false });
     const remove = state.trusted.get(VOICE_CLONE_CHANNELS.remove)!;
     expect(await remove({}, { id: '../../etc' })).toMatchObject({ ok: false, canRemoveLocally: false });
+  });
+
+  it('com o estúdio desligado não se cria voz, mas listar e apagar continuam', async () => {
+    studio.on = false;
+    try {
+      for (const channel of [VOICE_CLONE_CHANNELS.begin, VOICE_CLONE_CHANNELS.verifyDeclaration, VOICE_CLONE_CHANNELS.create]) {
+        await expect(Promise.resolve().then(() => state.trusted.get(channel)!({}, {}))).rejects.toThrow(/estúdio de vídeo está desligado/u);
+      }
+      expect(await state.trusted.get(VOICE_CLONE_CHANNELS.list)!({})).toEqual([]);
+      expect(await state.trusted.get(VOICE_CLONE_CHANNELS.remove)!({}, { id: '../../etc' })).toMatchObject({ ok: false });
+      expect(await state.trusted.get(VOICE_CLONE_CHANNELS.cancel)!({}, { sessionId: 'a'.repeat(32) })).toEqual({ ok: true });
+    } finally {
+      studio.on = true;
+    }
   });
 });

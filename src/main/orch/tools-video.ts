@@ -1,4 +1,5 @@
 import { assertMcpInvocationCurrent, type McpToolDef } from './mcp-protocol';
+import { isVideoStudioEnabled, VIDEO_STUDIO_DISABLED_REASON } from '../video/video-studio-flag';
 import { executionScopeFor, type AgentGateContext } from './gate';
 import { num, requireStr, str } from './tool-util';
 import { resolveCwdForScope } from './workspace-path';
@@ -22,6 +23,8 @@ function baseDirFor(ctx: AgentGateContext): string {
 
 const videoDoctorTool: McpToolDef = {
   name: 'nexus_video_doctor',
+  available: isVideoStudioEnabled,
+  unavailableReason: VIDEO_STUDIO_DISABLED_REASON,
   description:
     'Check what a video render needs on this machine, read-only: Node.js 22+, npm, ffmpeg, ffprobe, ' +
     `the pinned HyperFrames ${HYPERFRAMES_VERSION} engine, its Chrome, free disk and (Windows) path length. ` +
@@ -45,6 +48,8 @@ const videoDoctorTool: McpToolDef = {
 
 const videoRenderTool: McpToolDef = {
   name: 'nexus_video_render',
+  available: isVideoStudioEnabled,
+  unavailableReason: VIDEO_STUDIO_DISABLED_REASON,
   description:
     `Render a HyperFrames project of the workspace to MP4 with the pinned engine (hyperframes ${HYPERFRAMES_VERSION}), ` +
     'clean environment (no API keys, no telemetry) and the machine-wide heavy-command reservation. The first ' +
@@ -91,6 +96,8 @@ const videoRenderTool: McpToolDef = {
 
 const videoExportTool: McpToolDef = {
   name: 'nexus_video_export',
+  available: isVideoStudioEnabled,
+  unavailableReason: VIDEO_STUDIO_DISABLED_REASON,
   description:
     'Export a rendered MP4 of the workspace for a network: preset size and fps, H.264 High yuv420p, AAC 48 kHz, ' +
     '+faststart, loudness in two passes to -14 LUFS / -1 dBTP (measured again on the output), a mute version, a PNG ' +
