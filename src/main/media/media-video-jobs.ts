@@ -1,6 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { GeminiOmniUsage } from '../../shared/media-video-models';
+import { videoModelSpec, type GeminiOmniUsage } from '../../shared/media-video-models';
+import {
+  assertMediaAuthorityCurrent,
+  MediaJobInterruptedError,
+  MediaJobTimeoutError,
+  type MediaAuthorityRequest,
+} from './media-runtime';
 
 /**
  * Persist long-running video predictions so a timed-out call can resume
@@ -76,4 +82,70 @@ export function getVideoJob(
 ): MediaVideoJobRecord | null {
   const jobs = loadVideoJobs(baseDir);
   return jobs[jobId] ?? null;
+}
+
+/** Resolução e duração do pedido, guardadas no job para a retomada (F-1587). */
+export function jobBilling(req: {
+  resolution?: string;
+  durationSeconds?: number;
+}): Pick<MediaVideoJobRecord, 'resolution' | 'durationSeconds'> {
+  return {
+    ...(req.resolution ? { resolution: req.resolution } : {}),
+    ...(req.durationSeconds !== undefined ? { durationSeconds: req.durationSeconds } : {}),
+  };
+}
+
+/**
+ * Resolução e duração salvas no job, só quando o modelo as aceita: o arquivo
+ * de jobs mora no workspace e não é confiável.
+ */
+export function savedJobBilling(saved: MediaVideoJobRecord): { resolution?: string; seconds?: number } {
+  const spec = videoModelSpec(saved.model);
+  return {
+    resolution:
+      spec && typeof saved.resolution === 'string' && spec.resolutions.includes(saved.resolution)
+        ? saved.resolution
+        : undefined,
+    seconds:
+      spec && typeof saved.durationSeconds === 'number' && spec.durations.includes(saved.durationSeconds)
+        ? saved.durationSeconds
+        : undefined,
+  };
+}
+
+/**
+ * O serviço diz que o vídeo falhou ou não existe mais (Files API `FAILED` ou
+ * 404 no Gemini; `failed`/`expired` ou 404 na xAI): retomar não adianta, o job
+ * vira `failed`. Qualquer outra falha depois do pedido aceito deixa o job
+ * pendente (`MediaJobInterruptedError`).
+ */
+export class MediaJobGoneError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'MediaJobGoneError';
+  }
+}
+
+/**
+ * Depois que o serviço aceitou (e cobra) o vídeo: só `MediaJobGoneError`
+ * encerra o job; timeout segue como está; qualquer outra falha (HTTP
+ * passageiro, download, disco) deixa o job pendente e devolve o
+ * `recoverJobId`.
+ */
+export async function settleVideoJob<T>(
+  job: MediaVideoJobRecord,
+  req: MediaAuthorityRequest & { baseDir: string },
+  run: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    assertMediaAuthorityCurrent(req);
+    if (err instanceof MediaJobTimeoutError) throw err;
+    if (err instanceof MediaJobGoneError) {
+      saveVideoJob(req.baseDir, { ...job, status: 'failed' });
+      throw err;
+    }
+    throw new MediaJobInterruptedError(job.provider, job.jobId, err);
+  }
 }

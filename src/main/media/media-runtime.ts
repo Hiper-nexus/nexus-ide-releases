@@ -47,17 +47,17 @@ export class MediaJobTimeoutError extends Error {
 }
 
 /**
- * F-1587: o vídeo já foi gerado e cobrado, mas não chegou (a Files API ou o
- * download falhou no meio). O job segue pendente e `recoverJobId` baixa sem
- * gerar de novo. Herda de `MediaJobTimeoutError` para o IPC e o MCP
- * devolverem o `recoverJobId` pelo mesmo caminho.
+ * F-1587: o serviço já aceitou (e cobra) o vídeo, mas ele não chegou: a
+ * espera ou o download falhou no meio. O job segue pendente e `recoverJobId`
+ * retoma sem gerar de novo. Herda de `MediaJobTimeoutError` para o IPC e o
+ * MCP devolverem o `recoverJobId` pelo mesmo caminho.
  */
 export class MediaJobInterruptedError extends MediaJobTimeoutError {
   constructor(provider: string, jobId: string, cause: unknown) {
     super(provider, jobId);
     const detail = cause instanceof Error ? cause.message : String(cause);
     this.message =
-      `${provider}: o vídeo já foi gerado, mas não chegou (${detail}). ` +
+      `${provider}: o vídeo já foi pedido (e cobrado), mas não chegou (${detail}). ` +
       `Chame de novo com recoverJobId="${jobId}" para baixar sem pagar duas vezes`;
     this.name = 'MediaJobInterruptedError';
     this.cause = cause;

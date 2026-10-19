@@ -51,14 +51,17 @@ import {
 } from '../../shared/media-video-models';
 import {
   getVideoJob,
+  jobBilling,
+  MediaJobGoneError,
+  savedJobBilling,
   saveVideoJob,
+  settleVideoJob,
   type MediaVideoJobRecord,
 } from './media-video-jobs';
 import {
   assertMediaAuthorityCurrent,
   dataUri,
   fileToInlineData,
-  MediaJobInterruptedError,
   MediaJobTimeoutError,
   mediaResult as result,
   requireKey,
@@ -172,32 +175,6 @@ export interface AudioRequest extends MediaAuthorityRequest {
   voiceId?: string;
   outPath?: string;
   baseDir: string;
-}
-
-/** Resolução e duração do pedido, guardadas no job para a retomada (F-1587). */
-function jobBilling(req: VideoRequest): Pick<MediaVideoJobRecord, 'resolution' | 'durationSeconds'> {
-  return {
-    ...(req.resolution ? { resolution: req.resolution } : {}),
-    ...(req.durationSeconds !== undefined ? { durationSeconds: req.durationSeconds } : {}),
-  };
-}
-
-/**
- * Resolução e duração salvas no job, só quando o modelo as aceita: o arquivo
- * de jobs mora no workspace e não é confiável.
- */
-function savedJobBilling(saved: MediaVideoJobRecord): { resolution?: string; seconds?: number } {
-  const spec = videoModelSpec(saved.model);
-  return {
-    resolution:
-      spec && typeof saved.resolution === 'string' && spec.resolutions.includes(saved.resolution)
-        ? saved.resolution
-        : undefined,
-    seconds:
-      spec && typeof saved.durationSeconds === 'number' && spec.durations.includes(saved.durationSeconds)
-        ? saved.durationSeconds
-        : undefined,
-  };
 }
 
 // ── Image ────────────────────────────────────────────────────────────────────
@@ -1079,18 +1056,6 @@ async function downloadGoogleVeoBytes(
 // acima de 4 MB), como arquivo da Files API que fica ACTIVE e é baixado com a
 // chave. Não há campo de duração: o modelo decide.
 
-/**
- * A Files API diz que o arquivo falhou (`FAILED`) ou não existe mais (404):
- * retomar não adianta, o job vira `failed`. Qualquer outra falha depois da
- * geração deixa o job pendente (`MediaJobInterruptedError`).
- */
-class GeminiFileGoneError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'GeminiFileGoneError';
-  }
-}
-
 /** Espera o arquivo da Files API ficar ACTIVE (a documentação manda pollar). */
 async function waitGeminiFileActive(
   fileId: string,
@@ -1109,7 +1074,7 @@ async function waitGeminiFileActive(
     assertMediaAuthorityCurrent(req);
     if (res.status === 404) {
       const gone = await mediaHttpError(res, 'google-video');
-      throw new GeminiFileGoneError(
+      throw new MediaJobGoneError(
         `O arquivo do vídeo não existe mais na Files API do Google (HTTP 404); gere de novo.${
           gone.detail ? ` Resposta do serviço: ${gone.detail}` : ''
         }`,
@@ -1121,7 +1086,7 @@ async function waitGeminiFileActive(
     if (file.state === undefined || file.state === 'ACTIVE') return;
     if (file.state === 'FAILED') {
       const message = typeof file.error?.message === 'string' ? ` — ${file.error.message}` : '';
-      throw new GeminiFileGoneError(
+      throw new MediaJobGoneError(
         `O Google não concluiu o arquivo do vídeo (Files API: FAILED)${message}.`,
       );
     }
@@ -1160,29 +1125,6 @@ async function downloadGeminiOmniFile(
  * sem eles (retomada pela Files API), a tabela por segundo com a duração
  * lida do MP4.
  */
-/**
- * Depois que o vídeo existe (e foi cobrado): só `GeminiFileGoneError` encerra
- * o job; timeout segue como está; qualquer outra falha (HTTP passageiro,
- * download, disco) deixa o job pendente e devolve o `recoverJobId`.
- */
-async function settleGeminiOmniJob<T>(
-  job: MediaVideoJobRecord,
-  req: VideoRequest,
-  run: () => Promise<T>,
-): Promise<T> {
-  try {
-    return await run();
-  } catch (err) {
-    assertMediaAuthorityCurrent(req);
-    if (err instanceof MediaJobTimeoutError) throw err;
-    if (err instanceof GeminiFileGoneError) {
-      saveVideoJob(req.baseDir, { ...job, status: 'failed' });
-      throw err;
-    }
-    throw new MediaJobInterruptedError('google-video', job.jobId, err);
-  }
-}
-
 function omniResult(
   def: MediaProviderDef,
   model: string,
@@ -1291,7 +1233,7 @@ async function generateVideoGeminiOmni(
   saveVideoJob(req.baseDir, jobRecord);
   assertMediaAuthorityCurrent(req);
   const fileId = output.fileId;
-  return settleGeminiOmniJob(jobRecord, req, async () => {
+  return settleVideoJob(jobRecord, req, async () => {
     const data = await downloadGeminiOmniFile(fileId, jobRecord.jobId, key, deps, req);
     writeMediaOutput(outPath, req.baseDir, data);
     assertMediaAuthorityCurrent(req);
@@ -1326,7 +1268,7 @@ async function generateVideoGoogle(
     if (isGeminiFileTarget(saved.pollTarget)) {
       // Gemini Omni: o vídeo já existe na Files API; só falta baixar. O custo
       // é o do que foi gerado: `usage` e resolução salvos no job.
-      return settleGeminiOmniJob(saved, req, async () => {
+      return settleVideoJob(saved, req, async () => {
         const data = await downloadGeminiOmniFile(saved.pollTarget, saved.jobId, key, deps, req);
         const dest = resolveOutPath(req.outPath ?? saved.outPath, req.baseDir, 'mp4', deps.now);
         writeMediaOutput(dest, req.baseDir, data);
@@ -1494,7 +1436,7 @@ async function finishXaiVideo(
   deps: MediaDeps,
   startedAt: number,
 ): Promise<MediaGenerationResult> {
-  try {
+  return settleVideoJob(job, req, async () => {
     let poll: XaiVideoPoll = { state: 'pending' };
     for (let attempt = 0; poll.state === 'pending'; attempt += 1) {
       if (attempt >= XAI_VIDEO_MAX_POLLS) throw new MediaJobTimeoutError(def.id, job.jobId);
@@ -1504,11 +1446,19 @@ async function finishXaiVideo(
         signal: req.signal,
       });
       assertMediaAuthorityCurrent(req);
+      if (res.status === 404) {
+        const gone = await mediaHttpError(res, def.id);
+        throw new MediaJobGoneError(
+          `A xAI não conhece mais este pedido de vídeo (HTTP 404); gere de novo.${
+            gone.detail ? ` Resposta do serviço: ${gone.detail}` : ''
+          }`,
+        );
+      }
       if (!res.ok) throw await mediaHttpError(res, def.id);
       poll = readXaiVideoPoll((await res.json()) as Record<string, unknown>);
       assertMediaAuthorityCurrent(req);
     }
-    if (poll.state === 'failed') throw new Error(poll.problem);
+    if (poll.state === 'failed') throw new MediaJobGoneError(poll.problem);
     const data = await downloadProviderAsset(
       poll.url,
       'xai-video',
@@ -1520,16 +1470,15 @@ async function finishXaiVideo(
     writeMediaOutput(outPath, req.baseDir, data);
     assertMediaAuthorityCurrent(req);
     saveVideoJob(req.baseDir, { ...job, status: 'completed' });
-    const seconds = poll.durationSeconds ?? req.durationSeconds ?? videoModelSpec(job.model)?.defaultDuration;
-    const resolution = req.resolution ?? videoModelSpec(job.model)?.defaultResolution;
+    // Retomada só com o id: a resolução e a duração pedidas vêm do job salvo.
+    const billing = savedJobBilling(job);
+    const spec = videoModelSpec(job.model);
+    const seconds =
+      poll.durationSeconds ?? billing.seconds ?? req.durationSeconds ?? spec?.defaultDuration;
+    const resolution = billing.resolution ?? req.resolution ?? spec?.defaultResolution;
     const base = result(def, job.model, outPath, startedAt, deps, { seconds, resolution }, job.jobId);
     return poll.costUsd !== undefined ? { ...base, estimatedCostUsd: poll.costUsd } : base;
-  } catch (err) {
-    assertMediaAuthorityCurrent(req);
-    if (err instanceof MediaJobTimeoutError) throw err;
-    saveVideoJob(req.baseDir, { ...job, status: 'failed' });
-    throw err;
-  }
+  });
 }
 
 async function generateVideoXai(
@@ -1585,6 +1534,7 @@ async function generateVideoXai(
     outPath: req.outPath,
     startedAt: deps.now(),
     status: 'pending',
+    ...jobBilling(req),
   };
   // Job aceito e cobrável: a identidade de retomada fica salva mesmo que a
   // autoridade caia logo depois (mesma regra do Replicate e do Google).

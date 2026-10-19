@@ -1201,7 +1201,7 @@ describe('F-1587: Gemini Omni Flash pelo google-video', () => {
     expect(first).toBeInstanceOf(MediaJobTimeoutError);
     expect((first as MediaJobTimeoutError).jobId).toBe('v1_omni-1');
     expect((first as MediaJobTimeoutError).recoverable).toBe(true);
-    expect((first as Error).message).toContain('o vídeo já foi gerado, mas não chegou');
+    expect((first as Error).message).toContain('o vídeo já foi pedido (e cobrado), mas não chegou');
     expect((first as Error).message).toContain('recoverJobId="v1_omni-1"');
     expect(getVideoJob(dir, 'v1_omni-1')?.status).toBe('pending');
 
@@ -1578,5 +1578,64 @@ describe('F-1599: Grok Imagine (xAI) pelo motor', () => {
     });
     expect(res.path).toBe(path.join(dir, 'generated-1000.png'));
     expect(res.estimatedCostUsd).toBe(0.06);
+  });
+
+  it('vídeo: falha passageira depois do pedido aceito deixa o job retomável; falha da xAI encerra', async () => {
+    // 503 no meio da espera: o pedido já foi aceito e é cobrado.
+    const flaky = fakeDeps([
+      { json: { request_id: 'req-flaky' } },
+      { status: 503, json: { error: 'unavailable' } },
+    ]);
+    const err = await generateVideo({ prompt: 'x', provider: 'xai-video', baseDir: dir }, xaiOnly(flaky.deps)).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(MediaJobInterruptedError);
+    expect((err as Error).message).toContain('recoverJobId="req-flaky"');
+    expect(getVideoJob(dir, 'req-flaky')?.status).toBe('pending');
+
+    // Download que cai depois do done também segue retomável.
+    const download = fakeDeps([
+      { json: { request_id: 'req-dl' } },
+      { json: { status: 'done', video: { url: VIDEO_URL, respect_moderation: true } } },
+      { status: 500, body: Buffer.from('erro') },
+    ]);
+    await expect(
+      generateVideo({ prompt: 'x', provider: 'xai-video', baseDir: dir }, xaiOnly(download.deps)),
+    ).rejects.toBeInstanceOf(MediaJobInterruptedError);
+    expect(getVideoJob(dir, 'req-dl')?.status).toBe('pending');
+
+    // A própria xAI dizendo que falhou é definitivo.
+    const failed = fakeDeps([
+      { json: { request_id: 'req-failed' } },
+      { json: { status: 'expired' } },
+    ]);
+    await expect(
+      generateVideo({ prompt: 'x', provider: 'xai-video', baseDir: dir }, xaiOnly(failed.deps)),
+    ).rejects.toThrow('O pedido de vídeo expirou na xAI antes de ficar pronto. Gere de novo.');
+    expect(getVideoJob(dir, 'req-failed')?.status).toBe('failed');
+  });
+
+  it('vídeo: o job guarda resolução e duração; retomar só com o id cobra o que foi pedido', async () => {
+    const create = fakeDeps([
+      { json: { request_id: 'req-hd' } },
+      { status: 503, json: { error: 'unavailable' } },
+    ]);
+    await generateVideo(
+      { prompt: 'x', provider: 'xai-video', resolution: '1080p', durationSeconds: 10, baseDir: dir },
+      xaiOnly(create.deps),
+    ).catch(() => undefined);
+    expect(getVideoJob(dir, 'req-hd')).toMatchObject({ resolution: '1080p', durationSeconds: 10 });
+
+    const recover = fakeDeps([
+      { json: { status: 'done', video: { url: VIDEO_URL, respect_moderation: true } } },
+      { body: Buffer.from('mp4') },
+    ]);
+    const res = await generateVideo(
+      { prompt: '', recoverJobId: 'req-hd', baseDir: dir },
+      xaiOnly(recover.deps),
+    );
+    // 10 s × US$ 0,25/s em 1080p, não 8 s × US$ 0,14/s do padrão.
+    expect(res.estimatedCostUsd).toBe(2.5);
+    expect(getVideoJob(dir, 'req-hd')?.status).toBe('completed');
   });
 });
