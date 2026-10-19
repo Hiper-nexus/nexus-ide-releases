@@ -11652,14 +11652,17 @@ export const RELEASE_076315: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.316',
+export const RELEASE_076317: AppRelease = {
+  version: '0.76.317',
   date: '2026-10-19',
-  codename: 'Dono pelo terminal do pane',
-  summary: 'No desktop Linux, a fila de comandos pesados aceita o processo do pane mesmo quando o intermediário já saiu, e continua recusando processo de fora. A tag 0.76.315 ficou no macOS.',
+  codename: 'MiniMax estável na rota Anthropic',
+  summary: 'A rota upstream `minimax` no `claude` passa do id Preview `MiniMax-M3[1m]` para o id estável `MiniMax-M3.1-Flash` (API Anthropic, `platform.minimax.io`, 19/10/2026), com janela de 1M contexto preservada. O CLI `mcode` do `minimax-code` continua no Preview (`minimax/MiniMax-M3.1-Flash-Preview`).',
   highlights: [
-    { title: 'Testes dos workers voltam a rodar', detail: 'A fila de comandos pesados recusava o vitest de workers com "pid fora da árvore do terminal" quando um processo intermediário já tinha saído. A prova de dono agora aceita também o terminal do pane, e processo de fora continua recusado.' },
-    { title: 'Pacote Linux', detail: 'A tag 0.76.315 é o pacote macOS e não recebe arquivos Linux. O desktop Linux sai na 0.76.316.' },
+    { title: 'MiniMax GA no `claude` Token Plan', detail: 'O `MINIMAX_MODEL` (`src/main/adapters/launcher-provider-manager.ts`) deixa de ser `MiniMax-M3[1m]` e vira `MiniMax-M3.1-Flash`; os quatro slots (`ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL`) e a janela `CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000` seguem no id novo. O endpoint Anthropic continua `https://api.minimax.io/anthropic`.' },
+    { title: 'Preview preservado na rota do `mcode`', detail: 'Catálogo (`src/main/adapters/model-catalog.ts`), `task-router`, `published-benchmarks` e o adapter embutido `adapters/builtin/minimax-code.json` continuam com `minimax/MiniMax-M3.1-Flash-Preview` como default e `minimax/MiniMax-M3` como secundário; nada no argv do `mcode` muda nesta versão.' },
+    { title: 'Sem `thinking.type=disabled`', detail: 'A doc da MiniMax recusa `thinking.type=disabled` com HTTP 400 e aceita `effort` em `low|medium|high|xhigh|max`. O env do upstream continua sem chave de thinking; o teste novo trava o contrato (id sem `[1m]`, slots batem com `defaultModel`, JSON do env não casa `thinking.*disabled`).' },
   ],
   fixes: [],
 };
+
+export const CURRENT_RELEASE: AppRelease = RELEASE_076317;

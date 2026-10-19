@@ -76,7 +76,11 @@ const GLM_FLASH_EXTRA: Record<string, string> = {
   ANTHROPIC_DEFAULT_OPUS_MODEL: GLM_FLASH_MODEL,
 };
 
-const MINIMAX_MODEL = 'MiniMax-M3[1m]';
+// Id estável da API Anthropic (platform.minimax.io, 19/10/2026). A CLI
+// `mcode` 0.6.2 ainda só conhece o Preview — esse id não vai no argv dela.
+// A doc recusa thinking.type=disabled (400) e aceita effort
+// low|medium|high|xhigh|max. Este env não desliga o thinking.
+const MINIMAX_MODEL = 'MiniMax-M3.1-Flash';
 
 const THIRD_PARTY_EXTRA: Record<string, string> = {
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',

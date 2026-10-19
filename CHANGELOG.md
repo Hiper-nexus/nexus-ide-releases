@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.317 — MiniMax estável na rota Anthropic
+
+A tag 0.76.315 é o pacote macOS e 0.76.316 é o pacote Linux; nenhum dos dois recebe arquivos novos nesta versão. Este pacote leva a troca do id estável da MiniMax para a rota Anthropic do `claude` (`upstream` `minimax`):
+
+- **MiniMax GA no lugar do `claude` Token Plan**. O slot upstream da MiniMax no Nexus passa de `MiniMax-M3[1m]` (Preview em produção) para `MiniMax-M3.1-Flash` (id estável da API Anthropic, `platform.minimax.io`, 19/10/2026). A janela de 1M contexto e os quatro slots (`ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL`) seguem todos no id novo. O CLI `mcode` (rota do `minimax-code`) continua com o Preview (`minimax/MiniMax-M3.1-Flash-Preview`) intacto em `model-catalog`, `task-router`, `published-benchmarks` e no `adapters/builtin/minimax-code.json`. A doc da MiniMax recusa `thinking.type=disabled` com HTTP 400 e aceita `effort` `low|medium|high|xhigh|max`: este env não desliga o thinking.
+- **Teste do upstream trava o contrato**. O caso passa a afirmar que o id não contém `[1m]`, que os quatro slots batem com o `defaultModel` e que o env serializado não casa `thinking.*disabled`.
+
 ## 0.76.316 — Dono pelo terminal do pane
 
 A tag 0.76.315 é o pacote macOS e não recebe arquivos Linux. Este pacote leva o desktop Linux.
