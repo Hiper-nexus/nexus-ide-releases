@@ -6,6 +6,7 @@
  * `blocked` com as falhas em artifact — nunca como `success`.
  */
 import type { ProjectExecutionScope } from '../../shared/types';
+import { randomUUID } from 'node:crypto';
 import type { McpToolInvocation } from '../orch/mcp-protocol';
 import {
   formatRegressionGateReport,
@@ -27,6 +28,8 @@ export const REGRESSION_GATE_BOUNCES_PER_SESSION = 2;
  * `unavailable` → aceito e NÃO verificado, fail-open honesto.
  */
 export const HANDOFF_REGRESSION_BUDGET_MS = 45_000;
+/** O runner destacado não compete com a resposta MCP; pode terminar o lote útil. */
+export const BACKGROUND_HANDOFF_REGRESSION_BUDGET_MS = 120_000;
 /** Prefixo no resumo quando os testes impactados não rodaram. */
 export const REGRESSION_UNVERIFIED_PREFIX = '[testes impactados não verificados]';
 const MAX_TRACKED_SESSIONS = 512;
@@ -34,7 +37,9 @@ const MAX_TRACKED_SESSIONS = 512;
 export interface RegressionGateArtifact {
   readonly kind: 'nexus.regressionGate';
   readonly payload: {
-    readonly status: RegressionGateResult['status'];
+    readonly status: RegressionGateResult['status'] | 'running';
+    /** Liga o recibo provisório ao resultado Main-owned que o substitui. */
+    readonly runId?: string;
     readonly diffHash: string;
     readonly headSha: string | null;
     readonly baseSha: string | null;
@@ -43,6 +48,13 @@ export interface RegressionGateArtifact {
     readonly notRun?: RegressionNotRun | null;
     readonly testsRun: readonly string[];
     readonly testsNotRun: readonly string[];
+    /** Leitura curta para o Maestro, sem precisar inferir dos arrays. */
+    readonly summary: {
+      readonly affected: number;
+      readonly passed: number;
+      readonly failed: number;
+      readonly notRun: number;
+    };
     readonly failures: RegressionGateResult['failures'];
     readonly inheritedFailures: RegressionGateResult['inheritedFailures'];
     readonly preexistingFailures: RegressionGateResult['preexistingFailures'];
@@ -60,6 +72,8 @@ export type RegressionHandoffVerdict =
       readonly artifact?: RegressionGateArtifact;
       /** Havia testes impactados e eles não rodaram: aceito, mas NÃO verificado. */
       readonly unverified?: boolean;
+      /** Só no handoff assíncrono: chamar DEPOIS da escrita durável. */
+      readonly completeInBackground?: () => Promise<RegressionGateArtifact>;
     }
   | { readonly kind: 'exhausted'; readonly artifact: RegressionGateArtifact; readonly report: string };
 
@@ -69,11 +83,12 @@ export function __resetRegressionHandoffBouncesForTests(): void {
   bouncesBySession.clear();
 }
 
-function artifactOf(result: RegressionGateResult): RegressionGateArtifact {
+function artifactOf(result: RegressionGateResult, runId?: string): RegressionGateArtifact {
   return {
     kind: 'nexus.regressionGate',
     payload: {
       status: result.status,
+      ...(runId ? { runId } : {}),
       diffHash: result.diffHash,
       headSha: result.headSha,
       baseSha: result.baseSha,
@@ -81,6 +96,12 @@ function artifactOf(result: RegressionGateResult): RegressionGateArtifact {
       notRun: result.notRun ?? null,
       testsRun: result.testsRun.slice(0, 64),
       testsNotRun: result.testsNotRun.slice(0, 64),
+      summary: {
+        affected: result.testsRun.length + result.testsNotRun.length,
+        failed: new Set(result.failures.map((failure) => failure.file)).size,
+        passed: result.testsRun.filter((test) => !result.failures.some((failure) => failure.file === test)).length,
+        notRun: result.testsNotRun.length,
+      },
       failures: result.failures.slice(0, 16),
       inheritedFailures: result.inheritedFailures.slice(0, 16),
       preexistingFailures: result.preexistingFailures.slice(0, 16),
@@ -89,6 +110,54 @@ function artifactOf(result: RegressionGateResult): RegressionGateArtifact {
       warnings: result.warnings.slice(0, 8),
     },
   };
+}
+
+function pendingArtifact(runId: string): RegressionGateArtifact {
+  return {
+    kind: 'nexus.regressionGate',
+    payload: {
+      status: 'running', runId, diffHash: '', headSha: null, baseSha: null, runner: null,
+      notRun: null, testsRun: [], testsNotRun: [], summary: { affected: 0, passed: 0, failed: 0, notRun: 0 }, failures: [], inheritedFailures: [],
+      preexistingFailures: [], untestedFiles: [], invariantsTouched: [], warnings: [],
+    },
+  };
+}
+
+function unavailableArtifact(runId: string): RegressionGateArtifact {
+  const pending = pendingArtifact(runId);
+  return {
+    ...pending,
+    payload: {
+      ...pending.payload,
+      status: 'unavailable',
+      warnings: ['execução em segundo plano falhou antes de produzir relatório'],
+    },
+  };
+}
+
+/**
+ * Troca somente o recibo Main-owned que este módulo acabou de criar. O store
+ * mantém a identidade do handoff; Maestro/renderer recebem o evento normal.
+ */
+export function settleBackgroundRegressionGate(
+  verdict: RegressionHandoffVerdict,
+  handoffId: string,
+  store: {
+    replaceBackgroundRegressionArtifact: (
+      handoffId: string,
+      runId: string,
+      artifact: RegressionGateArtifact,
+    ) => boolean;
+  },
+): void {
+  if (verdict.kind !== 'accepted' || !verdict.completeInBackground) return;
+  const runId = verdict.artifact?.payload.runId;
+  if (!runId) return;
+  void verdict.completeInBackground().then((artifact) => {
+    store.replaceBackgroundRegressionArtifact(handoffId, runId, artifact);
+  }).catch((error) => {
+    console.warn('[regression-gate] não consegui persistir o resultado em segundo plano:', error);
+  });
 }
 
 export async function evaluateHandoffRegressionGate(
@@ -106,6 +175,8 @@ export async function evaluateHandoffRegressionGate(
     readonly authority?: McpToolInvocation;
     /** Checkout principal do projeto (escopo do Main): ver RunRegressionGateInput. */
     readonly trustedDependencyRoot?: string;
+    /** Handoff MCP: persiste `running`, executa depois sem segurar a resposta. */
+    readonly background?: boolean;
     /**
      * false quando o transporte não devolve erro ao agente (bloco no PTY,
      * fechamento mecânico): falha entra direto como `exhausted` (blocked),
@@ -118,23 +189,42 @@ export async function evaluateHandoffRegressionGate(
   if (!(deps.enabled ?? isRegressionGateEnabled)()) {
     return { kind: 'skipped', reason: 'disabled' };
   }
+  const run = () => runRegressionGate(
+    {
+      scope: input.scope,
+      projectScope: input.projectScope,
+      declaredFiles: input.declaredFiles,
+      baseSha: input.baseSha,
+      startedAtMs: input.startedAtMs,
+      recordedEdits: input.recordedEdits,
+      timeoutMs: input.background ? BACKGROUND_HANDOFF_REGRESSION_BUDGET_MS : HANDOFF_REGRESSION_BUDGET_MS,
+      // A resposta MCP fecha/cancela a invocation; o job destacado já foi
+      // autorizado pelo Main e não pode herdar esse AbortSignal efêmero.
+      signal: input.background ? undefined : input.signal,
+      authority: input.background ? undefined : input.authority,
+      trustedDependencyRoot: input.trustedDependencyRoot,
+    },
+    deps,
+  );
+  if (input.background) {
+    const runId = randomUUID();
+    return {
+      kind: 'accepted',
+      artifact: pendingArtifact(runId),
+      unverified: true,
+      completeInBackground: async () => {
+        try {
+          return artifactOf(await run(), runId);
+        } catch (error) {
+          console.warn('[regression-gate] portão em segundo plano falhou (registrado):', error);
+          return unavailableArtifact(runId);
+        }
+      },
+    };
+  }
   let result: RegressionGateResult;
   try {
-    result = await runRegressionGate(
-      {
-        scope: input.scope,
-        projectScope: input.projectScope,
-        declaredFiles: input.declaredFiles,
-        baseSha: input.baseSha,
-        startedAtMs: input.startedAtMs,
-        recordedEdits: input.recordedEdits,
-        timeoutMs: HANDOFF_REGRESSION_BUDGET_MS,
-        signal: input.signal,
-        authority: input.authority,
-        trustedDependencyRoot: input.trustedDependencyRoot,
-      },
-      deps,
-    );
+    result = await run();
   } catch (error) {
     // Fail-open: infraestrutura do portão nunca segura a entrega.
     console.warn('[regression-gate] portão falhou (ignorado):', error);

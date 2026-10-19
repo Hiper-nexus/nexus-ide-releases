@@ -34,6 +34,7 @@ import {
 } from "./jev-handoff-review";
 import {
   REGRESSION_UNVERIFIED_PREFIX,
+  settleBackgroundRegressionGate,
   type RegressionHandoffVerdict,
 } from "../regression-gate/regression-gate-handoff";
 import { evaluateWriterHandoffRegression } from "./handoff-regression-gate";
@@ -99,6 +100,7 @@ export async function submitWorkspaceHandoff(
     regressionVerdict = await evaluateWriterHandoffRegression(ctx, {
       declaredFiles,
       invocation,
+      background: true,
     });
     if (regressionVerdict.kind === "retry")
       throw new Error(regressionVerdict.message);
@@ -225,6 +227,7 @@ export async function submitWorkspaceHandoff(
     // por id depois do auto-close não depende do registro vivo de panes.
     workspaceRecipientSessionId: destination.parentContext.sessionId!,
   });
+  settleBackgroundRegressionGate(regressionVerdict, handoff.id, store);
   if (verdict.kind !== "none" && ctx.sessionId)
     disarmDeliveryContract(ctx.sessionId);
   let deliveryError: string | undefined;

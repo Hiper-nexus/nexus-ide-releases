@@ -98,6 +98,8 @@ const BASE_COMPARE_MIN_BUDGET_MS = 20_000;
 export const MIN_TEST_BUDGET_MS = 20_000;
 /** Teto de arquivos no cache incremental de imports (F-1533). */
 const IMPORT_FACT_CACHE_LIMIT = 40_000;
+const MAX_DIFF_LITERAL_CANDIDATES = 64;
+const MAX_DIFF_LITERAL_LENGTH = 256;
 
 export const DEFAULT_REGRESSION_TEST_TIMEOUT_MS = 120_000;
 /**
@@ -440,8 +442,11 @@ const inflight = new Map<string, { readonly promise: Promise<RegressionGateResul
  * certifica nada sozinho — o veredito continua saindo dos testes executados.
  */
 const importFactCache = new Map<string, {
+  /** Identidade de conteúdo; nunca reaproveitamos fatos sob outro hash. */
+  readonly hash: string;
   readonly size: number;
-  readonly mtimeMs: number;
+  /** `ctime` muda mesmo quando uma restauração preserva o mtime original. */
+  readonly ctimeMs: number;
   readonly fact: OrientationImportFileFact;
 }>();
 
@@ -710,6 +715,49 @@ export function regressionDiffHash(root: string, changedFiles: readonly string[]
   return hash.digest('hex');
 }
 
+/**
+ * Literais de linhas adicionadas/removidas no diff. Expectativas de UI e
+ * hashes de proveniência frequentemente vivem em testes que não importam a
+ * fonte alterada, portanto o grafo sozinho não os alcança.
+ */
+export function regressionDiffLiterals(diff: string): string[] {
+  const literals = new Set<string>();
+  for (const line of diff.split(/\r?\n/u)) {
+    if (!/^[+-][^+-]/u.test(line)) continue;
+    for (const match of line.matchAll(/(['"`])((?:\\.|(?!\1)[^\r\n]){3,256})\1/gu)) {
+      const literal = match[2]!;
+      if (literal.length <= MAX_DIFF_LITERAL_LENGTH) literals.add(literal);
+      if (literals.size >= MAX_DIFF_LITERAL_CANDIDATES) return [...literals];
+    }
+  }
+  return [...literals];
+}
+
+/** O diff do commit e o WIP próprio atual são ambos relevantes ao handoff. */
+function changedDiffLiterals(
+  root: string,
+  base: RegressionBase,
+  git: GitRunner,
+  ownFiles: readonly string[],
+): string[] {
+  const read = (args: readonly string[]) => {
+    try {
+      return git.run(root, args, { allowFailure: true }).stdout;
+    } catch {
+      return '';
+    }
+  };
+  const committed = base.sha
+    ? read(['diff', '--no-ext-diff', '--unified=0', `${base.sha}...HEAD`])
+    : '';
+  // `git diff HEAD` soma index e worktree. Caminhos próprios impedem que uma
+  // expectativa textual do WIP anterior ao spawn passe a ser cobrada do writer.
+  const working = ownFiles.length > 0
+    ? read(['diff', '--no-ext-diff', '--unified=0', 'HEAD', '--', ...ownFiles])
+    : '';
+  return regressionDiffLiterals(`${committed}\n${working}`);
+}
+
 interface ObservedState {
   readonly base: RegressionBase;
   readonly changed: ChangedSnapshot;
@@ -897,6 +945,8 @@ interface ImpactedTests {
   readonly distances: ReadonlyMap<string, number>;
   readonly untestedFiles: readonly string[];
   readonly e2eSkipped: readonly string[];
+  /** Selecionados por uma literal removida/alterada no diff. */
+  readonly literalTests: readonly string[];
   readonly indexComplete: boolean;
   /** F-1533: o mapa parou no prazo — seleção parcial nunca certifica. */
   readonly mapDeadlineHit: boolean;
@@ -912,13 +962,46 @@ export interface ImpactMapBudget {
 async function buildReverseGraph(
   scope: ProjectExecutionScope,
   changedFiles: readonly string[],
+  literalCandidates: readonly string[] = [],
   budget?: ImpactMapBudget,
-): Promise<{ reverse: ReadonlyMap<string, readonly string[]>; files: readonly string[]; truncated: boolean; deadlineHit: boolean }> {
+): Promise<{
+  reverse: ReadonlyMap<string, readonly string[]>;
+  files: readonly string[];
+  /** Testes achados por uma literal que o diff removeu ou alterou. */
+  literalTests: readonly string[];
+  truncated: boolean;
+  deadlineHit: boolean;
+}> {
   const walk = await walkOrientationTreeAsync(scope, GRAPH_LIMITS);
   const facts: OrientationImportFileFact[] = [];
   let incomplete = walk.truncated || walk.treeFingerprintParts.some(part => { const [file, state] = part.split('\0'); return state === 'skip-size' && isOrientationImportSource(path.posix.extname(file!).toLowerCase()); });
   let deadlineHit = false;
   const now = budget?.now ?? Date.now;
+  const literals = [...new Set(literalCandidates)]
+    .filter((literal) => literal.length >= 3 && literal.length <= MAX_DIFF_LITERAL_LENGTH)
+    .slice(0, MAX_DIFF_LITERAL_CANDIDATES);
+  const literalTests: string[] = [];
+  // Faz esta busca antes de montar as arestas: é a via de resgate para uma
+  // expectativa textual (rótulo, hash de proveniência) que não importa a
+  // fonte alterada. Também dá preferência ao sinal mais próximo do diff.
+  if (literals.length > 0) {
+    let scannedTests = 0;
+    for (const file of walk.files) {
+      if (!TEST_FILE_RE.test(file.relativePath) && !PY_TEST_RE.test(file.relativePath)) continue;
+      if (budget?.deadline !== undefined && now() >= budget.deadline) {
+        deadlineHit = true;
+        incomplete = true;
+        break;
+      }
+      try {
+        const content = readWorkspaceTextFile(scope, file.relativePath).content;
+        if (literals.some((literal) => content.includes(literal))) literalTests.push(file.relativePath);
+      } catch {
+        incomplete = true;
+      }
+      if (++scannedTests % 64 === 0) await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+  }
   // Módulo removido/renomeado continua nó resolvível: quem ainda o importa
   // (e agora quebra) entra no conjunto com os seus testes.
   const present = new Set(walk.files.map((file) => file.relativePath));
@@ -944,12 +1027,21 @@ async function buildReverseGraph(
       const absolute = path.join(scope.rootRealPath, file.relativePath);
       const stat = fs.statSync(absolute);
       let entry = importFactCache.get(cacheKey);
-      if (entry && (entry.size !== stat.size || entry.mtimeMs !== stat.mtimeMs)) entry = undefined;
+      // `ctime` é só o detector barato; o valor cacheado é o hash do conteúdo.
+      // Assim um mapa quente não relê milhares de fontes e uma regravação que
+      // preserva mtime ainda força a comparação de hash.
+      if (entry && entry.size === stat.size && entry.ctimeMs === stat.ctimeMs) {
+        facts.push(entry.fact);
+        continue;
+      }
+      const read = readWorkspaceTextFile(scope, file.relativePath);
+      const hash = createHash('sha256').update(read.content).digest('hex');
+      if (entry?.hash !== hash) entry = undefined;
       if (!entry) {
-        const read = readWorkspaceTextFile(scope, file.relativePath);
         entry = {
+          hash,
           size: stat.size,
-          mtimeMs: stat.mtimeMs,
+          ctimeMs: stat.ctimeMs,
           fact: {
             relativePath: file.relativePath,
             ext: file.ext,
@@ -961,6 +1053,9 @@ async function buildReverseGraph(
         while (importFactCache.size > IMPORT_FACT_CACHE_LIMIT) {
           importFactCache.delete(importFactCache.keys().next().value!);
         }
+      } else {
+        entry = { ...entry, size: stat.size, ctimeMs: stat.ctimeMs };
+        importFactCache.set(cacheKey, entry);
       }
       facts.push(entry.fact);
     } catch {
@@ -974,6 +1069,7 @@ async function buildReverseGraph(
   return {
     reverse: graph.reverse,
     files: walk.files.map((file) => file.relativePath),
+    literalTests,
     truncated: incomplete,
     deadlineHit,
   };
@@ -1026,8 +1122,15 @@ export async function computeImpactedTests(
   wip: { readonly tests: readonly string[]; readonly dbConsumers: readonly string[] } = { tests: [], dbConsumers: [] },
   /** F-1533: prazo do mapa; vencido, o grafo fica parcial e nada certifica. */
   budget?: ImpactMapBudget,
+  /** Literais removidas/alteradas: expectativa sem import direto ainda entra. */
+  literalCandidates: readonly string[] = [],
 ): Promise<ImpactedTests> {
-  const { reverse, files, truncated, deadlineHit } = await buildReverseGraph(scope, changedFiles, budget);
+  const { reverse, files, literalTests, truncated, deadlineHit } = await buildReverseGraph(
+    scope,
+    changedFiles,
+    literalCandidates,
+    budget,
+  );
   const fileSet = new Set(files);
   const uncoveredChangedSource = changedFiles.some(file => !fileSet.has(file) &&
     isOrientationImportSource(path.posix.extname(file).toLowerCase()) && fs.existsSync(path.join(scope.rootRealPath, file)));
@@ -1095,6 +1198,7 @@ export async function computeImpactedTests(
       if (normalized) addTest(normalized, label, 1);
     }
   }
+  for (const test of literalTests) addTest(test, '(literal alterado)', 1);
   const e2eSkipped = includeE2E ? [] : ordered.filter((test) => E2E_FILE_RE.test(test));
   return {
     tests: includeE2E ? ordered : ordered.filter((test) => !E2E_FILE_RE.test(test)),
@@ -1102,6 +1206,7 @@ export async function computeImpactedTests(
     distances,
     untestedFiles: untested,
     e2eSkipped,
+    literalTests,
     indexComplete: !truncated && !uncoveredChangedSource && !traversalIncomplete,
     mapDeadlineHit: deadlineHit,
     warnings: [...(truncated ? ['índice do projeto truncado: o grafo de imports pode estar incompleto'] : []),
@@ -1109,6 +1214,31 @@ export async function computeImpactedTests(
       // F-1533: diz que foi o PRAZO, não a config do projeto — e que os
       // co-localizados do diff continuam cobertos.
       ...(deadlineHit ? ['mapa de imports cortado pelo prazo: grafo parcial, testes co-localizados do diff mantidos'] : [])],
+  };
+}
+
+/** Escolha pura e testável: invariantes, diretos e expectativas textuais primeiro. */
+export function prioritizeRegressionTests(input: {
+  readonly tests: readonly string[];
+  readonly distances: ReadonlyMap<string, number>;
+  readonly invariantTests?: ReadonlySet<string>;
+  readonly literalTests?: ReadonlySet<string>;
+  readonly maxTestFiles: number;
+}): { readonly tests: readonly string[]; readonly overflow: readonly string[] } {
+  const invariants = input.invariantTests ?? new Set<string>();
+  const literals = input.literalTests ?? new Set<string>();
+  const tierOf = (test: string) => Math.max(1, input.distances.get(test) ?? 1);
+  const ordered = [...input.tests].sort(
+    (left, right) =>
+      Number(invariants.has(right)) - Number(invariants.has(left)) ||
+      Number(tierOf(right) <= 1) - Number(tierOf(left) <= 1) ||
+      Number(literals.has(right)) - Number(literals.has(left)) ||
+      tierOf(left) - tierOf(right) ||
+      left.localeCompare(right),
+  );
+  return {
+    tests: ordered.slice(0, input.maxTestFiles),
+    overflow: ordered.slice(input.maxTestFiles),
   };
 }
 
@@ -1887,6 +2017,7 @@ async function evaluateMappedTests(
   const ownExtra = new Set([...(ownRadius?.tests ?? []), ...ownTouched.flatMap((invariant) => invariant.testes ?? [])]);
   const dbConsumers = radius?.dbConsumers ?? [];
   const ownConsumers = new Set(ownRadius?.dbConsumers ?? []);
+  const literalCandidates = changedDiffLiterals(root, state.base, git, ownFiles);
 
   // F-1533: o prazo é UM só (mapa + testes), e o mapa para antes de comer o
   // piso dos testes. Antes ele não tinha prazo nenhum: num repositório grande
@@ -1905,6 +2036,7 @@ async function evaluateMappedTests(
       input.includeE2E === true,
       { tests: extraTests.filter((test) => !ownExtra.has(test)), dbConsumers: dbConsumers.filter((file) => !ownConsumers.has(file)) },
       { deadline: mapDeadline, now },
+      literalCandidates,
     );
   } catch (error) {
     warnings.push(`mapa de testes indisponível: ${error instanceof Error ? error.message : String(error)}`.slice(0, 200));
@@ -1936,13 +2068,16 @@ async function evaluateMappedTests(
   // F-1348: depois deles, por distância no grafo reverso. Co-localizados e
   // importadores diretos (0–1) formam a 1ª faixa; 2, 3… as seguintes.
   const tierOf = (test: string) => Math.max(1, impacted.distances.get(test) ?? 1);
-  const prioritizedTests = [...impacted.tests].sort(
-    (left, right) =>
-      Number(invariantTests.has(right)) - Number(invariantTests.has(left)) || tierOf(left) - tierOf(right),
-  );
-  const tests = prioritizedTests.slice(0, maxTests);
+  const selection = prioritizeRegressionTests({
+    tests: impacted.tests,
+    distances: impacted.distances,
+    invariantTests,
+    literalTests: new Set(impacted.literalTests),
+    maxTestFiles: maxTests,
+  });
+  const tests = selection.tests;
   // Cortados pelo teto não rodaram: contam como não verificados, não como aprovados.
-  const overflow = prioritizedTests.slice(maxTests);
+  const overflow = selection.overflow;
   if (impacted.tests.length > maxTests) {
     warnings.push(
       `raio grande: ${impacted.tests.length} testes impactados, rodando os ${maxTests} mais próximos do diff`,

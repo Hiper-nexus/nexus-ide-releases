@@ -544,6 +544,24 @@ function resolveRouteAttribution(
   }
 }
 
+/** Recibo derivado do Main, mutável só enquanto o gate destacado termina. */
+function backgroundRegressionRunId(artifact: unknown): string | null {
+  if (!artifact || typeof artifact !== 'object') return null;
+  const value = artifact as { kind?: unknown; payload?: { runId?: unknown } };
+  return value.kind === 'nexus.regressionGate' && typeof value.payload?.runId === 'string'
+    ? value.payload.runId
+    : null;
+}
+
+function withoutBackgroundRegressionArtifact(artifacts: readonly unknown[]): unknown[] {
+  return artifacts.filter((artifact) => backgroundRegressionRunId(artifact) === null);
+}
+
+function isPendingBackgroundRegressionArtifact(artifact: unknown, runId: string): boolean {
+  if (backgroundRegressionRunId(artifact) !== runId || !artifact || typeof artifact !== 'object') return false;
+  return (artifact as { payload?: { status?: unknown } }).payload?.status === 'running';
+}
+
 export class ScopedHandoffStore {
   readonly #binding: ScopedStoreBinding;
   readonly #configuredMissionEngine:
@@ -1404,8 +1422,12 @@ export class ScopedHandoffStore {
       row.status === input.status &&
       row.summary === input.summary &&
       isDeepStrictEqual(
-        parseJsonArray(row.artifacts_json, "handoff replay artifacts"),
-        parseJsonArray(artifactsJson, "handoff retry artifacts"),
+        withoutBackgroundRegressionArtifact(
+          parseJsonArray(row.artifacts_json, "handoff replay artifacts"),
+        ),
+        withoutBackgroundRegressionArtifact(
+          parseJsonArray(artifactsJson, "handoff retry artifacts"),
+        ),
       ) &&
       isDeepStrictEqual(
         parseJsonArray(row.evidence_ids_json, "handoff replay evidence IDs"),
@@ -1616,6 +1638,35 @@ export class ScopedHandoffStore {
       )
       .all(...params);
     return this.#fromRows(rows, db);
+  }
+
+  /**
+   * Finaliza o recibo de regressão que o Main inseriu no handoff já durável.
+   * Não acrescenta nem substitui artefato do agente, e é idempotente para o
+   * mesmo runId — retries físicos continuam comparando o payload original.
+   */
+  replaceBackgroundRegressionArtifact(
+    rawHandoffId: string,
+    runId: string,
+    artifact: unknown,
+  ): boolean {
+    const handoffId = identifierSchema.parse(rawHandoffId);
+    if (!runId || backgroundRegressionRunId(artifact) !== runId) return false;
+    const db = this.#binding.writeDatabase();
+    const outcome = db.transaction(() => {
+      const row = db.prepare('SELECT artifacts_json FROM handoffs WHERE id = ?').get(handoffId) as
+        { artifacts_json: string } | undefined;
+      if (!row) return false;
+      const artifacts = parseJsonArray(row.artifacts_json, 'handoff artifacts');
+      const index = artifacts.findIndex((candidate) => isPendingBackgroundRegressionArtifact(candidate, runId));
+      if (index < 0) return false;
+      const next = [...artifacts];
+      next[index] = artifact;
+      return db.prepare('UPDATE handoffs SET artifacts_json = ? WHERE id = ?')
+        .run(encodeJsonArray(next, 'handoff artifacts'), handoffId).changes === 1;
+    })();
+    if (outcome) this.#binding.emitChange();
+    return outcome;
   }
 
   /**
