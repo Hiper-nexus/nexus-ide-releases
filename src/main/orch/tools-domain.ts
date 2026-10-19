@@ -193,7 +193,7 @@ import { operatorHandMissionContract, operatorHandMissionLane } from './operator
 import { hasOperatorTabHost, recordOperatorTabCompletionRequest } from './operator-tab-completion';
 import { stripAwaitingAdjustmentMarker } from '../../shared/mission-recovery-policy';
 import { billingFromAuth } from './subscription-route-preference';
-import { readQwenSettingsSummary } from '../adapters/qwen-settings';
+import { readQwenSettingsSummaryAsync } from '../adapters/qwen-settings';
 import {
   countMissionItems,
   fastLaneObjectiveText,
@@ -2232,6 +2232,9 @@ export async function routeTaskForCaller(
         !credentialRefusedExcluded.includes(id) &&
         (!hasAvailableAccount(id) || quotaWindowFull.has(id)),
     );
+  // Lido uma vez por rota e fora do caminho síncrono do Main.
+  const qwenTokenPlan = await readQwenSettingsSummaryAsync()
+    .then((summary) => summary.tokenPlan, () => false);
   const buildAdapters = (skip: ReadonlySet<string>) =>
     providers.map((a) => {
       const models = [
@@ -2311,8 +2314,7 @@ export async function routeTaskForCaller(
           const billing = billingFromAuth({
             authStrategy: a.authStrategy,
             // Qwen no Alibaba Token Plan: chave de plano com tarifa fixa.
-            flatRatePlan: a.adapterId === 'qwen' && a.authStrategy === 'api-key' &&
-              readQwenSettingsSummary().tokenPlan,
+            flatRatePlan: a.adapterId === 'qwen' && a.authStrategy === 'api-key' && qwenTokenPlan,
           });
           return billing ? { billing } : {};
         })(),
