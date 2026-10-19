@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { AsyncProcessGitRunner, assertSafeLocalGitConfigAsync } from '../runtime/git-command';
 import { iteratePeriodicMissionIds } from './mission-store';
 import { sameProjectScope } from './project-scoped-broadcast';
 import { runPeriodicTask, stopPeriodicTask, type PeriodicTaskContext } from '../observability/periodic-task';
@@ -1474,18 +1474,20 @@ interface IdleWorkerRow {
 const idleWorkerRows = new Map<string, IdleWorkerRow>();
 
 /** true = commit no intervalo; null = git não respondeu (não decide). */
-function gitCommitSince(root: string, sinceMs: number): Promise<boolean | null> {
-  return new Promise((resolve) => {
-    execFile(
-      'git',
-      ['-C', root, 'log', '-1', '--format=%H', `--since=${new Date(sinceMs).toISOString()}`],
-      { timeout: 2000, windowsHide: true },
-      (error, stdout) => {
-        if (error) { resolve(null); return; }
-        resolve(/^[0-9a-f]{7,64}$/i.test(String(stdout ?? '').trim()));
-      },
-    );
-  });
+export function gitCommitSince(root: string, sinceMs: number): Promise<boolean | null> {
+  const git = new AsyncProcessGitRunner();
+  return (async () => {
+    // Mesmo envelope do resto do Main: config local executável recusada antes
+    // do log, flags seguras do runner e `log.showSignature` desligado (o
+    // format %H é o único dado que interessa aqui).
+    await assertSafeLocalGitConfigAsync(git, root);
+    const result = await git.run(root, [
+      '-c', 'log.showSignature=false',
+      'log', '-1', '--format=%H', `--since=${new Date(sinceMs).toISOString()}`,
+    ], { allowFailure: true, timeoutMs: 2000 });
+    if (result.status !== 0) return null;
+    return /^[0-9a-f]{7,64}$/i.test(String(result.stdout ?? '').trim());
+  })().catch(() => null);
 }
 
 async function recoverIdleWorkers(

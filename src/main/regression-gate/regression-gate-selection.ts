@@ -5,7 +5,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import type { GitRunner } from '../runtime/git-command';
+import type { AsyncGitRunner, GitRunner } from '../runtime/git-command';
 
 /** Teto de testes achados por literal removido/alterado no diff. */
 export const MAX_LITERAL_TESTS = 20;
@@ -18,6 +18,10 @@ const MAX_BASENAME_FILES = 40;
 const MAX_DIFF_CHARS = 400_000;
 const MIN_LITERAL_LENGTH = 6;
 const MAX_LITERAL_LENGTH = 120;
+/** Git assíncrono no Main: poucos processos de uma vez, nunca os 40 do laço. */
+const GREP_CONCURRENCY = 4;
+/** Teto de parede da busca por basename; vencido, devolve o que já achou. */
+export const BASENAME_BUDGET_MS = 8_000;
 
 /** Pathspecs de arquivos de teste (git grep não traz fonte de produção). */
 const TEST_PATHSPECS = [
@@ -88,13 +92,13 @@ export function extractRemovedLiterals(diff: string, max = MAX_LITERALS): string
   return result.slice(0, max);
 }
 
-function grepTests(git: GitRunner, root: string, needles: readonly string[], limit: number): string[] {
+async function grepTests(git: AsyncGitRunner | GitRunner, root: string, needles: readonly string[], limit: number): Promise<string[]> {
   if (needles.length === 0 || limit <= 0) return [];
   try {
     const args = ['grep', '-l', '-F', '--untracked'];
     for (const needle of needles) args.push('-e', needle);
     args.push('--', ...TEST_PATHSPECS);
-    const result = git.run(root, args, { allowFailure: true, timeoutMs: 10_000 });
+    const result = await git.run(root, args, { allowFailure: true, timeoutMs: 10_000 });
     if (result.status !== 0) return [];
     return result.stdout
       .split('\n')
@@ -111,20 +115,22 @@ function grepTests(git: GitRunner, root: string, needles: readonly string[], lim
  * Testes que contêm um literal removido/alterado no diff, limitado a `limit`.
  * `baseSha` nulo compara com o HEAD (só o working tree).
  */
-export function testsByRemovedLiterals(
-  git: GitRunner,
+export async function testsByRemovedLiterals(
+  git: AsyncGitRunner | GitRunner,
   root: string,
   baseSha: string | null,
   limit = MAX_LITERAL_TESTS,
-): string[] {
+): Promise<string[]> {
   try {
-    const result = git.run(
+    const result = await git.run(
       root,
-      ['diff', '-U0', '--no-color', '--no-ext-diff', baseSha ?? 'HEAD', '--'],
+      // --no-textconv/--no-ext-diff: o diff é dado cru para extrair literais;
+      // um textconv/ext-diff configurável reescreveria (ou executaria) antes.
+      ['diff', '-U0', '--no-color', '--no-textconv', '--no-ext-diff', baseSha ?? 'HEAD', '--'],
       { allowFailure: true, timeoutMs: 15_000 },
     );
     if (result.status !== 0) return [];
-    return grepTests(git, root, extractRemovedLiterals(result.stdout), limit);
+    return await grepTests(git, root, extractRemovedLiterals(result.stdout), limit);
   } catch {
     return [];
   }
@@ -133,14 +139,16 @@ export function testsByRemovedLiterals(
 /**
  * Fallback quando o mapa de imports estoura: testes que importam o arquivo
  * pelo basename (`/foo'`, `/foo.js`...). Por arquivo tocado, para manter a
- * autoria de cada teste.
+ * autoria de cada teste. Assíncrono com concorrência pequena e teto de
+ * parede: no Main, 40 `git grep` síncronos congelavam o evento.
  */
-export function testsImportingBasename(
-  git: GitRunner,
+export async function testsImportingBasename(
+  git: AsyncGitRunner | GitRunner,
   root: string,
   changedFiles: readonly string[],
-): ReadonlyMap<string, readonly string[]> {
-  const out = new Map<string, readonly string[]>();
+  budgetMs = BASENAME_BUDGET_MS,
+): Promise<ReadonlyMap<string, readonly string[]>> {
+  const candidates: { file: string; needles: string[] }[] = [];
   let searched = 0;
   for (const file of changedFiles) {
     if (searched >= MAX_BASENAME_FILES) break;
@@ -149,10 +157,25 @@ export function testsImportingBasename(
     if (stem === 'index') stem = path.posix.basename(path.posix.dirname(file));
     if (!stem || stem === '.') continue;
     searched += 1;
-    const needles = [`/${stem}'`, `/${stem}"`, `/${stem}\``, `/${stem}.js`, `/${stem}.mjs`, `/${stem}.ts`];
-    const found = grepTests(git, root, needles, MAX_BASENAME_TESTS_PER_FILE);
-    if (found.length > 0) out.set(file, found);
+    candidates.push({ file, needles: [`/${stem}'`, `/${stem}"`, `/${stem}\``, `/${stem}.js`, `/${stem}.mjs`, `/${stem}.ts`] });
   }
+  const found = new Array<readonly string[] | undefined>(candidates.length);
+  const deadline = Date.now() + Math.max(0, budgetMs);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      if (next >= candidates.length || Date.now() >= deadline) return;
+      const index = next++;
+      const hits = await grepTests(git, root, candidates[index]!.needles, MAX_BASENAME_TESTS_PER_FILE);
+      if (hits.length > 0) found[index] = hits;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(GREP_CONCURRENCY, candidates.length) }, worker));
+  const out = new Map<string, readonly string[]>();
+  candidates.forEach((candidate, index) => {
+    const hits = found[index];
+    if (hits && hits.length > 0) out.set(candidate.file, hits);
+  });
   return out;
 }
 

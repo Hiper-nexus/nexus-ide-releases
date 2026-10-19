@@ -38,12 +38,33 @@ function occupantText(occupant: HeavyCommandQueueWait['occupants'][number]): str
   const what = occupant.label ? `${occupant.kind} ${occupant.label}` : occupant.kind;
   return `${who} ${what} for ${Math.max(0, Math.round(occupant.ageMs / 1000))} s`;
 }
+/** Occupants shown in full; the rest collapse to "+N more". */
+const MAX_SHOWN_OCCUPANTS = 3;
+/**
+ * The HTTP/file transports refuse a reply over 2048 B (request.cjs destroys the
+ * round) — a longer queued message was silently discarded and the caller saw
+ * only an unreadable reply. Keep the whole message far below that ceiling,
+ * counted in UTF-8 bytes: a path of non-ASCII chars is not one byte each.
+ */
+export const MAX_QUEUE_MESSAGE_BYTES = 1200;
+function clampBytes(text: string, maxBytes: number): string {
+  if (Buffer.byteLength(text, 'utf8') <= maxBytes) return text;
+  // The ellipsis itself is 3 bytes: budget for it before trimming.
+  let out = text;
+  const limit = maxBytes - 3;
+  while (out.length > 0 && Buffer.byteLength(out, 'utf8') > limit) out = out.slice(0, -1);
+  return `${out.trimEnd()}…`;
+}
 /** F-1229: the refusal names who holds the slot, the command and for how long. */
 export function queueWaitMessage(wait: HeavyCommandQueueWait, mode: 'gave-up' | 'waiting' = 'gave-up'): string {
   const root = wait.root.length > 160 ? `…${wait.root.slice(-159)}` : wait.root;
   // F-1434: RAM is named only when free RAM was really below the reserve.
   const gb = (mb: number) => (mb / 1024).toFixed(1);
-  const held = wait.occupants.length ? ` (held by ${wait.occupants.map(occupantText).join(', ')})` : '';
+  const shownOccupants = wait.occupants.slice(0, MAX_SHOWN_OCCUPANTS).map(occupantText).join(', ');
+  const overflow = wait.occupants.length - MAX_SHOWN_OCCUPANTS;
+  const held = wait.occupants.length
+    ? ` (held by ${shownOccupants}${overflow > 0 ? ` and ${overflow} more` : ''})`
+    : '';
   const cause = wait.blockedBy === 'exclusive' ? `exclusive build or install on this root${held}`
     : wait.blockedBy === 'writer-ahead' ? 'a build or install is ahead in the queue'
     : wait.blockedBy === 'pressure' ? 'esperando: pressão de memória'
@@ -52,10 +73,13 @@ export function queueWaitMessage(wait: HeavyCommandQueueWait, mode: 'gave-up' | 
       ? `free RAM ${gb(wait.memory.freeMB)} GB below the ${gb(wait.memory.neededMB)} GB reserve`
     : wait.blockedBy === 'machine' ? `machine limit of ${wait.maxActive} parallel heavy jobs`
     : 'machine capacity, not this root';
-  const shown = wait.blockedBy === 'pressure' ? (wait.effectiveMaxActive ?? wait.maxActive) : wait.maxActive;
+  const shownMax = wait.blockedBy === 'pressure' ? (wait.effectiveMaxActive ?? wait.maxActive) : wait.maxActive;
   const verb = mode === 'waiting' ? 'still waiting after' : 'gave up after';
-  return `nexus-heavy: ${verb} ${Math.round(wait.waitedMs / 1000)} s in the admission queue of ${root}: ` +
-    `${wait.running} job(s) running there, ${wait.waiting} more waiting (${cause}); machine ${wait.machineActive}/${shown} heavy jobs running.`;
+  return clampBytes(
+    `nexus-heavy: ${verb} ${Math.round(wait.waitedMs / 1000)} s in the admission queue of ${root}: ` +
+      `${wait.running} job(s) running there, ${wait.waiting} more waiting (${cause}); machine ${wait.machineActive}/${shownMax} heavy jobs running.`,
+    MAX_QUEUE_MESSAGE_BYTES,
+  );
 }
 /** F-1434: every refusal carries the line the shell prints; none blames CPU/RAM. */
 function denied(reason: string, detail: string): Admission {

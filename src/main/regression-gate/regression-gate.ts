@@ -56,7 +56,7 @@ import { readWorkspaceTextFile } from '../orch/workspace-file';
 import { assertMcpInvocationCurrent, type McpToolInvocation } from '../orch/mcp-protocol';
 import { buildScopedExecPlan, createScopedSandboxHome } from '../runtime/process-sandbox';
 import { listDirtyPathsUnderCwd } from '../orch/worker-delivery-evidence';
-import { AsyncProcessGitRunner, ProcessGitRunner, type GitRunner } from '../runtime/git-command';
+import { AsyncProcessGitRunner, ProcessGitRunner, type AsyncGitRunner, type GitRunner } from '../runtime/git-command';
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import { removeTreeSync } from '../util/remove-tree';
@@ -1097,7 +1097,7 @@ export async function computeImpactedTests(
   /** F-1533: prazo do mapa; vencido, o grafo fica parcial e nada certifica. */
   budget?: ImpactMapBudget,
   /** Seleção barata via `git grep`: fallback do mapa estourado e faixa de literais. */
-  selection?: { readonly git: GitRunner; readonly baseSha: string | null },
+  selection?: { readonly git: GitRunner | AsyncGitRunner; readonly baseSha: string | null },
 ): Promise<ImpactedTests> {
   const { reverse, files, truncated, deadlineHit } = await buildReverseGraph(scope, changedFiles, budget);
   const fileSet = new Set(files);
@@ -1154,17 +1154,19 @@ export async function computeImpactedTests(
   }
   if (selection) {
     const root = scope.rootRealPath;
+    // Até 40 greps: no Main isso é o runner assíncrono, nunca spawnSync.
+    const git = selection.git instanceof ProcessGitRunner ? new AsyncProcessGitRunner() : selection.git;
     // Mapa cortado/truncado: o grafo de importadores diretos pode faltar. Os
     // testes que citam o basename do arquivo tocado entram como distância 1,
     // junto do `.test` irmão (que já vem da lista de arquivos do walk).
     if (deadlineHit || truncated) {
-      for (const [file, found] of testsImportingBasename(selection.git, root, changedFiles)) {
+      for (const [file, found] of await testsImportingBasename(git, root, changedFiles)) {
         for (const test of found) addTest(test, file, 1);
       }
     }
     // Depois dos diretos e antes da distância 2: testes que contêm um literal
     // removido/alterado no diff (limitado; `git grep -l -F`, sem varrer em JS).
-    for (const test of testsByRemovedLiterals(selection.git, root, selection.baseSha)) {
+    for (const test of await testsByRemovedLiterals(git, root, selection.baseSha)) {
       addTest(test, LITERAL_IMPACT_SOURCE, LITERAL_TIER);
     }
   }
