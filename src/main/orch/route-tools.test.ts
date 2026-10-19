@@ -757,6 +757,40 @@ describe('nexus_route_task — exclude do caller só honra CLI doente', () => {
       expect(hasRecentCredentialProbeFailure('muse')).toBe(true);
     } finally {
       clearRecentCredentialProbeFailuresForTests();
+      adapterCircuitBreakers.reset('muse');
+    }
+  });
+
+  it('recusas repetidas ficam fora após 10 min e só voltam quando o probe passa', async () => {
+    mocks.listProviderSettings.mockReturnValue([museProvider, codexProvider]);
+    const now = Date.now();
+    recordRecentCredentialProbeFailure('muse', now - 20 * 60_000);
+    recordRecentCredentialProbeFailure('muse', now - 15 * 60_000);
+    mocks.probePreSpawn.mockImplementation(async (adapterId: string) =>
+      adapterId === 'muse'
+        ? { code: 'missing-credential', adapterId, hint: 'login' }
+        : null,
+    );
+    try {
+      const refused = (await routeTaskForCaller(
+        { task: 'tarefa média', preferAdapters: ['muse'] }, context(),
+      )) as { adapterId: string };
+      expect(refused.adapterId).not.toBe('muse');
+      expect(hasRecentCredentialProbeFailure('muse')).toBe(true);
+
+      mocks.probePreSpawn.mockImplementation(async () => {
+        clearRecentCredentialProbeFailuresForTests();
+        return null;
+      });
+      const recovered = (await routeTaskForCaller(
+        { task: 'tarefa média', preferAdapters: ['muse'] }, context(),
+      )) as { adapterId: string };
+      expect(mocks.probePreSpawn).toHaveBeenCalledWith('muse', expect.objectContaining({ silentRemint: true }));
+      expect(recovered.adapterId).toBe('muse');
+      expect(hasRecentCredentialProbeFailure('muse')).toBe(false);
+    } finally {
+      clearRecentCredentialProbeFailuresForTests();
+      adapterCircuitBreakers.reset('muse');
     }
   });
 
@@ -768,6 +802,7 @@ describe('nexus_route_task — exclude do caller só honra CLI doente', () => {
       expect(decision.adapterId).toBe('muse');
     } finally {
       clearRecentCredentialProbeFailuresForTests();
+      adapterCircuitBreakers.reset('muse');
     }
   });
 

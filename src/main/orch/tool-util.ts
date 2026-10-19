@@ -81,6 +81,7 @@ import { noteMissionCliFailure } from './mission-cli-failures';
 import { classifySeatAuth } from '../adapters/seat-auth-readiness';
 import { detectSubscriptionAuthReadiness } from '../adapters/subscription-auth';
 import {
+  effectiveProviderModel,
   hasRuntimeKey,
   providerAuthStrategy,
   providerReadiness,
@@ -1584,6 +1585,13 @@ export interface SpawnToolOptions {
   resumeFromPaneId?: string;
 }
 
+export interface SpawnSeatRemap {
+  readonly requested: string;
+  readonly reason: string;
+  readonly adapterId: string;
+  readonly model: string | null;
+}
+
 /**
  * Lifecycle hooks for the host-side spawn transaction. The pane-created hook
  * fires immediately after the PTY exists and before mission composition is
@@ -1591,6 +1599,7 @@ export interface SpawnToolOptions {
  */
 export interface SpawnPaneHooks {
   readonly onPaneCreated?: (paneId: string, sessionId: string) => void;
+  readonly onSeatRemap?: (remap: SpawnSeatRemap) => void;
   /**
    * Fires only after the exact final prompt (including the worker handoff
    * contract) has crossed the transport acceptance boundary.
@@ -1745,8 +1754,9 @@ function cliHasPresentAuth(cli: string): boolean {
 
 /**
  * O gate pré-spawn recusou a credencial do assento pedido: a recusa vale para
- * a rota (memória de 10 min do probe), para a missão (`credential-remap`,
- * honra o `exclude` e entra como falha no sucesso 14d) e para o disjuntor.
+ * a rota (10 min isolada; repetida em 1 h até um probe passar), para a missão
+ * (`credential-remap`, honra o `exclude` e entra como falha no sucesso 14d) e
+ * para o disjuntor.
  */
 export function noteCredentialSeatRefusal(
   adapterId: string,
@@ -1937,7 +1947,6 @@ export async function spawnPaneAndMaybePrompt(
     options = { ...options, adapterId: successor, model: undefined };
   }
   if (activeAdapterId !== resolvedAdapter.id) {
-    effectiveModel = undefined;
     const swapped = getAdapter(activeAdapterId);
     if (!swapped || swapped.kind !== 'cli-pty') {
       throw new Error(`unknown adapter: ${activeAdapterId}`);
@@ -1957,7 +1966,35 @@ export async function spawnPaneAndMaybePrompt(
     }
     resolvedAdapter = swapped;
     adapter = swapped;
+    effectiveModel = effectiveProviderModel(activeAdapterId);
   }
+  if (seatRemap) {
+    hooks.onSeatRemap?.({
+      requested: seatRemap.requested,
+      reason: seatRemap.reason,
+      adapterId: options.adapterId,
+      model: effectiveModel ?? null,
+    });
+  }
+  const emitSeatRemapNotice = () => {
+    if (!seatRemap) return;
+    try {
+      emitWorkerSpawnFailed({
+        missionId: options.missionId ?? '',
+        deadAdapterId: seatRemap.requested,
+        message: seatRemap.reason,
+        title:
+          `Assento ${seatRemap.requested} recusado (credencial) → ${options.adapterId}` +
+          (options.agentName ? ` (${options.agentName})` : ''),
+        successorCli: options.adapterId,
+        successorName: getAdapter(options.adapterId)?.label,
+        at: Date.now(),
+        scope: options.scope,
+      });
+    } catch {
+      // Aviso é best-effort: nunca derruba um spawn que já deu certo.
+    }
+  };
   // A sonda de credencial e a cadeia de sucessão de assento são os awaits
   // pré-alocação desta função. Em 28/09 a espera de ~50 s aconteceu antes da
   // alocação do pane, sem registro de em qual etapa — esta marca separa.
@@ -2079,6 +2116,9 @@ export async function spawnPaneAndMaybePrompt(
       : {}),
   });
   hooks.timer?.mark('pane-alloc');
+  if (result.ok && result.pending === true && result.paneId) {
+    emitSeatRemapNotice();
+  }
   if (result.ok && result.pending === true && result.paneId && finalPrompt) {
     // F-723: a ficha nasce ANTES da entrega adiada, que pode falhar e avisar.
     const attempt = { requestId: result.requestId, paneId: result.paneId };
@@ -2235,26 +2275,7 @@ export async function spawnPaneAndMaybePrompt(
   // o disjuntor nunca abria. O sucesso do adapter é o início provado do turno
   // (pane-start watchdog, delegation-supervisor).
   hooks.onPaneCreated?.(result.paneId, result.sessionId);
-  if (seatRemap) {
-    // O pane ABRIU — em outro CLI. Sem este aviso o operador só descobre a
-    // troca por acaso, e o pane parece ter ignorado o que foi pedido.
-    try {
-      emitWorkerSpawnFailed({
-        missionId: options.missionId ?? '',
-        deadAdapterId: seatRemap.requested,
-        message: seatRemap.reason,
-        title:
-          `Assento ${seatRemap.requested} → ${options.adapterId}` +
-          (options.agentName ? ` (${options.agentName})` : ''),
-        successorCli: options.adapterId,
-        successorName: getAdapter(options.adapterId)?.label,
-        at: Date.now(),
-        scope: options.scope,
-      });
-    } catch {
-      // Aviso é best-effort: nunca derruba um spawn que já deu certo.
-    }
-  }
+  emitSeatRemapNotice();
   // Remember the mission's composition so it can be reopened from history.
   if (options.missionId && options.transient !== true) {
     assertMcpInvocationCurrent(hooks.invocation);

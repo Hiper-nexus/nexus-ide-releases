@@ -109,6 +109,7 @@ import {
   strArray,
   type PendingMissionPaneRecord,
   type PendingSpawnAttemptInfo,
+  type SpawnSeatRemap,
   type SpawnToolOptions,
 } from './tool-util';
 import {
@@ -2986,11 +2987,28 @@ const paneSpawnAfterTabMission = {
             }
           : undefined;
       let spawned: { paneId: string; sessionId: string };
+      const seatRemap = { current: null as SpawnSeatRemap | null };
+      const harnessWithSeatRemap = () => ({
+        ...harness,
+        ...(seatRemap.current
+          ? {
+              adapterId: seatRemap.current.adapterId,
+              model: seatRemap.current.model,
+              seatRemap: {
+                requested: seatRemap.current.requested,
+                reason: seatRemap.current.reason,
+              },
+            }
+          : {}),
+      });
       try {
         if (missionResume && (options.executionScope ?? options.scope).rootRealPath !== missionResume.spec.executionScope.rootRealPath) {
           throw new Error('resume_scope_changed: a retomada deve usar a pasta original');
         }
         spawned = await spawnPaneAndMaybePrompt(options, {
+          onSeatRemap: (remap) => {
+            seatRemap.current = remap;
+          },
           // Capture the PTY identity before missionPanes.record(). If that
           // durable write fails, the finally block must retain the reservation
           // instead of treating the spawn as if it never happened.
@@ -3037,7 +3055,7 @@ const paneSpawnAfterTabMission = {
           if (pending.sessionId) spawnTiming.meta.sessionId = pending.sessionId;
         }
         const pendingDiversity = harness.source === 'explicit'
-          ? sameAdapterDiversityHint(options.adapterId, options.missionId, listPaneSnapshots(), pending.paneId ?? undefined)
+          ? sameAdapterDiversityHint(seatRemap.current?.adapterId ?? options.adapterId, options.missionId, listPaneSnapshots(), pending.paneId ?? undefined)
           : null;
         return {
           ...pending,
@@ -3046,7 +3064,7 @@ const paneSpawnAfterTabMission = {
           ...(tabMissionId ? { tabMission: { missionId: tabMissionId } } : {}),
           ...(modelUpgrade ? { modelUpgrade } : {}),
           // ACK pendente: ainda não há sessionId para buscar o recibo.
-          harness: { ...harness, account: null },
+          harness: { ...harnessWithSeatRemap(), account: null },
           ...freshResumeReceipt,
           ...routeReceipt,
           ...(pendingDiversity ? { diversity: pendingDiversity } : {}),
@@ -3061,7 +3079,7 @@ const paneSpawnAfterTabMission = {
       spawnedPaneId = spawned.paneId;
       // Spawn que nasceu sem ACK pendente (ex.: main-owned, sem renderer).
       if (trackedStartPaneId !== spawned.paneId) {
-        registerTaskReroute(spawned.paneId, options.adapterId);
+        registerTaskReroute(spawned.paneId, seatRemap.current?.adapterId ?? options.adapterId);
       }
       if (spawnTiming) {
         spawnTiming.meta.ok = true;
@@ -3084,12 +3102,13 @@ const paneSpawnAfterTabMission = {
       );
       // The structured route already describes this spawn; a table receipt
       // would invent medium for a CLI with no native effort control (F-163).
+      const taskModel = seatRemap.current ? seatRemap.current.model : options.model;
       const taskHarnessReceipt = autoRoute ? null : harnessReceiptForTask(str(args, 'task'), {
-        ...(options.model ? { model: options.model } : {}),
+        ...(taskModel ? { model: taskModel } : {}),
         ...(options.effort ? { effort: options.effort as 'low' | 'medium' | 'high' } : {}),
       });
       const diversity = harness.source === 'explicit'
-        ? sameAdapterDiversityHint(options.adapterId, options.missionId, listPaneSnapshots(), spawned.paneId)
+        ? sameAdapterDiversityHint(seatRemap.current?.adapterId ?? options.adapterId, options.missionId, listPaneSnapshots(), spawned.paneId)
         : null;
       return {
         ...spawned,
@@ -3100,7 +3119,7 @@ const paneSpawnAfterTabMission = {
         ...(modelUpgrade ? { modelUpgrade } : {}),
         ...(diversity ? { diversity } : {}),
         harness: {
-          ...harness,
+          ...harnessWithSeatRemap(),
           account: getAccountChoiceReceipt(spawned.sessionId) ?? null,
           ...(taskHarnessReceipt ? { receipt: taskHarnessReceipt } : {}),
         },

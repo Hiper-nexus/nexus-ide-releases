@@ -10,6 +10,7 @@ const h = vi.hoisted(() => ({
       onPaneCreated?: (p: string) => void;
       invocation?: { assertCurrentAuthority?: () => void };
       onPendingMissionPane?: (recorded: Promise<'recorded' | 'no-session' | 'unrecorded'>) => void;
+      onSeatRemap?: (remap: { requested: string; reason: string; adapterId: string; model: string | null }) => void;
     },
   ) => {
     hooks?.onPaneCreated?.('pane-w');
@@ -235,6 +236,34 @@ describe('nexus_pane_spawn dentro da missão sem adapterId', () => {
     expect(receipt.harness.source).toBe('auto-route');
     expect(receipt.route.tier).toBe('medium');
     expect(receipt.route.ignored).toEqual({ model: 'ignorado' });
+  });
+
+  it.each([false, true])('recibo com remap mostra o harness real (pending=%s)', async (pending) => {
+    h.mission.intentContract = { ...(h.mission.intentContract as object), freeAgentChoice: true };
+    setOperatorRouteResolver(vi.fn(async () => ({
+      adapterId: 'muse', model: 'muse-wonder-full-1.0', routeReservationId: 'rr-remap',
+    })));
+    h.spawn.mockImplementationOnce(async (_options, hooks) => {
+      hooks?.onSeatRemap?.({
+        requested: 'muse', reason: '[missing-credential] muse: login',
+        adapterId: 'openclaude', model: 'sonnet',
+      });
+      if (pending) throw new Error('pane spawn failed');
+      return { paneId: 'pane-w', sessionId: 'session-w' };
+    });
+    if (pending) {
+      h.pending.mockReturnValueOnce({
+        requestId: 'req-remap', ok: true, paneId: 'pane-w', sessionId: null, pending: true,
+      });
+    }
+    const receipt = await paneSpawnTool.handler(
+      { task: 'implementar o login', prompt: 'faça o login' }, ctx,
+    ) as Record<string, any>;
+    expect(receipt.pending === true).toBe(pending);
+    expect(receipt.harness).toMatchObject({
+      adapterId: 'openclaude', model: 'sonnet',
+      seatRemap: { requested: 'muse', reason: '[missing-credential] muse: login' },
+    });
   });
 
   // F-1477 (revisão Codex): a rota dentro da missão não sabia que o pane era

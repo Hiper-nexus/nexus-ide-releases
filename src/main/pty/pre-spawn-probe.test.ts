@@ -5,6 +5,7 @@ import {
   assertPreSpawnProbe,
   clearRecentCredentialProbeFailuresForTests,
   hasRecentCredentialProbeFailure,
+  hasRepeatedCredentialProbeFailure,
   probePreSpawn,
   recordRecentCredentialProbeFailure,
   type PreSpawnProbeDeps,
@@ -14,6 +15,8 @@ import {
   SILENT_REMINT_HINT,
   rememberKimiSeatReadiness,
 } from '../adapters/seat-auth-readiness';
+
+vi.mock('../observability/main-trace', () => ({ trace: vi.fn() }));
 
 const claudeAdapter: ProbeAdapterView = {
   kind: 'cli-pty',
@@ -61,7 +64,7 @@ function makeDeps(overrides: Partial<PreSpawnProbeDeps> = {}): PreSpawnProbeDeps
     readActiveClaudeCredential: () => null,
     readClaudeCredentialsFile: () => null,
     claudeOauthEmail: () => null,
-    hasNativeFileAuth: () => false,
+    nativeSessionReady: () => false,
     authStrategy: () => 'subscription',
     ...overrides,
   };
@@ -186,7 +189,7 @@ describe('probePreSpawn — file-backed adapters', () => {
   it('codex passes with a native auth file', async () => {
     const deps = makeDeps({
       getAdapter: () => codexAdapter,
-      hasNativeFileAuth: () => true,
+      nativeSessionReady: () => true,
     });
     expect(await runProbe('codex', deps)).toBeNull();
   });
@@ -225,7 +228,7 @@ describe('probePreSpawn — file-backed adapters', () => {
       getAdapter: () => agyAdapter,
       authStrategy: () => 'subscription',
       authoritativeAuthStrategy: authoritativeAuth,
-      hasNativeFileAuth: () => false,
+      nativeSessionReady: () => false,
     });
 
     expect(
@@ -244,7 +247,7 @@ describe('probePreSpawn — file-backed adapters', () => {
       getAdapter: () => agyAdapter,
       authStrategy: cachedAuth,
       authoritativeAuthStrategy: authoritativeAuth,
-      hasNativeFileAuth: () => false,
+      nativeSessionReady: () => false,
     });
 
     expect(
@@ -266,7 +269,7 @@ describe('probePreSpawn — file-backed adapters', () => {
       getAdapter: () => agyAdapter,
       authStrategy: () => 'subscription',
       authoritativeAuthStrategy: () => 'login-needed',
-      hasNativeFileAuth: () => false,
+      nativeSessionReady: () => false,
     });
 
     const failure = await probePreSpawn('agy', {
@@ -322,7 +325,7 @@ describe('probePreSpawn — credentialless OpenCode', () => {
         'opencode',
         withOpenCode({
           authStrategy: () => 'subscription',
-          hasNativeFileAuth: () => true,
+          nativeSessionReady: () => true,
         }),
         'openrouter/openai/gpt-5',
       ),
@@ -384,7 +387,7 @@ describe('probePreSpawn — kimi 5-state seating', () => {
       'kimi',
       makeDeps({
         getAdapter: () => kimiAdapter,
-        hasNativeFileAuth: () => true,
+        nativeSessionReady: () => true,
         authStrategy: () => 'subscription',
       }),
     );
@@ -533,11 +536,25 @@ describe('recusa recente de credencial', () => {
     recordRecentCredentialProbeFailure('codex');
     recordRecentCredentialProbeFailure('grok');
     expect(
-      await runProbe('codex', makeDeps({ getAdapter: () => codexAdapter, hasNativeFileAuth: () => true })),
+      await runProbe('codex', makeDeps({ getAdapter: () => codexAdapter, nativeSessionReady: () => true })),
     ).toBeNull();
     expect(await runProbe('grok', makeDeps({ getAdapter: () => grokAdapter }))).not.toBeNull();
     expect(hasRecentCredentialProbeFailure('codex')).toBe(false);
     expect(hasRecentCredentialProbeFailure('grok')).toBe(true);
+    clearRecentCredentialProbeFailuresForTests();
+  });
+
+  it('duas recusas em 1 h ficam fora depois dos 10 min até o probe passar', async () => {
+    clearRecentCredentialProbeFailuresForTests();
+    recordRecentCredentialProbeFailure('codex', 1_000);
+    recordRecentCredentialProbeFailure('codex', 2_000);
+    expect(hasRepeatedCredentialProbeFailure('codex', 2_000 + 2 * 60 * 60_000)).toBe(true);
+    expect(hasRecentCredentialProbeFailure('codex', 2_000 + 2 * 60 * 60_000)).toBe(true);
+    expect(
+      await runProbe('codex', makeDeps({ getAdapter: () => codexAdapter, nativeSessionReady: () => true })),
+    ).toBeNull();
+    expect(hasRepeatedCredentialProbeFailure('codex')).toBe(false);
+    expect(hasRecentCredentialProbeFailure('codex')).toBe(false);
     clearRecentCredentialProbeFailuresForTests();
   });
 });

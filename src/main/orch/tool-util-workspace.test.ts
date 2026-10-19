@@ -70,6 +70,7 @@ const stubs = vi.hoisted(() => ({
     cliPromptAutoResponderEnabled: true,
   },
   issueAgentIdentityBestEffort: vi.fn(),
+  settleSeat: vi.fn(async () => 'claude'),
 }));
 
 vi.mock('./workspace-path', async (importOriginal) => ({
@@ -253,6 +254,15 @@ vi.mock('../adapters/adapter-registry', () => ({
 vi.mock('../pty/pre-spawn-probe', async original => ({
   ...await original<typeof import('../pty/pre-spawn-probe')>(),
   assertPreSpawnProbe: stubs.preSpawnProbe,
+}));
+vi.mock('../persistence/provider-config-store', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../persistence/provider-config-store')>()),
+  effectiveProviderModel: (_adapterId: string, selectedModel?: string) =>
+    selectedModel ?? 'provider/model',
+}));
+vi.mock('./spawn-seat-fallback', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./spawn-seat-fallback')>()),
+  settleSeatAfterCredentialFailure: stubs.settleSeat,
 }));
 vi.mock('./mission-pane-store', () => ({ recordMissionPane: vi.fn() }));
 vi.mock('./mission-pane-resume-ownership', async (importOriginal) => ({
@@ -527,6 +537,39 @@ describe('agent pane workspace confinement', () => {
     } finally {
       clearRecentCredentialProbeFailuresForTests();
       resetMissionCliFailures();
+      adapterCircuitBreakers.reset('codex');
+    }
+  });
+
+  it('remap pendente informa o sucessor, usa o modelo default efetivo e emite o aviso', async () => {
+    clearRecentCredentialProbeFailuresForTests();
+    adapterCircuitBreakers.reset('codex');
+    const error = new PreSpawnProbeError({ code: 'missing-credential', adapterId: 'codex', hint: 'fixture' });
+    stubs.preSpawnProbe.mockRejectedValueOnce(error);
+    stubs.requestPaneSpawn.mockResolvedValueOnce({
+      requestId: 'req-remap', ok: true, paneId: 'pane-remap', sessionId: null, pending: true,
+    } as never);
+    const onSeatRemap = vi.fn();
+    const notices: string[] = [];
+    const unsubscribe = onWorkerSpawnFailed((event) => {
+      notices.push(`${event.title}:${event.successorCli}`);
+    });
+    try {
+      await expect(spawnPaneAndMaybePrompt(
+        { adapterId: 'codex', model: 'gpt-original', scope },
+        { onSeatRemap },
+      )).rejects.toThrow('pane spawn failed');
+      expect(onSeatRemap).toHaveBeenCalledWith({
+        requested: 'codex', reason: error.message,
+        adapterId: 'claude', model: 'provider/model',
+      });
+      expect(stubs.requestPaneSpawn).toHaveBeenCalledWith(expect.objectContaining({
+        adapterId: 'claude', model: 'provider/model',
+      }));
+      expect(notices).toEqual(['Assento codex recusado (credencial) → claude:claude']);
+    } finally {
+      unsubscribe();
+      clearRecentCredentialProbeFailuresForTests();
       adapterCircuitBreakers.reset('codex');
     }
   });

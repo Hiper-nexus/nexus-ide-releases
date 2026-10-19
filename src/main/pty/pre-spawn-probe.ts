@@ -6,15 +6,15 @@ import {
   claudeCredentialBlobIsUsable,
   readActiveClaudeCredential,
 } from '../adapters/claude-credential';
-import {
-  hasNativeFileAuth,
-  isFileAuthAdapter,
-} from '../adapters/managed-credentials';
+import { isFileAuthAdapter } from '../../shared/file-auth-adapters';
 import {
   claudeCliAuthStatusLoggedInSync,
   claudeOauthEmail,
+  hasSubscriptionAuth,
+  MUSE_KEYCHAIN_SERVICE,
   type AuthStrategy,
 } from '../adapters/subscription-auth';
+import { trace } from '../observability/main-trace';
 import { isCredentiallessOpenCodeModel } from '../adapters/model-auth-readiness';
 import { refreshKimiSeatReadiness } from '../adapters/kimi-seat-probe';
 import {
@@ -103,7 +103,8 @@ export interface PreSpawnProbeDeps {
    * a positive is a usable session, stronger than email identity.
    */
   claudeCliLoggedIn?: () => boolean;
-  hasNativeFileAuth(adapterId: string): boolean;
+  /** A mesma prontidão nativa usada pela UI e pela decisão de rota. */
+  nativeSessionReady(adapterId: string, model?: string): boolean;
   authStrategy(adapterId: string, model?: string): AuthStrategy;
   /** Optional uncached authority used only at autonomous process creation. */
   authoritativeAuthStrategy?(
@@ -180,7 +181,7 @@ export const PRODUCTION_PROBE_DEPS: PreSpawnProbeDeps = {
   readClaudeCredentialsFile,
   claudeOauthEmail: () => claudeOauthEmail(),
   claudeCliLoggedIn: () => claudeCliAuthStatusLoggedInSync(),
-  hasNativeFileAuth: (adapterId) => hasNativeFileAuth(adapterId),
+  nativeSessionReady: hasSubscriptionAuth,
   authStrategy: (adapterId, model) =>
     providerAuthStrategy(adapterId, model),
   authoritativeAuthStrategy: (adapterId, model) =>
@@ -306,8 +307,8 @@ async function probe(
     };
   }
 
-  // File-backed subscription CLIs (codex/grok/kimi/opencode/agy): the native
-  // auth file (or a managed account's home, covered above) must exist.
+  // File-backed subscription CLIs: a sessão nativa (arquivo ou Keychain) usa
+  // a MESMA prontidão da UI/rota; conta gerenciada já foi coberta acima.
   if (isFileAuthAdapter(adapterId)) {
     if (adapterId === 'kimi') {
       const listed =
@@ -340,7 +341,7 @@ async function probe(
     // `opencode/*-free` lookalikes must still fail before a pane exists.
     if (credentiallessOpenCode) return null;
     if (adapterId === 'mimo-code' && currentAuthStrategy === 'subscription') return null;
-    if (adapterId !== 'mimo-code' && deps.hasNativeFileAuth(adapterId)) return null;
+    if (deps.nativeSessionReady(adapterId, effectiveModel)) return null;
     if (deps.hasStoredKey(adapterId, effectiveModel)) return null;
     return {
       code: 'missing-credential',
@@ -392,26 +393,68 @@ async function probe(
  * delegada ao Keychain e o assento caía calado no `claude` — 22 de 23 spawns,
  * porque nada lembrava a recusa e o fair-share via o muse com "0 uso". O
  * spawn que remapeia o assento anota a recusa aqui; a rota tira a CLI enquanto
- * ela vale. Memória do processo: partida fria = nenhuma recusa. O primeiro
- * probe que passa para a CLI apaga a anotação (login refeito volta na hora).
+ * ela vale. Uma recusa expira em 10 min; duas em 1 h ficam até um probe passar.
+ * Memória do processo: partida fria = nenhuma recusa. O primeiro probe que
+ * passa para a CLI apaga a anotação (login refeito volta na hora).
  */
 const RECENT_CREDENTIAL_FAILURE_TTL_MS = 10 * 60_000;
-const recentCredentialFailures = new Map<string, number>();
+const REPEATED_CREDENTIAL_FAILURE_WINDOW_MS = 60 * 60_000;
+interface CredentialFailureHistory {
+  failures: number[];
+  repeated: boolean;
+}
+const recentCredentialFailures = new Map<string, CredentialFailureHistory>();
+
+function credentialFailureHistory(
+  adapterId: string,
+  now: number,
+): CredentialFailureHistory | undefined {
+  const history = recentCredentialFailures.get(adapterId);
+  if (!history) return undefined;
+  history.failures = history.failures.filter(
+    (at) => now - at < REPEATED_CREDENTIAL_FAILURE_WINDOW_MS,
+  );
+  if (history.failures.length === 0 && !history.repeated) {
+    recentCredentialFailures.delete(adapterId);
+    return undefined;
+  }
+  return history;
+}
 
 export function recordRecentCredentialProbeFailure(
   adapterId: string,
   now = Date.now(),
 ): void {
-  recentCredentialFailures.set(adapterId, now);
+  const history = recentCredentialFailures.get(adapterId) ?? {
+    failures: [],
+    repeated: false,
+  };
+  history.failures.push(now);
+  history.failures = history.failures.filter(
+    (at) => now - at < REPEATED_CREDENTIAL_FAILURE_WINDOW_MS,
+  );
+  if (history.failures.length >= 2) history.repeated = true;
+  recentCredentialFailures.set(adapterId, history);
+}
+
+export function hasRepeatedCredentialProbeFailure(
+  adapterId: string,
+  now = Date.now(),
+): boolean {
+  return credentialFailureHistory(adapterId, now)?.repeated === true;
 }
 
 export function hasRecentCredentialProbeFailure(
   adapterId: string,
   now = Date.now(),
 ): boolean {
-  const at = recentCredentialFailures.get(adapterId);
-  if (at === undefined) return false;
-  if (now - at < RECENT_CREDENTIAL_FAILURE_TTL_MS) return true;
+  const history = credentialFailureHistory(adapterId, now);
+  if (!history) return false;
+  if (history.repeated) return true;
+  const latest = history.failures.at(-1);
+  if (latest !== undefined && now - latest < RECENT_CREDENTIAL_FAILURE_TTL_MS) {
+    return true;
+  }
   recentCredentialFailures.delete(adapterId);
   return false;
 }
@@ -429,13 +472,36 @@ export async function probePreSpawn(
   options: PreSpawnProbeOptions = {},
 ): Promise<PreSpawnProbeFailure | null> {
   try {
+    const deps = options.deps ?? PRODUCTION_PROBE_DEPS;
     const failure = await probe(
       adapterId,
       options.model,
-      options.deps ?? PRODUCTION_PROBE_DEPS,
+      deps,
       options.failClosed === true,
       options,
     );
+    if (
+      failure &&
+      (failure.code === 'missing-credential' || failure.code === 'key-missing')
+    ) {
+      let uiShowsLogin = false;
+      try {
+        uiShowsLogin = deps.nativeSessionReady(adapterId, options.model);
+      } catch {
+        // A leitura da UI não substitui a recusa já medida pelo probe.
+      }
+      if (uiShowsLogin) {
+        const authPath = adapterId === 'muse'
+          ? `~/.config/muse/auth.json e Keychain ${MUSE_KEYCHAIN_SERVICE}/meta`
+          : `configuração nativa de auth do ${adapterId}`;
+        const detail =
+          'credencial recusada pelo probe, mas a UI mostra login; ' +
+          `verifique ${authPath}`;
+        trace({ kind: 'probe-divergence', adapterId });
+        console.warn(`[probe-divergence] ${adapterId}: ${detail}`);
+        return { ...failure, hint: `${detail}; ${failure.hint}` };
+      }
+    }
     if (!failure) recentCredentialFailures.delete(adapterId);
     return failure;
   } catch (err) {

@@ -105,8 +105,8 @@ import { adapterCircuitBreakers, DEFAULT_CIRCUIT_CONFIG } from './circuit-breake
 import { activeCliLimit, isCliLimited } from './cli-limit-registry';
 import {
   hasRecentCredentialProbeFailure,
+  hasRepeatedCredentialProbeFailure,
   probePreSpawn,
-  recordRecentCredentialProbeFailure,
 } from '../pty/pre-spawn-probe';
 import { CREDENTIAL_FAILURE_CODES } from './spawn-seat-fallback';
 import { workerMortalityCount } from './worker-mortality';
@@ -167,6 +167,7 @@ import {
   listRemoteTmuxSessions,
 } from '../remote/remote-spawn';
 import {
+  noteCredentialSeatRefusal,
   num,
   requireStr,
   str,
@@ -2215,11 +2216,22 @@ export async function routeTaskForCaller(
   const quotaWindowFull = quotaEntries
     ? quotaExhaustedAdapters(quotaEntries, Date.now())
     : new Set<string>();
-  // Rota ≠ execução (16/10): o gate pré-spawn recusou a credencial desta CLI
-  // há pouco e o assento caiu em outra. Sem sair daqui, a CLI recusada seguia
-  // com "0 uso" no fair-share e vencia o desempate de novo (muse → claude em
-  // 22 de 23 spawns). A anotação expira sozinha (10 min) ou some no 1º probe
-  // que passar.
+  // Rota ≠ execução (16/10): uma recusa vale por 10 min; duas em 1 h ficam
+  // fora até um probe passar. A recuperação sonda só as recusas repetidas e é
+  // fail-closed: indisponibilidade da sonda não prova que a credencial voltou.
+  for (const provider of providers) {
+    const adapterId = provider.adapterId;
+    if (!hasRepeatedCredentialProbeFailure(adapterId)) continue;
+    const model = provider.defaultModel?.trim() || undefined;
+    const failure = await probePreSpawn(adapterId, {
+      model,
+      failClosed: true,
+      silentRemint: true,
+    });
+    if (failure && CREDENTIAL_FAILURE_CODES.has(failure.code)) {
+      noteCredentialSeatRefusal(adapterId, missionId ?? undefined, model);
+    }
+  }
   const credentialRefusedExcluded = providers
     .map((a) => a.adapterId)
     .filter((id) => !cliLimitExcluded.includes(id) && hasRecentCredentialProbeFailure(id));
@@ -2579,7 +2591,7 @@ export async function routeTaskForCaller(
       silentRemint: true,
     });
     if (!failure || !CREDENTIAL_FAILURE_CODES.has(failure.code)) break;
-    recordRecentCredentialProbeFailure(refusedId);
+    noteCredentialSeatRefusal(refusedId, missionId ?? undefined, decision.model);
     const chosen = adapters;
     adapters = adapters.map((a) =>
       a.id === refusedId

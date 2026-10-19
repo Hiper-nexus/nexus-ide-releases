@@ -694,7 +694,7 @@ export async function providerAuthStrategyAuthoritativeAsync(
     .strategy;
 }
 
-function effectiveProviderModel(
+export function effectiveProviderModel(
   adapterId: string,
   selectedModel?: string,
 ): string | undefined {
