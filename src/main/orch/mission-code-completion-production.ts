@@ -17,6 +17,7 @@ import { getMissionEventRuntimeManager } from './mission-event-emit';
 import { MissionCodeReviewRuntime, codeReviewMissionSignature } from './mission-code-review-runtime';
 import type { CodeReviewBinding } from './mission-code-review-runtime';
 import { candidateRecapturePaths, declaredLimitNote, ensureMissionCodeCompletion, type MissionCodeCandidate } from './mission-code-completion';
+import { captureMissionCodeUpstreamHead } from './mission-code-baseline-ledger';
 import { enforceCivilianAutoReview, type CivilianAutoReviewOutcome } from './civilian-auto-review';
 import type { CandidateQualityDeclaredLimit } from '../context/candidate-quality-scanner';
 import type { CivilianCodeCompletionGate } from './civilian-delivery-completion';
@@ -292,6 +293,13 @@ export const runMissionCodeCompletion: CivilianCodeCompletionGate = async input 
     reason: 'O Council do candidato congelado já possui esta verificação.', hint: 'Conclua o workflow PREVC existente; não abra um revisor fora do plano.' };
   const stores = getProjectDomainStores(scope);
   const executionScope = missionExecutionScope(scope, mission);
+  // F-1428a: if Main recorded an upstream head at sync time (its own fetch),
+  // re-anchor the baseline to that exact head before measuring the delta, so a
+  // post-baseline upstream merge does not leave a stale, bloated two-dot diff.
+  try {
+    const upstream = stores.missions.codeBaseline.readUpstream(mission.id, executionScope.rootRealPath);
+    if (upstream) await stores.missions.codeBaseline.advance(mission.id, executionScope.rootRealPath, captureMissionCodeUpstreamHead(upstream.headSha));
+  } catch { /* best-effort: the recorded baseline below still delimits the candidate */ }
   const baseline = stores.missions.codeBaseline.read(mission.id, executionScope.rootRealPath);
   const executionBase = missionExecutionBaseSha(scope, mission);
   const baseSha = executionBase ?? (baseline?.status === 'known' ? baseline.headSha : null);
