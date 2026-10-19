@@ -315,6 +315,12 @@ describe('confirmationReason', () => {
     );
   });
 
+  it('describes the export input, preset and label mode', () => {
+    const reason = confirmationReason('nexus_video_export', { input: 'promo/renders/a.mp4', preset: 'vertical-9x16', label: 'on' });
+    expect(reason).toContain('export promo/renders/a.mp4 for vertical-9x16');
+    expect(reason).toContain('AI label on');
+  });
+
   it('describes the render project, its risk and destination', () => {
     const reason = confirmationReason('nexus_video_render', { projectDir: 'promo', output: 'promo/renders/v1.mp4' });
     expect(reason).toContain('render HyperFrames project promo');

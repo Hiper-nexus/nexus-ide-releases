@@ -336,6 +336,12 @@ export function confirmationReason(
   if (toolName === 'nexus_audio_generate' || toolName === 'audio_generate') {
     return mediaConfirmation('audio', args);
   }
+  if (toolName === 'nexus_video_export' || toolName === 'video_export') {
+    return (
+      `export ${safeMediaArg(args.input, 'unknown')} for ${safeMediaArg(args.preset, 'unknown preset')} ` +
+      `(loudness -14 LUFS, mute copy, cover, captions; AI label ${safeMediaArg(args.label, 'auto')}); output: ${safeMediaArg(args.outDir, '<project>/exports')}`
+    );
+  }
   if (toolName === 'nexus_video_render' || toolName === 'video_render') {
     return (
       `render HyperFrames project ${safeMediaArg(args.projectDir, 'unknown')} (runs the project's HTML/JS in a ` +

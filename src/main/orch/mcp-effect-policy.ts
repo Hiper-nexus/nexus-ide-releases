@@ -390,6 +390,8 @@ const EXECUTION_EFFECT_TOOLS = new Set([
   'music_generate',
   // F-1594: renderizar executa o HTML/JS do projeto num Chrome sem sandbox.
   'video_render',
+  // F-1595: codifica e grava os exports no workspace (ffmpeg).
+  'video_export',
 ]);
 
 /**
