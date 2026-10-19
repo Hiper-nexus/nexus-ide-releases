@@ -1570,6 +1570,69 @@ saber isto antes de mexer:
   (`~/.claude.json`); só a mão do operador (`role user`) herda. Quem precisa
   de um servidor MCP extra declara por allowlist.
 
+## Freio de emergência: pressão CRÍTICA é a única trava sem opt-in (19/10)
+
+Incidente do cliente (iMac M5, 16 GB): abriu ~2 panes, depois vários mais, com
+terminais próprios fora do Nexus, e o macOS travou inteiro. Medido neste
+repositório: num Mac de 16 GB `limitsForMachine` dá teto 4 e reserva de
+2.458 MB, mas as DUAS defesas eram inertes justamente no cenário que mata a
+máquina — e os testes de pressão só cobriam panes OCIOSOS.
+
+- **O reaper não via pane ocupado.** `listIdleSessions()` filtra
+  `getSessionState === 'idle'` e o tap de status apaga de `idleSince` quem sai
+  do idle. Com 8 panes OCUPADOS e pressão crítica por 10 varreduras, o
+  guardião recuperava ZERO: a RAM está nos panes que trabalham. Os lotes de
+  2/4/6 por tick estacionavam um conjunto vazio por construção.
+- **A mão do operador nunca era recusada.** `hardBlocks` nasce `false`, então
+  o teto e a memória baixa só AVISAM; o 9º pane entrava com 500 MB livres.
+- **A reação levava até 60 s** (`PANE_GUARDIAN_SWEEP_INTERVAL_MS`), sem nada
+  entre ticks.
+- **O footprint por pane era só telemetria**: `pane-footprint.ts` mede o RSS
+  da árvore por sessão, o badge do PaneToolbar o mostra, e nenhuma decisão o
+  usava.
+
+O que mudou — e o que NÃO mudou:
+
+- **A doutrina "menos travas" segue valendo para contagem, moderada e severa:
+  elas avisam.** A exceção é estreita e medida: livre abaixo de **30 % da
+  reserva** (`isCriticalFreeMemory`, `CRITICAL_PRESSURE_FREE_RATIO`) recusa o
+  spawn mesmo sem `hardBlocks` — é a leitura literal de "bloqueio só por
+  pressão real". A recusa diz que é RAM física (não limite do plano), nomeia o
+  dano (travar o sistema inteiro) e o caminho.
+- **Swap continua FORA da recusa dura**, de propósito: o gate nasce desarmado
+  e, mesmo armado por uma máquina, é advisory por decisão do operador (no
+  macOS o número guarda o pico). Por isso há dois predicados:
+  `isCriticalFreeMemory` (só livre — é o da admissão) e
+  `isCriticalMemoryPressureSample` (livre + swap armado — é o do guardião, com
+  a semântica que ele já tinha). A suíte pegou essa diferença: não as una.
+- **Na pressão CRÍTICA o guardião também estaciona pane OCUPADO**
+  (`paneIsSalvageableUnderCriticalPressure` + `drainBusyPanesUnderCriticalPressure`),
+  até `CRITICAL_BUSY_DRAIN_PARKS_PER_TICK` (3) por tick, remedindo a pressão a
+  cada park — assim que a folga volta, para. A fila é
+  `criticalDrainOrder`: worker/helper antes do pane que o humano abriu no
+  "+ Pane", e dentro do tier o **maior footprint medido primeiro** (footprint
+  não medido vai ao fim do tier; ausência de dado não é 0 MB). Os vetos de
+  sempre continuam: orquestrador, entrega armada, pane que fez pergunta ao
+  operador e carência de quem acabou de acordar. Estacionar preserva pane,
+  scrollback e "Acordar" por resume; adapter sem resume devolve `false` e nada
+  é perdido.
+- **O guardião mede o footprint ele mesmo** (`refreshPaneFootprints`, uma vez
+  por tick crítico): o push do badge só roda com um renderer assinando, então
+  o freio não pode depender dele.
+- **Cadência curta sob pressão**: `PRESSURE_FAST_SWEEP_INTERVAL_MS` (5 s)
+  dispara a varredura enquanto a pressão é severa/crítica, com guarda de
+  sobreposição (`sweepInFlight`); fora disso continua 60 s e não há `ps` extra.
+- **O aviso no pane não pode parecer crash**: na pressão o texto diz
+  "estacionado para a máquina não travar (memória crítica) … Digite para
+  retomar a conversa".
+- **A recusa crítica é uniforme**: worker automático, helper, pane do operador
+  E orquestrador. Consequência assumida: a remontagem de um orquestrador
+  (F-245/F-721) espera a folga voltar — na beira do freeze um pane novo de
+  ~1,25 GB levaria o sistema inteiro, e o freio de emergência está drenando em
+  paralelo a cada 5 s. Quem recusa diz o caminho; o retry existente reabre.
+- As válvulas de escape continuam desligando TUDO, inclusive a recusa crítica:
+  `NEXUS_PANE_GUARD=off` e `NEXUS_PANE_MIN_FREE_MB=0`.
+
 ## Pane solto tem que começar (F-723)
 
 - Regra do operador (02/10): o Nexus solta um pane e confere se ele está

@@ -330,15 +330,22 @@ describe('pane-admission (F-572): teto de panes + gate por memória', () => {
 describe('pane-admission: cache síncrono da memória para o gate de spawn', () => {
   it('o gate lê a amostra em cache sem esperar sysctl', async () => {
     const { getCachedSystemMemory, primeSystemMemoryCacheForTest } = await import('./pane-admission');
+    // Amostra saudável: chega ao gate sem `sysctl` e não inventa pressão.
+    primeSystemMemoryCacheForTest({ freeMB: 9_000, swapUsedMB: 9_000 }, Date.now());
+    const healthy = evaluatePaneAdmission(input({ memory: getCachedSystemMemory(Date.now()) }));
+    expect(healthy.ok).toBe(true);
+    // 12 MB livres é a máquina à beira do freeze. Até 19/10 o gate AVISAVA
+    // e admitia (0.76.47); foi assim que o iMac M5 de 16 GB do cliente travou
+    // inteiro. A amostra em cache continua chegando sem `sysctl` — o que
+    // mudou é o veredito dela: pressão CRÍTICA agora recusa.
     primeSystemMemoryCacheForTest({ freeMB: 12, swapUsedMB: 9_000 }, Date.now());
     const verdict = evaluatePaneAdmission(
       input({ memory: getCachedSystemMemory(Date.now()) }),
     );
-    // A amostra em cache chega ao gate sem `sysctl`; por padrão ela AVISA
-    // (0.76.47) e não recusa.
-    expect(verdict.ok).toBe(true);
-    if (!verdict.ok) return;
-    expect(verdict.warning ?? '').toMatch(/livre|swap/i);
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) return;
+    expect(verdict.reason).toBe('memory');
+    expect(verdict.message).toMatch(/cr[íi]tica/i);
   });
 
   it('cache vencido devolve a última amostra e não inventa pressão quando nunca houve', async () => {
@@ -506,9 +513,20 @@ describe('pane-admission: limites proporcionais à RAM da máquina (0.76.44)', (
       expect(admitAgentSpawnSync(atCap, Date.now(), env, { agentRequested: true }).ok).toBe(false);
       expect(admitAgentSpawnSync(atCap, Date.now(), env).ok).toBe(false);
     }
-    primeSystemMemoryCacheForTest({ freeMB: 1, swapUsedMB: 0 });
+    // Memória baixa mas NÃO crítica (entre 30 % e 100 % da reserva): a
+    // doutrina "menos travas" segue valendo — avisa e deixa passar.
+    const reserve = readPaneAdmissionLimits({}, 24 * 1024).minFreeMB;
+    primeSystemMemoryCacheForTest({ freeMB: Math.round(reserve * 0.8), swapUsedMB: 0 });
     const lowMemory = admitAgentSpawnSync(0, Date.now(), {}, { agentRequested: true });
     expect(lowMemory).toMatchObject({ ok: true, warning: expect.stringContaining('Memória livre baixa') });
+    // 1 MB livre é outra coisa: abrir um pane ali trava a máquina inteira.
+    // Única recusa que não pede opt-in (19/10, cliente iMac M5 16 GB).
+    primeSystemMemoryCacheForTest({ freeMB: 1, swapUsedMB: 0 });
+    const critical = admitAgentSpawnSync(0, Date.now(), {}, { agentRequested: true });
+    expect(critical.ok).toBe(false);
+    // ...e as válvulas de escape continuam desligando até ela.
+    expect(admitAgentSpawnSync(0, Date.now(), { NEXUS_PANE_GUARD: 'off' }).ok).toBe(true);
+    expect(admitAgentSpawnSync(0, Date.now(), { NEXUS_PANE_MIN_FREE_MB: '0' }).ok).toBe(true);
   });
 });
 
