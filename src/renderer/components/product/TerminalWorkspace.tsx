@@ -663,7 +663,11 @@ export function TerminalWorkspace({
       )}
 
       <div className="terminal-workspace__surface">
-        {inMission ? <MissionInterruptedCard missionId={missionId} /> : null}
+        {/* Sem panes, o card de interrompida vem só pelo emptyState do grid:
+            um card, um "Retomar missão". */}
+        {inMission && (visiblePaneIds?.size ?? 0) > 0 ? (
+          <MissionInterruptedCard missionId={missionId} />
+        ) : null}
         {inMission && visiblePaneIds?.size === 0 ? (
           <PaneGrid
             visiblePaneIds={visiblePaneIds}

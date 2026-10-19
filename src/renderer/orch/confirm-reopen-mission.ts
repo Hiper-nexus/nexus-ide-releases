@@ -97,7 +97,23 @@ export interface ConfirmReopenOptions {
   readonly onPaneReady?: (paneId: string, sessionId: string | null) => void;
 }
 
-export async function confirmAndReopenMission(
+/** Reabertura em voo por missão: clique duplo (ou dois botões) reabre uma vez só. */
+const reopenInFlight = new Map<string, Promise<MissionReopenResult>>();
+
+export function confirmAndReopenMission(
+  mission: Mission,
+  options?: ConfirmReopenOptions,
+): Promise<MissionReopenResult> {
+  const pending = reopenInFlight.get(mission.id);
+  if (pending) return pending;
+  const run = confirmAndReopenMissionOnce(mission, options).finally(() => {
+    reopenInFlight.delete(mission.id);
+  });
+  reopenInFlight.set(mission.id, run);
+  return run;
+}
+
+async function confirmAndReopenMissionOnce(
   mission: Mission,
   options?: ConfirmReopenOptions,
 ): Promise<MissionReopenResult> {

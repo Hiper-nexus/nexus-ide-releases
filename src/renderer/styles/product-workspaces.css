@@ -325,11 +325,24 @@
   min-inline-size: 0;
   min-block-size: 0;
   overflow: hidden;
+  /* Coluna: o card de missão interrompida ocupa só a sua altura e o grid
+     fica com o resto, sem ter o fim cortado pelo overflow. */
+  display: flex;
+  flex-direction: column;
+}
+
+.terminal-workspace__surface > * {
+  flex: 1 1 auto;
+  min-block-size: 0;
+}
+
+.terminal-workspace__surface > .mission-interrupted {
+  flex: 0 0 auto;
 }
 
 .terminal-workspace__surface > .grid {
   inline-size: 100%;
-  block-size: 100%;
+  block-size: auto;
 }
 
 .terminal-workspace__empty-body {

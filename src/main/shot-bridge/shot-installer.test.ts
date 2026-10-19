@@ -72,7 +72,7 @@ describe('ensureShotMinVersion', () => {
     const removed: string[] = [];
     const { deps } = makeDeps({
       rename: (a: string) => {
-        if (a.endsWith('Nexus Shot.app') || a.endsWith('old.app')) throw new Error('EPERM');
+        if (a === '/Applications/.stg/Nexus Shot.app' || a.endsWith('old.app')) throw new Error('EPERM');
       },
       remove: (p: string) => void removed.push(p),
     });

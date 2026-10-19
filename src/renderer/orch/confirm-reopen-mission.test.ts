@@ -132,6 +132,20 @@ describe('confirmAndReopenMission', () => {
     },
   );
 
+  it('clique duplo reabre a missão uma vez só', async () => {
+    const mission = blockedMission('blocked_technical');
+    let release!: () => void;
+    harness.reopenMission.mockImplementationOnce(
+      () => new Promise((resolve) => { release = () => resolve({ ok: true, panes: 1 }); }),
+    );
+    const first = confirmAndReopenMission(mission);
+    const second = confirmAndReopenMission(mission);
+    expect(second).toBe(first);
+    release();
+    await expect(first).resolves.toEqual({ ok: true, panes: 1 });
+    expect(harness.reopenMission).toHaveBeenCalledTimes(1);
+  });
+
   describe('contrato de navegação', () => {
     function armedShell(): Mission {
       return {
