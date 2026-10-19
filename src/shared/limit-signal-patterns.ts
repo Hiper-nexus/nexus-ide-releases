@@ -24,6 +24,9 @@ export const CODEX_CHATGPT_MODEL_REJECTION =
 
 const CODEX_REJECTION_PHRASE = CODEX_CHATGPT_MODEL_REJECTION.replace(/\s+/g, '');
 
+/** Contador de rede da CLI sem rede ("59s · check your network"); também filtra ruído do reducer. */
+export const NETWORK_COUNTER_RE = /\b\d{1,4}\s*s\s*[·•∙⋅|]\s*check\s+your\s+network\b/i;
+
 export interface LimitSignalPattern {
   kind: FailoverReasonKind;
   re: RegExp;
@@ -277,6 +280,15 @@ export const LIMIT_SIGNAL_PATTERNS: readonly LimitSignalPattern[] = [
     kind: 'transient',
     cooldownMs: 30_000,
     re: /^[^\S\r\n]{0,4}Reason:[^\S\r\n]*\[Error\][^\S\r\n]*(?:Connection error|Network error|Request timed out|fetch failed|socket hang up|ECONNRESET|ETIMEDOUT)\b/m,
+  },
+  // Contador de rede da CLI Claude (apontada para api.deepseek.com) sem rede:
+  // "59s · check your network" … "9s · check your network", redesenhado para
+  // sempre. Casa no fim da linha (a TUI põe prefixo de spinner/parêntese e
+  // espaços variáveis); prosa solta não tem "<N>s ·" colado na frase.
+  {
+    kind: 'transient',
+    cooldownMs: 30_000,
+    re: NETWORK_COUNTER_RE,
   },
 ];
 

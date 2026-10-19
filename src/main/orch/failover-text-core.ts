@@ -1,5 +1,6 @@
 import { detectLimit, type LimitHit } from './limit-detector';
 import { FAILOVER_HANDOFF_HEADER } from '../../shared/failover-handoff';
+import { NETWORK_COUNTER_RE } from '../../shared/limit-signal-patterns';
 const WINDOW = 4_000;
 /**
  * F-999: depois do eco de um pack de continuidade o worker novo lê e cita o
@@ -10,7 +11,8 @@ const WINDOW = 4_000;
  * vale na hora, e cota/taxa/auth não esperam — a sonda decide (F-249).
  */
 export const CONTINUITY_ECHO_CONFIRM_MS = 120_000;
-const NOISE = /retrying\s+in\s+\d|attempt\s+\d+\s*\/\s*\d+|api\s*error|overloaded_error|service unavailable|status[\s:(]*5\d\d\b|\bhttp\s*5\d\d\b/i;
+// O contador de rede da CLI redesenha a cada segundo: nunca é progresso.
+const NOISE = new RegExp(String.raw`${NETWORK_COUNTER_RE.source}|retrying\s+in\s+\d|attempt\s+\d+\s*\/\s*\d+|api\s*error|overloaded_error|service unavailable|status[\s:(]*5\d\d\b|\bhttp\s*5\d\d\b`, 'i');
 export interface FailoverTextProposal {
   readonly hit?: LimitHit;
   /** F-999: sinal de modelo citado logo depois do pack, à espera da 2ª ocorrência. */

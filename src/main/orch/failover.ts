@@ -31,6 +31,7 @@ import {
 import { nativeResumeAcrossAccounts } from '../../shared/cross-account-resume';
 import { rebindProviderPaneSessionAccount } from '../persistence/provider-session-store';
 import { maskAccountLabel } from '../../shared/account-choice';
+import { NETWORK_COUNTER_RE } from '../../shared/limit-signal-patterns';
 import { missionOwnsItsPanes } from '../../shared/mission-recovery-policy';
 import { wasMissionLeftoverParked } from '../../shared/mission-leftover-isolation';
 import {
@@ -2906,6 +2907,30 @@ function checkTransientRecoveryNow(
     logSuppressedFailover(pane, current, hit, 'transient-cli-still-busy', 'transient-watch', {
       attempt,
     });
+    // CLI sem rede só redesenhando o contador ("59s · check your network"): não
+    // é trabalho real (o contador nem conta como progresso). Mesma saída do
+    // ramo idle: o supervisor reabre o brief noutra CLI.
+    if (authority.missionId && NETWORK_COUNTER_RE.test(hit.reason)) {
+      noteConfirmedPaneLimit({
+        paneId: pane.paneId,
+        sessionId: authority.sessionId,
+        adapterId: pane.adapterId,
+        reason: hit.reason,
+        at: Date.now(),
+        kind: 'provider-error',
+        ...(pane.model ? { model: pane.model } : {}),
+      });
+      emitNoSwitch(
+        authority,
+        pane,
+        current,
+        hit,
+        `${hit.reason} — a CLI segue sem rede; a tarefa vai para outra CLI`,
+        'stopped',
+      );
+      endTransientEpisode(watch);
+      return;
+    }
     emitNoSwitch(
       authority,
       pane,

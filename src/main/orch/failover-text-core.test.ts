@@ -99,3 +99,9 @@ it('F-1517: slow-scan overflow becomes unavailable instead of reporting incomple
   expect(afterBackoff).toContainEqual(expect.objectContaining({ unavailable: true }));
   expect(afterBackoff.some((proposal) => proposal.hit)).toBe(false);
 });
+it('o contador de rede da CLI redesenhado não conta como progresso', () => {
+  const reducer = new FailoverTextReducer();
+  expect(reducer.feed('Retrying… (59s · check your network)\n', 1_000).find((v) => v.hit)?.hit?.kind).toBe('transient');
+  for (let n = 58; n > 0; n -= 1) reducer.feed(`✻ Retrying… (${n}s · check your network)\n`, 1_100 + n);
+  expect(reducer.feed('✻ Retrying… (0s · check your network)\n', 2_000).at(-1)?.progressChars).toBe(0);
+});

@@ -99,6 +99,17 @@ const orchestratorSwitch = vi.hoisted(() => ({
     | { handled: true; ok: true; sessionId: string }
     | { handled: true; ok: false; error: string }),
 }));
+const limitMocks = vi.hoisted(() => ({ note: vi.fn() }));
+vi.mock('./pane-start-watchdog', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./pane-start-watchdog')>();
+  return {
+  ...actual,
+  noteConfirmedPaneLimit: (...args: Parameters<typeof import('./pane-start-watchdog').noteConfirmedPaneLimit>) => {
+    limitMocks.note(...args);
+    return actual.noteConfirmedPaneLimit(...args);
+  },
+  };
+});
 vi.mock('./failover-orchestrator-respawn', () => ({
   switchRendererOrchestratorAccount: orchestratorSwitch.switch,
 }));
@@ -2216,6 +2227,8 @@ describe('erro do provider (5xx) — episódio sem troca de conta', () => {
       if (buffer.includes('status:503')) {
         return { kind: 'transient', reason: 'status:503', cooldownMs: 20_000 };
       }
+      const counter = /\d+s · check your network/.exec(buffer);
+      if (counter) return { kind: 'transient', reason: counter[0], cooldownMs: 30_000 };
       return null;
     });
     const scope = testProjectScope();
@@ -2433,6 +2446,44 @@ ${E503}`);
     ptyMocks.dataTaps[0]('session-503', E503);
     await settleFailover();
     expect(failoverEvents(owner)).toHaveLength(3);
+  });
+
+  it('contador de rede persistente com a CLI ocupada: provider-error para o supervisor, sem nudge', async () => {
+    const owner = await setupTransient();
+    limitMocks.note.mockClear();
+    ptyMocks.dataTaps[0]('session-503', 'Retrying… (59s · check your network)');
+    await vi.advanceTimersByTimeAsync(21_000);
+    // O contador segue redesenhando durante todo o episódio (checks a cada 30 s).
+    for (let n = 58; n > 38; n -= 8) {
+      ptyMocks.dataTaps[0]('session-503', `Retrying… (${n}s · check your network)`);
+      await vi.advanceTimersByTimeAsync(31_000);
+    }
+    for (let i = 0; i < 4; i += 1) await vi.advanceTimersByTimeAsync(31_000);
+    await settleFailover();
+
+    expect(limitMocks.note).toHaveBeenCalledOnce();
+    expect(limitMocks.note).toHaveBeenCalledWith(
+      expect.objectContaining({ paneId: 'pane-503', kind: 'provider-error' }),
+    );
+    expect(failoverEvents(owner).at(-1)).toMatchObject({ transientPhase: 'stopped' });
+    expect(toolMocks.injectPrompt).not.toHaveBeenCalled();
+  });
+
+  it('contador que some e a CLI volta a produzir: recuperado, sem reroute', async () => {
+    const owner = await setupTransient();
+    limitMocks.note.mockClear();
+    ptyMocks.dataTaps[0]('session-503', 'Retrying… (59s · check your network)');
+    const answer = Array.from(
+      { length: 12 },
+      (_, i) => `Linha ${i} da resposta do modelo depois da rede voltar ao normal.`,
+    ).join('\n');
+    ptyMocks.dataTaps[0]('session-503', answer);
+    for (let i = 0; i < 8; i += 1) await vi.advanceTimersByTimeAsync(31_000);
+    await settleFailover();
+
+    expect(limitMocks.note).not.toHaveBeenCalled();
+    expect(toolMocks.injectPrompt).not.toHaveBeenCalled();
+    expect(failoverEvents(owner).filter((e) => e.transientPhase === 'stopped')).toHaveLength(0);
   });
 
   it('limite de verdade esperando a conta: o 503 não abre episódio nem pede continue', async () => {

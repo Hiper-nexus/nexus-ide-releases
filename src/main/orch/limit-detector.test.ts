@@ -1068,6 +1068,21 @@ describe('F-1427: célula de erro de provedor/rede da própria CLI', () => {
   });
 
   it.each([
+    '59s · check your network',
+    '✻ Retrying… (9s · check your network)',
+    '  12s  ·  check your network',
+    '1s\u00a0·\u00a0check your network',
+  ])('contador de rede da CLI sem rede é transitório: %s', (line) => {
+    const hit = detectLimit(`trabalhando\n${line}\n`);
+    expect(hit).toMatchObject({ kind: 'transient' });
+    expect(hit?.confirmed).toBeUndefined();
+  });
+
+  it('"check your network" sem contador não dispara', () => {
+    expect(detectLimit('Please check your network settings and retry.')).toBeNull();
+  });
+
+  it.each([
     ['frase solta no meio da linha (log)', '2026-10-13 12:00:01 WARN upstream: The model provider is temporarily unavailable (retrying)'],
     ['asserção de teste', "    expect(screen).toContain('× Error  The response failed.');"],
     ['saída de ferramenta emoldurada', '  ⎿  × Error  The response failed.'],
