@@ -71,6 +71,33 @@ const ALIASES: Record<string, string> = {
   'nano-banana': 'gemini-3.1-flash-image-preview',
   gemini: 'gemini-3.1-flash-image-preview',
   'gpt-image': 'gpt-image-2',
+  // Grok Imagine (xAI, F-1599) — nomes que já dizem o tipo. Nunca um id real
+  // (`grok-imagine-video` e `grok-imagine-image` são modelos, não apelidos).
+  'grok-image': 'grok-imagine-image-2.0',
+  'grok-image-2': 'grok-imagine-image-2.0',
+  'grok-image-quality': 'grok-imagine-image-quality',
+  'grok-image-pro': 'grok-imagine-image-quality',
+  'grok-video': 'grok-imagine-video-1.5',
+  'grok-video-1.5': 'grok-imagine-video-1.5',
+  'grok-video-lite': 'grok-imagine-video-1.5-lite',
+  'grok-video-classic': 'grok-imagine-video',
+};
+
+/**
+ * Apelidos que dependem do tipo pedido: "grok" na ferramenta de imagem é o
+ * Grok Imagine Image, na de vídeo é o Grok Imagine Video (F-1599).
+ */
+const KIND_ALIASES: Partial<Record<MediaKind, Record<string, string>>> = {
+  image: {
+    grok: 'grok-imagine-image-2.0',
+    'grok-imagine': 'grok-imagine-image-2.0',
+    imagine: 'grok-imagine-image-2.0',
+  },
+  video: {
+    grok: 'grok-imagine-video-1.5',
+    'grok-imagine': 'grok-imagine-video-1.5',
+    imagine: 'grok-imagine-video-1.5',
+  },
 };
 
 /** Normalized lookup: trim, lower-case, collapse spaces/underscores to `-`. */
@@ -88,14 +115,21 @@ export function normalizeMediaAlias(raw: string): string {
  */
 export function resolveMediaModelAlias(
   raw: string | undefined,
-  _kind?: MediaKind,
+  kind?: MediaKind,
 ): string | undefined {
   if (!raw?.trim()) return undefined;
   const key = normalizeMediaAlias(raw);
-  return ALIASES[key];
+  return (kind ? KIND_ALIASES[kind]?.[key] : undefined) ?? ALIASES[key];
 }
 
 /** Public map for MCP `nexus_media_providers` (agents must not invent ids). */
 export function listMediaModelAliases(): Record<string, string> {
   return { ...ALIASES };
+}
+
+/** Apelidos que mudam com o tipo (`grok` → imagem ou vídeo), para o MCP. */
+export function listMediaModelAliasesByKind(): Partial<Record<MediaKind, Record<string, string>>> {
+  return Object.fromEntries(
+    Object.entries(KIND_ALIASES).map(([kind, aliases]) => [kind, { ...aliases }]),
+  );
 }

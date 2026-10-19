@@ -48,11 +48,12 @@ export const SYSTEM_API_KEYS: readonly SystemApiKeyDef[] = [
     envVar: 'XAI_API_KEY',
     title: 'Grok (xAI)',
     description:
-      'Voz oficial da assistente Jarvis em tempo real (Grok Voice) e CLI do Grok (grok-2, grok-vision).',
+      'Voz oficial da assistente Jarvis em tempo real (Grok Voice), CLI do Grok e geração de imagens e vídeos no Estúdio de Mídia (Grok Imagine).',
     category: 'core',
     docLink: 'https://console.x.ai/',
     docLabel: 'xAI Console',
     adapterId: 'grok',
+    mediaProviderIds: ['xai-image', 'xai-video'],
     placeholder: 'xai-...',
   },
   {

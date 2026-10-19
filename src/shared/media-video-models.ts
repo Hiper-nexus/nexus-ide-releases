@@ -21,6 +21,14 @@
  * (`ai.google.dev/gemini-api/docs/pricing`, 16/10/2026: ~$0.10/s em 720p,
  * 5.792 tokens de saída por segundo a $17.50 o milhão).
  *
+ * Grok Imagine (xAI, F-1599): `docs.x.ai/developers/model-capabilities/video/
+ * overview` (08/10/2026, tabela "Capabilities and specifications": 1–15 s,
+ * resolução e proporções por modelo) e `video/generation` (10/10/2026: padrão
+ * 8 s; com imagem inicial a saída segue a proporção dela). Preço por segundo
+ * e resolução da tabela "Imagine API" de `docs.x.ai/developers/pricing`
+ * (10/10/2026); a imagem de entrada custa à parte (US$ 0,01) e o custo real
+ * vem do `usage.cost_in_usd_ticks` da resposta.
+ *
  * Resolução usa o vocabulário do Nexus (`720p`, `1080p`, `4k`…); a tradução
  * para o campo do modelo (Kling `mode`, Sora `standard`/`high`) mora no motor.
  */
@@ -72,6 +80,7 @@ const range = (from: number, to: number): number[] =>
 const SEEDANCE_ASPECTS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', '9:21'] as const;
 const VEO_ASPECTS = ['16:9', '9:16'] as const;
 const KLING_ASPECTS = ['16:9', '9:16', '1:1'] as const;
+const XAI_VIDEO_ASPECTS = ['16:9', '9:16', '1:1', '4:3', '3:4', '3:2', '2:3', '21:9', '5:2'] as const;
 const GEMINI_VEO_RETIREMENT = {
   retiresOn: '2026-10-22',
   replacement: 'gemini-omni-1.1-flash, com a mesma chave do Gemini',
@@ -266,6 +275,33 @@ export const VIDEO_MODEL_SPECS: Readonly<Record<string, VideoModelSpec>> = Objec
     aspectRatios: VEO_ASPECTS,
     pricing: { kind: 'per-second', usd: { '720p': 0.05, '1080p': 0.08 } },
     ...GEMINI_VEO_RETIREMENT,
+  },
+  'grok-imagine-video-1.5': {
+    durations: range(1, 15),
+    defaultDuration: 8,
+    // 1080p nativo; com referências ou último quadro vai até 720p
+    // (`xai-imagine.ts` recusa antes de pagar).
+    resolutions: ['480p', '720p', '1080p'],
+    defaultResolution: '720p',
+    aspectRatios: XAI_VIDEO_ASPECTS,
+    pricing: { kind: 'per-second', usd: { '480p': 0.08, '720p': 0.14, '1080p': 0.25 } },
+  },
+  'grok-imagine-video-1.5-lite': {
+    durations: range(1, 15),
+    defaultDuration: 8,
+    // 1080p é o 720p ampliado pela própria xAI.
+    resolutions: ['480p', '720p', '1080p'],
+    defaultResolution: '720p',
+    aspectRatios: XAI_VIDEO_ASPECTS,
+    pricing: { kind: 'per-second', usd: { '480p': 0.02, '720p': 0.03, '1080p': 0.14 } },
+  },
+  'grok-imagine-video': {
+    durations: range(1, 15),
+    defaultDuration: 8,
+    resolutions: ['480p', '720p'],
+    defaultResolution: '720p',
+    aspectRatios: XAI_VIDEO_ASPECTS,
+    pricing: { kind: 'per-second', usd: { '480p': 0.05, '720p': 0.07 } },
   },
 });
 

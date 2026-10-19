@@ -377,8 +377,8 @@ function mediaConfirmation(
   const provider = safeMediaArg(
     args.provider,
     kind === 'video'
-      ? 'replicate-video|google-video'
-      : 'automatic (google-image, openai-image or replicate-image/seedream)',
+      ? 'replicate-video|google-video|xai-video'
+      : 'automatic (google-image, openai-image, replicate-image/seedream or xai-image)',
   );
   const prompt = `prompt (${textLength(args.prompt)} chars)`;
   const image = safeMediaArg(args.imagePath, 'none');

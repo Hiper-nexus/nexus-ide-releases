@@ -232,6 +232,29 @@ describe('provider media downloads', () => {
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
+  it('F-1599: o vídeo do Grok Imagine só baixa de vidgen.x.ai', async () => {
+    const fetchFn = vi.fn(async () => new Response('mp4')) as unknown as typeof fetch;
+    await expect(
+      downloadProviderAsset(
+        'https://vidgen.x.ai/xai-vidgen-bucket/xai-video-abc.mp4',
+        'xai-video',
+        deps(fetchFn),
+      ),
+    ).resolves.toEqual(Buffer.from('mp4'));
+    for (const url of [
+      'https://api.x.ai/v1/files/abc.mp4',
+      'https://x.ai/video.mp4',
+      'https://imgen.x.ai/xai-imgen/abc.mp4',
+      'https://vidgen.x.ai.evil.example/abc.mp4',
+      'https://evilvidgen.x.ai/abc.mp4',
+    ]) {
+      await expect(downloadProviderAsset(url, 'xai-video', deps(fetchFn))).rejects.toThrow(
+        'xai-video: domínio não permitido para download',
+      );
+    }
+    expect(fetchFn).toHaveBeenCalledOnce();
+  });
+
   describe('F-1587: download autenticado da Files API do Gemini', () => {
     const FILE_URL =
       'https://generativelanguage.googleapis.com/v1beta/files/abc123:download?alt=media';

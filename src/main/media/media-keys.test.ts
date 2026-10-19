@@ -58,4 +58,27 @@ describe('shared media provider credentials', () => {
     // Masked preview must reflect the shared key so Settings shows usable state.
     expect(maskedMediaKey('replicate-image')).toBe('r8-…abcd');
   });
+
+  it('F-1599: a XAI_API_KEY salva para a voz do Grok liga imagem e vídeo do Grok Imagine', () => {
+    vi.stubEnv('XAI_API_KEY', '');
+    const image = findMediaProvider('xai-image')!;
+    const video = findMediaProvider('xai-video')!;
+    expect(hasMediaKey(video)).toBe(false);
+    secrets.set('voice-env:XAI_API_KEY', 'xai-voice-secret-7777');
+    expect(resolveMediaKey(image)).toBe('xai-voice-secret-7777');
+    expect(resolveMediaKey(video)).toBe('xai-voice-secret-7777');
+    expect(hasMediaKey(video)).toBe(true);
+    expect(maskedMediaKey('xai-video')).toBe('xai…7777');
+    vi.unstubAllEnvs();
+  });
+
+  it('F-1599: xai-image e xai-video dividem a chave salva em Serviços de mídia', () => {
+    vi.stubEnv('XAI_API_KEY', '');
+    secrets.set('mediakey:xai-image', 'xai-media-secret-4242');
+    const video = findMediaProvider('xai-video')!;
+    expect(resolveMediaKey(video)).toBe('xai-media-secret-4242');
+    expect(hasMediaKey(video)).toBe(true);
+    expect(maskedMediaKey('xai-video')).toBe('xai…4242');
+    vi.unstubAllEnvs();
+  });
 });

@@ -21,6 +21,9 @@ export const MEDIA_PROVIDER_IDS = [
   'replicate-video',
   'google-video',
   'elevenlabs',
+  // F-1599: Grok Imagine (xAI), com a XAI_API_KEY da voz do Grok.
+  'xai-image',
+  'xai-video',
 ] as const;
 
 export type MediaProviderId = (typeof MEDIA_PROVIDER_IDS)[number];

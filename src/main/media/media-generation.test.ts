@@ -1353,3 +1353,230 @@ describe('F-1587: Gemini Omni Flash pelo google-video', () => {
     ).rejects.toThrow('O Google não terminou o vídeo em 5 minutos');
   });
 });
+describe('F-1599: Grok Imagine (xAI) pelo motor', () => {
+  const XAI = 'https://api.x.ai/v1';
+  const VIDEO_URL = 'https://vidgen.x.ai/xai-vidgen-bucket/xai-video-req-1.mp4';
+  const REQUEST_ID = 'a3d1008e-4544-40d4-d075-11527e794e4a';
+  const xaiOnly = (deps: MediaDeps): MediaDeps => ({
+    ...deps,
+    getKey: (def) => (def.envVar === 'XAI_API_KEY' ? 'xai-test-key' : undefined),
+  });
+
+  it('vídeo: envia o pedido, faz poll até done, baixa de vidgen.x.ai sem a chave e cobra o que a xAI informou', async () => {
+    const mp4 = Buffer.from('xai-mp4-bytes');
+    const { deps, calls } = fakeDeps([
+      { json: { request_id: REQUEST_ID } },
+      { json: { status: 'pending', progress: 40 } },
+      {
+        json: {
+          status: 'done',
+          video: { url: VIDEO_URL, duration: 6, respect_moderation: true },
+          model: 'grok-imagine-video-1.5',
+          usage: { cost_in_usd_ticks: 8_400_000_000 },
+        },
+      },
+      { body: mp4 },
+    ]);
+    const res = await generateVideo(
+      {
+        prompt: 'drone sobre a praia',
+        model: 'grok',
+        durationSeconds: 6,
+        resolution: '720p',
+        aspectRatio: '9:16',
+        outPath: 'grok.mp4',
+        baseDir: dir,
+      },
+      xaiOnly(deps),
+    );
+    expect(calls[0]?.url).toBe(`${XAI}/videos/generations`);
+    expect(calls[0]?.init?.method).toBe('POST');
+    expect(new Headers(calls[0]?.init?.headers).get('authorization')).toBe('Bearer xai-test-key');
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+      model: 'grok-imagine-video-1.5',
+      prompt: 'drone sobre a praia',
+      duration: 6,
+      aspect_ratio: '9:16',
+      resolution: '720p',
+    });
+    expect(calls[1]?.url).toBe(`${XAI}/videos/${REQUEST_ID}`);
+    expect(calls[2]?.url).toBe(`${XAI}/videos/${REQUEST_ID}`);
+    expect(calls[3]?.url).toBe(VIDEO_URL);
+    // A chave nunca vai para o host do vídeo.
+    expect(new Headers(calls[3]?.init?.headers).get('authorization')).toBeNull();
+    expect(fs.readFileSync(path.join(dir, 'grok.mp4')).toString()).toBe('xai-mp4-bytes');
+    expect(res).toMatchObject({
+      provider: 'xai-video',
+      model: 'grok-imagine-video-1.5',
+      kind: 'video',
+      estimatedCostUsd: 0.84,
+      jobId: REQUEST_ID,
+    });
+    expect(getVideoJob(dir, REQUEST_ID)).toMatchObject({ provider: 'xai-video', status: 'completed' });
+  });
+
+  it('vídeo sem usage cobra a tabela; sem duração nem resolução usa o padrão do modelo (8 s, 720p)', async () => {
+    const { deps, calls } = fakeDeps([
+      { json: { request_id: REQUEST_ID } },
+      { json: { status: 'done', video: { url: VIDEO_URL, respect_moderation: true } } },
+      { body: Buffer.from('mp4') },
+    ]);
+    const res = await generateVideo({ prompt: 'x', provider: 'xai-video', baseDir: dir }, xaiOnly(deps));
+    expect(JSON.parse(String(calls[0]?.init?.body))).toMatchObject({ duration: 8, resolution: '720p' });
+    // 8 s × US$ 0,14/s (720p no grok-imagine-video-1.5).
+    expect(res.estimatedCostUsd).toBe(1.12);
+  });
+
+  it('vídeo com imagem inicial manda data URL e não manda proporção', async () => {
+    fs.writeFileSync(path.join(dir, 'start.png'), Buffer.from('png-start'));
+    const { deps, calls } = fakeDeps([
+      { json: { request_id: REQUEST_ID } },
+      { json: { status: 'done', video: { url: VIDEO_URL, duration: 5, respect_moderation: true } } },
+      { body: Buffer.from('mp4') },
+    ]);
+    await generateVideo(
+      {
+        prompt: 'anime',
+        model: 'grok-video-lite',
+        durationSeconds: 5,
+        aspectRatio: '16:9',
+        imagePath: 'start.png',
+        baseDir: dir,
+      },
+      xaiOnly(deps),
+    );
+    const body = JSON.parse(String(calls[0]?.init?.body)) as Record<string, unknown>;
+    expect(body.model).toBe('grok-imagine-video-1.5-lite');
+    expect(body.image).toEqual({ url: `data:image/png;base64,${Buffer.from('png-start').toString('base64')}` });
+    expect(body).not.toHaveProperty('aspect_ratio');
+  });
+
+  it('o que o modelo recusa para antes de qualquer chamada paga', async () => {
+    const { deps, calls } = fakeDeps([]);
+    fs.writeFileSync(path.join(dir, 'ref.png'), Buffer.from('ref'));
+    await expect(
+      generateVideo(
+        { prompt: 'x', model: 'grok-video-lite', referenceImagePaths: ['ref.png'], baseDir: dir },
+        xaiOnly(deps),
+      ),
+    ).rejects.toThrow('grok-imagine-video-1.5-lite não usa imagens de referência');
+    await expect(
+      generateVideo({ prompt: 'x', model: 'grok', durationSeconds: 16, baseDir: dir }, xaiOnly(deps)),
+    ).rejects.toThrow('grok-imagine-video-1.5 aceita 1, 2, 3');
+    await expect(
+      generateVideo({ prompt: 'x', model: 'grok-imagine-video', resolution: '1080p', baseDir: dir }, xaiOnly(deps)),
+    ).rejects.toThrow('grok-imagine-video aceita resolução 480p, 720p (pedido: 1080p).');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('falha no serviço vira a frase do que fazer e o job fica como falho', async () => {
+    const { deps } = fakeDeps([
+      { json: { request_id: REQUEST_ID } },
+      { json: { status: 'failed', error: { code: 'failed_precondition', message: 'resolution not supported' } } },
+    ]);
+    await expect(
+      generateVideo({ prompt: 'x', provider: 'xai-video', baseDir: dir }, xaiOnly(deps)),
+    ).rejects.toThrow(
+      'O modelo não faz isso com essas opções (resolução ou modo). Troque o modelo ou as opções. ' +
+        'Resposta do serviço: resolution not supported',
+    );
+    expect(getVideoJob(dir, REQUEST_ID)?.status).toBe('failed');
+  });
+
+  it('URL do vídeo fora de vidgen.x.ai não é baixada', async () => {
+    const { deps, calls } = fakeDeps([
+      { json: { request_id: REQUEST_ID } },
+      { json: { status: 'done', video: { url: 'https://api.x.ai/v1/files/x.mp4', respect_moderation: true } } },
+    ]);
+    await expect(
+      generateVideo({ prompt: 'x', provider: 'xai-video', baseDir: dir }, xaiOnly(deps)),
+    ).rejects.toThrow('xai-video: domínio não permitido para download');
+    expect(calls).toHaveLength(2);
+  });
+
+  it('estouro de tempo devolve recoverJobId; a retomada só faz poll, sem gerar de novo', async () => {
+    const pending = Array.from({ length: 120 }, () => ({ json: { status: 'pending' } }));
+    const first = fakeDeps([{ json: { request_id: REQUEST_ID } }, ...pending]);
+    const err = await generateVideo(
+      { prompt: 'x', provider: 'xai-video', outPath: 'late.mp4', baseDir: dir },
+      xaiOnly(first.deps),
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MediaJobTimeoutError);
+    expect((err as MediaJobTimeoutError).jobId).toBe(REQUEST_ID);
+    expect((err as MediaJobTimeoutError).recoverable).toBe(true);
+    expect(first.calls).toHaveLength(121);
+    expect(getVideoJob(dir, REQUEST_ID)?.status).toBe('pending');
+
+    const resumed = fakeDeps([
+      { json: { status: 'done', video: { url: VIDEO_URL, duration: 8, respect_moderation: true } } },
+      { body: Buffer.from('late-mp4') },
+    ]);
+    const res = await generateVideo({ prompt: '', recoverJobId: REQUEST_ID, baseDir: dir }, xaiOnly(resumed.deps));
+    expect(resumed.calls.map((c) => c.url)).toEqual([`${XAI}/videos/${REQUEST_ID}`, VIDEO_URL]);
+    expect(fs.readFileSync(path.join(dir, 'late.mp4')).toString()).toBe('late-mp4');
+    expect(res).toMatchObject({ provider: 'xai-video', jobId: REQUEST_ID });
+    expect(getVideoJob(dir, REQUEST_ID)?.status).toBe('completed');
+  });
+
+  it('chave recusada (HTTP 400 "Incorrect API key") diz para trocar a chave, não "pedido inválido"', async () => {
+    // Corpo visto ao vivo com chave falsa em 19/10/2026.
+    const { deps } = fakeDeps([
+      {
+        status: 400,
+        json: {
+          code: 'invalid-argument',
+          error: 'Incorrect API key provided. You can obtain an API key from https://console.x.ai.',
+        },
+      },
+    ]);
+    const err = await generateVideo(
+      { prompt: 'x', provider: 'xai-video', baseDir: dir },
+      xaiOnly(deps),
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MediaProviderHttpError);
+    expect((err as MediaProviderHttpError).kind).toBe('key');
+    expect((err as Error).message).toContain('xAI recusou a chave (HTTP 400)');
+  });
+
+  it('imagem: gera em base64, grava .jpg pelo mime_type e cobra o que a xAI informou', async () => {
+    const { deps, calls } = fakeDeps([
+      {
+        json: {
+          data: [{ b64_json: Buffer.from('jpeg').toString('base64'), mime_type: 'image/jpeg' }],
+          usage: { cost_in_usd_ticks: 400_000_000 },
+        },
+      },
+    ]);
+    const res = await generateImage(
+      { prompt: 'um farol', model: 'grok', aspectRatio: '1:1', baseDir: dir },
+      xaiOnly(deps),
+    );
+    expect(calls[0]?.url).toBe(`${XAI}/images/generations`);
+    expect(new Headers(calls[0]?.init?.headers).get('authorization')).toBe('Bearer xai-test-key');
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+      model: 'grok-imagine-image-2.0',
+      prompt: 'um farol',
+      response_format: 'b64_json',
+      aspect_ratio: '1:1',
+    });
+    expect(res.path).toBe(path.join(dir, 'generated-1000.jpg'));
+    expect(fs.readFileSync(res.path).toString()).toBe('jpeg');
+    expect(res).toMatchObject({ provider: 'xai-image', model: 'grok-imagine-image-2.0', estimatedCostUsd: 0.04 });
+  });
+
+  it('imagem com imagePath edita em /images/edits; PNG sai .png; sem usage, preço de lista do tamanho', async () => {
+    fs.writeFileSync(path.join(dir, 'foto.png'), Buffer.from('foto'));
+    const { deps, calls } = fakeDeps([{ json: { data: [{ b64_json: 'cG5n', mime_type: 'image/png' }] } }]);
+    const res = await generateImage(
+      { prompt: 'em lápis', provider: 'xai-image', imagePath: 'foto.png', size: '2K', baseDir: dir },
+      xaiOnly(deps),
+    );
+    expect(calls[0]?.url).toBe(`${XAI}/images/edits`);
+    expect(JSON.parse(String(calls[0]?.init?.body))).toMatchObject({
+      resolution: '2k',
+      image: { url: `data:image/png;base64,${Buffer.from('foto').toString('base64')}` },
+    });
+    expect(res.path).toBe(path.join(dir, 'generated-1000.png'));
+    expect(res.estimatedCostUsd).toBe(0.06);
+  });
+});

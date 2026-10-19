@@ -473,6 +473,66 @@ describe('MediaStudioPanel: vídeo com as opções do modelo (F-1585)', () => {
     });
     expect(dialog.textContent).toContain('Custo estimado: $0.80 · 8 s de vídeo');
   });
+
+  it('F-1599: só com a chave da xAI, o Grok Imagine gera vídeo com as opções e o preço do modelo', async () => {
+    const xaiVideo = {
+      id: 'xai-video',
+      kind: 'video',
+      label: 'xAI — Grok Imagine (vídeo)',
+      envVar: 'XAI_API_KEY',
+      defaultModel: 'grok-imagine-video-1.5',
+      models: ['grok-imagine-video-1.5', 'grok-imagine-video-1.5-lite', 'grok-imagine-video'],
+      hasKey: true,
+      maskedKey: null,
+    };
+    media().listProviders.mockResolvedValue([xaiVideo]);
+    media().generate.mockResolvedValue({
+      ok: true,
+      path: 'C:\\proj\\generated-7.mp4',
+      provider: 'xai-video',
+      model: 'grok-imagine-video',
+      kind: 'video',
+      estimatedCostUsd: 0.35,
+      durationMs: 60_000,
+      jobId: 'a3d1008e-4544-40d4-d075-11527e794e4a',
+    });
+    const dialog = await openFrom(renderHarness());
+    const videoTab = Array.from(dialog.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find(
+      (b) => b.textContent === 'Vídeo',
+    )!;
+    act(() => videoTab.click());
+
+    expect(dialog.querySelector<HTMLSelectElement>('select')!.value).toBe('xai-video::grok-imagine-video-1.5');
+    expect(chipTexts(dialog, 'Resolução')).toEqual(['480p', '720p', '1080p']);
+    expect(chipTexts(dialog, 'Proporção')).toEqual(['16:9', '9:16', '1:1', '4:3', '3:4', '3:2', '2:3', '21:9', '5:2']);
+    const slider = dialog.querySelector<HTMLInputElement>('input[type="range"]')!;
+    expect([slider.min, slider.max, slider.value]).toEqual(['1', '15', '5']);
+    // 5 s × US$ 0,14/s (720p no 1.5).
+    expect(dialog.textContent).toContain('Custo estimado: $0.70');
+
+    // O clássico vai só até 720p: o 1080p some e o custo segue o modelo.
+    choose(dialog, 'xai-video::grok-imagine-video');
+    expect(chipTexts(dialog, 'Resolução')).toEqual(['480p', '720p']);
+    expect(dialog.textContent).toContain('Custo estimado: $0.35');
+
+    const prompt = dialog.querySelector<HTMLTextAreaElement>('textarea')!;
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+      setter.call(prompt, 'um farol na tempestade');
+      prompt.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      dialog.querySelector<HTMLButtonElement>('.ms-generate')!.click();
+    });
+    expect(media().generate.mock.calls[0]?.[0]).toMatchObject({
+      kind: 'video',
+      providerId: 'xai-video',
+      model: 'grok-imagine-video',
+      durationSeconds: 5,
+      resolution: '720p',
+      aspectRatio: '16:9',
+    });
+  });
 });
 
 describe('MediaStudioPanel: prévia do arquivo gerado (F-1586)', () => {

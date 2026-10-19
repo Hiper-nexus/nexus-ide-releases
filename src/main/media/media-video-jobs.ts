@@ -9,12 +9,15 @@ import type { GeminiOmniUsage } from '../../shared/media-video-models';
  * Jobs live under the open workspace: `.nexus/media/video-jobs.json`.
  */
 
-export type MediaVideoJobProvider = 'replicate-video' | 'google-video';
+export type MediaVideoJobProvider = 'replicate-video' | 'google-video' | 'xai-video';
 
 export interface MediaVideoJobRecord {
   jobId: string;
   provider: MediaVideoJobProvider;
-  /** Absolute poll URL (Replicate) or operation resource name (Google). */
+  /**
+   * Absolute poll URL (Replicate), operation resource name or Files API id
+   * (Google), or the xAI `request_id`.
+   */
   pollTarget: string;
   model: string;
   prompt: string;

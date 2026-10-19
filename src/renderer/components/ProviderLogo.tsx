@@ -35,6 +35,8 @@ const PROVIDER_LOGOS: Record<string, { src: string; mono?: boolean }> = {
   codex: { src: codexLogo, mono: true },
   kimi: { src: kimiLogo },
   grok: { src: grokLogo, mono: true },
+  // Serviços de mídia xai-image/xai-video (F-1599): a marca é a do Grok.
+  xai: { src: grokLogo, mono: true },
   glm: { src: glmLogo },
   'glm-flash': { src: glmLogo },
   longcat: { src: longcatLogo },

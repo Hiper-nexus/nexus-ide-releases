@@ -3,10 +3,30 @@ import {
   MediaProviderHttpError,
   describeMediaHttpError,
   mediaHttpError,
+  mediaHttpErrorKind,
   mediaServiceName,
   providerErrorDetail,
   providerErrorReason,
 } from './media-errors';
+
+describe('F-1599: erro da xAI', () => {
+  it('chave incorreta vem como HTTP 400 e vira tipo key, com o nome xAI', () => {
+    // Corpo visto ao vivo em 19/10/2026 (chave falsa), igual a docs.x.ai/developers/debugging.
+    const body = JSON.stringify({
+      code: 'invalid-argument',
+      error: 'Incorrect API key provided. You can obtain an API key from https://console.x.ai.',
+    });
+    const detail = providerErrorDetail(body);
+    expect(detail).toBe('Incorrect API key provided. You can obtain an API key from https://console.x.ai.');
+    expect(mediaHttpErrorKind(400, providerErrorReason(body), detail)).toBe('key');
+    expect(describeMediaHttpError('xai-video', 400, detail)).toContain(
+      'xAI recusou a chave (HTTP 400). Confira ou troque a chave em Ajustes → Serviços de mídia.',
+    );
+    // Outro parâmetro errado com o mesmo code continua sendo pedido inválido.
+    expect(mediaHttpErrorKind(400, undefined, 'Invalid aspect ratio')).toBe('invalid-request');
+    expect(mediaServiceName('xai-image')).toBe('xAI');
+  });
+});
 
 describe('media-errors (F-1584)', () => {
   it('tira a frase do serviço do corpo JSON de cada provedor', () => {

@@ -112,4 +112,26 @@ describe('media-studio-options (F-1585)', () => {
     expect(studioCostUsd('image', image, 'gpt-image-2')).toBe(0.07);
     expect(studioCostUsd('image', image, 'outro')).toBeNull();
   });
+
+  it('F-1599: Grok Imagine oferece 1–15 s e as resoluções do modelo, com o custo antes de gerar', () => {
+    const video15 = studioVideoChoices('grok-imagine-video-1.5', { aspect: '21:9', resolution: '1080p', duration: 12 });
+    expect(video15).toMatchObject({ aspect: '21:9', resolution: '1080p', duration: 12 });
+    expect(video15.durations).toHaveLength(15);
+    expect(video15.resolutions).toEqual(['480p', '720p', '1080p']);
+    // O clássico não faz 1080p: cai no padrão dele, mantendo duração e proporção.
+    const classic = studioVideoChoices('grok-imagine-video', { aspect: '21:9', resolution: '1080p', duration: 12 });
+    expect(classic).toMatchObject({ aspect: '21:9', resolution: '720p', duration: 12 });
+    expect(studioCostUsd('video', undefined, 'grok-imagine-video', classic)).toBe(0.84);
+    expect(studioCostUsd('video', undefined, 'grok-imagine-video-1.5', { duration: 5, resolution: '720p' })).toBe(0.7);
+    expect(studioVideoPerSecondUsd('grok-imagine-video-1.5', video15)).toBeNull();
+    const xai = provider({
+      id: 'xai-video',
+      label: 'xAI — Grok Imagine (vídeo)',
+      envVar: 'XAI_API_KEY',
+      defaultModel: 'grok-imagine-video-1.5',
+      models: ['grok-imagine-video-1.5', 'grok-imagine-video-1.5-lite', 'grok-imagine-video'],
+    });
+    expect(firstUsableModel([xai], BEFORE)).toEqual({ providerId: 'xai-video', model: 'grok-imagine-video-1.5' });
+    expect(studioModelBlock('grok-imagine-video-1.5-lite', AFTER)).toBeNull();
+  });
 });

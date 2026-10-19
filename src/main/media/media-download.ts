@@ -9,7 +9,7 @@ import { Readable } from 'node:stream';
 import tls from 'node:tls';
 
 export type DynamicMediaProvider =
-  'openai-image' | 'replicate-image' | 'replicate-video' | 'google-video';
+  'openai-image' | 'replicate-image' | 'replicate-video' | 'google-video' | 'xai-video';
 
 export type PinnedMediaFetch = (
   url: URL,
@@ -38,6 +38,7 @@ const DEFAULT_LIMITS: Record<DynamicMediaProvider, MediaDownloadLimits> = {
   'replicate-image': { maxBytes: 64 * 1024 * 1024, timeoutMs: 120_000 },
   'replicate-video': { maxBytes: 256 * 1024 * 1024, timeoutMs: 120_000 },
   'google-video': { maxBytes: 256 * 1024 * 1024, timeoutMs: 120_000 },
+  'xai-video': { maxBytes: 256 * 1024 * 1024, timeoutMs: 120_000 },
 };
 const ALLOWED_HOST_SUFFIXES: Record<DynamicMediaProvider, string[]> = {
   'openai-image': ['openai.com', 'oaistatic.com', 'blob.core.windows.net'],
@@ -49,6 +50,10 @@ const ALLOWED_HOST_SUFFIXES: Record<DynamicMediaProvider, string[]> = {
     'gstatic.com',
     'storage.googleapis.com',
   ],
+  // F-1599: o vídeo do Grok Imagine é uma URL temporária e pública em
+  // `vidgen.x.ai` (docs.x.ai, resposta do `GET /v1/videos/{id}`); baixada sem
+  // a chave. Só esse host, nunca o `x.ai` inteiro.
+  'xai-video': ['vidgen.x.ai'],
 };
 
 interface ApprovedDownloadTarget {

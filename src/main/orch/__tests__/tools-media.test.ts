@@ -52,6 +52,10 @@ vi.mock('../../media/media-model-aliases', async (importOriginal) => ({
     seedream: 'bytedance/seedream-5-pro',
     seedance: 'bytedance/seedance-2.0',
   }),
+  listMediaModelAliasesByKind: () => ({
+    image: { grok: 'grok-imagine-image-2.0' },
+    video: { grok: 'grok-imagine-video-1.5' },
+  }),
 }));
 vi.mock('../../media/media-keys', () => ({
   hasMediaKey: (def: { id: string }) => mocks.keyedProviders.includes(def.id),
@@ -89,6 +93,21 @@ describe('media MCP tools', () => {
         true,
       );
     }
+  });
+
+  it('F-1599: o Grok Imagine (xai-image/xai-video) é oferecido e "grok" depende da ferramenta', async () => {
+    const tools = buildMediaTools();
+    const providerEnum = (name: string) =>
+      (tools.find((tool) => tool.name === name)!.inputSchema as {
+        properties: { provider: { enum: string[] } };
+      }).properties.provider.enum;
+    expect(providerEnum('nexus_image_generate')).toContain('xai-image');
+    expect(providerEnum('nexus_video_generate')).toContain('xai-video');
+    const listing = (await tools
+      .find((tool) => tool.name === 'nexus_media_providers')!
+      .handler({}, fakeCtx())) as { aliasesByKind: Record<string, Record<string, string>> };
+    expect(listing.aliasesByKind.video?.grok).toBe('grok-imagine-video-1.5');
+    expect(listing.aliasesByKind.image?.grok).toBe('grok-imagine-image-2.0');
   });
 
   it('binds generation to the canonical active workspace', async () => {

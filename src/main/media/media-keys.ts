@@ -18,6 +18,19 @@ import { findMediaProvider } from './media-providers';
 const MEDIA_SECRET_PREFIX = 'mediakey:';
 const VOICE_SECRET_PREFIX = 'voice-env:';
 
+/**
+ * Pares que dividem a mesma chave: Gemini (google-image ↔ google-video),
+ * REPLICATE_API_TOKEN e, desde o F-1599, a XAI_API_KEY (xai-image ↔ xai-video).
+ */
+const PAIRED_PROVIDER: Partial<Record<MediaProviderId, MediaProviderId>> = {
+  'google-image': 'google-video',
+  'google-video': 'google-image',
+  'replicate-image': 'replicate-video',
+  'replicate-video': 'replicate-image',
+  'xai-image': 'xai-video',
+  'xai-video': 'xai-image',
+};
+
 export function mediaSecretKey(providerId: MediaProviderId): string {
   return `${MEDIA_SECRET_PREFIX}${providerId}`;
 }
@@ -26,23 +39,10 @@ export function mediaSecretKey(providerId: MediaProviderId): string {
 export function resolveMediaKey(def: MediaProviderDef): string | undefined {
   const stored = getSecret(mediaSecretKey(def.id))?.trim();
   if (stored) return stored;
-  // google-image ↔ google-video share the same Gemini AI Studio key.
-  if (def.id === 'google-video') {
-    const imageKey = getSecret(mediaSecretKey('google-image'))?.trim();
-    if (imageKey) return imageKey;
-  }
-  if (def.id === 'google-image') {
-    const videoKey = getSecret(mediaSecretKey('google-video'))?.trim();
-    if (videoKey) return videoKey;
-  }
-  // replicate-image ↔ replicate-video share REPLICATE_API_TOKEN.
-  if (def.id === 'replicate-image') {
-    const videoKey = getSecret(mediaSecretKey('replicate-video'))?.trim();
-    if (videoKey) return videoKey;
-  }
-  if (def.id === 'replicate-video') {
-    const imageKey = getSecret(mediaSecretKey('replicate-image'))?.trim();
-    if (imageKey) return imageKey;
+  const paired = PAIRED_PROVIDER[def.id];
+  if (paired) {
+    const pairedKey = getSecret(mediaSecretKey(paired))?.trim();
+    if (pairedKey) return pairedKey;
   }
   // Provider credentials are app-wide. A Gemini/OpenAI key already saved in
   // Voice must immediately enable the matching media provider instead of
@@ -59,11 +59,8 @@ export function hasMediaKey(def: MediaProviderDef): boolean {
   // the macOS Keychain and stall Electron's main thread.
   const own = hasSecret(mediaSecretKey(def.id));
   const shared = hasSecret(`${VOICE_SECRET_PREFIX}${def.envVar}`);
-  const paired =
-    (def.id === 'google-image' && hasSecret(mediaSecretKey('google-video'))) ||
-    (def.id === 'google-video' && hasSecret(mediaSecretKey('google-image'))) ||
-    (def.id === 'replicate-image' && hasSecret(mediaSecretKey('replicate-video'))) ||
-    (def.id === 'replicate-video' && hasSecret(mediaSecretKey('replicate-image')));
+  const pairedId = PAIRED_PROVIDER[def.id];
+  const paired = pairedId !== undefined && hasSecret(mediaSecretKey(pairedId));
   return own || shared || paired || Boolean(process.env[def.envVar]?.trim());
 }
 
@@ -84,12 +81,10 @@ export function maskedMediaKey(providerId: MediaProviderId): string | null {
   // encrypted index and never decrypt Keychain data for a status render.
   const cached = (key: string): string | null =>
     hasCachedSecret(key) ? getSecret(key)?.trim() || null : null;
+  const pairedId = def ? PAIRED_PROVIDER[def.id] : undefined;
   const key = def
     ? cached(mediaSecretKey(def.id)) ||
-      (def.id === 'google-video' && cached(mediaSecretKey('google-image'))) ||
-      (def.id === 'google-image' && cached(mediaSecretKey('google-video'))) ||
-      (def.id === 'replicate-image' && cached(mediaSecretKey('replicate-video'))) ||
-      (def.id === 'replicate-video' && cached(mediaSecretKey('replicate-image'))) ||
+      (pairedId !== undefined && cached(mediaSecretKey(pairedId))) ||
       cached(`${VOICE_SECRET_PREFIX}${def.envVar}`) ||
       (process.env[def.envVar]?.trim() ?? null)
     : cached(mediaSecretKey(providerId));

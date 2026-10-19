@@ -6,6 +6,7 @@ import type {
 import { estimateVideoCostUsd, videoModelCard } from '../../shared/media-video-models';
 import { resolveMediaModelAlias } from './media-model-aliases';
 import { resolveMediaOutputPath } from './media-path-policy';
+import { xaiImageCostUsd } from './xai-imagine';
 
 /**
  * Media provider registry — the table that turns a stored API key into a
@@ -154,6 +155,27 @@ export const MEDIA_PROVIDERS: MediaProviderDef[] = [
       typeof chars === 'number'
         ? Number(((chars / 1_000) * 0.18).toFixed(4))
         : null,
+  },
+  // F-1599: Grok Imagine pela API da xAI (docs.x.ai). A chave é a mesma
+  // XAI_API_KEY da voz do Grok (media-keys lê o cofre da voz). Ficam no fim
+  // de cada tipo: quem já tinha outro serviço conectado mantém o padrão.
+  {
+    id: 'xai-image',
+    kind: 'image',
+    label: 'xAI — Grok Imagine (imagem)',
+    envVar: 'XAI_API_KEY',
+    defaultModel: 'grok-imagine-image-2.0',
+    models: ['grok-imagine-image-2.0', 'grok-imagine-image-quality', 'grok-imagine-image'],
+    estimateCost: ({ model, resolution }) => xaiImageCostUsd(model, resolution),
+  },
+  {
+    id: 'xai-video',
+    kind: 'video',
+    label: 'xAI — Grok Imagine (vídeo)',
+    envVar: 'XAI_API_KEY',
+    defaultModel: 'grok-imagine-video-1.5',
+    models: ['grok-imagine-video-1.5', 'grok-imagine-video-1.5-lite', 'grok-imagine-video'],
+    estimateCost: videoEstimate,
   },
 ];
 

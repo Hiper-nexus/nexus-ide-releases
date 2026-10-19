@@ -58,6 +58,8 @@ const PROVIDER_LINKS: Record<string, CredentialLink> = {
   'openai-image': ENV_LINKS.OPENAI_API_KEY,
   'replicate-image': ENV_LINKS.REPLICATE_API_TOKEN,
   'replicate-video': ENV_LINKS.REPLICATE_API_TOKEN,
+  'xai-image': ENV_LINKS.XAI_API_KEY,
+  'xai-video': ENV_LINKS.XAI_API_KEY,
   elevenlabs: ENV_LINKS.ELEVENLABS_API_KEY,
   glm: {
     label: 'Z.AI Platform',

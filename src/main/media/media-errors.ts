@@ -19,6 +19,7 @@ export function mediaServiceName(provider: string): string {
   if (id.startsWith('google') || id.startsWith('gemini')) return 'Google';
   if (id.startsWith('openai')) return 'OpenAI';
   if (id.startsWith('elevenlabs')) return 'ElevenLabs';
+  if (id.startsWith('xai')) return 'xAI';
   return provider;
 }
 
@@ -96,6 +97,10 @@ export function mediaHttpErrorKind(
 ): MediaErrorKind {
   // O Google recusa chave inválida com 400, não 401/403.
   if (reason === 'API_KEY_INVALID') return 'key';
+  // A xAI também (docs.x.ai/developers/debugging, e visto ao vivo em
+  // 19/10/2026, F-1599): `{"code":"invalid-argument","error":"Incorrect API
+  // key provided…"}`. O `code` é o mesmo de qualquer parâmetro errado.
+  if (status === 400 && /\bincorrect api key\b/iu.test(detail)) return 'key';
   if (status === 401 || status === 403) return 'key';
   if (status === 402) return 'billing';
   if (status === 404) return 'not-found';

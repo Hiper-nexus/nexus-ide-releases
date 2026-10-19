@@ -11,7 +11,10 @@ import {
   listMediaProviders,
   MediaProviderUnavailableError,
 } from '../media/media-providers';
-import { listMediaModelAliases } from '../media/media-model-aliases';
+import {
+  listMediaModelAliases,
+  listMediaModelAliasesByKind,
+} from '../media/media-model-aliases';
 import { hasMediaKey, maskedMediaKey } from '../media/media-keys';
 import { recordMediaUsage } from '../usage/media-usage-recorder';
 import { num, requireStr, str, strArray } from './tool-util';
@@ -44,7 +47,10 @@ const mediaProvidersTool: McpToolDef = {
   description:
     'List media generation providers (image/video/audio), their models, ' +
     'whether an API key is configured, and friendly model aliases ' +
-    '(seedream, seedance, veo, omni, kling, sora, runway, luma…). ' +
+    '(seedream, seedance, veo, omni, kling, sora, runway, luma, grok…; ' +
+    'aliasesByKind lists the ones that depend on the tool, e.g. "grok" is ' +
+    'Grok Imagine Image in nexus_image_generate and Grok Imagine Video in ' +
+    'nexus_video_generate). ' +
     'Image providers carry imageCostUsd (list USD per image, per model). ' +
     'Video providers carry videoModels, one card per model with the rules ' +
     'nexus_video_generate enforces before any charge: durationsSeconds ' +
@@ -65,6 +71,7 @@ const mediaProvidersTool: McpToolDef = {
     ),
     defaults: defaultMediaChoices(hasMediaKey),
     aliases: listMediaModelAliases(),
+    aliasesByKind: listMediaModelAliasesByKind(),
   }),
 };
 
@@ -84,6 +91,10 @@ const imageGenerateTool: McpToolDef = {
     'Seedream size: 1K|2K only (default 2K). imagePath + ' +
     'referenceImagePaths[] → image_input (1–10 refs, Seedream ONLY — ' +
     'google/openai-image accept just imagePath). ' +
+    'xai-image (Grok Imagine Image 2.0 via the XAI_API_KEY; alias grok): ' +
+    'imagePath edits that image; size 1K|1.5K|2K (grok-imagine-image: ' +
+    '1K|2K); aspectRatio 1:1|16:9|9:16|4:3|3:4|3:2|2:3|2:1|1:2|21:9|5:2|' +
+    '19.5:9|9:19.5|20:9|9:20|auto. ' +
     'Paths stay in the open workspace. Missing key → STOP and report ' +
     '"configure o provider em Ajustes → Serviços de mídia".',
   inputSchema: {
@@ -92,7 +103,7 @@ const imageGenerateTool: McpToolDef = {
       prompt: { type: 'string' },
       provider: {
         type: 'string',
-        enum: ['google-image', 'openai-image', 'replicate-image'],
+        enum: ['google-image', 'openai-image', 'replicate-image', 'xai-image'],
       },
       model: { type: 'string' },
       outPath: { type: 'string' },
@@ -160,15 +171,22 @@ const videoGenerateTool: McpToolDef = {
     'Hailuo, Wan, Sora 2, Runway, Luma Ray) | google-video (Gemini API key: ' +
     'default gemini-omni-1.1-flash — the model picks the clip length, so omit ' +
     'durationSeconds; it bills tokens, close to the per-second table; ' +
-    'resolution 360p|720p|1080p|4k). The native Veo 3.1 previews ' +
+    'resolution 360p|720p|1080p|4k) | xai-video (Grok Imagine via the ' +
+    'XAI_API_KEY: default grok-imagine-video-1.5, also -1.5-lite and ' +
+    'grok-imagine-video; durationSeconds 1–15; resolution 480p|720p|1080p, ' +
+    'grok-imagine-video up to 720p; aspectRatio 16:9|9:16|1:1|4:3|3:4|3:2|' +
+    '2:3|21:9|5:2, ignored with imagePath (the clip follows the image); ' +
+    'references or endImagePath cap at 720p). The native Veo 3.1 previews ' +
     '(veo-3.1-*-generate-preview) retire on 2026-10-22: use Omni, or ' +
     'google/veo-3.1 via Replicate. ' +
-    'Friendly model aliases work: seedance, veo, omni, kling, sora, runway, luma. ' +
-    'imagePath=first frame; endImagePath=last frame (Seedance, Veo, Kling, ' +
-    'Luma, google-video; Omni needs imagePath with it); referenceImagePaths[] ' +
-    'for character refs (max 9) on Seedance, Veo and google-video. On timeout ' +
-    'the error includes recoverJobId — call again with that id to resume ' +
-    'without double charge. Paths stay in the open workspace. ' +
+    'Friendly model aliases work: seedance, veo, omni, kling, sora, runway, ' +
+    'luma, grok. imagePath=first frame; endImagePath=last frame (Seedance, ' +
+    'Veo, Kling, Luma, google-video — Omni needs imagePath with it — and only ' +
+    'grok-imagine-video-1.5 on xai-video); referenceImagePaths[] for ' +
+    'character refs: max 9 on Seedance, Veo and google-video; on xai-video up ' +
+    'to 14 on 1.5, 7 on grok-imagine-video (max 10 s), none on lite. On ' +
+    'timeout the error includes recoverJobId — call again with that id to ' +
+    'resume without double charge. Paths stay in the open workspace. ' +
     'Missing key → STOP and report Ajustes → Serviços de mídia.',
   inputSchema: {
     type: 'object',
@@ -176,7 +194,7 @@ const videoGenerateTool: McpToolDef = {
       prompt: { type: 'string' },
       provider: {
         type: 'string',
-        enum: ['replicate-video', 'google-video'],
+        enum: ['replicate-video', 'google-video', 'xai-video'],
       },
       model: { type: 'string' },
       outPath: { type: 'string' },

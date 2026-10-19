@@ -166,6 +166,42 @@ describe('videoModelSummary (F-1585)', () => {
     );
     expect(videoModelSummary('modelo/novo')).toBeNull();
   });
+
+  it('F-1599: Grok Imagine com o preço por resolução da página de preços da xAI', () => {
+    expect(videoModelSummary('grok-imagine-video-1.5', BEFORE)).toBe(
+      '1–15 s · 480p, 720p, 1080p · a partir de $0.08/s',
+    );
+    expect(videoModelSummary('grok-imagine-video-1.5-lite', BEFORE)).toBe(
+      '1–15 s · 480p, 720p, 1080p · a partir de $0.02/s',
+    );
+    expect(videoModelSummary('grok-imagine-video', BEFORE)).toBe('1–15 s · 480p, 720p · a partir de $0.05/s');
+  });
+});
+
+describe('F-1599: Grok Imagine na tabela de vídeo', () => {
+  it('1–15 s, padrão 8 s em 720p, e o clássico vai só até 720p', () => {
+    for (const model of ['grok-imagine-video-1.5', 'grok-imagine-video-1.5-lite', 'grok-imagine-video']) {
+      const spec = videoModelSpec(model)!;
+      expect(spec.durations).toEqual(Array.from({ length: 15 }, (_, i) => i + 1));
+      expect(spec.defaultDuration).toBe(8);
+      expect(spec.defaultResolution).toBe('720p');
+      expect(spec.aspectRatios).toEqual(['16:9', '9:16', '1:1', '4:3', '3:4', '3:2', '2:3', '21:9', '5:2']);
+    }
+    expect(videoRequestProblem('grok-imagine-video', { resolution: '1080p' }, BEFORE)).toBe(
+      'grok-imagine-video aceita resolução 480p, 720p (pedido: 1080p).',
+    );
+    expect(videoRequestProblem('grok-imagine-video-1.5', { durationSeconds: 0 }, BEFORE)).toContain('aceita 1, 2, 3');
+    expect(videoRequestProblem('grok-imagine-video-1.5', { durationSeconds: 15, resolution: '1080p', aspectRatio: '5:2' }, BEFORE)).toBeNull();
+  });
+
+  it('custo: segundos × preço da resolução (docs.x.ai/developers/pricing, 10/10/2026)', () => {
+    expect(estimateVideoCostUsd('grok-imagine-video-1.5', { seconds: 10, resolution: '1080p' })).toBe(2.5);
+    expect(estimateVideoCostUsd('grok-imagine-video-1.5', { seconds: 8, resolution: '480p' })).toBe(0.64);
+    expect(estimateVideoCostUsd('grok-imagine-video-1.5-lite', { seconds: 8, resolution: '720p' })).toBe(0.24);
+    expect(estimateVideoCostUsd('grok-imagine-video-1.5-lite', { seconds: 5, resolution: '1080p' })).toBe(0.7);
+    expect(estimateVideoCostUsd('grok-imagine-video', { seconds: 15, resolution: '720p' })).toBe(1.05);
+    expect(estimateVideoCostUsd('grok-imagine-video', { resolution: '1080p' })).toBeNull();
+  });
 });
 
 describe('videoModelCard (F-1598)', () => {
