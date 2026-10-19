@@ -274,16 +274,45 @@ export function compareAccountHeadroom(
 export function headroomInputsByAccount(
   entries: readonly ProviderQuotaEntry[],
   adapterId: string,
+  options?: {
+    /**
+     * Conta que detém a identidade viva da CLI. A linha NATIVA do snapshot
+     * (sem `accountId`) recebe a leitura que o bridge/CLI mediu da sessão
+     * logada; para o AGY de conta pessoal ela é a ÚNICA leitura possível,
+     * porque o endpoint direto responde 403 por conta do cofre
+     * (`agy-bridge.ts`). Sem esta atribuição a conta ativa parece "sem
+     * medição" e a drenagem nunca dispara.
+     *
+     * Só a identidade viva recebe: as irmãs seguem sem leitura, que é a
+     * verdade — ninguém as mediu.
+     */
+    readonly attributeNativeTo?: string;
+  },
 ): Map<string, HeadroomInput> | undefined {
   const out = new Map<string, HeadroomInput>();
+  let native: ProviderQuotaEntry | undefined;
   for (const entry of entries) {
-    if (entry.adapterId !== adapterId || !entry.accountId) continue;
+    if (entry.adapterId !== adapterId) continue;
+    if (!entry.accountId) {
+      native ??= entry;
+      continue;
+    }
     // Mesmo critério do escore antigo (quotaAvailabilityScore): conta em
     // cooldown não tem folga, seja qual for o motivo.
     out.set(entry.accountId, {
       windows: entry.windows,
       onCooldown: entry.onCooldown,
       ...(Number.isFinite(entry.updatedAt) ? { updatedAt: entry.updatedAt } : {}),
+    });
+  }
+  const identity = options?.attributeNativeTo;
+  const row = identity ? out.get(identity) : undefined;
+  // A linha da própria conta vence: só preenche quando ela nada mediu.
+  if (identity && native && row && headroomReadings(row).size === 0) {
+    out.set(identity, {
+      ...row,
+      windows: native.windows,
+      ...(Number.isFinite(native.updatedAt) ? { updatedAt: native.updatedAt } : {}),
     });
   }
   return out.size > 0 ? out : undefined;

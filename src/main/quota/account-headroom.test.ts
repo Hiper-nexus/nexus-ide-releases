@@ -9,6 +9,7 @@ import {
   unreadWindowWithProvenHeadroom,
   type HeadroomInput,
 } from './account-headroom';
+import type { ProviderQuotaEntry } from '../../shared/quota-types';
 
 const RESET_5H = 1_791_420_599_886;
 const RESET_WEEK = 1_791_658_799_908;
@@ -191,5 +192,83 @@ describe('isHeadroomDraining (limiar de drenagem)', () => {
       updatedAt: NOW - 60_000,
     };
     expect(isHeadroomDraining(input, DRAIN_THRESHOLD, EV)).toBe(false);
+  });
+});
+
+describe('headroomInputsByAccount — leitura da identidade viva (AGY)', () => {
+  const entry = (
+    over: Partial<ProviderQuotaEntry>,
+  ): ProviderQuotaEntry => ({
+    id: 'agy:x', adapterId: 'agy', label: 'AGY', installed: true,
+    onCooldown: false, updatedAt: 1_000, windows: [], ...over,
+  } as ProviderQuotaEntry);
+
+  const w = (usedRatio: number) => ({
+    kind: 'hours' as const, label: '5 Horas', usedRatio,
+    source: 'provider-api' as const, confidence: 'high' as const,
+  });
+
+  it('sem a opção, a linha nativa (sem accountId) continua descartada', () => {
+    const out = headroomInputsByAccount(
+      [entry({ id: 'agy:native', windows: [w(0.9)] }), entry({ id: 'agy:a', accountId: 'a' })],
+      'agy',
+    );
+    expect(out?.get('a')?.windows).toEqual([]);
+  });
+
+  it('atribui a leitura nativa à conta que detém a identidade viva', () => {
+    const out = headroomInputsByAccount(
+      [entry({ id: 'agy:native', windows: [w(0.9)] }), entry({ id: 'agy:a', accountId: 'a' })],
+      'agy',
+      { attributeNativeTo: 'a' },
+    );
+    expect(out?.get('a')?.windows).toEqual([w(0.9)]);
+    expect(out?.get('a')?.updatedAt).toBe(1_000);
+  });
+
+  it('não atribui às IRMÃS: só a identidade viva foi medida', () => {
+    const out = headroomInputsByAccount(
+      [
+        entry({ id: 'agy:native', windows: [w(0.9)] }),
+        entry({ id: 'agy:a', accountId: 'a' }),
+        entry({ id: 'agy:b', accountId: 'b' }),
+      ],
+      'agy',
+      { attributeNativeTo: 'a' },
+    );
+    expect(out?.get('b')?.windows).toEqual([]);
+  });
+
+  it('a linha da própria conta vence a nativa quando ela foi medida', () => {
+    const out = headroomInputsByAccount(
+      [
+        entry({ id: 'agy:native', windows: [w(0.9)] }),
+        entry({ id: 'agy:a', accountId: 'a', windows: [w(0.2)] }),
+      ],
+      'agy',
+      { attributeNativeTo: 'a' },
+    );
+    expect(out?.get('a')?.windows).toEqual([w(0.2)]);
+  });
+
+  it('preserva o cooldown da linha da conta, não o da nativa', () => {
+    const out = headroomInputsByAccount(
+      [
+        entry({ id: 'agy:native', windows: [w(0.9)], onCooldown: false }),
+        entry({ id: 'agy:a', accountId: 'a', onCooldown: true }),
+      ],
+      'agy',
+      { attributeNativeTo: 'a' },
+    );
+    expect(out?.get('a')?.onCooldown).toBe(true);
+  });
+
+  it('conta que não existe na frota não vira linha', () => {
+    const out = headroomInputsByAccount(
+      [entry({ id: 'agy:native', windows: [w(0.9)] })],
+      'agy',
+      { attributeNativeTo: 'fantasma' },
+    );
+    expect(out).toBeUndefined();
   });
 });

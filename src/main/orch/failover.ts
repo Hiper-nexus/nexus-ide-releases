@@ -717,8 +717,21 @@ function quotaHeadroomFor(
   adapterId: string,
 ): ReadonlyMap<string, HeadroomInput> | undefined {
   try {
+    // A leitura do CLI/bridge nativo é da identidade LOGADA. Para o AGY de
+    // conta pessoal ela é a única que existe (o endpoint direto responde 403
+    // por conta do cofre), então sem atribuí-la à conta ativa a frota inteira
+    // parece "sem medição" e a drenagem nunca dispara. Só a ativa recebe — as
+    // irmãs seguem sem leitura, que é a verdade.
+    // Limite conhecido: no Windows a identidade real é a vaga do keyring; se
+    // ela divergir da ativa (login feito fora do Nexus), a leitura vai para a
+    // irmã errada. O custo é drenar uma conta saudável cedo — preferência,
+    // não banimento —, e o Nexus escreve a vaga ele mesmo a cada spawn.
     const snap = requireQuotaService().lastSnapshot();
-    return snap ? headroomInputsByAccount(snap.entries, adapterId) : undefined;
+    return snap ? headroomInputsByAccount(snap.entries, adapterId, {
+      ...(getActiveAccount(adapterId)?.id
+        ? { attributeNativeTo: getActiveAccount(adapterId)!.id }
+        : {}),
+    }) : undefined;
   } catch {
     /* quota service optional at boot race */
     return undefined;
