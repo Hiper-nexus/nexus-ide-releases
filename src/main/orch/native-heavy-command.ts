@@ -3,10 +3,10 @@ import { z } from 'zod';
 import type { AgentGateContext } from './gate';
 import { executionScopeFor, isCurrentGateContext, gateContextAbortSignal } from './gate';
 import { handleHookJsonPost } from './hook-http';
-import { acquireHeavyCommandPermit, heavyCommandLabel, type HeavyCommandPermit, type HeavyCommandQueueWait, type HeavyCommandRequest } from './heavy-command-permit';
+import { acquireHeavyCommandPermit, heavyCommandLabel, setHeavyCommandPermitLiveness, type HeavyCommandPermit, type HeavyCommandQueueWait, type HeavyCommandRequest } from './heavy-command-permit';
 import { heavyCommandExecutionRoot } from './nested-worktree-execution';
 import type { ProjectExecutionScope } from '../../shared/types';
-import { claimSessionCommandProcess, probeSessionCommandProcess, borrowSessionCommandProcess, stopSessionCommandProcess } from '../pty/pty-manager';
+import { claimSessionCommandProcess, probeSessionCommandProcess, borrowSessionCommandProcess, stopSessionCommandProcess, getAgentSessionInfo } from '../pty/pty-manager';
 import type { CommandProcessState } from '../pty/owned-command-process';
 import { trace } from '../observability/main-trace';
 const TICKET = /^hq-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -153,7 +153,7 @@ export class NativeHeavyCommands {
     // repositório (subagentes do mesmo token, cada um na sua worktree).
     // Progress is per HTTP round: in-process terminal/bg callers omit it and
     // keep the promise until the slot opens.
-    try { permit = await this.ports.acquire({ scope: await this.#executionScope(ctx, body.cwd, body.pid), missionId: ctx.missionId, sessionId: ctx.sessionId, label: heavyCommandLabel(body.label), kind: body.kind, signal, isCurrent: () => this.#current(ctx) && this.#accepting, progressAfterMs: PROGRESS_AFTER_MS, queueTicket: body.ticket }); }
+    try { permit = await this.ports.acquire({ scope: await this.#executionScope(ctx, body.cwd, body.pid), missionId: ctx.missionId, sessionId: ctx.sessionId, label: heavyCommandLabel(body.label), kind: body.kind, executorPid: body.pid, signal, isCurrent: () => this.#current(ctx) && this.#accepting, progressAfterMs: PROGRESS_AFTER_MS, queueTicket: body.ticket }); }
     catch (failure) {
       const queued = failure as { message?: string; ticket?: string; queue?: HeavyCommandQueueWait } | null;
       if (queued?.message === 'heavy_command_queued' && queued.ticket && queued.queue) {
@@ -231,6 +231,10 @@ export const nativeHeavyCommands = new NativeHeavyCommands({ current: isCurrentG
   executorLive: heavyExecutorIsLive,
   executionRoot: (scope, cwd) => heavyCommandExecutionRoot(scope, cwd),
   afterDrain: async () => { const { drainNativeHeavyLocalChannels } = await import('./native-heavy-local-channel'); await drainNativeHeavyLocalChannels(); } });
+// Ghost-lease TTL: give the permit pool the same pid/session checks #observe
+// uses, so a lease whose watcher proof is stuck on daemon-inherited processes
+// still expires once the executor or the owning session is provably gone.
+setHeavyCommandPermitLiveness({ executorLive: heavyExecutorIsLive, sessionLive: (sessionId) => Boolean(getAgentSessionInfo(sessionId)) });
 export async function handleNativeHeavyCommandHttp(req: http.IncomingMessage, res: http.ServerResponse, ctx: AgentGateContext | null): Promise<void> {
   const abort = new AbortController();
   const parent = ctx ? gateContextAbortSignal(ctx) : undefined;

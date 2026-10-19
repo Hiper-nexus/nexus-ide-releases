@@ -132,6 +132,20 @@ it.each([
  expect(rewritten.endsWith(command)).toBe(true);
 });
 
+// F-1229 follow-up: the queue refusal names WHICH command holds the slot, not
+// just the kind. The label must be exported before request.cjs runs.
+it('the Bash hook prefix exports a command label the admission body carries', () => {
+ const resources = path.join(process.cwd(), 'resources/heavy-command');
+ const result = spawnSync(process.execPath, [path.join(resources, 'tool-hook.cjs')], { encoding: 'utf8', input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'node scripts/verify-fixtures.js run' } }),
+   env: { NEXUS_HEAVY_COMMAND_URL: 'http://127.0.0.1:1234/hook/heavy-command', NEXUS_GATE_TOKEN: 'finite-token', NEXUS_HEAVY_NODE: process.execPath, NEXUS_HEAVY_DIR: resources } });
+ expect(result.status).toBe(0);
+ const rewritten = JSON.parse(result.stdout).hookSpecificOutput.updatedInput.command as string;
+ expect(rewritten).toContain(`NEXUS_HEAVY_LABEL='node scripts/verify-fixtures.js'`);
+ // The label line precedes the lease assignment: request.cjs reads the env.
+ expect(rewritten.indexOf('NEXUS_HEAVY_LABEL=')).toBeLessThan(rewritten.indexOf('NEXUS_HEAVY_LEASE="$('));
+ expect(rewritten.endsWith('node scripts/verify-fixtures.js run')).toBe(true);
+});
+
 it('a remote scheduling URL denies a heavy native call before any command rewrite', () => {
  const result = spawnSync(process.execPath, [path.join(process.cwd(), 'resources/heavy-command/tool-hook.cjs')], { encoding: 'utf8', input: JSON.stringify({ tool_input: { command: 'make' } }),
    env: { NEXUS_HEAVY_COMMAND_URL: 'https://example.invalid/hook/heavy-command', NEXUS_GATE_TOKEN: 'finite-secret', NEXUS_HEAVY_NODE: process.execPath, NEXUS_HEAVY_DIR: process.cwd() } });

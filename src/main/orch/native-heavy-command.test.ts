@@ -123,6 +123,20 @@ it('refuses unknown PID ownership and outside-mission callers before taking any 
  expect(await native.admit({ ...ctx, role: 'worker', missionId: 'finite', sessionId: 'finite' }, { pid: 123, kind: 'typescript' })).toMatchObject({ allow: false, reason: 'heavy_command_process_ownership_unproved' });
 });
 
+it('passes the admitted pid and label to the pool so a ghost lease can expire and be named', async () => {
+ const scope = { version: 1 as const, installationId: 'finite', projectId: 'wire', checkoutId: 'main', rootRealPath: '/repo', identitySource: 'manifest' as const };
+ const ctx = { token: 'finite', sessionId: 'pty-wire', missionId: 'finite', role: 'worker', scope } as AgentGateContext;
+ const seen: Array<{ kind: string; executorPid?: number; sessionId?: string; label?: string }> = [];
+ const pool = new HeavyCommandPermitPool({ memory: () => ({ freeMB: 16_384, swapUsedMB: 0 }), limits: () => ({ minFreeMB: 512, maxSwapUsedMB: 0 }), refreshMemory: async () => {}, pollMs: 10 });
+ let state: 'live' | 'gone' = 'live';
+ const native = new NativeHeavyCommands({ current: () => true, claim: async () => 'owned', probe: async () => state,
+  acquire: async (request) => { seen.push({ kind: request.kind, executorPid: request.executorPid, sessionId: request.sessionId, label: request.label }); return pool.acquire(request); } });
+ const admitted = await native.admit(ctx, { pid: 4242, kind: 'build', label: 'node check-migrations.js' });
+ expect(admitted.allow).toBe(true);
+ expect(seen[0]).toMatchObject({ kind: 'build', executorPid: 4242, sessionId: 'pty-wire', label: 'node check-migrations.js' });
+ state = 'gone'; await native.drain(); pool.close();
+});
+
 it('a removed session never releases a still-live or unknown compiler claim', async () => {
  const ctx = { token: 'finite', sessionId: 'finite', missionId: 'finite', role: 'worker', scope: { installationId: 'finite', projectId: 'finite' } } as AgentGateContext;
  let state: 'live' | 'unknown' | 'gone' = 'live'; let released = false; let sessionPresent = true;
