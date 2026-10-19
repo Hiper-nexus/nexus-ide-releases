@@ -32,6 +32,8 @@ export interface MediaProviderDef {
     chars?: number;
     seconds?: number;
     resolution?: string;
+    /** Imagens de entrada (edição), cobradas à parte por alguns serviços. */
+    inputImages?: number;
   }): number | null;
 }
 
@@ -166,7 +168,8 @@ export const MEDIA_PROVIDERS: MediaProviderDef[] = [
     envVar: 'XAI_API_KEY',
     defaultModel: 'grok-imagine-image-2.0',
     models: ['grok-imagine-image-2.0', 'grok-imagine-image-quality', 'grok-imagine-image'],
-    estimateCost: ({ model, resolution }) => xaiImageCostUsd(model, resolution),
+    estimateCost: ({ model, resolution, inputImages }) =>
+      xaiImageCostUsd(model, resolution, { inputImages }),
   },
   {
     id: 'xai-video',

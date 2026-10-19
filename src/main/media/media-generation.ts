@@ -511,7 +511,7 @@ export async function generateImage(
     finalPath,
     startedAt,
     deps,
-    xai ? { resolution: xaiImageResolution(model, req.size) } : {},
+    xai ? { resolution: xaiImageResolution(model, req.size), inputImages: image ? 1 : 0 } : {},
   );
   // O custo que a xAI informou (`usage.cost_in_usd_ticks`) vence a tabela.
   return xai?.costUsd !== undefined ? { ...base, estimatedCostUsd: xai.costUsd } : base;

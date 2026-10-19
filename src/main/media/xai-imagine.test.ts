@@ -3,6 +3,7 @@ import {
   extractXaiImage,
   readXaiVideoPoll,
   xaiCostUsd,
+  xaiImageCostUsd,
   xaiImageOutputPath,
   xaiImageRequest,
   xaiRequestId,
@@ -181,6 +182,16 @@ describe('F-1599: resposta do vídeo do Grok Imagine', () => {
 });
 
 describe('F-1599: imagem do Grok Imagine', () => {
+  it('revisão #145: edição cobra a saída na qualidade da edição e a imagem de entrada à parte', () => {
+    // Páginas dos modelos em docs.x.ai (19/10/2026).
+    expect(xaiImageCostUsd('grok-imagine-image-2.0', '2k')).toBe(0.06);
+    expect(xaiImageCostUsd('grok-imagine-image-2.0', '2k', { inputImages: 1 })).toBe(0.09);
+    expect(xaiImageCostUsd('grok-imagine-image-2.0', undefined, { inputImages: 1 })).toBe(0.07);
+    expect(xaiImageCostUsd('grok-imagine-image-quality', '2k', { inputImages: 1 })).toBe(0.08);
+    expect(xaiImageCostUsd('grok-imagine-image', '1k', { inputImages: 1 })).toBe(0.022);
+    expect(xaiImageCostUsd('grok-imagine-image', '1.5k', { inputImages: 1 })).toBeNull();
+  });
+
   it('revisão #145: o arquivo leva a extensão do formato que a xAI devolveu, também com outPath', () => {
     expect(xaiImageOutputPath('/proj/hero.png', 'jpg')).toBe('/proj/hero.jpg');
     expect(xaiImageOutputPath('/proj/hero.jpg', 'png')).toBe('/proj/hero.png');

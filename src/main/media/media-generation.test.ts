@@ -1564,7 +1564,7 @@ describe('F-1599: Grok Imagine (xAI) pelo motor', () => {
     expect(res).toMatchObject({ provider: 'xai-image', model: 'grok-imagine-image-2.0', estimatedCostUsd: 0.04 });
   });
 
-  it('imagem com imagePath edita em /images/edits; PNG sai .png; sem usage, preço de lista do tamanho', async () => {
+  it('imagem com imagePath edita em /images/edits; PNG sai .png; sem usage, preço de lista da edição', async () => {
     fs.writeFileSync(path.join(dir, 'foto.png'), Buffer.from('foto'));
     const { deps, calls } = fakeDeps([{ json: { data: [{ b64_json: 'cG5n', mime_type: 'image/png' }] } }]);
     const res = await generateImage(
@@ -1577,7 +1577,9 @@ describe('F-1599: Grok Imagine (xAI) pelo motor', () => {
       image: { url: `data:image/png;base64,${Buffer.from('foto').toString('base64')}` },
     });
     expect(res.path).toBe(path.join(dir, 'generated-1000.png'));
-    expect(res.estimatedCostUsd).toBe(0.06);
+    // Revisão #145: a edição do 2.0 sai em medium (2K US$ 0,08) e a imagem de
+    // entrada custa US$ 0,01 à parte; antes ficava no preço da geração (0,06).
+    expect(res.estimatedCostUsd).toBe(0.09);
   });
 
   it('revisão #145: outPath explícito ganha a extensão do formato devolvido (JPEG não vira .png)', async () => {

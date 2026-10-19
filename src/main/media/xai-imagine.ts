@@ -51,8 +51,9 @@ function clip(text: string, max = 300): string {
 
 /**
  * Preço de lista por imagem gerada, por resolução, na qualidade que a xAI usa
- * quando o pedido não diz (`auto` = `low` na geração). Edição sai em `medium`
- * e cobra a imagem de entrada à parte: o custo real vem do `usage`.
+ * quando o pedido não diz (`auto` = `low` na geração). Fonte: as páginas de
+ * cada modelo em docs.x.ai/developers/models (lidas renderizadas em
+ * 19/10/2026). O custo real vem do `usage`; a tabela é a reserva.
  */
 export const XAI_IMAGE_USD: Readonly<Record<string, Readonly<Record<string, number>>>> = {
   'grok-imagine-image-2.0': { '1k': 0.04, '1.5k': 0.05, '2k': 0.06 },
@@ -78,9 +79,34 @@ export function xaiImageResolution(model: string, size?: string): string | undef
   return wanted;
 }
 
-export function xaiImageCostUsd(model: string, resolution?: string): number | null {
-  const prices = XAI_IMAGE_USD[model];
-  return prices?.[resolution ?? '1k'] ?? null;
+/**
+ * Edição: com `auto` o 2.0 sai em `medium` («`auto` currently serves `low` on
+ * generation and `medium` on edit», guia de prompts da xAI); os outros dois
+ * têm um preço só por resolução. Revisão do PR #145.
+ */
+const XAI_IMAGE_EDIT_USD: Readonly<Record<string, Readonly<Record<string, number>>>> = {
+  'grok-imagine-image-2.0': { '1k': 0.06, '1.5k': 0.07, '2k': 0.08 },
+};
+
+/** Imagem de entrada da edição, cobrada à parte («Image input»). */
+const XAI_IMAGE_INPUT_USD: Readonly<Record<string, number>> = {
+  'grok-imagine-image-2.0': 0.01,
+  'grok-imagine-image-quality': 0.01,
+  'grok-imagine-image': 0.002,
+};
+
+export function xaiImageCostUsd(
+  model: string,
+  resolution?: string,
+  options: { inputImages?: number } = {},
+): number | null {
+  const inputs = options.inputImages ?? 0;
+  const table = inputs > 0 ? (XAI_IMAGE_EDIT_USD[model] ?? XAI_IMAGE_USD[model]) : XAI_IMAGE_USD[model];
+  const output = table?.[resolution ?? '1k'];
+  if (output === undefined) return null;
+  const input = XAI_IMAGE_INPUT_USD[model];
+  if (inputs > 0 && input === undefined) return null;
+  return Number((output + inputs * (input ?? 0)).toFixed(4));
 }
 
 /**

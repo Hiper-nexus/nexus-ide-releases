@@ -149,7 +149,7 @@ export function mediaResult(
   outPath: string,
   startedAt: number,
   deps: MediaDeps,
-  costParams: { chars?: number; seconds?: number; resolution?: string } = {},
+  costParams: { chars?: number; seconds?: number; resolution?: string; inputImages?: number } = {},
   jobId?: string,
 ): MediaGenerationResult {
   return {
