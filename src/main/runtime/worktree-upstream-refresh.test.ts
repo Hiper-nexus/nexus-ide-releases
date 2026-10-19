@@ -276,6 +276,10 @@ describe("WorktreeManager.create — refresh do upstream antes de congelar a bas
     git(root, "commit", "-m", "B");
     const shaB = git(root, "rev-parse", "HEAD");
     git(root, "update-ref", "refs/remotes/origin/main", shaB);
+    // @{upstream} só resolve com o remote configurado: sem o refspec de fetch o
+    // Git recusa "upstream branch not stored as a remote-tracking branch".
+    git(root, "config", "remote.origin.url", path.join(tempDir, "origin-stub.git"));
+    git(root, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*");
     git(root, "config", "branch.main.remote", "origin");
     git(root, "config", "branch.main.merge", "refs/heads/main");
     git(root, "reset", "--hard", shaA);
