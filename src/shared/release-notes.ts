@@ -11579,7 +11579,7 @@ export const RELEASE_076312: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076313: AppRelease = {
   version: '0.76.313',
   date: '2026-10-19',
   codename: 'Retomada à vista no Mac',
@@ -11606,4 +11606,17 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Pane reaberto atende pelo id', detail: 'Depois de reabrir o CLI de um pane, ler ou escrever nele pelo id respondia "unknown pane" listando o próprio pane. O Nexus agora escolhe a sessão viva desse pane; com duas sessões vivas continua recusando.' },
     { title: 'Gate do candidato diz o que caiu', detail: 'Quando uma etapa do gate de release falha, a mensagem nomeia o script e mostra o fim da saída, onde está o motivo, em vez do caminho do executável.' },
   ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.314',
+  date: '2026-10-19',
+  codename: 'Muse de volta à rota',
+  summary: 'No desktop Linux, o Muse que já está logado volta a ser escolhido pela rota, e um pane cujo CLI foi reaberto volta a atender pelo próprio id. A tag 0.76.313 ficou no macOS.',
+  highlights: [
+    { title: 'Muse logado volta à rota', detail: 'Recusas de credencial antigas deixavam o Muse como "rota falha" mesmo depois do login, e o Nexus desviava dele. Quando o teste da credencial volta a passar, essas recusas deixam de contar no histórico de sucesso da CLI. Falhas de entrega reais continuam contando.' },
+    { title: 'Pane reaberto atende pelo id', detail: 'Depois de reabrir o CLI de um pane, ler ou escrever nele pelo id respondia "unknown pane" listando o próprio pane. O Nexus agora escolhe a sessão viva desse pane; com duas sessões vivas continua recusando.' },
+    { title: 'Pacote Linux', detail: 'A tag 0.76.313 é o candidato macOS e não recebe pacotes Linux. O desktop Linux sai na 0.76.314.' },
+  ],
+  fixes: [],
 };
