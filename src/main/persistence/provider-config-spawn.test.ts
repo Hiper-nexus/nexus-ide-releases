@@ -2106,6 +2106,7 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
     });
     expect(spawnDeps.pickAvailableForFailover).toHaveBeenCalledWith(
       'claude', null, expect.any(Number), undefined,
+      expect.objectContaining({ drain: expect.objectContaining({ requireSource: 'provider-api', maxAgeMs: expect.any(Number) }), model: 'claude-sonnet' }),
     );
   });
 
@@ -2380,6 +2381,41 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
     }
   });
 
+  it('Windows: a dona da vaga DRENANDO também cede, antes de esgotar (camada 1)', async () => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    try {
+      spawnDeps.hasSecret.mockReturnValue(true);
+      const owner = {
+        id: 'agy-slot', adapterId: 'agy', label: 'Vaga', mode: 'subscription' as const,
+        upstream: 'agy', createdAt: 1,
+      };
+      spawnDeps.listAccounts.mockReturnValue([owner]);
+      spawnDeps.getAccount.mockReturnValue(owner);
+      agyActivation.slotOwner.mockReturnValue(owner);
+      spawnDeps.blockedForScope.mockReturnValue(false);
+      // 90% medido pelo provedor, leitura fresca: drenando, não esgotada.
+      spawnDeps.quotaSnapshot.mockReturnValue({
+        entries: [{
+          adapterId: 'agy', accountId: 'agy-slot', updatedAt: Date.now(), onCooldown: false,
+          windows: [{
+            kind: 'hours', label: '5 Horas', usedRatio: 0.9,
+            source: 'provider-api', confidence: 'high',
+          }],
+        }],
+      } as never);
+      spawnDeps.pickAvailableForFailover.mockReturnValue({ account: null, probe: false });
+
+      const drained = await prepareProviderSpawnAuthoritative('agy', { model: 'gemini-3.6-flash-high' });
+      expect(drained).toMatchObject({ ok: true });
+      expect((drained as { overrides: { accountChoice: { source: string } } }).overrides.accountChoice.source)
+        .not.toBe('native');
+    } finally {
+      Object.defineProperty(process, 'platform', platform);
+      agyActivation.slotOwner.mockReturnValue(null);
+    }
+  });
+
   it('returns the exact account error instead of passing through global auth', () => {
     spawnDeps.prepareAccount.mockReturnValueOnce({
       ok: false,
@@ -2540,13 +2576,32 @@ describe('G3 — pane sem conta pinada nasce na conta com folga', () => {
       null,
       expect.any(Number),
       expect.any(Map),
-      { quotaByAccountId: expect.any(Map) },
+      expect.objectContaining({ quotaByAccountId: expect.any(Map), drain: expect.objectContaining({ requireSource: 'provider-api', maxAgeMs: expect.any(Number) }) }),
     );
     const scores = spawnDeps.pickAvailableForFailover.mock.calls[0]?.[3] as Map<
       string,
       number
     >;
     expect(scores.get('kimi-b')).toBeGreaterThan(scores.get('kimi-a') ?? 0);
+  });
+
+  it('drenagem: o recibo diz por que a conta mudou, com rótulo mascarado', () => {
+    spawnDeps.listAccounts.mockReturnValue([
+      kimiAccount('kimi-a', 'Conta A', 1),
+      kimiAccount('kimi-b', 'Conta B', 2),
+    ]);
+    spawnDeps.getActiveAccount.mockReturnValue(kimiAccount('kimi-a', 'Conta A', 1));
+    spawnDeps.pickAvailableForFailover.mockReturnValue({
+      account: kimiAccount('kimi-b', 'Conta B', 2),
+      probe: false,
+      drained: true,
+    });
+
+    const result = prepareProviderSpawn('kimi');
+    const receipt = (result as { overrides: { accountChoice?: { note?: string; account?: { label: string } } } })
+      .overrides.accountChoice;
+    expect(receipt?.note).toMatch(/limiar/i);
+    expect(receipt?.account?.label).not.toBe('Conta B');
   });
 
   it('quota fora do ar abre na ativa e nunca bloqueia o spawn', () => {
@@ -3077,7 +3132,7 @@ describe('Recibo da escolha de conta (overrides.accountChoice)', () => {
     // A regra de folga recebe as janelas por conta, não só o escore escalar.
     expect(spawnDeps.pickAvailableForFailover).toHaveBeenCalledWith(
       'kimi', null, expect.any(Number), expect.any(Map),
-      { quotaByAccountId: expect.any(Map) },
+      expect.objectContaining({ quotaByAccountId: expect.any(Map), drain: expect.objectContaining({ requireSource: 'provider-api', maxAgeMs: expect.any(Number) }) }),
     );
     const receipt = (result as { overrides: { accountChoice?: unknown } })
       .overrides.accountChoice as {

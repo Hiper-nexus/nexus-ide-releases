@@ -41,6 +41,8 @@ import {
   type ResumeBootVerdict,
 } from './failover-mission-respawn';
 import { switchRendererOrchestratorAccount } from './failover-orchestrator-respawn';
+import { reportMeasuredExhaustion } from './measured-exhaustion';
+import { nativeQuotaIdentity } from '../persistence/native-quota-identity';
 import {
   getProjectDomainStores,
   requireProjectDomainStoreRegistry,
@@ -716,8 +718,19 @@ function quotaHeadroomFor(
   adapterId: string,
 ): ReadonlyMap<string, HeadroomInput> | undefined {
   try {
+    // A leitura do CLI/bridge nativo é da identidade LOGADA. Para o AGY de
+    // conta pessoal ela é a única que existe (o endpoint direto responde 403
+    // por conta do cofre), então sem atribuí-la à conta ativa a frota inteira
+    // parece "sem medição" e a drenagem nunca dispara. Só a ativa recebe — as
+    // irmãs seguem sem leitura, que é a verdade.
+    // Limite conhecido: no Windows a identidade real é a vaga do keyring; se
+    // ela divergir da ativa (login feito fora do Nexus), a leitura vai para a
+    // irmã errada. O custo é drenar uma conta saudável cedo — preferência,
+    // não banimento —, e o Nexus escreve a vaga ele mesmo a cada spawn.
     const snap = requireQuotaService().lastSnapshot();
-    return snap ? headroomInputsByAccount(snap.entries, adapterId) : undefined;
+    return snap ? headroomInputsByAccount(snap.entries, adapterId, {
+      ...nativeQuotaIdentity(adapterId),
+    }) : undefined;
   } catch {
     /* quota service optional at boot race */
     return undefined;
@@ -3635,6 +3648,9 @@ function freshSiblingWithHeadroom(
   let proven: { readonly accountId: string; readonly worst: number } | null = null;
   for (const [accountId, input] of byAccount) {
     if (accountId === currentId || input.onCooldown) continue;
+    // F-1489 exige folga COMPROVADA desta conta: leitura emprestada da
+    // identidade viva não é prova dela.
+    if (input.attributed) continue;
     if (isAccountBlockedForScope(accountId, probedAt, scope)) continue;
     if (!Number.isFinite(input.updatedAt) || probedAt - input.updatedAt! > REFUTE_FRESH_MS) continue;
     if (
@@ -4284,6 +4300,7 @@ export function shutdownFailover(): void {
   // failover: sem isto, mortes de testes/sessões anteriores vazam para as
   // próximas e o trip dispara cedo demais.
   instantAuthDeaths.clear();
+  measuredExhaustionSwaps.clear();
   limitCommits.clear();
   probesInFlight.clear();
   accountLimitCommits.clear();
@@ -4321,6 +4338,53 @@ export function shutdownFailover(): void {
  * resume mechanism. Used by the stall watchdog only after a long second
  * timeout; no account/keychain mutation occurs.
  */
+/** Última troca a quente por esgotamento MEDIDO, por pane (teto da camada 2). */
+const measuredExhaustionSwaps = new Map<string, number>();
+
+/**
+ * Camada 3.2: a medição de cota autoriza a troca quando a CLI emudece sem
+ * imprimir erro — o caso do AGY relatado pelo cliente. Chamado pelo
+ * `delegation-supervisor`; a decisão mora em `measured-exhaustion.ts`.
+ */
+export function reportPaneMeasuredExhaustion(input: {
+  readonly sessionId: string;
+  readonly hasPendingWork: boolean;
+  /** Há quanto tempo o PTY não imprime. `undefined` = não se sabe. */
+  readonly silentForMs: number | undefined;
+  /** Quando a CLI reportou `working`, ou `null` (veto só enquanto fresco). */
+  readonly semanticWorkingAt: number | null;
+  readonly now?: number;
+}): boolean {
+  const now = input.now ?? Date.now();
+  const authority = resolveAuthority(input.sessionId);
+  if (!authority || !isCurrentAuthority(authority)) return false;
+  const pane = resolvePaneDetails(authority);
+  if (!pane?.adapterId) return false;
+  const current = paneAccount(pane);
+  const outcome = reportMeasuredExhaustion(
+    {
+      paneId: pane.paneId,
+      sessionId: input.sessionId,
+      adapterId: pane.adapterId,
+      accountId: current?.id ?? null,
+      hasPendingWork: input.hasPendingWork,
+      silentForMs: input.silentForMs,
+      semanticWorkingAt: input.semanticWorkingAt,
+      now,
+    },
+    {
+      headroomFor: (adapterId, accountId) => quotaHeadroomFor(adapterId)?.get(accountId),
+      lastSwapAt: (paneId) => measuredExhaustionSwaps.get(paneId) ?? null,
+      noteSwap: (paneId, at) => measuredExhaustionSwaps.set(paneId, at),
+      commitHit: ({ hit }) => {
+        const [key] = watchFor(authority);
+        commitLimitHit(authority, pane, key, hit, now, 'observer', current, pane.adapterId!);
+      },
+    },
+  );
+  return outcome.acted;
+}
+
 export function requestSessionRecovery(sessionId: string, reason: string): boolean {
   const authority = resolveAuthority(sessionId);
   // Native resume is a renderer-owned mechanism; main-owned/headless mission
