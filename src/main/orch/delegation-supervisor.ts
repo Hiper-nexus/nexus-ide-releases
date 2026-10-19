@@ -2499,7 +2499,19 @@ export async function checkMeasuredExhaustion(
       continue; // sem leitura confiável não decide
     }
     if (delivered) continue;
-    reportPaneMeasuredExhaustion({ sessionId: pane.sessionId, hasPendingWork: true, now });
+    // Prova de que o pane parou de verdade: silêncio SUSTENTADO do PTY e o
+    // status semântico fora de `working`. Um sample ocioso sozinho fecharia
+    // um worker que está numa chamada de API silenciosa, perdendo o trabalho
+    // em voo — `idle` só diz que nada foi impresso no timeout curto do PTY.
+    const lastOutputAt = paneSessionLastOutputAt(pane.sessionId);
+    reportPaneMeasuredExhaustion({
+      sessionId: pane.sessionId,
+      hasPendingWork: true,
+      silentForMs: lastOutputAt === undefined ? undefined : now - lastOutputAt,
+      semanticWorking:
+        getAgentSemanticStatusBySession(pane.sessionId)?.status === 'working',
+      now,
+    });
   }
 }
 

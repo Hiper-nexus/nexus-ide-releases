@@ -14,6 +14,26 @@
  * esquece, e a próxima leitura a reconstrói.
  */
 
+/**
+ * Até quando lembrar que a conta drenou. O reset CONHECIDO e futuro manda,
+ * mesmo quando é mais curto que o fallback: um bucket de 5 Horas que cruza o
+ * limiar 5 min antes de reabrir não pode ficar fora da preferência por mais
+ * 55 min — no modo fila, conta que não é escolhida não ganha leitura nova que
+ * limpe a lembrança, e a exclusão se auto-sustenta. Sem reset, ou com reset já
+ * vencido (que gravaria lembrança expirando no mesmo instante, fazendo o
+ * carrossel quicar), vale o fallback.
+ */
+export function drainMemoryUntil(
+  resetsAt: number | undefined | null,
+  now: number,
+  fallbackMs: number,
+): number {
+  if (typeof resetsAt === 'number' && Number.isFinite(resetsAt) && resetsAt > now) {
+    return resetsAt;
+  }
+  return now + fallbackMs;
+}
+
 /** accountId → instante em que a janela cheia reabre. */
 const drainedUntil = new Map<string, number>();
 

@@ -1221,7 +1221,15 @@ function buildProviderSpawnOverrides(
   // Este spawn sela a identidade viva da CLI. É o que permite atribuir a
   // leitura da linha nativa à conta certa na rodada seguinte — a coluna
   // "ativa" do store não serve, porque só a UI a move.
-  if (account) noteLiveIdentity(adapterId, account.id);
+  //
+  // EXCEÇÃO: no Windows a identidade do AGY é a vaga física do keyring, e
+  // quem a grava é `activateAgyAccountForSpawn`, mais adiante. Registrar aqui
+  // mentiria quando a ativação recusa (blob ausente, releitura divergente):
+  // a conta velha continua na vaga e a leitura nativa dela seria atribuída à
+  // conta nova. Lá o registro sai depois da gravação verificada.
+  if (account && !sealsAgyKeyringSlot(adapterId, account)) {
+    noteLiveIdentity(adapterId, account.id);
+  }
   if (adapterId === 'mimo-code' && account?.mode === 'subscription') {
     const blob = getSecret(`acctcred:${account.id}`);
     if (!blob || !mimoCredentialSupportsModel(blob, effectiveProviderModel(adapterId, perSpawn.model))) {
@@ -1825,6 +1833,18 @@ function resolveSpawnAccountChoice(
   };
 }
 
+/**
+ * Este spawn vai gravar a vaga única do keyring (F-677)? Só nesse caso a
+ * identidade viva depende de uma escrita física que pode falhar.
+ */
+function sealsAgyKeyringSlot(adapterId: string, account: Account): boolean {
+  return (
+    adapterId === 'agy' &&
+    process.platform === 'win32' &&
+    account.mode === 'subscription'
+  );
+}
+
 /** A conta cruzou o limiar, provada por leitura provider-api fresca? */
 function accountIsDraining(adapterId: string, accountId: string, now: number): boolean {
   const evidence = accountDrainEvidence(now);
@@ -2087,6 +2107,8 @@ export async function prepareProviderSpawnAuthoritative(
   if (agySelected?.mode === 'subscription') {
     const activation = await activateAgyAccountForSpawn(agySelected.id);
     if (!activation.ok) return { ok: false, error: activation.error };
+    // A vaga foi gravada E relida: só agora esta conta é a identidade viva.
+    noteLiveIdentity('agy', agySelected.id);
   }
   return prepared;
 }

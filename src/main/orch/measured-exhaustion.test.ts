@@ -3,6 +3,7 @@ import type { HeadroomInput } from '../quota/account-headroom';
 import {
   MEASURED_EXHAUSTION_REASON,
   reportMeasuredExhaustion,
+  SUSTAINED_SILENCE_MS,
   type MeasuredExhaustionDeps,
 } from './measured-exhaustion';
 import { detectLimit } from './limit-detector';
@@ -36,6 +37,8 @@ const input = {
   adapterId: 'agy',
   accountId: 'acct-a',
   hasPendingWork: true,
+  silentForMs: 10 * 60_000,
+  semanticWorking: false,
   now: NOW,
 };
 
@@ -128,5 +131,60 @@ describe('laço de realimentação', () => {
     // Um padrão novo que a reconheça fecharia o laço: a troca geraria o
     // sinal que dispara a próxima troca.
     expect(detectLimit(MEASURED_EXHAUSTION_REASON)).toBeNull();
+  });
+});
+
+describe('prova de que o pane REALMENTE parou (C6)', () => {
+  it('pane com status semântico working nunca é trocado, mesmo esgotado', () => {
+    const d = deps();
+    const out = reportMeasuredExhaustion(
+      { ...input, semanticWorking: true, silentForMs: 10 * 60_000 },
+      d,
+    );
+    expect(out.acted).toBe(false);
+    expect(out.reason).toMatch(/trabalhando/i);
+    expect(d.commitHit).not.toHaveBeenCalled();
+  });
+
+  it('silêncio curto não é prova: pode ser chamada de API em voo', () => {
+    const d = deps();
+    const out = reportMeasuredExhaustion({ ...input, silentForMs: 30_000 }, d);
+    expect(out.acted).toBe(false);
+    expect(out.reason).toMatch(/sil[êe]ncio/i);
+    expect(d.commitHit).not.toHaveBeenCalled();
+  });
+
+  it('silêncio sustentado com conta esgotada troca', () => {
+    const d = deps();
+    expect(
+      reportMeasuredExhaustion({ ...input, silentForMs: SUSTAINED_SILENCE_MS }, d).acted,
+    ).toBe(true);
+  });
+
+  it('silêncio desconhecido não autoriza', () => {
+    const d = deps();
+    expect(
+      reportMeasuredExhaustion({ ...input, silentForMs: undefined }, d).acted,
+    ).toBe(false);
+  });
+});
+
+describe('leitura emprestada não grava cooldown (C3)', () => {
+  it('leitura atribuída da identidade viva NÃO sintetiza limite', () => {
+    // O bridge do AGY não traz identidade e prefere o processo do IDE: com o
+    // Antigravity aberto noutra conta, a leitura seria de um terceiro. Drenar
+    // por ela é recuperável; pôr a conta em cooldown e rerrotear, não.
+    const d = deps({
+      headroomFor: () => ({ ...read(1), attributed: true }),
+    });
+    const out = reportMeasuredExhaustion(input, d);
+    expect(out.acted).toBe(false);
+    expect(out.reason).toMatch(/pr[óo]pria/i);
+    expect(d.commitHit).not.toHaveBeenCalled();
+  });
+
+  it('leitura própria da conta continua sintetizando', () => {
+    const d = deps({ headroomFor: () => read(1) });
+    expect(reportMeasuredExhaustion(input, d).acted).toBe(true);
   });
 });

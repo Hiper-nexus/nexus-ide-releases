@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   drainedAccountIds,
+  drainMemoryUntil,
   forgetAccountDrain,
   forgetDrainMemory,
   isRememberedDrained,
@@ -64,5 +65,33 @@ describe('a memória cede a prova fresca em contrário', () => {
 
   it('esquecer conta que não está anotada é inócuo', () => {
     expect(() => forgetAccountDrain('fantasma')).not.toThrow();
+  });
+});
+
+describe('drainMemoryUntil — até quando lembrar', () => {
+  const FALLBACK = 60 * 60_000;
+
+  it('reset futuro manda, mesmo mais curto que o fallback', () => {
+    // Um bucket de 5 Horas que cruza o limiar 5 min antes de reabrir não pode
+    // ficar fora da preferência por mais 55 min — e, no modo fila, uma conta
+    // que não é escolhida não ganha leitura nova que limpe a lembrança.
+    expect(drainMemoryUntil(NOW + 5 * 60_000, NOW, FALLBACK)).toBe(NOW + 5 * 60_000);
+  });
+
+  it('reset futuro mais longo que o fallback também manda', () => {
+    expect(drainMemoryUntil(NOW + 5 * HOUR, NOW, FALLBACK)).toBe(NOW + 5 * HOUR);
+  });
+
+  it('sem reset conhecido vale o fallback', () => {
+    expect(drainMemoryUntil(undefined, NOW, FALLBACK)).toBe(NOW + FALLBACK);
+  });
+
+  it('reset já vencido vale o fallback: lembrança que expira no mesmo instante faz quicar', () => {
+    expect(drainMemoryUntil(NOW - 1, NOW, FALLBACK)).toBe(NOW + FALLBACK);
+    expect(drainMemoryUntil(NOW, NOW, FALLBACK)).toBe(NOW + FALLBACK);
+  });
+
+  it('reset não finito vale o fallback', () => {
+    expect(drainMemoryUntil(Number.NaN, NOW, FALLBACK)).toBe(NOW + FALLBACK);
   });
 });

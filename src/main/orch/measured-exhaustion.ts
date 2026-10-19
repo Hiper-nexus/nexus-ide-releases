@@ -31,6 +31,18 @@ import type { LimitHit } from './limit-detector';
 export const MEASURED_EXHAUSTION_REASON =
   'cota medida esgotada pela API do provedor (pane em silêncio)';
 
+/**
+ * Quanto silêncio prova que o pane PAROU.
+ *
+ * `idle` do PTY só diz que nada foi impresso no timeout curto dele: um worker
+ * pode estar numa chamada de API ou numa ferramenta silenciosa, sobretudo em
+ * CLI sem hooks. Um único sample ocioso faria o scan de 15 s fechar um pane
+ * que ainda trabalha, duplicando ou perdendo o trabalho em voo. Três minutos
+ * é mais longo que qualquer rodada de modelo e mais curto que o travamento de
+ * 20 min do F-242, que cuida do pane realmente preso.
+ */
+export const SUSTAINED_SILENCE_MS = 3 * 60_000;
+
 /** Mesmo teto que a troca por limite de texto usa para conta esgotada. */
 const MEASURED_EXHAUSTION_COOLDOWN_MS = 60 * 60_000;
 
@@ -41,6 +53,10 @@ export interface MeasuredExhaustionInput {
   readonly accountId: string | null;
   /** Há entrega esperando este pane? Sem isso a troca inventaria trabalho. */
   readonly hasPendingWork: boolean;
+  /** Há quanto tempo o PTY não imprime nada. `undefined` = não se sabe. */
+  readonly silentForMs: number | undefined;
+  /** O status semântico diz que a CLI está trabalhando agora. */
+  readonly semanticWorking: boolean;
   readonly now: number;
 }
 
@@ -61,8 +77,29 @@ export function reportMeasuredExhaustion(
   deps: MeasuredExhaustionDeps,
 ): MeasuredExhaustionResult {
   if (!input.accountId) return { acted: false, reason: 'pane sem conta' };
+  // A CLI diz que está trabalhando: nada de medição contra o próprio agente.
+  if (input.semanticWorking) {
+    return { acted: false, reason: 'a CLI está trabalhando' };
+  }
+  if (
+    input.silentForMs === undefined ||
+    input.silentForMs < SUSTAINED_SILENCE_MS
+  ) {
+    return { acted: false, reason: 'silêncio ainda não sustentado' };
+  }
+  const headroom = deps.headroomFor(input.adapterId, input.accountId);
+  // A leitura emprestada da identidade viva serve para DRENAR (perder
+  // trabalho novo é recuperável e uma leitura fresca em contrário a desfaz),
+  // mas não para cá: este caminho grava cooldown e rerroteia o pane. O bridge
+  // do AGY não traz identidade e prefere o processo do IDE — com o
+  // Antigravity aberto noutra conta, a leitura seria de um terceiro, e
+  // puniríamos uma conta saudável enquanto a esgotada segue recebendo
+  // trabalho. Aqui só vale a medição da própria conta.
+  if (headroom?.attributed) {
+    return { acted: false, reason: 'leitura não é própria da conta' };
+  }
   const decision = decideDrainSwap({
-    headroom: deps.headroomFor(input.adapterId, input.accountId),
+    headroom,
     hasPendingWork: input.hasPendingWork,
     lastSwapAt: deps.lastSwapAt(input.paneId),
     evidence: accountDrainEvidence(input.now),

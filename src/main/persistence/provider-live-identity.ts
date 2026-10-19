@@ -27,6 +27,27 @@ export function liveIdentityAccountId(adapterId: string): string | null {
   return liveIdentity.get(adapterId) ?? null;
 }
 
+/**
+ * CLIs em que UMA sessão do sistema serve todos os panes — logo, a conta do
+ * último spawn É a conta em uso. Só o AGY: a vaga `gemini:antigravity` é
+ * única por máquina (F-677).
+ *
+ * Claude, Codex e as demais isolam conta por perfil/HOME, então vários panes
+ * rodam em contas diferentes ao mesmo tempo e "o último spawn" não diz qual
+ * conta está em uso. Usar a identidade selada como âncora de seleção nelas
+ * faria um pane FIXADO em B desviar os spawns seguintes, sem pin, para B.
+ */
+const SINGLE_SLOT_IDENTITY_ADAPTERS = new Set(['agy']);
+
+/**
+ * A âncora de "conta em uso" para a seleção, ou `null` quando a coluna do
+ * store continua sendo a autoridade.
+ */
+export function liveIdentityAnchor(adapterId: string): string | null {
+  if (!SINGLE_SLOT_IDENTITY_ADAPTERS.has(adapterId)) return null;
+  return liveIdentityAccountId(adapterId);
+}
+
 export function forgetLiveIdentity(): void {
   liveIdentity.clear();
 }

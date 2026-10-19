@@ -4349,6 +4349,10 @@ const measuredExhaustionSwaps = new Map<string, number>();
 export function reportPaneMeasuredExhaustion(input: {
   readonly sessionId: string;
   readonly hasPendingWork: boolean;
+  /** Há quanto tempo o PTY não imprime. `undefined` = não se sabe. */
+  readonly silentForMs: number | undefined;
+  /** O status semântico diz que a CLI está trabalhando agora. */
+  readonly semanticWorking: boolean;
   readonly now?: number;
 }): boolean {
   const now = input.now ?? Date.now();
@@ -4364,6 +4368,8 @@ export function reportPaneMeasuredExhaustion(input: {
       adapterId: pane.adapterId,
       accountId: current?.id ?? null,
       hasPendingWork: input.hasPendingWork,
+      silentForMs: input.silentForMs,
+      semanticWorking: input.semanticWorking,
       now,
     },
     {
