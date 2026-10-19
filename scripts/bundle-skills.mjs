@@ -49,6 +49,8 @@ const SKILLS = [
   { dir: 'oc-scout', constName: 'OC_SCOUT_MANIFEST', outFile: 'oc-scout-manifest.ts' },
   { dir: 'oc-conveyor', constName: 'OC_CONVEYOR_MANIFEST', outFile: 'oc-conveyor-manifest.ts' },
   { dir: 'stack-advisor', constName: 'STACK_ADVISOR_MANIFEST', outFile: 'stack-advisor-manifest.ts' },
+  // F-1597: estúdio de vídeo (fluxo do Nexus + recorte das guias do HyperFrames 0.8.177).
+  { dir: 'nexus-video', constName: 'NEXUS_VIDEO_MANIFEST', outFile: 'nexus-video-manifest.ts' },
 ];
 
 function walk(dir) {

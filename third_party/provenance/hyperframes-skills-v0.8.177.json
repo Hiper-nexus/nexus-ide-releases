@@ -1,0 +1,13 @@
+{
+  "source": "heygen-com/hyperframes",
+  "upstreamRepository": "https://github.com/heygen-com/hyperframes",
+  "upstreamVersion": "0.8.177",
+  "upstreamCommit": "2a2a1d2d902aa837c5fc68b4ab28d5e747033a8e",
+  "license": "Apache-2.0",
+  "copyright": "Copyright HeyGen and the HyperFrames contributors",
+  "licenseFile": "assets/skills/nexus-video/LICENSE-hyperframes.txt",
+  "importedAt": "2026-10-19",
+  "type": "vendored-subset",
+  "nexusPath": "assets/skills/nexus-video/hyperframes",
+  "notes": "Recorte das skills do HyperFrames da versão que o Nexus fixa (F-1597): contrato de composição (hyperframes-core), guia do CLI sem as referências de nuvem/Lambda/Cloud Run, áudio (só documentação) e as referências criativas do product-launch-video. Os SKILL.md viraram core.md/cli.md/audio.md para as CLIs não os carregarem como skills separadas; textos sem alteração. Scripts, testes e as demais skills não entram. Detalhes em assets/skills/nexus-video/NOTICE.md. O motor em si (pacote npm hyperframes 0.8.177, Apache-2.0) não é empacotado: o Main instala pelo lockfile de resources/video-engines/hyperframes."
+}
