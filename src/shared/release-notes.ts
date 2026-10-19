@@ -11664,7 +11664,7 @@ export const RELEASE_076316: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076317: AppRelease = {
   version: '0.76.317',
   date: '2026-10-19',
   codename: 'MiniMax-M3.1-Flash na rota Anthropic',
@@ -11674,6 +11674,20 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Janela de contexto: sem promessa de 1M no cliente', detail: 'A documentação da MiniMax lista 1M de contexto para o `MiniMax-M3.1-Flash` na API compatível com Anthropic, mas o cliente aplica outra janela: o sufixo `[1m]` era o que fazia o Claude Code tratar o modelo antigo como 1M. Numa sonda local com o Claude Code 2.1.303 (servidor de teste em loopback, sem inferência autenticada), o id novo reportou `modelUsage.contextWindow=200000`, com ou sem `CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000`, e o id antigo reportou 1000000. O upstream continua mandando `CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000` como configuração, sem garantia de janela efetiva de 1M.' },
     { title: 'O `mcode` continua no Preview', detail: 'O `mcode` (rota do `minimax-code`) segue com `minimax/MiniMax-M3.1-Flash-Preview` como padrão e `minimax/MiniMax-M3` como secundário em `src/adapters/builtin/minimax-code.json`; `model-catalog`, `task-router` e `published-benchmarks` não mudam. A versão 0.6.12 do `mcode`, conferida em 19/10/2026, só lista o Preview do Flash e não o id `MiniMax-M3.1-Flash`.' },
     { title: 'Thinking: sem promessa universal', detail: 'O env do upstream `minimax` não define nenhuma chave de thinking, e o teste trava isso no env, não no payload HTTP. A documentação da MiniMax diz que o `MiniMax-M3.1-Flash` sempre pensa e responde HTTP 400 a `thinking.type=disabled`. Esta versão não promete o que cada versão ou configuração do cliente envia.' },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.318',
+  date: '2026-10-19',
+  codename: 'MiniMax-M3.1-Flash no Linux',
+  summary: 'No desktop Linux, a rota `minimax` do `claude` passa a pedir `MiniMax-M3.1-Flash` no lugar de `MiniMax-M3[1m]`. Sem o sufixo `[1m]`, o Claude Code 2.1.303 mediu a janela do id novo em 200 mil tokens, e esta versão não promete 1M de contexto no cliente. O `mcode` continua no Preview. A tag 0.76.317 ficou no macOS.',
+  highlights: [
+    { title: 'Modelo novo na rota `claude` com MiniMax', detail: 'O `MINIMAX_MODEL` deixa de ser `MiniMax-M3[1m]`, que é o `MiniMax-M3` com o sufixo `[1m]` do Claude Code, e passa a ser `MiniMax-M3.1-Flash`. Os quatro slots e o `defaultModel` do upstream apontam para o id novo, e o endpoint continua `https://api.minimax.io/anthropic`.' },
+    { title: 'Janela de contexto: sem promessa de 1M no cliente', detail: 'O sufixo `[1m]` era o que fazia o Claude Code tratar o modelo antigo como 1M. Numa sonda local com o Claude Code 2.1.303, o id novo reportou `modelUsage.contextWindow=200000`, com ou sem `CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000`. O upstream continua mandando essa variável, sem garantia de janela efetiva de 1M.' },
+    { title: 'O `mcode` continua no Preview', detail: 'A rota do `minimax-code` segue com `minimax/MiniMax-M3.1-Flash-Preview`. A versão 0.6.12 do `mcode` só lista o Preview do Flash e não o id `MiniMax-M3.1-Flash`.' },
+    { title: 'Pacote Linux', detail: 'A tag 0.76.317 é o pacote macOS e não recebe arquivos Linux. O desktop Linux sai na 0.76.318.' },
   ],
   fixes: [],
 };
