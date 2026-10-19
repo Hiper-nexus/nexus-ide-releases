@@ -1,5 +1,9 @@
 # Windows x64 preview and signing
 
+> **19/10/2026: a assinatura Windows passa a ser pelo YubiKey** (decisão do
+> operador; substitui o eSigner, não o religa). Caminho, estado e o que é recusado:
+> [`windows-signing/YUBIKEY.md`](windows-signing/YUBIKEY.md).
+
 > **05/10/2026: o eSigner da SSL.com saiu do fluxo.** Ele cobrava por assinatura e
 > a build automática gerou faturas de excesso. A release Windows (`windows-release.yml`)
 > agora sai sem Authenticode, com o hash de cada executável no recibo, e a versão

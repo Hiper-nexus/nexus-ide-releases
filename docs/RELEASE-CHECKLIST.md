@@ -86,7 +86,7 @@ Riscos residuais: ...
 ## Windows x64 (canal independente)
 
 - [ ] Workflow privado `windows-release.yml` concluído para a tag e o commit Windows em `main` protegido. Não exige candidata, assinatura ou notarização macOS.
-- [ ] Recibo `schemaVersion` 2 com `signing: none` e SHA-256 de Setup, aplicativo, Squirrel.exe (Update.exe instalado) e ExecutionStub. Sem Authenticode desde 05/10/2026 (eSigner removido); a versão assinada é a da Microsoft Store.
+- [ ] Recibo `schemaVersion` 2 com SHA-256 de Setup, aplicativo, Squirrel.exe (Update.exe instalado) e ExecutionStub. Build local assinado pelo YubiKey (`NEXUS_WINDOWS_YUBIKEY_SIGNING=1`, `docs/windows-signing/YUBIKEY.md`): `signing: yubikey`, os quatro com assinatura e carimbo do certificado fixado em `build/windows-signing-identity.json`, e `Get-AuthenticodeSignature` = `Valid` HIPERSEND no Setup. Sem o token (worker do GitHub, ou enquanto o thumbprint estiver `null`): `signing: none`. O eSigner saiu em 05/10/2026 e não volta.
 - [ ] Instalação limpa pelo Setup e atualização N→N+1 funcionam sem gh/login; dados e terminal preservados.
 - [ ] SHA-256 do artifact GitHub validado; recibo e três assets Windows entram na transação de drafts do canal Windows (`npm run release:publish:windows`).
 - [ ] NUPKG mantém nome original e RELEASES contém uma única entrada completa; Setup identifica win32-x64.

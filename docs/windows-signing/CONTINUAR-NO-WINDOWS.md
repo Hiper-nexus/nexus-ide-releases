@@ -4,7 +4,8 @@
 > foi removido: cobrava por assinatura e a build automática gerou faturas de
 > excesso. A release Windows sai sem assinatura e a versão assinada é a da
 > Microsoft Store. Não configure eSigner CKA nem `WINDOWS_CERTIFICATE_SHA1`;
-> veja `docs/RELEASE.md` ("Canal Windows independente").
+> veja `docs/RELEASE.md` ("Canal Windows independente"). Desde 19/10/2026 a
+> assinatura é pelo YubiKey: `docs/windows-signing/YUBIKEY.md`.
 
 Handoff de 14/09/2026. Repositório privado: `Hiper-nexus/nexus-ide`.
 Branch de trabalho: `codex/windows-test-20260914`.

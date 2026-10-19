@@ -289,19 +289,26 @@ o recibo e, quando autorizado, o waiver de prova de upgrade. O espelho
 público recebe **somente** `Setup.exe`, NUPKG e `RELEASES`. Assim o feed
 Squirrel Windows fica disponível sem aguardar um artefato de macOS.
 
-**Sem assinatura Authenticode desde 05/10/2026.** O eSigner da SSL.com cobrava
-por assinatura e cada build assina dezenas de arquivos, o que gerou faturas de
-excesso; ele foi removido do fluxo. Quem baixa o `Setup.exe` pelo site vê o aviso
-do SmartScreen ("O Windows protegeu o computador" → "Mais informações" →
-"Executar assim mesmo"). No Windows 11 com o Controle Inteligente de Aplicativos
-(Smart App Control) ligado, não há esse botão: o app sem assinatura é bloqueado
-até o usuário desligar o recurso em Segurança do Windows. Quem já tem o Nexus
-instalado atualiza pelo Squirrel. A versão assinada é a da Microsoft Store, que
-reassina o MSIX de graça (guia em `docs/windows-signing/MICROSOFT-STORE.md`, que
-chega com a branch `claude/ssl-code-signing-yubikey-ce1859`). Não religue o
-eSigner: o workflow para se `NEXUS_WINDOWS_RELEASE_SIGNING` ou
-`WINDOWS_CERTIFICATE_FILE` aparecer no ambiente do worker, e o `forge.config.ts`
-recusa o certificado do eSigner.
+**Authenticode só pelo YubiKey (decisão do operador, 19/10/2026).** O eSigner da
+SSL.com cobrava por assinatura e cada build assina dezenas de arquivos, o que gerou
+faturas de excesso; ele saiu do fluxo em 05/10. O substituto é um YubiKey com a
+chave ECC P-384 no slot PIV 9a: o build local com `NEXUS_WINDOWS_YUBIKEY_SIGNING=1`
+assina pelo certificado fixado em `build/windows-signing-identity.json` e recusa
+qualquer outro (runbook em `docs/windows-signing/YUBIKEY.md`). Em 19/10 o SSL.com
+ainda não reemitiu o certificado ECC, o thumbprint está `null` e o modo recusa:
+até ele ser importado e fixado, a release Windows sai sem assinatura.
+
+Sem assinatura, quem baixa o `Setup.exe` pelo site vê o aviso do SmartScreen
+("O Windows protegeu o computador" → "Mais informações" → "Executar assim
+mesmo"). No Windows 11 com o Controle Inteligente de Aplicativos (Smart App
+Control) ligado, não há esse botão: o app sem assinatura é bloqueado até o usuário
+desligar o recurso em Segurança do Windows. Quem já tem o Nexus instalado
+atualiza pelo Squirrel. O MSIX da Microsoft Store é outro caminho (a Store
+assina; guia em `docs/windows-signing/MICROSOFT-STORE.md`, que chega com a branch
+`claude/ssl-code-signing-yubikey-ce1859`). Não religue o eSigner: o workflow para
+se `NEXUS_WINDOWS_RELEASE_SIGNING` ou `WINDOWS_CERTIFICATE_FILE` aparecer no
+ambiente do worker, e o `forge.config.ts` recusa `NEXUS_WINDOWS_RELEASE_SIGNING` em
+qualquer valor.
 
 O repositório público é compartilhado, mas cada atualizador seleciona apenas o
 asset compatível: uma release macOS sem Setup Windows não avança o canal
@@ -319,9 +326,10 @@ npm run release:publish:windows
 ```
 
 O run deve ser o workflow protegido, bem-sucedido e no mesmo commit da tag. O
-publicador baixa o artifact autenticado, confere seu SHA-256, assinaturas,
-timestamp e inventário Squirrel antes de criar drafts e só então publica a
-canônica seguida do espelho público.
+publicador baixa o artifact autenticado, confere seu SHA-256, o recibo (com
+`signing: yubikey`, as assinaturas e os carimbos de Setup, app, Update.exe e stub
+contra a identidade fixada) e o inventário Squirrel antes de criar drafts e só
+então publica a canônica seguida do espelho público.
 
 O runtime de release também é autoridade versionada: use exatamente Node
 `22.23.2`, conforme `package.json > nexusRelease.node`. Outro patch de Node 22
@@ -460,11 +468,11 @@ mesmo commit da candidata Mac em `main` protegido. Desde 05/10/2026 o build roda
 numa máquina Windows do GitHub (`windows-latest`, nova a cada build, ~10 min) e não
 depende mais do runner no PC do operador, que só existia para o certificado do
 eSigner. O ambiente continua `windows-release-signing` (nome da época da
-assinatura). O worker não assina nada.
+assinatura). O worker não assina nada: o YubiKey só existe no PC do operador.
 O input `version` deve corresponder ao package.json, sem prefixo `v`. O worker não
 publica releases, e só pode ser iniciado a partir de `main` protegido.
 
-Sem crédito/orçamento do GitHub Actions (o job falha em segundos com "An Actions budget is preventing further use"), o candidato Windows é gerado localmente no PC Windows do operador (`npm run make` + `npm run release:candidate`, mesmo recibo schemaVersion 2 `signing: none` com o hash de cada executável) e os artefatos sobem para a Release com `gh release upload`; com orçamento, o caminho padrão continua sendo o `windows-release.yml`.
+Sem crédito/orçamento do GitHub Actions (o job falha em segundos com "An Actions budget is preventing further use"), o candidato Windows é gerado localmente no PC Windows do operador (`npm run make` + `npm run release:candidate`, mesmo recibo schemaVersion 2 com o hash de cada executável; `signing: yubikey` quando o build foi assinado pelo token com `NEXUS_WINDOWS_YUBIKEY_SIGNING=1`, `signing: none` sem ele) e os artefatos sobem para a Release com `gh release upload`; com orçamento, o caminho padrão continua sendo o `windows-release.yml`.
 
 No Mac, selecione o run autenticado:
 

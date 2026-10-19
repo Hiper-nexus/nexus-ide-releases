@@ -113,21 +113,45 @@ npm run rebuild:node           # rebuild native modules for Node (CI/tests)
 | `npm run release:candidate` | Gate do candidato (assinatura, staple, smoke do ZIP, receipt) |
 | `npm run release:security` | Security gate (renderer sinks + audit) |
 
-## Windows sem assinatura até a Microsoft Store (05/10/2026)
+## Windows: Authenticode só pelo YubiKey (19/10/2026; eSigner fora desde 05/10)
 
-- O eSigner da SSL.com saiu do fluxo por decisão do operador: cobrava por
+- O eSigner da SSL.com saiu do fluxo em 05/10 por decisão do operador: cobrava por
   assinatura, a build assina dezenas de arquivos e a build automática gerou
-  faturas de excesso. Não religue eSigner, CKA, `NEXUS_WINDOWS_RELEASE_SIGNING`
-  nem `WINDOWS_CERTIFICATE_SHA1`; o `forge.config.ts` recusa o certificado dele.
+  faturas de excesso. Não religue eSigner, CKA nem `WINDOWS_CERTIFICATE_SHA1`;
+  `NEXUS_WINDOWS_RELEASE_SIGNING` é recusada em qualquer valor.
+- Em 19/10 o operador decidiu que um YubiKey 5C NFC FIPS (série 25700086)
+  substitui o eSigner: chave ECC P-384 gerada no slot PIV 9a, atestação aceita no
+  pedido `co-f01l53ldh43`. O único caminho de assinatura é
+  `NEXUS_WINDOWS_YUBIKEY_SIGNING=1` (`build/windows-token-signing.ts`): SignTool
+  `/sha1 <thumbprint>` na loja do USUÁRIO e, antes de empacotar
+  (`prePackage`/`preMake`), checagem do certificado contra
+  `build/windows-signing-identity.json` (thumbprint, SHA-256 do SPKI da chave do
+  slot 9a, CN da HIPERSEND, EKU de assinatura de código, validade, chave do
+  cartão). O modo recusa `WINDOWS_CERTIFICATE_FILE/PASSWORD`, `WINDOWS_SIGNTOOL_PATH`,
+  `WINDOWS_SIGN_HOOK_MODULE_PATH` e `WINDOWS_SIGN_WITH_PARAMS`: o
+  `@electron/windows-sign` os lê do ambiente por baixo das opções do Forge.
+- **Em 19/10 o `certificateSha1` do JSON é `null`**: o SSL.com ainda não reemitiu o
+  certificado ECC (o baixável, série 7538CB4E…, RSA 3072, é do eSigner e não
+  combina com a chave). Até ele ser importado no slot e fixado, o modo recusa e a
+  build sai sem assinatura. Runbook: `docs/windows-signing/YUBIKEY.md`. Nunca
+  digite PIN ou PUK pelo operador; o Windows pede o PIN a cada processo do SignTool.
+- O JSON é a fonte única: o coletor (`collect-windows-release.ps1`) grava
+  `signing: 'yubikey'` só com Setup, app, Update.exe e stub assinados e carimbados
+  pelo certificado fixado (thumbprint e SPKI conferidos); nenhum assinado vira
+  `signing: 'none'`, e a mistura é recusada. O publicador aceita os dois valores e
+  confere as assinaturas contra o JSON. `build/*` é ignorado no git: arquivo novo em
+  `build/` que o Forge importa precisa de exceção no `.gitignore`
+  (`forge.config.test.ts` trava).
 - `windows-release.yml` gera o candidato sem Authenticode numa máquina do GitHub
-  (`windows-latest`); não depende mais do runner no PC do operador. O recibo
-  (schemaVersion 2, `signing: none`) traz o hash de cada executável. A versão assinada é a da
-  Microsoft Store (MSIX), que a Store reassina de graça.
+  (`windows-latest`), que não tem o token: lá o recibo (schemaVersion 2) continua
+  `signing: none`, com o hash de cada executável. O MSIX da Microsoft Store é outro
+  caminho (a Store assina).
 - Sem crédito/orçamento do GitHub Actions (o job falha em segundos com "An
   Actions budget is preventing further use"), o candidato Windows é gerado
   LOCALMENTE no PC Windows do operador (`npm run make` + `npm run
-  release:candidate`, mesmo recibo schemaVersion 2 `signing: none` com o hash de
-  cada executável) e os artefatos sobem para a Release com `gh release upload`.
+  release:candidate`, mesmo recibo schemaVersion 2 com o hash de cada executável,
+  `signing: yubikey` quando assinado pelo token e `none` sem ele) e os artefatos
+  sobem para a Release com `gh release upload`.
   Com orçamento, o caminho padrão continua sendo o `windows-release.yml`.
 
 ## Authoritative Owners
