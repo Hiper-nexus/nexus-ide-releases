@@ -86,16 +86,19 @@ export function assertWindowsArtifact(artifact, archive, run) {
   }
 }
 
+const EXECUTABLES = ['setup', 'app', 'updater', 'stub'];
+const SIGNING_IDENTITY = new URL('../build/windows-signing-identity.json', import.meta.url);
+
 /**
- * O canal Windows saiu sem Authenticode desde 05/10/2026: o eSigner da SSL.com
- * cobrava por assinatura e a build assinava dezenas de arquivos por release.
- * A versão assinada passa a ser a da Microsoft Store, que reassina o MSIX de
- * graça. Aqui o recibo prova integridade, não editor: o hash do Setup fica
- * amarrado ao asset publicado; os de app, Update.exe e stub são registro
- * forense (estão dentro do NUPKG e não são recalculados na publicação).
+ * O eSigner da SSL.com saiu em 05/10/2026 (cobrava por assinatura). Desde
+ * 19/10 a build local pode ser assinada pelo YubiKey (`signing: 'yubikey'`); a
+ * do worker hospedado continua `signing: 'none'`. O hash de cada executável
+ * vai sempre: o do Setup fica amarrado ao asset publicado; os de app,
+ * Update.exe e stub são registro forense (estão dentro do NUPKG e não são
+ * recalculados na publicação).
  */
 function assertExecutableHashes(receipt) {
-  for (const kind of ['setup', 'app', 'updater', 'stub']) {
+  for (const kind of EXECUTABLES) {
     const digest = receipt.executables?.[kind]?.sha256;
     if (typeof digest !== 'string' || !SHA256.test(digest)) fail(`executable hash missing or invalid: ${kind}`);
   }
@@ -103,11 +106,28 @@ function assertExecutableHashes(receipt) {
   if (setup?.sha256 !== receipt.executables.setup.sha256) fail('Setup hash is not bound to the published Setup asset');
 }
 
-function assertReceipt(receipt, expected) {
-  if (receipt?.schemaVersion !== 2 || receipt?.signing !== 'none' || !STABLE.test(expected.version) || receipt?.version !== expected.version ||
+/** Assinado é tudo pelo certificado fixado do YubiKey (thumbprint E chave pública); sem assinatura é nenhum. */
+function assertExecutableSignatures(receipt, identity) {
+  const signatures = EXECUTABLES.map(kind => receipt.executables[kind].signature);
+  if (receipt.signing === 'none') {
+    if (signatures.some(signature => signature !== undefined)) fail('unsigned receipt carries executable signatures');
+    return;
+  }
+  if (receipt.signing !== identity?.signing || !/^[A-F\d]{40}$/u.test(identity?.certificateSha1 ?? '') || !SHA256.test(identity?.spkiSha256 ?? '')) {
+    fail('receipt claims a signing identity that build/windows-signing-identity.json does not pin');
+  }
+  signatures.forEach((signature, index) => {
+    if (signature?.thumbprint !== identity.certificateSha1 || signature?.spkiSha256 !== identity.spkiSha256 ||
+      !/^[A-F\d]{40}$/u.test(signature?.timestampThumbprint ?? '')) fail(`executable ${EXECUTABLES[index]} is not signed and timestamped by the pinned YubiKey certificate`);
+  });
+}
+
+function assertReceipt(receipt, expected, identity) {
+  if (receipt?.schemaVersion !== 2 || !['none', 'yubikey'].includes(receipt?.signing) || !STABLE.test(expected.version) || receipt?.version !== expected.version ||
     receipt?.commitSha !== expected.commitSha || receipt?.runId !== expected.runId || receipt?.platform !== 'win32' || receipt?.arch !== 'x64' ||
     receipt?.smoke?.status !== 'pass' || !Array.isArray(receipt?.assets) || receipt.assets.length !== 3) fail('candidate receipt does not match the release or smoke failed');
   assertExecutableHashes(receipt);
+  assertExecutableSignatures(receipt, identity);
 }
 
 /**
@@ -181,7 +201,7 @@ export function assertWindowsCandidate(root, expected, options = {}) {
   const receiptPath = path.join(root, RECEIPT);
   if (!fs.lstatSync(receiptPath).isFile() || fs.lstatSync(receiptPath).isSymbolicLink()) fail('unsafe receipt');
   const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
-  assertReceipt(receipt, expected);
+  assertReceipt(receipt, expected, options.signingIdentity ?? JSON.parse(fs.readFileSync(SIGNING_IDENTITY, 'utf8')));
   const names = receipt.assets.map(a => a.name);
   const setupName = `NexusIDE-${expected.version}-win32-x64-Setup.exe`;
   const packages = names.filter(name => name === `nexus_ide-${expected.version}-full.nupkg`);

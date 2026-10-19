@@ -143,11 +143,48 @@ describe('Windows candidate bytes within an authenticated archive', () => {
     expect(() => assertWindowsCandidate(f.root, f.expected)).not.toThrow();
   });
   it('rejects old signed receipts, missing executable hashes, a setup hash not bound to the asset, failed smoke, stale commit/version', () => {
-    for (const alter of [r => { r.schemaVersion = 1; }, r => { r.signing = 'authenticode'; }, r => { delete r.executables.stub; }, r => { r.executables.app.sha256 = 'not-a-hash'; }, r => { r.executables.app.sha256 = ['b'.repeat(64)]; }, r => { r.executables.setup.sha256 = [r.executables.setup.sha256]; }, r => { r.executables.setup.sha256 = 'e'.repeat(64); }, r => { r.smoke.status = 'fail'; }, r => { r.commitSha = 'b'.repeat(40); }, r => { r.version = '1.2.4'; }]) {
+    for (const alter of [r => { r.schemaVersion = 1; }, r => { r.signing = 'authenticode'; }, r => { r.signing = 'esigner'; }, r => { delete r.executables.stub; }, r => { r.executables.app.sha256 = 'not-a-hash'; }, r => { r.executables.app.sha256 = ['b'.repeat(64)]; }, r => { r.executables.setup.sha256 = [r.executables.setup.sha256]; }, r => { r.executables.setup.sha256 = 'e'.repeat(64); }, r => { r.smoke.status = 'fail'; }, r => { r.commitSha = 'b'.repeat(40); }, r => { r.version = '1.2.4'; }]) {
       const f = fixture(); alter(f.receipt);
       fs.writeFileSync(path.join(f.root, 'windows-release-receipt.json'), JSON.stringify(f.receipt));
       expect(() => assertWindowsCandidate(f.root, f.expected)).toThrow();
     }
+  });
+  describe('YubiKey-signed candidate', () => {
+    const signingIdentity = { schemaVersion: 1, signing: 'yubikey', spkiSha256: 'cc'.repeat(32), publisherCommonName: 'HIPERSEND TECNOLOGIA INTERNET & SOFTWARES LTDA', certificateSha1: 'A1'.repeat(20) };
+    const signature = { thumbprint: 'A1'.repeat(20), spkiSha256: 'cc'.repeat(32), timestampThumbprint: 'B2'.repeat(20) };
+    function signedFixture(alter = () => {}) {
+      const f = fixture();
+      f.receipt.signing = 'yubikey';
+      for (const kind of ['setup', 'app', 'updater', 'stub']) f.receipt.executables[kind].signature = { ...signature };
+      alter(f.receipt);
+      fs.writeFileSync(path.join(f.root, 'windows-release-receipt.json'), JSON.stringify(f.receipt));
+      return f;
+    }
+    it('accepts every executable signed and timestamped by the pinned YubiKey certificate', () => {
+      const f = signedFixture();
+      expect(() => assertWindowsCandidate(f.root, f.expected, { signingIdentity })).not.toThrow();
+    });
+    it('reads the identity pinned in the repository: no certificate yet means no signed candidate', () => {
+      const pinned = JSON.parse(fs.readFileSync(new URL('../build/windows-signing-identity.json', import.meta.url), 'utf8'));
+      expect(pinned.signing).toBe('yubikey');
+      const f = signedFixture(r => { for (const kind of ['setup', 'app', 'updater', 'stub']) r.executables[kind].signature = { ...signature, thumbprint: pinned.certificateSha1 ?? 'A1'.repeat(20), spkiSha256: pinned.spkiSha256 }; });
+      if (pinned.certificateSha1 === null) expect(() => assertWindowsCandidate(f.root, f.expected)).toThrow(/does not pin/);
+      else expect(() => assertWindowsCandidate(f.root, f.expected)).not.toThrow();
+    });
+    it('refuses a mix, another certificate, another key, a missing timestamp and signatures on an unsigned receipt', () => {
+      for (const alter of [
+        r => { delete r.executables.stub.signature; },
+        r => { r.executables.updater.signature.thumbprint = 'E44D98FF840B1DF78D87F6768D177B5719952CAB'; },
+        r => { r.executables.app.signature.spkiSha256 = 'dd'.repeat(32); },
+        r => { delete r.executables.setup.signature.timestampThumbprint; },
+        r => { r.signing = 'none'; },
+      ]) {
+        const f = signedFixture(alter);
+        expect(() => assertWindowsCandidate(f.root, f.expected, { signingIdentity })).toThrow();
+      }
+      const f = signedFixture();
+      expect(() => assertWindowsCandidate(f.root, f.expected, { signingIdentity: { ...signingIdentity, certificateSha1: null } })).toThrow(/does not pin/);
+    });
   });
   it('rejects changed bytes, extra files, symlinks, and multiple RELEASES entries', () => {
     const f = fixture(); fs.appendFileSync(path.join(f.root, f.nupkg), 'tamper');

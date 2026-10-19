@@ -1,9 +1,16 @@
-# Runs only on the protected native Windows worker, after Forge make.
-# Windows releases are not Authenticode-signed since 05/10/2026 (the paid
-# eSigner service was removed; the Microsoft Store signs the Store build). The
-# receipt records the SHA-256 of every executable instead of a signature.
+# Runs on the native Windows worker or the operator's Windows PC, after Forge make.
+# The paid eSigner service was removed on 05/10/2026. A build signed with
+# NEXUS_WINDOWS_YUBIKEY_SIGNING=1 carries Authenticode from the YubiKey
+# certificate pinned in build/windows-signing-identity.json (19/10/2026); an
+# unsigned build records `signing = 'none'`. Every executable gets its SHA-256
+# either way, and a mix of signed and unsigned executables is refused.
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+
+$identity = Get-Content -LiteralPath 'build/windows-signing-identity.json' -Raw | ConvertFrom-Json
+if ($identity.schemaVersion -ne 1 -or $identity.signing -cne 'yubikey' -or $identity.spkiSha256 -cnotmatch '^[a-f0-9]{64}$') {
+  throw 'build/windows-signing-identity.json is malformed'
+}
 
 function Get-OneFile([string]$Root, [string]$Filter) {
   $files = @(Get-ChildItem $Root -Recurse -File -Filter $Filter)
@@ -11,8 +18,28 @@ function Get-OneFile([string]$Root, [string]$Filter) {
   return $files[0]
 }
 
-function Get-ExecutableHash([string]$Filename) {
-  return @{ sha256 = (Get-FileHash -LiteralPath $Filename -Algorithm SHA256).Hash.ToLowerInvariant() }
+function Get-ExecutableRecord([string]$Filename) {
+  $record = [ordered]@{ sha256 = (Get-FileHash -LiteralPath $Filename -Algorithm SHA256).Hash.ToLowerInvariant() }
+  $signature = Get-AuthenticodeSignature -LiteralPath $Filename
+  if ($signature.Status -eq 'NotSigned') { return $record }
+  $signer = $signature.SignerCertificate
+  if ($signature.Status -ne 'Valid' -or $null -eq $signer -or $null -eq $signature.TimeStamperCertificate) {
+    throw "Authenticode signature or timestamp invalid: $Filename"
+  }
+  # The SPKI pin binds the signature to the YubiKey slot 9a key itself, so a
+  # certificate over any other key is refused even under the pinned thumbprint.
+  $spki = [Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData(
+    $signer.PublicKey.ExportSubjectPublicKeyInfo())).ToLowerInvariant()
+  if ($signer.Thumbprint -cne $identity.certificateSha1 -or $spki -cne $identity.spkiSha256 -or
+      $signer.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false) -cne $identity.publisherCommonName) {
+    throw "Unexpected signer (not the pinned YubiKey certificate): $Filename"
+  }
+  $record.signature = [ordered]@{
+    thumbprint = $signer.Thumbprint
+    spkiSha256 = $spki
+    timestampThumbprint = $signature.TimeStamperCertificate.Thumbprint
+  }
+  return $record
 }
 
 if ($env:OS -ne 'Windows_NT' -or (node -p 'process.arch') -ne 'x64') { throw 'Native Windows x64 required' }
@@ -39,12 +66,16 @@ try {
   # Squirrel.exe in the NUPKG becomes installed Update.exe.
   $updater = Get-OneFile $extracted 'Squirrel.exe'
   $stub = Get-OneFile $extracted 'nexus-ide_ExecutionStub.exe'
-  $executables = @{
-    setup = Get-ExecutableHash $setup.FullName
-    app = Get-ExecutableHash $app.FullName
-    updater = Get-ExecutableHash $updater.FullName
-    stub = Get-ExecutableHash $stub.FullName
+  $executables = [ordered]@{
+    setup = Get-ExecutableRecord $setup.FullName
+    app = Get-ExecutableRecord $app.FullName
+    updater = Get-ExecutableRecord $updater.FullName
+    stub = Get-ExecutableRecord $stub.FullName
   }
+  $signedCount = @($executables.Values | Where-Object { $_.Contains('signature') }).Count
+  if ($signedCount -eq 0) { $signing = 'none' }
+  elseif ($signedCount -eq $executables.Count) { $signing = $identity.signing }
+  else { throw "Only $signedCount of $($executables.Count) executables are signed: sign all of them with the YubiKey or none" }
   node scripts/smoke-packaged-app.mjs --app $app.FullName
   if ($LASTEXITCODE -ne 0) { throw 'Full-package native smoke failed' }
 
@@ -66,7 +97,7 @@ try {
     runId = $env:GITHUB_RUN_ID
     platform = 'win32'
     arch = 'x64'
-    signing = 'none'
+    signing = $signing
     smoke = @{ status = 'pass'; kind = 'nupkg-native'; installedUpgradeVerified = $false }
     executables = $executables
     assets = $inventory
