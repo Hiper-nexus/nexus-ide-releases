@@ -35,6 +35,11 @@ export interface MediaProviderInfo {
   hasKey: boolean;
   /** Masked key preview for the settings UI (never the raw key). */
   maskedKey: string | null;
+  /**
+   * F-1585: preço de lista por imagem, em USD, por modelo (só imagem; o de
+   * vídeo depende de duração e resolução e vem de `media-video-models`).
+   */
+  imageCostUsd?: Record<string, number | null>;
 }
 
 export interface MediaGenerationResult {

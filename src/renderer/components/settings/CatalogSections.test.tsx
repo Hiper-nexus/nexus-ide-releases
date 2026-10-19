@@ -173,3 +173,18 @@ it('keeps models separate and provides a direct route to media connections', asy
   expect(navigate).toHaveBeenCalledWith('media');
   navigate.mockRestore();
 });
+
+it('F-1585: cada modelo de mídia diz o que aceita e quanto custa', async () => {
+  const listProviders = vi.fn(async () => [
+    { id: 'replicate-video', kind: 'video', label: 'Replicate', envVar: 'REPLICATE_API_TOKEN', defaultModel: 'google/veo-3.1', models: ['google/veo-3.1', 'wan-video/wan-2.5-i2v'], hasKey: true, maskedKey: null },
+    { id: 'openai-image', kind: 'image', label: 'OpenAI', envVar: 'OPENAI_API_KEY', defaultModel: 'gpt-image-2', models: ['gpt-image-2'], hasKey: true, maskedKey: null, imageCostUsd: { 'gpt-image-2': 0.07 } },
+  ]);
+  Object.defineProperty(window, 'nexus', { configurable: true, value: { orch: api, media: { listProviders } } });
+  const host = mount(<MediaCatalogSection />);
+  await settle();
+  const text = host.textContent ?? '';
+  expect(text).toContain('google/veo-3.1 — 4, 6, 8 s · 720p, 1080p · $0.40/s');
+  expect(text).toContain('wan-video/wan-2.5-i2v —');
+  expect(text).toContain('precisa de imagem inicial');
+  expect(text).toContain('gpt-image-2 — $0.07 por imagem');
+});

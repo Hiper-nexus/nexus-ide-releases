@@ -311,3 +311,98 @@ describe('MediaStudioPanel sem projeto aberto (F-1589)', () => {
     expect(dialog.textContent).not.toContain('authorized workspace scope');
   });
 });
+
+describe('MediaStudioPanel: vídeo com as opções do modelo (F-1585)', () => {
+  const replicateVideo = {
+    id: 'replicate-video',
+    kind: 'video',
+    label: 'Replicate',
+    envVar: 'REPLICATE_API_TOKEN',
+    defaultModel: 'bytedance/seedance-2.0',
+    models: ['bytedance/seedance-2.0', 'google/veo-3.1', 'wan-video/wan-2.5-i2v'],
+    hasKey: true,
+    maskedKey: null,
+  };
+
+  function media(): Record<string, ReturnType<typeof vi.fn>> {
+    return (window.nexus as unknown as { media: Record<string, ReturnType<typeof vi.fn>> }).media;
+  }
+
+  function chipTexts(dialog: HTMLElement, group: string): string[] {
+    return Array.from(
+      dialog.querySelectorAll<HTMLButtonElement>(`[aria-label="${group}"] button`),
+    ).map((b) => b.textContent ?? '');
+  }
+
+  function pressedChip(dialog: HTMLElement, group: string): string | undefined {
+    return dialog.querySelector(`[aria-label="${group}"] [aria-pressed="true"]`)?.textContent ?? undefined;
+  }
+
+  async function openVideoTab(): Promise<HTMLElement> {
+    media().listProviders.mockResolvedValue([replicateVideo]);
+    const dialog = await openFrom(renderHarness());
+    const videoTab = Array.from(dialog.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find(
+      (b) => b.textContent === 'Vídeo',
+    )!;
+    act(() => videoTab.click());
+    return dialog;
+  }
+
+  function choose(dialog: HTMLElement, value: string): void {
+    const select = dialog.querySelector<HTMLSelectElement>('select')!;
+    act(() => {
+      select.value = value;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  }
+
+  it('Veo mostra só 4/6/8 s, começa em 8 s e o custo de lista antes de gerar', async () => {
+    const dialog = await openVideoTab();
+    choose(dialog, 'replicate-video::google/veo-3.1');
+    expect(chipTexts(dialog, 'Duração')).toEqual(['4s', '6s', '8s']);
+    expect(pressedChip(dialog, 'Duração')).toBe('8s');
+    expect(chipTexts(dialog, 'Resolução')).toEqual(['720p', '1080p']);
+    expect(chipTexts(dialog, 'Proporção')).toEqual(['16:9', '9:16']);
+    expect(dialog.textContent).toContain('Custo estimado: $3.20 (preço de lista');
+
+    // 1080p só com 8 s.
+    const hd = Array.from(dialog.querySelectorAll<HTMLButtonElement>('[aria-label="Resolução"] button')).find(
+      (b) => b.textContent === '1080p',
+    )!;
+    act(() => hd.click());
+    expect(chipTexts(dialog, 'Duração')).toEqual(['8s']);
+  });
+
+  it('o pedido leva só o que o modelo aceita', async () => {
+    media().generate.mockResolvedValue({ ok: false, error: 'x' });
+    const dialog = await openVideoTab();
+    choose(dialog, 'replicate-video::google/veo-3.1');
+    const prompt = dialog.querySelector<HTMLTextAreaElement>('textarea')!;
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+      setter.call(prompt, 'praia ao pôr do sol');
+      prompt.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      dialog.querySelector<HTMLButtonElement>('.ms-generate')!.click();
+    });
+    expect(media().generate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'video',
+        model: 'google/veo-3.1',
+        durationSeconds: 8,
+        resolution: '720p',
+        aspectRatio: '16:9',
+      }),
+    );
+  });
+
+  it('modelo que precisa de imagem inicial aparece desabilitado e com o motivo', async () => {
+    const dialog = await openVideoTab();
+    const option = Array.from(dialog.querySelectorAll<HTMLOptionElement>('option')).find((o) =>
+      o.value.endsWith('wan-video/wan-2.5-i2v'),
+    )!;
+    expect(option.disabled).toBe(true);
+    expect(option.textContent).toContain('precisa de imagem inicial');
+  });
+});

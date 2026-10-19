@@ -11,6 +11,15 @@ import { useProductNavigationStore } from '../state/product-navigation-store';
 import { CloseButton } from './CloseButton';
 import { PixelIcon } from './PixelIcon';
 import { platformCopy } from '../lib/platform-copy';
+import {
+  IMAGE_ASPECTS,
+  firstUsableModel,
+  studioCostUsd,
+  studioModelBlock,
+  studioRetirementNotice,
+  studioVideoChoices,
+  type StudioKind,
+} from './media-studio-options';
 
 /**
  * Estúdio de Mídia — geração de imagem/vídeo para quem não fala com agente:
@@ -18,13 +27,6 @@ import { platformCopy } from '../lib/platform-copy';
  * Ajustes → Serviços de mídia; aqui só geram os serviços conectados (hasKey).
  * Geração e galeria são da pasta do projeto aberto (F-1589).
  */
-
-type StudioKind = 'image' | 'video';
-
-const ASPECTS: Record<StudioKind, string[]> = {
-  image: ['1:1', '16:9', '9:16', '4:3', '3:4'],
-  video: ['16:9', '9:16'],
-};
 
 const EXAMPLES: Record<StudioKind, string[]> = {
   image: [
@@ -185,19 +187,16 @@ export function MediaStudioPanel({
 
   // Seleção default: primeiro provider COM key do kind ativo + seu defaultModel.
   // Re-reseta quando a aba/providers mudam e a seleção atual não é mais válida.
+  // F-1585: modelo que não gera pelo Estúdio (desligado, precisa de imagem
+  // inicial) nunca é o padrão.
   useEffect(() => {
     if (!providers) return;
     const [pid, model] = sel.split('::');
     const current = keyed.find((p) => p.id === pid);
-    if (current && current.models.includes(model)) return;
-    const first = keyed[0];
-    setSel(first ? selValue(first.id, first.defaultModel) : '');
+    if (current && current.models.includes(model) && studioModelBlock(model) === null) return;
+    const first = firstUsableModel(keyed);
+    setSel(first ? selValue(first.providerId, first.model) : '');
   }, [providers, keyed, sel]);
-
-  // Proporção default por aba (vídeo não tem 1:1 etc.).
-  useEffect(() => {
-    if (!ASPECTS[tab].includes(aspect)) setAspect('16:9');
-  }, [tab, aspect]);
 
   // Cronômetro de espera — anda 1x/s enquanto a geração não resolve.
   useEffect(() => {
@@ -233,6 +232,23 @@ export function MediaStudioPanel({
   }, [artifacts, thumbs]);
 
   if (!open) return null;
+
+  // F-1585: as opções de vídeo são as do modelo escolhido (o slider de 2 a
+  // 12 s e o 720p/1080p fixos mandavam valores que o Veo, o Hailuo e o Sora
+  // recusam); o custo de lista aparece antes de gerar.
+  const [selProviderId, selModel = ''] = sel.split('::');
+  const selectedProvider = keyed.find((p) => p.id === selProviderId);
+  const video =
+    tab === 'video' && selModel
+      ? studioVideoChoices(selModel, { aspect, resolution, duration })
+      : null;
+  const aspectChoices = tab === 'image' ? IMAGE_ASPECTS : (video?.aspects ?? []);
+  const effectiveAspect =
+    tab === 'image' ? (IMAGE_ASPECTS.includes(aspect) ? aspect : '16:9') : video?.aspect;
+  const costUsd = selModel
+    ? studioCostUsd(tab, selectedProvider, selModel, video ?? undefined)
+    : null;
+  const retirementNotice = tab === 'video' && selModel ? studioRetirementNotice(selModel) : null;
 
   async function run(request: MediaStudioRequest) {
     setJob({ clientJobId: request.clientJobId, startedAt: Date.now() });
@@ -285,8 +301,13 @@ export function MediaStudioPanel({
       prompt: prompt.trim(),
       providerId: provider.id,
       model,
-      aspectRatio: aspect,
-      ...(tab === 'video' ? { durationSeconds: duration, resolution } : {}),
+      ...(effectiveAspect ? { aspectRatio: effectiveAspect } : {}),
+      ...(video
+        ? {
+            durationSeconds: video.duration,
+            ...(video.resolution ? { resolution: video.resolution } : {}),
+          }
+        : {}),
       clientJobId: crypto.randomUUID(),
     });
   }
@@ -468,65 +489,110 @@ export function MediaStudioPanel({
                             : `${p.label} — sem chave (Serviços de mídia)`
                         }
                       >
-                        {p.models.map((m) => (
-                          <option
-                            key={m}
-                            value={selValue(p.id, m)}
-                            disabled={!p.hasKey}
-                          >
-                            {m}
-                          </option>
-                        ))}
+                        {p.models.map((m) => {
+                          const block = studioModelBlock(m);
+                          return (
+                            <option
+                              key={m}
+                              value={selValue(p.id, m)}
+                              disabled={!p.hasKey || block !== null}
+                            >
+                              {block ? `${m} — ${block}` : m}
+                            </option>
+                          );
+                        })}
                       </optgroup>
                     ))}
                   </select>
                 </label>
 
-                <div className="ms-field">
-                  <span className="ms-field__label">Proporção</span>
-                  <div className="ms-chips" role="group" aria-label="Proporção">
-                    {ASPECTS[tab].map((a) => (
-                      <button
-                        key={a}
-                        type="button"
-                        aria-pressed={a === aspect}
-                        className={a === aspect ? 'ms-chip ms-chip--on' : 'ms-chip'}
-                        onClick={() => setAspect(a)}
-                      >
-                        {a}
-                      </button>
-                    ))}
+                {aspectChoices.length > 0 && (
+                  <div className="ms-field">
+                    <span className="ms-field__label">Proporção</span>
+                    <div className="ms-chips" role="group" aria-label="Proporção">
+                      {aspectChoices.map((a) => (
+                        <button
+                          key={a}
+                          type="button"
+                          aria-pressed={a === effectiveAspect}
+                          className={a === effectiveAspect ? 'ms-chip ms-chip--on' : 'ms-chip'}
+                          onClick={() => setAspect(a)}
+                        >
+                          {a}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                )}
 
-                {tab === 'video' && (
+                {video && (
                   <>
-                    <label className="ms-field">
-                      <span className="ms-field__label">Duração: {duration}s</span>
-                      <input
-                        type="range"
-                        className="ms-range"
-                        min={2}
-                        max={12}
-                        step={1}
-                        value={duration}
-                        onChange={(e) => setDuration(Number(e.target.value))}
-                      />
-                    </label>
-                    <label className="ms-field">
-                      <span className="ms-field__label">Resolução</span>
-                      <select
-                        className="ms-select"
-                        value={resolution}
-                        onChange={(e) => setResolution(e.target.value)}
-                      >
-                        <option value="720p">720p</option>
-                        <option value="1080p">1080p</option>
-                      </select>
-                    </label>
+                    {video.resolutions.length > 0 && (
+                      <div className="ms-field">
+                        <span className="ms-field__label">Resolução</span>
+                        <div className="ms-chips" role="group" aria-label="Resolução">
+                          {video.resolutions.map((r) => (
+                            <button
+                              key={r}
+                              type="button"
+                              aria-pressed={r === video.resolution}
+                              className={r === video.resolution ? 'ms-chip ms-chip--on' : 'ms-chip'}
+                              onClick={() => setResolution(r)}
+                            >
+                              {r}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {video.durations.length > 6 ? (
+                      <label className="ms-field">
+                        <span className="ms-field__label">Duração: {video.duration}s</span>
+                        <input
+                          type="range"
+                          className="ms-range"
+                          min={video.durations[0]}
+                          max={video.durations.at(-1)}
+                          step={1}
+                          value={video.duration}
+                          onChange={(e) => setDuration(Number(e.target.value))}
+                        />
+                      </label>
+                    ) : (
+                      <div className="ms-field">
+                        <span className="ms-field__label">Duração</span>
+                        <div className="ms-chips" role="group" aria-label="Duração">
+                          {video.durations.map((d) => (
+                            <button
+                              key={d}
+                              type="button"
+                              aria-pressed={d === video.duration}
+                              className={d === video.duration ? 'ms-chip ms-chip--on' : 'ms-chip'}
+                              onClick={() => setDuration(d)}
+                            >
+                              {d}s
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </>
                 )}
               </div>
+
+              {retirementNotice && (
+                <p className="ms-dim" role="note">
+                  <PixelIcon name="warn" size={11} /> {retirementNotice}
+                </p>
+              )}
+              {selModel && (
+                <p className="ms-dim" aria-live="polite">
+                  Custo estimado:{' '}
+                  {costUsd !== null
+                    ? `${formatUsd(costUsd)} (preço de lista; quem cobra é o serviço)`
+                    : 'sem preço de lista para esta escolha'}
+                </p>
+              )}
 
               <button
                 type="button"
