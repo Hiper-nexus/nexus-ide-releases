@@ -216,6 +216,55 @@ describe('MediaStudioPanel behavioral contract', () => {
   });
 });
 
+describe('MediaStudioPanel: falha do serviço (F-1584)', () => {
+  it('chave recusada mostra a frase do Main e leva a Serviços de mídia', async () => {
+    const media = (window.nexus as unknown as {
+      media: Record<string, ReturnType<typeof vi.fn>>;
+    }).media;
+    media.listProviders.mockResolvedValue([
+      {
+        id: 'openai-image',
+        kind: 'image',
+        label: 'OpenAI',
+        envVar: 'OPENAI_API_KEY',
+        defaultModel: 'gpt-image-2',
+        models: ['gpt-image-2'],
+        hasKey: true,
+        maskedKey: null,
+      },
+    ]);
+    media.generate.mockResolvedValue({
+      ok: false,
+      error: 'OpenAI recusou a chave (HTTP 401). Confira ou troque a chave em Ajustes → Serviços de mídia.',
+      errorKind: 'key',
+    });
+    const dialog = await openFrom(renderHarness());
+    const prompt = dialog.querySelector<HTMLTextAreaElement>('textarea')!;
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+      setter.call(prompt, 'um gato astronauta');
+      prompt.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      dialog.querySelector<HTMLButtonElement>('.ms-generate')!.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const alert = dialog.querySelector('.ms-error')!;
+    expect(alert.textContent).toContain('OpenAI recusou a chave (HTTP 401)');
+    const open = Array.from(alert.querySelectorAll<HTMLButtonElement>('button')).find((b) =>
+      b.textContent?.includes('Abrir Serviços de mídia'),
+    )!;
+    act(() => open.click());
+    expect(useMediaStudioStore.getState().open).toBe(false);
+    expect(useProductNavigationStore.getState().destination).toEqual({
+      kind: 'settings',
+      section: 'media',
+    });
+  });
+});
+
 describe('MediaStudioPanel sem projeto aberto (F-1589)', () => {
   const keyedImage = {
     id: 'openai-image',

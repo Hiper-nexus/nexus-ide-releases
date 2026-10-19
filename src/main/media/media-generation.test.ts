@@ -20,6 +20,7 @@ import {
   type MediaDeps,
 } from './media-generation';
 import { getVideoJob, saveVideoJob } from './media-video-jobs';
+import { MediaProviderHttpError } from './media-errors';
 
 let dir: string;
 
@@ -99,7 +100,7 @@ describe('resolveMediaProvider / resolveMediaModel', () => {
   it('provider explícito sem key é erro, nunca substitui', () => {
     expect(() =>
       resolveMediaProvider('image', 'openai-image', () => false),
-    ).toThrow(/sem key/);
+    ).toThrow(/sem chave — conecte em Ajustes → Serviços de mídia/);
   });
 
   it('provider de kind errado é erro', () => {
@@ -204,6 +205,48 @@ describe('generateImage', () => {
     await expect(
       generateImage({ prompt: 'x', baseDir: dir }, deps),
     ).rejects.toThrow(/401/);
+  });
+
+  it('F-1584: chave recusada diz o que fazer, com a frase do serviço e sem o JSON cru', async () => {
+    const { deps } = fakeDeps([
+      { status: 401, json: { error: { code: 401, message: 'API key not valid.' } } },
+    ]);
+    const err = await generateImage({ prompt: 'x', baseDir: dir }, deps).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MediaProviderHttpError);
+    expect((err as MediaProviderHttpError).kind).toBe('key');
+    expect((err as Error).message).toBe(
+      'Google recusou a chave (HTTP 401). Confira ou troque a chave em Ajustes → Serviços de mídia. Resposta do serviço: API key not valid.',
+    );
+  });
+});
+
+describe('F-1584: falha do Replicate legível', () => {
+  it('parâmetro recusado (422) traz o campo recusado, não o corpo inteiro', async () => {
+    const { deps } = fakeDeps([
+      {
+        status: 422,
+        json: {
+          title: 'Input validation failed',
+          detail: '- input.duration: duration must be one of the following: 4, 6, 8',
+          status: 422,
+        },
+      },
+    ]);
+    await expect(
+      generateVideo({ prompt: 'x', model: 'google/veo-3.1', durationSeconds: 8, baseDir: dir }, deps),
+    ).rejects.toThrow(
+      'Replicate não aceitou o pedido (HTTP 422); nada foi gerado. Resposta do serviço: - input.duration: duration must be one of the following: 4, 6, 8',
+    );
+  });
+
+  it('prediction que falha no serviço diz que não concluiu, com a causa', async () => {
+    const { deps } = fakeDeps([
+      { json: { id: 'p9', status: 'starting' } },
+      { json: { id: 'p9', status: 'failed', error: 'E005: flagged as sensitive' } },
+    ]);
+    await expect(generateVideo({ prompt: 'x', baseDir: dir }, deps)).rejects.toThrow(
+      'Replicate não concluiu a geração (falhou): E005: flagged as sensitive',
+    );
   });
 });
 

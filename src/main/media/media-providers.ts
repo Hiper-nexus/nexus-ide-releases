@@ -184,6 +184,12 @@ export const MEDIA_PROVIDERS: MediaProviderDef[] = [
   },
 ];
 
+const MEDIA_KIND_PT: Record<MediaKind, string> = {
+  image: 'imagem',
+  video: 'vídeo',
+  audio: 'voz',
+};
+
 export function findMediaProvider(id: string): MediaProviderDef | null {
   return MEDIA_PROVIDERS.find((p) => p.id === id) ?? null;
 }
@@ -277,7 +283,7 @@ export function resolveMediaProvider(
     if (!hasKeyFn(def)) {
       throw new MediaProviderUnavailableError(
         kind,
-        `provider ${requested} sem key — configure em Settings → Mídia`,
+        `${def.label} sem chave — conecte em Ajustes → Serviços de mídia`,
       );
     }
     return def;
@@ -298,7 +304,7 @@ export function resolveMediaProvider(
   if (available.length === 0) {
     throw new MediaProviderUnavailableError(
       kind,
-      `nenhum provider de ${kind} com key configurada — configure em Settings → Mídia`,
+      `nenhum serviço de ${MEDIA_KIND_PT[kind]} com chave — conecte em Ajustes → Serviços de mídia`,
     );
   }
   return available[0];

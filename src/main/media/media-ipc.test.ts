@@ -29,7 +29,8 @@ vi.mock('electron', () => ({
   ipcMain: { handle: electronMock.handle },
   shell: { showItemInFolder: electronMock.showItemInFolder },
 }));
-vi.mock('./media-providers', () => ({
+vi.mock('./media-providers', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./media-providers')>()),
   listMediaProviders: vi.fn(() => []),
 }));
 vi.mock('./media-keys', () => ({
@@ -55,6 +56,8 @@ vi.mock('./media-generation', () => ({
 }));
 
 import { registerMediaIpc } from './media-ipc';
+import { MediaProviderHttpError } from './media-errors';
+import { generateImage } from './media-generation';
 
 type Renderer = WebContents & { id: number };
 
@@ -221,6 +224,26 @@ describe('media IPC — Estúdio de Mídia', () => {
       }),
     ).resolves.toEqual({ ok: false, error: MEDIA_NO_PROJECT_ERROR });
     expect(generateImage).not.toHaveBeenCalled();
+  });
+
+  it('F-1584: a falha do serviço chega com o tipo, para o Estúdio oferecer a saída', async () => {
+    const s = scope(parent, 'project-err', 'checkout-err');
+    const win = boundRenderer(16, s);
+    registerMediaIpc(runtimeManager);
+    vi.mocked(generateImage).mockRejectedValueOnce(
+      new MediaProviderHttpError('openai-image', 401, 'Incorrect API key provided'),
+    );
+    const response = (await invokeWith(MEDIA_CHANNELS.generate, win, {
+      kind: 'image',
+      prompt: 'x',
+      clientJobId: 'j-err',
+    })) as { ok: boolean; error: string; errorKind?: string };
+    expect(response).toEqual({
+      ok: false,
+      error:
+        'OpenAI recusou a chave (HTTP 401). Confira ou troque a chave em Ajustes → Serviços de mídia. Resposta do serviço: Incorrect API key provided',
+      errorKind: 'key',
+    });
   });
 
   it('cancelGenerate é idempotente mesmo sem job ativo', () => {

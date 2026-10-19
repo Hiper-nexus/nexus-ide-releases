@@ -117,7 +117,7 @@ describe('MediaProviderUnavailableError', () => {
       resolveMediaProvider('video', undefined, () => false);
       expect.fail('deveria ter lançado');
     } catch (err) {
-      expect((err as Error).message).toMatch(/Settings/i);
+      expect((err as Error).message).toMatch(/Ajustes → Serviços de mídia/);
     }
   });
 });

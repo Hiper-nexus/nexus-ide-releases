@@ -2,6 +2,7 @@ import path from 'node:path';
 import type { MediaGenerationResult } from '../../shared/media-types';
 import {
   findMediaProvider,
+  MediaProviderUnavailableError,
   resolveMediaModel,
   resolveMediaProvider,
   resolveOutPath,
@@ -22,6 +23,7 @@ import {
   type BrowserAddressResolver,
 } from '../browser/url-policy';
 import { geminiImageAspect, openaiImageSize } from './media-aspect';
+import { mediaHttpError, mediaServiceName } from './media-errors';
 import {
   getVideoJob,
   saveVideoJob,
@@ -207,21 +209,12 @@ export interface AudioRequest extends MediaAuthorityRequest {
 function requireKey(def: MediaProviderDef, deps: MediaDeps): string {
   const key = deps.getKey(def);
   if (!key) {
-    throw new Error(
-      `provider ${def.id} sem key — configure em Settings → Mídia`,
+    throw new MediaProviderUnavailableError(
+      def.kind,
+      `${def.label} sem chave — conecte em Ajustes → Serviços de mídia`,
     );
   }
   return key;
-}
-
-async function httpError(res: Response, provider: string): Promise<Error> {
-  let detail = '';
-  try {
-    detail = (await res.text()).slice(0, 400);
-  } catch {
-    // corpo ilegível — o status já identifica a falha
-  }
-  return new Error(`${provider} HTTP ${res.status}: ${detail}`);
 }
 
 function fileToInlineData(image: MediaInputFile): {
@@ -294,7 +287,7 @@ async function googleImage(
     },
   );
   assertMediaAuthorityCurrent(req);
-  if (!res.ok) throw await httpError(res, def.id);
+  if (!res.ok) throw await mediaHttpError(res, def.id);
   const json = (await res.json()) as {
     candidates?: Array<{
       content?: {
@@ -362,7 +355,7 @@ async function openaiImage(
     });
   }
   assertMediaAuthorityCurrent(req);
-  if (!res.ok) throw await httpError(res, def.id);
+  if (!res.ok) throw await mediaHttpError(res, def.id);
   const json = (await res.json()) as {
     data?: Array<{ b64_json?: string; url?: string }>;
   };
@@ -467,7 +460,7 @@ async function replicateImage(
     },
   );
   assertMediaAuthorityCurrent(req);
-  if (!create.ok) throw await httpError(create, def.id);
+  if (!create.ok) throw await mediaHttpError(create, def.id);
   const created = (await create.json()) as {
     id?: string;
     status?: string;
@@ -691,7 +684,7 @@ async function pollReplicatePrediction(
     assertMediaAuthorityCurrent(authority);
     if (prediction.status === 'failed' || prediction.status === 'canceled') {
       throw new Error(
-        `${providerLabel}: prediction ${prediction.status} — ${prediction.error ?? 'sem causa'}`,
+        `${mediaServiceName(providerLabel)} não concluiu a geração (${prediction.status === 'canceled' ? 'cancelada no serviço' : 'falhou'}): ${prediction.error ?? 'o serviço não informou a causa'}`,
       );
     }
     await sleepWhileAuthorized(deps, REPLICATE_POLL_MS, authority);
@@ -701,7 +694,7 @@ async function pollReplicatePrediction(
       signal: opts.signal,
     });
     assertMediaAuthorityCurrent(authority);
-    if (!res.ok) throw await httpError(res, providerLabel);
+    if (!res.ok) throw await mediaHttpError(res, providerLabel);
     prediction = (await res.json()) as typeof prediction;
     assertMediaAuthorityCurrent(authority);
   }
@@ -814,8 +807,8 @@ async function generateVideoReplicate(
     openaiApiKey = openaiDef ? deps.getKey(openaiDef) : undefined;
     if (!openaiApiKey) {
       throw new Error(
-        'openai/sora exige OPENAI_API_KEY (Settings → Mídia → OpenAI Image) ' +
-          'além do token Replicate',
+        'O Sora pelo Replicate também exige a chave da OpenAI: conecte ' +
+          'OpenAI Image em Ajustes → Serviços de mídia',
       );
     }
   }
@@ -842,7 +835,7 @@ async function generateVideoReplicate(
       signal: req.signal,
     },
   );
-  if (!create.ok) throw await httpError(create, def.id);
+  if (!create.ok) throw await mediaHttpError(create, def.id);
   const created = (await create.json()) as {
     id?: string;
     status?: string;
@@ -1011,7 +1004,7 @@ async function pollGoogleVeoOperation(
       signal,
     });
     assertMediaAuthorityCurrent(authority);
-    if (!res.ok) throw await httpError(res, 'google-video');
+    if (!res.ok) throw await mediaHttpError(res, 'google-video');
     body = (await res.json()) as Record<string, unknown>;
     assertMediaAuthorityCurrent(authority);
     if (body.done === true) {
@@ -1060,7 +1053,7 @@ async function downloadGoogleVeoBytes(
       signal: req.signal,
     });
     assertMediaAuthorityCurrent(req);
-    if (!res.ok) throw await httpError(res, 'google-video');
+    if (!res.ok) throw await mediaHttpError(res, 'google-video');
     const data = Buffer.from(await res.arrayBuffer());
     assertMediaAuthorityCurrent(req);
     return data;
@@ -1158,7 +1151,7 @@ async function generateVideoGoogle(
       signal: req.signal,
     },
   );
-  if (!submit.ok) throw await httpError(submit, def.id);
+  if (!submit.ok) throw await mediaHttpError(submit, def.id);
   const started = (await submit.json()) as { name?: string };
   if (!started.name) {
     throw new Error('google-video: operation sem name');
@@ -1273,7 +1266,7 @@ export async function generateAudio(
     },
   );
   assertMediaAuthorityCurrent(req);
-  if (!res.ok) throw await httpError(res, def.id);
+  if (!res.ok) throw await mediaHttpError(res, def.id);
 
   const data = Buffer.from(await res.arrayBuffer());
   assertMediaAuthorityCurrent(req);

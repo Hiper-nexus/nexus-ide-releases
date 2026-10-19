@@ -93,9 +93,27 @@ export interface MediaStudioRequest {
   clientJobId: string;
 }
 
+/**
+ * F-1584: que tipo de falha o serviço devolveu — o Estúdio oferece a saída
+ * certa (ex.: abrir Serviços de mídia quando a chave foi recusada).
+ */
+export type MediaErrorKind =
+  | 'key'
+  | 'billing'
+  | 'not-found'
+  | 'rate-limit'
+  | 'unavailable'
+  | 'invalid-request';
+
 export type MediaStudioResponse =
   | MediaGenerationResult
-  | { ok: false; error: string; recoverJobId?: string; canceled?: boolean };
+  | {
+      ok: false;
+      error: string;
+      errorKind?: MediaErrorKind;
+      recoverJobId?: string;
+      canceled?: boolean;
+    };
 
 /**
  * F-1589: geração, galeria e totais vivem na pasta do projeto aberto; chaves

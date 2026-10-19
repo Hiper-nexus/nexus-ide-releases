@@ -10,7 +10,11 @@ import {
   type MediaStudioResponse,
   type MediaUsageTotals,
 } from '../../shared/media-types';
-import { listMediaProviders } from './media-providers';
+import {
+  listMediaProviders,
+  MediaProviderUnavailableError,
+} from './media-providers';
+import { MediaProviderHttpError } from './media-errors';
 import { hasMediaKey, maskedMediaKey, setMediaKey } from './media-keys';
 import {
   generateImage,
@@ -196,6 +200,11 @@ export function registerMediaIpc(runtimeManager: ProjectRuntimeManager): void {
         return {
           ok: false,
           error: err instanceof Error ? err.message : String(err),
+          ...(err instanceof MediaProviderHttpError
+            ? { errorKind: err.kind }
+            : err instanceof MediaProviderUnavailableError
+              ? { errorKind: 'key' as const }
+              : {}),
         };
       } finally {
         studioJobs.delete(jobKey);

@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
   MEDIA_NO_PROJECT_ERROR,
   type MediaArtifactInfo,
+  type MediaErrorKind,
   type MediaGenerationResult,
   type MediaProviderInfo,
   type MediaStudioRequest,
@@ -72,6 +73,8 @@ interface StudioResult {
 
 interface StudioError {
   message: string;
+  /** F-1584: chave recusada ou ausente ganha o atalho para Serviços de mídia. */
+  kind?: MediaErrorKind;
   recoverJobId?: string;
   /** Request original — "Retomar sem pagar de novo" repete com recoverJobId. */
   request: MediaStudioRequest;
@@ -256,7 +259,12 @@ export function MediaStudioPanel({
         setResult({ res, storageKey: newest?.storageKey ?? null, dataUrl });
       } else if (!res.canceled) {
         // Cancelamento é ação do usuário — não vira card de erro.
-        setError({ message: res.error, recoverJobId: res.recoverJobId, request });
+        setError({
+          message: res.error,
+          kind: res.errorKind,
+          recoverJobId: res.recoverJobId,
+          request,
+        });
       }
     } catch (e) {
       setError({
@@ -619,6 +627,15 @@ export function MediaStudioPanel({
                   onClick={resume}
                 >
                   Retomar sem pagar de novo
+                </button>
+              )}
+              {error.kind === 'key' && (
+                <button
+                  type="button"
+                  className="ms-button ms-button--sm"
+                  onClick={openMediaSettings}
+                >
+                  Abrir Serviços de mídia
                 </button>
               )}
             </section>
