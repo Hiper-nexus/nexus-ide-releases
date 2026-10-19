@@ -1,0 +1,20 @@
+mission-tests: exit 0
+
+ RUN  v5.0.0 /Users/cleofasrocha/Library/Application Support/NexusIDE/project-runtime/projects/project-5c533be885a824a09199ffb9c0d2ee8cb9a88ca6eb881cec920cf98bb0718c0f/checkout-2ce873723081dbdee70178d4c6eb0c975c170ecf7628bb6809481fc0d771e2a7/worktrees.noindex/project-4bd6404c5885df95fc2ad9477d576c3a17870146029c7c433cdee26c29072e0d/checkout-f03ac473958ccc311c35043306b876935d81057b06dabf6ccb592fb28642b8f0/task-7fa1ef17829e60d73e989cf5de70b476e76eb9e004c85ce852ffb4fc6683c68b
+
+Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+
+ Test Files  4 passed (4)
+      Tests  128 passed (128)
+   Start at  11:25:52
+   Duration  1.78s (environment 35%, tests 26%, transform 25%, import 13%, setup 1%)
+
+
+
+typecheck: exit 0
+
+
+renderer-sinks: exit 0
+renderer sink audit: 0 executable DOM sinks

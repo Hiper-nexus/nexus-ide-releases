@@ -21,6 +21,8 @@ import {
   missionEventSchema,
   type MissionEvent,
 } from '../../../shared/mission-events';
+import { useOrchStore } from '../../state/orch-store';
+import { useSessionStateStore } from '../../state/session-state-store';
 import { useMissionInspectorStore } from '../../state/mission-inspector-store';
 import {
   MISSION_INSPECTOR_WIDTH_DEFAULT,
@@ -618,6 +620,8 @@ function emitChanged(items: MissionSummarySnapshot[]): void {
 beforeEach(() => {
   subscriptions.length = 0;
   localStorage.clear();
+  useOrchStore.setState({ missions: [], missionSummaries: [] });
+  useSessionStateStore.setState({ displayStates: new Map(), paneStates: new Map() });
   useInspectorWidthStore.setState({ width: MISSION_INSPECTOR_WIDTH_DEFAULT });
   api.snapshot.mockReset();
   api.command.mockReset();
@@ -1832,6 +1836,90 @@ describe('F-1005 — histórico da atividade paginado pelo Main', () => {
 
 describe('cabeçalho do Quadro: primária única, menu Mais e minimizar', () => {
   const BOARD_COLLAPSED_KEY = 'nexus.mission.board-collapsed';
+
+  it('abre o histórico com espaço de leitura mesmo com quadro e inspetor recolhidos', async () => {
+    window.localStorage.setItem(BOARD_COLLAPSED_KEY, '1');
+    window.localStorage.setItem(MISSION_INSPECTOR_COLLAPSED_KEY, '1');
+    api.snapshot.mockResolvedValue(canonicalSnapshot());
+    useMissionInspectorStore.setState({ missionId: 'mission-alpha', tab: 'chat' });
+    const { host } = mount();
+    await flush();
+
+    await click(buttonByName(host, 'Ver o que aconteceu'));
+    expect(board(host).dataset.boardCollapsed).toBe('false');
+    expect(board(host).dataset.detailsFocused).toBe('true');
+    expect(useMissionInspectorStore.getState().tab).toBe('activity');
+    const region = host.querySelector('.mission-board__inspector-region');
+    expect(region).not.toBeNull();
+    expect(document.activeElement).toBe(region);
+    expect(host.querySelector('.mission-board__inspector-rail')).toBeNull();
+
+    await click(buttonByName(host, 'Voltar à equipe'));
+    expect(board(host).dataset.detailsFocused).toBe('false');
+    expect(host.querySelector('[aria-label="Grafo da missão"]')).not.toBeNull();
+  });
+
+  it('não leva a leitura ampliada para outra missão', async () => {
+    const { host, root, onOpenTerminals } = mount();
+    await flush();
+    await click(buttonByName(host, 'Ver o que aconteceu'));
+    api.snapshot.mockResolvedValue(canonicalSnapshot({ id: 'mission-beta' }));
+    rerender(root, 'mission-beta', onOpenTerminals);
+    await flush();
+    expect(board(host).dataset.detailsFocused).toBe('false');
+    expect(buttonByName(host, 'Ver o que aconteceu')).not.toBeNull();
+  });
+
+  it('o botão do card interrompido abre a Atividade ampliada, sem ação duplicada', async () => {
+    const interrupted = canonicalSnapshot({
+      state: 'blocked_technical',
+      stateReason: { code: 'session-dead', label: 'Runtime encerrado' },
+    });
+    const mission = {
+      id: 'mission-alpha', title: 'Missão interrompida', status: 'running',
+      intentState: 'executing', description: '', milestones: [], learnings: '',
+      createdAt: 1, updatedAt: 2,
+    } as const;
+    useOrchStore.setState({
+      missions: [{ ...mission, milestones: [] }],
+      missionSummaries: [missionSummarySnapshotSchema.parse({
+        id: interrupted.id, title: interrupted.title, state: interrupted.state,
+        stateReason: interrupted.stateReason, progress: interrupted.progress,
+        needsAttention: true, updatedAt: interrupted.updatedAt,
+      })],
+    });
+    api.snapshot.mockResolvedValue(interrupted);
+    const { host } = mount();
+    await flush();
+    const card = host.querySelector('.mission-interrupted')!;
+    expect(card).not.toBeNull();
+    expect([...host.querySelectorAll('button')].filter((button) =>
+      normalizedText(button) === 'Ver o que aconteceu')).toHaveLength(1);
+    const why = buttonByName(card, 'Ver o que aconteceu');
+    why.focus();
+    await click(why);
+    expect(board(host).dataset.detailsFocused).toBe('true');
+    expect(useMissionInspectorStore.getState().tab).toBe('activity');
+    expect(document.activeElement).toBe(host.querySelector('.mission-board__inspector-region'));
+    await click(buttonByName(host, 'Voltar à equipe'));
+    expect(board(host).dataset.detailsFocused).toBe('false');
+    expect(document.activeElement).toBe(why);
+  });
+
+  it('cabeçalho acompanha o mesmo busy de apresentação do rail', async () => {
+    const agents = canonicalSnapshot().agents.map((agent) => ({ ...agent, state: 'queued' as const, terminalLive: true }));
+    api.snapshot.mockResolvedValue(canonicalSnapshot({ state: 'running', agents,
+      stateReason: { code: 'awaiting-instruction', label: 'Aguardando sua instrução' },
+    }));
+    const { host } = mount();
+    await flush();
+    expect(host.textContent).toContain('Aguardando sua instrução');
+    act(() => useSessionStateStore.setState({ displayStates: new Map([
+      ['pane-coordinator', 'busy'], ['pane-worker', 'busy'],
+    ]) }));
+    expect(host.textContent).not.toContain('Aguardando sua instrução');
+    expect(host.querySelector('.mission-board__status')?.textContent).toBe('Trabalhando');
+  });
 
   function resumeSnapshot() {
     return canonicalSnapshot({
