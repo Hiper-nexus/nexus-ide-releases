@@ -4351,8 +4351,8 @@ export function reportPaneMeasuredExhaustion(input: {
   readonly hasPendingWork: boolean;
   /** Há quanto tempo o PTY não imprime. `undefined` = não se sabe. */
   readonly silentForMs: number | undefined;
-  /** O status semântico diz que a CLI está trabalhando agora. */
-  readonly semanticWorking: boolean;
+  /** Quando a CLI reportou `working`, ou `null` (veto só enquanto fresco). */
+  readonly semanticWorkingAt: number | null;
   readonly now?: number;
 }): boolean {
   const now = input.now ?? Date.now();
@@ -4369,7 +4369,7 @@ export function reportPaneMeasuredExhaustion(input: {
       accountId: current?.id ?? null,
       hasPendingWork: input.hasPendingWork,
       silentForMs: input.silentForMs,
-      semanticWorking: input.semanticWorking,
+      semanticWorkingAt: input.semanticWorkingAt,
       now,
     },
     {

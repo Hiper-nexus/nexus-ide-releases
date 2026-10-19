@@ -200,3 +200,44 @@ describe('e2e — carrossel de contas AGY pessoais', () => {
     expect(second).not.toBeUndefined();
   });
 });
+
+describe('o Maestro só drena pelo bucket do modelo que ele usa', () => {
+  const mixed = (accountId: string, gemini: number, third: number): ProviderQuotaEntry => ({
+    id: `agy:${accountId}`, adapterId: 'agy', accountId, label: accountId,
+    installed: true, onCooldown: false, updatedAt: NOW,
+    windows: [
+      { kind: 'hours', label: 'Gemini · 5 Horas', usedRatio: gemini,
+        resetsAt: NOW + 18_000_000, source: 'provider-api', confidence: 'high' },
+      { kind: 'hours', label: 'Claude/GPT · 5 Horas', usedRatio: third,
+        resetsAt: NOW + 18_000_000, source: 'provider-api', confidence: 'high' },
+    ],
+  } as ProviderQuotaEntry);
+
+  it('bucket de terceiros cheio não tira o Maestro da conta com Gemini livre', () => {
+    const sibling = addAcct('agy', 'sibling');
+    const maestro = addAcct('agy', 'maestro');
+    quota.entries = [mixed(maestro.id, 0.1, 1), mixed(sibling.id, 0.1, 0.1)];
+
+    expect(
+      pickMissionOrchestratorAccountId('agy', maestro.id, NOW, 'gemini-3.8-flash-high'),
+    ).toBe(maestro.id);
+  });
+
+  it('o bucket do próprio modelo no limiar ainda troca', () => {
+    const sibling = addAcct('agy', 'sibling');
+    const maestro = addAcct('agy', 'maestro');
+    quota.entries = [mixed(maestro.id, 0.9, 0.1), mixed(sibling.id, 0.1, 0.1)];
+
+    expect(
+      pickMissionOrchestratorAccountId('agy', maestro.id, NOW, 'gemini-3.8-flash-high'),
+    ).toBe(sibling.id);
+  });
+
+  it('sem modelo informado o pior bucket decide (recuo conservador)', () => {
+    const sibling = addAcct('agy', 'sibling');
+    const maestro = addAcct('agy', 'maestro');
+    quota.entries = [mixed(maestro.id, 0.1, 1), mixed(sibling.id, 0.1, 0.1)];
+
+    expect(pickMissionOrchestratorAccountId('agy', maestro.id, NOW)).toBe(sibling.id);
+  });
+});

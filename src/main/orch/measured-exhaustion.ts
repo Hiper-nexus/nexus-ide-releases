@@ -21,6 +21,7 @@ import { accountDrainEvidence } from '../persistence/account-drain-evidence';
 import { decideDrainSwap } from './drain-watchdog';
 import type { HeadroomInput } from '../quota/account-headroom';
 import type { LimitHit } from './limit-detector';
+import { SEMANTIC_WORKING_VETO_MS } from './agent-status';
 
 /**
  * A razão do hit sintetizado vira `last_error` da conta e volta ao
@@ -55,8 +56,14 @@ export interface MeasuredExhaustionInput {
   readonly hasPendingWork: boolean;
   /** Há quanto tempo o PTY não imprime nada. `undefined` = não se sabe. */
   readonly silentForMs: number | undefined;
-  /** O status semântico diz que a CLI está trabalhando agora. */
-  readonly semanticWorking: boolean;
+  /**
+   * Quando a CLI reportou `working`, ou `null`. É instante, não booleano, de
+   * propósito: a cota esgotada pode travar o pedido ao provedor ANTES do
+   * evento de parada, e aí `working` ficaria verdadeiro para sempre — o veto
+   * duraria eternamente e o pane nunca seria resgatado, justamente o caso que
+   * esta camada existe para resolver.
+   */
+  readonly semanticWorkingAt: number | null;
   readonly now: number;
 }
 
@@ -77,8 +84,13 @@ export function reportMeasuredExhaustion(
   deps: MeasuredExhaustionDeps,
 ): MeasuredExhaustionResult {
   if (!input.accountId) return { acted: false, reason: 'pane sem conta' };
-  // A CLI diz que está trabalhando: nada de medição contra o próprio agente.
-  if (input.semanticWorking) {
+  // A CLI diz que está trabalhando: nada de medição contra o próprio agente —
+  // mas só enquanto a afirmação for recente, pelo mesmo prazo que o resto do
+  // supervisor usa (`SEMANTIC_WORKING_VETO_MS`).
+  if (
+    input.semanticWorkingAt !== null &&
+    input.now - input.semanticWorkingAt <= SEMANTIC_WORKING_VETO_MS
+  ) {
     return { acted: false, reason: 'a CLI está trabalhando' };
   }
   if (

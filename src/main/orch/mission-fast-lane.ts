@@ -1365,7 +1365,12 @@ async function spawnAgentPane(
   // provider com folga. Sem pin, o seletor escolhia outra conta e o vínculo
   // recusava — a missão dormia e queimava o orçamento de respawn.
   const accountId = spawnOpts?.accountId ?? (approvedRuntime
-    ? pickMissionOrchestratorAccountId(agent.cli, previous?.accountId ?? approvedRuntime.accountId)
+    ? pickMissionOrchestratorAccountId(
+        agent.cli,
+        previous?.accountId ?? approvedRuntime.accountId,
+        Date.now(),
+        agent.model,
+      )
     : undefined);
   const title = paneTitle?.trim() || agent.agentName;
   const readOnly = spawnOpts?.readOnly === true;
@@ -2402,7 +2407,12 @@ async function respawnFastLaneOrchestrator(
     );
     assertFastLaneMaestroMcp(orchestrator.cli);
     if (resumeAccountId) {
-      resumeAccountId = pickMissionOrchestratorAccountId(orchestrator.cli, resumeAccountId) ?? resumeAccountId;
+      resumeAccountId = pickMissionOrchestratorAccountId(
+        orchestrator.cli,
+        resumeAccountId,
+        Date.now(),
+        orchestrator.model,
+      ) ?? resumeAccountId;
     }
     const accountNote = resumeAccountId !== operatorResume.accountId
       ? 'A conta da conversa anterior ficou sem cota; esta conversa é nova, em outra conta do mesmo provedor.'

@@ -7,6 +7,7 @@ import {
   type MeasuredExhaustionDeps,
 } from './measured-exhaustion';
 import { detectLimit } from './limit-detector';
+import { SEMANTIC_WORKING_VETO_MS } from './agent-status';
 
 const NOW = 1_000_000;
 
@@ -38,7 +39,7 @@ const input = {
   accountId: 'acct-a',
   hasPendingWork: true,
   silentForMs: 10 * 60_000,
-  semanticWorking: false,
+  semanticWorkingAt: null as number | null,
   now: NOW,
 };
 
@@ -135,15 +136,38 @@ describe('laço de realimentação', () => {
 });
 
 describe('prova de que o pane REALMENTE parou (C6)', () => {
-  it('pane com status semântico working nunca é trocado, mesmo esgotado', () => {
+  it('pane com status semântico working FRESCO nunca é trocado, mesmo esgotado', () => {
     const d = deps();
     const out = reportMeasuredExhaustion(
-      { ...input, semanticWorking: true, silentForMs: 10 * 60_000 },
+      { ...input, semanticWorkingAt: NOW - 60_000, silentForMs: 10 * 60_000 },
       d,
     );
     expect(out.acted).toBe(false);
     expect(out.reason).toMatch(/trabalhando/i);
     expect(d.commitHit).not.toHaveBeenCalled();
+  });
+
+  it('working OBSOLETO não veta: a cota esgotada impede o stop de chegar', () => {
+    // O hook diz working, o pedido ao provedor trava por falta de cota e o
+    // evento de parada nunca vem. Sem prazo, o veto duraria para sempre e o
+    // pane nunca seria resgatado — exatamente o caso que isto existe para
+    // resolver. Mesmo prazo do resto do supervisor (SEMANTIC_WORKING_VETO_MS).
+    const d = deps();
+    const out = reportMeasuredExhaustion(
+      { ...input, semanticWorkingAt: NOW - SEMANTIC_WORKING_VETO_MS - 1 },
+      d,
+    );
+    expect(out.acted).toBe(true);
+  });
+
+  it('working exatamente no limite do prazo ainda veta', () => {
+    const d = deps();
+    expect(
+      reportMeasuredExhaustion(
+        { ...input, semanticWorkingAt: NOW - SEMANTIC_WORKING_VETO_MS },
+        d,
+      ).acted,
+    ).toBe(false);
   });
 
   it('silêncio curto não é prova: pode ser chamada de API em voo', () => {

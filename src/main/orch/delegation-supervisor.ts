@@ -2508,8 +2508,10 @@ export async function checkMeasuredExhaustion(
       sessionId: pane.sessionId,
       hasPendingWork: true,
       silentForMs: lastOutputAt === undefined ? undefined : now - lastOutputAt,
-      semanticWorking:
-        getAgentSemanticStatusBySession(pane.sessionId)?.status === 'working',
+      semanticWorkingAt: ((): number | null => {
+        const semantic = getAgentSemanticStatusBySession(pane.sessionId);
+        return semantic?.status === 'working' ? semantic.updatedAt : null;
+      })(),
       now,
     });
   }

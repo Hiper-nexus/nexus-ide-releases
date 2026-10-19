@@ -59,6 +59,7 @@ import {
 } from '../adapters/adapter-registry';
 import { accountDrainEvidence } from './account-drain-evidence';
 import { nativeQuotaIdentity } from './native-quota-identity';
+import { windowsServingModel } from '../quota/headroom-route-filter';
 import { noteLiveIdentity } from './provider-live-identity';
 import { DRAIN_THRESHOLD, isHeadroomDraining } from '../quota/account-headroom';
 import { resolveCliLoginCommand } from '../../shared/cli-login';
@@ -1797,7 +1798,7 @@ function resolveSpawnAccountChoice(
     // Drenando também cede: senão o pane AGY do Windows ficaria preso na vaga
     // até o esgotamento, que é exatamente o que a camada 1 existe para evitar.
     if (slotOwner && (isAccountBlockedForScope(slotOwner.id, decidedAt) ||
-      accountIsDraining(adapterId, slotOwner.id, decidedAt))) {
+      accountIsDraining(adapterId, slotOwner.id, decidedAt, model))) {
       return pickUnpinnedAccountWithHeadroom(adapterId, model);
     }
     if (slotOwner) {
@@ -1846,10 +1847,18 @@ function sealsAgyKeyringSlot(adapterId: string, account: Account): boolean {
 }
 
 /** A conta cruzou o limiar, provada por leitura provider-api fresca? */
-function accountIsDraining(adapterId: string, accountId: string, now: number): boolean {
+function accountIsDraining(
+  adapterId: string,
+  accountId: string,
+  now: number,
+  model?: string,
+): boolean {
   const evidence = accountDrainEvidence(now);
+  const input = quotaHeadroomFor(adapterId)?.get(accountId);
   return isHeadroomDraining(
-    quotaHeadroomFor(adapterId)?.get(accountId),
+    // Só os buckets que ESTE modelo consome: senão um grupo de terceiros
+    // cheio drena um Maestro cuja janela de Gemini está livre.
+    input ? windowsServingModel(input, model ?? null) : undefined,
     evidence.threshold ?? DRAIN_THRESHOLD,
     evidence,
   );
@@ -1866,6 +1875,7 @@ export function pickMissionOrchestratorAccountId(
   adapterId: string,
   candidateId: string | undefined,
   now = Date.now(),
+  model?: string,
 ): string | undefined {
   const candidate = candidateId ? getAccount(candidateId) : null;
   const usable = candidate?.adapterId === adapterId &&
@@ -1874,7 +1884,7 @@ export function pickMissionOrchestratorAccountId(
   // A candidata drenando cede no respawn: ali já não há conversa a preservar,
   // ao contrário de um pin, que é escolha explícita do operador. Mas drenagem
   // é preferência, não banimento — sem irmã com folga ela continua.
-  const draining = usable && accountIsDraining(adapterId, candidate.id, now);
+  const draining = usable && accountIsDraining(adapterId, candidate.id, now, model);
   if (usable && !draining) return candidate.id;
   const quotaByAccountId = quotaHeadroomFor(adapterId);
   const picked = pickAvailableForFailover(
@@ -1882,6 +1892,7 @@ export function pickMissionOrchestratorAccountId(
     {
       ...(quotaByAccountId ? { quotaByAccountId } : {}),
       drain: accountDrainEvidence(now),
+      ...(model ? { model } : {}),
     },
   ).account?.id;
   return picked ?? (draining ? candidate.id : undefined);
