@@ -137,6 +137,18 @@ npm run make -- --platform win32 --arch x64
   reemissão, e o `spkiSha256` do JSON muda junto com o thumbprint, revisados no
   mesmo commit.
 
+## O que esta assinatura cobre (por produto)
+
+| Produto | Windows | Como sai assinado |
+|---|---|---|
+| NexusIDE (app, DLLs e `.node` do pacote) | Sim | `npm run make` com `NEXUS_WINDOWS_YUBIKEY_SIGNING=1` (este runbook) |
+| Redline no Windows (`resources\nexus-redline\NexusRedline.exe`) | Sim | Vai dentro do pacote do NexusIDE e é assinado na mesma chamada (conferido em 19/10: `Valid`, `41BB4AFD…`) |
+| Instalador Squirrel (`Setup.exe`, `Update.exe`, stub) | Sim | O Squirrel assina na mesma build; o recibo confere os quatro executáveis |
+| `d3dcompiler_47.dll`, `dxil.dll` | Não precisa | Já vêm assinadas pela Microsoft no Electron |
+| Nexus Shot (repo `nexus-shot`, Tauri, NSIS) | **Ainda não** | Repositório próprio; o `tauri.conf.json` não tem assinatura Windows e o instalador público do v0.1.15 saiu sem assinatura. Ligar exige `bundle.windows.certificateThumbprint` = `41BB4AFD0B69AA7B8B88F732E66808A2A5B93560`, `digestAlgorithm: sha256` e `timestampUrl` RFC 3161 num `tauri.windows.conf.json`, o minidriver e o PIN como aqui |
+| NexusIDE no macOS / Redline do Mac / Shot no Mac | Outro caminho | Developer ID + notarização (`build/notarize.md`, `docs/RELEASE.md`) |
+| NexusIDE no Linux | Outro caminho | Ed25519 do `.sig` (F-940, `docs/RELEASE.md`) |
+
 ## Limites
 
 - O `windows-release.yml` roda numa máquina do GitHub, sem o token: o candidato de
