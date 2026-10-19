@@ -336,6 +336,17 @@ export function confirmationReason(
   if (toolName === 'nexus_audio_generate' || toolName === 'audio_generate') {
     return mediaConfirmation('audio', args);
   }
+  if (toolName === 'nexus_voiceover_generate' || toolName === 'voiceover_generate') {
+    const source =
+      typeof args.scriptPath === 'string'
+        ? `script file ${safeMediaArg(args.scriptPath, 'unknown')}`
+        : `script (${textLength(args.script)} chars)`;
+    const mode = args.dryRun === true ? 'price only (dryRun, no charge)' : 'paid narration';
+    return (
+      `${mode} via elevenlabs voice ${safeMediaArg(args.voiceId, 'unset')}; input: ${source}; ` +
+      `output: ${safeMediaArg(args.outDir, 'narration')}/${safeMediaArg(args.baseName, 'narration')}.mp3 + timeline/srt/vtt`
+    );
+  }
   if (toolName === 'nexus_catalog_install' || toolName === 'catalog_install') {
     // M8: spell out that this downloads UNVERIFIED third-party code from the
     // community catalog into ~/.claude, which the coding agent can later run.

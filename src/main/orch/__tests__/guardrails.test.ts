@@ -299,6 +299,22 @@ describe('confirmationReason', () => {
     expect(reason).not.toContain('segredo falado');
   });
 
+  it('describes narration voice, script size and destination without leaking the script', () => {
+    const reason = confirmationReason('nexus_voiceover_generate', {
+      voiceId: 'voz1',
+      script: 'roteiro confidencial',
+      outDir: 'promo/assets',
+    });
+    expect(reason).toContain('paid narration');
+    expect(reason).toContain('voz1');
+    expect(reason).toContain('20 chars');
+    expect(reason).toContain('promo/assets/narration.mp3');
+    expect(reason).not.toContain('roteiro confidencial');
+    expect(confirmationReason('nexus_voiceover_generate', { scriptPath: 'roteiro.txt', dryRun: true })).toContain(
+      'price only',
+    );
+  });
+
   it('describes video provider, keyframes and destination without leaking the prompt', () => {
     const reason = confirmationReason('nexus_video_generate', {
       provider: 'replicate-video',
