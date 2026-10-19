@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.76.330 — As contas se revezam sozinhas
+
+Quem tem várias contas da mesma IA usava só a primeira: quando a cota dela acabava, o pane simplesmente parava — não trocava, não avisava, não morria com erro. Agora o Nexus mede a cota e tira o trabalho NOVO da conta que está chegando ao fim, antes de ela acabar, sem interromper quem já está trabalhando. Quem esgota no meio da tarefa continua na conta seguinte, e quando todas acabam o trabalho segue em outra IA. Sete contas passam a render como sete, não como uma.
+
+- **A próxima tarefa já nasce na conta que tem folga**. A troca acontece na borda entre uma tarefa e outra, então ninguém é interrompido e nada se perde: o agente que está trabalhando termina o que começou usando a fatia que resta, e o próximo nasce na conta seguinte. O limiar é 89 % da janela que está apertando — e os 11 % que sobram não são desperdiçados: quando todas as contas chegam lá, o Nexus volta a usá-las e consome o resto numa segunda volta.
+- **O pane que emudecia por falta de cota agora continua**. Algumas IAs não imprimem erro quando a cota acaba: a tela simplesmente para. Sem texto de erro o Nexus nunca sabia que havia um limite, e a missão ficava parada até alguém perceber. Agora a própria medição de cota serve de prova: o pane parado numa conta esgotada é religado na conta seguinte com um resumo do que estava fazendo, e um aviso aparece no momento da troca.
+- **Acabaram todas as contas? O trabalho segue em outra IA**. Quando nenhuma conta da CLI tem folga, a missão não para: ela continua numa IA elegível, com o contexto reidratado, no mesmo lugar. A conta esgotada não volta a ser escolhida antes de liberar.
+- **A conta que está em uso é medida de verdade**. Em algumas IAs o provedor só informa a cota da conta que está logada no momento, e recusa a consulta das demais. Essa leitura passa a ser atribuída à conta que o Nexus de fato abriu — sem ela, a frota inteira parecia "sem medição" e nada rotacionava. As contas irmãs continuam honestamente sem leitura: ninguém as mediu.
+- **A troca não acusa conta saudável**. A decisão só aceita leitura vinda do provedor e com menos de 10 minutos: uma estimativa local nunca tira o pane de uma conta que está bem. Conta fixada por você continua só cedendo quando esgota de fato, e um agente que está no meio de uma chamada silenciosa não é trocado por engano.
+
 ## 0.76.329 — Freio de emergência de memória
 
 Num Mac de 16 GB com vários panes abertos e trabalhando, a máquina podia travar inteira. O guardião de memória só sabia recuperar pane OCIOSO, e a memória está justamente nos panes que trabalham: com todos ocupados ele não recuperava nada e o sistema ia ao chão. Agora, só na pressão crítica, o Nexus estaciona o pane de maior consumo — histórico e retomada preservados — reage em 5 segundos e recusa abrir mais um pane na beira do travamento. Teto, pressão moderada e severa continuam só avisando.

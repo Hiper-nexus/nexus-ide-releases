@@ -11818,7 +11818,7 @@ export const RELEASE_076328: AppRelease = {
   fixes: RELEASE_076326.fixes,
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076329: AppRelease = {
   version: '0.76.329',
   date: '2026-10-19',
   codename: 'Freio de emergência de memória',
@@ -11831,5 +11831,21 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: [
     { title: 'Escolhe o pane que realmente pesa', detail: 'O consumo de memória de cada pane já era medido e mostrado no cabeçalho, mas nenhuma decisão o usava. Agora ele ordena quem sai primeiro: worker e ajudante antes do pane que você abriu, e dentro disso o de maior consumo medido — um pane de 3 GB devolve a folga que três de 900 MB não devolvem. Pane sem medida vai para o fim: falta de dado não é zero.' },
     { title: 'O aviso do pane não parece mais um crash', detail: 'Um pane estacionado no meio do trabalho dizia apenas "pane estacionado". Agora explica que foi para a máquina não travar, por memória crítica, e que basta digitar para retomar a conversa.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.330',
+  date: '2026-10-19',
+  codename: 'As contas se revezam sozinhas',
+  summary: 'Quem tem várias contas da mesma IA usava só a primeira: quando a cota dela acabava, o pane simplesmente parava — não trocava, não avisava, não morria com erro. Agora o Nexus mede a cota e tira o trabalho NOVO da conta que está chegando ao fim, antes de ela acabar, sem interromper quem já está trabalhando. Quem esgota no meio da tarefa continua na conta seguinte, e quando todas acabam o trabalho segue em outra IA. Sete contas passam a render como sete, não como uma.',
+  highlights: [
+    { title: 'A próxima tarefa já nasce na conta que tem folga', detail: 'A troca acontece na borda entre uma tarefa e outra, então ninguém é interrompido e nada se perde: o agente que está trabalhando termina o que começou usando a fatia que resta, e o próximo nasce na conta seguinte. O limiar é 89 % da janela que está apertando — e os 11 % que sobram não são desperdiçados: quando todas as contas chegam lá, o Nexus volta a usá-las e consome o resto numa segunda volta.' },
+    { title: 'O pane que emudecia por falta de cota agora continua', detail: 'Algumas IAs não imprimem erro quando a cota acaba: a tela simplesmente para. Sem texto de erro o Nexus nunca sabia que havia um limite, e a missão ficava parada até alguém perceber. Agora a própria medição de cota serve de prova: o pane parado numa conta esgotada é religado na conta seguinte com um resumo do que estava fazendo, e um aviso aparece no momento da troca.' },
+    { title: 'Acabaram todas as contas? O trabalho segue em outra IA', detail: 'Quando nenhuma conta da CLI tem folga, a missão não para: ela continua numa IA elegível, com o contexto reidratado, no mesmo lugar. A conta esgotada não volta a ser escolhida antes de liberar.' },
+  ],
+  fixes: [
+    { title: 'A conta que está em uso é medida de verdade', detail: 'Em algumas IAs o provedor só informa a cota da conta que está logada no momento, e recusa a consulta das demais. Essa leitura passa a ser atribuída à conta que o Nexus de fato abriu — sem ela, a frota inteira parecia "sem medição" e nada rotacionava. As contas irmãs continuam honestamente sem leitura: ninguém as mediu.' },
+    { title: 'A troca não acusa conta saudável', detail: 'A decisão só aceita leitura vinda do provedor e com menos de 10 minutos: uma estimativa local nunca tira o pane de uma conta que está bem. Conta fixada por você continua só cedendo quando esgota de fato, e um agente que está no meio de uma chamada silenciosa não é trocado por engano.' },
   ],
 };
