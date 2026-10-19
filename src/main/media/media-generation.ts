@@ -22,6 +22,7 @@ import {
   GEMINI_HOST,
   isGeminiFileTarget,
   isGeminiOmniModel,
+  isGeminiOmniUsage,
 } from './gemini-omni-interactions';
 import {
   readMediaInput,
@@ -117,6 +118,24 @@ export class MediaJobTimeoutError extends Error {
     this.jobId = jobId;
     this.provider = provider;
     this.recoverable = recoverable;
+  }
+}
+
+/**
+ * F-1587: o vídeo já foi gerado e cobrado, mas não chegou (a Files API ou o
+ * download falhou no meio). O job segue pendente e `recoverJobId` baixa sem
+ * gerar de novo. Herda de `MediaJobTimeoutError` para o IPC e o MCP
+ * devolverem o `recoverJobId` pelo mesmo caminho.
+ */
+export class MediaJobInterruptedError extends MediaJobTimeoutError {
+  constructor(provider: string, jobId: string, cause: unknown) {
+    super(provider, jobId);
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    this.message =
+      `${provider}: o vídeo já foi gerado, mas não chegou (${detail}). ` +
+      `Chame de novo com recoverJobId="${jobId}" para baixar sem pagar duas vezes`;
+    this.name = 'MediaJobInterruptedError';
+    this.cause = cause;
   }
 }
 
@@ -271,6 +290,32 @@ function result(
     estimatedCostUsd: def.estimateCost({ model, ...costParams }),
     durationMs: deps.now() - startedAt,
     ...(jobId ? { jobId } : {}),
+  };
+}
+
+/** Resolução e duração do pedido, guardadas no job para a retomada (F-1587). */
+function jobBilling(req: VideoRequest): Pick<MediaVideoJobRecord, 'resolution' | 'durationSeconds'> {
+  return {
+    ...(req.resolution ? { resolution: req.resolution } : {}),
+    ...(req.durationSeconds !== undefined ? { durationSeconds: req.durationSeconds } : {}),
+  };
+}
+
+/**
+ * Resolução e duração salvas no job, só quando o modelo as aceita: o arquivo
+ * de jobs mora no workspace e não é confiável.
+ */
+function savedJobBilling(saved: MediaVideoJobRecord): { resolution?: string; seconds?: number } {
+  const spec = videoModelSpec(saved.model);
+  return {
+    resolution:
+      spec && typeof saved.resolution === 'string' && spec.resolutions.includes(saved.resolution)
+        ? saved.resolution
+        : undefined,
+    seconds:
+      spec && typeof saved.durationSeconds === 'number' && spec.durations.includes(saved.durationSeconds)
+        ? saved.durationSeconds
+        : undefined,
   };
 }
 
@@ -808,8 +853,14 @@ async function generateVideoReplicate(
         startedAt,
         deps,
         {
-          seconds: req.durationSeconds ?? videoModelSpec(saved.model)?.defaultDuration,
-          resolution: req.resolution ?? videoModelSpec(saved.model)?.defaultResolution,
+          seconds:
+            savedJobBilling(saved).seconds ??
+            req.durationSeconds ??
+            videoModelSpec(saved.model)?.defaultDuration,
+          resolution:
+            savedJobBilling(saved).resolution ??
+            req.resolution ??
+            videoModelSpec(saved.model)?.defaultResolution,
         },
         saved.jobId,
       );
@@ -886,6 +937,7 @@ async function generateVideoReplicate(
     outPath: req.outPath,
     startedAt: deps.now(),
     status: 'pending',
+    ...jobBilling(req),
   };
   // The provider has accepted a billable remote job. Persisting its pending
   // recovery identity is compensating state and must survive a revocation that
@@ -1101,6 +1153,18 @@ async function downloadGoogleVeoBytes(
 // acima de 4 MB), como arquivo da Files API que fica ACTIVE e é baixado com a
 // chave. Não há campo de duração: o modelo decide.
 
+/**
+ * A Files API diz que o arquivo falhou (`FAILED`) ou não existe mais (404):
+ * retomar não adianta, o job vira `failed`. Qualquer outra falha depois da
+ * geração deixa o job pendente (`MediaJobInterruptedError`).
+ */
+class GeminiFileGoneError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'GeminiFileGoneError';
+  }
+}
+
 /** Espera o arquivo da Files API ficar ACTIVE (a documentação manda pollar). */
 async function waitGeminiFileActive(
   fileId: string,
@@ -1117,13 +1181,23 @@ async function waitGeminiFileActive(
       signal: req.signal,
     });
     assertMediaAuthorityCurrent(req);
+    if (res.status === 404) {
+      const gone = await mediaHttpError(res, 'google-video');
+      throw new GeminiFileGoneError(
+        `O arquivo do vídeo não existe mais na Files API do Google (HTTP 404); gere de novo.${
+          gone.detail ? ` Resposta do serviço: ${gone.detail}` : ''
+        }`,
+      );
+    }
     if (!res.ok) throw await mediaHttpError(res, 'google-video');
     const file = (await res.json()) as { state?: unknown; error?: { message?: unknown } };
     assertMediaAuthorityCurrent(req);
     if (file.state === undefined || file.state === 'ACTIVE') return;
     if (file.state === 'FAILED') {
       const message = typeof file.error?.message === 'string' ? ` — ${file.error.message}` : '';
-      throw new Error(`O Google não concluiu o arquivo do vídeo (Files API: FAILED)${message}.`);
+      throw new GeminiFileGoneError(
+        `O Google não concluiu o arquivo do vídeo (Files API: FAILED)${message}.`,
+      );
     }
   }
   throw new MediaJobTimeoutError('google-video', jobId);
@@ -1160,6 +1234,29 @@ async function downloadGeminiOmniFile(
  * sem eles (retomada pela Files API), a tabela por segundo com a duração
  * lida do MP4.
  */
+/**
+ * Depois que o vídeo existe (e foi cobrado): só `GeminiFileGoneError` encerra
+ * o job; timeout segue como está; qualquer outra falha (HTTP passageiro,
+ * download, disco) deixa o job pendente e devolve o `recoverJobId`.
+ */
+async function settleGeminiOmniJob<T>(
+  job: MediaVideoJobRecord,
+  req: VideoRequest,
+  run: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    assertMediaAuthorityCurrent(req);
+    if (err instanceof MediaJobTimeoutError) throw err;
+    if (err instanceof GeminiFileGoneError) {
+      saveVideoJob(req.baseDir, { ...job, status: 'failed' });
+      throw err;
+    }
+    throw new MediaJobInterruptedError('google-video', job.jobId, err);
+  }
+}
+
 function omniResult(
   def: MediaProviderDef,
   model: string,
@@ -1262,11 +1359,14 @@ async function generateVideoGeminiOmni(
     outPath: req.outPath,
     startedAt: deps.now(),
     status: 'pending',
+    ...jobBilling(req),
+    ...(output.usage ? { usage: output.usage } : {}),
   };
   saveVideoJob(req.baseDir, jobRecord);
   assertMediaAuthorityCurrent(req);
-  try {
-    const data = await downloadGeminiOmniFile(output.fileId, jobRecord.jobId, key, deps, req);
+  const fileId = output.fileId;
+  return settleGeminiOmniJob(jobRecord, req, async () => {
+    const data = await downloadGeminiOmniFile(fileId, jobRecord.jobId, key, deps, req);
     writeMediaOutput(outPath, req.baseDir, data);
     assertMediaAuthorityCurrent(req);
     saveVideoJob(req.baseDir, { ...jobRecord, status: 'completed' });
@@ -1275,12 +1375,7 @@ async function generateVideoGeminiOmni(
       jobId: jobRecord.jobId,
       usage: output.usage,
     });
-  } catch (err) {
-    assertMediaAuthorityCurrent(req);
-    if (err instanceof MediaJobTimeoutError) throw err;
-    saveVideoJob(req.baseDir, { ...jobRecord, status: 'failed' });
-    throw err;
-  }
+  });
 }
 
 async function generateVideoGoogle(
@@ -1303,23 +1398,20 @@ async function generateVideoGoogle(
       );
     }
     if (isGeminiFileTarget(saved.pollTarget)) {
-      // Gemini Omni: o vídeo já existe na Files API; só falta baixar.
-      try {
+      // Gemini Omni: o vídeo já existe na Files API; só falta baixar. O custo
+      // é o do que foi gerado: `usage` e resolução salvos no job.
+      return settleGeminiOmniJob(saved, req, async () => {
         const data = await downloadGeminiOmniFile(saved.pollTarget, saved.jobId, key, deps, req);
         const dest = resolveOutPath(req.outPath ?? saved.outPath, req.baseDir, 'mp4', deps.now);
         writeMediaOutput(dest, req.baseDir, data);
         assertMediaAuthorityCurrent(req);
         saveVideoJob(req.baseDir, { ...saved, status: 'completed' });
         return omniResult(def, saved.model, dest, startedAt, deps, data, {
-          resolution: req.resolution,
+          resolution: savedJobBilling(saved).resolution ?? req.resolution,
           jobId: saved.jobId,
+          usage: isGeminiOmniUsage(saved.usage) ? saved.usage : undefined,
         });
-      } catch (err) {
-        assertMediaAuthorityCurrent(req);
-        if (err instanceof MediaJobTimeoutError) throw err;
-        saveVideoJob(req.baseDir, { ...saved, status: 'failed' });
-        throw err;
-      }
+      });
     }
     try {
       const done = await pollGoogleVeoOperation(
@@ -1350,8 +1442,14 @@ async function generateVideoGoogle(
         startedAt,
         deps,
         {
-          seconds: req.durationSeconds ?? videoModelSpec(saved.model)?.defaultDuration,
-          resolution: req.resolution ?? videoModelSpec(saved.model)?.defaultResolution,
+          seconds:
+            savedJobBilling(saved).seconds ??
+            req.durationSeconds ??
+            videoModelSpec(saved.model)?.defaultDuration,
+          resolution:
+            savedJobBilling(saved).resolution ??
+            req.resolution ??
+            videoModelSpec(saved.model)?.defaultResolution,
         },
         saved.jobId,
       );
@@ -1412,6 +1510,7 @@ async function generateVideoGoogle(
     outPath: req.outPath,
     startedAt: deps.now(),
     status: 'pending',
+    ...jobBilling(req),
   };
   // Recovery identity is compensating state for an already-submitted remote
   // operation; keep it pending even if authority disappears immediately after.

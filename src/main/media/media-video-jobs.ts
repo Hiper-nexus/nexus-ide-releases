@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import type { GeminiOmniUsage } from '../../shared/media-video-models';
 
 /**
  * Persist long-running video predictions so a timed-out call can resume
@@ -20,6 +21,15 @@ export interface MediaVideoJobRecord {
   outPath?: string;
   startedAt: number;
   status: 'pending' | 'completed' | 'failed';
+  /**
+   * F-1587: o que foi gerado, para a retomada cobrar certo (quem retoma só com
+   * `recoverJobId` não manda resolução nem duração). O arquivo é do
+   * workspace: o motor confere antes de usar.
+   */
+  resolution?: string;
+  durationSeconds?: number;
+  /** Tokens que o Google cobrou (Gemini Omni). */
+  usage?: GeminiOmniUsage;
 }
 
 const JOBS_REL = path.join('.nexus', 'media', 'video-jobs.json');

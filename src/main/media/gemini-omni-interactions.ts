@@ -112,6 +112,17 @@ function tokenCount(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 
+/** `usage` salvo no job (arquivo do workspace): só números válidos contam. */
+export function isGeminiOmniUsage(value: unknown): value is GeminiOmniUsage {
+  if (!value || typeof value !== 'object') return false;
+  const usage = value as Record<string, unknown>;
+  return (
+    tokenCount(usage.inputTokens) !== undefined &&
+    tokenCount(usage.videoTokens) !== undefined &&
+    tokenCount(usage.textTokens) !== undefined
+  );
+}
+
 /**
  * `usage` como veio ao vivo em 19/10/2026: `total_input_tokens`,
  * `total_output_tokens`, `output_tokens_by_modality: [{ modality: "video",

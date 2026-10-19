@@ -12,6 +12,7 @@ import {
   generateAudio,
   generateImage,
   generateVideo,
+  MediaJobInterruptedError,
   MediaJobTimeoutError,
   replicateEndImageField,
   replicateImageField,
@@ -1185,6 +1186,136 @@ describe('F-1587: Gemini Omni Flash pelo google-video', () => {
       'O Google não concluiu o arquivo do vídeo (Files API: FAILED) — processing error.',
     );
     expect(getVideoJob(dir, 'v1_omni-1')?.status).toBe('failed');
+  });
+
+  it('revisão #145 (P1): falha passageira depois de gerar deixa o job retomável, com o recoverJobId', async () => {
+    // Files API com 503 no meio da espera: o vídeo já foi gerado e cobrado.
+    const polling = fakeDeps([
+      { json: omniInteraction([{ type: 'video', uri: 'files/flaky1' }]) },
+      { status: 503, json: { error: { code: 503, message: 'The service is currently unavailable.' } } },
+    ]);
+    const first = await generateVideo({ prompt: 'x', model: 'omni', baseDir: dir }, polling.deps).catch(
+      (err: unknown) => err,
+    );
+    expect(first).toBeInstanceOf(MediaJobInterruptedError);
+    expect(first).toBeInstanceOf(MediaJobTimeoutError);
+    expect((first as MediaJobTimeoutError).jobId).toBe('v1_omni-1');
+    expect((first as MediaJobTimeoutError).recoverable).toBe(true);
+    expect((first as Error).message).toContain('o vídeo já foi gerado, mas não chegou');
+    expect((first as Error).message).toContain('recoverJobId="v1_omni-1"');
+    expect(getVideoJob(dir, 'v1_omni-1')?.status).toBe('pending');
+
+    // O download que cai depois do ACTIVE também não perde o vídeo pago.
+    const download = fakeDeps([
+      { json: omniInteraction([{ type: 'video', uri: 'files/flaky2' }], { id: 'v1_omni-2' }) },
+      { json: { state: 'ACTIVE' } },
+      { status: 500, json: { error: { message: 'backend error' } } },
+    ]);
+    await expect(
+      generateVideo({ prompt: 'x', model: 'omni', baseDir: dir }, download.deps),
+    ).rejects.toBeInstanceOf(MediaJobInterruptedError);
+    expect(getVideoJob(dir, 'v1_omni-2')?.status).toBe('pending');
+
+    // Arquivo que não existe mais (404) é definitivo: retomar não adiantaria.
+    const gone = fakeDeps([
+      { json: omniInteraction([{ type: 'video', uri: 'files/gone1' }], { id: 'v1_omni-3' }) },
+      { status: 404, json: { error: { code: 404, message: 'File not found.' } } },
+    ]);
+    await expect(generateVideo({ prompt: 'x', model: 'omni', baseDir: dir }, gone.deps)).rejects.toThrow(
+      'O arquivo do vídeo não existe mais na Files API do Google (HTTP 404); gere de novo. ' +
+        'Resposta do serviço: File not found.',
+    );
+    expect(getVideoJob(dir, 'v1_omni-3')?.status).toBe('failed');
+  });
+
+  it('revisão #145 (P2): o job guarda resolução e usage; retomar só com o id cobra o que foi gerado', async () => {
+    const generate = fakeDeps([
+      {
+        json: omniInteraction([{ type: 'video', uri: 'files/later1' }], {
+          id: 'v1_omni-4',
+          usage: LIVE_USAGE,
+        }),
+      },
+      { status: 503, json: { error: { message: 'unavailable' } } },
+    ]);
+    await expect(
+      generateVideo({ prompt: 'x', model: 'omni', resolution: '360p', baseDir: dir }, generate.deps),
+    ).rejects.toBeInstanceOf(MediaJobInterruptedError);
+    expect(getVideoJob(dir, 'v1_omni-4')).toMatchObject({
+      resolution: '360p',
+      usage: { inputTokens: 22, videoTokens: 19310, textTokens: 304 },
+    });
+
+    // Retomada como a mensagem manda: só o recoverJobId, sem resolução.
+    const recover = fakeDeps([{ json: { state: 'ACTIVE' } }, { body: fakeMp4(10) }]);
+    const result = await generateVideo(
+      { prompt: '', recoverJobId: 'v1_omni-4', outPath: 'later.mp4', baseDir: dir },
+      recover.deps,
+    );
+    // Pelos tokens salvos, não pelos $0.10/s do 720p padrão ($1.00).
+    expect(result.estimatedCostUsd).toBe(0.3407);
+    expect(getVideoJob(dir, 'v1_omni-4')?.status).toBe('completed');
+  });
+
+  it('revisão #145 (P2): sem usage, a retomada usa a resolução salva; valor estranho no arquivo é ignorado', async () => {
+    saveVideoJob(dir, {
+      jobId: 'v1_saved360',
+      provider: 'google-video',
+      pollTarget: 'files/s360',
+      model: 'gemini-omni-1.1-flash',
+      prompt: 'x',
+      startedAt: 1,
+      status: 'pending',
+      resolution: '360p',
+    });
+    const ok = fakeDeps([{ json: { state: 'ACTIVE' } }, { body: fakeMp4(10) }]);
+    const cheap = await generateVideo({ prompt: '', recoverJobId: 'v1_saved360', baseDir: dir }, ok.deps);
+    expect(cheap.estimatedCostUsd).toBe(0.3);
+
+    saveVideoJob(dir, {
+      jobId: 'v1_tampered',
+      provider: 'google-video',
+      pollTarget: 'files/tamp',
+      model: 'gemini-omni-1.1-flash',
+      prompt: 'x',
+      startedAt: 2,
+      status: 'pending',
+      resolution: '8k',
+      usage: { inputTokens: -1, videoTokens: 1, textTokens: 0 },
+    });
+    const tampered = fakeDeps([{ json: { state: 'ACTIVE' } }, { body: fakeMp4(10) }]);
+    const fallback = await generateVideo(
+      { prompt: '', recoverJobId: 'v1_tampered', baseDir: dir },
+      tampered.deps,
+    );
+    // Nem 8k nem usage negativo: tabela do 720p padrão × 10 s.
+    expect(fallback.estimatedCostUsd).toBe(1);
+  });
+
+  it('revisão #145 (P2): Replicate guarda resolução e duração e a retomada cobra por elas', async () => {
+    const create = fakeDeps([
+      { json: { id: 'pred-hd', status: 'starting' } },
+      { json: { id: 'pred-hd', status: 'processing' } },
+    ]);
+    create.deps.sleep = async () => {
+      throw new Error('para o teste depois do 1º poll');
+    };
+    await generateVideo(
+      { prompt: 'x', model: 'bytedance/seedance-2.0', resolution: '1080p', durationSeconds: 10, baseDir: dir },
+      create.deps,
+    ).catch(() => undefined);
+    expect(getVideoJob(dir, 'pred-hd')).toMatchObject({ resolution: '1080p', durationSeconds: 10 });
+
+    const recover = fakeDeps([
+      { json: { id: 'pred-hd', status: 'succeeded', output: 'https://replicate.delivery/hd.mp4' } },
+      { body: Buffer.from('mp4') },
+    ]);
+    const result = await generateVideo(
+      { prompt: '', provider: 'replicate-video', recoverJobId: 'pred-hd', baseDir: dir },
+      recover.deps,
+    );
+    // 10 s × $0.45/s em 1080p, não 5 s × $0.18/s do padrão.
+    expect(result.estimatedCostUsd).toBe(4.5);
   });
 
   it('recoverJobId baixa o arquivo já gerado, sem gerar (e pagar) de novo', async () => {
