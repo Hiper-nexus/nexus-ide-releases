@@ -39,6 +39,13 @@ this file, THIS FILE WINS (see "Nexus rules over the upstream guides").
    `narration.vtt`. Re-running the same text costs nothing (cache); editing one
    paragraph pays only that paragraph. If the result has `modelFallback`, tell
    the operator which model was used.
+   **The operator's own recorded voice instead** (no synthesis, no clone): the
+   operator records in the Estúdio ("Gravar narração") or gives an audio file
+   of the workspace; `nexus_voiceover_align({ audioPath, scriptPath, outDir })`
+   writes the same timeline, .srt and .vtt with the script's spelling.
+   `engine: "elevenlabs"` costs US$ 0.22 per audio hour; `engine: "local"` is
+   free but downloads 639 MB once: ask, then pass `allowModelDownload: true`.
+   Read `matchedRatio`/`warnings`: a low ratio means the audio is not this script.
 6. **Music.** `nexus_music_generate({ prompt, lengthMs: <timeline durationMs + 1500>, outPath: "<project>/assets/music.mp3" })`.
    Describe genre, era, instruments, tempo and mood; never an artist, song or
    lyric. If it returns `promptSuggestion`, show it and ask before using it.

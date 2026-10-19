@@ -382,6 +382,14 @@ export function confirmationReason(
       costPhrase(estimateMediaToolUsd('music_generate', args))
     );
   }
+  if (toolName === 'nexus_voiceover_align' || toolName === 'voiceover_align') {
+    const engine = args.engine === 'local' ? 'local Parakeet (free, on this machine)' : 'elevenlabs forced alignment (US$ 0.22 per audio hour)';
+    const download = args.allowModelDownload === true ? '; may download the 639 MB Parakeet model' : '';
+    return (
+      `${args.dryRun === true ? 'price only (dryRun, no charge)' : 'align recorded narration'} ${safeMediaArg(args.audioPath, 'unknown')} ` +
+      `to the script via ${engine}${download}; output: timeline/srt/vtt next to the audio`
+    );
+  }
   if (toolName === 'nexus_voiceover_generate' || toolName === 'voiceover_generate') {
     const source =
       typeof args.scriptPath === 'string'

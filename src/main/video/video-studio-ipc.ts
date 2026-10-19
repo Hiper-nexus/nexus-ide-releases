@@ -8,6 +8,7 @@ import {
   type VideoDoctorView,
   type VideoExportView,
   type VideoPreviewView,
+  type NarrationAlignView,
   type VideoFileInfo,
   type VideoProjectInfo,
   type VideoRenderView,
@@ -24,6 +25,10 @@ import { exportVideo, findSyntheticSources } from './video-export';
 import { renderVideo, resolveWorkspaceDir } from './video-render';
 import { videoRenderDeps } from './video-runtime-deps';
 import { listVideoPreviews, startVideoPreview, stopVideoPreview } from './video-preview';
+import { alignVoiceover } from '../media/voiceover-align';
+import { resolveMediaKey } from '../media/media-keys';
+import { writeMediaOutput } from '../media/media-path-policy';
+import { reserveMediaSpend } from '../media/media-budget';
 
 /**
  * Estúdio de Mídia → "Vídeos do projeto" (F-1596): the human's buttons for
@@ -209,6 +214,76 @@ export function registerVideoStudioIpc(): void {
         videoRenderDeps(),
       );
       return result.ok ? { ok: true, id: result.id, url: result.url, reused: result.reused } : result;
+    } catch (error) {
+      return { ok: false, error: (error as Error).message };
+    }
+  });
+
+  // F-1602: a narração gravada no Estúdio vai para <projeto>/assets e é alinhada ao roteiro.
+  handleStudio(VIDEO_STUDIO_CHANNELS.alignRecording, async (event, raw): Promise<NarrationAlignView> => {
+    const parsed = z
+      .object({
+        projectPath: workspacePath,
+        script: z.string().min(1).max(50_000),
+        wav: z.instanceof(Uint8Array).refine((bytes) => bytes.byteLength <= 64 * 1024 * 1024).optional(),
+        audioPath: workspacePath.optional(),
+        engine: z.enum(['elevenlabs', 'local']),
+        allowModelDownload: z.boolean().optional(),
+      })
+      .strict()
+      .safeParse(raw);
+    if (!parsed.success || (!parsed.data.wav && !parsed.data.audioPath)) return { ok: false, error: 'Gravação ou pedido inválido.' };
+    const scope = scopeOf(event);
+    try {
+      const projectDir = resolveWorkspaceDir(parsed.data.projectPath, scope.rootRealPath);
+      let audioPath = parsed.data.audioPath;
+      if (parsed.data.wav) {
+        const wav = Buffer.from(parsed.data.wav);
+        if (wav.toString('latin1', 0, 4) !== 'RIFF' || wav.toString('latin1', 8, 12) !== 'WAVE') {
+          return { ok: false, error: 'A gravação não é WAV.' };
+        }
+        const stamp = new Date().toISOString().replace(/[-:]/gu, '').replace(/\..*$/u, '').replace('T', '-');
+        const file = path.join(projectDir, 'assets', `narration-recorded-${stamp}.wav`);
+        writeMediaOutput(file, scope.rootRealPath, wav);
+        audioPath = relativeFile(scope.rootRealPath, file);
+      }
+      const runtime = videoRenderDeps();
+      const deps = { ...runtime, fetchFn: fetch, getKey: resolveMediaKey };
+      const request = {
+        audioPath: audioPath!,
+        script: parsed.data.script,
+        engine: parsed.data.engine,
+        outDir: path.join(relativeFile(scope.rootRealPath, projectDir), 'assets'),
+        baseName: 'narration',
+        allowModelDownload: parsed.data.allowModelDownload === true,
+        baseDir: scope.rootRealPath,
+        scope,
+      };
+      const priced = await alignVoiceover({ ...request, dryRun: true }, deps);
+      if (!priced.ok) return { ...priced, audioPath };
+      const spend = reserveMediaSpend({ provider: priced.engine, usd: priced.estimatedCostUsd }, null, 'voiceover_align');
+      if (!spend.ok) return { ok: false, error: spend.error, audioPath };
+      let result: Awaited<ReturnType<typeof alignVoiceover>>;
+      try {
+        result = await alignVoiceover(request, deps);
+      } catch (error) {
+        spend.release();
+        throw error;
+      }
+      if (!result.ok) {
+        spend.release();
+        return { ok: false, error: result.error, audioPath, ...(result.needsModelDownload ? { needsModelDownload: true } : {}) };
+      }
+      spend.settle(result.estimatedCostUsd);
+      return {
+        ok: true,
+        audioPath: audioPath!,
+        words: result.words ?? 0,
+        matchedRatio: result.matchedRatio ?? 0,
+        costUsd: result.estimatedCostUsd,
+        warnings: result.warnings ?? [],
+        files: result.files ? Object.values(result.files).map((file) => relativeFile(scope.rootRealPath, file)) : [],
+      };
     } catch (error) {
       return { ok: false, error: (error as Error).message };
     }

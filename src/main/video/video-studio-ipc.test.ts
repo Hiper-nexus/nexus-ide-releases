@@ -14,6 +14,7 @@ const state = vi.hoisted(() => ({
   previewStart: vi.fn(),
   previewStop: vi.fn(async () => true),
   previews: [] as Array<{ id: string; url: string; project: string }>,
+  align: vi.fn(),
 }));
 
 vi.mock('electron', () => ({
@@ -38,6 +39,8 @@ vi.mock('./video-preview', () => ({
   stopVideoPreview: state.previewStop,
   listVideoPreviews: () => state.previews,
 }));
+vi.mock('../media/voiceover-align', () => ({ alignVoiceover: state.align }));
+vi.mock('../media/media-keys', () => ({ resolveMediaKey: () => 'xi' }));
 const studio = vi.hoisted(() => ({ on: true }));
 vi.mock('./video-studio-flag', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./video-studio-flag')>();
@@ -146,10 +149,44 @@ describe('Vídeos do projeto — Main', () => {
     expect(await state.trusted.get(VIDEO_STUDIO_CHANNELS.previewStop)!(event, { id: '../x' })).toEqual({ ok: false });
   });
 
+  it('narração gravada: salva o WAV em assets do projeto e alinha, com preço antes (F-1602)', async () => {
+    state.align.mockImplementation(async (request: { dryRun?: boolean }) =>
+      request.dryRun
+        ? { ok: true, dryRun: true, engine: 'elevenlabs', durationSec: 2, estimatedCostUsd: 0.0001 }
+        : {
+            ok: true,
+            dryRun: false,
+            engine: 'elevenlabs',
+            durationSec: 2,
+            estimatedCostUsd: 0.0001,
+            words: 3,
+            matchedRatio: 1,
+            files: { timeline: path.join(state.root, 'videos', 'promo', 'assets', 'narration.timeline.json') },
+          },
+    );
+    const wav = new Uint8Array(Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WAVE'), Buffer.alloc(36)]));
+    const align = state.trusted.get(VIDEO_STUDIO_CHANNELS.alignRecording)!;
+    const view = (await align(event, { projectPath: 'videos/promo', script: 'Olá a todos.', wav, engine: 'elevenlabs' })) as {
+      ok: boolean;
+      audioPath: string;
+      files: string[];
+    };
+    expect(view).toMatchObject({ ok: true, words: 3, files: ['videos/promo/assets/narration.timeline.json'] });
+    expect(view.audioPath).toMatch(/^videos\/promo\/assets\/narration-recorded-\d{8}-\d{6}\.wav$/u);
+    expect(fs.existsSync(path.join(state.root, view.audioPath))).toBe(true);
+    expect(state.align.mock.calls.map((call) => (call[0] as { dryRun?: boolean }).dryRun)).toEqual([true, undefined]);
+    expect(state.align.mock.calls[1][0]).toMatchObject({ audioPath: view.audioPath, outDir: path.join('videos/promo', 'assets'), baseName: 'narration' });
+    expect(await align(event, { projectPath: 'videos/promo', script: 'x', wav: new Uint8Array([1, 2]), engine: 'local' })).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/WAV/u),
+    });
+    expect(await align(event, { projectPath: 'videos/promo', script: 'x', engine: 'local' })).toMatchObject({ ok: false });
+  });
+
   it('com o estúdio desligado só o cancelar responde', async () => {
     studio.on = false;
     try {
-      expect(state.trusted.size).toBe(9);
+      expect(state.trusted.size).toBe(10);
       for (const [channel, handler] of state.trusted) {
         if (channel === VIDEO_STUDIO_CHANNELS.cancel || channel === VIDEO_STUDIO_CHANNELS.previewStop) continue;
         await expect(Promise.resolve().then(() => handler(event, {}))).rejects.toThrow(

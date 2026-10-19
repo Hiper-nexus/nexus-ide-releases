@@ -328,6 +328,13 @@ describe('confirmationReason', () => {
     expect(reason).toContain('promo/renders/v1.mp4');
   });
 
+  it('describes the narration alignment engine and the model download (F-1602)', () => {
+    expect(confirmationReason('nexus_voiceover_align', { audioPath: 'promo/voz.wav' })).toContain('elevenlabs forced alignment');
+    const local = confirmationReason('nexus_voiceover_align', { audioPath: 'promo/voz.wav', engine: 'local', allowModelDownload: true });
+    expect(local).toContain('local Parakeet');
+    expect(local).toContain('639 MB');
+  });
+
   it('paid media shows its estimated cost in the modal (F-1606)', () => {
     expect(confirmationReason('nexus_audio_generate', { text: 'a'.repeat(1_000) })).toContain('estimated cost: US$ 0,08');
     expect(confirmationReason('nexus_music_generate', { prompt: 'lofi', lengthMs: 60_000 })).toContain('estimated cost: US$ 0,15');

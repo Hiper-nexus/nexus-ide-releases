@@ -147,6 +147,7 @@ describe('Jarvis mãos-livres — o que continua confirmando', () => {
     'nexus_video_capture',
     'nexus_music_generate',
     'nexus_voiceover_generate',
+    'nexus_voiceover_align',
     'nexus_skills',
     'nexus_harness',
     'nexus_goal_register',
@@ -445,6 +446,7 @@ describe('contrato com o registro real de tools', () => {
     'nexus_video_capture',
     'nexus_music_generate',
     'nexus_voiceover_generate',
+    'nexus_voiceover_align',
     'nexus_wave_advance',
   ]);
 

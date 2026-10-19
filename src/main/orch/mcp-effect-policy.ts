@@ -388,6 +388,8 @@ const EXECUTION_EFFECT_TOOLS = new Set([
   'voiceover_generate',
   // F-1592: música paga (Eleven Music) gravada no workspace.
   'music_generate',
+  // F-1602: alinha a narração gravada ao roteiro (ElevenLabs paga ou motor local) e grava no workspace.
+  'voiceover_align',
   // F-1594: renderizar executa o HTML/JS do projeto num Chrome sem sandbox.
   'video_render',
   // F-1595: codifica e grava os exports no workspace (ffmpeg).

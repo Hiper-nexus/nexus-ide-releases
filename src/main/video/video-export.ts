@@ -144,14 +144,18 @@ export function findSyntheticSources(projectDir: string, maxDepth = 4): Syntheti
         } catch {
           continue;
         }
-        if (parsed.generator === 'nexus_voiceover_generate') {
-          const voice = (parsed.voice ?? {}) as Record<string, unknown>;
-          narration.push({
-            file: full,
-            provider: String(parsed.provider ?? 'unknown'),
-            model: String(parsed.model ?? 'unknown'),
-            voiceOrigin: String(voice.origin ?? 'unknown'),
-          });
+        // F-1602: a narration the person recorded and the Nexus aligned brings
+        // captions but no synthetic voice (no AI label, no synthetic provenance).
+        if (parsed.generator === 'nexus_voiceover_generate' || parsed.generator === 'nexus_voiceover_align') {
+          if (parsed.generator === 'nexus_voiceover_generate') {
+            const voice = (parsed.voice ?? {}) as Record<string, unknown>;
+            narration.push({
+              file: full,
+              provider: String(parsed.provider ?? 'unknown'),
+              model: String(parsed.model ?? 'unknown'),
+              voiceOrigin: String(voice.origin ?? 'unknown'),
+            });
+          }
           const caps = (parsed.captions ?? {}) as Record<string, unknown>;
           if (!captions) {
             // The timeline names its captions; an older or hand-made one falls back to the siblings.

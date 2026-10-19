@@ -17,6 +17,7 @@ import { useLayoutStore } from '../state/layout-store';
 import { reportLicenseDenial } from '../state/access-guard';
 import { waitForBrowserPaneCreated } from '../browser/browser-host';
 import { buildPresentationBrief, type BriefVoice } from './video-brief';
+import { NarrationRecorder } from './NarrationRecorder';
 
 /**
  * Estúdio de Mídia → "Vídeos do projeto" (F-1596). The person sees the
@@ -232,6 +233,7 @@ function ProjectCard({
 }) {
   const [job, setJob] = useState<JobState | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
+  const [narrationOpen, setNarrationOpen] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [preset, setPreset] = useState<VideoExportPresetId>('vertical-9x16');
   const [label, setLabel] = useState<'auto' | 'on' | 'off'>('auto');
@@ -410,6 +412,9 @@ function ProjectCard({
                   Parar prévia
                 </button>
               )}
+              <button type="button" className="ms-button" aria-expanded={narrationOpen} onClick={() => setNarrationOpen((open) => !open)}>
+                {narrationOpen ? 'Fechar gravação' : 'Gravar narração'}
+              </button>
               {latestRender && (
                 <>
                   <select className="ms-select" aria-label="Rede do export" value={preset} onChange={(event) => setPreset(event.target.value as VideoExportPresetId)}>
@@ -436,6 +441,8 @@ function ProjectCard({
           )}
         </>
       )}
+
+      {narrationOpen && project.engine === 'hyperframes' && <NarrationRecorder projectPath={project.path} onDone={onChanged} />}
 
       {notice && (
         <div className={notice.tone === 'danger' ? 'vp-notice vp-notice--danger' : 'vp-notice'} role={notice.tone === 'danger' ? 'alert' : 'status'}>

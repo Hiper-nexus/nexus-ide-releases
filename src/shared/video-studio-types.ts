@@ -18,6 +18,7 @@ export const VIDEO_STUDIO_CHANNELS = {
   progress: 'videoStudio:progress',
   previewStart: 'videoStudio:previewStart',
   previewStop: 'videoStudio:previewStop',
+  alignRecording: 'videoStudio:alignRecording',
 } as const;
 
 export interface VideoFileInfo {
@@ -111,7 +112,32 @@ export interface VideoStudioApi {
   /** Live Studio (F-1603); the url is a trusted Nexus preview for the browser pane. */
   previewStart(projectPath: string): Promise<VideoPreviewView>;
   previewStop(id: string): Promise<{ ok: boolean }>;
+  /** F-1602: saves the recorded narration in <project>/assets and aligns the script to it. */
+  alignRecording(request: NarrationAlignRequest): Promise<NarrationAlignView>;
 }
+
+export interface NarrationAlignRequest {
+  readonly projectPath: string;
+  readonly script: string;
+  /** Fresh recording (mono PCM16 WAV) … */
+  readonly wav?: Uint8Array;
+  /** … or the recording a previous call already saved (retry after the model OK). */
+  readonly audioPath?: string;
+  readonly engine: 'elevenlabs' | 'local';
+  readonly allowModelDownload?: boolean;
+}
+
+export type NarrationAlignView =
+  | {
+      readonly ok: true;
+      readonly audioPath: string;
+      readonly words: number;
+      readonly matchedRatio: number;
+      readonly costUsd: number;
+      readonly warnings: readonly string[];
+      readonly files: readonly string[];
+    }
+  | { readonly ok: false; readonly error: string; readonly audioPath?: string; readonly needsModelDownload?: boolean };
 
 export type VideoPreviewView =
   | { readonly ok: true; readonly id: string; readonly url: string; readonly reused: boolean }

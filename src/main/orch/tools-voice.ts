@@ -10,6 +10,7 @@ import { isNexusClonedVoice } from '../media/voice-origin';
 import { recordMediaUsage } from '../usage/media-usage-recorder';
 import { reserveMediaSpend } from '../media/media-budget';
 import { musicCostUsd } from '../media/music-generation';
+import { alignVoiceover, ALIGN_AUDIO_EXTENSIONS, PARAKEET_DOWNLOAD_MB } from '../media/voiceover-align';
 import { num, str } from './tool-util';
 import { resolveCwdForScope } from './workspace-path';
 import { executionScopeFor, type AgentGateContext } from './gate';
@@ -254,6 +255,93 @@ const musicGenerateTool: McpToolDef = {
   },
 };
 
+const voiceoverAlignTool: McpToolDef = {
+  name: 'nexus_voiceover_align',
+  available: isVideoStudioEnabled,
+  unavailableReason: VIDEO_STUDIO_DISABLED_REASON,
+  description:
+    'Time a narration the operator RECORDED with their own voice (no synthesis, no clone): aligns the script to ' +
+    `the audio file of the workspace (${ALIGN_AUDIO_EXTENSIONS.join(', ')}) and writes the same narration.timeline.json, ` +
+    '.srt and .vtt as nexus_voiceover_generate, with the SCRIPT spelling (the recognizer only gives times). ' +
+    'engine: elevenlabs (forced alignment, the user key, US$ 0.22 per hour of audio) or local (Parakeet on this ' +
+    `machine, free; first use downloads ${PARAKEET_DOWNLOAD_MB} MB: ask the operator, then call again with ` +
+    'allowModelDownload: true). Default: elevenlabs when its key exists. dryRun:true prices it. Check ' +
+    'matchedRatio and warnings: a low ratio means the audio does not read this script. The export burns no AI ' +
+    'label for a recorded voice.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      audioPath: { type: 'string', description: 'Recorded narration inside the workspace.' },
+      script: { type: 'string' },
+      scriptPath: { type: 'string', description: 'Workspace .txt/.md (instead of script).' },
+      engine: { type: 'string', enum: ['elevenlabs', 'local'] },
+      language: { type: 'string', description: 'Recognizer language for engine local (default pt).' },
+      outDir: { type: 'string', description: 'Workspace folder (default: the audio folder).' },
+      baseName: { type: 'string', description: 'Default narration.' },
+      allowModelDownload: { type: 'boolean' },
+      dryRun: { type: 'boolean' },
+    },
+    required: ['audioPath'],
+  },
+  requiresConfirm: true,
+  handler: async (args, ctx, invocation) => {
+    assertMcpInvocationCurrent(invocation);
+    const baseDir = baseDirFor(ctx);
+    const engine = str(args, 'engine');
+    const language = str(args, 'language');
+    if (language !== undefined && !/^[a-z]{2,3}(?:-[A-Za-z]{2})?$/u.test(language)) throw new Error('language inválido (ex.: pt, en, es)');
+    const { videoRenderDeps } = await import('../video/video-runtime-deps');
+    const runtime = videoRenderDeps();
+    const deps = {
+      ...runtime,
+      fetchFn: fetch,
+      getKey: resolveMediaKey,
+    };
+    const request = {
+      audioPath: requireAudioPath(args),
+      script: readScript(args, baseDir),
+      engine: engine === 'local' || engine === 'elevenlabs' ? engine : undefined,
+      language,
+      outDir: str(args, 'outDir'),
+      baseName: str(args, 'baseName'),
+      allowModelDownload: args.allowModelDownload === true,
+      baseDir,
+      scope: executionScopeFor(ctx),
+      missionId: ctx.missionId,
+      sessionId: ctx.sessionId,
+      signal: invocation?.signal,
+      assertCurrentAuthority: () => assertMcpInvocationCurrent(invocation),
+    } as const;
+    if (args.dryRun === true) return alignVoiceover({ ...request, dryRun: true }, deps);
+    // F-1606: the forced alignment is paid; price it and reserve under the media cap.
+    const priced = await alignVoiceover({ ...request, dryRun: true }, deps);
+    if (!priced.ok) return priced;
+    const spend = reserveMediaSpend(
+      { provider: priced.engine === 'elevenlabs' ? 'elevenlabs' : 'local', usd: priced.estimatedCostUsd },
+      ctx.missionId,
+      'voiceover_align',
+    );
+    if (!spend.ok) return spend;
+    let result: Awaited<ReturnType<typeof alignVoiceover>>;
+    try {
+      result = await alignVoiceover({ ...request, dryRun: false }, deps);
+    } catch (error) {
+      spend.release();
+      throw error;
+    }
+    if (result.ok) spend.settle(result.estimatedCostUsd);
+    else spend.release();
+    assertMcpInvocationCurrent(invocation);
+    return result;
+  },
+};
+
+function requireAudioPath(args: Record<string, unknown>): string {
+  const value = str(args, 'audioPath');
+  if (!value) throw new Error('missing required argument: audioPath');
+  return value;
+}
+
 export function buildVoiceTools(): McpToolDef[] {
-  return [voiceListTool, voiceoverGenerateTool, musicGenerateTool];
+  return [voiceListTool, voiceoverGenerateTool, musicGenerateTool, voiceoverAlignTool];
 }

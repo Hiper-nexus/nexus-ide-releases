@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   resolveKey: vi.fn(() => 'xi-key' as string | undefined),
   recordUsage: vi.fn(),
   generateMusic: vi.fn(),
+  align: vi.fn(),
 }));
 
 vi.mock('../workspace-path', () => ({ resolveCwdForScope: mocks.workspaceRoot }));
@@ -28,6 +29,12 @@ vi.mock('../../media/music-generation', () => ({
   musicCostUsd: (lengthMs: number) => Number(((lengthMs / 60_000) * 0.15).toFixed(4)),
 }));
 vi.mock('../../media/elevenlabs-voices', () => ({ listElevenLabsVoices: mocks.listVoices }));
+vi.mock('../../media/voiceover-align', () => ({
+  alignVoiceover: mocks.align,
+  ALIGN_AUDIO_EXTENSIONS: ['.wav', '.mp3'],
+  PARAKEET_DOWNLOAD_MB: 639,
+}));
+vi.mock('../../video/video-runtime-deps', () => ({ videoRenderDeps: () => ({ userData: '/ud', pathValue: '/bin' }) }));
 vi.mock('../../media/media-keys', () => ({ resolveMediaKey: mocks.resolveKey }));
 vi.mock('../../usage/media-usage-recorder', () => ({ recordMediaUsage: mocks.recordUsage }));
 
@@ -198,5 +205,30 @@ describe('teto de gasto na narração e na música (F-1606)', () => {
       configureMediaBudget(null);
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('alinhamento da narração gravada (F-1602)', () => {
+  it('não cria voz, é efeito com confirmação, preço antes e o mesmo escopo do chamador', async () => {
+    expect(effectPolicyForTool('nexus_voiceover_align')).toBe('execution-effect');
+    expect(tool('nexus_voiceover_align').requiresConfirm).toBe(true);
+    mocks.align
+      .mockResolvedValueOnce({ ok: true, dryRun: true, engine: 'elevenlabs', durationSec: 30, estimatedCostUsd: 0.0018 })
+      .mockResolvedValueOnce({ ok: true, dryRun: false, engine: 'elevenlabs', durationSec: 30, estimatedCostUsd: 0.0018, words: 80 });
+    const result = await tool('nexus_voiceover_align').handler({ audioPath: 'promo/voz.wav', script: 'Olá.' }, ctx);
+    expect(result).toMatchObject({ ok: true, words: 80 });
+    expect(mocks.align.mock.calls[0][0]).toMatchObject({ audioPath: 'promo/voz.wav', script: 'Olá.', dryRun: true, baseDir: workspace });
+    expect(mocks.align.mock.calls[1][0]).toMatchObject({ dryRun: false, allowModelDownload: false });
+    await expect(tool('nexus_voiceover_align').handler({ script: 'Olá.' }, ctx)).rejects.toThrow(/audioPath/u);
+    await expect(tool('nexus_voiceover_align').handler({ audioPath: 'a.wav', script: 'x', language: 'pt; rm' }, ctx)).rejects.toThrow(/language/u);
+  });
+
+  it('o pedido de baixar o modelo só segue com o OK explícito', async () => {
+    mocks.align.mockResolvedValueOnce({ ok: false, needsModelDownload: true, error: 'baixa 639 MB' });
+    expect(await tool('nexus_voiceover_align').handler({ audioPath: 'a.wav', script: 'x', engine: 'local' }, ctx)).toMatchObject({
+      ok: false,
+      needsModelDownload: true,
+    });
+    expect(mocks.align).toHaveBeenCalledTimes(1);
   });
 });
