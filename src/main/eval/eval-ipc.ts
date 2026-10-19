@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ipcMain } from 'electron';
+import { handleTrusted } from '../security/trusted-ipc';
 import { EVAL_RANKING_CHANNELS } from '../../shared/eval-ranking-types';
 import type {
   ModelComparisonSnapshot,
@@ -120,5 +121,5 @@ export function registerEvalRankingIpc(): void {
   ipcMain.removeHandler(EVAL_RANKING_CHANNELS.publicRanking);
   ipcMain.handle(EVAL_RANKING_CHANNELS.publicRanking, () => getPublicModelRanking());
   ipcMain.removeHandler(EVAL_RANKING_CHANNELS.modelComparison);
-  ipcMain.handle(EVAL_RANKING_CHANNELS.modelComparison, () => getModelComparison());
+  handleTrusted(EVAL_RANKING_CHANNELS.modelComparison, () => getModelComparison());
 }
