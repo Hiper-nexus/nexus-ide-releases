@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quadro da missão · leitura de atividade</title>
+<link rel="stylesheet" href="../../../../src/renderer/styles/base.css">
+<link rel="stylesheet" href="../../../../src/renderer/styles/mission-board.css">
+<style>
+html,body{height:100%;margin:0;overflow:hidden}body{display:flex;flex-direction:column;background:var(--bg);color:var(--text);font-family:var(--font-ui)}
+.preview-note{flex:none;margin:0;padding:8px 16px;font-size:12px;color:var(--text-dim);background:var(--bg-bar)}
+.preview-shell{flex:1;min-height:0}.preview-empty{padding:24px;color:var(--text-dim)}
+</style>
+</head>
+<body>
+<p class="preview-note">Prévia isolada de layout · conteúdo ilustrativo · usa o CSS real do Quadro. Não executa nem retoma missões.</p>
+<main class="preview-shell">
+<article class="mission-board" data-state="blocked_technical" data-details-focused="false">
+<header class="mission-board__header">
+<div class="mission-board__identity"><h1>Histórico e diagnóstico da missão</h1><p class="mission-board__workspace">Quadro da missão</p></div>
+<div class="mission-board__status-group"><span class="mission-board__status">Parou</span></div>
+<p class="mission-board__reason"><strong>A missão está parada</strong><span>Consulte a atividade e a última informação registrada antes de decidir o próximo passo.</span></p>
+<div class="mission-board__actions"><button id="history" class="mission-board__button mission-board__button--secondary" aria-expanded="false" aria-controls="details">Ver o que aconteceu</button></div>
+</header>
+<div class="mission-board__body"><div class="mission-board__workspace-layout">
+<div class="mission-board__graph-region"><div class="preview-empty"><h2>Equipe da missão</h2><p>Os agentes aparecem aqui quando o orquestrador abre panes para esta missão.</p><p>Abra a atividade para ler o histórico com toda a área disponível.</p></div></div>
+<div class="mission-board__splitter" aria-hidden="true"></div>
+<div id="details" class="mission-board__inspector-region" tabindex="-1"><aside class="mission-inspector" aria-label="Inspetor da missão">
+<div class="mission-inspector__chrome"><div class="mission-inspector__tabs" role="tablist" aria-label="Detalhes da missão"><button class="mission-inspector__tab" role="tab" aria-selected="true" aria-controls="activity" id="activity-tab">Atividade</button></div></div>
+<div class="mission-inspector__panel" role="tabpanel" aria-labelledby="activity-tab" id="activity" tabindex="0"><section class="mission-inspector__stop-reason"><h3>Por que parou</h3><p>Esta prévia demonstra a área de leitura. O motivo real e os eventos vêm do histórico da missão no aplicativo.</p></section><h2>Atividade da missão</h2><ol id="events"></ol></div>
+</aside></div></div></div>
+</article></main>
+<script>
+const board=document.querySelector('.mission-board'),button=document.getElementById('history');
+button.addEventListener('click',()=>{const focused=board.dataset.detailsFocused!=='true';board.dataset.detailsFocused=String(focused);button.setAttribute('aria-expanded',String(focused));button.textContent=focused?'Voltar à equipe':'Ver o que aconteceu';if(focused)document.getElementById('activity').focus({preventScroll:true});});
+if(new URLSearchParams(location.search).has('details'))button.click();
+for(let i=1;i<=20;i++){const item=document.createElement('li');item.style.padding='16px 0';item.textContent=`Registro ilustrativo ${i}. O conteúdo continua disponível por rolagem dentro da área de atividade, enquanto as abas permanecem visíveis.`;document.getElementById('events').appendChild(item);}
+</script>
+</body></html>
