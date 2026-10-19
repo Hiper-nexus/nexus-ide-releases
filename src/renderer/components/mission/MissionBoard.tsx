@@ -39,6 +39,9 @@ import {
   formatMissionTelemetry,
 } from '../../../shared/handoff-telemetry';
 import { useMissionInspectorStore } from '../../state/mission-inspector-store';
+import { useSessionStateStore } from '../../state/session-state-store';
+import { usePaneParkedStore } from '../../state/pane-parked-store';
+import { missionLiveDisplay } from '../../lib/mission-live-display';
 import {
   MISSION_INSPECTOR_WIDTH_MAX,
   MISSION_INSPECTOR_WIDTH_MIN,
@@ -360,6 +363,20 @@ export function MissionBoard({
     readStoredInspectorCollapsed,
   );
   const [moreOpen, setMoreOpen] = useState(false);
+  const [detailsMissionId, setDetailsMissionId] = useState<string | null>(null);
+  const detailsFocused = detailsMissionId === missionId;
+  const detailsRegionRef = useRef<HTMLDivElement | null>(null);
+  const detailsInvokerRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!detailsFocused) {
+      if (detailsInvokerRef.current?.isConnected) detailsInvokerRef.current.focus({ preventScroll: true });
+      detailsInvokerRef.current = null;
+      return;
+    }
+    const region = detailsRegionRef.current;
+    const panel = region?.querySelector<HTMLElement>('[role="tabpanel"]:not([hidden])');
+    (panel ?? region)?.focus({ preventScroll: true });
+  }, [detailsFocused]);
   const [boardCollapsed, setBoardCollapsed] = useState(
     readStoredBoardCollapsed,
   );
@@ -371,6 +388,16 @@ export function MissionBoard({
       return next;
     });
   }, []);
+  const openActivityDetails = useCallback((): void => {
+    detailsInvokerRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement : null;
+    setBoardCollapsed(false);
+    persistBoardCollapsed(false);
+    setInspectorCollapsed(false);
+    persistInspectorCollapsed(false);
+    useMissionInspectorStore.getState().selectMissionTab(missionId, 'activity');
+    setDetailsMissionId(missionId);
+  }, [missionId]);
   const moreButtonRef = useRef<HTMLButtonElement | null>(null);
   const moreMenuRef = useRef<HTMLDivElement | null>(null);
   const moreMenuId = useId();
@@ -378,6 +405,7 @@ export function MissionBoard({
   // Trocar de missão com o menu aberto mostraria ações da missão anterior.
   useEffect(() => {
     setMoreOpen(false);
+    setDetailsMissionId(null);
   }, [missionId]);
   // Menu Mais aberto: foco no primeiro item habilitado e clique fora fecha
   // (mesmo idioma do PaneContextMenu).
@@ -458,6 +486,7 @@ export function MissionBoard({
     items[next]?.focus({ preventScroll: true });
   };
   const toggleInspectorCollapsed = useCallback((): void => {
+    setDetailsMissionId(null);
     setInspectorCollapsed((current) => {
       const next = !current;
       persistInspectorCollapsed(next);
@@ -770,7 +799,13 @@ export function MissionBoard({
     [journalHistory],
   );
 
-  const currentSnapshot = snapshot?.id === missionId ? snapshot : null;
+  const displayStates = useSessionStateStore((state) => state.displayStates);
+  const parkedPanes = usePaneParkedStore((state) => state.parked);
+  const currentSnapshot = useMemo(() => missionLiveDisplay(
+    snapshot?.id === missionId ? snapshot : null,
+    displayStates,
+    parkedPanes,
+  ), [snapshot, missionId, displayStates, parkedPanes]);
   const questionKey = currentSnapshot?.question
     ? `${currentSnapshot.id}:${currentSnapshot.question.id}`
     : null;
@@ -1460,6 +1495,7 @@ export function MissionBoard({
         boardCollapsed ? 'mission-board mission-board--collapsed' : 'mission-board'
       }
       data-board-collapsed={boardCollapsed}
+      data-details-focused={detailsFocused}
       data-state={currentSnapshot.state}
       aria-labelledby={headingId}
       aria-busy={loading}
@@ -1556,11 +1592,7 @@ export function MissionBoard({
             missionId={missionId}
             focusAction
             action={primaryButton}
-            onOpenWhy={() =>
-              useMissionInspectorStore
-                .getState()
-                .selectMissionTab(missionId, 'activity')
-            }
+            onOpenWhy={openActivityDetails}
           />
         ) : (
           currentSnapshot.stateReason && (
@@ -1574,6 +1606,21 @@ export function MissionBoard({
         )}
 
         <div className="mission-board__actions" aria-label="Ações da missão">
+          {(!interruptedCard || detailsFocused) && <button
+            type="button"
+            className="mission-board__button mission-board__button--secondary"
+            aria-controls={inspectorRegionId}
+            aria-expanded={detailsFocused}
+            onClick={() => {
+              if (detailsFocused) {
+                setDetailsMissionId(null);
+                return;
+              }
+              openActivityDetails();
+            }}
+          >
+            {detailsFocused ? 'Voltar à equipe' : 'Ver o que aconteceu'}
+          </button>}
           {/* leader-drift: o terminal do Maestro está vivo numa sessão nova e
               a missão ainda aponta a que morreu — a ação primária aqui é
               religar, não parar. */}
@@ -1844,8 +1891,10 @@ export function MissionBoard({
               onDoubleClick={isSideBySide ? resetInspectorWidth : undefined}
             />
             <div
+              ref={detailsRegionRef}
               id={inspectorRegionId}
               className="mission-board__inspector-region"
+              tabIndex={-1}
             >
               <MissionInspector
                 snapshot={currentSnapshot}

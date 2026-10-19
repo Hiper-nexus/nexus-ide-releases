@@ -108,6 +108,61 @@ describe('working-tree candidate snapshot', () => {
     expect(snapshot.incompleteReasons).toContain('candidate file limit 512 reached');
     expect(snapshot.changedPaths).toHaveLength(512);
   });
+
+  it('a declared deliverable alphabetically beyond the 512-file cut is still read and fingerprinted', async () => {
+    const { root, scope, run } = fixture(true);
+    const baseSha = run('rev-parse', 'HEAD');
+    // 600 early-alphabetical upstream files plus one late deliverable: without
+    // priority the deliverable would fall beyond the first 512 and be dropped.
+    fs.writeFileSync(path.join(root, 'zzz-delivered.ts'), 'export const delivered = 1;\n');
+    for (let index = 0; index < 600; index += 1) {
+      fs.writeFileSync(path.join(root, `aaa-${String(index).padStart(3, '0')}.ts`), 'export const upstream = 1;\n');
+    }
+    const snapshot = await captureWorkingTreeCandidate({ scope, baseSha, requiredPaths: ['zzz-delivered.ts'] });
+    expect(snapshot.incompleteReasons).toContain('candidate file limit 512 reached');
+    expect(snapshot.coveredPaths).toContain('zzz-delivered.ts');
+    expect(snapshot.incompleteReasons).not.toContain('delivered candidate path was not inspected: "zzz-delivered.ts"');
+  });
+});
+
+describe('post-baseline upstream merge does not stall completion', () => {
+  it('a merge of 700 upstream files plus 11 deliverables stops blocking once the baseline advances', async () => {
+    const { root, scope, run } = fixture(true);
+    const baseSha = run('rev-parse', 'HEAD');
+    // origin/main advancing past the baseline.
+    for (let index = 0; index < 700; index += 1) {
+      fs.writeFileSync(path.join(root, `upstream-${String(index).padStart(3, '0')}.ts`), 'export const upstream = 1;\n');
+    }
+    run('add', '--', '.');
+    run('commit', '-qm', 'upstream advance');
+    const advancedBase = run('rev-parse', 'HEAD');
+    // The worker's own deliverables, committed on top of the synchronized upstream.
+    for (let index = 0; index < 11; index += 1) {
+      fs.writeFileSync(path.join(root, `delivered-${String(index).padStart(2, '0')}.ts`), 'export const delivered = 1;\n');
+    }
+    run('add', '--', '.');
+    run('commit', '-qm', 'deliverables');
+    const delivered = Array.from({ length: 11 }, (_, index) => `delivered-${String(index).padStart(2, '0')}.ts`);
+    const mission = { id: 'upstream-merge', title: 'Fix code', intentContract: { lane: 'standard' }, intentVersion: 1, updatedAt: 1 } as Mission;
+    const mechanical = vi.fn(async () => ({ kind: 'blocked' as const, description: 'review still required' }));
+    const ports = (captureCandidate: (input: { scope: ProjectExecutionScope; baseSha?: string; mode: 'delta' | 'current-state'; requiredPaths?: readonly string[]; untrackedSince?: number }) => ReturnType<typeof captureWorkingTreeCandidate>) => ({
+      captureCandidate, runMechanical: mechanical,
+      ensureIndependentReview: async () => ({ kind: 'unavailable' as const, reason: 'no independent review' }),
+      assertCurrent: () => {},
+    });
+
+    // Stale baseline: 700 upstream + 11 delivered = 711 files > 512 → refuse.
+    const stale = await ensureMissionCodeCompletion({ scope, executionScope: scope, mission, baselineSha: baseSha,
+      authorSessionIds: [], requiredPaths: delivered }, ports(input => captureWorkingTreeCandidate(input)));
+    expect(stale.kind).toBe('blocked');
+    expect('code' in stale ? stale.code : '').toBe('code_candidate_incomplete');
+
+    // Advanced baseline: the 700 upstream leave the delta; only 11 delivered remain.
+    const advanced = await ensureMissionCodeCompletion({ scope, executionScope: scope, mission, baselineSha: advancedBase,
+      authorSessionIds: [], requiredPaths: delivered }, ports(input => captureWorkingTreeCandidate(input)));
+    expect('code' in advanced ? advanced.code : '').not.toBe('code_candidate_incomplete');
+    expect(mechanical).toHaveBeenCalled();
+  });
 });
 
 

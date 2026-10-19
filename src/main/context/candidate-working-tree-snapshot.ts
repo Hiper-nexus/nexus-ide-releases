@@ -63,10 +63,18 @@ function inCandidateScope(value: string): boolean {
     !value.split('/').slice(0, -1).some((segment) => PROTECTED_DIRECTORIES.has(segment) || SECRET_BASENAME_PATTERN.test(segment));
 }
 
-function candidatePaths(raw: readonly string[]): { paths: string[]; reasons: string[] } {
+function candidatePaths(raw: readonly string[], priority: readonly string[] = []): { paths: string[]; reasons: string[] } {
   const reasons: string[] = [];
   if (raw.some((value) => !isSafeCandidatePath(value))) reasons.push('candidate has unsupported paths');
-  const paths = [...new Set(raw.filter(isSafeCandidatePath))].sort();
+  const sorted = [...new Set(raw.filter(isSafeCandidatePath))].sort();
+  // Prioritários antes do corte, SÓ acima do teto: um entregável declarado nunca
+  // fica fora do mapa de leitura porque o delta estourou o limite de arquivos
+  // (ex.: merge de upstream no meio da missão). Abaixo do teto a ordem — e o
+  // fingerprint — fica intacta.
+  const prefer = sorted.length > MAX_CANDIDATE_FILES ? new Set(priority.filter(isSafeCandidatePath)) : new Set<string>();
+  const paths = prefer.size > 0
+    ? [...sorted.filter((file) => prefer.has(file)), ...sorted.filter((file) => !prefer.has(file))]
+    : sorted;
   for (const file of paths.slice(0, MAX_CANDIDATE_FILES)) if (!inCandidateScope(file)) reasons.push(`candidate content excluded by safety policy: ${file}`);
   if (paths.length > MAX_CANDIDATE_FILES) reasons.push(`candidate file limit ${MAX_CANDIDATE_FILES} reached`);
   return { paths: paths.slice(0, MAX_CANDIDATE_FILES), reasons };
@@ -353,7 +361,7 @@ export async function captureWorkingTreeCandidate(input: {
   }
   // Required artifacts can be unchanged since baseline. Hash them without
   // inventing a Git delta; their coverage is recorded separately below.
-  const readTargets = candidatePaths([...inventory.changedPaths, ...admittedRequired]);
+  const readTargets = candidatePaths([...inventory.changedPaths, ...admittedRequired], admittedRequired);
   const { files, unread, absent, reasons } = await fingerprintFiles(input.scope, { ...inventory, changedPaths: readTargets.paths }, input.signal);
   reasons.push(...required.reasons, ...readTargets.reasons);
   const coveredPaths = Object.freeze(files.map(file => file.path));

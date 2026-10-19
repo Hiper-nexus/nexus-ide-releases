@@ -91,6 +91,17 @@ const MIN_RUN_BUDGET_MS = 3_000;
 /** F-246: comparação com a base só sobe runner com folga real de prazo. */
 const BASE_COMPARE_MIN_BUDGET_MS = 20_000;
 /**
+ * F-1571: arquivos por lote do runner dentro de uma faixa. A faixa inteira
+ * num só processo não termina no prazo do handoff (F-1302: 49 arquivos ≈ 90 s
+ * de vitest) e o portão reportava ZERO testes rodados. Em lotes, cada lote
+ * que TERMINA conta como rodou; o que o prazo não alcança continua notRun.
+ */
+const RUNNER_BATCH_MAX_FILES = 8;
+/** F-1571: custo por arquivo até o 1º lote medir (ms) — chute conservador. */
+const RUNNER_BATCH_ASSUMED_MS_PER_FILE = 2_000;
+/** F-1571: fração do prazo restante que um lote pode usar (o resto é folga). */
+const RUNNER_BATCH_BUDGET_SHARE = 0.5;
+/**
  * F-1533: piso do orçamento que SOBRA para os testes. O mapa de imports lia
  * todo arquivo-fonte do projeto sem prazo nenhum (63 s medidos neste
  * repositório; 6-30 min no campo) e comia o orçamento inteiro do handoff:
@@ -1770,6 +1781,21 @@ function planRunnerGroups(
 }
 
 /**
+ * F-1571: quantos arquivos do lote cabem no prazo que sobrou. O custo por
+ * arquivo é MEDIDO nos lotes que terminaram (o runner não muda de velocidade
+ * entre faixas); sem medição vale o chute. O lote usa no máximo a metade do
+ * prazo restante — a outra metade é a folga caso ele seja mais lento do que a
+ * medição. O portão não raciona testes (decisão do operador): o lote encolhe
+ * para CABER no prazo, nunca para pular teste.
+ */
+function runnerBatchSize(pending: number, remainingMs: number, msPerFile: number | null): number {
+  if (pending <= 0) return 0;
+  const cost = msPerFile !== null && msPerFile > 0 ? msPerFile : RUNNER_BATCH_ASSUMED_MS_PER_FILE;
+  const affordable = Math.floor((remainingMs * RUNNER_BATCH_BUDGET_SHARE) / cost);
+  return Math.max(1, Math.min(RUNNER_BATCH_MAX_FILES, pending, affordable));
+}
+
+/**
  * F-246: "isso já falhava na base?" — os arquivos que falharam e EXISTEM na
  * base do diff rodam de novo num worktree temporário dela, com o mesmo
  * runner/ambiente/sandbox do portão. O `node_modules` do worktree é um link
@@ -2117,6 +2143,24 @@ async function evaluateMappedTests(
     load.offenderUnknown ||
     runnerConfigTouched ||
     (load.offender !== null && changedSet.has(load.offender));
+  /** F-1571: marca no recibo POR QUE um teste não rodou (causa por arquivo). */
+  const markNotRun = (tests: readonly string[], cause: RegressionNotRunCause) => {
+    for (const test of tests) notRunCause.set(test, cause);
+  };
+  /** Falha de carga do runner que o diff não explica vira aviso, não falha. */
+  const attributedLoadFailures = (
+    loads: readonly LoadFailure[],
+    kind: RegressionRunnerKind,
+  ): RegressionTestFailure[] => {
+    const out: RegressionTestFailure[] = [];
+    for (const load of loads) {
+      if (loadAttributable(load)) out.push({ file: load.file, message: load.message });
+      else warnings.push(
+        `${kind} não conseguiu carregar ${load.file} (erro de parse fora do diff — configuração do runner do projeto?)`,
+      );
+    }
+    return out;
+  };
   // Quem entrega responde pelo próprio delta: teste puxado SÓ por WIP que já
   // estava sujo antes do spawn (outro writer, o operador) não o devolve.
   const owned = (test: string) =>
@@ -2129,6 +2173,12 @@ async function evaluateMappedTests(
   let retryable = false;
   let launched = false;
   let executedRunner: RegressionRunnerKind | null = null;
+  /**
+   * F-1571: custo por arquivo do runner, MEDIDO nos lotes que terminaram (ms
+   * por arquivo, startup incluído). Serve para o lote seguinte caber no prazo
+   * que sobrou. `null` = ainda não mediu nada.
+   */
+  let msPerFile: number | null = null;
   // F-1348: faixa por faixa. A retentativa e a comparação com a base das
   // falhas de uma faixa usam o prazo ANTES de a faixa seguinte subir: direto
   // instável ou que já quebrava na base não vira devolução só porque os
@@ -2136,33 +2186,48 @@ async function evaluateMappedTests(
   for (const tierGroups of planned.map((plan) => plan.groups)) {
     const failuresByGroup = new Map<RunnerGroup, RegressionTestFailure[]>();
     for (const group of tierGroups) {
-      if (remaining() < MIN_RUN_BUDGET_MS) {
-        for (const test of group.tests) notRunCause.set(test, launched ? 'test-deadline' : 'map-deadline');
-        warnings.push(`prazo esgotado antes de rodar ${group.tests.length} teste(s) (${group.runner.kind})`);
-        continue;
-      }
-      launched = true;
-      const outcome = await runTests(input.scope, group, remaining(), exec, control);
-      retryable ||= outcome.retryable === true;
-      if (outcome.warning) warnings.push(outcome.warning);
-      for (const file of outcome.ran) ran.add(file);
-      if (outcome.ran.length > 0 || outcome.failures.length > 0 || (outcome.loadFailures?.length ?? 0) > 0) {
-        executedRunner ??= group.runner.kind;
-      }
-      for (const test of group.tests) {
-        if (!outcome.ran.includes(test)) notRunCause.set(test, outcome.timedOut ? 'test-deadline' : 'runner');
-      }
-      const groupFailures = [...outcome.failures];
-      for (const load of outcome.loadFailures ?? []) {
-        if (loadAttributable(load)) {
-          groupFailures.push({ file: load.file, message: load.message });
-        } else {
-          warnings.push(
-            `${group.runner.kind} não conseguiu carregar ${load.file} (erro de parse fora do diff — configuração do runner do projeto?)`,
-          );
+      // F-1571: a faixa inteira num só processo do runner não termina no
+      // prazo do handoff e NADA é reportado (F-1302: 49 arquivos ≈ 90 s de
+      // vitest contra 45 s de orçamento). A faixa vira LOTES, em sequência:
+      // cada lote que TERMINA conta como rodou; o que o prazo não alcança
+      // continua notRun. O portão não raciona testes (decisão do operador) —
+      // o lote encolhe para CABER no prazo que sobrou, nunca para pular teste.
+      let pending = group.tests;
+      while (pending.length > 0) {
+        if (remaining() < MIN_RUN_BUDGET_MS) {
+          markNotRun(pending, launched ? 'test-deadline' : 'map-deadline');
+          warnings.push(`prazo esgotado antes de rodar ${pending.length} teste(s) (${group.runner.kind})`);
+          pending = [];
+          break;
         }
+        const batch: RunnerGroup = {
+          ...group,
+          tests: pending.slice(0, runnerBatchSize(pending.length, remaining(), msPerFile)),
+        };
+        pending = pending.slice(batch.tests.length);
+        launched = true;
+        const batchStartedAt = now();
+        const outcome = await runTests(input.scope, batch, remaining(), exec, control);
+        const elapsed = now() - batchStartedAt;
+        // Só o lote que TERMINOU mede: um lote que venceu o prazo não diz
+        // quanto cada arquivo custa (o runner pode nem ter começado).
+        if (!outcome.timedOut && batch.tests.length > 0) msPerFile = elapsed / batch.tests.length;
+        retryable ||= outcome.retryable === true;
+        if (outcome.warning) warnings.push(outcome.warning);
+        for (const file of outcome.ran) ran.add(file);
+        if (outcome.ran.length > 0 || outcome.failures.length > 0 || (outcome.loadFailures?.length ?? 0) > 0) {
+          executedRunner ??= group.runner.kind;
+        }
+        markNotRun(
+          batch.tests.filter((test) => !outcome.ran.includes(test)),
+          outcome.timedOut ? 'test-deadline' : 'runner',
+        );
+        const groupFailures = [
+          ...outcome.failures,
+          ...attributedLoadFailures(outcome.loadFailures ?? [], group.runner.kind),
+        ];
+        if (groupFailures.length > 0) failuresByGroup.set(batch, groupFailures);
       }
-      if (groupFailures.length > 0) failuresByGroup.set(group, groupFailures);
     }
     // Teste instável (tempo, ordem) não pode barrar entrega: os arquivos que
     // falharam rodam de novo uma vez, sozinhos; só a falha que se repete conta.
