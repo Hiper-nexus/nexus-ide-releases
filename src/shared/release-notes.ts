@@ -11730,7 +11730,7 @@ export const RELEASE_076320: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076321: AppRelease = {
   version: '0.76.321',
   date: '2026-10-19',
   codename: 'Piloto para todas as CLIs no Linux',
@@ -11748,3 +11748,20 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'O pane diz o motivo real', detail: '"Contexto degradado" virou a causa de fato (troca de conta por limite confirmado ou entrega que o Maestro não aceitou), um pane cuja missão não existe mais não diz que ela encerrou com relatório, e quando a verificação automática recusa a conclusão o Quadro mostra que o Maestro está corrigindo.' },
   ],
 };
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.322',
+  date: '2026-10-19',
+  codename: 'Velocidade e detalhes da missão',
+  summary: 'No Quadro, o botão "Ver o que aconteceu" abre a visão de Atividade ampliada, com estado coerente com a barra lateral e layout ajustado para janelas estreitas. No motor, a base da worktree ganha aviso e atualização com throttle de 60 s, o verificador lê entregáveis além do corte de 512 arquivos, o portão de regressão roda testes em lotes, o pane_write comprova entrega e o esforço do revisor fica proporcional.',
+  highlights: [
+    { title: 'Atividade ampliada no Quadro', detail: 'O botão "Ver o que aconteceu" no Quadro da missão agora abre a visão de Atividade detalhada ao concluir ou interromper uma missão. O estado visual fica sincronizado e coerente com o status da barra lateral, e os cards e cabeçalho se ajustam perfeitamente mesmo em janelas estreitas.' },
+    { title: 'Base da worktree com aviso e atualização', detail: 'Antes de congelar a base isolada do writer, o motor atualiza o upstream do origin (com throttle de 60 s por raiz no fetch) e emite aviso explícito caso a branch local não rastreie uma branch remota origin/*.' },
+    { title: 'Entregáveis lidos antes do corte de 512 arquivos', detail: 'No snapshot da árvore de trabalho candidata, entregáveis declarados alfabeticamente além do limite de 512 arquivos continuam sendo lidos e têm fingerprint gerado antes do corte de leitura.' },
+    { title: 'Portão de regressão em lotes', detail: 'A faixa de testes impactados no handoff agora é dividida em lotes calculados dinamicamente com base no tempo restante. Cada lote concluído reporta seu veredito imediatamente, evitando que suítes extensas terminem com 0 testes reportados ao atingir o prazo.' },
+    { title: 'pane_write com recibo de entrega', detail: 'A ferramenta de escrita em terminais (nexus_pane_write) agora emite prova de turno e confirmação de recebimento apenas quando os bytes chegam e o pane está apto a aceitar entrada.' },
+    { title: 'Esforço do revisor proporcional', detail: 'O roteador de tarefas e as regras de modelo reservam o nível de esforço máximo no revisor para tarefas críticas, usando esforço proporcional nos demais níveis para evitar latência desnecessária.' },
+  ],
+  fixes: [],
+};
+
