@@ -1,0 +1,13 @@
+{
+  "name": "nexus-video-engine-hyperframes",
+  "version": "0.8.177",
+  "private": true,
+  "description": "Motor de render de vídeo fixado pelo NexusIDE (estúdio de vídeo, F-1594). Instalado com npm ci --ignore-scripts em <userData>/video-engines.",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "hyperframes": "0.8.177"
+  }
+}

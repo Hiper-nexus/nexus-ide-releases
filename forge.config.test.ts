@@ -272,6 +272,10 @@ describe('agent detection manifests packaging', () => {
     );
   });
 
+  it('ships the pinned video engine lockfile outside the asar (F-1594)', () => {
+    expect(forgeConfig.packagerConfig?.extraResource).toContain('resources/video-engines');
+  });
+
   it('ships the libghostty-vt grid outside the asar on every Forge target', () => {
     expect(forgeConfig.packagerConfig?.extraResource).toContain('resources/ghostty');
   });

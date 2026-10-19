@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  alignScriptWords,
   buildCaptionCues,
   buildNarrationTimeline,
   cuesToSrt,
@@ -105,6 +106,27 @@ describe('buildNarrationTimeline', () => {
 
   it('a duração do áudio vale quando é maior que a última palavra', () => {
     expect(buildNarrationTimeline(paragraphs, timed, 99_000).durationMs).toBe(99_000);
+  });
+});
+
+describe('alignScriptWords', () => {
+  const t = (text: string, startMs: number, endMs: number) => ({ text, startMs, endMs });
+
+  it('a grafia do roteiro vence mesmo quando o áudio quebra uma palavra em duas', () => {
+    const out = alignScriptWords(['Baixe', 'em', 'nexuside.app', 'hoje.'], [
+      t('Baixe', 0, 300), t('em', 320, 400), t('nexuside', 420, 900), t('app', 920, 1200), t('hoje', 1250, 1600),
+    ]);
+    expect(out).toEqual([t('Baixe', 0, 300), t('em', 320, 400), t('nexuside.app', 420, 1200), t('hoje.', 1250, 1600)]);
+  });
+
+  it('uma palavra do áudio que cobre duas do roteiro divide o tempo', () => {
+    const out = alignScriptWords(['co-', 'piloto'], [t('copiloto', 0, 1000)]);
+    expect(out).toEqual([t('co-', 0, 500), t('piloto', 500, 1000)]);
+  });
+
+  it('sem casamento, avança junto; áudio que acaba antes segura o último tempo', () => {
+    expect(alignScriptWords(['Clode'], [t('Claude', 10, 90)])).toEqual([t('Clode', 10, 90)]);
+    expect(alignScriptWords(['a', 'b', 'c'], [t('a', 0, 100)])).toEqual([t('a', 0, 100), t('b', 100, 100), t('c', 100, 100)]);
   });
 });
 

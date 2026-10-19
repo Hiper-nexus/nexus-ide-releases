@@ -315,6 +315,13 @@ describe('confirmationReason', () => {
     );
   });
 
+  it('describes the render project, its risk and destination', () => {
+    const reason = confirmationReason('nexus_video_render', { projectDir: 'promo', output: 'promo/renders/v1.mp4' });
+    expect(reason).toContain('render HyperFrames project promo');
+    expect(reason).toContain('without sandbox');
+    expect(reason).toContain('promo/renders/v1.mp4');
+  });
+
   it('describes music length, kind and destination without leaking the prompt', () => {
     const reason = confirmationReason('nexus_music_generate', {
       prompt: 'trilha secreta',

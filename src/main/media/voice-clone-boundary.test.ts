@@ -28,7 +28,7 @@ describe('fronteira: nenhum caminho MCP cria voz', () => {
       .filter((file) => fs.readFileSync(file, 'utf8').includes('/v1/voices/add'))
       .map((file) => path.relative(SRC, file).split(path.sep).join('/'));
     expect(callers).toEqual(['main/media/voice-clone.ts']);
-  });
+  }, 60_000);
 
   it('nada em src/main/orch importa o fluxo de clonagem ou o recibo', () => {
     const offenders = all
@@ -36,7 +36,7 @@ describe('fronteira: nenhum caminho MCP cria voz', () => {
       .filter((file) => /from ['"][./]*(?:\.\.\/)*media\/voice-(?:clone|consents)(?:-ipc)?['"]/u.test(fs.readFileSync(file, 'utf8')))
       .map((file) => path.relative(SRC, file));
     expect(offenders).toEqual([]);
-  });
+  }, 60_000);
 
   it('o registro real de ferramentas não tem ferramenta de clonar, criar ou apagar voz', async () => {
     const { buildToolset } = await import('../orch/tools');

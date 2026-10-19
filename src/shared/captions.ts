@@ -128,22 +128,103 @@ function endsSentence(word: string): boolean {
   return /[.!?…]["'”’»)\]]*$/u.test(word);
 }
 
+function normWord(text: string): string {
+  return text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/gu, '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, '');
+}
+
+/**
+ * Give every SCRIPT word a time from the timed words, even when the two lists
+ * do not split the same way: a provider (or a recognizer) may split
+ * "nexuside.app" in two, join two words, or drop punctuation. Walks both
+ * lists in order, matching normalized text, merging up to 4 timed words into
+ * one script word or splitting one timed word over up to 4 script words; an
+ * unmatched pair takes the timed word's time and both lists advance.
+ */
+export function alignScriptWords(script: readonly string[], timed: readonly TimedWord[]): TimedWord[] {
+  const out: TimedWord[] = [];
+  if (timed.length === 0) return script.map((text) => ({ text, startMs: 0, endMs: 0 }));
+  let j = 0;
+  let i = 0;
+  const last = timed[timed.length - 1];
+  while (i < script.length) {
+    if (j >= timed.length) {
+      out.push({ text: script[i], startMs: last.endMs, endMs: last.endMs });
+      i += 1;
+      continue;
+    }
+    const target = normWord(script[i]);
+    if (target === normWord(timed[j].text)) {
+      out.push({ text: script[i], startMs: timed[j].startMs, endMs: timed[j].endMs });
+      i += 1;
+      j += 1;
+      continue;
+    }
+    // Several timed words make one script word ("nexuside" + "app").
+    let merged = false;
+    let joined = normWord(timed[j].text);
+    for (let k = j + 1; k < Math.min(timed.length, j + 4) && joined.length < target.length; k += 1) {
+      joined += normWord(timed[k].text);
+      if (joined === target) {
+        out.push({ text: script[i], startMs: timed[j].startMs, endMs: timed[k].endMs });
+        i += 1;
+        j = k + 1;
+        merged = true;
+        break;
+      }
+    }
+    if (merged) continue;
+    // One timed word covers several script words: split its time evenly.
+    const spoken = normWord(timed[j].text);
+    let combined = target;
+    let split = false;
+    for (let m = i + 1; m < Math.min(script.length, i + 4) && combined.length < spoken.length; m += 1) {
+      combined += normWord(script[m]);
+      if (combined === spoken) {
+        const count = m - i + 1;
+        const step = (timed[j].endMs - timed[j].startMs) / count;
+        for (let n = 0; n < count; n += 1) {
+          out.push({
+            text: script[i + n],
+            startMs: Math.round(timed[j].startMs + step * n),
+            endMs: Math.round(timed[j].startMs + step * (n + 1)),
+          });
+        }
+        i = m + 1;
+        j += 1;
+        split = true;
+        break;
+      }
+    }
+    if (split) continue;
+    out.push({ text: script[i], startMs: timed[j].startMs, endMs: timed[j].endMs });
+    i += 1;
+    j += 1;
+  }
+  return out;
+}
+
 /**
  * Build the timeline from the paragraphs of the script and the timed words of
- * the audio. When the provider returns the same number of words, the script's
- * spelling wins; otherwise the aligned text (which is the script text as the
- * provider received it) is kept and the structure is attributed by order.
+ * the audio. The words are always the SCRIPT's words with the script's
+ * spelling; the audio only supplies their times (`alignScriptWords`).
  */
 export function buildNarrationTimeline(
   paragraphs: readonly string[],
-  timed: readonly TimedWord[],
+  timedWords: readonly TimedWord[],
   durationMs: number,
 ): NarrationTimelineBody {
   const expected: Array<{ text: string; paragraph: number }> = [];
   paragraphs.forEach((paragraph, index) => {
     for (const word of scriptWords(paragraph)) expected.push({ text: word, paragraph: index });
   });
-  const sameShape = expected.length === timed.length;
+  const timed = alignScriptWords(
+    expected.map((word) => word.text),
+    timedWords,
+  );
 
   const words: TimelineWord[] = [];
   const sentences: TimelineSentence[] = [];
@@ -151,8 +232,8 @@ export function buildNarrationTimeline(
   let sentenceIndex = 0;
   for (let index = 0; index < timed.length; index += 1) {
     const source = timed[index];
-    const paragraph = expected[Math.min(index, expected.length - 1)]?.paragraph ?? 0;
-    const text = sameShape ? expected[index].text : source.text;
+    const paragraph = expected[index]?.paragraph ?? 0;
+    const text = source.text;
     words.push({
       i: index,
       text,

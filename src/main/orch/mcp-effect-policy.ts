@@ -58,6 +58,8 @@ const READ_ONLY_TOOLS = new Set([
   // F-1591: lista as vozes da conta ElevenLabs do usuário (GET). Nenhuma
   // escrita; clonar voz não tem ferramenta MCP (só a mão humana, por IPC).
   'voice_list',
+  // F-1594: só lê o PATH, versões e pastas; nunca instala nem baixa.
+  'video_doctor',
   // Consulta de memória agentic (C2): leitura FTS local; o único write é o
   // contador de recall no banco de memória em userData (nunca no workspace).
   'memory_recall',
@@ -386,6 +388,8 @@ const EXECUTION_EFFECT_TOOLS = new Set([
   'voiceover_generate',
   // F-1592: música paga (Eleven Music) gravada no workspace.
   'music_generate',
+  // F-1594: renderizar executa o HTML/JS do projeto num Chrome sem sandbox.
+  'video_render',
 ]);
 
 /**

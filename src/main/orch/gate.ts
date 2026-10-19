@@ -156,6 +156,11 @@ function hardenedSpawnPolicy(): boolean {
   }
 }
 
+/** F-1594: o render de vídeo executa código do projeto; no Hardened ele recusa. */
+export function isHardenedPolicyActive(): boolean {
+  return hardenedSpawnPolicy();
+}
+
 
 const NAMESPACE_PREFIXES = ["nexus_"];
 

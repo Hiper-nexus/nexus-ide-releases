@@ -1015,6 +1015,13 @@ function isAllowedChildEnvKey(key: string): boolean {
   );
 }
 
+/** HyperFrames policy every pane carries (F-1594); exported for the env test. */
+export const PANE_VIDEO_ENGINE_ENV: Readonly<Record<string, string>> = {
+  HYPERFRAMES_NO_TELEMETRY: '1',
+  HYPERFRAMES_SKIP_SKILLS: '1',
+  HYPERFRAMES_NO_UPDATE_CHECK: '1',
+};
+
 function baseChildEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(process.env)) {
@@ -1033,6 +1040,11 @@ function baseChildEnv(): NodeJS.ProcessEnv {
   // App GUI (Finder) não herda locale do shell: sem isto o CLI filho roda em
   // locale C e prompts pt-BR viram mojibake no empacotado (bug F, 05/08).
   ensureUtf8Locale(env);
+  // F-1594 (estudo de vídeo §5.2.6): `npx hyperframes` digitado por um agente
+  // não manda telemetria, não instala skills fora do skill-mirror e não checa
+  // atualização. Só as variáveis do próprio HyperFrames: DO_NOT_TRACK mudaria
+  // o comportamento de outras CLIs do pane.
+  Object.assign(env, PANE_VIDEO_ENGINE_ENV);
   return applyPaneTerminalIdentity(env);
 }
 

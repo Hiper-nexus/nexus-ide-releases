@@ -336,6 +336,12 @@ export function confirmationReason(
   if (toolName === 'nexus_audio_generate' || toolName === 'audio_generate') {
     return mediaConfirmation('audio', args);
   }
+  if (toolName === 'nexus_video_render' || toolName === 'video_render') {
+    return (
+      `render HyperFrames project ${safeMediaArg(args.projectDir, 'unknown')} (runs the project's HTML/JS in a ` +
+      `headless Chrome without sandbox; first run installs the pinned engine); output: ${safeMediaArg(args.output, '<project>/renders/<name>.mp4')}`
+    );
+  }
   if (toolName === 'nexus_music_generate' || toolName === 'music_generate') {
     const seconds =
       typeof args.lengthMs === 'number' && Number.isFinite(args.lengthMs)
