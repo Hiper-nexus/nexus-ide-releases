@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { Handoff, Mission } from '../../shared/orch-types';
-import { resolveOpenMissionQuestion } from './mission-open-question';
+import {
+  hasOpenClarifyQuestion,
+  resolveOpenMissionQuestion,
+} from './mission-open-question';
 import {
   projectMissionSnapshot,
   type ProjectMissionSnapshotView,
@@ -279,5 +282,53 @@ describe('resolveOpenMissionQuestion', () => {
         { id: 'opt-2', label: 'Não' },
       ],
     });
+  });
+});
+
+describe('hasOpenClarifyQuestion', () => {
+  const answer: Handoff = {
+    ...questionHandoff('answer-q1', 'm1', 20),
+    sessionId: undefined,
+    fromAgent: 'Operador Nexus',
+    artifacts: [
+      {
+        kind: 'nexus-clarify-answer',
+        schemaVersion: 1,
+        questionId: 'q1',
+        answer: { kind: 'chip', chipId: 'opt-1', value: 'Sim' },
+      },
+    ],
+  };
+  const dismiss: Handoff = {
+    ...questionHandoff('dismiss-q2', 'm1', 20),
+    sessionId: undefined,
+    fromAgent: 'Operador Nexus',
+    artifacts: [
+      { kind: 'nexus-clarify-dismiss', schemaVersion: 1, questionId: 'q2' },
+    ],
+  };
+
+  it('pergunta em aberto da missão conta, mesmo em running', () => {
+    expect(
+      hasOpenClarifyQuestion('m1', [questionHandoff('q1', 'm1', 1)]),
+    ).toBe(true);
+  });
+
+  it('respondida, adiada, consumida ou de outra missão não contam', () => {
+    expect(
+      hasOpenClarifyQuestion('m1', [questionHandoff('q1', 'm1', 1), answer]),
+    ).toBe(false);
+    expect(
+      hasOpenClarifyQuestion('m1', [questionHandoff('q2', 'm1', 1), dismiss]),
+    ).toBe(false);
+    expect(
+      hasOpenClarifyQuestion('m1', [
+        questionHandoff('q3', 'm1', 1, 'consumed'),
+      ]),
+    ).toBe(false);
+    expect(hasOpenClarifyQuestion('m1', [questionHandoff('q9', 'm9', 1)])).toBe(
+      false,
+    );
+    expect(hasOpenClarifyQuestion('m1', [])).toBe(false);
   });
 });

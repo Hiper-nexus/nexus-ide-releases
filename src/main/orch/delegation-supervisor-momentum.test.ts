@@ -13,6 +13,7 @@ const h = vi.hoisted(() => ({
   semantic: vi.fn(
     (_sessionId: string): { status: string; updatedAt: number } | null => null,
   ),
+  awaitingOperator: vi.fn((_sessionId: string) => false),
   delivered: vi.fn(),
   event: vi.fn(),
   judge: vi.fn(),
@@ -48,6 +49,7 @@ vi.mock('../pty/pty-manager', () => ({
 vi.mock('./agent-status', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./agent-status')>()),
   getAgentSemanticStatusBySession: h.semantic,
+  isAgentAwaitingOperator: h.awaitingOperator,
 }));
 vi.mock('./idle-delivery', () => ({
   onHandoffSubmitted: h.delivered,
@@ -86,6 +88,7 @@ import {
   reconcileDelegationSupervisor,
   shutdownDelegationSupervisor,
 } from './delegation-supervisor';
+import { MOMENTUM_OPERATOR_WAIT_CEILING_MS } from './mission-momentum-watchdog';
 
 const NOW = 200_000_000;
 let directory = '',
@@ -95,6 +98,7 @@ beforeEach(async () => {
   await shutdownDelegationSupervisor();
   h.panes = [];
   h.semantic.mockReset();
+  h.awaitingOperator.mockReset().mockReturnValue(false);
   h.delivered.mockClear();
   h.event.mockClear();
   h.judge.mockReset().mockResolvedValue({ kind: 'skipped' });
@@ -198,6 +202,40 @@ function setup(
     await reconcileDelegationSupervisor(clock);
   };
   return { mission, tasks, handoffs, notices, scan, suite };
+}
+
+/** O Maestro perguntou via nexus_clarify: o ledger durável tem a questão. */
+function askOperator(c: ReturnType<typeof setup>) {
+  return c.handoffs.submit({
+    missionId: c.mission.id,
+    sessionId: 'leader-session',
+    fromAgent: 'Maestro',
+    status: 'progress',
+    summary: 'Pergunta ao operador: Qual caminho?',
+    artifacts: [
+      {
+        kind: 'nexus-clarify-question',
+        schemaVersion: 1,
+        clarify: {
+          question: 'Qual caminho?',
+          chips: [
+            { id: 'opt-1', label: 'Sim' },
+            { id: 'opt-2', label: 'Não' },
+          ],
+          allowFreeform: false,
+        },
+      },
+    ],
+  });
+}
+
+function reminderEvents(c: ReturnType<typeof setup>) {
+  return h.event.mock.calls.filter(
+    ([scope, input]) =>
+      scope === c.suite.scope &&
+      (input as { payload?: { kind?: string } }).payload?.kind ===
+        'momentum-awaiting-operator',
+  );
 }
 
 describe('real supervisor momentum queue', () => {
@@ -427,5 +465,103 @@ describe('real supervisor momentum queue', () => {
     await c.scan(3615000);
     await c.scan(3650000);
     expect(c.notices()).toHaveLength(0);
+  });
+
+  // O Maestro perguntou e parou: empurrá-lo de novo a cada hora é ruído no
+  // turno dele. A espera termina quando o operador responde (aqui: "agora
+  // não"), e o nudge volta ao normal.
+  it('a pending clarify silences the solo nudge until the operator answers', async () => {
+    const c = setup();
+    h.panes = h.panes.slice(0, 1);
+    const question = askOperator(c);
+    await c.scan(0);
+    await c.scan(20 * 60_000);
+    await c.scan(60 * 60_000);
+    expect(c.notices()).toHaveLength(0);
+    expect(h.delivered).not.toHaveBeenCalled();
+    c.handoffs.submit({
+      missionId: c.mission.id,
+      fromAgent: 'Operador Nexus',
+      status: 'progress',
+      summary: 'Operador adiou a pergunta "Qual caminho?" (agora não).',
+      artifacts: [
+        {
+          kind: 'nexus-clarify-dismiss',
+          schemaVersion: 1,
+          questionId: question.id,
+        },
+      ],
+    });
+    await c.scan(61 * 60_000);
+    expect(c.notices()).toHaveLength(1);
+    expect(c.notices()[0].summary).toContain('Esteira parada');
+    expect(h.delivered).toHaveBeenCalledTimes(1);
+  });
+
+  it('an awaiting-input latch on the Maestro silences the nudge; released, it returns', async () => {
+    const c = setup();
+    h.panes = h.panes.slice(0, 1);
+    h.awaitingOperator.mockImplementation(
+      (sessionId) => sessionId === 'leader-session',
+    );
+    await c.scan(0);
+    await c.scan(20 * 60_000);
+    expect(c.notices()).toHaveLength(0);
+    h.awaitingOperator.mockReturnValue(false);
+    await c.scan(21 * 60_000);
+    expect(c.notices()).toHaveLength(1);
+    expect(c.notices()[0].summary).toContain('Esteira parada');
+  });
+
+  // Teto longo: no máximo UM lembrete, ao OPERADOR (jornal de eventos — nunca
+  // um handoff pasteado no PTY do Maestro).
+  it('six hours of operator wait: one operator reminder, never a Maestro nudge', async () => {
+    const c = setup();
+    h.panes = h.panes.slice(0, 1);
+    askOperator(c);
+    await c.scan(0);
+    await c.scan(MOMENTUM_OPERATOR_WAIT_CEILING_MS - 60_000);
+    expect(reminderEvents(c)).toHaveLength(0);
+    expect(c.notices()).toHaveLength(0);
+    await c.scan(MOMENTUM_OPERATOR_WAIT_CEILING_MS);
+    expect(reminderEvents(c)).toHaveLength(1);
+    expect(c.notices()).toHaveLength(0);
+    expect(h.delivered).not.toHaveBeenCalled();
+    await c.scan(MOMENTUM_OPERATOR_WAIT_CEILING_MS + 60 * 60_000);
+    await c.scan(MOMENTUM_OPERATOR_WAIT_CEILING_MS * 2);
+    expect(reminderEvents(c)).toHaveLength(1);
+  });
+
+  it('a new operator wait after the answer starts a fresh episode and can remind again', async () => {
+    const c = setup();
+    h.panes = h.panes.slice(0, 1);
+    const question = askOperator(c);
+    await c.scan(0);
+    await c.scan(MOMENTUM_OPERATOR_WAIT_CEILING_MS);
+    expect(reminderEvents(c)).toHaveLength(1);
+    expect(c.notices()).toHaveLength(0);
+    c.handoffs.submit({
+      missionId: c.mission.id,
+      fromAgent: 'Operador Nexus',
+      status: 'progress',
+      summary: 'Resposta humana à pergunta "Qual caminho?": Sim.',
+      artifacts: [
+        {
+          kind: 'nexus-clarify-answer',
+          schemaVersion: 1,
+          questionId: question.id,
+          answer: { kind: 'chip', chipId: 'opt-1', value: 'Sim' },
+        },
+      ],
+    });
+    const afterAnswer = MOMENTUM_OPERATOR_WAIT_CEILING_MS + 60_000;
+    await c.scan(afterAnswer);
+    expect(c.notices()).toHaveLength(1);
+    expect(reminderEvents(c)).toHaveLength(1);
+    askOperator(c);
+    const secondWaitStart = afterAnswer + 60_000;
+    await c.scan(secondWaitStart);
+    await c.scan(secondWaitStart + MOMENTUM_OPERATOR_WAIT_CEILING_MS);
+    expect(reminderEvents(c)).toHaveLength(2);
   });
 });
