@@ -252,35 +252,6 @@ describe("scoped handoff store", () => {
     ).toHaveLength(1);
   });
 
-  it("replaces only the matching pending background regression artifact", () => {
-    const runtimeManager = manager();
-    const scope = testProjectScope();
-    const handoffs = createScopedHandoffStore(runtimeManager, scope, {
-      idFactory: () => "handoff-regression-background",
-    });
-    const handoff = handoffs.submit({
-      status: "success",
-      summary: "Entrega persistida enquanto a verificação de regressão termina.",
-      artifacts: [{
-        kind: "nexus.regressionGate",
-        payload: { status: "running", runId: "gate-1" },
-      }],
-    });
-
-    expect(handoffs.replaceBackgroundRegressionArtifact(handoff.id, "other", {
-      kind: "nexus.regressionGate", payload: { status: "passed", runId: "other" },
-    })).toBe(false);
-    expect(handoffs.replaceBackgroundRegressionArtifact(handoff.id, "gate-1", {
-      kind: "nexus.regressionGate", payload: { status: "passed", runId: "gate-1", testsRun: ["src/a.test.ts"] },
-    })).toBe(true);
-    expect(handoffs.list({ includeDelivered: true })[0]?.artifacts).toEqual([
-      { kind: "nexus.regressionGate", payload: { status: "passed", runId: "gate-1", testsRun: ["src/a.test.ts"] } },
-    ]);
-    expect(handoffs.replaceBackgroundRegressionArtifact(handoff.id, "gate-1", {
-      kind: "nexus.regressionGate", payload: { status: "failed", runId: "gate-1" },
-    })).toBe(false);
-  });
-
   it("list-ack does not steal queued handoffs from idle-delivery", () => {
     const runtimeManager = manager();
     const scope = testProjectScope();

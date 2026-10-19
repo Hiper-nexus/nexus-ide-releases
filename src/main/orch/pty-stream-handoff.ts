@@ -61,11 +61,7 @@ import {
 import { evaluateWriterHandoffRegression } from "./handoff-regression-gate";
 import { captureWriterHandoffCheckpoint } from "./handoff-checkpoint";
 import { normalizeFilesModified } from "./worker-files-modified";
-import {
-  REGRESSION_UNVERIFIED_PREFIX,
-  settleBackgroundRegressionGate,
-  type RegressionHandoffVerdict,
-} from "../regression-gate/regression-gate-handoff";
+import { REGRESSION_UNVERIFIED_PREFIX } from "../regression-gate/regression-gate-handoff";
 import {
   mechanicalHandoffReviewOutcome,
   reviewMissionHandoff,
@@ -172,7 +168,6 @@ interface PreparedPtyHandoff {
   /** O que é persistido: `payload` depois do portão de regressão. */
   readonly status: PtyStreamHandoffPayload["status"];
   readonly artifacts: readonly unknown[];
-  readonly regression: RegressionHandoffVerdict | null;
   readonly rawArgs: PtyStreamHandoffPayload;
   readonly rawPayloadSha256: string;
   readonly summary: string;
@@ -397,7 +392,6 @@ async function preparePtyHandoff(
           declaredFiles,
           mission,
           returnable: false,
-          background: true,
         })
       : null;
   if (regression?.kind === "exhausted") {
@@ -481,7 +475,6 @@ async function preparePtyHandoff(
     artifacts: [...payload.artifacts, ...regressionArtifact, ...jevOutcome.artifacts,
       ...(visual?.required ? [{ kind: 'nexus.visualVerification', payload: visual }] : []),
       ...(checkpointArtifact ? [checkpointArtifact] : [])],
-    regression,
     rawArgs,
     rawPayloadSha256: handoffRawPayloadSha256(rawArgs),
     summary,
@@ -553,7 +546,7 @@ function commitPhysicalPtyHandoff(
     ctx.workerIncarnationId &&
     (dispatch.state === "running" || !dispatchDeliveredBefore)
   ) {
-    const committed = suite.handoffs.submitFromPhysicalAgentBoundaryAndTransitionDispatch(
+    return suite.handoffs.submitFromPhysicalAgentBoundaryAndTransitionDispatch(
       handoffInput,
       physicalReceipt,
       provenance,
@@ -564,8 +557,6 @@ function commitPhysicalPtyHandoff(
       },
       attestation,
     );
-    if (!committed.replayed) settleBackgroundRegressionGate(prepared.regression ?? { kind: 'skipped', reason: 'not-run' }, committed.handoff.id, suite.handoffs);
-    return committed;
   }
   const committed = suite.handoffs.submitFromPhysicalAgentBoundaryWithReplay(
     handoffInput,
@@ -573,7 +564,6 @@ function commitPhysicalPtyHandoff(
     provenance,
     attestation,
   );
-  if (!committed.replayed) settleBackgroundRegressionGate(prepared.regression ?? { kind: 'skipped', reason: 'not-run' }, committed.handoff.id, suite.handoffs);
   return {
     handoff: committed.handoff,
     replayed: committed.replayed,
