@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectExecutionScope } from "../../shared/types";
 import {
   AsyncProcessGitRunner,
@@ -61,9 +61,9 @@ describe("refreshUpstreamDriftAsync", () => {
     expect(runner.called("fetch")).toBe(false);
   });
 
-  it("upstream fora do origin: não busca", async () => {
+  it("upstream fora do origin (e nenhuma ref do origin presente): não busca", async () => {
     const runner = new ScriptedRunner((args) =>
-      args[0] === "rev-parse" ? ok("upstream/main\n") : null,
+      args[0] === "rev-parse" && args.includes("@{upstream}") ? ok("upstream/main\n") : null,
     );
     const drift = await refreshUpstreamDriftAsync(runner, "/repo");
     expect(drift.upstream).toBeNull();
@@ -189,6 +189,72 @@ describe("refreshUpstreamDriftAsync", () => {
     const drift = await refreshUpstreamDriftAsync(runner, "/repo");
     expect(drift.fastForwarded).toBe(false);
     expect(drift.behind).toBe(3);
+  });
+
+  it("branch sem upstream origin/*, com origin/HEAD: mede para o aviso, NUNCA faz ff", async () => {
+    const runner = new ScriptedRunner((args) => {
+      if (args[0] === "rev-parse" && args.includes("@{upstream}")) return null;
+      if (args[0] === "rev-parse" && args.includes("--verify")) return ok("a".repeat(40) + "\n");
+      if (args[0] === "fetch") return ok();
+      if (args[0] === "rev-list") return ok("0\t309\n");
+      if (args[0] === "status") return ok("");
+      return null;
+    });
+    const drift = await refreshUpstreamDriftAsync(runner, "/repo");
+    expect(drift.upstream).toBe("origin/HEAD");
+    expect(drift.behind).toBe(309);
+    expect(drift.fetched).toBe(true);
+    expect(drift.fastForwarded).toBe(false);
+    expect(runner.called("fetch")).toBe(true);
+    expect(runner.called("merge")).toBe(false);
+  });
+
+  it("fallback sem origin/HEAD usa origin/main", async () => {
+    const runner = new ScriptedRunner((args) => {
+      if (args[0] === "rev-parse" && args.includes("@{upstream}")) return null;
+      if (args[0] === "rev-parse" && args.some((a) => a.startsWith("refs/remotes/origin/HEAD"))) return failed(128);
+      if (args[0] === "rev-parse" && args.some((a) => a.startsWith("refs/remotes/origin/main"))) return ok("b".repeat(40) + "\n");
+      if (args[0] === "fetch") return ok();
+      if (args[0] === "rev-list") return ok("1\t7\n");
+      return null;
+    });
+    const drift = await refreshUpstreamDriftAsync(runner, "/repo");
+    expect(drift.upstream).toBe("origin/main");
+    expect(drift.behind).toBe(7);
+    expect(drift.fastForwarded).toBe(false);
+    expect(runner.called("merge")).toBe(false);
+  });
+
+  it("sem upstream e sem refs do origin: estacionário, sem fetch", async () => {
+    const runner = new ScriptedRunner(() => null);
+    const drift = await refreshUpstreamDriftAsync(runner, "/repo");
+    expect(drift).toEqual({
+      upstream: null,
+      behind: 0,
+      ahead: 0,
+      fetched: false,
+      fastForwarded: false,
+    });
+    expect(runner.called("fetch")).toBe(false);
+  });
+
+  it("skipFetch (throttle do manager): não busca, mas mede e ainda pode ff", async () => {
+    const runner = new ScriptedRunner((args) => {
+      if (args[0] === "rev-parse") return ok("origin/main\n");
+      if (args[0] === "rev-list") return ok("0\t3\n");
+      if (args[0] === "status") return ok("");
+      if (args[0] === "merge") return ok();
+      return null;
+    });
+    const drift = await refreshUpstreamDriftAsync(runner, "/repo", { skipFetch: true });
+    expect(runner.called("fetch")).toBe(false);
+    expect(drift).toEqual({
+      upstream: "origin/main",
+      behind: 0,
+      ahead: 0,
+      fetched: false,
+      fastForwarded: true,
+    });
   });
 });
 
@@ -373,5 +439,68 @@ describe("WorktreeManager.create — refresh do upstream antes de congelar a bas
     });
     expect(asyncGit.fetchCalls).toBe(0);
     expect(record.baseSha).toBe(shaA);
+  });
+
+  it("throttle por raiz: o 2º create em menos de 60 s não refaz o fetch", async () => {
+    const { shaB } = parkBehindOrigin();
+    const asyncGit = new FetchStubRunner();
+    let now = 1_700_000_000_000;
+    const manager = new WorktreeManager({
+      runtimeRoot,
+      stateStore: new MemoryWorktreeStateStore(),
+      gitRunner: new ProcessGitRunner(),
+      asyncGitRunner: asyncGit,
+      now: () => now,
+    });
+    const first = await manager.create({
+      scope: scope(), missionId: "upstream", taskId: "throttle-1", workerId: "worker",
+      ownership: { files: ["src/t1.ts"], symbols: [], domains: [] },
+    });
+    expect(asyncGit.fetchCalls).toBe(1);
+    expect(first.baseSha).toBe(shaB);
+
+    now += 30_000; // 30 s depois do fetch: throttle dispensa o 2º fetch
+    const second = await manager.create({
+      scope: scope(), missionId: "upstream", taskId: "throttle-2", workerId: "worker",
+      ownership: { files: ["src/t2.ts"], symbols: [], domains: [] },
+    });
+    expect(asyncGit.fetchCalls).toBe(1);
+    expect(second.baseSha).toBe(shaB);
+
+    // 61 s depois do fetch, com o origin avançado de novo: busca e faz ff.
+    now += 31_000;
+    write("src/c.ts", "export const c = 3;\n");
+    git(root, "add", ".");
+    git(root, "commit", "-m", "C");
+    const shaC = git(root, "rev-parse", "HEAD");
+    git(root, "update-ref", "refs/remotes/origin/main", shaC);
+    git(root, "reset", "--hard", shaB);
+    const third = await manager.create({
+      scope: scope(), missionId: "upstream", taskId: "throttle-3", workerId: "worker",
+      ownership: { files: ["src/t3.ts"], symbols: [], domains: [] },
+    });
+    expect(asyncGit.fetchCalls).toBe(2);
+    expect(third.baseSha).toBe(shaC);
+  });
+
+  it("branch de feature sem upstream origin/*: mede contra origin/main, avisa e NUNCA faz ff", async () => {
+    const { shaA } = parkBehindOrigin();
+    git(root, "switch", "-c", "feature/sem-upstream");
+    const asyncGit = new FetchStubRunner();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const record = await managerWith(asyncGit).create({
+        scope: scope(), missionId: "upstream", taskId: "feature", workerId: "worker",
+        ownership: { files: ["src/feature.ts"], symbols: [], domains: [] },
+      });
+      expect(asyncGit.fetchCalls).toBe(1);
+      // A branch do operador não é tocada: base e HEAD ficam no commit local.
+      expect(record.baseSha).toBe(shaA);
+      expect(git(root, "rev-parse", "HEAD")).toBe(shaA);
+      expect(git(root, "symbolic-ref", "--quiet", "HEAD")).toBe("refs/heads/feature/sem-upstream");
+      expect(warnSpy.mock.calls.some((args) => args.map(String).join(" ").includes("1 commits atrás de origin/main"))).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });

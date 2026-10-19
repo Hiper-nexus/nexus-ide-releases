@@ -84,6 +84,8 @@ export {
 } from "./worktree-manager-markers";
 
 const MAX_CAS_ATTEMPTS = 16;
+/** Refresh da base: um fetch do upstream por raiz a cada 60 s no máximo. */
+const UPSTREAM_FETCH_THROTTLE_MS = 60_000;
 /** Remover ~2 GB de node_modules clonado passa fácil dos 30 s padrão do Git. */
 const WORKTREE_REMOVE_TIMEOUT_MS = 10 * 60_000;
 /**
@@ -197,6 +199,8 @@ export class WorktreeManager {
   /** Ordem do último exame por taskKey: mantidos não bloqueiam o teto. */
   readonly #lastExamined = new Map<string, number>();
   #examinations = 0;
+  /** Último fetch do upstream bem-sucedido por raiz (throttle do refresh da base). */
+  readonly #upstreamFetchAt = new Map<string, number>();
   readonly #now: () => number;
 
   constructor(options: WorktreeManagerOptions) {
@@ -361,10 +365,18 @@ export class WorktreeManager {
     // A base congela o HEAD local; sem refresh ela nasce N commits atrás de
     // origin/main (só o nexus_git_sync manual buscava). O fetch só toca
     // refs/remotes/origin/* e é absorvido em falha de rede; o ff-only exige
-    // árvore limpa e histórico estritamente atrás. Nunca destrói WIP.
-    const drift = await refreshUpstreamDriftAsync(this.#asyncGit, input.scope.rootRealPath);
+    // branch rastreando origin/*, árvore limpa e histórico estritamente atrás.
+    // Nunca destrói WIP. Throttle por raiz: um fetch bem-sucedido há menos de
+    // 60 s dispensa o próximo (a medição e o aviso continuam, custo local).
+    const rootRealPath = input.scope.rootRealPath;
+    const lastFetchAt = this.#upstreamFetchAt.get(rootRealPath);
+    const skipFetch =
+      lastFetchAt !== undefined &&
+      this.#now() - lastFetchAt < UPSTREAM_FETCH_THROTTLE_MS;
+    const drift = await refreshUpstreamDriftAsync(this.#asyncGit, rootRealPath, { skipFetch });
     assertCurrentAuthority();
-    if (drift.fetched && drift.upstream !== null && drift.behind > 0) {
+    if (drift.fetched) this.#upstreamFetchAt.set(rootRealPath, this.#now());
+    if (drift.upstream !== null && drift.behind > 0) {
       console.warn(
         `[worktree-runtime] checkout ${drift.behind} commits atrás de ${drift.upstream}; ` +
           "a base do writer nasce do HEAD local. Sincronize com nexus_git_sync.",
