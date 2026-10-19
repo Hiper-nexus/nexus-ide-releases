@@ -3,7 +3,8 @@
 Decisão do operador em 19/10/2026: o YubiKey substitui o eSigner da SSL.com, que
 saiu do fluxo em 05/10 por cobrar cada assinatura (a build assina dezenas de
 arquivos). Não é o eSigner religado: a chave mora no token, não na nuvem, e
-assinar não gera cobrança.
+assinar não gera cobrança. **Regra: todo app Windows assinado (NexusIDE, Nexus
+Shot e os que vierem) usa este YubiKey.**
 
 ## Estado
 
@@ -132,7 +133,8 @@ npm run make -- --platform win32 --arch x64
 ## Renovação e troca de chave
 
 - Certificado novo sobre a mesma chave (renovação anual): importe no slot 9a e
-  troque só o `certificateSha1`.
+  troque só o `certificateSha1`, aqui e no `src-tauri/windows-signing-identity.json`
+  do Nexus Shot (os dois repositórios fixam a mesma identidade).
 - Chave nova (outro YubiKey ou slot regenerado): nova atestação, novo pedido de
   reemissão, e o `spkiSha256` do JSON muda junto com o thumbprint, revisados no
   mesmo commit.
@@ -145,7 +147,7 @@ npm run make -- --platform win32 --arch x64
 | Redline no Windows (`resources\nexus-redline\NexusRedline.exe`) | Sim | Vai dentro do pacote do NexusIDE e é assinado na mesma chamada (conferido em 19/10: `Valid`, `41BB4AFD…`) |
 | Instalador Squirrel (`Setup.exe`, `Update.exe`, stub) | Sim | O Squirrel assina na mesma build; o recibo confere os quatro executáveis |
 | `d3dcompiler_47.dll`, `dxil.dll` | Não precisa | Já vêm assinadas pela Microsoft no Electron |
-| Nexus Shot (repo `nexus-shot`, Tauri, NSIS) | **Ainda não** | Repositório próprio; o `tauri.conf.json` não tem assinatura Windows e o instalador público do v0.1.15 saiu sem assinatura. Ligar exige `bundle.windows.certificateThumbprint` = `41BB4AFD0B69AA7B8B88F732E66808A2A5B93560`, `digestAlgorithm: sha256` e `timestampUrl` RFC 3161 num `tauri.windows.conf.json`, o minidriver e o PIN como aqui |
+| Nexus Shot (repo `nexus-shot`, Tauri, NSIS) | Sim, desde 19/10 (branch `feat/windows-port`, `3c76ad9`) | `src-tauri/tauri.windows.conf.json` → `scripts/windows-sign.ps1` com a mesma identidade fixada (`src-tauri/windows-signing-identity.json`); 8 PINs no primeiro build e 3 nos seguintes (plugins do NSIS em cache). Runbook: `docs/windows-signing.md` do Shot. O instalador público do v0.1.15 (0.1.13) é anterior e saiu sem assinatura |
 | NexusIDE no macOS / Redline do Mac / Shot no Mac | Outro caminho | Developer ID + notarização (`build/notarize.md`, `docs/RELEASE.md`) |
 | NexusIDE no Linux | Outro caminho | Ed25519 do `.sig` (F-940, `docs/RELEASE.md`) |
 
