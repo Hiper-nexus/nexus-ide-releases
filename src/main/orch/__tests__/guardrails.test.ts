@@ -328,6 +328,15 @@ describe('confirmationReason', () => {
     expect(reason).toContain('promo/renders/v1.mp4');
   });
 
+  it('names every network and the variant count (F-1605)', () => {
+    expect(confirmationReason('nexus_video_export', { input: 'promo/renders/a.mp4', presets: ['vertical-9x16', 'youtube-16x9'] })).toContain(
+      'for vertical-9x16, youtube-16x9',
+    );
+    expect(confirmationReason('nexus_video_render', { projectDir: 'promo', variants: [{ name: 'a' }, { name: 'b' }] })).toContain(
+      'promo in 2 variants',
+    );
+  });
+
   it('describes the site capture by origin only, never the query (F-1604)', () => {
     const reason = confirmationReason('nexus_video_capture', { url: 'https://agendify.com.br/precos?ref=abc', outDir: 'capture/a' });
     expect(reason).toContain('capture public site https://agendify.com.br');

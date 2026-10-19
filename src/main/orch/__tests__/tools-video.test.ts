@@ -3,6 +3,7 @@ import { effectPolicyForTool, isToolAllowedForReadOnlyContext } from '../mcp-eff
 
 const mocks = vi.hoisted(() => ({
   render: vi.fn(async (..._args: unknown[]) => ({ ok: false, error: 'stub' })),
+  exportVideo: vi.fn(async (request: { preset: string }) => ({ ok: true, files: { video: `${request.preset}.mp4` } })),
   doctor: vi.fn(async (..._args: unknown[]) => ({ ok: true, engine: { name: 'hyperframes', version: '0.8.177' }, checks: [], node: null })),
 }));
 
@@ -13,7 +14,11 @@ vi.mock('../../path-resolver', async (importOriginal) => ({
   getEffectivePath: () => '/bin',
   lookupInPath: () => null,
 }));
-vi.mock('../../video/video-render', () => ({ renderVideo: mocks.render }));
+vi.mock('../../video/video-render', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../video/video-render')>()),
+  renderVideo: mocks.render,
+}));
+vi.mock('../../video/video-export', () => ({ exportVideo: mocks.exportVideo }));
 vi.mock('../../video/video-doctor', () => ({ runVideoDoctor: mocks.doctor }));
 
 import { buildVideoTools } from '../tools-video';
@@ -75,5 +80,32 @@ describe('ferramentas de vídeo', () => {
     const report = await tool('nexus_video_doctor').handler({}, ctx);
     expect(report).toEqual({ ok: true, engine: { name: 'hyperframes', version: '0.8.177' }, checks: [] });
     expect(mocks.doctor.mock.calls[0][0]).toMatchObject({ workspaceDir: '/workspace', userData: '/user-data' });
+  });
+
+  it('render repassa composição, variáveis e variantes; export aceita a lista de redes (F-1605)', async () => {
+    mocks.render.mockClear();
+    await tool('nexus_video_render').handler(
+      {
+        projectDir: 'promo',
+        variants: [{ name: 'vertical-pt', variables: { lang: 'pt' } }, { name: 'wide-pt', composition: 'compositions/wide.html' }],
+      },
+      ctx,
+    );
+    expect(mocks.render.mock.calls[0][0]).toMatchObject({
+      variants: [{ name: 'vertical-pt', variables: { lang: 'pt' } }, { name: 'wide-pt', composition: 'compositions/wide.html' }],
+    });
+    await expect(tool('nexus_video_render').handler({ projectDir: 'promo', variants: 'x' }, ctx)).rejects.toThrow(/lista/u);
+    await expect(tool('nexus_video_render').handler({ projectDir: 'promo', variables: [1] }, ctx)).rejects.toThrow(/objeto/u);
+
+    const many = (await tool('nexus_video_export').handler(
+      { input: 'promo/renders/a.mp4', presets: ['vertical-9x16', 'youtube-16x9', 'vertical-9x16'] },
+      ctx,
+    )) as { ok: boolean; exports: Array<{ preset: string }> };
+    expect(many.ok).toBe(true);
+    expect(many.exports.map((item) => item.preset)).toEqual(['vertical-9x16', 'youtube-16x9']);
+    const single = await tool('nexus_video_export').handler({ input: 'promo/renders/a.mp4', preset: 'square-1x1' }, ctx);
+    expect(single).toEqual({ ok: true, files: { video: 'square-1x1.mp4' } });
+    await expect(tool('nexus_video_export').handler({ input: 'a.mp4', presets: ['tiktok'] }, ctx)).rejects.toThrow(/desconhecido/u);
+    await expect(tool('nexus_video_export').handler({ input: 'a.mp4' }, ctx)).rejects.toThrow(/preset ou presets/u);
   });
 });

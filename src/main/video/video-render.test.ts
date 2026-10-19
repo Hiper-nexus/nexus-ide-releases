@@ -182,9 +182,10 @@ describe('renderVideo', () => {
 
   it('saída fora do workspace ou que não é mp4 é recusada', async () => {
     hyperframesProject();
-    await expect(
-      renderVideo({ projectDir: 'promo', output: '../fora.mp4', baseDir: workspace, scope }, deps()),
-    ).rejects.toThrow(/escapa o workspace/u);
+    expect(await renderVideo({ projectDir: 'promo', output: '../fora.mp4', baseDir: workspace, scope }, deps())).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/escapa o workspace/u),
+    });
     expect(await renderVideo({ projectDir: 'promo', output: 'a.mov', baseDir: workspace, scope }, deps())).toMatchObject({
       ok: false,
     });
@@ -331,5 +332,112 @@ describe('runVideoDoctor', () => {
     expect(byId.node).toMatchObject({ ok: false, fix: 'brew install node' });
     expect(byId.disk.ok).toBe(false);
     expect(byId['path-length']).toBeUndefined();
+  });
+});
+
+describe('renderVideo: variantes de formato e idioma (F-1605)', () => {
+  function variantProject(): string {
+    const project = hyperframesProject();
+    fs.mkdirSync(path.join(project, 'compositions'));
+    fs.writeFileSync(path.join(project, 'compositions', 'wide.html'), '<div data-composition-id="wide"></div>');
+    return project;
+  }
+
+  /** Fake engine: --batch writes one file per row from the {index} template, plus its manifest. */
+  function batchRun(calls: OwnedProcessOptions[], options: { failRow?: number } = {}) {
+    return async (opts: OwnedProcessOptions): Promise<OwnedProcessResult> => {
+      calls.push(opts);
+      const output = opts.args[opts.args.indexOf('--output') + 1];
+      const batchIndex = opts.args.indexOf('--batch');
+      if (batchIndex > 0) {
+        const rows = JSON.parse(fs.readFileSync(opts.args[batchIndex + 1], 'utf8')) as unknown[];
+        rows.forEach((_row, index) => {
+          opts.onLine?.(`Batch row ${index}: ${output.replace('{index}', String(index))}`, 'stdout');
+          opts.onLine?.('@hf-progress {"pct":100}', 'stdout');
+          if (index !== options.failRow) fs.writeFileSync(output.replace('{index}', String(index)), 'mp4');
+        });
+        fs.writeFileSync(path.join(path.dirname(output), 'manifest.json'), '{}');
+        return { exitCode: options.failRow === undefined ? 0 : 1, timedOut: false, aborted: false, tail: [] };
+      }
+      opts.onLine?.('@hf-progress {"pct":100}', 'stdout');
+      fs.writeFileSync(output, 'mp4');
+      return { exitCode: 0, timedOut: false, aborted: false, tail: [] };
+    };
+  }
+
+  it('variantes da mesma composição saem num --batch; outro formato é outro render; tudo com o nome da variante', async () => {
+    const project = variantProject();
+    const calls: OwnedProcessOptions[] = [];
+    const progress: number[] = [];
+    const d = deps({ run: batchRun(calls) });
+    const result = await renderVideo(
+      {
+        projectDir: 'promo',
+        baseDir: workspace,
+        scope,
+        onProgress: (p) => progress.push(p.pct),
+        variants: [
+          { name: 'vertical-pt', variables: { lang: 'pt' } },
+          { name: 'wide-pt', composition: 'compositions/wide.html' },
+          { name: 'vertical-en', variables: { lang: 'en' } },
+        ],
+      },
+      d,
+    );
+    if (!result.ok) throw new Error(result.error);
+    expect(calls).toHaveLength(2);
+    expect(d.permitRequests).toHaveLength(1);
+    const [batchCall, wideCall] = calls;
+    expect(batchCall.args).toContain('--batch');
+    expect(batchCall.args).not.toContain('--composition');
+    expect(wideCall.args).toEqual(expect.arrayContaining(['--composition', 'compositions/wide.html']));
+    expect(wideCall.args).not.toContain('--batch');
+    const renders = path.join(fs.realpathSync(project), 'renders');
+    expect(result.variants?.map((item) => item.name)).toEqual(['vertical-pt', 'wide-pt', 'vertical-en']);
+    expect(result.variants?.every((item) => item.ok)).toBe(true);
+    expect(fs.readdirSync(renders).sort()).toEqual([
+      'promo-vertical-en-20261019-170509.mp4',
+      'promo-vertical-pt-20261019-170509.mp4',
+      'promo-wide-pt-20261019-170509.mp4',
+    ]);
+    expect(result.path).toBe(path.join(renders, 'promo-vertical-pt-20261019-170509.mp4'));
+    expect(fs.readdirSync(videoEnginePaths(userData).workDir).filter((name) => name.startsWith('batch-'))).toEqual([]);
+    expect(Math.max(...progress)).toBe(100);
+  });
+
+  it('uma linha do lote que falha não derruba as outras', async () => {
+    variantProject();
+    const calls: OwnedProcessOptions[] = [];
+    const result = await renderVideo(
+      {
+        projectDir: 'promo',
+        baseDir: workspace,
+        scope,
+        variants: [
+          { name: 'pt', variables: { lang: 'pt' } },
+          { name: 'en', variables: { lang: 'en' } },
+        ],
+      },
+      deps({ run: batchRun(calls, { failRow: 1 }) }),
+    );
+    expect(result).toMatchObject({ ok: true, variants: [{ name: 'pt', ok: true }, { name: 'en', ok: false }] });
+  });
+
+  it('composição e variáveis de um render só vão ao motor; pedidos inválidos são recusados antes', async () => {
+    variantProject();
+    const calls: OwnedProcessOptions[] = [];
+    await renderVideo(
+      { projectDir: 'promo', baseDir: workspace, scope, composition: 'compositions/wide.html', variables: { title: 'Agendify' } },
+      deps({ run: batchRun(calls) }),
+    );
+    expect(calls[0].args).toEqual(expect.arrayContaining(['--composition', 'compositions/wide.html', '--variables', '{"title":"Agendify"}']));
+    const refuse = async (variants: unknown) =>
+      renderVideo({ projectDir: 'promo', baseDir: workspace, scope, variants: variants as never }, deps({ run: batchRun([]) }));
+    expect(await refuse([{ name: 'Vertical PT' }])).toMatchObject({ ok: false, error: expect.stringMatching(/nome de variante/u) });
+    expect(await refuse([{ name: 'a' }, { name: 'a' }])).toMatchObject({ ok: false, error: expect.stringMatching(/repetida/u) });
+    expect(await refuse(Array.from({ length: 9 }, (_v, i) => ({ name: `v${i}` })))).toMatchObject({ ok: false, error: expect.stringMatching(/8 variantes/u) });
+    expect(await refuse([{ name: 'a', composition: '../fora.html' }])).toMatchObject({ ok: false });
+    expect(await refuse([{ name: 'a', composition: 'hyperframes.json' }])).toMatchObject({ ok: false, error: expect.stringMatching(/\.html/u) });
+    expect(await refuse([{ name: 'a', variables: ['x'] }])).toMatchObject({ ok: false, error: expect.stringMatching(/objeto JSON/u) });
   });
 });

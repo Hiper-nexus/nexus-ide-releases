@@ -340,7 +340,7 @@ export function confirmationReason(
   }
   if (toolName === 'nexus_video_export' || toolName === 'video_export') {
     return (
-      `export ${safeMediaArg(args.input, 'unknown')} for ${safeMediaArg(args.preset, 'unknown preset')} ` +
+      `export ${safeMediaArg(args.input, 'unknown')} for ${safeMediaArg(Array.isArray(args.presets) ? args.presets.filter((item) => typeof item === 'string').join(', ') : args.preset, 'unknown preset')} ` +
       `(loudness -14 LUFS, mute copy, cover, captions; AI label ${safeMediaArg(args.label, 'auto')}); output: ${safeMediaArg(args.outDir, '<project>/exports')}`
     );
   }
@@ -364,7 +364,7 @@ export function confirmationReason(
   }
   if (toolName === 'nexus_video_render' || toolName === 'video_render') {
     return (
-      `render HyperFrames project ${safeMediaArg(args.projectDir, 'unknown')} (runs the project's HTML/JS in a ` +
+      `render HyperFrames project ${safeMediaArg(args.projectDir, 'unknown')}${Array.isArray(args.variants) ? ` in ${args.variants.length} variants` : ''} (runs the project's HTML/JS in a ` +
       `headless Chrome without sandbox; first run installs the pinned engine); output: ${safeMediaArg(args.output, '<project>/renders/<name>.mp4')}`
     );
   }

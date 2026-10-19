@@ -6,7 +6,7 @@ import { resolveCwdForScope } from './workspace-path';
 import { HYPERFRAMES_VERSION, videoEnginePaths } from '../video/video-engine';
 import { videoRenderDeps } from '../video/video-runtime-deps';
 import { runVideoDoctor } from '../video/video-doctor';
-import { renderVideo } from '../video/video-render';
+import { MAX_RENDER_VARIANTS, renderVideo, type RenderVariant } from '../video/video-render';
 import { exportVideo } from '../video/video-export';
 import { listVideoPreviews, startVideoPreview, stopVideoPreview } from '../video/video-preview';
 import { captureSite } from '../video/video-capture';
@@ -18,6 +18,40 @@ import { VIDEO_EXPORT_PRESET_IDS, type VideoExportPresetId } from '../../shared/
  * The agent writes the composition in its pane; the Nexus owns install,
  * clean environment, reservation, cancellation and the ffprobe proof.
  */
+
+function objectArg(value: unknown): Record<string, unknown> | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'object' || Array.isArray(value)) throw new Error('variables precisa ser um objeto JSON');
+  return value as Record<string, unknown>;
+}
+
+function variantsArg(value: unknown): RenderVariant[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value)) throw new Error('variants precisa ser uma lista');
+  return value.map((item, index) => {
+    if (typeof item !== 'object' || item === null || typeof (item as { name?: unknown }).name !== 'string') {
+      throw new Error(`variants[${index}] precisa de name`);
+    }
+    const record = item as Record<string, unknown>;
+    return {
+      name: record.name as string,
+      ...(typeof record.composition === 'string' ? { composition: record.composition } : {}),
+      ...(record.variables !== undefined ? { variables: objectArg(record.variables) } : {}),
+    };
+  });
+}
+
+function presetsArg(args: Record<string, unknown>): VideoExportPresetId[] {
+  const raw = Array.isArray(args.presets) ? args.presets : typeof args.preset === 'string' ? [args.preset] : [];
+  if (raw.length === 0) throw new Error(`informe preset ou presets (${VIDEO_EXPORT_PRESET_IDS.join(', ')})`);
+  const presets = [...new Set(raw)];
+  for (const preset of presets) {
+    if (typeof preset !== 'string' || !(VIDEO_EXPORT_PRESET_IDS as string[]).includes(preset)) {
+      throw new Error(`preset desconhecido: ${String(preset)} (use ${VIDEO_EXPORT_PRESET_IDS.join(', ')})`);
+    }
+  }
+  return presets as VideoExportPresetId[];
+}
 
 function baseDirFor(ctx: AgentGateContext): string {
   return resolveCwdForScope(executionScopeFor(ctx));
@@ -59,7 +93,10 @@ const videoRenderTool: McpToolDef = {
     'index.html. Remotion projects are refused (license). Before rendering: `npx hyperframes@' +
     `${HYPERFRAMES_VERSION} check` + '` with no errors and snapshots reviewed. The result is read back with ' +
     'ffprobe (duration, size, codecs) and lists any network access the render made (fonts/CDN must be local). ' +
-    'Then call nexus_video_export for each network.',
+    'Then call nexus_video_export for each network. Variants (formats, languages): pass variants=[{name, ' +
+    'composition?, variables?}] (≤8); variants of the same composition differ only in variables and render in one ' +
+    "engine --batch; another format needs its own composition (the engine cannot change a composition's aspect). " +
+    'Outputs are <project>/renders/<project>-<name>-<stamp>.mp4 and the result lists each variant.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -67,7 +104,22 @@ const videoRenderTool: McpToolDef = {
       output: { type: 'string', description: 'Workspace .mp4 path (default <projectDir>/renders/<name>-<stamp>.mp4).' },
       quality: { type: 'string', enum: ['draft', 'final'], description: 'draft = fast preview; final (default) = engine default quality.' },
       fps: { type: 'number' },
-      timeoutMinutes: { type: 'number', description: '1–60, default 20.' },
+      timeoutMinutes: { type: 'number', description: '1–60 per output, default 20.' },
+      composition: { type: 'string', description: 'Composition .html inside the project (default index.html).' },
+      variables: { type: 'object', description: "Values for the composition's data-composition-variables." },
+      variants: {
+        type: 'array',
+        maxItems: MAX_RENDER_VARIANTS,
+        items: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: 'Slug: a-z, 0-9, hyphen (e.g. vertical-pt, wide-en).' },
+            composition: { type: 'string' },
+            variables: { type: 'object' },
+          },
+          required: ['name'],
+        },
+      },
     },
     required: ['projectDir'],
   },
@@ -82,6 +134,9 @@ const videoRenderTool: McpToolDef = {
         quality: quality === 'draft' ? 'draft' : 'final',
         fps: num(args, 'fps'),
         timeoutMinutes: num(args, 'timeoutMinutes'),
+        composition: str(args, 'composition'),
+        variables: objectArg(args.variables),
+        variants: variantsArg(args.variants),
         baseDir: baseDirFor(ctx),
         scope: executionScopeFor(ctx),
         missionId: ctx.missionId,
@@ -111,49 +166,61 @@ const videoExportTool: McpToolDef = {
     properties: {
       input: { type: 'string', description: 'Rendered .mp4 inside the workspace.' },
       preset: { type: 'string', enum: [...VIDEO_EXPORT_PRESET_IDS] },
+      presets: {
+        type: 'array',
+        items: { type: 'string', enum: [...VIDEO_EXPORT_PRESET_IDS] },
+        description: 'Several networks from the same render, one after the other (instead of preset).',
+      },
       projectDir: { type: 'string', description: 'Project folder (default: nearest folder with hyperframes.json above input).' },
       label: { type: 'string', enum: ['auto', 'on', 'off'] },
       labelSeconds: { type: 'number', description: 'Seconds the AI label stays on screen; 0 = whole video. Default 6.' },
       coverAtSec: { type: 'number' },
       outDir: { type: 'string', description: 'Workspace folder (default <project>/exports).' },
     },
-    required: ['input', 'preset'],
+    required: ['input'],
   },
   requiresConfirm: true,
   handler: async (args, ctx, invocation) => {
     assertMcpInvocationCurrent(invocation);
-    const preset = requireStr(args, 'preset');
-    if (!(VIDEO_EXPORT_PRESET_IDS as string[]).includes(preset)) {
-      throw new Error(`preset desconhecido: ${preset} (use ${VIDEO_EXPORT_PRESET_IDS.join(', ')})`);
-    }
+    const presets = presetsArg(args);
     const label = str(args, 'label');
     const deps = videoRenderDeps();
-    const result = await exportVideo(
-      {
-        input: requireStr(args, 'input'),
-        preset: preset as VideoExportPresetId,
-        projectDir: str(args, 'projectDir'),
-        label: label === 'on' || label === 'off' ? label : 'auto',
-        labelSeconds: num(args, 'labelSeconds'),
-        coverAtSec: num(args, 'coverAtSec'),
-        outDir: str(args, 'outDir'),
-        baseDir: baseDirFor(ctx),
-        scope: executionScopeFor(ctx),
-        missionId: ctx.missionId,
-        sessionId: ctx.sessionId,
-        signal: invocation?.signal,
-        assertCurrentAuthority: () => assertMcpInvocationCurrent(invocation),
-      },
-      {
-        pathValue: deps.pathValue,
-        baseEnv: deps.baseEnv,
-        lookup: deps.lookup,
-        acquirePermit: deps.acquirePermit,
-        home: videoEnginePaths(deps.userData).home,
-      },
-    );
-    assertMcpInvocationCurrent(invocation);
-    return result;
+    const results = [];
+    for (const preset of presets) {
+      const result = await exportVideo(
+        {
+          input: requireStr(args, 'input'),
+          preset,
+          projectDir: str(args, 'projectDir'),
+          label: label === 'on' || label === 'off' ? label : 'auto',
+          labelSeconds: num(args, 'labelSeconds'),
+          coverAtSec: num(args, 'coverAtSec'),
+          outDir: str(args, 'outDir'),
+          baseDir: baseDirFor(ctx),
+          scope: executionScopeFor(ctx),
+          missionId: ctx.missionId,
+          sessionId: ctx.sessionId,
+          signal: invocation?.signal,
+          assertCurrentAuthority: () => assertMcpInvocationCurrent(invocation),
+        },
+        {
+          pathValue: deps.pathValue,
+          baseEnv: deps.baseEnv,
+          lookup: deps.lookup,
+          acquirePermit: deps.acquirePermit,
+          home: videoEnginePaths(deps.userData).home,
+        },
+      );
+      assertMcpInvocationCurrent(invocation);
+      results.push({ preset, ...result });
+      if (!result.ok && result.canceled) break;
+    }
+    // One preset keeps the single-export shape; a list (F-1605) returns one entry per network.
+    if (results.length === 1 && typeof args.preset === 'string') {
+      const [{ preset: _preset, ...single }] = results;
+      return single;
+    }
+    return { ok: results.some((item) => item.ok), exports: results };
   },
 };
 
