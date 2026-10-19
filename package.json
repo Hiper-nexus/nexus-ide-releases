@@ -26,6 +26,7 @@
     "smoke:package": "node scripts/smoke-packaged-app.mjs",
     "release:security": "node scripts/release-security-gate.mjs",
     "release:candidate": "node scripts/release-candidate-gate.mjs",
+    "windows-signer": "node scripts/windows-signer/client.cjs",
     "release:publish": "node scripts/publish-release.mjs",
     "release:publish:windows": "node scripts/publish-release.mjs --windows",
     "release:publish:macos": "node scripts/publish-release.mjs --macos",

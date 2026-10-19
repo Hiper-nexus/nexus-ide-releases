@@ -1,7 +1,9 @@
 import { execFile } from 'node:child_process';
 import { X509Certificate, createHash } from 'node:crypto';
+import { readdirSync } from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import windowsSigner from '../scripts/windows-signer/client.cjs';
 import pinnedIdentity from './windows-signing-identity.json';
 
 /**
@@ -10,9 +12,15 @@ import pinnedIdentity from './windows-signing-identity.json';
  * SSL.com, que cobrava por assinatura e saiu em 05/10. A chave ECC P-384 nasceu
  * no slot PIV 9a e não sai dele (a atestação da Yubico foi aceita no pedido
  * co-f01l53ldh43). Com o YubiKey espetado, o Windows propaga o certificado OV
- * da HIPERSEND para `Cert:\CurrentUser\My`, ligado à chave do cartão; o
- * SignTool o escolhe pelo thumbprint e o Windows pede o PIN a cada processo
- * que assina.
+ * da HIPERSEND para `Cert:\CurrentUser\My`, ligado à chave do cartão.
+ *
+ * O Windows pede o PIN a cada PROCESSO que usa a chave, e o Squirrel abre um
+ * signtool por executável: eram 5 janelas por build (19/10). Por isso a build não
+ * chama o SignTool: o @electron/windows-sign (packager e Squirrel) usa o hook
+ * `scripts/windows-signer/client.cjs`, que pede cada assinatura ao agente de
+ * `scripts/windows-signer/agent.cjs`. O agente segura a chave num só processo:
+ * uma janela de PIN quando sobe e nenhuma enquanto vive (24 h por padrão,
+ * `NEXUS_WINDOWS_SIGNER_HOURS` de 0 = só este build a 168 = uma semana).
  *
  * `windows-signing-identity.json` é a fonte única da identidade, lida também
  * pelo coletor do recibo (PowerShell) e pelo publicador:
@@ -41,7 +49,8 @@ const CODE_SIGNING_EKU = '1.3.6.1.5.5.7.3.3';
 /**
  * O @electron/windows-sign lê estas variáveis por baixo das opções do Forge:
  * `/f` + `/p` de um PFX, outro signtool ou um hook no lugar dele. Qualquer uma
- * assinaria com outra coisa que não o YubiKey.
+ * assinaria com outra coisa que não o YubiKey. `NEXUS_WINDOWS_SIGNER_DIR` mandaria
+ * o hook a outro agente.
  */
 const SIGNER_OVERRIDE_ENV = [
   'WINDOWS_CERTIFICATE_FILE',
@@ -50,6 +59,7 @@ const SIGNER_OVERRIDE_ENV = [
   'WINDOWS_SIGN_WITH_PARAMS',
   'WINDOWS_SIGNTOOL_PATH',
   'WINDOWS_SIGN_HOOK_MODULE_PATH',
+  'NEXUS_WINDOWS_SIGNER_DIR',
 ] as const;
 
 export function parseWindowsSigningIdentity(raw: unknown): WindowsSigningIdentity {
@@ -260,4 +270,119 @@ export async function assertWindowsTokenSigningReady(
     );
   }
   assertWindowsTokenCertificate(certificate, identity, now);
+}
+
+/** Módulo que o @electron/windows-sign carrega no lugar do SignTool (caminho absoluto: o Squirrel roda em outra pasta). */
+export const WINDOWS_SIGNER_HOOK_MODULE = path.resolve('scripts', 'windows-signer', 'client.cjs');
+
+export type WindowsSignerClient = Pick<
+  typeof windowsSigner,
+  'ensureAgent' | 'verifyFile' | 'failures' | 'stopAgent'
+>;
+
+/** Horas de vida do agente: 24 por padrão, 0 = só este build, até 168 (uma semana). */
+export function windowsTokenSignerHours(
+  environment: Readonly<Record<string, string | undefined>>,
+): number {
+  return windowsSigner.parseAgentHours(environment.NEXUS_WINDOWS_SIGNER_HOURS);
+}
+
+/**
+ * Antes do primeiro arquivo assinado: reaproveita o agente destrancado (nenhum
+ * PIN) ou sobe um novo (a janela de PIN do Windows, uma vez), confere que o
+ * certificado que ele segura é o fixado e passa ao hook, pelo ambiente que o
+ * Squirrel herda, o checkout cujo `out\` pode ser assinado e o carimbo.
+ */
+export async function prepareWindowsTokenSigner({
+  environment = process.env,
+  identity = WINDOWS_SIGNING_IDENTITY,
+  timestampServer,
+  checkoutRoot = process.cwd(),
+  client = windowsSigner,
+  now = new Date(),
+}: {
+  environment?: NodeJS.ProcessEnv;
+  identity?: WindowsSigningIdentity;
+  timestampServer: string;
+  checkoutRoot?: string;
+  client?: WindowsSignerClient;
+  now?: Date;
+}): Promise<{ started: boolean; expiresAt: number | null }> {
+  const thumbprint = identity.certificateSha1;
+  if (!thumbprint) {
+    throw new Error('No YubiKey certificate is pinned in build/windows-signing-identity.json.');
+  }
+  const hours = windowsTokenSignerHours(environment);
+  const status = await client.ensureAgent({
+    thumbprint,
+    spkiSha256: identity.spkiSha256,
+    hours,
+    parentPid: hours === 0 ? process.pid : undefined,
+  });
+  if (!status.unlocked || !status.certificate) {
+    throw new Error('The YubiKey signing agent is not unlocked.');
+  }
+  assertWindowsTokenCertificate(
+    { der: Buffer.from(status.certificate, 'base64'), hasPrivateKey: true },
+    identity,
+    now,
+  );
+  environment.NEXUS_WINDOWS_SIGNER_CHECKOUT = path.resolve(checkoutRoot);
+  environment.NEXUS_WINDOWS_SIGNER_TIMESTAMP = timestampServer;
+  return { started: status.started, expiresAt: status.expiresAt ?? null };
+}
+
+/** O que o @electron/windows-sign tentaria assinar (dist/cjs/files.js). */
+const WINDOWS_SIGN_CANDIDATE =
+  /\.(exe|dll|sys|efi|scr|node|msi|appx|appxbundle|msix|msixbundle|cat|cab|xap|vbs|wsf|ps1)$/iu;
+
+export function listWindowsSignCandidates(directory: string): string[] {
+  const found: string[] = [];
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const full = path.join(directory, entry.name);
+    if (entry.isDirectory()) found.push(...listWindowsSignCandidates(full));
+    else if (entry.isFile() && WINDOWS_SIGN_CANDIDATE.test(entry.name)) found.push(full);
+  }
+  return found;
+}
+
+/**
+ * O hook do @electron/windows-sign tem o erro engolido pela biblioteca: sem esta
+ * conferência um arquivo recusado sairia sem assinatura num pacote "pronto".
+ * Falha registrada pelo hook recusa; depois cada executável do pacote é
+ * conferido pelo agente (assinatura válida e do certificado fixado).
+ */
+export async function assertWindowsPackageSigned(
+  outputPaths: readonly string[],
+  client: WindowsSignerClient = windowsSigner,
+  environment: NodeJS.ProcessEnv = process.env,
+): Promise<number> {
+  assertNoWindowsSigningFailures(client);
+  let verified = 0;
+  for (const outputPath of outputPaths) {
+    for (const file of listWindowsSignCandidates(outputPath)) {
+      await client.verifyFile(file, environment);
+      verified += 1;
+    }
+  }
+  if (verified === 0) throw new Error('The Windows package has no executable to verify.');
+  return verified;
+}
+
+export function assertNoWindowsSigningFailures(client: WindowsSignerClient = windowsSigner): void {
+  const failed = client.failures();
+  if (failed.length > 0) {
+    throw new Error(
+      `YubiKey signing failed for ${failed.length} file(s): ${failed.map(({ file, error }) => `${file} (${error})`).join('; ')}`,
+    );
+  }
+}
+
+/** Fim do make: o agente de build único (`NEXUS_WINDOWS_SIGNER_HOURS=0`) sai junto. */
+export async function finishWindowsTokenSigning(
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+  client: WindowsSignerClient = windowsSigner,
+): Promise<void> {
+  assertNoWindowsSigningFailures(client);
+  if (windowsTokenSignerHours(environment) === 0) await client.stopAgent();
 }
