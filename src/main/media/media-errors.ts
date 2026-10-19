@@ -89,12 +89,19 @@ export function providerErrorDetail(body: string): string {
   return clip(raw);
 }
 
-export function mediaHttpErrorKind(status: number, reason?: string): MediaErrorKind {
+export function mediaHttpErrorKind(
+  status: number,
+  reason?: string,
+  detail = '',
+): MediaErrorKind {
   // O Google recusa chave inválida com 400, não 401/403.
   if (reason === 'API_KEY_INVALID') return 'key';
   if (status === 401 || status === 403) return 'key';
   if (status === 402) return 'billing';
   if (status === 404) return 'not-found';
+  // Cota zero (modelo só do plano pago do Gemini, F-1587): esperar não
+  // resolve, falta ativar a cobrança.
+  if (status === 429 && /\blimit: 0\b/u.test(detail)) return 'billing';
   if (status === 429) return 'rate-limit';
   if (status >= 500) return 'unavailable';
   return 'invalid-request';
@@ -108,7 +115,7 @@ export function describeMediaHttpError(
 ): string {
   const service = mediaServiceName(provider);
   const tail = detail ? ` Resposta do serviço: ${detail}` : '';
-  switch (mediaHttpErrorKind(status, reason)) {
+  switch (mediaHttpErrorKind(status, reason, detail)) {
     case 'key':
       return `${service} recusou a chave (HTTP ${status}). Confira ou troque a chave em Ajustes → Serviços de mídia.${tail}`;
     case 'billing':
@@ -135,7 +142,7 @@ export class MediaProviderHttpError extends Error {
   ) {
     super(describeMediaHttpError(provider, status, detail, reason));
     this.name = 'MediaProviderHttpError';
-    this.kind = mediaHttpErrorKind(status, reason);
+    this.kind = mediaHttpErrorKind(status, reason, detail);
   }
 }
 

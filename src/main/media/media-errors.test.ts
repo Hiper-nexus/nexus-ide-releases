@@ -97,6 +97,33 @@ describe('media-errors (F-1584)', () => {
     expect(providerErrorReason('não é json')).toBeUndefined();
   });
 
+  it('F-1587: cota zero do plano gratuito do Gemini não é "espere e tente de novo"', async () => {
+    // Frase devolvida ao vivo em 19/10/2026 para uma chave de projeto gratuito.
+    const message =
+      'Rate limit exceeded for model gemini-omni-1.1-flash (limit: 0 input tokens per minute on Free Tier). ' +
+      'Please upgrade your tier at https://ai.dev/rate-limit.';
+    const err = await mediaHttpError(
+      new Response(JSON.stringify({ error: { code: 429, message, status: 'RESOURCE_EXHAUSTED' } }), {
+        status: 429,
+      }),
+      'google-video',
+    );
+    expect(err.kind).toBe('billing');
+    expect(err.message).toBe(
+      'Google recusou por falta de saldo ou de cobrança ativa (HTTP 429). Adicione crédito na conta do serviço. ' +
+        `Resposta do serviço: ${message}`,
+    );
+    // Limite de verdade (cota maior que zero) continua sendo "espere".
+    const throttled = await mediaHttpError(
+      new Response(
+        JSON.stringify({ error: { code: 429, message: 'Quota exceeded (limit: 10 requests per minute).' } }),
+        { status: 429 },
+      ),
+      'google-video',
+    );
+    expect(throttled.kind).toBe('rate-limit');
+  });
+
   it('nome curto do serviço', () => {
     expect(mediaServiceName('replicate-video')).toBe('Replicate');
     expect(mediaServiceName('google-image')).toBe('Google');
