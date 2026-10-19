@@ -192,3 +192,61 @@ it('claim também espera a virada do segundo quando o comando nasceu no segundo 
  expect(await tracker.claim('s', 20)).toBeTypeOf('string'); expect(sleeps).toBe(1);
  expect(await tracker.claim('s', 999)).toBeNull();
 });
+
+// F-1570: forma medida num PTY real do macOS (`ps -axo pid=,ppid=,pgid=,sess=,
+// tty=,lstart=`). O root do pane é líder de sessão em ttys004, `sess` é 0 em TODO
+// processo, e matar um intermediário re-parenta o filho para o pid 1 com o tty e
+// o pgid intactos. É essa a forma que a fila heavy estava recusando.
+const mac = (pid: number, ppid: number, tty: string, pgid: number, startedAt = 'Sat Oct  3 12:00:00 2026'): ProcessTableRow =>
+  ({ pid, ppid, pgid, sid: 0, tty, startedAt });
+const CAPTURED = Date.parse('Sat Oct  3 12:00:02 2026');
+const trackerOver = (table: () => readonly ProcessTableRow[], extra?: ConstructorParameters<typeof OwnedCommandProcesses>[3]) => {
+  const identity = {};
+  const capture = async (pid: number) => collectDescendantRows(pid, [...table()], CAPTURED);
+  return new OwnedCommandProcesses(() => ({ pid: 10, identity }), capture, undefined, extra);
+};
+
+it('F-1570: um descendente fundo (pane → CLI → zsh -c → npx → node) é aceito', async () => {
+  const pane = mac(10, 1, 'ttys004', 10);
+  const table = [pane, mac(20, 10, 'ttys004', 10), mac(30, 20, 'ttys004', 10), mac(40, 30, 'ttys004', 10), mac(50, 40, 'ttys004', 10)];
+  expect(await trackerOver(() => table).claim('s', 50)).toBeTypeOf('string');
+});
+
+it('F-1570: o comando pesado cujo intermediário morreu entra pelo terminal do pane, não pela cadeia de PPID', async () => {
+  const pane = mac(10, 1, 'ttys004', 10);
+  // `zsh -c`/`npx` já saíram: o job pesado é filho do launchd (ppid 1), não do pane.
+  const reparented = mac(50, 1, 'ttys004', 10);
+  const table = [pane, reparented];
+  const tracker = trackerOver(() => table);
+  expect(await tracker.claim('s', 50)).toBeTypeOf('string');
+  expect(await tracker.probe('s', (await tracker.claim('s', 50))!)).toBe('live');
+});
+
+it('F-1570: processo de fora do pane continua recusado — outro tty, daemon sem tty e o próprio root', async () => {
+  const pane = mac(10, 1, 'ttys004', 10);
+  const table = [pane, mac(80, 1, 'ttys005', 80), mac(81, 80, 'ttys005', 80), mac(90, 1, '??', 90)];
+  const tracker = trackerOver(() => table);
+  expect(await tracker.claim('s', 81)).toBeNull();
+  expect(await tracker.claim('s', 90)).toBeNull();
+  expect(await tracker.claim('s', 10)).toBeNull();
+});
+
+it('F-1570: pid que some na verificação não ocupa vaga nem derruba a fila do pane', async () => {
+  const pane = mac(10, 1, 'ttys004', 10), job = mac(50, 10, 'ttys004', 10);
+  let vanish = false;
+  const watch = async () => ({ state: () => 'live' as const, borrow: async () => false });
+  const identity = {};
+  const capture = async (pid: number) => collectDescendantRows(pid, vanish ? [pane] : [pane, job], CAPTURED);
+  const tracker = new OwnedCommandProcesses(() => ({ pid: 10, identity }), capture, watch);
+  // A capacidade do host é 128 claims; um claim vazado aqui recusaria para
+  // sempre todo comando pesado seguinte deste pane.
+  for (let attempt = 0; attempt < 128; attempt += 1) {
+    vanish = true;
+    expect(await tracker.claim('s', 50, 'darwin-job')).toBeNull();
+  }
+  vanish = false;
+  expect(await tracker.claim('s', 50)).toBeTypeOf('string');
+  // A reamostra que some inteira (orçamento do `ps` estourado) recusa sem TypeError.
+  const dropped = new OwnedCommandProcesses(() => ({ pid: 10, identity }), async () => null, watch);
+  expect(await dropped.claim('s', 50, 'darwin-job')).toBeNull();
+});

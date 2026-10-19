@@ -254,6 +254,40 @@ export function collectDescendantRows(
   return { root, descendants, inventory: table, capturedAtMs };
 }
 
+/**
+ * F-1570: a cadeia de PPID não atravessa um intermediário que já morreu. O
+ * kernel re-parenta o neto para o init e a varredura do pane o perde — medido
+ * num PTY real do macOS, onde o neto reapareceu com `ppid 1` e o mesmo `tty` e
+ * `pgid`. O terminal controlador pertence ao root VIVO e uma sessão só pode
+ * controlar um terminal: um processo de fora do pane não consegue ocupa-lo.
+ * `sess` é 0 em todo processo do macOS moderno (medido) e `pgid` é reutilizável,
+ * então o TTY é a única âncora que sobrevive ao reparentamento. Sem âncora real
+ * (`?`, `??`, `-`, e o inventário do Windows, que não expõe terminal) a prova
+ * continua sendo exatamente a cadeia de PPID.
+ */
+export function paneOwnedRows(
+  snapshot: DescendantSnapshot,
+): readonly ProcessTableRow[] {
+  const root = snapshot.root;
+  if (!root || !isControllingTerminal(root.tty)) return snapshot.descendants;
+  const owned = [...snapshot.descendants];
+  const seen = new Set(owned.map((row) => row.pid));
+  for (const candidate of snapshot.inventory) {
+    if (candidate.pid === root.pid || candidate.tty !== root.tty || seen.has(candidate.pid)) continue;
+    seen.add(candidate.pid);
+    owned.push(candidate);
+  }
+  return owned;
+}
+
+/** A row of {@link paneOwnedRows} for one pid, or null when nothing proves it. */
+export function paneOwnedRow(
+  snapshot: DescendantSnapshot,
+  pid: number,
+): ProcessTableRow | null {
+  return paneOwnedRows(snapshot).find((candidate) => candidate.pid === pid) ?? null;
+}
+
 export async function captureDescendantSnapshot(
   rootPid: number,
   deps: SnapshotDependencies = {},

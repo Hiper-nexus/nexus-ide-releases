@@ -1,7 +1,7 @@
 import { captureNativeHeavyProcessSnapshot } from './native-heavy-process-snapshot';
 import type { PhysicalCommandClaim } from './darwin-heavy-command';
 import { randomUUID } from 'node:crypto';
-import { hasUnambiguousStartIdentity, type DescendantSnapshot, type ProcessTableRow } from './pty-descendant-termination';
+import { hasUnambiguousStartIdentity, paneOwnedRow, type DescendantSnapshot, type ProcessTableRow } from './pty-descendant-termination';
 export type CommandProcessState = 'live' | 'gone' | 'unknown';
 interface Root { pid: number; identity: object }
 interface Claim { sessionId: string; rootIdentity: object; rows: Map<number, { row: ProcessTableRow; observedAt: number }>; root: ProcessTableRow; physical?: PhysicalCommandClaim }
@@ -32,7 +32,9 @@ export class OwnedCommandProcesses {
       if (gone) this.#rememberGone(id, claim.sessionId);
     }
     if (this.#claims.size >= 128) return null;
-    let row = snapshot.descendants.find((candidate) => candidate.pid === pid);
+    // F-1570: PPID morre com o intermediário e leva o neto com ele (o kernel
+    // re-parenta para o init). A âncora é o terminal controlador do root vivo.
+    let row = paneOwnedRow(snapshot, pid);
     // F-1544: o comando pesado pede a vaga nos primeiros ms de vida, ainda no
     // segundo da captura (cerca de mesmo segundo = ambíguo). Espera a virada e
     // reamostra UMA vez; a cerca em si não muda.
@@ -42,16 +44,18 @@ export class OwnedCommandProcesses {
         await this.clock.sleep(wait);
         snapshot = await this.capture(root.pid);
         if (!snapshot?.root || this.rootFor(sessionId)?.identity !== root.identity) return null;
-        row = snapshot.descendants.find((candidate) => candidate.pid === pid);
+        row = paneOwnedRow(snapshot, pid);
       }
     }
     if (!row || !hasUnambiguousStartIdentity(row, snapshot.capturedAtMs)) return null;
     let physical: PhysicalCommandClaim | undefined;
     if (proof) {
       physical = await this.watch?.(pid) ?? undefined;
+      // A reamostra pode falhar sob carga (orçamento do `ps`): falta de prova
+      // recusa, nunca TypeError.
       const after = await this.capture(root.pid);
       if (!physical || physical.state() !== 'live' || this.rootFor(sessionId)?.identity !== root.identity ||
-          !after?.descendants.some((current) => current.pid === pid && current.startedAt === row.startedAt) || this.#claims.size >= 128) return null;
+          (after ? paneOwnedRow(after, pid)?.startedAt : null) !== row.startedAt || this.#claims.size >= 128) return null;
     }
     const id = randomUUID();
     this.#claims.set(id, { ...(physical ? { physical } : {}), sessionId, rootIdentity: root.identity, root: row, rows: new Map([[row.pid, { row, observedAt: snapshot.capturedAtMs }]]) });
@@ -92,7 +96,11 @@ export class OwnedCommandProcesses {
     }
     let snapshot = await this.capture(claim.root.pid);
     if (this.#claims.get(id) !== claim || !snapshot?.root || snapshot.root.startedAt !== claim.root.startedAt) return false;
-    let row = pid === claim.root.pid ? snapshot.root : snapshot.descendants.find((candidate) => candidate.pid === pid);
+    // Deliberately NOT paneOwnedRow: here the root is the CLAIMED COMMAND, not the
+    // pane, and its terminal is the whole pane. Borrowing stays on the exact
+    // PPID subtree so a sibling of the pane can never inherit the lease.
+    const find = (current: DescendantSnapshot) => pid === claim.root.pid ? current.root : current.descendants.find((candidate) => candidate.pid === pid);
+    let row = find(snapshot);
     // F-1544: o filho de um comando pesado pede o lease no primeiro segundo de
     // vida (`node install.js`, `electron-forge`), quando a cerca de "mesmo
     // segundo" ainda o chama de ambíguo — e a recusa virava exit 78. A cerca
@@ -104,7 +112,7 @@ export class OwnedCommandProcesses {
         await this.clock.sleep(wait);
         snapshot = await this.capture(claim.root.pid);
         if (this.#claims.get(id) !== claim || !snapshot?.root || snapshot.root.startedAt !== claim.root.startedAt) return false;
-        row = pid === claim.root.pid ? snapshot.root : snapshot.descendants.find((candidate) => candidate.pid === pid);
+        row = find(snapshot);
       }
     }
     if (!row || !hasUnambiguousStartIdentity(row, snapshot.capturedAtMs)) return false;
