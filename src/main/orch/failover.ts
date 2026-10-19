@@ -41,6 +41,7 @@ import {
   type ResumeBootVerdict,
 } from './failover-mission-respawn';
 import { switchRendererOrchestratorAccount } from './failover-orchestrator-respawn';
+import { reportMeasuredExhaustion } from './measured-exhaustion';
 import {
   getProjectDomainStores,
   requireProjectDomainStoreRegistry,
@@ -4284,6 +4285,7 @@ export function shutdownFailover(): void {
   // failover: sem isto, mortes de testes/sessões anteriores vazam para as
   // próximas e o trip dispara cedo demais.
   instantAuthDeaths.clear();
+  measuredExhaustionSwaps.clear();
   limitCommits.clear();
   probesInFlight.clear();
   accountLimitCommits.clear();
@@ -4321,6 +4323,47 @@ export function shutdownFailover(): void {
  * resume mechanism. Used by the stall watchdog only after a long second
  * timeout; no account/keychain mutation occurs.
  */
+/** Última troca a quente por esgotamento MEDIDO, por pane (teto da camada 2). */
+const measuredExhaustionSwaps = new Map<string, number>();
+
+/**
+ * Camada 3.2: a medição de cota autoriza a troca quando a CLI emudece sem
+ * imprimir erro — o caso do AGY relatado pelo cliente. Chamado pelo
+ * `delegation-supervisor`; a decisão mora em `measured-exhaustion.ts`.
+ */
+export function reportPaneMeasuredExhaustion(input: {
+  readonly sessionId: string;
+  readonly hasPendingWork: boolean;
+  readonly now?: number;
+}): boolean {
+  const now = input.now ?? Date.now();
+  const authority = resolveAuthority(input.sessionId);
+  if (!authority || !isCurrentAuthority(authority)) return false;
+  const pane = resolvePaneDetails(authority);
+  if (!pane?.adapterId) return false;
+  const current = paneAccount(pane);
+  const outcome = reportMeasuredExhaustion(
+    {
+      paneId: pane.paneId,
+      sessionId: input.sessionId,
+      adapterId: pane.adapterId,
+      accountId: current?.id ?? null,
+      hasPendingWork: input.hasPendingWork,
+      now,
+    },
+    {
+      headroomFor: (adapterId, accountId) => quotaHeadroomFor(adapterId)?.get(accountId),
+      lastSwapAt: (paneId) => measuredExhaustionSwaps.get(paneId) ?? null,
+      noteSwap: (paneId, at) => measuredExhaustionSwaps.set(paneId, at),
+      commitHit: ({ hit }) => {
+        const [key] = watchFor(authority);
+        commitLimitHit(authority, pane, key, hit, now, 'observer', current, pane.adapterId!);
+      },
+    },
+  );
+  return outcome.acted;
+}
+
 export function requestSessionRecovery(sessionId: string, reason: string): boolean {
   const authority = resolveAuthority(sessionId);
   // Native resume is a renderer-owned mechanism; main-owned/headless mission

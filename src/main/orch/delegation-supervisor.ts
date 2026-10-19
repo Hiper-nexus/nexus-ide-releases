@@ -128,7 +128,11 @@ import {
   registerPaneTaskReroute,
 } from './pane-task-reroute';
 import { trace } from '../observability/main-trace';
-import { failoverReopensTask, hasPendingFailoverRecovery } from './failover';
+import {
+  failoverReopensTask,
+  hasPendingFailoverRecovery,
+  reportPaneMeasuredExhaustion,
+} from './failover';
 import { noteMissionCliFailure } from './mission-cli-failures';
 import { sanitizePaneBootOutput } from './pane-boot-output';
 import { paneSessionLastOutputAt } from './pane-session-output';
@@ -2460,6 +2464,45 @@ export function prepareDelegationSupervisor(): void {
 }
 
 /** One main-coordinator scan, error-isolated per project scope. */
+/**
+ * Camada 3.2: pane de tarefa delegada que PAROU em silêncio e cuja conta a
+ * medição mostra esgotada. A CLI do AGY não imprime erro reconhecível, então
+ * sem isto o pane fica parado para sempre — o relato do cliente.
+ *
+ * Três guardas, nesta ordem: o pane tem de estar parado (quem trabalha não
+ * precisa de resgate), tem de ser tarefa delegada com entrega pendente (pane
+ * que TERMINOU nunca recebe pacote de continuidade) e o failover não pode já
+ * estar cuidando dele. A decisão final é de `reportPaneMeasuredExhaustion`,
+ * que exige leitura `provider-api` fresca e respeita o teto por pane.
+ */
+export async function checkMeasuredExhaustion(
+  now: number = Date.now(),
+  context?: PeriodicTaskContext,
+): Promise<void> {
+  for (const pane of listPaneSnapshots()) {
+    context?.assertCurrent();
+    if (pane.kind !== 'cli-agent' || !pane.adapterId || !pane.scope || !pane.sessionId) continue;
+    const physical = getSessionState(pane.sessionId);
+    if (physical === null || physical === 'busy' || physical === 'spawning') continue;
+    if (hasPendingFailoverRecovery(pane.paneId, pane.sessionId)) continue;
+    // Só tarefa delegada pelo nexus_pane_spawn: o pane do operador nunca é
+    // religado por medição de cota.
+    const handle = getPaneTaskReroute(pane.paneId, now);
+    if (!handle || handle.adapterId !== pane.adapterId) continue;
+    let delivered = true;
+    try {
+      delivered = suiteForScope(pane.scope).handoffs.list({
+        sessionIds: [pane.sessionId],
+        includeDelivered: true,
+      }).length > 0;
+    } catch {
+      continue; // sem leitura confiável não decide
+    }
+    if (delivered) continue;
+    reportPaneMeasuredExhaustion({ sessionId: pane.sessionId, hasPendingWork: true, now });
+  }
+}
+
 export function reconcileDelegationSupervisor(now: number = Date.now(), context?: PeriodicTaskContext): Promise<void> {
   const reconcile = async (budget: PeriodicTaskContext) => {
     for (const suite of [...suites.values()]) {
@@ -2473,6 +2516,7 @@ export function reconcileDelegationSupervisor(now: number = Date.now(), context?
     }
     await budget.wait(checkPaneStarts(now, budget));
     await budget.wait(checkLimitedTaskPanes(now, budget));
+    await budget.wait(checkMeasuredExhaustion(now, budget));
   };
   return context ? reconcile(context) : runPeriodicTask('delegation-supervisor:legacy', reconcile, { cadenceMs: DELEGATION_SCAN_MS });
 }
