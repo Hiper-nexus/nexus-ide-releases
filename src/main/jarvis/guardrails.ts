@@ -137,6 +137,8 @@ const JARVIS_HANDS_FREE_TOOLS: ReadonlySet<string> = new Set([
   // preview local
   'preview_start',
   'preview_stop',
+  // F-1603: parar a prévia de vídeo só encerra um processo do próprio Nexus.
+  'video_preview_stop',
   // leitura de goal em andamento
   'goal_status',
 ]);
@@ -340,6 +342,12 @@ export function confirmationReason(
     return (
       `export ${safeMediaArg(args.input, 'unknown')} for ${safeMediaArg(args.preset, 'unknown preset')} ` +
       `(loudness -14 LUFS, mute copy, cover, captions; AI label ${safeMediaArg(args.label, 'auto')}); output: ${safeMediaArg(args.outDir, '<project>/exports')}`
+    );
+  }
+  if (toolName === 'nexus_video_preview_start' || toolName === 'video_preview_start') {
+    return (
+      `open the live HyperFrames Studio of ${safeMediaArg(args.projectDir, 'unknown')} (a local server that runs ` +
+      "the project's HTML/JS, bound to 127.0.0.1, until stopped)"
     );
   }
   if (toolName === 'nexus_video_render' || toolName === 'video_render') {

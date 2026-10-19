@@ -16,6 +16,8 @@ export const VIDEO_STUDIO_CHANNELS = {
   mediaUrl: 'videoStudio:mediaUrl',
   reveal: 'videoStudio:reveal',
   progress: 'videoStudio:progress',
+  previewStart: 'videoStudio:previewStart',
+  previewStop: 'videoStudio:previewStop',
 } as const;
 
 export interface VideoFileInfo {
@@ -34,6 +36,8 @@ export interface VideoProjectInfo {
   readonly exports: readonly VideoFileInfo[];
   readonly hasNarration: boolean;
   readonly hasMusic: boolean;
+  /** Live HyperFrames Studio of this project, when one is open (F-1603). */
+  readonly preview?: { readonly id: string; readonly url: string };
 }
 
 export type VideoStudioListResult =
@@ -104,4 +108,11 @@ export interface VideoStudioApi {
   mediaUrl(path: string): Promise<{ ok: true; url: string } | { ok: false; error: string }>;
   reveal(path: string): Promise<{ ok: boolean; error?: string }>;
   onProgress(callback: (event: VideoRenderProgressEvent) => void): () => void;
+  /** Live Studio (F-1603); the url is a trusted Nexus preview for the browser pane. */
+  previewStart(projectPath: string): Promise<VideoPreviewView>;
+  previewStop(id: string): Promise<{ ok: boolean }>;
 }
+
+export type VideoPreviewView =
+  | { readonly ok: true; readonly id: string; readonly url: string; readonly reused: boolean }
+  | { readonly ok: false; readonly error: string; readonly log?: readonly string[] };

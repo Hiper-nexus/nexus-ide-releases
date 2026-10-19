@@ -8,6 +8,8 @@ import {
   isRunningPreviewUrl,
   isRunningPreviewUrlForScope,
   listPreviews,
+  registerExternalPreview,
+  unregisterExternalPreview,
   startPreview,
   stopAllPreviews,
   stopPreview,
@@ -229,5 +231,63 @@ describe('preview-server', () => {
       ws.once('error',()=>resolve('refused'));
     });
     expect(outcome).not.toBe('opened');
+  });
+});
+
+describe('preview-server: mídia e prévias externas (F-1603)', () => {
+  function get(port: number, requestPath: string, headers: Record<string, string> = {}) {
+    return new Promise<{ status: number | undefined; headers: http.IncomingHttpHeaders; body: Buffer }>((resolve, reject) => {
+      const request = http.get({ hostname: '127.0.0.1', port, path: requestPath, headers, agent: false }, (response) => {
+        const chunks: Buffer[] = [];
+        response.on('data', (chunk: Buffer) => chunks.push(chunk));
+        response.on('end', () => resolve({ status: response.statusCode, headers: response.headers, body: Buffer.concat(chunks) }));
+        response.on('error', reject);
+      });
+      request.on('error', reject);
+    });
+  }
+
+  it('serve vídeo e áudio com o tipo certo e faixa de bytes (seek)', async () => {
+    fs.writeFileSync(path.join(dir, 'clip.mp4'), Buffer.from('0123456789'));
+    fs.writeFileSync(path.join(dir, 'voz.mp3'), Buffer.from('abc'));
+    const preview = await startPreview(dir, scopeA);
+    const whole = await get(preview.port, '/clip.mp4');
+    expect(whole.status).toBe(200);
+    expect(whole.headers['content-type']).toBe('video/mp4');
+    expect(whole.headers['accept-ranges']).toBe('bytes');
+    const part = await get(preview.port, '/clip.mp4', { Range: 'bytes=2-5' });
+    expect(part.status).toBe(206);
+    expect(part.headers['content-range']).toBe('bytes 2-5/10');
+    expect(part.body.toString()).toBe('2345');
+    const tail = await get(preview.port, '/clip.mp4', { Range: 'bytes=-3' });
+    expect(tail.body.toString()).toBe('789');
+    const bad = await get(preview.port, '/clip.mp4', { Range: 'bytes=20-30' });
+    expect(bad.status).toBe(416);
+    expect(bad.headers['content-range']).toBe('bytes */10');
+    expect((await get(preview.port, '/voz.mp3')).headers['content-type']).toBe('audio/mpeg');
+  });
+
+  it('prévia externa registrada é confiável só no escopo dela e só enquanto registrada', () => {
+    const scope = {
+      version: 1 as const,
+      installationId: 'installation-a',
+      ...scopeA,
+      rootRealPath: dir,
+      identitySource: 'manifest' as const,
+    };
+    const url = 'http://127.0.0.1:45991/#project/promo';
+    expect(isRunningPreviewUrl(url)).toBe(false);
+    registerExternalPreview({ id: 'vpreview-x', port: 45991, root: path.join(dir, 'promo'), ...scopeA });
+    try {
+      expect(isRunningPreviewUrl(url)).toBe(true);
+      expect(isRunningPreviewUrlForScope(url, scope)).toBe(true);
+      expect(isRunningPreviewUrlForScope(url, { ...scope, ...scopeB })).toBe(false);
+      expect(isRunningPreviewUrlForScope(url, { ...scope, rootRealPath: outsideDir })).toBe(false);
+      expect(isRunningPreviewUrl('http://localhost:45991/')).toBe(false);
+    } finally {
+      unregisterExternalPreview('vpreview-x');
+    }
+    expect(isRunningPreviewUrl(url)).toBe(false);
+    expect(() => registerExternalPreview({ id: 'y', port: 0, root: dir, ...scopeA })).toThrow(/porta/u);
   });
 });

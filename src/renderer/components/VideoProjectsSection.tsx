@@ -13,6 +13,9 @@ import type {
 import type { VoiceCloneReceiptView } from '../../shared/voice-clone-types';
 import { usePanePickerStore } from '../state/pane-picker-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
+import { useLayoutStore } from '../state/layout-store';
+import { reportLicenseDenial } from '../state/access-guard';
+import { waitForBrowserPaneCreated } from '../browser/browser-host';
 import { buildPresentationBrief, type BriefVoice } from './video-brief';
 
 /**
@@ -218,8 +221,17 @@ function Checklist({ items }: { items: readonly PublishChecklistItem[] }) {
   );
 }
 
-function ProjectCard({ project, onChanged }: { project: VideoProjectInfo; onChanged: () => void }) {
+function ProjectCard({
+  project,
+  onChanged,
+  onOpenedPreview,
+}: {
+  project: VideoProjectInfo;
+  onChanged: () => void;
+  onOpenedPreview: () => void;
+}) {
   const [job, setJob] = useState<JobState | null>(null);
+  const [previewBusy, setPreviewBusy] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [preset, setPreset] = useState<VideoExportPresetId>('vertical-9x16');
   const [label, setLabel] = useState<'auto' | 'on' | 'off'>('auto');
@@ -243,6 +255,36 @@ function ProjectCard({ project, onChanged }: { project: VideoProjectInfo; onChan
     const granted = await window.nexus.videoStudio.mediaUrl(path);
     if (granted.ok) setPlayer({ path, url: granted.url });
     else setNotice({ tone: 'danger', text: granted.error });
+  }
+
+  /** F-1603: o Studio ao vivo num painel do navegador (URL já confiável, sem pergunta de rede privada). */
+  async function openPreview() {
+    setPreviewBusy(true);
+    setNotice(null);
+    try {
+      const started = await window.nexus.videoStudio.previewStart(project.path);
+      if (!started.ok) {
+        setNotice({ tone: 'danger', text: started.error, ...(started.log ? { detail: started.log } : {}) });
+        return;
+      }
+      onChanged();
+      useProductNavigationStore.getState().openTerminal();
+      const paneId = useLayoutStore.getState().addBrowserPane('about:blank');
+      await waitForBrowserPaneCreated(paneId);
+      await window.nexus.browser.load(paneId, started.url);
+      onOpenedPreview();
+    } catch (error) {
+      reportLicenseDenial(error);
+      setNotice({ tone: 'danger', text: 'Não consegui abrir a prévia num painel do navegador.' });
+    } finally {
+      setPreviewBusy(false);
+    }
+  }
+
+  async function stopPreview() {
+    if (!project.preview) return;
+    await window.nexus.videoStudio.previewStop(project.preview.id);
+    onChanged();
   }
 
   async function render(quality: 'draft' | 'final') {
@@ -360,6 +402,14 @@ function ProjectCard({ project, onChanged }: { project: VideoProjectInfo; onChan
               <button type="button" className="ms-button ms-button--primary" onClick={() => void render('final')}>
                 Renderizar final
               </button>
+              <button type="button" className="ms-button" disabled={previewBusy} onClick={() => void openPreview()}>
+                {previewBusy ? 'Abrindo prévia…' : project.preview ? 'Abrir prévia' : 'Prévia ao vivo'}
+              </button>
+              {project.preview && (
+                <button type="button" className="ms-button" onClick={() => void stopPreview()}>
+                  Parar prévia
+                </button>
+              )}
               {latestRender && (
                 <>
                   <select className="ms-select" aria-label="Rede do export" value={preset} onChange={(event) => setPreset(event.target.value as VideoExportPresetId)}>
@@ -512,7 +562,7 @@ export function VideoProjectsSection({ onRequestClose }: { onRequestClose: () =>
       ) : (
         <div className="vp-list">
           {projects.map((project) => (
-            <ProjectCard key={project.path} project={project} onChanged={() => void reload()} />
+            <ProjectCard key={project.path} project={project} onChanged={() => void reload()} onOpenedPreview={onRequestClose} />
           ))}
         </div>
       )}

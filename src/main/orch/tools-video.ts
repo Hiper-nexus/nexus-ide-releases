@@ -8,6 +8,7 @@ import { videoRenderDeps } from '../video/video-runtime-deps';
 import { runVideoDoctor } from '../video/video-doctor';
 import { renderVideo } from '../video/video-render';
 import { exportVideo } from '../video/video-export';
+import { listVideoPreviews, startVideoPreview, stopVideoPreview } from '../video/video-preview';
 import { VIDEO_EXPORT_PRESET_IDS, type VideoExportPresetId } from '../../shared/video-export-presets';
 
 /**
@@ -155,6 +156,57 @@ const videoExportTool: McpToolDef = {
   },
 };
 
+const videoPreviewStartTool: McpToolDef = {
+  name: 'nexus_video_preview_start',
+  available: isVideoStudioEnabled,
+  unavailableReason: VIDEO_STUDIO_DISABLED_REASON,
+  description:
+    `Open the live HyperFrames Studio (${HYPERFRAMES_VERSION}) of a workspace project: timeline, scrubbing and hot ` +
+    'reload while you edit the composition. Runs the pinned engine in the clean environment, bound to 127.0.0.1, ' +
+    'and returns {id, url}; the url is a trusted Nexus preview, so open it with nexus_browser_open (no extra ' +
+    'confirmation). One Studio per project (reused), at most 3 at once; stop it with nexus_video_preview_stop ' +
+    'when done. Preview is for looking; deliver with nexus_video_render.',
+  inputSchema: {
+    type: 'object',
+    properties: { projectDir: { type: 'string', description: 'Project folder inside the workspace.' } },
+    required: ['projectDir'],
+  },
+  requiresConfirm: true,
+  handler: async (args, ctx, invocation) => {
+    assertMcpInvocationCurrent(invocation);
+    const deps = videoRenderDeps();
+    const result = await startVideoPreview(
+      {
+        projectDir: requireStr(args, 'projectDir'),
+        baseDir: baseDirFor(ctx),
+        scope: executionScopeFor(ctx),
+        signal: invocation?.signal,
+        assertCurrentAuthority: () => assertMcpInvocationCurrent(invocation),
+      },
+      deps,
+    );
+    assertMcpInvocationCurrent(invocation);
+    return result;
+  },
+};
+
+const videoPreviewStopTool: McpToolDef = {
+  name: 'nexus_video_preview_stop',
+  available: isVideoStudioEnabled,
+  unavailableReason: VIDEO_STUDIO_DISABLED_REASON,
+  description:
+    'Stop a live video preview of this project by its id (kills the Studio process tree); omit id to list the ' +
+    'previews open for this project and checkout.',
+  inputSchema: { type: 'object', properties: { id: { type: 'string' } } },
+  handler: async (args, ctx, invocation) => {
+    assertMcpInvocationCurrent(invocation);
+    const scope = executionScopeFor(ctx);
+    const id = str(args, 'id');
+    if (id) return { stopped: await stopVideoPreview(id, scope) };
+    return { running: listVideoPreviews(scope) };
+  },
+};
+
 export function buildVideoTools(): McpToolDef[] {
-  return [videoDoctorTool, videoRenderTool, videoExportTool];
+  return [videoDoctorTool, videoRenderTool, videoExportTool, videoPreviewStartTool, videoPreviewStopTool];
 }

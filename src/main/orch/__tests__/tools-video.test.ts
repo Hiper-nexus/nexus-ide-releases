@@ -38,6 +38,8 @@ describe('ferramentas de vídeo', () => {
         'nexus_music_generate',
         'nexus_video_doctor',
         'nexus_video_export',
+        'nexus_video_preview_start',
+        'nexus_video_preview_stop',
         'nexus_video_render',
         'nexus_voice_list',
         'nexus_voiceover_generate',

@@ -11,6 +11,9 @@ const state = vi.hoisted(() => ({
   reveal: vi.fn(),
   root: '',
   render: vi.fn(),
+  previewStart: vi.fn(),
+  previewStop: vi.fn(async () => true),
+  previews: [] as Array<{ id: string; url: string; project: string }>,
 }));
 
 vi.mock('electron', () => ({
@@ -30,6 +33,11 @@ vi.mock('./video-render', async (importOriginal) => ({
   renderVideo: state.render,
 }));
 vi.mock('./video-runtime-deps', () => ({ videoRenderDeps: () => ({ userData: '/ud' }) }));
+vi.mock('./video-preview', () => ({
+  startVideoPreview: state.previewStart,
+  stopVideoPreview: state.previewStop,
+  listVideoPreviews: () => state.previews,
+}));
 const studio = vi.hoisted(() => ({ on: true }));
 vi.mock('./video-studio-flag', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./video-studio-flag')>();
@@ -124,17 +132,33 @@ describe('Vídeos do projeto — Main', () => {
     expect(await running).toMatchObject({ canceled: true });
   });
 
+  it('prévia ao vivo: abre com o escopo da janela, aparece na lista e para por id (F-1603)', async () => {
+    state.previewStart.mockResolvedValueOnce({ ok: true, reused: false, id: 'vpreview-1', url: 'http://127.0.0.1:4000/#project/promo', port: 4000, project: 'videos/promo' });
+    const started = await state.trusted.get(VIDEO_STUDIO_CHANNELS.previewStart)!(event, { projectPath: 'videos/promo' });
+    expect(started).toEqual({ ok: true, id: 'vpreview-1', url: 'http://127.0.0.1:4000/#project/promo', reused: false });
+    const [request] = state.previewStart.mock.calls[0] as [{ projectDir: string; baseDir: string; scope: { rootRealPath: string } }];
+    expect(request).toMatchObject({ projectDir: 'videos/promo', baseDir: state.root, scope: { rootRealPath: state.root } });
+    expect(await state.trusted.get(VIDEO_STUDIO_CHANNELS.previewStart)!(event, {})).toMatchObject({ ok: false });
+    state.previews = [{ id: 'vpreview-1', url: 'http://127.0.0.1:4000/#project/promo', project: 'videos/promo' }];
+    const listed = (await state.trusted.get(VIDEO_STUDIO_CHANNELS.listProjects)!(event)) as { projects: Array<{ path: string; preview?: unknown }> };
+    expect(listed.projects.find((item) => item.path === 'videos/promo')?.preview).toEqual({ id: 'vpreview-1', url: 'http://127.0.0.1:4000/#project/promo' });
+    state.previews = [];
+    expect(await state.trusted.get(VIDEO_STUDIO_CHANNELS.previewStop)!(event, { id: '../x' })).toEqual({ ok: false });
+  });
+
   it('com o estúdio desligado só o cancelar responde', async () => {
     studio.on = false;
     try {
-      expect(state.trusted.size).toBe(7);
+      expect(state.trusted.size).toBe(9);
       for (const [channel, handler] of state.trusted) {
-        if (channel === VIDEO_STUDIO_CHANNELS.cancel) continue;
+        if (channel === VIDEO_STUDIO_CHANNELS.cancel || channel === VIDEO_STUDIO_CHANNELS.previewStop) continue;
         await expect(Promise.resolve().then(() => handler(event, {}))).rejects.toThrow(
           /estúdio de vídeo está desligado/u,
         );
       }
       expect(await state.trusted.get(VIDEO_STUDIO_CHANNELS.cancel)!(event, { jobId: 'nenhum' })).toEqual({ ok: true });
+      const id = 'vpreview-00000000-0000-4000-8000-000000000000';
+      expect(await state.trusted.get(VIDEO_STUDIO_CHANNELS.previewStop)!(event, { id })).toEqual({ ok: true });
     } finally {
       studio.on = true;
     }

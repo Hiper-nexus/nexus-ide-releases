@@ -7,6 +7,7 @@ import {
   VIDEO_STUDIO_CHANNELS,
   type VideoDoctorView,
   type VideoExportView,
+  type VideoPreviewView,
   type VideoFileInfo,
   type VideoProjectInfo,
   type VideoRenderView,
@@ -22,6 +23,7 @@ import { runVideoDoctor } from './video-doctor';
 import { exportVideo, findSyntheticSources } from './video-export';
 import { renderVideo, resolveWorkspaceDir } from './video-render';
 import { videoRenderDeps } from './video-runtime-deps';
+import { listVideoPreviews, startVideoPreview, stopVideoPreview } from './video-preview';
 
 /**
  * Estúdio de Mídia → "Vídeos do projeto" (F-1596): the human's buttons for
@@ -55,7 +57,11 @@ function videoFiles(root: string, dir: string, max: number): VideoFileInfo[] {
     .slice(0, max);
 }
 
-export function listVideoProjects(workspaceRoot: string, maxDepth = 3): VideoProjectInfo[] {
+export function listVideoProjects(
+  workspaceRoot: string,
+  maxDepth = 3,
+  previews: readonly { id: string; url: string; project: string }[] = [],
+): VideoProjectInfo[] {
   const root = fs.realpathSync(workspaceRoot);
   const projects: VideoProjectInfo[] = [];
   const walk = (dir: string, depth: number) => {
@@ -71,6 +77,7 @@ export function listVideoProjects(workspaceRoot: string, maxDepth = 3): VideoPro
         exports: videoFiles(root, path.join(dir, 'exports'), 20),
         hasNarration: synthetic.narration.length > 0,
         hasMusic: synthetic.music.length > 0,
+        ...previewOf(previews, posix(root, dir)),
       });
       return;
     }
@@ -88,6 +95,14 @@ export function listVideoProjects(workspaceRoot: string, maxDepth = 3): VideoPro
   };
   walk(root, 0);
   return projects;
+}
+
+function previewOf(
+  previews: readonly { id: string; url: string; project: string }[],
+  project: string,
+): { preview?: { id: string; url: string } } {
+  const found = previews.find((item) => item.project === project);
+  return found ? { preview: { id: found.id, url: found.url } } : {};
 }
 
 function scopeOf(event: IpcMainInvokeEvent): Readonly<ProjectExecutionScope> {
@@ -118,7 +133,8 @@ export function registerVideoStudioIpc(): void {
 
   handleStudio(VIDEO_STUDIO_CHANNELS.listProjects, (event): VideoStudioListResult => {
     try {
-      return { ok: true, projects: listVideoProjects(scopeOf(event).rootRealPath) };
+      const scope = scopeOf(event);
+      return { ok: true, projects: listVideoProjects(scope.rootRealPath, 3, listVideoPreviews(scope)) };
     } catch (error) {
       return { ok: false, error: (error as Error).message };
     }
@@ -181,6 +197,28 @@ export function registerVideoStudioIpc(): void {
     } finally {
       jobs.delete(key);
     }
+  });
+
+  handleStudio(VIDEO_STUDIO_CHANNELS.previewStart, async (event, raw): Promise<VideoPreviewView> => {
+    const parsed = z.object({ projectPath: workspacePath }).safeParse(raw);
+    if (!parsed.success) return { ok: false, error: 'pedido inválido' };
+    const scope = scopeOf(event);
+    try {
+      const result = await startVideoPreview(
+        { projectDir: parsed.data.projectPath, baseDir: scope.rootRealPath, scope },
+        videoRenderDeps(),
+      );
+      return result.ok ? { ok: true, id: result.id, url: result.url, reused: result.reused } : result;
+    } catch (error) {
+      return { ok: false, error: (error as Error).message };
+    }
+  });
+
+  // Parar a prévia vale sempre, como cancelar: encerra um processo do próprio Nexus.
+  handleTrusted(VIDEO_STUDIO_CHANNELS.previewStop, async (event, raw): Promise<{ ok: boolean }> => {
+    const parsed = z.object({ id: z.string().regex(/^vpreview-[0-9a-f-]{36}$/u) }).safeParse(raw);
+    if (!parsed.success) return { ok: false };
+    return { ok: await stopVideoPreview(parsed.data.id, scopeOf(event)) };
   });
 
   handleTrusted(VIDEO_STUDIO_CHANNELS.cancel, (event, raw): { ok: true } => {

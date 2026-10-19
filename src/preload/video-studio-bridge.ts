@@ -32,6 +32,8 @@ export function createVideoStudioBridge(ipcRenderer: IpcRenderer): VideoStudioAp
     exportVideo: (request) => ipcRenderer.invoke(VIDEO_STUDIO_CHANNELS.exportVideo, request),
     mediaUrl: (path) => ipcRenderer.invoke(VIDEO_STUDIO_CHANNELS.mediaUrl, { path }),
     reveal: (path) => ipcRenderer.invoke(VIDEO_STUDIO_CHANNELS.reveal, { path }),
+    previewStart: (projectPath) => ipcRenderer.invoke(VIDEO_STUDIO_CHANNELS.previewStart, { projectPath }),
+    previewStop: (id) => ipcRenderer.invoke(VIDEO_STUDIO_CHANNELS.previewStop, { id }),
     onProgress: (callback) => {
       const listener = (_event: unknown, payload: VideoRenderProgressEvent) => callback(payload);
       ipcRenderer.on(VIDEO_STUDIO_CHANNELS.progress, listener);

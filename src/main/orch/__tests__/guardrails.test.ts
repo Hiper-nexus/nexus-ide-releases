@@ -328,6 +328,12 @@ describe('confirmationReason', () => {
     expect(reason).toContain('promo/renders/v1.mp4');
   });
 
+  it('describes the live video preview as a local server running the project (F-1603)', () => {
+    const reason = confirmationReason('nexus_video_preview_start', { projectDir: 'promo' });
+    expect(reason).toContain('live HyperFrames Studio of promo');
+    expect(reason).toContain('127.0.0.1');
+  });
+
   it('describes music length, kind and destination without leaking the prompt', () => {
     const reason = confirmationReason('nexus_music_generate', {
       prompt: 'trilha secreta',

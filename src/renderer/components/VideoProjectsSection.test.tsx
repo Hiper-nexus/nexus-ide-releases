@@ -4,6 +4,9 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { usePanePickerStore } from '../state/pane-picker-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
+import { useLayoutStore } from '../state/layout-store';
+
+vi.mock('../browser/browser-host', () => ({ waitForBrowserPaneCreated: vi.fn(async () => undefined) }));
 import { VideoProjectsSection } from './VideoProjectsSection';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -19,6 +22,8 @@ const studio = {
   exportVideo: vi.fn(),
   mediaUrl: vi.fn(async (path: string) => ({ ok: true, url: `nexus-media://media/${'a'.repeat(31)}${path.length % 10}` })),
   reveal: vi.fn(async () => ({ ok: true })),
+  previewStart: vi.fn(),
+  previewStop: vi.fn(async () => ({ ok: true })),
   onProgress: vi.fn((callback) => {
     progress = callback;
     return () => {
@@ -27,6 +32,7 @@ const studio = {
   }),
 };
 const voiceClone = { list: vi.fn(async () => [] as unknown[]) };
+const browser = { load: vi.fn(async () => undefined) };
 
 const PROMO = {
   name: 'promo',
@@ -60,7 +66,7 @@ async function render(onRequestClose = vi.fn()) {
 beforeEach(() => {
   vi.clearAllMocks();
   studio.listProjects.mockResolvedValue({ ok: true, projects: [PROMO] });
-  Object.defineProperty(window, 'nexus', { configurable: true, value: { videoStudio: studio, voiceClone } });
+  Object.defineProperty(window, 'nexus', { configurable: true, value: { videoStudio: studio, voiceClone, browser } });
   host = document.createElement('div');
   document.body.appendChild(host);
   root = createRoot(host);
@@ -148,6 +154,39 @@ describe('Vídeos do projeto', () => {
     expect(usePanePickerStore.getState().pendingOpen).toBe(true);
     expect(usePanePickerStore.getState().pendingBrief).toContain('Produto: Agendify, agenda online para barbearias');
     expect(close).toHaveBeenCalled();
+  });
+
+  it('Prévia ao vivo abre o Studio num painel do navegador; com prévia aberta, oferece parar (F-1603)', async () => {
+    studio.previewStart.mockResolvedValue({ ok: true, id: 'vpreview-1', url: 'http://127.0.0.1:4000/#project/promo', reused: false });
+    const addBrowserPane = vi.spyOn(useLayoutStore.getState(), 'addBrowserPane').mockReturnValue('pane-b');
+    const openTerminal = vi.spyOn(useProductNavigationStore.getState(), 'openTerminal');
+    const close = await render();
+    await click('Prévia ao vivo');
+    expect(studio.previewStart).toHaveBeenCalledWith('videos/promo');
+    expect(openTerminal).toHaveBeenCalled();
+    expect(addBrowserPane).toHaveBeenCalledWith('about:blank');
+    expect(browser.load).toHaveBeenCalledWith('pane-b', 'http://127.0.0.1:4000/#project/promo');
+    expect(close).toHaveBeenCalled();
+    addBrowserPane.mockRestore();
+
+    studio.listProjects.mockResolvedValue({ ok: true, projects: [{ ...PROMO, preview: { id: 'vpreview-1', url: 'http://127.0.0.1:4000/' } }] });
+    act(() => root.unmount());
+    root = createRoot(host);
+    await render();
+    expect(button('Abrir prévia')).toBeTruthy();
+    await click('Parar prévia');
+    expect(studio.previewStop).toHaveBeenCalledWith('vpreview-1');
+  });
+
+  it('falha da prévia aparece com o log e não abre painel', async () => {
+    studio.previewStart.mockResolvedValue({ ok: false, error: 'o Studio do HyperFrames não respondeu a tempo', log: ['porta ocupada'] });
+    const addBrowserPane = vi.spyOn(useLayoutStore.getState(), 'addBrowserPane');
+    await render();
+    await click('Prévia ao vivo');
+    expect(host.textContent).toContain('não respondeu a tempo');
+    expect(host.textContent).toContain('porta ocupada');
+    expect(addBrowserPane).not.toHaveBeenCalled();
+    addBrowserPane.mockRestore();
   });
 
   it('a verificação da máquina mostra o comando que resolve', async () => {

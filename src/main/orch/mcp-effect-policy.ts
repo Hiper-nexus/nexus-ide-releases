@@ -392,6 +392,10 @@ const EXECUTION_EFFECT_TOOLS = new Set([
   'video_render',
   // F-1595: codifica e grava os exports no workspace (ffmpeg).
   'video_export',
+  // F-1603: sobe o Studio do HyperFrames (processo do Main que executa o
+  // projeto) e o encerra; a prévia vira alvo confiável do browser pane.
+  'video_preview_start',
+  'video_preview_stop',
 ]);
 
 /**
