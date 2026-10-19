@@ -130,6 +130,44 @@ describe('decideStartAction (F-723)', () => {
       decideStartAction(input({ pinnedRuntime: true, session: 'none' })),
     ).toBe('notify-only');
   });
+
+  it('brief recusado numa retomada sem pin do operador: reabre uma vez', () => {
+    expect(decideStartAction(input({
+      failed: true,
+      pinnedRuntime: true,
+      operatorPinned: false,
+      failureCause: 'brief-rejected',
+      generation: 0,
+    }))).toBe('reroute');
+  });
+
+  it('CLI pedida pelo operador: brief recusado só avisa', () => {
+    expect(decideStartAction(input({
+      failed: true,
+      pinnedRuntime: true,
+      operatorPinned: true,
+      failureCause: 'brief-rejected',
+    }))).toBe('notify-only');
+  });
+
+  it('brief recusado já reaberto: não troca de novo', () => {
+    expect(decideStartAction(input({
+      failed: true,
+      operatorPinned: false,
+      failureCause: 'brief-rejected',
+      generation: 1,
+    }))).toBe('notify-only');
+  });
+
+  it('outra falha numa retomada continua só avisando', () => {
+    expect(decideStartAction(input({
+      failed: true,
+      session: 'none',
+      pinnedRuntime: true,
+      operatorPinned: false,
+      failureCause: 'boot-exit',
+    }))).toBe('notify-only');
+  });
 });
 
 describe('turno do brief recusado pelo provedor (F-734)', () => {

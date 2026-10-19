@@ -70,4 +70,12 @@ describe('F-1427: registro por (missão, CLI)', () => {
       { adapterId: 'mimo-code', model: 'mimo-v2.5', successes: 0, total: 2 },
     ]);
   });
+
+  it('ocioso sem entrega entra como falha no sucesso da rota', () => {
+    noteMissionCliFailure({ missionId: 'm', adapterId: 'qwen', cause: 'idle-without-delivery', attemptKey: 'idle-1', at: 1_000 });
+    expect(missionCliFailureNote('m', 'qwen')).toBe('qwen (ocioso sem entrega)');
+    expect(routeFailureOutcomeRows(500)).toEqual([
+      { adapterId: 'qwen', successes: 0, total: 1 },
+    ]);
+  });
 });

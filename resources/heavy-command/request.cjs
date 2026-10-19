@@ -27,18 +27,24 @@ if (inheritedProxy) {
     if (proxy.hostname === 'localhost') proxy.hostname = '127.0.0.1';
   } catch { fail('the inherited HTTP proxy is not a local loopback proxy'); }
 }
-function accepted(status, raw) {
+const TICKET = /^hq-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function interpret(status, raw) {
   let result;
   try { result = JSON.parse(raw); } catch { fail(`Nexus admission sent an unreadable reply (HTTP ${status})`); }
   // F-1479: `null` (or any non-object) would throw a TypeError below instead of naming the cause.
   if (result === null || typeof result !== 'object' || Array.isArray(result)) fail(`Nexus admission sent an unreadable reply (HTTP ${status})`);
-  if (status !== 200 || result.allow !== true || typeof result.leaseId !== 'string' || !result.leaseId || result.leaseId.length > 128) {
-    // F-1229: Main's reason (queue wait, root, jobs there) instead of a bare exit.
-    if (status === 200 && typeof result.message === 'string') { process.stderr.write(result.message.replace(/[\x00-\x1f\x7f]/g, ' ').slice(0, 600) + '\n'); process.exit(78); }
-    if (status !== 200) fail(`Nexus admission answered HTTP ${status}`);
-    fail(`Nexus refused the command (${typeof result.reason === 'string' && result.reason ? result.reason.replace(/[^\w.-]/g, '').slice(0, 80) : 'no reason given'})`);
+  if (status === 200 && result.allow === true && typeof result.leaseId === 'string' && result.leaseId && result.leaseId.length <= 128) {
+    process.stdout.write(result.leaseId);
+    return null;
   }
-  process.stdout.write(result.leaseId);
+  // A queued round is not a refusal: print who holds the slot and ask again.
+  if (status === 200 && result.reason === 'heavy_command_queued' && typeof result.ticket === 'string' && TICKET.test(result.ticket)) {
+    if (typeof result.message === 'string' && result.message) process.stderr.write(result.message.replace(/[\x00-\x1f\x7f]/g, ' ').slice(0, 600) + '\n');
+    return result.ticket;
+  }
+  if (status === 200 && typeof result.message === 'string') { process.stderr.write(result.message.replace(/[\x00-\x1f\x7f]/g, ' ').slice(0, 600) + '\n'); process.exit(78); }
+  if (status !== 200) fail(`Nexus admission answered HTTP ${status}`);
+  fail(`Nexus refused the command (${typeof result.reason === 'string' && result.reason ? result.reason.replace(/[^\w.-]/g, '').slice(0, 80) : 'no reason given'})`);
 }
 // F-1229: Main queues one job per real git root of the work. The job runs in
 // this process's cwd; a wrapped `cd <dir> && …` line names its dir through
@@ -47,9 +53,24 @@ let cwd = (process.argv[4] === 'darwin-job' && process.env.NEXUS_HEAVY_CWD) || '
 if (!cwd) { try { cwd = process.cwd(); } catch {} }
 // Every transport carries ≤2048 bytes; an unusual path just keeps the token's lane.
 if (!require('node:path').isAbsolute(cwd) || /[\x00-\x1f\x7f]/.test(cwd) || Buffer.byteLength(JSON.stringify(cwd)) > 1024) cwd = '';
-const body = JSON.stringify({ pid, kind, ...(process.argv[4] === 'darwin-job' ? { proof: 'darwin-job' } : {}), ...(process.env.NEXUS_HEAVY_LEASE ? { leaseId: process.env.NEXUS_HEAVY_LEASE } : cwd ? { cwd } : {}) });
+const label = /^[\w .:/_-]{1,80}$/.test(process.env.NEXUS_HEAVY_LABEL || '') ? process.env.NEXUS_HEAVY_LABEL : '';
+const ROUND_MS = 30_000;
+function bodyFor(ticket) {
+  return JSON.stringify({ pid, kind, ...(process.argv[4] === 'darwin-job' ? { proof: 'darwin-job' } : {}),
+    ...(process.env.NEXUS_HEAVY_LEASE ? { leaseId: process.env.NEXUS_HEAVY_LEASE } : cwd ? { cwd } : {}),
+    ...(ticket ? { ticket } : {}), ...(label ? { label } : {}) });
+}
 // ps birth identity is second-granularity: do not claim a same-second PID.
 setTimeout(async () => {
+  let ticket = '';
+  for (;;) {
+    const next = await round(ticket);
+    if (!next) return;
+    ticket = next;
+  }
+}, 1100);
+async function round(ticket) {
+  const body = bodyFor(ticket);
   if (process.env.NEXUS_HEAVY_CHANNEL_DIR) {
     try {
       const crypto = require('node:crypto'), fs = require('node:fs'), directory = process.env.NEXUS_HEAVY_CHANNEL_DIR;
@@ -69,15 +90,14 @@ setTimeout(async () => {
       if (manifest.transport === 'file') raw = await require('./file-channel-client.cjs')(directory, JSON.parse(packet));
       else {
         const config = ['url = ' + JSON.stringify(url.href), 'request = "POST"', 'header = "Content-Type: application/json"', 'data = ' + JSON.stringify(packet), 'noproxy = "*"'].join('\n') + '\n';
-        raw = require('node:child_process').execFileSync('/usr/bin/curl', ['--disable', '--config', '-', '--silent', '--show-error', '--unix-socket', 'heavy.sock', '--proto', '=http', '--max-time', '360', '--connect-timeout', '5'],
-          { cwd: directory, env: {}, input: config, encoding: 'utf8', timeout: 365000, maxBuffer: 2048, stdio: ['pipe', 'pipe', 'pipe'] });
+        raw = require('node:child_process').execFileSync('/usr/bin/curl', ['--disable', '--config', '-', '--silent', '--show-error', '--unix-socket', 'heavy.sock', '--proto', '=http', '--max-time', '30', '--connect-timeout', '5'],
+          { cwd: directory, env: {}, input: config, encoding: 'utf8', timeout: 35_000, maxBuffer: 2048, stdio: ['pipe', 'pipe', 'pipe'] });
       }
       const reply = JSON.parse(raw), hash = crypto.createHash('sha256').update(input).digest('hex');
       if (key.asymmetricKeyType !== 'ed25519' || reply.schema !== 'nexus.native-heavy-reply/v1' || reply.epoch !== process.env.NEXUS_HEAVY_CHANNEL_EPOCH || reply.id !== id || reply.hash !== hash ||
           typeof reply.signature !== 'string' || !crypto.verify(null, Buffer.from(JSON.stringify([reply.schema, reply.epoch, reply.id, reply.hash, reply.result])), key, Buffer.from(reply.signature, 'base64'))) fail('the Nexus admission reply failed its integrity check');
-      accepted(200, JSON.stringify(reply.result));
+      return interpret(200, JSON.stringify(reply.result));
     } catch (error) { fail(`Nexus admission did not answer on its channel (${error?.code || 'channel failed'})`); }
-    return;
   }
   if (process.platform === 'darwin' && process.env.NEXUS_HEAVY_CURL === '/usr/bin/curl') {
     // Credentials and the proxy's existing authentication travel only on
@@ -90,18 +110,20 @@ setTimeout(async () => {
         ...(proxy ? ['proxy = ' + JSON.stringify(proxy.href), 'noproxy = ""'] : ['noproxy = "*"'])].join('\n') + '\n';
       const output = require('node:child_process').execFileSync('/usr/bin/curl',
         ['--disable', '--config', '-', '--silent', '--show-error', '--proto', '=http',
-          '--max-time', '360', '--connect-timeout', '5', '--write-out', '\n%{http_code}'],
-        { env: {}, input: config, encoding: 'utf8', timeout: 365_000, maxBuffer: 2048, stdio: ['pipe', 'pipe', 'pipe'] });
+          '--max-time', '30', '--connect-timeout', '5', '--write-out', '\n%{http_code}'],
+        { env: {}, input: config, encoding: 'utf8', timeout: 35_000, maxBuffer: 2048, stdio: ['pipe', 'pipe', 'pipe'] });
       const boundary = output.lastIndexOf('\n');
-      accepted(Number(output.slice(boundary + 1)), output.slice(0, boundary));
+      return interpret(Number(output.slice(boundary + 1)), output.slice(0, boundary));
     } catch (error) { fail(`Nexus admission did not answer (curl exit ${typeof error?.status === 'number' ? error.status : error?.code || 'unknown'})`); }
-    return;
   }
-  const req = http.request(url, { method: 'POST', headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), authorization: 'Bearer ' + process.env.NEXUS_GATE_TOKEN }, timeout: 360_000 }, (res) => {
-    let text = '';
-    res.on('data', (part) => { text += part; if (text.length > 2048) req.destroy(Object.assign(new Error('oversized'), { code: 'reply over 2 KB' })); });
-    res.on('end', () => { try { accepted(res.statusCode, text); } catch { fail(`Nexus admission sent an unreadable reply (HTTP ${res.statusCode})`); } });
+  return await new Promise((resolve) => {
+    const req = http.request(url, { method: 'POST', headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), authorization: 'Bearer ' + process.env.NEXUS_GATE_TOKEN }, timeout: ROUND_MS }, (res) => {
+      let text = '';
+      res.on('data', (part) => { text += part; if (text.length > 2048) req.destroy(Object.assign(new Error('oversized'), { code: 'reply over 2 KB' })); });
+      res.on('end', () => { try { resolve(interpret(res.statusCode, text)); } catch { fail(`Nexus admission sent an unreadable reply (HTTP ${res.statusCode})`); } });
+    });
+    req.on('timeout', () => req.destroy(Object.assign(new Error('timeout'), { code: 'no answer in 30 s' })));
+    req.on('error', (error) => fail(`Nexus admission did not answer (${error?.code || 'connection failed'})`));
+    req.end(body);
   });
-  req.on('timeout', () => req.destroy(Object.assign(new Error('timeout'), { code: 'no answer in 360 s' })));
-  req.on('error', (error) => fail(`Nexus admission did not answer (${error?.code || 'connection failed'})`)); req.end(body);
-}, 1100);
+}

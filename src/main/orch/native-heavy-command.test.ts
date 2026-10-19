@@ -49,7 +49,10 @@ it('two actual native Node tsc descendants from the AI operator hand serialize w
  });
  try {
   const result = await Promise.all([run(), run()]); expectAdmittedQuiet(result);
-  await native.drain(); expect(transitions.map((v) => v.kind)).toEqual(['grant', 'release', 'grant', 'release']); expect(pool.snapshot().active).toBe(0);
+  await native.drain();
+  expect(transitions.filter((v) => v.kind === 'grant')).toHaveLength(2);
+  expect(transitions.filter((v) => v.kind === 'release')).toHaveLength(2);
+  expect(pool.snapshot().active).toBe(0);
  } finally { pool.close(); await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true }); }
 }, 30_000);
 
@@ -75,9 +78,11 @@ it('F-983/F-997: writers isolados do MESMO checkout testam ao mesmo tempo — a 
  const native = new NativeHeavyCommands({ current: () => true, claim: async () => 'owned', probe: async () => state, acquire: (request) => pool.acquire(request) });
  const [first, second] = await Promise.all([native.admit(writer('w1'), { pid: 101, kind: 'tests' }), native.admit(writer('w2'), { pid: 102, kind: 'tests' })]);
  expect(first.allow).toBe(true); expect(second.allow).toBe(true);
- expect(pool.snapshot().active).toBe(2);
- // Mesma worktree continua serializada (saídas e caches compartilhados).
- expect(await native.admit({ ...writer('w1'), token: 'w1b', sessionId: 'w1b' }, { pid: 103, kind: 'tests' })).toMatchObject({ allow: false, reason: 'heavy_command_wait_timeout' });
+ const sameTree = await native.admit({ ...writer('w1'), token: 'w1b', sessionId: 'w1b' }, { pid: 103, kind: 'tests' });
+ expect(sameTree.allow).toBe(true);
+ expect(pool.snapshot().active).toBe(3);
+ // Build on that worktree stays exclusive while a reader holds the lane.
+ expect(await native.admit({ ...writer('w1'), token: 'w1c', sessionId: 'w1c' }, { pid: 104, kind: 'build' })).toMatchObject({ allow: false, reason: 'heavy_command_wait_timeout' });
  state = 'gone'; await native.drain(); expect(pool.snapshot().active).toBe(0); pool.close();
 });
 
@@ -169,7 +174,10 @@ it('two actual npm script parents borrow their child TypeScript lease without se
  });
  try {
   const result = await Promise.all([run(), run()]); expectAdmittedQuiet(result);
-  await native.drain(); expect(transitions.map((v) => v.kind)).toEqual(['grant', 'release', 'grant', 'release']); expect(pool.snapshot().active).toBe(0);
+  await native.drain();
+  expect(transitions.filter((v) => v.kind === 'grant')).toHaveLength(2);
+  expect(transitions.filter((v) => v.kind === 'release')).toHaveLength(2);
+  expect(pool.snapshot().active).toBe(0);
  } finally { pool.close(); await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true }); }
 }, 30_000);
 
@@ -201,7 +209,10 @@ it('absolute Bash execution with stripped NODE_OPTIONS is admitted before actual
  });
  try {
   const result = await Promise.all([run(), run()]); expectAdmittedQuiet(result);
-  await native.drain(); expect(transitions.map((v) => v.kind)).toEqual(['grant', 'release', 'grant', 'release']); expect(pool.snapshot().active).toBe(0);
+  await native.drain();
+  expect(transitions.filter((v) => v.kind === 'grant')).toHaveLength(2);
+  expect(transitions.filter((v) => v.kind === 'release')).toHaveLength(2);
+  expect(pool.snapshot().active).toBe(0);
  } finally { pool.close(); await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true }); }
 }, 30_000);
 
@@ -233,7 +244,10 @@ it('absolute zsh execution with stripped NODE_OPTIONS is admitted before actual 
  });
  try {
   const result = await Promise.all([run(), run()]); expectAdmittedQuiet(result);
-  await native.drain(); expect(transitions.map((v) => v.kind)).toEqual(['grant', 'release', 'grant', 'release']); expect(pool.snapshot().active).toBe(0);
+  await native.drain();
+  expect(transitions.filter((v) => v.kind === 'grant')).toHaveLength(2);
+  expect(transitions.filter((v) => v.kind === 'release')).toHaveLength(2);
+  expect(pool.snapshot().active).toBe(0);
  } finally { pool.close(); await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true }); }
 }, 30_000);
 it('actual absolute make commands serialize through non-Node shell preexec', async () => {
@@ -264,10 +278,12 @@ it('actual absolute make commands serialize through non-Node shell preexec', asy
  });
  try {
   const result = await Promise.all([run(), run()]); expectAdmittedQuiet(result);
-  await native.drain(); expect(transitions.map((v) => v.kind)).toEqual(['grant', 'release', 'grant', 'release']); expect(pool.snapshot().active).toBe(0);
+  await native.drain();
+  expect(transitions.map((v) => v.kind)).toEqual(['grant', 'release', 'grant', 'release']);
+  expect(pool.snapshot().active).toBe(0);
  } finally { pool.close(); await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true }); }
 }, 30_000);
-it.runIf(process.platform === 'darwin')('two actual native Node tsc descendants serialize in the real offline Seatbelt via only the curl loopback grant', async () => {
+it.runIf(process.platform === 'darwin')('two actual native Node tsc descendants share the root in the real offline Seatbelt via only the curl loopback grant', async () => {
  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-native-tsc-'));
  fs.writeFileSync(path.join(root, 'fixture.ts'), Array.from({ length: 4000 }, (_, i) => `interface Value${i} { name: string; value: number }`).join('\n'));
  const scope = { version: 1 as const, installationId: 'finite', projectId: 'native-tsc', checkoutId: 'main', rootRealPath: root, identitySource: 'manifest' as const };
@@ -295,7 +311,10 @@ it.runIf(process.platform === 'darwin')('two actual native Node tsc descendants 
  });
  try {
   const result = await Promise.all([run(), run()]); expectAdmittedQuiet(result);
-  await native.drain(); expect(transitions.map((v) => v.kind)).toEqual(['grant', 'release', 'grant', 'release']); expect(pool.snapshot().active).toBe(0);
+  await native.drain();
+  expect(transitions.filter((v) => v.kind === 'grant')).toHaveLength(2);
+  expect(transitions.filter((v) => v.kind === 'release')).toHaveLength(2);
+  expect(pool.snapshot().active).toBe(0);
  } finally { pool.close(); await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true }); }
 }, 30_000);
 
@@ -400,9 +419,11 @@ it('says it is waiting on memory pressure only when the shrunk cap is what block
  expect(blocked.message).toContain('esperando: pressão de memória');
  expect(blocked.message).not.toContain('machine 2/5');
  for (const permit of held) permit.release();
- const sameRoot = await pool.acquire({ scope, kind: 'tests' });
+ const sameRoot = await pool.acquire({ scope, kind: 'build', sessionId: 'pressure-holder' });
  const queued = await native.admit(ctx, { pid: 4247, kind: 'tests' });
- expect(queued.message).toContain('one job per root at a time');
+ expect(queued.message).toContain('exclusive build or install on this root');
+ expect(queued.message).toContain('session pressure-holder build');
+ expect(queued.message).not.toContain('one job per root');
  expect(queued.message).not.toContain('esperando: pressão de memória');
  sameRoot.release(); pool.close();
 });

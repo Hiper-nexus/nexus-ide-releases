@@ -1,5 +1,6 @@
 // Runs only in the caller's inherited sandbox. Main constructs the fixed
 // Apple stage-zero command; this bridge preserves cwd/env/stdio and exit.
+const path = require('node:path');
 const cp = require('node:child_process');
 const transport = require('./grok-transport.cjs');
 const kind = process.argv[2], file = process.argv[3], args = process.argv.slice(4);
@@ -17,17 +18,19 @@ async function main() {
     let target = base.file, targetArgs = [...base.args, kind, '--', file, ...args];
     if (env.NEXUS_HEAVY_LEASE) {
       const lease = await new Promise(resolve => {
-        const validator = cp.spawn(process.execPath, [require('node:path').join(__dirname, 'request.cjs'), String(process.pid), kind], {
-          env: { ...env, NODE_OPTIONS: '', NEXUS_HEAVY_HELPER: '1' }, stdio: ['ignore', 'pipe', 'ignore'],
+        const baseName = path.basename(file).slice(0, 80);
+        const label = /^[\w .:/_-]+$/.test(baseName) ? baseName : '';
+        const validator = cp.spawn(process.execPath, [path.join(__dirname, 'request.cjs'), String(process.pid), kind], {
+          env: { ...env, NODE_OPTIONS: '', NEXUS_HEAVY_HELPER: '1', ...(label ? { NEXUS_HEAVY_LABEL: label } : {}) },
+          stdio: ['ignore', 'pipe', 'inherit'],
         });
         relay.bind(validator);
         let output = '', failed = false;
         const stop = () => { failed = true; try { validator.kill('SIGTERM'); } catch {} };
-        const timer = setTimeout(stop, 370_000);
         validator.stdout.on('data', data => { output += data; if (output.length > 128) stop(); });
         validator.once('error', () => { failed = true; });
         validator.once('close', (code, signal) => {
-          clearTimeout(timer); relay.bind(null);
+          relay.bind(null);
           resolve(!failed && code === 0 && signal === null ? output.trim() : null);
         });
       });

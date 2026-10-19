@@ -35,7 +35,7 @@ afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
 
 function script(name: string, body: string): string {
   const folder = path.join(dir, name); fs.mkdirSync(folder);
-  const file = path.join(folder, 'tsc'); fs.writeFileSync(file, `#!/bin/sh\n${body}\n`, { mode: 0o700 }); return quote(file);
+  const file = path.join(folder, 'make'); fs.writeFileSync(file, `#!/bin/sh\n${body}\n`, { mode: 0o700 }); return quote(file);
 }
 async function until(check: () => boolean): Promise<void> {
   const deadline = Date.now() + 3000;

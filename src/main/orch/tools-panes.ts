@@ -2874,11 +2874,11 @@ const paneSpawnAfterTabMission = {
       const startWatchRole =
         options.role === 'worker' ? 'worker' : options.role === undefined ? 'helper' : null;
       const startCallerSessionId = ctx.sessionId;
-      // CLI pedida pelo operador ou conversa retomada: troca nunca é sozinha.
-      const pinnedRuntime =
-        Boolean(resumeRef) ||
-        operatorChoiceProved ||
-        (operatorExplicit && pinRedistributed === null);
+      // Pin do operador é escolha explícita. Retomada sozinha não prende a
+      // recuperação de brief recusado nem de ociosidade sem entrega.
+      const operatorPinned =
+        operatorChoiceProved || (operatorExplicit && pinRedistributed === null);
+      const pinnedRuntime = Boolean(resumeRef) || operatorPinned;
       const rerouteGeneration = startRecovery?.generation ?? 0;
       // "Mandar para outro" deste pedido: este mesmo handler, autoridade atual
       // de quem pediu. Agente de roster selado numa missão com squad: o
@@ -2942,6 +2942,7 @@ const paneSpawnAfterTabMission = {
           lineageId: startRecovery?.lineageId ?? paneId,
           operatorOpened: options.operatorOpened === true,
           pinnedRuntime,
+          operatorPinned,
           generation: rerouteGeneration,
           // F-1471: leitor não segura checkout; writer (ou worktree isolada) sim.
           exclusiveCheckout: options.readOnly !== true || isolatedWriter !== undefined,
@@ -2968,6 +2969,7 @@ const paneSpawnAfterTabMission = {
                 operatorOpened: options.operatorOpened === true,
                 turnProof: attempt.turnProof,
                 pinnedRuntime,
+                operatorPinned,
                 rerouted: startRecovery !== undefined,
                 // F-1414: teto de reaberturas por pedido, não "um reenvio só".
                 generation: rerouteGeneration,

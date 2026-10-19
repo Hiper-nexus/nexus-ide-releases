@@ -181,6 +181,15 @@ export interface StartCheckInput {
   readonly rerouted: boolean;
   /** CLI nomeada pelo operador ou retomada de conversa: não troca sozinho. */
   readonly pinnedRuntime: boolean;
+  /**
+   * Escolha explícita do operador. `false` = retomada, que não prende o
+   * briefing recusado. Ausente: `pinnedRuntime` continua prendendo.
+   */
+  readonly operatorPinned?: boolean;
+  /** Causa já provada. Só `brief-rejected` escapa de uma retomada sem pin. */
+  readonly failureCause?: PaneStartFailureCause | null;
+  /** 0 = pedido original. Brief recusado só troca de CLI nessa geração. */
+  readonly generation?: number;
   readonly hasAlternative: boolean;
   readonly now: number;
   readonly graceMs?: number;
@@ -230,10 +239,19 @@ export function decideStartAction(input: StartCheckInput): StartAction {
   // CLI. Só vale para veredito por PRAZO — `failed` é falha provada e não
   // espera ninguém.
   if (!input.failed && input.mainPressure && pressureSettling(input)) return 'none';
+  const generation = input.generation ?? 0;
+  // Retomada sem pin do operador: o brief recusado reabre uma vez noutra CLI.
+  const briefEscape =
+    input.failureCause === 'brief-rejected' &&
+    input.operatorPinned === false &&
+    generation === 0;
+  const pinBlocks = briefEscape ? false : input.operatorPinned === true || input.pinnedRuntime;
+  const briefAlreadyReopened = input.failureCause === 'brief-rejected' && generation > 0;
   if (
     input.operatorOpened ||
     input.rerouted ||
-    input.pinnedRuntime ||
+    briefAlreadyReopened ||
+    pinBlocks ||
     !input.hasAlternative
   ) {
     return 'notify-only';
@@ -574,6 +592,8 @@ export interface PaneStartWatchInit {
   readonly operatorOpened?: boolean;
   readonly turnProof: boolean;
   readonly pinnedRuntime: boolean;
+  /** Escolha explícita do operador. Retomada sozinha fica `false`. */
+  readonly operatorPinned?: boolean;
   /** Esta tentativa é uma reabertura automática de outra (generation > 0). */
   readonly rerouted: boolean;
   /**

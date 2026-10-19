@@ -20,7 +20,9 @@
  *    não voltou depois do retry;
  *  - `usage-limit`: o limite confirmado tirou a tarefa do pane;
  *  - `credential-remap`: o gate pré-spawn recusou a credencial e o assento
- *    foi remapeado para outra CLI antes de o pane nascer.
+ *    foi remapeado para outra CLI antes de o pane nascer;
+ *  - `idle-without-delivery`: o worker ficou ocioso sem commit nem handoff
+ *    e o supervisor reabriu a tarefa noutra CLI.
  *
  * Duas leituras, nenhuma bloqueia spawn sozinha:
  *  - o `exclude` do caller passa a valer para a CLI (`tools-domain`);
@@ -38,7 +40,8 @@ export type MissionCliFailureCause =
   | 'no-execution-proof'
   | 'provider-error'
   | 'usage-limit'
-  | 'credential-remap';
+  | 'credential-remap'
+  | 'idle-without-delivery';
 
 export interface MissionCliFailure {
   readonly missionId: string;
@@ -59,6 +62,7 @@ const CAUSE_LABEL: Readonly<Record<MissionCliFailureCause, string>> = {
   'provider-error': 'erro do provedor',
   'usage-limit': 'limite de uso',
   'credential-remap': 'credencial recusada no spawn',
+  'idle-without-delivery': 'ocioso sem entrega',
 };
 
 export function noteMissionCliFailure(

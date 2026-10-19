@@ -3,14 +3,17 @@ import { z } from 'zod';
 import type { AgentGateContext } from './gate';
 import { executionScopeFor, isCurrentGateContext, gateContextAbortSignal } from './gate';
 import { handleHookJsonPost } from './hook-http';
-import { acquireHeavyCommandPermit, type HeavyCommandPermit, type HeavyCommandQueueWait, type HeavyCommandRequest } from './heavy-command-permit';
+import { acquireHeavyCommandPermit, heavyCommandLabel, type HeavyCommandPermit, type HeavyCommandQueueWait, type HeavyCommandRequest } from './heavy-command-permit';
 import { sameRepositoryExecutionRoot } from './nested-worktree-execution';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { claimSessionCommandProcess, probeSessionCommandProcess, borrowSessionCommandProcess, stopSessionCommandProcess } from '../pty/pty-manager';
 import type { CommandProcessState } from '../pty/owned-command-process';
 import { trace } from '../observability/main-trace';
-const schema = z.object({ pid: z.number().int().positive(), kind: z.enum(['typescript', 'tests', 'build', 'install']), leaseId: z.string().min(1).max(128).optional(), proof: z.literal('darwin-job').optional(), cwd: z.string().min(1).max(1024).optional() }).strict();
-type Admission = { allow: boolean; reason?: string; leaseId?: string; message?: string };
+const TICKET = /^hq-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const schema = z.object({ pid: z.number().int().positive(), kind: z.enum(['typescript', 'tests', 'build', 'install']), leaseId: z.string().min(1).max(128).optional(), proof: z.literal('darwin-job').optional(), cwd: z.string().min(1).max(1024).optional(), ticket: z.string().regex(TICKET).optional(), label: z.string().max(80).optional() }).strict();
+type AdmissionBody = z.infer<typeof schema>;
+type Admission = { allow: boolean; reason?: string; leaseId?: string; message?: string; ticket?: string };
+const PROGRESS_AFTER_MS = 20_000;
 export interface NativeHeavyCommandPorts {
   current(ctx: AgentGateContext): boolean;
   claim(sessionId: string, pid: number, proof?: 'darwin-job'): Promise<string | null>;
@@ -30,22 +33,28 @@ export function heavyExecutorIsLive(pid: number): boolean {
   try { process.kill(pid, 0); return true; }
   catch (error) { return (error as NodeJS.ErrnoException).code !== 'ESRCH'; }
 }
-/** F-1229: the 74 says it was a queue wait, for how long and behind what. */
-function queueWaitMessage(wait: HeavyCommandQueueWait): string {
+function occupantText(occupant: HeavyCommandQueueWait['occupants'][number]): string {
+  const who = occupant.paneId ? `pane ${occupant.paneId}` : occupant.sessionId ? `session ${occupant.sessionId}` : 'a job';
+  const what = occupant.label ? `${occupant.kind} ${occupant.label}` : occupant.kind;
+  return `${who} ${what} for ${Math.max(0, Math.round(occupant.ageMs / 1000))} s`;
+}
+/** F-1229: the refusal names who holds the slot, the command and for how long. */
+export function queueWaitMessage(wait: HeavyCommandQueueWait, mode: 'gave-up' | 'waiting' = 'gave-up'): string {
   const root = wait.root.length > 160 ? `…${wait.root.slice(-159)}` : wait.root;
   // F-1434: RAM is named only when free RAM was really below the reserve.
   const gb = (mb: number) => (mb / 1024).toFixed(1);
-  const effective = wait.effectiveMaxActive ?? wait.maxActive;
-  // Same-root serialization still wins when the shrunk cap has room.
-  const pressureBlocked = effective < wait.maxActive && wait.running === 0 && wait.machineActive >= effective;
-  const cause = wait.running > 0 ? 'one job per root at a time'
-    : pressureBlocked ? 'esperando: pressão de memória'
-    : wait.machineActive >= wait.maxActive ? `machine limit of ${wait.maxActive} parallel heavy jobs`
-    : wait.memory?.swapBound ? 'swap use above the configured limit'
-    : wait.memory && wait.memory.freeMB !== null && wait.memory.freeMB < wait.memory.neededMB ? `free RAM ${gb(wait.memory.freeMB)} GB below the ${gb(wait.memory.neededMB)} GB reserve`
+  const held = wait.occupants.length ? ` (held by ${wait.occupants.map(occupantText).join(', ')})` : '';
+  const cause = wait.blockedBy === 'exclusive' ? `exclusive build or install on this root${held}`
+    : wait.blockedBy === 'writer-ahead' ? 'a build or install is ahead in the queue'
+    : wait.blockedBy === 'pressure' ? 'esperando: pressão de memória'
+    : wait.blockedBy === 'swap' ? 'swap use above the configured limit'
+    : wait.blockedBy === 'ram' && wait.memory && wait.memory.freeMB !== null && wait.memory.freeMB < wait.memory.neededMB
+      ? `free RAM ${gb(wait.memory.freeMB)} GB below the ${gb(wait.memory.neededMB)} GB reserve`
+    : wait.blockedBy === 'machine' ? `machine limit of ${wait.maxActive} parallel heavy jobs`
     : 'machine capacity, not this root';
-  const shown = pressureBlocked ? effective : wait.maxActive;
-  return `nexus-heavy: gave up after ${Math.round(wait.waitedMs / 1000)} s in the admission queue of ${root}: ` +
+  const shown = wait.blockedBy === 'pressure' ? (wait.effectiveMaxActive ?? wait.maxActive) : wait.maxActive;
+  const verb = mode === 'waiting' ? 'still waiting after' : 'gave up after';
+  return `nexus-heavy: ${verb} ${Math.round(wait.waitedMs / 1000)} s in the admission queue of ${root}: ` +
     `${wait.running} job(s) running there, ${wait.waiting} more waiting (${cause}); machine ${wait.machineActive}/${shown} heavy jobs running.`;
 }
 /** F-1434: every refusal carries the line the shell prints; none blames CPU/RAM. */
@@ -59,10 +68,12 @@ const POOL_REFUSALS: Readonly<Record<string, string>> = {
   heavy_command_authority_revoked: 'this terminal lost its Nexus authority while waiting for a slot',
 };
 interface Flight { ctx: AgentGateContext; claim: string; permit: HeavyCommandPermit; pid: number; slotReleased: boolean; done: Promise<void> }
+interface QueuedHold { ctx: AgentGateContext; claim: string; pid: number }
 /** No remote release endpoint. Kernel identity disappearance or physical PTY
  * proof alone releases RAM/CPU; PostToolUse never does. */
 export class NativeHeavyCommands {
   readonly #flights = new Set<Flight>();
+  readonly #holds = new Map<string, QueuedHold>();
   readonly #orphans = new Map<Promise<void>, AgentGateContext>();
   readonly #retired = new WeakSet<AgentGateContext>();
   #accepting = true;
@@ -74,13 +85,24 @@ export class NativeHeavyCommands {
     void pending.then((result) => {
       this.#pending.delete(pending);
       // F-997: o "exit 74/78" do pane ganha causa no trace do Main.
-      if (!result.allow) trace({ kind: 'heavy-command-denied', sessionId: ctx.sessionId ?? '', reason: result.reason ?? 'unknown', elapsedMs: Date.now() - started });
+      if (!result.allow && result.reason !== 'heavy_command_queued') trace({ kind: 'heavy-command-denied', sessionId: ctx.sessionId ?? '', reason: result.reason ?? 'unknown', elapsedMs: Date.now() - started });
     }, () => this.#pending.delete(pending)); return pending;
   }
   async #admit(ctx: AgentGateContext, raw: unknown, signal?: AbortSignal): Promise<Admission> {
     const body = schema.safeParse(raw);
     if (!body.success) return denied('heavy_command_authority_unavailable', 'malformed admission request');
     if (!ctx.sessionId || !this.#accepting || !this.#current(ctx)) return denied('heavy_command_authority_unavailable', 'this terminal has no live Nexus admission authority (pane closed or Nexus shutting down)');
+    if (body.data.ticket && !body.data.leaseId) {
+      const hold = this.#holds.get(body.data.ticket);
+      if (hold && hold.ctx.token === ctx.token && hold.ctx.sessionId === ctx.sessionId && hold.pid === body.data.pid) {
+        if (!this.#accepting || !this.#current(ctx) || signal?.aborted) {
+          this.#holds.delete(body.data.ticket);
+          this.#reap(ctx, hold.claim);
+          return denied('heavy_command_authority_unavailable', 'this terminal lost its Nexus authority while waiting for a slot');
+        }
+        return this.#acquireHeld(ctx, hold.claim, body.data, signal);
+      }
+    }
     if (body.data.leaseId) {
       const flight = [...this.#flights].find((candidate) => candidate.permit.id === body.data.leaseId && candidate.ctx.token === ctx.token && candidate.ctx.sessionId === ctx.sessionId);
       let proved = false;
@@ -97,25 +119,37 @@ export class NativeHeavyCommands {
         ? 'this terminal lost its Nexus authority during admission'
         : `could not prove that pid ${body.data.pid} runs inside this agent terminal's process tree`);
     }
+    return this.#acquireHeld(ctx, claim, body.data, signal);
+  }
+  async #acquireHeld(ctx: AgentGateContext, claim: string, body: AdmissionBody, signal?: AbortSignal): Promise<Admission> {
     let permit: HeavyCommandPermit;
     // F-983/F-997: a fila é por raiz de EXECUÇÃO (a worktree do writer), não
     // pelo checkout de coordenação do token — senão writers isolados voltam à
     // fila única do projeto. F-1229: e a raiz é a do cwd do job, se for deste
     // repositório (subagentes do mesmo token, cada um na sua worktree).
-    try { permit = await this.ports.acquire({ scope: await this.#executionScope(ctx, body.data.cwd, body.data.pid), missionId: ctx.missionId, sessionId: ctx.sessionId, kind: body.data.kind, signal, isCurrent: () => this.#current(ctx) && this.#accepting }); }
+    // Progress is per HTTP round: in-process terminal/bg callers omit it and
+    // keep the promise until the slot opens.
+    try { permit = await this.ports.acquire({ scope: await this.#executionScope(ctx, body.cwd, body.pid), missionId: ctx.missionId, sessionId: ctx.sessionId, label: heavyCommandLabel(body.label), kind: body.kind, signal, isCurrent: () => this.#current(ctx) && this.#accepting, progressAfterMs: PROGRESS_AFTER_MS, queueTicket: body.ticket }); }
     catch (failure) {
+      const queued = failure as { message?: string; ticket?: string; queue?: HeavyCommandQueueWait } | null;
+      if (queued?.message === 'heavy_command_queued' && queued.ticket && queued.queue) {
+        this.#holds.set(queued.ticket, { ctx, claim, pid: body.pid });
+        return { allow: false, reason: 'heavy_command_queued', ticket: queued.ticket, message: queueWaitMessage(queued.queue, 'waiting') };
+      }
+      if (body.ticket) this.#holds.delete(body.ticket);
       this.#reap(ctx, claim);
       const wait = (failure as { queue?: HeavyCommandQueueWait } | null)?.queue;
       if (wait) return { allow: false, reason: 'heavy_command_wait_timeout', message: queueWaitMessage(wait) };
       const code = failure instanceof Error ? failure.message : '';
       return denied('heavy_command_admission_denied', POOL_REFUSALS[code] ?? `admission failed (${code || 'unknown'})`);
     }
-    const flight: Flight = { ctx, claim, permit, pid: body.data.pid, slotReleased: false, done: Promise.resolve() }; this.#flights.add(flight);
+    if (body.ticket) this.#holds.delete(body.ticket);
+    const flight: Flight = { ctx, claim, permit, pid: body.pid, slotReleased: false, done: Promise.resolve() }; this.#flights.add(flight);
     flight.done = this.#observe(flight); void flight.done.catch(() => {});
     let state: CommandProcessState = 'unknown';
-    try { state = await this.ports.probe(ctx.sessionId, claim); } catch { /* unknown is not permission */ }
+    try { state = await this.ports.probe(ctx.sessionId!, claim); } catch { /* unknown is not permission */ }
     if (state !== 'live' || !this.#flights.has(flight) || !this.#accepting || !this.#current(ctx) || signal?.aborted) {
-      return denied('heavy_command_process_ownership_changed', `pid ${body.data.pid} exited or changed while it was being admitted`);
+      return denied('heavy_command_process_ownership_changed', `pid ${body.pid} exited or changed while it was being admitted`);
     }
     return { allow: true, leaseId: permit.id };
   }

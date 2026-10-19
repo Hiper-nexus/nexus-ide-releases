@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { runInNewContext } from 'node:vm';
 import { afterEach, expect, it, vi } from 'vitest';
-import { HeavyCommandPermitPool, createHeavyCommandPressureCache, heavyCommandEffectiveCap, parseHeavyCommandPressureOutput } from './heavy-command-permit';
+import { HeavyCommandPermitPool, createHeavyCommandPressureCache, heavyCommandEffectiveCap, heavyCommandKindIsExclusive, heavyLaneBlocked, parseHeavyCommandPressureOutput } from './heavy-command-permit';
 import { testProjectScope } from './__tests__/scope-fixture';
 
 const pools: HeavyCommandPermitPool[] = [];
@@ -68,10 +68,10 @@ it('expires mission and loose-helper waits before the shipped file transport tim
   }
 });
 
-it('serializes jobs in one checkout while worktrees of the same project run in parallel (F-983)', async () => {
-  const value = pool(); const first = await value.acquire(request());
+it('serializes builds in one checkout while worktrees of the same project run in parallel (F-983)', async () => {
+  const value = pool(); const first = await value.acquire({ ...request(), kind: 'build' });
   let sameCheckout = false;
-  const second = value.acquire({ ...request(), sessionId: 'other-worker' }).then(p => { sameCheckout = true; return p; });
+  const second = value.acquire({ ...request(), kind: 'install', sessionId: 'other-worker' }).then(p => { sameCheckout = true; return p; });
   // Parallel writers own separate worktrees: one project-wide slot made them
   // queue behind each other until the 300 s admission timeout (exit 74).
   const worktree = await value.acquire({ ...request(), scope: { ...scope, checkoutId: 'worker-checkout', rootRealPath: '/isolated' } });
@@ -81,6 +81,98 @@ it('serializes jobs in one checkout while worktrees of the same project run in p
   next.release(); worktree.release(); other.release(); expect(value.snapshot().active).toBe(0);
 });
 
+it('runs typecheck and tests of one root together, up to the machine cap', async () => {
+  const value = pool();
+  const first = await value.acquire(request());
+  const second = await value.acquire({ ...request(), kind: 'tests', sessionId: 'reader' });
+  expect(value.snapshot().active).toBe(2);
+  first.release(); second.release();
+});
+
+it('does not let a later reader pass a build that is already waiting', async () => {
+  const value = new HeavyCommandPermitPool({ memory: () => ({ freeMB: 100_000, swapUsedMB: 0 }),
+    limits: () => ({ minFreeMB: 1000, maxSwapUsedMB: 0 }), refreshMemory: async () => {},
+    pollMs: 10, waitMs: 1000, maxWaiters: 8, reserveMB: 1000, maxActive: 1 });
+  pools.push(value);
+  const holder = await value.acquire({ ...request(), scope: { ...scope, rootRealPath: '/other' }, kind: 'typescript' });
+  let early = false, writer = false, late = false;
+  const earlyPermit = value.acquire({ ...request(), kind: 'tests', sessionId: 'early' }).then(p => { early = true; return p; });
+  const writerPermit = value.acquire({ ...request(), kind: 'build', sessionId: 'writer' }).then(p => { writer = true; return p; });
+  const latePermit = value.acquire({ ...request(), kind: 'typescript', sessionId: 'late' }).then(p => { late = true; return p; });
+  await Promise.resolve();
+  expect(early || writer || late).toBe(false);
+  holder.release();
+  await Promise.resolve();
+  expect(early).toBe(true); expect(writer).toBe(false); expect(late).toBe(false);
+  (await earlyPermit).release();
+  await Promise.resolve();
+  expect(writer).toBe(true); expect(late).toBe(false);
+  (await writerPermit).release();
+  (await latePermit).release();
+  expect(value.snapshot().active).toBe(0);
+});
+
+it('parks an attached waiter with a ticket and admits that same waiter on retry', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(0);
+  const value = new HeavyCommandPermitPool({ memory: () => ({ freeMB: 100_000, swapUsedMB: 0 }),
+    limits: () => ({ minFreeMB: 1000, maxSwapUsedMB: 0 }), refreshMemory: async () => {},
+    pollMs: 10, waitMs: 10_000, maxActive: 1, progressAfterMs: 20, parkMs: 45_000 });
+  pools.push(value);
+  const holder = await value.acquire({ ...request(), kind: 'build', sessionId: 'holder' });
+  const controller = new AbortController();
+  const queued = value.acquire({ ...request(), kind: 'typescript', signal: controller.signal, progressAfterMs: 20 })
+    .then(() => { throw new Error('admitted'); }, (failure: Error & { ticket?: string; queue?: { blockedBy?: string; occupants?: Array<{ sessionId?: string; kind?: string }> } }) => failure);
+  await vi.advanceTimersByTimeAsync(20);
+  const failure = await queued;
+  expect(failure.message).toBe('heavy_command_queued');
+  expect(failure.ticket).toMatch(/^hq-[0-9a-f-]{36}$/i);
+  expect(failure.queue?.blockedBy).toBe('exclusive');
+  expect(failure.queue?.occupants?.[0]).toMatchObject({ sessionId: 'holder', kind: 'build' });
+  controller.abort();
+  expect(value.snapshot().waiting).toBe(1);
+  let admitted = false;
+  const retry = value.acquire({ ...request(), kind: 'typescript', queueTicket: failure.ticket, progressAfterMs: 20 })
+    .then(permit => { admitted = true; return permit; });
+  await Promise.resolve();
+  expect(admitted).toBe(false);
+  holder.release();
+  (await retry).release();
+  expect(admitted).toBe(true);
+});
+
+it('drops a parked waiter that nobody reattaches, then a new ticket waits fresh', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(0);
+  const value = new HeavyCommandPermitPool({ memory: () => ({ freeMB: 100_000, swapUsedMB: 0 }),
+    limits: () => ({ minFreeMB: 1000, maxSwapUsedMB: 0 }), refreshMemory: async () => {},
+    pollMs: 10, waitMs: 10_000, maxActive: 1, progressAfterMs: 20, parkMs: 45_000 });
+  pools.push(value);
+  const holder = await value.acquire({ ...request(), kind: 'build' });
+  const queued = value.acquire({ ...request(), progressAfterMs: 20 }).then(() => { throw new Error('admitted'); }, (failure: Error & { ticket?: string }) => failure);
+  await vi.advanceTimersByTimeAsync(20);
+  const failure = await queued;
+  await vi.advanceTimersByTimeAsync(45_000);
+  expect(value.snapshot().waiting).toBe(0);
+  let admitted = false;
+  const fresh = value.acquire({ ...request(), queueTicket: failure.ticket }).then(permit => { admitted = true; return permit; });
+  await Promise.resolve();
+  expect(admitted).toBe(false);
+  holder.release();
+  (await fresh).release();
+  expect(admitted).toBe(true);
+});
+
+it('classifies exclusive kinds and a writer already ahead of a reader', () => {
+  expect(heavyCommandKindIsExclusive('build')).toBe(true);
+  expect(heavyCommandKindIsExclusive('install')).toBe(true);
+  expect(heavyCommandKindIsExclusive('typescript')).toBe(false);
+  expect(heavyCommandKindIsExclusive('tests')).toBe(false);
+  expect(heavyLaneBlocked({ kind: 'typescript', occupants: [{ kind: 'tests' }], earlierExclusive: false })).toBe(false);
+  expect(heavyLaneBlocked({ kind: 'typescript', occupants: [{ kind: 'build' }], earlierExclusive: false })).toBe(true);
+  expect(heavyLaneBlocked({ kind: 'tests', occupants: [], earlierExclusive: true })).toBe(true);
+  expect(heavyLaneBlocked({ kind: 'build', occupants: [{ kind: 'typescript' }], earlierExclusive: false })).toBe(true);
+  expect(heavyLaneBlocked({ kind: 'install', occupants: [], earlierExclusive: false })).toBe(false);
+});
+
 it('F-1229: a wait timeout carries how long it waited and what held its root or the machine', async () => {
   const value = new HeavyCommandPermitPool({ memory: () => ({ freeMB: 100_000, swapUsedMB: 0 }),
     limits: () => ({ minFreeMB: 1000, maxSwapUsedMB: 0 }), refreshMemory: async () => {}, pollMs: 10, waitMs: 60, reserveMB: 1000, maxActive: 2 });
@@ -88,10 +180,11 @@ it('F-1229: a wait timeout carries how long it waited and what held its root or 
   const lane = (root: string) => ({ ...request(), scope: { ...scope, rootRealPath: root } });
   const timedOut = (root: string) => value.acquire(lane(root))
     .then(() => { throw new Error('unexpected admission'); }, (failure: Error & { queue?: { waitedMs: number } }) => failure);
-  const held = await value.acquire(lane('/wt'));
+  const held = await value.acquire({ ...lane('/wt'), kind: 'build', sessionId: 'holder' });
   const sameRoot = await timedOut('/wt');
   expect(sameRoot.message).toBe('heavy_command_wait_timeout');
-  expect(sameRoot).toMatchObject({ queue: { root: '/wt', running: 1, waiting: 0, machineActive: 1, maxActive: 2 } });
+  expect(sameRoot).toMatchObject({ queue: { root: '/wt', running: 1, waiting: 0, machineActive: 1, maxActive: 2, blockedBy: 'exclusive' } });
+  expect(sameRoot.queue && 'occupants' in sameRoot.queue ? sameRoot.queue.occupants : []).toMatchObject([{ sessionId: 'holder', kind: 'build' }]);
   expect(sameRoot.queue?.waitedMs).toBeGreaterThanOrEqual(60);
   const other = await value.acquire(lane('/other'));
   const machine = await timedOut('/third');
@@ -113,7 +206,7 @@ it('bounds machine-wide concurrency even when RAM would admit more lanes', async
 
 it('cancels queued commands and keeps an active reservation through caller cancellation', async () => {
   const value = pool(); const activeController = new AbortController();
-  const active = await value.acquire({ ...request(), signal: activeController.signal });
+  const active = await value.acquire({ ...request(), kind: 'build', signal: activeController.signal });
   const cancelled = new AbortController();
   const waiting = value.acquire({ ...request(), signal: cancelled.signal });
   const rejected = expect(waiting).rejects.toThrow('aborted'); cancelled.abort(); await rejected;
@@ -130,11 +223,11 @@ it('reserves RAM atomically across projects and admits after physical release', 
 });
 
 it('does not let stale authority consume the next slot and bounds its waiting queue', async () => {
-  const value = pool(); const first = await value.acquire(request()); let current = true;
-  const stale = value.acquire({ ...request(), isCurrent: () => current });
+  const value = pool(); const first = await value.acquire({ ...request(), kind: 'build' }); let current = true;
+  const stale = value.acquire({ ...request(), kind: 'build', isCurrent: () => current });
   const staleResult = expect(stale).rejects.toThrow('authority');
-  const last = value.acquire(request());
-  await expect(value.acquire(request())).rejects.toThrow('queue_full');
+  const last = value.acquire({ ...request(), kind: 'build' });
+  await expect(value.acquire({ ...request(), kind: 'build' })).rejects.toThrow('queue_full');
   current = false; first.release(); await staleResult; (await last).release();
 });
 
@@ -265,7 +358,7 @@ it('keeps the configured cap when memory pressure cannot be read', async () => {
 
 it('queues Main-owned loose helpers without a mission, including direct assistant tools', async () => {
   const value = pool();
-  const helper = await value.acquire({ ...request(), missionId: undefined });
+  const helper = await value.acquire({ ...request(), missionId: undefined, kind: 'build' });
   expect(helper.id).not.toBe('');
   let admitted = false;
   const assistant = value.acquire({ ...request(), missionId: undefined, sessionId: undefined }).then(p => { admitted = true; return p; });
