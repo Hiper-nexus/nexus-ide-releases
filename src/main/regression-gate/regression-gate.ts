@@ -60,6 +60,8 @@ import { AsyncProcessGitRunner, ProcessGitRunner, type GitRunner } from '../runt
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import { removeTreeSync } from '../util/remove-tree';
+import { hashContent, loadImportStore, saveImportStore, type PersistedImportEntry } from './regression-gate-import-store';
+import { isSameRepoNodeModules, testsByRemovedLiterals, testsImportingBasename } from './regression-gate-selection';
 
 const GATE_VERSION = 'regression-gate-v2';
 const TEST_FILE_RE = /(?:^|\/)(?:__tests__\/|[^/]+\.(?:test|spec)\.[^/]+$)/iu;
@@ -442,13 +444,32 @@ const inflight = new Map<string, { readonly promise: Promise<RegressionGateResul
 const importFactCache = new Map<string, {
   readonly size: number;
   readonly mtimeMs: number;
+  /** sha1 do conteúdo: revalida o arquivo quando só o mtime mudou. */
+  readonly hash: string;
   readonly fact: OrientationImportFileFact;
 }>();
+/** Raízes cujo cache persistido já foi carregado nesta vida do processo. */
+const importStoreLoaded = new Set<string>();
+const importFactStats = { parsed: 0, revalidated: 0, hits: 0 };
+
+/** Contadores do cache de imports (diagnóstico e testes). */
+export function getImportFactStats(): { parsed: number; revalidated: number; hits: number } {
+  return { ...importFactStats };
+}
+
+/** Esquece só a memória: simula um processo novo com o cache em disco intacto. */
+export function __resetImportFactMemoryForTests(): void {
+  importFactCache.clear();
+  importStoreLoaded.clear();
+  importFactStats.parsed = 0;
+  importFactStats.revalidated = 0;
+  importFactStats.hits = 0;
+}
 
 export function __resetRegressionGateForTests(): void {
   cache.clear();
   inflight.clear();
-  importFactCache.clear();
+  __resetImportFactMemoryForTests();
   registeredExtensions = {};
 }
 
@@ -916,6 +937,26 @@ async function buildReverseGraph(
 ): Promise<{ reverse: ReadonlyMap<string, readonly string[]>; files: readonly string[]; truncated: boolean; deadlineHit: boolean }> {
   const walk = await walkOrientationTreeAsync(scope, GRAPH_LIMITS);
   const facts: OrientationImportFileFact[] = [];
+  let storeDirty = false;
+  // Cache persistido: o 2º handoff (ou um processo novo) não reanalisa o repositório.
+  if (!importStoreLoaded.has(scope.rootRealPath)) {
+    importStoreLoaded.add(scope.rootRealPath);
+    for (const [rel, persisted] of loadImportStore(scope.rootRealPath)) {
+      const key = `${scope.rootRealPath}\u0000${rel}`;
+      if (importFactCache.has(key)) continue;
+      importFactCache.set(key, {
+        size: persisted.size,
+        mtimeMs: persisted.mtimeMs,
+        hash: persisted.hash,
+        fact: {
+          relativePath: rel,
+          ext: path.posix.extname(rel).toLowerCase(),
+          size: persisted.size,
+          importSpecifiers: [...persisted.specifiers],
+        },
+      });
+    }
+  }
   let incomplete = walk.truncated || walk.treeFingerprintParts.some(part => { const [file, state] = part.split('\0'); return state === 'skip-size' && isOrientationImportSource(path.posix.extname(file!).toLowerCase()); });
   let deadlineHit = false;
   const now = budget?.now ?? Date.now;
@@ -944,20 +985,31 @@ async function buildReverseGraph(
       const absolute = path.join(scope.rootRealPath, file.relativePath);
       const stat = fs.statSync(absolute);
       let entry = importFactCache.get(cacheKey);
-      if (entry && (entry.size !== stat.size || entry.mtimeMs !== stat.mtimeMs)) entry = undefined;
-      if (!entry) {
+      if (entry && entry.size === stat.size && entry.mtimeMs === stat.mtimeMs) {
+        importFactStats.hits += 1;
+      } else {
         const read = readWorkspaceTextFile(scope, file.relativePath);
-        entry = {
-          size: stat.size,
-          mtimeMs: stat.mtimeMs,
-          fact: {
-            relativePath: file.relativePath,
-            ext: file.ext,
-            size: read.size,
-            importSpecifiers: extractOrientationImportSpecifiers(read.content),
-          },
-        };
+        const hash = hashContent(read.content);
+        if (entry && entry.hash === hash && entry.size === stat.size) {
+          // Só o mtime mudou: o conteúdo é o mesmo, não reanalisa.
+          entry = { ...entry, mtimeMs: stat.mtimeMs };
+          importFactStats.revalidated += 1;
+        } else {
+          entry = {
+            size: stat.size,
+            mtimeMs: stat.mtimeMs,
+            hash,
+            fact: {
+              relativePath: file.relativePath,
+              ext: file.ext,
+              size: read.size,
+              importSpecifiers: extractOrientationImportSpecifiers(read.content),
+            },
+          };
+          importFactStats.parsed += 1;
+        }
         importFactCache.set(cacheKey, entry);
+        storeDirty = true;
         while (importFactCache.size > IMPORT_FACT_CACHE_LIMIT) {
           importFactCache.delete(importFactCache.keys().next().value!);
         }
@@ -968,6 +1020,21 @@ async function buildReverseGraph(
       continue;
     }
     if (facts.length % 256 === 0) await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  if (storeDirty) {
+    const prefix = `${scope.rootRealPath}\u0000`;
+    const snapshot = new Map<string, PersistedImportEntry>();
+    for (const [key, entry] of importFactCache) {
+      if (key.startsWith(prefix)) {
+        snapshot.set(key.slice(prefix.length), {
+          size: entry.size,
+          mtimeMs: entry.mtimeMs,
+          hash: entry.hash,
+          specifiers: entry.fact.importSpecifiers,
+        });
+      }
+    }
+    await saveImportStore(scope.rootRealPath, snapshot);
   }
   // Aliases do tsconfig (`@/…`) com o mesmo resolvedor do code map.
   const graph = buildOrientationImportGraphFromFacts(facts, GRAPH_LIMITS, loadTsconfigAliases(scope));
@@ -1009,6 +1076,9 @@ function isSourceNeedingTest(file: string): boolean {
 
 /** F-1224: fonte de teste que a extensão/banco puxou só pelo WIP anterior ao spawn. */
 const WIP_IMPACT_SOURCE = '(WIP anterior ao spawn)';
+/** Testes achados por literal do diff: entre a distância 1 e a 2. */
+const LITERAL_IMPACT_SOURCE = '(literal do diff)';
+const LITERAL_TIER = 1.5;
 
 /**
  * Testes impactados: os próprios testes tocados, os co-localizados e os que
@@ -1026,6 +1096,8 @@ export async function computeImpactedTests(
   wip: { readonly tests: readonly string[]; readonly dbConsumers: readonly string[] } = { tests: [], dbConsumers: [] },
   /** F-1533: prazo do mapa; vencido, o grafo fica parcial e nada certifica. */
   budget?: ImpactMapBudget,
+  /** Seleção barata via `git grep`: fallback do mapa estourado e faixa de literais. */
+  selection?: { readonly git: GitRunner; readonly baseSha: string | null },
 ): Promise<ImpactedTests> {
   const { reverse, files, truncated, deadlineHit } = await buildReverseGraph(scope, changedFiles, budget);
   const fileSet = new Set(files);
@@ -1078,6 +1150,22 @@ export async function computeImpactedTests(
     if (TEST_FILE_RE.test(file) || PY_TEST_RE.test(file)) continue;
     if (!testsOf(file, file) && isSourceNeedingTest(file) && fileSet.has(file)) {
       untested.push(file);
+    }
+  }
+  if (selection) {
+    const root = scope.rootRealPath;
+    // Mapa cortado/truncado: o grafo de importadores diretos pode faltar. Os
+    // testes que citam o basename do arquivo tocado entram como distância 1,
+    // junto do `.test` irmão (que já vem da lista de arquivos do walk).
+    if (deadlineHit || truncated) {
+      for (const [file, found] of testsImportingBasename(selection.git, root, changedFiles)) {
+        for (const test of found) addTest(test, file, 1);
+      }
+    }
+    // Depois dos diretos e antes da distância 2: testes que contêm um literal
+    // removido/alterado no diff (limitado; `git grep -l -F`, sem varrer em JS).
+    for (const test of testsByRemovedLiterals(selection.git, root, selection.baseSha)) {
+      addTest(test, LITERAL_IMPACT_SOURCE, LITERAL_TIER);
     }
   }
   for (const [consumers, label] of [[dbConsumers, '(banco)'], [wip.dbConsumers, WIP_IMPACT_SOURCE]] as const) {
@@ -1424,10 +1512,11 @@ function realOrNull(target: string): string | null {
  * principal (`trustedRoot`), real dentro dele. Qualquer outro (ex.: um link
  * para o HOME, com a rede liberada) vira `rejected` e os testes não rodam.
  */
-function externalDependencyReads(
+export function externalDependencyReads(
   root: string,
   cwd: string,
   trustedRoot: string | undefined,
+  git: GitRunner = new ProcessGitRunner(),
 ): { readonly reads: string[]; readonly rejected: string | null } {
   const out: string[] = [];
   const trustedReal = trustedRoot ? realOrNull(trustedRoot) : null;
@@ -1440,6 +1529,14 @@ function externalDependencyReads(
       // sem node_modules neste nível (ou link quebrado: nada a ler)
     }
     if (real && !isInside(root, real)) {
+      // `node_modules` de outra worktree do MESMO repositório (mesmo git
+      // common-dir) é tão confiável quanto o da própria; fora do repositório,
+      // cai na regra do checkout principal abaixo.
+      if (isSameRepoNodeModules(git, root, real)) {
+        out.push(real);
+        if (dir === root || path.dirname(dir) === dir) break;
+        continue;
+      }
       const mirror = trustedReal ? realOrNull(path.join(trustedReal, path.relative(root, candidate))) : null;
       if (!mirror || mirror !== real || !isInside(trustedReal!, mirror)) {
         return { reads: [], rejected: path.relative(root, candidate).replace(/\\/g, '/') };
@@ -1905,6 +2002,7 @@ async function evaluateMappedTests(
       input.includeE2E === true,
       { tests: extraTests.filter((test) => !ownExtra.has(test)), dbConsumers: dbConsumers.filter((file) => !ownConsumers.has(file)) },
       { deadline: mapDeadline, now },
+      { git, baseSha: state.base.sha },
     );
   } catch (error) {
     warnings.push(`mapa de testes indisponível: ${error instanceof Error ? error.message : String(error)}`.slice(0, 200));
