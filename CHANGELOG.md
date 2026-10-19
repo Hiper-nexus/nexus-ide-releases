@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.76.320 — Piloto para todas as CLIs no Linux
+
+A tag 0.76.319 é o pacote Windows e não recebe arquivos Linux. Este pacote leva o desktop Linux.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+No desktop Linux, em relação à 0.76.318:
+
+- **AGY e todas as CLIs no Piloto automático**. O Piloto automático só oferecia Claude e Codex como coordenador, mesmo no Autopiloto, onde a missão aceita qualquer CLI que coordena. Agora o card mostra o AGY, Kimi, Grok, Qwen e as demais CLIs instaladas que coordenam missão; só o modo Hardened continua restrito aos Maestros verificados. A trava antiga que tirava o AGY da coordenação saiu: ele já tem o MCP do Nexus desde o fim de setembro.
+- **Equipes salvas sem projeto aberto**. O catálogo de equipes é global, mas a tela de Ajustes só o mostrava com um projeto aberto e dizia "Nenhuma equipe salva" sem ele. Agora as equipes originais e as suas aparecem sempre, e criar, editar, importar, exportar e apagar funcionam sem projeto. Erros técnicos em inglês viraram orientação em português.
+- **Escolha a equipe na Nova missão**. A etapa Equipe da Nova missão ganhou "Começar de uma equipe salva", com as suas equipes antes das originais. O Quadro explica que a equipe é da missão e que outra equipe se escolhe numa Nova missão.
+- **Atualização do Claude Code não quebra mais a CLI**. O npm 12 bloqueia os scripts de instalação e o Claude Code atualizado ficava como um stub que saía no boot: toda missão nascia com o Maestro morto. As atualizações liberam só o script do próprio pacote da CLI, uma atualização que deixa a CLI sem responder é reinstalada na hora, e o Quadro mostra a última tela do Maestro que caiu em vez de culpar uma build anterior.
+- **DeepSeek Flash só onde existe**. O deepseek-flash aparecia em primeiro no grupo Claude mesmo com o Claude na Anthropic, onde esse modelo não existe, e a rota visual podia escolhê-lo. Agora ele só aparece com o Claude apontado para a DeepSeek, e o seletor usa a lista que o provider realmente serve.
+- **Textos do Linux**. O cofre passa a dizer "chaveiro do sistema" (libsecret), mostrar um arquivo salvo é "Mostrar na pasta", e o aviso de microfone mudo aponta o mixer de som. Os botões que abrem os Ajustes de som do macOS e do Windows ficam ocultos no Linux: não há uma URL comum entre os desktops.
+- **O pane diz o motivo real**. "Contexto degradado" virou a causa de fato (troca de conta por limite confirmado ou entrega que o Maestro não aceitou), um pane cuja missão não existe mais não diz que ela encerrou com relatório, e quando a verificação automática recusa a conclusão o Quadro mostra que o Maestro está corrigindo.
+
 ## 0.76.319 — Piloto para todas as CLIs
 
 As tags 0.76.317 (macOS) e 0.76.318 (Linux) não recebem arquivos Windows. Este pacote leva ao Windows tudo delas e as correções abaixo, vindas do relato de um cliente no Windows (19/10):
