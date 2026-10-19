@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "signing": "yubikey",
+  "spkiSha256": "cc695904302f57c37532f709c25a9f25710bb04a2f23d1f89b42cf7430c4e3d0",
+  "publisherCommonName": "HIPERSEND TECNOLOGIA INTERNET & SOFTWARES LTDA",
+  "certificateSha1": null
+}

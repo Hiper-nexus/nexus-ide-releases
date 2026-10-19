@@ -35,6 +35,11 @@ build/*
 !build/prune-native-payload.test.ts
 !build/release-npm-integrity.json
 !build/release-tag-signers.json
+# Windows Authenticode by the YubiKey: forge.config.ts, the receipt collector and
+# the publisher read the pinned identity from a clean checkout.
+!build/windows-token-signing.ts
+!build/windows-token-signing.test.ts
+!build/windows-signing-identity.json
 .next/
 .nuxt/
 

@@ -28,6 +28,12 @@ import {
   isAppleReleaseSigning,
   macTimestampAuthority,
 } from './build/mac-signing';
+import {
+  WINDOWS_SIGNING_IDENTITY,
+  assertWindowsTokenSigningReady,
+  windowsTokenSignerThumbprint,
+  type WindowsSigningIdentity,
+} from './build/windows-token-signing';
 
 /**
  * Ícone do instalador Windows, gerado de `assets/icon.png` por
@@ -315,81 +321,40 @@ export function windowsTimestampServer(
 }
 
 /**
- * Certificado OV da SSL.com com a chave no eSigner (pedido co-f01l53ldh43). O
- * eSigner cobra por assinatura e a build assina dezenas de arquivos: a build
- * automática gerou faturas de excesso. Fica bloqueado aqui para nenhum ambiente
- * voltar a usá-lo por engano; outro certificado no repositório do Windows (um
- * YubiKey, por exemplo) continua possível.
+ * Authenticode só pelo YubiKey (decisão do operador em 19/10/2026; ver
+ * `build/windows-token-signing.ts`). `NEXUS_WINDOWS_YUBIKEY_SIGNING=1` assina com
+ * o certificado fixado em `build/windows-signing-identity.json`; sem a variável a
+ * build sai sem assinatura. O eSigner (cobrança por assinatura, 05/10), PFX e
+ * outros certificados da loja não têm caminho aqui.
  */
-const ESIGNER_CERTIFICATE_SHA1 = 'E44D98FF840B1DF78D87F6768D177B5719952CAB';
-
 export function createWindowsSignOptions(
   environment: NodeJS.ProcessEnv,
+  identity: WindowsSigningIdentity = WINDOWS_SIGNING_IDENTITY,
 ): WindowsReleaseSignOptions | undefined {
-  const mode = environment.NEXUS_WINDOWS_RELEASE_SIGNING;
-  if (mode === undefined) return undefined;
-  if (mode !== '1') {
-    throw new Error('NEXUS_WINDOWS_RELEASE_SIGNING must be exactly "1".');
-  }
-
-  const certificateFile = environment.WINDOWS_CERTIFICATE_FILE?.trim();
-  const certificatePassword = environment.WINDOWS_CERTIFICATE_PASSWORD;
-  const certificateSha1 = environment.WINDOWS_CERTIFICATE_SHA1?.trim();
-  const hasFileModeValue =
-    environment.WINDOWS_CERTIFICATE_FILE !== undefined ||
-    certificatePassword !== undefined;
-  const hasStoreModeValue = environment.WINDOWS_CERTIFICATE_SHA1 !== undefined;
-
-  if (hasFileModeValue && hasStoreModeValue) {
-    throw new Error(
-      'Windows release signing must use either certificate file credentials or WINDOWS_CERTIFICATE_SHA1, not both.',
-    );
-  }
-
-  const commonOptions = {
-    continueOnError: false as const,
+  const certificateSha1 = windowsTokenSignerThumbprint(environment, identity);
+  if (!certificateSha1) return undefined;
+  return {
+    continueOnError: false,
     hashes: [
       'sha256' as NonNullable<WindowsSignOptions['hashes']>[number],
     ],
     timestampServer: windowsTimestampServer(environment),
-  };
-
-  if (hasStoreModeValue) {
-    if (!certificateSha1 || !/^[a-f0-9]{40}$/iu.test(certificateSha1)) {
-      throw new Error(
-        'WINDOWS_CERTIFICATE_SHA1 must contain exactly 40 hexadecimal characters.',
-      );
-    }
-    if (certificateSha1.toUpperCase() === ESIGNER_CERTIFICATE_SHA1) {
-      throw new Error(
-        'WINDOWS_CERTIFICATE_SHA1 is the SSL.com eSigner certificate, which bills per signature and was removed on 2026-10-05. Windows releases ship unsigned; the Microsoft Store signs the Store build.',
-      );
-    }
-    return {
-      ...commonOptions,
-      // eSigner CKA exposes the cloud-backed certificate through the Local
-      // Machine certificate store. `/sm` makes SignTool select that store
-      // instead of the empty per-user store on the signing host.
-      signWithParams: ['/sm', '/sha1', certificateSha1.toUpperCase()],
-    };
-  }
-
-  if (!certificateFile) {
-    throw new Error('WINDOWS_CERTIFICATE_FILE is required for Windows release signing.');
-  }
-  if (!certificatePassword) {
-    throw new Error('WINDOWS_CERTIFICATE_PASSWORD is required for Windows release signing.');
-  }
-  return {
-    ...commonOptions,
-    certificateFile,
-    certificatePassword,
+    // Sem `/sm`: o Windows propaga o certificado do cartão para a loja do
+    // USUÁRIO (Cert:\CurrentUser\My), ligado à chave do slot 9a.
+    signWithParams: ['/sha1', certificateSha1],
   };
 }
 
 const windowsSignOptions = createWindowsSignOptions(
   process.platform === 'win32' ? process.env : {},
 );
+let windowsTokenSigningPreflight: Promise<void> | undefined;
+/** Uma checagem por build, antes do primeiro arquivo assinado (package ou make). */
+function assertWindowsTokenSigningPreflight(): Promise<void> {
+  if (!windowsSignOptions) return Promise.resolve();
+  windowsTokenSigningPreflight ??= assertWindowsTokenSigningReady();
+  return windowsTokenSigningPreflight;
+}
 const squirrelWindowsSignOptions = windowsSignOptions
   ? (({ continueOnError: _continueOnError, ...options }) => options)(
       windowsSignOptions,
@@ -399,6 +364,8 @@ const macNotarizeCredentials = createMacNotarizeCredentials(process.env);
 
 const config: ForgeConfig = {
   hooks: {
+    prePackage: async () => assertWindowsTokenSigningPreflight(),
+    preMake: async () => assertWindowsTokenSigningPreflight(),
     packageAfterPrune: async (_forgeConfig, buildPath, electronVersion, platform, arch) => {
       await preserveMacElectronLicenses(buildPath, electronVersion, platform, arch);
       const removed = pruneNativePayload(buildPath, platform, arch);

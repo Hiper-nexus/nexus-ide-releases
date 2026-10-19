@@ -1,6 +1,7 @@
+import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { describe, expect, it } from 'vitest';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 const require = createRequire(import.meta.url);
@@ -18,86 +19,83 @@ import forgeConfig, {
   createWindowsSignOptions,
   windowsTimestampServer,
 } from './forge.config';
+import { WINDOWS_SIGNING_IDENTITY } from './build/windows-token-signing';
 
 describe('Windows release signing', () => {
-  it('keeps signing disabled without the explicit release opt-in', () => {
-    expect(createWindowsSignOptions({})).toBeUndefined();
+  const pinned = {
+    ...WINDOWS_SIGNING_IDENTITY,
+    certificateSha1: '0123456789ABCDEF0123456789ABCDEF01234567',
+  };
+  const yubikey = { NEXUS_WINDOWS_YUBIKEY_SIGNING: '1' };
+
+  it('keeps signing disabled without the explicit YubiKey opt-in', () => {
+    expect(createWindowsSignOptions({}, pinned)).toBeUndefined();
   });
 
-  it('configures SHA-256 signing from a certificate file', () => {
-    expect(createWindowsSignOptions({
-      NEXUS_WINDOWS_RELEASE_SIGNING: '1',
-      WINDOWS_CERTIFICATE_FILE: ' C:\\release\\publisher.pfx ',
-      WINDOWS_CERTIFICATE_PASSWORD: 'secret',
-    })).toEqual({
-      certificateFile: 'C:\\release\\publisher.pfx',
-      certificatePassword: 'secret',
+  it('signs SHA-256 with the pinned YubiKey certificate from the user store', () => {
+    expect(createWindowsSignOptions(yubikey, pinned)).toEqual({
       continueOnError: false,
       hashes: ['sha256'],
+      signWithParams: ['/sha1', '0123456789ABCDEF0123456789ABCDEF01234567'],
       timestampServer: 'http://timestamp.digicert.com',
     });
   });
 
-  it('configures SHA-256 certificate-store signing by thumbprint', () => {
-    expect(createWindowsSignOptions({
-      NEXUS_WINDOWS_RELEASE_SIGNING: '1',
-      WINDOWS_CERTIFICATE_SHA1: ' 0123456789abcdef0123456789abcdef01234567 ',
-    })).toEqual({
-      continueOnError: false,
-      hashes: ['sha256'],
-      signWithParams: [
-        '/sm',
-        '/sha1',
-        '0123456789ABCDEF0123456789ABCDEF01234567',
-      ],
-      timestampServer: 'http://timestamp.digicert.com',
-    });
+  it('refuses until the reissued certificate is pinned', () => {
+    expect(() => createWindowsSignOptions(yubikey, { ...pinned, certificateSha1: null }))
+      .toThrow(/No YubiKey certificate is pinned/u);
   });
 
-  it('refuses the SSL.com eSigner certificate, which bills per signature', () => {
-    expect(() => createWindowsSignOptions({
-      NEXUS_WINDOWS_RELEASE_SIGNING: '1',
-      WINDOWS_CERTIFICATE_SHA1: ' e44d98ff840b1df78d87f6768d177b5719952cab ',
-    })).toThrow(/eSigner/u);
+  it('has no path back to the eSigner, a PFX or another store certificate', () => {
+    for (const environment of [
+      { NEXUS_WINDOWS_RELEASE_SIGNING: '1', WINDOWS_CERTIFICATE_SHA1: 'E44D98FF840B1DF78D87F6768D177B5719952CAB' },
+      { NEXUS_WINDOWS_RELEASE_SIGNING: '1', WINDOWS_CERTIFICATE_FILE: 'publisher.pfx', WINDOWS_CERTIFICATE_PASSWORD: 'secret' },
+      { ...yubikey, WINDOWS_CERTIFICATE_SHA1: '0123456789ABCDEF0123456789ABCDEF01234567' },
+      { ...yubikey, WINDOWS_CERTIFICATE_FILE: 'publisher.pfx', WINDOWS_CERTIFICATE_PASSWORD: 'secret' },
+      { ...yubikey, NEXUS_WINDOWS_RELEASE_SIGNING: '1' },
+    ]) {
+      expect(() => createWindowsSignOptions(environment, pinned)).toThrow();
+    }
   });
 
   it('troca o servidor de carimbo só com uma URL explícita (F-656)', () => {
-    const storeMode = {
-      NEXUS_WINDOWS_RELEASE_SIGNING: '1',
-      WINDOWS_CERTIFICATE_SHA1: '0123456789ABCDEF0123456789ABCDEF01234567',
-    };
     expect(createWindowsSignOptions({
-      ...storeMode,
+      ...yubikey,
       NEXUS_WINDOWS_TIMESTAMP_URL: ' http://timestamp.sectigo.com ',
-    })?.timestampServer).toBe('http://timestamp.sectigo.com');
+    }, pinned)?.timestampServer).toBe('http://timestamp.sectigo.com');
     expect(windowsTimestampServer({ NEXUS_WINDOWS_TIMESTAMP_URL: '/tr evil' }))
       .toBe('http://timestamp.digicert.com');
     expect(windowsTimestampServer({})).toBe('http://timestamp.digicert.com');
   });
 
-  it.each([
-    ['invalid opt-in', { NEXUS_WINDOWS_RELEASE_SIGNING: 'true' }],
-    ['missing signing mode', { NEXUS_WINDOWS_RELEASE_SIGNING: '1' }],
-    ['file without password', {
-      NEXUS_WINDOWS_RELEASE_SIGNING: '1',
-      WINDOWS_CERTIFICATE_FILE: 'publisher.pfx',
-    }],
-    ['password without file', {
-      NEXUS_WINDOWS_RELEASE_SIGNING: '1',
-      WINDOWS_CERTIFICATE_PASSWORD: 'secret',
-    }],
-    ['invalid thumbprint', {
-      NEXUS_WINDOWS_RELEASE_SIGNING: '1',
-      WINDOWS_CERTIFICATE_SHA1: 'not-a-thumbprint',
-    }],
-    ['mixed modes', {
-      NEXUS_WINDOWS_RELEASE_SIGNING: '1',
-      WINDOWS_CERTIFICATE_FILE: 'publisher.pfx',
-      WINDOWS_CERTIFICATE_PASSWORD: 'secret',
-      WINDOWS_CERTIFICATE_SHA1: 'E44D98FF840B1DF78D87F6768D177B5719952CAB',
-    }],
-  ])('rejects %s', (_name, environment) => {
-    expect(() => createWindowsSignOptions(environment)).toThrow();
+  it('imports only build/ files that a clean checkout has (build/* is ignored by default)', () => {
+    const imported = new Set<string>();
+    const visit = (file: string) => {
+      for (const [, specifier] of readFileSync(file, 'utf8').matchAll(/from '(\.{1,2}\/[^']+)'/gu)) {
+        const base = path.resolve(path.dirname(file), specifier);
+        const target = path.extname(base) ? base : `${base}.ts`;
+        const relative = path.relative(process.cwd(), target).replaceAll('\\', '/');
+        if (!relative.startsWith('build/') || imported.has(relative)) continue;
+        imported.add(relative);
+        if (relative.endsWith('.ts')) visit(target);
+      }
+    };
+    visit('forge.config.ts');
+    expect([...imported]).toEqual(expect.arrayContaining([
+      'build/windows-token-signing.ts',
+      'build/windows-signing-identity.json',
+    ]));
+    // Sem `--no-index`, o git só acusa o que é ignorado E não rastreado.
+    const ignored = spawnSync('git', ['check-ignore', ...imported], { encoding: 'utf8' });
+    expect(ignored.stdout.trim()).toBe('');
+    expect(ignored.status).toBe(1);
+  });
+
+  it('checks the certificate store before packaging or making only when the build signs', async () => {
+    expect(process.env.NEXUS_WINDOWS_YUBIKEY_SIGNING).toBeUndefined();
+    const resolved = forgeConfig as never;
+    await expect(forgeConfig.hooks?.prePackage?.(resolved, 'win32', 'x64')).resolves.toBeUndefined();
+    await expect(forgeConfig.hooks?.preMake?.(resolved)).resolves.toBeUndefined();
   });
 });
 
