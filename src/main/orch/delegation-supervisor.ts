@@ -160,6 +160,8 @@ const chefIdleTrackers = new Map<string, ChefIdleTracker>();
 const momentumSoloSince = new Map<string, number>();
 const momentumNudgedAt = new Map<string, { at: number; backlogKey?: string }>();
 const momentumReadySince = new Map<string, number>();
+/** Chaves já semeadas do ledger: semear só uma vez por processo, senão uma onda nova herda o carimbo antigo. */
+const momentumReadySeeded = new Set<string>();
 /** Espera de decisão humana: relógio do episódio e lembrete já emitido. */
 const operatorWaitSince = new Map<string, number>();
 const operatorWaitReminded = new Set<string>();
@@ -1926,8 +1928,11 @@ async function scanSuite(suite: ProjectDomainStoreSuite, now: number, context: P
       }
       if (lastReadyNudge) {
         const momentumKey = `${scopeKey(suite)}\0${mission.id}`;
-        if (!momentumReadySince.has(momentumKey)) {
-          momentumReadySince.set(momentumKey, lastReadyNudge.createdAt);
+        if (!momentumReadySeeded.has(momentumKey)) {
+          momentumReadySeeded.add(momentumKey);
+          if (!momentumReadySince.has(momentumKey)) {
+            momentumReadySince.set(momentumKey, lastReadyNudge.createdAt);
+          }
         }
       }
     }
@@ -2491,6 +2496,7 @@ export async function shutdownDelegationSupervisor(): Promise<void> {
   momentumSoloSince.clear();
   momentumNudgedAt.clear();
   momentumReadySince.clear();
+  momentumReadySeeded.clear();
   operatorWaitSince.clear();
   operatorWaitReminded.clear();
 }
