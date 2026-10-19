@@ -63,7 +63,11 @@
       "qwen3.6-flash",
       "deepseek-flash"
     ],
-    "default": "qwen3.8-max"
+    "default": "qwen3.8-max",
+    "families": {
+      "deepseek-flash": "deepseek",
+      "deepseek-v4-pro": "deepseek"
+    }
   },
   "promptInjection": {
     "method": "arg",

@@ -63,7 +63,11 @@
       "deepseek-v4-pro",
       "deepseek-flash"
     ],
-    "default": "deepseek-v4-pro"
+    "default": "deepseek-v4-pro",
+    "families": {
+      "deepseek-v4-pro": "deepseek",
+      "deepseek-flash": "deepseek"
+    }
   },
   "promptInjection": {
     "method": "arg",
