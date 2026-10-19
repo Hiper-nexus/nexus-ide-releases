@@ -455,12 +455,35 @@ export function hasRecentCredentialProbeFailure(
   if (latest !== undefined && now - latest < RECENT_CREDENTIAL_FAILURE_TTL_MS) {
     return true;
   }
-  recentCredentialFailures.delete(adapterId);
+  // Fora dos 10 min, mas o histórico fica para a janela de 1 h: apagar aqui
+  // fazia a 2ª recusa contar como 1ª e `repeated` nunca ligava na rota.
   return false;
 }
 
+/**
+ * A sonda de recuperação de uma CLI com recusa repetida roda no máximo uma vez
+ * a cada {@link RECENT_CREDENTIAL_FAILURE_TTL_MS}: sem isso cada rota sondava
+ * de novo (auth status / Keychain no Main).
+ */
+const credentialRecoveryProbedAt = new Map<string, number>();
+
+export function claimCredentialRecoveryProbe(
+  adapterId: string,
+  now = Date.now(),
+): boolean {
+  const last = credentialRecoveryProbedAt.get(adapterId);
+  if (last !== undefined && now - last < RECENT_CREDENTIAL_FAILURE_TTL_MS) return false;
+  credentialRecoveryProbedAt.set(adapterId, now);
+  return true;
+}
+
+/** Divergência probe × UI: no máximo uma checagem por CLI a cada 10 min. */
+const divergenceCheckedAt = new Map<string, number>();
+
 export function clearRecentCredentialProbeFailuresForTests(): void {
   recentCredentialFailures.clear();
+  credentialRecoveryProbedAt.clear();
+  divergenceCheckedAt.clear();
 }
 
 /**
@@ -480,10 +503,17 @@ export async function probePreSpawn(
       options.failClosed === true,
       options,
     );
+    const now = Date.now();
+    const lastDivergenceCheck = divergenceCheckedAt.get(adapterId);
     if (
       failure &&
-      (failure.code === 'missing-credential' || failure.code === 'key-missing')
+      (failure.code === 'missing-credential' || failure.code === 'key-missing') &&
+      // Kimi decide pelo `kimi provider list`, como a UI: não é divergência.
+      adapterId !== 'kimi' &&
+      (lastDivergenceCheck === undefined ||
+        now - lastDivergenceCheck >= RECENT_CREDENTIAL_FAILURE_TTL_MS)
     ) {
+      divergenceCheckedAt.set(adapterId, now);
       let uiShowsLogin = false;
       try {
         uiShowsLogin = deps.nativeSessionReady(adapterId, options.model);

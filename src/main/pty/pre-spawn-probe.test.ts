@@ -3,6 +3,7 @@ import {
   PRODUCTION_PROBE_DEPS,
   PreSpawnProbeError,
   assertPreSpawnProbe,
+  claimCredentialRecoveryProbe,
   clearRecentCredentialProbeFailuresForTests,
   hasRecentCredentialProbeFailure,
   hasRepeatedCredentialProbeFailure,
@@ -541,6 +542,28 @@ describe('recusa recente de credencial', () => {
     expect(await runProbe('grok', makeDeps({ getAdapter: () => grokAdapter }))).not.toBeNull();
     expect(hasRecentCredentialProbeFailure('codex')).toBe(false);
     expect(hasRecentCredentialProbeFailure('grok')).toBe(true);
+    clearRecentCredentialProbeFailuresForTests();
+  });
+
+  it('a rota consulta a recusa depois dos 10 min e a 2ª recusa ainda liga repeated', () => {
+    clearRecentCredentialProbeFailuresForTests();
+    const t0 = 1_000;
+    recordRecentCredentialProbeFailure('muse', t0);
+    // Fluxo real da rota: passa da janela curta, a CLI volta à rota...
+    expect(hasRecentCredentialProbeFailure('muse', t0 + 10 * 60_000 + 1_000)).toBe(false);
+    // ...e falha de novo dentro de 1 h: não pode contar como 1ª recusa.
+    recordRecentCredentialProbeFailure('muse', t0 + 11 * 60_000);
+    expect(hasRepeatedCredentialProbeFailure('muse', t0 + 11 * 60_000)).toBe(true);
+    expect(hasRecentCredentialProbeFailure('muse', t0 + 50 * 60_000)).toBe(true);
+    clearRecentCredentialProbeFailuresForTests();
+  });
+
+  it('sonda de recuperação roda no máximo uma vez a cada 10 min por CLI', () => {
+    clearRecentCredentialProbeFailuresForTests();
+    expect(claimCredentialRecoveryProbe('muse', 1_000)).toBe(true);
+    expect(claimCredentialRecoveryProbe('muse', 1_000 + 60_000)).toBe(false);
+    expect(claimCredentialRecoveryProbe('codex', 1_000 + 60_000)).toBe(true);
+    expect(claimCredentialRecoveryProbe('muse', 1_000 + 10 * 60_000)).toBe(true);
     clearRecentCredentialProbeFailuresForTests();
   });
 

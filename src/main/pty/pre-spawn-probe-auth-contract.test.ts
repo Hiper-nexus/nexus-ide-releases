@@ -14,6 +14,7 @@ import {
 } from '../adapters/subscription-auth';
 import {
   PRODUCTION_PROBE_DEPS,
+  clearRecentCredentialProbeFailuresForTests,
   probePreSpawn,
   type PreSpawnProbeDeps,
 } from './pre-spawn-probe';
@@ -148,6 +149,8 @@ describe('pre-spawn probe — contrato único de prontidão nativa', () => {
   });
 
   it('probe-divergence informa o login divergente e o caminho do auth', async () => {
+    // A checagem de divergência roda no máximo a cada 10 min por CLI.
+    clearRecentCredentialProbeFailuresForTests();
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       const failure = await probePreSpawn('muse', {

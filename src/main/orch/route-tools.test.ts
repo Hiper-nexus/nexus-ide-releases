@@ -782,9 +782,16 @@ describe('nexus_route_task — exclude do caller só honra CLI doente', () => {
         clearRecentCredentialProbeFailuresForTests();
         return null;
       });
-      const recovered = (await routeTaskForCaller(
-        { task: 'tarefa média', preferAdapters: ['muse'] }, context(),
-      )) as { adapterId: string };
+      // A sonda de recuperação roda no máximo a cada 10 min por CLI.
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 11 * 60_000);
+      let recovered: { adapterId: string };
+      try {
+        recovered = (await routeTaskForCaller(
+          { task: 'tarefa média', preferAdapters: ['muse'] }, context(),
+        )) as { adapterId: string };
+      } finally {
+        clock.mockRestore();
+      }
       expect(mocks.probePreSpawn).toHaveBeenCalledWith('muse', expect.objectContaining({ silentRemint: true }));
       expect(recovered.adapterId).toBe('muse');
       expect(hasRecentCredentialProbeFailure('muse')).toBe(false);

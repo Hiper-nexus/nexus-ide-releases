@@ -105,6 +105,7 @@ import { adapterCircuitBreakers, DEFAULT_CIRCUIT_CONFIG } from './circuit-breake
 import { activeCliLimit, isCliLimited } from './cli-limit-registry';
 import {
   hasRecentCredentialProbeFailure,
+  claimCredentialRecoveryProbe,
   hasRepeatedCredentialProbeFailure,
   probePreSpawn,
 } from '../pty/pre-spawn-probe';
@@ -2219,18 +2220,18 @@ export async function routeTaskForCaller(
   // Rota ≠ execução (16/10): uma recusa vale por 10 min; duas em 1 h ficam
   // fora até um probe passar. A recuperação sonda só as recusas repetidas e é
   // fail-closed: indisponibilidade da sonda não prova que a credencial voltou.
+  // No máximo uma sonda por CLI a cada 10 min; a recusa que se repete não é
+  // um spawn novo e não entra no histórico da missão nem no disjuntor. A sonda
+  // que passa já limpa a recusa (probePreSpawn).
   for (const provider of providers) {
     const adapterId = provider.adapterId;
-    if (!hasRepeatedCredentialProbeFailure(adapterId)) continue;
-    const model = provider.defaultModel?.trim() || undefined;
-    const failure = await probePreSpawn(adapterId, {
-      model,
+    if (excluded.has(adapterId) || !hasRepeatedCredentialProbeFailure(adapterId)) continue;
+    if (!claimCredentialRecoveryProbe(adapterId)) continue;
+    await probePreSpawn(adapterId, {
+      model: provider.defaultModel?.trim() || undefined,
       failClosed: true,
       silentRemint: true,
     });
-    if (failure && CREDENTIAL_FAILURE_CODES.has(failure.code)) {
-      noteCredentialSeatRefusal(adapterId, missionId ?? undefined, model);
-    }
   }
   const credentialRefusedExcluded = providers
     .map((a) => a.adapterId)
