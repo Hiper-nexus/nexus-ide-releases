@@ -148,7 +148,10 @@ import type {
 import type { CostSnapshot } from './cost-types';
 import type { TokenSpeedSnapshot } from './token-speed-types';
 import type { UsageSnapshot } from './usage-types';
-import type { PublicModelRankingSnapshot } from './eval-ranking-types';
+import type {
+  ModelComparisonSnapshot,
+  PublicModelRankingSnapshot,
+} from './eval-ranking-types';
 import type { GamificationSnapshot } from './gamification-types';
 import type {
   MediaArtifactInfo,
@@ -1414,6 +1417,8 @@ export interface NexusApi {
    */
   ranking: {
     public(): Promise<PublicModelRankingSnapshot>;
+    /** Ajustes → Comparar modelos: benchmarks publicados da oferta desta máquina (F-1588). */
+    compare(): Promise<ModelComparisonSnapshot>;
   };
   media: {
     listProviders(): Promise<MediaProviderInfo[]>;

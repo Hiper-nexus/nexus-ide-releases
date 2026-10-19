@@ -115,36 +115,71 @@ function hasOwnNumbers(entry: PublishedBenchmark): boolean {
  * (normalizado) e herda a nota dela. Nunca herda de um modelo mais novo, e
  * uma entrada direta sempre vence.
  */
-function predecessorBenchmarkEntry(
-  adapterId: string,
-  model: string,
-): PublishedBenchmark | null {
+function predecessorBenchmarkKey(adapterId: string, model: string): string | null {
   const key = publishedBenchmarkKey(adapterId, model);
   const prefix = key.slice(0, key.indexOf(':') + 1);
   const target = modelLineOf(key.slice(prefix.length));
-  let best: PublishedBenchmark | null = null;
+  let best: string | null = null;
   let bestVersion: readonly number[] = [];
-  for (const [candidateKey, candidate] of Object.entries(PUBLISHED_BENCHMARKS)) {
+  for (const candidateKey of Object.keys(PUBLISHED_BENCHMARKS)) {
     if (!candidateKey.startsWith(prefix)) continue;
     const line = modelLineOf(candidateKey.slice(prefix.length));
     if (line.stem !== target.stem) continue;
     if (!isNewerModelVersion(target.version, line.version)) continue;
     if (best && !isNewerModelVersion(line.version, bestVersion)) continue;
-    best = candidate;
+    best = candidateKey;
     bestVersion = line.version;
   }
   return best;
 }
 
-export function publishedBenchmarkFor(adapterId: string, model: string): PublishedBenchmark | null {
-  let entry = PUBLISHED_BENCHMARKS[publishedBenchmarkKey(adapterId, model)]
-    ?? predecessorBenchmarkEntry(adapterId, model);
-  for (let hops = 0; entry && hops < 4; hops += 1) {
-    const next = entry.sameModelAs ?? (hasOwnNumbers(entry) ? undefined : entry.successorOf);
-    if (!next) break;
-    entry = PUBLISHED_BENCHMARKS[next] ?? null;
+/**
+ * De quem são os números (F-1588): do próprio modelo, de uma variante de
+ * esforço/contexto do mesmo modelo, do mesmo modelo servido por outro id
+ * (`sameModelAs`) ou de um antecessor da linha (piso do modelo mais novo).
+ */
+export type PublishedBenchmarkOrigin = 'own' | 'variant' | 'same-model' | 'predecessor';
+
+export interface ResolvedPublishedBenchmark {
+  readonly entry: PublishedBenchmark;
+  /** Chave `adapter:modelo` dona dos números. */
+  readonly key: string;
+  readonly origin: PublishedBenchmarkOrigin;
+}
+
+export function resolvePublishedBenchmark(
+  adapterId: string,
+  model: string,
+): ResolvedPublishedBenchmark | null {
+  const directKey = publishedBenchmarkKey(adapterId, model);
+  let key: string | null = PUBLISHED_BENCHMARKS[directKey] ? directKey : null;
+  let origin: PublishedBenchmarkOrigin =
+    directKey.slice(directKey.indexOf(':') + 1) === model ? 'own' : 'variant';
+  if (!key) {
+    key = predecessorBenchmarkKey(adapterId, model);
+    origin = 'predecessor';
   }
-  return entry;
+  for (let hops = 0; key && hops < 4; hops += 1) {
+    const entry: PublishedBenchmark | undefined = PUBLISHED_BENCHMARKS[key];
+    if (!entry) return null;
+    if (entry.sameModelAs) {
+      if (origin !== 'predecessor') origin = 'same-model';
+      key = entry.sameModelAs;
+      continue;
+    }
+    if (!hasOwnNumbers(entry) && entry.successorOf) {
+      origin = 'predecessor';
+      key = entry.successorOf;
+      continue;
+    }
+    return { entry, key, origin };
+  }
+  const last = key ? PUBLISHED_BENCHMARKS[key] : undefined;
+  return key && last ? { entry: last, key, origin } : null;
+}
+
+export function publishedBenchmarkFor(adapterId: string, model: string): PublishedBenchmark | null {
+  return resolvePublishedBenchmark(adapterId, model)?.entry ?? null;
 }
 
 /**
@@ -162,6 +197,12 @@ function publishedNormalizedMean(entry: PublishedBenchmark): number | null {
   }
   if (normalized.length === 0) return null;
   return normalized.reduce((sum, value) => sum + value, 0) / normalized.length;
+}
+
+/** A mesma média do roteador em 0..100 (uma casa); `null` sem número publicado. */
+export function publishedEntryScore100(entry: PublishedBenchmark): number | null {
+  const mean = publishedNormalizedMean(entry);
+  return mean === null ? null : Math.round(mean * 1000) / 10;
 }
 
 /**
