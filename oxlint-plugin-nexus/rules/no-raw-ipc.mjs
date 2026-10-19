@@ -93,7 +93,7 @@ export const RAW_IPC_ALLOWLIST = {
   'src/main/ops/ops-ipc.ts': { max: 2, reason: LEGACY_MAIN },
   'src/main/orch/cost-ipc.ts': { max: 2, reason: LEGACY_MAIN },
   'src/main/orch/mission-event-ipc.ts': { max: 4, reason: LEGACY_MAIN },
-  'src/main/orch/orch-ipc.ts': { max: 51, reason: LEGACY_MAIN },
+  'src/main/orch/orch-ipc.ts': { max: 46, reason: LEGACY_MAIN },
   'src/main/orch/pane-pipe-ipc.ts': { max: 3, reason: LEGACY_MAIN },
   'src/main/orch/token-speed-ipc.ts': { max: 1, reason: LEGACY_MAIN },
   'src/main/persistence/account-ipc.ts': { max: 3, reason: LEGACY_MAIN },

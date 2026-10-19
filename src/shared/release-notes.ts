@@ -11711,7 +11711,7 @@ export const RELEASE_076319: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076320: AppRelease = {
   version: '0.76.320',
   date: '2026-10-19',
   codename: 'Piloto para todas as CLIs no Linux',
@@ -11722,6 +11722,25 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Escolha a equipe na Nova missão', detail: 'A etapa Equipe da Nova missão ganhou "Começar de uma equipe salva", com as suas equipes antes das originais. O Quadro explica que a equipe é da missão e que outra equipe se escolhe numa Nova missão.' },
     { title: 'Atualização do Claude Code não quebra mais a CLI', detail: 'O npm 12 bloqueia os scripts de instalação e o Claude Code atualizado ficava como um stub que saía no boot: toda missão nascia com o Maestro morto. As atualizações liberam só o script do próprio pacote da CLI, uma atualização que deixa a CLI sem responder é reinstalada na hora, e o Quadro mostra a última tela do Maestro que caiu em vez de culpar uma build anterior.' },
     { title: 'Pacote Linux', detail: 'A tag 0.76.319 é o pacote Windows e não recebe arquivos Linux. O desktop Linux sai na 0.76.320.' },
+  ],
+  fixes: [
+    { title: 'DeepSeek Flash só onde existe', detail: 'O deepseek-flash aparecia em primeiro no grupo Claude mesmo com o Claude na Anthropic, onde esse modelo não existe, e a rota visual podia escolhê-lo. Agora ele só aparece com o Claude apontado para a DeepSeek, e o seletor usa a lista que o provider realmente serve.' },
+    { title: 'Textos do Linux', detail: 'O cofre passa a dizer "chaveiro do sistema" (libsecret), mostrar um arquivo salvo é "Mostrar na pasta", e o aviso de microfone mudo aponta o mixer de som. Os botões que abrem os Ajustes de som do macOS e do Windows ficam ocultos no Linux: não há uma URL comum entre os desktops.' },
+    { title: 'O pane diz o motivo real', detail: '"Contexto degradado" virou a causa de fato (troca de conta por limite confirmado ou entrega que o Maestro não aceitou), um pane cuja missão não existe mais não diz que ela encerrou com relatório, e quando a verificação automática recusa a conclusão o Quadro mostra que o Maestro está corrigindo.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.321',
+  date: '2026-10-19',
+  codename: 'Piloto para todas as CLIs no Linux',
+  summary: 'No desktop Linux, o Piloto automático oferece o AGY e todas as CLIs que coordenam missão, as equipes salvas aparecem sem projeto aberto e podem ser escolhidas na Nova missão, e a atualização do Claude Code pelo npm 12 não deixa a CLI como stub. A tag 0.76.319 ficou no Windows e a 0.76.320 não foi publicada.',
+  highlights: [
+    { title: 'AGY e todas as CLIs no Piloto automático', detail: 'O Piloto automático só oferecia Claude e Codex como coordenador, mesmo no Autopiloto, onde a missão aceita qualquer CLI que coordena. Agora o card mostra o AGY, Kimi, Grok, Qwen e as demais CLIs instaladas que coordenam missão; só o modo Hardened continua restrito aos Maestros verificados. A trava antiga que tirava o AGY da coordenação saiu: ele já tem o MCP do Nexus desde o fim de setembro.' },
+    { title: 'Equipes salvas sem projeto aberto', detail: 'O catálogo de equipes é global, mas a tela de Ajustes só o mostrava com um projeto aberto e dizia "Nenhuma equipe salva" sem ele. Agora as equipes originais e as suas aparecem sempre, e criar, editar, importar, exportar e apagar funcionam sem projeto. Erros técnicos em inglês viraram orientação em português.' },
+    { title: 'Escolha a equipe na Nova missão', detail: 'A etapa Equipe da Nova missão ganhou "Começar de uma equipe salva", com as suas equipes antes das originais. O Quadro explica que a equipe é da missão e que outra equipe se escolhe numa Nova missão.' },
+    { title: 'Atualização do Claude Code não quebra mais a CLI', detail: 'O npm 12 bloqueia os scripts de instalação e o Claude Code atualizado ficava como um stub que saía no boot: toda missão nascia com o Maestro morto. As atualizações liberam só o script do próprio pacote da CLI, uma atualização que deixa a CLI sem responder é reinstalada na hora, e o Quadro mostra a última tela do Maestro que caiu em vez de culpar uma build anterior.' },
+    { title: 'Pacote Linux', detail: 'A tag 0.76.319 é o pacote Windows e não recebe arquivos Linux. A tag 0.76.320 não foi publicada porque a suíte Ubuntu falhou. O desktop Linux sai na 0.76.321.' },
   ],
   fixes: [
     { title: 'DeepSeek Flash só onde existe', detail: 'O deepseek-flash aparecia em primeiro no grupo Claude mesmo com o Claude na Anthropic, onde esse modelo não existe, e a rota visual podia escolhê-lo. Agora ele só aparece com o Claude apontado para a DeepSeek, e o seletor usa a lista que o provider realmente serve.' },

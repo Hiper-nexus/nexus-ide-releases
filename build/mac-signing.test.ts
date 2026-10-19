@@ -344,31 +344,25 @@ describe('Windows release signing mode', () => {
     expect(createWindowsSignOptions({})).toBeUndefined();
   });
 
-  it('fails closed when release signing configuration is incomplete', () => {
+  it('fails closed when the retired eSigner switch is set', () => {
     expect(() => createWindowsSignOptions({
       NEXUS_WINDOWS_RELEASE_SIGNING: 'yes',
-    })).toThrow(/NEXUS_WINDOWS_RELEASE_SIGNING/);
+    })).toThrow(/NEXUS_WINDOWS_RELEASE_SIGNING was retired/);
     expect(() => createWindowsSignOptions({
       NEXUS_WINDOWS_RELEASE_SIGNING: '1',
-    })).toThrow(/WINDOWS_CERTIFICATE_FILE/);
+    })).toThrow(/NEXUS_WINDOWS_RELEASE_SIGNING was retired/);
     expect(() => createWindowsSignOptions({
       NEXUS_WINDOWS_RELEASE_SIGNING: '1',
       WINDOWS_CERTIFICATE_FILE: 'C:\\release.pfx',
-    })).toThrow(/WINDOWS_CERTIFICATE_PASSWORD/);
+      WINDOWS_CERTIFICATE_PASSWORD: 'secret',
+    })).toThrow(/NEXUS_WINDOWS_RELEASE_SIGNING was retired/);
   });
 
-  it('uses one SHA-256 PFX signing policy for app payload and Squirrel', () => {
+  it('does not sign from a PFX path left in the environment', () => {
     expect(createWindowsSignOptions({
-      NEXUS_WINDOWS_RELEASE_SIGNING: '1',
       WINDOWS_CERTIFICATE_FILE: ' C:\\release.pfx ',
       WINDOWS_CERTIFICATE_PASSWORD: 'secret with spaces',
-    })).toEqual({
-      certificateFile: 'C:\\release.pfx',
-      certificatePassword: 'secret with spaces',
-      continueOnError: false,
-      hashes: ['sha256'],
-      timestampServer: 'http://timestamp.digicert.com',
-    });
+    })).toBeUndefined();
   });
 });
 
