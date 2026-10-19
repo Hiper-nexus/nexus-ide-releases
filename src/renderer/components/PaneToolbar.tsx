@@ -445,20 +445,21 @@ export const PaneToolbar = memo(function PaneToolbar({ pane, isFocused }: Props)
   // True state for actions (dormir/reiniciar guards); display for avatar chrome.
   const paneState = useSessionStateStore((s) => s.paneStates.get(pane.id));
   const displayState = useSessionStateStore((s) => s.displayStates.get(pane.id));
-  const { agentCategory, missionId, missionOwned, missionCanResume } = useOrchStore(useShallow((s) => {
+  // O seletor devolve só valores: broadcast de missão que não muda a resposta
+  // não re-renderiza a toolbar de cada pane (orçamento QLT-01).
+  const otherPanes = useLayoutStore(useShallow((s) => s.root ? listPanes(s.root).filter((p) => p.id !== pane.id) : []));
+  const { agentCategory, missionId, missionOwned, missionCanResume, closeEndsMission } = useOrchStore(useShallow((s) => {
     const mission = s.missions.find((candidate) => candidate.id === (pane.missionId ?? s.paneMissions[pane.id]));
     return {
       agentCategory: resolveAgentCategory(s.squads, pane.agentName, pane.role),
       missionId: mission?.id,
       missionOwned: Boolean(mission && missionOwnsItsPanes(mission)),
       missionCanResume: Boolean(mission && missionIsResumable(mission)),
+      // Fechar o último pane de uma missão `running` a encerra (ordem de
+      // 20/08): o mesmo predicado de mission-last-pane-notify decide o aviso.
+      closeEndsMission: closingPaneEndsMission(pane, otherPanes, s.missions, s.paneMissions),
     };
   }));
-  // Fechar o último pane de uma missão `running` a encerra (ordem de 20/08):
-  // o mesmo predicado de mission-last-pane-notify decide o aviso do Fechar.
-  const { missions, paneMissions } = useOrchStore(useShallow((s) => ({ missions: s.missions, paneMissions: s.paneMissions })));
-  const otherPanes = useLayoutStore(useShallow((s) => s.root ? listPanes(s.root).filter((p) => p.id !== pane.id) : []));
-  const closeEndsMission = closingPaneEndsMission(pane, otherPanes, missions, paneMissions);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(pane.title);
   const [density, setDensity] = useState<Density>('full');

@@ -160,7 +160,7 @@ describe('projectMissionSnapshot', () => {
 
     expect(snapshot.state).toBe('blocked_technical');
     expect(snapshot.stateReason?.code).toBe('session-dead');
-    expect(snapshot.stateReason?.label).toBe('Dormindo');
+    expect(snapshot.stateReason?.label).toBe('Interrompida');
   });
 
   it('leftover-park sem Encerrar é Dormindo mesmo com openQuestion', () => {
@@ -182,7 +182,7 @@ describe('projectMissionSnapshot', () => {
 
     expect(snapshot.state).toBe('blocked_user');
     expect(snapshot.stateReason?.code).toBe('session-sleeping');
-    expect(snapshot.stateReason?.label).toBe('Dormindo');
+    expect(snapshot.stateReason?.label).toBe('Interrompida');
     expect(snapshot.stateReason?.code).not.toBe('open-question');
     expect(snapshot.stateReason?.code).not.toBe('runtime-closed');
     expect(snapshot.question).toBeUndefined();
@@ -202,7 +202,7 @@ describe('projectMissionSnapshot', () => {
 
     expect(snapshot.state).toBe('blocked_user');
     expect(snapshot.stateReason?.code).toBe('session-sleeping');
-    expect(snapshot.stateReason?.label).toBe('Dormindo');
+    expect(snapshot.stateReason?.label).toBe('Interrompida');
     expect(summary.needsAttention).toBe(false);
     expect(snapshot.allowedActions).toEqual(['resume']);
   });
@@ -333,7 +333,7 @@ describe('projectMissionSnapshot', () => {
 
     expect(snapshot.state).toBe('blocked_technical');
     expect(snapshot.stateReason?.code).toBe('session-dead');
-    expect(snapshot.stateReason?.label).toBe('Dormindo');
+    expect(snapshot.stateReason?.label).toBe('Interrompida');
     expect(snapshot.stateReason?.code).not.toBe('runtime-closed');
   });
 

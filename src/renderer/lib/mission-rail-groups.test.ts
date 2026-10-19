@@ -359,12 +359,12 @@ describe('railStatusDisplay', () => {
     );
   });
 
-  it('leftover-parked isolado mostra Dormindo, nunca Precisa de você', () => {
+  it('leftover-parked isolado mostra Interrompida, nunca Precisa de você', () => {
     expect(
       railStatusDisplay('blocked', false, 'blocked_user', null, {
         leftoverParked: true,
       }),
-    ).toEqual({ label: 'Dormindo', tone: 'blocked' });
+    ).toEqual({ label: 'Interrompida', tone: 'blocked' });
     expect(
       railStatusDisplay('blocked', false, 'blocked_user', null, {
         leftoverParked: true,
@@ -383,7 +383,7 @@ describe('railStatusDisplay', () => {
       railStatusDisplay('blocked', false, 'blocked_user', null, {
         leftoverParked: true,
       }),
-    ).toEqual({ label: 'Dormindo', tone: 'blocked' });
+    ).toEqual({ label: 'Interrompida', tone: 'blocked' });
   });
 
   // Voo real 05/08, mission-3be48989: o worker submeteu um handoff `blocked`,
