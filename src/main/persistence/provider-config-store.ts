@@ -81,9 +81,11 @@ import {
   cliInstallCommandFor,
   compatibleManualInstallCommand,
   selectInstallRecipe,
+  selectCliRepairRecipe,
   selectCliUpdateRecipe,
   describeInstallRecipe,
   type CliInstallRecipe,
+  type CliUpdateRecipeInput,
 } from '../adapters/cli-install-recipes';
 import {
   windowsNpmShimInvocation,
@@ -98,7 +100,7 @@ import {
 import {
   BOOT_RECHECK_MS, CliAutoUpdateQueue, CliSpawnPermitTimeoutError, CliUpdateLease, caskManifestArtifactKinds, caskReceiptArtifactKinds,
   caskReceiptPath, caskTokenFromRealBinPath, cliUpdateKey, cliVersionCheck, cliVersionCheckUpToDate, isBrewRunner,
-  isVersionedCliInstall, selectAutomaticCliUpdateRecipe, shouldOfferAutoCliConsent,
+  isSafeAutomaticCliRecipe, isVersionedCliInstall, selectAutomaticCliUpdateRecipe, shouldOfferAutoCliConsent,
 } from '../adapters/cli-auto-update';
 import type { CliVersionCheck } from '../adapters/cli-auto-update';
 import { trace } from '../observability/main-trace';
@@ -2438,6 +2440,33 @@ async function automaticCliCandidateAsync(adapterId: string): Promise<AutomaticC
   } catch { return null; }
 }
 
+function cliUpdateRecipeInput(adapterId: string, binPath: string, realBinPath: string): CliUpdateRecipeInput {
+  return {
+    adapterId, platform: process.platform, binPath, realBinPath,
+    userHome: realUserHome(), windowsLocalAppData: process.env.LOCALAPPDATA,
+    installationDistribution: adapterId === 'devin' ? installedDevinDistribution(realBinPath) : null,
+    isRunnerResolvable: (runner) => resolveRunnerPath(runner) !== null,
+    resolveRealPath: resolveCliRealPath,
+  };
+}
+
+/**
+ * F-1571: reinstalação npm da CLI no MESMO prefixo, com os scripts do pacote
+ * liberados — o conserto quando a CLI deixou de responder (o Claude Code que
+ * o npm 12 deixou como stub). Só instalação npm reconhecida e receita segura.
+ */
+function automaticCliRepairRecipe(
+  candidate: Pick<AutomaticCliCandidate, 'adapterId' | 'binPath' | 'realBinPath'>,
+): { readonly recipe: CliInstallRecipe; readonly prepared: ArgvInstallInvocation } | null {
+  const selection = selectCliRepairRecipe(
+    cliUpdateRecipeInput(candidate.adapterId, candidate.binPath, candidate.realBinPath));
+  if (!selection?.ok || selection.recipe.kind !== 'argv' || !isSafeAutomaticCliRecipe(selection.recipe)) {
+    return null;
+  }
+  try { return { recipe: selection.recipe, prepared: prepareArgvInstallInvocation(selection.recipe) }; }
+  catch { return null; }
+}
+
 /** Linha do diálogo de consentimento: o comando exato ou o script oficial. */
 function describeAutomaticCliCandidate(candidate: AutomaticCliCandidate): string {
   if (candidate.prepared) {
@@ -2689,6 +2718,8 @@ export function startCliAutoUpdate(
   const awaitingPaneClose = new Set<string>();
   /** Liberadas pelo fechamento do último pane: rodam no próximo passe, sem ociosidade. */
   const releasedByPaneClose = new Set<string>();
+  /** F-1571: CLI que já respondeu e parou ganha UMA reinstalação npm por sessão do app. */
+  const repairAttempted = new Set<string>();
   const paneBlocks = (id: string, candidate: AutomaticCliCandidate | null | undefined) =>
     hasLivePane(id) && !(candidate && isVersionedCliInstall(id, candidate.binPath, candidate.realBinPath));
   /** R3: mata o processo do install só no teto do shutdown (stop não o aborta). */
@@ -2808,15 +2839,21 @@ export function startCliAutoUpdate(
         // M8: as checagens só-leitura (versão instalada, alvo, checagem barata)
         // rodam SEM o lease — ele só segura o spawn quando há o que instalar.
         const beforeVersion = await context.wait(installedCliVersion(id, selected.binPath));
+        // F-1571: CLI que já passou numa checagem e hoje não responde (o
+        // Claude que o npm 12 deixou como stub) não espera o operador: uma
+        // reinstalação npm no mesmo prefixo por sessão do app, nunca em laço.
+        const repairOnly = !beforeVersion && (queue.snapshot()[id] ?? 0) > 0 && !repairAttempted.has(id)
+          ? automaticCliRepairRecipe(selected)
+          : null;
         const stillSameTarget = await sameTarget();
         const effectivePreference = await context.wait(readAutoCliPreferencesAsync(file));
-        if (!beforeVersion || !stillSameTarget || stopped || !idleEnough() ||
+        if ((!beforeVersion && !repairOnly) || !stillSameTarget || stopped || !idleEnough() ||
             effectivePreference?.enabled !== true ||
             activeProviderBinary(id) !== selected.binPath) return false;
         // F-1397: checagem barata antes de instalar — npm/brew respondem sem
         // tocar na instalação; em dia, só marca a checagem.
-        const versionCheck = cliVersionCheck(selected.recipe);
-        if (versionCheck) {
+        const versionCheck = beforeVersion ? cliVersionCheck(selected.recipe) : null;
+        if (beforeVersion && versionCheck) {
           const stdout = await context.wait(availableCliVersion(selected.recipe, versionCheck, context.signal));
           if (cliVersionCheckUpToDate(versionCheck, beforeVersion, stdout ?? '') === true) {
             console.info(`[cli-auto-update] ${id}: up-to-date, ${beforeVersion}`);
@@ -2860,51 +2897,92 @@ export function startCliAutoUpdate(
           // virar órfão; o marcador acusa no próximo boot o que não terminou.
           // O download (B3) segue abortável na hora; só o processo que grava
           // entra no teto do stop e no marcador.
-          let child: Promise<void> | null = null;
-          let markerWritten: Promise<void> = Promise.resolve();
-          const install = runInstallRecipe(selected.recipe, selected.prepared ?? undefined,
-            assertInstallCurrent, context.signal, {
-              childSignal: installAbort.signal,
-              onChildStart: (exited) => {
-                child = exited;
-                inflightInstall = exited;
-                markerWritten = writeInstallMarker(id);
-              },
-            });
-          const clearAfterChild = async () => {
-            if (!child) return;
-            await child;
-            await markerWritten;
-            await clearInstallMarker();
+          const runTracked = async (recipe: CliInstallRecipe, prepared: ArgvInstallInvocation | undefined) => {
+            let child: Promise<void> | null = null;
+            let markerWritten: Promise<void> = Promise.resolve();
+            const clearAfterChild = async () => {
+              if (!child) return;
+              await child;
+              await markerWritten;
+              await clearInstallMarker();
+            };
+            try {
+              await context.wait(runInstallRecipe(recipe, prepared, assertInstallCurrent, context.signal, {
+                childSignal: installAbort.signal,
+                onChildStart: (exited) => {
+                  child = exited;
+                  inflightInstall = exited;
+                  markerWritten = writeInstallMarker(id);
+                },
+              }));
+              await clearAfterChild();
+            } catch (error) {
+              // Abortado pelo stop com o processo ainda vivo: o marcador fica.
+              if (!stopped) await clearAfterChild();
+              throw error;
+            } finally { if (child && inflightInstall === child) inflightInstall = null; }
           };
-          try { await context.wait(install); await clearAfterChild(); }
-          catch (error) {
-            // Abortado pelo stop com o processo ainda vivo: o marcador fica.
-            if (!stopped) await clearAfterChild();
-            console.warn(`[cli-auto-update] ${id}: update failed`, error);
-            if (!stopped && error !== authorityChanged) {
+          const readAfter = async () => {
+            // Refresh this launcher under the lease. The full PATH/login-shell
+            // scan below must not keep a ready launcher behind unrelated CLIs.
+            resolveAdapterBinary(id);
+            const bin = activeProviderBinary(id);
+            return { bin, version: bin ? await context.wait(installedCliVersion(id, bin)) : null };
+          };
+          // F-1571: a atualização nunca deixa a CLI pior do que estava. O
+          // lançador do pane que parou de responder é reinstalado pelo npm no
+          // mesmo prefixo, com o postinstall liberado (uma vez por sessão).
+          const repairIfBroken = async (): Promise<'answering' | 'repaired' | 'broken'> => {
+            const after = await readAfter();
+            if (after.bin && (after.version || after.bin !== selected.binPath)) return 'answering';
+            const repair = repairOnly ?? automaticCliRepairRecipe(selected);
+            if (stopped || !repair || repairAttempted.has(id)) return 'broken';
+            repairAttempted.add(id);
+            try {
+              await runTracked(repair.recipe, repair.prepared);
+              return 'repaired';
+            } catch (error) {
+              console.warn(`[cli-auto-update] ${id}: repair failed`, error);
+              return 'broken';
+            }
+          };
+          if (repairOnly) repairAttempted.add(id);
+          let repaired = repairOnly !== null;
+          try {
+            await runTracked(repairOnly?.recipe ?? selected.recipe,
+              repairOnly?.prepared ?? selected.prepared ?? undefined);
+          } catch (error) {
+            console.warn(`[cli-auto-update] ${id}: ${repairOnly ? 'repair' : 'update'} failed`, error);
+            if (stopped || error === authorityChanged) return false;
+            const state = await repairIfBroken();
+            if (state !== 'repaired') {
               const isDownloadTimeout = (error as { isDownloadTimeout?: boolean })?.isDownloadTimeout === true;
               recordCliAutoUpdate(id, {
-                status: 'failed', fromVersion: beforeVersion,
-                reason: isDownloadTimeout
-                  ? 'download-timeout'
-                  : (error as { killed?: boolean }).killed
-                    ? 'timeout'
-                    : 'install-failed',
+                status: 'failed', fromVersion: beforeVersion ?? undefined,
+                reason: state === 'broken'
+                  ? 'broke-cli'
+                  : isDownloadTimeout
+                    ? 'download-timeout'
+                    : (error as { killed?: boolean }).killed
+                      ? 'timeout'
+                      : 'install-failed',
               }, shortInstallError(error));
+              return false;
             }
-            return false;
+            repaired = true;
           }
-          finally { if (child && inflightInstall === child) inflightInstall = null; }
-          // Refresh this launcher under the lease. The full PATH/login-shell
-          // scan below must not keep a ready launcher behind unrelated CLIs.
-          resolveAdapterBinary(id);
-          const afterBin = activeProviderBinary(id);
-          const afterVersion = afterBin ? await context.wait(installedCliVersion(id, afterBin)) : null;
+          let after = await readAfter();
           if (stopped) return false;
+          if (!repaired && (!after.bin || !after.version) && await repairIfBroken() === 'repaired') {
+            repaired = true;
+            after = await readAfter();
+            if (stopped) return false;
+          }
+          const afterBin = after.bin;
+          const afterVersion = after.version;
           if (!afterBin || !afterVersion) {
-            recordCliAutoUpdate(id, { status: 'failed', fromVersion: beforeVersion,
-              reason: afterBin ? 'version-unreadable' : 'launcher-missing' });
+            recordCliAutoUpdate(id, { status: 'failed', fromVersion: beforeVersion ?? undefined,
+              reason: !afterBin ? 'launcher-missing' : beforeVersion || repaired ? 'broke-cli' : 'version-unreadable' });
             return false;
           }
           const result = assessCliUpdate({
@@ -2912,13 +2990,14 @@ export function startCliAutoUpdate(
             platform: process.platform,
           });
           if (result === 'different-launcher') {
-            recordCliAutoUpdate(id, { status: 'failed', fromVersion: beforeVersion, toVersion: afterVersion,
+            recordCliAutoUpdate(id, { status: 'failed', fromVersion: beforeVersion ?? undefined, toVersion: afterVersion,
               reason: 'different-launcher' });
             return false;
           }
-          console.info(`[cli-auto-update] ${id}: ${result === 'updated' ? 'updated' : 'checked'}, ${afterVersion}`);
-          recordCliAutoUpdate(id, { status: result === 'updated' ? 'updated' : 'unchanged',
-            fromVersion: beforeVersion, toVersion: afterVersion });
+          console.info(`[cli-auto-update] ${id}: ${repaired ? 'repaired' : result === 'updated' ? 'updated' : 'checked'}, ${afterVersion}`);
+          recordCliAutoUpdate(id, { status: repaired || result === 'updated' ? 'updated' : 'unchanged',
+            fromVersion: beforeVersion ?? undefined, toVersion: afterVersion,
+            ...(repaired ? { reason: 'repaired' } : {}) });
         } finally { cliUpdateLease.release(id); }
         await context.wait(rescanAdapterBinaries());
         if (stopped) return false;
@@ -3695,20 +3774,14 @@ export function registerProviderIpc(): void {
         return { ok: false, error: 'O executável mudou; reexamine as CLIs antes de atualizar.' };
       }
     }
-    const selection = updating && beforeBin && realBinPath
-      ? selectCliUpdateRecipe({
-          adapterId: adapter.id,
-          platform: process.platform,
-          binPath: beforeBin,
-          realBinPath,
-          userHome: realUserHome(),
-          windowsLocalAppData: process.env.LOCALAPPDATA,
-          installationDistribution: adapter.id === 'devin'
-            ? installedDevinDistribution(realBinPath)
-            : null,
-          isRunnerResolvable: (runner) => resolveRunnerPath(runner) !== null,
-          resolveRealPath: resolveCliRealPath,
-        })
+    const beforeVersion = beforeBin ? await installedCliVersion(adapter.id, beforeBin) : null;
+    // F-1571: CLI que não responde (o stub que o npm 12 deixou no lugar do
+    // Claude) não roda o próprio updater — reinstala pelo npm no mesmo prefixo.
+    const updateInput = updating && beforeBin && realBinPath
+      ? cliUpdateRecipeInput(adapter.id, beforeBin, realBinPath)
+      : null;
+    const selection = updateInput
+      ? (!beforeVersion ? selectCliRepairRecipe(updateInput) : null) ?? selectCliUpdateRecipe(updateInput)
       : selectInstallRecipe(
           cliInstallRecipeCandidates(adapter.id),
           (runner) => resolveRunnerPath(runner) !== null,
@@ -3737,7 +3810,6 @@ export function registerProviderIpc(): void {
       parsed.data.mode,
     );
     if (!confirmed) return { ok: false, error: updating ? 'atualização cancelada' : 'instalação cancelada' };
-    const beforeVersion = beforeBin ? await installedCliVersion(adapter.id, beforeBin) : null;
     try {
       // brew pode compilar; 15 min é teto honesto para 1ª instalação.
       await runInstallRecipe(recipe, prepared);
@@ -3757,9 +3829,15 @@ export function registerProviderIpc(): void {
     const afterBin = activeProviderBinary(adapter.id);
     const afterVersion = afterBin ? await installedCliVersion(adapter.id, afterBin) : null;
     if (!afterBin || !afterVersion) {
+      // F-1571: o comando confirmado deixou a CLI sem responder; o próximo
+      // clique já escolhe a reinstalação npm (outro comando, outro diálogo).
+      const repairable = updateInput && beforeVersion && afterBin === beforeBin &&
+        selectCliRepairRecipe(updateInput)?.ok === true;
       return {
         ok: false,
-        error: 'O instalador terminou, mas o Nexus não conseguiu verificar a versão da CLI usada pelo pane.',
+        error: repairable
+          ? 'A atualização deixou a CLI sem responder. Clique em "Atualizar CLI" de novo: o Nexus a reinstala pelo npm com o instalador do pacote liberado.'
+          : 'O instalador terminou, mas o Nexus não conseguiu verificar a versão da CLI usada pelo pane.',
       };
     }
     if (!updating) return { ok: true, version: afterVersion };

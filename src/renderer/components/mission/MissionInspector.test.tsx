@@ -1211,9 +1211,9 @@ describe('MissionInspector', () => {
     const panel = selectTab(host, 'Atividade');
 
     expect(panel.textContent).toContain('Por que parou');
-    expect(panel.textContent).toContain(
-      'Sem última tela registrada (a missão foi encerrada por uma build anterior)',
-    );
+    expect(panel.textContent).toContain('Nenhum pane deixou a última tela registrada.');
+    // F-1571: a falta de tela não é prova de "build anterior".
+    expect(panel.textContent).not.toContain('build anterior');
   });
 });
 

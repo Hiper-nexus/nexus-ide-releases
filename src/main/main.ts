@@ -485,7 +485,10 @@ import {
 import { GlobalXpLedger } from "./gamification/global-xp-ledger";
 import { GAMIFICATION_CHANNELS } from "../shared/gamification-types";
 import { requireProjectDomainStoreRegistry } from "./orch/project-domain-store-registry";
-import { closeMissionRuntimePreservingHistory } from "./orch/mission-runtime-termination";
+import {
+  closeMissionRuntimePreservingHistory,
+  recordMissionOrchestratorExitScreen,
+} from "./orch/mission-runtime-termination";
 import {
   configureCronRuntime,
   disposeCronRuntime,
@@ -687,6 +690,8 @@ async function bootstrap(userPathReady: Promise<void>): Promise<void> {
   bootStep('tapSessionExit', () => tapSessionExit((sessionId, agent) =>
     rememberExitedSessionAttribution(sessionId, routeAttributionFromSession(agent)),
   ));
+  // F-1571: Maestro que sai sozinho deixa a última tela no Quadro da missão.
+  bootStep('tapMissionOrchestratorExitScreen', () => tapSessionExit(recordMissionOrchestratorExitScreen));
   // Liga a varredura de PTY do teardown de worktree. Injetado aqui, e não
   // importado dentro do registry, porque pty-manager já importa de runtime/ —
   // o import de volta fecharia um ciclo ESM.

@@ -40,6 +40,7 @@ import {
   orchTerminateSession,
   releaseOperatorOpenedAgentSession,
   returnAdoptedAgentSessionToUser,
+  type OwnedAgentSessionInfo,
 } from '../pty/pty-manager';
 import {
   getAcpDriverSession,
@@ -157,6 +158,9 @@ export function missionHasLivePhysicalSession(
 }
 
 const FINAL_SCREEN_TAIL_MAX_BYTES = 4 * 1024;
+/** Sessões cuja última tela a terminação pedida já gravou (o tap de saída pula). */
+const finalScreenRecorded = new Set<string>();
+const FINAL_SCREEN_RECORDED_CAP = 512;
 
 /**
  * F-244: última tela do pane antes de matar a sessão. O Quadro da missão
@@ -172,6 +176,11 @@ function emitFinalPaneScreen(
   try {
     const raw = readSessionOutput(target.sessionId, 80);
     if (!raw.trim()) return;
+    finalScreenRecorded.add(target.sessionId);
+    if (finalScreenRecorded.size > FINAL_SCREEN_RECORDED_CAP) {
+      const oldest = finalScreenRecorded.values().next().value;
+      if (oldest !== undefined) finalScreenRecorded.delete(oldest);
+    }
     let tail = sanitizeMissionOrchestratorExitOutput(raw);
     if (Buffer.byteLength(tail, 'utf8') > FINAL_SCREEN_TAIL_MAX_BYTES) {
       tail =
@@ -198,6 +207,28 @@ function emitFinalPaneScreen(
   } catch {
     // Sessão já morrendo / journal indisponível: nunca compete com o teardown.
   }
+}
+
+/**
+ * F-1571: o Maestro que sai SOZINHO (a CLI quebrada morre no boot) não passa
+ * pela terminação acima, e o Quadro culpava "uma build anterior" por não
+ * haver tela. O tap de saída grava a última tela dele — o buffer do pane vive
+ * minutos depois do exit. Terminação pedida já gravou: pula.
+ */
+export function recordMissionOrchestratorExitScreen(
+  sessionId: string,
+  agent: OwnedAgentSessionInfo | null,
+): void {
+  if (!agent?.missionId || agent.role !== 'orchestrator' || !agent.paneId) return;
+  if (finalScreenRecorded.has(sessionId)) return;
+  emitFinalPaneScreen(agent.coordinationScope ?? agent.scope, agent.missionId, {
+    paneId: agent.paneId,
+    sessionId,
+    role: 'orchestrator',
+    adapterId: agent.adapterId,
+    ...(agent.agentName ? { agentName: agent.agentName } : {}),
+    orphaned: false,
+  });
 }
 
 async function terminatePhysicalSession(sessionId: string): Promise<boolean> {

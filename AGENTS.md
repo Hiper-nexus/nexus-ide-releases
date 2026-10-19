@@ -1379,6 +1379,26 @@ saber isto antes de mexer:
   estourou, o artifact diz `{ ok: false, reason: 'timeout' }`, nada é publicado
   depois e o trace `handoff-checkpoint` registra `elapsedMs`.
 
+## Atualização de CLI pelo npm 12 não pode deixar stub (F-1571)
+
+- O npm 12 bloqueia scripts de instalação por padrão e sai com código 0. O
+  Claude Code npm depende do `postinstall` (copia o binário nativo sobre
+  `bin/claude.exe`): sem ele fica um stub de 500 bytes que sai com 1, e todo
+  pane morre no boot. O próprio `claude update` ainda diz "Successfully
+  updated" (provado em prefixo temporário em 19/10).
+- Toda receita npm leva `--allow-scripts=<pacote da CLI>` (só ele, pacote por
+  último); o ramo npm da atualização preserva as flags da receita. O `claude
+  update` de instalação npm recebe `npm_config_allow_scripts` no ambiente: o
+  updater da Anthropic continua dono do canal (F-360).
+- A atualização nunca deixa a CLI pior: lançador que parou de responder é
+  reinstalado na hora pela receita npm do mesmo prefixo
+  (`selectCliRepairRecipe`); sem reparo vira `broke-cli` no painel. CLI que já
+  passou numa checagem e hoje não responde ganha UMA reinstalação npm por
+  sessão do app; a que nunca respondeu não é reinstalada às cegas.
+- Maestro de missão que sai sozinho grava a última tela pelo tap de saída
+  (`recordMissionOrchestratorExitScreen`). Quadro sem tela não diz mais
+  "build anterior".
+
 ## Grok: não spawna `grok models` (ciclo 5)
 
 - O binário `grok models` faz silent refresh e rotaciona o refresh token a

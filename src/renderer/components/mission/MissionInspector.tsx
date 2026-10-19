@@ -924,9 +924,10 @@ function ActivityProjection({
               />
             ))
           ) : (
+            // F-1571: sem tela gravada não é prova de "build anterior" — o
+            // Maestro que morreu no boot também caía aqui.
             <p className="mission-inspector__empty-value">
-              Sem última tela registrada (a missão foi encerrada por uma build
-              anterior)
+              Nenhum pane deixou a última tela registrada.
             </p>
           )}
         </section>

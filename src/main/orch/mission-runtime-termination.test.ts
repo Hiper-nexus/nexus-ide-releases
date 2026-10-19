@@ -14,6 +14,7 @@ const runtime = vi.hoisted(() => ({
   sessionOutput: new Map<string, string>(),
   readOutputError: null as Error | null,
   emittedEvents: [] as Array<Record<string, unknown>>,
+  emittedScopes: [] as unknown[],
   /** Ordem das operações: evento de tela ANTES do encerramento físico. */
   order: [] as string[],
   terminatePty: vi.fn(async (_sessionId: string) => true),
@@ -34,7 +35,8 @@ vi.mock('./pane-session-output', () => ({
 }));
 
 vi.mock('./mission-event-emit', () => ({
-  emitMissionEvent: (_scope: unknown, input: Record<string, unknown>) => {
+  emitMissionEvent: (eventScope: unknown, input: Record<string, unknown>) => {
+    runtime.emittedScopes.push(eventScope);
     runtime.emittedEvents.push(input);
     runtime.order.push(`event:${(input as { idempotencyKey?: string }).idempotencyKey}`);
     return true;
@@ -104,6 +106,7 @@ import {
   closeMissionRuntimePreservingHistory,
   missionHasLivePhysicalSession,
   prepareMissionRuntimeTermination,
+  recordMissionOrchestratorExitScreen,
   settleMissionRuntimeDemotion,
   terminateMissionRuntime,
   terminateUnauthorizedMissionRuntimes,
@@ -260,6 +263,7 @@ beforeEach(() => {
   runtime.sessionOutput = new Map();
   runtime.readOutputError = null;
   runtime.emittedEvents = [];
+  runtime.emittedScopes = [];
   runtime.order = [];
   runtime.terminatePty.mockReset().mockResolvedValue(true);
   runtime.closeMissionPane.mockReset().mockResolvedValue(true);
@@ -427,6 +431,67 @@ describe('mission runtime physical inventory termination', () => {
     ).resolves.toMatchObject({ ok: true });
     expect(runtime.terminatePty).toHaveBeenCalledWith('pty-broken');
     expect(runtime.emittedEvents).toHaveLength(0);
+  });
+
+  // F-1571: o Maestro com a CLI quebrada morria no boot sozinho; sem tela
+  // gravada, o Quadro dizia "encerrada por uma build anterior".
+  describe('F-1571: Maestro que sai sozinho deixa a última tela', () => {
+    const maestro = (sessionId: string, extra: Record<string, unknown> = {}) => ({
+      ...physical(sessionId, `pane-${sessionId}`, 'inc-unused'),
+      role: 'orchestrator' as const,
+      adapterId: 'claude',
+      ...extra,
+    }) as unknown as NonNullable<Parameters<typeof recordMissionOrchestratorExitScreen>[1]>;
+
+    it('grava a cauda sanitizada com a mesma chave da terminação', () => {
+      runtime.sessionOutput.set('pty-boot', 'Error: claude native binary not installed.\ntoken=sk-ant-abc123456789');
+      recordMissionOrchestratorExitScreen('pty-boot', maestro('pty-boot'));
+      expect(runtime.emittedEvents).toHaveLength(1);
+      const [event] = runtime.emittedEvents;
+      expect(event).toMatchObject({
+        missionId: mission.id, runId: 'pane-final-screen', type: 'custom',
+        idempotencyKey: 'pane_final_screen:pty-boot',
+        payload: { kind: 'pane-final-screen', paneId: 'pane-pty-boot', role: 'orchestrator', adapterId: 'claude' },
+      });
+      const tail = (event.payload as { tail: string }).tail;
+      expect(tail).toContain('claude native binary not installed');
+      expect(tail).not.toContain('sk-ant');
+    });
+
+    it('usa o escopo de coordenação quando a execução é a worktree da aba (F-1006)', () => {
+      runtime.sessionOutput.set('pty-tab', 'saiu');
+      const coordinationScope = { ...scope, rootRealPath: '/workspace/coordination' };
+      recordMissionOrchestratorExitScreen('pty-tab', maestro('pty-tab', { coordinationScope }));
+      expect(runtime.emittedScopes).toEqual([coordinationScope]);
+      runtime.sessionOutput.set('pty-plain', 'saiu');
+      recordMissionOrchestratorExitScreen('pty-plain', maestro('pty-plain'));
+      expect(runtime.emittedScopes.at(-1)).toBe(scope);
+    });
+
+    it('não grava worker, pane sem missão nem sessão cuja terminação já gravou', async () => {
+      runtime.sessionOutput.set('pty-w', 'worker saiu');
+      recordMissionOrchestratorExitScreen('pty-w', { ...maestro('pty-w'), role: 'worker' });
+      runtime.sessionOutput.set('pty-u', 'operador');
+      recordMissionOrchestratorExitScreen('pty-u', { ...maestro('pty-u'), missionId: undefined });
+      recordMissionOrchestratorExitScreen('pty-none', null);
+      expect(runtime.emittedEvents).toHaveLength(0);
+
+      runtime.pty = [physical('pty-tail2', 'pane-tail2', 'inc-tail2')];
+      runtime.sessionOutput.set('pty-tail2', 'antes do kill');
+      await terminateMissionRuntime({
+        scope, suite: suite([pane('pane-tail2', 'inc-tail2')]),
+        missionId: mission.id, reason: 'authority-revoked', collapsePanes: true,
+      });
+      expect(runtime.emittedEvents).toHaveLength(1);
+      runtime.sessionOutput.set('pty-tail2', 'antes do kill\ndepois do kill');
+      recordMissionOrchestratorExitScreen('pty-tail2', maestro('pty-tail2'));
+      expect(runtime.emittedEvents).toHaveLength(1);
+    });
+
+    it('sessão sem saída não gera evento', () => {
+      recordMissionOrchestratorExitScreen('pty-silent', maestro('pty-silent'));
+      expect(runtime.emittedEvents).toHaveLength(0);
+    });
   });
 
   it('F-231: pane aberto pelo operador é devolvido à mão dele, nunca encerrado', async () => {

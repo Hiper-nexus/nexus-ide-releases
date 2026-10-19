@@ -31,7 +31,7 @@ describe('automatic CLI updates', () => {
         adapterId: 'codex', platform: 'darwin', binPath: selected.binPath,
         realBinPath: fs.realpathSync(selected.binPath), userHome: home,
         isRunnerResolvable: () => true, isTargetWritable: () => true,
-      })).toMatchObject({ kind: 'argv', argv: ['npm', 'install', '-g', '--prefix', prefix, '@openai/codex'] });
+      })).toMatchObject({ kind: 'argv', argv: ['npm', 'install', '-g', '--prefix', prefix, '--allow-scripts=@openai/codex', '@openai/codex'] });
     } finally {
       __resetPathResolverForTests(); fs.rmSync(home, { recursive: true, force: true });
     }

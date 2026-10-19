@@ -39,6 +39,12 @@
  *             os dois pacotes. Atualização é `mcode update`, que refaz esse
  *             mesmo passo — o `npm install -g --prefix` genérico perderia
  *             as flags e deixaria o SQLite quebrado.
+ *
+ * F-1571: toda receita npm libera os scripts de instalação do PRÓPRIO pacote
+ * da CLI (`--allow-scripts=<pacote>`, só ele, nunca as dependências). O npm
+ * 12 os bloqueia por padrão e sai com código 0: o Claude Code ficava com o
+ * stub de 500 bytes no lugar do binário nativo e todo pane morria no boot.
+ * npm anterior ao 12 só avisa da flag desconhecida.
  */
 
 import { codexWindowsPrefixFits, codexWindowsShortPrefix } from './codex-windows-prefix';
@@ -104,14 +110,24 @@ const BASH_HINT =
 const POWERSHELL_HINT =
   'Este instalador usa o PowerShell, que não foi encontrado nesta máquina.';
 
+/** O pacote fica por último: o updater lê o alvo npm do fim do argv. */
 function npmRecipe(pkg: string): ArgvInstallRecipe {
   return Object.freeze({
     kind: 'argv' as const,
-    argv: Object.freeze(['npm', 'install', '-g', pkg]),
+    argv: Object.freeze(['npm', 'install', '-g', `--allow-scripts=${pkg}`, pkg]),
     runner: 'npm',
     runnerHint: NPM_HINT,
   });
 }
+
+/**
+ * F-1571: `claude update` numa instalação npm chama `npm install -g` sozinho,
+ * sem a flag; o npm lê a mesma configuração do ambiente (`npm_config_*`).
+ */
+export const CLAUDE_NPM_PACKAGE = '@anthropic-ai/claude-code';
+const CLAUDE_NPM_UPDATE_ENV: Readonly<Record<string, string>> = Object.freeze({
+  npm_config_allow_scripts: CLAUDE_NPM_PACKAGE,
+});
 
 /** O pacote fica por último: o updater lê o alvo npm do fim do argv. */
 function minimaxCodeNpmRecipe(): ArgvInstallRecipe {
@@ -371,12 +387,7 @@ export function selectInstallRecipe(
   };
 }
 
-/**
- * An update must target the CLI Nexus will spawn. Claude can coexist as a
- * native and an npm installation, so choosing the first available package
- * manager can update a different binary while leaving the pane unchanged.
- */
-export function selectCliUpdateRecipe(input: {
+export interface CliUpdateRecipeInput {
   readonly adapterId: string;
   readonly platform: NodeJS.Platform;
   readonly binPath: string;
@@ -386,7 +397,69 @@ export function selectCliUpdateRecipe(input: {
   readonly installationDistribution?: string | null;
   readonly isRunnerResolvable: (runner: string) => boolean;
   readonly resolveRealPath?: (filePath: string) => string | null;
-}): InstallRecipeSelection | null {
+}
+
+/**
+ * `npm install` no prefixo da instalação que o pane usa, com as flags da
+ * receita (`--allow-scripts`, registry). null quando o binário não é desse
+ * pacote npm ou mora fora do bin do prefixo.
+ */
+function npmPrefixRecipe(
+  input: CliUpdateRecipeInput,
+  candidate: ArgvInstallRecipe,
+): InstallRecipeSelection | null {
+  const realPath = input.realBinPath.replaceAll('\\', '/');
+  const target = candidate.argv[candidate.argv.length - 1];
+  const marker = input.platform === 'win32'
+    ? `/node_modules/${target}/`
+    : `/lib/node_modules/${target}/`;
+  const index = realPath.indexOf(marker);
+  if (index < 0 || realPath.includes('/.pnpm/')) return null;
+  const prefix = realPath.slice(0, index);
+  const expectedBinDir = input.platform === 'win32' ? prefix : `${prefix}/bin`;
+  const binPath = input.binPath.replaceAll('\\', '/');
+  const actualBinDir = binPath.slice(0, binPath.lastIndexOf('/'));
+  const isOutsideNpmBin = input.platform === 'win32'
+    ? actualBinDir.toLowerCase() !== expectedBinDir.toLowerCase()
+    : actualBinDir !== expectedBinDir;
+  if (isOutsideNpmBin && (input.platform === 'win32' ||
+    input.resolveRealPath?.(`${expectedBinDir}/${binPath.slice(binPath.lastIndexOf('/') + 1)}`)
+      !== input.realBinPath)) return null;
+  // F-688: Codex num prefixo onde o host de ferramentas passa do
+  // MAX_PATH do Windows não tem conserto no lugar — a atualização o
+  // reinstala no prefixo curto, que o spawn prefere.
+  const targetPrefix = input.platform === 'win32' && input.adapterId === 'codex' &&
+    input.userHome && !codexWindowsPrefixFits(prefix.replaceAll('/', '\\'))
+    ? codexWindowsShortPrefix(input.userHome)
+    : prefix;
+  const recipe = {
+    ...candidate,
+    argv: ['npm', 'install', '-g', '--prefix', targetPrefix, ...candidate.argv.slice(3, -1), target],
+  };
+  return selectInstallRecipe([recipe], input.isRunnerResolvable);
+}
+
+/**
+ * F-1571: conserto de uma instalação npm que a atualização deixou sem
+ * responder — reinstala o pacote no MESMO prefixo, com os scripts dele
+ * liberados. Vale também para quem atualiza pelo próprio updater (Claude):
+ * o stub não roda `claude update`. null fora de instalação npm reconhecida.
+ */
+export function selectCliRepairRecipe(input: CliUpdateRecipeInput): InstallRecipeSelection | null {
+  for (const candidate of cliInstallRecipeCandidates(input.adapterId, input.platform)) {
+    if (candidate.kind !== 'argv' || candidate.argv[0] !== 'npm') continue;
+    const selected = npmPrefixRecipe(input, candidate);
+    if (selected) return selected;
+  }
+  return null;
+}
+
+/**
+ * An update must target the CLI Nexus will spawn. Claude can coexist as a
+ * native and an npm installation, so choosing the first available package
+ * manager can update a different binary while leaving the pane unchanged.
+ */
+export function selectCliUpdateRecipe(input: CliUpdateRecipeInput): InstallRecipeSelection | null {
   const realPath = input.realBinPath.replaceAll('\\', '/');
   const binPath = input.binPath.replaceAll('\\', '/');
   const bindBrew = (
@@ -405,10 +478,14 @@ export function selectCliUpdateRecipe(input: {
       argv: [runner, ...updateArgv.slice(1)],
     }], input.isRunnerResolvable);
   };
-  const selfUpdate = (args: readonly string[]): InstallRecipeSelection => {
+  const selfUpdate = (
+    args: readonly string[],
+    env?: Readonly<Record<string, string>>,
+  ): InstallRecipeSelection => {
     const recipe: ArgvInstallRecipe = {
       kind: 'argv',
       argv: [input.binPath, ...args],
+      ...(env ? { env } : {}),
       runner: input.binPath,
       runnerHint: 'A CLI instalada não está mais executável; reexamine as CLIs.',
     };
@@ -435,7 +512,12 @@ export function selectCliUpdateRecipe(input: {
     }
     // Anthropic's own updater knows the installation that invoked it. This
     // covers the native launcher and npm installations with custom prefixes.
-    return selfUpdate(['update']);
+    // F-1571: numa instalação npm ele roda `npm install -g` sem liberar o
+    // postinstall; o ambiente leva a liberação (provado: sem ela o npm 12
+    // deixa o stub e o `claude update` ainda diz "Successfully updated").
+    return selfUpdate(['update'], realPath.includes(`/node_modules/${CLAUDE_NPM_PACKAGE}/`)
+      ? CLAUDE_NPM_UPDATE_ENV
+      : undefined);
   }
   if (input.adapterId === 'kimi' && /\/\.kimi-code\/bin\/kimi$/u.test(realPath)) {
     return selfUpdate(['upgrade', '--yes']);
@@ -495,33 +577,9 @@ export function selectCliUpdateRecipe(input: {
         continue;
       }
       if (command === 'npm') {
-        const marker = input.platform === 'win32'
-          ? `/node_modules/${target}/`
-          : `/lib/node_modules/${target}/`;
-        const index = realPath.indexOf(marker);
-        if (index < 0 || realPath.includes('/.pnpm/')) continue;
-        const prefix = realPath.slice(0, index);
-        const expectedBinDir = input.platform === 'win32' ? prefix : `${prefix}/bin`;
-        const binPath = input.binPath.replaceAll('\\', '/');
-        const actualBinDir = binPath.slice(0, binPath.lastIndexOf('/'));
-        const isOutsideNpmBin = input.platform === 'win32'
-          ? actualBinDir.toLowerCase() !== expectedBinDir.toLowerCase()
-          : actualBinDir !== expectedBinDir;
-        if (isOutsideNpmBin && (input.platform === 'win32' ||
-          input.resolveRealPath?.(`${expectedBinDir}/${binPath.slice(binPath.lastIndexOf('/') + 1)}`)
-            !== input.realBinPath)) continue;
-        // F-688: Codex num prefixo onde o host de ferramentas passa do
-        // MAX_PATH do Windows não tem conserto no lugar — a atualização o
-        // reinstala no prefixo curto, que o spawn prefere.
-        const targetPrefix = input.platform === 'win32' && input.adapterId === 'codex' &&
-          input.userHome && !codexWindowsPrefixFits(prefix.replaceAll('/', '\\'))
-          ? codexWindowsShortPrefix(input.userHome)
-          : prefix;
-        const recipe = {
-          ...candidate,
-          argv: ['npm', 'install', '-g', '--prefix', targetPrefix, target],
-        };
-        return selectInstallRecipe([recipe], input.isRunnerResolvable);
+        const selected = npmPrefixRecipe(input, candidate);
+        if (selected) return selected;
+        continue;
       }
       if (command === 'uv' && realPath.includes(`/uv/tools/${target.split('@')[0]}/`)) {
         const toolName = target.split('@')[0];

@@ -896,7 +896,7 @@ describe('background CLI maintenance during pane startup', () => {
      * self-update com esse mesmo realpath.
      */
     const npmOpencode = '/fixture-quota-home/.npm-global/lib/node_modules/opencode-ai/bin/opencode.js';
-    const npmInstall = ['install', '-g', '--prefix', '/fixture-quota-home/.npm-global', 'opencode-ai'];
+    const npmInstall = ['install', '-g', '--prefix', '/fixture-quota-home/.npm-global', '--allow-scripts=opencode-ai', 'opencode-ai'];
     let installs: string[][];
     let viewReply: { error: Error | null; stdout: string };
     let viewOptions: Array<Record<string, unknown> | undefined>;
@@ -1304,6 +1304,133 @@ describe('background CLI maintenance during pane startup', () => {
       expect(onChildStart).toHaveBeenCalledOnce();
       expect(psOptions?.signal).toBe(childSignal);
       expect(psOptions?.shell).toBe(false);
+    });
+  });
+
+  // F-1571: em 19/10 o `claude update` rodou `npm install -g` com o npm 12,
+  // que bloqueou o postinstall e saiu com 0; o Claude virou um stub que sai
+  // com 1 e todo pane morria no boot. A atualização nunca deixa a CLI pior.
+  describe('F-1571: atualização que deixa a CLI sem responder', () => {
+    const npmClaude = '/fixture-quota-home/.npm-global/lib/node_modules/@anthropic-ai/claude-code/cli.js';
+    const repairArgv = ['install', '-g', '--prefix', '/fixture-quota-home/.npm-global',
+      '--allow-scripts=@anthropic-ai/claude-code', '@anthropic-ai/claude-code'];
+    type Call = { argv: string[]; env?: Record<string, string | undefined> };
+    let calls: Call[];
+    let cli: 'answering' | 'stub' | 'repaired';
+    let repairFixes: boolean;
+    let updateFails: string | null;
+    const claudeSnapshot = () => listProviderSettings().find((info) => info.adapterId === 'claude')?.cliAutoUpdate;
+    const fixture = (options: { realPath?: string; checkedAt?: Record<string, number>; start?: 'answering' | 'stub' } = {}) => {
+      const realPath = options.realPath ?? npmClaude;
+      vi.spyOn(fs, 'realpathSync').mockReturnValue(realPath);
+      vi.spyOn(fsp, 'realpath').mockResolvedValue(realPath);
+      vi.spyOn(fs, 'readFileSync').mockReturnValue(JSON.stringify({
+        enabled: true, checkedAt: options.checkedAt ?? { claude: Date.now() - 3 * 60 * 60_000 },
+      }));
+      calls = [];
+      cli = options.start ?? 'answering';
+      repairFixes = true;
+      updateFails = null;
+      spawnDeps.systemIdleTime.mockReturnValue(0);
+      spawnDeps.execFile.mockImplementation((...args: unknown[]) => {
+        const argv = args[1] as string[];
+        const callback = args.at(-1) as (error: Error | null, stdout: string) => void;
+        calls.push({ argv, env: (args[2] as { env?: Record<string, string | undefined> } | undefined)?.env });
+        if (argv[0] === 'update') {
+          if (updateFails === 'network') {
+            callback(new Error('Command failed: claude update\nnetwork unreachable'), '');
+          } else {
+            cli = 'stub';
+            if (updateFails) callback(new Error(`Command failed: claude update\n${updateFails}`), '');
+            else callback(null, 'Successfully updated from 1.0.0 to version 1.0.1');
+          }
+        } else if (argv[0] === 'install') {
+          if (repairFixes) cli = 'repaired';
+          callback(null, '');
+        } else if (argv[0] === '--version') {
+          if (cli === 'stub') callback(Object.assign(new Error('Command failed: claude --version'), { code: 1 }), '');
+          else callback(null, cli === 'repaired' ? '1.0.1 (Claude Code)' : '1.0.0 (Claude Code)');
+        } else callback(null, '');
+        return {} as ChildProcess;
+      });
+    };
+    const installs = () => calls.filter((call) => call.argv[0] === 'install');
+    let warn: ReturnType<typeof vi.spyOn>;
+    beforeEach(() => { warn = vi.spyOn(console, 'warn').mockImplementation(() => {}); });
+    afterEach(() => warn.mockRestore());
+
+    it('o claude update de uma instalação npm leva a liberação do postinstall no ambiente', async () => {
+      fixture();
+      stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(calls.find((call) => call.argv[0] === 'update')?.env)
+        .toMatchObject({ npm_config_allow_scripts: '@anthropic-ai/claude-code' });
+    });
+
+    it('update "bem-sucedido" que deixa o stub reinstala pelo npm do mesmo prefixo, na hora', async () => {
+      fixture();
+      stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(installs().map((call) => call.argv)).toEqual([repairArgv]);
+      expect(claudeSnapshot()).toMatchObject({
+        status: 'updated', fromVersion: '1.0.0 (Claude Code)', toVersion: '1.0.1 (Claude Code)', reason: 'repaired',
+      });
+    });
+
+    it('update que falha e deixa o stub também é reparado', async () => {
+      fixture();
+      updateFails = 'Update failed because the native binary for this platform was not downloaded.';
+      stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(installs().map((call) => call.argv)).toEqual([repairArgv]);
+      expect(claudeSnapshot()).toMatchObject({ status: 'updated', reason: 'repaired', toVersion: '1.0.1 (Claude Code)' });
+    });
+
+    it('update que falha com a CLI ainda respondendo não reinstala nada', async () => {
+      fixture();
+      updateFails = 'network';
+      stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(installs()).toEqual([]);
+      expect(claudeSnapshot()).toMatchObject({ status: 'failed', reason: 'install-failed' });
+    });
+
+    it('instalação sem reparo possível (nativa) registra que a atualização quebrou a CLI', async () => {
+      fixture({ realPath: '/fixture-quota-home/.local/share/claude/versions/1' });
+      stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(installs()).toEqual([]);
+      expect(claudeSnapshot()).toMatchObject({ status: 'failed', fromVersion: '1.0.0 (Claude Code)', reason: 'broke-cli' });
+    });
+
+    it('CLI que já respondeu e hoje é stub é reinstalada uma vez por sessão, sem laço', async () => {
+      fixture({ start: 'stub' });
+      repairFixes = false;
+      stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(installs().map((call) => call.argv)).toEqual([repairArgv]);
+      expect(calls.some((call) => call.argv[0] === 'update')).toBe(false); // o stub não roda `claude update`
+      expect(claudeSnapshot()).toMatchObject({ status: 'failed', reason: 'broke-cli' });
+      spawnDeps.systemIdleTime.mockReturnValue(120);
+      for (let hour = 0; hour < 26; hour++) await vi.advanceTimersByTimeAsync(60 * 60_000);
+      expect(installs()).toHaveLength(1);
+    });
+
+    it('o reparo do stub que funciona deixa o painel com "reinstalada"', async () => {
+      fixture({ start: 'stub' });
+      stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(installs().map((call) => call.argv)).toEqual([repairArgv]);
+      expect(claudeSnapshot()).toMatchObject({ status: 'updated', toVersion: '1.0.1 (Claude Code)', reason: 'repaired' });
+      expect(claudeSnapshot()?.fromVersion).toBeUndefined();
+    });
+
+    it('CLI que nunca respondeu numa checagem não é reinstalada às cegas', async () => {
+      fixture({ start: 'stub', checkedAt: {} });
+      stop = startCliAutoUpdate('/fixture-quota-home', () => false);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(installs()).toEqual([]);
+      expect(calls.some((call) => call.argv[0] === 'update')).toBe(false);
     });
   });
 
@@ -3020,6 +3147,55 @@ describe('F-210: instalação de Claude verifica e reutiliza o binário real', (
     expect(spawnDeps.execFile.mock.calls.at(-1)?.slice(0, 2)).toEqual([
       '/fixture-quota-home/.local/share/claude/versions/4.12.7', ['--version'],
     ]);
+  });
+});
+
+// F-1571: o stub que o npm 12 deixou no lugar do Claude não roda `claude
+// update` — o botão precisa reinstalar pelo npm, mostrando esse comando.
+describe('F-1571: "Atualizar CLI" com o Claude npm sem responder', () => {
+  const update = () => spawnDeps.trustedHandlers.get(PROVIDER_CHANNELS.installCli)!({}, { adapterId: 'claude', mode: 'update' });
+  const npmClaude = '/fixture-quota-home/.npm-global/lib/node_modules/@anthropic-ai/claude-code/cli.js';
+  const repairArgv = ['install', '-g', '--prefix', '/fixture-quota-home/.npm-global',
+    '--allow-scripts=@anthropic-ai/claude-code', '@anthropic-ai/claude-code'];
+  let cli: 'answering' | 'stub' | 'repaired';
+  let argvs: string[][];
+  beforeEach(() => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+    spawnDeps.resolvedClaudeBin = '/usr/local/bin/claude';
+    spawnDeps.confirmInstall.mockClear();
+    spawnDeps.rescanBinaries.mockReset().mockResolvedValue([]);
+    vi.spyOn(fs, 'realpathSync').mockReturnValue(npmClaude);
+    argvs = [];
+    spawnDeps.execFile.mockReset().mockImplementation((...args: unknown[]) => {
+      const argv = args[1] as string[];
+      const callback = args.at(-1) as (error: Error | null, stdout: string) => void;
+      argvs.push(argv);
+      if (argv[0] === 'update') cli = 'stub';
+      if (argv[0] === 'install') cli = 'repaired';
+      if (argv[0] === '--version' && cli === 'stub') callback(new Error('Command failed: claude --version'), '');
+      else callback(null, cli === 'repaired' ? '1.0.1 (Claude Code)' : '1.0.0 (Claude Code)');
+      return {} as ChildProcess;
+    });
+    registerProviderIpc();
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it('reinstala pelo npm do mesmo prefixo em vez de rodar o claude update no stub', async () => {
+    cli = 'stub';
+    await expect(update()).resolves.toMatchObject({ ok: true, version: '1.0.1 (Claude Code)' });
+    expect(argvs.filter((argv) => argv[0] === 'install')).toEqual([repairArgv]);
+    expect(argvs.some((argv) => argv[0] === 'update')).toBe(false);
+    const detail = (spawnDeps.confirmInstall.mock.calls.at(-1)?.at(-1) as { detail?: string } | undefined)?.detail;
+    expect(detail).toContain('--allow-scripts=@anthropic-ai/claude-code');
+  });
+
+  it('update que deixa a CLI sem responder diz ao operador que o próximo clique a reinstala', async () => {
+    cli = 'answering';
+    await expect(update()).resolves.toMatchObject({
+      ok: false, error: expect.stringContaining('Clique em "Atualizar CLI" de novo'),
+    });
+    expect(argvs.some((argv) => argv[0] === 'update')).toBe(true);
+    expect(argvs.some((argv) => argv[0] === 'install')).toBe(false);
   });
 });
 

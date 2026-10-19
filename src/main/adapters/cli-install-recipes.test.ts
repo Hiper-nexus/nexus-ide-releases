@@ -6,6 +6,7 @@ import {
   describeInstallRecipe,
   compatibleManualInstallCommand,
   selectInstallRecipe,
+  selectCliRepairRecipe,
   selectCliUpdateRecipe,
 } from './cli-install-recipes';
 
@@ -26,7 +27,7 @@ describe('cli install recipes', () => {
     const realBinPath = `${prefix}/${platform === 'win32' ? '' : 'lib/'}node_modules/@qwen-code/qwen-code/cli.js`;
     expect(selectCliUpdateRecipe({ adapterId: 'qwen', platform, binPath, realBinPath,
       isRunnerResolvable: () => true })).toMatchObject({ ok: true,
-      recipe: { argv: ['npm', 'install', '-g', '--prefix', prefix, '@qwen-code/qwen-code'] } });
+      recipe: { argv: ['npm', 'install', '-g', '--prefix', prefix, '--allow-scripts=@qwen-code/qwen-code', '@qwen-code/qwen-code'] } });
   });
 
   it('covers the fresh-client core on macOS', () => {
@@ -85,8 +86,32 @@ describe('cli install recipes', () => {
       'npm',
       'install',
       '-g',
+      '--allow-scripts=@gitlawb/openclaude',
       '@gitlawb/openclaude',
     ]);
+  });
+
+  // F-1571: o npm 12 bloqueia scripts de instalação por padrão e sai com 0 —
+  // o Claude Code ficava com o stub de 500 bytes e todo pane morria no boot.
+  it('toda receita npm libera os scripts só do próprio pacote, que fica por último', () => {
+    let npmRecipes = 0;
+    for (const id of [...ARGV_IDS, 'qwen', 'mimo-code', 'minimax-code']) {
+      for (const platform of ['darwin', 'linux', 'win32'] as const) {
+        for (const recipe of cliInstallRecipeCandidates(id, platform)) {
+          if (recipe.kind !== 'argv' || recipe.runner !== 'npm') continue;
+          npmRecipes++;
+          const pkg = recipe.argv.at(-1)!;
+          const allowed = recipe.argv.filter((arg) => arg.startsWith('--allow-scripts='));
+          expect(allowed).toHaveLength(1);
+          const list = allowed[0]!.slice('--allow-scripts='.length).split(',');
+          // Só o pacote da CLI; o MiniMax soma o better-sqlite3 do README oficial.
+          expect(list).toEqual(id === 'minimax-code' ? [pkg, 'better-sqlite3'] : [pkg]);
+        }
+      }
+    }
+    expect(npmRecipes).toBeGreaterThan(10);
+    expect(cliInstallCommandFor('claude', 'win32'))
+      .toBe('npm install -g --allow-scripts=@anthropic-ai/claude-code @anthropic-ai/claude-code');
   });
 
   it('installs Muse via official Homebrew cask', () => {
@@ -200,7 +225,79 @@ describe('updating the CLI that Nexus launches', () => {
       ok: true,
       recipe: {
         argv: ['/Users/operator/.npm-global/bin/claude', 'update'],
+        // F-1571: o `npm install -g` que o `claude update` roda lê a liberação
+        // do ambiente; sem ela o npm 12 deixa o stub no lugar do binário.
+        env: { npm_config_allow_scripts: '@anthropic-ai/claude-code' },
       },
+    });
+  });
+
+  it('the native Claude self-update does not carry npm configuration (F-1571)', () => {
+    const selected = selectCliUpdateRecipe({
+      adapterId: 'claude',
+      platform: 'darwin',
+      binPath: '/Users/operator/.local/bin/claude',
+      realBinPath: '/Users/operator/.local/share/claude/versions/2.1.278',
+      isRunnerResolvable: () => true,
+    });
+    expect(selected?.ok && selected.recipe.kind === 'argv' ? selected.recipe.env : 'not-argv').toBeUndefined();
+  });
+
+  describe('F-1571: reparo de uma CLI npm que parou de responder', () => {
+    const winget =
+      'C:\\Users\\Operator\\AppData\\Local\\Microsoft\\WinGet\\Packages\\' +
+      'OpenJS.NodeJS.22_Microsoft.Winget.Source_8wekyb3d8bbwe\\node-v22.23.2-win-x64';
+
+    it('reinstala o Claude npm do Windows no mesmo prefixo com o postinstall liberado', () => {
+      expect(selectCliRepairRecipe({
+        adapterId: 'claude',
+        platform: 'win32',
+        binPath: `${winget}\\claude.cmd`,
+        realBinPath: `${winget}\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe`,
+        isRunnerResolvable: () => true,
+      })).toMatchObject({
+        ok: true,
+        recipe: {
+          runner: 'npm',
+          argv: ['npm', 'install', '-g', '--prefix', winget.replaceAll('\\', '/'),
+            '--allow-scripts=@anthropic-ai/claude-code', '@anthropic-ai/claude-code'],
+        },
+      });
+    });
+
+    it('preserva as flags fixas da receita npm (MiniMax: registry e scripts nativos)', () => {
+      const selected = selectCliRepairRecipe({
+        adapterId: 'minimax-code',
+        platform: 'linux',
+        binPath: '/home/operator/.npm-global/bin/mcode',
+        realBinPath: '/home/operator/.npm-global/lib/node_modules/@minimax-ai/code/dist/cli.js',
+        isRunnerResolvable: () => true,
+      });
+      expect(selected?.ok && selected.recipe.kind === 'argv' ? selected.recipe.argv : null).toEqual([
+        'npm', 'install', '-g', '--prefix', '/home/operator/.npm-global',
+        '--registry=https://registry.npmjs.org/', '--ignore-scripts=false', '--include=optional',
+        '--allow-scripts=@minimax-ai/code,better-sqlite3', '@minimax-ai/code',
+      ]);
+    });
+
+    it('nunca inventa reparo fora de uma instalação npm reconhecida', () => {
+      expect(selectCliRepairRecipe({
+        adapterId: 'claude', platform: 'darwin',
+        binPath: '/Users/operator/.local/bin/claude',
+        realBinPath: '/Users/operator/.local/share/claude/versions/2.1.278',
+        isRunnerResolvable: () => true,
+      })).toBeNull();
+      expect(selectCliRepairRecipe({
+        adapterId: 'claude', platform: 'linux',
+        binPath: '/home/operator/.local/share/pnpm/claude',
+        realBinPath: '/home/operator/.local/share/pnpm/global/5/.pnpm/@anthropic-ai+claude-code@2.1.303/node_modules/@anthropic-ai/claude-code/cli.js',
+        isRunnerResolvable: () => true,
+      })).toBeNull();
+      expect(selectCliRepairRecipe({
+        adapterId: 'agy', platform: 'darwin',
+        binPath: '/Users/operator/.local/bin/agy', realBinPath: '/Users/operator/.local/bin/agy',
+        isRunnerResolvable: () => true,
+      })).toBeNull();
     });
   });
 
@@ -243,7 +340,7 @@ describe('updating the CLI that Nexus launches', () => {
     expect(selected).toMatchObject({
       ok: true,
       recipe: {
-        argv: ['npm', 'install', '-g', '--prefix', '/Users/operator/.npm-global', '@openai/codex'],
+        argv: ['npm', 'install', '-g', '--prefix', '/Users/operator/.npm-global', '--allow-scripts=@openai/codex', '@openai/codex'],
       },
     });
   });
@@ -261,7 +358,7 @@ describe('updating the CLI that Nexus launches', () => {
     });
     expect(selected).toMatchObject({
       ok: true,
-      recipe: { argv: ['npm', 'install', '-g', '--prefix', '/Users/operator/.hermes/node', '@openai/codex'] },
+      recipe: { argv: ['npm', 'install', '-g', '--prefix', '/Users/operator/.hermes/node', '--allow-scripts=@openai/codex', '@openai/codex'] },
     });
   });
 
@@ -336,7 +433,7 @@ describe('updating the CLI that Nexus launches', () => {
     expect(selected).toMatchObject({
       ok: true,
       recipe: {
-        argv: ['npm', 'install', '-g', '--prefix', 'C:/Users/Operator/AppData/Roaming/npm', '@openai/codex'],
+        argv: ['npm', 'install', '-g', '--prefix', 'C:/Users/Operator/AppData/Roaming/npm', '--allow-scripts=@openai/codex', '@openai/codex'],
       },
     });
   });
@@ -356,7 +453,7 @@ describe('updating the CLI that Nexus launches', () => {
     expect(selected).toMatchObject({
       ok: true,
       recipe: {
-        argv: ['npm', 'install', '-g', '--prefix', 'C:\\Users\\Administrador\\.local\\bin', '@openai/codex'],
+        argv: ['npm', 'install', '-g', '--prefix', 'C:\\Users\\Administrador\\.local\\bin', '--allow-scripts=@openai/codex', '@openai/codex'],
       },
     });
   });

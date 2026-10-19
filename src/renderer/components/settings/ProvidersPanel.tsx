@@ -49,6 +49,7 @@ const cliUpdateFailureReasons: Record<string, string> = {
   'different-launcher': 'outra instalação da CLI foi encontrada',
   'version-unreadable': 'não foi possível conferir a versão instalada',
   'launcher-missing': 'a CLI não foi encontrada após a atualização',
+  'broke-cli': 'a CLI parou de responder e a reinstalação não a recuperou; use "Atualizar CLI"',
 };
 
 /**
@@ -713,6 +714,8 @@ function ProviderDetail({
             <p className={`prov-detail__sub${provider.cliAutoUpdate.status === 'failed' ? ' settings-field__note--warning' : ''}`} role="status">
               {provider.cliAutoUpdate.status === 'failed'
                 ? `Atualização automática falhou: ${cliUpdateFailureReasons[provider.cliAutoUpdate.reason ?? ''] ?? 'não foi possível concluir a atualização'}. Com as atualizações automáticas ativas, o Nexus tenta de novo quando a CLI estiver livre.`
+                : provider.cliAutoUpdate.reason === 'repaired'
+                  ? `Reinstalada automaticamente (a CLI tinha parado de responder): ${provider.cliAutoUpdate.toVersion}`
                 : provider.cliAutoUpdate.status === 'updated'
                   ? `Atualizada automaticamente: ${provider.cliAutoUpdate.fromVersion} → ${provider.cliAutoUpdate.toVersion}`
                   : `Checada automaticamente: ${provider.cliAutoUpdate.toVersion} (em dia)`}

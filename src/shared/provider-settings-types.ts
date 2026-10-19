@@ -231,7 +231,11 @@ export interface CliAutoUpdateOutcome {
   status: 'updated' | 'unchanged' | 'up-to-date' | 'failed';
   fromVersion?: string;
   toVersion?: string;
-  /** Motivo curto da falha: install-failed, timeout, version-unreadable… */
+  /**
+   * Motivo curto da falha (install-failed, timeout, version-unreadable,
+   * broke-cli…) ou, num `updated`, `repaired`: a CLI tinha parado de responder
+   * e foi reinstalada pelo npm (F-1571).
+   */
   reason?: string;
 }
 
