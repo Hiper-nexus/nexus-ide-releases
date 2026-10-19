@@ -671,7 +671,8 @@ describe('builtin adapters', () => {
   it.each([
     ['claude', true],
     ['codex', true],
-    ['agy', false],
+    // F-697 deu ao AGY a ponte stdio do MCP: coordena como as demais (F-1575).
+    ['agy', true],
     ['aider', false],
   ])('projects physical Nexus MCP coordinator eligibility for %s', (id, capable) => {
     const raw = BUILTIN_ADAPTERS.find(
@@ -693,7 +694,7 @@ describe('builtin adapters', () => {
     expect(missionControlCapabilityForAdapter(parsed, 'user')).toBe(true);
   });
 
-  it('admits custom MCP declarations but rejects AGY even with autoload metadata', () => {
+  it('admits custom MCP declarations, the AGY bridge included', () => {
     const parsed = cliPtyAdapterSchema.parse(MINIMAL_CLI_PTY);
 
     expect(missionControlCapabilityForAdapter({
@@ -703,7 +704,7 @@ describe('builtin adapters', () => {
     expect(missionControlCapabilityForAdapter({
       ...parsed,
       quirks: { ...parsed.quirks, mcpAutoload: true, nexusMcp: 'agy' },
-    }, 'user')).toBe(false);
+    }, 'user')).toBe(true);
   });
 
   it.each([

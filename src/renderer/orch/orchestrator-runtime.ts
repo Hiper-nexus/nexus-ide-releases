@@ -27,6 +27,31 @@ export function isVerifiedOrchestratorAdapter(adapter: AdapterInfo): boolean {
 }
 
 /**
+ * Pode ser o Maestro escolhido nesta política: o mesmo requisito que o Main
+ * confere no prepare (`mission-orchestrator-runtime`). Em Autopilot basta a
+ * CLI instalada coordenar missão; só o Hardened exige o gate de Maestro
+ * verificado. O Piloto automático usava o gate do Hardened em qualquer
+ * política e só oferecia Claude e Codex (F-1575).
+ */
+export function isSelectableOrchestratorAdapter(
+  adapter: AdapterInfo,
+  squadCliPolicy: SquadCliPolicy = 'operator-choice',
+): boolean {
+  if (!adapter.installed) return false;
+  if (!isOperatorChoicePolicy(squadCliPolicy)) {
+    return isVerifiedOrchestratorAdapter(adapter);
+  }
+  const capabilities = adapterCapabilityMatrixOf(adapter);
+  return (
+    adapter.kind === 'cli-pty' &&
+    adapter.missionControlCapable === true &&
+    capabilities.launchable &&
+    capabilities.promptInjectable &&
+    capabilities.statusObservable
+  );
+}
+
+/**
  * Automatic routing never falls through to adapters[0]. A configured
  * experimental route is skipped in favor of a verified provider; null means
  * the operator must make an explicit choice in review.
@@ -37,28 +62,12 @@ export function automaticOrchestratorAdapterId(
   squadCliPolicy: SquadCliPolicy = 'operator-choice',
   authenticatedAdapterIds?: ReadonlySet<string>,
 ): string | null {
-  const operatorChoice = isOperatorChoicePolicy(squadCliPolicy);
   const isEligible = (
     adapter: AdapterInfo & { enabled?: boolean },
-  ): boolean => {
-    if (
-      adapter.enabled === false ||
-      !adapter.installed ||
-      (authenticatedAdapterIds &&
-        !authenticatedAdapterIds.has(adapter.id))
-    ) {
-      return false;
-    }
-    if (!operatorChoice) return isVerifiedOrchestratorAdapter(adapter);
-    const capabilities = adapterCapabilityMatrixOf(adapter);
-    return (
-      adapter.kind === 'cli-pty' &&
-      adapter.missionControlCapable === true &&
-      capabilities.launchable &&
-      capabilities.promptInjectable &&
-      capabilities.statusObservable
-    );
-  };
+  ): boolean =>
+    adapter.enabled !== false &&
+    (!authenticatedAdapterIds || authenticatedAdapterIds.has(adapter.id)) &&
+    isSelectableOrchestratorAdapter(adapter, squadCliPolicy);
   const configured = adapters.find(
     (adapter) => adapter.id === configuredAdapterId,
   );

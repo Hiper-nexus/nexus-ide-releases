@@ -198,14 +198,17 @@ export function taskHandoffCapabilityForAdapter(
  * Maestro startup requires the physical Nexus MCP route checked by
  * canUseNexusMcp in cli-mcp-inject. PTY completion alone remains sufficient for
  * workers, but cannot carry the coordinator's Nexus tool calls.
+ *
+ * O AGY ficava fora desde 05/09, quando a 1.1 não tinha rota de MCP. O F-697
+ * deu a ele a ponte stdio pelo perfil nativo: a mesma rota que o leva às
+ * missões como worker serve ao Maestro (o cliente não o via no Piloto
+ * automático, F-1575).
  */
 export function missionControlCapabilityForAdapter(
   adapter: Adapter,
   origin: AdapterOrigin,
 ): boolean {
-  if (adapter.kind !== 'cli-pty' || adapter.quirks.nexusMcp === 'agy') {
-    return false;
-  }
+  if (adapter.kind !== 'cli-pty') return false;
   const hasPhysicalMcpRoute =
     hasNexusMcpCapability(adapter.quirks) || adapter.bin === 'claude';
   const capabilities = adapterCapabilityMatrixForAdapter(adapter, origin);

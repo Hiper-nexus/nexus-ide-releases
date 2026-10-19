@@ -69,7 +69,7 @@ export function ModelPicker({
   if (groups.length === 0) {
     return (
       <p className="model-picker__empty" role="status">
-        Nenhuma CLI instalada — instale Claude ou Codex para escolher um modelo.
+        Nenhuma CLI disponível — instale ou habilite uma CLI em Providers para escolher um modelo.
       </p>
     );
   }

@@ -103,6 +103,6 @@ describe('ModelPicker', () => {
 
   it('sem CLIs mostra estado vazio acionável', () => {
     const host = render(<ModelPicker options={[]} onSelect={vi.fn()} />);
-    expect(host.textContent).toContain('Nenhuma CLI instalada');
+    expect(host.textContent).toContain('Nenhuma CLI disponível');
   });
 });

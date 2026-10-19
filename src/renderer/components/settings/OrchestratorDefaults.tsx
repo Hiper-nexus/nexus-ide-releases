@@ -3,7 +3,7 @@ import type { AccountInfo } from "../../../shared/account-types";
 import type { ProviderSettingsInfo } from "../../../shared/provider-settings-types";
 import type { OrchSettings } from "../../../shared/settings-types";
 import type { AdapterInfo } from "../../../shared/types";
-import { isVerifiedOrchestratorAdapter } from "../../orch/orchestrator-runtime";
+import { isSelectableOrchestratorAdapter } from "../../orch/orchestrator-runtime";
 import { isAdapterModelAuthenticated } from "../../orch/mission-runtime-readiness";
 import { ProviderLogo } from "../ProviderLogo";
 import { ModelPicker } from "../model/ModelPicker";
@@ -150,15 +150,18 @@ export function OrchestratorDefaults() {
     setGatewayDraft(defaults.aiGatewayBaseUrl);
   }, [defaults.aiGatewayBaseUrl]);
 
+  // Mesma régua do prepare no Main: em Autopilot toda CLI instalada que
+  // coordena missão (AGY, Kimi, Grok…); só o Hardened restringe aos Maestros
+  // verificados (F-1575).
   const capableAdapters = useMemo(
     () =>
       adapters.filter(
         (adapter) =>
-          isVerifiedOrchestratorAdapter(adapter) &&
+          isSelectableOrchestratorAdapter(adapter, defaults.squadCliPolicy) &&
           providers.find((provider) => provider.adapterId === adapter.id)
             ?.enabled === true,
       ),
-    [adapters, providers],
+    [adapters, providers, defaults.squadCliPolicy],
   );
   const selectedAdapter = capableAdapters.find(
     (adapter) => adapter.id === defaults.defaultAdapterId,
@@ -265,7 +268,7 @@ export function OrchestratorDefaults() {
       : configuredAdapter
         ? configuredProvider?.enabled === false
           ? `${configuredAdapter.label} · provider desabilitado`
-          : `${configuredAdapter.label} · Maestro não verificado`
+          : `${configuredAdapter.label} · não coordena missões`
         : "Provider indisponível";
   const visibleAdapter = selectedAdapter ?? configuredAdapter;
 
@@ -305,9 +308,11 @@ export function OrchestratorDefaults() {
         <p className="settings-orchestrator__warning" role="status">
           {configuredAdapter?.installed
             ? configuredProvider?.enabled === false
-              ? `${configuredAdapter.label} está desabilitado. Habilite o provider ou escolha outro Maestro verificado.`
-              : `${configuredAdapter.label} não concluiu o gate Nexus de Maestro. Escolha Claude ou Codex quando estiverem instalados.`
-            : "Instale ou escolha um Maestro verificado para iniciar novos squads."}
+              ? `${configuredAdapter.label} está desabilitado. Habilite o provider ou escolha outra ferramenta abaixo.`
+              : defaults.squadCliPolicy === "governed"
+                ? `${configuredAdapter.label} não concluiu o gate de Maestro do modo Hardened. Escolha um Maestro verificado ou volte ao Autopiloto.`
+                : `${configuredAdapter.label} não coordena missões nesta versão. Escolha outra ferramenta abaixo.`
+            : "Instale ou escolha uma ferramenta abaixo para iniciar novos squads."}
         </p>
       )}
       {/* Modelo sumido é aviso próprio: desde que login deixou de ser
@@ -336,8 +341,8 @@ export function OrchestratorDefaults() {
             className="settings-orchestrator__saved-unavailable"
             role="status"
           >
-            Salvo: {configuredAdapter.label} (indisponível) — escolha um
-            Maestro verificado abaixo.
+            Salvo: {configuredAdapter.label} (indisponível) — escolha outra
+            ferramenta abaixo.
           </p>
         )}
         {!providerUnavailable && missingModel && (

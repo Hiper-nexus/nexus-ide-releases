@@ -24,7 +24,9 @@ function adapter(
     "claude" || id === "codex"
     ? "verified"
     : "experimental",
+  missionControlCapable = id !== "aider",
 ): AdapterInfo {
+  const verified = id !== "aider" && orchestrationEvidence === "verified";
   return {
     id,
     kind: "cli-pty",
@@ -35,6 +37,18 @@ function adapter(
     orchestratorCapable: id !== "aider",
     orchestrationEvidence:
       id === "aider" ? "unsupported" : orchestrationEvidence,
+    // Como o Main publica: quem coordena missão também lança, recebe prompt e
+    // tem status observável; o selo verificado é só do gate do Hardened.
+    missionControlCapable,
+    capabilities: {
+      launchable: installed,
+      promptInjectable: missionControlCapable,
+      statusObservable: missionControlCapable,
+      resumable: false,
+      autonomousReadOnly: verified,
+      governedWriter: false,
+      verifiedMaestro: verified,
+    },
     installCommand: "",
     idleTimeoutMs: 800,
   };
@@ -171,12 +185,15 @@ describe("OrchestratorDefaults", () => {
     const accountSelect = host.querySelector<HTMLSelectElement>(
       'select[aria-label="Conta do orquestrador"]',
     );
-    // Picker unificado: um grupo por provider verificado, com logo e uso.
+    // Picker unificado: um grupo por CLI que coordena missão (Autopiloto),
+    // com logo e uso; CLI não instalada e CLI sem MCP do Nexus ficam fora.
     expect(
       host.querySelector('section[aria-label="Claude"]'),
     ).not.toBeNull();
     expect(host.querySelector('section[aria-label="Codex"]')).not.toBeNull();
-    expect(host.querySelector('section[aria-label="Grok"]')).toBeNull();
+    expect(host.querySelector('section[aria-label="Grok"]')).not.toBeNull();
+    expect(host.querySelector('section[aria-label="Gemini"]')).toBeNull();
+    expect(host.querySelector('section[aria-label="Aider"]')).toBeNull();
     const checked = () =>
       host.querySelector<HTMLButtonElement>(
         '[role="radio"][aria-checked="true"]',
@@ -329,12 +346,64 @@ describe("OrchestratorDefaults", () => {
     act(() => root.unmount());
   });
 
-  it("keeps a declared but unverified coordinator visible and unavailable", async () => {
+  it("no Autopiloto oferece toda CLI que coordena missão, AGY incluído (F-1575)", async () => {
+    // Caso do cliente: só Claude e Codex apareciam; AGY e as outras CLIs dele
+    // coordenam missão no Main, mas o card aplicava o gate do Hardened.
+    const saved: OrchSettings = {
+      ...DEFAULT_ORCH_SETTINGS,
+      defaultAdapterId: "agy",
+      defaultModel: "",
+      defaultAccountId: "",
+    };
+    const adapters = [
+      adapter("claude", "Claude", ["claude-sonnet"]),
+      adapter("codex", "Codex", ["gpt-5.4"]),
+      adapter("agy", "Antigravity", ["gemini-3.8-flash-high"], true, "unsupported"),
+      adapter("kimi", "Kimi", ["kimi-code/kimi-for-coding"], true, "experimental"),
+      adapter("aider", "Aider", ["sonnet"]),
+    ];
+    Object.defineProperty(window, "nexus", {
+      configurable: true,
+      value: {
+        settings: {
+          orchGet: vi.fn(async () => saved),
+          orchSet: vi.fn(async () => saved),
+        },
+        adapters: {
+          list: vi.fn(async () => adapters),
+          onChanged: vi.fn(() => vi.fn()),
+        },
+        providers: {
+          list: vi.fn(async () => adapters.map((value) => provider(value))),
+          onChanged: vi.fn(() => vi.fn()),
+        },
+        accounts: {
+          list: vi.fn(async () => []),
+          onChanged: vi.fn(() => vi.fn()),
+        },
+      },
+    });
+
+    const { host, root } = mount();
+    await flushEffects();
+
+    expect(host.textContent).toContain("Antigravity · pronto");
+    expect(host.textContent).not.toContain("indisponível");
+    for (const label of ["Claude", "Codex", "Antigravity", "Kimi"]) {
+      expect(host.querySelector(`section[aria-label="${label}"]`)).not.toBeNull();
+    }
+    // Sem rota de MCP do Nexus não há Maestro, nem no Autopiloto.
+    expect(host.querySelector('section[aria-label="Aider"]')).toBeNull();
+    act(() => root.unmount());
+  });
+
+  it("no Hardened mantém o coordenador não verificado visível e indisponível", async () => {
     const saved: OrchSettings = {
       ...DEFAULT_ORCH_SETTINGS,
       defaultAdapterId: "kimi",
       defaultModel: "",
       defaultAccountId: "",
+      squadCliPolicy: "governed",
     };
     const adapters = [
       adapter("claude", "Claude", ["claude-sonnet"]),
@@ -371,9 +440,9 @@ describe("OrchestratorDefaults", () => {
     const { host, root } = mount();
     await flushEffects();
 
-    expect(host.textContent).toContain("Kimi · Maestro não verificado");
+    expect(host.textContent).toContain("Kimi · não coordena missões");
     expect(host.textContent).toContain(
-      "Kimi não concluiu o gate Nexus de Maestro",
+      "Kimi não concluiu o gate de Maestro do modo Hardened",
     );
     expect(host.textContent).not.toContain("MCP conectado");
     // O salvo indisponível continua visível (nunca troca em silêncio) e o
@@ -424,7 +493,7 @@ describe("OrchestratorDefaults", () => {
 
     expect(host.textContent).toContain("Salvo: Claude (indisponível)");
     expect(host.textContent).toContain(
-      "Instale ou escolha um Maestro verificado",
+      "Instale ou escolha uma ferramenta abaixo",
     );
     // O picker oferece o Codex instalado como substituição; o Claude
     // desinstalado não aparece como opção.
