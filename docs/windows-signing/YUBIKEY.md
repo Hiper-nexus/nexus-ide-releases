@@ -218,5 +218,13 @@ npm run windows-signer -- stop     # encerra (o PIN some com ele)
 - O agente não sobrevive a logoff, reinício nem à retirada do YubiKey: depois
   disso o primeiro build (ou o `start`) pede o PIN de novo. Build sem ninguém na
   frente do PC só funciona com um agente já destrancado.
+- **Dois builds Windows não rodam ao mesmo tempo nesta máquina.** O
+  `@electron/packager` apaga `%TEMP%\electron-packager` inteiro quando começa
+  (`dist/packager.js`), e em 19/10 o início de um make derrubou outro com `ENOENT`
+  no meio do pacote. `TEMP`/`TMP` próprios por build separam o packager (o agente
+  aceita o `electron-packager` do TEMP de quem pede), mas o Squirrel continua
+  usando `%LOCALAPPDATA%\SquirrelTemp\tempb`: dois makes nunca passam pelo Squirrel
+  juntos. Confira antes (`tasklist | findstr /i "Squirrel electron-forge"` e as
+  outras sessões).
 - O pacote MSIX da Microsoft Store é outro caminho (a Store assina), sem relação
   com este.
