@@ -173,11 +173,21 @@ export function assertWindowsTokenCertificate(
 
 const execFileAsync = promisify(execFile);
 
-/** Lê o certificado sem tocar na chave: nenhum PIN é pedido aqui. */
+/**
+ * Lê o certificado sem tocar na chave: nenhum PIN é pedido aqui. Só .NET
+ * (`X509Store`), sem módulo do PowerShell: aberto de um PowerShell 7, o 5.1 herda
+ * o `PSModulePath` dele e fica sem o drive `Cert:` ("Não existe uma unidade com o
+ * nome 'Cert'"), o que o `Get-Item -ErrorAction SilentlyContinue` antigo virava em
+ * "certificado ausente". Erro de leitura agora sai como erro (código 1).
+ */
 const READ_CERTIFICATE_SCRIPT = [
-  "$certificate = Get-Item -LiteralPath ('Cert:\\CurrentUser\\My\\' + $env:NEXUS_SIGNING_THUMBPRINT) -ErrorAction SilentlyContinue",
-  'if ($null -eq $certificate) { exit 3 }',
-  '[Console]::Out.Write((ConvertTo-Json -Compress @{ der = [Convert]::ToBase64String($certificate.RawData); hasPrivateKey = $certificate.HasPrivateKey }))',
+  "$ErrorActionPreference = 'Stop'",
+  "$store = [System.Security.Cryptography.X509Certificates.X509Store]::new('My', 'CurrentUser')",
+  "$store.Open('ReadOnly')",
+  "try { $found = $store.Certificates.Find('FindByThumbprint', $env:NEXUS_SIGNING_THUMBPRINT, $false) } finally { $store.Close() }",
+  'if ($found.Count -eq 0) { exit 3 }',
+  '$certificate = $found[0]',
+  "[Console]::Out.Write('{\"der\":\"' + [Convert]::ToBase64String($certificate.RawData) + '\",\"hasPrivateKey\":' + $certificate.HasPrivateKey.ToString().ToLowerInvariant() + '}')",
 ].join('\n');
 
 type ExecFile = (
@@ -197,6 +207,9 @@ export async function readCurrentUserCertificate(
     'v1.0',
     'powershell.exe',
   );
+  const environment = Object.fromEntries(
+    Object.entries(process.env).filter(([name]) => name.toLowerCase() !== 'psmodulepath'),
+  );
   let stdout: string;
   try {
     ({ stdout } = await run(
@@ -208,7 +221,7 @@ export async function readCurrentUserCertificate(
         Buffer.from(READ_CERTIFICATE_SCRIPT, 'utf16le').toString('base64'),
       ],
       {
-        env: { ...process.env, NEXUS_SIGNING_THUMBPRINT: thumbprint },
+        env: { ...environment, NEXUS_SIGNING_THUMBPRINT: thumbprint },
         timeout: 30_000,
         windowsHide: true,
       },

@@ -97,9 +97,15 @@ npm run make -- --platform win32 --arch x64
   HIPERSEND, uso de assinatura de código, validade e a ligação com a chave do
   cartão. YubiKey fora da porta falha aqui, antes de qualquer arquivo assinado.
 - O SignTool recebe `/sha1 <thumbprint>` da loja do usuário (sem `/sm`). O Windows
-  pede o PIN a cada processo do SignTool: um para todos os `.exe`, `.dll` e `.node`
-  do pacote (o `@electron/windows-sign` assina tudo numa chamada) e um para cada
-  executável que o Squirrel assina depois (Update.exe, o stub e o Setup).
+  pede o PIN a cada processo do SignTool (o minidriver só guarda o PIN dentro do
+  processo). Medido em 19/10: **5 janelas por build completo**, uma para todos os
+  `.exe`, `.dll` e `.node` do pacote (o `@electron/windows-sign` assina tudo numa
+  chamada) e quatro do Squirrel, em sequência: o stub, o `squirrel.exe` do
+  pacote, o `Update.exe` e o `Setup.exe`. A janela "Segurança do Windows" pode
+  abrir atrás das outras, e uma janela cancelada ou perdida derruba o make
+  ("Failed to sign … Update.exe"). Com o pacote já assinado em `out/`, refazer só o
+  instalador (`electron-forge make --skip-package`) pede 4. Reduzir isso é trabalho
+  em andamento; o PIN nunca vai para script, argv nem variável de ambiente.
 - Servidor de carimbo instável (`SignerSign() failed (0x80093102)` num arquivo
   diferente a cada tentativa, F-656): repita com
   `$env:NEXUS_WINDOWS_TIMESTAMP_URL = 'http://timestamp.sectigo.com'`.
@@ -130,6 +136,18 @@ npm run make -- --platform win32 --arch x64
 - Chave nova (outro YubiKey ou slot regenerado): nova atestação, novo pedido de
   reemissão, e o `spkiSha256` do JSON muda junto com o thumbprint, revisados no
   mesmo commit.
+
+## O que esta assinatura cobre (por produto)
+
+| Produto | Windows | Como sai assinado |
+|---|---|---|
+| NexusIDE (app, DLLs e `.node` do pacote) | Sim | `npm run make` com `NEXUS_WINDOWS_YUBIKEY_SIGNING=1` (este runbook) |
+| Redline no Windows (`resources\nexus-redline\NexusRedline.exe`) | Sim | Vai dentro do pacote do NexusIDE e é assinado na mesma chamada (conferido em 19/10: `Valid`, `41BB4AFD…`) |
+| Instalador Squirrel (`Setup.exe`, `Update.exe`, stub) | Sim | O Squirrel assina na mesma build; o recibo confere os quatro executáveis |
+| `d3dcompiler_47.dll`, `dxil.dll` | Não precisa | Já vêm assinadas pela Microsoft no Electron |
+| Nexus Shot (repo `nexus-shot`, Tauri, NSIS) | **Ainda não** | Repositório próprio; o `tauri.conf.json` não tem assinatura Windows e o instalador público do v0.1.15 saiu sem assinatura. Ligar exige `bundle.windows.certificateThumbprint` = `41BB4AFD0B69AA7B8B88F732E66808A2A5B93560`, `digestAlgorithm: sha256` e `timestampUrl` RFC 3161 num `tauri.windows.conf.json`, o minidriver e o PIN como aqui |
+| NexusIDE no macOS / Redline do Mac / Shot no Mac | Outro caminho | Developer ID + notarização (`build/notarize.md`, `docs/RELEASE.md`) |
+| NexusIDE no Linux | Outro caminho | Ed25519 do `.sig` (F-940, `docs/RELEASE.md`) |
 
 ## Limites
 
