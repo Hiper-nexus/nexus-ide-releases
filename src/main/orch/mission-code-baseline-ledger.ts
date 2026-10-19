@@ -101,6 +101,64 @@ export class MissionCodeBaselineLedger {
     return baseline;
   }
 
+  /**
+   * Main-owned forward-only re-baseline. The new head must descend from the
+   * previous baseline (never shrinks the already-reviewed region) and must be
+   * part of the worktree history (the worktree is synchronized with it), so a
+   * worker that merges upstream post-baseline can have Main re-anchor the
+   * delta to that upstream tip instead of a stale, bloated two-dot diff.
+   * Provenance stays Main-only: `captures` admits only a Main-minted capture,
+   * and the ancestor proof is verified with Git here, never caller-asserted.
+   */
+  async advance(
+    missionId: string,
+    executionRoot: string,
+    captured: MissionCodeBaseline,
+    options: { readonly git?: AsyncGitRunner } = {},
+  ): Promise<MissionCodeBaseline> {
+    z.string().min(1).max(128).parse(missionId);
+    if (!captures.has(captured)) throw new Error('mission code baseline advance requires a Main capture');
+    const input = captureSchema.parse(captured);
+    if (input.status !== 'known') throw new Error('mission code baseline advance requires a known baseline');
+    const root = await fs.realpath(executionRoot);
+    const rootHash = executionRootHash(root);
+    if (input.executionRootHash !== rootHash) throw new Error('mission code baseline binding mismatch');
+    const db = this.#binding.writeDatabase();
+    const existing = this.readFromDatabase(db, missionId, rootHash);
+    if (!existing) throw new Error('mission code baseline advance requires an existing baseline');
+    if (existing.status !== 'known') throw new Error('mission code baseline advance requires a known baseline');
+    if (existing.headSha === input.headSha) return existing;
+    const runner = options.git ?? new AsyncProcessGitRunner();
+    const bounded: AsyncGitRunner = { run: (cwd, args, runOptions) => runner.run(cwd, args, { ...runOptions, timeoutMs: 5_000 }) };
+    await assertSafeLocalGitConfigAsync(bounded, root);
+    const descendant = await bounded.run(root, ['merge-base', '--is-ancestor', existing.headSha, input.headSha], { allowFailure: true });
+    if (descendant.status !== 0) throw new Error('mission code baseline advance is not a descendant of the current baseline');
+    const head = await bounded.run(root, ['rev-parse', '--verify', 'HEAD^{commit}'], { allowFailure: true });
+    const headSha = headSchema.safeParse(head.stdout.trim().toLowerCase());
+    if (head.status !== 0 || !headSha.success) throw new Error('mission code baseline advance could not read the worktree HEAD');
+    const synced = await bounded.run(root, ['merge-base', '--is-ancestor', input.headSha, headSha.data], { allowFailure: true });
+    if (synced.status !== 0) throw new Error('mission code baseline advance requires the worktree to include the new baseline');
+    let inserted = false;
+    const advanced = db.transaction(() => {
+      const latest = this.readFromDatabase(db, missionId, rootHash);
+      if (!latest || latest.status !== 'known') throw new Error('mission code baseline advance requires a known baseline');
+      if (latest.headSha === input.headSha) return latest;
+      const sequence = (db.prepare('SELECT COALESCE(MAX(sequence), 0) + 1 AS value FROM mission_events WHERE mission_id = ?').get(missionId) as { value: number }).value;
+      const id = z.string().min(1).max(128).parse(this.#binding.makeId('code-baseline-advance'));
+      db.prepare(`INSERT INTO mission_events (sequence, id, mission_id, run_id, parent_run_id, event_type,
+        payload_json, idempotency_key, occurred_at, origin, delivery_status)
+        VALUES (?, ?, ?, ?, NULL, 'custom', ?, ?, ?, 'main', 'pending')`).run(
+        sequence, id, missionId, RUN_ID,
+        JSON.stringify({ kind: 'nexus.mission-code-baseline', version: 1, scopeHash: scopeHash(this.#binding.scope), baseline: input }),
+        `${KEY}:advance:${input.headSha}`, input.observedAt,
+      );
+      inserted = true;
+      return Object.freeze(input);
+    }).immediate();
+    if (inserted) this.#binding.emitChange();
+    return advanced;
+  }
+
   /** executionRoot is the current Main-authoritative canonical execution root. */
   read(missionId: string, executionRoot: string): MissionCodeBaseline | null {
     z.string().min(1).max(128).parse(missionId);
@@ -108,8 +166,10 @@ export class MissionCodeBaselineLedger {
   }
 
   private readFromDatabase(db: ReturnType<ScopedStoreBinding['readDatabase']>, missionId: string, rootHash: string): MissionCodeBaseline | null {
+    // A baseline may be advanced by Main (advance below) which appends a newer
+    // row under the same run_id. The newest row is the authoritative boundary.
     const raw = db.prepare(`SELECT event_type, origin, run_id, payload_json, occurred_at FROM mission_events
-      WHERE mission_id = ? AND idempotency_key = ?`).get(missionId, KEY);
+      WHERE mission_id = ? AND run_id = ? ORDER BY sequence DESC LIMIT 1`).get(missionId, RUN_ID);
     if (raw === undefined) return null;
     try {
       const row = rowSchema.parse(raw);

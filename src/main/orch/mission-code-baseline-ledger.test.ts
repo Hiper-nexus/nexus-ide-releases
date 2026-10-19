@@ -119,3 +119,58 @@ it('root replacement during asynchronous capture produces unknown', async () => 
   } } });
   expect(captured).toMatchObject({ status: 'unknown', reason: 'root-changed' });
 });
+
+describe('Main-owned baseline advance', () => {
+  const commit = (message: string) => git('-c', 'user.name=Nexus Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--allow-empty', '-qm', message);
+  const captureAs = (headSha: string) => captureMissionCodeBaseline(repo, {
+    git: { run: async (_cwd, args) => args[0] === 'config'
+      ? { status: 1, stdout: '', stderr: '' }
+      : { status: 0, stdout: headSha, stderr: '' } },
+  });
+
+  it('advances a Main baseline forward-only along the worktree history and reads the latest', async () => {
+    const captured = await captureMissionCodeBaseline(repo);
+    const missions = store(); const mission = missions.create({ title: 'advance' });
+    missions.codeBaseline.record(mission.id, captured);
+    commit('forward');
+    const advanced = await missions.codeBaseline.advance(mission.id, repo, await captureMissionCodeBaseline(repo));
+    expect(advanced).toMatchObject({ status: 'known', headSha: git('rev-parse', 'HEAD') });
+    expect(missions.codeBaseline.read(mission.id, repo)).toEqual(advanced);
+    // Re-advancing to the same HEAD is idempotent (returns the existing row).
+    expect(await missions.codeBaseline.advance(mission.id, repo, await captureMissionCodeBaseline(repo))).toEqual(advanced);
+  });
+
+  it('refuses to advance a baseline backward to an ancestor', async () => {
+    const initial = await captureMissionCodeBaseline(repo);
+    commit('forward');
+    const ahead = await captureMissionCodeBaseline(repo);
+    const missions = store(); const mission = missions.create({ title: 'reject-backward' });
+    missions.codeBaseline.record(mission.id, ahead);
+    await expect(missions.codeBaseline.advance(mission.id, repo, initial)).rejects.toThrow(/descendant/);
+  });
+
+  it('refuses to advance to a descendant that is not part of the worktree history', async () => {
+    const captured = await captureMissionCodeBaseline(repo);
+    const missions = store(); const mission = missions.create({ title: 'reject-unsynced' });
+    missions.codeBaseline.record(mission.id, captured);
+    commit('forward'); // HEAD = C, descendant of the baseline
+    git('checkout', '-qb', 'side', captured.headSha);
+    commit('side sibling'); // D: descendant of B, not merged into HEAD
+    const sideSha = git('rev-parse', 'HEAD');
+    git('checkout', '-q', '-');
+    await expect(missions.codeBaseline.advance(mission.id, repo, await captureAs(sideSha))).rejects.toThrow(/worktree to include/);
+  });
+
+  it('rejects a copied/agent-authored capture on advance (Main provenance)', async () => {
+    const captured = await captureMissionCodeBaseline(repo);
+    const missions = store(); const mission = missions.create({ title: 'forged-advance' });
+    missions.codeBaseline.record(mission.id, captured);
+    await expect(missions.codeBaseline.advance(mission.id, repo, { ...captured })).rejects.toThrow(/Main|capture/);
+  });
+
+  it('advance requires an existing known baseline', async () => {
+    const captured = await captureMissionCodeBaseline(repo);
+    const missions = store(); const mission = missions.create({ title: 'advance-no-baseline' });
+    await expect(missions.codeBaseline.advance(mission.id, repo, captured)).rejects.toThrow(/existing baseline/);
+  });
+});
