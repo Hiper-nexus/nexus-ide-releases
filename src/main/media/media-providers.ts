@@ -3,7 +3,7 @@ import type {
   MediaProviderId,
   MediaProviderInfo,
 } from '../../shared/media-types';
-import { estimateVideoCostUsd } from '../../shared/media-video-models';
+import { estimateVideoCostUsd, videoModelCard } from '../../shared/media-video-models';
 import { resolveMediaModelAlias } from './media-model-aliases';
 import { resolveMediaOutputPath } from './media-path-policy';
 
@@ -236,10 +236,25 @@ export function computeMediaTierAlternatives(
 }
 
 /**
+ * F-1598: custo de lista do pedido que o serviço recebe quando ninguém diz
+ * nada (modelo padrão com a duração e a resolução padrão dele), pela mesma
+ * tabela que o Estúdio mostra. `null` = a tabela não sabe antes de gerar
+ * (Gemini Omni decide a duração; voz depende do texto).
+ */
+export function defaultRequestCostUsd(def: MediaProviderDef): number | null {
+  return def.estimateCost({ model: def.defaultModel });
+}
+
+/**
  * Pick the provider for a request. Explicit provider: must exist, match the
  * kind and have a key — otherwise error (never silently substitute).
- * No provider: if preferredModel is set, prefer a keyed provider that lists it;
- * else cheapest provider of the kind WITH a key (table order).
+ * No provider: if preferredModel is set, prefer a keyed provider that lists it.
+ * Else (F-1598) the keyed provider whose default request has the lowest LIST
+ * price (`defaultRequestCostUsd`); unknown price never beats a known one, and
+ * ties keep the table order. It is a price rule only: the Nexus has measured
+ * no provider's quality against another's. Before F-1598 this said
+ * "cheapest" but took the table order: with OpenAI and Replicate keys (no
+ * Gemini) image went to gpt-image-2 (US$ 0,07) over Seedream 5 Pro (US$ 0,04).
  */
 export function resolveMediaProvider(
   kind: MediaKind,
@@ -280,7 +295,33 @@ export function resolveMediaProvider(
       `nenhum serviço de ${MEDIA_KIND_PT[kind]} com chave — conecte em Ajustes → Serviços de mídia`,
     );
   }
-  return available[0];
+  const unknownLast = (def: MediaProviderDef): number =>
+    defaultRequestCostUsd(def) ?? Number.POSITIVE_INFINITY;
+  // `Array.prototype.sort` é estável: empate (inclusive dois desconhecidos)
+  // mantém a ordem da tabela.
+  return [...available].sort((a, b) => {
+    const diff = unknownLast(a) - unknownLast(b);
+    return Number.isNaN(diff) ? 0 : diff;
+  })[0];
+}
+
+/** O que roda quando o agente não passa provider nem modelo, por tipo. */
+export interface MediaDefaultChoice {
+  provider: MediaProviderId;
+  model: string;
+  /** Preço de lista do pedido padrão; `null` quando a tabela não sabe antes. */
+  listCostUsd: number | null;
+}
+
+export function defaultMediaChoices(
+  hasKeyFn: (def: MediaProviderDef) => boolean,
+): Record<MediaKind, MediaDefaultChoice | null> {
+  const choose = (kind: MediaKind): MediaDefaultChoice | null => {
+    if (!MEDIA_PROVIDERS.some((p) => p.kind === kind && hasKeyFn(p))) return null;
+    const def = resolveMediaProvider(kind, undefined, hasKeyFn);
+    return { provider: def.id, model: def.defaultModel, listCostUsd: defaultRequestCostUsd(def) };
+  };
+  return { image: choose('image'), video: choose('video'), audio: choose('audio') };
 }
 
 /** Model must be whitelisted for the provider — no silent fallback. */
@@ -317,6 +358,7 @@ export function resolveOutPath(
 export function listMediaProviders(
   hasKeyFn: (def: MediaProviderDef) => boolean,
   maskedKeyFn: (id: MediaProviderId) => string | null,
+  now: number = Date.now(),
 ): MediaProviderInfo[] {
   return MEDIA_PROVIDERS.map((def) => ({
     id: def.id,
@@ -331,6 +373,13 @@ export function listMediaProviders(
       ? {
           imageCostUsd: Object.fromEntries(
             def.models.map((model) => [model, def.estimateCost({ model })]),
+          ),
+        }
+      : {}),
+    ...(def.kind === 'video'
+      ? {
+          videoModels: Object.fromEntries(
+            def.models.map((model) => [model, videoModelCard(model, now)]),
           ),
         }
       : {}),

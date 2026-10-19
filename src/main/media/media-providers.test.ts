@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   computeMediaTierAlternatives,
+  defaultMediaChoices,
+  defaultRequestCostUsd,
+  findMediaProvider,
   MEDIA_PROVIDERS,
   MediaProviderUnavailableError,
   listMediaProviders,
@@ -143,5 +146,68 @@ describe('F-1585: preço por imagem chega à lista de provedores', () => {
       'bytedance/seedream-5-lite': 0.02,
     });
     expect(list.find((p) => p.id === 'replicate-video')!.imageCostUsd).toBeUndefined();
+  });
+});
+
+describe('F-1598: sem provider, o pedido padrão mais barato pela tabela', () => {
+  const keyed = (...ids: string[]) => (def: { id: string }) => ids.includes(def.id);
+
+  it('imagem com OpenAI e Replicate (sem Gemini) vai ao Seedream 5 Pro, não ao gpt-image-2', () => {
+    // Antes: a ordem da tabela mandava ao gpt-image-2 (US$ 0,07) com o
+    // Seedream 5 Pro (US$ 0,04) também conectado.
+    expect(resolveMediaProvider('image', undefined, keyed('openai-image', 'replicate-image')).id).toBe(
+      'replicate-image',
+    );
+    expect(defaultRequestCostUsd(findMediaProvider('replicate-image')!)).toBe(0.04);
+    expect(defaultRequestCostUsd(findMediaProvider('openai-image')!)).toBe(0.07);
+  });
+
+  it('imagem com tudo conectado continua no Gemini Flash Image (US$ 0,039)', () => {
+    expect(resolveMediaProvider('image', undefined, () => true).id).toBe('google-image');
+  });
+
+  it('vídeo: custo conhecido passa na frente do desconhecido (Omni decide a duração)', () => {
+    expect(defaultRequestCostUsd(findMediaProvider('replicate-video')!)).toBe(0.9);
+    expect(defaultRequestCostUsd(findMediaProvider('google-video')!)).toBeNull();
+    expect(resolveMediaProvider('video', undefined, () => true).id).toBe('replicate-video');
+    expect(resolveMediaProvider('video', undefined, keyed('google-video')).id).toBe('google-video');
+  });
+
+  it('provider ou modelo pedido continuam vencendo o preço', () => {
+    expect(resolveMediaProvider('image', 'openai-image', () => true).id).toBe('openai-image');
+    expect(resolveMediaProvider('video', undefined, () => true, 'omni').id).toBe('google-video');
+  });
+
+  it('defaults diz o que roda sem provider nem modelo, e null sem chave do tipo', () => {
+    expect(defaultMediaChoices(keyed('openai-image', 'replicate-image', 'google-video'))).toEqual({
+      image: { provider: 'replicate-image', model: 'bytedance/seedream-5-pro', listCostUsd: 0.04 },
+      video: { provider: 'google-video', model: 'gemini-omni-1.1-flash', listCostUsd: null },
+      audio: null,
+    });
+  });
+});
+
+describe('F-1598: cartão de cada modelo de vídeo na lista de provedores', () => {
+  it('todo modelo de vídeo leva o cartão; imagem e voz não', () => {
+    const list = listMediaProviders(() => true, () => null, Date.parse('2026-10-19T12:00:00Z'));
+    for (const provider of list) {
+      if (provider.kind !== 'video') {
+        expect(provider.videoModels, provider.id).toBeUndefined();
+        continue;
+      }
+      expect(Object.keys(provider.videoModels ?? {})).toEqual(provider.models);
+      for (const model of provider.models) {
+        expect(provider.videoModels?.[model], model).not.toBeNull();
+      }
+    }
+  });
+
+  it('o desligamento segue o relógio de quem pergunta', () => {
+    const veoOn = (now: number) =>
+      listMediaProviders(() => true, () => null, now).find((p) => p.id === 'google-video')!.videoModels![
+        'veo-3.1-fast-generate-preview'
+      ]!;
+    expect(veoOn(Date.parse('2026-10-21T23:59:59Z'))).toMatchObject({ retiresOn: '2026-10-22', retired: false });
+    expect(veoOn(Date.parse('2026-10-22T00:00:00Z')).retired).toBe(true);
   });
 });

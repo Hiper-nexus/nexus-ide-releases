@@ -5,6 +5,8 @@
  * vault and NEVER reach the agent — it only receives the generated file path.
  */
 
+import type { VideoModelCard } from './media-video-models';
+
 export type MediaKind = 'image' | 'video' | 'audio';
 
 /**
@@ -40,6 +42,12 @@ export interface MediaProviderInfo {
    * vídeo depende de duração e resolução e vem de `media-video-models`).
    */
   imageCostUsd?: Record<string, number | null>;
+  /**
+   * F-1598: o cartão de cada modelo de vídeo (durações ou «o modelo decide»,
+   * resoluções, proporções, imagem obrigatória, preço de lista, desligamento),
+   * para o agente escolher sem tentar e ser recusado. Só vídeo.
+   */
+  videoModels?: Record<string, VideoModelCard | null>;
 }
 
 export interface MediaGenerationResult {

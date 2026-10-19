@@ -7,6 +7,7 @@ import {
 } from '../media/media-generation';
 import {
   computeMediaTierAlternatives,
+  defaultMediaChoices,
   listMediaProviders,
   MediaProviderUnavailableError,
 } from '../media/media-providers';
@@ -32,18 +33,37 @@ function baseDirFor(ctx: AgentGateContext): string {
   return resolveCwdForScope(executionScopeFor(ctx));
 }
 
+/**
+ * F-1598: o agente escolhe o modelo pelo que esta resposta traz — o cartão de
+ * cada modelo de vídeo (as regras que o motor aplica antes de cobrar, o preço
+ * de lista e o desligamento), o preço por imagem e o que roda sem provider.
+ * Nada aqui fala de qualidade: o Nexus não mediu um modelo contra outro.
+ */
 const mediaProvidersTool: McpToolDef = {
   name: 'nexus_media_providers',
   description:
     'List media generation providers (image/video/audio), their models, ' +
     'whether an API key is configured, and friendly model aliases ' +
-    '(seedream, seedance, veo, omni, kling, sora, runway, luma…). Call before ' +
-    'generating; never invent providers/models outside this list.',
+    '(seedream, seedance, veo, omni, kling, sora, runway, luma…). ' +
+    'Image providers carry imageCostUsd (list USD per image, per model). ' +
+    'Video providers carry videoModels, one card per model with the rules ' +
+    'nexus_video_generate enforces before any charge: durationsSeconds ' +
+    '(null = the model picks the length, so omit durationSeconds), ' +
+    'durationsByResolution / durationsWithImage limits, resolutions and ' +
+    'aspectRatios ([] = do not send that field), requiresImage, price ' +
+    '(usd-per-second by resolution, or usd-per-video by resolution and ' +
+    'seconds; billedByTokensUsdPerMillion = billed by tokens, the per-second ' +
+    'table is approximate), defaultRequestCostUsd, retiresOn/retired/' +
+    'replacement. defaults = what runs when you omit provider and model. ' +
+    'Prices are list prices, not quality: the Nexus has not measured model ' +
+    'quality. Call before generating; never invent providers/models outside ' +
+    'this list.',
   inputSchema: { type: 'object', properties: {} },
   handler: async () => ({
     providers: listMediaProviders(hasMediaKey, maskedMediaKey).map(
       ({ maskedKey: _masked, ...info }) => info,
     ),
+    defaults: defaultMediaChoices(hasMediaKey),
     aliases: listMediaModelAliases(),
   }),
 };
@@ -52,9 +72,13 @@ const imageGenerateTool: McpToolDef = {
   name: 'nexus_image_generate',
   description:
     'Generate an image and save it in the workspace. Returns {path}. ' +
-    'Providers: google-image (default/cheap) | openai-image | ' +
-    'replicate-image (ByteDance Seedream 5.0 Pro — flagship multimodal ' +
-    'image; official seed.bytedance.com/en/seedream5_0_pro; aliases: ' +
+    'Choose with nexus_media_providers: imageCostUsd is the list price per ' +
+    'image of each model; if the user named a model or provider, use it. ' +
+    'Without provider/model the keyed provider with the lowest list price ' +
+    'runs (see defaults there). Providers: google-image (Gemini Flash Image; ' +
+    'aspectRatio 1:1|16:9|9:16|4:3|3:4|3:2|2:3) | openai-image (gpt-image-2/1; ' +
+    'aspectRatio 1:1|16:9|9:16|4:3|3:4|3:2|2:3, mapped to its 3 sizes) | ' +
+    'replicate-image (ByteDance Seedream 5.0 Pro; aliases: ' +
     'seedream, seedream-5-pro, seedream5-0-pro, seedream-lite). ' +
     'Seedream aspectRatio: match_input_image|1:1|4:3|3:4|16:9|9:16|3:2|2:3|21:9. ' +
     'Seedream size: 1K|2K only (default 2K). imagePath + ' +
@@ -124,15 +148,27 @@ const videoGenerateTool: McpToolDef = {
   name: 'nexus_video_generate',
   description:
     'Generate a video clip and save the mp4 in the workspace. ' +
-    'Providers: replicate-video (default Seedance 2.0; also Veo/Kling/Sora/' +
-    'Runway/Luma) | google-video (Gemini API key: default Gemini Omni Flash, ' +
-    'which picks the clip length itself — omit durationSeconds; resolution ' +
-    '360p|720p|1080p|4k; the Veo 3.1 previews retire on 2026-10-22). ' +
+    'Choose with nexus_media_providers → videoModels, the same rules this ' +
+    'tool enforces (a request outside them is refused before any charge): ' +
+    'pick a model whose durationsSeconds, resolutions and aspectRatios fit ' +
+    'the brief, that needs no image you lack (requiresImage) and is not ' +
+    'retired, then compare price; if the user named a model or provider, use ' +
+    'it. Cost = seconds × the per-second price at the resolution, or the ' +
+    'per-video price. Without provider/model the keyed provider whose default ' +
+    'request has the lowest list price runs (see defaults there). ' +
+    'Providers: replicate-video (Seedance 2.0 default; also Veo 3.1, Kling, ' +
+    'Hailuo, Wan, Sora 2, Runway, Luma Ray) | google-video (Gemini API key: ' +
+    'default gemini-omni-1.1-flash — the model picks the clip length, so omit ' +
+    'durationSeconds; it bills tokens, close to the per-second table; ' +
+    'resolution 360p|720p|1080p|4k). The native Veo 3.1 previews ' +
+    '(veo-3.1-*-generate-preview) retire on 2026-10-22: use Omni, or ' +
+    'google/veo-3.1 via Replicate. ' +
     'Friendly model aliases work: seedance, veo, omni, kling, sora, runway, luma. ' +
-    'imagePath=first frame; endImagePath=last frame; referenceImagePaths[] ' +
-    'for Seedance/Veo character refs (max 9). On timeout the error includes ' +
-    'recoverJobId — call again with that id to resume without double charge. ' +
-    'Call nexus_media_providers first. Paths stay in the open workspace. ' +
+    'imagePath=first frame; endImagePath=last frame (Seedance, Veo, Kling, ' +
+    'Luma, google-video; Omni needs imagePath with it); referenceImagePaths[] ' +
+    'for character refs (max 9) on Seedance, Veo and google-video. On timeout ' +
+    'the error includes recoverJobId — call again with that id to resume ' +
+    'without double charge. Paths stay in the open workspace. ' +
     'Missing key → STOP and report Ajustes → Serviços de mídia.',
   inputSchema: {
     type: 'object',

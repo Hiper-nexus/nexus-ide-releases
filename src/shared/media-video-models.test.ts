@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  GEMINI_OMNI_TOKEN_USD_PER_MILLION,
   VIDEO_MODEL_SPECS,
   allowedVideoDurations,
   estimateVideoCostUsd,
@@ -7,6 +8,7 @@ import {
   isVideoModelRetired,
   modelPicksVideoDuration,
   videoCostPerSecondUsd,
+  videoModelCard,
   videoModelSpec,
   videoModelSummary,
   videoRequestProblem,
@@ -163,5 +165,120 @@ describe('videoModelSummary (F-1585)', () => {
       'duração escolhida pelo modelo · 360p, 720p, 1080p, 4k · a partir de $0.03/s',
     );
     expect(videoModelSummary('modelo/novo')).toBeNull();
+  });
+});
+
+describe('videoModelCard (F-1598)', () => {
+  it('o cartão só anuncia o que o motor aceita, para todo modelo da tabela', () => {
+    for (const model of Object.keys(VIDEO_MODEL_SPECS)) {
+      const card = videoModelCard(model, BEFORE)!;
+      expect(card, model).not.toBeNull();
+      expect(JSON.parse(JSON.stringify(card)), model).toEqual(card);
+      expect(card.defaultRequestCostUsd, model).toBe(estimateVideoCostUsd(model, {}));
+      const hasImage = card.requiresImage || undefined;
+      for (const resolution of card.resolutions.length > 0 ? card.resolutions : [undefined]) {
+        expect(videoRequestProblem(model, { resolution, hasImage }, BEFORE), `${model} ${resolution}`).toBeNull();
+        const allowed = card.durationsSeconds === null
+          ? []
+          : card.durationsSeconds.filter((d) =>
+              !resolution || !card.durationsByResolution?.[resolution] || card.durationsByResolution[resolution].includes(d),
+            );
+        for (const durationSeconds of allowed) {
+          expect(
+            videoRequestProblem(model, { resolution, durationSeconds, hasImage }, BEFORE),
+            `${model} ${resolution} ${durationSeconds}s`,
+          ).toBeNull();
+        }
+      }
+      for (const aspectRatio of card.aspectRatios) {
+        expect(videoRequestProblem(model, { aspectRatio, hasImage }, BEFORE), `${model} ${aspectRatio}`).toBeNull();
+      }
+      if (card.aspectRatios.length === 0) {
+        expect(videoRequestProblem(model, { aspectRatio: '16:9', hasImage }, BEFORE), model).not.toBeNull();
+      }
+      if (card.resolutions.length === 0) {
+        expect(card.defaultResolution, model).toBeNull();
+        expect(videoRequestProblem(model, { resolution: '720p', hasImage }, BEFORE), model).not.toBeNull();
+      }
+      if (card.requiresImage) {
+        expect(videoRequestProblem(model, {}, BEFORE), model).not.toBeNull();
+      }
+    }
+  });
+
+  it('Gemini Omni: duração é do modelo, cobra por token e o pedido padrão não tem custo antes', () => {
+    expect(videoModelCard('gemini-omni-1.1-flash', BEFORE)).toMatchObject({
+      durationsSeconds: null,
+      defaultDurationSeconds: null,
+      resolutions: ['360p', '720p', '1080p', '4k'],
+      defaultResolution: '720p',
+      aspectRatios: ['16:9', '9:16'],
+      requiresImage: false,
+      price: {
+        unit: 'usd-per-second',
+        default: 0.1,
+        byResolution: { '360p': 0.03, '720p': 0.1, '1080p': 0.15, '4k': 0.3 },
+        billedByTokensUsdPerMillion: { input: 1.5, textOutput: 9, videoOutput: 17.5 },
+      },
+      defaultRequestCostUsd: null,
+      retiresOn: null,
+      retired: false,
+      replacement: null,
+    });
+    expect(videoModelCard('gemini-omni-1.1-flash', BEFORE)!.summary).toContain('duração escolhida pelo modelo');
+  });
+
+  it('Veo 3.1 preview: data de desligamento, substituto e 1080p/4k só com 8 s', () => {
+    const before = videoModelCard('veo-3.1-generate-preview', BEFORE)!;
+    expect(before).toMatchObject({
+      durationsSeconds: [4, 6, 8],
+      defaultDurationSeconds: 8,
+      durationsByResolution: { '1080p': [8], '4k': [8] },
+      retiresOn: '2026-10-22',
+      retired: false,
+      defaultRequestCostUsd: 3.2,
+    });
+    expect(before.replacement).toContain('gemini-omni-1.1-flash');
+    expect(before.price).not.toHaveProperty('billedByTokensUsdPerMillion');
+    expect(videoModelCard('veo-3.1-generate-preview', AFTER)!.retired).toBe(true);
+  });
+
+  it('preço que não varia por resolução, por vídeo e duração restrita com imagem', () => {
+    expect(videoModelCard('google/veo-3.1', BEFORE)!.price).toEqual({
+      unit: 'usd-per-second',
+      default: 0.4,
+      byResolution: { '720p': 0.4, '1080p': 0.4 },
+    });
+    expect(videoModelCard('kwaivgi/kling-v2.5-turbo-pro', BEFORE)).toMatchObject({
+      resolutions: [],
+      defaultResolution: null,
+      price: { unit: 'usd-per-second', default: 0.07 },
+    });
+    expect(videoModelCard('kwaivgi/kling-v2.5-turbo-pro', BEFORE)!.price).not.toHaveProperty('byResolution');
+    expect(videoModelCard('minimax/hailuo-2.3', BEFORE)!.price).toEqual({
+      unit: 'usd-per-video',
+      byResolution: { '768p': { 6: 0.28, 10: 0.56 }, '1080p': { 6: 0.49 } },
+    });
+    expect(videoModelCard('luma/ray-3.2', BEFORE)).toMatchObject({ durationsSeconds: [5, 10], durationsWithImage: [5] });
+    expect(videoModelCard('wan-video/wan-2.5-i2v', BEFORE)).toMatchObject({ requiresImage: true, aspectRatios: [] });
+  });
+
+  it('o cartão é cópia: mexer nele não muda a tabela', () => {
+    const card = videoModelCard('bytedance/seedance-2.0', BEFORE)!;
+    (card.durationsSeconds as number[]).push(99);
+    (card.resolutions as string[]).length = 0;
+    expect(videoModelSpec('bytedance/seedance-2.0')!.durations).not.toContain(99);
+    expect(videoModelSpec('bytedance/seedance-2.0')!.resolutions).toContain('720p');
+  });
+
+  it('modelo fora da tabela não ganha cartão inventado', () => {
+    expect(videoModelCard('acme/video-9', BEFORE)).toBeNull();
+  });
+
+  it('o custo do Omni pelos tokens usa o mesmo preço que o cartão mostra', () => {
+    expect(GEMINI_OMNI_TOKEN_USD_PER_MILLION).toEqual({ input: 1.5, textOutput: 9, videoOutput: 17.5 });
+    expect(geminiOmniCostUsd({ inputTokens: 1_000_000, textTokens: 0, videoTokens: 0 })).toBe(1.5);
+    expect(geminiOmniCostUsd({ inputTokens: 0, textTokens: 1_000_000, videoTokens: 0 })).toBe(9);
+    expect(geminiOmniCostUsd({ inputTokens: 0, textTokens: 0, videoTokens: 1_000_000 })).toBe(17.5);
   });
 });

@@ -55,6 +55,11 @@ export interface VideoModelSpec {
   readonly durationsWithImage?: readonly number[];
   /** Preço com a 1ª resolução como chave curinga `*` quando não varia. */
   readonly pricing: VideoPricing;
+  /**
+   * Cobrança por token (Gemini Omni): `pricing` é a tabela por segundo do
+   * anúncio, aproximada; o custo real sai do `usage` da resposta.
+   */
+  readonly tokenPricingUsdPerMillion?: GeminiOmniTokenPricing;
   /** Dia (AAAA-MM-DD, UTC) em que o fornecedor desliga o modelo. */
   readonly retiresOn?: string;
   /** Modelo que segue funcionando, para a frase de desligamento. */
@@ -71,6 +76,20 @@ const GEMINI_VEO_RETIREMENT = {
   retiresOn: '2026-10-22',
   replacement: 'gemini-omni-1.1-flash, com a mesma chave do Gemini',
 } as const;
+
+/** US$ por milhão de tokens do Gemini Omni (ver `geminiOmniCostUsd`). */
+export interface GeminiOmniTokenPricing {
+  readonly input: number;
+  /** Texto de saída, raciocínio incluído. */
+  readonly textOutput: number;
+  readonly videoOutput: number;
+}
+
+export const GEMINI_OMNI_TOKEN_USD_PER_MILLION: GeminiOmniTokenPricing = Object.freeze({
+  input: 1.5,
+  textOutput: 9,
+  videoOutput: 17.5,
+});
 
 export const VIDEO_MODEL_SPECS: Readonly<Record<string, VideoModelSpec>> = Object.freeze({
   'bytedance/seedance-2.0': {
@@ -216,6 +235,7 @@ export const VIDEO_MODEL_SPECS: Readonly<Record<string, VideoModelSpec>> = Objec
     defaultResolution: '720p',
     aspectRatios: VEO_ASPECTS,
     pricing: { kind: 'per-second', usd: { '360p': 0.03, '720p': 0.1, '1080p': 0.15, '4k': 0.3 } },
+    tokenPricingUsdPerMillion: GEMINI_OMNI_TOKEN_USD_PER_MILLION,
   },
   'veo-3.1-generate-preview': {
     durations: [4, 6, 8],
@@ -364,7 +384,12 @@ export interface GeminiOmniUsage {
  * `usage` da resposta, o custo é o que o Google cobra.
  */
 export function geminiOmniCostUsd(usage: GeminiOmniUsage): number {
-  const usd = (usage.inputTokens * 1.5 + usage.textTokens * 9 + usage.videoTokens * 17.5) / 1_000_000;
+  const price = GEMINI_OMNI_TOKEN_USD_PER_MILLION;
+  const usd =
+    (usage.inputTokens * price.input +
+      usage.textTokens * price.textOutput +
+      usage.videoTokens * price.videoOutput) /
+    1_000_000;
   return Number(usd.toFixed(4));
 }
 
@@ -440,4 +465,111 @@ export function videoModelSummary(model: string, now: number = Date.now()): stri
     );
   }
   return parts.join(' · ');
+}
+
+/**
+ * Preço de lista do cartão. `usd-per-second`: `default` é o que se paga por
+ * segundo sem `resolution` e `byResolution` só existe quando dá para escolher
+ * a resolução. `usd-per-video`: resolução → segundos → US$ do vídeo inteiro.
+ */
+export type VideoModelPriceCard =
+  | {
+      readonly unit: 'usd-per-second';
+      readonly default: number | null;
+      readonly byResolution?: Readonly<Record<string, number>>;
+      /** Gemini Omni: cobra por token (US$ por milhão); a tabela por segundo é aproximada. */
+      readonly billedByTokensUsdPerMillion?: GeminiOmniTokenPricing;
+    }
+  | {
+      readonly unit: 'usd-per-video';
+      readonly byResolution: Readonly<Record<string, Readonly<Record<string, number>>>>;
+    };
+
+/**
+ * O que um agente precisa para escolher um modelo de vídeo sem chamar e
+ * receber a recusa (F-1598): as regras que `videoRequestProblem` aplica, o
+ * preço de lista e o desligamento, estruturados para comparar. Qualidade não
+ * entra: o Nexus não mediu nenhum modelo contra outro.
+ */
+export interface VideoModelCard {
+  /** Durações aceitas (s); `null` = o modelo decide e o pedido não leva `durationSeconds`. */
+  readonly durationsSeconds: readonly number[] | null;
+  readonly defaultDurationSeconds: number | null;
+  /** Só onde a resolução restringe a duração (Veo 1080p/4k: 8 s). */
+  readonly durationsByResolution?: Readonly<Record<string, readonly number[]>>;
+  /** Durações aceitas com `imagePath` (Ray 3.2: 5 s). */
+  readonly durationsWithImage?: readonly number[];
+  /** `[]` = não aceita `resolution`. */
+  readonly resolutions: readonly string[];
+  readonly defaultResolution: string | null;
+  /** `[]` = não aceita `aspectRatio` (segue a imagem inicial). */
+  readonly aspectRatios: readonly string[];
+  /** Sem `imagePath` o serviço recusa. */
+  readonly requiresImage: boolean;
+  readonly price: VideoModelPriceCard;
+  /** Custo de lista do pedido só com os padrões do modelo; `null` quando o modelo decide a duração. */
+  readonly defaultRequestCostUsd: number | null;
+  /** Dia (AAAA-MM-DD, UTC) em que o fornecedor desliga; `null` = sem data anunciada. */
+  readonly retiresOn: string | null;
+  readonly retired: boolean;
+  readonly replacement: string | null;
+  /** A mesma linha do catálogo de Ajustes → Modelos de mídia. */
+  readonly summary: string;
+}
+
+function videoPriceCard(model: string, spec: VideoModelSpec): VideoModelPriceCard {
+  if (spec.pricing.kind === 'per-video') {
+    return {
+      unit: 'usd-per-video',
+      byResolution: Object.fromEntries(
+        Object.entries(spec.pricing.usd).map(([resolution, bySeconds]) => [resolution, { ...bySeconds }]),
+      ),
+    };
+  }
+  const { usd } = spec.pricing;
+  const byResolution: Record<string, number> = {};
+  for (const resolution of spec.resolutions) {
+    const price = usd[resolution] ?? usd['*'];
+    if (typeof price === 'number') byResolution[resolution] = price;
+  }
+  return {
+    unit: 'usd-per-second',
+    default: videoCostPerSecondUsd(model),
+    ...(spec.resolutions.length > 0 ? { byResolution } : {}),
+    ...(spec.tokenPricingUsdPerMillion
+      ? { billedByTokensUsdPerMillion: { ...spec.tokenPricingUsdPerMillion } }
+      : {}),
+  };
+}
+
+/** Cartão do modelo para os agentes; `null` para modelo fora da tabela. */
+export function videoModelCard(model: string, now: number = Date.now()): VideoModelCard | null {
+  const spec = videoModelSpec(model);
+  if (!spec) return null;
+  const picksDuration = modelPicksVideoDuration(spec);
+  return {
+    durationsSeconds: picksDuration ? null : [...spec.durations],
+    defaultDurationSeconds: spec.defaultDuration ?? null,
+    ...(spec.durationsByResolution
+      ? {
+          durationsByResolution: Object.fromEntries(
+            Object.entries(spec.durationsByResolution).map(([resolution, durations]) => [
+              resolution,
+              [...durations],
+            ]),
+          ),
+        }
+      : {}),
+    ...(spec.durationsWithImage ? { durationsWithImage: [...spec.durationsWithImage] } : {}),
+    resolutions: [...spec.resolutions],
+    defaultResolution: spec.resolutions.length > 0 ? (spec.defaultResolution ?? null) : null,
+    aspectRatios: [...spec.aspectRatios],
+    requiresImage: spec.requiresImage === true,
+    price: videoPriceCard(model, spec),
+    defaultRequestCostUsd: estimateVideoCostUsd(model, {}),
+    retiresOn: spec.retiresOn ?? null,
+    retired: isVideoModelRetired(spec, now),
+    replacement: spec.replacement ?? null,
+    summary: videoModelSummary(model, now) ?? '',
+  };
 }
