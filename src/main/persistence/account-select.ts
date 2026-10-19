@@ -106,12 +106,13 @@ function chooseByWindows(
   // rotacionaríamos onde as irmãs são inmensuráveis (AGY pessoal).
   // Preferência, não banimento: com todas drenando a regra abaixo decide e o
   // resto da janela é consumido numa segunda volta.
-  if (drain && isHeadroomDraining(activeQuota, DRAIN_THRESHOLD, drain)) {
+  const threshold = drain?.threshold ?? DRAIN_THRESHOLD;
+  if (drain && isHeadroomDraining(activeQuota, threshold, drain)) {
     const fresh = ranked.find(
       (account) =>
         account.id !== active.id &&
         !isHeadroomExhausted(quota(account)) &&
-        !isHeadroomDraining(quota(account), DRAIN_THRESHOLD, drain),
+        !isHeadroomDraining(quota(account), threshold, drain),
     );
     if (fresh) return fresh;
   }

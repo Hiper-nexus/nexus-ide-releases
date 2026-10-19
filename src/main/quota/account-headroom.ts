@@ -135,6 +135,8 @@ export interface DrainEvidence {
   readonly requireSource?: QuotaSource;
   /** Idade máxima da leitura. Ausente = sem limite de idade. */
   readonly maxAgeMs?: number;
+  /** Limiar efetivo. Ausente = `DRAIN_THRESHOLD`. */
+  readonly threshold?: number;
   readonly now: number;
 }
 

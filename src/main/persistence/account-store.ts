@@ -1426,7 +1426,11 @@ export function pickAvailableForFailover(
       options?.drain !== undefined &&
       activeId !== null &&
       chosen.id !== activeId &&
-      isHeadroomDraining(quotaByAccountId?.get(activeId), DRAIN_THRESHOLD, options.drain);
+      isHeadroomDraining(
+        quotaByAccountId?.get(activeId),
+        options.drain.threshold ?? DRAIN_THRESHOLD,
+        options.drain,
+      );
     return { account: chosen, probe: false, ...(drained ? { drained: true } : {}) };
   }
 
