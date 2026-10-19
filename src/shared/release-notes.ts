@@ -11750,11 +11750,12 @@ export const RELEASE_076321: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.322',
+  version: '0.76.323',
   date: '2026-10-19',
   codename: 'Velocidade e detalhes da missão',
   summary: 'No Quadro, o botão "Ver o que aconteceu" abre a visão de Atividade ampliada, com estado coerente com a barra lateral e layout ajustado para janelas estreitas. No motor, a base da worktree ganha aviso e atualização com throttle de 60 s, o verificador lê entregáveis além do corte de 512 arquivos, o portão de regressão roda testes em lotes, o pane_write comprova entrega e o esforço do revisor fica proporcional.',
   highlights: [
+    { title: 'Equipe salva no Expresso', detail: 'Em Personalizar equipe, no início expresso da missão, "Começar de uma equipe salva" lista as suas equipes antes das originais (já na 0.76.322 do Linux).' },
     { title: 'Atividade ampliada no Quadro', detail: 'O botão "Ver o que aconteceu" no Quadro da missão agora abre a visão de Atividade detalhada ao concluir ou interromper uma missão. O estado visual fica sincronizado e coerente com o status da barra lateral, e os cards e cabeçalho se ajustam perfeitamente mesmo em janelas estreitas.' },
     { title: 'Base da worktree com aviso e atualização', detail: 'Antes de congelar a base isolada do writer, o motor atualiza o upstream do origin (com throttle de 60 s por raiz no fetch) e emite aviso explícito caso a branch local não rastreie uma branch remota origin/*.' },
     { title: 'Entregáveis lidos antes do corte de 512 arquivos', detail: 'No snapshot da árvore de trabalho candidata, entregáveis declarados alfabeticamente além do limite de 512 arquivos continuam sendo lidos e têm fingerprint gerado antes do corte de leitura.' },

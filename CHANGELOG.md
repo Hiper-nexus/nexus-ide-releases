@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.76.322 — Velocidade e detalhes da missão
+## 0.76.323 — Velocidade e detalhes da missão
 
 Melhorias de usabilidade no Quadro da missão e otimizações de robustez e velocidade no motor de execução:
 
@@ -11,6 +11,15 @@ Melhorias de usabilidade no Quadro da missão e otimizações de robustez e velo
 - **Motor: pane_write com recibo de entrega**. A escrita em panes comprova entrega com recibo estruturado de prova de turno e aceite de bytes, rejeitando confirmações falsas quando o pane não está pronto.
 - **Motor: esforço do revisor proporcional**. O roteamento de tarefas e as regras de conformidade reservam o esforço máximo do revisor para tarefas críticas, alocando esforço proporcional nos demais níveis de severidade.
 - **Motor: fila de comandos pesados se liberta sozinha**. Um lease exclusivo cujo executor ou sessão dona morreu passa a ser liberado pela própria fila após 60 s (antes ficava preso e travava novos comandos), e a recusa da fila agora diz qual comando segura o lease. O conserto no supervisor nativo (`native/darwin-pty-supervisor/main.c`) não está nesta build: fica para o próximo rebuild nativo.
+- **Equipe salva em Personalizar equipe**. Já presente no pacote Linux 0.76.322 e incluída aqui no macOS.
+
+## 0.76.322 — Equipe salva no Expresso
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+No desktop Linux, em relação à 0.76.321:
+
+- **Equipe salva em Personalizar equipe**. No início expresso da missão, "Personalizar equipe" só deixava editar os papéis um a um. Agora há "Começar de uma equipe salva": as suas equipes vêm antes das originais, os integrantes substituem o roster, e um roster que o rascunho recusa (equipe grande demais) mostra o erro em vez de aplicar pela metade.
 
 ## 0.76.321 — Piloto para todas as CLIs no Linux
 
