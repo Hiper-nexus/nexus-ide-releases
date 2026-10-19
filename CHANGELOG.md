@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.76.316 — Dono pelo terminal do pane
+
+A tag 0.76.315 é o pacote macOS e não recebe arquivos Linux. Este pacote leva o desktop Linux.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+No desktop Linux, em relação à 0.76.314:
+
+- **Testes dos workers voltam a rodar**. A fila de comandos pesados recusava o vitest de workers com "pid fora da árvore do terminal" quando um processo intermediário já tinha saído. A prova de dono agora aceita também o terminal do pane, e processo de fora continua recusado.
+
 ## 0.76.315 — Retomada à vista no Mac
 
 As tags 0.76.310 e 0.76.313 não foram publicadas: o gate do candidato caiu na primeira e a 0.76.314 do Linux saiu antes da segunda. Este pacote leva ao macOS tudo o que a 0.76.312 e a 0.76.314 levaram ao Linux, as correções da 0.76.313 e mais:

@@ -11621,7 +11621,7 @@ export const RELEASE_076314: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076315: AppRelease = {
   version: '0.76.315',
   date: '2026-10-19',
   codename: 'Retomada à vista no Mac',
@@ -11650,4 +11650,16 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Smoke do candidato resiste a máquina carregada', detail: 'Sob carga o macOS descarta a saída não lida do terminal e a prova do PTY no candidato caía mesmo com tudo funcionando. A prova é refeita até três vezes só quando a saída volta vazia; o recibo do provider continua obrigatório.' },
     { title: 'Testes dos workers voltam a rodar', detail: 'A fila de comandos pesados recusava o vitest de workers com "pid fora da árvore do terminal" quando um processo intermediário já tinha saído. A prova de dono agora aceita também o terminal do pane, e processo de fora continua recusado.' },
   ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.316',
+  date: '2026-10-19',
+  codename: 'Dono pelo terminal do pane',
+  summary: 'No desktop Linux, a fila de comandos pesados aceita o processo do pane mesmo quando o intermediário já saiu, e continua recusando processo de fora. A tag 0.76.315 ficou no macOS.',
+  highlights: [
+    { title: 'Testes dos workers voltam a rodar', detail: 'A fila de comandos pesados recusava o vitest de workers com "pid fora da árvore do terminal" quando um processo intermediário já tinha saído. A prova de dono agora aceita também o terminal do pane, e processo de fora continua recusado.' },
+    { title: 'Pacote Linux', detail: 'A tag 0.76.315 é o pacote macOS e não recebe arquivos Linux. O desktop Linux sai na 0.76.316.' },
+  ],
+  fixes: [],
 };
