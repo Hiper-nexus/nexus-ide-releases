@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.315 — Retomada à vista no Mac
+
+As tags 0.76.310 e 0.76.313 não foram publicadas: o gate do candidato caiu na primeira e a 0.76.314 do Linux saiu antes da segunda. Este pacote leva ao macOS tudo o que a 0.76.312 e a 0.76.314 levaram ao Linux, as correções da 0.76.313 e mais:
+
+- **Smoke do candidato resiste a máquina carregada**. Sob carga o macOS descarta a saída não lida do terminal e a prova do PTY no candidato caía mesmo com tudo funcionando. A prova é refeita até três vezes só quando a saída volta vazia; o recibo do provider continua obrigatório.
+
 ## 0.76.314 — Muse de volta à rota
 
 A tag 0.76.313 é o candidato macOS e não recebe pacotes Linux. Este pacote leva o desktop Linux.
