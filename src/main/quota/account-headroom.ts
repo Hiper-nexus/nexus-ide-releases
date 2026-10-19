@@ -20,6 +20,7 @@
  */
 import type {
   ProviderQuotaEntry,
+  QuotaSource,
   QuotaWindow,
   QuotaWindowKind,
 } from '../../shared/quota-types';
@@ -41,6 +42,12 @@ export interface HeadroomInput {
       readonly kind?: QuotaWindowKind;
       readonly resetsAt?: number;
       readonly confidence?: QuotaWindow['confidence'];
+      /**
+       * Quem mediu. A drenagem proativa só confia em `provider-api`: uma
+       * estimativa local (`local-tokens`, `transcript-inferred`) tirando um
+       * pane de uma conta saudável custa mais que o limite real (F-249).
+       */
+      readonly source?: QuotaSource;
     }
   >;
   readonly onCooldown?: boolean;
@@ -107,6 +114,54 @@ export function headroomReadings(
     }
   }
   return out;
+}
+
+/**
+ * Limiar de drenagem: acima disto a conta para de receber trabalho NOVO, mas
+ * os panes vivos nela continuam até terminar a unidade atual. Escolha do
+ * operador em 19/10. Não é banimento — quando todas as contas estão drenando,
+ * a regra volta a escolher entre elas e o resto da janela é consumido.
+ */
+export const DRAIN_THRESHOLD = 0.89;
+
+/**
+ * O que autoriza drenar. Sem evidência não há drenagem: o gatilho é a leitura
+ * da conta ATIVA, e exigir leitura também do destino significaria nunca
+ * rotacionar onde as irmãs são inmensuráveis por desenho (AGY pessoal toma
+ * 403 no endpoint direto — `agy-bridge.ts`).
+ */
+export interface DrainEvidence {
+  /** Só esta fonte autoriza drenar. Ausente = qualquer uma. */
+  readonly requireSource?: QuotaSource;
+  /** Idade máxima da leitura. Ausente = sem limite de idade. */
+  readonly maxAgeMs?: number;
+  readonly now: number;
+}
+
+/**
+ * A conta está acima do limiar, provada por leitura que satisfaz a evidência?
+ * Janela desconhecida (`usedRatio: null`) não é 89%; leitura velha ou de fonte
+ * errada não é prova. Esgotada (100%) também é drenando.
+ */
+export function isHeadroomDraining(
+  input: HeadroomInput | undefined,
+  threshold: number,
+  evidence: DrainEvidence,
+): boolean {
+  if (!input) return false;
+  if (evidence.maxAgeMs !== undefined) {
+    const measuredAt = input.updatedAt;
+    if (typeof measuredAt !== 'number' || !Number.isFinite(measuredAt)) return false;
+    if (evidence.now - measuredAt > evidence.maxAgeMs) return false;
+  }
+  const windows = evidence.requireSource
+    ? input.windows.filter((window) => window.source === evidence.requireSource)
+    : input.windows;
+  if (windows.length === 0) return false;
+  for (const reading of headroomReadings({ ...input, windows }).values()) {
+    if (reading.usedRatio >= threshold) return true;
+  }
+  return false;
 }
 
 /** Cooldown ou alguma janela medida cheia. */
