@@ -1149,11 +1149,12 @@ describe("renderer mission authority", () => {
     };
     deps.findMissionPaneByPaneId.mockReturnValue(spec);
 
-    // Missão ausente: encerrou (ou nunca existiu neste escopo).
+    // F-1581: missão ausente (removida, outro checkout) tem motivo próprio —
+    // 'mission-terminal' mandava procurar um relatório que não existe.
     deps.getMission.mockReturnValue(null);
     expect(
       authority.canRestoreMissionPaneForRenderer(owner, "mission-a", "pane-a"),
-    ).toMatchObject({ authorized: false, reason: "mission-terminal" });
+    ).toMatchObject({ authorized: false, reason: "mission-missing" });
 
     // done/failed: autoridade de dispatch encerrada com a missão.
     deps.getMission.mockReturnValue({ ...approvedMission, status: "done" });

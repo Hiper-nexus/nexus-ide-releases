@@ -872,6 +872,14 @@ describe('missionPaneRestoreHoldNotice — A4: uma linha por motivo', () => {
     expect(notice).not.toContain('use Retomar');
   });
 
+  it('missão inexistente não promete relatório: diz que ela não existe neste projeto (F-1581)', () => {
+    const notice = missionPaneRestoreHoldNotice('mission-missing');
+    expect(notice).toContain('não existe mais neste projeto');
+    expect(notice).toContain('Abra uma nova missão');
+    expect(notice).not.toContain('a missão encerrou');
+    expect(notice).not.toContain('relatório');
+  });
+
   it('motivo ausente ou desconhecido cai no aviso genérico (canal legado)', () => {
     expect(missionPaneRestoreHoldNotice(undefined)).toBe(MISSION_HOLD_NOTICE);
   });

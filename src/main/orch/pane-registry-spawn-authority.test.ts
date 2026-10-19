@@ -1049,6 +1049,43 @@ describe("pending pane spawn authority", () => {
     }, owner);
     await expect(promise).resolves.toMatchObject({ ok: false });
   });
+
+  it("F-1581: carries the recovery reason to the renderer so the pane says why", async () => {
+    const owner = renderer();
+    const scope = testProjectScope();
+    registered = owner;
+    registerOrchRenderer(owner);
+    bindScope(owner, scope);
+    const promise = requestMissionPaneRecovery({
+      missionId: "mission-missing",
+      paneId: "pane-missing",
+      role: "orchestrator",
+      expectedSessionId: "old-session",
+      pane: {
+        id: "spec-orch",
+        missionId: "mission-missing",
+        paneId: "pane-missing",
+        adapterId: "codex",
+        title: "Orchestrator",
+        role: "orchestrator",
+        scope,
+        createdAt: 1,
+      },
+      scope,
+      recap: "Continue the mission.",
+      reason: "account-failover",
+    });
+    await Promise.resolve();
+    const request = owner.send.mock.calls[0]?.[1] as MissionPaneRecoveryRequest;
+    expect(request.reason).toBe("account-failover");
+    resolveMissionPaneRecovery({
+      requestId: request.requestId,
+      ok: false,
+      paneId: request.paneId,
+      error: "test cleanup",
+    }, owner);
+    await expect(promise).resolves.toMatchObject({ ok: false });
+  });
 });
 
 describe("F-1151: deferred native birth after the single-use recovery grant was consumed", () => {

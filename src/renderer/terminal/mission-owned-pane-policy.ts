@@ -499,6 +499,13 @@ export function missionPaneRestoreHoldNotice(
         '[Nexus] Agente aposentado — a missão encerrou.\r\n' +
         '  O relatório final está na aba da missão.\r\n'
       );
+    case 'mission-missing':
+      // F-1581: a missão foi removida ou o layout veio de outro checkout —
+      // não há "relatório na aba" a apontar.
+      return (
+        '[Nexus] Agente aposentado — a missão deste painel não existe mais neste projeto.\r\n' +
+        '  Abra uma nova missão ou feche este painel.\r\n'
+      );
     default:
       return MISSION_HOLD_NOTICE;
   }

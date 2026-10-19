@@ -34,6 +34,10 @@ export const MISSION_AWAITING_INSTRUCTION_REASON_CODE =
   'awaiting-instruction' as const;
 export const MISSION_AWAITING_INSTRUCTION_LABEL = 'Aguardando';
 
+/** F-1581: a verificação recusou a conclusão e o Maestro está corrigindo. */
+export const MISSION_COMPLETION_REFUSED_REASON_CODE =
+  'completion-refused' as const;
+
 /** Preload/main injects this when a PTY hole is accepted. */
 export const SKIPPED_TERMINAL_OUTPUT_MARKER =
   'skipped terminal output that could not be recovered';

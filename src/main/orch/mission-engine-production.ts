@@ -145,6 +145,7 @@ import {
 } from "./mission-snapshot";
 import { resolveOpenMissionQuestion } from "./mission-open-question";
 import { isOperatorTabMission } from "./operator-tab-mission-resume";
+import { hasPendingCompletionRefusal } from "./operator-tab-completion";
 import { sameMissionPaneAuthoritySeal } from "./mission-pane-authority";
 import { MissionLeadershipError, type MissionLeader } from "./mission-leadership";
 import { getMissionLeadership } from "./mission-leadership-runtime";
@@ -1607,6 +1608,10 @@ export function projectMissionEngineSnapshotView(
       ? { orchestratorIdle: true }
       : {}),
     ...(leaderDrift ? { orchestratorDrift: true } : {}),
+    // F-1581: recusa da verificação entregue ao Maestro — o Quadro a mostra.
+    ...(mission.status === "running" && hasPendingCompletionRefusal(scope, mission)
+      ? { completionRefused: true }
+      : {}),
     runtimeClosedByOperator: wasMissionRuntimeClosedByOperator(mission),
     leftoverParked: wasMissionLeftoverParked(mission),
     tasks,

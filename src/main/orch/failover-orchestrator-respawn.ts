@@ -169,6 +169,8 @@ export async function switchRendererOrchestratorAccount(
       pane: rebound,
       scope: input.scope,
       recap,
+      // F-1581: o terminal diz "troca de conta por limite", não "contexto degradado".
+      reason: 'account-failover' as const,
     };
     result = await deps.requestRecovery(resumeNote ? { ...request, resumeNote } : request);
     // F-1473: a retomada não subiu depois do grant — a mesma troca, agora com

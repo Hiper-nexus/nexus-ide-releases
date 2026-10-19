@@ -1,8 +1,40 @@
 import { describe, expect, it } from 'vitest';
 import type { Mission } from '../../shared/orch-types';
 import { withAwaitingAdjustmentMarker } from '../../shared/mission-recovery-policy';
-import { awaitsOperatorTabCompletionRequest, recordOperatorTabCompletionRequest } from './operator-tab-completion';
+import {
+  awaitsOperatorTabCompletionRequest,
+  clearCompletionRequest,
+  hasPendingCompletionRefusal,
+  recordCompletionRefusalDelivered,
+  recordOperatorTabCompletionRequest,
+} from './operator-tab-completion';
 import { testProjectScope } from './__tests__/scope-fixture';
+
+describe('recusa da conclusão entregue ao Maestro (F-1581)', () => {
+  const refused = {
+    id: 'refused-mission',
+    description: 'Corrigir o login.',
+    orchestratorSessionId: 'maestro',
+    intentVersion: 3,
+  } as Pick<Mission, 'id' | 'description' | 'intentVersion' | 'intentContract' | 'orchestratorSessionId'>;
+
+  it('vale enquanto o mesmo Maestro, na mesma versão, não pede done de novo', () => {
+    const scope = testProjectScope();
+    expect(hasPendingCompletionRefusal(scope, refused)).toBe(false);
+    recordCompletionRefusalDelivered(scope, refused, 'maestro');
+    expect(hasPendingCompletionRefusal(scope, refused)).toBe(true);
+    expect(hasPendingCompletionRefusal({ ...scope, checkoutId: 'outro' }, refused)).toBe(false);
+    expect(hasPendingCompletionRefusal(scope, { ...refused, intentVersion: 4 })).toBe(false);
+    expect(hasPendingCompletionRefusal(scope, { ...refused, orchestratorSessionId: 'novo' })).toBe(false);
+    // Novo pedido de done reabre a verificação: a recusa deixa de ser o estado.
+    recordOperatorTabCompletionRequest(scope, refused, 500);
+    expect(hasPendingCompletionRefusal(scope, refused)).toBe(false);
+    // Nova recusa entregue (o pedido foi consumido): volta a valer.
+    clearCompletionRequest(scope, refused.id);
+    recordCompletionRefusalDelivered(scope, refused, 'maestro');
+    expect(hasPendingCompletionRefusal(scope, refused)).toBe(true);
+  });
+});
 
 const scope = testProjectScope();
 const mission = {

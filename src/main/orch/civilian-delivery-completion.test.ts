@@ -77,7 +77,7 @@ import { maybeApplyCivilianPronto } from './civilian-pronto';
 import { getAutomaticCompletionProof } from './automatic-completion-proof';
 import type { ScopedTaskRecord } from './task-store';
 import { MissionLeadershipError } from './mission-leadership';
-import { hasCurrentCompletionRequest, recordOperatorTabCompletionRequest } from './operator-tab-completion';
+import { hasCurrentCompletionRequest, hasPendingCompletionRefusal, recordOperatorTabCompletionRequest } from './operator-tab-completion';
 
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { createScopedEffectOutboxStore } from './effect-outbox';
@@ -1792,6 +1792,8 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
     expect(prompt).toContain('nexus_pane_spawn');
     // O pedido de done foi respondido: o idle do Maestro não reverifica em loop.
     expect(hasCurrentCompletionRequest(scope, state.liveMission)).toBe(false);
+    // F-1581: o Quadro passa a mostrar a recusa (o prompt é do agente).
+    expect(hasPendingCompletionRefusal(scope, state.liveMission)).toBe(true);
 
     // Mesmo veredito num gatilho de worker (handoff/idle): sem spam ao Maestro.
     expect((await state.reconcile()).reason).toBe('completion-refused-to-leader');
@@ -1799,7 +1801,9 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
 
     // Novo pedido de done com o mesmo veredito: o Maestro recebe a resposta de novo.
     recordOperatorTabCompletionRequest(scope, state.liveMission, 2_000);
+    expect(hasPendingCompletionRefusal(scope, state.liveMission)).toBe(false);
     await state.reconcile();
+    expect(hasPendingCompletionRefusal(scope, state.liveMission)).toBe(true);
     expect(deliverCompletionRefusal).toHaveBeenCalledTimes(2);
     expect(blockUser).not.toHaveBeenCalled();
   });

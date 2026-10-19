@@ -776,3 +776,38 @@ describe('awaiting-instruction — Maestro vivo esperando o próximo pedido (F-1
     expect(snapshot.stateReason).toBeUndefined();
   });
 });
+
+describe('completion-refused — a verificação recusou e o Maestro corrige (F-1581)', () => {
+  it('o Quadro diz em português o que aconteceu, e a missão segue running', () => {
+    const view: ProjectMissionSnapshotView = {
+      ...runningView(),
+      completionRefused: true,
+    };
+
+    const snapshot = projectMissionSnapshot(view);
+
+    expect(snapshot.state).toBe('running');
+    expect(snapshot.stateReason).toMatchObject({
+      code: 'completion-refused',
+      label: 'A verificação automática recusou a conclusão',
+    });
+    expect(snapshot.stateReason?.detail).toContain('O Maestro recebeu o motivo e está corrigindo');
+    expect(snapshot.stateReason?.detail).not.toContain('NEXUS_COMPLETION_REFUSED');
+    expect(snapshot.allowedActions).toEqual(['direct', 'stop']);
+  });
+
+  it('vale mesmo com o Maestro parado no prompt: a recusa é o que o operador precisa ver', () => {
+    const view: ProjectMissionSnapshotView = {
+      ...runningView(),
+      tasks: [],
+      panes: [
+        { paneId: 'pane-orch', agentId: 'orchestrator', state: 'queued' },
+      ],
+      roster: [],
+      orchestratorIdle: true,
+      completionRefused: true,
+    };
+
+    expect(projectMissionSnapshot(view).stateReason?.code).toBe('completion-refused');
+  });
+});

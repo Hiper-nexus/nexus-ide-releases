@@ -164,6 +164,11 @@ import { notifyPaneWorkspaceReveal } from '../lib/pane-intersection';
 import { tuiWheelPageSequence } from './tui-wheel';
 import { xtermWindowsPty } from '../lib/platform';
 import { platformCopy } from '../lib/platform-copy';
+import {
+  installMissionPaneRecoveryReasonListener,
+  missionPaneRecoveryNotice,
+  takeMissionPaneRecoveryReason,
+} from './mission-pane-recovery-notice';
 
 /**
  * Persistent terminal manager.
@@ -3206,6 +3211,9 @@ function createHostForKind(pane: PaneModel): Host {
 export function getOrCreateHost(pane: PaneModel): Host {
   const existing = hosts.get(pane.id);
   if (existing) return existing;
+  // F-1581: o pane que o Main recupera sempre tem host; assinar aqui garante
+  // que o motivo do pedido chegue antes de `respawnMissionPaneFresh`.
+  installMissionPaneRecoveryReasonListener();
   const host = createHostForKind(pane);
   hosts.set(pane.id, host);
   return host;
@@ -4705,10 +4713,13 @@ export async function respawnMissionPaneFresh(
   setHostSession(host, pane.id, null);
   host.spawnStarted = false;
   host.hibernated = false;
+  // F-1581: o motivo real (troca de conta por limite, entrega recusada) vem
+  // no pedido do Main; "contexto degradado" fazia o operador ler um defeito.
   host.term.writeln(
-    resumeNative
-      ? '\r\n\x1b[33m[nexus] conta trocada — retomando a mesma conversa na conta nova…\x1b[0m'
-      : '\r\n\x1b[33m[nexus] contexto degradado — iniciando uma sessão limpa…\x1b[0m',
+    missionPaneRecoveryNotice(
+      takeMissionPaneRecoveryReason(recoveryRequestId),
+      resumeNative,
+    ),
   );
   // F-1473: o Main refaz a troca com o pacote se a retomada não subir.
   if (resumeNative) host.crossAccountResume = {};

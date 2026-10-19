@@ -866,7 +866,13 @@ export type MissionPaneRestoreDenialReason =
   | 'stale-seal'
   | 'transfer-in-flight'
   | 'spec-missing'
-  | 'mission-terminal';
+  | 'mission-terminal'
+  /**
+   * F-1581: a missão do pane não existe neste projeto (removida, ou o layout
+   * veio de outro checkout). Antes caía em 'mission-terminal' e o pane dizia
+   * que a missão encerrou e que o relatório estava na aba dela.
+   */
+  | 'mission-missing';
 
 /**
  * Main → renderer: restore proof for one persisted mission pane.
@@ -999,7 +1005,19 @@ export interface MissionPaneRecoveryRequest {
    * conversa nativa e recebe esta nota; sem retomada exata, recebe `recap`.
    */
   resumeNote?: string;
+  /**
+   * F-1581: por que o Main troca a sessão — a linha do terminal diz o motivo
+   * real em vez de "contexto degradado". Ausente = motivo desconhecido.
+   */
+  reason?: MissionPaneRecoveryReason;
 }
+
+/** F-1581: motivos fechados da troca de sessão do pane de missão. */
+export type MissionPaneRecoveryReason =
+  /** Limite confirmado: a conta do Maestro foi trocada (failover). */
+  | 'account-failover'
+  /** O Maestro vivo não aceitou a entrega durável de um handoff. */
+  | 'handoff-delivery';
 
 /** Renderer → main: acknowledged fresh session for the same stable pane. */
 export const missionPaneRecoveryResultSchema = z.object({

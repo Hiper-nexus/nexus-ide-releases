@@ -1437,7 +1437,8 @@ export class RendererMissionAuthority {
     const spec = suite.missionPanes.findByPaneId(paneId);
     // A4: cada recusa carrega o motivo fechado — o gate aposenta o leaf com a
     // linha certa em vez do "use Retomar" que prometia uma retomada impossível.
-    if (!mission) return denied('mission-terminal');
+    // F-1581: missão inexistente não 'encerrou' nem tem relatório na aba.
+    if (!mission) return denied('mission-missing');
     // A2/A4: o pane que hoje carrega a conversa da missão — para o aviso do
     // leaf aposentado poder dizer "a conversa continua no pane X".
     const successorOrchestratorPaneId = (): string | undefined =>

@@ -71,6 +71,8 @@ export async function recoverHandoffDeliveryRuntime(
     pane,
     scope: request.scope,
     recap: recoveryRecap(request),
+    // F-1581: o terminal diz que o Maestro não aceitou a entrega.
+    reason: "handoff-delivery",
   });
   if (!result.ok || !result.sessionId) return false;
   const rebound = stores.missions.rebindOrchestratorSession(

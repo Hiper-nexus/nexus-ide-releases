@@ -65,3 +65,38 @@ export function recordOperatorTabCompletionRequest(scope: ProjectExecutionScope,
   requests.set(key, { intentVersion: mission.intentVersion ?? 0, requestedAt: now, sessionId: mission.orchestratorSessionId });
   if (requests.size > 1024) requests.delete(requests.keys().next().value!);
 }
+
+/**
+ * F-1581: a recusa da verificação de conclusão foi entregue ao Maestro (o
+ * `[NEXUS_COMPLETION_REFUSED]` colado no composer dele). O operador via o
+ * texto cru no pane e nada no Quadro; o snapshot da missão lê isto e o Quadro
+ * diz em português que a verificação recusou e o Maestro está corrigindo.
+ * Memória do processo, como o pedido de done: reinício não inventa recusa.
+ */
+const refusals = new Map<string, { intentVersion: number; sessionId: string }>();
+
+export function recordCompletionRefusalDelivered(
+  scope: ProjectExecutionScope,
+  mission: CompletionMission,
+  sessionId: string,
+): void {
+  const key = missionLifecycleKey(scope, mission.id);
+  refusals.delete(key);
+  refusals.set(key, { intentVersion: mission.intentVersion ?? 0, sessionId });
+  if (refusals.size > 1024) refusals.delete(refusals.keys().next().value!);
+}
+
+/**
+ * A recusa ainda é o estado atual: mesma versão da missão, mesmo Maestro e
+ * nenhum pedido de done novo (o novo pedido reabre a verificação).
+ */
+export function hasPendingCompletionRefusal(
+  scope: ProjectExecutionScope,
+  mission: CompletionMission,
+): boolean {
+  const refusal = refusals.get(missionLifecycleKey(scope, mission.id));
+  if (!refusal) return false;
+  if (refusal.intentVersion !== (mission.intentVersion ?? 0) ||
+      refusal.sessionId !== mission.orchestratorSessionId) return false;
+  return !hasCurrentCompletionRequest(scope, mission);
+}

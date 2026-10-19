@@ -10,6 +10,7 @@ import type {
   BrowserPaneOpenRequest,
   BrowserPaneOpenResult,
   PaneRegistryEntry,
+  MissionPaneRecoveryReason,
   MissionPaneRecoveryRequest,
   MissionPaneRecoveryResult,
   MissionPanePresentationRequest,
@@ -3726,6 +3727,8 @@ export async function requestMissionPaneRecovery(options: {
   recap: string;
   /** F-1473: retoma a conversa nativa na conta nova; `recap` é o fallback. */
   resumeNote?: string;
+  /** F-1581: o motivo que o terminal do pane mostra ao operador. */
+  reason?: MissionPaneRecoveryReason;
 }): Promise<MissionPaneRecoveryResult> {
   if (options.role === "worker") {
     return {
@@ -3859,6 +3862,7 @@ export async function requestMissionPaneRecovery(options: {
     },
     recap: options.recap.slice(0, 65_536),
     ...(options.resumeNote ? { resumeNote: options.resumeNote.slice(0, 65_536) } : {}),
+    ...(options.reason ? { reason: options.reason } : {}),
   };
   return new Promise((resolve) => {
     let pending!: PendingPaneRecovery;

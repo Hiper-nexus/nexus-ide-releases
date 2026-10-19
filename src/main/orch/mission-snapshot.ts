@@ -23,6 +23,7 @@ import {
 import { missionBlockCause } from '../../shared/mission-block-cause';
 import {
   MISSION_AWAITING_INSTRUCTION_REASON_CODE,
+  MISSION_COMPLETION_REFUSED_REASON_CODE,
   NEXUS_PROCESS_STARTED_AT,
   isIsolationStopReasonCode,
   leftoverRunningOrPendingIsDead,
@@ -158,6 +159,11 @@ export const projectMissionSnapshotViewSchema = z
      * mas não é o líder provado (a sessão durável morreu num failover/restart).
      */
     orchestratorDrift: z.boolean().optional(),
+    /**
+     * F-1581: a verificação de conclusão recusou e a recusa foi entregue ao
+     * Maestro, que ainda não pediu done de novo.
+     */
+    completionRefused: z.boolean().optional(),
     runtimeClosedByOperator: z.boolean().optional(),
     leftoverParked: z.boolean().optional(),
     tasks: z.array(snapshotTaskViewSchema).max(256),
@@ -399,6 +405,21 @@ function projectState(view: ParsedView): {
         stateReason: {
           code: 'restore-failed',
           label: 'O runtime não foi restaurado após restart',
+        },
+      };
+    }
+
+    // F-1581: o operador via o `[NEXUS_COMPLETION_REFUSED]` cru no pane do
+    // Maestro e nada no Quadro. A missão continua running (F-1428); o Quadro
+    // diz o que aconteceu e quem está com a correção.
+    if (view.completionRefused) {
+      return {
+        state: 'running',
+        stateReason: {
+          code: MISSION_COMPLETION_REFUSED_REASON_CODE,
+          label: 'A verificação automática recusou a conclusão',
+          detail:
+            'O Maestro recebeu o motivo e está corrigindo; ele pede a conclusão de novo quando terminar. A missão continua rodando.',
         },
       };
     }

@@ -78,6 +78,8 @@ describe('switchRendererOrchestratorAccount (F-995)', () => {
       pane: expect.objectContaining({ accountId: 'acct-re-claude', role: 'orchestrator' }),
       scope,
       recap: '[NEXUS FAILOVER HANDOFF] recap',
+      // F-1581: o terminal do pane mostra o motivo real da sessão nova.
+      reason: 'account-failover',
     });
   });
 

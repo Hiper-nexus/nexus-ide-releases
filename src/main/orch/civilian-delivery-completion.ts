@@ -1,5 +1,5 @@
 import { missionExecutionScope, missionExecutionBaseSha } from './mission-execution-scope';
-import { awaitsOperatorTabCompletionRequest, clearCompletionRequest, completionRequestedAt, hasCurrentCompletionRequest } from './operator-tab-completion';
+import { awaitsOperatorTabCompletionRequest, clearCompletionRequest, completionRequestedAt, hasCurrentCompletionRequest, recordCompletionRefusalDelivered } from './operator-tab-completion';
 import { missionIntentAuthoritySnapshot } from '../../shared/mission-intent';
 import { execFile } from 'node:child_process';
 import { hasCurrentMissionRuntimeCloseVerdict, holdsAwaitingOperatorAdjustment } from '../../shared/mission-recovery-policy';
@@ -1197,6 +1197,8 @@ async function returnCompletionRefusalToLeader(
   deliveredCompletionRefusals.set(key, { refusal: identity, requestedAt });
   if (deliveredCompletionRefusals.size > 1024) deliveredCompletionRefusals.delete(deliveredCompletionRefusals.keys().next().value!);
   clearCompletionRequest(scope, mission.id);
+  // F-1581: o prompt acima é do agente; o Quadro mostra a recusa em português.
+  recordCompletionRefusalDelivered(scope, mission, sessionId);
   return true;
 }
 
