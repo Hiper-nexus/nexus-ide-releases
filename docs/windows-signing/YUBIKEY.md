@@ -97,9 +97,15 @@ npm run make -- --platform win32 --arch x64
   HIPERSEND, uso de assinatura de código, validade e a ligação com a chave do
   cartão. YubiKey fora da porta falha aqui, antes de qualquer arquivo assinado.
 - O SignTool recebe `/sha1 <thumbprint>` da loja do usuário (sem `/sm`). O Windows
-  pede o PIN a cada processo do SignTool: um para todos os `.exe`, `.dll` e `.node`
-  do pacote (o `@electron/windows-sign` assina tudo numa chamada) e um para cada
-  executável que o Squirrel assina depois (Update.exe, o stub e o Setup).
+  pede o PIN a cada processo do SignTool (o minidriver só guarda o PIN dentro do
+  processo). Medido em 19/10: **5 janelas por build completo**, uma para todos os
+  `.exe`, `.dll` e `.node` do pacote (o `@electron/windows-sign` assina tudo numa
+  chamada) e quatro do Squirrel, em sequência: o stub, o `squirrel.exe` do
+  pacote, o `Update.exe` e o `Setup.exe`. A janela "Segurança do Windows" pode
+  abrir atrás das outras, e uma janela cancelada ou perdida derruba o make
+  ("Failed to sign … Update.exe"). Com o pacote já assinado em `out/`, refazer só o
+  instalador (`electron-forge make --skip-package`) pede 4. Reduzir isso é trabalho
+  em andamento; o PIN nunca vai para script, argv nem variável de ambiente.
 - Servidor de carimbo instável (`SignerSign() failed (0x80093102)` num arquivo
   diferente a cada tentativa, F-656): repita com
   `$env:NEXUS_WINDOWS_TIMESTAMP_URL = 'http://timestamp.sectigo.com'`.
