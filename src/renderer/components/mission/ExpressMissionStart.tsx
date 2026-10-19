@@ -7,11 +7,16 @@ import {
   type ReactNode,
 } from 'react';
 import { MISSION_INTENT_GOAL_MAX_CHARS } from '../../../shared/mission-intent';
-import type { SquadAgent } from '../../../shared/orch-types';
+import type { Squad, SquadAgent } from '../../../shared/orch-types';
 import type { WorkspaceInfo } from '../../../shared/workspace-types';
 import type { MissionSetupDraft } from '../../state/mission-setup-store';
 import { useWorkspaceRequiredStore } from '../../state/workspace-required-store';
 import type { DirectAnswer } from '../../lib/direct-answer';
+import {
+  applySavedSquadMembers,
+  savedSquadsForMissionTeam,
+} from '../../orch/saved-squad-members';
+import { useOrchStore } from '../../state/orch-store';
 import { ExpressTerminalOptions } from './ExpressTerminalOptions';
 import { FirstStepsGuide } from '../onboarding/FirstStepsGuide';
 import { MissionAttachmentPicker } from './MissionAttachmentPicker';
@@ -62,7 +67,8 @@ interface ExpressMissionStartProps {
   /** Leva direto a Providers: o pré-requisito deixa de ser texto morto. */
   onConnectProvider(): void;
   inventory: MissionTeamInventory;
-  onRosterChange(roster: readonly SquadAgent[]): void;
+  /** `false` quando o rascunho recusa o roster (ex.: equipe salva grande demais). */
+  onRosterChange(roster: readonly SquadAgent[]): boolean | void;
 }
 
 /**
@@ -294,6 +300,25 @@ export function ExpressMissionStart({
       ),
     ),
   ];
+  // F-1582: na tela expressa ("Personalizar equipe") o operador também precisa
+  // escolher uma equipe salva sem abrir o assistente completo.
+  const squads = useOrchStore((state) => state.squads);
+  const savedSquads = savedSquadsForMissionTeam(squads);
+  const ownSavedSquads = savedSquads.filter((squad) => !squad.builtin);
+  const builtinSavedSquads = savedSquads.filter((squad) => squad.builtin);
+  const [appliedSquadName, setAppliedSquadName] = useState<string | null>(null);
+  const [teamEditError, setTeamEditError] = useState<string | null>(null);
+
+  const startFromSavedSquad = (squad: Squad): void => {
+    const applied = applySavedSquadMembers(squad, onRosterChange);
+    if (!applied.ok) {
+      setAppliedSquadName(null);
+      setTeamEditError(applied.message);
+      return;
+    }
+    setTeamEditError(null);
+    setAppliedSquadName(squad.name);
+  };
 
   const dictation = useObjectiveDictation({
     enabled: !draftEditingDisabled && !busy,
@@ -689,6 +714,71 @@ export function ExpressMissionStart({
               </span>
             </summary>
             <div className="mission-setup__option-content">
+              {savedSquads.length > 0 && (
+                <div className="mission-setup__presets mission-setup__saved-squad">
+                  <label
+                    className="mission-setup__presets-label"
+                    htmlFor="express-saved-squad"
+                  >
+                    Começar de uma equipe salva
+                  </label>
+                  <div className="mission-setup__field">
+                    <select
+                      id="express-saved-squad"
+                      value=""
+                      disabled={draftEditingDisabled || busy}
+                      aria-describedby="express-saved-squad-hint"
+                      onChange={(event) => {
+                        const squad = savedSquads.find(
+                          (candidate) => candidate.id === event.target.value,
+                        );
+                        if (squad) startFromSavedSquad(squad);
+                      }}
+                    >
+                      <option value="">Escolha uma equipe…</option>
+                      {ownSavedSquads.length > 0 && (
+                        <optgroup label="Suas equipes">
+                          {ownSavedSquads.map((squad) => (
+                            <option key={squad.id} value={squad.id}>
+                              {squad.name}
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
+                      {builtinSavedSquads.length > 0 && (
+                        <optgroup label="Originais">
+                          {builtinSavedSquads.map((squad) => (
+                            <option key={squad.id} value={squad.id}>
+                              {squad.name}
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
+                    </select>
+                  </div>
+                  <p
+                    id="express-saved-squad-hint"
+                    className="mission-setup__hint"
+                  >
+                    Troca os papéis abaixo pelos integrantes da equipe
+                    escolhida. Depois ajuste o que quiser.
+                  </p>
+                  {appliedSquadName && (
+                    <p className="mission-setup__hint" role="status">
+                      Integrantes de “{appliedSquadName}” aplicados.
+                    </p>
+                  )}
+                  {teamEditError && (
+                    <p
+                      className="mission-setup__inline-error"
+                      role="alert"
+                      aria-atomic="true"
+                    >
+                      {teamEditError}
+                    </p>
+                  )}
+                </div>
+              )}
               <h2>Quem faz o quê</h2>
               {inventory.status === 'ready' ? (
                 <ul
@@ -709,13 +799,14 @@ export function ExpressMissionStart({
                       issue={issueForAgent(agent, inventory)}
                       removable={false}
                       compact
-                      onChange={(next) =>
+                      onChange={(next) => {
+                        setTeamEditError(null);
                         onRosterChange(
                           draft.roster.map((item) =>
                             item.id === next.id ? next : item,
                           ),
-                        )
-                      }
+                        );
+                      }}
                       onRemove={() => undefined}
                     />
                   ))}
