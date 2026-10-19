@@ -11749,7 +11749,7 @@ export const RELEASE_076321: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076323: AppRelease = {
   version: '0.76.323',
   date: '2026-10-19',
   codename: 'Velocidade e detalhes da missão',
@@ -11765,6 +11765,16 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
   fixes: [
     { title: 'Fila de comandos pesados se liberta sozinha', detail: 'Um lease exclusivo cujo executor ou sessão dona morreu passa a ser liberado pela própria fila após 60 s — antes ficava preso e travava novos comandos —, e a recusa da fila diz qual comando segura o lease. O conserto no supervisor nativo (native/darwin-pty-supervisor/main.c) não está nesta build: fica para o próximo rebuild nativo.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  ...RELEASE_076323,
+  version: '0.76.324',
+  summary: 'No desktop Linux, o Quadro ganha "Ver o que aconteceu", a base da worktree avisa e atualiza com throttle de 60 s, o portão de regressão roda em lotes, o pane_write prova a entrega e a fila de comandos pesados se libera em 60 s. A tag 0.76.323 é o pacote macOS e não recebe arquivos Linux.',
+  highlights: [
+    ...RELEASE_076323.highlights,
+    { title: 'Pacote Linux', detail: 'A tag 0.76.323 é o pacote macOS e não recebe arquivos Linux. O desktop Linux sai na 0.76.324.' },
   ],
 };
 
