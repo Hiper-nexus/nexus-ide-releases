@@ -5,6 +5,7 @@
 As tags 0.76.310 e 0.76.313 não foram publicadas: o gate do candidato caiu na primeira e a 0.76.314 do Linux saiu antes da segunda. Este pacote leva ao macOS tudo o que a 0.76.312 e a 0.76.314 levaram ao Linux, as correções da 0.76.313 e mais:
 
 - **Smoke do candidato resiste a máquina carregada**. Sob carga o macOS descarta a saída não lida do terminal e a prova do PTY no candidato caía mesmo com tudo funcionando. A prova é refeita até três vezes só quando a saída volta vazia; o recibo do provider continua obrigatório.
+- **Testes dos workers voltam a rodar**. A fila de comandos pesados recusava o vitest de workers com "pid fora da árvore do terminal" quando um processo intermediário já tinha saído. A prova de dono agora aceita também o terminal do pane, e processo de fora continua recusado.
 
 ## 0.76.314 — Muse de volta à rota
 

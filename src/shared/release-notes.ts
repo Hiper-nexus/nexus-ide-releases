@@ -11648,5 +11648,6 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Pane reaberto atende pelo id', detail: 'Depois de reabrir o CLI de um pane, ler ou escrever nele pelo id respondia "unknown pane" listando o próprio pane. O Nexus agora escolhe a sessão viva desse pane; com duas sessões vivas continua recusando.' },
     { title: 'Gate do candidato diz o que caiu', detail: 'Quando uma etapa do gate de release falha, a mensagem nomeia o script e mostra o fim da saída, onde está o motivo, em vez do caminho do executável.' },
     { title: 'Smoke do candidato resiste a máquina carregada', detail: 'Sob carga o macOS descarta a saída não lida do terminal e a prova do PTY no candidato caía mesmo com tudo funcionando. A prova é refeita até três vezes só quando a saída volta vazia; o recibo do provider continua obrigatório.' },
+    { title: 'Testes dos workers voltam a rodar', detail: 'A fila de comandos pesados recusava o vitest de workers com "pid fora da árvore do terminal" quando um processo intermediário já tinha saído. A prova de dono agora aceita também o terminal do pane, e processo de fora continua recusado.' },
   ],
 };
