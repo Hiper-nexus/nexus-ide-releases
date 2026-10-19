@@ -147,12 +147,16 @@ function defaultRunChecked(command, args, options = {}) {
   if (result.status !== 0) {
     const detail = [result.stderr, result.stdout]
       .filter((chunk) => typeof chunk === 'string' && chunk.trim())
-      .map((chunk) => chunk.trim().replace(/\s+/gu, ' ').slice(0, 400))
+      // O FIM da saída: é onde está o motivo; o começo era só o caminho.
+      .map((chunk) => chunk.trim().replace(/\s+/gu, ' ').slice(-600))
       .join(' | ');
+    // Nome do script, não do node: "node failed" não dizia qual etapa caiu.
+    const script = args.find((arg) => /\.[cm]?js$/u.test(arg));
+    const label = script ? path.basename(script) : path.basename(command);
     throw new Error(
       detail
-        ? `${path.basename(command)} failed with exit ${result.status ?? 1}: ${detail}`
-        : `${path.basename(command)} failed with exit ${result.status ?? 1}`,
+        ? `${label} failed with exit ${result.status ?? 1}: ${detail}`
+        : `${label} failed with exit ${result.status ?? 1}`,
     );
   }
   return {

@@ -2602,7 +2602,19 @@ export function getPaneAuthzInfo(paneRef: string): PaneAuthzInfo | null {
       const key = `${info.paneId}\u0000${info.sessionId ?? ''}`;
       if (!unique.has(key)) unique.set(key, info);
     }
-    return unique.size === 1 ? unique.values().next().value! : null;
+    if (unique.size === 1) return unique.values().next().value!;
+    // Campo 19/10: o MESMO paneId com a sessão nova (CLI reaberto pelo
+    // operador) e um registro velho da encarnação anterior — "unknown pane"
+    // pelo id enquanto o inventário listava o pane. Mesmo pane, uma sessão
+    // viva só: é ela. Duas vivas, ou panes diferentes, seguem ambiguidade.
+    const candidates = [...unique.values()];
+    if (candidates.every((info) => info.paneId === candidates[0]!.paneId)) {
+      const live = candidates.filter(
+        (info) => info.sessionId && getSessionState(info.sessionId) !== null,
+      );
+      if (live.length === 1) return live[0]!;
+    }
+    return null;
   }
   const wanted = parsePaneNumberRef(paneRef);
   if (wanted === null) return null;

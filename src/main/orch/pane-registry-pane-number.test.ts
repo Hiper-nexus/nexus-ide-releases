@@ -239,6 +239,26 @@ describe('F-927: o mesmo pane nos dois registros não é ambiguidade', () => {
     }
   });
 
+  it('mesmo paneId com sessão nova viva e registro velho morto resolve para a viva', () => {
+    // Campo 19/10: Muse reaberto pelo operador — pane_read("pane-…") dizia
+    // "unknown pane" listando o mesmo pane vivo; pela sessão funcionava.
+    const paneId = 'pane-mveoigmj-3g';
+    pty.live.add('session-new');
+    try {
+      syncPanes([entry(paneId, 4, 'session-new')], renderer, 'gen-reopen');
+      setMainOwnedPane(paneId, {
+        entry: { paneId, sessionId: 'session-old', title: 'muse', kind: 'cli-agent', adapterId: 'muse', state: 'idle' },
+        meta: { missionId: 'mission-a', role: 'worker', scope: testProjectScope() },
+      });
+      expect(getPaneAuthzInfo(paneId)?.sessionId).toBe('session-new');
+      // As duas vivas: continua recusa, nunca chute.
+      pty.live.add('session-old');
+      expect(getPaneAuthzInfo(paneId)).toBeNull();
+    } finally {
+      deleteMainOwnedPane(paneId);
+    }
+  });
+
   it('panes DIFERENTES com o mesmo sessionId continuam ambiguidade', () => {
     const sessionId = 'session-shared';
     pty.live.add(sessionId);
