@@ -135,6 +135,22 @@ export function extractXaiImage(body: Record<string, unknown>): XaiImageOutput {
   };
 }
 
+const IMAGE_FILE_EXTENSION = /\.(png|jpe?g|webp)$/iu;
+
+/**
+ * O arquivo leva a extensão do formato que a xAI devolveu, inclusive quando
+ * quem chamou deu o `outPath` (revisão do PR #145): a galeria e quem abre o
+ * arquivo leem o tipo pela extensão, então JPEG gravado em `.png` não abre
+ * direito. Mesmo formato mantém o nome pedido (`.jpeg` para JPEG); sem
+ * extensão de imagem, a certa é acrescentada. Fica na mesma pasta.
+ */
+export function xaiImageOutputPath(outPath: string, extension: string): string {
+  const current = IMAGE_FILE_EXTENSION.exec(outPath)?.[1]?.toLowerCase();
+  if (current === undefined) return `${outPath}.${extension}`;
+  const same = current === extension || (current === 'jpeg' && extension === 'jpg');
+  return same ? outPath : outPath.replace(IMAGE_FILE_EXTENSION, `.${extension}`);
+}
+
 // ── Vídeo ────────────────────────────────────────────────────────────────────
 
 interface XaiVideoInputs {

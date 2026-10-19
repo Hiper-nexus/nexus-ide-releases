@@ -26,6 +26,7 @@ import {
   extractXaiImage,
   readXaiVideoPoll,
   XAI_API_BASE,
+  xaiImageOutputPath,
   xaiImageRequest,
   xaiImageResolution,
   xaiRequestId,
@@ -501,8 +502,8 @@ export async function generateImage(
     data = await openaiImage(req, def, model, key, deps, image);
   }
   assertMediaAuthorityCurrent(req);
-  // Nome gerado pelo Nexus segue o formato que a xAI devolveu.
-  const finalPath = xai && !req.outPath ? outPath.replace(/\.jpg$/u, `.${xai.extension}`) : outPath;
+  // O arquivo segue o formato que a xAI devolveu, com outPath ou sem.
+  const finalPath = xai ? xaiImageOutputPath(outPath, xai.extension) : outPath;
   writeMediaOutput(finalPath, req.baseDir, data);
   const base = result(
     def,

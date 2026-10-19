@@ -3,6 +3,7 @@ import {
   extractXaiImage,
   readXaiVideoPoll,
   xaiCostUsd,
+  xaiImageOutputPath,
   xaiImageRequest,
   xaiRequestId,
   xaiVideoInputProblem,
@@ -180,6 +181,18 @@ describe('F-1599: resposta do vídeo do Grok Imagine', () => {
 });
 
 describe('F-1599: imagem do Grok Imagine', () => {
+  it('revisão #145: o arquivo leva a extensão do formato que a xAI devolveu, também com outPath', () => {
+    expect(xaiImageOutputPath('/proj/hero.png', 'jpg')).toBe('/proj/hero.jpg');
+    expect(xaiImageOutputPath('/proj/hero.jpg', 'png')).toBe('/proj/hero.png');
+    expect(xaiImageOutputPath('/proj/HERO.PNG', 'webp')).toBe('/proj/HERO.webp');
+    // Mesmo formato: o nome pedido fica (inclusive .jpeg para JPEG).
+    expect(xaiImageOutputPath('/proj/hero.jpeg', 'jpg')).toBe('/proj/hero.jpeg');
+    expect(xaiImageOutputPath('/proj/hero.png', 'png')).toBe('/proj/hero.png');
+    // Sem extensão de imagem: acrescenta a certa, sem perder o nome.
+    expect(xaiImageOutputPath('/proj/capa', 'jpg')).toBe('/proj/capa.jpg');
+    expect(xaiImageOutputPath('/proj/capa.v2', 'png')).toBe('/proj/capa.v2.png');
+  });
+
   it('geração pede base64, com proporção e tamanho no vocabulário da xAI', () => {
     expect(
       xaiImageRequest({ prompt: 'Mountain landscape at sunrise', aspectRatio: '16:9', size: '2K' }, 'grok-imagine-image-2.0'),

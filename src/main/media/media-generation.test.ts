@@ -1580,6 +1580,24 @@ describe('F-1599: Grok Imagine (xAI) pelo motor', () => {
     expect(res.estimatedCostUsd).toBe(0.06);
   });
 
+  it('revisão #145: outPath explícito ganha a extensão do formato devolvido (JPEG não vira .png)', async () => {
+    const jpeg = fakeDeps([{ json: { data: [{ b64_json: 'anBn', mime_type: 'image/jpeg' }] } }]);
+    const asJpeg = await generateImage(
+      { prompt: 'capa', provider: 'xai-image', outPath: 'hero.png', baseDir: dir },
+      xaiOnly(jpeg.deps),
+    );
+    expect(asJpeg.path).toBe(path.join(dir, 'hero.jpg'));
+    expect(fs.existsSync(path.join(dir, 'hero.png'))).toBe(false);
+
+    fs.writeFileSync(path.join(dir, 'foto.png'), Buffer.from('foto'));
+    const png = fakeDeps([{ json: { data: [{ b64_json: 'cG5n', mime_type: 'image/png' }] } }]);
+    const asPng = await generateImage(
+      { prompt: 'edite', provider: 'xai-image', imagePath: 'foto.png', outPath: 'arte/hero.jpg', baseDir: dir },
+      xaiOnly(png.deps),
+    );
+    expect(asPng.path).toBe(path.join(dir, 'arte', 'hero.png'));
+  });
+
   it('vídeo: falha passageira depois do pedido aceito deixa o job retomável; falha da xAI encerra', async () => {
     // 503 no meio da espera: o pedido já foi aceito e é cobrado.
     const flaky = fakeDeps([
