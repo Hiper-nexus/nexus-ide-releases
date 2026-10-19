@@ -714,6 +714,12 @@ function customActivity(
       return { label: 'Credencial recusada. Nenhuma credencial alternativa está pronta. Entre novamente em Configurações → Providers.' };
     case 'momentum-stalled':
       return { label: momentumStalledLabel(payload.idleMinutes) ?? 'Equipe sem progresso registrado; o Maestro foi avisado' };
+    case 'momentum-awaiting-operator':
+      return {
+        label:
+          `A missão espera uma sua decisão há ` +
+          `${customPayloadNumber(payload.waitingMinutes)} min; o Maestro não foi avisado.`,
+      };
     case 'worker-hung':
       return {
         label: `Worker travado há ${customPayloadNumber(payload.hungMinutes)} min`,

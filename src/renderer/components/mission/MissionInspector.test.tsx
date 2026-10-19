@@ -889,10 +889,12 @@ describe('MissionInspector', () => {
       event({ sequence: 1, type: 'custom', payload: { kind: 'auth-credential-refused', reasonKind: 'auth' } }),
       event({ sequence: 2, id: 'momentum', type: 'custom', payload: { kind: 'momentum-stalled', idleMinutes: 7 } }),
       event({ sequence: 3, id: 'invalid', type: 'custom', payload: { kind: 'momentum-stalled', idleMinutes: '<script>' } }),
+      event({ sequence: 4, id: 'operator-wait', type: 'custom', payload: { kind: 'momentum-awaiting-operator', waitingMinutes: 360 } }),
     ] });
     const panel = selectTab(host, 'Atividade');
     expect(panel.textContent).toContain('Credencial recusada. Nenhuma credencial alternativa está pronta. Entre novamente em Configurações → Providers.');
     expect(panel.textContent).toContain('Equipe parada há 7 min; o Maestro foi avisado');
+    expect(panel.textContent).toContain('A missão espera uma sua decisão há 360 min; o Maestro não foi avisado.');
     expect(panel.textContent).not.toContain('<script>');
     expect(panel.textContent).not.toContain('rota alternativa acionada');
   });

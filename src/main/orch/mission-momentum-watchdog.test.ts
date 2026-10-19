@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   MOMENTUM_REPEAT_MS,
   MOMENTUM_SOLO_MS,
+  awaitingOperatorDecision,
   decideMomentumNudge,
   momentumNudgeSummary,
   momentumReadyBacklog,
@@ -72,12 +73,80 @@ describe('vigia de esteira (F-714)', () => {
     ).toEqual({ action: 'nudge', soloForMs: MOMENTUM_SOLO_MS });
   });
 
+  it('espera de decisão do operador silencia o nudge; respondida, ele volta', () => {
+    expect(
+      decideMomentumNudge({ ...base, awaitingOperatorDecision: true }),
+    ).toEqual({ action: 'none' });
+    expect(
+      decideMomentumNudge({ ...base, awaitingOperatorDecision: false }),
+    ).toEqual({ action: 'nudge', soloForMs: MOMENTUM_SOLO_MS });
+  });
+
+  it('o silêncio por espera do operador também cobre o ramo de backlog registrado', () => {
+    const ready = {
+      ...base,
+      workerPanes: 1,
+      maxWorkers: 3,
+      soloSinceMs: null,
+      readyTaskIds: ['task-ready'],
+      availableSlots: 2,
+      readySinceMs: now - 30_000,
+      dispatchAuthorized: true,
+      readOnly: false,
+      backlogKey: 'ready-key',
+      lastBacklogKey: null,
+    };
+    expect(decideMomentumNudge(ready).action).toBe('nudge');
+    expect(
+      decideMomentumNudge({ ...ready, awaitingOperatorDecision: true }),
+    ).toEqual({ action: 'none' });
+  });
+
   it('o lembrete diz há quanto tempo e manda adiantar as próximas unidades sem paralelizar o gate', () => {
     const text = momentumNudgeSummary('mission-1', 95 * 60_000);
     expect(text).toContain('[momentum:mission-1]');
     expect(text).toContain('95 min');
     expect(text).toContain('próximas unidades');
     expect(text).toContain('um por vez');
+  });
+});
+
+describe('awaitingOperatorDecision', () => {
+  const running = {
+    missionStatus: 'running',
+    intentState: 'executing',
+  } as const;
+
+  it('sem sinal de espera, não é espera', () => {
+    expect(awaitingOperatorDecision(running)).toBe(false);
+    expect(awaitingOperatorDecision({ ...running, intentState: null })).toBe(
+      false,
+    );
+  });
+
+  it.each([
+    { missionStatus: 'blocked', intentState: 'blocked_user' },
+    { missionStatus: 'running', intentState: 'awaiting_approval' },
+    { missionStatus: 'running', intentState: 'awaiting_goal' },
+    { missionStatus: 'running', intentState: 'blocked_user' },
+  ] as const)('estado de missão em espera humana %j conta', (over) => {
+    expect(awaitingOperatorDecision({ ...running, ...over })).toBe(true);
+  });
+
+  it('clarify pendente e latch de espera do Maestro contam; trabalhando, não', () => {
+    expect(awaitingOperatorDecision({ ...running, pendingClarify: true })).toBe(
+      true,
+    );
+    expect(
+      awaitingOperatorDecision({ ...running, orchestratorAwaiting: true }),
+    ).toBe(true);
+    expect(
+      awaitingOperatorDecision({
+        ...running,
+        pendingClarify: false,
+        orchestratorAwaiting: false,
+      }),
+    ).toBe(false);
   });
 });
 

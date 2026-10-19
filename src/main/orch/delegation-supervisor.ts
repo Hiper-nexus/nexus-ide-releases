@@ -98,7 +98,14 @@ import {
   type ZeroDeliverySeen,
 } from './zero-delivery-watchdog';
 import { flushAllNexusTaskFailClosedRetries } from './nexus-task-fail-closed-recovery';
-import { decideMomentumNudge, momentumNudgeSummary, momentumReadyBacklog } from './mission-momentum-watchdog';
+import {
+  MOMENTUM_OPERATOR_WAIT_CEILING_MS,
+  awaitingOperatorDecision,
+  decideMomentumNudge,
+  momentumNudgeSummary,
+  momentumReadyBacklog,
+} from './mission-momentum-watchdog';
+import { hasOpenClarifyQuestion } from './mission-open-question';
 import { hasCurrentCompletionRequest } from './operator-tab-completion';
 import { getContextBySession } from './gate';
 import { judgeMissionMomentum, momentumNudgeFromJudgment } from './jev-mission-momentum';
@@ -107,6 +114,7 @@ import {
   getAgentSemanticStatusBySession,
   getAgentToolActivityCount,
   getAgentTurnStartSequence,
+  isAgentAwaitingOperator,
   SEMANTIC_WORKING_VETO_MS,
   tapAgentSemanticStatus,
   tapAgentTurnEnd,
@@ -152,6 +160,9 @@ const chefIdleTrackers = new Map<string, ChefIdleTracker>();
 const momentumSoloSince = new Map<string, number>();
 const momentumNudgedAt = new Map<string, { at: number; backlogKey?: string }>();
 const momentumReadySince = new Map<string, number>();
+/** Espera de decisão humana: relógio do episódio e lembrete já emitido. */
+const operatorWaitSince = new Map<string, number>();
+const operatorWaitReminded = new Set<string>();
 
 /**
  * F-242: worker `working` sem ferramenta/saída por 20 min com o PTY parado =
@@ -2130,11 +2141,53 @@ async function scanSuite(suite: ProjectDomainStoreSuite, now: number, context: P
         (leaderCtx?.promotedFromUserSession === true &&
           leaderCtx.role === 'orchestrator' &&
           leaderCtx.missionId === mission.id);
+      // O Maestro perguntou e parou: o "Esteira parada" reinjetado a cada
+      // hora é ruído no turno dele. Recalculado a cada scan — respondeu o
+      // operador ou saiu o latch, o nudge volta sozinho.
+      const waitingOperator = awaitingOperatorDecision({
+        missionStatus: mission.status,
+        intentState: mission.intentState ?? null,
+        pendingClarify: hasOpenClarifyQuestion(mission.id, handoffs),
+        orchestratorAwaiting: Boolean(
+          orchSessionId && isAgentAwaitingOperator(orchSessionId),
+        ),
+      });
+      if (waitingOperator) {
+        const waitSince = operatorWaitSince.get(key) ?? now;
+        operatorWaitSince.set(key, waitSince);
+        // Teto longo: UM lembrete ao OPERADOR, pelo jornal de eventos — que é
+        // a superfície dele no inspector. Nada de handoff, que o idle-delivery
+        // colaria no PTY do Maestro.
+        if (
+          now - waitSince >= MOMENTUM_OPERATOR_WAIT_CEILING_MS &&
+          !operatorWaitReminded.has(key)
+        ) {
+          operatorWaitReminded.add(key);
+          emitMissionEvent(suite.scope, {
+            missionId: mission.id,
+            runId: 'delegation-supervisor',
+            type: 'custom',
+            origin: 'main',
+            idempotencyKey: `momentum-awaiting-operator:${mission.id}:${waitSince}`,
+            payload: {
+              kind: 'momentum-awaiting-operator',
+              waitingMinutes: Math.max(1, Math.round((now - waitSince) / 60_000)),
+            },
+          });
+          console.warn(
+            `[delegation-supervisor] operator-wait reminder for ${mission.id}`,
+          );
+        }
+      } else {
+        operatorWaitSince.delete(key);
+        operatorWaitReminded.delete(key);
+      }
       const momentum = decideMomentumNudge({
         missionStatus: mission.status, lane: lane ?? null, maxWorkers: cap,
         workerPanes: workerPaneCount, orchestratorAlive, dispatchAuthorized: authorized,
         readOnly: leader?.readOnly === true, readyTaskIds, availableSlots, usefulWorkingWorkers,
         soloNudgeWhenNoBacklog,
+        awaitingOperatorDecision: waitingOperator,
         completionRequested: hasCurrentCompletionRequest(suite.scope, mission),
         readySinceMs: momentumReadySince.get(key) ?? null,
         soloSinceMs: momentumSoloSince.get(key) ?? null,
@@ -2438,4 +2491,6 @@ export async function shutdownDelegationSupervisor(): Promise<void> {
   momentumSoloSince.clear();
   momentumNudgedAt.clear();
   momentumReadySince.clear();
+  operatorWaitSince.clear();
+  operatorWaitReminded.clear();
 }

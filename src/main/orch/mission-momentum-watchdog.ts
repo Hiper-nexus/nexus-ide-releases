@@ -1,4 +1,8 @@
 import { createHash } from 'node:crypto';
+import {
+  isHumanWaitIntentState,
+  type MissionIntentState,
+} from '../../shared/mission-intent';
 
 /**
  * Vigia de esteira: uma vaga com backlog registrado/pronto não espera 20 min
@@ -13,6 +17,33 @@ export const MOMENTUM_REPEAT_MS = 60 * 60_000;
 export const MOMENTUM_READY_MS = 30_000;
 /** A new registered queue milestone may refresh a receipt, never every scan. */
 export const MOMENTUM_PROGRESS_REPEAT_MS = 60_000;
+/**
+ * Espera longa de decisão humana: o nudge continua calado e o operador ganha,
+ * no máximo, UM lembrete — explícito a ELE, nunca injetado no PTY do Maestro.
+ */
+export const MOMENTUM_OPERATOR_WAIT_CEILING_MS = 6 * 60 * 60_000;
+
+/**
+ * O operador é a próxima peça: empurrar o Maestro agora só gasta tokens no
+ * turno dele. Só sinais duráveis que já existem, nenhum parsing de texto:
+ *  - missão parada (blocked_user / Encerrar / leftover) e estados de intenção
+ *    em espera humana (`isHumanWaitIntentState`);
+ *  - clarify durable ainda sem resposta/dismiss (`hasOpenClarifyQuestion`);
+ *  - latch de espera do turno do Maestro (permissão/elicitação, F-660).
+ * Uma pergunta escrita em texto no fim do turno não tem sinal próprio no
+ * ledger; sem sinal não se inventa um.
+ */
+export function awaitingOperatorDecision(input: {
+  readonly missionStatus: string;
+  readonly intentState?: MissionIntentState | null;
+  readonly pendingClarify?: boolean;
+  readonly orchestratorAwaiting?: boolean;
+}): boolean {
+  if (input.missionStatus === 'blocked') return true;
+  if (isHumanWaitIntentState(input.intentState ?? null)) return true;
+  if (input.pendingClarify === true) return true;
+  return input.orchestratorAwaiting === true;
+}
 
 export type MomentumDecision =
   | { readonly action: 'none' }
@@ -60,9 +91,15 @@ export function decideMomentumNudge(input: {
    * verificação recusar (clearCompletionRequest), o nudge volta a valer.
    */
   readonly completionRequested?: boolean;
+  /**
+   * O Maestro perguntou e o operador é a peça que falta (clarify aberto,
+   * latch de espera ou estado humano). Empurrá-lo a cada hora é ruído.
+   */
+  readonly awaitingOperatorDecision?: boolean;
 }): MomentumDecision {
   if (input.missionStatus !== 'running') return { action: 'none' };
   if (input.completionRequested === true) return { action: 'none' };
+  if (input.awaitingOperatorDecision === true) return { action: 'none' };
   if (input.lane === 'plan' || input.lane === 'consult')
     return { action: 'none' };
   if (input.maxWorkers === 0) return { action: 'none' };

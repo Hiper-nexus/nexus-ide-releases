@@ -141,3 +141,26 @@ export function resolveOpenMissionQuestion(
   }
   return undefined;
 }
+
+/**
+ * Alguma pergunta durable desta missão ainda sem resposta/dismiss.
+ *
+ * Ao contrário de `resolveOpenMissionQuestion`, não filtra por status nem por
+ * sessão: o operador continua sendo a peça que falta mesmo em `running`
+ * (clarify é fire-and-forget no MCP) e depois de um rebind de sessão — é
+ * esse silêncio que o vigia de momentum precisa para não empurrar o Maestro.
+ */
+export function hasOpenClarifyQuestion(
+  missionId: string,
+  handoffs: readonly Handoff[],
+): boolean {
+  const answered = answeredQuestionIds(handoffs);
+  return handoffs.some((handoff) => {
+    if (handoff.missionId !== missionId) return false;
+    if (handoff.deliveryState === 'consumed') return false;
+    if (answered.has(handoff.id)) return false;
+    return handoff.artifacts.some(
+      (raw) => parseClarifyQuestionArtifact(raw) !== null,
+    );
+  });
+}
