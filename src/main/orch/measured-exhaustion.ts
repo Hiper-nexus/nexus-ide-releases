@@ -22,6 +22,15 @@ import { decideDrainSwap } from './drain-watchdog';
 import type { HeadroomInput } from '../quota/account-headroom';
 import type { LimitHit } from './limit-detector';
 
+/**
+ * A razão do hit sintetizado vira `last_error` da conta e volta ao
+ * `detectLimit` (`quota-service.ts`). Se um padrão futuro a reconhecer como
+ * sinal de limite, fecha um laço de realimentação. Exportada para o teste
+ * travar isso.
+ */
+export const MEASURED_EXHAUSTION_REASON =
+  'cota medida esgotada pela API do provedor (pane em silêncio)';
+
 /** Mesmo teto que a troca por limite de texto usa para conta esgotada. */
 const MEASURED_EXHAUSTION_COOLDOWN_MS = 60 * 60_000;
 
@@ -61,9 +70,7 @@ export function reportMeasuredExhaustion(
   if (!decision.swap) return { acted: false, reason: decision.reason };
   const hit: LimitHit = {
     kind: 'quota',
-    // Nunca uma frase de CLI: este motivo é lido por humanos E passa perto do
-    // detector de texto. "cota medida" não casa nenhum padrão de limite.
-    reason: 'cota medida esgotada pela API do provedor (pane em silêncio)',
+    reason: MEASURED_EXHAUSTION_REASON,
     cooldownMs: MEASURED_EXHAUSTION_COOLDOWN_MS,
     adapterId: input.adapterId,
     // A medição É a confirmação: não há sonda a esperar.

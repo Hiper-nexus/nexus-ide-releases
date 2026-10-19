@@ -58,6 +58,8 @@ import {
   resolveAdapterBinary,
 } from '../adapters/adapter-registry';
 import { accountDrainEvidence } from './account-drain-evidence';
+import { nativeQuotaIdentity } from './native-quota-identity';
+import { noteLiveIdentity } from './provider-live-identity';
 import { DRAIN_THRESHOLD, isHeadroomDraining } from '../quota/account-headroom';
 import { resolveCliLoginCommand } from '../../shared/cli-login';
 import { kimiLoginCommand } from '../../shared/kimi-login-command';
@@ -1216,6 +1218,10 @@ function buildProviderSpawnOverrides(
     adapterId, preparedAccount, options, credentiallessOpenCode,
     effectiveProviderModel(adapterId, perSpawn.model),
   );
+  // Este spawn sela a identidade viva da CLI. É o que permite atribuir a
+  // leitura da linha nativa à conta certa na rodada seguinte — a coluna
+  // "ativa" do store não serve, porque só a UI a move.
+  if (account) noteLiveIdentity(adapterId, account.id);
   if (adapterId === 'mimo-code' && account?.mode === 'subscription') {
     const blob = getSecret(`acctcred:${account.id}`);
     if (!blob || !mimoCredentialSupportsModel(blob, effectiveProviderModel(adapterId, perSpawn.model))) {
@@ -1600,9 +1606,7 @@ function quotaHeadroomFor(
     // não banimento —, e o Nexus escreve a vaga ele mesmo a cada spawn.
     const snap = requireQuotaService().lastSnapshot();
     return snap ? headroomInputsByAccount(snap.entries, adapterId, {
-      ...(getActiveAccount(adapterId)?.id
-        ? { attributeNativeTo: getActiveAccount(adapterId)!.id }
-        : {}),
+      ...nativeQuotaIdentity(adapterId),
     }) : undefined;
   } catch {
     /* quota service opcional na corrida de boot — sem medição */
@@ -1907,6 +1911,9 @@ function pickUnpinnedAccountWithHeadroom(
         adapterId,
         source:
           active && picked.id === active.id ? 'active' : 'headroom-rule',
+        ...(pick.drained
+          ? { note: 'a conta anterior cruzou o limiar de uso; o trabalho novo nasce na irmã' }
+          : {}),
         account: receiptAccount(picked),
         headroom: headroomFor(adapterId, picked.id),
         alternatives,

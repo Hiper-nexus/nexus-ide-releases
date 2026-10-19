@@ -53,6 +53,13 @@ export interface HeadroomInput {
   readonly onCooldown?: boolean;
   /** F-1483: instante da leitura (a folga de uma irmã só conta fresca). */
   readonly updatedAt?: number;
+  /**
+   * A leitura veio da linha NATIVA (a identidade logada), não de uma sonda
+   * desta conta. Serve para drenar a conta que está em uso, mas NÃO é prova
+   * própria: os caminhos que escolhem destino por "folga comprovada"
+   * (F-1489 `freshSiblingWithHeadroom`) têm de ignorá-la.
+   */
+  readonly attributed?: boolean;
 }
 
 export interface HeadroomReading {
@@ -312,6 +319,7 @@ export function headroomInputsByAccount(
     out.set(identity, {
       ...row,
       windows: native.windows,
+      attributed: true,
       ...(Number.isFinite(native.updatedAt) ? { updatedAt: native.updatedAt } : {}),
     });
   }

@@ -51,6 +51,7 @@ import { chooseAccount } from './account-select';
 import {
   bindingHeadroomWindow,
   DRAIN_THRESHOLD,
+  headroomReadings,
   fullWindowsReopenAt,
   isHeadroomDraining,
   type DrainEvidence,
@@ -59,10 +60,12 @@ import {
 import { windowsServingModel } from '../quota/headroom-route-filter';
 import {
   drainedAccountIds,
+  forgetAccountDrain,
   forgetDrainMemory,
   isRememberedDrained,
   noteAccountDrained,
 } from './account-drain-memory';
+import { liveIdentityAccountId } from './provider-live-identity';
 
 /** Sem reset conhecido, a lembrança de drenagem vale uma hora. */
 const DRAIN_MEMORY_FALLBACK_MS = 60 * 60_000;
@@ -1424,7 +1427,12 @@ export function pickAvailableForFailover(
       accountHasFailoverCredential(a) &&
       !measuredFullUntil.has(a.id),
   );
-  const activeId = activeByAdapter.get(adapterId) ?? null;
+  // A âncora de "conta em uso" é a identidade que o SPAWN selou, não a coluna
+  // do store: `activeByAdapter` só é movida por cadastro e pela ação do
+  // operador na UI, então ancorar nela fazia a rotação voltar sempre para a
+  // mesma conta. Sem spawn nenhum ainda, vale a coluna (comportamento de hoje).
+  const activeId =
+    liveIdentityAccountId(adapterId) ?? activeByAdapter.get(adapterId) ?? null;
   const activeDraining =
     options?.drain !== undefined &&
     activeId !== null &&
@@ -1437,12 +1445,21 @@ export function pickAvailableForFailover(
   // ela passa para a irmã, a conta drenada voltaria a parecer "sem medição" e
   // o carrossel quicaria entre duas contas. A lembrança a mantém fora da
   // preferência até a janela dela reabrir.
-  if (activeDraining && activeId) {
-    noteAccountDrained(
-      activeId,
-      bindingHeadroomWindow(quotaByAccountId?.get(activeId))?.resetsAt ??
-        now + DRAIN_MEMORY_FALLBACK_MS,
-    );
+  if (activeId && options?.drain) {
+    if (activeDraining) {
+      const resetsAt = bindingHeadroomWindow(quotaByAccountId?.get(activeId))?.resetsAt;
+      // Reset já vencido grava lembrança que expira no mesmo instante e o
+      // carrossel volta a quicar: o piso é o fallback.
+      noteAccountDrained(
+        activeId,
+        Math.max(resetsAt ?? 0, now + DRAIN_MEMORY_FALLBACK_MS),
+      );
+    } else if (
+      headroomReadings(quotaByAccountId?.get(activeId)).size > 0
+    ) {
+      // Medida e com folga: a lembrança não sobrevive à prova em contrário.
+      forgetAccountDrain(activeId);
+    }
   }
   // Lembradas saem da preferência; se não sobrar ninguém, voltam (2ª volta).
   const remembered = options?.drain ? drainedAccountIds(now) : new Set<string>();

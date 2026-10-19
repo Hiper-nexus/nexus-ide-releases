@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { HeadroomInput } from '../quota/account-headroom';
 import {
+  MEASURED_EXHAUSTION_REASON,
   reportMeasuredExhaustion,
   type MeasuredExhaustionDeps,
 } from './measured-exhaustion';
+import { detectLimit } from './limit-detector';
 
 const NOW = 1_000_000;
 
@@ -117,5 +119,14 @@ describe('reportMeasuredExhaustion (camada 3.2 — o silêncio do AGY)', () => {
     const d = deps({ headroomFor: () => read(0.3) });
     reportMeasuredExhaustion(input, d);
     expect(d.noteSwap).not.toHaveBeenCalled();
+  });
+});
+
+describe('laço de realimentação', () => {
+  it('a razão do hit sintetizado NÃO é reconhecida pelo detector de limite', () => {
+    // Ela vira last_error da conta e volta ao detectLimit em quota-service.
+    // Um padrão novo que a reconheça fecharia o laço: a troca geraria o
+    // sinal que dispara a próxima troca.
+    expect(detectLimit(MEASURED_EXHAUSTION_REASON)).toBeNull();
   });
 });

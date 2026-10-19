@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   drainedAccountIds,
+  forgetAccountDrain,
   forgetDrainMemory,
   isRememberedDrained,
   noteAccountDrained,
@@ -51,5 +52,17 @@ describe('memória de drenagem', () => {
     noteAccountDrained('a', NOW + HOUR);
     forgetDrainMemory();
     expect(isRememberedDrained('a', NOW)).toBe(false);
+  });
+});
+
+describe('a memória cede a prova fresca em contrário', () => {
+  it('leitura abaixo do limiar esquece a conta', () => {
+    noteAccountDrained('a', NOW + HOUR);
+    forgetAccountDrain('a');
+    expect(isRememberedDrained('a', NOW)).toBe(false);
+  });
+
+  it('esquecer conta que não está anotada é inócuo', () => {
+    expect(() => forgetAccountDrain('fantasma')).not.toThrow();
   });
 });

@@ -2585,6 +2585,25 @@ describe('G3 — pane sem conta pinada nasce na conta com folga', () => {
     expect(scores.get('kimi-b')).toBeGreaterThan(scores.get('kimi-a') ?? 0);
   });
 
+  it('drenagem: o recibo diz por que a conta mudou, com rótulo mascarado', () => {
+    spawnDeps.listAccounts.mockReturnValue([
+      kimiAccount('kimi-a', 'Conta A', 1),
+      kimiAccount('kimi-b', 'Conta B', 2),
+    ]);
+    spawnDeps.getActiveAccount.mockReturnValue(kimiAccount('kimi-a', 'Conta A', 1));
+    spawnDeps.pickAvailableForFailover.mockReturnValue({
+      account: kimiAccount('kimi-b', 'Conta B', 2),
+      probe: false,
+      drained: true,
+    });
+
+    const result = prepareProviderSpawn('kimi');
+    const receipt = (result as { overrides: { accountChoice?: { note?: string; account?: { label: string } } } })
+      .overrides.accountChoice;
+    expect(receipt?.note).toMatch(/limiar/i);
+    expect(receipt?.account?.label).not.toBe('Conta B');
+  });
+
   it('quota fora do ar abre na ativa e nunca bloqueia o spawn', () => {
     spawnDeps.quotaSnapshot.mockImplementation(() => {
       throw new Error('quota service not initialized');

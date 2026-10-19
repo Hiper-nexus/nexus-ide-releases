@@ -37,7 +37,8 @@ vi.mock('../quota/quota-service', async importOriginal => ({
   requireQuotaService: () => ({ lastSnapshot: () => ({ entries: quota.entries }) }),
 }));
 
-import { activateAccount, addAccount, initAccountStore, setCooldown } from './account-store';
+import { addAccount, initAccountStore, setCooldown } from './account-store';
+import { noteLiveIdentity } from './provider-live-identity';
 import { pickMissionOrchestratorAccountId } from './provider-config-store';
 
 const NOW = 1_000_000;
@@ -152,7 +153,7 @@ describe('e2e — carrossel de contas AGY pessoais', () => {
     const vault = [agyVault(a.id), agyVault(b.id), agyVault(c.id)];
 
     // a é a identidade viva e ainda tem folga: fica.
-    activateAccount(a.id);
+    noteLiveIdentity('agy', a.id);
     quota.entries = [agyNative(0.5), ...vault];
     expect(pickMissionOrchestratorAccountId('agy', a.id)).toBe(a.id);
 
@@ -161,12 +162,14 @@ describe('e2e — carrossel de contas AGY pessoais', () => {
     expect(pickMissionOrchestratorAccountId('agy', a.id)).toBe(b.id);
 
     // b assume a identidade e drena: passa para c.
-    activateAccount(b.id);
+    // NADA de activateAccount aqui: em produção a rotação não mexe na coluna
+    // "ativa" (o único chamador é a UI). O spawn é quem sela a identidade.
+    noteLiveIdentity('agy', b.id);
     expect(pickMissionOrchestratorAccountId('agy', b.id)).toBe(c.id);
 
     // c assume e ESGOTA: sem irmã com folga medida, ninguém sobra — é o
     // estado em que performSwitch cai na troca de CLI (F-775 item 2).
-    activateAccount(c.id);
+    noteLiveIdentity('agy', c.id);
     quota.entries = [agyNative(1), ...vault];
     setCooldown(a.id, NOW + 3_600_000, 'cota medida esgotada');
     setCooldown(b.id, NOW + 3_600_000, 'cota medida esgotada');
@@ -177,7 +180,7 @@ describe('e2e — carrossel de contas AGY pessoais', () => {
   it('sem a atribuição da leitura nativa nada drenaria: a linha do cofre é vazia', () => {
     const a = addAcct('agy', 'a');
     const b = addAcct('agy', 'b');
-    activateAccount(a.id);
+    noteLiveIdentity('agy', a.id);
     // Só as linhas do cofre (o que o 403 deixa): ninguém tem folga medida.
     quota.entries = [agyVault(a.id), agyVault(b.id)];
     expect(pickMissionOrchestratorAccountId('agy', a.id)).toBe(a.id);
@@ -186,13 +189,13 @@ describe('e2e — carrossel de contas AGY pessoais', () => {
   it('a segunda volta do carrossel consome o resto da janela', () => {
     const a = addAcct('agy', 'a');
     const b = addAcct('agy', 'b');
-    activateAccount(a.id);
+    noteLiveIdentity('agy', a.id);
     // Todas drenando (a identidade viva em 0.9, irmã sem leitura própria):
     // a regra não pode devolver nada — a fatia que resta é usada.
     quota.entries = [agyNative(0.9), agyVault(a.id), agyVault(b.id)];
     const first = pickMissionOrchestratorAccountId('agy', a.id);
     expect(first).toBe(b.id);
-    activateAccount(b.id);
+    noteLiveIdentity('agy', b.id);
     const second = pickMissionOrchestratorAccountId('agy', b.id);
     expect(second).not.toBeUndefined();
   });

@@ -44,6 +44,16 @@ export function drainedAccountIds(now: number): Set<string> {
   return out;
 }
 
+/**
+ * Prova fresca em contrário: a conta foi medida abaixo do limiar, então a
+ * lembrança morre. Sem isto uma atribuição errada manteria uma conta saudável
+ * fora da preferência até a janela que a marcou reabrir — que pode ser a
+ * Semanal, ou seja, dias.
+ */
+export function forgetAccountDrain(accountId: string): void {
+  drainedUntil.delete(accountId);
+}
+
 export function forgetDrainMemory(): void {
   drainedUntil.clear();
 }

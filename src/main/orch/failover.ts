@@ -42,6 +42,7 @@ import {
 } from './failover-mission-respawn';
 import { switchRendererOrchestratorAccount } from './failover-orchestrator-respawn';
 import { reportMeasuredExhaustion } from './measured-exhaustion';
+import { nativeQuotaIdentity } from '../persistence/native-quota-identity';
 import {
   getProjectDomainStores,
   requireProjectDomainStoreRegistry,
@@ -728,9 +729,7 @@ function quotaHeadroomFor(
     // não banimento —, e o Nexus escreve a vaga ele mesmo a cada spawn.
     const snap = requireQuotaService().lastSnapshot();
     return snap ? headroomInputsByAccount(snap.entries, adapterId, {
-      ...(getActiveAccount(adapterId)?.id
-        ? { attributeNativeTo: getActiveAccount(adapterId)!.id }
-        : {}),
+      ...nativeQuotaIdentity(adapterId),
     }) : undefined;
   } catch {
     /* quota service optional at boot race */
@@ -3649,6 +3648,9 @@ function freshSiblingWithHeadroom(
   let proven: { readonly accountId: string; readonly worst: number } | null = null;
   for (const [accountId, input] of byAccount) {
     if (accountId === currentId || input.onCooldown) continue;
+    // F-1489 exige folga COMPROVADA desta conta: leitura emprestada da
+    // identidade viva não é prova dela.
+    if (input.attributed) continue;
     if (isAccountBlockedForScope(accountId, probedAt, scope)) continue;
     if (!Number.isFinite(input.updatedAt) || probedAt - input.updatedAt! > REFUTE_FRESH_MS) continue;
     if (
