@@ -72,6 +72,7 @@ vi.mock('../persistence/provider-config-store', () => ({
 vi.mock('../adapters/subscription-auth', () => ({
   warmKeychainOnlySubscriptionAuth: async () => {},
   detectSubscriptionAuthReadiness: () => 'present',
+  hasSubscriptionAuth: () => true,
 }));
 vi.mock('../adapters/kimi-seat-probe', () => ({
   refreshKimiSeatReadiness: async () => undefined,

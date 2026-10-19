@@ -57,6 +57,8 @@ vi.mock('../persistence/provider-config-store', () => ({
 vi.mock('../adapters/subscription-auth', () => ({
   detectSubscriptionAuthReadiness: (id: string) =>
     state.readyClis === null || state.readyClis.has(id) ? 'present' : 'missing',
+  hasSubscriptionAuth: (id: string) =>
+    state.readyClis === null || state.readyClis.has(id),
 }));
 vi.mock('./squad-runtime-inventory', () => ({ warmSquadRuntimeSubscriptionAuth: async () => undefined }));
 vi.mock('../pty/warm-pool', () => ({ warmPool: { take: () => null } }));

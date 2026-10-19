@@ -23,10 +23,12 @@ function fixture() {
 }
 const request = { scope, kind: 'tests' as const };
 
-it('serializes checks with native validators until physical descendants exit', async () => {
-  const f = fixture(); const running = execOwnedCheck({ plan, request, timeoutMs: 10_000 }, f.ports);
+it('holds an exclusive check until physical descendants exit', async () => {
+  const f = fixture();
+  const running = execOwnedCheck({ plan, request: { ...request, kind: 'build' }, timeoutMs: 10_000 }, f.ports);
   await vi.waitFor(() => expect(f.ports.spawn).toHaveBeenCalledOnce());
-  let admitted = false; const next = f.pool.acquire({ ...request, kind: 'typescript' }).then(p => { admitted = true; return p; });
+  let admitted = false;
+  const next = f.pool.acquire({ ...request, kind: 'typescript' }).then(p => { admitted = true; return p; });
   f.proc.emit('close', 0, null); await Promise.resolve(); expect(admitted).toBe(false);
   expect(f.pool.snapshot().active).toBe(1);
   f.exited(); expect(await running).toMatchObject({ exitCode: 0, timedOut: false });
@@ -61,8 +63,8 @@ it('synchronous spawn failure disposes ownership and frees the unused slot', asy
   expect(f.owned.dispose).toHaveBeenCalledOnce(); expect(f.pool.snapshot().active).toBe(0);
 });
 
-it('timeout includes queue admission and cannot launch after its deadline', async () => {
-  vi.useFakeTimers(); const f = fixture(); const active = await f.pool.acquire(request);
+it('timeout includes queue admission behind an exclusive command and cannot launch after its deadline', async () => {
+  vi.useFakeTimers(); const f = fixture(); const active = await f.pool.acquire({ ...request, kind: 'build' });
   const running = execOwnedCheck({ plan, request, timeoutMs: 100 }, f.ports);
   await vi.advanceTimersByTimeAsync(101); expect(await running).toMatchObject({ timedOut: true, exitCode: null });
   expect(f.ports.spawn).not.toHaveBeenCalled(); active.release();

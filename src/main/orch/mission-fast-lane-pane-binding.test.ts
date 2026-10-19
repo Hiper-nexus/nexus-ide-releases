@@ -41,7 +41,10 @@ vi.mock('../acp/acp-harness-driver', () => ({
 vi.mock('../persistence/provider-config-store', () => ({
   hasRuntimeKey: () => true, providerAuthStrategy: () => 'api-key', listProviderSettings: () => [],
 }));
-vi.mock('../adapters/subscription-auth', () => ({ detectSubscriptionAuthReadiness: () => 'present' }));
+vi.mock('../adapters/subscription-auth', () => ({
+  detectSubscriptionAuthReadiness: () => 'present',
+  hasSubscriptionAuth: () => true,
+}));
 vi.mock('./squad-runtime-inventory', () => ({ warmSquadRuntimeSubscriptionAuth: async () => undefined }));
 vi.mock('../pty/warm-pool', () => ({ warmPool: { take: () => null } }));
 vi.mock('../observability/main-trace', () => ({ trace: state.trace }));
