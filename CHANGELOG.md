@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.76.322 — Equipe salva no Expresso
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+No desktop Linux, em relação à 0.76.321:
+
+- **Equipe salva em Personalizar equipe**. No início expresso da missão, "Personalizar equipe" só deixava editar os papéis um a um. Agora há "Começar de uma equipe salva": as suas equipes vêm antes das originais, os integrantes substituem o roster, e um roster que o rascunho recusa (equipe grande demais) mostra o erro em vez de aplicar pela metade.
+
 ## 0.76.321 — Piloto para todas as CLIs no Linux
 
 A tag 0.76.319 é o pacote Windows e não recebe arquivos Linux. A tag 0.76.320 não foi publicada: a suíte Ubuntu falhou em testes desatualizados (assinatura Windows ainda pedia o eSigner, e o teto de IPC de `orch-ipc.ts` tinha ficado em 51 com 46 chamadas). Este pacote leva o desktop Linux.

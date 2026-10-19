@@ -11730,7 +11730,7 @@ export const RELEASE_076320: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076321: AppRelease = {
   version: '0.76.321',
   date: '2026-10-19',
   codename: 'Piloto para todas as CLIs no Linux',
@@ -11747,4 +11747,16 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Textos do Linux', detail: 'O cofre passa a dizer "chaveiro do sistema" (libsecret), mostrar um arquivo salvo é "Mostrar na pasta", e o aviso de microfone mudo aponta o mixer de som. Os botões que abrem os Ajustes de som do macOS e do Windows ficam ocultos no Linux: não há uma URL comum entre os desktops.' },
     { title: 'O pane diz o motivo real', detail: '"Contexto degradado" virou a causa de fato (troca de conta por limite confirmado ou entrega que o Maestro não aceitou), um pane cuja missão não existe mais não diz que ela encerrou com relatório, e quando a verificação automática recusa a conclusão o Quadro mostra que o Maestro está corrigindo.' },
   ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.322',
+  date: '2026-10-19',
+  codename: 'Equipe salva no Expresso',
+  summary: 'No desktop Linux, Personalizar equipe no início expresso da missão passa a aceitar uma equipe salva. O restante é o pacote 0.76.321.',
+  highlights: [
+    { title: 'Equipe salva no Expresso', detail: 'Em Personalizar equipe, no início expresso da missão, só dava para editar os papéis um a um. Agora "Começar de uma equipe salva" lista as suas equipes antes das originais e troca os integrantes pelos da equipe escolhida. Se o rascunho recusar o roster (equipe grande demais), o erro aparece e nada é aplicado pela metade.' },
+    { title: 'Pacote Linux', detail: 'O desktop Linux publicado era a 0.76.321. Esta é a 0.76.322, só com a escolha de equipe salva no Expresso.' },
+  ],
+  fixes: [],
 };
