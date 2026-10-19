@@ -142,10 +142,10 @@ function suite(row: Mission) {
       setStatus: vi.fn(),
     },
     tasks: {
-      list: () => [READY_TASK],
+      list: () => taskList,
       getPlanReceipt: () => ({
         intentVersion: 1,
-        tasks: [{ taskId: 'task-ready-1', plannerId: 'planner-1', detail: '' }],
+        tasks: taskList.map((task) => ({ taskId: task.id, plannerId: 'planner-1', detail: '' })),
       }),
     },
     taskDispatches: { list: () => [] },
@@ -168,6 +168,7 @@ function suite(row: Mission) {
 const ESCALATED_AT = NOW - 80 * MIN;
 const READY_NUDGED_AT = NOW - 10 * MIN;
 let ledger: Handoff[] = [];
+let taskList: Array<typeof READY_TASK> = [READY_TASK];
 
 function seededLedger(): Handoff[] {
   const backlogKey = momentumReadyBacklog({
@@ -219,6 +220,7 @@ describe('reinício semeia dedups do supervisor a partir do ledger', () => {
     h.getSemantic.mockReturnValue(null);
     h.toolActivity.mockReturnValue(0);
     ledger = seededLedger();
+    taskList = [READY_TASK];
     await shutdownDelegationSupervisor();
     prepareDelegationSupervisor();
   });
@@ -257,5 +259,38 @@ describe('reinício semeia dedups do supervisor a partir do ledger', () => {
       (call) => String((call[0] as { summary?: unknown }).summary ?? ''),
     );
     expect(submitted.filter((s) => s.includes('[zero-delivery'))).not.toEqual([]);
+  });
+
+  it('fila esvazia e uma 2a onda pronta espera 30 s de novo, sem herdar o carimbo do ledger', async () => {
+    const row = mission();
+    const stores = suite(row);
+    h.onScope!(SCOPE, stores);
+    h.listPaneSnapshots.mockReturnValue(panes(row));
+    const momentumNudges = () =>
+      h.submit.mock.calls
+        .map((call) => String((call[0] as { summary?: unknown }).summary ?? ''))
+        .filter((s) => s.startsWith(`[momentum:${MISSION_ID}]`));
+
+    // 1a onda: semeada do ledger (nudge ready de 10 min atras), sem repetir.
+    await reconcileDelegationSupervisor(NOW);
+    expect(momentumNudges()).toEqual([]);
+
+    // Fila esvazia: o carimbo da onda 1 e descartado.
+    taskList = [];
+    await reconcileDelegationSupervisor(NOW + 60 * MIN);
+
+    // 2a onda horas depois, tarefa nova (backlog diferente).
+    taskList = [{ ...READY_TASK, id: 'task-ready-2', title: 'Second wave' }];
+    const wave2 = NOW + 180 * MIN;
+    await reconcileDelegationSupervisor(wave2);
+    await reconcileDelegationSupervisor(wave2 + 20_000);
+    expect(momentumNudges()).toEqual([]);
+
+    await reconcileDelegationSupervisor(wave2 + 31_000);
+    const nudges = momentumNudges();
+    expect(nudges).toHaveLength(1);
+    // N medido desde a 2a onda, nunca desde o ledger (~3 h).
+    expect(nudges[0]).toContain('[momentum-ready:');
+    expect(nudges[0]).not.toMatch(/há (1[0-9]{2}|[2-9][0-9]) min/i);
   });
 });
