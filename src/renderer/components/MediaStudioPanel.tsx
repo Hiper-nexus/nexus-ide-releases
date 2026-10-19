@@ -21,6 +21,8 @@ import {
   type StudioKind,
 } from './media-studio-options';
 import { VideoProjectsSection } from './VideoProjectsSection';
+import { useProductFlags } from '../lib/use-product-flags';
+import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 
 /**
  * Estúdio de Mídia — geração de imagem/vídeo para quem não fala com agente:
@@ -95,6 +97,10 @@ export function MediaStudioPanel({
   const [tab, setTab] = useState<StudioKind>('image');
   /** F-1596: "Vídeos do projeto" é outra vista, não outro tipo de geração. */
   const [view, setView] = useState<'generate' | 'projects'>('generate');
+  const productFlags = useProductFlags();
+  // F-1600: "Vídeos do projeto" só com a chave interna do estúdio ligada.
+  const videoStudioOn = productFlags[FEATURE_FLAG_IDS.mediaVideoStudio] === true;
+  const showProjects = videoStudioOn && view === 'projects';
   const [providers, setProviders] = useState<MediaProviderInfo[] | null>(null);
   const [prompt, setPrompt] = useState('');
   const [sel, setSel] = useState('');
@@ -414,8 +420,8 @@ export function MediaStudioPanel({
             <button
               type="button"
               role="tab"
-              aria-selected={view === 'generate' && tab === 'image'}
-              className={view === 'generate' && tab === 'image' ? 'ms-tab ms-tab--active' : 'ms-tab'}
+              aria-selected={!showProjects && tab === 'image'}
+              className={!showProjects && tab === 'image' ? 'ms-tab ms-tab--active' : 'ms-tab'}
               onClick={() => {
                 setView('generate');
                 setTab('image');
@@ -426,8 +432,8 @@ export function MediaStudioPanel({
             <button
               type="button"
               role="tab"
-              aria-selected={view === 'generate' && tab === 'video'}
-              className={view === 'generate' && tab === 'video' ? 'ms-tab ms-tab--active' : 'ms-tab'}
+              aria-selected={!showProjects && tab === 'video'}
+              className={!showProjects && tab === 'video' ? 'ms-tab ms-tab--active' : 'ms-tab'}
               onClick={() => {
                 setView('generate');
                 setTab('video');
@@ -435,18 +441,20 @@ export function MediaStudioPanel({
             >
               Vídeo
             </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={view === 'projects'}
-              className={view === 'projects' ? 'ms-tab ms-tab--active' : 'ms-tab'}
-              onClick={() => setView('projects')}
-            >
-              Vídeos do projeto
-            </button>
+            {videoStudioOn && (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={showProjects}
+                className={showProjects ? 'ms-tab ms-tab--active' : 'ms-tab'}
+                onClick={() => setView('projects')}
+              >
+                Vídeos do projeto
+              </button>
+            )}
           </div>
 
-          {view === 'projects' ? (
+          {showProjects ? (
             <VideoProjectsSection onRequestClose={onClose} />
           ) : (
           <>

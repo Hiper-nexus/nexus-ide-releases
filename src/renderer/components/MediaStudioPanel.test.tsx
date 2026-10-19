@@ -2,6 +2,9 @@
 import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+const productFlags = vi.hoisted(() => ({ map: {} as Record<string, boolean> }));
+vi.mock('../lib/use-product-flags', () => ({ useProductFlags: () => productFlags.map }));
+
 import { MediaStudioPanel } from './MediaStudioPanel';
 import { useMediaStudioStore } from '../state/media-studio-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
@@ -139,7 +142,18 @@ describe('MediaStudioPanel: revelar arquivo por sistema (F-1579)', () => {
 });
 
 describe('MediaStudioPanel: Vídeos do projeto (F-1596)', () => {
+  afterEach(() => {
+    productFlags.map = {};
+  });
+
+  it('sem a chave interna do estúdio a aba não aparece (F-1600)', async () => {
+    const dialog = await openFrom(renderHarness());
+    const tabs = [...dialog.querySelectorAll<HTMLButtonElement>('[role="tab"]')].map((item) => item.textContent);
+    expect(tabs).toEqual(['Imagem', 'Vídeo']);
+  });
+
   it('a terceira aba mostra os projetos de vídeo sem trocar o tipo de geração', async () => {
+    productFlags.map = { 'feature.media.videoStudio': true };
     const listProjects = vi.fn(async () => ({ ok: true, projects: [] }));
     (window.nexus as unknown as Record<string, unknown>).videoStudio = {
       listProjects,
