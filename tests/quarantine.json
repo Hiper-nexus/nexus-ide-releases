@@ -1,25 +1,4 @@
 {
   "version": 1,
-  "tests": [
-    {
-      "file": "src/main/context/context-workflow-service.test.ts",
-      "reason": "Falha também em origin/main c572c47029 (rodado em árvore limpa em 18/10/2026); instável sob carga"
-    },
-    {
-      "file": "src/main/runtime/merge-queue-recovery.test.ts",
-      "reason": "Falha também em origin/main c572c47029 (rodado em árvore limpa em 18/10/2026); instável sob carga"
-    },
-    {
-      "file": "native/menubar-redline/main.test.ts",
-      "reason": "Falha também em origin/main c572c47029 (rodado em árvore limpa em 18/10/2026); instável sob carga"
-    },
-    {
-      "file": "src/main/orch/mission-autopilot-completion.integration.test.ts",
-      "reason": "Falha também em origin/main c572c47029 (rodado em árvore limpa em 18/10/2026); instável sob carga"
-    },
-    {
-      "file": "third_party/appdmg-secure/test/util.test.mjs",
-      "reason": "Falha também em origin/main c572c47029 (rodado em árvore limpa em 18/10/2026); instável sob carga"
-    }
-  ]
+  "tests": []
 }
