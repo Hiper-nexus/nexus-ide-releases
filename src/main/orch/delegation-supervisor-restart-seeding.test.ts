@@ -10,6 +10,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Handoff, Mission } from '../../shared/orch-types';
 import { momentumReadyBacklog } from './mission-momentum-watchdog';
+import { compileIntentContract } from '../../shared/mission-intent';
 
 const h = vi.hoisted(() => ({
   onScope: null as null | ((scope: unknown, suite: unknown) => void),
@@ -262,10 +263,25 @@ describe('reinício semeia dedups do supervisor a partir do ledger', () => {
   });
 
   it('fila esvazia e uma 2a onda pronta espera 30 s de novo, sem herdar o carimbo do ledger', async () => {
+    // Fila pronta de verdade: líder no escopo e vagas no orçamento.
     const row = mission();
+    const contract = compileIntentContract({
+      goal: 'Executar as ondas registradas',
+      intentVersion: 1,
+      freeAgentChoice: false,
+    });
+    Object.assign(row, {
+      intentState: 'executing',
+      intentContract: {
+        ...contract,
+        approvedAt: NOW - 4 * 60 * MIN,
+        dispatchedAt: NOW - 4 * 60 * MIN,
+        budgets: { ...contract.budgets, maxWorkers: 4 },
+      },
+    });
     const stores = suite(row);
     h.onScope!(SCOPE, stores);
-    h.listPaneSnapshots.mockReturnValue(panes(row));
+    h.listPaneSnapshots.mockReturnValue(panes(row).map((pane) => ({ ...pane, scope: SCOPE })));
     const momentumNudges = () =>
       h.submit.mock.calls
         .map((call) => String((call[0] as { summary?: unknown }).summary ?? ''))
