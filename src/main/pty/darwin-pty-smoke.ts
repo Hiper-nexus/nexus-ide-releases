@@ -11,6 +11,24 @@ import type { DarwinPtyExecutableSeal } from "./darwin-pty-supervisor";
 export const DARWIN_PTY_SMOKE_TIMEOUT_MS = 10_000;
 export const DARWIN_PTY_SMOKE_TERM_TIMEOUT_MS = 1_500;
 export const DARWIN_PTY_SMOKE_KILL_TIMEOUT_MS = 4_000;
+/**
+ * Saída 0 SEM NENHUM byte é a assinatura do macOS descartando a saída não
+ * lida do PTY quando o host não lê antes do último close do slave (máquina
+ * carregada; o node-pty destrói o socket 200 ms depois do exit). Nova
+ * tentativa só nesse caso: o recibo continua obrigatório, e saída não-zero,
+ * sinal ou saída sem recibo reprovam na hora.
+ */
+export const DARWIN_PTY_SMOKE_ATTEMPTS = 3;
+
+class EmptyCleanExitError extends Error {}
+
+interface DarwinPtySmokeOptions {
+  readonly platform?: NodeJS.Platform;
+  readonly cwd?: string;
+  readonly environment?: NodeJS.ProcessEnv;
+  readonly timeoutMs?: number;
+  readonly resolveProviderSeal?: () => DarwinPtyExecutableSeal;
+}
 
 function stringEnvironment(
   environment: NodeJS.ProcessEnv,
@@ -29,17 +47,30 @@ function stringEnvironment(
  */
 export function proveDarwinPtyPipelineForSmoke(
   host: PtyHost,
-  options: {
-    readonly platform?: NodeJS.Platform;
-    readonly cwd?: string;
-    readonly environment?: NodeJS.ProcessEnv;
-    readonly timeoutMs?: number;
-    readonly resolveProviderSeal?: () => DarwinPtyExecutableSeal;
-  } = {},
+  options: DarwinPtySmokeOptions = {},
 ): Promise<boolean> {
   if ((options.platform ?? process.platform) !== "darwin") {
     return Promise.resolve(false);
   }
+  const attempt = async (remaining: number): Promise<boolean> => {
+    try {
+      return await proveDarwinPtyPipelineOnce(host, options, remaining);
+    } catch (error) {
+      if (error instanceof EmptyCleanExitError && remaining > 1) {
+        console.warn(`[smoke] ${error.message}; nova tentativa`);
+        return attempt(remaining - 1);
+      }
+      throw error;
+    }
+  };
+  return attempt(DARWIN_PTY_SMOKE_ATTEMPTS);
+}
+
+function proveDarwinPtyPipelineOnce(
+  host: PtyHost,
+  options: DarwinPtySmokeOptions,
+  attemptsLeft: number,
+): Promise<boolean> {
   const cwd = options.cwd ?? process.cwd();
   const timeoutMs = options.timeoutMs ?? DARWIN_PTY_SMOKE_TIMEOUT_MS;
   if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
@@ -121,7 +152,7 @@ export function proveDarwinPtyPipelineForSmoke(
     try {
       handle = host.spawn(
         {
-          sessionId: `packaged-smoke-${process.pid}-${Date.now()}`,
+          sessionId: `packaged-smoke-${process.pid}-${Date.now()}-${attemptsLeft}`,
           file: providerSeal.executablePath,
           args: [DARWIN_PTY_PROVIDER_PROBE_MODE],
           cwd,
@@ -146,6 +177,14 @@ export function proveDarwinPtyPipelineForSmoke(
               output.includes(DARWIN_PTY_PROVIDER_PROBE_RECEIPT)
             ) {
               finish();
+              return;
+            }
+            if (exitCode === 0 && (signal === undefined || signal === 0) && output === "") {
+              finish(
+                new EmptyCleanExitError(
+                  `Darwin PTY utility pipeline exited 0 with no output (unread PTY output discarded)`,
+                ),
+              );
               return;
             }
             finish(
