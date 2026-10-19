@@ -19,10 +19,11 @@ describe('VoiceHud drag and mute-key copy', () => {
     expect(source).toContain('onPointerDown={beginDrag}');
   });
 
-  it('opts the HUD out of the mac header drag region so it stays clickable over it', () => {
+  it('opts the HUD and every child hit target out of the mac header drag region', () => {
     const css = fs.readFileSync(path.join(__dirname, '../styles/voice-hud.css'), 'utf-8');
-    const start = css.indexOf('.voice-hud {');
+    const start = css.indexOf('.voice-hud,');
     const block = css.slice(start, css.indexOf('}', start));
+    expect(block).toContain('.voice-hud *');
     expect(block).toMatch(/-webkit-app-region:\s*no-drag;/);
   });
 

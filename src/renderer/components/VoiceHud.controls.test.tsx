@@ -6,7 +6,7 @@
  * Os botões escapam do arrasto via stopPropagation; estes testes simulam a
  * sequência real de pointerdown → pointerup → click em cada ctl.
  */
-import { act } from 'react';
+import { act, Profiler } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -102,6 +102,45 @@ describe('VoiceHud — controles clicáveis em qualquer estado (Bug 7)', () => {
   });
 
   const render = () => act(() => root.render(<VoiceHud />));
+
+  it('keeps every collapsed and expanded HUD hit target under the no-drag HUD root', () => {
+    render();
+    const assertHudDescendant = (selector: string) => {
+      const target = host.querySelector(selector) as HTMLElement;
+      expect(target, `${selector} deveria existir no HUD`).toBeTruthy();
+      expect(target.closest('.voice-hud')).toBe(host.querySelector('.voice-hud'));
+    };
+
+    assertHudDescendant('.voice-hud__mini-trigger');
+    assertHudDescendant('.voice-hud__ctl');
+
+    act(() => {
+      useVoiceStore.setState({
+        hud: { mode: 'expanded', corner: 'br', dx: 16, dy: 16, width: 300 },
+      } as never);
+    });
+
+    assertHudDescendant('.voice-hud__titlebar');
+    assertHudDescendant('.voice-figure');
+    assertHudDescendant('.voice-hud__resize');
+  });
+
+  it('does not commit a React render when the collapsed pill is hovered', () => {
+    let commits = 0;
+    act(() => {
+      root.render(
+        <Profiler id="voice-hud" onRender={() => { commits += 1; }}>
+          <VoiceHud />
+        </Profiler>,
+      );
+    });
+    const beforeHover = commits;
+    const trigger = host.querySelector('.voice-hud__mini-trigger') as HTMLButtonElement;
+    trigger.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+    trigger.dispatchEvent(pointerEvent('pointerover'));
+
+    expect(commits).toBe(beforeHover);
+  });
 
   it('mini idle: clique no corpo do pill não desliga nem esconde (só wake/expand)', async () => {
     render();

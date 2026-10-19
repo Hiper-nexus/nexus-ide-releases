@@ -20,10 +20,6 @@
   position: fixed;
   z-index: var(--z-voice-hud);
   pointer-events: auto;
-  /* O header do mac é drag region: no Electron ela engole o mouse acima de
-     qualquer z-index. Sem no-drag, o HUD arrastado sobre o header não
-     arrasta nem clica. */
-  -webkit-app-region: no-drag;
   user-select: none;
   border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
   /* Fundo SÓLIDO no lugar do glassmorphism (blur 14px removido) — o color-mix
@@ -37,6 +33,15 @@
     0 14px 44px rgba(0, 0, 0, 0.5),
     inset 0 1px 0 rgba(255, 255, 255, 0.05);
   animation: voice-hud-in 180ms var(--ease-out-expo);
+}
+
+.voice-hud,
+.voice-hud * {
+  /* O header do mac é drag region: no Electron ela engole o mouse acima de
+     qualquer z-index. `-webkit-app-region` não é herdado pelos filhos que
+     recebem o ponteiro (pill, botões, alça), então o escopo inteiro do HUD
+     precisa sair da região de drag. */
+  -webkit-app-region: no-drag;
 }
 
 /* F-1393: no tema claro o escurecimento virava #e0e0e0 (#fff a 88% com
