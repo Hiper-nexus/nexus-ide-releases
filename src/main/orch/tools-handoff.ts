@@ -106,6 +106,7 @@ import {
 } from "./jev-handoff-review";
 import {
   REGRESSION_UNVERIFIED_PREFIX,
+  settleBackgroundRegressionGate,
   type RegressionHandoffVerdict,
 } from "../regression-gate/regression-gate-handoff";
 import { evaluateWriterHandoffRegression } from "./handoff-regression-gate";
@@ -486,6 +487,7 @@ const handoffSubmitTool: McpToolDef = {
         declaredFiles,
         mission,
         invocation,
+        background: true,
       });
       if (regressionVerdict.kind === "retry") {
         throw new Error(regressionVerdict.message);
@@ -704,6 +706,7 @@ const handoffSubmitTool: McpToolDef = {
       handoff = committed.handoff;
       replayed = committed.replayed;
     }
+    if (!replayed) settleBackgroundRegressionGate(regressionVerdict, handoff.id, suite.handoffs);
     if (handoff.evidenceTrust === "nexus-trusted") {
       markHandoffSubmitted(ctx);
     }

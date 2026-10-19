@@ -27,6 +27,8 @@ export function evaluateWriterHandoffRegression(
     readonly invocation?: McpToolInvocation;
     /** false: transporte sem canal de volta (PTY) — falha entra como blocked. */
     readonly returnable?: boolean;
+    /** Persistir o handoff primeiro e executar o portão fora da resposta MCP. */
+    readonly background?: boolean;
   } = {},
 ): Promise<RegressionHandoffVerdict> {
   const execution = executionScopeFor(ctx);
@@ -63,5 +65,6 @@ export function evaluateWriterHandoffRegression(
     signal: input.invocation?.signal,
     authority: input.invocation,
     returnable: input.returnable,
+    background: input.background,
   });
 }

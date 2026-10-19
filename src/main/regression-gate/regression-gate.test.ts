@@ -21,7 +21,9 @@ import {
   formatRegressionGateReport,
   hashRegressionFile,
   MIN_TEST_BUDGET_MS,
+  prioritizeRegressionTests,
   RECORDED_EDIT_MAX_HASH_BYTES,
+  regressionDiffLiterals,
   runRegressionGate,
   type RegressionExec,
 } from './regression-gate';
@@ -30,6 +32,7 @@ import {
   evaluateHandoffRegressionGate,
   HANDOFF_REGRESSION_BUDGET_MS,
   REGRESSION_GATE_BOUNCES_PER_SESSION,
+  settleBackgroundRegressionGate,
 } from './regression-gate-handoff';
 
 const roots: string[] = [];
@@ -1427,6 +1430,31 @@ describe('falha de carga da suíte (F-199)', () => {
 });
 
 describe('evaluateHandoffRegressionGate', () => {
+  it('destaca a execução: o handoff recebe running e o recibo final carrega falhas', async () => {
+    const { root, scope } = project();
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    const { exec } = fakeVitest(['src/a.test.ts']);
+    const verdict = await evaluateHandoffRegressionGate(
+      { sessionId: 'sess-background', scope, background: true },
+      { exec, enabled: () => true },
+    );
+    expect(verdict).toMatchObject({ kind: 'accepted', unverified: true });
+    expect(verdict.kind === 'accepted' && verdict.artifact?.payload.status).toBe('running');
+    expect(exec).not.toHaveBeenCalled();
+
+    const saved: Array<{ handoffId: string; runId: string; status: string; failures: string[] }> = [];
+    settleBackgroundRegressionGate(verdict, 'handoff-background', {
+      replaceBackgroundRegressionArtifact: (handoffId, runId, artifact) => {
+        saved.push({ handoffId, runId, status: artifact.payload.status, failures: artifact.payload.failures.map((failure) => failure.file) });
+        return true;
+      },
+    });
+    await vi.waitFor(() => expect(saved).toHaveLength(1));
+    expect(saved).toEqual([expect.objectContaining({
+      handoffId: 'handoff-background', status: 'failed', failures: ['src/a.test.ts'],
+    })]);
+  });
+
   it('falha bloqueia a aceitação: devolve ao agente e, esgotado, nunca vira success', async () => {
     const { root, scope } = project();
     write(root, 'src/a.ts', 'export const a = 2;\n');
@@ -1768,19 +1796,60 @@ describe('prazo do mapa de imports (F-1533)', () => {
     expect(mapMs).toBeLessThan(MIN_TEST_BUDGET_MS);
   });
 
-  it('o cache de imports invalida por mtime e não serve grafo velho', async () => {
+  it('o cache de imports invalida por hash mesmo com tamanho e mtime preservados', async () => {
     const { root, scope } = project();
     const first = await computeImpactedTests(scope, ['src/a.ts']);
     // b.test.ts importa b, que importa a: alcançado pelo grafo reverso.
     expect(first.tests).toContain('src/b.test.ts');
 
-    // Mesmo NÚMERO DE BYTES, conteúdo sem o import: só o mtime pode invalidar
-    // o cache (24 chars + \n nas duas pontas).
+    const original = fs.statSync(path.join(root, 'src/b.test.ts'));
+    // Mesmo número de bytes E mesmo mtime: cópia/restauração rápida não pode
+    // devolver o fato de import antigo só porque o relógio não mudou.
     write(root, 'src/b.test.ts', 'export const zz = 00000;\n');
-    const bumped = new Date(Date.now() + 5_000);
-    fs.utimesSync(path.join(root, 'src/b.test.ts'), bumped, bumped);
+    fs.utimesSync(path.join(root, 'src/b.test.ts'), original.atime, original.mtime);
 
     const second = await computeImpactedTests(scope, ['src/a.ts']);
     expect(second.tests).not.toContain('src/b.test.ts');
+  });
+
+  it('prioriza importadores diretos e expectativas textuais antes dos indiretos', () => {
+    const selected = prioritizeRegressionTests({
+      tests: ['src/indirect.test.ts', 'src/literal.test.ts', 'src/direct.test.ts'],
+      distances: new Map([
+        ['src/indirect.test.ts', 2],
+        ['src/literal.test.ts', 1],
+        ['src/direct.test.ts', 1],
+      ]),
+      literalTests: new Set(['src/literal.test.ts']),
+      maxTestFiles: 2,
+    });
+    expect(selected.tests).toEqual(['src/literal.test.ts', 'src/direct.test.ts']);
+    expect(selected.overflow).toEqual(['src/indirect.test.ts']);
+  });
+
+  it('seleciona teste sem import quando ele contém literal alterada no diff', async () => {
+    const { root, scope } = project();
+    write(root, 'src/a.ts', 'export const state = "Dormindo";\n');
+    write(root, 'tests/mission-copy.test.ts', 'expect(label).toBe("Dormindo");\n');
+    const git = new ProcessGitRunner();
+    git.run(root, ['add', '-A']);
+    git.run(root, ['commit', '-qm', 'fixture literal']);
+    write(root, 'src/a.ts', 'export const state = "Interrompida";\n');
+
+    const literals = regressionDiffLiterals(git.run(root, ['diff', '--unified=0', 'HEAD']).stdout);
+    expect(literals).toContain('Dormindo');
+    expect(literals).toContain('Interrompida');
+    const impacted = await computeImpactedTests(
+      scope,
+      ['src/a.ts'],
+      [],
+      [],
+      false,
+      undefined,
+      undefined,
+      literals,
+    );
+    expect(impacted.tests).toContain('tests/mission-copy.test.ts');
+    expect(impacted.literalTests).toEqual(['tests/mission-copy.test.ts']);
   });
 });
