@@ -348,6 +348,26 @@ export function videoRequestProblem(
   return null;
 }
 
+/** Tokens que a resposta do Gemini Omni informa em `usage`. */
+export interface GeminiOmniUsage {
+  readonly inputTokens: number;
+  readonly videoTokens: number;
+  /** Saída de texto mais o raciocínio (cobrado como saída de texto). */
+  readonly textTokens: number;
+}
+
+/**
+ * O Gemini Omni cobra por token (`ai.google.dev/gemini-api/docs/pricing`,
+ * 16/10/2026, Standard pago, por milhão): entrada US$ 1,50; saída «including
+ * thinking tokens» US$ 9,00 de texto e US$ 17,50 de vídeo. A tabela por
+ * segundo arredonda (360p = 1.930 tokens/s = US$ 0,0338/s, não 0,03): com o
+ * `usage` da resposta, o custo é o que o Google cobra.
+ */
+export function geminiOmniCostUsd(usage: GeminiOmniUsage): number {
+  const usd = (usage.inputTokens * 1.5 + usage.textTokens * 9 + usage.videoTokens * 17.5) / 1_000_000;
+  return Number(usd.toFixed(4));
+}
+
 /**
  * Preço de lista por segundo na resolução (ou na padrão); `null` para modelo
  * cobrado por vídeo ou sem preço naquela resolução.

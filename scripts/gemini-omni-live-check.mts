@@ -66,7 +66,11 @@ const loggingFetch: typeof fetch = async (input, init) => {
   const res = await fetch(input, init);
   const where = url.replace(/\?.*$/u, '');
   console.log(`${init?.method ?? 'GET'} ${where} → HTTP ${res.status} em ${Date.now() - t0} ms`);
-  if (url.endsWith('/interactions')) {
+  if (url.endsWith('/interactions') && !res.ok) {
+    // O corpo de erro do Google não ecoa a chave: traz a cota recusada
+    // (`quotaId`, `quotaMetric`) e, às vezes, o projeto que consumiu a chamada.
+    console.log((await res.clone().text().catch(() => '<corpo ilegível>')).slice(0, 4000));
+  } else if (url.endsWith('/interactions')) {
     const body = (await res.clone().json().catch(() => null)) as Record<string, unknown> | null;
     console.log(JSON.stringify(body ? describeInteraction(body) : '<corpo ilegível>', null, 2));
   } else if (/\/files\/[^/:]+$/u.test(where)) {

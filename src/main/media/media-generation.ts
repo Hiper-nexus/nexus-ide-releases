@@ -16,6 +16,14 @@ import {
 } from './media-download';
 import { mp4DurationSeconds } from './mp4-duration';
 import {
+  extractGeminiOmniOutput,
+  geminiOmniRequest,
+  geminiOmniTransportError,
+  GEMINI_HOST,
+  isGeminiFileTarget,
+  isGeminiOmniModel,
+} from './gemini-omni-interactions';
+import {
   readMediaInput,
   writeMediaOutput,
   type MediaInputFile,
@@ -27,8 +35,10 @@ import {
 import { geminiImageAspect, openaiImageSize } from './media-aspect';
 import { mediaHttpError, mediaServiceName } from './media-errors';
 import {
+  geminiOmniCostUsd,
   videoModelSpec,
   videoRequestProblem,
+  type GeminiOmniUsage,
 } from '../../shared/media-video-models';
 import {
   getVideoJob,
@@ -1086,152 +1096,10 @@ async function downloadGoogleVeoBytes(
 
 // ── Video · Gemini Omni (Interactions API) ───────────────────────────────────
 //
-// F-1587 — ai.google.dev/gemini-api/docs/omni e a referência
-// ai.google.dev/api/interactions-api, conferidas em 19/10/2026. Um pedido
-// síncrono: o vídeo volta na resposta (`steps[].content[]`, item `video`),
-// em base64 ou, com `delivery: "uri"` (o recomendado acima de 4 MB), como
-// arquivo da Files API que fica ACTIVE e é baixado com a chave. Não há campo
-// de duração: o modelo decide, e o custo usa a duração do MP4 recebido.
-
-const GEMINI_HOST = 'generativelanguage.googleapis.com';
-const GEMINI_FILE_ID = /(?:^|\/)files\/([A-Za-z0-9_-]{1,128})(?::download)?(?:[?#]|$)/u;
-
-export function isGeminiOmniModel(model: string): boolean {
-  return model.startsWith('gemini-omni-');
-}
-
-function omniImagePart(image: MediaInputFile): Record<string, string> {
-  const { mimeType, data } = fileToInlineData(image);
-  return { type: 'image', data, mime_type: mimeType };
-}
-
-/**
- * Corpo do `POST /v1beta/interactions`. Imagens vão antes do texto, e o
- * papel de cada uma é dito no início do prompt pela sintaxe declarativa da
- * documentação (`[# Sources <FIRST_FRAME>@Image1]`, `[# References
- * <IMAGE_REF_0>@Image2]`), em vez de deixar o modelo adivinhar.
- */
-export function geminiOmniRequest(
-  req: VideoRequest,
-  model: string,
-  image?: MediaInputFile,
-  endImage?: MediaInputFile,
-  referenceImages: MediaInputFile[] = [],
-): Record<string, unknown> {
-  if (endImage && !image) {
-    throw new Error(
-      `${model} usa a imagem final junto da inicial: informe também a imagem inicial (imagePath).`,
-    );
-  }
-  const responseFormat: Record<string, string> = { type: 'video', delivery: 'uri' };
-  if (req.aspectRatio) responseFormat.aspect_ratio = req.aspectRatio;
-  if (req.resolution) responseFormat.resolution = req.resolution;
-
-  const images = [image, endImage, ...referenceImages].filter(
-    (file): file is MediaInputFile => file !== undefined,
-  );
-  let input: string | Array<Record<string, string>> = req.prompt;
-  let task: string | undefined = 'text_to_video';
-  if (images.length > 0) {
-    const sources: string[] = [];
-    if (image) sources.push('<FIRST_FRAME>@Image1');
-    if (endImage) sources.push('<LAST_FRAME>@Image2');
-    const firstReference = sources.length + 1;
-    const references = referenceImages.map(
-      (_ref, index) => `<IMAGE_REF_${index}>@Image${firstReference + index}`,
-    );
-    const roles = [
-      sources.length > 0 ? `[# Sources ${sources.join(' ')}]` : '',
-      references.length > 0 ? `[# References ${references.join(' ')}]` : '',
-    ].filter(Boolean);
-    input = [
-      ...images.map(omniImagePart),
-      { type: 'text', text: `${roles.join(' ')}\n${req.prompt}` },
-    ];
-    // Moldura e referência juntas: o modelo infere a tarefa pelos papéis.
-    task =
-      references.length === 0
-        ? 'image_to_video'
-        : sources.length === 0
-          ? 'reference_to_video'
-          : undefined;
-  }
-  return {
-    model,
-    input,
-    response_format: responseFormat,
-    ...(task ? { generation_config: { video_config: { task } } } : {}),
-    // Sem guardar a interação no Google: o Nexus não continua o vídeo em
-    // outro turno, e a documentação diz que assim a geração sai mais rápido.
-    store: false,
-  };
-}
-
-export interface GeminiOmniOutput {
-  /** Vídeo em base64 (entrega inline). */
-  data?: string;
-  /** Id da Files API (`files/<id>`), da entrega por URI. */
-  fileId?: string;
-  /** URI que não é da Files API: baixada sem a chave, pela lista de hosts. */
-  uri?: string;
-  interactionId?: string;
-  status?: string;
-  /** Texto do modelo (recusa, explicação) para a frase de erro. */
-  text: string;
-}
-
-function omniVideoFrom(item: unknown): { data?: string; uri?: string } | null {
-  if (!item || typeof item !== 'object') return null;
-  const record = item as Record<string, unknown>;
-  const data = typeof record.data === 'string' && record.data ? record.data : undefined;
-  const uri = typeof record.uri === 'string' && record.uri ? record.uri : undefined;
-  return data || uri ? { data, uri } : null;
-}
-
-/**
- * Lê a interação: o último item `video` dos passos `model_output` (a forma
- * documentada), de `outputs[]` (a forma mais antiga da Interactions API) ou de
- * `output_video` (o atalho que o exemplo em shell da documentação lê).
- */
-export function extractGeminiOmniOutput(body: Record<string, unknown>): GeminiOmniOutput {
-  const items: unknown[] = [];
-  if (Array.isArray(body.steps)) {
-    for (const step of body.steps as Array<Record<string, unknown>>) {
-      if (step?.type === 'model_output' && Array.isArray(step.content)) {
-        items.push(...step.content);
-      }
-    }
-  }
-  if (Array.isArray(body.outputs)) items.push(...body.outputs);
-  let video: { data?: string; uri?: string } | null = null;
-  const texts: string[] = [];
-  for (const item of items) {
-    const record = item as Record<string, unknown> | null;
-    if (record?.type === 'video') video = omniVideoFrom(record) ?? video;
-    if (record?.type === 'text' && typeof record.text === 'string') texts.push(record.text);
-  }
-  video ??= omniVideoFrom(body.output_video);
-  const fileId = video?.uri ? GEMINI_FILE_ID.exec(video.uri)?.[1] : undefined;
-  return {
-    ...(video?.data ? { data: video.data } : {}),
-    ...(fileId ? { fileId: `files/${fileId}` } : video?.uri ? { uri: video.uri } : {}),
-    ...(typeof body.id === 'string' ? { interactionId: body.id } : {}),
-    ...(typeof body.status === 'string' ? { status: body.status } : {}),
-    text: texts.join(' ').replace(/\s+/gu, ' ').trim().slice(0, 300),
-  };
-}
-
-/** O `fetch` do Node desiste depois de 5 min sem cabeçalho de resposta. */
-function omniTransportError(err: unknown): unknown {
-  const code = (err as { cause?: { code?: unknown } } | null)?.cause?.code;
-  if (code === 'UND_ERR_HEADERS_TIMEOUT') {
-    return new Error(
-      'O Google não terminou o vídeo em 5 minutos e a conexão caiu; o vídeo não chegou. ' +
-        'Tente de novo em 720p ou 360p, que saem mais rápido.',
-    );
-  }
-  return err;
-}
+// F-1587 — um pedido síncrono (contrato em `gemini-omni-interactions.ts`): o
+// vídeo volta na resposta em base64 ou, com `delivery: "uri"` (o recomendado
+// acima de 4 MB), como arquivo da Files API que fica ACTIVE e é baixado com a
+// chave. Não há campo de duração: o modelo decide.
 
 /** Espera o arquivo da Files API ficar ACTIVE (a documentação manda pollar). */
 async function waitGeminiFileActive(
@@ -1287,6 +1155,11 @@ async function downloadGeminiOmniFile(
   return data;
 }
 
+/**
+ * Custo do que o Google cobrou (`usage`) quando a resposta traz os tokens;
+ * sem eles (retomada pela Files API), a tabela por segundo com a duração
+ * lida do MP4.
+ */
 function omniResult(
   def: MediaProviderDef,
   model: string,
@@ -1294,12 +1167,21 @@ function omniResult(
   startedAt: number,
   deps: MediaDeps,
   data: Buffer,
-  resolution: string | undefined,
-  jobId?: string,
+  billing: { resolution?: string; jobId?: string; usage?: GeminiOmniUsage },
 ): MediaGenerationResult {
   const seconds = mp4DurationSeconds(data) ?? undefined;
+  const base = result(
+    def,
+    model,
+    outPath,
+    startedAt,
+    deps,
+    { seconds, resolution: billing.resolution },
+    billing.jobId,
+  );
   return {
-    ...result(def, model, outPath, startedAt, deps, { seconds, resolution }, jobId),
+    ...base,
+    ...(billing.usage ? { estimatedCostUsd: geminiOmniCostUsd(billing.usage) } : {}),
     ...(seconds !== undefined ? { videoDurationSeconds: seconds } : {}),
   };
 }
@@ -1313,12 +1195,12 @@ async function generateVideoGeminiOmni(
   startedAt: number,
 ): Promise<MediaGenerationResult> {
   const outPath = resolveOutPath(req.outPath, req.baseDir, 'mp4', deps.now);
-  const image = req.imagePath ? readMediaInput(req.imagePath, req.baseDir) : undefined;
-  const endImage = req.endImagePath ? readMediaInput(req.endImagePath, req.baseDir) : undefined;
-  const referenceImages = (req.referenceImagePaths ?? [])
-    .slice(0, MAX_REFERENCE_IMAGES)
-    .map((p) => readMediaInput(p, req.baseDir));
-  const body = geminiOmniRequest(req, model, image, endImage, referenceImages);
+  const inline = (file: string) => fileToInlineData(readMediaInput(file, req.baseDir));
+  const body = geminiOmniRequest(req, model, {
+    start: req.imagePath ? inline(req.imagePath) : undefined,
+    end: req.endImagePath ? inline(req.endImagePath) : undefined,
+    references: (req.referenceImagePaths ?? []).slice(0, MAX_REFERENCE_IMAGES).map(inline),
+  });
 
   assertMediaAuthorityCurrent(req);
   let create: Response;
@@ -1331,7 +1213,7 @@ async function generateVideoGeminiOmni(
     });
   } catch (err) {
     assertMediaAuthorityCurrent(req);
-    throw omniTransportError(err);
+    throw geminiOmniTransportError(err);
   }
   assertMediaAuthorityCurrent(req);
   if (!create.ok) throw await mediaHttpError(create, def.id);
@@ -1342,7 +1224,10 @@ async function generateVideoGeminiOmni(
     const data = Buffer.from(output.data, 'base64');
     writeMediaOutput(outPath, req.baseDir, data);
     assertMediaAuthorityCurrent(req);
-    return omniResult(def, model, outPath, startedAt, deps, data, req.resolution);
+    return omniResult(def, model, outPath, startedAt, deps, data, {
+      resolution: req.resolution,
+      usage: output.usage,
+    });
   }
   if (output.uri) {
     const data = await downloadProviderAsset(
@@ -1355,7 +1240,10 @@ async function generateVideoGeminiOmni(
     assertMediaAuthorityCurrent(req);
     writeMediaOutput(outPath, req.baseDir, data);
     assertMediaAuthorityCurrent(req);
-    return omniResult(def, model, outPath, startedAt, deps, data, req.resolution);
+    return omniResult(def, model, outPath, startedAt, deps, data, {
+      resolution: req.resolution,
+      usage: output.usage,
+    });
   }
   if (!output.fileId) {
     const status = output.status && output.status !== 'completed' ? ` (status: ${output.status})` : '';
@@ -1382,7 +1270,11 @@ async function generateVideoGeminiOmni(
     writeMediaOutput(outPath, req.baseDir, data);
     assertMediaAuthorityCurrent(req);
     saveVideoJob(req.baseDir, { ...jobRecord, status: 'completed' });
-    return omniResult(def, model, outPath, startedAt, deps, data, req.resolution, jobRecord.jobId);
+    return omniResult(def, model, outPath, startedAt, deps, data, {
+      resolution: req.resolution,
+      jobId: jobRecord.jobId,
+      usage: output.usage,
+    });
   } catch (err) {
     assertMediaAuthorityCurrent(req);
     if (err instanceof MediaJobTimeoutError) throw err;
@@ -1410,7 +1302,7 @@ async function generateVideoGoogle(
           `.nexus/media/video-jobs.json`,
       );
     }
-    if (GEMINI_FILE_ID.test(saved.pollTarget)) {
+    if (isGeminiFileTarget(saved.pollTarget)) {
       // Gemini Omni: o vídeo já existe na Files API; só falta baixar.
       try {
         const data = await downloadGeminiOmniFile(saved.pollTarget, saved.jobId, key, deps, req);
@@ -1418,7 +1310,10 @@ async function generateVideoGoogle(
         writeMediaOutput(dest, req.baseDir, data);
         assertMediaAuthorityCurrent(req);
         saveVideoJob(req.baseDir, { ...saved, status: 'completed' });
-        return omniResult(def, saved.model, dest, startedAt, deps, data, req.resolution, saved.jobId);
+        return omniResult(def, saved.model, dest, startedAt, deps, data, {
+          resolution: req.resolution,
+          jobId: saved.jobId,
+        });
       } catch (err) {
         assertMediaAuthorityCurrent(req);
         if (err instanceof MediaJobTimeoutError) throw err;

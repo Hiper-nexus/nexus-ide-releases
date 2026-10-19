@@ -3,6 +3,7 @@ import {
   VIDEO_MODEL_SPECS,
   allowedVideoDurations,
   estimateVideoCostUsd,
+  geminiOmniCostUsd,
   isVideoModelRetired,
   modelPicksVideoDuration,
   videoCostPerSecondUsd,
@@ -125,6 +126,13 @@ describe('media-video-models (F-1585)', () => {
     expect(estimateVideoCostUsd('gemini-omni-1.1-flash', { seconds: 8, resolution: '4k' })).toBe(2.4);
     expect(estimateVideoCostUsd('gemini-omni-1.1-flash', { seconds: 8.04 })).toBe(0.804);
     expect(videoCostPerSecondUsd('minimax/hailuo-2.3')).toBeNull();
+  });
+
+  it('F-1587: custo do Omni pelos tokens que o Google cobrou (geração real de 19/10/2026)', () => {
+    // 360p, 10 s: 19.310 tokens de vídeo = 1.930/s (1/3 dos 5.792/s do 720p);
+    // a tabela por segundo arredonda para $0.30, o Google cobra $0.3407.
+    expect(geminiOmniCostUsd({ inputTokens: 22, videoTokens: 19310, textTokens: 304 })).toBe(0.3407);
+    expect(geminiOmniCostUsd({ inputTokens: 0, videoTokens: 57920, textTokens: 0 })).toBe(1.0136);
   });
 
   it('custo de lista por segundo ou por vídeo; combinação sem preço é null', () => {

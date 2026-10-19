@@ -12,8 +12,6 @@ import {
   generateAudio,
   generateImage,
   generateVideo,
-  extractGeminiOmniOutput,
-  geminiOmniRequest,
   MediaJobTimeoutError,
   replicateEndImageField,
   replicateImageField,
@@ -1029,18 +1027,33 @@ function omniInteraction(content: unknown[], extra: Record<string, unknown> = {}
   };
 }
 
+/** `usage` da geração real de 19/10/2026 (360p, 10 s, prompt de 22 tokens). */
+const LIVE_USAGE = {
+  total_tokens: 19636,
+  total_input_tokens: 22,
+  input_tokens_by_modality: [{ modality: 'text', tokens: 22 }],
+  total_cached_tokens: 0,
+  total_output_tokens: 19310,
+  output_tokens_by_modality: [{ modality: 'video', tokens: 19310 }],
+  total_tool_use_tokens: 0,
+  total_thought_tokens: 304,
+};
+
 describe('F-1587: Gemini Omni Flash pelo google-video', () => {
-  it('texto → vídeo: POST /interactions sem duração, Files API até ACTIVE e custo pela duração do MP4', async () => {
+  it('texto → vídeo: POST /interactions sem duração, Files API até ACTIVE e custo pelos tokens cobrados', async () => {
     const mp4 = fakeMp4(8);
     const { deps, calls } = fakeDeps([
       {
-        json: omniInteraction([
-          {
-            type: 'video',
-            mime_type: 'video/mp4',
-            uri: `${GEMINI}/files/omni123:download?alt=media`,
-          },
-        ]),
+        json: omniInteraction(
+          [
+            {
+              type: 'video',
+              mime_type: 'video/mp4',
+              uri: `${GEMINI}/files/omni123:download?alt=media`,
+            },
+          ],
+          { usage: LIVE_USAGE, service_tier: 'standard' },
+        ),
       },
       { json: { name: 'files/omni123', state: 'PROCESSING' } },
       { json: { name: 'files/omni123', state: 'ACTIVE' } },
@@ -1066,7 +1079,10 @@ describe('F-1587: Gemini Omni Flash pelo google-video', () => {
       input: 'um gato no telhado',
       response_format: { type: 'video', delivery: 'uri', aspect_ratio: '9:16', resolution: '1080p' },
       generation_config: { video_config: { task: 'text_to_video' } },
-      store: false,
+      // O Google recusa entrega por URI sem guardar a interação (HTTP 400 ao
+      // vivo em 19/10/2026: "store=true is required when response format has
+      // video delivery set to URI").
+      store: true,
     });
     expect(calls[1]?.url).toBe(`${GEMINI}/files/omni123`);
     expect(calls[2]?.url).toBe(`${GEMINI}/files/omni123`);
@@ -1078,8 +1094,9 @@ describe('F-1587: Gemini Omni Flash pelo google-video', () => {
       provider: 'google-video',
       model: 'gemini-omni-1.1-flash',
       videoDurationSeconds: 8,
-      // 8 s × $0.15/s em 1080p (tabela do Google, 27/08/2026).
-      estimatedCostUsd: 1.2,
+      // Pelos tokens cobrados, não pela tabela por segundo: 22 × $1.50/M +
+      // 304 × $9/M (raciocínio) + 19.310 × $17.50/M (vídeo) = $0.3407.
+      estimatedCostUsd: 0.3407,
       jobId: 'v1_omni-1',
     });
     expect(getVideoJob(dir, 'v1_omni-1')).toMatchObject({
@@ -1140,58 +1157,6 @@ describe('F-1587: Gemini Omni Flash pelo google-video', () => {
       { type: 'text', text: '[# Sources <FIRST_FRAME>@Image1]\nanime esta cena' },
     ]);
     expect(body.generation_config).toEqual({ video_config: { task: 'image_to_video' } });
-  });
-
-  it('moldura final, referências e combinações seguem a sintaxe da documentação', () => {
-    const file = (name: string) => ({ path: path.join(dir, name), data: Buffer.from(name) });
-    const req = { prompt: 'p', baseDir: dir };
-    const both = geminiOmniRequest(req, 'gemini-omni-1.1-flash', file('a.jpg'), file('b.jpg'));
-    expect((both.input as Array<{ text?: string }>).at(-1)?.text).toBe(
-      '[# Sources <FIRST_FRAME>@Image1 <LAST_FRAME>@Image2]\np',
-    );
-    expect(both.generation_config).toEqual({ video_config: { task: 'image_to_video' } });
-
-    const refs = geminiOmniRequest(req, 'gemini-omni-1.1-flash', undefined, undefined, [
-      file('r1.png'),
-      file('r2.webp'),
-    ]);
-    expect(refs.input).toEqual([
-      { type: 'image', data: Buffer.from('r1.png').toString('base64'), mime_type: 'image/png' },
-      { type: 'image', data: Buffer.from('r2.webp').toString('base64'), mime_type: 'image/webp' },
-      { type: 'text', text: '[# References <IMAGE_REF_0>@Image1 <IMAGE_REF_1>@Image2]\np' },
-    ]);
-    expect(refs.generation_config).toEqual({ video_config: { task: 'reference_to_video' } });
-
-    const mixed = geminiOmniRequest(req, 'gemini-omni-1.1-flash', file('a.jpg'), undefined, [
-      file('r.png'),
-    ]);
-    expect((mixed.input as Array<{ text?: string }>).at(-1)?.text).toBe(
-      '[# Sources <FIRST_FRAME>@Image1] [# References <IMAGE_REF_0>@Image2]\np',
-    );
-    expect(mixed.generation_config).toBeUndefined();
-
-    expect(() =>
-      geminiOmniRequest(req, 'gemini-omni-1.1-flash', undefined, file('b.jpg')),
-    ).toThrow('usa a imagem final junto da inicial');
-  });
-
-  it('lê as outras formas da resposta: outputs[], output_video e URI fora da Files API', () => {
-    expect(extractGeminiOmniOutput({ outputs: [{ type: 'video', data: 'QUJD' }] })).toMatchObject({
-      data: 'QUJD',
-    });
-    expect(extractGeminiOmniOutput({ output_video: { uri: 'files/xyz-9' } })).toMatchObject({
-      fileId: 'files/xyz-9',
-    });
-    expect(
-      extractGeminiOmniOutput({
-        steps: [
-          {
-            type: 'model_output',
-            content: [{ type: 'video', uri: 'https://video.googleusercontent.com/v.mp4' }],
-          },
-        ],
-      }),
-    ).toMatchObject({ uri: 'https://video.googleusercontent.com/v.mp4' });
   });
 
   it('resposta sem vídeo diz o que o modelo respondeu e não grava nada', async () => {
