@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.76.311 — Retomada no Linux
+
+A tag 0.76.310 é o candidato macOS. Este pacote leva o desktop Linux.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+No desktop Linux, em relação à 0.76.309:
+
+- **Retomar missão à vista**. Depois de reinício, crash ou travamento, a missão aparece como Interrompida num cartão único, com Retomar missão em destaque na barra do pane e na paleta de comandos. Os avisos do terminal apontam para esse botão, Fechar avisa quando é o último pane da missão, e depois de 20 s restaurando os agentes o Nexus diz o que está esperando.
+- **Retomada mais confiável**. A entrega de handoff depois do reinício não se perde nem duplica, a equipe parada há muito tempo aparece no quadro e worker travado sem telemetria é detectado. Um clique duplo em Retomar reabre a missão uma vez só, e o cartão de interrompida não corta mais o grid de panes.
+- **Login expirado troca de conta**. Quando o Claude mostra "Login expired · Please run /login", o Nexus troca a conta do pane para outra pronta em vez de deixar o Maestro parado.
+- **Workers sem tela de plano**. Workers da família Claude nascem em modo direto, sem plan mode: não param mais em "aprovar plano".
+- **JARVIS reage à própria voz**. As partículas se mexem com a voz ao falar e com o microfone ao ouvir, e a voz continua audível mesmo se o medidor falhar.
+- **Assinatura antes de API key**. Quando o mesmo modelo chega por duas rotas, como o DeepSeek pelo Qwen Code no plano do operador e pelo adapter DeepSeek com API key, o Nexus prefere a rota da assinatura. A API key fica de reserva para quando a assinatura estiver sem credencial, em cooldown ou falhando.
+- **Missões mais rápidas**. Comandos de leitura pesados (typecheck, testes) rodam em paralelo e só build e instalação ficam exclusivos. Um pedido espera na fila com ticket em vez de falhar. O gate de regressão guarda o mapa de imports em disco e escolhe os testes pelo nome do arquivo, e worker parado é reaberto uma vez em vez de segurar a esteira.
+- **Spawn de worker resiste a Git transitório**. A criação da worktree repete falhas passageiras do Git e diz a causa quando desiste.
+- **Rota confere a credencial**. O Nexus testa a credencial da CLI escolhida antes de abrir o worker e evita CLI com login recusado. A checagem de login do spawn é a mesma da tela e da rota; se as duas discordarem, o Nexus avisa em vez de trocar de CLI escondido.
+- **Recibo diz a CLI que subiu**. Quando a credencial de uma CLI é recusada e o assento passa para outra, o recibo do spawn, o título do pane e a lista de panes mostram a CLI e o modelo reais, com o motivo da troca. A segunda recusa dentro de 1 h liga de fato a saída da rota até a credencial voltar. A sonda de recuperação roda no máximo uma vez por CLI a cada 10 min.
+- **Queda de rede troca de CLI**. Uma CLI presa no contador "check your network" não conta mais como trabalhando: esgotada a espera, o Nexus marca falha do provedor e reabre a tarefa em outra CLI.
+- **Git mais seguro e sem travar**. O supervisor usa o runner git seguro do Nexus, o diff do gate ignora textconv/ext-diff e as buscas do gate rodam assíncronas e com teto de tempo. A mensagem de fila pesada fica curta o bastante para chegar ao terminal.
+- **Esteira parada não insiste com o operador**. Enquanto o Maestro espera uma decisão sua, o aviso de esteira parada fica em silêncio; depois de 6 h sai um único lembrete no inspector. Uma segunda onda de tarefas prontas espera os 30 s de novo em vez de herdar o carimbo antigo.
+- **Fila pesada por repositório**. Build de outro repositório não segura mais typecheck e testes do Nexus.
+
 ## 0.76.310 — Retomada à vista no Mac
 
 Candidato macOS (`darwin-arm64`) assinado e notarizado. Em relação à 0.76.308 (último macOS):

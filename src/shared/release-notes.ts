@@ -11498,7 +11498,7 @@ export const RELEASE_076309: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076310: AppRelease = {
   version: '0.76.310',
   date: '2026-10-18',
   codename: 'Retomada à vista no Mac',
@@ -11524,5 +11524,31 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Instalador do Shot mais rígido', detail: 'O Nexus confere o Shot pelo requisito do codesign (identificador e equipe), só aceita asset do repositório oficial e nunca apaga o app antigo se a troca e a restauração falharem.' },
     { title: 'Fila pesada por repositório', detail: 'Build de outro repositório (ex.: o Shot) não segura mais typecheck e testes do Nexus.' },
     { title: 'Publicação do Mac resiste à main andando', detail: 'Se outra plataforma empurrar a main durante a publicação, o script atualiza e segue sem forçar nada.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.311',
+  date: '2026-10-19',
+  codename: 'Retomada no Linux',
+  summary: 'O desktop Linux recebe a retomada de missão à vista, a troca de conta quando o login expira, workers sem plan mode, a preferência pela assinatura, a voz do JARVIS nas partículas e missões mais rápidas. A tag 0.76.310 ficou no macOS.',
+  highlights: [
+    { title: 'Retomar missão à vista', detail: 'Depois de reinício, crash ou travamento, a missão aparece como Interrompida num cartão único, com Retomar missão em destaque na barra do pane e na paleta de comandos. Os avisos do terminal apontam para esse botão, Fechar avisa quando é o último pane da missão, e depois de 20 s restaurando os agentes o Nexus diz o que está esperando.' },
+    { title: 'Retomada mais confiável', detail: 'A entrega de handoff depois do reinício não se perde nem duplica, a equipe parada há muito tempo aparece no quadro e worker travado sem telemetria é detectado. Um clique duplo em Retomar reabre a missão uma vez só, e o cartão de interrompida não corta mais o grid de panes.' },
+    { title: 'Login expirado troca de conta', detail: 'Quando o Claude mostra "Login expired · Please run /login", o Nexus troca a conta do pane para outra pronta em vez de deixar o Maestro parado.' },
+    { title: 'Workers sem tela de plano', detail: 'Workers da família Claude nascem em modo direto, sem plan mode: não param mais em "aprovar plano".' },
+    { title: 'JARVIS reage à própria voz', detail: 'As partículas se mexem com a voz ao falar e com o microfone ao ouvir, e a voz continua audível mesmo se o medidor falhar.' },
+    { title: 'Assinatura antes de API key', detail: 'Quando o mesmo modelo chega por duas rotas, como o DeepSeek pelo Qwen Code no plano do operador e pelo adapter DeepSeek com API key, o Nexus prefere a rota da assinatura. A API key fica de reserva para quando a assinatura estiver sem credencial, em cooldown ou falhando.' },
+    { title: 'Missões mais rápidas', detail: 'Comandos de leitura pesados (typecheck, testes) rodam em paralelo e só build e instalação ficam exclusivos. Um pedido espera na fila com ticket em vez de falhar. O gate de regressão guarda o mapa de imports em disco e escolhe os testes pelo nome do arquivo, e worker parado é reaberto uma vez em vez de segurar a esteira.' },
+    { title: 'Pacote Linux', detail: 'A tag 0.76.310 é o candidato macOS e não recebe pacotes Linux. O desktop Linux sai na 0.76.311.' },
+  ],
+  fixes: [
+    { title: 'Spawn de worker resiste a Git transitório', detail: 'A criação da worktree repete falhas passageiras do Git e diz a causa quando desiste.' },
+    { title: 'Rota confere a credencial', detail: 'O Nexus testa a credencial da CLI escolhida antes de abrir o worker e evita CLI com login recusado. A checagem de login do spawn é a mesma da tela e da rota; se as duas discordarem, o Nexus avisa em vez de trocar de CLI escondido.' },
+    { title: 'Recibo diz a CLI que subiu', detail: 'Quando a credencial de uma CLI é recusada e o assento passa para outra, o recibo do spawn, o título do pane e a lista de panes mostram a CLI e o modelo reais, com o motivo da troca. A segunda recusa dentro de 1 h liga de fato a saída da rota até a credencial voltar. A sonda de recuperação roda no máximo uma vez por CLI a cada 10 min.' },
+    { title: 'Queda de rede troca de CLI', detail: 'Uma CLI presa no contador "check your network" não conta mais como trabalhando: esgotada a espera, o Nexus marca falha do provedor e reabre a tarefa em outra CLI.' },
+    { title: 'Git mais seguro e sem travar', detail: 'O supervisor usa o runner git seguro do Nexus, o diff do gate ignora textconv/ext-diff e as buscas do gate rodam assíncronas e com teto de tempo. A mensagem de fila pesada fica curta o bastante para chegar ao terminal.' },
+    { title: 'Esteira parada não insiste com o operador', detail: 'Enquanto o Maestro espera uma decisão sua, o aviso de esteira parada fica em silêncio; depois de 6 h sai um único lembrete no inspector. Uma segunda onda de tarefas prontas espera os 30 s de novo em vez de herdar o carimbo antigo.' },
+    { title: 'Fila pesada por repositório', detail: 'Build de outro repositório não segura mais typecheck e testes do Nexus.' },
   ],
 };
