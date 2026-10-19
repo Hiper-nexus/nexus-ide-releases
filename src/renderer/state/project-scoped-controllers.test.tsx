@@ -190,6 +190,44 @@ describe('project-scoped renderer controllers', () => {
     expect(api.usage.onChanged).toHaveBeenCalledOnce();
   });
 
+  it('F-1577: carrega as equipes salvas sem projeto e as mantém ao abrir e fechar um projeto', async () => {
+    const saved = [
+      { id: 'nexus-fullstack', name: 'Full-Stack', createdAt: '1', builtin: true, agents: [] },
+      { id: 'full-stack-gbx', name: 'Full-Stack - GBX', createdAt: '2', builtin: false, agents: [] },
+    ];
+    api.orch.listSquads.mockResolvedValue(saved as never);
+
+    mounted = mount();
+    await flush();
+    // O catálogo é global: lido no boot mesmo sem projeto autorizado.
+    expect(api.orch.listSquads).toHaveBeenCalledOnce();
+    expect(api.orch.listMissions).not.toHaveBeenCalled();
+    expect(useOrchStore.getState().squads).toEqual(saved);
+
+    act(() => {
+      setActiveWorkspacePath('/workspace/a');
+      useWorkspaceStore.setState({ current: workspace('/workspace/a') });
+    });
+    expect(useOrchStore.getState().squads).toEqual(saved);
+    await flush();
+    expect(useOrchStore.getState().squads).toEqual(saved);
+
+    act(() => {
+      setActiveWorkspacePath(null);
+      useWorkspaceStore.setState({ current: null });
+    });
+    await flush();
+    expect(useOrchStore.getState().squads).toEqual(saved);
+
+    const onSquadsChanged = api.orch.onSquadsChanged.mock.calls[0]?.[0] as
+      | ((squads: unknown[]) => void)
+      | undefined;
+    if (!onSquadsChanged) throw new Error('missing squads subscription');
+    const next = [...saved, { id: 'nova', name: 'Equipe nova', createdAt: '3', builtin: false, agents: [] }];
+    act(() => onSquadsChanged(next));
+    expect(useOrchStore.getState().squads).toEqual(next);
+  });
+
   it('waits for workspace hydration even when a current path is present', async () => {
     setActiveWorkspacePath('/workspace/a');
     useWorkspaceStore.setState({

@@ -13,6 +13,10 @@ import { getActiveWorkspacePath } from './active-workspace';
  * Renderer mirror of the orchestration domain (missions / handoffs / todos /
  * squads) plus pane→mission bindings. Project data is reset
  * and rehydrated whenever the main-authorized workspace changes.
+ *
+ * F-1577: `squads` NÃO é dado de projeto. O catálogo de equipes mora na
+ * tabela global do userData; ele é lido no boot (com ou sem projeto), aceito
+ * em todo broadcast e sobrevive à troca de workspace.
  */
 
 interface OrchState {
@@ -22,7 +26,10 @@ interface OrchState {
   missionSummariesHydrated: boolean;
   handoffs: Handoff[];
   todoLists: TodoList[];
+  /** Catálogo global de equipes (F-1577): independe do projeto aberto. */
   squads: Squad[];
+  /** Bumps em cada leitura/broadcast do catálogo; resposta atrasada cai. */
+  squadsEpoch: number;
   mcpInfo: McpRuntimeInfo | null;
   /**
    * paneId → missionId for panes spawned by the orchestration layer.
@@ -50,6 +57,8 @@ interface OrchState {
   crossWorkspaceEpoch: number;
 
   hydrate(workspacePath: string): Promise<void>;
+  /** Lê o catálogo global de equipes; não depende de workspace (F-1577). */
+  hydrateSquads(): Promise<void>;
   /** Refresca as missões ativas dos workspaces vizinhos (paths conhecidos). */
   hydrateCrossWorkspace(paths: readonly string[]): Promise<void>;
   resetProjectState(): void;
@@ -105,6 +114,7 @@ export const useOrchStore = create<OrchState>((set, get) => ({
   handoffs: [],
   todoLists: [],
   squads: [],
+  squadsEpoch: 0,
   mcpInfo: null,
   paneMissions: {},
   boundWorkspacePath: null,
@@ -129,6 +139,21 @@ export const useOrchStore = create<OrchState>((set, get) => ({
     set({ crossWorkspaceSummaries: next });
   },
 
+  hydrateSquads: async () => {
+    const epoch = get().squadsEpoch + 1;
+    set({ squadsEpoch: epoch });
+    try {
+      const squads = await window.nexus.orch.listSquads();
+      // Um broadcast que chegou durante a leitura é mais novo: ele vence.
+      if (get().squadsEpoch !== epoch) return;
+      set({ squads });
+    } catch (reason) {
+      if (get().squadsEpoch === epoch) {
+        console.warn('[orch] failed to hydrate squads catalog:', reason);
+      }
+    }
+  },
+
   hydrate: async (workspacePath) => {
     if (getActiveWorkspacePath() !== workspacePath) return;
     const epoch = get().workspaceEpoch + 1;
@@ -145,7 +170,6 @@ export const useOrchStore = create<OrchState>((set, get) => ({
       missionSummaries: stateBeforeHydration.missionSummaries,
       handoffs: stateBeforeHydration.handoffs,
       todoLists: stateBeforeHydration.todoLists,
-      squads: stateBeforeHydration.squads,
       mcpInfo: stateBeforeHydration.mcpInfo,
     };
 
@@ -173,11 +197,13 @@ export const useOrchStore = create<OrchState>((set, get) => ({
           }
         },
       );
+    // F-1577: o catálogo é global; abrir um projeto só o relê, sem amarrá-lo
+    // à época do workspace.
+    const squadsHydration = get().hydrateSquads();
     // Começa os auxiliares em paralelo, mas observa suas rejeições desde já.
     const auxiliaryHydration = Promise.allSettled([
       window.nexus.orch.listHandoffs(),
       window.nexus.orch.getTodos(),
-      window.nexus.orch.listSquads(),
       window.nexus.orch.getMcpInfo(),
     ] as const);
     let missions: Mission[];
@@ -190,7 +216,7 @@ export const useOrchStore = create<OrchState>((set, get) => ({
       ) {
         console.warn('[orch] failed to hydrate legacy mission state:', reason);
       }
-      await canonicalHydration;
+      await Promise.all([canonicalHydration, squadsHydration]);
       return;
     }
     if (getActiveWorkspacePath() !== workspacePath) return;
@@ -199,12 +225,12 @@ export const useOrchStore = create<OrchState>((set, get) => ({
       set({ missions });
     }
 
-    const [handoffs, todoLists, squads, mcpInfo] = await auxiliaryHydration;
+    const [handoffs, todoLists, mcpInfo] = await auxiliaryHydration;
     if (getActiveWorkspacePath() !== workspacePath) return;
     if (get().workspaceEpoch !== epoch) return;
 
     const auxiliaryPatch: Partial<
-      Pick<OrchState, 'handoffs' | 'todoLists' | 'squads' | 'mcpInfo'>
+      Pick<OrchState, 'handoffs' | 'todoLists' | 'mcpInfo'>
     > = {};
     const current = get();
     if (
@@ -234,19 +260,6 @@ export const useOrchStore = create<OrchState>((set, get) => ({
       }
     }
     if (
-      squads.status === 'fulfilled' &&
-      current.squads === hydrationBaseline.squads
-    ) {
-      auxiliaryPatch.squads = squads.value;
-    } else {
-      if (squads.status === 'rejected') {
-        console.warn(
-          '[orch] failed to hydrate auxiliary squads:',
-          squads.reason,
-        );
-      }
-    }
-    if (
       mcpInfo.status === 'fulfilled' &&
       current.mcpInfo === hydrationBaseline.mcpInfo
     ) {
@@ -260,7 +273,7 @@ export const useOrchStore = create<OrchState>((set, get) => ({
       }
     }
     if (Object.keys(auxiliaryPatch).length > 0) set(auxiliaryPatch);
-    await canonicalHydration;
+    await Promise.all([canonicalHydration, squadsHydration]);
   },
 
   resetProjectState: () =>
@@ -270,7 +283,7 @@ export const useOrchStore = create<OrchState>((set, get) => ({
       missionSummariesHydrated: false,
       handoffs: [],
       todoLists: [],
-      squads: [],
+      // F-1577: `squads` fica — o catálogo é global, não do projeto que sai.
       paneMissions: {},
       boundWorkspacePath: null,
       workspaceEpoch: s.workspaceEpoch + 1,
@@ -327,9 +340,7 @@ export const useOrchStore = create<OrchState>((set, get) => ({
     if (!acceptsWorkspacePayload(path)) return;
     set({ todoLists });
   },
-  setSquads: (squads) => {
-    const path = getActiveWorkspacePath();
-    if (!acceptsWorkspacePayload(path)) return;
-    set({ squads });
-  },
+  // F-1577: broadcast do catálogo global vale com ou sem projeto aberto.
+  setSquads: (squads) =>
+    set((s) => ({ squads, squadsEpoch: s.squadsEpoch + 1 })),
 }));

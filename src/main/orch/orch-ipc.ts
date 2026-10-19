@@ -2,10 +2,13 @@ import { assertLicenseAccess } from '../license-enforcement';
 import { licenseFailure } from '../../shared/license-errors';
 import { observePrivateMissionCommand } from '../private-mission-command-probe';
 import { registerMissionCheckpointIpc } from "./mission-checkpoint-ipc";
-import { handleTrusted } from "../security/trusted-ipc";
+import {
+  handleTrusted,
+  isLiveTrustedMainWindowSender,
+} from "../security/trusted-ipc";
 import { BrowserWindow, dialog, ipcMain } from "electron";
 import { showOwnedOpenDialog } from "../dialog/owned-open-dialog";
-import type { WebContents } from "electron";
+import type { IpcMainInvokeEvent, WebContents } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
@@ -38,6 +41,7 @@ import { getFeatureFlagRegistry } from "../feature-flags/feature-flag-registry";
 import { FEATURE_FLAG_IDS } from "../../shared/feature-flags";
 import type { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
 import {
+  getRendererWorkspaceScope,
   onRendererWorkspaceScopeChange,
   requireLiveRendererWorkspaceScope,
   requireRendererWorkspaceScope,
@@ -1129,11 +1133,21 @@ function assertSquadsNotExecuting(
   squadIds: readonly string[],
 ): void {
   const targetIds = new Set(squadIds);
-  const currentSuite = requireProjectStores(owner);
-  const suites = projectDomainStores?.listSuites() ?? [];
-  const allSuites = suites.includes(currentSuite)
-    ? suites
-    : [currentSuite, ...suites];
+  if (!projectDomainStores) {
+    throw new Error("project-scoped domain stores are not initialized");
+  }
+  // F-1577: o catálogo é global, então a edição não depende de projeto
+  // aberto. Sem projeto, a varredura cobre os escopos já abertos e o
+  // inventário físico de PTY/pane abaixo; com projeto, inclui o dele.
+  const currentScope = getRendererWorkspaceScope(owner);
+  const currentSuite = currentScope
+    ? projectDomainStores.forScope(currentScope)
+    : null;
+  const suites = projectDomainStores.listSuites();
+  const allSuites =
+    currentSuite && !suites.includes(currentSuite)
+      ? [currentSuite, ...suites]
+      : suites;
   const missionIds = new Set<string>();
   const scopedMissionIds = new Set<string>();
   const targetScopeKeys = new Set<string>();
@@ -1211,9 +1225,34 @@ function assertSquadNotExecuting(owner: WebContents, squadId: string): void {
   assertSquadsNotExecuting(owner, [squadId]);
 }
 
+/**
+ * F-1577: o catálogo de equipes é GLOBAL (tabela `squads` do nexus.db do
+ * userData), não do projeto. Ler, criar, editar, importar, exportar e apagar
+ * exigem só o remetente confiável (janela principal viva, frame principal),
+ * como as outras configurações globais (`handleTrusted`). Depois de um diálogo
+ * nativo o remetente é conferido de novo. Cópias seladas de missão e tudo que
+ * toca checkout continuam exigindo o escopo do projeto.
+ */
+function assertLiveTrustedCatalogSender(
+  event: Pick<IpcMainInvokeEvent, 'sender' | 'senderFrame'>,
+): void {
+  if (!isLiveTrustedMainWindowSender(event)) {
+    throw new Error('ipc sender não autorizado');
+  }
+}
+
+function requestingWorkspaceDialogLabel(
+  scope: ProjectExecutionScope | null,
+  maxLength: number,
+): string {
+  return scope
+    ? safeDialogLabel(scope.rootRealPath, maxLength)
+    : 'nenhum projeto aberto';
+}
+
 async function confirmSquadsImport(
   owner: WebContents,
-  scope: ProjectExecutionScope,
+  scope: ProjectExecutionScope | null,
   selectedPath: string,
   candidate: PreparedSquadsImport,
 ): Promise<boolean> {
@@ -1228,7 +1267,7 @@ async function confirmSquadsImport(
   // and the normalized content, so the integral JSON dump only overflowed the
   // screen (and vetoed legitimate large squads via the dialog size fence).
   const detail = assertExactOperatorDialog(
-    `Workspace solicitante: ${safeDialogLabel(scope.rootRealPath, 512)}\n` +
+    `Workspace solicitante: ${requestingWorkspaceDialogLabel(scope, 512)}\n` +
       `Arquivo selecionado (JSON): ${safeDialogLabel(selectedPath, 512)}\n` +
       `SHA-256 bruto: ${candidate.rawSha256}\n` +
       `SHA-256 canônico (fixa o conteúdo normalizado integral): ${candidate.canonicalSha256}\n` +
@@ -1253,7 +1292,7 @@ async function confirmSquadsImport(
 
 async function confirmSquadDelete(
   owner: WebContents,
-  scope: ProjectExecutionScope,
+  scope: ProjectExecutionScope | null,
   snapshot: SquadAuthoritySnapshot,
 ): Promise<boolean> {
   assertSquadReviewable(snapshot);
@@ -1288,7 +1327,7 @@ async function confirmSquadDelete(
 
 /** Bounded, human-readable confirmation body; exactness is pinned by the hash. */
 function summarizeSquadDeletionForDialog(
-  scope: ProjectExecutionScope,
+  scope: ProjectExecutionScope | null,
   snapshot: SquadAuthoritySnapshot,
 ): string {
   const MAX_AGENT_LINES = 16;
@@ -1306,7 +1345,7 @@ function summarizeSquadDeletionForDialog(
     agentLines.push(`• +${overflow} agente(s) — conteúdo exato garantido pelo hash`);
   }
   return [
-    `Workspace solicitante: ${safeDialogLabel(scope.rootRealPath, 4_096)}`,
+    `Workspace solicitante: ${requestingWorkspaceDialogLabel(scope, 4_096)}`,
     `Squad: ${safeDialogLabel(snapshot.name, 128)} (${safeDialogLabel(snapshot.id, 128)})`,
     `${snapshot.agents.length} agente(s):`,
     ...agentLines,
@@ -2621,10 +2660,8 @@ export function registerOrchIpc(): void {
       todoLists: stores.todos.list(),
     };
   });
-  ipcMain.handle(ORCH_CHANNELS.squadsList, (event) => {
-    requireLiveRendererWorkspaceScope(event.sender);
-    return listSquads();
-  });
+  // F-1577: catálogo global — remetente confiável basta, sem projeto aberto.
+  handleTrusted(ORCH_CHANNELS.squadsList, () => listSquads());
   ipcMain.handle(ORCH_CHANNELS.squadDesign, async (event, raw: unknown) => {
     // O workspace é autoridade do processo principal. O payload legado ainda
     // é aceito por compatibilidade, mas nunca escolhe o projeto analisado.
@@ -2712,7 +2749,7 @@ export function registerOrchIpc(): void {
     return getMcpRuntimeInfo();
   });
 
-  ipcMain.handle(ORCH_CHANNELS.squadSave, async (event, raw) => {
+  handleTrusted(ORCH_CHANNELS.squadSave, async (event, raw) => {
     const runtimeRequest = missionRuntimeSquadSaveSchema.safeParse(raw);
     const globalRequest = runtimeRequest.success
       ? null
@@ -2721,9 +2758,9 @@ export function registerOrchIpc(): void {
       return { ok: false, error: "invalid squad payload" };
     }
     try {
-      const scope = requireLiveRendererWorkspaceScope(event.sender);
-
       if (runtimeRequest.success) {
+        // A cópia selada de missão é do projeto: continua exigindo o escopo.
+        const scope = requireLiveRendererWorkspaceScope(event.sender);
         const draftSourceSquad = runtimeRequest.data.designDraftToken
           ? resolveSquadDesignDraft(
               event.sender,
@@ -2843,7 +2880,7 @@ export function registerOrchIpc(): void {
       // mission approval with the exact roster and hashes. Delete/import keep
       // their destructive confirmations.
       assertSquadNotExecuting(event.sender, candidate.squad.id);
-      requireLiveRendererWorkspaceScope(event.sender, scope);
+      assertLiveTrustedCatalogSender(event);
       assertSquadNotExecuting(event.sender, candidate.squad.id);
       const saved = applyPreparedSquadSave(candidate);
       return { ok: true, squad: saved };
@@ -2855,12 +2892,12 @@ export function registerOrchIpc(): void {
     }
   });
 
-  ipcMain.handle(ORCH_CHANNELS.squadDelete, async (event, raw) => {
+  handleTrusted(ORCH_CHANNELS.squadDelete, async (event, raw) => {
     if (typeof raw !== "string" || raw.length === 0 || raw.length > 128) {
       return { ok: false };
     }
     try {
-      const scope = requireLiveRendererWorkspaceScope(event.sender);
+      const requester = getRendererWorkspaceScope(event.sender);
       assertSquadNotExecuting(event.sender, raw);
       const existing = listSquads().find((squad) => squad.id === raw);
       if (!existing) return { ok: false };
@@ -2875,11 +2912,11 @@ export function registerOrchIpc(): void {
       const snapshot = snapshotSquadAuthority(existing);
       const approved = await confirmSquadDelete(
         event.sender,
-        scope,
+        requester,
         snapshot,
       );
       if (!approved) return { ok: false, error: 'user_denied' };
-      requireLiveRendererWorkspaceScope(event.sender, scope);
+      assertLiveTrustedCatalogSender(event);
       assertSquadNotExecuting(event.sender, raw);
       const current = listSquads().find((squad) => squad.id === raw);
       if (!current || snapshotSquadAuthority(current).hash !== snapshot.hash) {
@@ -2894,10 +2931,9 @@ export function registerOrchIpc(): void {
     }
   });
 
-  ipcMain.handle(ORCH_CHANNELS.squadExport, async (event) => {
+  handleTrusted(ORCH_CHANNELS.squadExport, async (event) => {
     let releaseLane: (() => void) | null = null;
     try {
-      const scope = requireLiveRendererWorkspaceScope(event.sender);
       releaseLane = acquireSquadFileOperation();
       const window = BrowserWindow.fromWebContents(event.sender);
       if (!window || window.isDestroyed()) {
@@ -2916,7 +2952,7 @@ export function registerOrchIpc(): void {
         defaultPath: "nexus-squads.json",
         filters: [{ name: "JSON", extensions: ["json"] }],
       });
-      requireLiveRendererWorkspaceScope(event.sender, scope);
+      assertLiveTrustedCatalogSender(event);
       if (result.canceled || !result.filePath) return { ok: false };
       atomicWriteSelectedSquadsFile(result.filePath, bytes);
       return { ok: true, path: result.filePath };
@@ -3264,10 +3300,10 @@ export function registerOrchIpc(): void {
     }
   });
 
-  ipcMain.handle(ORCH_CHANNELS.squadImport, async (event) => {
+  handleTrusted(ORCH_CHANNELS.squadImport, async (event) => {
     let releaseLane: (() => void) | null = null;
     try {
-      const scope = requireLiveRendererWorkspaceScope(event.sender);
+      const requester = getRendererWorkspaceScope(event.sender);
       releaseLane = acquireSquadFileOperation();
       const window = BrowserWindow.fromWebContents(event.sender);
       if (!window || window.isDestroyed()) {
@@ -3278,7 +3314,7 @@ export function registerOrchIpc(): void {
         properties: ["openFile"],
         filters: [{ name: "JSON", extensions: ["json"] }],
       });
-      requireLiveRendererWorkspaceScope(event.sender, scope);
+      assertLiveTrustedCatalogSender(event);
       if (result.canceled || result.filePaths.length === 0) {
         return { ok: false };
       }
@@ -3295,12 +3331,12 @@ export function registerOrchIpc(): void {
       assertSquadsNotExecuting(event.sender, candidate.targetIds);
       const approved = await confirmSquadsImport(
         event.sender,
-        scope,
+        requester,
         selectedPath,
         candidate,
       );
       if (!approved) return { ok: false, error: 'user_denied' };
-      requireLiveRendererWorkspaceScope(event.sender, scope);
+      assertLiveTrustedCatalogSender(event);
       const confirmed = secureReadSquadImportFile(selectedPath);
       assertSameSecureImportRead(selected, confirmed);
       assertSquadsNotExecuting(event.sender, candidate.targetIds);

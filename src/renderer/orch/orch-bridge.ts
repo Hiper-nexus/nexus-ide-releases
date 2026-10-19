@@ -766,6 +766,12 @@ export function useOrchBridge(): void {
     if (workspaceHydrated && workspacePath) void hydrate(workspacePath);
   }, [hydrate, workspaceHydrated, workspacePath]);
 
+  // F-1577: o catálogo de equipes é global — carrega no boot, com ou sem
+  // projeto aberto. Abrir ou fechar projeto não o zera.
+  useEffect(() => {
+    void useOrchStore.getState().hydrateSquads();
+  }, []);
+
   useEffect(() => {
     // First handoffs/missions payloads are snapshots — do not treat as live events.
 

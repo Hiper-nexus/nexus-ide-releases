@@ -29,6 +29,7 @@ import { TerminalPerformanceStatus } from './TerminalPerformanceStatus';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
 import { EmptyState } from '../ActionCard';
 import { SquadEditor } from '../SquadEditor';
+import { squadErrorCopy } from '../../lib/squad-error-copy';
 import { VoiceSettings } from '../VoiceSettings';
 import { DecisionModelsSection } from './DecisionModelsSection';
 import { JEV_SURFACES_CHANGED_EVENT } from './MissionDecisionEngineControls';
@@ -549,14 +550,14 @@ export function SquadsSection() {
       } else if (!error || error === 'user_denied') {
         setFeedback({ tone: 'info', message: 'Importação cancelada.' });
       } else {
-        setFeedback({ tone: 'error', message: error });
+        setFeedback({ tone: 'error', message: squadErrorCopy(error, 'importar equipes') });
       }
     } catch (cause) {
       setFeedback({
         tone: 'error',
-        message: squadFailureMessage(
-          cause,
-          'Não foi possível importar os squads.',
+        message: squadErrorCopy(
+          squadFailureMessage(cause, 'Não foi possível importar os squads.'),
+          'importar equipes',
         ),
       });
     } finally {
@@ -584,14 +585,14 @@ export function SquadsSection() {
       } else if (!error || error === 'user_denied') {
         setFeedback({ tone: 'info', message: 'Exportação cancelada.' });
       } else {
-        setFeedback({ tone: 'error', message: error });
+        setFeedback({ tone: 'error', message: squadErrorCopy(error, 'exportar equipes') });
       }
     } catch (cause) {
       setFeedback({
         tone: 'error',
-        message: squadFailureMessage(
-          cause,
-          'Não foi possível exportar os squads.',
+        message: squadErrorCopy(
+          squadFailureMessage(cause, 'Não foi possível exportar os squads.'),
+          'exportar equipes',
         ),
       });
     } finally {
@@ -629,15 +630,17 @@ export function SquadsSection() {
       } else {
         setFeedback({
           tone: 'error',
-          message: error ?? `Não foi possível apagar o squad "${squad.name}".`,
+          message: error
+            ? squadErrorCopy(error, 'apagar esta equipe')
+            : `Não foi possível apagar o squad "${squad.name}".`,
         });
       }
     } catch (cause) {
       setFeedback({
         tone: 'error',
-        message: squadFailureMessage(
-          cause,
-          `Não foi possível apagar o squad "${squad.name}".`,
+        message: squadErrorCopy(
+          squadFailureMessage(cause, `Não foi possível apagar o squad "${squad.name}".`),
+          'apagar esta equipe',
         ),
       });
     } finally {

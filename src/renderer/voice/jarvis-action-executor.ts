@@ -546,7 +546,8 @@ export async function executeJarvisAction(
       expectReply = true;
       toolResult = { tool: action.type, ok: false, summary: 'sem workspace aberto' };
     } else if (squads.length === 0) {
-      sayText = 'Este projeto ainda não tem squads salvos. Quer criar um novo?';
+      // F-1577: o catálogo é global, não do projeto.
+      sayText = 'Ainda não há squads salvos. Quer criar um novo?';
       expectReply = true;
       toolResult = { tool: action.type, ok: false, summary: 'nenhum squad salvo' };
     } else {

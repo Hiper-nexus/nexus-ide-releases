@@ -8,6 +8,7 @@ import { CloseButton } from './CloseButton';
 import { PixelIcon } from './PixelIcon';
 import { useFocusTrap } from '../lib/use-focus-trap';
 import { authViewForModel } from '../lib/model-picker-rank';
+import { squadErrorCopy } from '../lib/squad-error-copy';
 import { canCoordinateMission } from '../orch/mission-runtime-readiness';
 import { useProviderStore } from '../state/provider-store';
 
@@ -143,7 +144,11 @@ export function SquadEditor({
       );
       const result = await window.nexus.orch.saveSquad(edited as Squad);
       if (!result.ok) {
-        setError(result.error ?? 'Falha ao salvar o squad.');
+        setError(
+          result.error
+            ? squadErrorCopy(result.error, 'salvar a equipe')
+            : 'Falha ao salvar o squad.',
+        );
         return;
       }
       onSaved(
@@ -155,7 +160,12 @@ export function SquadEditor({
       );
       onClose();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(
+        squadErrorCopy(
+          cause instanceof Error ? cause.message : String(cause),
+          'salvar a equipe',
+        ),
+      );
     } finally {
       setBusy(false);
     }

@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MissionSummarySnapshot } from '../../shared/mission-engine-contract';
-import type { Handoff, Mission } from '../../shared/orch-types';
+import type { Handoff, Mission, Squad } from '../../shared/orch-types';
 import { setActiveWorkspacePath } from './active-workspace';
 import { useOrchStore } from './orch-store';
 
@@ -48,10 +48,80 @@ describe('orch-store workspace isolation', () => {
       handoffs: [],
       todoLists: [],
       squads: [],
+      squadsEpoch: 0,
       paneMissions: {},
       boundWorkspacePath: null,
       workspaceEpoch: 0,
     });
+  });
+
+  // F-1577: o catálogo de equipes é global (tabela do userData), não do projeto.
+  const catalogSquad = (id: string, name: string): Squad => ({
+    id,
+    name,
+    createdAt: '1',
+    builtin: false,
+    orchestratorInstructions: '',
+    agents: [],
+  });
+
+  it('F-1577: lê o catálogo de equipes sem projeto aberto', async () => {
+    const saved = [catalogSquad('full-stack-gbx', 'Full-Stack - GBX')];
+    vi.mocked(window.nexus.orch.listSquads).mockResolvedValue(saved);
+
+    await useOrchStore.getState().hydrateSquads();
+
+    expect(useOrchStore.getState().squads).toEqual(saved);
+  });
+
+  it('F-1577: trocar ou fechar o projeto não zera as equipes salvas', () => {
+    const saved = [catalogSquad('full-stack-gbx', 'Full-Stack - GBX')];
+    setActiveWorkspacePath('/ws/a');
+    useOrchStore.setState({ boundWorkspacePath: '/ws/a', squads: saved });
+
+    useOrchStore.getState().resetProjectState();
+    setActiveWorkspacePath(null);
+
+    expect(useOrchStore.getState().boundWorkspacePath).toBeNull();
+    expect(useOrchStore.getState().squads).toEqual(saved);
+  });
+
+  it('F-1577: aceita o broadcast de equipes sem projeto aberto', () => {
+    const next = [catalogSquad('nova', 'Equipe nova')];
+
+    useOrchStore.getState().setSquads(next);
+
+    expect(useOrchStore.getState().squads).toEqual(next);
+  });
+
+  it('F-1577: broadcast que chega durante a leitura do catálogo vence a resposta atrasada', async () => {
+    let resolveList!: (squads: Squad[]) => void;
+    vi.mocked(window.nexus.orch.listSquads).mockReturnValue(
+      new Promise<Squad[]>((resolve) => {
+        resolveList = resolve;
+      }),
+    );
+    const reading = useOrchStore.getState().hydrateSquads();
+    const broadcast = [catalogSquad('broadcast', 'Mais nova')];
+    useOrchStore.getState().setSquads(broadcast);
+    resolveList([catalogSquad('stale', 'Antiga')]);
+    await reading;
+
+    expect(useOrchStore.getState().squads).toEqual(broadcast);
+  });
+
+  it('F-1577: abrir um projeto relê o catálogo e não o amarra ao workspace', async () => {
+    const saved = [catalogSquad('full-stack-gbx', 'Full-Stack - GBX')];
+    vi.mocked(window.nexus.orch.listSquads).mockResolvedValue(saved);
+    setActiveWorkspacePath('/ws/a');
+
+    const hydration = useOrchStore.getState().hydrate('/ws/a');
+    // O projeto muda antes da leitura terminar: as equipes continuam valendo.
+    useOrchStore.getState().resetProjectState();
+    setActiveWorkspacePath('/ws/b');
+    await hydration;
+
+    expect(useOrchStore.getState().squads).toEqual(saved);
   });
 
   it('drops setMissions while unbound (workspace switch)', () => {

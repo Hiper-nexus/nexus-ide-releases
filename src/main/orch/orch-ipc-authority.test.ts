@@ -57,6 +57,11 @@ const harness = vi.hoisted(() => {
     squads,
     paneSnapshots,
     agentSessions,
+    /**
+     * Remetentes que NÃO são a janela principal confiável (`handleTrusted`).
+     * Todo `owner()` é a janela principal até entrar aqui.
+     */
+    untrustedSenders: new Set<number>(),
     /** Teclado do operador: posse de sessão, missões e o que chegou ao PTY. */
     operatorInput: {
       ownedSessions: new Map<string, { missionId?: string }>(),
@@ -287,6 +292,30 @@ vi.mock('electron', () => ({
   dialog: harness.dialog,
   ipcMain: harness.ipcMain,
 }));
+
+// `handleTrusted` real confere a janela principal registrada; o harness simula
+// a mesma régua: remetente vivo e fora de `untrustedSenders`.
+vi.mock('../security/trusted-ipc', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../security/trusted-ipc')>();
+  const trusted = (event: { sender: TestOwner }): boolean =>
+    !harness.untrustedSenders.has(event.sender.id) &&
+    !event.sender.isDestroyed() &&
+    !event.sender.isCrashed();
+  return {
+    ...actual,
+    isLiveTrustedMainWindowSender: trusted,
+    handleTrusted: (
+      channel: string,
+      handler: (event: any, ...args: unknown[]) => unknown,
+    ) => {
+      harness.ipcMain.handle(channel, (event: any, ...args: unknown[]) => {
+        if (!trusted(event)) throw new Error('ipc sender não autorizado');
+        return handler(event, ...args);
+      });
+    },
+  };
+});
 
 vi.mock('../design/designmd-api-client', () => ({
   // Vitest 5 exige implementation `function` para `new` (arrow quebra).
@@ -837,6 +866,7 @@ function designedSquad(id: string): Squad {
 beforeEach(() => {
   harness.handlers.clear();
   harness.scopes.clear();
+  harness.untrustedSenders.clear();
   harness.windows.clear();
   harness.squads.splice(0);
   harness.paneSnapshots.splice(0);
@@ -1823,7 +1853,6 @@ describe('canonical MissionEngine IPC boundary', () => {
 });
 describe('bounded enrichment authority', () => {
   it.each([
-    ORCH_CHANNELS.squadsList,
     ORCH_CHANNELS.mcpInfo,
     ORCH_CHANNELS.catalogInstalled,
     ORCH_CHANNELS.toolsList,
@@ -3846,16 +3875,18 @@ describe('squad import/export global authority boundary', () => {
     expect(harness.applyPreparedSquadsImport).not.toHaveBeenCalled();
   });
 
-  it('recusa troca de workspace durante picker ou confirmação', async () => {
+  // F-1577: o catálogo é global; a autoridade é a janela principal confiável,
+  // não o projeto. Ela é conferida de novo depois de cada diálogo nativo.
+  it('recusa se a janela deixa de ser confiável durante picker ou confirmação', async () => {
     const first = setup(ORCH_CHANNELS.squadImport, 881);
     const { file } = validImportFile();
     harness.dialog.showOpenDialog.mockImplementationOnce(async () => {
-      harness.scopes.set(first.sender.id, SCOPE_B);
+      harness.untrustedSenders.add(first.sender.id);
       return { canceled: false, filePaths: [file] };
     });
     await expect(first.handler({ sender: first.sender })).resolves.toMatchObject({
       ok: false,
-      error: expect.stringMatching(/authority changed/i),
+      error: expect.stringMatching(/não autorizado/),
     });
 
     const second = setup(ORCH_CHANNELS.squadImport, 882);
@@ -3864,12 +3895,12 @@ describe('squad import/export global authority boundary', () => {
       filePaths: [file],
     });
     harness.dialog.showMessageBox.mockImplementationOnce(async () => {
-      harness.scopes.set(second.sender.id, SCOPE_B);
+      second.sender.destroy();
       return { response: 1 };
     });
     await expect(second.handler({ sender: second.sender })).resolves.toMatchObject({
       ok: false,
-      error: expect.stringMatching(/authority changed/i),
+      error: expect.stringMatching(/não autorizado/),
     });
     expect(harness.applyPreparedSquadsImport).not.toHaveBeenCalled();
   });
@@ -4037,6 +4068,169 @@ describe('squad import/export global authority boundary', () => {
     });
     expect(fs.readFileSync(victim, 'utf8')).toBe('KEEP');
     expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
+  });
+});
+
+describe('F-1577: catálogo global de equipes sem projeto aberto', () => {
+  // As equipes moram na tabela global `squads` do userData. Sem projeto
+  // aberto o renderer não tem escopo de workspace, e o catálogo continua
+  // sendo da janela principal confiável.
+  function setup(channel: string, id: number) {
+    configureRendererMissionAuthority({} as never);
+    const handler = harness.handlers.get(channel);
+    if (!handler) throw new Error(`missing ${channel} handler`);
+    const sender = owner(id);
+    const window = { isDestroyed: () => false };
+    harness.windows.set(sender.id, window);
+    expect(harness.scopes.has(sender.id)).toBe(false);
+    return { handler, sender, window };
+  }
+
+  function untrusted(id: number): TestOwner {
+    const sender = owner(id);
+    harness.untrustedSenders.add(sender.id);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    return sender;
+  }
+
+  it('lista as equipes sem projeto e recusa remetente que não é a janela principal', () => {
+    const { handler, sender } = setup(ORCH_CHANNELS.squadsList, 960);
+    harness.squads.push({ ...SAVED_SQUAD });
+
+    expect(handler({ sender })).toEqual([SAVED_SQUAD]);
+    expect(() => handler({ sender: untrusted(961) })).toThrow(
+      /ipc sender não autorizado/,
+    );
+  });
+
+  it('cria equipe sem projeto e não grava nada para remetente não confiável', async () => {
+    const { handler, sender } = setup(ORCH_CHANNELS.squadSave, 962);
+
+    await expect(handler({ sender }, SAVED_SQUAD)).resolves.toMatchObject({
+      ok: true,
+      squad: expect.objectContaining({ id: SAVED_SQUAD.id }),
+    });
+    expect(harness.squads.map((squad) => squad.id)).toEqual([SAVED_SQUAD.id]);
+
+    expect(() =>
+      handler({ sender: untrusted(963) }, { ...SAVED_SQUAD, id: 'squad-alheio' }),
+    ).toThrow(/ipc sender não autorizado/);
+    expect(harness.applyPreparedSquadSave).toHaveBeenCalledOnce();
+    expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
+  });
+
+  it('a cópia selada de missão continua exigindo o projeto aberto', async () => {
+    const { handler, sender } = setup(ORCH_CHANNELS.squadSave, 964);
+    harness.squads.push({ ...SAVED_SQUAD });
+
+    await expect(
+      handler(
+        { sender },
+        {
+          squad: SAVED_SQUAD,
+          purpose: 'mission-runtime',
+          guided: false,
+          sourceSquadId: SAVED_SQUAD.id,
+        },
+      ),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/authorized workspace scope/i),
+    });
+    expect(harness.applyPreparedSquadSave).not.toHaveBeenCalled();
+  });
+
+  it('apaga sem projeto com a confirmação nativa, que diz que não há projeto aberto', async () => {
+    const { handler, sender } = setup(ORCH_CHANNELS.squadDelete, 965);
+    harness.squads.push({ ...SAVED_SQUAD });
+    harness.dialog.showMessageBox.mockResolvedValueOnce({ response: 1 });
+
+    await expect(handler({ sender }, SAVED_SQUAD.id)).resolves.toEqual({
+      ok: true,
+    });
+    expect(harness.squads).toHaveLength(0);
+    expect(
+      harness.dialog.showMessageBox.mock.calls.at(-1)?.[1]?.detail,
+    ).toContain('Workspace solicitante: nenhum projeto aberto');
+  });
+
+  it('não apaga se a janela deixou de ser confiável durante a confirmação', async () => {
+    const { handler, sender } = setup(ORCH_CHANNELS.squadDelete, 966);
+    harness.squads.push({ ...SAVED_SQUAD });
+    harness.dialog.showMessageBox.mockImplementationOnce(async () => {
+      harness.untrustedSenders.add(sender.id);
+      return { response: 1 };
+    });
+
+    await expect(handler({ sender }, SAVED_SQUAD.id)).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/não autorizado/),
+    });
+    expect(harness.squads).toHaveLength(1);
+  });
+
+  it('exporta sem projeto aberto', async () => {
+    const { handler, sender, window } = setup(ORCH_CHANNELS.squadExport, 967);
+    harness.squads.push({ ...SAVED_SQUAD });
+    const target = path.join(makeTempDir(), 'equipes.json');
+    harness.dialog.showSaveDialog.mockResolvedValueOnce({
+      canceled: false,
+      filePath: target,
+    });
+
+    await expect(handler({ sender })).resolves.toEqual({
+      ok: true,
+      path: target,
+    });
+    expect(harness.dialog.showSaveDialog).toHaveBeenCalledWith(
+      window,
+      expect.anything(),
+    );
+    expect(JSON.parse(fs.readFileSync(target, 'utf8')).squads[0].id).toBe(
+      SAVED_SQUAD.id,
+    );
+  });
+
+  it('importa sem projeto aberto, com a confirmação nativa', async () => {
+    const { handler, sender } = setup(ORCH_CHANNELS.squadImport, 968);
+    const file = path.join(makeTempDir(), 'equipes.json');
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        squads: [
+          {
+            id: 'full-stack-gbx',
+            name: 'Full-Stack - GBX',
+            createdAt: '1',
+            builtin: false,
+            agents: [
+              {
+                id: 'orch',
+                agentName: 'Maestro',
+                category: 'orchestrator',
+                cli: 'codex',
+              },
+            ],
+          },
+        ],
+      }),
+      'utf8',
+    );
+    harness.dialog.showOpenDialog.mockResolvedValueOnce({
+      canceled: false,
+      filePaths: [file],
+    });
+    harness.dialog.showMessageBox.mockResolvedValueOnce({ response: 1 });
+
+    await expect(handler({ sender })).resolves.toEqual({
+      ok: true,
+      count: 1,
+      skipped: [],
+    });
+    expect(harness.squads.map((squad) => squad.id)).toEqual(['full-stack-gbx']);
+    expect(
+      harness.dialog.showMessageBox.mock.calls.at(-1)?.[1]?.detail,
+    ).toContain('Workspace solicitante: nenhum projeto aberto');
   });
 });
 

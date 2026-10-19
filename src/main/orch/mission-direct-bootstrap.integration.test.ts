@@ -458,6 +458,9 @@ describe.runIf(ENABLED)('F-1109 — ordinary native CLI bootstrap/direct causal 
       rootRealPath: repo, identitySource: 'manifest', workspaceRootDevice: String(stat.dev), workspaceRootInode: String(stat.ino) };
     const { bindResolvedRendererWorkspaceScope } = await import('../persistence/renderer-workspace-scope');
     bindResolvedRendererWorkspaceScope(owner, scope);
+    // F-1577: o catálogo global de equipes responde à janela principal confiável.
+    const { bindTrustedMainWindow } = await import('../security/trusted-ipc');
+    bindTrustedMainWindow({ webContents: owner, isDestroyed: () => false } as never, 'nexus-app://bundle/index.html');
     const { runtimeGateConfiguration, armPrivateRuntimeClaudeConsent } = await import('../runtime-gate-mode');
     expect(runtimeGateConfiguration({ smokeTest: true, packaged: true, userData: state.userData, env: process.env })).not.toBeNull();
     releaseConsent = armPrivateRuntimeClaudeConsent({ userData: state.userData, gateway: gatewayUrl, gatewayNonce: nonce,

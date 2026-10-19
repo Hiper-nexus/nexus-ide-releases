@@ -326,6 +326,68 @@ describe('Settings → Squads retained management capability', () => {
     expect(announcementText(host)).toMatch(/tem 13 pessoas e a missão aceita até 12/i);
     expect(useMissionSetupStore.getState().draft.roster).toEqual([]);
   });
+  it('F-1577: sem projeto aberto, mostra as equipes salvas e cria equipe nova', async () => {
+    useWorkspaceStore.setState({ current: null });
+    useOrchStore.setState({
+      squads: [
+        squad('nexus-fullstack', 'Full-Stack', true),
+        squad('full-stack-gbx', 'Full-Stack - GBX'),
+      ],
+    });
+    const host = renderSquads();
+    await settle();
+
+    const list = host.querySelector<HTMLElement>('[aria-label="Equipes salvas"]');
+    expect(host.textContent).not.toMatch(/Nenhuma equipe salva/i);
+    expect(list?.textContent).toMatch(/Full-Stack - GBX/);
+    expect(list?.textContent).toMatch(/Full-Stack/);
+
+    act(() => requiredButton(host, /Criar equipe/i).click());
+    await settle();
+    const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+    if (!dialog) return;
+    setControlValue(
+      controlByLabel<HTMLInputElement>(dialog, /^Nome/i),
+      'Equipe sem projeto',
+    );
+    act(() => requiredButton(dialog, /^Salvar$/i).click());
+    await settle();
+
+    expect(squadMocks.saveSquad).toHaveBeenCalledTimes(1);
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    expect(host.textContent).toMatch(/Equipe sem projeto/i);
+  });
+
+  it('F-1577: a recusa de escopo do Main vira instrução em português, nunca o texto cru', async () => {
+    useWorkspaceStore.setState({ current: null });
+    squadMocks.importSquads.mockResolvedValueOnce({
+      ok: false,
+      error: 'renderer has no authorized workspace scope',
+    });
+    const host = renderSquads();
+    await settle();
+
+    act(() => requiredButton(host, /Importar/i).click());
+    await settle();
+    expect(announcementText(host)).toMatch(/Abra um projeto para importar equipes\./);
+    expect(host.textContent).not.toMatch(/authorized workspace scope/i);
+
+    act(() => requiredButton(host, /Criar equipe/i).click());
+    await settle();
+    const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]');
+    if (!dialog) throw new Error('missing squad editor');
+    setControlValue(controlByLabel<HTMLInputElement>(dialog, /^Nome/i), 'Equipe X');
+    squadMocks.saveSquad.mockResolvedValueOnce({
+      ok: false,
+      error: 'renderer has no authorized workspace scope',
+    });
+    act(() => requiredButton(dialog, /^Salvar$/i).click());
+    await settle();
+    expect(announcementText(document.body)).toMatch(/Abra um projeto para salvar a equipe\./);
+    expect(document.body.textContent).not.toMatch(/authorized workspace scope/i);
+  });
+
   it('renders an actionable empty inventory with create/import available and export disabled', async () => {
     const host = renderSquads();
     await settle();
