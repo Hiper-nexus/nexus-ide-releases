@@ -11778,7 +11778,7 @@ export const RELEASE_076325: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076326: AppRelease = {
   version: '0.76.326',
   date: '2026-10-19',
   codename: 'Comparador honesto e mídia que gera',
@@ -11793,4 +11793,27 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Prévia mostra o arquivo gerado', detail: 'A prévia do Estúdio podia mostrar outra criação do mesmo tipo; agora mostra exatamente o arquivo que acabou de ser gerado.' },
     { title: 'Veo nativo do Google até 22/10', detail: 'O Google desliga os Veo 3.1 preview do Gemini em 22/10/2026. O Estúdio avisa antes da data e, depois dela, recusa indicando o Veo 3.1 pelo Replicate. O Veo 2, já desligado, saiu da lista.' },
   ],
+};
+
+export const RELEASE_076327: AppRelease = {
+  version: '0.76.327',
+  date: '2026-10-19',
+  codename: 'Instalador assinado',
+  summary: 'O instalador, o app e o atualizador do Windows passam a sair assinados com o certificado de assinatura de código da HIPERSEND, guardado num token de hardware (YubiKey). O conteúdo do app é o mesmo da 0.76.326.',
+  highlights: [
+    { title: 'Instalador do Windows assinado', detail: 'O Setup.exe, o NexusIDE, o atualizador e o Redline do Windows saem com assinatura Authenticode da HIPERSEND TECNOLOGIA INTERNET & SOFTWARES LTDA, emitida pelo SSL.com, com carimbo de tempo. O Windows mostra o editor em vez de "Editor desconhecido". O SmartScreen ainda pode avisar nas primeiras instalações, até o certificado novo ganhar reputação. A chave fica num token de hardware e não sai dele.' },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.328',
+  date: '2026-10-19',
+  codename: 'Comparador e mídia no Linux',
+  summary: 'No desktop Linux, Comparar modelos mostra os benchmarks oficiais da rota, só na versão mais nova de cada modelo e das ferramentas instaladas. Serviços de mídia e o Estúdio funcionam sem projeto aberto, explicam as falhas, só oferecem a duração e o formato que cada modelo de vídeo aceita e mostram o custo antes de gerar. As tags 0.76.326 e 0.76.327 são pacotes Windows e não recebem arquivos Linux.',
+  highlights: [
+    ...RELEASE_076326.highlights,
+    { title: 'Pacote Linux', detail: 'A tag 0.76.326 é o pacote Windows do comparador e da mídia e não recebe arquivos Linux. A tag 0.76.327 só assina o instalador do Windows e também não recebe arquivos Linux. O desktop Linux sai na 0.76.328.' },
+  ],
+  fixes: RELEASE_076326.fixes,
 };

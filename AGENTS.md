@@ -139,8 +139,10 @@ npm run rebuild:node           # rebuild native modules for Node (CI/tests)
   usuário). Runbook: `docs/windows-signing/YUBIKEY.md`. Nunca digite PIN ou PUK
   pelo operador; o Windows pede o PIN a cada processo do SignTool (5 por build).
   Cobre o NexusIDE inteiro, inclusive o `NexusRedline.exe` do pacote e o instalador
-  Squirrel. O Nexus Shot (repo próprio, Tauri) ainda sai sem assinatura no Windows:
-  o caminho está na tabela "O que esta assinatura cobre" do runbook.
+  Squirrel. **Regra do operador (19/10): todo app Windows assinado usa este
+  YubiKey.** O Nexus Shot (repo próprio, Tauri) assina pelo mesmo token desde
+  `3c76ad9` na `feat/windows-port` (`scripts/windows-sign.ps1`, mesma identidade
+  fixada; renovação troca o thumbprint nos dois repositórios).
 - O JSON é a fonte única: o coletor (`collect-windows-release.ps1`) grava
   `signing: 'yubikey'` só com Setup, app, Update.exe e stub assinados e carimbados
   pelo certificado fixado (thumbprint e SPKI conferidos); nenhum assinado vira

@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.76.328 — Comparador e mídia no Linux
+
+As tags 0.76.326 e 0.76.327 são pacotes Windows e não recebem arquivos Linux. A 0.76.327 só assina o instalador do Windows; o app é o mesmo da 0.76.326. Este pacote leva o desktop Linux.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+No desktop Linux, em relação à 0.76.325:
+
+- **Comparar modelos com números oficiais**. As notas da tela eram de demonstração, escritas à mão em setembro, e a escolha automática nem as usava. Agora a tela mostra os mesmos benchmarks oficiais da rota (DeepSWE, Terminal-Bench 2.1, SWE-bench Verified), com link para a fonte e dizendo quando a nota vem de outro modelo da mesma linha. Aparece só a versão mais nova de cada modelo e, por padrão, só as ferramentas instaladas; modelo sem número publicado fica sem nota, nunca com zero.
+- **Mídia sem projeto aberto**. Sem projeto aberto, Serviços de mídia caía num erro e nem deixava conectar uma chave, e o Estúdio abria mudo. Agora os serviços carregam sempre e o Estúdio explica que gerar precisa de um projeto aberto.
+- **Vídeo só com o que o modelo aceita**. O Estúdio mandava 5 s para todo vídeo e o Veo, que só aceita 4, 6 ou 8 s, falhava com as opções padrão; Hailuo, Sora e Wan também recebiam valores que recusam. Agora cada modelo só oferece a duração, a proporção e a resolução que aceita, o pedido inválido é recusado antes de qualquer chamada paga e o custo aparece antes de gerar.
+- **Erro de mídia com o que fazer**. A falha do serviço chegava crua ("HTTP 422" com JSON). Agora vem uma frase com o que houve e o que fazer, e um botão para Serviços de mídia quando o problema é a chave.
+- **Prévia mostra o arquivo gerado**. A prévia do Estúdio podia mostrar outra criação do mesmo tipo; agora mostra exatamente o arquivo que acabou de ser gerado.
+- **Veo nativo do Google até 22/10**. O Google desliga os Veo 3.1 preview do Gemini em 22/10/2026. O Estúdio avisa antes da data e, depois dela, recusa indicando o Veo 3.1 pelo Replicate. O Veo 2, já desligado, saiu da lista.
+
+## 0.76.327 — Instalador assinado
+
+O instalador, o app e o atualizador do Windows passam a sair assinados com o certificado de assinatura de código da HIPERSEND, guardado num token de hardware (YubiKey). O conteúdo do app é o mesmo da 0.76.326.
+
+- **Instalador do Windows assinado**. O Setup.exe, o NexusIDE, o atualizador e o Redline do Windows saem com assinatura Authenticode da HIPERSEND TECNOLOGIA INTERNET & SOFTWARES LTDA, emitida pelo SSL.com, com carimbo de tempo. O Windows mostra o editor em vez de "Editor desconhecido". O SmartScreen ainda pode avisar nas primeiras instalações, até o certificado novo ganhar reputação. A chave fica num token de hardware e não sai dele.
+
 ## 0.76.326 — Comparador honesto e mídia que gera
 
 As tags 0.76.323 (macOS) e 0.76.325 (Linux) não receberam arquivos Windows. Este pacote leva ao Windows tudo delas (velocidade e detalhes da missão, "Ver o que aconteceu" no Quadro, portão de regressão em lotes, fila de comandos pesados que se libera sozinha) e as melhorias abaixo no comparador de modelos e na geração de mídia:
