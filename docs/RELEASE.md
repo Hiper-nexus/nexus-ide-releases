@@ -294,9 +294,10 @@ SSL.com cobrava por assinatura e cada build assina dezenas de arquivos, o que ge
 faturas de excesso; ele saiu do fluxo em 05/10. O substituto é um YubiKey com a
 chave ECC P-384 no slot PIV 9a: o build local com `NEXUS_WINDOWS_YUBIKEY_SIGNING=1`
 assina pelo certificado fixado em `build/windows-signing-identity.json` e recusa
-qualquer outro (runbook em `docs/windows-signing/YUBIKEY.md`). Em 19/10 o SSL.com
-ainda não reemitiu o certificado ECC, o thumbprint está `null` e o modo recusa:
-até ele ser importado e fixado, a release Windows sai sem assinatura.
+qualquer outro (runbook em `docs/windows-signing/YUBIKEY.md`). O certificado ECC
+(série `0FF90DF6…`, thumbprint `41BB4AFD…3560`) foi emitido, importado no slot e
+fixado em 19/10; o PC que assina precisa do YubiKey Smart Card Minidriver. Sem o
+token (ou sem a variável), a release Windows sai sem assinatura.
 
 Sem assinatura, quem baixa o `Setup.exe` pelo site vê o aviso do SmartScreen
 ("O Windows protegeu o computador" → "Mais informações" → "Executar assim

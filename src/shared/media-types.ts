@@ -35,6 +35,11 @@ export interface MediaProviderInfo {
   hasKey: boolean;
   /** Masked key preview for the settings UI (never the raw key). */
   maskedKey: string | null;
+  /**
+   * F-1585: preço de lista por imagem, em USD, por modelo (só imagem; o de
+   * vídeo depende de duração e resolução e vem de `media-video-models`).
+   */
+  imageCostUsd?: Record<string, number | null>;
 }
 
 export interface MediaGenerationResult {
@@ -93,9 +98,39 @@ export interface MediaStudioRequest {
   clientJobId: string;
 }
 
+/**
+ * F-1584: que tipo de falha o serviço devolveu — o Estúdio oferece a saída
+ * certa (ex.: abrir Serviços de mídia quando a chave foi recusada).
+ */
+export type MediaErrorKind =
+  | 'key'
+  | 'billing'
+  | 'not-found'
+  | 'rate-limit'
+  | 'unavailable'
+  | 'invalid-request';
+
 export type MediaStudioResponse =
-  | MediaGenerationResult
-  | { ok: false; error: string; recoverJobId?: string; canceled?: boolean };
+  /**
+   * F-1586: `artifactId` é a linha da galeria gravada para ESTE resultado —
+   * a prévia mostra o arquivo gerado, não "o mais novo do mesmo tipo".
+   */
+  | (MediaGenerationResult & { artifactId?: string })
+  | {
+      ok: false;
+      error: string;
+      errorKind?: MediaErrorKind;
+      recoverJobId?: string;
+      canceled?: boolean;
+    };
+
+/**
+ * F-1589: geração, galeria e totais vivem na pasta do projeto aberto; chaves
+ * e provedores são globais. Sem projeto, o Main responde com esta frase (ou
+ * `null` nas leituras) em vez de lançar a recusa crua de escopo.
+ */
+export const MEDIA_NO_PROJECT_ERROR =
+  'Abra um projeto para gerar: as imagens e os vídeos são salvos na pasta do projeto aberto.';
 
 export const MEDIA_CHANNELS = {
   listProviders: 'media:listProviders',

@@ -9,6 +9,7 @@ import {
   assertSafeLocalGitConfig,
   assertSafeLocalGitConfigAsync,
   type AsyncGitRunner,
+  type GitResult,
   type GitRunner,
 } from "./git-command";
 import {
@@ -233,6 +234,163 @@ export async function gitOutputAsync(
   args: readonly string[],
 ): Promise<string> {
   return (await runner.run(cwd, args)).stdout.trim();
+}
+
+/** Atraso do checkout contra o upstream `origin`, medido após um fetch. */
+export interface UpstreamDrift {
+  /**
+   * Upstream `origin/*` da branch ("origin/main") ou, quando a branch não
+   * rastreia o origin, a REFERÊNCIA usada só para medir o atraso e avisar
+   * ("origin/HEAD" ou "origin/main"); null quando não há o que medir.
+   */
+  readonly upstream: string | null;
+  /** Commits atrás da referência medida (0 quando o ff-only foi feito). */
+  readonly behind: number;
+  /** Commits locais à frente (divergência: nunca ff). */
+  readonly ahead: number;
+  /** true só quando o fetch rodou nesta chamada e saiu com status 0. */
+  readonly fetched: boolean;
+  /**
+   * true quando a raiz limpa e estritamente atrás recebeu merge --ff-only.
+   * Só é possível quando a branch rastreia um upstream origin/* — com a
+   * referência de fallback a medição é só para o aviso, nunca ff.
+   */
+  readonly fastForwarded: boolean;
+}
+
+const UPSTREAM_FETCH_TIMEOUT_MS = 20_000;
+
+/** Referência de fallback para medir o atraso quando a branch não rastreia origin/*. */
+const UPSTREAM_FALLBACK_REFS = ["origin/HEAD", "origin/main"] as const;
+
+/**
+ * Refresh do upstream da raiz de coordenação antes de congelar a base de uma
+ * worktree: a base era sempre o HEAD local, N commits atrás de origin/main,
+ * porque só o nexus_git_sync manual buscava. O fetch só toca
+ * refs/remotes/origin/* e o banco de objetos, então é seguro com WIP; o
+ * ff-only exige a branch rastreando origin/*, a árvore comprovadamente limpa
+ * (arquivos rastreados) e o histórico estritamente atrás — um untracked que o
+ * merge fosse sobrescrever o faz falhar sem tocar em nada. Branch sem upstream
+ * origin/* (a branch de feature do incidente dos 309 commits) é medida contra
+ * origin/HEAD|origin/main SÓ para o aviso, sem ff e sem tocar na branch. Toda
+ * falha de fetch/rede é absorvida (`fetched: false`): a criação da worktree
+ * nunca morre por causa do refresh. `skipFetch` (throttle do chamador) pula o
+ * fetch mas mantém a medição e o aviso contra as refs já buscadas.
+ */
+export async function refreshUpstreamDriftAsync(
+  git: AsyncGitRunner,
+  rootRealPath: string,
+  options?: { readonly skipFetch?: boolean },
+): Promise<UpstreamDrift> {
+  const stationary: UpstreamDrift = {
+    upstream: null,
+    behind: 0,
+    ahead: 0,
+    fetched: false,
+    fastForwarded: false,
+  };
+  let trackedUpstream: string | null = null;
+  try {
+    const upstreamResult = await git.run(
+      rootRealPath,
+      ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+      { allowFailure: true },
+    );
+    const upstream = upstreamResult.stdout.trim();
+    if (upstreamResult.status === 0 && upstream.startsWith("origin/")) {
+      trackedUpstream = upstream;
+    }
+  } catch {
+    // Runner em timeout/erro de processo já na sonda: segue com o HEAD local.
+    return stationary;
+  }
+  let measureName: string | null = trackedUpstream;
+  if (measureName === null) {
+    for (const candidate of UPSTREAM_FALLBACK_REFS) {
+      let probe: GitResult;
+      try {
+        probe = await git.run(
+          rootRealPath,
+          ["rev-parse", "--verify", `refs/remotes/${candidate}^{commit}`],
+          { allowFailure: true },
+        );
+      } catch {
+        return stationary;
+      }
+      if (probe.status === 0 && probe.stdout.trim().length > 0) {
+        measureName = candidate;
+        break;
+      }
+    }
+    if (measureName === null) return stationary;
+  }
+  const measureRef = `refs/remotes/${measureName}`;
+  let fetched = false;
+  if (!options?.skipFetch) {
+    try {
+      fetched =
+        (
+          await git.run(rootRealPath, ["fetch", "--prune", "origin"], {
+            allowFailure: true,
+            timeoutMs: UPSTREAM_FETCH_TIMEOUT_MS,
+          })
+        ).status === 0;
+    } catch {
+      // Timeout/erro de processo no fetch: segue com o HEAD local.
+      fetched = false;
+    }
+    if (!fetched) {
+      return { ...stationary, upstream: measureName };
+    }
+  }
+  let ahead = 0;
+  let behind = 0;
+  try {
+    const divergence = (
+      await git.run(rootRealPath, [
+        "rev-list",
+        "--left-right",
+        "--count",
+        `HEAD...${measureRef}`,
+      ])
+    ).stdout
+      .trim()
+      .split(/\s+/)
+      .map((value) => Number.parseInt(value, 10));
+    ahead = divergence[0] ?? 0;
+    behind = divergence[1] ?? 0;
+    if (!Number.isInteger(ahead) || !Number.isInteger(behind)) {
+      return { ...stationary, upstream: measureName, fetched };
+    }
+  } catch {
+    // Fetch saiu mas a medição falhou: atraso desconhecido, sem ff.
+    return { ...stationary, upstream: measureName, fetched };
+  }
+  // Sem upstream origin/* rastreado a medição é SÓ para o aviso: nunca ff numa
+  // branch que não é a de integração do operador.
+  if (trackedUpstream === null || ahead > 0 || behind === 0) {
+    return { upstream: measureName, behind, ahead, fetched, fastForwarded: false };
+  }
+  let ff: GitResult | null = null;
+  try {
+    const trackedStatus = await git.run(
+      rootRealPath,
+      ["status", "--porcelain=v1", "--untracked-files=no"],
+      { allowFailure: true },
+    );
+    if (trackedStatus.status === 0 && trackedStatus.stdout.length === 0) {
+      ff = await git.run(rootRealPath, ["merge", "--ff-only", "@{upstream}"], {
+        allowFailure: true,
+      });
+    }
+  } catch {
+    // Status/merge rejeitado pelo runner: preserva o atraso medido, sem ff.
+    return { upstream: measureName, behind, ahead, fetched, fastForwarded: false };
+  }
+  if (ff === null || ff.status !== 0) {
+    return { upstream: measureName, behind, ahead, fetched, fastForwarded: false };
+  }
+  return { upstream: measureName, behind: 0, ahead, fetched, fastForwarded: true };
 }
 
 export async function readRepositorySnapshotAsync(

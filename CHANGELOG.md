@@ -1,5 +1,69 @@
 # Changelog
 
+## 0.76.326 — Comparador honesto e mídia que gera
+
+As tags 0.76.323 (macOS) e 0.76.325 (Linux) não receberam arquivos Windows. Este pacote leva ao Windows tudo delas (velocidade e detalhes da missão, "Ver o que aconteceu" no Quadro, portão de regressão em lotes, fila de comandos pesados que se libera sozinha) e as melhorias abaixo no comparador de modelos e na geração de mídia:
+
+- **Comparar modelos com números oficiais**. As notas da tela eram de demonstração, escritas à mão em setembro, e a escolha automática nem as usava. Agora a tela mostra os mesmos benchmarks oficiais da rota (DeepSWE, Terminal-Bench 2.1, SWE-bench Verified), com link para a fonte e dizendo quando a nota vem de outro modelo da mesma linha. Aparece só a versão mais nova de cada modelo e, por padrão, só as ferramentas instaladas; modelo sem número publicado fica sem nota, nunca com zero.
+- **Mídia sem projeto aberto**. Sem projeto aberto, Serviços de mídia caía num erro e nem deixava conectar uma chave, e o Estúdio abria mudo. Agora os serviços carregam sempre e o Estúdio explica que gerar precisa de um projeto aberto.
+- **Vídeo só com o que o modelo aceita**. O Estúdio mandava 5 s para todo vídeo e o Veo, que só aceita 4, 6 ou 8 s, falhava com as opções padrão; Hailuo, Sora e Wan também recebiam valores que recusam. Agora cada modelo só oferece a duração, a proporção e a resolução que aceita, o pedido inválido é recusado antes de qualquer chamada paga e o custo aparece antes de gerar.
+- **Erro de mídia com o que fazer**. A falha do serviço chegava crua ("HTTP 422" com JSON). Agora vem uma frase com o que houve e o que fazer, e um botão para Serviços de mídia quando o problema é a chave.
+- **Prévia mostra o arquivo gerado**. A prévia do Estúdio podia mostrar outra criação do mesmo tipo; agora mostra exatamente o arquivo que acabou de ser gerado.
+- **Veo nativo do Google até 22/10**. O Google desliga os Veo 3.1 preview do Gemini em 22/10/2026. O Estúdio avisa antes da data e, depois dela, recusa indicando o Veo 3.1 pelo Replicate. O Veo 2, já desligado, saiu da lista.
+
+## 0.76.325 — Velocidade e detalhes da missão
+
+A tag 0.76.323 é o pacote macOS e não recebe arquivos Linux. A tag 0.76.324 não foi publicada: a suíte Ubuntu falhou em `tool-util-workspace.test.ts` (F-742), porque o recibo de escrita passou a levar `inputWriter` e o teste ainda exigia o objeto antigo. Este pacote leva o desktop Linux.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+No desktop Linux, em relação à 0.76.322:
+
+- **Quadro: botão "Ver o que aconteceu" e Atividade ampliada**. Ao encerrar uma missão (sucesso, falha ou interrupção), o botão "Ver o que aconteceu" abre a visão de Atividade ampliada para inspeção detalhada. O estado do Quadro mantém coerência com a barra lateral e o layout se adapta a janelas estreitas sem quebra de elementos.
+- **Motor: base da worktree com aviso e refresh**. O upstream do origin é atualizado antes de congelar a base do writer isolado (com throttle de 60 s por raiz de repositório no fetch) e emite aviso explícito se a branch não rastreia origin/*.
+- **Motor: entregáveis preservados no corte de 512 arquivos**. O snapshot de arquivos candidatos lê e gera fingerprint de arquivos declarados como entregáveis mesmo que estejam alfabeticamente além do limite de 512 arquivos.
+- **Motor: portão de regressão em lotes**. A faixa de testes impactados no handoff é dividida em lotes sequenciais calibrados pelo orçamento de tempo restante. Os testes concluídos reportam resultado e veredito imediatamente, impedindo que estouros de prazo resultem em 0 testes computados.
+- **Motor: pane_write com recibo de entrega**. A escrita em panes comprova entrega com recibo estruturado de prova de turno e aceite de bytes, rejeitando confirmações falsas quando o pane não está pronto.
+- **Motor: esforço do revisor proporcional**. O roteamento de tarefas e as regras de conformidade reservam o esforço máximo do revisor para tarefas críticas, alocando esforço proporcional nos demais níveis de severidade.
+- **Motor: fila de comandos pesados se liberta sozinha**. Um lease exclusivo cujo executor ou sessão dona morreu passa a ser liberado pela própria fila após 60 s (antes ficava preso e travava novos comandos), e a recusa da fila agora diz qual comando segura o lease. O conserto no supervisor nativo (`native/darwin-pty-supervisor/main.c`) não está nesta build: fica para o próximo rebuild nativo.
+
+## 0.76.324 — Velocidade e detalhes da missão
+
+A tag 0.76.323 é o pacote macOS e não recebe arquivos Linux. Esta tag não foi publicada: a suíte Ubuntu falhou no teste de retomada do MiMo.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+No desktop Linux, em relação à 0.76.322:
+
+- **Quadro: botão "Ver o que aconteceu" e Atividade ampliada**. Ao encerrar uma missão (sucesso, falha ou interrupção), o botão "Ver o que aconteceu" abre a visão de Atividade ampliada para inspeção detalhada. O estado do Quadro mantém coerência com a barra lateral e o layout se adapta a janelas estreitas sem quebra de elementos.
+- **Motor: base da worktree com aviso e refresh**. O upstream do origin é atualizado antes de congelar a base do writer isolado (com throttle de 60 s por raiz de repositório no fetch) e emite aviso explícito se a branch não rastreia origin/*.
+- **Motor: entregáveis preservados no corte de 512 arquivos**. O snapshot de arquivos candidatos lê e gera fingerprint de arquivos declarados como entregáveis mesmo que estejam alfabeticamente além do limite de 512 arquivos.
+- **Motor: portão de regressão em lotes**. A faixa de testes impactados no handoff é dividida em lotes sequenciais calibrados pelo orçamento de tempo restante. Os testes concluídos reportam resultado e veredito imediatamente, impedindo que estouros de prazo resultem em 0 testes computados.
+- **Motor: pane_write com recibo de entrega**. A escrita em panes comprova entrega com recibo estruturado de prova de turno e aceite de bytes, rejeitando confirmações falsas quando o pane não está pronto.
+- **Motor: esforço do revisor proporcional**. O roteamento de tarefas e as regras de conformidade reservam o esforço máximo do revisor para tarefas críticas, alocando esforço proporcional nos demais níveis de severidade.
+- **Motor: fila de comandos pesados se liberta sozinha**. Um lease exclusivo cujo executor ou sessão dona morreu passa a ser liberado pela própria fila após 60 s (antes ficava preso e travava novos comandos), e a recusa da fila agora diz qual comando segura o lease. O conserto no supervisor nativo (`native/darwin-pty-supervisor/main.c`) não está nesta build: fica para o próximo rebuild nativo.
+
+## 0.76.323 — Velocidade e detalhes da missão
+
+Melhorias de usabilidade no Quadro da missão e otimizações de robustez e velocidade no motor de execução:
+
+- **Quadro: botão "Ver o que aconteceu" e Atividade ampliada**. Ao encerrar uma missão (sucesso, falha ou interrupção), o botão "Ver o que aconteceu" abre a visão de Atividade ampliada para inspeção detalhada. O estado do Quadro mantém coerência com a barra lateral e o layout se adapta a janelas estreitas sem quebra de elementos.
+- **Motor: base da worktree com aviso e refresh**. O upstream do origin é atualizado antes de congelar a base do writer isolado (com throttle de 60 s por raiz de repositório no fetch) e emite aviso explícito se a branch não rastreia origin/*.
+- **Motor: entregáveis preservados no corte de 512 arquivos**. O snapshot de arquivos candidatos lê e gera fingerprint de arquivos declarados como entregáveis mesmo que estejam alfabeticamente além do limite de 512 arquivos.
+- **Motor: portão de regressão em lotes**. A faixa de testes impactados no handoff é dividida em lotes sequenciais calibrados pelo orçamento de tempo restante. Os testes concluídos reportam resultado e veredito imediatamente, impedindo que estouros de prazo resultem em 0 testes computados.
+- **Motor: pane_write com recibo de entrega**. A escrita em panes comprova entrega com recibo estruturado de prova de turno e aceite de bytes, rejeitando confirmações falsas quando o pane não está pronto.
+- **Motor: esforço do revisor proporcional**. O roteamento de tarefas e as regras de conformidade reservam o esforço máximo do revisor para tarefas críticas, alocando esforço proporcional nos demais níveis de severidade.
+- **Motor: fila de comandos pesados se liberta sozinha**. Um lease exclusivo cujo executor ou sessão dona morreu passa a ser liberado pela própria fila após 60 s (antes ficava preso e travava novos comandos), e a recusa da fila agora diz qual comando segura o lease. O conserto no supervisor nativo (`native/darwin-pty-supervisor/main.c`) não está nesta build: fica para o próximo rebuild nativo.
+- **Equipe salva em Personalizar equipe**. Já presente no pacote Linux 0.76.322 e incluída aqui no macOS.
+
+## 0.76.322 — Equipe salva no Expresso
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+No desktop Linux, em relação à 0.76.321:
+
+- **Equipe salva em Personalizar equipe**. No início expresso da missão, "Personalizar equipe" só deixava editar os papéis um a um. Agora há "Começar de uma equipe salva": as suas equipes vêm antes das originais, os integrantes substituem o roster, e um roster que o rascunho recusa (equipe grande demais) mostra o erro em vez de aplicar pela metade.
+
 ## 0.76.321 — Piloto para todas as CLIs no Linux
 
 A tag 0.76.319 é o pacote Windows e não recebe arquivos Linux. A tag 0.76.320 não foi publicada: a suíte Ubuntu falhou em testes desatualizados (assinatura Windows ainda pedia o eSigner, e o teto de IPC de `orch-ipc.ts` tinha ficado em 51 com 46 chamadas). Este pacote leva o desktop Linux.

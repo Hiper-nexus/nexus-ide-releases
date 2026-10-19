@@ -1,27 +1,32 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import type {
-  MediaArtifactInfo,
-  MediaGenerationResult,
-  MediaProviderInfo,
-  MediaStudioRequest,
+import {
+  MEDIA_NO_PROJECT_ERROR,
+  type MediaArtifactInfo,
+  type MediaErrorKind,
+  type MediaGenerationResult,
+  type MediaProviderInfo,
+  type MediaStudioRequest,
 } from '../../shared/media-types';
 import { useProductNavigationStore } from '../state/product-navigation-store';
 import { CloseButton } from './CloseButton';
 import { PixelIcon } from './PixelIcon';
 import { platformCopy } from '../lib/platform-copy';
+import {
+  IMAGE_ASPECTS,
+  firstUsableModel,
+  studioCostUsd,
+  studioModelBlock,
+  studioRetirementNotice,
+  studioVideoChoices,
+  type StudioKind,
+} from './media-studio-options';
 
 /**
  * Estúdio de Mídia — geração de imagem/vídeo para quem não fala com agente:
- * descreve o que quer, escolhe o modelo, clica em Gerar. As API keys ficam em
- * Ajustes → Mídia; aqui só aparecem providers já configurados (hasKey).
+ * descreve o que quer, escolhe o modelo, clica em Gerar. As chaves ficam em
+ * Ajustes → Serviços de mídia; aqui só geram os serviços conectados (hasKey).
+ * Geração e galeria são da pasta do projeto aberto (F-1589).
  */
-
-type StudioKind = 'image' | 'video';
-
-const ASPECTS: Record<StudioKind, string[]> = {
-  image: ['1:1', '16:9', '9:16', '4:3', '3:4'],
-  video: ['16:9', '9:16'],
-};
 
 const EXAMPLES: Record<StudioKind, string[]> = {
   image: [
@@ -53,7 +58,8 @@ function formatUsd(usd: number): string {
 }
 
 function basename(p: string): string {
-  return p.split('/').filter(Boolean).pop() ?? p;
+  // O caminho absoluto do resultado usa \ no Windows.
+  return p.split(/[\\/]/u).filter(Boolean).pop() ?? p;
 }
 
 /** Junta provider+modelo num valor único para o <select> (optgroup por provider). */
@@ -63,13 +69,15 @@ function selValue(providerId: string, model: string): string {
 
 interface StudioResult {
   res: MediaGenerationResult;
-  /** storageKey do artifact mais recente do mesmo kind (para reveal/preview). */
+  /** storageKey do artifact deste resultado (para reveal/preview); F-1586. */
   storageKey: string | null;
   dataUrl: string | null;
 }
 
 interface StudioError {
   message: string;
+  /** F-1584: chave recusada ou ausente ganha o atalho para Serviços de mídia. */
+  kind?: MediaErrorKind;
   recoverJobId?: string;
   /** Request original — "Retomar sem pagar de novo" repete com recoverJobId. */
   request: MediaStudioRequest;
@@ -97,6 +105,9 @@ export function MediaStudioPanel({
   const [result, setResult] = useState<StudioResult | null>(null);
   const [error, setError] = useState<StudioError | null>(null);
   const [artifacts, setArtifacts] = useState<MediaArtifactInfo[]>([]);
+  // F-1589: `null` = ainda lendo; false = sem projeto aberto.
+  const [projectOpen, setProjectOpen] = useState<boolean | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
   const [copied, setCopied] = useState(false);
   // storageKeys com fetch de thumb já tentado — não re-dispara em falha.
@@ -143,18 +154,33 @@ export function MediaStudioPanel({
     [],
   );
 
-  // Carrega providers + galeria ao abrir (e recarrega a cada abertura).
+  // Carrega providers e galeria ao abrir (e recarrega a cada abertura). São
+  // leituras independentes (F-1589): provedores são globais, a galeria é do
+  // projeto; uma falhar não pode deixar a outra muda.
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    void Promise.all([
-      window.nexus.media.listProviders(),
-      window.nexus.media.listArtifacts(),
-    ]).then(([list, arts]) => {
-      if (cancelled) return;
-      setProviders(list);
-      setArtifacts(arts);
-    });
+    setLoadError(null);
+    window.nexus.media.listProviders().then(
+      (list) => {
+        if (!cancelled) setProviders(list);
+      },
+      () => {
+        if (cancelled) return;
+        setProviders([]);
+        setLoadError('Não foi possível carregar os serviços de mídia. Feche e abra o Estúdio de novo.');
+      },
+    );
+    window.nexus.media.listArtifacts().then(
+      (arts) => {
+        if (cancelled) return;
+        setProjectOpen(arts !== null);
+        setArtifacts(arts ?? []);
+      },
+      () => {
+        if (!cancelled) setArtifacts([]);
+      },
+    );
     return () => {
       cancelled = true;
     };
@@ -162,19 +188,16 @@ export function MediaStudioPanel({
 
   // Seleção default: primeiro provider COM key do kind ativo + seu defaultModel.
   // Re-reseta quando a aba/providers mudam e a seleção atual não é mais válida.
+  // F-1585: modelo que não gera pelo Estúdio (desligado, precisa de imagem
+  // inicial) nunca é o padrão.
   useEffect(() => {
     if (!providers) return;
     const [pid, model] = sel.split('::');
     const current = keyed.find((p) => p.id === pid);
-    if (current && current.models.includes(model)) return;
-    const first = keyed[0];
-    setSel(first ? selValue(first.id, first.defaultModel) : '');
+    if (current && current.models.includes(model) && studioModelBlock(model) === null) return;
+    const first = firstUsableModel(keyed);
+    setSel(first ? selValue(first.providerId, first.model) : '');
   }, [providers, keyed, sel]);
-
-  // Proporção default por aba (vídeo não tem 1:1 etc.).
-  useEffect(() => {
-    if (!ASPECTS[tab].includes(aspect)) setAspect('16:9');
-  }, [tab, aspect]);
 
   // Cronômetro de espera — anda 1x/s enquanto a geração não resolve.
   useEffect(() => {
@@ -211,6 +234,23 @@ export function MediaStudioPanel({
 
   if (!open) return null;
 
+  // F-1585: as opções de vídeo são as do modelo escolhido (o slider de 2 a
+  // 12 s e o 720p/1080p fixos mandavam valores que o Veo, o Hailuo e o Sora
+  // recusam); o custo de lista aparece antes de gerar.
+  const [selProviderId, selModel = ''] = sel.split('::');
+  const selectedProvider = keyed.find((p) => p.id === selProviderId);
+  const video =
+    tab === 'video' && selModel
+      ? studioVideoChoices(selModel, { aspect, resolution, duration })
+      : null;
+  const aspectChoices = tab === 'image' ? IMAGE_ASPECTS : (video?.aspects ?? []);
+  const effectiveAspect =
+    tab === 'image' ? (IMAGE_ASPECTS.includes(aspect) ? aspect : '16:9') : video?.aspect;
+  const costUsd = selModel
+    ? studioCostUsd(tab, selectedProvider, selModel, video ?? undefined)
+    : null;
+  const retirementNotice = tab === 'video' && selModel ? studioRetirementNotice(selModel) : null;
+
   async function run(request: MediaStudioRequest) {
     setJob({ clientJobId: request.clientJobId, startedAt: Date.now() });
     setElapsed(0);
@@ -219,11 +259,16 @@ export function MediaStudioPanel({
     setCopied(false);
     try {
       const res = await window.nexus.media.generate(request);
-      if (res.ok) {        // Sucesso: recarrega a galeria e usa o artifact mais novo do kind
-        // (a lista vem newest-first) para preview + "Mostrar no Finder".
-        const arts = await window.nexus.media.listArtifacts();
+      if (res.ok) {
+        // Sucesso: recarrega a galeria e usa o artifact DESTE resultado para a
+        // prévia e o "Mostrar no Explorador" (F-1586). "O mais novo do mesmo
+        // tipo" podia ser o de um agente que gerou no mesmo projeto ao mesmo
+        // tempo. Sem o id, não há prévia — nunca o arquivo de outro.
+        const arts = (await window.nexus.media.listArtifacts()) ?? [];
         setArtifacts(arts);
-        const newest = arts.find((a) => a.kind === res.kind) ?? null;
+        const newest = res.artifactId
+          ? (arts.find((a) => a.id === res.artifactId) ?? null)
+          : null;
         let dataUrl: string | null = null;
         if (newest) {
           const d = await window.nexus.media.readArtifactDataUrl(newest.storageKey);
@@ -236,7 +281,12 @@ export function MediaStudioPanel({
         setResult({ res, storageKey: newest?.storageKey ?? null, dataUrl });
       } else if (!res.canceled) {
         // Cancelamento é ação do usuário — não vira card de erro.
-        setError({ message: res.error, recoverJobId: res.recoverJobId, request });
+        setError({
+          message: res.error,
+          kind: res.errorKind,
+          recoverJobId: res.recoverJobId,
+          request,
+        });
       }
     } catch (e) {
       setError({
@@ -251,14 +301,19 @@ export function MediaStudioPanel({
   function generate() {
     const [pid, model] = sel.split('::');
     const provider = keyed.find((p) => p.id === pid);
-    if (!provider || !prompt.trim() || job) return;
+    if (!provider || !prompt.trim() || job || projectOpen === false) return;
     void run({
       kind: tab,
       prompt: prompt.trim(),
       providerId: provider.id,
       model,
-      aspectRatio: aspect,
-      ...(tab === 'video' ? { durationSeconds: duration, resolution } : {}),
+      ...(effectiveAspect ? { aspectRatio: effectiveAspect } : {}),
+      ...(video
+        ? {
+            durationSeconds: video.duration,
+            ...(video.resolution ? { resolution: video.resolution } : {}),
+          }
+        : {}),
       clientJobId: crypto.randomUUID(),
     });
   }
@@ -373,21 +428,31 @@ export function MediaStudioPanel({
             </button>
           </div>
 
-          {providers !== null && keyed.length === 0 ? (
+          {loadError && (
+            <p className="ms-error__msg" role="alert">
+              <PixelIcon name="warn" size={11} /> {loadError}
+            </p>
+          )}
+          {projectOpen === false && (
+            <p className="ms-dim" role="status">
+              {MEDIA_NO_PROJECT_ERROR}
+            </p>
+          )}
+          {providers !== null && keyed.length === 0 && !loadError ? (
             <section className="ms-empty">
               <p className="ms-empty__title">
-                Nenhum provider de {KIND_PT[tab]} configurado
+                Nenhum serviço de {KIND_PT[tab]} conectado
               </p>
               <p className="ms-dim">
-                Para gerar {KIND_PT[tab]}, conecte uma API key em Ajustes → Mídia.
-                Leva menos de um minuto.
+                Para gerar {KIND_PT[tab]}, conecte a chave de um serviço em Ajustes →
+                Serviços de mídia. Leva menos de um minuto.
               </p>
               <button
                 type="button"
                 className="ms-button ms-button--primary ms-empty__cta"
                 onClick={openMediaSettings}
               >
-                Configurar API key
+                Conectar serviço de mídia
               </button>
             </section>
           ) : (
@@ -427,73 +492,118 @@ export function MediaStudioPanel({
                         label={
                           p.hasKey
                             ? p.label
-                            : `${p.label} — sem key (Ajustes → Mídia)`
+                            : `${p.label} — sem chave (Serviços de mídia)`
                         }
                       >
-                        {p.models.map((m) => (
-                          <option
-                            key={m}
-                            value={selValue(p.id, m)}
-                            disabled={!p.hasKey}
-                          >
-                            {m}
-                          </option>
-                        ))}
+                        {p.models.map((m) => {
+                          const block = studioModelBlock(m);
+                          return (
+                            <option
+                              key={m}
+                              value={selValue(p.id, m)}
+                              disabled={!p.hasKey || block !== null}
+                            >
+                              {block ? `${m} — ${block}` : m}
+                            </option>
+                          );
+                        })}
                       </optgroup>
                     ))}
                   </select>
                 </label>
 
-                <div className="ms-field">
-                  <span className="ms-field__label">Proporção</span>
-                  <div className="ms-chips" role="group" aria-label="Proporção">
-                    {ASPECTS[tab].map((a) => (
-                      <button
-                        key={a}
-                        type="button"
-                        aria-pressed={a === aspect}
-                        className={a === aspect ? 'ms-chip ms-chip--on' : 'ms-chip'}
-                        onClick={() => setAspect(a)}
-                      >
-                        {a}
-                      </button>
-                    ))}
+                {aspectChoices.length > 0 && (
+                  <div className="ms-field">
+                    <span className="ms-field__label">Proporção</span>
+                    <div className="ms-chips" role="group" aria-label="Proporção">
+                      {aspectChoices.map((a) => (
+                        <button
+                          key={a}
+                          type="button"
+                          aria-pressed={a === effectiveAspect}
+                          className={a === effectiveAspect ? 'ms-chip ms-chip--on' : 'ms-chip'}
+                          onClick={() => setAspect(a)}
+                        >
+                          {a}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                )}
 
-                {tab === 'video' && (
+                {video && (
                   <>
-                    <label className="ms-field">
-                      <span className="ms-field__label">Duração: {duration}s</span>
-                      <input
-                        type="range"
-                        className="ms-range"
-                        min={2}
-                        max={12}
-                        step={1}
-                        value={duration}
-                        onChange={(e) => setDuration(Number(e.target.value))}
-                      />
-                    </label>
-                    <label className="ms-field">
-                      <span className="ms-field__label">Resolução</span>
-                      <select
-                        className="ms-select"
-                        value={resolution}
-                        onChange={(e) => setResolution(e.target.value)}
-                      >
-                        <option value="720p">720p</option>
-                        <option value="1080p">1080p</option>
-                      </select>
-                    </label>
+                    {video.resolutions.length > 0 && (
+                      <div className="ms-field">
+                        <span className="ms-field__label">Resolução</span>
+                        <div className="ms-chips" role="group" aria-label="Resolução">
+                          {video.resolutions.map((r) => (
+                            <button
+                              key={r}
+                              type="button"
+                              aria-pressed={r === video.resolution}
+                              className={r === video.resolution ? 'ms-chip ms-chip--on' : 'ms-chip'}
+                              onClick={() => setResolution(r)}
+                            >
+                              {r}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {video.durations.length > 6 ? (
+                      <label className="ms-field">
+                        <span className="ms-field__label">Duração: {video.duration}s</span>
+                        <input
+                          type="range"
+                          className="ms-range"
+                          min={video.durations[0]}
+                          max={video.durations.at(-1)}
+                          step={1}
+                          value={video.duration}
+                          onChange={(e) => setDuration(Number(e.target.value))}
+                        />
+                      </label>
+                    ) : (
+                      <div className="ms-field">
+                        <span className="ms-field__label">Duração</span>
+                        <div className="ms-chips" role="group" aria-label="Duração">
+                          {video.durations.map((d) => (
+                            <button
+                              key={d}
+                              type="button"
+                              aria-pressed={d === video.duration}
+                              className={d === video.duration ? 'ms-chip ms-chip--on' : 'ms-chip'}
+                              onClick={() => setDuration(d)}
+                            >
+                              {d}s
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </>
                 )}
               </div>
 
+              {retirementNotice && (
+                <p className="ms-dim" role="note">
+                  <PixelIcon name="warn" size={11} /> {retirementNotice}
+                </p>
+              )}
+              {selModel && (
+                <p className="ms-dim" aria-live="polite">
+                  Custo estimado:{' '}
+                  {costUsd !== null
+                    ? `${formatUsd(costUsd)} (preço de lista; quem cobra é o serviço)`
+                    : 'sem preço de lista para esta escolha'}
+                </p>
+              )}
+
               <button
                 type="button"
                 className="ms-button ms-button--primary ms-generate"
-                disabled={!prompt.trim() || Boolean(job) || !sel}
+                disabled={!prompt.trim() || Boolean(job) || !sel || projectOpen === false}
                 onClick={generate}
               >
                 {tab === 'image' ? 'Gerar imagem' : 'Gerar vídeo'}
@@ -591,12 +701,23 @@ export function MediaStudioPanel({
                   Retomar sem pagar de novo
                 </button>
               )}
+              {error.kind === 'key' && (
+                <button
+                  type="button"
+                  className="ms-button ms-button--sm"
+                  onClick={openMediaSettings}
+                >
+                  Abrir Serviços de mídia
+                </button>
+              )}
             </section>
           )}
 
           <section className="ms-gallery">
             <h4 className="ms-gallery__title">Suas criações</h4>
-            {artifacts.length === 0 ? (
+            {projectOpen === false ? (
+              <p className="ms-dim">As criações ficam na pasta de cada projeto. Abra um projeto para vê-las.</p>
+            ) : artifacts.length === 0 ? (
               <p className="ms-dim">Suas criações aparecerão aqui.</p>
             ) : (
               <div className="ms-grid">

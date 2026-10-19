@@ -102,6 +102,7 @@ import {
   authorizePaneRef,
   authorizedSessionIdOf,
   injectPrompt,
+  injectSubmittedPaneWrite,
   num,
   requireStr,
   spawnPaneAndMaybePrompt,
@@ -3802,7 +3803,10 @@ const paneWrite: McpToolDef = {
   name: 'nexus_pane_write',
   description:
     "Type text into a pane's terminal. By default an Enter keypress is sent " +
-    'after the text (submit: false to suppress).',
+    'after the text (submit: false to suppress). The receipt keeps ok:true and ' +
+    'adds delivery: entregue (turn proved while the pane was injectable-idle), ' +
+    'sem-prova-de-turno (bytes reached the PTY without turn proof), or ' +
+    'pane-finalizado (the session ended).',
   inputSchema: {
     type: 'object',
     properties: {
@@ -3827,11 +3831,17 @@ const paneWrite: McpToolDef = {
       sessionId,
       typeof args.text === 'string' ? args.text : '',
     );
+    const inputWriter = ctx.role === 'orchestrator' ? 'maestro' : 'nexus';
+    let delivery: 'entregue' | 'sem-prova-de-turno' | 'pane-finalizado';
     if (args.submit === false) {
       assertMcpInvocationCurrent(invocation);
-      orchWriteSession(sessionId, text, { inputWriter: ctx.role === 'orchestrator' ? 'maestro' : 'nexus' });
+      const wrote = orchWriteSession(sessionId, text, { inputWriter });
+      const state = getSessionState(sessionId);
+      delivery = wrote && state !== null && state !== 'exited'
+        ? 'sem-prova-de-turno'
+        : 'pane-finalizado';
     } else {
-      await injectPrompt(sessionId, text, invocation, ctx.role === 'orchestrator' ? 'maestro' : 'nexus');
+      delivery = await injectSubmittedPaneWrite(sessionId, text, invocation, inputWriter);
     }
     // OVKA-750 (soft): brief longo que cita card/task file → avisa o ponteiro.
     const briefingWarn = briefingPointerWarning(text);
@@ -3840,6 +3850,7 @@ const paneWrite: McpToolDef = {
     const target = getAgentSessionInfo(sessionId);
     return {
       ok: true,
+      delivery,
       ...(briefingWarn
         ? { briefingWarnings: [formatBriefingWarning(briefingWarn)] }
         : {}),

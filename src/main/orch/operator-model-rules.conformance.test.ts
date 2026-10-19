@@ -254,10 +254,24 @@ describe('regra 4: front-end reveza o pool inteiro, Devin elegível', () => {
 describe('regra 5: Muse Wonder Full no topo da lane de julgamento', () => {
   const REVIEW_TASK = 'Revise de forma independente o diff da correção do kickoff e dê o veredito';
 
-  it('com Muse disponível, a revisão vai para o Wonder Full max', () => {
+  it('com Muse disponível, revisão hard vai para o Wonder Full em high', () => {
     const decision = route(REVIEW_TASK, JUDGE_POOL);
-    expect(decision).toMatchObject({ adapterId: 'muse', model: 'muse-wonder-full-1.0', effort: 'max' });
+    expect(decision.tier).toBe('hard');
+    expect(decision).toMatchObject({ adapterId: 'muse', model: 'muse-wonder-full-1.0', effort: 'high' });
     expect(isFrontierReviewer(decision.adapterId, decision.model)).toBe(true);
+  });
+
+  it('critical na lane de julgamento usa o max do Wonder Full', () => {
+    const decision = routeTask(
+      REVIEW_TASK,
+      JUDGE_POOL,
+      DEFAULT_ROUTING_TABLE,
+      'critical',
+      false,
+      BUILTIN_MODEL_CATALOG,
+      { multiScore: true },
+    );
+    expect(decision).toMatchObject({ adapterId: 'muse', model: 'muse-wonder-full-1.0', effort: 'max' });
   });
 
   it('sem Muse, o topo da lane cai para o próximo frontier (Fable)', () => {

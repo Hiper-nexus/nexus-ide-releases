@@ -21,6 +21,8 @@ export interface HeavyCommandRequest {
   /** Short command label. Anything outside `[\w .:/_-]{1,80}` is dropped. */
   readonly label?: string;
   readonly kind: HeavyCommandKind;
+  /** The pid that asked for admission. Feeds the ghost-lease expiry below. */
+  readonly executorPid?: number;
   readonly signal?: AbortSignal;
   readonly isCurrent?: () => boolean;
   /** When finite, an attached waiter parks and rejects with `heavy_command_queued`. */
@@ -72,7 +74,10 @@ interface ActiveJob {
   readonly sessionId?: string;
   readonly paneId?: string;
   readonly label?: string;
+  readonly executorPid?: number;
   readonly startedAt: number;
+  /** First observation of a dead executor/session; reset the moment either revives. */
+  deadSince: number | null;
 }
 interface PermitPoolOptions {
   memory(): SystemMemorySample | null;
@@ -89,6 +94,19 @@ interface PermitPoolOptions {
   readonly progressAfterMs?: number;
   /** Cached dispatch level from kern.memorystatus_vm_pressure_level, or null. */
   pressure?(): number | null;
+  /** True while the admitted executor pid exists. ESRCH-style check; errors read as alive. */
+  readonly executorLive?: (pid: number) => boolean;
+  /** True while the owning session still exists (pane open). */
+  readonly sessionLive?: (sessionId: string) => boolean;
+  /**
+   * Ghost-lease TTL: how long an exclusive build/install stays held after BOTH
+   * the executor pid and the owner session probe say gone. The native watcher
+   * releases a slot only through its own cohort proof; a caller that dies while
+   * its processes were re-parented to a daemon never delivers that proof, and
+   * without this TTL the lane stays locked forever. Default 60 s. Without the
+   * probes the pool never expires a lease on its own.
+   */
+  readonly staleExclusiveMs?: number;
 }
 const LABEL_PATTERN = /^[\w .:/_-]{1,80}$/;
 /** Drop a label that could carry a secret or a control character. */
@@ -287,6 +305,34 @@ export class HeavyCommandPermitPool {
     }));
   }
 
+  /**
+   * Second release path for exclusive leases whose owner can no longer prove
+   * physical exit: the executor pid is gone (ESRCH) or the owning session
+   * closed while the watcher's cohort proof is stuck on daemon-inherited
+   * processes. A probe that errors or flaps back to alive resets the clock —
+   * a live job is never expired.
+   */
+  #expireStaleExclusive(): void {
+    const ttl = this.#options.staleExclusiveMs;
+    if (ttl === undefined || ttl <= 0 || this.#active.size === 0) return;
+    const executorLive = this.#options.executorLive;
+    const sessionLive = this.#options.sessionLive;
+    const now = Date.now();
+    for (const [id, job] of this.#active) {
+      if (!heavyCommandKindIsExclusive(job.kind)) continue;
+      let gone = false;
+      if (typeof job.executorPid === 'number' && executorLive) {
+        try { gone = !executorLive(job.executorPid); } catch { gone = false; }
+      }
+      if (!gone && job.sessionId && sessionLive) {
+        try { gone = !sessionLive(job.sessionId); } catch { gone = false; }
+      }
+      if (!gone) { job.deadSince = null; continue; }
+      job.deadSince ??= now;
+      if (now - job.deadSince >= ttl) this.#active.delete(id);
+    }
+  }
+
   #blockedBy(waiter: Waiter, maxActive: number, effectiveMaxActive: number): HeavyCommandBlock {
     const occupants = this.#occupants(waiter.lane);
     const index = this.#waiters.indexOf(waiter);
@@ -353,6 +399,9 @@ export class HeavyCommandPermitPool {
 
   #pump(): void {
     if (this.#closed) return;
+    // Runs only while someone waits (the timer below): expiry exists to unblock
+    // a queued lane, not to sweep idle state.
+    this.#expireStaleExclusive();
     const maxActive = this.#options.maxActive ?? machineActiveLimit();
     const effective = heavyCommandEffectiveCap(maxActive, this.#pressureLevel());
     const writerAhead = new Set<string>();
@@ -387,7 +436,7 @@ export class HeavyCommandPermitPool {
       const id = `heavy-${randomUUID()}`;
       const label = heavyCommandLabel(waiter.request.label);
       this.#active.set(id, { lane: waiter.lane, kind: waiter.request.kind, sessionId: waiter.request.sessionId,
-        paneId: waiter.request.paneId, label, startedAt: Date.now() });
+        paneId: waiter.request.paneId, label, executorPid: waiter.request.executorPid, startedAt: Date.now(), deadSince: null });
       // The synchronous reservation precedes resolving the caller's promise.
       // Two lanes cannot both spend the same cached free RAM.
       waiter.resolve(Object.freeze({ id, release: () => {
@@ -410,9 +459,25 @@ export class HeavyCommandPermitPool {
   }
 }
 
+interface HeavyCommandLivenessProbe {
+  /** kill(pid, 0)-style check; true keeps the lease (ESRCH gone, EPERM alive). */
+  executorLive(pid: number): boolean;
+  /** True while the owning PTY session still exists. */
+  sessionLive(sessionId: string): boolean;
+}
+let livenessProbe: HeavyCommandLivenessProbe | null = null;
+/**
+ * Wired once by native-heavy-command at boot (it owns the pid/session checks;
+ * importing them here would cycle). Until then the pool never expires a lease
+ * on its own — the pre-existing behavior.
+ */
+export function setHeavyCommandPermitLiveness(probe: HeavyCommandLivenessProbe): void { livenessProbe = probe; }
+
 const permits = new HeavyCommandPermitPool({ memory: getMemoryAfterAgentReservations, limits: readPaneAdmissionLimits,
   refreshMemory: refreshSystemMemorySample, pressure: readHeavyCommandMemoryPressure,
-  waitMs: Number.POSITIVE_INFINITY, parkMs: 45_000 });
+  waitMs: Number.POSITIVE_INFINITY, parkMs: 45_000, staleExclusiveMs: 60_000,
+  executorLive: (pid) => { try { return livenessProbe?.executorLive(pid) ?? true; } catch { return true; } },
+  sessionLive: (sessionId) => { try { return livenessProbe?.sessionLive(sessionId) ?? true; } catch { return true; } } });
 registerHeavyCommandMemoryReservation(() => permits.snapshot().reservedMB);
 export function acquireHeavyCommandPermit(request: HeavyCommandRequest): Promise<HeavyCommandPermit> { return permits.acquire(request); }
 export function heavyCommandPermitSnapshot(): ReturnType<HeavyCommandPermitPool['snapshot']> { return permits.snapshot(); }

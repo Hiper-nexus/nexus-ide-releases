@@ -20,6 +20,7 @@ import {
   type MediaDeps,
 } from './media-generation';
 import { getVideoJob, saveVideoJob } from './media-video-jobs';
+import { MediaProviderHttpError } from './media-errors';
 
 let dir: string;
 
@@ -99,7 +100,7 @@ describe('resolveMediaProvider / resolveMediaModel', () => {
   it('provider explícito sem key é erro, nunca substitui', () => {
     expect(() =>
       resolveMediaProvider('image', 'openai-image', () => false),
-    ).toThrow(/sem key/);
+    ).toThrow(/sem chave — conecte em Ajustes → Serviços de mídia/);
   });
 
   it('provider de kind errado é erro', () => {
@@ -204,6 +205,48 @@ describe('generateImage', () => {
     await expect(
       generateImage({ prompt: 'x', baseDir: dir }, deps),
     ).rejects.toThrow(/401/);
+  });
+
+  it('F-1584: chave recusada diz o que fazer, com a frase do serviço e sem o JSON cru', async () => {
+    const { deps } = fakeDeps([
+      { status: 401, json: { error: { code: 401, message: 'API key not valid.' } } },
+    ]);
+    const err = await generateImage({ prompt: 'x', baseDir: dir }, deps).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MediaProviderHttpError);
+    expect((err as MediaProviderHttpError).kind).toBe('key');
+    expect((err as Error).message).toBe(
+      'Google recusou a chave (HTTP 401). Confira ou troque a chave em Ajustes → Serviços de mídia. Resposta do serviço: API key not valid.',
+    );
+  });
+});
+
+describe('F-1584: falha do Replicate legível', () => {
+  it('parâmetro recusado (422) traz o campo recusado, não o corpo inteiro', async () => {
+    const { deps } = fakeDeps([
+      {
+        status: 422,
+        json: {
+          title: 'Input validation failed',
+          detail: '- input.duration: duration must be one of the following: 4, 6, 8',
+          status: 422,
+        },
+      },
+    ]);
+    await expect(
+      generateVideo({ prompt: 'x', model: 'google/veo-3.1', durationSeconds: 8, baseDir: dir }, deps),
+    ).rejects.toThrow(
+      'Replicate não aceitou o pedido (HTTP 422); nada foi gerado. Resposta do serviço: - input.duration: duration must be one of the following: 4, 6, 8',
+    );
+  });
+
+  it('prediction que falha no serviço diz que não concluiu, com a causa', async () => {
+    const { deps } = fakeDeps([
+      { json: { id: 'p9', status: 'starting' } },
+      { json: { id: 'p9', status: 'failed', error: 'E005: flagged as sensitive' } },
+    ]);
+    await expect(generateVideo({ prompt: 'x', baseDir: dir }, deps)).rejects.toThrow(
+      'Replicate não concluiu a geração (falhou): E005: flagged as sensitive',
+    );
   });
 });
 
@@ -325,7 +368,30 @@ describe('replicate adapters', () => {
     expect(input.seconds).toBe(8);
     expect(input.openai_api_key).toBe('sk-test');
     expect(input.input_reference).toBeDefined();
-    expect(input.aspect_ratio).toBe('16:9');
+    // F-1585: o schema do Sora só aceita portrait|landscape.
+    expect(input.aspect_ratio).toBe('landscape');
+  });
+
+  it('F-1585: Sora Pro traduz 720p/1024p para standard/high; 9:16 vira portrait', () => {
+    const input = replicateInput(
+      { prompt: 'city', baseDir: dir, durationSeconds: 12, aspectRatio: '9:16', resolution: '1024p' },
+      'openai/sora-2-pro',
+    );
+    expect(input).toMatchObject({ seconds: 12, aspect_ratio: 'portrait', resolution: 'high' });
+  });
+
+  it('F-1585: Veo sem duração usa o padrão do modelo (8 s), nunca 5 s', () => {
+    const input = replicateInput({ prompt: 'x', baseDir: dir }, 'google/veo-3.1');
+    expect(input.duration).toBe(8);
+    expect(input.resolution).toBe('720p');
+  });
+
+  it('F-1585: Wan recebe duração e resolução pedidas (antes eram descartadas)', () => {
+    const input = replicateInput(
+      { prompt: 'x', baseDir: dir, durationSeconds: 10, resolution: '1080p' },
+      'wan-video/wan-2.5-i2v',
+    );
+    expect(input).toMatchObject({ duration: 10, resolution: '1080p' });
   });
 
   it('luma: start_image + end_image', () => {
@@ -693,14 +759,25 @@ describe('estimateCost — vídeo/imagem nunca invisível a $0', () => {
     expect(def.estimateCost({ model: 'kwaivgi/kling-v2.1' })).toBe(0.25);
   });
 
-  it('google-video estima por segundo (default 8s)', () => {
+  it('google-video estima por segundo e resolução (preço de lista do Gemini)', () => {
     const def = findMediaProvider('google-video')!;
     expect(
       def.estimateCost({ model: 'veo-3.1-generate-preview', seconds: 8 }),
     ).toBe(3.2);
     expect(
-      def.estimateCost({ model: 'veo-2.0-generate-001', seconds: 8 }),
-    ).toBe(2.8);
+      def.estimateCost({ model: 'veo-3.1-fast-generate-preview', seconds: 8, resolution: '4k' }),
+    ).toBe(2.4);
+    // F-1585: o Google desligou o Veo 2 em 30/06/2026 — saiu da lista.
+    expect(def.models).not.toContain('veo-2.0-generate-001');
+  });
+
+  it('F-1585: replicate-video usa o preço de lista por resolução', () => {
+    const def = findMediaProvider('replicate-video')!;
+    expect(def.estimateCost({ model: 'bytedance/seedance-2.0', seconds: 5 })).toBe(0.9);
+    expect(def.estimateCost({ model: 'bytedance/seedance-2.0', seconds: 5, resolution: '1080p' })).toBe(2.25);
+    // Hailuo e Ray cobram por vídeo, não por segundo.
+    expect(def.estimateCost({ model: 'minimax/hailuo-2.3', seconds: 10, resolution: '768p' })).toBe(0.56);
+    expect(def.estimateCost({ model: 'luma/ray-3.2', seconds: 10, resolution: '1080p' })).toBe(3.6);
   });
 
   it('replicate-image (Seedream) tem estimativa flat por modelo', () => {
@@ -876,5 +953,40 @@ describe('cancelamento (AbortSignal)', () => {
       provider: 'replicate-video',
     });
     expect(fs.existsSync(path.join(dir, 'revoked.mp4'))).toBe(false);
+  });
+});
+
+describe('F-1585: pedido de vídeo que o modelo recusa não chega ao serviço', () => {
+  it('Veo com 5 s (o padrão antigo do Estúdio) é recusado antes de qualquer chamada', async () => {
+    const { deps, calls } = fakeDeps([]);
+    await expect(
+      generateVideo({ prompt: 'x', model: 'google/veo-3.1', durationSeconds: 5, baseDir: dir }, deps),
+    ).rejects.toThrow('google/veo-3.1 aceita 4, 6, 8 segundos (pedido: 5 s).');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('modelo do Gemini desligado diz quando e o que usar, sem chamar o Google', async () => {
+    const { deps, calls } = fakeDeps([]);
+    deps.now = () => Date.parse('2026-10-23T10:00:00Z');
+    await expect(
+      generateVideo(
+        { prompt: 'x', provider: 'google-video', baseDir: dir },
+        deps,
+      ),
+    ).rejects.toThrow(
+      'O fornecedor desligou o veo-3.1-generate-preview em 22/10/2026; use google/veo-3.1 pelo Replicate.',
+    );
+    expect(calls).toHaveLength(0);
+  });
+
+  it('sem duração, o Veo pelo Replicate recebe 8 s e o custo usa 8 s', async () => {
+    const { deps, calls } = fakeDeps([
+      { json: { id: 'pv', status: 'succeeded', output: 'https://replicate.delivery/v.mp4' } },
+      { body: Buffer.from('mp4') },
+    ]);
+    const result = await generateVideo({ prompt: 'x', model: 'google/veo-3.1', baseDir: dir }, deps);
+    const body = JSON.parse(String(calls[0].init?.body ?? '{}')) as { input: Record<string, unknown> };
+    expect(body.input.duration).toBe(8);
+    expect(result.estimatedCostUsd).toBe(3.2);
   });
 });

@@ -12,6 +12,18 @@ function cssRule(css: string, selector: string): string {
 }
 
 describe("MissionBoard layout system invariants (RED test)", () => {
+  it("gives focused details the whole workspace and bounds header scrolling", () => {
+    const focused = cssRule(missionCss, ".mission-board[data-details-focused='true'] .mission-board__inspector-region");
+    expect(missionCss).toMatch(/\.mission-board\[data-details-focused='true'\] \.mission-interrupted,[\s\S]*?display:\s*none/);
+    expect(missionCss).toMatch(/@container mission-inspector-chrome \(max-width: 459px\)[\s\S]*?grid-template-columns:\s*repeat\(3, minmax\(max-content, 1fr\)\)/);
+    expect(focused).toMatch(/flex:\s*1 1 auto/);
+    expect(focused).toMatch(/max-height:\s*none/);
+    expect(focused).toMatch(/max-width:\s*none/);
+    const header = cssRule(missionCss, ".mission-board__header:not(.mission-board__header--menu-open)");
+    expect(header).toMatch(/max-height:\s*45%/);
+    expect(header).toMatch(/overflow:\s*auto/);
+    expect(cssRule(missionCss, ".mission-inspector__panel")).toMatch(/overscroll-behavior:\s*contain/);
+  });
   it("establishes named inline-size containment on the board", () => {
     const boardRule = cssRule(missionCss, ".mission-board");
     expect(boardRule).toMatch(/container-type:\s*inline-size/);

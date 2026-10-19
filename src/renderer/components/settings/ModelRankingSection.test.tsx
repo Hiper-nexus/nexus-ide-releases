@@ -2,310 +2,225 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { PublicModelRankingSnapshot } from '../../../shared/eval-ranking-types';
-import type { ProviderSettingsInfo } from '../../../shared/provider-settings-types';
-import { useProviderStore } from '../../state/provider-store';
-import { useQuotaStore } from '../../state/quota-store';
+import type { ModelComparisonSnapshot } from '../../../shared/eval-ranking-types';
 import { ModelRankingSection } from './ModelRankingSection';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
 
-const sampleSnapshot: PublicModelRankingSnapshot = {
-  schemaVersion: 1,
-  generatedAt: '2026-08-14T10:00:00.000Z',
-  suiteId: 'nexus-v1',
-  suiteRevision: 'eval-prod',
-  description: 'Nexus model evaluation ranking',
+const snapshot: ModelComparisonSnapshot = {
+  generatedAt: '2026-10-19T12:00:00.000Z',
+  olderVersionsHidden: 4,
   entries: [
     {
-      id: 'codex/gpt-5-pro',
+      id: 'codex/gpt-6.1-sol',
       adapterId: 'codex',
-      modelId: 'gpt-5-pro',
-      overall: 92,
-      coding: 95,
-      reasoning: 94,
-      frontend: 88,
-      security: 90,
+      adapterLabel: 'Codex',
+      modelId: 'gpt-6.1-sol',
+      cli: 'ready',
       costTier: 'high',
-      availability: 'paid',
-      evaluatedAt: '2026-08-14T10:00:00.000Z',
-      source: 'nexus-eval/v1/eval-prod',
-      confidence: 0.96,
-      rank: 1,
+      score: 97.4,
+      scoreKind: 'published',
+      benchmarks: { deepSWE: 75.2 },
+      source: 'https://openai.com/index/introducing-gpt-6-1-sol/',
+      origin: 'own',
     },
     {
-      id: 'claude/claude-3-7-sonnet',
-      adapterId: 'claude',
-      modelId: 'claude-3-7-sonnet',
-      overall: 90,
-      coding: 92,
-      reasoning: 91,
-      frontend: 94,
-      security: 89,
-      costTier: 'medium',
-      availability: 'paid',
-      evaluatedAt: '2026-08-14T10:00:00.000Z',
-      source: 'nexus-eval/v1/eval-prod',
-      confidence: 0.94,
-      rank: 2,
-    },
-    {
-      id: 'grok/grok-code-fast',
-      adapterId: 'grok',
-      modelId: 'grok-code-fast',
-      overall: 78,
-      coding: 80,
-      reasoning: 75,
-      frontend: 76,
-      security: 77,
+      id: 'agy/gemini-3.8-flash-low',
+      adapterId: 'agy',
+      adapterLabel: 'Antigravity',
+      modelId: 'gemini-3.8-flash-low',
+      cli: 'ready',
       costTier: 'low',
-      availability: 'cheap',
-      evaluatedAt: '2026-08-14T10:00:00.000Z',
-      source: 'nexus-eval/v1/eval-prod',
-      confidence: 0.9,
-      rank: 3,
+      score: 89.8,
+      scoreKind: 'published',
+      benchmarks: { deepSWE: 73.7, terminalBench21: 89.4 },
+      source: 'https://deepmind.google/models/model-cards/gemini-3-8-flash/',
+      origin: 'variant',
+      numbersFrom: 'gemini-3.8-flash',
+    },
+    {
+      id: 'codex/gpt-6.2-sol',
+      adapterId: 'codex',
+      adapterLabel: 'Codex',
+      modelId: 'gpt-6.2-sol',
+      cli: 'ready',
+      costTier: 'high',
+      score: 97.4,
+      scoreKind: 'published',
+      benchmarks: { deepSWE: 75.2 },
+      source: 'https://openai.com/index/introducing-gpt-6-1-sol/',
+      origin: 'predecessor',
+      numbersFrom: 'gpt-6.1-sol',
+    },
+    {
+      id: 'qwen/qwen3.8-max',
+      adapterId: 'qwen',
+      adapterLabel: 'Qwen Code',
+      modelId: 'qwen3.8-max',
+      cli: 'ready',
+      costTier: 'medium',
+      score: null,
+      scoreKind: 'none',
+      benchmarks: {},
+    },
+    {
+      id: 'devin/swe-2-high',
+      adapterId: 'devin',
+      adapterLabel: 'Devin',
+      modelId: 'swe-2-high',
+      cli: 'missing',
+      costTier: 'high',
+      score: 82.6,
+      scoreKind: 'published',
+      benchmarks: { deepSWE: 73, terminalBench21: 92.8 },
+      source: 'https://cognition.com/blog/swe-2',
+      origin: 'variant',
+      numbersFrom: 'swe-2',
     },
   ],
 };
 
-function mount(): { host: HTMLDivElement; root: Root } {
+let openExternal: ReturnType<typeof vi.fn>;
+let compare: ReturnType<typeof vi.fn>;
+
+async function mount(): Promise<{ host: HTMLDivElement; root: Root }> {
   const host = document.createElement('div');
   document.body.appendChild(host);
   const root = createRoot(host);
-  act(() => root.render(<ModelRankingSection />));
+  await act(async () => {
+    root.render(<ModelRankingSection />);
+  });
+  await act(async () => {
+    await Promise.resolve();
+  });
   return { host, root };
 }
 
-describe('ModelRankingSection', () => {
+function rowIds(host: HTMLElement): string[] {
+  return [...host.querySelectorAll('.rank-race__row strong')].map((el) => el.textContent ?? '');
+}
+
+function clickByText(host: HTMLElement, selector: string, text: string): void {
+  const target = [...host.querySelectorAll<HTMLElement>(selector)].find((el) =>
+    el.textContent?.includes(text),
+  );
+  expect(target, `${selector} com "${text}"`).toBeTruthy();
+  act(() => target!.click());
+}
+
+describe('ModelRankingSection (F-1588)', () => {
   beforeEach(() => {
-    useProviderStore.setState({
-      providers: [
-        {
-          adapterId: 'codex',
-          label: 'Codex',
-          installed: true,
-          enabled: true,
-        } as unknown as ProviderSettingsInfo,
-        {
-          adapterId: 'claude',
-          label: 'Claude',
-          installed: false,
-          enabled: true,
-        } as unknown as ProviderSettingsInfo,
-      ],
-    });
-    useQuotaStore.getState().reset();
+    openExternal = vi.fn(async () => undefined);
+    compare = vi.fn(async () => snapshot);
     Object.defineProperty(window, 'nexus', {
       configurable: true,
-      value: {
-        ranking: {
-          public: vi.fn(async () => sampleSnapshot),
-        },
-      },
+      value: { ranking: { compare }, app: { openExternal } },
     });
   });
 
   afterEach(() => {
-    useProviderStore.setState({ providers: [] });
-    useQuotaStore.getState().reset();
     Reflect.deleteProperty(window, 'nexus');
     document.body.innerHTML = '';
     vi.restoreAllMocks();
   });
 
-  it('renders section title, operational doctrine hint, and fleet counters', async () => {
-    const { host, root } = mount();
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(host.textContent).toContain('Comparar modelos');
-    expect(host.textContent).toContain('Faixas de custo');
-    expect(host.textContent).toContain('estimativas, não avaliações reais');
-    // Technical suite id stays in the tooltip, never in the visible copy.
-    expect(host.textContent).not.toContain('nexus-v1');
-    expect(host.textContent).toContain('notas medidas em teste');
-    expect(host.querySelector('[title*="nexus-v1/eval-prod"]')).not.toBeNull();
-    expect(host.textContent).toContain('3 modelos');
-    expect(host.textContent).toContain('1 com ferramenta instalada');
-    expect(host.textContent).not.toMatch(/η|overall/);
-
+  it('conta só o que existe e nunca fala de nota estimada', async () => {
+    const { host, root } = await mount();
+    const fleet = host.querySelector('.rank-ops__fleet')!.textContent ?? '';
+    expect(fleet).toContain('5 modelos');
+    expect(fleet).toContain('4 com benchmark publicado');
+    expect(fleet).toContain('1 sem número publicado');
+    expect(fleet).toContain('4 com a ferramenta instalada');
+    expect(fleet).toContain('4 versões antigas ocultas');
+    expect(host.textContent).toContain('benchmarks oficiais');
+    expect(host.textContent).not.toMatch(/estimativa|fixture|radar|demonstração/i);
     act(() => root.unmount());
   });
 
-  it('marks estimates with the plain word, never fixture jargon per row', async () => {
-    const estimated: PublicModelRankingSnapshot = {
-      ...sampleSnapshot,
-      entries: sampleSnapshot.entries.map((e) => ({
-        ...e,
-        estimate: true,
-        sourceLabel: 'estimativa (fixture)',
-      })),
-    };
-    (window as unknown as { nexus: { ranking: { public: () => Promise<unknown> } } })
-      .nexus.ranking.public = vi.fn(async () => estimated);
-    const { host, root } = mount();
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    const badges = [...host.querySelectorAll('.rank-race .rank-estimate')];
-    expect(badges).toHaveLength(3);
-    for (const badge of badges) {
-      expect(badge.textContent).toBe('estimativa');
-      expect(badge.getAttribute('title')).toContain('não medida em teste real');
-    }
-    expect(host.textContent).not.toContain('fixture');
-    expect(host.textContent).toContain('notas estimadas');
-
+  it('mostra só as ferramentas instaladas por padrão e libera as outras no filtro', async () => {
+    const { host, root } = await mount();
+    expect(rowIds(host)).toEqual(['gpt-6.1-sol', 'gpt-6.2-sol', 'gemini-3.8-flash-low', 'qwen3.8-max']);
+    act(() => host.querySelector<HTMLInputElement>('.rank-ops__only-installed input')!.click());
+    expect(rowIds(host)).toContain('swe-2-high');
+    expect(host.textContent).toContain('não instalada');
     act(() => root.unmount());
   });
 
-  it('renders operational bands and mission picks correctly', async () => {
-    const { host, root } = mount();
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    // Operational bands
-    expect(host.textContent).toContain('Faixas de custo');
-    expect(host.textContent).toContain('Rápido');
-    expect(host.textContent).toContain('Equilibrado');
-    expect(host.textContent).toContain('Profundo');
-
-    // Mission picks
-    expect(host.textContent).toContain('Destaques por tipo de tarefa');
-    expect(host.textContent).toContain('gpt-5-pro');
-    expect(host.textContent).toContain('claude-3-7-sonnet');
-    expect(host.textContent).toContain('grok-code-fast');
-
+  it('ordena por benchmark com "—" para quem não publicou', async () => {
+    const { host, root } = await mount();
+    clickByText(host, '.rank-ops__chip', 'Terminal-Bench 2.1');
+    expect(rowIds(host)[0]).toBe('gemini-3.8-flash-low');
+    const last = [...host.querySelectorAll('.rank-race__row')].at(-1)!;
+    expect(last.textContent).toContain('qwen3.8-max');
+    expect(last.querySelector('.rank-race__place')!.textContent).toBe('—');
+    expect(last.querySelector('.rank-race__score')!.textContent).toBe('—');
     act(() => root.unmount());
   });
 
-  it('renders sorting chips and allows switching sorting dimension', async () => {
-    const { host, root } = mount();
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    const chips = host.querySelectorAll<HTMLButtonElement>('.rank-ops__chip');
-    expect(chips.length).toBe(5);
-
-    const codingChip = Array.from(chips).find((c) => c.textContent?.includes('Programação'));
-    expect(codingChip).not.toBeUndefined();
-
-    await act(async () => {
-      codingChip?.click();
-    });
-
-    expect(host.textContent).toContain('Comparação · Programação');
+  it('o detalhe traz os números, de quem são e a fonte, que abre fora do app', async () => {
+    const { host, root } = await mount();
+    clickByText(host, '.rank-race__row', 'gpt-6.2-sol');
+    const detail = host.querySelector('[aria-label="Modelo selecionado"]')!;
+    expect(detail.textContent).toContain('gpt-6.2-sol');
+    expect(detail.textContent).toContain('75,2%');
+    expect(detail.textContent).toContain('herda a nota de gpt-6.1-sol');
+    const link = detail.querySelector<HTMLAnchorElement>('a.settings-link')!;
+    expect(link.textContent).toBe('openai.com');
+    act(() => link.click());
+    expect(openExternal).toHaveBeenCalledWith('https://openai.com/index/introducing-gpt-6-1-sol/');
     act(() => root.unmount());
   });
 
-  it('renders radar chart and detail view for the selected model', async () => {
-    const { host, root } = mount();
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(host.querySelector('.rank-radar')).not.toBeNull();
-    expect(host.querySelector('.rank-ops__detail')).not.toBeNull();
-    expect(host.textContent).toContain('confiança 96%');
-
-    act(() => root.unmount());
-  });
-
-  it('labels tool presence in Portuguese and filters the race to installed tools', async () => {
-    const { host, root } = mount();
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    // Estado escrito em pt-BR, não "live"/"off-machine".
-    expect(host.textContent).toContain('instalada');
-    expect(host.textContent).toContain('não detectada');
-    expect(host.textContent).not.toContain('off-machine');
-
-    const toggle = host.querySelector<HTMLInputElement>(
-      '.rank-ops__only-installed input',
-    );
-    expect(toggle).toBeTruthy();
-    await act(async () => {
-      toggle!.click();
-    });
-
-    const rows = host.querySelectorAll('.rank-race__row');
-    expect(rows.length).toBe(1);
-    expect(rows[0]!.textContent).toContain('gpt-5-pro');
-    expect(host.textContent).toContain('Ordenar por');
-    act(() => root.unmount());
-  });
-
-  it('handles error state when public ranking API fails', async () => {
-    Object.defineProperty(window, 'nexus', {
-      configurable: true,
-      value: {
-        ranking: {
-          public: vi.fn(async () => {
-            throw new Error('Falha de rede');
-          }),
-        },
-      },
-    });
-
-    const { host, root } = mount();
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(host.textContent).toContain('Falha ao carregar ranking');
-    expect(host.textContent).toContain('Falha de rede');
-    act(() => root.unmount());
-  });
-
-  it('shows selectable MiMo models without inventing a rank, score or radar', async () => {
-    const models = ['xiaomi/mimo-v2.6-flash', 'xiaomi/mimo-v2.6-pro', 'xiaomi/mimo-v2.6-pro-ultraspeed'];
-    useProviderStore.setState({ providers: [{
-      adapterId: 'mimo-code', label: 'MiMo Code', installed: true, enabled: true,
-      models, modelInfo: { [models[0]!]: { id: models[0], costTier: 'low' } },
-    } as ProviderSettingsInfo] });
-    const { host, root } = mount();
-    await act(async () => { await Promise.resolve(); });
-
-    const list = host.querySelector('[aria-label="Modelos não avaliados"]')!;
-    expect(list.querySelectorAll('button')).toHaveLength(3);
-    expect(list.textContent).toContain('MiMo Code');
-    expect(list.textContent).not.toMatch(/#[0-9]|η[0-9]/);
-    act(() => (list.querySelector('button') as HTMLButtonElement).click());
-    expect(host.querySelector('.rank-radar__svg')).toBeNull();
-    const detail = host.querySelector('[aria-label="Modelo não avaliado selecionado"]')!;
-    expect(detail.textContent).toContain(models[0]);
-    expect(detail.textContent).toContain('Não avaliado');
-    expect(detail.querySelector('.rank-ops__detail-rank')).toBeNull();
+  it('modelo sem número publicado explica a nota neutra, sem barra nem posição', async () => {
+    const { host, root } = await mount();
+    clickByText(host, '.rank-race__row', 'qwen3.8-max');
+    const detail = host.querySelector('[aria-label="Modelo selecionado"]')!;
+    expect(detail.textContent).toContain('não publicou');
+    expect(detail.textContent).toContain('nota neutra');
     expect(detail.querySelectorAll('.rank-ops__dim-val')).toHaveLength(0);
+    expect(detail.querySelector('.rank-ops__detail-rank')!.textContent).toBe('—');
     act(() => root.unmount());
   });
 
-  it('keeps catalog models visible when ranking is empty and applies the installed filter', async () => {
-    const modelId = 'xiaomi/mimo-v2.6-pro';
-    useProviderStore.setState({ providers: [{
-      adapterId: 'mimo-code', label: 'MiMo Code', installed: false, enabled: true,
-      models: [modelId],
-    } as ProviderSettingsInfo] });
-    vi.mocked(window.nexus!.ranking.public).mockResolvedValue({ ...sampleSnapshot, entries: [] });
-    const { host, root } = mount();
-    await act(async () => { await Promise.resolve(); });
-    expect(host.querySelector('[aria-label="Modelos não avaliados"]')?.textContent).toContain(modelId);
-    act(() => (host.querySelector('input[type="checkbox"]') as HTMLInputElement).click());
-    expect(host.querySelector('[aria-label="Modelos não avaliados"]')).toBeNull();
+  it('destaques e faixas usam números reais e logos dos provedores', async () => {
+    const { host, root } = await mount();
+    const highlights = host.querySelector('[aria-label="Destaques pelos benchmarks publicados"]')!;
+    expect(highlights.textContent).toContain('Maior nota geral');
+    expect(highlights.textContent).toContain('Melhor em Terminal-Bench 2.1');
+    expect(highlights.textContent).toContain('89,4%');
+    // Ninguém instalado publicou SWE-bench Verified: sem cartão, nunca zero.
+    expect(highlights.textContent).not.toContain('SWE-bench Verified');
+    expect(highlights.textContent).toContain('Melhor na faixa Rápido');
+    expect(host.querySelectorAll('.rank-missions__card .provider-logo').length).toBeGreaterThan(0);
+    expect(host.querySelector('.rank-bands')!.textContent).toContain('gemini-3.8-flash-low');
+    act(() => root.unmount());
+  });
+
+  it('erro diz o motivo e "Tentar novamente" relê', async () => {
+    compare.mockRejectedValueOnce(new Error('Falha de rede'));
+    const { host, root } = await mount();
+    expect(host.textContent).toContain('Não foi possível carregar a comparação: Falha de rede');
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[role="alert"] button')!.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(compare).toHaveBeenCalledTimes(2);
+    expect(rowIds(host)).toContain('gpt-6.1-sol');
+    act(() => root.unmount());
+  });
+
+  it('sem ferramenta instalada oferece ver os modelos das outras', async () => {
+    compare.mockResolvedValueOnce({
+      ...snapshot,
+      entries: snapshot.entries.map((entry) => ({ ...entry, cli: 'missing' as const })),
+    });
+    const { host, root } = await mount();
+    expect(host.textContent).toContain('Nenhuma ferramenta de IA instalada e ligada');
+    clickByText(host, 'button', 'Ver modelos das ferramentas não instaladas');
+    expect(rowIds(host)).toHaveLength(5);
     act(() => root.unmount());
   });
 });

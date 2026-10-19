@@ -851,8 +851,10 @@ export const READ_IMAGE_LANE: ReadonlyArray<{
 /**
  * Lane de julgamento (regra do operador, 01/10): revisão/auditoria/veredito
  * só com modelos de ponta — GLM/MiMo davam "veredito APROVAR" em revisão de
- * código. F-1398 ADD3: Wonder Full max lidera, depois Fable, Opus/Sonnet e
- * Codex Sol/Astra. A restrição de segurança crítica do F-817 continua.
+ * código. F-1398 ADD3: Wonder Full lidera, depois Fable, Opus/Sonnet e
+ * Codex Sol/Astra. O `effort: 'max'` do assento só vale no tier critical;
+ * hard segue `effortForTier` (high). A restrição de segurança crítica do
+ * F-817 continua.
  */
 export const JUDGE_FRONTIER_LANE: ReadonlyArray<{
   adapterId: string;
@@ -2367,7 +2369,15 @@ export function routeTask(
       // F-1412: assento sem visão declarada não é promovido numa tarefa de
       // imagem quando o pool tem visão — a lane não pode furar o filtro.
       if (visionCapable && !hasVision(seat.adapterId, chosen)) return;
-      if (seat.effort) laneEfforts.set(`${seat.adapterId}:${chosen}`, seat.effort);
+      // F-1398 ADD3 deixava `max` fixo no assento da lane de julgamento, então
+      // revisão hard nascia em max. max só no critical; nos outros tiers o
+      // esforço volta ao do tier (hard → high). A lane visual mantém o max
+      // (regra de front do operador).
+      const laneEffort =
+        seat.effort === 'max' && lane !== VISUAL_FRONTIER_LANE && tier !== 'critical'
+          ? undefined
+          : seat.effort;
+      if (laneEffort) laneEfforts.set(`${seat.adapterId}:${chosen}`, laneEffort);
       laneSeats.push({
         lane: laneIndex, adapterId: seat.adapterId, model: chosen, preferenceOnly: seat.preferenceOnly === true,
       });

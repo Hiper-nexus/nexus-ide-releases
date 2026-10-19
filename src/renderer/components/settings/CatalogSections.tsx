@@ -7,6 +7,8 @@ import type {
   NativeToolInfo,
 } from '../../../shared/types';
 import { isMissionRuntimeSquadId } from '../../../shared/orch-types';
+import type { MediaProviderInfo } from '../../../shared/media-types';
+import { videoModelSummary } from '../../../shared/media-video-models';
 import { useOrchStore } from '../../state/orch-store';
 import { PixelIcon, type PixelIconName } from '../PixelIcon';
 import { ActionCard, EmptyState } from '../ActionCard';
@@ -268,6 +270,17 @@ const MEDIA_KIND_ICONS: Record<(typeof MEDIA_KIND_ORDER)[number], PixelIconName>
   audio: 'volume',
 };
 
+/**
+ * F-1585: o que cada modelo aceita e quanto custa (preço de lista), para
+ * escolher antes de gerar. Vídeo pela tabela compartilhada; imagem pelo preço
+ * por imagem que o Main informa.
+ */
+function mediaModelSummary(provider: MediaProviderInfo, model: string): string | null {
+  if (provider.kind === 'video') return videoModelSummary(model);
+  const usd = provider.imageCostUsd?.[model];
+  return typeof usd === 'number' ? `$${usd.toFixed(2)} por imagem` : null;
+}
+
 /** Faixa MÍDIA do arsenal: modelos de geração habilitados (key presente). */
 export function MediaCatalogSection() {
   const catalog = useCatalogResource(readMediaProviders, 'Não foi possível carregar os modelos de mídia.');
@@ -346,7 +359,17 @@ export function MediaCatalogSection() {
                   </div>
                   <details className="catalog-item__details">
                     <summary>Ver {p.models.length} modelos disponíveis</summary>
-                    <p className="settings-list__detail">{p.models.join(' · ')}</p>
+                    <ul className="settings-list__detail">
+                      {p.models.map((model) => {
+                        const summary = mediaModelSummary(p, model);
+                        return (
+                          <li key={model}>
+                            <code>{model}</code>
+                            {summary ? ` — ${summary}` : ''}
+                          </li>
+                        );
+                      })}
+                    </ul>
                   </details>
                 </li>
               ))}

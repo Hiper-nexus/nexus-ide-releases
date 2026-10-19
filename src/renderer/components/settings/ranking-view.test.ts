@@ -1,194 +1,120 @@
 import { describe, expect, it } from 'vitest';
-import type { PublicModelRankingEntry } from '../../../shared/eval-ranking-types';
+import type { ModelComparisonEntry } from '../../../shared/eval-ranking-types';
 import {
-  costEfficiency,
-  estimateBadge,
-  estimateDetail,
-  hasEstimates,
-  formatEvalTime,
-  pickForDimension,
-  pickValue,
-  radarPoints,
-  radarPolygon,
-  scoreWithQuota,
-  sortEntries,
-  sortEntriesWithQuota,
-  bandOfEntry,
-  groupEntriesByBand,
+  bestFor,
+  bestValuePick,
+  formatPercent,
+  formatScore,
+  groupByBand,
+  originBadge,
+  originNote,
+  sortComparison,
+  sourceHref,
+  valueFor,
 } from './ranking-view';
 
 function entry(
-  patch: Partial<PublicModelRankingEntry> & Pick<PublicModelRankingEntry, 'id' | 'modelId'>,
-): PublicModelRankingEntry {
+  patch: Partial<ModelComparisonEntry> & Pick<ModelComparisonEntry, 'modelId'>,
+): ModelComparisonEntry {
   return {
-    adapterId: 'claude',
-    overall: 50,
-    coding: 50,
-    reasoning: 50,
-    frontend: 50,
-    security: 50,
-    evaluatedAt: '2026-07-11T21:00:00.000Z',
-    source: 'nexus-eval/v1/fixture',
+    id: `codex/${patch.modelId}`,
+    adapterId: 'codex',
+    adapterLabel: 'Codex',
+    cli: 'ready',
+    score: null,
+    scoreKind: 'none',
+    benchmarks: {},
     ...patch,
   };
 }
 
-describe('ranking-view', () => {
-  const pack = [
-    entry({
-      id: 'a/opus',
-      modelId: 'opus',
-      overall: 61,
-      coding: 63,
-      frontend: 40,
-      costTier: 'high',
-    }),
-    entry({
-      id: 'b/fast',
-      modelId: 'fast',
-      adapterId: 'grok',
-      overall: 45,
-      coding: 50,
-      frontend: 65,
-      costTier: 'low',
-      availability: 'cheap',
-    }),
-    entry({
-      id: 'c/mid',
-      modelId: 'mid',
-      adapterId: 'glm',
-      overall: 58,
-      coding: 62,
-      frontend: 57,
-      costTier: 'low',
-    }),
-  ];
+const sol = entry({
+  modelId: 'gpt-6.1-sol',
+  score: 97.4,
+  scoreKind: 'published',
+  costTier: 'high',
+  benchmarks: { deepSWE: 75.2 },
+});
+const flash = entry({
+  modelId: 'gemini-3.8-flash-low',
+  adapterId: 'agy',
+  score: 85.1,
+  scoreKind: 'published',
+  costTier: 'low',
+  benchmarks: { deepSWE: 73.7, terminalBench21: 89.4 },
+});
+const sonnet = entry({
+  modelId: 'claude-sonnet-5',
+  adapterId: 'claude',
+  score: 70.6,
+  scoreKind: 'published',
+  costTier: 'medium',
+  benchmarks: { terminalBench21: 80.4, swebenchVerified: 85.2 },
+});
+const qwen = entry({ modelId: 'qwen3.8-max', adapterId: 'qwen', costTier: 'medium' });
 
-  it('sorts by active dimension', () => {
-    expect(sortEntries(pack, 'frontend').map((e) => e.modelId)).toEqual([
-      'fast',
-      'mid',
-      'opus',
+describe('ranking-view (F-1588)', () => {
+  it('ordena pelo número escolhido e manda quem não publicou para o fim', () => {
+    expect(sortComparison([qwen, sonnet, sol, flash], 'score').map((e) => e.modelId)).toEqual([
+      'gpt-6.1-sol',
+      'gemini-3.8-flash-low',
+      'claude-sonnet-5',
+      'qwen3.8-max',
     ]);
-  });
-
-  it('picks mission winners per axis', () => {
-    expect(pickForDimension(pack, 'coding')?.modelId).toBe('opus');
-    expect(pickForDimension(pack, 'frontend')?.modelId).toBe('fast');
-  });
-
-  it('picks value model among low cost', () => {
-    expect(pickValue(pack)?.modelId).toBe('mid');
-  });
-
-  it('classifica faixas por custo, não por score de fixture', () => {
-    expect(bandOfEntry(pack[0]!)).toBe('deep');
-    expect(bandOfEntry(pack[1]!)).toBe('fast');
-    expect(bandOfEntry(pack[2]!)).toBe('fast');
-    expect(groupEntriesByBand(pack).deep.map((e) => e.modelId)).toEqual(['opus']);
-  });
-
-  it('scores cost efficiency higher for cheap models', () => {
-    const high = entry({ id: 'h', modelId: 'h', overall: 60, costTier: 'high' });
-    const low = entry({ id: 'l', modelId: 'l', overall: 50, costTier: 'low' });
-    expect(costEfficiency(low)).toBeGreaterThan(costEfficiency(high));
-  });
-
-  it('builds a closed radar polygon with five vertices', () => {
-    const pts = radarPoints(pack[0]!, 100, 100, 80);
-    expect(pts).toHaveLength(5);
-    const poly = radarPolygon(pts);
-    expect(poly.split(' ')).toHaveLength(5);
-    // overall axis points up from center
-    expect(pts[0]!.y).toBeLessThan(100);
-  });
-
-  it('scoreWithQuota boosts freer accounts without inventing free when null', () => {
-    const e = pack[0]!;
-    const free = scoreWithQuota(e, 1);
-    const tight = scoreWithQuota(e, 0);
-    const unknown = scoreWithQuota(e, null);
-    expect(free).toBeGreaterThan(tight);
-    expect(unknown).toBeGreaterThan(tight);
-    expect(unknown).toBeLessThan(free);
-  });
-
-  it('sortEntriesWithQuota demotes exhausted adapters on overall sort', () => {
-    const quota = new Map<string, number | null>([
-      ['claude', 0.1],
-      ['grok', 0.95],
-      ['glm', null],
+    // Sem DeepSWE publicado: fim da lista, desempate pela nota geral.
+    expect(sortComparison([sonnet, qwen, flash, sol], 'deepSWE').map((e) => e.modelId)).toEqual([
+      'gpt-6.1-sol',
+      'gemini-3.8-flash-low',
+      'claude-sonnet-5',
+      'qwen3.8-max',
     ]);
-    const ranked = sortEntriesWithQuota(pack, 'overall', quota);
-    const idx = (adapter: string) =>
-      ranked.findIndex((e) => e.adapterId === adapter);
-    // freer grok ranks above exhausted claude despite lower raw overall
-    expect(scoreWithQuota(pack[1]!, 0.95)).toBeGreaterThan(
-      scoreWithQuota(pack[0]!, 0.1),
-    );
-    expect(idx('grok')).toBeLessThan(idx('claude'));
-    // unknown glm uses neutral weight — stays competitive with raw 58 overall
-    expect(idx('glm')).toBeLessThan(idx('claude'));
-    // coding sort ignores quota map path for non-overall keys
-    const byCoding = sortEntriesWithQuota(pack, 'coding', quota);
-    expect(byCoding[0]!.modelId).toBe(sortEntries(pack, 'coding')[0]!.modelId);
+    expect(valueFor(sonnet, 'deepSWE')).toBeNull();
+    expect(valueFor(sonnet, 'swebenchVerified')).toBe(85.2);
   });
 
-  it('estimateBadge surfaces the fixture mark and stays null for real audits', () => {
-    const fixture = entry({
-      id: 'f/opus',
-      modelId: 'opus',
-      estimate: true,
-      sourceLabel: 'estimativa (fixture)',
-    });
-    // The visible badge never echoes the internal "(fixture)" jargon; the
-    // technical origin only lives in the tooltip.
-    expect(estimateBadge(fixture)).toBe('estimativa');
-    expect(estimateDetail(fixture)).toContain('não medida em teste real');
-    expect(estimateDetail(fixture)).toContain('estimativa (fixture)');
-    expect(hasEstimates([fixture])).toBe(true);
-    expect(
-      hasEstimates([entry({ id: 'r/x', modelId: 'x', estimate: false })]),
-    ).toBe(false);
-    expect(
-      estimateDetail(entry({ id: 'r/y', modelId: 'y', estimate: false })),
-    ).toBeNull();
-    // Mark without label falls back to the bare badge copy.
-    expect(
-      estimateBadge(entry({ id: 'f/bare', modelId: 'bare', estimate: true })),
-    ).toBe('estimativa');
-    // Real audits: no mark (or explicit false) → no badge.
-    expect(
-      estimateBadge(
-        entry({
-          id: 'r/opus',
-          modelId: 'opus-real',
-          source: 'nexus-eval/v1/run-2026-07-18',
-        }),
-      ),
-    ).toBeNull();
-    expect(
-      estimateBadge(entry({ id: 'r/false', modelId: 'f', estimate: false })),
-    ).toBeNull();
+  it('destaque só existe com número; ausência nunca vence', () => {
+    expect(bestFor([sol, flash, sonnet], 'terminalBench21')?.modelId).toBe('gemini-3.8-flash-low');
+    expect(bestFor([sol, qwen], 'swebenchVerified')).toBeNull();
+    expect(bestFor([], 'score')).toBeNull();
   });
 
-  it('formatEvalTime renders real timestamps and never echoes junk as a date', () => {
-    // A parseable ISO becomes a locale timestamp, not the raw string.
-    const formatted = formatEvalTime('2026-07-11T21:00:00.000Z');
-    expect(formatted).not.toBe('2026-07-11T21:00:00.000Z');
-    expect(formatted).toBe(new Date('2026-07-11T21:00:00.000Z').toLocaleString());
+  it('melhor da faixa mais barata: rápida antes de equilibrada', () => {
+    expect(bestValuePick([sol, flash, sonnet])?.modelId).toBe('gemini-3.8-flash-low');
+    expect(bestValuePick([sol, sonnet, qwen])?.modelId).toBe('claude-sonnet-5');
+    expect(bestValuePick([sol])).toBeNull();
+  });
 
-    // Unparseable payloads are unknown, not a date. `isPublicModelRankingSnapshot`
-    // only checks `typeof generatedAt === 'string'`, so a malformed bundled
-    // model-ranking.json reaches the UI — it must read '—', never pose as time.
-    expect(formatEvalTime('garbage')).toBe('—');
-    expect(formatEvalTime('')).toBe('—');
-    expect(formatEvalTime('   ')).toBe('—');
+  it('faixas vêm do custo do catálogo, em ordem de nota', () => {
+    const groups = groupByBand([qwen, sonnet, sol, flash]);
+    expect(groups.fast.map((e) => e.modelId)).toEqual(['gemini-3.8-flash-low']);
+    expect(groups.balanced.map((e) => e.modelId)).toEqual(['claude-sonnet-5', 'qwen3.8-max']);
+    expect(groups.deep.map((e) => e.modelId)).toEqual(['gpt-6.1-sol']);
+  });
 
-    // Same honesty across the IPC boundary when the field is missing entirely.
-    expect(formatEvalTime(undefined as unknown as string)).toBe('—');
-    expect(formatEvalTime(null as unknown as string)).toBe('—');
-    expect(formatEvalTime(123 as unknown as string)).toBe('—');
+  it('diz de quem são os números quando não são do próprio modelo', () => {
+    expect(originNote(sol)).toBeNull();
+    expect(originBadge(sol)).toBeNull();
+    const heir = entry({ modelId: 'gpt-6.2-sol', origin: 'predecessor', numbersFrom: 'gpt-6.1-sol' });
+    expect(originNote(heir)).toContain('herda a nota de gpt-6.1-sol');
+    expect(originBadge(heir)).toBe('nota herdada');
+    const twin = entry({ modelId: 'deepseek-flash', origin: 'same-model', numbersFrom: 'deepseek-flash' });
+    expect(originBadge(twin)).toBe('mesmo modelo');
+    const variant = entry({ modelId: 'gemini-3.8-flash-high', origin: 'variant', numbersFrom: 'gemini-3.8-flash' });
+    expect(originNote(variant)).toContain('esforço e contexto não mudam o modelo');
+    expect(originBadge(variant)).toBeNull();
+  });
+
+  it('só http(s) vira link; nome de documento fica texto', () => {
+    expect(sourceHref({ source: 'https://openai.com/index/gpt-5-6/' })).toBe('https://openai.com/index/gpt-5-6/');
+    expect(sourceHref({ source: 'Fable 5.1 & Mythos 5.1 System Card' })).toBeNull();
+    expect(sourceHref({ source: 'javascript:alert(1)' })).toBeNull();
+    expect(sourceHref({})).toBeNull();
+  });
+
+  it('formata em pt-BR e escreve "—" para ausência', () => {
+    expect(formatPercent(75.2)).toBe('75,2%');
+    expect(formatPercent(undefined)).toBe('—');
+    expect(formatScore(97.4)).toBe('97,4');
+    expect(formatScore(null)).toBe('—');
   });
 });
-

@@ -20,10 +20,15 @@ process.stdin.on('end', () => {
     output({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'Nexus heavy-command admission is not configured for this session.' } }); return;
   }
   const quote = (value) => "'" + value.replace(/'/g, "'\\''") + "'";
+  // F-1229 follow-up: the queue refusal names WHICH command holds the slot.
+  // First two plain words only; anything quoted or substituted is dropped by
+  // the same pattern Main applies (no secrets travel through the label).
+  const label = input.command.trim().split(/\s+/).slice(0, 2).filter((word) => /^[\w.:/-]{1,40}$/.test(word)).join(' ').slice(0, 80);
+  const labelEnv = label ? `NEXUS_HEAVY_LABEL=${quote(label)} ` : '';
   if (process.env.NEXUS_HEAVY_JOB_BASE) {
-    const wrapped = `NODE_OPTIONS= NEXUS_HEAVY_HELPER=1 ${quote(node)} ${quote(path.join(directory, 'job-launch.cjs'))} ${quote(kind)} "\${BASH:-\${SHELL:-/bin/bash}}" -c ${quote(input.command)}`;
+    const wrapped = `NODE_OPTIONS= ${labelEnv}NEXUS_HEAVY_HELPER=1 ${quote(node)} ${quote(path.join(directory, 'job-launch.cjs'))} ${quote(kind)} "\${BASH:-\${SHELL:-/bin/bash}}" -c ${quote(input.command)}`;
     output({ hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { ...input, command: wrapped } } }); return;
   }
-  const prefix = `NEXUS_HEAVY_LEASE="$(NODE_OPTIONS= NEXUS_HEAVY_HELPER=1 ${quote(node)} ${quote(path.join(directory, 'request.cjs'))} "$$" ${quote(kind)})" || exit 78\nexport NEXUS_HEAVY_LEASE\n`;
-  output({ hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { ...input, command: prefix + input.command } } });
+  const prefix = label ? `${labelEnv}export NEXUS_HEAVY_LABEL\n` : '';
+  output({ hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { ...input, command: prefix + `NEXUS_HEAVY_LEASE="$(NODE_OPTIONS= NEXUS_HEAVY_HELPER=1 ${quote(node)} ${quote(path.join(directory, 'request.cjs'))} "$$" ${quote(kind)})" || exit 78\nexport NEXUS_HEAVY_LEASE\n` + input.command } } });
 });

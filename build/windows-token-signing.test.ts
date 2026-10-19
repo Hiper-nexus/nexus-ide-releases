@@ -1,5 +1,7 @@
+import { spawnSync } from 'node:child_process';
 import { X509Certificate, createPublicKey } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
   ESIGNER_CERTIFICATE_SHA1,
@@ -238,4 +240,60 @@ describe('certificate store reader', () => {
     await expect(readCurrentUserCertificate('A'.repeat(40), async () => ({ stdout: '{}' })))
       .rejects.toThrow(/Unexpected/u);
   });
+
+  it('runs on .NET alone, without the PowerShell 7 module path a Forge build inherits', async () => {
+    const saved = process.env.PSModulePath;
+    process.env.PSModulePath = 'C:\\Program Files\\PowerShell\\7\\Modules';
+    try {
+      const run = vi.fn(async () => ({
+        stdout: JSON.stringify({ der: codeSigning.raw.toString('base64'), hasPrivateKey: true }),
+      }));
+      await readCurrentUserCertificate(thumbprintOf(codeSigning), run);
+      const [, args, options] = run.mock.calls[0] as unknown as [
+        string,
+        string[],
+        { env: Record<string, string | undefined> },
+      ];
+      expect(Object.keys(options.env).some((name) => name.toLowerCase() === 'psmodulepath'))
+        .toBe(false);
+      const script = Buffer.from(args.at(-1) ?? '', 'base64').toString('utf16le');
+      expect(script).toContain('X509Store');
+      expect(script).not.toMatch(/Cert:|Get-Item|ConvertTo-Json|SilentlyContinue/u);
+    } finally {
+      if (saved === undefined) delete process.env.PSModulePath;
+      else process.env.PSModulePath = saved;
+    }
+  });
+
+  // Reproduz o build real: npm aberto num terminal PowerShell 7 passa o
+  // PSModulePath do 7 ao powershell.exe 5.1, que ficava sem o drive Cert:.
+  const pwsh7Modules = 'C:\\Program Files\\PowerShell\\7\\Modules';
+  const firstUserCertificate = process.platform === 'win32' && existsSync(pwsh7Modules)
+    ? spawnSync(
+        path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+        ['-NoProfile', '-NonInteractive', '-Command',
+          "$s = [System.Security.Cryptography.X509Certificates.X509Store]::new('My', 'CurrentUser'); $s.Open('ReadOnly'); $c = @($s.Certificates); $s.Close(); if ($c.Count) { [Console]::Out.Write($c[0].Thumbprint) }"],
+        { encoding: 'utf8', timeout: 30_000, windowsHide: true },
+      ).stdout.trim()
+    : '';
+  it.runIf(/^[A-F0-9]{40}$/u.test(firstUserCertificate))(
+    'finds a real user-store certificate under a PowerShell 7 module path',
+    async () => {
+      const saved = process.env.PSModulePath;
+      process.env.PSModulePath = [
+        'C:\\Users\\Administrador\\Documents\\PowerShell\\Modules',
+        'C:\\Program Files\\PowerShell\\Modules',
+        pwsh7Modules,
+      ].join(';');
+      try {
+        const certificate = await readCurrentUserCertificate(firstUserCertificate);
+        expect(certificate && new X509Certificate(certificate.der).fingerprint.replaceAll(':', ''))
+          .toBe(firstUserCertificate);
+      } finally {
+        if (saved === undefined) delete process.env.PSModulePath;
+        else process.env.PSModulePath = saved;
+      }
+    },
+    60_000,
+  );
 });

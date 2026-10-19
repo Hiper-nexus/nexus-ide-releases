@@ -64,6 +64,12 @@ if (isMainThread && process.env.NEXUS_HEAVY_COMMAND_URL && process.env.NEXUS_GAT
   function admit(kind) {
     if (!kind || admitted) return;
     try {
+      // F-1229 follow-up: name the entry in queue refusals ("build tsc", not
+      // bare "build"). job-launch may already have set a better label.
+      if (!process.env.NEXUS_HEAVY_LABEL) {
+        const label = path.basename(String(process.argv[1] || ''));
+        if (/^[\w .:/_-]{1,80}$/.test(label)) process.env.NEXUS_HEAVY_LABEL = label;
+      }
       if (process.env.NEXUS_HEAVY_JOB_BASE && !process.env.NEXUS_HEAVY_LEASE) {
         if (process.channel) throw new Error('unwrapped native IPC entry');
         const base = JSON.parse(process.env.NEXUS_HEAVY_JOB_BASE);
@@ -72,7 +78,8 @@ if (isMainThread && process.env.NEXUS_HEAVY_COMMAND_URL && process.env.NEXUS_GAT
         catch (error) { if (typeof error.status === 'number') process.exit(error.status); throw error; }
       }
       const requestEnv = { NEXUS_HEAVY_COMMAND_URL: process.env.NEXUS_HEAVY_COMMAND_URL, NEXUS_GATE_TOKEN: process.env.NEXUS_GATE_TOKEN, NEXUS_HEAVY_CURL: process.env.NEXUS_HEAVY_CURL,
-        ...(process.env.NEXUS_HEAVY_LEASE ? { NEXUS_HEAVY_LEASE: process.env.NEXUS_HEAVY_LEASE } : {}) };
+        ...(process.env.NEXUS_HEAVY_LEASE ? { NEXUS_HEAVY_LEASE: process.env.NEXUS_HEAVY_LEASE } : {}),
+        ...(process.env.NEXUS_HEAVY_LABEL ? { NEXUS_HEAVY_LABEL: process.env.NEXUS_HEAVY_LABEL } : {}) };
       for (const key of ['NEXUS_HEAVY_CHANNEL_DIR', 'NEXUS_HEAVY_CHANNEL_KEY', 'NEXUS_HEAVY_CHANNEL_EPOCH', 'NEXUS_HEAVY_CHANNEL_PUBLIC_KEY']) {
         if (process.env[key]) requestEnv[key] = process.env[key];
       }

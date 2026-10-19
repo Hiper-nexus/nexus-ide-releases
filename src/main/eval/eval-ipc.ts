@@ -6,13 +6,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ipcMain } from 'electron';
+import { handleTrusted } from '../security/trusted-ipc';
 import { EVAL_RANKING_CHANNELS } from '../../shared/eval-ranking-types';
-import type { PublicModelRankingSnapshot } from '../../shared/eval-ranking-types';
+import type {
+  ModelComparisonSnapshot,
+  PublicModelRankingSnapshot,
+} from '../../shared/eval-ranking-types';
 import {
   loadModelCatalog,
   PUBLISHED_MODEL_CATALOG,
 } from '../adapters/model-catalog';
 import { runOfflineEvalV1 } from './eval-pipeline';
+import { buildModelComparison, comparisonAdaptersFrom } from './model-comparison';
 import {
   buildPublicRankingFromCatalog,
   dedupeRankingEntries,
@@ -85,8 +90,36 @@ export function getPublicModelRanking(): PublicModelRankingSnapshot {
   return runOfflineEvalV1(PUBLISHED_MODEL_CATALOG).publicRanking;
 }
 
+export async function getModelComparison(): Promise<ModelComparisonSnapshot> {
+  const [{ listAdapterInfos }, { modelAccessQuarantine }] = await Promise.all([
+    import('../adapters/adapter-registry'),
+    import('../orch/model-access-quarantine'),
+  ]);
+  let disabled = new Set<string>();
+  try {
+    const { listProviderSettings } = await import('../persistence/provider-config-store');
+    disabled = new Set(
+      listProviderSettings({ nonBlockingAuth: true })
+        .filter((provider) => !provider.enabled)
+        .map((provider) => provider.adapterId),
+    );
+  } catch {
+    // Postura de Providers ilegível: só a instalação decide o estado da CLI.
+  }
+  return buildModelComparison(
+    comparisonAdaptersFrom(
+      listAdapterInfos(),
+      disabled,
+      (adapterId, model) => modelAccessQuarantine(adapterId, model) !== null,
+    ),
+    new Date().toISOString(),
+  );
+}
+
 export function registerEvalRankingIpc(): void {
   // Idempotent for HMR / re-bootstrap of main process handlers.
   ipcMain.removeHandler(EVAL_RANKING_CHANNELS.publicRanking);
   ipcMain.handle(EVAL_RANKING_CHANNELS.publicRanking, () => getPublicModelRanking());
+  ipcMain.removeHandler(EVAL_RANKING_CHANNELS.modelComparison);
+  handleTrusted(EVAL_RANKING_CHANNELS.modelComparison, () => getModelComparison());
 }

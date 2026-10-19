@@ -11730,7 +11730,7 @@ export const RELEASE_076320: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076321: AppRelease = {
   version: '0.76.321',
   date: '2026-10-19',
   codename: 'Piloto para todas as CLIs no Linux',
@@ -11746,5 +11746,51 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'DeepSeek Flash só onde existe', detail: 'O deepseek-flash aparecia em primeiro no grupo Claude mesmo com o Claude na Anthropic, onde esse modelo não existe, e a rota visual podia escolhê-lo. Agora ele só aparece com o Claude apontado para a DeepSeek, e o seletor usa a lista que o provider realmente serve.' },
     { title: 'Textos do Linux', detail: 'O cofre passa a dizer "chaveiro do sistema" (libsecret), mostrar um arquivo salvo é "Mostrar na pasta", e o aviso de microfone mudo aponta o mixer de som. Os botões que abrem os Ajustes de som do macOS e do Windows ficam ocultos no Linux: não há uma URL comum entre os desktops.' },
     { title: 'O pane diz o motivo real', detail: '"Contexto degradado" virou a causa de fato (troca de conta por limite confirmado ou entrega que o Maestro não aceitou), um pane cuja missão não existe mais não diz que ela encerrou com relatório, e quando a verificação automática recusa a conclusão o Quadro mostra que o Maestro está corrigindo.' },
+  ],
+};
+
+export const RELEASE_076323: AppRelease = {
+  version: '0.76.323',
+  date: '2026-10-19',
+  codename: 'Velocidade e detalhes da missão',
+  summary: 'No Quadro, o botão "Ver o que aconteceu" abre a visão de Atividade ampliada, com estado coerente com a barra lateral e layout ajustado para janelas estreitas. No motor, a base da worktree ganha aviso e atualização com throttle de 60 s, o verificador lê entregáveis além do corte de 512 arquivos, o portão de regressão roda testes em lotes, o pane_write comprova entrega e o esforço do revisor fica proporcional.',
+  highlights: [
+    { title: 'Equipe salva no Expresso', detail: 'Em Personalizar equipe, no início expresso da missão, "Começar de uma equipe salva" lista as suas equipes antes das originais (já na 0.76.322 do Linux).' },
+    { title: 'Atividade ampliada no Quadro', detail: 'O botão "Ver o que aconteceu" no Quadro da missão agora abre a visão de Atividade detalhada ao concluir ou interromper uma missão. O estado visual fica sincronizado e coerente com o status da barra lateral, e os cards e cabeçalho se ajustam perfeitamente mesmo em janelas estreitas.' },
+    { title: 'Base da worktree com aviso e atualização', detail: 'Antes de congelar a base isolada do writer, o motor atualiza o upstream do origin (com throttle de 60 s por raiz no fetch) e emite aviso explícito caso a branch local não rastreie uma branch remota origin/*.' },
+    { title: 'Entregáveis lidos antes do corte de 512 arquivos', detail: 'No snapshot da árvore de trabalho candidata, entregáveis declarados alfabeticamente além do limite de 512 arquivos continuam sendo lidos e têm fingerprint gerado antes do corte de leitura.' },
+    { title: 'Portão de regressão em lotes', detail: 'A faixa de testes impactados no handoff agora é dividida em lotes calculados dinamicamente com base no tempo restante. Cada lote concluído reporta seu veredito imediatamente, evitando que suítes extensas terminem com 0 testes reportados ao atingir o prazo.' },
+    { title: 'pane_write com recibo de entrega', detail: 'A ferramenta de escrita em terminais (nexus_pane_write) agora emite prova de turno e confirmação de recebimento apenas quando os bytes chegam e o pane está apto a aceitar entrada.' },
+    { title: 'Esforço do revisor proporcional', detail: 'O roteador de tarefas e as regras de modelo reservam o nível de esforço máximo no revisor para tarefas críticas, usando esforço proporcional nos demais níveis para evitar latência desnecessária.' },
+  ],
+  fixes: [
+    { title: 'Fila de comandos pesados se liberta sozinha', detail: 'Um lease exclusivo cujo executor ou sessão dona morreu passa a ser liberado pela própria fila após 60 s — antes ficava preso e travava novos comandos —, e a recusa da fila diz qual comando segura o lease. O conserto no supervisor nativo (native/darwin-pty-supervisor/main.c) não está nesta build: fica para o próximo rebuild nativo.' },
+  ],
+};
+
+export const RELEASE_076325: AppRelease = {
+  ...RELEASE_076323,
+  version: '0.76.325',
+  summary: 'No desktop Linux, o Quadro ganha "Ver o que aconteceu", a base da worktree avisa e atualiza com throttle de 60 s, o portão de regressão roda em lotes, o pane_write prova a entrega e a fila de comandos pesados se libera em 60 s. A tag 0.76.323 é o pacote macOS. A 0.76.324 não foi publicada: a suíte Ubuntu falhou num teste do MiMo.',
+  highlights: [
+    ...RELEASE_076323.highlights,
+    { title: 'Pacote Linux', detail: 'A tag 0.76.323 é o pacote macOS e não recebe arquivos Linux. A tag 0.76.324 não foi publicada porque a suíte Ubuntu falhou no teste de retomada do MiMo (o recibo de escrita agora leva inputWriter). O desktop Linux sai na 0.76.325.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.326',
+  date: '2026-10-19',
+  codename: 'Comparador honesto e mídia que gera',
+  summary: 'Comparar modelos passa a mostrar os benchmarks oficiais que a escolha automática usa, só na versão mais nova de cada modelo e das ferramentas instaladas. Serviços de mídia e o Estúdio funcionam sem projeto aberto, explicam as falhas, só oferecem a duração e o formato que cada modelo de vídeo aceita e mostram o custo antes de gerar. Leva ao Windows a velocidade e os detalhes da missão da 0.76.323 a 0.76.325.',
+  highlights: [
+    { title: 'Comparar modelos com números oficiais', detail: 'As notas da tela eram de demonstração, escritas à mão em setembro, e a escolha automática nem as usava. Agora a tela mostra os mesmos benchmarks oficiais da rota (DeepSWE, Terminal-Bench 2.1, SWE-bench Verified), com link para a fonte e dizendo quando a nota vem de outro modelo da mesma linha. Aparece só a versão mais nova de cada modelo e, por padrão, só as ferramentas instaladas; modelo sem número publicado fica sem nota, nunca com zero.' },
+    { title: 'Mídia sem projeto aberto', detail: 'Sem projeto aberto, Serviços de mídia caía num erro e nem deixava conectar uma chave, e o Estúdio abria mudo. Agora os serviços carregam sempre e o Estúdio explica que gerar precisa de um projeto aberto.' },
+    { title: 'Vídeo só com o que o modelo aceita', detail: 'O Estúdio mandava 5 s para todo vídeo e o Veo, que só aceita 4, 6 ou 8 s, falhava com as opções padrão; Hailuo, Sora e Wan também recebiam valores que recusam. Agora cada modelo só oferece a duração, a proporção e a resolução que aceita, o pedido inválido é recusado antes de qualquer chamada paga e o custo aparece antes de gerar.' },
+  ],
+  fixes: [
+    { title: 'Erro de mídia com o que fazer', detail: 'A falha do serviço chegava crua ("HTTP 422" com JSON). Agora vem uma frase com o que houve e o que fazer, e um botão para Serviços de mídia quando o problema é a chave.' },
+    { title: 'Prévia mostra o arquivo gerado', detail: 'A prévia do Estúdio podia mostrar outra criação do mesmo tipo; agora mostra exatamente o arquivo que acabou de ser gerado.' },
+    { title: 'Veo nativo do Google até 22/10', detail: 'O Google desliga os Veo 3.1 preview do Gemini em 22/10/2026. O Estúdio avisa antes da data e, depois dela, recusa indicando o Veo 3.1 pelo Replicate. O Veo 2, já desligado, saiu da lista.' },
   ],
 };
