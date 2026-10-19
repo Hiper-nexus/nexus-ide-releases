@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.76.329 — Freio de emergência de memória
+
+Num Mac de 16 GB com vários panes abertos e trabalhando, a máquina podia travar inteira. O guardião de memória só sabia recuperar pane OCIOSO, e a memória está justamente nos panes que trabalham: com todos ocupados ele não recuperava nada e o sistema ia ao chão. Agora, só na pressão crítica, o Nexus estaciona o pane de maior consumo — histórico e retomada preservados — reage em 5 segundos e recusa abrir mais um pane na beira do travamento. Teto, pressão moderada e severa continuam só avisando.
+
+- **Pane ocupado também libera memória na hora**. O guardião estacionava apenas panes ociosos. Medido: oito panes ocupados, memória crítica, dez varreduras — zero recuperado, porque a lista de candidatos era vazia por construção. Foi assim que um iMac M5 de 16 GB travou inteiro depois que o cliente abriu vários panes. Agora, quando a memória livre cai abaixo de 30 % da reserva, o Nexus estaciona até três panes por varredura mesmo que estejam trabalhando, remedindo a memória a cada um: assim que a folga volta, ele para. Estacionar encerra só o processo — o pane, o histórico e o "Acordar" ficam, e quem não sabe retomar a conversa não é tocado.
+- **O Nexus recusa abrir pane na beira do travamento**. O teto de panes e a memória baixa sempre foram aviso, e um aviso se dispensa com um clique: num Mac de 16 GB o nono pane entrava com 500 MB livres. Agora a pressão crítica — e só ela — recusa o spawn, dizendo que é memória física da máquina (não limite do plano), o que aconteceria e o que fazer. Contagem de panes, pressão moderada e severa seguem apenas avisando, e NEXUS_PANE_GUARD=off desliga tudo.
+- **Reação em 5 segundos, não em um minuto**. A varredura do guardião roda a cada 60 s. Com seis a oito agentes alocando ao mesmo tempo, a máquina sai de "apertada" para travada antes do próximo ciclo. Enquanto a pressão está severa ou crítica a varredura passa a rodar a cada 5 segundos; fora disso continua de minuto em minuto, sem medição extra.
+- **Escolhe o pane que realmente pesa**. O consumo de memória de cada pane já era medido e mostrado no cabeçalho, mas nenhuma decisão o usava. Agora ele ordena quem sai primeiro: worker e ajudante antes do pane que você abriu, e dentro disso o de maior consumo medido — um pane de 3 GB devolve a folga que três de 900 MB não devolvem. Pane sem medida vai para o fim: falta de dado não é zero.
+- **O aviso do pane não parece mais um crash**. Um pane estacionado no meio do trabalho dizia apenas "pane estacionado". Agora explica que foi para a máquina não travar, por memória crítica, e que basta digitar para retomar a conversa.
+
 ## 0.76.328 — Comparador e mídia no Linux
 
 As tags 0.76.326 e 0.76.327 são pacotes Windows e não recebem arquivos Linux. A 0.76.327 só assina o instalador do Windows; o app é o mesmo da 0.76.326. Este pacote leva o desktop Linux.

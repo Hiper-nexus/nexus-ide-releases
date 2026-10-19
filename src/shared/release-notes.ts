@@ -11806,7 +11806,7 @@ export const RELEASE_076327: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076328: AppRelease = {
   version: '0.76.328',
   date: '2026-10-19',
   codename: 'Comparador e mídia no Linux',
@@ -11816,4 +11816,20 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Pacote Linux', detail: 'A tag 0.76.326 é o pacote Windows do comparador e da mídia e não recebe arquivos Linux. A tag 0.76.327 só assina o instalador do Windows e também não recebe arquivos Linux. O desktop Linux sai na 0.76.328.' },
   ],
   fixes: RELEASE_076326.fixes,
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.329',
+  date: '2026-10-19',
+  codename: 'Freio de emergência de memória',
+  summary: 'Num Mac de 16 GB com vários panes abertos e trabalhando, a máquina podia travar inteira. O guardião de memória só sabia recuperar pane OCIOSO, e a memória está justamente nos panes que trabalham: com todos ocupados ele não recuperava nada e o sistema ia ao chão. Agora, só na pressão crítica, o Nexus estaciona o pane de maior consumo — histórico e retomada preservados — reage em 5 segundos e recusa abrir mais um pane na beira do travamento. Teto, pressão moderada e severa continuam só avisando.',
+  highlights: [
+    { title: 'Pane ocupado também libera memória na hora', detail: 'O guardião estacionava apenas panes ociosos. Medido: oito panes ocupados, memória crítica, dez varreduras — zero recuperado, porque a lista de candidatos era vazia por construção. Foi assim que um iMac M5 de 16 GB travou inteiro depois que o cliente abriu vários panes. Agora, quando a memória livre cai abaixo de 30 % da reserva, o Nexus estaciona até três panes por varredura mesmo que estejam trabalhando, remedindo a memória a cada um: assim que a folga volta, ele para. Estacionar encerra só o processo — o pane, o histórico e o "Acordar" ficam, e quem não sabe retomar a conversa não é tocado.' },
+    { title: 'O Nexus recusa abrir pane na beira do travamento', detail: 'O teto de panes e a memória baixa sempre foram aviso, e um aviso se dispensa com um clique: num Mac de 16 GB o nono pane entrava com 500 MB livres. Agora a pressão crítica — e só ela — recusa o spawn, dizendo que é memória física da máquina (não limite do plano), o que aconteceria e o que fazer. Contagem de panes, pressão moderada e severa seguem apenas avisando, e NEXUS_PANE_GUARD=off desliga tudo.' },
+    { title: 'Reação em 5 segundos, não em um minuto', detail: 'A varredura do guardião roda a cada 60 s. Com seis a oito agentes alocando ao mesmo tempo, a máquina sai de "apertada" para travada antes do próximo ciclo. Enquanto a pressão está severa ou crítica a varredura passa a rodar a cada 5 segundos; fora disso continua de minuto em minuto, sem medição extra.' },
+  ],
+  fixes: [
+    { title: 'Escolhe o pane que realmente pesa', detail: 'O consumo de memória de cada pane já era medido e mostrado no cabeçalho, mas nenhuma decisão o usava. Agora ele ordena quem sai primeiro: worker e ajudante antes do pane que você abriu, e dentro disso o de maior consumo medido — um pane de 3 GB devolve a folga que três de 900 MB não devolvem. Pane sem medida vai para o fim: falta de dado não é zero.' },
+    { title: 'O aviso do pane não parece mais um crash', detail: 'Um pane estacionado no meio do trabalho dizia apenas "pane estacionado". Agora explica que foi para a máquina não travar, por memória crítica, e que basta digitar para retomar a conversa.' },
+  ],
 };
