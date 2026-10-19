@@ -48,7 +48,27 @@ import {
 import { compareAuthFreshness } from '../adapters/auth-freshness';
 import { readRegularFileCapped } from '../redline/redline-safe-read';
 import { chooseAccount } from './account-select';
-import { fullWindowsReopenAt, type HeadroomInput } from '../quota/account-headroom';
+import {
+  DRAIN_THRESHOLD,
+  fullWindowsReopenAt,
+  isHeadroomDraining,
+  type DrainEvidence,
+  type HeadroomInput,
+} from '../quota/account-headroom';
+import { windowsServingModel } from '../quota/headroom-route-filter';
+
+/** As janelas de cada conta, reduzidas às que o modelo do spawn consome. */
+function narrowQuotaToModel(
+  quota: ReadonlyMap<string, HeadroomInput> | undefined,
+  model: string | null,
+): ReadonlyMap<string, HeadroomInput> | undefined {
+  if (!quota || !model) return quota;
+  const out = new Map<string, HeadroomInput>();
+  for (const [accountId, input] of quota) {
+    out.set(accountId, windowsServingModel(input, model));
+  }
+  return out;
+}
 import { initFailoverWaits } from './failover-waits';
 import {
   deleteAgyWindowsKeyringBlob,
@@ -1315,6 +1335,17 @@ export interface FailoverPickOptions {
    */
   quotaByAccountId?: ReadonlyMap<string, HeadroomInput>;
   /**
+   * Autoriza a drenagem proativa: a conta ativa que cruzou `DRAIN_THRESHOLD`
+   * para de receber trabalho NOVO. Ausente = comportamento de hoje.
+   */
+  drain?: DrainEvidence;
+  /**
+   * Modelo do spawn alvo. Com ele, só os buckets que o modelo consome contam
+   * para a drenagem — senão um bucket de outro grupo cheio drenaria uma conta
+   * que serve perfeitamente este pane.
+   */
+  model?: string | null;
+  /**
    * F-1483: troca por limite — conta com alguma janela MEDIDA em 100% que
    * ainda não reabriu não é destino (respawnar nela só bate de novo). Ela
    * entra na espera (`nextUnblockAtMs`) pelo reset da janela, ou por
@@ -1337,6 +1368,11 @@ export interface FailoverPick {
    * esperar a janela multi-hora do provedor (retryAtMs do omp).
    */
   nextUnblockAtMs?: number;
+  /**
+   * A conta ativa saiu por DRENAGEM (cruzou o limiar), não por esgotamento —
+   * é o que o recibo e o trace usam para dizer o motivo da troca.
+   */
+  drained?: boolean;
 }
 
 // Derived from can1357/oh-my-pi@03c48d073 auth-storage cooldown machine (MIT):
@@ -1351,12 +1387,18 @@ export function pickAvailableForFailover(
   const siblings = listAccounts(adapterId).filter(
     (a) => a.id !== excludeId && !options?.excludeIds?.has(a.id),
   );
+  // Só os buckets que o modelo deste spawn consome contam — para a drenagem e
+  // para o "medida cheia" abaixo. Sem modelo, nada é filtrado (pior bucket).
+  const quotaByAccountId = narrowQuotaToModel(
+    options?.quotaByAccountId,
+    options?.model ?? null,
+  );
   // F-1483: conta medida cheia sai da escolha e conta na espera pelo reset.
   const measuredFullUntil = new Map<string, number>();
   if (options?.rejectExhausted) {
     for (const sibling of siblings) {
       const until = fullWindowsReopenAt(
-        options.quotaByAccountId?.get(sibling.id),
+        quotaByAccountId?.get(sibling.id),
         now,
         EXHAUSTED_UNKNOWN_RESET_MS,
       );
@@ -1369,15 +1411,24 @@ export function pickAvailableForFailover(
       accountHasFailoverCredential(a) &&
       !measuredFullUntil.has(a.id),
   );
+  const activeId = activeByAdapter.get(adapterId) ?? null;
   const chosen = chooseAccount(
     free,
-    activeByAdapter.get(adapterId) ?? null,
+    activeId,
     excludeId,
     now,
     quotaScoreByAccountId,
-    options?.quotaByAccountId,
+    quotaByAccountId,
+    options?.drain,
   );
-  if (chosen) return { account: chosen, probe: false };
+  if (chosen) {
+    const drained =
+      options?.drain !== undefined &&
+      activeId !== null &&
+      chosen.id !== activeId &&
+      isHeadroomDraining(quotaByAccountId?.get(activeId), DRAIN_THRESHOLD, options.drain);
+    return { account: chosen, probe: false, ...(drained ? { drained: true } : {}) };
+  }
 
   let nextUnblockAtMs: number | undefined;
   const noteUnblock = (at: number): void => {
