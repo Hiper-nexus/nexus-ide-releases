@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.76.319 — Piloto para todas as CLIs
+
+As tags 0.76.317 (macOS) e 0.76.318 (Linux) não recebem arquivos Windows. Este pacote leva ao Windows tudo delas e as correções abaixo, vindas do relato de um cliente no Windows (19/10):
+
+- **AGY e todas as CLIs no Piloto automático**. O Piloto automático só oferecia Claude e Codex como coordenador, mesmo no Autopiloto, onde a missão aceita qualquer CLI que coordena. Agora o card mostra o AGY, Kimi, Grok, Qwen e as demais CLIs instaladas que coordenam missão; só o modo Hardened continua restrito aos Maestros verificados. A trava antiga que tirava o AGY da coordenação saiu: ele já tem o MCP do Nexus desde o fim de setembro.
+- **Equipes salvas sem projeto aberto**. O catálogo de equipes é global, mas a tela de Ajustes só o mostrava com um projeto aberto e dizia "Nenhuma equipe salva" sem ele. Agora as equipes originais e as suas aparecem sempre, e criar, editar, importar, exportar e apagar funcionam sem projeto. Erros técnicos em inglês viraram orientação em português.
+- **Escolha a equipe na Nova missão**. A etapa Equipe da Nova missão ganhou "Começar de uma equipe salva", com as suas equipes antes das originais. O Quadro explica que a equipe é da missão e que outra equipe se escolhe numa Nova missão.
+- **Atualização do Claude Code não quebra mais a CLI**. O npm 12 bloqueia os scripts de instalação e o Claude Code atualizado ficava como um stub que saía no boot: toda missão nascia com o Maestro morto. As atualizações liberam só o script do próprio pacote da CLI, uma atualização que deixa a CLI sem responder é reinstalada na hora, e o Quadro mostra a última tela do Maestro que caiu em vez de culpar uma build anterior.
+- **DeepSeek Flash só onde existe**. O deepseek-flash aparecia em primeiro no grupo Claude mesmo com o Claude na Anthropic, onde esse modelo não existe, e a rota visual podia escolhê-lo. Agora ele só aparece com o Claude apontado para a DeepSeek, e o seletor usa a lista que o provider realmente serve.
+- **Windows fala Windows**. No Windows, as chaves dizem "cofre do Windows" em vez de Keychain, a wake word diz "detecção local neste computador", os botões de microfone e som abrem os Ajustes do Windows, "Mostrar no Finder" vira Explorador de Arquivos, o trecho do Arms traz o caminho real do executável e a opção escolhida nos menus nativos fica legível no tema escuro.
+- **Conta do AGY no Windows**. Salvar a conta do AGY podia guardar a sobra de ~/.gemini (inclusive a sessão do Gemini CLI) num formato que o AGY do Windows não lê, e o pane recusava com "salve de novo" em laço. Agora a conta vem do Gerenciador de Credenciais, a sobra de outro formato é recusada com o motivo e a mensagem manda usar Entrar novamente; cancelar o login devolve os arquivos.
+- **O pane diz o motivo real**. "Contexto degradado" virou a causa de fato (troca de conta por limite confirmado ou entrega que o Maestro não aceitou), um pane cuja missão não existe mais não diz que ela encerrou com relatório, e quando a verificação automática recusa a conclusão o Quadro mostra que o Maestro está corrigindo.
+
 ## 0.76.318 — MiniMax-M3.1-Flash no Linux
 
 A tag 0.76.317 é o pacote macOS e não recebe arquivos Linux. Este pacote leva o desktop Linux.
