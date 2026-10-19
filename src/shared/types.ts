@@ -148,7 +148,10 @@ import type {
 import type { CostSnapshot } from './cost-types';
 import type { TokenSpeedSnapshot } from './token-speed-types';
 import type { UsageSnapshot } from './usage-types';
-import type { PublicModelRankingSnapshot } from './eval-ranking-types';
+import type {
+  ModelComparisonSnapshot,
+  PublicModelRankingSnapshot,
+} from './eval-ranking-types';
 import type { GamificationSnapshot } from './gamification-types';
 import type {
   MediaArtifactInfo,
@@ -1414,6 +1417,8 @@ export interface NexusApi {
    */
   ranking: {
     public(): Promise<PublicModelRankingSnapshot>;
+    /** Ajustes → Comparar modelos: benchmarks publicados da oferta desta máquina (F-1588). */
+    compare(): Promise<ModelComparisonSnapshot>;
   };
   media: {
     listProviders(): Promise<MediaProviderInfo[]>;
@@ -1421,11 +1426,13 @@ export interface NexusApi {
       providerId: MediaProviderId,
       key: string,
     ): Promise<{ ok: boolean; error?: string }>;
-    usageTotals(): Promise<MediaUsageTotals>;
+    /** `null` sem projeto aberto (F-1589). */
+    usageTotals(): Promise<MediaUsageTotals | null>;
     /** Estúdio de Mídia: gera imagem/vídeo a partir do prompt (longo). */
     generate(req: MediaStudioRequest): Promise<MediaStudioResponse>;
     cancelGenerate(clientJobId: string): Promise<{ ok: boolean }>;
-    listArtifacts(): Promise<MediaArtifactInfo[]>;
+    /** `null` sem projeto aberto: a galeria é da pasta do projeto (F-1589). */
+    listArtifacts(): Promise<MediaArtifactInfo[] | null>;
     revealArtifact(
       storageKey: string,
     ): Promise<{ ok: boolean; error?: string }>;

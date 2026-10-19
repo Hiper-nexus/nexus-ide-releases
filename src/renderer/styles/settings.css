@@ -3012,12 +3012,21 @@
 }
 
 .rank-bands__model {
+  flex: 1;
+  min-width: 0;
   font-size: var(--text-xs);
   font-weight: 650;
   font-family: var(--font-mono);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.rank-bands__score {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
 }
 
 .rank-race__band {
@@ -3209,21 +3218,6 @@
   );
 }
 
-.rank-race__ticks {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  justify-content: space-evenly;
-  pointer-events: none;
-}
-
-.rank-race__ticks i {
-  width: 1px;
-  height: 100%;
-  background: color-mix(in srgb, var(--bg) 55%, transparent);
-  opacity: 0.5;
-}
-
 .rank-race__score {
   display: flex;
   flex-direction: column;
@@ -3239,94 +3233,6 @@
   font-size: var(--text-2xs);
   font-weight: 600;
   color: var(--text-dim);
-}
-
-/* ---- Radar ---- */
-.rank-radar {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.rank-radar__svg {
-  display: block;
-  max-width: 100%;
-  height: auto;
-}
-
-.rank-radar__ring {
-  fill: none;
-  stroke: color-mix(in srgb, var(--border-strong) 80%, transparent);
-  stroke-width: 1;
-}
-
-.rank-radar__axis {
-  stroke: color-mix(in srgb, var(--border-strong) 70%, transparent);
-  stroke-width: 1;
-}
-
-.rank-radar__ghost {
-  fill: color-mix(in srgb, var(--text-dim) 8%, transparent);
-  stroke: color-mix(in srgb, var(--text-dim) 35%, transparent);
-  stroke-width: 1;
-  stroke-dasharray: 3 3;
-}
-
-.rank-radar__poly {
-  fill: url(#rank-poly-fill);
-  stroke: var(--accent);
-  stroke-width: 1.5;
-}
-
-.rank-radar__dot {
-  fill: var(--accent);
-  stroke: var(--bg);
-  stroke-width: 1;
-}
-
-.rank-radar__core {
-  fill: var(--accent);
-}
-
-.rank-radar__label {
-  fill: var(--text-dim);
-  font-size: var(--text-2xs);
-  font-family: var(--font-mono);
-}
-
-.rank-radar__caption {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  text-align: center;
-  font-size: var(--text-xs);
-  color: var(--text-dim);
-}
-
-.rank-radar__identity {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-.rank-radar__identity-copy {
-  display: flex;
-  align-items: flex-start;
-  flex-direction: column;
-  gap: 2px;
-  text-align: left;
-}
-
-.rank-radar__caption strong {
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
-}
-
-.rank-radar__ghost-cap {
-  font-size: var(--text-2xs);
-  opacity: 0.8;
 }
 
 /* ---- Detail strip ---- */

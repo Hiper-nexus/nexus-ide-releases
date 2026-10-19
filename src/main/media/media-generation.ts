@@ -2,6 +2,7 @@ import path from 'node:path';
 import type { MediaGenerationResult } from '../../shared/media-types';
 import {
   findMediaProvider,
+  MediaProviderUnavailableError,
   resolveMediaModel,
   resolveMediaProvider,
   resolveOutPath,
@@ -22,6 +23,11 @@ import {
   type BrowserAddressResolver,
 } from '../browser/url-policy';
 import { geminiImageAspect, openaiImageSize } from './media-aspect';
+import { mediaHttpError, mediaServiceName } from './media-errors';
+import {
+  videoModelSpec,
+  videoRequestProblem,
+} from '../../shared/media-video-models';
 import {
   getVideoJob,
   saveVideoJob,
@@ -207,21 +213,12 @@ export interface AudioRequest extends MediaAuthorityRequest {
 function requireKey(def: MediaProviderDef, deps: MediaDeps): string {
   const key = deps.getKey(def);
   if (!key) {
-    throw new Error(
-      `provider ${def.id} sem key — configure em Settings → Mídia`,
+    throw new MediaProviderUnavailableError(
+      def.kind,
+      `${def.label} sem chave — conecte em Ajustes → Serviços de mídia`,
     );
   }
   return key;
-}
-
-async function httpError(res: Response, provider: string): Promise<Error> {
-  let detail = '';
-  try {
-    detail = (await res.text()).slice(0, 400);
-  } catch {
-    // corpo ilegível — o status já identifica a falha
-  }
-  return new Error(`${provider} HTTP ${res.status}: ${detail}`);
 }
 
 function fileToInlineData(image: MediaInputFile): {
@@ -249,7 +246,7 @@ function result(
   outPath: string,
   startedAt: number,
   deps: MediaDeps,
-  costParams: { chars?: number; seconds?: number } = {},
+  costParams: { chars?: number; seconds?: number; resolution?: string } = {},
   jobId?: string,
 ): MediaGenerationResult {
   return {
@@ -294,7 +291,7 @@ async function googleImage(
     },
   );
   assertMediaAuthorityCurrent(req);
-  if (!res.ok) throw await httpError(res, def.id);
+  if (!res.ok) throw await mediaHttpError(res, def.id);
   const json = (await res.json()) as {
     candidates?: Array<{
       content?: {
@@ -362,7 +359,7 @@ async function openaiImage(
     });
   }
   assertMediaAuthorityCurrent(req);
-  if (!res.ok) throw await httpError(res, def.id);
+  if (!res.ok) throw await mediaHttpError(res, def.id);
   const json = (await res.json()) as {
     data?: Array<{ b64_json?: string; url?: string }>;
   };
@@ -467,7 +464,7 @@ async function replicateImage(
     },
   );
   assertMediaAuthorityCurrent(req);
-  if (!create.ok) throw await httpError(create, def.id);
+  if (!create.ok) throw await mediaHttpError(create, def.id);
   const created = (await create.json()) as {
     id?: string;
     status?: string;
@@ -588,6 +585,17 @@ export function replicateEndImageField(model: string): string | null {
   return null;
 }
 
+const SORA_ASPECTS: Record<string, string> = { '16:9': 'landscape', '9:16': 'portrait' };
+const SORA_RESOLUTIONS: Record<string, string> = { '720p': 'standard', '1024p': 'high' };
+
+function soraAspect(value: string): string {
+  return SORA_ASPECTS[value] ?? value;
+}
+
+function soraResolution(value: string): string {
+  return SORA_RESOLUTIONS[value] ?? value;
+}
+
 /**
  * Build the Replicate prediction `input` for the requested model.
  */
@@ -606,12 +614,14 @@ export function replicateInput(
   const isSora = model.startsWith('openai/sora');
   const isRunway = model.startsWith('runwayml/');
   const isLuma = model.startsWith('luma/');
+  const isWan = model.startsWith('wan-video/');
 
   const input: Record<string, unknown> = { prompt: req.prompt };
 
+  const spec = videoModelSpec(model);
   if (isSeedance || isVeo) {
-    input.duration = req.durationSeconds ?? 5;
-    input.resolution = req.resolution ?? '720p';
+    input.duration = req.durationSeconds ?? spec?.defaultDuration ?? 5;
+    input.resolution = req.resolution ?? spec?.defaultResolution ?? '720p';
     input.aspect_ratio = req.aspectRatio ?? '16:9';
     if (!(isVeo && model.endsWith('-lite'))) {
       input.generate_audio = true;
@@ -622,15 +632,17 @@ export function replicateInput(
     if (req.resolution === '720p') input.mode = 'standard';
     else if (req.resolution === '1080p') input.mode = 'pro';
     else if (req.resolution === '4k') input.mode = '4k';
-  } else if (isHailuo) {
+  } else if (isHailuo || isWan) {
     if (req.durationSeconds !== undefined) input.duration = req.durationSeconds;
     if (req.resolution) input.resolution = req.resolution;
   } else if (isSora) {
     // Sora uses `seconds` not duration; may require the caller's OpenAI key.
+    // F-1585: o schema do Sora só aceita aspect_ratio portrait|landscape e,
+    // no Pro, resolution standard|high — o Nexus fala 16:9/9:16 e 720p/1024p.
     input.seconds = req.durationSeconds ?? 4;
-    if (req.aspectRatio) input.aspect_ratio = req.aspectRatio;
+    if (req.aspectRatio) input.aspect_ratio = soraAspect(req.aspectRatio);
     if (req.resolution && model.includes('pro')) {
-      input.resolution = req.resolution;
+      input.resolution = soraResolution(req.resolution);
     }
     if (openaiApiKey) input.openai_api_key = openaiApiKey;
   } else if (isRunway) {
@@ -691,7 +703,7 @@ async function pollReplicatePrediction(
     assertMediaAuthorityCurrent(authority);
     if (prediction.status === 'failed' || prediction.status === 'canceled') {
       throw new Error(
-        `${providerLabel}: prediction ${prediction.status} — ${prediction.error ?? 'sem causa'}`,
+        `${mediaServiceName(providerLabel)} não concluiu a geração (${prediction.status === 'canceled' ? 'cancelada no serviço' : 'falhou'}): ${prediction.error ?? 'o serviço não informou a causa'}`,
       );
     }
     await sleepWhileAuthorized(deps, REPLICATE_POLL_MS, authority);
@@ -701,7 +713,7 @@ async function pollReplicatePrediction(
       signal: opts.signal,
     });
     assertMediaAuthorityCurrent(authority);
-    if (!res.ok) throw await httpError(res, providerLabel);
+    if (!res.ok) throw await mediaHttpError(res, providerLabel);
     prediction = (await res.json()) as typeof prediction;
     assertMediaAuthorityCurrent(authority);
   }
@@ -783,7 +795,8 @@ async function generateVideoReplicate(
         startedAt,
         deps,
         {
-          seconds: req.durationSeconds ?? 5,
+          seconds: req.durationSeconds ?? videoModelSpec(saved.model)?.defaultDuration,
+          resolution: req.resolution ?? videoModelSpec(saved.model)?.defaultResolution,
         },
         saved.jobId,
       );
@@ -814,8 +827,8 @@ async function generateVideoReplicate(
     openaiApiKey = openaiDef ? deps.getKey(openaiDef) : undefined;
     if (!openaiApiKey) {
       throw new Error(
-        'openai/sora exige OPENAI_API_KEY (Settings → Mídia → OpenAI Image) ' +
-          'além do token Replicate',
+        'O Sora pelo Replicate também exige a chave da OpenAI: conecte ' +
+          'OpenAI Image em Ajustes → Serviços de mídia',
       );
     }
   }
@@ -842,7 +855,7 @@ async function generateVideoReplicate(
       signal: req.signal,
     },
   );
-  if (!create.ok) throw await httpError(create, def.id);
+  if (!create.ok) throw await mediaHttpError(create, def.id);
   const created = (await create.json()) as {
     id?: string;
     status?: string;
@@ -902,7 +915,8 @@ async function generateVideoReplicate(
       startedAt,
       deps,
       {
-        seconds: req.durationSeconds ?? 5,
+        seconds: req.durationSeconds,
+        resolution: req.resolution,
       },
       created.id,
     );
@@ -1011,7 +1025,7 @@ async function pollGoogleVeoOperation(
       signal,
     });
     assertMediaAuthorityCurrent(authority);
-    if (!res.ok) throw await httpError(res, 'google-video');
+    if (!res.ok) throw await mediaHttpError(res, 'google-video');
     body = (await res.json()) as Record<string, unknown>;
     assertMediaAuthorityCurrent(authority);
     if (body.done === true) {
@@ -1060,7 +1074,7 @@ async function downloadGoogleVeoBytes(
       signal: req.signal,
     });
     assertMediaAuthorityCurrent(req);
-    if (!res.ok) throw await httpError(res, 'google-video');
+    if (!res.ok) throw await mediaHttpError(res, 'google-video');
     const data = Buffer.from(await res.arrayBuffer());
     assertMediaAuthorityCurrent(req);
     return data;
@@ -1115,7 +1129,8 @@ async function generateVideoGoogle(
         startedAt,
         deps,
         {
-          seconds: req.durationSeconds ?? 8,
+          seconds: req.durationSeconds ?? videoModelSpec(saved.model)?.defaultDuration,
+          resolution: req.resolution ?? videoModelSpec(saved.model)?.defaultResolution,
         },
         saved.jobId,
       );
@@ -1158,7 +1173,7 @@ async function generateVideoGoogle(
       signal: req.signal,
     },
   );
-  if (!submit.ok) throw await httpError(submit, def.id);
+  if (!submit.ok) throw await mediaHttpError(submit, def.id);
   const started = (await submit.json()) as { name?: string };
   if (!started.name) {
     throw new Error('google-video: operation sem name');
@@ -1201,7 +1216,8 @@ async function generateVideoGoogle(
       startedAt,
       deps,
       {
-        seconds: req.durationSeconds ?? 8,
+        seconds: req.durationSeconds,
+        resolution: req.resolution,
       },
       started.name,
     );
@@ -1238,12 +1254,37 @@ export async function generateVideo(
     ? (getVideoJob(req.baseDir, req.recoverJobId)?.model ??
       resolveMediaModel(def, req.model))
     : resolveMediaModel(def, req.model);
+  // F-1585: o que o modelo recusa é recusado aqui, antes de qualquer chamada
+  // paga, com a frase do que ele aceita; o que não veio usa o padrão DELE.
+  let effective = req;
+  if (!req.recoverJobId) {
+    const problem = videoRequestProblem(
+      model,
+      {
+        durationSeconds: req.durationSeconds,
+        resolution: req.resolution,
+        aspectRatio: req.aspectRatio,
+        hasImage: Boolean(req.imagePath),
+      },
+      deps.now(),
+    );
+    if (problem) throw new Error(problem);
+    const spec = videoModelSpec(model);
+    if (spec) {
+      effective = {
+        ...req,
+        durationSeconds: req.durationSeconds ?? spec.defaultDuration,
+        resolution:
+          req.resolution ?? (spec.resolutions.length > 0 ? spec.defaultResolution : undefined),
+      };
+    }
+  }
   const key = requireKey(def, deps);
 
   if (def.id === 'google-video') {
-    return generateVideoGoogle(req, def, model, key, deps, startedAt);
+    return generateVideoGoogle(effective, def, model, key, deps, startedAt);
   }
-  return generateVideoReplicate(req, def, model, key, deps, startedAt);
+  return generateVideoReplicate(effective, def, model, key, deps, startedAt);
 }
 
 // ── Audio ────────────────────────────────────────────────────────────────────
@@ -1273,7 +1314,7 @@ export async function generateAudio(
     },
   );
   assertMediaAuthorityCurrent(req);
-  if (!res.ok) throw await httpError(res, def.id);
+  if (!res.ok) throw await mediaHttpError(res, def.id);
 
   const data = Buffer.from(await res.arrayBuffer());
   assertMediaAuthorityCurrent(req);

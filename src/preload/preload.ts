@@ -1565,6 +1565,7 @@ const api: NexusApi = {
   },
   ranking: {
     public: () => ipcRenderer.invoke(EVAL_RANKING_CHANNELS.publicRanking),
+    compare: () => ipcRenderer.invoke(EVAL_RANKING_CHANNELS.modelComparison),
   },
   media: {
     listProviders: () => ipcRenderer.invoke(MEDIA_CHANNELS.listProviders),

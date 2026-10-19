@@ -83,3 +83,36 @@ it('does not claim removal when saving fails and allows retry after a rejected r
     Reflect.deleteProperty(window, 'nexus');
   }
 });
+
+it('F-1589: sem projeto aberto os serviços continuam na tela para conectar a chave', async () => {
+  for (const usageTotals of [
+    // Main antigo: a leitura dos totais lançava sem projeto.
+    vi.fn(async () => { throw new Error('renderer has no authorized workspace scope'); }),
+    // Main novo: `null` = sem projeto aberto.
+    vi.fn(async () => null),
+  ]) {
+    Object.defineProperty(window, 'nexus', { configurable: true, value: {
+      media: {
+        listProviders: vi.fn(async () => [{
+          id: 'replicate-video', kind: 'video', label: 'Replicate', envVar: 'REPLICATE_API_TOKEN',
+          defaultModel: 'bytedance/seedance-2.0', models: ['bytedance/seedance-2.0'], hasKey: false, maskedKey: null,
+        }]),
+        usageTotals,
+      },
+    } });
+    const host = document.createElement('div');
+    const root = createRoot(host);
+    try {
+      await act(async () => { root.render(<MediaSection />); });
+      expect(host.querySelector('[role="alert"]')).toBeNull();
+      expect(host.textContent).toContain('Replicate');
+      expect(host.textContent).toContain('Não conectado');
+      expect(host.querySelector('input')?.getAttribute('aria-label')).toBe('Chave de acesso de Replicate');
+      expect(host.textContent).not.toMatch(/gerações?/);
+      expect(host.textContent).not.toContain('authorized workspace scope');
+    } finally {
+      act(() => root.unmount());
+      Reflect.deleteProperty(window, 'nexus');
+    }
+  }
+});

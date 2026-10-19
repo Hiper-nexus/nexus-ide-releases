@@ -61,7 +61,7 @@ const imageGenerateTool: McpToolDef = {
     'referenceImagePaths[] → image_input (1–10 refs, Seedream ONLY — ' +
     'google/openai-image accept just imagePath). ' +
     'Paths stay in the open workspace. Missing key → STOP and report ' +
-    '"configure o provider em Settings → Mídia".',
+    '"configure o provider em Ajustes → Serviços de mídia".',
   inputSchema: {
     type: 'object',
     properties: {
@@ -131,7 +131,7 @@ const videoGenerateTool: McpToolDef = {
     'for Seedance/Veo character refs (max 9). On timeout the error includes ' +
     'recoverJobId — call again with that id to resume without double charge. ' +
     'Call nexus_media_providers first. Paths stay in the open workspace. ' +
-    'Missing key → STOP and report Settings → Mídia.',
+    'Missing key → STOP and report Ajustes → Serviços de mídia.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -218,7 +218,7 @@ const audioGenerateTool: McpToolDef = {
     'Generate speech audio (TTS) from text via ElevenLabs and save the mp3 ' +
     'inside the open workspace. Returns {path}. voiceId optional (default Rachel). ' +
     'If the key is missing, STOP and report "configure o provider em ' +
-    'Settings → Mídia".',
+    'Ajustes → Serviços de mídia".',
   inputSchema: {
     type: 'object',
     properties: {

@@ -36,6 +36,8 @@
 .catalog-settings .settings-list__head { min-inline-size: 0; flex-wrap: wrap; gap: var(--space-2); }
 .catalog-settings .settings-list__title { min-inline-size: 0; font-size: var(--text-md); overflow-wrap: anywhere; }
 .catalog-settings .settings-list__detail { max-inline-size: 75ch; font-size: var(--text-sm); line-height: 1.5; overflow-wrap: anywhere; }
+/* F-1585: lista de modelos de mídia com o resumo de cada um. */
+.catalog-settings ul.settings-list__detail { margin: var(--space-1) 0 0; padding-left: var(--space-4); display: flex; flex-direction: column; gap: var(--space-1); }
 .catalog-settings .settings-list__title--mono { font-size: var(--text-md); }
 .catalog-settings__resource { display: grid; grid-template-columns: minmax(10rem, 0.7fr) minmax(0, 1.4fr); align-items: start; gap: var(--space-4); }
 /* Sem descrição (Plugins/Hooks): a 2ª coluna só tem um details fechado —

@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WebContents } from 'electron';
-import { MEDIA_CHANNELS } from '../../shared/media-types';
+import { MEDIA_CHANNELS, MEDIA_NO_PROJECT_ERROR } from '../../shared/media-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
   bindResolvedRendererWorkspaceScope,
@@ -29,7 +29,8 @@ vi.mock('electron', () => ({
   ipcMain: { handle: electronMock.handle },
   shell: { showItemInFolder: electronMock.showItemInFolder },
 }));
-vi.mock('./media-providers', () => ({
+vi.mock('./media-providers', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./media-providers')>()),
   listMediaProviders: vi.fn(() => []),
 }));
 vi.mock('./media-keys', () => ({
@@ -55,6 +56,8 @@ vi.mock('./media-generation', () => ({
 }));
 
 import { registerMediaIpc } from './media-ipc';
+import { MediaProviderHttpError } from './media-errors';
+import { generateImage } from './media-generation';
 
 type Renderer = WebContents & { id: number };
 
@@ -144,9 +147,37 @@ describe('media IPC project authority', () => {
       generations: 1,
       costUsd: 0.2,
     });
-    expect(() => invoke(MEDIA_CHANNELS.usageTotals, unauthorized)).toThrow(
-      /authorized workspace scope/i,
-    );
+    // F-1589: sem projeto a leitura diz "sem projeto" (null), sem lançar e
+    // sem devolver os totais de outro projeto.
+    expect(invoke(MEDIA_CHANNELS.usageTotals, unauthorized)).toBeNull();
+  });
+
+  it('F-1589: sem projeto a galeria é null e revelar/ler respondem com a frase de projeto', async () => {
+    const scopeA = scope(parent, 'project-na', 'checkout-na');
+    const windowA = renderer(401);
+    const noProject = renderer(402);
+    renderers.push(windowA, noProject);
+    bindResolvedRendererWorkspaceScope(windowA, scopeA);
+    createScopedMediaUsageStore(runtimeManager, scopeA).record({
+      kind: 'image',
+      provider: 'openai-image',
+      model: 'gpt-image-1',
+      storageKey: 'a.png',
+      sha256: 'a'.repeat(64),
+      costUsd: 0.03,
+      durationMs: 1,
+    });
+    registerMediaIpc(runtimeManager);
+    const handler = (channel: string) => electronMock.handlers.get(channel)!;
+
+    expect(invoke(MEDIA_CHANNELS.listArtifacts, noProject)).toBeNull();
+    await expect(
+      handler(MEDIA_CHANNELS.revealArtifact)({ sender: noProject }, { storageKey: 'a.png' }),
+    ).toEqual({ ok: false, error: MEDIA_NO_PROJECT_ERROR });
+    await expect(
+      handler(MEDIA_CHANNELS.readArtifactDataUrl)({ sender: noProject }, { storageKey: 'a.png' }),
+    ).resolves.toEqual({ ok: false, error: MEDIA_NO_PROJECT_ERROR });
+    expect(electronMock.showItemInFolder).not.toHaveBeenCalled();
   });
 });
 
@@ -180,17 +211,39 @@ describe('media IPC — Estúdio de Mídia', () => {
     ).resolves.toEqual({ ok: false, error: 'payload inválido' });
   });
 
-  it('generate exige workspace autorizado', async () => {
+  it('generate sem projeto aberto recusa com a frase de projeto, sem tocar o engine (F-1589)', async () => {
     const stranger = renderer(12);
     renderers.push(stranger);
     registerMediaIpc(runtimeManager);
+    const { generateImage } = await import('./media-generation');
     await expect(
       invokeWith(MEDIA_CHANNELS.generate, stranger, {
         kind: 'image',
         prompt: 'x',
         clientJobId: 'j1',
       }),
-    ).rejects.toThrow(/authorized workspace scope/i);
+    ).resolves.toEqual({ ok: false, error: MEDIA_NO_PROJECT_ERROR });
+    expect(generateImage).not.toHaveBeenCalled();
+  });
+
+  it('F-1584: a falha do serviço chega com o tipo, para o Estúdio oferecer a saída', async () => {
+    const s = scope(parent, 'project-err', 'checkout-err');
+    const win = boundRenderer(16, s);
+    registerMediaIpc(runtimeManager);
+    vi.mocked(generateImage).mockRejectedValueOnce(
+      new MediaProviderHttpError('openai-image', 401, 'Incorrect API key provided'),
+    );
+    const response = (await invokeWith(MEDIA_CHANNELS.generate, win, {
+      kind: 'image',
+      prompt: 'x',
+      clientJobId: 'j-err',
+    })) as { ok: boolean; error: string; errorKind?: string };
+    expect(response).toEqual({
+      ok: false,
+      error:
+        'OpenAI recusou a chave (HTTP 401). Confira ou troque a chave em Ajustes → Serviços de mídia. Resposta do serviço: Incorrect API key provided',
+      errorKind: 'key',
+    });
   });
 
   it('cancelGenerate é idempotente mesmo sem job ativo', () => {

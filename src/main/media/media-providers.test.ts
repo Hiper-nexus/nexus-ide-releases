@@ -3,8 +3,10 @@ import {
   computeMediaTierAlternatives,
   MEDIA_PROVIDERS,
   MediaProviderUnavailableError,
+  listMediaProviders,
   resolveMediaProvider,
 } from './media-providers';
+import { videoModelSpec } from '../../shared/media-video-models';
 
 describe('computeMediaTierAlternatives', () => {
   it('retorna providers de imagem disponíveis quando vídeo está indisponível', () => {
@@ -117,7 +119,29 @@ describe('MediaProviderUnavailableError', () => {
       resolveMediaProvider('video', undefined, () => false);
       expect.fail('deveria ter lançado');
     } catch (err) {
-      expect((err as Error).message).toMatch(/Settings/i);
+      expect((err as Error).message).toMatch(/Ajustes → Serviços de mídia/);
     }
+  });
+});
+
+describe('F-1585: todo modelo de vídeo da lista tem regras e preço', () => {
+  it('a tabela compartilhada cobre a lista de vídeo inteira', () => {
+    const videoModels = MEDIA_PROVIDERS.filter((p) => p.kind === 'video').flatMap((p) => p.models);
+    expect(videoModels.length).toBeGreaterThan(0);
+    for (const model of videoModels) {
+      expect(videoModelSpec(model), model).not.toBeNull();
+    }
+  });
+});
+
+describe('F-1585: preço por imagem chega à lista de provedores', () => {
+  it('imagem leva o preço de lista por modelo; vídeo e voz não', () => {
+    const list = listMediaProviders(() => true, () => null);
+    const seedream = list.find((p) => p.id === 'replicate-image')!;
+    expect(seedream.imageCostUsd).toMatchObject({
+      'bytedance/seedream-5-pro': 0.04,
+      'bytedance/seedream-5-lite': 0.02,
+    });
+    expect(list.find((p) => p.id === 'replicate-video')!.imageCostUsd).toBeUndefined();
   });
 });

@@ -11768,7 +11768,7 @@ export const RELEASE_076323: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076325: AppRelease = {
   ...RELEASE_076323,
   version: '0.76.325',
   summary: 'No desktop Linux, o Quadro ganha "Ver o que aconteceu", a base da worktree avisa e atualiza com throttle de 60 s, o portão de regressão roda em lotes, o pane_write prova a entrega e a fila de comandos pesados se libera em 60 s. A tag 0.76.323 é o pacote macOS. A 0.76.324 não foi publicada: a suíte Ubuntu falhou num teste do MiMo.',
@@ -11778,3 +11778,19 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.326',
+  date: '2026-10-19',
+  codename: 'Comparador honesto e mídia que gera',
+  summary: 'Comparar modelos passa a mostrar os benchmarks oficiais que a escolha automática usa, só na versão mais nova de cada modelo e das ferramentas instaladas. Serviços de mídia e o Estúdio funcionam sem projeto aberto, explicam as falhas, só oferecem a duração e o formato que cada modelo de vídeo aceita e mostram o custo antes de gerar. Leva ao Windows a velocidade e os detalhes da missão da 0.76.323 a 0.76.325.',
+  highlights: [
+    { title: 'Comparar modelos com números oficiais', detail: 'As notas da tela eram de demonstração, escritas à mão em setembro, e a escolha automática nem as usava. Agora a tela mostra os mesmos benchmarks oficiais da rota (DeepSWE, Terminal-Bench 2.1, SWE-bench Verified), com link para a fonte e dizendo quando a nota vem de outro modelo da mesma linha. Aparece só a versão mais nova de cada modelo e, por padrão, só as ferramentas instaladas; modelo sem número publicado fica sem nota, nunca com zero.' },
+    { title: 'Mídia sem projeto aberto', detail: 'Sem projeto aberto, Serviços de mídia caía num erro e nem deixava conectar uma chave, e o Estúdio abria mudo. Agora os serviços carregam sempre e o Estúdio explica que gerar precisa de um projeto aberto.' },
+    { title: 'Vídeo só com o que o modelo aceita', detail: 'O Estúdio mandava 5 s para todo vídeo e o Veo, que só aceita 4, 6 ou 8 s, falhava com as opções padrão; Hailuo, Sora e Wan também recebiam valores que recusam. Agora cada modelo só oferece a duração, a proporção e a resolução que aceita, o pedido inválido é recusado antes de qualquer chamada paga e o custo aparece antes de gerar.' },
+  ],
+  fixes: [
+    { title: 'Erro de mídia com o que fazer', detail: 'A falha do serviço chegava crua ("HTTP 422" com JSON). Agora vem uma frase com o que houve e o que fazer, e um botão para Serviços de mídia quando o problema é a chave.' },
+    { title: 'Prévia mostra o arquivo gerado', detail: 'A prévia do Estúdio podia mostrar outra criação do mesmo tipo; agora mostra exatamente o arquivo que acabou de ser gerado.' },
+    { title: 'Veo nativo do Google até 22/10', detail: 'O Google desliga os Veo 3.1 preview do Gemini em 22/10/2026. O Estúdio avisa antes da data e, depois dela, recusa indicando o Veo 3.1 pelo Replicate. O Veo 2, já desligado, saiu da lista.' },
+  ],
+};
