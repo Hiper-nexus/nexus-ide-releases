@@ -137,6 +137,7 @@ import {
   DEEPSEEK_TOKEN_PLAN_PROVIDER,
   TOKEN_PLAN_KEY_ENV_VARS,
   TOKEN_PLAN_KEY_VAULT_SLOT,
+  claudeModelsForUpstream,
   deepseekModelForProvider,
   deepseekModelsForProvider,
   deepseekProviderChoice,
@@ -2088,9 +2089,18 @@ function toInfo(
   // Token Plan só o v4-pro; o flash dá 403).
   const deepseekSelected =
     adapterId === DEEPSEEK_DIRECT_PROVIDER ? deepseekChoice(cfg.upstream) : null;
+  // F-1576: no Claude o Flash só existe com o upstream na DeepSeek direta. A
+  // lista daqui alimenta o menu e a rota automática (tools-domain).
   const models = deepseekSelected
     ? deepseekModelsForProvider([...offer.offered], deepseekSelected)
-    : [...offer.offered];
+    : adapterId === 'claude'
+      ? claudeModelsForUpstream(
+          [...offer.offered],
+          listUpstreamProviders().find(
+            (route) => route.id === (cfg.upstream || 'anthropic'),
+          )?.baseUrl,
+        )
+      : [...offer.offered];
   const keySlot = deepseekSelected
     ? deepseekKeyVaultSlot(deepseekSelected)
     : adapterId;

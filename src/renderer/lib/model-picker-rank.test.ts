@@ -132,12 +132,40 @@ describe('model-picker-rank', () => {
     const options = rankModelOptions({
       adapters: [pricey, cheap],
       providers: [
-        provider(),
-        provider({ adapterId: 'opencode', authStrategy: 'subscription' }),
+        provider({ models: ['opus'] }),
+        provider({ adapterId: 'opencode', authStrategy: 'subscription', models: ['cheap-model'] }),
       ],
       quotaEntries: [],
     });
     expect(options[0]).toMatchObject({ adapterId: 'opencode', model: 'cheap-model' });
+  });
+
+  it('oferece só o que o provider serve no endpoint escolhido (F-1576)', () => {
+    // O manifesto do Claude traz o DeepSeek Flash (custo free, viria em 1º);
+    // com o Claude na Anthropic, a lista do provider já sai sem ele.
+    const claude = adapter({
+      models: {
+        list: ['claude-opus-5-5', 'claude-sonnet-5-5', 'deepseek-flash'],
+        default: 'claude-sonnet-5-5',
+        info: { 'deepseek-flash': { id: 'deepseek-flash', costTier: 'free' } },
+      },
+    });
+    const options = rankModelOptions({
+      adapters: [claude],
+      providers: [provider({ models: ['claude-opus-5-5', 'claude-sonnet-5-5'] })],
+      quotaEntries: [],
+    });
+    expect(options.map((option) => option.model)).not.toContain('deepseek-flash');
+    expect(options).toHaveLength(2);
+  });
+
+  it('sem lista no provider, cai no manifesto do adapter', () => {
+    const options = rankModelOptions({
+      adapters: [adapter()],
+      providers: [provider({ models: [] })],
+      quotaEntries: [],
+    });
+    expect(options.map((option) => option.model).sort()).toEqual(['opus', 'sonnet']);
   });
 
   it('provedor ausente = verificando (null), nunca pronto nem bloqueado', () => {
@@ -179,16 +207,16 @@ describe('model-picker-rank', () => {
     const first = rankModelOptions({
       adapters: [blocked('b', 'Beta'), blocked('a', 'Alfa')],
       providers: [
-        provider({ adapterId: 'b' }),
-        provider({ adapterId: 'a', label: 'Alfa' }),
+        provider({ adapterId: 'b', models: ['b-x'] }),
+        provider({ adapterId: 'a', label: 'Alfa', models: ['a-x'] }),
       ],
       quotaEntries: [],
     });
     const second = rankModelOptions({
       adapters: [blocked('a', 'Alfa'), blocked('b', 'Beta')],
       providers: [
-        provider({ adapterId: 'a', label: 'Alfa' }),
-        provider({ adapterId: 'b' }),
+        provider({ adapterId: 'a', label: 'Alfa', models: ['a-x'] }),
+        provider({ adapterId: 'b', models: ['b-x'] }),
       ],
       quotaEntries: [],
     });

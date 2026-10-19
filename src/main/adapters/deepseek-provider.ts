@@ -138,6 +138,25 @@ export function deepseekModelForProvider(
   return DEEPSEEK_TOKEN_PLAN_MODEL_ALIASES[model.trim()] ?? model;
 }
 
+/** Id do DeepSeek Flash no menu (o `deepseek-v4-flash` é alias dele). */
+export const DEEPSEEK_FLASH_MODEL = 'deepseek-flash';
+
+/**
+ * F-1576: o Claude Code só serve o `deepseek-flash` quando o upstream
+ * escolhido é a DeepSeek direta. Na Anthropic (assinatura ou API key) o id
+ * não existe: no menu ele aparecia em 1º no grupo Claude (custo "free") e a
+ * lane visual podia rotear `claude --model deepseek-flash` para a Anthropic.
+ */
+export function claudeModelsForUpstream(
+  models: readonly string[],
+  upstreamBaseUrl: string | null | undefined,
+): string[] {
+  if (httpsHostOf(upstreamBaseUrl) === DEEPSEEK_DIRECT_HOST) return [...models];
+  return models.filter(
+    (model) => model !== DEEPSEEK_FLASH_MODEL && model !== 'deepseek-v4-flash',
+  );
+}
+
 /**
  * Catálogo do adapter sob o provedor: no plano saem os flash (403) e o
  * v4-pro fica garantido; na API direta nada muda.

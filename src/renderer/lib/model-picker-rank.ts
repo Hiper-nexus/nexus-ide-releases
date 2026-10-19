@@ -130,9 +130,14 @@ export function rankModelOptions(
   for (const adapter of input.adapters) {
     if (!adapter.installed) continue;
     const provider = providersById.get(adapter.id);
-    const models = adapter.models.list.length > 0
-      ? adapter.models.list
-      : [adapter.models.default];
+    // F-1576: a lista do provider já sai filtrada pelo endpoint escolhido
+    // (Flash só no Claude da DeepSeek; Token Plan sem o flash, F-724); a do
+    // adapter é o manifesto inteiro.
+    const models = provider && provider.models.length > 0
+      ? provider.models
+      : adapter.models.list.length > 0
+        ? adapter.models.list
+        : [adapter.models.default];
     for (const model of models) {
       const auth = authViewForModel(provider, model);
       options.push({

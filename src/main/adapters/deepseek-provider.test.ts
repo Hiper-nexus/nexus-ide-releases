@@ -5,6 +5,7 @@ import {
   DEEPSEEK_DIRECT_HOST,
   DEEPSEEK_DIRECT_PROVIDER,
   DEEPSEEK_TOKEN_PLAN_PROVIDER,
+  claudeModelsForUpstream,
   deepseekModelForProvider,
   deepseekModelsForProvider,
   deepseekProviderChoice,
@@ -106,5 +107,35 @@ describe('provedor do DeepSeek (F-724)', () => {
     expect(
       deepseekModelsForProvider(['deepseek-v4-pro', 'deepseek-flash'], DEEPSEEK_DIRECT_PROVIDER),
     ).toEqual(['deepseek-v4-pro', 'deepseek-flash']);
+  });
+});
+
+describe('DeepSeek Flash no Claude só com o upstream na DeepSeek (F-1576)', () => {
+  const claudeMenu = ['claude-opus-5-5', 'claude-sonnet-5-5', 'deepseek-flash'];
+
+  it('na Anthropic (assinatura ou API key) o Flash sai do menu e da rota', () => {
+    expect(claudeModelsForUpstream(claudeMenu, '')).toEqual([
+      'claude-opus-5-5',
+      'claude-sonnet-5-5',
+    ]);
+    expect(claudeModelsForUpstream(claudeMenu, undefined)).not.toContain('deepseek-flash');
+    expect(
+      claudeModelsForUpstream([...claudeMenu, 'deepseek-v4-flash'], null),
+    ).not.toContain('deepseek-v4-flash');
+  });
+
+  it('outro upstream Anthropic-compatible também não serve o Flash', () => {
+    expect(
+      claudeModelsForUpstream(claudeMenu, 'https://api.z.ai/api/anthropic'),
+    ).not.toContain('deepseek-flash');
+    expect(
+      claudeModelsForUpstream(claudeMenu, ALIBABA_TOKEN_PLAN_ANTHROPIC_BASE_URL),
+    ).not.toContain('deepseek-flash');
+  });
+
+  it('com o Claude na DeepSeek direta o Flash fica', () => {
+    expect(
+      claudeModelsForUpstream(claudeMenu, `https://${DEEPSEEK_DIRECT_HOST}/anthropic`),
+    ).toEqual(claudeMenu);
   });
 });
