@@ -34,7 +34,7 @@ export const SYSTEM_API_KEYS: readonly SystemApiKeyDef[] = [
     envVar: 'GEMINI_API_KEY',
     title: 'Google Gemini',
     description:
-      'Jarvis Live (Gemini Live), transcrição de fala STT, Antigravity/Gemini CLI e geração de imagens/vídeos no Estúdio de Mídia (Imagen 3 e Veo 2).',
+      'Jarvis Live (Gemini Live), transcrição de fala STT, Antigravity/Gemini CLI e geração de imagens e vídeos com os modelos do Google no Estúdio de Mídia.',
     category: 'core',
     docLink: 'https://aistudio.google.com/app/apikey',
     docLabel: 'Google AI Studio',
@@ -100,7 +100,7 @@ export const SYSTEM_API_KEYS: readonly SystemApiKeyDef[] = [
     envVar: 'ELEVENLABS_API_KEY',
     title: 'ElevenLabs',
     description:
-      'Síntese de voz neural hiper-realista para a assistente Jarvis (TTS) e narração no Estúdio de Mídia.',
+      'Narração de vídeo com tempo por palavra e legenda (Eleven v4), música de fundo, Minha voz (clonar a sua própria voz) e fala gerada pelos agentes.',
     category: 'voice',
     docLink: 'https://elevenlabs.io/app/settings/api-keys',
     docLabel: 'ElevenLabs Console',

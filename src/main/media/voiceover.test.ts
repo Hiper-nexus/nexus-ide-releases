@@ -6,6 +6,7 @@ import {
   generateVoiceover,
   planVoiceoverChunks,
   purgeVoiceoverCacheForVoice,
+  resetVoiceoverTimingMemoryForTests,
   splitLongParagraph,
   voiceoverChunkKey,
   type VoiceoverDeps,
@@ -37,7 +38,7 @@ interface Call {
   body: Record<string, unknown> | null;
 }
 
-function fakeFetch(options: { framesPerChunk?: number; alignmentNull?: boolean } = {}) {
+function fakeFetch(options: { framesPerChunk?: number; alignmentNull?: boolean; noTimingModels?: string[] } = {}) {
   const calls: Call[] = [];
   const fn = vi.fn(async (input: string | URL, init?: RequestInit) => {
     const url = String(input);
@@ -53,7 +54,10 @@ function fakeFetch(options: { framesPerChunk?: number; alignmentNull?: boolean }
       return new Response(
         JSON.stringify({
           audio_base64: mp3(options.framesPerChunk ?? 40).toString('base64'),
-          alignment: options.alignmentNull ? null : alignment(text),
+          alignment:
+            options.alignmentNull || options.noTimingModels?.includes(String(body?.model_id))
+              ? null
+              : alignment(text),
         }),
         { status: 200 },
       );
@@ -83,6 +87,7 @@ function deps(fetchFn: typeof fetch, overrides: Partial<VoiceoverDeps> = {}): Vo
 }
 
 beforeEach(() => {
+  resetVoiceoverTimingMemoryForTests();
   workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-vo-ws-'));
   cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-vo-cache-'));
 });
@@ -145,7 +150,7 @@ describe('generateVoiceover', () => {
     expect(tts[0].headers['xi-api-key']).toBe('xi-test-key');
     expect(tts[0].body).toMatchObject({
       text: 'O Claude abre panes. O Gemini revisa.',
-      model_id: 'eleven_multilingual_v2',
+      model_id: 'eleven_v4',
       next_text: 'Tudo no Nexus IDE.',
     });
     expect(tts[1].body).toMatchObject({ previous_text: 'O Claude abre panes. O Gemini revisa.' });
@@ -211,12 +216,44 @@ describe('generateVoiceover', () => {
     expect(voiceoverChunkKey({ ...base })).toBe(key);
   });
 
-  it('modelo sem tempo por caractere vira erro com a saída', async () => {
+  it('modelo pedido sem tempo por caractere vira erro com a saída, sem gravar nada', async () => {
     const { fn } = fakeFetch({ alignmentNull: true });
     await expect(
-      generateVoiceover({ script: SCRIPT, voiceId: 'voz1', baseDir: workspace }, deps(fn as unknown as typeof fetch)),
+      generateVoiceover(
+        { script: SCRIPT, voiceId: 'voz1', model: 'eleven_v4', baseDir: workspace },
+        deps(fn as unknown as typeof fetch),
+      ),
     ).rejects.toThrow(/eleven_multilingual_v2/u);
     expect(fs.readdirSync(workspace)).toEqual([]);
+  });
+
+  it('padrão v4 sem tempo: refaz tudo no Multilingual v2, diz isso e soma o que pagou', async () => {
+    const { fn, calls } = fakeFetch({ noTimingModels: ['eleven_v4'] });
+    const result = await generateVoiceover(
+      { script: SCRIPT, voiceId: 'voz1', baseDir: workspace },
+      deps(fn as unknown as typeof fetch),
+    );
+    const models = calls.filter((call) => call.url.includes('/with-timestamps')).map((call) => call.body?.model_id);
+    // O 1º trecho no v4 voltou sem tempo; os dois trechos saem do mesmo modelo.
+    expect(models).toEqual(['eleven_v4', 'eleven_multilingual_v2', 'eleven_multilingual_v2']);
+    expect(result).toMatchObject({
+      model: 'eleven_multilingual_v2',
+      modelFallback: { requested: 'eleven_v4', used: 'eleven_multilingual_v2' },
+    });
+    // 37 caracteres no v4 (pagos e descartados) + 55 no Multilingual v2, ambos a US$ 0,08/mil.
+    expect(result.estimatedCostUsd).toBeCloseTo(((37 + 55) / 1_000) * 0.08, 4);
+    const timeline = JSON.parse(fs.readFileSync(result.files!.timeline, 'utf8'));
+    expect(timeline.model).toBe('eleven_multilingual_v2');
+
+    // Na próxima narração do processo o v4 nem é tentado.
+    const again = fakeFetch({ noTimingModels: ['eleven_v4'] });
+    await generateVoiceover(
+      { script: 'Outra coisa.', voiceId: 'voz1', baseDir: workspace },
+      deps(again.fn as unknown as typeof fetch),
+    );
+    expect(
+      again.calls.filter((call) => call.url.includes('/with-timestamps')).map((call) => call.body?.model_id),
+    ).toEqual(['eleven_multilingual_v2']);
   });
 
   it('sem voiceId não paga nada', async () => {

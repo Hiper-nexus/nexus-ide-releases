@@ -41,7 +41,7 @@ const MAX_PAGES = 5;
 
 function text(value: unknown, max: number): string | undefined {
   if (typeof value !== 'string') return undefined;
-  const clean = value.replace(/[\u0000-\u001f\u007f‪-‮⁦-⁩]+/gu, ' ').trim();
+  const clean = value.replace(/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]+/gu, ' ').trim();
   return clean ? clean.slice(0, max) : undefined;
 }
 

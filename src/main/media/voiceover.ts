@@ -101,10 +101,38 @@ export interface VoiceoverResult {
   readonly cachedChunks: number;
   /** What THIS call pays: zero when every chunk came from the cache. */
   readonly estimatedCostUsd: number | null;
+  /** The default model gave no timing; the narration used the fallback (said, never silent). */
+  readonly modelFallback?: { readonly requested: string; readonly used: string; readonly reason: string };
   readonly durationMs?: number;
   readonly words?: number;
   readonly captions?: number;
   readonly files?: VoiceoverFiles;
+}
+
+/**
+ * The model answered without per-character timing (or refused the timing
+ * endpoint). Narration without timing is useless to the video, so the
+ * default model falls back to the one the timing contract was built on.
+ */
+export class TimingUnavailableError extends Error {
+  constructor(
+    readonly model: string,
+    /** The provider spoke (and billed) the chunk before we saw no timing. */
+    readonly billedChars: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'TimingUnavailableError';
+  }
+}
+
+/** Proven timing on /with-timestamps (study §2.1, prototype of 19/10). */
+export const TIMING_FALLBACK_MODEL = 'eleven_multilingual_v2';
+/** Models that came back without timing in this process: never paid for twice. */
+const timingUnsupported = new Set<string>();
+
+export function resetVoiceoverTimingMemoryForTests(): void {
+  timingUnsupported.clear();
 }
 
 export class VoiceoverAbortError extends Error {
@@ -361,12 +389,20 @@ async function synthesizeChunk(input: {
     signal: input.req.signal,
   });
   assertCurrent(input.req);
-  if (!res.ok) throw await providerError(res, input.model);
+  if (!res.ok) {
+    const error = await providerError(res, input.model);
+    if ((res.status === 400 || res.status === 422) && /model|timestamp|alignment/iu.test(error.message)) {
+      throw new TimingUnavailableError(input.model, 0, error.message);
+    }
+    throw error;
+  }
   const json = (await res.json()) as { audio_base64?: unknown; alignment?: unknown };
   if (!isAlignment(json.alignment)) {
-    throw new Error(
+    throw new TimingUnavailableError(
+      input.model,
+      input.text.length,
       `O modelo ${input.model} não devolveu o tempo de cada caractere. ` +
-        'Use eleven_multilingual_v2 para narração com legenda.',
+        `Use ${TIMING_FALLBACK_MODEL} para narração com legenda.`,
     );
   }
   if (typeof json.audio_base64 !== 'string' || json.audio_base64.length === 0) {
@@ -394,8 +430,14 @@ export async function generateVoiceover(
   assertCurrent(req);
   const def = findMediaProvider('elevenlabs');
   if (!def) throw new Error('provedor elevenlabs ausente');
-  const model = resolveMediaModel(def, req.model);
-  const script = req.script.replace(/^﻿/u, '');
+  const explicitModel = Boolean(req.model?.trim());
+  let model = resolveMediaModel(def, req.model);
+  // Default model already seen without timing in this process: go straight
+  // to the fallback instead of paying for audio we would throw away.
+  if (!explicitModel && timingUnsupported.has(model) && def.models.includes(TIMING_FALLBACK_MODEL)) {
+    model = TIMING_FALLBACK_MODEL;
+  }
+  const script = req.script.replace(/^\uFEFF/u, '');
   const { paragraphs, chunks } = planVoiceoverChunks(script);
   const chars = chunks.reduce((total, chunk) => total + chunk.length, 0);
   if (chars === 0) throw new Error('roteiro vazio');
@@ -415,14 +457,19 @@ export async function generateVoiceover(
   if (voiceId !== null && !/^[A-Za-z0-9_-]{1,64}$/u.test(voiceId)) {
     throw new Error('voiceId inválido');
   }
-  const keys = voiceId
-    ? chunks.map((text) => voiceoverChunkKey({ text, voiceId, model, settings, languageCode }))
-    : [];
-  const cached = keys.map((key) => readCachedChunk(deps.cacheDir, key));
-  const cachedChunks = cached.filter(Boolean).length;
-  const uncachedChars = voiceId
-    ? chunks.reduce((total, chunk, index) => total + (cached[index] ? 0 : chunk.length), 0)
-    : chars;
+  const planFor = (activeModel: string) => {
+    const keys = voiceId
+      ? chunks.map((text) =>
+          voiceoverChunkKey({ text, voiceId, model: activeModel, settings, languageCode }),
+        )
+      : [];
+    const cached = keys.map((key) => readCachedChunk(deps.cacheDir, key));
+    const uncachedChars = voiceId
+      ? chunks.reduce((total, chunk, index) => total + (cached[index] ? 0 : chunk.length), 0)
+      : chars;
+    return { keys, cached, uncachedChars, cachedChunks: cached.filter(Boolean).length };
+  };
+  let plan = planFor(model);
 
   // Paths are validated before any money is spent.
   const outDir = req.outDir?.trim() || 'narration';
@@ -442,8 +489,8 @@ export async function generateVoiceover(
       voiceId,
       chars,
       chunks: chunks.length,
-      cachedChunks,
-      estimatedCostUsd: costOf(def, model, uncachedChars),
+      cachedChunks: plan.cachedChunks,
+      estimatedCostUsd: costOf(def, model, plan.uncachedChars),
     };
   }
   if (!voiceId) {
@@ -454,27 +501,54 @@ export async function generateVoiceover(
     throw new Error('ElevenLabs sem chave — configure em Ajustes → Serviços de mídia');
   }
 
-  const spoken: CachedChunk[] = [];
-  for (let index = 0; index < chunks.length; index += 1) {
-    const hit = cached[index];
-    if (hit) {
-      spoken.push(hit);
-      continue;
+  let paidUsd = 0;
+  const speakAll = async (activeModel: string): Promise<CachedChunk[]> => {
+    const spokenChunks: CachedChunk[] = [];
+    for (let index = 0; index < chunks.length; index += 1) {
+      const hit = plan.cached[index];
+      if (hit) {
+        spokenChunks.push(hit);
+        continue;
+      }
+      const chunk = await synthesizeChunk({
+        key,
+        voiceId,
+        model: activeModel,
+        text: chunks[index],
+        previousText: chunks[index - 1],
+        nextText: chunks[index + 1],
+        settings,
+        languageCode,
+        req,
+        deps,
+      });
+      paidUsd += costOf(def, activeModel, chunks[index].length) ?? 0;
+      writeCachedChunk(deps.cacheDir, plan.keys[index], voiceId, chunk);
+      spokenChunks.push(chunk);
     }
-    const chunk = await synthesizeChunk({
-      key,
-      voiceId,
-      model,
-      text: chunks[index],
-      previousText: chunks[index - 1],
-      nextText: chunks[index + 1],
-      settings,
-      languageCode,
-      req,
-      deps,
-    });
-    writeCachedChunk(deps.cacheDir, keys[index], voiceId, chunk);
-    spoken.push(chunk);
+    return spokenChunks;
+  };
+
+  let spoken: CachedChunk[];
+  let modelFallback: VoiceoverResult['modelFallback'];
+  try {
+    spoken = await speakAll(model);
+  } catch (error) {
+    // Every chunk must come from the same model, or the voice changes mid-video.
+    if (
+      !(error instanceof TimingUnavailableError) ||
+      explicitModel ||
+      model === TIMING_FALLBACK_MODEL ||
+      !def.models.includes(TIMING_FALLBACK_MODEL)
+    ) {
+      throw error;
+    }
+    timingUnsupported.add(model);
+    paidUsd += costOf(def, model, error.billedChars) ?? 0;
+    modelFallback = { requested: model, used: TIMING_FALLBACK_MODEL, reason: error.message };
+    model = TIMING_FALLBACK_MODEL;
+    plan = planFor(model);
+    spoken = await speakAll(model);
   }
 
   const parsed: Mp3Audio[] = spoken.map((chunk) => parseMp3(chunk.audio));
@@ -531,8 +605,9 @@ export async function generateVoiceover(
     voice,
     chars,
     chunks: chunks.length,
-    cachedChunks,
-    estimatedCostUsd: costOf(def, model, uncachedChars),
+    cachedChunks: plan.cachedChunks,
+    estimatedCostUsd: Number(paidUsd.toFixed(4)),
+    ...(modelFallback ? { modelFallback } : {}),
     durationMs: body.durationMs,
     words: body.words.length,
     captions: cues.length,

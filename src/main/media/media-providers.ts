@@ -73,6 +73,18 @@ const GOOGLE_VIDEO_USD_PER_SEC: Record<string, number> = {
   'veo-2.0-generate-001': 0.35,
 };
 
+/**
+ * Preço de API por mil caracteres (elevenlabs.io/pricing/api, lido em
+ * 19/10/2026): v4 e Multilingual v2 a US$ 0,08; v4 Turbo e Flash a US$ 0,04.
+ * Na assinatura o desconto é em créditos; isto é o equivalente de API.
+ */
+const ELEVENLABS_USD_PER_1K_CHARS: Record<string, number> = {
+  eleven_v4: 0.08,
+  eleven_v4_turbo: 0.04,
+  eleven_flash_v2_5: 0.04,
+  eleven_multilingual_v2: 0.08,
+};
+
 function perSecondEstimate(
   table: Record<string, number>,
   fallbackPerSec: number,
@@ -175,11 +187,15 @@ export const MEDIA_PROVIDERS: MediaProviderDef[] = [
     kind: 'audio',
     label: 'ElevenLabs — voz/TTS',
     envVar: 'ELEVENLABS_API_KEY',
-    defaultModel: 'eleven_multilingual_v2',
-    models: ['eleven_multilingual_v2', 'eleven_turbo_v2_5'],
-    estimateCost: ({ chars }) =>
+    // F-1590: modelo mais novo primeiro (regra do operador). O eleven_v3 é a
+    // geração anterior da mesma linha; o eleven_turbo_v2_5 foi descontinuado
+    // em favor do Flash v2.5 (alias em media-model-aliases). O Multilingual v2
+    // fica: é o que garante o tempo por caractere na narração (F-1591).
+    defaultModel: 'eleven_v4',
+    models: ['eleven_v4', 'eleven_v4_turbo', 'eleven_flash_v2_5', 'eleven_multilingual_v2'],
+    estimateCost: ({ model, chars }) =>
       typeof chars === 'number'
-        ? Number(((chars / 1_000) * 0.18).toFixed(4))
+        ? Number(((chars / 1_000) * (ELEVENLABS_USD_PER_1K_CHARS[model] ?? 0.08)).toFixed(4))
         : null,
   },
 ];

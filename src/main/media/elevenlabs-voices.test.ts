@@ -32,7 +32,7 @@ describe('summarizeVoice', () => {
     const summary = summarizeVoice(
       {
         voice_id: 'abc123',
-        name: 'Ana‮',
+        name: 'Ana\u202e',
         category: 'premade',
         labels: { accent: 'brazilian', gender: 'female', secret: 'x' },
         description: 'Voz calma',

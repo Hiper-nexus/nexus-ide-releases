@@ -677,8 +677,10 @@ describe('generateAudio', () => {
     );
     expect(result.provider).toBe('elevenlabs');
     expect(fs.readFileSync(result.path, 'utf8')).toBe('fake-mp3');
-    // custo arredondado a 4 casas: (11/1000)*0.18 = 0.00198 → 0.002
-    expect(result.estimatedCostUsd).toBe(0.002);
+    // F-1590: eleven_v4 a US$ 0,08/mil caracteres: (11/1000)*0.08 = 0.00088 → 0.0009
+    expect(result.model).toBe('eleven_v4');
+    expect(result.estimatedCostUsd).toBe(0.0009);
+    expect(JSON.parse(String(calls[0].init?.body))).toMatchObject({ model_id: 'eleven_v4' });
     expect(calls[0].url).toContain('/v1/text-to-speech/');
     const headers = calls[0].init?.headers as Record<string, string>;
     expect(headers['xi-api-key']).toBe('test-key');

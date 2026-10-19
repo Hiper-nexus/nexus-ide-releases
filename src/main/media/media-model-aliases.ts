@@ -65,6 +65,10 @@ const ALIASES: Record<string, string> = {
   'nano-banana': 'gemini-3.1-flash-image-preview',
   gemini: 'gemini-3.1-flash-image-preview',
   'gpt-image': 'gpt-image-2',
+  // ElevenLabs (F-1590): o Turbo v2.5 foi descontinuado; a própria ElevenLabs
+  // diz que o Flash v2.5 é equivalente e o recomenda em todo caso.
+  'eleven-turbo-v2-5': 'eleven_flash_v2_5',
+  'eleven-v3': 'eleven_v4',
 };
 
 /** Normalized lookup: trim, lower-case, collapse spaces/underscores to `-`. */

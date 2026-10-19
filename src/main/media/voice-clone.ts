@@ -103,7 +103,7 @@ const NUMBER_WORDS: Record<string, string> = {
 export function normalizeSpeech(text: string): string[] {
   return text
     .normalize('NFD')
-    .replace(/[̀-ͯ]/gu, '')
+    .replace(/[\u0300-\u036f]/gu, '')
     .toLowerCase()
     .replace(/[^a-z0-9]+/gu, ' ')
     .split(' ')

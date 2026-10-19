@@ -3,6 +3,7 @@ import {
   computeMediaTierAlternatives,
   MEDIA_PROVIDERS,
   MediaProviderUnavailableError,
+  resolveMediaModel,
   resolveMediaProvider,
 } from './media-providers';
 
@@ -119,5 +120,29 @@ describe('MediaProviderUnavailableError', () => {
     } catch (err) {
       expect((err as Error).message).toMatch(/Settings/i);
     }
+  });
+});
+
+describe('ElevenLabs em dia (F-1590)', () => {
+  const eleven = MEDIA_PROVIDERS.find((def) => def.id === 'elevenlabs')!;
+
+  it('o modelo de ponta é o padrão e o descontinuado saiu da lista', () => {
+    expect(eleven.defaultModel).toBe('eleven_v4');
+    expect(eleven.models[0]).toBe('eleven_v4');
+    expect(eleven.models).toEqual(['eleven_v4', 'eleven_v4_turbo', 'eleven_flash_v2_5', 'eleven_multilingual_v2']);
+    expect(eleven.models).not.toContain('eleven_turbo_v2_5');
+  });
+
+  it('custo pelo preço de API de cada modelo', () => {
+    expect(eleven.estimateCost({ model: 'eleven_v4', chars: 1_000 })).toBe(0.08);
+    expect(eleven.estimateCost({ model: 'eleven_multilingual_v2', chars: 900 })).toBe(0.072);
+    expect(eleven.estimateCost({ model: 'eleven_v4_turbo', chars: 1_000 })).toBe(0.04);
+    expect(eleven.estimateCost({ model: 'eleven_flash_v2_5', chars: 900 })).toBe(0.036);
+    expect(eleven.estimateCost({ model: 'eleven_v4' })).toBeNull();
+  });
+
+  it('pedido do Turbo v2.5 ou do v3 vai para o sucessor', () => {
+    expect(resolveMediaModel(eleven, 'eleven_turbo_v2_5')).toBe('eleven_flash_v2_5');
+    expect(resolveMediaModel(eleven, 'eleven_v3')).toBe('eleven_v4');
   });
 });
