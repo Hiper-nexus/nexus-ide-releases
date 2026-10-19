@@ -66,6 +66,13 @@ const modelsConfigSchema = z.object({
   flag: z.string(),
   list: z.array(z.string()),
   default: z.string(),
+  /**
+   * Família de cada modelo servido por esta CLI (id do modelo -> família, ex.:
+   * `"deepseek-flash": "deepseek"`). O roteador usa para reconhecer que duas
+   * CLIs servem o MESMO modelo e preferir a rota de assinatura à de API key.
+   * Ausente = o modelo não declara equivalência.
+   */
+  families: z.record(z.string(), z.string().min(1)).optional(),
 });
 
 const promptInjectionSchema = z.object({

@@ -187,6 +187,8 @@ import { isTaskQueueManagedMission } from './task-dispatch-authority';
 import { operatorHandMissionContract, operatorHandMissionLane } from './operator-hand-mission';
 import { hasOperatorTabHost, recordOperatorTabCompletionRequest } from './operator-tab-completion';
 import { stripAwaitingAdjustmentMarker } from '../../shared/mission-recovery-policy';
+import { billingFromAuth } from './subscription-route-preference';
+import { readQwenSettingsSummary } from '../adapters/qwen-settings';
 import {
   countMissionItems,
   fastLaneObjectiveText,
@@ -2300,6 +2302,15 @@ export async function routeTaskForCaller(
         ),
         ...(provenListing ? { liveModelsAuthoritative: true } : {}),
         efforts: a.efforts,
+        ...(() => {
+          const billing = billingFromAuth({
+            authStrategy: a.authStrategy,
+            // Qwen no Alibaba Token Plan: chave de plano com tarifa fixa.
+            flatRatePlan: a.adapterId === 'qwen' && a.authStrategy === 'api-key' &&
+              readQwenSettingsSummary().tokenPlan,
+          });
+          return billing ? { billing } : {};
+        })(),
         // F-724: o provedor escolhido serve alguns ids com outro modelo.
         ...(a.modelAliases ? { modelAliases: a.modelAliases } : {}),
         capabilities: {

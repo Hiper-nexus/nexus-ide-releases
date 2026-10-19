@@ -69,6 +69,7 @@ import { isAstraModel, routingPurpose } from './routing-cost-policy';
 import type { QuotaPace } from './quota-pace';
 import { modelListAuthority, resolveOfferedModels } from '../adapters/model-availability';
 import { readMuseContributorConsent } from '../adapters/cli-model-discovery';
+import { subscriptionOverApiKey, type BillingRouteCandidate, type RouteBilling } from './subscription-route-preference';
 
 export type TaskTier = 'trivial' | 'easy' | 'medium' | 'hard' | 'critical';
 
@@ -1107,6 +1108,13 @@ export interface AdapterAvailability {
   modelAliases?: Readonly<Record<string, string>>;
   /** Capacidades de tarefa declaradas/detectadas (F-771). */
   capabilities?: AdapterRouteCapabilities;
+  /**
+   * Cobrança efetiva agora: `subscription` (login/plano, sem custo por uso) ou
+   * `api-key` (pago por uso). Ausente = desconhecida; nunca troca a rota.
+   */
+  billing?: RouteBilling;
+  /** Família por modelo (`models.families` do adapter); ausente = a do bundled. */
+  modelFamilies?: Readonly<Record<string, string>>;
 }
 
 /** Modelo que o provedor do adapter realmente serve para o id da tabela. */
@@ -1128,6 +1136,17 @@ const BUNDLED_MODELS = new Map(BUILTIN_ADAPTERS.map((raw) => {
   const adapter = adapterSchema.parse(raw);
   return [adapter.id, adapter.kind === 'cli-pty' ? adapter.models.list : []];
 }));
+
+const BUNDLED_FAMILIES = new Map(BUILTIN_ADAPTERS.map((raw) => {
+  const adapter = adapterSchema.parse(raw);
+  return [adapter.id, adapter.kind === 'cli-pty' ? adapter.models.families ?? {} : {}] as const;
+}));
+
+function modelFamilyIn(adapter: AdapterAvailability, model: string | undefined): string | undefined {
+  if (!model) return undefined;
+  const declared = adapter.modelFamilies ?? BUNDLED_FAMILIES.get(adapter.id);
+  return declared && Object.hasOwn(declared, model) ? declared[model] : undefined;
+}
 
 /**
  * Modelos roteáveis do adapter segundo o que a CLI instalada anunciou.
@@ -2771,6 +2790,44 @@ export function routeTask(
           '; opção do próprio tier pronta — sem empréstimo de tier mais barato (F-1412)';
       }
     }
+    // Regra do operador: o mesmo modelo/família por assinatura (plano, sem
+    // custo por uso) vence a API key paga por uso; a API key fica de fallback.
+    // Pin do operador (modelo no texto, CLI em preferAdapters) nunca é trocado.
+    let subscriptionPreferenceNote = '';
+    const chosenAdapter = available.get(chosen.c.adapterId);
+    const chosenFamily = chosenAdapter ? modelFamilyIn(chosenAdapter, chosen.c.model) : undefined;
+    if (chosenAdapter?.billing === 'api-key' && chosenFamily && mention.model === undefined &&
+        !context.preferAdapters?.includes(chosen.c.adapterId)) {
+      type FamilyEntry = BillingRouteCandidate & { entry: RankedRouteEntry };
+      const asCandidate = (entry: RankedRouteEntry, adapter: AdapterAvailability): FamilyEntry => ({
+        adapterId: entry.c.adapterId,
+        model: entry.c.model,
+        billing: adapter.billing,
+        ready: true,
+        healthy: !adapterCircuitBreakers.isOpen(entry.c.adapterId) && !isFailing(entry),
+        entry,
+      });
+      const sameFamily: FamilyEntry[] = [];
+      for (const adapter of available.values()) {
+        if (adapter.id === chosen.c.adapterId || adapter.billing !== 'subscription') continue;
+        const eligible = eligibleModels(adapter).filter((model) =>
+          modelFamilyIn(adapter, model) === chosenFamily &&
+          !lacksAccessProof(adapter, model) && fitsContext(adapter.id, model) &&
+          (!visionCapable || hasVision(adapter.id, model)));
+        // Mesmo id primeiro; depois a ordem em que a CLI lista os modelos.
+        eligible.sort((a, b) => Number(b === chosen.c.model) - Number(a === chosen.c.model));
+        for (const model of eligible) {
+          const existing = ranked.find((r) => r.c.adapterId === adapter.id && r.c.model === model);
+          sameFamily.push(asCandidate(
+            existing ?? { c: { adapterId: adapter.id, model }, fromTier: chosen.fromTier }, adapter));
+        }
+      }
+      const preference = subscriptionOverApiKey(asCandidate(chosen, chosenAdapter), sameFamily);
+      if (preference) {
+        chosen = preference.pick.entry;
+        subscriptionPreferenceNote = preference.note;
+      }
+    }
     if (reserveClaude && chosen.c.adapterId === 'claude') {
       // O bloco do líder falho estaciona a falha logo atrás do pronto: a
       // reserva pega a 1ª alternativa que não falha (fail-open: só falhas ⇒ a 1ª).
@@ -2860,7 +2917,7 @@ export function routeTask(
       adapterId: pick.adapterId,
       model: pick.model,
       effort,
-      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${capabilityNote}${visionNote}${contextNote}${mentionNote}${costNote}${evaluationNote}${riskNote}${missingNote}${accessProofNote}${liveCatalogDropNote}${lineUpgradeNote}${servedNote}${bandNote}${multiScoreNote}${failingAvoidedNote}${tieBreakNote}${crossCliNote}${visualNote}${visionLaneNote}${ownTierGuardNote}${judgeNote}${rotationNote}${fairShareNote}${preferNote}${preferenceYieldNote}${writerCostNote}${pick.adapterId === 'muse' && pick.model?.endsWith('-contributor') ? '; contributor (conteúdo pode ser usado pela Meta)' : ''}${effortNoteFor(pick.adapterId, pick.model)}`,
+      reason: `${tier}${borrowed}${specialtyNote}; ${why}${frontierNote}${capabilityNote}${visionNote}${contextNote}${mentionNote}${costNote}${evaluationNote}${riskNote}${missingNote}${accessProofNote}${liveCatalogDropNote}${lineUpgradeNote}${servedNote}${bandNote}${multiScoreNote}${failingAvoidedNote}${tieBreakNote}${crossCliNote}${visualNote}${visionLaneNote}${ownTierGuardNote}${judgeNote}${rotationNote}${fairShareNote}${preferNote}${preferenceYieldNote}${subscriptionPreferenceNote}${writerCostNote}${pick.adapterId === 'muse' && pick.model?.endsWith('-contributor') ? '; contributor (conteúdo pode ser usado pela Meta)' : ''}${effortNoteFor(pick.adapterId, pick.model)}`,
       alternatives: ranked.filter((r) => r.c !== pick).map(({ c }) => ({ ...c, effort: effortFor(c.adapterId, c.model) })),
       specialty: specialtyVerdict.specialty,
       policySource,
