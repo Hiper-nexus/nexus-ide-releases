@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.327 — Instalador assinado
+
+O instalador, o app e o atualizador do Windows passam a sair assinados com o certificado de assinatura de código da HIPERSEND, guardado num token de hardware (YubiKey). O conteúdo do app é o mesmo da 0.76.326.
+
+- **Instalador do Windows assinado**. O Setup.exe, o NexusIDE, o atualizador e o Redline do Windows saem com assinatura Authenticode da HIPERSEND TECNOLOGIA INTERNET & SOFTWARES LTDA, emitida pelo SSL.com, com carimbo de tempo. O Windows mostra o editor em vez de "Editor desconhecido". O SmartScreen ainda pode avisar nas primeiras instalações, até o certificado novo ganhar reputação. A chave fica num token de hardware e não sai dele.
+
 ## 0.76.326 — Comparador honesto e mídia que gera
 
 As tags 0.76.323 (macOS) e 0.76.325 (Linux) não receberam arquivos Windows. Este pacote leva ao Windows tudo delas (velocidade e detalhes da missão, "Ver o que aconteceu" no Quadro, portão de regressão em lotes, fila de comandos pesados que se libera sozinha) e as melhorias abaixo no comparador de modelos e na geração de mídia:
