@@ -384,6 +384,8 @@ const EXECUTION_EFFECT_TOOLS = new Set([
   'video_generate',
   // F-1591: narração paga com a chave do usuário e grava no workspace.
   'voiceover_generate',
+  // F-1592: música paga (Eleven Music) gravada no workspace.
+  'music_generate',
 ]);
 
 /**

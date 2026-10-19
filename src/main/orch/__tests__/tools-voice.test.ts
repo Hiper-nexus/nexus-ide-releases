@@ -12,12 +12,19 @@ const mocks = vi.hoisted(() => ({
   listVoices: vi.fn(),
   resolveKey: vi.fn(() => 'xi-key' as string | undefined),
   recordUsage: vi.fn(),
+  generateMusic: vi.fn(),
 }));
 
 vi.mock('../workspace-path', () => ({ resolveCwdForScope: mocks.workspaceRoot }));
 vi.mock('../../media/voiceover', () => ({
   generateVoiceover: mocks.generateVoiceover,
   VOICEOVER_MAX_CHARS: 20_000,
+}));
+vi.mock('../../media/music-generation', () => ({
+  generateMusic: mocks.generateMusic,
+  MUSIC_MIN_MS: 3_000,
+  MUSIC_MAX_MS: 600_000,
+  MUSIC_MODELS: ['music_v2_5', 'music_v2', 'music_v1'],
 }));
 vi.mock('../../media/elevenlabs-voices', () => ({ listElevenLabsVoices: mocks.listVoices }));
 vi.mock('../../media/media-keys', () => ({ resolveMediaKey: mocks.resolveKey }));
@@ -128,5 +135,42 @@ describe('ferramentas de voz', () => {
     await expect(
       tool('nexus_voiceover_generate').handler({ scriptPath: '../fora.txt' }, ctx),
     ).rejects.toThrow(/escapa o workspace/u);
+  });
+
+  it('música é efeito com confirmação e repassa os argumentos', async () => {
+    expect(effectPolicyForTool('nexus_music_generate')).toBe('execution-effect');
+    expect(tool('nexus_music_generate').requiresConfirm).toBe(true);
+    mocks.generateMusic.mockResolvedValue({
+      ok: true,
+      dryRun: false,
+      model: 'music_v2_5',
+      lengthMs: 45_000,
+      estimatedCostUsd: 0.1125,
+      path: path.join(workspace, 'music', 'a.mp3'),
+    });
+    await tool('nexus_music_generate').handler(
+      { prompt: 'piano calmo', lengthMs: 45_000.4, instrumental: false, outPath: 'music/a.mp3' },
+      ctx,
+    );
+    expect(mocks.generateMusic.mock.calls[0][0]).toMatchObject({
+      prompt: 'piano calmo',
+      lengthMs: 45_000,
+      instrumental: false,
+      outPath: 'music/a.mp3',
+      baseDir: workspace,
+    });
+    expect(mocks.recordUsage).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'audio', estimatedCostUsd: 0.1125 }),
+      ctx,
+      undefined,
+    );
+  });
+
+  it('música recusada pelo provedor volta como resultado, sem registro de gasto', async () => {
+    mocks.generateMusic.mockResolvedValue({ ok: false, error: 'cita artista', promptSuggestion: 'synth pop' });
+    const result = await tool('nexus_music_generate').handler({ prompt: 'x', lengthMs: 10_000 }, ctx);
+    expect(result).toMatchObject({ ok: false, promptSuggestion: 'synth pop' });
+    expect(mocks.recordUsage).not.toHaveBeenCalled();
+    await expect(tool('nexus_music_generate').handler({ prompt: 'x' }, ctx)).rejects.toThrow(/lengthMs/u);
   });
 });

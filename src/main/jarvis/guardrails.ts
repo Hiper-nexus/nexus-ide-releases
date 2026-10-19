@@ -336,6 +336,17 @@ export function confirmationReason(
   if (toolName === 'nexus_audio_generate' || toolName === 'audio_generate') {
     return mediaConfirmation('audio', args);
   }
+  if (toolName === 'nexus_music_generate' || toolName === 'music_generate') {
+    const seconds =
+      typeof args.lengthMs === 'number' && Number.isFinite(args.lengthMs)
+        ? Math.round(args.lengthMs / 1000)
+        : 0;
+    const mode = args.dryRun === true ? 'price only (dryRun, no charge)' : 'paid music';
+    return (
+      `${mode} via elevenlabs, ${seconds} s, ${args.instrumental === false ? 'with vocals' : 'instrumental'}; ` +
+      `input: prompt (${textLength(args.prompt)} chars); output: ${safeMediaArg(args.outPath, 'music/music-<timestamp>.mp3')}`
+    );
+  }
   if (toolName === 'nexus_voiceover_generate' || toolName === 'voiceover_generate') {
     const source =
       typeof args.scriptPath === 'string'

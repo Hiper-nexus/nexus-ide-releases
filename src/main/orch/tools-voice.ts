@@ -4,6 +4,7 @@ import { resolveMediaKey } from '../media/media-keys';
 import { readMediaInput } from '../media/media-path-policy';
 import { listElevenLabsVoices } from '../media/elevenlabs-voices';
 import { generateVoiceover, VOICEOVER_MAX_CHARS } from '../media/voiceover';
+import { generateMusic, MUSIC_MAX_MS, MUSIC_MIN_MS, MUSIC_MODELS } from '../media/music-generation';
 import { isNexusClonedVoice } from '../media/voice-origin';
 import { recordMediaUsage } from '../usage/media-usage-recorder';
 import { num, str } from './tool-util';
@@ -11,10 +12,11 @@ import { resolveCwdForScope } from './workspace-path';
 import { executionScopeFor, type AgentGateContext } from './gate';
 
 /**
- * Voice tools for presentation videos (F-1591). The agent can LIST the voices
- * of the user's ElevenLabs account and NARRATE a script with one of them. No
- * tool here, or anywhere in the MCP registry, creates or clones a voice:
- * cloning is a human-only flow in Ajustes → Serviços de mídia → Minha voz.
+ * Audio tools for presentation videos. The agent can LIST the voices of the
+ * user's ElevenLabs account, NARRATE a script with one of them (F-1591) and
+ * compose background MUSIC (F-1592). No tool here, or anywhere in the MCP
+ * registry, creates or clones a voice: cloning is a human-only flow in
+ * Ajustes → Serviços de mídia → Minha voz.
  */
 
 const SCRIPT_FILE_MAX_BYTES = 200 * 1024;
@@ -155,6 +157,69 @@ const voiceoverGenerateTool: McpToolDef = {
   },
 };
 
+const musicGenerateTool: McpToolDef = {
+  name: 'nexus_music_generate',
+  description:
+    'Compose background music (Eleven Music, the user ElevenLabs key) and save ' +
+    'an mp3 plus <name>.provenance.json inside the workspace. Instrumental by ' +
+    'default; the provider signs the mp3 with C2PA. Describe genre, era, ' +
+    'instruments, tempo and mood — never an artist, song or lyric (the ' +
+    'provider refuses and returns promptSuggestion; show it to the operator ' +
+    `before using it). lengthMs ${MUSIC_MIN_MS}–${MUSIC_MAX_MS}; ` +
+    'match the narration durationMs from the timeline. dryRun:true prices it ' +
+    '(US$ 0.15/min). The result carries the license notice to relay to the ' +
+    'operator. Missing key → STOP and report Ajustes → Serviços de mídia.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      prompt: { type: 'string' },
+      lengthMs: { type: 'number' },
+      instrumental: { type: 'boolean', description: 'Default true.' },
+      model: { type: 'string', enum: [...MUSIC_MODELS] },
+      outPath: { type: 'string', description: 'Workspace .mp3 path (default music/music-<timestamp>.mp3).' },
+      dryRun: { type: 'boolean' },
+    },
+    required: ['prompt', 'lengthMs'],
+  },
+  requiresConfirm: true,
+  handler: async (args, ctx, invocation) => {
+    assertMcpInvocationCurrent(invocation);
+    const lengthMs = num(args, 'lengthMs');
+    if (lengthMs === undefined) throw new Error('missing required argument: lengthMs');
+    const prompt = str(args, 'prompt');
+    if (!prompt) throw new Error('missing required argument: prompt');
+    const result = await generateMusic({
+      prompt,
+      lengthMs: Math.round(lengthMs),
+      instrumental: args.instrumental !== false,
+      model: str(args, 'model'),
+      outPath: str(args, 'outPath'),
+      dryRun: args.dryRun === true,
+      baseDir: baseDirFor(ctx),
+      signal: invocation?.signal,
+      assertCurrentAuthority: invocation?.assertCurrentAuthority,
+    });
+    assertMcpInvocationCurrent(invocation);
+    if (result.ok && !result.dryRun && result.path) {
+      await recordMediaUsage(
+        {
+          ok: true,
+          path: result.path,
+          provider: 'elevenlabs',
+          model: result.model,
+          kind: 'audio',
+          estimatedCostUsd: result.estimatedCostUsd,
+          durationMs: result.lengthMs,
+        },
+        ctx,
+        invocation,
+      );
+      assertMcpInvocationCurrent(invocation);
+    }
+    return result;
+  },
+};
+
 export function buildVoiceTools(): McpToolDef[] {
-  return [voiceListTool, voiceoverGenerateTool];
+  return [voiceListTool, voiceoverGenerateTool, musicGenerateTool];
 }

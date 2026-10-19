@@ -315,6 +315,19 @@ describe('confirmationReason', () => {
     );
   });
 
+  it('describes music length, kind and destination without leaking the prompt', () => {
+    const reason = confirmationReason('nexus_music_generate', {
+      prompt: 'trilha secreta',
+      lengthMs: 45_000,
+      outPath: 'promo/music.mp3',
+    });
+    expect(reason).toContain('paid music');
+    expect(reason).toContain('45 s');
+    expect(reason).toContain('instrumental');
+    expect(reason).toContain('promo/music.mp3');
+    expect(reason).not.toContain('trilha secreta');
+  });
+
   it('describes video provider, keyframes and destination without leaking the prompt', () => {
     const reason = confirmationReason('nexus_video_generate', {
       provider: 'replicate-video',
