@@ -11834,7 +11834,7 @@ export const RELEASE_076329: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076330: AppRelease = {
   version: '0.76.330',
   date: '2026-10-19',
   codename: 'As contas se revezam sozinhas',
@@ -11848,4 +11848,17 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'A conta que está em uso é medida de verdade', detail: 'Em algumas IAs o provedor só informa a cota da conta que está logada no momento, e recusa a consulta das demais. Essa leitura passa a ser atribuída à conta que o Nexus de fato abriu — sem ela, a frota inteira parecia "sem medição" e nada rotacionava. As contas irmãs continuam honestamente sem leitura: ninguém as mediu.' },
     { title: 'A troca não acusa conta saudável', detail: 'A decisão só aceita leitura vinda do provedor e com menos de 10 minutos: uma estimativa local nunca tira o pane de uma conta que está bem. Conta fixada por você continua só cedendo quando esgota de fato, e um agente que está no meio de uma chamada silenciosa não é trocado por engano.' },
   ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.331',
+  date: '2026-10-19',
+  codename: 'Memória e contas no Linux',
+  summary: 'No desktop Linux, a pressão crítica estaciona até o pane que está trabalhando e recusa abrir outro na beira do travamento. Várias contas da mesma IA passam a se revezar pela cota medida: o trabalho novo sai da conta que está chegando ao fim, e o pane que emudece continua na conta seguinte. A tag 0.76.329 é o pacote macOS. A tag 0.76.330 não recebe arquivos Linux.',
+  highlights: [
+    ...RELEASE_076329.highlights,
+    ...RELEASE_076330.highlights,
+    { title: 'Pacote Linux', detail: 'A tag 0.76.329 é o pacote macOS e não recebe arquivos Linux. A tag 0.76.330 não recebe arquivos Linux. O desktop Linux sai na 0.76.331, com o comparador e a mídia da 0.76.328, o freio de memória e a rotação de contas.' },
+  ],
+  fixes: [...RELEASE_076329.fixes, ...RELEASE_076330.fixes],
 };

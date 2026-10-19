@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.76.331 — Memória e contas no Linux
+
+A tag 0.76.329 é o pacote macOS e não recebe arquivos Linux. A tag 0.76.330 não recebe arquivos Linux. Este pacote leva o desktop Linux.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+No desktop Linux, em relação à 0.76.328:
+
+- **Freio de emergência de memória**. Na pressão crítica, o Nexus estaciona até o pane que está trabalhando, no máximo três por varredura, e recusa abrir outro. A varredura acelera para 5 segundos enquanto a pressão está severa ou crítica. O histórico e o "Acordar" ficam.
+- **As contas se revezam sozinhas**. O trabalho novo sai da conta cuja cota medida passa de 89%, sem interromper quem já está trabalhando. O pane que emudece por cota esgotada continua na conta seguinte. Quando nenhuma conta da CLI tem folga, a missão segue em outra IA.
+
 ## 0.76.330 — As contas se revezam sozinhas
 
 Quem tem várias contas da mesma IA usava só a primeira: quando a cota dela acabava, o pane simplesmente parava — não trocava, não avisava, não morria com erro. Agora o Nexus mede a cota e tira o trabalho NOVO da conta que está chegando ao fim, antes de ela acabar, sem interromper quem já está trabalhando. Quem esgota no meio da tarefa continua na conta seguinte, e quando todas acabam o trabalho segue em outra IA. Sete contas passam a render como sete, não como uma.
