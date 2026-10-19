@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.76.310 — Retomada à vista no Mac
+
+Candidato macOS (`darwin-arm64`) assinado e notarizado. Em relação à 0.76.308 (último macOS):
+
+- **Retomar missão à vista**. Depois de reinício, crash ou travamento, a missão aparece como Interrompida num cartão único com o botão Retomar missão em destaque na barra do pane e no ⌘K. Os avisos do terminal apontam para esse botão, Fechar avisa quando é o último pane da missão, e depois de 20 s restaurando os agentes o Nexus diz o que está esperando.
+- **Retomada mais confiável**. A entrega de handoff depois do reinício não se perde nem duplica, a equipe parada há muito tempo aparece no quadro, worker travado sem telemetria é detectado. Um clique duplo em Retomar reabre a missão uma vez só, e o cartão de interrompida não corta mais o grid de panes.
+- **Login expirado troca de conta**. Quando o Claude mostra "Login expired · Please run /login", o Nexus troca a conta do pane para outra pronta em vez de deixar o Maestro parado. A troca nunca mexe no login global do Mac.
+- **Workers sem tela de plano**. Workers da família Claude nascem em modo direto, sem plan mode: não param mais em "aprovar plano".
+- **Nexus Shot atualizado junto**. O Nexus atualiza o Nexus Shot instalado quando ele está abaixo da versão mínima ou crashou recentemente, baixando só do feed oficial e conferindo assinatura, equipe e Gatekeeper antes de trocar.
+- **JARVIS Live solto e vivo**. A pílula do JARVIS não pisca mais ao passar o mouse e volta a arrastar e clicar sobre o cabeçalho do Mac. As partículas se mexem com a própria voz ao falar e com o microfone ao ouvir, e a voz continua audível mesmo se o medidor falhar.
+- **Assinatura antes de API key**. Quando o mesmo modelo chega por duas rotas, como o DeepSeek pelo Qwen Code no plano do operador e pelo adapter DeepSeek com API key, o Nexus prefere a rota da assinatura. A API key fica de reserva para quando a assinatura estiver sem credencial, em cooldown ou falhando.
+- **Missões mais rápidas**. Comandos de leitura pesados (typecheck, testes) rodam em paralelo e só build/instalação ficam exclusivos. Um pedido espera na fila com ticket em vez de falhar. O gate de regressão guarda o mapa de imports em disco e escolhe os testes pelo nome do arquivo, e worker parado é reaberto uma vez em vez de segurar a esteira.
+- **Spawn de worker resiste a Git transitório**. A criação da worktree repete falhas passageiras do Git e diz a causa quando desiste.
+- **Rota confere a credencial**. O Nexus testa a credencial da CLI escolhida antes de abrir o worker e evita CLI com login recusado.
+- **Muse logada volta a abrir**. A Muse com login guardado no Keychain era recusada no spawn e caía calada no Claude. Agora a checagem de login do spawn é a mesma da tela e da rota, um teste cobre todos os formatos de login conhecidos e, se as duas discordarem, o Nexus avisa em vez de trocar de CLI escondido.
+- **Recibo diz a CLI que subiu**. Quando a credencial de uma CLI é recusada e o assento passa para outra, o recibo do spawn, o título do pane e a lista de panes mostram a CLI e o modelo reais, com o motivo da troca. Uma CLI recusada duas vezes em 1 h sai da rota até a credencial voltar.
+- **Queda de rede troca de CLI**. Uma CLI presa no contador "check your network" não conta mais como trabalhando: esgotada a espera, o Nexus marca falha do provedor e reabre a tarefa em outra CLI.
+- **Git mais seguro e sem travar**. O supervisor usa o runner git seguro do Nexus, o diff do gate ignora textconv/ext-diff e as buscas do gate rodam assíncronas e com teto de tempo. A mensagem de fila pesada fica curta o bastante para chegar ao terminal.
+- **Esteira parada não insiste com o operador**. Enquanto o Maestro espera uma decisão sua, o aviso de esteira parada fica em silêncio; depois de 6 h sai um único lembrete no inspector. Uma segunda onda de tarefas prontas espera os 30 s de novo em vez de herdar o carimbo antigo.
+- **Instalador do Shot mais rígido**. O Nexus confere o Shot pelo requisito do codesign (identificador e equipe), só aceita asset do repositório oficial e nunca apaga o app antigo se a troca e a restauração falharem.
+- **Fila pesada por repositório**. Build de outro repositório (ex.: o Shot) não segura mais typecheck e testes do Nexus.
+- **Publicação do Mac resiste à main andando**. Se outra plataforma empurrar a main durante a publicação, o script atualiza e segue sem forçar nada.
+
 ## 0.76.309 — Recibo fiel e esteira sem corrida no Linux
 
 A tag 0.76.308 é o candidato macOS. Este pacote leva o desktop Linux.
