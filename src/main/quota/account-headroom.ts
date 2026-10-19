@@ -20,6 +20,7 @@
  */
 import type {
   ProviderQuotaEntry,
+  QuotaSource,
   QuotaWindow,
   QuotaWindowKind,
 } from '../../shared/quota-types';
@@ -41,11 +42,24 @@ export interface HeadroomInput {
       readonly kind?: QuotaWindowKind;
       readonly resetsAt?: number;
       readonly confidence?: QuotaWindow['confidence'];
+      /**
+       * Quem mediu. A drenagem proativa só confia em `provider-api`: uma
+       * estimativa local (`local-tokens`, `transcript-inferred`) tirando um
+       * pane de uma conta saudável custa mais que o limite real (F-249).
+       */
+      readonly source?: QuotaSource;
     }
   >;
   readonly onCooldown?: boolean;
   /** F-1483: instante da leitura (a folga de uma irmã só conta fresca). */
   readonly updatedAt?: number;
+  /**
+   * A leitura veio da linha NATIVA (a identidade logada), não de uma sonda
+   * desta conta. Serve para drenar a conta que está em uso, mas NÃO é prova
+   * própria: os caminhos que escolhem destino por "folga comprovada"
+   * (F-1489 `freshSiblingWithHeadroom`) têm de ignorá-la.
+   */
+  readonly attributed?: boolean;
 }
 
 export interface HeadroomReading {
@@ -107,6 +121,56 @@ export function headroomReadings(
     }
   }
   return out;
+}
+
+/**
+ * Limiar de drenagem: acima disto a conta para de receber trabalho NOVO, mas
+ * os panes vivos nela continuam até terminar a unidade atual. Escolha do
+ * operador em 19/10. Não é banimento — quando todas as contas estão drenando,
+ * a regra volta a escolher entre elas e o resto da janela é consumido.
+ */
+export const DRAIN_THRESHOLD = 0.89;
+
+/**
+ * O que autoriza drenar. Sem evidência não há drenagem: o gatilho é a leitura
+ * da conta ATIVA, e exigir leitura também do destino significaria nunca
+ * rotacionar onde as irmãs são inmensuráveis por desenho (AGY pessoal toma
+ * 403 no endpoint direto — `agy-bridge.ts`).
+ */
+export interface DrainEvidence {
+  /** Só esta fonte autoriza drenar. Ausente = qualquer uma. */
+  readonly requireSource?: QuotaSource;
+  /** Idade máxima da leitura. Ausente = sem limite de idade. */
+  readonly maxAgeMs?: number;
+  /** Limiar efetivo. Ausente = `DRAIN_THRESHOLD`. */
+  readonly threshold?: number;
+  readonly now: number;
+}
+
+/**
+ * A conta está acima do limiar, provada por leitura que satisfaz a evidência?
+ * Janela desconhecida (`usedRatio: null`) não é 89%; leitura velha ou de fonte
+ * errada não é prova. Esgotada (100%) também é drenando.
+ */
+export function isHeadroomDraining(
+  input: HeadroomInput | undefined,
+  threshold: number,
+  evidence: DrainEvidence,
+): boolean {
+  if (!input) return false;
+  if (evidence.maxAgeMs !== undefined) {
+    const measuredAt = input.updatedAt;
+    if (typeof measuredAt !== 'number' || !Number.isFinite(measuredAt)) return false;
+    if (evidence.now - measuredAt > evidence.maxAgeMs) return false;
+  }
+  const windows = evidence.requireSource
+    ? input.windows.filter((window) => window.source === evidence.requireSource)
+    : input.windows;
+  if (windows.length === 0) return false;
+  for (const reading of headroomReadings({ ...input, windows }).values()) {
+    if (reading.usedRatio >= threshold) return true;
+  }
+  return false;
 }
 
 /** Cooldown ou alguma janela medida cheia. */
@@ -217,16 +281,46 @@ export function compareAccountHeadroom(
 export function headroomInputsByAccount(
   entries: readonly ProviderQuotaEntry[],
   adapterId: string,
+  options?: {
+    /**
+     * Conta que detém a identidade viva da CLI. A linha NATIVA do snapshot
+     * (sem `accountId`) recebe a leitura que o bridge/CLI mediu da sessão
+     * logada; para o AGY de conta pessoal ela é a ÚNICA leitura possível,
+     * porque o endpoint direto responde 403 por conta do cofre
+     * (`agy-bridge.ts`). Sem esta atribuição a conta ativa parece "sem
+     * medição" e a drenagem nunca dispara.
+     *
+     * Só a identidade viva recebe: as irmãs seguem sem leitura, que é a
+     * verdade — ninguém as mediu.
+     */
+    readonly attributeNativeTo?: string;
+  },
 ): Map<string, HeadroomInput> | undefined {
   const out = new Map<string, HeadroomInput>();
+  let native: ProviderQuotaEntry | undefined;
   for (const entry of entries) {
-    if (entry.adapterId !== adapterId || !entry.accountId) continue;
+    if (entry.adapterId !== adapterId) continue;
+    if (!entry.accountId) {
+      native ??= entry;
+      continue;
+    }
     // Mesmo critério do escore antigo (quotaAvailabilityScore): conta em
     // cooldown não tem folga, seja qual for o motivo.
     out.set(entry.accountId, {
       windows: entry.windows,
       onCooldown: entry.onCooldown,
       ...(Number.isFinite(entry.updatedAt) ? { updatedAt: entry.updatedAt } : {}),
+    });
+  }
+  const identity = options?.attributeNativeTo;
+  const row = identity ? out.get(identity) : undefined;
+  // A linha da própria conta vence: só preenche quando ela nada mediu.
+  if (identity && native && row && headroomReadings(row).size === 0) {
+    out.set(identity, {
+      ...row,
+      windows: native.windows,
+      attributed: true,
+      ...(Number.isFinite(native.updatedAt) ? { updatedAt: native.updatedAt } : {}),
     });
   }
   return out.size > 0 ? out : undefined;

@@ -48,7 +48,41 @@ import {
 import { compareAuthFreshness } from '../adapters/auth-freshness';
 import { readRegularFileCapped } from '../redline/redline-safe-read';
 import { chooseAccount } from './account-select';
-import { fullWindowsReopenAt, type HeadroomInput } from '../quota/account-headroom';
+import {
+  bindingHeadroomWindow,
+  DRAIN_THRESHOLD,
+  headroomReadings,
+  fullWindowsReopenAt,
+  isHeadroomDraining,
+  type DrainEvidence,
+  type HeadroomInput,
+} from '../quota/account-headroom';
+import { windowsServingModel } from '../quota/headroom-route-filter';
+import {
+  drainedAccountIds,
+  drainMemoryUntil,
+  forgetAccountDrain,
+  forgetDrainMemory,
+  isRememberedDrained,
+  noteAccountDrained,
+} from './account-drain-memory';
+import { liveIdentityAnchor } from './provider-live-identity';
+
+/** Sem reset conhecido, a lembrança de drenagem vale uma hora. */
+const DRAIN_MEMORY_FALLBACK_MS = 60 * 60_000;
+
+/** As janelas de cada conta, reduzidas às que o modelo do spawn consome. */
+function narrowQuotaToModel(
+  quota: ReadonlyMap<string, HeadroomInput> | undefined,
+  model: string | null,
+): ReadonlyMap<string, HeadroomInput> | undefined {
+  if (!quota || !model) return quota;
+  const out = new Map<string, HeadroomInput>();
+  for (const [accountId, input] of quota) {
+    out.set(accountId, windowsServingModel(input, model));
+  }
+  return out;
+}
 import { initFailoverWaits } from './failover-waits';
 import {
   deleteAgyWindowsKeyringBlob,
@@ -212,6 +246,9 @@ function persistFresherManagedAuth(
 export function initAccountStore(database: Db | null): void {
   db = database;
   readOnly = true;
+  // A memória de drenagem é do escopo do store: trocar de projeto (ou fechar)
+  // não pode levar a lembrança de uma frota para outra.
+  forgetDrainMemory();
   // F-1483: as esperas do failover moram no mesmo DB dos blocos de cooldown.
   initFailoverWaits(database);
   // Registra o read-back de tokens renovados para o scrub de sessão gerenciada
@@ -1315,6 +1352,17 @@ export interface FailoverPickOptions {
    */
   quotaByAccountId?: ReadonlyMap<string, HeadroomInput>;
   /**
+   * Autoriza a drenagem proativa: a conta ativa que cruzou `DRAIN_THRESHOLD`
+   * para de receber trabalho NOVO. Ausente = comportamento de hoje.
+   */
+  drain?: DrainEvidence;
+  /**
+   * Modelo do spawn alvo. Com ele, só os buckets que o modelo consome contam
+   * para a drenagem — senão um bucket de outro grupo cheio drenaria uma conta
+   * que serve perfeitamente este pane.
+   */
+  model?: string | null;
+  /**
    * F-1483: troca por limite — conta com alguma janela MEDIDA em 100% que
    * ainda não reabriu não é destino (respawnar nela só bate de novo). Ela
    * entra na espera (`nextUnblockAtMs`) pelo reset da janela, ou por
@@ -1337,6 +1385,11 @@ export interface FailoverPick {
    * esperar a janela multi-hora do provedor (retryAtMs do omp).
    */
   nextUnblockAtMs?: number;
+  /**
+   * A conta ativa saiu por DRENAGEM (cruzou o limiar), não por esgotamento —
+   * é o que o recibo e o trace usam para dizer o motivo da troca.
+   */
+  drained?: boolean;
 }
 
 // Derived from can1357/oh-my-pi@03c48d073 auth-storage cooldown machine (MIT):
@@ -1351,12 +1404,18 @@ export function pickAvailableForFailover(
   const siblings = listAccounts(adapterId).filter(
     (a) => a.id !== excludeId && !options?.excludeIds?.has(a.id),
   );
+  // Só os buckets que o modelo deste spawn consome contam — para a drenagem e
+  // para o "medida cheia" abaixo. Sem modelo, nada é filtrado (pior bucket).
+  const quotaByAccountId = narrowQuotaToModel(
+    options?.quotaByAccountId,
+    options?.model ?? null,
+  );
   // F-1483: conta medida cheia sai da escolha e conta na espera pelo reset.
   const measuredFullUntil = new Map<string, number>();
   if (options?.rejectExhausted) {
     for (const sibling of siblings) {
       const until = fullWindowsReopenAt(
-        options.quotaByAccountId?.get(sibling.id),
+        quotaByAccountId?.get(sibling.id),
         now,
         EXHAUSTED_UNKNOWN_RESET_MS,
       );
@@ -1369,15 +1428,62 @@ export function pickAvailableForFailover(
       accountHasFailoverCredential(a) &&
       !measuredFullUntil.has(a.id),
   );
+  // A âncora de "conta em uso" é a identidade que o SPAWN selou, não a coluna
+  // do store: `activeByAdapter` só é movida por cadastro e pela ação do
+  // operador na UI, então ancorar nela fazia a rotação voltar sempre para a
+  // mesma conta. Sem spawn nenhum ainda, vale a coluna (comportamento de hoje).
+  const activeId =
+    liveIdentityAnchor(adapterId) ?? activeByAdapter.get(adapterId) ?? null;
+  const activeDraining =
+    options?.drain !== undefined &&
+    activeId !== null &&
+    isHeadroomDraining(
+      quotaByAccountId?.get(activeId),
+      options.drain.threshold ?? DRAIN_THRESHOLD,
+      options.drain,
+    );
+  // A leitura da identidade viva é a única que existe no modo fila: quando
+  // ela passa para a irmã, a conta drenada voltaria a parecer "sem medição" e
+  // o carrossel quicaria entre duas contas. A lembrança a mantém fora da
+  // preferência até a janela dela reabrir.
+  if (activeId && options?.drain) {
+    if (activeDraining) {
+      noteAccountDrained(
+        activeId,
+        drainMemoryUntil(
+          bindingHeadroomWindow(quotaByAccountId?.get(activeId))?.resetsAt,
+          now,
+          DRAIN_MEMORY_FALLBACK_MS,
+        ),
+      );
+    } else if (
+      headroomReadings(quotaByAccountId?.get(activeId)).size > 0
+    ) {
+      // Medida e com folga: a lembrança não sobrevive à prova em contrário.
+      forgetAccountDrain(activeId);
+    }
+  }
+  // Lembradas saem da preferência; se não sobrar ninguém, voltam (2ª volta).
+  const remembered = options?.drain ? drainedAccountIds(now) : new Set<string>();
+  const preferred = remembered.size > 0 ? free.filter((a) => !remembered.has(a.id)) : free;
+  const pool = preferred.length > 0 ? preferred : free;
   const chosen = chooseAccount(
-    free,
-    activeByAdapter.get(adapterId) ?? null,
+    pool,
+    // Ativa lembrada como drenada não "segura" o pane: ela saiu do pool.
+    activeId && pool.some((a) => a.id === activeId) ? activeId : null,
     excludeId,
     now,
     quotaScoreByAccountId,
-    options?.quotaByAccountId,
+    quotaByAccountId,
+    options?.drain,
   );
-  if (chosen) return { account: chosen, probe: false };
+  if (chosen) {
+    const drained =
+      activeId !== null &&
+      chosen.id !== activeId &&
+      (activeDraining || isRememberedDrained(activeId, now));
+    return { account: chosen, probe: false, ...(drained ? { drained: true } : {}) };
+  }
 
   let nextUnblockAtMs: number | undefined;
   const noteUnblock = (at: number): void => {

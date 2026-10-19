@@ -57,6 +57,10 @@ import {
   rescanAdapterBinaries,
   resolveAdapterBinary,
 } from '../adapters/adapter-registry';
+import { accountDrainEvidence } from './account-drain-evidence';
+import { nativeQuotaIdentity } from './native-quota-identity';
+import { noteLiveIdentity } from './provider-live-identity';
+import { DRAIN_THRESHOLD, isHeadroomDraining } from '../quota/account-headroom';
 import { resolveCliLoginCommand } from '../../shared/cli-login';
 import { kimiLoginCommand } from '../../shared/kimi-login-command';
 import { cachedCliBinaryVersion, revalidateExecutable, resolveCliBinary, realUserHome } from '../path-resolver';
@@ -1212,7 +1216,20 @@ function buildProviderSpawnOverrides(
   // ativa, fallback, nativa ou legada) — rótulos sempre mascarados.
   const { account, receipt } = options.selectedChoice ?? resolveSpawnAccountChoice(
     adapterId, preparedAccount, options, credentiallessOpenCode,
+    effectiveProviderModel(adapterId, perSpawn.model),
   );
+  // Este spawn sela a identidade viva da CLI. É o que permite atribuir a
+  // leitura da linha nativa à conta certa na rodada seguinte — a coluna
+  // "ativa" do store não serve, porque só a UI a move.
+  //
+  // EXCEÇÃO: no Windows a identidade do AGY é a vaga física do keyring, e
+  // quem a grava é `activateAgyAccountForSpawn`, mais adiante. Registrar aqui
+  // mentiria quando a ativação recusa (blob ausente, releitura divergente):
+  // a conta velha continua na vaga e a leitura nativa dela seria atribuída à
+  // conta nova. Lá o registro sai depois da gravação verificada.
+  if (account && !sealsAgyKeyringSlot(adapterId, account)) {
+    noteLiveIdentity(adapterId, account.id);
+  }
   if (adapterId === 'mimo-code' && account?.mode === 'subscription') {
     const blob = getSecret(`acctcred:${account.id}`);
     if (!blob || !mimoCredentialSupportsModel(blob, effectiveProviderModel(adapterId, perSpawn.model))) {
@@ -1586,8 +1603,19 @@ function quotaHeadroomFor(
   adapterId: string,
 ): ReadonlyMap<string, HeadroomInput> | undefined {
   try {
+    // A leitura do CLI/bridge nativo é da identidade LOGADA. Para o AGY de
+    // conta pessoal ela é a única que existe (o endpoint direto responde 403
+    // por conta do cofre), então sem atribuí-la à conta ativa a frota inteira
+    // parece "sem medição" e a drenagem nunca dispara. Só a ativa recebe — as
+    // irmãs seguem sem leitura, que é a verdade.
+    // Limite conhecido: no Windows a identidade real é a vaga do keyring; se
+    // ela divergir da ativa (login feito fora do Nexus), a leitura vai para a
+    // irmã errada. O custo é drenar uma conta saudável cedo — preferência,
+    // não banimento —, e o Nexus escreve a vaga ele mesmo a cada spawn.
     const snap = requireQuotaService().lastSnapshot();
-    return snap ? headroomInputsByAccount(snap.entries, adapterId) : undefined;
+    return snap ? headroomInputsByAccount(snap.entries, adapterId, {
+      ...nativeQuotaIdentity(adapterId),
+    }) : undefined;
   } catch {
     /* quota service opcional na corrida de boot — sem medição */
     return undefined;
@@ -1695,6 +1723,7 @@ function resolveSpawnAccountChoice(
   preparedAccount: PreparedAccount | null,
   options: { decision?: AuthDecision; nativeAuthAttempt?: boolean },
   credentiallessOpenCode: boolean,
+  model?: string,
 ): { account: Account | null; receipt: AccountChoiceReceipt } {
   const decidedAt = Date.now();
   if (options.nativeAuthAttempt) {
@@ -1756,7 +1785,7 @@ function resolveSpawnAccountChoice(
     (adapterId === 'agy' && options.decision?.strategy === 'subscription') ||
     credentiallessOpenCode;
   if (!nativeLineage && hasManagedAccounts) {
-    return pickUnpinnedAccountWithHeadroom(adapterId);
+    return pickUnpinnedAccountWithHeadroom(adapterId, model);
   }
   if (adapterId === 'agy' && nativeLineage && hasManagedAccounts && process.platform === 'win32') {
     // F-677: no Windows a "sessão nativa" do AGY é a conta da vaga única do
@@ -1765,8 +1794,11 @@ function resolveSpawnAccountChoice(
     // irmã, que o preparo autoritativo grava na vaga.
     // Vaga ilegível: segue a linhagem nativa (nunca troca por conta velha).
     const slotOwner = agyKeyringSlotAccount();
-    if (slotOwner && isAccountBlockedForScope(slotOwner.id, decidedAt)) {
-      return pickUnpinnedAccountWithHeadroom(adapterId);
+    // Drenando também cede: senão o pane AGY do Windows ficaria preso na vaga
+    // até o esgotamento, que é exatamente o que a camada 1 existe para evitar.
+    if (slotOwner && (isAccountBlockedForScope(slotOwner.id, decidedAt) ||
+      accountIsDraining(adapterId, slotOwner.id, decidedAt))) {
+      return pickUnpinnedAccountWithHeadroom(adapterId, model);
     }
     if (slotOwner) {
       return {
@@ -1802,6 +1834,28 @@ function resolveSpawnAccountChoice(
 }
 
 /**
+ * Este spawn vai gravar a vaga única do keyring (F-677)? Só nesse caso a
+ * identidade viva depende de uma escrita física que pode falhar.
+ */
+function sealsAgyKeyringSlot(adapterId: string, account: Account): boolean {
+  return (
+    adapterId === 'agy' &&
+    process.platform === 'win32' &&
+    account.mode === 'subscription'
+  );
+}
+
+/** A conta cruzou o limiar, provada por leitura provider-api fresca? */
+function accountIsDraining(adapterId: string, accountId: string, now: number): boolean {
+  const evidence = accountDrainEvidence(now);
+  return isHeadroomDraining(
+    quotaHeadroomFor(adapterId)?.get(accountId),
+    evidence.threshold ?? DRAIN_THRESHOLD,
+    evidence,
+  );
+}
+
+/**
  * F-1470: conta do Maestro de uma missão aprovada (bootstrap e respawn). A
  * candidata — a linha durável, que o failover F-995 pode ter trocado, ou a
  * conta aprovada — continua enquanto for deste provider, sem bloco e com
@@ -1814,11 +1868,23 @@ export function pickMissionOrchestratorAccountId(
   now = Date.now(),
 ): string | undefined {
   const candidate = candidateId ? getAccount(candidateId) : null;
-  if (candidate?.adapterId === adapterId && !isAccountBlockedForScope(candidate.id, now) &&
-    accountHasFailoverCredential(candidate)) return candidate.id;
+  const usable = candidate?.adapterId === adapterId &&
+    !isAccountBlockedForScope(candidate.id, now) &&
+    accountHasFailoverCredential(candidate);
+  // A candidata drenando cede no respawn: ali já não há conversa a preservar,
+  // ao contrário de um pin, que é escolha explícita do operador. Mas drenagem
+  // é preferência, não banimento — sem irmã com folga ela continua.
+  const draining = usable && accountIsDraining(adapterId, candidate.id, now);
+  if (usable && !draining) return candidate.id;
   const quotaByAccountId = quotaHeadroomFor(adapterId);
-  return pickAvailableForFailover(adapterId, candidateId ?? null, now, quotaScoresFor(adapterId),
-    quotaByAccountId ? { quotaByAccountId } : undefined).account?.id;
+  const picked = pickAvailableForFailover(
+    adapterId, candidateId ?? null, now, quotaScoresFor(adapterId),
+    {
+      ...(quotaByAccountId ? { quotaByAccountId } : {}),
+      drain: accountDrainEvidence(now),
+    },
+  ).account?.id;
+  return picked ?? (draining ? candidate.id : undefined);
 }
 
 /**
@@ -1829,17 +1895,22 @@ export function pickMissionOrchestratorAccountId(
  */
 function pickUnpinnedAccountWithHeadroom(
   adapterId: string,
+  model?: string,
 ): { account: Account | null; receipt: AccountChoiceReceipt } {
   const decidedAt = Date.now();
   const active = getActiveAccount(adapterId);
   const quotaScores = quotaScoresFor(adapterId);
   // F-995: folga comparada só entre janelas comparáveis.
   const quotaByAccountId = quotaHeadroomFor(adapterId);
-  const picked = (
-    quotaByAccountId
-      ? pickAvailableForFailover(adapterId, null, decidedAt, quotaScores, { quotaByAccountId })
-      : pickAvailableForFailover(adapterId, null, decidedAt, quotaScores)
-  ).account;
+  // Camada 1: a ativa que cruzou o limiar para de receber trabalho NOVO. O
+  // modelo reduz as janelas aos buckets que ele de fato consome.
+  const drain = accountDrainEvidence(decidedAt);
+  const pick = pickAvailableForFailover(adapterId, null, decidedAt, quotaScores, {
+    ...(quotaByAccountId ? { quotaByAccountId } : {}),
+    drain,
+    ...(model ? { model } : {}),
+  });
+  const picked = pick.account;
   // F-1401: sem recusa por colisão de conta — panes Claude da mesma conta
   // compartilham a linhagem de credencial (escopo por conta, não por pane).
   const alternatives = accountChoiceAlternatives(
@@ -1860,6 +1931,9 @@ function pickUnpinnedAccountWithHeadroom(
         adapterId,
         source:
           active && picked.id === active.id ? 'active' : 'headroom-rule',
+        ...(pick.drained
+          ? { note: 'a conta anterior cruzou o limiar de uso; o trabalho novo nasce na irmã' }
+          : {}),
         account: receiptAccount(picked),
         headroom: headroomFor(adapterId, picked.id),
         alternatives,
@@ -2033,6 +2107,8 @@ export async function prepareProviderSpawnAuthoritative(
   if (agySelected?.mode === 'subscription') {
     const activation = await activateAgyAccountForSpawn(agySelected.id);
     if (!activation.ok) return { ok: false, error: activation.error };
+    // A vaga foi gravada E relida: só agora esta conta é a identidade viva.
+    noteLiveIdentity('agy', agySelected.id);
   }
   return prepared;
 }

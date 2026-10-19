@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { chooseAccount } from './account-select';
 import type { Account } from '../../shared/account-types';
+import type { HeadroomInput } from '../quota/account-headroom';
 
 function acct(id: string, createdAt: number, cooldownUntil?: number): Account {
   return {
@@ -154,5 +155,92 @@ describe('chooseAccount com janelas medidas (F-995)', () => {
       ['proven', windows(0.2, null)],
     ]);
     expect(chooseAccount(accounts, 'exhausted', 'exhausted', NOW, undefined, quota)?.id).toBe('proven');
+  });
+});
+
+describe('chooseAccount — drenagem (limiar antes do esgotamento)', () => {
+  const EV = { requireSource: 'provider-api', maxAgeMs: 600_000, now: NOW } as const;
+  const W = (usedRatio: number | null, source = 'provider-api') => ({
+    label: '5 Horas',
+    kind: 'hours' as const,
+    usedRatio,
+    source: source as HeadroomInput['windows'][number]['source'],
+  });
+  const read = (usedRatio: number | null): HeadroomInput => ({
+    windows: [W(usedRatio)],
+    updatedAt: NOW - 60_000,
+  });
+  const quota = (rows: Record<string, HeadroomInput>) =>
+    new Map<string, HeadroomInput>(Object.entries(rows));
+
+  const a = acct('a', 1);
+  const b = acct('b', 2);
+  const c = acct('c', 3);
+
+  // Modo B (AGY): só a ativa tem leitura; as irmãs tomam 403 no endpoint direto.
+  it('ativa drenando cede para a irmã mais velha quando nenhuma irmã tem leitura', () => {
+    const chosen = chooseAccount(
+      [a, b, c], 'a', null, NOW, undefined, quota({ a: read(0.9) }), EV,
+    );
+    expect(chosen?.id).toBe('b');
+  });
+
+  it('ativa abaixo do limiar fica', () => {
+    const chosen = chooseAccount(
+      [a, b], 'a', null, NOW, undefined, quota({ a: read(0.88) }), EV,
+    );
+    expect(chosen?.id).toBe('a');
+  });
+
+  it('todas drenando: escolhe entre elas, nunca devolve null', () => {
+    const chosen = chooseAccount(
+      [a, b], 'a', null, NOW, undefined, quota({ a: read(0.95), b: read(0.91) }), EV,
+    );
+    expect(chosen).not.toBeNull();
+  });
+
+  it('sem drain evidence o comportamento é o de hoje', () => {
+    const chosen = chooseAccount(
+      [a, b], 'a', null, NOW, undefined, quota({ a: read(0.9) }),
+    );
+    expect(chosen?.id).toBe('a');
+  });
+
+  it('conta única drenando continua escolhida', () => {
+    const chosen = chooseAccount(
+      [a], 'a', null, NOW, undefined, quota({ a: read(0.95) }), EV,
+    );
+    expect(chosen?.id).toBe('a');
+  });
+
+  it('irmã esgotada não recebe o pane mesmo com a ativa drenando', () => {
+    const chosen = chooseAccount(
+      [a, b, c], 'a', null, NOW, undefined,
+      quota({ a: read(0.9), b: read(1) }), EV,
+    );
+    expect(chosen?.id).toBe('c');
+  });
+
+  it('leitura local-tokens não drena a ativa', () => {
+    const local: HeadroomInput = {
+      windows: [W(0.95, 'local-tokens')],
+      updatedAt: NOW - 60_000,
+    };
+    const chosen = chooseAccount([a, b], 'a', null, NOW, undefined, quota({ a: local }), EV);
+    expect(chosen?.id).toBe('a');
+  });
+
+  it('leitura velha não drena a ativa', () => {
+    const stale: HeadroomInput = { windows: [W(0.95)], updatedAt: NOW - 600_001 };
+    const chosen = chooseAccount([a, b], 'a', null, NOW, undefined, quota({ a: stale }), EV);
+    expect(chosen?.id).toBe('a');
+  });
+
+  it('a irmã drenando perde para a irmã sem leitura', () => {
+    const chosen = chooseAccount(
+      [a, b, c], 'a', null, NOW, undefined,
+      quota({ a: read(0.9), b: read(0.92) }), EV,
+    );
+    expect(chosen?.id).toBe('c');
   });
 });

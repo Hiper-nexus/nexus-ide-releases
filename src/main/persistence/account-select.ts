@@ -1,9 +1,12 @@
 import type { Account } from '../../shared/account-types';
 import {
   compareAccountHeadroom,
+  DRAIN_THRESHOLD,
   headroomReadings,
+  isHeadroomDraining,
   isHeadroomExhausted,
   unreadWindowWithProvenHeadroom,
+  type DrainEvidence,
   type HeadroomInput,
 } from '../quota/account-headroom';
 
@@ -31,6 +34,7 @@ export function chooseAccount(
   now: number,
   quotaScoreByAccountId?: ReadonlyMap<string, number>,
   quotaByAccountId?: ReadonlyMap<string, HeadroomInput>,
+  drain?: DrainEvidence,
 ): Account | null {
   const candidates = accounts.filter(
     (a) => a.id !== excludeId && (!a.cooldownUntil || a.cooldownUntil <= now),
@@ -38,7 +42,7 @@ export function chooseAccount(
   if (candidates.length === 0) return null;
   const active = candidates.find((a) => a.id === activeId) ?? null;
   if (quotaByAccountId) {
-    return chooseByWindows(candidates, active, quotaByAccountId);
+    return chooseByWindows(candidates, active, quotaByAccountId, drain);
   }
   const measured = candidates
     .map((account) => ({
@@ -81,6 +85,7 @@ function chooseByWindows(
   candidates: readonly Account[],
   active: Account | null,
   quotaByAccountId: ReadonlyMap<string, HeadroomInput>,
+  drain?: DrainEvidence,
 ): Account {
   const quota = (account: Account) => quotaByAccountId.get(account.id);
   const ranked = [...candidates].sort(
@@ -95,6 +100,22 @@ function chooseByWindows(
   if (!best) return active;
   const activeQuota = quota(active);
   if (isHeadroomExhausted(activeQuota)) return best;
+  // Drenagem: a ativa cruzou o limiar e ainda tem fatia, mas o trabalho NOVO
+  // vai para quem não cruzou. Só vale com evidência (leitura provider-api
+  // fresca da ATIVA); o destino não precisa de leitura, senão nunca
+  // rotacionaríamos onde as irmãs são inmensuráveis (AGY pessoal).
+  // Preferência, não banimento: com todas drenando a regra abaixo decide e o
+  // resto da janela é consumido numa segunda volta.
+  const threshold = drain?.threshold ?? DRAIN_THRESHOLD;
+  if (drain && isHeadroomDraining(activeQuota, threshold, drain)) {
+    const fresh = ranked.find(
+      (account) =>
+        account.id !== active.id &&
+        !isHeadroomExhausted(quota(account)) &&
+        !isHeadroomDraining(quota(account), threshold, drain),
+    );
+    if (fresh) return fresh;
+  }
   // Ativa sem leitura nenhuma: nada a comparar — fica (cota fora do ar).
   if (headroomReadings(activeQuota).size === 0) return active;
   if (
