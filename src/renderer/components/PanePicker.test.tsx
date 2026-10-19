@@ -237,6 +237,7 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
     usePanePickerStore.setState({
       pendingOpen: false,
       pendingAccountsAdapterId: null,
+      pendingBrief: null,
     });
     if (originalScrollIntoView) {
       Object.defineProperty(
@@ -360,6 +361,29 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
     act(() => usePanePickerStore.getState().requestOpen());
     expect(host.querySelector('[role="dialog"]')).not.toBeNull();
     expect(usePanePickerStore.getState().pendingOpen).toBe(false);
+  });
+
+  it('F-1596: o brief de "Novo vídeo" vai só para o agente escolhido nesta abertura', () => {
+    mount();
+    act(() => usePanePickerStore.getState().requestOpen(undefined, { brief: 'Crie o vídeo do Agendify' }));
+    expect(usePanePickerStore.getState().pendingBrief).toBeNull();
+    drillInto('codex');
+    clickEntry('agent:codex:default:codex-alt');
+    expect(spawnAgent).toHaveBeenCalledWith('codex', 'codex-alt', { brief: 'Crie o vídeo do Agendify' });
+  });
+
+  it('F-1596: fechar o picker sem escolher descarta o brief', () => {
+    mount();
+    act(() => usePanePickerStore.getState().requestOpen(undefined, { brief: 'brief esquecido' }));
+    act(() => {
+      document.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+      );
+    });
+    openMenu();
+    drillInto('codex');
+    clickEntry('agent:codex:default:codex-alt');
+    expect(spawnAgent).toHaveBeenCalledWith('codex', 'codex-alt');
   });
 
   it('clicar numa linha sobe o pane com adapterId e modelo exatos', () => {

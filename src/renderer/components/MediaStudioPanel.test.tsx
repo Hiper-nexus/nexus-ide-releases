@@ -138,6 +138,32 @@ describe('MediaStudioPanel: revelar arquivo por sistema (F-1579)', () => {
   });
 });
 
+describe('MediaStudioPanel: Vídeos do projeto (F-1596)', () => {
+  it('a terceira aba mostra os projetos de vídeo sem trocar o tipo de geração', async () => {
+    const listProjects = vi.fn(async () => ({ ok: true, projects: [] }));
+    (window.nexus as unknown as Record<string, unknown>).videoStudio = {
+      listProjects,
+      onProgress: () => () => undefined,
+    };
+    const dialog = await openFrom(renderHarness());
+    const tab = [...dialog.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((item) => item.textContent === 'Vídeos do projeto');
+    expect(tab?.getAttribute('aria-selected')).toBe('false');
+    await act(async () => {
+      tab?.click();
+    });
+    expect(tab?.getAttribute('aria-selected')).toBe('true');
+    expect(listProjects).toHaveBeenCalled();
+    expect(dialog.textContent).toContain('Novo vídeo de apresentação');
+    expect(dialog.querySelector('textarea.ms-prompt')).toBeNull();
+    const image = [...dialog.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((item) => item.textContent === 'Imagem');
+    await act(async () => {
+      image?.click();
+    });
+    expect(image?.getAttribute('aria-selected')).toBe('true');
+    expect(dialog.textContent).not.toContain('Novo vídeo de apresentação');
+  });
+});
+
 describe('MediaStudioPanel behavioral contract', () => {
   it('uses its rendered title and description for the dialog name and moves initial focus inside', async () => {
     const invoker = renderHarness();

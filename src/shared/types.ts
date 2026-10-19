@@ -216,6 +216,7 @@ import type {
 } from './billing-types';
 import type { IntegrationsApi } from './integrations-api';
 import type { VoiceCloneApi } from './voice-clone-types';
+import type { VideoStudioApi } from './video-studio-types';
 import type { ProductApi } from './product-api';
 import type {
   AgentSpecWriteRequest,
@@ -1304,6 +1305,8 @@ export interface NexusApi {
   integrations: IntegrationsApi;
   /** "Minha voz" (F-1593): clonar a própria voz, só pela mão humana. */
   voiceClone: VoiceCloneApi;
+  /** Estúdio → Vídeos do projeto (F-1596). */
+  videoStudio: VideoStudioApi;
   accounts: {
     list(): Promise<AccountInfo[]>;
     quota(): Promise<AccountQuotaInfo[]>;

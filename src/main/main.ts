@@ -72,7 +72,8 @@ configureLinuxSecretStore(app.commandLine, {
 
 // Must run before Electron emits `ready`. The handler itself is installed in
 // bootstrap (after ready), before the first BrowserWindow is created.
-registerRendererProtocolScheme(protocol);
+// F-1596: `nexus-media:` (player do Estúdio, com Range) entra no mesmo registro.
+registerRendererProtocolScheme(protocol, [MEDIA_STREAM_SCHEME_DEF]);
 
 // O Nexus orquestra agentes de longa duração: o Chromium NUNCA pode throttlar
 // os timers do processo (em background/oculto o message pump adia a fase de
@@ -466,6 +467,8 @@ import { registerRemoteIpc } from "./remote/remote-ipc";
 import { registerIntegrationsIpc } from "./integrations/integrations-ipc";
 import { registerMediaIpc } from "./media/media-ipc";
 import { registerVoiceCloneIpc } from "./media/voice-clone-ipc";
+import { MEDIA_STREAM_SCHEME_DEF } from "./video/media-stream-protocol";
+import { registerVideoStudioIpc } from "./video/video-studio-ipc";
 import {
   broadcastGamificationToProject,
   registerGamificationIpc,
@@ -848,6 +851,8 @@ async function bootstrap(userPathReady: Promise<void>): Promise<void> {
   bootStep('registerMediaIpc', () => registerMediaIpc(runtimeManager));
   // F-1593: "Minha voz" só pela janela principal (handleTrusted), nunca por MCP.
   bootStep('registerVoiceCloneIpc', () => registerVoiceCloneIpc());
+  // F-1596: Vídeos do projeto (render, export, player por nexus-media:).
+  bootStep('registerVideoStudioIpc', () => registerVideoStudioIpc());
   bootStep('registerGamificationIpc', () => registerGamificationIpc(gamificationService));
   bootStep('registerMcpIpc', () => registerMcpIpc());
   bootStep('registerOpsIpc', () => registerOpsIpc());

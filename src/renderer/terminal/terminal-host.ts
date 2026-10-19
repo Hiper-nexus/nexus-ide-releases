@@ -131,6 +131,7 @@ import {
   nextContinuityInjectionDelay,
   takePendingContinuity,
 } from '../orch/stranded-mission-handoff';
+import { takePendingBrief } from './pending-brief';
 import {
   createAdoptionRepaintTape,
   repaintAdoptedFrame,
@@ -1333,6 +1334,9 @@ function startSpawn(
   usePaneParkedStore.getState().clearParked(pane.id);
   useSessionStateStore.getState().setPaneState(pane.id, 'spawning');
   const pack = continuityPack ?? takePendingContinuity(pane.id);
+  // F-1596: brief de tarefa (ex.: vídeo de apresentação) — entregue pelo mesmo
+  // caminho do pacote de continuidade, que espera a CLI aceitar texto.
+  const brief = pack ? undefined : takePendingBrief(pane.id);
   return (async (): Promise<string | null> => {
     try {
       while (!useAccessStore.getState().canUseApp) {
@@ -1881,7 +1885,7 @@ function startSpawn(
         ? resume && res.resumeMode === 'exact'
           ? crossResume.note
           : crossResume.fallbackPack
-        : pack;
+        : (pack ?? brief);
       const shouldInjectContinue = shouldInjectResumeContinuation({
         quietSpawn,
         hasContinuityPack: Boolean(injectedPack),
@@ -1939,6 +1943,8 @@ function startSpawn(
             host.term.writeln(
               injectedPack && injectedPack === crossResume?.note
                 ? '\r\n\x1b[36m[nexus] conta trocada: a mesma conversa segue nesta conta.\x1b[0m'
+                : brief && injectedPack === brief
+                ? '\r\n\x1b[36m[nexus] pedido enviado ao agente.\x1b[0m'
                 : injectedPack
                 ? '\r\n\x1b[36m[nexus] handoff multi-conta submetido (sessão nova nesta conta).\x1b[0m'
                 : '\r\n\x1b[36m[nexus] continuidade submetida automaticamente ao agente.\x1b[0m',

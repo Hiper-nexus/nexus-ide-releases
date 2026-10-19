@@ -1092,6 +1092,16 @@ describe('layout-store spawnAgent continuity', () => {
     expect(takePendingContinuity(paneId!)).toContain('Radar BI');
     expect(takePendingContinuity(paneId!)).toBeUndefined();
   });
+
+  it('F-1596: o brief de tarefa fica guardado para o pane novo, uma vez só', async () => {
+    const { takePendingBrief } = await import('../terminal/pending-brief');
+    const { takePendingContinuity } = await import('../orch/stranded-mission-handoff');
+    const paneId = useLayoutStore.getState().spawnAgent('claude', 'opus', { brief: '  Crie o vídeo  ' });
+    expect(paneId).toBeTruthy();
+    expect(takePendingContinuity(paneId!)).toBeUndefined();
+    expect(takePendingBrief(paneId!)).toBe('Crie o vídeo');
+    expect(takePendingBrief(paneId!)).toBeUndefined();
+  });
 });
 
 describe('layout-store role assignment and promotion', () => {

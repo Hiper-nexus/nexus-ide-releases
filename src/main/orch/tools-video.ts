@@ -1,16 +1,13 @@
-import { app } from 'electron';
 import { assertMcpInvocationCurrent, type McpToolDef } from './mcp-protocol';
-import { acquireHeavyCommandPermit } from './heavy-command-permit';
-import { executionScopeFor, isHardenedPolicyActive, type AgentGateContext } from './gate';
+import { executionScopeFor, type AgentGateContext } from './gate';
 import { num, requireStr, str } from './tool-util';
 import { resolveCwdForScope } from './workspace-path';
-import { getEffectivePath, lookupInPath } from '../path-resolver';
-import { bundledEngineManifestDir, HYPERFRAMES_VERSION } from '../video/video-engine';
+import { HYPERFRAMES_VERSION, videoEnginePaths } from '../video/video-engine';
+import { videoRenderDeps } from '../video/video-runtime-deps';
 import { runVideoDoctor } from '../video/video-doctor';
-import { renderVideo, type RenderDeps } from '../video/video-render';
+import { renderVideo } from '../video/video-render';
 import { exportVideo } from '../video/video-export';
 import { VIDEO_EXPORT_PRESET_IDS, type VideoExportPresetId } from '../../shared/video-export-presets';
-import { videoEnginePaths } from '../video/video-engine';
 
 /**
  * Video studio tools (F-1594): check the machine and render a HyperFrames
@@ -21,20 +18,6 @@ import { videoEnginePaths } from '../video/video-engine';
 
 function baseDirFor(ctx: AgentGateContext): string {
   return resolveCwdForScope(executionScopeFor(ctx));
-}
-
-export function videoRenderDeps(): RenderDeps {
-  const pathValue = getEffectivePath();
-  return {
-    userData: app.getPath('userData'),
-    manifestDir: bundledEngineManifestDir(),
-    pathValue,
-    baseEnv: process.env,
-    lookup: (command) => lookupInPath(command, pathValue),
-    acquirePermit: acquireHeavyCommandPermit,
-    isHardened: isHardenedPolicyActive,
-    now: () => new Date(),
-  };
 }
 
 const videoDoctorTool: McpToolDef = {

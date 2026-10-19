@@ -35,6 +35,7 @@ import { useOrchStore } from './orch-store';
 import { paneScopeResolver, spaceIdOfScopeKey } from '../lib/pane-spaces';
 import { notifyIfLastMissionPaneClosed } from '../orch/mission-last-pane-notify';
 import { stashPendingContinuity } from '../orch/stranded-mission-handoff';
+import { stashPendingBrief } from '../terminal/pending-brief';
 import { isAutomatedReviewerPaneIdentity } from '../../shared/automated-reviewer-pane';
 
 interface LayoutState {
@@ -58,6 +59,8 @@ interface LayoutState {
       readonly accountId?: string;
       readonly continuityPack?: string;
       readonly effort?: string;
+      /** F-1596: primeiro pedido do agente, entregue quando a CLI estiver pronta. */
+      readonly brief?: string;
     },
   ): string | undefined;
   /** Replace the whole grid with an explicit set of panes (Modo Livre). */
@@ -1160,6 +1163,8 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
     // (Main would reject stale persisted mission authority).
     if (options?.continuityPack) {
       stashPendingContinuity(newPane.id, options.continuityPack);
+    } else if (options?.brief) {
+      stashPendingBrief(newPane.id, options.brief);
     }
     const pivotId = targetId ?? firstPaneId(currentRoot);
     // splitPane com pivô fora da árvore é no-op silencioso — sem a garantia o
