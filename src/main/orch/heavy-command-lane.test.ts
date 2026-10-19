@@ -103,30 +103,33 @@ describe('F-1229: a fila de comando pesado é a raiz Git real do job', () => {
     } finally { server.close(); await h.close(); }
   });
 
-  it('os mesmos pedidos na mesma raiz serializam: o segundo só entra quando o primeiro sai', async () => {
+  it('leitores da mesma raiz entram juntos; build espera os dois saírem', async () => {
     const h = harness(10_000); const ctx = pane();
     try {
       expect((await h.native.admit(ctx, { pid: 201, kind: 'tests', cwd: wt1 })).allow).toBe(true);
+      expect((await h.native.admit(ctx, { pid: 202, kind: 'typescript', cwd: path.join(wt1, 'src') })).allow).toBe(true);
+      expect(h.pool.snapshot().active).toBe(2);
       let admitted = false;
-      const second = h.native.admit(ctx, { pid: 202, kind: 'tests', cwd: path.join(wt1, 'src') }).then((result) => { admitted = true; return result; });
+      const build = h.native.admit(ctx, { pid: 203, kind: 'build', cwd: wt1 }).then((result) => { admitted = true; return result; });
       await until(() => h.pool.snapshot().waiting === 1);
       await new Promise((resolve) => setTimeout(resolve, 100));
       expect(admitted).toBe(false);
       h.gone.add('claim-201');
-      expect(await second).toMatchObject({ allow: true });
-      expect(h.lanes).toEqual([wt1, wt1]);
+      h.gone.add('claim-202');
+      expect(await build).toMatchObject({ allow: true });
+      expect(h.lanes).toEqual([wt1, wt1, wt1]);
     } finally { await h.close(); }
   });
 
   it('pasta sem Git, inexistente ou relativa cai na lane do token; o 74 diz que foi fila', async () => {
     const h = harness(300); const ctx = pane();
     try {
-      expect((await h.native.admit(ctx, { pid: 301, kind: 'tests', cwd: root })).allow).toBe(true);
+      expect((await h.native.admit(ctx, { pid: 301, kind: 'build', cwd: root })).allow).toBe(true);
       const outside = [plain, path.join(temp, 'missing'), 'relative/dir'];
       const results = await Promise.all(outside.map((cwd, index) => h.native.admit(ctx, { pid: 310 + index, kind: 'tests', cwd })));
       expect(h.lanes).toEqual([root, root, root, root]);
       for (const result of results) expect(result).toMatchObject({ allow: false, reason: 'heavy_command_wait_timeout' });
-      expect(results[0]!.message).toMatch(/^nexus-heavy: gave up after \d+ s in the admission queue of .+: 1 job\(s\) running there, \d+ more waiting \(one job per root at a time\); machine 1\/4 heavy jobs running\.$/);
+      expect(results[0]!.message).toMatch(/^nexus-heavy: gave up after \d+ s in the admission queue of .+: 1 job\(s\) running there, \d+ more waiting \(exclusive build or install on this root \(held by session pane-session build for \d+ s\)\); machine 1\/4 heavy jobs running\.$/);
       expect(results[0]!.message).toContain(root);
     } finally { await h.close(); }
   });

@@ -58,8 +58,13 @@ export interface PaneTaskRerouteHandle {
   readonly lineageId: string;
   /** F-231: pane aberto pelo operador — a máquina nunca o troca. */
   readonly operatorOpened: boolean;
-  /** CLI pedida pelo operador (ou conversa retomada): troca nunca é sozinha. */
+  /** CLI pedida pelo operador ou conversa retomada: o failover não troca sozinho. */
   readonly pinnedRuntime: boolean;
+  /**
+   * CLI que o operador escolheu. Retomada sozinha é `false`. Ausente: handle
+   * antigo, e `pinnedRuntime` continua decidindo.
+   */
+  readonly operatorPinned?: boolean;
   /** 0 = pedido original; n = n-ésima reabertura automática do mesmo pedido. */
   readonly generation: number;
   /**

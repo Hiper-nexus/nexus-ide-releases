@@ -6,8 +6,12 @@ import {
   DELEGATION_RETRY_MS,
   DELEGATION_SLA_MS,
   decideChefIdleEscalation,
+  decideIdleWorkerRecovery,
   decideWorkerHung,
   delegationRecoveryStage,
+  IDLE_WORKER_NUDGE_AFTER_MS,
+  IDLE_WORKER_REOPEN_AFTER_MS,
+  idleWorkerPinBlocks,
   isDelegationSupervisable,
   pendingDeliverableHandoffs,
   RECOVERY_QUEUED_TTL_MS,
@@ -173,6 +177,57 @@ describe('decideWorkerHung — worker travado no meio do turno (F-242)', () => {
         notifiedAt: now - WORKER_HUNG_RENOTIFY_MS - 60_000,
       }),
     ).toBe('renotify');
+  });
+});
+
+describe('decideIdleWorkerRecovery — ocioso sem commit nem handoff', () => {
+  const idle = {
+    role: 'worker' as const,
+    operatorOpened: false,
+    pinBlocked: false,
+    paneState: 'idle' as const,
+    idleForMs: IDLE_WORKER_NUDGE_AFTER_MS,
+    hasCommit: false,
+    hasHandoff: false,
+    nudged: false,
+    sinceNudgeMs: null,
+    reopened: false,
+    hasAlternative: true,
+  };
+
+  it('8 min sem entrega: cutuca; antes disso, nada', () => {
+    expect(decideIdleWorkerRecovery(idle)).toBe('nudge');
+    expect(decideIdleWorkerRecovery({ ...idle, idleForMs: IDLE_WORKER_NUDGE_AFTER_MS - 1 })).toBe('none');
+  });
+
+  it('depois do cutucão, mais 8 min e ainda sem entrega: reabre uma vez', () => {
+    expect(decideIdleWorkerRecovery({
+      ...idle,
+      idleForMs: IDLE_WORKER_REOPEN_AFTER_MS,
+      nudged: true,
+      sinceNudgeMs: IDLE_WORKER_NUDGE_AFTER_MS,
+    })).toBe('reopen');
+    expect(decideIdleWorkerRecovery({
+      ...idle,
+      idleForMs: IDLE_WORKER_REOPEN_AFTER_MS,
+      nudged: true,
+      sinceNudgeMs: IDLE_WORKER_NUDGE_AFTER_MS,
+      reopened: true,
+    })).toBe('none');
+  });
+
+  it('commit, handoff, pin do operador ou pane do operador: não mexe', () => {
+    expect(decideIdleWorkerRecovery({ ...idle, hasCommit: true })).toBe('none');
+    expect(decideIdleWorkerRecovery({ ...idle, hasHandoff: true })).toBe('none');
+    expect(decideIdleWorkerRecovery({ ...idle, pinBlocked: true })).toBe('none');
+    expect(decideIdleWorkerRecovery({ ...idle, operatorOpened: true })).toBe('none');
+    expect(decideIdleWorkerRecovery({ ...idle, hasAlternative: false, nudged: true, sinceNudgeMs: IDLE_WORKER_REOPEN_AFTER_MS, idleForMs: IDLE_WORKER_REOPEN_AFTER_MS })).toBe('none');
+  });
+
+  it('retomada sem pin não bloqueia; pin explícito bloqueia', () => {
+    expect(idleWorkerPinBlocks({ operatorPinned: false, pinnedRuntime: true })).toBe(false);
+    expect(idleWorkerPinBlocks({ operatorPinned: true, pinnedRuntime: true })).toBe(true);
+    expect(idleWorkerPinBlocks({ pinnedRuntime: true })).toBe(true);
   });
 });
 

@@ -5,17 +5,32 @@ import type { ProjectExecutionScope } from '../../shared/types';
 import { getMemoryAfterAgentReservations, readPaneAdmissionLimits, refreshSystemMemorySample, registerHeavyCommandMemoryReservation, type SystemMemorySample } from './pane-admission';
 
 export type HeavyCommandKind = 'typescript' | 'tests' | 'build' | 'install';
+export type HeavyCommandBlock = 'exclusive' | 'writer-ahead' | 'machine' | 'ram' | 'pressure' | 'swap';
+export interface HeavyCommandOccupant {
+  readonly sessionId?: string;
+  readonly paneId?: string;
+  readonly label?: string;
+  readonly kind: HeavyCommandKind;
+  readonly ageMs: number;
+}
 export interface HeavyCommandRequest {
   readonly scope: Readonly<ProjectExecutionScope>;
   readonly missionId?: string;
   readonly sessionId?: string;
+  readonly paneId?: string;
+  /** Short command label. Anything outside `[\w .:/_-]{1,80}` is dropped. */
+  readonly label?: string;
   readonly kind: HeavyCommandKind;
   readonly signal?: AbortSignal;
   readonly isCurrent?: () => boolean;
+  /** When finite, an attached waiter parks and rejects with `heavy_command_queued`. */
+  readonly progressAfterMs?: number;
+  /** Reattach a parked waiter. Unknown tickets enqueue as a new wait. */
+  readonly queueTicket?: string;
 }
 /** release is Main-only: callers must first prove physical exit or no spawn. */
 export interface HeavyCommandPermit { readonly id: string; release(): void }
-/** F-1229: why a waiter gave up — attached to `heavy_command_wait_timeout`. */
+/** F-1229: why a waiter is still queued — attached to `heavy_command_wait_timeout` or `heavy_command_queued`. */
 export interface HeavyCommandQueueWait {
   readonly waitedMs: number;
   readonly root: string;
@@ -29,15 +44,35 @@ export interface HeavyCommandQueueWait {
   readonly effectiveMaxActive?: number;
   /** F-1434: the RAM budget at give-up time; freeMB null = no telemetry. */
   readonly memory?: { readonly freeMB: number | null; readonly neededMB: number; readonly swapBound: boolean };
+  readonly occupants: readonly HeavyCommandOccupant[];
+  readonly blockedBy: HeavyCommandBlock;
+}
+interface Gap {
+  readonly promise: Promise<HeavyCommandPermit>;
+  readonly resolve: (permit: HeavyCommandPermit) => void;
+  readonly reject: (error: Error) => void;
 }
 interface Waiter {
-  readonly request: HeavyCommandRequest;
+  request: HeavyCommandRequest;
   readonly lane: string;
   readonly since: number;
   readonly deadline: number;
-  readonly resolve: (permit: HeavyCommandPermit) => void;
-  readonly reject: (error: Error) => void;
+  resolve: (permit: HeavyCommandPermit) => void;
+  reject: (error: Error) => void;
   readonly aborted: () => void;
+  ticket?: string;
+  attached: boolean;
+  progressAt: number;
+  parkedAt?: number;
+  parked?: Gap;
+}
+interface ActiveJob {
+  readonly lane: string;
+  readonly kind: HeavyCommandKind;
+  readonly sessionId?: string;
+  readonly paneId?: string;
+  readonly label?: string;
+  readonly startedAt: number;
 }
 interface PermitPoolOptions {
   memory(): SystemMemorySample | null;
@@ -48,8 +83,34 @@ interface PermitPoolOptions {
   readonly waitMs?: number;
   readonly pollMs?: number;
   readonly maxActive?: number;
+  /** Drop a parked waiter that nobody reattached. Unset: parked waiters stay until retry or close. */
+  readonly parkMs?: number;
+  /** Test seam. Production leaves this unset; the native HTTP request opts in per call. */
+  readonly progressAfterMs?: number;
   /** Cached dispatch level from kern.memorystatus_vm_pressure_level, or null. */
   pressure?(): number | null;
+}
+const LABEL_PATTERN = /^[\w .:/_-]{1,80}$/;
+/** Drop a label that could carry a secret or a control character. */
+export function heavyCommandLabel(raw: string | undefined): string | undefined {
+  return raw && LABEL_PATTERN.test(raw) ? raw : undefined;
+}
+/** Build and install share outputs. Typecheck and tests only read them. */
+export function heavyCommandKindIsExclusive(kind: HeavyCommandKind): boolean {
+  return kind === 'build' || kind === 'install';
+}
+/**
+ * A writer needs the root to itself. A reader waits for a running writer or
+ * for a writer already ahead of it. Readers do not block each other here.
+ */
+export function heavyLaneBlocked(input: {
+  readonly kind: HeavyCommandKind;
+  readonly occupants: readonly { readonly kind: HeavyCommandKind }[];
+  readonly earlierExclusive: boolean;
+}): boolean {
+  if (heavyCommandKindIsExclusive(input.kind)) return input.occupants.length > 0;
+  if (input.occupants.some((occupant) => heavyCommandKindIsExclusive(occupant.kind))) return true;
+  return input.earlierExclusive;
 }
 const error = (code: string) => new Error(`heavy_command_${code}`);
 
@@ -59,11 +120,10 @@ const error = (code: string) => new Error(`heavy_command_${code}`);
 const DEFAULT_WAIT_MS = 300_000;
 
 /**
- * F-983: one physical heavy job per execution root (checkout or worktree),
- * never one per project. Parallel writers each own a worktree and must be able
- * to test at the same time; the machine RAM reservation and the CPU bound
- * below are what keep that safe. Two jobs in the SAME root still serialize:
- * they share build outputs and caches.
+ * F-983: the lane is one execution root (checkout or worktree), never one per
+ * project. Parallel writers each own a worktree. Build and install stay
+ * exclusive on a root because they share outputs and caches. Typecheck and
+ * tests of that root run together, up to the machine RAM and CPU bounds.
  */
 const machineActiveLimit = (): number => {
   const cpus = typeof os.availableParallelism === 'function' ? os.availableParallelism() : os.cpus().length;
@@ -133,7 +193,7 @@ export const readHeavyCommandMemoryPressure = createHeavyCommandPressureCache();
 export class HeavyCommandPermitPool {
   readonly #options: PermitPoolOptions;
   readonly #waiters: Waiter[] = [];
-  readonly #active = new Map<string, { lane: string; kind: HeavyCommandKind }>();
+  readonly #active = new Map<string, ActiveJob>();
   #timer: ReturnType<typeof setTimeout> | undefined;
   #refresh: Promise<void> | undefined;
   #closed = false;
@@ -151,15 +211,19 @@ export class HeavyCommandPermitPool {
     // command came from a human shell outside Nexus.
     if (this.#closed) return Promise.reject(error('closed'));
     if (request.signal?.aborted) return Promise.reject(error('aborted'));
+    if (request.queueTicket) {
+      const existing = this.#waiters.find((waiter) => waiter.ticket === request.queueTicket);
+      if (existing) return this.#reattach(existing, request);
+    }
     if (this.#waiters.length >= (this.#options.maxWaiters ?? 128)) return Promise.reject(error('queue_full'));
-    // RAM/CPU are machine-wide budgets; the lane only serializes jobs that
-    // share one physical checkout (same build outputs and caches).
+    // RAM/CPU are machine-wide. The lane only keeps build/install exclusive.
     const lane = JSON.stringify([request.scope.installationId, request.scope.projectId, request.scope.rootRealPath]);
     return new Promise((resolve, reject) => {
       const since = Date.now();
-      const waiter: Waiter = { request, lane, resolve, reject, since,
+      const waiter: Waiter = { request, lane, resolve, reject, since, attached: true,
         deadline: since + (this.#options.waitMs ?? DEFAULT_WAIT_MS),
-        aborted: () => { this.#remove(waiter); reject(error('aborted')); this.#pump(); },
+        progressAt: this.#progressAt(request, since),
+        aborted: () => { this.#remove(waiter); waiter.reject(error('aborted')); this.#pump(); },
       };
       this.#waiters.push(waiter);
       request.signal?.addEventListener('abort', waiter.aborted, { once: true });
@@ -176,10 +240,34 @@ export class HeavyCommandPermitPool {
     // supply physical exit proof. Teardown is not evidence that work stopped.
   }
 
+  #reattach(waiter: Waiter, request: HeavyCommandRequest): Promise<HeavyCommandPermit> {
+    waiter.request.signal?.removeEventListener('abort', waiter.aborted);
+    const gap = waiter.parked;
+    waiter.parked = undefined;
+    gap?.reject(error('reattached'));
+    waiter.request = request;
+    waiter.attached = true;
+    waiter.parkedAt = undefined;
+    waiter.progressAt = this.#progressAt(request, Date.now());
+    const promise = new Promise<HeavyCommandPermit>((resolve, reject) => {
+      waiter.resolve = resolve;
+      waiter.reject = reject;
+    });
+    request.signal?.addEventListener('abort', waiter.aborted, { once: true });
+    this.#pump();
+    return promise;
+  }
+
+  #progressAt(request: HeavyCommandRequest, now: number): number {
+    const after = request.progressAfterMs ?? this.#options.progressAfterMs;
+    return typeof after === 'number' && Number.isFinite(after) ? now + after : Number.POSITIVE_INFINITY;
+  }
+
   #remove(waiter: Waiter): void {
     const index = this.#waiters.indexOf(waiter);
     if (index >= 0) this.#waiters.splice(index, 1);
     waiter.request.signal?.removeEventListener('abort', waiter.aborted);
+    waiter.attached = false;
   }
 
   #pressureLevel(): number | null {
@@ -191,11 +279,36 @@ export class HeavyCommandPermitPool {
     } catch { return null; }
   }
 
-  #queueWait(waiter: Waiter, maxActive: number, effectiveMaxActive: number): HeavyCommandQueueWait {
+  #occupants(lane: string): HeavyCommandOccupant[] {
+    const now = Date.now();
+    return [...this.#active.values()].filter((entry) => entry.lane === lane).map((entry) => ({
+      sessionId: entry.sessionId, paneId: entry.paneId, label: entry.label, kind: entry.kind,
+      ageMs: Math.max(0, now - entry.startedAt),
+    }));
+  }
+
+  #blockedBy(waiter: Waiter, maxActive: number, effectiveMaxActive: number): HeavyCommandBlock {
+    const occupants = this.#occupants(waiter.lane);
+    const index = this.#waiters.indexOf(waiter);
+    const earlierExclusive = this.#waiters.some((other, otherIndex) => other.lane === waiter.lane && otherIndex < index
+      && heavyCommandKindIsExclusive(other.request.kind));
+    if (heavyLaneBlocked({ kind: waiter.request.kind, occupants, earlierExclusive })) {
+      return heavyCommandKindIsExclusive(waiter.request.kind) || occupants.some((occupant) => heavyCommandKindIsExclusive(occupant.kind))
+        ? 'exclusive' : 'writer-ahead';
+    }
+    if (this.#active.size >= effectiveMaxActive) return effectiveMaxActive < maxActive ? 'pressure' : 'machine';
+    const budget = this.#memoryBudget();
+    if (budget.swapBound) return 'swap';
+    if (budget.freeMB === null || budget.freeMB < budget.neededMB) return 'ram';
+    return 'machine';
+  }
+
+  #queueWait(waiter: Waiter, blockedBy: HeavyCommandBlock, maxActive: number, effectiveMaxActive: number): HeavyCommandQueueWait {
     return { waitedMs: Date.now() - waiter.since, root: waiter.request.scope.rootRealPath,
       running: [...this.#active.values()].filter(entry => entry.lane === waiter.lane).length,
       waiting: this.#waiters.filter(other => other !== waiter && other.lane === waiter.lane).length,
-      machineActive: this.#active.size, maxActive, effectiveMaxActive, memory: this.#memoryBudget() };
+      machineActive: this.#active.size, maxActive, effectiveMaxActive, memory: this.#memoryBudget(),
+      occupants: this.#occupants(waiter.lane), blockedBy };
   }
 
   #memoryBudget(): { freeMB: number | null; neededMB: number; swapBound: boolean } {
@@ -217,26 +330,64 @@ export class HeavyCommandPermitPool {
     return budget.freeMB >= budget.neededMB;
   }
 
+  #current(waiter: Waiter): boolean {
+    try { return !waiter.request.signal?.aborted && (waiter.request.isCurrent?.() ?? true); }
+    catch { return false; }
+  }
+
+  #park(waiter: Waiter, blockedBy: HeavyCommandBlock, maxActive: number, effective: number): void {
+    waiter.request.signal?.removeEventListener('abort', waiter.aborted);
+    waiter.attached = false;
+    waiter.parkedAt = Date.now();
+    waiter.ticket ??= `hq-${randomUUID()}`;
+    let resolve!: Gap['resolve'];
+    let reject!: Gap['reject'];
+    const promise = new Promise<HeavyCommandPermit>((res, rej) => { resolve = res; reject = rej; });
+    promise.catch(() => {});
+    const abandon = waiter.reject;
+    waiter.resolve = resolve;
+    waiter.reject = reject;
+    waiter.parked = { promise, resolve, reject };
+    abandon(Object.assign(error('queued'), { ticket: waiter.ticket, queue: this.#queueWait(waiter, blockedBy, maxActive, effective) }));
+  }
+
   #pump(): void {
     if (this.#closed) return;
-    const blockedLanes = new Set<string>();
     const maxActive = this.#options.maxActive ?? machineActiveLimit();
     const effective = heavyCommandEffectiveCap(maxActive, this.#pressureLevel());
+    const writerAhead = new Set<string>();
     for (const waiter of [...this.#waiters]) {
-      let current = false;
-      try { current = !waiter.request.signal?.aborted && (waiter.request.isCurrent?.() ?? true); } catch { /* revoked */ }
       if (!this.#waiters.includes(waiter)) continue;
-      current &&= !waiter.request.signal?.aborted;
+      if (!waiter.attached) {
+        if (!this.#current(waiter)) { this.#remove(waiter); waiter.reject(error('authority_revoked')); continue; }
+        const parkMs = this.#options.parkMs;
+        if (parkMs !== undefined && waiter.parkedAt !== undefined && Date.now() - waiter.parkedAt >= parkMs) {
+          this.#remove(waiter); waiter.reject(error('aborted')); continue;
+        }
+        if (heavyCommandKindIsExclusive(waiter.request.kind)) writerAhead.add(waiter.lane);
+        continue;
+      }
+      const current = this.#current(waiter);
       if (!current || Date.now() >= waiter.deadline) {
-        const failure = current ? Object.assign(error('wait_timeout'), { queue: this.#queueWait(waiter, maxActive, effective) }) : error('authority_revoked');
+        const blockedBy = this.#blockedBy(waiter, maxActive, effective);
+        const failure = current ? Object.assign(error('wait_timeout'), { queue: this.#queueWait(waiter, blockedBy, maxActive, effective) }) : error('authority_revoked');
         this.#remove(waiter); waiter.reject(failure); continue;
       }
-      if (blockedLanes.has(waiter.lane)) continue;
-      const activeLane = [...this.#active.values()].some(entry => entry.lane === waiter.lane);
-      if (activeLane || this.#active.size >= effective || !this.#hasRam()) { blockedLanes.add(waiter.lane); continue; }
+      const occupants = this.#occupants(waiter.lane);
+      const laneBlocked = heavyLaneBlocked({ kind: waiter.request.kind, occupants, earlierExclusive: writerAhead.has(waiter.lane) });
+      const machineFull = this.#active.size >= effective;
+      const ramOk = !machineFull && !laneBlocked && this.#hasRam();
+      if (laneBlocked || machineFull || !ramOk) {
+        if (heavyCommandKindIsExclusive(waiter.request.kind)) writerAhead.add(waiter.lane);
+        const blockedBy = this.#blockedBy(waiter, maxActive, effective);
+        if (Date.now() >= waiter.progressAt) this.#park(waiter, blockedBy, maxActive, effective);
+        continue;
+      }
       this.#remove(waiter);
       const id = `heavy-${randomUUID()}`;
-      this.#active.set(id, { lane: waiter.lane, kind: waiter.request.kind });
+      const label = heavyCommandLabel(waiter.request.label);
+      this.#active.set(id, { lane: waiter.lane, kind: waiter.request.kind, sessionId: waiter.request.sessionId,
+        paneId: waiter.request.paneId, label, startedAt: Date.now() });
       // The synchronous reservation precedes resolving the caller's promise.
       // Two lanes cannot both spend the same cached free RAM.
       waiter.resolve(Object.freeze({ id, release: () => {
@@ -260,7 +411,8 @@ export class HeavyCommandPermitPool {
 }
 
 const permits = new HeavyCommandPermitPool({ memory: getMemoryAfterAgentReservations, limits: readPaneAdmissionLimits,
-  refreshMemory: refreshSystemMemorySample, pressure: readHeavyCommandMemoryPressure });
+  refreshMemory: refreshSystemMemorySample, pressure: readHeavyCommandMemoryPressure,
+  waitMs: Number.POSITIVE_INFINITY, parkMs: 45_000 });
 registerHeavyCommandMemoryReservation(() => permits.snapshot().reservedMB);
 export function acquireHeavyCommandPermit(request: HeavyCommandRequest): Promise<HeavyCommandPermit> { return permits.acquire(request); }
 export function heavyCommandPermitSnapshot(): ReturnType<HeavyCommandPermitPool['snapshot']> { return permits.snapshot(); }

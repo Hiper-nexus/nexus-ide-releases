@@ -1,3 +1,4 @@
+import { execFile } from 'node:child_process';
 import { iteratePeriodicMissionIds } from './mission-store';
 import { sameProjectScope } from './project-scoped-broadcast';
 import { runPeriodicTask, stopPeriodicTask, type PeriodicTaskContext } from '../observability/periodic-task';
@@ -114,6 +115,7 @@ import {
 import {
   forgetPaneTaskReroute,
   getPaneTaskReroute,
+  MAX_PANE_TASK_REROUTES,
   paneTaskRerouteBlocker,
   registerPaneTaskReroute,
 } from './pane-task-reroute';
@@ -263,6 +265,53 @@ export function decideWorkerHung(input: {
   return input.now - input.notifiedAt >= WORKER_HUNG_RENOTIFY_MS
     ? 'renotify'
     : 'none';
+}
+
+/** Ocioso sem commit nem handoff: cutuca aos 8 min e reabre aos 16. */
+export const IDLE_WORKER_NUDGE_AFTER_MS = 8 * 60_000;
+export const IDLE_WORKER_REOPEN_AFTER_MS = 16 * 60_000;
+
+/**
+ * Pin que impede cutucar e reabrir. `operatorPinned: false` é retomada e
+ * não prende. Ausente: o `pinnedRuntime` antigo continua prendendo.
+ */
+export function idleWorkerPinBlocks(input: {
+  readonly operatorPinned?: boolean;
+  readonly pinnedRuntime: boolean;
+}): boolean {
+  if (input.operatorPinned === true) return true;
+  if (input.operatorPinned === false) return false;
+  return input.pinnedRuntime;
+}
+
+/** Decisão pura. O relógio e o git ficam no supervisor. */
+export function decideIdleWorkerRecovery(input: {
+  readonly role: string | undefined;
+  readonly operatorOpened: boolean;
+  readonly pinBlocked: boolean;
+  readonly paneState: string | undefined;
+  readonly idleForMs: number | null;
+  readonly hasCommit: boolean;
+  readonly hasHandoff: boolean;
+  readonly nudged: boolean;
+  readonly sinceNudgeMs: number | null;
+  readonly reopened: boolean;
+  readonly hasAlternative: boolean;
+}): 'none' | 'nudge' | 'reopen' {
+  if (input.role !== 'worker' || input.operatorOpened || input.pinBlocked) return 'none';
+  if (input.paneState !== 'idle' || input.idleForMs === null) return 'none';
+  if (input.hasCommit || input.hasHandoff) return 'none';
+  if (!input.nudged) return input.idleForMs >= IDLE_WORKER_NUDGE_AFTER_MS ? 'nudge' : 'none';
+  if (
+    !input.reopened &&
+    input.hasAlternative &&
+    input.sinceNudgeMs !== null &&
+    input.sinceNudgeMs >= IDLE_WORKER_NUDGE_AFTER_MS &&
+    input.idleForMs >= IDLE_WORKER_REOPEN_AFTER_MS
+  ) {
+    return 'reopen';
+  }
+  return 'none';
 }
 
 /** Zero-entrega: Maestro dormiu esperando handoff com disco vazio. */
@@ -1184,9 +1233,11 @@ async function handlePaneNotStarted(
         ? 'operator'
         : startRerouteChainExhausted(watch)
           ? 'chain-limit'
-          : watch.pinnedRuntime
+          : (watch.failure?.cause !== 'brief-rejected' || watch.operatorPinned !== false) && watch.pinnedRuntime
             ? 'pinned'
-            : 'no-alternative',
+            : watch.operatorPinned === true
+              ? 'pinned'
+              : 'no-alternative',
     };
   }
   // F-1270: o motivo da recusa de capacidade viaja em `failure.detail` (o
@@ -1355,6 +1406,9 @@ async function checkPaneStart(watch: PaneStartWatch, now: number, context?: Peri
     redeliveredAt: watch.redeliveredAt,
     rerouted: startRerouteChainExhausted(watch),
     pinnedRuntime: watch.pinnedRuntime,
+    operatorPinned: watch.operatorPinned,
+    failureCause: watch.failure?.cause ?? null,
+    generation: watch.generation ?? (watch.rerouted ? 1 : 0),
     hasAlternative: watch.hasAlternative?.() ?? false,
     mainPressure,
     pressureSince: watch.pressureSince,
@@ -1395,6 +1449,135 @@ export function checkPaneStarts(now: number = Date.now(), parentContext?: Period
  * da rota, na mesma worktree do writer isolado) e avisa quem pediu. Teto de
  * reaberturas do pedido (MAX_PANE_TASK_REROUTES) → `blocked` com o motivo.
  */
+const IDLE_NUDGE =
+  'Você está ocioso sem commit nem nexus_handoff_submit. Entregue o que já fez, ou diga o bloqueio. Sem isso o Nexus reabre a tarefa em outra CLI.';
+
+interface IdleWorkerRow {
+  since: number;
+  nudgedAt: number | null;
+  reopened: boolean;
+}
+
+const idleWorkerRows = new Map<string, IdleWorkerRow>();
+
+/** true = commit no intervalo; null = git não respondeu (não decide). */
+function gitCommitSince(root: string, sinceMs: number): Promise<boolean | null> {
+  return new Promise((resolve) => {
+    execFile(
+      'git',
+      ['-C', root, 'log', '-1', '--format=%H', `--since=${new Date(sinceMs).toISOString()}`],
+      { timeout: 2000, windowsHide: true },
+      (error, stdout) => {
+        if (error) { resolve(null); return; }
+        resolve(/^[0-9a-f]{7,64}$/i.test(String(stdout ?? '').trim()));
+      },
+    );
+  });
+}
+
+async function recoverIdleWorkers(
+  suite: ProjectDomainStoreSuite,
+  panes: readonly PaneSnapshot[],
+  now: number,
+  current: () => boolean,
+): Promise<void> {
+  for (const pane of panes) {
+    if (!pane.sessionId || pane.role !== 'worker' || pane.state !== 'idle') {
+      if (pane.sessionId) idleWorkerRows.delete(pane.sessionId);
+      continue;
+    }
+    const sessionId = pane.sessionId;
+    let row = idleWorkerRows.get(sessionId);
+    if (!row) {
+      row = { since: now, nudgedAt: null, reopened: false };
+      idleWorkerRows.set(sessionId, row);
+      if (idleWorkerRows.size > 256) {
+        const oldest = idleWorkerRows.keys().next().value;
+        if (oldest !== undefined && oldest !== sessionId) idleWorkerRows.delete(oldest);
+      }
+    }
+    if (now - row.since < IDLE_WORKER_NUDGE_AFTER_MS) continue;
+    if (!current()) return;
+    const handle = getPaneTaskReroute(pane.paneId, now);
+    const pinBlocked = idleWorkerPinBlocks({
+      operatorPinned: handle?.operatorPinned,
+      pinnedRuntime: handle?.pinnedRuntime === true,
+    });
+    let hasHandoff = true;
+    try {
+      hasHandoff = suite.handoffs.list({ sessionIds: [sessionId], includeDelivered: true })
+        .some((handoff) => handoff.sessionId === sessionId && handoff.fromAgent !== DELEGATION_SUPERVISOR_AGENT);
+    } catch {
+      continue;
+    }
+    let hasCommit = false;
+    const root = pane.executionScope?.rootRealPath;
+    if (root) {
+      const committed = await gitCommitSince(root, row.since);
+      if (!current()) return;
+      if (committed === null) continue;
+      hasCommit = committed;
+    }
+    const chainBlocked = (handle?.generation ?? 0) >= MAX_PANE_TASK_REROUTES;
+    const hasAlternative = Boolean(
+      handle && !chainBlocked && !mainPressureNow() && handle.hasAlternative([handle.adapterId]),
+    );
+    const decision = decideIdleWorkerRecovery({
+      role: pane.role,
+      operatorOpened: pane.operatorOpened === true || handle?.operatorOpened === true,
+      pinBlocked,
+      paneState: pane.state,
+      idleForMs: now - row.since,
+      hasCommit,
+      hasHandoff,
+      nudged: row.nudgedAt !== null,
+      sinceNudgeMs: row.nudgedAt === null ? null : now - row.nudgedAt,
+      reopened: row.reopened,
+      hasAlternative,
+    });
+    if (decision === 'none') continue;
+    if (decision === 'nudge') {
+      row.nudgedAt = now;
+      try {
+        const { injectPrompt } = await import('./tool-util');
+        await injectPrompt(sessionId, IDLE_NUDGE);
+      } catch (error) {
+        console.warn(`[delegation-supervisor] cutucão ocioso falhou (pane=${pane.paneId}): ${shortStartError(error)}`);
+      }
+      continue;
+    }
+    if (!handle || handle.operatorOpened) continue;
+    row.reopened = true;
+    releasePaneStartWatch(pane.paneId);
+    forgetPaneTaskReroute(pane.paneId);
+    const closed = await requestPaneClose(pane.paneId, sessionId).catch(() => false);
+    if (!current()) return;
+    if (!closed) {
+      registerPaneTaskReroute(handle);
+      console.warn(`[delegation-supervisor] worker ocioso ${pane.paneId} não fechou; nada foi reaberto`);
+      continue;
+    }
+    if (pane.missionId) {
+      noteMissionCliFailure({
+        missionId: pane.missionId,
+        adapterId: handle.adapterId,
+        ...(pane.model ? { model: pane.model } : {}),
+        cause: 'idle-without-delivery',
+        attemptKey: sessionId,
+      });
+    }
+    try {
+      const next = await handle.reroute({
+        excludeAdapterIds: [handle.adapterId],
+        worktreeFromPaneId: pane.paneId,
+      });
+      console.warn(`[delegation-supervisor] worker ocioso ${pane.paneId} reaberto em ${next.adapterId} (${next.paneId})`);
+    } catch (error) {
+      console.warn(`[delegation-supervisor] reabertura ociosa falhou (pane=${pane.paneId}): ${shortStartError(error)}`);
+    }
+  }
+}
+
 export async function checkLimitedTaskPanes(
   now: number = Date.now(),
   context?: PeriodicTaskContext,
@@ -1745,6 +1928,8 @@ async function scanSuite(suite: ProjectDomainStoreSuite, now: number, context: P
     if (mission.status === 'pending' || mission.status === 'running') {
       flushAllNexusTaskFailClosedRetries(suite.scope, mission.id);
       await notifyHungWorkerPanes(suite, mission, panes, now, context, current);
+      if (!current()) continue;
+      await recoverIdleWorkers(suite, panes, now, current);
       if (!current()) continue;
     }
 
