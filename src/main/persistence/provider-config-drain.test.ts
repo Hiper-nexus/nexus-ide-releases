@@ -37,7 +37,7 @@ vi.mock('../quota/quota-service', async importOriginal => ({
   requireQuotaService: () => ({ lastSnapshot: () => ({ entries: quota.entries }) }),
 }));
 
-import { addAccount, initAccountStore } from './account-store';
+import { activateAccount, addAccount, initAccountStore, setCooldown } from './account-store';
 import { pickMissionOrchestratorAccountId } from './provider-config-store';
 
 const NOW = 1_000_000;
@@ -117,5 +117,83 @@ describe('camada 1 — o Maestro respeita a drenagem no respawn', () => {
     quota.entries = [weekly(candidate.id, 0.9)];
 
     expect(pickMissionOrchestratorAccountId('claude', candidate.id)).toBe(candidate.id);
+  });
+});
+
+/**
+ * Ponta a ponta do roteador, com o store de contas REAL, a regra de folga
+ * REAL e a atribuição da leitura nativa do AGY. Três contas pessoais, só a
+ * identidade viva medida — exatamente a frota do relato, em escala menor.
+ */
+describe('e2e — carrossel de contas AGY pessoais', () => {
+  /** A única leitura que existe: linha NATIVA, sem accountId. */
+  function agyNative(usedRatio: number): ProviderQuotaEntry {
+    return {
+      id: 'agy:native', adapterId: 'agy', label: 'AGY · CLI nativo',
+      installed: true, onCooldown: false, updatedAt: NOW,
+      windows: [{
+        kind: 'hours', label: '5 Horas', usedRatio,
+        resetsAt: NOW + 18_000_000, source: 'provider-api', confidence: 'high',
+      }],
+    } as ProviderQuotaEntry;
+  }
+  /** Linha da conta do cofre: existe, mas sem janela (o 403 do endpoint). */
+  function agyVault(accountId: string): ProviderQuotaEntry {
+    return {
+      id: `agy:${accountId}`, adapterId: 'agy', accountId, label: accountId,
+      installed: true, onCooldown: false, updatedAt: NOW, windows: [],
+    } as ProviderQuotaEntry;
+  }
+
+  it('drena a, depois b, depois c, e então não sobra conta (a CLI troca)', () => {
+    const a = addAcct('agy', 'a');
+    const b = addAcct('agy', 'b');
+    const c = addAcct('agy', 'c');
+    const vault = [agyVault(a.id), agyVault(b.id), agyVault(c.id)];
+
+    // a é a identidade viva e ainda tem folga: fica.
+    activateAccount(a.id);
+    quota.entries = [agyNative(0.5), ...vault];
+    expect(pickMissionOrchestratorAccountId('agy', a.id)).toBe(a.id);
+
+    // a cruza o limiar: o trabalho novo vai para a irmã mais velha.
+    quota.entries = [agyNative(0.9), ...vault];
+    expect(pickMissionOrchestratorAccountId('agy', a.id)).toBe(b.id);
+
+    // b assume a identidade e drena: passa para c.
+    activateAccount(b.id);
+    expect(pickMissionOrchestratorAccountId('agy', b.id)).toBe(c.id);
+
+    // c assume e ESGOTA: sem irmã com folga medida, ninguém sobra — é o
+    // estado em que performSwitch cai na troca de CLI (F-775 item 2).
+    activateAccount(c.id);
+    quota.entries = [agyNative(1), ...vault];
+    setCooldown(a.id, NOW + 3_600_000, 'cota medida esgotada');
+    setCooldown(b.id, NOW + 3_600_000, 'cota medida esgotada');
+    setCooldown(c.id, NOW + 3_600_000, 'cota medida esgotada');
+    expect(pickMissionOrchestratorAccountId('agy', c.id)).toBeUndefined();
+  });
+
+  it('sem a atribuição da leitura nativa nada drenaria: a linha do cofre é vazia', () => {
+    const a = addAcct('agy', 'a');
+    const b = addAcct('agy', 'b');
+    activateAccount(a.id);
+    // Só as linhas do cofre (o que o 403 deixa): ninguém tem folga medida.
+    quota.entries = [agyVault(a.id), agyVault(b.id)];
+    expect(pickMissionOrchestratorAccountId('agy', a.id)).toBe(a.id);
+  });
+
+  it('a segunda volta do carrossel consome o resto da janela', () => {
+    const a = addAcct('agy', 'a');
+    const b = addAcct('agy', 'b');
+    activateAccount(a.id);
+    // Todas drenando (a identidade viva em 0.9, irmã sem leitura própria):
+    // a regra não pode devolver nada — a fatia que resta é usada.
+    quota.entries = [agyNative(0.9), agyVault(a.id), agyVault(b.id)];
+    const first = pickMissionOrchestratorAccountId('agy', a.id);
+    expect(first).toBe(b.id);
+    activateAccount(b.id);
+    const second = pickMissionOrchestratorAccountId('agy', b.id);
+    expect(second).not.toBeUndefined();
   });
 });

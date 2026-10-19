@@ -49,6 +49,7 @@ import { compareAuthFreshness } from '../adapters/auth-freshness';
 import { readRegularFileCapped } from '../redline/redline-safe-read';
 import { chooseAccount } from './account-select';
 import {
+  bindingHeadroomWindow,
   DRAIN_THRESHOLD,
   fullWindowsReopenAt,
   isHeadroomDraining,
@@ -56,6 +57,15 @@ import {
   type HeadroomInput,
 } from '../quota/account-headroom';
 import { windowsServingModel } from '../quota/headroom-route-filter';
+import {
+  drainedAccountIds,
+  forgetDrainMemory,
+  isRememberedDrained,
+  noteAccountDrained,
+} from './account-drain-memory';
+
+/** Sem reset conhecido, a lembrança de drenagem vale uma hora. */
+const DRAIN_MEMORY_FALLBACK_MS = 60 * 60_000;
 
 /** As janelas de cada conta, reduzidas às que o modelo do spawn consome. */
 function narrowQuotaToModel(
@@ -232,6 +242,9 @@ function persistFresherManagedAuth(
 export function initAccountStore(database: Db | null): void {
   db = database;
   readOnly = true;
+  // A memória de drenagem é do escopo do store: trocar de projeto (ou fechar)
+  // não pode levar a lembrança de uma frota para outra.
+  forgetDrainMemory();
   // F-1483: as esperas do failover moram no mesmo DB dos blocos de cooldown.
   initFailoverWaits(database);
   // Registra o read-back de tokens renovados para o scrub de sessão gerenciada
@@ -1412,9 +1425,33 @@ export function pickAvailableForFailover(
       !measuredFullUntil.has(a.id),
   );
   const activeId = activeByAdapter.get(adapterId) ?? null;
+  const activeDraining =
+    options?.drain !== undefined &&
+    activeId !== null &&
+    isHeadroomDraining(
+      quotaByAccountId?.get(activeId),
+      options.drain.threshold ?? DRAIN_THRESHOLD,
+      options.drain,
+    );
+  // A leitura da identidade viva é a única que existe no modo fila: quando
+  // ela passa para a irmã, a conta drenada voltaria a parecer "sem medição" e
+  // o carrossel quicaria entre duas contas. A lembrança a mantém fora da
+  // preferência até a janela dela reabrir.
+  if (activeDraining && activeId) {
+    noteAccountDrained(
+      activeId,
+      bindingHeadroomWindow(quotaByAccountId?.get(activeId))?.resetsAt ??
+        now + DRAIN_MEMORY_FALLBACK_MS,
+    );
+  }
+  // Lembradas saem da preferência; se não sobrar ninguém, voltam (2ª volta).
+  const remembered = options?.drain ? drainedAccountIds(now) : new Set<string>();
+  const preferred = remembered.size > 0 ? free.filter((a) => !remembered.has(a.id)) : free;
+  const pool = preferred.length > 0 ? preferred : free;
   const chosen = chooseAccount(
-    free,
-    activeId,
+    pool,
+    // Ativa lembrada como drenada não "segura" o pane: ela saiu do pool.
+    activeId && pool.some((a) => a.id === activeId) ? activeId : null,
     excludeId,
     now,
     quotaScoreByAccountId,
@@ -1423,14 +1460,9 @@ export function pickAvailableForFailover(
   );
   if (chosen) {
     const drained =
-      options?.drain !== undefined &&
       activeId !== null &&
       chosen.id !== activeId &&
-      isHeadroomDraining(
-        quotaByAccountId?.get(activeId),
-        options.drain.threshold ?? DRAIN_THRESHOLD,
-        options.drain,
-      );
+      (activeDraining || isRememberedDrained(activeId, now));
     return { account: chosen, probe: false, ...(drained ? { drained: true } : {}) };
   }
 
