@@ -97,6 +97,14 @@ export type MediaStudioResponse =
   | MediaGenerationResult
   | { ok: false; error: string; recoverJobId?: string; canceled?: boolean };
 
+/**
+ * F-1589: geração, galeria e totais vivem na pasta do projeto aberto; chaves
+ * e provedores são globais. Sem projeto, o Main responde com esta frase (ou
+ * `null` nas leituras) em vez de lançar a recusa crua de escopo.
+ */
+export const MEDIA_NO_PROJECT_ERROR =
+  'Abra um projeto para gerar: as imagens e os vídeos são salvos na pasta do projeto aberto.';
+
 export const MEDIA_CHANNELS = {
   listProviders: 'media:listProviders',
   setKey: 'media:setKey',

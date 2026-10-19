@@ -1426,11 +1426,13 @@ export interface NexusApi {
       providerId: MediaProviderId,
       key: string,
     ): Promise<{ ok: boolean; error?: string }>;
-    usageTotals(): Promise<MediaUsageTotals>;
+    /** `null` sem projeto aberto (F-1589). */
+    usageTotals(): Promise<MediaUsageTotals | null>;
     /** Estúdio de Mídia: gera imagem/vídeo a partir do prompt (longo). */
     generate(req: MediaStudioRequest): Promise<MediaStudioResponse>;
     cancelGenerate(clientJobId: string): Promise<{ ok: boolean }>;
-    listArtifacts(): Promise<MediaArtifactInfo[]>;
+    /** `null` sem projeto aberto: a galeria é da pasta do projeto (F-1589). */
+    listArtifacts(): Promise<MediaArtifactInfo[] | null>;
     revealArtifact(
       storageKey: string,
     ): Promise<{ ok: boolean; error?: string }>;

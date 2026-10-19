@@ -1,9 +1,10 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import type {
-  MediaArtifactInfo,
-  MediaGenerationResult,
-  MediaProviderInfo,
-  MediaStudioRequest,
+import {
+  MEDIA_NO_PROJECT_ERROR,
+  type MediaArtifactInfo,
+  type MediaGenerationResult,
+  type MediaProviderInfo,
+  type MediaStudioRequest,
 } from '../../shared/media-types';
 import { useProductNavigationStore } from '../state/product-navigation-store';
 import { CloseButton } from './CloseButton';
@@ -12,8 +13,9 @@ import { platformCopy } from '../lib/platform-copy';
 
 /**
  * Estúdio de Mídia — geração de imagem/vídeo para quem não fala com agente:
- * descreve o que quer, escolhe o modelo, clica em Gerar. As API keys ficam em
- * Ajustes → Mídia; aqui só aparecem providers já configurados (hasKey).
+ * descreve o que quer, escolhe o modelo, clica em Gerar. As chaves ficam em
+ * Ajustes → Serviços de mídia; aqui só geram os serviços conectados (hasKey).
+ * Geração e galeria são da pasta do projeto aberto (F-1589).
  */
 
 type StudioKind = 'image' | 'video';
@@ -97,6 +99,9 @@ export function MediaStudioPanel({
   const [result, setResult] = useState<StudioResult | null>(null);
   const [error, setError] = useState<StudioError | null>(null);
   const [artifacts, setArtifacts] = useState<MediaArtifactInfo[]>([]);
+  // F-1589: `null` = ainda lendo; false = sem projeto aberto.
+  const [projectOpen, setProjectOpen] = useState<boolean | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
   const [copied, setCopied] = useState(false);
   // storageKeys com fetch de thumb já tentado — não re-dispara em falha.
@@ -143,18 +148,33 @@ export function MediaStudioPanel({
     [],
   );
 
-  // Carrega providers + galeria ao abrir (e recarrega a cada abertura).
+  // Carrega providers e galeria ao abrir (e recarrega a cada abertura). São
+  // leituras independentes (F-1589): provedores são globais, a galeria é do
+  // projeto; uma falhar não pode deixar a outra muda.
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    void Promise.all([
-      window.nexus.media.listProviders(),
-      window.nexus.media.listArtifacts(),
-    ]).then(([list, arts]) => {
-      if (cancelled) return;
-      setProviders(list);
-      setArtifacts(arts);
-    });
+    setLoadError(null);
+    window.nexus.media.listProviders().then(
+      (list) => {
+        if (!cancelled) setProviders(list);
+      },
+      () => {
+        if (cancelled) return;
+        setProviders([]);
+        setLoadError('Não foi possível carregar os serviços de mídia. Feche e abra o Estúdio de novo.');
+      },
+    );
+    window.nexus.media.listArtifacts().then(
+      (arts) => {
+        if (cancelled) return;
+        setProjectOpen(arts !== null);
+        setArtifacts(arts ?? []);
+      },
+      () => {
+        if (!cancelled) setArtifacts([]);
+      },
+    );
     return () => {
       cancelled = true;
     };
@@ -221,7 +241,7 @@ export function MediaStudioPanel({
       const res = await window.nexus.media.generate(request);
       if (res.ok) {        // Sucesso: recarrega a galeria e usa o artifact mais novo do kind
         // (a lista vem newest-first) para preview + "Mostrar no Finder".
-        const arts = await window.nexus.media.listArtifacts();
+        const arts = (await window.nexus.media.listArtifacts()) ?? [];
         setArtifacts(arts);
         const newest = arts.find((a) => a.kind === res.kind) ?? null;
         let dataUrl: string | null = null;
@@ -251,7 +271,7 @@ export function MediaStudioPanel({
   function generate() {
     const [pid, model] = sel.split('::');
     const provider = keyed.find((p) => p.id === pid);
-    if (!provider || !prompt.trim() || job) return;
+    if (!provider || !prompt.trim() || job || projectOpen === false) return;
     void run({
       kind: tab,
       prompt: prompt.trim(),
@@ -373,21 +393,31 @@ export function MediaStudioPanel({
             </button>
           </div>
 
-          {providers !== null && keyed.length === 0 ? (
+          {loadError && (
+            <p className="ms-error__msg" role="alert">
+              <PixelIcon name="warn" size={11} /> {loadError}
+            </p>
+          )}
+          {projectOpen === false && (
+            <p className="ms-dim" role="status">
+              {MEDIA_NO_PROJECT_ERROR}
+            </p>
+          )}
+          {providers !== null && keyed.length === 0 && !loadError ? (
             <section className="ms-empty">
               <p className="ms-empty__title">
-                Nenhum provider de {KIND_PT[tab]} configurado
+                Nenhum serviço de {KIND_PT[tab]} conectado
               </p>
               <p className="ms-dim">
-                Para gerar {KIND_PT[tab]}, conecte uma API key em Ajustes → Mídia.
-                Leva menos de um minuto.
+                Para gerar {KIND_PT[tab]}, conecte a chave de um serviço em Ajustes →
+                Serviços de mídia. Leva menos de um minuto.
               </p>
               <button
                 type="button"
                 className="ms-button ms-button--primary ms-empty__cta"
                 onClick={openMediaSettings}
               >
-                Configurar API key
+                Conectar serviço de mídia
               </button>
             </section>
           ) : (
@@ -427,7 +457,7 @@ export function MediaStudioPanel({
                         label={
                           p.hasKey
                             ? p.label
-                            : `${p.label} — sem key (Ajustes → Mídia)`
+                            : `${p.label} — sem chave (Serviços de mídia)`
                         }
                       >
                         {p.models.map((m) => (
@@ -493,7 +523,7 @@ export function MediaStudioPanel({
               <button
                 type="button"
                 className="ms-button ms-button--primary ms-generate"
-                disabled={!prompt.trim() || Boolean(job) || !sel}
+                disabled={!prompt.trim() || Boolean(job) || !sel || projectOpen === false}
                 onClick={generate}
               >
                 {tab === 'image' ? 'Gerar imagem' : 'Gerar vídeo'}
@@ -596,7 +626,9 @@ export function MediaStudioPanel({
 
           <section className="ms-gallery">
             <h4 className="ms-gallery__title">Suas criações</h4>
-            {artifacts.length === 0 ? (
+            {projectOpen === false ? (
+              <p className="ms-dim">As criações ficam na pasta de cada projeto. Abra um projeto para vê-las.</p>
+            ) : artifacts.length === 0 ? (
               <p className="ms-dim">Suas criações aparecerão aqui.</p>
             ) : (
               <div className="ms-grid">

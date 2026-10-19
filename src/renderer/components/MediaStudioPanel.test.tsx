@@ -178,8 +178,10 @@ describe('MediaStudioPanel behavioral contract', () => {
     const dialog = await openFrom(renderHarness());
     const configure = Array.from(
       dialog.querySelectorAll<HTMLButtonElement>('button'),
-    ).find((button) => button.textContent?.includes('Configurar API key'));
-    if (!configure) throw new Error('Configure API key action was not rendered');
+    ).find((button) => button.textContent?.includes('Conectar serviço de mídia'));
+    if (!configure) throw new Error('Connect media service action was not rendered');
+    expect(dialog.textContent).toContain('Ajustes → Serviços de mídia');
+    expect(dialog.textContent).not.toMatch(/API key|provider/);
 
     act(() => configure.click());
 
@@ -211,5 +213,52 @@ describe('MediaStudioPanel behavioral contract', () => {
     expect(useMediaStudioStore.getState().open).toBe(false);
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(document.activeElement).toBe(invoker);
+  });
+});
+
+describe('MediaStudioPanel sem projeto aberto (F-1589)', () => {
+  const keyedImage = {
+    id: 'openai-image',
+    kind: 'image',
+    label: 'OpenAI',
+    envVar: 'OPENAI_API_KEY',
+    defaultModel: 'gpt-image-2',
+    models: ['gpt-image-2'],
+    hasKey: true,
+    maskedKey: null,
+  };
+
+  it('mostra os serviços, explica que falta o projeto e não deixa gerar', async () => {
+    const media = (window.nexus as unknown as {
+      media: Record<string, ReturnType<typeof vi.fn>>;
+    }).media;
+    media.listProviders.mockResolvedValue([keyedImage]);
+    media.listArtifacts.mockResolvedValue(null);
+
+    const dialog = await openFrom(renderHarness());
+    expect(dialog.querySelector('[role="status"]')?.textContent).toContain('Abra um projeto para gerar');
+    expect(dialog.querySelector<HTMLSelectElement>('select')?.value).toBe('openai-image::gpt-image-2');
+    const prompt = dialog.querySelector<HTMLTextAreaElement>('textarea')!;
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+      setter.call(prompt, 'um gato astronauta');
+      prompt.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const generate = dialog.querySelector<HTMLButtonElement>('.ms-generate')!;
+    expect(generate.disabled).toBe(true);
+    expect(media.generate).not.toHaveBeenCalled();
+    expect(dialog.textContent).toContain('Abra um projeto para vê-las');
+  });
+
+  it('a galeria falhar não esconde os serviços', async () => {
+    const media = (window.nexus as unknown as {
+      media: Record<string, ReturnType<typeof vi.fn>>;
+    }).media;
+    media.listProviders.mockResolvedValue([keyedImage]);
+    media.listArtifacts.mockRejectedValue(new Error('renderer has no authorized workspace scope'));
+
+    const dialog = await openFrom(renderHarness());
+    expect(dialog.querySelector<HTMLSelectElement>('select')?.value).toBe('openai-image::gpt-image-2');
+    expect(dialog.textContent).not.toContain('authorized workspace scope');
   });
 });
