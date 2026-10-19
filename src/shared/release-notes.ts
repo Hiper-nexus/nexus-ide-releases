@@ -11863,7 +11863,7 @@ export const RELEASE_076331: AppRelease = {
   fixes: [...RELEASE_076329.fixes, ...RELEASE_076330.fixes],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076332: AppRelease = {
   version: '0.76.332',
   date: '2026-10-19',
   codename: 'As contas se revezam sozinhas (macOS)',
@@ -11875,4 +11875,17 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'O resgate não trava mais por status preso', detail: 'Quando a cota esgota, o pedido ao provedor pode travar antes do aviso de parada, e a IA ficava marcada como "trabalhando" para sempre — o que impedia o próprio resgate que essa trava deveria proteger. Agora esse estado vale por tempo limitado, e depois disso o pane é religado na conta seguinte.' },
     { title: 'O orquestrador não troca de conta à toa', detail: 'Algumas IAs têm cota separada por família de modelo. O orquestrador era tirado da conta quando a cota de uma família que ele nem usa enchia, e a missão recomeçava a conversa noutra conta sem precisar. Agora só a cota do modelo que ele realmente usa conta para essa decisão.' },
   ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.333',
+  date: '2026-10-19',
+  codename: 'Memória e contas no Linux',
+  summary: 'No desktop Linux, a pressão crítica estaciona até o pane que está trabalhando e recusa abrir outro na beira do travamento. Várias contas da mesma IA passam a se revezar pela cota medida: o trabalho novo sai da conta que está chegando ao fim, e o pane que emudece continua na conta seguinte. O resgate ignora um status working obsoleto, e o Maestro só drena pela cota do modelo que usa. A tag 0.76.332 é o pacote macOS e não recebe arquivos Linux. A tag 0.76.331 foi marcada e não foi publicada.',
+  highlights: [
+    ...RELEASE_076329.highlights,
+    ...RELEASE_076330.highlights,
+    { title: 'Pacote Linux', detail: 'A tag 0.76.329 é o pacote macOS da memória e não recebe arquivos Linux. A tag 0.76.332 é o pacote macOS das contas e não recebe arquivos Linux. A tag 0.76.330 não recebe arquivos Linux. A tag 0.76.331 foi marcada e não foi publicada. O desktop Linux sai na 0.76.333, com o comparador e a mídia da 0.76.328, o freio de memória e a rotação de contas.' },
+  ],
+  fixes: [...RELEASE_076329.fixes, ...RELEASE_076330.fixes, ...RELEASE_076332.fixes],
 };

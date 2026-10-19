@@ -515,7 +515,9 @@ describe('pane-admission: limites proporcionais à RAM da máquina (0.76.44)', (
     }
     // Memória baixa mas NÃO crítica (entre 30 % e 100 % da reserva): a
     // doutrina "menos travas" segue valendo — avisa e deixa passar.
-    const reserve = readPaneAdmissionLimits({}, 24 * 1024).minFreeMB;
+    // A reserva é a que o gate lê (os.totalmem()). 24 GB deixava 80 % dela
+    // acima da reserva real neste host e o aviso não saía.
+    const reserve = readPaneAdmissionLimits({}).minFreeMB;
     primeSystemMemoryCacheForTest({ freeMB: Math.round(reserve * 0.8), swapUsedMB: 0 });
     const lowMemory = admitAgentSpawnSync(0, Date.now(), {}, { agentRequested: true });
     expect(lowMemory).toMatchObject({ ok: true, warning: expect.stringContaining('Memória livre baixa') });
