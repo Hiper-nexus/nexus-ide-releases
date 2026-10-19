@@ -59,10 +59,10 @@ describe('F-1398: Muse Full nas lanes e contributor com consentimento', () => {
     expect(VISUAL_FRONTIER_LANE[sonnet + 1].preferenceOnly).not.toBe(true);
   });
 
-  it('Full julga com max quando Claude e Codex não estão disponíveis', () => {
+  it('Full julga com high no hard quando Claude e Codex não estão disponíveis', () => {
     const decision = routeTask('Revise o diff do worker e dê o veredito', [contributor(true)],
       DEFAULT_ROUTING_TABLE, 'hard', false, BUILTIN_MODEL_CATALOG, { multiScore: false });
-    expect(decision).toMatchObject({ adapterId: 'muse', model: 'muse-wonder-full-1.0', effort: 'max' });
+    expect(decision).toMatchObject({ adapterId: 'muse', model: 'muse-wonder-full-1.0', effort: 'high' });
     expect(decision?.reason).toContain('lane de julgamento');
     expect(decision?.judgeUnavailable).toBeUndefined();
     expect(JUDGE_FRONTIER_LANE).toContainEqual({ adapterId: 'muse', model: 'muse-wonder-full-1.0', effort: 'max' });
@@ -91,9 +91,17 @@ describe('F-1398 ADD3: Wonder Full lidera o julgamento', () => {
   ];
   const judge = (pool: AdapterAvailability[]) => routeTask('Revise o diff do worker e dê o veredito', pool,
     DEFAULT_ROUTING_TABLE, 'hard', false, BUILTIN_MODEL_CATALOG, { multiScore: true });
-  it('primeiro assento elegível é Wonder Full max, antes de Fable e Astra', () => {
+  it('primeiro assento elegível é Wonder Full, antes de Fable e Astra; hard fica em high', () => {
     expect(JUDGE_FRONTIER_LANE[0]).toMatchObject({ adapterId: 'muse', model: 'muse-wonder-full-1.0', effort: 'max' });
-    expect(judge(judges)).toMatchObject({ adapterId: 'muse', model: 'muse-wonder-full-1.0', effort: 'max' });
+    expect(judge(judges)).toMatchObject({ adapterId: 'muse', model: 'muse-wonder-full-1.0', effort: 'high' });
+  });
+  it('critical aplica o max do assento; hard não', () => {
+    const pool = judges;
+    const review = 'Revise o diff do worker e dê o veredito';
+    expect(routeTask(review, pool, DEFAULT_ROUTING_TABLE, 'critical', false, BUILTIN_MODEL_CATALOG, { multiScore: true }))
+      .toMatchObject({ adapterId: 'muse', model: 'muse-wonder-full-1.0', effort: 'max' });
+    expect(routeTask(review, pool, DEFAULT_ROUTING_TABLE, 'hard', false, BUILTIN_MODEL_CATALOG, { multiScore: true }))
+      .toMatchObject({ adapterId: 'muse', model: 'muse-wonder-full-1.0', effort: 'high' });
   });
   it('sem Muse pronto preserva o Fable como fallback', () => {
     expect(judge(judges.filter((a) => a.id !== 'muse'))).toMatchObject({ adapterId: 'claude', model: 'claude-fable-5-1' });

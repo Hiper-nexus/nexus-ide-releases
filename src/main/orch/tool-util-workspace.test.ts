@@ -3630,9 +3630,11 @@ describe('agent prompt injection', () => {
       }) as typeof stubs.writeSession);
       await vi.advanceTimersByTimeAsync(2_000);
       await expect(pending).resolves.toBe(true);
-      expect(stubs.writeSession).toHaveBeenCalledWith('session-1', 'retome a revisão', {
-        markInputBusy: false,
-      });
+      expect(stubs.writeSession).toHaveBeenCalledWith(
+        'session-1',
+        'retome a revisão',
+        expect.objectContaining({ markInputBusy: false }),
+      );
     } finally {
       vi.useRealTimers();
     }

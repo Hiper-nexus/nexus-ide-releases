@@ -3,7 +3,8 @@
 Decisão do operador em 19/10/2026: o YubiKey substitui o eSigner da SSL.com, que
 saiu do fluxo em 05/10 por cobrar cada assinatura (a build assina dezenas de
 arquivos). Não é o eSigner religado: a chave mora no token, não na nuvem, e
-assinar não gera cobrança.
+assinar não gera cobrança. **Regra: todo app Windows assinado (NexusIDE, Nexus
+Shot e os que vierem) usa este YubiKey.**
 
 ## Estado
 
@@ -14,18 +15,33 @@ assinar não gera cobrança.
 | SHA-256 do SPKI | `cc695904302f57c37532f709c25a9f25710bb04a2f23d1f89b42cf7430c4e3d0` |
 | Atestação | `C:\Users\Administrador\Documents\yubikey-ssl\` (atestação do slot 9a + intermediário Yubico), aceita no pedido |
 | Pedido SSL.com | `co-f01l53ldh43`, OV, HIPERSEND TECNOLOGIA INTERNET & SOFTWARES LTDA |
-| Certificado | **ainda não reemitido** (19/10). O baixável hoje (série 7538CB4E…, RSA 3072) é o do eSigner e não combina com a chave; o `ykman --verify` o recusa |
-| `build/windows-signing-identity.json` | `certificateSha1: null`: o modo recusa e a build sai sem assinatura |
+| Certificado | série `0FF90DF65ACAABCE88CF75190F9E2DE0`, ECC P-384, emitido em 19/10/2026 pela `SSL.com Code Signing Intermediate CA ECC R2`, válido até 22/07/2027; importado no slot 9a (cópia em `yubikey-ssl\codesign-0FF90DF6.crt`, com a cadeia ECC) |
+| Thumbprint fixado | `41BB4AFD0B69AA7B8B88F732E66808A2A5B93560` |
+| Driver | **YubiKey Smart Card Minidriver** (5.0.4.273). O driver PIV nativo do Windows (`msclmd.dll`) não expõe a chave ECC P-384: o `certutil -scinfo` dava `NTE_BAD_KEYSET` e o certificado nunca chegava à loja do usuário |
 
 O SSL.com não emite sozinho para um pedido cadastrado no eSigner: a reemissão foi
-pedida por ticket no chat. A assinatura do eSigner continua cobrando até o
-operador cancelá-la em Orders.
+pedida por ticket no chat e saiu como um segundo certificado no mesmo pedido. O
+baixável antigo (série 7538CB4E…, RSA 3072) é o do eSigner e não combina com a
+chave. O e-mail da emissão é o modelo do eSigner ("set your PIN", "issue
+certificate"): ignore, o YubiKey não usa nada disso. A assinatura do eSigner
+continua cobrando até o operador cancelá-la em Orders.
 
-## Quando o certificado sair (uma vez)
+Prova de 19/10: `signtool sign /sha1 41BB4AFD… /fd sha256 /tr
+http://timestamp.sectigo.com /td sha256` numa cópia do `StubExecutable.exe` deu
+`Get-AuthenticodeSignature` = `Valid`, cadeia até a `SSL.com Root Certification
+Authority ECC` e carimbo da Sectigo. Um artigo da Yubico diz que a Microsoft não
+aceita certificado ECC para code signing; para Authenticode de modo usuário o
+Windows aceitou. Assinatura de driver de kernel é outra regra e não é o caso do
+Nexus.
 
-1. Em secure.ssl.com, Orders → `co-f01l53ldh43` → END ENTITY CERTIFICATES precisa
-   ter uma segunda entrada, ECC, que não é a série 7538CB4E…. O operador baixa o
-   `.crt` dela.
+## Quando um certificado novo sair (renovação; feito uma vez em 19/10)
+
+0. No PC que assina, instale o **YubiKey Smart Card Minidriver** x64
+   (downloads.yubico.com, confira o `.sha256` publicado e a assinatura Authenticode
+   da Yubico AB no MSI). Sem ele o Windows não enxerga a chave ECC.
+1. Em secure.ssl.com, Orders → `co-f01l53ldh43` → END ENTITY CERTIFICATES, baixe o
+   `.zip` da entrada ECC (traz o certificado e a cadeia ECC). A entrada 7538CB4E…
+   é a do eSigner.
 2. Confira que o certificado é da chave do slot 9a (precisa imprimir o SPKI da
    tabela acima):
 
@@ -48,9 +64,12 @@ operador cancelá-la em Orders.
    certutil -scinfo -silent
    ```
 
-   `HasPrivateKey` precisa ser `True`. Se o certificado não aparecer, tire e
-   recoloque o YubiKey; o serviço Propagação de Certificado (`CertPropSvc`) tem de
-   estar rodando.
+   `HasPrivateKey` precisa ser `True`, e o `certutil` precisa mostrar a placa como
+   "YubiKey Smart Card" (não "Identity Device (NIST SP 800-73 [PIV])", o driver
+   nativo) com "Teste de correspondência de chave pública bem-sucedido". O Windows
+   só propaga o certificado quando o cartão é conectado: depois de importar ou de
+   instalar o minidriver, tire e recoloque o YubiKey. O serviço Propagação de
+   Certificado (`CertPropSvc`) sobe sozinho com o cartão.
 5. Prove a assinatura à mão numa cópia de qualquer executável (o Windows pede o
    PIN):
 
@@ -79,9 +98,15 @@ npm run make -- --platform win32 --arch x64
   HIPERSEND, uso de assinatura de código, validade e a ligação com a chave do
   cartão. YubiKey fora da porta falha aqui, antes de qualquer arquivo assinado.
 - O SignTool recebe `/sha1 <thumbprint>` da loja do usuário (sem `/sm`). O Windows
-  pede o PIN a cada processo do SignTool: um para todos os `.exe`, `.dll` e `.node`
-  do pacote (o `@electron/windows-sign` assina tudo numa chamada) e um para cada
-  executável que o Squirrel assina depois (Update.exe, o stub e o Setup).
+  pede o PIN a cada processo do SignTool (o minidriver só guarda o PIN dentro do
+  processo). Medido em 19/10: **5 janelas por build completo**, uma para todos os
+  `.exe`, `.dll` e `.node` do pacote (o `@electron/windows-sign` assina tudo numa
+  chamada) e quatro do Squirrel, em sequência: o stub, o `squirrel.exe` do
+  pacote, o `Update.exe` e o `Setup.exe`. A janela "Segurança do Windows" pode
+  abrir atrás das outras, e uma janela cancelada ou perdida derruba o make
+  ("Failed to sign … Update.exe"). Com o pacote já assinado em `out/`, refazer só o
+  instalador (`electron-forge make --skip-package`) pede 4. Reduzir isso é trabalho
+  em andamento; o PIN nunca vai para script, argv nem variável de ambiente.
 - Servidor de carimbo instável (`SignerSign() failed (0x80093102)` num arquivo
   diferente a cada tentativa, F-656): repita com
   `$env:NEXUS_WINDOWS_TIMESTAMP_URL = 'http://timestamp.sectigo.com'`.
@@ -108,10 +133,23 @@ npm run make -- --platform win32 --arch x64
 ## Renovação e troca de chave
 
 - Certificado novo sobre a mesma chave (renovação anual): importe no slot 9a e
-  troque só o `certificateSha1`.
+  troque só o `certificateSha1`, aqui e no `src-tauri/windows-signing-identity.json`
+  do Nexus Shot (os dois repositórios fixam a mesma identidade).
 - Chave nova (outro YubiKey ou slot regenerado): nova atestação, novo pedido de
   reemissão, e o `spkiSha256` do JSON muda junto com o thumbprint, revisados no
   mesmo commit.
+
+## O que esta assinatura cobre (por produto)
+
+| Produto | Windows | Como sai assinado |
+|---|---|---|
+| NexusIDE (app, DLLs e `.node` do pacote) | Sim | `npm run make` com `NEXUS_WINDOWS_YUBIKEY_SIGNING=1` (este runbook) |
+| Redline no Windows (`resources\nexus-redline\NexusRedline.exe`) | Sim | Vai dentro do pacote do NexusIDE e é assinado na mesma chamada (conferido em 19/10: `Valid`, `41BB4AFD…`) |
+| Instalador Squirrel (`Setup.exe`, `Update.exe`, stub) | Sim | O Squirrel assina na mesma build; o recibo confere os quatro executáveis |
+| `d3dcompiler_47.dll`, `dxil.dll` | Não precisa | Já vêm assinadas pela Microsoft no Electron |
+| Nexus Shot (repo `nexus-shot`, Tauri, NSIS) | Sim, desde 19/10 (branch `feat/windows-port`, `3c76ad9`) | `src-tauri/tauri.windows.conf.json` → `scripts/windows-sign.ps1` com a mesma identidade fixada (`src-tauri/windows-signing-identity.json`); 8 PINs no primeiro build e 3 nos seguintes (plugins do NSIS em cache). Runbook: `docs/windows-signing.md` do Shot. O instalador público do v0.1.15 (0.1.13) é anterior e saiu sem assinatura |
+| NexusIDE no macOS / Redline do Mac / Shot no Mac | Outro caminho | Developer ID + notarização (`build/notarize.md`, `docs/RELEASE.md`) |
+| NexusIDE no Linux | Outro caminho | Ed25519 do `.sig` (F-940, `docs/RELEASE.md`) |
 
 ## Limites
 

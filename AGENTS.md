@@ -130,11 +130,19 @@ npm run rebuild:node           # rebuild native modules for Node (CI/tests)
   cartão). O modo recusa `WINDOWS_CERTIFICATE_FILE/PASSWORD`, `WINDOWS_SIGNTOOL_PATH`,
   `WINDOWS_SIGN_HOOK_MODULE_PATH` e `WINDOWS_SIGN_WITH_PARAMS`: o
   `@electron/windows-sign` os lê do ambiente por baixo das opções do Forge.
-- **Em 19/10 o `certificateSha1` do JSON é `null`**: o SSL.com ainda não reemitiu o
-  certificado ECC (o baixável, série 7538CB4E…, RSA 3072, é do eSigner e não
-  combina com a chave). Até ele ser importado no slot e fixado, o modo recusa e a
-  build sai sem assinatura. Runbook: `docs/windows-signing/YUBIKEY.md`. Nunca
-  digite PIN ou PUK pelo operador; o Windows pede o PIN a cada processo do SignTool.
+- **Certificado fixado em 19/10**: série `0FF90DF6…` (ECC P-384, intermediária
+  `SSL.com Code Signing Intermediate CA ECC R2`, vence 22/07/2027), thumbprint
+  `41BB4AFD0B69AA7B8B88F732E66808A2A5B93560`. O baixável antigo (série 7538CB4E…,
+  RSA 3072) é o do eSigner e não combina com a chave. O PC que assina precisa do
+  **YubiKey Smart Card Minidriver**: o driver PIV nativo do Windows (`msclmd.dll`)
+  não expõe a chave ECC P-384 (`NTE_BAD_KEYSET`, certificado fora da loja do
+  usuário). Runbook: `docs/windows-signing/YUBIKEY.md`. Nunca digite PIN ou PUK
+  pelo operador; o Windows pede o PIN a cada processo do SignTool (5 por build).
+  Cobre o NexusIDE inteiro, inclusive o `NexusRedline.exe` do pacote e o instalador
+  Squirrel. **Regra do operador (19/10): todo app Windows assinado usa este
+  YubiKey.** O Nexus Shot (repo próprio, Tauri) assina pelo mesmo token desde
+  `3c76ad9` na `feat/windows-port` (`scripts/windows-sign.ps1`, mesma identidade
+  fixada; renovação troca o thumbprint nos dois repositórios).
 - O JSON é a fonte única: o coletor (`collect-windows-release.ps1`) grava
   `signing: 'yubikey'` só com Setup, app, Update.exe e stub assinados e carimbados
   pelo certificado fixado (thumbprint e SPKI conferidos); nenhum assinado vira
@@ -520,6 +528,15 @@ saber isto antes de mexer:
   ids de missão/worker, derivados por `worktreeBranchRef` nos validadores também.
 - A base é HEAD do escopo; WIP do checkout de coordenação não é copiado nem
   exige limpeza. O caminho selado mantém a exigência de checkout limpo.
+- Antes de congelar a base, `WorktreeManager.create()` refresca o upstream da
+  raiz de coordenação (`refreshUpstreamDriftAsync`): `fetch --prune origin`
+  (só toca `refs/remotes/origin/*`, fail-open em falha de rede, no máximo um
+  fetch bem-sucedido por raiz a cada 60 s — cache em memória no manager) e
+  `merge --ff-only @{upstream}` SÓ com a branch rastreando origin/*, a árvore
+  comprovadamente limpa (rastreados) e o histórico estritamente atrás. Branch
+  sem upstream origin/* (ex.: a branch de feature do operador) é medida contra
+  `origin/HEAD`/`origin/main` SÓ para o aviso de atraso, sem ff e sem tocar na
+  branch. Nunca destrói WIP.
 - `isolated-writer-worktree.ts` libera a reserva por `markFailed` no tap de
   saída física do PTY, inclusive fechamento/teardown de missão, ou em falha
   de spawn sem pane vivo. ACK pendente mantém a reserva de worktree.
@@ -1557,6 +1574,69 @@ saber isto antes de mexer:
 - Workers e orquestradores NÃO herdam o perfil MCP global do usuário
   (`~/.claude.json`); só a mão do operador (`role user`) herda. Quem precisa
   de um servidor MCP extra declara por allowlist.
+
+## Freio de emergência: pressão CRÍTICA é a única trava sem opt-in (19/10)
+
+Incidente do cliente (iMac M5, 16 GB): abriu ~2 panes, depois vários mais, com
+terminais próprios fora do Nexus, e o macOS travou inteiro. Medido neste
+repositório: num Mac de 16 GB `limitsForMachine` dá teto 4 e reserva de
+2.458 MB, mas as DUAS defesas eram inertes justamente no cenário que mata a
+máquina — e os testes de pressão só cobriam panes OCIOSOS.
+
+- **O reaper não via pane ocupado.** `listIdleSessions()` filtra
+  `getSessionState === 'idle'` e o tap de status apaga de `idleSince` quem sai
+  do idle. Com 8 panes OCUPADOS e pressão crítica por 10 varreduras, o
+  guardião recuperava ZERO: a RAM está nos panes que trabalham. Os lotes de
+  2/4/6 por tick estacionavam um conjunto vazio por construção.
+- **A mão do operador nunca era recusada.** `hardBlocks` nasce `false`, então
+  o teto e a memória baixa só AVISAM; o 9º pane entrava com 500 MB livres.
+- **A reação levava até 60 s** (`PANE_GUARDIAN_SWEEP_INTERVAL_MS`), sem nada
+  entre ticks.
+- **O footprint por pane era só telemetria**: `pane-footprint.ts` mede o RSS
+  da árvore por sessão, o badge do PaneToolbar o mostra, e nenhuma decisão o
+  usava.
+
+O que mudou — e o que NÃO mudou:
+
+- **A doutrina "menos travas" segue valendo para contagem, moderada e severa:
+  elas avisam.** A exceção é estreita e medida: livre abaixo de **30 % da
+  reserva** (`isCriticalFreeMemory`, `CRITICAL_PRESSURE_FREE_RATIO`) recusa o
+  spawn mesmo sem `hardBlocks` — é a leitura literal de "bloqueio só por
+  pressão real". A recusa diz que é RAM física (não limite do plano), nomeia o
+  dano (travar o sistema inteiro) e o caminho.
+- **Swap continua FORA da recusa dura**, de propósito: o gate nasce desarmado
+  e, mesmo armado por uma máquina, é advisory por decisão do operador (no
+  macOS o número guarda o pico). Por isso há dois predicados:
+  `isCriticalFreeMemory` (só livre — é o da admissão) e
+  `isCriticalMemoryPressureSample` (livre + swap armado — é o do guardião, com
+  a semântica que ele já tinha). A suíte pegou essa diferença: não as una.
+- **Na pressão CRÍTICA o guardião também estaciona pane OCUPADO**
+  (`paneIsSalvageableUnderCriticalPressure` + `drainBusyPanesUnderCriticalPressure`),
+  até `CRITICAL_BUSY_DRAIN_PARKS_PER_TICK` (3) por tick, remedindo a pressão a
+  cada park — assim que a folga volta, para. A fila é
+  `criticalDrainOrder`: worker/helper antes do pane que o humano abriu no
+  "+ Pane", e dentro do tier o **maior footprint medido primeiro** (footprint
+  não medido vai ao fim do tier; ausência de dado não é 0 MB). Os vetos de
+  sempre continuam: orquestrador, entrega armada, pane que fez pergunta ao
+  operador e carência de quem acabou de acordar. Estacionar preserva pane,
+  scrollback e "Acordar" por resume; adapter sem resume devolve `false` e nada
+  é perdido.
+- **O guardião mede o footprint ele mesmo** (`refreshPaneFootprints`, uma vez
+  por tick crítico): o push do badge só roda com um renderer assinando, então
+  o freio não pode depender dele.
+- **Cadência curta sob pressão**: `PRESSURE_FAST_SWEEP_INTERVAL_MS` (5 s)
+  dispara a varredura enquanto a pressão é severa/crítica, com guarda de
+  sobreposição (`sweepInFlight`); fora disso continua 60 s e não há `ps` extra.
+- **O aviso no pane não pode parecer crash**: na pressão o texto diz
+  "estacionado para a máquina não travar (memória crítica) … Digite para
+  retomar a conversa".
+- **A recusa crítica é uniforme**: worker automático, helper, pane do operador
+  E orquestrador. Consequência assumida: a remontagem de um orquestrador
+  (F-245/F-721) espera a folga voltar — na beira do freeze um pane novo de
+  ~1,25 GB levaria o sistema inteiro, e o freio de emergência está drenando em
+  paralelo a cada 5 s. Quem recusa diz o caminho; o retry existente reabre.
+- As válvulas de escape continuam desligando TUDO, inclusive a recusa crítica:
+  `NEXUS_PANE_GUARD=off` e `NEXUS_PANE_MIN_FREE_MB=0`.
 
 ## Pane solto tem que começar (F-723)
 

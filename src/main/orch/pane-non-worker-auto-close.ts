@@ -27,7 +27,7 @@ import { runPeriodicTask, stopPeriodicTask, type PeriodicTaskContext } from '../
  */
 
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
-import { getSessionState, tapSessionExit } from '../pty/pty-manager';
+import { getSessionState, probePaneFootprints, tapSessionExit } from '../pty/pty-manager';
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 import {
   getPaneAuthzInfo,
@@ -40,6 +40,7 @@ import {
 import { getAgentSessionInfo } from '../pty/pty-manager';
 import { getAdapter } from '../adapters/adapter-registry';
 import {
+  isAgentAwaitingOperator,
   isSessionIdleForCleanup,
   isSessionInAbandonedDialog,
   tapAgentSemanticStatus,
@@ -48,7 +49,9 @@ import { getContextBySession } from './gate';
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { armedDeliveryContract } from './delivery-contract';
 import {
+  SEVERE_PRESSURE_FREE_RATIO,
   getCachedSystemMemory,
+  isCriticalMemoryPressureSample,
   isUnderMemoryPressure,
   readPaneAdmissionLimits,
   registerPaneAdmissionAdvisor,
@@ -139,6 +142,25 @@ export interface NonWorkerAutoCloseDeps {
    * do reaper de emergência. Ausente = nunca crítica.
    */
   readonly isCriticalMemoryPressure?: () => boolean;
+  /**
+   * 19/10 (cliente iMac M5 16 GB): TODAS as sessões de agente vivas, ocupadas
+   * ou não. `listIdleSessions` só enxerga as ociosas, e a RAM está nos panes
+   * que trabalham — sem esta lista o freio de emergência não tem candidato.
+   */
+  readonly listAgentSessions?: () => readonly string[];
+  /** RSS da árvore do pane em MB; null = não medido (nunca chutar 0). */
+  readonly paneFootprintMB?: (sessionId: string) => number | null;
+  /** Remede o footprint antes do drain crítico (uma vez por tick). */
+  readonly refreshPaneFootprints?: () => Promise<void>;
+  /** O pane fez uma pergunta ao operador: drenar seria perder a resposta. */
+  readonly isAwaitingOperator?: (sessionId: string) => boolean;
+  /**
+   * 19/10: cadência CURTA usada só enquanto a máquina está severa/crítica. A
+   * varredura normal é de 60 s, e com 6-8 CLIs alocando a máquina vai de
+   * "apertada" a travada bem antes do próximo tick. Ausente (o default dos
+   * testes) = nenhum timer extra, cadência única de `sweepIntervalMs`.
+   */
+  readonly pressureSweepIntervalMs?: number;
 }
 
 /** Carência pós-acordar antes de o reaper de emergência poder estacionar de novo. */
@@ -157,10 +179,21 @@ const MEMORY_SAMPLE_BLIND_TICKS = 3;
 const MODERATE_PRESSURE_PARKS_PER_TICK = 2;
 const SEVERE_PRESSURE_PARKS_PER_TICK = 4;
 const CRITICAL_PRESSURE_PARKS_PER_TICK = 6;
-/** Fração do mínimo livre abaixo da qual a pressão é considerada severa. */
-const SEVERE_PRESSURE_RATIO = 0.6;
-/** Fração do mínimo livre abaixo da qual a pressão é considerada crítica. */
-const CRITICAL_PRESSURE_RATIO = 0.3;
+/**
+ * A razão da pressão severa mora em `pane-admission` (junto de quem define a
+ * reserva) e é reexportada aqui pelo nome histórico do guardião. A crítica
+ * não aparece mais solta: `isCriticalMemoryPressureSample` é a dona dela.
+ */
+const SEVERE_PRESSURE_RATIO = SEVERE_PRESSURE_FREE_RATIO;
+/**
+ * Freio de emergência (19/10): panes OCUPADOS estacionados por tick na
+ * pressão CRÍTICA. Menor que o lote de ociosos (6) de propósito — estacionar
+ * quem trabalha custa trabalho em voo, e o maior footprint primeiro costuma
+ * devolver a folga no primeiro park. A pressão é remedida a cada park.
+ */
+export const CRITICAL_BUSY_DRAIN_PARKS_PER_TICK = 3;
+/** Cadência da varredura enquanto a pressão está severa ou crítica. */
+export const PRESSURE_FAST_SWEEP_INTERVAL_MS = 5_000;
 
 function productionDeps(): NonWorkerAutoCloseDeps {
   return {
@@ -245,6 +278,31 @@ function productionDeps(): NonWorkerAutoCloseDeps {
     isMemorySampleMissing: () => getCachedSystemMemory() === null,
     isSevereMemoryPressure: productionSevereMemoryPressure,
     isCriticalMemoryPressure: productionCriticalMemoryPressure,
+    pressureSweepIntervalMs: PRESSURE_FAST_SWEEP_INTERVAL_MS,
+    // Freio de emergência (19/10): sessões de agente VIVAS, ocupadas ou não.
+    listAgentSessions: () =>
+      listPaneSnapshots()
+        .filter(
+          (pane) =>
+            pane.kind === 'cli-agent' &&
+            typeof pane.sessionId === 'string' &&
+            getSessionState(pane.sessionId) !== null,
+        )
+        .map((pane) => pane.sessionId as string),
+    paneFootprintMB: (sessionId) => footprintMBBySession.get(sessionId) ?? null,
+    refreshPaneFootprints: async () => {
+      const sample = await probePaneFootprints();
+      if (!sample) return;
+      const next = new Map<string, number | null>();
+      for (const footprint of sample) {
+        next.set(
+          footprint.sessionId,
+          footprint.rssBytes === null ? null : Math.round(footprint.rssBytes / (1024 * 1024)),
+        );
+      }
+      footprintMBBySession = next;
+    },
+    isAwaitingOperator: (sessionId) => isAgentAwaitingOperator(sessionId),
     registerAdvisor: () =>
       registerPaneAdmissionAdvisor({
         idleCandidates: (now) =>
@@ -352,12 +410,130 @@ export function paneIsParkableUnderPressure(
   return ref;
 }
 
+/**
+ * Quem o freio de emergência pode estacionar na pressão CRÍTICA — a diferença
+ * para `paneIsParkableUnderPressure` é uma só: **não exige estar ocioso**.
+ *
+ * Por que isso é necessário: no incidente do iMac M5 de 16 GB os panes que
+ * consumiam a RAM estavam todos trabalhando, então o reaper de ociosos ficava
+ * com a lista vazia e a máquina travava inteira. Estacionar suspende o CLI
+ * mas preserva o pane, o scrollback e o "Acordar" por resume; adapter sem
+ * resume devolve `false` em `parkPane` e nada é perdido.
+ *
+ * Os vetos continuam de pé: orquestrador (governa a missão), entrega armada,
+ * pane que fez uma pergunta ao operador e carência de quem acabou de acordar.
+ */
+export function paneIsSalvageableUnderCriticalPressure(
+  deps: NonWorkerAutoCloseDeps,
+  sessionId: string,
+): NonWorkerPaneRef | null {
+  if (!deps.isEnabled()) return null;
+  if (deps.hasPendingDelivery?.(sessionId)) return null;
+  if (deps.isAwaitingOperator?.(sessionId)) return null;
+  const wokeAgo = deps.wokeAgoMs?.(sessionId);
+  if (wokeAgo !== null && wokeAgo !== undefined && wokeAgo < PANE_WAKE_GRACE_MS) return null;
+  const ref = deps.getPaneRef(sessionId);
+  if (!ref) return null;
+  if (!isGuardianParkablePane(ref)) return null;
+  return ref;
+}
+
+/**
+ * Fila do freio de emergência: quem sai primeiro. Dois critérios, nesta ordem.
+ *
+ * 1. **Tier.** Worker e helper (aberto pela mão do operador via spawn) antes
+ *    do pane que o humano abriu no "+ Pane" — esse é a mão dele e só sai se a
+ *    pressão continuar depois dos outros.
+ * 2. **Footprint medido, do maior para o menor.** Um pane de 3 GB devolve a
+ *    folga que três de 900 MB não devolvem. Footprint não medido vai ao fim do
+ *    próprio tier: ausência de dado não é 0 MB nem licença para drenar.
+ *
+ * Desempate final pelo id, para a ordem ser estável entre ticks.
+ */
+export function criticalDrainOrder(
+  deps: NonWorkerAutoCloseDeps,
+  sessionIds: readonly string[],
+): string[] {
+  const tierOf = (sessionId: string): number => {
+    const ref = deps.getPaneRef(sessionId);
+    if (!ref) return 2;
+    if (ref.role === 'worker' || ref.operatorParentSessionId !== undefined) return 0;
+    return 1;
+  };
+  const footprintOf = (sessionId: string): number => {
+    const mb = deps.paneFootprintMB?.(sessionId);
+    return typeof mb === 'number' && Number.isFinite(mb) ? mb : -1;
+  };
+  return [...sessionIds].sort(
+    (a, b) => tierOf(a) - tierOf(b) || footprintOf(b) - footprintOf(a) || a.localeCompare(b),
+  );
+}
+
+/**
+ * Um tick do freio de emergência. Só a pressão CRÍTICA chega aqui: na
+ * moderada e na severa o guardião continua tocando apenas panes ociosos
+ * (doutrina "menos travas" — contagem não é dano, mas o freeze da máquina é).
+ */
+async function drainBusyPanesUnderCriticalPressure(
+  deps: NonWorkerAutoCloseDeps,
+  context?: PeriodicTaskContext,
+): Promise<void> {
+  const list = deps.listAgentSessions;
+  if (!list) return;
+  if (deps.refreshPaneFootprints) {
+    try {
+      await deps.refreshPaneFootprints();
+    } catch {
+      // Sem medida o drain segue: a fila cai para o desempate estável.
+    }
+    context?.assertCurrent();
+  }
+  let parked = 0;
+  const attempted = new Set<string>();
+  while (parked < CRITICAL_BUSY_DRAIN_PARKS_PER_TICK) {
+    await context?.checkpoint();
+    // Remedida a cada volta: assim que a folga volta, o drain para.
+    if (!deps.isCriticalMemoryPressure?.()) break;
+    const queue = criticalDrainOrder(
+      deps,
+      list().filter((sessionId) => !attempted.has(sessionId) && !closing.has(sessionId)),
+    );
+    const sessionId = queue[0];
+    if (!sessionId) break;
+    attempted.add(sessionId);
+    const ref = paneIsSalvageableUnderCriticalPressure(deps, sessionId);
+    if (!ref) continue;
+    // Sem parkPane só resta o fechamento destrutivo: aí vale a régua estreita.
+    if (!deps.parkPane && !isGuardianEligiblePane(ref)) continue;
+    const footprintMB = deps.paneFootprintMB?.(sessionId) ?? null;
+    deps.log(
+      'pressão crítica: estacionando pane OCUPADO para não travar a máquina ' +
+        `(pane=${ref.paneId}, role=${ref.role ?? 'none'}` +
+        `${footprintMB === null ? '' : `, ${Math.round(footprintMB)} MB`}) ` +
+        `[lote ${parked + 1}/${CRITICAL_BUSY_DRAIN_PARKS_PER_TICK}]`,
+    );
+    const closed = await closeIdlePane(deps, ref, sessionId, 'varredura', 'memory-pressure');
+    context?.assertCurrent();
+    if (closed) parked += 1;
+  }
+}
+
 const armed = new Map<string, ReturnType<typeof setTimeout>>();
 /** Varredura (F-572): quando cada sessão foi vista idle pela primeira vez. */
 const idleSince = new Map<string, number>();
 /** Sessões cujo fechamento já foi pedido; evita pedir duas vezes por tick. */
 const closing = new Set<string>();
+/**
+ * Última medida de footprint por sessão (MB), colhida pelo próprio guardião
+ * no tick de pressão crítica. O push do badge (pane-footprint-broadcast) só
+ * roda quando um renderer assina, então o freio de emergência não pode
+ * depender dele. null = medida ausente, nunca 0.
+ */
+let footprintMBBySession = new Map<string, number | null>();
 let sweepTimer: ReturnType<typeof setInterval> | null = null;
+let pressureSweepTimer: ReturnType<typeof setInterval> | null = null;
+/** Uma varredura por vez: a cadência curta não pode sobrepor a de 60 s. */
+let sweepInFlight = false;
 let blindTicks = 0;
 let sweepController = new AbortController();
 const closeFlights = new Set<Promise<unknown>>();
@@ -523,6 +699,13 @@ export async function sweepIdlePanes(deps: NonWorkerAutoCloseDeps, context?: Per
       if (closed) parked += 1;
     }
   }
+  // Freio de emergência (19/10, cliente iMac M5 16 GB): o reaper acima fica
+  // com a lista vazia quando TODOS os panes trabalham — e é exatamente aí que
+  // a RAM acaba e o macOS trava inteiro. Na pressão CRÍTICA, e só nela, o
+  // guardião também estaciona pane ocupado, do maior footprint para o menor.
+  if (deps.isCriticalMemoryPressure?.()) {
+    await drainBusyPanesUnderCriticalPressure(deps, context);
+  }
 }
 
 /** Pressão severa: memória livre abaixo de 60 % do mínimo do gate. */
@@ -545,17 +728,7 @@ function productionSevereMemoryPressure(): boolean {
  */
 function productionCriticalMemoryPressure(): boolean {
   try {
-    const sample = getCachedSystemMemory();
-    if (!sample) return false;
-    const limits = readPaneAdmissionLimits();
-    if (sample.freeMB !== null && sample.freeMB < limits.minFreeMB * CRITICAL_PRESSURE_RATIO) {
-      return true;
-    }
-    return (
-      limits.maxSwapUsedMB > 0 &&
-      sample.swapUsedMB !== null &&
-      sample.swapUsedMB > limits.maxSwapUsedMB
-    );
+    return isCriticalMemoryPressureSample(getCachedSystemMemory(), readPaneAdmissionLimits());
   } catch {
     return false;
   }
@@ -590,11 +763,26 @@ export function initNonWorkerAutoClose(
   });
   if (deps.listIdleSessions) {
     const interval = deps.sweepIntervalMs ?? PANE_GUARDIAN_SWEEP_INTERVAL_MS;
-    sweepTimer = setInterval(() => {
-      void runPeriodicTask('pane-guardian', (context) => sweepIdlePanes(deps, context),
-        { signal: sweepController.signal, cadenceMs: interval }).catch(() => undefined);
-    }, interval);
+    const runSweep = (taskId: string, cadenceMs: number): void => {
+      if (sweepInFlight) return;
+      sweepInFlight = true;
+      void runPeriodicTask(taskId, (context) => sweepIdlePanes(deps, context),
+        { signal: sweepController.signal, cadenceMs })
+        .catch(() => undefined)
+        .finally(() => { sweepInFlight = false; });
+    };
+    sweepTimer = setInterval(() => runSweep('pane-guardian', interval), interval);
     if (typeof sweepTimer.unref === 'function') sweepTimer.unref();
+    // Cadência curta: só dispara enquanto a pressão está severa/crítica, e a
+    // checagem é uma leitura do cache de memória — nenhum `ps` por tick.
+    const fast = deps.pressureSweepIntervalMs;
+    if (fast !== undefined && fast > 0 && fast < interval) {
+      pressureSweepTimer = setInterval(() => {
+        if (!(deps.isCriticalMemoryPressure?.() || deps.isSevereMemoryPressure?.())) return;
+        runSweep('pane-guardian-pressure', fast);
+      }, fast);
+      if (typeof pressureSweepTimer.unref === 'function') pressureSweepTimer.unref();
+    }
   }
 }
 
@@ -606,10 +794,15 @@ export async function shutdownNonWorkerAutoClose(): Promise<void> {
   untapExit = null;
   if (sweepTimer) clearInterval(sweepTimer);
   sweepTimer = null;
+  if (pressureSweepTimer) clearInterval(pressureSweepTimer);
+  pressureSweepTimer = null;
+  sweepInFlight = false;
   for (const sessionId of [...armed.keys()]) cancelTimer(sessionId);
   idleSince.clear();
   closing.clear();
+  footprintMBBySession = new Map();
   blindTicks = 0;
   await stopPeriodicTask('pane-guardian');
+  await stopPeriodicTask('pane-guardian-pressure');
   await Promise.allSettled([...closeFlights]);
 }

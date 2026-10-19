@@ -5,6 +5,8 @@ import { act, useState, type ComponentProps } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import type { Editor } from '@tiptap/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Squad, SquadAgent } from '../../../shared/orch-types';
+import { PET_STUDIO_SQUAD } from '../../../shared/pet-studio';
 import type { AdapterInfo } from '../../../shared/types';
 import type { ProviderSettingsInfo } from '../../../shared/provider-settings-types';
 import { DEFAULT_ORCH_SETTINGS } from '../../../shared/settings-types';
@@ -17,8 +19,10 @@ import {
 } from '../../state/mission-attachment-presentation';
 import {
   createEmptyMissionSetupDraft,
+  useMissionSetupStore,
   type MissionSetupDraft,
 } from '../../state/mission-setup-store';
+import { useOrchStore } from '../../state/orch-store';
 import { missionRuntimeReadiness } from '../../orch/mission-runtime-readiness';
 import { formatShortcut } from '../../lib/platform';
 import { ExpressMissionStart } from './ExpressMissionStart';
@@ -133,6 +137,7 @@ afterEach(() => {
     presentation: new Map(),
     pending: [],
   });
+  useOrchStore.setState({ squads: [] });
   for (const [name, descriptor] of geometry) {
     if (descriptor) Object.defineProperty(Range.prototype, name, descriptor);
     else Reflect.deleteProperty(Range.prototype, name);
@@ -571,4 +576,226 @@ describe('ExpressMissionStart — ordem do Tab e anexos acessíveis', () => {
     expect(zone.getAttribute('aria-label')).toMatch(/anexar arquivos/i);
   });
 });
+
+describe('ExpressMissionStart — escolher equipe salva em Personalizar equipe (F-1582)', () => {
+  function member(
+    id: string,
+    agentName: string,
+    category: SquadAgent['category'],
+    cli: string,
+  ): SquadAgent {
+    return {
+      id,
+      agentName,
+      category,
+      cli,
+      model: 'm1',
+      allowedSkills: [],
+      allowedTools: null,
+    };
+  }
+
+  function squad(
+    id: string,
+    name: string,
+    builtin: boolean,
+    agents: SquadAgent[],
+  ): Squad {
+    return {
+      id,
+      name,
+      createdAt: '1',
+      builtin,
+      orchestratorInstructions: '',
+      agents,
+    };
+  }
+
+  const ORIGINAL = squad('nexus-fullstack', 'Full-Stack', true, [
+    member('fs-orch', 'Maestro Full-Stack', 'orchestrator', 'claude'),
+    member('fs-dev', 'Dev Full-Stack', 'executor', 'codex'),
+    member('fs-qa', 'QA Full-Stack', 'reviewer', 'claude'),
+  ]);
+  const GBX = squad('full-stack-gbx', 'Full-Stack - GBX', false, [
+    member('gbx-orch', 'Maestro GBX', 'orchestrator', 'claude'),
+    { ...member('gbx-api', 'API GBX', 'executor', 'codex'), ownsPlanDocs: true },
+    member('gbx-front', 'Front GBX', 'executor', 'claude'),
+    member('gbx-qa', 'QA GBX', 'reviewer', 'codex'),
+  ]);
+  const RUNTIME_COPY = squad(
+    'mission-runtime-0f8fad5b-d9cb-469f-a165-70867728950e',
+    'Cópia selada',
+    false,
+    [member('rt-orch', 'Maestro selado', 'orchestrator', 'claude')],
+  );
+  const TOO_BIG = squad(
+    'equipe-grande',
+    'Equipe grande',
+    false,
+    Array.from({ length: 13 }, (_, index) =>
+      member(
+        `big-${index}`,
+        `Agente ${index}`,
+        index === 0 ? 'orchestrator' : 'executor',
+        'codex',
+      ),
+    ),
+  );
+
+  function renderStoreBackedExpress(): HTMLElement {
+    const inv = inventory(true);
+    useMissionSetupStore.getState().setWorkspace(WORKSPACE.path);
+    useMissionSetupStore.getState().resetWorkspace(WORKSPACE.path);
+    useMissionSetupStore.getState().setRoster(
+      buildRecommendedMissionRoster({
+        objective: 'x',
+        lane: 'standard',
+        readiness: inv.readiness,
+        providers: inv.providers,
+        accounts: inv.accounts,
+        settings: inv.settings,
+      }) ?? [],
+    );
+
+    function StoreBacked() {
+      const draft = useMissionSetupStore((state) => state.draft);
+      return (
+        <ExpressMissionStart
+          workspace={WORKSPACE}
+          draft={draft}
+          draftFieldsDisabled={false}
+          suppressHeadingAutofocus={false}
+          pickingWorkspace={false}
+          workspaceActionError={null}
+          inventoryReady
+          inventoryLoading={false}
+          busy={false}
+          error={null}
+          directAnswer={null}
+          onDismissDirectAnswer={() => undefined}
+          onStartMissionAnyway={() => undefined}
+          onPickWorkspace={() => undefined}
+          onObjectiveChange={(objective) =>
+            useMissionSetupStore.getState().setObjective(objective)
+          }
+          onAcceptanceChange={(acceptance) =>
+            useMissionSetupStore.getState().setAcceptance(acceptance)
+          }
+          onContextPathsChange={(paths) =>
+            useMissionSetupStore.getState().setContextPaths(paths)
+          }
+          onStart={() => undefined}
+          onAdvanced={() => undefined}
+          onConnectProvider={() => undefined}
+          inventory={inv}
+          onRosterChange={(next) =>
+            useMissionSetupStore.getState().setRoster(next)
+          }
+        />
+      );
+    }
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    roots.push(root);
+    act(() => root.render(<StoreBacked />));
+    return host;
+  }
+
+  function choose(select: HTMLSelectElement, value: string): void {
+    act(() => {
+      select.value = value;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  }
+
+  it('lista as equipes do usuário antes das originais dentro de Personalizar equipe, sem cópias seladas nem Pet Studio', () => {
+    useOrchStore.setState({
+      squads: [ORIGINAL, RUNTIME_COPY, PET_STUDIO_SQUAD, GBX, TOO_BIG],
+    });
+    const host = renderStoreBackedExpress();
+    const disclosure = host.querySelector<HTMLDetailsElement>(
+      '#express-team-options',
+    );
+    const select = host.querySelector<HTMLSelectElement>(
+      '#express-saved-squad',
+    );
+    const label = host.querySelector('label[for="express-saved-squad"]');
+
+    expect(disclosure).not.toBeNull();
+    expect(select?.closest('#express-team-options')).toBe(disclosure);
+    expect(label?.textContent).toBe('Começar de uma equipe salva');
+    const groups = [...select!.querySelectorAll('optgroup')].map((group) => ({
+      label: group.label,
+      options: [...group.querySelectorAll('option')].map(
+        (option) => option.textContent,
+      ),
+    }));
+    expect(groups).toEqual([
+      { label: 'Suas equipes', options: ['Full-Stack - GBX', 'Equipe grande'] },
+      { label: 'Originais', options: ['Full-Stack'] },
+    ]);
+    expect(select!.value).toBe('');
+    expect(select!.textContent).not.toContain('Cópia selada');
+    expect(select!.textContent).not.toContain(PET_STUDIO_SQUAD.name);
+  });
+
+  it('aplica os integrantes da equipe salva em Quem faz o quê pela mesma conversão de setRoster', () => {
+    useOrchStore.setState({ squads: [ORIGINAL, GBX] });
+    const host = renderStoreBackedExpress();
+    const select = host.querySelector<HTMLSelectElement>(
+      '#express-saved-squad',
+    )!;
+
+    choose(select, GBX.id);
+
+    const roster = useMissionSetupStore.getState().draft.roster;
+    expect(roster.map((item) => item.id)).toEqual(
+      GBX.agents.map((item) => item.id),
+    );
+    expect(roster.every((item) => item.ownsPlanDocs === undefined)).toBe(true);
+    expect(host.textContent).toContain('Maestro GBX');
+    expect(host.textContent).toContain('API GBX');
+    expect(host.textContent).toContain(
+      'Integrantes de “Full-Stack - GBX” aplicados.',
+    );
+    expect(select.value).toBe('');
+
+    choose(select, ORIGINAL.id);
+    expect(
+      useMissionSetupStore.getState().draft.roster.map((item) => item.id),
+    ).toEqual(ORIGINAL.agents.map((item) => item.id));
+  });
+
+  it('avisa e mantém a equipe atual quando a equipe salva excede 12 integrantes', () => {
+    useOrchStore.setState({ squads: [TOO_BIG] });
+    const host = renderStoreBackedExpress();
+    const beforeIds = useMissionSetupStore
+      .getState()
+      .draft.roster.map((item) => item.id);
+    const select = host.querySelector<HTMLSelectElement>(
+      '#express-saved-squad',
+    )!;
+
+    choose(select, TOO_BIG.id);
+
+    expect(
+      useMissionSetupStore.getState().draft.roster.map((item) => item.id),
+    ).toEqual(beforeIds);
+    const alert = [...host.querySelectorAll('#express-team-options [role="alert"]')]
+      .map((node) => node.textContent)
+      .join(' ');
+    expect(alert).toMatch(/tem 13 pessoas e a missão aceita até 12/);
+    expect(host.textContent).not.toContain('aplicados.');
+  });
+
+  it('não mostra o seletor quando não há equipes salvas elegíveis', () => {
+    useOrchStore.setState({ squads: [RUNTIME_COPY, PET_STUDIO_SQUAD] });
+    const host = renderStoreBackedExpress();
+
+    expect(host.querySelector('#express-saved-squad')).toBeNull();
+  });
+});
+
 

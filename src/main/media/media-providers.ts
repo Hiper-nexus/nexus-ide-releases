@@ -3,6 +3,7 @@ import type {
   MediaProviderId,
   MediaProviderInfo,
 } from '../../shared/media-types';
+import { estimateVideoCostUsd } from '../../shared/media-video-models';
 import { resolveMediaModelAlias } from './media-model-aliases';
 import { resolveMediaOutputPath } from './media-path-policy';
 
@@ -29,6 +30,7 @@ export interface MediaProviderDef {
     model: string;
     chars?: number;
     seconds?: number;
+    resolution?: string;
   }): number | null;
 }
 
@@ -45,33 +47,13 @@ const SEEDREAM_IMAGE_USD: Record<string, number> = {
   'bytedance/seedream-3': 0.03,
 };
 
-/** Per-second-of-video rough estimates. */
-const REPLICATE_VIDEO_USD_PER_SEC: Record<string, number> = {
-  'bytedance/seedance-2.0': 0.12,
-  'bytedance/seedance-2.0-fast': 0.06,
-  'bytedance/seedance-2.0-mini': 0.04,
-  'google/veo-3.1': 0.4,
-  'google/veo-3.1-fast': 0.15,
-  'google/veo-3.1-lite': 0.1,
-  'kwaivgi/kling-v3-video': 0.09,
-  'kwaivgi/kling-v3-omni-video': 0.12,
-  'kwaivgi/kling-v2.5-turbo-pro': 0.07,
-  'kwaivgi/kling-v2.1': 0.05,
-  'minimax/hailuo-2.3': 0.05,
-  'wan-video/wan-2.5-i2v': 0.05,
-  'openai/sora-2': 0.1,
-  'openai/sora-2-pro': 0.3,
-  'runwayml/gen-4.5': 0.05,
-  'luma/ray-3.2': 0.06,
-};
-
-/** Per-second rough estimates for native Veo (Google AI Studio billing). */
-const GOOGLE_VIDEO_USD_PER_SEC: Record<string, number> = {
-  'veo-3.1-generate-preview': 0.4,
-  'veo-3.1-fast-generate-preview': 0.15,
-  'veo-3.1-lite-generate-preview': 0.1,
-  'veo-2.0-generate-001': 0.35,
-};
+/**
+ * Vídeo (F-1585): preço de lista por modelo, duração e resolução em
+ * `shared/media-video-models.ts` — a mesma tabela que valida o pedido e que
+ * o Estúdio mostra antes de gerar. Combinação sem preço conhecido = null.
+ */
+const videoEstimate: MediaProviderDef['estimateCost'] = ({ model, seconds, resolution }) =>
+  estimateVideoCostUsd(model, { seconds, resolution });
 
 /**
  * Preço de API por mil caracteres (elevenlabs.io/pricing/api, lido em
@@ -84,18 +66,6 @@ const ELEVENLABS_USD_PER_1K_CHARS: Record<string, number> = {
   eleven_flash_v2_5: 0.04,
   eleven_multilingual_v2: 0.08,
 };
-
-function perSecondEstimate(
-  table: Record<string, number>,
-  fallbackPerSec: number,
-  fallbackSeconds: number,
-): MediaProviderDef['estimateCost'] {
-  return ({ model, seconds }) => {
-    const secs = seconds && seconds > 0 ? seconds : fallbackSeconds;
-    const perSec = table[model] ?? fallbackPerSec;
-    return Number((perSec * secs).toFixed(4));
-  };
-}
 
 export const MEDIA_PROVIDERS: MediaProviderDef[] = [
   {
@@ -166,7 +136,7 @@ export const MEDIA_PROVIDERS: MediaProviderDef[] = [
       'runwayml/gen-4.5',
       'luma/ray-3.2',
     ],
-    estimateCost: perSecondEstimate(REPLICATE_VIDEO_USD_PER_SEC, 0.1, 5),
+    estimateCost: videoEstimate,
   },
   {
     id: 'google-video',
@@ -174,13 +144,14 @@ export const MEDIA_PROVIDERS: MediaProviderDef[] = [
     label: 'Google Veo nativo (AI Studio)',
     envVar: 'GEMINI_API_KEY',
     defaultModel: 'veo-3.1-generate-preview',
+    // veo-2.0-generate-001 saiu: o Google o desligou em 30/06/2026. Os três
+    // Veo 3.1 preview desligam em 22/10/2026 (`retiresOn` na tabela de vídeo).
     models: [
       'veo-3.1-generate-preview',
       'veo-3.1-fast-generate-preview',
       'veo-3.1-lite-generate-preview',
-      'veo-2.0-generate-001',
     ],
-    estimateCost: perSecondEstimate(GOOGLE_VIDEO_USD_PER_SEC, 0.3, 8),
+    estimateCost: videoEstimate,
   },
   {
     id: 'elevenlabs',
@@ -199,6 +170,12 @@ export const MEDIA_PROVIDERS: MediaProviderDef[] = [
         : null,
   },
 ];
+
+const MEDIA_KIND_PT: Record<MediaKind, string> = {
+  image: 'imagem',
+  video: 'vídeo',
+  audio: 'voz',
+};
 
 export function findMediaProvider(id: string): MediaProviderDef | null {
   return MEDIA_PROVIDERS.find((p) => p.id === id) ?? null;
@@ -293,7 +270,7 @@ export function resolveMediaProvider(
     if (!hasKeyFn(def)) {
       throw new MediaProviderUnavailableError(
         kind,
-        `provider ${requested} sem key — configure em Settings → Mídia`,
+        `${def.label} sem chave — conecte em Ajustes → Serviços de mídia`,
       );
     }
     return def;
@@ -314,7 +291,7 @@ export function resolveMediaProvider(
   if (available.length === 0) {
     throw new MediaProviderUnavailableError(
       kind,
-      `nenhum provider de ${kind} com key configurada — configure em Settings → Mídia`,
+      `nenhum serviço de ${MEDIA_KIND_PT[kind]} com chave — conecte em Ajustes → Serviços de mídia`,
     );
   }
   return available[0];
@@ -364,5 +341,12 @@ export function listMediaProviders(
     models: def.models,
     hasKey: hasKeyFn(def),
     maskedKey: maskedKeyFn(def.id),
+    ...(def.kind === 'image'
+      ? {
+          imageCostUsd: Object.fromEntries(
+            def.models.map((model) => [model, def.estimateCost({ model })]),
+          ),
+        }
+      : {}),
   }));
 }

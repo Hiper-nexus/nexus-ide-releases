@@ -1,5 +1,141 @@
 # Changelog
 
+## 0.76.333 — Memória e contas no Linux
+
+A tag 0.76.329 é o pacote macOS da memória e não recebe arquivos Linux. A tag 0.76.332 é o pacote macOS das contas e não recebe arquivos Linux. A tag 0.76.330 não recebe arquivos Linux. A tag 0.76.331 foi marcada e não foi publicada: a suíte no Ubuntu 22.04 falhou em pane-admission.test.ts, porque a prova de memória baixa usava a reserva de 24 GB numa máquina de 16 GB. Este pacote leva o desktop Linux.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+No desktop Linux, em relação à 0.76.328:
+
+- **Freio de emergência de memória**. Na pressão crítica, o Nexus estaciona até o pane que está trabalhando, no máximo três por varredura, e recusa abrir outro. A varredura acelera para 5 segundos enquanto a pressão está severa ou crítica. O histórico e o "Acordar" ficam.
+- **As contas se revezam sozinhas**. O trabalho novo sai da conta cuja cota medida passa de 89%, sem interromper quem já está trabalhando. O pane que emudece por cota esgotada continua na conta seguinte. Quando nenhuma conta da CLI tem folga, a missão segue em outra IA.
+- **O resgate não trava mais por status preso**. Quando a cota esgota, o pedido ao provedor pode travar antes do aviso de parada, e a IA ficava marcada como "trabalhando" para sempre. Agora esse estado vale por tempo limitado, e depois disso o pane é religado na conta seguinte.
+- **O orquestrador não troca de conta à toa**. Algumas IAs têm cota separada por família de modelo. O orquestrador era tirado da conta quando a cota de uma família que ele nem usa enchia. Agora só a cota do modelo que ele realmente usa conta para essa decisão.
+
+## 0.76.332 — As contas se revezam sozinhas (macOS)
+
+Pacote macOS do revezamento de contas. Quem tem várias contas da mesma IA usava só a primeira: quando a cota acabava, o pane simplesmente parava. Agora o Nexus mede a cota e tira o trabalho NOVO da conta que está chegando ao fim antes de ela acabar, sem interromper quem já trabalha; o pane que emudece por cota esgotada continua na conta seguinte; e quando todas acabam o trabalho segue em outra IA. Inclui a pressão crítica de memória da 0.76.329 e o pacote Linux da 0.76.331.
+
+- **O resgate não trava mais por status preso**. Quando a cota esgota, o pedido ao provedor pode travar antes do aviso de parada, e a IA ficava marcada como "trabalhando" para sempre — o que impedia o próprio resgate que essa trava deveria proteger. Agora esse estado vale por tempo limitado, e depois disso o pane é religado na conta seguinte.
+- **O orquestrador não troca de conta à toa**. Algumas IAs têm cota separada por família de modelo. O orquestrador era tirado da conta quando a cota de uma família que ele nem usa enchia, e a missão recomeçava a conversa noutra conta sem precisar. Agora só a cota do modelo que ele realmente usa conta para essa decisão.
+
+## 0.76.331 — Memória e contas no Linux
+
+A tag 0.76.329 é o pacote macOS e não recebe arquivos Linux. A tag 0.76.330 não recebe arquivos Linux. Este pacote leva o desktop Linux.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+No desktop Linux, em relação à 0.76.328:
+
+- **Freio de emergência de memória**. Na pressão crítica, o Nexus estaciona até o pane que está trabalhando, no máximo três por varredura, e recusa abrir outro. A varredura acelera para 5 segundos enquanto a pressão está severa ou crítica. O histórico e o "Acordar" ficam.
+- **As contas se revezam sozinhas**. O trabalho novo sai da conta cuja cota medida passa de 89%, sem interromper quem já está trabalhando. O pane que emudece por cota esgotada continua na conta seguinte. Quando nenhuma conta da CLI tem folga, a missão segue em outra IA.
+
+## 0.76.330 — As contas se revezam sozinhas
+
+Quem tem várias contas da mesma IA usava só a primeira: quando a cota dela acabava, o pane simplesmente parava — não trocava, não avisava, não morria com erro. Agora o Nexus mede a cota e tira o trabalho NOVO da conta que está chegando ao fim, antes de ela acabar, sem interromper quem já está trabalhando. Quem esgota no meio da tarefa continua na conta seguinte, e quando todas acabam o trabalho segue em outra IA. Sete contas passam a render como sete, não como uma.
+
+- **A próxima tarefa já nasce na conta que tem folga**. A troca acontece na borda entre uma tarefa e outra, então ninguém é interrompido e nada se perde: o agente que está trabalhando termina o que começou usando a fatia que resta, e o próximo nasce na conta seguinte. O limiar é 89 % da janela que está apertando — e os 11 % que sobram não são desperdiçados: quando todas as contas chegam lá, o Nexus volta a usá-las e consome o resto numa segunda volta.
+- **O pane que emudecia por falta de cota agora continua**. Algumas IAs não imprimem erro quando a cota acaba: a tela simplesmente para. Sem texto de erro o Nexus nunca sabia que havia um limite, e a missão ficava parada até alguém perceber. Agora a própria medição de cota serve de prova: o pane parado numa conta esgotada é religado na conta seguinte com um resumo do que estava fazendo, e um aviso aparece no momento da troca.
+- **Acabaram todas as contas? O trabalho segue em outra IA**. Quando nenhuma conta da CLI tem folga, a missão não para: ela continua numa IA elegível, com o contexto reidratado, no mesmo lugar. A conta esgotada não volta a ser escolhida antes de liberar.
+- **A conta que está em uso é medida de verdade**. Em algumas IAs o provedor só informa a cota da conta que está logada no momento, e recusa a consulta das demais. Essa leitura passa a ser atribuída à conta que o Nexus de fato abriu — sem ela, a frota inteira parecia "sem medição" e nada rotacionava. As contas irmãs continuam honestamente sem leitura: ninguém as mediu.
+- **A troca não acusa conta saudável**. A decisão só aceita leitura vinda do provedor e com menos de 10 minutos: uma estimativa local nunca tira o pane de uma conta que está bem. Conta fixada por você continua só cedendo quando esgota de fato, e um agente que está no meio de uma chamada silenciosa não é trocado por engano.
+
+## 0.76.329 — Freio de emergência de memória
+
+Num Mac de 16 GB com vários panes abertos e trabalhando, a máquina podia travar inteira. O guardião de memória só sabia recuperar pane OCIOSO, e a memória está justamente nos panes que trabalham: com todos ocupados ele não recuperava nada e o sistema ia ao chão. Agora, só na pressão crítica, o Nexus estaciona o pane de maior consumo — histórico e retomada preservados — reage em 5 segundos e recusa abrir mais um pane na beira do travamento. Teto, pressão moderada e severa continuam só avisando.
+
+- **Pane ocupado também libera memória na hora**. O guardião estacionava apenas panes ociosos. Medido: oito panes ocupados, memória crítica, dez varreduras — zero recuperado, porque a lista de candidatos era vazia por construção. Foi assim que um iMac M5 de 16 GB travou inteiro depois que o cliente abriu vários panes. Agora, quando a memória livre cai abaixo de 30 % da reserva, o Nexus estaciona até três panes por varredura mesmo que estejam trabalhando, remedindo a memória a cada um: assim que a folga volta, ele para. Estacionar encerra só o processo — o pane, o histórico e o "Acordar" ficam, e quem não sabe retomar a conversa não é tocado.
+- **O Nexus recusa abrir pane na beira do travamento**. O teto de panes e a memória baixa sempre foram aviso, e um aviso se dispensa com um clique: num Mac de 16 GB o nono pane entrava com 500 MB livres. Agora a pressão crítica — e só ela — recusa o spawn, dizendo que é memória física da máquina (não limite do plano), o que aconteceria e o que fazer. Contagem de panes, pressão moderada e severa seguem apenas avisando, e NEXUS_PANE_GUARD=off desliga tudo.
+- **Reação em 5 segundos, não em um minuto**. A varredura do guardião roda a cada 60 s. Com seis a oito agentes alocando ao mesmo tempo, a máquina sai de "apertada" para travada antes do próximo ciclo. Enquanto a pressão está severa ou crítica a varredura passa a rodar a cada 5 segundos; fora disso continua de minuto em minuto, sem medição extra.
+- **Escolhe o pane que realmente pesa**. O consumo de memória de cada pane já era medido e mostrado no cabeçalho, mas nenhuma decisão o usava. Agora ele ordena quem sai primeiro: worker e ajudante antes do pane que você abriu, e dentro disso o de maior consumo medido — um pane de 3 GB devolve a folga que três de 900 MB não devolvem. Pane sem medida vai para o fim: falta de dado não é zero.
+- **O aviso do pane não parece mais um crash**. Um pane estacionado no meio do trabalho dizia apenas "pane estacionado". Agora explica que foi para a máquina não travar, por memória crítica, e que basta digitar para retomar a conversa.
+
+## 0.76.328 — Comparador e mídia no Linux
+
+As tags 0.76.326 e 0.76.327 são pacotes Windows e não recebem arquivos Linux. A 0.76.327 só assina o instalador do Windows; o app é o mesmo da 0.76.326. Este pacote leva o desktop Linux.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+No desktop Linux, em relação à 0.76.325:
+
+- **Comparar modelos com números oficiais**. As notas da tela eram de demonstração, escritas à mão em setembro, e a escolha automática nem as usava. Agora a tela mostra os mesmos benchmarks oficiais da rota (DeepSWE, Terminal-Bench 2.1, SWE-bench Verified), com link para a fonte e dizendo quando a nota vem de outro modelo da mesma linha. Aparece só a versão mais nova de cada modelo e, por padrão, só as ferramentas instaladas; modelo sem número publicado fica sem nota, nunca com zero.
+- **Mídia sem projeto aberto**. Sem projeto aberto, Serviços de mídia caía num erro e nem deixava conectar uma chave, e o Estúdio abria mudo. Agora os serviços carregam sempre e o Estúdio explica que gerar precisa de um projeto aberto.
+- **Vídeo só com o que o modelo aceita**. O Estúdio mandava 5 s para todo vídeo e o Veo, que só aceita 4, 6 ou 8 s, falhava com as opções padrão; Hailuo, Sora e Wan também recebiam valores que recusam. Agora cada modelo só oferece a duração, a proporção e a resolução que aceita, o pedido inválido é recusado antes de qualquer chamada paga e o custo aparece antes de gerar.
+- **Erro de mídia com o que fazer**. A falha do serviço chegava crua ("HTTP 422" com JSON). Agora vem uma frase com o que houve e o que fazer, e um botão para Serviços de mídia quando o problema é a chave.
+- **Prévia mostra o arquivo gerado**. A prévia do Estúdio podia mostrar outra criação do mesmo tipo; agora mostra exatamente o arquivo que acabou de ser gerado.
+- **Veo nativo do Google até 22/10**. O Google desliga os Veo 3.1 preview do Gemini em 22/10/2026. O Estúdio avisa antes da data e, depois dela, recusa indicando o Veo 3.1 pelo Replicate. O Veo 2, já desligado, saiu da lista.
+
+## 0.76.327 — Instalador assinado
+
+O instalador, o app e o atualizador do Windows passam a sair assinados com o certificado de assinatura de código da HIPERSEND, guardado num token de hardware (YubiKey). O conteúdo do app é o mesmo da 0.76.326.
+
+- **Instalador do Windows assinado**. O Setup.exe, o NexusIDE, o atualizador e o Redline do Windows saem com assinatura Authenticode da HIPERSEND TECNOLOGIA INTERNET & SOFTWARES LTDA, emitida pelo SSL.com, com carimbo de tempo. O Windows mostra o editor em vez de "Editor desconhecido". O SmartScreen ainda pode avisar nas primeiras instalações, até o certificado novo ganhar reputação. A chave fica num token de hardware e não sai dele.
+
+## 0.76.326 — Comparador honesto e mídia que gera
+
+As tags 0.76.323 (macOS) e 0.76.325 (Linux) não receberam arquivos Windows. Este pacote leva ao Windows tudo delas (velocidade e detalhes da missão, "Ver o que aconteceu" no Quadro, portão de regressão em lotes, fila de comandos pesados que se libera sozinha) e as melhorias abaixo no comparador de modelos e na geração de mídia:
+
+- **Comparar modelos com números oficiais**. As notas da tela eram de demonstração, escritas à mão em setembro, e a escolha automática nem as usava. Agora a tela mostra os mesmos benchmarks oficiais da rota (DeepSWE, Terminal-Bench 2.1, SWE-bench Verified), com link para a fonte e dizendo quando a nota vem de outro modelo da mesma linha. Aparece só a versão mais nova de cada modelo e, por padrão, só as ferramentas instaladas; modelo sem número publicado fica sem nota, nunca com zero.
+- **Mídia sem projeto aberto**. Sem projeto aberto, Serviços de mídia caía num erro e nem deixava conectar uma chave, e o Estúdio abria mudo. Agora os serviços carregam sempre e o Estúdio explica que gerar precisa de um projeto aberto.
+- **Vídeo só com o que o modelo aceita**. O Estúdio mandava 5 s para todo vídeo e o Veo, que só aceita 4, 6 ou 8 s, falhava com as opções padrão; Hailuo, Sora e Wan também recebiam valores que recusam. Agora cada modelo só oferece a duração, a proporção e a resolução que aceita, o pedido inválido é recusado antes de qualquer chamada paga e o custo aparece antes de gerar.
+- **Erro de mídia com o que fazer**. A falha do serviço chegava crua ("HTTP 422" com JSON). Agora vem uma frase com o que houve e o que fazer, e um botão para Serviços de mídia quando o problema é a chave.
+- **Prévia mostra o arquivo gerado**. A prévia do Estúdio podia mostrar outra criação do mesmo tipo; agora mostra exatamente o arquivo que acabou de ser gerado.
+- **Veo nativo do Google até 22/10**. O Google desliga os Veo 3.1 preview do Gemini em 22/10/2026. O Estúdio avisa antes da data e, depois dela, recusa indicando o Veo 3.1 pelo Replicate. O Veo 2, já desligado, saiu da lista.
+
+## 0.76.325 — Velocidade e detalhes da missão
+
+A tag 0.76.323 é o pacote macOS e não recebe arquivos Linux. A tag 0.76.324 não foi publicada: a suíte Ubuntu falhou em `tool-util-workspace.test.ts` (F-742), porque o recibo de escrita passou a levar `inputWriter` e o teste ainda exigia o objeto antigo. Este pacote leva o desktop Linux.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+No desktop Linux, em relação à 0.76.322:
+
+- **Quadro: botão "Ver o que aconteceu" e Atividade ampliada**. Ao encerrar uma missão (sucesso, falha ou interrupção), o botão "Ver o que aconteceu" abre a visão de Atividade ampliada para inspeção detalhada. O estado do Quadro mantém coerência com a barra lateral e o layout se adapta a janelas estreitas sem quebra de elementos.
+- **Motor: base da worktree com aviso e refresh**. O upstream do origin é atualizado antes de congelar a base do writer isolado (com throttle de 60 s por raiz de repositório no fetch) e emite aviso explícito se a branch não rastreia origin/*.
+- **Motor: entregáveis preservados no corte de 512 arquivos**. O snapshot de arquivos candidatos lê e gera fingerprint de arquivos declarados como entregáveis mesmo que estejam alfabeticamente além do limite de 512 arquivos.
+- **Motor: portão de regressão em lotes**. A faixa de testes impactados no handoff é dividida em lotes sequenciais calibrados pelo orçamento de tempo restante. Os testes concluídos reportam resultado e veredito imediatamente, impedindo que estouros de prazo resultem em 0 testes computados.
+- **Motor: pane_write com recibo de entrega**. A escrita em panes comprova entrega com recibo estruturado de prova de turno e aceite de bytes, rejeitando confirmações falsas quando o pane não está pronto.
+- **Motor: esforço do revisor proporcional**. O roteamento de tarefas e as regras de conformidade reservam o esforço máximo do revisor para tarefas críticas, alocando esforço proporcional nos demais níveis de severidade.
+- **Motor: fila de comandos pesados se liberta sozinha**. Um lease exclusivo cujo executor ou sessão dona morreu passa a ser liberado pela própria fila após 60 s (antes ficava preso e travava novos comandos), e a recusa da fila agora diz qual comando segura o lease. O conserto no supervisor nativo (`native/darwin-pty-supervisor/main.c`) não está nesta build: fica para o próximo rebuild nativo.
+
+## 0.76.324 — Velocidade e detalhes da missão
+
+A tag 0.76.323 é o pacote macOS e não recebe arquivos Linux. Esta tag não foi publicada: a suíte Ubuntu falhou no teste de retomada do MiMo.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+No desktop Linux, em relação à 0.76.322:
+
+- **Quadro: botão "Ver o que aconteceu" e Atividade ampliada**. Ao encerrar uma missão (sucesso, falha ou interrupção), o botão "Ver o que aconteceu" abre a visão de Atividade ampliada para inspeção detalhada. O estado do Quadro mantém coerência com a barra lateral e o layout se adapta a janelas estreitas sem quebra de elementos.
+- **Motor: base da worktree com aviso e refresh**. O upstream do origin é atualizado antes de congelar a base do writer isolado (com throttle de 60 s por raiz de repositório no fetch) e emite aviso explícito se a branch não rastreia origin/*.
+- **Motor: entregáveis preservados no corte de 512 arquivos**. O snapshot de arquivos candidatos lê e gera fingerprint de arquivos declarados como entregáveis mesmo que estejam alfabeticamente além do limite de 512 arquivos.
+- **Motor: portão de regressão em lotes**. A faixa de testes impactados no handoff é dividida em lotes sequenciais calibrados pelo orçamento de tempo restante. Os testes concluídos reportam resultado e veredito imediatamente, impedindo que estouros de prazo resultem em 0 testes computados.
+- **Motor: pane_write com recibo de entrega**. A escrita em panes comprova entrega com recibo estruturado de prova de turno e aceite de bytes, rejeitando confirmações falsas quando o pane não está pronto.
+- **Motor: esforço do revisor proporcional**. O roteamento de tarefas e as regras de conformidade reservam o esforço máximo do revisor para tarefas críticas, alocando esforço proporcional nos demais níveis de severidade.
+- **Motor: fila de comandos pesados se liberta sozinha**. Um lease exclusivo cujo executor ou sessão dona morreu passa a ser liberado pela própria fila após 60 s (antes ficava preso e travava novos comandos), e a recusa da fila agora diz qual comando segura o lease. O conserto no supervisor nativo (`native/darwin-pty-supervisor/main.c`) não está nesta build: fica para o próximo rebuild nativo.
+
+## 0.76.323 — Velocidade e detalhes da missão
+
+Melhorias de usabilidade no Quadro da missão e otimizações de robustez e velocidade no motor de execução:
+
+- **Quadro: botão "Ver o que aconteceu" e Atividade ampliada**. Ao encerrar uma missão (sucesso, falha ou interrupção), o botão "Ver o que aconteceu" abre a visão de Atividade ampliada para inspeção detalhada. O estado do Quadro mantém coerência com a barra lateral e o layout se adapta a janelas estreitas sem quebra de elementos.
+- **Motor: base da worktree com aviso e refresh**. O upstream do origin é atualizado antes de congelar a base do writer isolado (com throttle de 60 s por raiz de repositório no fetch) e emite aviso explícito se a branch não rastreia origin/*.
+- **Motor: entregáveis preservados no corte de 512 arquivos**. O snapshot de arquivos candidatos lê e gera fingerprint de arquivos declarados como entregáveis mesmo que estejam alfabeticamente além do limite de 512 arquivos.
+- **Motor: portão de regressão em lotes**. A faixa de testes impactados no handoff é dividida em lotes sequenciais calibrados pelo orçamento de tempo restante. Os testes concluídos reportam resultado e veredito imediatamente, impedindo que estouros de prazo resultem em 0 testes computados.
+- **Motor: pane_write com recibo de entrega**. A escrita em panes comprova entrega com recibo estruturado de prova de turno e aceite de bytes, rejeitando confirmações falsas quando o pane não está pronto.
+- **Motor: esforço do revisor proporcional**. O roteamento de tarefas e as regras de conformidade reservam o esforço máximo do revisor para tarefas críticas, alocando esforço proporcional nos demais níveis de severidade.
+- **Motor: fila de comandos pesados se liberta sozinha**. Um lease exclusivo cujo executor ou sessão dona morreu passa a ser liberado pela própria fila após 60 s (antes ficava preso e travava novos comandos), e a recusa da fila agora diz qual comando segura o lease. O conserto no supervisor nativo (`native/darwin-pty-supervisor/main.c`) não está nesta build: fica para o próximo rebuild nativo.
+- **Equipe salva em Personalizar equipe**. Já presente no pacote Linux 0.76.322 e incluída aqui no macOS.
+
+## 0.76.322 — Equipe salva no Expresso
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+No desktop Linux, em relação à 0.76.321:
+
+- **Equipe salva em Personalizar equipe**. No início expresso da missão, "Personalizar equipe" só deixava editar os papéis um a um. Agora há "Começar de uma equipe salva": as suas equipes vêm antes das originais, os integrantes substituem o roster, e um roster que o rascunho recusa (equipe grande demais) mostra o erro em vez de aplicar pela metade.
+
 ## 0.76.321 — Piloto para todas as CLIs no Linux
 
 A tag 0.76.319 é o pacote Windows e não recebe arquivos Linux. A tag 0.76.320 não foi publicada: a suíte Ubuntu falhou em testes desatualizados (assinatura Windows ainda pedia o eSigner, e o teto de IPC de `orch-ipc.ts` tinha ficado em 51 com 46 chamadas). Este pacote leva o desktop Linux.

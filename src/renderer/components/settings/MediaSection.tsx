@@ -137,23 +137,26 @@ function MediaKeyField({
   );
 }
 
-async function readMediaSettings() {
-  const [providers, totals] = await Promise.all([
-    window.nexus.media.listProviders(),
-    window.nexus.media.usageTotals(),
-  ]);
+async function readMediaSettings(): Promise<{
+  providers: MediaProviderInfo[];
+  totals: MediaUsageTotals | null;
+}> {
+  const providers = await window.nexus.media.listProviders();
+  // F-1589: serviços e chaves são globais; só os totais são do projeto
+  // aberto. Sem projeto (null) ou com a leitura falhando, a tela continua
+  // mostrando os serviços para conectar a chave.
+  const totals = await window.nexus.media.usageTotals().catch(() => null);
   return { providers, totals };
 }
 
 const EMPTY_PROVIDERS: MediaProviderInfo[] = [];
-const EMPTY_TOTALS: MediaUsageTotals = { generations: 0, costUsd: 0 };
 
 export function MediaSection() {
   const { data, loading, error, reload: refresh } = useCatalogResource(
     readMediaSettings, 'Não foi possível carregar os serviços de mídia.',
   );
   const providers = data?.providers ?? EMPTY_PROVIDERS;
-  const totals = data?.totals ?? EMPTY_TOTALS;
+  const totals = data?.totals ?? null;
   const productFlags = useProductFlags();
 
   const withKey = providers.filter((p) => p.hasKey).length;
@@ -197,7 +200,7 @@ export function MediaSection() {
         <span className="arsenal-fleet__stat">
           <strong>{withKey}</strong> conectados
         </span>
-        {totals.generations > 0 && (
+        {totals !== null && totals.generations > 0 && (
           <>
             <span className="arsenal-fleet__sep" aria-hidden="true">
               ·

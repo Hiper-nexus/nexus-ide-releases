@@ -11730,7 +11730,7 @@ export const RELEASE_076320: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076321: AppRelease = {
   version: '0.76.321',
   date: '2026-10-19',
   codename: 'Piloto para todas as CLIs no Linux',
@@ -11747,4 +11747,145 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Textos do Linux', detail: 'O cofre passa a dizer "chaveiro do sistema" (libsecret), mostrar um arquivo salvo é "Mostrar na pasta", e o aviso de microfone mudo aponta o mixer de som. Os botões que abrem os Ajustes de som do macOS e do Windows ficam ocultos no Linux: não há uma URL comum entre os desktops.' },
     { title: 'O pane diz o motivo real', detail: '"Contexto degradado" virou a causa de fato (troca de conta por limite confirmado ou entrega que o Maestro não aceitou), um pane cuja missão não existe mais não diz que ela encerrou com relatório, e quando a verificação automática recusa a conclusão o Quadro mostra que o Maestro está corrigindo.' },
   ],
+};
+
+export const RELEASE_076323: AppRelease = {
+  version: '0.76.323',
+  date: '2026-10-19',
+  codename: 'Velocidade e detalhes da missão',
+  summary: 'No Quadro, o botão "Ver o que aconteceu" abre a visão de Atividade ampliada, com estado coerente com a barra lateral e layout ajustado para janelas estreitas. No motor, a base da worktree ganha aviso e atualização com throttle de 60 s, o verificador lê entregáveis além do corte de 512 arquivos, o portão de regressão roda testes em lotes, o pane_write comprova entrega e o esforço do revisor fica proporcional.',
+  highlights: [
+    { title: 'Equipe salva no Expresso', detail: 'Em Personalizar equipe, no início expresso da missão, "Começar de uma equipe salva" lista as suas equipes antes das originais (já na 0.76.322 do Linux).' },
+    { title: 'Atividade ampliada no Quadro', detail: 'O botão "Ver o que aconteceu" no Quadro da missão agora abre a visão de Atividade detalhada ao concluir ou interromper uma missão. O estado visual fica sincronizado e coerente com o status da barra lateral, e os cards e cabeçalho se ajustam perfeitamente mesmo em janelas estreitas.' },
+    { title: 'Base da worktree com aviso e atualização', detail: 'Antes de congelar a base isolada do writer, o motor atualiza o upstream do origin (com throttle de 60 s por raiz no fetch) e emite aviso explícito caso a branch local não rastreie uma branch remota origin/*.' },
+    { title: 'Entregáveis lidos antes do corte de 512 arquivos', detail: 'No snapshot da árvore de trabalho candidata, entregáveis declarados alfabeticamente além do limite de 512 arquivos continuam sendo lidos e têm fingerprint gerado antes do corte de leitura.' },
+    { title: 'Portão de regressão em lotes', detail: 'A faixa de testes impactados no handoff agora é dividida em lotes calculados dinamicamente com base no tempo restante. Cada lote concluído reporta seu veredito imediatamente, evitando que suítes extensas terminem com 0 testes reportados ao atingir o prazo.' },
+    { title: 'pane_write com recibo de entrega', detail: 'A ferramenta de escrita em terminais (nexus_pane_write) agora emite prova de turno e confirmação de recebimento apenas quando os bytes chegam e o pane está apto a aceitar entrada.' },
+    { title: 'Esforço do revisor proporcional', detail: 'O roteador de tarefas e as regras de modelo reservam o nível de esforço máximo no revisor para tarefas críticas, usando esforço proporcional nos demais níveis para evitar latência desnecessária.' },
+  ],
+  fixes: [
+    { title: 'Fila de comandos pesados se liberta sozinha', detail: 'Um lease exclusivo cujo executor ou sessão dona morreu passa a ser liberado pela própria fila após 60 s — antes ficava preso e travava novos comandos —, e a recusa da fila diz qual comando segura o lease. O conserto no supervisor nativo (native/darwin-pty-supervisor/main.c) não está nesta build: fica para o próximo rebuild nativo.' },
+  ],
+};
+
+export const RELEASE_076325: AppRelease = {
+  ...RELEASE_076323,
+  version: '0.76.325',
+  summary: 'No desktop Linux, o Quadro ganha "Ver o que aconteceu", a base da worktree avisa e atualiza com throttle de 60 s, o portão de regressão roda em lotes, o pane_write prova a entrega e a fila de comandos pesados se libera em 60 s. A tag 0.76.323 é o pacote macOS. A 0.76.324 não foi publicada: a suíte Ubuntu falhou num teste do MiMo.',
+  highlights: [
+    ...RELEASE_076323.highlights,
+    { title: 'Pacote Linux', detail: 'A tag 0.76.323 é o pacote macOS e não recebe arquivos Linux. A tag 0.76.324 não foi publicada porque a suíte Ubuntu falhou no teste de retomada do MiMo (o recibo de escrita agora leva inputWriter). O desktop Linux sai na 0.76.325.' },
+  ],
+};
+
+export const RELEASE_076326: AppRelease = {
+  version: '0.76.326',
+  date: '2026-10-19',
+  codename: 'Comparador honesto e mídia que gera',
+  summary: 'Comparar modelos passa a mostrar os benchmarks oficiais que a escolha automática usa, só na versão mais nova de cada modelo e das ferramentas instaladas. Serviços de mídia e o Estúdio funcionam sem projeto aberto, explicam as falhas, só oferecem a duração e o formato que cada modelo de vídeo aceita e mostram o custo antes de gerar. Leva ao Windows a velocidade e os detalhes da missão da 0.76.323 a 0.76.325.',
+  highlights: [
+    { title: 'Comparar modelos com números oficiais', detail: 'As notas da tela eram de demonstração, escritas à mão em setembro, e a escolha automática nem as usava. Agora a tela mostra os mesmos benchmarks oficiais da rota (DeepSWE, Terminal-Bench 2.1, SWE-bench Verified), com link para a fonte e dizendo quando a nota vem de outro modelo da mesma linha. Aparece só a versão mais nova de cada modelo e, por padrão, só as ferramentas instaladas; modelo sem número publicado fica sem nota, nunca com zero.' },
+    { title: 'Mídia sem projeto aberto', detail: 'Sem projeto aberto, Serviços de mídia caía num erro e nem deixava conectar uma chave, e o Estúdio abria mudo. Agora os serviços carregam sempre e o Estúdio explica que gerar precisa de um projeto aberto.' },
+    { title: 'Vídeo só com o que o modelo aceita', detail: 'O Estúdio mandava 5 s para todo vídeo e o Veo, que só aceita 4, 6 ou 8 s, falhava com as opções padrão; Hailuo, Sora e Wan também recebiam valores que recusam. Agora cada modelo só oferece a duração, a proporção e a resolução que aceita, o pedido inválido é recusado antes de qualquer chamada paga e o custo aparece antes de gerar.' },
+  ],
+  fixes: [
+    { title: 'Erro de mídia com o que fazer', detail: 'A falha do serviço chegava crua ("HTTP 422" com JSON). Agora vem uma frase com o que houve e o que fazer, e um botão para Serviços de mídia quando o problema é a chave.' },
+    { title: 'Prévia mostra o arquivo gerado', detail: 'A prévia do Estúdio podia mostrar outra criação do mesmo tipo; agora mostra exatamente o arquivo que acabou de ser gerado.' },
+    { title: 'Veo nativo do Google até 22/10', detail: 'O Google desliga os Veo 3.1 preview do Gemini em 22/10/2026. O Estúdio avisa antes da data e, depois dela, recusa indicando o Veo 3.1 pelo Replicate. O Veo 2, já desligado, saiu da lista.' },
+  ],
+};
+
+export const RELEASE_076327: AppRelease = {
+  version: '0.76.327',
+  date: '2026-10-19',
+  codename: 'Instalador assinado',
+  summary: 'O instalador, o app e o atualizador do Windows passam a sair assinados com o certificado de assinatura de código da HIPERSEND, guardado num token de hardware (YubiKey). O conteúdo do app é o mesmo da 0.76.326.',
+  highlights: [
+    { title: 'Instalador do Windows assinado', detail: 'O Setup.exe, o NexusIDE, o atualizador e o Redline do Windows saem com assinatura Authenticode da HIPERSEND TECNOLOGIA INTERNET & SOFTWARES LTDA, emitida pelo SSL.com, com carimbo de tempo. O Windows mostra o editor em vez de "Editor desconhecido". O SmartScreen ainda pode avisar nas primeiras instalações, até o certificado novo ganhar reputação. A chave fica num token de hardware e não sai dele.' },
+  ],
+  fixes: [],
+};
+
+export const RELEASE_076328: AppRelease = {
+  version: '0.76.328',
+  date: '2026-10-19',
+  codename: 'Comparador e mídia no Linux',
+  summary: 'No desktop Linux, Comparar modelos mostra os benchmarks oficiais da rota, só na versão mais nova de cada modelo e das ferramentas instaladas. Serviços de mídia e o Estúdio funcionam sem projeto aberto, explicam as falhas, só oferecem a duração e o formato que cada modelo de vídeo aceita e mostram o custo antes de gerar. As tags 0.76.326 e 0.76.327 são pacotes Windows e não recebem arquivos Linux.',
+  highlights: [
+    ...RELEASE_076326.highlights,
+    { title: 'Pacote Linux', detail: 'A tag 0.76.326 é o pacote Windows do comparador e da mídia e não recebe arquivos Linux. A tag 0.76.327 só assina o instalador do Windows e também não recebe arquivos Linux. O desktop Linux sai na 0.76.328.' },
+  ],
+  fixes: RELEASE_076326.fixes,
+};
+
+export const RELEASE_076329: AppRelease = {
+  version: '0.76.329',
+  date: '2026-10-19',
+  codename: 'Freio de emergência de memória',
+  summary: 'Num Mac de 16 GB com vários panes abertos e trabalhando, a máquina podia travar inteira. O guardião de memória só sabia recuperar pane OCIOSO, e a memória está justamente nos panes que trabalham: com todos ocupados ele não recuperava nada e o sistema ia ao chão. Agora, só na pressão crítica, o Nexus estaciona o pane de maior consumo — histórico e retomada preservados — reage em 5 segundos e recusa abrir mais um pane na beira do travamento. Teto, pressão moderada e severa continuam só avisando.',
+  highlights: [
+    { title: 'Pane ocupado também libera memória na hora', detail: 'O guardião estacionava apenas panes ociosos. Medido: oito panes ocupados, memória crítica, dez varreduras — zero recuperado, porque a lista de candidatos era vazia por construção. Foi assim que um iMac M5 de 16 GB travou inteiro depois que o cliente abriu vários panes. Agora, quando a memória livre cai abaixo de 30 % da reserva, o Nexus estaciona até três panes por varredura mesmo que estejam trabalhando, remedindo a memória a cada um: assim que a folga volta, ele para. Estacionar encerra só o processo — o pane, o histórico e o "Acordar" ficam, e quem não sabe retomar a conversa não é tocado.' },
+    { title: 'O Nexus recusa abrir pane na beira do travamento', detail: 'O teto de panes e a memória baixa sempre foram aviso, e um aviso se dispensa com um clique: num Mac de 16 GB o nono pane entrava com 500 MB livres. Agora a pressão crítica — e só ela — recusa o spawn, dizendo que é memória física da máquina (não limite do plano), o que aconteceria e o que fazer. Contagem de panes, pressão moderada e severa seguem apenas avisando, e NEXUS_PANE_GUARD=off desliga tudo.' },
+    { title: 'Reação em 5 segundos, não em um minuto', detail: 'A varredura do guardião roda a cada 60 s. Com seis a oito agentes alocando ao mesmo tempo, a máquina sai de "apertada" para travada antes do próximo ciclo. Enquanto a pressão está severa ou crítica a varredura passa a rodar a cada 5 segundos; fora disso continua de minuto em minuto, sem medição extra.' },
+  ],
+  fixes: [
+    { title: 'Escolhe o pane que realmente pesa', detail: 'O consumo de memória de cada pane já era medido e mostrado no cabeçalho, mas nenhuma decisão o usava. Agora ele ordena quem sai primeiro: worker e ajudante antes do pane que você abriu, e dentro disso o de maior consumo medido — um pane de 3 GB devolve a folga que três de 900 MB não devolvem. Pane sem medida vai para o fim: falta de dado não é zero.' },
+    { title: 'O aviso do pane não parece mais um crash', detail: 'Um pane estacionado no meio do trabalho dizia apenas "pane estacionado". Agora explica que foi para a máquina não travar, por memória crítica, e que basta digitar para retomar a conversa.' },
+  ],
+};
+
+export const RELEASE_076330: AppRelease = {
+  version: '0.76.330',
+  date: '2026-10-19',
+  codename: 'As contas se revezam sozinhas',
+  summary: 'Quem tem várias contas da mesma IA usava só a primeira: quando a cota dela acabava, o pane simplesmente parava — não trocava, não avisava, não morria com erro. Agora o Nexus mede a cota e tira o trabalho NOVO da conta que está chegando ao fim, antes de ela acabar, sem interromper quem já está trabalhando. Quem esgota no meio da tarefa continua na conta seguinte, e quando todas acabam o trabalho segue em outra IA. Sete contas passam a render como sete, não como uma.',
+  highlights: [
+    { title: 'A próxima tarefa já nasce na conta que tem folga', detail: 'A troca acontece na borda entre uma tarefa e outra, então ninguém é interrompido e nada se perde: o agente que está trabalhando termina o que começou usando a fatia que resta, e o próximo nasce na conta seguinte. O limiar é 89 % da janela que está apertando — e os 11 % que sobram não são desperdiçados: quando todas as contas chegam lá, o Nexus volta a usá-las e consome o resto numa segunda volta.' },
+    { title: 'O pane que emudecia por falta de cota agora continua', detail: 'Algumas IAs não imprimem erro quando a cota acaba: a tela simplesmente para. Sem texto de erro o Nexus nunca sabia que havia um limite, e a missão ficava parada até alguém perceber. Agora a própria medição de cota serve de prova: o pane parado numa conta esgotada é religado na conta seguinte com um resumo do que estava fazendo, e um aviso aparece no momento da troca.' },
+    { title: 'Acabaram todas as contas? O trabalho segue em outra IA', detail: 'Quando nenhuma conta da CLI tem folga, a missão não para: ela continua numa IA elegível, com o contexto reidratado, no mesmo lugar. A conta esgotada não volta a ser escolhida antes de liberar.' },
+  ],
+  fixes: [
+    { title: 'A conta que está em uso é medida de verdade', detail: 'Em algumas IAs o provedor só informa a cota da conta que está logada no momento, e recusa a consulta das demais. Essa leitura passa a ser atribuída à conta que o Nexus de fato abriu — sem ela, a frota inteira parecia "sem medição" e nada rotacionava. As contas irmãs continuam honestamente sem leitura: ninguém as mediu.' },
+    { title: 'A troca não acusa conta saudável', detail: 'A decisão só aceita leitura vinda do provedor e com menos de 10 minutos: uma estimativa local nunca tira o pane de uma conta que está bem. Conta fixada por você continua só cedendo quando esgota de fato, e um agente que está no meio de uma chamada silenciosa não é trocado por engano.' },
+  ],
+};
+
+export const RELEASE_076331: AppRelease = {
+  version: '0.76.331',
+  date: '2026-10-19',
+  codename: 'Memória e contas no Linux',
+  summary: 'No desktop Linux, a pressão crítica estaciona até o pane que está trabalhando e recusa abrir outro na beira do travamento. Várias contas da mesma IA passam a se revezar pela cota medida: o trabalho novo sai da conta que está chegando ao fim, e o pane que emudece continua na conta seguinte. A tag 0.76.329 é o pacote macOS. A tag 0.76.330 não recebe arquivos Linux.',
+  highlights: [
+    ...RELEASE_076329.highlights,
+    ...RELEASE_076330.highlights,
+    { title: 'Pacote Linux', detail: 'A tag 0.76.329 é o pacote macOS e não recebe arquivos Linux. A tag 0.76.330 não recebe arquivos Linux. O desktop Linux sai na 0.76.331, com o comparador e a mídia da 0.76.328, o freio de memória e a rotação de contas.' },
+  ],
+  fixes: [...RELEASE_076329.fixes, ...RELEASE_076330.fixes],
+};
+
+export const RELEASE_076332: AppRelease = {
+  version: '0.76.332',
+  date: '2026-10-19',
+  codename: 'As contas se revezam sozinhas (macOS)',
+  summary: 'Pacote macOS do revezamento de contas. Quem tem várias contas da mesma IA usava só a primeira: quando a cota acabava, o pane simplesmente parava. Agora o Nexus mede a cota e tira o trabalho NOVO da conta que está chegando ao fim antes de ela acabar, sem interromper quem já trabalha; o pane que emudece por cota esgotada continua na conta seguinte; e quando todas acabam o trabalho segue em outra IA. Inclui a pressão crítica de memória da 0.76.329 e o pacote Linux da 0.76.331.',
+  highlights: [
+    ...RELEASE_076331.highlights,
+  ],
+  fixes: [
+    { title: 'O resgate não trava mais por status preso', detail: 'Quando a cota esgota, o pedido ao provedor pode travar antes do aviso de parada, e a IA ficava marcada como "trabalhando" para sempre — o que impedia o próprio resgate que essa trava deveria proteger. Agora esse estado vale por tempo limitado, e depois disso o pane é religado na conta seguinte.' },
+    { title: 'O orquestrador não troca de conta à toa', detail: 'Algumas IAs têm cota separada por família de modelo. O orquestrador era tirado da conta quando a cota de uma família que ele nem usa enchia, e a missão recomeçava a conversa noutra conta sem precisar. Agora só a cota do modelo que ele realmente usa conta para essa decisão.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.333',
+  date: '2026-10-19',
+  codename: 'Memória e contas no Linux',
+  summary: 'No desktop Linux, a pressão crítica estaciona até o pane que está trabalhando e recusa abrir outro na beira do travamento. Várias contas da mesma IA passam a se revezar pela cota medida: o trabalho novo sai da conta que está chegando ao fim, e o pane que emudece continua na conta seguinte. O resgate ignora um status working obsoleto, e o Maestro só drena pela cota do modelo que usa. A tag 0.76.332 é o pacote macOS e não recebe arquivos Linux. A tag 0.76.331 foi marcada e não foi publicada.',
+  highlights: [
+    ...RELEASE_076329.highlights,
+    ...RELEASE_076330.highlights,
+    { title: 'Pacote Linux', detail: 'A tag 0.76.329 é o pacote macOS da memória e não recebe arquivos Linux. A tag 0.76.332 é o pacote macOS das contas e não recebe arquivos Linux. A tag 0.76.330 não recebe arquivos Linux. A tag 0.76.331 foi marcada e não foi publicada. O desktop Linux sai na 0.76.333, com o comparador e a mídia da 0.76.328, o freio de memória e a rotação de contas.' },
+  ],
+  fixes: [...RELEASE_076329.fixes, ...RELEASE_076330.fixes, ...RELEASE_076332.fixes],
 };
