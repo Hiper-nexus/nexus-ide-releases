@@ -54,6 +54,11 @@ export interface MediaGenerationResult {
   durationMs: number;
   /** Long-running video job id (resume with recoverJobId on timeout). */
   jobId?: string;
+  /**
+   * F-1587: duração lida do MP4 gerado, em segundos, quando é o modelo que
+   * decide (Gemini Omni). O custo estimado usa este número.
+   */
+  videoDurationSeconds?: number;
 }
 
 export interface MediaUsageTotals {

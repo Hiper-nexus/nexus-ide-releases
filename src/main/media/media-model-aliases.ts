@@ -38,6 +38,12 @@ const ALIASES: Record<string, string> = {
   'veo-fast': 'google/veo-3.1-fast',
   'veo-3.1-fast': 'google/veo-3.1-fast',
   'veo-lite': 'google/veo-3.1-lite',
+  // Gemini Omni Flash (AI Studio, F-1587) — `kling-omni` segue sendo o Kling.
+  omni: 'gemini-omni-1.1-flash',
+  'omni-flash': 'gemini-omni-1.1-flash',
+  'gemini-omni': 'gemini-omni-1.1-flash',
+  'gemini-omni-flash': 'gemini-omni-1.1-flash',
+  'gemini-omni-1.1': 'gemini-omni-1.1-flash',
   // Native Google Veo (AI Studio)
   'veo-native': 'veo-3.1-generate-preview',
   'veo-3.1-native': 'veo-3.1-generate-preview',

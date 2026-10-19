@@ -1,5 +1,11 @@
+import https from 'node:https';
+import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
-import { downloadProviderAsset } from './media-download';
+import {
+  downloadAuthenticatedProviderAsset,
+  downloadProviderAsset,
+  fetchPinnedProviderAsset,
+} from './media-download';
 
 const PUBLIC_IP = '93.184.216.34';
 
@@ -224,5 +230,78 @@ describe('provider media downloads', () => {
       ),
     ).rejects.toThrow(/timeout no DNS/);
     expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  describe('F-1587: download autenticado da Files API do Gemini', () => {
+    const FILE_URL =
+      'https://generativelanguage.googleapis.com/v1beta/files/abc123:download?alt=media';
+    const credential = {
+      host: 'generativelanguage.googleapis.com',
+      headers: { 'x-goog-api-key': 'gemini-key' },
+    };
+
+    it('manda a chave no primeiro salto e nunca no redirect', async () => {
+      const seen: Array<{ url: string; init?: RequestInit }> = [];
+      const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
+        seen.push({ url, init });
+        return seen.length === 1
+          ? new Response(null, {
+              status: 302,
+              headers: { location: 'https://video-downloads.googleusercontent.com/v.mp4' },
+            })
+          : new Response('omni-mp4');
+      }) as unknown as typeof fetch;
+      await expect(
+        downloadAuthenticatedProviderAsset(FILE_URL, 'google-video', credential, deps(fetchFn)),
+      ).resolves.toEqual(Buffer.from('omni-mp4'));
+      expect(seen[0]?.url).toBe(FILE_URL);
+      expect(new Headers(seen[0]?.init?.headers).get('x-goog-api-key')).toBe('gemini-key');
+      expect(seen[1]?.url).toBe('https://video-downloads.googleusercontent.com/v.mp4');
+      expect(new Headers(seen[1]?.init?.headers).get('x-goog-api-key')).toBeNull();
+    });
+
+    it('recusa mandar a chave para outro host, mesmo da lista do Google', async () => {
+      const fetchFn = vi.fn() as unknown as typeof fetch;
+      await expect(
+        downloadAuthenticatedProviderAsset(
+          'https://storage.googleapis.com/bucket/v.mp4',
+          'google-video',
+          credential,
+          deps(fetchFn),
+        ),
+      ).rejects.toThrow('google-video: credencial só vai para generativelanguage.googleapis.com');
+      expect(fetchFn).not.toHaveBeenCalled();
+    });
+
+    it('o transporte fixado no IP leva os cabeçalhos do pedido junto do Host', async () => {
+      let options: https.RequestOptions | undefined;
+      const spy = vi.spyOn(https, 'request').mockImplementation(((
+        opts: https.RequestOptions,
+        onResponse: (res: EventEmitter & { statusCode: number; headers: object }) => void,
+      ) => {
+        options = opts;
+        const req = Object.assign(new EventEmitter(), {
+          end: () => {
+            const res = Object.assign(new EventEmitter(), { statusCode: 204, headers: {} });
+            onResponse(res);
+          },
+          destroy: () => {},
+        });
+        return req;
+      }) as unknown as typeof https.request);
+      try {
+        const response = await fetchPinnedProviderAsset(new URL(FILE_URL), [PUBLIC_IP], {
+          headers: { 'x-goog-api-key': 'gemini-key' },
+        });
+        expect(response.status).toBe(204);
+      } finally {
+        spy.mockRestore();
+      }
+      expect(options?.host).toBe(PUBLIC_IP);
+      expect(options?.headers).toEqual({
+        'x-goog-api-key': 'gemini-key',
+        Host: 'generativelanguage.googleapis.com',
+      });
+    });
   });
 });

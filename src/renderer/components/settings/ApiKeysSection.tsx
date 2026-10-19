@@ -34,7 +34,7 @@ export const SYSTEM_API_KEYS: readonly SystemApiKeyDef[] = [
     envVar: 'GEMINI_API_KEY',
     title: 'Google Gemini',
     description:
-      'Jarvis Live (Gemini Live), transcrição de fala STT, Antigravity/Gemini CLI e geração de imagens/vídeos no Estúdio de Mídia (Imagen 3 e Veo 2).',
+      'Jarvis Live (Gemini Live), transcrição de fala STT, Antigravity/Gemini CLI e geração de imagens e vídeos no Estúdio de Mídia (Gemini Flash Image e Gemini Omni Flash).',
     category: 'core',
     docLink: 'https://aistudio.google.com/app/apikey',
     docLabel: 'Google AI Studio',

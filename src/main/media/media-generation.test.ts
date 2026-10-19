@@ -12,6 +12,8 @@ import {
   generateAudio,
   generateImage,
   generateVideo,
+  extractGeminiOmniOutput,
+  geminiOmniRequest,
   MediaJobTimeoutError,
   replicateEndImageField,
   replicateImageField,
@@ -970,11 +972,12 @@ describe('F-1585: pedido de vídeo que o modelo recusa não chega ao serviço', 
     deps.now = () => Date.parse('2026-10-23T10:00:00Z');
     await expect(
       generateVideo(
-        { prompt: 'x', provider: 'google-video', baseDir: dir },
+        { prompt: 'x', provider: 'google-video', model: 'veo-3.1-generate-preview', baseDir: dir },
         deps,
       ),
     ).rejects.toThrow(
-      'O fornecedor desligou o veo-3.1-generate-preview em 22/10/2026; use google/veo-3.1 pelo Replicate.',
+      'O fornecedor desligou o veo-3.1-generate-preview em 22/10/2026; ' +
+        'use gemini-omni-1.1-flash, com a mesma chave do Gemini.',
     );
     expect(calls).toHaveLength(0);
   });
@@ -988,5 +991,269 @@ describe('F-1585: pedido de vídeo que o modelo recusa não chega ao serviço', 
     const body = JSON.parse(String(calls[0].init?.body ?? '{}')) as { input: Record<string, unknown> };
     expect(body.input.duration).toBe(8);
     expect(result.estimatedCostUsd).toBe(3.2);
+  });
+});
+
+/** MP4 mínimo com `moov/mvhd` dizendo a duração (o que o Omni devolve tem). */
+function fakeMp4(seconds: number): Buffer {
+  const box = (type: string, payload: Buffer): Buffer => {
+    const header = Buffer.alloc(8);
+    header.writeUInt32BE(8 + payload.length, 0);
+    header.write(type, 4, 'latin1');
+    return Buffer.concat([header, payload]);
+  };
+  const mvhd = Buffer.alloc(100);
+  mvhd.writeUInt32BE(1000, 12);
+  mvhd.writeUInt32BE(Math.round(seconds * 1000), 16);
+  return Buffer.concat([
+    box('ftyp', Buffer.from('isom', 'latin1')),
+    box('moov', box('mvhd', mvhd)),
+    box('mdat', Buffer.from('omni-frames')),
+  ]);
+}
+
+const GEMINI = 'https://generativelanguage.googleapis.com/v1beta';
+
+function omniInteraction(content: unknown[], extra: Record<string, unknown> = {}) {
+  return {
+    id: 'v1_omni-1',
+    status: 'completed',
+    model: 'gemini-omni-1.1-flash',
+    object: 'interaction',
+    steps: [
+      { type: 'user_input', content: [{ type: 'text', text: 'x' }] },
+      { type: 'thought', content: [{ type: 'thought', text: '...' }] },
+      { type: 'model_output', content },
+    ],
+    ...extra,
+  };
+}
+
+describe('F-1587: Gemini Omni Flash pelo google-video', () => {
+  it('texto → vídeo: POST /interactions sem duração, Files API até ACTIVE e custo pela duração do MP4', async () => {
+    const mp4 = fakeMp4(8);
+    const { deps, calls } = fakeDeps([
+      {
+        json: omniInteraction([
+          {
+            type: 'video',
+            mime_type: 'video/mp4',
+            uri: `${GEMINI}/files/omni123:download?alt=media`,
+          },
+        ]),
+      },
+      { json: { name: 'files/omni123', state: 'PROCESSING' } },
+      { json: { name: 'files/omni123', state: 'ACTIVE' } },
+      { body: mp4 },
+    ]);
+    const result = await generateVideo(
+      {
+        prompt: 'um gato no telhado',
+        provider: 'google-video',
+        aspectRatio: '9:16',
+        resolution: '1080p',
+        outPath: 'omni.mp4',
+        baseDir: dir,
+      },
+      deps,
+    );
+
+    expect(calls[0]?.url).toBe(`${GEMINI}/interactions`);
+    expect(calls[0]?.init?.method).toBe('POST');
+    expect(new Headers(calls[0]?.init?.headers).get('x-goog-api-key')).toBe('test-key');
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+      model: 'gemini-omni-1.1-flash',
+      input: 'um gato no telhado',
+      response_format: { type: 'video', delivery: 'uri', aspect_ratio: '9:16', resolution: '1080p' },
+      generation_config: { video_config: { task: 'text_to_video' } },
+      store: false,
+    });
+    expect(calls[1]?.url).toBe(`${GEMINI}/files/omni123`);
+    expect(calls[2]?.url).toBe(`${GEMINI}/files/omni123`);
+    expect(calls[3]?.url).toBe(`${GEMINI}/files/omni123:download?alt=media`);
+    expect(new Headers(calls[3]?.init?.headers).get('x-goog-api-key')).toBe('test-key');
+
+    expect(fs.readFileSync(result.path)).toEqual(mp4);
+    expect(result).toMatchObject({
+      provider: 'google-video',
+      model: 'gemini-omni-1.1-flash',
+      videoDurationSeconds: 8,
+      // 8 s × $0.15/s em 1080p (tabela do Google, 27/08/2026).
+      estimatedCostUsd: 1.2,
+      jobId: 'v1_omni-1',
+    });
+    expect(getVideoJob(dir, 'v1_omni-1')).toMatchObject({
+      pollTarget: 'files/omni123',
+      status: 'completed',
+    });
+  });
+
+  it('vídeo em base64 na resposta é gravado sem outra chamada; padrão 720p', async () => {
+    const mp4 = fakeMp4(6.5);
+    const { deps, calls } = fakeDeps([
+      {
+        json: omniInteraction([
+          { type: 'video', mime_type: 'video/mp4', data: mp4.toString('base64') },
+        ]),
+      },
+    ]);
+    const result = await generateVideo(
+      { prompt: 'onda', model: 'omni', outPath: 'inline.mp4', baseDir: dir },
+      deps,
+    );
+    expect(calls).toHaveLength(1);
+    const body = JSON.parse(String(calls[0]?.init?.body)) as Record<string, unknown>;
+    expect(body.response_format).toEqual({ type: 'video', delivery: 'uri', resolution: '720p' });
+    expect(fs.readFileSync(result.path)).toEqual(mp4);
+    expect(result.estimatedCostUsd).toBe(0.65);
+    expect(result.videoDurationSeconds).toBe(6.5);
+    // Sem job salvo, não há o que retomar: nenhum jobId prometido.
+    expect(result.jobId).toBeUndefined();
+  });
+
+  it('duração no pedido é recusada antes de chamar o Google (a API não tem esse campo)', async () => {
+    const { deps, calls } = fakeDeps([]);
+    await expect(
+      generateVideo(
+        { prompt: 'x', provider: 'google-video', durationSeconds: 8, baseDir: dir },
+        deps,
+      ),
+    ).rejects.toThrow('gemini-omni-1.1-flash não deixa escolher a duração (o modelo decide)');
+    await expect(
+      generateVideo({ prompt: 'x', model: 'omni', resolution: '480p', baseDir: dir }, deps),
+    ).rejects.toThrow('aceita resolução 360p, 720p, 1080p, 4k (pedido: 480p)');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('imagem inicial vai antes do texto, com o papel declarado no prompt', async () => {
+    fs.writeFileSync(path.join(dir, 'start.png'), 'start-png');
+    const { deps, calls } = fakeDeps([
+      { json: omniInteraction([{ type: 'video', data: fakeMp4(4).toString('base64') }]) },
+    ]);
+    await generateVideo(
+      { prompt: 'anime esta cena', model: 'omni', imagePath: 'start.png', baseDir: dir },
+      deps,
+    );
+    const body = JSON.parse(String(calls[0]?.init?.body)) as Record<string, unknown>;
+    expect(body.input).toEqual([
+      { type: 'image', data: Buffer.from('start-png').toString('base64'), mime_type: 'image/png' },
+      { type: 'text', text: '[# Sources <FIRST_FRAME>@Image1]\nanime esta cena' },
+    ]);
+    expect(body.generation_config).toEqual({ video_config: { task: 'image_to_video' } });
+  });
+
+  it('moldura final, referências e combinações seguem a sintaxe da documentação', () => {
+    const file = (name: string) => ({ path: path.join(dir, name), data: Buffer.from(name) });
+    const req = { prompt: 'p', baseDir: dir };
+    const both = geminiOmniRequest(req, 'gemini-omni-1.1-flash', file('a.jpg'), file('b.jpg'));
+    expect((both.input as Array<{ text?: string }>).at(-1)?.text).toBe(
+      '[# Sources <FIRST_FRAME>@Image1 <LAST_FRAME>@Image2]\np',
+    );
+    expect(both.generation_config).toEqual({ video_config: { task: 'image_to_video' } });
+
+    const refs = geminiOmniRequest(req, 'gemini-omni-1.1-flash', undefined, undefined, [
+      file('r1.png'),
+      file('r2.webp'),
+    ]);
+    expect(refs.input).toEqual([
+      { type: 'image', data: Buffer.from('r1.png').toString('base64'), mime_type: 'image/png' },
+      { type: 'image', data: Buffer.from('r2.webp').toString('base64'), mime_type: 'image/webp' },
+      { type: 'text', text: '[# References <IMAGE_REF_0>@Image1 <IMAGE_REF_1>@Image2]\np' },
+    ]);
+    expect(refs.generation_config).toEqual({ video_config: { task: 'reference_to_video' } });
+
+    const mixed = geminiOmniRequest(req, 'gemini-omni-1.1-flash', file('a.jpg'), undefined, [
+      file('r.png'),
+    ]);
+    expect((mixed.input as Array<{ text?: string }>).at(-1)?.text).toBe(
+      '[# Sources <FIRST_FRAME>@Image1] [# References <IMAGE_REF_0>@Image2]\np',
+    );
+    expect(mixed.generation_config).toBeUndefined();
+
+    expect(() =>
+      geminiOmniRequest(req, 'gemini-omni-1.1-flash', undefined, file('b.jpg')),
+    ).toThrow('usa a imagem final junto da inicial');
+  });
+
+  it('lê as outras formas da resposta: outputs[], output_video e URI fora da Files API', () => {
+    expect(extractGeminiOmniOutput({ outputs: [{ type: 'video', data: 'QUJD' }] })).toMatchObject({
+      data: 'QUJD',
+    });
+    expect(extractGeminiOmniOutput({ output_video: { uri: 'files/xyz-9' } })).toMatchObject({
+      fileId: 'files/xyz-9',
+    });
+    expect(
+      extractGeminiOmniOutput({
+        steps: [
+          {
+            type: 'model_output',
+            content: [{ type: 'video', uri: 'https://video.googleusercontent.com/v.mp4' }],
+          },
+        ],
+      }),
+    ).toMatchObject({ uri: 'https://video.googleusercontent.com/v.mp4' });
+  });
+
+  it('resposta sem vídeo diz o que o modelo respondeu e não grava nada', async () => {
+    const { deps } = fakeDeps([
+      {
+        json: omniInteraction([{ type: 'text', text: 'Não posso gerar   este vídeo.' }], {
+          status: 'incomplete',
+        }),
+      },
+    ]);
+    await expect(
+      generateVideo({ prompt: 'x', model: 'omni', outPath: 'nada.mp4', baseDir: dir }, deps),
+    ).rejects.toThrow(
+      'O Google não devolveu vídeo (status: incomplete); nada foi salvo. ' +
+        'O modelo respondeu: "Não posso gerar este vídeo."',
+    );
+    expect(fs.existsSync(path.join(dir, 'nada.mp4'))).toBe(false);
+  });
+
+  it('arquivo FAILED na Files API vira erro e o job fica failed', async () => {
+    const { deps } = fakeDeps([
+      { json: omniInteraction([{ type: 'video', uri: 'files/bad1' }]) },
+      { json: { state: 'FAILED', error: { message: 'processing error' } } },
+    ]);
+    await expect(generateVideo({ prompt: 'x', model: 'omni', baseDir: dir }, deps)).rejects.toThrow(
+      'O Google não concluiu o arquivo do vídeo (Files API: FAILED) — processing error.',
+    );
+    expect(getVideoJob(dir, 'v1_omni-1')?.status).toBe('failed');
+  });
+
+  it('recoverJobId baixa o arquivo já gerado, sem gerar (e pagar) de novo', async () => {
+    saveVideoJob(dir, {
+      jobId: 'v1_saved',
+      provider: 'google-video',
+      pollTarget: 'files/saved7',
+      model: 'gemini-omni-1.1-flash',
+      prompt: 'x',
+      startedAt: 1,
+      status: 'pending',
+    });
+    const mp4 = fakeMp4(10);
+    const { deps, calls } = fakeDeps([{ json: { state: 'ACTIVE' } }, { body: mp4 }]);
+    const result = await generateVideo(
+      { prompt: '', recoverJobId: 'v1_saved', outPath: 'back.mp4', baseDir: dir },
+      deps,
+    );
+    expect(calls.map((c) => c.url)).toEqual([
+      `${GEMINI}/files/saved7`,
+      `${GEMINI}/files/saved7:download?alt=media`,
+    ]);
+    expect(fs.readFileSync(result.path)).toEqual(mp4);
+    expect(result.estimatedCostUsd).toBe(1);
+    expect(getVideoJob(dir, 'v1_saved')?.status).toBe('completed');
+  });
+
+  it('a espera de 5 min do fetch vira frase do que fazer', async () => {
+    const { deps } = fakeDeps([]);
+    deps.fetchFn = (async () => {
+      throw new TypeError('fetch failed', { cause: { code: 'UND_ERR_HEADERS_TIMEOUT' } });
+    }) as typeof fetch;
+    await expect(
+      generateVideo({ prompt: 'x', model: 'omni', resolution: '4k', baseDir: dir }, deps),
+    ).rejects.toThrow('O Google não terminou o vídeo em 5 minutos');
   });
 });

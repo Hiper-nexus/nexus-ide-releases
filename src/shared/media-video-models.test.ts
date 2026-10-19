@@ -4,6 +4,8 @@ import {
   allowedVideoDurations,
   estimateVideoCostUsd,
   isVideoModelRetired,
+  modelPicksVideoDuration,
+  videoCostPerSecondUsd,
   videoModelSpec,
   videoModelSummary,
   videoRequestProblem,
@@ -15,18 +17,24 @@ const AFTER = Date.parse('2026-10-22T00:00:00Z');
 describe('media-video-models (F-1585)', () => {
   it('todo modelo tem padrão aceito por ele mesmo e preço para o padrão', () => {
     for (const [model, spec] of Object.entries(VIDEO_MODEL_SPECS)) {
-      expect(spec.durations, model).toContain(spec.defaultDuration);
       if (spec.resolutions.length > 0) {
         expect(spec.resolutions, model).toContain(spec.defaultResolution);
       } else {
         expect(spec.defaultResolution, model).toBeUndefined();
       }
+      expect(videoRequestProblem(model, { hasImage: true }, BEFORE), model).toBeNull();
+      if (modelPicksVideoDuration(spec)) {
+        // Sem duração no pedido: o custo sai da duração do arquivo gerado.
+        expect(spec.defaultDuration, model).toBeUndefined();
+        expect(estimateVideoCostUsd(model, { seconds: 8 }), model).not.toBeNull();
+        continue;
+      }
+      expect(spec.durations, model).toContain(spec.defaultDuration);
       expect(
         allowedVideoDurations(spec, { resolution: spec.defaultResolution }),
         model,
       ).toContain(spec.defaultDuration);
       expect(estimateVideoCostUsd(model, {}), model).not.toBeNull();
-      expect(videoRequestProblem(model, { hasImage: true }, BEFORE), model).toBeNull();
     }
   });
 
@@ -83,10 +91,40 @@ describe('media-video-models (F-1585)', () => {
     const spec = videoModelSpec('veo-3.1-generate-preview')!;
     expect(isVideoModelRetired(spec, BEFORE)).toBe(false);
     expect(isVideoModelRetired(spec, AFTER)).toBe(true);
+    // F-1587: o substituto do Google usa a mesma chave do Gemini.
     expect(videoRequestProblem('veo-3.1-lite-generate-preview', {}, AFTER)).toBe(
-      'O fornecedor desligou o veo-3.1-lite-generate-preview em 22/10/2026; use google/veo-3.1 pelo Replicate.',
+      'O fornecedor desligou o veo-3.1-lite-generate-preview em 22/10/2026; ' +
+        'use gemini-omni-1.1-flash, com a mesma chave do Gemini.',
     );
     expect(isVideoModelRetired(videoModelSpec('google/veo-3.1')!, AFTER)).toBe(false);
+    expect(isVideoModelRetired(videoModelSpec('gemini-omni-1.1-flash')!, AFTER)).toBe(false);
+  });
+
+  it('F-1587: Gemini Omni não aceita duração no pedido e cobra por resolução', () => {
+    const spec = videoModelSpec('gemini-omni-1.1-flash')!;
+    expect(modelPicksVideoDuration(spec)).toBe(true);
+    expect(videoRequestProblem('gemini-omni-1.1-flash', { durationSeconds: 8 }, BEFORE)).toBe(
+      'gemini-omni-1.1-flash não deixa escolher a duração (o modelo decide): tire a duração do pedido.',
+    );
+    expect(videoRequestProblem('gemini-omni-1.1-flash', { resolution: '480p' }, BEFORE)).toBe(
+      'gemini-omni-1.1-flash aceita resolução 360p, 720p, 1080p, 4k (pedido: 480p).',
+    );
+    expect(videoRequestProblem('gemini-omni-1.1-flash', { aspectRatio: '1:1' }, BEFORE)).toContain(
+      'aceita proporção 16:9, 9:16',
+    );
+    expect(
+      videoRequestProblem('gemini-omni-1.1-flash', { resolution: '4k', aspectRatio: '9:16' }, BEFORE),
+    ).toBeNull();
+    // Tabela do anúncio do Google (27/08/2026), por segundo.
+    expect(videoCostPerSecondUsd('gemini-omni-1.1-flash', '360p')).toBe(0.03);
+    expect(videoCostPerSecondUsd('gemini-omni-1.1-flash')).toBe(0.1);
+    expect(videoCostPerSecondUsd('gemini-omni-1.1-flash', '1080p')).toBe(0.15);
+    expect(videoCostPerSecondUsd('gemini-omni-1.1-flash', '4k')).toBe(0.3);
+    // Sem a duração do arquivo não há custo inventado.
+    expect(estimateVideoCostUsd('gemini-omni-1.1-flash', {})).toBeNull();
+    expect(estimateVideoCostUsd('gemini-omni-1.1-flash', { seconds: 8, resolution: '4k' })).toBe(2.4);
+    expect(estimateVideoCostUsd('gemini-omni-1.1-flash', { seconds: 8.04 })).toBe(0.804);
+    expect(videoCostPerSecondUsd('minimax/hailuo-2.3')).toBeNull();
   });
 
   it('custo de lista por segundo ou por vídeo; combinação sem preço é null', () => {
@@ -113,6 +151,9 @@ describe('videoModelSummary (F-1585)', () => {
     expect(videoModelSummary('wan-video/wan-2.5-i2v', BEFORE)).toContain('precisa de imagem inicial');
     expect(videoModelSummary('veo-3.1-generate-preview', BEFORE)).toContain('desliga em 22/10/2026');
     expect(videoModelSummary('veo-3.1-generate-preview', AFTER)).toContain('desligado em 22/10/2026');
+    expect(videoModelSummary('gemini-omni-1.1-flash', AFTER)).toBe(
+      'duração escolhida pelo modelo · 360p, 720p, 1080p, 4k · a partir de $0.03/s',
+    );
     expect(videoModelSummary('modelo/novo')).toBeNull();
   });
 });

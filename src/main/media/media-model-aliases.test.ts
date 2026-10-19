@@ -69,6 +69,17 @@ describe('media model aliases', () => {
     expect(def.id).toBe('google-video');
   });
 
+  it('F-1587: "omni" é o Gemini Omni do google-video; "kling-omni" segue sendo o Kling', () => {
+    expect(resolveMediaModelAlias('Gemini Omni')).toBe('gemini-omni-1.1-flash');
+    expect(resolveMediaModelAlias('omni')).toBe('gemini-omni-1.1-flash');
+    expect(resolveMediaModelAlias('kling omni')).toBe('kwaivgi/kling-v3-omni-video');
+    const google = findMediaProvider('google-video')!;
+    expect(google.defaultModel).toBe('gemini-omni-1.1-flash');
+    expect(resolveMediaModel(google, 'omni-flash')).toBe('gemini-omni-1.1-flash');
+    // Com as duas chaves, o modelo pedido escolhe o serviço que o tem.
+    expect(resolveMediaProvider('video', undefined, () => true, 'omni').id).toBe('google-video');
+  });
+
   it('exports a non-empty alias map for MCP', () => {
     const aliases = listMediaModelAliases();
     expect(aliases.seedance).toBe('bytedance/seedance-2.0');

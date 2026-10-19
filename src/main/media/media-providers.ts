@@ -129,12 +129,14 @@ export const MEDIA_PROVIDERS: MediaProviderDef[] = [
   {
     id: 'google-video',
     kind: 'video',
-    label: 'Google Veo nativo (AI Studio)',
+    label: 'Google nativo — Gemini Omni / Veo (AI Studio)',
     envVar: 'GEMINI_API_KEY',
-    defaultModel: 'veo-3.1-generate-preview',
-    // veo-2.0-generate-001 saiu: o Google o desligou em 30/06/2026. Os três
-    // Veo 3.1 preview desligam em 22/10/2026 (`retiresOn` na tabela de vídeo).
+    // F-1587: o Gemini Omni Flash é o substituto do Google para os Veo 3.1
+    // preview, que desligam em 22/10/2026 (`retiresOn` na tabela de vídeo).
+    // veo-2.0-generate-001 saiu: o Google o desligou em 30/06/2026.
+    defaultModel: 'gemini-omni-1.1-flash',
     models: [
+      'gemini-omni-1.1-flash',
       'veo-3.1-generate-preview',
       'veo-3.1-fast-generate-preview',
       'veo-3.1-lite-generate-preview',

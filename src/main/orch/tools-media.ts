@@ -37,7 +37,7 @@ const mediaProvidersTool: McpToolDef = {
   description:
     'List media generation providers (image/video/audio), their models, ' +
     'whether an API key is configured, and friendly model aliases ' +
-    '(seedream, seedance, veo, kling, sora, runway, luma…). Call before ' +
+    '(seedream, seedance, veo, omni, kling, sora, runway, luma…). Call before ' +
     'generating; never invent providers/models outside this list.',
   inputSchema: { type: 'object', properties: {} },
   handler: async () => ({
@@ -125,8 +125,10 @@ const videoGenerateTool: McpToolDef = {
   description:
     'Generate a video clip and save the mp4 in the workspace. ' +
     'Providers: replicate-video (default Seedance 2.0; also Veo/Kling/Sora/' +
-    'Runway/Luma) | google-video (native Veo via Gemini API key). ' +
-    'Friendly model aliases work: seedance, veo, kling, sora, runway, luma. ' +
+    'Runway/Luma) | google-video (Gemini API key: default Gemini Omni Flash, ' +
+    'which picks the clip length itself — omit durationSeconds; resolution ' +
+    '360p|720p|1080p|4k; the Veo 3.1 previews retire on 2026-10-22). ' +
+    'Friendly model aliases work: seedance, veo, omni, kling, sora, runway, luma. ' +
     'imagePath=first frame; endImagePath=last frame; referenceImagePaths[] ' +
     'for Seedance/Veo character refs (max 9). On timeout the error includes ' +
     'recoverJobId — call again with that id to resume without double charge. ' +

@@ -5,6 +5,7 @@ import {
   mediaHttpError,
   mediaServiceName,
   providerErrorDetail,
+  providerErrorReason,
 } from './media-errors';
 
 describe('media-errors (F-1584)', () => {
@@ -55,6 +56,45 @@ describe('media-errors (F-1584)', () => {
     expect(err.message).toContain('Replicate recusou a chave (HTTP 401)');
     expect(err.message).toContain('You did not pass a valid authentication token');
     expect(err.message).not.toContain('"title"');
+  });
+
+  it('F-1587: erro do /interactions vem num array; chave inválida do Google é 400 e diz "recusou a chave"', async () => {
+    // Corpo devolvido ao vivo pelo Google em 19/10/2026 (chave de teste falsa).
+    const body = JSON.stringify([
+      {
+        error: {
+          code: 400,
+          message: 'API key not valid. Please pass a valid API key.',
+          status: 'INVALID_ARGUMENT',
+          details: [
+            {
+              '@type': 'type.googleapis.com/google.rpc.ErrorInfo',
+              reason: 'API_KEY_INVALID',
+              domain: 'googleapis.com',
+              metadata: { service: 'generativelanguage.googleapis.com' },
+            },
+          ],
+        },
+      },
+    ]);
+    expect(providerErrorDetail(body)).toBe('API key not valid. Please pass a valid API key.');
+    expect(providerErrorReason(body)).toBe('API_KEY_INVALID');
+    const err = await mediaHttpError(new Response(body, { status: 400 }), 'google-video');
+    expect(err.kind).toBe('key');
+    expect(err.message).toBe(
+      'Google recusou a chave (HTTP 400). Confira ou troque a chave em Ajustes → Serviços de mídia. ' +
+        'Resposta do serviço: API key not valid. Please pass a valid API key.',
+    );
+    // Outro 400 do Google segue sendo pedido recusado.
+    const other = await mediaHttpError(
+      new Response('{"error":{"code":400,"message":"bad resolution","status":"INVALID_ARGUMENT"}}', {
+        status: 400,
+      }),
+      'google-video',
+    );
+    expect(other.kind).toBe('invalid-request');
+    expect(providerErrorReason('[]')).toBeUndefined();
+    expect(providerErrorReason('não é json')).toBeUndefined();
   });
 
   it('nome curto do serviço', () => {
