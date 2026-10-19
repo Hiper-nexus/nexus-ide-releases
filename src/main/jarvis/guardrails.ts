@@ -344,6 +344,18 @@ export function confirmationReason(
       `(loudness -14 LUFS, mute copy, cover, captions; AI label ${safeMediaArg(args.label, 'auto')}); output: ${safeMediaArg(args.outDir, '<project>/exports')}`
     );
   }
+  if (toolName === 'nexus_video_capture' || toolName === 'video_capture') {
+    let origin = 'unknown site';
+    try {
+      origin = new URL(String(args.url)).origin;
+    } catch {
+      // invalid URL: the tool refuses it anyway
+    }
+    return (
+      `capture public site ${origin} with a headless Chrome (screenshots, text, images; third-party content); ` +
+      `output: ${safeMediaArg(args.outDir, 'capture/<host>-<stamp>')}`
+    );
+  }
   if (toolName === 'nexus_video_preview_start' || toolName === 'video_preview_start') {
     return (
       `open the live HyperFrames Studio of ${safeMediaArg(args.projectDir, 'unknown')} (a local server that runs ` +

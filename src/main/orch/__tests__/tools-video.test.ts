@@ -36,6 +36,7 @@ describe('ferramentas de vídeo', () => {
       const tools = [...buildVoiceTools(), ...buildVideoTools()];
       expect(tools.map((item) => item.name).sort()).toEqual([
         'nexus_music_generate',
+        'nexus_video_capture',
         'nexus_video_doctor',
         'nexus_video_export',
         'nexus_video_preview_start',

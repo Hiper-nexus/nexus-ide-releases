@@ -328,6 +328,13 @@ describe('confirmationReason', () => {
     expect(reason).toContain('promo/renders/v1.mp4');
   });
 
+  it('describes the site capture by origin only, never the query (F-1604)', () => {
+    const reason = confirmationReason('nexus_video_capture', { url: 'https://agendify.com.br/precos?ref=abc', outDir: 'capture/a' });
+    expect(reason).toContain('capture public site https://agendify.com.br');
+    expect(reason).toContain('third-party content');
+    expect(reason).not.toContain('ref=abc');
+  });
+
   it('describes the live video preview as a local server running the project (F-1603)', () => {
     const reason = confirmationReason('nexus_video_preview_start', { projectDir: 'promo' });
     expect(reason).toContain('live HyperFrames Studio of promo');

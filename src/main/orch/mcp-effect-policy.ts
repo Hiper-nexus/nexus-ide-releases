@@ -396,6 +396,9 @@ const EXECUTION_EFFECT_TOOLS = new Set([
   // projeto) e o encerra; a prévia vira alvo confiável do browser pane.
   'video_preview_start',
   'video_preview_stop',
+  // F-1604: abre um site público num Chrome do motor e grava prints, textos e
+  // imagens dele no workspace (conteúdo de terceiros).
+  'video_capture',
 ]);
 
 /**
