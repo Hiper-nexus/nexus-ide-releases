@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   SHOT_APP_PATH,
+  SHOT_CODE_REQUIREMENT,
   ensureShotMinVersion,
+  isOfficialShotAssetUrl,
   parseShotFeed,
   type ShotInstallerDeps,
   type ShotRunResult,
@@ -11,11 +13,6 @@ const ASSET = 'https://github.com/Hiper-nexus/nexus-shot-releases/releases/downl
 const feed = (version = '0.1.15', url = ASSET) =>
   JSON.stringify({ version, platforms: { 'darwin-aarch64': { url } } });
 const ok: ShotRunResult = { code: 0, stdout: '', stderr: '' };
-const signed: ShotRunResult = {
-  code: 0,
-  stdout: '',
-  stderr: 'Identifier=com.nexuside.shot\nTeamIdentifier=35P5XL3JN6\n',
-};
 
 function makeDeps(over: Partial<ShotInstallerDeps> & { installed?: string; fresh?: string } = {}) {
   const renames: Array<[string, string]> = [];
@@ -29,7 +26,7 @@ function makeDeps(over: Partial<ShotInstallerDeps> & { installed?: string; fresh
     hasRecentShotCrash: () => false,
     fetchText: async () => feed(),
     downloadTo: async () => {},
-    run: async (_c, args) => (args[0] === '-dv' ? signed : ok),
+    run: async () => ok,
     makeStagingDir: () => '/Applications/.stg',
     rename: (a, b) => void renames.push([a, b]),
     remove: () => {},
@@ -49,24 +46,51 @@ describe('ensureShotMinVersion', () => {
     ]);
   });
 
-  it.each([
-    ['Team ID alheio', { code: 0, stdout: '', stderr: 'Identifier=com.nexuside.shot\nTeamIdentifier=ABCDE12345\n' }],
-    ['bundle id alheio', { code: 0, stdout: '', stderr: 'Identifier=com.evil\nTeamIdentifier=35P5XL3JN6\n' }],
-  ])('recusa %s sem tocar na instalação', async (_n, info) => {
-    const { deps, renames } = makeDeps({ run: async (_c, a) => (a[0] === '-dv' ? info : ok) });
-    expect((await ensureShotMinVersion(deps)).status).toBe('failed');
-    expect(renames).toEqual([]);
+  it('valida Team ID e bundle id pelo requisito do codesign, não pelo texto', async () => {
+    const calls: string[][] = [];
+    const { deps } = makeDeps({ run: async (_c, a) => (calls.push(a), ok) });
+    expect((await ensureShotMinVersion(deps)).status).toBe('updated');
+    const verify = calls.find((a) => a.includes('--verify'));
+    expect(verify).toContain(`-R=${SHOT_CODE_REQUIREMENT}`);
+    expect(SHOT_CODE_REQUIREMENT).toBe(
+      'anchor apple generic and identifier "com.nexuside.shot" and certificate leaf[subject.OU] = "35P5XL3JN6"',
+    );
+    expect(calls.some((a) => a[0] === '-dv')).toBe(false);
   });
 
-  it('recusa assinatura inválida e falta de notarização (spctl)', async () => {
+  it('recusa bundle fora do requisito ou sem notarização sem tocar na instalação', async () => {
     for (const bad of ['--verify', '--assess']) {
       const { deps, renames } = makeDeps({
-        run: async (_c, a) =>
-          a[0] === '-dv' ? signed : a.includes(bad) ? { code: 3, stdout: '', stderr: 'rejected' } : ok,
+        run: async (_c, a) => (a.includes(bad) ? { code: 3, stdout: '', stderr: 'rejected' } : ok),
       });
       expect((await ensureShotMinVersion(deps)).status).toBe('failed');
       expect(renames).toEqual([]);
     }
+  });
+
+  it('não apaga o staging (onde ficou o app antigo) se troca e restauração falharem', async () => {
+    const removed: string[] = [];
+    const { deps } = makeDeps({
+      rename: (a: string) => {
+        if (a.endsWith('Nexus Shot.app') || a.endsWith('old.app')) throw new Error('EPERM');
+      },
+      remove: (p: string) => void removed.push(p),
+    });
+    expect((await ensureShotMinVersion(deps)).status).toBe('failed');
+    expect(removed).toEqual([]);
+  });
+
+  it.each([
+    'https://github.com/Hiper-nexus/nexus-shot-releases/releases/download/../../../evil/x/releases/download/v1/a.tar.gz',
+    'https://github.com/Hiper-nexus/nexus-shot-releases/releases/download/%2e%2e/%2e%2e/evil/a.tar.gz',
+    'https://github.com/Hiper-nexus/nexus-shot-releases/releases/download/v1/..%2fa.tar.gz',
+  ])('recusa URL de asset que escapa do repo oficial: %s', (url) => {
+    expect(isOfficialShotAssetUrl(url)).toBe(false);
+    expect(parseShotFeed(feed('0.1.16', url), 'arm64')).toBeNull();
+  });
+
+  it('aceita o asset oficial', () => {
+    expect(isOfficialShotAssetUrl(ASSET)).toBe(true);
   });
 
   it('restaura o app antigo se a troca falhar no meio', async () => {

@@ -1392,9 +1392,12 @@ if (squirrelStartupEvent || !wireDeepLinks()) {
 
         // O Shot 0.1.14 crasha antes do 1º check do updater dele (10 s): o
         // Nexus garante a versão mínima pelo feed oficial, com assinatura e Team ID.
-        void ensureShotMinVersion(createShotInstallerDeps((m) => console.warn(m))).catch((err) =>
-          console.warn('[main] shot-installer failed:', err),
-        );
+        // Build de dev nunca troca o /Applications/Nexus Shot.app do operador.
+        if (app.isPackaged) {
+          void ensureShotMinVersion(createShotInstallerDeps((m) => console.warn(m))).catch((err) =>
+            console.warn('[main] shot-installer failed:', err),
+          );
+        }
 
         // Limpeza dos hooks de handoff da 0.32.x (port do Overclock que nunca
         // rodou no Nexus — ver docstring do handoff-hook-installer). O

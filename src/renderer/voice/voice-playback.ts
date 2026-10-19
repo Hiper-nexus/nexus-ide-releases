@@ -122,7 +122,12 @@ export async function playAudioBase64(
     source.buffer = audioBuffer;
     // A saída passa pelo medidor (source → analyser → destination): a figura
     // de partículas ganha o nível REAL da fala em `voice-store.outputLevel`.
-    untapOutput = jarvisOutputMeter.tap(ctx, source);
+    // O medidor é cosmético: se falhar, a voz sai direto e nunca fica muda.
+    try {
+      untapOutput = jarvisOutputMeter.tap(ctx, source);
+    } catch {
+      source.connect(ctx.destination);
+    }
     await new Promise<void>((resolve) => {
       source.onended = () => resolve();
       source.start();

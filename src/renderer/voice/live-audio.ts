@@ -155,11 +155,13 @@ export class LiveAudioPlayer {
       const source = ctx.createBufferSource();
       source.buffer = buffer;
       let untapOutput: (() => void) | null = null;
-      if (this.tapOutput) {
-        untapOutput = this.tapOutput(ctx, source);
-      } else {
-        source.connect(ctx.destination);
+      // O medidor é cosmético: se falhar, a voz sai direto e nunca fica muda.
+      try {
+        untapOutput = this.tapOutput ? this.tapOutput(ctx, source) : null;
+      } catch {
+        untapOutput = null;
       }
+      if (!untapOutput) source.connect(ctx.destination);
       const startAt = Math.max(ctx.currentTime, this.nextStartAt);
       source.start(startAt);
       this.nextStartAt = startAt + buffer.duration;

@@ -74,23 +74,50 @@ export function parseShotFeed(raw: string, arch: string): FeedAsset | null {
     const feed = JSON.parse(raw) as { version?: unknown; platforms?: Record<string, { url?: unknown }> };
     const url = feed.platforms?.[darwinFeedPlatformKey(arch)]?.url;
     if (typeof feed.version !== 'string' || typeof url !== 'string') return null;
-    if (!isValidAppVersion(feed.version) || !url.startsWith(SHOT_ASSET_URL_PREFIX)) return null;
+    if (!isValidAppVersion(feed.version) || !isOfficialShotAssetUrl(url)) return null;
     return { version: feed.version, url };
   } catch {
     return null;
   }
 }
 
+/**
+ * Requisito de assinatura do Shot oficial. Validado pelo próprio codesign
+ * (`-R`), nunca pelo texto de `codesign -dv`: um identifier com quebra de
+ * linha injetava uma linha `TeamIdentifier=` falsa no texto.
+ */
+export const SHOT_CODE_REQUIREMENT =
+  `anchor apple generic and identifier "${SHOT_BUNDLE_ID}" and certificate leaf[subject.OU] = "${SHOT_TEAM_ID}"`;
+
+/** URL de asset do feed oficial, sem `..` nem escapes que normalizem para outro repo. */
+export function isOfficialShotAssetUrl(raw: string): boolean {
+  if (!raw.startsWith(SHOT_ASSET_URL_PREFIX)) return false;
+  if (/%2e|%2f|%5c|\\/i.test(raw)) return false;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  return (
+    url.protocol === 'https:' &&
+    url.host === 'github.com' &&
+    url.pathname.startsWith(new URL(SHOT_ASSET_URL_PREFIX).pathname) &&
+    !url.pathname.split('/').some((segment) => segment === '..' || segment === '.')
+  );
+}
+
 /** Confere assinatura, identidade e notarização do bundle extraído. Devolve o motivo da recusa, ou null. */
 async function verifyShotBundle(deps: ShotInstallerDeps, bundle: string): Promise<string | null> {
-  const strict = await deps.run('/usr/bin/codesign', ['--verify', '--deep', '--strict', bundle]);
-  if (strict.code !== 0) return `codesign --verify falhou: ${strict.stderr.trim()}`;
-  // codesign -dv escreve os campos em stderr.
-  const info = await deps.run('/usr/bin/codesign', ['-dv', '--verbose=2', bundle]);
-  const fields = `${info.stdout}\n${info.stderr}`;
-  if (!new RegExp(`^TeamIdentifier=${SHOT_TEAM_ID}$`, 'm').test(fields)) return 'Team ID diferente de 35P5XL3JN6';
-  if (!new RegExp(`^Identifier=${SHOT_BUNDLE_ID.replace(/\./g, '\\.')}$`, 'm').test(fields)) {
-    return 'bundle id diferente de com.nexuside.shot';
+  const strict = await deps.run('/usr/bin/codesign', [
+    '--verify',
+    '--deep',
+    '--strict',
+    `-R=${SHOT_CODE_REQUIREMENT}`,
+    bundle,
+  ]);
+  if (strict.code !== 0) {
+    return `assinatura fora do requisito (Team ${SHOT_TEAM_ID}, ${SHOT_BUNDLE_ID}): ${strict.stderr.trim()}`;
   }
   const gatekeeper = await deps.run('/usr/sbin/spctl', ['--assess', '--type', 'execute', bundle]);
   if (gatekeeper.code !== 0) return `spctl recusou (notarização): ${gatekeeper.stderr.trim()}`;
@@ -124,6 +151,9 @@ export async function ensureShotMinVersion(deps: ShotInstallerDeps): Promise<Sho
   if (!acceptable(asset.version)) return fail(`feed ainda em ${asset.version}`);
 
   let staging: string | null = null;
+  // Se a troca e a restauração falharem, o app antigo só existe no staging:
+  // nesse caso o staging NUNCA é apagado.
+  let keepStaging = false;
   try {
     staging = deps.makeStagingDir(parentDir(deps.appPath));
     const archive = `${staging}/shot.tar.gz`;
@@ -142,7 +172,16 @@ export async function ensureShotMinVersion(deps: ShotInstallerDeps): Promise<Sho
     try {
       deps.rename(bundle, deps.appPath);
     } catch (err) {
-      deps.rename(backup, deps.appPath);
+      try {
+        deps.rename(backup, deps.appPath);
+      } catch (restoreErr) {
+        keepStaging = true;
+        deps.log(
+          `[shot-installer] restauração falhou; app antigo preservado em ${backup}: ${
+            restoreErr instanceof Error ? restoreErr.message : String(restoreErr)
+          }`,
+        );
+      }
       throw err;
     }
     deps.log(`[shot-installer] Nexus Shot ${installed} -> ${extracted}`);
@@ -150,7 +189,7 @@ export async function ensureShotMinVersion(deps: ShotInstallerDeps): Promise<Sho
   } catch (err) {
     return fail(err instanceof Error ? err.message : String(err));
   } finally {
-    if (staging) {
+    if (staging && !keepStaging) {
       try {
         deps.remove(staging);
       } catch {

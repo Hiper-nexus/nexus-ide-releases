@@ -76,6 +76,29 @@ describe('micFrameToBase64', () => {
 });
 
 describe('LiveAudioPlayer output readiness', () => {
+  it('keeps the voice audible when the output meter tap throws', async () => {
+    const connect = vi.fn();
+    const channel = new Float32Array(240);
+    const destination = {};
+    const context = {
+      currentTime: 1,
+      destination,
+      state: 'running',
+      resume: vi.fn(() => Promise.resolve()),
+      close: vi.fn(() => Promise.resolve()),
+      createBuffer: vi.fn(() => ({ duration: 0.01, getChannelData: () => channel })),
+      createBufferSource: vi.fn(() => ({ buffer: null, connect, start: vi.fn(), stop: vi.fn(), onended: null })),
+    } as unknown as AudioContext;
+    const player = new LiveAudioPlayer(
+      () => context,
+      () => {
+        throw new Error('analyser indisponível');
+      },
+    );
+    await player.play(bytesToBase64(new Uint8Array(480)));
+    expect(connect).toHaveBeenCalledWith(destination);
+  });
+
   it('does not start the first PCM block before sink selection completes', async () => {
     let resolveSink!: () => void;
     const sinkReady = new Promise<void>((resolve) => {
