@@ -9,6 +9,7 @@ import {
   type MediaProviderDef,
 } from './media-providers';
 import { musicCostUsd } from './music-generation';
+import { geminiTtsCostUsd, PT_CHARS_PER_SECOND } from './voice-providers/gemini-voice';
 
 /**
  * Media spend cap (F-1606, study §5.3 step 14): the operator sets a limit per
@@ -322,6 +323,11 @@ export function estimateMediaToolUsd(
     if (args.dryRun === true) return { provider: 'elevenlabs', usd: 0 };
     const script = text('script');
     if (script === undefined) return { provider: text('provider') ?? 'elevenlabs', usd: null };
+    // F-1601: a Gemini voice pays the TTS by audio second (the alignment, when
+    // ElevenLabs, is cents per hour and is settled with the real price).
+    if (text('provider') === 'gemini') {
+      return { provider: 'google-image', usd: geminiTtsCostUsd(script.length / PT_CHARS_PER_SECOND) };
+    }
     const def = findMediaProvider('elevenlabs');
     try {
       const model = def ? resolveMediaModel(def, text('model')) : 'eleven_v4';

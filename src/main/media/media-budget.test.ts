@@ -139,6 +139,9 @@ describe('custo estimado por pedido (modal e teto)', () => {
     expect(estimateMediaToolUsd('nexus_music_generate', { lengthMs: 60_000, dryRun: true })).toEqual({ provider: 'elevenlabs', usd: 0 });
     expect(estimateMediaToolUsd('nexus_voiceover_generate', { script: 'a'.repeat(900) })).toEqual({ provider: 'elevenlabs', usd: 0.072 });
     expect(estimateMediaToolUsd('nexus_voiceover_generate', { scriptPath: 'roteiro.txt' })).toEqual({ provider: 'elevenlabs', usd: null });
+    // F-1601: Gemini voice — 1.400 caracteres ≈ 100 s de fala a 25 tokens/s e US$ 9 por milhão.
+    expect(estimateMediaToolUsd('nexus_voiceover_generate', { script: 'a'.repeat(1_400), provider: 'gemini' })?.provider).toBe('google-image');
+    expect(estimateMediaToolUsd('nexus_voiceover_generate', { script: 'a'.repeat(1_400), provider: 'gemini' })?.usd).toBeGreaterThan(0);
     expect(estimateMediaToolUsd('nexus_video_generate', { recoverJobId: 'abc' })).toMatchObject({ usd: 0 });
     const image = estimateMediaToolUsd('nexus_image_generate', { provider: 'replicate-image', model: 'bytedance/seedream-5-pro' });
     expect(image).toEqual({ provider: 'replicate-image', usd: 0.04 });
