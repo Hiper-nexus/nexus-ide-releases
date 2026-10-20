@@ -2165,9 +2165,12 @@ O que mudou — e o que NÃO mudou:
   `viewport`/`atBottom`; `format: 'compact'` no read. Cada ação e o read
   devolvem `errors` (console/HTTP ≥ 400/falha de carga desde a ação anterior)
   e o read traz `alerts` da página (role=alert, aria-invalid, allowlist de
-  classes de erro — árvores sensíveis excluídas). `judge: true` anexa um
-  julgamento Jev da página (erro visível, bloqueio humano, carregando, tipo de
-  página; fail-open com `judgmentSkipped`). `nexus_browser_extract` extrai
+  classes de erro — árvores sensíveis excluídas). Navigate, click, fill e
+  press anexam por padrão um julgamento Jev da página (erro visível, bloqueio
+  humano, carregando, tipo de página; `judge: false` desliga), com teto de
+  ~1,5 s: estourado, sai `judgmentSkipped: 'budget-exceeded'` e a resposta
+  não espera. Só o TEXTO redigido vai sem pedido; imagem continua exigindo a
+  visão ligada e o consentimento. `nexus_browser_extract` extrai
   campos tipados: o código levanta candidatos (JSON-LD, tabelas, label→valor,
   tokens) e o Jev só escolhe entre eles — `null` quando nada confiável;
   extract usa UMA chamada Jev para todos os campos (fan-out); booleano
