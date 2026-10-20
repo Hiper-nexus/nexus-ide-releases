@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.76.343 — Estúdio de mídia e encerramento de missões
+
+macOS arm64 com as melhorias compartilhadas desde a última publicação Mac (0.76.336): estúdio de mídia na barra lateral e no ⌘K, vídeos de apresentação com HyperFrames, narração e legendas, música, Minha voz com consentimento, prévia ao vivo, captura de site, variantes por rede/idioma e teto de gasto de mídia.
+
+Inclui referências do projeto, modelos de vídeo novos, Higgsfield e os ajustes posteriores para colar a chave em Modelos de mídia e abrir Criar minha voz direto do Estúdio (F-1615/F-1616). O alinhamento do roteiro roda no processo principal. O estúdio vem ligado e pode ser desligado em Ajustes → Experimental.
+
+Corrige também o encerramento e a conclusão de missões no fechamento/reinício do app e no Quadro de Missões: "Sair e encerrar processos" sela todas as missões abertas como `runtime-closed` antes de encerrar a janela, os watchers de fast-lane e conclusão civil param no início do shutdown para não reescreverem sobre o selo, panes de operador promovidos/devolvidos a `user` e runtimes em worktree encerram e limpam `orchestratorSessionId` sem erro de autoridade de pane, e missões estacionadas ("Dormindo") podem ser concluídas pelo botão "Marcar como feito".
+
 ## 0.76.342 — Chave e minha voz
 
 Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.

@@ -10,6 +10,7 @@ import {
   missionAwaitsOperatorReview,
   wasMissionRuntimeClosedByOperator,
 } from '../../shared/mission-recovery-policy';
+import { wasMissionLeftoverParked } from '../../shared/mission-leftover-isolation';
 
 const TERMINAL_BOARD_STATES: ReadonlySet<MissionLifecycleState> = new Set([
   'completed',
@@ -58,7 +59,10 @@ export function missionListAction(
   if (missionAwaitsOperatorReview(mission)) return 'complete';
   // Aprovada: nada a Encerrar — o Main recusa esse caminho.
   if (mission.status === 'done') return 'remove';
-  if (wasMissionRuntimeClosedByOperator(mission)) {
+  if (
+    wasMissionRuntimeClosedByOperator(mission) ||
+    wasMissionLeftoverParked(mission)
+  ) {
     if (mission.orchestratorSessionId !== undefined) return 'close-runtime';
     return 'complete';
   }

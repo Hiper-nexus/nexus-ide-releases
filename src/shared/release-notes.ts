@@ -12009,7 +12009,7 @@ export const RELEASE_076341: AppRelease = {
   fixes: [...RELEASE_076340.fixes],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076342: AppRelease = {
   version: '0.76.342',
   date: '2026-10-20',
   codename: 'Chave e minha voz',
@@ -12021,4 +12021,20 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: [...RELEASE_076341.fixes],
 };
 
-export const RELEASE_076342: AppRelease = CURRENT_RELEASE;
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.343',
+  date: '2026-10-20',
+  codename: 'Estúdio de mídia e encerramento de missões',
+  summary: 'O Mac recebe o estúdio de mídia e vídeo (referências do projeto, Higgsfield, narração, legendas, música, export por rede e Minha voz), além da correção do encerramento de missões no reinício do app e no Quadro de Missões. A versão macOS anterior é a 0.76.336.',
+  highlights: [
+    ...RELEASE_076340.highlights.filter((note) => note.title !== 'Pacote Linux' && !RELEASE_076336.highlights.some((previous) => previous.title === note.title)),
+    ...RELEASE_076342.highlights,
+  ],
+  fixes: [
+    { title: 'Encerramento de missões no reinício e no Quadro', detail: 'Confirmar "Sair e encerrar processos" sela todas as missões abertas antes de fechar a janela, os watchers de fast-lane e conclusão civil param no shutdown, panes de operador devolvidos a user e runtimes em worktree limpam orchestratorSessionId sem erro de autoridade de pane, e missões estacionadas podem ser marcadas como feitas.' },
+    { title: 'Custo da narração Gemini', detail: 'O modal estima a narração do Gemini pelo preço do Gemini.' },
+    { title: 'Alinhamento do roteiro', detail: 'O alinhamento da narração ao roteiro roda no processo principal, com processamento mais rápido.' },
+  ],
+};
+
+export const RELEASE_076343: AppRelease = CURRENT_RELEASE;

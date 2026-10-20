@@ -57,6 +57,7 @@ import { useWorkspaceStore } from '../../state/workspace-store';
 import {
   closeMissionNote,
   closeMissionRuntimeAndPanes,
+  sweepMissionPanes,
 } from '../../orch/close-mission-runtime';
 import {
   discardMissionPrompt,
@@ -1292,6 +1293,7 @@ export function MissionBoard({
             return;
           }
 
+          sweepMissionPanes?.(mission.id, 'mission-board-complete');
           setActionAnnouncement(
             'Missão marcada como concluída. Histórico preservado.',
           );

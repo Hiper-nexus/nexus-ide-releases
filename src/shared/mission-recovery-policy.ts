@@ -138,8 +138,9 @@ export function hasCurrentMissionRuntimeCloseVerdict(
   );
 }
 
-/** Qualquer veredito anexado depois do selo, exceto o de "dormindo". */
-const LATER_VERDICT_MARKER = /<!--\s*nexus:(?!leftover-parked\b)/u;
+/** Qualquer veredito anexado depois do selo, exceto o de "dormindo" ou pendência física do próprio encerramento. */
+const LATER_VERDICT_MARKER =
+  /<!--\s*nexus:(?!leftover-parked\b|mission-runtime-termination-pending\b)/u;
 
 export function hasTerminalOperationalFailureMarker(value: string): boolean {
   return value.includes(TERMINAL_OPERATIONAL_FAILURE_MARKER);

@@ -55,6 +55,14 @@ import { listMtimePathsSince } from './worker-delivery-evidence';
 import { MissionLeadershipError, type MissionLeader } from './mission-leadership';
 import { getMissionLeadership } from './mission-leadership-runtime';
 import { runPeriodicTask, type PeriodicTaskContext } from '../observability/periodic-task';
+import { isPtySessionAdmissionSealedForShutdown } from '../pty/pty-manager';
+
+function isCivilianDeliverySealedForShutdown(): boolean {
+  return (
+    typeof isPtySessionAdmissionSealedForShutdown === 'function' &&
+    isPtySessionAdmissionSealedForShutdown()
+  );
+}
 
 const execFileAsync = promisify(execFile);
 
@@ -1470,7 +1478,9 @@ export function maybeCompleteFastLaneOnDelivery(
   deps: CivilianDeliveryDependencies = {},
 ): Promise<CivilianDeliveryResult> {
   const owner = completionLifetime;
-  if (!missionId || !owner) return Promise.resolve({ ...emptyResult(), reason: 'completion-stopped' });
+  if (!missionId || !owner || isCivilianDeliverySealedForShutdown()) {
+    return Promise.resolve({ ...emptyResult(), reason: 'completion-stopped' });
+  }
   const key = missionLifecycleKey(scope, missionId);
   const active = completionFlights.get(key);
   if (active) {
@@ -1551,6 +1561,9 @@ async function reconcileCivilianCompletionAttempt(
   context: PeriodicTaskContext,
 ): Promise<CivilianDeliveryResult> {
   context.assertCurrent();
+  if (isCivilianDeliverySealedForShutdown()) {
+    return { ...emptyResult(), reason: 'completion-stopped' };
+  }
   if (!missionId) return emptyResult();
   const stores = deps.getStores?.(scope) ?? getProjectDomainStores(scope);
   if (!storesReady(stores)) return emptyResult();
@@ -1880,6 +1893,9 @@ async function reconcileCivilianCompletionAttempt(
     return { ...emptyResult(), productFiles, markedDoneTaskIds, reason: 'review-candidate-changed' };
   }
   if (autoReview.action === 'block') {
+    if (isCivilianDeliverySealedForShutdown()) {
+      return { ...emptyResult(), productFiles, markedDoneTaskIds, reason: 'completion-stopped' };
+    }
     const engine = deps.missionEngine ?? missionEngineForScope(scope);
     try {
       engine.blockUser(scope, {

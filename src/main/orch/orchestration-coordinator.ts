@@ -39,6 +39,8 @@ import {
   reconcileGoalGovernor,
   shutdownGoalGovernor,
 } from './goal-governor';
+import { stopAllFastLaneWatchers } from './mission-fast-lane';
+import { stopCivilianDeliveryCompletion } from './civilian-delivery-completion';
 
 /**
  * Production owner for orchestration supervision.
@@ -201,6 +203,10 @@ export function requestMissionRuntimeAuthorityReconciliation(): boolean {
  * exact exit observations can still be committed synchronously.
  */
 export async function quiesceOrchestrationCoordinator(): Promise<void> {
+  await Promise.allSettled([
+    stopAllFastLaneWatchers(),
+    stopCivilianDeliveryCompletion(),
+  ]);
   if (coordinatorStopFlight) return coordinatorStopFlight;
   const current = coordinator;
   if (!current) return;
@@ -211,6 +217,10 @@ export async function quiesceOrchestrationCoordinator(): Promise<void> {
 }
 
 export async function stopOrchestrationCoordinator(): Promise<void> {
+  await Promise.allSettled([
+    stopAllFastLaneWatchers(),
+    stopCivilianDeliveryCompletion(),
+  ]);
   if (coordinatorStopFlight) return coordinatorStopFlight;
   const current = coordinator;
   if (!current) return;

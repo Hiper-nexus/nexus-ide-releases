@@ -118,6 +118,28 @@ describe('mission list action policy', () => {
     expect(missionListAction(closedLive, false)).toBe('close-runtime');
   });
 
+  it('missão estacionada (leftover-parked / Dormindo) oferece Marcar como feito ou Encerrar', () => {
+    const parked = mission({
+      status: 'blocked',
+      intentState: 'blocked_user',
+      description:
+        '<!-- nexus:leftover-parked -->\n[NEXUS_LEFTOVER_PARKED] Sessão anterior estacionada.',
+      intentVersion: 1,
+      intentContract: {
+        goal: 'Retomar ou encerrar depois do boot',
+        intentVersion: 1,
+        approvedAt: 1,
+      } as Mission['intentContract'],
+    });
+    expect(missionListAction(parked, false)).toBe('complete');
+    expect(
+      missionListAction(
+        { ...parked, orchestratorSessionId: 'pty-leftover' },
+        false,
+      ),
+    ).toBe('close-runtime');
+  });
+
   it('keeps a user-blocked active mission when there is no runtime that can be closed safely', () => {
     const awaitingOperator = mission({
       status: 'blocked',

@@ -56,6 +56,7 @@ import {
   getSessionState,
   getAgentSessionInfo,
   getSessionCwd,
+  isPtySessionAdmissionSealedForShutdown,
   isPtySessionConnectedAndWritable,
   listAgentSessions,
   orchTerminateSession,
@@ -1690,6 +1691,13 @@ function reconcileOperatorTabPaneLink(scope: ProjectExecutionScope, mission: Mis
 
 // ── Watcher ──────────────────────────────────────────────────────────────
 
+function isFastLaneSealedForShutdown(): boolean {
+  return (
+    typeof isPtySessionAdmissionSealedForShutdown === 'function' &&
+    isPtySessionAdmissionSealedForShutdown()
+  );
+}
+
 function stopWatcher(scope: ProjectExecutionScope, missionId: string): void {
   const key = watcherKey(scope, missionId);
   const watcher = watchers.get(key);
@@ -1697,6 +1705,19 @@ function stopWatcher(scope: ProjectExecutionScope, missionId: string): void {
   if (watcher) { watcher.stopped = true; watcher.controller.abort(new Error('fast-lane watcher stopped')); }
   watchers.delete(key);
   void stopPeriodicTask(`mission-fast-lane:${key}`);
+}
+
+export async function stopAllFastLaneWatchers(): Promise<void> {
+  const keys = [...watchers.keys()];
+  for (const [key, watcher] of watchers) {
+    if (watcher.timer) clearInterval(watcher.timer);
+    watcher.stopped = true;
+    watcher.controller.abort(new Error('fast-lane watcher stopped'));
+    watchers.delete(key);
+  }
+  await Promise.allSettled(
+    keys.map((key) => stopPeriodicTask(`mission-fast-lane:${key}`)),
+  );
 }
 
 /**
@@ -1709,7 +1730,7 @@ function stopWatcher(scope: ProjectExecutionScope, missionId: string): void {
  * orquestrador.
  */
 async function tickWatcher(state: WatcherState, context: PeriodicTaskContext): Promise<void> {
-  if (state.stopped) {
+  if (state.stopped || isFastLaneSealedForShutdown()) {
     stopWatcher(state.scope, state.missionId);
     return;
   }
@@ -1751,7 +1772,7 @@ async function tickWatcher(state: WatcherState, context: PeriodicTaskContext): P
   const current = () => {
     context.assertCurrent();
     const live = stores.missions.get(state.missionId);
-    if (state.stopped || watchers.get(watcherKey(state.scope, state.missionId)) !== state ||
+    if (state.stopped || isFastLaneSealedForShutdown() || watchers.get(watcherKey(state.scope, state.missionId)) !== state ||
       !live || live.status !== 'running' || live.intentVersion !== version ||
       live.orchestratorSessionId !== mission.orchestratorSessionId ||
       missionExecutionScope(state.scope, live).rootRealPath !== executionRoot) {
