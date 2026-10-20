@@ -18,6 +18,7 @@ import {
   studioModelBlock,
   studioRetirementNotice,
   studioVideoChoices,
+  studioVideoPerSecondUsd,
   type StudioKind,
 } from './media-studio-options';
 import { VideoProjectsSection } from './VideoProjectsSection';
@@ -58,6 +59,12 @@ function formatUsd(usd: number): string {
   if (usd === 0) return '$0.00';
   if (usd < 0.01) return '<$0.01';
   return `$${usd.toFixed(2)}`;
+}
+
+/** `8.042` → `8 s de vídeo`; `6.5` → `6,5 s de vídeo`. */
+function formatSeconds(seconds: number): string {
+  const rounded = Math.round(seconds * 10) / 10;
+  return `${String(rounded).replace('.', ',')} s de vídeo`;
 }
 
 function basename(p: string): string {
@@ -258,6 +265,9 @@ export function MediaStudioPanel({
   const costUsd = selModel
     ? studioCostUsd(tab, selectedProvider, selModel, video ?? undefined)
     : null;
+  // F-1587: o Gemini Omni decide a duração; antes de gerar só há a taxa.
+  const perSecondUsd =
+    tab === 'video' && selModel ? studioVideoPerSecondUsd(selModel, video ?? undefined) : null;
   const retirementNotice = tab === 'video' && selModel ? studioRetirementNotice(selModel) : null;
 
   async function run(request: MediaStudioRequest) {
@@ -319,7 +329,7 @@ export function MediaStudioPanel({
       ...(effectiveAspect ? { aspectRatio: effectiveAspect } : {}),
       ...(video
         ? {
-            durationSeconds: video.duration,
+            ...(video.duration !== undefined ? { durationSeconds: video.duration } : {}),
             ...(video.resolution ? { resolution: video.resolution } : {}),
           }
         : {}),
@@ -582,7 +592,12 @@ export function MediaStudioPanel({
                         </div>
                       </div>
                     )}
-                    {video.durations.length > 6 ? (
+                    {video.duration === undefined ? (
+                      <div className="ms-field">
+                        <span className="ms-field__label">Duração</span>
+                        <span className="ms-dim">O modelo decide quanto o vídeo dura.</span>
+                      </div>
+                    ) : video.durations.length > 6 ? (
                       <label className="ms-field">
                         <span className="ms-field__label">Duração: {video.duration}s</span>
                         <input
@@ -627,7 +642,9 @@ export function MediaStudioPanel({
                   Custo estimado:{' '}
                   {costUsd !== null
                     ? `${formatUsd(costUsd)} (preço de lista; quem cobra é o serviço)`
-                    : 'sem preço de lista para esta escolha'}
+                    : perSecondUsd !== null
+                      ? `${formatUsd(perSecondUsd)} por segundo de vídeo; o total sai da duração que o modelo escolher (preço de lista; quem cobra é o serviço)`
+                      : 'sem preço de lista para esta escolha'}
                 </p>
               )}
 
@@ -694,6 +711,9 @@ export function MediaStudioPanel({
                   {result.res.estimatedCostUsd !== null
                     ? formatUsd(result.res.estimatedCostUsd)
                     : '—'}
+                  {result.res.videoDurationSeconds !== undefined
+                    ? ` · ${formatSeconds(result.res.videoDurationSeconds)}`
+                    : ''}
                 </span>
                 <div className="ms-result__actions">
                   <button

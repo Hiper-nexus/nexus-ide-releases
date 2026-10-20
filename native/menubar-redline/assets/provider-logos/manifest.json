@@ -127,6 +127,10 @@
     "file": "sakana.png",
     "mono": false
   },
+  "xai": {
+    "file": "grok.png",
+    "mono": true
+  },
   "xiaomi": {
     "file": "mimo-code.png",
     "mono": false

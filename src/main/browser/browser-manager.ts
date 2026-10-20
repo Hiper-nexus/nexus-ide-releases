@@ -471,6 +471,13 @@ function browserPartition(scope: ProjectExecutionScope, paneId: string): string 
   return `persist:nexus-browser-${digest}`;
 }
 
+/**
+ * Partições Chromium (`nexus-browser-…`) carregadas neste processo. Uma
+ * sessão aberta segura arquivos da pasta: a higiene de disco nunca a apaga,
+ * mesmo com o pane já fechado (o Electron não descarrega a sessão).
+ */
+const loadedBrowserPartitions = new Set<string>();
+
 function requireBrowserRuntimeManager(): ProjectRuntimeManager {
   if (!browserRuntimeManager) {
     throw new Error('project-scoped browser runtime is not configured');
@@ -822,6 +829,7 @@ async function createEntry(
   if (agentOwned) rememberAgentBrowser(key);
   const profileMode = browserProfileMode(key, agentOwned);
   const partition = browserPartition(scope, paneId) + (profileMode === 'personal' ? '-personal' : '');
+  loadedBrowserPartitions.add(partition.slice('persist:'.length));
   const browserSession = electronSession.fromPartition(partition);
   const allowedPrivateTargets = new Map<string, Set<string>>();
   const resolveHostname = createChromiumResolver(browserSession);
@@ -3206,6 +3214,18 @@ function destroyParkedBrowsersOfWorkspace(
 
 export function getBrowserViewCount(): number {
   return browsers.size;
+}
+
+/** Ver `loadedBrowserPartitions`. */
+export function loadedBrowserPartitionNames(): ReadonlySet<string> {
+  return new Set(loadedBrowserPartitions);
+}
+
+/** Esvazia o cache HTTP da sessão padrão e das partições carregadas (disco apertado). */
+export async function clearBrowserHttpCaches(): Promise<void> {
+  const sessions = [electronSession.defaultSession,
+    ...[...loadedBrowserPartitions].map((name) => electronSession.fromPartition(`persist:${name}`))];
+  await Promise.allSettled(sessions.map((entry) => entry.clearCache()));
 }
 
 function browserShowsOrigin(entry: BrowserEntry, previewOrigin: string): boolean {

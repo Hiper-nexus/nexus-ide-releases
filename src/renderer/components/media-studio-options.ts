@@ -11,6 +11,8 @@ import {
   estimateVideoCostUsd,
   formatRetirementDay,
   isVideoModelRetired,
+  modelPicksVideoDuration,
+  videoCostPerSecondUsd,
   videoModelSpec,
   type VideoModelSpec,
 } from '../../shared/media-video-models';
@@ -47,11 +49,13 @@ export interface StudioVideoChoices {
   readonly spec: VideoModelSpec | null;
   readonly aspects: readonly string[];
   readonly resolutions: readonly string[];
+  /** Vazio quando o modelo decide a duração (Gemini Omni, F-1587). */
   readonly durations: readonly number[];
   /** Valores efetivos: o escolhido se o modelo aceita, senão o padrão dele. */
   readonly aspect?: string;
   readonly resolution?: string;
-  readonly duration: number;
+  /** Ausente quando o modelo decide: o pedido não leva duração. */
+  readonly duration?: number;
 }
 
 /**
@@ -81,11 +85,13 @@ export function studioVideoChoices(
         ? picked.resolution
         : spec.defaultResolution;
   const durations = allowedVideoDurations(spec, { resolution });
-  const duration = durations.includes(picked.duration)
-    ? picked.duration
-    : durations.includes(spec.defaultDuration)
-      ? spec.defaultDuration
-      : (durations.at(-1) ?? spec.defaultDuration);
+  const duration = modelPicksVideoDuration(spec)
+    ? undefined
+    : durations.includes(picked.duration)
+      ? picked.duration
+      : spec.defaultDuration !== undefined && durations.includes(spec.defaultDuration)
+        ? spec.defaultDuration
+        : (durations.at(-1) ?? spec.defaultDuration);
   const aspect =
     spec.aspectRatios.length === 0
       ? undefined
@@ -109,6 +115,18 @@ export function studioRetirementNotice(model: string, now: number = Date.now()):
   if (!spec?.retiresOn || isVideoModelRetired(spec, now)) return null;
   const after = spec.replacement ? ` Depois disso, use ${spec.replacement}.` : '';
   return `O fornecedor desliga este modelo em ${formatRetirementDay(spec.retiresOn)}.${after}`;
+}
+
+/**
+ * Preço de lista por segundo quando é o modelo que decide a duração: antes
+ * de gerar não há total, só a taxa (o total vem da duração do arquivo).
+ */
+export function studioVideoPerSecondUsd(
+  model: string,
+  video?: Pick<StudioVideoChoices, 'spec' | 'resolution'>,
+): number | null {
+  if (!video?.spec || !modelPicksVideoDuration(video.spec)) return null;
+  return videoCostPerSecondUsd(model, video.resolution);
 }
 
 /** Custo de lista antes de gerar; `null` quando não há preço conhecido. */

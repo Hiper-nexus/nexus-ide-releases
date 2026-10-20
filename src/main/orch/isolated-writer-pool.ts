@@ -28,6 +28,7 @@ import {
 } from '../runtime/worktree-runtime-registry';
 import { KeyedCoalescingWorker } from '../util/keyed-coalescing-worker';
 import { getOrchSettings } from '../persistence/settings-store';
+import { currentStorageHygienePolicy } from '../storage-hygiene/hygiene-policy';
 
 export const WORKTREE_POOL_MAX_PER_SCOPE = 2;
 
@@ -200,6 +201,9 @@ export class IsolatedWriterPoolOrchestrator {
     request: IsolatedWriterPoolRequest,
   ): Promise<void> {
     if (!this.#enabled()) return;
+    // Disco crítico: ~1,6 GB de reserva por worktree não compensam o spawn
+    // mais rápido. O writer materializa a worktree na hora, como sem pool.
+    if (currentStorageHygienePolicy().pressure === 'critical') return;
     const scopeKey = this.#backend.scopeKey(scope);
     this.#scopes.set(scopeKey, scope);
     if (this.#pool.entriesFor(scopeKey).length >= WORKTREE_POOL_MAX_PER_SCOPE) return;

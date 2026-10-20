@@ -1,5 +1,62 @@
 # Changelog
 
+## 0.76.337 — O Nexus limpa o próprio disco
+
+A tag 0.76.336 é o pacote macOS da higiene de disco e não recebe arquivos Linux. A tag 0.76.335 é o pacote Linux anterior e não recebe estes arquivos. Este pacote leva o desktop Linux.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+No desktop Linux, em relação à 0.76.335:
+
+- **Limpeza automática de disco**. Roda a cada 3 horas com o disco folgado e a cada 20 minutos com o disco crítico (menos de 5 GB livres). Cuida das cópias de trabalho dos agentes, dos perfis do navegador de cada pane, dos snapshots de desfazer das CLIs, dos mapas de orientação, dos arquivos de sessões encerradas, dos anexos de missão antigos, dos temporários e dos logs que não tinham rotação.
+- **Cópias de trabalho dos agentes não se acumulam**. Uma hora depois de o pane encerrar, os caches regeneráveis (.nexus-cache, .vite, .turbo…) saem, sem tocar no código nem no node_modules. A cópia limpa sai em 12 horas. A que tem trabalho não commitado sai em 2 dias, e só depois de o Nexus guardar tudo numa ref de salvaguarda (refs/nexus-salvage/…) duas vezes seguidas, sem nenhuma edição no meio; a branch sempre fica. Repositório Git aninhado, edição recente no disco ou saída de build recente (out/, dist/) seguram a cópia. Com o disco apertado, os prazos caem para horas.
+- **Armazenamento em Configurações → Diagnóstico**. Mostra o espaço livre, quanto o Nexus ocupa em cada categoria, o que a última limpeza removeu — com a ref de cada cópia aposentada e o cherry-pick para trazê-la de volta — e o botão "Limpar agora", que roda na hora com os prazos de disco apertado.
+- **Lixo do Nexus dentro dos projetos**. Prints colados em missões (.nexus/attachments) saem depois de 30 dias e rascunhos de swarm de missões antigas (.nexus/swarms) depois de 14. Nada sai de missão que ainda pode rodar, e o que estiver versionado no Git do projeto nunca é apagado.
+- **Configs MCP de sessões encerradas**. Os arquivos em ~/.nexus/mcp-configs, cada um com um token, ficavam para sempre quando o pane morria sem encerrar (crash, kill). Agora saem 3 dias depois; os de sessões vivas nunca saem. Um login feito no pane que morreu volta ao perfil real antes, só se for mais novo que o login atual.
+- **Cache do Chromium com teto**. O cache HTTP de cada perfil do navegador fica limitado a 64 MB e é esvaziado quando o disco aperta. Perfis de pane sem uso há 21 dias saem (os perfis pessoais, só depois de 63 dias); o perfil carregado nunca sai.
+- **Banco SQLite sem WAL gigante**. O arquivo -wal volta a até 16 MB depois de cada checkpoint, em vez de guardar para sempre o pico de escrita. Das cópias de migração do banco, ficam só as 3 mais novas por projeto.
+- **Pool de cópias de trabalho respeita o disco**. Com o disco crítico, o Nexus não deixa mais cópias de reserva prontas (cerca de 1,6 GB cada); o agente cria a sua na hora.
+
+## 0.76.336 — O Nexus limpa o próprio disco (macOS)
+
+Em pouco uso o Nexus chegava a ocupar metade do disco. Cada agente que escreve código ganha uma cópia de trabalho do projeto (worktree), e a de um pane encerrado só saía se estivesse limpa: com qualquer alteração não commitada, saída de build ou cache, ficava para sempre — e no Windows nunca saía. Na máquina de desenvolvimento havia 50 cópias guardadas ao mesmo tempo, de 1,5 a 2,6 GB cada. Agora uma rotina de higiene roda sozinha, encurta os prazos quando o disco aperta e nunca apaga trabalho que só exista ali. A tag 0.76.335 é o pacote Linux e não recebe arquivos macOS.
+
+- **Limpeza automática de disco**. Roda a cada 3 horas com o disco folgado e a cada 20 minutos com o disco crítico (menos de 5 GB livres). Cuida das cópias de trabalho dos agentes, dos perfis do navegador de cada pane, dos snapshots de desfazer das CLIs, dos mapas de orientação, dos arquivos de sessões encerradas, dos anexos de missão antigos, dos temporários e dos logs que não tinham rotação.
+- **Cópias de trabalho dos agentes não se acumulam**. Uma hora depois de o pane encerrar, os caches regeneráveis (.nexus-cache, .vite, .turbo…) saem, sem tocar no código nem no node_modules. A cópia limpa sai em 12 horas. A que tem trabalho não commitado sai em 2 dias, e só depois de o Nexus guardar tudo numa ref de salvaguarda (refs/nexus-salvage/…) duas vezes seguidas, sem nenhuma edição no meio; a branch sempre fica. Repositório Git aninhado, edição recente no disco ou saída de build recente (out/, dist/) seguram a cópia. Com o disco apertado, os prazos caem para horas.
+- **Armazenamento em Configurações → Diagnóstico**. Mostra o espaço livre, quanto o Nexus ocupa em cada categoria, o que a última limpeza removeu — com a ref de cada cópia aposentada e o cherry-pick para trazê-la de volta — e o botão "Limpar agora", que roda na hora com os prazos de disco apertado.
+- **Lixo do Nexus dentro dos projetos**. Prints colados em missões (.nexus/attachments) saem depois de 30 dias e rascunhos de swarm de missões antigas (.nexus/swarms) depois de 14. Nada sai de missão que ainda pode rodar, e o que estiver versionado no Git do projeto nunca é apagado.
+- **Windows**. As cópias de trabalho passam a ser coletadas também no Windows, que não tem como ler a pasta atual dos processos: o Nexus prova que a pasta está livre tentando renomeá-la, o que o NTFS recusa quando algum programa a usa. O node_modules ligado por junction sai só como link, nunca o conteúdo. O log do Jarvis vai para a pasta de logs do app e não cria mais Library\Logs no perfil do usuário. O temporário do Windows, que o sistema não esvazia sozinho, também é limpo.
+- **Configs MCP de sessões encerradas**. Os arquivos em ~/.nexus/mcp-configs, cada um com um token, ficavam para sempre quando o pane morria sem encerrar (crash, kill). Agora saem 3 dias depois; os de sessões vivas nunca saem. Um login feito no pane que morreu volta ao perfil real antes, só se for mais novo que o login atual.
+- **Cache do Chromium com teto**. O cache HTTP de cada perfil do navegador fica limitado a 64 MB e é esvaziado quando o disco aperta. Perfis de pane sem uso há 21 dias saem (os perfis pessoais, só depois de 63 dias); o perfil carregado nunca sai.
+- **Banco SQLite sem WAL gigante**. O arquivo -wal volta a até 16 MB depois de cada checkpoint, em vez de guardar para sempre o pico de escrita. Das cópias de migração do banco, ficam só as 3 mais novas por projeto.
+- **Pool de cópias de trabalho respeita o disco**. Com o disco crítico, o Nexus não deixa mais cópias de reserva prontas (cerca de 1,6 GB cada); o agente cria a sua na hora.
+
+## 0.76.335 — Vídeo pelo Gemini Omni e pelo Grok
+
+A tag 0.76.334 é o pacote macOS da mídia nova e não recebe arquivos Linux. A tag 0.76.333 é o pacote Linux anterior e não recebe estes arquivos. Este pacote leva o desktop Linux.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+No desktop Linux, em relação à 0.76.333:
+
+- **Vídeo do Google pelo Gemini Omni Flash**. A mesma chave do Gemini gera vídeo pelo Gemini Omni Flash, de 360p a 4K, em 16:9 ou 9:16. É o modelo que decide quanto o vídeo dura, então o Estúdio não oferece duração e mostra o preço por segundo antes de gerar; depois, mostra o custo real, calculado pelo que o Google cobrou. O Omni só funciona com cobrança ativa no projeto do Google: no plano gratuito, o Nexus agora diz que falta ativar a cobrança, em vez de mandar esperar e tentar de novo.
+- **Grok Imagine com a chave do Grok**. A chave do Grok salva para a voz já liga a geração de imagem e de vídeo pelo Grok Imagine (xAI), no Estúdio e nas ferramentas dos agentes. Vídeo de 1 a 15 s, de 480p a 1080p; pelas ferramentas, também com imagem inicial, último quadro e referências nos modelos que aceitam. O custo de lista aparece antes de gerar, incluindo as imagens de entrada.
+- **Agentes escolhem o modelo de mídia vendo regras e preço**. Antes de gerar, o agente vê, para cada modelo de vídeo, as durações, resoluções e proporções aceitas, se exige imagem, o preço e quando ele sai do ar — as mesmas regras que o Nexus usa para recusar um pedido antes de cobrar. Sem serviço escolhido, o padrão passa a ser o de menor preço de lista entre os que têm chave; antes valia a ordem da tabela.
+- **Vídeo pago não se perde em falha passageira**. Depois que o vídeo existe e foi cobrado, uma queda de rede, de download ou de disco deixa o pedido pendente com o código para retomar, em vez de marcá-lo como falho e induzir a pagar de novo. A retomada só baixa o que já foi gerado e registra o custo certo.
+- **Chave recusada diz para trocar a chave**. O Google e a xAI recusam chave errada com HTTP 400, que virava "não aceitou o pedido" com o JSON cru. Agora a mensagem diz que a chave foi recusada e leva a Serviços de mídia.
+- **Imagem do Grok com a extensão certa e o custo certo**. Ao gravar num caminho pedido, a imagem leva a extensão do formato que a xAI devolveu, em vez de gravar JPEG num arquivo .png. Sem o custo na resposta, a edição de imagem passa a somar a qualidade da edição e a imagem de entrada (uma edição 2K custa US$ 0,09, não US$ 0,06).
+
+## 0.76.334 — Vídeo pelo Gemini Omni e pelo Grok (macOS)
+
+Pacote macOS da mídia nova. O Google desliga em 22/10/2026 os Veo 3.1 preview que o vídeo nativo do Gemini usava, e a chave do Gemini ficaria sem vídeo; agora ela gera pelo Gemini Omni Flash, o substituto que o Google indica. A chave do Grok, que só servia à voz, passa a gerar imagem e vídeo pelo Grok Imagine. E os agentes passam a escolher o modelo de mídia vendo antes o que cada um aceita e quanto custa. A tag 0.76.333 é o pacote Linux e não recebe arquivos macOS.
+
+- **Vídeo do Google pelo Gemini Omni Flash**. A mesma chave do Gemini gera vídeo pelo Gemini Omni Flash, de 360p a 4K, em 16:9 ou 9:16. É o modelo que decide quanto o vídeo dura, então o Estúdio não oferece duração e mostra o preço por segundo antes de gerar; depois, mostra o custo real, calculado pelo que o Google cobrou. O Omni só funciona com cobrança ativa no projeto do Google: no plano gratuito, o Nexus agora diz que falta ativar a cobrança, em vez de mandar esperar e tentar de novo.
+- **Grok Imagine com a chave do Grok**. A chave do Grok salva para a voz já liga a geração de imagem e de vídeo pelo Grok Imagine (xAI), no Estúdio e nas ferramentas dos agentes. Vídeo de 1 a 15 s, de 480p a 1080p; pelas ferramentas, também com imagem inicial, último quadro e referências nos modelos que aceitam. O custo de lista aparece antes de gerar, incluindo as imagens de entrada.
+- **Agentes escolhem o modelo de mídia vendo regras e preço**. Antes de gerar, o agente vê, para cada modelo de vídeo, as durações, resoluções e proporções aceitas, se exige imagem, o preço e quando ele sai do ar — as mesmas regras que o Nexus usa para recusar um pedido antes de cobrar. Sem serviço escolhido, o padrão passa a ser o de menor preço de lista entre os que têm chave; antes valia a ordem da tabela.
+- **Vídeo pago não se perde em falha passageira**. Depois que o vídeo existe e foi cobrado, uma queda de rede, de download ou de disco deixa o pedido pendente com o código para retomar, em vez de marcá-lo como falho e induzir a pagar de novo. A retomada só baixa o que já foi gerado e registra o custo certo.
+- **Chave recusada diz para trocar a chave**. O Google e a xAI recusam chave errada com HTTP 400, que virava "não aceitou o pedido" com o JSON cru. Agora a mensagem diz que a chave foi recusada e leva a Serviços de mídia.
+- **Imagem do Grok com a extensão certa e o custo certo**. Ao gravar num caminho pedido, a imagem leva a extensão do formato que a xAI devolveu, em vez de gravar JPEG num arquivo .png. Sem o custo na resposta, a edição de imagem passa a somar a qualidade da edição e a imagem de entrada (uma edição 2K custa US$ 0,09, não US$ 0,06).
+
 ## 0.76.333 — Memória e contas no Linux
 
 A tag 0.76.329 é o pacote macOS da memória e não recebe arquivos Linux. A tag 0.76.332 é o pacote macOS das contas e não recebe arquivos Linux. A tag 0.76.330 não recebe arquivos Linux. A tag 0.76.331 foi marcada e não foi publicada: a suíte no Ubuntu 22.04 falhou em pane-admission.test.ts, porque a prova de memória baixa usava a reserva de 24 GB numa máquina de 16 GB. Este pacote leva o desktop Linux.

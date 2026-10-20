@@ -11,6 +11,7 @@ import { stopManagedAuthSpawnGateWatchers } from './adapters/managed-auth-spawn-
 import { initializeLicenseAuthority } from "./license-bootstrap";
 import './macos-activation-policy';
 import { registerArmsIpc } from './connectors/arms-ipc';
+import os from "node:os";
 import path from "node:path";
 import {
   app,
@@ -93,6 +94,10 @@ app.commandLine.appendSwitch(
     ...darwinMediaDisabledFeatures(process.platform),
   ].join(','),
 );
+// Higiene de disco: o cache HTTP de CADA sessão Chromium (padrão e uma
+// partição por pane de navegador) cresce até centenas de MB por conta própria.
+// Teto fixo por sessão; a higiene ainda esvazia tudo com o disco apertado.
+app.commandLine.appendSwitch('disk-cache-size', String(64 * 1024 * 1024));
 const darwinMediaEnabled = darwinMediaEnabledFeatures(process.platform);
 if (darwinMediaEnabled.length > 0) {
   app.commandLine.appendSwitch('enable-features', darwinMediaEnabled.join(','));
@@ -218,8 +223,14 @@ import { proveNativeHeavyJobBaseAtBoot } from "./orch/native-heavy-preload";
 import {
   registerBrowserIpc,
   destroyBrowsersFor,
+  clearBrowserHttpCaches,
+  loadedBrowserPartitionNames,
 } from "./browser/browser-manager";
 import { registerPerfIpc } from "./perf/perf-ipc";
+import { configureStorageHygiene } from "./storage-hygiene/storage-hygiene-service";
+import { registerStorageHygieneIpc } from "./storage-hygiene/storage-hygiene-ipc";
+import { runWorktreeHygiene } from "./storage-hygiene/worktree-hygiene";
+import { rescueOrphanSessionOverlay } from "./storage-hygiene/session-overlay-rescue";
 import {
   closeAllDesignWritebacks,
   closeDesignWritebackFor,
@@ -253,7 +264,7 @@ import {
 } from "./orch/orch-ipc";
 import { quiesceOrchestrationCoordinator } from "./orch/orchestration-coordinator";
 import { nativeHeavyCommands } from "./orch/native-heavy-command";
-import { drainMissionShimDisposals } from "./orch/mcp-server";
+import { drainMissionShimDisposals, liveSessionArtifactKeys } from "./orch/mcp-server";
 import {
   initNonWorkerAutoClose,
   shutdownNonWorkerAutoClose,
@@ -714,6 +725,30 @@ async function bootstrap(userPathReady: Promise<void>): Promise<void> {
   bootStep('configureProjectOrientationService', () => configureProjectOrientationService({
     cacheRoot: path.join(app.getPath("userData"), "orientation-maps"),
   }));
+  // Higiene de disco: poda/coleta worktrees de writers, perfis de navegador,
+  // caches, sessões órfãs e temporários com prazos que encolhem quando o disco
+  // aperta. Primeira rodada só depois do boot assentado (fila pós-boot).
+  bootStep('configureStorageHygiene', () => {
+    const hygiene = configureStorageHygiene({
+      roots: {
+        userDataDir: app.getPath("userData"),
+        logsDir: app.getPath("logs"),
+        homeDir: os.homedir(),
+        tempDir: os.tmpdir(),
+      },
+      liveSessionKeys: liveSessionArtifactKeys,
+      livePartitionNames: loadedBrowserPartitionNames,
+      workspaces: () => worktreeRuntime.openScopes().map((scope) => ({
+        root: scope.rootRealPath,
+        liveMissionIds: worktreeRuntime.liveMissionIds(scope),
+      })),
+      rescueSessionOverlay: (overlayDir) => rescueOrphanSessionOverlay(overlayDir),
+      worktrees: (policy, deadlineAt) => runWorktreeHygiene(worktreeRuntime, policy, deadlineAt),
+      clearHttpCaches: clearBrowserHttpCaches,
+    });
+    registerStorageHygieneIpc(hygiene);
+    enqueuePostBootIdleTask('startStorageHygiene', () => hygiene.start());
+  });
   const gamificationService = configureGamificationService({
     globalLedger: new GlobalXpLedger({
       file: path.join(app.getPath("userData"), "gamification", "global-xp.json"),

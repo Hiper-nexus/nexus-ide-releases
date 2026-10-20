@@ -308,6 +308,15 @@ let port = 0;
 let registry: McpRegistry | null = null;
 let mcpStopFlight: Promise<void> | null = null;
 const sessionTokens = new Map<string, string>(); // sessionId → token
+
+/**
+ * Chaves (12 primeiros chars do token) dos artefatos em disco das sessões
+ * vivas — `~/.nexus/ephemeral/<chave>` e `~/.nexus/mcp-configs/<chave>.json`.
+ * A higiene de disco nunca apaga estes.
+ */
+export function liveSessionArtifactKeys(): ReadonlySet<string> {
+  return new Set([...sessionTokens.values()].map((token) => token.slice(0, 12)));
+}
 const missionShims = new Set<MissionShimRuntime>();
 const missionShimBySession = new Map<string, MissionShimRuntime>(); // sessionId → runtime
 let disposeTerminationRevocation: (() => void) | null = null;

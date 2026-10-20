@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { WorktreeRecord } from '../runtime/worktree-contract';
 import type { PooledWorktreeEntry } from '../runtime/worktree-pool';
@@ -7,6 +7,7 @@ import {
   type IsolatedWriterPoolBackend,
   type PoolBaseResolution,
 } from './isolated-writer-pool';
+import { recordDiskSample, resetStorageHygienePolicyForTest } from '../storage-hygiene/hygiene-policy';
 
 const SHA = 'a'.repeat(40);
 const MOVED = 'b'.repeat(40);
@@ -86,6 +87,17 @@ function makeBackend(overrides: Partial<IsolatedWriterPoolBackend> = {}): {
 }
 
 describe('IsolatedWriterPoolOrchestrator', () => {
+  afterEach(() => resetStorageHygienePolicyForTest());
+
+  it('disco crítico: não pré-aloca (a reserva de ~1,6 GB por worktree não compensa)', async () => {
+    const { backend, materialize } = makeBackend();
+    const orchestrator = new IsolatedWriterPoolOrchestrator(backend, { enabled: () => true });
+    recordDiskSample({ freeBytes: 1024 ** 3, totalBytes: 500 * 1024 ** 3, sampledAt: 1 });
+    await orchestrator.preallocate(SCOPE, {});
+    expect(materialize).not.toHaveBeenCalled();
+    expect(orchestrator.size).toBe(0);
+  });
+
   it('adopts a pooled entry and returns the claimed record', async () => {
     const { backend, claim } = makeBackend();
     const orchestrator = new IsolatedWriterPoolOrchestrator(backend, { enabled: () => true });

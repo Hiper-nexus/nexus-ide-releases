@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { JarvisLatencyTracker, JarvisMetricsLogger } from './metrics';
+import { defaultJarvisMetricsFile, JarvisLatencyTracker, JarvisMetricsLogger } from './metrics';
 
 describe('JarvisMetricsLogger', () => {
   it('honors the test/runtime metrics file override', () => {
@@ -174,5 +174,12 @@ describe('JarvisLatencyTracker', () => {
       ['transcript_final_to_audio_out_ms', 15, 'turn-current'],
       ['roundtrip_ms', 60, 'turn-current'],
     ]);
+  });
+
+  it('pasta de logs certa por SO (sem `Library/Logs` solto no perfil do Windows)', () => {
+    expect(defaultJarvisMetricsFile('darwin', {}, '/Users/u')).toBe('/Users/u/Library/Logs/NexusIDE/jarvis-metrics.log');
+    expect(defaultJarvisMetricsFile('win32', { APPDATA: 'C:\\Users\\u\\AppData\\Roaming' }, 'C:\\Users\\u'))
+      .toBe('C:\\Users\\u\\AppData\\Roaming\\NexusIDE\\logs\\jarvis-metrics.log');
+    expect(defaultJarvisMetricsFile('linux', {}, '/home/u')).toBe('/home/u/.config/NexusIDE/logs/jarvis-metrics.log');
   });
 });

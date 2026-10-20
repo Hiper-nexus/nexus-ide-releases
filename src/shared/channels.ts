@@ -88,6 +88,14 @@ export const PERF_CHANNELS = {
   paneFootprintsWatch: 'perf:paneFootprints:watch',
 } as const;
 
+/** Higiene de disco: medição por categoria e limpeza sob demanda. */
+export const STORAGE_HYGIENE_CHANNELS = {
+  /** invoke: relatório (medição em cache; agenda remedição se velha). */
+  report: 'storage-hygiene:report',
+  /** invoke: roda a limpeza agora (prazos de disco apertado) e devolve o relatório. */
+  cleanNow: 'storage-hygiene:clean-now',
+} as const;
+
 /** Terminal CommandBlock contextual actions (re-run / copy / handoff / …). */
 export const TERMINAL_BLOCK_CHANNELS = {
   action: 'terminal-block:action',

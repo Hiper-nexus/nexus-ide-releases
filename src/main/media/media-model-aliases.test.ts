@@ -6,6 +6,7 @@ import {
 } from './media-model-aliases';
 import {
   findMediaProvider,
+  MEDIA_PROVIDERS,
   resolveMediaModel,
   resolveMediaProvider,
 } from './media-providers';
@@ -67,6 +68,40 @@ describe('media model aliases', () => {
       'veo-native',
     );
     expect(def.id).toBe('google-video');
+  });
+
+  it('F-1587: "omni" é o Gemini Omni do google-video; "kling-omni" segue sendo o Kling', () => {
+    expect(resolveMediaModelAlias('Gemini Omni')).toBe('gemini-omni-1.1-flash');
+    expect(resolveMediaModelAlias('omni')).toBe('gemini-omni-1.1-flash');
+    expect(resolveMediaModelAlias('kling omni')).toBe('kwaivgi/kling-v3-omni-video');
+    const google = findMediaProvider('google-video')!;
+    expect(google.defaultModel).toBe('gemini-omni-1.1-flash');
+    expect(resolveMediaModel(google, 'omni-flash')).toBe('gemini-omni-1.1-flash');
+    // Com as duas chaves, o modelo pedido escolhe o serviço que o tem.
+    expect(resolveMediaProvider('video', undefined, () => true, 'omni').id).toBe('google-video');
+  });
+
+  it('F-1599: "grok" é a imagem do Grok Imagine na imagem e o vídeo no vídeo', () => {
+    expect(resolveMediaModelAlias('grok', 'image')).toBe('grok-imagine-image-2.0');
+    expect(resolveMediaModelAlias('Grok Imagine', 'video')).toBe('grok-imagine-video-1.5');
+    expect(resolveMediaModelAlias('grok')).toBeUndefined();
+    expect(resolveMediaModelAlias('grok video lite')).toBe('grok-imagine-video-1.5-lite');
+    const video = findMediaProvider('xai-video')!;
+    const image = findMediaProvider('xai-image')!;
+    expect(resolveMediaModel(video, 'grok')).toBe('grok-imagine-video-1.5');
+    expect(resolveMediaModel(image, 'grok')).toBe('grok-imagine-image-2.0');
+    // O id real do modelo clássico continua chegando a ele.
+    expect(resolveMediaModel(video, 'grok-imagine-video')).toBe('grok-imagine-video');
+    expect(resolveMediaModel(image, 'grok-imagine-image')).toBe('grok-imagine-image');
+    // Com todas as chaves, "grok" escolhe o serviço da xAI.
+    expect(resolveMediaProvider('video', undefined, () => true, 'grok').id).toBe('xai-video');
+    expect(resolveMediaProvider('image', undefined, () => true, 'grok').id).toBe('xai-image');
+  });
+
+  it('nenhum apelido tem o nome de um modelo real (sombrearia o modelo)', () => {
+    const models = new Set(MEDIA_PROVIDERS.flatMap((p) => p.models));
+    const shadowing = Object.keys(listMediaModelAliases()).filter((alias) => models.has(alias));
+    expect(shadowing).toEqual([]);
   });
 
   it('exports a non-empty alias map for MCP', () => {

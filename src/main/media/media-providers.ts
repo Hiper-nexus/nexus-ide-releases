@@ -3,9 +3,10 @@ import type {
   MediaProviderId,
   MediaProviderInfo,
 } from '../../shared/media-types';
-import { estimateVideoCostUsd } from '../../shared/media-video-models';
+import { estimateVideoCostUsd, videoModelCard } from '../../shared/media-video-models';
 import { resolveMediaModelAlias } from './media-model-aliases';
 import { resolveMediaOutputPath } from './media-path-policy';
+import { xaiImageCostUsd } from './xai-imagine';
 
 /**
  * Media provider registry — the table that turns a stored API key into a
@@ -31,6 +32,8 @@ export interface MediaProviderDef {
     chars?: number;
     seconds?: number;
     resolution?: string;
+    /** Imagens de entrada (edição), cobradas à parte por alguns serviços. */
+    inputImages?: number;
   }): number | null;
 }
 
@@ -52,8 +55,8 @@ const SEEDREAM_IMAGE_USD: Record<string, number> = {
  * `shared/media-video-models.ts` — a mesma tabela que valida o pedido e que
  * o Estúdio mostra antes de gerar. Combinação sem preço conhecido = null.
  */
-const videoEstimate: MediaProviderDef['estimateCost'] = ({ model, seconds, resolution }) =>
-  estimateVideoCostUsd(model, { seconds, resolution });
+const videoEstimate: MediaProviderDef['estimateCost'] = ({ model, seconds, resolution, inputImages }) =>
+  estimateVideoCostUsd(model, { seconds, resolution, inputImages });
 
 /**
  * Preço de API por mil caracteres (elevenlabs.io/pricing/api, lido em
@@ -141,12 +144,14 @@ export const MEDIA_PROVIDERS: MediaProviderDef[] = [
   {
     id: 'google-video',
     kind: 'video',
-    label: 'Google Veo nativo (AI Studio)',
+    label: 'Google nativo — Gemini Omni / Veo (AI Studio)',
     envVar: 'GEMINI_API_KEY',
-    defaultModel: 'veo-3.1-generate-preview',
-    // veo-2.0-generate-001 saiu: o Google o desligou em 30/06/2026. Os três
-    // Veo 3.1 preview desligam em 22/10/2026 (`retiresOn` na tabela de vídeo).
+    // F-1587: o Gemini Omni Flash é o substituto do Google para os Veo 3.1
+    // preview, que desligam em 22/10/2026 (`retiresOn` na tabela de vídeo).
+    // veo-2.0-generate-001 saiu: o Google o desligou em 30/06/2026.
+    defaultModel: 'gemini-omni-1.1-flash',
     models: [
+      'gemini-omni-1.1-flash',
       'veo-3.1-generate-preview',
       'veo-3.1-fast-generate-preview',
       'veo-3.1-lite-generate-preview',
@@ -168,6 +173,28 @@ export const MEDIA_PROVIDERS: MediaProviderDef[] = [
       typeof chars === 'number'
         ? Number(((chars / 1_000) * (ELEVENLABS_USD_PER_1K_CHARS[model] ?? 0.08)).toFixed(4))
         : null,
+  },
+  // F-1599: Grok Imagine pela API da xAI (docs.x.ai). A chave é a mesma
+  // XAI_API_KEY da voz do Grok (media-keys lê o cofre da voz). Ficam no fim
+  // de cada tipo: quem já tinha outro serviço conectado mantém o padrão.
+  {
+    id: 'xai-image',
+    kind: 'image',
+    label: 'xAI — Grok Imagine (imagem)',
+    envVar: 'XAI_API_KEY',
+    defaultModel: 'grok-imagine-image-2.0',
+    models: ['grok-imagine-image-2.0', 'grok-imagine-image-quality', 'grok-imagine-image'],
+    estimateCost: ({ model, resolution, inputImages }) =>
+      xaiImageCostUsd(model, resolution, { inputImages }),
+  },
+  {
+    id: 'xai-video',
+    kind: 'video',
+    label: 'xAI — Grok Imagine (vídeo)',
+    envVar: 'XAI_API_KEY',
+    defaultModel: 'grok-imagine-video-1.5',
+    models: ['grok-imagine-video-1.5', 'grok-imagine-video-1.5-lite', 'grok-imagine-video'],
+    estimateCost: videoEstimate,
   },
 ];
 
@@ -250,10 +277,25 @@ export function computeMediaTierAlternatives(
 }
 
 /**
+ * F-1598: custo de lista do pedido que o serviço recebe quando ninguém diz
+ * nada (modelo padrão com a duração e a resolução padrão dele), pela mesma
+ * tabela que o Estúdio mostra. `null` = a tabela não sabe antes de gerar
+ * (Gemini Omni decide a duração; voz depende do texto).
+ */
+export function defaultRequestCostUsd(def: MediaProviderDef): number | null {
+  return def.estimateCost({ model: def.defaultModel });
+}
+
+/**
  * Pick the provider for a request. Explicit provider: must exist, match the
  * kind and have a key — otherwise error (never silently substitute).
- * No provider: if preferredModel is set, prefer a keyed provider that lists it;
- * else cheapest provider of the kind WITH a key (table order).
+ * No provider: if preferredModel is set, prefer a keyed provider that lists it.
+ * Else (F-1598) the keyed provider whose default request has the lowest LIST
+ * price (`defaultRequestCostUsd`); unknown price never beats a known one, and
+ * ties keep the table order. It is a price rule only: the Nexus has measured
+ * no provider's quality against another's. Before F-1598 this said
+ * "cheapest" but took the table order: with OpenAI and Replicate keys (no
+ * Gemini) image went to gpt-image-2 (US$ 0,07) over Seedream 5 Pro (US$ 0,04).
  */
 export function resolveMediaProvider(
   kind: MediaKind,
@@ -294,7 +336,33 @@ export function resolveMediaProvider(
       `nenhum serviço de ${MEDIA_KIND_PT[kind]} com chave — conecte em Ajustes → Serviços de mídia`,
     );
   }
-  return available[0];
+  const unknownLast = (def: MediaProviderDef): number =>
+    defaultRequestCostUsd(def) ?? Number.POSITIVE_INFINITY;
+  // `Array.prototype.sort` é estável: empate (inclusive dois desconhecidos)
+  // mantém a ordem da tabela.
+  return [...available].sort((a, b) => {
+    const diff = unknownLast(a) - unknownLast(b);
+    return Number.isNaN(diff) ? 0 : diff;
+  })[0];
+}
+
+/** O que roda quando o agente não passa provider nem modelo, por tipo. */
+export interface MediaDefaultChoice {
+  provider: MediaProviderId;
+  model: string;
+  /** Preço de lista do pedido padrão; `null` quando a tabela não sabe antes. */
+  listCostUsd: number | null;
+}
+
+export function defaultMediaChoices(
+  hasKeyFn: (def: MediaProviderDef) => boolean,
+): Record<MediaKind, MediaDefaultChoice | null> {
+  const choose = (kind: MediaKind): MediaDefaultChoice | null => {
+    if (!MEDIA_PROVIDERS.some((p) => p.kind === kind && hasKeyFn(p))) return null;
+    const def = resolveMediaProvider(kind, undefined, hasKeyFn);
+    return { provider: def.id, model: def.defaultModel, listCostUsd: defaultRequestCostUsd(def) };
+  };
+  return { image: choose('image'), video: choose('video'), audio: choose('audio') };
 }
 
 /** Model must be whitelisted for the provider — no silent fallback. */
@@ -331,6 +399,7 @@ export function resolveOutPath(
 export function listMediaProviders(
   hasKeyFn: (def: MediaProviderDef) => boolean,
   maskedKeyFn: (id: MediaProviderId) => string | null,
+  now: number = Date.now(),
 ): MediaProviderInfo[] {
   return MEDIA_PROVIDERS.map((def) => ({
     id: def.id,
@@ -345,6 +414,13 @@ export function listMediaProviders(
       ? {
           imageCostUsd: Object.fromEntries(
             def.models.map((model) => [model, def.estimateCost({ model })]),
+          ),
+        }
+      : {}),
+    ...(def.kind === 'video'
+      ? {
+          videoModels: Object.fromEntries(
+            def.models.map((model) => [model, videoModelCard(model, now)]),
           ),
         }
       : {}),

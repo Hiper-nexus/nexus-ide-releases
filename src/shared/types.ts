@@ -1399,6 +1399,11 @@ export interface NexusApi {
     }): Promise<GamificationSnapshot>;
     onChanged(cb: (snapshot: GamificationSnapshot) => void): Unsubscribe;
   };
+  /** Higiene de disco (Configurações → Diagnóstico → Armazenamento). */
+  storage: {
+    report(): Promise<import('./storage-hygiene').StorageHygieneReport>;
+    cleanNow(): Promise<import('./storage-hygiene').StorageHygieneReport>;
+  };
   perf: {
     snapshot(): Promise<PerfSnapshot>;
     /** Push periódico (30s) do footprint por pane — ver PERF_CHANNELS.paneFootprints.

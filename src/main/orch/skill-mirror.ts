@@ -74,21 +74,41 @@ Use this workflow whenever the mission requires an image, illustration,
 avatar, mascot, sprite or other generated visual asset.
 
 1. Call \`nexus_media_providers\` and use only a configured provider/model from
-   its response. Never invent a provider or model.
-2. Call \`nexus_image_generate\` with a precise prompt and an \`outPath\` inside
-   the current workspace. Pass workspace reference images through
-   \`imagePath\` or \`referenceImagePaths\` when the selected provider supports
-   them.
-3. Inspect the returned workspace file, compare it with the mission criteria
+   its response (\`hasKey: true\`). Never invent a provider or model.
+2. Choose the model from that response, not from memory:
+   - If the user or the brief names a model or provider, use it.
+   - Images: \`imageCostUsd\` is the list price per image of each model. Only
+     \`replicate-image\` (Seedream) takes \`referenceImagePaths\`; the others
+     take a single \`imagePath\` to edit.
+   - Video clips, when \`nexus_video_generate\` is among your tools: each model
+     in \`videoModels\` lists \`durationsSeconds\` (\`null\` = the model picks the
+     length, so send no \`durationSeconds\`), \`resolutions\` and \`aspectRatios\`
+     (\`[]\` = do not send that field), \`requiresImage\`, \`price\` and
+     \`retiresOn\`/\`retired\`. Pick a model whose fields fit the brief and never
+     a retired one. Cost = seconds × the per-second price at the resolution,
+     or the per-video price; \`billedByTokensUsdPerMillion\` means the bill
+     comes from tokens and the per-second price is an approximation.
+   - \`defaults\` shows what runs with no provider and no model: the lowest
+     list price among the connected services. Prices are list prices, not
+     quality: the Nexus has not measured one model against another, so do not
+     claim that one is better.
+3. Call \`nexus_image_generate\` (or \`nexus_video_generate\`) with a precise
+   prompt and an \`outPath\` inside the current workspace. Pass workspace
+   reference images through \`imagePath\` or \`referenceImagePaths\` when the
+   selected model supports them.
+4. Inspect the returned workspace file, compare it with the mission criteria
    and iterate deliberately. Keep intermediate and QA artifacts in a named
    workspace directory so the handoff is reproducible.
-4. Submit the final workspace paths and visual QA evidence in the handoff.
+5. Submit the final workspace paths, the provider/model you chose and why,
+   the \`estimatedCostUsd\` of each generation and the visual QA evidence in
+   the handoff.
 
 Do not use native image-generation tools, \`generated_images\`, an
 \`OPENAI_API_KEY\`, the Codex system \`imagegen\` skill or \`hatch-pet\`.
 Those paths are outside this governed session and are not mission authority.
 If no configured Nexus media provider is available, stop and report the exact
-Settings → Mídia action required instead of pretending an asset was generated.
+Ajustes → Serviços de mídia action required instead of pretending an asset
+was generated.
 `;
 
 const GENERATED_NEXUS_PET_STUDIO_SKILL = `---

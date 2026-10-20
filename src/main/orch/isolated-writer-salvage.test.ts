@@ -12,6 +12,7 @@ vi.mock('../observability/main-trace', () => ({
 }));
 
 import {
+  salvageCoversWorktree,
   salvageIsolatedWriterWorktree,
   salvageNoticeSummary,
   salvageRefPrefix,
@@ -124,7 +125,12 @@ describe('salvaguarda da worktree do writer isolado (F-794)', () => {
     const first = await salvageIsolatedWriterWorktree(target({ reason: 'handoff' }));
     expect(first.kind).toBe('saved');
     const again = await salvageIsolatedWriterWorktree(target());
-    expect(again).toMatchObject({ kind: 'unchanged' });
+    expect(again).toMatchObject({ kind: 'unchanged', skipped: [], untrackedOmitted: 0 });
+    expect(salvageCoversWorktree(again)).toBe(true);
+    expect(salvageCoversWorktree({ ...again, skipped: ['grande.bin'] } as typeof again)).toBe(false);
+    expect(salvageCoversWorktree({ kind: 'clean' })).toBe(true);
+    expect(salvageCoversWorktree({ kind: 'refused', reason: 'x' })).toBe(false);
+    expect(salvageCoversWorktree(null)).toBe(false);
     if (first.kind !== 'saved' || again.kind !== 'unchanged') return;
     expect(again.commit).toBe(first.commit);
     expect(salvageRefs()).toHaveLength(1);
@@ -173,6 +179,22 @@ describe('salvaguarda da worktree do writer isolado (F-794)', () => {
     expect(result.skipped).toEqual(['dump.bin']);
     expect(() => git(repo, 'show', `${result.commit}:dump.bin`)).toThrow();
     expect(salvageNoticeSummary(target(), result)).toContain('1 arquivo(s) grande(s) ficaram fora do snapshot');
+  });
+
+  it('repo Git aninhado novo vira só gitlink no snapshot: declarado e não conta como coberto', async () => {
+    const sub = path.join(worktree, 'sub');
+    fs.mkdirSync(sub);
+    git(sub, 'init', '-q');
+    fs.writeFileSync(path.join(sub, 'only-here.txt'), 'commit só do repo interno\n');
+    git(sub, 'add', '.');
+    git(sub, 'commit', '-qm', 'interno');
+    fs.writeFileSync(path.join(worktree, 'novo.txt'), 'novo\n');
+    const result = await salvageIsolatedWriterWorktree(target());
+    expect(result).toMatchObject({ kind: 'saved', nestedRepos: ['sub'] });
+    expect(salvageCoversWorktree(result)).toBe(false);
+    const again = await salvageIsolatedWriterWorktree(target());
+    expect(again).toMatchObject({ kind: 'unchanged', nestedRepos: ['sub'] });
+    expect(salvageCoversWorktree(again)).toBe(false);
   });
 
   it('o disparo do produto registra no trace, avisa o orquestrador e nunca lança', async () => {

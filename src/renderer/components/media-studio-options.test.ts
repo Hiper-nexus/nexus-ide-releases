@@ -6,6 +6,7 @@ import {
   studioModelBlock,
   studioRetirementNotice,
   studioVideoChoices,
+  studioVideoPerSecondUsd,
 } from './media-studio-options';
 
 const BEFORE = Date.parse('2026-10-19T12:00:00Z');
@@ -58,11 +59,48 @@ describe('media-studio-options (F-1585)', () => {
     expect(firstUsableModel([i2v], BEFORE)).toEqual({ providerId: 'replicate-video', model: 'google/veo-3.1' });
     expect(firstUsableModel([google, i2v], AFTER)).toEqual({ providerId: 'replicate-video', model: 'google/veo-3.1' });
     expect(firstUsableModel([google], AFTER)).toBeNull();
+    // F-1587: com o Omni na lista, o serviço do Google segue gerando depois de 22/10.
+    const withOmni = provider({
+      id: 'google-video',
+      defaultModel: 'gemini-omni-1.1-flash',
+      models: ['gemini-omni-1.1-flash', 'veo-3.1-generate-preview'],
+    });
+    expect(firstUsableModel([withOmni], AFTER)).toEqual({
+      providerId: 'google-video',
+      model: 'gemini-omni-1.1-flash',
+    });
+  });
+
+  it('F-1587: Omni não tem duração a escolher; antes de gerar, só a taxa por segundo', () => {
+    const omni = studioVideoChoices('gemini-omni-1.1-flash', {
+      aspect: '1:1',
+      resolution: '768p',
+      duration: 5,
+    });
+    expect(omni).toMatchObject({
+      durations: [],
+      duration: undefined,
+      resolution: '720p',
+      resolutions: ['360p', '720p', '1080p', '4k'],
+      aspect: '16:9',
+    });
+    expect(studioCostUsd('video', undefined, 'gemini-omni-1.1-flash', omni)).toBeNull();
+    expect(studioVideoPerSecondUsd('gemini-omni-1.1-flash', omni)).toBe(0.1);
+    const draft = studioVideoChoices('gemini-omni-1.1-flash', {
+      aspect: '9:16',
+      resolution: '360p',
+      duration: 5,
+    });
+    expect(studioVideoPerSecondUsd('gemini-omni-1.1-flash', draft)).toBe(0.03);
+    // Modelo com duração escolhida mostra o total, não a taxa.
+    const veo = studioVideoChoices('google/veo-3.1', { aspect: '16:9', resolution: '720p', duration: 8 });
+    expect(studioVideoPerSecondUsd('google/veo-3.1', veo)).toBeNull();
   });
 
   it('avisa do desligamento só antes da data', () => {
     expect(studioRetirementNotice('veo-3.1-lite-generate-preview', BEFORE)).toBe(
-      'O fornecedor desliga este modelo em 22/10/2026. Depois disso, use google/veo-3.1 pelo Replicate.',
+      'O fornecedor desliga este modelo em 22/10/2026. ' +
+        'Depois disso, use gemini-omni-1.1-flash, com a mesma chave do Gemini.',
     );
     expect(studioRetirementNotice('veo-3.1-lite-generate-preview', AFTER)).toBeNull();
     expect(studioRetirementNotice('google/veo-3.1', BEFORE)).toBeNull();
@@ -73,5 +111,27 @@ describe('media-studio-options (F-1585)', () => {
     const image = provider({ id: 'openai-image', kind: 'image', imageCostUsd: { 'gpt-image-2': 0.07 } });
     expect(studioCostUsd('image', image, 'gpt-image-2')).toBe(0.07);
     expect(studioCostUsd('image', image, 'outro')).toBeNull();
+  });
+
+  it('F-1599: Grok Imagine oferece 1–15 s e as resoluções do modelo, com o custo antes de gerar', () => {
+    const video15 = studioVideoChoices('grok-imagine-video-1.5', { aspect: '21:9', resolution: '1080p', duration: 12 });
+    expect(video15).toMatchObject({ aspect: '21:9', resolution: '1080p', duration: 12 });
+    expect(video15.durations).toHaveLength(15);
+    expect(video15.resolutions).toEqual(['480p', '720p', '1080p']);
+    // O clássico não faz 1080p: cai no padrão dele, mantendo duração e proporção.
+    const classic = studioVideoChoices('grok-imagine-video', { aspect: '21:9', resolution: '1080p', duration: 12 });
+    expect(classic).toMatchObject({ aspect: '21:9', resolution: '720p', duration: 12 });
+    expect(studioCostUsd('video', undefined, 'grok-imagine-video', classic)).toBe(0.84);
+    expect(studioCostUsd('video', undefined, 'grok-imagine-video-1.5', { duration: 5, resolution: '720p' })).toBe(0.7);
+    expect(studioVideoPerSecondUsd('grok-imagine-video-1.5', video15)).toBeNull();
+    const xai = provider({
+      id: 'xai-video',
+      label: 'xAI — Grok Imagine (vídeo)',
+      envVar: 'XAI_API_KEY',
+      defaultModel: 'grok-imagine-video-1.5',
+      models: ['grok-imagine-video-1.5', 'grok-imagine-video-1.5-lite', 'grok-imagine-video'],
+    });
+    expect(firstUsableModel([xai], BEFORE)).toEqual({ providerId: 'xai-video', model: 'grok-imagine-video-1.5' });
+    expect(studioModelBlock('grok-imagine-video-1.5-lite', AFTER)).toBeNull();
   });
 });

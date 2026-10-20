@@ -526,3 +526,67 @@
     flex-direction: column;
   }
 }
+
+/* ---------- armazenamento (higiene de disco) ---------------------------- */
+.storage-hygiene__verdict {
+  margin: 0 0 var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+}
+
+.storage-hygiene__verdict strong {
+  color: var(--text);
+}
+
+.storage-hygiene__list {
+  display: grid;
+  gap: 1px;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--border);
+  overflow: hidden;
+}
+
+.storage-hygiene__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-1-5) var(--space-3);
+  background: var(--bg);
+  font-size: var(--text-sm);
+}
+
+.storage-hygiene__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.storage-hygiene__bytes {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.storage-hygiene__mode {
+  color: var(--text-dim);
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.storage-hygiene__notes {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-4);
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+}
+
+.storage-hygiene__hint {
+  margin: 0;
+  flex: 1 1 260px;
+}

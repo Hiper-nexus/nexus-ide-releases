@@ -2,55 +2,94 @@ import path from 'node:path';
 import type { MediaGenerationResult } from '../../shared/media-types';
 import {
   findMediaProvider,
-  MediaProviderUnavailableError,
   resolveMediaModel,
   resolveMediaProvider,
   resolveOutPath,
   type MediaProviderDef,
 } from './media-providers';
 import {
+  downloadAuthenticatedProviderAsset,
   downloadProviderAsset,
   fetchPinnedProviderAsset,
-  type PinnedMediaFetch,
 } from './media-download';
+import { mp4DurationSeconds } from './mp4-duration';
+import {
+  extractGeminiOmniOutput,
+  geminiOmniRequest,
+  geminiOmniTransportError,
+  GEMINI_HOST,
+  isGeminiFileTarget,
+  isGeminiOmniModel,
+  isGeminiOmniUsage,
+} from './gemini-omni-interactions';
+import {
+  extractXaiImage,
+  readXaiVideoPoll,
+  XAI_API_BASE,
+  xaiImageOutputPath,
+  xaiImageRequest,
+  xaiImageResolution,
+  xaiRequestId,
+  xaiVideoInputProblem,
+  xaiVideoPollUrl,
+  xaiVideoRequest,
+  type XaiImageOutput,
+  type XaiVideoPoll,
+} from './xai-imagine';
 import {
   readMediaInput,
   writeMediaOutput,
   type MediaInputFile,
 } from './media-path-policy';
-import {
-  resolveBrowserHostname,
-  type BrowserAddressResolver,
-} from '../browser/url-policy';
+import { resolveBrowserHostname } from '../browser/url-policy';
 import { geminiImageAspect, openaiImageSize } from './media-aspect';
 import { mediaHttpError, mediaServiceName } from './media-errors';
 import {
+  geminiOmniCostUsd,
   videoModelSpec,
   videoRequestProblem,
+  type GeminiOmniUsage,
 } from '../../shared/media-video-models';
 import {
   getVideoJob,
+  jobBilling,
+  MediaJobGoneError,
+  savedJobBilling,
   saveVideoJob,
+  settleVideoJob,
+  videoInputImageCount,
   type MediaVideoJobRecord,
 } from './media-video-jobs';
+import {
+  assertMediaAuthorityCurrent,
+  dataUri,
+  fileToInlineData,
+  MediaJobTimeoutError,
+  mediaResult as result,
+  requireKey,
+  sleepWhileAuthorized,
+  type MediaAuthorityRequest,
+  type MediaDeps,
+} from './media-runtime';
+
+export {
+  MediaAbortError,
+  MediaJobInterruptedError,
+  MediaJobTimeoutError,
+  throwIfMediaAborted,
+  type MediaDeps,
+} from './media-runtime';
 
 /**
- * Media generation engine — image (Gemini/OpenAI), video (Replicate + native
- * Google Veo) and audio (ElevenLabs). Runs entirely in main: the API key never
- * crosses the MCP boundary; the agent receives only the generated file path.
+ * Media generation engine — image (Gemini/OpenAI/Seedream/Grok Imagine), video
+ * (Replicate, native Google: Gemini Omni and Veo, and xAI Grok Imagine) and
+ * audio (ElevenLabs). Runs entirely in main:
+ * the API key never crosses the MCP boundary; the agent receives only the
+ * generated file path.
  *
  * All network/clock/key access is injected via MediaDeps so the engine is
  * unit-testable without electron or real HTTP.
  */
-
-export interface MediaDeps {
-  fetchFn: typeof fetch;
-  resolveHostname: BrowserAddressResolver;
-  fetchPinned?: PinnedMediaFetch;
-  getKey(def: MediaProviderDef): string | undefined;
-  sleep(ms: number): Promise<void>;
-  now(): number;
-}
 
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 const OPENAI_BASE = 'https://api.openai.com/v1';
@@ -61,6 +100,10 @@ const REPLICATE_POLL_MS = 4_000;
 const REPLICATE_MAX_POLLS = 90; // 6 min
 const GOOGLE_VIDEO_POLL_MS = 5_000;
 const GOOGLE_VIDEO_MAX_POLLS = 72; // 6 min
+// Grok Imagine: "typically takes up to several minutes"; o SDK da xAI espera
+// até 10 min com o mesmo intervalo de 5 s do exemplo REST (F-1599).
+const XAI_VIDEO_POLL_MS = 5_000;
+const XAI_VIDEO_MAX_POLLS = 120;
 const DEFAULT_ELEVENLABS_VOICE = '21m00Tcm4TlvDq8ikWAM'; // Rachel
 /** Seedance/Veo video refs (Replicate schemas typically cap near 9). */
 const MAX_REFERENCE_IMAGES = 9;
@@ -81,80 +124,6 @@ const SEEDREAM5_ASPECTS = new Set([
   '2:3',
   '21:9',
 ]);
-
-/**
- * Timeout on a long-running Replicate/Google media job (image or video).
- * `recoverable` controls whether the message promises resume via recoverJobId
- * — only video jobs are persisted, so only they may advertise recovery.
- */
-export class MediaJobTimeoutError extends Error {
-  readonly jobId: string;
-  readonly provider: string;
-  readonly recoverable: boolean;
-
-  constructor(provider: string, jobId: string, recoverable = true) {
-    super(
-      recoverable
-        ? `${provider}: timeout esperando job ${jobId} — chame de novo com ` +
-            `recoverJobId="${jobId}" para retomar sem pagar duas vezes`
-        : `${provider}: timeout esperando job ${jobId} — a prediction pode ` +
-            'ter completado no provider; reenvie a geração',
-    );
-    this.name = 'MediaJobTimeoutError';
-    this.jobId = jobId;
-    this.provider = provider;
-    this.recoverable = recoverable;
-  }
-}
-
-/** Local abort (mission preempt / Estúdio cancel button) — not an error. */
-export class MediaAbortError extends Error {
-  constructor() {
-    super('geração de mídia cancelada');
-    this.name = 'MediaAbortError';
-  }
-}
-
-export function throwIfMediaAborted(signal?: AbortSignal): void {
-  if (signal?.aborted) throw new MediaAbortError();
-}
-
-interface MediaAuthorityRequest {
-  /** Aborted on caller/mission revocation. */
-  signal?: AbortSignal;
-  /** Revalidates non-signal authority (PREVC/scope/intent) at commit points. */
-  assertCurrentAuthority?: () => void;
-}
-
-function assertMediaAuthorityCurrent(req: MediaAuthorityRequest): void {
-  req.assertCurrentAuthority?.();
-  throwIfMediaAborted(req.signal);
-}
-
-async function sleepWhileAuthorized(
-  deps: MediaDeps,
-  delayMs: number,
-  req: MediaAuthorityRequest,
-): Promise<void> {
-  assertMediaAuthorityCurrent(req);
-  if (!req.signal) {
-    await deps.sleep(delayMs);
-    assertMediaAuthorityCurrent(req);
-    return;
-  }
-  let rejectAbort!: (reason: MediaAbortError) => void;
-  const aborted = new Promise<never>((_resolve, reject) => {
-    rejectAbort = reject;
-  });
-  const onAbort = () => rejectAbort(new MediaAbortError());
-  req.signal.addEventListener('abort', onAbort, { once: true });
-  try {
-    await Promise.race([deps.sleep(delayMs), aborted]);
-  } finally {
-    req.signal.removeEventListener('abort', onAbort);
-  }
-  assertMediaAuthorityCurrent(req);
-}
 
 export interface ImageRequest extends MediaAuthorityRequest {
   prompt: string;
@@ -208,57 +177,6 @@ export interface AudioRequest extends MediaAuthorityRequest {
   voiceId?: string;
   outPath?: string;
   baseDir: string;
-}
-
-function requireKey(def: MediaProviderDef, deps: MediaDeps): string {
-  const key = deps.getKey(def);
-  if (!key) {
-    throw new MediaProviderUnavailableError(
-      def.kind,
-      `${def.label} sem chave — conecte em Ajustes → Serviços de mídia`,
-    );
-  }
-  return key;
-}
-
-function fileToInlineData(image: MediaInputFile): {
-  mimeType: string;
-  data: string;
-} {
-  const ext = path.extname(image.path).toLowerCase().replace('.', '');
-  const mime =
-    ext === 'jpg' || ext === 'jpeg'
-      ? 'image/jpeg'
-      : ext === 'webp'
-        ? 'image/webp'
-        : `image/${ext || 'png'}`;
-  return { mimeType: mime, data: image.data.toString('base64') };
-}
-
-function dataUri(image: MediaInputFile): string {
-  const { mimeType, data } = fileToInlineData(image);
-  return `data:${mimeType};base64,${data}`;
-}
-
-function result(
-  def: MediaProviderDef,
-  model: string,
-  outPath: string,
-  startedAt: number,
-  deps: MediaDeps,
-  costParams: { chars?: number; seconds?: number; resolution?: string } = {},
-  jobId?: string,
-): MediaGenerationResult {
-  return {
-    ok: true,
-    path: outPath,
-    provider: def.id,
-    model,
-    kind: def.kind,
-    estimatedCostUsd: def.estimateCost({ model, ...costParams }),
-    durationMs: deps.now() - startedAt,
-    ...(jobId ? { jobId } : {}),
-  };
 }
 
 // ── Image ────────────────────────────────────────────────────────────────────
@@ -502,6 +420,30 @@ async function replicateImage(
   );
 }
 
+/** Grok Imagine (F-1599): geração, ou edição quando há imagem do projeto. */
+async function xaiImage(
+  req: ImageRequest,
+  def: MediaProviderDef,
+  model: string,
+  key: string,
+  deps: MediaDeps,
+  image?: MediaInputFile,
+): Promise<XaiImageOutput> {
+  const { endpoint, body } = xaiImageRequest(req, model, image ? fileToInlineData(image) : undefined);
+  assertMediaAuthorityCurrent(req);
+  const res = await deps.fetchFn(`${XAI_API_BASE}/${endpoint}`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: req.signal,
+  });
+  assertMediaAuthorityCurrent(req);
+  if (!res.ok) throw await mediaHttpError(res, def.id);
+  const output = extractXaiImage((await res.json()) as Record<string, unknown>);
+  assertMediaAuthorityCurrent(req);
+  return output;
+}
+
 export async function generateImage(
   req: ImageRequest,
   deps: MediaDeps = defaultMediaDeps(),
@@ -516,7 +458,13 @@ export async function generateImage(
   );
   const model = resolveMediaModel(def, req.model);
   const key = requireKey(def, deps);
-  const outPath = resolveOutPath(req.outPath, req.baseDir, 'png', deps.now);
+  // A xAI devolve JPEG quando o pedido não diz a qualidade (F-1599).
+  const outPath = resolveOutPath(
+    req.outPath,
+    req.baseDir,
+    def.id === 'xai-image' ? 'jpg' : 'png',
+    deps.now,
+  );
   const image = req.imagePath
     ? readMediaInput(req.imagePath, req.baseDir)
     : undefined;
@@ -543,16 +491,31 @@ export async function generateImage(
       : [];
 
   let data: Buffer;
+  let xai: XaiImageOutput | undefined;
   if (def.id === 'google-image') {
     data = await googleImage(req, def, model, key, deps, image);
   } else if (def.id === 'replicate-image') {
     data = await replicateImage(req, def, model, key, deps, seedreamImages);
+  } else if (def.id === 'xai-image') {
+    xai = await xaiImage(req, def, model, key, deps, image);
+    data = xai.data;
   } else {
     data = await openaiImage(req, def, model, key, deps, image);
   }
   assertMediaAuthorityCurrent(req);
-  writeMediaOutput(outPath, req.baseDir, data);
-  return result(def, model, outPath, startedAt, deps);
+  // O arquivo segue o formato que a xAI devolveu, com outPath ou sem.
+  const finalPath = xai ? xaiImageOutputPath(outPath, xai.extension) : outPath;
+  writeMediaOutput(finalPath, req.baseDir, data);
+  const base = result(
+    def,
+    model,
+    finalPath,
+    startedAt,
+    deps,
+    xai ? { resolution: xaiImageResolution(model, req.size), inputImages: image ? 1 : 0 } : {},
+  );
+  // O custo que a xAI informou (`usage.cost_in_usd_ticks`) vence a tabela.
+  return xai?.costUsd !== undefined ? { ...base, estimatedCostUsd: xai.costUsd } : base;
 }
 
 // ── Video · Replicate adapters ───────────────────────────────────────────────
@@ -795,8 +758,14 @@ async function generateVideoReplicate(
         startedAt,
         deps,
         {
-          seconds: req.durationSeconds ?? videoModelSpec(saved.model)?.defaultDuration,
-          resolution: req.resolution ?? videoModelSpec(saved.model)?.defaultResolution,
+          seconds:
+            savedJobBilling(saved).seconds ??
+            req.durationSeconds ??
+            videoModelSpec(saved.model)?.defaultDuration,
+          resolution:
+            savedJobBilling(saved).resolution ??
+            req.resolution ??
+            videoModelSpec(saved.model)?.defaultResolution,
         },
         saved.jobId,
       );
@@ -873,6 +842,7 @@ async function generateVideoReplicate(
     outPath: req.outPath,
     startedAt: deps.now(),
     status: 'pending',
+    ...jobBilling(req),
   };
   // The provider has accepted a billable remote job. Persisting its pending
   // recovery identity is compensating state and must survive a revocation that
@@ -1081,6 +1051,203 @@ async function downloadGoogleVeoBytes(
   }
 }
 
+// ── Video · Gemini Omni (Interactions API) ───────────────────────────────────
+//
+// F-1587 — um pedido síncrono (contrato em `gemini-omni-interactions.ts`): o
+// vídeo volta na resposta em base64 ou, com `delivery: "uri"` (o recomendado
+// acima de 4 MB), como arquivo da Files API que fica ACTIVE e é baixado com a
+// chave. Não há campo de duração: o modelo decide.
+
+/** Espera o arquivo da Files API ficar ACTIVE (a documentação manda pollar). */
+async function waitGeminiFileActive(
+  fileId: string,
+  jobId: string,
+  key: string,
+  deps: MediaDeps,
+  req: MediaAuthorityRequest,
+): Promise<void> {
+  for (let poll = 0; poll < GOOGLE_VIDEO_MAX_POLLS; poll += 1) {
+    if (poll > 0) await sleepWhileAuthorized(deps, GOOGLE_VIDEO_POLL_MS, req);
+    assertMediaAuthorityCurrent(req);
+    const res = await deps.fetchFn(`${GEMINI_BASE}/${fileId}`, {
+      headers: { 'x-goog-api-key': key },
+      signal: req.signal,
+    });
+    assertMediaAuthorityCurrent(req);
+    if (res.status === 404) {
+      const gone = await mediaHttpError(res, 'google-video');
+      throw new MediaJobGoneError(
+        `O arquivo do vídeo não existe mais na Files API do Google (HTTP 404); gere de novo.${
+          gone.detail ? ` Resposta do serviço: ${gone.detail}` : ''
+        }`,
+      );
+    }
+    if (!res.ok) throw await mediaHttpError(res, 'google-video');
+    const file = (await res.json()) as { state?: unknown; error?: { message?: unknown } };
+    assertMediaAuthorityCurrent(req);
+    if (file.state === undefined || file.state === 'ACTIVE') return;
+    if (file.state === 'FAILED') {
+      const message = typeof file.error?.message === 'string' ? ` — ${file.error.message}` : '';
+      throw new MediaJobGoneError(
+        `O Google não concluiu o arquivo do vídeo (Files API: FAILED)${message}.`,
+      );
+    }
+  }
+  throw new MediaJobTimeoutError('google-video', jobId);
+}
+
+async function downloadGeminiOmniFile(
+  fileId: string,
+  jobId: string,
+  key: string,
+  deps: MediaDeps,
+  req: MediaAuthorityRequest,
+): Promise<Buffer> {
+  await waitGeminiFileActive(fileId, jobId, key, deps, req);
+  assertMediaAuthorityCurrent(req);
+  // A URL é montada aqui a partir do id; a chave nunca vai para uma URL que
+  // veio da resposta.
+  const data = await downloadAuthenticatedProviderAsset(
+    `${GEMINI_BASE}/${fileId}:download?alt=media`,
+    'google-video',
+    { host: GEMINI_HOST, headers: { 'x-goog-api-key': key } },
+    {
+      fetchFn: deps.fetchFn,
+      resolveHostname: deps.resolveHostname,
+      fetchPinned: deps.fetchPinned,
+    },
+    req.signal,
+  );
+  assertMediaAuthorityCurrent(req);
+  return data;
+}
+
+/**
+ * Custo do que o Google cobrou (`usage`) quando a resposta traz os tokens;
+ * sem eles (retomada pela Files API), a tabela por segundo com a duração
+ * lida do MP4.
+ */
+function omniResult(
+  def: MediaProviderDef,
+  model: string,
+  outPath: string,
+  startedAt: number,
+  deps: MediaDeps,
+  data: Buffer,
+  billing: { resolution?: string; jobId?: string; usage?: GeminiOmniUsage },
+): MediaGenerationResult {
+  const seconds = mp4DurationSeconds(data) ?? undefined;
+  const base = result(
+    def,
+    model,
+    outPath,
+    startedAt,
+    deps,
+    { seconds, resolution: billing.resolution },
+    billing.jobId,
+  );
+  return {
+    ...base,
+    ...(billing.usage ? { estimatedCostUsd: geminiOmniCostUsd(billing.usage) } : {}),
+    ...(seconds !== undefined ? { videoDurationSeconds: seconds } : {}),
+  };
+}
+
+async function generateVideoGeminiOmni(
+  req: VideoRequest,
+  def: MediaProviderDef,
+  model: string,
+  key: string,
+  deps: MediaDeps,
+  startedAt: number,
+): Promise<MediaGenerationResult> {
+  const outPath = resolveOutPath(req.outPath, req.baseDir, 'mp4', deps.now);
+  const inline = (file: string) => fileToInlineData(readMediaInput(file, req.baseDir));
+  const body = geminiOmniRequest(req, model, {
+    start: req.imagePath ? inline(req.imagePath) : undefined,
+    end: req.endImagePath ? inline(req.endImagePath) : undefined,
+    references: (req.referenceImagePaths ?? []).slice(0, MAX_REFERENCE_IMAGES).map(inline),
+  });
+
+  assertMediaAuthorityCurrent(req);
+  let create: Response;
+  try {
+    create = await deps.fetchFn(`${GEMINI_BASE}/interactions`, {
+      method: 'POST',
+      headers: { 'x-goog-api-key': key, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: req.signal,
+    });
+  } catch (err) {
+    assertMediaAuthorityCurrent(req);
+    throw geminiOmniTransportError(err);
+  }
+  assertMediaAuthorityCurrent(req);
+  if (!create.ok) throw await mediaHttpError(create, def.id);
+  const output = extractGeminiOmniOutput((await create.json()) as Record<string, unknown>);
+  assertMediaAuthorityCurrent(req);
+
+  if (output.data) {
+    const data = Buffer.from(output.data, 'base64');
+    writeMediaOutput(outPath, req.baseDir, data);
+    assertMediaAuthorityCurrent(req);
+    return omniResult(def, model, outPath, startedAt, deps, data, {
+      resolution: req.resolution,
+      usage: output.usage,
+    });
+  }
+  if (output.uri) {
+    const data = await downloadProviderAsset(
+      output.uri,
+      'google-video',
+      { fetchFn: deps.fetchFn, resolveHostname: deps.resolveHostname, fetchPinned: deps.fetchPinned },
+      undefined,
+      req.signal,
+    );
+    assertMediaAuthorityCurrent(req);
+    writeMediaOutput(outPath, req.baseDir, data);
+    assertMediaAuthorityCurrent(req);
+    return omniResult(def, model, outPath, startedAt, deps, data, {
+      resolution: req.resolution,
+      usage: output.usage,
+    });
+  }
+  if (!output.fileId) {
+    const status = output.status && output.status !== 'completed' ? ` (status: ${output.status})` : '';
+    const said = output.text ? ` O modelo respondeu: "${output.text}"` : '';
+    throw new Error(`O Google não devolveu vídeo${status}; nada foi salvo.${said}`);
+  }
+
+  // O vídeo já foi gerado (e cobrado): o id do arquivo fica salvo para
+  // `recoverJobId` antes de esperar a Files API.
+  const jobRecord: MediaVideoJobRecord = {
+    jobId: output.interactionId ?? output.fileId,
+    provider: 'google-video',
+    pollTarget: output.fileId,
+    model,
+    prompt: req.prompt,
+    outPath: req.outPath,
+    startedAt: deps.now(),
+    status: 'pending',
+    ...jobBilling(req),
+    ...(output.usage ? { usage: output.usage } : {}),
+  };
+  saveVideoJob(req.baseDir, jobRecord);
+  assertMediaAuthorityCurrent(req);
+  const fileId = output.fileId;
+  return settleVideoJob(jobRecord, req, async () => {
+    const data = await downloadGeminiOmniFile(fileId, jobRecord.jobId, key, deps, req);
+    writeMediaOutput(outPath, req.baseDir, data);
+    assertMediaAuthorityCurrent(req);
+    saveVideoJob(req.baseDir, { ...jobRecord, status: 'completed' });
+    return omniResult(def, model, outPath, startedAt, deps, data, {
+      resolution: req.resolution,
+      jobId: jobRecord.jobId,
+      usage: output.usage,
+    });
+  });
+}
+
 async function generateVideoGoogle(
   req: VideoRequest,
   def: MediaProviderDef,
@@ -1099,6 +1266,22 @@ async function generateVideoGoogle(
         `job '${req.recoverJobId}' não encontrado em ` +
           `.nexus/media/video-jobs.json`,
       );
+    }
+    if (isGeminiFileTarget(saved.pollTarget)) {
+      // Gemini Omni: o vídeo já existe na Files API; só falta baixar. O custo
+      // é o do que foi gerado: `usage` e resolução salvos no job.
+      return settleVideoJob(saved, req, async () => {
+        const data = await downloadGeminiOmniFile(saved.pollTarget, saved.jobId, key, deps, req);
+        const dest = resolveOutPath(req.outPath ?? saved.outPath, req.baseDir, 'mp4', deps.now);
+        writeMediaOutput(dest, req.baseDir, data);
+        assertMediaAuthorityCurrent(req);
+        saveVideoJob(req.baseDir, { ...saved, status: 'completed' });
+        return omniResult(def, saved.model, dest, startedAt, deps, data, {
+          resolution: savedJobBilling(saved).resolution ?? req.resolution,
+          jobId: saved.jobId,
+          usage: isGeminiOmniUsage(saved.usage) ? saved.usage : undefined,
+        });
+      });
     }
     try {
       const done = await pollGoogleVeoOperation(
@@ -1129,8 +1312,14 @@ async function generateVideoGoogle(
         startedAt,
         deps,
         {
-          seconds: req.durationSeconds ?? videoModelSpec(saved.model)?.defaultDuration,
-          resolution: req.resolution ?? videoModelSpec(saved.model)?.defaultResolution,
+          seconds:
+            savedJobBilling(saved).seconds ??
+            req.durationSeconds ??
+            videoModelSpec(saved.model)?.defaultDuration,
+          resolution:
+            savedJobBilling(saved).resolution ??
+            req.resolution ??
+            videoModelSpec(saved.model)?.defaultResolution,
         },
         saved.jobId,
       );
@@ -1145,6 +1334,9 @@ async function generateVideoGoogle(
 
   if (!req.prompt?.trim()) {
     throw new Error('google-video: prompt is required');
+  }
+  if (isGeminiOmniModel(model)) {
+    return generateVideoGeminiOmni(req, def, model, key, deps, startedAt);
   }
 
   const image = req.imagePath
@@ -1188,6 +1380,7 @@ async function generateVideoGoogle(
     outPath: req.outPath,
     startedAt: deps.now(),
     status: 'pending',
+    ...jobBilling(req),
   };
   // Recovery identity is compensating state for an already-submitted remote
   // operation; keep it pending even if authority disappears immediately after.
@@ -1230,6 +1423,137 @@ async function generateVideoGoogle(
   }
 }
 
+// ── Video · xAI Grok Imagine (F-1599) ────────────────────────────────────────
+//
+// `POST /v1/videos/generations` devolve só o `request_id` (job salvo para
+// `recoverJobId`); o `GET /v1/videos/{id}` é pollado até `done` e o MP4 vem de
+// uma URL temporária e pública em `vidgen.x.ai`, baixada sem a chave.
+
+async function finishXaiVideo(
+  job: MediaVideoJobRecord,
+  outPath: string,
+  req: VideoRequest,
+  def: MediaProviderDef,
+  key: string,
+  deps: MediaDeps,
+  startedAt: number,
+): Promise<MediaGenerationResult> {
+  return settleVideoJob(job, req, async () => {
+    let poll: XaiVideoPoll = { state: 'pending' };
+    for (let attempt = 0; poll.state === 'pending'; attempt += 1) {
+      if (attempt >= XAI_VIDEO_MAX_POLLS) throw new MediaJobTimeoutError(def.id, job.jobId);
+      await sleepWhileAuthorized(deps, XAI_VIDEO_POLL_MS, req);
+      const res = await deps.fetchFn(xaiVideoPollUrl(job.pollTarget), {
+        headers: { authorization: `Bearer ${key}` },
+        signal: req.signal,
+      });
+      assertMediaAuthorityCurrent(req);
+      if (res.status === 404) {
+        const gone = await mediaHttpError(res, def.id);
+        throw new MediaJobGoneError(
+          `A xAI não conhece mais este pedido de vídeo (HTTP 404); gere de novo.${
+            gone.detail ? ` Resposta do serviço: ${gone.detail}` : ''
+          }`,
+        );
+      }
+      if (!res.ok) throw await mediaHttpError(res, def.id);
+      poll = readXaiVideoPoll((await res.json()) as Record<string, unknown>);
+      assertMediaAuthorityCurrent(req);
+    }
+    if (poll.state === 'failed') throw new MediaJobGoneError(poll.problem);
+    const data = await downloadProviderAsset(
+      poll.url,
+      'xai-video',
+      { fetchFn: deps.fetchFn, resolveHostname: deps.resolveHostname, fetchPinned: deps.fetchPinned },
+      undefined,
+      req.signal,
+    );
+    assertMediaAuthorityCurrent(req);
+    writeMediaOutput(outPath, req.baseDir, data);
+    assertMediaAuthorityCurrent(req);
+    saveVideoJob(req.baseDir, { ...job, status: 'completed' });
+    // Retomada só com o id: a resolução e a duração pedidas vêm do job salvo.
+    const billing = savedJobBilling(job);
+    const spec = videoModelSpec(job.model);
+    const seconds =
+      poll.durationSeconds ?? billing.seconds ?? req.durationSeconds ?? spec?.defaultDuration;
+    const resolution = billing.resolution ?? req.resolution ?? spec?.defaultResolution;
+    const inputImages = billing.inputImages ?? videoInputImageCount(req);
+    const base = result(
+      def,
+      job.model,
+      outPath,
+      startedAt,
+      deps,
+      { seconds, resolution, inputImages },
+      job.jobId,
+    );
+    return poll.costUsd !== undefined ? { ...base, estimatedCostUsd: poll.costUsd } : base;
+  });
+}
+
+async function generateVideoXai(
+  req: VideoRequest,
+  def: MediaProviderDef,
+  model: string,
+  key: string,
+  deps: MediaDeps,
+  startedAt: number,
+): Promise<MediaGenerationResult> {
+  if (req.recoverJobId) {
+    assertMediaAuthorityCurrent(req);
+    const saved = getVideoJob(req.baseDir, req.recoverJobId);
+    if (!saved || saved.provider !== 'xai-video') {
+      throw new Error(`job '${req.recoverJobId}' não encontrado em .nexus/media/video-jobs.json`);
+    }
+    const dest = resolveOutPath(req.outPath ?? saved.outPath, req.baseDir, 'mp4', deps.now);
+    return finishXaiVideo(saved, dest, req, def, key, deps, startedAt);
+  }
+
+  const outPath = resolveOutPath(req.outPath, req.baseDir, 'mp4', deps.now);
+  const references = req.referenceImagePaths ?? [];
+  const problem = xaiVideoInputProblem(model, {
+    hasImage: Boolean(req.imagePath),
+    hasEndImage: Boolean(req.endImagePath),
+    referenceCount: references.length,
+    resolution: req.resolution,
+    durationSeconds: req.durationSeconds,
+  });
+  if (problem) throw new Error(problem);
+  const inline = (file: string) => fileToInlineData(readMediaInput(file, req.baseDir));
+  const body = xaiVideoRequest(req, model, {
+    start: req.imagePath ? inline(req.imagePath) : undefined,
+    end: req.endImagePath ? inline(req.endImagePath) : undefined,
+    references: references.map(inline),
+  });
+
+  assertMediaAuthorityCurrent(req);
+  const create = await deps.fetchFn(`${XAI_API_BASE}/videos/generations`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: req.signal,
+  });
+  if (!create.ok) throw await mediaHttpError(create, def.id);
+  const requestId = xaiRequestId(await create.json());
+  const job: MediaVideoJobRecord = {
+    jobId: requestId,
+    provider: 'xai-video',
+    pollTarget: requestId,
+    model,
+    prompt: req.prompt,
+    outPath: req.outPath,
+    startedAt: deps.now(),
+    status: 'pending',
+    ...jobBilling(req),
+  };
+  // Job aceito e cobrável: a identidade de retomada fica salva mesmo que a
+  // autoridade caia logo depois (mesma regra do Replicate e do Google).
+  saveVideoJob(req.baseDir, job);
+  assertMediaAuthorityCurrent(req);
+  return finishXaiVideo(job, outPath, req, def, key, deps, startedAt);
+}
+
 export async function generateVideo(
   req: VideoRequest,
   deps: MediaDeps = defaultMediaDeps(),
@@ -1254,6 +1578,13 @@ export async function generateVideo(
     ? (getVideoJob(req.baseDir, req.recoverJobId)?.model ??
       resolveMediaModel(def, req.model))
     : resolveMediaModel(def, req.model);
+  // Só o Grok Imagine gera vídeo sem texto (a partir de imagem; o contrato da
+  // xAI decide). Os outros recusam aqui, antes de chamar o serviço.
+  if (!req.recoverJobId && !req.prompt?.trim() && def.id !== 'xai-video') {
+    throw new Error(
+      `${def.label}: informe o texto do vídeo (prompt). Só o Grok Imagine (xai-video) gera vídeo sem texto, a partir de imagem.`,
+    );
+  }
   // F-1585: o que o modelo recusa é recusado aqui, antes de qualquer chamada
   // paga, com a frase do que ele aceita; o que não veio usa o padrão DELE.
   let effective = req;
@@ -1283,6 +1614,9 @@ export async function generateVideo(
 
   if (def.id === 'google-video') {
     return generateVideoGoogle(effective, def, model, key, deps, startedAt);
+  }
+  if (def.id === 'xai-video') {
+    return generateVideoXai(effective, def, model, key, deps, startedAt);
   }
   return generateVideoReplicate(effective, def, model, key, deps, startedAt);
 }

@@ -445,6 +445,134 @@ describe('MediaStudioPanel: vídeo com as opções do modelo (F-1585)', () => {
     expect(option.disabled).toBe(true);
     expect(option.textContent).toContain('precisa de imagem inicial');
   });
+
+  it('F-1587: Gemini Omni sem escolha de duração, taxa por segundo e duração real no resultado', async () => {
+    const googleVideo = {
+      id: 'google-video',
+      kind: 'video',
+      label: 'Google nativo — Gemini Omni / Veo (AI Studio)',
+      envVar: 'GEMINI_API_KEY',
+      defaultModel: 'gemini-omni-1.1-flash',
+      models: ['gemini-omni-1.1-flash', 'veo-3.1-generate-preview'],
+      hasKey: true,
+      maskedKey: null,
+    };
+    media().listProviders.mockResolvedValue([googleVideo]);
+    media().generate.mockResolvedValue({
+      ok: true,
+      path: 'C:\\proj\\generated-9.mp4',
+      provider: 'google-video',
+      model: 'gemini-omni-1.1-flash',
+      kind: 'video',
+      estimatedCostUsd: 0.8,
+      durationMs: 40_000,
+      videoDurationSeconds: 8.042,
+    });
+    const dialog = await openFrom(renderHarness());
+    const videoTab = Array.from(dialog.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find(
+      (b) => b.textContent === 'Vídeo',
+    )!;
+    act(() => videoTab.click());
+
+    // O padrão do serviço é o Omni: sem chips de duração, a frase no lugar.
+    expect(dialog.querySelector<HTMLSelectElement>('select')!.value).toBe(
+      'google-video::gemini-omni-1.1-flash',
+    );
+    expect(chipTexts(dialog, 'Duração')).toEqual([]);
+    expect(dialog.textContent).toContain('O modelo decide quanto o vídeo dura.');
+    expect(chipTexts(dialog, 'Resolução')).toEqual(['360p', '720p', '1080p', '4k']);
+    expect(chipTexts(dialog, 'Proporção')).toEqual(['16:9', '9:16']);
+    expect(dialog.textContent).toContain('Custo estimado: $0.10 por segundo de vídeo');
+    const uhd = Array.from(
+      dialog.querySelectorAll<HTMLButtonElement>('[aria-label="Resolução"] button'),
+    ).find((b) => b.textContent === '4k')!;
+    act(() => uhd.click());
+    expect(dialog.textContent).toContain('Custo estimado: $0.30 por segundo de vídeo');
+
+    const prompt = dialog.querySelector<HTMLTextAreaElement>('textarea')!;
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+      setter.call(prompt, 'um farol na tempestade');
+      prompt.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      dialog.querySelector<HTMLButtonElement>('.ms-generate')!.click();
+    });
+    const request = media().generate.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(request).toMatchObject({
+      kind: 'video',
+      providerId: 'google-video',
+      model: 'gemini-omni-1.1-flash',
+      resolution: '4k',
+      aspectRatio: '16:9',
+    });
+    expect(request).not.toHaveProperty('durationSeconds');
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(dialog.textContent).toContain('Custo estimado: $0.80 · 8 s de vídeo');
+  });
+
+  it('F-1599: só com a chave da xAI, o Grok Imagine gera vídeo com as opções e o preço do modelo', async () => {
+    const xaiVideo = {
+      id: 'xai-video',
+      kind: 'video',
+      label: 'xAI — Grok Imagine (vídeo)',
+      envVar: 'XAI_API_KEY',
+      defaultModel: 'grok-imagine-video-1.5',
+      models: ['grok-imagine-video-1.5', 'grok-imagine-video-1.5-lite', 'grok-imagine-video'],
+      hasKey: true,
+      maskedKey: null,
+    };
+    media().listProviders.mockResolvedValue([xaiVideo]);
+    media().generate.mockResolvedValue({
+      ok: true,
+      path: 'C:\\proj\\generated-7.mp4',
+      provider: 'xai-video',
+      model: 'grok-imagine-video',
+      kind: 'video',
+      estimatedCostUsd: 0.35,
+      durationMs: 60_000,
+      jobId: 'a3d1008e-4544-40d4-d075-11527e794e4a',
+    });
+    const dialog = await openFrom(renderHarness());
+    const videoTab = Array.from(dialog.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find(
+      (b) => b.textContent === 'Vídeo',
+    )!;
+    act(() => videoTab.click());
+
+    expect(dialog.querySelector<HTMLSelectElement>('select')!.value).toBe('xai-video::grok-imagine-video-1.5');
+    expect(chipTexts(dialog, 'Resolução')).toEqual(['480p', '720p', '1080p']);
+    expect(chipTexts(dialog, 'Proporção')).toEqual(['16:9', '9:16', '1:1', '4:3', '3:4', '3:2', '2:3', '21:9', '5:2']);
+    const slider = dialog.querySelector<HTMLInputElement>('input[type="range"]')!;
+    expect([slider.min, slider.max, slider.value]).toEqual(['1', '15', '5']);
+    // 5 s × US$ 0,14/s (720p no 1.5).
+    expect(dialog.textContent).toContain('Custo estimado: $0.70');
+
+    // O clássico vai só até 720p: o 1080p some e o custo segue o modelo.
+    choose(dialog, 'xai-video::grok-imagine-video');
+    expect(chipTexts(dialog, 'Resolução')).toEqual(['480p', '720p']);
+    expect(dialog.textContent).toContain('Custo estimado: $0.35');
+
+    const prompt = dialog.querySelector<HTMLTextAreaElement>('textarea')!;
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+      setter.call(prompt, 'um farol na tempestade');
+      prompt.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      dialog.querySelector<HTMLButtonElement>('.ms-generate')!.click();
+    });
+    expect(media().generate.mock.calls[0]?.[0]).toMatchObject({
+      kind: 'video',
+      providerId: 'xai-video',
+      model: 'grok-imagine-video',
+      durationSeconds: 5,
+      resolution: '720p',
+      aspectRatio: '16:9',
+    });
+  });
 });
 
 describe('MediaStudioPanel: prévia do arquivo gerado (F-1586)', () => {
