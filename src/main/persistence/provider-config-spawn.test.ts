@@ -3432,6 +3432,35 @@ describe('F-1567: spawn do Qwen carrega o descritor de injeção do overlay', ()
     expect(result.overrides.qwenSettingsInjection?.models).toContain('qwen3.8-max');
   });
 
+  it('404 "Model not exist": no Token Plan o deepseek-flash vira deepseek-v4.1-flash-1017 e o catálogo gerado só tem o que o plano serve', () => {
+    spawnDeps.runtimeKey.mockReturnValue('sk-sp-fixture-cofre');
+    const result = prepareProviderSpawn('qwen', { model: 'deepseek-flash' });
+    if (!result.ok) throw new Error('spawn falhou');
+    expect(result.overrides.modelAliases).toMatchObject({
+      'deepseek-flash': 'deepseek-v4.1-flash-1017',
+      'deepseek-v4-flash': 'deepseek-v4.1-flash-1017',
+    });
+    const models = result.overrides.qwenSettingsInjection?.models ?? [];
+    expect(models).toContain('deepseek-v4.1-flash-1017');
+    expect(models).toContain('deepseek-v4-pro');
+    expect(models).not.toContain('deepseek-flash');
+  });
+
+  it('o id completo pedido pela pessoa (deepseek-v4.1-flash-1017) passa como está e entra no catálogo gerado', () => {
+    spawnDeps.runtimeKey.mockReturnValue('sk-sp-fixture-cofre');
+    const result = prepareProviderSpawn('qwen', { model: 'deepseek-v4.1-flash-1017' });
+    if (!result.ok) throw new Error('spawn falhou');
+    expect(Object.keys(result.overrides.modelAliases ?? {})).not.toContain('deepseek-v4.1-flash-1017');
+    expect(result.overrides.qwenSettingsInjection?.models).toContain('deepseek-v4.1-flash-1017');
+  });
+
+  it('fora do plano (DashScope padrão) o id não é trocado', () => {
+    spawnDeps.runtimeKey.mockReturnValue('sk-fixture-padrao');
+    const result = prepareProviderSpawn('qwen', { model: 'qwen3.8-max' });
+    if (!result.ok) throw new Error('spawn falhou');
+    expect(result.overrides.modelAliases).toBeUndefined();
+  });
+
   it('N1: dois spawns não reutilizam o nome da variável do cofre', () => {
     spawnDeps.runtimeKey.mockReturnValue('sk-sp-fixture-cofre');
     const first = prepareProviderSpawn('qwen', {});

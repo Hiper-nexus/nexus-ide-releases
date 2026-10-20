@@ -140,6 +140,8 @@ import {
   DEEPSEEK_TOKEN_PLAN_MODEL,
   DEEPSEEK_TOKEN_PLAN_MODEL_ALIASES,
   DEEPSEEK_TOKEN_PLAN_PROVIDER,
+  QWEN_TOKEN_PLAN_FLASH_MODEL,
+  QWEN_TOKEN_PLAN_MODEL_ALIASES,
   TOKEN_PLAN_KEY_ENV_VARS,
   TOKEN_PLAN_KEY_VAULT_SLOT,
   claudeModelsForUpstream,
@@ -149,6 +151,7 @@ import {
   defaultDeepseekProviderChoice,
   httpsHostOf,
   isAlibabaPlanKey,
+  isAlibabaTokenPlanUrl,
   isDeepseekProviderChoice,
   type DeepseekProviderChoice,
 } from '../adapters/deepseek-provider';
@@ -558,12 +561,38 @@ function qwenSettingsInjection(
     const trimmed = id?.trim();
     if (trimmed) models.add(trimmed);
   }
+  // O Token Plan serve o deepseek-v4-pro e o deepseek-v4.1-flash-1017: o flash
+  // genérico vira o segundo no spawn (`qwenTokenPlanModelAliases`), então o
+  // catálogo gerado traz o que será pedido de verdade e nenhuma linha para um
+  // id que o plano não tem.
+  if (isAlibabaTokenPlanUrl(baseUrl) || isAlibabaPlanKey(key)) {
+    for (const id of Object.keys(QWEN_TOKEN_PLAN_MODEL_ALIASES)) models.delete(id);
+    models.add(DEEPSEEK_TOKEN_PLAN_MODEL);
+    models.add(QWEN_TOKEN_PLAN_FLASH_MODEL);
+  }
   return {
     baseUrl,
     models: [...models],
     tokenPlanKey: isAlibabaPlanKey(key),
     envKey: `${QWEN_INJECTED_KEY_ENV_PREFIX}${randomBytes(16).toString('hex')}`,
   };
+}
+
+/**
+ * Qwen no Alibaba Token Plan: o plano não tem o `deepseek-flash` do menu do
+ * Qwen ("404 Model not exist", campo, 20/10/2026: pane com a chave do plano ok
+ * e o erro parecia de chave). O Nexus troca o id no `--model`, como faz com o
+ * adapter `deepseek`. Vale com a chave injetada (host do plano ou chave
+ * `sk-sp-`) e com o settings.json do operador apontando para o plano; fora do
+ * plano o id segue como está.
+ */
+function qwenTokenPlanModelAliases(
+  injection: QwenSettingsInjection | undefined,
+): { modelAliases: Readonly<Record<string, string>> } | Record<string, never> {
+  const onPlan = injection
+    ? injection.tokenPlanKey || isAlibabaTokenPlanUrl(injection.baseUrl)
+    : readQwenSettingsSummary().tokenPlan;
+  return onPlan ? { modelAliases: QWEN_TOKEN_PLAN_MODEL_ALIASES } : {};
 }
 
 /**
@@ -1414,6 +1443,7 @@ function buildProviderSpawnOverrides(
       ...(qwenInjection
         ? { qwenSettingsInjection: qwenInjection }
         : {}),
+      ...(adapterId === 'qwen' ? qwenTokenPlanModelAliases(qwenInjection) : {}),
     };
   }
 
@@ -1495,6 +1525,7 @@ function buildProviderSpawnOverrides(
     ...(qwenInjection
       ? { qwenSettingsInjection: qwenInjection }
       : {}),
+    ...(adapterId === 'qwen' ? qwenTokenPlanModelAliases(qwenInjection) : {}),
   };
 }
 

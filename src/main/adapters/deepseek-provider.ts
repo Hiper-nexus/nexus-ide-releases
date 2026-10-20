@@ -52,6 +52,20 @@ export const DEEPSEEK_TOKEN_PLAN_MODEL_ALIASES: Readonly<Record<string, string>>
     'deepseek-v4-flash': DEEPSEEK_TOKEN_PLAN_MODEL,
   });
 
+/**
+ * Flash do Qwen Code no Token Plan. A lista de modelos do plano (20/10/2026)
+ * traz `deepseek-v4.1-flash-1017` (o mais novo), `deepseek-v4.1-flash`,
+ * `deepseek-v4-flash-0731` e o `deepseek-v4-pro`; o id `deepseek-flash` do menu
+ * do Qwen não existe lá e voltava "404 Model not exist". O que a pessoa pede
+ * pelo nome inteiro segue como está; só os nomes genéricos do flash trocam.
+ */
+export const QWEN_TOKEN_PLAN_FLASH_MODEL = 'deepseek-v4.1-flash-1017';
+export const QWEN_TOKEN_PLAN_MODEL_ALIASES: Readonly<Record<string, string>> =
+  Object.freeze({
+    'deepseek-flash': QWEN_TOKEN_PLAN_FLASH_MODEL,
+    'deepseek-v4-flash': QWEN_TOKEN_PLAN_FLASH_MODEL,
+  });
+
 /** Variáveis do Qwen Code que carregam a chave do Token Plan. */
 export const TOKEN_PLAN_KEY_ENV_VARS = [
   'BAILIAN_TOKEN_PLAN_API_KEY',

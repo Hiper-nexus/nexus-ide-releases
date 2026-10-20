@@ -287,6 +287,7 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
       models: [
         { id: 'qwen3.8-max', availability: 'paid', costTier: 'medium', source: 'bundled' },
         { id: 'qwen3.8-max-preview', availability: 'paid', costTier: 'medium', source: 'bundled' },
+        { id: 'qwen3.8-flash', availability: 'cheap', costTier: 'free', source: 'bundled' },
         { id: 'qwen3.7-max', availability: 'paid', costTier: 'medium', source: 'bundled' },
         { id: 'qwen3.7-plus', availability: 'cheap', costTier: 'low', source: 'bundled' },
         { id: 'qwen3.6-plus', availability: 'cheap', costTier: 'low', source: 'bundled' },
