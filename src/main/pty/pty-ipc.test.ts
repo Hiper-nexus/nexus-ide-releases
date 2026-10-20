@@ -557,6 +557,7 @@ describe("registerPtyIpc account fail-fast", () => {
         coordinationScope: authorityDeps.scope,
         cwd: "/workspace/a",
       },
+      expect.anything(),
     );
     expect(authorityDeps.attachSessionScope).toHaveBeenCalledWith(
       "pty-created",
@@ -579,7 +580,7 @@ describe("registerPtyIpc account fail-fast", () => {
     if (kind === 'cli-agent') expect(ptyDeps.spawnAgentSession).toHaveBeenCalledWith(
       expect.anything(), expect.anything(), expect.anything(), expect.anything(), expect.objectContaining({
       scope, coordinationScope: authorityDeps.scope, cwd: '/private/tab-a', source: 'direct-user',
-    }));
+    }), expect.anything());
     else expect(ptyDeps.spawnSession).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ scope, cwd: '/private/tab-a' }));
   });
 
@@ -663,7 +664,7 @@ describe("registerPtyIpc account fail-fast", () => {
       expect(tabDeps.prepare).toHaveBeenCalledWith(authorityDeps.scope, 'space-a', tab.rootRealPath);
       if (kind === 'cli-agent') expect(ptyDeps.spawnAgentSession).toHaveBeenCalledWith(
         expect.anything(), expect.anything(), expect.anything(), expect.anything(),
-        expect.objectContaining({ scope: tab, coordinationScope: authorityDeps.scope, cwd: tab.rootRealPath, source: 'direct-user' }));
+        expect.objectContaining({ scope: tab, coordinationScope: authorityDeps.scope, cwd: tab.rootRealPath, source: 'direct-user' }), expect.anything());
       else expect(ptyDeps.spawnSession).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ scope: tab, cwd: tab.rootRealPath }));
     });
 
@@ -678,7 +679,7 @@ describe("registerPtyIpc account fail-fast", () => {
       expect(tabDeps.prepare).toHaveBeenCalledWith(authorityDeps.scope, 'space-a', tab.rootRealPath);
       expect(ptyDeps.spawnAgentSession).toHaveBeenCalledWith(
         expect.anything(), expect.anything(), expect.anything(), expect.anything(),
-        expect.objectContaining({ scope: tab, cwd: tab.rootRealPath, source: 'direct-user' }));
+        expect.objectContaining({ scope: tab, cwd: tab.rootRealPath, source: 'direct-user' }), expect.anything());
       warn.mockRestore();
     });
 
@@ -693,7 +694,7 @@ describe("registerPtyIpc account fail-fast", () => {
       expect(authorityDeps.resolveCwdForScope).toHaveBeenCalledWith(authorityDeps.scope, undefined);
       expect(ptyDeps.spawnAgentSession).toHaveBeenCalledWith(
         expect.anything(), expect.anything(), expect.anything(), expect.anything(),
-        expect.objectContaining({ scope: authorityDeps.scope, cwd: '/workspace/a', source: 'direct-user' }));
+        expect.objectContaining({ scope: authorityDeps.scope, cwd: '/workspace/a', source: 'direct-user' }), expect.anything());
       warn.mockRestore();
     });
   });
@@ -735,6 +736,7 @@ describe("registerPtyIpc account fail-fast", () => {
     expect(ptyDeps.spawnAgentSession).toHaveBeenCalledWith(
       expect.anything(), expect.anything(), expect.anything(), { binPath: '/usr/local/bin/muse' },
       expect.objectContaining({ source: 'direct-user', context: null, scope: authorityDeps.scope }),
+      expect.anything(),
     );
   });
 
@@ -947,6 +949,7 @@ describe("registerPtyIpc account fail-fast", () => {
         coordinationScope: authorityDeps.scope,
         cwd: "/workspace/a/packages/api",
       },
+      expect.anything(),
     );
     expect(authorityDeps.assertPendingSpawnGrantActive).toHaveBeenCalledWith(
       "orchspawn-1",
@@ -1005,7 +1008,7 @@ describe("registerPtyIpc account fail-fast", () => {
       expect(authGateDeps.wait).toHaveBeenCalledTimes(1);
       expect(ptyDeps.spawnAgentSession).toHaveBeenCalledWith(
         expect.anything(), expect.anything(), expect.objectContaining({ id: "codex" }),
-        overrides, expect.anything(),
+        overrides, expect.anything(), expect.anything(),
       );
     },
   );
@@ -1021,7 +1024,7 @@ describe("registerPtyIpc account fail-fast", () => {
     })).resolves.toMatchObject({ ok: true, accountId: "acct-main-selected" });
     expect(ptyDeps.spawnAgentSession).toHaveBeenCalledWith(
       expect.anything(), expect.objectContaining({ accountId: "acct-main-selected" }),
-      expect.anything(), expect.anything(), expect.anything(),
+      expect.anything(), expect.anything(), expect.anything(), expect.anything(),
     );
     expect(authGateDeps.track).toHaveBeenCalledWith("pty-created", "codex", "acct-main-selected");
   });
@@ -1596,6 +1599,7 @@ describe("registerPtyIpc account fail-fast", () => {
           source: "legacy-squad",
           context: expect.objectContaining({ squadId }),
         }),
+        expect.anything(),
       );
       expect(authorityDeps.resolveCwdForScope).toHaveBeenCalledWith(
         authorityDeps.scope,
@@ -1845,6 +1849,7 @@ describe("registerPtyIpc account fail-fast", () => {
         source: "legacy-squad",
         context: expect.objectContaining({ missionId: "mission-a" }),
       }),
+      expect.anything(),
     );
 
     ptyDeps.spawnAgentSession.mockClear();
