@@ -12152,7 +12152,7 @@ export const RELEASE_076351: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076352: AppRelease = {
   version: '0.76.352',
   date: '2026-10-20',
   codename: 'Flash do Token Plan',
@@ -12171,4 +12171,28 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076352: AppRelease = CURRENT_RELEASE;
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.353',
+  date: '2026-10-20',
+  codename: 'Flash no desktop',
+  summary: 'No desktop Linux, o DeepSeek Flash sobe no Claude Code e no Qwen Code pelo Alibaba Token Plan como deepseek-v4.1-flash-1017, o estúdio de mídia ganha imagens novas e anexos no vídeo, a imagem do Gemini sai em JPEG e o anexo fica no projeto de origem. A 0.76.352 fica no Windows e não recebe arquivos Linux. A 0.76.351 é o pacote Linux anterior.',
+  highlights: [
+    { title: 'DeepSeek Flash no Alibaba Token Plan', detail: 'A lista de modelos do plano passou a trazer o deepseek-v4.1-flash-1017. O flash do menu do Claude Code agora sobe nele (antes caía no deepseek-v4-pro), o modelo barato do Claude Code fica no flash e o menu do plano oferece o v4-pro e o v4.1-flash-1017.' },
+    { title: 'O Qwen Code no Token Plan não volta mais «Model not exist»', detail: 'O menu mandava deepseek-flash, que o plano não tem, e o erro parecia de chave. O flash genérico sobe como deepseek-v4.1-flash-1017, o catálogo gerado traz só o que o plano serve e o nome completo pedido pela pessoa passa como está. O qwen3.8-flash entra no menu do Qwen Code.' },
+    { title: 'API direta da DeepSeek', detail: 'O nome de versão do plano não é id da API da DeepSeek: o deepseek-flash já é o DeepSeek-V4.1-Flash-1017. Quem pedir o nome de versão na API direta recebe o deepseek-flash.' },
+    { title: 'Estúdio de mídia: imagens novas e anexos no vídeo', detail: 'Catálogo de imagem com o GPT-Image 2.5 e os modelos Nano Banana do Google. O novo vídeo de apresentação aceita anexos com papel (logo, mascote, print do sistema, vídeo de exemplo e outra imagem) por clique, arraste ou colagem.' },
+    { title: 'O pedido do vídeo espera o pane subir', detail: 'O texto do pedido era colado antes de a CLI subir e, no Qwen Code, se perdia sem aviso. Agora a entrega espera o pane sair de «subindo» e, se falhar, copia o pedido e avisa no terminal.' },
+    { title: 'Imagem do Gemini sai em JPEG', detail: 'A Interactions API só aceita image/jpeg. O arquivo padrão sai como .jpg, e um caminho explícito com extensão de outro formato, inclusive .png, vira .jpg.' },
+    { title: 'O anexo do vídeo fica no projeto de origem', detail: 'Depois de ler ou copiar o arquivo, a entrega confere se o projeto ainda é o mesmo e descarta o resto se a pasta trocou.' },
+    { title: 'Pacote Linux', detail: 'A 0.76.352 fica no Windows (YubiKey) e não recebe arquivos Linux. A 0.76.351 é o pacote Linux anterior. A 0.76.346 é a publicação macOS e não recebe arquivos Linux. O agente do YubiKey que assina o Nexus Shot sem PIN é só Windows e não muda o desktop Linux.' },
+  ],
+  fixes: [
+    { title: 'Flash do Token Plan', detail: 'No Token Plan o deepseek-flash e o deepseek-v4-flash sobem como deepseek-v4.1-flash-1017 no Claude Code e no Qwen Code.' },
+    { title: 'Pedido do vídeo não se perde no boot lento', detail: 'A entrega do pedido ao pane espera o início da CLI (até 60 s) e avisa quando não consegue entregar.' },
+    { title: 'Gemini em JPEG', detail: 'A imagem pela Interactions API pede image/jpeg, e um caminho explícito de outro formato vira .jpg.' },
+    { title: 'Anexo do vídeo no projeto de origem', detail: 'A entrega confere o workspace depois de cada espera e descarta o anexo se o projeto trocou.' },
+    ...RELEASE_076352.fixes,
+  ],
+};
+
+export const RELEASE_076353: AppRelease = CURRENT_RELEASE;
