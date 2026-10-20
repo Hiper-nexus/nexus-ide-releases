@@ -234,15 +234,13 @@ describe('OutputLevelMeter', () => {
     const { ctx, analyser, source } = fakeAudio(0.01); // nível 0,04: abaixo do piso
     const rate = 24_000;
     Object.assign(ctx, { sampleRate: rate });
-    Object.assign(analyser, {
-      frequencyBinCount: 256,
-      getFloatFrequencyData: vi.fn((buf: Float32Array) => buf.set(spectrumWithPeak(rate, 512, 3000, 5500))),
-    });
+    const getFloatFrequencyData = vi.fn((buf: Float32Array) => buf.set(spectrumWithPeak(rate, 512, 3000, 5500)));
+    Object.assign(analyser, { frequencyBinCount: 256, getFloatFrequencyData });
     meter.tap(ctx, source);
     for (let i = 0; i < 5; i += 1) raf.step();
     expect(useVoiceStore.getState().outputLevel).toBeGreaterThan(0);
     expect(useVoiceStore.getState().outputBrightness).toBe(0);
-    expect(analyser.getFloatFrequencyData).not.toHaveBeenCalled();
+    expect(getFloatFrequencyData).not.toHaveBeenCalled();
   });
 
   it('duas fontes no mesmo contexto mantêm o analisador até a última sair', () => {
