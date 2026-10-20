@@ -11890,7 +11890,7 @@ export const RELEASE_076333: AppRelease = {
   fixes: [...RELEASE_076329.fixes, ...RELEASE_076330.fixes, ...RELEASE_076332.fixes],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076334: AppRelease = {
   version: '0.76.334',
   date: '2026-10-19',
   codename: 'Vídeo pelo Gemini Omni e pelo Grok (macOS)',
@@ -11906,3 +11906,17 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Imagem do Grok com a extensão certa e o custo certo', detail: 'Ao gravar num caminho pedido, a imagem leva a extensão do formato que a xAI devolveu, em vez de gravar JPEG num arquivo .png. Sem o custo na resposta, a edição de imagem passa a somar a qualidade da edição e a imagem de entrada (uma edição 2K custa US$ 0,09, não US$ 0,06).' },
   ],
 };
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.335',
+  date: '2026-10-20',
+  codename: 'Vídeo pelo Gemini Omni e pelo Grok',
+  summary: 'No desktop Linux, a mesma chave do Gemini gera vídeo pelo Gemini Omni Flash, e a chave do Grok passa a gerar imagem e vídeo pelo Grok Imagine. Os agentes escolhem o modelo de mídia vendo regras e preço, e o vídeo pago não se perde numa falha passageira. A tag 0.76.334 é o pacote macOS e não recebe arquivos Linux.',
+  highlights: [
+    ...RELEASE_076334.highlights,
+    { title: 'Pacote Linux', detail: 'A tag 0.76.334 é o pacote macOS da mídia nova e não recebe arquivos Linux. A tag 0.76.333 é o pacote Linux anterior. O desktop Linux sai na 0.76.335, com o vídeo do Gemini Omni Flash, o Grok Imagine e a escolha de modelo por regras e preço.' },
+  ],
+  fixes: [...RELEASE_076334.fixes],
+};
+
+export const RELEASE_076335: AppRelease = CURRENT_RELEASE;
