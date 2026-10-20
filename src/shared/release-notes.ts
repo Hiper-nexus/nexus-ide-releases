@@ -12253,7 +12253,7 @@ export const RELEASE_076356: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076357: AppRelease = {
   version: '0.76.357',
   date: '2026-10-20',
   codename: 'O Jev julga a página',
