@@ -98,7 +98,8 @@ export const FEATURE_FLAG_IDS = {
   dependencyFreshness: 'feature.context.dependencyFreshness',
   /**
    * Estúdio de vídeo (F-1590..F-1606): narração, música, Minha voz, render,
-   * export e "Vídeos do projeto". Desligado até a validação nos três sistemas.
+   * export e "Vídeos do projeto". Ligado por padrão desde a 0.76.338 (pedido do
+   * operador em 20/10); o painel Experimental desliga.
    */
   mediaVideoStudio: 'feature.media.videoStudio',
 } as const;
@@ -390,13 +391,13 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     id: FEATURE_FLAG_IDS.mediaVideoStudio,
     owner: 'media',
     description:
-      'Estúdio de vídeo: narração com legenda, música, Minha voz, render e export por rede. Fica desligado até a entrega completa ser validada no Windows, no macOS e no Linux.',
+      'Estúdio de vídeo: narração com legenda, música, Minha voz, render e export por rede. Ligado por padrão; desligue aqui para esconder as ferramentas de vídeo e voz dos agentes.',
     channel: 'dev',
     createdAt: '2026-10-19',
     removeAfter: '2027-04-30',
     killSwitch: false,
     telemetry: false,
-    defaultEnabled: false,
+    defaultEnabled: true,
   },
 ] as const;
 

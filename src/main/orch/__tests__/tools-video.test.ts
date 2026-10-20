@@ -35,7 +35,7 @@ function tool(name: string) {
 }
 
 describe('ferramentas de vídeo', () => {
-  it('voz, música e vídeo só aparecem com o estúdio ligado (F-1600)', () => {
+  it('voz, música e vídeo somem quando o estúdio é desligado (F-1600)', () => {
     resetFeatureFlagRegistryForTests();
     try {
       const tools = [...buildVoiceTools(), ...buildVideoTools()];
@@ -51,12 +51,12 @@ describe('ferramentas de vídeo', () => {
         'nexus_voiceover_align',
         'nexus_voiceover_generate',
       ]);
+      for (const item of tools) expect(item.available?.(), item.name).toBe(true);
+      getFeatureFlagRegistry().setOverride(FEATURE_FLAG_IDS.mediaVideoStudio, false);
       for (const item of tools) {
         expect(item.available?.(), item.name).toBe(false);
         expect(item.unavailableReason, item.name).toMatch(/Ajustes → Experimental/u);
       }
-      getFeatureFlagRegistry().setOverride(FEATURE_FLAG_IDS.mediaVideoStudio, true);
-      for (const item of tools) expect(item.available?.(), item.name).toBe(true);
     } finally {
       resetFeatureFlagRegistryForTests();
     }
