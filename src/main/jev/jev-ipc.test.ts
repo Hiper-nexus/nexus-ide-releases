@@ -68,6 +68,7 @@ describe('registerJevIpc', () => {
       inputTokens: 900,
       estimatedUsd: 0.0000378,
     });
+    expect(status.boot).toEqual({ byProvider: {}, bySurface: {} });
     expect(secrets.hasStoredJevApiKey).toHaveBeenCalled();
   });
 

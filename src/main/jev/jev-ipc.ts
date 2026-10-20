@@ -20,6 +20,7 @@ import { isJevAutopilotEnabled } from './jev-autopilot';
 import { getDecisionSettings } from '../decision-models/decision-availability';
 import { jevModel } from '../decision-models/decision-routing';
 import {
+  jevDecisionBootCounts,
   jevDecisionStats,
   listJevDecisions,
   setJevDecisionFeedback,
@@ -46,6 +47,7 @@ export function registerJevIpc(): void {
         inputTokens: stats.inputTokens,
         estimatedUsd: stats.estimatedUsd,
       },
+      boot: jevDecisionBootCounts(),
     };
   });
 

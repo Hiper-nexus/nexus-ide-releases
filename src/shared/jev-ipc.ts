@@ -25,6 +25,11 @@ export interface JevStatus {
     inputTokens: number;
     estimatedUsd: number;
   };
+  /**
+   * Linhas do diário desde o boot por provider (jev/clef/luna) e por
+   * superfície — inclui sem-resposta e otimização. Ausente em versões antigas.
+   */
+  boot?: { byProvider: Record<string, number>; bySurface: Record<string, number> };
 }
 
 export interface JevTestResult {
@@ -165,6 +170,8 @@ export interface JevPaneHint {
   needsHuman: number;
   at: number;
   model: string;
+  /** Quem respondeu (chip honesto "Clef · pane ocioso"); ausente em hints antigos = Jev. */
+  provider?: DecisionProvider;
 }
 
 /** Payload do push `jev:paneHint` (main → renderer). */
