@@ -2354,6 +2354,12 @@ O que mudou — e o que NÃO mudou:
   Chamar `proc.kill('SIGTERM')` direto deixa a sessão presa no voo de
   encerramento — entrada recusada, saída descartada, "Retomar"/"Pedir ajuste"
   esperando para sempre, e o reconciliador de 1 s repete a tentativa.
+- **F-1617: o `kill()` do ConPTY não é idempotente.** Cada chamada repete o
+  `ClosePseudoConsole` no mesmo HPCON; a 2ª antes do `onExit` derruba o PTY
+  host com `0xC0000374` e TODOS os panes caem juntos (reproduzido com o
+  node-pty real). `killPtyRoot` fecha o console só no 1º pedido e a escalada
+  `SIGKILL` termina a raiz pelo PID. Nunca chame `proc.kill()` de um PTY
+  fora dele, nem «tente de novo» um encerramento chamando `kill()` outra vez.
 - Pane `idle` não é "orquestrador terminou". Maestro parado numa pergunta ao
   operador (hook `awaiting-input` ou notificação, rodada ainda aberta) é
   `isAgentAwaitingOperator` e conta como ocupado no `orchestratorBusy` da
