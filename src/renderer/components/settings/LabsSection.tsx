@@ -12,6 +12,10 @@ import { EmptyState } from '../ActionCard';
 
 /** Rótulos e dicas PT-BR por flag; ids novos caem no fallback (id cru). */
 export const LABS_FLAG_COPY: Record<string, { title: string; hint?: string }> = {
+  'feature.media.videoStudio': {
+    title: 'Estúdio de vídeo (em validação)',
+    hint: 'Vídeos de apresentação com narração, legenda, música, Minha voz, render e export por rede. Ainda em validação nos três sistemas.',
+  },
   'feature.context.dependencyFreshness': {
     title: 'Avisos de dependências',
     hint: 'Consulta o npm público e informa versões novas ou pacotes descontinuados. A atualização fica a seu critério.',

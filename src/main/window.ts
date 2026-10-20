@@ -89,7 +89,9 @@ function showRecoveryScreen(wc: WebContents): void {
 function buildCsp(devServerUrl: string | undefined): string {
   const styleSrc = "style-src 'self' 'unsafe-inline'";
   const fontSrc = "font-src 'self' data:";
-  const imgSrc = "img-src 'self' data:";
+  // F-1596: capa e vídeo do Estúdio chegam por nexus-media: (token do Main).
+  const imgSrc = "img-src 'self' data: nexus-media:";
+  const mediaSrc = "media-src 'self' nexus-media:";
 
   // Wake word (Porcupine) runs bundled WASM inside a blob: Web Worker /
   // AudioWorklet — hence 'wasm-unsafe-eval' + worker-src blob:. Both refer to
@@ -109,6 +111,7 @@ function buildCsp(devServerUrl: string | undefined): string {
       styleSrc,
       fontSrc,
       imgSrc,
+      mediaSrc,
       `connect-src 'self' ${origin} ${ws}`,
       "object-src 'none'",
       "base-uri 'self'",
@@ -124,6 +127,7 @@ function buildCsp(devServerUrl: string | undefined): string {
     styleSrc,
     fontSrc,
     imgSrc,
+    mediaSrc,
     "connect-src 'self'",
     "object-src 'none'",
     "base-uri 'self'",

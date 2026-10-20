@@ -48,6 +48,7 @@
 @import './settings-system-polish.css';
 @import './settings-agents-polish.css';
 @import './settings-media-polish.css';
+@import './video-studio.css';
 @import './pane-approval.css';
 @import './markdown.css';
 /* Camada de overlay (H6) por último de propósito: é a folha que ANCORA a

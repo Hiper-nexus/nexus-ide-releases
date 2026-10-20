@@ -11,6 +11,7 @@ import { stopManagedAuthSpawnGateWatchers } from './adapters/managed-auth-spawn-
 import { initializeLicenseAuthority } from "./license-bootstrap";
 import './macos-activation-policy';
 import { registerArmsIpc } from './connectors/arms-ipc';
+import os from "node:os";
 import path from "node:path";
 import {
   app,
@@ -72,7 +73,8 @@ configureLinuxSecretStore(app.commandLine, {
 
 // Must run before Electron emits `ready`. The handler itself is installed in
 // bootstrap (after ready), before the first BrowserWindow is created.
-registerRendererProtocolScheme(protocol);
+// F-1596: `nexus-media:` (player do Estúdio, com Range) entra no mesmo registro.
+registerRendererProtocolScheme(protocol, [MEDIA_STREAM_SCHEME_DEF]);
 
 // O Nexus orquestra agentes de longa duração: o Chromium NUNCA pode throttlar
 // os timers do processo (em background/oculto o message pump adia a fase de
@@ -92,6 +94,10 @@ app.commandLine.appendSwitch(
     ...darwinMediaDisabledFeatures(process.platform),
   ].join(','),
 );
+// Higiene de disco: o cache HTTP de CADA sessão Chromium (padrão e uma
+// partição por pane de navegador) cresce até centenas de MB por conta própria.
+// Teto fixo por sessão; a higiene ainda esvazia tudo com o disco apertado.
+app.commandLine.appendSwitch('disk-cache-size', String(64 * 1024 * 1024));
 const darwinMediaEnabled = darwinMediaEnabledFeatures(process.platform);
 if (darwinMediaEnabled.length > 0) {
   app.commandLine.appendSwitch('enable-features', darwinMediaEnabled.join(','));
@@ -217,8 +223,14 @@ import { proveNativeHeavyJobBaseAtBoot } from "./orch/native-heavy-preload";
 import {
   registerBrowserIpc,
   destroyBrowsersFor,
+  clearBrowserHttpCaches,
+  loadedBrowserPartitionNames,
 } from "./browser/browser-manager";
 import { registerPerfIpc } from "./perf/perf-ipc";
+import { configureStorageHygiene } from "./storage-hygiene/storage-hygiene-service";
+import { registerStorageHygieneIpc } from "./storage-hygiene/storage-hygiene-ipc";
+import { runWorktreeHygiene } from "./storage-hygiene/worktree-hygiene";
+import { rescueOrphanSessionOverlay } from "./storage-hygiene/session-overlay-rescue";
 import {
   closeAllDesignWritebacks,
   closeDesignWritebackFor,
@@ -252,7 +264,7 @@ import {
 } from "./orch/orch-ipc";
 import { quiesceOrchestrationCoordinator } from "./orch/orchestration-coordinator";
 import { nativeHeavyCommands } from "./orch/native-heavy-command";
-import { drainMissionShimDisposals } from "./orch/mcp-server";
+import { drainMissionShimDisposals, liveSessionArtifactKeys } from "./orch/mcp-server";
 import {
   initNonWorkerAutoClose,
   shutdownNonWorkerAutoClose,
@@ -465,6 +477,10 @@ import {
 import { registerRemoteIpc } from "./remote/remote-ipc";
 import { registerIntegrationsIpc } from "./integrations/integrations-ipc";
 import { registerMediaIpc } from "./media/media-ipc";
+import { registerVoiceCloneIpc } from "./media/voice-clone-ipc";
+import { registerMediaBudgetIpc } from "./media/media-budget-ipc";
+import { MEDIA_STREAM_SCHEME_DEF } from "./video/media-stream-protocol";
+import { registerVideoStudioIpc } from "./video/video-studio-ipc";
 import {
   broadcastGamificationToProject,
   registerGamificationIpc,
@@ -709,6 +725,30 @@ async function bootstrap(userPathReady: Promise<void>): Promise<void> {
   bootStep('configureProjectOrientationService', () => configureProjectOrientationService({
     cacheRoot: path.join(app.getPath("userData"), "orientation-maps"),
   }));
+  // Higiene de disco: poda/coleta worktrees de writers, perfis de navegador,
+  // caches, sessões órfãs e temporários com prazos que encolhem quando o disco
+  // aperta. Primeira rodada só depois do boot assentado (fila pós-boot).
+  bootStep('configureStorageHygiene', () => {
+    const hygiene = configureStorageHygiene({
+      roots: {
+        userDataDir: app.getPath("userData"),
+        logsDir: app.getPath("logs"),
+        homeDir: os.homedir(),
+        tempDir: os.tmpdir(),
+      },
+      liveSessionKeys: liveSessionArtifactKeys,
+      livePartitionNames: loadedBrowserPartitionNames,
+      workspaces: () => worktreeRuntime.openScopes().map((scope) => ({
+        root: scope.rootRealPath,
+        liveMissionIds: worktreeRuntime.liveMissionIds(scope),
+      })),
+      rescueSessionOverlay: (overlayDir) => rescueOrphanSessionOverlay(overlayDir),
+      worktrees: (policy, deadlineAt) => runWorktreeHygiene(worktreeRuntime, policy, deadlineAt),
+      clearHttpCaches: clearBrowserHttpCaches,
+    });
+    registerStorageHygieneIpc(hygiene);
+    enqueuePostBootIdleTask('startStorageHygiene', () => hygiene.start());
+  });
   const gamificationService = configureGamificationService({
     globalLedger: new GlobalXpLedger({
       file: path.join(app.getPath("userData"), "gamification", "global-xp.json"),
@@ -845,6 +885,12 @@ async function bootstrap(userPathReady: Promise<void>): Promise<void> {
   bootStep('registerCostIpc', () => registerCostIpc());
   bootStep('registerTokenSpeedIpc', () => registerTokenSpeedIpc());
   bootStep('registerMediaIpc', () => registerMediaIpc(runtimeManager));
+  // F-1606: teto de gasto de mídia antes de qualquer ferramenta paga.
+  bootStep('registerMediaBudgetIpc', () => registerMediaBudgetIpc());
+  // F-1593: "Minha voz" só pela janela principal (handleTrusted), nunca por MCP.
+  bootStep('registerVoiceCloneIpc', () => registerVoiceCloneIpc());
+  // F-1596: Vídeos do projeto (render, export, player por nexus-media:).
+  bootStep('registerVideoStudioIpc', () => registerVideoStudioIpc());
   bootStep('registerGamificationIpc', () => registerGamificationIpc(gamificationService));
   bootStep('registerMcpIpc', () => registerMcpIpc());
   bootStep('registerOpsIpc', () => registerOpsIpc());

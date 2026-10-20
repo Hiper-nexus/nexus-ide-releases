@@ -58,6 +58,8 @@ export interface McpToolDef {
    * refuses the call — a client without the dependency sees a classic Nexus.
    */
   available?: () => boolean;
+  /** What the refusal says when `available` is false (default: the TypeSafe key). */
+  unavailableReason?: string;
   handler: (
     args: Record<string, unknown>,
     ctx: AgentGateContext,

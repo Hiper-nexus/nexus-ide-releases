@@ -148,7 +148,10 @@ import type {
 import type { CostSnapshot } from './cost-types';
 import type { TokenSpeedSnapshot } from './token-speed-types';
 import type { UsageSnapshot } from './usage-types';
-import type { PublicModelRankingSnapshot } from './eval-ranking-types';
+import type {
+  ModelComparisonSnapshot,
+  PublicModelRankingSnapshot,
+} from './eval-ranking-types';
 import type { GamificationSnapshot } from './gamification-types';
 import type {
   MediaArtifactInfo,
@@ -215,6 +218,9 @@ import type {
   TeamInfo,
 } from './billing-types';
 import type { IntegrationsApi } from './integrations-api';
+import type { VoiceCloneApi } from './voice-clone-types';
+import type { VideoStudioApi } from './video-studio-types';
+import type { MediaBudgetApi } from './media-budget-types';
 import type { ProductApi } from './product-api';
 import type {
   AgentSpecWriteRequest,
@@ -1301,6 +1307,12 @@ export interface NexusApi {
   };
   /** GitHub / Linear / git SCM / SSH (see integrations-api.ts). */
   integrations: IntegrationsApi;
+  /** "Minha voz" (F-1593): clonar a própria voz, só pela mão humana. */
+  voiceClone: VoiceCloneApi;
+  /** Estúdio → Vídeos do projeto (F-1596). */
+  videoStudio: VideoStudioApi;
+  /** Teto de gasto de mídia (F-1606). */
+  mediaBudget: MediaBudgetApi;
   accounts: {
     list(): Promise<AccountInfo[]>;
     quota(): Promise<AccountQuotaInfo[]>;
@@ -1387,6 +1399,11 @@ export interface NexusApi {
     }): Promise<GamificationSnapshot>;
     onChanged(cb: (snapshot: GamificationSnapshot) => void): Unsubscribe;
   };
+  /** Higiene de disco (Configurações → Diagnóstico → Armazenamento). */
+  storage: {
+    report(): Promise<import('./storage-hygiene').StorageHygieneReport>;
+    cleanNow(): Promise<import('./storage-hygiene').StorageHygieneReport>;
+  };
   perf: {
     snapshot(): Promise<PerfSnapshot>;
     /** Push periódico (30s) do footprint por pane — ver PERF_CHANNELS.paneFootprints.
@@ -1414,6 +1431,8 @@ export interface NexusApi {
    */
   ranking: {
     public(): Promise<PublicModelRankingSnapshot>;
+    /** Ajustes → Comparar modelos: benchmarks publicados da oferta desta máquina (F-1588). */
+    compare(): Promise<ModelComparisonSnapshot>;
   };
   media: {
     listProviders(): Promise<MediaProviderInfo[]>;
@@ -1421,11 +1440,13 @@ export interface NexusApi {
       providerId: MediaProviderId,
       key: string,
     ): Promise<{ ok: boolean; error?: string }>;
-    usageTotals(): Promise<MediaUsageTotals>;
+    /** `null` sem projeto aberto (F-1589). */
+    usageTotals(): Promise<MediaUsageTotals | null>;
     /** Estúdio de Mídia: gera imagem/vídeo a partir do prompt (longo). */
     generate(req: MediaStudioRequest): Promise<MediaStudioResponse>;
     cancelGenerate(clientJobId: string): Promise<{ ok: boolean }>;
-    listArtifacts(): Promise<MediaArtifactInfo[]>;
+    /** `null` sem projeto aberto: a galeria é da pasta do projeto (F-1589). */
+    listArtifacts(): Promise<MediaArtifactInfo[] | null>;
     revealArtifact(
       storageKey: string,
     ): Promise<{ ok: boolean; error?: string }>;

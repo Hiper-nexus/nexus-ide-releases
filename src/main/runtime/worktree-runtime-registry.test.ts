@@ -1435,6 +1435,52 @@ describe("F-908: coleta de worktrees de writers paradas", () => {
     registry.dispose();
   });
 
+  it("higiene de disco: suja parada além do prazo se aposenta com salvaguarda real; branch e ref ficam", async (context) => {
+    skipIfCwdProbeDeniedBySandbox(context);
+    const { root, scope, manager } = fixture();
+    const registry = new WorktreeRuntimeRegistry(manager);
+    try {
+      setMission(manager, scope, "mission-old", "done");
+      const dirty = await paneWriter(registry, scope, "mission-old", "r", "r.txt");
+      fs.writeFileSync(path.join(dirty.worktreePath, "r.txt"), "editado sem commit\n");
+      fs.writeFileSync(path.join(dirty.worktreePath, "novo.txt"), "só existe aqui\n");
+      expect(registry.openScopes().map((open) => open.checkoutId)).toEqual([scope.checkoutId]);
+      const report = await registry.collectAgedPaneWriterWorktrees(scope, { minIdleMs: 0, retireAfterMs: 0 });
+      expect(report).toMatchObject({ retired: 1, kept: {} });
+      expect(fs.existsSync(dirty.worktreePath)).toBe(false);
+      const [ref] = salvageRefs(root);
+      expect(git(root, "show", `${ref}:novo.txt`)).toBe("só existe aqui");
+      expect(git(root, "show", `${ref}:r.txt`)).toBe("editado sem commit");
+      expect(branchExists(root, dirty.branchRef)).toBe(true);
+      expect(registry.listMission(scope, "mission-old")).toEqual([]);
+    } finally {
+      registry.dispose();
+    }
+  });
+
+  it("higiene de disco: poda os caches do writer liberado e mantém a worktree", async () => {
+    const { root, scope, manager } = fixture();
+    const registry = new WorktreeRuntimeRegistry(manager);
+    try {
+      fs.appendFileSync(path.join(root, ".git", "info", "exclude"), ".nexus-cache/\n");
+      setMission(manager, scope, "mission-done", "done");
+      setMission(manager, scope, "mission-live", "running");
+      const done = await paneWriter(registry, scope, "mission-done", "t");
+      const live = await paneWriter(registry, scope, "mission-live", "l");
+      for (const record of [done, live]) {
+        fs.mkdirSync(path.join(record.worktreePath, ".nexus-cache", "vitest"), { recursive: true });
+        fs.writeFileSync(path.join(record.worktreePath, ".nexus-cache", "vitest", "a"), "x");
+      }
+      expect(await registry.trimAgedPaneWriterCaches(scope, { minIdleMs: 0 }))
+        .toMatchObject({ trimmed: 1, removedDirs: 1 });
+      expect(fs.existsSync(path.join(done.worktreePath, ".nexus-cache"))).toBe(false);
+      expect(fs.existsSync(done.worktreePath)).toBe(true);
+      expect(fs.existsSync(path.join(live.worktreePath, ".nexus-cache", "vitest", "a"))).toBe(true);
+    } finally {
+      registry.dispose();
+    }
+  });
+
   it("missão viva, sessão viva dentro ou liberação recente mantêm a worktree", async (context) => {
     const { scope, manager } = fixture();
     const registry = new WorktreeRuntimeRegistry(manager);
@@ -1464,7 +1510,7 @@ describe("F-908: coleta de worktrees de writers paradas", () => {
         expect((await registry.collectAgedPaneWriterWorktrees(scope, NOW)).removed.map((r) => r.taskId))
           .toEqual([busy.taskId]);
       }
-      // Idade mínima padrão (24 h): acabou de ser liberada, não é candidata.
+      // Idade mínima padrão (política de disco: 12 h com folga): acabou de ser liberada, não é candidata.
       expect((await registry.collectAgedPaneWriterWorktrees(scope)).removed).toEqual([]);
       expect(fs.existsSync(live.worktreePath)).toBe(true);
       expect(registry.listMission(scope, "mission-live")).toHaveLength(1);

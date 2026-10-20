@@ -281,6 +281,12 @@ describe('ensureSkillsForCli', () => {
     expect(body).toContain('nexus_media_providers');
     expect(body).toContain('nexus_image_generate');
     expect(body).toContain('Do not use native image-generation tools');
+    // F-1598: a escolha sai dos campos que a ferramenta devolve, não da memória.
+    for (const field of ['imageCostUsd', 'videoModels', 'durationsSeconds', 'retired', 'defaults']) {
+      expect(body, field).toContain(`\`${field}\``);
+    }
+    expect(body).toMatch(/not\s+quality/);
+    expect(body).toContain('Ajustes → Serviços de mídia');
     expect(fs.existsSync(path.join(isolated, 'imagegen'))).toBe(false);
     expect(fs.existsSync(path.join(isolated, 'hatch-pet'))).toBe(false);
   });

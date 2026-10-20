@@ -161,6 +161,7 @@ import {
   type OrchestrationStartHealth,
 } from './orchestration-start-supervisor';
 import { stopAllPreviews } from "./preview-server";
+import { stopAllVideoPreviews } from "../video/video-preview";
 import { stopRemoteBridge } from "../remote/remote-bridge";
 import { buildRecipeOverlay } from "./recipe-overlay";
 import {
@@ -1724,6 +1725,7 @@ export async function closeOrchestration(): Promise<void> {
     await shutdownWorkerDeliveryBoard();
     shutdownWorkerHandoffEnforcement();
     stopAllPreviews();
+    await stopAllVideoPreviews();
     stopRemoteBridge();
     await stopMcpServer();
     await disposeProjectDomainStoreRegistry();

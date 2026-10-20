@@ -20,6 +20,7 @@ import {
   type WorktreeStateStore,
 } from "./worktree-manager";
 import { rollbackIntegrationCheckout } from "./merge-integration-rollback";
+import type { RetireSalvageProof } from "./worktree-manager";
 import { AsyncProcessGitRunner, type AsyncGitRunner } from "./git-command";
 import {
   readRepositorySnapshot,
@@ -919,6 +920,238 @@ describe("WorktreeManager", () => {
       // Branch não mesclada fica.
       expect(git(root, "rev-parse", clean.branchRef)).toMatch(/^[0-9a-f]{40}$/);
       expect(fs.existsSync(path.join(dirty.worktreePath, "wip.txt"))).toBe(true);
+    });
+  });
+
+  describe("higiene de disco: aposentadoria e poda de writers de pane", () => {
+    const scope = () => projectScope();
+    const T0 = 1_700_000_000_000;
+    const DAY = 24 * 60 * 60_000;
+    const writer = async (id: string) => {
+      const record = await manager.create({ scope: scope(), missionId: "operator-hand", taskId: `pane-${id}`,
+        workerId: id, ownerKind: "pane", ownership: { files: [], symbols: [], domains: [`pane-${id}`] } });
+      write(`${id}.txt`, id, record.worktreePath);
+      git(record.worktreePath, "add", `${id}.txt`);
+      git(record.worktreePath, "commit", "-qm", id);
+      manager.markFailed(scope(), "operator-hand", record.taskId, "pane closed");
+      return record;
+    };
+    let salvageCalls: string[] = [];
+    /** Salvaguarda falsa: 1ª chamada guarda (`saved`), as seguintes acham a mesma árvore. */
+    const salvage = (covered = true, onCall?: (call: number) => void) => {
+      const seen = new Map<string, number>();
+      return async (record: WorktreeRecord): Promise<RetireSalvageProof> => {
+        const call = (seen.get(record.taskKey) ?? 0) + 1;
+        seen.set(record.taskKey, call);
+        salvageCalls.push(record.taskId);
+        onCall?.(call);
+        return { covered, kind: call === 1 ? "saved" : "unchanged" };
+      };
+    };
+    const retiring = (retireSalvage = salvage(), retireAfterMs = 0) => ({
+      owner: () => true, inUse: () => false,
+      salvageDirty: async () => undefined,
+      retireAfterMs,
+      retireSalvage,
+    });
+    /** Manager sobre o mesmo store, com relógio próprio e registro dos `worktree remove`. */
+    const collector = (now = T0) => {
+      const seen: string[][] = [];
+      const real = new AsyncProcessGitRunner();
+      const gc = new WorktreeManager({ runtimeRoot, stateStore, gitRunner, now: () => now,
+        asyncGitRunner: { run: (cwd, args, options) => {
+          if (args[0] === "worktree" && args[1] === "remove") seen.push([...args]);
+          return real.run(cwd, args, options);
+        } } });
+      return { gc, seen };
+    };
+
+    beforeEach(() => { salvageCalls = []; });
+
+    it("suja e parada além do prazo: duas salvaguardas iguais na seção crítica e só então --force; a branch fica", async () => {
+      const dirty = await writer("retire");
+      write("README.md", "edição não commitada\n", dirty.worktreePath);
+      write("novo.txt", "só existe aqui", dirty.worktreePath);
+      const { gc, seen } = collector();
+      const report = await gc.collectReleasedPaneWorktrees(scope(), retiring());
+      expect(report).toMatchObject({ kept: {}, retired: 1, retiredTaskKeys: [dirty.taskKey] });
+      expect(report.removed.map((r) => r.taskId)).toEqual([dirty.taskId]);
+      expect(salvageCalls).toEqual([dirty.taskId, dirty.taskId]);
+      expect(seen).toEqual([["worktree", "remove", "--force", dirty.worktreePath]]);
+      expect(fs.existsSync(dirty.worktreePath)).toBe(false);
+      expect(git(root, "show", `${dirty.branchRef}:retire.txt`)).toBe("retire");
+    });
+
+    it("salvaguarda incompleta (arquivo grande, excesso, repo aninhado) mantém tudo", async () => {
+      const dirty = await writer("partial");
+      write("enorme.bin", "x", dirty.worktreePath);
+      const report = await manager.collectReleasedPaneWorktrees(scope(), retiring(salvage(false)));
+      expect(report).toMatchObject({ removed: [], kept: { "salvage-incomplete": 1 } });
+      expect(fs.readFileSync(path.join(dirty.worktreePath, "enorme.bin"), "utf8")).toBe("x");
+    });
+
+    it("escrita entre as duas salvaguardas (mesma linha de status) mantém tudo", async () => {
+      const dirty = await writer("racing");
+      write("wip.txt", "versão 1", dirty.worktreePath);
+      const moving = async (record: WorktreeRecord): Promise<RetireSalvageProof> => {
+        salvageCalls.push(record.taskId);
+        // A 2ª salvaguarda acha árvore nova: alguém escreveu depois da 1ª.
+        if (salvageCalls.length === 1) write("wip.txt", "versão 2", dirty.worktreePath);
+        return { covered: true, kind: "saved" };
+      };
+      const report = await manager.collectReleasedPaneWorktrees(scope(), retiring(moving));
+      expect(report).toMatchObject({ removed: [], kept: { changed: 1 } });
+      expect(fs.readFileSync(path.join(dirty.worktreePath, "wip.txt"), "utf8")).toBe("versão 2");
+    });
+
+    it("salvaguarda `clean` com status sujo (só o índice difere) não conta como guardada", async () => {
+      const staged = await writer("staged");
+      write("README.md", "staged\n", staged.worktreePath);
+      git(staged.worktreePath, "add", "README.md");
+      write("README.md", "# Test\n", staged.worktreePath);
+      const report = await manager.collectReleasedPaneWorktrees(scope(), retiring(async () => ({ covered: true, kind: "clean" })));
+      expect(report).toMatchObject({ removed: [], kept: { "salvage-incomplete": 1 } });
+      expect(git(staged.worktreePath, "show", ":README.md")).toBe("staged");
+    });
+
+    it("repositório Git aninhado novo nunca se aposenta (o snapshot só teria o gitlink)", async () => {
+      const nested = await writer("nested");
+      const sub = path.join(nested.worktreePath, "sub");
+      fs.mkdirSync(sub);
+      git(sub, "init", "-q");
+      write("only-here.txt", "commit só do repo interno", sub);
+      git(sub, "add", ".");
+      git(sub, "-c", "user.name=x", "-c", "user.email=x@example.test", "commit", "-qm", "interno");
+      const report = await manager.collectReleasedPaneWorktrees(scope(), retiring());
+      expect(report).toMatchObject({ removed: [], kept: { "nested-repo": 1 } });
+      expect(git(sub, "log", "--format=%s")).toBe("interno");
+    });
+
+    it("antes do prazo de aposentadoria a suja segue só com a salvaguarda (dirty-kept)", async () => {
+      const dirty = await writer("young");
+      write("wip.txt", "wip", dirty.worktreePath);
+      const report = await manager.collectReleasedPaneWorktrees(scope(), retiring(salvage(), 60_000));
+      expect(report).toMatchObject({ removed: [], kept: { "dirty-kept": 1 } });
+      expect(salvageCalls).toEqual([]);
+    });
+
+    it("registro velho, mas edição recente no disco (editor externo): mantém", async () => {
+      const dirty = await writer("editor");
+      write("wip.txt", "acabei de salvar", dirty.worktreePath);
+      // Um dia depois do registro, prazo de 1 h: pelo registro já se aposentaria.
+      const { gc } = collector(T0 + DAY);
+      const report = await gc.collectReleasedPaneWorktrees(scope(), retiring(salvage(), 60 * 60_000));
+      expect(report).toMatchObject({ removed: [], kept: { "recent-edits": 1 } });
+      expect(salvageCalls).toEqual([]);
+    });
+
+    it("aposentada: caches ignorados saem sem --force; .env e pasta solta mantêm", async () => {
+      fs.appendFileSync(path.join(root, ".git", "info", "exclude"), "__pycache__/\n.venv/\n*.env\nscratch/\n");
+      const caches = await writer("caches");
+      write("src/__pycache__/m.pyc", "pyc", caches.worktreePath);
+      write(".venv/bin/python", "py", caches.worktreePath);
+      const secret = await writer("secret");
+      write(".env", "TOKEN=1", secret.worktreePath);
+      const loose = await writer("loose");
+      write("scratch/dump.sql", "dump", loose.worktreePath);
+      const { gc, seen } = collector();
+      const report = await gc.collectReleasedPaneWorktrees(scope(), retiring());
+      expect(report.removed.map((r) => r.taskId)).toEqual([caches.taskId]);
+      expect(report.kept).toEqual({ "ignored-kept": 2 });
+      expect(report.retired).toBeUndefined();
+      expect(seen).toEqual([["worktree", "remove", caches.worktreePath]]);
+      expect(fs.readFileSync(path.join(secret.worktreePath, ".env"), "utf8")).toBe("TOKEN=1");
+      expect(fs.readFileSync(path.join(loose.worktreePath, "scratch", "dump.sql"), "utf8")).toBe("dump");
+    });
+
+    it("saída de build (out/, dist/) só sai parada há 3× o prazo; recente mantém a worktree", async () => {
+      fs.appendFileSync(path.join(root, ".git", "info", "exclude"), "out/\ndist/\n");
+      const build = await writer("build");
+      write("out/NexusIDE.dmg", "assinado e notarizado", build.worktreePath);
+      // Registro de um dia atrás, prazo de 1 h: a saída de build acabou de ser escrita (< 3 h).
+      const { gc } = collector(T0 + DAY);
+      const fresh = await gc.collectReleasedPaneWorktrees(scope(), retiring(salvage(), 60 * 60_000));
+      expect(fresh).toMatchObject({ removed: [], kept: { "ignored-kept": 1 } });
+      expect(fs.existsSync(path.join(build.worktreePath, "out", "NexusIDE.dmg"))).toBe(true);
+      // Prazo zero (disco crítico extremo, só no teste): parada além de 3× → sai.
+      const stale = await gc.collectReleasedPaneWorktrees(scope(), retiring(salvage(), 0));
+      expect(stale.removed.map((r) => r.taskId)).toEqual([build.taskId]);
+      // Sem aposentadoria, saída de build mantém (regra conservadora de sempre).
+      const kept = await writer("build2");
+      write("dist/app.js", "bundle", kept.worktreePath);
+      expect((await manager.collectReleasedPaneWorktrees(scope(),
+        { owner: () => true, inUse: () => false, salvageDirty: async () => undefined })).kept)
+        .toEqual({ "ignored-kept": 1 });
+    });
+
+    it("pasta presa no nome da sonda de uso (Windows) volta ao lugar antes de qualquer coisa", async () => {
+      const dirty = await writer("probe");
+      write("wip.txt", "trabalho", dirty.worktreePath);
+      fs.renameSync(dirty.worktreePath, `${dirty.worktreePath}.nexus-gc-probe-123-abc`);
+      const report = await manager.collectReleasedPaneWorktrees(scope(), retiring());
+      expect(report).toMatchObject({ removed: [], kept: { "probe-restored": 1 } });
+      expect(fs.readFileSync(path.join(dirty.worktreePath, "wip.txt"), "utf8")).toBe("trabalho");
+      expect(manager.get(scope(), "operator-hand", dirty.taskId)).not.toBeNull();
+    });
+
+    it("prune não roda com coleta em curso (a sonda do Windows renomeia a pasta por instantes)", async () => {
+      const gone = await writer("gone");
+      fs.rmSync(gone.worktreePath, { recursive: true, force: true });
+      let pruneDuringCollection: unknown = "não chamado";
+      const probing = async (record: WorktreeRecord): Promise<RetireSalvageProof> => {
+        pruneDuringCollection = await manager.pruneManagedWorktrees(scope());
+        return salvage()(record);
+      };
+      const dirty = await writer("collecting");
+      write("wip.txt", "x", dirty.worktreePath);
+      await manager.collectReleasedPaneWorktrees(scope(), { ...retiring(probing), owner: () => true });
+      expect(pruneDuringCollection).toEqual({ skipped: "collection-in-flight" });
+    });
+
+    it("poda: apaga só pastas de cache ignoradas do topo; worktree, node_modules, build e trabalho ficam", async () => {
+      fs.appendFileSync(path.join(root, ".git", "info", "exclude"),
+        ".nexus-cache/\n.vite/\n.turbo/\nnode_modules/\nout/\n.cache\n");
+      const record = await writer("trim");
+      write(".nexus-cache/vitest/a.json", "cache", record.worktreePath);
+      write(".vite/deps/x.js", "cache", record.worktreePath);
+      write("node_modules/pkg/index.js", "dep", record.worktreePath);
+      write("out/app.js", "bundle", record.worktreePath);
+      write("wip.txt", "trabalho", record.worktreePath);
+      // Cache que é LINK para fora: nunca seguido nem apagado.
+      const outside = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-trim-outside-"));
+      try {
+        fs.writeFileSync(path.join(outside, "keep.txt"), "fora");
+        fs.symlinkSync(outside, path.join(record.worktreePath, ".cache"), "junction");
+        const report = await manager.trimReleasedPaneWorktreeCaches(scope(),
+          { owner: () => true, inUse: () => false, minIdleMs: 0 });
+        expect(report).toEqual({ trimmed: 1, removedDirs: 2, deferred: 0 });
+        expect(fs.existsSync(path.join(record.worktreePath, ".nexus-cache"))).toBe(false);
+        expect(fs.existsSync(path.join(record.worktreePath, ".vite"))).toBe(false);
+        for (const kept of ["node_modules/pkg/index.js", "out/app.js", "wip.txt", "trim.txt"]) {
+          expect(fs.existsSync(path.join(record.worktreePath, kept)), kept).toBe(true);
+        }
+        expect(fs.readFileSync(path.join(outside, "keep.txt"), "utf8")).toBe("fora");
+        expect(manager.get(scope(), "operator-hand", record.taskId)?.status).toBe("failed");
+        // Segunda passada: nada mais a podar.
+        expect((await manager.trimReleasedPaneWorktreeCaches(scope(),
+          { owner: () => true, inUse: () => false, minIdleMs: 0 })).trimmed).toBe(0);
+      } finally {
+        fs.rmSync(outside, { recursive: true, force: true });
+      }
+    });
+
+    it("poda respeita dono vivo, sessão viva e idade mínima", async () => {
+      fs.appendFileSync(path.join(root, ".git", "info", "exclude"), ".nexus-cache/\n");
+      const record = await writer("guarded");
+      write(".nexus-cache/vitest/a.json", "cache", record.worktreePath);
+      const trim = (options: Partial<Parameters<WorktreeManager["trimReleasedPaneWorktreeCaches"]>[1]>) =>
+        manager.trimReleasedPaneWorktreeCaches(scope(),
+          { owner: () => true, inUse: () => false, minIdleMs: 0, ...options });
+      expect((await trim({ owner: () => false })).trimmed).toBe(0);
+      expect((await trim({ inUse: () => true })).trimmed).toBe(0);
+      expect((await trim({ minIdleMs: 60_000 })).trimmed).toBe(0);
+      expect(fs.existsSync(path.join(record.worktreePath, ".nexus-cache"))).toBe(true);
+      expect((await trim({})).trimmed).toBe(1);
     });
   });
 

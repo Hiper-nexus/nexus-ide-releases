@@ -40,16 +40,25 @@ interface SessionTiming {
   firstChunkLogged: boolean;
 }
 
-const DEFAULT_METRICS_FILE = path.join(
-  os.homedir(),
-  'Library',
-  'Logs',
-  'NexusIDE',
-  'jarvis-metrics.log',
-);
+/**
+ * Pasta de logs do app por SO — a mesma de `app.getPath('logs')` (este módulo
+ * não importa o Electron). No Windows o caminho do macOS criava uma pasta
+ * `Library/Logs` solta no perfil do usuário.
+ */
+export function defaultJarvisMetricsFile(
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+  home: string = os.homedir(),
+): string {
+  if (platform === 'darwin') return path.posix.join(home, 'Library', 'Logs', 'NexusIDE', 'jarvis-metrics.log');
+  if (platform === 'win32') {
+    return path.win32.join(env.APPDATA || path.win32.join(home, 'AppData', 'Roaming'), 'NexusIDE', 'logs', 'jarvis-metrics.log');
+  }
+  return path.posix.join(env.XDG_CONFIG_HOME || path.posix.join(home, '.config'), 'NexusIDE', 'logs', 'jarvis-metrics.log');
+}
 
 function resolveMetricsFile(): string {
-  return process.env.NEXUS_JARVIS_METRICS_FILE?.trim() || DEFAULT_METRICS_FILE;
+  return process.env.NEXUS_JARVIS_METRICS_FILE?.trim() || defaultJarvisMetricsFile();
 }
 
 export class JarvisMetricsLogger {

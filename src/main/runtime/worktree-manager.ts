@@ -46,6 +46,9 @@ import {
   managedWorktreeRelativePath,
 } from "./managed-worktree-layout";
 import { materializeGitWorktree } from "./worktree-cow";
+import { removeTree, unlinkLinksInTree } from "../util/remove-tree";
+import { newestActivityMs } from "../storage-hygiene/dir-usage";
+import { restoreStrandedProbe } from "./directory-in-use-probe";
 import {
   findRegisteredDeletableWorktree,
   isDangerousWorktreeRemovalPath,
@@ -114,12 +117,77 @@ const REGENERABLE_IGNORED = new Set([
  */
 const ADOPTED_KEPT = "adopted";
 const ADOPTED_RECORD_DROPPED = "adopted-record-dropped";
+/** Resultado interno da coleta: removida pela aposentadoria (não é motivo de manter). */
+const RETIRED = "\0retired";
 
 function regenerableIgnored(entry: string): boolean {
   const segments = entry.replace(/\/$/, "").split("/");
   return segments.some((segment, index) => REGENERABLE_IGNORED.has(segment) ||
     (segment === ".next" && segments[index + 1] === "cache"));
 }
+
+/**
+ * Aposentadoria (worktree parada além de `retireAfterMs`, missão encerrada):
+ * caches, ambientes e estado de ferramenta também são regeneráveis.
+ * Qualquer outro ignorado (`.env`, dump, pasta solta) segue mantendo a
+ * worktree — pode ser o único lugar de um entregável.
+ */
+const RETIRABLE_CACHES = new Set([
+  "coverage", ".next", ".nuxt", ".svelte-kit", ".parcel-cache", ".gradle", "DerivedData",
+  "__pycache__", ".mypy_cache", ".ruff_cache", ".tox", ".venv", "venv", ".expo", ".angular",
+  ".dart_tool", ".mimocode", ".dev-electron",
+]);
+const RETIRABLE_IGNORED_SUFFIXES = [".tsbuildinfo", ".pyc", ".DS_Store", "Thumbs.db", "desktop.ini"];
+/**
+ * Saída de build: pode ser cara (um `make:release` assinado e notarizado em
+ * `out/`) ou o entregável de mídia de um agente. Só se aposenta parada há
+ * {@link STALE_BUILD_OUTPUT_FACTOR}× o prazo de aposentadoria.
+ */
+const STALE_BUILD_OUTPUTS = new Set(["out", "output", "dist", "build", "target", "storybook-static", ".playwright-mcp"]);
+const STALE_BUILD_OUTPUT_FACTOR = 3;
+/** Acima disso a aposentadoria não prova inatividade arquivo a arquivo: mantém. */
+const MAX_RETIRE_CHANGED_PATHS = 2_000;
+
+function retirableCacheIgnored(entry: string): boolean {
+  const clean = entry.replace(/\/$/, "");
+  return clean.split("/").some((segment) => RETIRABLE_CACHES.has(segment)) ||
+    RETIRABLE_IGNORED_SUFFIXES.some((suffix) => clean.endsWith(suffix));
+}
+
+function staleBuildOutputCandidate(entry: string): boolean {
+  return entry.replace(/\/$/, "").split("/").some((segment) => STALE_BUILD_OUTPUTS.has(segment));
+}
+
+/** Caminhos alterados (não ignorados) do `status --porcelain=v1 -z`; renomeação traz a origem a seguir. */
+function changedPaths(statusZ: string): string[] {
+  const paths: string[] = [];
+  const fields = statusZ.split("\0");
+  for (let index = 0; index < fields.length; index += 1) {
+    const field = fields[index];
+    if (!field || field.length < 4) continue;
+    const xy = field.slice(0, 2);
+    if (xy === "!!") continue;
+    paths.push(field.slice(3));
+    if (xy[0] === "R" || xy[0] === "C") index += 1;
+  }
+  return paths;
+}
+
+async function pathExists(target: string): Promise<boolean> {
+  try {
+    await fs.promises.lstat(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Caches que a poda leve apaga de writers liberados SEM remover a worktree:
+ * só diretórios inteiros, ignorados, no topo da worktree. `node_modules` fica
+ * de fora — é o clone CoW (ou o link) que a retomada do writer usa.
+ */
+const TRIMMABLE_CACHE_DIRS = new Set([".nexus-cache", ".vite", ".turbo", ".cache", ".pytest_cache"]);
 
 export interface PaneWorktreeGcOptions {
   /** Chaves do registry (missão ou `operator-hand`) cujos writers podem sair. */
@@ -144,6 +212,26 @@ export interface PaneWorktreeGcOptions {
    * branch fica); worktree suja recebe esta salvaguarda e FICA.
    */
   readonly salvageDirty?: (record: WorktreeRecord) => Promise<unknown>;
+  /**
+   * Aposentadoria (só na coleta de paradas, com `salvageDirty`): parada há
+   * pelo menos isto desde `updatedAt`, a worktree sai mesmo suja ou com saída
+   * de build ignorada — desde que `retireSalvage` prove que todo o trabalho
+   * ficou numa ref de salvaguarda. A branch nunca é apagada.
+   */
+  readonly retireAfterMs?: number;
+  /**
+   * Salvaguarda da aposentadoria. Chamada DUAS vezes na seção crítica: a
+   * primeira tem de cobrir tudo; a segunda, logo antes do `--force`, tem de
+   * achar a mesma árvore (`unchanged`) — qualquer escrita no meio mantém tudo.
+   */
+  readonly retireSalvage?: (record: WorktreeRecord) => Promise<RetireSalvageProof>;
+}
+
+/** O que a aposentadoria precisa saber de uma salvaguarda (sem depender de orch/). */
+export interface RetireSalvageProof {
+  /** Todo o trabalho rastreado e novo ficou na ref (nada grande, excesso nem repo aninhado de fora). */
+  readonly covered: boolean;
+  readonly kind: "clean" | "saved" | "unchanged" | "refused";
 }
 
 export interface PaneWorktreeGcReport {
@@ -151,6 +239,26 @@ export interface PaneWorktreeGcReport {
   /** Candidatos mantidos, por motivo (recusa de prova ou falha). */
   readonly kept: Readonly<Record<string, number>>;
   /** Candidatos não examinados por teto de itens/tempo. */
+  readonly deferred: number;
+  /** Dos removidos, quantos saíram pela aposentadoria (salvaguarda + --force). */
+  readonly retired?: number;
+  /** As tarefas (taskKey) desses aposentados. */
+  readonly retiredTaskKeys?: readonly string[];
+}
+
+export interface PaneWorktreeTrimOptions {
+  readonly owner: (missionId: string) => boolean;
+  readonly inUse: (worktreePath: string) => boolean;
+  readonly minIdleMs: number;
+  readonly maxCandidates?: number;
+  readonly deadlineAt?: number;
+}
+
+export interface PaneWorktreeTrimReport {
+  /** Worktrees que perderam pelo menos um diretório de cache. */
+  readonly trimmed: number;
+  /** Diretórios de cache apagados (relativos à worktree). */
+  readonly removedDirs: number;
   readonly deferred: number;
 }
 
@@ -1579,6 +1687,7 @@ export class WorktreeManager {
     const removed: WorktreeRecord[] = [];
     const kept: Record<string, number> = {};
     let deferred = 0;
+    const retiredTaskKeys: string[] = [];
     for (const [index, candidate] of candidates.entries()) {
       if (index >= maxCandidates || (options.deadlineAt !== undefined && Date.now() >= options.deadlineAt)) {
         deferred = candidates.length - index;
@@ -1591,13 +1700,14 @@ export class WorktreeManager {
           ? "collecting"
           : candidate.adopted === true
             ? this.#releaseAdoptedPaneWriter(scopeKey, candidate, released, options)
-            : await this.#collectReleasedPaneWorktree(scopeKey, candidate, released, options);
+            : await this.#collectReleasedPaneWorktree(scopeKey, candidate, released, options, now);
       } catch (error) {
         // Identidade incerta mantém worktree, branch e registro — mas conta.
         reason = `error: ${this.#failureMessage(error).slice(0, 120)}`;
       }
-      if (reason === null) {
+      if (reason === null || reason === RETIRED) {
         removed.push(candidate);
+        if (reason === RETIRED) retiredTaskKeys.push(candidate.taskKey);
         this.#lastExamined.delete(candidate.taskKey);
       }
       else {
@@ -1605,7 +1715,83 @@ export class WorktreeManager {
         if (reason === ADOPTED_RECORD_DROPPED) this.#lastExamined.delete(candidate.taskKey);
       }
     }
-    return Object.freeze({ removed: Object.freeze(removed), kept: Object.freeze(kept), deferred });
+    return Object.freeze({
+      removed: Object.freeze(removed), kept: Object.freeze(kept), deferred,
+      ...(retiredTaskKeys.length > 0
+        ? { retired: retiredTaskKeys.length, retiredTaskKeys: Object.freeze(retiredTaskKeys) }
+        : {}),
+    });
+  }
+
+  /**
+   * Poda leve dos writers de pane liberados: apaga só diretórios de cache
+   * ignorados no topo da worktree (`.nexus-cache`, `.vite`, …), sem remover a
+   * worktree, a branch nem o registro. O `node_modules` (clone/link da
+   * retomada) e qualquer link ficam; o Git é quem diz que a pasta inteira é
+   * ignorada, e nada fora da raiz gerenciada é tocado.
+   */
+  async trimReleasedPaneWorktreeCaches(
+    scope: ProjectExecutionScope,
+    options: PaneWorktreeTrimOptions,
+  ): Promise<PaneWorktreeTrimReport> {
+    const scopeKey = this.scopeKey(scope);
+    const now = this.#timestamp();
+    const candidates = this.#snapshot(scopeKey).records.filter((record) =>
+      record.ownerKind === "pane" && record.taskId.startsWith("pane-") && record.adopted !== true &&
+      (record.status === "failed" || record.status === "integrated") &&
+      options.owner(record.missionId) && now - record.updatedAt >= options.minIdleMs &&
+      !options.inUse(record.worktreePath) && !this.#collecting.has(record.taskKey));
+    const maxCandidates = options.maxCandidates ?? Number.POSITIVE_INFINITY;
+    let trimmed = 0;
+    let removedDirs = 0;
+    let deferred = 0;
+    for (const [index, candidate] of candidates.entries()) {
+      if (index >= maxCandidates || (options.deadlineAt !== undefined && Date.now() >= options.deadlineAt)) {
+        deferred = candidates.length - index;
+        break;
+      }
+      try {
+        const count = await this.#trimWorktreeCaches(candidate);
+        if (count > 0) {
+          trimmed += 1;
+          removedDirs += count;
+        }
+      } catch (error) {
+        console.warn(`[worktree] poda de cache adiada em ${candidate.worktreePath}: ${this.#failureMessage(error).slice(0, 160)}`);
+      }
+    }
+    return Object.freeze({ trimmed, removedDirs, deferred });
+  }
+
+  async #trimWorktreeCaches(candidate: WorktreeRecord): Promise<number> {
+    const entry = await fs.promises.lstat(candidate.worktreePath).catch(() => null);
+    if (!entry || entry.isSymbolicLink() || !entry.isDirectory()) return 0;
+    const real = await fs.promises.realpath(candidate.worktreePath);
+    if (real !== candidate.worktreePath) return 0;
+    const managed = [this.worktreesRoot, this.legacyWorktreesRoot].some((managedRoot) =>
+      real !== managedRoot && isPathInsideOrEqual(managedRoot, real));
+    if (!managed || isDangerousWorktreeRemovalPath(real, candidate.rootRealPath)) return 0;
+    // Barato antes do Git: nenhuma pasta de cache no topo, nada a fazer.
+    const present = (await fs.promises.readdir(real)).filter((name) => TRIMMABLE_CACHE_DIRS.has(name));
+    if (present.length === 0) return 0;
+    const git = this.#asyncGit;
+    await assertSafeLocalGitConfigAsync(git, real);
+    const top = await git.run(real, ["rev-parse", "--show-toplevel"], { allowFailure: true });
+    if (top.status !== 0 || await fs.promises.realpath(top.stdout.trim()) !== real) return 0;
+    const status = (await git.run(real, WORKTREE_STATUS_ARGS)).stdout.split("\0").filter(Boolean);
+    // Só a pasta que o Git reporta INTEIRA como ignorada (`!! .vite/`).
+    const ignoredDirs = new Set(status.filter((field) => field.startsWith("!! ") && field.endsWith("/"))
+      .map((field) => field.slice(3, -1)));
+    let removed = 0;
+    for (const name of present) {
+      if (!ignoredDirs.has(name)) continue;
+      const target = path.join(real, name);
+      const stat = await fs.promises.lstat(target).catch(() => null);
+      if (!stat || stat.isSymbolicLink() || !stat.isDirectory()) continue;
+      await removeTree(target, { force: true });
+      removed += 1;
+    }
+    return removed;
   }
 
   /**
@@ -1644,12 +1830,18 @@ export class WorktreeManager {
     candidate: WorktreeRecord,
     released: (record: WorktreeRecord) => boolean,
     options: PaneWorktreeGcOptions,
+    now: number,
   ): Promise<string | null> {
     // F-1429 parte 2: defesa em profundidade — pasta adotada nunca chega à remoção.
     if (candidate.adopted === true) return ADOPTED_KEPT;
     const git = this.#asyncGit;
     const root = candidate.rootRealPath;
     const aged = options.salvageDirty !== undefined;
+    const retiring = aged && options.retireSalvage !== undefined &&
+      options.retireAfterMs !== undefined && now - candidate.updatedAt >= options.retireAfterMs;
+    const retireAfterMs = options.retireAfterMs ?? 0;
+    // Aposentada sai com --force: duas salvaguardas iguais provam que nada some.
+    let force = false;
     // Toda prova abaixo é sobre ESTE commit; a ref é conferida de novo antes de remover.
     const tip = await this.#branchTip(root, candidate.branchRef);
     if (!tip) return "branch-missing";
@@ -1668,6 +1860,14 @@ export class WorktreeManager {
       if (error.code === "ENOENT") return null;
       throw error;
     });
+    if (!entry) {
+      // Sonda de uso do Windows que não conseguiu desfazer: a pasta está ao
+      // lado, com outro nome. Pasta "sumida" aqui soltaria o registro e
+      // abandonaria o trabalho lá dentro.
+      const stranded = await restoreStrandedProbe(candidate.worktreePath);
+      if (stranded === "restored") return "probe-restored";
+      if (stranded === "stranded") return "probe-stranded";
+    }
     let real: string | undefined;
     if (entry) {
       // Nunca segue symlink nem sai da raiz gerenciada.
@@ -1686,6 +1886,7 @@ export class WorktreeManager {
       if (inUse(candidate.worktreePath)) return "in-use";
     }
     let statusBefore = "";
+    let ignoredBefore: string[] = [];
     if (real !== undefined) {
       await assertSafeLocalGitConfigAsync(git, real);
       const top = await git.run(real, ["rev-parse", "--show-toplevel"], { allowFailure: true });
@@ -1696,19 +1897,46 @@ export class WorktreeManager {
       if (!findRegisteredDeletableWorktree(root, real, parseWorktreeList(listed.stdout))) return "unregistered";
       statusBefore = (await git.run(real, WORKTREE_STATUS_ARGS)).stdout;
       const entries = statusBefore.split("\0").filter(Boolean);
+      const ignored = entries.filter((field) => field.startsWith("!! ")).map((field) => field.slice(3));
+      ignoredBefore = ignored;
+      const dirty = entries.length !== ignored.length;
       // Suja (inclusive staged distinto): nunca sai. A coleta de paradas só registra a salvaguarda.
-      if (entries.some((field) => !field.startsWith("!! "))) {
+      if (dirty && !retiring) {
         if (!aged) return "dirty";
         await options.salvageDirty!(candidate);
         return "dirty-kept";
       }
-      if (!entries.every((field) => regenerableIgnored(field.slice(3)))) return "ignored-kept";
+      for (const item of ignored) {
+        if (regenerableIgnored(item)) continue;
+        if (retiring && retirableCacheIgnored(item)) continue;
+        if (retiring && staleBuildOutputCandidate(item) && Date.now() -
+            await newestActivityMs(path.join(real, item), { depth: 3 }) >= retireAfterMs * STALE_BUILD_OUTPUT_FACTOR) {
+          continue;
+        }
+        if (dirty) await options.salvageDirty!(candidate);
+        return "ignored-kept";
+      }
       // `assume-unchanged`/`skip-worktree` escondem edições do status (e da
       // re-checagem do próprio `worktree remove`); gitlink guarda outro repositório.
       for (const line of (await git.run(real, ["ls-files", "-s", "-v", "-z"])).stdout.split("\0")) {
         if (!line) continue;
         if (line[0] !== line[0].toUpperCase() || line[0] === "S") return "index-flags";
         if (line.slice(2, 8) === "160000") return "gitlink";
+      }
+      if (dirty) {
+        // Aposentadoria: o prazo conta do registro, mas um editor externo
+        // escrevendo na pasta não mexe nele — a atividade no disco também conta.
+        const changed = changedPaths(statusBefore);
+        if (changed.length > MAX_RETIRE_CHANGED_PATHS) return "salvage-incomplete";
+        let newest = 0;
+        for (const rel of changed) {
+          const target = path.join(real, rel);
+          // Repositório aninhado novo: o snapshot guardaria só o gitlink.
+          if (rel.endsWith("/") && await pathExists(path.join(target, ".git"))) return "nested-repo";
+          newest = Math.max(newest, await newestActivityMs(target, { depth: 3 }));
+        }
+        if (Date.now() - newest < retireAfterMs) return "recent-edits";
+        force = true;
       }
     }
     // Revalidação síncrona + marca: nada reabre este writer daqui em diante.
@@ -1734,9 +1962,32 @@ export class WorktreeManager {
         const head = await git.run(real, ["symbolic-ref", "--quiet", "HEAD"], { allowFailure: true });
         const status = await git.run(real, WORKTREE_STATUS_ARGS);
         if (head.stdout.trim() !== record.branchRef || status.stdout !== statusBefore) return "changed";
-        // Nunca --force: o Git re-checa a limpeza na própria remoção e recusa
-        // worktree trancada (`git worktree lock`).
-        await git.run(root, ["worktree", "remove", real], { timeoutMs: WORKTREE_REMOVE_TIMEOUT_MS });
+        if (force) {
+          // A salvaguarda vem DEPOIS da marca e da prova de uso. A primeira
+          // guarda tudo; a segunda, logo antes do --force, tem de achar a
+          // MESMA árvore: edição no meio (mesma linha de status, arquivo novo
+          // dentro de pasta já nova) vira "changed". `clean` com status sujo
+          // = só o índice difere (staged desfeito): não está guardado.
+          const first = await options.retireSalvage!(record).catch(() => null);
+          if (!first?.covered || first.kind === "clean") return "salvage-incomplete";
+          const second = await options.retireSalvage!(record).catch(() => null);
+          if (!second?.covered || second.kind !== "unchanged") return "changed";
+          if ((await git.run(real, WORKTREE_STATUS_ARGS)).stdout !== statusBefore) return "changed";
+        }
+        // F-663: no Windows o node_modules da worktree é JUNCTION para o do
+        // checkout; sai só o link (ignorado) antes do Git apagar a árvore,
+        // nunca o alvo. Link rastreado fica: tirá-lo sujaria a worktree.
+        if (process.platform === "win32") {
+          for (const item of ignoredBefore) {
+            const target = path.join(real, item.replace(/\/$/, ""));
+            if ((await fs.promises.lstat(target).catch(() => null))?.isSymbolicLink()) await unlinkLinksInTree(target);
+          }
+        }
+        // Sem --force o Git re-checa a limpeza na própria remoção. O --force
+        // só vem da aposentadoria (trabalho já na ref de salvaguarda) e, com
+        // um só, o Git segue recusando worktree trancada (`git worktree lock`).
+        await git.run(root, ["worktree", "remove", ...(force ? ["--force"] : []), real],
+          { timeoutMs: WORKTREE_REMOVE_TIMEOUT_MS });
       }
       // -d (não -D): o Git só apaga a branch se ela estiver mesclada.
       if (await this.#branchTip(root, record.branchRef) !== tip) return "changed";
@@ -1745,7 +1996,7 @@ export class WorktreeManager {
         records: records.filter((current) => current.taskKey !== record.taskKey),
         result: undefined,
       }));
-      return null;
+      return force ? RETIRED : null;
     } finally {
       this.#collecting.delete(record.taskKey);
     }
@@ -1774,6 +2025,9 @@ export class WorktreeManager {
   async pruneManagedWorktrees(
     scope: ProjectExecutionScope,
   ): Promise<{ readonly pruned: number } | { readonly skipped: string }> {
+    // Uma coleta em curso pode estar no meio da sonda de uso do Windows (pasta
+    // renomeada por instantes): o Git a veria como `prunable` e a esqueceria.
+    if (this.#collecting.size > 0) return { skipped: "collection-in-flight" };
     const listed = await this.#asyncGit.run(scope.rootRealPath, ["worktree", "list", "--porcelain"]);
     const prunable = parseWorktreeList(listed.stdout).filter((worktree) => worktree.prunable);
     if (prunable.length === 0) return { pruned: 0 };

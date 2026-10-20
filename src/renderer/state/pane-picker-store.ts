@@ -13,21 +13,35 @@ import { useOnboardingStore } from './onboarding-store';
 export interface PanePickerStore {
   pendingOpen: boolean;
   pendingAccountsAdapterId: string | null;
-  requestOpen(accountsAdapterId?: string): void;
+  /**
+   * F-1596: tarefa para o agente que sair DESTA abertura do picker (ex.: brief
+   * do vídeo de apresentação). O picker a toma ao abrir e a descarta ao fechar
+   * sem escolher: nunca vaza para um "+ Pane" aberto depois.
+   */
+  pendingBrief: string | null;
+  requestOpen(accountsAdapterId?: string, options?: { readonly brief?: string }): void;
   consumePendingOpen(): void;
+  takePendingBrief(): string | null;
 }
 
-export const usePanePickerStore = create<PanePickerStore>()((set) => ({
+export const usePanePickerStore = create<PanePickerStore>()((set, get) => ({
   pendingOpen: false,
   pendingAccountsAdapterId: null,
-  requestOpen: (accountsAdapterId) => {
+  pendingBrief: null,
+  requestOpen: (accountsAdapterId, options) => {
     // Fato de ativação: o operador pediu o + Pane de verdade (qualquer origem).
     useOnboardingStore.getState().markChecklist('openedPlusPane');
     set({
       pendingOpen: true,
       pendingAccountsAdapterId: accountsAdapterId ?? null,
+      pendingBrief: options?.brief?.trim() || null,
     });
   },
   consumePendingOpen: () =>
     set({ pendingOpen: false, pendingAccountsAdapterId: null }),
+  takePendingBrief: () => {
+    const brief = get().pendingBrief;
+    set({ pendingBrief: null });
+    return brief;
+  },
 }));

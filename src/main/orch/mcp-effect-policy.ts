@@ -55,6 +55,11 @@ const READ_ONLY_TOOLS = new Set([
   'pr_inspect',
   'handoff_list',
   'media_providers',
+  // F-1591: lista as vozes da conta ElevenLabs do usuário (GET). Nenhuma
+  // escrita; clonar voz não tem ferramenta MCP (só a mão humana, por IPC).
+  'voice_list',
+  // F-1594: só lê o PATH, versões e pastas; nunca instala nem baixa.
+  'video_doctor',
   // Consulta de memória agentic (C2): leitura FTS local; o único write é o
   // contador de recall no banco de memória em userData (nunca no workspace).
   'memory_recall',
@@ -379,6 +384,23 @@ const EXECUTION_EFFECT_TOOLS = new Set([
   'terminal_run',
   'bg_run',
   'video_generate',
+  // F-1591: narração paga com a chave do usuário e grava no workspace.
+  'voiceover_generate',
+  // F-1592: música paga (Eleven Music) gravada no workspace.
+  'music_generate',
+  // F-1602: alinha a narração gravada ao roteiro (ElevenLabs paga ou motor local) e grava no workspace.
+  'voiceover_align',
+  // F-1594: renderizar executa o HTML/JS do projeto num Chrome sem sandbox.
+  'video_render',
+  // F-1595: codifica e grava os exports no workspace (ffmpeg).
+  'video_export',
+  // F-1603: sobe o Studio do HyperFrames (processo do Main que executa o
+  // projeto) e o encerra; a prévia vira alvo confiável do browser pane.
+  'video_preview_start',
+  'video_preview_stop',
+  // F-1604: abre um site público num Chrome do motor e grava prints, textos e
+  // imagens dele no workspace (conteúdo de terceiros).
+  'video_capture',
 ]);
 
 /**

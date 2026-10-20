@@ -48,6 +48,8 @@ export default defineConfig({
     fsModuleCache: true,
     fsModuleCachePath: '.nexus-cache/vitest',
     setupFiles: ['./src/test/vitest.setup.ts'],
+    // Teto do fsModuleCache acima (o Vitest nunca poda): 512 MB por worktree.
+    globalSetup: ['./src/test/vitest-cache-budget.ts'],
     // The root run also collects server PGlite suites, and `server/vitest.config.ts`
     // does NOT apply to it: Vitest resolves `maxWorkers`/`poolOptions` from the
     // config of the run, and the worker pool is global — there is no per-project

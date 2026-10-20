@@ -84,7 +84,11 @@ afterAll(async () => {
 
 test('mission authority activates RAM admission only for automatic workers', async () => {
   vi.stubEnv('NEXUS_PANE_GUARD', '');
-  primeSystemMemoryCacheForTest({ freeMB: 1, swapUsedMB: 0 });
+  // Memória BAIXA mas não crítica (abaixo da reserva de 3.686 MB num Mac de
+  // 24 GB, acima dos 30 % que são o limiar crítico): é aqui que vale a
+  // distinção "só worker automático respeita o orçamento de RAM". Com 1 MB
+  // livre, de 19/10 em diante NINGUÉM entra — ver o teste seguinte.
+  primeSystemMemoryCacheForTest({ freeMB: 2_000, swapUsedMB: 0 });
   const base = {
     harness: { ...PRESET_HARNESSES[0], command: process.execPath, args: [fakePeerPath] },
     cwd: fixtureDir, paneId: 'resource-pane', missionId: 'resource-mission',
@@ -97,6 +101,36 @@ test('mission authority activates RAM admission only for automatic workers', asy
       const session = await spawnAcpHarnessSession({ ...base, ...override });
       await session.shutdown();
     }
+  } finally { vi.unstubAllEnvs(); primeSystemMemoryCacheForTest(null); }
+});
+
+test('pressão CRÍTICA recusa qualquer spawn ACP, inclusive orquestrador e pane do operador', async () => {
+  // 19/10, cliente iMac M5 16 GB: na beira do freeze um pane novo (~1,25 GB)
+  // leva o sistema inteiro. A recusa é uniforme de propósito — consequência
+  // assumida: a remontagem de um orquestrador espera a folga voltar (o freio
+  // de emergência do guardião está drenando em paralelo, a 5 s por varredura).
+  vi.stubEnv('NEXUS_PANE_GUARD', '');
+  primeSystemMemoryCacheForTest({ freeMB: 1, swapUsedMB: 0 });
+  const base = {
+    harness: { ...PRESET_HARNESSES[0], command: process.execPath, args: [fakePeerPath] },
+    cwd: fixtureDir, paneId: 'critical-pane', missionId: 'critical-mission',
+    scope: { version: 1 as const, installationId: 'install-test', projectId: 'p', checkoutId: 'c', rootRealPath: fixtureDir, identitySource: 'manifest' as const },
+    publishFrame: () => {},
+  };
+  try {
+    for (const override of [
+      {},
+      { role: 'orchestrator' as const },
+      { role: 'worker' as const, operatorOpened: true as const },
+    ]) {
+      await expect(spawnAcpHarnessSession({ ...base, ...override })).rejects.toThrow(
+        /Mem[óo]ria RAM cr[íi]tica/,
+      );
+    }
+    // A válvula de escape continua valendo.
+    vi.stubEnv('NEXUS_PANE_GUARD', 'off');
+    const session = await spawnAcpHarnessSession({ ...base, role: 'orchestrator' as const });
+    await session.shutdown();
   } finally { vi.unstubAllEnvs(); primeSystemMemoryCacheForTest(null); }
 });
 

@@ -20,7 +20,7 @@ function notice(missionId = 'mission-a'): WorktreeSalvageNotice {
       kind: 'saved', ref: 'refs/nexus-salvage/nexus/aaaa/bbbb/20261003T144400000Z',
       commit: 'c'.repeat(40), baseSha: 'b'.repeat(40),
       files: [{ status: 'M', path: 'src/main/memory/trusted-memory.ts' }], fileCount: 1,
-      skipped: [], untrackedOmitted: 0,
+      skipped: [], untrackedOmitted: 0, nestedRepos: [],
     },
   };
 }

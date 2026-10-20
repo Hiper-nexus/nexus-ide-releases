@@ -76,7 +76,11 @@ function contentTypeFor(filePath: string): string {
  * secure-context APIs and AudioWorklet module fetches behave like a normal web
  * origin. Every privilege not listed here keeps Electron's default `false`.
  */
-export function registerRendererProtocolScheme(target: SchemeRegistrar): void {
+export function registerRendererProtocolScheme(
+  target: SchemeRegistrar,
+  /** Electron accepts ONE registration call: other app schemes ride along. */
+  extraSchemes: readonly CustomScheme[] = [],
+): void {
   const scheme: CustomScheme = {
     scheme: RENDERER_PROTOCOL_SCHEME,
     privileges: {
@@ -86,7 +90,7 @@ export function registerRendererProtocolScheme(target: SchemeRegistrar): void {
       codeCache: true,
     },
   };
-  target.registerSchemesAsPrivileged([scheme]);
+  target.registerSchemesAsPrivileged([scheme, ...extraSchemes]);
 }
 
 /**

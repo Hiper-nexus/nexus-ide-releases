@@ -1,5 +1,156 @@
 # Changelog
 
+## 0.76.338 — Estúdio de vídeo
+
+Os agentes fazem vídeos de apresentação por código: roteiro, narração com tempo por palavra e legendas, música, render no computador e export por rede, com o custo mostrado antes de pagar. "Minha voz" grava e clona a sua voz na ElevenLabs ou no Gemini, com termo de consentimento. O instalador, o app e o atualizador do Windows saem assinados.
+
+- **Estúdio de vídeo**. Peça um vídeo de apresentação a um agente e ele escreve o roteiro, narra, põe música e monta a composição em HyperFrames, com cenas e legendas cronometradas pela narração. O render roda no computador e o export sai para Reels, Shorts, TikTok, YouTube, LinkedIn e quadrado, com volume normalizado, versão muda, capa e legendas. A aba "Vídeos do projeto" no Estúdio de Mídia mostra o que foi feito. Desliga em Ajustes → Experimental.
+- **Minha voz**. Grave alguns trechos e crie uma voz sintética sua na sua conta da ElevenLabs ou do Gemini, depois de aceitar o termo e ler a declaração de consentimento. O Nexus guarda o recibo, apaga a voz no provedor quando você pede, e o export marca como gerada por IA a narração feita com ela. Nenhum agente cria ou clona voz.
+- **Narração e música**. A ElevenLabs usa o Eleven v4 por padrão. As vozes do Gemini também narram. Quem prefere a própria voz grava a narração no app e o Nexus alinha o roteiro ao áudio, pela ElevenLabs ou no computador, com a grafia do roteiro nas legendas. A música de fundo vem da ElevenLabs, no tamanho da narração.
+- **Prévia, captura do site e variantes**. A prévia ao vivo abre no navegador do pane enquanto o agente edita. O agente captura o site público do produto (telas, textos, cores e fontes) para usar no vídeo. Um pedido gera várias versões: formatos vertical, horizontal e quadrado, e outros idiomas com a mesma voz.
+- **Teto de gasto de mídia**. Defina quanto a mídia paga pode gastar por dia e por missão. O modal de confirmação mostra o custo de cada geração, e o pedido que passaria do teto é recusado antes de chamar o provedor.
+- **Instalador do Windows assinado**. O Setup.exe, o NexusIDE, o atualizador e o Redline do Windows saem com assinatura Authenticode da HIPERSEND TECNOLOGIA INTERNET & SOFTWARES LTDA, emitida pelo SSL.com, com carimbo de tempo. Os instaladores Windows das 0.76.334 a 0.76.337 tinham saído sem assinatura. O SmartScreen ainda pode avisar nas primeiras instalações, até o certificado ganhar reputação.
+
+## 0.76.337 — O Nexus limpa o próprio disco
+
+A tag 0.76.336 é o pacote macOS da higiene de disco e não recebe arquivos Linux. A tag 0.76.335 é o pacote Linux anterior e não recebe estes arquivos. Este pacote leva o desktop Linux.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+No desktop Linux, em relação à 0.76.335:
+
+- **Limpeza automática de disco**. Roda a cada 3 horas com o disco folgado e a cada 20 minutos com o disco crítico (menos de 5 GB livres). Cuida das cópias de trabalho dos agentes, dos perfis do navegador de cada pane, dos snapshots de desfazer das CLIs, dos mapas de orientação, dos arquivos de sessões encerradas, dos anexos de missão antigos, dos temporários e dos logs que não tinham rotação.
+- **Cópias de trabalho dos agentes não se acumulam**. Uma hora depois de o pane encerrar, os caches regeneráveis (.nexus-cache, .vite, .turbo…) saem, sem tocar no código nem no node_modules. A cópia limpa sai em 12 horas. A que tem trabalho não commitado sai em 2 dias, e só depois de o Nexus guardar tudo numa ref de salvaguarda (refs/nexus-salvage/…) duas vezes seguidas, sem nenhuma edição no meio; a branch sempre fica. Repositório Git aninhado, edição recente no disco ou saída de build recente (out/, dist/) seguram a cópia. Com o disco apertado, os prazos caem para horas.
+- **Armazenamento em Configurações → Diagnóstico**. Mostra o espaço livre, quanto o Nexus ocupa em cada categoria, o que a última limpeza removeu — com a ref de cada cópia aposentada e o cherry-pick para trazê-la de volta — e o botão "Limpar agora", que roda na hora com os prazos de disco apertado.
+- **Lixo do Nexus dentro dos projetos**. Prints colados em missões (.nexus/attachments) saem depois de 30 dias e rascunhos de swarm de missões antigas (.nexus/swarms) depois de 14. Nada sai de missão que ainda pode rodar, e o que estiver versionado no Git do projeto nunca é apagado.
+- **Configs MCP de sessões encerradas**. Os arquivos em ~/.nexus/mcp-configs, cada um com um token, ficavam para sempre quando o pane morria sem encerrar (crash, kill). Agora saem 3 dias depois; os de sessões vivas nunca saem. Um login feito no pane que morreu volta ao perfil real antes, só se for mais novo que o login atual.
+- **Cache do Chromium com teto**. O cache HTTP de cada perfil do navegador fica limitado a 64 MB e é esvaziado quando o disco aperta. Perfis de pane sem uso há 21 dias saem (os perfis pessoais, só depois de 63 dias); o perfil carregado nunca sai.
+- **Banco SQLite sem WAL gigante**. O arquivo -wal volta a até 16 MB depois de cada checkpoint, em vez de guardar para sempre o pico de escrita. Das cópias de migração do banco, ficam só as 3 mais novas por projeto.
+- **Pool de cópias de trabalho respeita o disco**. Com o disco crítico, o Nexus não deixa mais cópias de reserva prontas (cerca de 1,6 GB cada); o agente cria a sua na hora.
+
+## 0.76.336 — O Nexus limpa o próprio disco (macOS)
+
+Em pouco uso o Nexus chegava a ocupar metade do disco. Cada agente que escreve código ganha uma cópia de trabalho do projeto (worktree), e a de um pane encerrado só saía se estivesse limpa: com qualquer alteração não commitada, saída de build ou cache, ficava para sempre — e no Windows nunca saía. Na máquina de desenvolvimento havia 50 cópias guardadas ao mesmo tempo, de 1,5 a 2,6 GB cada. Agora uma rotina de higiene roda sozinha, encurta os prazos quando o disco aperta e nunca apaga trabalho que só exista ali. A tag 0.76.335 é o pacote Linux e não recebe arquivos macOS.
+
+- **Limpeza automática de disco**. Roda a cada 3 horas com o disco folgado e a cada 20 minutos com o disco crítico (menos de 5 GB livres). Cuida das cópias de trabalho dos agentes, dos perfis do navegador de cada pane, dos snapshots de desfazer das CLIs, dos mapas de orientação, dos arquivos de sessões encerradas, dos anexos de missão antigos, dos temporários e dos logs que não tinham rotação.
+- **Cópias de trabalho dos agentes não se acumulam**. Uma hora depois de o pane encerrar, os caches regeneráveis (.nexus-cache, .vite, .turbo…) saem, sem tocar no código nem no node_modules. A cópia limpa sai em 12 horas. A que tem trabalho não commitado sai em 2 dias, e só depois de o Nexus guardar tudo numa ref de salvaguarda (refs/nexus-salvage/…) duas vezes seguidas, sem nenhuma edição no meio; a branch sempre fica. Repositório Git aninhado, edição recente no disco ou saída de build recente (out/, dist/) seguram a cópia. Com o disco apertado, os prazos caem para horas.
+- **Armazenamento em Configurações → Diagnóstico**. Mostra o espaço livre, quanto o Nexus ocupa em cada categoria, o que a última limpeza removeu — com a ref de cada cópia aposentada e o cherry-pick para trazê-la de volta — e o botão "Limpar agora", que roda na hora com os prazos de disco apertado.
+- **Lixo do Nexus dentro dos projetos**. Prints colados em missões (.nexus/attachments) saem depois de 30 dias e rascunhos de swarm de missões antigas (.nexus/swarms) depois de 14. Nada sai de missão que ainda pode rodar, e o que estiver versionado no Git do projeto nunca é apagado.
+- **Windows**. As cópias de trabalho passam a ser coletadas também no Windows, que não tem como ler a pasta atual dos processos: o Nexus prova que a pasta está livre tentando renomeá-la, o que o NTFS recusa quando algum programa a usa. O node_modules ligado por junction sai só como link, nunca o conteúdo. O log do Jarvis vai para a pasta de logs do app e não cria mais Library\Logs no perfil do usuário. O temporário do Windows, que o sistema não esvazia sozinho, também é limpo.
+- **Configs MCP de sessões encerradas**. Os arquivos em ~/.nexus/mcp-configs, cada um com um token, ficavam para sempre quando o pane morria sem encerrar (crash, kill). Agora saem 3 dias depois; os de sessões vivas nunca saem. Um login feito no pane que morreu volta ao perfil real antes, só se for mais novo que o login atual.
+- **Cache do Chromium com teto**. O cache HTTP de cada perfil do navegador fica limitado a 64 MB e é esvaziado quando o disco aperta. Perfis de pane sem uso há 21 dias saem (os perfis pessoais, só depois de 63 dias); o perfil carregado nunca sai.
+- **Banco SQLite sem WAL gigante**. O arquivo -wal volta a até 16 MB depois de cada checkpoint, em vez de guardar para sempre o pico de escrita. Das cópias de migração do banco, ficam só as 3 mais novas por projeto.
+- **Pool de cópias de trabalho respeita o disco**. Com o disco crítico, o Nexus não deixa mais cópias de reserva prontas (cerca de 1,6 GB cada); o agente cria a sua na hora.
+
+## 0.76.335 — Vídeo pelo Gemini Omni e pelo Grok
+
+A tag 0.76.334 é o pacote macOS da mídia nova e não recebe arquivos Linux. A tag 0.76.333 é o pacote Linux anterior e não recebe estes arquivos. Este pacote leva o desktop Linux.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+No desktop Linux, em relação à 0.76.333:
+
+- **Vídeo do Google pelo Gemini Omni Flash**. A mesma chave do Gemini gera vídeo pelo Gemini Omni Flash, de 360p a 4K, em 16:9 ou 9:16. É o modelo que decide quanto o vídeo dura, então o Estúdio não oferece duração e mostra o preço por segundo antes de gerar; depois, mostra o custo real, calculado pelo que o Google cobrou. O Omni só funciona com cobrança ativa no projeto do Google: no plano gratuito, o Nexus agora diz que falta ativar a cobrança, em vez de mandar esperar e tentar de novo.
+- **Grok Imagine com a chave do Grok**. A chave do Grok salva para a voz já liga a geração de imagem e de vídeo pelo Grok Imagine (xAI), no Estúdio e nas ferramentas dos agentes. Vídeo de 1 a 15 s, de 480p a 1080p; pelas ferramentas, também com imagem inicial, último quadro e referências nos modelos que aceitam. O custo de lista aparece antes de gerar, incluindo as imagens de entrada.
+- **Agentes escolhem o modelo de mídia vendo regras e preço**. Antes de gerar, o agente vê, para cada modelo de vídeo, as durações, resoluções e proporções aceitas, se exige imagem, o preço e quando ele sai do ar — as mesmas regras que o Nexus usa para recusar um pedido antes de cobrar. Sem serviço escolhido, o padrão passa a ser o de menor preço de lista entre os que têm chave; antes valia a ordem da tabela.
+- **Vídeo pago não se perde em falha passageira**. Depois que o vídeo existe e foi cobrado, uma queda de rede, de download ou de disco deixa o pedido pendente com o código para retomar, em vez de marcá-lo como falho e induzir a pagar de novo. A retomada só baixa o que já foi gerado e registra o custo certo.
+- **Chave recusada diz para trocar a chave**. O Google e a xAI recusam chave errada com HTTP 400, que virava "não aceitou o pedido" com o JSON cru. Agora a mensagem diz que a chave foi recusada e leva a Serviços de mídia.
+- **Imagem do Grok com a extensão certa e o custo certo**. Ao gravar num caminho pedido, a imagem leva a extensão do formato que a xAI devolveu, em vez de gravar JPEG num arquivo .png. Sem o custo na resposta, a edição de imagem passa a somar a qualidade da edição e a imagem de entrada (uma edição 2K custa US$ 0,09, não US$ 0,06).
+
+## 0.76.334 — Vídeo pelo Gemini Omni e pelo Grok (macOS)
+
+Pacote macOS da mídia nova. O Google desliga em 22/10/2026 os Veo 3.1 preview que o vídeo nativo do Gemini usava, e a chave do Gemini ficaria sem vídeo; agora ela gera pelo Gemini Omni Flash, o substituto que o Google indica. A chave do Grok, que só servia à voz, passa a gerar imagem e vídeo pelo Grok Imagine. E os agentes passam a escolher o modelo de mídia vendo antes o que cada um aceita e quanto custa. A tag 0.76.333 é o pacote Linux e não recebe arquivos macOS.
+
+- **Vídeo do Google pelo Gemini Omni Flash**. A mesma chave do Gemini gera vídeo pelo Gemini Omni Flash, de 360p a 4K, em 16:9 ou 9:16. É o modelo que decide quanto o vídeo dura, então o Estúdio não oferece duração e mostra o preço por segundo antes de gerar; depois, mostra o custo real, calculado pelo que o Google cobrou. O Omni só funciona com cobrança ativa no projeto do Google: no plano gratuito, o Nexus agora diz que falta ativar a cobrança, em vez de mandar esperar e tentar de novo.
+- **Grok Imagine com a chave do Grok**. A chave do Grok salva para a voz já liga a geração de imagem e de vídeo pelo Grok Imagine (xAI), no Estúdio e nas ferramentas dos agentes. Vídeo de 1 a 15 s, de 480p a 1080p; pelas ferramentas, também com imagem inicial, último quadro e referências nos modelos que aceitam. O custo de lista aparece antes de gerar, incluindo as imagens de entrada.
+- **Agentes escolhem o modelo de mídia vendo regras e preço**. Antes de gerar, o agente vê, para cada modelo de vídeo, as durações, resoluções e proporções aceitas, se exige imagem, o preço e quando ele sai do ar — as mesmas regras que o Nexus usa para recusar um pedido antes de cobrar. Sem serviço escolhido, o padrão passa a ser o de menor preço de lista entre os que têm chave; antes valia a ordem da tabela.
+- **Vídeo pago não se perde em falha passageira**. Depois que o vídeo existe e foi cobrado, uma queda de rede, de download ou de disco deixa o pedido pendente com o código para retomar, em vez de marcá-lo como falho e induzir a pagar de novo. A retomada só baixa o que já foi gerado e registra o custo certo.
+- **Chave recusada diz para trocar a chave**. O Google e a xAI recusam chave errada com HTTP 400, que virava "não aceitou o pedido" com o JSON cru. Agora a mensagem diz que a chave foi recusada e leva a Serviços de mídia.
+- **Imagem do Grok com a extensão certa e o custo certo**. Ao gravar num caminho pedido, a imagem leva a extensão do formato que a xAI devolveu, em vez de gravar JPEG num arquivo .png. Sem o custo na resposta, a edição de imagem passa a somar a qualidade da edição e a imagem de entrada (uma edição 2K custa US$ 0,09, não US$ 0,06).
+
+## 0.76.333 — Memória e contas no Linux
+
+A tag 0.76.329 é o pacote macOS da memória e não recebe arquivos Linux. A tag 0.76.332 é o pacote macOS das contas e não recebe arquivos Linux. A tag 0.76.330 não recebe arquivos Linux. A tag 0.76.331 foi marcada e não foi publicada: a suíte no Ubuntu 22.04 falhou em pane-admission.test.ts, porque a prova de memória baixa usava a reserva de 24 GB numa máquina de 16 GB. Este pacote leva o desktop Linux.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+No desktop Linux, em relação à 0.76.328:
+
+- **Freio de emergência de memória**. Na pressão crítica, o Nexus estaciona até o pane que está trabalhando, no máximo três por varredura, e recusa abrir outro. A varredura acelera para 5 segundos enquanto a pressão está severa ou crítica. O histórico e o "Acordar" ficam.
+- **As contas se revezam sozinhas**. O trabalho novo sai da conta cuja cota medida passa de 89%, sem interromper quem já está trabalhando. O pane que emudece por cota esgotada continua na conta seguinte. Quando nenhuma conta da CLI tem folga, a missão segue em outra IA.
+- **O resgate não trava mais por status preso**. Quando a cota esgota, o pedido ao provedor pode travar antes do aviso de parada, e a IA ficava marcada como "trabalhando" para sempre. Agora esse estado vale por tempo limitado, e depois disso o pane é religado na conta seguinte.
+- **O orquestrador não troca de conta à toa**. Algumas IAs têm cota separada por família de modelo. O orquestrador era tirado da conta quando a cota de uma família que ele nem usa enchia. Agora só a cota do modelo que ele realmente usa conta para essa decisão.
+
+## 0.76.332 — As contas se revezam sozinhas (macOS)
+
+Pacote macOS do revezamento de contas. Quem tem várias contas da mesma IA usava só a primeira: quando a cota acabava, o pane simplesmente parava. Agora o Nexus mede a cota e tira o trabalho NOVO da conta que está chegando ao fim antes de ela acabar, sem interromper quem já trabalha; o pane que emudece por cota esgotada continua na conta seguinte; e quando todas acabam o trabalho segue em outra IA. Inclui a pressão crítica de memória da 0.76.329 e o pacote Linux da 0.76.331.
+
+- **O resgate não trava mais por status preso**. Quando a cota esgota, o pedido ao provedor pode travar antes do aviso de parada, e a IA ficava marcada como "trabalhando" para sempre — o que impedia o próprio resgate que essa trava deveria proteger. Agora esse estado vale por tempo limitado, e depois disso o pane é religado na conta seguinte.
+- **O orquestrador não troca de conta à toa**. Algumas IAs têm cota separada por família de modelo. O orquestrador era tirado da conta quando a cota de uma família que ele nem usa enchia, e a missão recomeçava a conversa noutra conta sem precisar. Agora só a cota do modelo que ele realmente usa conta para essa decisão.
+
+## 0.76.331 — Memória e contas no Linux
+
+A tag 0.76.329 é o pacote macOS e não recebe arquivos Linux. A tag 0.76.330 não recebe arquivos Linux. Este pacote leva o desktop Linux.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+No desktop Linux, em relação à 0.76.328:
+
+- **Freio de emergência de memória**. Na pressão crítica, o Nexus estaciona até o pane que está trabalhando, no máximo três por varredura, e recusa abrir outro. A varredura acelera para 5 segundos enquanto a pressão está severa ou crítica. O histórico e o "Acordar" ficam.
+- **As contas se revezam sozinhas**. O trabalho novo sai da conta cuja cota medida passa de 89%, sem interromper quem já está trabalhando. O pane que emudece por cota esgotada continua na conta seguinte. Quando nenhuma conta da CLI tem folga, a missão segue em outra IA.
+
+## 0.76.330 — As contas se revezam sozinhas
+
+Quem tem várias contas da mesma IA usava só a primeira: quando a cota dela acabava, o pane simplesmente parava — não trocava, não avisava, não morria com erro. Agora o Nexus mede a cota e tira o trabalho NOVO da conta que está chegando ao fim, antes de ela acabar, sem interromper quem já está trabalhando. Quem esgota no meio da tarefa continua na conta seguinte, e quando todas acabam o trabalho segue em outra IA. Sete contas passam a render como sete, não como uma.
+
+- **A próxima tarefa já nasce na conta que tem folga**. A troca acontece na borda entre uma tarefa e outra, então ninguém é interrompido e nada se perde: o agente que está trabalhando termina o que começou usando a fatia que resta, e o próximo nasce na conta seguinte. O limiar é 89 % da janela que está apertando — e os 11 % que sobram não são desperdiçados: quando todas as contas chegam lá, o Nexus volta a usá-las e consome o resto numa segunda volta.
+- **O pane que emudecia por falta de cota agora continua**. Algumas IAs não imprimem erro quando a cota acaba: a tela simplesmente para. Sem texto de erro o Nexus nunca sabia que havia um limite, e a missão ficava parada até alguém perceber. Agora a própria medição de cota serve de prova: o pane parado numa conta esgotada é religado na conta seguinte com um resumo do que estava fazendo, e um aviso aparece no momento da troca.
+- **Acabaram todas as contas? O trabalho segue em outra IA**. Quando nenhuma conta da CLI tem folga, a missão não para: ela continua numa IA elegível, com o contexto reidratado, no mesmo lugar. A conta esgotada não volta a ser escolhida antes de liberar.
+- **A conta que está em uso é medida de verdade**. Em algumas IAs o provedor só informa a cota da conta que está logada no momento, e recusa a consulta das demais. Essa leitura passa a ser atribuída à conta que o Nexus de fato abriu — sem ela, a frota inteira parecia "sem medição" e nada rotacionava. As contas irmãs continuam honestamente sem leitura: ninguém as mediu.
+- **A troca não acusa conta saudável**. A decisão só aceita leitura vinda do provedor e com menos de 10 minutos: uma estimativa local nunca tira o pane de uma conta que está bem. Conta fixada por você continua só cedendo quando esgota de fato, e um agente que está no meio de uma chamada silenciosa não é trocado por engano.
+
+## 0.76.329 — Freio de emergência de memória
+
+Num Mac de 16 GB com vários panes abertos e trabalhando, a máquina podia travar inteira. O guardião de memória só sabia recuperar pane OCIOSO, e a memória está justamente nos panes que trabalham: com todos ocupados ele não recuperava nada e o sistema ia ao chão. Agora, só na pressão crítica, o Nexus estaciona o pane de maior consumo — histórico e retomada preservados — reage em 5 segundos e recusa abrir mais um pane na beira do travamento. Teto, pressão moderada e severa continuam só avisando.
+
+- **Pane ocupado também libera memória na hora**. O guardião estacionava apenas panes ociosos. Medido: oito panes ocupados, memória crítica, dez varreduras — zero recuperado, porque a lista de candidatos era vazia por construção. Foi assim que um iMac M5 de 16 GB travou inteiro depois que o cliente abriu vários panes. Agora, quando a memória livre cai abaixo de 30 % da reserva, o Nexus estaciona até três panes por varredura mesmo que estejam trabalhando, remedindo a memória a cada um: assim que a folga volta, ele para. Estacionar encerra só o processo — o pane, o histórico e o "Acordar" ficam, e quem não sabe retomar a conversa não é tocado.
+- **O Nexus recusa abrir pane na beira do travamento**. O teto de panes e a memória baixa sempre foram aviso, e um aviso se dispensa com um clique: num Mac de 16 GB o nono pane entrava com 500 MB livres. Agora a pressão crítica — e só ela — recusa o spawn, dizendo que é memória física da máquina (não limite do plano), o que aconteceria e o que fazer. Contagem de panes, pressão moderada e severa seguem apenas avisando, e NEXUS_PANE_GUARD=off desliga tudo.
+- **Reação em 5 segundos, não em um minuto**. A varredura do guardião roda a cada 60 s. Com seis a oito agentes alocando ao mesmo tempo, a máquina sai de "apertada" para travada antes do próximo ciclo. Enquanto a pressão está severa ou crítica a varredura passa a rodar a cada 5 segundos; fora disso continua de minuto em minuto, sem medição extra.
+- **Escolhe o pane que realmente pesa**. O consumo de memória de cada pane já era medido e mostrado no cabeçalho, mas nenhuma decisão o usava. Agora ele ordena quem sai primeiro: worker e ajudante antes do pane que você abriu, e dentro disso o de maior consumo medido — um pane de 3 GB devolve a folga que três de 900 MB não devolvem. Pane sem medida vai para o fim: falta de dado não é zero.
+- **O aviso do pane não parece mais um crash**. Um pane estacionado no meio do trabalho dizia apenas "pane estacionado". Agora explica que foi para a máquina não travar, por memória crítica, e que basta digitar para retomar a conversa.
+
+## 0.76.328 — Comparador e mídia no Linux
+
+As tags 0.76.326 e 0.76.327 são pacotes Windows e não recebem arquivos Linux. A 0.76.327 só assina o instalador do Windows; o app é o mesmo da 0.76.326. Este pacote leva o desktop Linux.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+No desktop Linux, em relação à 0.76.325:
+
+- **Comparar modelos com números oficiais**. As notas da tela eram de demonstração, escritas à mão em setembro, e a escolha automática nem as usava. Agora a tela mostra os mesmos benchmarks oficiais da rota (DeepSWE, Terminal-Bench 2.1, SWE-bench Verified), com link para a fonte e dizendo quando a nota vem de outro modelo da mesma linha. Aparece só a versão mais nova de cada modelo e, por padrão, só as ferramentas instaladas; modelo sem número publicado fica sem nota, nunca com zero.
+- **Mídia sem projeto aberto**. Sem projeto aberto, Serviços de mídia caía num erro e nem deixava conectar uma chave, e o Estúdio abria mudo. Agora os serviços carregam sempre e o Estúdio explica que gerar precisa de um projeto aberto.
+- **Vídeo só com o que o modelo aceita**. O Estúdio mandava 5 s para todo vídeo e o Veo, que só aceita 4, 6 ou 8 s, falhava com as opções padrão; Hailuo, Sora e Wan também recebiam valores que recusam. Agora cada modelo só oferece a duração, a proporção e a resolução que aceita, o pedido inválido é recusado antes de qualquer chamada paga e o custo aparece antes de gerar.
+- **Erro de mídia com o que fazer**. A falha do serviço chegava crua ("HTTP 422" com JSON). Agora vem uma frase com o que houve e o que fazer, e um botão para Serviços de mídia quando o problema é a chave.
+- **Prévia mostra o arquivo gerado**. A prévia do Estúdio podia mostrar outra criação do mesmo tipo; agora mostra exatamente o arquivo que acabou de ser gerado.
+- **Veo nativo do Google até 22/10**. O Google desliga os Veo 3.1 preview do Gemini em 22/10/2026. O Estúdio avisa antes da data e, depois dela, recusa indicando o Veo 3.1 pelo Replicate. O Veo 2, já desligado, saiu da lista.
+
+## 0.76.327 — Instalador assinado
+
+O instalador, o app e o atualizador do Windows passam a sair assinados com o certificado de assinatura de código da HIPERSEND, guardado num token de hardware (YubiKey). O conteúdo do app é o mesmo da 0.76.326.
+
+- **Instalador do Windows assinado**. O Setup.exe, o NexusIDE, o atualizador e o Redline do Windows saem com assinatura Authenticode da HIPERSEND TECNOLOGIA INTERNET & SOFTWARES LTDA, emitida pelo SSL.com, com carimbo de tempo. O Windows mostra o editor em vez de "Editor desconhecido". O SmartScreen ainda pode avisar nas primeiras instalações, até o certificado novo ganhar reputação. A chave fica num token de hardware e não sai dele.
+
+## 0.76.326 — Comparador honesto e mídia que gera
+
+As tags 0.76.323 (macOS) e 0.76.325 (Linux) não receberam arquivos Windows. Este pacote leva ao Windows tudo delas (velocidade e detalhes da missão, "Ver o que aconteceu" no Quadro, portão de regressão em lotes, fila de comandos pesados que se libera sozinha) e as melhorias abaixo no comparador de modelos e na geração de mídia:
+
+- **Comparar modelos com números oficiais**. As notas da tela eram de demonstração, escritas à mão em setembro, e a escolha automática nem as usava. Agora a tela mostra os mesmos benchmarks oficiais da rota (DeepSWE, Terminal-Bench 2.1, SWE-bench Verified), com link para a fonte e dizendo quando a nota vem de outro modelo da mesma linha. Aparece só a versão mais nova de cada modelo e, por padrão, só as ferramentas instaladas; modelo sem número publicado fica sem nota, nunca com zero.
+- **Mídia sem projeto aberto**. Sem projeto aberto, Serviços de mídia caía num erro e nem deixava conectar uma chave, e o Estúdio abria mudo. Agora os serviços carregam sempre e o Estúdio explica que gerar precisa de um projeto aberto.
+- **Vídeo só com o que o modelo aceita**. O Estúdio mandava 5 s para todo vídeo e o Veo, que só aceita 4, 6 ou 8 s, falhava com as opções padrão; Hailuo, Sora e Wan também recebiam valores que recusam. Agora cada modelo só oferece a duração, a proporção e a resolução que aceita, o pedido inválido é recusado antes de qualquer chamada paga e o custo aparece antes de gerar.
+- **Erro de mídia com o que fazer**. A falha do serviço chegava crua ("HTTP 422" com JSON). Agora vem uma frase com o que houve e o que fazer, e um botão para Serviços de mídia quando o problema é a chave.
+- **Prévia mostra o arquivo gerado**. A prévia do Estúdio podia mostrar outra criação do mesmo tipo; agora mostra exatamente o arquivo que acabou de ser gerado.
+- **Veo nativo do Google até 22/10**. O Google desliga os Veo 3.1 preview do Gemini em 22/10/2026. O Estúdio avisa antes da data e, depois dela, recusa indicando o Veo 3.1 pelo Replicate. O Veo 2, já desligado, saiu da lista.
+
 ## 0.76.325 — Velocidade e detalhes da missão
 
 A tag 0.76.323 é o pacote macOS e não recebe arquivos Linux. A tag 0.76.324 não foi publicada: a suíte Ubuntu falhou em `tool-util-workspace.test.ts` (F-742), porque o recibo de escrita passou a levar `inputWriter` e o teste ainda exigia o objeto antigo. Este pacote leva o desktop Linux.

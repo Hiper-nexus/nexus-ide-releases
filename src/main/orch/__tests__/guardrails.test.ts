@@ -299,6 +299,83 @@ describe('confirmationReason', () => {
     expect(reason).not.toContain('segredo falado');
   });
 
+  it('describes narration voice, script size and destination without leaking the script', () => {
+    const reason = confirmationReason('nexus_voiceover_generate', {
+      voiceId: 'voz1',
+      script: 'roteiro confidencial',
+      outDir: 'promo/assets',
+    });
+    expect(reason).toContain('paid narration');
+    expect(reason).toContain('voz1');
+    expect(reason).toContain('20 chars');
+    expect(reason).toContain('promo/assets/narration.mp3');
+    expect(reason).not.toContain('roteiro confidencial');
+    expect(confirmationReason('nexus_voiceover_generate', { scriptPath: 'roteiro.txt', dryRun: true })).toContain(
+      'price only',
+    );
+  });
+
+  it('describes the export input, preset and label mode', () => {
+    const reason = confirmationReason('nexus_video_export', { input: 'promo/renders/a.mp4', preset: 'vertical-9x16', label: 'on' });
+    expect(reason).toContain('export promo/renders/a.mp4 for vertical-9x16');
+    expect(reason).toContain('AI label on');
+  });
+
+  it('describes the render project, its risk and destination', () => {
+    const reason = confirmationReason('nexus_video_render', { projectDir: 'promo', output: 'promo/renders/v1.mp4' });
+    expect(reason).toContain('render HyperFrames project promo');
+    expect(reason).toContain('without sandbox');
+    expect(reason).toContain('promo/renders/v1.mp4');
+  });
+
+  it('describes the narration alignment engine and the model download (F-1602)', () => {
+    expect(confirmationReason('nexus_voiceover_align', { audioPath: 'promo/voz.wav' })).toContain('elevenlabs forced alignment');
+    const local = confirmationReason('nexus_voiceover_align', { audioPath: 'promo/voz.wav', engine: 'local', allowModelDownload: true });
+    expect(local).toContain('local Parakeet');
+    expect(local).toContain('639 MB');
+  });
+
+  it('paid media shows its estimated cost in the modal (F-1606)', () => {
+    expect(confirmationReason('nexus_audio_generate', { text: 'a'.repeat(1_000) })).toContain('estimated cost: US$ 0,08');
+    expect(confirmationReason('nexus_music_generate', { prompt: 'lofi', lengthMs: 60_000 })).toContain('estimated cost: US$ 0,15');
+    expect(confirmationReason('nexus_voiceover_generate', { scriptPath: 'roteiro.txt', voiceId: 'v1' })).toContain('estimated cost: unknown');
+  });
+
+  it('names every network and the variant count (F-1605)', () => {
+    expect(confirmationReason('nexus_video_export', { input: 'promo/renders/a.mp4', presets: ['vertical-9x16', 'youtube-16x9'] })).toContain(
+      'for vertical-9x16, youtube-16x9',
+    );
+    expect(confirmationReason('nexus_video_render', { projectDir: 'promo', variants: [{ name: 'a' }, { name: 'b' }] })).toContain(
+      'promo in 2 variants',
+    );
+  });
+
+  it('describes the site capture by origin only, never the query (F-1604)', () => {
+    const reason = confirmationReason('nexus_video_capture', { url: 'https://agendify.com.br/precos?ref=abc', outDir: 'capture/a' });
+    expect(reason).toContain('capture public site https://agendify.com.br');
+    expect(reason).toContain('third-party content');
+    expect(reason).not.toContain('ref=abc');
+  });
+
+  it('describes the live video preview as a local server running the project (F-1603)', () => {
+    const reason = confirmationReason('nexus_video_preview_start', { projectDir: 'promo' });
+    expect(reason).toContain('live HyperFrames Studio of promo');
+    expect(reason).toContain('127.0.0.1');
+  });
+
+  it('describes music length, kind and destination without leaking the prompt', () => {
+    const reason = confirmationReason('nexus_music_generate', {
+      prompt: 'trilha secreta',
+      lengthMs: 45_000,
+      outPath: 'promo/music.mp3',
+    });
+    expect(reason).toContain('paid music');
+    expect(reason).toContain('45 s');
+    expect(reason).toContain('instrumental');
+    expect(reason).toContain('promo/music.mp3');
+    expect(reason).not.toContain('trilha secreta');
+  });
+
   it('describes video provider, keyframes and destination without leaking the prompt', () => {
     const reason = confirmationReason('nexus_video_generate', {
       provider: 'replicate-video',

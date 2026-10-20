@@ -1,152 +1,114 @@
-import { useEffect, useMemo, useState } from "react";
-import type { PublicModelRankingEntry } from "../../../shared/eval-ranking-types";
-import type { QuotaFleetSnapshot } from "../../../shared/quota-types";
-import { useProviderStore } from "../../state/provider-store";
-import { useQuotaStore } from "../../state/quota-store";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type {
+  ModelComparisonEntry,
+  ModelComparisonSnapshot,
+} from "../../../shared/eval-ranking-types";
+import { openExternalFromAnchor } from "../../lib/open-external";
 import {
+  CLI_LABELS,
+  COMPARE_SORT_HINTS,
+  COMPARE_SORT_KEYS,
+  COMPARE_SORT_LABELS,
   OPERATIONAL_BAND_LABELS,
-  RADAR_AXES,
-  SORT_LABELS,
-  SORT_MISSION,
-  type OperationalBand,
-  type SortKey,
-  bandOfEntry,
-  costEfficiency,
-  costLabel,
-  estimateBadge,
-  estimateDetail,
-  formatEvalTime,
-  hasEstimates,
-  gridRingPath,
-  groupEntriesByBand,
-  pickForDimension,
-  pickValue,
-  radarPoints,
-  radarPolygon,
-  scoreOf,
-  scoreOrZero,
-  sortEntries,
-  sortEntriesWithQuota,
+  OPERATIONAL_BANDS,
+  type CompareSortKey,
+  bandOf,
+  bestFor,
+  bestValuePick,
+  costTierLabel,
+  formatGeneratedAt,
+  formatPercent,
+  formatScore,
+  groupByBand,
+  originBadge,
+  originNote,
+  sortComparison,
+  sourceHref,
+  valueFor,
 } from "./ranking-view";
 import { ProviderLogo } from "../ProviderLogo";
 import { PixelIcon } from "../PixelIcon";
 import { SettingsSectionTitle } from "./SettingsSectionTitle";
-import { unrankedModels } from "./unranked-models";
-import { UnrankedModelDetail, UnrankedModelList } from "./UnrankedModelList";
-
-/** Quantos modelos sem avaliação aparecem antes de "Mostrar todos". */
-const UNRANKED_PREVIEW = 24;
 
 /**
- * Per-adapter free capacity 0..1 for ranking blend. Uses freest account of each
- * adapter; null = no known ratios (neutral weight in scoreWithQuota).
+ * Ajustes → Comparar modelos (F-1588). Benchmarks oficiais publicados pelos
+ * fabricantes — a mesma régua da escolha automática — sobre os modelos que
+ * esta máquina oferece, na versão mais nova de cada linha. Modelo sem número
+ * publicado aparece sem nota; nada aqui é estimado à mão.
  */
-function quotaAvailabilityByAdapter(
-  snapshot: QuotaFleetSnapshot,
-): Map<string, number | null> {
-  const map = new Map<string, number | null>();
-  for (const e of snapshot.entries) {
-    let free: number | null;
-    if (e.onCooldown) {
-      free = 0;
-    } else {
-      let worst: number | null = null;
-      for (const w of e.windows) {
-        if (w.usedRatio === null) continue;
-        if (worst === null || w.usedRatio > worst) worst = w.usedRatio;
-      }
-      free = worst === null ? null : Math.max(0, Math.min(1, 1 - worst));
-    }
-    const prev = map.get(e.adapterId);
-    if (prev === undefined) {
-      map.set(e.adapterId, free);
-      continue;
-    }
-    // Prefer freer account when comparing known values; null loses to known free.
-    if (free === null) continue;
-    if (prev === null || free > prev) map.set(e.adapterId, free);
-  }
-  return map;
+
+/** Quantos modelos sem número aparecem antes de "Mostrar todos". */
+const UNSCORED_PREVIEW = 12;
+
+const BAND_HINTS = {
+  fast: "Tarefas simples e repetitivas",
+  balanced: "Criação e manutenção no dia a dia",
+  deep: "Análises e problemas complexos",
+} as const;
+
+const PUBLISHED_KEYS = ["deepSWE", "terminalBench21", "swebenchVerified"] as const;
+
+function scoreKindLabel(entry: ModelComparisonEntry): string {
+  if (entry.scoreKind === "measured") return "medida pelo Nexus";
+  if (entry.scoreKind === "published") return "benchmark publicado";
+  return "sem número publicado";
 }
 
-/**
- * Operational LLM ranking cockpit — race + radar + mission picks.
- * Same DTO as resources/model-ranking.json; scores feed auto-routing.
- */
-
-function RaceChart({
+function ComparisonList({
   rows,
   sort,
   selectedId,
-  installed,
   onSelect,
 }: {
-  rows: PublicModelRankingEntry[];
-  sort: SortKey;
+  rows: readonly ModelComparisonEntry[];
+  sort: CompareSortKey;
   selectedId: string | null;
-  installed: ReadonlySet<string>;
   onSelect: (id: string) => void;
 }) {
-  const max = Math.max(1, ...rows.map((r) => scoreOrZero(r, sort)));
-
   return (
     <div
       className="rank-race"
       role="list"
-      aria-label={`Corrida por ${SORT_LABELS[sort]}`}
+      aria-label={`Modelos por ${COMPARE_SORT_LABELS[sort]}`}
     >
       {rows.map((entry, index) => {
-        const score = scoreOf(entry, sort);
-        const width = score === null ? 0 : (score / max) * 100;
-        const live = installed.has(entry.adapterId);
+        const value = valueFor(entry, sort);
         const active = entry.id === selectedId;
-        const estimate = estimateBadge(entry);
+        const ready = entry.cli === "ready";
+        const badge = originBadge(entry);
+        const shown = sort === "score" ? formatScore(value) : formatPercent(value);
         return (
           <button
             key={entry.id}
             type="button"
             role="listitem"
-            className={`rank-race__row ${active ? "rank-race__row--active" : ""} ${live ? "" : "rank-race__row--ghost"}`}
+            className={`rank-race__row ${active ? "rank-race__row--active" : ""} ${ready ? "" : "rank-race__row--ghost"}`}
             onClick={() => onSelect(entry.id)}
             aria-pressed={active}
-            aria-label={`${index + 1}º: ${entry.modelId} — ${SORT_LABELS[sort]} ${
-              score === null ? "sem nota" : score
-            }${live ? "" : ", ferramenta não detectada nesta máquina"}`}
-            title={
-              live
-                ? `Selecionar ${entry.modelId} (CLI ${entry.adapterId} detectada)`
-                : `${entry.modelId} — CLI ${entry.adapterId} ausente nesta máquina`
-            }
+            aria-label={`${value === null ? "Sem número" : `${index + 1}º`}: ${entry.modelId} (${entry.adapterLabel}) — ${COMPARE_SORT_LABELS[sort]} ${value === null ? "não publicado" : shown}, ferramenta ${CLI_LABELS[entry.cli]}`}
           >
-            <span className="rank-race__place">#{index + 1}</span>
-            <ProviderLogo
-              adapterId={entry.adapterId}
-              label={entry.adapterId}
-              size="sm"
-            />
+            <span className="rank-race__place">
+              {value === null ? "—" : `#${index + 1}`}
+            </span>
+            <ProviderLogo adapterId={entry.adapterId} label={entry.adapterLabel} size="sm" />
             <span className="rank-race__id">
               <strong>{entry.modelId}</strong>
               <span className="rank-race__adapter">
-                {entry.adapterId}
+                {entry.adapterLabel}
                 <span
                   className={`rank-race__presence ${
-                    live
-                      ? "rank-race__presence--live"
-                      : "rank-race__presence--missing"
+                    ready ? "rank-race__presence--live" : "rank-race__presence--missing"
                   }`}
                 >
                   <span className="rank-race__presence-dot" aria-hidden="true" />
-                  {live ? "instalada" : "não detectada"}
+                  {CLI_LABELS[entry.cli]}
                 </span>
                 <span className="rank-race__band">
-                  {OPERATIONAL_BAND_LABELS[bandOfEntry(entry)]}
+                  {OPERATIONAL_BAND_LABELS[bandOf(entry)]}
                 </span>
-                {estimate !== null && (
-                  <span
-                    className="rank-estimate"
-                    title={estimateDetail(entry) ?? undefined}
-                  >
-                    {estimate}
+                {badge !== null && (
+                  <span className="rank-estimate" title={originNote(entry) ?? undefined}>
+                    {badge}
                   </span>
                 )}
               </span>
@@ -154,19 +116,11 @@ function RaceChart({
             <span className="rank-race__track" aria-hidden="true">
               <span
                 className="rank-race__bar"
-                style={{ transform: `scaleX(${width / 100})` }}
-                data-cost={costLabel(entry)}
+                style={{ transform: `scaleX(${value === null ? 0 : Math.min(100, value) / 100})` }}
+                data-cost={entry.costTier}
               />
-              <span className="rank-race__ticks">
-                <i />
-                <i />
-                <i />
-                <i />
-              </span>
             </span>
-            <span className="rank-race__score">
-              {score === null ? "—" : score}
-            </span>
+            <span className="rank-race__score">{shown}</span>
           </button>
         );
       })}
@@ -174,218 +128,71 @@ function RaceChart({
   );
 }
 
-function RadarChart({
-  entry,
-  ghost,
-}: {
-  entry: PublicModelRankingEntry;
-  ghost: PublicModelRankingEntry | null;
-}) {
-  const size = 240;
-  const cx = size / 2;
-  const cy = size / 2;
-  const r = 88;
-  const main = radarPoints(entry, cx, cy, r);
-  const ghostPts =
-    ghost && ghost.id !== entry.id ? radarPoints(ghost, cx, cy, r) : null;
-  const rings = [0.25, 0.5, 0.75, 1];
-
-  return (
-    <div className="rank-radar">
-      <svg
-        className="rank-radar__svg"
-        viewBox={`0 0 ${size} ${size}`}
-        width={size}
-        height={size}
-        role="img"
-        aria-label={`Perfil multi-eixo de ${entry.modelId}`}
-      >
-        <defs>
-          <radialGradient id="rank-radar-glow" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.22" />
-            <stop offset="70%" stopColor="var(--accent)" stopOpacity="0.05" />
-            <stop offset="100%" stopColor="var(--accent)" stopOpacity="0" />
-          </radialGradient>
-          <linearGradient
-            id="rank-poly-fill"
-            x1="0%"
-            y1="0%"
-            x2="100%"
-            y2="100%"
-          >
-            <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.35" />
-            <stop
-              offset="100%"
-              stopColor="var(--ok, #5fd38d)"
-              stopOpacity="0.12"
-            />
-          </linearGradient>
-        </defs>
-
-        <circle cx={cx} cy={cy} r={r + 8} fill="url(#rank-radar-glow)" />
-
-        {rings.map((f) => (
-          <polygon
-            key={f}
-            className="rank-radar__ring"
-            points={gridRingPath(cx, cy, r, RADAR_AXES.length, f)}
-          />
-        ))}
-
-        {main.map((p) => (
-          <line
-            key={p.key}
-            className="rank-radar__axis"
-            x1={cx}
-            y1={cy}
-            x2={p.tipX}
-            y2={p.tipY}
-          />
-        ))}
-
-        {ghostPts && (
-          <polygon
-            className="rank-radar__ghost"
-            points={radarPolygon(ghostPts)}
-          />
-        )}
-
-        <polygon className="rank-radar__poly" points={radarPolygon(main)} />
-
-        {main.map((p) => (
-          <g key={`dot-${p.key}`}>
-            <circle className="rank-radar__dot" cx={p.x} cy={p.y} r={3.5} />
-            <text
-              className="rank-radar__label"
-              x={p.tipX + (p.tipX - cx) * 0.12}
-              y={p.tipY + (p.tipY - cy) * 0.12}
-              textAnchor="middle"
-              dominantBaseline="middle"
-            >
-              {p.label.slice(0, 3)} {p.score}
-            </text>
-          </g>
-        ))}
-
-        <circle className="rank-radar__core" cx={cx} cy={cy} r={4} />
-      </svg>
-      <div className="rank-radar__caption">
-        <span className="rank-radar__identity">
-          <ProviderLogo
-            adapterId={entry.adapterId}
-            label={entry.adapterId}
-            size="sm"
-          />
-          <span className="rank-radar__identity-copy">
-            <strong>{entry.modelId}</strong>
-            <span>
-              nota geral {entry.overall} ·{" "}
-              <span title="Nota geral dividida pelo peso do custo">
-                custo-benefício {costEfficiency(entry)}
-              </span>{" "}
-              · {costLabel(entry)}
-            </span>
-          </span>
-        </span>
-        {ghostPts && ghost && (
-          <span className="rank-radar__ghost-cap">
-            sombra: #{ghost.rank ?? 1} {ghost.modelId}
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function MissionPicks({
+function Highlights({
   entries,
   onSelect,
 }: {
-  entries: PublicModelRankingEntry[];
+  entries: readonly ModelComparisonEntry[];
   onSelect: (id: string) => void;
 }) {
-  const missions: Array<{
-    key: SortKey | "value";
-    label: string;
-    pick: PublicModelRankingEntry | null;
-  }> = [
-    {
-      key: "coding",
-      label: SORT_MISSION.coding,
-      pick: pickForDimension(entries, "coding"),
-    },
-    {
-      key: "reasoning",
-      label: SORT_MISSION.reasoning,
-      pick: pickForDimension(entries, "reasoning"),
-    },
-    {
-      key: "frontend",
-      label: SORT_MISSION.frontend,
-      pick: pickForDimension(entries, "frontend"),
-    },
-    {
-      key: "security",
-      label: SORT_MISSION.security,
-      pick: pickForDimension(entries, "security"),
-    },
-    { key: "value", label: "Relação entre custo e nota geral", pick: pickValue(entries) },
+  const picks: Array<{ key: string; kind: string; pick: ModelComparisonEntry | null; value: string }> = [
+    ...COMPARE_SORT_KEYS.map((key) => {
+      const pick = bestFor(entries, key);
+      const value = pick ? valueFor(pick, key) : null;
+      return {
+        key,
+        kind: key === "score" ? "Maior nota geral" : `Melhor em ${COMPARE_SORT_LABELS[key]}`,
+        pick,
+        value: key === "score" ? `nota ${formatScore(value)}` : formatPercent(value),
+      };
+    }),
+    (() => {
+      const pick = bestValuePick(entries);
+      return {
+        key: "value",
+        kind: pick ? `Melhor na faixa ${OPERATIONAL_BAND_LABELS[bandOf(pick)]}` : "",
+        pick,
+        value: pick ? `nota ${formatScore(pick.score)} · custo ${costTierLabel(pick)}` : "",
+      };
+    })(),
   ];
-
+  const shown = picks.filter((p) => p.pick !== null);
+  if (shown.length === 0) return null;
   return (
-    <div
-      className="rank-missions"
-      role="list"
-      aria-label="Picks do motor por tipo de missão"
-    >
-      {missions.map((m) => {
-        if (!m.pick) return null;
-        const score =
-          m.key === "value"
-            ? m.pick.overall
-            : (scoreOf(m.pick, m.key) ?? m.pick.overall);
-        return (
-          <button
-            key={m.key}
-            type="button"
-            role="listitem"
-            className="rank-missions__card"
-            onClick={() => onSelect(m.pick!.id)}
-          >
-            <span className="rank-missions__head">
-              <ProviderLogo
-                adapterId={m.pick.adapterId}
-                label={m.pick.adapterId}
-                size="sm"
-              />
-              <span className="rank-missions__kind">
-                {m.key === "value" ? "Custo e resultado" : SORT_LABELS[m.key]}
-              </span>
-            </span>
-            <span className="rank-missions__model">{m.pick.modelId}</span>
-            <span className="rank-missions__meta">
-              {m.label} · nota {score}
-            </span>
-          </button>
-        );
-      })}
+    <div className="rank-missions" role="list" aria-label="Destaques pelos benchmarks publicados">
+      {shown.map((p) => (
+        <button
+          key={p.key}
+          type="button"
+          role="listitem"
+          className="rank-missions__card"
+          onClick={() => onSelect(p.pick!.id)}
+        >
+          <span className="rank-missions__head">
+            <ProviderLogo adapterId={p.pick!.adapterId} label={p.pick!.adapterLabel} size="sm" />
+            <span className="rank-missions__kind">{p.kind}</span>
+          </span>
+          <span className="rank-missions__model">{p.pick!.modelId}</span>
+          <span className="rank-missions__meta">
+            {p.pick!.adapterLabel} · {p.value}
+          </span>
+        </button>
+      ))}
     </div>
   );
 }
-
-const BAND_ORDER: OperationalBand[] = ["fast", "balanced", "deep"];
 
 function BandBoard({
   entries,
   onSelect,
 }: {
-  entries: PublicModelRankingEntry[];
+  entries: readonly ModelComparisonEntry[];
   onSelect: (id: string) => void;
 }) {
-  const groups = groupEntriesByBand(entries);
+  const groups = groupByBand(entries);
   return (
-    <div className="rank-bands" role="list" aria-label="Faixas operacionais">
-      {BAND_ORDER.map((band) => {
+    <div className="rank-bands" role="list" aria-label="Faixas de custo">
+      {OPERATIONAL_BANDS.map((band) => {
         const rows = groups[band];
         return (
           <div key={band} className="rank-bands__col" role="listitem">
@@ -393,25 +200,26 @@ function BandBoard({
               {OPERATIONAL_BAND_LABELS[band]}
               <span className="rank-bands__count">{rows.length}</span>
             </h5>
-            <p className="rank-bands__hint">{{ fast: 'Tarefas simples e repetitivas', balanced: 'Criação e manutenção no dia a dia', deep: 'Análises e problemas complexos' }[band]}</p>
-            <ul className="rank-bands__list">
-              {rows.slice(0, 4).map((entry) => (
-                <li key={entry.id}>
-                  <button
-                    type="button"
-                    className="rank-bands__item"
-                    onClick={() => onSelect(entry.id)}
-                  >
-                    <ProviderLogo
-                      adapterId={entry.adapterId}
-                      label={entry.adapterId}
-                      size="sm"
-                    />
-                    <span className="rank-bands__model">{entry.modelId}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
+            <p className="rank-bands__hint">{BAND_HINTS[band]}</p>
+            {rows.length === 0 ? (
+              <p className="rank-bands__hint">Nenhum modelo nesta faixa.</p>
+            ) : (
+              <ul className="rank-bands__list">
+                {rows.slice(0, 4).map((entry) => (
+                  <li key={entry.id}>
+                    <button
+                      type="button"
+                      className="rank-bands__item"
+                      onClick={() => onSelect(entry.id)}
+                    >
+                      <ProviderLogo adapterId={entry.adapterId} label={entry.adapterLabel} size="sm" />
+                      <span className="rank-bands__model">{entry.modelId}</span>
+                      <span className="rank-bands__score">{formatScore(entry.score)}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         );
       })}
@@ -419,56 +227,112 @@ function BandBoard({
   );
 }
 
+function ComparisonDetail({ entry }: { entry: ModelComparisonEntry }) {
+  const href = sourceHref(entry);
+  const note = originNote(entry);
+  const measured = entry.measured;
+  return (
+    <div className="rank-ops__detail" aria-live="polite" aria-label="Modelo selecionado">
+      <div className="rank-ops__detail-head">
+        <ProviderLogo adapterId={entry.adapterId} label={entry.adapterLabel} size="sm" />
+        <span className="rank-ops__detail-identity">
+          <span className="rank-ops__detail-name">{entry.modelId}</span>
+          <span className="rank-ops__detail-adapter">
+            {entry.adapterLabel}
+            <span
+              className={`rank-race__presence ${
+                entry.cli === "ready" ? "rank-race__presence--live" : "rank-race__presence--missing"
+              }`}
+            >
+              <span className="rank-race__presence-dot" aria-hidden="true" />
+              ferramenta {CLI_LABELS[entry.cli]}
+            </span>
+          </span>
+        </span>
+        <span className="rank-ops__detail-rank" title="Nota geral (0 a 100)">
+          {formatScore(entry.score)}
+        </span>
+      </div>
+      {entry.scoreKind === "none" ? (
+        <p className="rank-ops__mission-hint">
+          O fabricante não publicou DeepSWE, Terminal-Bench 2.1 nem SWE-bench Verified
+          para este modelo. A escolha automática o trata com nota neutra, sem bônus nem
+          punição.
+        </p>
+      ) : (
+        <div className="rank-ops__dims">
+          {PUBLISHED_KEYS.map((key) => {
+            const value = entry.benchmarks[key];
+            return (
+              <div key={key} className="rank-ops__dim-cell">
+                <span className="rank-ops__dim-label">{COMPARE_SORT_LABELS[key]}</span>
+                <span className="rank-ops__dim-val">{formatPercent(value)}</span>
+                <span
+                  className="rank-ops__dim-bar"
+                  aria-hidden="true"
+                  style={{ width: `${typeof value === "number" ? Math.min(100, value) : 0}%` }}
+                />
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {measured && (
+        <p className="rank-ops__mission-hint">
+          Avaliação medida pelo Nexus em {formatGeneratedAt(measured.evaluatedAt)}: geral{" "}
+          {formatScore(measured.overall)}
+          {measured.coding !== undefined && ` · programação ${formatScore(measured.coding)}`}
+          {measured.reasoning !== undefined && ` · raciocínio ${formatScore(measured.reasoning)}`}
+          {measured.frontend !== undefined && ` · interface ${formatScore(measured.frontend)}`}
+          {measured.security !== undefined && ` · segurança ${formatScore(measured.security)}`}.
+        </p>
+      )}
+      {note && <p className="rank-ops__mission-hint">{note}</p>}
+      <p className="rank-ops__foot">
+        nota {scoreKindLabel(entry)} · faixa {OPERATIONAL_BAND_LABELS[bandOf(entry)]} · custo{" "}
+        {costTierLabel(entry)}
+      </p>
+      {entry.source && (
+        <p className="rank-ops__foot">
+          Fonte:{" "}
+          {href ? (
+            <a className="settings-link" href={href} onClick={(e) => openExternalFromAnchor(e, href)}>
+              {new URL(href).host}
+            </a>
+          ) : (
+            entry.source
+          )}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function ModelRankingSection() {
-  const [snapshot, setSnapshot] = useState<Awaited<
-    ReturnType<NonNullable<typeof window.nexus>["ranking"]["public"]>
-  > | null>(null);
+  const [snapshot, setSnapshot] = useState<ModelComparisonSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [sort, setSort] = useState<SortKey>("overall");
   const [loading, setLoading] = useState(true);
+  const [sort, setSort] = useState<CompareSortKey>("score");
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [onlyInstalled, setOnlyInstalled] = useState(false);
-  // 900+ modelos sem avaliação renderizavam de uma vez (935 botões, 47k px).
-  // Os primeiros bastam para decidir; o resto sob demanda.
-  const [showAllUnranked, setShowAllUnranked] = useState(false);
+  const [onlyInstalled, setOnlyInstalled] = useState(true);
+  const [showAllUnscored, setShowAllUnscored] = useState(false);
 
-  const providers = useProviderStore((s) => s.providers);
-  const installed = useMemo(() => {
-    const set = new Set<string>();
-    for (const p of providers) {
-      if (p.installed && p.enabled) set.add(p.adapterId);
+  const load = useCallback(() => {
+    const compare = window.nexus?.ranking?.compare;
+    if (typeof compare !== "function") {
+      setError("A comparação de modelos não está disponível nesta versão.");
+      setLoading(false);
+      return () => undefined;
     }
-    return set;
-  }, [providers]);
-
-  useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    const publicRanking = window.nexus?.ranking?.public;
-    if (typeof publicRanking !== "function") {
-      setError("API de ranking indisponível neste build.");
-      setLoading(false);
-      return;
-    }
-    void publicRanking()
+    setError(null);
+    void compare()
       .then((data) => {
-        if (cancelled) return;
-        setSnapshot(data);
-        setError(null);
-        setSelectedId((prev) => {
-          if (prev && data.entries.some((e) => e.id === prev)) return prev;
-          const top = sortEntriesWithQuota(
-            data.entries,
-            "overall",
-            quotaAvailabilityByAdapter(useQuotaStore.getState().snapshot),
-          )[0];
-          return top?.id ?? null;
-        });
+        if (!cancelled) setSnapshot(data);
       })
       .catch((err: unknown) => {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : String(err));
-        }
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -478,44 +342,34 @@ export function ModelRankingSection() {
     };
   }, []);
 
-  const rows = useMemo(() => {
-    if (!snapshot) return [];
-    const sorted = sortEntries(snapshot.entries, sort);
-    if (!onlyInstalled) return sorted;
-    return sorted.filter((row) => installed.has(row.adapterId));
-  }, [snapshot, sort, onlyInstalled, installed]);
+  useEffect(() => load(), [load]);
 
-  const unranked = useMemo(
-    () => unrankedModels(providers, snapshot?.entries ?? []),
-    [providers, snapshot],
+  const entries = snapshot?.entries ?? [];
+  const visible = useMemo(
+    () => (onlyInstalled ? entries.filter((entry) => entry.cli === "ready") : entries),
+    [entries, onlyInstalled],
   );
-  const visibleUnranked = onlyInstalled ? unranked.filter((model) => model.installed) : unranked;
-  const selectedUnranked = visibleUnranked.find((model) => model.id === selectedId);
+  const sorted = useMemo(() => sortComparison(visible, sort), [visible, sort]);
+  const withValue = sorted.filter((entry) => valueFor(entry, sort) !== null);
+  const withoutValue = sorted.filter((entry) => valueFor(entry, sort) === null);
+  const rows = showAllUnscored
+    ? sorted
+    : [...withValue, ...withoutValue.slice(0, UNSCORED_PREVIEW)];
 
-  const selected = useMemo(() => {
-    if (!snapshot || !selectedId || selectedUnranked) return null;
-    return snapshot.entries.find((e) => e.id === selectedId) ?? rows[0] ?? null;
-  }, [snapshot, selectedId, rows, selectedUnranked]);
+  const selected =
+    visible.find((entry) => entry.id === selectedId) ?? sortComparison(visible, "score")[0] ?? null;
 
-  const leader = useMemo(() => {
-    if (!snapshot) return null;
-    return sortEntries(snapshot.entries, "overall")[0] ?? null;
-  }, [snapshot]);
-
-  const liveCount = useMemo(
-    () => rows.filter((r) => installed.has(r.adapterId)).length + visibleUnranked.filter((model) => model.installed).length,
-    [rows, installed, visibleUnranked],
-  );
+  const scored = entries.filter((entry) => entry.score !== null).length;
+  const ready = entries.filter((entry) => entry.cli === "ready").length;
 
   return (
     <section className="rank-ops" aria-labelledby="ranking-title">
       <header className="rank-ops__intro">
-        <SettingsSectionTitle id="ranking-title">
-          Comparar modelos
-        </SettingsSectionTitle>
+        <SettingsSectionTitle id="ranking-title">Comparar modelos</SettingsSectionTitle>
         <p className="settings-detail__hint">
-          Compare modelos por tarefa e custo. As notas de demonstração são
-          estimativas, não avaliações reais, e não definem a escolha automática dos agentes.
+          Compare os modelos desta máquina pelos benchmarks oficiais que cada fabricante
+          publicou. É a mesma régua da escolha automática; modelo sem número publicado
+          aparece sem nota, nunca com nota inventada.
         </p>
       </header>
 
@@ -525,70 +379,92 @@ export function ModelRankingSection() {
         </p>
       )}
       {error && (
-        <p className="rank-ops__status rank-ops__status--error" role="alert">
-          <PixelIcon name="warn" size={11} /> Falha ao carregar ranking: {error}
-        </p>
+        <div className="rank-ops__status rank-ops__status--error" role="alert">
+          <PixelIcon name="warn" size={11} /> Não foi possível carregar a comparação: {error}{" "}
+          <button type="button" className="settings-btn settings-btn--sm" onClick={() => load()}>
+            Tentar novamente
+          </button>
+        </div>
       )}
 
       {snapshot && (
         <>
           <div className="rank-ops__fleet" role="status">
-            <span
-              title={`Conjunto de testes ${snapshot.suiteId}/${snapshot.suiteRevision}`}
-            >
-              {hasEstimates(snapshot.entries)
-                ? "notas estimadas"
-                : "notas medidas em teste"}
-            </span>
-            <span className="rank-ops__sep" aria-hidden="true">
-              ·
-            </span>
             <span>
-              <strong>{snapshot.entries.length + unranked.length}</strong> modelos
-              {unranked.length > 0 && ` · ${unranked.length} não avaliados`}
+              <strong>{entries.length}</strong> modelos
             </span>
-            <span className="rank-ops__sep" aria-hidden="true">
-              ·
-            </span>
+            <span className="rank-ops__sep" aria-hidden="true">·</span>
             <span>
-              <strong>{liveCount}</strong> com ferramenta instalada
+              <strong>{scored}</strong> com benchmark publicado
             </span>
-            <span className="rank-ops__sep" aria-hidden="true">
-              ·
+            <span className="rank-ops__sep" aria-hidden="true">·</span>
+            <span>
+              <strong>{entries.length - scored}</strong> sem número publicado
             </span>
-            <span className="rank-ops__dim">
-              gerado {formatEvalTime(snapshot.generatedAt)}
+            <span className="rank-ops__sep" aria-hidden="true">·</span>
+            <span>
+              <strong>{ready}</strong> com a ferramenta instalada
             </span>
+            {snapshot.olderVersionsHidden > 0 && (
+              <>
+                <span className="rank-ops__sep" aria-hidden="true">·</span>
+                <span
+                  className="rank-ops__dim"
+                  title="Quando a mesma linha tem versão mais nova, só a mais nova aparece."
+                >
+                  {snapshot.olderVersionsHidden} versões antigas ocultas
+                </span>
+              </>
+            )}
+            <span className="rank-ops__sep" aria-hidden="true">·</span>
+            <span className="rank-ops__dim">lido {formatGeneratedAt(snapshot.generatedAt)}</span>
           </div>
 
-          <div className="rank-ops__block">
-            <h3 className="rank-ops__block-title">
-              Faixas de custo
-            </h3>
-            <p className="rank-ops__mission-hint">Escolha uma faixa econômica para tarefas simples e reserve os modelos mais caros para problemas complexos.</p>
-            <BandBoard entries={snapshot.entries} onSelect={setSelectedId} />
-          </div>
+          {visible.length === 0 ? (
+            <div className="rank-ops__status">
+              {entries.length === 0
+                ? "Nenhuma ferramenta de IA informou modelos ainda."
+                : "Nenhuma ferramenta de IA instalada e ligada nesta máquina."}{" "}
+              {onlyInstalled && entries.length > 0 && (
+                <button
+                  type="button"
+                  className="settings-btn settings-btn--sm"
+                  onClick={() => setOnlyInstalled(false)}
+                >
+                  Ver modelos das ferramentas não instaladas
+                </button>
+              )}
+            </div>
+          ) : (
+            <>
+              <div className="rank-ops__block">
+                <h3 className="rank-ops__block-title">Faixas de custo</h3>
+                <p className="rank-ops__mission-hint">
+                  Use a faixa mais barata que resolve e reserve os modelos caros para
+                  problemas complexos.
+                </p>
+                <BandBoard entries={visible} onSelect={setSelectedId} />
+              </div>
 
-          <div className="rank-ops__block">
-            <h3 className="rank-ops__block-title">Destaques por tipo de tarefa</h3>
-            <MissionPicks entries={snapshot.entries} onSelect={setSelectedId} />
-          </div>
+              <div className="rank-ops__block">
+                <h3 className="rank-ops__block-title">Destaques</h3>
+                <Highlights entries={visible} onSelect={setSelectedId} />
+              </div>
+            </>
+          )}
 
-          <div
-            className="rank-ops__sort"
-            role="group"
-            aria-label="Dimensão da corrida"
-          >
+          <div className="rank-ops__sort" role="group" aria-label="Ordenar a lista">
             <span className="rank-ops__sort-label">Ordenar por:</span>
-            {(Object.keys(SORT_LABELS) as SortKey[]).map((key) => (
+            {COMPARE_SORT_KEYS.map((key) => (
               <button
                 key={key}
                 type="button"
+                aria-pressed={sort === key}
                 className={`rank-ops__chip ${sort === key ? "rank-ops__chip--on" : ""}`}
                 onClick={() => setSort(key)}
-                title={SORT_MISSION[key]}
+                title={COMPARE_SORT_HINTS[key]}
               >
-                {SORT_LABELS[key]}
+                {COMPARE_SORT_LABELS[key]}
               </button>
             ))}
             <label className="rank-ops__only-installed">
@@ -600,128 +476,39 @@ export function ModelRankingSection() {
               Só ferramentas instaladas
             </label>
           </div>
-          <p className="rank-ops__mission-hint">{SORT_MISSION[sort]}</p>
+          <p className="rank-ops__mission-hint">{COMPARE_SORT_HINTS[sort]}</p>
 
-          <div className="rank-ops__stage">
-            <div className="rank-ops__stage-main">
-              <h3 className="rank-ops__block-title">
-                Comparação · {SORT_LABELS[sort]}
-              </h3>
-              <RaceChart
-                rows={rows}
-                sort={sort}
-                selectedId={selected?.id ?? null}
-                installed={installed}
-                onSelect={setSelectedId}
-              />
-              <UnrankedModelList
-                models={showAllUnranked ? visibleUnranked : visibleUnranked.slice(0, UNRANKED_PREVIEW)}
-                selectedId={selectedId}
-                onSelect={setSelectedId}
-              />
-              {!showAllUnranked && visibleUnranked.length > UNRANKED_PREVIEW ? (
-                <button
-                  type="button"
-                  className="settings-btn rank-ops__show-all"
-                  onClick={() => setShowAllUnranked(true)}
-                >
-                  Mostrar todos os {visibleUnranked.length} modelos sem avaliação
-                </button>
-              ) : null}
-            </div>
-            <div className="rank-ops__stage-side">
-              <h3 className="rank-ops__block-title">Radar operacional</h3>
-              {selected ? (
-                <RadarChart entry={selected} ghost={leader} />
-              ) : (
-                <p className="rank-ops__status">
-                  {selectedUnranked ? 'Não avaliado: o radar aguarda notas de benchmark.' : 'Selecione um modelo na lista.'}
-                </p>
-              )}
-            </div>
-          </div>
-
-          {selectedUnranked && <UnrankedModelDetail model={selectedUnranked} />}
-
-          {selected && (
-            <div className="rank-ops__detail" aria-live="polite">
-              <div className="rank-ops__detail-head">
-                <ProviderLogo
-                  adapterId={selected.adapterId}
-                  label={selected.adapterId}
-                  size="sm"
+          {visible.length > 0 && (
+            <div className="rank-ops__stage">
+              <div className="rank-ops__stage-main">
+                <h3 className="rank-ops__block-title">
+                  Comparação · {COMPARE_SORT_LABELS[sort]}
+                </h3>
+                <ComparisonList
+                  rows={rows}
+                  sort={sort}
+                  selectedId={selected?.id ?? null}
+                  onSelect={setSelectedId}
                 />
-                <span className="rank-ops__detail-identity">
-                  <span className="rank-ops__detail-name">
-                    {selected.modelId}
-                  </span>
-                  <span className="rank-ops__detail-adapter">
-                    {selected.adapterId}
-                    <span
-                      className={`rank-race__presence ${
-                        installed.has(selected.adapterId)
-                          ? "rank-race__presence--live"
-                          : "rank-race__presence--missing"
-                      }`}
-                    >
-                      <span
-                        className="rank-race__presence-dot"
-                        aria-hidden="true"
-                      />
-                      {installed.has(selected.adapterId)
-                        ? "ferramenta instalada"
-                        : "ferramenta não detectada"}
-                    </span>
-                  </span>
-                </span>
-                <span
-                  className="rank-ops__detail-rank"
-                  title="Posição no ranking geral"
-                >
-                  #{selected.rank ?? "—"}
-                </span>
+                {!showAllUnscored && withoutValue.length > UNSCORED_PREVIEW && (
+                  <button
+                    type="button"
+                    className="settings-btn rank-ops__show-all"
+                    onClick={() => setShowAllUnscored(true)}
+                  >
+                    Mostrar todos os {withoutValue.length} modelos sem número em{" "}
+                    {COMPARE_SORT_LABELS[sort]}
+                  </button>
+                )}
               </div>
-              <div className="rank-ops__dims">
-                {RADAR_AXES.map((key) => {
-                  const v = scoreOf(selected, key);
-                  return (
-                    <div key={key} className="rank-ops__dim-cell">
-                      <span className="rank-ops__dim-label">
-                        {SORT_LABELS[key]}
-                      </span>
-                      <span className="rank-ops__dim-val">
-                        {v === null ? "—" : v}
-                      </span>
-                      <span
-                        className="rank-ops__dim-bar"
-                        aria-hidden="true"
-                        style={{
-                          width: `${v === null ? 0 : Math.min(100, v)}%`,
-                        }}
-                      />
-                    </div>
-                  );
-                })}
+              <div className="rank-ops__stage-side">
+                <h3 className="rank-ops__block-title">Detalhe</h3>
+                {selected ? (
+                  <ComparisonDetail entry={selected} />
+                ) : (
+                  <p className="rank-ops__status">Selecione um modelo na lista.</p>
+                )}
               </div>
-              <p
-                className="rank-ops__foot"
-                title={`Origem técnica: ${selected.source}`}
-              >
-                faixa {OPERATIONAL_BAND_LABELS[bandOfEntry(selected)]} · custo{" "}
-                {costLabel(selected)}
-                {estimateBadge(selected) !== null && (
-                  <span className="rank-estimate rank-estimate--detail">
-                    {" "}
-                    · {estimateBadge(selected)}
-                  </span>
-                )}{" "}
-                · confiança{" "}
-                {typeof selected.confidence === "number" &&
-                Number.isFinite(selected.confidence)
-                  ? `${Math.round(selected.confidence * 100)}%`
-                  : "—"}{" "}
-                · avaliado {formatEvalTime(selected.evaluatedAt)}
-              </p>
             </div>
           )}
         </>

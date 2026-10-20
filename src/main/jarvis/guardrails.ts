@@ -11,6 +11,7 @@
 
 import { canonicalToolName } from '../orch/gate';
 import { requiresHumanConfirmationForTool } from '../orch/mcp-effect-policy';
+import { costPhrase, estimateMediaToolUsd } from '../media/media-budget';
 
 /**
  * Âncora chain-aware: início do comando OU logo após `;`, `&`, `|`. Sem ela,
@@ -137,6 +138,8 @@ const JARVIS_HANDS_FREE_TOOLS: ReadonlySet<string> = new Set([
   // preview local
   'preview_start',
   'preview_stop',
+  // F-1603: parar a prévia de vídeo só encerra um processo do próprio Nexus.
+  'video_preview_stop',
   // leitura de goal em andamento
   'goal_status',
 ]);
@@ -327,14 +330,77 @@ export function confirmationReason(
   if (toolName === 'nexus_preview_start' || toolName === 'preview_start') {
     return `serve preview directory ${safeMediaArg(args.dir, 'unknown')}`;
   }
+  // F-1606: paid media shows its estimated cost in the modal.
   if (toolName === 'nexus_image_generate' || toolName === 'image_generate') {
-    return mediaConfirmation('image', args);
+    return mediaConfirmation('image', args) + costPhrase(estimateMediaToolUsd('image_generate', args));
   }
   if (toolName === 'nexus_video_generate' || toolName === 'video_generate') {
-    return mediaConfirmation('video', args);
+    return mediaConfirmation('video', args) + costPhrase(estimateMediaToolUsd('video_generate', args));
   }
   if (toolName === 'nexus_audio_generate' || toolName === 'audio_generate') {
-    return mediaConfirmation('audio', args);
+    return mediaConfirmation('audio', args) + costPhrase(estimateMediaToolUsd('audio_generate', args));
+  }
+  if (toolName === 'nexus_video_export' || toolName === 'video_export') {
+    return (
+      `export ${safeMediaArg(args.input, 'unknown')} for ${safeMediaArg(Array.isArray(args.presets) ? args.presets.filter((item) => typeof item === 'string').join(', ') : args.preset, 'unknown preset')} ` +
+      `(loudness -14 LUFS, mute copy, cover, captions; AI label ${safeMediaArg(args.label, 'auto')}); output: ${safeMediaArg(args.outDir, '<project>/exports')}`
+    );
+  }
+  if (toolName === 'nexus_video_capture' || toolName === 'video_capture') {
+    let origin = 'unknown site';
+    try {
+      origin = new URL(String(args.url)).origin;
+    } catch {
+      // invalid URL: the tool refuses it anyway
+    }
+    return (
+      `capture public site ${origin} with a headless Chrome (screenshots, text, images; third-party content); ` +
+      `output: ${safeMediaArg(args.outDir, 'capture/<host>-<stamp>')}`
+    );
+  }
+  if (toolName === 'nexus_video_preview_start' || toolName === 'video_preview_start') {
+    return (
+      `open the live HyperFrames Studio of ${safeMediaArg(args.projectDir, 'unknown')} (a local server that runs ` +
+      "the project's HTML/JS, bound to 127.0.0.1, until stopped)"
+    );
+  }
+  if (toolName === 'nexus_video_render' || toolName === 'video_render') {
+    return (
+      `render HyperFrames project ${safeMediaArg(args.projectDir, 'unknown')}${Array.isArray(args.variants) ? ` in ${args.variants.length} variants` : ''} (runs the project's HTML/JS in a ` +
+      `headless Chrome without sandbox; first run installs the pinned engine); output: ${safeMediaArg(args.output, '<project>/renders/<name>.mp4')}`
+    );
+  }
+  if (toolName === 'nexus_music_generate' || toolName === 'music_generate') {
+    const seconds =
+      typeof args.lengthMs === 'number' && Number.isFinite(args.lengthMs)
+        ? Math.round(args.lengthMs / 1000)
+        : 0;
+    const mode = args.dryRun === true ? 'price only (dryRun, no charge)' : 'paid music';
+    return (
+      `${mode} via elevenlabs, ${seconds} s, ${args.instrumental === false ? 'with vocals' : 'instrumental'}; ` +
+      `input: prompt (${textLength(args.prompt)} chars); output: ${safeMediaArg(args.outPath, 'music/music-<timestamp>.mp3')}` +
+      costPhrase(estimateMediaToolUsd('music_generate', args))
+    );
+  }
+  if (toolName === 'nexus_voiceover_align' || toolName === 'voiceover_align') {
+    const engine = args.engine === 'local' ? 'local Parakeet (free, on this machine)' : 'elevenlabs forced alignment (US$ 0.22 per audio hour)';
+    const download = args.allowModelDownload === true ? '; may download the 639 MB Parakeet model' : '';
+    return (
+      `${args.dryRun === true ? 'price only (dryRun, no charge)' : 'align recorded narration'} ${safeMediaArg(args.audioPath, 'unknown')} ` +
+      `to the script via ${engine}${download}; output: timeline/srt/vtt next to the audio`
+    );
+  }
+  if (toolName === 'nexus_voiceover_generate' || toolName === 'voiceover_generate') {
+    const source =
+      typeof args.scriptPath === 'string'
+        ? `script file ${safeMediaArg(args.scriptPath, 'unknown')}`
+        : `script (${textLength(args.script)} chars)`;
+    const mode = args.dryRun === true ? 'price only (dryRun, no charge)' : 'paid narration';
+    return (
+      `${mode} via elevenlabs voice ${safeMediaArg(args.voiceId, 'unset')}; input: ${source}; ` +
+      `output: ${safeMediaArg(args.outDir, 'narration')}/${safeMediaArg(args.baseName, 'narration')}.mp3 + timeline/srt/vtt` +
+      costPhrase(estimateMediaToolUsd('voiceover_generate', args))
+    );
   }
   if (toolName === 'nexus_catalog_install' || toolName === 'catalog_install') {
     // M8: spell out that this downloads UNVERIFIED third-party code from the
@@ -377,8 +443,8 @@ function mediaConfirmation(
   const provider = safeMediaArg(
     args.provider,
     kind === 'video'
-      ? 'replicate-video|google-video'
-      : 'automatic (google-image, openai-image or replicate-image/seedream)',
+      ? 'replicate-video|google-video|xai-video'
+      : 'automatic (google-image, openai-image, replicate-image/seedream or xai-image)',
   );
   const prompt = `prompt (${textLength(args.prompt)} chars)`;
   const image = safeMediaArg(args.imagePath, 'none');

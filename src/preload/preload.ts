@@ -6,6 +6,7 @@ import {
   DESIGN_WRITEBACK_CHANNELS,
   DEV_SERVER_CHANNELS,
   PERF_CHANNELS,
+  STORAGE_HYGIENE_CHANNELS,
   MCP_CHANNELS,
   LAYOUT_CHANNELS,
   ADAPTER_CHANNELS,
@@ -69,6 +70,7 @@ import { PROVIDER_CHANNELS } from '../shared/provider-settings-types';
 import type { ProviderSettingsInfo } from '../shared/provider-settings-types';
 import { FILES_CHANNELS } from '../shared/files-types';
 import { createIntegrationsBridge } from './integrations-bridge';
+import { createMediaBudgetBridge, createVideoStudioBridge, createVoiceCloneBridge } from './video-studio-bridge';
 import { ACCOUNT_CHANNELS } from '../shared/account-types';
 import type {
   AccountActivatedEvent,
@@ -1452,6 +1454,9 @@ const api: NexusApi = {
       ipcRenderer.invoke(MODEL_CHANNELS.richMetadata, { adapterId, modelId }),
   },
   integrations: createIntegrationsBridge(ipcRenderer),
+  voiceClone: createVoiceCloneBridge(ipcRenderer),
+  videoStudio: createVideoStudioBridge(ipcRenderer),
+  mediaBudget: createMediaBudgetBridge(ipcRenderer),
   accounts: {
     list: () => ipcRenderer.invoke(ACCOUNT_CHANNELS.list),
     quota: () => ipcRenderer.invoke(ACCOUNT_CHANNELS.quota) as Promise<AccountQuotaInfo[]>,
@@ -1537,6 +1542,10 @@ const api: NexusApi = {
     onChanged: (cb: (snapshot: GamificationSnapshot) => void) =>
       addListener(gamificationChangedListeners, cb),
   },
+  storage: {
+    report: () => ipcRenderer.invoke(STORAGE_HYGIENE_CHANNELS.report),
+    cleanNow: () => ipcRenderer.invoke(STORAGE_HYGIENE_CHANNELS.cleanNow),
+  },
   perf: {
     snapshot: () => ipcRenderer.invoke(PERF_CHANNELS.snapshot),
     onPaneFootprints: (cb) => {
@@ -1565,6 +1574,7 @@ const api: NexusApi = {
   },
   ranking: {
     public: () => ipcRenderer.invoke(EVAL_RANKING_CHANNELS.publicRanking),
+    compare: () => ipcRenderer.invoke(EVAL_RANKING_CHANNELS.modelComparison),
   },
   media: {
     listProviders: () => ipcRenderer.invoke(MEDIA_CHANNELS.listProviders),

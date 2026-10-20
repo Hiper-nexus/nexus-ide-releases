@@ -800,6 +800,16 @@ describe("gateway de IA local (OmniRoute-like)", () => {
     };
   }
 
+  it("F-1594: todo pane leva a política do HyperFrames, sem DO_NOT_TRACK global", () => {
+    const env = agentEnv(claudeLike(), null);
+    expect(env).toMatchObject({
+      HYPERFRAMES_NO_TELEMETRY: "1",
+      HYPERFRAMES_SKIP_SKILLS: "1",
+      HYPERFRAMES_NO_UPDATE_CHECK: "1",
+    });
+    expect(env.DO_NOT_TRACK).toBeUndefined();
+  });
+
   it("aponta para o gateway a base URL que o adapter declarou", () => {
     const env = agentEnv(claudeLike(), GATEWAY);
     expect(env.ANTHROPIC_BASE_URL).toBe(GATEWAY);

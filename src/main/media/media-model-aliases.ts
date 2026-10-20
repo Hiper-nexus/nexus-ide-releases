@@ -38,6 +38,12 @@ const ALIASES: Record<string, string> = {
   'veo-fast': 'google/veo-3.1-fast',
   'veo-3.1-fast': 'google/veo-3.1-fast',
   'veo-lite': 'google/veo-3.1-lite',
+  // Gemini Omni Flash (AI Studio, F-1587) — `kling-omni` segue sendo o Kling.
+  omni: 'gemini-omni-1.1-flash',
+  'omni-flash': 'gemini-omni-1.1-flash',
+  'gemini-omni': 'gemini-omni-1.1-flash',
+  'gemini-omni-flash': 'gemini-omni-1.1-flash',
+  'gemini-omni-1.1': 'gemini-omni-1.1-flash',
   // Native Google Veo (AI Studio)
   'veo-native': 'veo-3.1-generate-preview',
   'veo-3.1-native': 'veo-3.1-generate-preview',
@@ -65,6 +71,37 @@ const ALIASES: Record<string, string> = {
   'nano-banana': 'gemini-3.1-flash-image-preview',
   gemini: 'gemini-3.1-flash-image-preview',
   'gpt-image': 'gpt-image-2',
+  // ElevenLabs (F-1590): o Turbo v2.5 foi descontinuado; a própria ElevenLabs
+  // diz que o Flash v2.5 é equivalente e o recomenda em todo caso.
+  'eleven-turbo-v2-5': 'eleven_flash_v2_5',
+  'eleven-v3': 'eleven_v4',
+  // Grok Imagine (xAI, F-1599) — nomes que já dizem o tipo. Nunca um id real
+  // (`grok-imagine-video` e `grok-imagine-image` são modelos, não apelidos).
+  'grok-image': 'grok-imagine-image-2.0',
+  'grok-image-2': 'grok-imagine-image-2.0',
+  'grok-image-quality': 'grok-imagine-image-quality',
+  'grok-image-pro': 'grok-imagine-image-quality',
+  'grok-video': 'grok-imagine-video-1.5',
+  'grok-video-1.5': 'grok-imagine-video-1.5',
+  'grok-video-lite': 'grok-imagine-video-1.5-lite',
+  'grok-video-classic': 'grok-imagine-video',
+};
+
+/**
+ * Apelidos que dependem do tipo pedido: "grok" na ferramenta de imagem é o
+ * Grok Imagine Image, na de vídeo é o Grok Imagine Video (F-1599).
+ */
+const KIND_ALIASES: Partial<Record<MediaKind, Record<string, string>>> = {
+  image: {
+    grok: 'grok-imagine-image-2.0',
+    'grok-imagine': 'grok-imagine-image-2.0',
+    imagine: 'grok-imagine-image-2.0',
+  },
+  video: {
+    grok: 'grok-imagine-video-1.5',
+    'grok-imagine': 'grok-imagine-video-1.5',
+    imagine: 'grok-imagine-video-1.5',
+  },
 };
 
 /** Normalized lookup: trim, lower-case, collapse spaces/underscores to `-`. */
@@ -82,14 +119,21 @@ export function normalizeMediaAlias(raw: string): string {
  */
 export function resolveMediaModelAlias(
   raw: string | undefined,
-  _kind?: MediaKind,
+  kind?: MediaKind,
 ): string | undefined {
   if (!raw?.trim()) return undefined;
   const key = normalizeMediaAlias(raw);
-  return ALIASES[key];
+  return (kind ? KIND_ALIASES[kind]?.[key] : undefined) ?? ALIASES[key];
 }
 
 /** Public map for MCP `nexus_media_providers` (agents must not invent ids). */
 export function listMediaModelAliases(): Record<string, string> {
   return { ...ALIASES };
+}
+
+/** Apelidos que mudam com o tipo (`grok` → imagem ou vídeo), para o MCP. */
+export function listMediaModelAliasesByKind(): Partial<Record<MediaKind, Record<string, string>>> {
+  return Object.fromEntries(
+    Object.entries(KIND_ALIASES).map(([kind, aliases]) => [kind, { ...aliases }]),
+  );
 }

@@ -9,7 +9,7 @@ import { Readable } from 'node:stream';
 import tls from 'node:tls';
 
 export type DynamicMediaProvider =
-  'openai-image' | 'replicate-image' | 'replicate-video' | 'google-video';
+  'openai-image' | 'replicate-image' | 'replicate-video' | 'google-video' | 'xai-video';
 
 export type PinnedMediaFetch = (
   url: URL,
@@ -38,6 +38,7 @@ const DEFAULT_LIMITS: Record<DynamicMediaProvider, MediaDownloadLimits> = {
   'replicate-image': { maxBytes: 64 * 1024 * 1024, timeoutMs: 120_000 },
   'replicate-video': { maxBytes: 256 * 1024 * 1024, timeoutMs: 120_000 },
   'google-video': { maxBytes: 256 * 1024 * 1024, timeoutMs: 120_000 },
+  'xai-video': { maxBytes: 256 * 1024 * 1024, timeoutMs: 120_000 },
 };
 const ALLOWED_HOST_SUFFIXES: Record<DynamicMediaProvider, string[]> = {
   'openai-image': ['openai.com', 'oaistatic.com', 'blob.core.windows.net'],
@@ -49,6 +50,10 @@ const ALLOWED_HOST_SUFFIXES: Record<DynamicMediaProvider, string[]> = {
     'gstatic.com',
     'storage.googleapis.com',
   ],
+  // F-1599: o vídeo do Grok Imagine é uma URL temporária e pública em
+  // `vidgen.x.ai` (docs.x.ai, resposta do `GET /v1/videos/{id}`); baixada sem
+  // a chave. Só esse host, nunca o `x.ai` inteiro.
+  'xai-video': ['vidgen.x.ai'],
 };
 
 interface ApprovedDownloadTarget {
@@ -152,7 +157,7 @@ function requestPinnedAddress(
         port: Number(url.port || 443),
         method: init.method ?? 'GET',
         path: `${url.pathname || '/'}${url.search}`,
-        headers: { Host: url.host },
+        headers: { ...Object.fromEntries(new Headers(init.headers)), Host: url.host },
         // Keep TLS identity bound to the allowlisted hostname while the TCP
         // socket is pinned to the already-validated numeric address.
         servername: url.hostname,
@@ -304,6 +309,7 @@ async function downloadHop(
   deps: MediaDownloadDeps,
   limits: MediaDownloadLimits,
   signal?: AbortSignal,
+  headers?: Readonly<Record<string, string>>,
 ): Promise<{ body?: Buffer; redirect?: string }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), limits.timeoutMs);
@@ -314,6 +320,7 @@ async function downloadHop(
     const requestInit: RequestInit = {
       redirect: 'manual',
       signal: requestSignal,
+      ...(headers ? { headers: { ...headers } } : {}),
     };
     const response = deps.fetchPinned
       ? await deps.fetchPinned(target.url, target.addresses, requestInit)
@@ -347,16 +354,56 @@ async function downloadHop(
   }
 }
 
-export async function downloadProviderAsset(
-  rawUrl: string,
-  provider: DynamicMediaProvider,
-  deps: MediaDownloadDeps = {
+function defaultDownloadDeps(): MediaDownloadDeps {
+  return {
     fetchFn: fetch,
     resolveHostname: resolveBrowserHostname,
     fetchPinned: fetchPinnedProviderAsset,
-  },
+  };
+}
+
+export async function downloadProviderAsset(
+  rawUrl: string,
+  provider: DynamicMediaProvider,
+  deps: MediaDownloadDeps = defaultDownloadDeps(),
   overrideLimits?: Partial<MediaDownloadLimits>,
   signal?: AbortSignal,
+): Promise<Buffer> {
+  return downloadWithPolicy(rawUrl, provider, deps, overrideLimits, signal);
+}
+
+/**
+ * Download que exige a credencial do serviço (Files API do Gemini, F-1587).
+ * A credencial vai só no primeiro salto e só se a URL for do host que o
+ * chamador montou (`credentialHost`); um redirect segue pela mesma política
+ * de host e DNS, sem a credencial.
+ */
+export async function downloadAuthenticatedProviderAsset(
+  rawUrl: string,
+  provider: DynamicMediaProvider,
+  credential: { host: string; headers: Readonly<Record<string, string>> },
+  deps: MediaDownloadDeps = defaultDownloadDeps(),
+  signal?: AbortSignal,
+): Promise<Buffer> {
+  let hostname: string;
+  try {
+    hostname = normalizedHostname(new URL(rawUrl));
+  } catch {
+    throw new Error(`${provider}: URL de download inválida`);
+  }
+  if (hostname !== credential.host.toLowerCase()) {
+    throw new Error(`${provider}: credencial só vai para ${credential.host}`);
+  }
+  return downloadWithPolicy(rawUrl, provider, deps, undefined, signal, credential.headers);
+}
+
+async function downloadWithPolicy(
+  rawUrl: string,
+  provider: DynamicMediaProvider,
+  deps: MediaDownloadDeps,
+  overrideLimits: Partial<MediaDownloadLimits> | undefined,
+  signal: AbortSignal | undefined,
+  firstHopHeaders?: Readonly<Record<string, string>>,
 ): Promise<Buffer> {
   signal?.throwIfAborted();
   const limits = { ...DEFAULT_LIMITS[provider], ...overrideLimits };
@@ -387,6 +434,7 @@ export async function downloadProviderAsset(
         timeoutMs: fetchTimeoutMs,
       },
       signal,
+      redirect === 0 ? firstHopHeaders : undefined,
     );
     if (result.body) return result.body;
     if (!result.redirect) throw new Error(`${provider}: download sem conteúdo`);

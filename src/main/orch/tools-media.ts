@@ -7,12 +7,17 @@ import {
 } from '../media/media-generation';
 import {
   computeMediaTierAlternatives,
+  defaultMediaChoices,
   listMediaProviders,
   MediaProviderUnavailableError,
 } from '../media/media-providers';
-import { listMediaModelAliases } from '../media/media-model-aliases';
+import {
+  listMediaModelAliases,
+  listMediaModelAliasesByKind,
+} from '../media/media-model-aliases';
 import { hasMediaKey, maskedMediaKey } from '../media/media-keys';
 import { recordMediaUsage } from '../usage/media-usage-recorder';
+import { estimateMediaToolUsd, reserveMediaSpend } from '../media/media-budget';
 import { num, requireStr, str, strArray } from './tool-util';
 import { resolveCwdForScope } from './workspace-path';
 import type { AgentGateContext } from './gate';
@@ -32,19 +37,42 @@ function baseDirFor(ctx: AgentGateContext): string {
   return resolveCwdForScope(executionScopeFor(ctx));
 }
 
+/**
+ * F-1598: o agente escolhe o modelo pelo que esta resposta traz — o cartão de
+ * cada modelo de vídeo (as regras que o motor aplica antes de cobrar, o preço
+ * de lista e o desligamento), o preço por imagem e o que roda sem provider.
+ * Nada aqui fala de qualidade: o Nexus não mediu um modelo contra outro.
+ */
 const mediaProvidersTool: McpToolDef = {
   name: 'nexus_media_providers',
   description:
     'List media generation providers (image/video/audio), their models, ' +
     'whether an API key is configured, and friendly model aliases ' +
-    '(seedream, seedance, veo, kling, sora, runway, luma…). Call before ' +
-    'generating; never invent providers/models outside this list.',
+    '(seedream, seedance, veo, omni, kling, sora, runway, luma, grok…; ' +
+    'aliasesByKind lists the ones that depend on the tool, e.g. "grok" is ' +
+    'Grok Imagine Image in nexus_image_generate and Grok Imagine Video in ' +
+    'nexus_video_generate). ' +
+    'Image providers carry imageCostUsd (list USD per image, per model). ' +
+    'Video providers carry videoModels, one card per model with the rules ' +
+    'nexus_video_generate enforces before any charge: durationsSeconds ' +
+    '(null = the model picks the length, so omit durationSeconds), ' +
+    'durationsByResolution / durationsWithImage limits, resolutions and ' +
+    'aspectRatios ([] = do not send that field), requiresImage, price ' +
+    '(usd-per-second by resolution, or usd-per-video by resolution and ' +
+    'seconds; billedByTokensUsdPerMillion = billed by tokens, the per-second ' +
+    'table is approximate), defaultRequestCostUsd, retiresOn/retired/' +
+    'replacement. defaults = what runs when you omit provider and model. ' +
+    'Prices are list prices, not quality: the Nexus has not measured model ' +
+    'quality. Call before generating; never invent providers/models outside ' +
+    'this list.',
   inputSchema: { type: 'object', properties: {} },
   handler: async () => ({
     providers: listMediaProviders(hasMediaKey, maskedMediaKey).map(
       ({ maskedKey: _masked, ...info }) => info,
     ),
+    defaults: defaultMediaChoices(hasMediaKey),
     aliases: listMediaModelAliases(),
+    aliasesByKind: listMediaModelAliasesByKind(),
   }),
 };
 
@@ -52,23 +80,31 @@ const imageGenerateTool: McpToolDef = {
   name: 'nexus_image_generate',
   description:
     'Generate an image and save it in the workspace. Returns {path}. ' +
-    'Providers: google-image (default/cheap) | openai-image | ' +
-    'replicate-image (ByteDance Seedream 5.0 Pro — flagship multimodal ' +
-    'image; official seed.bytedance.com/en/seedream5_0_pro; aliases: ' +
+    'Choose with nexus_media_providers: imageCostUsd is the list price per ' +
+    'image of each model; if the user named a model or provider, use it. ' +
+    'Without provider/model the keyed provider with the lowest list price ' +
+    'runs (see defaults there). Providers: google-image (Gemini Flash Image; ' +
+    'aspectRatio 1:1|16:9|9:16|4:3|3:4|3:2|2:3) | openai-image (gpt-image-2/1; ' +
+    'aspectRatio 1:1|16:9|9:16|4:3|3:4|3:2|2:3, mapped to its 3 sizes) | ' +
+    'replicate-image (ByteDance Seedream 5.0 Pro; aliases: ' +
     'seedream, seedream-5-pro, seedream5-0-pro, seedream-lite). ' +
     'Seedream aspectRatio: match_input_image|1:1|4:3|3:4|16:9|9:16|3:2|2:3|21:9. ' +
     'Seedream size: 1K|2K only (default 2K). imagePath + ' +
     'referenceImagePaths[] → image_input (1–10 refs, Seedream ONLY — ' +
     'google/openai-image accept just imagePath). ' +
+    'xai-image (Grok Imagine Image 2.0 via the XAI_API_KEY; alias grok): ' +
+    'imagePath edits that image; size 1K|1.5K|2K (grok-imagine-image: ' +
+    '1K|2K); aspectRatio 1:1|16:9|9:16|4:3|3:4|3:2|2:3|2:1|1:2|21:9|5:2|' +
+    '19.5:9|9:19.5|20:9|9:20|auto. ' +
     'Paths stay in the open workspace. Missing key → STOP and report ' +
-    '"configure o provider em Settings → Mídia".',
+    '"configure o provider em Ajustes → Serviços de mídia".',
   inputSchema: {
     type: 'object',
     properties: {
       prompt: { type: 'string' },
       provider: {
         type: 'string',
-        enum: ['google-image', 'openai-image', 'replicate-image'],
+        enum: ['google-image', 'openai-image', 'replicate-image', 'xai-image'],
       },
       model: { type: 'string' },
       outPath: { type: 'string' },
@@ -85,6 +121,9 @@ const imageGenerateTool: McpToolDef = {
   requiresConfirm: true,
   handler: async (args, ctx, invocation) => {
     assertMcpInvocationCurrent(invocation);
+    // F-1606: the media spend cap is checked before the provider is called.
+    const spend = reserveMediaSpend(estimateMediaToolUsd('image_generate', args, hasMediaKey), ctx.missionId, 'image_generate');
+    if (!spend.ok) return spend;
     try {
       const result = await generateImage({
         prompt: requireStr(args, 'prompt'),
@@ -99,11 +138,13 @@ const imageGenerateTool: McpToolDef = {
         signal: invocation?.signal,
         assertCurrentAuthority: invocation?.assertCurrentAuthority,
       });
+      spend.settle(result.estimatedCostUsd);
       assertMcpInvocationCurrent(invocation);
       await recordMediaUsage(result, ctx, invocation);
       assertMcpInvocationCurrent(invocation);
       return result;
     } catch (err) {
+      spend.release();
       if (err instanceof MediaProviderUnavailableError) {
         return {
           ok: false,
@@ -124,21 +165,44 @@ const videoGenerateTool: McpToolDef = {
   name: 'nexus_video_generate',
   description:
     'Generate a video clip and save the mp4 in the workspace. ' +
-    'Providers: replicate-video (default Seedance 2.0; also Veo/Kling/Sora/' +
-    'Runway/Luma) | google-video (native Veo via Gemini API key). ' +
-    'Friendly model aliases work: seedance, veo, kling, sora, runway, luma. ' +
-    'imagePath=first frame; endImagePath=last frame; referenceImagePaths[] ' +
-    'for Seedance/Veo character refs (max 9). On timeout the error includes ' +
-    'recoverJobId — call again with that id to resume without double charge. ' +
-    'Call nexus_media_providers first. Paths stay in the open workspace. ' +
-    'Missing key → STOP and report Settings → Mídia.',
+    'Choose with nexus_media_providers → videoModels, the same rules this ' +
+    'tool enforces (a request outside them is refused before any charge): ' +
+    'pick a model whose durationsSeconds, resolutions and aspectRatios fit ' +
+    'the brief, that needs no image you lack (requiresImage) and is not ' +
+    'retired, then compare price; if the user named a model or provider, use ' +
+    'it. Cost = seconds × the per-second price at the resolution, or the ' +
+    'per-video price. Without provider/model the keyed provider whose default ' +
+    'request has the lowest list price runs (see defaults there). ' +
+    'Providers: replicate-video (Seedance 2.0 default; also Veo 3.1, Kling, ' +
+    'Hailuo, Wan, Sora 2, Runway, Luma Ray) | google-video (Gemini API key: ' +
+    'default gemini-omni-1.1-flash — the model picks the clip length, so omit ' +
+    'durationSeconds; it bills tokens, close to the per-second table; ' +
+    'resolution 360p|720p|1080p|4k) | xai-video (Grok Imagine via the ' +
+    'XAI_API_KEY: default grok-imagine-video-1.5, also -1.5-lite and ' +
+    'grok-imagine-video; durationSeconds 1–15; resolution 480p|720p|1080p, ' +
+    'grok-imagine-video up to 720p; aspectRatio 16:9|9:16|1:1|4:3|3:4|3:2|' +
+    '2:3|21:9|5:2, ignored with imagePath (the clip follows the image); ' +
+    'references or endImagePath cap at 720p; prompt is optional when an ' +
+    'image input is given; each input image is billed: see inputImageUsd). ' +
+    'The native Veo 3.1 previews ' +
+    '(veo-3.1-*-generate-preview) retire on 2026-10-22: use Omni, or ' +
+    'google/veo-3.1 via Replicate. ' +
+    'Friendly model aliases work: seedance, veo, omni, kling, sora, runway, ' +
+    'luma, grok. imagePath=first frame; endImagePath=last frame (Seedance, ' +
+    'Veo, Kling, Luma, google-video — Omni needs imagePath with it — and only ' +
+    'grok-imagine-video-1.5 on xai-video); referenceImagePaths[] for ' +
+    'character refs: max 9 on Seedance, Veo and google-video; on xai-video up ' +
+    'to 14 on 1.5, 7 on grok-imagine-video (max 10 s), none on lite. On ' +
+    'timeout the error includes recoverJobId — call again with that id to ' +
+    'resume without double charge. Paths stay in the open workspace. ' +
+    'Missing key → STOP and report Ajustes → Serviços de mídia.',
   inputSchema: {
     type: 'object',
     properties: {
       prompt: { type: 'string' },
       provider: {
         type: 'string',
-        enum: ['replicate-video', 'google-video'],
+        enum: ['replicate-video', 'google-video', 'xai-video'],
       },
       model: { type: 'string' },
       outPath: { type: 'string' },
@@ -161,9 +225,18 @@ const videoGenerateTool: McpToolDef = {
     assertMcpInvocationCurrent(invocation);
     const recoverJobId = str(args, 'recoverJobId');
     const prompt = str(args, 'prompt');
-    if (!recoverJobId && !prompt) {
-      throw new Error('missing required argument: prompt (or recoverJobId)');
+    // xai-video aceita vídeo só a partir de imagem (prompt opcional com
+    // imagePath/endImagePath/referenceImagePaths); o motor recusa os demais.
+    const hasImageInput = Boolean(
+      str(args, 'imagePath') ||
+        str(args, 'endImagePath') ||
+        (strArray(args, 'referenceImagePaths') ?? []).length > 0,
+    );
+    if (!recoverJobId && !prompt && !hasImageInput) {
+      throw new Error('missing required argument: prompt (or recoverJobId, or an image input on xai-video)');
     }
+    const spend = reserveMediaSpend(estimateMediaToolUsd('video_generate', args, hasMediaKey), ctx.missionId, 'video_generate');
+    if (!spend.ok) return spend;
     try {
       const result = await generateVideo({
         prompt: prompt ?? '',
@@ -181,11 +254,15 @@ const videoGenerateTool: McpToolDef = {
         signal: invocation?.signal,
         assertCurrentAuthority: invocation?.assertCurrentAuthority,
       });
+      spend.settle(result.estimatedCostUsd);
       assertMcpInvocationCurrent(invocation);
       await recordMediaUsage(result, ctx, invocation);
       assertMcpInvocationCurrent(invocation);
       return result;
     } catch (err) {
+      // A timed-out job keeps running at the provider: its cost stays reserved.
+      if (err instanceof MediaJobTimeoutError) spend.settle();
+      else spend.release();
       assertMcpInvocationCurrent(invocation);
       if (err instanceof MediaJobTimeoutError) {
         return {
@@ -218,7 +295,7 @@ const audioGenerateTool: McpToolDef = {
     'Generate speech audio (TTS) from text via ElevenLabs and save the mp3 ' +
     'inside the open workspace. Returns {path}. voiceId optional (default Rachel). ' +
     'If the key is missing, STOP and report "configure o provider em ' +
-    'Settings → Mídia".',
+    'Ajustes → Serviços de mídia".',
   inputSchema: {
     type: 'object',
     properties: {
@@ -233,6 +310,8 @@ const audioGenerateTool: McpToolDef = {
   requiresConfirm: true,
   handler: async (args, ctx, invocation) => {
     assertMcpInvocationCurrent(invocation);
+    const spend = reserveMediaSpend(estimateMediaToolUsd('audio_generate', args, hasMediaKey), ctx.missionId, 'audio_generate');
+    if (!spend.ok) return spend;
     try {
       const result = await generateAudio({
         text: requireStr(args, 'text'),
@@ -244,11 +323,13 @@ const audioGenerateTool: McpToolDef = {
         signal: invocation?.signal,
         assertCurrentAuthority: invocation?.assertCurrentAuthority,
       });
+      spend.settle(result.estimatedCostUsd);
       assertMcpInvocationCurrent(invocation);
       await recordMediaUsage(result, ctx, invocation);
       assertMcpInvocationCurrent(invocation);
       return result;
     } catch (err) {
+      spend.release();
       if (err instanceof MediaProviderUnavailableError) {
         return {
           ok: false,

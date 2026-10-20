@@ -7,6 +7,7 @@ import {
   assertMcpInvocationCurrent,
   type McpToolInvocation,
 } from './mcp-protocol';
+import { parseRange } from '../video/media-stream-protocol';
 
 /**
  * Preview server local (benchmark §7): serve um diretório estático (build de
@@ -36,6 +37,23 @@ const MIME: Record<string, string> = {
   '.map': 'application/json',
   '.txt': 'text/plain; charset=utf-8',
   '.woff2': 'font/woff2',
+  '.woff': 'font/woff',
+  '.ttf': 'font/ttf',
+  '.otf': 'font/otf',
+  // F-1603: a prévia de vídeo toca mídia com seek (Range).
+  '.mp4': 'video/mp4',
+  '.m4v': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mov': 'video/quicktime',
+  '.mp3': 'audio/mpeg',
+  '.m4a': 'audio/mp4',
+  '.aac': 'audio/aac',
+  '.wav': 'audio/wav',
+  '.ogg': 'audio/ogg',
+  '.opus': 'audio/ogg',
+  '.flac': 'audio/flac',
+  '.vtt': 'text/vtt; charset=utf-8',
+  '.srt': 'text/plain; charset=utf-8',
 };
 
 interface RunningPreview {
@@ -71,6 +89,36 @@ interface OpenedPreviewFile {
 class ForbiddenPreviewPathError extends Error {}
 
 const runningById = new Map<string, RunningPreview>();
+
+/**
+ * Loopback servers the Nexus started and owns as a process, not as an
+ * http.Server here (F-1603: the HyperFrames Studio of nexus_video_preview_start).
+ * They are trusted browser targets only while registered: the owner
+ * unregisters on stop and when the process exits.
+ */
+export interface ExternalPreview {
+  readonly id: string;
+  readonly port: number;
+  readonly root: string;
+  readonly projectId: string;
+  readonly checkoutId: string;
+}
+const externalById = new Map<string, ExternalPreview>();
+
+export function registerExternalPreview(entry: ExternalPreview): void {
+  if (!Number.isInteger(entry.port) || entry.port <= 0 || entry.port > 65_535) {
+    throw new Error(`porta de prévia inválida: ${entry.port}`);
+  }
+  externalById.set(entry.id, { ...entry });
+}
+
+export function unregisterExternalPreview(id: string): void {
+  externalById.delete(id);
+}
+
+function trustedEntries(): Array<Pick<RunningPreview, 'port' | 'root' | 'projectId' | 'checkoutId'>> {
+  return [...runningById.values(), ...externalById.values()];
+}
 const previewIdByKey = new Map<string, string>();
 const startingByKey = new Map<string, Promise<PreviewStartResult>>();
 const stoppingById = new Map<string, Promise<boolean>>();
@@ -79,7 +127,7 @@ function previewKey(root: string, scope: PreviewScope): string {
   return JSON.stringify([scope.projectId, scope.checkoutId, root]);
 }
 
-function isOwnedBy(entry: RunningPreview, scope: PreviewScope): boolean {
+function isOwnedBy(entry: Pick<RunningPreview, 'projectId' | 'checkoutId'>, scope: PreviewScope): boolean {
   return (
     entry.projectId === scope.projectId &&
     entry.checkoutId === scope.checkoutId
@@ -147,17 +195,39 @@ function serve(root: string, req: http.IncomingMessage, res: http.ServerResponse
   }
   try {
     const { fd, filePath, stat } = openPreviewFile(root, candidate);
-    res.writeHead(200, {
-      'Content-Type': MIME[path.extname(filePath).toLowerCase()] ?? 'application/octet-stream',
-      'Content-Length': stat.size,
-      'Cache-Control': 'no-store',
-    });
-    if (req.method === 'HEAD') {
+    const type = MIME[path.extname(filePath).toLowerCase()] ?? 'application/octet-stream';
+    const rangeHeader = req.headers.range;
+    let start = 0;
+    let end = stat.size - 1;
+    if (typeof rangeHeader === 'string' && rangeHeader.length > 0) {
+      const range = parseRange(rangeHeader, stat.size);
+      if (!range) {
+        fs.closeSync(fd);
+        res.writeHead(416, { 'Content-Range': `bytes */${stat.size}`, 'Cache-Control': 'no-store' }).end();
+        return;
+      }
+      ({ start, end } = range);
+      res.writeHead(206, {
+        'Content-Type': type,
+        'Content-Length': end - start + 1,
+        'Content-Range': `bytes ${start}-${end}/${stat.size}`,
+        'Accept-Ranges': 'bytes',
+        'Cache-Control': 'no-store',
+      });
+    } else {
+      res.writeHead(200, {
+        'Content-Type': type,
+        'Content-Length': stat.size,
+        'Accept-Ranges': 'bytes',
+        'Cache-Control': 'no-store',
+      });
+    }
+    if (req.method === 'HEAD' || stat.size === 0) {
       fs.closeSync(fd);
       res.end();
       return;
     }
-    fs.createReadStream(filePath, { fd, autoClose: true }).pipe(res);
+    fs.createReadStream(filePath, { fd, start, end, autoClose: true }).pipe(res);
   } catch (error) {
     if (error instanceof ForbiddenPreviewPathError) {
       res.writeHead(403).end('forbidden');
@@ -346,7 +416,7 @@ export function isRunningPreviewUrl(raw: string | URL): boolean {
     const port = Number.parseInt(url.port, 10);
     return (
       Number.isInteger(port) &&
-      [...runningById.values()].some((entry) => entry.port === port)
+      trustedEntries().some((entry) => entry.port === port)
     );
   } catch {
     return false;
@@ -363,7 +433,7 @@ export function isRunningPreviewUrlForScope(
     if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1') return false;
     const port = Number.parseInt(url.port, 10);
     const root = fs.realpathSync.native(path.resolve(scope.rootRealPath));
-    return [...runningById.values()].some((entry) => {
+    return trustedEntries().some((entry) => {
       if (entry.port !== port || !isOwnedBy(entry, scope)) return false;
       const relative = path.relative(root, entry.root);
       return !path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`);

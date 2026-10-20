@@ -2,6 +2,8 @@ import type { McpToolDef } from './mcp-protocol';
 import { buildPaneTools } from './tools-panes';
 import { buildDomainTools } from './tools-domain';
 import { buildMediaTools } from './tools-media';
+import { buildVoiceTools } from './tools-voice';
+import { buildVideoTools } from './tools-video';
 import { buildFileTools } from './tools-files';
 import { buildTerminalTools } from './tools-terminal';
 import { buildGitTools } from './tools-git';
@@ -46,6 +48,8 @@ export function buildToolset(): McpToolDef[] {
     ...buildCodeMapTools(),
     ...buildSyncTools(),
     ...buildMediaTools(),
+    ...buildVoiceTools(),
+    ...buildVideoTools(),
     ...buildFileTools(),
     ...buildTerminalTools(),
     ...buildBgTools(),

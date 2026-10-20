@@ -477,6 +477,9 @@ const config: ForgeConfig = {
       // libghostty-vt (Ghostty, MIT) em wasm: grade do detector de tela no
       // Worker de análise. Fora do asar — o Worker lê com fs puro.
       'resources/ghostty',
+      // F-1594: package.json + lockfile do motor de vídeo fixado (HyperFrames);
+      // o Main instala com `npm ci --ignore-scripts` em <userData>/video-engines.
+      'resources/video-engines',
       // Linux: ícone concreto da janela (X11) e da entrada de menu que o ZIP
       // portátil escreve para si (`src/main/linux-desktop-entry.ts`).
       ...(process.platform === 'linux' ? ['assets/icon.png'] : []),

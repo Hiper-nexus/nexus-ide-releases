@@ -5,6 +5,8 @@
  * vault and NEVER reach the agent — it only receives the generated file path.
  */
 
+import type { VideoModelCard } from './media-video-models';
+
 export type MediaKind = 'image' | 'video' | 'audio';
 
 /**
@@ -19,6 +21,9 @@ export const MEDIA_PROVIDER_IDS = [
   'replicate-video',
   'google-video',
   'elevenlabs',
+  // F-1599: Grok Imagine (xAI), com a XAI_API_KEY da voz do Grok.
+  'xai-image',
+  'xai-video',
 ] as const;
 
 export type MediaProviderId = (typeof MEDIA_PROVIDER_IDS)[number];
@@ -35,6 +40,17 @@ export interface MediaProviderInfo {
   hasKey: boolean;
   /** Masked key preview for the settings UI (never the raw key). */
   maskedKey: string | null;
+  /**
+   * F-1585: preço de lista por imagem, em USD, por modelo (só imagem; o de
+   * vídeo depende de duração e resolução e vem de `media-video-models`).
+   */
+  imageCostUsd?: Record<string, number | null>;
+  /**
+   * F-1598: o cartão de cada modelo de vídeo (durações ou «o modelo decide»,
+   * resoluções, proporções, imagem obrigatória, preço de lista, desligamento),
+   * para o agente escolher sem tentar e ser recusado. Só vídeo.
+   */
+  videoModels?: Record<string, VideoModelCard | null>;
 }
 
 export interface MediaGenerationResult {
@@ -49,6 +65,11 @@ export interface MediaGenerationResult {
   durationMs: number;
   /** Long-running video job id (resume with recoverJobId on timeout). */
   jobId?: string;
+  /**
+   * F-1587: duração lida do MP4 gerado, em segundos, quando é o modelo que
+   * decide (Gemini Omni). O custo estimado usa este número.
+   */
+  videoDurationSeconds?: number;
 }
 
 export interface MediaUsageTotals {
@@ -93,9 +114,39 @@ export interface MediaStudioRequest {
   clientJobId: string;
 }
 
+/**
+ * F-1584: que tipo de falha o serviço devolveu — o Estúdio oferece a saída
+ * certa (ex.: abrir Serviços de mídia quando a chave foi recusada).
+ */
+export type MediaErrorKind =
+  | 'key'
+  | 'billing'
+  | 'not-found'
+  | 'rate-limit'
+  | 'unavailable'
+  | 'invalid-request';
+
 export type MediaStudioResponse =
-  | MediaGenerationResult
-  | { ok: false; error: string; recoverJobId?: string; canceled?: boolean };
+  /**
+   * F-1586: `artifactId` é a linha da galeria gravada para ESTE resultado —
+   * a prévia mostra o arquivo gerado, não "o mais novo do mesmo tipo".
+   */
+  | (MediaGenerationResult & { artifactId?: string })
+  | {
+      ok: false;
+      error: string;
+      errorKind?: MediaErrorKind;
+      recoverJobId?: string;
+      canceled?: boolean;
+    };
+
+/**
+ * F-1589: geração, galeria e totais vivem na pasta do projeto aberto; chaves
+ * e provedores são globais. Sem projeto, o Main responde com esta frase (ou
+ * `null` nas leituras) em vez de lançar a recusa crua de escopo.
+ */
+export const MEDIA_NO_PROJECT_ERROR =
+  'Abra um projeto para gerar: as imagens e os vídeos são salvos na pasta do projeto aberto.';
 
 export const MEDIA_CHANNELS = {
   listProviders: 'media:listProviders',

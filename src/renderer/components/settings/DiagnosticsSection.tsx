@@ -15,6 +15,7 @@ import {
   readMicPermission,
 } from './ops-format';
 import { DoctorEngineSettings } from './DoctorEngineSettings';
+import { StorageHygieneCard } from './StorageHygieneCard';
 import { ContextDraftsSection } from './ContextDraftsSection';
 import { TerminalPerformanceStatus } from './TerminalPerformanceStatus';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
@@ -141,6 +142,8 @@ export function DiagnosticsSection() {
       </p>
 
       <DoctorEngineSettings />
+
+      <StorageHygieneCard />
 
       <ContextDraftsSection />
 

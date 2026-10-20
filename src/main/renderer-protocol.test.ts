@@ -35,6 +35,19 @@ describe('renderer protocol registration', () => {
     expect(privileges).not.toHaveProperty('corsEnabled');
   });
 
+  it('F-1596: other app schemes ride in the single privileged registration', () => {
+    const registerSchemesAsPrivileged = vi.fn();
+    const media = { scheme: 'nexus-media', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } };
+
+    registerRendererProtocolScheme({ registerSchemesAsPrivileged }, [media]);
+
+    expect(registerSchemesAsPrivileged).toHaveBeenCalledOnce();
+    expect(registerSchemesAsPrivileged.mock.calls[0]?.[0]?.map((entry: { scheme: string }) => entry.scheme)).toEqual([
+      RENDERER_PROTOCOL_SCHEME,
+      'nexus-media',
+    ]);
+  });
+
   it('installs one handler for the exact renderer scheme', () => {
     const handle = vi.fn();
 

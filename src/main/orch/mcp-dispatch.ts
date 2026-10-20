@@ -875,11 +875,11 @@ export async function dispatchToolCall(
     );
   }
 
-  // Runtime availability (ex.: credencial TypeSafe ausente): antes do intent,
+  // Runtime availability (credencial TypeSafe ausente, chave interna desligada): antes do intent,
   // como os demais denyBeforeIntent.
   if (tool.available && !tool.available()) {
     return denyBeforeIntent(
-      `${tool.name} indisponível: configure a chave TypeSafe em Ajustes → Chaves de API`,
+      `${tool.name} indisponível: ${tool.unavailableReason ?? 'configure a chave TypeSafe em Ajustes → Chaves de API'}`,
     );
   }
 

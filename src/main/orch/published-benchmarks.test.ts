@@ -5,7 +5,9 @@ import {
   publishedBenchmarkFor,
   publishedBenchmarkKey,
   publishedCodingQuality,
+  publishedEntryScore100,
   publishedScoreHint,
+  resolvePublishedBenchmark,
 } from './published-benchmarks';
 import { DEFAULT_ROUTING_TABLE } from './task-router';
 
@@ -175,6 +177,40 @@ describe('benchmarks oficiais publicados (F-675)', () => {
     expect(publishedCodingQuality('qwen', 'deepseek-flash')).toBe(
       publishedCodingQuality('deepseek', 'deepseek-flash'),
     );
+  });
+
+  it('F-1588: o resolvedor diz de quem são os números', () => {
+    expect(resolvePublishedBenchmark('codex', 'gpt-6.1-sol')).toMatchObject({
+      key: 'codex:gpt-6.1-sol',
+      origin: 'own',
+    });
+    // Esforço e contexto não mudam o modelo: os números são do id base.
+    expect(resolvePublishedBenchmark('agy', 'gemini-3.8-flash-high')).toMatchObject({
+      key: 'agy:gemini-3.8-flash',
+      origin: 'variant',
+    });
+    expect(resolvePublishedBenchmark('claude', 'claude-opus-5-5[1m]')?.origin).toBe('variant');
+    expect(resolvePublishedBenchmark('claude', 'deepseek-flash')).toMatchObject({
+      key: 'deepseek:deepseek-flash',
+      origin: 'same-model',
+    });
+    // Versão nova sem publicação: piso do antecessor, nunca "número dela".
+    expect(resolvePublishedBenchmark('codex', 'gpt-6.2-sol')).toMatchObject({
+      key: 'codex:gpt-6.1-sol',
+      origin: 'predecessor',
+    });
+    expect(
+      resolvePublishedBenchmark('minimax-code', 'minimax/MiniMax-M3.1-Flash-Preview'),
+    ).toMatchObject({ key: 'minimax-code:minimax/MiniMax-M3', origin: 'predecessor' });
+    expect(resolvePublishedBenchmark('qwen', 'qwen3.8-max')).toBeNull();
+  });
+
+  it('F-1588: a nota 0..100 da entrada é a mesma do hint do roteador', () => {
+    const entry = publishedBenchmarkFor('codex', 'gpt-6-astra')!;
+    expect(publishedEntryScore100(entry)).toBe(
+      publishedScoreHint('codex', 'gpt-6-astra')!.score100,
+    );
+    expect(publishedEntryScore100({ source: 'x' })).toBeNull();
   });
 });
 

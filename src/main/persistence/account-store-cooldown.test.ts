@@ -53,10 +53,12 @@ import {
   isAccountBlockedForScope,
   pickAvailable,
   pickAvailableForFailover,
+  activateAccount,
   prepareAccountForSpawn,
   setCooldown,
 } from './account-store';
 import type { Account } from '../../shared/account-types';
+import type { HeadroomInput } from '../quota/account-headroom';
 
 function makeDb(): Db {
   const db = new Database(':memory:');
@@ -475,6 +477,87 @@ describe('F-1483: conta medida em 100% não é escolhida no failover', () => {
     const b = addAcct('b');
     const pick = pickAvailableForFailover('claude', a.id, NOW, undefined, {
       quotaByAccountId: new Map([[b.id, full(NOW + 2 * HOUR)]]),
+    });
+    expect(pick.account?.id).toBe(b.id);
+  });
+});
+
+describe('pickAvailableForFailover — drenagem (limiar antes do esgotamento)', () => {
+  const EV = { requireSource: 'provider-api' as const, maxAgeMs: 600_000, now: NOW };
+  const win = (label: string, usedRatio: number) => ({
+    label,
+    kind: 'hours' as const,
+    usedRatio,
+    source: 'provider-api' as const,
+  });
+  const read = (usedRatio: number): HeadroomInput => ({
+    windows: [win('5 Horas', usedRatio)],
+    updatedAt: NOW - 60_000,
+  });
+
+  it('a ativa drenando cede para a irmã e o pick diz drained', () => {
+    const a = addAcct('a');
+    const b = addAcct('b');
+    activateAccount(a.id);
+    const pick = pickAvailableForFailover('claude', null, NOW, undefined, {
+      quotaByAccountId: new Map([[a.id, read(0.9)]]),
+      drain: EV,
+    });
+    expect(pick.account?.id).toBe(b.id);
+    expect(pick.drained).toBe(true);
+  });
+
+  it('sem drain nas options nada muda', () => {
+    const a = addAcct('a');
+    addAcct('b');
+    activateAccount(a.id);
+    const pick = pickAvailableForFailover('claude', null, NOW, undefined, {
+      quotaByAccountId: new Map([[a.id, read(0.9)]]),
+    });
+    expect(pick.account?.id).toBe(a.id);
+    expect(pick.drained).toBeFalsy();
+  });
+
+  it('a ativa abaixo do limiar fica e drained é falso', () => {
+    const a = addAcct('a');
+    addAcct('b');
+    activateAccount(a.id);
+    const pick = pickAvailableForFailover('claude', null, NOW, undefined, {
+      quotaByAccountId: new Map([[a.id, read(0.88)]]),
+      drain: EV,
+    });
+    expect(pick.account?.id).toBe(a.id);
+    expect(pick.drained).toBeFalsy();
+  });
+
+  it('model filtra os buckets antes de decidir a drenagem', () => {
+    const a = addAcct('a');
+    addAcct('b');
+    activateAccount(a.id);
+    const mixed: HeadroomInput = {
+      windows: [win('Gemini · 5 Horas', 0.1), win('Claude/GPT · 5 Horas', 1)],
+      updatedAt: NOW - 60_000,
+    };
+    const pick = pickAvailableForFailover('claude', null, NOW, undefined, {
+      quotaByAccountId: new Map([[a.id, mixed]]),
+      drain: EV,
+      model: 'gemini-3.8-flash-high',
+    });
+    expect(pick.account?.id).toBe(a.id);
+    expect(pick.drained).toBeFalsy();
+  });
+
+  it('sem model o bucket mais apertado decide (recuo conservador)', () => {
+    const a = addAcct('a');
+    const b = addAcct('b');
+    activateAccount(a.id);
+    const mixed: HeadroomInput = {
+      windows: [win('Gemini · 5 Horas', 0.1), win('Claude/GPT · 5 Horas', 1)],
+      updatedAt: NOW - 60_000,
+    };
+    const pick = pickAvailableForFailover('claude', null, NOW, undefined, {
+      quotaByAccountId: new Map([[a.id, mixed]]),
+      drain: EV,
     });
     expect(pick.account?.id).toBe(b.id);
   });

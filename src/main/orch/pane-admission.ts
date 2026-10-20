@@ -105,6 +105,60 @@ export function limitsForMachine(
 export const DEFAULT_PANE_ADMISSION_LIMITS: PaneAdmissionLimits = limitsForMachine(24 * 1024);
 
 /**
+ * Fração da reserva (`minFreeMB`) abaixo da qual a pressão é SEVERA. Mora
+ * aqui, junto de quem define a reserva, e é importada pelo guardião — dois
+ * literais em módulos diferentes derivam no primeiro ajuste.
+ */
+export const SEVERE_PRESSURE_FREE_RATIO = 0.6;
+/** Fração da reserva abaixo da qual a pressão é CRÍTICA (beira do freeze). */
+export const CRITICAL_PRESSURE_FREE_RATIO = 0.3;
+
+/**
+ * Memória livre MEDIDA abaixo de 30 % da reserva: a beira do freeze.
+ *
+ * É só isto que autoriza a recusa dura da admissão. Swap fica FORA de
+ * propósito: o gate de swap nasce desarmado e, mesmo armado por uma máquina,
+ * é advisory por decisão do operador (ele AVISA e só recusa com a trava dura)
+ * — no macOS o número guarda o pico, não o agora.
+ *
+ * Amostra ausente ou `freeMB` nulo nunca é crítico: falta de dado não vira
+ * pressão inventada. Reserva zerada (`NEXUS_PANE_MIN_FREE_MB=0`) desliga o
+ * limiar — a válvula de escape de quem não quer freio nenhum.
+ */
+export function isCriticalFreeMemory(
+  sample: SystemMemorySample | null,
+  limits: PaneAdmissionLimits,
+): boolean {
+  if (!sample) return false;
+  return (
+    limits.minFreeMB > 0 &&
+    sample.freeMB !== null &&
+    sample.freeMB < limits.minFreeMB * CRITICAL_PRESSURE_FREE_RATIO
+  );
+}
+
+/**
+ * Pressão crítica para o GUARDIÃO (reaper e freio de emergência): a livre
+ * crítica acima, OU swap acima do teto que ESTA máquina armou. Mantém, byte a
+ * byte, o que `productionCriticalMemoryPressure` já decidia — quem armou
+ * `NEXUS_PANE_MAX_SWAP_MB` quer o swap tratado como pressão naquela máquina.
+ *
+ * A admissão NÃO usa este predicado: ela recusa só por `isCriticalFreeMemory`.
+ */
+export function isCriticalMemoryPressureSample(
+  sample: SystemMemorySample | null,
+  limits: PaneAdmissionLimits,
+): boolean {
+  if (!sample) return false;
+  if (isCriticalFreeMemory(sample, limits)) return true;
+  return (
+    limits.maxSwapUsedMB > 0 &&
+    sample.swapUsedMB !== null &&
+    sample.swapUsedMB > limits.maxSwapUsedMB
+  );
+}
+
+/**
  * Os mesmos limiares do gate de spawn, lidos como "a máquina já está sob
  * pressão". Swap só entra se a máquina armou o gate dela.
  */
@@ -357,6 +411,31 @@ export function evaluatePaneAdmission(input: PaneAdmissionInput): PaneAdmissionV
 
   const idleHint = describeIdleCandidates(input.idleCandidates);
   const reserved = describeReservations(input.reservations);
+  // 19/10 (cliente iMac M5 16 GB) — a ÚNICA recusa que não pede `hardBlocks`.
+  // A doutrina "menos travas" (16/09) recusa trava por CONTAGEM, e segue
+  // valendo: moderada e severa só avisam. Mas ela mesma diz "bloqueio só por
+  // pressão real", e livre abaixo de 30 % da reserva é a medida de que o
+  // próximo pane leva o sistema inteiro ao chão — ali o aviso que a pessoa
+  // dispensa com um clique custa a máquina dela. `NEXUS_PANE_GUARD=off` e
+  // `NEXUS_PANE_MIN_FREE_MB=0` continuam desligando este freio.
+  if (isCriticalFreeMemory(memory, limits)) {
+    const measured =
+      memory?.freeMB !== null && memory
+        ? `${Math.round(memory.freeMB)} MB livres, abaixo de ${Math.round(
+            limits.minFreeMB * CRITICAL_PRESSURE_FREE_RATIO,
+          )} MB (30 % da reserva de ${limits.minFreeMB} MB)`
+        : `memória livre abaixo de 30 % da reserva de ${limits.minFreeMB} MB`;
+    return {
+      ok: false,
+      reason: 'memory',
+      message:
+        `Memória RAM crítica: ${measured} — memória física da máquina, não ` +
+        `limite do plano${reserved ? `; os livres já descontam ${reserved}` : ''}. ` +
+        'Abrir mais um pane agora pode travar o sistema inteiro. ' +
+        `${idleHint} Feche ou estacione um pane e tente de novo; ` +
+        'NEXUS_PANE_GUARD=off desliga este freio por sua conta.',
+    };
+  }
   const capMessage =
     `Teto de ${limits.maxAgentPanes} panes de agente atingido ` +
     `(${input.liveAgentPanes} vivos). ${idleHint} ` +

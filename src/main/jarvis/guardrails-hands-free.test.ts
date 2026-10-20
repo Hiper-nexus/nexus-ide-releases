@@ -83,6 +83,7 @@ describe('Jarvis mãos-livres — o que roda direto', () => {
     // preview e goal
     ['nexus_preview_start', { dir: 'dist' }],
     ['nexus_preview_stop', {}],
+    ['nexus_video_preview_stop', { id: 'vpreview-1' }],
     ['nexus_goal_status', {}],
   ] as const)('%s executa sem modal', (tool, args) => {
     expect(handsFree(tool, { ...args })).toBe(false);
@@ -140,6 +141,13 @@ describe('Jarvis mãos-livres — o que continua confirmando', () => {
     'nexus_image_generate',
     'nexus_video_generate',
     'nexus_audio_generate',
+    'nexus_video_export',
+    'nexus_video_render',
+    'nexus_video_preview_start',
+    'nexus_video_capture',
+    'nexus_music_generate',
+    'nexus_voiceover_generate',
+    'nexus_voiceover_align',
     'nexus_skills',
     'nexus_harness',
     'nexus_goal_register',
@@ -389,6 +397,7 @@ describe('contrato com o registro real de tools', () => {
     'nexus_git_pull',
     'nexus_preview_start',
     'nexus_preview_stop',
+    'nexus_video_preview_stop',
     'nexus_goal_status',
   ]);
   // terminal_run e bg_run decidem pelo comando (cobertos acima).
@@ -431,6 +440,13 @@ describe('contrato com o registro real de tools', () => {
     'nexus_squad_save',
     'nexus_ui_action',
     'nexus_video_generate',
+    'nexus_video_export',
+    'nexus_video_render',
+    'nexus_video_preview_start',
+    'nexus_video_capture',
+    'nexus_music_generate',
+    'nexus_voiceover_generate',
+    'nexus_voiceover_align',
     'nexus_wave_advance',
   ]);
 

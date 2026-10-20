@@ -4,12 +4,17 @@ import path from 'node:path';
 import { z } from 'zod';
 import {
   MEDIA_CHANNELS,
+  MEDIA_NO_PROJECT_ERROR,
   MEDIA_PROVIDER_IDS,
   type MediaArtifactInfo,
   type MediaStudioResponse,
   type MediaUsageTotals,
 } from '../../shared/media-types';
-import { listMediaProviders } from './media-providers';
+import {
+  listMediaProviders,
+  MediaProviderUnavailableError,
+} from './media-providers';
+import { MediaProviderHttpError } from './media-errors';
 import { hasMediaKey, maskedMediaKey, setMediaKey } from './media-keys';
 import {
   generateImage,
@@ -18,9 +23,13 @@ import {
   MediaJobTimeoutError,
 } from './media-generation';
 import { resolveMediaOutputPath } from './media-path-policy';
+import { estimateMediaToolUsd, reserveMediaSpend } from './media-budget';
 import { createScopedMediaUsageStore } from '../usage/media-usage-store';
 import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
-import { requireRendererWorkspaceScope } from '../persistence/renderer-workspace-scope';
+import {
+  getRendererWorkspaceScope,
+  requireRendererWorkspaceScope,
+} from '../persistence/renderer-workspace-scope';
 import { sameProjectScope } from '../orch/project-scoped-broadcast';
 
 /**
@@ -102,12 +111,13 @@ export function registerMediaIpc(runtimeManager: ProjectRuntimeManager): void {
     return setMediaKey(parsed.data.providerId, parsed.data.key);
   });
 
-  ipcMain.handle(MEDIA_CHANNELS.usageTotals, (event): MediaUsageTotals =>
-    createScopedMediaUsageStore(
-      runtimeManager,
-      requireRendererWorkspaceScope(event.sender),
-    ).totals(),
-  );
+  // F-1589: chaves e provedores são globais; só totais, galeria e geração
+  // pertencem ao projeto. Sem projeto aberto a resposta diz isso (null), em
+  // vez de lançar e derrubar a tela inteira de Serviços de mídia.
+  ipcMain.handle(MEDIA_CHANNELS.usageTotals, (event): MediaUsageTotals | null => {
+    const scope = getRendererWorkspaceScope(event.sender);
+    return scope ? createScopedMediaUsageStore(runtimeManager, scope).totals() : null;
+  });
 
   ipcMain.handle(
     MEDIA_CHANNELS.generate,
@@ -115,7 +125,25 @@ export function registerMediaIpc(runtimeManager: ProjectRuntimeManager): void {
       const parsed = studioRequestSchema.safeParse(raw);
       if (!parsed.success) return { ok: false, error: 'payload inválido' };
       const req = parsed.data;
-      const scope = requireRendererWorkspaceScope(event.sender);
+      const scope = getRendererWorkspaceScope(event.sender);
+      if (!scope) return { ok: false, error: MEDIA_NO_PROJECT_ERROR };
+      // F-1606: the media spend cap also holds for the Estúdio's own Gerar.
+      const spend = reserveMediaSpend(
+        estimateMediaToolUsd(
+          req.kind === 'image' ? 'image_generate' : 'video_generate',
+          {
+            provider: req.providerId,
+            model: req.model,
+            durationSeconds: req.durationSeconds,
+            resolution: req.resolution,
+            recoverJobId: req.recoverJobId,
+          },
+          hasMediaKey,
+        ),
+        null,
+        'media-studio',
+      );
+      if (!spend.ok) return { ok: false, error: spend.error };
       const controller = new AbortController();
       const jobKey = studioJobKey(event.sender.id, req.clientJobId);
       studioJobs.set(jobKey, controller);
@@ -161,8 +189,9 @@ export function registerMediaIpc(runtimeManager: ProjectRuntimeManager): void {
                 signal: controller.signal,
                 assertCurrentAuthority: assertStudioAuthority,
               });
+        spend.settle(result.estimatedCostUsd);
         assertStudioAuthority();
-        await recordStudioUsage(
+        const artifactId = await recordStudioUsage(
           result,
           {
             agentName: 'media-studio',
@@ -175,8 +204,11 @@ export function registerMediaIpc(runtimeManager: ProjectRuntimeManager): void {
           },
         );
         assertStudioAuthority();
-        return result;
+        return { ...result, artifactId };
       } catch (err) {
+        // A timed-out job keeps running at the provider: its cost stays reserved.
+        if (err instanceof MediaJobTimeoutError) spend.settle();
+        else spend.release();
         if (err instanceof MediaAbortError) {
           return { ok: false, error: 'geração cancelada', canceled: true };
         }
@@ -190,6 +222,11 @@ export function registerMediaIpc(runtimeManager: ProjectRuntimeManager): void {
         return {
           ok: false,
           error: err instanceof Error ? err.message : String(err),
+          ...(err instanceof MediaProviderHttpError
+            ? { errorKind: err.kind }
+            : err instanceof MediaProviderUnavailableError
+              ? { errorKind: 'key' as const }
+              : {}),
         };
       } finally {
         studioJobs.delete(jobKey);
@@ -208,17 +245,16 @@ export function registerMediaIpc(runtimeManager: ProjectRuntimeManager): void {
     return { ok: true };
   });
 
-  ipcMain.handle(MEDIA_CHANNELS.listArtifacts, (event): MediaArtifactInfo[] =>
-    createScopedMediaUsageStore(
-      runtimeManager,
-      requireRendererWorkspaceScope(event.sender),
-    ).listRecent(60),
-  );
+  ipcMain.handle(MEDIA_CHANNELS.listArtifacts, (event): MediaArtifactInfo[] | null => {
+    const scope = getRendererWorkspaceScope(event.sender);
+    return scope ? createScopedMediaUsageStore(runtimeManager, scope).listRecent(60) : null;
+  });
 
   ipcMain.handle(MEDIA_CHANNELS.revealArtifact, (event, raw) => {
     const parsed = storageKeyPayload.safeParse(raw);
     if (!parsed.success) return { ok: false, error: 'payload inválido' };
-    const scope = requireRendererWorkspaceScope(event.sender);
+    const scope = getRendererWorkspaceScope(event.sender);
+    if (!scope) return { ok: false, error: MEDIA_NO_PROJECT_ERROR };
     const abs = resolveMediaOutputPath(
       parsed.data.storageKey,
       scope.rootRealPath,
@@ -230,7 +266,8 @@ export function registerMediaIpc(runtimeManager: ProjectRuntimeManager): void {
   ipcMain.handle(MEDIA_CHANNELS.readArtifactDataUrl, async (event, raw) => {
     const parsed = storageKeyPayload.safeParse(raw);
     if (!parsed.success) return { ok: false, error: 'payload inválido' };
-    const scope = requireRendererWorkspaceScope(event.sender);
+    const scope = getRendererWorkspaceScope(event.sender);
+    if (!scope) return { ok: false, error: MEDIA_NO_PROJECT_ERROR };
     const abs = resolveMediaOutputPath(
       parsed.data.storageKey,
       scope.rootRealPath,
