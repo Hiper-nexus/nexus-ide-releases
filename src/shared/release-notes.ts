@@ -11919,7 +11919,7 @@ export const RELEASE_076335: AppRelease = {
   fixes: [...RELEASE_076334.fixes],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076336: AppRelease = {
   version: '0.76.336',
   date: '2026-10-20',
   codename: 'O Nexus limpa o próprio disco (macOS)',
@@ -11938,3 +11938,17 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Pool de cópias de trabalho respeita o disco', detail: 'Com o disco crítico, o Nexus não deixa mais cópias de reserva prontas (cerca de 1,6 GB cada); o agente cria a sua na hora.' },
   ],
 };
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.337',
+  date: '2026-10-20',
+  codename: 'O Nexus limpa o próprio disco',
+  summary: 'No desktop Linux, a higiene de disco passa a rodar sozinha: cópias de trabalho de panes encerrados deixam de ficar para sempre, os prazos encurtam quando o disco aperta e nada sai se o trabalho só existir ali. Configurações → Diagnóstico mostra o espaço e oferece Limpar agora. A tag 0.76.336 é o pacote macOS e não recebe arquivos Linux.',
+  highlights: [
+    ...RELEASE_076336.highlights.filter((note) => note.title !== 'Windows'),
+    { title: 'Pacote Linux', detail: 'A tag 0.76.336 é o pacote macOS da higiene de disco e não recebe arquivos Linux. A tag 0.76.335 é o pacote Linux anterior. O desktop Linux sai na 0.76.337, com a limpeza automática, a aposentadoria das cópias de trabalho e o painel de armazenamento.' },
+  ],
+  fixes: [...RELEASE_076336.fixes],
+};
+
+export const RELEASE_076337: AppRelease = CURRENT_RELEASE;
