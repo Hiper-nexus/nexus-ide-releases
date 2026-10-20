@@ -67,6 +67,13 @@
   overflow: hidden;
 }
 
+/* O painel mede a PRÓPRIA largura: embutido em Ajustes ele fica estreito
+   dentro de uma janela larga, e o @media por viewport nunca disparava. */
+.voice-settings--embedded .voice-settings__container,
+.agent-picker__panel--voice {
+  container: voice-settings / inline-size;
+}
+
 /* ── Header ─────────────────────────────────────────────────────────── */
 .voice-settings__hero {
   display: flex;
@@ -258,6 +265,10 @@
   align-items: center;
   width: 100%;
   min-height: 48px;
+  /* Na coluna de altura limitada o item encolhia até 48px com o subtítulo em
+     duas linhas, e o texto vazava por cima do item de baixo. Não encolhe: a
+     nav rola. */
+  flex: 0 0 auto;
   padding: var(--space-2-5) var(--space-2-5);
   border: 1px solid transparent;
   border-radius: var(--radius-lg);
@@ -992,6 +1003,45 @@
   padding: var(--space-6) var(--space-4);
   color: var(--text-dim);
   text-align: center;
+}
+
+/* Painel estreito (embutido numa coluna de Ajustes): a nav vira uma faixa de
+   abas acima do conteúdo, sem subtítulo, e o conteúdo ganha a largura toda. */
+@container voice-settings (max-width: 600px) {
+  .voice-settings__shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .voice-settings__nav {
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: var(--space-2);
+  }
+
+  .voice-settings__nav-item {
+    width: auto;
+    min-width: max-content;
+    min-height: 40px;
+    grid-template-columns: 24px auto;
+    padding: var(--space-1-5) var(--space-2-5);
+  }
+
+  .voice-settings__nav-icon {
+    width: 24px;
+    height: 24px;
+  }
+
+  .voice-settings__nav-item > span:not(.voice-settings__nav-icon) {
+    display: none;
+  }
+
+  .voice-settings__stage {
+    padding: var(--space-3);
+  }
 }
 
 /* ── Responsive ─────────────────────────────────────────────────────── */
