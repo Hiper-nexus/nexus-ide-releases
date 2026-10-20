@@ -19,6 +19,7 @@ import { useSessionStateStore } from '../state/session-state-store';
 import { useSettingsStore } from '../state/settings-store';
 import { useMissionSetupStore } from '../state/mission-setup-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
+import { useMediaStudioStore } from '../state/media-studio-store';
 import { usePaneScopeStore } from '../state/pane-scope-store';
 import { LOOSE_SCOPE_KEY } from '../lib/pane-spaces';
 import {
@@ -539,6 +540,14 @@ export function CommandPalette() {
       () => useProductNavigationStore.getState().openMemory(),
       '',
       'memory memória decisões contexto',
+    );
+    tool(
+      'media-studio',
+      'Estúdio de mídia',
+      'vision',
+      () => useMediaStudioStore.getState().show(),
+      '',
+      'estudio estúdio midia mídia imagem foto logo video vídeo audio áudio voz musica música gerar criar',
     );
     // F-1171: transcripts das CLIs do projeto do pane focado → histórico.
     tool(
