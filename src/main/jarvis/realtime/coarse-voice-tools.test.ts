@@ -4,7 +4,47 @@ import {
   COARSE_VOICE_TOOL_NAMES,
   coarseVoiceToolsAsRealtimeDefinitions,
   resolveCoarseVoiceTool,
+  systemReadToolForScope,
 } from './coarse-voice-tools';
+
+describe('ler — estado real do sistema', () => {
+  it('cada scope de estado vira a ferramenta MCP somente leitura certa', () => {
+    const cases: Array<[string, string]> = [
+      ['panes', 'nexus_pane_list'],
+      ['agentes', 'nexus_pane_list'],
+      ['Missões', 'nexus_mission_list'],
+      ['cotas', 'nexus_quota_status'],
+      ['git', 'nexus_git_status'],
+      ['saúde', 'nexus_system_doctor'],
+      ['diagnóstico', 'nexus_system_doctor'],
+    ];
+    for (const [scope, tool] of cases) {
+      expect(systemReadToolForScope(scope)).toBe(tool);
+      expect(resolveCoarseVoiceTool('ler', { scope })).toMatchObject({
+        kind: 'action',
+        action: { action: 'mcp_tool', tool, args: {} },
+      });
+    }
+  });
+
+  it('pane e view seguem nos caminhos de sempre', () => {
+    expect(systemReadToolForScope('pane')).toBeNull();
+    expect(systemReadToolForScope('view')).toBeNull();
+    expect(resolveCoarseVoiceTool('ler', {})).toMatchObject({ action: { action: 'read_pane' } });
+    expect(resolveCoarseVoiceTool('ler', { scope: 'tela' })).toMatchObject({
+      action: { action: 'read_current_view' },
+    });
+  });
+
+  it('a descrição de consultar manda ler o estado vivo em vez de adivinhar', () => {
+    const consultar = COARSE_VOICE_TOOLS.find((tool) => tool.name === 'consultar');
+    const ler = COARSE_VOICE_TOOLS.find((tool) => tool.name === 'ler');
+    expect(consultar?.description).toMatch(/ler/u);
+    for (const scope of ['panes', 'missoes', 'cotas', 'git', 'saude']) {
+      expect(ler?.description).toContain(`"${scope}"`);
+    }
+  });
+});
 
 describe('COARSE_VOICE_TOOLS declarations', () => {
   it('declares all 8 coarse tools with Gemini uppercase schema', () => {

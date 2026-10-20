@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { SAFE_REALTIME_ACTIONS } from './voice-realtime-actions';
 import {
+  LIVE_TOOL_RESULT_SUMMARY_MAX,
   jarvisLiveAudioPlaybackEventSchema,
   jarvisLiveToolResultInputSchema,
   speakRequestSchema,
@@ -101,5 +103,27 @@ describe('speakRequestSchema', () => {
     expect(speakRequestSchema.safeParse({ text: 'oi' }).success).toBe(true);
     expect(speakRequestSchema.safeParse({ text: '   ' }).success).toBe(false);
     expect(speakRequestSchema.safeParse({}).success).toBe(false);
+  });
+});
+
+describe('jarvisLiveToolResultInputSchema — resultado nunca some', () => {
+  const base = { callId: 'call_1', source: 'realtime' as const, ok: true, summary: 'ok' };
+
+  it('aceita toda ação que o modelo realtime pode pedir (open_agent incluído)', () => {
+    for (const tool of SAFE_REALTIME_ACTIONS) {
+      expect(jarvisLiveToolResultInputSchema.safeParse({ ...base, tool }).success, tool).toBe(true);
+    }
+  });
+
+  it('resumo longo é cortado, não recusado (antes o modelo esperava 120 s)', () => {
+    const parsed = jarvisLiveToolResultInputSchema.safeParse({
+      ...base,
+      tool: 'mcp_tool',
+      summary: 'x'.repeat(5_000),
+    });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data.summary.length).toBe(LIVE_TOOL_RESULT_SUMMARY_MAX);
+    expect(parsed.data.summary.endsWith('…')).toBe(true);
   });
 });

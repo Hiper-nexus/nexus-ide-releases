@@ -66,7 +66,7 @@ export const COARSE_VOICE_TOOLS: GeminiFunctionDeclaration[] = [
   {
     name: 'consultar',
     description:
-      'Consulta estado do Nexus (workspaces, panes, squads, missões, tela atual) e responde direto a partir do contexto fornecido. Use para perguntas de estado/UI ("quais panes?", "que tela é essa?").',
+      'Responde pelo RESUMO da tela que você já recebeu (projeto aberto, nomes dos panes, squads, títulos das missões, tela atual). É rápido, mas não sabe se um agente está trabalhando ou parado, nem cotas, git ou erros: para isso use "ler" com scope "panes", "missoes", "cotas", "git" ou "saude". Use para "que tela é essa?", "qual projeto está aberto?".',
     parameters: {
       type: 'OBJECT',
       properties: {
@@ -81,14 +81,14 @@ export const COARSE_VOICE_TOOLS: GeminiFunctionDeclaration[] = [
   {
     name: 'ler',
     description:
-      'Lê conteúdo visível no Nexus. Para output recente de um pane (o que o agente/Claude respondeu ali), use scope "pane" e paneId opcional; sem paneId lê o pane ativo. Para "leia esta tela/página", "o que tem aqui" ou conteúdo visível fora de um pane, use scope "view" — ele coleta a visão atual por accessibility tree + OCR local. Nunca invente texto que a leitura não retornar.',
+      'Lê o Nexus DE VERDADE, agora. scope "pane" (padrão): output recente de um pane (o que o agente respondeu ali); paneId opcional, sem ele lê o pane ativo. scope "view": a tela/página visível (accessibility + OCR local). scope "panes": todos os panes com estado (trabalhando, ocioso, saiu), CLI, modelo e missão. scope "missoes": missões e o status de cada uma. scope "cotas": uso e reset das cotas por conta. scope "git": branch e arquivos alterados do projeto. scope "saude": diagnóstico do app. Antes de afirmar estado (quem está trabalhando, o que falhou, quanto de cota sobra), LEIA. Nunca invente o que a leitura não retornar.',
     parameters: {
       type: 'OBJECT',
       properties: {
         scope: {
           type: 'STRING',
           description:
-            '"pane" (default) lê o output de um pane; "view" lê a tela/página visível atual por accessibility + OCR local.',
+            '"pane" (padrão), "view", "panes", "missoes", "cotas", "git" ou "saude".',
         },
         paneId: {
           type: 'STRING',
@@ -342,6 +342,40 @@ function navegarToAction(target: string, query: string): NexusRealtimeActionArgs
   }
 }
 
+/**
+ * Leituras do ESTADO do sistema que `ler` faz direto no Nexus. Todas são
+ * ferramentas MCP somente leitura (o despachante não pede confirmação nem
+ * missão para elas): a Jarvis responde pelo dado vivo, não pelo resumo da tela.
+ */
+const SYSTEM_READ_SCOPES: Readonly<Record<string, string>> = {
+  panes: 'nexus_pane_list',
+  paineis: 'nexus_pane_list',
+  painel: 'nexus_pane_list',
+  agentes: 'nexus_pane_list',
+  agents: 'nexus_pane_list',
+  missoes: 'nexus_mission_list',
+  missao: 'nexus_mission_list',
+  missions: 'nexus_mission_list',
+  cotas: 'nexus_quota_status',
+  cota: 'nexus_quota_status',
+  quota: 'nexus_quota_status',
+  quotas: 'nexus_quota_status',
+  limites: 'nexus_quota_status',
+  git: 'nexus_git_status',
+  repo: 'nexus_git_status',
+  repositorio: 'nexus_git_status',
+  saude: 'nexus_system_doctor',
+  health: 'nexus_system_doctor',
+  diagnostico: 'nexus_system_doctor',
+  doctor: 'nexus_system_doctor',
+  sistema: 'nexus_system_doctor',
+};
+
+/** Ferramenta MCP de leitura para o scope pedido, ou null (pane/view). */
+export function systemReadToolForScope(scope: string): string | null {
+  return SYSTEM_READ_SCOPES[navToken(scope)] ?? null;
+}
+
 function isCurrentViewScope(value: string): boolean {
   return [
     'view',
@@ -386,6 +420,11 @@ export function resolveCoarseVoiceTool(
       return { kind: 'direct', intent: 'consult', query };
     }
     case 'ler': {
+      const systemTool = systemReadToolForScope(str(args.scope, 64));
+      if (systemTool) {
+        const action: NexusRealtimeActionArgs = { action: 'mcp_tool', tool: systemTool, args: {} };
+        return { kind: 'action', action, summary: summarizeNexusRealtimeAction(action) };
+      }
       if (isCurrentViewScope(str(args.scope, 64))) {
         const action: NexusRealtimeActionArgs = { action: 'read_current_view' };
         return { kind: 'action', action, summary: summarizeNexusRealtimeAction(action) };
