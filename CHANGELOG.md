@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.76.358 — Picker prioriza disponíveis (F-1602)
+
+O "+ Pane" agora deixa as CLIs disponíveis claramente em primeiro plano:
+
+- **Lista principal antes de indisponíveis**. As CLIs instaladas e ligadas abrem a lista como antes; o bloco "Indisponíveis · N" vem depois, agora com a contagem das CLIs desligadas ou ausentes — nunca filtra em silêncio, e nunca compete visualmente com as disponíveis.
+- **Bloco secundário compacto e acessível**. O bloco de indisponíveis tem altura capada com rolagem interna (não domina o painel), é focável por teclado (`tabIndex` + `focus-visible`) e o título é exposto a leitores de tela (`role="group"` + `aria-labelledby`).
+- **Garantia de ordem por teste**. Testes novos provam que a lista de disponíveis precede o bloco (posição no DOM via `compareDocumentPosition`) e que a busca esconde o bloco.
+
 ## 0.76.357 — O Jev julga a página
 
 Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.

@@ -12269,4 +12269,17 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076357: AppRelease = CURRENT_RELEASE;
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.358',
+  date: '2026-10-20',
+  codename: 'Picker prioriza disponíveis (F-1602)',
+  summary: 'O "+ Pane" deixa as CLIs disponíveis em primeiro plano: o bloco de indisponíveis ganha contagem, vira uma região de rolagem focável e compacta, e a ordem disponíveis → indisponíveis fica garantida por teste.',
+  highlights: [
+    { title: 'Lista principal antes de indisponíveis', detail: 'As CLIs instaladas e ligadas continuam abrindo a lista; o bloco "Indisponíveis · N" vem depois, com a contagem das CLIs desligadas ou ausentes.' },
+    { title: 'Bloco secundário compacto e acessível', detail: 'O bloco de indisponíveis tem altura capada com rolagem interna, é focável por teclado (tabIndex + focus-visible) e tem o título exposto a leitores de tela (role=group + aria-labelledby).' },
+    { title: 'Garantia de ordem por teste', detail: 'Testes novos provam que a lista de disponíveis precede o bloco (compareDocumentPosition) e que a busca esconde o bloco.' },
+  ],
+  fixes: [...RELEASE_076357.fixes],
+};
+
+export const RELEASE_076358: AppRelease = CURRENT_RELEASE;
