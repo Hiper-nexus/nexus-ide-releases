@@ -5,7 +5,6 @@ import path from 'node:path';
 import {
   applyProjectNodeToWorkerPath,
   candidateNodeBinDirs,
-  clearNodePathCacheForTests,
   detectPinnedNodeMajor,
   majorFromVersion,
   resolveInstalledNodeBin,
@@ -174,72 +173,5 @@ describe('F-1385 — resolução do bin instalado', () => {
         platform: 'darwin',
       }),
     ).toBeNull();
-  });
-});
-
-describe('F-1583 — cache de applyProjectNodeToWorkerPath por mtime', () => {
-  const delim = path.delimiter;
-
-  it('reusa o resultado cacheado quando os mtimes não mudaram', () => {
-    clearNodePathCacheForTests();
-    const root = tmpRoot();
-    const fakeBin = path.join(root, 'fake', 'node@22', 'bin');
-    write(root, { '.nvmrc': '22\n' });
-    fs.mkdirSync(fakeBin, { recursive: true });
-
-    // Primeira chamada: cache miss, lê os arquivos do disco.
-    const env1: NodeJS.ProcessEnv = { PATH: '/usr/bin' };
-    const info1 = applyProjectNodeToWorkerPath(env1, root, depsFor(root, [fakeBin]));
-    expect(info1.applied).toBe(true);
-    expect(env1.PATH).toBe(`${fakeBin}${delim}/usr/bin`);
-
-    // Segunda chamada com os mesmos mtimes: cache hit, NÃO relê do disco.
-    const env2: NodeJS.ProcessEnv = { PATH: '/usr/bin' };
-    const info2 = applyProjectNodeToWorkerPath(env2, root, depsFor(root, [fakeBin]));
-    expect(info2.applied).toBe(true);
-    expect(info2.binDir).toBe(fakeBin);
-    expect(env2.PATH).toBe(`${fakeBin}${delim}/usr/bin`);
-  });
-
-  it('invalida o cache quando um arquivo de versão muda de mtime', () => {
-    clearNodePathCacheForTests();
-    const root = tmpRoot();
-    const fakeBin = path.join(root, 'fake', 'node@22', 'bin');
-    write(root, { '.nvmrc': '22\n' });
-    fs.mkdirSync(fakeBin, { recursive: true });
-
-    const env1: NodeJS.ProcessEnv = { PATH: '/usr/bin' };
-    applyProjectNodeToWorkerPath(env1, root, depsFor(root, [fakeBin]));
-
-    // Toca o .nvmrc para mudar o mtime
-    const nvmrc = path.join(root, '.nvmrc');
-    const atime = fs.statSync(nvmrc).atime;
-    const mtime = fs.statSync(nvmrc).mtime;
-    fs.utimesSync(nvmrc, atime, new Date(mtime.getTime() + 2000));
-
-    // Segunda chamada com mtime alterado: cache miss, relê os arquivos
-    const env2: NodeJS.ProcessEnv = { PATH: '/usr/bin' };
-    const info2 = applyProjectNodeToWorkerPath(env2, root, depsFor(root, [fakeBin]));
-    expect(info2.applied).toBe(true);
-    expect(info2.binDir).toBe(fakeBin);
-  });
-
-  it('limpar o cache entre testes evita contaminação', () => {
-    clearNodePathCacheForTests();
-    const root = tmpRoot();
-    const fakeBin = path.join(root, 'fake', 'node@22', 'bin');
-    write(root, { '.nvmrc': '22\n' });
-    fs.mkdirSync(fakeBin, { recursive: true });
-
-    const env1: NodeJS.ProcessEnv = { PATH: '/usr/bin' };
-    applyProjectNodeToWorkerPath(env1, root, depsFor(root, [fakeBin]));
-    expect(env1.PATH).toBe(`${fakeBin}${delim}/usr/bin`);
-
-    // Limpa o cache e verifica que uma nova chamada funciona normalmente
-    clearNodePathCacheForTests();
-    const env2: NodeJS.ProcessEnv = { PATH: '/usr/bin' };
-    const info2 = applyProjectNodeToWorkerPath(env2, root, depsFor(root, [fakeBin]));
-    expect(info2.applied).toBe(true);
-    expect(env2.PATH).toBe(`${fakeBin}${delim}/usr/bin`);
   });
 });

@@ -145,117 +145,33 @@ export function resolveInstalledNodeBin(
 }
 
 /**
- * F-1583: cache do resultado de `applyProjectNodeToWorkerPath` por raiz de
- * projeto, invalidado quando os arquivos de versão mudam de mtime. A leitura
- * síncrona de .nvmrc/.node-version/package.json e a varredura de
- * ~/.nvm/versions acontecia em todo spawn de agente e, no primeiro spawn a
- * frio no Windows, somava centenas de ms com o FS cache vazio.
- */
-const nodePathCache = new Map<
-  string,
-  { info: AppliedNodeInfo; pinMtimeMs: number; binMtimeMs: number }
->();
-
-function versionFilesMtime(
-  projectRoot: string,
-  deps: NodeVersionDeps | undefined,
-): { pinMtimeMs: number; binMtimeMs: number } {
-  let pinMtimeMs = 0;
-  for (const name of NODE_VERSION_FILES) {
-    try {
-      const s = fs.statSync(path.join(projectRoot, name));
-      if (s.mtimeMs > pinMtimeMs) pinMtimeMs = s.mtimeMs;
-    } catch {}
-  }
-  try {
-    const s = fs.statSync(path.join(projectRoot, 'package.json'));
-    if (s.mtimeMs > pinMtimeMs) pinMtimeMs = s.mtimeMs;
-  } catch {}
-  let binMtimeMs = 0;
-  const homeDir = deps?.homeDir ?? os.homedir();
-  const versionsDir = path.join(homeDir, '.nvm', 'versions', 'node');
-  try {
-    const s = fs.statSync(versionsDir);
-    binMtimeMs = s.mtimeMs;
-  } catch {}
-  return { pinMtimeMs, binMtimeMs };
-}
-
-/**
  * Prefixa o `bin` do Node fixado pelo projeto no PATH de um env de worker.
  * Sem versão fixada, ou sem Node compatível instalado, deixa o env intacto.
- *
- * O resultado é cacheado por projectRoot. O cache é invalidado quando qualquer
- * arquivo de versão (.nvmrc, .node-version, package.json) ou o diretório
- * ~/.nvm/versions/node muda de mtime.
  */
 export function applyProjectNodeToWorkerPath(
   env: NodeJS.ProcessEnv,
   projectRoot: string,
   deps?: NodeVersionDeps,
 ): AppliedNodeInfo {
-  const mtimes = versionFilesMtime(projectRoot, deps);
-  const cached = nodePathCache.get(projectRoot);
-  if (
-    cached &&
-    cached.pinMtimeMs === mtimes.pinMtimeMs &&
-    cached.binMtimeMs === mtimes.binMtimeMs
-  ) {
-    if (cached.info.applied && cached.info.binDir) {
-      const current = env.PATH ?? '';
-      env.PATH = current
-        ? `${cached.info.binDir}${path.delimiter}${current}`
-        : cached.info.binDir;
-    }
-    return cached.info;
-  }
   const pin = detectPinnedNodeMajor(projectRoot, deps);
   if (!pin) {
-    const info: AppliedNodeInfo = {
-      applied: false,
-      binDir: null,
-      major: null,
-      reason: 'no-pinned-node',
-    };
-    nodePathCache.set(projectRoot, {
-      info,
-      pinMtimeMs: mtimes.pinMtimeMs,
-      binMtimeMs: mtimes.binMtimeMs,
-    });
-    return info;
+    return { applied: false, binDir: null, major: null, reason: 'no-pinned-node' };
   }
   const binDir = resolveInstalledNodeBin(pin.major, deps);
   if (!binDir) {
-    const info: AppliedNodeInfo = {
+    return {
       applied: false,
       binDir: null,
       major: pin.major,
       reason: 'no-compatible-node-installed',
     };
-    nodePathCache.set(projectRoot, {
-      info,
-      pinMtimeMs: mtimes.pinMtimeMs,
-      binMtimeMs: mtimes.binMtimeMs,
-    });
-    return info;
   }
   const current = env.PATH ?? '';
   env.PATH = current ? `${binDir}${path.delimiter}${current}` : binDir;
-  const info: AppliedNodeInfo = {
+  return {
     applied: true,
     binDir,
     major: pin.major,
     reason: `${pin.source}=${pin.major}`,
   };
-  nodePathCache.set(projectRoot, {
-    info,
-    pinMtimeMs: mtimes.pinMtimeMs,
-    binMtimeMs: mtimes.binMtimeMs,
-  });
-  return info;
-}
-
-/** Só para testes: limpa o cache interno (entre testes ou simulação de mudança). */
-export function clearNodePathCacheForTests(): void {
-  nodePathCache.clear();
 }
