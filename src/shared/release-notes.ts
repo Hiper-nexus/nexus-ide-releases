@@ -12021,7 +12021,7 @@ export const RELEASE_076342: AppRelease = {
   fixes: [...RELEASE_076341.fixes],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076343: AppRelease = {
   version: '0.76.343',
   date: '2026-10-20',
   codename: 'Estúdio de mídia e encerramento de missões',
@@ -12037,4 +12037,17 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076343: AppRelease = CURRENT_RELEASE;
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.344',
+  date: '2026-10-20',
+  codename: 'Encerramento de missões',
+  summary: 'No desktop Linux, sair e encerrar sela as missões abertas, o Quadro conclui missão dormindo, e o pane do operador devolvido não quebra o encerramento. A tag 0.76.343 é a publicação macOS e não recebe arquivos Linux. A 0.76.342 é o pacote Linux anterior.',
+  highlights: [
+    { title: 'Sair e encerrar', detail: 'Confirmar "Sair e encerrar processos" sela todas as missões abertas como runtime-closed antes de fechar a janela. Os watchers de fast-lane e da conclusão civil param no início do shutdown, para não reescreverem o selo.' },
+    { title: 'Pane do operador devolvido', detail: 'Pane promovido e depois devolvido a user, e runtime em worktree, encerram e limpam orchestratorSessionId sem erro de autoridade de pane. Um ponteiro velho não mata o processo do operador.' },
+    { title: 'Missão dormindo no Quadro', detail: 'Missão estacionada ("Dormindo") pode ser concluída pelo botão "Marcar como feito".' },
+  ],
+  fixes: [...RELEASE_076343.fixes],
+};
+
+export const RELEASE_076344: AppRelease = CURRENT_RELEASE;
