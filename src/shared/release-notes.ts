@@ -12048,7 +12048,7 @@ export const RELEASE_076344: AppRelease = {
   fixes: [...RELEASE_076343.fixes],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076345: AppRelease = {
   version: '0.76.345',
   date: '2026-10-20',
   codename: 'Encerramento de missões',
@@ -12062,4 +12062,18 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: [...RELEASE_076344.fixes],
 };
 
-export const RELEASE_076345: AppRelease = CURRENT_RELEASE;
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.346',
+  date: '2026-10-20',
+  codename: 'Abas estáveis e botão de fechar',
+  summary: 'No macOS, corrige a barra de abas dos Terminais para que a largura da aba permaneça imóvel quando agentes entram ou saem de trabalho, mantém o botão × sempre visível sem corte na última aba e evita arraste acidental no trackpad ao clicar em fechar.',
+  highlights: [
+    ...RELEASE_076343.highlights,
+  ],
+  fixes: [
+    { title: 'Abas dos Terminais estáveis e botão × sempre visível no macOS', detail: 'O selo de agentes trabalhando (● N) e a contagem de painéis dividem a mesma célula de largura fixa (.workspace-tab__badges) sem deslocar as abas vizinhas, o × fica sempre visível sem sobrepor a contagem nem sofrer corte por mask-image, e clicar no × no trackpad desativa o arraste da aba.' },
+    ...RELEASE_076343.fixes,
+  ],
+};
+
+export const RELEASE_076346: AppRelease = CURRENT_RELEASE;

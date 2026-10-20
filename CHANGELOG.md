@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.76.346 — Abas estáveis e botão de fechar
+
+No macOS, corrige a barra de abas dos Terminais (`WorkspaceTabs`):
+
+- **Largura estável durante trabalho de agente**. O selo de agentes trabalhando (`● N`) e a contagem de painéis (`N`) dividem a mesma célula de largura fixa (`.workspace-tab__badges`), impedindo que a aba cresça e encolha quando um agente entra ou sai de trabalho e empurre as abas vizinhas de um lado para o outro.
+- **Botão `×` sempre visível e sem corte**. O botão de fechar a aba fica sempre visível em espaço próprio à direita sem sobrepor a contagem e sem o `mask-image` que esmaecia a borda direita da última aba.
+- **Clique no `×` sem arraste acidental no trackpad**. Pressionar ou passar o cursor sobre o `×` desativa o `draggable` da aba no macOS, evitando que um movimento mínimo no trackpad inicie o arraste da aba e cancele o fechamento.
+
 ## 0.76.345 — Encerramento de missões
 
 Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.

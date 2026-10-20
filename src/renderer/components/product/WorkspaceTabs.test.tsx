@@ -648,4 +648,32 @@ describe('WorkspaceTabs — agentes trabalhando agora', () => {
     expect(blog!.getAttribute('aria-label')).toBe('Blog, 3 painéis');
     expect(blog!.getAttribute('title')).not.toContain('trabalhando');
   });
+
+  it('pressionar o × desativa o arraste da aba no macOS para não engolir o clique de fechar', () => {
+    const onMoveTab = vi.fn();
+    const onCloseTab = vi.fn();
+    const { host } = render({ scopes, onMoveTab, onCloseTab });
+    const tab = host.querySelector<HTMLElement>('.workspace-tab')!;
+    const closeBtn = tab.querySelector<HTMLButtonElement>('.workspace-tab__close')!;
+
+    expect(tab.getAttribute('draggable')).toBe('true');
+    expect(closeBtn.getAttribute('draggable')).toBe('false');
+
+    act(() => {
+      closeBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    });
+    expect(tab.getAttribute('draggable')).toBe('false');
+
+    const dragStart = new MouseEvent('dragstart', { bubbles: true, cancelable: true });
+    act(() => {
+      closeBtn.dispatchEvent(dragStart);
+    });
+    expect(dragStart.defaultPrevented).toBe(true);
+    expect(tab.hasAttribute('data-dragging')).toBe(false);
+
+    act(() => {
+      closeBtn.click();
+    });
+    expect(onCloseTab).toHaveBeenCalledWith(scopes[0]);
+  });
 });
