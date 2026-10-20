@@ -41,17 +41,34 @@ export function foldWord(text: string): string {
     .replace(/[^\p{L}\p{N}]+/gu, '');
 }
 
+// Two reusable rows: the alignment calls this millions of times on a long
+// narration, and allocating per call was most of its time.
+let rowA = new Int32Array(64);
+let rowB = new Int32Array(64);
+
 function levenshtein(a: string, b: string): number {
   if (a === b) return 0;
   if (!a) return b.length;
   if (!b) return a.length;
-  let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  if (rowA.length <= b.length) {
+    rowA = new Int32Array(b.length + 1);
+    rowB = new Int32Array(b.length + 1);
+  }
+  let previous = rowA;
+  let current = rowB;
+  for (let j = 0; j <= b.length; j += 1) previous[j] = j;
   for (let i = 1; i <= a.length; i += 1) {
-    const current = [i];
+    current[0] = i;
+    const letter = a.charCodeAt(i - 1);
     for (let j = 1; j <= b.length; j += 1) {
-      current[j] = Math.min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      const replace = previous[j - 1] + (letter === b.charCodeAt(j - 1) ? 0 : 1);
+      const remove = previous[j] + 1;
+      const insert = current[j - 1] + 1;
+      current[j] = replace < remove ? (replace < insert ? replace : insert) : remove < insert ? remove : insert;
     }
+    const swap = previous;
     previous = current;
+    current = swap;
   }
   return previous[b.length];
 }
@@ -76,6 +93,13 @@ export function alignScriptToSpeech(script: readonly string[], spoken: readonly 
   }
   const s = script.map(foldWord);
   const r = spoken.map((word) => foldWord(word.text));
+  // Joined groups, built once: scriptGroup[a][i] = s[i-a..i), spokenGroup[b][j] = r[j-b..j).
+  const joinedGroups = (words: readonly string[], max: number): string[][] =>
+    Array.from({ length: max + 1 }, (_, size) =>
+      size === 0 ? [] : words.map((_, end) => (end + 1 >= size ? words.slice(end + 1 - size, end + 1).join('') : '')),
+    );
+  const scriptGroup = joinedGroups(s, MAX_SCRIPT_PER_SPOKEN_WORD);
+  const spokenGroup = joinedGroups(r, MAX_SPOKEN_PER_SCRIPT_WORD);
   // Diagonal band: speech and script advance together; the band absorbs
   // ad-libs and dropped words without an n×m matrix for long narrations.
   const band = Math.max(MIN_BAND, Math.abs(n - m) + MIN_BAND);
@@ -115,16 +139,22 @@ export function alignScriptToSpeech(script: readonly string[], spoken: readonly 
         }
       }
       for (let a = 1; a <= MAX_SCRIPT_PER_SPOKEN_WORD && a <= i; a += 1) {
-        const scriptText = s.slice(i - a, i).join('');
+        const scriptText = scriptGroup[a][i - 1];
         const maxB = a === 1 ? MAX_SPOKEN_PER_SCRIPT_WORD : 1;
         for (let b = 1; b <= maxB && b <= j; b += 1) {
           const previous = at(i - a, j - b);
           if (!Number.isFinite(previous)) continue;
-          const spokenText = r.slice(j - b, j).join('');
+          const spokenText = spokenGroup[b][j - 1];
           // A group pays its dissimilarity once per word it covers: grouping is for
           // real splits, never a shortcut over words nobody said.
-          const candidate =
-            previous + (1 - wordSimilarity(scriptText, spokenText)) * Math.max(a, b) + GROUP_PENALTY * (a + b - 2);
+          const weight = Math.max(a, b);
+          const penalty = GROUP_PENALTY * (a + b - 2);
+          // The length difference is a floor of the edit distance: skip the
+          // distance when even that floor cannot beat the best so far.
+          const longest = Math.max(scriptText.length, spokenText.length);
+          const floor = longest === 0 ? 0 : (Math.abs(scriptText.length - spokenText.length) / longest) * weight;
+          if (previous + floor + penalty > best + 1e-9) continue;
+          const candidate = previous + (1 - wordSimilarity(scriptText, spokenText)) * weight + penalty;
           if (candidate < best) {
             best = candidate;
             bestOp = groupOp(a, b);

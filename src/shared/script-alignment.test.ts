@@ -99,6 +99,7 @@ describe('alinhamento do roteiro com a fala reconhecida', () => {
     const result = alignScriptToSpeech(many, spoken);
     expect(result.matchedRatio).toBe(1);
     expect(result.words[2_999]).toEqual({ text: 'palavra2999', startMs: 899_700, endMs: 899_950 });
-    expect(Date.now() - started).toBeLessThan(15_000);
+    // 13 s before the reusable rows and the length floor (20/10); 0,24 s after.
+    expect(Date.now() - started).toBeLessThan(3_000);
   });
 });
