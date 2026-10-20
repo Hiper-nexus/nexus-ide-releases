@@ -12199,7 +12199,7 @@ export const RELEASE_076354: AppRelease = {
   version: '0.76.354',
   date: '2026-10-20',
   codename: 'Cotas na barra',
-  summary: 'O cabeçalho do Nexus mostra as contas de IA mais usadas, com logo, porcentagem e tempo até o reset, sempre à vista. Windows x64, assinado pelo YubiKey. Não recebe arquivos Linux.',
+  summary: 'O cabeçalho do Nexus mostra as contas de IA mais usadas, com logo, porcentagem e tempo até o reset, sempre à vista. A tag 0.76.354 não foi publicada: a 0.76.356 (Windows, assinada pelo YubiKey) já traz esta mudança. Não recebe arquivos Linux.',
   highlights: [
     { title: 'Cotas na barra', detail: 'As 5 contas que mais consomem aparecem no cabeçalho com a logo do provedor, a porcentagem da janela mais gasta e o tempo até o reset. Com mais de uma conta do mesmo provedor, a logo ganha um número. Clicar abre Uso e cotas.' },
     { title: 'Só o que foi medido', detail: 'Conta sem leitura real não aparece na faixa, e a faixa nunca mostra 0% inventado.' },

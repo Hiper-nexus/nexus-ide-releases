@@ -39,7 +39,7 @@ O agente do YubiKey que assina o Nexus Shot sem PIN é só Windows e não muda o
 
 ## 0.76.354 — Cotas na barra
 
-Windows x64, assinado pelo YubiKey (HIPERSEND). Não recebe arquivos Linux. Em relação à 0.76.353:
+A tag foi marcada e não foi publicada: a 0.76.355 (Linux) e a 0.76.356 (Windows, assinada pelo YubiKey) saíram com número maior e já trazem esta mudança. Não recebe arquivos Linux. Em relação à 0.76.353:
 
 - **Cotas na barra.** O cabeçalho mostra as 5 contas mais usadas: logo miniatura, porcentagem da janela mais gasta e tempo até o reset. Com mais de uma conta do mesmo provedor, a logo ganha um número. Clicar abre Uso e cotas. Conta sem leitura real não aparece, nunca como 0%.
 
