@@ -12175,7 +12175,7 @@ export const RELEASE_076353: AppRelease = {
   version: '0.76.353',
   date: '2026-10-20',
   codename: 'Flash no desktop',
-  summary: 'No desktop Linux, o DeepSeek Flash sobe no Claude Code e no Qwen Code pelo Alibaba Token Plan como deepseek-v4.1-flash-1017, o estúdio de mídia ganha imagens novas e anexos no vídeo, a imagem do Gemini sai em JPEG e o anexo fica no projeto de origem. A 0.76.352 fica no Windows e não recebe arquivos Linux. A 0.76.351 é o pacote Linux anterior.',
+  summary: 'A tag 0.76.353 foi marcada e não foi publicada: a suíte no Ubuntu falhou porque o ledger de proveniência ainda apontava o hash antigo de model-catalog.ts. Não recebe arquivos Linux. O desktop Linux sai na 0.76.355.',
   highlights: [
     { title: 'DeepSeek Flash no Alibaba Token Plan', detail: 'A lista de modelos do plano passou a trazer o deepseek-v4.1-flash-1017. O flash do menu do Claude Code agora sobe nele (antes caía no deepseek-v4-pro), o modelo barato do Claude Code fica no flash e o menu do plano oferece o v4-pro e o v4.1-flash-1017.' },
     { title: 'O Qwen Code no Token Plan não volta mais «Model not exist»', detail: 'O menu mandava deepseek-flash, que o plano não tem, e o erro parecia de chave. O flash genérico sobe como deepseek-v4.1-flash-1017, o catálogo gerado traz só o que o plano serve e o nome completo pedido pela pessoa passa como está. O qwen3.8-flash entra no menu do Qwen Code.' },
@@ -12195,11 +12195,11 @@ export const RELEASE_076353: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076354: AppRelease = {
   version: '0.76.354',
   date: '2026-10-20',
   codename: 'Cotas na barra',
-  summary: 'O cabeçalho do Nexus mostra as contas de IA mais usadas, com logo, porcentagem e tempo até o reset, sempre à vista. Windows x64, assinado pelo YubiKey.',
+  summary: 'O cabeçalho do Nexus mostra as contas de IA mais usadas, com logo, porcentagem e tempo até o reset, sempre à vista. Windows x64, assinado pelo YubiKey. Não recebe arquivos Linux.',
   highlights: [
     { title: 'Cotas na barra', detail: 'As 5 contas que mais consomem aparecem no cabeçalho com a logo do provedor, a porcentagem da janela mais gasta e o tempo até o reset. Com mais de uma conta do mesmo provedor, a logo ganha um número. Clicar abre Uso e cotas.' },
     { title: 'Só o que foi medido', detail: 'Conta sem leitura real não aparece na faixa, e a faixa nunca mostra 0% inventado.' },
@@ -12209,4 +12209,26 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076354: AppRelease = CURRENT_RELEASE;
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.355',
+  date: '2026-10-20',
+  codename: 'Flash no desktop',
+  summary: 'No desktop Linux, o DeepSeek Flash sobe no Token Plan, o estúdio de mídia ganha imagens e anexos, a imagem do Gemini sai em JPEG, as cotas das contas mais usadas ficam no cabeçalho e a fala sem pane focado explica o caminho. A tag 0.76.353 não foi publicada. A 0.76.354 fica no Windows e não recebe arquivos Linux. A 0.76.351 é o pacote Linux anterior.',
+  highlights: [
+    { title: 'DeepSeek Flash no Alibaba Token Plan', detail: 'A lista de modelos do plano passou a trazer o deepseek-v4.1-flash-1017. O flash do menu do Claude Code agora sobe nele (antes caía no deepseek-v4-pro), o modelo barato do Claude Code fica no flash e o menu do plano oferece o v4-pro e o v4.1-flash-1017.' },
+    { title: 'O Qwen Code no Token Plan não volta mais «Model not exist»', detail: 'O menu mandava deepseek-flash, que o plano não tem, e o erro parecia de chave. O flash genérico sobe como deepseek-v4.1-flash-1017, o catálogo gerado traz só o que o plano serve e o nome completo pedido pela pessoa passa como está. O qwen3.8-flash entra no menu do Qwen Code.' },
+    { title: 'Estúdio de mídia, JPEG e anexo no projeto', detail: 'Catálogo de imagem com o GPT-Image 2.5 e os modelos Nano Banana. O anexo do vídeo fica no projeto de origem. A imagem do Gemini pede image/jpeg e um caminho explícito de outro formato vira .jpg. O pedido do vídeo espera o pane sair de subindo.' },
+    { title: 'Cotas na barra', detail: 'As 5 contas que mais consomem aparecem no cabeçalho com a logo do provedor, a porcentagem da janela mais gasta e o tempo até o reset. Com mais de uma conta do mesmo provedor, a logo ganha um número. Clicar abre Uso e cotas. Conta sem leitura real não aparece, e a faixa nunca mostra 0% inventado.' },
+    { title: 'Voz no painel estreito e sem pane focado', detail: 'O item dos ajustes de voz não cobre o de baixo; no painel estreito a navegação vira uma faixa de abas. Sem pane focado, o aviso diz para focar um pane ou mudar o destino da voz para Jarvis em Ajustes › Voz. Se o pane focado recusou a fala, o aviso diz isso.' },
+    { title: 'Pacote Linux', detail: 'A tag 0.76.353 não foi publicada porque o hash de model-catalog.ts no ledger de proveniência ficou para trás da entrada qwen3.8-flash; o hash passa a ser o do arquivo. A 0.76.354 e a 0.76.352 ficam no Windows e não recebem arquivos Linux. A 0.76.351 é o pacote Linux anterior. A 0.76.346 é a publicação macOS e não recebe arquivos Linux. O agente do YubiKey que assina o Nexus Shot sem PIN é só Windows e não muda o desktop Linux.' },
+  ],
+  fixes: [
+    { title: 'Flash do Token Plan', detail: 'No Token Plan o deepseek-flash e o deepseek-v4-flash sobem como deepseek-v4.1-flash-1017 no Claude Code e no Qwen Code.' },
+    { title: 'Gemini em JPEG e anexo no projeto de origem', detail: 'A imagem pela Interactions API pede image/jpeg, e a entrega do anexo confere o workspace depois de cada espera.' },
+    { title: 'Cotas na barra', detail: 'O cabeçalho mostra as contas mais usadas com logo, porcentagem e reset, e omite conta sem leitura real.' },
+    { title: 'Fala sem pane focado', detail: 'O aviso em português diz para focar um pane ou mudar o destino da voz para Jarvis, e distingue pane que recusou a fala.' },
+    ...RELEASE_076354.fixes,
+  ],
+};
+
+export const RELEASE_076355: AppRelease = CURRENT_RELEASE;
