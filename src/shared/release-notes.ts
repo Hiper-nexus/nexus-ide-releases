@@ -12269,7 +12269,7 @@ export const RELEASE_076357: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076358: AppRelease = {
   version: '0.76.358',
   date: '2026-10-20',
   codename: 'Picker prioriza disponíveis (F-1602)',
@@ -12282,4 +12282,22 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: [...RELEASE_076357.fixes],
 };
 
-export const RELEASE_076358: AppRelease = CURRENT_RELEASE;
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.359',
+  date: '2026-10-20',
+  codename: 'Picker prioriza disponíveis',
+  summary: 'No desktop Linux, o + Pane coloca as CLIs disponíveis primeiro e compacta o bloco de indisponíveis, e o seletor deixa de levar um pedido pendente para o spawn. A 0.76.358 é a publicação macOS e não recebe arquivos Linux. A 0.76.357 é o pacote Linux anterior.',
+  highlights: [
+    { title: 'CLIs disponíveis primeiro', detail: 'As CLIs instaladas e ligadas abrem a lista. O bloco "Indisponíveis · N" vem depois, com a contagem das CLIs desligadas ou ausentes, sem filtrar em silêncio.' },
+    { title: 'Bloco de indisponíveis compacto', detail: 'O bloco tem altura capada e rolagem interna, é focável por teclado e expõe o título a leitores de tela. A busca esconde o bloco. Testes garantem que a lista de disponíveis vem antes.' },
+    { title: 'O seletor não leva pedido pendente', detail: 'Abrir um pane pelo + Pane não carrega mais um brief pendente para o spawn. O agente nasce pelo caminho comum, sem o pedido que estava guardado para aquela abertura.' },
+    { title: 'Pacote Linux', detail: 'A 0.76.358 é a publicação macOS e não recebe arquivos Linux. A 0.76.356 fica no Windows e não recebe arquivos Linux. A 0.76.357 é o pacote Linux anterior.' },
+  ],
+  fixes: [
+    { title: 'CLIs disponíveis primeiro', detail: 'O + Pane mostra as CLIs disponíveis antes do bloco compacto de indisponíveis, com contagem, rolagem e foco por teclado.' },
+    { title: 'Pedido pendente fora do spawn', detail: 'O seletor não passa mais um brief pendente ao spawn do agente.' },
+    ...RELEASE_076358.fixes,
+  ],
+};
+
+export const RELEASE_076359: AppRelease = CURRENT_RELEASE;

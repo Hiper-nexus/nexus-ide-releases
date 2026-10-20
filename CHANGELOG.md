@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.76.359 — Picker prioriza disponíveis
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+A 0.76.358 é a publicação macOS e não recebe arquivos Linux. A 0.76.356 fica no Windows e não recebe arquivos Linux. A 0.76.357 é o pacote Linux anterior.
+
+No desktop Linux, em relação à 0.76.357:
+
+- **CLIs disponíveis primeiro.** O + Pane abre com as CLIs instaladas e ligadas. O bloco "Indisponíveis · N" vem depois, com a contagem das CLIs desligadas ou ausentes — não filtra em silêncio e não compete com as disponíveis.
+- **Bloco de indisponíveis compacto.** Altura capada, rolagem interna, foco por teclado (`tabIndex` + `focus-visible`) e título para leitores de tela (`role="group"` + `aria-labelledby`). A busca esconde o bloco. Testes provam que a lista de disponíveis precede o bloco.
+- **O seletor não leva pedido pendente.** Abrir um pane pelo + Pane não carrega mais um brief pendente para o spawn. O agente nasce pelo caminho comum.
+
 ## 0.76.358 — Picker prioriza disponíveis (F-1602)
 
 O "+ Pane" agora deixa as CLIs disponíveis claramente em primeiro plano:
