@@ -31,6 +31,7 @@ import {
 } from "../../shared/cli-initial-prompt";
 import { ensureUtf8Locale } from "./pty-env-locale";
 import { applyProjectNodeToWorkerPath } from "./node-version-path";
+import type { PhaseTimer } from "../observability/phase-timer";
 import { mergeWindowsUserEnvironment } from "./windows-user-env";
 import { createExactResumeHealth, exactResumeScreenSaysConversationMissing, type ExactResumeAttempt } from "./exact-resume-health";
 import { materializeProviderState, providerStateEnvFor } from "./provider-state-env";
@@ -1964,6 +1965,7 @@ export function spawnAgentSession(
   adapter: CliPtyAdapter,
   overrides: AgentSpawnOverrides = {},
   authority: BoundSpawnAuthority,
+  timer?: PhaseTimer,
 ): SpawnedSession {
   if (allSessionsTerminationInProgress) {
     throw new Error("PTY shutdown is in progress; new sessions are blocked");
@@ -2076,6 +2078,7 @@ export function spawnAgentSession(
   // Absolute path only — bare names re-search PATH inside the PTY host, which
   // often has a minimal Finder PATH and misses ~/.kimi-code/bin, Homebrew, etc.
   const resolvedBin = resolveSpawnBinary(adapter.bin, overrides.binPath);
+  timer?.mark("spawn-binary");
   let bin = resolvedBin?.binPath ?? null;
   if (!bin || !path.isAbsolute(bin)) {
     throw new Error(
@@ -3416,6 +3419,7 @@ export function spawnAgentSession(
       authoritySeal: authority.context?.authoritySeal }, lease.startKey, safeNativeInitialPrompt, spawnEnv.NEXUS_GATE_TOKEN, initialBriefPath ? assertSafePtyPrompt(nativeInitialPrompt!) : undefined);
   }
   try {
+    timer?.mark("spawn-decorate");
     const host = requireHost();
     const handlers = sessionHandlers(sessionId, () => session);
     if (trustedNativeLaunch && persistencePlan.mode === "direct") {
@@ -3424,6 +3428,7 @@ export function spawnAgentSession(
     assertLicenseAccess();
     if (!readiness) overrides.onNativeBirthAuthorized?.();
     proc = host.spawn(spec, handlers, readiness);
+    timer?.mark("spawn-host");
     licenseChildSpawned = true;
     if (!req.resume && !warmSpawnInProgress()) {
       try {

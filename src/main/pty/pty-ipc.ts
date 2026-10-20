@@ -604,6 +604,7 @@ function spawnCliPtyAgentPane(
             pending, recovery, persistedPane, deferredSessionId }),
         } : overrides,
       authority,
+      timer,
     );
     timer.mark("pty-spawn");
     if (workerRestart) {
