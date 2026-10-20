@@ -208,6 +208,16 @@ describe('generateImage', () => {
     const named = await generateImage({ prompt: 'x', baseDir: dir, outPath: 'poster.png' }, explicit.deps);
     expect(named.path.endsWith('poster.jpg')).toBe(true);
     expect(fs.existsSync(named.path)).toBe(true);
+    // Qualquer outra extensão também; jpg/jpeg ficam como estão.
+    for (const [given, expected] of [
+      ['a.avif', 'a.jpg'],
+      ['b.svg', 'b.jpg'],
+      ['c.jpeg', 'c.jpeg'],
+    ] as const) {
+      const run = fakeDeps([{ json: { output_image: { data: PNG_B64 } } }]);
+      const out = await generateImage({ prompt: 'x', baseDir: dir, outPath: given }, run.deps);
+      expect(out.path.endsWith(expected)).toBe(true);
+    }
   });
 
   it('google-image: o Nano Banana Pro custa o preço de lista dele', async () => {

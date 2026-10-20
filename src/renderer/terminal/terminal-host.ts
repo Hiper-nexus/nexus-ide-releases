@@ -1961,14 +1961,26 @@ function startSpawn(
           const submitted = pane.adapterId === 'kimi' || pane.adapterId === 'claude'
             ? submitPromptToPane(pane.id, continuation)
             : Promise.resolve(submitPanePrompt(pane.id, continuation, ports));
-          void submitted.then((accepted) => {
+          void submitted.then(async (accepted) => {
             if (isTaskBrief && !accepted && !cancelled && !host.disposed) {
               // Entrega recusada: o pedido não pode sumir calado. Tenta deixá-lo
-              // na área de transferência para colar no pane.
-              void navigator.clipboard?.writeText(brief ?? '').catch(() => undefined);
+              // na área de transferência e só diz «copiado» se a escrita passou
+              // (sem permissão ou sem API, o aviso manda refazer o pedido).
+              let copied = false;
+              try {
+                await navigator.clipboard.writeText(brief ?? '');
+                copied = true;
+              } catch {
+                copied = false;
+              }
+              if (host.disposed) return;
               host.term.writeln(
-                '\r\n\x1b[33m[nexus] não consegui entregar o pedido a este agente. ' +
-                  'Ele foi copiado: cole no pane (Ctrl+V) e envie.\x1b[0m',
+                copied
+                  ? '\r\n\x1b[33m[nexus] não consegui entregar o pedido a este agente. ' +
+                      'Ele foi copiado: cole no pane (Ctrl+V) e envie.\x1b[0m'
+                  : '\r\n\x1b[33m[nexus] não consegui entregar o pedido a este agente ' +
+                      'e não consegui copiá-lo. Refaça o pedido (Novo vídeo de apresentação) ' +
+                      'ou digite-o neste pane.\x1b[0m',
               );
               return;
             }

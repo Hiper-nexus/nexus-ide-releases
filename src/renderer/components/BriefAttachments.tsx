@@ -48,9 +48,23 @@ export function BriefAttachments({ attachments, onChange }: BriefAttachmentsProp
     setLibrary(list ?? []);
   }, []);
 
+  // A biblioteca e os anexos pertencem ao projeto: trocar de workspace com o
+  // formulário aberto zera tudo e relê a biblioteca do projeto novo, senão o
+  // brief enviaria chaves de `media/referencias/` que o outro projeto não tem.
+  const workspacePath = useWorkspaceStore((state) => state.current?.path ?? null);
+  const seenWorkspace = useRef(workspacePath);
   useEffect(() => {
+    if (seenWorkspace.current !== workspacePath) {
+      seenWorkspace.current = workspacePath;
+      tried.current.clear();
+      setThumbs({});
+      setError(null);
+      setLibrary([]);
+      if (attachments.length > 0) onChange([]);
+    }
     void reload().catch(() => setLibrary([]));
-  }, [reload]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- só o workspace dispara
+  }, [reload, workspacePath]);
 
   useEffect(() => {
     const pending = attachments.filter(
