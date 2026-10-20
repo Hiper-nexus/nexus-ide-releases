@@ -39,6 +39,14 @@ this file, THIS FILE WINS (see "Nexus rules over the upstream guides").
    `narration.vtt`. Re-running the same text costs nothing (cache); editing one
    paragraph pays only that paragraph. If the result has `modelFallback`, tell
    the operator which model was used.
+   **A Gemini voice** (`gemini.library` name like Kore, or a `voice_…` from
+   `gemini.replicated` in `nexus_voice_list`): add `provider: "gemini"` (and
+   optionally `style`, e.g. "calm, confident product demo"). It writes
+   `narration.wav` plus the same timeline/.srt/.vtt; the word times come from the
+   alignment (`alignEngine: "local"` is free but downloads 639 MB once: ask, then
+   `allowModelDownload: true`; `"elevenlabs"` costs US$ 0.22 per audio hour).
+   `dryRun` prices both. A `voice_…` with origin `nexus-clone` is the operator's
+   own voice made in Minha voz.
    **The operator's own recorded voice instead** (no synthesis, no clone): the
    operator records in the Estúdio ("Gravar narração") or gives an audio file
    of the workspace; `nexus_voiceover_align({ audioPath, scriptPath, outDir })`

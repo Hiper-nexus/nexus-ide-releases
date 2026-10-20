@@ -11,6 +11,8 @@ import { recordMediaUsage } from '../usage/media-usage-recorder';
 import { reserveMediaSpend } from '../media/media-budget';
 import { musicCostUsd } from '../media/music-generation';
 import { alignVoiceover, ALIGN_AUDIO_EXTENSIONS, PARAKEET_DOWNLOAD_MB } from '../media/voiceover-align';
+import { generateGeminiVoiceover } from '../media/voiceover-gemini';
+import { GEMINI_PREBUILT_VOICES, listGeminiReplicatedVoices } from '../media/voice-providers/gemini-voice';
 import { num, str } from './tool-util';
 import { resolveCwdForScope } from './workspace-path';
 import { executionScopeFor, type AgentGateContext } from './gate';
@@ -61,7 +63,8 @@ const voiceListTool: McpToolDef = {
   available: isVideoStudioEnabled,
   unavailableReason: VIDEO_STUDIO_DISABLED_REASON,
   description:
-    'List the voices of the ElevenLabs account configured in the Nexus. Each ' +
+    'List the narration voices: the ElevenLabs account (voices) and, when the Gemini key is set, the ' +
+    'Gemini voices (gemini.library: prebuilt names; gemini.replicated: voice_… ids). Each ' +
     'voice has an origin: library (premade or shared), designed, nexus-clone ' +
     '(the operator cloned it in Minha voz, with a consent receipt) or ' +
     'external-clone. Narrate ONLY with the voice the operator indicated; ' +
@@ -71,20 +74,37 @@ const voiceListTool: McpToolDef = {
     assertMcpInvocationCurrent(invocation);
     const def = findMediaProvider('elevenlabs');
     const key = def ? resolveMediaKey(def) : undefined;
-    if (!key) {
+    const googleDef = findMediaProvider('google-image');
+    const geminiKey = googleDef ? resolveMediaKey(googleDef) : undefined;
+    if (!key && !geminiKey) {
       return {
         ok: false,
-        error: 'ElevenLabs sem chave — configure em Ajustes → Serviços de mídia',
+        error: 'Sem chave de voz: configure a ElevenLabs ou o Gemini (Google) em Ajustes → Serviços de mídia',
       };
     }
-    const voices = await listElevenLabsVoices({
-      key,
-      fetchFn: fetch,
-      isNexusClone: isNexusClonedVoice,
-      signal: invocation?.signal,
-    });
+    const voices = key
+      ? await listElevenLabsVoices({
+          key,
+          fetchFn: fetch,
+          isNexusClone: isNexusClonedVoice,
+          signal: invocation?.signal,
+        })
+      : [];
+    // F-1601: Gemini voices, narrated with nexus_voiceover_generate({ provider: "gemini" }).
+    const gemini = geminiKey
+      ? {
+          library: GEMINI_PREBUILT_VOICES.map((name) => ({ voiceId: name, name, origin: 'library' })),
+          replicated: (
+            await listGeminiReplicatedVoices({ key: geminiKey, fetchFn: fetch, signal: invocation?.signal }).catch(() => [])
+          ).map((voice) => ({
+            voiceId: voice.id,
+            name: voice.displayName,
+            origin: isNexusClonedVoice(voice.id) ? 'nexus-clone' : 'external-clone',
+          })),
+        }
+      : undefined;
     assertMcpInvocationCurrent(invocation);
-    return { ok: true, voices };
+    return { ok: true, voices, ...(gemini ? { gemini } : {}) };
   },
 };
 
@@ -102,7 +122,10 @@ const voiceoverGenerateTool: McpToolDef = {
     `(chunk cache); editing one paragraph pays only that paragraph. Max ` +
     `${VOICEOVER_MAX_CHARS} characters. voiceId comes from nexus_voice_list ` +
     'and must be the voice the operator asked for. Missing key → STOP and ' +
-    'report "configure ElevenLabs em Ajustes → Serviços de mídia".',
+    'report "configure ElevenLabs em Ajustes → Serviços de mídia". provider:"gemini" narrates with a Gemini ' +
+    'voice (gemini.library name or voice_… from nexus_voice_list, US$ 0.0135 per minute); its word times come ' +
+    'from the alignment (alignEngine local = free, downloads 639 MB once with allowModelDownload:true after the ' +
+    'operator OK; elevenlabs = US$ 0.22/h) and the files are .wav + the same timeline/srt/vtt.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -123,6 +146,10 @@ const voiceoverGenerateTool: McpToolDef = {
         },
       },
       dryRun: { type: 'boolean' },
+      provider: { type: 'string', enum: ['elevenlabs', 'gemini'], description: 'Default elevenlabs.' },
+      style: { type: 'string', description: 'Gemini only: delivery style, e.g. "calm, confident product demo".' },
+      alignEngine: { type: 'string', enum: ['local', 'elevenlabs'], description: 'Gemini only: who times the words.' },
+      allowModelDownload: { type: 'boolean', description: 'Gemini + local alignment: operator OK to download 639 MB once.' },
     },
     required: [],
   },
@@ -130,6 +157,7 @@ const voiceoverGenerateTool: McpToolDef = {
   handler: async (args, ctx, invocation) => {
     assertMcpInvocationCurrent(invocation);
     const baseDir = baseDirFor(ctx);
+    if (str(args, 'provider') === 'gemini') return geminiVoiceover(args, ctx, invocation, baseDir);
     const request = {
       script: readScript(args, baseDir),
       voiceId: str(args, 'voiceId'),
@@ -335,6 +363,78 @@ const voiceoverAlignTool: McpToolDef = {
     return result;
   },
 };
+
+async function geminiVoiceover(
+  args: Record<string, unknown>,
+  ctx: AgentGateContext,
+  invocation: Parameters<McpToolDef['handler']>[2],
+  baseDir: string,
+): Promise<unknown> {
+  const voice = str(args, 'voiceId');
+  if (!voice) throw new Error('voiceId é obrigatório: use uma voz do Gemini de nexus_voice_list');
+  const engine = str(args, 'alignEngine');
+  const { videoRenderDeps } = await import('../video/video-runtime-deps');
+  const path = await import('node:path');
+  const { app } = await import('electron');
+  const deps = {
+    ...videoRenderDeps(),
+    fetchFn: fetch,
+    getKey: resolveMediaKey,
+    cacheDir: path.join(app.getPath('userData'), 'media', 'voiceover-cache'),
+    now: () => new Date(),
+    isNexusClone: isNexusClonedVoice,
+  };
+  const request = {
+    script: readScript(args, baseDir),
+    voice,
+    style: str(args, 'style'),
+    outDir: str(args, 'outDir'),
+    baseName: str(args, 'baseName'),
+    alignEngine: engine === 'local' || engine === 'elevenlabs' ? engine : undefined,
+    allowModelDownload: args.allowModelDownload === true,
+    baseDir,
+    scope: executionScopeFor(ctx),
+    missionId: ctx.missionId,
+    sessionId: ctx.sessionId,
+    signal: invocation?.signal,
+    assertCurrentAuthority: () => assertMcpInvocationCurrent(invocation),
+  } as const;
+  if (args.dryRun === true) return generateGeminiVoiceover({ ...request, dryRun: true }, deps);
+  const priced = await generateGeminiVoiceover({ ...request, dryRun: true }, deps);
+  if (!priced.ok) return priced;
+  const spend = reserveMediaSpend({ provider: 'gemini', usd: priced.estimatedCostUsd }, ctx.missionId, 'voiceover_generate');
+  if (!spend.ok) return spend;
+  let result: Awaited<ReturnType<typeof generateGeminiVoiceover>>;
+  try {
+    result = await generateGeminiVoiceover({ ...request, dryRun: false }, deps);
+  } catch (error) {
+    spend.release();
+    throw error;
+  }
+  if (!result.ok) {
+    spend.release();
+    return result;
+  }
+  spend.settle(result.estimatedCostUsd);
+  assertMcpInvocationCurrent(invocation);
+  if (result.files && result.estimatedCostUsd > 0) {
+    await recordMediaUsage(
+      {
+        ok: true,
+        path: result.files.audio,
+        provider: 'google-image', // the Gemini key lives on the Google media service
+        model: result.model,
+        kind: 'audio',
+        estimatedCostUsd: result.estimatedCostUsd,
+        durationMs: result.durationMs ?? 0,
+      },
+      ctx,
+      invocation,
+    );
+    assertMcpInvocationCurrent(invocation);
+  }
+  return result;
+}
 
 function requireAudioPath(args: Record<string, unknown>): string {
   const value = str(args, 'audioPath');

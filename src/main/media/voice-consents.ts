@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { VoiceCloneReceiptView } from '../../shared/voice-clone-types';
+import type { VoiceCloneProvider, VoiceCloneReceiptView } from '../../shared/voice-clone-types';
 import { removeTreeSync } from '../util/remove-tree';
 
 /**
@@ -14,7 +14,7 @@ import { removeTreeSync } from '../util/remove-tree';
 
 export interface VoiceConsentReceipt {
   readonly id: string;
-  readonly provider: 'elevenlabs';
+  readonly provider: VoiceCloneProvider;
   readonly voiceId: string;
   readonly voiceName: string;
   /** Name the person declared; the declaration audio is the proof. */
@@ -29,11 +29,17 @@ export interface VoiceConsentReceipt {
   readonly appVersion: string;
   readonly verification: {
     readonly method: 'stt';
-    readonly provider: 'elevenlabs';
+    readonly provider: 'elevenlabs' | 'gemini';
     readonly model: string;
     readonly heard: readonly ('nome' | 'idade' | 'autorização' | 'código')[];
   };
   readonly requiresVerification: boolean;
+  /** Gemini (F-1601): the official consent clip Google checked, kept as proof. */
+  readonly providerConsent?: {
+    readonly method: 'consent_audio';
+    readonly phrase: string;
+    readonly sha256: string;
+  };
 }
 
 interface ConsentFile {
@@ -127,10 +133,11 @@ export class VoiceConsentStore {
   }
 
   /** Evidence first, receipt last: a receipt never points at missing proof. */
-  add(receipt: VoiceConsentReceipt, declarationWav: Uint8Array): void {
+  add(receipt: VoiceConsentReceipt, declarationWav: Uint8Array, consentWav?: Uint8Array): void {
     const dir = this.evidenceDir(receipt.id);
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     fs.writeFileSync(path.join(dir, 'declaration.wav'), declarationWav, { mode: 0o600, flag: 'wx' });
+    if (consentWav) fs.writeFileSync(path.join(dir, 'provider-consent.wav'), consentWav, { mode: 0o600, flag: 'wx' });
     try {
       const current = this.read();
       this.write({ version: 1, receipts: [...current.receipts, receipt] });

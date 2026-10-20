@@ -62,9 +62,9 @@ function type(input: HTMLInputElement, value: string) {
   });
 }
 
-async function render(connected = true, canCreate = true) {
+async function render(connected = true, canCreate = true, gemini = false) {
   await act(async () => {
-    root.render(<MyVoiceCard elevenLabsConnected={connected} canCreate={canCreate} />);
+    root.render(<MyVoiceCard elevenLabsConnected={connected} geminiConnected={gemini} canCreate={canCreate} />);
   });
 }
 
@@ -76,6 +76,9 @@ beforeEach(() => {
   api.list.mockResolvedValue([]);
   api.begin.mockResolvedValue({
     sessionId: 'a'.repeat(32),
+    provider: 'elevenlabs',
+    readingMinSec: 60,
+    readingMaxSec: 180,
     code: '482913',
     consentVersion: 'v',
     readingText: 'Texto para ler em voz alta.',
@@ -231,5 +234,59 @@ describe('Minha voz', () => {
     expect(host.textContent).toContain('Ajustes → Experimental');
     expect(host.textContent).not.toContain('Criar minha voz');
     expect(button('Apagar')).toBeTruthy();
+  });
+
+  it('Gemini (F-1601): pede chave paga, grava declaração, frase do Google e 10–30 s de leitura', async () => {
+    api.begin.mockResolvedValue({
+      sessionId: 'b'.repeat(32),
+      provider: 'gemini',
+      consentPhrase: 'Eu sou o proprietário desta voz e autorizo o Google a usá-la para criar um modelo de voz sintética.',
+      readingMinSec: 10,
+      readingMaxSec: 30,
+      code: '111222',
+      consentVersion: 'v',
+      readingText: 'Texto para ler em voz alta.',
+      expiresAt: Date.now() + 60_000,
+    });
+    api.verifyDeclaration.mockResolvedValue({ ok: true });
+    api.create.mockResolvedValue({
+      ok: true,
+      receipt: { id: 'g'.repeat(24), provider: 'gemini', voiceId: 'voice_ana', voiceName: 'Voz de Ana', createdAt: '2026-10-19T12:00:00Z', requiresVerification: false },
+    });
+    await render(false, true, true);
+    expect(button('Criar minha voz na ElevenLabs').disabled).toBe(true);
+    await click('Criar minha voz no Gemini');
+    expect(host.textContent).toContain('No plano grátis da Gemini API');
+    type(host.querySelector<HTMLInputElement>('input:not([type])')!, 'Ana Souza');
+    const boxes = host.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+    expect(boxes).toHaveLength(3);
+    act(() => boxes[0].click());
+    act(() => boxes[1].click());
+    expect(button('Continuar').disabled).toBe(true);
+    act(() => boxes[2].click());
+    await click('Continuar');
+    expect(api.begin).toHaveBeenCalledWith('gemini');
+    expect(host.textContent).toContain('1 de 3');
+    await click('Gravar declaração');
+    await click('Parar e conferir');
+    expect(host.textContent).toContain('2 de 3');
+    expect(host.textContent).toContain('autorizo o Google');
+    recorder.duration = 6;
+    await click('Gravar a frase');
+    expect(recorder.started.at(-1)).toBe(20);
+    await click('Parar');
+    expect(host.textContent).toContain('3 de 3');
+    recorder.duration = 20;
+    await click('Gravar leitura');
+    expect(recorder.started.at(-1)).toBe(30);
+    await click('Parar');
+    await click('Criar a voz no Gemini');
+    expect(api.create).toHaveBeenCalledWith({
+      sessionId: 'b'.repeat(32),
+      voiceName: 'Voz de Ana',
+      samples: [expect.any(Uint8Array)],
+      consentWav: expect.any(Uint8Array),
+    });
+    expect(host.textContent).toContain('criada na sua conta do Gemini (Google)');
   });
 });

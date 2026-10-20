@@ -48,6 +48,7 @@ describe('ferramentas de vídeo', () => {
         'nexus_video_preview_stop',
         'nexus_video_render',
         'nexus_voice_list',
+        'nexus_voiceover_align',
         'nexus_voiceover_generate',
       ]);
       for (const item of tools) {

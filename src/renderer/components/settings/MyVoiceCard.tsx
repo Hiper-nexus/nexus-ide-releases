@@ -2,9 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   VOICE_CONSENT_POINTS,
   VOICE_DECLARATION_MAX_SEC,
-  VOICE_SAMPLE_MAX_SEC,
-  VOICE_SAMPLE_MIN_SEC,
+  VOICE_GEMINI_CONSENT_MAX_SEC,
+  VOICE_GEMINI_CONSENT_POINTS,
   voiceDeclarationText,
+  type VoiceCloneProvider,
   type VoiceCloneReceiptView,
   type VoiceCloneSessionView,
 } from '../../../shared/voice-clone-types';
@@ -21,7 +22,7 @@ import { VoiceSampleRecorder, type VoiceSample } from '../../voice/voice-sample-
  * leaves the computer before the declaration is checked.
  */
 
-type Step = 'list' | 'consent' | 'declaration' | 'reading' | 'done';
+type Step = 'list' | 'consent' | 'declaration' | 'consentPhrase' | 'reading' | 'done';
 type Recording = 'idle' | 'recording' | 'checking';
 
 function formatSeconds(seconds: number): string {
@@ -56,6 +57,11 @@ function LevelMeter({ level }: { level: number }) {
   );
 }
 
+/** F-1601: where the voice lives, in the words the person reads. */
+export function providerLabel(provider: VoiceCloneProvider): string {
+  return provider === 'gemini' ? 'Gemini (Google)' : 'ElevenLabs';
+}
+
 function VoiceRow({ receipt, onRemoved }: { receipt: VoiceCloneReceiptView; onRemoved: () => void }) {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -84,7 +90,7 @@ function VoiceRow({ receipt, onRemoved }: { receipt: VoiceCloneReceiptView; onRe
       <div className="my-voice__item-head">
         <span className="my-voice__item-name">{receipt.voiceName}</span>
         <span className="my-voice__item-meta">
-          ElevenLabs · criada em {formatDate(receipt.createdAt)} · recibo neste computador
+          {providerLabel(receipt.provider)} · criada em {formatDate(receipt.createdAt)} · recibo neste computador
         </span>
       </div>
       {receipt.requiresVerification && (
@@ -105,7 +111,7 @@ function VoiceRow({ receipt, onRemoved }: { receipt: VoiceCloneReceiptView; onRe
               disabled={busy}
               onClick={() => void remove(false)}
             >
-              {busy ? 'Apagando…' : 'Apagar na ElevenLabs e aqui'}
+              {busy ? 'Apagando…' : `Apagar ${receipt.provider === 'gemini' ? 'no Gemini' : 'na ElevenLabs'} e aqui`}
             </button>
             <button type="button" className="settings-btn" disabled={busy} onClick={() => setConfirming(false)}>
               Manter
@@ -133,9 +139,12 @@ function VoiceRow({ receipt, onRemoved }: { receipt: VoiceCloneReceiptView; onRe
  */
 export function MyVoiceCard({
   elevenLabsConnected,
+  geminiConnected = false,
   canCreate = true,
 }: {
   elevenLabsConnected: boolean;
+  /** F-1601: the Gemini key of the media services (google-image/google-video). */
+  geminiConnected?: boolean;
   canCreate?: boolean;
 }) {
   const bridge = typeof window !== 'undefined' ? window.nexus?.voiceClone : undefined;
@@ -145,6 +154,9 @@ export function MyVoiceCard({
   const [speakerName, setSpeakerName] = useState('');
   const [consented, setConsented] = useState(false);
   const [ownVoiceAdult, setOwnVoiceAdult] = useState(false);
+  const [provider, setProvider] = useState<VoiceCloneProvider>('elevenlabs');
+  const [paidKey, setPaidKey] = useState(false);
+  const [consentClip, setConsentClip] = useState<VoiceSample | null>(null);
   const [recording, setRecording] = useState<Recording>('idle');
   const [level, setLevel] = useState(0);
   const [message, setMessage] = useState<{ tone: 'ok' | 'danger'; text: string } | null>(null);
@@ -184,6 +196,8 @@ export function MyVoiceCard({
     setStep('list');
     setConsented(false);
     setOwnVoiceAdult(false);
+    setPaidKey(false);
+    setConsentClip(null);
     setRecording('idle');
     setReading(null);
     setMessage(null);
@@ -191,7 +205,7 @@ export function MyVoiceCard({
 
   async function beginConsent() {
     setMessage(null);
-    const started = await bridge!.begin();
+    const started = await bridge!.begin(provider);
     if ('ok' in started) {
       setMessage({ tone: 'danger', text: started.error });
       return;
@@ -235,7 +249,7 @@ export function MyVoiceCard({
       });
       if (result.ok) {
         setMessage({ tone: 'ok', text: 'Declaração conferida.' });
-        setStep('reading');
+        setStep(session.provider === 'gemini' ? 'consentPhrase' : 'reading');
       } else {
         setMessage({ tone: 'danger', text: result.error });
       }
@@ -244,6 +258,22 @@ export function MyVoiceCard({
     } finally {
       setRecording('idle');
     }
+  }
+
+  /** Gemini: the official sentence; Google checks it was the same speaker. */
+  async function stopConsentPhrase() {
+    const active = recorder.current;
+    if (!active) return;
+    recorder.current = null;
+    const sample = await active.stop();
+    setRecording('idle');
+    if (sample.peakRms < 0.003) {
+      setMessage({ tone: 'danger', text: 'O microfone gravou silêncio. Confira o microfone e grave de novo.' });
+      return;
+    }
+    setConsentClip(sample);
+    setMessage(null);
+    setStep('reading');
   }
 
   async function stopReading() {
@@ -258,11 +288,12 @@ export function MyVoiceCard({
       return;
     }
     setReading(sample);
+    const minSec = session?.readingMinSec ?? 0;
     setMessage(
-      sample.durationSec < VOICE_SAMPLE_MIN_SEC
+      sample.durationSec < minSec
         ? {
             tone: 'danger',
-            text: `A leitura teve ${formatSeconds(sample.durationSec)}; precisa de pelo menos ${formatSeconds(VOICE_SAMPLE_MIN_SEC)}. Grave de novo, sem pressa.`,
+            text: `A leitura teve ${formatSeconds(sample.durationSec)}; precisa de pelo menos ${formatSeconds(minSec)}. Grave de novo, sem pressa.`,
           }
         : null,
     );
@@ -277,6 +308,7 @@ export function MyVoiceCard({
         sessionId: session.sessionId,
         voiceName,
         samples: [reading.wav],
+        ...(session.provider === 'gemini' && consentClip ? { consentWav: consentClip.wav } : {}),
       });
       if (!result.ok) {
         setMessage({ tone: 'danger', text: result.error });
@@ -287,7 +319,7 @@ export function MyVoiceCard({
       setStep('done');
       setMessage({
         tone: 'ok',
-        text: `Voz "${result.receipt.voiceName}" criada na sua conta da ElevenLabs. Os agentes a veem em nexus_voice_list; peça o vídeo dizendo que é para usar a sua voz.`,
+        text: `Voz "${result.receipt.voiceName}" criada na sua conta ${result.receipt.provider === 'gemini' ? 'do Gemini (Google)' : 'da ElevenLabs'}. Os agentes a veem em nexus_voice_list; peça o vídeo dizendo que é para usar a sua voz.`,
       });
       await reload();
     } catch {
@@ -298,7 +330,9 @@ export function MyVoiceCard({
   }
 
   const declaration = session ? voiceDeclarationText(speakerName, session.code) : '';
-  const readingOk = reading !== null && reading.durationSec >= VOICE_SAMPLE_MIN_SEC;
+  const readingOk = reading !== null && session !== null && reading.durationSec >= session.readingMinSec;
+  const gemini = session?.provider === 'gemini';
+  const totalSteps = gemini ? 3 : 2;
 
   if (!canCreate && receipts.length === 0) return null;
 
@@ -336,13 +370,26 @@ export function MyVoiceCard({
             disabled={!elevenLabsConnected}
             onClick={() => {
               setMessage(null);
+              setProvider('elevenlabs');
               setStep('consent');
             }}
           >
-            Criar minha voz
+            Criar minha voz na ElevenLabs
           </button>
-          {!elevenLabsConnected && (
-            <span className="settings-detail__hint">Conecte a ElevenLabs acima para criar a sua voz.</span>
+          <button
+            type="button"
+            className="settings-btn"
+            disabled={!geminiConnected}
+            onClick={() => {
+              setMessage(null);
+              setProvider('gemini');
+              setStep('consent');
+            }}
+          >
+            Criar minha voz no Gemini
+          </button>
+          {!elevenLabsConnected && !geminiConnected && (
+            <span className="settings-detail__hint">Conecte a ElevenLabs ou o Gemini (Google) acima para criar a sua voz.</span>
           )}
         </div>
       )}
@@ -351,7 +398,7 @@ export function MyVoiceCard({
         <div className="my-voice__step" role="group" aria-label="Consentimento">
           <p className="my-voice__step-title">Antes de gravar</p>
           <ul className="my-voice__points">
-            {VOICE_CONSENT_POINTS.map((point) => (
+            {(provider === 'gemini' ? VOICE_GEMINI_CONSENT_POINTS : VOICE_CONSENT_POINTS).map((point) => (
               <li key={point}>{point}</li>
             ))}
           </ul>
@@ -369,18 +416,24 @@ export function MyVoiceCard({
             <input type="checkbox" checked={consented} onChange={(event) => setConsented(event.target.checked)} />
             <span>
               Autorizo o tratamento da minha voz, dado biométrico, para criar uma voz sintética minha na minha
-              conta da ElevenLabs, só para narrar os meus vídeos.
+              conta {provider === 'gemini' ? 'do Gemini (Google)' : 'da ElevenLabs'}, só para narrar os meus vídeos.
             </span>
           </label>
           <label className="my-voice__check">
             <input type="checkbox" checked={ownVoiceAdult} onChange={(event) => setOwnVoiceAdult(event.target.checked)} />
             <span>Sou maior de 18 anos e a voz que vou gravar é a minha.</span>
           </label>
+          {provider === 'gemini' && (
+            <label className="my-voice__check">
+              <input type="checkbox" checked={paidKey} onChange={(event) => setPaidKey(event.target.checked)} />
+              <span>A minha chave da Gemini API é de plano pago (no grátis o Google usa a gravação para treinar).</span>
+            </label>
+          )}
           <div className="settings-row">
             <button
               type="button"
               className="settings-btn settings-btn--primary"
-              disabled={!consented || !ownVoiceAdult || speakerName.trim().length < 2}
+              disabled={!consented || !ownVoiceAdult || (provider === 'gemini' && !paidKey) || speakerName.trim().length < 2}
               onClick={() => void beginConsent()}
             >
               Continuar
@@ -394,7 +447,7 @@ export function MyVoiceCard({
 
       {step === 'declaration' && session && (
         <div className="my-voice__step" role="group" aria-label="Declaração gravada">
-          <p className="my-voice__step-title">1 de 2 · Leia em voz alta, devagar, número por número</p>
+          <p className="my-voice__step-title">1 de {totalSteps} · Leia em voz alta, devagar, número por número</p>
           <blockquote className="my-voice__script">{declaration}</blockquote>
           <div className="settings-row">
             {recording === 'recording' ? (
@@ -419,11 +472,37 @@ export function MyVoiceCard({
         </div>
       )}
 
+      {step === 'consentPhrase' && session && (
+        <div className="my-voice__step" role="group" aria-label="Autorização para o Google">
+          <p className="my-voice__step-title">2 de 3 · Leia a frase de autorização do Google, com a mesma voz e no mesmo lugar</p>
+          <blockquote className="my-voice__script">{session.consentPhrase}</blockquote>
+          <div className="settings-row">
+            {recording === 'recording' ? (
+              <button type="button" className="settings-btn settings-btn--primary" onClick={() => void stopConsentPhrase()}>
+                Parar ({formatSeconds(elapsed)})
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="settings-btn settings-btn--primary"
+                onClick={() => void startRecording(VOICE_GEMINI_CONSENT_MAX_SEC, () => void stopConsentPhrase())}
+              >
+                Gravar a frase
+              </button>
+            )}
+            {recording === 'recording' && <LevelMeter level={level} />}
+            <button type="button" className="settings-btn" onClick={resetFlow}>
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+
       {step === 'reading' && session && (
         <div className="my-voice__step" role="group" aria-label="Leitura para a voz">
           <p className="my-voice__step-title">
-            2 de 2 · Leia o texto no seu ritmo natural ({formatSeconds(VOICE_SAMPLE_MIN_SEC)} a{' '}
-            {formatSeconds(VOICE_SAMPLE_MAX_SEC)}, em lugar silencioso)
+            {totalSteps} de {totalSteps} · Leia o texto no seu ritmo natural ({formatSeconds(session.readingMinSec)} a{' '}
+            {formatSeconds(session.readingMaxSec)}, em lugar silencioso)
           </p>
           <blockquote className="my-voice__script my-voice__script--long">{session.readingText}</blockquote>
           <div className="settings-row">
@@ -435,7 +514,7 @@ export function MyVoiceCard({
               <button
                 type="button"
                 className="settings-btn"
-                onClick={() => void startRecording(VOICE_SAMPLE_MAX_SEC, () => void stopReading())}
+                onClick={() => void startRecording(session.readingMaxSec, () => void stopReading())}
               >
                 {reading ? 'Gravar de novo' : 'Gravar leitura'}
               </button>
@@ -446,7 +525,7 @@ export function MyVoiceCard({
             )}
           </div>
           <label className="my-voice__field">
-            <span>Nome da voz na ElevenLabs</span>
+            <span>Nome da voz {gemini ? 'no Gemini' : 'na ElevenLabs'}</span>
             <input
               className="settings-input"
               value={voiceName}
@@ -461,7 +540,7 @@ export function MyVoiceCard({
               disabled={!readingOk || creating || recording !== 'idle' || voiceName.trim().length < 2}
               onClick={() => void createVoice()}
             >
-              {creating ? 'Criando…' : 'Criar a voz na ElevenLabs'}
+              {creating ? 'Criando…' : gemini ? 'Criar a voz no Gemini' : 'Criar a voz na ElevenLabs'}
             </button>
             <button type="button" className="settings-btn" disabled={creating} onClick={resetFlow}>
               Cancelar

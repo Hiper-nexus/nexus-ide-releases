@@ -6,7 +6,13 @@ import {
   VOICE_READING_TEXT,
   VOICE_SAMPLE_MAX_SEC,
   VOICE_SAMPLE_MIN_SEC,
+  VOICE_GEMINI_CONSENT_MAX_SEC,
+  VOICE_GEMINI_CONSENT_MIN_SEC,
+  VOICE_GEMINI_CONSENT_PHRASE,
+  VOICE_GEMINI_SAMPLE_MAX_SEC,
+  VOICE_GEMINI_SAMPLE_MIN_SEC,
   voiceDeclarationText,
+  type VoiceCloneProvider,
   type VoiceCloneCreateResult,
   type VoiceCloneRemoveResult,
   type VoiceCloneSessionView,
@@ -23,6 +29,13 @@ import {
   type VoiceConsentStore,
 } from './voice-consents';
 import { purgeVoiceoverCacheForVoice } from './voiceover';
+import {
+  createGeminiReplicatedVoice,
+  deleteGeminiVoice,
+  GEMINI_SAMPLE_RATE,
+  geminiTranscribe,
+} from './voice-providers/gemini-voice';
+import { decodeWav, durationSec, encodeWav, resample, trim } from './wav-pcm';
 
 /**
  * "Minha voz" (F-1593): instant voice cloning of the operator's own voice.
@@ -53,6 +66,7 @@ export interface VoiceCloneDeps {
 
 interface Session {
   readonly id: string;
+  readonly provider: VoiceCloneProvider;
   readonly code: string;
   readonly expiresAt: number;
   declaration?: {
@@ -61,6 +75,7 @@ interface Session {
     readonly speakerName: string;
     readonly text: string;
     readonly heard: readonly VoiceDeclarationMissing[];
+    readonly sttProvider: 'elevenlabs' | 'gemini';
   };
 }
 
@@ -169,10 +184,21 @@ export function missingFromDeclaration(
 
 // ── Provider calls ──────────────────────────────────────────────────────────
 
-function requireKey(deps: VoiceCloneDeps): string {
-  const def = findMediaProvider('elevenlabs');
-  const key = def ? deps.getKey(def) : undefined;
-  if (!key) throw new Error('Conecte a ElevenLabs em Serviços de mídia antes de criar a sua voz.');
+function keyFor(deps: VoiceCloneDeps, provider: VoiceCloneProvider): string | undefined {
+  // The Gemini key of the media services (google-image and google-video share it).
+  const def = findMediaProvider(provider === 'gemini' ? 'google-image' : 'elevenlabs');
+  return def ? deps.getKey(def) : undefined;
+}
+
+function requireKey(deps: VoiceCloneDeps, provider: VoiceCloneProvider = 'elevenlabs'): string {
+  const key = keyFor(deps, provider);
+  if (!key) {
+    throw new Error(
+      provider === 'gemini'
+        ? 'Conecte a chave do Gemini (Google) em Serviços de mídia antes de criar a sua voz.'
+        : 'Conecte a ElevenLabs em Serviços de mídia antes de criar a sua voz.',
+    );
+  }
   return key;
 }
 
@@ -220,7 +246,10 @@ async function transcribe(deps: VoiceCloneDeps, key: string, wav: Uint8Array): P
 
 // ── Flow ────────────────────────────────────────────────────────────────────
 
-export function beginVoiceClone(deps: Pick<VoiceCloneDeps, 'now' | 'randomCode'>): VoiceCloneSessionView {
+export function beginVoiceClone(
+  deps: Pick<VoiceCloneDeps, 'now' | 'randomCode'>,
+  provider: VoiceCloneProvider = 'elevenlabs',
+): VoiceCloneSessionView {
   const now = deps.now();
   sweep(now);
   if (sessions.size >= MAX_SESSIONS) {
@@ -230,15 +259,20 @@ export function beginVoiceClone(deps: Pick<VoiceCloneDeps, 'now' | 'randomCode'>
   const code = deps.randomCode?.() ?? String(randomInt(0, 1_000_000)).padStart(6, '0');
   const session: Session = {
     id: randomBytes(16).toString('hex'),
+    provider,
     code,
     expiresAt: now + SESSION_TTL_MS,
   };
   sessions.set(session.id, session);
   return {
     sessionId: session.id,
+    provider,
     code,
     consentVersion: VOICE_CONSENT_VERSION,
     readingText: VOICE_READING_TEXT,
+    readingMinSec: provider === 'gemini' ? VOICE_GEMINI_SAMPLE_MIN_SEC : VOICE_SAMPLE_MIN_SEC,
+    readingMaxSec: provider === 'gemini' ? VOICE_GEMINI_SAMPLE_MAX_SEC : VOICE_SAMPLE_MAX_SEC,
+    ...(provider === 'gemini' ? { consentPhrase: VOICE_GEMINI_CONSENT_PHRASE } : {}),
     expiresAt: session.expiresAt,
   };
 }
@@ -281,9 +315,22 @@ export async function verifyVoiceDeclaration(
       error: `A declaração precisa ter entre ${VOICE_DECLARATION_MIN_SEC} e ${VOICE_DECLARATION_MAX_SEC} segundos.`,
     };
   }
+  // The declaration is checked by STT: ElevenLabs Scribe when its key exists,
+  // otherwise (a Gemini-only setup) the Gemini key transcribes it.
   let transcript: string;
+  let sttProvider: 'elevenlabs' | 'gemini';
   try {
-    transcript = await transcribe(deps, requireKey(deps), input.wav);
+    const elevenKey = keyFor(deps, 'elevenlabs');
+    if (elevenKey) {
+      transcript = await transcribe(deps, elevenKey, input.wav);
+      sttProvider = 'elevenlabs';
+    } else if (session.provider === 'gemini') {
+      transcript = await geminiTranscribe({ key: requireKey(deps, 'gemini'), fetchFn: deps.fetchFn, wav: input.wav });
+      sttProvider = 'gemini';
+    } else {
+      requireKey(deps);
+      return { ok: false, missing: [], error: 'Conecte a ElevenLabs em Serviços de mídia.' };
+    }
   } catch (error) {
     return { ok: false, missing: [], error: (error as Error).message };
   }
@@ -302,12 +349,13 @@ export async function verifyVoiceDeclaration(
     speakerName,
     text: voiceDeclarationText(speakerName, session.code),
     heard: ['nome', 'idade', 'autorização', 'código'],
+    sttProvider,
   };
   return { ok: true };
 }
 
 export async function createVoiceClone(
-  input: { sessionId: string; voiceName: string; samples: Uint8Array[] },
+  input: { sessionId: string; voiceName: string; samples: Uint8Array[]; consentWav?: Uint8Array },
   deps: VoiceCloneDeps,
 ): Promise<VoiceCloneCreateResult> {
   let session: Session;
@@ -327,6 +375,7 @@ export async function createVoiceClone(
   if (input.samples.length === 0 || input.samples.length > 5) {
     return { ok: false, error: 'Envie de 1 a 5 gravações da leitura.' };
   }
+  if (session.provider === 'gemini') return createGeminiVoice(session, declaration, voiceName, input, deps);
   let seconds = 0;
   try {
     for (const sample of input.samples) seconds += readWavInfo(sample).durationSec;
@@ -378,7 +427,7 @@ export async function createVoiceClone(
     readingTextSha256: createHash('sha256').update(VOICE_READING_TEXT).digest('hex'),
     createdAt: new Date(deps.now()).toISOString(),
     appVersion: deps.appVersion,
-    verification: { method: 'stt', provider: 'elevenlabs', model: STT_MODEL, heard: declaration.heard },
+    verification: { method: 'stt', provider: declaration.sttProvider, model: sttModel(declaration.sttProvider), heard: declaration.heard },
     requiresVerification: body.requires_verification === true,
   };
   try {
@@ -412,12 +461,17 @@ export async function removeVoiceClone(
   let removedAtProvider = false;
   if (!input.localOnly) {
     try {
-      await deleteAtProvider(deps, requireKey(deps), receipt.voiceId);
+      if (receipt.provider === 'gemini') {
+        await deleteGeminiVoice({ key: requireKey(deps, 'gemini'), fetchFn: deps.fetchFn, id: receipt.voiceId });
+      } else {
+        await deleteAtProvider(deps, requireKey(deps), receipt.voiceId);
+      }
       removedAtProvider = true;
     } catch (error) {
+      const where = receipt.provider === 'gemini' ? 'no Google (Gemini API)' : 'na ElevenLabs';
       return {
         ok: false,
-        error: `${(error as Error).message} A voz continua na ElevenLabs; tente de novo ou apague lá.`,
+        error: `${(error as Error).message} A voz continua ${where}; tente de novo ou apague lá.`,
         canRemoveLocally: true,
       };
     }
@@ -425,4 +479,86 @@ export async function removeVoiceClone(
   deps.store.remove(receipt.id);
   if (deps.voiceoverCacheDir) purgeVoiceoverCacheForVoice(deps.voiceoverCacheDir, receipt.voiceId);
   return { ok: true, removedAtProvider };
+}
+
+function sttModel(provider: 'elevenlabs' | 'gemini'): string {
+  return provider === 'gemini' ? 'gemini-3.5-flash' : STT_MODEL;
+}
+
+/**
+ * Gemini replication (F-1601): the reading becomes the 10–30 s reference clip
+ * and the official sentence the consent clip, both mono 24 kHz WAV (the format
+ * Google recommends). Google checks the speaker match; the Nexus keeps both
+ * declarations as proof, exactly like the ElevenLabs path.
+ */
+async function createGeminiVoice(
+  session: Session,
+  declaration: NonNullable<Session['declaration']>,
+  voiceName: string,
+  input: { samples: Uint8Array[]; consentWav?: Uint8Array },
+  deps: VoiceCloneDeps,
+): Promise<VoiceCloneCreateResult> {
+  if (!input.consentWav) return { ok: false, error: 'Grave a frase de autorização do Google antes de criar a voz.' };
+  let source: Buffer;
+  let consent: Buffer;
+  let seconds: number;
+  try {
+    const reading = decodeWav(input.samples[0]);
+    seconds = durationSec(reading);
+    if (seconds < VOICE_GEMINI_SAMPLE_MIN_SEC) {
+      return { ok: false, error: `A leitura precisa de pelo menos ${VOICE_GEMINI_SAMPLE_MIN_SEC} segundos (agora: ${Math.round(seconds)} s).` };
+    }
+    source = encodeWav(trim(resample(reading, GEMINI_SAMPLE_RATE), VOICE_GEMINI_SAMPLE_MAX_SEC));
+    const consentPcm = decodeWav(input.consentWav);
+    const consentSeconds = durationSec(consentPcm);
+    if (consentSeconds < VOICE_GEMINI_CONSENT_MIN_SEC || consentSeconds > VOICE_GEMINI_CONSENT_MAX_SEC) {
+      return {
+        ok: false,
+        error: `A frase de autorização precisa ter entre ${VOICE_GEMINI_CONSENT_MIN_SEC} e ${VOICE_GEMINI_CONSENT_MAX_SEC} segundos.`,
+      };
+    }
+    consent = encodeWav(resample(consentPcm, GEMINI_SAMPLE_RATE));
+  } catch (error) {
+    return { ok: false, error: `Gravação inválida: ${(error as Error).message}.` };
+  }
+  let key: string;
+  try {
+    key = requireKey(deps, 'gemini');
+  } catch (error) {
+    return { ok: false, error: (error as Error).message };
+  }
+  let voiceId: string;
+  try {
+    voiceId = (
+      await createGeminiReplicatedVoice({ key, fetchFn: deps.fetchFn, displayName: voiceName, sourceWav: source, consentWav: consent })
+    ).id;
+  } catch (error) {
+    return { ok: false, error: (error as Error).message };
+  }
+  const receipt: VoiceConsentReceipt = {
+    id: newReceiptId(),
+    provider: 'gemini',
+    voiceId,
+    voiceName,
+    speakerName: declaration.speakerName,
+    declarationText: declaration.text,
+    declarationSha256: declaration.sha256,
+    samplesSha256: input.samples.slice(0, 1).map(sha256),
+    samplesSeconds: Math.round(Math.min(seconds, VOICE_GEMINI_SAMPLE_MAX_SEC) * 10) / 10,
+    consentVersion: VOICE_CONSENT_VERSION,
+    readingTextSha256: createHash('sha256').update(VOICE_READING_TEXT).digest('hex'),
+    createdAt: new Date(deps.now()).toISOString(),
+    appVersion: deps.appVersion,
+    verification: { method: 'stt', provider: declaration.sttProvider, model: sttModel(declaration.sttProvider), heard: declaration.heard },
+    requiresVerification: false,
+    providerConsent: { method: 'consent_audio', phrase: VOICE_GEMINI_CONSENT_PHRASE, sha256: sha256(input.consentWav) },
+  };
+  try {
+    deps.store.add(receipt, declaration.wav, input.consentWav);
+  } catch {
+    await deleteGeminiVoice({ key, fetchFn: deps.fetchFn, id: voiceId }).catch(() => undefined);
+    return { ok: false, error: 'Não consegui guardar o recibo neste computador; a voz foi desfeita no Google.' };
+  }
+  sessions.delete(session.id);
+  return { ok: true, receipt: receiptView(receipt) };
 }

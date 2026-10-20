@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   recordUsage: vi.fn(),
   generateMusic: vi.fn(),
   align: vi.fn(),
+  listGemini: vi.fn(),
+  generateGemini: vi.fn(),
 }));
 
 vi.mock('../workspace-path', () => ({ resolveCwdForScope: mocks.workspaceRoot }));
@@ -36,6 +38,12 @@ vi.mock('../../media/voiceover-align', () => ({
 }));
 vi.mock('../../video/video-runtime-deps', () => ({ videoRenderDeps: () => ({ userData: '/ud', pathValue: '/bin' }) }));
 vi.mock('../../media/media-keys', () => ({ resolveMediaKey: mocks.resolveKey }));
+vi.mock('electron', () => ({ app: { getPath: () => '/ud' } }));
+vi.mock('../../media/voiceover-gemini', () => ({ generateGeminiVoiceover: mocks.generateGemini }));
+vi.mock('../../media/voice-providers/gemini-voice', () => ({
+  GEMINI_PREBUILT_VOICES: ['Kore', 'Puck'],
+  listGeminiReplicatedVoices: mocks.listGemini,
+}));
 vi.mock('../../usage/media-usage-recorder', () => ({ recordMediaUsage: mocks.recordUsage }));
 
 let workspace: string;
@@ -51,7 +59,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-tools-voice-'));
   mocks.workspaceRoot.mockReturnValue(workspace);
-  mocks.resolveKey.mockReturnValue('xi-key');
+  mocks.resolveKey.mockImplementation((def?: { id?: string }) => (def?.id === 'elevenlabs' ? 'xi-key' : undefined));
 });
 
 afterEach(() => {
@@ -84,6 +92,46 @@ describe('ferramentas de voz', () => {
     const result = await tool('nexus_voice_list').handler({}, ctx);
     expect(result).toEqual({ ok: true, voices: [{ voiceId: 'v1', origin: 'library' }] });
     expect(mocks.listVoices.mock.calls[0][0]).toMatchObject({ key: 'xi-key' });
+    expect(mocks.listGemini).not.toHaveBeenCalled();
+  });
+
+  it('com a chave do Google lista também as vozes do Gemini (F-1601)', async () => {
+    mocks.resolveKey.mockImplementation((def?: { id?: string }) => (def?.id === 'google-image' ? 'gm-key' : undefined));
+    mocks.listGemini.mockResolvedValue([{ id: 'voice_minha', displayName: 'Minha voz' }]);
+    const result = await tool('nexus_voice_list').handler({}, ctx);
+    expect(result).toEqual({
+      ok: true,
+      voices: [],
+      gemini: {
+        library: [
+          { voiceId: 'Kore', name: 'Kore', origin: 'library' },
+          { voiceId: 'Puck', name: 'Puck', origin: 'library' },
+        ],
+        replicated: [{ voiceId: 'voice_minha', name: 'Minha voz', origin: 'external-clone' }],
+      },
+    });
+    expect(mocks.listVoices).not.toHaveBeenCalled();
+    expect(mocks.listGemini.mock.calls[0][0]).toMatchObject({ key: 'gm-key' });
+  });
+
+  it('narração com provider gemini vai ao caminho do Gemini, com preço antes e o gasto registrado', async () => {
+    mocks.resolveKey.mockImplementation((def?: { id?: string }) => (def?.id === 'google-image' ? 'gm-key' : undefined));
+    mocks.generateGemini
+      .mockResolvedValueOnce({ ok: true, dryRun: true, model: 'gemini-3.8-flash-tts', estimatedCostUsd: 0.01 })
+      .mockResolvedValueOnce({
+        ok: true,
+        dryRun: false,
+        model: 'gemini-3.8-flash-tts',
+        estimatedCostUsd: 0.008,
+        durationMs: 30_000,
+        files: { audio: path.join(workspace, 'narration', 'narration.wav') },
+      });
+    const result = await tool('nexus_voiceover_generate').handler({ script: 'Olá.', voiceId: 'Kore', provider: 'gemini' }, ctx);
+    expect(result).toMatchObject({ ok: true, estimatedCostUsd: 0.008 });
+    expect(mocks.generateGemini.mock.calls.map((call) => call[0].dryRun)).toEqual([true, false]);
+    expect(mocks.generateGemini.mock.calls[1][0]).toMatchObject({ script: 'Olá.', voice: 'Kore' });
+    expect(mocks.generateVoiceover).not.toHaveBeenCalled();
+    expect(mocks.recordUsage.mock.calls[0][0]).toMatchObject({ provider: 'google-image', kind: 'audio', estimatedCostUsd: 0.008 });
   });
 
   it('narra o roteiro inline no workspace do chamador e registra o gasto', async () => {

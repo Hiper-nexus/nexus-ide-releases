@@ -296,3 +296,82 @@ describe('fluxo Minha voz', () => {
     expect(calls).toHaveLength(0);
   });
 });
+
+describe('Minha voz no Gemini (F-1601)', () => {
+  function geminiFetch(seen: Array<{ url: string; method: string; body: unknown }>): typeof fetch {
+    return vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      const body = typeof init?.body === 'string' ? JSON.parse(init.body) : null;
+      seen.push({ url, method: init?.method ?? 'GET', body });
+      if (url.endsWith(':generateContent')) {
+        return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: transcript }] } }] }));
+      }
+      if (url.endsWith('/v1beta/voices') && init?.method === 'POST') {
+        return new Response(JSON.stringify({ id: 'voice_ana123', type: 'replicated', display_name: 'Voz de Ana' }));
+      }
+      if (url.includes('/v1beta/voices/') && init?.method === 'DELETE') return new Response('', { status: 200 });
+      return new Response('{}', { status: 404 });
+    }) as unknown as typeof fetch;
+  }
+
+  it('só com a chave do Gemini: STT pelo Gemini, voz criada com a frase do Google, recibo e as duas provas', async () => {
+    const seen: Array<{ url: string; method: string; body: unknown }> = [];
+    const d = deps({
+      fetchFn: geminiFetch(seen),
+      getKey: (def) => (def.id === 'google-image' ? 'gm-key' : undefined),
+    });
+    const session = beginVoiceClone(d, 'gemini');
+    expect(session).toMatchObject({ provider: 'gemini', readingMinSec: 10, readingMaxSec: 30, consentPhrase: expect.stringContaining('autorizo o Google') });
+    expect(await verifyVoiceDeclaration({ sessionId: session.sessionId, speakerName: 'Ana Beatriz Souza', wav: wav(8) }, d)).toEqual({ ok: true });
+    expect(seen[0].url).toMatch(/gemini-3\.5-flash:generateContent$/u);
+
+    expect(await createVoiceClone({ sessionId: session.sessionId, voiceName: 'Voz de Ana', samples: [wav(20, 48_000)] }, d)).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/frase de autorização/u),
+    });
+    const created = await createVoiceClone(
+      { sessionId: session.sessionId, voiceName: 'Voz de Ana', samples: [wav(45, 48_000)], consentWav: wav(6, 48_000) },
+      d,
+    );
+    if (!created.ok) throw new Error(created.error);
+    expect(created.receipt).toMatchObject({ provider: 'gemini', voiceId: 'voice_ana123', voiceName: 'Voz de Ana' });
+    const post = seen.find((call) => call.url.endsWith('/v1beta/voices') && call.method === 'POST')!;
+    const voice = (post.body as { store: boolean; voice: Record<string, unknown> });
+    expect(voice.store).toBe(true);
+    expect(voice.voice).toMatchObject({ model: 'gemini-3.8-flash-tts', type: 'replicated', display_name: 'Voz de Ana' });
+    const replicated = voice.voice.replicated as { source_audio: { mime_type: string; data: string }; consent_audio: { data: string } };
+    expect(replicated.source_audio.mime_type).toBe('audio/wav');
+    // The reference is cut to 30 s and resampled to 24 kHz mono.
+    const source = readWavInfo(Buffer.from(replicated.source_audio.data, 'base64'));
+    expect(source).toMatchObject({ sampleRate: 24_000, channels: 1 });
+    expect(source.durationSec).toBeCloseTo(30, 1);
+    expect(readWavInfo(Buffer.from(replicated.consent_audio.data, 'base64')).sampleRate).toBe(24_000);
+
+    const [stored] = d.store.list();
+    expect(stored.verification).toMatchObject({ provider: 'gemini', model: 'gemini-3.5-flash' });
+    expect(stored.providerConsent).toMatchObject({ method: 'consent_audio', phrase: expect.stringContaining('Google') });
+    expect(fs.existsSync(path.join(root, 'voice-consents', stored.id, 'provider-consent.wav'))).toBe(true);
+
+    expect(await removeVoiceClone({ id: stored.id }, d)).toEqual({ ok: true, removedAtProvider: true });
+    expect(seen.at(-1)).toMatchObject({ url: expect.stringMatching(/\/v1beta\/voices\/voice_ana123$/u), method: 'DELETE' });
+    expect(d.store.list()).toEqual([]);
+  });
+
+  it('leitura curta para o Gemini é recusada antes da rede; sem chave do Gemini não cria', async () => {
+    const seen: Array<{ url: string; method: string; body: unknown }> = [];
+    const d = deps({ fetchFn: geminiFetch(seen), getKey: (def) => (def.id === 'elevenlabs' ? 'xi-key' : undefined) });
+    const session = beginVoiceClone(d, 'gemini');
+    transcript =
+      'Eu, Ana Beatriz Souza, sou maior de 18 anos e autorizo a criação de uma voz sintética. Código quatro oito dois nove um três.';
+    d.fetchFn = fetchFn();
+    expect(await verifyVoiceDeclaration({ sessionId: session.sessionId, speakerName: 'Ana Beatriz Souza', wav: wav(8) }, d)).toEqual({ ok: true });
+    expect(calls[0].url).toMatch(/speech-to-text$/u);
+    expect(
+      await createVoiceClone({ sessionId: session.sessionId, voiceName: 'Voz', samples: [wav(5)], consentWav: wav(6) }, d),
+    ).toMatchObject({ ok: false, error: expect.stringMatching(/pelo menos 10 segundos/u) });
+    expect(
+      await createVoiceClone({ sessionId: session.sessionId, voiceName: 'Voz', samples: [wav(20)], consentWav: wav(6) }, d),
+    ).toMatchObject({ ok: false, error: expect.stringMatching(/chave do Gemini/u) });
+    expect(seen.filter((call) => call.method === 'POST')).toHaveLength(0);
+  });
+});

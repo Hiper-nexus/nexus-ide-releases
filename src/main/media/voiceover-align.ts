@@ -25,6 +25,7 @@ import {
 import { ensureVideoEngine } from '../video/video-engine-install';
 import { runOwnedProcess } from '../video/video-process';
 import { probeMedia } from '../video/ffprobe';
+import { SYNTHETIC_VOICE_LABEL, SYNTHETIC_VOICE_SOURCE_TYPE } from './voiceover';
 
 /**
  * `nexus_voiceover_align` (F-1602, study §5.3 step 10): the person narrates
@@ -64,6 +65,16 @@ export interface AlignRequest {
   readonly baseName?: string;
   readonly allowModelDownload?: boolean;
   readonly dryRun?: boolean;
+  /**
+   * F-1601: the audio is a SYNTHETIC narration the Nexus generated (Gemini TTS
+   * gives no word times). The timeline then says so, exactly like
+   * nexus_voiceover_generate, and the export labels and marks it.
+   */
+  readonly generated?: {
+    readonly provider: string;
+    readonly model: string;
+    readonly voice: { readonly id: string; readonly name: string | null; readonly origin: string };
+  };
   readonly baseDir: string;
   readonly scope: Readonly<ProjectExecutionScope>;
   readonly missionId?: string;
@@ -366,17 +377,36 @@ export async function alignVoiceover(req: AlignRequest, deps: AlignDeps): Promis
     writeMediaOutput(files.audio, req.baseDir, fs.readFileSync(audio));
   }
   const relative = (to: string) => path.relative(path.dirname(files.timeline), to).split(path.sep).join('/');
-  const timeline = {
-    version: 1,
-    generator: 'nexus_voiceover_align',
-    audio: relative(files.audio),
-    captions: { srt: relative(files.srt), vtt: relative(files.vtt) },
-    provider: engine === 'elevenlabs' ? 'elevenlabs' : 'local',
+  const alignment = {
+    engine,
     model: engine === 'elevenlabs' ? 'forced-alignment' : 'parakeet-tdt-0.6b-v3',
-    voice: { id: null, name: null, origin: 'recorded' },
-    alignment: { matchedRatio: Number(aligned.matchedRatio.toFixed(3)), unmatchedWords: aligned.unmatched },
-    ...body,
+    matchedRatio: Number(aligned.matchedRatio.toFixed(3)),
+    unmatchedWords: aligned.unmatched,
   };
+  const timeline = req.generated
+    ? {
+        version: 1,
+        generator: 'nexus_voiceover_generate',
+        audio: relative(files.audio),
+        captions: { srt: relative(files.srt), vtt: relative(files.vtt) },
+        provider: req.generated.provider,
+        model: req.generated.model,
+        voice: req.generated.voice,
+        synthetic: { digitalSourceType: SYNTHETIC_VOICE_SOURCE_TYPE, label: SYNTHETIC_VOICE_LABEL },
+        alignment,
+        ...body,
+      }
+    : {
+        version: 1,
+        generator: 'nexus_voiceover_align',
+        audio: relative(files.audio),
+        captions: { srt: relative(files.srt), vtt: relative(files.vtt) },
+        provider: engine === 'elevenlabs' ? 'elevenlabs' : 'local',
+        model: alignment.model,
+        voice: { id: null, name: null, origin: 'recorded' },
+        alignment: { matchedRatio: alignment.matchedRatio, unmatchedWords: alignment.unmatchedWords },
+        ...body,
+      };
   writeMediaOutput(files.timeline, req.baseDir, Buffer.from(`${JSON.stringify(timeline, null, 2)}\n`, 'utf8'));
   writeMediaOutput(files.srt, req.baseDir, Buffer.from(cuesToSrt(cues), 'utf8'));
   writeMediaOutput(files.vtt, req.baseDir, Buffer.from(cuesToVtt(cues), 'utf8'));

@@ -15,7 +15,7 @@ import {
 export function createVoiceCloneBridge(ipcRenderer: IpcRenderer): VoiceCloneApi {
   return {
     list: () => ipcRenderer.invoke(VOICE_CLONE_CHANNELS.list),
-    begin: () => ipcRenderer.invoke(VOICE_CLONE_CHANNELS.begin),
+    begin: (provider) => ipcRenderer.invoke(VOICE_CLONE_CHANNELS.begin, { provider: provider ?? 'elevenlabs' }),
     verifyDeclaration: (input) => ipcRenderer.invoke(VOICE_CLONE_CHANNELS.verifyDeclaration, input),
     create: (input) => ipcRenderer.invoke(VOICE_CLONE_CHANNELS.create, input),
     cancel: (sessionId) => ipcRenderer.invoke(VOICE_CLONE_CHANNELS.cancel, { sessionId }),

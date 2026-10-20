@@ -56,7 +56,11 @@ const createSchema = z.object({
     .min(1)
     .max(5)
     .refine((list) => list.reduce((total, item) => total + item.byteLength, 0) <= SAMPLES_MAX_TOTAL_BYTES),
+  /** Gemini (F-1601): the official consent sentence, recorded now. */
+  consentWav: bytes(DECLARATION_MAX_BYTES).optional(),
 });
+
+const beginSchema = z.object({ provider: z.enum(['elevenlabs', 'gemini']).optional() }).strict();
 
 const removeSchema = z.object({
   id: z.string().regex(/^[a-f0-9]{24}$/u),
@@ -82,9 +86,10 @@ export function registerVoiceCloneIpc(): void {
 
   // Criar voz só com o estúdio ligado; listar, cancelar e apagar ficam sempre
   // disponíveis: a pessoa apaga a própria voz mesmo com a chave desligada.
-  handleTrusted(VOICE_CLONE_CHANNELS.begin, (): VoiceCloneSessionView => {
+  handleTrusted(VOICE_CLONE_CHANNELS.begin, (_event, raw): VoiceCloneSessionView => {
     assertVideoStudioEnabled();
-    return beginVoiceClone(deps());
+    const parsed = beginSchema.safeParse(raw ?? {});
+    return beginVoiceClone(deps(), parsed.success ? (parsed.data.provider ?? 'elevenlabs') : 'elevenlabs');
   });
 
   handleTrusted(VOICE_CLONE_CHANNELS.verifyDeclaration, async (_event, raw): Promise<VoiceDeclarationResult> => {

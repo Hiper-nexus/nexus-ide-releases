@@ -341,6 +341,7 @@ export function MediaSection() {
       {!error && !loading && (
         <MyVoiceCard
           elevenLabsConnected={providers.some((provider) => provider.id === 'elevenlabs' && provider.hasKey)}
+          geminiConnected={providers.some((provider) => (provider.id === 'google-image' || provider.id === 'google-video') && provider.hasKey)}
           canCreate={productFlags[FEATURE_FLAG_IDS.mediaVideoStudio] === true}
         />
       )}
