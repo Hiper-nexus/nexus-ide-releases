@@ -1385,6 +1385,35 @@ export class WorktreeManager {
         "pooled worktree HEAD diverged from the pre-allocated base",
       );
     }
+    // F-XXX (BUG 2): a base congelada na reserva pode estar obsoleta se um
+    // commit entrou entre reserve e claim. Compara contra o HEAD ATUAL do
+    // checkout; se divergiu, a worktree do pool é descartada e o chamador cai
+    // no create() com o HEAD novo.
+    if (baseSha !== repository.headSha) {
+      throw new WorktreeStateConflictError(
+        "pooled worktree base is stale: a commit landed between reserve and claim",
+      );
+    }
+    // F-XXX (BUG 1): se o registro sumiu mas a worktree/branch canônica da aba
+    // ainda existe fisicamente, a adoção colidiria no `git branch -m` e o
+    // rollback apagaria a worktree preexistente com WIP. Detecta a colisão
+    // ANTES de qualquer mutação (registro ou Git) e recusa.
+    const derivedBranchName = derivedBranchRef.slice("refs/heads/".length);
+    if (fs.existsSync(derivedPath)) {
+      throw new WorktreeStateConflictError(
+        "adopted worktree path already exists on disk (preexisting tab worktree)",
+      );
+    }
+    const branchCheck = await this.#asyncGit.run(
+      repository.rootRealPath,
+      ["show-ref", "--verify", "--quiet", `refs/heads/${derivedBranchName}`],
+      { allowFailure: true },
+    );
+    if (branchCheck.status === 0) {
+      throw new WorktreeStateConflictError(
+        "adopted worktree branch already exists (preexisting tab worktree)",
+      );
+    }
     // Intenção durável ANTES de qualquer mutação Git (mesma ordem do
     // create()): o registro `reserved` já nomeia a identidade derivada. Se o
     // processo morrer entre o rename, o move e a promoção, a reconciliação de
@@ -1430,7 +1459,6 @@ export class WorktreeManager {
     // Conversão. Rename da branch é instantâneo; o move do worktree é um
     // rename no mesmo volume e leva o node_modules clonado junto.
     const poolBranchName = input.branchRef.slice("refs/heads/".length);
-    const derivedBranchName = derivedBranchRef.slice("refs/heads/".length);
     try {
       const rename = await this.#asyncGit.run(
         repository.rootRealPath,
