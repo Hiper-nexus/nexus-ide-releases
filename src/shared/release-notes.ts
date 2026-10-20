@@ -12231,11 +12231,11 @@ export const RELEASE_076355: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076356: AppRelease = {
   version: '0.76.356',
   date: '2026-10-20',
   codename: 'O Jev de olho na página',
-  summary: 'O navegador do agente julga a página depois de cada ação, as decisões do Jev aparecem no registro, as entregas com testes no relatório deixam de sair como evidência fraca e as abas novas reaproveitam pastas já preparadas sem apagar o trabalho de uma aba anterior.',
+  summary: 'O navegador do agente julga a página depois de cada ação, as decisões do Jev aparecem no registro, as entregas com testes no relatório deixam de sair como evidência fraca e as abas novas reaproveitam pastas já preparadas sem apagar o trabalho de uma aba anterior. A 0.76.356 é a publicação Windows e não recebe arquivos Linux.',
   highlights: [
     { title: 'O navegador do agente julga a página depois de cada ação', detail: 'Abrir, clicar, preencher e teclar devolvem junto um julgamento do Jev sobre a página (erro visível, bloqueio humano, carregando), com teto de cerca de 1,5 s. Estourou o teto, a ação sai sem julgamento e o resultado fica guardado para a próxima leitura. Imagem da página continua indo só com a visão ligada e o consentimento dado.' },
     { title: 'Decisões do Jev visíveis no registro', detail: 'Cada decisão do Jev entra no registro do app sem conteúdo (superfície, provedor, modelo, desfecho, duração e tokens), o chip do pane diz quem respondeu, e o status do Jev mostra as contagens desde a abertura por provedor e por superfície.' },
@@ -12253,4 +12253,20 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076356: AppRelease = CURRENT_RELEASE;
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.357',
+  date: '2026-10-20',
+  codename: 'O Jev julga a página',
+  summary: 'No desktop Linux, o navegador do agente julga a página depois de cada ação, as decisões do Jev entram no registro, as abas novas reaproveitam pastas já preparadas e os anexos de mídia zeram ao trocar de projeto. A 0.76.356 fica no Windows e não recebe arquivos Linux. A 0.76.355 é o pacote Linux anterior.',
+  highlights: [
+    { title: 'Anexos de mídia ao trocar de projeto', detail: 'Trocar de projeto zera os anexos e relê a biblioteca. Na imagem do Gemini só jpg e jpeg permanecem; qualquer outra extensão vira .jpg. O aviso só diz que o pedido de vídeo foi copiado quando a área de transferência aceitou a escrita.' },
+    { title: 'Pacote Linux', detail: 'A 0.76.356 é a publicação Windows, assinada pelo YubiKey, e não recebe arquivos Linux. A tag 0.76.354 não foi publicada. A tag 0.76.353 não foi publicada. A 0.76.355 é o pacote Linux anterior. A 0.76.346 é a publicação macOS e não recebe arquivos Linux.' },
+    ...RELEASE_076356.highlights,
+  ],
+  fixes: [
+    { title: 'Anexos de mídia ao trocar de projeto', detail: 'Trocar de projeto zera os anexos. Na imagem do Gemini qualquer extensão que não seja jpg ou jpeg vira .jpg, e o aviso de cópia do pedido de vídeo só confirma quando a área de transferência aceitou a escrita.' },
+    ...RELEASE_076356.fixes,
+  ],
+};
+
+export const RELEASE_076357: AppRelease = CURRENT_RELEASE;
