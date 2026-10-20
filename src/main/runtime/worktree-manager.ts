@@ -1301,6 +1301,8 @@ export class WorktreeManager {
     missionId: string,
     input: {
       readonly workerId: string;
+      readonly taskId?: string;
+      readonly ownership?: WorktreeOwnership;
       readonly worktreePath: string;
       readonly branchRef: string;
       readonly baseSha: string;
@@ -1328,7 +1330,10 @@ export class WorktreeManager {
         "pooled worktree branch is not a pool branch",
       );
     }
-    const taskId = `pane-${assertIdentifier(input.workerId, "workerId")}`;
+    const workerId = assertIdentifier(input.workerId, "workerId");
+    const taskId = input.taskId
+      ? assertIdentifier(input.taskId, "taskId")
+      : `pane-${workerId}`;
     const taskKey = worktreeTaskKey(missionId, taskId);
     const baseSha = assertSha(input.baseSha, "pooled base SHA");
     // Identidade canônica do writer: a MESMA derivada por create().
@@ -1337,7 +1342,7 @@ export class WorktreeManager {
       projectId: scope.projectId,
       missionId,
       taskId,
-      workerId: input.workerId,
+      workerId,
     });
     const derivedPath = path.join(
       this.worktreesRoot,
@@ -1347,6 +1352,9 @@ export class WorktreeManager {
     // `create()`, que garante o diretório do caminho derivado antes.
     ensureDirectory(path.dirname(derivedPath), this.worktreesRoot);
     const now = this.#timestamp();
+    const ownership = input.ownership
+      ? normalizeOwnership(input.ownership)
+      : { files: [], symbols: [], domains: [taskId] };
     const pooledCandidate = cloneRecord({
       ownerKind: "pane",
       reservationGeneration: randomUUID(),
@@ -1357,13 +1365,13 @@ export class WorktreeManager {
       missionId,
       taskId,
       taskKey,
-      workerId: input.workerId,
+      workerId,
       rootRealPath: repository.rootRealPath,
       worktreePath: realWorktree,
       branchRef: input.branchRef,
       integrationRef: repository.integrationRef,
       baseSha,
-      ownership: { files: [], symbols: [], domains: [taskId] },
+      ownership,
       dependencies: [],
       status: "ready",
       createdAt: now,

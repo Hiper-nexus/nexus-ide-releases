@@ -112,6 +112,26 @@ describe('IsolatedWriterPoolOrchestrator', () => {
     expect(orchestrator.size).toBe(0);
   });
 
+  it('passes explicit target (workerId, taskId, ownership) to backend claim', async () => {
+    const { backend, claim } = makeBackend();
+    const orchestrator = new IsolatedWriterPoolOrchestrator(backend, { enabled: () => true });
+    await orchestrator.preallocate(SCOPE, {});
+
+    const target = {
+      workerId: 'space-test',
+      taskId: 'tab',
+      ownership: { files: [], symbols: [], domains: ['space-test'] },
+    };
+    const result = await orchestrator.tryAdopt(SCOPE, 'space-test', {}, target);
+    expect(result).not.toBeNull();
+    expect(claim).toHaveBeenCalledWith(
+      SCOPE,
+      'space-test',
+      expect.objectContaining({ baseSha: SHA }),
+      target,
+    );
+  });
+
   it('falls through to null when the pool is empty', async () => {
     const { backend } = makeBackend();
     const orchestrator = new IsolatedWriterPoolOrchestrator(backend, { enabled: () => true });

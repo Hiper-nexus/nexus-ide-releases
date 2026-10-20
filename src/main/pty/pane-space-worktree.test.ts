@@ -7,6 +7,7 @@ import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { configureWorktreeRuntimeRegistry, disposeWorktreeRuntimeRegistry, requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 import { testProjectScope } from '../orch/__tests__/scope-fixture';
 import { preparePaneSpaceWorktree, isSharedPaneSpaceWorktree, tabGitProofStats, clearTabGitProofCache, findPaneSpaceIdByWorktreeCwd } from './pane-space-worktree';
+import { requireIsolatedWriterPool, resetIsolatedWriterPoolForTests, createRealIsolatedWriterPoolBackend } from '../orch/isolated-writer-pool';
 
 let temp: string;
 let manager: ProjectRuntimeManager;
@@ -141,4 +142,55 @@ it('a tampered .git pointer invalidates the cache and still fails closed', async
   const after = tabGitProofStats();
   expect(after.gitRuns).toBeGreaterThan(before.gitRuns);
   expect(after.hits).toBe(before.hits);
+});
+
+it('reivindica uma worktree do pool quando disponivel no HEAD atual e agenda reposição', async () => {
+  resetIsolatedWriterPoolForTests(createRealIsolatedWriterPoolBackend());
+  const pool = requireIsolatedWriterPool();
+  await pool.preallocate(scope, {});
+  expect(pool.size).toBe(1);
+
+  const spaceId = 'space-from-pool';
+  const prepared = await preparePaneSpaceWorktree(scope, spaceId);
+
+  expect(pool.size).toBe(0);
+  expect(isSharedPaneSpaceWorktree(scope, prepared.scope)).toBe(true);
+
+  const record = requireWorktreeRuntimeRegistry().get(scope, spaceId, 'tab');
+  expect(record).toBeDefined();
+  expect(record?.ownerKind).toBe('pane');
+  expect(record?.taskId).toBe('tab');
+  expect(record?.workerId).toBe(spaceId);
+  expect(record?.missionId).toBe(spaceId);
+  expect(record?.status).toBe('ready');
+
+  // Reposição agendada em segundo plano
+  await pool.idle();
+  expect(pool.size).toBe(1);
+  await pool.shutdown();
+  resetIsolatedWriterPoolForTests();
+});
+
+it('cai no fallback (registry.create) quando o pool esta vazio e mantem todas as garantias', async () => {
+  resetIsolatedWriterPoolForTests(createRealIsolatedWriterPoolBackend());
+  const pool = requireIsolatedWriterPool();
+  expect(pool.size).toBe(0);
+
+  const spaceId = 'space-fallback';
+  const prepared = await preparePaneSpaceWorktree(scope, spaceId);
+
+  expect(isSharedPaneSpaceWorktree(scope, prepared.scope)).toBe(true);
+  const record = requireWorktreeRuntimeRegistry().get(scope, spaceId, 'tab');
+  expect(record).toBeDefined();
+  expect(record?.ownerKind).toBe('pane');
+  expect(record?.taskId).toBe('tab');
+  expect(record?.workerId).toBe(spaceId);
+  expect(record?.missionId).toBe(spaceId);
+  expect(record?.status).toBe('ready');
+
+  // Reposição agendada apos o create
+  await pool.idle();
+  expect(pool.size).toBe(1);
+  await pool.shutdown();
+  resetIsolatedWriterPoolForTests();
 });

@@ -228,6 +228,34 @@ describe('WorktreeManager pooled worktree adoption (A1)', () => {
     }));
   });
 
+  it('adopts for isolated tab with taskId=tab, ownerKind=pane and workerId===missionId===spaceId', async () => {
+    const base = headSha();
+    const spaceId = 'space-tab-pool-1';
+    const { worktreePath: poolPath, branchRef: poolBranch } = await materializePooled('tab-pool-1');
+
+    const record = await manager.claimPooledPaneWriter(scope(), spaceId, {
+      workerId: spaceId,
+      taskId: 'tab',
+      ownership: { files: [], symbols: [], domains: [spaceId] },
+      worktreePath: poolPath,
+      branchRef: poolBranch,
+      baseSha: base,
+    });
+
+    expect(record.status).toBe('ready');
+    expect(record.ownerKind).toBe('pane');
+    expect(record.taskId).toBe('tab');
+    expect(record.workerId).toBe(spaceId);
+    expect(record.missionId).toBe(spaceId);
+    expect(record.ownership.domains).toEqual([spaceId]);
+    expect(record.branchRef).toBe(worktreeBranchRef({
+      ownerKind: 'pane', projectId: PROJECT_ID, missionId: spaceId,
+      taskId: 'tab', workerId: spaceId,
+    }));
+    expect(fs.existsSync(record.worktreePath)).toBe(true);
+    expect(git(record.worktreePath, 'symbolic-ref', '--quiet', 'HEAD')).toBe(record.branchRef);
+  });
+
   it('reverts the rename and throws when the worktree move fails (fail-closed)', async () => {
     const base = headSha();
     const { worktreePath: poolPath, branchRef: poolBranch } = await materializePooled('move-fail');

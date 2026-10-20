@@ -1963,6 +1963,47 @@ describe("registerPtyIpc account fail-fast", () => {
       }
     });
 
+    it("registra a fase tab-worktree separada de orchestration-gate e pty-spawn em isolatedTab", async () => {
+      tabDeps.prepare.mockImplementationOnce(async () => {
+        return { scope: authorityDeps.scope, cwd: authorityDeps.scope.rootRealPath };
+      });
+      providerDeps.prepareProviderSpawn.mockReturnValueOnce({
+        ok: true,
+        overrides: {},
+      });
+      let ready!: () => void;
+      setCliSpawnOrchestrationGate(() => new Promise<void>((resolve) => { ready = resolve; }));
+
+      const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn)!;
+      const pending = handler(
+        { sender: { id: 7 } },
+        {
+          kind: "cli-agent",
+          adapterId: "claude",
+          paneId: "pane-tab-timed",
+          worktreeSpaceId: "space-timing-test",
+          cols: 100,
+          rows: 30,
+        },
+      );
+
+      // Permite que preparePaneSpaceWorktree resolva e trave no orchestration gate
+      await Promise.resolve();
+      await Promise.resolve();
+      ready();
+      const result = await pending;
+      expect(result).toMatchObject({ ok: true });
+
+      const timingEvents = traceDeps.trace.mock.calls
+        .map(([event]) => event as Record<string, unknown>)
+        .filter((event) => event.kind === "pane-spawn-timing");
+      expect(timingEvents).toHaveLength(1);
+      const phases = timingEvents[0]?.phases as Record<string, number>;
+      expect(phases).toHaveProperty("tab-worktree");
+      expect(phases).toHaveProperty("orchestration-gate");
+      expect(phases).toHaveProperty("pty-spawn");
+    });
+
     it("registra orchestration-gate separado de provider-prep e não conta a espera como stall contra PANE_SPAWN_STALL_MS", async () => {
       vi.useFakeTimers();
       try {
