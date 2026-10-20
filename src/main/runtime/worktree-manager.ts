@@ -1385,7 +1385,7 @@ export class WorktreeManager {
         "pooled worktree HEAD diverged from the pre-allocated base",
       );
     }
-    // F-XXX (BUG 2): a base congelada na reserva pode estar obsoleta se um
+    // a base congelada na reserva pode estar obsoleta se um
     // commit entrou entre reserve e claim. Compara contra o HEAD ATUAL do
     // checkout; se divergiu, a worktree do pool é descartada e o chamador cai
     // no create() com o HEAD novo.
@@ -1394,7 +1394,7 @@ export class WorktreeManager {
         "pooled worktree base is stale: a commit landed between reserve and claim",
       );
     }
-    // F-XXX (BUG 1): se o registro sumiu mas a worktree/branch canônica da aba
+    // se o registro sumiu mas a worktree/branch canônica da aba
     // ainda existe fisicamente, a adoção colidiria no `git branch -m` e o
     // rollback apagaria a worktree preexistente com WIP. Detecta a colisão
     // ANTES de qualquer mutação (registro ou Git) e recusa.

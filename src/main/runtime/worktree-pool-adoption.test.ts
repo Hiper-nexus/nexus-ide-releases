@@ -596,7 +596,7 @@ describe('WorktreeManager pooled adoption crash recovery (A1)', () => {
   });
 });
 
-describe('WorktreeManager pooled adoption regression (F-XXX)', () => {
+describe('WorktreeManager pooled adoption regression', () => {
   it('BUG 1 (HIGH): preexisting tab worktree with WIP survives when pool adoption collides', async () => {
     // Cenário: o registro SQLite sumiu, mas a worktree/branch canônica da aba
     // ainda existe com WIP (ex.: reset do registry, crash de disco).
