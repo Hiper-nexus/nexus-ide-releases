@@ -59,6 +59,13 @@ export interface TurnManagedRealtimeProvider extends RoleAwareRealtimeProvider {
   sendContext(text: string): void;
   sendText(text: string): void;
   sendToolResult(callId: string, output: unknown): void;
+  /**
+   * Uma resposta segue em curso (ou acabou de ser pedida) depois do último
+   * `response.done`: o `done` que chegou era o da resposta que FEZ a chamada de
+   * ferramenta, e a resposta de seguimento ainda vai falar. Quem fecha o turno
+   * de ferramenta espera o próximo `done`. Ausente = sem essa distinção (Gemini).
+   */
+  readonly responseInFlight?: boolean;
   /** Gemini function responses require the original declaration name. */
   sendNamedToolResult?(callId: string, name: string, output: unknown): void;
   onToolCall(cb: (event: RealtimeToolCallEvent) => void): void;

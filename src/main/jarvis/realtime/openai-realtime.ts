@@ -88,6 +88,18 @@ export interface ParsedOpenAIRealtimeEvent {
   responseCancelled?: boolean;
   toolCall?: RealtimeToolCallEvent;
   error?: Error;
+  /**
+   * O `response.create` chegou com outra resposta ainda ativa
+   * (`conversation_already_has_active_response`). Não é falha da sessão: o
+   * pedido volta a sair quando a resposta ativa terminar.
+   */
+  responseBusy?: boolean;
+}
+
+/** Chamadas de ferramenta de uma resposta: as que faltam e quantas já voltaram. */
+interface ToolBatch {
+  pending: Set<string>;
+  resolved: number;
 }
 
 const DEFAULT_MODEL = 'gpt-realtime-2.1-mini';
@@ -102,6 +114,15 @@ const EMITTED_TOOL_CALL_IDS_MAX = 256;
 const USER_FINAL_ITEM_IDS_MAX = 64;
 const MAX_CONTEXT_CHARS = 1_200;
 const WS_OPEN = 1;
+/** Lotes de ferramenta esperando resultado guardados ao mesmo tempo (os mais velhos caem). */
+const AWAITING_TOOL_BATCHES_MAX = 16;
+/**
+ * Teto da espera por `response.done` com um `response.create` adiado. A voz é
+ * gerada bem mais rápido que tempo real (o `done` de uma fala de 20 s chega em
+ * poucos segundos); passou disso, o `done` se perdeu e o pedido sai assim
+ * mesmo, em vez de deixar a Jarvis muda.
+ */
+const DEFERRED_RESPONSE_MAX_MS = 10_000;
 
 export type OpenAIRealtimeTurnDetection = 'semantic_vad' | 'manual';
 
@@ -180,6 +201,14 @@ export function parseOpenAIRealtimeEvent(raw: string): ParsedOpenAIRealtimeEvent
 
   if (type === 'error') {
     const payload = event.error as { message?: string; code?: string } | undefined;
+    const code = typeof payload?.code === 'string' ? payload.code : '';
+    const message = typeof payload?.message === 'string' ? payload.message : '';
+    if (
+      code === 'conversation_already_has_active_response' ||
+      /already has an active response/iu.test(message)
+    ) {
+      return { type, responseBusy: true };
+    }
     return {
       type,
       error: new Error(payload?.message ?? payload?.code ?? 'OpenAI realtime error'),
@@ -382,6 +411,20 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
   private disconnectedCallbacks: Array<(err: Error) => void> = [];
   private latestContext = '';
   private responseActive = false;
+  /**
+   * Chamadas de ferramenta da resposta EM CURSO. Quando ela termina o lote passa
+   * a `awaitingToolBatches`, e a resposta de seguimento só é pedida quando TODAS
+   * as chamadas do lote têm resultado: xAI e OpenAI pedem um `response.create`
+   * único depois de todos os `function_call_output` (pedir antes responde sem o
+   * contexto inteiro).
+   */
+  private openToolBatch: ToolBatch | null = null;
+  private awaitingToolBatches: ToolBatch[] = [];
+  /** Resultado de ferramenta fora de qualquer lote conhecido aguardando resposta. */
+  private orphanToolResultPending = false;
+  /** `response.create` pedido com uma resposta ainda ativa: sai no `response.done`. */
+  private responseRequestDeferred = false;
+  private deferredResponseTimer: ReturnType<typeof setTimeout> | null = null;
   private hasUncommittedAudio = false;
   private serverSpeechStopped = false;
   /**
@@ -441,11 +484,16 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
     return this.ready && this.ws?.readyState === WS_OPEN;
   }
 
+  get responseInFlight(): boolean {
+    return this.responseActive;
+  }
+
   connect(): Promise<void> {
     this.close();
     this.ready = false;
     this.emittedToolCallIds = new Set();
     this.emittedToolCallOrder = [];
+    this.resetResponseSequencing();
     const url = `${this.realtimeUrl}?model=${encodeURIComponent(this.model)}`;
     const ws = this.wsFactory(url, {
       headers: {
@@ -468,6 +516,7 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
         const wasReady = this.ready;
         this.ready = false;
         this.responseActive = false;
+        this.resetResponseSequencing();
         this.pendingAudio = [];
         this.pendingAudioBytes = 0;
         this.settleLiveness(false);
@@ -698,9 +747,18 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
         content: [{ type: 'input_text', text: trimmed }],
       },
     });
-    this.createResponse();
+    this.requestResponse();
   }
 
+  /**
+   * Devolve o resultado de uma ferramenta. O item vai na hora (a conversa
+   * aceita item com resposta ativa); a resposta de seguimento só é pedida
+   * quando a resposta que fez a chamada terminou E as demais chamadas
+   * paralelas dela também têm resultado. Pedir na hora, com a resposta da
+   * chamada ainda aberta, devolvia `conversation_already_has_active_response`
+   * e o turno ficava mudo: era o caso de toda resposta síncrona do Main
+   * (`consultar`, recusas).
+   */
   sendToolResult(callId: string, output: unknown): void {
     const trimmedCallId = callId.trim();
     if (!trimmedCallId || !this.isReady) return;
@@ -714,12 +772,94 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
         output: outputText.slice(0, 20_000),
       },
     });
+    if (!this.resolveToolCall(trimmedCallId)) this.orphanToolResultPending = true;
+    this.flushResponseRequests();
+  }
+
+  /** Marca a chamada como respondida no lote dela; false = chamada de lote desconhecido. */
+  private resolveToolCall(callId: string): boolean {
+    for (const batch of [this.openToolBatch, ...this.awaitingToolBatches]) {
+      if (batch?.pending.delete(callId)) {
+        batch.resolved += 1;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Pede uma resposta agora, ou assim que a ativa terminar. */
+  private requestResponse(): void {
+    if (this.responseActive) {
+      this.deferResponseRequest();
+      return;
+    }
     this.createResponse();
+  }
+
+  private deferResponseRequest(): void {
+    this.responseRequestDeferred = true;
+    if (this.deferredResponseTimer) return;
+    this.deferredResponseTimer = this.setTimeoutFn(() => {
+      this.deferredResponseTimer = null;
+      // O `response.done` da resposta ativa se perdeu: segue sem ele.
+      this.responseActive = false;
+      this.flushResponseRequests();
+    }, DEFERRED_RESPONSE_MAX_MS);
+  }
+
+  /**
+   * Sem resposta ativa, solta UM `response.create` se houver lote de
+   * ferramenta completo, resultado avulso ou pedido adiado. Lote com chamada
+   * ainda sem resultado espera, mas não segura os outros lotes.
+   */
+  private flushResponseRequests(): void {
+    if (!this.isReady || this.responseActive) {
+      if (this.orphanToolResultPending || this.hasCompleteToolBatch()) this.deferResponseRequest();
+      return;
+    }
+    let needsResponse = this.orphanToolResultPending || this.responseRequestDeferred;
+    this.awaitingToolBatches = this.awaitingToolBatches.filter((batch) => {
+      if (batch.pending.size > 0) return true;
+      if (batch.resolved > 0) needsResponse = true;
+      return false;
+    });
+    this.orphanToolResultPending = false;
+    this.responseRequestDeferred = false;
+    this.clearDeferredResponseTimer();
+    if (needsResponse) this.createResponse();
+  }
+
+  private hasCompleteToolBatch(): boolean {
+    return this.awaitingToolBatches.some((batch) => batch.pending.size === 0 && batch.resolved > 0);
+  }
+
+  /** A resposta que fez as chamadas terminou: o lote dela passa a esperar os resultados. */
+  private closeOpenToolBatch(): void {
+    const batch = this.openToolBatch;
+    this.openToolBatch = null;
+    if (!batch || batch.pending.size + batch.resolved === 0) return;
+    this.awaitingToolBatches.push(batch);
+    if (this.awaitingToolBatches.length > AWAITING_TOOL_BATCHES_MAX) this.awaitingToolBatches.shift();
+  }
+
+  private clearDeferredResponseTimer(): void {
+    if (!this.deferredResponseTimer) return;
+    this.clearTimeoutFn(this.deferredResponseTimer);
+    this.deferredResponseTimer = null;
+  }
+
+  private resetResponseSequencing(): void {
+    this.openToolBatch = null;
+    this.awaitingToolBatches = [];
+    this.orphanToolResultPending = false;
+    this.responseRequestDeferred = false;
+    this.clearDeferredResponseTimer();
   }
 
   close(): void {
     this.ready = false;
     this.responseActive = false;
+    this.resetResponseSequencing();
     this.pendingAudio = [];
     this.pendingAudioBytes = 0;
     this.hasUncommittedAudio = false;
@@ -769,6 +909,12 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
   }
 
   private handleParsedEvent(event: ParsedOpenAIRealtimeEvent): void {
+    if (event.responseBusy) {
+      // Corrida com a resposta do servidor: o pedido sai quando ela terminar.
+      this.responseActive = true;
+      this.deferResponseRequest();
+      return;
+    }
     if (event.error) {
       this.emitError(event.error);
       return;
@@ -789,8 +935,19 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
       this.responseActive = true;
       this.hasUncommittedAudio = false;
     }
+    if (event.toolCall && !this.emittedToolCallIds.has(event.toolCall.callId)) {
+      // Entra no lote da resposta em curso ANTES de ela fechar; sem resposta
+      // ativa conhecida a chamada abre um lote próprio, já encerrado.
+      const batch = (this.openToolBatch ??= { pending: new Set(), resolved: 0 });
+      batch.pending.add(event.toolCall.callId);
+      if (!this.responseActive) this.closeOpenToolBatch();
+    }
     if (event.responseDone || event.responseCancelled) {
       this.responseActive = false;
+      this.closeOpenToolBatch();
+      // ANTES dos callbacks de `done`: quem os ouve sabe, por
+      // `responseInFlight`, se a resposta de seguimento já foi pedida.
+      this.flushResponseRequests();
     }
     if (event.responseDone) {
       for (const cb of this.responseDoneCallbacks) cb();

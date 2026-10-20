@@ -323,6 +323,8 @@ describe('createGrokRealtimeProvider', () => {
       'response.create',
     ]);
 
+    // A resposta do texto terminou: o resultado da tool pede a próxima.
+    ws.fire('message', JSON.stringify({ type: 'response.done' }));
     provider.sendToolResult('call-1', 'ok');
     expect(types().filter((type) => type === 'response.create')).toHaveLength(2);
   });

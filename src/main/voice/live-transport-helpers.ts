@@ -15,6 +15,18 @@ export function isLocalToolCallId(callId: string): boolean {
   return callId.startsWith(LOCAL_TOOL_CALL_PREFIX);
 }
 
+/**
+ * `callId` de um resultado de ação que o schema recusou: com ele a chamada
+ * ainda fecha com erro para o modelo, em vez de esperar o timeout de 120 s.
+ */
+export function invalidToolResultCallId(raw: unknown): string | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const callId = (raw as { callId?: unknown }).callId;
+  if (typeof callId !== 'string') return null;
+  const trimmed = callId.trim();
+  return trimmed && trimmed.length <= 256 ? trimmed : null;
+}
+
 export function isIgnorableRealtimeError(message: string): boolean {
   const m = message.toLowerCase();
   return (

@@ -1197,7 +1197,22 @@ export function useVoiceController(active = true): void {
       useVoiceStore.getState().addTranscriptAppend(event);
     });
     const unsubLiveToolCall = window.nexus.voice.onLiveToolCall((event) => {
-      if (isJarvisPoweredOff()) return;
+      if (isJarvisPoweredOff()) {
+        // Desligada não executa, mas responde: sem resultado o modelo ficava
+        // 120 s esperando o timeout da chamada.
+        if (event.source === 'realtime' && event.callId) {
+          window.nexus.voice.liveToolResult({
+            source: 'realtime',
+            callId: event.callId,
+            name: event.name,
+            tool: 'none',
+            ok: false,
+            summary: 'A Jarvis está desligada; não executei.',
+            output: { error: 'jarvis_powered_off' },
+          });
+        }
+        return;
+      }
       useVoiceStore.getState().setLiveTool(event);
       if (event.source === 'realtime') {
         void executeRealtimeToolCall(event);

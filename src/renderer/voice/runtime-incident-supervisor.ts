@@ -31,7 +31,8 @@ const ACTION_DEADLINES_MS: Partial<Record<JarvisAction['type'], number>> = {
   read_current_view: 12_000,
   mcp_tool: 30_000,
   restore_mission_panes: 20_000,
-  ask_pane: 12_000,
+  // A pergunta espera o pane responder (`nexus_pane_ask`, 45 s) + folga.
+  ask_pane: 55_000,
   send_to_pane: 12_000,
   // Push may wait on native confirm; submit itself is fast.
   sync_repo_via_pane: 60_000,
