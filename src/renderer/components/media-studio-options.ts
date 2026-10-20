@@ -21,15 +21,22 @@ export type StudioKind = 'image' | 'video';
 
 export const IMAGE_ASPECTS: readonly string[] = ['1:1', '16:9', '9:16', '4:3', '3:4'];
 
-/** Por que o modelo não gera pelo Estúdio; `null` quando gera. */
+/**
+ * Por que o modelo não gera pelo Estúdio; `null` quando gera. Modelo que
+ * pede imagem inicial gera, sim — com uma imagem nas Referências (F-1611).
+ */
 export function studioModelBlock(model: string, now: number = Date.now()): string | null {
   const spec = videoModelSpec(model);
   if (!spec) return null;
   if (isVideoModelRetired(spec, now)) {
     return `desligado em ${formatRetirementDay(spec.retiresOn ?? '')}`;
   }
-  if (spec.requiresImage) return 'precisa de imagem inicial (peça a um agente)';
   return null;
+}
+
+/** Image-to-video: sem uma imagem escolhida nas Referências o serviço recusa. */
+export function studioNeedsImage(model: string): boolean {
+  return videoModelSpec(model)?.requiresImage === true;
 }
 
 /** Primeiro modelo que gera, começando pelo padrão de cada serviço conectado. */
@@ -39,7 +46,11 @@ export function firstUsableModel(
 ): { providerId: string; model: string } | null {
   for (const provider of keyed) {
     const ordered = [provider.defaultModel, ...provider.models.filter((m) => m !== provider.defaultModel)];
-    const model = ordered.find((m) => provider.models.includes(m) && studioModelBlock(m, now) === null);
+    // O padrão nunca é um modelo que só anda com imagem: quem abre o Estúdio
+    // pela primeira vez precisa conseguir gerar só com o texto.
+    const model = ordered.find(
+      (m) => provider.models.includes(m) && studioModelBlock(m, now) === null && !studioNeedsImage(m),
+    );
     if (model) return { providerId: provider.id, model };
   }
   return null;
@@ -141,4 +152,57 @@ export function studioCostUsd(
     seconds: video?.duration,
     resolution: video?.resolution,
   });
+}
+
+/** Seedream recebe várias imagens; os outros serviços de imagem editam uma. */
+const IMAGE_MULTI_REFERENCE: Readonly<Record<string, number>> = { 'replicate-image': 10 };
+
+export interface StudioReferencePlan {
+  /** Quantas imagens do projeto podem ir para este modelo. */
+  readonly max: number;
+  /** O papel da 1ª e das demais, numa frase. */
+  readonly hint: string;
+}
+
+/**
+ * F-1611: o que as Referências viram em cada modelo. Vídeo: 1 imagem é o
+ * primeiro quadro; 2 ou mais viram referência (personagem, produto, logo,
+ * estilo) — o Seedance recusa misturar os dois, então o Estúdio nunca mistura.
+ */
+export function studioReferencePlan(
+  kind: StudioKind,
+  providerId: string,
+  model: string,
+): StudioReferencePlan {
+  if (kind === 'image') {
+    const multi = IMAGE_MULTI_REFERENCE[providerId];
+    return multi
+      ? {
+          max: multi,
+          hint: `A 1ª imagem é a base; as outras (até ${multi}) entram como referência de pessoa, produto, logo ou estilo.`,
+        }
+      : {
+          max: 1,
+          hint: 'A imagem escolhida é editada pelo modelo: trocar o fundo, aplicar o logo, mudar o estilo.',
+        };
+  }
+  const refs = videoModelSpec(model)?.maxReferenceImages ?? 0;
+  if (refs > 1) {
+    return {
+      max: refs,
+      hint: `1 imagem vira o primeiro quadro do vídeo. 2 ou mais (até ${refs}) viram referência de personagem, produto, logo ou estilo.`,
+    };
+  }
+  return { max: 1, hint: 'A imagem escolhida vira o primeiro quadro do vídeo.' };
+}
+
+/** Os campos do pedido a partir da seleção, na ordem em que a pessoa escolheu. */
+export function studioReferenceRequest(
+  kind: StudioKind,
+  selected: readonly string[],
+): { imagePath?: string; referenceImagePaths?: string[] } {
+  if (selected.length === 0) return {};
+  if (kind === 'video' && selected.length > 1) return { referenceImagePaths: [...selected] };
+  const [first, ...rest] = selected;
+  return { imagePath: first, ...(rest.length > 0 ? { referenceImagePaths: rest } : {}) };
 }

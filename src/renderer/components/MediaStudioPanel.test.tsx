@@ -99,6 +99,12 @@ beforeEach(() => {
         cancelGenerate: vi.fn(),
         revealArtifact: vi.fn(),
       },
+      mediaReferences: {
+        list: vi.fn(async () => []),
+        save: vi.fn(),
+        remove: vi.fn(async () => ({ ok: true })),
+        readDataUrl: vi.fn(async () => ({ ok: false })),
+      },
     },
   });
   useMediaStudioStore.setState({ open: false });
@@ -397,13 +403,72 @@ describe('MediaStudioPanel: vídeo com as opções do modelo (F-1585)', () => {
     );
   });
 
-  it('modelo que precisa de imagem inicial aparece desabilitado e com o motivo', async () => {
+  function references(): Record<string, ReturnType<typeof vi.fn>> {
+    return (window.nexus as unknown as { mediaReferences: Record<string, ReturnType<typeof vi.fn>> })
+      .mediaReferences;
+  }
+
+  function typePrompt(dialog: HTMLElement, text: string): void {
+    const prompt = dialog.querySelector<HTMLTextAreaElement>('textarea')!;
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+      setter.call(prompt, text);
+      prompt.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  }
+
+  const refInfo = (name: string) => ({
+    storageKey: `media/referencias/lzx3k1a0-${name}`,
+    name,
+    kind: 'image' as const,
+    bytes: 1000,
+    vector: false,
+    addedAt: 1,
+  });
+
+  it('F-1611: modelo que precisa de imagem inicial gera com uma imagem das Referências', async () => {
+    references().list.mockResolvedValue([refInfo('produto.png')]);
+    media().generate.mockResolvedValue({ ok: false, error: 'x' });
     const dialog = await openVideoTab();
     const option = Array.from(dialog.querySelectorAll<HTMLOptionElement>('option')).find((o) =>
       o.value.endsWith('wan-video/wan-2.5-i2v'),
     )!;
-    expect(option.disabled).toBe(true);
-    expect(option.textContent).toContain('precisa de imagem inicial');
+    expect(option.disabled).toBe(false);
+    expect(option.textContent).toContain('precisa de imagem inicial (escolha em Referências)');
+    choose(dialog, 'replicate-video::wan-video/wan-2.5-i2v');
+    typePrompt(dialog, 'o produto girando');
+    const generate = dialog.querySelector<HTMLButtonElement>('.ms-generate')!;
+    expect(generate.disabled).toBe(true);
+    expect(dialog.textContent).toContain('escolha uma em Referências');
+
+    act(() => dialog.querySelector<HTMLButtonElement>('.ms-refs__card')!.click());
+    expect(generate.disabled).toBe(false);
+    await act(async () => generate.click());
+    expect(media().generate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: 'wan-video/wan-2.5-i2v',
+        imagePath: 'media/referencias/lzx3k1a0-produto.png',
+      }),
+    );
+  });
+
+  it('F-1611: duas ou mais referências num vídeo viram reference_images, nunca primeiro quadro', async () => {
+    references().list.mockResolvedValue([refInfo('rosto.png'), refInfo('logo.png')]);
+    media().generate.mockResolvedValue({ ok: false, error: 'x' });
+    const dialog = await openVideoTab();
+    expect(dialog.textContent).toContain('2 ou mais (até 9) viram referência');
+    typePrompt(dialog, 'apresentadora mostrando o logo');
+    for (const card of Array.from(dialog.querySelectorAll<HTMLButtonElement>('.ms-refs__card'))) {
+      act(() => card.click());
+    }
+    await act(async () => dialog.querySelector<HTMLButtonElement>('.ms-generate')!.click());
+    const request = media().generate.mock.calls.at(-1)![0] as Record<string, unknown>;
+    expect(request.model).toBe('bytedance/seedance-2.0');
+    expect(request.referenceImagePaths).toEqual([
+      'media/referencias/lzx3k1a0-rosto.png',
+      'media/referencias/lzx3k1a0-logo.png',
+    ]);
+    expect(request).not.toHaveProperty('imagePath');
   });
 
   it('F-1587: Gemini Omni sem escolha de duração, taxa por segundo e duração real no resultado', async () => {

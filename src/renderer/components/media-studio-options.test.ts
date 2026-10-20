@@ -4,6 +4,9 @@ import {
   firstUsableModel,
   studioCostUsd,
   studioModelBlock,
+  studioNeedsImage,
+  studioReferencePlan,
+  studioReferenceRequest,
   studioRetirementNotice,
   studioVideoChoices,
   studioVideoPerSecondUsd,
@@ -43,7 +46,10 @@ describe('media-studio-options (F-1585)', () => {
   });
 
   it('bloqueia o que o Estúdio não consegue gerar', () => {
-    expect(studioModelBlock('wan-video/wan-2.5-i2v', BEFORE)).toBe('precisa de imagem inicial (peça a um agente)');
+    // F-1611: image-to-video gera com uma imagem das Referências — não bloqueia.
+    expect(studioModelBlock('wan-video/wan-2.5-i2v', BEFORE)).toBeNull();
+    expect(studioNeedsImage('wan-video/wan-2.5-i2v')).toBe(true);
+    expect(studioNeedsImage('google/veo-3.1')).toBe(false);
     expect(studioModelBlock('veo-3.1-generate-preview', BEFORE)).toBeNull();
     expect(studioModelBlock('veo-3.1-generate-preview', AFTER)).toBe('desligado em 22/10/2026');
     expect(studioModelBlock('gpt-image-2', BEFORE)).toBeNull();
@@ -133,5 +139,29 @@ describe('media-studio-options (F-1585)', () => {
     });
     expect(firstUsableModel([xai], BEFORE)).toEqual({ providerId: 'xai-video', model: 'grok-imagine-video-1.5' });
     expect(studioModelBlock('grok-imagine-video-1.5-lite', AFTER)).toBeNull();
+  });
+});
+
+describe('F-1611: o que as Referências viram em cada modelo', () => {
+  it('imagem: Seedream recebe até 10; os outros editam uma', () => {
+    expect(studioReferencePlan('image', 'replicate-image', 'bytedance/seedream-5-pro').max).toBe(10);
+    expect(studioReferencePlan('image', 'openai-image', 'gpt-image-2').max).toBe(1);
+    expect(studioReferenceRequest('image', ['a', 'b', 'c'])).toEqual({
+      imagePath: 'a',
+      referenceImagePaths: ['b', 'c'],
+    });
+    expect(studioReferenceRequest('image', ['a'])).toEqual({ imagePath: 'a' });
+    expect(studioReferenceRequest('image', [])).toEqual({});
+  });
+
+  it('vídeo: teto da tabela; 1 imagem é o primeiro quadro, 2+ só referência', () => {
+    expect(studioReferencePlan('video', 'replicate-video', 'bytedance/seedance-2.5').max).toBe(30);
+    expect(studioReferencePlan('video', 'replicate-video', 'google/veo-3.1').max).toBe(3);
+    expect(studioReferencePlan('video', 'replicate-video', 'minimax/h3')).toEqual({
+      max: 1,
+      hint: 'A imagem escolhida vira o primeiro quadro do vídeo.',
+    });
+    expect(studioReferenceRequest('video', ['a'])).toEqual({ imagePath: 'a' });
+    expect(studioReferenceRequest('video', ['a', 'b'])).toEqual({ referenceImagePaths: ['a', 'b'] });
   });
 });

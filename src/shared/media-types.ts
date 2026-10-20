@@ -108,6 +108,11 @@ export interface MediaStudioRequest {
   resolution?: string;
   /** Workspace image for image-to-image / first-frame (optional). */
   imagePath?: string;
+  /**
+   * F-1611: imagens das Referências do projeto (personagem, produto, logo,
+   * estilo). O motor recusa, antes de pagar, o que o modelo não aceita.
+   */
+  referenceImagePaths?: string[];
   /** Video only: resume a timed-out job without paying twice. */
   recoverJobId?: string;
   /** Renderer-generated id so media:cancelGenerate can abort the wait. */

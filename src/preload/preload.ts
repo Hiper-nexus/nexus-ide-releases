@@ -70,6 +70,7 @@ import { PROVIDER_CHANNELS } from '../shared/provider-settings-types';
 import type { ProviderSettingsInfo } from '../shared/provider-settings-types';
 import { FILES_CHANNELS } from '../shared/files-types';
 import { createIntegrationsBridge } from './integrations-bridge';
+import { createMediaReferencesBridge } from './media-references-bridge';
 import { ACCOUNT_CHANNELS } from '../shared/account-types';
 import type {
   AccountActivatedEvent,
@@ -1587,6 +1588,7 @@ const api: NexusApi = {
     readArtifactDataUrl: (storageKey: string) =>
       ipcRenderer.invoke(MEDIA_CHANNELS.readArtifactDataUrl, { storageKey }),
   },
+  mediaReferences: createMediaReferencesBridge(ipcRenderer),
   pipes: {
     list: () => ipcRenderer.invoke(PIPE_CHANNELS.list),
     add: (sourcePaneId: string, targetPaneId: string, mode: PipeMode) =>

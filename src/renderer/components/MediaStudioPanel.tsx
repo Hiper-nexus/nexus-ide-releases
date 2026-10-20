@@ -11,11 +11,15 @@ import { useProductNavigationStore } from '../state/product-navigation-store';
 import { CloseButton } from './CloseButton';
 import { PixelIcon } from './PixelIcon';
 import { platformCopy } from '../lib/platform-copy';
+import { MediaReferencesPicker } from './MediaReferencesPicker';
 import {
   IMAGE_ASPECTS,
   firstUsableModel,
   studioCostUsd,
   studioModelBlock,
+  studioNeedsImage,
+  studioReferencePlan,
+  studioReferenceRequest,
   studioRetirementNotice,
   studioVideoChoices,
   studioVideoPerSecondUsd,
@@ -117,6 +121,8 @@ export function MediaStudioPanel({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
   const [copied, setCopied] = useState(false);
+  // F-1611: referências escolhidas, na ordem (a 1ª tem papel próprio).
+  const [refsSelected, setRefsSelected] = useState<string[]>([]);
   // storageKeys com fetch de thumb já tentado — não re-dispara em falha.
   const thumbTried = useRef(new Set<string>());
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -260,6 +266,10 @@ export function MediaStudioPanel({
   const perSecondUsd =
     tab === 'video' && selModel ? studioVideoPerSecondUsd(selModel, video ?? undefined) : null;
   const retirementNotice = tab === 'video' && selModel ? studioRetirementNotice(selModel) : null;
+  const refPlan = selectedProvider && selModel ? studioReferencePlan(tab, selectedProvider.id, selModel) : null;
+  // Image-to-video (Kling 2.1, Wan 2.5 i2v): gera com 1 imagem nas Referências.
+  const missingImage =
+    tab === 'video' && Boolean(selModel) && studioNeedsImage(selModel) && refsSelected.length !== 1;
 
   async function run(request: MediaStudioRequest) {
     setJob({ clientJobId: request.clientJobId, startedAt: Date.now() });
@@ -311,12 +321,13 @@ export function MediaStudioPanel({
   function generate() {
     const [pid, model] = sel.split('::');
     const provider = keyed.find((p) => p.id === pid);
-    if (!provider || !prompt.trim() || job || projectOpen === false) return;
+    if (!provider || !prompt.trim() || job || projectOpen === false || missingImage) return;
     void run({
       kind: tab,
       prompt: prompt.trim(),
       providerId: provider.id,
       model,
+      ...studioReferenceRequest(tab, refsSelected),
       ...(effectiveAspect ? { aspectRatio: effectiveAspect } : {}),
       ...(video
         ? {
@@ -409,8 +420,8 @@ export function MediaStudioPanel({
           <div className="ms-head">
             <strong id={titleId}>Estúdio de Mídia</strong>
             <span id={descriptionId} className="ms-subtitle">
-              Crie imagens e vídeos com IA. Descreva o que você quer e clique em
-              Gerar.
+              Crie imagens e vídeos com IA. Descreva o que você quer, traga
+              referências (imagem, logo, vídeo de exemplo) e clique em Gerar.
             </span>
           </div>
           <CloseButton onClick={onClose} label="Fechar Estúdio de Mídia" />
@@ -488,6 +499,16 @@ export function MediaStudioPanel({
                 ))}
               </div>
 
+              {projectOpen !== false && (
+                <MediaReferencesPicker
+                  maxSelectable={refPlan?.max ?? 0}
+                  selected={refsSelected}
+                  onSelectedChange={setRefsSelected}
+                  roleHint={refPlan?.hint ?? null}
+                  disabled={Boolean(job)}
+                />
+              )}
+
               <div className="ms-fields">
                 <label className="ms-field">
                   <span className="ms-field__label">Modelo</span>
@@ -507,13 +528,15 @@ export function MediaStudioPanel({
                       >
                         {p.models.map((m) => {
                           const block = studioModelBlock(m);
+                          const note =
+                            block ?? (studioNeedsImage(m) ? 'precisa de imagem inicial (escolha em Referências)' : null);
                           return (
                             <option
                               key={m}
                               value={selValue(p.id, m)}
                               disabled={!p.hasKey || block !== null}
                             >
-                              {block ? `${m} — ${block}` : m}
+                              {note ? `${m} — ${note}` : m}
                             </option>
                           );
                         })}
@@ -617,10 +640,16 @@ export function MediaStudioPanel({
                 </p>
               )}
 
+              {missingImage && (
+                <p className="ms-dim" role="note">
+                  <PixelIcon name="warn" size={11} /> Este modelo gera a partir de uma imagem:
+                  escolha uma em Referências.
+                </p>
+              )}
               <button
                 type="button"
                 className="ms-button ms-button--primary ms-generate"
-                disabled={!prompt.trim() || Boolean(job) || !sel || projectOpen === false}
+                disabled={!prompt.trim() || Boolean(job) || !sel || projectOpen === false || missingImage}
                 onClick={generate}
               >
                 {tab === 'image' ? 'Gerar imagem' : 'Gerar vídeo'}

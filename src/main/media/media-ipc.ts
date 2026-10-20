@@ -70,6 +70,7 @@ const studioRequestSchema = z.object({
   durationSeconds: z.number().int().min(1).max(60).optional(),
   resolution: z.string().max(16).optional(),
   imagePath: z.string().max(4096).optional(),
+  referenceImagePaths: z.array(z.string().min(1).max(4096)).max(30).optional(),
   recoverJobId: z.string().max(512).optional(),
   clientJobId: z.string().min(1).max(64),
 });
@@ -154,6 +155,7 @@ export function registerMediaIpc(runtimeManager: ProjectRuntimeManager): void {
                 aspectRatio: req.aspectRatio,
                 size: req.size,
                 imagePath: req.imagePath,
+                referenceImagePaths: req.referenceImagePaths,
                 baseDir,
                 signal: controller.signal,
                 assertCurrentAuthority: assertStudioAuthority,
@@ -166,6 +168,7 @@ export function registerMediaIpc(runtimeManager: ProjectRuntimeManager): void {
                 durationSeconds: req.durationSeconds,
                 resolution: req.resolution,
                 imagePath: req.imagePath,
+                referenceImagePaths: req.referenceImagePaths,
                 recoverJobId: req.recoverJobId,
                 baseDir,
                 signal: controller.signal,
