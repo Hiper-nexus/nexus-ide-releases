@@ -122,27 +122,57 @@ npm run rebuild:node           # rebuild native modules for Node (CI/tests)
 - Em 19/10 o operador decidiu que um YubiKey 5C NFC FIPS (série 25700086)
   substitui o eSigner: chave ECC P-384 gerada no slot PIV 9a, atestação aceita no
   pedido `co-f01l53ldh43`. O único caminho de assinatura é
-  `NEXUS_WINDOWS_YUBIKEY_SIGNING=1` (`build/windows-token-signing.ts`): SignTool
-  `/sha1 <thumbprint>` na loja do USUÁRIO e, antes de empacotar
+  `NEXUS_WINDOWS_YUBIKEY_SIGNING=1` (`build/windows-token-signing.ts`): o
+  certificado da loja do USUÁRIO e, antes de empacotar
   (`prePackage`/`preMake`), checagem do certificado contra
   `build/windows-signing-identity.json` (thumbprint, SHA-256 do SPKI da chave do
   slot 9a, CN da HIPERSEND, EKU de assinatura de código, validade, chave do
   cartão). O modo recusa `WINDOWS_CERTIFICATE_FILE/PASSWORD`, `WINDOWS_SIGNTOOL_PATH`,
-  `WINDOWS_SIGN_HOOK_MODULE_PATH` e `WINDOWS_SIGN_WITH_PARAMS`: o
-  `@electron/windows-sign` os lê do ambiente por baixo das opções do Forge.
+  `WINDOWS_SIGN_HOOK_MODULE_PATH`, `WINDOWS_SIGN_WITH_PARAMS` e
+  `NEXUS_WINDOWS_SIGNER_DIR`: o `@electron/windows-sign` os lê do ambiente por
+  baixo das opções do Forge.
+- **Um PIN por agente, não por executável (19/10, `scripts/windows-signer/`).** O
+  Windows pede o PIN a cada processo que usa a chave e o Squirrel abria um
+  signtool por executável: eram 5 janelas por build, e uma escondida derrubava o
+  make. Nenhum SignTool roda mais: o hook `client.cjs` (packager e o signtool
+  falso do Squirrel) pede cada assinatura ao agente por usuário (`agent.cjs` +
+  `engine.cs` num `powershell.exe` 5.1, `SignerSignEx2`), que abre a janela de PIN
+  do próprio Windows uma vez e vive `NEXUS_WINDOWS_SIGNER_HOURS` (24 h padrão, 0 =
+  só este build, até 168). O operador pediu "uma vez por dia ou por semana":
+  builds seguintes reaproveitam o agente SEM PIN. Ele morre no prazo, no
+  `npm run windows-signer -- stop` e quando o YubiKey perde o PIN (sonda
+  silenciosa antes de cada assinatura: nunca abre janela escondida). Só assina
+  .exe/.dll/.node do `out\` de checkout que fixa este certificado, da SquirrelTemp
+  e do staging do packager, e anota o SHA-256 de tudo em
+  `%LOCALAPPDATA%\NexusIDE\windows-signer\signed.ndjson`. Enquanto vive, qualquer
+  processo do usuário que leia o `agent.json` pode pedir assinatura: é o preço do
+  prazo, dito no runbook. O `@electron/windows-sign` engole erro de hook; o hook
+  marca saída 1 e o `postPackage` confere cada executável pelo agente. Não volte a
+  passar `signWithParams`/SignTool ao Forge.
+- **Zero PIN nesta máquina (decisão do operador, 19/10, risco aceito por
+  escrito).** `npm run windows-signer -- save-pin` abre a janela do motor, o
+  cartão confere o PIN e só então ele fica cifrado pelo DPAPI do usuário
+  (`%LOCALAPPDATA%\NexusIDE\windows-signer\pin.dpapi`). Daí em diante todo agente
+  destranca sem janela, e `install-logon` (HKCU Run, `conhost --headless`, cópia
+  dos scripts em `...\bin`) o sobe no logon. Primeira recusa do cartão apaga o
+  arquivo; YubiKey ausente não. O PIN só passa pelo motor: nunca o peça, receba,
+  logue ou passe por argv/env, e não troque DPAPI por variável, `/kc` ou
+  Credential Manager. Qualquer programa deste usuário pode decifrar o PIN:
+  `forget-pin` + `uninstall-logon` desfazem.
 - **Certificado fixado em 19/10**: série `0FF90DF6…` (ECC P-384, intermediária
   `SSL.com Code Signing Intermediate CA ECC R2`, vence 22/07/2027), thumbprint
   `41BB4AFD0B69AA7B8B88F732E66808A2A5B93560`. O baixável antigo (série 7538CB4E…,
   RSA 3072) é o do eSigner e não combina com a chave. O PC que assina precisa do
   **YubiKey Smart Card Minidriver**: o driver PIV nativo do Windows (`msclmd.dll`)
   não expõe a chave ECC P-384 (`NTE_BAD_KEYSET`, certificado fora da loja do
-  usuário). Runbook: `docs/windows-signing/YUBIKEY.md`. Nunca digite PIN ou PUK
-  pelo operador; o Windows pede o PIN a cada processo do SignTool (5 por build).
+  usuário). Runbook: `docs/windows-signing/YUBIKEY.md`. Nunca peça, receba ou
+  digite o PIN ou o PUK pelo operador (nem se ele pedir): ele digita na janela que
+  o agente abre (a do Windows ou a do `save-pin`).
   Cobre o NexusIDE inteiro, inclusive o `NexusRedline.exe` do pacote e o instalador
   Squirrel. **Regra do operador (19/10): todo app Windows assinado usa este
   YubiKey.** O Nexus Shot (repo próprio, Tauri) assina pelo mesmo token desde
-  `3c76ad9` na `feat/windows-port` (`scripts/windows-sign.ps1`, mesma identidade
-  fixada; renovação troca o thumbprint nos dois repositórios).
+  `3c76ad9` na `feat/windows-port` (`scripts/windows-sign.ps1`, SignTool próprio,
+  mesma identidade fixada; renovação troca o thumbprint nos dois repositórios).
 - O JSON é a fonte única: o coletor (`collect-windows-release.ps1`) grava
   `signing: 'yubikey'` só com Setup, app, Update.exe e stub assinados e carimbados
   pelo certificado fixado (thumbprint e SPKI conferidos); nenhum assinado vira
@@ -1822,9 +1852,23 @@ O que mudou — e o que NÃO mudou:
 - Cada `VoiceUiStatus` tem assinatura de movimento própria
   (`figureMotionForStatus`, `src/renderer/components/JarvisParticleFigure.tsx`):
   ouvindo puxa as partículas para dentro e pulsa com `voice-store.level`;
-  falando emite ondas concêntricas da cabeça/peito e vibra boca/torso
-  (`speakingEnergy`/`speakingZoneWeight`); transcrever/rotear orbita em
-  vórtice; erro dispersa na cor `--danger`.
+  falando MEXE A BOCA (abaixo); transcrever/rotear orbita em vórtice; erro
+  dispersa na cor `--danger`.
+- **A boca fala com a voz (20/10).** Um anel de lábios (`buildMouthRing`,
+  partículas DEPOIS da silhueta, então os índices do corpo não mudam) abre com
+  `voice-store.outputLevel` e estica com `outputBrightness`
+  (`mouthShape`/`lipPoint`); o rosto abre o vão e o queixo desce
+  (`mouthDeform`); cada sílaba solta uma onda da boca. A cabeça quase não treme
+  mais (`speakingZoneWeight` 0,12): tremer borrava os lábios. O medidor
+  (`voice-output-level.ts`) publica o brilho espectral (agudos 2–6 kHz ÷ graves
+  200–1100 Hz; só acima de `OUTPUT_BRIGHTNESS_MIN_LEVEL`, senão cauda/chiado
+  esticava a boca) e ATRASA o par pela latência de saída do contexto
+  (`baseLatency + outputLatency`, teto 350 ms): o analisador lê a amostra antes
+  do alto-falante e a boca andava à frente da voz. Silêncio depois de voz
+  medida é pausa (boca fecha); sílabas sintéticas (~4/s) só sem medidor e
+  depois de `SYNTHETIC_MOUTH_GRACE_S`. Validado com fala real (SAPI pt-BR)
+  tocando pelo medidor numa bancada: em 220 px a boca abre com nível ≥ 0,4 e
+  fecha na pausa.
 - **Ocioso = silhueta reconhecível, nunca nuvem.** Antes a coesão ia só até
   ~0,31 e a figura jamais se formava (no Chrome só ~40% dos pixels acesos
   ficavam perto do corpo). Agora `idleCohesion` cicla de ~0,91 (pico) a ~0,61
@@ -1861,6 +1905,39 @@ O que mudou — e o que NÃO mudou:
   desse mesmo quadrado (os pés fecham em y = 0,96). Validar com o
   `VoiceHud` real num Chrome (hit-test do centro da figura = o botão, clique
   acorda, só a alça arrasta), não só com teste de CSS.
+
+## Voz: ferramentas realtime respondem sempre e leem o estado vivo (20/10)
+
+- **Um `response.create` por lote, depois do `done`.** `OpenAIRealtimeProvider`
+  (OpenAI e Grok) manda o `function_call_output` na hora, mas só pede a resposta
+  de seguimento quando a resposta que FEZ as chamadas terminou e TODAS as
+  chamadas paralelas dela têm resultado (doc da xAI). Antes saía um
+  `response.create` por resultado, e o síncrono do Main (`consultar`, recusas)
+  batia em `conversation_already_has_active_response`: turno mudo. Lote lento
+  não segura outro lote; `sendText` com resposta ativa espera o `done`; esse
+  erro vira `responseBusy` (adiado, nunca falha de sessão); sem `done` em
+  `DEFERRED_RESPONSE_MAX_MS` (10 s) o pedido sai assim mesmo.
+  `responseInFlight` diz ao controller que o `done` era da resposta que chamou
+  a ferramenta: o turno de ferramenta só fecha no `done` do seguimento (senão a
+  narração local "Feito." passava por cima da resposta de verdade).
+- **Nada espera 120 s em silêncio.** O schema do resultado aceita toda ação de
+  `SAFE_REALTIME_ACTIONS` (faltava `open_agent`) e CORTA o resumo em 1000
+  caracteres em vez de recusar; resultado recusado ainda fecha a chamada com
+  `invalid_tool_result` e loga `live.toolResultRejected` (só os caminhos dos
+  campos). Jarvis desligada responde `jarvis_powered_off`. A `hint` do
+  despachante MCP vai ao modelo (`McpInvokeResult.hint`) para ele seguir o
+  caminho certo em vez de repetir a chamada recusada.
+- **Leitura viva.** `ler` ganhou scopes `panes`, `missoes`, `cotas`, `git` e
+  `saude` (`systemReadToolForScope` → `nexus_pane_list`, `nexus_mission_list`,
+  `nexus_quota_status`, `nexus_git_status`, `nexus_system_doctor`, todas
+  somente leitura). `consultar` só conhece o resumo da tela e diz isso.
+- **`perguntar` devolve a resposta.** `ask_pane` usa `nexus_pane_ask` (digita,
+  espera o pane ficar ocioso, devolve só o texto novo; 45 s, prazo da ação
+  55 s); o resumo diz se o pane respondeu, ainda trabalha ou é one-shot. Antes
+  era `nexus_pane_write` e o modelo narrava "mandei" como se fosse resposta.
+- `system.en.md` e os adendos de `factory.ts` agora batem com o código: sync de
+  repositório é `sync_repo_via_pane` (pane de CLI), voz não tem missão (efeito
+  de missão → `delegar`), enviado não é concluído.
 
 ## Voz: relato de handoff e atalho global (17/10)
 
@@ -2327,6 +2404,12 @@ O que mudou — e o que NÃO mudou:
   Chamar `proc.kill('SIGTERM')` direto deixa a sessão presa no voo de
   encerramento — entrada recusada, saída descartada, "Retomar"/"Pedir ajuste"
   esperando para sempre, e o reconciliador de 1 s repete a tentativa.
+- **F-1617: o `kill()` do ConPTY não é idempotente.** Cada chamada repete o
+  `ClosePseudoConsole` no mesmo HPCON; a 2ª antes do `onExit` derruba o PTY
+  host com `0xC0000374` e TODOS os panes caem juntos (reproduzido com o
+  node-pty real). `killPtyRoot` fecha o console só no 1º pedido e a escalada
+  `SIGKILL` termina a raiz pelo PID. Nunca chame `proc.kill()` de um PTY
+  fora dele, nem «tente de novo» um encerramento chamando `kill()` outra vez.
 - Pane `idle` não é "orquestrador terminou". Maestro parado numa pergunta ao
   operador (hook `awaiting-input` ou notificação, rodada ainda aberta) é
   `isAgentAwaitingOperator` e conta como ocupado no `orchestratorBusy` da

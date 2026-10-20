@@ -1602,15 +1602,6 @@
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
-  /* Rolagem horizontal com as bordas esmaecidas: a barra avisa que há mais
-     abas sem ganhar uma setinha de navegação. Na máscara só o alfa conta. */
-  mask-image: linear-gradient(
-    90deg,
-    transparent 0,
-    var(--bg) var(--space-2),
-    var(--bg) calc(100% - var(--space-4)),
-    transparent 100%
-  );
 }
 
 .workspace-tabs__rail::-webkit-scrollbar {
@@ -1653,7 +1644,8 @@
   gap: var(--space-2);
   min-inline-size: 0;
   padding-inline: var(--space-3) var(--space-2);
-  border: 0;
+  border-block: 0;
+  border-inline: 1px solid transparent;
   border-radius: var(--radius-md) var(--radius-md) 0 0;
   background: transparent;
   color: inherit;
@@ -1663,6 +1655,10 @@
   transition:
     background 140ms var(--ease-out-quart),
     color 140ms var(--ease-out-quart);
+}
+
+.workspace-tab:has(.workspace-tab__close) .workspace-tab__main {
+  padding-inline-end: calc(var(--space-1-5) + 18px + var(--space-1-5));
 }
 
 .workspace-tab__main--editing {
@@ -1760,11 +1756,23 @@
   color: var(--accent);
 }
 
+/* O selo de agentes trabalhando e a contagem de painéis dividem a mesma
+   célula de largura fixa: a aba nunca cresce nem encolhe quando um agente
+   entra ou sai do estado de trabalho, mantendo o × e as abas vizinhas imóveis. */
+.workspace-tab__badges {
+  display: inline-grid;
+  flex-shrink: 0;
+  grid-template-areas: 'slot';
+  place-items: center;
+  min-inline-size: 26px;
+}
+
 /* A contagem nunca trunca: é a prova de que os painéis estão do outro lado
    da aba e não sumiram. */
 .workspace-tab__count {
+  grid-area: slot;
   flex-shrink: 0;
-  min-inline-size: 16px;
+  min-inline-size: 26px;
   padding: 2px 5px;
   border-radius: var(--radius-round);
   background: var(--surface-2);
@@ -1779,14 +1787,22 @@
   color: var(--text);
 }
 
+.workspace-tab[data-working] .workspace-tab__count {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 /* Agentes trabalhando na aba: ponto vivo + número, sem precisar abri-la. A
    palavra ("N trabalhando agora") mora no nome acessível e no tooltip da aba;
    o ponto reusa o respirar do glifo de missão viva. */
 .workspace-tab__working {
+  grid-area: slot;
   display: inline-flex;
   flex-shrink: 0;
   align-items: center;
+  justify-content: center;
   gap: var(--space-1);
+  min-inline-size: 26px;
   padding: 2px 5px;
   border-radius: var(--radius-round);
   background: color-mix(in srgb, var(--state-running) 14%, transparent);
@@ -1813,29 +1829,26 @@
   block-size: 18px;
   border: 0;
   border-radius: var(--radius-sm);
-  background: var(--surface-3);
+  background: transparent;
   color: var(--text-dim);
   cursor: pointer;
-  opacity: 0;
+  opacity: 1;
   transform: translateY(-50%);
-  transition: opacity 120ms var(--ease-out-quart);
+  transition:
+    background 120ms var(--ease-out-quart),
+    color 120ms var(--ease-out-quart);
 }
 
 .workspace-tab:hover .workspace-tab__close,
 .workspace-tab[data-active] .workspace-tab__close,
 .workspace-tab__close:focus-visible {
-  opacity: 1;
+  background: var(--surface-3);
+  color: var(--text);
 }
 
 .workspace-tab__close:hover {
   background: color-mix(in srgb, var(--danger) 22%, var(--surface-3));
   color: var(--text);
-}
-
-/* O × aparece por cima da contagem: ela cede o lugar enquanto ele existe. */
-.workspace-tab:has(.workspace-tab__close):hover .workspace-tab__count,
-.workspace-tab[data-active]:has(.workspace-tab__close) .workspace-tab__count {
-  visibility: hidden;
 }
 
 /* WEB-13: arrastar para reordenar. A aba em trânsito esmaece e o ponto de

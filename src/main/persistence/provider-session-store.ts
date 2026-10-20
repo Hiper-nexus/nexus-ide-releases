@@ -97,6 +97,32 @@ export function saveProviderPaneSession(
 }
 
 /**
+ * F-1618: id da conversa hoje ligada ao pane, de QUALQUER conta. Só responde
+ * se um id ditado no spawn substituiria outra conversa; nunca serve de
+ * retomada (essa continua na régua de conta de getProviderPaneSession).
+ */
+export function providerPaneSessionId(
+  scope: Readonly<ProjectExecutionScope>,
+  paneId: string,
+  adapterId: string,
+): string | null {
+  const db = getDb();
+  if (!db) return null;
+  const row = db.prepare(
+    `SELECT session_id FROM provider_pane_sessions
+      WHERE installation_id = ? AND project_id = ? AND checkout_id = ?
+        AND pane_id = ? AND adapter_id = ?`,
+  ).get(
+    scope.installationId,
+    scope.projectId,
+    scope.checkoutId,
+    paneId,
+    adapterId,
+  ) as { session_id?: unknown } | undefined;
+  return typeof row?.session_id === 'string' ? row.session_id : null;
+}
+
+/**
  * Load a captured session for exact resume.
  * Fail-closed:
  *  - owned row (account_id set) requires a matching pin

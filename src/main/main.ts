@@ -506,6 +506,9 @@ import {
   closeMissionRuntimePreservingHistory,
   recordMissionOrchestratorExitScreen,
 } from "./orch/mission-runtime-termination";
+import { stopAllFastLaneWatchers } from "./orch/mission-fast-lane";
+import { stopCivilianDeliveryCompletion } from "./orch/civilian-delivery-completion";
+import { wasMissionRuntimeClosedByOperator } from "../shared/mission-recovery-policy";
 import {
   configureCronRuntime,
   disposeCronRuntime,
@@ -568,6 +571,7 @@ import {
   QUIT_DIALOG_BUTTONS,
   quitChoiceFromResponse,
   isAppQuitAuthorized,
+  registerShutdownMissionSealer,
   revokeAppQuitAuthorization,
 } from "./close-authorization";
 import { trace, flushMainTrace } from "./observability/main-trace";
@@ -1702,17 +1706,27 @@ const QUIT_MISSION_SEAL_BUDGET_MS = 4_000;
 async function closeAllActiveMissionsForShutdown(): Promise<void> {
   const seal = (async () => {
     try {
+      await Promise.allSettled([
+        stopAllFastLaneWatchers(),
+        stopCivilianDeliveryCompletion(),
+      ]);
       const registry = requireProjectDomainStoreRegistry();
       const jobs: Promise<void>[] = [];
       for (const suite of registry.listSuites()) {
-        let runningMissions: ReturnType<typeof suite.missions.list>;
+        let missions: ReturnType<typeof suite.missions.list>;
         try {
-          runningMissions = suite.missions.list('running');
+          missions = suite.missions.list();
         } catch (error) {
           console.error('[quit] Falha ao processar escopo no quit:', error);
           continue;
         }
-        for (const mission of runningMissions) {
+        const openMissions = missions.filter(
+          (mission) =>
+            mission.status !== 'done' &&
+            mission.status !== 'failed' &&
+            !wasMissionRuntimeClosedByOperator(mission),
+        );
+        for (const mission of openMissions) {
           jobs.push(
             closeMissionRuntimePreservingHistory({
               scope: suite.scope,
@@ -1753,6 +1767,7 @@ async function closeAllActiveMissionsForShutdown(): Promise<void> {
     if (timer) clearTimeout(timer);
   }
 }
+registerShutdownMissionSealer(closeAllActiveMissionsForShutdown);
 
 function shutdown(): Promise<void> {
   if (shutdownComplete) return Promise.resolve();

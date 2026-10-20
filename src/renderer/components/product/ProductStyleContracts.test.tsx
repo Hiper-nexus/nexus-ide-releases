@@ -614,4 +614,15 @@ describe('sinal de "trabalhando agora" (rail, abas e cabeçalho da missão)', ()
       expect(activeCssomDeclaration(reduced, selector, 'animation'), selector).toBe('none');
     }
   });
+
+  it('mantém largura estável na aba (working/count na mesma célula) e o × sempre visível sem mask-image', () => {
+    const active = installStyleContract(productStyles, { width: 1_400 });
+    expect(activeCssomDeclaration(active, '.workspace-tab__badges', 'display')).toBe('inline-grid');
+    expect(activeCssomDeclaration(active, '.workspace-tab__count', 'grid-area')).toBe('slot');
+    expect(activeCssomDeclaration(active, '.workspace-tab__working', 'grid-area')).toBe('slot');
+    expect(activeCssomDeclaration(active, '.workspace-tab__count', 'min-inline-size')).toBe('26px');
+    expect(activeCssomDeclaration(active, '.workspace-tab__working', 'min-inline-size')).toBe('26px');
+    expect(activeCssomDeclaration(active, '.workspace-tab__close', 'opacity')).toBe('1');
+    expect(activeCssomDeclaration(active, '.workspace-tabs__rail', 'mask-image')).toBe('');
+  });
 });

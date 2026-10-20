@@ -1,4 +1,15 @@
 let appQuitAuthorized = false;
+let shutdownMissionSealer: (() => Promise<void>) | null = null;
+
+export function registerShutdownMissionSealer(
+  sealer: (() => Promise<void>) | null,
+): void {
+  shutdownMissionSealer = sealer;
+}
+
+export async function sealMissionsBeforeConfirmedShutdown(): Promise<void> {
+  await shutdownMissionSealer?.();
+}
 
 export function authorizeAppQuit(): void {
   appQuitAuthorized = true;

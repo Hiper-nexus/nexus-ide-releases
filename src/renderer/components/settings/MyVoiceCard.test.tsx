@@ -213,6 +213,38 @@ describe('Minha voz', () => {
     expect(api.remove).toHaveBeenLastCalledWith({ id: 'r'.repeat(24), localOnly: true });
   });
 
+  it('F-1616: aberto pelo atalho do Estúdio, rola até o cartão e o foca uma vez', async () => {
+    const { requestMyVoiceFocus } = await import('./my-voice-focus');
+    const scrollIntoView = vi.fn();
+    const original = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = scrollIntoView;
+    document.body.appendChild(host);
+    try {
+      requestMyVoiceFocus();
+      await render();
+      const card = host.querySelector<HTMLElement>('#my-voice')!;
+      expect(scrollIntoView).toHaveBeenCalledTimes(1);
+      expect(document.activeElement).toBe(card);
+      await render();
+      expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    } finally {
+      HTMLElement.prototype.scrollIntoView = original;
+      host.remove();
+    }
+  });
+
+  it('sem pedido do atalho, não rouba o foco', async () => {
+    const scrollIntoView = vi.fn();
+    const original = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = scrollIntoView;
+    try {
+      await render();
+      expect(scrollIntoView).not.toHaveBeenCalled();
+    } finally {
+      HTMLElement.prototype.scrollIntoView = original;
+    }
+  });
+
   it('sem a ponte do preload não desenha nada', async () => {
     Object.defineProperty(window, 'nexus', { configurable: true, value: {} });
     await render();

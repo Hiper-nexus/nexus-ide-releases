@@ -1,5 +1,116 @@
 # Changelog
 
+## 0.76.351 — A boca do Jarvis
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+A tag 0.76.350 foi marcada e não foi publicada: a suíte no Ubuntu falhou em dois testes do assinador do YubiKey, que montavam caminho do Windows com `path.join` e no Linux trocavam a barra. A linha de comando do Windows passa a usar `path.win32`. A tag 0.76.349 também não foi publicada: o portão de segurança encontrou vite 8.1.5 (GHSA-698v-4r3x-3vcv); o vite sobe para 8.1.6. A 0.76.348 é a publicação Windows, assinada pelo YubiKey, e não recebe arquivos Linux. A 0.76.347 é o pacote Linux anterior. A 0.76.346 continua a publicação macOS e não recebe arquivos Linux.
+
+No desktop Linux, em relação à 0.76.347:
+
+- **A boca do Jarvis fala com a própria voz**. A figura ganha boca: abre com o volume da saída, estica com o brilho do espectro e fecha na pausa. O movimento espera a latência do alto-falante, para a boca não andar à frente da voz.
+- **A Jarvis responde e lê o estado vivo**. Uma ação não fica em silêncio: ler consulta panes, missões, cotas, git e saúde antes de afirmar, e perguntar devolve o texto novo do pane em vez de só dizer que mandou.
+- **Ferramenta em tempo real pede uma resposta por lote**. A continuação sai depois que a resposta que chamou as ferramentas terminou, para o turno não ficar mudo.
+- **O Maestro volta com a própria conversa** (F-1618). O id de conversa ditado no spawn só substitui a conversa do pane quando o transcrito aparece. Uma reabertura que morria antes da primeira mensagem não apaga mais a conversa real.
+- **Pane do operador na missão liga de primeira** (F-1619). O pane de «+ Pane → Nesta missão» liga a tela ao processo que já nasceu e não reabre sozinho em «Não subiu».
+
+Fechar um pane lento no Windows (F-1617) está na 0.76.348 e não muda o desktop Linux.
+
+## 0.76.350 — A boca do Jarvis
+
+A tag foi marcada e não foi publicada: a suíte no Ubuntu falhou nos testes do assinador do YubiKey (`path.join` em caminho do Windows). Não recebe arquivos Linux. O desktop Linux sai na 0.76.351.
+
+## 0.76.349 — A boca do Jarvis
+
+A tag foi marcada e não foi publicada: o portão de segurança no Ubuntu encontrou uma vulnerabilidade na toolchain. Não recebe arquivos Linux. O desktop Linux sai na 0.76.350.
+
+## 0.76.348 — Terminais que não caem
+
+Windows x64, assinado pelo YubiKey (HIPERSEND). Em relação à 0.76.347:
+
+- **Fechar um pane não derruba os outros** (F-1617). No Windows o `kill()` do ConPTY não é idempotente: a escalada SIGTERM→SIGKILL chamava `kill()` duas vezes em toda CLI que leva mais de 1,5 s para sair, e o 2º fechamento do mesmo pseudoconsole derrubava o PTY host com `0xC0000374`, levando todos os panes. O console agora é fechado uma vez só e a escalada termina a raiz pelo PID.
+- **O Maestro volta com a própria conversa** (F-1618). O `--session-id` ditado no spawn só substitui a conversa ligada ao pane quando o transcrito dele aparece; um respawn que morria antes da 1ª mensagem deixava um id inexistente e cada «Retomar» saía com «No conversation found».
+- **Pane do operador na missão liga de primeira** (F-1619). O pane de «+ Pane → Nesta missão» nasce sem allowlist, mas a adoção e o respawn supunham a de worker (`[]`): a tela não se ligava ao PTY vivo, a cerca negava o substituto e o pane ficava em «Não subiu», reabrindo a cada fechamento.
+
+## 0.76.347 — Abas estáveis e botão de fechar
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+A 0.76.346 descreve o mesmo ajuste das abas como correção no macOS e não recebe arquivos Linux. A 0.76.345 é o pacote Linux anterior. A tag 0.76.343 continua a publicação macOS e não recebe arquivos Linux.
+
+No desktop Linux, em relação à 0.76.345:
+
+- **Largura estável das abas**. O selo de agentes trabalhando (`● N`) e a contagem de painéis dividem a mesma célula de largura fixa (`.workspace-tab__badges`). A aba não cresce nem encolhe quando um agente entra ou sai de trabalho, e as abas vizinhas ficam no lugar.
+- **Botão `×` sempre visível**. O fechar da aba fica sempre à mostra, em espaço próprio, sem cobrir a contagem e sem o esmaecimento da borda direita que cortava o botão da última aba.
+- **Fechar sem arrastar a aba**. Passar o cursor ou pressionar o `×` desliga o arraste da aba, para um movimento pequeno do ponteiro não cancelar o fechamento.
+
+## 0.76.346 — Abas estáveis e botão de fechar
+
+No macOS, corrige a barra de abas dos Terminais (`WorkspaceTabs`):
+
+- **Largura estável durante trabalho de agente**. O selo de agentes trabalhando (`● N`) e a contagem de painéis (`N`) dividem a mesma célula de largura fixa (`.workspace-tab__badges`), impedindo que a aba cresça e encolha quando um agente entra ou sai de trabalho e empurre as abas vizinhas de um lado para o outro.
+- **Botão `×` sempre visível e sem corte**. O botão de fechar a aba fica sempre visível em espaço próprio à direita sem sobrepor a contagem e sem o `mask-image` que esmaecia a borda direita da última aba.
+- **Clique no `×` sem arraste acidental no trackpad**. Pressionar ou passar o cursor sobre o `×` desativa o `draggable` da aba no macOS, evitando que um movimento mínimo no trackpad inicie o arraste da aba e cancele o fechamento.
+
+## 0.76.345 — Encerramento de missões
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+A tag 0.76.344 foi marcada e não foi publicada: a suíte no Ubuntu falhou porque os testes do fast-lane e da entrega ociosa não conheciam o selo de shutdown. A tag 0.76.343 é a publicação macOS e não recebe arquivos Linux. A 0.76.342 é o pacote Linux anterior.
+
+No desktop Linux, em relação à 0.76.342:
+
+- **Sair e encerrar**. Confirmar "Sair e encerrar processos" sela todas as missões abertas como `runtime-closed` antes de fechar a janela. Os watchers de fast-lane e da conclusão civil param no início do shutdown, para não reescreverem o selo.
+- **Pane do operador devolvido**. Pane promovido e depois devolvido a `user`, e runtime em worktree, encerram e limpam `orchestratorSessionId` sem erro de autoridade de pane. Um ponteiro velho não mata o processo do operador.
+- **Missão dormindo no Quadro**. Missão estacionada ("Dormindo") pode ser concluída pelo botão "Marcar como feito".
+
+## 0.76.344 — Encerramento de missões
+
+A tag foi marcada e não foi publicada: a suíte no Ubuntu falhou. Não recebe arquivos Linux. O desktop Linux sai na 0.76.345.
+
+## 0.76.343 — Estúdio de mídia e encerramento de missões
+
+macOS arm64 com as melhorias compartilhadas desde a última publicação Mac (0.76.336): estúdio de mídia na barra lateral e no ⌘K, vídeos de apresentação com HyperFrames, narração e legendas, música, Minha voz com consentimento, prévia ao vivo, captura de site, variantes por rede/idioma e teto de gasto de mídia.
+
+Inclui referências do projeto, modelos de vídeo novos, Higgsfield e os ajustes posteriores para colar a chave em Modelos de mídia e abrir Criar minha voz direto do Estúdio (F-1615/F-1616). O alinhamento do roteiro roda no processo principal. O estúdio vem ligado e pode ser desligado em Ajustes → Experimental.
+
+Corrige também o encerramento e a conclusão de missões no fechamento/reinício do app e no Quadro de Missões: "Sair e encerrar processos" sela todas as missões abertas como `runtime-closed` antes de encerrar a janela, os watchers de fast-lane e conclusão civil param no início do shutdown para não reescreverem sobre o selo, panes de operador promovidos/devolvidos a `user` e runtimes em worktree encerram e limpam `orchestratorSessionId` sem erro de autoridade de pane, e missões estacionadas ("Dormindo") podem ser concluídas pelo botão "Marcar como feito".
+
+## 0.76.342 — Chave e minha voz
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+No desktop Linux, em relação à 0.76.341:
+
+- **Chave no catálogo**. Em Ajustes → Modelos de mídia, o serviço sem chave mostra o campo para colar a chave ali mesmo. A Higgsfield pede o formato ID:SEGREDO. Serviço já conectado guarda o campo em "Gerenciar conexão". A chave segue só para o cofre do Main.
+- **Criar minha voz no Estúdio**. No vídeo de apresentação, abaixo da Narração, "Criar minha voz" abre Ajustes → Serviços de mídia, fecha o Estúdio e leva o foco ao cartão Minha voz. Quem já tem voz vê "Minha voz". A clonagem continua só pela mão da pessoa.
+
+## 0.76.341 — Estúdio de mídia completo
+
+A tag 0.76.340 foi marcada e não foi publicada: a suíte no Ubuntu falhou em dois testes do motor de vídeo (caminho do npm no Windows e o limite de caminho sob o TMPDIR longo do container). Este pacote leva o desktop Linux. As tags 0.76.338 e 0.76.339 não recebem arquivos Linux. A tag 0.76.337 é o pacote Linux anterior.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+No desktop Linux, em relação à 0.76.337, vale o estúdio descrito na 0.76.340: vídeos de apresentação, Minha voz, narração e música, prévia, referências do projeto, modelos novos e a Higgsfield. O estúdio de vídeo vem ligado; desliga em Ajustes → Experimental.
+
+## 0.76.340 — Estúdio de mídia completo
+
+A tag 0.76.339 é a versão do estúdio de mídia e não recebe arquivos Linux. A tag 0.76.338 ficou só como tag, sem pacote. A tag 0.76.337 é o pacote Linux anterior. Este pacote leva o desktop Linux.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+No desktop Linux, em relação à 0.76.337:
+
+- **Estúdio de mídia à mão**. O Estúdio de mídia tem uma linha própria na barra lateral, logo abaixo de Memória, e um comando na paleta (Ctrl+K). Buscar "vídeo", "logo" ou "voz" também acha. O estúdio de vídeo vem ligado; desliga em Ajustes → Experimental.
+- **Vídeos de apresentação**. Um agente escreve o roteiro, narra, põe música e monta a composição em HyperFrames, com cenas e legendas cronometradas pela narração. O render roda no computador e o export sai para Reels, Shorts, TikTok, YouTube, LinkedIn e quadrado, com volume normalizado, versão muda, capa e legendas. A aba "Vídeos do projeto" mostra o que foi feito.
+- **Minha voz**. Grave alguns trechos e crie uma voz sintética sua na sua conta da ElevenLabs ou do Gemini, depois de aceitar o termo e ler a declaração de consentimento. O Nexus guarda o recibo, apaga a voz no provedor quando você pede, e o export marca como gerada por IA a narração feita com ela. Nenhum agente cria ou clona voz.
+- **Narração e música**. A ElevenLabs usa o Eleven v4 por padrão. As vozes do Gemini também narram. Quem prefere a própria voz grava a narração no app e o Nexus alinha o roteiro ao áudio, pela ElevenLabs ou no computador, com a grafia do roteiro nas legendas. A música de fundo vem da ElevenLabs, no tamanho da narração.
+- **Prévia, captura do site e variantes**. A prévia ao vivo abre no navegador do pane enquanto o agente edita. O agente captura o site público do produto (telas, textos, cores e fontes) para usar no vídeo. Um pedido gera várias versões: formatos vertical, horizontal e quadrado, e outros idiomas com a mesma voz.
+- **Teto de gasto de mídia**. Defina quanto a mídia paga pode gastar por dia e por missão. O modal de confirmação mostra o custo de cada geração, e o pedido que passaria do teto é recusado antes de chamar o provedor.
+- **Referências do projeto**. Imagem, logo ou vídeo de exemplo entram por Adicionar, arrastando ou colando, e ficam copiados em media/referencias/ do projeto. Na imagem servem de base para editar. No vídeo, uma imagem vira o primeiro quadro e duas ou mais viram referência de personagem, produto ou logo. Os modelos que exigem imagem inicial (Kling 2.1, Wan 2.5) deixaram de ficar bloqueados.
+- **Modelos de vídeo novos**. Seedance 2.5, MiniMax H3 (Hailuo 3), Wan 3 e Wan 3 Prime, Gemini Omni 1.1, PixVerse v6 e Vidu Q3, com o preço de lista do Replicate. O Veo 3.1 Fast e o Lite recebiam imagens de referência que não aceitam; agora o pedido é recusado antes de cobrar.
+- **Higgsfield**. Entra como serviço de imagem e de vídeo, com uma chave no formato ID:SEGREDO. Imagem: Soul 2, Ideogram 4 (bom para logo e texto), Qwen Image 3 e Recraft 4.1. Vídeo: Seedance 2.5 até 1080p, Seedance 2.0 até 4K, Kling 3.0, H3 e Wan 3.0. O preço vem da própria Higgsfield antes de gerar, e por ela o vídeo de exemplo chega ao modelo como referência de movimento e estilo.
+
 ## 0.76.339 — Estúdio de mídia completo
 
 O Estúdio de mídia ganha lugar na barra lateral, referências do projeto (imagem, logo e vídeo de exemplo), modelos de vídeo novos e a Higgsfield. Os agentes fazem vídeos de apresentação por código, com narração, legendas, música e export por rede, e "Minha voz" cria uma voz sintética sua na ElevenLabs ou no Gemini. O instalador do Windows sai assinado.

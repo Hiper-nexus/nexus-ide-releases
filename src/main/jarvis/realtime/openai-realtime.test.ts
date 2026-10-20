@@ -681,3 +681,161 @@ describe('OpenAIRealtimeProvider', () => {
     expect(calls).toHaveLength(258);
   });
 });
+
+describe('OpenAIRealtimeProvider — resultado de ferramenta e response.create', () => {
+  type Timer = { cb: () => void; ms: number; cleared: boolean };
+
+  async function connected(options: { timers?: Timer[] } = {}) {
+    const ws = fakeWs();
+    const timers = options.timers;
+    const provider = new OpenAIRealtimeProvider({
+      apiKey: 'sk-test',
+      instructions: 'You are Jarvis.',
+      wsFactory: () => ws,
+      setTimeoutFn: ((cb: () => void, ms: number) => {
+        if (!timers) return 0;
+        const timer = { cb, ms, cleared: false };
+        timers.push(timer);
+        return timer;
+      }) as unknown as typeof setTimeout,
+      clearTimeoutFn: ((timer: Timer | number) => {
+        if (typeof timer === 'object' && timer) timer.cleared = true;
+      }) as never,
+    });
+    const ready = provider.connect();
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ type: 'session.updated' }));
+    await ready;
+    const fire = (event: Record<string, unknown>) => ws.fire('message', JSON.stringify(event));
+    const call = (callId: string) =>
+      fire({
+        type: 'response.function_call_arguments.done',
+        call_id: callId,
+        name: 'consultar',
+        arguments: '{"pergunta":"quantos panes?"}',
+      });
+    const creates = () =>
+      ws.sent.map((item) => JSON.parse(item).type).filter((type) => type === 'response.create').length;
+    const outputs = () =>
+      ws.sent
+        .map((item) => JSON.parse(item))
+        .filter((item) => item.item?.type === 'function_call_output')
+        .map((item) => item.item.call_id);
+    return { ws, provider, fire, call, creates, outputs };
+  }
+
+  it('resposta síncrona do Main (consultar) espera a resposta da chamada terminar', async () => {
+    const t = await connected();
+    t.provider.onToolCall((event) => t.provider.sendToolResult(event.callId, { ok: true }));
+    t.fire({ type: 'response.created' });
+    t.call('call_1');
+    // O item vai na hora; o response.create, não (era o `already has an active response`).
+    expect(t.outputs()).toEqual(['call_1']);
+    expect(t.creates()).toBe(0);
+
+    t.fire({ type: 'response.done' });
+    expect(t.creates()).toBe(1);
+    t.fire({ type: 'response.done' }); // done repetido não pede outra
+    expect(t.creates()).toBe(1);
+  });
+
+  it('chamadas paralelas da mesma resposta: um único response.create depois de TODOS os resultados', async () => {
+    const t = await connected();
+    t.fire({ type: 'response.created' });
+    t.call('call_a');
+    t.call('call_b');
+    t.fire({ type: 'response.done' });
+
+    t.provider.sendToolResult('call_a', { ok: true });
+    expect(t.creates()).toBe(0); // falta o b: responder agora seria sem contexto
+    t.provider.sendToolResult('call_b', { ok: true });
+    expect(t.creates()).toBe(1);
+  });
+
+  it('um lote lento não segura o resultado de outra resposta', async () => {
+    const t = await connected();
+    t.fire({ type: 'response.created' });
+    t.call('slow');
+    t.fire({ type: 'response.done' });
+    t.fire({ type: 'response.created' });
+    t.call('fast');
+    t.fire({ type: 'response.done' });
+
+    t.provider.sendToolResult('fast', { ok: true });
+    expect(t.creates()).toBe(1);
+    t.fire({ type: 'response.done' });
+    t.provider.sendToolResult('slow', { ok: true });
+    expect(t.creates()).toBe(2);
+  });
+
+  it('resultado sem lote conhecido (ou com resposta já encerrada) responde na hora', async () => {
+    const t = await connected();
+    t.provider.sendToolResult('call_x', { ok: true });
+    expect(t.creates()).toBe(1);
+  });
+
+  it('texto injetado durante uma resposta ativa sai quando ela terminar', async () => {
+    const t = await connected();
+    t.fire({ type: 'response.created' });
+    t.provider.sendText('[wake]');
+    expect(t.creates()).toBe(0);
+    t.fire({ type: 'response.done' });
+    expect(t.creates()).toBe(1);
+  });
+
+  it('`conversation_already_has_active_response` não derruba a sessão: o pedido volta no done', async () => {
+    const t = await connected();
+    const errors: Error[] = [];
+    t.provider.onError((err) => errors.push(err));
+    t.provider.sendText('olá');
+    expect(t.creates()).toBe(1);
+    t.fire({
+      type: 'error',
+      error: {
+        code: 'conversation_already_has_active_response',
+        message: 'Conversation already has an active response in progress: resp_1.',
+      },
+    });
+    expect(errors).toEqual([]);
+    t.fire({ type: 'response.done' });
+    expect(t.creates()).toBe(2);
+  });
+
+  it('se o done da resposta ativa se perder, o pedido adiado sai pelo teto', async () => {
+    const timers: Timer[] = [];
+    const t = await connected({ timers });
+    t.fire({ type: 'response.created' });
+    t.provider.sendText('status?');
+    expect(t.creates()).toBe(0);
+    const pending = timers.filter((timer) => !timer.cleared && timer.ms === 10_000);
+    expect(pending).toHaveLength(1);
+    pending[0]!.cb();
+    expect(t.creates()).toBe(1);
+  });
+
+  it('o done normal cancela o teto do pedido adiado', async () => {
+    const timers: Timer[] = [];
+    const t = await connected({ timers });
+    t.fire({ type: 'response.created' });
+    t.provider.sendText('status?');
+    t.fire({ type: 'response.done' });
+    expect(timers.filter((timer) => timer.ms === 10_000).every((timer) => timer.cleared)).toBe(true);
+    expect(t.creates()).toBe(1);
+  });
+});
+
+describe('parseOpenAIRealtimeEvent — resposta ocupada', () => {
+  it('marca `responseBusy` e não erro para o código e para a mensagem', () => {
+    expect(
+      parseOpenAIRealtimeEvent(
+        JSON.stringify({ type: 'error', error: { code: 'conversation_already_has_active_response' } }),
+      ),
+    ).toEqual({ type: 'error', responseBusy: true });
+    const viaMessage = parseOpenAIRealtimeEvent(
+      JSON.stringify({ type: 'error', error: { message: 'Conversation already has an active response' } }),
+    );
+    expect(viaMessage.responseBusy).toBe(true);
+    expect(viaMessage.error).toBeUndefined();
+    expect(parseOpenAIRealtimeEvent(JSON.stringify({ type: 'error', error: { code: 'x' } })).error).toBeInstanceOf(Error);
+  });
+});

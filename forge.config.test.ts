@@ -19,7 +19,7 @@ import forgeConfig, {
   createWindowsSignOptions,
   windowsTimestampServer,
 } from './forge.config';
-import { WINDOWS_SIGNING_IDENTITY } from './build/windows-token-signing';
+import { WINDOWS_SIGNER_HOOK_MODULE, WINDOWS_SIGNING_IDENTITY } from './build/windows-token-signing';
 
 describe('Windows release signing', () => {
   const pinned = {
@@ -32,13 +32,27 @@ describe('Windows release signing', () => {
     expect(createWindowsSignOptions({}, pinned)).toBeUndefined();
   });
 
-  it('signs SHA-256 with the pinned YubiKey certificate from the user store', () => {
-    expect(createWindowsSignOptions(yubikey, pinned)).toEqual({
-      continueOnError: false,
-      hashes: ['sha256'],
-      signWithParams: ['/sha1', '0123456789ABCDEF0123456789ABCDEF01234567'],
-      timestampServer: 'http://timestamp.digicert.com',
-    });
+  it('signs through the YubiKey agent hook, never a SignTool process per file', () => {
+    const options = createWindowsSignOptions(yubikey, pinned);
+    expect(options).toEqual({ continueOnError: false, hookModulePath: WINDOWS_SIGNER_HOOK_MODULE });
+    // O Squirrel serializa as opções em JSON para o signtool falso: função não
+    // sobrevive, e o caminho precisa valer fora da pasta do projeto.
+    expect(JSON.parse(JSON.stringify(options))).toEqual(options);
+    expect(path.isAbsolute(WINDOWS_SIGNER_HOOK_MODULE)).toBe(true);
+    expect(existsSync(WINDOWS_SIGNER_HOOK_MODULE)).toBe(true);
+  });
+
+  it('carrega o hook como o @electron/windows-sign carrega (require do caminho, função exportada)', () => {
+    const hook = require(path.resolve(WINDOWS_SIGNER_HOOK_MODULE)) as { default?: unknown };
+    expect(hook.default).toBeUndefined();
+    expect(typeof hook).toBe('function');
+  });
+
+  it('valida as horas do agente ao carregar a config', () => {
+    expect(() => createWindowsSignOptions({ ...yubikey, NEXUS_WINDOWS_SIGNER_HOURS: '169' }, pinned))
+      .toThrow(/NEXUS_WINDOWS_SIGNER_HOURS/u);
+    expect(createWindowsSignOptions({ ...yubikey, NEXUS_WINDOWS_SIGNER_HOURS: '168' }, pinned))
+      .toBeDefined();
   });
 
   it('refuses until the reissued certificate is pinned', () => {
@@ -53,16 +67,16 @@ describe('Windows release signing', () => {
       { ...yubikey, WINDOWS_CERTIFICATE_SHA1: '0123456789ABCDEF0123456789ABCDEF01234567' },
       { ...yubikey, WINDOWS_CERTIFICATE_FILE: 'publisher.pfx', WINDOWS_CERTIFICATE_PASSWORD: 'secret' },
       { ...yubikey, NEXUS_WINDOWS_RELEASE_SIGNING: '1' },
+      { ...yubikey, WINDOWS_SIGN_HOOK_MODULE_PATH: 'evil.js' },
+      { ...yubikey, NEXUS_WINDOWS_SIGNER_DIR: 'C:\\outro-agente' },
     ]) {
       expect(() => createWindowsSignOptions(environment, pinned)).toThrow();
     }
   });
 
   it('troca o servidor de carimbo só com uma URL explícita (F-656)', () => {
-    expect(createWindowsSignOptions({
-      ...yubikey,
-      NEXUS_WINDOWS_TIMESTAMP_URL: ' http://timestamp.sectigo.com ',
-    }, pinned)?.timestampServer).toBe('http://timestamp.sectigo.com');
+    expect(windowsTimestampServer({ NEXUS_WINDOWS_TIMESTAMP_URL: ' http://timestamp.sectigo.com ' }))
+      .toBe('http://timestamp.sectigo.com');
     expect(windowsTimestampServer({ NEXUS_WINDOWS_TIMESTAMP_URL: '/tr evil' }))
       .toBe('http://timestamp.digicert.com');
     expect(windowsTimestampServer({})).toBe('http://timestamp.digicert.com');

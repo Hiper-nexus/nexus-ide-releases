@@ -24,7 +24,8 @@ vi.mock('../agent-hooks/mimo-session-registry', () => ({ isMimoUsageBindingProve
   deps.mimoTap = callback; return () => { deps.mimoTap = null; };
 } }));
 vi.mock('../persistence/provider-session-store', () => ({ saveProviderPaneSession: () => true,
-  getProviderPaneSession: () => null, forgetProviderSessionById: () => 0 }));
+  getProviderPaneSession: () => null, forgetProviderSessionById: () => 0,
+  providerPaneSessionId: () => null }));
 const registry = vi.hoisted(() => ({ forScope: () => ({ usage: { record: deps.record }, media: {} }) }));
 vi.mock('./usage-store-registry', () => ({ configureProjectUsageStoreRegistry: () => registry,
   disposeProjectUsageStoreRegistry: deps.disposed }));

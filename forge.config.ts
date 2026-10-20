@@ -29,8 +29,13 @@ import {
   macTimestampAuthority,
 } from './build/mac-signing';
 import {
+  WINDOWS_SIGNER_HOOK_MODULE,
   WINDOWS_SIGNING_IDENTITY,
+  assertWindowsPackageSigned,
   assertWindowsTokenSigningReady,
+  finishWindowsTokenSigning,
+  prepareWindowsTokenSigner,
+  windowsTokenSignerHours,
   windowsTokenSignerThumbprint,
   type WindowsSigningIdentity,
 } from './build/windows-token-signing';
@@ -326,6 +331,10 @@ export function windowsTimestampServer(
  * o certificado fixado em `build/windows-signing-identity.json`; sem a variável a
  * build sai sem assinatura. O eSigner (cobrança por assinatura, 05/10), PFX e
  * outros certificados da loja não têm caminho aqui.
+ *
+ * Nenhum SignTool: o packager e o Squirrel chamam o hook, e o hook pede cada
+ * assinatura ao agente que segura a chave do cartão (um PIN por agente, não por
+ * executável). O carimbo (`windowsTimestampServer`) vai ao agente pelo ambiente.
  */
 export function createWindowsSignOptions(
   environment: NodeJS.ProcessEnv,
@@ -333,15 +342,10 @@ export function createWindowsSignOptions(
 ): WindowsReleaseSignOptions | undefined {
   const certificateSha1 = windowsTokenSignerThumbprint(environment, identity);
   if (!certificateSha1) return undefined;
+  windowsTokenSignerHours(environment);
   return {
     continueOnError: false,
-    hashes: [
-      'sha256' as NonNullable<WindowsSignOptions['hashes']>[number],
-    ],
-    timestampServer: windowsTimestampServer(environment),
-    // Sem `/sm`: o Windows propaga o certificado do cartão para a loja do
-    // USUÁRIO (Cert:\CurrentUser\My), ligado à chave do slot 9a.
-    signWithParams: ['/sha1', certificateSha1],
+    hookModulePath: WINDOWS_SIGNER_HOOK_MODULE,
   };
 }
 
@@ -349,10 +353,22 @@ const windowsSignOptions = createWindowsSignOptions(
   process.platform === 'win32' ? process.env : {},
 );
 let windowsTokenSigningPreflight: Promise<void> | undefined;
-/** Uma checagem por build, antes do primeiro arquivo assinado (package ou make). */
+/**
+ * Uma vez por build, antes do primeiro arquivo assinado (package ou make): o
+ * certificado na loja do usuário e, depois, o agente destrancado. É aqui, e só
+ * aqui, que o Windows pode pedir o PIN.
+ */
 function assertWindowsTokenSigningPreflight(): Promise<void> {
   if (!windowsSignOptions) return Promise.resolve();
-  windowsTokenSigningPreflight ??= assertWindowsTokenSigningReady();
+  windowsTokenSigningPreflight ??= (async () => {
+    await assertWindowsTokenSigningReady();
+    const agent = await prepareWindowsTokenSigner({
+      timestampServer: windowsTimestampServer(process.env),
+    });
+    console.log(agent.expiresAt === null
+      ? '[windows-signer] agente pronto para este build'
+      : `[windows-signer] agente ${agent.started ? 'pronto' : 'reaproveitado, sem PIN'} até ${new Date(agent.expiresAt).toLocaleString('pt-BR')}`);
+  })();
   return windowsTokenSigningPreflight;
 }
 const squirrelWindowsSignOptions = windowsSignOptions
@@ -396,6 +412,10 @@ const config: ForgeConfig = {
       for (const resourcesDir of resourceDirs) {
         assertRequiredWakeResource(resourcesDir);
       }
+      if (windowsSignOptions && packageResult.platform === 'win32') {
+        const verified = await assertWindowsPackageSigned(packageResult.outputPaths);
+        console.log(`[windows-signer] ${verified} executáveis do pacote assinados pelo YubiKey`);
+      }
 
       if (
         process.platform !== 'darwin' ||
@@ -414,8 +434,10 @@ const config: ForgeConfig = {
         });
       }
     },
-    postMake: async (_forgeConfig, makeResults) =>
-      notarizeMacDmgArtifacts(makeResults, process.env),
+    postMake: async (_forgeConfig, makeResults) => {
+      if (windowsSignOptions) await finishWindowsTokenSigning();
+      return notarizeMacDmgArtifacts(makeResults, process.env);
+    },
   },
   packagerConfig: {
     appBundleId: APP_BUNDLE_ID,

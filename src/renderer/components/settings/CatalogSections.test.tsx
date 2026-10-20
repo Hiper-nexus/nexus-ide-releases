@@ -161,17 +161,68 @@ it('filters declared permissions by team without changing the declarations', () 
 });
 
 
-it('keeps models separate and provides a direct route to media connections', async () => {
+it('keeps a direct route to media connections', async () => {
   const { useProductNavigationStore } = await import('../../state/product-navigation-store');
   const navigate = vi.spyOn(useProductNavigationStore.getState(), 'openSettings');
   const listProviders = vi.fn(async () => [{ id: 'openai-image', kind: 'image', label: 'OpenAI', envVar: 'OPENAI_API_KEY', defaultModel: 'gpt-image-2', models: ['gpt-image-2'], hasKey: false, maskedKey: null }]);
   Object.defineProperty(window, 'nexus', { configurable: true, value: { orch: api, media: { listProviders } } });
   const host = mount(<MediaCatalogSection />);
   await settle();
-  expect(host.querySelector('input[type="password"]')).toBeNull();
   act(() => button(host, 'Configurar conexões de mídia').click());
   expect(navigate).toHaveBeenCalledWith('media');
   navigate.mockRestore();
+});
+
+describe('F-1615: a chave se cola em Modelos de mídia', () => {
+  function typeInto(input: HTMLInputElement, value: string): void {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    act(() => {
+      setter?.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  }
+
+  it('o serviço sem chave mostra o campo aberto, salva no cofre e relê a lista', async () => {
+    let connected = false;
+    const listProviders = vi.fn(async () => [
+      { id: 'higgsfield-video', kind: 'video', label: 'Higgsfield — vídeo', envVar: 'HIGGSFIELD_API_KEY', defaultModel: 'higgsfield/seedance-2.5', models: ['higgsfield/seedance-2.5'], hasKey: connected, maskedKey: null },
+    ]);
+    const setKey = vi.fn(async () => {
+      connected = true;
+      return { ok: true };
+    });
+    Object.defineProperty(window, 'nexus', { configurable: true, value: { orch: api, media: { listProviders, setKey } } });
+    const host = mount(<MediaCatalogSection />);
+    await settle();
+
+    const group = host.querySelector('[role="group"][aria-label="Conectar Higgsfield — vídeo"]');
+    expect(group).not.toBeNull();
+    const input = group!.querySelector<HTMLInputElement>('input[type="password"]')!;
+    expect(input.getAttribute('aria-label')).toBe('Chave de acesso de Higgsfield — vídeo');
+    expect(input.placeholder).toContain('ID:SEGREDO');
+    typeInto(input, 'abc:def');
+    await act(async () => { button(host, 'Conectar').click(); });
+    await settle();
+
+    expect(setKey).toHaveBeenCalledWith('higgsfield-video', 'abc:def');
+    expect(listProviders).toHaveBeenCalledTimes(2);
+    expect(host.textContent).toContain('conectado');
+    expect(host.querySelector('[aria-label="Conectar Higgsfield — vídeo"]')).toBeNull();
+  });
+
+  it('o serviço conectado guarda o campo em "Gerenciar conexão"', async () => {
+    const listProviders = vi.fn(async () => [
+      { id: 'elevenlabs', kind: 'audio', label: 'ElevenLabs — voz/TTS', envVar: 'ELEVENLABS_API_KEY', defaultModel: 'eleven_v4', models: ['eleven_v4'], hasKey: true, maskedKey: null },
+    ]);
+    Object.defineProperty(window, 'nexus', { configurable: true, value: { orch: api, media: { listProviders, setKey: vi.fn() } } });
+    const host = mount(<MediaCatalogSection />);
+    await settle();
+    const details = [...host.querySelectorAll('details')].find((node) => node.querySelector('summary')?.textContent === 'Gerenciar conexão');
+    expect(details).toBeDefined();
+    expect(details!.open).toBe(false);
+    expect(details!.querySelector('input[type="password"]')).not.toBeNull();
+    expect(details!.textContent).toContain('Remover chave');
+  });
 });
 
 it('F-1585: cada modelo de mídia diz o que aceita e quanto custa', async () => {

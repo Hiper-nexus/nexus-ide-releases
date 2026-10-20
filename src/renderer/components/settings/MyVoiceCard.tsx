@@ -11,6 +11,7 @@ import {
 } from '../../../shared/voice-clone-types';
 import { micErrorMessage } from '../../voice/mic-error-message';
 import { VoiceSampleRecorder, type VoiceSample } from '../../voice/voice-sample-recorder';
+import { consumeMyVoiceFocus } from './my-voice-focus';
 
 /**
  * Ajustes → Serviços de mídia → Minha voz (F-1593).
@@ -164,7 +165,15 @@ export function MyVoiceCard({
   const [voiceName, setVoiceName] = useState('');
   const [creating, setCreating] = useState(false);
   const recorder = useRef<VoiceSampleRecorder | null>(null);
+  const rootRef = useRef<HTMLElement | null>(null);
   const elapsed = useElapsed(recording === 'recording');
+  const visible = canCreate || receipts.length > 0;
+
+  useEffect(() => {
+    if (!visible || !rootRef.current || !consumeMyVoiceFocus()) return;
+    rootRef.current.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+    rootRef.current.focus({ preventScroll: true });
+  }, [visible]);
 
   const reload = useCallback(async () => {
     if (!bridge) return;
@@ -334,10 +343,16 @@ export function MyVoiceCard({
   const gemini = session?.provider === 'gemini';
   const totalSteps = gemini ? 3 : 2;
 
-  if (!canCreate && receipts.length === 0) return null;
+  if (!visible) return null;
 
   return (
-    <section className="media-card my-voice" aria-labelledby="my-voice-title">
+    <section
+      ref={rootRef}
+      id="my-voice"
+      tabIndex={-1}
+      className="media-card my-voice"
+      aria-labelledby="my-voice-title"
+    >
       <header className="my-voice__head">
         <h3 id="my-voice-title" className="arsenal-media-card__name">
           Minha voz

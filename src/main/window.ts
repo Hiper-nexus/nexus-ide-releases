@@ -14,6 +14,7 @@ import {
   closeNeedsConfirmation,
   completeConfirmedWindowClose,
   isAppQuitAuthorized,
+  sealMissionsBeforeConfirmedShutdown,
 } from './close-authorization';
 import { isCurrentProcessSmokeTest } from './smoke-core';
 import { isSoakSmokeRequested } from './soak-smoke';
@@ -494,9 +495,11 @@ export function createMainWindow(
         cancelId: 0,
         noLink: true,
       })
-      .then(({ response }) => {
+      .then(async ({ response }) => {
         windowClosePromptOpen = false;
         if (response !== 1 || win.isDestroyed()) return;
+        sealRuntimeProcessAdmissionForShutdown();
+        await sealMissionsBeforeConfirmedShutdown();
         beginSafeAppShutdown();
       })
       .catch(() => {

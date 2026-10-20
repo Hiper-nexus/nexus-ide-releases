@@ -185,6 +185,14 @@
   color: var(--text-dim);
 }
 
+/* F-1616: "Criar minha voz" é um botão com cara de link, na linha da dica. */
+.vp-voice-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
 .vp-field {
   display: flex;
   flex-direction: column;

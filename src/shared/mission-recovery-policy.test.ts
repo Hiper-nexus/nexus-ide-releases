@@ -44,12 +44,20 @@ describe('wasMissionRuntimeClosedByOperator (F-738)', () => {
     ).toBe(false);
   });
 
-  it('"dormindo" depois do selo não o substitui', () => {
+  it('"dormindo" ou pendência física depois do selo não o substitui', () => {
     expect(
       wasMissionRuntimeClosedByOperator(
         blockedMission(
           RUNTIME_CLOSED_VERDICT,
           '<!-- nexus:leftover-parked -->\n[NEXUS_LEFTOVER_PARKED] sessão antiga.',
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      wasMissionRuntimeClosedByOperator(
+        blockedMission(
+          RUNTIME_CLOSED_VERDICT,
+          '<!-- nexus:mission-runtime-termination-pending -->\n[NEXUS_RUNTIME_TERMINATION_PENDING] Prova física de saída pendente.',
         ),
       ),
     ).toBe(true);

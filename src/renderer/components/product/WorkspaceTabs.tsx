@@ -276,6 +276,7 @@ export function WorkspaceTabs({
   // WEB-13: arraste e anúncio da nova posição (teclado e leitor de tela).
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{ key: string; side: DropSide } | null>(null);
+  const [closeHoverKey, setCloseHoverKey] = useState<string | null>(null);
   const [moveAnnouncement, setMoveAnnouncement] = useState('');
   const refocusKeyRef = useRef<string | null>(null);
   const keys = scopes.map((scope) => scope.key);
@@ -401,10 +402,18 @@ export function WorkspaceTabs({
               data-working={scope.workingCount || undefined}
               data-dragging={dragKey === scope.key || undefined}
               data-drop={dropTarget?.key === scope.key ? dropTarget.side : undefined}
-              draggable={canReorder && !isEditing}
+              draggable={canReorder && !isEditing && closeHoverKey !== scope.key}
               onDragStart={
                 canReorder && !isEditing
                   ? (event) => {
+                      if (
+                        closeHoverKey === scope.key ||
+                        (event.target instanceof Element &&
+                          event.target.closest('.workspace-tab__close'))
+                      ) {
+                        event.preventDefault();
+                        return;
+                      }
                       event.dataTransfer?.setData(TAB_DRAG_MIME, scope.key);
                       if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
                       setDragKey(scope.key);
@@ -514,16 +523,18 @@ export function WorkspaceTabs({
                       <PixelIcon name="split-right" size={10} />
                     </span>
                   ) : null}
-                  {scope.workingCount ? (
-                    // Quem trabalha nesta aba, à vista sem abri-la. A palavra
-                    // mora no nome acessível e no tooltip; aqui, ponto + número.
-                    <span className="workspace-tab__working" aria-hidden="true">
-                      <span className="workspace-tab__working-dot" />
-                      {scope.workingCount}
+                  <span className="workspace-tab__badges" aria-hidden="true">
+                    {scope.workingCount ? (
+                      // Quem trabalha nesta aba, à vista sem abri-la. A palavra
+                      // mora no nome acessível e no tooltip; aqui, ponto + número.
+                      <span className="workspace-tab__working" aria-hidden="true">
+                        <span className="workspace-tab__working-dot" />
+                        {scope.workingCount}
+                      </span>
+                    ) : null}
+                    <span className="workspace-tab__count" aria-hidden="true">
+                      {scope.paneCount}
                     </span>
-                  ) : null}
-                  <span className="workspace-tab__count" aria-hidden="true">
-                    {scope.paneCount}
                   </span>
                 </button>
               )}
@@ -532,8 +543,27 @@ export function WorkspaceTabs({
                   type="button"
                   className="workspace-tab__close"
                   tabIndex={-1}
+                  draggable={false}
                   aria-label={`Fechar a aba ${scope.title}`}
                   title="Fechar a aba e os painéis dela"
+                  onPointerEnter={() => setCloseHoverKey(scope.key)}
+                  onPointerLeave={() =>
+                    setCloseHoverKey((current) => (current === scope.key ? null : current))
+                  }
+                  onPointerDown={(event) => {
+                    event.stopPropagation();
+                    setCloseHoverKey(scope.key);
+                    event.currentTarget.closest('.workspace-tab')?.setAttribute('draggable', 'false');
+                  }}
+                  onMouseDown={(event) => {
+                    event.stopPropagation();
+                    setCloseHoverKey(scope.key);
+                    event.currentTarget.closest('.workspace-tab')?.setAttribute('draggable', 'false');
+                  }}
+                  onDragStart={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                  }}
                   onClick={() => onCloseTab(scope)}
                 >
                   <PixelIcon name="close" size={8} />

@@ -32,7 +32,7 @@ export function isOrphanMissionPaneSweep(result: MissionRuntimeCloseResult): boo
   );
 }
 
-function sweepMissionPanes(missionId: string, reason: string): void {
+export function sweepMissionPanes(missionId: string, reason: string): void {
   const layout = useLayoutStore.getState();
   const orch = useOrchStore.getState();
   const panes = listPanes(layout.root);

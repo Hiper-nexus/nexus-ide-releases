@@ -72,6 +72,60 @@ describe('killPtyRoot no Windows (F-659)', () => {
     expect(proof.rootExited).toBe(true);
   });
 
+  // F-1617: o 2º `kill()` do node-pty repete o ClosePseudoConsole no mesmo
+  // HPCON e o host inteiro morre com 0xC0000374 (todos os panes caem juntos).
+  it('fecha o pseudoconsole uma vez só; a escalada termina a raiz pelo PID', () => {
+    const proc = { pid: 4242, kill: vi.fn() };
+    const terminatePid = vi.fn();
+    killPtyRoot(proc, 'SIGTERM', 'win32', terminatePid);
+    killPtyRoot(proc, 'SIGTERM', 'win32', terminatePid);
+    killPtyRoot(proc, undefined, 'win32', terminatePid);
+    killPtyRoot(proc, 'SIGKILL', 'win32', terminatePid);
+    expect(proc.kill).toHaveBeenCalledTimes(1);
+    expect(terminatePid).toHaveBeenCalledTimes(1);
+    expect(terminatePid).toHaveBeenCalledWith(4242);
+  });
+
+  it('kill que lança não abre caminho para um 2º fechamento', () => {
+    const proc = {
+      pid: 7,
+      kill: vi.fn(() => {
+        throw new Error('falha nativa');
+      }),
+    };
+    const terminatePid = vi.fn();
+    expect(() => killPtyRoot(proc, 'SIGTERM', 'win32', terminatePid)).toThrow('falha nativa');
+    killPtyRoot(proc, 'SIGKILL', 'win32', terminatePid);
+    expect(proc.kill).toHaveBeenCalledTimes(1);
+    expect(terminatePid).toHaveBeenCalledWith(7);
+  });
+
+  it('escalada do encerramento com raiz lenta: um único kill() no Windows', async () => {
+    const proc = { pid: 4242, kill: vi.fn() };
+    const terminatePid = vi.fn();
+    const exited = deferred();
+    const proof = await terminatePtyProcessTree(
+      {
+        rootPid: 4242,
+        ownsRoot: () => true,
+        killRoot: (signal) => killPtyRoot(proc, signal, 'win32', terminatePid),
+        rootExited: exited.promise,
+      },
+      { platform: 'win32', termTimeoutMs: 1, killTimeoutMs: 1, snapshotTimeoutMs: 1 },
+    );
+    expect(proc.kill).toHaveBeenCalledTimes(1);
+    expect(terminatePid).toHaveBeenCalledWith(4242);
+    expect(proof.rootExited).toBe(false);
+  });
+
+  it('fora do Windows nada muda: cada pedido manda o sinal', () => {
+    const proc = { pid: 9, kill: vi.fn() };
+    killPtyRoot(proc, 'SIGTERM', 'linux');
+    killPtyRoot(proc, 'SIGKILL', 'linux');
+    killPtyRoot(proc, undefined, 'linux');
+    expect(proc.kill.mock.calls).toEqual([['SIGTERM'], ['SIGKILL'], [undefined]]);
+  });
+
   it('com o sinal cru (como antes) o processo nunca morria', async () => {
     const { proc, exited } = windowsPty();
     const proof = await terminatePtyProcessTree(

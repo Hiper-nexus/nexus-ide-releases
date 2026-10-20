@@ -191,16 +191,19 @@ function execFileText(
 }
 
 export function npmCliCandidates(execPath: string, platform: NodeJS.Platform = process.platform): string[] {
-  const dir = path.dirname(execPath);
+  // The platform argument is the Node being resolved, not the host running the
+  // check. path.win32/posix keep a Windows node.exe resolvable on Linux.
+  const pathFor = platform === 'win32' ? path.win32 : path.posix;
+  const dir = pathFor.dirname(execPath);
   const posix = platform !== 'win32';
   return posix
     ? [
-        path.join(dir, '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
-        path.join(dir, 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+        pathFor.join(dir, '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+        pathFor.join(dir, 'node_modules', 'npm', 'bin', 'npm-cli.js'),
       ]
     : [
-        path.join(dir, 'node_modules', 'npm', 'bin', 'npm-cli.js'),
-        path.join(dir, '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+        pathFor.join(dir, 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+        pathFor.join(dir, '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
       ];
 }
 
