@@ -35,7 +35,19 @@ const ENGINE_START_TIMEOUT_MS = 2 * 60_000;
 const SIGN_TIMEOUT_MS = 10 * 60_000;
 const MAX_REQUEST_BYTES = 64 * 1024;
 const SIGNABLE_EXTENSIONS = new Set(['.exe', '.dll', '.node']);
-const IDENTITY_FILE = path.join('build', 'windows-signing-identity.json');
+/**
+ * Checkouts cuja pasta de build o agente aceita quando o arquivo de identidade
+ * do próprio checkout fixa ESTE certificado: o NexusIDE (`out\`) e o Nexus Shot
+ * (Tauri, `src-tauri\target\release`). O Shot traz para dentro dessa pasta o
+ * que o NSIS assina fora dela (o desinstalador no TEMP), então não há raiz nova.
+ */
+const CHECKOUT_LAYOUTS = [
+  { identity: path.join('build', 'windows-signing-identity.json'), output: 'out' },
+  {
+    identity: path.join('src-tauri', 'windows-signing-identity.json'),
+    output: path.join('src-tauri', 'target', 'release'),
+  },
+];
 
 /** Script fixo do powershell.exe: só .NET, nenhum cmdlet (o PSModulePath do 7 quebra o 5.1). */
 const ENGINE_BOOTSTRAP = [
@@ -135,9 +147,10 @@ function packagerRootFrom(value) {
 /**
  * Decide se um arquivo pode ser assinado. Só executável (.exe/.dll/.node),
  * arquivo comum, com o caminho real (junction e link resolvidos) dentro de uma
- * pasta de build: a `out\` de um checkout do NexusIDE que fixa ESTE certificado,
- * a SquirrelTemp ou a pasta de staging do electron-packager. Devolve o caminho
- * real que o motor vai assinar.
+ * pasta de build: a `out\` de um checkout do NexusIDE ou a
+ * `src-tauri\target\release` de um checkout do Nexus Shot que fixa ESTE
+ * certificado, a SquirrelTemp ou a pasta de staging do electron-packager.
+ * Devolve o caminho real que o motor vai assinar.
  */
 function resolveSignableFile({ file, checkoutRoot, thumbprint, temporaryRoots }) {
   if (typeof file !== 'string' || !path.isAbsolute(file)) throw new Error('file must be an absolute path');
@@ -162,19 +175,20 @@ function resolveSignableFile({ file, checkoutRoot, thumbprint, temporaryRoots })
   const checkout = typeof checkoutRoot === 'string' && path.isAbsolute(checkoutRoot)
     ? realDirectory(checkoutRoot)
     : undefined;
-  if (checkout && checkoutPinsThumbprint(checkout, thumbprint)) {
-    const out = realDirectory(path.join(checkout, 'out'));
-    if (out) roots.push(out);
+  for (const layout of checkout ? CHECKOUT_LAYOUTS : []) {
+    if (!checkoutPinsThumbprint(checkout, layout.identity, thumbprint)) continue;
+    const output = realDirectory(path.join(checkout, layout.output));
+    if (output) roots.push(output);
   }
   if (!roots.some((root) => isInside(root, real))) {
-    throw new Error(`refusing ${file}: outside the build folders (out\\ of a NexusIDE checkout, SquirrelTemp, electron-packager)`);
+    throw new Error(`refusing ${file}: outside the build folders (out\\ of a NexusIDE checkout, src-tauri\\target\\release of a Nexus Shot checkout, SquirrelTemp, electron-packager)`);
   }
   return real;
 }
 
-function checkoutPinsThumbprint(checkout, thumbprint) {
+function checkoutPinsThumbprint(checkout, identityFile, thumbprint) {
   try {
-    const identity = JSON.parse(fs.readFileSync(path.join(checkout, IDENTITY_FILE), 'utf8'));
+    const identity = JSON.parse(fs.readFileSync(path.join(checkout, identityFile), 'utf8'));
     return identity && identity.certificateSha1 === thumbprint;
   } catch {
     return false;

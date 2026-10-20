@@ -50,6 +50,17 @@ export function makeCheckout(root: string, thumbprint = TEST_THUMBPRINT): string
   return checkout;
 }
 
+/** Checkout falso do Nexus Shot (Tauri) que fixa `thumbprint`, com a saída do NSIS em target\release. */
+export function makeShotCheckout(root: string, thumbprint = TEST_THUMBPRINT): string {
+  const checkout = path.join(root, 'nexus-shot');
+  mkdirSync(path.join(checkout, 'src-tauri', 'target', 'release', 'nsis', 'x64', 'Plugins', 'x86-unicode', 'additional'), { recursive: true });
+  writeFileSync(
+    path.join(checkout, 'src-tauri', 'windows-signing-identity.json'),
+    JSON.stringify({ schemaVersion: 1, signing: 'yubikey', certificateSha1: thumbprint }),
+  );
+  return checkout;
+}
+
 /** Agente real (pipe, token, política, diário) com o motor falso no lugar do cartão. */
 export async function startTestAgent({
   hours = 24,
