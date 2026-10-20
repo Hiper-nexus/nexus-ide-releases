@@ -46,7 +46,7 @@ describe('CLI model discovery', () => {
       }));
       write('https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1');
       expect(discoverCliModels([{ ...qwen, files: [file] }]).get('qwen'))
-        .toEqual(['qwen3.8-max', 'deepseek-v4-pro']);
+        .toEqual(['qwen3.8-max', 'deepseek-v4-pro', 'deepseek-v4.1-flash-1017']);
       write('https://dashscope.aliyuncs.com/compatible-mode/v1');
       expect(discoverCliModels([{ ...qwen, files: [file] }]).get('qwen'))
         .toEqual(['qwen3.8-max']);

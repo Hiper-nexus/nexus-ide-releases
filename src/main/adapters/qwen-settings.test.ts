@@ -161,8 +161,9 @@ describe('readQwenSettingsSummary (F-238)', () => {
     });
     const summary = readQwenSettingsSummary(home);
     expect(summary.tokenPlan).toBe(true);
-    expect(summary.modelIds).toEqual(['qwen3.8-max', 'deepseek-v4-pro']);
-    // flash dá 403 no plano; outros deepseek-* continuam de fora.
+    // 20/10: o plano serve o v4-pro e o flash v4.1 (lista do console).
+    expect(summary.modelIds).toEqual(['qwen3.8-max', 'deepseek-v4-pro', 'deepseek-v4.1-flash-1017']);
+    // O id genérico do flash não existe no plano; outros deepseek-* ficam de fora.
     expect(summary.modelIds).not.toContain('deepseek-v4-flash');
     expect(summary.modelIds).not.toContain('deepseek-chat');
     expect(JSON.stringify(summary)).not.toContain('fixture-secret-key');

@@ -1311,6 +1311,10 @@ function handlePaneKeyboardInput(
   deliverPaneUserInput(pane.id, host.sessionId, data);
 }
 
+/** Espera da CLI subir antes de colar um pedido de tarefa: 1 s × 60 = 1 min. */
+const BRIEF_BOOT_WAIT_TICK_MS = 1_000;
+const BRIEF_BOOT_WAIT_MAX_TICKS = 60;
+
 function startSpawn(
   pane: PaneModel,
   host: Host,
@@ -1897,9 +1901,28 @@ function startSpawn(
       if (shouldInjectContinue) {
         const resumedSessionId = res.sessionId;
         let attempt = 0;
+        let bootWaits = 0;
         let cancelled = false;
+        const isTaskBrief = Boolean(brief) && injectedPack === brief;
         const tryInject = () => {
           if (cancelled || host.disposed || host.sessionId !== resumedSessionId) {
+            return;
+          }
+          // Pedido de tarefa (vídeo de apresentação etc.): só cola depois que a
+          // CLI saiu de `spawning`. Colar aos 1,8 s perdia o texto nas CLIs de
+          // boot lento (Qwen carregando contexto): o composer ficava vazio e
+          // nada avisava. Passado o teto, cola mesmo assim.
+          if (
+            isTaskBrief &&
+            bootWaits < BRIEF_BOOT_WAIT_MAX_TICKS &&
+            useSessionStateStore.getState().paneStates.get(pane.id) === 'spawning'
+          ) {
+            bootWaits += 1;
+            const bootTimer = setTimeout(tryInject, BRIEF_BOOT_WAIT_TICK_MS);
+            host.cleanups.push(() => {
+              cancelled = true;
+              clearTimeout(bootTimer);
+            });
             return;
           }
           const decision = nextContinuityInjectionDelay({
@@ -1939,6 +1962,16 @@ function startSpawn(
             ? submitPromptToPane(pane.id, continuation)
             : Promise.resolve(submitPanePrompt(pane.id, continuation, ports));
           void submitted.then((accepted) => {
+            if (isTaskBrief && !accepted && !cancelled && !host.disposed) {
+              // Entrega recusada: o pedido não pode sumir calado. Tenta deixá-lo
+              // na área de transferência para colar no pane.
+              void navigator.clipboard?.writeText(brief ?? '').catch(() => undefined);
+              host.term.writeln(
+                '\r\n\x1b[33m[nexus] não consegui entregar o pedido a este agente. ' +
+                  'Ele foi copiado: cole no pane (Ctrl+V) e envie.\x1b[0m',
+              );
+              return;
+            }
             if (!accepted || cancelled || host.disposed || typingSessionId(pane.id) !== resumedSessionId) return;
             host.term.writeln(
               injectedPack && injectedPack === crossResume?.note

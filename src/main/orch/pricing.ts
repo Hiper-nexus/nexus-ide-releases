@@ -181,6 +181,7 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   'deepseek-v4-pro': { inputPerM: 0.435, outputPerM: 0.87, cacheReadPerM: 0.003625 },
   'deepseek-v4-flash-free': { inputPerM: 0, outputPerM: 0 },
   'deepseek-flash': { inputPerM: 0, outputPerM: 0 },
+  'deepseek-v4.1-flash-1017': { inputPerM: 0, outputPerM: 0 },
   'deepseek-coder': { inputPerM: 0.14, outputPerM: 0.28 },
   deepseek: { inputPerM: 0.27, outputPerM: 1.1, cacheReadPerM: 0.07 },
 

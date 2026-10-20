@@ -106,9 +106,9 @@ describe('DeepSeek Flash no Claude, no Qwen Code e no DeepSeek', () => {
     );
   });
 
-  it('no Token Plan o Flash vira o v4-pro servido pelo plano, nunca o id cru', () => {
+  it('no Token Plan o Flash vira o v4.1-flash-1017 servido pelo plano, nunca o id cru', () => {
     expect(DEEPSEEK_TOKEN_PLAN_MODEL_ALIASES[FLASH]).toBe(
-      DEEPSEEK_TOKEN_PLAN_MODEL,
+      'deepseek-v4.1-flash-1017',
     );
     expect(DEEPSEEK_TOKEN_PLAN_MODEL).toBe('deepseek-v4-pro');
   });

@@ -161,7 +161,12 @@ describe('generateImage', () => {
       },
     ]);
     const result = await generateImage(
-      { prompt: 'um gato', baseDir: dir, outPath: 'gato.png' },
+      {
+        prompt: 'um gato',
+        baseDir: dir,
+        outPath: 'gato.png',
+        model: 'gemini-3.1-flash-image-preview',
+      },
       deps,
     );
     expect(result.provider).toBe('google-image');
@@ -172,6 +177,54 @@ describe('generateImage', () => {
     );
     const headers = calls[0].init?.headers as Record<string, string>;
     expect(headers['x-goog-api-key']).toBe('test-key');
+  });
+
+  it('google-image: o padrão é o Nano Banana 2.1, pela Interactions API, com o preço de 1K', async () => {
+    const { deps, calls } = fakeDeps([
+      { json: { steps: [{ type: 'model_output', content: [{ type: 'image', data: PNG_B64 }] }] } },
+    ]);
+    const result = await generateImage(
+      { prompt: 'um gato', baseDir: dir, outPath: 'gato.png', aspectRatio: '9:16' },
+      deps,
+    );
+    expect(result.model).toBe('gemini-nano-banana-2.1');
+    expect(result.estimatedCostUsd).toBe(0.0336);
+    expect(fs.readFileSync(result.path, 'utf8')).toBe('fake-png-bytes');
+    expect(calls[0].url).toMatch(/\/v1beta\/interactions$/u);
+    const body = JSON.parse(String(calls[0].init?.body)) as Record<string, unknown>;
+    expect(body.model).toBe('gemini-nano-banana-2.1');
+    expect(body.response_format).toMatchObject({
+      type: 'image',
+      mime_type: 'image/jpeg',
+      aspect_ratio: '9:16',
+      image_size: '1K',
+    });
+    // Sem outPath, a imagem JPEG da Interactions API sai como .jpg.
+    const noPath = fakeDeps([{ json: { output_image: { data: PNG_B64 } } }]);
+    const saved = await generateImage({ prompt: 'x', baseDir: dir }, noPath.deps);
+    expect(saved.path.endsWith('.jpg')).toBe(true);
+    // Caminho explícito .png com payload JPEG também vira .jpg (nome honesto).
+    const explicit = fakeDeps([{ json: { output_image: { data: PNG_B64 } } }]);
+    const named = await generateImage({ prompt: 'x', baseDir: dir, outPath: 'poster.png' }, explicit.deps);
+    expect(named.path.endsWith('poster.jpg')).toBe(true);
+    expect(fs.existsSync(named.path)).toBe(true);
+  });
+
+  it('google-image: o Nano Banana Pro custa o preço de lista dele', async () => {
+    const { deps } = fakeDeps([{ json: { output_image: { data: PNG_B64 } } }]);
+    const result = await generateImage(
+      { prompt: 'x', baseDir: dir, model: 'nano-banana-pro' },
+      deps,
+    );
+    expect(result.model).toBe('gemini-3-pro-image');
+    expect(result.estimatedCostUsd).toBe(0.134);
+  });
+
+  it('google-image: Interactions sem imagem diz o que o modelo respondeu', async () => {
+    const { deps } = fakeDeps([
+      { json: { steps: [{ type: 'model_output', content: [{ type: 'text', text: 'bloqueado' }] }] } },
+    ]);
+    await expect(generateImage({ prompt: 'x', baseDir: dir }, deps)).rejects.toThrow(/sem imagem — "bloqueado"/u);
   });
 
   it('google-image: erro claro quando a resposta não tem imagem', async () => {
@@ -193,10 +246,29 @@ describe('generateImage', () => {
       { prompt: 'logo', provider: 'openai-image', baseDir: dir },
       deps,
     );
-    expect(result.model).toBe('gpt-image-2');
+    expect(result.model).toBe('gpt-image-2.5-flare');
     expect(fs.existsSync(result.path)).toBe(true);
     const headers = calls[0].init?.headers as Record<string, string>;
     expect(headers.authorization).toBe('Bearer test-key');
+    expect(JSON.parse(String(calls[0].init?.body)).model).toBe('gpt-image-2.5-flare');
+  });
+
+  it('openai-image: sunburst e o gpt-image-2 anterior continuam escolhíveis', async () => {
+    const { deps, calls } = fakeDeps([
+      { json: { data: [{ b64_json: PNG_B64 }] } },
+      { json: { data: [{ b64_json: PNG_B64 }] } },
+    ]);
+    const sunburst = await generateImage(
+      { prompt: 'logo', provider: 'openai-image', model: 'sunburst', baseDir: dir },
+      deps,
+    );
+    expect(sunburst.model).toBe('gpt-image-2.5-sunburst');
+    const previous = await generateImage(
+      { prompt: 'logo', provider: 'openai-image', model: 'gpt-image-2', baseDir: dir },
+      deps,
+    );
+    expect(previous.model).toBe('gpt-image-2');
+    expect(JSON.parse(String(calls[1].init?.body)).model).toBe('gpt-image-2');
   });
 
   it('erro HTTP vira mensagem com status e corpo', async () => {
@@ -701,6 +773,7 @@ describe('generateImage aspectRatio', () => {
         baseDir: dir,
         aspectRatio: '16:9',
         outPath: 'wide.png',
+        model: 'gemini-3.1-flash-image-preview',
       },
       deps,
     );

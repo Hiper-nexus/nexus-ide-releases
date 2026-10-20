@@ -71,23 +71,44 @@ const ELEVENLABS_USD_PER_1K_CHARS: Record<string, number> = {
   eleven_multilingual_v2: 0.08,
 };
 
+/**
+ * Imagem do Google, preço de lista de 1K (ai.google.dev/gemini-api/docs/pricing,
+ * lido em 20/10/2026). O motor pede 1K, então é o preço que vale.
+ */
+const GOOGLE_IMAGE_USD: Record<string, number> = {
+  'gemini-nano-banana-2.1': 0.0336,
+  'gemini-3.1-flash-image': 0.067,
+  'gemini-3.1-flash-lite-image': 0.0336,
+  'gemini-3-pro-image': 0.134,
+};
+
 export const MEDIA_PROVIDERS: MediaProviderDef[] = [
   {
     id: 'google-image',
     kind: 'image',
-    label: 'Google Image (Gemini)',
+    label: 'Google — Nano Banana (imagem)',
     envVar: 'GEMINI_API_KEY',
-    defaultModel: 'gemini-3.1-flash-image-preview',
-    models: ['gemini-3.1-flash-image-preview'],
-    estimateCost: () => 0.039,
+    // Modelo mais novo primeiro (regra do operador). O Nano Banana Pro é o de
+    // maior qualidade; o preview 3.1 fica para quem já o usava.
+    defaultModel: 'gemini-nano-banana-2.1',
+    models: [
+      'gemini-nano-banana-2.1',
+      'gemini-3-pro-image',
+      'gemini-3.1-flash-image',
+      'gemini-3.1-flash-lite-image',
+      'gemini-3.1-flash-image-preview',
+    ],
+    estimateCost: ({ model }) => GOOGLE_IMAGE_USD[model] ?? 0.039,
   },
   {
     id: 'openai-image',
     kind: 'image',
-    label: 'OpenAI Image (gpt-image)',
+    label: 'OpenAI — GPT Image (imagem)',
     envVar: 'OPENAI_API_KEY',
-    defaultModel: 'gpt-image-2',
-    models: ['gpt-image-2', 'gpt-image-1'],
+    // GPT-Image-2.5 (08/09/2026): Flare é o rápido do dia a dia, Sunburst o de
+    // maior precisão em edição. Mesmas tarifas por token do GPT Image 2.
+    defaultModel: 'gpt-image-2.5-flare',
+    models: ['gpt-image-2.5-flare', 'gpt-image-2.5-sunburst', 'gpt-image-2', 'gpt-image-1'],
     estimateCost: () => 0.07,
   },
   {

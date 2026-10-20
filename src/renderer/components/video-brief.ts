@@ -15,6 +15,51 @@ export type BriefVoice =
   | { readonly kind: 'library' }
   | { readonly kind: 'none' };
 
+/** O que cada anexo é para o vídeo; o agente trata cada papel de um jeito. */
+export type BriefAttachmentRole = 'logo' | 'mascot' | 'example-video' | 'screenshot' | 'other';
+
+export const BRIEF_ATTACHMENT_ROLES: readonly BriefAttachmentRole[] = [
+  'logo',
+  'mascot',
+  'example-video',
+  'screenshot',
+  'other',
+];
+
+export const BRIEF_ATTACHMENT_ROLE_LABEL: Readonly<Record<BriefAttachmentRole, string>> = {
+  logo: 'Logo',
+  mascot: 'Mascote',
+  'example-video': 'Vídeo de exemplo',
+  screenshot: 'Print do sistema',
+  other: 'Outra imagem',
+};
+
+const ROLE_INSTRUCTION: Readonly<Record<BriefAttachmentRole, string>> = {
+  logo: 'use na abertura e no fecho; copie para assets/ e não redesenhe nem recolora',
+  mascot: 'personagem fixo do vídeo; mantenha o desenho e as cores, sem inventar outra versão',
+  'example-video':
+    'referência de ritmo, cortes, transições e estilo; estude com ffprobe e quadros extraídos e NÃO copie o conteúdo, o texto nem a música dele',
+  screenshot: 'tela real do produto; use nas cenas de demonstração, sem alterar',
+  other: 'imagem de apoio; use onde fizer sentido',
+};
+
+export interface BriefAttachment {
+  readonly role: BriefAttachmentRole;
+  /** Caminho relativo ao projeto, dentro de `media/referencias/`. */
+  readonly storageKey: string;
+  readonly name: string;
+}
+
+/** Papel provável pelo nome e pelo tipo; a pessoa troca na lista. */
+export function guessAttachmentRole(name: string, isVideo: boolean): BriefAttachmentRole {
+  if (isVideo) return 'example-video';
+  const lower = name.toLowerCase();
+  if (/logo|marca|brand/u.test(lower)) return 'logo';
+  if (/mascote|mascot|personagem|character/u.test(lower)) return 'mascot';
+  if (/print|screen|tela|captura|screenshot/u.test(lower)) return 'screenshot';
+  return 'other';
+}
+
 export interface PresentationBriefInput {
   readonly product: string;
   readonly siteUrl?: string;
@@ -24,6 +69,7 @@ export interface PresentationBriefInput {
   readonly preset: VideoExportPresetId;
   readonly voice: BriefVoice;
   readonly music: boolean;
+  readonly attachments?: readonly BriefAttachment[];
 }
 
 const clean = (value: string | undefined, max: number): string =>
@@ -66,6 +112,18 @@ export function buildPresentationBrief(input: PresentationBriefInput): string {
   if (audience) lines.push(`Público: ${audience}`);
   const style = clean(input.style, 300);
   if (style) lines.push(`Estilo: ${style}`);
+  const attachments = (input.attachments ?? []).slice(0, 20);
+  if (attachments.length > 0) {
+    lines.push(
+      '',
+      'Anexos que eu trouxe (arquivos do projeto; copie os que forem entrar no vídeo para a pasta assets/ do projeto de vídeo):',
+      ...attachments.map(
+        (item) =>
+          `- ${BRIEF_ATTACHMENT_ROLE_LABEL[item.role]}: ${clean(item.storageKey, 240)} (${ROLE_INSTRUCTION[item.role]})`,
+      ),
+      '',
+    );
+  }
   lines.push(
     `Duração: cerca de ${Math.round(input.durationSec)} s · Formato: ${preset.label} (${preset.width}×${preset.height}, preset ${preset.id})`,
     voiceLine(input.voice),

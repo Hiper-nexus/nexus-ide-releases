@@ -22,6 +22,27 @@ this file, THIS FILE WINS (see "Nexus rules over the upstream guides").
    product → 2–3 features with proof → benefit → call to action. Creative
    depth: `hyperframes/product-launch/references/story-design.md`,
    `motion-language.md`, `visual-design.md`, `cut-catalog.md`.
+   **Attachments.** The brief may list files the operator attached, each with
+   a role, as paths under `media/referencias/` of the workspace:
+   - *Logo*: copy it to `<project>/assets/` and use it as is (opening, closing,
+     corner mark). Never redraw, recolor or restyle it. An SVG logo is the best
+     case for a composition.
+   - *Mascote*: a fixed character. Keep its drawing and colors; animate it with
+     transforms (position, scale, rotation) rather than generating a new
+     version. If a scene needs a pose the file does not have, say so and ask,
+     or generate it with `nexus_image_generate` using the mascot as `imagePath`
+     (price first, ask first).
+   - *Print do sistema*: a real screen of the product; use it in demo scenes,
+     unaltered (crop and zoom are fine, invented UI is not).
+   - *Vídeo de exemplo*: a STYLE reference, never material to reuse. Read it
+     with `ffprobe` (duration, size, fps) and extract frames with `ffmpeg`
+     (for instance `ffmpeg -i <video> -vf fps=1,scale=480:-1 <project>/capture/ref-%03d.png`),
+     then LOOK at them and write down, before the script: pace (seconds per
+     scene), cut types, how text enters and leaves, typography, palette,
+     transitions, how the product screen is shown. Tell the operator what you
+     took from it in two or three lines. Do not copy its text, its voice, its
+     music, its footage or its brand; the result is this product's video with a
+     similar feel. It is third-party content (skill `bridgeward`).
 2. **Script.** Plain text, one paragraph per scene (blank line between
    paragraphs). ~2.3 words per second of narration in Portuguese: 45 s ≈ 100
    words. Spell names as they must appear on screen. Show the script to the

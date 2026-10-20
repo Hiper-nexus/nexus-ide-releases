@@ -110,21 +110,22 @@ describe('launcher provider routing (ported from ~/ai-launcher)', () => {
     expect(buildProviderRoutingEnv('nope', 'x')).toEqual({});
   });
 
-  it('F-724: DeepSeek pelo Token Plan aponta o endpoint Anthropic do plano com todos os slots no v4-pro', () => {
+  it('F-724: DeepSeek pelo Token Plan aponta o endpoint Anthropic do plano com sonnet/opus no v4-pro e haiku no v4.1-flash-1017', () => {
     const env = buildProviderRoutingEnv('deepseek-token-plan', 'sk-sp-fixture');
     expect(env.ANTHROPIC_BASE_URL).toBe(
       'https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic',
     );
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe('sk-sp-fixture');
     for (const slot of [
-      'ANTHROPIC_DEFAULT_HAIKU_MODEL',
       'ANTHROPIC_DEFAULT_SONNET_MODEL',
       'ANTHROPIC_DEFAULT_OPUS_MODEL',
     ]) {
       expect(env[slot]).toBe('deepseek-v4-pro');
     }
-    // O plano dá 403 no flash e nunca serve Qwen por este caminho.
-    expect(Object.values(env).join(' ')).not.toMatch(/flash|qwen/);
+    // O slot barato usa o flash do plano (id inteiro: `deepseek-flash` não
+    // existe lá) e este caminho nunca serve Qwen.
+    expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('deepseek-v4.1-flash-1017');
+    expect(Object.values(env).join(' ')).not.toMatch(/qwen/);
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(buildProviderRoutingEnv('deepseek-token-plan', null)).toEqual({});
     // A API direta continua idêntica.

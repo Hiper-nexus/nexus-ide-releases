@@ -21,6 +21,7 @@ import {
   ALIBABA_TOKEN_PLAN_OPENAI_BASE_URL,
   DEEPSEEK_DIRECT_HOST,
   DEEPSEEK_TOKEN_PLAN_MODEL,
+  QWEN_TOKEN_PLAN_FLASH_MODEL,
   httpsHostOf,
   isAlibabaPlanKey,
   isAlibabaTokenPlanUrl,
@@ -178,7 +179,10 @@ function parseQwenSettingsSummary(raw: unknown): QwenSettingsSummary {
     }
   }
 
-  if (tokenPlan) modelIds.add(DEEPSEEK_TOKEN_PLAN_MODEL);
+  if (tokenPlan) {
+    modelIds.add(DEEPSEEK_TOKEN_PLAN_MODEL);
+    modelIds.add(QWEN_TOKEN_PLAN_FLASH_MODEL);
+  }
 
   return {
     hasCredential,

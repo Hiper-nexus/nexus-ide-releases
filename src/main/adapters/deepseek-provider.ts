@@ -10,7 +10,14 @@
  *
  * Sondas de 02/10/2026 nos dois endpoints do Token Plan (Anthropic e
  * OpenAI-compatible): `deepseek-v4-pro` 200, `qwen3.8-max` 200,
- * `deepseek-v4-flash` 403 — no plano o único DeepSeek servido é o v4-pro.
+ * `deepseek-v4-flash` 403 — naquele dia o único DeepSeek servido era o v4-pro.
+ * Em 20/10/2026 o console do plano passou a listar `deepseek-v4.1-flash-1017`
+ * (New), `deepseek-v4.1-flash`, `deepseek-v4-pro-0813`, `deepseek-v4-pro` e
+ * `deepseek-v4-flash-0731`: o flash do plano é o `deepseek-v4.1-flash-1017`.
+ * Esse id é NOME DE VERSÃO no plano; a API direta da DeepSeek não o serve
+ * (api-docs.deepseek.com, 20/10/2026: só `deepseek-flash` — hoje o
+ * DeepSeek-V4.1-Flash-1017 — e `deepseek-v4-pro`; `deepseek-v4-flash` é alias
+ * aposentado que cai no mesmo flash).
  */
 
 export const DEEPSEEK_DIRECT_PROVIDER = 'deepseek' as const;
@@ -39,17 +46,40 @@ export const ALIBABA_TOKEN_PLAN_ANTHROPIC_BASE_URL =
 export const ALIBABA_TOKEN_PLAN_OPENAI_BASE_URL =
   `https://${ALIBABA_TOKEN_PLAN_HOST}/compatible-mode/v1`;
 
-/** Único DeepSeek que o Token Plan serve (o flash responde 403). */
+/** Pro do Token Plan (o mesmo id da API direta). */
 export const DEEPSEEK_TOKEN_PLAN_MODEL = 'deepseek-v4-pro';
 
 /**
- * Ids que o provedor Token Plan não serve e que o Nexus troca pelo v4-pro —
- * uma tarefa trivial roteada para o `deepseek-flash` não pode morrer em 403.
+ * Flash do Token Plan (20/10/2026, lista do console do plano): o id inteiro,
+ * com versão e data. O `deepseek-flash` do menu e o `deepseek-v4-flash` não
+ * existem lá ("404 Model not exist" no Qwen Code, 403 no Claude Code).
+ */
+export const DEEPSEEK_TOKEN_PLAN_FLASH_MODEL = 'deepseek-v4.1-flash-1017';
+
+/**
+ * Ids genéricos do flash que o Token Plan não serve e que o Nexus troca pelo
+ * flash do plano — uma tarefa trivial roteada para o `deepseek-flash` não pode
+ * morrer em 403/404. Nomes inteiros (`deepseek-v4.1-flash`, `-v4-flash-0731`)
+ * seguem como a pessoa pediu.
  */
 export const DEEPSEEK_TOKEN_PLAN_MODEL_ALIASES: Readonly<Record<string, string>> =
   Object.freeze({
-    'deepseek-flash': DEEPSEEK_TOKEN_PLAN_MODEL,
-    'deepseek-v4-flash': DEEPSEEK_TOKEN_PLAN_MODEL,
+    'deepseek-flash': DEEPSEEK_TOKEN_PLAN_FLASH_MODEL,
+    'deepseek-v4-flash': DEEPSEEK_TOKEN_PLAN_FLASH_MODEL,
+  });
+
+/** Qwen Code no Token Plan usa o mesmo flash e as mesmas trocas. */
+export const QWEN_TOKEN_PLAN_FLASH_MODEL = DEEPSEEK_TOKEN_PLAN_FLASH_MODEL;
+export const QWEN_TOKEN_PLAN_MODEL_ALIASES = DEEPSEEK_TOKEN_PLAN_MODEL_ALIASES;
+
+/**
+ * API direta: o nome de versão do plano não existe lá (a DeepSeek devolve 400
+ * para id desconhecido). Quem pedir `deepseek-v4.1-flash-1017` na API direta
+ * recebe o `deepseek-flash`, que é justamente esse modelo.
+ */
+export const DEEPSEEK_DIRECT_MODEL_ALIASES: Readonly<Record<string, string>> =
+  Object.freeze({
+    [DEEPSEEK_TOKEN_PLAN_FLASH_MODEL]: 'deepseek-flash',
   });
 
 /** Variáveis do Qwen Code que carregam a chave do Token Plan. */
@@ -134,8 +164,11 @@ export function deepseekModelForProvider(
   model: string,
   choice: DeepseekProviderChoice,
 ): string {
-  if (choice !== DEEPSEEK_TOKEN_PLAN_PROVIDER) return model;
-  return DEEPSEEK_TOKEN_PLAN_MODEL_ALIASES[model.trim()] ?? model;
+  const aliases =
+    choice === DEEPSEEK_TOKEN_PLAN_PROVIDER
+      ? DEEPSEEK_TOKEN_PLAN_MODEL_ALIASES
+      : DEEPSEEK_DIRECT_MODEL_ALIASES;
+  return aliases[model.trim()] ?? model;
 }
 
 /** Id do DeepSeek Flash no menu (o `deepseek-v4-flash` é alias dele). */
@@ -158,18 +191,28 @@ export function claudeModelsForUpstream(
 }
 
 /**
- * Catálogo do adapter sob o provedor: no plano saem os flash (403) e o
- * v4-pro fica garantido; na API direta nada muda.
+ * Catálogo do adapter sob o provedor: no plano os ids genéricos do flash saem e
+ * entram o v4-pro e o `deepseek-v4.1-flash-1017`; na API direta o nome de
+ * versão do plano sai e o `deepseek-flash` fica.
  */
 export function deepseekModelsForProvider(
   models: readonly string[],
   choice: DeepseekProviderChoice,
 ): string[] {
-  if (choice !== DEEPSEEK_TOKEN_PLAN_PROVIDER) return [...models];
+  if (choice !== DEEPSEEK_TOKEN_PLAN_PROVIDER) {
+    return models.filter((model) => !(model in DEEPSEEK_DIRECT_MODEL_ALIASES));
+  }
   const served = models.filter(
     (model) => !(model in DEEPSEEK_TOKEN_PLAN_MODEL_ALIASES),
   );
-  return served.includes(DEEPSEEK_TOKEN_PLAN_MODEL)
+  const out = served.includes(DEEPSEEK_TOKEN_PLAN_MODEL)
     ? served
     : [DEEPSEEK_TOKEN_PLAN_MODEL, ...served];
+  if (out.includes(DEEPSEEK_TOKEN_PLAN_FLASH_MODEL)) return out;
+  const proAt = out.indexOf(DEEPSEEK_TOKEN_PLAN_MODEL);
+  return [
+    ...out.slice(0, proAt + 1),
+    DEEPSEEK_TOKEN_PLAN_FLASH_MODEL,
+    ...out.slice(proAt + 1),
+  ];
 }

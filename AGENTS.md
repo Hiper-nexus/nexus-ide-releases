@@ -1125,8 +1125,8 @@ saber isto antes de mexer:
   nunca copiar o segredo.
 - O catálogo vivo vem de `modelProviders.*[].id` do settings (só ids `qwen*`;
   `deepseek-*` no mesmo settings é de outro provider). Exceção F-724: com a
-  auth OpenAI-compatible no Alibaba Token Plan entra o `deepseek-v4-pro`
-  (e só ele). Um `OPENAI_API_KEY` solto só vale para qwen com
+  auth OpenAI-compatible no Alibaba Token Plan entram o `deepseek-v4-pro`
+  e o `deepseek-v4.1-flash-1017` (e só eles). Um `OPENAI_API_KEY` solto só vale para qwen com
   `OPENAI_BASE_URL` em `*.aliyuncs.com` — mesmo gate de host do ANTHROPIC_*.
 - **F-1567: a env `BAILIAN_TOKEN_PLAN_API_KEY` sozinha NÃO autentica.** A CLI
   (0.25.2) só a lê quando um `modelProviders.openai[]` aponta para ela via
@@ -1219,10 +1219,30 @@ saber isto antes de mexer:
   Token Plan. Nunca usa a chave da DeepSeek nem copia o `~/.qwen/settings.json`.
   `resolveRuntimeApiKey('deepseek')` (o intent router, que fala com
   api.deepseek.com) devolve só a chave da API direta.
-- O plano só serve o `deepseek-v4-pro` (sonda de 02/10: o v4-flash dá 403).
-  Os três slots `ANTHROPIC_DEFAULT_*` ficam nele. `modelAliases` troca
-  `deepseek-flash`/`deepseek-v4-flash` por v4-pro na rota (task-router,
-  `servido pelo provedor escolhido`) e no `--model` do spawn (pty-manager).
+- **Flash do plano (20/10/2026).** Em 02/10 a sonda deu `deepseek-v4-flash` 403 e
+  o plano só servia o `deepseek-v4-pro`. A lista do console do plano em 20/10
+  traz `deepseek-v4.1-flash-1017` (New), `deepseek-v4.1-flash`,
+  `deepseek-v4-pro-0813`, `deepseek-v4-pro` e `deepseek-v4-flash-0731`: o flash do
+  plano é o `deepseek-v4.1-flash-1017` (`DEEPSEEK_TOKEN_PLAN_FLASH_MODEL`; ainda
+  NÃO provado com chamada ao endpoint Anthropic do plano, só pela lista do
+  console). Slots `ANTHROPIC_DEFAULT_*`: haiku no flash 1017, sonnet/opus no
+  `deepseek-v4-pro`. `modelAliases` troca os genéricos
+  `deepseek-flash`/`deepseek-v4-flash` por `deepseek-v4.1-flash-1017` na rota
+  (task-router, `servido pelo provedor escolhido`), no default salvo e no
+  `--model` do spawn (pty-manager); nome inteiro pedido pela pessoa
+  (`deepseek-v4.1-flash`, `-v4-flash-0731`) segue como está. O catálogo do plano
+  (`deepseekModelsForProvider`) oferece v4-pro e v4.1-flash-1017. O Qwen Code no
+  mesmo plano usa as mesmas trocas (`QWEN_TOKEN_PLAN_*`, apelidos dos mesmos
+  valores).
+- **Na API direta `deepseek-v4.1-flash-1017` NÃO é id de API.** A doc oficial
+  (api-docs.deepseek.com/quick_start/pricing, 20/10/2026) lista só `deepseek-flash`
+  (hoje servido pelo DeepSeek-V4.1-Flash-1017) e `deepseek-v4-pro` (V4-Pro-0813);
+  `deepseek-v4-flash` e `deepseek-v4-flash-vision-exp` são aliases aposentados
+  que caem no mesmo flash; id desconhecido volta 400. Ou seja, o Claude Code com
+  a chave da DeepSeek já roda o 1017 pelo `deepseek-flash`, sem mudança. Quem pedir
+  o nome de versão na API direta recebe `deepseek-flash`
+  (`DEEPSEEK_DIRECT_MODEL_ALIASES`, no spawn e no catálogo). Não invente id.
+  `migrateModelId`/`modelLineOf` não reescrevem o id (versão `[4,1,1017]`).
 - No plano as contas DeepSeek (chaves da API direta) não entram: o pane sem
   conta usa a chave do plano e o pane com conta fixada é recusado.
 - O Qwen 3.8 fica só no Qwen Code. Nenhuma linha de rota põe modelo `qwen*` no

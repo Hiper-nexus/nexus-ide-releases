@@ -84,10 +84,18 @@ const ALIASES: Record<string, string> = {
   luma: 'luma/ray-3.2',
   ray: 'luma/ray-3.2',
   // Image
-  nano: 'gemini-3.1-flash-image-preview',
-  'nano-banana': 'gemini-3.1-flash-image-preview',
-  gemini: 'gemini-3.1-flash-image-preview',
-  'gpt-image': 'gpt-image-2',
+  nano: 'gemini-nano-banana-2.1',
+  'nano-banana': 'gemini-nano-banana-2.1',
+  'nano-banana-2.1': 'gemini-nano-banana-2.1',
+  'nano-banana-2': 'gemini-3.1-flash-image',
+  'nano-banana-lite': 'gemini-3.1-flash-lite-image',
+  'nano-banana-pro': 'gemini-3-pro-image',
+  gemini: 'gemini-nano-banana-2.1',
+  // GPT-Image-2.5 (OpenAI, 08/09/2026): "gpt-image" pede o mais novo rápido.
+  'gpt-image': 'gpt-image-2.5-flare',
+  'gpt-image-2.5': 'gpt-image-2.5-flare',
+  flare: 'gpt-image-2.5-flare',
+  sunburst: 'gpt-image-2.5-sunburst',
   // ElevenLabs (F-1590): o Turbo v2.5 foi descontinuado; a própria ElevenLabs
   // diz que o Flash v2.5 é equivalente e o recomenda em todo caso.
   'eleven-turbo-v2-5': 'eleven_flash_v2_5',
