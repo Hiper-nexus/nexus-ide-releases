@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.76.340 — Estúdio de mídia completo
+
+A tag 0.76.339 é a versão do estúdio de mídia e não recebe arquivos Linux. A tag 0.76.338 ficou só como tag, sem pacote. A tag 0.76.337 é o pacote Linux anterior. Este pacote leva o desktop Linux.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+No desktop Linux, em relação à 0.76.337:
+
+- **Estúdio de mídia à mão**. O Estúdio de mídia tem uma linha própria na barra lateral, logo abaixo de Memória, e um comando na paleta (Ctrl+K). Buscar "vídeo", "logo" ou "voz" também acha. O estúdio de vídeo vem ligado; desliga em Ajustes → Experimental.
+- **Vídeos de apresentação**. Um agente escreve o roteiro, narra, põe música e monta a composição em HyperFrames, com cenas e legendas cronometradas pela narração. O render roda no computador e o export sai para Reels, Shorts, TikTok, YouTube, LinkedIn e quadrado, com volume normalizado, versão muda, capa e legendas. A aba "Vídeos do projeto" mostra o que foi feito.
+- **Minha voz**. Grave alguns trechos e crie uma voz sintética sua na sua conta da ElevenLabs ou do Gemini, depois de aceitar o termo e ler a declaração de consentimento. O Nexus guarda o recibo, apaga a voz no provedor quando você pede, e o export marca como gerada por IA a narração feita com ela. Nenhum agente cria ou clona voz.
+- **Narração e música**. A ElevenLabs usa o Eleven v4 por padrão. As vozes do Gemini também narram. Quem prefere a própria voz grava a narração no app e o Nexus alinha o roteiro ao áudio, pela ElevenLabs ou no computador, com a grafia do roteiro nas legendas. A música de fundo vem da ElevenLabs, no tamanho da narração.
+- **Prévia, captura do site e variantes**. A prévia ao vivo abre no navegador do pane enquanto o agente edita. O agente captura o site público do produto (telas, textos, cores e fontes) para usar no vídeo. Um pedido gera várias versões: formatos vertical, horizontal e quadrado, e outros idiomas com a mesma voz.
+- **Teto de gasto de mídia**. Defina quanto a mídia paga pode gastar por dia e por missão. O modal de confirmação mostra o custo de cada geração, e o pedido que passaria do teto é recusado antes de chamar o provedor.
+- **Referências do projeto**. Imagem, logo ou vídeo de exemplo entram por Adicionar, arrastando ou colando, e ficam copiados em media/referencias/ do projeto. Na imagem servem de base para editar. No vídeo, uma imagem vira o primeiro quadro e duas ou mais viram referência de personagem, produto ou logo. Os modelos que exigem imagem inicial (Kling 2.1, Wan 2.5) deixaram de ficar bloqueados.
+- **Modelos de vídeo novos**. Seedance 2.5, MiniMax H3 (Hailuo 3), Wan 3 e Wan 3 Prime, Gemini Omni 1.1, PixVerse v6 e Vidu Q3, com o preço de lista do Replicate. O Veo 3.1 Fast e o Lite recebiam imagens de referência que não aceitam; agora o pedido é recusado antes de cobrar.
+- **Higgsfield**. Entra como serviço de imagem e de vídeo, com uma chave no formato ID:SEGREDO. Imagem: Soul 2, Ideogram 4 (bom para logo e texto), Qwen Image 3 e Recraft 4.1. Vídeo: Seedance 2.5 até 1080p, Seedance 2.0 até 4K, Kling 3.0, H3 e Wan 3.0. O preço vem da própria Higgsfield antes de gerar, e por ela o vídeo de exemplo chega ao modelo como referência de movimento e estilo.
+
 ## 0.76.339 — Estúdio de mídia completo
 
 O Estúdio de mídia ganha lugar na barra lateral, referências do projeto (imagem, logo e vídeo de exemplo), modelos de vídeo novos e a Higgsfield. Os agentes fazem vídeos de apresentação por código, com narração, legendas, música e export por rede, e "Minha voz" cria uma voz sintética sua na ElevenLabs ou no Gemini. O instalador do Windows sai assinado.
