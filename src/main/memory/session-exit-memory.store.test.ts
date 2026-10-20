@@ -20,6 +20,11 @@ import {
   getWorkspaceMemoryStore,
 } from './workspace-memory';
 import { distillSessionExitMemory } from './session-exit-memory';
+import {
+  configureProjectDomainStoreRegistry,
+  disposeProjectDomainStoreRegistry,
+  getProjectDomainStores,
+} from '../orch/project-domain-store-registry';
 
 const dirs: string[] = [];
 let runtime: ProjectRuntimeManager;
@@ -145,6 +150,47 @@ describe('session-exit digest com o handoff-store real', () => {
       trustedOnly: true,
     });
     expect(hit?.source).toBe('trusted:session-digest');
+  });
+
+  it('aba isolada: pane na worktree da aba destila para o projeto dono (coordenação), não pula store-unavailable', async () => {
+    configureProjectDomainStoreRegistry(runtime);
+    try {
+      // Suite do projeto nasce pelo escopo de coordenação (checkout dono),
+      // como quando o workspace abre — antes de qualquer pane da aba sair.
+      const coordHandoffs = getProjectDomainStores(scope).handoffs;
+      coordHandoffs.submit({
+        sessionId: 'session-a',
+        status: 'success',
+        summary: 'Parser de datas aceita fuso horário explícito.',
+      });
+      const worktree = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-exit-tab-wt-'));
+      dirs.push(worktree);
+      const executionScope: ProjectExecutionScope = {
+        ...scope,
+        rootRealPath: worktree,
+      };
+      const tabAgent = {
+        ...agent(),
+        scope: executionScope,
+        coordinationScope: scope,
+        cwd: worktree,
+      } as unknown as OwnedAgentSessionInfo;
+
+      const outcome = await distillSessionExitMemory(
+        { sessionId: 'session-a', agent: tabAgent },
+        { distill: approve },
+      );
+
+      expect(outcome).toMatchObject({ retained: true, reason: 'ok' });
+      const [hit] = getWorkspaceMemoryStore(scope).recall({
+        query: 'parser datas fuso',
+        includeGlobal: false,
+        trustedOnly: true,
+      });
+      expect(hit?.source).toBe('trusted:session-digest');
+    } finally {
+      await disposeProjectDomainStoreRegistry();
+    }
   });
 
   it('F-768: declaração de sucesso sem evidência passa pela barreira Jev e mantém a procedência', async () => {
