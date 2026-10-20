@@ -106,9 +106,11 @@ describe('detectVideoProject', () => {
 
 describe('npm ao lado do Node', () => {
   it('Windows procura node_modules/npm ao lado do node.exe; POSIX em lib/', () => {
-    expect(npmCliCandidates('C:\\nodejs\\node.exe', 'win32')[0]).toBe(path.join('C:\\nodejs', 'node_modules', 'npm', 'bin', 'npm-cli.js'));
+    expect(npmCliCandidates('C:\\nodejs\\node.exe', 'win32')[0]).toBe(
+      path.win32.join('C:\\nodejs', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+    );
     expect(npmCliCandidates('/usr/local/bin/node', 'darwin')[0]).toBe(
-      path.join('/usr/local/bin', '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+      path.posix.join('/usr/local/bin', '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
     );
   });
 });

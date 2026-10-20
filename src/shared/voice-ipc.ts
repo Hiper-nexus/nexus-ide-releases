@@ -764,6 +764,20 @@ export const jarvisLiveTranscriptInputSchema = z.object({
   final: z.boolean().default(true),
 });
 
+/** Teto do resumo de um resultado de ação que vai ao modelo de voz. */
+export const LIVE_TOOL_RESULT_SUMMARY_MAX = 1000;
+
+/**
+ * Resumo longo (erro de MCP, exceção com pilha) é CORTADO, nunca recusado: a
+ * recusa do schema descartava o resultado inteiro e o modelo ficava 120 s
+ * esperando o timeout, mudo.
+ */
+export function clampLiveToolSummary(summary: string): string {
+  return summary.length > LIVE_TOOL_RESULT_SUMMARY_MAX
+    ? `${summary.slice(0, LIVE_TOOL_RESULT_SUMMARY_MAX - 1)}…`
+    : summary;
+}
+
 export const jarvisLiveToolResultInputSchema = z.object({
   callId: z.string().min(1).max(256).optional(),
   name: z.string().min(1).max(128).optional(),
@@ -780,6 +794,7 @@ export const jarvisLiveToolResultInputSchema = z.object({
     'new_agentic_mission',
     'new_workspace',
     'open_terminal',
+    'open_agent',
     'close_pane',
     'open_board',
     'open_settings',
@@ -801,7 +816,7 @@ export const jarvisLiveToolResultInputSchema = z.object({
     'sync_repository',
     'sync_repo_via_pane',
   ]),
-  summary: z.string().max(1000),
+  summary: z.string().max(64_000).transform(clampLiveToolSummary),
   ok: z.boolean(),
   output: z.unknown().optional(),
 });

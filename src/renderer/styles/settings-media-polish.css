@@ -142,6 +142,17 @@
   margin-bottom: 0;
 }
 
+/* F-1615: o mesmo campo de chave nos itens de Modelos de mídia. */
+.catalog-item .media-card__connect,
+.catalog-item .media-card__details {
+  margin-top: var(--space-2);
+}
+
+.catalog-item .prov__key-input .settings-input {
+  min-width: 0;
+  width: 100%;
+}
+
 .media-key__status--ok {
   color: var(--ok);
 }

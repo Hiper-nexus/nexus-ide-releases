@@ -35,6 +35,7 @@ import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import {
   forgetProviderSessionById,
   getProviderPaneSession,
+  providerPaneSessionId,
   saveProviderPaneSession,
 } from '../persistence/provider-session-store';
 import { ClaudeTranscriptWatcher } from './claude-transcript-watcher';
@@ -67,6 +68,11 @@ interface DictatedAttribution {
   paneId: string;
   executionRoot: string;
   accountId?: string;
+  /**
+   * F-1618: o pane já estava ligado a OUTRA conversa; este id só a substitui
+   * quando o transcrito dele aparece (1º evento de uso).
+   */
+  bindOnTranscript?: boolean;
 }
 
 interface ScopeTelemetryState {
@@ -571,16 +577,31 @@ export class UsageTelemetryService {
     }
     this.#registerExecutionRoot(state, executionRoot);
     if (info.providerSessionId && info.paneId) {
-      saveProviderPaneSession(
+      // F-1618: o id ditado ainda não é conversa nenhuma — o transcrito só
+      // nasce com a 1ª mensagem. Gravá-lo já no spawn apagava a conversa real
+      // do pane: o Maestro recuperado e morto em 4 s deixou um id sem
+      // transcrito, e cada «Retomar» seguinte saía com «No conversation
+      // found». Com outra conversa ligada, ela fica até o transcrito provar
+      // a nova.
+      const bound = providerPaneSessionId(
         state.scope,
         info.paneId,
         info.adapterId,
-        {
-          key: 'session_id',
-          id: info.providerSessionId,
-        },
-        info.accountId,
       );
+      const bindOnTranscript =
+        bound !== null && bound !== info.providerSessionId;
+      if (!bindOnTranscript) {
+        saveProviderPaneSession(
+          state.scope,
+          info.paneId,
+          info.adapterId,
+          {
+            key: 'session_id',
+            id: info.providerSessionId,
+          },
+          info.accountId,
+        );
+      }
       const existing = state.dictated.get(info.providerSessionId);
       if (existing && existing.ptySessionId !== info.ptySessionId) {
         throw new Error('provider session is attributed to multiple PTYs');
@@ -591,6 +612,7 @@ export class UsageTelemetryService {
         paneId: info.paneId,
         executionRoot,
         ...(info.accountId ? { accountId: info.accountId } : {}),
+        ...(bindOnTranscript ? { bindOnTranscript: true } : {}),
       });
       if (info.accountId) {
         state.accountIdByProviderSession.set(
@@ -781,6 +803,7 @@ export class UsageTelemetryService {
   ): void {
     if (this.#stopped) return;
     if (!this.#acceptProviderEvent(state, 'claude', event)) return;
+    this.#bindDictatedOnTranscript(state, event.sessionId);
     const attribution = this.#attributionForEvent(
       state,
       'claude',
@@ -894,6 +917,30 @@ export class UsageTelemetryService {
       requireGamificationService().recordAgentTurn(state.scope, provider);
     } catch {
       // Serviço ausente ou falha de gravação — nunca propaga para a telemetria.
+    }
+  }
+
+  /** F-1618: o transcrito existe — agora o id ditado vira a conversa do pane. */
+  #bindDictatedOnTranscript(
+    state: ScopeTelemetryState,
+    providerSessionId: string,
+  ): void {
+    const dictated = state.dictated.get(providerSessionId);
+    if (!dictated?.bindOnTranscript) return;
+    dictated.bindOnTranscript = false;
+    try {
+      saveProviderPaneSession(
+        state.scope,
+        dictated.paneId,
+        dictated.adapterId,
+        { key: 'session_id', id: providerSessionId },
+        dictated.accountId,
+      );
+    } catch (error) {
+      console.warn(
+        '[usage] vínculo da conversa ditada não gravado:',
+        error instanceof Error ? error.message : String(error),
+      );
     }
   }
 

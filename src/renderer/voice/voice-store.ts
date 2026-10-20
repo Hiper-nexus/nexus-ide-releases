@@ -82,6 +82,12 @@ interface VoiceStore {
    * figura de partículas pulsa com a própria fala. Zero fora dela.
    */
   outputLevel: number;
+  /**
+   * Brilho espectral da voz de saída [0,1] (agudos ÷ graves, ver
+   * `spectralBrightness`): 0 = vogal aberta (a, o), 1 = chiado (s, i). Dá a
+   * FORMA da boca da figura — volume abre, brilho estica. Zero fora da fala.
+   */
+  outputBrightness: number;
   lastTranscript: string;
   lastSpoken: string;
   /** Transient fallback note, e.g. "groq throttled (429) → openai". */
@@ -130,7 +136,7 @@ interface VoiceStore {
   setStatus: (status: VoiceUiStatus) => void;
   setInfo: (info: VoiceRuntimeInfo) => void;
   setLevel: (level: number) => void;
-  setOutputLevel: (level: number) => void;
+  setOutputLevel: (level: number, brightness?: number) => void;
   setTranscript: (text: string) => void;
   setSpoken: (text: string) => void;
   setNote: (note: string | null) => void;
@@ -169,6 +175,7 @@ export const useVoiceStore = create<VoiceStore>((set) => ({
   info: null,
   level: 0,
   outputLevel: 0,
+  outputBrightness: 0,
   lastTranscript: '',
   lastSpoken: '',
   note: null,
@@ -190,7 +197,7 @@ export const useVoiceStore = create<VoiceStore>((set) => ({
   setStatus: (status) => set({ status, ...(status !== 'error' ? { error: null } : {}) }),
   setInfo: (info) => set({ info }),
   setLevel: (level) => set({ level }),
-  setOutputLevel: (outputLevel) => set({ outputLevel }),
+  setOutputLevel: (outputLevel, outputBrightness = 0) => set({ outputLevel, outputBrightness }),
   setTranscript: (lastTranscript) => set({ lastTranscript }),
   setSpoken: (lastSpoken) => set({ lastSpoken }),
   setNote: (note) => set({ note }),

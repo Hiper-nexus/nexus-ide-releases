@@ -52,6 +52,7 @@ import { WakeEngine } from "./wake-engine";
 import { getAecRuntimeStatus } from "./aec-runtime";
 import { startNativeAecRuntime, type NativeAecRuntime } from "./aec-native-runtime";
 import { logVoice } from "./voice-log";
+import { invalidToolResultCallId } from "./live-transport-helpers";
 import { trace } from "../observability/main-trace";
 import {
   DICTATION_SESSION_EVENT,
@@ -1587,7 +1588,27 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
   onIpcGuarded(VOICE_CHANNELS.liveToolResultIn, (event, raw) => {
     if (!acceptLiveEvent(event.sender)) return;
     const parsed = jarvisLiveToolResultInputSchema.safeParse(raw);
-    if (!parsed.success) return;
+    if (!parsed.success) {
+      // Antes: `return` mudo, e o modelo esperava o timeout de 120 s. Agora a
+      // chamada fecha com erro estruturado (o modelo se recupera ou avisa) e o
+      // motivo fica no voice.log — só os caminhos dos campos, nunca o conteúdo.
+      const callId = invalidToolResultCallId(raw);
+      logVoice("warn", "live.toolResultRejected", "resultado de ação recusado pelo schema", {
+        fields: parsed.error.issues.map((issue) => issue.path.join(".")).slice(0, 8),
+        hasCallId: callId !== null,
+      });
+      if (!callId) return;
+      const fallback = liveSession.toolResult({
+        callId,
+        source: "realtime",
+        tool: "none",
+        ok: false,
+        summary: "A ação terminou, mas o resultado chegou num formato inválido.",
+        output: { error: "invalid_tool_result" },
+      });
+      if (fallback) liveTransport.toolResult(fallback);
+      return;
+    }
     const resultEvent = liveSession.toolResult(parsed.data);
     if (resultEvent) {
       liveTransport.toolResult(resultEvent);

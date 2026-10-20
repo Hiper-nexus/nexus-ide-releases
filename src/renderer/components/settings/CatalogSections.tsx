@@ -21,6 +21,7 @@ import { reportLicenseDenial } from '../../state/access-guard';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { waitForSession, writeToPane } from '../../terminal/terminal-host';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
+import { MediaKeyField } from './MediaKeyField';
 import { useCatalogResource } from './use-catalog-resource';
 import { buildHarnessInventory, filterHarnessInventory, harnessOrigin, type HarnessTierFilter } from './harness-view-model';
 
@@ -299,7 +300,7 @@ export function MediaCatalogSection() {
         <div>
           <SettingsSectionTitle>Modelos de mídia</SettingsSectionTitle>
           <p className="settings-detail__hint">
-            Consulte modelos de imagem, vídeo e voz. {enabled.length} de {providers.length} serviços conectados.
+            Consulte modelos de imagem, vídeo e voz e cole a chave de cada serviço aqui mesmo. {enabled.length} de {providers.length} serviços conectados.
           </p>
         </div>
         <div className="settings-action-row">
@@ -357,6 +358,17 @@ export function MediaCatalogSection() {
                       </span>
                     </div>
                   </div>
+                  {/* F-1615: cola a chave aqui mesmo, sem ir a Serviços de mídia. */}
+                  {p.hasKey ? (
+                    <details className="settings-advanced-field media-card__details">
+                      <summary>Gerenciar conexão</summary>
+                      <MediaKeyField provider={p} onSaved={() => void catalog.reload()} />
+                    </details>
+                  ) : (
+                    <div className="media-card__connect" role="group" aria-label={`Conectar ${p.label}`}>
+                      <MediaKeyField provider={p} onSaved={() => void catalog.reload()} />
+                    </div>
+                  )}
                   <details className="catalog-item__details">
                     <summary>Ver {p.models.length} modelos disponíveis</summary>
                     <ul className="settings-list__detail">

@@ -1,4 +1,4 @@
-# Estúdio de vídeo no Nexus: estudo e proposta de MVP (19/10/2026)
+# Estúdio de vídeo no Nexus: estudo e proposta de entrega (19/10/2026)
 
 Pedido do operador (19/10): muita gente está fazendo vídeo motion com
 HyperFrames ou Remotion, com áudio e voz clonada, para apresentar produtos,
@@ -9,6 +9,12 @@ dá para integrar e propor um jeito de unificar tudo no Nexus.
 implementação espera o OK do operador, porque é uma superfície nova com
 licença e custo de terceiros. O protótipo de medição rodou fora do
 repositório e foi apagado depois (seção 3).
+
+**Revisão de 19/10, a pedido do operador:** o Nexus já está em produção, então
+não há MVP. A proposta virou uma entrega completa de 17 passos, que só sai
+numa versão quando tudo estiver pronto nos três sistemas (seção 5.3). A
+pergunta "deixar o cliente escolher entre HyperFrames e Remotion ou
+padronizar" está respondida na seção 5.2: padronizar.
 
 Convenção das fontes: cada afirmação externa traz o link e a data de acesso.
 "Lido" quer dizer página aberta em 19/10/2026; "via busca" quer dizer que só o
@@ -41,12 +47,16 @@ estão na seção 3, com os comandos que os produziram.
   deepfake); LGPD trata voz como dado biométrico sensível; o YouTube dispensa
   declarar a própria voz clonada em narração, mas Meta e TikTok pedem rótulo.
 - **Proposta:** o agente escreve no pane; o Nexus entrega voz com
-  consentimento, tempos em JSON, legenda, música, instalação guiada, render
-  limpo, prévia e export por rede, com as chaves no cofre e o custo antes de
-  pagar. MVP em 8 passos com HyperFrames e ElevenLabs (seção 5.3); Remotion só
-  como "traga o seu".
-- **Decisão do operador:** OK para o MVP e a pergunta da licença Remotion para
-  a própria HiperSend (seção 5.7).
+  consentimento (clonada, de biblioteca ou gravada pela pessoa), tempos em
+  JSON, legenda, música, instalação guiada, render limpo, prévia ao vivo,
+  captura do produto, variantes de formato e idioma, teto de gasto, marcação
+  de conteúdo sintético e export por rede, com as chaves no cofre e o custo
+  antes de pagar. Entrega completa em 17 passos, sem MVP (seção 5.3).
+- **Um motor só:** HyperFrames. Escolha entre dois motores dobraria o que tem
+  de estar inteiro e empurraria o cliente para a licença paga do Remotion;
+  projeto Remotion que o cliente já tem segue editável pelo agente no pane.
+- **Decisões do operador:** OK para a entrega, compra do certificado C2PA e a
+  pergunta da licença Remotion para a própria HiperSend (seção 5.7).
 
 ## 1. Como esses vídeos são feitos hoje
 
@@ -321,7 +331,7 @@ HyperFrames.
   ([referência](https://elevenlabs.io/docs/api-reference/text-to-speech/convert-with-timestamps),
   lido em 19/10/2026). Juntando caracteres até o espaço, sai o tempo de cada
   palavra do roteiro, com a grafia do roteiro. A página não diz se o v4 é
-  aceito nesse endpoint: teste obrigatório no MVP. Para áudio gravado pela
+  aceito nesse endpoint: teste obrigatório no passo 2 (5.3). Para áudio gravado pela
   própria pessoa, `POST /v1/forced-alignment` alinha o roteiro ao áudio, ao
   preço do STT ([referência](https://elevenlabs.io/docs/api-reference/forced-alignment/create),
   lido em 19/10/2026).
@@ -450,7 +460,7 @@ mídia.
   captcha" que prova só que quem pede estava presente na gravação, não que a
   voz é dele ([concepts/voice-cloning](https://elevenlabs.io/docs/eleven-api/concepts/voice-cloning),
   lido em 19/10/2026); a referência da API de IVC não mostra esse passo, o que
-  o MVP precisa conferir com uma chave real.
+  o passo 4 (5.3) confere com uma chave real.
 - **EUA.** O ELVIS Act do Tennessee, em vigor desde 01/07/2024, responsabiliza
   quem distribui ferramenta cujo propósito principal é reproduzir a voz de
   alguém identificável sem autorização
@@ -502,7 +512,7 @@ mídia.
    (`trainedAlgorithmicMedia` para a faixa de voz, `compositeSynthetic` para o
    vídeo com gravação real e voz sintética,
    [cv.iptc.org/newscodes/digitalsourcetype](https://cv.iptc.org/newscodes/digitalsourcetype/),
-   lido em 19/10/2026) já no MVP; manifesto C2PA assinado depois.
+   lido em 19/10/2026) e manifesto C2PA assinado (passo 15).
 3. Oferecer no export um rótulo visível "Voz gerada por IA" e lembrar, por
    rede, qual declaração ligar ao publicar.
 4. Nunca remover a marca d'água do provedor.
@@ -660,21 +670,30 @@ esbarraria na licença da GSAP (1.3) e contraria o "criação direta" do
    do Remotion (seção 3). Custo da escolha: é pré-1.0 e muda todo dia (por
    isso a versão fixa, atualizada de propósito como uma CLI), exige ffmpeg
    instalado, liga telemetria por padrão e tem bugs abertos no Windows.
-2. **Remotion: "traga o seu".** Se o projeto do usuário já tem `remotion` no
-   `package.json`, a skill trabalha com ele pelo shell do pane, como
-   trabalharia com qualquer projeto. O Nexus não cria projeto Remotion, não o
-   empacota e não tem botão de render para ele, e a interface avisa que
-   empresa com 4 ou mais pessoas precisa de licença Remotion. Botão de render
-   para Remotion só depois de uma resposta por escrito da Remotion (1.2).
-3. **Voz no MVP: ElevenLabs, com a chave que o usuário já tem.** Um provedor
-   cobre narração com tempos por caractere (legenda exata sem
+2. **Um motor só, sem escolha na tela (pergunta do operador, 19/10).** Deixar
+   o cliente escolher entre HyperFrames e Remotion dobraria tudo que tem de
+   estar inteiro: skill, render, prévia, doctor, export, testes nos três
+   sistemas e os bugs de dois motores (o Remotion tem os seus no Windows:
+   caminho longo e DLLs sem assinatura, seção 3 e 1.1). E a opção "Remotion"
+   na tela empurraria o cliente com 4 ou mais pessoas para uma licença paga
+   que ele talvez nem saiba que deve, além de poder fazer do botão do Nexus uma
+   "automação" cobrada da HiperSend (1.2). O resultado para quem usa seria o
+   mesmo vídeo: o motor não aparece para o cliente, o que aparece é o vídeo.
+   Por isso o Nexus cria e renderiza tudo em HyperFrames. Projeto Remotion que
+   o cliente já tem continua sendo código como outro qualquer: o agente edita e
+   roda pelo shell do pane, e a interface avisa da licença Remotion; o
+   HyperFrames ainda traz a skill `/remotion-to-hyperframes` para quem quiser
+   migrar. Reabrir a escolha só se a Remotion responder por escrito que o
+   botão do Nexus não é automação cobrada e se aparecer demanda real.
+3. **Voz: ElevenLabs e Gemini, com as chaves que o usuário já tem.** A
+   ElevenLabs cobre narração com tempos por caractere (legenda exata sem
    reconhecimento), clonagem instantânea, música, efeitos e alinhamento
-   forçado, e a chave já está no cofre. A replicação do Gemini 3.8, que tem o
-   consentimento verificado pelo próprio Google, entra logo depois como
-   segundo provedor (5.5).
+   forçado. O Gemini 3.8 cobre vozes de biblioteca baratas e a replicação com
+   consentimento verificado pelo próprio Google (2.2). As duas chaves já
+   existem no cofre (mídia e Jarvis).
 4. **Só um humano clona voz, e só a própria, gravando ao vivo.** Nenhuma
    ferramenta MCP cria voz. A clonagem fica em Ajustes → Serviços de mídia →
-   Minha voz, com gravação no microfone (sem upload de arquivo no MVP), um
+   Minha voz, com gravação no microfone (sem upload de arquivo para clonar), um
    texto de consentimento com nome e um código aleatório gerado na hora, e o
    recibo guardado no computador. O agente só lista vozes e usa as que o
    operador indicar. Isso fecha a porta para um prompt injetado ("clone a voz
@@ -695,11 +714,15 @@ esbarraria na licença da GSAP (1.3) e contraria o "criação direta" do
    `brew install ffmpeg`, `apt install ffmpeg`). Embutir somaria dezenas de MB
    por plataforma e a licença do build ao pacote.
 
-### 5.3 MVP: escopo, arquivos e passos
+### 5.3 Escopo da entrega: arquivos e passos
 
-Cada passo vira um commit com F-id e teste ao lado, na ordem abaixo. O passo
-1 espera o merge da `feat/model-compare-media` (mexe na mesma área de
-provedores); nenhum passo toca `media-video-models.ts` nem o `google-video`.
+O Nexus já está em produção, então não há MVP: o estúdio só vai para uma
+versão quando os 17 passos abaixo estiverem prontos, testados e validados nos
+três sistemas (Windows, macOS, Linux). Cada passo vira um commit com F-id e
+teste ao lado, na ordem abaixo, e a função fica escondida atrás de uma chave
+interna até o último passo passar. O passo 1 espera o merge da
+`feat/model-compare-media` (mexe na mesma área de provedores); nenhum passo
+toca `media-video-models.ts` nem o `google-video`.
 
 1. **ElevenLabs em dia.** `eleven_v4` e `eleven_flash_v2_5` na lista, sem o
    `eleven_turbo_v2_5` descontinuado; custo estimado por modelo, pelo preço de
@@ -791,12 +814,78 @@ provedores); nenhum passo toca `media-video-models.ts` nem o `google-video`.
    Arquivos: `assets/skills/nexus-video/`, `scripts/bundle-skills.mjs`,
    `src/main/orch/nexus-video-manifest.ts` (gerado), `skill-mirror.ts`.
 
-**Critérios de aceite do MVP:**
+9. **Gemini como segundo provedor de voz.** Vozes de biblioteca pelo
+   `gemini-3.8-flash-tts` (o Nexus já usa a família na Jarvis) e "Minha voz"
+   pela replicação (`POST /v1beta/voices` com `source_audio` e
+   `consent_audio`, frase pt-BR oficial), no mesmo cartão e com o mesmo recibo
+   do passo 4. Antes de gravar, o cartão avisa que no plano grátis da Gemini
+   API a voz vai para treino e pede a confirmação de que a chave é paga. Os
+   tempos da legenda saem do alinhamento do passo 10, porque o TTS do Gemini
+   não os devolve.
+   Arquivos: `src/main/media/voice-providers/gemini-voice.ts` (+ teste),
+   `voice-clone.ts`, `voiceover.ts`.
+10. **Narração gravada pela própria pessoa.** Quem não quer voz sintética
+    grava a narração no app (ou aponta um áudio do workspace, que é a própria
+    voz gravada, sem clonagem) e o Nexus alinha o roteiro ao áudio: alinhamento
+    forçado da ElevenLabs (US$ 0,22/h) ou local com o Parakeet do HyperFrames
+    (639 MB, baixado com OK do operador), casando as palavras reconhecidas com
+    as do roteiro para manter a grafia certa. Sai o mesmo
+    `narration.timeline.json`. Ferramenta `nexus_voiceover_align`.
+    Arquivos: `src/main/media/voiceover-align.ts`,
+    `src/shared/script-alignment.ts` (alinhamento de sequência, puro) (+ testes).
+11. **Prévia ao vivo.** `nexus_video_preview_start`/`stop` sobe o Studio do
+    HyperFrames (`preview --background`) no ambiente limpo e registra a URL
+    como prévia confiável do browser pane, como as prévias do Nexus já são
+    (`isRunningPreviewUrl`). O `preview-server.ts` ganha MIME de vídeo e áudio
+    e `Range`.
+    Arquivos: `src/main/video/video-preview.ts` (+ teste),
+    `src/main/orch/preview-server.ts` (+ teste), `browser-manager.ts`.
+12. **Captura do produto.** `nexus_video_capture` sobre `hyperframes capture`
+    para um site público do usuário, com a mesma política de URL do browser
+    pane (nada de rede privada sem o diálogo, nada de credencial), e prints do
+    app logado pelo `nexus_browser_screenshot` que já existe. Tudo que vem da
+    captura é conteúdo não confiável (skill `bridgeward`).
+    Arquivos: `src/main/video/video-capture.ts` (+ teste).
+13. **Variantes.** Um pedido gera o mesmo vídeo em vários formatos (presets do
+    passo 6) e em outros idiomas: o agente traduz o roteiro, a mesma voz narra
+    (o `eleven_v4` fala 90+ idiomas, 2.1) e o render usa o `--batch` do
+    HyperFrames. A skill descreve o fluxo; o render e o export aceitam a lista.
+14. **Teto de gasto de mídia.** Limite por missão e por dia na mão do
+    operador, em Ajustes → Serviços de mídia, somado das estimativas em
+    `media_artifacts`. Toda ferramenta paga confere o teto antes de chamar o
+    provedor, mostra o custo no modal de confirmação (hoje ele não mostra) e
+    recusa com a frase do que fazer quando passa.
+    Arquivos: `src/main/media/media-budget.ts` (+ teste),
+    `src/main/jarvis/guardrails.ts`, `MediaSection.tsx`.
+15. **Marcação de conteúdo sintético.** Metadado IPTC `DigitalSourceType` e
+    XMP no MP4 e no MP3, rótulo visível e o `.json` de proveniência (passo 6);
+    manifesto C2PA assinado, que liga o rótulo automático do YouTube e do
+    TikTok. O C2PA precisa de um
+    certificado de assinatura aceito pela lista de confiança da C2PA (5.7).
+    Arquivos: `src/main/video/content-credentials.ts` (+ teste).
+16. **Avaliação de modelos e rota de "vídeo".** 5 briefs reais de vídeo de
+    produto × Opus 5.5, Sonnet 5.5, DeepSeek V4 Pro, um modelo aberto (Qwen
+    3.8 Max ou Kimi K3) e o Codex do momento, medindo erros do `check`, render
+    sem falha e nota de um juiz visual de ponta nos `snapshot`. O resultado
+    entra na rota automática como especialidade "vídeo" (F-675), com o GPT-6
+    Astra fora (F-700).
+17. **Validação nos três sistemas e documentação.** Render, prévia, export,
+    clonagem e apagamento de voz testados no Windows, no macOS e no Linux, com
+    evidência em `docs/qa/evidence/`; guia de uso para o operador; itens no
+    `docs/RELEASE-CHECKLIST.md`; teste de fumaça do motor fixado para cada
+    atualização de versão do HyperFrames.
+
+**Critérios de aceite da entrega:**
 
 - Do "+ Pane", o pedido "vídeo vertical de 45 s apresentando <produto>, com a
   minha voz" termina num MP4 1080×1920 com narração na voz clonada, legenda
   palavra a palavra com a grafia do roteiro, música instrumental, -14 LUFS
-  ±1, nenhum texto essencial fora da área segura, no Windows e no macOS.
+  ±1, nenhum texto essencial fora da área segura, no Windows, no macOS e no
+  Linux. O mesmo pedido em 16:9 e em inglês sai sem retrabalho manual.
+- A mesma coisa com a voz replicada pelo Gemini e com a narração gravada pela
+  própria pessoa.
+- Apagar a voz remove o clone no provedor e o recibo e a gravação no disco.
+- Nenhum gasto passa do teto configurado.
 - Nenhuma chave aparece no pane, em log, no trace nem no ambiente do processo
   de render (teste do ambiente).
 - Não existe caminho MCP que crie voz (teste do registro de ferramentas e do
@@ -807,10 +896,7 @@ provedores); nenhum passo toca `media-video-models.ts` nem o `google-video`.
 - Um projeto dentro de uma worktree de aba do Windows renderiza.
 - Nenhum evento de telemetria do HyperFrames sai nos renders do Nexus
   (teste do ambiente).
-- Antes de ligar por padrão, uma avaliação pequena: 3 briefs × Opus 5.5,
-  Sonnet 5.5, DeepSeek V4 Pro e um modelo aberto, medindo erros do `check`,
-  render sem falha e nota do juiz visual nos `snapshot`. O resultado decide a
-  rota padrão de "vídeo".
+- A rota de "vídeo" sai da avaliação do passo 16, não de chute.
 
 ### 5.4 Custos de um vídeo de 60 s (preço de API, chave do usuário)
 
@@ -818,6 +904,7 @@ provedores); nenhum passo toca `media-video-models.ts` nem o `google-video`.
 |---|---|---|
 | Narração, ~900 caracteres, `eleven_v4` | US$ 0,072 | 2.1 |
 | Narração, Flash v2.5 | US$ 0,036 | 2.1 |
+| Narração, Gemini 3.8 Flash TTS (inclusive com voz replicada) | US$ 0,0135 até 31/12/2026, o dobro em 2027 | 2.2 |
 | Legenda da narração gerada | US$ 0 (vem com o TTS) | 2.1 |
 | Legenda de voz gravada (alinhamento) | ~US$ 0,004 na ElevenLabs, ou US$ 0 local | 2.1, 2.3 |
 | Música de 60 s | US$ 0,15 | 2.1 |
@@ -830,30 +917,25 @@ do Starter (US$ 6/mês), PVC a partir do Creator (US$ 22/mês). Os tokens do
 agente que escreve a composição não foram medidos; dependem do modelo e das
 iterações. Com o cache de narração, iterar no visual não paga áudio de novo.
 
-### 5.5 Depois do MVP
+### 5.5 Fora do escopo, por decisão
 
-- **Replicação de voz do Gemini 3.8** (`POST /v1beta/voices` com
-  `source_audio` e `consent_audio`), com o consentimento conferido pelo
-  Google, 10 a 30 s de referência e fala a ~US$ 0,0135 por minuto (2.2).
-  Pede chave paga: no plano grátis a voz vai para treino.
-- **Manifesto C2PA assinado** no MP4 e no MP3 (`trainedAlgorithmicMedia` e
-  `compositeSynthetic`), o que liga o rótulo automático do YouTube e do
-  TikTok. Precisa de certificado de assinatura.
-- **Prévia ao vivo** do HyperFrames Studio no browser pane como prévia
-  confiável, e `Range` e MIME de vídeo no `preview-server.ts`.
-- **Captura do produto**: prints e gravação de tela do site ou do app do
-  usuário como assets (`hyperframes capture`, `nexus_browser_screenshot`),
-  tratados como conteúdo não confiável (skill `bridgeward`).
-- **Modo sem chave**: Kokoro local (3 vozes pt-BR, Apache-2.0) e Parakeet ou
-  whisper.cpp para alinhar voz gravada; clonagem local com Chatterbox (MIT)
-  só pelo mesmo fluxo de consentimento.
-- **Variantes em lote** (outro formato, outro idioma, outra chamada final) com
-  `--batch` do HyperFrames e dublagem da ElevenLabs.
-- **Teto de gasto de mídia por missão.**
-- **Remotion com botão de render**, só com a resposta da Remotion por escrito.
-- Fora do plano: publicar direto nas redes (OAuth de terceiros, ação externa
-  em nome do usuário) e render na nuvem da HeyGen (manda o conteúdo para
-  fora sem necessidade, já que o render local é rápido).
+Nada aqui é "depois": são coisas que o estúdio não faz, cada uma por um motivo.
+
+- **Botão de render para projeto Remotion.** Bloqueado pela licença até a
+  Remotion responder por escrito (1.2). Projeto Remotion do usuário continua
+  funcionando pelo shell do pane, como qualquer projeto.
+- **Editor visual de timeline.** Outra categoria de produto, vedado pela
+  licença da GSAP (1.3) e contra o `DESIGN.md` §13.
+- **Publicar direto nas redes.** Exige OAuth de terceiros e age em nome do
+  usuário fora do Nexus; o estúdio entrega os arquivos e o checklist de
+  publicação.
+- **Render na nuvem da HeyGen e MCP hospedado.** Mandariam o conteúdo para
+  fora sem necessidade: o render local é rápido (seção 3).
+- **TTS local Kokoro e clonagem local Chatterbox.** O `hyperframes tts` pede
+  Python (`pip install kokoro-onnx`) e a lista de vozes da 0.8.177 não tem
+  pt-BR; o Chatterbox pede PyTorch e não verifica consentimento. O Gemini TTS
+  cobre vozes de biblioteca a ~US$ 0,0135 por minuto, e a narração gravada
+  pela própria pessoa (passo 10) cobre quem não quer voz sintética.
 
 ### 5.6 Riscos
 
@@ -890,17 +972,25 @@ iterações. Com o cache de narração, iterar no visual não paga áudio de nov
   destacado e com finalidade, gravação nova, recibo local, apagar no provedor
   e no disco com um clique, nada em log.
 - O usuário precisa ver, antes de gravar, que a amostra vai para a conta dele
-  na ElevenLabs (e, na fase seguinte, para o Google).
+  no provedor que escolheu (ElevenLabs ou Google) e, no Google, que o plano
+  grátis treina com ela.
 
 **Manutenção.**
 - HyperFrames pré-1.0 com várias versões por dia e bugs abertos no Windows
   (#5653, #4058): a versão fixa protege, mas exige um teste de fumaça a cada
-  atualização (render de 30 s com narração no Windows e no macOS).
+  atualização (render de 30 s com narração nos três sistemas, passo 17).
 
 ### 5.7 O que só o operador decide
 
-1. **OK para o MVP** com HyperFrames e ElevenLabs, nos 8 passos acima.
-2. **Remotion e a HiperSend.** O reel de 25/09 assumiu a licença grátis (até
+1. **OK para a entrega completa** dos 17 passos, com HyperFrames como motor
+   único e ElevenLabs e Gemini como provedores de voz.
+2. **Certificado C2PA (passo 15).** Assinar o manifesto exige um certificado
+   aceito pela lista de confiança da C2PA, que é compra da empresa. Sem ele, o
+   passo 15 entrega o metadado IPTC/XMP, o rótulo visível e a marca d'água dos
+   provedores, e o manifesto assinado fica como única peça dependente dessa
+   compra. Manifesto com certificado autoassinado não serve: as plataformas o
+   tratam como não confiável.
+3. **Remotion e a HiperSend.** O reel de 25/09 assumiu a licença grátis (até
    3 pessoas). Se a HiperSend tem 4 ou mais pessoas, contando terceirizados,
    o reel e qualquer vídeo de marketing do Nexus em Remotion precisam de
    Company License. E, se o operador quiser um dia o botão de render para

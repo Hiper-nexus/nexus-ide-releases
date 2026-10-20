@@ -162,3 +162,15 @@ describe('live-transport-helpers', () => {
     );
   });
 });
+
+describe('invalidToolResultCallId', () => {
+  it('recupera o callId de um resultado recusado para fechar a chamada com erro', async () => {
+    const { invalidToolResultCallId } = await import('./live-transport-helpers');
+    expect(invalidToolResultCallId({ callId: ' call_9 ', summary: 'x'.repeat(9_999) })).toBe('call_9');
+    expect(invalidToolResultCallId({ callId: '' })).toBeNull();
+    expect(invalidToolResultCallId({ callId: 'x'.repeat(300) })).toBeNull();
+    expect(invalidToolResultCallId({ callId: 7 })).toBeNull();
+    expect(invalidToolResultCallId(null)).toBeNull();
+    expect(invalidToolResultCallId('call_1')).toBeNull();
+  });
+});

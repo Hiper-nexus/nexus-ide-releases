@@ -1270,6 +1270,146 @@ describe('operator close preserves durable mission history', () => {
     if (!result.mission) throw new Error('mission result expected');
     expect(hasAutomaticTechnicalRecovery(result.mission)).toBe(false);
   });
+
+  it('closes a mission cleanly when mission_panes has multiple rows for a respawned orchestrator on the same pane', async () => {
+    const firstOrch: MissionPaneSpec = {
+      ...pane('pane-orch', ''),
+      id: 'persisted-orch-1',
+      role: 'orchestrator',
+      workerIncarnationId: undefined,
+      createdAt: 1,
+    };
+    const secondOrch: MissionPaneSpec = {
+      ...pane('pane-orch', ''),
+      id: 'persisted-orch-2',
+      role: 'orchestrator',
+      workerIncarnationId: undefined,
+      createdAt: 2,
+    };
+    runtime.pty = [
+      {
+        ...physical('pty-orch-2', 'pane-orch', ''),
+        role: 'orchestrator',
+        workerIncarnationId: undefined,
+      },
+    ];
+    const stores = closeSuite(
+      { ...authorizedMission(), orchestratorSessionId: 'pty-orch-2' },
+      [firstOrch, secondOrch],
+    );
+
+    const result = await closeMissionRuntimePreservingHistory({
+      scope,
+      suite: stores.suite,
+      missionId: mission.id,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.terminatedSessionIds).toEqual(['pty-orch-2']);
+    expect(runtime.terminatePty).toHaveBeenCalledWith('pty-orch-2');
+    expect(stores.current().orchestratorSessionId).toBeUndefined();
+  });
+
+  it('closes a mission cleanly when orchestratorSessionId points to a promoted operator pane and clears orchestratorSessionId', async () => {
+    const opSpec: MissionPaneSpec = {
+      ...pane('pane-op-leader', ''),
+      role: 'orchestrator',
+      workerIncarnationId: undefined,
+    };
+    runtime.pty = [
+      {
+        ...physical('pty-op-leader', 'pane-op-leader', ''),
+        role: 'orchestrator',
+        workerIncarnationId: undefined,
+        promotedFromUser: true,
+      },
+    ];
+    const stores = closeSuite(
+      { ...authorizedMission(), orchestratorSessionId: 'pty-op-leader' },
+      [opSpec],
+    );
+
+    const result = await closeMissionRuntimePreservingHistory({
+      scope,
+      suite: stores.suite,
+      missionId: mission.id,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(runtime.terminatePty).not.toHaveBeenCalled();
+    expect(runtime.pty[0]).toMatchObject({
+      sessionId: 'pty-op-leader',
+      role: 'user',
+    });
+    expect(runtime.pty[0]?.missionId).toBeUndefined();
+    expect(stores.current().orchestratorSessionId).toBeUndefined();
+  });
+
+  it('closes a mission cleanly when orchestratorSessionId points to a live operator user session already released from the mission', async () => {
+    // Simulates real pane-registry behavior for a user pane without orchMetaByPane:
+    // physical PTY has role: 'user' and no missionId, while pane authority has role: undefined.
+    runtime.pty = [
+      {
+        sessionId: 'pty-mvfp239l-1',
+        paneId: 'pane-user-1',
+        adapterId: 'claude',
+        cwd: scope.rootRealPath,
+        role: undefined,
+        missionId: undefined,
+        scope,
+        kind: 'cli-agent',
+      },
+    ];
+    const stores = closeSuite(
+      {
+        ...mission,
+        status: 'failed',
+        intentState: 'blocked_technical',
+        orchestratorSessionId: 'pty-mvfp239l-1',
+      },
+      [],
+    );
+
+    const result = await closeMissionRuntimePreservingHistory({
+      scope,
+      suite: stores.suite,
+      missionId: mission.id,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(runtime.terminatePty).not.toHaveBeenCalled();
+    expect(stores.current().orchestratorSessionId).toBeUndefined();
+  });
+
+  it('terminates worktree-scoped physical runtimes whose coordinationScope matches the mission scope', async () => {
+    const worktreeScope: ProjectExecutionScope = Object.freeze({
+      ...scope,
+      rootRealPath: '/workspace/runtime-termination/.nexus/worktrees/wt-1',
+    });
+    runtime.pty = [
+      {
+        ...physical('pty-wt-worker', 'pane-wt', 'inc-wt'),
+        scope: worktreeScope,
+        coordinationScope: scope,
+      },
+    ];
+    const stores = closeSuite(
+      { ...authorizedMission(), orchestratorSessionId: undefined },
+      [pane('pane-wt', 'inc-wt')],
+    );
+
+    expect(missionHasLivePhysicalSession(scope, mission.id)).toBe(true);
+
+    const result = await closeMissionRuntimePreservingHistory({
+      scope,
+      suite: stores.suite,
+      missionId: mission.id,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.terminatedSessionIds).toEqual(['pty-wt-worker']);
+    expect(runtime.terminatePty).toHaveBeenCalledWith('pty-wt-worker');
+  });
 });
 
 describe('missionHasLivePhysicalSession', () => {

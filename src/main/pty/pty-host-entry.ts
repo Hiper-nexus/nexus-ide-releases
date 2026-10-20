@@ -424,10 +424,9 @@ parentPort.on('message', (e) => {
         const target = procs.get(msg.sessionId)?.proc;
         // F-659: no Windows o node-pty recusa qualquer sinal (o erro era
         // engolido aqui como "já morto" e o processo seguia vivo).
-        if (target) {
-          if (msg.signal) killPtyRoot(target, msg.signal);
-          else target.kill();
-        }
+        // F-1617: sem sinal também passa por killPtyRoot — um 2º `kill()` cru
+        // fecharia o mesmo pseudoconsole de novo e derrubaria o host.
+        if (target) killPtyRoot(target, msg.signal);
       } catch {
         // Already dead.
       }

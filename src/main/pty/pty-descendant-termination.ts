@@ -624,14 +624,36 @@ function proofError(
  * recusada, Retomar/Pedir ajuste abortados por "não terminou fisicamente" e
  * pane fechado virando processo órfão. Sem sinal, o `kill()` do ConPTY fecha o
  * pseudoconsole e encerra a lista de processos do console.
+ *
+ * F-1617: esse `kill()` NÃO é idempotente. Cada chamada repete o
+ * `ClosePseudoConsole` nativo no mesmo HPCON; a 2ª antes do `onExit` libera a
+ * mesma memória de novo e o PTY host inteiro morre com 0xC0000374 (corrupção
+ * de heap), levando TODOS os panes juntos. A escalada SIGTERM→SIGKILL chamava
+ * `kill()` duas vezes em toda CLI que leva mais que a graça para sair (o AGY,
+ * em 20/10). Só o 1º pedido fecha o console; a escalada termina a raiz pelo
+ * PID (TerminateProcess), sem tocar no HPCON.
  */
+const win32ClosedPtyRoots = new WeakSet<object>();
+
 export function killPtyRoot(
-  proc: { kill(signal?: string): void },
-  signal: NodeJS.Signals,
+  proc: { kill(signal?: string): void; readonly pid?: number },
+  signal?: NodeJS.Signals,
   platform: NodeJS.Platform = process.platform,
+  terminatePid: (pid: number) => void = (pid) => {
+    process.kill(pid);
+  },
 ): void {
   if (platform === 'win32') {
-    proc.kill();
+    if (!win32ClosedPtyRoots.has(proc)) {
+      // Marca ANTES: um `kill()` que lança no meio nunca deve abrir caminho
+      // para um 2º fechamento do mesmo HPCON.
+      win32ClosedPtyRoots.add(proc);
+      proc.kill();
+      return;
+    }
+    if (signal === 'SIGKILL' && typeof proc.pid === 'number' && proc.pid > 0) {
+      terminatePid(proc.pid);
+    }
     return;
   }
   proc.kill(signal);

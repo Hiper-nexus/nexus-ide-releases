@@ -221,6 +221,7 @@ import type { IntegrationsApi } from './integrations-api';
 import type { VoiceCloneApi } from './voice-clone-types';
 import type { VideoStudioApi } from './video-studio-types';
 import type { MediaBudgetApi } from './media-budget-types';
+import type { MediaReferencesApi } from './media-reference-types';
 import type { ProductApi } from './product-api';
 import type {
   AgentSpecWriteRequest,
@@ -1454,6 +1455,8 @@ export interface NexusApi {
       storageKey: string,
     ): Promise<{ ok: boolean; dataUrl?: string; error?: string }>;
   };
+  /** Referências do Estúdio: imagens, logos e vídeos de exemplo do projeto (F-1611). */
+  mediaReferences: MediaReferencesApi;
   pipes: PipeApi;
   /** Fase 5 — Jarvis Vision: screen capture + AX tree + OCR */
   vision: VisionApi;

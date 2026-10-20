@@ -1832,9 +1832,23 @@ O que mudou — e o que NÃO mudou:
 - Cada `VoiceUiStatus` tem assinatura de movimento própria
   (`figureMotionForStatus`, `src/renderer/components/JarvisParticleFigure.tsx`):
   ouvindo puxa as partículas para dentro e pulsa com `voice-store.level`;
-  falando emite ondas concêntricas da cabeça/peito e vibra boca/torso
-  (`speakingEnergy`/`speakingZoneWeight`); transcrever/rotear orbita em
-  vórtice; erro dispersa na cor `--danger`.
+  falando MEXE A BOCA (abaixo); transcrever/rotear orbita em vórtice; erro
+  dispersa na cor `--danger`.
+- **A boca fala com a voz (20/10).** Um anel de lábios (`buildMouthRing`,
+  partículas DEPOIS da silhueta, então os índices do corpo não mudam) abre com
+  `voice-store.outputLevel` e estica com `outputBrightness`
+  (`mouthShape`/`lipPoint`); o rosto abre o vão e o queixo desce
+  (`mouthDeform`); cada sílaba solta uma onda da boca. A cabeça quase não treme
+  mais (`speakingZoneWeight` 0,12): tremer borrava os lábios. O medidor
+  (`voice-output-level.ts`) publica o brilho espectral (agudos 2–6 kHz ÷ graves
+  200–1100 Hz; só acima de `OUTPUT_BRIGHTNESS_MIN_LEVEL`, senão cauda/chiado
+  esticava a boca) e ATRASA o par pela latência de saída do contexto
+  (`baseLatency + outputLatency`, teto 350 ms): o analisador lê a amostra antes
+  do alto-falante e a boca andava à frente da voz. Silêncio depois de voz
+  medida é pausa (boca fecha); sílabas sintéticas (~4/s) só sem medidor e
+  depois de `SYNTHETIC_MOUTH_GRACE_S`. Validado com fala real (SAPI pt-BR)
+  tocando pelo medidor numa bancada: em 220 px a boca abre com nível ≥ 0,4 e
+  fecha na pausa.
 - **Ocioso = silhueta reconhecível, nunca nuvem.** Antes a coesão ia só até
   ~0,31 e a figura jamais se formava (no Chrome só ~40% dos pixels acesos
   ficavam perto do corpo). Agora `idleCohesion` cicla de ~0,91 (pico) a ~0,61
@@ -1871,6 +1885,39 @@ O que mudou — e o que NÃO mudou:
   desse mesmo quadrado (os pés fecham em y = 0,96). Validar com o
   `VoiceHud` real num Chrome (hit-test do centro da figura = o botão, clique
   acorda, só a alça arrasta), não só com teste de CSS.
+
+## Voz: ferramentas realtime respondem sempre e leem o estado vivo (20/10)
+
+- **Um `response.create` por lote, depois do `done`.** `OpenAIRealtimeProvider`
+  (OpenAI e Grok) manda o `function_call_output` na hora, mas só pede a resposta
+  de seguimento quando a resposta que FEZ as chamadas terminou e TODAS as
+  chamadas paralelas dela têm resultado (doc da xAI). Antes saía um
+  `response.create` por resultado, e o síncrono do Main (`consultar`, recusas)
+  batia em `conversation_already_has_active_response`: turno mudo. Lote lento
+  não segura outro lote; `sendText` com resposta ativa espera o `done`; esse
+  erro vira `responseBusy` (adiado, nunca falha de sessão); sem `done` em
+  `DEFERRED_RESPONSE_MAX_MS` (10 s) o pedido sai assim mesmo.
+  `responseInFlight` diz ao controller que o `done` era da resposta que chamou
+  a ferramenta: o turno de ferramenta só fecha no `done` do seguimento (senão a
+  narração local "Feito." passava por cima da resposta de verdade).
+- **Nada espera 120 s em silêncio.** O schema do resultado aceita toda ação de
+  `SAFE_REALTIME_ACTIONS` (faltava `open_agent`) e CORTA o resumo em 1000
+  caracteres em vez de recusar; resultado recusado ainda fecha a chamada com
+  `invalid_tool_result` e loga `live.toolResultRejected` (só os caminhos dos
+  campos). Jarvis desligada responde `jarvis_powered_off`. A `hint` do
+  despachante MCP vai ao modelo (`McpInvokeResult.hint`) para ele seguir o
+  caminho certo em vez de repetir a chamada recusada.
+- **Leitura viva.** `ler` ganhou scopes `panes`, `missoes`, `cotas`, `git` e
+  `saude` (`systemReadToolForScope` → `nexus_pane_list`, `nexus_mission_list`,
+  `nexus_quota_status`, `nexus_git_status`, `nexus_system_doctor`, todas
+  somente leitura). `consultar` só conhece o resumo da tela e diz isso.
+- **`perguntar` devolve a resposta.** `ask_pane` usa `nexus_pane_ask` (digita,
+  espera o pane ficar ocioso, devolve só o texto novo; 45 s, prazo da ação
+  55 s); o resumo diz se o pane respondeu, ainda trabalha ou é one-shot. Antes
+  era `nexus_pane_write` e o modelo narrava "mandei" como se fosse resposta.
+- `system.en.md` e os adendos de `factory.ts` agora batem com o código: sync de
+  repositório é `sync_repo_via_pane` (pane de CLI), voz não tem missão (efeito
+  de missão → `delegar`), enviado não é concluído.
 
 ## Voz: relato de handoff e atalho global (17/10)
 
@@ -2337,6 +2384,12 @@ O que mudou — e o que NÃO mudou:
   Chamar `proc.kill('SIGTERM')` direto deixa a sessão presa no voo de
   encerramento — entrada recusada, saída descartada, "Retomar"/"Pedir ajuste"
   esperando para sempre, e o reconciliador de 1 s repete a tentativa.
+- **F-1617: o `kill()` do ConPTY não é idempotente.** Cada chamada repete o
+  `ClosePseudoConsole` no mesmo HPCON; a 2ª antes do `onExit` derruba o PTY
+  host com `0xC0000374` e TODOS os panes caem juntos (reproduzido com o
+  node-pty real). `killPtyRoot` fecha o console só no 1º pedido e a escalada
+  `SIGKILL` termina a raiz pelo PID. Nunca chame `proc.kill()` de um PTY
+  fora dele, nem «tente de novo» um encerramento chamando `kill()` outra vez.
 - Pane `idle` não é "orquestrador terminou". Maestro parado numa pergunta ao
   operador (hook `awaiting-input` ou notificação, rodada ainda aberta) é
   `isAgentAwaitingOperator` e conta como ocupado no `orchestratorBusy` da

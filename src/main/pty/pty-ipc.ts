@@ -111,6 +111,7 @@ import {
 } from "../observability/phase-timer";
 import { onIpcGuarded } from '../runtime/git-ipc-guard';
 import { trackPaneSpawnEntry } from "../orch/pane-admission";
+import { persistedPaneAllowedTools } from "../orch/spawn-authority";
 
 let projectRuntimeManager: ProjectRuntimeManager | null = null;
 const RESTARTED_WORKER_LEASE_MS = 10 * 60_000;
@@ -493,12 +494,9 @@ function spawnCliPtyAgentPane(
             agentName: persistedPane.agentName,
             readOnly: persistedPane.readOnly === true,
             nativeReadOnly,
-            allowedTools:
-              persistedPane.allowedTools !== undefined
-                ? persistedPane.allowedTools
-                : persistedPane.role === "worker"
-                  ? []
-                  : null,
+            // F-1619: a mesma regra do respawn — o pane aberto pelo operador
+            // nasce sem allowlist; supor `[]` recusava adotar o PTY vivo.
+            allowedTools: persistedPaneAllowedTools(persistedPane),
             allowedSkills: persistedPane.allowedSkills ?? null,
             authoritySeal: persistedPane.authoritySeal,
             scope: authority.scope,

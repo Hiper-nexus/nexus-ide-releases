@@ -103,10 +103,11 @@ function targetIsOperatorOpened(target: RuntimeTarget): boolean {
   if (getPaneRuntimeAuthorityBySession(target.sessionId)?.operatorOpened === true) {
     return true;
   }
+  const session = listAgentSessions().find(
+    (entry) => entry.sessionId === target.sessionId,
+  );
   return (
-    listAgentSessions().find(
-      (session) => session.sessionId === target.sessionId,
-    )?.operatorOpened === true
+    session?.operatorOpened === true || session?.promotedFromUser === true
   );
 }
 
@@ -147,13 +148,22 @@ function physicalSessionIsLive(sessionId: string): boolean {
   );
 }
 
+function agentCoordinationScope(agent: {
+  readonly scope: Readonly<ProjectExecutionScope>;
+  readonly coordinationScope?: Readonly<ProjectExecutionScope>;
+}): Readonly<ProjectExecutionScope> {
+  return agent.coordinationScope ?? agent.scope;
+}
+
 export function missionHasLivePhysicalSession(
   scope: ProjectExecutionScope,
   missionId: string,
 ): boolean {
   return [...listAgentSessions(), ...listAcpDriverAgentSessions()].some(
     (session) =>
-      session.missionId === missionId && sameScope(session.scope, scope),
+      session.missionId === missionId &&
+      (sameScope(agentCoordinationScope(session), scope) ||
+        sameScope(session.scope, scope)),
   );
 }
 
@@ -300,9 +310,7 @@ function runtimeTargets(input: {
         spec.workerIncarnationId === physical.workerIncarnationId &&
         (!spec.scope || sameScope(spec.scope, input.scope)),
     );
-    if (matching.length > 1) {
-      throw new Error('duplicate persisted mission pane authority');
-    }
+    const matchedSpec = matching.at(-1);
     const authority = getPaneRuntimeAuthorityBySession(physical.sessionId);
     const exactAuthority =
       !authority ||
@@ -324,20 +332,24 @@ function runtimeTargets(input: {
       role: physical.role,
       ...(physical.adapterId ? { adapterId: physical.adapterId } : {}),
       ...(physical.agentName ? { agentName: physical.agentName } : {}),
-      ...(matching[0] && exactAuthority ? { spec: matching[0] } : {}),
+      ...(matchedSpec && exactAuthority ? { spec: matchedSpec } : {}),
       ...(physical.workerIncarnationId
         ? { workerIncarnationId: physical.workerIncarnationId }
         : {}),
-      orphaned: matching.length !== 1 || !exactAuthority,
+      orphaned: matching.length === 0 || !exactAuthority,
     });
   };
 
   // Physical inventories are the source of truth. Detached/headless workers
   // remain visible here even when the renderer mirror lost their pane.
-  for (const agent of [
+  const physicalAgents = [
     ...listAgentSessions(),
     ...listAcpDriverAgentSessions(),
-  ]) {
+  ];
+  for (const agent of physicalAgents) {
+    const resolvedScope = sameScope(agentCoordinationScope(agent), input.scope)
+      ? agentCoordinationScope(agent)
+      : agent.scope;
     addPhysical({
       sessionId: agent.sessionId,
       paneId: agent.paneId,
@@ -346,7 +358,7 @@ function runtimeTargets(input: {
       adapterId: agent.adapterId,
       agentName: agent.agentName,
       workerIncarnationId: agent.workerIncarnationId,
-      scope: agent.scope,
+      scope: resolvedScope,
     });
   }
 
@@ -372,7 +384,21 @@ function runtimeTargets(input: {
     // A durable pointer to an already-dead process closes cleanly: there is
     // no runtime left to prove anything about.
     if (!physicalLive) continue;
+    const physicalAgent = physicalAgents.find(
+      (agent) => agent.sessionId === sessionId,
+    );
     const authority = getPaneRuntimeAuthorityBySession(sessionId);
+    if (
+      physicalAgent &&
+      physicalAgent.missionId !== input.mission.id &&
+      authority?.missionId !== input.mission.id
+    ) {
+      // A live operator session returned to `user` (or subsequently adopted by
+      // another mission) still has a stale pointer on this mission row until
+      // demotion clears it. Main's physical inventory attributes it as a
+      // non-member of this mission, so never kill it or fail teardown.
+      continue;
+    }
     if (!authority || !authority.role || !authority.scope) {
       // The mission still points at a LIVE process that no pane authority can
       // attribute. Reporting a clean exit here would strand that process and
@@ -478,7 +504,15 @@ function orphanRuntimeInventory(input: {
   for (const agent of [
     ...listAgentSessions(),
     ...listAcpDriverAgentSessions(),
-  ]) add(agent);
+  ]) {
+    const resolvedScope = sameScope(agentCoordinationScope(agent), input.scope)
+      ? agentCoordinationScope(agent)
+      : agent.scope;
+    add({
+      ...agent,
+      scope: resolvedScope,
+    });
+  }
 
   // Preserve visual leaves even when their PTY already exited. A live legacy
   // snapshot absent from the agent inventory is admitted only through its
@@ -859,14 +893,27 @@ export async function settleMissionRuntimeDemotion(input: {
   }
   if (termination.ok) {
     const current = input.suite.missions.get(input.demotedMission.id);
-    if (current?.orchestratorSessionId && physicalSessionIsLive(current.orchestratorSessionId)) {
+    const retainedCoordinator =
+      current?.orchestratorSessionId &&
+      input.reason !== 'operator-close' &&
+      !wasMissionRuntimeClosedByOperator(current) &&
+      !termination.terminatedSessionIds.includes(current.orchestratorSessionId) &&
+      physicalSessionIsLive(current.orchestratorSessionId) &&
+      [...listAgentSessions(), ...listAcpDriverAgentSessions()].some(
+        (session) =>
+          session.sessionId === current.orchestratorSessionId &&
+          session.missionId === current.id &&
+          session.role === 'orchestrator',
+      );
+    if (current && retainedCoordinator) {
       // A blocked coordinator is intentionally retained for recovery. Losing
       // its durable pointer would make the next reconciliation kill it.
       return { mission: current, termination };
     }
     const mission =
+      current?.orchestratorSessionId === undefined &&
       input.demotedMission.orchestratorSessionId === undefined
-        ? input.demotedMission
+        ? (current ?? input.demotedMission)
         : input.suite.missions.setOrchestratorSession(
             input.demotedMission.id,
             null,

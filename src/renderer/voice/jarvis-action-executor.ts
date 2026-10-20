@@ -156,9 +156,31 @@ function paneContext() {
   };
 }
 
-function mcpSummary(result: { ok: boolean; tool: string; error?: string }): string {
+function mcpSummary(result: { ok: boolean; tool: string; error?: string; hint?: string }): string {
   if (result.ok) return `${result.tool} ok`;
-  return result.error ?? `${result.tool} falhou`;
+  const error = result.error ?? `${result.tool} falhou`;
+  return result.hint ? `${error} — ${result.hint}` : error;
+}
+
+/**
+ * O que volta ao modelo de uma chamada MCP: o resultado da ferramenta ou, na
+ * falha, o erro e a dica de recuperação do despachante — sem a dica o modelo
+ * repetia a mesma chamada recusada.
+ */
+function mcpToolOutput(result: {
+  ok: boolean;
+  result?: unknown;
+  error?: string;
+  hint?: string;
+}): { output?: unknown } {
+  if (result.result !== undefined) return { output: sanitizeMcpResultOutput(result.result) };
+  if (result.ok) return {};
+  return {
+    output: sanitizeMcpResultOutput({
+      error: result.error ?? 'falhou',
+      ...(result.hint ? { hint: result.hint } : {}),
+    }),
+  };
 }
 
 function repositorySyncNarration(result: {
@@ -368,6 +390,48 @@ async function navigateBrowserPane(
   }
 }
 
+/** Espera da resposta do pane (o supervisor da ação dá a folga acima disto). */
+export const PANE_ASK_TIMEOUT_MS = 45_000;
+
+interface PaneAskOutput {
+  ok?: unknown;
+  state?: unknown;
+  answer?: unknown;
+  reason?: unknown;
+}
+
+function paneAskOutputOf(toolResult: { output?: unknown } | null | undefined): PaneAskOutput | null {
+  const output = toolResult?.output;
+  return output && typeof output === 'object' && !Array.isArray(output) ? (output as PaneAskOutput) : null;
+}
+
+/**
+ * Resumo honesto da pergunta ao pane: respondeu, ainda está trabalhando, ou
+ * não dá para perguntar (one-shot). Antes era "nexus_pane_write ok", que o
+ * modelo narrava como se o agente já tivesse respondido.
+ */
+export function paneAskSummary(toolResult: { ok: boolean; summary: string; output?: unknown }): string {
+  if (!toolResult.ok) return toolResult.summary;
+  const out = paneAskOutputOf(toolResult);
+  if (!out) return toolResult.summary;
+  if (out.ok === true) return 'o pane respondeu (texto em result.answer)';
+  if (out.state === 'oneshot') return 'pane one-shot: não lê perguntas no terminal';
+  if (typeof out.reason === 'string' && out.reason) return out.reason;
+  return 'pergunta enviada, mas o pane ainda não respondeu dentro do prazo';
+}
+
+/** Fala de reserva quando o modelo não narrar sozinho: a resposta, nunca "feito". */
+export function paneAskNarration(toolResult: { ok: boolean; output?: unknown } | null): string | null {
+  const out = paneAskOutputOf(toolResult);
+  if (!toolResult?.ok || !out) return null;
+  if (out.ok === true && typeof out.answer === 'string' && out.answer.trim()) {
+    const answer = out.answer.trim();
+    return answer.length > 600 ? `${answer.slice(0, 599)}…` : answer;
+  }
+  if (out.state === 'oneshot') return 'Esse pane roda uma vez só; não dá para perguntar nele.';
+  return 'Perguntei, mas o pane ainda não respondeu. Posso ler o pane daqui a pouco.';
+}
+
 async function executeViaMcp(
   action: JarvisAction,
   sayText: string,
@@ -398,9 +462,7 @@ async function executeViaMcp(
       tool: action.type === 'mcp_tool' ? 'mcp_tool' : action.type,
       ok: result.ok,
       summary: mcpSummary(result),
-      ...(result.result !== undefined
-        ? { output: sanitizeMcpResultOutput(result.result) }
-        : {}),
+      ...mcpToolOutput(result),
     },
   };
 }
@@ -1369,47 +1431,29 @@ export async function executeJarvisAction(
     // de um pane de agente/orquestrador.
     const { root } = useLayoutStore.getState();
     const target = resolveSendToPaneTarget(action.paneId, listPanes(root));
-    if (target.kind === 'asking-pane') {
+    const askPaneId =
+      target.kind === 'asking-pane'
+        ? target.paneId
+        : target.kind === 'delegation'
+          ? target.orchestratorPaneId
+          : null;
+    if (askPaneId) {
+      // `nexus_pane_ask` digita, espera o pane ficar ocioso e devolve SÓ o
+      // texto novo: a Jarvis narra a resposta do agente, não "mandei".
       const result = await executeViaMcp(
         {
           type: 'mcp_tool',
-          tool: 'nexus_pane_write',
-          args: { paneId: target.paneId, text: action.pergunta, submit: true },
+          tool: 'nexus_pane_ask',
+          args: { paneId: askPaneId, question: action.pergunta, timeoutMs: PANE_ASK_TIMEOUT_MS },
         },
         sayText,
         control,
       );
       if (result) {
-        return {
-          ...result,
-          expectReply,
-          toolResult: result.toolResult
-            ? { ...result.toolResult, tool: 'ask_pane' }
-            : null,
-        };
-      }
-    } else if (target.kind === 'delegation') {
-      const result = await executeViaMcp(
-        {
-          type: 'mcp_tool',
-          tool: 'nexus_pane_write',
-          args: {
-            paneId: target.orchestratorPaneId,
-            text: action.pergunta,
-            submit: true,
-          },
-        },
-        sayText,
-        control,
-      );
-      if (result) {
-        return {
-          ...result,
-          expectReply,
-          toolResult: result.toolResult
-            ? { ...result.toolResult, tool: 'ask_pane' }
-            : null,
-        };
+        const toolResult = result.toolResult
+          ? { ...result.toolResult, tool: 'ask_pane' as const, summary: paneAskSummary(result.toolResult) }
+          : null;
+        return { ...result, sayText: paneAskNarration(result.toolResult) ?? result.sayText, expectReply, toolResult };
       }
     } else if (target.kind === 'asking-pane-gone') {
       sayText =

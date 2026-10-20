@@ -18,6 +18,7 @@ import { reportLicenseDenial } from '../state/access-guard';
 import { waitForBrowserPaneCreated } from '../browser/browser-host';
 import { buildPresentationBrief, type BriefVoice } from './video-brief';
 import { NarrationRecorder } from './NarrationRecorder';
+import { requestMyVoiceFocus } from './settings/my-voice-focus';
 
 /**
  * Estúdio de Mídia → "Vídeos do projeto" (F-1596). The person sees the
@@ -48,7 +49,15 @@ function fileName(file: VideoFileInfo): string {
   return file.path.split('/').pop() ?? file.path;
 }
 
-function BriefForm({ onClose, onSent }: { onClose: () => void; onSent: () => void }) {
+function BriefForm({
+  onClose,
+  onSent,
+  onOpenMyVoice,
+}: {
+  onClose: () => void;
+  onSent: () => void;
+  onOpenMyVoice: () => void;
+}) {
   const [product, setProduct] = useState('');
   const [siteUrl, setSiteUrl] = useState('');
   const [audience, setAudience] = useState('');
@@ -155,6 +164,14 @@ function BriefForm({ onClose, onSent }: { onClose: () => void; onSent: () => voi
           <option value="none">Sem narração</option>
         </select>
       </label>
+      {/* F-1616: a voz própria é criada em Serviços de mídia; daqui se chega lá direto. */}
+      <p className="settings-detail__hint vp-field--wide">
+        {voices.length === 0 ? 'Quer narrar com a sua própria voz? ' : 'Para gravar outra voz ou apagar uma, use '}
+        <button type="button" className="settings-link vp-voice-link" onClick={onOpenMyVoice}>
+          {voices.length === 0 ? 'Criar minha voz' : 'Minha voz'}
+        </button>
+        {voices.length === 0 ? ' (grava e clona com consentimento, na ElevenLabs ou no Gemini).' : '.'}
+      </p>
       <label className="my-voice__check vp-field">
         <input type="checkbox" checked={music} onChange={(event) => setMusic(event.target.checked)} />
         <span>Música instrumental de fundo</span>
@@ -548,7 +565,17 @@ export function VideoProjectsSection({ onRequestClose }: { onRequestClose: () =>
         </div>
       </div>
 
-      {briefOpen && <BriefForm onClose={() => setBriefOpen(false)} onSent={onRequestClose} />}
+      {briefOpen && (
+        <BriefForm
+          onClose={() => setBriefOpen(false)}
+          onSent={onRequestClose}
+          onOpenMyVoice={() => {
+            requestMyVoiceFocus();
+            useProductNavigationStore.getState().openSettings('media');
+            onRequestClose();
+          }}
+        />
+      )}
       {doctor && <DoctorReport report={doctor} />}
       {error && <p className="ms-dim" role="status">{error}</p>}
 

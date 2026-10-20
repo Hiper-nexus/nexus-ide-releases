@@ -14,6 +14,7 @@ vi.mock('../orch/confirm-reopen-mission', () => ({
 
 import { CommandPalette } from './CommandPalette';
 import { useCommandPaletteStore } from '../state/command-palette-store';
+import { useMediaStudioStore } from '../state/media-studio-store';
 import { useContextualPanelNavStore } from '../state/contextual-panel-nav-store';
 import { useLayoutStore } from '../state/layout-store';
 import { useMissionSetupStore } from '../state/mission-setup-store';
@@ -174,6 +175,21 @@ describe('CommandPalette product navigation', () => {
     act(() => action.click());
     expect(useCommandPaletteStore.getState().open).toBe(false);
     expect(useBugReportDialogStore.getState().isOpen).toBe(true);
+  });
+
+  it('abre o Estúdio de mídia por palavra natural (vídeo) e fecha o palette', () => {
+    useMediaStudioStore.getState().hide();
+    const host = render(<CommandPalette />);
+    const input = host.querySelector<HTMLInputElement>('input')!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    act(() => {
+      setter.call(input, 'video');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    act(() => actionButton(host, 'Estúdio de mídia').click());
+    expect(useCommandPaletteStore.getState().open).toBe(false);
+    expect(useMediaStudioStore.getState().open).toBe(true);
+    useMediaStudioStore.getState().hide();
   });
 
   it('acha o comando por palavras de busca naturais (bug, erro, problema)', () => {

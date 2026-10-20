@@ -15,9 +15,14 @@ import { useVoiceStore, type VoiceUiStatus } from '../voice/voice-store';
  *    e se refazem (`idleParticleCohesion`, dissolução LOCAL — nunca a nuvem
  *    espalhada pelo canvas inteiro);
  *  - ouvindo: corpo inteiro puxado para dentro, pulsando com o nível do mic;
- *  - falando: ondas (ripples) saindo da cabeça/peito, boca e torso vibrando
- *    com a energia da própria voz (`speakingEnergy` sobre o RMS da SAÍDA em
- *    `voice-store.outputLevel`; pulso base quando não há nível);
+ *  - falando: a BOCA fala. Um anel de lábios (`buildMouthRing`) abre e fecha
+ *    com o volume da própria voz e estica com o brilho do espectro
+ *    (`mouthShape` sobre `voice-store.outputLevel`/`outputBrightness`, já
+ *    atrasados pela latência do alto-falante): vogal aberta abre, "s"/"i"
+ *    estica, pausa fecha. As partículas da cabeça abrem o vão da boca e o
+ *    queixo desce com a mandíbula (`mouthDeform`); cada sílaba solta uma onda
+ *    da boca e o torso ressoa com a energia (`speakingEnergy`). Sem medidor
+ *    de saída, sílabas sintéticas (~4/s) mantêm a boca viva;
  *  - transcrevendo/roteando: órbita/vórtice ao redor do centro;
  *  - erro: cor `--danger` e dispersão.
  *
@@ -274,12 +279,134 @@ export function particleCountForSize(size: number): number {
 }
 
 /**
- * Energia da fala para vibrar boca/torso e emitir ondas: usa o nível REAL de
- * áudio quando existe; sem nível, um pulso base para o estado não ficar estático.
+ * Energia da fala para vibrar o torso e emitir ondas: usa o nível REAL de
+ * áudio quando existe; sem nível, um pulso base para o estado não ficar
+ * estático. `measured` = o medidor de saída já entregou voz neste turno: aí o
+ * silêncio é PAUSA de verdade e a energia segue o nível, sem pulso inventado.
  */
-export function speakingEnergy(level: number, t: number): number {
-  if (level > 0.02) return clamp01(level);
+export function speakingEnergy(level: number, t: number, measured = false): number {
+  if (measured || level > 0.02) return clamp01(level);
   return 0.3 + 0.25 * Math.sin(t * 8.2);
+}
+
+// ---- boca --------------------------------------------------------------------
+
+/** Centro da boca (normalizado): terço inferior da cabeça (centro 0,155, raio 0,09). */
+export const MOUTH_CENTER: Readonly<Particle2> = { x: 0.5, y: 0.198 };
+/** Meia-largura da boca fechada. */
+export const MOUTH_HALF_WIDTH = 0.034;
+/** Meia-altura da boca fechada: os lábios encostados, uma linha. */
+export const MOUTH_CLOSED_HALF_HEIGHT = 0.0035;
+/** Quanto o lábio superior sobe na abertura máxima. */
+const MOUTH_OPEN_UPPER = 0.01;
+/** Quanto o lábio inferior desce além da mandíbula na abertura máxima. */
+const MOUTH_OPEN_LOWER = 0.02;
+/** O queixo inteiro desce com a mandíbula. */
+const JAW_DROP = 0.012;
+/** "s"/"i": a boca estica até +35% de largura. */
+const MOUTH_STRETCH = 0.35;
+/** Sílabas sintéticas só depois disto falando sem nenhum nível medido (s). */
+export const SYNTHETIC_MOUTH_GRACE_S = 0.5;
+
+export interface MouthShape {
+  /** 0 = lábios encostados … 1 = abertura máxima (vogal aberta, voz alta). */
+  open: number;
+  /** 0 = largura de repouso … 1 = esticada (fricativa, "i", "e"). */
+  wide: number;
+}
+
+/** Quantas partículas desenham os lábios para `bodyCount` partículas de corpo. */
+export function mouthParticleCount(bodyCount: number): number {
+  if (bodyCount <= 0) return 0;
+  return Math.round(clamp(bodyCount * 0.045, 10, 16));
+}
+
+/**
+ * Ângulos dos lábios ao redor da elipse da boca, igualmente espaçados com um
+ * desvio pequeno e determinístico (a boca não lê como um anel de régua).
+ * `sin(θ) < 0` = lábio superior; `> 0` = inferior; `≈ 0` = cantos.
+ */
+export function buildMouthRing(count: number, seed = 0x5eed11): number[] {
+  const n = Math.max(0, Math.floor(count));
+  const rng = mulberry32(seed);
+  const step = (Math.PI * 2) / Math.max(1, n);
+  return Array.from({ length: n }, (_, i) => i * step + (rng() - 0.5) * step * 0.35);
+}
+
+/**
+ * Forma da boca para o som que está saindo agora. Medido: volume abre (curva
+ * suave, a fala baixa ainda mexe a boca), brilho estica e fecha um pouco (o
+ * "i" é largo e estreito, o "a" é alto). Silêncio medido = boca fechada.
+ * Sem medida: sílabas sintéticas (~4,2 por segundo, irregulares).
+ */
+export function mouthShape(level: number, brightness: number, t: number, measured: boolean): MouthShape {
+  if (measured || level > 0.02) {
+    const l = clamp01(level);
+    const b = clamp01(brightness);
+    if (l <= 0.02) return { open: 0, wide: b * 0.3 };
+    return {
+      open: clamp01(l ** 0.75 * (1 - 0.5 * b) * 1.15),
+      wide: clamp01(b * 0.85 + l * 0.15),
+    };
+  }
+  const syllable = Math.sin(t * 26.4) * 0.5 + Math.sin(t * 10.7 + 0.9) * 0.3;
+  return { open: clamp01(0.15 + syllable), wide: clamp01(0.3 + 0.2 * Math.sin(t * 5.7)) };
+}
+
+/**
+ * Posição (normalizada) do lábio no ângulo `theta` para a forma dada. Os
+ * cantos (sin θ ≈ 0) só esticam; o meio dos lábios é quem abre: o superior
+ * sobe pouco, o inferior desce com a mandíbula. Esticar estreita a abertura.
+ */
+export function lipPoint(theta: number, open: number, wide: number): Particle2 {
+  const o = clamp01(open);
+  const w = clamp01(wide);
+  const halfWidth = MOUTH_HALF_WIDTH * (1 + MOUTH_STRETCH * w - 0.2 * o);
+  const s = Math.sin(theta);
+  const lift =
+    s < 0 ? MOUTH_OPEN_UPPER * o * (1 - 0.5 * w) : (MOUTH_OPEN_LOWER + JAW_DROP) * o * (1 - 0.4 * w);
+  return {
+    x: MOUTH_CENTER.x + Math.cos(theta) * halfWidth,
+    y: MOUTH_CENTER.y + s * (MOUTH_CLOSED_HALF_HEIGHT + lift),
+  };
+}
+
+/**
+ * Deslocamento de uma partícula do ROSTO (casa em `x`,`y`) para a boca abrir
+ * de verdade: o que está logo acima da linha da boca sobe, o que está abaixo
+ * desce com o lábio inferior e o queixo inteiro acompanha a mandíbula — fica
+ * um vão escuro no meio, contornado pelos lábios. Os cantos esticam para os
+ * lados com `wide`. Fora da cabeça (pescoço, corpo) = sem deslocamento.
+ */
+export function mouthDeform(x: number, y: number, open: number, wide: number): Particle2 {
+  const o = clamp01(open);
+  const w = clamp01(wide);
+  if ((o === 0 && w === 0) || Math.hypot(x - 0.5, y - 0.155) > 0.1) return { x: 0, y: 0 };
+  const dx = x - MOUTH_CENTER.x;
+  const dy = y - MOUTH_CENTER.y;
+  // A coluna da boca: o meio abre mais que os cantos (vão em forma de lente).
+  const column = Math.exp(-((dx / 0.045) ** 2));
+  const oy =
+    dy >= 0
+      ? o *
+        (JAW_DROP * (0.4 + 0.6 * column) +
+          MOUTH_OPEN_LOWER * (1 - 0.4 * w) * column * Math.exp(-((dy / 0.025) ** 2)))
+      : -o * MOUTH_OPEN_UPPER * (1 - 0.5 * w) * column * Math.exp(-((dy / 0.02) ** 2));
+  const ox =
+    Math.sign(dx) *
+    w *
+    MOUTH_HALF_WIDTH *
+    MOUTH_STRETCH *
+    Math.exp(-((dy / 0.015) ** 2)) *
+    Math.exp(-((dx / 0.06) ** 2));
+  return { x: ox, y: oy };
+}
+
+/** Passo de suavização da boca: abre junto com a sílaba, fecha um pouco mais devagar. */
+export function smoothMouth(previous: MouthShape, target: MouthShape, dtMs: number): MouthShape {
+  const step = (from: number, to: number) =>
+    lerp(from, to, clamp(dtMs * (to > from ? 0.035 : 0.02), 0, 1));
+  return { open: step(previous.open, target.open), wide: step(previous.wide, target.wide) };
 }
 
 /**
@@ -298,12 +425,13 @@ export function figureLevel(
 }
 
 /**
- * Peso da vibração por região do corpo enquanto fala: peito/torso vibram mais,
- * cabeça (boca) um pouco, pernas quase nada.
+ * Peso da vibração por região do corpo enquanto fala: peito/torso ressoam,
+ * pernas quase nada e a cabeça quase parada — quem fala é a boca, e tremer o
+ * rosto borrava os lábios.
  */
 export function speakingZoneWeight(y: number): number {
   if (y > 0.27 && y < 0.56) return 1;
-  if (y >= 0.06 && y <= 0.27) return 0.55;
+  if (y >= 0.06 && y <= 0.27) return 0.12;
   return 0.3;
 }
 
@@ -403,6 +531,8 @@ interface Particle {
   tip: number;
   /** Coesão efetiva neste quadro (alpha: a ponta solta fica mais tênue). */
   form: number;
+  /** Ângulo na elipse da boca para os lábios; `null` = partícula do corpo. */
+  lip: number | null;
 }
 
 interface Ripple {
@@ -414,16 +544,21 @@ interface Ripple {
 
 /** Fontes das ondas ao falar: boca/peito, em coordenadas normalizadas. */
 const RIPPLE_SOURCES: readonly Particle2[] = [
-  { x: 0.5, y: 0.19 },
+  { x: 0.5, y: MOUTH_CENTER.y },
   { x: 0.5, y: 0.4 },
 ];
 
 const MAX_RIPPLES = 24;
+/** Ataque de sílaba: o nível sobe isto acima da média lenta. */
+const SYLLABLE_ONSET = 0.1;
+/** Intervalo mínimo entre duas ondas de sílaba (ms). */
+const SYLLABLE_MIN_GAP_MS = 120;
 
 export function JarvisParticleFigure({ status }: { status: VoiceUiStatus }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const levelRef = useRef(0);
   const outputRef = useRef(0);
+  const brightnessRef = useRef(0);
   const statusRef = useRef<VoiceUiStatus>(status);
   const motionRef = useRef<FigureMotion>(figureMotionForStatus(status));
   /** Movimento reduzido: não há loop, então o estado novo pede repintura. */
@@ -470,11 +605,28 @@ export function JarvisParticleFigure({ status }: { status: VoiceUiStatus }) {
       phase: scatter() * Math.PI * 2,
       tip: p.tip,
       form: 0,
+      lip: null,
     }));
+    // Os lábios vêm DEPOIS do corpo: a silhueta segue com os mesmos índices.
+    for (const theta of buildMouthRing(mouthParticleCount(count))) {
+      const home = lipPoint(theta, 0, 0);
+      particles.push({
+        home,
+        cloud: { x: scatter(), y: scatter() },
+        pos: { x: scatter() * cssSize, y: scatter() * cssSize },
+        vel: { x: 0, y: 0 },
+        r: 0.75 + scatter() * 0.5,
+        phase: scatter() * Math.PI * 2,
+        tip: 0,
+        form: 0,
+        lip: theta,
+      });
+    }
 
     const unsub = useVoiceStore.subscribe((s) => {
       levelRef.current = s.level;
       outputRef.current = s.outputLevel;
+      brightnessRef.current = s.outputBrightness;
     });
 
     // Cursor: ouvido em `window` (o canvas é pointer-events:none e o clique do
@@ -503,6 +655,14 @@ export function JarvisParticleFigure({ status }: { status: VoiceUiStatus }) {
     let raf = 0;
     let running = false;
     let last = performance.now();
+    // Boca: forma suavizada, presença dos lábios e o turno de fala atual
+    // (desde quando fala e se o medidor já entregou voz de verdade).
+    let mouth: MouthShape = { open: 0, wide: 0 };
+    let lipGlow = 0;
+    let speakingSince: number | null = null;
+    let measuredVoice = false;
+    let slowLevel = 0;
+    let lastOnset = -Infinity;
     // Valores por quadro que o pincel lê (física e desenho são separados).
     const frame = { level: 0, energy: 0, breath: 0 };
 
@@ -523,7 +683,25 @@ export function JarvisParticleFigure({ status }: { status: VoiceUiStatus }) {
       form = lerp(form, target, clamp(dtMs * 0.0045, 0, 1));
       calm = lerp(calm, motion.calm, clamp(dtMs * 0.004, 0, 1));
 
-      const energy = st === 'speaking' ? speakingEnergy(level, t) : 0;
+      // Turno de fala: o medidor de saída prova voz real uma vez e, dali em
+      // diante, silêncio é pausa (boca fecha), não falta de medida.
+      if (st === 'speaking') {
+        speakingSince ??= t;
+        if (level > 0.02) measuredVoice = true;
+      } else {
+        speakingSince = null;
+        measuredVoice = false;
+      }
+      const synthetic =
+        st === 'speaking' && !measuredVoice && t - (speakingSince ?? t) >= SYNTHETIC_MOUTH_GRACE_S;
+      const mouthTarget: MouthShape =
+        st === 'speaking' && (measuredVoice || synthetic)
+          ? mouthShape(level, brightnessRef.current, t, measuredVoice)
+          : { open: 0, wide: 0 };
+      mouth = smoothMouth(mouth, mouthTarget, dtMs);
+      lipGlow = lerp(lipGlow, st === 'speaking' ? 1 : 0, clamp(dtMs * 0.006, 0, 1));
+
+      const energy = st === 'speaking' ? speakingEnergy(level, t, measuredVoice) : 0;
       frame.level = level;
       frame.energy = energy;
       frame.breath = form * motion.breathe * (0.35 + level * 0.65); // pulsa com a voz
@@ -544,8 +722,18 @@ export function JarvisParticleFigure({ status }: { status: VoiceUiStatus }) {
         const pf = calm > 0.001 ? lerp(form, idleParticleCohesion(t, p.tip), calm) : form;
         p.form = pf;
 
+        // A boca fala: lábios na forma atual; o rosto abre o vão e o queixo
+        // desce com a mandíbula. Boca fechada = casa de sempre.
+        let home = p.home;
+        if (p.lip !== null) {
+          home = lipPoint(p.lip, mouth.open, mouth.wide);
+        } else if (mouth.open > 0.001 || mouth.wide > 0.001) {
+          const d = mouthDeform(p.home.x, p.home.y, mouth.open, mouth.wide);
+          if (d.x !== 0 || d.y !== 0) home = { x: p.home.x + d.x, y: p.home.y + d.y };
+        }
+
         // Casa/nuvem normalizadas → px; repouso intermediado pela coesão.
-        const rest = restPoint(p.home, p.cloud, pf, lerp(1, idleScatter(p.tip), calm));
+        const rest = restPoint(home, p.cloud, pf, lerp(1, idleScatter(p.tip), calm));
         let restX = rest.x * size;
         let restY = rest.y * size;
 
@@ -602,8 +790,10 @@ export function JarvisParticleFigure({ status }: { status: VoiceUiStatus }) {
         p.pos.x += p.vel.x + Math.sin(t * 0.8 + p.phase) * drift;
         p.pos.y += p.vel.y + Math.cos(t * 0.7 + p.phase) * drift;
 
-        // Vibração: boca/torso quando fala (peso por zona), tremor no erro.
+        // Vibração: torso ressoa quando fala (peso por zona), tremor no erro.
         // O raio cresce com a energia da própria voz — fala alta, corpo mais.
+        // Os lábios nunca tremem: a boca tem de ler nítida.
+        if (p.lip !== null && st === 'speaking') continue;
         const jitter =
           motion.jitter *
           (st === 'speaking' ? speakingZoneWeight(p.home.y) * (0.3 + energy * 1.3) : 0.6);
@@ -611,19 +801,27 @@ export function JarvisParticleFigure({ status }: { status: VoiceUiStatus }) {
       }
 
       // Ondas ao falar: anéis que nascem na boca/peito, expandem e somem.
+      // Com voz medida, uma onda por SÍLABA (ataque do nível acima da média
+      // lenta) saindo da boca; sem medida, o ritmo base do estado.
+      const pushRipple = (src: Particle2) => {
+        if (ripples.length >= MAX_RIPPLES) return;
+        ripples.push({ x: cx + gaze.x, y: src.y * size + gaze.y, radius: size * 0.04, alpha: 0.5 });
+      };
       if (running && motion.ripple > 0) {
-        rippleAcc += motion.ripple * (0.5 + energy) * dtMs * 0.001;
-        while (rippleAcc >= 1 && ripples.length < MAX_RIPPLES) {
-          rippleAcc -= 1;
-          const src = RIPPLE_SOURCES[rippleToggle++ % RIPPLE_SOURCES.length];
-          ripples.push({
-            x: cx + gaze.x,
-            y: src.y * size + gaze.y,
-            radius: size * 0.04,
-            alpha: 0.5,
-          });
+        if (measuredVoice) {
+          if (level - slowLevel > SYLLABLE_ONSET && now - lastOnset >= SYLLABLE_MIN_GAP_MS) {
+            lastOnset = now;
+            pushRipple(RIPPLE_SOURCES[0]!);
+          }
+        } else {
+          rippleAcc += motion.ripple * (0.5 + energy) * dtMs * 0.001;
+          while (rippleAcc >= 1 && ripples.length < MAX_RIPPLES) {
+            rippleAcc -= 1;
+            pushRipple(RIPPLE_SOURCES[rippleToggle++ % RIPPLE_SOURCES.length]!);
+          }
         }
       }
+      slowLevel = lerp(slowLevel, level, clamp(dtMs * 0.006, 0, 1));
       if (ripples.length > 0) {
         const next: Ripple[] = [];
         for (const rp of ripples) {
@@ -642,12 +840,18 @@ export function JarvisParticleFigure({ status }: { status: VoiceUiStatus }) {
       ctx.clearRect(0, 0, size, size);
       ctx.fillStyle = color;
       for (const p of particles) {
-        ctx.globalAlpha = clamp(0.28 + p.form * 0.38 + frame.level * 0.2 + frame.energy * 0.12, 0, 1);
+        // Lábios: discretos no repouso, acesos ao falar (mais quanto mais abre).
+        const lip = p.lip !== null;
+        ctx.globalAlpha = lip
+          ? clamp(0.22 + p.form * 0.1 + lipGlow * 0.4 + mouth.open * 0.3, 0, 1)
+          : clamp(0.28 + p.form * 0.38 + frame.level * 0.2 + frame.energy * 0.12, 0, 1);
         ctx.beginPath();
         ctx.arc(
           p.pos.x,
           p.pos.y,
-          p.r * (0.85 + frame.breath * 0.35 + frame.energy * 0.25),
+          lip
+            ? p.r * (1 + mouth.open * 0.2)
+            : p.r * (0.85 + frame.breath * 0.35 + frame.energy * 0.25),
           0,
           Math.PI * 2,
         );
@@ -675,6 +879,7 @@ export function JarvisParticleFigure({ status }: { status: VoiceUiStatus }) {
       frame.level = 0;
       frame.energy = 0;
       frame.breath = 0;
+      mouth = { open: 0, wide: 0 }; // boca fechada: os lábios ficam na casa
       for (const p of particles) {
         p.form = 1;
         p.pos.x = p.home.x * cssSize;

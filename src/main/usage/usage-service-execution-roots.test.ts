@@ -123,6 +123,10 @@ vi.mock('../persistence/provider-session-store', () => ({
     },
   ),
   saveProviderPaneSession: mocks.saveProviderPaneSession,
+  providerPaneSessionId: vi.fn(
+    (_scope: ProjectExecutionScope, paneId: string, adapterId: string) =>
+      mocks.savedPaneSessions.get(`${paneId}|${adapterId}`)?.sessionId ?? null,
+  ),
 }));
 
 vi.mock('./claude-transcript-watcher', () => ({
@@ -1044,6 +1048,90 @@ describe.skipIf(!sqliteAvailable)(
       ).toBe(conversation);
       // A telemetria de uso continua só para claude/codex.
       expect(mocks.watcherOptions).toHaveLength(0);
+      service.stop();
+    });
+
+    it('F-1618: id ditado sem transcrito não apaga a conversa real do pane', () => {
+      // Campo 20/10: o Maestro recuperado depois da queda do host nasceu com
+      // `--session-id` novo e morreu em 4 s. O id foi gravado no spawn por
+      // cima da conversa real, e cada «Retomar» saiu com «No conversation found».
+      const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'usage-dictated-bind-'));
+      tempRoots.push(parent);
+      const scope = scopeFixture(parent, 'checkout-a');
+      const tabRoot = executionScope(scope, path.join(parent, 'wt', 'tab-a'));
+      const runtimeManager = new ProjectRuntimeManager({
+        baseDir: path.join(parent, 'runtime'),
+        appVersion: 'usage-service-test',
+      });
+      managers.push(runtimeManager);
+      const service = new UsageTelemetryService(new ProjectUsageStoreRegistry(runtimeManager));
+      service.start();
+      mocks.savedPaneSessions.set('pane-maestro|claude', {
+        sessionId: 'conversa-real',
+        accountId: 'acct-a',
+      });
+      const token = mintToken({ label: 'maestro', role: 'orchestrator', scope, executionScope: tabRoot });
+      bindTokenToSession(token.token, 'pty-novo');
+      mocks.dictationHook?.({
+        providerSessionId: 'id-ditado',
+        ptySessionId: 'pty-novo',
+        paneId: 'pane-maestro',
+        adapterId: 'claude',
+        cwd: tabRoot.rootRealPath,
+        accountId: 'acct-a',
+      });
+
+      // Sem transcrito, a retomada continua achando a conversa real.
+      expect(mocks.saveProviderPaneSession).not.toHaveBeenCalled();
+      expect(
+        mocks.resumeLookup?.(scope, 'pane-maestro', 'claude', 'acct-a', { executionScope: tabRoot }),
+      ).toBe('conversa-real');
+
+      // O 1º evento do transcrito prova a conversa nova: agora ela é a do pane.
+      const onEvent = (mocks.watcherOptions.at(-1) as unknown as {
+        onEvent: (event: unknown, file: string, timing: { requestStartedAt: number | null }) => void;
+      }).onEvent;
+      onEvent(
+        { ...codexUsage('id-ditado', 'msg-1'), model: 'claude-fable-5-1' },
+        path.join(tabRoot.rootRealPath, 'id-ditado.jsonl'),
+        { requestStartedAt: null },
+      );
+      expect(mocks.saveProviderPaneSession).toHaveBeenCalledTimes(1);
+      expect(mocks.savedPaneSessions.get('pane-maestro|claude')).toEqual({
+        sessionId: 'id-ditado',
+        accountId: 'acct-a',
+      });
+      // Um 2º evento não regrava.
+      onEvent(
+        { ...codexUsage('id-ditado', 'msg-2'), model: 'claude-fable-5-1' },
+        path.join(tabRoot.rootRealPath, 'id-ditado.jsonl'),
+        { requestStartedAt: null },
+      );
+      expect(mocks.saveProviderPaneSession).toHaveBeenCalledTimes(1);
+      service.stop();
+    });
+
+    it('F-1618: pane sem conversa ligada grava o id ditado já no spawn', () => {
+      const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'usage-dictated-first-'));
+      tempRoots.push(parent);
+      const scope = scopeFixture(parent, 'checkout-a');
+      const runtimeManager = new ProjectRuntimeManager({
+        baseDir: path.join(parent, 'runtime'),
+        appVersion: 'usage-service-test',
+      });
+      managers.push(runtimeManager);
+      const service = new UsageTelemetryService(new ProjectUsageStoreRegistry(runtimeManager));
+      service.start();
+      const token = mintToken({ label: 'operador', role: 'user', scope, executionScope: scope });
+      bindTokenToSession(token.token, 'pty-primeiro');
+      mocks.dictationHook?.({
+        providerSessionId: 'id-primeiro',
+        ptySessionId: 'pty-primeiro',
+        paneId: 'pane-novo',
+        adapterId: 'claude',
+        cwd: scope.rootRealPath,
+      });
+      expect(mocks.savedPaneSessions.get('pane-novo|claude')?.sessionId).toBe('id-primeiro');
       service.stop();
     });
   },

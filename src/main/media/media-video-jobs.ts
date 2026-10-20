@@ -15,7 +15,11 @@ import {
  * Jobs live under the open workspace: `.nexus/media/video-jobs.json`.
  */
 
-export type MediaVideoJobProvider = 'replicate-video' | 'google-video' | 'xai-video';
+export type MediaVideoJobProvider =
+  | 'replicate-video'
+  | 'google-video'
+  | 'xai-video'
+  | 'higgsfield-video';
 
 export interface MediaVideoJobRecord {
   jobId: string;
@@ -41,6 +45,8 @@ export interface MediaVideoJobRecord {
   inputImages?: number;
   /** Tokens que o Google cobrou (Gemini Omni). */
   usage?: GeminiOmniUsage;
+  /** F-1613: USD que a Higgsfield cotou para o pedido (`/estimate`). */
+  quotedCostUsd?: number;
 }
 
 const JOBS_REL = path.join('.nexus', 'media', 'video-jobs.json');

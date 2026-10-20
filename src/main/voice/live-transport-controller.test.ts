@@ -38,6 +38,7 @@ function fakeProvider(connect: () => Promise<void>): TurnManagedRealtimeProvider
   fireAudioOut(samples?: Int16Array): void;
   fireResponseDone(): void;
   setSynchronousToolResponseDone(enabled?: boolean): void;
+  setResponseInFlight(inFlight: boolean): void;
   fireError(err: Error): void;
 } {
   let ready = false;
@@ -52,9 +53,13 @@ function fakeProvider(connect: () => Promise<void>): TurnManagedRealtimeProvider
   const responseDoneCallbacks: Array<() => void> = [];
   const errorCallbacks: Array<(err: Error) => void> = [];
   let respondDoneDuringToolResult = false;
+  let responseInFlight = false;
   return {
     get closeCalls() {
       return closeCalls;
+    },
+    get responseInFlight() {
+      return responseInFlight;
     },
     get isReady() {
       return ready;
@@ -130,6 +135,9 @@ function fakeProvider(connect: () => Promise<void>): TurnManagedRealtimeProvider
     },
     setSynchronousToolResponseDone(enabled = true) {
       respondDoneDuringToolResult = enabled;
+    },
+    setResponseInFlight(inFlight) {
+      responseInFlight = inFlight;
     },
     fireError(err) {
       for (const cb of errorCallbacks) cb(err);
@@ -1185,6 +1193,68 @@ describe('LiveTransportController', () => {
     vi.doUnmock('./voice-secrets');
     vi.doUnmock('./jarvis-memory');
     vi.doUnmock('../jarvis/realtime/factory');
+  });
+
+  it('o done da resposta que FEZ a chamada não fecha o turno de ferramenta quando o seguimento já foi pedido', async () => {
+    vi.useFakeTimers();
+    vi.resetModules();
+    const provider = fakeProvider(async () => {});
+    const candidates: RealtimeProviderCandidate[] = [{ id: 'openai', provider }];
+    const events: Array<{ channel: string; payload: unknown }> = [];
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: { ...DEFAULT_VOICE_CONFIG.jarvisLive, enabled: true, transport: 'openai-realtime' },
+      }),
+    }));
+    vi.doMock('./voice-secrets', () => ({
+      resolveVoiceApiKey: () => 'key',
+      voiceApiKeySource: () => 'env',
+    }));
+    vi.doMock('./jarvis-memory', () => ({ jarvisMemory: { factsBlock: () => '' } }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => candidates,
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['openai'],
+    }));
+    const { VOICE_CHANNELS } = await import('../../shared/voice-channels');
+    const { LiveTransportController } = await import('./live-transport-controller');
+    const session = new JarvisLiveSession((channel, payload) => events.push({ channel, payload }), () => 1000);
+    session.setEnabled(true);
+    session.start({ reason: 'manual' });
+    const controller = new LiveTransportController((channel, payload) => events.push({ channel, payload }), session);
+    await controller.onStart();
+    const completions = () =>
+      events.filter((event) => event.channel === VOICE_CHANNELS.liveToolTurnComplete);
+
+    controller.beginTurn('turn-consultar');
+    provider.fireToolCall({ callId: 'call_sync' });
+    controller.toolResult({
+      sessionId: session.getState().sessionId ?? 'session',
+      at: 1001,
+      source: 'realtime',
+      callId: 'call_sync',
+      name: 'consultar',
+      tool: 'none',
+      ok: true,
+      summary: 'três panes abertos',
+    });
+    // O `done` é o da resposta que chamou a ferramenta; o seguimento já foi pedido.
+    provider.setResponseInFlight(true);
+    provider.fireResponseDone();
+    expect(completions()).toHaveLength(0);
+
+    // A resposta de seguimento terminou: agora o turno de ferramenta fecha.
+    provider.setResponseInFlight(false);
+    provider.fireResponseDone();
+    expect(completions()).toHaveLength(1);
+    expect(completions()[0]?.payload).toMatchObject({ callId: 'call_sync', turnId: 'turn-consultar' });
+
+    vi.doUnmock('./voice-config-store');
+    vi.doUnmock('./voice-secrets');
+    vi.doUnmock('./jarvis-memory');
+    vi.doUnmock('../jarvis/realtime/factory');
+    vi.useRealTimers();
   });
 
   it('bridges native realtime tool calls to the renderer and returns function output', async () => {

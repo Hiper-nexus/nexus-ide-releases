@@ -13,6 +13,7 @@ import {
   bindSpawnAuthority,
   consumeImmediateSquadSpawnGrant,
   issueImmediateSquadSpawnGrant,
+  persistedPaneAllowedTools,
   resolveSpawnAuthority,
 } from "./spawn-authority";
 
@@ -471,6 +472,36 @@ describe("spawn authority resolution", () => {
       authoritySeal,
       scope,
     });
+  });
+
+  it("F-1619: pane do operador sem allowlist gravada volta sem allowlist; worker comum fica []", () => {
+    // Campo 20/10: "Claude · operador" (+ Pane → Nesta missão) nasceu com
+    // allowedTools null e a linha durável sem o campo. O `[]` suposto aqui
+    // e na adoção recusava ligar a tela ao PTY vivo: "Não subiu" em laço.
+    const scope = testProjectScope();
+    const base = {
+      id: "mpane-op",
+      missionId: "mission-a",
+      adapterId: "claude",
+      title: "Claude · operador",
+      agentName: "Claude · operador",
+      role: "worker" as const,
+      paneId: "pane-op",
+      scope,
+      createdAt: 1,
+    };
+    expect(
+      resolveSpawnAuthority(undefined, null, [squad], { ...base, operatorOpened: true })
+        ?.allowedTools,
+    ).toBeNull();
+    expect(resolveSpawnAuthority(undefined, null, [squad], base)?.allowedTools).toEqual([]);
+    expect(persistedPaneAllowedTools({ role: "worker", operatorOpened: true })).toBeNull();
+    expect(persistedPaneAllowedTools({ role: "worker" })).toEqual([]);
+    expect(persistedPaneAllowedTools({ role: "orchestrator" })).toBeNull();
+    // Campo gravado vence a regra, inclusive no pane do operador.
+    expect(
+      persistedPaneAllowedTools({ role: "worker", operatorOpened: true, allowedTools: ["nexus_file_read"] }),
+    ).toEqual(["nexus_file_read"]);
   });
 
   it("fails closed for stale or fabricated orchestration requests", () => {

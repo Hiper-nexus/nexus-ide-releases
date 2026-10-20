@@ -377,6 +377,26 @@ export function consumeImmediateSquadSpawnGrant(
 }
 
 /**
+ * Allowlist que a linha durável de um pane implica. Sem campo gravado, worker
+ * é `[]` — exceto o pane aberto pelo operador na missão (F-231), que nasce sem
+ * allowlist (`null`, como no token MCP e na ficha do PTY). F-1619: supor `[]`
+ * para ele recusava a adoção do PTY vivo e a cerca negava o substituto —
+ * "Não subiu" em laço, reaberto a cada fechamento.
+ */
+export function persistedPaneAllowedTools(
+  persistedPane: Pick<MissionPaneSpec, "allowedTools" | "role" | "operatorOpened">,
+): string[] | null {
+  if (persistedPane.allowedTools !== undefined) {
+    return persistedPane.allowedTools === null
+      ? null
+      : [...persistedPane.allowedTools];
+  }
+  return persistedPane.role === "worker" && persistedPane.operatorOpened !== true
+    ? []
+    : null;
+}
+
+/**
  * Resolve only main-side spawn authority. A renderer may carry an opaque
  * request id, but it never gets to invent a role or allowlist. Immediate
  * squad launches require a separately consumed main-owned grant; every
@@ -401,14 +421,7 @@ export function resolveSpawnAuthority(
       workerIncarnationId: persistedPane.workerIncarnationId,
       ...(persistedPane.operatorOpened === true ? { operatorOpened: true } : {}),
       role: persistedPane.role,
-      allowedTools:
-        persistedPane.allowedTools !== undefined
-          ? persistedPane.allowedTools === null
-            ? null
-            : [...persistedPane.allowedTools]
-          : persistedPane.role === "worker"
-            ? []
-            : null,
+      allowedTools: persistedPaneAllowedTools(persistedPane),
       allowedSkills:
         persistedPane.allowedSkills !== undefined
           ? persistedPane.allowedSkills === null

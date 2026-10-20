@@ -147,6 +147,7 @@ vi.mock('./mission-event-emit', async (importOriginal) => ({
 }));
 
 vi.mock('../pty/pty-manager', () => ({
+  isPtySessionAdmissionSealedForShutdown: () => false,
   getSessionState: vi.fn(() => ptyMocks.state),
   orchWriteSession: ptyMocks.writes,
   tapSessionState: vi.fn(

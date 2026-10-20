@@ -14,6 +14,7 @@ import { useAdapterStore } from '../../state/adapter-store';
 import { useLayoutStore } from '../../state/layout-store';
 import { useWorkspaceStore } from '../../state/workspace-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
+import { useMediaStudioStore } from '../../state/media-studio-store';
 import { usePaneFootprintStore } from '../../state/pane-footprint-store';
 import { useSessionStateStore } from '../../state/session-state-store';
 import { usePaneParkedStore } from '../../state/pane-parked-store';
@@ -215,8 +216,25 @@ describe('WorkspaceRail', () => {
       'Abrir Terminais',
       'Abrir Missões e tarefas',
       'Abrir Memória',
+      'Abrir Estúdio de mídia',
     ]);
     expect(destinations.querySelector('.workspace-rail__fixed-item--wide')).toBeNull();
+  });
+
+  it('abre o Estúdio de mídia direto do rail, sem passar por Ajustes', () => {
+    const { host } = renderRail();
+    const studio = host.querySelector<HTMLButtonElement>('[data-testid="rail-media-studio"]')!;
+    expect(studio.textContent).toContain('Estúdio de mídia');
+    // Painel por cima da tela atual: não vira a página corrente do rail.
+    expect(studio.getAttribute('aria-haspopup')).toBe('dialog');
+    expect(studio.hasAttribute('aria-current')).toBe(false);
+    act(() => useMediaStudioStore.getState().hide());
+    act(() => studio.click());
+    expect(useMediaStudioStore.getState().open).toBe(true);
+    // Aceso enquanto o painel está aberto.
+    expect(studio.classList.contains('workspace-rail__row--selected')).toBe(true);
+    act(() => useMediaStudioStore.getState().hide());
+    expect(studio.classList.contains('workspace-rail__row--selected')).toBe(false);
   });
 
   it('opens an existing project without entering the creation flow', () => {

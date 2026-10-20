@@ -11952,7 +11952,7 @@ export const RELEASE_076337: AppRelease = {
 };
 
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076338: AppRelease = {
   version: '0.76.338',
   date: '2026-10-20',
   codename: 'Estúdio de vídeo',
@@ -11969,4 +11969,164 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: [...RELEASE_076337.fixes],
 };
 
-export const RELEASE_076338: AppRelease = CURRENT_RELEASE;
+
+export const RELEASE_076339: AppRelease = {
+  version: '0.76.339',
+  date: '2026-10-20',
+  codename: 'Estúdio de mídia completo',
+  summary: 'O Estúdio de mídia ganha lugar na barra lateral, referências do projeto (imagem, logo e vídeo de exemplo), modelos de vídeo novos e a Higgsfield. Os agentes fazem vídeos de apresentação por código, com narração, legendas, música e export por rede, e "Minha voz" cria uma voz sintética sua na ElevenLabs ou no Gemini. O instalador do Windows sai assinado.',
+  highlights: [
+    { title: 'Estúdio de mídia à mão', detail: 'O Estúdio de mídia tem uma linha própria na barra lateral, logo abaixo de Memória, e um comando na paleta (Ctrl+K no Windows e no Linux, ⌘K no Mac). Buscar "vídeo", "logo" ou "voz" também acha.' },
+    { title: 'Referências do projeto', detail: 'Imagem, logo ou vídeo de exemplo entram por Adicionar, arrastando ou colando, e ficam copiados em media/referencias/ do projeto. Na imagem servem de base para editar. No vídeo, uma imagem vira o primeiro quadro e duas ou mais viram referência de personagem, produto ou logo. Os modelos que exigem imagem inicial (Kling 2.1, Wan 2.5) deixaram de ficar bloqueados.' },
+    { title: 'Modelos de vídeo novos', detail: 'Seedance 2.5, MiniMax H3 (Hailuo 3), Wan 3 e Wan 3 Prime, Gemini Omni 1.1, PixVerse v6 e Vidu Q3, com o preço de lista do Replicate. O Veo 3.1 Fast e o Lite recebiam imagens de referência que não aceitam; agora o pedido é recusado antes de cobrar.' },
+    { title: 'Higgsfield', detail: 'Entra como serviço de imagem e de vídeo, com uma chave no formato ID:SEGREDO. Imagem: Soul 2, Ideogram 4 (bom para logo e texto), Qwen Image 3 e Recraft 4.1. Vídeo: Seedance 2.5 até 1080p, Seedance 2.0 até 4K, Kling 3.0, H3 e Wan 3.0. O preço vem da própria Higgsfield antes de gerar, e por ela o vídeo de exemplo chega ao modelo como referência de movimento e estilo.' },
+    ...RELEASE_076338.highlights,
+  ],
+  fixes: [...RELEASE_076338.fixes],
+};
+
+export const RELEASE_076340: AppRelease = {
+  version: '0.76.340',
+  date: '2026-10-20',
+  codename: 'Estúdio de mídia completo',
+  summary: 'No desktop Linux, o Estúdio de mídia ganha lugar na barra lateral, referências do projeto e modelos de vídeo novos, inclusive a Higgsfield. Os agentes fazem vídeos de apresentação por código, com narração, legendas, música e export por rede, e "Minha voz" cria uma voz sintética sua na ElevenLabs ou no Gemini. O estúdio vem ligado; desliga em Ajustes → Experimental. As tags 0.76.338 e 0.76.339 não recebem arquivos Linux.',
+  highlights: [
+    ...RELEASE_076339.highlights.filter((note) => note.title !== 'Instalador do Windows assinado'),
+    { title: 'Pacote Linux', detail: 'A tag 0.76.339 é a versão do estúdio de mídia e não recebe arquivos Linux. A tag 0.76.338 ficou só como tag, sem pacote. A tag 0.76.337 é o pacote Linux anterior. O desktop Linux sai na 0.76.340, com o estúdio de vídeo, Minha voz, a narração, a música, as referências do projeto e a Higgsfield.' },
+  ],
+  fixes: [...RELEASE_076339.fixes],
+};
+
+export const RELEASE_076341: AppRelease = {
+  version: '0.76.341',
+  date: '2026-10-20',
+  codename: 'Estúdio de mídia completo',
+  summary: 'No desktop Linux, o Estúdio de mídia ganha lugar na barra lateral, referências do projeto e modelos de vídeo novos, inclusive a Higgsfield. Os agentes fazem vídeos de apresentação por código, com narração, legendas, música e export por rede, e "Minha voz" cria uma voz sintética sua na ElevenLabs ou no Gemini. O estúdio vem ligado; desliga em Ajustes → Experimental. As tags 0.76.338 e 0.76.339 não recebem arquivos Linux. A tag 0.76.340 foi marcada e não foi publicada.',
+  highlights: [
+    ...RELEASE_076340.highlights.filter((note) => note.title !== 'Pacote Linux'),
+    { title: 'Pacote Linux', detail: 'A tag 0.76.339 é a versão do estúdio de mídia e não recebe arquivos Linux. A tag 0.76.338 ficou só como tag, sem pacote. A tag 0.76.340 foi marcada e não foi publicada porque a suíte no Ubuntu falhou. A tag 0.76.337 é o pacote Linux anterior. O desktop Linux sai na 0.76.341, com o estúdio de vídeo, Minha voz, a narração, a música, as referências do projeto e a Higgsfield.' },
+  ],
+  fixes: [...RELEASE_076340.fixes],
+};
+
+export const RELEASE_076342: AppRelease = {
+  version: '0.76.342',
+  date: '2026-10-20',
+  codename: 'Chave e minha voz',
+  summary: 'No desktop Linux, Ajustes → Modelos de mídia aceita colar a chave do serviço ali mesmo, e o Estúdio de vídeo leva direto a Criar minha voz. A tag 0.76.341 é o pacote Linux anterior.',
+  highlights: [
+    { title: 'Chave no catálogo', detail: 'Em Ajustes → Modelos de mídia, o serviço sem chave mostra o campo para colar a chave ali mesmo. A Higgsfield pede o formato ID:SEGREDO. Serviço já conectado guarda o campo em "Gerenciar conexão". A chave segue só para o cofre do Main.' },
+    { title: 'Criar minha voz no Estúdio', detail: 'No vídeo de apresentação, abaixo da Narração, "Criar minha voz" abre Ajustes → Serviços de mídia, fecha o Estúdio e leva o foco ao cartão Minha voz. Quem já tem voz vê "Minha voz". A clonagem continua só pela mão da pessoa.' },
+  ],
+  fixes: [...RELEASE_076341.fixes],
+};
+
+export const RELEASE_076343: AppRelease = {
+  version: '0.76.343',
+  date: '2026-10-20',
+  codename: 'Estúdio de mídia e encerramento de missões',
+  summary: 'O Mac recebe o estúdio de mídia e vídeo (referências do projeto, Higgsfield, narração, legendas, música, export por rede e Minha voz), além da correção do encerramento de missões no reinício do app e no Quadro de Missões. A versão macOS anterior é a 0.76.336.',
+  highlights: [
+    ...RELEASE_076340.highlights.filter((note) => note.title !== 'Pacote Linux' && !RELEASE_076336.highlights.some((previous) => previous.title === note.title)),
+    ...RELEASE_076342.highlights,
+  ],
+  fixes: [
+    { title: 'Encerramento de missões no reinício e no Quadro', detail: 'Confirmar "Sair e encerrar processos" sela todas as missões abertas antes de fechar a janela, os watchers de fast-lane e conclusão civil param no shutdown, panes de operador devolvidos a user e runtimes em worktree limpam orchestratorSessionId sem erro de autoridade de pane, e missões estacionadas podem ser marcadas como feitas.' },
+    { title: 'Custo da narração Gemini', detail: 'O modal estima a narração do Gemini pelo preço do Gemini.' },
+    { title: 'Alinhamento do roteiro', detail: 'O alinhamento da narração ao roteiro roda no processo principal, com processamento mais rápido.' },
+  ],
+};
+
+export const RELEASE_076344: AppRelease = {
+  version: '0.76.344',
+  date: '2026-10-20',
+  codename: 'Encerramento de missões',
+  summary: 'A tag 0.76.344 foi marcada e não foi publicada: a suíte no Ubuntu falhou. Não recebe arquivos Linux. O desktop Linux sai na 0.76.345.',
+  highlights: [
+    { title: 'Pacote Linux', detail: 'A tag 0.76.344 não foi publicada porque a suíte no Ubuntu falhou nos testes do fast-lane e da entrega ociosa. O desktop Linux sai na 0.76.345.' },
+  ],
+  fixes: [...RELEASE_076343.fixes],
+};
+
+export const RELEASE_076345: AppRelease = {
+  version: '0.76.345',
+  date: '2026-10-20',
+  codename: 'Encerramento de missões',
+  summary: 'No desktop Linux, sair e encerrar sela as missões abertas, o Quadro conclui missão dormindo, e o pane do operador devolvido não quebra o encerramento. A tag 0.76.344 foi marcada e não foi publicada. A tag 0.76.343 é a publicação macOS e não recebe arquivos Linux. A 0.76.342 é o pacote Linux anterior.',
+  highlights: [
+    { title: 'Sair e encerrar', detail: 'Confirmar "Sair e encerrar processos" sela todas as missões abertas como runtime-closed antes de fechar a janela. Os watchers de fast-lane e da conclusão civil param no início do shutdown, para não reescreverem o selo.' },
+    { title: 'Pane do operador devolvido', detail: 'Pane promovido e depois devolvido a user, e runtime em worktree, encerram e limpam orchestratorSessionId sem erro de autoridade de pane. Um ponteiro velho não mata o processo do operador.' },
+    { title: 'Missão dormindo no Quadro', detail: 'Missão estacionada ("Dormindo") pode ser concluída pelo botão "Marcar como feito".' },
+    { title: 'Pacote Linux', detail: 'A tag 0.76.344 foi marcada e não foi publicada porque a suíte no Ubuntu falhou. A tag 0.76.343 é a publicação macOS e não recebe arquivos Linux. A 0.76.342 é o pacote Linux anterior. O desktop Linux sai na 0.76.345.' },
+  ],
+  fixes: [...RELEASE_076344.fixes],
+};
+
+export const RELEASE_076346: AppRelease = {
+  version: '0.76.346',
+  date: '2026-10-20',
+  codename: 'Abas estáveis e botão de fechar',
+  summary: 'No macOS, corrige a barra de abas dos Terminais para que a largura da aba permaneça imóvel quando agentes entram ou saem de trabalho, mantém o botão × sempre visível sem corte na última aba e evita arraste acidental no trackpad ao clicar em fechar. Não recebe arquivos Linux.',
+  highlights: [
+    ...RELEASE_076343.highlights,
+  ],
+  fixes: [
+    { title: 'Abas dos Terminais estáveis e botão × sempre visível no macOS', detail: 'O selo de agentes trabalhando (● N) e a contagem de painéis dividem a mesma célula de largura fixa (.workspace-tab__badges) sem deslocar as abas vizinhas, o × fica sempre visível sem sobrepor a contagem nem sofrer corte por mask-image, e clicar no × no trackpad desativa o arraste da aba. A 0.76.346 não recebe arquivos Linux.' },
+    ...RELEASE_076343.fixes,
+  ],
+};
+
+export const RELEASE_076347: AppRelease = {
+  version: '0.76.347',
+  date: '2026-10-20',
+  codename: 'Abas estáveis e botão de fechar',
+  summary: 'No desktop Linux, as abas dos Terminais mantêm a largura quando um agente entra ou sai de trabalho, o botão de fechar fica sempre visível e um movimento pequeno do ponteiro não arrasta a aba no lugar de fechá-la. A 0.76.346 não recebe arquivos Linux. A 0.76.345 é o pacote Linux anterior. A tag 0.76.343 é a publicação macOS.',
+  highlights: [
+    { title: 'Largura estável das abas', detail: 'O selo de agentes trabalhando e a contagem de painéis dividem a mesma célula de largura fixa. A aba não cresce nem encolhe quando um agente entra ou sai de trabalho, e as abas vizinhas ficam no lugar.' },
+    { title: 'Botão de fechar sempre visível', detail: 'O fechar da aba fica sempre à mostra, em espaço próprio, sem cobrir a contagem e sem o esmaecimento da borda direita que cortava o botão da última aba.' },
+    { title: 'Fechar sem arrastar a aba', detail: 'Passar o cursor ou pressionar o botão de fechar desliga o arraste da aba, para um movimento pequeno do ponteiro não cancelar o fechamento.' },
+    { title: 'Pacote Linux', detail: 'A 0.76.346 descreve o mesmo ajuste como correção no macOS e não recebe arquivos Linux. A 0.76.345 é o pacote Linux anterior. A tag 0.76.343 é a publicação macOS e não recebe arquivos Linux. O desktop Linux sai na 0.76.347.' },
+  ],
+  fixes: [...RELEASE_076346.fixes],
+};
+
+export const RELEASE_076348: AppRelease = {
+  version: '0.76.348',
+  date: '2026-10-20',
+  codename: 'Terminais que não caem',
+  summary: 'No Windows, fechar um pane não derruba mais todos os terminais, o Maestro volta com a própria conversa depois de uma queda e o pane aberto pelo operador dentro da missão liga de primeira. Não recebe arquivos Linux.',
+  highlights: [
+    ...RELEASE_076347.highlights,
+  ],
+  fixes: [
+    { title: 'Fechar um pane lento no Windows não derruba mais todos os outros', detail: 'O encerramento de um pane cuja CLI demora a sair (o AGY, por exemplo) pedia o fechamento do console duas vezes, e o processo que hospeda todos os terminais caía junto: todos os panes mostravam «processo caiu». Agora o console é fechado uma vez só e a insistência termina o processo pelo PID. A 0.76.348 não recebe arquivos Linux.' },
+    { title: 'O Maestro volta com a própria conversa depois de uma queda', detail: 'Uma tentativa de reabrir o Maestro que morria antes da primeira mensagem trocava a conversa do pane por uma que nunca existiu, e cada «Retomar missão» saía com «No conversation found». A conversa nova só substitui a anterior quando o registro dela aparece em disco.' },
+    { title: 'O pane aberto pelo operador dentro da missão liga de primeira', detail: 'O pane de «+ Pane → Nesta missão» ficava em «Não subiu» e reabria sozinho depois de fechado: a tela pedia um processo novo em vez de se ligar ao que já rodava. Agora a ligação e a reabertura usam as mesmas permissões com que o pane nasceu.' },
+    ...RELEASE_076347.fixes,
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.349',
+  date: '2026-10-20',
+  codename: 'A boca do Jarvis',
+  summary: 'No desktop Linux, a boca do Jarvis acompanha a própria voz, a ação de voz responde e lê o estado vivo, e perguntar devolve o texto do pane. O Maestro conserva a conversa e o pane aberto pelo operador dentro da missão liga de primeira. A 0.76.348 é a publicação Windows e não recebe arquivos Linux. A 0.76.347 é o pacote Linux anterior.',
+  highlights: [
+    { title: 'A boca do Jarvis fala com a própria voz', detail: 'A figura ganha boca: abre com o volume da saída, estica com o brilho do espectro e fecha na pausa. O movimento espera a latência do alto-falante, para a boca não andar à frente da voz.' },
+    { title: 'A Jarvis responde e lê o estado vivo', detail: 'Uma ação não fica em silêncio. Ler consulta panes, missões, cotas, git e saúde antes de afirmar, e perguntar devolve o texto novo do pane em vez de só dizer que mandou.' },
+    { title: 'Ferramenta em tempo real pede uma resposta por lote', detail: 'A continuação sai depois que a resposta que chamou as ferramentas terminou e todas as chamadas daquele lote têm resultado, para o turno não ficar mudo.' },
+    { title: 'O Maestro volta com a própria conversa', detail: 'O id de conversa ditado no spawn só substitui a conversa do pane quando o transcrito aparece. Uma reabertura que morria antes da primeira mensagem não apaga mais a conversa real.' },
+    { title: 'Pane do operador na missão liga de primeira', detail: 'O pane de «+ Pane → Nesta missão» liga a tela ao processo que já nasceu, com as mesmas permissões do nascimento, e não reabre sozinho em «Não subiu».' },
+    { title: 'Pacote Linux', detail: 'A 0.76.348 é a publicação Windows, assinada pelo YubiKey, e não recebe arquivos Linux. A 0.76.347 é o pacote Linux anterior. A 0.76.346 é a publicação macOS e não recebe arquivos Linux. O desktop Linux sai na 0.76.349.' },
+  ],
+  fixes: [
+    { title: 'A boca do Jarvis acompanha a voz', detail: 'A figura abre a boca com o volume da saída e o brilho do espectro, e fecha na pausa, atrasada pela latência do alto-falante.' },
+    { title: 'Ação de voz responde e perguntar devolve o pane', detail: 'Uma ação não fica em silêncio, a leitura usa o estado vivo e perguntar devolve o texto novo do pane.' },
+    { title: 'Turno realtime não fica mudo depois da ferramenta', detail: 'O pedido de continuação sai uma vez por lote, depois que a resposta que chamou as ferramentas terminou.' },
+    { title: 'O Maestro conserva a conversa real', detail: 'O id ditado no spawn só substitui a conversa ligada ao pane quando o transcrito aparece em disco.' },
+    { title: 'Pane do operador na missão liga de primeira', detail: 'Adoção e reabertura usam as permissões com que o pane nasceu, então a tela liga ao processo vivo e o pane não reabre sozinho.' },
+    ...RELEASE_076348.fixes,
+  ],
+};
+
+export const RELEASE_076349: AppRelease = CURRENT_RELEASE;

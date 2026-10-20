@@ -294,26 +294,33 @@ describe('instalação do motor', () => {
 
 describe('runVideoDoctor', () => {
   it('lista o que falta com o comando que resolve, sem instalar nada', async () => {
-    const report = await runVideoDoctor({
-      userData,
-      manifestDir,
-      workspaceDir: workspace,
-      pathValue: '/bin',
-      baseEnv: {},
-      platform: 'win32',
-      lookup: (command) => (command === 'node' ? '/bin/node' : null),
-      resolveNode: async () => ({ version: 'v22.23.2', major: 22, execPath: '/bin/node', npmCli: '/lib/npm-cli.js' }),
-      versionOf: async () => null,
-      freeBytes: () => 50 * 1024 ** 3,
-    });
-    expect(report.ok).toBe(false);
-    const byId = Object.fromEntries(report.checks.map((check) => [check.id, check]));
-    expect(byId.node.ok).toBe(true);
-    expect(byId.ffmpeg).toMatchObject({ ok: false, fix: 'winget install --id Gyan.FFmpeg -e' });
-    expect(byId.engine).toMatchObject({ ok: true, detail: expect.stringMatching(/primeiro render/u) });
-    expect(byId['path-length'].ok).toBe(true);
-    expect(byId.telemetry.detail).toMatch(/sem telemetria/u);
-    expect(fs.existsSync(videoEnginePaths(userData).root)).toBe(false);
+    // The release container sets a ~60-character TMPDIR. A win32 path-length
+    // check on that temp dir crosses 260 and is not the short userData case.
+    const shortUserData = fs.mkdtempSync('/tmp/nexus-vd-');
+    try {
+      const report = await runVideoDoctor({
+        userData: shortUserData,
+        manifestDir,
+        workspaceDir: workspace,
+        pathValue: '/bin',
+        baseEnv: {},
+        platform: 'win32',
+        lookup: (command) => (command === 'node' ? '/bin/node' : null),
+        resolveNode: async () => ({ version: 'v22.23.2', major: 22, execPath: '/bin/node', npmCli: '/lib/npm-cli.js' }),
+        versionOf: async () => null,
+        freeBytes: () => 50 * 1024 ** 3,
+      });
+      expect(report.ok).toBe(false);
+      const byId = Object.fromEntries(report.checks.map((check) => [check.id, check]));
+      expect(byId.node.ok).toBe(true);
+      expect(byId.ffmpeg).toMatchObject({ ok: false, fix: 'winget install --id Gyan.FFmpeg -e' });
+      expect(byId.engine).toMatchObject({ ok: true, detail: expect.stringMatching(/primeiro render/u) });
+      expect(byId['path-length'].ok).toBe(true);
+      expect(byId.telemetry.detail).toMatch(/sem telemetria/u);
+      expect(fs.existsSync(videoEnginePaths(shortUserData).root)).toBe(false);
+    } finally {
+      fs.rmSync(shortUserData, { recursive: true, force: true });
+    }
   });
 
   it('Node velho e disco cheio aparecem como bloqueio', async () => {

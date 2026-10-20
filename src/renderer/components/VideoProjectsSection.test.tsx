@@ -156,6 +156,30 @@ describe('Vídeos do projeto', () => {
     expect(close).toHaveBeenCalled();
   });
 
+  it('F-1616: sem voz própria, a Narração leva a Serviços de mídia já no cartão Minha voz', async () => {
+    const openSettings = vi.spyOn(useProductNavigationStore.getState(), 'openSettings');
+    const close = await render();
+    await click('Novo vídeo de apresentação');
+    expect(host.textContent).toContain('Quer narrar com a sua própria voz?');
+    await click('Criar minha voz');
+    expect(openSettings).toHaveBeenCalledWith('media');
+    expect(close).toHaveBeenCalled();
+    const { consumeMyVoiceFocus } = await import('./settings/my-voice-focus');
+    expect(consumeMyVoiceFocus()).toBe(true);
+    expect(consumeMyVoiceFocus()).toBe(false);
+    openSettings.mockRestore();
+  });
+
+  it('F-1616: com voz própria, a voz vem escolhida e o atalho vira "Minha voz"', async () => {
+    voiceClone.list.mockResolvedValueOnce([{ id: 'r1', voiceName: 'Voz de Ana', provider: 'elevenlabs', voiceId: 'v1', createdAt: 1 }]);
+    await render();
+    await click('Novo vídeo de apresentação');
+    const select = [...host.querySelectorAll('select')].find((node) => node.textContent?.includes('Voz de biblioteca'))!;
+    expect(select.value).toBe('mine:r1');
+    expect(host.textContent).toContain('Para gravar outra voz ou apagar uma, use Minha voz.');
+    expect(host.textContent).not.toContain('Criar minha voz');
+  });
+
   it('Prévia ao vivo abre o Studio num painel do navegador; com prévia aberta, oferece parar (F-1603)', async () => {
     studio.previewStart.mockResolvedValue({ ok: true, id: 'vpreview-1', url: 'http://127.0.0.1:4000/#project/promo', reused: false });
     const addBrowserPane = vi.spyOn(useLayoutStore.getState(), 'addBrowserPane').mockReturnValue('pane-b');
