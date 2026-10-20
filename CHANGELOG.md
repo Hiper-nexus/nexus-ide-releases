@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.76.348 — Terminais que não caem
+
+Windows x64, assinado pelo YubiKey (HIPERSEND). Em relação à 0.76.347:
+
+- **Fechar um pane não derruba os outros** (F-1617). No Windows o `kill()` do ConPTY não é idempotente: a escalada SIGTERM→SIGKILL chamava `kill()` duas vezes em toda CLI que leva mais de 1,5 s para sair, e o 2º fechamento do mesmo pseudoconsole derrubava o PTY host com `0xC0000374`, levando todos os panes. O console agora é fechado uma vez só e a escalada termina a raiz pelo PID.
+- **O Maestro volta com a própria conversa** (F-1618). O `--session-id` ditado no spawn só substitui a conversa ligada ao pane quando o transcrito dele aparece; um respawn que morria antes da 1ª mensagem deixava um id inexistente e cada «Retomar» saía com «No conversation found».
+- **Pane do operador na missão liga de primeira** (F-1619). O pane de «+ Pane → Nesta missão» nasce sem allowlist, mas a adoção e o respawn supunham a de worker (`[]`): a tela não se ligava ao PTY vivo, a cerca negava o substituto e o pane ficava em «Não subiu», reabrindo a cada fechamento.
+
 ## 0.76.347 — Abas estáveis e botão de fechar
 
 Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.

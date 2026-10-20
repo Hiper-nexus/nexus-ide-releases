@@ -12076,7 +12076,7 @@ export const RELEASE_076346: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076347: AppRelease = {
   version: '0.76.347',
   date: '2026-10-20',
   codename: 'Abas estáveis e botão de fechar',
@@ -12090,4 +12090,20 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: [...RELEASE_076346.fixes],
 };
 
-export const RELEASE_076347: AppRelease = CURRENT_RELEASE;
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.348',
+  date: '2026-10-20',
+  codename: 'Terminais que não caem',
+  summary: 'No Windows, fechar um pane não derruba mais todos os terminais, o Maestro volta com a própria conversa depois de uma queda e o pane aberto pelo operador dentro da missão liga de primeira.',
+  highlights: [
+    ...RELEASE_076347.highlights,
+  ],
+  fixes: [
+    { title: 'Fechar um pane lento no Windows não derruba mais todos os outros', detail: 'O encerramento de um pane cuja CLI demora a sair (o AGY, por exemplo) pedia o fechamento do console duas vezes, e o processo que hospeda todos os terminais caía junto: todos os panes mostravam «processo caiu». Agora o console é fechado uma vez só e a insistência termina o processo pelo PID.' },
+    { title: 'O Maestro volta com a própria conversa depois de uma queda', detail: 'Uma tentativa de reabrir o Maestro que morria antes da primeira mensagem trocava a conversa do pane por uma que nunca existiu, e cada «Retomar missão» saía com «No conversation found». A conversa nova só substitui a anterior quando o registro dela aparece em disco.' },
+    { title: 'O pane aberto pelo operador dentro da missão liga de primeira', detail: 'O pane de «+ Pane → Nesta missão» ficava em «Não subiu» e reabria sozinho depois de fechado: a tela pedia um processo novo em vez de se ligar ao que já rodava. Agora a ligação e a reabertura usam as mesmas permissões com que o pane nasceu.' },
+    ...RELEASE_076347.fixes,
+  ],
+};
+
+export const RELEASE_076348: AppRelease = CURRENT_RELEASE;
