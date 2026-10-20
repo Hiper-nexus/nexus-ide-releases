@@ -44,7 +44,7 @@ describe('triageResearchHits', () => {
     expect(d.judge).not.toHaveBeenCalled();
   });
 
-  it('aceita o best_hit com confiança ≥ 0.6 e marca answered pelo noul', async () => {
+  it('aceita o best_hit com confiança ≥ 0.6', async () => {
     const d = deps(
       jevResult({
         best_hit: {
@@ -53,15 +53,14 @@ describe('triageResearchHits', () => {
           confidence: 0.9,
           probabilities: { h1: 0.9, h2: 0.05, none: 0.05 },
         },
-        answered: { type: 'noul', noul: 0.85 },
       }),
     );
     const out = await triageResearchHits('como faço login?', HITS, 's1', 'm1', d);
-    expect(out).toMatchObject({ bestHitId: 'h1', answered: true });
+    expect(out).toMatchObject({ bestHitId: 'h1' });
     expect(d.recordDecision).toHaveBeenCalledOnce();
   });
 
-  it('confiança baixa ou none → bestHitId null; noul incerto → precisa mais pesquisa', async () => {
+  it('confiança baixa ou none → bestHitId null', async () => {
     const d = deps(
       jevResult({
         best_hit: {
@@ -70,11 +69,9 @@ describe('triageResearchHits', () => {
           confidence: 0.9,
           probabilities: { none: 0.9 },
         },
-        answered: { type: 'noul', noul: 0.5 },
       }),
     );
     const out = await triageResearchHits('q', HITS, 's1', undefined, d);
     expect(out?.bestHitId).toBeNull();
-    expect(out?.answered).toBe(false);
   });
 });

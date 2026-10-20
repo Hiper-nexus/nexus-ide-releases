@@ -1,4 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
+
+const { mockRecordJevDecision } = vi.hoisted(() => ({
+  mockRecordJevDecision: vi.fn(),
+}));
+
+vi.mock('../jev/jev-decision-log', () => ({
+  jevAnswerConfidences: vi.fn(() => ({})),
+  jevAnswerProbabilities: vi.fn(() => ({})),
+  recordJevDecision: mockRecordJevDecision,
+}));
+
 import type { JevResult, judge as jevJudge } from '../jev/jev-client';
 import { routeWithJev } from './intent-router-jev';
 
@@ -86,9 +97,11 @@ describe('routeWithJev', () => {
     // O intake roda antes do spawn do orquestrador: sem retry no timeout.
     expect(judge.mock.calls[0]![0].retryOnTimeout).toBe(false);
     expect(judge.mock.calls[0]![0].timeoutMs).toBeLessThanOrEqual(6_000);
+    expect(mockRecordJevDecision).toHaveBeenCalledTimes(1);
   });
 
   it('falls through (null) when kind confidence < 0.6', async () => {
+    mockRecordJevDecision.mockClear();
     const judge = vi.fn<typeof jevJudge>(async () =>
       result({
         kind: {
@@ -102,6 +115,33 @@ describe('routeWithJev', () => {
     expect(
       await routeWithJev('faz algo', { judge, enabled, hasKey }),
     ).toBeNull();
+    // Deve gravar exatamente UM registro intake para baixa confiança.
+    expect(mockRecordJevDecision).toHaveBeenCalledTimes(1);
+    expect(mockRecordJevDecision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        surface: 'intake',
+        decision: 'fallback:low-confidence',
+      }),
+    );
+  });
+
+  it('falls through (null) and records when kind type is not choice', async () => {
+    mockRecordJevDecision.mockClear();
+    const judge = vi.fn<typeof jevJudge>(async () =>
+      result({
+        kind: { type: 'noul', noul: 0.5, confidence: 0.9 } as never,
+      }),
+    );
+    expect(
+      await routeWithJev('faz algo', { judge, enabled, hasKey }),
+    ).toBeNull();
+    expect(mockRecordJevDecision).toHaveBeenCalledTimes(1);
+    expect(mockRecordJevDecision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        surface: 'intake',
+        decision: 'fallback:bad-kind',
+      }),
+    );
   });
 
   it('direct_answer returns a direct-answer route with the question', async () => {

@@ -287,12 +287,55 @@ export async function judgeIdleHelperReuse(
   });
   if (!result) return null;
   const answer = result.answers.pick;
-  if (answer?.type !== 'choice' || answer.choice === 'none') return null;
+  if (answer?.type !== 'choice' || answer.choice === 'none') {
+    recordJevDecision({
+      surface: 'helperReuse',
+      model: result.model,
+      questions: Object.keys(questions),
+      probabilities: jevAnswerProbabilities(result.answers),
+      confidence: jevAnswerConfidences(result.answers),
+      decision:
+        answer?.type !== 'choice'
+          ? 'spawn:bad-kind'
+          : 'spawn:none',
+      ...decisionResultUsage(result),
+      ...(input.callerSessionId ? { sessionId: input.callerSessionId } : {}),
+      ...(input.missionId ? { missionId: input.missionId } : {}),
+    });
+    return null;
+  }
   const match = /^h(\d+)$/.exec(answer.choice ?? '');
   const index = match ? Number(match[1]) - 1 : -1;
   const candidate = index >= 0 ? input.candidates[index] : undefined;
   const confidence = answer.confidence;
-  if (!candidate || confidence < HELPER_REUSE_MIN_CONFIDENCE) return null;
+  if (!candidate) {
+    recordJevDecision({
+      surface: 'helperReuse',
+      model: result.model,
+      questions: Object.keys(questions),
+      probabilities: jevAnswerProbabilities(result.answers),
+      confidence: jevAnswerConfidences(result.answers),
+      decision: 'spawn:invalid-choice',
+      ...decisionResultUsage(result),
+      ...(input.callerSessionId ? { sessionId: input.callerSessionId } : {}),
+      ...(input.missionId ? { missionId: input.missionId } : {}),
+    });
+    return null;
+  }
+  if (confidence < HELPER_REUSE_MIN_CONFIDENCE) {
+    recordJevDecision({
+      surface: 'helperReuse',
+      model: result.model,
+      questions: Object.keys(questions),
+      probabilities: jevAnswerProbabilities(result.answers),
+      confidence: jevAnswerConfidences(result.answers),
+      decision: 'spawn:low-confidence',
+      ...decisionResultUsage(result),
+      ...(input.callerSessionId ? { sessionId: input.callerSessionId } : {}),
+      ...(input.missionId ? { missionId: input.missionId } : {}),
+    });
+    return null;
+  }
   recordJevDecision({
     surface: 'helperReuse',
     model: result.model,

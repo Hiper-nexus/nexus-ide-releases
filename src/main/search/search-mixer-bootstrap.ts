@@ -233,11 +233,24 @@ export async function runSearchMixerQuery(
       'search-mixer',
       undefined,
     );
-    if (triage) return { ...result, triage };
+    if (triage) {
+      const promoted = triage.bestHitId
+        ? promoteBestHit(result.hits ?? [], triage.bestHitId)
+        : result.hits;
+      return { ...result, hits: promoted, triage };
+    }
   } catch {
     // Julgamento nunca quebra a busca.
   }
   return result;
+}
+
+/** Move o hit escolhido pelo Jev ao topo, preservando a ordem relativa dos demais. */
+export function promoteBestHit(hits: readonly SearchHit[], bestHitId: string): SearchHit[] {
+  const bestIndex = hits.findIndex((hit) => hit.id === bestHitId);
+  if (bestIndex <= 0) return [...hits];
+  const best = hits[bestIndex]!;
+  return [best, ...hits.slice(0, bestIndex), ...hits.slice(bestIndex + 1)];
 }
 
 /** Test-only. */

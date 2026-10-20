@@ -43,23 +43,9 @@ export interface ResearchTriageResult {
   /** Hit mais decisivo para a pergunta. `null` quando nada é confiável. */
   readonly bestHitId: string | null;
   readonly bestConfidence: number;
-  /** true = a pergunta já está respondida por estes hits (noul ≥ limiar). */
-  readonly answered: boolean;
-  readonly answeredConfidence: number;
   readonly model: string;
   readonly inputTokens: number;
 }
-
-const RESEARCH_TRIAGE_ANSWERED: JevQuestion = {
-  type: 'noul',
-  instructions:
-    'Do these research hits together answer the question, or is more ' +
-    'research needed?',
-  criteria: {
-    true: 'the question is answered (or the decision can be made) from these hits',
-    false: 'more research is needed — the answer is missing, stale or off-topic',
-  },
-};
 
 const RESEARCH_TRIAGE_BEST: JevQuestion = {
   type: 'choice',
@@ -124,7 +110,6 @@ export async function triageResearchHits(
         instructions: RESEARCH_TRIAGE_BEST.instructions,
         criteria,
       },
-      answered: RESEARCH_TRIAGE_ANSWERED,
     },
     timeoutMs: RESEARCH_TRIAGE_TIMEOUT_MS,
     surface: 'researchTriage',
@@ -132,22 +117,17 @@ export async function triageResearchHits(
   if (!result) return null;
 
   const best = result.answers.best_hit;
-  const answered = result.answers.answered;
   const bestId =
     best && best.type === 'choice' && best.choice !== 'none' && best.confidence >= RESEARCH_TRIAGE_MIN_CONFIDENCE
       ? best.choice
       : null;
-  // `noul` = P(sim) = "a pergunta está respondida". Incerto (0.4–0.6) conta
-  // como "precisa de mais pesquisa" — melhor pedir outro resultado do que
-  // fechar a investigação com uma resposta fraca.
-  const answeredYes = answered?.type === 'noul' ? answered.noul : 0;
 
   record({
     surface: 'researchTriage',
     sessionId,
     missionId,
     model: result.model,
-    questions: ['best_hit', 'answered'],
+    questions: ['best_hit'],
     probabilities: jevAnswerProbabilities(result.answers),
     confidence: jevAnswerConfidences(result.answers),
     decision: bestId ?? 'none',
@@ -157,8 +137,6 @@ export async function triageResearchHits(
   return {
     bestHitId: bestId,
     bestConfidence: best && best.type === 'choice' ? best.confidence : 0,
-    answered: answeredYes >= RESEARCH_TRIAGE_MIN_CONFIDENCE,
-    answeredConfidence: jevAnswerConfidences(result.answers).answered ?? 0,
     model: result.model,
     inputTokens: result.usage.input_tokens,
   };

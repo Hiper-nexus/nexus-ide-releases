@@ -86,8 +86,6 @@ export const searchPartialResultSchema = z
       .object({
         bestHitId: z.string().max(256).nullable(),
         bestConfidence: z.number().min(0).max(1),
-        answered: z.boolean(),
-        answeredConfidence: z.number().min(0).max(1),
         model: z.string().max(64),
         inputTokens: z.number().int().nonnegative(),
       })

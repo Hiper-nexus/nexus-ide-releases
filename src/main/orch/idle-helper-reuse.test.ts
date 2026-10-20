@@ -1,4 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
+
+const { mockRecordJevDecision } = vi.hoisted(() => ({
+  mockRecordJevDecision: vi.fn(),
+}));
+
+vi.mock('../jev/jev-decision-log', () => ({
+  jevAnswerConfidences: vi.fn(() => ({})),
+  jevAnswerProbabilities: vi.fn(() => ({})),
+  recordJevDecision: mockRecordJevDecision,
+}));
+
 import type { PaneSnapshot } from '../../shared/orch-types';
 import { testProjectScope } from './__tests__/scope-fixture';
 import {
@@ -235,6 +246,7 @@ describe('judgeIdleHelperReuse', () => {
   });
 
   it('hN com confiança ≥0.7 escolhe o candidato e registra a decisão', async () => {
+    mockRecordJevDecision.mockClear();
     const { judgeFn, deps: d } = judgeDeps({
       model: 'jev-m',
       answers: { pick: { type: 'choice', choice: 'h2', probabilities: {}, confidence: 0.8 } },
@@ -247,6 +259,13 @@ describe('judgeIdleHelperReuse', () => {
     expect(choice?.candidate.paneId).toBe('pane-2');
     expect(choice?.confidence).toBe(0.8);
     expect(choice?.reason).toBe('helper ocioso com contexto relacionado (Jev 0.8)');
+    expect(mockRecordJevDecision).toHaveBeenCalledTimes(1);
+    expect(mockRecordJevDecision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        surface: 'helperReuse',
+        decision: 'reuse:h2',
+      }),
+    );
     const state = (
       judgeFn.mock.calls[0]![0] as unknown as {
         state: {
@@ -259,21 +278,52 @@ describe('judgeIdleHelperReuse', () => {
     expect(state.helpers[0]!.recentWork).toBe('Refatorei o parser de args.');
   });
 
-  it('none, confiança baixa, escolha inválida e judge null → null', async () => {
-    for (const answers of [
-      { pick: { type: 'choice', choice: 'none', probabilities: {}, confidence: 0.99 } },
-      { pick: { type: 'choice', choice: 'h1', probabilities: {}, confidence: 0.5 } },
-      { pick: { type: 'choice', choice: 'h9', probabilities: {}, confidence: 0.99 } },
-    ]) {
-      const { deps: d } = judgeDeps({ model: 'm', answers, usage: { input_tokens: 1, output_tokens: 1 } });
+  it('none, confiança baixa, escolha inválida e judge null → null + registra cada', async () => {
+    // none → spawn:none
+    mockRecordJevDecision.mockClear();
+    {
+      const { deps: d } = judgeDeps({ model: 'm', answers: { pick: { type: 'choice', choice: 'none', probabilities: {}, confidence: 0.99 } }, usage: { input_tokens: 1, output_tokens: 1 } });
       expect(
         await judgeIdleHelperReuse({ newTask: 'x', candidates, scope, missionId: null }, d),
       ).toBeNull();
+      expect(mockRecordJevDecision).toHaveBeenCalledTimes(1);
+      expect(mockRecordJevDecision).toHaveBeenCalledWith(
+        expect.objectContaining({ surface: 'helperReuse', decision: 'spawn:none' }),
+      );
     }
-    const { deps: dNull } = judgeDeps(null);
-    expect(
-      await judgeIdleHelperReuse({ newTask: 'x', candidates, scope, missionId: null }, dNull),
-    ).toBeNull();
+    // confiança baixa → spawn:low-confidence
+    mockRecordJevDecision.mockClear();
+    {
+      const { deps: d } = judgeDeps({ model: 'm', answers: { pick: { type: 'choice', choice: 'h1', probabilities: {}, confidence: 0.5 } }, usage: { input_tokens: 1, output_tokens: 1 } });
+      expect(
+        await judgeIdleHelperReuse({ newTask: 'x', candidates, scope, missionId: null }, d),
+      ).toBeNull();
+      expect(mockRecordJevDecision).toHaveBeenCalledTimes(1);
+      expect(mockRecordJevDecision).toHaveBeenCalledWith(
+        expect.objectContaining({ surface: 'helperReuse', decision: 'spawn:low-confidence' }),
+      );
+    }
+    // escolha inválida (h9) → spawn:invalid-choice
+    mockRecordJevDecision.mockClear();
+    {
+      const { deps: d } = judgeDeps({ model: 'm', answers: { pick: { type: 'choice', choice: 'h9', probabilities: {}, confidence: 0.99 } }, usage: { input_tokens: 1, output_tokens: 1 } });
+      expect(
+        await judgeIdleHelperReuse({ newTask: 'x', candidates, scope, missionId: null }, d),
+      ).toBeNull();
+      expect(mockRecordJevDecision).toHaveBeenCalledTimes(1);
+      expect(mockRecordJevDecision).toHaveBeenCalledWith(
+        expect.objectContaining({ surface: 'helperReuse', decision: 'spawn:invalid-choice' }),
+      );
+    }
+    // judge null → sem registro (no-answer é do jev-client)
+    mockRecordJevDecision.mockClear();
+    {
+      const { deps: dNull } = judgeDeps(null);
+      expect(
+        await judgeIdleHelperReuse({ newTask: 'x', candidates, scope, missionId: null }, dNull),
+      ).toBeNull();
+      expect(mockRecordJevDecision).not.toHaveBeenCalled();
+    }
   });
 
   it('sem handoff usa o tail ANSI-stripado do output (≤600 chars)', async () => {
