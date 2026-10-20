@@ -227,6 +227,19 @@ npm run windows-signer -- uninstall-logon   # tira o início no logon
   Windows só para isso, e tirar o YubiKey quando não houver build.
 - **Saindo disso:** `forget-pin` + `uninstall-logon` voltam ao agente com a janela
   do Windows (um PIN por dia).
+- **Medido em 20/10.** `save-pin`: o operador digitou o PIN uma vez, o cartão o
+  aceitou e o agente ficou pronto em 5,7 s. Depois, sem ninguém: `stop` + `start`
+  destrancou só com o PIN guardado em 0,87 s (0,24 s entre pedir e ficar pronto), e
+  dois executáveis de prova saíram `Valid`, HIPERSEND, carimbo Sectigo. A linha
+  exata da entrada `Run`, lançada como o Explorer a lança no logon (`CreateProcess`
+  com console novo), subiu o agente sozinha e gravou `logon: agent ready with the
+  saved PIN` no `agent.log`. O logon de verdade (reiniciar o PC) ainda não foi
+  visto.
+- **Para testar a linha do logon, não a rode de um terminal.** Herdando o console
+  de quem chama (ou com `DETACHED_PROCESS`/`CREATE_NO_WINDOW`), o
+  `conhost --headless` sai na hora e leva o Node junto; `cmd /c "<linha>"` estraga
+  as aspas. Use `CreateProcess` com `CREATE_NEW_CONSOLE` ou `Start-Process` (a
+  situação do Explorer), ou rode o `node ... client.cjs start --if-pin-saved` direto.
 
 ## O que recusa
 
