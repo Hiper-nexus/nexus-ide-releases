@@ -279,7 +279,10 @@ describe('F-724 — DeepSeek pela API direta (padrão, comportamento histórico)
     expect(overrides.keyEnv.ANTHROPIC_BASE_URL).toBe(DEEPSEEK_ANTHROPIC);
     expect(overrides.keyEnv.ANTHROPIC_AUTH_TOKEN).toBe(DIRECT_KEY);
     expect(overrides.keyEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('deepseek-flash');
-    expect(overrides.modelAliases).toBeUndefined();
+    // O nome de versão do plano não existe na API direta: volta a deepseek-flash.
+    expect(overrides.modelAliases).toEqual({
+      'deepseek-v4.1-flash-1017': 'deepseek-flash',
+    });
   });
 
   it('nunca manda para api.deepseek.com a chave do Token Plan que o launcher amarra à Alibaba', () => {
@@ -336,18 +339,19 @@ describe('F-724 — DeepSeek pelo Alibaba Token Plan', () => {
     expect(overrides.keyEnv.ANTHROPIC_BASE_URL).toBe(TOKEN_PLAN_ANTHROPIC);
     expect(overrides.keyEnv.ANTHROPIC_AUTH_TOKEN).toBe(PLAN_KEY);
     for (const slot of [
-      'ANTHROPIC_DEFAULT_HAIKU_MODEL',
       'ANTHROPIC_DEFAULT_SONNET_MODEL',
       'ANTHROPIC_DEFAULT_OPUS_MODEL',
     ]) {
       expect(overrides.keyEnv[slot]).toBe('deepseek-v4-pro');
     }
-    // O `--model deepseek-flash` vira v4-pro no spawn (o plano dá 403 no flash).
+    expect(overrides.keyEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('deepseek-v4.1-flash-1017');
+    // O `--model deepseek-flash` vira o flash do plano no spawn (o plano não
+    // tem esse id).
     expect(overrides.modelAliases).toMatchObject({
-      'deepseek-flash': 'deepseek-v4-pro',
-      'deepseek-v4-flash': 'deepseek-v4-pro',
+      'deepseek-flash': 'deepseek-v4.1-flash-1017',
+      'deepseek-v4-flash': 'deepseek-v4.1-flash-1017',
     });
-    expect(overrides.defaultModel).toBe('deepseek-v4-pro');
+    expect(overrides.defaultModel).toBe('deepseek-v4.1-flash-1017');
     expect(overrides.suppressEnv).toContain('DEEPSEEK_API_KEY');
     // A chave da API direta nunca entra no processo que fala com a Alibaba.
     expect(JSON.stringify(overrides)).not.toContain(DIRECT_KEY);
@@ -484,11 +488,12 @@ describe('F-724 — setConfig e snapshot do provider', () => {
     expect(plan.providerChoice?.key.label).toContain('Qwen Code');
     expect(plan.hasKey).toBe(false);
     expect(plan.models).toContain('deepseek-v4-pro');
+    expect(plan.models).toContain('deepseek-v4.1-flash-1017');
     expect(plan.models).not.toContain('deepseek-flash');
     expect(plan.models.some((m) => m.startsWith('qwen'))).toBe(false);
     expect(plan.modelAliases).toEqual({
-      'deepseek-flash': 'deepseek-v4-pro',
-      'deepseek-v4-flash': 'deepseek-v4-pro',
+      'deepseek-flash': 'deepseek-v4.1-flash-1017',
+      'deepseek-v4-flash': 'deepseek-v4.1-flash-1017',
     });
     fx.vault.set('qwen', PLAN_KEY);
     fx.cached.add('qwen');

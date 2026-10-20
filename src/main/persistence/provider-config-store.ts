@@ -137,7 +137,9 @@ import {
   ALIBABA_TOKEN_PLAN_HOST,
   DEEPSEEK_DIRECT_HOST,
   DEEPSEEK_DIRECT_PROVIDER,
+  DEEPSEEK_DIRECT_MODEL_ALIASES,
   DEEPSEEK_TOKEN_PLAN_MODEL,
+  DEEPSEEK_TOKEN_PLAN_FLASH_MODEL,
   DEEPSEEK_TOKEN_PLAN_MODEL_ALIASES,
   DEEPSEEK_TOKEN_PLAN_PROVIDER,
   QWEN_TOKEN_PLAN_FLASH_MODEL,
@@ -579,12 +581,12 @@ function qwenSettingsInjection(
 }
 
 /**
- * Qwen no Alibaba Token Plan: o plano não tem o `deepseek-flash` do menu do
- * Qwen ("404 Model not exist", campo, 20/10/2026: pane com a chave do plano ok
- * e o erro parecia de chave). O Nexus troca o id no `--model`, como faz com o
- * adapter `deepseek`. Vale com a chave injetada (host do plano ou chave
- * `sk-sp-`) e com o settings.json do operador apontando para o plano; fora do
- * plano o id segue como está.
+ * Qwen no Alibaba Token Plan: o plano só serve o `deepseek-v4-pro`, e o
+ * `deepseek-flash` do menu do Qwen volta "404 Model not exist" (campo,
+ * 20/10/2026: pane com a chave do plano ok e o erro parecia de chave). O
+ * Nexus troca o id no `--model`, como faz com o adapter `deepseek`. Vale com a
+ * chave injetada (host do plano ou chave `sk-sp-`) e com o settings.json do
+ * operador apontando para o plano; fora do plano o id segue como está.
  */
 function qwenTokenPlanModelAliases(
   injection: QwenSettingsInjection | undefined,
@@ -1283,11 +1285,13 @@ function buildProviderSpawnOverrides(
     cached && revalidateExecutable(cached) ? cached : null;
   const discovered =
     userBin ?? cachedValid ?? resolveAdapterBinary(adapterId);
-  // F-724: no Token Plan o DeepSeek só existe como v4-pro — o default salvo e
-  // o `--model` pedido sobem nele em vez de morrer em 403.
-  const deepseekPlan =
-    adapterId === DEEPSEEK_DIRECT_PROVIDER &&
-    deepseekChoice(cfg.upstream) === DEEPSEEK_TOKEN_PLAN_PROVIDER;
+  // F-724: o provedor escolhido serve alguns ids com outro nome. No Token Plan
+  // o flash genérico sobe como `deepseek-v4.1-flash-1017` (o plano não tem
+  // `deepseek-flash`); na API direta o nome de versão do plano sobe como
+  // `deepseek-flash`. O default salvo e o `--model` pedido passam por aqui.
+  const deepseekChoiceNow =
+    adapterId === DEEPSEEK_DIRECT_PROVIDER ? deepseekChoice(cfg.upstream) : null;
+  const deepseekPlan = deepseekChoiceNow === DEEPSEEK_TOKEN_PLAN_PROVIDER;
   // F-990: o default salvo só vale se a CLI ainda o oferece (listagem viva
   // autoritativa); senão o pane abre no default resolvido, nunca num fantasma.
   const offer = adapter ? currentModelOffer(adapter) : null;
@@ -1310,13 +1314,19 @@ function buildProviderSpawnOverrides(
         ? discovered
         : null,
     defaultModel:
-      savedDefault && deepseekPlan
-        ? deepseekModelForProvider(savedDefault, DEEPSEEK_TOKEN_PLAN_PROVIDER)
+      savedDefault && deepseekChoiceNow
+        ? deepseekModelForProvider(savedDefault, deepseekChoiceNow)
         : savedDefault,
     extraArgs: [...controlArgsFor(adapterId, perSpawn.effort), ...cfg.extraArgs],
     accountChoice: receipt,
     ...(account ? { selectedAccountId: account.id } : {}),
-    ...(deepseekPlan ? { modelAliases: DEEPSEEK_TOKEN_PLAN_MODEL_ALIASES } : {}),
+    ...(deepseekChoiceNow
+      ? {
+          modelAliases: deepseekPlan
+            ? DEEPSEEK_TOKEN_PLAN_MODEL_ALIASES
+            : DEEPSEEK_DIRECT_MODEL_ALIASES,
+        }
+      : {}),
   };
 
   if (options.nativeAuthAttempt) {
@@ -2204,7 +2214,7 @@ function toInfo(
   // listagem vazia com sucesso limpa; o que a CLI não lista vira unverified.
   const offer = currentModelOffer(adapter);
   // F-724: o catálogo do DeepSeek é o que o provedor escolhido serve (no
-  // Token Plan só o v4-pro; o flash dá 403).
+  // Token Plan o v4-pro e o v4.1-flash-1017; na API direta o deepseek-flash).
   const deepseekSelected =
     adapterId === DEEPSEEK_DIRECT_PROVIDER ? deepseekChoice(cfg.upstream) : null;
   // F-1576: no Claude o Flash só existe com o upstream na DeepSeek direta. A
@@ -2392,8 +2402,9 @@ function deepseekProviderChoiceInfo(
         id: DEEPSEEK_TOKEN_PLAN_PROVIDER,
         label: 'Alibaba Token Plan',
         hint:
-          `Chave do Token Plan (a mesma do Qwen Code). O plano só serve o ` +
-          `${DEEPSEEK_TOKEN_PLAN_MODEL}: o flash sobe nele.`,
+          `Chave do Token Plan (a mesma do Qwen Code). O plano serve o ` +
+          `${DEEPSEEK_TOKEN_PLAN_MODEL} e o ${DEEPSEEK_TOKEN_PLAN_FLASH_MODEL}: ` +
+          `o flash do menu sobe neste último.`,
       },
     ],
     key: {

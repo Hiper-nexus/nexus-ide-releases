@@ -16,6 +16,8 @@ import {
   isAlibabaTokenPlanUrl,
   isDeepseekProviderChoice,
 } from './deepseek-provider';
+import { migrateModelId } from '../../shared/model-defaults';
+import { modelLineOf, newestInModelLine } from '../../shared/model-line';
 
 describe('provedor do DeepSeek (F-724)', () => {
   it('API direta é o padrão; só o id do plano escolhe o Token Plan', () => {
@@ -86,26 +88,47 @@ describe('provedor do DeepSeek (F-724)', () => {
     expect(isAlibabaTokenPlanUrl('não é url')).toBe(false);
   });
 
-  it('no plano o flash sobe como v4-pro; na API direta nada muda', () => {
+  it('no plano o flash genérico sobe como v4.1-flash-1017; na API direta o nome de versão volta a deepseek-flash', () => {
     for (const flash of ['deepseek-flash', 'deepseek-v4-flash']) {
       expect(deepseekModelForProvider(flash, DEEPSEEK_TOKEN_PLAN_PROVIDER)).toBe(
-        'deepseek-v4-pro',
+        'deepseek-v4.1-flash-1017',
       );
       expect(deepseekModelForProvider(flash, DEEPSEEK_DIRECT_PROVIDER)).toBe(flash);
     }
     expect(deepseekModelForProvider('deepseek-v4-pro', DEEPSEEK_TOKEN_PLAN_PROVIDER))
       .toBe('deepseek-v4-pro');
+    // Nomes inteiros do plano seguem como pedidos.
+    for (const full of ['deepseek-v4.1-flash-1017', 'deepseek-v4.1-flash', 'deepseek-v4-flash-0731']) {
+      expect(deepseekModelForProvider(full, DEEPSEEK_TOKEN_PLAN_PROVIDER)).toBe(full);
+    }
+    // A DeepSeek direta não tem o id de versão do plano (doc oficial, 20/10).
+    expect(deepseekModelForProvider('deepseek-v4.1-flash-1017', DEEPSEEK_DIRECT_PROVIDER))
+      .toBe('deepseek-flash');
   });
 
-  it('catálogo do plano tira os flash e garante o v4-pro', () => {
+  it('o id do plano não é reescrito por migrateModelId nem confundido com outra linha', () => {
+    expect(migrateModelId('deepseek-v4.1-flash-1017')).toBe('deepseek-v4.1-flash-1017');
+    expect(modelLineOf('deepseek-v4.1-flash-1017').version).toEqual([4, 1, 1017]);
+    // Só a versão muda dentro da linha: o 1017 supera o flash de setembro.
+    expect(newestInModelLine('deepseek-v4.1-flash', ['deepseek-v4.1-flash-1017']))
+      .toBe('deepseek-v4.1-flash');
+  });
+
+  it('catálogo do plano: v4-pro e v4.1-flash-1017, sem o flash genérico', () => {
     expect(
       deepseekModelsForProvider(['deepseek-v4-pro', 'deepseek-flash'], DEEPSEEK_TOKEN_PLAN_PROVIDER),
-    ).toEqual(['deepseek-v4-pro']);
+    ).toEqual(['deepseek-v4-pro', 'deepseek-v4.1-flash-1017']);
     expect(
       deepseekModelsForProvider(['deepseek-flash'], DEEPSEEK_TOKEN_PLAN_PROVIDER),
-    ).toEqual(['deepseek-v4-pro']);
+    ).toEqual(['deepseek-v4-pro', 'deepseek-v4.1-flash-1017']);
     expect(
       deepseekModelsForProvider(['deepseek-v4-pro', 'deepseek-flash'], DEEPSEEK_DIRECT_PROVIDER),
+    ).toEqual(['deepseek-v4-pro', 'deepseek-flash']);
+    expect(
+      deepseekModelsForProvider(
+        ['deepseek-v4-pro', 'deepseek-flash', 'deepseek-v4.1-flash-1017'],
+        DEEPSEEK_DIRECT_PROVIDER,
+      ),
     ).toEqual(['deepseek-v4-pro', 'deepseek-flash']);
   });
 });

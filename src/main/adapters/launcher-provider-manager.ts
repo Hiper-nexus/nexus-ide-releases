@@ -20,6 +20,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   ALIBABA_TOKEN_PLAN_ANTHROPIC_BASE_URL,
+  DEEPSEEK_TOKEN_PLAN_FLASH_MODEL,
   DEEPSEEK_TOKEN_PLAN_MODEL,
   DEEPSEEK_TOKEN_PLAN_PROVIDER,
 } from './deepseek-provider';
@@ -207,7 +208,8 @@ export const UPSTREAM_PROVIDERS: Record<string, UpstreamProvider> = {
   // F-724: o mesmo DeepSeek pelo Alibaba Model Studio Token Plan (endpoint
   // Anthropic-compatible do plano). Só o adapter `deepseek` escolhe esta rota
   // e a chave é a do Token Plan (a do Qwen Code), nunca a da DeepSeek. O
-  // plano só serve o v4-pro: os três slots ficam nele (o flash dá 403).
+  // plano serve o v4-pro e, desde 20/10/2026, o v4.1-flash-1017: o slot barato
+  // (haiku) fica no flash e sonnet/opus no v4-pro, como na API direta.
   [DEEPSEEK_TOKEN_PLAN_PROVIDER]: {
     id: DEEPSEEK_TOKEN_PLAN_PROVIDER,
     label: 'DeepSeek via Alibaba Token Plan',
@@ -216,7 +218,7 @@ export const UPSTREAM_PROVIDERS: Record<string, UpstreamProvider> = {
     extraEnv: {
       ...THIRD_PARTY_EXTRA,
       CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT: '1',
-      ANTHROPIC_DEFAULT_HAIKU_MODEL: DEEPSEEK_TOKEN_PLAN_MODEL,
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: DEEPSEEK_TOKEN_PLAN_FLASH_MODEL,
       ANTHROPIC_DEFAULT_SONNET_MODEL: DEEPSEEK_TOKEN_PLAN_MODEL,
       ANTHROPIC_DEFAULT_OPUS_MODEL: DEEPSEEK_TOKEN_PLAN_MODEL,
     },
