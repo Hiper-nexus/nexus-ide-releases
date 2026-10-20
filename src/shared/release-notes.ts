@@ -11952,7 +11952,7 @@ export const RELEASE_076337: AppRelease = {
 };
 
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076338: AppRelease = {
   version: '0.76.338',
   date: '2026-10-20',
   codename: 'Estúdio de vídeo',
@@ -11969,4 +11969,20 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: [...RELEASE_076337.fixes],
 };
 
-export const RELEASE_076338: AppRelease = CURRENT_RELEASE;
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.339',
+  date: '2026-10-20',
+  codename: 'Estúdio de mídia completo',
+  summary: 'O Estúdio de mídia ganha lugar na barra lateral, referências do projeto (imagem, logo e vídeo de exemplo), modelos de vídeo novos e a Higgsfield. Os agentes fazem vídeos de apresentação por código, com narração, legendas, música e export por rede, e "Minha voz" cria uma voz sintética sua na ElevenLabs ou no Gemini. O instalador do Windows sai assinado.',
+  highlights: [
+    { title: 'Estúdio de mídia à mão', detail: 'O Estúdio de mídia tem uma linha própria na barra lateral, logo abaixo de Memória, e um comando na paleta (Ctrl+K no Windows e no Linux, ⌘K no Mac). Buscar "vídeo", "logo" ou "voz" também acha.' },
+    { title: 'Referências do projeto', detail: 'Imagem, logo ou vídeo de exemplo entram por Adicionar, arrastando ou colando, e ficam copiados em media/referencias/ do projeto. Na imagem servem de base para editar. No vídeo, uma imagem vira o primeiro quadro e duas ou mais viram referência de personagem, produto ou logo. Os modelos que exigem imagem inicial (Kling 2.1, Wan 2.5) deixaram de ficar bloqueados.' },
+    { title: 'Modelos de vídeo novos', detail: 'Seedance 2.5, MiniMax H3 (Hailuo 3), Wan 3 e Wan 3 Prime, Gemini Omni 1.1, PixVerse v6 e Vidu Q3, com o preço de lista do Replicate. O Veo 3.1 Fast e o Lite recebiam imagens de referência que não aceitam; agora o pedido é recusado antes de cobrar.' },
+    { title: 'Higgsfield', detail: 'Entra como serviço de imagem e de vídeo, com uma chave no formato ID:SEGREDO. Imagem: Soul 2, Ideogram 4 (bom para logo e texto), Qwen Image 3 e Recraft 4.1. Vídeo: Seedance 2.5 até 1080p, Seedance 2.0 até 4K, Kling 3.0, H3 e Wan 3.0. O preço vem da própria Higgsfield antes de gerar, e por ela o vídeo de exemplo chega ao modelo como referência de movimento e estilo.' },
+    ...RELEASE_076338.highlights,
+  ],
+  fixes: [...RELEASE_076338.fixes],
+};
+
+export const RELEASE_076339: AppRelease = CURRENT_RELEASE;
