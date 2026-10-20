@@ -688,11 +688,7 @@ function paneStateRecord(): Record<string, string | undefined> {
  * vistas filtradas (ex.: Terminais da missão) possam mostrar o pane novo em
  * vez de criá-lo invisível.
  */
-export function runPanePickerIntent(
-  intent: PanePickerIntent,
-  /** F-1596: tarefa desta abertura (brief); só vale para pane de agente. */
-  brief?: string | null,
-): string | undefined {
+export function runPanePickerIntent(intent: PanePickerIntent): string | undefined {
   if (!allowPaneCreation()) return undefined;
   const layout = useLayoutStore.getState();
   if (intent.kind === 'terminal') {
@@ -700,14 +696,6 @@ export function runPanePickerIntent(
   }
   if (intent.kind === 'browser') {
     return layout.addBrowserPane();
-  }
-  if (brief) {
-    // Pedido novo e explícito: o agente nasce com o brief, sem pacote de
-    // recuperação de missão parada (isso continua no "+ Pane" comum).
-    return layout.spawnAgent(intent.adapterId, intent.model, {
-      ...(intent.accountId ? { accountId: intent.accountId } : {}),
-      brief,
-    });
   }
   const orch = useOrchStore.getState();
   const panes = listPanes(layout.root);
@@ -820,11 +808,6 @@ export function PanePicker({
   );
 
   const [open, setOpen] = useState(false);
-  /** F-1596: brief desta abertura; fechar sem escolher o descarta. */
-  const briefRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!open) briefRef.current = null;
-  }, [open]);
   const [query, setQuery] = useState('');
   const [cursor, setCursor] = useState(0);
   /** F-231: destino escolhido no passo extra de uma aba com missão viva. */
@@ -955,12 +938,7 @@ export function PanePicker({
   // menu volta direto na vista de contas dela.
   useEffect(() => {
     if (!pendingOpen || !acceptsPendingOpen) return;
-    if (!allowPaneCreation()) {
-      consumePendingOpen();
-      usePanePickerStore.getState().takePendingBrief();
-      return;
-    }
-    briefRef.current = usePanePickerStore.getState().takePendingBrief();
+    if (!allowPaneCreation()) { consumePendingOpen(); return; }
     setOpen(true);
     if (pendingAccountsAdapterId) {
       // Voltar das contas devolve a matriz daquela CLI, não o índice geral.
@@ -1085,8 +1063,6 @@ export function PanePicker({
       setExpandedFolds((current) => new Set(current).add(row.expandFold));
       return;
     }
-    const brief = briefRef.current;
-    briefRef.current = null;
     setOpen(false);
     const intent = row.intent;
     // F-231: dentro de uma aba de missão o destino foi escolhido no passo
@@ -1146,7 +1122,7 @@ export function PanePicker({
         });
       return;
     }
-    const paneId = runPanePickerIntent(intent, intent.kind === 'agent' ? brief : null);
+    const paneId = runPanePickerIntent(intent);
     if (!paneId) return;
     if (picked === 'newTab') {
       (onPaneCreatedInNewTab ?? onPaneCreated)?.(paneId);
@@ -1534,10 +1510,18 @@ export function PanePicker({
               {unavailable.length > 0 && !drillCli && !query.trim() && (
                 <div
                   className="pane-picker__unavailable"
-                  aria-label="CLIs indisponíveis"
+                  role="group"
+                  aria-labelledby="pane-picker-unavailable-title"
+                  // Região de rolagem focável: teclado alcança o que a altura
+                  // capada corta (tabIndex + setas rolam; sem isso o conteúdo
+                  // além da dobra fica inatingível).
+                  tabIndex={0}
                 >
-                  <div className="pane-picker__section" aria-hidden="true">
-                    Indisponíveis
+                  <div
+                    id="pane-picker-unavailable-title"
+                    className="pane-picker__section"
+                  >
+                    {`Indisponíveis · ${unavailable.length}`}
                   </div>
                   {unavailable.map((item) => (
                     <p

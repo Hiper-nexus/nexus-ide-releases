@@ -237,7 +237,6 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
     usePanePickerStore.setState({
       pendingOpen: false,
       pendingAccountsAdapterId: null,
-      pendingBrief: null,
     });
     if (originalScrollIntoView) {
       Object.defineProperty(
@@ -329,6 +328,37 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
     );
   });
 
+  it('ordena as disponíveis antes das indisponíveis — F-1602', () => {
+    mount();
+    openMenu();
+
+    // Posição no DOM, não substring no texto: prova a ORDEM das regiões
+    // (lista principal → bloco) sem acoplar a conteúdo de linha específico.
+    const list = host.querySelector<HTMLElement>('.pane-picker__list');
+    const unavailableBlock = host.querySelector<HTMLElement>(
+      '.pane-picker__unavailable',
+    );
+    expect(list).not.toBeNull();
+    expect(unavailableBlock).not.toBeNull();
+    // A lista traz pelo menos uma CLI disponível (não é vazia).
+    expect(optionIds()).toContain('cli:claude');
+    expect(
+      list!.compareDocumentPosition(unavailableBlock!) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    // Título com contagem deixa claro que o bloco é resumo secundário.
+    expect(host.textContent).toContain('Indisponíveis · 2');
+  });
+
+  it('busca esconde o bloco de indisponíveis — F-1602', () => {
+    mount();
+    openMenu();
+
+    type('claude');
+    expect(host.querySelector('.pane-picker__unavailable')).toBeNull();
+    expect(host.textContent).not.toContain('Indisponíveis');
+  });
+
   it('filtra por texto digitado em CLI, conta e modelo', () => {
     useAccountStore.setState({
       accounts: [account('acc-1', 'claude', 'Conta Pessoal')],
@@ -361,29 +391,6 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
     act(() => usePanePickerStore.getState().requestOpen());
     expect(host.querySelector('[role="dialog"]')).not.toBeNull();
     expect(usePanePickerStore.getState().pendingOpen).toBe(false);
-  });
-
-  it('F-1596: o brief de "Novo vídeo" vai só para o agente escolhido nesta abertura', () => {
-    mount();
-    act(() => usePanePickerStore.getState().requestOpen(undefined, { brief: 'Crie o vídeo do Agendify' }));
-    expect(usePanePickerStore.getState().pendingBrief).toBeNull();
-    drillInto('codex');
-    clickEntry('agent:codex:default:codex-alt');
-    expect(spawnAgent).toHaveBeenCalledWith('codex', 'codex-alt', { brief: 'Crie o vídeo do Agendify' });
-  });
-
-  it('F-1596: fechar o picker sem escolher descarta o brief', () => {
-    mount();
-    act(() => usePanePickerStore.getState().requestOpen(undefined, { brief: 'brief esquecido' }));
-    act(() => {
-      document.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
-      );
-    });
-    openMenu();
-    drillInto('codex');
-    clickEntry('agent:codex:default:codex-alt');
-    expect(spawnAgent).toHaveBeenCalledWith('codex', 'codex-alt');
   });
 
   it('clicar numa linha sobe o pane com adapterId e modelo exatos', () => {

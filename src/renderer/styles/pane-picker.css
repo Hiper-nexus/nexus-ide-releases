@@ -589,6 +589,22 @@
   flex: 0 0 auto;
   border-top: 1px solid var(--border);
   padding-bottom: 6px;
+  /* Bloco secundário: nunca compete com a lista de disponíveis. Altura
+     capada com rolagem interna — o motivo de cada linha continua inteiro.
+     O teto acompanha o painel (nunca domina a altura dele) e a rolagem é
+     contida para não encadear com a da lista (`.pane-picker__list`). */
+  min-height: 0;
+  max-height: min(32%, 224px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* Região de rolagem focável (tabIndex no JSX): o foco de teclado precisa
+     ser visível para quem rola sem mouse. */
+  outline: none;
+}
+
+.pane-picker__unavailable:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .pane-picker__unavailable-row {
@@ -597,7 +613,7 @@
   align-items: flex-start;
   gap: 8px;
   margin: 0;
-  padding: 4px 12px;
+  padding: 3px 12px;
   color: var(--text-faint);
   font-size: var(--text-xs);
 }
