@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.76.352 — Flash do Token Plan
+
+Windows x64, assinado pelo YubiKey (HIPERSEND). Não recebe arquivos Linux. Em relação à 0.76.351:
+
+- **DeepSeek Flash no Alibaba Token Plan.** A lista de modelos do plano (20/10/2026) traz o `deepseek-v4.1-flash-1017`. O flash do menu do Claude Code sobe nele em vez de cair no `deepseek-v4-pro`, o modelo barato fica no flash e o menu do plano oferece o `deepseek-v4-pro` e o `deepseek-v4.1-flash-1017`.
+- **Qwen Code no Token Plan sem «Model not exist».** O menu mandava `deepseek-flash`, que o plano não tem. O flash genérico sobe como `deepseek-v4.1-flash-1017`, o catálogo gerado traz só o que o plano serve e o nome completo pedido passa como está. O `qwen3.8-flash` entra no menu.
+- **API direta da DeepSeek.** O nome de versão do plano não é id da API: o `deepseek-flash` já é o DeepSeek-V4.1-Flash-1017 (api-docs.deepseek.com). Quem pedir o nome de versão na API direta recebe o `deepseek-flash`.
+- **Estúdio de mídia.** Catálogo de imagem com o GPT-Image 2.5 e os modelos Nano Banana do Google; anexos com papel (logo, mascote, print, vídeo de exemplo) no novo vídeo de apresentação.
+- **O pedido do vídeo espera o pane subir.** A entrega espera a CLI iniciar (até 60 s) e, se falhar, copia o pedido e avisa no terminal.
+
+
 ## 0.76.351 — A boca do Jarvis
 
 Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.

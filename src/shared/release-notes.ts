@@ -12128,7 +12128,7 @@ export const RELEASE_076350: AppRelease = {
   fixes: [...RELEASE_076349.fixes],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076351: AppRelease = {
   version: '0.76.351',
   date: '2026-10-20',
   codename: 'A boca do Jarvis',
@@ -12152,4 +12152,23 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076351: AppRelease = CURRENT_RELEASE;
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.352',
+  date: '2026-10-20',
+  codename: 'Flash do Token Plan',
+  summary: 'No Windows, o DeepSeek Flash sobe no Claude Code e no Qwen Code pelo Alibaba Token Plan com o modelo que o plano serve (deepseek-v4.1-flash-1017), em vez de morrer em erro de modelo inexistente. O estúdio de mídia ganha os modelos de imagem novos e os anexos do vídeo, e o pedido do vídeo espera o pane subir. Não recebe arquivos Linux.',
+  highlights: [
+    { title: 'DeepSeek Flash no Alibaba Token Plan', detail: 'A lista de modelos do plano passou a trazer o deepseek-v4.1-flash-1017. O flash do menu do Claude Code agora sobe nele (antes caía no deepseek-v4-pro), o modelo barato do Claude Code fica no flash e o menu do plano oferece o v4-pro e o v4.1-flash-1017.' },
+    { title: 'O Qwen Code no Token Plan não volta mais «Model not exist»', detail: 'O menu mandava deepseek-flash, que o plano não tem, e o erro parecia de chave. O flash genérico sobe como deepseek-v4.1-flash-1017, o catálogo gerado traz só o que o plano serve e o nome completo pedido pela pessoa passa como está. O qwen3.8-flash entra no menu do Qwen Code.' },
+    { title: 'API direta da DeepSeek', detail: 'O nome de versão do plano não é id da API da DeepSeek: o deepseek-flash já é o DeepSeek-V4.1-Flash-1017. Quem pedir o nome de versão na API direta recebe o deepseek-flash.' },
+    { title: 'Estúdio de mídia: imagens novas e anexos no vídeo', detail: 'Catálogo de imagem com o GPT-Image 2.5 e os modelos Nano Banana do Google. O novo vídeo de apresentação aceita anexos com papel (logo, mascote, print do sistema, vídeo de exemplo e outra imagem) por clique, arraste ou colagem.' },
+    { title: 'O pedido do vídeo espera o pane subir', detail: 'O texto do pedido era colado antes de a CLI subir e, no Qwen Code, se perdia sem aviso. Agora a entrega espera o pane sair de «subindo» e, se falhar, copia o pedido e avisa no terminal.' },
+  ],
+  fixes: [
+    { title: 'Flash do Token Plan', detail: 'No Token Plan o deepseek-flash e o deepseek-v4-flash sobem como deepseek-v4.1-flash-1017 no Claude Code e no Qwen Code.' },
+    { title: 'Pedido do vídeo não se perde no boot lento', detail: 'A entrega do pedido ao pane espera o início da CLI (até 60 s) e avisa quando não consegue entregar.' },
+    ...RELEASE_076351.fixes,
+  ],
+};
+
+export const RELEASE_076352: AppRelease = CURRENT_RELEASE;
