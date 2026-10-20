@@ -16,7 +16,8 @@ import { useProductNavigationStore } from '../state/product-navigation-store';
 import { useLayoutStore } from '../state/layout-store';
 import { reportLicenseDenial } from '../state/access-guard';
 import { waitForBrowserPaneCreated } from '../browser/browser-host';
-import { buildPresentationBrief, type BriefVoice } from './video-brief';
+import { buildPresentationBrief, type BriefAttachment, type BriefVoice } from './video-brief';
+import { BriefAttachments } from './BriefAttachments';
 import { NarrationRecorder } from './NarrationRecorder';
 
 /**
@@ -58,6 +59,7 @@ function BriefForm({ onClose, onSent }: { onClose: () => void; onSent: () => voi
   const [voiceChoice, setVoiceChoice] = useState('library');
   const [music, setMusic] = useState(true);
   const [voices, setVoices] = useState<VoiceCloneReceiptView[]>([]);
+  const [attachments, setAttachments] = useState<BriefAttachment[]>([]);
 
   useEffect(() => {
     let alive = true;
@@ -81,7 +83,7 @@ function BriefForm({ onClose, onSent }: { onClose: () => void; onSent: () => voi
   }
 
   function send() {
-    const brief = buildPresentationBrief({ product, siteUrl, audience, style, durationSec, preset, voice: voice(), music });
+    const brief = buildPresentationBrief({ product, siteUrl, audience, style, durationSec, preset, voice: voice(), music, attachments });
     useProductNavigationStore.getState().openTerminal();
     usePanePickerStore.getState().requestOpen(undefined, { brief });
     onSent();
@@ -97,8 +99,9 @@ function BriefForm({ onClose, onSent }: { onClose: () => void; onSent: () => voi
       }}
     >
       <p className="vp-brief__lead">
-        Conte o que o produto faz. Você escolhe o agente no &quot;+ Pane&quot; e ele recebe este pedido; antes de gastar, ele
-        mostra o roteiro e o custo.
+        Conte o que o produto faz e anexe o que quiser no vídeo: logo, mascote, prints do sistema e um vídeo de exemplo do
+        estilo. Você escolhe o agente no &quot;+ Pane&quot; e ele recebe este pedido; antes de gastar, ele mostra o roteiro
+        e o custo.
       </p>
       <label className="vp-field vp-field--wide">
         <span>Produto e o que ele resolve</span>
@@ -111,6 +114,7 @@ function BriefForm({ onClose, onSent }: { onClose: () => void; onSent: () => voi
           onChange={(event) => setProduct(event.target.value)}
         />
       </label>
+      <BriefAttachments attachments={attachments} onChange={setAttachments} />
       <label className="vp-field">
         <span>Site do produto (opcional)</span>
         <input className="settings-input" value={siteUrl} maxLength={500} placeholder="agendify.com.br" onChange={(event) => setSiteUrl(event.target.value)} />

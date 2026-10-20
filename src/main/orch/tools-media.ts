@@ -84,8 +84,10 @@ const imageGenerateTool: McpToolDef = {
     'Choose with nexus_media_providers: imageCostUsd is the list price per ' +
     'image of each model; if the user named a model or provider, use it. ' +
     'Without provider/model the keyed provider with the lowest list price ' +
-    'runs (see defaults there). Providers: google-image (Gemini Flash Image; ' +
-    'aspectRatio 1:1|16:9|9:16|4:3|3:4|3:2|2:3) | openai-image (gpt-image-2/1; ' +
+    'runs (see defaults there). Providers: google-image (Nano Banana 2.1, Pro, ' +
+    '2, Lite; aliases nano-banana-pro, nano-banana-2; ' +
+    'aspectRatio 1:1|16:9|9:16|4:3|3:4|3:2|2:3) | openai-image (GPT-Image 2.5 ' +
+    'Flare/Sunburst, gpt-image-2/1; aliases flare, sunburst; ' +
     'aspectRatio 1:1|16:9|9:16|4:3|3:4|3:2|2:3, mapped to its 3 sizes) | ' +
     'replicate-image (ByteDance Seedream 5.0 Pro; aliases: ' +
     'seedream, seedream-5-pro, seedream5-0-pro, seedream-lite). ' +

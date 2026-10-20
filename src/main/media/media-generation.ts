@@ -14,6 +14,11 @@ import {
 } from './media-download';
 import { mp4DurationSeconds } from './mp4-duration';
 import {
+  extractGeminiImage,
+  geminiImageRequest,
+  geminiImageUsesInteractions,
+} from './gemini-image-interactions';
+import {
   extractGeminiOmniOutput,
   geminiOmniRequest,
   geminiOmniTransportError,
@@ -205,9 +210,30 @@ async function googleImage(
   image?: MediaInputFile,
 ): Promise<Buffer> {
   assertMediaAuthorityCurrent(req);
+  const aspect = geminiImageAspect(req.aspectRatio);
+  if (geminiImageUsesInteractions(model)) {
+    const inline = image ? fileToInlineData(image) : undefined;
+    const created = await deps.fetchFn(`${GEMINI_BASE}/interactions`, {
+      method: 'POST',
+      headers: { 'x-goog-api-key': key, 'content-type': 'application/json' },
+      body: JSON.stringify(
+        geminiImageRequest({ prompt: req.prompt, aspectRatio: aspect }, model, inline),
+      ),
+      signal: req.signal,
+    });
+    assertMediaAuthorityCurrent(req);
+    if (!created.ok) throw await mediaHttpError(created, def.id);
+    const output = extractGeminiImage((await created.json()) as Record<string, unknown>);
+    assertMediaAuthorityCurrent(req);
+    if (!output.data) {
+      throw new Error(
+        `${def.id}: resposta sem imagem${output.text ? ` — "${output.text}"` : ''}`,
+      );
+    }
+    return Buffer.from(output.data, 'base64');
+  }
   const parts: unknown[] = [{ text: req.prompt }];
   if (image) parts.push({ inlineData: fileToInlineData(image) });
-  const aspect = geminiImageAspect(req.aspectRatio);
   const res = await deps.fetchFn(
     `${GEMINI_BASE}/models/${model}:generateContent`,
     {
