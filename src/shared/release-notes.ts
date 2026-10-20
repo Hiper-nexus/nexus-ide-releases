@@ -11997,7 +11997,7 @@ export const RELEASE_076340: AppRelease = {
   fixes: [...RELEASE_076339.fixes],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076341: AppRelease = {
   version: '0.76.341',
   date: '2026-10-20',
   codename: 'Estúdio de mídia completo',
@@ -12009,4 +12009,16 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: [...RELEASE_076340.fixes],
 };
 
-export const RELEASE_076341: AppRelease = CURRENT_RELEASE;
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.342',
+  date: '2026-10-20',
+  codename: 'Chave e minha voz',
+  summary: 'No desktop Linux, Ajustes → Modelos de mídia aceita colar a chave do serviço ali mesmo, e o Estúdio de vídeo leva direto a Criar minha voz. A tag 0.76.341 é o pacote Linux anterior.',
+  highlights: [
+    { title: 'Chave no catálogo', detail: 'Em Ajustes → Modelos de mídia, o serviço sem chave mostra o campo para colar a chave ali mesmo. A Higgsfield pede o formato ID:SEGREDO. Serviço já conectado guarda o campo em "Gerenciar conexão". A chave segue só para o cofre do Main.' },
+    { title: 'Criar minha voz no Estúdio', detail: 'No vídeo de apresentação, abaixo da Narração, "Criar minha voz" abre Ajustes → Serviços de mídia, fecha o Estúdio e leva o foco ao cartão Minha voz. Quem já tem voz vê "Minha voz". A clonagem continua só pela mão da pessoa.' },
+  ],
+  fixes: [...RELEASE_076341.fixes],
+};
+
+export const RELEASE_076342: AppRelease = CURRENT_RELEASE;
