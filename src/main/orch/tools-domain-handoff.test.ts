@@ -623,6 +623,26 @@ describe("handoff MCP stop receipt", () => {
     expect(result).toMatchObject({ jevReview: "weak" });
   });
 
+  it("encaminha artifacts[{ fullText }] e o summary integral (pré-condensação) para reviewMissionHandoff", async () => {
+    const longSummary = `${"Resumo detalhado da entrega. ".repeat(16)}Final do resumo sem corte.`;
+    const reportArtifact = { fullText: "Validação: npx vitest run src/x.test.ts → 5 passed. Commit abc1234." };
+    await submitTool().handler(
+      {
+        status: "success",
+        summary: longSummary,
+        artifacts: [reportArtifact],
+      },
+      context(),
+      invocation(),
+    );
+    expect(jevReview.reviewMissionHandoff).toHaveBeenCalledWith(
+      expect.objectContaining({
+        summary: longSummary,
+        artifacts: [reportArtifact],
+      }),
+    );
+  });
+
   it("F-1166: handoff de código de sucesso agenda a triagem consultiva (sem esperar); sem arquivos, não", async () => {
     advisor.scheduleReviewTriageAdvice.mockClear();
     await submitTool().handler(

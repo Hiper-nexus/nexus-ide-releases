@@ -136,6 +136,7 @@ export async function submitWorkspaceHandoff(
         declaredStatus,
         summary: rawSummary,
         fullText: typeof args.fullText === "string" ? args.fullText : undefined,
+        artifacts: workerArtifactsList(args.artifacts),
         accomplished: args.accomplished,
         blockers: args.blockers,
         nextSteps: args.nextSteps,

@@ -67,20 +67,6 @@ import {
   reviewMissionHandoff,
 } from "./jev-handoff-review";
 
-/** Íntegra do fechamento mecânico viaja no artifact `fullText` (turn-end-handoff). */
-function artifactFullText(artifacts: readonly unknown[]): string | undefined {
-  for (const artifact of artifacts) {
-    if (
-      artifact &&
-      typeof artifact === "object" &&
-      typeof (artifact as Record<string, unknown>).fullText === "string"
-    ) {
-      return (artifact as Record<string, unknown>).fullText as string;
-    }
-  }
-  return undefined;
-}
-
 const ptyStreamHandoffPayloadSchema = z
   .object({
     status: handoffStatusSchema,
@@ -426,7 +412,7 @@ async function preparePtyHandoff(
         missionId: mission.id,
         declaredStatus: payload.status,
         summary,
-        fullText: artifactFullText(payload.artifacts),
+        artifacts: payload.artifacts,
         declaredFiles,
         artifactKinds: payload.artifacts
           .filter(

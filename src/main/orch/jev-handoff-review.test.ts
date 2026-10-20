@@ -134,6 +134,69 @@ describe('buildHandoffReviewState', () => {
     expect(state.delivery.declaredFiles.length).toBe(50);
     expect(state.delivery.artifactKinds).toEqual(['k1', 'k2']);
   });
+
+  // Falso negativo real (handoff Devin): o worker entrega a íntegra SÓ em
+  // artifacts[{ fullText }] e um summary curto; sem ler o artifact, o juiz
+  // via "sem evidência de verificação"/"não lista arquivos" com o relatório
+  // completo — testes e arquivos — já no registro.
+  const fullReport =
+    'Corrigido o gate em src/main/orch/foo.ts:42 e src/main/orch/bar.ts:7.\n' +
+    'Validação: npx vitest run src/main/orch/foo.test.ts → 26 passed; ' +
+    'npx tsc --noEmit → exit 0. Commit abc1234 na branch nexus/x.';
+
+  it('artifact { fullText } entra no estado julgado (evidência e arquivos)', () => {
+    const state = buildHandoffReviewState({
+      ...baseInput,
+      summary: 'Correção entregue.',
+      declaredFiles: [],
+      artifacts: [{ fullText: fullReport }],
+    }) as { report: { fullText?: string } };
+    expect(state.report.fullText).toContain('26 passed');
+    expect(state.report.fullText).toContain('src/main/orch/foo.ts:42');
+  });
+
+  it('artifact overclock.fullText (payload string) entra no estado julgado', () => {
+    const state = buildHandoffReviewState({
+      ...baseInput,
+      summary: 'Correção entregue.',
+      declaredFiles: [],
+      artifacts: [{ kind: 'overclock.fullText', payload: fullReport }],
+    }) as { report: { fullText?: string } };
+    expect(state.report.fullText).toContain('26 passed');
+  });
+
+  it('relatório longo: a cauda (onde vai o resultado dos testes) sobrevive ao cap', () => {
+    const state = buildHandoffReviewState({
+      ...baseInput,
+      summary: 'Correção entregue.',
+      artifacts: [{ fullText: `${'detalhe '.repeat(2_000)}\n${fullReport}` }],
+    }) as { report: { fullText?: string } };
+    expect(state.report.fullText!.length).toBeLessThan(8_100);
+    expect(state.report.fullText).toContain('26 passed');
+  });
+
+  it('payload de artifact que não é a íntegra do relatório não entra no estado', () => {
+    const state = buildHandoffReviewState({
+      ...baseInput,
+      artifacts: [{ kind: 'nexus.workerArtifacts', payload: 'segredo-ou-lixo 26 passed' }],
+    }) as { report: { fullText?: string } };
+    expect(state.report.fullText).toBeUndefined();
+  });
+
+  it('negativo: íntegra sem teste/commit não inventa evidência — o sinal continua', () => {
+    const state = buildHandoffReviewState({
+      ...baseInput,
+      summary: 'Mexi no código.',
+      artifacts: [{ fullText: 'Alterei a lógica principal e ficou pronto.' }],
+    }) as { report: { fullText?: string } };
+    expect(state.report.fullText).toContain('Alterei a lógica');
+    expect(state.report.fullText).not.toContain('passed');
+    const signals = evaluateHandoffEvidence(
+      result({ is_specific: 0.9, has_verification: 0.1, admits_incomplete: 0.1 }).answers,
+      { declaredFiles: ['src/x.ts'], evidenceIdsCount: 0, hasObservedCommit: false },
+    );
+    expect(signals.some((s) => s.includes('sem evidência de verificação'))).toBe(true);
+  });
 });
 
 describe('reviewMissionHandoff', () => {
