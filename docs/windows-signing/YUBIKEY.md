@@ -162,8 +162,11 @@ npm run windows-signer -- stop     # encerra (o PIN some com ele)
 - **O que ele assina.** Só `.exe`, `.dll` e `.node`, arquivo comum, com o caminho
   real (junction resolvida) dentro do `out\` de um checkout cujo
   `build/windows-signing-identity.json` fixa este certificado, da
+  `src-tauri\target\release` de um checkout do Nexus Shot cujo
+  `src-tauri/windows-signing-identity.json` o fixa (seção seguinte), da
   `%LOCALAPPDATA%\SquirrelTemp` ou do staging `electron-packager` no TEMP de quem
-  pede. Pedido sem o token do `agent.json` é recusado.
+  pede. A identidade de um produto só abre a pasta dele (o `out\` de um checkout
+  do Shot não vale). Pedido sem o token do `agent.json` é recusado.
 - **O risco que o prazo compra.** Enquanto vive, o agente é um assinador para
   qualquer processo deste usuário do Windows que leia o `agent.json`: um malware
   rodando como o operador poderia assinar um `.exe` posto numa dessas pastas.
@@ -193,6 +196,50 @@ npm run windows-signer -- stop     # encerra (o PIN some com ele)
 - Coletor (`collect-windows-release.ps1`) com `RUNNER_TEMP` de caminho longo (o
   scratchpad do Claude) falha no smoke do app extraído do nupkg; use uma pasta
   curta, como `$env:TEMP\nxrt`.
+
+## Nexus Shot pelo mesmo agente (20/10)
+
+O Shot (repositório `nexus-shot`, Tauri + NSIS) chamava o SignTool direto: 8
+janelas de PIN no primeiro build e 3 nos seguintes. Desde 20/10 o
+`scripts/windows-sign.ps1` dele (o `bundle.windows.signCommand`) pede cada
+assinatura ao agente daqui, pelo pipe e token do `agent.json` (o mesmo protocolo
+do `client.cjs`, uma linha JSON por pedido, com `checkoutRoot` = o checkout do
+Shot e `requester.app = 'nexus-shot'` no diário).
+
+- **A raiz nova é uma só.** O agente aceita a `src-tauri\target\release` de um
+  checkout que fixa este certificado em `src-tauri/windows-signing-identity.json`
+  (`CHECKOUT_LAYOUTS` em `agent.cjs`). Lá ficam o `nexus-shot.exe`, as DLLs de
+  plugin que o Tauri copia para `nsis\x64\Plugins` e o instalador
+  (`nsis\x64\nsis-output.exe`). O desinstalador, que o `makensis` assina num
+  `nst*.tmp` do TEMP pelo `!uninstfinalize`, não abriu raiz no TEMP nem a extensão
+  `.tmp`: o script o copia para `target\release\windows-sign\<guid>.exe`, pede a
+  assinatura lá, confere e devolve ao lugar. O diário registra esse nome.
+- **Sem agente vivo.** Com o PIN guardado e o início no logon instalado, o script
+  roda a mesma linha do logon (`bin\client.cjs start --if-pin-saved`, que nunca
+  abre janela) por `Start-Process` (ShellExecute: o agente não herda o stdout que o
+  Tauri e o `makensis` leem até o fim) e tenta de novo. Por isso o `agent.log`
+  mostra `logon: agent ready with the saved PIN` também quando quem subiu foi um
+  build do Shot. Só sem agente nenhum o script cai no SignTool com a janela do
+  Windows, avisando.
+- **Agente vivo que recusa para o build.** Não cai para a janela em silêncio: a
+  mensagem manda atualizar o agente (`install-logon` de novo, a cópia em `bin` é o
+  que o logon e o Shot sobem) ou pará-lo (`stop`) para assinar com a janela.
+- **O que muda na assinatura.** O motor não grava descrição (`/d 'Nexus Shot'` do
+  SignTool); assinante, carimbo e conferência são os mesmos. O instalador do Shot
+  é por usuário, sem UAC. O script confere cada arquivo como antes (Valid,
+  carimbado, thumbprint e SPKI fixados) e o cache das DLLs de plugin continua.
+- **Medido em 20/10** (Shot `feat/windows-port`, Tauri CLI 2.11.4, carimbo
+  Sectigo, agente com o PIN guardado), **zero janela de PIN** nos dois builds:
+  - Sem agente vivo, o script subiu um pela linha do logon e assinou um `.exe` em
+    2,9 s; um `.tmp` do TEMP passou pela cópia em 4,4 s.
+  - `tauri build --bundles nsis` com o cache de plugins vazio: os 8 arquivos
+    pelo agente (app, 5 plugins, `nst4620.tmp`, instalador; cerca de 3 s cada,
+    o carimbo é a maior parte), build em 206 s. Cópias tiradas no próprio
+    `signCommand` e o conteúdo do instalador extraído pelo 7-Zip: tudo `Valid`,
+    `41BB4AFD…`, SPKI `cc695904…`, carimbo Sectigo; o `nexus-shot.exe` de dentro
+    é byte a byte o que o agente assinou.
+  - O mesmo comando, sem nada em volta: app, desinstalador e instalador pelo
+    agente, 5 plugins do cache, 161 s, nenhum `signtool` rodando.
 
 ## PIN guardado: zero janela (decisão do operador, 19/10)
 
@@ -286,7 +333,7 @@ npm run windows-signer -- uninstall-logon   # tira o início no logon
 | Redline no Windows (`resources\nexus-redline\NexusRedline.exe`) | Sim | Vai dentro do pacote do NexusIDE e é assinado pelo agente com o resto (conferido em 19/10: `Valid`, `41BB4AFD…`) |
 | Instalador Squirrel (`Setup.exe`, `Update.exe`, stub, `squirrel.exe`) | Sim | O Squirrel pede ao agente na mesma build; o recibo confere os quatro executáveis |
 | `d3dcompiler_47.dll`, `dxil.dll` | Sim | O agente embute a assinatura da HIPERSEND, mas o `Get-AuthenticodeSignature` mostra "Microsoft Windows" (`SignatureType = Catalog`): o hash delas está num catálogo do sistema |
-| Nexus Shot (repo `nexus-shot`, Tauri, NSIS) | Sim, desde 19/10 (branch `feat/windows-port`, `3c76ad9`) | `src-tauri/tauri.windows.conf.json` → `scripts/windows-sign.ps1` com a mesma identidade fixada (`src-tauri/windows-signing-identity.json`); 8 PINs no primeiro build e 3 nos seguintes (plugins do NSIS em cache). Runbook: `docs/windows-signing.md` do Shot. O instalador público do v0.1.15 (0.1.13) é anterior e saiu sem assinatura |
+| Nexus Shot (repo `nexus-shot`, Tauri, NSIS) | Sim, desde 19/10 (branch `feat/windows-port`, `3c76ad9`); pelo agente desde 20/10 | `src-tauri/tauri.windows.conf.json` → `scripts/windows-sign.ps1` com a mesma identidade fixada (`src-tauri/windows-signing-identity.json`), assinando pelo agente (seção "Nexus Shot pelo mesmo agente"): zero PIN; sem agente, SignTool com janela. Runbook: `docs/windows-signing.md` do Shot. O instalador público do v0.1.15 (0.1.13) é anterior e saiu sem assinatura |
 | NexusIDE no macOS / Redline do Mac / Shot no Mac | Outro caminho | Developer ID + notarização (`build/notarize.md`, `docs/RELEASE.md`) |
 | NexusIDE no Linux | Outro caminho | Ed25519 do `.sig` (F-940, `docs/RELEASE.md`) |
 

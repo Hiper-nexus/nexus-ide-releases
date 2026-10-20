@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import agent from './agent.cjs';
-import { TEST_THUMBPRINT, makeCheckout, startTestAgent, type TestAgent } from './test-fixtures/agent-harness';
+import { TEST_THUMBPRINT, makeCheckout, makeShotCheckout, startTestAgent, type TestAgent } from './test-fixtures/agent-harness';
 
 function ask(testAgent: TestAgent, payload: Record<string, unknown>, token?: string): Promise<Record<string, unknown>> {
   const { token: realToken } = JSON.parse(readFileSync(path.join(testAgent.directory, 'agent.json'), 'utf8'));
@@ -87,6 +87,71 @@ describe('what the agent agrees to sign', () => {
   });
 });
 
+describe('Nexus Shot (Tauri): só a target\\release de um checkout que fixa este certificado', () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'nexus-signer-shot-'));
+  const shot = makeShotCheckout(root);
+  const release = path.join(shot, 'src-tauri', 'target', 'release');
+  const app = path.join(release, 'nexus-shot.exe');
+  const plugin = path.join(release, 'nsis', 'x64', 'Plugins', 'x86-unicode', 'additional', 'nsis_tauri_utils.dll');
+  const installer = path.join(release, 'nsis', 'x64', 'nsis-output.exe');
+  for (const file of [app, plugin, installer]) writeFileSync(file, 'MZ');
+  const base = { checkoutRoot: shot, thumbprint: TEST_THUMBPRINT, temporaryRoots: [] as string[] };
+
+  it('assina o app, os plugins e o instalador do NSIS', () => {
+    for (const file of [app, plugin, installer]) {
+      expect(agent.resolveSignableFile({ ...base, file })).toBe(realpathSync.native(file));
+    }
+  });
+
+  it('recusa Shot que fixa outro certificado e executável fora da target\\release', () => {
+    expect(() => agent.resolveSignableFile({ ...base, thumbprint: '0'.repeat(40), file: app }))
+      .toThrow(/outside the build folders/u);
+    const tool = path.join(shot, 'src-tauri', 'tool.exe');
+    writeFileSync(tool, 'MZ');
+    mkdirSync(path.join(shot, 'src-tauri', 'target', 'debug'), { recursive: true });
+    const debug = path.join(shot, 'src-tauri', 'target', 'debug', 'nexus-shot.exe');
+    writeFileSync(debug, 'MZ');
+    for (const file of [tool, debug]) {
+      expect(() => agent.resolveSignableFile({ ...base, file })).toThrow(/outside the build folders/u);
+    }
+  });
+
+  it('o desinstalador temporário do NSIS (nst*.tmp no TEMP) não abre raiz nova', () => {
+    const temp = path.join(root, 'Temp');
+    mkdirSync(temp, { recursive: true });
+    const uninstaller = path.join(temp, 'nst4F2A.tmp');
+    writeFileSync(uninstaller, 'MZ');
+    expect(() => agent.resolveSignableFile({ ...base, file: uninstaller })).toThrow(/only \.exe, \.dll and \.node/u);
+    const renamed = path.join(temp, 'nst4F2A.exe');
+    writeFileSync(renamed, 'MZ');
+    expect(() => agent.resolveSignableFile({ ...base, file: renamed })).toThrow(/outside the build folders/u);
+  });
+
+  it('a identidade de um produto não abre a pasta de build do outro', () => {
+    const ideRoot = mkdtempSync(path.join(os.tmpdir(), 'nexus-signer-cross-'));
+    const ide = makeCheckout(ideRoot);
+    mkdirSync(path.join(ide, 'src-tauri', 'target', 'release'), { recursive: true });
+    const tauriInIde = path.join(ide, 'src-tauri', 'target', 'release', 'x.exe');
+    writeFileSync(tauriInIde, 'MZ');
+    expect(() => agent.resolveSignableFile({ ...base, checkoutRoot: ide, file: tauriInIde }))
+      .toThrow(/outside the build folders/u);
+    mkdirSync(path.join(shot, 'out'), { recursive: true });
+    const outInShot = path.join(shot, 'out', 'x.exe');
+    writeFileSync(outInShot, 'MZ');
+    expect(() => agent.resolveSignableFile({ ...base, file: outInShot })).toThrow(/outside the build folders/u);
+  });
+
+  it('junction dentro da target\\release não leva para fora dela', () => {
+    const outside = path.join(root, 'elsewhere');
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(path.join(outside, 'malware.exe'), 'MZ');
+    const link = path.join(release, 'link');
+    symlinkSync(outside, link, 'junction');
+    expect(() => agent.resolveSignableFile({ ...base, file: path.join(link, 'malware.exe') }))
+      .toThrow(/outside the build folders/u);
+  });
+});
+
 describe('signing agent', () => {
   it('abre o motor, confere o certificado e só então pede o PIN, uma vez', async () => {
     const testAgent = await startTestAgent();
@@ -117,6 +182,22 @@ describe('signing agent', () => {
     expect(testAgent.engineLog()).toContain(`SIGN ${realpathSync.native(first)} http://timestamp.sectigo.com`);
     const audit = readFileSync(path.join(testAgent.directory, 'signed.ndjson'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
     expect(audit.map((entry) => path.basename(entry.file))).toEqual(['nexus-ide.exe', 'ffmpeg.dll']);
+    await ask(testAgent, { op: 'stop' });
+    await testAgent.stopped;
+  });
+
+  it('assina pelo pipe o executável do Nexus Shot com o checkout dele, com o mesmo PIN', async () => {
+    const testAgent = await startTestAgent();
+    const shot = makeShotCheckout(path.dirname(testAgent.checkout));
+    const file = path.join(shot, 'src-tauri', 'target', 'release', 'nexus-shot.exe');
+    writeFileSync(file, 'MZ');
+    const request = { op: 'sign', file, timestampServer: 'http://timestamp.sectigo.com', requester: { pid: 1, app: 'nexus-shot' } };
+    expect(await ask(testAgent, request)).toMatchObject({ ok: false, error: expect.stringMatching(/outside the build folders/u) });
+    expect(await ask(testAgent, { ...request, checkoutRoot: shot })).toMatchObject({ ok: true });
+    expect(await ask(testAgent, { op: 'verify', file, checkoutRoot: shot })).toEqual({ ok: true });
+    expect(testAgent.engineLog()).toEqual(['UNLOCK', `SIGN ${realpathSync.native(file)} http://timestamp.sectigo.com`, `VERIFY ${realpathSync.native(file)}`]);
+    const audit = readFileSync(path.join(testAgent.directory, 'signed.ndjson'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    expect(audit).toEqual([expect.objectContaining({ file: realpathSync.native(file), requester: { pid: 1, app: 'nexus-shot' } })]);
     await ask(testAgent, { op: 'stop' });
     await testAgent.stopped;
   });
