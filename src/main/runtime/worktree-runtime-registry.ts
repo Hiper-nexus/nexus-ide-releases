@@ -7,6 +7,7 @@ import {
   WorktreeManager,
   type CreateWorktreeInput,
   type PaneWorktreeGcReport,
+  type PaneWorktreeTrimReport,
   type WorktreeRecord,
 } from "./worktree-manager";
 import {
@@ -28,8 +29,16 @@ import {
 } from "./sqlite-workflow-state-stores";
 import { ScopedStoreBinding } from "../orch/scoped-store";
 import { sweepPtysInsideWorktree, worktreeHasLiveSession } from "./worktree-pty-sweep";
-import { scheduleWorktreeSalvage } from "../orch/isolated-writer-salvage";
+import {
+  salvageCoversWorktree,
+  salvageIsolatedWriterWorktree,
+  scheduleWorktreeSalvage,
+} from "../orch/isolated-writer-salvage";
 import { listProcessCwds } from "./process-cwds";
+import { probeDirectoryUnusedByRename } from "./directory-in-use-probe";
+import { currentStorageHygienePolicy } from "../storage-hygiene/hygiene-policy";
+import { trace } from "../observability/main-trace";
+import { KeyedLock } from "../util/keyed-lock";
 import { isPathInsideOrEqual } from "./worktree-removal-safety";
 import {
   managedCandidatesRoot,
@@ -79,10 +88,12 @@ const DEAD_OWNER_WORKTREE_RELEASE_REASON =
 /**
  * F-908: coleta de worktrees de writers paradas. Roda depois do boot (nunca
  * no caminho de abertura do escopo), no máximo uma vez a cada REARM por
- * escopo, com teto de itens e de tempo por rodada.
+ * escopo, com teto de itens e de tempo por rodada. As idades (limpa,
+ * aposentada) vêm da política de higiene de disco: encolhem com o disco
+ * apertado (storage-hygiene/hygiene-policy.ts).
  */
 export const AGED_PANE_WORKTREE_GC: Readonly<Record<
-  "delayMs" | "rearmMs" | "minIdleMs" | "maxCandidates" | "budgetMs" |
+  "delayMs" | "rearmMs" | "maxCandidates" | "budgetMs" |
   "continuationDelayMs" | "maxContinuations", number
 >> = Object.freeze({
   delayMs: 30_000,
@@ -90,14 +101,31 @@ export const AGED_PANE_WORKTREE_GC: Readonly<Record<
   continuationDelayMs: 60_000,
   maxContinuations: 5,
   rearmMs: 6 * 60 * 60_000,
-  minIdleMs: 24 * 60 * 60_000,
   maxCandidates: 12,
   budgetMs: 3 * 60_000,
 });
 
+export interface AgedPaneWorktreeGcLimits {
+  readonly minIdleMs?: number;
+  readonly retireAfterMs?: number;
+  readonly maxCandidates?: number;
+  readonly budgetMs?: number;
+}
+
 export type AgedPaneWorktreeGcReport = PaneWorktreeGcReport & {
   readonly prune: { readonly pruned: number } | { readonly skipped: string };
 };
+
+/** Worktree aposentada: onde o trabalho ficou (para o relatório de armazenamento). */
+export interface RetiredWorktree {
+  readonly branch: string;
+  readonly ref: string;
+  readonly commit: string;
+  readonly missionId: string;
+  readonly at: number;
+}
+
+const RETIRED_LOG_LIMIT = 20;
 
 export class WorktreeRuntimeRegistry {
   readonly #manager: ProjectRuntimeManager;
@@ -105,6 +133,15 @@ export class WorktreeRuntimeRegistry {
   readonly #agedGcNextAt = new Map<string, number>();
   readonly #agedGcTimers = new Set<NodeJS.Timeout>();
   #agedGcGeneration = 0;
+  /**
+   * Uma coleta/poda de paradas por escopo de cada vez: o timer do registry e a
+   * higiene de disco disparam as duas; em paralelo, o `prune` de uma veria
+   * como `prunable` a pasta que a sonda de uso da outra renomeou por instantes.
+   */
+  readonly #agedGcLock = new KeyedLock();
+  /** Salvaguarda da última prova de aposentadoria, por tarefa (ref + commit). */
+  readonly #retireSalvages = new Map<string, { readonly ref: string; readonly commit: string }>();
+  #retiredLog: RetiredWorktree[] = [];
 
   constructor(manager: ProjectRuntimeManager) {
     this.#manager = manager;
@@ -246,10 +283,22 @@ export class WorktreeRuntimeRegistry {
   /**
    * Prova de uso pelo cwd ATUAL dos processos, para a worktree: cwd
    * desconhecido do mesmo uid (ou de outro uid sem ancestral 0700 do usuário)
-   * conta como em uso.
+   * conta como em uso. No Windows (sem lsof/procfs) a prova é a renomeação
+   * da pasta: o NTFS a recusa com cwd ou arquivo aberto lá dentro.
    */
   #unusedByProcesses(): (worktreePath: string) => Promise<boolean> {
     return async (worktreePath) => {
+      if (process.platform === "win32") {
+        if (worktreeHasLiveSession(worktreePath)) return false;
+        try {
+          return await probeDirectoryUnusedByRename(worktreePath);
+        } catch (error) {
+          // A pasta ficou com o nome da sonda: a próxima coleta a devolve
+          // (restoreStrandedProbe) antes de olhar qualquer outra coisa.
+          trace({ kind: "worktree-probe-stranded", worktreePath, detail: String(error).slice(0, 200) });
+          return false;
+        }
+      }
       // Ancestrais do caminho real da worktree: os roots do manager podem ser
       // o caminho não resolvido (/var → /private/var) e não casariam.
       const privateAncestors: string[] = [];
@@ -269,11 +318,24 @@ export class WorktreeRuntimeRegistry {
    * salvaguarda F-794 e fica; branch não mesclada fica. Antes, prune só
    * quando todo `prunable` é registro Nexus atual. Resultado registrado.
    */
-  async collectAgedPaneWriterWorktrees(
+  collectAgedPaneWriterWorktrees(
     scope: ProjectExecutionScope,
-    limits: Partial<typeof AGED_PANE_WORKTREE_GC> = {},
+    limits: AgedPaneWorktreeGcLimits = {},
   ): Promise<AgedPaneWorktreeGcReport> {
-    const { minIdleMs, maxCandidates, budgetMs } = { ...AGED_PANE_WORKTREE_GC, ...limits };
+    return this.#agedGcLock.run(scopeKey(scope), () => this.#collectAgedPaneWriterWorktrees(scope, limits));
+  }
+
+  async #collectAgedPaneWriterWorktrees(
+    scope: ProjectExecutionScope,
+    limits: AgedPaneWorktreeGcLimits,
+  ): Promise<AgedPaneWorktreeGcReport> {
+    const policy = currentStorageHygienePolicy();
+    const { minIdleMs, retireAfterMs, maxCandidates, budgetMs } = {
+      ...AGED_PANE_WORKTREE_GC,
+      minIdleMs: policy.paneWorktreeMinIdleMs,
+      retireAfterMs: policy.paneWorktreeRetireAfterMs,
+      ...limits,
+    };
     const deadlineAt = Date.now() + budgetMs;
     const runtime = this.forScope(scope);
     // Sem o status das missões, nada é coletado (a leitura lança).
@@ -299,8 +361,10 @@ export class WorktreeRuntimeRegistry {
     const report = await runtime.worktrees.collectReleasedPaneWorktrees(scope, {
       owner: finished,
       inUse: (worktreePath) => worktreeHasLiveSession(worktreePath),
-      // win32, lsof/procfs indisponível ou com erro: sem prova de uso, nada sai.
+      // lsof/procfs indisponível ou com erro: sem prova de uso, nada sai. No
+      // win32 a prova é a sonda de renomeação, por worktree, no `confirmUnused`.
       liveness: async () => {
+        if (process.platform === "win32") return () => false;
         const current = await (cwds ??= listProcessCwds({ privateAncestors: [runtimeRoot] }));
         return current && ((worktreePath) =>
           current.some((cwd) => isPathInsideOrEqual(worktreePath, cwd)));
@@ -316,16 +380,124 @@ export class WorktreeRuntimeRegistry {
         taskId: record.taskId,
         reason: "gc",
       }, { notify: false }),
+      // Aposentadoria: parada além do prazo, sai suja só se a salvaguarda
+      // guardou TUDO (rastreado e novo) numa ref; a branch nunca é apagada.
+      retireAfterMs,
+      retireSalvage: async (record) => {
+        const result = await salvageIsolatedWriterWorktree({
+          worktreePath: record.worktreePath,
+          branchRef: record.branchRef,
+          missionId: record.missionId,
+          taskId: record.taskId,
+          reason: "gc",
+        });
+        const covered = salvageCoversWorktree(result);
+        if (result.kind === "saved" || result.kind === "unchanged") {
+          this.#retireSalvages.set(record.taskKey, { ref: result.ref, commit: result.commit });
+        }
+        trace({
+          kind: "worktree-retire-salvage",
+          outcome: covered ? "covered" : "incomplete",
+          salvage: result.kind,
+          missionId: record.missionId,
+          taskId: record.taskId,
+          branch: record.branchRef.slice("refs/heads/".length),
+          ...(result.kind === "saved" || result.kind === "unchanged"
+            ? { ref: result.ref, nestedRepos: result.nestedRepos.length }
+            : {}),
+        });
+        return { covered, kind: result.kind };
+      },
     });
+    for (const record of report.removed) {
+      const salvage = this.#retireSalvages.get(record.taskKey);
+      this.#retireSalvages.delete(record.taskKey);
+      if (!salvage || !report.retiredTaskKeys?.includes(record.taskKey)) continue;
+      const retired: RetiredWorktree = {
+        branch: record.branchRef.slice("refs/heads/".length),
+        ref: salvage.ref,
+        commit: salvage.commit,
+        missionId: record.missionId,
+        at: Date.now(),
+      };
+      this.#retiredLog = [...this.#retiredLog, retired].slice(-RETIRED_LOG_LIMIT);
+      trace({ kind: "worktree-retired", ...retired });
+    }
     if (report.removed.length > 0 || Object.keys(report.kept).length > 0 ||
         report.deferred > 0 || !('pruned' in prune) || prune.pruned > 0) {
       console.warn(
-        `[worktree-runtime] coleta de worktrees paradas: ${report.removed.length} removida(s), ` +
+        `[worktree-runtime] coleta de worktrees paradas: ${report.removed.length} removida(s) ` +
+          `(${report.retired ?? 0} aposentada(s) com salvaguarda), ` +
           `mantidas ${JSON.stringify(report.kept)}, ${report.deferred} para a próxima rodada, ` +
           `prune ${JSON.stringify(prune)}`,
       );
     }
     return Object.freeze({ ...report, prune });
+  }
+
+  /**
+   * Poda leve dos writers de pane liberados (missão encerrada): apaga caches
+   * ignorados no topo da worktree antes de ela ser coletada. Só a sessão viva
+   * do Nexus protege — cache apagado sob um processo é só cache perdido.
+   */
+  trimAgedPaneWriterCaches(
+    scope: ProjectExecutionScope,
+    options: { readonly minIdleMs: number; readonly deadlineAt?: number },
+  ): Promise<PaneWorktreeTrimReport> {
+    return this.#agedGcLock.run(scopeKey(scope), () => this.#trimAgedPaneWriterCaches(scope, options));
+  }
+
+  async #trimAgedPaneWriterCaches(
+    scope: ProjectExecutionScope,
+    options: { readonly minIdleMs: number; readonly deadlineAt?: number },
+  ): Promise<PaneWorktreeTrimReport> {
+    const runtime = this.forScope(scope);
+    const missionStatus = new Map(
+      (
+        new ScopedStoreBinding(this.#manager, scope)
+          .readDatabase()
+          .prepare('SELECT id, status FROM missions')
+          .all() as ReadonlyArray<{ id: string; status: string }>
+      ).map((row) => [row.id, row.status] as const),
+    );
+    return runtime.worktrees.trimReleasedPaneWorktreeCaches(scope, {
+      owner: (missionId) => {
+        const status = missionStatus.get(missionId);
+        return status === undefined || status === 'done' || status === 'failed';
+      },
+      inUse: (worktreePath) => worktreeHasLiveSession(worktreePath),
+      minIdleMs: options.minIdleMs,
+      ...(options.deadlineAt !== undefined ? { deadlineAt: options.deadlineAt } : {}),
+    });
+  }
+
+  /** Escopos com runtime aberto neste processo (a higiene de disco percorre estes). */
+  openScopes(): readonly ProjectExecutionScope[] {
+    return Object.freeze([...this.#runtimes.values()].map((runtime) => runtime.scope));
+  }
+
+  /**
+   * Missões que ainda podem rodar ou ser retomadas (tudo menos done/failed).
+   * A higiene de disco nunca apaga swarm nem anexo delas. Leitura falha =
+   * conjunto `null`: quem chama trata o projeto inteiro como vivo.
+   */
+  liveMissionIds(scope: ProjectExecutionScope): ReadonlySet<string> | null {
+    try {
+      const rows = new ScopedStoreBinding(this.#manager, scope)
+        .readDatabase()
+        .prepare("SELECT id FROM missions WHERE status NOT IN ('done', 'failed')")
+        .all() as ReadonlyArray<{ id: string }>;
+      return new Set(rows.map((row) => row.id));
+    } catch {
+      return null;
+    }
+  }
+
+  /** Aposentadorias desde a última leitura (relatório de armazenamento). */
+  drainRetiredWorktrees(): readonly RetiredWorktree[] {
+    const drained = this.#retiredLog;
+    this.#retiredLog = [];
+    return drained;
   }
 
   /**

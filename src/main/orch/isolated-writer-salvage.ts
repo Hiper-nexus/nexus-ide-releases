@@ -80,7 +80,15 @@ export interface WorktreeSalvageFile {
 
 export type WorktreeSalvageResult =
   | { readonly kind: 'clean' }
-  | { readonly kind: 'unchanged'; readonly ref: string; readonly commit: string }
+  | {
+      readonly kind: 'unchanged';
+      readonly ref: string;
+      readonly commit: string;
+      /** Mesmas exclusões desta passada (a árvore é a da última salvaguarda). */
+      readonly skipped: readonly string[];
+      readonly untrackedOmitted: number;
+      readonly nestedRepos: readonly string[];
+    }
   | {
       readonly kind: 'saved';
       readonly ref: string;
@@ -92,6 +100,12 @@ export type WorktreeSalvageResult =
       readonly skipped: readonly string[];
       /** Arquivos novos não varridos (excesso); o snapshot leva só rastreados. */
       readonly untrackedOmitted: number;
+      /**
+       * Repositórios Git aninhados novos (`git init` dentro da worktree): o
+       * snapshot guarda só o gitlink (o SHA), nunca os commits nem os arquivos
+       * deles — o conteúdo NÃO está salvo.
+       */
+      readonly nestedRepos: readonly string[];
     }
   | { readonly kind: 'refused'; readonly reason: string };
 
@@ -109,6 +123,31 @@ const SALVAGE_SCHEMA_REASON: Record<WorktreeSalvageReason, string> = {
 
 function refused(reason: string): WorktreeSalvageResult {
   return { kind: 'refused', reason };
+}
+
+/**
+ * A salvaguarda guarda TODO o trabalho da worktree (rastreado e novo não
+ * ignorado)? Só então a aposentadoria pode apagar a pasta: nada ficou de
+ * fora por tamanho nem por excesso de arquivos novos. Ignorados nunca entram
+ * no snapshot; quem aposenta decide sobre eles à parte.
+ */
+export function salvageCoversWorktree(result: WorktreeSalvageResult | null): boolean {
+  if (!result) return false;
+  if (result.kind === 'clean') return true;
+  if (result.kind !== 'saved' && result.kind !== 'unchanged') return false;
+  return result.skipped.length === 0 && result.untrackedOmitted === 0 && result.nestedRepos.length === 0;
+}
+
+/** Caminhos que viraram gitlink (modo 160000) entre a base e a árvore do snapshot. */
+function parseNewGitlinks(rawZ: string): string[] {
+  const nested: string[] = [];
+  const fields = rawZ.split('\0');
+  for (let index = 0; index + 1 < fields.length; index += 2) {
+    // `:<modo antigo> <modo novo> <sha> <sha> <status>` e, a seguir, o caminho.
+    const [oldMode, newMode] = fields[index]!.replace(/^:/, '').split(' ');
+    if (newMode === '160000' && oldMode !== '160000') nested.push(fields[index + 1]!);
+  }
+  return nested;
 }
 
 /** `20261003T143513123Z`: ordenável e válido como componente de ref. */
@@ -275,6 +314,8 @@ async function runSalvage(
     const headTree = (await git.run(real, ['rev-parse', `${baseSha}^{tree}`])).stdout.trim();
     // Só ignorados/vazios mudaram: nada a guardar.
     if (tree === headTree) return { kind: 'clean' };
+    const nestedRepos = parseNewGitlinks((await git.run(real,
+      ['diff-tree', '-r', '-z', '--raw', '--no-renames', headTree, tree])).stdout);
     const prefix = salvageRefPrefix(target.branchRef);
     const latest = (await git.run(real, [
       'for-each-ref', '--sort=-refname', '--count=1',
@@ -284,7 +325,7 @@ async function runSalvage(
       const [latestCommit, latestRef] = latest.split(' ');
       const latestTree = await git.run(real, ['rev-parse', `${latestCommit}^{tree}`], { allowFailure: true });
       if (latestCommit && latestRef && latestTree.status === 0 && latestTree.stdout.trim() === tree) {
-        return { kind: 'unchanged', ref: latestRef, commit: latestCommit };
+        return { kind: 'unchanged', ref: latestRef, commit: latestCommit, skipped, untrackedOmitted, nestedRepos };
       }
     }
     const commit = (await git.run(
@@ -306,6 +347,7 @@ async function runSalvage(
       fileCount: files.length,
       skipped,
       untrackedOmitted,
+      nestedRepos,
     };
   } finally {
     await index.dispose().catch(() => undefined);

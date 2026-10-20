@@ -63,6 +63,37 @@ export function syncBackClaudeEphemeralAuth(
   syncBackClaudeAuthIdentity(overlayDir, realHome);
 }
 
+/**
+ * Variante para overlay ÓRFÃO (pane morto sem teardown, varrido dias depois
+ * pela higiene de disco). O sync-back do teardown copia o .credentials.json do
+ * overlay sem comparar idade — certo na hora em que o pane fecha, errado dias
+ * depois: o perfil real pode ter um login mais novo (o refresh token gira), e
+ * a cópia velha deslogaria o usuário. Aqui o arquivo só volta se for MAIS NOVO
+ * que o do perfil real; a identidade segue a regra de sempre (nunca
+ * sobrescreve um oauthAccount existente). Best-effort: nunca lança.
+ */
+export function syncBackStaleClaudeOverlayAuth(
+  overlayDir: string,
+  realHome: string,
+): void {
+  try {
+    const src = path.join(overlayDir, '.claude', '.credentials.json');
+    const overlay = fs.lstatSync(src);
+    if (overlay.isFile()) {
+      let realMtimeMs = -1;
+      try {
+        realMtimeMs = fs.statSync(path.join(realHome, '.claude', '.credentials.json')).mtimeMs;
+      } catch {
+        // Sem credencial no perfil real: a do overlay é a única.
+      }
+      if (overlay.mtimeMs > realMtimeMs) syncBackClaudeCredentialsFile(overlayDir, realHome);
+    }
+  } catch {
+    // Sem credencial real no overlay: nada a resgatar.
+  }
+  syncBackClaudeAuthIdentity(overlayDir, realHome);
+}
+
 function readJsonObject(file: string): Record<string, unknown> | null {
   try {
     const parsed: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));

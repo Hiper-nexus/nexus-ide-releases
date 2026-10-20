@@ -361,7 +361,8 @@ export const SETTINGS_GROUPS: NavGroup[] = [
       pixelIcon: 'warn',
       title: 'Diagnóstico',
       subtitle: 'Verificar o funcionamento do app',
-      aliases: ['mic · permissões', 'diagnostics', 'health', 'permissions'],
+      aliases: ['mic · permissões', 'diagnostics', 'health', 'permissions',
+        'armazenamento', 'disco', 'espaço', 'limpeza', 'storage', 'disk'],
     },
     {
       id: 'system',

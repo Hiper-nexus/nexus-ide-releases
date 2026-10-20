@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { syncBackClaudeEphemeralAuth, syncBackOverlayAuth } from './overlay-auth-syncback';
+import { syncBackClaudeEphemeralAuth, syncBackOverlayAuth, syncBackStaleClaudeOverlayAuth } from './overlay-auth-syncback';
 
 const snapshot = vi.hoisted(() => ({ clear: vi.fn() }));
 vi.mock('../adapters/claude-config-snapshot', async (importOriginal) => ({
@@ -111,5 +111,42 @@ describe('syncBackClaudeEphemeralAuth', () => {
     expect(JSON.parse(fs.readFileSync(path.join(realHome, '.claude.json'), 'utf8')).oauthAccount)
       .toEqual({ emailAddress: 'fresh@example.test' });
     expect(snapshot.clear).toHaveBeenCalled();
+  });
+});
+
+describe('syncBackStaleClaudeOverlayAuth (overlay órfão varrido pela higiene de disco)', () => {
+  const credentials = (home: string, token: string, ageMs: number) => {
+    const file = path.join(home, '.claude', '.credentials.json');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ token }));
+    const at = new Date(Date.now() - ageMs);
+    fs.utimesSync(file, at, at);
+    return file;
+  };
+
+  it('credencial do overlay mais nova que a do perfil real volta (login feito no pane que morreu)', () => {
+    const realHome = tmp();
+    const overlay = tmp();
+    const real = credentials(realHome, 'velho', 60 * 60_000);
+    credentials(overlay, 'novo', 1_000);
+    syncBackStaleClaudeOverlayAuth(overlay, realHome);
+    expect(JSON.parse(fs.readFileSync(real, 'utf8')).token).toBe('novo');
+  });
+
+  it('credencial do overlay mais velha NUNCA sobrescreve o login atual do perfil real', () => {
+    const realHome = tmp();
+    const overlay = tmp();
+    const real = credentials(realHome, 'atual', 1_000);
+    credentials(overlay, 'velho-do-overlay', 3 * 24 * 60 * 60_000);
+    syncBackStaleClaudeOverlayAuth(overlay, realHome);
+    expect(JSON.parse(fs.readFileSync(real, 'utf8')).token).toBe('atual');
+  });
+
+  it('sem credencial no perfil real, a do overlay é a única e volta', () => {
+    const realHome = tmp();
+    const overlay = tmp();
+    credentials(overlay, 'unico', 3 * 24 * 60 * 60_000);
+    syncBackStaleClaudeOverlayAuth(overlay, realHome);
+    expect(JSON.parse(fs.readFileSync(path.join(realHome, '.claude', '.credentials.json'), 'utf8')).token).toBe('unico');
   });
 });

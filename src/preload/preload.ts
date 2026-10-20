@@ -6,6 +6,7 @@ import {
   DESIGN_WRITEBACK_CHANNELS,
   DEV_SERVER_CHANNELS,
   PERF_CHANNELS,
+  STORAGE_HYGIENE_CHANNELS,
   MCP_CHANNELS,
   LAYOUT_CHANNELS,
   ADAPTER_CHANNELS,
@@ -1536,6 +1537,10 @@ const api: NexusApi = {
       ipcRenderer.invoke(GAMIFICATION_CHANNELS.recordJarvisAction, input),
     onChanged: (cb: (snapshot: GamificationSnapshot) => void) =>
       addListener(gamificationChangedListeners, cb),
+  },
+  storage: {
+    report: () => ipcRenderer.invoke(STORAGE_HYGIENE_CHANNELS.report),
+    cleanNow: () => ipcRenderer.invoke(STORAGE_HYGIENE_CHANNELS.cleanNow),
   },
   perf: {
     snapshot: () => ipcRenderer.invoke(PERF_CHANNELS.snapshot),
