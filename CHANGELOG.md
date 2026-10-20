@@ -2,8 +2,10 @@
 
 ## 0.76.356 — O Jev de olho na página
 
-Windows x64, assinado pelo YubiKey (HIPERSEND). Em relação à 0.76.354 (a 0.76.355 é o pacote Linux):
+Windows x64, assinado pelo YubiKey (HIPERSEND). Em relação à 0.76.352, a publicação Windows anterior: a tag 0.76.354 não foi publicada e a 0.76.353 e a 0.76.355 são pacotes Linux.
 
+- **Cotas na barra do cabeçalho**. As 5 contas que mais consomem aparecem no cabeçalho com a logo do provedor, a porcentagem da janela mais gasta e o tempo até o reset; com mais de uma conta do mesmo provedor, a logo ganha um número. Clicar abre Uso e cotas. Conta sem leitura real não aparece, nunca como 0%.
+- **Ajustes de voz no painel estreito**. O item da navegação não encolhe mais até o subtítulo vazar sobre o item de baixo; abaixo de 600 px a navegação vira faixa de abas acima do conteúdo.
 - **O navegador do agente julga a página depois de cada ação**. `navigate`, `click`, `fill` e `press` julgam a página por padrão (`judge: false` desliga), com teto de ~1,5 s: estourado, a resposta sai com `judgmentSkipped: 'budget-exceeded'` e o julgamento continua populando o cache (URL + hash do texto + navegação). A checagem visual depois do `navigate` só roda com a visão e o consentimento já ligados.
 - **Decisões do Jev no trace**. Cada linha do diário do Jev vai ao trace principal sem conteúdo (superfície, provedor, modelo, desfecho, duração, tokens), com amostragem por superfície nas otimizações; pulos `skip:<motivo>` saem como `skip` com o motivo. O chip do pane diz qual provedor respondeu e o `jev:status` traz as contagens desde o boot por provedor e superfície.
 - **Revisão de entrega lê a íntegra**. A revisão de evidência do handoff junta as íntegras de `artifacts[{ fullText }]`, preserva o fim do relatório no corte e recebe o resumo antes da condensação; entregas com testes e arquivos no registro saíam como «sem evidência».
