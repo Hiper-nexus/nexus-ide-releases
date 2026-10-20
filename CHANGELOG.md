@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.76.347 — Abas estáveis e botão de fechar
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+A 0.76.346 descreve o mesmo ajuste das abas como correção no macOS e não recebe arquivos Linux. A 0.76.345 é o pacote Linux anterior. A tag 0.76.343 continua a publicação macOS e não recebe arquivos Linux.
+
+No desktop Linux, em relação à 0.76.345:
+
+- **Largura estável das abas**. O selo de agentes trabalhando (`● N`) e a contagem de painéis dividem a mesma célula de largura fixa (`.workspace-tab__badges`). A aba não cresce nem encolhe quando um agente entra ou sai de trabalho, e as abas vizinhas ficam no lugar.
+- **Botão `×` sempre visível**. O fechar da aba fica sempre à mostra, em espaço próprio, sem cobrir a contagem e sem o esmaecimento da borda direita que cortava o botão da última aba.
+- **Fechar sem arrastar a aba**. Passar o cursor ou pressionar o `×` desliga o arraste da aba, para um movimento pequeno do ponteiro não cancelar o fechamento.
+
 ## 0.76.346 — Abas estáveis e botão de fechar
 
 No macOS, corrige a barra de abas dos Terminais (`WorkspaceTabs`):

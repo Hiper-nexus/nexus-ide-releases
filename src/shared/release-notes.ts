@@ -12062,18 +12062,32 @@ export const RELEASE_076345: AppRelease = {
   fixes: [...RELEASE_076344.fixes],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076346: AppRelease = {
   version: '0.76.346',
   date: '2026-10-20',
   codename: 'Abas estáveis e botão de fechar',
-  summary: 'No macOS, corrige a barra de abas dos Terminais para que a largura da aba permaneça imóvel quando agentes entram ou saem de trabalho, mantém o botão × sempre visível sem corte na última aba e evita arraste acidental no trackpad ao clicar em fechar.',
+  summary: 'No macOS, corrige a barra de abas dos Terminais para que a largura da aba permaneça imóvel quando agentes entram ou saem de trabalho, mantém o botão × sempre visível sem corte na última aba e evita arraste acidental no trackpad ao clicar em fechar. Não recebe arquivos Linux.',
   highlights: [
     ...RELEASE_076343.highlights,
   ],
   fixes: [
-    { title: 'Abas dos Terminais estáveis e botão × sempre visível no macOS', detail: 'O selo de agentes trabalhando (● N) e a contagem de painéis dividem a mesma célula de largura fixa (.workspace-tab__badges) sem deslocar as abas vizinhas, o × fica sempre visível sem sobrepor a contagem nem sofrer corte por mask-image, e clicar no × no trackpad desativa o arraste da aba.' },
+    { title: 'Abas dos Terminais estáveis e botão × sempre visível no macOS', detail: 'O selo de agentes trabalhando (● N) e a contagem de painéis dividem a mesma célula de largura fixa (.workspace-tab__badges) sem deslocar as abas vizinhas, o × fica sempre visível sem sobrepor a contagem nem sofrer corte por mask-image, e clicar no × no trackpad desativa o arraste da aba. A 0.76.346 não recebe arquivos Linux.' },
     ...RELEASE_076343.fixes,
   ],
 };
 
-export const RELEASE_076346: AppRelease = CURRENT_RELEASE;
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.347',
+  date: '2026-10-20',
+  codename: 'Abas estáveis e botão de fechar',
+  summary: 'No desktop Linux, as abas dos Terminais mantêm a largura quando um agente entra ou sai de trabalho, o botão de fechar fica sempre visível e um movimento pequeno do ponteiro não arrasta a aba no lugar de fechá-la. A 0.76.346 não recebe arquivos Linux. A 0.76.345 é o pacote Linux anterior. A tag 0.76.343 é a publicação macOS.',
+  highlights: [
+    { title: 'Largura estável das abas', detail: 'O selo de agentes trabalhando e a contagem de painéis dividem a mesma célula de largura fixa. A aba não cresce nem encolhe quando um agente entra ou sai de trabalho, e as abas vizinhas ficam no lugar.' },
+    { title: 'Botão de fechar sempre visível', detail: 'O fechar da aba fica sempre à mostra, em espaço próprio, sem cobrir a contagem e sem o esmaecimento da borda direita que cortava o botão da última aba.' },
+    { title: 'Fechar sem arrastar a aba', detail: 'Passar o cursor ou pressionar o botão de fechar desliga o arraste da aba, para um movimento pequeno do ponteiro não cancelar o fechamento.' },
+    { title: 'Pacote Linux', detail: 'A 0.76.346 descreve o mesmo ajuste como correção no macOS e não recebe arquivos Linux. A 0.76.345 é o pacote Linux anterior. A tag 0.76.343 é a publicação macOS e não recebe arquivos Linux. O desktop Linux sai na 0.76.347.' },
+  ],
+  fixes: [...RELEASE_076346.fixes],
+};
+
+export const RELEASE_076347: AppRelease = CURRENT_RELEASE;
