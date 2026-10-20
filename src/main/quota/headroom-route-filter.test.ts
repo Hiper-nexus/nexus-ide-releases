@@ -69,3 +69,33 @@ describe('windowsServingModel', () => {
     expect(windowsServingModel(empty, 'gemini-3.8-flash-high')).toEqual(empty);
   });
 });
+
+describe('rótulos REAIS do AGY (medidos em 20/10 com `agy --print /quota` 1.4.3)', () => {
+  // O servidor devolve os grupos "Gemini Models" e "Claude and GPT models";
+  // `windowsFromGroup` prefixa o rótulo do bucket. Os fixtures inventados
+  // ("Gemini · 5 Horas") casavam por sorte — estes são os de verdade.
+  const G5 = W('Gemini Models · 5 Horas', 0.005);
+  const GW = W('Gemini Models · Semanal', 0.109);
+  const T5 = W('Claude and GPT models · 5 Horas', 0);
+  const TW = W('Claude and GPT models · Semanal', 0);
+  const all = { windows: [G5, GW, T5, TW] };
+
+  it('modelo Gemini enxerga só os buckets Gemini', () => {
+    expect(windowsServingModel(all, 'gemini-3.8-flash-high').windows).toEqual([G5, GW]);
+  });
+
+  it('modelo Claude enxerga só os buckets de terceiros', () => {
+    expect(windowsServingModel(all, 'claude-opus-5-5').windows).toEqual([T5, TW]);
+  });
+
+  it('modelo GPT também cai no grupo de terceiros', () => {
+    expect(windowsServingModel(all, 'gpt-6-astra').windows).toEqual([T5, TW]);
+  });
+
+  it('o grupo de terceiros cheio não alcança um pane Gemini', () => {
+    const thirdFull = {
+      windows: [G5, GW, { ...T5, usedRatio: 0.95 }, { ...TW, usedRatio: 0.95 }],
+    };
+    expect(windowsServingModel(thirdFull, 'gemini-3.8-flash-high').windows).toEqual([G5, GW]);
+  });
+});
