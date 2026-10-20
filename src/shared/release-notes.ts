@@ -12090,20 +12090,43 @@ export const RELEASE_076347: AppRelease = {
   fixes: [...RELEASE_076346.fixes],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076348: AppRelease = {
   version: '0.76.348',
   date: '2026-10-20',
   codename: 'Terminais que não caem',
-  summary: 'No Windows, fechar um pane não derruba mais todos os terminais, o Maestro volta com a própria conversa depois de uma queda e o pane aberto pelo operador dentro da missão liga de primeira.',
+  summary: 'No Windows, fechar um pane não derruba mais todos os terminais, o Maestro volta com a própria conversa depois de uma queda e o pane aberto pelo operador dentro da missão liga de primeira. Não recebe arquivos Linux.',
   highlights: [
     ...RELEASE_076347.highlights,
   ],
   fixes: [
-    { title: 'Fechar um pane lento no Windows não derruba mais todos os outros', detail: 'O encerramento de um pane cuja CLI demora a sair (o AGY, por exemplo) pedia o fechamento do console duas vezes, e o processo que hospeda todos os terminais caía junto: todos os panes mostravam «processo caiu». Agora o console é fechado uma vez só e a insistência termina o processo pelo PID.' },
+    { title: 'Fechar um pane lento no Windows não derruba mais todos os outros', detail: 'O encerramento de um pane cuja CLI demora a sair (o AGY, por exemplo) pedia o fechamento do console duas vezes, e o processo que hospeda todos os terminais caía junto: todos os panes mostravam «processo caiu». Agora o console é fechado uma vez só e a insistência termina o processo pelo PID. A 0.76.348 não recebe arquivos Linux.' },
     { title: 'O Maestro volta com a própria conversa depois de uma queda', detail: 'Uma tentativa de reabrir o Maestro que morria antes da primeira mensagem trocava a conversa do pane por uma que nunca existiu, e cada «Retomar missão» saía com «No conversation found». A conversa nova só substitui a anterior quando o registro dela aparece em disco.' },
     { title: 'O pane aberto pelo operador dentro da missão liga de primeira', detail: 'O pane de «+ Pane → Nesta missão» ficava em «Não subiu» e reabria sozinho depois de fechado: a tela pedia um processo novo em vez de se ligar ao que já rodava. Agora a ligação e a reabertura usam as mesmas permissões com que o pane nasceu.' },
     ...RELEASE_076347.fixes,
   ],
 };
 
-export const RELEASE_076348: AppRelease = CURRENT_RELEASE;
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.349',
+  date: '2026-10-20',
+  codename: 'A boca do Jarvis',
+  summary: 'No desktop Linux, a boca do Jarvis acompanha a própria voz, a ação de voz responde e lê o estado vivo, e perguntar devolve o texto do pane. O Maestro conserva a conversa e o pane aberto pelo operador dentro da missão liga de primeira. A 0.76.348 é a publicação Windows e não recebe arquivos Linux. A 0.76.347 é o pacote Linux anterior.',
+  highlights: [
+    { title: 'A boca do Jarvis fala com a própria voz', detail: 'A figura ganha boca: abre com o volume da saída, estica com o brilho do espectro e fecha na pausa. O movimento espera a latência do alto-falante, para a boca não andar à frente da voz.' },
+    { title: 'A Jarvis responde e lê o estado vivo', detail: 'Uma ação não fica em silêncio. Ler consulta panes, missões, cotas, git e saúde antes de afirmar, e perguntar devolve o texto novo do pane em vez de só dizer que mandou.' },
+    { title: 'Ferramenta em tempo real pede uma resposta por lote', detail: 'A continuação sai depois que a resposta que chamou as ferramentas terminou e todas as chamadas daquele lote têm resultado, para o turno não ficar mudo.' },
+    { title: 'O Maestro volta com a própria conversa', detail: 'O id de conversa ditado no spawn só substitui a conversa do pane quando o transcrito aparece. Uma reabertura que morria antes da primeira mensagem não apaga mais a conversa real.' },
+    { title: 'Pane do operador na missão liga de primeira', detail: 'O pane de «+ Pane → Nesta missão» liga a tela ao processo que já nasceu, com as mesmas permissões do nascimento, e não reabre sozinho em «Não subiu».' },
+    { title: 'Pacote Linux', detail: 'A 0.76.348 é a publicação Windows, assinada pelo YubiKey, e não recebe arquivos Linux. A 0.76.347 é o pacote Linux anterior. A 0.76.346 é a publicação macOS e não recebe arquivos Linux. O desktop Linux sai na 0.76.349.' },
+  ],
+  fixes: [
+    { title: 'A boca do Jarvis acompanha a voz', detail: 'A figura abre a boca com o volume da saída e o brilho do espectro, e fecha na pausa, atrasada pela latência do alto-falante.' },
+    { title: 'Ação de voz responde e perguntar devolve o pane', detail: 'Uma ação não fica em silêncio, a leitura usa o estado vivo e perguntar devolve o texto novo do pane.' },
+    { title: 'Turno realtime não fica mudo depois da ferramenta', detail: 'O pedido de continuação sai uma vez por lote, depois que a resposta que chamou as ferramentas terminou.' },
+    { title: 'O Maestro conserva a conversa real', detail: 'O id ditado no spawn só substitui a conversa ligada ao pane quando o transcrito aparece em disco.' },
+    { title: 'Pane do operador na missão liga de primeira', detail: 'Adoção e reabertura usam as permissões com que o pane nasceu, então a tela liga ao processo vivo e o pane não reabre sozinho.' },
+    ...RELEASE_076348.fixes,
+  ],
+};
+
+export const RELEASE_076349: AppRelease = CURRENT_RELEASE;

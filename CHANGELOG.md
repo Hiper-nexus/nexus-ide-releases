@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.76.349 — A boca do Jarvis
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+A 0.76.348 é a publicação Windows, assinada pelo YubiKey, e não recebe arquivos Linux. A 0.76.347 é o pacote Linux anterior. A 0.76.346 continua a publicação macOS e não recebe arquivos Linux.
+
+No desktop Linux, em relação à 0.76.347:
+
+- **A boca do Jarvis fala com a própria voz**. A figura ganha boca: abre com o volume da saída, estica com o brilho do espectro e fecha na pausa. O movimento espera a latência do alto-falante, para a boca não andar à frente da voz.
+- **A Jarvis responde e lê o estado vivo**. Uma ação não fica em silêncio: ler consulta panes, missões, cotas, git e saúde antes de afirmar, e perguntar devolve o texto novo do pane em vez de só dizer que mandou.
+- **Ferramenta em tempo real pede uma resposta por lote**. A continuação sai depois que a resposta que chamou as ferramentas terminou, para o turno não ficar mudo.
+- **O Maestro volta com a própria conversa** (F-1618). O id de conversa ditado no spawn só substitui a conversa do pane quando o transcrito aparece. Uma reabertura que morria antes da primeira mensagem não apaga mais a conversa real.
+- **Pane do operador na missão liga de primeira** (F-1619). O pane de «+ Pane → Nesta missão» liga a tela ao processo que já nasceu e não reabre sozinho em «Não subiu».
+
+Fechar um pane lento no Windows (F-1617) está na 0.76.348 e não muda o desktop Linux.
+
 ## 0.76.348 — Terminais que não caem
 
 Windows x64, assinado pelo YubiKey (HIPERSEND). Em relação à 0.76.347:
