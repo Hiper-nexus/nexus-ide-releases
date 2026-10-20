@@ -221,6 +221,10 @@ const optimizationTracedAt = new Map<string, number>();
 function traceDecisionLine(entry: JevDecisionEntry): void {
   try {
     const outcome = entry.kind ?? 'decision';
+    // Pulos são gravados como `skip:<motivo categórico>` (memória, retenção).
+    const skipReason = outcome === 'decision' && entry.decision.startsWith('skip:')
+      ? entry.decision.slice('skip:'.length)
+      : undefined;
     if (outcome === 'optimization') {
       const last = optimizationTracedAt.get(entry.surface) ?? -Infinity;
       if (entry.at - last < TRACE_OPTIMIZATION_MIN_INTERVAL_MS) return;
@@ -231,8 +235,10 @@ function traceDecisionLine(entry: JevDecisionEntry): void {
       surface: entry.surface,
       provider: providerOfEntry(entry),
       model: entry.model,
-      outcome: outcome === 'decision' && entry.decision === 'skip' ? 'skip' : outcome,
-      ...(entry.reason !== undefined ? { reason: entry.reason } : {}),
+      outcome: skipReason !== undefined ? 'skip' : outcome,
+      ...(entry.reason !== undefined
+        ? { reason: entry.reason }
+        : skipReason !== undefined ? { reason: skipReason } : {}),
       ...(entry.durationMs !== undefined ? { durationMs: entry.durationMs } : {}),
       ...(entry.requestCount !== undefined ? { requestCount: entry.requestCount } : {}),
       ...(typeof entry.inputTokens === 'number' ? { inputTokens: entry.inputTokens } : {}),

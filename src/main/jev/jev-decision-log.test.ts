@@ -544,6 +544,17 @@ describe('espelho no trace principal e contadores de boot', () => {
     expect(raw).not.toContain('needs_human'); // ids de perguntas ficam só no diário
   });
 
+  it('pulo gravado como skip:<motivo> vira outcome skip com o motivo categórico', async () => {
+    setupDirs();
+    recordJevDecision(
+      entry({ surface: 'memoryDistill', model: 'unavailable', decision: 'skip:store-unavailable' }),
+      { dir: logDir },
+    );
+    const events = await readDecisionTrace();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ outcome: 'skip', reason: 'store-unavailable' });
+  });
+
   it('no-answer vira outcome no-answer com motivo categórico, sem texto do erro', async () => {
     setupDirs();
     recordJevNoAnswer(
