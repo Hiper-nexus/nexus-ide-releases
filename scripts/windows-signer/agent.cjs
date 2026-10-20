@@ -396,6 +396,8 @@ async function runAgent({
         startedAt,
         expiresAt,
         pinMode,
+        // Processo do build ao qual o agente está amarrado (modo 0 h), ou null.
+        parentPid: parentPid ?? null,
       };
     };
 
@@ -486,7 +488,7 @@ async function runAgent({
       }, 5_000);
     }
     log(`ready until ${expiresAt === null ? 'the build ends' : new Date(expiresAt).toISOString()}`);
-    onReady({ pid: process.pid, pipe, thumbprint, startedAt, expiresAt, pinMode });
+    onReady({ pid: process.pid, pipe, thumbprint, startedAt, expiresAt, pinMode, parentPid: parentPid ?? null });
   } catch (error) {
     shutdown(`failed to start: ${error instanceof Error ? error.message : String(error)}`);
     throw error;

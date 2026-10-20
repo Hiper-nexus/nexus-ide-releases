@@ -171,6 +171,63 @@ describe('PIN guardado e início no logon', () => {
   });
 });
 
+describe('modo só este build (NEXUS_WINDOWS_SIGNER_HOURS=0)', () => {
+  it('fora de um build o 0 é recusado, nunca trocado por 24 h', () => {
+    expect(() => client.standaloneAgentHours({ NEXUS_WINDOWS_SIGNER_HOURS: '0' })).toThrow(/só dentro de um build/u);
+    expect(client.standaloneAgentHours({})).toBe(24);
+    expect(client.standaloneAgentHours({ NEXUS_WINDOWS_SIGNER_HOURS: '168' })).toBe(168);
+  });
+
+  it('start do logon com 0 recusa na hora, sem esperar o YubiKey nem subir agente', async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), 'nexus-signer-zero-'));
+    writeFileSync(path.join(directory, 'pin.dpapi'), 'sealed');
+    process.env.NEXUS_WINDOWS_SIGNER_HOURS = '0';
+    const logs: string[] = [];
+    const started = Date.now();
+    await expect(client.startFromCli({
+      identity: { certificateSha1: TEST_THUMBPRINT, spkiSha256: TEST_SPKI },
+      directory,
+      ifPinSaved: true,
+      waitCard: true,
+      log: (message: string) => logs.push(message),
+    })).rejects.toThrow(/só dentro de um build/u);
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(logs).toEqual([]);
+  });
+
+  it('build com 0 não reaproveita o agente de 24 h: troca por um amarrado ao build', async () => {
+    const persistent = await startTestAgent({ hours: 24 });
+    const logs: string[] = [];
+    // O agente novo sai antes do PIN: o motor real não acha o certificado de teste.
+    await expect(client.ensureAgent({
+      thumbprint: TEST_THUMBPRINT,
+      spkiSha256: TEST_SPKI,
+      hours: 0,
+      parentPid: process.pid,
+      directory: persistent.directory,
+      log: (message) => logs.push(message),
+    })).rejects.toThrow();
+    expect(await persistent.stopped).toBe('stop requested');
+    expect(logs).toEqual([expect.stringMatching(/só para este build/u)]);
+  }, 60_000);
+
+  it('build com 0 reaproveita só o agente amarrado a ele', async () => {
+    const bound = await startTestAgent({ hours: 0, parentPid: process.pid });
+    expect(bound.info.parentPid).toBe(process.pid);
+    const status = await client.ensureAgent({
+      thumbprint: TEST_THUMBPRINT,
+      spkiSha256: TEST_SPKI,
+      hours: 0,
+      parentPid: process.pid,
+      directory: bound.directory,
+      log: () => undefined,
+    });
+    expect(status).toMatchObject({ started: false, parentPid: process.pid, expiresAt: null });
+    await client.stopAgent(bound.directory);
+    await bound.stopped;
+  });
+});
+
 describe('ensureAgent', () => {
   it('reaproveita o agente destrancado: nenhum PIN no segundo build', async () => {
     const testAgent = await startTestAgent();

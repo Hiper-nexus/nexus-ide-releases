@@ -34,7 +34,7 @@ export interface TestAgent {
   checkout: string;
   localAppData: string;
   engineLog: () => string[];
-  info: { pid: number; pipe: string; thumbprint: string; startedAt: number; expiresAt: number | null; pinMode: string };
+  info: { pid: number; pipe: string; thumbprint: string; startedAt: number; expiresAt: number | null; pinMode: string; parentPid: number | null };
   stopped: Promise<string>;
 }
 
@@ -58,6 +58,7 @@ export async function startTestAgent({
   thumbprint = TEST_THUMBPRINT,
   hasPrivateKey = true,
   pinMode,
+  parentPid,
   savedPin = false,
   fakeEnv = {},
   root = mkdtempSync(path.join(os.tmpdir(), 'nexus-signer-test-')),
@@ -69,6 +70,8 @@ export async function startTestAgent({
   thumbprint?: string;
   hasPrivateKey?: boolean;
   pinMode?: 'prompt' | 'save' | 'stored';
+  /** Amarra o agente a este processo (modo 0 h). */
+  parentPid?: number;
   /** Cria o pin.dpapi falso antes de subir o agente. */
   savedPin?: boolean;
   fakeEnv?: Record<string, string>;
@@ -90,6 +93,7 @@ export async function startTestAgent({
     expectedSpkiSha256: expectedSpki,
     hours,
     pinMode,
+    parentPid,
     directory,
     env: { ...process.env, LOCALAPPDATA: localAppData },
     now,

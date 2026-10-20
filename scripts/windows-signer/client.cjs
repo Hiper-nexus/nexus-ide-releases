@@ -110,13 +110,15 @@ async function stopAgent(directory = agent.defaultAgentDirectory()) {
   }
 }
 
-function usable(status, thumbprint, now) {
-  return Boolean(
-    status &&
-    status.unlocked &&
-    status.thumbprint === thumbprint &&
-    (status.expiresAt === null || status.expiresAt - now >= MIN_REMAINING_MS),
-  );
+/**
+ * Agente que serve a este pedido. Com `hours: 0` (só este build) apenas o agente
+ * amarrado a ESTE processo serve: reaproveitar um agente de 24 h deixaria a
+ * chave destrancada depois de um build que morreu antes do postMake.
+ */
+function usable(status, thumbprint, now, { hours, parentPid } = {}) {
+  if (!status || !status.unlocked || status.thumbprint !== thumbprint) return false;
+  if (hours === 0) return status.expiresAt === null && status.parentPid === parentPid;
+  return status.expiresAt === null || status.expiresAt - now >= MIN_REMAINING_MS;
 }
 
 function sleep(ms) {
@@ -239,7 +241,7 @@ async function ensureAgent({
   const deadline = now() + START_TIMEOUT_MS;
   for (;;) {
     const status = await agentStatus(directory);
-    if (pinMode !== 'save' && usable(status, thumbprint, now())) return { ...status, started: false };
+    if (pinMode !== 'save' && usable(status, thumbprint, now(), { hours, parentPid })) return { ...status, started: false };
     const release = acquireStartLock(directory);
     if (!release) {
       if (now() > deadline) throw new Error('another build is still starting the signing agent');
@@ -260,7 +262,7 @@ async function ensureAgent({
       release();
     }
     const started = await agentStatus(directory);
-    if (!usable(started, thumbprint, now())) {
+    if (!usable(started, thumbprint, now(), { hours, parentPid })) {
       throw new Error('the signing agent started but does not answer as unlocked');
     }
     return { ...started, started: true };
@@ -409,6 +411,18 @@ function readIdentity(file) {
 }
 
 /**
+ * Horas de um agente subido fora de um build (`start`, logon). O `0` ("só este
+ * build") não tem build a que se amarrar: é recusado, nunca trocado por 24 h.
+ */
+function standaloneAgentHours(env) {
+  const hours = agent.parseAgentHours(env.NEXUS_WINDOWS_SIGNER_HOURS);
+  if (hours === 0) {
+    throw new Error('NEXUS_WINDOWS_SIGNER_HOURS=0 vale só dentro de um build (o agente morre com ele). Fora do build use de 1 a 168 horas, ou `npm run windows-signer -- stop` para encerrar o agente.');
+  }
+  return hours;
+}
+
+/**
  * `start` do terminal ou do logon. No logon (`--wait-card`) o YubiKey pode
  * ainda não ter aparecido: tenta por até 3 min, e para na hora se o PIN guardado
  * foi recusado (o motor já o apagou).
@@ -416,13 +430,15 @@ function readIdentity(file) {
 async function startFromCli({ identity, directory, pinMode, ifPinSaved, waitCard, log = (message) => console.log(message) }) {
   const pinFile = agent.pinFilePath(directory);
   if (ifPinSaved && !fs.existsSync(pinFile)) return undefined;
+  // Erro de configuração não espera o YubiKey: recusa antes de qualquer tentativa.
+  const hours = standaloneAgentHours(process.env);
   const attempts = waitCard ? 12 : 1;
   for (let attempt = 1; ; attempt += 1) {
     try {
       return await ensureAgent({
         thumbprint: identity.certificateSha1,
         spkiSha256: identity.spkiSha256,
-        hours: agent.parseAgentHours(process.env.NEXUS_WINDOWS_SIGNER_HOURS) || agent.DEFAULT_HOURS,
+        hours,
         pinMode,
         directory,
         log,
@@ -522,4 +538,5 @@ module.exports.logonCommandLine = logonCommandLine;
 module.exports.installLogon = installLogon;
 module.exports.uninstallLogon = uninstallLogon;
 module.exports.startFromCli = startFromCli;
+module.exports.standaloneAgentHours = standaloneAgentHours;
 module.exports.MIN_REMAINING_MS = MIN_REMAINING_MS;

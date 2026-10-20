@@ -142,6 +142,11 @@ npm run windows-signer -- stop     # encerra (o PIN some com ele)
   agente morre com o processo do make). Build que encontra um agente destrancado
   com pelo menos 45 min de prazo o reaproveita **sem PIN**; perto de vencer, sobe
   outro (uma janela).
+- **O `0` não afrouxa.** Fora de um build (`start`, logon) o `0` é recusado: não há
+  build a que amarrar o agente, e virar 24 h em silêncio seria o contrário do
+  pedido. Num build com `0`, só serve o agente amarrado àquele processo: um agente
+  de 24 h vivo é encerrado e trocado por um que morre com o build, inclusive se o
+  Forge cair antes do `postMake` (apontado na revisão do PR #146).
 - **Quando ele morre.** Prazo vencido, `stop`, motor encerrado, logoff ou
   reinício, e YubiKey que perdeu o PIN (removido, sono que reinicia o cartão):
   antes de cada assinatura o motor prova o PIN em cache com uma assinatura
