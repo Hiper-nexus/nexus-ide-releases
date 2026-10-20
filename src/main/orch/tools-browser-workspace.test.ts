@@ -199,6 +199,86 @@ describe('nexus_browser_responsive', () => {
   });
 });
 
+describe('julgamento automático pós-ação (judge default-on)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const tool = (name: string) =>
+    buildBrowserTools().find((item) => item.name === name)!;
+
+  it('navigate judges by default and judge:false opts out', async () => {
+    await tool('nexus_browser_navigate').handler(
+      { paneId: 'browser-1', url: 'https://example.test/' },
+      context,
+    );
+    expect(stubs.loadBrowser).toHaveBeenCalledWith(
+      'browser-1',
+      'https://example.test/',
+      expect.objectContaining({ judge: true }),
+    );
+    await tool('nexus_browser_navigate').handler(
+      { paneId: 'browser-1', url: 'https://example.test/', judge: false },
+      context,
+    );
+    expect(stubs.loadBrowser).toHaveBeenLastCalledWith(
+      'browser-1',
+      'https://example.test/',
+      expect.objectContaining({ judge: false }),
+    );
+  });
+
+  it('click, fill and press judge by default; scroll and hover stay opt-in', async () => {
+    const manager = await import('../browser/browser-manager');
+    await tool('nexus_browser_click').handler({ paneId: 'browser-1', ref: 'e1' }, context);
+    expect(vi.mocked(manager.clickBrowserElement)).toHaveBeenCalledWith(
+      'browser-1',
+      scope,
+      'e1',
+      expect.objectContaining({ judge: true }),
+    );
+    await tool('nexus_browser_fill').handler(
+      { paneId: 'browser-1', ref: 'e1', text: 'x' },
+      context,
+    );
+    expect(vi.mocked(manager.fillBrowserElement)).toHaveBeenCalledWith(
+      'browser-1',
+      scope,
+      'e1',
+      'x',
+      expect.objectContaining({ judge: true }),
+    );
+    await tool('nexus_browser_press').handler({ paneId: 'browser-1', key: 'Enter' }, context);
+    expect(stubs.pressBrowserKey).toHaveBeenCalledWith(
+      'browser-1',
+      scope,
+      expect.objectContaining({ judge: true }),
+    );
+    await tool('nexus_browser_fill').handler(
+      { paneId: 'browser-1', ref: 'e1', text: 'x', judge: false },
+      context,
+    );
+    expect(vi.mocked(manager.fillBrowserElement)).toHaveBeenLastCalledWith(
+      'browser-1',
+      scope,
+      'e1',
+      'x',
+      expect.objectContaining({ judge: false }),
+    );
+    await tool('nexus_browser_scroll').handler({ paneId: 'browser-1', dy: 100 }, context);
+    expect(vi.mocked(manager.scrollBrowserPane)).toHaveBeenCalledWith(
+      'browser-1',
+      scope,
+      expect.objectContaining({ judge: false }),
+    );
+    await tool('nexus_browser_hover').handler({ paneId: 'browser-1', ref: 'e1' }, context);
+    expect(vi.mocked(manager.hoverBrowserElement)).toHaveBeenCalledWith(
+      'browser-1',
+      scope,
+      'e1',
+      expect.objectContaining({ judge: false }),
+    );
+  });
+});
+
 describe('nexus_browser_press', () => {
   beforeEach(() => vi.clearAllMocks());
 

@@ -85,8 +85,10 @@ const READ_ARG_PROP = {
 const JUDGE_ARG_PROP = {
   type: 'boolean',
   description:
-    'judge: true anexa um julgamento Jev da página (erro visível, ' +
-    'bloqueio humano, carregando, tipo) — falha aberta, nunca bloqueia.',
+    'Julgamento Jev da página (erro visível, bloqueio humano, carregando, ' +
+    'tipo) — falha aberta, nunca bloqueia e nunca atrasa a resposta mais ' +
+    'que ~1,5 s. Ligado por padrão em navigate/click/fill/press; ' +
+    'judge: false desliga.',
 };
 
 const previewStartTool: McpToolDef = {
@@ -256,7 +258,8 @@ const browserNavigateTool: McpToolDef = {
       signal: invocation?.signal,
       assertCurrentAuthority: invocation?.assertCurrentAuthority,
       read: inlineReadArg(args),
-      judge: args.judge === true,
+      // Auto-on: navigate muda a página; julgar é o que o Jev faz de melhor.
+      judge: args.judge !== false,
       sessionId: ctx.sessionId,
       missionId: ctx.missionId,
       ...(device === 'mobile' || device === 'tablet' || device === 'desktop'
@@ -583,7 +586,7 @@ const browserClickTool: McpToolDef = {
     if (!target) throw new Error('missing required argument: ref or text');
     return clickBrowserElement(paneId, ctx.scope, target, {
       read: inlineReadArg(args),
-      judge: args.judge === true,
+      judge: args.judge !== false,
       sessionId: ctx.sessionId,
       missionId: ctx.missionId,
     });
@@ -624,7 +627,7 @@ const browserFillTool: McpToolDef = {
     if (!target) throw new Error('missing required argument: ref or label');
     return fillBrowserElement(paneId, ctx.scope, target, args.text, {
       read: inlineReadArg(args),
-      judge: args.judge === true,
+      judge: args.judge !== false,
       sessionId: ctx.sessionId,
       missionId: ctx.missionId,
     });
@@ -751,7 +754,7 @@ const browserPressTool: McpToolDef = {
       ref: str(args, 'ref'),
       modifiers: strArray(args, 'modifiers'),
       read: inlineReadArg(args),
-      judge: args.judge === true,
+      judge: args.judge !== false,
       signal: invocation?.signal,
       assertCurrentAuthority: invocation?.assertCurrentAuthority,
       sessionId: ctx.sessionId,

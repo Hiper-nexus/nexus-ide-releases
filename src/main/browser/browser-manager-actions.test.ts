@@ -135,6 +135,8 @@ const state = vi.hoisted(() => {
     webContentsAvailable: true,
     profileMode: 'isolated' as 'isolated' | 'personal',
     decisionConfiguration: 'initial',
+    canVisual: vi.fn(() => false),
+    visualJudge: vi.fn(async () => ({ status: 'answered' as const, signals: {}, model: 'clef', route: 'test' })),
     encodeBitmap: vi.fn((_bitmap: Buffer, _size: unknown) => ({ toPNG: () => Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a2WQAAAAASUVORK5CYII=', 'base64') })),
     views: [] as Array<{ setVisible: ReturnType<typeof vi.fn>; setBounds: ReturnType<typeof vi.fn>; getBounds: ReturnType<typeof vi.fn> }>,
   };
@@ -234,6 +236,11 @@ vi.mock('../context/context-workflow-registry', () => ({
 
 vi.mock('../orch/design-send', () => ({
   sendDesignSelectionToAgent: vi.fn(),
+}));
+
+vi.mock('./browser-visual-judgment', () => ({
+  canJudgeBrowserVisual: () => state.canVisual(),
+  judgeBrowserVisual: state.visualJudge,
 }));
 
 import {
@@ -700,6 +707,76 @@ describe('browser manager actions (after/changed, errors, judge, text)', () => {
     expect(changed.judgment?.model).toBe('clef');
     expect(changed.judgmentReused).not.toBe(true);
     expect(jev).toHaveBeenCalledTimes(2);
+  });
+
+  it('judges navigate and reuses the cached verdict on the next judged action of the same page', async () => {
+    await boot();
+    const jev = vi.fn(async (_req: unknown) => ({
+      model: 'test-model',
+      answers: { errorVisible: { type: 'noul' as const, noul: 0.2 } },
+      usage: { input_tokens: 5, output_tokens: 1 },
+    }));
+    const deps = {
+      jev,
+      jevEnabled: () => true,
+      jevReady: () => true,
+      recordDecision: vi.fn(),
+      recordOptimization: vi.fn(),
+    };
+    const nav = await loadBrowser(PANE, 'https://example.test/app', { scope, judge: true, deps });
+    expect(nav.judgment).toMatchObject({ errorVisible: 0.2, model: 'test-model' });
+    expect(jev).toHaveBeenCalledOnce();
+    const pressed = await pressBrowserKey(PANE, scope, { key: 'Enter', judge: true, deps });
+    expect(pressed.judgment).toMatchObject({ errorVisible: 0.2 });
+    expect(jev).toHaveBeenCalledOnce();
+    destroyBrowser(PANE, scope);
+  });
+
+  it('answers inside the judgment budget when the provider stalls', async () => {
+    await boot();
+    const jev = vi.fn((_req: unknown) => new Promise<never>(() => {}));
+    const started = Date.now();
+    const nav = await loadBrowser(PANE, 'https://example.test/app', {
+      scope,
+      judge: true,
+      deps: { jev, jevEnabled: () => true, jevReady: () => true },
+    });
+    expect(Date.now() - started).toBeLessThan(4_000);
+    expect(nav.judgment).toBeNull();
+    expect(nav.judgmentSkipped).toBe('budget-exceeded');
+    destroyBrowser(PANE, scope);
+  });
+
+  it('runs the post-navigate visual check only with consent and never without the surface', async () => {
+    await boot();
+    const jev = vi.fn(async (_req: unknown) => ({
+      model: 'test-model',
+      answers: {},
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }));
+    const deps = { jev, jevEnabled: () => true, jevReady: () => true };
+    const first = await loadBrowser(PANE, 'https://example.test/a', { scope, judge: true, deps });
+    expect(first.visualJudgment).toBeUndefined();
+    expect(state.visualJudge).not.toHaveBeenCalled();
+    state.canVisual.mockReturnValue(true);
+    try {
+      const second = await loadBrowser(PANE, 'https://example.test/b', { scope, judge: true, deps });
+      expect(second.visualJudgment).toMatchObject({ status: 'answered' });
+      expect(state.visualJudge).toHaveBeenCalledWith(
+        expect.objectContaining({ paneId: PANE, scope }),
+      );
+      const third = await loadBrowser(PANE, 'https://example.test/c', {
+        scope,
+        judge: true,
+        deps: { ...deps, jevEnabled: () => false },
+      });
+      expect(third.judgmentSkipped).toBe('surface-disabled');
+      expect(third.visualJudgment).toBeUndefined();
+      expect(state.visualJudge).toHaveBeenCalledOnce();
+    } finally {
+      state.canVisual.mockReturnValue(false);
+    }
+    destroyBrowser(PANE, scope);
   });
 
   it('press returns after/changed and errors too', async () => {
