@@ -12209,7 +12209,7 @@ export const RELEASE_076354: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076355: AppRelease = {
   version: '0.76.355',
   date: '2026-10-20',
   codename: 'Flash no desktop',
@@ -12231,4 +12231,26 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076355: AppRelease = CURRENT_RELEASE;
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.356',
+  date: '2026-10-20',
+  codename: 'O Jev de olho na página',
+  summary: 'O navegador do agente julga a página depois de cada ação, as decisões do Jev aparecem no registro, as entregas com testes no relatório deixam de sair como evidência fraca e as abas novas reaproveitam pastas já preparadas sem apagar o trabalho de uma aba anterior.',
+  highlights: [
+    { title: 'O navegador do agente julga a página depois de cada ação', detail: 'Abrir, clicar, preencher e teclar devolvem junto um julgamento do Jev sobre a página (erro visível, bloqueio humano, carregando), com teto de cerca de 1,5 s. Estourou o teto, a ação sai sem julgamento e o resultado fica guardado para a próxima leitura. Imagem da página continua indo só com a visão ligada e o consentimento dado.' },
+    { title: 'Decisões do Jev visíveis no registro', detail: 'Cada decisão do Jev entra no registro do app sem conteúdo (superfície, provedor, modelo, desfecho, duração e tokens), o chip do pane diz quem respondeu, e o status do Jev mostra as contagens desde a abertura por provedor e por superfície.' },
+    { title: 'Abas novas reaproveitam pastas já preparadas', detail: 'Uma aba nova pega uma pasta isolada já preparada quando ela foi criada a partir do commit atual do projeto. Se um commit entrou no meio, ou se a pasta da aba já existe em disco, o Nexus cria uma pasta nova como antes.' },
+    ...RELEASE_076355.highlights.filter((note) => note.title !== 'Pacote Linux'),
+  ],
+  fixes: [
+    { title: 'Entrega com testes no relatório não sai mais como «evidência fraca»', detail: 'A revisão das entregas lia só o resumo condensado. Agora lê também a íntegra que o agente anexa ao relatório e o resumo antes da condensação, preservando o fim do texto, onde ficam os testes.' },
+    { title: 'A memória do projeto volta a guardar o fim de sessão das abas isoladas', detail: 'Nas abas com pasta própria, a destilação do fim de sessão abria o banco pela pasta de execução, batia na guarda de identidade e era pulada. Ela usa agora o checkout de coordenação do mesmo projeto.' },
+    { title: 'Abrir uma aba não apaga a pasta de uma aba anterior', detail: 'Se a pasta ou a branch da aba já existiam em disco, a adoção de uma pasta preparada colidia e a reversão apagava a pasta existente com o trabalho não salvo. A adoção agora recusa antes de mexer em qualquer coisa.' },
+    { title: 'Grok com login vencido sai da rota por 10 minutos', detail: 'Quando o Grok é recusado por sessão expirada, a rota deixa de escolhê-lo por 10 minutos, em vez de preparar pasta e reenviar a cada tentativa.' },
+    { title: 'A voz explica em português por que não mandou a fala', detail: 'Com o destino da voz no pane focado e nenhum pane em foco, o aviso saía em inglês e não dizia que o destino é um ajuste. Agora pede para focar um pane ou trocar o destino para a Jarvis em Ajustes › Voz; se o pane recusou a fala, diz isso.' },
+    { title: 'Decisões recusadas do Jev ficam registradas', detail: 'A classificação do pedido e o reaproveitamento de helper parado gravam também as decisões que o Jev não aceitou, o motivo de cada pulo aparece no registro e, na pesquisa, o resultado escolhido pelo Jev sobe ao topo.' },
+    ...RELEASE_076355.fixes,
+  ],
+};
+
+export const RELEASE_076356: AppRelease = CURRENT_RELEASE;
