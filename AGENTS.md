@@ -142,8 +142,10 @@ npm run rebuild:node           # rebuild native modules for Node (CI/tests)
   builds seguintes reaproveitam o agente SEM PIN. Ele morre no prazo, no
   `npm run windows-signer -- stop` e quando o YubiKey perde o PIN (sonda
   silenciosa antes de cada assinatura: nunca abre janela escondida). Só assina
-  .exe/.dll/.node do `out\` de checkout que fixa este certificado, da SquirrelTemp
-  e do staging do packager, e anota o SHA-256 de tudo em
+  .exe/.dll/.node do `out\` de checkout que fixa este certificado em
+  `build/windows-signing-identity.json`, da `src-tauri\target\release` de checkout
+  do Nexus Shot que o fixa em `src-tauri/windows-signing-identity.json`, da
+  SquirrelTemp e do staging do packager, e anota o SHA-256 de tudo em
   `%LOCALAPPDATA%\NexusIDE\windows-signer\signed.ndjson`. Enquanto vive, qualquer
   processo do usuário que leia o `agent.json` pode pedir assinatura: é o preço do
   prazo, dito no runbook. O `@electron/windows-sign` engole erro de hook; o hook
@@ -170,9 +172,14 @@ npm run rebuild:node           # rebuild native modules for Node (CI/tests)
   o agente abre (a do Windows ou a do `save-pin`).
   Cobre o NexusIDE inteiro, inclusive o `NexusRedline.exe` do pacote e o instalador
   Squirrel. **Regra do operador (19/10): todo app Windows assinado usa este
-  YubiKey.** O Nexus Shot (repo próprio, Tauri) assina pelo mesmo token desde
-  `3c76ad9` na `feat/windows-port` (`scripts/windows-sign.ps1`, SignTool próprio,
-  mesma identidade fixada; renovação troca o thumbprint nos dois repositórios).
+  YubiKey.** O Nexus Shot (repo próprio, Tauri) assina pelo mesmo token e, desde
+  20/10, pelo MESMO agente: o `scripts/windows-sign.ps1` dele fala com o pipe do
+  `agent.json` (zero PIN), sobe o agente pela cópia do logon quando há PIN guardado
+  e só sem agente nenhum cai no SignTool com janela. O que o NSIS assina fora da
+  `target\release` (desinstalador `nst*.tmp` no TEMP) passa por uma cópia dentro
+  dela: o agente não ganhou raiz no TEMP nem a extensão `.tmp`. Mudou o agente?
+  `npm run windows-signer -- install-logon` de novo, ou o Shot é recusado pela
+  cópia velha. Renovação troca o thumbprint nos dois repositórios.
 - O JSON é a fonte única: o coletor (`collect-windows-release.ps1`) grava
   `signing: 'yubikey'` só com Setup, app, Update.exe e stub assinados e carimbados
   pelo certificado fixado (thumbprint e SPKI conferidos); nenhum assinado vira

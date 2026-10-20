@@ -124,6 +124,7 @@ import { FEATURE_FLAG_IDS } from '../shared/feature-flags';
 import { bootGreeting } from '../shared/endorphin';
 import { missionAwaitsOperatorReview } from '../shared/mission-recovery-policy';
 import { AppShell } from './components/product/AppShell';
+import { HeaderQuotaStrip } from './components/product/HeaderQuotaStrip';
 import {
   WorkspaceRail,
   type WorkspaceRailSelection,
@@ -1600,6 +1601,11 @@ export function App() {
               </span>
             </div>
             <div className="product-header__tools">
+              {canUseApp && (
+                <HeaderQuotaStrip
+                  onOpenUsage={() => navigation.openSettings('usage-quota')}
+                />
+              )}
               {canUseApp && <UpdateNotifier alwaysVisible />}
               {currentWorkspace ? (
                 <>
