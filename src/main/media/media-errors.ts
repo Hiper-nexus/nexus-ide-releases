@@ -20,6 +20,7 @@ export function mediaServiceName(provider: string): string {
   if (id.startsWith('openai')) return 'OpenAI';
   if (id.startsWith('elevenlabs')) return 'ElevenLabs';
   if (id.startsWith('xai')) return 'xAI';
+  if (id.startsWith('higgsfield')) return 'Higgsfield';
   return provider;
 }
 
@@ -101,7 +102,11 @@ export function mediaHttpErrorKind(
   // 19/10/2026, F-1599): `{"code":"invalid-argument","error":"Incorrect API
   // key provided…"}`. O `code` é o mesmo de qualquer parâmetro errado.
   if (status === 400 && /\bincorrect api key\b/iu.test(detail)) return 'key';
+  // Higgsfield (docs.higgsfield.ai/docs/concepts/errors): 403 = sem crédito.
+  if (status === 403 && /\bcredits?\b/iu.test(detail)) return 'billing';
   if (status === 401 || status === 403) return 'key';
+  // 423: modelo bloqueado por um tempo (Higgsfield); esperar resolve.
+  if (status === 423) return 'unavailable';
   if (status === 402) return 'billing';
   if (status === 404) return 'not-found';
   // Cota zero (modelo só do plano pago do Gemini, F-1587): esperar não

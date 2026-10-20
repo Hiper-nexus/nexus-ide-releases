@@ -40,6 +40,7 @@ import { RailAgentRoster, type RailAgentMeta } from './RailAgentRoster';
 import { useTerminalGridDialogStore } from '../../state/terminal-grid-dialog-store';
 import { useCommandPaletteStore } from '../../state/command-palette-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
+import { useMediaStudioStore } from '../../state/media-studio-store';
 import { WorkspaceCleanup } from './WorkspaceCleanup';
 import { RailQuotaCard } from './RailQuotaCard';
 import { RailMemoryPressure } from './RailMemoryPressure';
@@ -972,6 +973,7 @@ export function WorkspaceRail({
   const taskBoardSelected = isSelected(selection, 'task-board');
   const memorySelected = isSelected(selection, 'memory');
   const settingsSelected = isSelected(selection, 'settings');
+  const mediaStudioOpen = useMediaStudioStore((s) => s.open);
 
   const layoutRoot = useLayoutStore((s) => s.root);
   const allPanes = useMemo(() => listPanes(layoutRoot), [layoutRoot]);
@@ -1207,6 +1209,25 @@ export function WorkspaceRail({
           >
             <PixelIcon name="file" size={12} />
             <span className="workspace-rail__row-label">Memória</span>
+          </button>
+        </li>
+        <li>
+          {/* O Estúdio morava atrás de Ajustes → Serviços de mídia: quem não
+              sabia que ele existia não o achava. É um painel por cima da tela
+              atual, não um destino — por isso aria-haspopup, não aria-current. */}
+          <button
+            type="button"
+            className={`workspace-rail__row workspace-rail__fixed-row${
+              mediaStudioOpen ? ' workspace-rail__row--selected' : ''
+            }`}
+            aria-label="Abrir Estúdio de mídia"
+            aria-haspopup="dialog"
+            title="Crie imagens e vídeos com IA"
+            data-testid="rail-media-studio"
+            onClick={() => useMediaStudioStore.getState().show()}
+          >
+            <PixelIcon name="vision" size={12} />
+            <span className="workspace-rail__row-label">Estúdio de mídia</span>
           </button>
         </li>
         {onOpenAttention && attentionCount > 0 ? (

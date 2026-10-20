@@ -29,12 +29,25 @@
  * (10/10/2026); a imagem de entrada custa à parte (US$ 0,01) e o custo real
  * vem do `usage.cost_in_usd_ticks` da resposta.
  *
+ * Geração 2026-08/09 (F-1612): Seedance 2.5, MiniMax H3 (Hailuo 3), Wan 3.0
+ * e 3.0 Prime (dono `alibaba/`), Gemini Omni 1.1, PixVerse v6 e Vidu Q3 Pro,
+ * pelo schema (`/api/schema`) e pelo `billingConfig` da página de cada modelo
+ * no Replicate, lidos em 20/10/2026. Kling 4 não estava em nenhuma API
+ * pública nessa data (nem no Replicate, nem na Higgsfield). `maxReferenceImages`
+ * vem do mesmo schema: Veo 3.1 Fast e Lite não têm `reference_images`.
+ *
  * Resolução usa o vocabulário do Nexus (`720p`, `1080p`, `4k`…); a tradução
  * para o campo do modelo (Kling `mode`, Sora `standard`/`high`) mora no motor.
  */
 
 export type VideoPricing =
   | { readonly kind: 'per-second'; readonly usd: Readonly<Record<string, number>> }
+  /**
+   * F-1613: o serviço informa o preço de cada pedido antes de gerar
+   * (Higgsfield: `POST /estimate/{endpoint}`, em crédito convertido para USD).
+   * A tabela não chuta: antes da consulta, o custo é desconhecido.
+   */
+  | { readonly kind: 'quoted'; readonly service: string }
   | {
       readonly kind: 'per-video';
       /** resolução → segundos → USD do vídeo inteiro. */
@@ -59,6 +72,16 @@ export interface VideoModelSpec {
   readonly aspectRatios: readonly string[];
   /** Image-to-video: sem imagem inicial o serviço recusa. */
   readonly requiresImage?: boolean;
+  /**
+   * Imagens de referência (personagem, produto, logo, estilo) que o motor
+   * manda para o modelo. `0` = o modelo não recebe referência; ausente = a
+   * tabela não sabe e o motor segue o teto antigo (F-1611/F-1612).
+   */
+  readonly maxReferenceImages?: number;
+  /** O que o modelo exige quando o pedido leva referências (Veo 3.1: 16:9, 8 s). */
+  readonly referencesRequire?: { readonly aspectRatio?: string; readonly durationSeconds?: number };
+  /** Vídeos de exemplo (movimento, estilo) que o modelo recebe; ausente = nenhum. */
+  readonly maxReferenceVideos?: number;
   /** Durações aceitas quando há imagem inicial (Ray 3.2: 10 s só sem imagem). */
   readonly durationsWithImage?: readonly number[];
   /** Preço com a 1ª resolução como chave curinga `*` quando não varia. */
@@ -86,6 +109,9 @@ const range = (from: number, to: number): number[] =>
 const SEEDANCE_ASPECTS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', '9:21'] as const;
 const VEO_ASPECTS = ['16:9', '9:16'] as const;
 const KLING_ASPECTS = ['16:9', '9:16', '1:1'] as const;
+const SEEDANCE_25_ASPECTS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'] as const;
+const H3_ASPECTS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'] as const;
+const WAN_3_ASPECTS = ['16:9', '9:16', '1:1', '4:3', '3:4'] as const;
 const XAI_VIDEO_ASPECTS = ['16:9', '9:16', '1:1', '4:3', '3:4', '3:2', '2:3', '21:9', '5:2'] as const;
 const GEMINI_VEO_RETIREMENT = {
   retiresOn: '2026-10-22',
@@ -108,6 +134,7 @@ export const GEMINI_OMNI_TOKEN_USD_PER_MILLION: GeminiOmniTokenPricing = Object.
 
 export const VIDEO_MODEL_SPECS: Readonly<Record<string, VideoModelSpec>> = Object.freeze({
   'bytedance/seedance-2.0': {
+    maxReferenceImages: 9,
     durations: range(4, 15),
     defaultDuration: 5,
     resolutions: ['480p', '720p', '1080p', '4k'],
@@ -116,6 +143,7 @@ export const VIDEO_MODEL_SPECS: Readonly<Record<string, VideoModelSpec>> = Objec
     pricing: { kind: 'per-second', usd: { '480p': 0.08, '720p': 0.18, '1080p': 0.45, '4k': 1 } },
   },
   'bytedance/seedance-2.0-fast': {
+    maxReferenceImages: 9,
     durations: range(4, 15),
     defaultDuration: 5,
     resolutions: ['480p', '720p'],
@@ -124,6 +152,7 @@ export const VIDEO_MODEL_SPECS: Readonly<Record<string, VideoModelSpec>> = Objec
     pricing: { kind: 'per-second', usd: { '480p': 0.07, '720p': 0.15 } },
   },
   'bytedance/seedance-2.0-mini': {
+    maxReferenceImages: 9,
     durations: range(4, 15),
     defaultDuration: 5,
     resolutions: ['480p', '720p'],
@@ -131,7 +160,79 @@ export const VIDEO_MODEL_SPECS: Readonly<Record<string, VideoModelSpec>> = Objec
     aspectRatios: SEEDANCE_ASPECTS,
     pricing: { kind: 'per-second', usd: { '480p': 0.04, '720p': 0.09 } },
   },
+  // F-1612: geração 2026-08/09, schema e preço da página de cada modelo no
+  // Replicate (20/10/2026). Seedance 2.5 cobra mais caro com vídeo de
+  // entrada (US$ 0,4304/0,9676 por segundo); a tabela é a de sem vídeo.
+  'bytedance/seedance-2.5': {
+    maxReferenceImages: 30,
+    durations: range(4, 30),
+    defaultDuration: 5,
+    resolutions: ['480p', '720p'],
+    defaultResolution: '720p',
+    aspectRatios: SEEDANCE_25_ASPECTS,
+    pricing: { kind: 'per-second', usd: { '480p': 0.1028, '720p': 0.2312 } },
+  },
+  // MiniMax H3 (Hailuo 3): referências só por URL pública, então o Estúdio
+  // manda só primeiro/último quadro.
+  'minimax/h3': {
+    maxReferenceImages: 0,
+    durations: range(4, 15),
+    defaultDuration: 5,
+    resolutions: ['768p', '2k'],
+    defaultResolution: '2k',
+    aspectRatios: H3_ASPECTS,
+    pricing: { kind: 'per-second', usd: { '768p': 0.08, '2k': 0.13 } },
+  },
+  'alibaba/wan-3': {
+    maxReferenceImages: 0,
+    durations: range(2, 30),
+    defaultDuration: 5,
+    resolutions: ['480p', '720p', '1080p'],
+    defaultResolution: '1080p',
+    aspectRatios: WAN_3_ASPECTS,
+    pricing: { kind: 'per-second', usd: { '480p': 0.025, '720p': 0.05, '1080p': 0.1 } },
+  },
+  'alibaba/wan-3-prime': {
+    maxReferenceImages: 0,
+    durations: range(2, 30),
+    defaultDuration: 5,
+    resolutions: ['480p', '720p', '1080p'],
+    defaultResolution: '1080p',
+    aspectRatios: WAN_3_ASPECTS,
+    pricing: { kind: 'per-second', usd: { '480p': 0.068, '720p': 0.14, '1080p': 0.28 } },
+  },
+  // Gemini Omni 1.1 pelo Replicate: decide a duração (sem campo), como o nativo.
+  'google/gemini-omni-1.1': {
+    maxReferenceImages: 9,
+    durations: [],
+    resolutions: ['360p', '720p', '1080p', '4k'],
+    defaultResolution: '720p',
+    aspectRatios: VEO_ASPECTS,
+    pricing: { kind: 'per-second', usd: { '360p': 0.05, '720p': 0.15, '1080p': 0.23, '4k': 0.45 } },
+  },
+  // Com áudio ligado (o motor manda `generate_audio_switch`).
+  'pixverse/pixverse-v6': {
+    maxReferenceImages: 0,
+    durations: [5, 8, 10, 15],
+    defaultDuration: 5,
+    resolutions: ['360p', '540p', '720p', '1080p'],
+    defaultResolution: '540p',
+    aspectRatios: ['16:9', '9:16', '1:1'],
+    pricing: { kind: 'per-second', usd: { '360p': 0.07, '540p': 0.09, '720p': 0.12, '1080p': 0.23 } },
+  },
+  'vidu/q3-pro': {
+    maxReferenceImages: 0,
+    durations: range(1, 16),
+    defaultDuration: 5,
+    resolutions: ['540p', '720p', '1080p'],
+    defaultResolution: '720p',
+    aspectRatios: ['16:9', '9:16', '3:4', '4:3', '1:1'],
+    pricing: { kind: 'per-second', usd: { '540p': 0.07, '720p': 0.15, '1080p': 0.16 } },
+  },
+  // Referência (R2V): de 1 a 3 imagens, só em 16:9 e 8 s (schema, 20/10/2026).
   'google/veo-3.1': {
+    maxReferenceImages: 3,
+    referencesRequire: { aspectRatio: '16:9', durationSeconds: 8 },
     durations: [4, 6, 8],
     defaultDuration: 8,
     resolutions: ['720p', '1080p'],
@@ -141,7 +242,9 @@ export const VIDEO_MODEL_SPECS: Readonly<Record<string, VideoModelSpec>> = Objec
     // Com áudio (o motor liga `generate_audio`).
     pricing: { kind: 'per-second', usd: { '*': 0.4 } },
   },
+  // Fast e Lite não têm `reference_images` no schema (20/10/2026).
   'google/veo-3.1-fast': {
+    maxReferenceImages: 0,
     durations: [4, 6, 8],
     defaultDuration: 8,
     resolutions: ['720p', '1080p'],
@@ -151,6 +254,7 @@ export const VIDEO_MODEL_SPECS: Readonly<Record<string, VideoModelSpec>> = Objec
     pricing: { kind: 'per-second', usd: { '*': 0.15 } },
   },
   'google/veo-3.1-lite': {
+    maxReferenceImages: 0,
     durations: [4, 6, 8],
     defaultDuration: 8,
     resolutions: ['720p', '1080p'],
@@ -243,7 +347,58 @@ export const VIDEO_MODEL_SPECS: Readonly<Record<string, VideoModelSpec>> = Objec
       usd: { '540p': { 5: 0.15, 10: 0.45 }, '720p': { 5: 0.3, 10: 0.9 }, '1080p': { 5: 1.2, 10: 3.6 } },
     },
   },
+  // F-1613: Higgsfield (docs.higgsfield.ai, 20/10/2026). O fluxo (texto,
+  // imagem ou referência) sai do pedido; o preço vem do `/estimate`.
+  'higgsfield/seedance-2.5': {
+    maxReferenceImages: 30,
+    maxReferenceVideos: 10,
+    durations: range(4, 30),
+    defaultDuration: 5,
+    resolutions: ['480p', '720p', '1080p'],
+    defaultResolution: '720p',
+    aspectRatios: SEEDANCE_25_ASPECTS,
+    pricing: { kind: 'quoted', service: 'Higgsfield' },
+  },
+  'higgsfield/seedance-2.0': {
+    maxReferenceImages: 9,
+    maxReferenceVideos: 3,
+    durations: range(4, 15),
+    defaultDuration: 5,
+    resolutions: ['480p', '720p', '1080p', '4k'],
+    defaultResolution: '720p',
+    aspectRatios: SEEDANCE_25_ASPECTS,
+    pricing: { kind: 'quoted', service: 'Higgsfield' },
+  },
+  'higgsfield/kling-3.0-pro': {
+    maxReferenceImages: 0,
+    durations: range(3, 15),
+    defaultDuration: 5,
+    resolutions: [],
+    aspectRatios: KLING_ASPECTS,
+    pricing: { kind: 'quoted', service: 'Higgsfield' },
+  },
+  // Só 2K na Higgsfield; duração mínima 5 s.
+  'higgsfield/minimax-h3': {
+    maxReferenceImages: 9,
+    maxReferenceVideos: 3,
+    durations: range(5, 15),
+    defaultDuration: 5,
+    resolutions: [],
+    aspectRatios: H3_ASPECTS,
+    pricing: { kind: 'quoted', service: 'Higgsfield' },
+  },
+  'higgsfield/wan-3.0': {
+    maxReferenceImages: 10,
+    maxReferenceVideos: 5,
+    durations: range(2, 30),
+    defaultDuration: 5,
+    resolutions: ['480p', '720p', '1080p'],
+    defaultResolution: '1080p',
+    aspectRatios: WAN_3_ASPECTS,
+    pricing: { kind: 'quoted', service: 'Higgsfield' },
+  },
   'gemini-omni-1.1-flash': {
+    maxReferenceImages: 9,
     durations: [],
     // 1080p e 4k são ampliados pelo próprio serviço a partir do 720p.
     resolutions: ['360p', '720p', '1080p', '4k'],
@@ -283,6 +438,7 @@ export const VIDEO_MODEL_SPECS: Readonly<Record<string, VideoModelSpec>> = Objec
     ...GEMINI_VEO_RETIREMENT,
   },
   'grok-imagine-video-1.5': {
+    maxReferenceImages: 14,
     durations: range(1, 15),
     defaultDuration: 8,
     // 1080p nativo; com referências ou último quadro vai até 720p
@@ -294,6 +450,7 @@ export const VIDEO_MODEL_SPECS: Readonly<Record<string, VideoModelSpec>> = Objec
     inputImageUsd: 0.01,
   },
   'grok-imagine-video-1.5-lite': {
+    // Sem referências: a recusa (com a sugestão do 1.5) é a de `xai-imagine.ts`.
     durations: range(1, 15),
     defaultDuration: 8,
     // 1080p é o 720p ampliado pela própria xAI.
@@ -304,6 +461,7 @@ export const VIDEO_MODEL_SPECS: Readonly<Record<string, VideoModelSpec>> = Objec
     inputImageUsd: 0.01,
   },
   'grok-imagine-video': {
+    maxReferenceImages: 7,
     durations: range(1, 15),
     defaultDuration: 8,
     resolutions: ['480p', '720p'],
@@ -362,6 +520,10 @@ export interface VideoRequestOptions {
   resolution?: string;
   aspectRatio?: string;
   hasImage?: boolean;
+  /** Quantas imagens de referência o pedido leva. */
+  referenceImages?: number;
+  /** Quantos vídeos de exemplo o pedido leva (F-1613). */
+  referenceVideos?: number;
 }
 
 /**
@@ -379,6 +541,29 @@ export function videoRequestProblem(
   if (isVideoModelRetired(spec, now)) return retiredVideoModelMessage(model, spec);
   if (spec.requiresImage && !options.hasImage) {
     return `${model} gera vídeo a partir de uma imagem inicial: informe a imagem (imagePath).`;
+  }
+  const refs = options.referenceImages ?? 0;
+  if (refs > 0 && spec.maxReferenceImages !== undefined && refs > spec.maxReferenceImages) {
+    return spec.maxReferenceImages === 0
+      ? `${model} não recebe imagens de referência: use só a imagem inicial (imagePath).`
+      : `${model} aceita até ${spec.maxReferenceImages} imagens de referência (pedido: ${refs}).`;
+  }
+  const videos = options.referenceVideos ?? 0;
+  if (videos > 0 && videos > (spec.maxReferenceVideos ?? 0)) {
+    return (spec.maxReferenceVideos ?? 0) === 0
+      ? `${model} não recebe vídeo de exemplo: use um modelo da Higgsfield com referência (Seedance, H3, Wan 3.0).`
+      : `${model} aceita até ${spec.maxReferenceVideos} vídeos de exemplo (pedido: ${videos}).`;
+  }
+  const need = refs > 0 ? spec.referencesRequire : undefined;
+  if (need?.aspectRatio && options.aspectRatio && options.aspectRatio !== need.aspectRatio) {
+    return `${model} com imagens de referência só gera em ${need.aspectRatio} (pedido: ${options.aspectRatio}).`;
+  }
+  if (
+    need?.durationSeconds !== undefined &&
+    options.durationSeconds !== undefined &&
+    options.durationSeconds !== need.durationSeconds
+  ) {
+    return `${model} com imagens de referência só gera ${need.durationSeconds} s (pedido: ${options.durationSeconds} s).`;
   }
   const { resolution, aspectRatio, durationSeconds } = options;
   if (resolution !== undefined) {
@@ -497,7 +682,9 @@ export function videoModelSummary(model: string, now: number = Date.now()): stri
         : `${durations.join(', ')} s`,
   );
   if (spec.resolutions.length > 0) parts.push(spec.resolutions.join(', '));
-  if (spec.pricing.kind === 'per-second') {
+  if (spec.pricing.kind === 'quoted') {
+    parts.push(`preço informado pela ${spec.pricing.service} antes de gerar`);
+  } else if (spec.pricing.kind === 'per-second') {
     const prices = Object.values(spec.pricing.usd);
     const min = Math.min(...prices);
     parts.push(`${prices.length > 1 ? 'a partir de ' : ''}${formatListUsd(min)}/s`);
@@ -532,6 +719,11 @@ export type VideoModelPriceCard =
   | {
       readonly unit: 'usd-per-video';
       readonly byResolution: Readonly<Record<string, Readonly<Record<string, number>>>>;
+    }
+  | {
+      /** O serviço cota cada pedido; o motor pergunta antes de enviar. */
+      readonly unit: 'quoted-by-service';
+      readonly service: string;
     };
 
 /**
@@ -555,6 +747,10 @@ export interface VideoModelCard {
   readonly aspectRatios: readonly string[];
   /** Sem `imagePath` o serviço recusa. */
   readonly requiresImage: boolean;
+  /** Teto de `referenceImagePaths`; `null` = a tabela não sabe. */
+  readonly maxReferenceImages: number | null;
+  /** Teto de `referenceVideoPaths` (vídeo de exemplo); 0 = não recebe. */
+  readonly maxReferenceVideos: number;
   readonly price: VideoModelPriceCard;
   /** Custo de lista do pedido só com os padrões do modelo; `null` quando o modelo decide a duração. */
   readonly defaultRequestCostUsd: number | null;
@@ -567,6 +763,9 @@ export interface VideoModelCard {
 }
 
 function videoPriceCard(model: string, spec: VideoModelSpec): VideoModelPriceCard {
+  if (spec.pricing.kind === 'quoted') {
+    return { unit: 'quoted-by-service', service: spec.pricing.service };
+  }
   if (spec.pricing.kind === 'per-video') {
     return {
       unit: 'usd-per-video',
@@ -615,6 +814,8 @@ export function videoModelCard(model: string, now: number = Date.now()): VideoMo
     defaultResolution: spec.resolutions.length > 0 ? (spec.defaultResolution ?? null) : null,
     aspectRatios: [...spec.aspectRatios],
     requiresImage: spec.requiresImage === true,
+    maxReferenceImages: spec.maxReferenceImages ?? null,
+    maxReferenceVideos: spec.maxReferenceVideos ?? 0,
     price: videoPriceCard(model, spec),
     defaultRequestCostUsd: estimateVideoCostUsd(model, {}),
     retiresOn: spec.retiresOn ?? null,

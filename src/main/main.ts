@@ -481,6 +481,7 @@ import { registerVoiceCloneIpc } from "./media/voice-clone-ipc";
 import { registerMediaBudgetIpc } from "./media/media-budget-ipc";
 import { MEDIA_STREAM_SCHEME_DEF } from "./video/media-stream-protocol";
 import { registerVideoStudioIpc } from "./video/video-studio-ipc";
+import { registerMediaReferenceIpc } from "./media/media-reference-ipc";
 import {
   broadcastGamificationToProject,
   registerGamificationIpc,
@@ -891,6 +892,7 @@ async function bootstrap(userPathReady: Promise<void>): Promise<void> {
   bootStep('registerVoiceCloneIpc', () => registerVoiceCloneIpc());
   // F-1596: Vídeos do projeto (render, export, player por nexus-media:).
   bootStep('registerVideoStudioIpc', () => registerVideoStudioIpc());
+  bootStep('registerMediaReferenceIpc', () => registerMediaReferenceIpc());
   bootStep('registerGamificationIpc', () => registerGamificationIpc(gamificationService));
   bootStep('registerMcpIpc', () => registerMcpIpc());
   bootStep('registerOpsIpc', () => registerOpsIpc());

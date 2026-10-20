@@ -116,53 +116,50 @@ export function alignScriptToSpeech(script: readonly string[], spoken: readonly 
     return k < 0 ? Number.POSITIVE_INFINITY : cost[k];
   };
   cost[index(0, 0)] = 0;
+  // Cheapest way into (i, j): skip a spoken word, skip a script word, or close a group.
+  const relax = (i: number, j: number): void => {
+    let best = Number.POSITIVE_INFINITY;
+    let bestOp = -1;
+    if (j > 0 && at(i, j - 1) + SKIP_SPOKEN < best) {
+      best = at(i, j - 1) + SKIP_SPOKEN;
+      bestOp = SKIP_SPOKEN_OP;
+    }
+    if (i > 0 && at(i - 1, j) + SKIP_SCRIPT < best) {
+      best = at(i - 1, j) + SKIP_SCRIPT;
+      bestOp = SKIP_SCRIPT_OP;
+    }
+    for (let a = 1; a <= MAX_SCRIPT_PER_SPOKEN_WORD && a <= i; a += 1) {
+      const scriptText = scriptGroup[a][i - 1];
+      const maxB = a === 1 ? MAX_SPOKEN_PER_SCRIPT_WORD : 1;
+      for (let b = 1; b <= maxB && b <= j; b += 1) {
+        const previous = at(i - a, j - b);
+        if (!Number.isFinite(previous)) continue;
+        const spokenText = spokenGroup[b][j - 1];
+        // A group pays its dissimilarity once per word it covers: grouping is for
+        // real splits, never a shortcut over words nobody said.
+        const weight = Math.max(a, b);
+        const penalty = GROUP_PENALTY * (a + b - 2);
+        // The length difference is a floor of the edit distance: skip the
+        // distance when even that floor cannot beat the best so far.
+        const longest = Math.max(scriptText.length, spokenText.length);
+        const floor = longest === 0 ? 0 : (Math.abs(scriptText.length - spokenText.length) / longest) * weight;
+        if (previous + floor + penalty > best + 1e-9) continue;
+        const candidate = previous + (1 - wordSimilarity(scriptText, spokenText)) * weight + penalty;
+        if (candidate < best) {
+          best = candidate;
+          bestOp = groupOp(a, b);
+        }
+      }
+    }
+    const k = index(i, j);
+    cost[k] = best;
+    op[k] = bestOp;
+  };
   for (let i = 0; i <= n; i += 1) {
     const lo = Math.max(0, center(i) - band);
     const hi = Math.min(m, center(i) + band);
     for (let j = lo; j <= hi; j += 1) {
-      if (i === 0 && j === 0) continue;
-      const k = index(i, j);
-      let best = Number.POSITIVE_INFINITY;
-      let bestOp = -1;
-      if (j > 0) {
-        const candidate = at(i, j - 1) + SKIP_SPOKEN;
-        if (candidate < best) {
-          best = candidate;
-          bestOp = SKIP_SPOKEN_OP;
-        }
-      }
-      if (i > 0) {
-        const candidate = at(i - 1, j) + SKIP_SCRIPT;
-        if (candidate < best) {
-          best = candidate;
-          bestOp = SKIP_SCRIPT_OP;
-        }
-      }
-      for (let a = 1; a <= MAX_SCRIPT_PER_SPOKEN_WORD && a <= i; a += 1) {
-        const scriptText = scriptGroup[a][i - 1];
-        const maxB = a === 1 ? MAX_SPOKEN_PER_SCRIPT_WORD : 1;
-        for (let b = 1; b <= maxB && b <= j; b += 1) {
-          const previous = at(i - a, j - b);
-          if (!Number.isFinite(previous)) continue;
-          const spokenText = spokenGroup[b][j - 1];
-          // A group pays its dissimilarity once per word it covers: grouping is for
-          // real splits, never a shortcut over words nobody said.
-          const weight = Math.max(a, b);
-          const penalty = GROUP_PENALTY * (a + b - 2);
-          // The length difference is a floor of the edit distance: skip the
-          // distance when even that floor cannot beat the best so far.
-          const longest = Math.max(scriptText.length, spokenText.length);
-          const floor = longest === 0 ? 0 : (Math.abs(scriptText.length - spokenText.length) / longest) * weight;
-          if (previous + floor + penalty > best + 1e-9) continue;
-          const candidate = previous + (1 - wordSimilarity(scriptText, spokenText)) * weight + penalty;
-          if (candidate < best) {
-            best = candidate;
-            bestOp = groupOp(a, b);
-          }
-        }
-      }
-      cost[k] = best;
-      op[k] = bestOp;
+      if (i !== 0 || j !== 0) relax(i, j);
     }
   }
 

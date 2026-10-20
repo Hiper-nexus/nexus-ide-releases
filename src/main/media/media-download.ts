@@ -9,7 +9,13 @@ import { Readable } from 'node:stream';
 import tls from 'node:tls';
 
 export type DynamicMediaProvider =
-  'openai-image' | 'replicate-image' | 'replicate-video' | 'google-video' | 'xai-video';
+  | 'openai-image'
+  | 'replicate-image'
+  | 'replicate-video'
+  | 'google-video'
+  | 'xai-video'
+  | 'higgsfield-image'
+  | 'higgsfield-video';
 
 export type PinnedMediaFetch = (
   url: URL,
@@ -39,6 +45,8 @@ const DEFAULT_LIMITS: Record<DynamicMediaProvider, MediaDownloadLimits> = {
   'replicate-video': { maxBytes: 256 * 1024 * 1024, timeoutMs: 120_000 },
   'google-video': { maxBytes: 256 * 1024 * 1024, timeoutMs: 120_000 },
   'xai-video': { maxBytes: 256 * 1024 * 1024, timeoutMs: 120_000 },
+  'higgsfield-image': { maxBytes: 64 * 1024 * 1024, timeoutMs: 120_000 },
+  'higgsfield-video': { maxBytes: 256 * 1024 * 1024, timeoutMs: 120_000 },
 };
 const ALLOWED_HOST_SUFFIXES: Record<DynamicMediaProvider, string[]> = {
   'openai-image': ['openai.com', 'oaistatic.com', 'blob.core.windows.net'],
@@ -54,6 +62,11 @@ const ALLOWED_HOST_SUFFIXES: Record<DynamicMediaProvider, string[]> = {
   // `vidgen.x.ai` (docs.x.ai, resposta do `GET /v1/videos/{id}`); baixada sem
   // a chave. Só esse host, nunca o `x.ai` inteiro.
   'xai-video': ['vidgen.x.ai'],
+  // F-1613: a Higgsfield entrega pelo CDN dela — a distribuição CloudFront
+  // exata que serve a galeria oficial (open.higgsfield.ai) e `*.higgsfield.ai`
+  // (cdn./static.). Nunca o `cloudfront.net` inteiro.
+  'higgsfield-image': ['d28lhcrx5qdowv.cloudfront.net', 'higgsfield.ai'],
+  'higgsfield-video': ['d28lhcrx5qdowv.cloudfront.net', 'higgsfield.ai'],
 };
 
 interface ApprovedDownloadTarget {

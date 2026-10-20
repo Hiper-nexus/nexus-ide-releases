@@ -63,7 +63,7 @@ describe('listElevenLabsVoices', () => {
     const urls: string[] = [];
     const fetchFn = vi.fn(async (input: string | URL, init?: RequestInit) => {
       urls.push(String(input));
-      expect((init?.headers as Record<string, string>)['xi-api-key']).toBe('k');
+      expect(((init?.headers ?? {}) as Record<string, string>)['xi-api-key']).toBe('k');
       const first = !String(input).includes('next_page_token');
       return new Response(
         JSON.stringify({

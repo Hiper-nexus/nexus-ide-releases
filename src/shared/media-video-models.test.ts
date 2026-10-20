@@ -37,6 +37,13 @@ describe('media-video-models (F-1585)', () => {
         allowedVideoDurations(spec, { resolution: spec.defaultResolution }),
         model,
       ).toContain(spec.defaultDuration);
+      // F-1613: preço cotado pelo serviço (Higgsfield) não tem tabela — nunca um chute.
+      if (spec.pricing.kind === 'quoted') {
+        expect(estimateVideoCostUsd(model, {}), model).toBeNull();
+        expect(videoModelCard(model)?.price, model).toEqual({ unit: 'quoted-by-service', service: 'Higgsfield' });
+        expect(videoModelSummary(model), model).toContain('preço informado pela Higgsfield');
+        continue;
+      }
       expect(estimateVideoCostUsd(model, {}), model).not.toBeNull();
     }
   });
