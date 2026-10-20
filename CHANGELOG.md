@@ -1,10 +1,10 @@
 # Changelog
 
-## 0.76.350 — A boca do Jarvis
+## 0.76.351 — A boca do Jarvis
 
 Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
 
-A tag 0.76.349 foi marcada e não foi publicada: o portão de segurança no Ubuntu encontrou uma vulnerabilidade moderada na toolchain (vite 8.1.5, GHSA-698v-4r3x-3vcv, launch-editor só no Windows). O vite sobe para 8.1.6. A 0.76.348 é a publicação Windows, assinada pelo YubiKey, e não recebe arquivos Linux. A 0.76.347 é o pacote Linux anterior. A 0.76.346 continua a publicação macOS e não recebe arquivos Linux.
+A tag 0.76.350 foi marcada e não foi publicada: a suíte no Ubuntu falhou em dois testes do assinador do YubiKey, que montavam caminho do Windows com `path.join` e no Linux trocavam a barra. A linha de comando do Windows passa a usar `path.win32`. A tag 0.76.349 também não foi publicada: o portão de segurança encontrou vite 8.1.5 (GHSA-698v-4r3x-3vcv); o vite sobe para 8.1.6. A 0.76.348 é a publicação Windows, assinada pelo YubiKey, e não recebe arquivos Linux. A 0.76.347 é o pacote Linux anterior. A 0.76.346 continua a publicação macOS e não recebe arquivos Linux.
 
 No desktop Linux, em relação à 0.76.347:
 
@@ -15,6 +15,10 @@ No desktop Linux, em relação à 0.76.347:
 - **Pane do operador na missão liga de primeira** (F-1619). O pane de «+ Pane → Nesta missão» liga a tela ao processo que já nasceu e não reabre sozinho em «Não subiu».
 
 Fechar um pane lento no Windows (F-1617) está na 0.76.348 e não muda o desktop Linux.
+
+## 0.76.350 — A boca do Jarvis
+
+A tag foi marcada e não foi publicada: a suíte no Ubuntu falhou nos testes do assinador do YubiKey (`path.join` em caminho do Windows). Não recebe arquivos Linux. O desktop Linux sai na 0.76.351.
 
 ## 0.76.349 — A boca do Jarvis
 

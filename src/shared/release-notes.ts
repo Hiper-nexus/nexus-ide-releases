@@ -12117,18 +12117,29 @@ export const RELEASE_076349: AppRelease = {
   fixes: [...RELEASE_076348.fixes],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076350: AppRelease = {
   version: '0.76.350',
   date: '2026-10-20',
   codename: 'A boca do Jarvis',
-  summary: 'No desktop Linux, a boca do Jarvis acompanha a própria voz, a ação de voz responde e lê o estado vivo, e perguntar devolve o texto do pane. O Maestro conserva a conversa e o pane aberto pelo operador dentro da missão liga de primeira. A tag 0.76.349 não foi publicada. A 0.76.348 é a publicação Windows e não recebe arquivos Linux. A 0.76.347 é o pacote Linux anterior.',
+  summary: 'A tag 0.76.350 foi marcada e não foi publicada: a suíte no Ubuntu falhou nos testes do assinador do YubiKey. Não recebe arquivos Linux. O desktop Linux sai na 0.76.351.',
+  highlights: [
+    { title: 'Pacote Linux', detail: 'A tag 0.76.350 não foi publicada porque a suíte no Ubuntu falhou em dois testes que montavam caminho do Windows com path.join. O desktop Linux sai na 0.76.351.' },
+  ],
+  fixes: [...RELEASE_076349.fixes],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.351',
+  date: '2026-10-20',
+  codename: 'A boca do Jarvis',
+  summary: 'No desktop Linux, a boca do Jarvis acompanha a própria voz, a ação de voz responde e lê o estado vivo, e perguntar devolve o texto do pane. O Maestro conserva a conversa e o pane aberto pelo operador dentro da missão liga de primeira. As tags 0.76.350 e 0.76.349 não foram publicadas. A 0.76.348 é a publicação Windows e não recebe arquivos Linux. A 0.76.347 é o pacote Linux anterior.',
   highlights: [
     { title: 'A boca do Jarvis fala com a própria voz', detail: 'A figura ganha boca: abre com o volume da saída, estica com o brilho do espectro e fecha na pausa. O movimento espera a latência do alto-falante, para a boca não andar à frente da voz.' },
     { title: 'A Jarvis responde e lê o estado vivo', detail: 'Uma ação não fica em silêncio. Ler consulta panes, missões, cotas, git e saúde antes de afirmar, e perguntar devolve o texto novo do pane em vez de só dizer que mandou.' },
     { title: 'Ferramenta em tempo real pede uma resposta por lote', detail: 'A continuação sai depois que a resposta que chamou as ferramentas terminou e todas as chamadas daquele lote têm resultado, para o turno não ficar mudo.' },
     { title: 'O Maestro volta com a própria conversa', detail: 'O id de conversa ditado no spawn só substitui a conversa do pane quando o transcrito aparece. Uma reabertura que morria antes da primeira mensagem não apaga mais a conversa real.' },
     { title: 'Pane do operador na missão liga de primeira', detail: 'O pane de «+ Pane → Nesta missão» liga a tela ao processo que já nasceu, com as mesmas permissões do nascimento, e não reabre sozinho em «Não subiu».' },
-    { title: 'Pacote Linux', detail: 'A tag 0.76.349 foi marcada e não foi publicada porque o portão de segurança no Ubuntu encontrou vite 8.1.5 (GHSA-698v-4r3x-3vcv); o vite sobe para 8.1.6. A 0.76.348 é a publicação Windows e não recebe arquivos Linux. A 0.76.347 é o pacote Linux anterior. A 0.76.346 é a publicação macOS e não recebe arquivos Linux. O desktop Linux sai na 0.76.350.' },
+    { title: 'Pacote Linux', detail: 'A tag 0.76.350 não foi publicada porque a suíte no Ubuntu falhou em dois testes do assinador do YubiKey (path.join em caminho do Windows); a linha de comando passa a usar path.win32. A tag 0.76.349 não foi publicada porque o portão de segurança encontrou vite 8.1.5 (GHSA-698v-4r3x-3vcv); o vite sobe para 8.1.6. A 0.76.348 é a publicação Windows e não recebe arquivos Linux. A 0.76.347 é o pacote Linux anterior. A 0.76.346 é a publicação macOS e não recebe arquivos Linux. O desktop Linux sai na 0.76.351.' },
   ],
   fixes: [
     { title: 'A boca do Jarvis acompanha a voz', detail: 'A figura abre a boca com o volume da saída e o brilho do espectro, e fecha na pausa, atrasada pela latência do alto-falante.' },
@@ -12137,8 +12148,8 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'O Maestro conserva a conversa real', detail: 'O id ditado no spawn só substitui a conversa ligada ao pane quando o transcrito aparece em disco.' },
     { title: 'Pane do operador na missão liga de primeira', detail: 'Adoção e reabertura usam as permissões com que o pane nasceu, então a tela liga ao processo vivo e o pane não reabre sozinho.' },
     { title: 'Toolchain vite 8.1.6', detail: 'O vite de desenvolvimento sobe de 8.1.5 para 8.1.6. O aviso GHSA-698v-4r3x-3vcv é do launch-editor no Windows e não muda o desktop Linux.' },
-    ...RELEASE_076349.fixes,
+    ...RELEASE_076350.fixes,
   ],
 };
 
-export const RELEASE_076350: AppRelease = CURRENT_RELEASE;
+export const RELEASE_076351: AppRelease = CURRENT_RELEASE;

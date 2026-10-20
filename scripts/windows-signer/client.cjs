@@ -353,7 +353,9 @@ const RUN_VALUE = 'NexusIDE Windows Signer';
 const LOGON_FILES = ['agent.cjs', 'client.cjs', 'engine.cs'];
 
 function systemTool(name, env = process.env) {
-  return path.join(env.SystemRoot || 'C:\\Windows', 'System32', name);
+  // Caminho do Windows mesmo quando o teste roda no Linux: path.join
+  // trocaria a barra e a suíte do Ubuntu recusaria a tag.
+  return path.win32.join(env.SystemRoot || 'C:\\Windows', 'System32', name);
 }
 
 function runTool(file, args) {
@@ -375,12 +377,12 @@ function logonCommandLine({ nodePath, binDirectory, env = process.env }) {
     `"${systemTool('conhost.exe', env)}"`,
     '--headless',
     `"${nodePath}"`,
-    `"${path.join(binDirectory, 'client.cjs')}"`,
+    `"${path.win32.join(binDirectory, 'client.cjs')}"`,
     'start',
     '--if-pin-saved',
     '--wait-card',
     '--identity',
-    `"${path.join(binDirectory, 'identity.json')}"`,
+    `"${path.win32.join(binDirectory, 'identity.json')}"`,
   ].join(' ');
 }
 
