@@ -203,6 +203,11 @@ describe('generateImage', () => {
     const noPath = fakeDeps([{ json: { output_image: { data: PNG_B64 } } }]);
     const saved = await generateImage({ prompt: 'x', baseDir: dir }, noPath.deps);
     expect(saved.path.endsWith('.jpg')).toBe(true);
+    // Caminho explícito .png com payload JPEG também vira .jpg (nome honesto).
+    const explicit = fakeDeps([{ json: { output_image: { data: PNG_B64 } } }]);
+    const named = await generateImage({ prompt: 'x', baseDir: dir, outPath: 'poster.png' }, explicit.deps);
+    expect(named.path.endsWith('poster.jpg')).toBe(true);
+    expect(fs.existsSync(named.path)).toBe(true);
   });
 
   it('google-image: o Nano Banana Pro custa o preço de lista dele', async () => {

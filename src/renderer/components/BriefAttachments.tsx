@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MediaReferenceInfo } from '../../shared/media-reference-types';
+import { useWorkspaceStore } from '../state/workspace-store';
 import { PixelIcon } from './PixelIcon';
 import { isVideoReferenceKey } from './media-studio-options';
 import {
@@ -73,18 +74,34 @@ export function BriefAttachments({ attachments, onChange }: BriefAttachmentsProp
     if (files.length === 0) return;
     setBusy(true);
     setError(null);
+    // O Main resolve o projeto de destino no `save` pelo workspace ATIVO: depois
+    // de cada espera (leitura do arquivo, cópia anterior) confere que ele ainda
+    // é o de onde o anexo saiu, senão a cópia cairia em outro projeto.
+    const origin = useWorkspaceStore.getState().current?.path ?? null;
+    const sameWorkspace = () => (useWorkspaceStore.getState().current?.path ?? null) === origin;
     const added: BriefAttachment[] = [];
     const failures: string[] = [];
     for (const file of files) {
       try {
-        const res = await window.nexus.mediaReferences.save(file.name || 'colado', await file.arrayBuffer());
+        const bytes = await file.arrayBuffer();
+        if (!sameWorkspace()) break;
+        const res = await window.nexus.mediaReferences.save(file.name || 'colado', bytes);
         if (res.ok) added.push(toAttachment(res.reference));
         else failures.push(res.error);
       } catch (e) {
         failures.push(e instanceof Error ? e.message : String(e));
       }
     }
+    if (!sameWorkspace()) {
+      // Trocou de projeto no meio: nada do que chegou pertence ao brief daqui.
+      setBusy(false);
+      return;
+    }
     await reload().catch(() => undefined);
+    if (!sameWorkspace()) {
+      setBusy(false);
+      return;
+    }
     const known = new Set(attachments.map((item) => item.storageKey));
     const next = [...attachments, ...added.filter((item) => !known.has(item.storageKey))].slice(0, MAX_ATTACHMENTS);
     if (next.length !== attachments.length) onChange(next);

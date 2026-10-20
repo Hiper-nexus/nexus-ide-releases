@@ -500,14 +500,16 @@ export async function generateImage(
   const model = resolveMediaModel(def, req.model);
   const key = requireKey(def, deps);
   // A xAI devolve JPEG quando o pedido não diz a qualidade (F-1599), e a
-  // Interactions API do Google só devolve JPEG.
+  // Interactions API do Google só devolve JPEG: caminho explícito com extensão
+  // de outro formato (`poster.png`) vira `.jpg`, para o nome dizer o que o
+  // arquivo tem (o caminho final volta em `result.path`).
+  const googleJpegOnly = def.id === 'google-image' && geminiImageUsesInteractions(model);
   const outPath = resolveOutPath(
-    req.outPath,
+    googleJpegOnly && req.outPath
+      ? req.outPath.replace(/\.(?:png|webp|gif|bmp|tiff?)$/iu, '.jpg')
+      : req.outPath,
     req.baseDir,
-    def.id === 'xai-image' ||
-      (def.id === 'google-image' && geminiImageUsesInteractions(model))
-      ? 'jpg'
-      : 'png',
+    def.id === 'xai-image' || googleJpegOnly ? 'jpg' : 'png',
     deps.now,
   );
   const image = req.imagePath
