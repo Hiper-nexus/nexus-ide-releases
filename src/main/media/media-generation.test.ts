@@ -193,7 +193,16 @@ describe('generateImage', () => {
     expect(calls[0].url).toMatch(/\/v1beta\/interactions$/u);
     const body = JSON.parse(String(calls[0].init?.body)) as Record<string, unknown>;
     expect(body.model).toBe('gemini-nano-banana-2.1');
-    expect(body.response_format).toMatchObject({ type: 'image', aspect_ratio: '9:16', image_size: '1K' });
+    expect(body.response_format).toMatchObject({
+      type: 'image',
+      mime_type: 'image/jpeg',
+      aspect_ratio: '9:16',
+      image_size: '1K',
+    });
+    // Sem outPath, a imagem JPEG da Interactions API sai como .jpg.
+    const noPath = fakeDeps([{ json: { output_image: { data: PNG_B64 } } }]);
+    const saved = await generateImage({ prompt: 'x', baseDir: dir }, noPath.deps);
+    expect(saved.path.endsWith('.jpg')).toBe(true);
   });
 
   it('google-image: o Nano Banana Pro custa o preço de lista dele', async () => {

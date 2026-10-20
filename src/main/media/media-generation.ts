@@ -499,11 +499,15 @@ export async function generateImage(
   );
   const model = resolveMediaModel(def, req.model);
   const key = requireKey(def, deps);
-  // A xAI devolve JPEG quando o pedido não diz a qualidade (F-1599).
+  // A xAI devolve JPEG quando o pedido não diz a qualidade (F-1599), e a
+  // Interactions API do Google só devolve JPEG.
   const outPath = resolveOutPath(
     req.outPath,
     req.baseDir,
-    def.id === 'xai-image' ? 'jpg' : 'png',
+    def.id === 'xai-image' ||
+      (def.id === 'google-image' && geminiImageUsesInteractions(model))
+      ? 'jpg'
+      : 'png',
     deps.now,
   );
   const image = req.imagePath

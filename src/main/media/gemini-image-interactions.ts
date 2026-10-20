@@ -22,6 +22,13 @@ export function geminiImageUsesInteractions(model: string): boolean {
   return !GENERATE_CONTENT_IMAGE_MODELS.has(model);
 }
 
+/**
+ * O `ImageResponseFormat` da API só aceita `image/jpeg` (ai.google.dev/api/
+ * interactions-api-v1, 20/10/2026): `image/png` é recusado antes de gerar.
+ * A imagem volta em JPEG, então o arquivo padrão leva a extensão `jpg`.
+ */
+export const GEMINI_IMAGE_MIME = 'image/jpeg';
+
 /** Tamanho pedido: 1K é o preço de lista que o Estúdio mostra (o Lite só faz 1K). */
 const IMAGE_SIZE = '1K';
 
@@ -32,7 +39,7 @@ export function geminiImageRequest(
 ): Record<string, unknown> {
   const responseFormat: Record<string, string> = {
     type: 'image',
-    mime_type: 'image/png',
+    mime_type: GEMINI_IMAGE_MIME,
     image_size: IMAGE_SIZE,
   };
   if (req.aspectRatio) responseFormat.aspect_ratio = req.aspectRatio;

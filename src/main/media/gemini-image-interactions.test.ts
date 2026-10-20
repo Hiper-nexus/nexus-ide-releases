@@ -23,7 +23,7 @@ describe('imagem do Gemini pela Interactions API', () => {
     expect(geminiImageRequest({ prompt: 'um gato', aspectRatio: '16:9' }, 'gemini-nano-banana-2.1')).toEqual({
       model: 'gemini-nano-banana-2.1',
       input: 'um gato',
-      response_format: { type: 'image', mime_type: 'image/png', image_size: '1K', aspect_ratio: '16:9' },
+      response_format: { type: 'image', mime_type: 'image/jpeg', image_size: '1K', aspect_ratio: '16:9' },
     });
     const noAspect = geminiImageRequest({ prompt: 'x' }, 'gemini-3-pro-image');
     expect((noAspect.response_format as Record<string, string>).aspect_ratio).toBeUndefined();
