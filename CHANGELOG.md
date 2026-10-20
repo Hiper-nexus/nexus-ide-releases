@@ -1,16 +1,20 @@
 # Changelog
 
-## 0.76.344 — Encerramento de missões
+## 0.76.345 — Encerramento de missões
 
 Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
 
-A tag 0.76.343 é a publicação macOS e não recebe arquivos Linux. A 0.76.342 é o pacote Linux anterior.
+A tag 0.76.344 foi marcada e não foi publicada: a suíte no Ubuntu falhou porque os testes do fast-lane e da entrega ociosa não conheciam o selo de shutdown. A tag 0.76.343 é a publicação macOS e não recebe arquivos Linux. A 0.76.342 é o pacote Linux anterior.
 
 No desktop Linux, em relação à 0.76.342:
 
 - **Sair e encerrar**. Confirmar "Sair e encerrar processos" sela todas as missões abertas como `runtime-closed` antes de fechar a janela. Os watchers de fast-lane e da conclusão civil param no início do shutdown, para não reescreverem o selo.
 - **Pane do operador devolvido**. Pane promovido e depois devolvido a `user`, e runtime em worktree, encerram e limpam `orchestratorSessionId` sem erro de autoridade de pane. Um ponteiro velho não mata o processo do operador.
 - **Missão dormindo no Quadro**. Missão estacionada ("Dormindo") pode ser concluída pelo botão "Marcar como feito".
+
+## 0.76.344 — Encerramento de missões
+
+A tag foi marcada e não foi publicada: a suíte no Ubuntu falhou. Não recebe arquivos Linux. O desktop Linux sai na 0.76.345.
 
 ## 0.76.343 — Estúdio de mídia e encerramento de missões
 

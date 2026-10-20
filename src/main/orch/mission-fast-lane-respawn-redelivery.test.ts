@@ -92,6 +92,7 @@ vi.mock('../persistence/account-store', async importOriginal => {
 });
 
 vi.mock('../pty/pty-manager', () => ({
+  isPtySessionAdmissionSealedForShutdown: () => false,
   getAgentSessionInfo: (sessionId: string) => harness.acpSessions.has(sessionId) ? null : harness.physicalSessions.get(sessionId) ?? null,
   getSessionState: (sessionId: string) =>
     harness.sessionStates.get(sessionId) ?? null,
