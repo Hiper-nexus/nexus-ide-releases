@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.76.341 — Estúdio de mídia completo
+
+A tag 0.76.340 foi marcada e não foi publicada: a suíte no Ubuntu falhou em dois testes do motor de vídeo (caminho do npm no Windows e o limite de caminho sob o TMPDIR longo do container). Este pacote leva o desktop Linux. As tags 0.76.338 e 0.76.339 não recebem arquivos Linux. A tag 0.76.337 é o pacote Linux anterior.
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+No desktop Linux, em relação à 0.76.337, vale o estúdio descrito na 0.76.340: vídeos de apresentação, Minha voz, narração e música, prévia, referências do projeto, modelos novos e a Higgsfield. O estúdio de vídeo vem ligado; desliga em Ajustes → Experimental.
+
 ## 0.76.340 — Estúdio de mídia completo
 
 A tag 0.76.339 é a versão do estúdio de mídia e não recebe arquivos Linux. A tag 0.76.338 ficou só como tag, sem pacote. A tag 0.76.337 é o pacote Linux anterior. Este pacote leva o desktop Linux.

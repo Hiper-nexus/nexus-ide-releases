@@ -11985,7 +11985,7 @@ export const RELEASE_076339: AppRelease = {
   fixes: [...RELEASE_076338.fixes],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076340: AppRelease = {
   version: '0.76.340',
   date: '2026-10-20',
   codename: 'Estúdio de mídia completo',
@@ -11997,4 +11997,16 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: [...RELEASE_076339.fixes],
 };
 
-export const RELEASE_076340: AppRelease = CURRENT_RELEASE;
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.341',
+  date: '2026-10-20',
+  codename: 'Estúdio de mídia completo',
+  summary: 'No desktop Linux, o Estúdio de mídia ganha lugar na barra lateral, referências do projeto e modelos de vídeo novos, inclusive a Higgsfield. Os agentes fazem vídeos de apresentação por código, com narração, legendas, música e export por rede, e "Minha voz" cria uma voz sintética sua na ElevenLabs ou no Gemini. O estúdio vem ligado; desliga em Ajustes → Experimental. As tags 0.76.338 e 0.76.339 não recebem arquivos Linux. A tag 0.76.340 foi marcada e não foi publicada.',
+  highlights: [
+    ...RELEASE_076340.highlights.filter((note) => note.title !== 'Pacote Linux'),
+    { title: 'Pacote Linux', detail: 'A tag 0.76.339 é a versão do estúdio de mídia e não recebe arquivos Linux. A tag 0.76.338 ficou só como tag, sem pacote. A tag 0.76.340 foi marcada e não foi publicada porque a suíte no Ubuntu falhou. A tag 0.76.337 é o pacote Linux anterior. O desktop Linux sai na 0.76.341, com o estúdio de vídeo, Minha voz, a narração, a música, as referências do projeto e a Higgsfield.' },
+  ],
+  fixes: [...RELEASE_076340.fixes],
+};
+
+export const RELEASE_076341: AppRelease = CURRENT_RELEASE;
