@@ -1071,6 +1071,10 @@ export class LiveTransportController {
       settleSmokeResponseDone: () => this.smokeProbe.settleResponseDone(),
       settleSmokeFailure: (reason) => this.smokeProbe.settleFailure(reason),
       onProviderResponseDone: () => {
+        // O `done` da resposta que fez a chamada de ferramenta, com a de
+        // seguimento já pedida: o turno não acabou. Fechar aqui soltava a
+        // narração local ("Feito.") por cima da resposta de verdade.
+        if (this._provider?.responseInFlight === true) return;
         this.recoverMissingWorkDelegation();
         this.emitToolTurnComplete();
       },
