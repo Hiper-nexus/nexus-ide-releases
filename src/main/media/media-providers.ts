@@ -106,6 +106,7 @@ export const MEDIA_PROVIDERS: MediaProviderDef[] = [
     defaultModel: 'bytedance/seedance-2.0',
     models: [
       // ByteDance Seedance 2.x (video — not Seedream, which is image)
+      'bytedance/seedance-2.5',
       'bytedance/seedance-2.0',
       'bytedance/seedance-2.0-fast',
       'bytedance/seedance-2.0-mini',
@@ -118,9 +119,17 @@ export const MEDIA_PROVIDERS: MediaProviderDef[] = [
       'kwaivgi/kling-v3-omni-video',
       'kwaivgi/kling-v2.5-turbo-pro',
       'kwaivgi/kling-v2.1',
-      // Minimax + Wan
+      // Minimax (H3 = Hailuo 3) + Wan (3.0 mudou de dono: alibaba/)
+      'minimax/h3',
       'minimax/hailuo-2.3',
+      'alibaba/wan-3',
+      'alibaba/wan-3-prime',
       'wan-video/wan-2.5-i2v',
+      // Google Gemini Omni 1.1 pelo Replicate (o nativo fica em google-video)
+      'google/gemini-omni-1.1',
+      // PixVerse v6 e Vidu Q3 Pro (com áudio)
+      'pixverse/pixverse-v6',
+      'vidu/q3-pro',
       // Premium alternatives
       'openai/sora-2',
       'openai/sora-2-pro',

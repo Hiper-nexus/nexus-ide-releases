@@ -181,12 +181,21 @@ const videoGenerateTool: McpToolDef = {
     'The native Veo 3.1 previews ' +
     '(veo-3.1-*-generate-preview) retire on 2026-10-22: use Omni, or ' +
     'google/veo-3.1 via Replicate. ' +
-    'Friendly model aliases work: seedance, veo, omni, kling, sora, runway, ' +
-    'luma, grok. imagePath=first frame; endImagePath=last frame (Seedance, ' +
-    'Veo, Kling, Luma, google-video — Omni needs imagePath with it — and only ' +
-    'grok-imagine-video-1.5 on xai-video); referenceImagePaths[] for ' +
-    'character refs: max 9 on Seedance, Veo and google-video; on xai-video up ' +
-    'to 14 on 1.5, 7 on grok-imagine-video (max 10 s), none on lite. On ' +
+    'Newest on replicate-video (2026-08/09): bytedance/seedance-2.5 (4–30 s, ' +
+    '480p|720p, up to 30 refs), minimax/h3 (Hailuo 3, 768p|2k), alibaba/wan-3 ' +
+    'and alibaba/wan-3-prime (2–30 s), google/gemini-omni-1.1 (model picks the ' +
+    'duration), pixverse/pixverse-v6, vidu/q3-pro (1–16 s); Kling 4 is not on ' +
+    'any API yet. ' +
+    'Friendly model aliases work: seedance, seedance-2.5, veo, omni, kling, ' +
+    'h3, hailuo-3, wan-3, pixverse, vidu, sora, runway, luma, grok. ' +
+    'imagePath=first frame; endImagePath=last frame (Seedance, Veo, Kling, ' +
+    'Luma, H3, PixVerse, Vidu, google-video — Omni needs imagePath with it — ' +
+    'and only grok-imagine-video-1.5 on xai-video); referenceImagePaths[] for ' +
+    'character refs: max 9 on Seedance 2.0 and google-video, 30 on Seedance ' +
+    '2.5, 1–3 on google/veo-3.1 (16:9 and 8 s only; none on veo-3.1-fast/lite), ' +
+    '9 on Gemini Omni 1.1, none on H3/Wan 3/PixVerse/Vidu ' +
+    '(refused before paying); on xai-video up to 14 on 1.5, 7 on ' +
+    'grok-imagine-video (max 10 s), none on lite. On ' +
     'timeout the error includes recoverJobId — call again with that id to ' +
     'resume without double charge. Paths stay in the open workspace. ' +
     'Missing key → STOP and report Ajustes → Serviços de mídia.',
