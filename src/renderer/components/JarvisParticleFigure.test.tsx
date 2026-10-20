@@ -9,6 +9,7 @@ import { useVoiceStore } from '../voice/voice-store';
 import {
   buildHumanSilhouette,
   breathingOffset,
+  buildMouthRing,
   cohesionForStatus,
   cursorForce,
   figureLevel,
@@ -20,12 +21,21 @@ import {
   idleParticleCohesion,
   idleScatter,
   JarvisParticleFigure,
+  lipPoint,
+  MOUTH_CENTER,
+  MOUTH_CLOSED_HALF_HEIGHT,
+  MOUTH_HALF_WIDTH,
+  mouthDeform,
+  mouthParticleCount,
+  mouthShape,
   mulberry32,
   parallaxOffset,
   particleCountForSize,
   restPoint,
+  smoothMouth,
   speakingEnergy,
   speakingZoneWeight,
+  SYNTHETIC_MOUTH_GRACE_S,
 } from './JarvisParticleFigure';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
@@ -315,6 +325,11 @@ describe('speakingEnergy', () => {
       expect(v).toBeLessThan(0.6);
     }
   });
+
+  it('com voz já medida no turno, o silêncio é pausa: energia segue o nível, sem pulso', () => {
+    expect(speakingEnergy(0, 1.3, true)).toBe(0);
+    expect(speakingEnergy(0.01, 2.1, true)).toBe(0.01);
+  });
 });
 
 describe('figureLevel', () => {
@@ -336,9 +351,9 @@ describe('figureLevel', () => {
 });
 
 describe('speakingZoneWeight', () => {
-  it('pesa o torso/peito mais que a cabeça, pernas quase nada', () => {
+  it('o torso ressoa, pernas quase nada e a cabeça quase parada (quem fala é a boca)', () => {
     expect(speakingZoneWeight(0.4)).toBe(1); // peito
-    expect(speakingZoneWeight(0.15)).toBe(0.55); // cabeça/boca
+    expect(speakingZoneWeight(0.15)).toBeLessThan(0.2); // cabeça: tremer borrava os lábios
     expect(speakingZoneWeight(0.8)).toBeLessThan(0.4); // pernas
   });
 });
@@ -621,10 +636,17 @@ describe('JarvisParticleFigure — movimento reduzido (quadro estático)', () =>
     const count = particleCountForSize(200);
     const homes = buildHumanSilhouette(count);
     const arcs = painted(figure.frames[0]);
-    expect(arcs).toHaveLength(count);
-    arcs.forEach((arc, i) => {
+    // O corpo inteiro e, depois dele, os lábios da boca fechada.
+    expect(arcs).toHaveLength(count + mouthParticleCount(count));
+    arcs.slice(0, count).forEach((arc, i) => {
       expect(arc.x).toBeCloseTo(homes[i]!.x * 200, 6);
       expect(arc.y).toBeCloseTo(homes[i]!.y * 200, 6);
+    });
+    const ring = buildMouthRing(mouthParticleCount(count));
+    arcs.slice(count).forEach((arc, i) => {
+      const lip = lipPoint(ring[i]!, 0, 0);
+      expect(arc.x).toBeCloseTo(lip.x * 200, 6);
+      expect(arc.y).toBeCloseTo(lip.y * 200, 6);
     });
     expect(figure.ctx.globalCompositeOperation).toBe('lighter');
   });
@@ -654,8 +676,8 @@ describe('JarvisParticleFigure — movimento reduzido (quadro estático)', () =>
     expect(figure.frames).toHaveLength(2);
     const homes = buildHumanSilhouette(particleCountForSize(160)); // contagem fixa no mount
     const arcs = painted(figure.frames.at(-1));
-    expect(arcs).toHaveLength(homes.length);
-    arcs.forEach((arc, i) => {
+    expect(arcs).toHaveLength(homes.length + mouthParticleCount(homes.length));
+    arcs.slice(0, homes.length).forEach((arc, i) => {
       expect(arc.x).toBeCloseTo(homes[i]!.x * 240, 6);
       expect(arc.y).toBeCloseTo(homes[i]!.y * 240, 6);
     });
@@ -703,7 +725,8 @@ describe('JarvisParticleFigure — o ocioso é uma silhueta reconhecível', () =
 
   /** Distância de cada partícula à sua casa na silhueta, em fração do canvas. */
   function displacement(arcs: DrawnArc[], homes: ReturnType<typeof buildHumanSilhouette>, size: number) {
-    const fills = painted(arcs);
+    // Só o corpo: os lábios vêm depois dele no mesmo quadro.
+    const fills = painted(arcs).slice(0, homes.length);
     return fills.map((a, i) => Math.hypot(a.x - homes[i]!.x * size, a.y - homes[i]!.y * size) / size);
   }
 
@@ -717,8 +740,8 @@ describe('JarvisParticleFigure — o ocioso é uma silhueta reconhecível', () =
     const samples: { t: number; within: number; mean: number; aspect: number }[] = [];
     figure.advance(IDLE_CYCLE_S * 2 * 1000, (arcs, t) => {
       const d = displacement(arcs, homes, size);
-      const xs = painted(arcs).map((a) => a.x);
-      const ys = painted(arcs).map((a) => a.y);
+      const xs = painted(arcs).slice(0, homes.length).map((a) => a.x);
+      const ys = painted(arcs).slice(0, homes.length).map((a) => a.y);
       samples.push({
         t,
         within: d.filter((v) => v <= near).length / d.length,
@@ -823,5 +846,171 @@ describe('JarvisParticleFigure — o nível que move a figura vem da fonte certa
     const loud = meanAlphaOf(figure, 30);
 
     expect(loud).toBeGreaterThan(quiet + 0.05); // alpha soma level*0.2 (mic)
+  });
+});
+
+describe('boca — funções puras', () => {
+  it('mouthParticleCount: anel pequeno, com piso e teto', () => {
+    expect(mouthParticleCount(0)).toBe(0);
+    expect(mouthParticleCount(120)).toBe(10);
+    expect(mouthParticleCount(360)).toBe(16);
+    expect(mouthParticleCount(5000)).toBe(16);
+  });
+
+  it('buildMouthRing é determinístico e dá a volta inteira (lábio de cima, de baixo e cantos)', () => {
+    const ring = buildMouthRing(16);
+    expect(ring).toEqual(buildMouthRing(16));
+    expect(ring.filter((a) => Math.sin(a) < -0.5).length).toBeGreaterThan(3); // superior
+    expect(ring.filter((a) => Math.sin(a) > 0.5).length).toBeGreaterThan(3); // inferior
+    expect(ring.filter((a) => Math.abs(Math.cos(a)) > 0.9).length).toBeGreaterThan(1); // cantos
+  });
+
+  it('lipPoint: fechada é uma linha; aberta afasta os lábios, mais o de baixo (mandíbula)', () => {
+    const top = -Math.PI / 2;
+    const bottom = Math.PI / 2;
+    expect(lipPoint(top, 0, 0).y).toBeCloseTo(MOUTH_CENTER.y - MOUTH_CLOSED_HALF_HEIGHT, 10);
+    expect(lipPoint(bottom, 0, 0).y).toBeCloseTo(MOUTH_CENTER.y + MOUTH_CLOSED_HALF_HEIGHT, 10);
+    expect(lipPoint(0, 0, 0).x).toBeCloseTo(MOUTH_CENTER.x + MOUTH_HALF_WIDTH, 10);
+
+    const up = MOUTH_CENTER.y - lipPoint(top, 1, 0).y;
+    const down = lipPoint(bottom, 1, 0).y - MOUTH_CENTER.y;
+    expect(down).toBeGreaterThan(up); // o lábio inferior desce com o queixo
+    expect(up + down).toBeGreaterThan(MOUTH_CLOSED_HALF_HEIGHT * 2 * 5);
+  });
+
+  it('lipPoint: "s"/"i" estica a boca e estreita a abertura', () => {
+    const corner = (wide: number) => lipPoint(0, 0.6, wide).x - MOUTH_CENTER.x;
+    expect(corner(1)).toBeGreaterThan(corner(0) * 1.25);
+    const gap = (wide: number) => lipPoint(Math.PI / 2, 0.6, wide).y - lipPoint(-Math.PI / 2, 0.6, wide).y;
+    expect(gap(1)).toBeLessThan(gap(0));
+  });
+
+  it('mouthShape medido: volume abre, brilho estica, silêncio fecha', () => {
+    const loudA = mouthShape(0.8, 0.05, 0, true);
+    const quiet = mouthShape(0.2, 0.05, 0, true);
+    const loudS = mouthShape(0.8, 0.95, 0, true);
+    expect(loudA.open).toBeGreaterThan(quiet.open);
+    expect(quiet.open).toBeGreaterThan(0.1); // fala baixa ainda mexe a boca
+    expect(loudS.wide).toBeGreaterThan(loudA.wide);
+    expect(loudS.open).toBeLessThan(loudA.open);
+    expect(mouthShape(0, 0.5, 3, true).open).toBe(0); // pausa medida
+    for (const v of [loudA, quiet, loudS]) {
+      expect(v.open).toBeLessThanOrEqual(1);
+      expect(v.wide).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('mouthShape sem medida: sílabas sintéticas abrem e fecham ~4 vezes por segundo', () => {
+    const opens = Array.from({ length: 120 }, (_, i) => mouthShape(0, 0, i / 60, false).open);
+    expect(Math.max(...opens)).toBeGreaterThan(0.5);
+    expect(Math.min(...opens)).toBe(0); // fecha entre as sílabas
+    let rises = 0;
+    for (let i = 1; i < opens.length; i += 1) if (opens[i - 1] === 0 && opens[i]! > 0) rises += 1;
+    expect(rises).toBeGreaterThanOrEqual(5); // 2 s ≈ 8 sílabas, algumas fundidas
+    expect(rises).toBeLessThanOrEqual(10);
+  });
+
+  it('mouthDeform abre um vão: nenhum ponto do rosto fica entre os lábios da boca aberta', () => {
+    const open = 1;
+    const upperLip = lipPoint(-Math.PI / 2, open, 0).y;
+    const lowerLip = lipPoint(Math.PI / 2, open, 0).y;
+    let inside = 0;
+    let moved = 0;
+    for (let x = 0.47; x <= 0.53; x += 0.002) {
+      for (let y = 0.17; y <= 0.235; y += 0.001) {
+        const d = mouthDeform(x, y, open, 0);
+        if (d.y !== 0) moved += 1;
+        const ny = y + d.y;
+        // O miolo do vão (60% central entre os lábios) fica livre.
+        const mid = (upperLip + lowerLip) / 2;
+        const half = ((lowerLip - upperLip) / 2) * 0.6;
+        if (Math.abs(x - MOUTH_CENTER.x) < 0.01 && Math.abs(ny - mid) < half) inside += 1;
+      }
+    }
+    expect(moved).toBeGreaterThan(100);
+    expect(inside).toBe(0);
+  });
+
+  it('mouthDeform: o queixo desce com a mandíbula; fora da cabeça e boca fechada nada muda', () => {
+    expect(mouthDeform(0.5, 0.235, 1, 0).y).toBeGreaterThan(0); // queixo
+    expect(mouthDeform(0.5, 0.235, 0, 0)).toEqual({ x: 0, y: 0 });
+    expect(mouthDeform(0.5, 0.4, 1, 1)).toEqual({ x: 0, y: 0 }); // peito
+    expect(Math.abs(mouthDeform(0.5, 0.09, 1, 0).y)).toBeLessThan(0.001); // testa quase parada
+  });
+
+  it('smoothMouth abre mais rápido do que fecha', () => {
+    const opened = smoothMouth({ open: 0, wide: 0 }, { open: 1, wide: 0 }, FRAME_MS);
+    const closed = smoothMouth({ open: 1, wide: 0 }, { open: 0, wide: 0 }, FRAME_MS);
+    expect(opened.open).toBeGreaterThan(1 - closed.open);
+    expect(opened.open).toBeLessThan(1);
+  });
+});
+
+describe('JarvisParticleFigure — a boca fala com a voz', () => {
+  let figure: ReturnType<typeof mountFigure> | null = null;
+
+  afterEach(() => {
+    figure?.unmount();
+    figure = null;
+    act(() => {
+      useVoiceStore.setState({ status: 'idle', level: 0, outputLevel: 0, outputBrightness: 0 });
+    });
+  });
+
+  /** Altura (fração do canvas) do anel de lábios num quadro pintado. */
+  const lipHeight = (arcs: DrawnArc[], size: number) => {
+    const count = particleCountForSize(size);
+    const lips = painted(arcs).slice(count);
+    const ys = lips.map((a) => a.y);
+    return (Math.max(...ys) - Math.min(...ys)) / size;
+  };
+
+  it('abre com a voz alta e fecha na pausa medida', () => {
+    const size = 200;
+    figure = mountFigure('speaking', { size });
+    figure.advance(1500); // assenta a figura
+    act(() => {
+      useVoiceStore.setState({ outputLevel: 0.85, outputBrightness: 0.05 });
+    });
+    figure.advance(700);
+    const open = lipHeight(figure.frames.at(-1)!, size);
+
+    act(() => {
+      useVoiceStore.setState({ outputLevel: 0, outputBrightness: 0 });
+    });
+    figure.advance(700);
+    const paused = lipHeight(figure.frames.at(-1)!, size);
+
+    expect(open).toBeGreaterThan(0.03);
+    expect(paused).toBeLessThan(open * 0.4);
+    expect(paused).toBeLessThan(MOUTH_CLOSED_HALF_HEIGHT * 2 + 0.006);
+  });
+
+  it('sem medidor: boca fechada na carência, depois sílabas sintéticas', () => {
+    const size = 200;
+    // Ouvindo o corpo fica inteiro (sem a poeira do ocioso): assenta antes de falar.
+    figure = mountFigure('listening', { size });
+    figure.advance(3000);
+    figure.setStatus('speaking');
+    const early: number[] = [];
+    figure.advance(SYNTHETIC_MOUTH_GRACE_S * 1000 * 0.6, (arcs) => early.push(lipHeight(arcs, size)));
+    figure.advance(1500);
+    const later: number[] = [];
+    figure.advance(1500, (arcs) => later.push(lipHeight(arcs, size)));
+
+    expect(Math.max(...later) - Math.min(...later)).toBeGreaterThan(0.015); // abre e fecha
+    expect(Math.max(...early)).toBeLessThan(MOUTH_CLOSED_HALF_HEIGHT * 2 + 0.006); // carência: fechada
+    expect(Math.max(...later)).toBeGreaterThan(Math.max(...early) + 0.01);
+  });
+
+  it('fora da fala a boca fica fechada (ouvindo, ainda que a saída esteja alta)', () => {
+    const size = 200;
+    figure = mountFigure('listening', { size });
+    act(() => {
+      useVoiceStore.setState({ level: 0.9, outputLevel: 1, outputBrightness: 0 });
+    });
+    figure.advance(2000);
+    // Ouvindo o corpo é puxado para dentro: a altura dos lábios encolhe junto.
+    expect(lipHeight(figure.frames.at(-1)!, size)).toBeLessThan(0.015);
   });
 });
