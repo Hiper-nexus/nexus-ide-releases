@@ -11877,7 +11877,7 @@ export const RELEASE_076332: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076333: AppRelease = {
   version: '0.76.333',
   date: '2026-10-19',
   codename: 'Memória e contas no Linux',
@@ -11888,4 +11888,21 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'Pacote Linux', detail: 'A tag 0.76.329 é o pacote macOS da memória e não recebe arquivos Linux. A tag 0.76.332 é o pacote macOS das contas e não recebe arquivos Linux. A tag 0.76.330 não recebe arquivos Linux. A tag 0.76.331 foi marcada e não foi publicada. O desktop Linux sai na 0.76.333, com o comparador e a mídia da 0.76.328, o freio de memória e a rotação de contas.' },
   ],
   fixes: [...RELEASE_076329.fixes, ...RELEASE_076330.fixes, ...RELEASE_076332.fixes],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.334',
+  date: '2026-10-19',
+  codename: 'Vídeo pelo Gemini Omni e pelo Grok (macOS)',
+  summary: 'Pacote macOS da mídia nova. O Google desliga em 22/10/2026 os Veo 3.1 preview que o vídeo nativo do Gemini usava; agora a mesma chave gera pelo Gemini Omni Flash, o substituto que o Google indica. A chave do Grok, que só servia à voz, passa a gerar imagem e vídeo pelo Grok Imagine. Os agentes escolhem o modelo de mídia vendo antes o que cada um aceita e quanto custa, e o vídeo pago não se perde numa falha passageira. A tag 0.76.333 é o pacote Linux e não recebe arquivos macOS.',
+  highlights: [
+    { title: 'Vídeo do Google pelo Gemini Omni Flash', detail: 'A mesma chave do Gemini gera vídeo pelo Gemini Omni Flash, de 360p a 4K, em 16:9 ou 9:16. É o modelo que decide quanto o vídeo dura, então o Estúdio não oferece duração e mostra o preço por segundo antes de gerar; depois, mostra o custo real, calculado pelo que o Google cobrou. O Omni só funciona com cobrança ativa no projeto do Google: no plano gratuito, o Nexus agora diz que falta ativar a cobrança, em vez de mandar esperar e tentar de novo.' },
+    { title: 'Grok Imagine com a chave do Grok', detail: 'A chave do Grok salva para a voz já liga a geração de imagem e de vídeo pelo Grok Imagine (xAI), no Estúdio e nas ferramentas dos agentes. Vídeo de 1 a 15 s, de 480p a 1080p; pelas ferramentas, também com imagem inicial, último quadro e referências nos modelos que aceitam. O custo de lista aparece antes de gerar, incluindo as imagens de entrada.' },
+    { title: 'Agentes escolhem o modelo de mídia vendo regras e preço', detail: 'Antes de gerar, o agente vê, para cada modelo de vídeo, as durações, resoluções e proporções aceitas, se exige imagem, o preço e quando ele sai do ar — as mesmas regras que o Nexus usa para recusar um pedido antes de cobrar. Sem serviço escolhido, o padrão passa a ser o de menor preço de lista entre os que têm chave; antes valia a ordem da tabela.' },
+  ],
+  fixes: [
+    { title: 'Vídeo pago não se perde em falha passageira', detail: 'Depois que o vídeo existe e foi cobrado, uma queda de rede, de download ou de disco deixa o pedido pendente com o código para retomar, em vez de marcá-lo como falho e induzir a pagar de novo. A retomada só baixa o que já foi gerado e registra o custo certo.' },
+    { title: 'Chave recusada diz para trocar a chave', detail: 'O Google e a xAI recusam chave errada com HTTP 400, que virava "não aceitou o pedido" com o JSON cru. Agora a mensagem diz que a chave foi recusada e leva a Serviços de mídia.' },
+    { title: 'Imagem do Grok com a extensão certa e o custo certo', detail: 'Ao gravar num caminho pedido, a imagem leva a extensão do formato que a xAI devolveu, em vez de gravar JPEG num arquivo .png. Sem o custo na resposta, a edição de imagem passa a somar a qualidade da edição e a imagem de entrada (uma edição 2K custa US$ 0,09, não US$ 0,06).' },
+  ],
 };
