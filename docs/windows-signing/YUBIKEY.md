@@ -97,23 +97,158 @@ npm run make -- --platform win32 --arch x64
   `Cert:\CurrentUser\My` sem tocar na chave e confere thumbprint, SPKI, CN da
   HIPERSEND, uso de assinatura de código, validade e a ligação com a chave do
   cartão. YubiKey fora da porta falha aqui, antes de qualquer arquivo assinado.
-- O SignTool recebe `/sha1 <thumbprint>` da loja do usuário (sem `/sm`). O Windows
-  pede o PIN a cada processo do SignTool (o minidriver só guarda o PIN dentro do
-  processo). Medido em 19/10: **5 janelas por build completo**, uma para todos os
-  `.exe`, `.dll` e `.node` do pacote (o `@electron/windows-sign` assina tudo numa
-  chamada) e quatro do Squirrel, em sequência: o stub, o `squirrel.exe` do
-  pacote, o `Update.exe` e o `Setup.exe`. A janela "Segurança do Windows" pode
-  abrir atrás das outras, e uma janela cancelada ou perdida derruba o make
-  ("Failed to sign … Update.exe"). Com o pacote já assinado em `out/`, refazer só o
-  instalador (`electron-forge make --skip-package`) pede 4. Reduzir isso é trabalho
-  em andamento; o PIN nunca vai para script, argv nem variável de ambiente.
-- Servidor de carimbo instável (`SignerSign() failed (0x80093102)` num arquivo
-  diferente a cada tentativa, F-656): repita com
+- Em seguida o Forge liga o **agente de assinatura** (seção abaixo) ou reaproveita
+  o que já está destrancado. É o único ponto do build em que o Windows pode pedir
+  o PIN: no máximo uma janela, e nenhuma enquanto o agente vive.
+- Nenhum SignTool roda. O packager e o Squirrel chamam o hook
+  `scripts/windows-signer/client.cjs`, que pede cada assinatura ao agente. Depois
+  do pacote, o `postPackage` confere pelo agente cada `.exe`, `.dll` e `.node` do
+  `out\NexusIDE-win32-x64` (assinatura válida e do certificado fixado).
+- Servidor de carimbo instável (`0x80093102` num arquivo diferente a cada
+  tentativa, F-656): o agente já repete o carimbo três vezes por arquivo. Se ainda
+  falhar, troque o servidor no build, sem reiniciar o agente:
   `$env:NEXUS_WINDOWS_TIMESTAMP_URL = 'http://timestamp.sectigo.com'`.
 - Depois do make, `scripts/collect-windows-release.ps1` grava no recibo
   `signing: 'yubikey'` e, por executável (Setup, app, Update.exe, stub), o
   thumbprint, o SPKI e o thumbprint do carimbo. Confira também à mão:
   `Get-AuthenticodeSignature` = `Valid` HIPERSEND no Setup e no `nexus-ide.exe`.
+
+## Agente de assinatura: um PIN por dia
+
+O Windows pede o PIN a cada **processo** que usa a chave do cartão (o minidriver
+e o provedor de chaves guardam o PIN por processo). Com o SignTool eram 5 janelas
+por build completo (medido em 19/10): uma para o pacote e uma por executável que
+o Squirrel assina (stub, `squirrel.exe`, `Update.exe`, `Setup.exe`), cada uma num
+signtool novo. A janela "Segurança do Windows" abria atrás das outras, e uma
+janela perdida derrubava o make ("Failed to sign … Update.exe").
+
+O agente (`scripts/windows-signer/agent.cjs`) segura a chave num só processo:
+o motor `engine.cs`, compilado em memória num `powershell.exe` 5.1, que assina
+por `SignerSignEx2` (SHA-256, carimbo RFC 3161) e confere cada arquivo
+(`WinVerifyTrust` + assinante = certificado fixado). A janela de PIN é a do
+próprio Windows, presa à janela que estava à frente quando o agente subiu, e o
+PIN fica no cache do provedor do cartão, dentro do motor. Nesse modo **ninguém
+lê, grava ou repassa o PIN, nem este código:** só o operador o digita, na janela
+do Windows. Para zero janela, o operador pode guardar o PIN (seção seguinte).
+
+```powershell
+npm run windows-signer -- start    # abre a janela de PIN do Windows; vale 24 h
+npm run windows-signer -- status   # vivo? até quando?
+npm run windows-signer -- stop     # encerra (o PIN some com ele)
+```
+
+- **Prazo.** `NEXUS_WINDOWS_SIGNER_HOURS` (no `start` ou no build que sobe o
+  agente): 24 por padrão, de 1 a 168 (uma semana), ou `0` = só este build (o
+  agente morre com o processo do make). Build que encontra um agente destrancado
+  com pelo menos 45 min de prazo o reaproveita **sem PIN**; perto de vencer, sobe
+  outro (uma janela).
+- **O `0` não afrouxa.** Fora de um build (`start`, logon) o `0` é recusado: não há
+  build a que amarrar o agente, e virar 24 h em silêncio seria o contrário do
+  pedido. Num build com `0`, só serve o agente amarrado àquele processo: um agente
+  de 24 h vivo é encerrado e trocado por um que morre com o build, inclusive se o
+  Forge cair antes do `postMake` (apontado na revisão do PR #146). No sentido
+  contrário, pedido de 1 a 168 h só aceita agente com prazo finito, e o agente
+  amarrado a OUTRO build que ainda roda nunca é trocado: o `start`, o logon ou o
+  segundo build recusam dizendo o pid (trocar derrubaria aquele build no meio).
+- **Quando ele morre.** Prazo vencido, `stop`, motor encerrado, logoff ou
+  reinício, e YubiKey que perdeu o PIN (removido, sono que reinicia o cartão):
+  antes de cada assinatura o motor prova o PIN em cache com uma assinatura
+  silenciosa e, sem ele, o agente encerra em vez de abrir uma janela escondida no
+  meio do build. O próximo build sobe outro (uma janela).
+- **Onde.** `%LOCALAPPDATA%\NexusIDE\windows-signer\`: `agent.json` (pipe e token
+  da sessão, nunca o PIN), `agent.log` e `signed.ndjson` (data, caminho e SHA-256
+  de tudo o que o agente assinou). Confira o diário quando quiser saber o que foi
+  assinado com a chave da HIPERSEND.
+- **O que ele assina.** Só `.exe`, `.dll` e `.node`, arquivo comum, com o caminho
+  real (junction resolvida) dentro do `out\` de um checkout cujo
+  `build/windows-signing-identity.json` fixa este certificado, da
+  `%LOCALAPPDATA%\SquirrelTemp` ou do staging `electron-packager` no TEMP de quem
+  pede. Pedido sem o token do `agent.json` é recusado.
+- **O risco que o prazo compra.** Enquanto vive, o agente é um assinador para
+  qualquer processo deste usuário do Windows que leia o `agent.json`: um malware
+  rodando como o operador poderia assinar um `.exe` posto numa dessas pastas.
+  A lista de pastas é cinto de segurança, não fronteira. Por isso o padrão é 24 h,
+  não uma semana, e o diário registra cada assinatura. Em máquina compartilhada
+  ou suspeita, use `NEXUS_WINDOWS_SIGNER_HOURS=0`.
+- **Falha não passa.** O `@electron/windows-sign` engole o erro do hook
+  (`sign-with-hook.js` só registra): o hook marca saída 1, que faz o signtool falso
+  do Squirrel parar o make, e o `postPackage` recusa o pacote com falha registrada
+  ou executável sem a assinatura certa.
+- **Alternativa avaliada:** o `sign` da Microsoft (dotnet/sign) assina vários
+  arquivos num processo, mas o Squirrel abre um processo por executável e cada um
+  pediria o PIN de novo; não resolve sem um agente como este, e exigiria o SDK do
+  .NET 8 no PC que assina.
+- Prova de 19/10: o operador digitou o PIN uma vez (`start`, 5,6 s entre pedir e
+  destrancar) e um executável de prova saiu `Valid`, HIPERSEND, carimbo Sectigo,
+  em 1,1 s e sem segunda janela. Em seguida, `npm run make` completo (commit
+  `1db471270`, carimbo Sectigo) com **zero** janelas: "agente reaproveitado, sem
+  PIN", 23 executáveis do pacote e os 4 do Squirrel assinados pelo agente, make em
+  7 min 18 s, coletor com `signing: 'yubikey'` (Setup, app, Update.exe e stub com o
+  thumbprint e o carimbo) e `Get-AuthenticodeSignature` `Valid` no Setup e nos
+  executáveis do nupkg.
+- `d3dcompiler_47.dll` e `dxil.dll` aparecem no `Get-AuthenticodeSignature` como
+  "Microsoft Windows" (`SignatureType = Catalog`): o hash Authenticode deles está
+  num catálogo do sistema e a assinatura embutida não muda esse hash. A embutida é
+  a da HIPERSEND, igual ao que o SignTool fazia.
+- Coletor (`collect-windows-release.ps1`) com `RUNNER_TEMP` de caminho longo (o
+  scratchpad do Claude) falha no smoke do app extraído do nupkg; use uma pasta
+  curta, como `$env:TEMP\nxrt`.
+
+## PIN guardado: zero janela (decisão do operador, 19/10)
+
+O operador pediu zero pedido de PIN nesta máquina (builds remotos) e aceitou,
+por escrito, o risco de guardar o PIN. Ele fica cifrado pelo DPAPI do usuário
+do Windows (`%LOCALAPPDATA%\NexusIDE\windows-signer\pin.dpapi`), e o agente
+destranca sozinho com ele.
+
+```powershell
+npm run windows-signer -- save-pin          # janela "NexusIDE — PIN do YubiKey": o operador digita, o cartão confere, só então guarda
+npm run windows-signer -- install-logon     # agente sobe sozinho no logon (só com PIN guardado)
+npm run windows-signer -- status            # agente, PIN guardado, logon
+npm run windows-signer -- forget-pin        # apaga o PIN guardado e encerra o agente
+npm run windows-signer -- uninstall-logon   # tira o início no logon
+```
+
+- **Quem vê o PIN.** Só o operador digita, na janela do motor (`engine.cs`, não no
+  chat nem no terminal). O motor entrega o PIN ao cartão (`SmartCardPin` + uma
+  assinatura silenciosa) e só depois o cifra com `ProtectedData`
+  (`CurrentUser`). Ele nunca vai a stdout, log, argumento ou variável de ambiente,
+  e o agente só entrega o PIN depois de conferir thumbprint e SPKI do
+  certificado aberto. Nenhum agente, Claude ou humano deve pedir ou receber o PIN.
+- **Primeira recusa apaga.** Com `pin.dpapi`, todo agente novo (build, `start`,
+  logon) destranca sem janela e nunca cai para a janela do Windows. Se o cartão
+  recusar o PIN guardado (errado, bloqueado) ou o arquivo não decifrar, o motor
+  apaga o arquivo na hora: um PIN guardado errado gasta uma tentativa, nunca duas.
+  YubiKey ausente (`SCARD_E_NO_SMARTCARD` e afins) não é recusa: o PIN fica. Depois
+  de uma recusa, o próximo build volta a pedir o PIN na janela do Windows; rode
+  `save-pin` de novo.
+- **Logon.** `install-logon` copia `agent.cjs`, `client.cjs`, `engine.cs` e a
+  identidade para `...\windows-signer\bin` (não depende de checkout nenhum) e grava
+  `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` "NexusIDE Windows Signer"
+  com `conhost.exe --headless` (Node sem janela, sem admin). Sem PIN guardado ele
+  não faz nada. Ele espera o YubiKey por até 3 min e para na hora se o PIN for
+  recusado; o resultado fica no `agent.log`. Depois de mudar o código do agente,
+  rode `install-logon` de novo.
+- **O risco aceito.** Qualquer programa rodando como este usuário do Windows
+  consegue decifrar o `pin.dpapi`. Com o YubiKey espetado, ele pode assinar como
+  HIPERSEND sem prazo e levar o PIN embora. Quem roubar só o YubiKey continua
+  precisando do PIN. Para endurecer: rodar os builds e o agente num usuário do
+  Windows só para isso, e tirar o YubiKey quando não houver build.
+- **Saindo disso:** `forget-pin` + `uninstall-logon` voltam ao agente com a janela
+  do Windows (um PIN por dia).
+- **Medido em 20/10.** `save-pin`: o operador digitou o PIN uma vez, o cartão o
+  aceitou e o agente ficou pronto em 5,7 s. Depois, sem ninguém: `stop` + `start`
+  destrancou só com o PIN guardado em 0,87 s (0,24 s entre pedir e ficar pronto), e
+  dois executáveis de prova saíram `Valid`, HIPERSEND, carimbo Sectigo. A linha
+  exata da entrada `Run`, lançada como o Explorer a lança no logon (`CreateProcess`
+  com console novo), subiu o agente sozinha e gravou `logon: agent ready with the
+  saved PIN` no `agent.log`. O logon de verdade (reiniciar o PC) ainda não foi
+  visto.
+- **Para testar a linha do logon, não a rode de um terminal.** Herdando o console
+  de quem chama (ou com `DETACHED_PROCESS`/`CREATE_NO_WINDOW`), o
+  `conhost --headless` sai na hora e leva o Node junto; `cmd /c "<linha>"` estraga
+  as aspas. Use `CreateProcess` com `CREATE_NEW_CONSOLE` ou `Start-Process` (a
+  situação do Explorer), ou rode o `node ... client.cjs start --if-pin-saved` direto.
 
 ## O que recusa
 
@@ -123,7 +258,11 @@ npm run make -- --platform win32 --arch x64
   `WINDOWS_CERTIFICATE_SHA1`, `WINDOWS_SIGN_WITH_PARAMS`, `WINDOWS_SIGNTOOL_PATH` e
   `WINDOWS_SIGN_HOOK_MODULE_PATH` junto do opt-in: o `@electron/windows-sign` os lê
   por baixo das opções e assinaria com outro certificado, outro signtool ou um
-  hook.
+  hook. `NEXUS_WINDOWS_SIGNER_DIR` (mandaria o hook a outro agente) também.
+- `NEXUS_WINDOWS_SIGNER_HOURS` fora de 0 a 168.
+- No agente: certificado aberto pelo motor com outro thumbprint ou outra chave
+  (recusado antes de pedir o PIN), arquivo fora das pastas de build, que não seja
+  `.exe`/`.dll`/`.node`, ou carimbo que não seja URL http(s).
 - `certificateSha1` nulo, o thumbprint do eSigner no JSON, ou um certificado na
   loja cuja chave pública não seja a do slot 9a (mesmo com o thumbprint fixado).
 - No coletor: executável assinado por outro certificado, sem carimbo, ou alguns
@@ -144,9 +283,9 @@ npm run make -- --platform win32 --arch x64
 | Produto | Windows | Como sai assinado |
 |---|---|---|
 | NexusIDE (app, DLLs e `.node` do pacote) | Sim | `npm run make` com `NEXUS_WINDOWS_YUBIKEY_SIGNING=1` (este runbook) |
-| Redline no Windows (`resources\nexus-redline\NexusRedline.exe`) | Sim | Vai dentro do pacote do NexusIDE e é assinado na mesma chamada (conferido em 19/10: `Valid`, `41BB4AFD…`) |
-| Instalador Squirrel (`Setup.exe`, `Update.exe`, stub) | Sim | O Squirrel assina na mesma build; o recibo confere os quatro executáveis |
-| `d3dcompiler_47.dll`, `dxil.dll` | Não precisa | Já vêm assinadas pela Microsoft no Electron |
+| Redline no Windows (`resources\nexus-redline\NexusRedline.exe`) | Sim | Vai dentro do pacote do NexusIDE e é assinado pelo agente com o resto (conferido em 19/10: `Valid`, `41BB4AFD…`) |
+| Instalador Squirrel (`Setup.exe`, `Update.exe`, stub, `squirrel.exe`) | Sim | O Squirrel pede ao agente na mesma build; o recibo confere os quatro executáveis |
+| `d3dcompiler_47.dll`, `dxil.dll` | Sim | O agente embute a assinatura da HIPERSEND, mas o `Get-AuthenticodeSignature` mostra "Microsoft Windows" (`SignatureType = Catalog`): o hash delas está num catálogo do sistema |
 | Nexus Shot (repo `nexus-shot`, Tauri, NSIS) | Sim, desde 19/10 (branch `feat/windows-port`, `3c76ad9`) | `src-tauri/tauri.windows.conf.json` → `scripts/windows-sign.ps1` com a mesma identidade fixada (`src-tauri/windows-signing-identity.json`); 8 PINs no primeiro build e 3 nos seguintes (plugins do NSIS em cache). Runbook: `docs/windows-signing.md` do Shot. O instalador público do v0.1.15 (0.1.13) é anterior e saiu sem assinatura |
 | NexusIDE no macOS / Redline do Mac / Shot no Mac | Outro caminho | Developer ID + notarização (`build/notarize.md`, `docs/RELEASE.md`) |
 | NexusIDE no Linux | Outro caminho | Ed25519 do `.sig` (F-940, `docs/RELEASE.md`) |
@@ -155,5 +294,16 @@ npm run make -- --platform win32 --arch x64
 
 - O `windows-release.yml` roda numa máquina do GitHub, sem o token: o candidato de
   lá continua `signing: 'none'`. Build assinado só no PC com o YubiKey.
+- O agente não sobrevive a logoff, reinício nem à retirada do YubiKey: depois
+  disso o primeiro build (ou o `start`) pede o PIN de novo. Build sem ninguém na
+  frente do PC só funciona com um agente já destrancado.
+- **Dois builds Windows não rodam ao mesmo tempo nesta máquina.** O
+  `@electron/packager` apaga `%TEMP%\electron-packager` inteiro quando começa
+  (`dist/packager.js`), e em 19/10 o início de um make derrubou outro com `ENOENT`
+  no meio do pacote. `TEMP`/`TMP` próprios por build separam o packager (o agente
+  aceita o `electron-packager` do TEMP de quem pede), mas o Squirrel continua
+  usando `%LOCALAPPDATA%\SquirrelTemp\tempb`: dois makes nunca passam pelo Squirrel
+  juntos. Confira antes (`tasklist | findstr /i "Squirrel electron-forge"` e as
+  outras sessões).
 - O pacote MSIX da Microsoft Store é outro caminho (a Store assina), sem relação
   com este.

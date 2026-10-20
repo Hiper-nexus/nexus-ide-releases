@@ -1,17 +1,24 @@
 import { spawnSync } from 'node:child_process';
 import { X509Certificate, createPublicKey } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
   ESIGNER_CERTIFICATE_SHA1,
   WINDOWS_SIGNING_IDENTITY,
+  assertWindowsPackageSigned,
   assertWindowsTokenCertificate,
   assertWindowsTokenSigningReady,
+  finishWindowsTokenSigning,
+  listWindowsSignCandidates,
   parseWindowsSigningIdentity,
+  prepareWindowsTokenSigner,
   readCurrentUserCertificate,
   windowsCertificateSpkiSha256,
+  windowsTokenSignerHours,
   windowsTokenSignerThumbprint,
+  type WindowsSignerClient,
   type WindowsSigningIdentity,
 } from './windows-token-signing';
 
@@ -156,6 +163,7 @@ describe('YubiKey signing opt-in', () => {
     'WINDOWS_SIGN_WITH_PARAMS',
     'WINDOWS_SIGNTOOL_PATH',
     'WINDOWS_SIGN_HOOK_MODULE_PATH',
+    'NEXUS_WINDOWS_SIGNER_DIR',
   ])('refuses %s, which @electron/windows-sign would honor over the YubiKey', (name) => {
     expect(() => windowsTokenSignerThumbprint(
       { NEXUS_WINDOWS_YUBIKEY_SIGNING: '1', [name]: '' },
@@ -296,4 +304,141 @@ describe('certificate store reader', () => {
     },
     60_000,
   );
+});
+
+function fakeClient(overrides: Partial<WindowsSignerClient> = {}) {
+  const calls = { ensureAgent: [] as unknown[], verified: [] as string[], stopped: 0 };
+  const client: WindowsSignerClient = {
+    ensureAgent: async (options) => {
+      calls.ensureAgent.push(options);
+      return {
+        ok: true,
+        unlocked: true,
+        started: false,
+        thumbprint: options.thumbprint,
+        certificate: codeSigning.raw.toString('base64'),
+        expiresAt: 1_900_000_000_000,
+      };
+    },
+    verifyFile: async (file) => {
+      if (!/\.(exe|dll|node)$/u.test(file)) throw new Error(`refusing ${file}`);
+      calls.verified.push(path.basename(file));
+    },
+    failures: () => [],
+    stopAgent: async () => {
+      calls.stopped += 1;
+      return true;
+    },
+    ...overrides,
+  };
+  return { client, calls };
+}
+
+function packageDirectory(files: string[]): string {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'nexus-signed-package-'));
+  for (const file of files) {
+    mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+    writeFileSync(path.join(root, file), 'MZ');
+  }
+  return root;
+}
+
+describe('YubiKey signing agent from the Forge side', () => {
+  const identity = identityFor(codeSigning);
+
+  it('reaproveita ou sobe o agente, confere o certificado dele e passa checkout e carimbo ao hook', async () => {
+    const { client, calls } = fakeClient();
+    const environment: NodeJS.ProcessEnv = { NEXUS_WINDOWS_SIGNER_HOURS: '168' };
+    const agent = await prepareWindowsTokenSigner({
+      environment,
+      identity,
+      timestampServer: 'http://timestamp.sectigo.com',
+      checkoutRoot: 'C:\\nx-yk',
+      client,
+      now: NOW,
+    });
+    expect(agent).toEqual({ started: false, expiresAt: 1_900_000_000_000 });
+    expect(calls.ensureAgent).toEqual([{
+      thumbprint: thumbprintOf(codeSigning),
+      spkiSha256: identity.spkiSha256,
+      hours: 168,
+      parentPid: undefined,
+    }]);
+    expect(environment.NEXUS_WINDOWS_SIGNER_CHECKOUT).toBe(path.resolve('C:\\nx-yk'));
+    expect(environment.NEXUS_WINDOWS_SIGNER_TIMESTAMP).toBe('http://timestamp.sectigo.com');
+  });
+
+  it('modo por build amarra o agente a este processo', async () => {
+    const { client, calls } = fakeClient();
+    await prepareWindowsTokenSigner({
+      environment: { NEXUS_WINDOWS_SIGNER_HOURS: '0' },
+      identity,
+      timestampServer: 'http://t',
+      client,
+      now: NOW,
+    });
+    expect(calls.ensureAgent).toEqual([expect.objectContaining({ hours: 0, parentPid: process.pid })]);
+  });
+
+  it('recusa agente sem PIN ou que segura outro certificado', async () => {
+    const locked = fakeClient({
+      ensureAgent: async () => ({ ok: true, unlocked: false, started: false }),
+    });
+    await expect(prepareWindowsTokenSigner({
+      environment: {}, identity, timestampServer: 'http://t', client: locked.client, now: NOW,
+    })).rejects.toThrow(/not unlocked/u);
+    const other = fakeClient({
+      ensureAgent: async () => ({
+        ok: true, unlocked: true, started: true, certificate: serverAuth.raw.toString('base64'),
+      }),
+    });
+    const environment: NodeJS.ProcessEnv = {};
+    await expect(prepareWindowsTokenSigner({
+      environment, identity, timestampServer: 'http://t', client: other.client, now: NOW,
+    })).rejects.toThrow(/refused/u);
+    expect(environment.NEXUS_WINDOWS_SIGNER_TIMESTAMP).toBeUndefined();
+  });
+
+  it('horas do agente: 24 por padrão, recusa fora de 0 a 168', () => {
+    expect(windowsTokenSignerHours({})).toBe(24);
+    expect(windowsTokenSignerHours({ NEXUS_WINDOWS_SIGNER_HOURS: '0' })).toBe(0);
+    expect(() => windowsTokenSignerHours({ NEXUS_WINDOWS_SIGNER_HOURS: '200' })).toThrow();
+  });
+
+  it('confere cada executável do pacote pelo agente depois de empacotar', async () => {
+    const root = packageDirectory([
+      'nexus-ide.exe',
+      'ffmpeg.dll',
+      'resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release/better_sqlite3.node',
+      'resources/app.asar',
+      'LICENSE',
+    ]);
+    expect(listWindowsSignCandidates(root).map((file) => path.basename(file)).sort())
+      .toEqual(['better_sqlite3.node', 'ffmpeg.dll', 'nexus-ide.exe']);
+    const { client, calls } = fakeClient();
+    await expect(assertWindowsPackageSigned([root], client)).resolves.toBe(3);
+    expect(calls.verified.sort()).toEqual(['better_sqlite3.node', 'ffmpeg.dll', 'nexus-ide.exe']);
+  });
+
+  it('recusa pacote com falha engolida pelo hook, com arquivo que o agente não assina ou vazio', async () => {
+    const failed = fakeClient({ failures: () => [{ file: 'C:\\out\\x.dll', error: 'timestamp' }] });
+    await expect(assertWindowsPackageSigned([packageDirectory(['a.exe'])], failed.client))
+      .rejects.toThrow('YubiKey signing failed for 1 file(s): C:\\out\\x.dll (timestamp)');
+    const { client } = fakeClient();
+    await expect(assertWindowsPackageSigned([packageDirectory(['a.exe', 'shell.ps1'])], client))
+      .rejects.toThrow(/refusing .*shell\.ps1/u);
+    await expect(assertWindowsPackageSigned([packageDirectory(['README.md'])], client))
+      .rejects.toThrow(/no executable/u);
+  });
+
+  it('no fim do make, só o agente por build é encerrado', async () => {
+    const daily = fakeClient();
+    await finishWindowsTokenSigning({}, daily.client);
+    expect(daily.calls.stopped).toBe(0);
+    const perBuild = fakeClient();
+    await finishWindowsTokenSigning({ NEXUS_WINDOWS_SIGNER_HOURS: '0' }, perBuild.client);
+    expect(perBuild.calls.stopped).toBe(1);
+    const failed = fakeClient({ failures: () => [{ file: 'Setup.exe', error: 'x' }] });
+    await expect(finishWindowsTokenSigning({}, failed.client)).rejects.toThrow(/Setup\.exe/u);
+  });
 });
