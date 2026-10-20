@@ -146,7 +146,10 @@ npm run windows-signer -- stop     # encerra (o PIN some com ele)
   build a que amarrar o agente, e virar 24 h em silêncio seria o contrário do
   pedido. Num build com `0`, só serve o agente amarrado àquele processo: um agente
   de 24 h vivo é encerrado e trocado por um que morre com o build, inclusive se o
-  Forge cair antes do `postMake` (apontado na revisão do PR #146).
+  Forge cair antes do `postMake` (apontado na revisão do PR #146). No sentido
+  contrário, pedido de 1 a 168 h só aceita agente com prazo finito, e o agente
+  amarrado a OUTRO build que ainda roda nunca é trocado: o `start`, o logon ou o
+  segundo build recusam dizendo o pid (trocar derrubaria aquele build no meio).
 - **Quando ele morre.** Prazo vencido, `stop`, motor encerrado, logoff ou
   reinício, e YubiKey que perdeu o PIN (removido, sono que reinicia o cartão):
   antes de cada assinatura o motor prova o PIN em cache com uma assinatura

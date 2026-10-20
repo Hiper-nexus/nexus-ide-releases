@@ -211,6 +211,29 @@ describe('modo só este build (NEXUS_WINDOWS_SIGNER_HOURS=0)', () => {
     expect(logs).toEqual([expect.stringMatching(/só para este build/u)]);
   }, 60_000);
 
+  it('start de 24 h com o agente de um build vivo recusa, sem fingir sucesso nem derrubar o build', async () => {
+    const bound = await startTestAgent({ hours: 0, parentPid: process.pid });
+    await expect(client.ensureAgent({
+      thumbprint: TEST_THUMBPRINT,
+      spkiSha256: TEST_SPKI,
+      hours: 24,
+      directory: bound.directory,
+      log: () => undefined,
+    })).rejects.toThrow(new RegExp(`pid ${process.pid}\\) está usando o agente`, 'u'));
+    expect(await client.agentStatus(bound.directory)).toMatchObject({ unlocked: true, parentPid: process.pid });
+    await client.stopAgent(bound.directory);
+    await bound.stopped;
+  });
+
+  it('só agente amarrado a outro build AINDA VIVO segura o pedido', () => {
+    const bound = { expiresAt: null, parentPid: 4242 };
+    expect(client.boundToAnotherLiveBuild(bound, undefined, () => true)).toBe(true);
+    expect(client.boundToAnotherLiveBuild(bound, undefined, () => false)).toBe(false);
+    expect(client.boundToAnotherLiveBuild(bound, 4242, () => true)).toBe(false);
+    expect(client.boundToAnotherLiveBuild({ expiresAt: 1, parentPid: null }, undefined, () => true)).toBe(false);
+    expect(client.boundToAnotherLiveBuild(undefined, undefined, () => true)).toBe(false);
+  });
+
   it('build com 0 reaproveita só o agente amarrado a ele', async () => {
     const bound = await startTestAgent({ hours: 0, parentPid: process.pid });
     expect(bound.info.parentPid).toBe(process.pid);
@@ -225,6 +248,48 @@ describe('modo só este build (NEXUS_WINDOWS_SIGNER_HOURS=0)', () => {
     expect(status).toMatchObject({ started: false, parentPid: process.pid, expiresAt: null });
     await client.stopAgent(bound.directory);
     await bound.stopped;
+  });
+});
+
+describe('trava de início do agente', () => {
+  it('trava que some entre o EEXIST e a leitura é trava liberada: tenta de novo', () => {
+    const exists = Object.assign(new Error('exists'), { code: 'EEXIST' });
+    const gone = Object.assign(new Error('gone'), { code: 'ENOENT' });
+    let writes = 0;
+    const fakeFs = {
+      writeFileSync: () => {
+        writes += 1;
+        if (writes === 1) throw exists;
+      },
+      statSync: () => { throw gone; },
+      rmSync: () => undefined,
+    };
+    const release = client.acquireStartLock('C:\\agente', fakeFs);
+    expect(typeof release).toBe('function');
+    expect(writes).toBe(2);
+  });
+
+  it('trava viva de outro starter faz esperar; trava velha é removida', () => {
+    const exists = Object.assign(new Error('exists'), { code: 'EEXIST' });
+    const removed: string[] = [];
+    const busy = {
+      writeFileSync: () => { throw exists; },
+      statSync: () => ({ mtimeMs: 1_000 }),
+      rmSync: (file: string) => removed.push(file),
+    };
+    expect(client.acquireStartLock('C:\\agente', busy, () => 2_000)).toBeUndefined();
+    expect(removed).toEqual([]);
+    let writes = 0;
+    const stale = {
+      writeFileSync: () => {
+        writes += 1;
+        if (writes === 1) throw exists;
+      },
+      statSync: () => ({ mtimeMs: 0 }),
+      rmSync: (file: string) => removed.push(file),
+    };
+    expect(typeof client.acquireStartLock('C:\\agente', stale, () => 60 * 60_000)).toBe('function');
+    expect(removed).toEqual([path.join('C:\\agente', 'starting.lock')]);
   });
 });
 

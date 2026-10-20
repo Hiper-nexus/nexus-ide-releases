@@ -113,12 +113,38 @@ async function stopAgent(directory = agent.defaultAgentDirectory()) {
 /**
  * Agente que serve a este pedido. Com `hours: 0` (só este build) apenas o agente
  * amarrado a ESTE processo serve: reaproveitar um agente de 24 h deixaria a
- * chave destrancada depois de um build que morreu antes do postMake.
+ * chave destrancada depois de um build que morreu antes do postMake. Pedido de 1
+ * a 168 h exige prazo finito: o agente de um build com 0 morre com aquele build.
  */
 function usable(status, thumbprint, now, { hours, parentPid } = {}) {
   if (!status || !status.unlocked || status.thumbprint !== thumbprint) return false;
   if (hours === 0) return status.expiresAt === null && status.parentPid === parentPid;
-  return status.expiresAt === null || status.expiresAt - now >= MIN_REMAINING_MS;
+  return status.expiresAt !== null && status.expiresAt !== undefined && status.expiresAt - now >= MIN_REMAINING_MS;
+}
+
+function processAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === 'EPERM';
+  }
+}
+
+/**
+ * Agente amarrado a OUTRO build que ainda roda. Trocá-lo derrubaria aquele build
+ * no meio, então quem chega recusa em vez de trocar (dois builds Windows não
+ * rodam juntos nesta máquina). Build que já acabou não segura nada: o agente
+ * dele sai sozinho em segundos e pode ser trocado.
+ */
+function boundToAnotherLiveBuild(status, parentPid, isAlive = processAlive) {
+  return Boolean(
+    status &&
+    status.expiresAt === null &&
+    Number.isInteger(status.parentPid) &&
+    status.parentPid !== parentPid &&
+    isAlive(status.parentPid),
+  );
 }
 
 function sleep(ms) {
@@ -127,22 +153,29 @@ function sleep(ms) {
 
 /**
  * Dois builds ao mesmo tempo não abrem duas janelas de PIN: quem chega depois
- * espera o agente do primeiro.
+ * espera o agente do primeiro. A trava pode sumir entre o EEXIST e a leitura
+ * dela (o primeiro terminou): isso é trava liberada, e a aquisição recomeça.
  */
-function acquireStartLock(directory) {
+function acquireStartLock(directory, fsImpl = fs, now = () => Date.now()) {
   const lock = path.join(directory, 'starting.lock');
-  try {
-    fs.writeFileSync(lock, String(process.pid), { flag: 'wx' });
-    return () => fs.rmSync(lock, { force: true });
-  } catch (error) {
-    if (error.code !== 'EEXIST') throw error;
-    const age = Date.now() - fs.statSync(lock).mtimeMs;
-    if (age > START_TIMEOUT_MS) {
-      fs.rmSync(lock, { force: true });
-      return acquireStartLock(directory);
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      fsImpl.writeFileSync(lock, String(process.pid), { flag: 'wx' });
+      return () => fsImpl.rmSync(lock, { force: true });
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
     }
-    return undefined;
+    let mtimeMs;
+    try {
+      ({ mtimeMs } = fsImpl.statSync(lock));
+    } catch (error) {
+      if (error.code === 'ENOENT') continue;
+      throw error;
+    }
+    if (now() - mtimeMs <= START_TIMEOUT_MS) return undefined;
+    fsImpl.rmSync(lock, { force: true });
   }
+  return undefined;
 }
 
 function launchAgent({ thumbprint, spkiSha256, hours, parentPid, pinMode, directory, nodePath, env }) {
@@ -242,6 +275,9 @@ async function ensureAgent({
   for (;;) {
     const status = await agentStatus(directory);
     if (pinMode !== 'save' && usable(status, thumbprint, now(), { hours, parentPid })) return { ...status, started: false };
+    if (boundToAnotherLiveBuild(status, parentPid)) {
+      throw new Error(`Um build com NEXUS_WINDOWS_SIGNER_HOURS=0 (pid ${status.parentPid}) está usando o agente de assinatura. Espere ele terminar: dois builds Windows não rodam juntos nesta máquina.`);
+    }
     const release = acquireStartLock(directory);
     if (!release) {
       if (now() > deadline) throw new Error('another build is still starting the signing agent');
@@ -539,4 +575,6 @@ module.exports.installLogon = installLogon;
 module.exports.uninstallLogon = uninstallLogon;
 module.exports.startFromCli = startFromCli;
 module.exports.standaloneAgentHours = standaloneAgentHours;
+module.exports.boundToAnotherLiveBuild = boundToAnotherLiveBuild;
+module.exports.acquireStartLock = acquireStartLock;
 module.exports.MIN_REMAINING_MS = MIN_REMAINING_MS;
