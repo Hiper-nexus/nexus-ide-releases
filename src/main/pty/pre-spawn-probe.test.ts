@@ -7,6 +7,7 @@ import {
   clearRecentCredentialProbeFailuresForTests,
   hasRecentCredentialProbeFailure,
   hasRepeatedCredentialProbeFailure,
+  noteGrokLoginRefusal,
   probePreSpawn,
   recordRecentCredentialProbeFailure,
   type PreSpawnProbeDeps,
@@ -21,6 +22,8 @@ import {
   SILENT_REMINT_HINT,
   rememberKimiSeatReadiness,
 } from '../adapters/seat-auth-readiness';
+
+import { GROK_LOGIN_REQUIRED_MESSAGE } from '../adapters/managed-auth-spawn-gate';
 
 vi.mock('../observability/main-trace', () => ({ trace: vi.fn() }));
 
@@ -599,6 +602,19 @@ describe('recusa recente de credencial', () => {
       await runProbe('codex', makeDeps({ getAdapter: () => codexAdapter, nativeSessionReady: () => true })),
     ).toBeNull();
     expect(hasRepeatedCredentialProbeFailure('codex')).toBe(false);
+    expect(hasRecentCredentialProbeFailure('codex')).toBe(false);
+    clearRecentCredentialProbeFailuresForTests();
+  });
+});
+
+describe('noteGrokLoginRefusal — sessão Grok expirada tira o Grok da rota', () => {
+  it('a recusa do gate marca o Grok; outros erros e outras CLIs não', () => {
+    clearRecentCredentialProbeFailuresForTests();
+    expect(noteGrokLoginRefusal('grok', new Error('timeout qualquer'))).toBe(false);
+    expect(noteGrokLoginRefusal('codex', new Error(GROK_LOGIN_REQUIRED_MESSAGE))).toBe(false);
+    expect(hasRecentCredentialProbeFailure('grok')).toBe(false);
+    expect(noteGrokLoginRefusal('grok', new Error(GROK_LOGIN_REQUIRED_MESSAGE))).toBe(true);
+    expect(hasRecentCredentialProbeFailure('grok')).toBe(true);
     expect(hasRecentCredentialProbeFailure('codex')).toBe(false);
     clearRecentCredentialProbeFailuresForTests();
   });
