@@ -71,6 +71,7 @@ const studioRequestSchema = z.object({
   resolution: z.string().max(16).optional(),
   imagePath: z.string().max(4096).optional(),
   referenceImagePaths: z.array(z.string().min(1).max(4096)).max(30).optional(),
+  referenceVideoPaths: z.array(z.string().min(1).max(4096)).max(10).optional(),
   recoverJobId: z.string().max(512).optional(),
   clientJobId: z.string().min(1).max(64),
 });
@@ -169,6 +170,7 @@ export function registerMediaIpc(runtimeManager: ProjectRuntimeManager): void {
                 resolution: req.resolution,
                 imagePath: req.imagePath,
                 referenceImagePaths: req.referenceImagePaths,
+                referenceVideoPaths: req.referenceVideoPaths,
                 recoverJobId: req.recoverJobId,
                 baseDir,
                 signal: controller.signal,

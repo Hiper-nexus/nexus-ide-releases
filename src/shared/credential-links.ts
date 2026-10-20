@@ -48,6 +48,11 @@ const ENV_LINKS: Record<string, CredentialLink> = {
     label: 'xAI Console',
     url: 'https://console.x.ai/',
   },
+  // F-1613: o console da API (antes cloud.higgsfield.ai) mudou para cá.
+  HIGGSFIELD_API_KEY: {
+    label: 'Higgsfield API',
+    url: 'https://open.higgsfield.ai/api-keys',
+  },
 };
 
 const PROVIDER_LINKS: Record<string, CredentialLink> = {
@@ -60,6 +65,8 @@ const PROVIDER_LINKS: Record<string, CredentialLink> = {
   'replicate-video': ENV_LINKS.REPLICATE_API_TOKEN,
   'xai-image': ENV_LINKS.XAI_API_KEY,
   'xai-video': ENV_LINKS.XAI_API_KEY,
+  'higgsfield-image': ENV_LINKS.HIGGSFIELD_API_KEY,
+  'higgsfield-video': ENV_LINKS.HIGGSFIELD_API_KEY,
   elevenlabs: ENV_LINKS.ELEVENLABS_API_KEY,
   glm: {
     label: 'Z.AI Platform',

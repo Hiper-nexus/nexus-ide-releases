@@ -109,7 +109,13 @@ function MediaKeyField({
           spellCheck={false}
           aria-label={`Chave de acesso de ${provider.label}`}
           value={draft}
-          placeholder={provider.hasKey ? 'Cole uma nova chave para substituir' : 'Cole sua chave de acesso'}
+          placeholder={
+            provider.envVar === 'HIGGSFIELD_API_KEY'
+              ? 'Cole no formato ID:SEGREDO (os dois valores da chave da Higgsfield)'
+              : provider.hasKey
+                ? 'Cole uma nova chave para substituir'
+                : 'Cole sua chave de acesso'
+          }
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && !busy && draft && void updateKey(draft)}
         />

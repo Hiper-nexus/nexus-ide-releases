@@ -58,7 +58,8 @@ const mediaProvidersTool: McpToolDef = {
     'durationsByResolution / durationsWithImage limits, resolutions and ' +
     'aspectRatios ([] = do not send that field), requiresImage, price ' +
     '(usd-per-second by resolution, or usd-per-video by resolution and ' +
-    'seconds; billedByTokensUsdPerMillion = billed by tokens, the per-second ' +
+    'seconds, or quoted-by-service = Higgsfield quotes each request and ' +
+    'returns it as estimatedCostUsd; billedByTokensUsdPerMillion = billed by tokens, the per-second ' +
     'table is approximate), defaultRequestCostUsd, retiresOn/retired/' +
     'replacement. defaults = what runs when you omit provider and model. ' +
     'Prices are list prices, not quality: the Nexus has not measured model ' +
@@ -91,6 +92,10 @@ const imageGenerateTool: McpToolDef = {
     'Seedream size: 1K|2K only (default 2K). imagePath + ' +
     'referenceImagePaths[] → image_input (1–10 refs, Seedream ONLY — ' +
     'google/openai-image accept just imagePath). ' +
+    'higgsfield-image (HIGGSFIELD_API_KEY ID:SECRET, price quoted per request): ' +
+    'higgsfield/soul-2 (photo, text only), higgsfield/ideogram-4 (text and ' +
+    'logos; imagePath remix), higgsfield/qwen-image-3 (edits up to 3 images: ' +
+    'imagePath + referenceImagePaths), higgsfield/recraft-4.1 (text only) | ' +
     'xai-image (Grok Imagine Image 2.0 via the XAI_API_KEY; alias grok): ' +
     'imagePath edits that image; size 1K|1.5K|2K (grok-imagine-image: ' +
     '1K|2K); aspectRatio 1:1|16:9|9:16|4:3|3:4|3:2|2:3|2:1|1:2|21:9|5:2|' +
@@ -103,7 +108,7 @@ const imageGenerateTool: McpToolDef = {
       prompt: { type: 'string' },
       provider: {
         type: 'string',
-        enum: ['google-image', 'openai-image', 'replicate-image', 'xai-image'],
+        enum: ['google-image', 'openai-image', 'replicate-image', 'xai-image', 'higgsfield-image'],
       },
       model: { type: 'string' },
       outPath: { type: 'string' },
@@ -186,6 +191,15 @@ const videoGenerateTool: McpToolDef = {
     'and alibaba/wan-3-prime (2–30 s), google/gemini-omni-1.1 (model picks the ' +
     'duration), pixverse/pixverse-v6, vidu/q3-pro (1–16 s); Kling 4 is not on ' +
     'any API yet. ' +
+    'higgsfield-video (HIGGSFIELD_API_KEY as ID:SECRET; price quoted by ' +
+    'Higgsfield per request, returned as estimatedCostUsd): ' +
+    'higgsfield/seedance-2.5 (4–30 s, up to 1080p), higgsfield/seedance-2.0 ' +
+    '(up to 4k), higgsfield/kling-3.0-pro (3–15 s), higgsfield/minimax-h3 ' +
+    '(5–15 s, 2K), higgsfield/wan-3.0 (2–30 s); the flow follows the inputs ' +
+    '(text, imagePath, or references) and referenceVideoPaths[] (example ' +
+    'video: motion/style; cite as [Video1]) works only here — up to 10 on ' +
+    'Seedance 2.5, 3 on Seedance 2.0 and H3, 5 on Wan 3.0, none on Kling; ' +
+    'first frame and references never mix. ' +
     'Friendly model aliases work: seedance, seedance-2.5, veo, omni, kling, ' +
     'h3, hailuo-3, wan-3, pixverse, vidu, sora, runway, luma, grok. ' +
     'imagePath=first frame; endImagePath=last frame (Seedance, Veo, Kling, ' +
@@ -205,7 +219,7 @@ const videoGenerateTool: McpToolDef = {
       prompt: { type: 'string' },
       provider: {
         type: 'string',
-        enum: ['replicate-video', 'google-video', 'xai-video'],
+        enum: ['replicate-video', 'google-video', 'xai-video', 'higgsfield-video'],
       },
       model: { type: 'string' },
       outPath: { type: 'string' },
@@ -215,6 +229,10 @@ const videoGenerateTool: McpToolDef = {
       imagePath: { type: 'string' },
       endImagePath: { type: 'string' },
       referenceImagePaths: {
+        type: 'array',
+        items: { type: 'string' },
+      },
+      referenceVideoPaths: {
         type: 'array',
         items: { type: 'string' },
       },
@@ -250,6 +268,7 @@ const videoGenerateTool: McpToolDef = {
         imagePath: str(args, 'imagePath'),
         endImagePath: str(args, 'endImagePath'),
         referenceImagePaths: strArray(args, 'referenceImagePaths'),
+        referenceVideoPaths: strArray(args, 'referenceVideoPaths'),
         recoverJobId,
         baseDir: baseDirFor(ctx),
         signal: invocation?.signal,

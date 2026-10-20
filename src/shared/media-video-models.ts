@@ -42,6 +42,12 @@
 
 export type VideoPricing =
   | { readonly kind: 'per-second'; readonly usd: Readonly<Record<string, number>> }
+  /**
+   * F-1613: o serviço informa o preço de cada pedido antes de gerar
+   * (Higgsfield: `POST /estimate/{endpoint}`, em crédito convertido para USD).
+   * A tabela não chuta: antes da consulta, o custo é desconhecido.
+   */
+  | { readonly kind: 'quoted'; readonly service: string }
   | {
       readonly kind: 'per-video';
       /** resolução → segundos → USD do vídeo inteiro. */
@@ -74,6 +80,8 @@ export interface VideoModelSpec {
   readonly maxReferenceImages?: number;
   /** O que o modelo exige quando o pedido leva referências (Veo 3.1: 16:9, 8 s). */
   readonly referencesRequire?: { readonly aspectRatio?: string; readonly durationSeconds?: number };
+  /** Vídeos de exemplo (movimento, estilo) que o modelo recebe; ausente = nenhum. */
+  readonly maxReferenceVideos?: number;
   /** Durações aceitas quando há imagem inicial (Ray 3.2: 10 s só sem imagem). */
   readonly durationsWithImage?: readonly number[];
   /** Preço com a 1ª resolução como chave curinga `*` quando não varia. */
@@ -339,6 +347,56 @@ export const VIDEO_MODEL_SPECS: Readonly<Record<string, VideoModelSpec>> = Objec
       usd: { '540p': { 5: 0.15, 10: 0.45 }, '720p': { 5: 0.3, 10: 0.9 }, '1080p': { 5: 1.2, 10: 3.6 } },
     },
   },
+  // F-1613: Higgsfield (docs.higgsfield.ai, 20/10/2026). O fluxo (texto,
+  // imagem ou referência) sai do pedido; o preço vem do `/estimate`.
+  'higgsfield/seedance-2.5': {
+    maxReferenceImages: 30,
+    maxReferenceVideos: 10,
+    durations: range(4, 30),
+    defaultDuration: 5,
+    resolutions: ['480p', '720p', '1080p'],
+    defaultResolution: '720p',
+    aspectRatios: SEEDANCE_25_ASPECTS,
+    pricing: { kind: 'quoted', service: 'Higgsfield' },
+  },
+  'higgsfield/seedance-2.0': {
+    maxReferenceImages: 9,
+    maxReferenceVideos: 3,
+    durations: range(4, 15),
+    defaultDuration: 5,
+    resolutions: ['480p', '720p', '1080p', '4k'],
+    defaultResolution: '720p',
+    aspectRatios: SEEDANCE_25_ASPECTS,
+    pricing: { kind: 'quoted', service: 'Higgsfield' },
+  },
+  'higgsfield/kling-3.0-pro': {
+    maxReferenceImages: 0,
+    durations: range(3, 15),
+    defaultDuration: 5,
+    resolutions: [],
+    aspectRatios: KLING_ASPECTS,
+    pricing: { kind: 'quoted', service: 'Higgsfield' },
+  },
+  // Só 2K na Higgsfield; duração mínima 5 s.
+  'higgsfield/minimax-h3': {
+    maxReferenceImages: 9,
+    maxReferenceVideos: 3,
+    durations: range(5, 15),
+    defaultDuration: 5,
+    resolutions: [],
+    aspectRatios: H3_ASPECTS,
+    pricing: { kind: 'quoted', service: 'Higgsfield' },
+  },
+  'higgsfield/wan-3.0': {
+    maxReferenceImages: 10,
+    maxReferenceVideos: 5,
+    durations: range(2, 30),
+    defaultDuration: 5,
+    resolutions: ['480p', '720p', '1080p'],
+    defaultResolution: '1080p',
+    aspectRatios: WAN_3_ASPECTS,
+    pricing: { kind: 'quoted', service: 'Higgsfield' },
+  },
   'gemini-omni-1.1-flash': {
     maxReferenceImages: 9,
     durations: [],
@@ -464,6 +522,8 @@ export interface VideoRequestOptions {
   hasImage?: boolean;
   /** Quantas imagens de referência o pedido leva. */
   referenceImages?: number;
+  /** Quantos vídeos de exemplo o pedido leva (F-1613). */
+  referenceVideos?: number;
 }
 
 /**
@@ -487,6 +547,12 @@ export function videoRequestProblem(
     return spec.maxReferenceImages === 0
       ? `${model} não recebe imagens de referência: use só a imagem inicial (imagePath).`
       : `${model} aceita até ${spec.maxReferenceImages} imagens de referência (pedido: ${refs}).`;
+  }
+  const videos = options.referenceVideos ?? 0;
+  if (videos > 0 && videos > (spec.maxReferenceVideos ?? 0)) {
+    return (spec.maxReferenceVideos ?? 0) === 0
+      ? `${model} não recebe vídeo de exemplo: use um modelo da Higgsfield com referência (Seedance, H3, Wan 3.0).`
+      : `${model} aceita até ${spec.maxReferenceVideos} vídeos de exemplo (pedido: ${videos}).`;
   }
   const need = refs > 0 ? spec.referencesRequire : undefined;
   if (need?.aspectRatio && options.aspectRatio && options.aspectRatio !== need.aspectRatio) {
@@ -616,7 +682,9 @@ export function videoModelSummary(model: string, now: number = Date.now()): stri
         : `${durations.join(', ')} s`,
   );
   if (spec.resolutions.length > 0) parts.push(spec.resolutions.join(', '));
-  if (spec.pricing.kind === 'per-second') {
+  if (spec.pricing.kind === 'quoted') {
+    parts.push(`preço informado pela ${spec.pricing.service} antes de gerar`);
+  } else if (spec.pricing.kind === 'per-second') {
     const prices = Object.values(spec.pricing.usd);
     const min = Math.min(...prices);
     parts.push(`${prices.length > 1 ? 'a partir de ' : ''}${formatListUsd(min)}/s`);
@@ -651,6 +719,11 @@ export type VideoModelPriceCard =
   | {
       readonly unit: 'usd-per-video';
       readonly byResolution: Readonly<Record<string, Readonly<Record<string, number>>>>;
+    }
+  | {
+      /** O serviço cota cada pedido; o motor pergunta antes de enviar. */
+      readonly unit: 'quoted-by-service';
+      readonly service: string;
     };
 
 /**
@@ -676,6 +749,8 @@ export interface VideoModelCard {
   readonly requiresImage: boolean;
   /** Teto de `referenceImagePaths`; `null` = a tabela não sabe. */
   readonly maxReferenceImages: number | null;
+  /** Teto de `referenceVideoPaths` (vídeo de exemplo); 0 = não recebe. */
+  readonly maxReferenceVideos: number;
   readonly price: VideoModelPriceCard;
   /** Custo de lista do pedido só com os padrões do modelo; `null` quando o modelo decide a duração. */
   readonly defaultRequestCostUsd: number | null;
@@ -688,6 +763,9 @@ export interface VideoModelCard {
 }
 
 function videoPriceCard(model: string, spec: VideoModelSpec): VideoModelPriceCard {
+  if (spec.pricing.kind === 'quoted') {
+    return { unit: 'quoted-by-service', service: spec.pricing.service };
+  }
   if (spec.pricing.kind === 'per-video') {
     return {
       unit: 'usd-per-video',
@@ -737,6 +815,7 @@ export function videoModelCard(model: string, now: number = Date.now()): VideoMo
     aspectRatios: [...spec.aspectRatios],
     requiresImage: spec.requiresImage === true,
     maxReferenceImages: spec.maxReferenceImages ?? null,
+    maxReferenceVideos: spec.maxReferenceVideos ?? 0,
     price: videoPriceCard(model, spec),
     defaultRequestCostUsd: estimateVideoCostUsd(model, {}),
     retiresOn: spec.retiresOn ?? null,

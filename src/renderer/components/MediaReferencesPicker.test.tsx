@@ -40,12 +40,13 @@ const api = {
 
 let lastSelected: string[] = [];
 
-function Harness({ max }: { max: number }) {
+function Harness({ max, videos = 0 }: { max: number; videos?: number }) {
   const [selected, setSelected] = useState<string[]>([]);
   lastSelected = selected;
   return (
     <MediaReferencesPicker
       maxSelectable={max}
+      maxVideos={videos}
       selected={selected}
       onSelectedChange={setSelected}
       roleHint="A 1ª imagem vira o primeiro quadro."
@@ -53,13 +54,13 @@ function Harness({ max }: { max: number }) {
   );
 }
 
-async function render(max: number): Promise<HTMLElement> {
+async function render(max: number, videos = 0): Promise<HTMLElement> {
   const host = document.createElement('div');
   document.body.appendChild(host);
   const root = createRoot(host);
   roots.push(root);
   await act(async () => {
-    root.render(<Harness max={max} />);
+    root.render(<Harness max={max} videos={videos} />);
   });
   await act(async () => {
     await Promise.resolve();
@@ -133,6 +134,21 @@ describe('MediaReferencesPicker', () => {
     expect(cards(host)[0]!.title).toMatch(/vídeo por código/u);
     expect(cards(host)[1]!.title).toMatch(/SVG/u);
     expect(referenceSelectable(library[0]!)).toBe(false);
+  });
+
+  it('F-1613: com modelo que recebe vídeo, o vídeo de exemplo entra em uso, com teto próprio', async () => {
+    library = [
+      ref('demo.mp4', { kind: 'video', storageKey: 'media/referencias/lzx3k1a0-demo.mp4' }),
+      ref('rosto.png'),
+    ];
+    const host = await render(1, 1);
+    act(() => cards(host)[0]!.click());
+    act(() => cards(host)[1]!.click());
+    expect(lastSelected).toEqual([
+      'media/referencias/lzx3k1a0-demo.mp4',
+      'media/referencias/lzx3k1a0-rosto.png',
+    ]);
+    expect(referenceSelectable(library[0]!, true)).toBe(true);
   });
 
   it('remover manda para a Lixeira e tira da seleção', async () => {

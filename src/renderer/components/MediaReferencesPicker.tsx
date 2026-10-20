@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { MediaReferenceInfo } from '../../shared/media-reference-types';
 import { PixelIcon } from './PixelIcon';
+import { isVideoReferenceKey } from './media-studio-options';
 
 /**
  * Referências do Estúdio (F-1611): imagens, logos e vídeos de exemplo que a
@@ -13,8 +14,10 @@ import { PixelIcon } from './PixelIcon';
 const ACCEPT = 'image/png,image/jpeg,image/webp,image/gif,image/svg+xml,video/mp4,video/quicktime,video/webm';
 
 export interface MediaReferencesPickerProps {
-  /** Quantas referências o modelo escolhido aceita agora (0 = nenhuma). */
+  /** Quantas imagens o modelo escolhido aceita agora (0 = nenhuma). */
   maxSelectable: number;
+  /** Quantos vídeos de exemplo o modelo aceita (F-1613); 0 = nenhum. */
+  maxVideos?: number;
   selected: readonly string[];
   onSelectedChange: (next: string[]) => void;
   /** Por que não dá para selecionar (modelo sem entrada de imagem, etc.). */
@@ -29,20 +32,25 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1).replace('.', ',')} MB`;
 }
 
-/** Só bitmap vai para os modelos; SVG e vídeo ficam na biblioteca do projeto. */
-export function referenceSelectable(ref: MediaReferenceInfo): boolean {
-  return ref.kind === 'image' && !ref.vector;
+/**
+ * Bitmap vai para os modelos; vídeo de exemplo só para quem o recebe
+ * (Higgsfield: Seedance, H3, Wan 3.0); SVG fica na biblioteca do projeto.
+ */
+export function referenceSelectable(ref: MediaReferenceInfo, allowVideos = false): boolean {
+  if (ref.kind === 'video') return allowVideos;
+  return !ref.vector;
 }
 
 function unselectableTitle(ref: MediaReferenceInfo): string {
   if (ref.kind === 'video') {
-    return 'Vídeo de exemplo: fica no projeto para o vídeo por código e para os agentes; os modelos daqui recebem só imagem.';
+    return 'Vídeo de exemplo: este modelo não recebe vídeo. Use um modelo da Higgsfield com referência (Seedance, H3, Wan 3.0); o vídeo também fica no projeto para o vídeo por código e para os agentes.';
   }
   return 'SVG: ótimo de logo no vídeo por código, mas os modelos de imagem e vídeo só aceitam PNG, JPG, WEBP ou GIF.';
 }
 
 export function MediaReferencesPicker({
   maxSelectable,
+  maxVideos = 0,
   selected,
   onSelectedChange,
   blockedReason = null,
@@ -71,10 +79,17 @@ export function MediaReferencesPicker({
   // A seleção só guarda o que ainda existe e cabe no modelo atual.
   useEffect(() => {
     if (!refs) return;
-    const alive = new Set(refs.filter(referenceSelectable).map((r) => r.storageKey));
-    const next = selected.filter((key) => alive.has(key)).slice(0, maxSelectable);
+    const byKey = new Map(refs.map((r) => [r.storageKey, r]));
+    let images = 0;
+    let videos = 0;
+    const next = selected.filter((key) => {
+      const ref = byKey.get(key);
+      if (!ref || !referenceSelectable(ref, maxVideos > 0)) return false;
+      if (ref.kind === 'video') return ++videos <= maxVideos;
+      return ++images <= maxSelectable;
+    });
     if (next.length !== selected.length) onSelectedChange(next);
-  }, [refs, selected, maxSelectable, onSelectedChange]);
+  }, [refs, selected, maxSelectable, maxVideos, onSelectedChange]);
 
   useEffect(() => {
     const pending = (refs ?? []).filter(
@@ -112,23 +127,32 @@ export function MediaReferencesPicker({
       }
     }
     await reload().catch(() => undefined);
-    // O que acabou de chegar já entra em uso, se couber.
-    const room = Math.max(0, maxSelectable - selected.length);
-    const fresh = added.filter(referenceSelectable).map((r) => r.storageKey).slice(0, room);
+    // O que acabou de chegar já entra em uso, se couber (imagem e vídeo à parte).
+    const videosInUse = selected.filter(isVideoReferenceKey).length;
+    let imageRoom = Math.max(0, maxSelectable - (selected.length - videosInUse));
+    let videoRoom = Math.max(0, maxVideos - videosInUse);
+    const fresh = added
+      .filter((r) => referenceSelectable(r, maxVideos > 0))
+      .filter((r) => (r.kind === 'video' ? videoRoom-- > 0 : imageRoom-- > 0))
+      .map((r) => r.storageKey);
     if (fresh.length > 0) onSelectedChange([...selected, ...fresh]);
     if (failures.length > 0) setError(failures.join(' '));
     setBusy(false);
   }
 
   function toggle(ref: MediaReferenceInfo) {
-    if (disabled || !referenceSelectable(ref)) return;
+    if (disabled || !referenceSelectable(ref, maxVideos > 0)) return;
     if (selected.includes(ref.storageKey)) {
       onSelectedChange(selected.filter((key) => key !== ref.storageKey));
       return;
     }
-    if (selected.length >= maxSelectable) {
-      // Modelo de uma imagem só: trocar é o gesto esperado, não recusar.
-      if (maxSelectable === 1) onSelectedChange([ref.storageKey]);
+    const sameKind = selected.filter((key) => isVideoReferenceKey(key) === (ref.kind === 'video'));
+    const limit = ref.kind === 'video' ? maxVideos : maxSelectable;
+    if (sameKind.length >= limit) {
+      // Uma de cada só: trocar é o gesto esperado, não recusar.
+      if (limit === 1) {
+        onSelectedChange([...selected.filter((key) => !sameKind.includes(key)), ref.storageKey]);
+      }
       return;
     }
     onSelectedChange([...selected, ref.storageKey]);
@@ -171,7 +195,7 @@ export function MediaReferencesPicker({
     >
       <div className="ms-refs__head">
         <span id={labelId} className="ms-field__label">
-          Referências{maxSelectable > 0 ? ` · ${count} de ${maxSelectable} em uso` : ''}
+          Referências{maxSelectable + maxVideos > 0 ? ` · ${count} de ${maxSelectable + maxVideos} em uso` : ''}
         </span>
         <button
           type="button"
@@ -200,7 +224,7 @@ export function MediaReferencesPicker({
 
       {blockedReason ? (
         <p className="ms-dim" role="note">{blockedReason}</p>
-      ) : roleHint && maxSelectable > 0 ? (
+      ) : roleHint && maxSelectable + maxVideos > 0 ? (
         <p className="ms-dim" role="note">{roleHint}</p>
       ) : null}
 
@@ -213,7 +237,10 @@ export function MediaReferencesPicker({
         <ul className="ms-refs__grid" aria-label="Referências do projeto">
           {(refs ?? []).map((ref) => {
             const order = selected.indexOf(ref.storageKey);
-            const selectable = referenceSelectable(ref) && !blockedReason && maxSelectable > 0;
+            const selectable =
+              referenceSelectable(ref, maxVideos > 0) &&
+              !blockedReason &&
+              (ref.kind === 'video' ? maxVideos > 0 : maxSelectable > 0);
             return (
               <li key={ref.storageKey} className="ms-refs__item">
                 <button
@@ -222,7 +249,7 @@ export function MediaReferencesPicker({
                   aria-pressed={order >= 0}
                   disabled={disabled || !selectable}
                   title={
-                    referenceSelectable(ref)
+                    referenceSelectable(ref, maxVideos > 0)
                       ? order >= 0
                         ? 'Clique para não usar'
                         : 'Clique para usar na geração'

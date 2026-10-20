@@ -7,6 +7,7 @@ import { estimateVideoCostUsd, videoModelCard } from '../../shared/media-video-m
 import { resolveMediaModelAlias } from './media-model-aliases';
 import { resolveMediaOutputPath } from './media-path-policy';
 import { xaiImageCostUsd } from './xai-imagine';
+import { HIGGSFIELD_IMAGE_MODELS, HIGGSFIELD_VIDEO_MODELS } from '../../shared/higgsfield-models';
 
 /**
  * Media provider registry — the table that turns a stored API key into a
@@ -188,6 +189,27 @@ export const MEDIA_PROVIDERS: MediaProviderDef[] = [
     defaultModel: 'grok-imagine-video-1.5',
     models: ['grok-imagine-video-1.5', 'grok-imagine-video-1.5-lite', 'grok-imagine-video'],
     estimateCost: videoEstimate,
+  },
+  // F-1613: Higgsfield — catálogo e endpoints em `shared/higgsfield-models.ts`.
+  // O preço vem do `/estimate` de cada pedido (sem tabela: `null` aqui), por
+  // isso nunca é escolhida sozinha quando há outro serviço com preço conhecido.
+  {
+    id: 'higgsfield-image',
+    kind: 'image',
+    label: 'Higgsfield — imagem (Soul 2, Ideogram 4, Qwen Image 3, Recraft 4.1)',
+    envVar: 'HIGGSFIELD_API_KEY',
+    defaultModel: 'higgsfield/soul-2',
+    models: Object.keys(HIGGSFIELD_IMAGE_MODELS),
+    estimateCost: () => null,
+  },
+  {
+    id: 'higgsfield-video',
+    kind: 'video',
+    label: 'Higgsfield — vídeo (Seedance 2.5, Kling 3.0, H3, Wan 3.0)',
+    envVar: 'HIGGSFIELD_API_KEY',
+    defaultModel: 'higgsfield/seedance-2.5',
+    models: Object.keys(HIGGSFIELD_VIDEO_MODELS),
+    estimateCost: () => null,
   },
 ];
 

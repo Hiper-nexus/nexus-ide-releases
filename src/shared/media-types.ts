@@ -24,6 +24,9 @@ export const MEDIA_PROVIDER_IDS = [
   // F-1599: Grok Imagine (xAI), com a XAI_API_KEY da voz do Grok.
   'xai-image',
   'xai-video',
+  // F-1613: Higgsfield (api.higgsfield.ai) — uma chave ID:SEGREDO para os dois.
+  'higgsfield-image',
+  'higgsfield-video',
 ] as const;
 
 export type MediaProviderId = (typeof MEDIA_PROVIDER_IDS)[number];
@@ -113,6 +116,8 @@ export interface MediaStudioRequest {
    * estilo). O motor recusa, antes de pagar, o que o modelo não aceita.
    */
   referenceImagePaths?: string[];
+  /** F-1613: vídeos de exemplo (movimento, estilo) — só modelos que os recebem. */
+  referenceVideoPaths?: string[];
   /** Video only: resume a timed-out job without paying twice. */
   recoverJobId?: string;
   /** Renderer-generated id so media:cancelGenerate can abort the wait. */

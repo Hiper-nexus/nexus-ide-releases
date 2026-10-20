@@ -77,6 +77,7 @@ import {
   replicateInput,
   replicateReferenceLimit,
 } from './replicate-video-input';
+import { generateImageHiggsfield, generateVideoHiggsfield } from './higgsfield';
 
 export {
   replicateEndImageField,
@@ -178,6 +179,8 @@ export interface VideoRequest extends MediaAuthorityRequest {
    * reference_images / Veo reference_images). Max 9.
    */
   referenceImagePaths?: string[];
+  /** F-1613: vídeos de exemplo (Higgsfield: Seedance, H3, Wan 3.0). */
+  referenceVideoPaths?: string[];
   /** Resume a timed-out prediction without resubmitting. */
   recoverJobId?: string;
 }
@@ -486,7 +489,7 @@ export async function generateImage(
   // capability request — fail loud instead (same contract as the model
   // whitelist).
   const extraRefPaths = req.referenceImagePaths ?? [];
-  if (extraRefPaths.length > 0 && def.id !== 'replicate-image') {
+  if (extraRefPaths.length > 0 && def.id !== 'replicate-image' && def.id !== 'higgsfield-image') {
     throw new Error(
       `referenceImagePaths só é suportado em replicate-image (Seedream); ` +
         `${def.id} aceita apenas imagePath (1 imagem de edição)`,
@@ -504,7 +507,15 @@ export async function generateImage(
 
   let data: Buffer;
   let xai: XaiImageOutput | undefined;
-  if (def.id === 'google-image') {
+  // F-1613: formato e custo informados pela Higgsfield (cotação do pedido).
+  let quoted: { extension: string; costUsd: number | null } | undefined;
+  if (def.id === 'higgsfield-image') {
+    // A 1ª é a imagem a editar; as outras entram junto (Qwen Image 3: até 3).
+    const inputs = [...(image ? [image] : []), ...extraRefPaths.map((p) => readMediaInput(p, req.baseDir))];
+    const hf = await generateImageHiggsfield(req, def, model, key, deps, inputs);
+    quoted = { extension: hf.extension, costUsd: hf.costUsd };
+    data = hf.data;
+  } else if (def.id === 'google-image') {
     data = await googleImage(req, def, model, key, deps, image);
   } else if (def.id === 'replicate-image') {
     data = await replicateImage(req, def, model, key, deps, seedreamImages);
@@ -515,8 +526,9 @@ export async function generateImage(
     data = await openaiImage(req, def, model, key, deps, image);
   }
   assertMediaAuthorityCurrent(req);
-  // O arquivo segue o formato que a xAI devolveu, com outPath ou sem.
-  const finalPath = xai ? xaiImageOutputPath(outPath, xai.extension) : outPath;
+  // O arquivo segue o formato que o serviço devolveu, com outPath ou sem.
+  const extension = xai?.extension ?? quoted?.extension;
+  const finalPath = extension ? xaiImageOutputPath(outPath, extension) : outPath;
   writeMediaOutput(finalPath, req.baseDir, data);
   const base = result(
     def,
@@ -527,7 +539,8 @@ export async function generateImage(
     xai ? { resolution: xaiImageResolution(model, req.size), inputImages: image ? 1 : 0 } : {},
   );
   // O custo que a xAI informou (`usage.cost_in_usd_ticks`) vence a tabela.
-  return xai?.costUsd !== undefined ? { ...base, estimatedCostUsd: xai.costUsd } : base;
+  if (xai?.costUsd !== undefined) return { ...base, estimatedCostUsd: xai.costUsd };
+  return quoted ? { ...base, estimatedCostUsd: quoted.costUsd } : base;
 }
 
 // ── Video · Replicate adapters ───────────────────────────────────────────────
@@ -1496,6 +1509,7 @@ export async function generateVideo(
         aspectRatio: req.aspectRatio,
         hasImage: Boolean(req.imagePath),
         referenceImages: req.referenceImagePaths?.length ?? 0,
+        referenceVideos: req.referenceVideoPaths?.length ?? 0,
       },
       deps.now(),
     );
@@ -1517,6 +1531,9 @@ export async function generateVideo(
   }
   if (def.id === 'xai-video') {
     return generateVideoXai(effective, def, model, key, deps, startedAt);
+  }
+  if (def.id === 'higgsfield-video') {
+    return generateVideoHiggsfield(effective, def, model, key, deps, startedAt);
   }
   return generateVideoReplicate(effective, def, model, key, deps, startedAt);
 }

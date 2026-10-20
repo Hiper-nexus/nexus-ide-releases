@@ -29,6 +29,8 @@ const PAIRED_PROVIDER: Partial<Record<MediaProviderId, MediaProviderId>> = {
   'replicate-video': 'replicate-image',
   'xai-image': 'xai-video',
   'xai-video': 'xai-image',
+  'higgsfield-image': 'higgsfield-video',
+  'higgsfield-video': 'higgsfield-image',
 };
 
 export function mediaSecretKey(providerId: MediaProviderId): string {

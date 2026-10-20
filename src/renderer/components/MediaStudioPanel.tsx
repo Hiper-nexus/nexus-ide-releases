@@ -502,8 +502,10 @@ export function MediaStudioPanel({
               {projectOpen !== false && (
                 <MediaReferencesPicker
                   maxSelectable={refPlan?.max ?? 0}
+                  maxVideos={refPlan?.maxVideos ?? 0}
                   selected={refsSelected}
                   onSelectedChange={setRefsSelected}
+                  blockedReason={refPlan?.blocked ?? null}
                   roleHint={refPlan?.hint ?? null}
                   disabled={Boolean(job)}
                 />

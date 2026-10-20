@@ -6,6 +6,7 @@
  */
 
 import type { MediaProviderInfo } from '../../shared/media-types';
+import { higgsfieldImageModel } from '../../shared/higgsfield-models';
 import {
   allowedVideoDurations,
   estimateVideoCostUsd,
@@ -160,8 +161,17 @@ const IMAGE_MULTI_REFERENCE: Readonly<Record<string, number>> = { 'replicate-ima
 export interface StudioReferencePlan {
   /** Quantas imagens do projeto podem ir para este modelo. */
   readonly max: number;
+  /** Quantos vídeos de exemplo (F-1613); 0 = o modelo não recebe vídeo. */
+  readonly maxVideos: number;
   /** O papel da 1ª e das demais, numa frase. */
   readonly hint: string;
+  /** Por que nenhuma referência vai para este modelo. */
+  readonly blocked?: string;
+}
+
+/** Vídeo pela extensão: a biblioteca grava com a extensão do formato real. */
+export function isVideoReferenceKey(storageKey: string): boolean {
+  return /\.(mp4|mov|webm)$/iu.test(storageKey);
 }
 
 /**
@@ -175,33 +185,50 @@ export function studioReferencePlan(
   model: string,
 ): StudioReferencePlan {
   if (kind === 'image') {
-    const multi = IMAGE_MULTI_REFERENCE[providerId];
-    return multi
+    const hf = providerId === 'higgsfield-image' ? higgsfieldImageModel(model) : null;
+    if (hf && hf.maxInputImages === 0) {
+      return { max: 0, maxVideos: 0, hint: '', blocked: `${hf.label} gera só a partir do texto.` };
+    }
+    const multi = hf ? hf.maxInputImages : IMAGE_MULTI_REFERENCE[providerId];
+    return multi && multi > 1
       ? {
           max: multi,
+          maxVideos: 0,
           hint: `A 1ª imagem é a base; as outras (até ${multi}) entram como referência de pessoa, produto, logo ou estilo.`,
         }
       : {
           max: 1,
+          maxVideos: 0,
           hint: 'A imagem escolhida é editada pelo modelo: trocar o fundo, aplicar o logo, mudar o estilo.',
         };
   }
-  const refs = videoModelSpec(model)?.maxReferenceImages ?? 0;
+  const spec = videoModelSpec(model);
+  const refs = spec?.maxReferenceImages ?? 0;
+  const maxVideos = spec?.maxReferenceVideos ?? 0;
+  const videoHint =
+    maxVideos > 0 ? ` Vídeo de exemplo (até ${maxVideos}): o modelo segue o movimento e o estilo dele.` : '';
   if (refs > 1) {
     return {
       max: refs,
-      hint: `1 imagem vira o primeiro quadro do vídeo. 2 ou mais (até ${refs}) viram referência de personagem, produto, logo ou estilo.`,
+      maxVideos,
+      hint: `1 imagem vira o primeiro quadro do vídeo. 2 ou mais (até ${refs}) viram referência de personagem, produto, logo ou estilo.${videoHint}`,
     };
   }
-  return { max: 1, hint: 'A imagem escolhida vira o primeiro quadro do vídeo.' };
+  return { max: 1, maxVideos, hint: `A imagem escolhida vira o primeiro quadro do vídeo.${videoHint}` };
 }
 
 /** Os campos do pedido a partir da seleção, na ordem em que a pessoa escolheu. */
 export function studioReferenceRequest(
   kind: StudioKind,
   selected: readonly string[],
-): { imagePath?: string; referenceImagePaths?: string[] } {
+): { imagePath?: string; referenceImagePaths?: string[]; referenceVideoPaths?: string[] } {
   if (selected.length === 0) return {};
+  const videos = selected.filter(isVideoReferenceKey);
+  if (kind === 'video' && videos.length > 0) {
+    // Vídeo de exemplo é sempre referência: as imagens vão junto como referência.
+    const images = selected.filter((key) => !isVideoReferenceKey(key));
+    return { ...(images.length > 0 ? { referenceImagePaths: images } : {}), referenceVideoPaths: videos };
+  }
   if (kind === 'video' && selected.length > 1) return { referenceImagePaths: [...selected] };
   const [first, ...rest] = selected;
   return { imagePath: first, ...(rest.length > 0 ? { referenceImagePaths: rest } : {}) };
