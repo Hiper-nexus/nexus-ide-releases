@@ -11939,7 +11939,7 @@ export const RELEASE_076336: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076337: AppRelease = {
   version: '0.76.337',
   date: '2026-10-20',
   codename: 'O Nexus limpa o próprio disco',
@@ -11951,4 +11951,22 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: [...RELEASE_076336.fixes],
 };
 
-export const RELEASE_076337: AppRelease = CURRENT_RELEASE;
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.338',
+  date: '2026-10-20',
+  codename: 'Estúdio de vídeo',
+  summary: 'Os agentes fazem vídeos de apresentação por código: roteiro, narração com tempo por palavra e legendas, música, render no computador e export por rede, com o custo mostrado antes de pagar. "Minha voz" grava e clona a sua voz na ElevenLabs ou no Gemini, com termo de consentimento. O instalador, o app e o atualizador do Windows saem assinados.',
+  highlights: [
+    { title: 'Estúdio de vídeo', detail: 'Peça um vídeo de apresentação a um agente e ele escreve o roteiro, narra, põe música e monta a composição em HyperFrames, com cenas e legendas cronometradas pela narração. O render roda no computador e o export sai para Reels, Shorts, TikTok, YouTube, LinkedIn e quadrado, com volume normalizado, versão muda, capa e legendas. A aba "Vídeos do projeto" no Estúdio de Mídia mostra o que foi feito. Desliga em Ajustes → Experimental.' },
+    { title: 'Minha voz', detail: 'Grave alguns trechos e crie uma voz sintética sua na sua conta da ElevenLabs ou do Gemini, depois de aceitar o termo e ler a declaração de consentimento. O Nexus guarda o recibo, apaga a voz no provedor quando você pede, e o export marca como gerada por IA a narração feita com ela. Nenhum agente cria ou clona voz.' },
+    { title: 'Narração e música', detail: 'A ElevenLabs usa o Eleven v4 por padrão. As vozes do Gemini também narram. Quem prefere a própria voz grava a narração no app e o Nexus alinha o roteiro ao áudio, pela ElevenLabs ou no computador, com a grafia do roteiro nas legendas. A música de fundo vem da ElevenLabs, no tamanho da narração.' },
+    { title: 'Prévia, captura do site e variantes', detail: 'A prévia ao vivo abre no navegador do pane enquanto o agente edita. O agente captura o site público do produto (telas, textos, cores e fontes) para usar no vídeo. Um pedido gera várias versões: formatos vertical, horizontal e quadrado, e outros idiomas com a mesma voz.' },
+    { title: 'Teto de gasto de mídia', detail: 'Defina quanto a mídia paga pode gastar por dia e por missão. O modal de confirmação mostra o custo de cada geração, e o pedido que passaria do teto é recusado antes de chamar o provedor.' },
+    { title: 'Instalador do Windows assinado', detail: 'O Setup.exe, o NexusIDE, o atualizador e o Redline do Windows saem com assinatura Authenticode da HIPERSEND TECNOLOGIA INTERNET & SOFTWARES LTDA, emitida pelo SSL.com, com carimbo de tempo. Os instaladores Windows das 0.76.334 a 0.76.337 tinham saído sem assinatura. O SmartScreen ainda pode avisar nas primeiras instalações, até o certificado ganhar reputação.' },
+    ...RELEASE_076337.highlights.filter((note) => note.title !== 'Pacote Linux'),
+  ],
+  fixes: [...RELEASE_076337.fixes],
+};
+
+export const RELEASE_076338: AppRelease = CURRENT_RELEASE;
