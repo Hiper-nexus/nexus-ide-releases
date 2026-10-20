@@ -586,6 +586,7 @@ describe("registerPtyIpc account fail-fast", () => {
       expect.anything(),
       expect.anything(),
       expect.anything(),
+      expect.anything(),
     );
   });
 
@@ -1573,6 +1574,7 @@ describe("registerPtyIpc account fail-fast", () => {
         scope: authorityDeps.scope,
         cwd: "/workspace/a",
       }),
+      expect.anything(),
     );
   });
 

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
+import { requireIsolatedWriterPool } from '../orch/isolated-writer-pool';
 import { AsyncProcessGitRunner, ProcessGitRunner } from '../runtime/git-command';
 import { smallFileToken, statToken } from '../git/proof-fingerprint';
 import { isInsidePath, resolveCwdForScope } from '../orch/workspace-path';
@@ -194,11 +195,26 @@ export async function preparePaneSpaceWorktree(
       }
       const head = await new AsyncProcessGitRunner().run(scope.rootRealPath, ['rev-parse', '--verify', 'HEAD^{commit}'], { allowFailure: true });
       if (head.status !== 0) throw new Error('Para abrir uma aba isolada, o projeto precisa de um repositório Git com pelo menos um commit. Inicialize e faça o primeiro commit, ou continue na aba existente.');
+      const poolRequest = {};
+      try {
+        const pooled = await requireIsolatedWriterPool().tryAdopt(scope, spaceId, poolRequest, {
+          workerId: spaceId,
+          taskId: 'tab',
+          ownership: { files: [], symbols: [], domains: [spaceId] },
+        });
+        if (pooled) {
+          requireIsolatedWriterPool().scheduleReplenish(scope, poolRequest);
+          return pooled.record.worktreePath;
+        }
+      } catch (error) {
+        console.warn('[pane-space-worktree] falha ao adotar do pool, caindo para create:', error);
+      }
       const record = await registry.create({
         scope, missionId: spaceId, taskId: 'tab', workerId: spaceId,
         ownerKind: 'pane',
         ownership: { files: [], symbols: [], domains: [spaceId] },
       });
+      requireIsolatedWriterPool().scheduleReplenish(scope, poolRequest);
       return record.worktreePath;
     })();
     pending.set(key, allocation);

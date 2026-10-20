@@ -22,6 +22,7 @@ import {
 import type {
   PreparedWorktreeIntegration,
   PreparedWorktreeNoChangeValidation,
+  WorktreeOwnership,
 } from "./worktree-contract";
 import {
   SqliteMergeQueueStateStore,
@@ -714,6 +715,8 @@ export class WorktreeRuntimeRegistry {
     missionId: string,
     input: {
       readonly workerId: string;
+      readonly taskId?: string;
+      readonly ownership?: WorktreeOwnership;
       readonly worktreePath: string;
       readonly branchRef: string;
       readonly baseSha: string;

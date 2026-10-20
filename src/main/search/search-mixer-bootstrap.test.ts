@@ -11,6 +11,7 @@ import {
 } from '../memory/workspace-memory';
 import {
   getSearchMixer,
+  promoteBestHit,
   resetSearchMixerForTests,
   runSearchMixerQuery,
 } from './search-mixer-bootstrap';
@@ -152,5 +153,32 @@ describe('search mixer bootstrap', () => {
     // nunca cria `.nexus-memory/` no checkout por conta própria.
     await store.flushProjections();
     expect(fs.existsSync(path.join(projectRoot, '.nexus-memory'))).toBe(false);
+  });
+});
+
+describe('promoteBestHit', () => {
+  const hits = [
+    { id: 'h1', source: 'files' as const, title: 'primeiro', score: 0.9 },
+    { id: 'h2', source: 'missions' as const, title: 'segundo', score: 0.8 },
+    { id: 'h3', source: 'files' as const, title: 'terceiro', score: 0.7 },
+  ];
+
+  it('move o hit escolhido para o topo preservando a ordem relativa', () => {
+    const promoted = promoteBestHit(hits, 'h2');
+    expect(promoted.map((h) => h.id)).toEqual(['h2', 'h1', 'h3']);
+    // Mesmos elementos
+    expect(promoted.map((h) => h.id).sort()).toEqual(['h1', 'h2', 'h3']);
+  });
+
+  it('bestHitId null ou ID ausente → hits inalterados', () => {
+    // null bestHitId não é passado — a função nunca recebe string vazia/null.
+    // ID não encontrado nos hits.
+    const unchanged = promoteBestHit(hits, 'h99');
+    expect(unchanged.map((h) => h.id)).toEqual(['h1', 'h2', 'h3']);
+  });
+
+  it('bestHitId já no topo → hits inalterados', () => {
+    const unchanged = promoteBestHit(hits, 'h1');
+    expect(unchanged.map((h) => h.id)).toEqual(['h1', 'h2', 'h3']);
   });
 });

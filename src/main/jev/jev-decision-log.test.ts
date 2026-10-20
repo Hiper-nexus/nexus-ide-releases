@@ -5,15 +5,18 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   configureJevDecisionLog,
   jevAnswerProbabilities,
+  jevDecisionBootCounts,
   jevDecisionStats,
   listJevDecisions,
   recordJevDecision,
   recordJevNoAnswer,
   recordJevOptimization,
+  resetJevDecisionInstrumentationForTesting,
   setJevDecisionFeedback,
   type JevDecisionEntry,
   type JevDecisionInput,
 } from './jev-decision-log';
+import { flushMainTrace, setTraceDirectory } from '../observability/main-trace';
 import { USD_PER_INPUT_TOKEN } from './jev-pricing';
 
 let dir: string;
@@ -467,5 +470,127 @@ describe('jev decision log', () => {
         },
       }),
     ).toEqual({ n: 0.7, c: 0.8, s: 2 / 3 });
+  });
+});
+
+describe('espelho no trace principal e contadores de boot', () => {
+  let logDir: string;
+  let traceDir: string | undefined;
+
+  afterEach(() => {
+    if (logDir) fs.rmSync(logDir, { recursive: true, force: true });
+    if (traceDir) fs.rmSync(traceDir, { recursive: true, force: true });
+    setTraceDirectory(null);
+    resetJevDecisionInstrumentationForTesting();
+  });
+
+  function setupDirs(): string {
+    traceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jev-trace-'));
+    setTraceDirectory(traceDir);
+    logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jev-log-trace-'));
+    return logDir;
+  }
+
+  async function readDecisionTrace(): Promise<Record<string, unknown>[]> {
+    await flushMainTrace();
+    const file = path.join(traceDir!, 'logs', 'main.trace.ndjson');
+    try {
+      return fs
+        .readFileSync(file, 'utf8')
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+        .filter((event) => event.kind === 'decision');
+    } catch {
+      return [];
+    }
+  }
+
+  it('emite um evento de trace com só rótulos e números — sem perguntas, decisão ou conteúdo', async () => {
+    setupDirs();
+    recordJevDecision(
+      entry({
+        surface: 'paneState',
+        provider: 'clef',
+        model: 'clef-omni',
+        decision: 'state:idle_prompt',
+        questions: ['state', 'needs_human'],
+        probabilities: { state: 0.9 },
+        durationMs: 120,
+        requestCount: 1,
+      }),
+      { dir: logDir },
+    );
+    const events = await readDecisionTrace();
+    expect(events).toHaveLength(1);
+    const allowed = new Set([
+      'at', 'kind', 'surface', 'provider', 'model', 'outcome',
+      'reason', 'durationMs', 'requestCount', 'inputTokens', 'sessionId', 'missionId',
+    ]);
+    for (const key of Object.keys(events[0]!)) {
+      expect(allowed.has(key)).toBe(true);
+    }
+    expect(events[0]).toMatchObject({
+      surface: 'paneState',
+      provider: 'clef',
+      model: 'clef-omni',
+      outcome: 'decision',
+      durationMs: 120,
+      requestCount: 1,
+    });
+    const raw = JSON.stringify(events[0]);
+    expect(raw).not.toContain('state:idle_prompt'); // o rótulo da decisão fica só no diário
+    expect(raw).not.toContain('needs_human'); // ids de perguntas ficam só no diário
+  });
+
+  it('pulo gravado como skip:<motivo> vira outcome skip com o motivo categórico', async () => {
+    setupDirs();
+    recordJevDecision(
+      entry({ surface: 'memoryDistill', model: 'unavailable', decision: 'skip:store-unavailable' }),
+      { dir: logDir },
+    );
+    const events = await readDecisionTrace();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ outcome: 'skip', reason: 'store-unavailable' });
+  });
+
+  it('no-answer vira outcome no-answer com motivo categórico, sem texto do erro', async () => {
+    setupDirs();
+    recordJevNoAnswer(
+      { surface: 'intake', reason: 'rate-limited', model: 'gpt-6-luna', provider: 'luna' },
+      { dir: logDir },
+    );
+    const events = await readDecisionTrace();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ outcome: 'no-answer', reason: 'rate-limited', provider: 'luna' });
+  });
+
+  it('otimização é amostrada: no máximo um evento por superfície por minuto', async () => {
+    setupDirs();
+    resetJevDecisionInstrumentationForTesting();
+    for (let i = 0; i < 3; i++) {
+      recordJevOptimization(
+        { surface: 'paneState', model: 'jev-1.13.0', optimization: { jevRequestsAvoided: 1 } },
+        { dir: logDir },
+      );
+    }
+    const events = await readDecisionTrace();
+    expect(events.filter((e) => e.outcome === 'optimization')).toHaveLength(1);
+  });
+
+  it('conta linhas por provider e superfície desde o boot (jev:status)', () => {
+    logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jev-log-boot-'));
+    resetJevDecisionInstrumentationForTesting();
+    recordJevDecision(entry({ surface: 'paneState', provider: 'clef', model: 'clef-omni' }), { dir: logDir });
+    recordJevNoAnswer(
+      { surface: 'paneState', reason: 'timeout', model: 'gpt-6-luna', provider: 'luna' },
+      { dir: logDir },
+    );
+    recordJevDecision(entry(), { dir: logDir }); // sem provider → jev
+    expect(jevDecisionBootCounts()).toEqual({
+      byProvider: { clef: 1, luna: 1, jev: 1 },
+      bySurface: { paneState: 2, handoffReview: 1 },
+    });
   });
 });

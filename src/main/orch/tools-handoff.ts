@@ -518,9 +518,10 @@ const handoffSubmitTool: McpToolDef = {
           missionId: ctx.missionId,
           signal: invocation?.signal,
           declaredStatus,
-          summary,
+          summary: cleanSummary,
           fullText:
             typeof args.fullText === "string" ? args.fullText : undefined,
+          artifacts: workerArtifactsList(args.artifacts),
           accomplished: args.accomplished,
           blockers: args.blockers,
           nextSteps: args.nextSteps,

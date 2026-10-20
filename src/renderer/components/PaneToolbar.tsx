@@ -205,12 +205,21 @@ function StateIndicator({
   );
 }
 
-const JEV_HINT_LABEL: Record<JevPaneHint['state'], string> = {
-  waiting_for_human: 'Jev: esperando você',
-  finished: 'Jev: terminou',
-  errored: 'Jev: erro',
-  working: 'Jev: trabalhando',
-  idle_prompt: 'Jev: ocioso',
+// Chip honesto: quem leu o pane (Jev/Clef/Luna) + o estado do PANE — o
+// rótulo antigo "Jev: ocioso" dizia que o Jev estava ocioso quando quem
+// estava parado era o prompt do pane (e quem respondeu podia ser o Clef).
+const JEV_HINT_STATE_LABEL: Record<JevPaneHint['state'], string> = {
+  waiting_for_human: 'pane esperando você',
+  finished: 'pane terminou',
+  errored: 'pane com erro',
+  working: 'pane trabalhando',
+  idle_prompt: 'pane ocioso',
+};
+
+const JEV_HINT_PROVIDER_LABEL: Record<string, string> = {
+  jev: 'Jev',
+  clef: 'Clef',
+  luna: 'Luna',
 };
 
 const JEV_HINT_MAX_AGE_MS = 10 * 60_000;
@@ -232,14 +241,15 @@ function JevHintChip({ paneId }: { paneId: string }) {
     return () => clearTimeout(timer);
   }, [hint, sessionId]);
   if (!hint || Date.now() - hint.at > JEV_HINT_MAX_AGE_MS) return null;
-  const tip = `Leitura Jev do conteúdo do pane · confiança ${hint.confidence.toFixed(2)}`;
+  const provider = JEV_HINT_PROVIDER_LABEL[hint.provider ?? 'jev'] ?? 'Jev';
+  const tip = `Leitura ${provider} (${hint.model}) do conteúdo do pane · confiança ${hint.confidence.toFixed(2)}`;
   return (
     <span
       className="toolbar__state toolbar__state--chip"
       data-tip={tip}
       aria-label={tip}
     >
-      <span className="toolbar__state-label">{JEV_HINT_LABEL[hint.state]}</span>
+      <span className="toolbar__state-label">{`${provider} · ${JEV_HINT_STATE_LABEL[hint.state]}`}</span>
     </span>
   );
 }

@@ -36,6 +36,8 @@ import {
 export interface HandoffReviewInput {
   summary: string;
   fullText?: string;
+  /** Artifacts crus do worker: só a íntegra do relatório entra no estado. */
+  artifacts?: readonly unknown[];
   accomplished?: unknown;
   blockers?: unknown;
   nextSteps?: unknown;
@@ -138,15 +140,47 @@ function cappedJson(value: unknown, max: number): string {
 }
 
 /**
+ * Íntegras do relatório nos artifacts, nos dois formatos em que o worker a
+ * entrega: `{ fullText }` (contrato do `nexus_handoff_submit`) e
+ * `{ kind: 'overclock.fullText', payload }` (spool). Ignorar isto era o falso
+ * negativo do handoff Devin: summary curto + íntegra só no artifact → o juiz
+ * marcava "sem evidência"/"não lista arquivos" com testes e arquivos no
+ * registro. Payload de qualquer outro kind NUNCA entra (não é relatório).
+ */
+export function artifactReportTexts(artifacts: readonly unknown[] | undefined): string[] {
+  const texts: string[] = [];
+  for (const artifact of artifacts ?? []) {
+    if (!artifact || typeof artifact !== 'object') continue;
+    const record = artifact as Record<string, unknown>;
+    const text =
+      typeof record.fullText === 'string'
+        ? record.fullText
+        : record.kind === 'overclock.fullText' && typeof record.payload === 'string'
+          ? record.payload
+          : undefined;
+    if (text && text.trim().length > 0 && !texts.includes(text)) texts.push(text);
+  }
+  return texts;
+}
+
+/**
  * State julgado pelo Jev: o relatório declarado + fatos verificáveis do
- * registro. NUNCA inclui payload de artifacts nem telemetria.
+ * registro. De artifacts, só a íntegra declarada do relatório (acima) —
+ * nunca payload arbitrário nem telemetria. O `judge()` ainda redige o state
+ * inteiro (`redactState`) antes do egresso.
  */
 export function buildHandoffReviewState(input: HandoffReviewInput): unknown {
   const report: Record<string, unknown> = {
     summary: capText(input.summary, 4_000),
   };
-  if (input.fullText !== undefined) {
-    report.fullText = capText(input.fullText, 8_000);
+  const fullTexts = [
+    ...(input.fullText !== undefined ? [input.fullText] : []),
+    ...artifactReportTexts(input.artifacts).filter((t) => t !== input.fullText),
+  ];
+  if (fullTexts.length > 0) {
+    // keepEnds: o resultado literal dos testes vai no FIM do relatório; o cap
+    // padrão (só cabeça) o cortava em íntegras > 8k.
+    report.fullText = capText(fullTexts.join('\n\n'), 8_000, { keepEnds: true });
   }
   if (input.accomplished !== undefined) {
     report.accomplished = cappedJson(input.accomplished, 2_000);

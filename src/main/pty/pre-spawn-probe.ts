@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { getAdapter } from '../adapters/adapter-registry';
+import { GROK_LOGIN_REQUIRED_MESSAGE } from '../adapters/managed-auth-spawn-gate';
 import {
   claudeCredentialBlobIsUsable,
   readActiveClaudeCredential,
@@ -436,6 +437,20 @@ export function recordRecentCredentialProbeFailure(
   );
   if (history.failures.length >= 2) history.repeated = true;
   recentCredentialFailures.set(adapterId, history);
+}
+
+/**
+ * F-1485: o gate de spawn do renderer recusou o worker Grok por sessão OAuth
+ * expirada (a conta selecionada, que a rota não enxerga). Anota a recusa para
+ * a rota tirar o Grok por 10 min, em vez de pagar worktree + reenvio a cada
+ * tentativa. Só esta recusa de auth entra; qualquer outro erro é ignorado.
+ */
+export function noteGrokLoginRefusal(adapterId: string | undefined, error: unknown): boolean {
+  if (adapterId !== 'grok') return false;
+  const raw = error instanceof Error ? error.message : String(error);
+  if (!raw.includes(GROK_LOGIN_REQUIRED_MESSAGE.slice(0, 40))) return false;
+  recordRecentCredentialProbeFailure('grok');
+  return true;
 }
 
 export function hasRepeatedCredentialProbeFailure(

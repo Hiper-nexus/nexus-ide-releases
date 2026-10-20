@@ -456,7 +456,10 @@ function narrowRoutingAdvice(advice: MissionRoutingAdvice, squad: Squad): Missio
   const allowedSkills = squad.agents.some((agent) => agent.allowedSkills === null)
     ? null
     : squad.agents.flatMap((agent) => agent.allowedSkills ?? []);
-  return parseMissionRoutingAdvice({ kind: advice.kind, skills: advice.skills }, allowedSkills);
+  return parseMissionRoutingAdvice(
+    { kind: advice.kind, skills: advice.skills, triage: advice.triage },
+    allowedSkills,
+  );
 }
 
 export function createMissionEnginePreparationPorts(input: {

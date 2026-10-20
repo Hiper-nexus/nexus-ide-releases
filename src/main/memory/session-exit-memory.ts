@@ -67,6 +67,31 @@ function digestQuery(digest: string): string {
   return digest.split(/\s+/).slice(0, 12).join(' ');
 }
 
+/**
+ * F-1006: `agent.scope` é a EXECUÇÃO (worktree da aba/writer); os stores do
+ * projeto (handoffs e memória) vivem no escopo de COORDENAÇÃO. Abrir os
+ * stores pela execução com o mesmo projectId/checkoutId e outra raiz bate
+ * na guarda de identidade do registry ("project store scope identity
+ * collision") e a destilação pulava como `store-unavailable`. A coordenação
+ * só vale com a mesma identidade de projeto/checkout/instalação — prova em
+ * contrário, fail-closed no escopo de execução (nunca outro projeto).
+ */
+function memoryScopeFor(
+  agent: OwnedAgentSessionInfo | null | undefined,
+): ProjectExecutionScope | undefined {
+  if (!agent) return undefined;
+  const coordination = agent.coordinationScope;
+  if (
+    coordination &&
+    coordination.projectId === agent.scope.projectId &&
+    coordination.checkoutId === agent.scope.checkoutId &&
+    coordination.installationId === agent.scope.installationId
+  ) {
+    return coordination;
+  }
+  return agent.scope;
+}
+
 export async function distillSessionExitMemory(
   input: {
     readonly sessionId: string;
@@ -74,7 +99,7 @@ export async function distillSessionExitMemory(
   },
   deps: SessionExitMemoryDeps = {},
 ): Promise<SessionDigestOutcome> {
-  const scope = input.agent?.scope;
+  const scope = memoryScopeFor(input.agent);
   const skip = (reason: Exclude<SessionDigestOutcome['reason'], 'ok'>): SessionDigestOutcome => {
     recordMemoryRetentionSkip(scope, reason);
     return { retained: false, reason };
@@ -189,7 +214,7 @@ export function ensureSessionExitMemoryDistiller(): void {
   if (ensureDisposer) return;
   ensureDisposer = tapSessionExit((sessionId, agent) => {
     void distillSessionExitMemory({ sessionId, agent }).catch(() => {
-      recordMemoryRetentionSkip(agent?.scope, 'store-unavailable');
+      recordMemoryRetentionSkip(memoryScopeFor(agent), 'store-unavailable');
     });
   });
 }

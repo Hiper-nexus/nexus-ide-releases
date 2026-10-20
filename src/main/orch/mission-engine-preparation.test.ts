@@ -307,6 +307,37 @@ describe('mission routing before approval', () => {
     expect(review.warnings.join('\n')).not.toContain('impeccable');
   });
 
+  it('preserva triage do intake Jev ao filtrar skills pela squad', async () => {
+    const squad: Squad = {
+      ...runtimeSquad,
+      agents: runtimeSquad.agents.map((agent) => ({
+        ...agent, allowedSkills: ['bridgesecurity'],
+      })),
+    };
+    const triage = {
+      source: 'jev' as const,
+      model: 'jev-1.14.0',
+      complexity: 1.4,
+      complexityLevel: 'small' as const,
+      complexityConfidence: 0.8,
+      riskSensitive: 0.12,
+      ambiguous: 0.2,
+    };
+    const { store, engine } = createRoutingHarness(async () => ({
+      kind: 'mission-work',
+      skills: ['impeccable', 'bridgesecurity'],
+      triage,
+    }), squad);
+    await engine.prepare(scope, request);
+
+    expect(store.current()?.intentContract?.routingAdvice).toEqual({
+      source: 'router',
+      kind: 'mission-work',
+      skills: ['bridgesecurity'],
+      triage,
+    });
+  });
+
   it.each([
     ['unavailable', async (): Promise<unknown> => null],
     ['invalid-result', async () => ({ kind: 'mission-question', question: '', readOnlyWorkers: false })],

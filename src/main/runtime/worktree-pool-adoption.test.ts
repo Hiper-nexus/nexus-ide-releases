@@ -228,6 +228,34 @@ describe('WorktreeManager pooled worktree adoption (A1)', () => {
     }));
   });
 
+  it('adopts for isolated tab with taskId=tab, ownerKind=pane and workerId===missionId===spaceId', async () => {
+    const base = headSha();
+    const spaceId = 'space-tab-pool-1';
+    const { worktreePath: poolPath, branchRef: poolBranch } = await materializePooled('tab-pool-1');
+
+    const record = await manager.claimPooledPaneWriter(scope(), spaceId, {
+      workerId: spaceId,
+      taskId: 'tab',
+      ownership: { files: [], symbols: [], domains: [spaceId] },
+      worktreePath: poolPath,
+      branchRef: poolBranch,
+      baseSha: base,
+    });
+
+    expect(record.status).toBe('ready');
+    expect(record.ownerKind).toBe('pane');
+    expect(record.taskId).toBe('tab');
+    expect(record.workerId).toBe(spaceId);
+    expect(record.missionId).toBe(spaceId);
+    expect(record.ownership.domains).toEqual([spaceId]);
+    expect(record.branchRef).toBe(worktreeBranchRef({
+      ownerKind: 'pane', projectId: PROJECT_ID, missionId: spaceId,
+      taskId: 'tab', workerId: spaceId,
+    }));
+    expect(fs.existsSync(record.worktreePath)).toBe(true);
+    expect(git(record.worktreePath, 'symbolic-ref', '--quiet', 'HEAD')).toBe(record.branchRef);
+  });
+
   it('reverts the rename and throws when the worktree move fails (fail-closed)', async () => {
     const base = headSha();
     const { worktreePath: poolPath, branchRef: poolBranch } = await materializePooled('move-fail');
@@ -565,5 +593,102 @@ describe('WorktreeManager pooled adoption crash recovery (A1)', () => {
     rebooted.reconcileInterruptedReservations(scope());
     expect(rebooted.get(scope(), 'operator-hand', derived.taskId)?.status).toBe('ready');
     expect([...linkedWorktrees()]).toEqual([[derived.worktreePath, derived.branchRef]]);
+  });
+});
+
+describe('WorktreeManager pooled adoption regression', () => {
+  it('BUG 1 (HIGH): preexisting tab worktree with WIP survives when pool adoption collides', async () => {
+    // Cenário: o registro SQLite sumiu, mas a worktree/branch canônica da aba
+    // ainda existe com WIP (ex.: reset do registry, crash de disco).
+    // A adoção do pool NÃO pode apagar essa worktree preexistente.
+    const spaceId = 'space-tab-collision';
+    const derived = derivedIdentity(spaceId, spaceId);
+
+    // Cria uma worktree canônica PRÉ-EXISTENTE (simula a aba que já existia).
+    // Usamos o caminho derivado EXATO que o claim derivaria para este espaço.
+    git(root, 'branch', derived.branchRef.slice('refs/heads/'.length), headSha());
+    git(root, 'worktree', 'add', derived.worktreePath, derived.branchRef.slice('refs/heads/'.length));
+    const wipFile = path.join(derived.worktreePath, 'wip.txt');
+    fs.writeFileSync(wipFile, 'trabalho não commitado da aba\n');
+    const wipContent = fs.readFileSync(wipFile, 'utf8');
+
+    // Cria uma worktree do pool para tentar adotar.
+    const base = headSha();
+    const { worktreePath: poolPath, branchRef: poolBranch } = await materializePooled('collision-tab');
+
+    // Tenta adotar para o MESMO espaço: deve recusar ANTES de qualquer
+    // mutação Git (a branch/pasta derivada já existem fisicamente).
+    await expect(
+      manager.claimPooledPaneWriter(scope(), spaceId, {
+        workerId: spaceId,
+        taskId: 'tab',
+        ownership: { files: [], symbols: [], domains: [spaceId] },
+        worktreePath: poolPath,
+        branchRef: poolBranch,
+        baseSha: base,
+      }),
+    ).rejects.toBeInstanceOf(WorktreeStateConflictError);
+
+    // ASSERT 1: a worktree preexistente SOBREVIVE intacta.
+    expect(fs.existsSync(derived.worktreePath)).toBe(true);
+    expect(fs.readFileSync(wipFile, 'utf8')).toBe(wipContent);
+    expect(git(derived.worktreePath, 'symbolic-ref', '--quiet', 'HEAD')).toBe(derived.branchRef);
+
+    // ASSERT 2: a worktree do pool também sobrevive (para descarte limpo).
+    expect(fs.existsSync(poolPath)).toBe(true);
+    expect(git(poolPath, 'symbolic-ref', '--quiet', 'HEAD')).toBe(poolBranch);
+
+    // ASSERT 3: nenhum registro de intenção foi escrito.
+    expect(manager.get(scope(), spaceId, 'tab')).toBeNull();
+
+    // ASSERT 4: o `git worktree list` ainda lista a preexistente, não a moveu.
+    const linked = linkedWorktrees();
+    expect(linked.has(fs.realpathSync(derived.worktreePath))).toBe(true);
+  });
+
+  it('BUG 2 (MEDIUM): commit interleaved between reserve and claim → abort and fall back to create', async () => {
+    // Cenário: a reserva congela o SHA, mas entre reserve e claim
+    // um commit A→B acontece no checkout principal. A worktree do pool
+    // está em A; adotá-la faria a aba nascer no HEAD velho.
+    const baseA = headSha();
+    const { worktreePath: poolPath, branchRef: poolBranch } = await materializePooled('stale-commit', baseA);
+
+    // Simula um commit que entra entre reserve e claim.
+    fs.writeFileSync(path.join(root, 'newer.txt'), 'commit novo\n');
+    git(root, 'add', '.');
+    git(root, 'commit', '-m', 'commit interleaved B');
+    const baseB = headSha();
+    expect(baseB).not.toBe(baseA);
+
+    // Tenta adotar com baseSha=A (a base da reserva, já obsoleta).
+    // O claim deve detectar que repository.headSha (B) ≠ baseSha (A) e recusar.
+    await expect(
+      manager.claimPooledPaneWriter(scope(), 'operator-hand', {
+        workerId: 'worker-1',
+        worktreePath: poolPath,
+        branchRef: poolBranch,
+        baseSha: baseA,
+      }),
+    ).rejects.toBeInstanceOf(WorktreeStateConflictError);
+
+    // ASSERT 1: a worktree do pool sobreviveu (para descarte limpo pelo pool).
+    expect(fs.existsSync(poolPath)).toBe(true);
+    expect(git(poolPath, 'symbolic-ref', '--quiet', 'HEAD')).toBe(poolBranch);
+    expect(git(poolPath, 'rev-parse', 'HEAD')).toBe(baseA);
+
+    // ASSERT 2: nenhum registro foi escrito.
+    const derived = derivedIdentity('operator-hand', 'worker-1');
+    expect(manager.get(scope(), 'operator-hand', derived.taskId)).toBeNull();
+
+    // ASSERT 3: um create() novo usaria o HEAD atual (B), não o velho (A).
+    const fresh = await manager.create({
+      scope: scope(),
+      missionId: 'operator-hand',
+      taskId: 'pane-worker-2',
+      workerId: 'worker-2',
+      ownerKind: 'pane',
+      ownership: { files: [], symbols: [], domains: ['pane-worker-2'] },
+    });
+    expect(fresh.baseSha).toBe(baseB);
   });
 });

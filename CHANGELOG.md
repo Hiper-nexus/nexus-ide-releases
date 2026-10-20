@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.76.356 — O Jev de olho na página
+
+Windows x64, assinado pelo YubiKey (HIPERSEND). Em relação à 0.76.354 (a 0.76.355 é o pacote Linux):
+
+- **O navegador do agente julga a página depois de cada ação**. `navigate`, `click`, `fill` e `press` julgam a página por padrão (`judge: false` desliga), com teto de ~1,5 s: estourado, a resposta sai com `judgmentSkipped: 'budget-exceeded'` e o julgamento continua populando o cache (URL + hash do texto + navegação). A checagem visual depois do `navigate` só roda com a visão e o consentimento já ligados.
+- **Decisões do Jev no trace**. Cada linha do diário do Jev vai ao trace principal sem conteúdo (superfície, provedor, modelo, desfecho, duração, tokens), com amostragem por superfície nas otimizações; pulos `skip:<motivo>` saem como `skip` com o motivo. O chip do pane diz qual provedor respondeu e o `jev:status` traz as contagens desde o boot por provedor e superfície.
+- **Revisão de entrega lê a íntegra**. A revisão de evidência do handoff junta as íntegras de `artifacts[{ fullText }]`, preserva o fim do relatório no corte e recebe o resumo antes da condensação; entregas com testes e arquivos no registro saíam como «sem evidência».
+- **Memória de fim de sessão nas abas isoladas**. A destilação abria os stores do projeto pela worktree de execução e batia na guarda de identidade (`skip:store-unavailable`) desde as abas com pasta própria; agora usa o escopo de coordenação do mesmo projeto e checkout.
+- **Abas novas pelo pool de worktrees**. A aba nova adota uma worktree pré-alocada do pool. A adoção recusa antes de qualquer mutação quando o caminho ou a branch da aba já existem (a reversão apagava a worktree existente com WIP) e quando a base do pool ficou para trás do HEAD atual (cai no `create()` com o HEAD novo).
+- **Grok com login vencido fora da rota por 10 min**. A recusa do spawn por sessão OAuth expirada conta como falha de credencial e tira o Grok da rota, em vez de pagar worktree e reenvio a cada tentativa.
+- **Auditoria do Jev**. Classificação do pedido recusada (resposta fora do formato ou confiança baixa) e reaproveitamento de helper passam a gravar a decisão no diário. Na triagem de pesquisa o resultado que o Jev escolheu sobe ao topo da lista e a triagem chega ao conselho de rota da missão; a pergunta «já está respondido?», que nada usava, saiu do lote.
+- **Sub-fases do spawn de PTY** no trace de tempo do nascimento do pane (`spawn-binary`, `spawn-decorate`, `spawn-host`, `tab-worktree`).
+- **Voz: erro de roteamento em português**. Com o destino no pane focado e nenhum pane em foco, o HUD dizia «No focused pane to route the prompt into.»; agora pede para focar um pane ou trocar o destino para a Jarvis em Ajustes › Voz, e diz quando foi o pane focado que recusou a fala.
+
 ## 0.76.355 — Flash no desktop
 
 Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.

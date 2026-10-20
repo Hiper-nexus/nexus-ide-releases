@@ -37,6 +37,7 @@ import {
   readSessionOutput,
   tapPendingSpawnStartFailure,
 } from './pane-registry';
+import { noteGrokLoginRefusal } from '../pty/pre-spawn-probe';
 import {
   getAgentSessionInfo,
   getRequestedTerminationOrigin,
@@ -1734,6 +1735,7 @@ function installPaneStartTaps(): void {
     // F-1270: recusa de capacidade (teto/memória) é CLI-agnóstica — guarda a
     // mensagem real e marca `capacity-refused` (não reroteia); o resto é recusa
     // da CLI e segue o reenvio de sempre.
+    noteGrokLoginRefusal(failure.adapterId, failure.error);
     const refusal = parsePaneAdmissionRefusal(failure.error);
     // F-1534: campo 14/10 — com o Main sob carga, recusa por CARGA (descritores,
     // memória do SO, Main encerrando PTYs, teto da licença) chegava como

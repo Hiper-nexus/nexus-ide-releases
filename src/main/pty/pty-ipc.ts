@@ -604,6 +604,7 @@ function spawnCliPtyAgentPane(
             pending, recovery, persistedPane, deferredSessionId }),
         } : overrides,
       authority,
+      timer,
     );
     timer.mark("pty-spawn");
     if (workerRestart) {
@@ -795,6 +796,7 @@ export function registerPtyIpc(): void {
           const coordinationScope = spawn.authority.scope;
           return preparePaneSpaceWorktree(coordinationScope, worktreeSpaceId!, envelope.request.cwd)
             .then(async (worktree): Promise<SpawnResult> => {
+              spawnTiming.mark('tab-worktree');
               // F-790: Codex com a versão ainda em sondagem espera (teto curto)
               // ANTES do preparo e da checagem de escopo, para o gate de hooks
               // enxergar a versão — as demais CLIs seguem direto.
@@ -812,6 +814,7 @@ export function registerPtyIpc(): void {
               return result;
             })
             .catch((error) => {
+              spawnTiming.mark('tab-worktree');
               reportTiming(false);
               return licenseFailure(error) ?? { ok: false, error: `Não foi possível abrir a pasta isolada da aba: ${error instanceof Error ? error.message : String(error)}` };
             });

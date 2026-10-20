@@ -1,4 +1,5 @@
 import { decisionResultUsage } from '../decision-models/decision-usage';
+import type { DecisionProvider } from '../../shared/decision-models';
 /**
  * Classificador Jev do estado do pane (piloto automático, superfície
  * `paneState`). Os manifests do `AgentScreenDetector` resolvem os CLIs
@@ -53,6 +54,8 @@ export interface JevPaneHint {
   needsHuman: number;
   at: number;
   model: string;
+  /** Quem respondeu esta classificação (rota do judge); ausente = Jev. */
+  provider?: DecisionProvider;
 }
 
 const PANE_STATE_QUESTIONS: Record<string, JevQuestion> = {
@@ -372,6 +375,7 @@ export function startJevPaneStateClassifier(
         return;
       }
       const needsAnswer = result.answers.needs_human;
+      const usage = decisionResultUsage(result);
       const hint: JevPaneHint = {
         state: stateAnswer.choice as JevPaneStateKind,
         confidence:
@@ -381,6 +385,7 @@ export function startJevPaneStateClassifier(
         needsHuman: needsAnswer?.type === 'noul' ? needsAnswer.noul : 0,
         at: now(),
         model: result.model,
+        provider: usage.provider,
       };
       hints.set(sessionId, hint);
       recordJevDecision({
@@ -392,7 +397,7 @@ export function startJevPaneStateClassifier(
         probabilities: jevAnswerProbabilities(result.answers),
         confidence: jevAnswerConfidences(result.answers),
         decision: `state:${hint.state}`,
-        ...decisionResultUsage(result),
+        ...usage,
       });
       (deps.broadcast ?? broadcastPaneHint)({ sessionId, paneId, hint });
       if (

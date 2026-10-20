@@ -56,6 +56,7 @@ import { hasDecisionCredential, decisionConfigurationKey } from '../decision-mod
 import { isJevSurfaceEnabled } from '../jev/jev-autopilot';
 import { JevResponseCache } from '../jev/jev-response-cache';
 import { prepareBrowserFocus, resolveBrowserFocus, type BrowserContextSelection } from './browser-focused-context';
+import type { judgeBrowserVisual } from './browser-visual-judgment';
 import {
   jevAnswerConfidences,
   jevAnswerProbabilities,
@@ -1317,6 +1318,7 @@ export async function loadBrowser(
     errors: BrowserErrorReport;
     judgment?: BrowserPageJudgment | null;
     judgmentSkipped?: BrowserJudgmentSkipped;
+    visualJudgment?: BrowserVisualAutoJudgment;
     page?: (BrowserPageReadResult | BrowserCompactPageResult) & { paneId: string };
   }
 > {
@@ -1343,6 +1345,7 @@ export async function loadBrowser(
     errors: BrowserErrorReport;
     judgment?: BrowserPageJudgment | null;
     judgmentSkipped?: BrowserJudgmentSkipped;
+    visualJudgment?: BrowserVisualAutoJudgment;
     page?: (BrowserPageReadResult | BrowserCompactPageResult) & { paneId: string };
   };
   if (options.read !== undefined && options.read !== false) {
@@ -1356,13 +1359,16 @@ export async function loadBrowser(
             maxChars: 4_000,
             maxElements: 60,
           });
+    const visual = autoBrowserVisualJudgment(paneId, options);
     const verdict = await judgeBrowserPage(readForJudge, errors, {
       sessionId: options.sessionId,
       missionId: options.missionId,
       ...(options.deps ? { deps: options.deps } : {}),
-    });
+    }, entry);
     out.judgment = verdict.judgment;
     if (verdict.judgmentSkipped) out.judgmentSkipped = verdict.judgmentSkipped;
+    const visualVerdict = await visual;
+    if (visualVerdict) out.visualJudgment = visualVerdict;
   }
   return out;
 }
@@ -1867,6 +1873,12 @@ async function inlinePageRead(
 // Single attempt (retryOnTimeout:false): judge()'s retry after a timeout
 // made this "never blocks" read judgment fail open only after ~8.4s.
 const BROWSER_JUDGE_TIMEOUT_MS = 4_000;
+/** Teto de espera do julgamento automático: a resposta da ferramenta nunca atrasa mais que isto. */
+const BROWSER_JUDGE_BUDGET_MS = 1_500;
+
+type BrowserVisualAutoJudgment =
+  | Awaited<ReturnType<typeof judgeBrowserVisual>>
+  | { status: 'pending' };
 
 type PageVerdict =
   | { judgment: BrowserPageJudgment; judgmentSkipped?: never; focusedText?: string; contextSelection?: BrowserContextSelection; reused?: boolean }
@@ -1997,34 +2009,100 @@ async function judgeBrowserPage(
         },
       };
     };
-    if (!cacheEntry) return compute();
-    const key = createHash('sha256').update(JSON.stringify({
-      state, questions,
-      navSeq: cacheEntry.navSeq,
-      loadGeneration: cacheEntry.loadGeneration,
-      sessionId: options?.sessionId ?? null,
-      missionId: options?.missionId ?? null,
-      model: process.env.NEXUS_JEV_MODEL ?? 'jev-latest',
-      decisionConfiguration: decisionConfigurationKey(),
-    })).digest('hex');
-    const cached = await pageJudgmentCache.get(pageCacheOwner(cacheEntry, judgeFn), key, compute, (value) => value.judgment !== null);
-    if (cached.reused && cached.value.judgment) {
-      (deps?.recordOptimization ?? recordJevOptimization)({
-        surface: 'browserTool', model: cached.value.judgment.model,
-        sessionId: options?.sessionId, missionId: options?.missionId,
-        optimization: {
-          jevRequestsAvoided: 1,
-          ...(cached.value.contextSelection?.applied ? {
-            contextBytesBefore: cached.value.contextSelection.beforeBytes,
-            contextBytesAfter: cached.value.contextSelection.afterBytes,
-          } : {}),
-        },
-      });
-    }
-    return { ...structuredClone(cached.value), ...(cached.reused ? { reused: true } : {}) };
+    const work = async (): Promise<PageVerdict> => {
+      if (!cacheEntry) return compute();
+      const key = createHash('sha256').update(JSON.stringify({
+        state, questions,
+        navSeq: cacheEntry.navSeq,
+        loadGeneration: cacheEntry.loadGeneration,
+        sessionId: options?.sessionId ?? null,
+        missionId: options?.missionId ?? null,
+        model: process.env.NEXUS_JEV_MODEL ?? 'jev-latest',
+        decisionConfiguration: decisionConfigurationKey(),
+      })).digest('hex');
+      const cached = await pageJudgmentCache.get(pageCacheOwner(cacheEntry, judgeFn), key, compute, (value) => value.judgment !== null);
+      if (cached.reused && cached.value.judgment) {
+        (deps?.recordOptimization ?? recordJevOptimization)({
+          surface: 'browserTool', model: cached.value.judgment.model,
+          sessionId: options?.sessionId, missionId: options?.missionId,
+          optimization: {
+            jevRequestsAvoided: 1,
+            ...(cached.value.contextSelection?.applied ? {
+              contextBytesBefore: cached.value.contextSelection.beforeBytes,
+              contextBytesAfter: cached.value.contextSelection.afterBytes,
+            } : {}),
+          },
+        });
+      }
+      return { ...structuredClone(cached.value), ...(cached.reused ? { reused: true } : {}) };
+    };
+    // ponytail: a resposta da ferramenta nunca espera o Jev mais que o orçamento;
+    // a promessa perdedora continua e ainda povoa o cache para a próxima ação.
+    return await Promise.race([
+      work(),
+      new Promise<PageVerdict>((resolve) => {
+        const timer = setTimeout(
+          () => resolve({ judgment: null, judgmentSkipped: 'budget-exceeded' }),
+          BROWSER_JUDGE_BUDGET_MS,
+        );
+        timer.unref?.();
+      }),
+    ]);
   } catch {
     return { judgment: null, judgmentSkipped: 'judge-unavailable' };
   }
+}
+
+/**
+ * §8 auto visual pós-navigate: roda só quando a superfície Jev está ligada,
+ * há credencial e o operador já deu consentimento de visão
+ * (`canJudgeBrowserVisual` é fail-closed). Também obedece ao orçamento —
+ * estourado, a resposta sai com `status: 'pending'`.
+ */
+async function autoBrowserVisualJudgment(
+  paneId: string,
+  options: BrowserActionOptions & {
+    scope: ProjectExecutionScope;
+    signal?: AbortSignal;
+    assertCurrentAuthority?: () => void;
+  },
+): Promise<BrowserVisualAutoJudgment | undefined> {
+  const deps = options.deps;
+  if (!(deps?.jevEnabled ?? (() => isJevSurfaceEnabled('browserTool')))()) {
+    return undefined;
+  }
+  if (!(deps?.jevReady ?? (() => hasDecisionCredential('browserTool')))()) {
+    return undefined;
+  }
+  const work = (async (): Promise<BrowserVisualAutoJudgment | null> => {
+    try {
+      const mod = await import('./browser-visual-judgment');
+      if (!mod.canJudgeBrowserVisual()) return null;
+      return await mod.judgeBrowserVisual({
+        paneId,
+        goal: 'a navegação pedida carregou a página esperada, sem erro visível',
+        scope: options.scope,
+        signal: options.signal,
+        sessionId: options.sessionId,
+        missionId: options.missionId,
+        assertCurrentAuthority: options.assertCurrentAuthority,
+      });
+    } catch {
+      return null;
+    }
+  })();
+  return (
+    (await Promise.race([
+      work,
+      new Promise<BrowserVisualAutoJudgment>((resolve) => {
+        const timer = setTimeout(
+          () => resolve({ status: 'pending' as const }),
+          BROWSER_JUDGE_BUDGET_MS,
+        );
+        timer.unref?.();
+      }),
+    ])) ?? undefined
+  );
 }
 
 async function attachAfterAndMaybePage<R extends Record<string, unknown>>(
@@ -2067,7 +2145,7 @@ async function attachAfterAndMaybePage<R extends Record<string, unknown>>(
             maxChars: 4_000,
             maxElements: 60,
           });
-    const verdict = await judgeBrowserPage(readForJudge, errors, options);
+    const verdict = await judgeBrowserPage(readForJudge, errors, options, entry);
     out.judgment = verdict.judgment;
     if (verdict.judgmentSkipped) out.judgmentSkipped = verdict.judgmentSkipped;
   }

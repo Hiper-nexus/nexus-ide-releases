@@ -16,6 +16,7 @@ import type { DecisionProvider, DecisionRoute, DecisionUsageReceipt } from '../.
 import { USD_PER_INPUT_TOKEN } from './jev-pricing';
 import { parseDecisionRow } from './jev-decision-row';
 import type { JevOptimizationEvidence, JevOptimizationStats, DecisionUsageStats } from '../../shared/jev-ipc';
+import { trace } from '../observability/main-trace';
 
 export type JevDecisionSurface =
   | JevSurface
@@ -155,6 +156,17 @@ export function recordJevDecision(
   deps?: { dir?: string },
 ): string {
   const id = crypto.randomUUID();
+  const line: JevDecisionEntry = { id, at: Date.now(), surface: entry.surface,
+    kind: entry.kind, reason: entry.reason, sessionId: entry.sessionId, missionId: entry.missionId,
+    model: entry.model, questions: entry.questions, probabilities: entry.probabilities,
+    confidence: entry.confidence, decision: entry.decision, inputTokens: entry.inputTokens, usd: entry.usd,
+    provider: entry.provider, route: entry.route, durationMs: entry.durationMs, requestCount: entry.requestCount,
+    usageIncomplete: entry.usageIncomplete, diverged: entry.diverged, ensemblePeers: entry.ensemblePeers,
+    budgetChargedUsd: entry.budgetChargedUsd,
+    feedback: entry.feedback, feedbackAt: entry.feedbackAt, optimization: entry.optimization };
+  // Espelho e contagem acontecem mesmo se o fs falhar: a decisão existiu.
+  countDecisionLine(line);
+  traceDecisionLine(line);
   try {
     const file = logFile(deps?.dir);
     fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -165,19 +177,84 @@ export function recordJevDecision(
     } catch {
       // arquivo ainda não existe — nada a rotacionar
     }
-    const line: JevDecisionEntry = { id, at: Date.now(), surface: entry.surface,
-      kind: entry.kind, reason: entry.reason, sessionId: entry.sessionId, missionId: entry.missionId,
-      model: entry.model, questions: entry.questions, probabilities: entry.probabilities,
-      confidence: entry.confidence, decision: entry.decision, inputTokens: entry.inputTokens, usd: entry.usd,
-      provider: entry.provider, route: entry.route, durationMs: entry.durationMs, requestCount: entry.requestCount,
-      usageIncomplete: entry.usageIncomplete, diverged: entry.diverged, ensemblePeers: entry.ensemblePeers,
-      budgetChargedUsd: entry.budgetChargedUsd,
-      feedback: entry.feedback, feedbackAt: entry.feedbackAt, optimization: entry.optimization };
     fs.appendFileSync(file, JSON.stringify(line) + '\n');
   } catch (error) {
     console.warn('[jev] decision log write failed (ignored):', error);
   }
   return id;
+}
+
+/**
+ * Contadores desde o boot por provider e superfície (IPC `jev:status`): todo
+ * o trabalho de decisão — inclusive Clef e Luna — fica visível sem ler o
+ * diário. Linhas de otimização (cache hit, sem requisição) contam como
+ * atividade do provider que teria respondido.
+ */
+const bootCounts = {
+  byProvider: Object.create(null) as Record<string, number>,
+  bySurface: Object.create(null) as Record<string, number>,
+};
+
+export function jevDecisionBootCounts(): {
+  byProvider: Record<string, number>;
+  bySurface: Record<string, number>;
+} {
+  return { byProvider: { ...bootCounts.byProvider }, bySurface: { ...bootCounts.bySurface } };
+}
+
+function countDecisionLine(entry: JevDecisionEntry): void {
+  const provider = providerOfEntry(entry);
+  bootCounts.byProvider[provider] = (bootCounts.byProvider[provider] ?? 0) + 1;
+  bootCounts.bySurface[entry.surface] = (bootCounts.bySurface[entry.surface] ?? 0) + 1;
+}
+
+/** Amostragem do trace: uma linha `optimization` por superfície por minuto. */
+const TRACE_OPTIMIZATION_MIN_INTERVAL_MS = 60_000;
+const optimizationTracedAt = new Map<string, number>();
+
+/**
+ * Espelha cada linha do diário no trace principal (`main.trace.ndjson`) SEM
+ * conteúdo: só rótulos e números (surface/provider/model/outcome/duração).
+ * O diário continua sendo a fonte completa; o trace dá às decisões a mesma
+ * visibilidade que os eventos de ciclo de vida já têm. Fail-open total.
+ */
+function traceDecisionLine(entry: JevDecisionEntry): void {
+  try {
+    const outcome = entry.kind ?? 'decision';
+    // Pulos são gravados como `skip:<motivo categórico>` (memória, retenção).
+    const skipReason = outcome === 'decision' && entry.decision.startsWith('skip:')
+      ? entry.decision.slice('skip:'.length)
+      : undefined;
+    if (outcome === 'optimization') {
+      const last = optimizationTracedAt.get(entry.surface) ?? -Infinity;
+      if (entry.at - last < TRACE_OPTIMIZATION_MIN_INTERVAL_MS) return;
+      optimizationTracedAt.set(entry.surface, entry.at);
+    }
+    trace({
+      kind: 'decision',
+      surface: entry.surface,
+      provider: providerOfEntry(entry),
+      model: entry.model,
+      outcome: skipReason !== undefined ? 'skip' : outcome,
+      ...(entry.reason !== undefined
+        ? { reason: entry.reason }
+        : skipReason !== undefined ? { reason: skipReason } : {}),
+      ...(entry.durationMs !== undefined ? { durationMs: entry.durationMs } : {}),
+      ...(entry.requestCount !== undefined ? { requestCount: entry.requestCount } : {}),
+      ...(typeof entry.inputTokens === 'number' ? { inputTokens: entry.inputTokens } : {}),
+      ...(entry.sessionId !== undefined ? { sessionId: entry.sessionId } : {}),
+      ...(entry.missionId !== undefined ? { missionId: entry.missionId } : {}),
+    });
+  } catch {
+    // O trace é diagnóstico: nunca derruba a gravação do diário.
+  }
+}
+
+/** Para testes: zera contadores de boot e a amostragem do trace. */
+export function resetJevDecisionInstrumentationForTesting(): void {
+  bootCounts.byProvider = Object.create(null);
+  bootCounts.bySurface = Object.create(null);
+  optimizationTracedAt.clear();
 }
 
 /** A reused answer made no API request; never inflate call, token or USD totals. */

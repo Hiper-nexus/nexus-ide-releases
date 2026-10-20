@@ -177,6 +177,21 @@ describe('session-exit memory distillation', () => {
     expect(hit?.content).toContain('not factual verification');
   });
 
+  it('coordenação de outro projeto não é usada: fail-closed no escopo de execução', async () => {
+    const otherProject: ProjectExecutionScope = { ...scope, projectId: 'project-other', rootRealPath: '/tmp/other' };
+    const seen: ProjectExecutionScope[] = [];
+    const outcome = await distillSessionExitMemory(
+      { sessionId: 'pty-session-1', agent: agent({ scope, coordinationScope: otherProject }) },
+      {
+        getStores: (target) => { seen.push(target); return stores([handoff('h-1', 'Slice shipped.')]); },
+        distill: approve,
+      },
+    );
+    expect(seen).toEqual([scope]);
+    expect(outcome).toMatchObject({ retained: true, reason: 'ok' });
+    expect(getWorkspaceMemoryStore(otherProject).stats().workspace.total).toBe(0);
+  });
+
   it('skips a trivial session with zero Jev calls', async () => {
     const distill = vi.fn<typeof distillHandoffSummary>();
     const outcome = await distillSessionExitMemory(

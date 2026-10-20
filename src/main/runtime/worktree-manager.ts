@@ -1301,6 +1301,8 @@ export class WorktreeManager {
     missionId: string,
     input: {
       readonly workerId: string;
+      readonly taskId?: string;
+      readonly ownership?: WorktreeOwnership;
       readonly worktreePath: string;
       readonly branchRef: string;
       readonly baseSha: string;
@@ -1328,7 +1330,10 @@ export class WorktreeManager {
         "pooled worktree branch is not a pool branch",
       );
     }
-    const taskId = `pane-${assertIdentifier(input.workerId, "workerId")}`;
+    const workerId = assertIdentifier(input.workerId, "workerId");
+    const taskId = input.taskId
+      ? assertIdentifier(input.taskId, "taskId")
+      : `pane-${workerId}`;
     const taskKey = worktreeTaskKey(missionId, taskId);
     const baseSha = assertSha(input.baseSha, "pooled base SHA");
     // Identidade canônica do writer: a MESMA derivada por create().
@@ -1337,7 +1342,7 @@ export class WorktreeManager {
       projectId: scope.projectId,
       missionId,
       taskId,
-      workerId: input.workerId,
+      workerId,
     });
     const derivedPath = path.join(
       this.worktreesRoot,
@@ -1347,6 +1352,9 @@ export class WorktreeManager {
     // `create()`, que garante o diretório do caminho derivado antes.
     ensureDirectory(path.dirname(derivedPath), this.worktreesRoot);
     const now = this.#timestamp();
+    const ownership = input.ownership
+      ? normalizeOwnership(input.ownership)
+      : { files: [], symbols: [], domains: [taskId] };
     const pooledCandidate = cloneRecord({
       ownerKind: "pane",
       reservationGeneration: randomUUID(),
@@ -1357,13 +1365,13 @@ export class WorktreeManager {
       missionId,
       taskId,
       taskKey,
-      workerId: input.workerId,
+      workerId,
       rootRealPath: repository.rootRealPath,
       worktreePath: realWorktree,
       branchRef: input.branchRef,
       integrationRef: repository.integrationRef,
       baseSha,
-      ownership: { files: [], symbols: [], domains: [taskId] },
+      ownership,
       dependencies: [],
       status: "ready",
       createdAt: now,
@@ -1375,6 +1383,35 @@ export class WorktreeManager {
     if (pooledHead !== baseSha) {
       throw new WorktreeStateConflictError(
         "pooled worktree HEAD diverged from the pre-allocated base",
+      );
+    }
+    // a base congelada na reserva pode estar obsoleta se um
+    // commit entrou entre reserve e claim. Compara contra o HEAD ATUAL do
+    // checkout; se divergiu, a worktree do pool é descartada e o chamador cai
+    // no create() com o HEAD novo.
+    if (baseSha !== repository.headSha) {
+      throw new WorktreeStateConflictError(
+        "pooled worktree base is stale: a commit landed between reserve and claim",
+      );
+    }
+    // se o registro sumiu mas a worktree/branch canônica da aba
+    // ainda existe fisicamente, a adoção colidiria no `git branch -m` e o
+    // rollback apagaria a worktree preexistente com WIP. Detecta a colisão
+    // ANTES de qualquer mutação (registro ou Git) e recusa.
+    const derivedBranchName = derivedBranchRef.slice("refs/heads/".length);
+    if (fs.existsSync(derivedPath)) {
+      throw new WorktreeStateConflictError(
+        "adopted worktree path already exists on disk (preexisting tab worktree)",
+      );
+    }
+    const branchCheck = await this.#asyncGit.run(
+      repository.rootRealPath,
+      ["show-ref", "--verify", "--quiet", `refs/heads/${derivedBranchName}`],
+      { allowFailure: true },
+    );
+    if (branchCheck.status === 0) {
+      throw new WorktreeStateConflictError(
+        "adopted worktree branch already exists (preexisting tab worktree)",
       );
     }
     // Intenção durável ANTES de qualquer mutação Git (mesma ordem do
@@ -1422,7 +1459,6 @@ export class WorktreeManager {
     // Conversão. Rename da branch é instantâneo; o move do worktree é um
     // rename no mesmo volume e leva o node_modules clonado junto.
     const poolBranchName = input.branchRef.slice("refs/heads/".length);
-    const derivedBranchName = derivedBranchRef.slice("refs/heads/".length);
     try {
       const rename = await this.#asyncGit.run(
         repository.rootRealPath,

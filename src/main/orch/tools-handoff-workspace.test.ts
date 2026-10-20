@@ -582,7 +582,11 @@ describe("workspace handoff", () => {
       kind: "ok",
       artifact: { kind: "nexus.jevReview", payload: { outcome: "ok" } },
     });
-    await tool("submit").handler(args, child);
+    const reportArtifact = { fullText: "Validação: npx vitest run → 4 passed." };
+    await tool("submit").handler({ ...args, artifacts: [reportArtifact] }, child);
+    expect(jevReview.reviewMissionHandoff).toHaveBeenCalledWith(
+      expect.objectContaining({ artifacts: [reportArtifact] }),
+    );
     const rows = getProjectDomainStores(scope).handoffs.list({
       includeDelivered: true,
     });

@@ -12,6 +12,7 @@ import path from 'node:path';
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
   POOL_BRANCH_REF_PREFIX,
+  type WorktreeOwnership,
   type WorktreeRecord,
 } from '../runtime/worktree-contract';
 import { WorktreePool, type PooledWorktreeEntry } from '../runtime/worktree-pool';
@@ -49,6 +50,12 @@ export interface PoolBaseResolution {
  * Operações físicas que o orquestrador delega. A implementação real usa o
  * registry durável + Git; os testes injetam um backend fake (sem Git real).
  */
+export interface PooledClaimTarget {
+  readonly workerId?: string;
+  readonly taskId?: string;
+  readonly ownership?: WorktreeOwnership;
+}
+
 export interface IsolatedWriterPoolBackend {
   scopeKey(scope: ProjectExecutionScope): string;
   worktreesRoot(scope: ProjectExecutionScope): string;
@@ -66,6 +73,7 @@ export interface IsolatedWriterPoolBackend {
     scope: ProjectExecutionScope,
     missionId: string,
     entry: PooledWorktreeEntry,
+    target?: PooledClaimTarget,
   ): Promise<WorktreeRecord>;
   /** Remove fisicamente uma worktree do pool nunca adotada. */
   remove(scope: ProjectExecutionScope, entry: PooledWorktreeEntry): Promise<void>;
@@ -138,6 +146,7 @@ export class IsolatedWriterPoolOrchestrator {
     scope: ProjectExecutionScope,
     missionId: string,
     request: IsolatedWriterPoolRequest,
+    target?: PooledClaimTarget,
   ): Promise<{ readonly record: WorktreeRecord } | null> {
     if (!this.#enabled()) return null;
     const scopeKey = this.#backend.scopeKey(scope);
@@ -160,7 +169,7 @@ export class IsolatedWriterPoolOrchestrator {
     const entry = reservation.entry;
     if (!entry) return null;
     try {
-      const record = await this.#backend.claim(scope, missionId, entry);
+      const record = await this.#backend.claim(scope, missionId, entry, target);
       return { record };
     } catch (error) {
       // Prova falhou (identidade/HEAD divergiu): descarta e cai no caminho atual.
@@ -240,10 +249,11 @@ export class IsolatedWriterPoolOrchestrator {
       await new Promise((resolve) => setImmediate(resolve));
       try {
         const inMemory = new Set(
-          this.#pool.entriesFor(scopeKey).map((entry) => entry.worktreePath),
+          this.#pool.entriesFor(scopeKey).map((entry) => path.resolve(entry.worktreePath).toLowerCase()),
         );
         for (const orphan of await this.#backend.listPooledWorktrees(scope)) {
-          if (inMemory.has(orphan.worktreePath)) continue;
+          const resolvedOrphan = path.resolve(orphan.worktreePath);
+          if (inMemory.has(resolvedOrphan.toLowerCase())) continue;
           try {
             await this.#backend.remove(scope, {
               scopeKey,
@@ -313,9 +323,11 @@ export function createRealIsolatedWriterPoolBackend(): IsolatedWriterPoolBackend
       });
       return entry;
     },
-    async claim(scope, missionId, entry) {
+    async claim(scope, missionId, entry, target) {
       return requireWorktreeRuntimeRegistry().claimPooledPaneWriter(scope, missionId, {
-        workerId: randomUUID(),
+        workerId: target?.workerId ?? randomUUID(),
+        taskId: target?.taskId,
+        ownership: target?.ownership,
         worktreePath: entry.worktreePath,
         branchRef: entry.branchRef,
         baseSha: entry.baseSha,
@@ -337,7 +349,7 @@ export function createRealIsolatedWriterPoolBackend(): IsolatedWriterPoolBackend
         const branchRef = lines
           .find((line) => line.startsWith('branch '))?.slice('branch '.length) ?? '';
         if (worktreePath && branchRef.startsWith(POOL_BRANCH_REF_PREFIX)) {
-          found.push({ worktreePath, branchRef });
+          found.push({ worktreePath: path.resolve(worktreePath), branchRef });
         }
       }
       return found;
@@ -358,10 +370,14 @@ export function requireIsolatedWriterPool(): IsolatedWriterPoolOrchestrator {
 }
 
 /** Testes: recria o orquestrador com um backend injetado. */
-export function resetIsolatedWriterPoolForTests(backend?: IsolatedWriterPoolBackend): void {
+export function resetIsolatedWriterPoolForTests(
+  backend?: IsolatedWriterPoolBackend,
+  options: { readonly enabled?: () => boolean } = { enabled: () => true },
+): void {
   orchestrator = backend
-    ? new IsolatedWriterPoolOrchestrator(backend, { enabled: () => true })
+    ? new IsolatedWriterPoolOrchestrator(backend, options)
     : undefined;
+  orchestratorGeneration = worktreeRuntimeRegistryGeneration();
 }
 
 export function shutdownIsolatedWriterPool(): Promise<void> {

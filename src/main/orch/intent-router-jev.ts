@@ -197,8 +197,34 @@ export async function routeWithJev(
   if (!result) return null;
 
   const kindAnswer = result.answers.kind;
-  if (kindAnswer?.type !== 'choice') return null;
-  if (kindAnswer.confidence < KIND_MIN_CONFIDENCE) return null;
+  if (kindAnswer?.type !== 'choice') {
+    recordJevDecision({
+      surface: 'intake',
+      missionId: deps.missionId,
+      model: result.model,
+      questions: Object.keys(questions),
+      probabilities: jevAnswerProbabilities(result.answers),
+      confidence: jevAnswerConfidences(result.answers),
+      decision: 'fallback:bad-kind',
+      ...decisionResultUsage(result),
+      optimization: { llmRoutingBypassed: true },
+    });
+    return null;
+  }
+  if (kindAnswer.confidence < KIND_MIN_CONFIDENCE) {
+    recordJevDecision({
+      surface: 'intake',
+      missionId: deps.missionId,
+      model: result.model,
+      questions: Object.keys(questions),
+      probabilities: jevAnswerProbabilities(result.answers),
+      confidence: jevAnswerConfidences(result.answers),
+      decision: 'fallback:low-confidence',
+      ...decisionResultUsage(result),
+      optimization: { llmRoutingBypassed: true },
+    });
+    return null;
+  }
 
   const complexityAnswer = result.answers.complexity;
   const complexity =

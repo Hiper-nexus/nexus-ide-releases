@@ -165,7 +165,8 @@ export interface BrowserPageJudgment {
 export type BrowserJudgmentSkipped =
   | 'surface-disabled'
   | 'no-credential'
-  | 'judge-unavailable';
+  | 'judge-unavailable'
+  | 'budget-exceeded';
 
 /** Bounded candidate pool returned by the page-side `extract_candidates`. */
 export interface BrowserExtractCandidates {
