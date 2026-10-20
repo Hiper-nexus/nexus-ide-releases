@@ -12171,7 +12171,7 @@ export const RELEASE_076352: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076353: AppRelease = {
   version: '0.76.353',
   date: '2026-10-20',
   codename: 'Flash no desktop',
@@ -12195,4 +12195,18 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076353: AppRelease = CURRENT_RELEASE;
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.354',
+  date: '2026-10-20',
+  codename: 'Cotas na barra',
+  summary: 'O cabeçalho do Nexus mostra as contas de IA mais usadas, com logo, porcentagem e tempo até o reset, sempre à vista. Windows x64, assinado pelo YubiKey.',
+  highlights: [
+    { title: 'Cotas na barra', detail: 'As 5 contas que mais consomem aparecem no cabeçalho com a logo do provedor, a porcentagem da janela mais gasta e o tempo até o reset. Com mais de uma conta do mesmo provedor, a logo ganha um número. Clicar abre Uso e cotas.' },
+    { title: 'Só o que foi medido', detail: 'Conta sem leitura real não aparece na faixa, e a faixa nunca mostra 0% inventado.' },
+  ],
+  fixes: [
+    ...RELEASE_076353.fixes,
+  ],
+};
+
+export const RELEASE_076354: AppRelease = CURRENT_RELEASE;

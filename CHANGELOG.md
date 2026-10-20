@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.354 — Cotas na barra
+
+Windows x64, assinado pelo YubiKey (HIPERSEND). Em relação à 0.76.353:
+
+- **Cotas na barra.** O cabeçalho mostra as 5 contas mais usadas: logo miniatura, porcentagem da janela mais gasta e tempo até o reset. Com mais de uma conta do mesmo provedor, a logo ganha um número. Clicar abre Uso e cotas. Conta sem leitura real não aparece, nunca como 0%.
+
 ## 0.76.353 — Flash no desktop
 
 Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
