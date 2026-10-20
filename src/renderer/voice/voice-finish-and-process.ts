@@ -131,6 +131,8 @@ import type { VoiceCapture, AutoStopOptions } from './voice-capture';
 import { noticeMuffledMic } from './speech-quality';
 import { useToastStore } from '../state/toast-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
+import { useLayoutStore } from '../state/layout-store';
+import { routePromptFailureMessage } from './route-prompt-failure';
 import type { TranscribeResult } from '../../shared/voice-ipc';
 import {
   filteredLiveRescueTranscript,
@@ -1288,7 +1290,7 @@ export async function finishAndProcess(
     store.setStatus('routing');
     const paneId = await routePrompt(transcript);
     if (!paneId) {
-      store.setError('No focused pane to route the prompt into.');
+      store.setError(routePromptFailureMessage(Boolean(useLayoutStore.getState().focusedPaneId)));
       return;
     }
 
