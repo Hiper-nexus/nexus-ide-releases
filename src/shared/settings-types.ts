@@ -161,6 +161,8 @@ export const orchSettingsSchema = z.object({
       missionPick: z.boolean().default(true),
       /** F-757: agentes e instruções do Marketplace recomendados para a stack do projeto. */
       catalogPick: z.boolean().default(true),
+      /** Qual kit de UI (shadcn/BoardUI) e qual item servem a tarefa — ou nenhum. */
+      uiKitPick: z.boolean().default(true),
       /** Motor (06/10): julgamento do momentum da missão (preso vs gate longo). */
       missionMomentum: z.boolean().default(true),
       /** F-1166: complexidade, workers e lane sugeridos no início da missão (consultivo). */

@@ -49,7 +49,7 @@ export const SECURITY_ENSEMBLE_SURFACES: ReadonlySet<JevDecisionSurface> = new S
  * viaja na superfície taskRouting; não há superfície própria.
  */
 export const REVERSIBLE_ENSEMBLE_SURFACES: ReadonlySet<JevDecisionSurface> = new Set<JevDecisionSurface>([
-  'taskRouting', 'missionPick', 'catalogPick',
+  'taskRouting', 'missionPick', 'catalogPick', 'uiKitPick',
 ]);
 
 /**

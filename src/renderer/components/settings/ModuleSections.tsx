@@ -409,6 +409,7 @@ export function SquadsSection() {
     businessModel: true,
     missionPick: true,
     catalogPick: true,
+    uiKitPick: true,
     missionMomentum: true,
     missionKickoff: true,
     reviewTriage: true,
@@ -445,6 +446,7 @@ export function SquadsSection() {
         businessModel: o.jevSurfaces?.businessModel !== false,
         missionPick: o.jevSurfaces?.missionPick !== false,
         catalogPick: o.jevSurfaces?.catalogPick !== false,
+        uiKitPick: o.jevSurfaces?.uiKitPick !== false,
         missionMomentum: o.jevSurfaces?.missionMomentum !== false,
         missionKickoff: o.jevSurfaces?.missionKickoff !== false,
         reviewTriage: o.jevSurfaces?.reviewTriage !== false,
@@ -896,6 +898,10 @@ export function SquadsSection() {
               [
                 'catalogPick',
                 'Marketplace (agentes e instruções recomendados para a stack do projeto)',
+              ],
+              [
+                'uiKitPick',
+                'Kit de UI (shadcn ou BoardUI, qual componente — e se o kit serve a tarefa)',
               ],
               [
                 'missionMomentum',
