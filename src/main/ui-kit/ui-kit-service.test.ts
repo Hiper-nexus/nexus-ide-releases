@@ -190,6 +190,29 @@ describe('runShadcnCommand', () => {
     expect(h.cliRuns[0]?.extraEnv).toEqual({ ACME_REGISTRY_TOKEN: 'tok-abc' });
   });
 
+  it('a search never writes the project config', async () => {
+    // The catalog tool is classified read-only; declaring a namespace writes
+    // components.json, so it may only happen on a command that already
+    // changes the project.
+    const h = harness({ registries: [PRIVATE_REGISTRY] });
+    h.vault.set('external:ui-kit-registry-acme', 'tok-abc');
+
+    await runShadcnCommand(
+      { command: { kind: 'search', registries: ['@shadcn', '@acme'] }, cwd },
+      h.deps,
+    );
+
+    expect(fs.existsSync(path.join(cwd, 'components.json'))).toBe(false);
+  });
+
+  it('a view never writes the project config either', async () => {
+    const h = harness({ registries: [PRIVATE_REGISTRY] });
+
+    await runShadcnCommand({ command: { kind: 'view', items: ['@acme/auth'] }, cwd }, h.deps);
+
+    expect(fs.existsSync(path.join(cwd, 'components.json'))).toBe(false);
+  });
+
   it('reports a non-zero exit as not ok', async () => {
     const h = harness({ cli: () => ({ code: 1, stderr: 'boom' }) });
 

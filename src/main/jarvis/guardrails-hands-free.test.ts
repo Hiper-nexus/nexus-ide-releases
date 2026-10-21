@@ -404,6 +404,16 @@ describe('contrato com o registro real de tools', () => {
   const DECIDED_BY_COMMAND = new Set(['nexus_terminal_run', 'nexus_bg_run']);
   const KEEPS_MODAL = new Set([
     'nexus_agent_spec_write',
+    // Kits de UI: `catalog` e `source` são leitura (classificados em
+    // mcp-effect-policy) e nem chegam aqui. Os quatro abaixo escrevem no
+    // projeto E rodam um install do gerenciador de pacotes, ou seja executam
+    // script de postinstall vindo do npm — efeito grande demais para a voz
+    // disparar sem o operador ver. `run` inclui init/migrate (codemod no
+    // projeto) e `boardui` mexe no estado da licença da máquina.
+    'nexus_ui_kit_add',
+    'nexus_ui_kit_recipe',
+    'nexus_ui_kit_run',
+    'nexus_ui_kit_boardui',
     'nexus_audio_generate',
     'nexus_catalog_install',
     'nexus_catalog_overlay',

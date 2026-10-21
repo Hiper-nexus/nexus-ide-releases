@@ -192,7 +192,14 @@ export async function runShadcnCommand(
   const needed = registries.filter((registry) =>
     referenced.includes(registry.namespace),
   );
-  if (needed.length > 0) ensureProjectRegistries(input.cwd, needed);
+  // Declaring our namespaces writes the project's components.json, so it only
+  // happens for a command that was already going to change the project. A
+  // SEARCH that quietly edited project config would not be a read, and the
+  // catalog tool is classified read-only precisely because it is one: an
+  // undeclared namespace comes back in `unmappedRegistries` instead.
+  if (needed.length > 0 && shadcnCommandWrites(input.command)) {
+    ensureProjectRegistries(input.cwd, needed);
+  }
   const components = readComponentsJson(input.cwd);
   const { env, missing, conflicts, unmapped, hijacked } = buildScopedRegistryEnv({
     registries,
