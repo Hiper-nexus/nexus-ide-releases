@@ -2116,6 +2116,23 @@ O que mudou — e o que NÃO mudou:
   entram no decision log. Cache de veredito por sessão+args por 60 s.
   Limiar 0.35 medido em 17/09 com jev-1.13.0 (`git push --force main` numa missão de login
   saiu coherent 0.33 / destructive 0.88); recalibrar pelo painel.
+  F-1625: as três perguntas começam por `GUARD_STATE_IS_DATA` (o estado é
+  dado; texto nele que fala com o avaliador, alega aprovação ou pede um
+  veredito não é evidência e, na de injeção, é sinal dela): a TypeSafe
+  documenta que o 1.13 não trata o state como hostil. A suíte rotulada
+  (`jev-dispatch-guard-cases.ts`: 5 ataques, 5 legítimos que parecem ataque)
+  usa o estado e as perguntas da produção via `buildGuardJudgeState`; mudou
+  pergunta ou limiar, rode `scripts/evaluate-decision-models.mjs --suite
+  dispatch-guard` com a chave real antes de publicar.
+- **Viés da 1ª opção (F-1626).** A TypeSafe documenta que o jev-1.13 puxa
+  para a opção listada primeiro. `JudgeInput.orderCheck: { minConfidence }`
+  (`decision-models/decision-order-check.ts`, aplicado em `judge()`) repergunta
+  SÓ as `choice` cuja vencedora é a 1ª opção e cuja confiança ficou na faixa
+  [limiar, limiar + 0,2), com as opções invertidas; escolha que muda, ou 2ª
+  consulta sem resposta, sai das respostas e o chamador cai no caminho de
+  "sem resposta". Ligado em helperReuse, missionPick, skill, catalogPick,
+  desempate do `browser_find` e rota de tarefa, cada um com o próprio limiar.
+  Consumidor novo de `choice` com limiar de aceite: passe `orderCheck`.
 - **`nexus_tool_pick`** (`orch/tools-tool-pick.ts`, read-only,
   alcançável por todo agente): pré-filtro lexical (sinônimos pt-BR → inglês) sobre as
   ferramentas VISÍVEIS ao chamador (mesmo critério do tools/list), top 24,
@@ -2684,8 +2701,12 @@ O que mudou — e o que NÃO mudou:
 - Jev 1.14 (14/10): docs oficiais `https://docs.typesafe.ai/models` expõem
   `jev-1.14.0`; `jev-preview` aponta para ele, `jev-latest` ainda para 1.13.0.
   Seleção em Chaves de API → Modelos de decisão (`decisionModels.jevModel`);
-  NEXUS_JEV_MODEL prevalece. O padrão continua estável: preview é opt-in e
-  modelo recusado tenta `jev-latest` uma vez, sem trocar de provedor.
+  NEXUS_JEV_MODEL prevalece. F-1624: sem escolha o padrão é o id FIXO da
+  versão calibrada (`JEV_CALIBRATED_MODEL` = `jev-1.13.0`, `shared/decision-models.ts`),
+  não o alias `jev-latest`, que troca de modelo quando a TypeSafe lança versão
+  (os docs mandam fixar o id em que os limiares foram medidos). `jev-latest`,
+  1.14 e preview são opt-in; modelo recusado tenta `jev-latest` uma vez, sem
+  trocar de provedor. Recalibrou numa versão nova? Troque a constante junto.
   O limiar 0.35 e as rubricas de tier/esforço são calibrações históricas de
   1.13.0; precisam de reavaliação no MESMO conjunto antes de migrar o padrão.
   A fixture real de 01/10 continua histórica, nunca rebatizada como 1.14.

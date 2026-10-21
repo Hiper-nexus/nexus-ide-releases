@@ -6,7 +6,7 @@
  * explícito, então só roda de fato no Automático (nos modos fixos a rota do
  * modelo pedido é nula e a observação conta como indisponível).
  */
-import { LUNA_DECISION_MODEL, type DecisionProvider } from '../../shared/decision-models';
+import { JEV_CALIBRATED_MODEL, LUNA_DECISION_MODEL, type DecisionProvider } from '../../shared/decision-models';
 import type { DecisionCalibrationModelResult, DecisionCalibrationPlanModel } from '../../shared/decision-engine-ui';
 import type { JevResult, JudgeInput } from '../jev/jev-client';
 import { recordJevDecision } from '../jev/jev-decision-log';
@@ -100,7 +100,7 @@ export function estimateCalibration(
   const tokens = cases.reduce((sum, testCase) => sum + estimateDecisionInputTokens(
     { state: testCase.state, questions: testCase.questions, images: testCase.images }), 0);
   return DECISION_EVAL_MODELS.map(model => {
-    const routeModel = model === 'luna' ? LUNA_DECISION_MODEL : model === 'jev' ? 'jev-latest' : model;
+    const routeModel = model === 'luna' ? LUNA_DECISION_MODEL : model === 'jev' ? JEV_CALIBRATED_MODEL : model;
     return { model, available: available.includes(model), estimatedTokens: tokens,
       estimatedUsd: estimateDecisionCostUsd(tokens, providerOf(model), routeModel),
       measuredAt: decisionQualityMeasuredAt(current, model) };

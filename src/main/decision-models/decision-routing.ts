@@ -1,10 +1,10 @@
-import { CLEF_MODELS, hasVisionRecipientConsent, LUNA_DECISION_MODEL, visionRecipientsForMode, type DecisionProvider, type DecisionRoute, type DecisionSettings, type ClefModel } from '../../shared/decision-models';
+import { CLEF_MODELS, hasVisionRecipientConsent, JEV_CALIBRATED_MODEL, LUNA_DECISION_MODEL, visionRecipientsForMode, type DecisionProvider, type DecisionRoute, type DecisionSettings, type ClefModel } from '../../shared/decision-models';
 import type { JudgeInput } from '../jev/jev-client';
 import type { JevDecisionSurface } from '../jev/jev-decision-log';
 
 export interface DecisionAvailability { jev: boolean; clef: boolean; luna?: boolean }
 export function jevModel(settings: DecisionSettings): string {
-  return process.env.NEXUS_JEV_MODEL ?? settings.jevModel ?? 'jev-latest';
+  return process.env.NEXUS_JEV_MODEL ?? settings.jevModel ?? JEV_CALIBRATED_MODEL;
 }
 type RouteInput = Pick<JudgeInput, 'surface' | 'model' | 'images'>;
 
