@@ -32,7 +32,11 @@ export function initializeAdsConsent(win = window, doc = document) {
     const saved = JSON.parse(win.localStorage.getItem(CONSENT_KEY));
     if (['granted', 'denied'].includes(saved?.choice) && Number.isFinite(saved.expiresAt) && saved.expiresAt > Date.now()) choice = saved.choice;
   } catch { /* Sem armazenamento ou escolha válida, nenhum recurso Google carrega. */ }
-  try { if (win.sessionStorage.getItem(REVOCATION_KEY) === '1') choice = 'denied'; }
+  try {
+    if (win.sessionStorage.getItem(REVOCATION_KEY) === '1') choice = 'denied';
+    // Prova que a salvaguarda pode ser gravada antes de reutilizar um aceite antigo.
+    else if (choice === 'granted') win.sessionStorage.setItem(REVOCATION_KEY, '0');
+  }
   catch {
     // Sem acesso à salvaguarda de revogação, não confiar em um aceite persistido.
     if (choice === 'granted') choice = null;
