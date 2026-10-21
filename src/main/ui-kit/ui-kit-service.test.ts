@@ -8,6 +8,7 @@ import { readCachedItem, writeCachedItem } from './ui-kit-cache';
 import type { UiKitRegistry } from './ui-kit-registry';
 import {
   activateBoardUiLicense,
+  readsAsActiveLicense,
   ensureProjectRegistries,
   readComponentsJson,
   boardUiCandidates,
@@ -416,6 +417,15 @@ describe('the BoardUI licence', () => {
     expect(status.masked).not.toContain('SECRET');
   });
 
+  it('reads "Invalid license" as NOT active', async () => {
+    // `invalid` contains `valid`: a substring test marked an unusable key as
+    // active, and the failure only surfaced at install time.
+    const h = harness({ mcp: () => ({ text: 'Invalid license key' }) });
+    h.vault.set(BOARDUI_LICENSE_SECRET, 'BUI-BAD');
+
+    expect((await boardUiLicenseStatus({ cwd }, h.deps)).state).toBe('absent');
+  });
+
   it('reads an absent licence', async () => {
     const h = harness({ mcp: () => ({ text: 'No license found' }) });
 
@@ -601,5 +611,94 @@ describe('ensureProjectRegistries', () => {
 
     expect(result.wrote).toEqual([]);
     expect(result.conflicts).toEqual([]);
+  });
+});
+
+describe('readsAsActiveLicense', () => {
+  it.each([
+    'pro license active',
+    'license is valid',
+    'licensed to you (••••1234)',
+  ])('accepts %s', (text) => {
+    expect(readsAsActiveLicense(text)).toBe(true);
+  });
+
+  it.each([
+    'invalid license key',
+    'license not valid',
+    'no license found',
+    'license inactive',
+    'license expired',
+    'license revoked',
+    'unlicensed',
+    'not licensed',
+    'license deactivated',
+    'license not found',
+  ])('refuses %s', (text) => {
+    expect(readsAsActiveLicense(text)).toBe(false);
+  });
+
+  it('does not accept a word that merely contains the token', () => {
+    // `invalidated` / `validation` must not read as active.
+    expect(readsAsActiveLicense('license validation failed')).toBe(false);
+    expect(readsAsActiveLicense('seat invalidated')).toBe(false);
+  });
+});
+
+describe('the Pro gate on a direct install', () => {
+  it('refuses a named Pro item and says which one needs the key', async () => {
+    const h = harness({ mcp: () => ({ text: 'No license found' }) });
+
+    const result = await installItems(
+      { kit: 'boardui', items: ['finance-dashboard', 'button'], cwd },
+      h.deps,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.needsLicense).toEqual(['finance-dashboard']);
+    expect(result.licenseState).toBe('absent');
+    expect(result.stderr).toMatch(/Settings → UI kits/);
+    // Nothing ran: the refusal is before the vendor.
+    expect(h.cliRuns).toHaveLength(0);
+  });
+
+  it('installs the Pro item once the licence is active', async () => {
+    const h = harness({ mcp: () => ({ text: 'Pro license active' }) });
+
+    const result = await installItems(
+      { kit: 'boardui', items: ['finance-dashboard'], cwd },
+      h.deps,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(h.cliRuns[0]?.args).toEqual(['add', 'finance-dashboard', '--yes']);
+  });
+
+  it('never probes the licence for free items', async () => {
+    const h = harness();
+
+    await installItems({ kit: 'boardui', items: ['button', 'sidebar'], cwd }, h.deps);
+
+    expect(h.mcpCalls).toHaveLength(0);
+    expect(h.cliRuns).toHaveLength(1);
+  });
+});
+
+describe('the cwd guard runs before the project config is touched', () => {
+  it('leaves components.json untouched when the run will be refused', async () => {
+    // A checkout whose node_modules is a shared symlink: the install is
+    // refused, and editing the project's config for a run that never happens
+    // is the worst of both.
+    writeComponentsJson({ style: 'new-york' });
+    fs.symlinkSync(path.join(dir, 'shared-modules'), path.join(cwd, 'node_modules'));
+    fs.mkdirSync(path.join(dir, 'shared-modules'));
+    const before = fs.readFileSync(path.join(cwd, 'components.json'), 'utf8');
+    const h = harness({ registries: [PRIVATE_REGISTRY] });
+
+    await expect(
+      runShadcnCommand({ command: { kind: 'add', items: ['@acme/auth'] }, cwd }, h.deps),
+    ).rejects.toThrow(/node_modules is a symlink/);
+
+    expect(fs.readFileSync(path.join(cwd, 'components.json'), 'utf8')).toBe(before);
   });
 });

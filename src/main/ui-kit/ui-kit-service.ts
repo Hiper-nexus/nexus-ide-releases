@@ -3,6 +3,7 @@ import path from 'node:path';
 import { writeFileAtomic } from '../util/atomic-write';
 import {
   assertPathStaysInProject,
+  assertSafeUiKitCwd,
   runUiKitCli,
   UiKitCliError,
   type UiKitCliRunner,
@@ -186,6 +187,9 @@ export interface UiKitRunResult {
    * another entry in the project's file references the token's variable.
    */
   readonly withheldRegistries?: readonly string[];
+  /** BoardUI Pro items the run refused because no licence is active. */
+  readonly needsLicense?: readonly string[];
+  readonly licenseState?: BoardUiLicenseState;
 }
 
 export const COMPONENTS_JSON = 'components.json';
@@ -283,6 +287,11 @@ export async function runShadcnCommand(
   // catalog tool is classified read-only precisely because it is one: an
   // undeclared namespace comes back in `unmappedRegistries` instead.
   if (needed.length > 0 && shadcnCommandWrites(input.command)) {
+    // The cwd guard BEFORE the write. `runUiKitCli` checks it too, but only
+    // after this point: in a checkout whose node_modules is a shared symlink
+    // the run is refused, and leaving the project's components.json edited by
+    // a run that never happened is the worst of both.
+    assertSafeUiKitCwd(input.cwd, { writes: true });
     ensureProjectRegistries(input.cwd, needed);
   }
   const components = readComponentsJson(input.cwd);
@@ -421,6 +430,38 @@ export async function callBoardUiTool(
   };
 }
 
+/**
+ * Negative states FIRST, and the positive token only on a word boundary.
+ *
+ * `'Invalid license'` contains `valid`, so a substring test read an unusable
+ * key as ACTIVE — and a Pro recipe was then selected with it, moving the
+ * failure to install time where nobody could explain it.
+ */
+const LICENSE_NEGATIVE_PHRASES = [
+  'invalid',
+  'not valid',
+  'no valid',
+  'not active',
+  'inactive',
+  'no license',
+  'no licence',
+  'not licensed',
+  'unlicensed',
+  'expired',
+  'revoked',
+  'deactivated',
+  'not found',
+] as const;
+
+const LICENSE_POSITIVE_PATTERN = /\b(active|valid|licensed|licenced)\b/;
+
+export function readsAsActiveLicense(lowercaseText: string): boolean {
+  for (const phrase of LICENSE_NEGATIVE_PHRASES) {
+    if (lowercaseText.includes(phrase)) return false;
+  }
+  return LICENSE_POSITIVE_PATTERN.test(lowercaseText);
+}
+
 export type BoardUiLicenseState = 'active' | 'absent' | 'unknown';
 
 export interface BoardUiLicenseStatus {
@@ -450,13 +491,7 @@ export async function boardUiLicenseStatus(
       { tool: 'license_status', cwd: input.cwd, ...(input.signal ? { signal: input.signal } : {}) },
       deps,
     );
-    const text = result.text.toLowerCase();
-    const active =
-      !result.isError &&
-      (text.includes('active') || text.includes('valid') || text.includes('licensed')) &&
-      !text.includes('not active') &&
-      !text.includes('no license') &&
-      !text.includes('inactive');
+    const active = !result.isError && readsAsActiveLicense(result.text.toLowerCase());
     return {
       state: active ? 'active' : 'absent',
       masked,
@@ -746,6 +781,34 @@ export async function installItems(
   deps: UiKitServiceDeps = {},
 ): Promise<UiKitRunResult> {
   if (input.kit === 'boardui') {
+    // The Pro gate on the DIRECT path. It used to live only in the
+    // recommendation and the recipe, so `nexus_ui_kit_add` with
+    // `finance-dashboard` and no licence went straight to the vendor and came
+    // back with a generic failure: no named item, no `needsLicense`.
+    //
+    // A direct install NAMES its items, so this refuses instead of
+    // substituting — swapping an item the caller asked for by name would be
+    // the surprise. Substitution belongs to the recipe, which picks for you.
+    const proItems = input.items.filter((item) => boardUiTierOf(item) === 'pro');
+    if (proItems.length > 0) {
+      const license = await boardUiLicenseStatus(
+        { cwd: input.cwd, ...(input.signal ? { signal: input.signal } : {}) },
+        deps,
+      );
+      if (license.state !== 'active') {
+        return {
+          ok: false,
+          stdout: '',
+          stderr:
+            `BoardUI Pro licence required for: ${proItems.join(', ')}. ` +
+            'Store it in Settings → UI kits; the free items need no key.',
+          code: null,
+          missingRegistryKeys: [],
+          needsLicense: proItems,
+          licenseState: license.state,
+        };
+      }
+    }
     return await runBoardUiCommand(
       {
         command: {

@@ -150,11 +150,23 @@ export interface UiKitLicenseView {
   readonly detail?: string;
 }
 
+export interface UiKitKnownRegistryView {
+  readonly namespace: string;
+  readonly label: string;
+  readonly url: string;
+  readonly site: string;
+  readonly note: string;
+  /** True when this namespace is already configured. */
+  readonly configured: boolean;
+}
+
 export interface UiKitStatusView {
   /** Absent when no project is open: nothing can be installed. */
   readonly workspaceOpen: boolean;
   readonly license: UiKitLicenseView;
   readonly registries: readonly UiKitRegistryView[];
+  /** Vendors whose registry shape ships with Nexus; the token never does. */
+  readonly knownRegistries: readonly UiKitKnownRegistryView[];
   readonly recipes: readonly UiKitRecipeView[];
   readonly cache: Readonly<Record<UiKitIdValue, { items: number; bytes: number }>>;
   /** Free item counts, so the panel can say what works with no key. */

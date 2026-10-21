@@ -45,6 +45,10 @@ export function UiKitSection() {
   const [loadingCatalog, setLoadingCatalog] = useState(false);
   const [licenseKey, setLicenseKey] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
+  const [registryNamespace, setRegistryNamespace] = useState('');
+  const [registryUrl, setRegistryUrl] = useState('');
+  const [registryToken, setRegistryToken] = useState('');
+  const [registryError, setRegistryError] = useState<string | null>(null);
   const [result, setResult] = useState<UiKitInstallView | null>(null);
 
   const refreshStatus = useCallback(async () => {
@@ -112,6 +116,50 @@ export function UiKitSection() {
     try {
       setResult(await window.nexus.uiKit.install({ kit, ...request }));
       await Promise.all([refreshStatus(), loadCatalog(kit, query)]);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /**
+   * Without this the panel only LISTED registries and nothing could add one —
+   * so an operator told "Settings → UI kits" by a `missingRegistryKeys` hint
+   * arrived at a page with no way in.
+   */
+  async function saveRegistry() {
+    const namespace = registryNamespace.trim();
+    const url = registryUrl.trim();
+    if (!namespace || !url) return;
+    setBusy('registry');
+    setRegistryError(null);
+    try {
+      const next = await window.nexus.uiKit.registry({
+        action: 'set',
+        registry: { namespace, url },
+        ...(registryToken.trim() ? { token: registryToken.trim() } : {}),
+      });
+      setStatus(next);
+      const saved = next.registries.some((entry) => entry.namespace === namespace);
+      if (saved) {
+        setRegistryNamespace('');
+        setRegistryUrl('');
+        setRegistryToken('');
+      } else {
+        // Main refuses a URL that is not https, carries credentials, or has no
+        // {name} placeholder — and it answers with the list it already had.
+        setRegistryError(
+          'Não foi possível salvar. A URL precisa ser https, conter {name} e não levar usuário/senha.',
+        );
+      }
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function removeRegistry(namespace: string) {
+    setBusy(`registry:${namespace}`);
+    try {
+      setStatus(await window.nexus.uiKit.registry({ action: 'remove', namespace }));
     } finally {
       setBusy(null);
     }
@@ -361,32 +409,105 @@ export function UiKitSection() {
         </button>
       </div>
 
-      {(status?.registries.length ?? 0) > 0 && (
-        <>
-          <h3 className="settings-subheading">Registries</h3>
-          <ul className="settings-list">
-            {(status?.registries ?? []).map((registry) => (
-              <li key={registry.namespace} className="settings-list__item">
-                <div className="settings-list__head">
-                  <span className="settings-list__title">{registry.namespace}</span>
-                  {registry.requiresToken && (
-                    <span
-                      className={
-                        registry.tokenStored
-                          ? 'settings-chip settings-chip--ok'
-                          : 'settings-chip'
-                      }
-                    >
-                      {registry.tokenStored ? 'token guardado' : 'sem token'}
-                    </span>
-                  )}
-                </div>
-                <p className="settings-list__detail">{registry.url}</p>
-              </li>
-            ))}
-          </ul>
-        </>
+      <h3 className="settings-subheading">Registries</h3>
+      <p className="settings-help">
+        Um kit pago que seja distribuído como registry do shadcn entra aqui: o
+        namespace, a URL com <code>{'{name}'}</code> e, se for privado, o token.
+        O token fica no cofre — o que vai para o <code>components.json</code> do
+        projeto é só o NOME da variável.
+      </p>
+      {(status?.knownRegistries ?? []).length > 0 && (
+        <div className="settings-row">
+          {(status?.knownRegistries ?? []).map((known) => (
+            <button
+              key={known.namespace}
+              type="button"
+              className="settings-btn"
+              title={`${known.note} — ${known.site}`}
+              onClick={() => {
+                setRegistryNamespace(known.namespace);
+                setRegistryUrl(known.url);
+                setRegistryError(null);
+              }}
+            >
+              {known.configured ? `${known.label} ✓` : known.label}
+            </button>
+          ))}
+        </div>
       )}
+      <div className="settings-row">
+        <input
+          className="settings-input"
+          value={registryNamespace}
+          placeholder="@meukit"
+          aria-label="Namespace do registry"
+          onChange={(event) => setRegistryNamespace(event.target.value)}
+        />
+        <input
+          className="settings-input"
+          value={registryUrl}
+          placeholder="https://registry.exemplo.com/r/{name}.json"
+          aria-label="URL do registry"
+          onChange={(event) => setRegistryUrl(event.target.value)}
+        />
+        <input
+          className="settings-input"
+          type="password"
+          autoComplete="off"
+          value={registryToken}
+          placeholder="Token (se for privado)"
+          aria-label="Token do registry"
+          onChange={(event) => setRegistryToken(event.target.value)}
+        />
+        <button
+          type="button"
+          className="settings-btn"
+          disabled={
+            busy !== null ||
+            registryNamespace.trim().length === 0 ||
+            registryUrl.trim().length === 0
+          }
+          onClick={() => void saveRegistry()}
+        >
+          {busy === 'registry' ? 'Salvando…' : 'Adicionar'}
+        </button>
+      </div>
+      {registryError && (
+        <div className="mkt-notice mkt-notice--danger" role="alert">
+          <p>{registryError}</p>
+        </div>
+      )}
+      <ul className="settings-list">
+        {(status?.registries ?? []).map((registry) => (
+          <li key={registry.namespace} className="settings-list__item">
+            <div className="settings-list__head">
+              <span className="settings-list__title">{registry.namespace}</span>
+              {registry.requiresToken && (
+                <span
+                  className={
+                    registry.tokenStored
+                      ? 'settings-chip settings-chip--ok'
+                      : 'settings-chip'
+                  }
+                >
+                  {registry.tokenStored ? 'token guardado' : 'sem token'}
+                </span>
+              )}
+            </div>
+            <p className="settings-list__detail">{registry.url}</p>
+            <div className="settings-row">
+              <button
+                type="button"
+                className="settings-btn"
+                disabled={busy !== null}
+                onClick={() => void removeRegistry(registry.namespace)}
+              >
+                {busy === `registry:${registry.namespace}` ? 'Removendo…' : 'Remover'}
+              </button>
+            </div>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }

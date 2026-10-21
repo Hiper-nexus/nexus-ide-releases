@@ -12,6 +12,16 @@ function status(over: Partial<UiKitStatusView> = {}): UiKitStatusView {
     workspaceOpen: true,
     license: { state: 'absent', stored: false, masked: null },
     registries: [],
+    knownRegistries: [
+      {
+        namespace: '@shadcnuikit',
+        label: 'Shadcn UI Kit',
+        url: 'https://shadcnuikit.com/r/{name}.json',
+        site: 'https://shadcnuikit.com',
+        note: 'Admin dashboards, blocks and templates.',
+        configured: false,
+      },
+    ],
     recipes: [
       {
         id: 'super-admin',
@@ -185,6 +195,57 @@ it('survives a rejected status without leaking transport detail', async () => {
   try {
     expect(host.textContent).not.toContain('private transport detail');
     expect(host.textContent).toContain('Kits de UI');
+  } finally {
+    act(() => root.unmount());
+  }
+});
+
+it('offers a known paid registry as a prefill, and never a key', async () => {
+  // The configuration ships; the token does not. A key embedded in the app
+  // would be published to everyone who unpacks it.
+  const uiKit = api();
+  const { host, root } = await mount();
+  try {
+    const prefill = [...host.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('Shadcn UI Kit'),
+    );
+    expect(prefill).toBeTruthy();
+    await act(async () => prefill!.click());
+
+    const inputs = [...host.querySelectorAll('input')];
+    expect(inputs.some((i) => i.value === '@shadcnuikit')).toBe(true);
+    expect(inputs.some((i) => i.value.includes('shadcnuikit.com/r/'))).toBe(true);
+    // Nothing was saved by the prefill alone, and no token was invented.
+    expect(uiKit.registry).not.toHaveBeenCalled();
+    expect(host.textContent).not.toMatch(/suk-|Bearer /);
+  } finally {
+    act(() => root.unmount());
+  }
+});
+
+it('adds a registry with the operator own token', async () => {
+  const uiKit = api();
+  const { host, root } = await mount();
+  try {
+    const inputs = [...host.querySelectorAll('input')];
+    const ns = inputs.find((i) => i.getAttribute('aria-label') === 'Namespace do registry');
+    const url = inputs.find((i) => i.getAttribute('aria-label') === 'URL do registry');
+    const token = inputs.find((i) => i.getAttribute('aria-label') === 'Token do registry');
+    await act(async () => {
+      typeInto(ns!, '@meukit');
+      typeInto(url!, 'https://meukit.test/r/{name}.json');
+      typeInto(token!, 'tok-do-operador');
+    });
+    const save = [...host.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Adicionar',
+    );
+    await act(async () => save!.click());
+
+    expect(uiKit.registry).toHaveBeenCalledWith({
+      action: 'set',
+      registry: { namespace: '@meukit', url: 'https://meukit.test/r/{name}.json' },
+      token: 'tok-do-operador',
+    });
   } finally {
     act(() => root.unmount());
   }

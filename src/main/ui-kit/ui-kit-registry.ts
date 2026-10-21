@@ -51,6 +51,47 @@ export interface UiKitRegistry {
   readonly label?: string;
 }
 
+/**
+ * Registries we know the shape of, offered as a one-click prefill.
+ *
+ * What ships is CONFIGURATION — the namespace, the public URL and the NAME of
+ * the variable the CLI interpolates. The token is never here: it is the
+ * operator's own licence, it goes in their vault, and a key embedded in the
+ * app would be published to everyone who unpacks it, not shared with them.
+ *
+ * The URL and header shape come from each vendor's own published setup
+ * instructions. The variable name is ours and is per-namespace on purpose: the
+ * vendors all document a bare `REGISTRY_TOKEN`, which would collide the moment
+ * a project uses two paid kits.
+ */
+export interface KnownUiKitRegistry {
+  readonly namespace: string;
+  readonly label: string;
+  readonly url: string;
+  readonly site: string;
+  /** What the operator has to have bought for the token to work. */
+  readonly note: string;
+}
+
+export const KNOWN_UI_KIT_REGISTRIES: readonly KnownUiKitRegistry[] = [
+  {
+    namespace: '@shadcnuikit',
+    label: 'Shadcn UI Kit',
+    url: 'https://shadcnuikit.com/r/{name}.json',
+    site: 'https://shadcnuikit.com',
+    note: 'Admin dashboards, blocks and templates. Paid: paste your own API key.',
+  },
+];
+
+export function findKnownRegistry(namespace: string): KnownUiKitRegistry | null {
+  const value = namespace.trim().toLowerCase();
+  return (
+    KNOWN_UI_KIT_REGISTRIES.find(
+      (entry) => entry.namespace.toLowerCase() === value,
+    ) ?? null
+  );
+}
+
 export function assertRegistryNamespace(raw: string): string {
   const value = raw.trim();
   if (

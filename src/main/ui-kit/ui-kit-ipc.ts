@@ -30,6 +30,7 @@ import {
 import {
   assertRegistry,
   registrySecretKey,
+  KNOWN_UI_KIT_REGISTRIES,
   type UiKitRegistry,
 } from './ui-kit-registry';
 import {
@@ -127,6 +128,14 @@ async function buildStatus(): Promise<UiKitStatusView> {
       tokenStored: Boolean(
         registry.secretKey && vault.getSecret(registry.secretKey),
       ),
+    })),
+    knownRegistries: KNOWN_UI_KIT_REGISTRIES.map((entry) => ({
+      namespace: entry.namespace,
+      label: entry.label,
+      url: entry.url,
+      site: entry.site,
+      note: entry.note,
+      configured: registries.some((r) => r.namespace === entry.namespace),
     })),
     recipes: UI_KIT_RECIPES.map((recipe) => ({
       id: recipe.id,
@@ -233,6 +242,7 @@ export function registerUiKitIpc(): void {
         workspaceOpen: false,
         license: emptyLicense(),
         registries: [],
+        knownRegistries: [],
         recipes: [],
         cache: Object.fromEntries(
           UI_KIT_IDS.map((kit) => [kit, { items: 0, bytes: 0 }]),
@@ -409,10 +419,24 @@ export function registerUiKitIpc(): void {
 
         const input = parsed.data.registry;
         if (!input) return await buildStatus();
+        // The panel sends namespace + URL + token. The auth CONTRACT (header
+        // name and the variable the CLI interpolates) is derived here: the
+        // renderer should not have to invent it, and a token with nowhere to
+        // go would be stored and never used.
+        const auth =
+          input.auth ??
+          (parsed.data.token
+            ? {
+                kind: 'header' as const,
+                name: 'Authorization',
+                envVar: `${input.namespace.replace(/^@/, '').replace(/[^a-zA-Z0-9]+/g, '_').toUpperCase()}_REGISTRY_TOKEN`,
+              }
+            : undefined);
         // Validated here, before anything is persisted: https only, `{name}`
         // present, no credentials in the URL, header/env names well formed.
         const registry = assertRegistry({
           ...input,
+          ...(auth ? { auth } : {}),
           secretKey: registrySecretKey(input.namespace),
         });
         const next = [
