@@ -199,6 +199,34 @@ describe('nexus_ui_kit_source is read-only in fact', () => {
   });
 });
 
+describe('the Jev decides on the EFFECTFUL surface only', () => {
+  it('keeps nexus_ui_kit_add out of the read-only class', async () => {
+    // The whole point of moving the pick to the install path: if this tool
+    // were ever reclassified, the task text would reach a third party from a
+    // reviewer, a readOnly worker or an unconfirmed voice call again. This
+    // asserts the classification itself, not a comment about it.
+    const policy = await import('./mcp-effect-policy');
+
+    expect(policy.effectPolicyForTool('nexus_ui_kit_add')).not.toBe('read-only');
+    expect(policy.isToolAllowedForReadOnlyContext('nexus_ui_kit_add')).toBe(false);
+    // And the two that DO carry the task text offline stay read-only.
+    expect(policy.effectPolicyForTool('nexus_ui_kit_catalog')).toBe('read-only');
+    expect(policy.effectPolicyForTool('nexus_ui_kit_source')).toBe('read-only');
+  });
+
+  it('offers `task` on the install tool and nowhere read-only', () => {
+    const named = (name: string) =>
+      buildUiKitTools().find((entry) => entry.name === name)?.inputSchema as {
+        properties?: Record<string, unknown>;
+      };
+
+    expect(named('nexus_ui_kit_add').properties?.task).toBeTruthy();
+    // The read-only catalogue still takes a `task`, but it answers with the
+    // offline rule — the guard above is what proves it never calls the Jev.
+    expect(named('nexus_ui_kit_source').properties?.task).toBeUndefined();
+  });
+});
+
 describe('the licence lifecycle stays with the operator', () => {
   it('refuses deactivate_license without touching the vendor, and names Settings', async () => {
     // Releasing the licence spends a vendor activation and wipes a key the

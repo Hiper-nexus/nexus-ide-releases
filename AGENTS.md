@@ -2878,9 +2878,23 @@ componente: o agente recebia a paleta e escrevia cada peça à mão. `src/main/u
   fornecedor; cada papel resolve contra o catálogo ao vivo e papel sem item volta
   `unresolved` — nunca preenchido com chute. Palavra-chave mais cedo vence, e
   entre iguais vence o slug mais CURTO.
-- **O Jev decide qual kit e quando** (superfície `uiKitPick`), com heurística
-  própria embaixo que SEMPRE responde offline e sem chave; `source` diz qual das
-  duas respondeu, para heurística nunca passar por julgamento.
+- **O Jev decide qual kit e quando, SÓ na superfície com efeito** (superfície
+  `uiKitPick`). `nexus_ui_kit_add` aceita `task` em vez de `items` e resolve por
+  `resolveInstallTargetForTask`: candidatos do catálogo AO VIVO, portão Pro
+  contra a licença real, e o recibo traz `pick` (quem decidiu, item, motivo,
+  `needsLicense`/`blocked`) sem nunca devolver o texto da tarefa. `items` vence
+  `task` quando os dois vêm, e o recibo diz `taskIgnored`.
+  O `nexus_ui_kit_catalog` com `task` usa `pickUiKitByHeuristic` e responde
+  `offlineRuleOnly` — ele é `read-only` em `mcp-effect-policy`, e o Jev ali era
+  um pedido HTTP com o texto da tarefa a um terceiro mais uma escrita no diário,
+  ao alcance de revisor, worker readOnly e voz NÃO confirmada. A guarda em
+  `tools-ui-kit-read-only.test.ts` LIGA superfície e credencial e afirma que o
+  `judge` não foi chamado; sem isso ela não prova nada, porque `pickUiKit`
+  devolve a heurística antes de perguntar quando falta qualquer das duas. O
+  mesmo arquivo trava a classe de efeito do `add` (reclassificá-lo reabriria o
+  furo).
+  A heurística embaixo SEMPRE responde offline e sem chave; `source` diz qual
+  das duas respondeu, para heurística nunca passar por julgamento.
 - **A doutrina "nada de default shadcn" é sobre o LOOK, não o código** (skill
   `ui-kit`): pega o comportamento/a11y/estados do kit, pinta com os tokens do
   DESIGN.md. Estar no catálogo bundled faz o Jev SUGERIR a skill; entregar exige

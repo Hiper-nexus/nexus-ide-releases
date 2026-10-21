@@ -31,6 +31,10 @@ import {
 } from '../ui-kit/ui-kit-service';
 import { liveCandidates, offlineCandidates } from '../ui-kit/ui-kit-catalog';
 import { agentInstallReceipt } from '../ui-kit/ui-kit-install-view';
+import {
+  installPickReceipt,
+  resolveInstallTargetForTask,
+} from '../ui-kit/ui-kit-install-target';
 import { getOrchSettings } from '../persistence/settings-store';
 import type { UiKitRegistry } from '../ui-kit/ui-kit-registry';
 
@@ -295,34 +299,91 @@ export function buildUiKitTools(): McpToolDef[] {
         'keyboard handling and the states. Style it with the project design ' +
         'contract afterwards instead of shipping vendor defaults. The ' +
         'destination is the project\'s own (shadcn follows the aliases in ' +
-        'components.json, BoardUI the source root) and is not selectable here.',
+        'components.json, BoardUI the source root) and is not selectable here. ' +
+        'Pass `items` when you know what you want, or `task` to describe the ' +
+        'need and let Nexus choose the kit and the item against the live ' +
+        'catalog — the receipt says what it picked and why.',
       inputSchema: {
         type: 'object',
         properties: {
-          kit: { type: 'string', enum: [...UI_KIT_IDS] },
+          kit: {
+            type: 'string',
+            enum: [...UI_KIT_IDS],
+            description: 'Optional with `task`: omit it to let Nexus choose the kit.',
+          },
           items: {
             type: 'array',
             items: { type: 'string' },
             description: 'Slugs, or @namespace/item for another registry.',
           },
+          task: {
+            type: 'string',
+            description:
+              'What you are building, when you do not know the item name. ' +
+              'Resolved against the live catalog; `items` wins if both are given.',
+          },
           overwrite: { type: 'boolean' },
         },
-        required: ['items'],
       },
       handler: async (args, ctx) => {
-        const kit = parseKit(args);
-        const items = assertNamedItems(strArray(args, 'items'));
-        if (items.length === 0) throw new Error('name at least one item to install');
+        const named = assertNamedItems(strArray(args, 'items'));
+        const task = str(args, 'task');
+        const cwd = cwdFor(ctx);
+        // A caller who names a kit keeps it; `parseKit` defaults to shadcn, so
+        // the pick only gets to choose when nothing was named.
+        const namedKit = str(args, 'kit') ? parseKit(args) : undefined;
+
+        let kit = namedKit ?? parseKit(args);
+        let items = named;
+        let pick: Record<string, unknown> | null = null;
+
+        if (named.length === 0) {
+          if (!task) {
+            throw new Error(
+              'name at least one item to install, or describe the need in `task`',
+            );
+          }
+          // THE EFFECTFUL SURFACE is where this decision belongs: it may ask
+          // the vendor (so the candidates are the live catalog and the Pro
+          // gate sees the real licence), and the call is already gated. The
+          // read-only catalog answers with the offline rule instead.
+          const resolved = await resolveInstallTargetForTask(
+            { task, kit: namedKit, cwd },
+            serviceDeps(),
+          );
+          if (!resolved.ok) {
+            return {
+              ok: false,
+              installed: [],
+              pick: installPickReceipt(resolved.pick),
+              hint: resolved.pick.needsKit
+                ? 'Nothing in the catalog fits that task. Name the item with ' +
+                  '`items`, or browse nexus_ui_kit_catalog.'
+                : 'That task does not call for a kit component.',
+            };
+          }
+          kit = resolved.target.kit;
+          items = resolved.target.items;
+          pick = installPickReceipt(resolved.pick);
+        }
+
         const result = await installItems(
           {
             kit,
             items,
-            cwd: cwdFor(ctx),
+            cwd,
             ...(args.overwrite === true ? { overwrite: true } : {}),
           },
           serviceDeps(),
         );
-        return agentInstallReceipt(result, { kit, items });
+        return {
+          ...agentInstallReceipt(result, { kit, items }),
+          ...(pick ? { pick } : {}),
+          // Said outright rather than silently preferring one: naming items
+          // and a task at once is over-specified, and `items` is the explicit
+          // one.
+          ...(pick === null && task ? { taskIgnored: true } : {}),
+        };
       },
     },
     {
