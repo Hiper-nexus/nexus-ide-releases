@@ -16,7 +16,7 @@ import {
   deliverDictationToClaim,
   resetDictationTargetForTests,
 } from '../voice/dictation-target';
-import { requestDictationStart } from '../voice/manual-dictation';
+import { requestDictationStart, requestDictationStop } from '../voice/manual-dictation';
 import { useMediaStudioStore } from '../state/media-studio-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
 
@@ -911,5 +911,43 @@ describe('Estúdio: ditar e escrever o pedido (pedido do operador, 21/10/2026)',
       'gato astronauta na lua, com capacete',
     );
     expect(dialog.textContent).toContain('mantive o seu');
+  });
+
+  it('trocar de aba com o microfone aberto NÃO joga a fala num pane', async () => {
+    // routeDictation consulta o claim depois da STT: sem claim, o texto é
+    // digitado no pane focado (um terminal de agente). O turno em voo segura.
+    productFlags.map = { 'feature.media.videoStudio': true };
+    (window.nexus as unknown as Record<string, unknown>).videoStudio = {
+      listProjects: vi.fn(async () => ({ ok: true, projects: [] })),
+      onProgress: () => () => undefined,
+    };
+    const media = mediaMocks();
+    media.listProviders.mockResolvedValue([keyedImage]);
+    useVoiceStore.setState({ info: { captureAllowed: true } as never, status: 'idle' });
+    const dialog = await openFrom(renderHarness());
+    typePrompt(dialog, 'Um gato astronauta.');
+    await act(async () => {
+      byText(dialog, 'Ditar').click();
+    });
+    // A captura está em voo quando a pessoa troca de aba.
+    await act(async () => {
+      useVoiceStore.setState({ status: 'listening' });
+    });
+    const projects = [...dialog.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(
+      (item) => item.textContent === 'Vídeos do projeto',
+    );
+    await act(async () => {
+      projects!.click();
+    });
+    await act(async () => {
+      useVoiceStore.setState({ status: 'transcribing' });
+    });
+    // O claim continua sendo o do pedido, e não o roteamento de panes.
+    expect(deliverDictationToClaim('flutuando sobre a Lua')).toEqual({
+      paneId: 'ui:media-studio-prompt',
+    });
+    // E o microfone foi mandado parar quando o campo saiu de cena.
+    expect(requestDictationStop).toHaveBeenCalled();
+    productFlags.map = {};
   });
 });
