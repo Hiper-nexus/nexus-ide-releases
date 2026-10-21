@@ -197,11 +197,25 @@ function drillInto(adapterId: string): void {
 }
 
 describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
+  const paneRoute = vi.fn();
+
   beforeEach(() => {
     Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
       configurable: true,
       value: vi.fn(),
     });
+    paneRoute.mockReset();
+    paneRoute.mockResolvedValue({
+      ok: true,
+      proposal: {
+        tier: 'hard',
+        reason: 'tier hard',
+        source: 'jev',
+        effort: 'high',
+        skill: 'oc-scout',
+      },
+    });
+    (window as unknown as { nexus: unknown }).nexus = { jev: { paneRoute } };
     useProviderStore.setState({
       providers: [
         provider('claude', 'Claude'),
@@ -238,6 +252,7 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
       pendingOpen: false,
       pendingAccountsAdapterId: null,
     });
+    (window as { nexus?: unknown }).nexus = undefined;
     if (originalScrollIntoView) {
       Object.defineProperty(
         HTMLElement.prototype,
@@ -248,6 +263,121 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
       Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
     }
     vi.clearAllMocks();
+  });
+
+  // ---- campo de pedido + passo de confirmação -------------------------
+
+  function typeRequest(text: string): void {
+    const input = host.querySelector<HTMLInputElement>(
+      '[data-testid="pane-picker-request"]',
+    );
+    if (!input) throw new Error('sem campo de pedido');
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value',
+      )?.set;
+      setter?.call(input, text);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  }
+
+  const flush = async () => {
+    await act(async () => { await Promise.resolve(); });
+  };
+
+  /** Botões DO PASSO, por classe: o drill-in tem um "Voltar" próprio. */
+  const stepButton = (klass: string): HTMLButtonElement | null =>
+    host.querySelector<HTMLButtonElement>(`.pane-route-confirm__${klass}`);
+
+  it('sem pedido digitado o + Pane abre na hora, como sempre abriu', () => {
+    mount();
+    openMenu();
+    drillInto('claude');
+    clickEntry('agent:claude:default:claude-default');
+    expect(spawnAgent).toHaveBeenCalledWith('claude', 'claude-default');
+    expect(paneRoute).not.toHaveBeenCalled();
+  });
+
+  it('com pedido digitado, escolher a CLI abre o passo e consulta o Jev', async () => {
+    mount();
+    openMenu();
+    typeRequest('arruma o login quebrado');
+    drillInto('claude');
+    clickEntry('agent:claude:default:claude-default');
+    expect(paneRoute).toHaveBeenCalledWith({
+      request: 'arruma o login quebrado',
+      adapterId: 'claude',
+    });
+    expect(spawnAgent).not.toHaveBeenCalled();
+    await flush();
+    expect(host.querySelector('.pane-route-confirm')).not.toBeNull();
+  });
+
+  it('o esforço proposto vem marcado e Abrir leva esforço e pedido ao spawn', async () => {
+    mount();
+    openMenu();
+    typeRequest('arruma o login');
+    drillInto('claude');
+    clickEntry('agent:claude:default:claude-default');
+    await flush();
+    const alto = [...host.querySelectorAll<HTMLButtonElement>('[role="radio"]')]
+      .find((el) => el.textContent === 'Alto');
+    expect(alto?.getAttribute('aria-checked')).toBe('true');
+    act(() => stepButton('go')?.click());
+    expect(spawnAgent).toHaveBeenCalledWith(
+      'claude',
+      'claude-default',
+      expect.objectContaining({ effort: 'high', brief: 'arruma o login' }),
+    );
+  });
+
+  it('o operador troca o esforço antes de abrir e é o dele que vale', async () => {
+    mount();
+    openMenu();
+    typeRequest('arruma o login');
+    drillInto('claude');
+    clickEntry('agent:claude:default:claude-default');
+    await flush();
+    const baixo = [...host.querySelectorAll<HTMLButtonElement>('[role="radio"]')]
+      .find((el) => el.textContent === 'Baixo');
+    act(() => baixo?.click());
+    act(() => stepButton('go')?.click());
+    expect(spawnAgent).toHaveBeenCalledWith(
+      'claude',
+      'claude-default',
+      expect.objectContaining({ effort: 'low' }),
+    );
+  });
+
+  // O Jev nunca pode impedir alguém de abrir um pane.
+  it('Jev fora do ar: passo sem proposta, e Abrir ainda abre', async () => {
+    paneRoute.mockRejectedValue(new Error('rede'));
+    mount();
+    openMenu();
+    typeRequest('arruma o login');
+    drillInto('claude');
+    clickEntry('agent:claude:default:claude-default');
+    await flush();
+    expect(host.textContent).toContain('Sem proposta');
+    act(() => stepButton('go')?.click());
+    expect(spawnAgent).toHaveBeenCalledWith(
+      'claude',
+      'claude-default',
+      expect.objectContaining({ brief: 'arruma o login' }),
+    );
+  });
+
+  it('Voltar sai do passo sem abrir pane nenhum', async () => {
+    mount();
+    openMenu();
+    typeRequest('arruma o login');
+    drillInto('claude');
+    clickEntry('agent:claude:default:claude-default');
+    await flush();
+    act(() => stepButton('cancel')?.click());
+    expect(spawnAgent).not.toHaveBeenCalled();
+    expect(host.querySelector('.pane-route-confirm')).toBeNull();
   });
 
   it('lista Terminal, Browser e UMA linha por CLI instalada — e só elas', () => {
