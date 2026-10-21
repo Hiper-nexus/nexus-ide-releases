@@ -12428,7 +12428,7 @@ export const RELEASE_076367: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076368: AppRelease = {
   version: '0.76.368',
   date: '2026-10-21',
   codename: 'O pedido do Estúdio chega ao pane',
@@ -12443,4 +12443,20 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076368: AppRelease = CURRENT_RELEASE;
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.370',
+  date: '2026-10-21',
+  codename: 'Estúdio de vídeo com contador, estilos e ditado',
+  summary: 'No Windows, o Estúdio de vídeo mostra um contador em cada campo do pedido e não corta mais texto em silêncio, ganhou predefinições de estilo, ditado por voz e a escrita do pedido por um modelo barato, com correções no ditado e na reescrita.',
+  highlights: [
+    { title: 'Contador à vista, sem corte silencioso', detail: 'Cada campo do pedido mostra quantos caracteres cabem; o envio só trava, dizendo o excesso, quando passa do limite. O produto aceita até 6.000.' },
+    { title: 'Estilos, ditado e escrita do pedido', detail: 'Predefinições de estilo, ditado que apensa ao texto e a reescrita do pedido por um modelo barato; se a reescrita falhar, o seu texto fica como estava.' },
+  ],
+  fixes: [
+    { title: 'Ditado caía no terminal do pane', detail: 'Um ditado em andamento não vai mais para o terminal do pane quando você troca de foco.' },
+    { title: 'Reescrita aplicada ao pedido errado', detail: 'A resposta de uma reescrita pedida para outro tipo de pedido deixou de ser aplicada ao campo atual.' },
+    ...RELEASE_076368.fixes,
+  ],
+};
+
+export const RELEASE_076370: AppRelease = CURRENT_RELEASE;

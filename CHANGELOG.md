@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.76.370 — Estúdio de vídeo com contador, estilos e ditado
+
+Build Windows assinado com o YubiKey (HIPERSEND), em relação à 0.76.368 do Windows.
+
+- **O brief do vídeo deixa de perder texto em silêncio.** Os campos do pedido não cortam mais o que você cola: cada um mostra um contador à vista e o envio trava, com o excesso dito por extenso, só quando passa do limite. O produto aceita até 6.000 caracteres.
+- **Predefinições de estilo, ditado e "Escrever meu pedido".** O Estúdio ganhou predefinições de estilo, ditado por voz que apensa ao que já está escrito e uma reescrita do pedido por um modelo barato (se falhar, o seu texto fica intacto).
+- **Correções do ditado e da reescrita.** Ditado em andamento não cai mais no terminal do pane, reescrita feita para outro tipo de pedido não é mais aplicada e, sem serviço de mídia conectado, o ditado não some num campo invisível.
+
+O resto do desktop é o da 0.76.368.
+
 ## 0.76.368 — O pedido do Estúdio chega ao pane
 
 Build Windows assinado com o YubiKey (HIPERSEND), em relação à 0.76.367 do Windows.
