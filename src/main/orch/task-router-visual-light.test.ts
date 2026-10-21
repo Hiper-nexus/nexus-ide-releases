@@ -47,3 +47,33 @@ describe('F-1621: ajuste visual leve sai da lane de topo', () => {
     expect(TOP_MODELS.has(decision.model ?? '')).toBe(true);
   });
 });
+
+describe('F-1623: jogo e 3D — Opus 5.5, depois Sonnet 5.5', () => {
+  const pool = (claudeModels: string[]): AdapterAvailability[] => [
+    { id: 'claude', installed: true, models: claudeModels },
+    { id: 'agy', installed: true, models: ['gemini-4-argon'], liveModels: ['gemini-4-argon'] },
+    { id: 'codex', installed: true, models: ['gpt-6-astra', 'gpt-6.1-sol'] },
+  ];
+  const routeTop = (task: string, adapters: AdapterAvailability[]) => routeTask(
+    task, adapters, DEFAULT_ROUTING_TABLE, 'medium', false, BUILTIN_MODEL_CATALOG,
+    { multiScore: true, visualUseCounts: new Map([['claude:claude-opus-5-5', 100]]) },
+  )!;
+
+  it.each(['crie uma cena 3D com three.js', 'shader de água em WebGL', 'renderizar o produto com react-three-fiber'])(
+    '3D vai para o Opus 5.5 mesmo com uso alto: %s', (task) => {
+      const decision = routeTop(task, pool(['claude-opus-5-5', 'claude-sonnet-5-5']));
+      expect(decision).toMatchObject({ adapterId: 'claude', model: 'claude-opus-5-5' });
+      expect(decision.reason).toContain('Next/jogo → Opus 5.5');
+    });
+
+  it('sem Opus, jogo vai para o Sonnet 5.5 antes de Argon e Astra', () => {
+    const decision = routeTop('crie um jogo de plataforma', pool(['claude-sonnet-5-5']));
+    expect(decision).toMatchObject({ adapterId: 'claude', model: 'claude-sonnet-5-5' });
+    expect(decision.reason).toContain('Next/jogo → Sonnet 5.5');
+  });
+
+  it.each(['adicionar suporte a 3D Secure no checkout', 'fluxo 3DS2 do cartão'])(
+    '3D Secure (cartão) não é cena 3D: %s', (task) => {
+      expect(routeTop(task, pool(['claude-opus-5-5'])).reason).not.toContain('Next/jogo');
+    });
+});

@@ -1544,8 +1544,10 @@ describe('F-1313 — preferência explícita e espalhamento', () => {
   });
 
   it('Kimi pronto sem assentos recebe a tarefa visual medium em vez do Codex com três', () => {
+    // F-1623: o Codex sem o Astra fica só com o Sol, reserva do mesmo grupo do Kimi.
     const decision = routeTask('implementar a tela responsiva e seus componentes visuais',
-      adapters('codex', 'kimi'), DEFAULT_ROUTING_TABLE, 'medium', false, undefined, {
+      [{ id: 'codex', installed: true, models: ['gpt-6.1-sol', 'gpt-6-luna'] }, { id: 'kimi', installed: true }],
+      DEFAULT_ROUTING_TABLE, 'medium', false, undefined, {
         multiScore: true, missionUseCounts: new Map([['codex', 3], ['kimi', 0]]),
       });
     expect(decision!.specialty).toBe('visual');

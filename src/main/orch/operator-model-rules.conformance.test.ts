@@ -112,6 +112,15 @@ const FRONT_POOL: AdapterAvailability[] = [
   { id: 'devin', installed: true, models: ['swe-2-medium', 'swe-2-high'] },
 ];
 
+/** F-1623: o topo de UI do operador (Opus 5.5, Gemini Argon, GPT Astra) mais a reserva. */
+const TOP_FRONT_POOL: AdapterAvailability[] = [
+  { id: 'claude', installed: true, models: ['claude-opus-5-5', 'claude-sonnet-5-5'] },
+  { id: 'agy', installed: true, models: ['gemini-4-argon'], liveModels: ['gemini-4-argon'] },
+  { id: 'codex', installed: true, models: ['gpt-6-astra', 'gpt-6.1-sol', 'gpt-6-luna'] },
+  { id: 'muse', installed: true, models: ['muse-wonder-full-1.0', 'muse-wonder-1.0', 'muse-spark-1.3'] },
+  { id: 'kimi', installed: true, models: ['kimi-code/k3'] },
+];
+
 const JUDGE_POOL: AdapterAvailability[] = [
   { id: 'muse', installed: true, models: ['muse-wonder-full-1.0', 'muse-wonder-1.0', 'muse-spark-1.3'] },
   { id: 'claude', installed: true, models: ['claude-fable-5-1', 'claude-opus-5-5', 'claude-sonnet-5-5'] },
@@ -213,40 +222,50 @@ describe('regra 3: segurança e credencial são critical/security e vencem visua
   });
 });
 
-// Regra 4 — Front-end reveza Opus 5.5, Sonnet 5.5, Muse Wonder Full max,
-// Kimi, Codex e Devin; uso concentrado empurra o próximo para outro modelo.
-describe('regra 4: front-end reveza o pool inteiro, Devin elegível', () => {
+// Regra 4 (F-1623, operador 21/10) — UI reveza só o topo: Opus 5.5, Gemini
+// Argon e GPT Astra. Quem não tem nenhum deles cai na reserva ordenada:
+// Sonnet 5.5, depois DeepSeek, depois Muse Full/Kimi/Codex/Devin.
+describe('regra 4: front-end reveza o topo; reserva ordenada para quem não o tem', () => {
   const VISUAL_TASK = 'implementar a tela responsiva de cadastro com estados vazios';
-
-  it('seis tarefas visuais distribuem seis modelos distintos, incluindo Devin', () => {
+  const TOP = new Set(['claude:claude-opus-5-5', 'agy:gemini-4-argon', 'codex:gpt-6-astra']);
+  const rotate = (pool: AdapterAvailability[], times: number): string[] => {
     const visualUseCounts = new Map<string, number>();
     const picks: string[] = [];
-    for (let index = 0; index < 6; index++) {
-      const decision = route(VISUAL_TASK, FRONT_POOL, { visualUseCounts });
+    for (let index = 0; index < times; index++) {
+      const decision = route(VISUAL_TASK, pool, { visualUseCounts });
       const key = `${decision.adapterId}:${decision.model}`;
       picks.push(key);
       visualUseCounts.set(key, (visualUseCounts.get(key) ?? 0) + 1);
-      if (decision.adapterId === 'claude' && decision.model === 'claude-opus-5-5') {
-        expect(decision.effort).toBe('max');
-      }
-      if (decision.adapterId === 'muse') {
-        expect(decision).toMatchObject({ model: 'muse-wonder-full-1.0', effort: 'max' });
-      }
     }
-    expect(new Set(picks).size).toBe(6);
-    expect(picks.filter((key) => key.startsWith('claude:claude-')).sort())
-      .toEqual(['claude:claude-opus-5-5', 'claude:claude-sonnet-5-5']);
-    expect(picks).toContain('muse:muse-wonder-full-1.0');
-    expect(picks).toContain('kimi:kimi-code/k3');
-    expect(picks.some((key) => key.startsWith('codex:'))).toBe(true);
-    expect(picks.some((key) => key.startsWith('devin:'))).toBe(true);
+    return picks;
+  };
+
+  it('seis tarefas visuais revezam só Opus 5.5, Argon e Astra', () => {
+    const picks = rotate(TOP_FRONT_POOL, 6);
+    expect(picks.every((key) => TOP.has(key))).toBe(true);
+    expect(new Set(picks)).toEqual(TOP);
   });
 
-  it('uso visual concentrado num modelo manda a próxima tarefa para outro do pool', () => {
-    const decision = route(VISUAL_TASK, FRONT_POOL, {
+  it('uso visual concentrado no Opus manda a próxima tarefa a outro do topo', () => {
+    const decision = route(VISUAL_TASK, TOP_FRONT_POOL, {
       visualUseCounts: new Map([['claude:claude-opus-5-5', 100]]),
     });
-    expect(`${decision.adapterId}:${decision.model}`).not.toBe('claude:claude-opus-5-5');
+    expect(TOP.has(`${decision.adapterId}:${decision.model}`)).toBe(true);
+    expect(decision.model).not.toBe('claude-opus-5-5');
+  });
+
+  it('sem o topo: Sonnet 5.5 primeiro, mesmo com uso alto; depois DeepSeek; Devin só no fim', () => {
+    const noTop: AdapterAvailability[] = [
+      { id: 'claude', installed: true, models: ['claude-sonnet-5-5'] },
+      { id: 'deepseek', installed: true, models: ['deepseek-v4-pro', 'deepseek-flash'] },
+      ...FRONT_POOL.filter((adapter) => adapter.id !== 'claude'),
+    ];
+    expect(route(VISUAL_TASK, noTop, { visualUseCounts: new Map([['claude:claude-sonnet-5-5', 100]]) }))
+      .toMatchObject({ adapterId: 'claude', model: 'claude-sonnet-5-5' });
+    const withoutSonnet = noTop.filter((adapter) => adapter.id !== 'claude');
+    expect(route(VISUAL_TASK, withoutSonnet)).toMatchObject({ adapterId: 'deepseek', model: 'deepseek-flash' });
+    const rest = rotate(withoutSonnet.filter((adapter) => adapter.id !== 'deepseek'), 4);
+    expect(new Set(rest)).toEqual(new Set(['muse:muse-wonder-full-1.0', 'kimi:kimi-code/k3', 'codex:gpt-6.1-sol', 'devin:swe-2-high']));
   });
 });
 
