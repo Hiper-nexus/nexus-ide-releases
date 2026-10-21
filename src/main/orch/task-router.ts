@@ -1969,7 +1969,10 @@ export function routeTask(
       available.set(id, { ...adapter, models: adapter.models.filter((model) => !/-contributor$/iu.test(model)) });
     }
   }
-  const permitsAutomaticAstra = specialtyVerdict.specialty === 'visual';
+  // F-1621: o Astra entra só pela lane visual, que vale de medium para cima
+  // (ou Next/jogo); ajuste visual trivial/easy não o chama.
+  const permitsAutomaticAstra = specialtyVerdict.specialty === 'visual' &&
+    (nextOrGame || TIER_ORDER.indexOf(tier) >= TIER_ORDER.indexOf('medium'));
   const policy = resolveSpecialtyPolicy(
     specialtyVerdict.specialty,
     context.specialtyBenchmark,
@@ -2447,14 +2450,19 @@ export function routeTask(
     return true;
   };
 
-  // Lane visual (regra do operador, 30/09): UI/design vai sempre para os
-  // modelos de topo. F-1412: LEITURA de imagem em tier baixo
-  // (trivial/easy/medium) não é escrita de UI — a lane visual não se aplica e
-  // vale a preferência de visão abaixo (Flash rápido primeiro).
+  // Lane visual (regra do operador, 30/09): UI/design vai para os modelos de
+  // topo. F-1412: LEITURA de imagem em tier baixo (trivial/easy/medium) não é
+  // escrita de UI — a lane visual não se aplica e vale a preferência de visão
+  // abaixo (Flash rápido primeiro). F-1621 (decisão do operador, 21/10: "barata
+  // escreve, ponta revisa"): ajuste de UI trivial/easy (cor, texto de botão,
+  // espaçamento) segue a rota do tier, com o revezamento entre as CLIs baratas.
+  // Construir tela (medium para cima) e Next/jogo continuam na lane de topo.
   const visionReading = visionCapable && tierIndex <= TIER_ORDER.indexOf('medium');
+  const visualLaneTier = nextOrGame || tierIndex >= TIER_ORDER.indexOf('medium');
   let visualNote = '';
   const visualLaneApplied =
     !visionReading &&
+    visualLaneTier &&
     specialtyVerdict.specialty === 'visual' &&
     (policy.source !== 'benchmark' || nextOrGame) &&
     mention.model === undefined &&

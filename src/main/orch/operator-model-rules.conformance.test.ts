@@ -308,9 +308,14 @@ describe('regra 6: Muse -contributor só em tarefa leve e só com consentimento'
   });
 
   it('front-end nunca recebe contributor, mesmo com consentimento', () => {
-    const decision = route('implementar a tela de login responsiva', museOnly(true));
-    expect(decision).toMatchObject({ adapterId: 'muse', model: 'muse-wonder-full-1.0' });
-    noContributor(decision);
+    // F-1621: front trivial/easy sai da lane de topo (rota do tier), mas o
+    // contributor continua fora de toda tarefa visual.
+    const light = route('implementar a tela de login responsiva', museOnly(true));
+    expect(light.adapterId).toBe('muse');
+    noContributor(light);
+    const screen = route('implementar a tela responsiva de cadastro com estados vazios', museOnly(true));
+    expect(screen).toMatchObject({ adapterId: 'muse', model: 'muse-wonder-full-1.0' });
+    noContributor(screen);
   });
 
   it('julgamento nunca recebe contributor, mesmo com consentimento', () => {
