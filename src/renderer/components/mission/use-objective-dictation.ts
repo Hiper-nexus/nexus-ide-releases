@@ -20,6 +20,13 @@ export type ObjectiveDictationState = 'idle' | 'listening' | 'busy';
 export function useObjectiveDictation(input: {
   enabled: boolean;
   onTranscript: (text: string) => void;
+  /**
+   * Qual superfície está pedindo o microfone. O claim é um só e o último
+   * vence (`dictation-target`), então cada campo que dita precisa do PRÓPRIO
+   * id — dois campos com o mesmo id ficariam indistinguíveis no log de voz.
+   * Omitido, segue o objetivo da missão, que foi o primeiro a ditar.
+   */
+  claimId?: string;
 }): {
   available: boolean;
   state: ObjectiveDictationState;
@@ -31,12 +38,43 @@ export function useObjectiveDictation(input: {
   const onTranscriptRef = useRef(input.onTranscript);
   onTranscriptRef.current = input.onTranscript;
 
+  const claimId = input.claimId ?? 'mission-objective';
+  /**
+   * O claim SOBREVIVE ao turno em voo, mesmo que a superfície desabilite.
+   *
+   * `routeDictation` consulta o claim DEPOIS que a STT devolve o texto. Soltar
+   * no meio da transcrição (trocar de aba, fechar o Estúdio) não perdia a fala
+   * — fazia pior: ela caía no roteamento de panes e era DIGITADA no pane
+   * focado, um terminal de agente. Por isso quem segura é `enabled || armed`:
+   * o que já foi falado ainda chega ao campo onde a fala começou.
+   */
+  const holdClaim = input.enabled || armed;
   useEffect(() => {
-    if (!input.enabled) return undefined;
-    return claimDictationTarget('mission-objective', (text) =>
+    if (!holdClaim) return undefined;
+    return claimDictationTarget(claimId, (text) =>
       onTranscriptRef.current(text),
     );
-  }, [input.enabled]);
+  }, [holdClaim, claimId]);
+
+  // A superfície saiu de cena com o microfone aberto: pare de ouvir agora. O
+  // claim acima continua até o turno resolver, então a janela entre a fala e
+  // a entrega é só a latência da STT — e ela aponta para o campo certo.
+  useEffect(() => {
+    if (input.enabled || !armed) return;
+    if (status === 'listening') requestDictationStop();
+  }, [input.enabled, armed, status]);
+
+  // Desmontou no meio da captura (o brief fechado no botão Cancelar): não dá
+  // para entregar a um campo que não existe mais, mas dá para parar de ouvir
+  // em vez de seguir gravando para lugar nenhum.
+  const armedRef = useRef(armed);
+  armedRef.current = armed;
+  useEffect(
+    () => () => {
+      if (armedRef.current) requestDictationStop();
+    },
+    [],
+  );
 
   // Desarme HONESTO: no clique o status ainda é 'idle' — desarmar ali matava
   // o ciclo antes de nascer (voo dev 19/08: botão voltava a "Ditar" em 1

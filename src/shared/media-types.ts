@@ -158,6 +158,32 @@ export type MediaStudioResponse =
 export const MEDIA_NO_PROJECT_ERROR =
   'Abra um projeto para gerar: as imagens e os vídeos são salvos na pasta do projeto aberto.';
 
+/**
+ * "Escrever meu pedido" (21/10/2026): o Estúdio manda o texto solto da
+ * pessoa — digitado ou ditado — e recebe um pedido que o modelo entende.
+ * `task` separa o risco: `scene` pode enriquecer à vontade (câmera, luz,
+ * ritmo), `product` descreve um produto real e não pode inventar nada.
+ */
+export interface MediaPromptWriteRequest {
+  text: string;
+  task: 'scene' | 'product';
+  kind?: 'video' | 'image';
+  style?: string;
+  durationSec?: number;
+  format?: string;
+}
+
+/**
+ * Fail-open: `written: false` devolve o texto ORIGINAL com o motivo. O
+ * Estúdio avisa e não troca nada — ninguém perde o que escreveu porque a
+ * cadeia barata estava fora do ar.
+ */
+export interface MediaPromptWriteResponse {
+  text: string;
+  written: boolean;
+  reason?: string;
+}
+
 export const MEDIA_CHANNELS = {
   listProviders: 'media:listProviders',
   setKey: 'media:setKey',
@@ -167,4 +193,5 @@ export const MEDIA_CHANNELS = {
   listArtifacts: 'media:listArtifacts',
   revealArtifact: 'media:revealArtifact',
   readArtifactDataUrl: 'media:readArtifactDataUrl',
+  writePrompt: 'media:writePrompt',
 } as const;

@@ -16,7 +16,21 @@ import { useProductNavigationStore } from '../state/product-navigation-store';
 import { useLayoutStore } from '../state/layout-store';
 import { reportLicenseDenial } from '../state/access-guard';
 import { waitForBrowserPaneCreated } from '../browser/browser-host';
-import { buildPresentationBrief, type BriefAttachment, type BriefVoice } from './video-brief';
+import {
+  BRIEF_FIELD_LIMITS,
+  briefFieldOverflow,
+  buildPresentationBrief,
+  type BriefAttachment,
+  type BriefFieldName,
+  type BriefVoice,
+} from './video-brief';
+import {
+  VIDEO_STYLE_PRESETS,
+  matchVideoStylePreset,
+  toggleVideoStylePreset,
+} from './video-style-presets';
+import { CharacterBudget } from './CharacterBudget';
+import { useObjectiveDictation } from './mission/use-objective-dictation';
 import { BriefAttachments } from './BriefAttachments';
 import { NarrationRecorder } from './NarrationRecorder';
 import { requestMyVoiceFocus } from './settings/my-voice-focus';
@@ -50,6 +64,75 @@ function fileName(file: VideoFileInfo): string {
   return file.path.split('/').pop() ?? file.path;
 }
 
+/**
+ * Campo de texto com teto à vista. O teto NÃO vira `maxLength`: o navegador
+ * cortaria o texto colado em silêncio (defeito de 21/10/2026, um roteiro de
+ * 1.800 caracteres virou 1.500 sem aviso). O campo aceita tudo, o contador
+ * mostra onde está e o envio trava com o excesso escrito por extenso.
+ */
+function BriefField({
+  field,
+  label,
+  value,
+  onChange,
+  required,
+  children,
+  multiline,
+  rows,
+  placeholder,
+  inputRef,
+}: {
+  field: BriefFieldName;
+  label: string;
+  value: string;
+  onChange: (next: string) => void;
+  required?: boolean;
+  children?: React.ReactNode;
+  multiline?: boolean;
+  rows?: number;
+  placeholder: string;
+  inputRef?: React.RefObject<HTMLTextAreaElement | null>;
+}) {
+  const limit = BRIEF_FIELD_LIMITS[field];
+  const over = briefFieldOverflow(value, field) > 0;
+  const budgetId = `vp-budget-${field}`;
+  const shared = {
+    value,
+    placeholder,
+    'aria-describedby': budgetId,
+    ...(over ? { 'aria-invalid': true as const } : {}),
+  };
+  return (
+    <label className={multiline ? 'vp-field vp-field--wide' : 'vp-field'}>
+      <span className="vp-field__label">
+        {label}
+        <span className={required ? 'vp-field__tag vp-field__tag--required' : 'vp-field__tag'}>
+          {required ? 'obrigatório' : 'opcional'}
+        </span>
+      </span>
+      {multiline ? (
+        <textarea
+          {...shared}
+          ref={inputRef}
+          className={over ? 'ms-prompt ms-prompt--over' : 'ms-prompt'}
+          rows={rows ?? 6}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      ) : (
+        <input
+          {...shared}
+          className={over ? 'settings-input settings-input--over' : 'settings-input'}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      )}
+      {/* O contador fica COLADO no campo: com a borda vermelha ao lado, o
+          número e o excesso se leem como uma coisa só. */}
+      <CharacterBudget value={value} limit={limit} id={budgetId} label={label} />
+      {children}
+    </label>
+  );
+}
+
 function BriefForm({
   onClose,
   onSent,
@@ -69,6 +152,17 @@ function BriefForm({
   const [music, setMusic] = useState(true);
   const [voices, setVoices] = useState<VoiceCloneReceiptView[]>([]);
   const [attachments, setAttachments] = useState<BriefAttachment[]>([]);
+  const [writing, setWriting] = useState(false);
+  const [writeNote, setWriteNote] = useState<string | null>(null);
+  const productRef = useRef<HTMLTextAreaElement | null>(null);
+  // Ver MediaStudioPanel: a reescrita demora e o campo segue editável; a
+  // resposta do texto antigo não pode apagar o que foi escrito depois.
+  const liveProductRef = useRef(product);
+  liveProductRef.current = product;
+  // Mesma guarda do Estúdio: a reescrita vai com a duração, então mudar a
+  // duração no meio torna a resposta de outro pedido.
+  const liveWriteContextRef = useRef(durationSec);
+  liveWriteContextRef.current = durationSec;
 
   useEffect(() => {
     let alive = true;
@@ -85,6 +179,56 @@ function BriefForm({
     };
   }, []);
 
+  // Ditado do pedido (pedido do operador, 21/10): a fala APENSA ao que já
+  // está escrito, nunca substitui. O claim é próprio deste campo.
+  const dictation = useObjectiveDictation({
+    enabled: true,
+    claimId: 'video-brief-product',
+    onTranscript: (text) => {
+      setProduct((current) => (current.trim() ? `${current.replace(/\s+$/u, '')} ${text}` : text));
+      setWriteNote(null);
+      productRef.current?.focus();
+    },
+  });
+
+  /**
+   * "Escrever meu pedido": uma LLM barata organiza o que foi digitado ou
+   * ditado. Fail-open — qualquer falha mantém o texto da pessoa e o aviso
+   * diz isso; ninguém perde o que escreveu.
+   */
+  async function writePrompt() {
+    const source = product.trim();
+    if (!source || writing) return;
+    const context = liveWriteContextRef.current;
+    setWriting(true);
+    setWriteNote(null);
+    try {
+      const result = await window.nexus.media?.writePrompt({
+        text: source,
+        task: 'product',
+        durationSec,
+      });
+      if (result?.written) {
+        if (liveProductRef.current.trim() !== source) {
+          setWriteNote('Você mexeu no texto enquanto eu escrevia, então mantive o seu.');
+          return;
+        }
+        if (liveWriteContextRef.current !== context) {
+          setWriteNote('Você mudou a duração enquanto eu escrevia, então mantive o seu texto. Peça de novo.');
+          return;
+        }
+        setProduct(result.text);
+        setWriteNote('Reescrito. Leia e ajuste o que não ficou do seu jeito — nada foi enviado ainda.');
+      } else {
+        setWriteNote('Não consegui reescrever agora; o seu texto está como estava.');
+      }
+    } catch {
+      setWriteNote('Não consegui reescrever agora; o seu texto está como estava.');
+    } finally {
+      setWriting(false);
+    }
+  }
+
   function voice(): BriefVoice {
     if (voiceChoice === 'none') return { kind: 'none' };
     const mine = voices.find((receipt) => `mine:${receipt.id}` === voiceChoice);
@@ -98,13 +242,28 @@ function BriefForm({
     onSent();
   }
 
+  // Nenhum campo pode estar acima do teto: o brief sai inteiro ou não sai.
+  const overflowing: readonly BriefFieldName[] = (
+    [
+      ['product', product],
+      ['siteUrl', siteUrl],
+      ['audience', audience],
+      ['style', style],
+    ] as const
+  )
+    .filter(([field, value]) => briefFieldOverflow(value, field) > 0)
+    .map(([field]) => field);
+  const tooShort = product.trim().length < 3;
+  const blocked = tooShort || overflowing.length > 0;
+  const activePreset = matchVideoStylePreset(style);
+
   return (
     <form
       className="vp-brief"
       aria-label="Novo vídeo de apresentação"
       onSubmit={(event) => {
         event.preventDefault();
-        if (product.trim().length >= 3) send();
+        if (!blocked) send();
       }}
     >
       <p className="vp-brief__lead">
@@ -112,32 +271,97 @@ function BriefForm({
         estilo. Você escolhe o agente no &quot;+ Pane&quot; e ele recebe este pedido; antes de gastar, ele mostra o roteiro
         e o custo.
       </p>
-      <label className="vp-field vp-field--wide">
-        <span>Produto e o que ele resolve</span>
-        <textarea
-          className="ms-prompt"
-          rows={3}
-          value={product}
-          maxLength={1500}
-          placeholder="Ex.: Agendify, agenda online para barbearias: o cliente marca pelo celular e a barbearia para de perder horário."
-          onChange={(event) => setProduct(event.target.value)}
-        />
-      </label>
+
+      <BriefField
+        field="product"
+        label="Produto e o que ele resolve"
+        value={product}
+        onChange={(next) => {
+          setProduct(next);
+          setWriteNote(null);
+        }}
+        required
+        multiline
+        inputRef={productRef}
+        placeholder="Ex.: Agendify, agenda online para barbearias: o cliente marca pelo celular e a barbearia para de perder horário."
+      >
+        <div className="vp-tools">
+          {dictation.available && (
+            <button
+              type="button"
+              className={dictation.state === 'listening' ? 'ms-button ms-button--sm ms-button--on' : 'ms-button ms-button--sm'}
+              aria-pressed={dictation.state === 'listening'}
+              onClick={dictation.toggle}
+            >
+              {dictation.state === 'listening' ? 'Ouvindo… toque para parar' : dictation.state === 'busy' ? 'Transcrevendo…' : 'Ditar'}
+            </button>
+          )}
+          <button
+            type="button"
+            className="ms-button ms-button--sm"
+            disabled={writing || product.trim().length < 3}
+            onClick={() => void writePrompt()}
+          >
+            {writing ? 'Escrevendo…' : 'Escrever meu pedido'}
+          </button>
+          <span className="vp-tools__hint">
+            Fale ou escreva do seu jeito; &quot;Escrever meu pedido&quot; organiza o texto sem inventar nada.
+          </span>
+        </div>
+        {writeNote && (
+          <p className="vp-tools__note" role="status">
+            {writeNote}
+          </p>
+        )}
+      </BriefField>
+
       <BriefAttachments attachments={attachments} onChange={setAttachments} />
+
+      <BriefField
+        field="siteUrl"
+        label="Site do produto"
+        value={siteUrl}
+        onChange={setSiteUrl}
+        placeholder="agendify.com.br"
+      />
+      <BriefField
+        field="audience"
+        label="Público"
+        value={audience}
+        onChange={setAudience}
+        placeholder="donos de barbearia"
+      />
+
+      <div className="vp-field vp-field--wide">
+        <BriefField
+          field="style"
+          label="Estilo"
+          value={style}
+          onChange={setStyle}
+          multiline
+          rows={3}
+          placeholder="escuro, enérgico, cores do site — ou escolha um começo abaixo"
+        />
+        {/* Predefinições (pedido do operador, 21/10): quem não sabe descrever
+            estilo escolhe um ponto de partida e edita o texto depois. */}
+        <div className="ms-chips vp-styles" role="group" aria-label="Predefinições de estilo">
+          {VIDEO_STYLE_PRESETS.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={activePreset === item.id ? 'ms-chip ms-chip--on' : 'ms-chip'}
+              aria-pressed={activePreset === item.id}
+              title={item.hint}
+              onClick={() => setStyle((current) => toggleVideoStylePreset(current, item.id))}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <label className="vp-field">
-        <span>Site do produto (opcional)</span>
-        <input className="settings-input" value={siteUrl} maxLength={500} placeholder="agendify.com.br" onChange={(event) => setSiteUrl(event.target.value)} />
-      </label>
-      <label className="vp-field">
-        <span>Público (opcional)</span>
-        <input className="settings-input" value={audience} maxLength={300} placeholder="donos de barbearia" onChange={(event) => setAudience(event.target.value)} />
-      </label>
-      <label className="vp-field">
-        <span>Estilo (opcional)</span>
-        <input className="settings-input" value={style} maxLength={300} placeholder="escuro, enérgico, cores do site" onChange={(event) => setStyle(event.target.value)} />
-      </label>
-      <label className="vp-field">
-        <span>Duração</span>
+        <span className="vp-field__label">Duração</span>
         <select className="ms-select" value={durationSec} onChange={(event) => setDurationSec(Number(event.target.value))}>
           {[30, 45, 60, 90].map((seconds) => (
             <option key={seconds} value={seconds}>
@@ -147,7 +371,7 @@ function BriefForm({
         </select>
       </label>
       <label className="vp-field">
-        <span>Formato</span>
+        <span className="vp-field__label">Formato</span>
         <select className="ms-select" value={preset} onChange={(event) => setPreset(event.target.value as VideoExportPresetId)}>
           {VIDEO_EXPORT_PRESET_IDS.map((id) => (
             <option key={id} value={id}>
@@ -157,7 +381,7 @@ function BriefForm({
         </select>
       </label>
       <label className="vp-field">
-        <span>Narração</span>
+        <span className="vp-field__label">Narração</span>
         <select className="ms-select" value={voiceChoice} onChange={(event) => setVoiceChoice(event.target.value)}>
           {voices.map((receipt) => (
             <option key={receipt.id} value={`mine:${receipt.id}`}>
@@ -176,17 +400,22 @@ function BriefForm({
         </button>
         {voices.length === 0 ? ' (grava e clona com consentimento, na ElevenLabs ou no Gemini).' : '.'}
       </p>
-      <label className="my-voice__check vp-field">
+      <label className="vp-music-check vp-field--wide">
         <input type="checkbox" checked={music} onChange={(event) => setMusic(event.target.checked)} />
         <span>Música instrumental de fundo</span>
       </label>
       <div className="settings-row vp-field--wide">
-        <button type="submit" className="ms-button ms-button--primary" disabled={product.trim().length < 3}>
+        <button type="submit" className="ms-button ms-button--primary" disabled={blocked}>
           Escolher o agente no + Pane
         </button>
         <button type="button" className="ms-button" onClick={onClose}>
           Cancelar
         </button>
+        {overflowing.length > 0 && (
+          <span className="vp-brief__blocked" role="alert">
+            Tire o excesso do campo em vermelho para enviar.
+          </span>
+        )}
       </div>
     </form>
   );

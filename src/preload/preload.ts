@@ -88,6 +88,7 @@ import type { QuotaFleetSnapshot } from '../shared/quota-types';
 import { EVAL_RANKING_CHANNELS } from '../shared/eval-ranking-types';
 import { MEDIA_CHANNELS } from '../shared/media-types';
 import type {
+  MediaPromptWriteRequest,
   MediaProviderId,
   MediaStudioRequest,
 } from '../shared/media-types';
@@ -1592,6 +1593,8 @@ const api: NexusApi = {
       ipcRenderer.invoke(MEDIA_CHANNELS.revealArtifact, { storageKey }),
     readArtifactDataUrl: (storageKey: string) =>
       ipcRenderer.invoke(MEDIA_CHANNELS.readArtifactDataUrl, { storageKey }),
+    writePrompt: (req: MediaPromptWriteRequest) =>
+      ipcRenderer.invoke(MEDIA_CHANNELS.writePrompt, req),
   },
   mediaReferences: createMediaReferencesBridge(ipcRenderer),
   pipes: {

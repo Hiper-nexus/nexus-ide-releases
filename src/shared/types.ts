@@ -156,6 +156,8 @@ import type {
 import type { GamificationSnapshot } from './gamification-types';
 import type {
   MediaArtifactInfo,
+  MediaPromptWriteRequest,
+  MediaPromptWriteResponse,
   MediaProviderId,
   MediaProviderInfo,
   MediaStudioRequest,
@@ -1461,6 +1463,12 @@ export interface NexusApi {
     readArtifactDataUrl(
       storageKey: string,
     ): Promise<{ ok: boolean; dataUrl?: string; error?: string }>;
+    /**
+     * "Escrever meu pedido" (21/10/2026): uma LLM barata reescreve o texto
+     * solto — digitado ou ditado — como pedido que o modelo entende.
+     * Fail-open: `written: false` devolve o texto original com o motivo.
+     */
+    writePrompt(req: MediaPromptWriteRequest): Promise<MediaPromptWriteResponse>;
   };
   /** Referências do Estúdio: imagens, logos e vídeos de exemplo do projeto (F-1611). */
   mediaReferences: MediaReferencesApi;

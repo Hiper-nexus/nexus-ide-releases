@@ -60,6 +60,41 @@ export function guessAttachmentRole(name: string, isVideo: boolean): BriefAttach
   return 'other';
 }
 
+/**
+ * Teto de cada campo do brief, num lugar só: o formulário do Estúdio e este
+ * construtor leem a MESMA tabela. Antes havia dois números soltos (o
+ * `maxLength` do campo e o `clean()` daqui) e o texto era cortado calado nos
+ * dois — um roteiro de 1.800 caracteres virava 1.500 sem aviso nenhum, e o
+ * render saía errado pagando API. Quem mexer num teto aqui mexe nos dois
+ * lados de uma vez; `pending-brief` prova que o brief montado ainda cabe.
+ *
+ * O produto cabe um roteiro de verdade: narração de 90 s com direção de cena
+ * passa de 2.000 caracteres com folga.
+ */
+export const BRIEF_FIELD_LIMITS = {
+  product: 6_000,
+  siteUrl: 500,
+  audience: 600,
+  style: 1_200,
+} as const;
+
+export type BriefFieldName = keyof typeof BRIEF_FIELD_LIMITS;
+
+/** Quantos anexos entram no brief; o resto fica de fora (e a UI avisa). */
+export const BRIEF_MAX_ATTACHMENTS = 20;
+
+/** Teto do caminho de cada anexo dentro da linha do brief. */
+export const BRIEF_ATTACHMENT_KEY_MAX = 240;
+
+/**
+ * Quanto passou do teto, para o campo dizer o número exato. 0 = cabe.
+ * Conta os caracteres crus que a pessoa vê no campo, não os do brief
+ * montado: é esse número que ela precisa apagar.
+ */
+export function briefFieldOverflow(value: string, field: BriefFieldName): number {
+  return Math.max(0, value.length - BRIEF_FIELD_LIMITS[field]);
+}
+
 export interface PresentationBriefInput {
   readonly product: string;
   readonly siteUrl?: string;
@@ -76,7 +111,7 @@ const clean = (value: string | undefined, max: number): string =>
   (value ?? '').replace(/[\u0000-\u001f\u007f]+/gu, ' ').replace(/\s+/gu, ' ').trim().slice(0, max);
 
 export function normalizeSiteUrl(raw: string | undefined): string | null {
-  const text = clean(raw, 500);
+  const text = clean(raw, BRIEF_FIELD_LIMITS.siteUrl);
   if (!text) return null;
   try {
     const url = new URL(/^[a-z][a-z0-9+.-]*:\/\//iu.test(text) ? text : `https://${text}`);
@@ -103,23 +138,23 @@ export function buildPresentationBrief(input: PresentationBriefInput): string {
     'Crie um vídeo motion de apresentação do produto abaixo com o estúdio de vídeo do Nexus. ' +
       'Carregue a skill nexus-video e siga o fluxo dela.',
     '',
-    `Produto: ${clean(input.product, 1_500)}`,
+    `Produto: ${clean(input.product, BRIEF_FIELD_LIMITS.product)}`,
     site
       ? `Site para capturar (cores, fontes, telas): ${site}`
       : 'Sem site: use a descrição acima e me peça prints se precisar.',
   ];
-  const audience = clean(input.audience, 300);
+  const audience = clean(input.audience, BRIEF_FIELD_LIMITS.audience);
   if (audience) lines.push(`Público: ${audience}`);
-  const style = clean(input.style, 300);
+  const style = clean(input.style, BRIEF_FIELD_LIMITS.style);
   if (style) lines.push(`Estilo: ${style}`);
-  const attachments = (input.attachments ?? []).slice(0, 20);
+  const attachments = (input.attachments ?? []).slice(0, BRIEF_MAX_ATTACHMENTS);
   if (attachments.length > 0) {
     lines.push(
       '',
       'Anexos que eu trouxe (arquivos do projeto; copie os que forem entrar no vídeo para a pasta assets/ do projeto de vídeo):',
       ...attachments.map(
         (item) =>
-          `- ${BRIEF_ATTACHMENT_ROLE_LABEL[item.role]}: ${clean(item.storageKey, 240)} (${ROLE_INSTRUCTION[item.role]})`,
+          `- ${BRIEF_ATTACHMENT_ROLE_LABEL[item.role]}: ${clean(item.storageKey, BRIEF_ATTACHMENT_KEY_MAX)} (${ROLE_INSTRUCTION[item.role]})`,
       ),
       '',
     );

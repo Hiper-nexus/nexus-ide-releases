@@ -7,6 +7,7 @@ import {
   MEDIA_NO_PROJECT_ERROR,
   MEDIA_PROVIDER_IDS,
   type MediaArtifactInfo,
+  type MediaPromptWriteResponse,
   type MediaStudioResponse,
   type MediaUsageTotals,
 } from '../../shared/media-types';
@@ -23,6 +24,11 @@ import {
   MediaJobTimeoutError,
 } from './media-generation';
 import { resolveMediaOutputPath } from './media-path-policy';
+import { handleTrusted } from '../security/trusted-ipc';
+import {
+  MEDIA_PROMPT_WRITER_MAX_INPUT,
+  writeMediaPrompt,
+} from './media-prompt-writer';
 import { estimateMediaToolUsd, reserveMediaSpend } from './media-budget';
 import { createScopedMediaUsageStore } from '../usage/media-usage-store';
 import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
@@ -101,6 +107,15 @@ const PREVIEW_MIME_BY_EXT: Record<string, string> = {
   '.mp3': 'audio/mpeg',
   '.wav': 'audio/wav',
 };
+
+const writePromptSchema = z.object({
+  text: z.string().max(MEDIA_PROMPT_WRITER_MAX_INPUT),
+  task: z.enum(['scene', 'product']),
+  kind: z.enum(['video', 'image']).optional(),
+  style: z.string().max(2_000).optional(),
+  durationSec: z.number().int().min(1).max(600).optional(),
+  format: z.string().max(200).optional(),
+});
 
 export function registerMediaIpc(runtimeManager: ProjectRuntimeManager): void {
   ipcMain.handle(MEDIA_CHANNELS.listProviders, () =>
@@ -266,6 +281,24 @@ export function registerMediaIpc(runtimeManager: ProjectRuntimeManager): void {
     );
     shell.showItemInFolder(abs);
     return { ok: true };
+  });
+
+  /**
+   * "Escrever meu pedido" (21/10/2026). Fail-open por contrato: qualquer
+   * problema — payload inválido, sem chave, timeout, JSON ruim — devolve o
+   * texto que chegou, com o motivo. O Estúdio nunca perde o que a pessoa
+   * escreveu ou ditou. Não toca em arquivo nem precisa de projeto aberto:
+   * é só texto entrando e saindo. Canal novo, então `handleTrusted`:
+   * só a janela principal registrada chega aqui.
+   */
+  handleTrusted(MEDIA_CHANNELS.writePrompt, async (_event, raw): Promise<MediaPromptWriteResponse> => {
+    const parsed = writePromptSchema.safeParse(raw);
+    if (!parsed.success) {
+      const text = typeof (raw as { text?: unknown })?.text === 'string' ? (raw as { text: string }).text : '';
+      return { text, written: false, reason: 'payload inválido' };
+    }
+    const { text, task, ...context } = parsed.data;
+    return writeMediaPrompt(text, task, context);
   });
 
   ipcMain.handle(MEDIA_CHANNELS.readArtifactDataUrl, async (event, raw) => {

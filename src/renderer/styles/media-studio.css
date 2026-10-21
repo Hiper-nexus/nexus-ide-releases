@@ -127,6 +127,17 @@
   white-space: nowrap;
 }
 
+/*
+ * Botão que está LIGADO agora (o microfone ouvindo, 21/10/2026). O estado
+ * precisa ser visível sem depender da cor: o rótulo muda junto ("Ouvindo…
+ * toque para parar") e o botão leva `aria-pressed`.
+ */
+.ms-button--on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
 .ms-button:disabled {
   opacity: 0.5;
   cursor: default;
