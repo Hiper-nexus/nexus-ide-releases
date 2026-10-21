@@ -180,6 +180,24 @@ it('refreshes the catalogue for the kit selected NOW, not the one installed into
   }
 });
 
+it('names a registry the project does not declare, instead of an empty list', async () => {
+  api({
+    catalog: vi.fn().mockResolvedValue({
+      kit: 'shadcn',
+      items: [],
+      bestEffort: false,
+      unmappedRegistries: ['@acme'],
+    }),
+  });
+  const { host, root } = await mount();
+  try {
+    expect(host.textContent).toContain('ainda não declara @acme');
+    expect(host.textContent).toContain('@acme/algum-item');
+  } finally {
+    act(() => root.unmount());
+  }
+});
+
 it('says the free half needs no key before it mentions a licence', async () => {
   api();
   const { host, root } = await mount();

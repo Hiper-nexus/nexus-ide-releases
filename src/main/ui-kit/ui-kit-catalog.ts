@@ -4,7 +4,7 @@ import type { UiKitCandidate } from './ui-kit-pick';
 import {
   boardUiCandidates,
   listBoardUiFreeSlugs,
-  parseShadcnSearchOutput,
+  parseShadcnSearch,
   runShadcnCommand,
   shadcnSearchNamespaces,
   type UiKitServiceDeps,
@@ -95,6 +95,8 @@ export interface LiveCatalogResult {
   readonly raw: string;
   /** True when the list came from scraping CLI text rather than a typed source. */
   readonly bestEffort: boolean;
+  /** Configured registries the project does not declare, so unreachable here. */
+  readonly unmappedRegistries?: readonly string[];
   readonly error?: string;
 }
 
@@ -154,15 +156,21 @@ export async function liveCandidates(
     },
     deps,
   );
-  const parsed = parseShadcnSearchOutput(result.stdout);
+  const parsed = parseShadcnSearch(result.stdout);
   return {
-    candidates: union(parsed, cachedCandidates(kit, deps.cacheOptions)).filter(
+    candidates: union(parsed.candidates, cachedCandidates(kit, deps.cacheOptions)).filter(
       (entry) => matchesQuery(entry, needle),
     ),
     raw: result.stdout.slice(0, 20_000),
-    // The CLI has no --json for search, so the parse is a scrape: an empty
-    // list never means "the registry has nothing".
-    bestEffort: true,
+    // False when `--json` answered. Only the text fallback is a scrape, where
+    // an empty list never means "the registry has nothing".
+    bestEffort: parsed.bestEffort,
+    // A registry the operator configured in Nexus but the PROJECT does not
+    // declare: the search cannot reach it and no token was released, so say
+    // which one rather than showing an empty list.
+    ...(result.unmappedRegistries && result.unmappedRegistries.length > 0
+      ? { unmappedRegistries: result.unmappedRegistries }
+      : {}),
     ...(result.ok ? {} : { error: (result.stderr || result.stdout).slice(0, 300) }),
   };
 }

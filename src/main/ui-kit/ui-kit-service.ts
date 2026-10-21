@@ -500,6 +500,15 @@ export async function callBoardUiTool(
       };
     }
   }
+  if (tool === 'activate_license' || tool === 'deactivate_license') {
+    // HERE, not only in the service wrappers. The agent surface reaches
+    // `activate_license` through this function directly, so the invalidation
+    // added to `activateBoardUiLicense` missed it entirely — and the free
+    // listing stayed authoritative for the whole TTL after a key was added.
+    // Putting it on the one call every door goes through closes the class
+    // rather than the instance.
+    invalidateBoardUiFreeList();
+  }
   const call = deps.callMcp ?? callMcpToolOnce;
   const result = await call({
     kit: 'boardui',
@@ -678,18 +687,83 @@ export function shadcnSearchNamespaces(
 }
 
 /**
- * Best-effort parse of `shadcn search` output.
+ * The TYPED parse of `shadcn search --json`, with the old scrape behind it.
  *
- * The CLI has no `--json` for search, so this scrapes its text. It is reported
- * as best-effort precisely because of that: the raw text travels alongside, and
- * an empty parse never means "the registry has nothing".
+ * The CLI does have `--json` — `search --help` lists it and it answers
+ * `{ items: [{ name, type, registry, addCommandArgument }] }` (measured
+ * 2026-10-21 against shadcn@latest). This function used to scrape the text
+ * output and report every search as best-effort because of a belief that it
+ * did not. The scrape stays as a fallback for an older CLI, and only that
+ * path is best-effort now.
  *
- * Measured against the real CLI (2026-10-21), which prints one item per line as
- * `- @shadcn/button (ui)`. The trailing category is worth keeping: `example`
- * items are demos, and a recipe that installed `button-demo` instead of
- * `button` would look like it worked and be wrong.
+ * `type` is what keeps a recipe honest: `registry:example` items are demos,
+ * and installing `button-demo` instead of `button` looks like success and is
+ * wrong. Reading it from a typed field beats sniffing a trailing `(ui)`.
  */
 export const SHADCN_DEMO_CATEGORY = 'example';
+
+export interface ShadcnSearchParse {
+  readonly candidates: readonly UiKitCandidate[];
+  /** True when the list came from the text scrape rather than `--json`. */
+  readonly bestEffort: boolean;
+}
+
+/** `registry:ui` → `ui`, so the demo check reads one typed field. */
+function categoryFromType(type: unknown): string {
+  if (typeof type !== 'string') return 'registry-item';
+  const bare = type.includes(':') ? type.slice(type.indexOf(':') + 1) : type;
+  return bare.trim().toLowerCase() || 'registry-item';
+}
+
+function candidateFromJsonItem(entry: unknown): UiKitCandidate | null {
+  if (!entry || typeof entry !== 'object') return null;
+  const row = entry as { name?: unknown; registry?: unknown; type?: unknown };
+  const name = typeof row.name === 'string' ? row.name.trim() : '';
+  if (name.length === 0) return null;
+  const registry =
+    typeof row.registry === 'string' && row.registry.trim().startsWith('@')
+      ? row.registry.trim()
+      : SHADCN_DEFAULT_NAMESPACE;
+  // The namespace is part of the IDENTIFIER for anything but the default
+  // registry: installing `auth` instead of `@acme/auth` goes to the public
+  // registry, and `referencedShadcnNamespaces` then sees no `@acme` and
+  // withholds its token.
+  const namespaced = registry !== SHADCN_DEFAULT_NAMESPACE;
+  return {
+    kit: 'shadcn',
+    slug: namespaced ? `${registry}/${name}` : name,
+    label: name,
+    category: categoryFromType(row.type),
+    tier: 'free',
+  };
+}
+
+/** The typed answer, or `null` when this output is not `--json`'s. */
+export function parseShadcnSearchJson(output: string): readonly UiKitCandidate[] | null {
+  const start = output.indexOf('{');
+  if (start < 0) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(output.slice(start));
+  } catch {
+    return null;
+  }
+  const items = (parsed as { items?: unknown })?.items;
+  if (!Array.isArray(items)) return null;
+  const found = new Map<string, UiKitCandidate>();
+  for (const entry of items) {
+    const candidate = candidateFromJsonItem(entry);
+    if (candidate && !found.has(candidate.slug)) found.set(candidate.slug, candidate);
+  }
+  return [...found.values()];
+}
+
+/** JSON first, the scrape behind it. */
+export function parseShadcnSearch(output: string): ShadcnSearchParse {
+  const typed = parseShadcnSearchJson(output);
+  if (typed) return { candidates: typed, bestEffort: false };
+  return { candidates: parseShadcnSearchOutput(output), bestEffort: true };
+}
 
 export function parseShadcnSearchOutput(
   output: string,
@@ -752,6 +826,16 @@ let boardUiFreeListCache: { at: number; slugs: ReadonlySet<string> } | null = nu
  * a burst cost one vendor call.
  */
 const boardUiFreeListInFlight = new Map<string, Promise<ReadonlySet<string> | null>>();
+/**
+ * Bumped by every invalidation. A listing that STARTED before the licence
+ * changed must not be written after it: clearing the map only stopped new
+ * callers from joining the old request, while its own closure still finished
+ * and repopulated the cache with the pre-change answer — a late licensed
+ * listing classifying Pro slugs as free for the whole TTL.
+ */
+let boardUiFreeListGeneration = 0;
+/** Which attempt owns each cwd's slot, so a stale one cannot clear it. */
+const boardUiFreeListAttempt = new Map<string, symbol>();
 
 /** The live free catalogue. `null` when the vendor could not be reached. */
 export async function listBoardUiFreeSlugs(
@@ -764,18 +848,30 @@ export async function listBoardUiFreeSlugs(
   }
   const pending = boardUiFreeListInFlight.get(cwd);
   if (pending) return pending;
+  const generation = boardUiFreeListGeneration;
+  const attempt = Symbol('boardui-list');
+  boardUiFreeListAttempt.set(cwd, attempt);
   const fetching = (async () => {
     try {
       const result = await runBoardUiCommand({ command: { kind: 'list' }, cwd }, deps);
       if (!result.ok) return null;
       const slugs = parseBoardUiListOutput(result.stdout);
       if (slugs.size === 0) return null;
-      boardUiFreeListCache = { at: now, slugs };
+      // The answer still goes back to whoever asked — it was true when the
+      // request was made — but it is not CACHED across a licence change.
+      if (generation === boardUiFreeListGeneration) {
+        boardUiFreeListCache = { at: now, slugs };
+      }
       return slugs;
     } catch {
       return null;
     } finally {
-      boardUiFreeListInFlight.delete(cwd);
+      // Only the attempt that still owns the slot clears it: a stale one
+      // would otherwise delete the entry a newer request had just put there.
+      if (boardUiFreeListAttempt.get(cwd) === attempt) {
+        boardUiFreeListInFlight.delete(cwd);
+        boardUiFreeListAttempt.delete(cwd);
+      }
     }
   })();
   boardUiFreeListInFlight.set(cwd, fetching);
@@ -798,6 +894,8 @@ export async function listBoardUiFreeSlugs(
 export function invalidateBoardUiFreeList(): void {
   boardUiFreeListCache = null;
   boardUiFreeListInFlight.clear();
+  boardUiFreeListAttempt.clear();
+  boardUiFreeListGeneration += 1;
 }
 
 export function resetBoardUiFreeListCacheForTests(): void {

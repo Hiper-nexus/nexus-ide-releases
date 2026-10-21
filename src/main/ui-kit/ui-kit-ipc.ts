@@ -198,6 +198,9 @@ async function buildCatalog(
       kit,
       items: view(live.candidates),
       bestEffort: live.bestEffort,
+      ...(live.unmappedRegistries && live.unmappedRegistries.length > 0
+        ? { unmappedRegistries: live.unmappedRegistries }
+        : {}),
       ...(live.error ? { error: live.error } : {}),
     };
   } catch (error) {

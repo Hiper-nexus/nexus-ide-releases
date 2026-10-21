@@ -380,7 +380,10 @@ export function buildShadcnArgs(command: ShadcnCommand): readonly string[] {
     case 'view':
       return ['view', ...assertShadcnItems(command.items)];
     case 'search': {
-      const args = ['search', ...assertShadcnRegistries(command.registries)];
+      // `--json` is real: `shadcn search --help` lists it and it answers with
+      // typed items. The scrape that used to parse this output was written on
+      // the belief that it did not exist.
+      const args = ['search', ...assertShadcnRegistries(command.registries), '--json'];
       if (command.query !== undefined) {
         const query = command.query.trim();
         if (query.length > SHADCN_MAX_QUERY_CHARS) {

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { UiKitCliRunRequest } from './ui-kit-cli';
 import { writeCachedItem } from './ui-kit-cache';
 import { liveCandidates, offlineCandidates } from './ui-kit-catalog';
+import type { UiKitRegistry } from './ui-kit-registry';
 import {
   resetBoardUiFreeListCacheForTests,
   type UiKitServiceDeps,
@@ -140,5 +141,50 @@ describe('liveCandidates', () => {
     const result = await liveCandidates('shadcn', cwd, undefined, h.deps);
 
     expect(result.error).toContain('registry refused the token');
+  });
+});
+
+describe('a configured registry the project does not declare', () => {
+  const PRIVATE: UiKitRegistry = {
+    namespace: '@acme',
+    url: 'https://registry.acme.test/r/{name}.json',
+    auth: { kind: 'header', name: 'Authorization', envVar: 'ACME_REGISTRY_TOKEN' },
+    secretKey: 'external:ui-kit-registry-acme',
+  };
+
+  it('is named in the result instead of coming back as an empty list', async () => {
+    // The operator adds it in Settings, the project's components.json does
+    // not declare it, so the search cannot reach it and its token is
+    // withheld. Showing nothing with no reason was the whole complaint.
+    const h = harness(() => ({ stdout: JSON.stringify({ items: [] }) }));
+
+    const result = await liveCandidates('shadcn', cwd, undefined, {
+      ...h.deps,
+      registries: () => [PRIVATE],
+    });
+
+    expect(result.unmappedRegistries).toEqual(['@acme']);
+  });
+
+  it('says nothing about it once the project declares it', async () => {
+    fs.writeFileSync(
+      path.join(cwd, 'components.json'),
+      JSON.stringify({
+        registries: {
+          '@acme': {
+            url: PRIVATE.url,
+            headers: { Authorization: 'Bearer ${ACME_REGISTRY_TOKEN}' },
+          },
+        },
+      }),
+    );
+    const h = harness(() => ({ stdout: JSON.stringify({ items: [] }) }));
+
+    const result = await liveCandidates('shadcn', cwd, undefined, {
+      ...h.deps,
+      registries: () => [PRIVATE],
+    });
+
+    expect(result.unmappedRegistries).toBeUndefined();
   });
 });

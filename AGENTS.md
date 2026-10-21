@@ -2894,8 +2894,22 @@ componente: o agente recebia a paleta e escrevia cada peça à mão. `src/main/u
   com o Nexus) e o cache; o registry ao vivo é o `nexus_ui_kit_run`, que é
   efeito. O `catalog` também NÃO sonda a licença: perguntar ao fornecedor sobe o
   MCP dele. `tools-ui-kit-read-only.test.ts` prova com `spawn` fatal.
-- `parseShadcnSearchOutput` é RASPAGEM de texto (a CLI não tem `--json` para
-  busca): lista vazia nunca prova registry vazio, e a UI diz isso.
+- **A busca do shadcn TEM `--json`** (medido em 21/10 no shadcn@latest:
+  `search --help` lista a flag e ela responde
+  `{items:[{name,type,registry,addCommandArgument}]}`). Esta linha dizia o
+  contrário, e por isso existia uma raspagem de texto marcada
+  `bestEffort: true` em toda busca. `parseShadcnSearch` lê o JSON e só cai na
+  raspagem (`parseShadcnSearchOutput`) numa CLI antiga — aí sim `bestEffort`, e
+  lista vazia não prova registry vazio. O `type` (`registry:example`) é o que
+  mantém a receita honesta: instalar `button-demo` em vez de `button` parece
+  sucesso e está errado.
+- **Registry configurado no Nexus que o PROJETO não declara não é lista
+  vazia.** A busca não o alcança e o token é retido (`unmappedRegistries`),
+  porque provisionar o `components.json` numa busca faria de uma leitura uma
+  escrita. O catálogo devolve o namespace e o painel diz o que fazer: instalar
+  um item pelo nome exato declara o namespace. Passar a URL do registry no
+  argv resolveria o caso público, mas a validação só aceita `@namespace` de
+  propósito — host escolhido por quem chama é a classe que este módulo recusa.
 - Cache em `<userData>/ui-kit/<kit>` a 0600, hash conferido na leitura (payload
   editado em disco volta como ausente). Conteúdo licenciado fica na máquina que
   licenciou: nunca no repo nem no pacote.

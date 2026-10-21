@@ -8,7 +8,10 @@ import { readCachedItem, writeCachedItem } from './ui-kit-cache';
 import type { UiKitRegistry } from './ui-kit-registry';
 import {
   activateBoardUiLicense,
+  invalidateBoardUiFreeList,
   parseBoardUiListOutput,
+  parseShadcnSearch,
+  parseShadcnSearchJson,
   planInstallItems,
   readsAsActiveLicense,
   listBoardUiFreeSlugs,
@@ -405,6 +408,60 @@ describe('the cached free list is a function of the licence', () => {
     await deactivateBoardUiLicense({ cwd }, h.deps);
 
     expect(await resolveBoardUiTier('template-home-dashboard', cwd, h.deps)).toBe('pro');
+  });
+});
+
+describe('every door that changes the licence forgets the listing', () => {
+  const FREE_ONLY = '  button    Primary button.\n';
+  const WITH_PRO = `${FREE_ONLY}  template-home-dashboard  Pro template.\n`;
+
+  it('invalidates on the AGENT activation path, not only the service wrapper', async () => {
+    // `nexus_ui_kit_boardui { tool: 'activate_license' }` reaches
+    // `callBoardUiTool` directly, so the invalidation added to
+    // `activateBoardUiLicense` missed it and the free listing stayed
+    // authoritative for the whole TTL after a key was added.
+    let listing = FREE_ONLY;
+    const h = harness({
+      cli: () => ({ stdout: listing }),
+      mcp: () => ({ text: 'license activated' }),
+    });
+
+    // The tool refuses without a stored key, so the vault carries one.
+    h.vault.set(BOARDUI_LICENSE_SECRET, 'BUI-TEST-KEY-0001');
+
+    expect(await resolveBoardUiTier('template-home-dashboard', cwd, h.deps)).toBe('pro');
+    listing = WITH_PRO;
+    await callBoardUiTool({ tool: 'activate_license', cwd }, h.deps);
+
+    expect(await resolveBoardUiTier('template-home-dashboard', cwd, h.deps)).toBe('free');
+  });
+
+  it('discards a listing that STARTED before the licence changed', async () => {
+    // Clearing the map only stopped new callers joining the old request; its
+    // own closure still finished and repopulated the cache with the
+    // pre-change answer.
+    let release: ((value: { stdout: string }) => void) | null = null;
+    const h = harness({
+      cli: () =>
+        ({ stdout: WITH_PRO }) /* unused: the runner below takes over */,
+    });
+    const slow: UiKitServiceDeps = {
+      ...h.deps,
+      runCli: async () =>
+        new Promise((resolve) => {
+          release = (value) => resolve({ stdout: value.stdout, stderr: '', code: 0 });
+        }),
+    };
+
+    // A listing goes out while the licence is still active…
+    const inFlight = listBoardUiFreeSlugs(cwd, slow);
+    invalidateBoardUiFreeList();
+    release?.({ stdout: WITH_PRO });
+    // …the caller still gets the answer it asked for,
+    expect((await inFlight)?.has('template-home-dashboard')).toBe(true);
+    // but it must not have been cached across the change.
+    const after = harness({ cli: () => ({ stdout: FREE_ONLY }) });
+    expect(await resolveBoardUiTier('template-home-dashboard', cwd, after.deps)).toBe('pro');
   });
 });
 
@@ -979,5 +1036,51 @@ describe('parseBoardUiListOutput', () => {
 
   it('is empty for output it cannot read, rather than guessing', () => {
     expect(parseBoardUiListOutput('Found nothing.').size).toBe(0);
+  });
+});
+
+describe('parseShadcnSearch', () => {
+  /** The real `--json` shape, measured against shadcn@latest on 2026-10-21. */
+  const JSON_OUT = JSON.stringify({
+    items: [
+      { name: 'button', type: 'registry:ui', registry: '@shadcn', addCommandArgument: '@shadcn/button' },
+      { name: 'button-demo', type: 'registry:example', registry: '@shadcn' },
+      { name: 'auth', type: 'registry:block', registry: '@acme' },
+    ],
+  });
+
+  it('reads the typed answer and is NOT best-effort', () => {
+    const parsed = parseShadcnSearch(JSON_OUT);
+
+    expect(parsed.bestEffort).toBe(false);
+    expect(parsed.candidates.map((entry) => entry.slug)).toEqual([
+      'button',
+      'button-demo',
+      '@acme/auth',
+    ]);
+    // The demo marker comes from the typed field, not from sniffing text:
+    // installing `button-demo` instead of `button` looks like success.
+    expect(
+      parsed.candidates.find((entry) => entry.slug === 'button-demo')?.category,
+    ).toBe('example');
+  });
+
+  it('keeps the namespace in the identifier for a non-default registry', () => {
+    // `auth` instead of `@acme/auth` would install from the public registry
+    // and leave the token withheld.
+    expect(parseShadcnSearchJson(JSON_OUT)?.find((entry) => entry.label === 'auth')?.slug).toBe(
+      '@acme/auth',
+    );
+  });
+
+  it('falls back to the scrape for an older CLI, and says it did', () => {
+    const parsed = parseShadcnSearch('- @shadcn/button (ui)\n- @shadcn/card (ui)\n');
+
+    expect(parsed.bestEffort).toBe(true);
+    expect(parsed.candidates.map((entry) => entry.slug)).toEqual(['button', 'card']);
+  });
+
+  it('is not fooled by prose that merely contains a brace', () => {
+    expect(parseShadcnSearchJson('no json here { but a brace')).toBeNull();
   });
 });

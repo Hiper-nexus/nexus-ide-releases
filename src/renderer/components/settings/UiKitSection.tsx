@@ -388,11 +388,23 @@ export function UiKitSection() {
           <p>{catalog.error}</p>
         </div>
       )}
+      {catalog?.unmappedRegistries && catalog.unmappedRegistries.length > 0 && (
+        // A silent empty list was the whole problem: o registry está guardado
+        // aqui, mas o PROJETO não o declara, então a busca não o alcança e o
+        // token é retido. Instalar um item dele declara o namespace.
+        <p className="settings-help">
+          O projeto ainda não declara {catalog.unmappedRegistries.join(', ')} no{' '}
+          <code>components.json</code>, então a busca não alcança esse registry
+          e o token dele fica retido. Instale um item pelo nome exato
+          (<code>{catalog.unmappedRegistries[0]}/algum-item</code>) para o
+          Nexus declarar o namespace no projeto.
+        </p>
+      )}
       {catalog?.bestEffort && catalog.items.length === 0 && !loadingCatalog && (
         <p className="settings-help">
-          Nada veio na leitura da lista. A CLI do shadcn não tem saída
-          estruturada para busca, então isso não prova que o registry está
-          vazio — procure pelo nome exato do item.
+          Nada veio na leitura da lista, e esta CLI respondeu em texto em vez
+          de JSON — então isso não prova que o registry está vazio. Procure
+          pelo nome exato do item.
         </p>
       )}
       <ul className="settings-list">

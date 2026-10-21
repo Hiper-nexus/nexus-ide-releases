@@ -87,6 +87,9 @@ describe('buildShadcnArgs — the full documented surface', () => {
       'search',
       '@shadcn',
       '@v0',
+      // The CLI does have `--json` for search; the old scrape existed on the
+      // belief that it did not.
+      '--json',
       '--query',
       'sidebar',
       '--limit',

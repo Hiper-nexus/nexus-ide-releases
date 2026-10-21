@@ -185,6 +185,12 @@ export interface UiKitCatalogView {
   readonly items: readonly UiKitCatalogItemView[];
   /** True when the list came from scraping CLI text, not a typed source. */
   readonly bestEffort: boolean;
+  /**
+   * Registries configured here that the PROJECT's components.json does not
+   * declare. The search cannot reach them and their token is withheld, so the
+   * panel names them instead of showing an empty list.
+   */
+  readonly unmappedRegistries?: readonly string[];
   readonly error?: string;
 }
 
