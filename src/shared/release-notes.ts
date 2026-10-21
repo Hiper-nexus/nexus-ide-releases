@@ -12375,6 +12375,7 @@ export const CURRENT_RELEASE: AppRelease = {
     { title: 'O pedido abre o pane', detail: 'Campo separado da busca: a busca filtra CLI, conta e modelo; o campo novo é o que você quer feito. Com pedido, escolher a CLI abre um passo com a proposta do Jev; o pedido viaja como primeiro brief. Vazio, o menu abre o pane na hora — o caminho rápido não ganhou fricção.' },
     { title: 'Esforço editável antes de abrir', detail: 'O esforço era decidido em 70% das rotas de missão e nunca chegava ao pane aberto na mão, que nascia no padrão do provider. Agora a proposta vem marcada e você troca antes do pane nascer, nos níveis que a CLI entende: baixo, médio, alto, máximo — ou "a CLI decide".' },
     { title: 'O passo diz quem decidiu', detail: 'Tier, especialidade e a origem da escolha aparecem no passo. Sem isso o revezamento por fair-share e diversidade lê como sorteio. Jev sem chave, desligado ou fora do ar: o passo aparece sem proposta e o Abrir funciona igual.' },
+    { title: 'No passo de confirmação, a busca some', detail: 'O cabeçalho declara display flex, que vencia o hidden do navegador e deixava a busca na tela. A classe escondida agora fica display none.' },
     { title: 'Pacote Linux', detail: 'A 0.76.362 é a publicação macOS e não recebe arquivos Linux. A 0.76.363 foi tagueada e não publicada. A 0.76.360 é o pacote Linux anterior.' },
   ],
   fixes: [

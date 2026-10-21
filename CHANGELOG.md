@@ -13,6 +13,7 @@ No desktop Linux, em relação à 0.76.360:
 - **O passo diz quem decidiu.** Tier, especialidade e origem da escolha aparecem ali. Sem isso o revezamento por fair-share e diversidade parece sorteio. Sem chave do Jev, com a superfície desligada ou com o serviço fora do ar, o passo aparece sem proposta e o Abrir funciona igual — o Jev nunca impede abrir um pane.
 - **O login deixa de mentir sobre o motivo da falha.** No fim da troca, `exchangeAuthCode` chama `clearAccess()`, que roda `resetPendingLogin()` e incrementa `authGeneration`. A partir dali toda falha era devolvida como "login superseded" no lugar da causa real — `exchange-storage` (Keychain recusando a gravação), `exchange-license-invalid`. A geração passa a ser rebaselinada depois do nosso próprio `clearAccess()`; um login concorrente de verdade continua invalidando o anterior.
 - **Entrar com GitHub e Entrar com Google ficam no mesmo peso.** Os dois são alternativas, não primário e secundário: dar branco a um inventava uma recomendação que não existe e apagava a cor da marca, que é o que o olho procura ali. A marca ganhou slot de largura fixa — sem ele os dois rótulos começavam em pontos diferentes.
+- **No passo de confirmação, a busca some.** O cabeçalho declara `display: flex`, que vencia o `hidden` do navegador e deixava a busca na tela. A classe escondida agora fica `display: none`.
 
 ## 0.76.363 — O pedido abre o pane, e o login volta
 
