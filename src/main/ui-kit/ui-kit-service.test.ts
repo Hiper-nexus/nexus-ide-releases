@@ -272,7 +272,7 @@ describe('installItems', () => {
     await installItems({ kit: 'boardui', items: ['date-picker'], cwd }, h.deps);
 
     expect(h.cliRuns[0]?.kit).toBe('boardui');
-    expect(h.cliRuns[0]?.args).toEqual(['add', 'date-picker']);
+    expect(h.cliRuns[0]?.args).toEqual(['add', 'date-picker', '--yes']);
     expect(h.cliRuns[0]?.writes).toBe(true);
   });
 });

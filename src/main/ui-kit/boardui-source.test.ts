@@ -75,13 +75,45 @@ describe('assertBoardUiItems', () => {
 });
 
 describe('buildBoardUiArgs', () => {
-  it('builds init and add', () => {
-    expect(buildBoardUiArgs({ kind: 'init' })).toEqual(['init']);
+  it('always passes --yes, because without it a headless spawn hangs on a prompt', () => {
+    // Verified against `boardui add --help`: `-y, --yes  skip prompts`.
+    expect(buildBoardUiArgs({ kind: 'init' })).toEqual(['init', '--yes']);
     expect(buildBoardUiArgs({ kind: 'add', items: ['button', 'select'] })).toEqual([
       'add',
       'button',
       'select',
+      '--yes',
     ]);
+  });
+
+  it('carries the measured flags', () => {
+    expect(
+      buildBoardUiArgs({ kind: 'init', overwrite: true, dir: 'src', pro: true }),
+    ).toEqual(['init', '--yes', '--overwrite', '--dir', 'src', '--pro']);
+    expect(
+      buildBoardUiArgs({
+        kind: 'add',
+        items: [],
+        all: true,
+        path: 'src/components/ui',
+        overwrite: true,
+      }),
+    ).toEqual([
+      'add',
+      '--all',
+      '--yes',
+      '--path',
+      'src/components/ui',
+      '--overwrite',
+    ]);
+  });
+
+  it('refuses a directory that escapes the project or looks like an option', () => {
+    expect(() => buildBoardUiArgs({ kind: 'init', dir: '../../etc' })).toThrow(/climb out/);
+    expect(() => buildBoardUiArgs({ kind: 'init', dir: '/abs' })).toThrow(/relative/);
+    expect(() => buildBoardUiArgs({ kind: 'add', items: ['button'], path: '-rf' })).toThrow(
+      /may not start with "-"/,
+    );
   });
 });
 
@@ -143,7 +175,7 @@ describe('sanitizeBoardUiToolArgs', () => {
     });
 
     expect(result.args).toEqual({ components: ['button'] });
-    expect(result.dropped.sort()).toEqual(['cwd', 'projectDir', 'root']);
+    expect([...result.dropped].sort()).toEqual(['cwd', 'projectDir', 'root']);
   });
 
   it('never accepts a licence key as an argument', () => {

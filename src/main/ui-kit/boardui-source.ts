@@ -247,18 +247,78 @@ export function assertBoardUiItems(
   });
 }
 
-export type BoardUiCliCommand =
-  | { readonly kind: 'init' }
-  | { readonly kind: 'add'; readonly items: readonly string[] };
+/**
+ * A project-relative directory for `--path` / `--dir`.
+ *
+ * Same rules as the shadcn destination: no absolute path, no `..`, and never
+ * something commander would read as an option.
+ */
+export function assertBoardUiDir(raw: string): string {
+  const value = raw.trim();
+  if (value.length === 0 || value.length > 256) {
+    throw new UiKitCliError('INVALID_PATH', 'empty or oversized target directory');
+  }
+  if (/[\0\r\n]/.test(value) || value.startsWith('-')) {
+    throw new UiKitCliError(
+      'INVALID_PATH',
+      'a target directory may not start with "-" or contain a control character',
+    );
+  }
+  if (value.startsWith('/') || value.startsWith('\\') || /^[a-z]:[\\/]/i.test(value)) {
+    throw new UiKitCliError('INVALID_PATH', 'target directory must be relative to the project');
+  }
+  if (value.split(/[\\/]/).includes('..')) {
+    throw new UiKitCliError('INVALID_PATH', 'target directory may not climb out of the project');
+  }
+  return value;
+}
 
+export type BoardUiCliCommand =
+  | {
+      readonly kind: 'init';
+      readonly overwrite?: boolean;
+      readonly dir?: string;
+      /** Also install the deps the Pro components use (recharts, motion, …). */
+      readonly pro?: boolean;
+    }
+  | {
+      readonly kind: 'add';
+      readonly items: readonly string[];
+      readonly all?: boolean;
+      readonly path?: string;
+      readonly dir?: string;
+      readonly overwrite?: boolean;
+    };
+
+/**
+ * Build the argv. Flags verified against `boardui --help` / `add --help` /
+ * `init --help` on 2026-10-21.
+ *
+ * `--yes` is NOT optional for us: both commands prompt without it, and a
+ * headless spawn with no stdin would sit there until the runner's deadline
+ * killed it — a hang that reads as "the kit is broken".
+ */
 export function buildBoardUiArgs(
   command: BoardUiCliCommand,
 ): readonly string[] {
   switch (command.kind) {
-    case 'init':
-      return ['init'];
-    case 'add':
-      return ['add', ...assertBoardUiItems(command.items)];
+    case 'init': {
+      const args = ['init', '--yes'];
+      if (command.overwrite) args.push('--overwrite');
+      if (command.dir) args.push('--dir', assertBoardUiDir(command.dir));
+      if (command.pro) args.push('--pro');
+      return args;
+    }
+    case 'add': {
+      const args = ['add'];
+      if (command.all) args.push('--all');
+      else args.push(...assertBoardUiItems(command.items));
+      args.push('--yes');
+      if (command.path) args.push('--path', assertBoardUiDir(command.path));
+      if (command.dir) args.push('--dir', assertBoardUiDir(command.dir));
+      if (command.overwrite) args.push('--overwrite');
+      return args;
+    }
   }
 }
 

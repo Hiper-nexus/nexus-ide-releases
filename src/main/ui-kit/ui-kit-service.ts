@@ -658,7 +658,12 @@ export async function installItems(
   if (input.kit === 'boardui') {
     return await runBoardUiCommand(
       {
-        command: { kind: 'add', items: input.items },
+        command: {
+          kind: 'add',
+          items: input.items,
+          ...(input.overwrite ? { overwrite: true } : {}),
+          ...(input.path ? { path: input.path } : {}),
+        },
         cwd: input.cwd,
         ...(input.signal ? { signal: input.signal } : {}),
       },
