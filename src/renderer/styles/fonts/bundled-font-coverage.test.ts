@@ -173,18 +173,16 @@ function unicodeCodepoints(cmap: Buffer): Set<number> {
 }
 
 describe('bundled woff2 keeps the TTF cmap', () => {
-  for (const face of FACES) {
-    it(`${face.woff2} drops no codepoint the TTF maps`, () => {
-      const source = unicodeCodepoints(sfntTable(load(face.ttf), 'cmap'));
-      const tables = woff2Tables(load(face.woff2));
-      const shipped = unicodeCodepoints(tables.get('cmap')!);
-      const lost = [...source].filter((cp) => !shipped.has(cp)).sort((a, b) => a - b);
-      expect(lost, face.woff2).toEqual([]);
-      const required = TERMINAL_CODEPOINTS.filter((cp) => source.has(cp) && !shipped.has(cp));
-      expect(required, `${face.woff2} terminal marks`).toEqual([]);
-      if (face.variable) expect(tables.has('fvar'), face.woff2).toBe(true);
-    });
-  }
+  it.each(FACES)('$woff2 drops no codepoint the TTF maps', (face) => {
+    const source = unicodeCodepoints(sfntTable(load(face.ttf), 'cmap'));
+    const tables = woff2Tables(load(face.woff2));
+    const shipped = unicodeCodepoints(tables.get('cmap')!);
+    const lost = [...source].filter((cp) => !shipped.has(cp)).sort((a, b) => a - b);
+    expect(lost, face.woff2).toEqual([]);
+    const required = TERMINAL_CODEPOINTS.filter((cp) => source.has(cp) && !shipped.has(cp));
+    expect(required, `${face.woff2} terminal marks`).toEqual([]);
+    if (face.variable) expect(tables.has('fvar'), face.woff2).toBe(true);
+  });
 
   it('JetBrains Mono still draws the terminal frame', () => {
     const shipped = unicodeCodepoints(woff2Tables(load('JetBrainsMono.var.woff2')).get('cmap')!);
