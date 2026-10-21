@@ -87,8 +87,9 @@ export function redactState(state: unknown): unknown {
 /**
  * Trunca texto longo; keepTail preserva o fim (saída de teste, tail de log).
  * keepEnds preserva cabeça e cauda — pedido do operador: o contexto abre, o
- * pedido de ação costuma fechar (F-1346). keepEnds redige ANTES de cortar: o
- * segundo ponto de corte não pode deixar o sufixo de um segredo partido ao meio.
+ * pedido de ação costuma fechar (F-1346). Todo modo redige ANTES de cortar
+ * (F-1620): o corte não pode deixar a cauda ou a cabeça de um segredo partido
+ * ao meio, curta demais para o padrão casar depois.
  */
 export function capText(
   text: string,
@@ -103,8 +104,19 @@ export function capText(
     const head = Math.ceil(maxChars / 2);
     return `${redacted.slice(0, head)}\n[... ${cut} chars omitted]\n${redacted.slice(head + cut)}`;
   }
+  // Só a janela mantida e uma folga além dela passam pela redação: o segredo
+  // que cruza o corte inteiro cabe na folga, e um log de MB não roda as regex.
   const omitted = text.length - maxChars;
-  return opts?.keepTail
-    ? `\n[... ${omitted} chars omitted]${text.slice(omitted)}`
-    : `${text.slice(0, maxChars)}\n[... ${omitted} chars omitted]`;
+  if (opts?.keepTail) {
+    const window = redactSecrets(text.slice(Math.max(0, omitted - CAP_REDACTION_MARGIN)));
+    return `\n[... ${omitted} chars omitted]${window.slice(Math.max(0, window.length - maxChars))}`;
+  }
+  const window = redactSecrets(text.slice(0, maxChars + CAP_REDACTION_MARGIN));
+  return `${window.slice(0, maxChars)}\n[... ${omitted} chars omitted]`;
 }
+
+/**
+ * Folga da redação além do corte: maior que o maior segredo que os padrões
+ * casam (JWT de três segmentos de até 4096, PEM de RSA 4096 ~3,2 KB).
+ */
+const CAP_REDACTION_MARGIN = 16_384;

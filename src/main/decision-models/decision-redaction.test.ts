@@ -66,3 +66,41 @@ describe('capText keepEnds (F-1346)', () => {
     expect(out).not.toMatch(/s{5}/);
   });
 });
+
+describe('capText corte simples (F-1620)', () => {
+  const key = `sk-ant-api03-${'A1b2C3d4E5f6G7h8I9j0'.repeat(4)}`;
+  const longestFragment = (text: string, secret: string): number => {
+    let best = 0;
+    for (let i = 0; i < secret.length; i++) {
+      for (let j = i + best + 1; j <= secret.length; j++) {
+        if (!text.includes(secret.slice(i, j))) break;
+        best = j - i;
+      }
+    }
+    return best;
+  };
+
+  it('keepTail: a cauda de um segredo cortado no começo da janela não sai', () => {
+    // Antes: a janela começava no meio da chave e os últimos 39 caracteres saíam crus.
+    const text = `${'x'.repeat(5_000)}export ANTHROPIC_API_KEY=${key}\n${'y'.repeat(5_960)}`;
+    const out = capText(text, 6_000, { keepTail: true });
+    expect(longestFragment(out, key)).toBeLessThan(8);
+    expect(out.endsWith('y'.repeat(100))).toBe(true);
+    expect(out.length).toBeLessThanOrEqual(6_000 + 40);
+  });
+
+  it('corte da cabeça: o prefixo de um token partido no fim da janela não sai', () => {
+    const token = `ghp_${'Z9y8X7w6V5u4T3s2R1q0'.repeat(2)}`;
+    const out = capText(`${'z'.repeat(3_990)}${token} fim`, 4_000);
+    expect(out).not.toContain('ghp_');
+    expect(longestFragment(out, token)).toBeLessThan(8);
+    expect(out.startsWith('z'.repeat(100))).toBe(true);
+  });
+
+  it('JWT longo que cruza o corte é redigido na janela', () => {
+    const jwt = `eyJ${'h'.repeat(30)}.${'p'.repeat(3_000)}.${'s'.repeat(40)}`;
+    const out = capText(`${'a'.repeat(1_000)}${jwt}${'b'.repeat(500)}`, 2_000, { keepTail: true });
+    expect(out).not.toContain('s'.repeat(40));
+    expect(out).not.toContain('p'.repeat(50));
+  });
+});
