@@ -12300,7 +12300,7 @@ export const RELEASE_076359: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076360: AppRelease = {
   version: '0.76.360',
   date: '2026-10-21',
   codename: 'Jev calibrado e UI no topo',
@@ -12318,4 +12318,24 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076360: AppRelease = CURRENT_RELEASE;
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.361',
+  date: '2026-10-21',
+  codename: 'Jev calibrado chega ao macOS',
+  summary: 'Publicação macOS. O macOS estava na 0.76.358 e não recebeu a 0.76.359 nem a 0.76.360, que são pacotes Linux: esta release leva ao Mac o Jev na versão calibrada, a guarda que trata estado como dado, a repergunta da primeira opção, a UI no topo com reserva ordenada e o + Pane que prioriza as CLIs disponíveis.',
+  highlights: [
+    { title: 'Jev na versão calibrada', detail: 'O padrão deixa de ser o alias jev-latest e passa a ser jev-1.13.0, a versão em que os limiares foram medidos. Escolha explícita e NEXUS_JEV_MODEL continuam vencendo. Versão recusada tenta jev-latest uma vez.' },
+    { title: 'Estado é dado, não instrução', detail: 'A guarda de despacho diz ao juiz que texto dirigido ao avaliador, alegação de aprovação ou pedido de veredito não é evidência. A suíte rotulada cobre cinco ataques e cinco chamadas legítimas que parecem ataque.' },
+    { title: 'Viés da primeira opção', detail: 'Escolha cuja vencedora é a primeira opção e a confiança está logo acima do limiar é reperguntada com as opções invertidas. Se a escolha mudar, a resposta sai. Vale para reuso de helper, missão falada, skill, Marketplace, desempate do navegador e rota de tarefa.' },
+    { title: 'UI no topo e ajuste leve barato', detail: 'Tarefa visual de medium para cima reveza só Opus 5.5, Gemini Argon e GPT Astra, com reserva ordenada. Cor, botão ou espaçamento em tier easy reveza as CLIs do tier. Jogo, Next.js e 3D/WebGL vão ao Opus 5.5 e, sem ele, ao Sonnet 5.5.' },
+    { title: 'O + Pane prioriza disponíveis', detail: 'As CLIs instaladas e ligadas abrem a lista; o bloco "Indisponíveis · N" vem depois, compacto, focável por teclado e exposto a leitores de tela. O seletor não leva mais um pedido pendente para o spawn.' },
+    { title: 'Pacote macOS', detail: 'Esta é a publicação macOS. A 0.76.359 e a 0.76.360 são pacotes Linux e não recebem arquivos macOS. A 0.76.358 é a publicação macOS anterior.' },
+  ],
+  fixes: [
+    { title: 'Segredo partido não sai no corte', detail: 'capText redige a janela mantida antes de cortar, com folga de 16 KB, para a triagem de terminal, o resumo de handoff e a memória não mandarem a cauda de uma chave.' },
+    { title: 'Autopilot de 5 s na missão', detail: 'nexus_browser_do e nexus_computer_do esperam 5 s por passo, sem repetir no timeout. A consulta entra no orçamento e no painel da missão. Sem a chave do Jev, a mensagem diz a chave que falta. Linha da Luna no diário conta como Luna.' },
+    ...RELEASE_076360.fixes,
+  ],
+};
+
+export const RELEASE_076361: AppRelease = CURRENT_RELEASE;
