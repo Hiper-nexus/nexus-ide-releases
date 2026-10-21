@@ -791,6 +791,33 @@ describe('resolveBoardUiTier', () => {
 
     expect(await resolveBoardUiTier('mystery-item', cwd, h.deps)).toBe('unknown');
   });
+
+  it('spends ONE vendor call on a burst of unknown slugs', async () => {
+    // The TTL cache alone did not do this: every call in the Promise.all
+    // arrived before the first had populated it, so a 32-item install fired
+    // 32 concurrent `npx boardui list`.
+    const h = harness({ cli: () => ({ stdout: freeList }) });
+    const unknown = Array.from({ length: 12 }, (_, index) => `mystery-${index}`);
+
+    const tiers = await Promise.all(
+      unknown.map((slug) => resolveBoardUiTier(slug, cwd, h.deps)),
+    );
+
+    expect(tiers).toEqual(unknown.map(() => 'pro'));
+    expect(h.cliRuns).toHaveLength(1);
+  });
+
+  it('does not keep a failed fetch, so the next burst may still succeed', async () => {
+    let reachable = false;
+    const h = harness({
+      cli: () => (reachable ? { stdout: freeList } : { code: 1, stderr: 'offline' }),
+    });
+
+    expect(await resolveBoardUiTier('mystery-item', cwd, h.deps)).toBe('unknown');
+    reachable = true;
+    expect(await resolveBoardUiTier('mystery-item', cwd, h.deps)).toBe('pro');
+    expect(h.cliRuns).toHaveLength(2);
+  });
 });
 
 describe('parseBoardUiListOutput', () => {

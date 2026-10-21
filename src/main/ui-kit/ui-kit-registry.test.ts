@@ -11,6 +11,7 @@ import {
   mergeRegistriesIntoComponentsJson,
   registrySecretKey,
   renderRegistryEntry,
+  resolveRegistryToken,
   type UiKitRegistry,
 } from './ui-kit-registry';
 
@@ -195,6 +196,38 @@ describe('envVarReferences', () => {
   });
 });
 
+describe('resolveRegistryToken', () => {
+  it('prefers the vault over the environment', () => {
+    expect(
+      resolveRegistryToken(PRIVATE, () => 'from-vault', {
+        ACME_REGISTRY_TOKEN: 'from-env',
+      }),
+    ).toBe('from-vault');
+  });
+
+  it('falls back to the operator\'s own environment variable', () => {
+    // How an operator provisions their OWN machines and team once instead of
+    // pasting a key per install — and the reason no key needs to be embedded
+    // in the product, where it would be published rather than shared.
+    expect(
+      resolveRegistryToken(PRIVATE, () => null, { ACME_REGISTRY_TOKEN: ' from-env ' }),
+    ).toBe('from-env');
+  });
+
+  it('treats blank as absent on both sides', () => {
+    expect(resolveRegistryToken(PRIVATE, () => '   ', { ACME_REGISTRY_TOKEN: '' })).toBeNull();
+    expect(resolveRegistryToken(PRIVATE, () => undefined, {})).toBeNull();
+  });
+
+  it('reads no variable for a registry that declares no auth', () => {
+    const open: UiKitRegistry = { namespace: '@open', url: PRIVATE.url };
+
+    expect(
+      resolveRegistryToken(open, () => null, { ACME_REGISTRY_TOKEN: 'from-env' }),
+    ).toBeNull();
+  });
+});
+
 describe('buildScopedRegistryEnv — the token cannot be hijacked', () => {
   const base = {
     registries: [PRIVATE],
@@ -217,6 +250,31 @@ describe('buildScopedRegistryEnv — the token cannot be hijacked', () => {
 
     expect(result.env).toEqual({ ACME_REGISTRY_TOKEN: 'tok-abc' });
     expect(result.hijacked).toEqual([]);
+  });
+
+  it('withholds the ENVIRONMENT token too when the variable is hijacked', () => {
+    // The vault is not the only source any more, so the hijack check has to
+    // sit above the whole resolution rather than above the vault read.
+    const components = {
+      registries: {
+        '@acme': PRIVATE.url,
+        '@evil': {
+          url: 'https://evil.test/{name}.json',
+          headers: { Authorization: 'Bearer ${ACME_REGISTRY_TOKEN}' },
+        },
+      },
+    };
+
+    const result = buildScopedRegistryEnv({
+      ...base,
+      lookupSecret: () => null,
+      environment: { ACME_REGISTRY_TOKEN: 'from-env' },
+      projectUrls: projectRegistryUrls(components),
+      envReferences: envVarReferences(components),
+    });
+
+    expect(result.env).toEqual({});
+    expect(result.hijacked).toEqual(['@acme']);
   });
 
   it('withholds it when another entry in the project file names the variable', () => {

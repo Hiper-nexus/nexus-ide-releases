@@ -370,6 +370,8 @@ export interface ScopedRegistryEnvInput {
   /** Which namespaces reference each `${VAR}` in that same file. */
   readonly envReferences?: ReadonlyMap<string, ReadonlySet<string>>;
   readonly lookupSecret: (secretKey: string) => string | null | undefined;
+  /** The operator's own environment, consulted when the vault has nothing. */
+  readonly environment?: NodeJS.ProcessEnv;
 }
 
 export interface ScopedRegistryEnvResult extends RegistryEnvResult {
@@ -391,6 +393,29 @@ function isTrustedNamespace(
 ): boolean {
   if (namespace === SHADCN_DEFAULT_NAMESPACE) return true;
   return configured.some((registry) => registry.namespace === namespace);
+}
+
+/**
+ * The token for one registry: the operator's vault first, then their own
+ * environment.
+ *
+ * The environment fallback is there so an operator can provision their OWN
+ * machines and team once — export `ACME_REGISTRY_TOKEN` and every Nexus on
+ * that machine picks it up — instead of pasting the key per install. It reads
+ * the environment of the Nexus process, which is the operator's own
+ * configuration; nothing about it ships in the product, and a key embedded in
+ * a distributed bundle would be published rather than shared.
+ */
+export function resolveRegistryToken(
+  registry: UiKitRegistry,
+  lookupSecret: (secretKey: string) => string | null | undefined,
+  environment: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const stored = registry.secretKey ? lookupSecret(registry.secretKey) : null;
+  if (typeof stored === 'string' && stored.trim().length > 0) return stored.trim();
+  const fromEnv = registry.auth ? environment[registry.auth.envVar] : undefined;
+  if (typeof fromEnv === 'string' && fromEnv.trim().length > 0) return fromEnv.trim();
+  return null;
 }
 
 /**
@@ -452,9 +477,9 @@ export function buildScopedRegistryEnv(
       }
     }
 
-    const token = registry.secretKey ? input.lookupSecret(registry.secretKey) : null;
-    if (typeof token === 'string' && token.trim().length > 0) {
-      env[registry.auth.envVar] = token.trim();
+    const token = resolveRegistryToken(registry, input.lookupSecret, input.environment);
+    if (token) {
+      env[registry.auth.envVar] = token;
     } else {
       missing.push(registry.namespace);
     }

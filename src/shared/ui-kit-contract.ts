@@ -187,6 +187,12 @@ export interface UiKitInstallView {
   readonly installed: readonly string[];
   readonly unresolved?: readonly string[];
   readonly needsLicense?: readonly string[];
+  /**
+   * How the licence itself read when something needed one: `absent` means no
+   * key is stored, `unknown` means the vendor could not be asked. Without
+   * this the panel could only say "it failed".
+   */
+  readonly licenseState?: 'active' | 'absent' | 'unknown';
   readonly missingRegistryKeys?: readonly string[];
   readonly output?: string;
   readonly error?: string;

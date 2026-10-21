@@ -318,9 +318,13 @@ export function UiKitSection() {
             <p>Sem item no catálogo para: {result.unresolved.join(', ')}</p>
           )}
           {result.needsLicense && result.needsLicense.length > 0 && (
+            // Reaches here from two places — uma receita cujo papel só casou
+            // com item Pro, e uma instalação direta que o portão recusou — e
+            // o texto tem de valer para as duas.
             <p>
-              Só havia item Pro para: {result.needsLicense.join(', ')} — guarde a
-              chave do BoardUI acima para usá-los.
+              {result.licenseState === 'unknown'
+                ? `Precisa da licença do BoardUI para: ${result.needsLicense.join(', ')} — não deu para confirmar a chave com o fornecedor agora.`
+                : `Precisa da licença do BoardUI para: ${result.needsLicense.join(', ')} — guarde a chave acima para usá-los; os itens grátis não pedem chave.`}
             </p>
           )}
           {result.missingRegistryKeys && result.missingRegistryKeys.length > 0 && (

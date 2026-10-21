@@ -155,8 +155,33 @@ it('explains a Pro-only role instead of reporting a bare failure', async () => {
     );
     await act(async () => install!.click());
 
-    expect(host.textContent).toContain('Só havia item Pro para: charts');
-    expect(host.textContent).toContain('guarde a chave do BoardUI');
+    expect(host.textContent).toContain('Precisa da licença do BoardUI para: charts');
+    expect(host.textContent).toContain('guarde a chave acima');
+  } finally {
+    act(() => root.unmount());
+  }
+});
+
+it('diz que a licença não pôde ser conferida, em vez de pedir a chave de novo', async () => {
+  // O caso do fornecedor fora do ar: a chave pode estar guardada e certa, e
+  // mandar "guarde a chave" manda a pessoa mexer no que não está quebrado.
+  api({
+    install: vi.fn().mockResolvedValue({
+      ok: false,
+      installed: [],
+      needsLicense: ['template-home-dashboard'],
+      licenseState: 'unknown',
+    }),
+  });
+  const { host, root } = await mount();
+  try {
+    const install = [...host.querySelectorAll('button')].find((button) =>
+      button.textContent?.startsWith('Instalar em'),
+    );
+    await act(async () => install!.click());
+
+    expect(host.textContent).toContain('não deu para confirmar a chave');
+    expect(host.textContent).not.toContain('guarde a chave acima');
   } finally {
     act(() => root.unmount());
   }

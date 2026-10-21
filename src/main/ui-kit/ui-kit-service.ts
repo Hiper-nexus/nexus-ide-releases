@@ -707,6 +707,16 @@ export function parseBoardUiListOutput(output: string): ReadonlySet<string> {
 
 const BOARDUI_FREE_LIST_TTL_MS = 10 * 60 * 1000;
 let boardUiFreeListCache: { at: number; slugs: ReadonlySet<string> } | null = null;
+/**
+ * The fetch already in flight, keyed by the directory it runs in.
+ *
+ * The TTL cache alone does not collapse a burst: resolving the tier of 32
+ * items runs `Promise.all`, so all 32 calls arrive before the first one has
+ * populated anything, every one misses the empty cache, and the install
+ * spawns 32 concurrent `npx boardui list`. Sharing the pending promise makes
+ * a burst cost one vendor call.
+ */
+const boardUiFreeListInFlight = new Map<string, Promise<ReadonlySet<string> | null>>();
 
 /** The live free catalogue. `null` when the vendor could not be reached. */
 export async function listBoardUiFreeSlugs(
@@ -717,20 +727,29 @@ export async function listBoardUiFreeSlugs(
   if (boardUiFreeListCache && now - boardUiFreeListCache.at < BOARDUI_FREE_LIST_TTL_MS) {
     return boardUiFreeListCache.slugs;
   }
-  try {
-    const result = await runBoardUiCommand({ command: { kind: 'list' }, cwd }, deps);
-    if (!result.ok) return null;
-    const slugs = parseBoardUiListOutput(result.stdout);
-    if (slugs.size === 0) return null;
-    boardUiFreeListCache = { at: now, slugs };
-    return slugs;
-  } catch {
-    return null;
-  }
+  const pending = boardUiFreeListInFlight.get(cwd);
+  if (pending) return pending;
+  const fetching = (async () => {
+    try {
+      const result = await runBoardUiCommand({ command: { kind: 'list' }, cwd }, deps);
+      if (!result.ok) return null;
+      const slugs = parseBoardUiListOutput(result.stdout);
+      if (slugs.size === 0) return null;
+      boardUiFreeListCache = { at: now, slugs };
+      return slugs;
+    } catch {
+      return null;
+    } finally {
+      boardUiFreeListInFlight.delete(cwd);
+    }
+  })();
+  boardUiFreeListInFlight.set(cwd, fetching);
+  return fetching;
 }
 
 export function resetBoardUiFreeListCacheForTests(): void {
   boardUiFreeListCache = null;
+  boardUiFreeListInFlight.clear();
 }
 
 /**

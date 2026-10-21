@@ -10,6 +10,7 @@ import {
   uiKitExternalKeyRequestSchema,
   uiKitRegistryRequestSchema,
   UI_KIT_EXTERNAL_KEYS,
+  type UiKitCatalogItemView,
   type UiKitCatalogView,
   type UiKitExternalKeyView,
   type UiKitInstallView,
@@ -26,7 +27,10 @@ import {
   clearUiKitCache,
   listCachedItems,
   uiKitCacheUsage,
+  type UiKitCachedTier,
 } from './ui-kit-cache';
+import { liveCandidates, offlineCandidates } from './ui-kit-catalog';
+import { installViewFromPlan, installViewFromRun } from './ui-kit-install-view';
 import {
   assertRegistry,
   registrySecretKey,
@@ -40,13 +44,9 @@ import {
 } from './ui-kit-recipes';
 import {
   activateBoardUiLicense,
-  boardUiCandidates,
   boardUiLicenseStatus,
   deactivateBoardUiLicense,
   installItems,
-  parseShadcnSearchOutput,
-  runShadcnCommand,
-  shadcnSearchNamespaces,
 } from './ui-kit-service';
 
 /**
@@ -155,18 +155,11 @@ async function buildCatalog(
   cachedOnly: boolean,
 ): Promise<UiKitCatalogView> {
   const cached = new Set(listCachedItems(kit).map((entry) => entry.slug));
-
-  if (kit === 'boardui') {
-    const needle = query?.trim().toLowerCase();
-    const items = boardUiCandidates()
-      .filter(
-        (entry) =>
-          (!needle ||
-            entry.slug.includes(needle) ||
-            entry.label.toLowerCase().includes(needle) ||
-            entry.category.includes(needle)) &&
-          (!cachedOnly || cached.has(entry.slug)),
-      )
+  const view = (
+    candidates: readonly { slug: string; label: string; category: string; tier: UiKitCachedTier }[],
+  ): readonly UiKitCatalogItemView[] =>
+    candidates
+      .filter((entry) => !cachedOnly || cached.has(entry.slug))
       .map((entry) => ({
         slug: entry.slug,
         label: entry.label,
@@ -174,59 +167,36 @@ async function buildCatalog(
         tier: entry.tier,
         cached: cached.has(entry.slug),
       }));
-    return { kit, items, bestEffort: false };
-  }
 
-  if (cachedOnly) {
+  const cwd = workspaceRootOrNull();
+  // Offline is the honest answer when nothing may run: `cachedOnly` is the
+  // operator asking for it, and with no project open there is no directory to
+  // run a vendor CLI in.
+  if (cachedOnly || !cwd) {
     return {
       kit,
-      items: listCachedItems(kit).map((entry) => ({
-        slug: entry.slug,
-        label: entry.slug,
-        category: 'registry-item',
-        tier: entry.tier,
-        cached: true,
-      })),
+      items: view(offlineCandidates(kit, query)),
       bestEffort: false,
+      ...(cwd ? {} : { error: 'no project is open' }),
     };
   }
 
-  const cwd = workspaceRootOrNull();
-  if (!cwd) {
-    return { kit, items: [], bestEffort: false, error: 'no project is open' };
-  }
   try {
-    const result = await runShadcnCommand(
-      {
-        command: {
-          kind: 'search',
-          registries: shadcnSearchNamespaces(configuredRegistries()),
-          ...(query ? { query } : {}),
-          limit: 200,
-        },
-        cwd,
-      },
-      serviceDeps(),
-    );
-    const items = parseShadcnSearchOutput(result.stdout).map((entry) => ({
-      slug: entry.slug,
-      label: entry.label,
-      category: entry.category,
-      tier: entry.tier,
-      cached: cached.has(entry.slug),
-    }));
+    // The LIVE list, through the same function the agent tools and the recipe
+    // use. This panel built its own BoardUI list from the bundled snapshot,
+    // which deliberately holds no Pro entry — so an operator who had paid for
+    // the licence could not see a single thing it bought.
+    const live = await liveCandidates(kit, cwd, query, serviceDeps());
     return {
       kit,
-      items,
-      // The CLI has no --json for search: an empty list is not proof of an
-      // empty registry.
-      bestEffort: true,
-      ...(result.ok ? {} : { error: (result.stderr || result.stdout).slice(0, 300) }),
+      items: view(live.candidates),
+      bestEffort: live.bestEffort,
+      ...(live.error ? { error: live.error } : {}),
     };
   } catch (error) {
     return {
       kit,
-      items: [],
+      items: view(offlineCandidates(kit, query)),
       bestEffort: true,
       error: error instanceof Error ? error.message.slice(0, 300) : 'search failed',
     };
@@ -305,37 +275,23 @@ export function registerUiKitIpc(): void {
             proLicensed: license?.state === 'active',
           });
           if (dryRun === true || resolved.install.length === 0) {
-            return {
-              ok: resolved.unresolved.length === 0,
-              installed: resolved.install,
-              unresolved: resolved.unresolved,
-              needsLicense: resolved.licensedRoles,
-            };
+            return installViewFromPlan(resolved);
           }
           const run = await installItems(
             { kit, items: resolved.install, cwd },
             serviceDeps(),
           );
-          return {
-            ok: run.ok,
-            installed: run.ok ? resolved.install : [],
-            unresolved: resolved.unresolved,
-            needsLicense: resolved.licensedRoles,
-            missingRegistryKeys: run.missingRegistryKeys,
-            output: `${run.stdout}\n${run.stderr}`.trim().slice(0, 8_000),
-          };
+          return installViewFromRun(run, {
+            requested: resolved.install,
+            recipe: resolved,
+          });
         }
 
         const run = await installItems(
           { kit, items: items ?? [], cwd },
           serviceDeps(),
         );
-        return {
-          ok: run.ok,
-          installed: run.ok ? (items ?? []) : [],
-          missingRegistryKeys: run.missingRegistryKeys,
-          output: `${run.stdout}\n${run.stderr}`.trim().slice(0, 8_000),
-        };
+        return installViewFromRun(run, { requested: items ?? [] });
       } catch (error) {
         return {
           ok: false,

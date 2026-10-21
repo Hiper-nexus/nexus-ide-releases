@@ -18,7 +18,7 @@ import {
   resolveUiKitRecipe,
   UI_KIT_RECIPES,
 } from '../ui-kit/ui-kit-recipes';
-import { pickUiKit, type UiKitCandidate } from '../ui-kit/ui-kit-pick';
+import { pickUiKit } from '../ui-kit/ui-kit-pick';
 import { listCachedItems, readCachedItem } from '../ui-kit/ui-kit-cache';
 import {
   boardUiCandidates,
@@ -26,10 +26,10 @@ import {
   boardUiLicenseStatus,
   callBoardUiTool,
   installItems,
-  parseShadcnSearchOutput,
   runShadcnCommand,
   shadcnSearchNamespaces,
 } from '../ui-kit/ui-kit-service';
+import { liveCandidates, offlineCandidates } from '../ui-kit/ui-kit-catalog';
 import { getOrchSettings } from '../persistence/settings-store';
 import type { UiKitRegistry } from '../ui-kit/ui-kit-registry';
 
@@ -113,86 +113,17 @@ function configuredRegistries(): readonly UiKitRegistry[] {
 
 const serviceDeps = () => ({ registries: configuredRegistries });
 
-function matchesQuery(entry: UiKitCandidate, needle: string | undefined): boolean {
-  if (!needle) return true;
-  return (
-    entry.slug.includes(needle) ||
-    entry.label.toLowerCase().includes(needle) ||
-    entry.category.includes(needle)
-  );
-}
-
 /**
- * The read-only listing: the BoardUI snapshot plus whatever is already cached.
+ * The read-only listing NEVER spawns.
  *
- * It NEVER spawns. That is the whole point — `nexus_ui_kit_catalog` and
+ * That is the whole point of `offlineCandidates`: `nexus_ui_kit_catalog` and
  * `nexus_ui_kit_source` are classified read-only, and a read-only lane (a
  * reviewer, a readOnly worker, an unconfirmed voice call) must not be able to
  * cause code execution. Running `npx` would, and in the project's own
  * directory at that: npm reads a `.npmrc` from its cwd, so the REPOSITORY
- * could choose which package gets downloaded and run. The live registry is
- * reachable through `nexus_ui_kit_run`, which is an effect and is gated.
+ * could choose which package gets downloaded and run. `liveCandidates` asks
+ * the vendor and is only ever called from an effectful tool.
  */
-function cachedCandidatesFor(
-  kit: UiKitId,
-  query: string | undefined,
-): readonly UiKitCandidate[] {
-  const needle = query?.trim().toLowerCase();
-  const cached = listCachedItems(kit);
-  const fromCache = cached.map((entry) => ({
-    kit,
-    slug: entry.slug,
-    label: entry.slug,
-    category: kit === 'boardui' ? 'cached' : 'registry-item',
-    tier: entry.tier,
-  }));
-  if (kit !== 'boardui') return fromCache.filter((entry) => matchesQuery(entry, needle));
-
-  // The UNION, not the snapshot alone. A Pro item that a licensed operator
-  // already fetched lives only in the cache — building the list from the
-  // bundled free snapshot meant it could never be found again unless the
-  // caller already remembered its exact slug.
-  const snapshot = boardUiCandidates();
-  const known = new Set(snapshot.map((entry) => entry.slug));
-  return [...snapshot, ...fromCache.filter((entry) => !known.has(entry.slug))].filter(
-    (entry) => matchesQuery(entry, needle),
-  );
-}
-
-/** The live listing. Only reachable from an effectful tool. */
-async function liveCandidatesFor(
-  kit: UiKitId,
-  cwd: string,
-  query: string | undefined,
-): Promise<{ candidates: readonly UiKitCandidate[]; raw: string; bestEffort: boolean }> {
-  if (kit === 'boardui') {
-    const needle = query?.trim().toLowerCase();
-    return {
-      candidates: boardUiCandidates().filter((entry) => matchesQuery(entry, needle)),
-      raw: '',
-      bestEffort: false,
-    };
-  }
-  const result = await runShadcnCommand(
-    {
-      command: {
-        kind: 'search',
-        registries: shadcnSearchNamespaces(configuredRegistries()),
-        ...(query ? { query } : {}),
-        limit: 200,
-      },
-      cwd,
-    },
-    serviceDeps(),
-  );
-  return {
-    candidates: parseShadcnSearchOutput(result.stdout),
-    raw: result.stdout.slice(0, 20_000),
-    // The CLI has no --json for search, so the parse is a scrape: an empty
-    // list never means "the registry has nothing".
-    bestEffort: true,
-  };
-}
 
 export function buildUiKitTools(): McpToolDef[] {
   return [
@@ -226,7 +157,7 @@ export function buildUiKitTools(): McpToolDef[] {
         const kit = parseKit(args);
         const query = str(args, 'query');
         const cached = listCachedItems(kit);
-        const items = cachedCandidatesFor(kit, query);
+        const items = offlineCandidates(kit, query);
         const task = str(args, 'task');
 
         let recommendation: unknown;
@@ -236,9 +167,16 @@ export function buildUiKitTools(): McpToolDef[] {
           // this tool must not reach. The Pro gate then falls back to a free
           // item and reports `needsLicense`, which is the honest answer from a
           // read-only lane.
+          const seen = new Set(items.map((entry) => entry.slug));
           const pick = await pickUiKit({
             task,
-            candidates: [...items, ...boardUiCandidates()].slice(0, 60),
+            candidates: [
+              ...items,
+              // Cross-kit on purpose: asked for a dashboard with kit shadcn,
+              // the honest answer may still be a BoardUI item. De-duplicated
+              // because for kit boardui `items` already holds the snapshot.
+              ...boardUiCandidates().filter((entry) => !seen.has(entry.slug)),
+            ].slice(0, 60),
           });
           recommendation = {
             needsKit: pick.needsKit,
@@ -293,7 +231,6 @@ export function buildUiKitTools(): McpToolDef[] {
         properties: {
           kit: { type: 'string', enum: [...UI_KIT_IDS] },
           slug: { type: 'string', description: 'Item slug, e.g. button, dashboard-01.' },
-          refresh: { type: 'boolean', description: 'Ignore the cache and refetch.' },
         },
         required: ['slug'],
       },
@@ -410,7 +347,7 @@ export function buildUiKitTools(): McpToolDef[] {
         const cwd = cwdFor(ctx);
         const license =
           kit === 'boardui' ? await boardUiLicenseStatus({ cwd }, serviceDeps()) : null;
-        const listed = await liveCandidatesFor(kit, cwd, undefined);
+        const listed = await liveCandidates(kit, cwd, undefined, serviceDeps());
         const resolved = resolveUiKitRecipe({
           recipe,
           kit,
