@@ -48,7 +48,13 @@ import {
 import {
   OPERATOR_BOARDUI_LICENSE_KEY,
   hasOperatorBoardUiLicenseKey,
+  operatorBoardUiLicenseFile,
 } from './ui-kit-operator-keys';
+import {
+  isProvisionedBoardUiLicense,
+  realBoardUiLicenseFileOps,
+  type BoardUiLicenseFileOps,
+} from './boardui-license-file';
 import {
   cachedItemIsStale,
   readCachedItem,
@@ -75,6 +81,8 @@ export interface UiKitServiceDeps {
   readonly setSecret?: (key: string, value: string) => { ok: boolean; error?: string };
   readonly registries?: () => readonly UiKitRegistry[];
   readonly cacheOptions?: UiKitCacheOptions;
+  /** Licence-file access; the default touches the real config root. */
+  readonly boardUiLicenseFile?: BoardUiLicenseFileOps;
 }
 
 function vault(deps: UiKitServiceDeps): {
@@ -496,15 +504,18 @@ async function gatedBoardUiItems(
     effectiveBoardUiLicenseKey(deps)
   ) {
     // Self-heal, once: a key exists here (the operator's, vault or bundle) but
-    // this machine never activated it. `activate_license` injects the key
-    // service-side, so this call never carries a secret.
+    // this machine never activated it. A vault key ACTIVATES with the vendor;
+    // the bundled one is PROVISIONED as a licence file — the same rule every
+    // door uses, so seats are spent only where a human typed the key.
     try {
-      const activated = await callBoardUiTool(
-        { tool: 'activate_license', cwd, ...(signal ? { signal } : {}) },
+      const activated = await ensureActiveBoardUiLicense(
+        { cwd, ...(signal ? { signal } : {}) },
         deps,
+        // The status this gate just read IS the pre-check.
+        { skipStatusPrecheck: true },
       );
       if (!activated.ok) {
-        activationDetail = activated.text.slice(0, 200);
+        activationDetail = (activated.detail ?? 'activation failed').slice(0, 200);
       }
     } catch (error) {
       activationDetail =
@@ -701,6 +712,12 @@ export async function boardUiLicenseStatus(
 export interface ActivateLicenseResult {
   readonly ok: boolean;
   readonly stored: boolean;
+  /**
+   * True when the operator's licence file was PROVISIONED here (bundled key,
+   * empty vault) instead of activated with the vendor. A provisioned
+   * machine's "Remover" is local: the vendor seat belongs to the operator.
+   */
+  readonly provisioned?: boolean;
   readonly detail?: string;
 }
 
@@ -744,22 +761,49 @@ export async function activateBoardUiLicense(
 }
 
 /**
+ * Licence-file access for this run: injected by tests, the real config root
+ * (the one the spawned MCP child resolves) otherwise.
+ */
+function boardUiLicenseFileOps(deps: UiKitServiceDeps): BoardUiLicenseFileOps {
+  return deps.boardUiLicenseFile ?? realBoardUiLicenseFileOps();
+}
+
+/**
  * Activate whichever key this machine actually has: the vault copy when there
  * is one, otherwise the operator key bundled with Nexus.
  *
- * The bundled path activates WITHOUT writing the vault, so "Remover" stays
- * honest — deactivate releases the vendor seat and clears the vault, and the
- * bundled key is simply there again on the next install. Only an explicit
- * 'set' in the panel persists a key.
+ * The bundled path does NOT call `activate_license` — it PROVISIONS the
+ * operator's licence file instead (operator decision 21/10, "opção B"). The
+ * vendor counts seats at activation only and both are used, so a third
+ * activation would be refused outright; a provisioned file validates and
+ * downloads Pro without consuming a seat (measured 21/10 on an isolated
+ * HOME). Nothing is written to the vault either, so "Remover" stays honest —
+ * on a provisioned machine it removes the file locally and never releases the
+ * operator's own seat. Only an explicit 'set' in the panel persists a key.
  */
 export async function activateEffectiveBoardUiLicense(
   input: { readonly cwd: string; readonly signal?: AbortSignal },
   deps: UiKitServiceDeps = {},
 ): Promise<ActivateLicenseResult> {
-  const { get } = vault(deps);
-  const stored = get(BOARDUI_LICENSE_SECRET);
+  return await ensureActiveBoardUiLicense(input, deps, {});
+}
+
+/**
+ * The shared activation core, so the panel door and the install doors cannot
+ * drift apart. A vault key ACTIVATES with the vendor (a real seat, the
+ * operator's own typed key); the bundled key is PROVISIONED as a licence file.
+ */
+async function ensureActiveBoardUiLicense(
+  input: { readonly cwd: string; readonly signal?: AbortSignal },
+  deps: UiKitServiceDeps,
+  options: { readonly skipStatusPrecheck?: boolean },
+): Promise<ActivateLicenseResult> {
+  const stored = vault(deps).get(BOARDUI_LICENSE_SECRET);
   if (stored && stored.trim().length > 0) {
-    return activateBoardUiLicense({ key: stored, cwd: input.cwd, ...(input.signal ? { signal: input.signal } : {}) }, deps);
+    return activateBoardUiLicense(
+      { key: stored, cwd: input.cwd, ...(input.signal ? { signal: input.signal } : {}) },
+      deps,
+    );
   }
   const bundled = effectiveBoardUiLicenseKey(deps);
   if (!bundled) {
@@ -771,40 +815,89 @@ export async function activateEffectiveBoardUiLicense(
     };
   }
   // A machine the vendor already counts as active (this Mac activated the key
-  // before Nexus bundled it; any client that kept its seat) has nothing to
-  // gain from re-activation — and a key at its seat limit would answer the
-  // re-run with "reached the activation limit" even though Pro works. Ask
-  // the vendor first; only an inactive licence pays the activation call.
-  const current = await boardUiLicenseStatus(
-    { cwd: input.cwd, ...(input.signal ? { signal: input.signal } : {}) },
-    deps,
-  );
-  if (current.state === 'active') {
-    return { ok: true, stored: false, detail: current.detail ?? 'licence already active on this machine' };
-  }
-  invalidateBoardUiFreeList();
-  try {
-    const result = await callBoardUiTool(
-      { tool: 'activate_license', cwd: input.cwd, ...(input.signal ? { signal: input.signal } : {}) },
+  // before Nexus bundled it; a client that kept its own seat) has a licence
+  // file worth protecting — provisioning would overwrite it. Ask the vendor
+  // first; the install doors skip this only right after running it themselves.
+  if (!options.skipStatusPrecheck) {
+    const current = await boardUiLicenseStatus(
+      { cwd: input.cwd, ...(input.signal ? { signal: input.signal } : {}) },
       deps,
     );
-    return { ok: result.ok, stored: false, detail: result.text.slice(0, 400) };
-  } catch (error) {
+    if (current.state === 'active') {
+      return {
+        ok: true,
+        stored: false,
+        detail: current.detail ?? 'licence already active on this machine',
+      };
+    }
+  }
+  invalidateBoardUiFreeList();
+  // PROVISION, don't activate: writing the operator's licence file where the
+  // CLI reads it is the whole trick — `validate` and every Pro download accept
+  // key + instanceId from this machine, and no vendor seat is spent. The
+  // vendor's own verdict follows; it does not count seats either.
+  const write = boardUiLicenseFileOps(deps).write(operatorBoardUiLicenseFile());
+  if (!write.ok) {
     return {
       ok: false,
       stored: false,
-      detail: error instanceof Error ? error.message.slice(0, 400) : 'activation failed',
+      detail: write.error ?? 'could not provision the operator licence file',
     };
   }
+  const after = await boardUiLicenseStatus(
+    { cwd: input.cwd, ...(input.signal ? { signal: input.signal } : {}) },
+    deps,
+  );
+  return {
+    ok: after.state === 'active',
+    stored: false,
+    provisioned: true,
+    detail:
+      after.state === 'active'
+        ? after.detail ?? 'operator licence provisioned on this machine'
+        : after.detail ??
+          'operator licence file provisioned; the vendor could not be reached to confirm it',
+  };
 }
 
-/** Release this machine's Pro seat and forget the stored key. */
+/**
+ * Release this machine's Pro seat and forget the stored key.
+ *
+ * A PROVISIONED machine has no seat of its own: its licence file is the
+ * operator's payload, and `deactivate_license` would release the OPERATOR's
+ * seat (their Mac), killing Pro for the whole fleet. There, "Remover" is
+ * local — the file goes, the vendor is not called.
+ */
 export async function deactivateBoardUiLicense(
   input: { readonly cwd: string; readonly signal?: AbortSignal },
   deps: UiKitServiceDeps = {},
 ): Promise<ActivateLicenseResult> {
   const { set } = vault(deps);
+  const ops = boardUiLicenseFileOps(deps);
+  const file = ops.read();
   invalidateBoardUiFreeList();
+  if (isProvisionedBoardUiLicense(file, operatorBoardUiLicenseFile())) {
+    const removed = ops.remove();
+    set(BOARDUI_LICENSE_SECRET, '');
+    return {
+      ok: removed.ok,
+      stored: false,
+      provisioned: true,
+      detail: removed.ok
+        ? 'operator licence removed from this machine; the vendor seat stays with the operator'
+        : removed.error ?? 'could not remove the BoardUI licence file',
+    };
+  }
+  if (!file) {
+    // Nothing on disk to release with the vendor; the CLI would only answer
+    // "no licence stored". Forget the key and stay honest.
+    set(BOARDUI_LICENSE_SECRET, '');
+    return {
+      ok: true,
+      stored: false,
+      detail: 'no BoardUI licence file on this machine; the stored key was forgotten',
+    };
+  }
   let detail: string | undefined;
   let ok = false;
   try {

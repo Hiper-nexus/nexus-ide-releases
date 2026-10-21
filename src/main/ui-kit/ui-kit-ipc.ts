@@ -37,6 +37,8 @@ import {
 } from './ui-kit-install-view';
 import {
   assertRegistry,
+  normalizeConfiguredRegistries,
+  persistableRegistry,
   registrySecretKey,
   resolveRegistryAuthContract,
   KNOWN_UI_KIT_REGISTRIES,
@@ -75,8 +77,13 @@ import { hasOperatorBoardUiLicenseKey } from './ui-kit-operator-keys';
  */
 
 function configuredRegistries(): readonly UiKitRegistry[] {
-  const settings = getOrchSettings() as { uiKitRegistries?: readonly UiKitRegistry[] };
-  return settings.uiKitRegistries ?? [];
+  const settings = getOrchSettings() as { uiKitRegistries?: readonly unknown[] };
+  // NORMALIZED on the way in: a settings file is data on disk, not a caller.
+  // Each row is re-validated (a derived `secretKey` comes with it), an
+  // unusable one is dropped rather than taken on trust — otherwise a stale
+  // or hand-edited row could clear ANOTHER registry's token on removal, and
+  // settings written here would carry vault names they should not hold.
+  return normalizeConfiguredRegistries(settings.uiKitRegistries ?? []);
 }
 
 function serviceDeps() {
@@ -145,8 +152,10 @@ async function buildStatus(): Promise<UiKitStatusView> {
     workspaceOpen: Boolean(cwd),
     license,
     registries: registries.map((registry) => {
+      // DERIVED at the point of use: the row's own `secretKey` (settings can
+      // carry one, merged operator rows carry one) never selects a secret.
       const tokenStored = Boolean(
-        registry.secretKey && vault.getSecret(registry.secretKey),
+        vault.getSecret(registrySecretKey(registry.namespace)),
       );
       return {
         namespace: registry.namespace,
@@ -436,12 +445,14 @@ export function registerUiKitIpc(): void {
         if (parsed.data.action === 'remove') {
           const namespace = parsed.data.namespace;
           if (namespace) {
-            const victim = current.find((entry) => entry.namespace === namespace);
-            if (victim?.secretKey) secrets().setSecret(victim.secretKey, '');
+            // The DERIVED vault key, not the stored row's `secretKey`: a
+            // settings file that carries a foreign name must not clear that
+            // secret here — only this namespace's own token ever goes.
+            secrets().setSecret(registrySecretKey(namespace), '');
             replaceOrchSettings({
-              uiKitRegistries: current.filter(
-                (entry) => entry.namespace !== namespace,
-              ),
+              uiKitRegistries: current
+                .filter((entry) => entry.namespace !== namespace)
+                .map(persistableRegistry),
             } as never);
           }
           return await buildStatus();
@@ -486,7 +497,11 @@ export function registerUiKitIpc(): void {
           ...current.filter((entry) => entry.namespace !== registry.namespace),
           registry,
         ];
-        replaceOrchSettings({ uiKitRegistries: next } as never);
+        // PERSISTED without the derived `secretKey`: settings hold the
+        // operator's registry configuration, never vault names.
+        replaceOrchSettings({
+          uiKitRegistries: next.map(persistableRegistry),
+        } as never);
         return await buildStatus();
       } catch {
         return await buildStatus();

@@ -37,6 +37,7 @@ import {
 } from '../ui-kit/ui-kit-install-target';
 import { getOrchSettings } from '../persistence/settings-store';
 import {
+  normalizeConfiguredRegistries,
   withOperatorRegistries,
   type UiKitRegistry,
 } from '../ui-kit/ui-kit-registry';
@@ -112,8 +113,10 @@ function assertNamedItems(items: readonly string[]): readonly string[] {
 
 function configuredRegistries(): readonly UiKitRegistry[] {
   try {
-    const settings = getOrchSettings() as { uiKitRegistries?: readonly UiKitRegistry[] };
-    return settings.uiKitRegistries ?? [];
+    const settings = getOrchSettings() as { uiKitRegistries?: readonly unknown[] };
+    // Same rule as the panel's reader: every stored row re-validated, an
+    // unusable one dropped — a settings file is data on disk, not a caller.
+    return normalizeConfiguredRegistries(settings.uiKitRegistries ?? []);
   } catch {
     return [];
   }

@@ -6,7 +6,8 @@ import { UiKitCliError, type UiKitCliRunRequest } from './ui-kit-cli';
 import { BOARDUI_LICENSE_SECRET } from './boardui-source';
 import { readCachedItem, writeCachedItem } from './ui-kit-cache';
 import type { UiKitRegistry } from './ui-kit-registry';
-import { OPERATOR_BOARDUI_LICENSE_KEY } from './ui-kit-operator-keys';
+import { OPERATOR_BOARDUI_LICENSE_KEY, operatorBoardUiLicenseFile } from './ui-kit-operator-keys';
+import type { BoardUiLicenseFile } from './boardui-license-file';
 import {
   activateBoardUiLicense,
   activateEffectiveBoardUiLicense,
@@ -61,24 +62,52 @@ afterEach(() => {
   operatorBundle.hasKey = true;
 });
 
+/**
+ * The licence file every test runs against. The REAL config root holds the
+ * operator's own licence on this very Mac — without this fake, a licence
+ * test would read (or worse, delete) `~/.config/boardui/license.json`.
+ */
+interface LicenseFileFake {
+  content: BoardUiLicenseFile | null;
+  writes: BoardUiLicenseFile[];
+  removed: boolean;
+}
+
 interface Harness {
   readonly deps: UiKitServiceDeps;
   readonly cliRuns: UiKitCliRunRequest[];
   readonly mcpCalls: Array<{ tool?: string; args?: Record<string, unknown>; writes?: boolean }>;
   readonly vault: Map<string, string>;
+  readonly licenseFile: LicenseFileFake;
 }
 
 function harness(
   over: {
     cli?: (request: UiKitCliRunRequest) => { stdout?: string; stderr?: string; code?: number };
-    mcp?: (tool: string | undefined) => { text: string; isError?: boolean } | Error;
+    mcp?: (
+      tool: string | undefined,
+      ctx: {
+        readonly licenseFile: BoardUiLicenseFile | null;
+        readonly vault: Map<string, string>;
+      },
+    ) => { text: string; isError?: boolean } | Error;
     registries?: readonly UiKitRegistry[];
     vaultWritable?: boolean;
+    licenseFile?: {
+      content?: BoardUiLicenseFile | null;
+      failWrite?: boolean;
+      failRemove?: boolean;
+    };
   } = {},
 ): Harness {
   const cliRuns: UiKitCliRunRequest[] = [];
   const mcpCalls: Array<{ tool?: string; args?: Record<string, unknown>; writes?: boolean }> = [];
   const store = new Map<string, string>();
+  const licenseFile: LicenseFileFake = {
+    content: over.licenseFile?.content ?? null,
+    writes: [],
+    removed: false,
+  };
   const deps: UiKitServiceDeps = {
     runCli: async (request) => {
       cliRuns.push(request);
@@ -91,7 +120,9 @@ function harness(
         ...(request.toolArguments ? { args: request.toolArguments as Record<string, unknown> } : {}),
         ...(request.writes !== undefined ? { writes: request.writes } : {}),
       });
-      const outcome = over.mcp?.(request.tool) ?? { text: 'ok' };
+      const outcome =
+        over.mcp?.(request.tool, { licenseFile: licenseFile.content, vault: store }) ??
+        { text: 'ok' };
       if (outcome instanceof Error) throw outcome;
       return { result: {}, text: outcome.text, isError: outcome.isError === true };
     },
@@ -104,8 +135,27 @@ function harness(
     },
     registries: () => over.registries ?? [],
     cacheOptions: { rootDir: dir },
+    boardUiLicenseFile: {
+      read: () => licenseFile.content,
+      write: (payload) => {
+        if (over.licenseFile?.failWrite) {
+          return { ok: false, error: 'EACCES: the licence file could not be written' };
+        }
+        licenseFile.writes.push(payload);
+        licenseFile.content = payload;
+        return { ok: true };
+      },
+      remove: () => {
+        if (over.licenseFile?.failRemove) {
+          return { ok: false, error: 'EPERM: the licence file could not be removed' };
+        }
+        licenseFile.removed = true;
+        licenseFile.content = null;
+        return { ok: true };
+      },
+    },
   };
-  return { deps, cliRuns, mcpCalls, vault: store };
+  return { deps, cliRuns, mcpCalls, vault: store, licenseFile };
 }
 
 function writeComponentsJson(value: Record<string, unknown>): void {
@@ -126,6 +176,17 @@ const PRIVATE_REGISTRY: UiKitRegistry = {
   url: 'https://registry.acme.test/r/{name}.json',
   auth: { kind: 'header', name: 'Authorization', envVar: 'ACME_REGISTRY_TOKEN' },
   secretKey: 'external:ui-kit-registry-acme',
+};
+
+/**
+ * A licence the VENDOR issued: another key and another instanceId, not the
+ * operator's provisioned payload. This is what sends "Remover" to the vendor
+ * for real — and what the pre-check must protect from being overwritten.
+ */
+const NATIVE_LICENSE: BoardUiLicenseFile = {
+  licenseKey: 'BUI-CLIENT-OWN',
+  instanceId: 'server-issued-instance',
+  instanceName: 'boardui-cli@client.local',
 };
 
 describe('runShadcnCommand', () => {
@@ -643,13 +704,61 @@ describe('the BoardUI licence', () => {
   });
 
   it('forgets the key locally even when the vendor call failed', async () => {
-    const h = harness({ mcp: () => new Error('offline') });
+    // A NATIVE licence is on disk (a vendor-issued instance), so the vendor
+    // release is attempted — and failing offline must still forget the key.
+    const h = harness({ licenseFile: { content: NATIVE_LICENSE }, mcp: () => new Error('offline') });
     h.vault.set(BOARDUI_LICENSE_SECRET, 'BUI-3');
 
     const result = await deactivateBoardUiLicense({ cwd }, h.deps);
 
     expect(result.ok).toBe(false);
     expect(h.vault.has(BOARDUI_LICENSE_SECRET)).toBe(false);
+  });
+
+  it('releases a NATIVE licence with the vendor, then forgets the key', async () => {
+    const h = harness({
+      licenseFile: { content: NATIVE_LICENSE },
+      mcp: (tool) => (tool === 'deactivate_license' ? { text: 'License deactivated' } : { text: 'ok' }),
+    });
+    h.vault.set(BOARDUI_LICENSE_SECRET, 'BUI-CLIENT-OWN');
+
+    const result = await deactivateBoardUiLicense({ cwd }, h.deps);
+
+    expect(result.ok).toBe(true);
+    expect(h.mcpCalls.map((call) => call.tool)).toContain('deactivate_license');
+    // The vendor owns the release of a native seat; we never touch the file.
+    expect(h.licenseFile.removed).toBe(false);
+    expect(h.vault.has(BOARDUI_LICENSE_SECRET)).toBe(false);
+  });
+
+  it('removes a PROVISIONED licence locally — the vendor seat stays with the operator', async () => {
+    // The file on this machine is exactly the operator's payload (bundled key,
+    // the operator's Mac instanceId): `deactivate_license` would release THE
+    // OPERATOR'S seat and kill Pro for the whole fleet. "Remover" is local.
+    const h = harness({ licenseFile: { content: operatorBoardUiLicenseFile() } });
+    h.vault.set(BOARDUI_LICENSE_SECRET, OPERATOR_BOARDUI_LICENSE_KEY);
+
+    const result = await deactivateBoardUiLicense({ cwd }, h.deps);
+
+    expect(result.ok).toBe(true);
+    expect(result.provisioned).toBe(true);
+    expect(h.mcpCalls.map((call) => call.tool)).not.toContain('deactivate_license');
+    expect(h.licenseFile.content).toBeNull();
+    expect(h.licenseFile.removed).toBe(true);
+    expect(h.vault.has(BOARDUI_LICENSE_SECRET)).toBe(false);
+    expect(result.detail).toMatch(/vendor seat stays with the operator/);
+  });
+
+  it('with no licence file at all, removal just forgets the stored key', async () => {
+    const h = harness();
+    h.vault.set(BOARDUI_LICENSE_SECRET, 'BUI-4');
+
+    const result = await deactivateBoardUiLicense({ cwd }, h.deps);
+
+    expect(result.ok).toBe(true);
+    expect(h.mcpCalls).toHaveLength(0);
+    expect(h.vault.has(BOARDUI_LICENSE_SECRET)).toBe(false);
+    expect(result.detail).toMatch(/stored key was forgotten/);
   });
 });
 
@@ -696,13 +805,46 @@ describe('the licence key bundled with Nexus', () => {
     expect((await boardUiLicenseStatus({ cwd }, own.deps)).operatorKey).toBe(false);
   });
 
-  it('activates the effective key without persisting a bundled one', async () => {
-    const h = harness({ mcp: () => ({ text: 'License activated' }) });
+  it('provisions the operator licence file when the vault is empty — no vendor seat, no vault write', async () => {
+    // Rota B (operator decision 21/10, "opção B"): a fresh machine with zero
+    // setup gets the operator's licence FILE, not a vendor activation — the
+    // vendor counts seats at activation only, and both are spent. The vault
+    // stays empty so the panel keeps offering "Remover" as the local undo.
+    const h = harness({
+      mcp: (tool, ctx) => {
+        if (tool === 'license_status') {
+          // The status mirrors the file, like the real vendor does.
+          return ctx.licenseFile
+            ? { text: 'Pro license valid and active: 4889…636E.' }
+            : { text: 'No license found' };
+        }
+        // A vendor activation here would burn a seat the operator does not have.
+        return { text: 'License activated' };
+      },
+    });
 
     const result = await activateEffectiveBoardUiLicense({ cwd }, h.deps);
 
     expect(result.ok).toBe(true);
+    expect(result.provisioned).toBe(true);
     expect(result.stored).toBe(false);
+    expect(h.licenseFile.writes).toEqual([operatorBoardUiLicenseFile()]);
+    expect(h.mcpCalls.map((call) => call.tool)).not.toContain('activate_license');
+    expect(h.vault.has(BOARDUI_LICENSE_SECRET)).toBe(false);
+    expect(JSON.stringify(result)).not.toContain(OPERATOR_BOARDUI_LICENSE_KEY);
+  });
+
+  it('names the write failure when provisioning is refused', async () => {
+    const h = harness({
+      licenseFile: { failWrite: true },
+      mcp: () => ({ text: 'No license found' }),
+    });
+
+    const result = await activateEffectiveBoardUiLicense({ cwd }, h.deps);
+
+    expect(result.ok).toBe(false);
+    expect(result.provisioned).toBeUndefined();
+    expect(result.detail).toMatch(/EACCES/);
     expect(h.vault.has(BOARDUI_LICENSE_SECRET)).toBe(false);
   });
 
@@ -713,9 +855,13 @@ describe('the licence key bundled with Nexus', () => {
     // failure on a machine the vendor itself calls active. The status call
     // comes first; an active licence never pays the activation call.
     const h = harness({
+      // A CLIENT's own licence file: provisioning would overwrite it. The
+      // pre-check is what keeps the operator's payload off machines that
+      // already hold a licence worth keeping.
+      licenseFile: { content: NATIVE_LICENSE },
       mcp: (tool) =>
         tool === 'license_status'
-          ? { text: 'Pro license valid and active: 4889…636E. Seats: 2/2.' }
+          ? { text: 'Pro license valid and active: BUI-CLIENT-OWN. Seats: 1/5.' }
           : { text: 'This license key has reached the activation limit.' },
     });
 
@@ -723,6 +869,7 @@ describe('the licence key bundled with Nexus', () => {
 
     expect(result.ok).toBe(true);
     expect(h.mcpCalls.map((call) => call.tool)).not.toContain('activate_license');
+    expect(h.licenseFile.writes).toHaveLength(0);
     expect(result.detail).toMatch(/valid and active/);
   });
 
@@ -754,18 +901,19 @@ describe('auto-activation at the install doors', () => {
   /** `boardui list` output shape, as the real CLI prints it. */
   const freeList = '  button    Primary button.\n';
 
-  it('activates the bundled key on the way in, then installs the Pro item', async () => {
+  it('provisions the operator licence on the way in, then installs the Pro item', async () => {
     // Fresh machine, empty vault: the install door heals itself before
     // refusing — the operator asked for "works everywhere with zero setup".
-    let activated = false;
+    // Rota B: the healing writes the operator's licence FILE, and the vendor
+    // is never asked for a seat the fleet does not have.
     const h = harness({
       cli: () => ({ stdout: freeList }),
-      mcp: (tool) => {
-        if (tool === 'activate_license') {
-          activated = true;
-          return { text: 'License activated' };
+      mcp: (tool, ctx) => {
+        if (tool === 'license_status') {
+          // The status mirrors the file, like the real vendor does.
+          return ctx.licenseFile ? { text: 'Pro license active' } : { text: 'No license found' };
         }
-        return { text: activated ? 'Pro license active' : 'No license found' };
+        return { text: 'License activated' };
       },
     });
 
@@ -775,22 +923,19 @@ describe('auto-activation at the install doors', () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(h.mcpCalls.map((call) => call.tool)).toContain('activate_license');
-    const activation = h.mcpCalls.find((call) => call.tool === 'activate_license');
-    expect(activation?.args).toEqual({ licenseKey: OPERATOR_BOARDUI_LICENSE_KEY });
+    expect(h.mcpCalls.map((call) => call.tool)).not.toContain('activate_license');
+    expect(h.licenseFile.writes).toEqual([operatorBoardUiLicenseFile()]);
     expect(h.vault.has(BOARDUI_LICENSE_SECRET)).toBe(false);
     expect(h.cliRuns.at(-1)?.args).toEqual(['add', 'template-home-dashboard', '--yes']);
   });
 
-  it('says WHY it refused when the automatic activation failed', async () => {
-    // The vendor rejects the key: the refusal must name the activation
-    // failure instead of a generic "no licence".
+  it('says WHY it refused when the automatic provisioning failed', async () => {
+    // The disk refuses the licence file: the refusal must name the
+    // provisioning failure instead of a generic "no licence".
     const h = harness({
       cli: () => ({ stdout: freeList }),
-      mcp: (tool) => {
-        if (tool === 'activate_license') throw new Error('key rejected by vendor');
-        return { text: 'No license found' };
-      },
+      licenseFile: { failWrite: true },
+      mcp: () => ({ text: 'No license found' }),
     });
 
     const result = await installItems(
@@ -801,18 +946,17 @@ describe('auto-activation at the install doors', () => {
     expect(result.ok).toBe(false);
     expect(result.needsLicense).toEqual(['template-home-dashboard']);
     expect(result.stderr).toMatch(/automatic activation failed/);
+    expect(result.stderr).toMatch(/EACCES/);
   });
 
-  it('auto-activates on the AGENT install door too (install_components)', async () => {
-    let activated = false;
+  it('auto-provisions on the AGENT install door too (install_components)', async () => {
     const h = harness({
       cli: () => ({ stdout: freeList }),
-      mcp: (tool) => {
-        if (tool === 'activate_license') {
-          activated = true;
-          return { text: 'License activated' };
+      mcp: (tool, ctx) => {
+        if (tool === 'license_status') {
+          return ctx.licenseFile ? { text: 'Pro license active' } : { text: 'No license found' };
         }
-        return { text: activated ? 'Pro license active' : 'No license found' };
+        return { text: 'ok' };
       },
     });
 
@@ -822,7 +966,8 @@ describe('auto-activation at the install doors', () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(h.mcpCalls.map((call) => call.tool)).toContain('activate_license');
+    expect(h.mcpCalls.map((call) => call.tool)).not.toContain('activate_license');
+    expect(h.licenseFile.writes).toEqual([operatorBoardUiLicenseFile()]);
   });
 
   it('does NOT spend a vendor seat from a dry-run plan', async () => {
@@ -838,6 +983,8 @@ describe('auto-activation at the install doors', () => {
 
     expect(plan.needsLicense).toEqual(['template-home-dashboard']);
     expect(h.mcpCalls.map((call) => call.tool)).not.toContain('activate_license');
+    // Dry-run spends NOTHING: no seat, no licence file either.
+    expect(h.licenseFile.writes).toHaveLength(0);
   });
 });
 

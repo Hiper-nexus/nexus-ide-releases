@@ -220,6 +220,38 @@ export function assertRegistries(
   });
 }
 
+/**
+ * The shape that may be PERSISTED into settings: everything but the derived
+ * `secretKey`. Settings deliberately hold no vault names — a `secretKey` that
+ * traveled through a settings file would be a vault name chosen outside Main,
+ * and both the token read and the panel's "token stored" flag would then trust
+ * a stored row instead of deriving it.
+ */
+export function persistableRegistry(registry: UiKitRegistry): UiKitRegistry {
+  const { secretKey: _derived, ...rest } = assertRegistry(registry);
+  return rest;
+}
+
+/**
+ * Settings rows as this module understands them: each one re-validated, an
+ * unusable one DROPPED instead of taken on trust. A settings file is data on
+ * disk, not a caller — a stale or hand-edited row must not break the whole
+ * panel, nor reach a token read with a `secretKey` it carried in.
+ */
+export function normalizeConfiguredRegistries(
+  stored: readonly unknown[],
+): readonly UiKitRegistry[] {
+  const normalized: UiKitRegistry[] = [];
+  for (const entry of stored) {
+    try {
+      normalized.push(assertRegistry(entry as UiKitRegistry));
+    } catch {
+      // Unusable configuration is not a reason to break the whole panel.
+    }
+  }
+  return normalized;
+}
+
 export type RenderedRegistryEntry =
   | string
   | {

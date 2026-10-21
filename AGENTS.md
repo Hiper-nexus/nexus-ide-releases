@@ -2866,11 +2866,33 @@ componente: o agente recebia a paleta e escrevia cada peça à mão. `src/main/u
   - `withOperatorRegistries` adiciona os namespaces com token de bundle nas
     listas de LEITURA (catálogo, busca MCP, painel); as escritas de settings
     continuam na lista crua — o painel não grava o que não foi configurado.
-  - Ativação da chave BoardUI de bundle NÃO escreve o cofre (só o 'set'
-    explícito grava): "Remover" continua significando liberar o assento do
-    fornecedor + limpar cofre, e o bundle simplesmente reativa no próximo
-    install Pro. Auto-ativação de bundle só nas PORTAS DE INSTALL
-    (`autoActivate: true`); `planInstallItems`/dry-run não gastam assento.
+  - Ativação da chave BoardUI de bundle NÃO chama o fornecedor e NÃO escreve o
+    cofre — ela PROVISIONA o arquivo de licença (Rota B, escolha do operador
+    21/10): `ensureActiveBoardUiLicense` escreve o payload exato da máquina do
+    operador (`operatorBoardUiLicenseFile`: chave + instanceId, provado ponta
+    a ponta antes de bundlar) em `<config root>/boardui/license.json`, o mesmo
+    root que a CLI lê (`boardui-license-file.ts` espelha a resolução
+    XDG/APPDATA/HOME do dist do fornecedor; `XDG_CONFIG_HOME` entrou no
+    `CHILD_ENV_ALLOWLIST` para Main e filho concordarem), com gravação atômica
+    0600, invalida a free-list e re-confirma `license_status`. Nenhuma máquina
+    de cliente gasta assento: o fornecedor só conta assento na ATIVAÇÃO.
+    Chave DIGITADA (cofre) continua ativando de verdade no fornecedor — assento
+    honesto para chave própria. A porta do painel confere `license_status`
+    ANTES de provisionar (arquivo válido do próprio usuário não é sobrescrito);
+    as portas de install pulam a pré-checagem (`skipStatusPrecheck`) só porque
+    acabaram de rodar status elas mesmas. Auto-provisionamento de bundle só nas
+    PORTAS DE INSTALL (`autoActivate: true`); `planInstallItems`/dry-run não
+    tocam o arquivo.
+  - "Remover" numa máquina provisionada é LOCAL, sempre
+    (`isProvisionedBoardUiLicense`: chave E instanceId do payload embutido):
+    apaga o arquivo + esquece o cofre, NUNCA chama `deactivate_license` —
+    devolver o assento soltaria o assento do Mac do OPERADOR que a frota
+    inteira compartilha. Sem arquivo nenhum no disco: limpa só o cofre.
+    Licença NATIVA (instanceId emitido pelo servidor, chave própria) remove no
+    fornecedor de verdade. Teste que exercita ativação/remoção PRECISA injetar
+    `boardUiLicenseFile` no deps (fake no harness do
+    `ui-kit-service.test.ts`): sem isso o teste lê e APAGA o `license.json`
+    REAL de quem roda a suíte.
   - Rotação: editar a constante e publicar novo Nexus. Nada mais a tocar.
   O preset (`KNOWN_UI_KIT_REGISTRIES`) continua existindo para quem quer chave
   própria: viaja a CONFIGURAÇÃO, e cada operador pode colar a própria chave no

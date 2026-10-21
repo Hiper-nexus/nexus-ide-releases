@@ -121,6 +121,10 @@ const CHILD_ENV_ALLOWLIST = [
   'USERPROFILE',
   'SystemRoot',
   'ComSpec',
+  // Where BoardUI resolves its config on Linux (and anywhere it is exported):
+  // the licence file must be written where the child READS it, and a terminal
+  // the user runs `boardui` in resolves the same root.
+  'XDG_CONFIG_HOME',
 ] as const;
 
 /**

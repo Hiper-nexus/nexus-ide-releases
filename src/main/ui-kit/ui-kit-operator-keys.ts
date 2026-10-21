@@ -26,9 +26,24 @@
  *
  * Rotation: edit the constant, ship a new Nexus. Nothing else to touch.
  */
+import type { BoardUiLicenseFile } from './boardui-license-file';
 
 /** BoardUI Pro licence key (one licence, activated per machine by the vendor). */
 export const OPERATOR_BOARDUI_LICENSE_KEY = '4889238F-A27C-46BC-8D42-7C7AB11A636E';
+
+/**
+ * The operator's own activated BoardUI instance: the exact licence file of the
+ * Mac that first activated the key. The vendor counts seats at ACTIVATION only
+ * and both seats are used, so a fresh machine must not activate — it gets this
+ * file PROVISIONED instead (measured 21/10: another machine's copy of
+ * key + instanceId validates, lists Pro and installs Pro templates without
+ * consuming a seat). "Remover" on a provisioned machine is therefore local
+ * only: calling `deactivate_license` there would release the OPERATOR's seat.
+ */
+export const OPERATOR_BOARDUI_LICENSE_INSTANCE_ID =
+  '1e124f71-2781-4173-96a3-ff66a5ef2a27';
+export const OPERATOR_BOARDUI_LICENSE_INSTANCE_NAME =
+  'boardui-cli@MacBook-Pro-de-Cleofas.local';
 
 /**
  * shadcn-CLI registry tokens, keyed by namespace. The URL each namespace must
@@ -56,4 +71,13 @@ export function operatorRegistryNamespaces(): readonly string[] {
 /** Whether a BoardUI licence key ships with this build. */
 export function hasOperatorBoardUiLicenseKey(): boolean {
   return OPERATOR_BOARDUI_LICENSE_KEY.trim().length > 0;
+}
+
+/** The licence file the bundled path provisions on a fresh machine. */
+export function operatorBoardUiLicenseFile(): BoardUiLicenseFile {
+  return {
+    licenseKey: OPERATOR_BOARDUI_LICENSE_KEY.trim(),
+    instanceId: OPERATOR_BOARDUI_LICENSE_INSTANCE_ID,
+    instanceName: OPERATOR_BOARDUI_LICENSE_INSTANCE_NAME,
+  };
 }

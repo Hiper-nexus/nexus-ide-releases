@@ -11,6 +11,8 @@ import {
   buildRegistryEnv,
   mergeRegistriesIntoComponentsJson,
   isRegistrySecretKey,
+  normalizeConfiguredRegistries,
+  persistableRegistry,
   operatorTokenForRegistry,
   registryEntryNeedsAuth,
   registrySecretKey,
@@ -184,6 +186,54 @@ describe('buildRegistryEnv', () => {
 describe('registrySecretKey', () => {
   it('derives a stable vault key from the namespace', () => {
     expect(registrySecretKey('@acme')).toBe('external:ui-kit-registry-acme');
+  });
+});
+
+describe('persistableRegistry — settings never carry vault names', () => {
+  it('strips the derived secretKey and keeps the rest verbatim', () => {
+    // What the panel persists: the operator's registry configuration, nothing
+    // else. A `secretKey` in settings is a vault name in a world-readable
+    // file, and one a hand-edited row could point at somebody else's secret.
+    const normalized = assertRegistry(PRIVATE);
+    const persisted = persistableRegistry(normalized);
+
+    expect(persisted.secretKey).toBeUndefined();
+    expect(persisted).toEqual({
+      namespace: '@acme',
+      url: PRIVATE.url,
+      auth: normalized.auth,
+    });
+  });
+});
+
+describe('normalizeConfiguredRegistries — a settings file is data, not a caller', () => {
+  it('re-validates every row and drops an unusable one without breaking the panel', () => {
+    // Hand-edited or stale settings: a row pointing at a non-https URL must
+    // not ride into an install, and it must not take the valid rows with it.
+    const rows = [
+      assertRegistry(PRIVATE),
+      { namespace: '@acme', url: 'http://insecure.test/{name}.json' },
+      'not even an object',
+      null,
+    ];
+
+    expect(normalizeConfiguredRegistries(rows)).toEqual([assertRegistry(PRIVATE)]);
+  });
+
+  it('overwrites a foreign secretKey the settings carried', () => {
+    // The same rule `assertRegistry` enforces on the way in: a row read back
+    // from disk gets its vault name DERIVED again, so a settings file that
+    // carries `auth:session` cannot aim a later removal at that secret.
+    const rows = [{ ...PRIVATE, secretKey: 'auth:session' }];
+
+    expect(normalizeConfiguredRegistries(rows)[0]?.secretKey).toBe(
+      'external:ui-kit-registry-acme',
+    );
+  });
+
+  it('returns an empty list when nothing usable is configured', () => {
+    expect(normalizeConfiguredRegistries([])).toEqual([]);
+    expect(normalizeConfiguredRegistries([undefined, 42])).toEqual([]);
   });
 });
 

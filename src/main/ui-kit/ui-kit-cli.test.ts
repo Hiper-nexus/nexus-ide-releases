@@ -38,6 +38,15 @@ describe('buildUiKitChildEnv', () => {
     expect(env.OPENAI_API_KEY).toBeUndefined();
   });
 
+  it('forwards XDG_CONFIG_HOME so the licence file lands where the child reads it', () => {
+    // BoardUI resolves its config root from this variable on Linux — and on any
+    // session that exports it: the Main writes `license.json` through the SAME
+    // child env, so dropping it here would split the two sides apart.
+    const env = buildUiKitChildEnv({ PATH: '/usr/bin', XDG_CONFIG_HOME: '/xdg-root' });
+
+    expect(env.XDG_CONFIG_HOME).toBe('/xdg-root');
+  });
+
   it('pins the npm registry so a project .npmrc cannot choose the package', () => {
     // npm reads a .npmrc from its cwd, and a writing run uses the project as
     // cwd: without this the repository decides which `shadcn` we execute.
