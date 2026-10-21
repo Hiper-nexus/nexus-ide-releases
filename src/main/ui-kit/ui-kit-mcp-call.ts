@@ -1,6 +1,13 @@
 import { spawn, type SpawnOptions } from 'node:child_process';
 import path from 'node:path';
-import { UiKitCliError } from './ui-kit-cli';
+import {
+  assertSafeUiKitCwd,
+  buildUiKitChildEnv,
+  resolveNpxCommand,
+  UiKitCliError,
+  UI_KIT_PACKAGES,
+  type UiKitId,
+} from './ui-kit-cli';
 
 /**
  * A one-shot MCP client: spawn a stdio MCP server, initialize, call ONE tool,
@@ -18,6 +25,13 @@ import { UiKitCliError } from './ui-kit-cli';
  * signing agent follows for its PIN.
  *
  * Framing is the MCP stdio transport: one JSON-RPC object per line.
+ *
+ * It takes NO command, argv or env from a caller. Those are built here from
+ * the same helpers `runUiKitCli` uses, so both doors into a vendor CLI pass
+ * the same gate: a fixed `npx -y <pinned package> mcp`, the env allowlist, and
+ * the cwd guard that refuses a writing run inside a shared `node_modules`. An
+ * exported function that spawned an arbitrary command would be a hole straight
+ * past all of it.
  */
 
 export const UI_KIT_MCP_PROTOCOL_VERSION = '2025-06-18';
@@ -26,22 +40,41 @@ export const UI_KIT_MCP_MAX_OUTPUT_BYTES = 8_000_000;
 export const UI_KIT_MCP_MAX_LINE_BYTES = 4_000_000;
 export const UI_KIT_MCP_TERMINATION_GRACE_MS = 2_000;
 
-export interface McpOneShotSpawn {
-  readonly command: string;
-  readonly args: readonly string[];
-  readonly cwd: string;
-  readonly env: NodeJS.ProcessEnv;
-}
-
 export type McpOneShotMethod = 'tools/call' | 'tools/list';
 
-export interface McpOneShotRequest extends McpOneShotSpawn {
+/** An MCP tool name: lowercase, digits and underscores. */
+export const MCP_TOOL_NAME_PATTERN = /^[a-z][a-z0-9_]*$/;
+export const MCP_MAX_TOOL_NAME_CHARS = 64;
+
+export interface McpOneShotRequest {
+  /** Which vendor's MCP server. The package is pinned per kit, not passed in. */
+  readonly kit: UiKitId;
+  /** Project directory; guarded exactly as a CLI run is. */
+  readonly cwd: string;
+  /** True when the tool writes the project or changes licence state. */
+  readonly writes?: boolean;
   readonly method: McpOneShotMethod;
   /** Required for `tools/call`. */
   readonly tool?: string;
   readonly toolArguments?: Readonly<Record<string, unknown>>;
   readonly timeoutMs?: number;
   readonly signal?: AbortSignal;
+}
+
+export function assertMcpToolName(raw: string): string {
+  const value = raw.trim();
+  if (
+    value.length === 0 ||
+    value.length > MCP_MAX_TOOL_NAME_CHARS ||
+    !MCP_TOOL_NAME_PATTERN.test(value)
+  ) {
+    throw new UiKitCliError(
+      'INVALID_TOOL_NAME',
+      `an MCP tool name must match ${String(MCP_TOOL_NAME_PATTERN)} and stay ` +
+        `under ${MCP_MAX_TOOL_NAME_CHARS} characters`,
+    );
+  }
+  return value;
 }
 
 export interface McpToolContentBlock {
@@ -136,9 +169,17 @@ export async function callMcpToolOnce(
   if (request.method === 'tools/call' && !request.tool) {
     throw new UiKitCliError('NO_TOOL', 'tools/call needs a tool name');
   }
+  const tool =
+    request.tool === undefined ? undefined : assertMcpToolName(request.tool);
   const platform = options.platform ?? process.platform;
   const spawnProcess = options.spawnProcess ?? spawn;
   const timeoutMs = request.timeoutMs ?? UI_KIT_MCP_TIMEOUT_MS;
+  // Same gate as a CLI run: a writing tool may not land in a checkout whose
+  // node_modules is a shared symlink.
+  const cwd = assertSafeUiKitCwd(request.cwd, { writes: request.writes === true });
+  const command = resolveNpxCommand({ platform });
+  const args = ['-y', UI_KIT_PACKAGES[request.kit], 'mcp'] as const;
+  const env = buildUiKitChildEnv();
 
   if (request.signal?.aborted) {
     throw new UiKitCliError('ABORTED', 'MCP call aborted');
@@ -147,9 +188,9 @@ export async function callMcpToolOnce(
   return await new Promise<McpOneShotResult>((resolve, reject) => {
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawnProcess(request.command, request.args, {
-        cwd: request.cwd,
-        env: request.env,
+      child = spawnProcess(command, args, {
+        cwd,
+        env,
         stdio: ['pipe', 'pipe', 'pipe'],
         detached: platform !== 'win32',
         shell: false,
@@ -306,7 +347,7 @@ export async function callMcpToolOnce(
         send({ jsonrpc: '2.0', method: 'notifications/initialized' });
         const params: Record<string, unknown> =
           request.method === 'tools/call'
-            ? { name: request.tool, arguments: request.toolArguments ?? {} }
+            ? { name: tool, arguments: request.toolArguments ?? {} }
             : {};
         send({ jsonrpc: '2.0', id: 2, method: request.method, params });
         return;

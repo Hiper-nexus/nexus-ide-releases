@@ -1,5 +1,8 @@
 import { EventEmitter } from 'node:events';
-import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { spawn } from 'node:child_process';
 import { callMcpToolOnce, mcpResultText } from './ui-kit-mcp-call';
 import { UiKitCliError } from './ui-kit-cli';
@@ -52,12 +55,23 @@ function fakeServer(respond: Responder): FakeServer {
   return { child, writes };
 }
 
-const BASE = {
-  command: 'npx',
-  args: ['-y', 'boardui@latest', 'mcp'] as const,
-  cwd: '/projects/app',
-  env: { PATH: '/usr/bin' },
-} as const;
+/**
+ * A real directory: the cwd guard stats it for real, which is the point — the
+ * MCP door and the CLI door go through the same check.
+ */
+let projectDir = '';
+
+beforeAll(() => {
+  projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-ui-kit-mcp-'));
+});
+
+afterAll(() => {
+  fs.rmSync(projectDir, { recursive: true, force: true });
+});
+
+function base() {
+  return { kit: 'boardui', cwd: projectDir } as const;
+}
 
 function handshake(respond: Responder): Responder {
   return (message, emit, close) => {
@@ -84,7 +98,7 @@ describe('callMcpToolOnce', () => {
     );
 
     const result = await callMcpToolOnce(
-      { ...BASE, method: 'tools/call', tool: 'install_components', toolArguments: { components: ['button'] } },
+      { ...base(), method: 'tools/call', tool: 'install_components', toolArguments: { components: ['button'] } },
       { spawnProcess: () => server.child, platform: 'linux' },
     );
 
@@ -109,7 +123,7 @@ describe('callMcpToolOnce', () => {
 
     await callMcpToolOnce(
       {
-        ...BASE,
+        ...base(),
         method: 'tools/call',
         tool: 'activate_license',
         toolArguments: { licenseKey: 'BUI-SECRET-9999' },
@@ -137,7 +151,7 @@ describe('callMcpToolOnce', () => {
     );
 
     const result = await callMcpToolOnce(
-      { ...BASE, method: 'tools/list' },
+      { ...base(), method: 'tools/list' },
       { spawnProcess: () => server.child, platform: 'linux' },
     );
 
@@ -146,7 +160,7 @@ describe('callMcpToolOnce', () => {
 
   it('requires a tool name for tools/call', async () => {
     await expect(
-      callMcpToolOnce({ ...BASE, method: 'tools/call' }, { platform: 'linux' }),
+      callMcpToolOnce({ ...base(), method: 'tools/call' }, { platform: 'linux' }),
     ).rejects.toThrow(/needs a tool name/);
   });
 
@@ -161,7 +175,7 @@ describe('callMcpToolOnce', () => {
 
     await expect(
       callMcpToolOnce(
-        { ...BASE, method: 'tools/call', tool: 'get_component', toolArguments: {} },
+        { ...base(), method: 'tools/call', tool: 'get_component', toolArguments: {} },
         { spawnProcess: () => server.child, platform: 'linux' },
       ),
     ).rejects.toThrow(/licence not active/);
@@ -181,7 +195,7 @@ describe('callMcpToolOnce', () => {
     );
 
     const result = await callMcpToolOnce(
-      { ...BASE, method: 'tools/call', tool: 'get_component', toolArguments: { name: 'line-chart' } },
+      { ...base(), method: 'tools/call', tool: 'get_component', toolArguments: { name: 'line-chart' } },
       { spawnProcess: () => server.child, platform: 'linux' },
     );
 
@@ -201,7 +215,7 @@ describe('callMcpToolOnce', () => {
     server.child.stdout?.emit('data', Buffer.from('BoardUI MCP v1\n', 'utf8'));
 
     const result = await callMcpToolOnce(
-      { ...BASE, method: 'tools/call', tool: 'get_started', toolArguments: {} },
+      { ...base(), method: 'tools/call', tool: 'get_started', toolArguments: {} },
       { spawnProcess: () => server.child, platform: 'linux' },
     );
 
@@ -215,7 +229,7 @@ describe('callMcpToolOnce', () => {
 
     await expect(
       callMcpToolOnce(
-        { ...BASE, method: 'tools/call', tool: 'license_status', toolArguments: {} },
+        { ...base(), method: 'tools/call', tool: 'license_status', toolArguments: {} },
         { spawnProcess: () => server.child, platform: 'linux' },
       ),
     ).rejects.toThrow(UiKitCliError);
@@ -228,7 +242,7 @@ describe('callMcpToolOnce', () => {
 
     await expect(
       callMcpToolOnce(
-        { ...BASE, method: 'tools/list', signal: controller.signal },
+        { ...base(), method: 'tools/list', signal: controller.signal },
         {
           spawnProcess: () => {
             spawned = true;

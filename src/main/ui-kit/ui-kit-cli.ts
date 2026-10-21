@@ -88,17 +88,59 @@ const CHILD_ENV_ALLOWLIST = [
 ] as const;
 
 /**
- * Names a caller may never override through `extraEnv`: the allowlist above
- * plus the npm knobs that would redirect the install or the registry itself.
+ * `extraEnv` is an allowlist BY SHAPE, not a denylist of bad names.
+ *
+ * A denylist was the first cut and it was wrong: npm reads EVERY
+ * `npm_config_*` variable as configuration, and the loader reads `LD_PRELOAD`
+ * / `DYLD_INSERT_LIBRARIES`, so a caller could have injected code into the npx
+ * child or repointed the registry through a name nobody thought to list.
+ *
+ * The only legitimate use of this channel is a registry credential that
+ * `components.json` references as `${VAR}`. So a name has to LOOK like one —
+ * it must carry one of the credential words below — and the dangerous
+ * families are refused on top of that. `LD_PRELOAD` and `NODE_EXTRA_CA_CERTS`
+ * fail the first test before the second one is reached.
  */
+const ENV_CREDENTIAL_WORDS = [
+  'TOKEN',
+  'KEY',
+  'SECRET',
+  'AUTH',
+  'PASS',
+  'LICENSE',
+  'LICENCE',
+  'CREDENTIAL',
+] as const;
+
+/** Families that must never arrive through this channel, whatever their name. */
+const ENV_FORBIDDEN_PREFIXES = [
+  'NPM_CONFIG',
+  'NODE_',
+  'LD_',
+  'DYLD_',
+  'ELECTRON_',
+  'NEXUS_',
+  'PYTHON',
+  'PERL5',
+  'BASH',
+  'GIT_',
+  'SSL_',
+  'OPENSSL_',
+] as const;
+
 const PROTECTED_ENV_NAMES = new Set<string>([
   ...CHILD_ENV_ALLOWLIST,
   'npm_config_yes',
-  'NPM_CONFIG_REGISTRY',
-  'NPM_CONFIG_PREFIX',
-  'NPM_CONFIG_CACHE',
-  'NODE_PATH',
+  'ENV',
+  'IFS',
+  'SHELL',
+  'SHELLOPTS',
+  'BASH_ENV',
 ]);
+
+export function envNameLooksLikeCredential(name: string): boolean {
+  return ENV_CREDENTIAL_WORDS.some((word) => name.includes(word));
+}
 
 export class UiKitCliError extends Error {
   readonly code: string;
@@ -167,11 +209,28 @@ export function assertSafeEnvName(name: string): string {
     );
   }
   if (PROTECTED_ENV_NAMES.has(name)) {
-    // Letting a caller set PATH or npm_config_registry would move the whole
-    // run to a binary / registry of its choosing.
+    // Letting a caller set PATH or npm_config_yes would move the whole run to
+    // a binary / configuration of its choosing.
     throw new UiKitCliError(
       'PROTECTED_ENV_NAME',
       `${name} cannot be overridden for a UI-kit run`,
+    );
+  }
+  const upper = name.toUpperCase();
+  for (const prefix of ENV_FORBIDDEN_PREFIXES) {
+    if (upper.startsWith(prefix)) {
+      throw new UiKitCliError(
+        'PROTECTED_ENV_NAME',
+        `${name} belongs to the ${prefix}* family, which can redirect the ` +
+          'package manager or inject code into the child',
+      );
+    }
+  }
+  if (!envNameLooksLikeCredential(upper)) {
+    throw new UiKitCliError(
+      'NOT_A_CREDENTIAL_ENV_NAME',
+      `${name} does not look like a registry credential (expected one of ` +
+        `${ENV_CREDENTIAL_WORDS.join(', ')} in the name)`,
     );
   }
   return name;

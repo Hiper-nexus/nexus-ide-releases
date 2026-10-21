@@ -46,9 +46,40 @@ describe('buildUiKitChildEnv', () => {
     expect(() => buildUiKitChildEnv({}, { 'A-B': 'x' })).toThrow(UiKitCliError);
   });
 
-  it('refuses to let a caller override PATH or the npm registry', () => {
+  it('refuses to let a caller override PATH or an npm config knob', () => {
     expect(() => assertSafeEnvName('PATH')).toThrow(/cannot be overridden/);
-    expect(() => assertSafeEnvName('NPM_CONFIG_REGISTRY')).toThrow(/cannot be overridden/);
+    expect(() => assertSafeEnvName('NPM_CONFIG_REGISTRY')).toThrow(/NPM_CONFIG\* family/);
+  });
+
+  it.each([
+    'LD_PRELOAD',
+    'DYLD_INSERT_LIBRARIES',
+    'NODE_OPTIONS',
+    'NODE_EXTRA_CA_CERTS',
+    'NPM_CONFIG_SCRIPT_SHELL',
+    'GIT_SSH_COMMAND',
+    'BASH_ENV',
+    'ELECTRON_RUN_AS_NODE',
+  ])('refuses %s, which could inject code or repoint the install', (name) => {
+    expect(() => assertSafeEnvName(name)).toThrow(UiKitCliError);
+  });
+
+  it('refuses a name that does not look like a credential at all', () => {
+    // The channel exists for registry auth; anything else has no business
+    // reaching the child's environment.
+    expect(() => assertSafeEnvName('HTTP_PROXY')).toThrow(/does not look like a registry credential/);
+    expect(() => assertSafeEnvName('FOO')).toThrow(/does not look like a registry credential/);
+  });
+
+  it.each([
+    'REGISTRY_TOKEN',
+    'ACME_API_KEY',
+    'INTERNAL_REGISTRY_SECRET',
+    'REGISTRY_AUTH',
+    'BOARDUI_LICENSE',
+    'VENDOR_CREDENTIAL',
+  ])('accepts the real credential name %s', (name) => {
+    expect(assertSafeEnvName(name)).toBe(name);
   });
 
   it('never puts a token value in the error message', () => {
