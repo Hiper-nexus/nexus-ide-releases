@@ -758,6 +758,17 @@ describe('MediaStudioPanel: prévia do arquivo gerado (F-1586)', () => {
 });
 
 describe('Estúdio: ditar e escrever o pedido (pedido do operador, 21/10/2026)', () => {
+  const keyedVideo = {
+    id: 'xai-video',
+    kind: 'video',
+    label: 'xAI',
+    envVar: 'XAI_API_KEY',
+    defaultModel: 'grok-imagine-video-1.5',
+    models: ['grok-imagine-video-1.5'],
+    hasKey: true,
+    maskedKey: null,
+  };
+
   const keyedImage = {
     id: 'openai-image',
     kind: 'image',
@@ -949,5 +960,33 @@ describe('Estúdio: ditar e escrever o pedido (pedido do operador, 21/10/2026)',
     // E o microfone foi mandado parar quando o campo saiu de cena.
     expect(requestDictationStop).toHaveBeenCalled();
     productFlags.map = {};
+  });
+
+  it('reescrita feita para Imagem não é aplicada depois de trocar para Vídeo', async () => {
+    // O texto é o mesmo nas duas abas: sem conferir o contexto, um pedido de
+    // IMAGEM (sem movimento) viraria a base de uma geração de vídeo PAGA.
+    const media = mediaMocks();
+    media.listProviders.mockResolvedValue([keyedImage, keyedVideo]);
+    let finish!: (value: { text: string; written: boolean }) => void;
+    media.writePrompt = vi.fn(() => new Promise((resolve) => { finish = resolve; }));
+    const dialog = await openFrom(renderHarness());
+    typePrompt(dialog, 'gato astronauta');
+    await act(async () => {
+      byText(dialog, 'Escrever meu pedido').click();
+    });
+    expect(media.writePrompt).toHaveBeenCalledWith(expect.objectContaining({ kind: 'image' }));
+    // Troca para Vídeo antes de a reescrita voltar.
+    const videoTab = [...dialog.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(
+      (item) => item.textContent === 'Vídeo',
+    );
+    await act(async () => {
+      videoTab!.click();
+    });
+    await act(async () => {
+      finish({ text: 'PEDIDO ESCRITO PARA IMAGEM', written: true });
+      await Promise.resolve();
+    });
+    expect(dialog.querySelector<HTMLTextAreaElement>('textarea')!.value).toBe('gato astronauta');
+    expect(dialog.textContent).toContain('mudou o tipo ou o formato');
   });
 });

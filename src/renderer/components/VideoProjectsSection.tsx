@@ -159,6 +159,10 @@ function BriefForm({
   // resposta do texto antigo não pode apagar o que foi escrito depois.
   const liveProductRef = useRef(product);
   liveProductRef.current = product;
+  // Mesma guarda do Estúdio: a reescrita vai com a duração, então mudar a
+  // duração no meio torna a resposta de outro pedido.
+  const liveWriteContextRef = useRef(durationSec);
+  liveWriteContextRef.current = durationSec;
 
   useEffect(() => {
     let alive = true;
@@ -195,6 +199,7 @@ function BriefForm({
   async function writePrompt() {
     const source = product.trim();
     if (!source || writing) return;
+    const context = liveWriteContextRef.current;
     setWriting(true);
     setWriteNote(null);
     try {
@@ -206,6 +211,10 @@ function BriefForm({
       if (result?.written) {
         if (liveProductRef.current.trim() !== source) {
           setWriteNote('Você mexeu no texto enquanto eu escrevia, então mantive o seu.');
+          return;
+        }
+        if (liveWriteContextRef.current !== context) {
+          setWriteNote('Você mudou a duração enquanto eu escrevia, então mantive o seu texto. Peça de novo.');
           return;
         }
         setProduct(result.text);

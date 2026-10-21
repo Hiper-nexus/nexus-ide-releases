@@ -136,6 +136,11 @@ export function MediaStudioPanel({
   // era apagado pela resposta montada a partir do texto ANTIGO.
   const livePromptRef = useRef(prompt);
   livePromptRef.current = prompt;
+  // Assinatura do contexto do pedido (aba, duração, proporção). O texto é o
+  // MESMO nas duas abas, então comparar só o texto deixava passar uma
+  // reescrita feita para IMAGEM sendo aplicada no vídeo — e daí para uma
+  // geração paga com um pedido sem movimento nenhum.
+  const liveWriteContextRef = useRef('');
   const [artifacts, setArtifacts] = useState<MediaArtifactInfo[]>([]);
   // F-1589: `null` = ainda lendo; false = sem projeto aberto.
   const [projectOpen, setProjectOpen] = useState<boolean | null>(null);
@@ -309,8 +314,11 @@ export function MediaStudioPanel({
    * pedido que o modelo entende (câmera, luz, ritmo). Falha nunca apaga o
    * que a pessoa escreveu — o aviso diz que o texto ficou como estava.
    */
+  liveWriteContextRef.current = `${tab}|${video?.duration ?? ''}|${effectiveAspect ?? ''}`;
+
   async function writePrompt() {
     const source = prompt.trim();
+    const context = liveWriteContextRef.current;
     if (!source || writing || job) return;
     setWriting(true);
     setWriteNote(null);
@@ -325,6 +333,12 @@ export function MediaStudioPanel({
       if (result?.written) {
         if (livePromptRef.current.trim() !== source) {
           setWriteNote('Você mexeu no texto enquanto eu escrevia, então mantive o seu.');
+          return;
+        }
+        if (liveWriteContextRef.current !== context) {
+          // Escrita feita para outro tipo/formato não serve aqui: aplicá-la
+          // seria gerar — pagando — a partir de um pedido de outra coisa.
+          setWriteNote('Você mudou o tipo ou o formato enquanto eu escrevia, então mantive o seu texto. Peça de novo.');
           return;
         }
         setPrompt(result.text);
