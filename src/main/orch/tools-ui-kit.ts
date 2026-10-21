@@ -30,6 +30,7 @@ import {
   shadcnSearchNamespaces,
 } from '../ui-kit/ui-kit-service';
 import { liveCandidates, offlineCandidates } from '../ui-kit/ui-kit-catalog';
+import { agentInstallReceipt } from '../ui-kit/ui-kit-install-view';
 import { getOrchSettings } from '../persistence/settings-store';
 import type { UiKitRegistry } from '../ui-kit/ui-kit-registry';
 
@@ -321,21 +322,7 @@ export function buildUiKitTools(): McpToolDef[] {
           },
           serviceDeps(),
         );
-        return {
-          ok: result.ok,
-          kit,
-          installed: result.ok ? items : [],
-          exitCode: result.code,
-          output: `${result.stdout}\n${result.stderr}`.trim().slice(0, 20_000),
-          ...(result.missingRegistryKeys.length > 0
-            ? {
-                missingRegistryKeys: result.missingRegistryKeys,
-                hint:
-                  'Those registries have no token stored. Settings → UI kits → ' +
-                  'registries, or install from a keyless registry.',
-              }
-            : {}),
-        };
+        return agentInstallReceipt(result, { kit, items });
       },
     },
     {

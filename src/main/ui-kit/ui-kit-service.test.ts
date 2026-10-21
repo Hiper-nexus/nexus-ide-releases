@@ -370,6 +370,44 @@ describe('where the BoardUI CLI is resolved from', () => {
   });
 });
 
+describe('the cached free list is a function of the licence', () => {
+  const FREE_ONLY = '  button    Primary button.\n';
+  const WITH_PRO = `${FREE_ONLY}  template-home-dashboard  Pro template.\n`;
+
+  it('forgets the unlicensed listing when a licence is activated', async () => {
+    // Without this, activating a key left the Pro items undiscoverable for up
+    // to the TTL: every lookup kept answering from the free-only listing.
+    let listing = FREE_ONLY;
+    const h = harness({
+      cli: () => ({ stdout: listing }),
+      mcp: () => ({ text: 'license activated' }),
+    });
+
+    expect(await resolveBoardUiTier('template-home-dashboard', cwd, h.deps)).toBe('pro');
+    listing = WITH_PRO;
+    await activateBoardUiLicense({ key: 'BUI-TEST-KEY-0001', cwd }, h.deps);
+
+    expect(await resolveBoardUiTier('template-home-dashboard', cwd, h.deps)).toBe('free');
+  });
+
+  it('forgets the licensed listing when the licence is removed', async () => {
+    // The dangerous direction: with a key active the vendor publishes the Pro
+    // items in the SAME list, so a stale licensed listing answered "free" for
+    // a Pro slug — the gate letting it through after the key was gone.
+    let listing = WITH_PRO;
+    const h = harness({
+      cli: () => ({ stdout: listing }),
+      mcp: () => ({ text: 'license released' }),
+    });
+
+    expect(await resolveBoardUiTier('template-home-dashboard', cwd, h.deps)).toBe('free');
+    listing = FREE_ONLY;
+    await deactivateBoardUiLicense({ cwd }, h.deps);
+
+    expect(await resolveBoardUiTier('template-home-dashboard', cwd, h.deps)).toBe('pro');
+  });
+});
+
 describe('planInstallItems', () => {
   it('runs the Pro gate and NEVER the install', async () => {
     // `dryRun` beside named items used to reach `installItems`, so an explicit

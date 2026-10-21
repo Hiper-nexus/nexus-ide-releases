@@ -102,3 +102,43 @@ export function installViewFromPlan(recipe: RecipeOutcomeForView): UiKitInstallV
       : {}),
   };
 }
+
+/**
+ * The receipt an AGENT gets from `nexus_ui_kit_add`.
+ *
+ * Separate from the panel's view because an agent reads different things (the
+ * exit code, the raw output) — but the licence verdict has to survive both
+ * ways out. This path used to drop `needsLicense` and `licenseState` and leave
+ * the refusal in free-form `output`, so a model could neither name the blocked
+ * items nor tell "no key stored" from "vendor unreachable".
+ */
+export function agentInstallReceipt(
+  run: UiKitRunResult,
+  asked: { readonly kit: string; readonly items: readonly string[] },
+): Record<string, unknown> {
+  const needsLicense = run.needsLicense ?? [];
+  return {
+    ok: run.ok,
+    kit: asked.kit,
+    installed: run.ok ? [...asked.items] : [],
+    exitCode: run.code,
+    output: `${run.stdout}\n${run.stderr}`.trim().slice(0, 20_000),
+    ...(needsLicense.length > 0
+      ? {
+          needsLicense,
+          licenceHint:
+            'Those items are BoardUI Pro. The operator stores the licence in ' +
+            'Settings → UI kits; the free items need no key.',
+        }
+      : {}),
+    ...(run.licenseState ? { licenseState: run.licenseState } : {}),
+    ...(run.missingRegistryKeys.length > 0
+      ? {
+          missingRegistryKeys: run.missingRegistryKeys,
+          hint:
+            'Those registries have no token stored. Settings → UI kits → ' +
+            'registries, or install from a keyless registry.',
+        }
+      : {}),
+  };
+}

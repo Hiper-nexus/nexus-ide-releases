@@ -127,6 +127,59 @@ it('ignores a catalogue reply for a kit the operator already left', async () => 
   }
 });
 
+it('refreshes the catalogue for the kit selected NOW, not the one installed into', async () => {
+  // The install closure captured `kit`, so switching kits during an install
+  // started a NEWER request for the OLD kit — and a newer ticket beats the
+  // superseded-request guard, repainting the list under the new kit's label.
+  let releaseInstall: (() => void) | null = null;
+  const uiKit = api({
+    catalog: vi.fn(async (request: { kit: string }) => ({
+      kit: request.kit,
+      items: [
+        {
+          slug: request.kit === 'shadcn' ? 'button' : 'stat-cards',
+          label: request.kit === 'shadcn' ? 'button' : 'stat-cards',
+          category: 'block',
+          tier: 'free' as const,
+          cached: false,
+        },
+      ],
+      bestEffort: false,
+    })),
+    install: vi.fn(
+      () =>
+        new Promise((resolve) => {
+          releaseInstall = () => resolve({ ok: true, installed: ['sidebar'] });
+        }),
+    ),
+  });
+  const { host, root } = await mount();
+  try {
+    const start = [...host.querySelectorAll('button')].find((button) =>
+      button.textContent?.startsWith('Instalar em'),
+    );
+    await act(async () => start!.click());
+
+    // Kit switched while the install is still in flight.
+    const boardui = [...host.querySelectorAll('button')].find(
+      (button) => button.textContent === 'BoardUI',
+    );
+    await act(async () => boardui!.click());
+    await act(async () => {
+      releaseInstall?.();
+    });
+
+    // The install itself went to the kit the operator clicked for.
+    expect(uiKit.install).toHaveBeenCalledWith({ kit: 'shadcn', recipe: 'super-admin' });
+    // The list did not go back to it.
+    expect(uiKit.catalog).toHaveBeenLastCalledWith({ kit: 'boardui' });
+    expect(host.textContent).toContain('stat-cards');
+    expect(host.textContent).not.toContain('button');
+  } finally {
+    act(() => root.unmount());
+  }
+});
+
 it('says the free half needs no key before it mentions a licence', async () => {
   api();
   const { host, root } = await mount();

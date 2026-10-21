@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  agentInstallReceipt,
   installViewFromItemPlan,
   installViewFromPlan,
   installViewFromRun,
@@ -143,5 +144,54 @@ describe('installViewFromPlan', () => {
 
     expect(view.ok).toBe(false);
     expect(view.needsLicense).toBeUndefined();
+  });
+});
+
+describe('agentInstallReceipt', () => {
+  it('names what the licence refused, instead of burying it in output', () => {
+    // The settings IPC and the BoardUI tool both carry the gate's verdict;
+    // this path left the refusal only in free-form `output`, so a model could
+    // neither name the blocked items nor tell "no key stored" from "vendor
+    // unreachable".
+    const receipt = agentInstallReceipt(
+      run({
+        ok: false,
+        code: 1,
+        stderr: 'BoardUI Pro licence required for: template-home-dashboard.',
+        needsLicense: ['template-home-dashboard'],
+        licenseState: 'absent',
+      }),
+      { kit: 'boardui', items: ['template-home-dashboard'] },
+    );
+
+    expect(receipt).toMatchObject({
+      ok: false,
+      kit: 'boardui',
+      installed: [],
+      needsLicense: ['template-home-dashboard'],
+      licenseState: 'absent',
+    });
+    expect(String(receipt.licenceHint)).toContain('Settings → UI kits');
+  });
+
+  it('distinguishes an unreachable vendor from a missing key', () => {
+    const receipt = agentInstallReceipt(
+      run({ ok: false, code: 1, needsLicense: ['x'], licenseState: 'unknown' }),
+      { kit: 'boardui', items: ['x'] },
+    );
+
+    expect(receipt.licenseState).toBe('unknown');
+  });
+
+  it('stays quiet about the licence when none was involved', () => {
+    const receipt = agentInstallReceipt(run({ stdout: 'added' }), {
+      kit: 'shadcn',
+      items: ['button'],
+    });
+
+    expect(receipt).toMatchObject({ ok: true, installed: ['button'], exitCode: 0 });
+    expect(receipt.needsLicense).toBeUndefined();
+    expect(receipt.licenseState).toBeUndefined();
+    expect(receipt.licenceHint).toBeUndefined();
   });
 });

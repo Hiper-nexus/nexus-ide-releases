@@ -619,6 +619,9 @@ export async function activateBoardUiLicense(
   if (!write.ok) {
     return { ok: false, stored: false, detail: write.error ?? 'vault write refused' };
   }
+  // Before the vendor call, not after: whatever the activation answers, the
+  // cached catalogue was read under the OLD licence state.
+  invalidateBoardUiFreeList();
   try {
     const result = await callBoardUiTool(
       {
@@ -644,6 +647,7 @@ export async function deactivateBoardUiLicense(
   deps: UiKitServiceDeps = {},
 ): Promise<ActivateLicenseResult> {
   const { set } = vault(deps);
+  invalidateBoardUiFreeList();
   let detail: string | undefined;
   let ok = false;
   try {
@@ -778,9 +782,26 @@ export async function listBoardUiFreeSlugs(
   return fetching;
 }
 
-export function resetBoardUiFreeListCacheForTests(): void {
+/**
+ * Drop the cached catalogue.
+ *
+ * The free list is a function of the LICENCE, not only of the vendor: with a
+ * key active `boardui list` publishes the Pro items too. So a list captured
+ * while unlicensed hid the items an activation had just unlocked (for up to
+ * the TTL), and — the dangerous direction — a list captured while licensed
+ * kept answering "free" for Pro slugs after the key was removed, which is the
+ * gate letting a Pro item through. Both mutations therefore forget it.
+ *
+ * A key that lapses at the VENDOR is not observable from here; the TTL is what
+ * bounds that case.
+ */
+export function invalidateBoardUiFreeList(): void {
   boardUiFreeListCache = null;
   boardUiFreeListInFlight.clear();
+}
+
+export function resetBoardUiFreeListCacheForTests(): void {
+  invalidateBoardUiFreeList();
 }
 
 /**
@@ -802,6 +823,10 @@ export async function resolveBoardUiTier(
   if (boardUiTierOf(slug) === 'free') return 'free';
   const free = await listBoardUiFreeSlugs(cwd, deps);
   if (!free) return 'unknown';
+  // Present in the listing reads as FREE. That is only sound because the
+  // listing is dropped whenever the licence changes: with a key active the
+  // vendor publishes the Pro items in the SAME list, so a stale licensed
+  // listing would answer "free" for a Pro slug — the gate letting it through.
   return free.has(slug.trim().toLowerCase()) ? 'free' : 'pro';
 }
 

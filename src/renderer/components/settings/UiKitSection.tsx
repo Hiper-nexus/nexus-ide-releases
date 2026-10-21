@@ -68,6 +68,11 @@ export function UiKitSection() {
    * reason that made no sense.
    */
   const catalogRequest = useRef(0);
+  /** The selection as it stands now, for work that outlives its own closure. */
+  const selection = useRef({ kit, query });
+  useEffect(() => {
+    selection.current = { kit, query };
+  }, [kit, query]);
 
   const loadCatalog = useCallback(
     async (target: UiKitIdValue, search: string) => {
@@ -129,8 +134,15 @@ export function UiKitSection() {
     setBusy(request.recipe ?? request.items?.join(',') ?? 'install');
     setResult(null);
     try {
+      // The install targets the kit the operator CLICKED for — honouring that
+      // is the point. The refresh afterwards must follow the kit that is
+      // selected NOW: this closure captured `kit`, so switching kits during
+      // an install started a newer request for the OLD kit, whose newer
+      // ticket then beat the superseded-request guard and repainted the list
+      // under the new kit's label.
       setResult(await window.nexus.uiKit.install({ kit, ...request }));
-      await Promise.all([refreshStatus(), loadCatalog(kit, query)]);
+      const now = selection.current;
+      await Promise.all([refreshStatus(), loadCatalog(now.kit, now.query)]);
     } finally {
       setBusy(null);
     }

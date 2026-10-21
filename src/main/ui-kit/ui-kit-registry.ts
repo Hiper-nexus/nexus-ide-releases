@@ -1,4 +1,4 @@
-import { UiKitCliError } from './ui-kit-cli';
+import { assertSafeEnvName, UiKitCliError } from './ui-kit-cli';
 
 /**
  * Registries the shadcn CLI may install from, and how each one authenticates.
@@ -157,15 +157,16 @@ function assertAuth(auth: UiKitRegistryAuth): UiKitRegistryAuth {
       `a registry ${auth.kind} name must match ${String(pattern)}, got: ${name.slice(0, 48)}`,
     );
   }
-  // The env var name is validated by the runner's credential-shape allowlist
-  // when the value actually travels; shape-check it here so a bad config fails
-  // at configuration time instead of at install time.
-  if (!/^[A-Z][A-Z0-9_]*$/.test(auth.envVar) || auth.envVar.length > 64) {
-    throw new UiKitCliError(
-      'INVALID_AUTH_ENV',
-      `a registry token env var is UPPER_SNAKE_CASE, got: ${auth.envVar.slice(0, 48)}`,
-    );
-  }
+  // THE RUNNER'S OWN RULE, not a weaker copy of it.
+  //
+  // This used to check only UPPER_SNAKE_CASE, so a declared name like `FOO`
+  // was persisted, `ensureProjectRegistries` wrote `${FOO}` into the
+  // project's components.json, and the run then refused the same name for
+  // lacking a credential word — the project's configuration was edited by an
+  // install that could never execute. Calling `assertSafeEnvName` means a
+  // name that cannot travel is refused at configuration time, and the two
+  // cannot drift apart again.
+  assertSafeEnvName(auth.envVar);
   return { ...auth, name, scheme: auth.scheme ?? 'bearer' };
 }
 

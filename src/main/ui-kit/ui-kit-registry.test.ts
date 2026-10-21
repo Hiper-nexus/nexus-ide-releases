@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { UiKitCliError } from './ui-kit-cli';
 import {
   assertRegistries,
+  assertRegistry,
   buildScopedRegistryEnv,
   envVarReferences,
   projectRegistryUrls,
@@ -96,7 +97,9 @@ describe('renderRegistryEntry', () => {
         ...PRIVATE,
         auth: { kind: 'header', name: 'Authorization', envVar: 'lower_token' },
       }),
-    ).toThrow(/UPPER_SNAKE_CASE/);
+      // The message is the RUNNER's now: this validation calls
+      // `assertSafeEnvName` instead of keeping a weaker copy of its rule.
+    ).toThrow(/registry env var name must match/);
   });
 });
 
@@ -195,6 +198,43 @@ describe('envVarReferences', () => {
   it('is empty with no registries at all', () => {
     expect(envVarReferences(null).size).toBe(0);
     expect(envVarReferences({ style: 'new-york' }).size).toBe(0);
+  });
+});
+
+describe('the saved env name is the one the runner accepts', () => {
+  it('refuses a name with no credential word, before anything is persisted', () => {
+    // `FOO` used to pass the UPPER_SNAKE_CASE check here, get persisted, reach
+    // `components.json` as `${FOO}`, and only THEN be refused by the run — so
+    // the project's configuration was edited by an install that could never
+    // execute.
+    expect(() =>
+      assertRegistry({
+        ...PRIVATE,
+        auth: { kind: 'header', name: 'Authorization', envVar: 'FOO' },
+      }),
+    ).toThrow(UiKitCliError);
+  });
+
+  it('refuses a name from a family that can redirect the child', () => {
+    for (const envVar of ['NODE_OPTIONS_TOKEN', 'LD_PRELOAD_KEY', 'PATH']) {
+      expect(() =>
+        assertRegistry({
+          ...PRIVATE,
+          auth: { kind: 'header', name: 'Authorization', envVar },
+        }),
+      ).toThrow(UiKitCliError);
+    }
+  });
+
+  it('accepts the credential-shaped names the runner will carry', () => {
+    for (const envVar of ['ACME_REGISTRY_TOKEN', 'MY_API_KEY', 'VENDOR_SECRET']) {
+      expect(
+        assertRegistry({
+          ...PRIVATE,
+          auth: { kind: 'header', name: 'Authorization', envVar },
+        }).auth?.envVar,
+      ).toBe(envVar);
+    }
   });
 });
 
