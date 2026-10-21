@@ -563,7 +563,10 @@ describe('nexus_computer_do', () => {
     });
     expect(deps.judge.mock.calls[0]![0]).toMatchObject({
       signal: controller.signal,
-      timeoutMs: 8_000,
+      timeoutMs: 5_000,
+      retryOnTimeout: false,
+      sessionId: ctx.sessionId,
+      missionId: ctx.missionId,
     });
   });
 

@@ -21,6 +21,14 @@ export const JEV_PINNED_SURFACES: ReadonlySet<JevDecisionSurface> = new Set<JevD
 ]);
 
 /**
+ * F-1622: superfície fixada não tem rota no Clef; "configure Jev ou Clef"
+ * mandava o operador configurar uma chave que nunca seria usada.
+ */
+export const PINNED_DECISION_KEY_HINT =
+  'configure a chave do Jev em Ajustes → Chaves de API (navegador e desktop decidem só pelo Jev; ' +
+  'no modo Somente Luna, pela Luna)';
+
+/**
  * Cheap and non-pinned surfaces routed to Clef in auto mode (F-783).
  * Effect-bearing surfaces remain strictly pinned to Jev via JEV_PINNED_SURFACES.
  */

@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { JevSurface } from './jev-autopilot';
 import type { JevAnswer } from './jev-client';
-import type { DecisionProvider, DecisionRoute, DecisionUsageReceipt } from '../../shared/decision-models';
+import { LUNA_DECISION_MODEL, type DecisionProvider, type DecisionRoute, type DecisionUsageReceipt } from '../../shared/decision-models';
 import { USD_PER_INPUT_TOKEN } from './jev-pricing';
 import { parseDecisionRow } from './jev-decision-row';
 import type { JevOptimizationEvidence, JevOptimizationStats, DecisionUsageStats } from '../../shared/jev-ipc';
@@ -581,9 +581,12 @@ async function journalStamp(dir: string): Promise<string> {
   return `${await part(rotatedLogFile(dir))}|${await part(logFile(dir))}`;
 }
 
+// F-1622: linha sem `provider` com o modelo da Luna era somada ao Jev.
 function providerOfEntry(entry: JevDecisionEntry): string {
-  return entry.provider ?? (entry.model === 'clef' || entry.model === 'clef-flash' || entry.model === 'clef-omni'
-    || entry.model.startsWith('@cf/cloudflare/') ? 'clef' : 'jev');
+  if (entry.provider) return entry.provider;
+  if (entry.model === LUNA_DECISION_MODEL) return 'luna';
+  return entry.model === 'clef' || entry.model === 'clef-flash' || entry.model === 'clef-omni'
+    || entry.model.startsWith('@cf/cloudflare/') ? 'clef' : 'jev';
 }
 
 async function aggregateMissionUsage(raw: string, into: Record<string, JevMissionStats>): Promise<void> {
@@ -741,7 +744,7 @@ export function jevDecisionStats(deps?: {
     });
     addOptimization(bucket, entry.optimization);
     if (entry.kind === 'optimization') continue;
-    const provider = entry.provider ?? (entry.model === 'clef' || entry.model === 'clef-flash' || entry.model === 'clef-omni' || entry.model.startsWith('@cf/cloudflare/') ? 'clef' : 'jev');
+    const provider = providerOfEntry(entry);
     addProviderUsage(stats.byProvider, provider, entry);
     addProviderUsage(stats.byModel, entry.model, entry);
     if (entry.missionId && !isUnavailableMarker(entry)) addMissionUsage(stats.byMission, entry.missionId, provider, entry);

@@ -28,10 +28,13 @@ import {
   type McpToolInvocation,
 } from './mcp-protocol';
 import { authorizePaneRef, requireStr } from './tool-util';
+import { PINNED_DECISION_KEY_HINT } from '../decision-models/decision-routing';
 import type { AgentGateContext } from './gate';
 import type { ProjectExecutionScope } from '../../shared/types';
 
-const JUDGE_TIMEOUT_MS = 8_000;
+// Um passo de autopilot é interativo (latência alvo de 5 s do motor): uma
+// tentativa só. Com 8 s e retry no timeout o passo podia esperar ~16 s.
+const JUDGE_TIMEOUT_MS = 5_000;
 const READ_MAX_CHARS = 3_000;
 const READ_MAX_ELEMENTS = 120;
 const SETTLE_MS = 150;
@@ -359,8 +362,12 @@ async function runBrowserDo(
       },
       questions,
       timeoutMs: JUDGE_TIMEOUT_MS,
+      retryOnTimeout: false,
       signal: invocation?.signal,
       surface: 'browserTool',
+      // F-1622: sem isto a consulta não contava no orçamento nem no painel da missão.
+      sessionId: ctx.sessionId,
+      missionId: ctx.missionId,
     });
     assertMcpInvocationCurrent(invocation);
 
@@ -557,7 +564,7 @@ const browserDoTool: McpToolDef = {
     authorizePaneRef(ctx, paneId, 'write');
     if (!hasDecisionCredential('browserTool')) {
       throw new Error(
-        'nexus_browser_do: configure Jev ou Clef em Ajustes → Chaves de API',
+        `nexus_browser_do: ${PINNED_DECISION_KEY_HINT}`,
       );
     }
     return runBrowserDo(parsed.data, ctx, invocation, {});
@@ -582,7 +589,7 @@ export function buildBrowserAutopilotTools(deps: BrowserDoDeps = {}): McpToolDef
         authorizePaneRef(ctx, paneId, 'write');
         if (!hasDecisionCredential('browserTool')) {
           throw new Error(
-            'nexus_browser_do: configure Jev ou Clef em Ajustes → Chaves de API',
+            `nexus_browser_do: ${PINNED_DECISION_KEY_HINT}`,
           );
         }
         return runBrowserDo(parsed.data, ctx, invocation, deps);
