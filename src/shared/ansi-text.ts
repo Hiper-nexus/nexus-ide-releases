@@ -1,7 +1,7 @@
 // CSI sequences, OSC sequences, remaining lone escapes, then control bytes.
 import { CSI_SEQUENCE_PATTERN } from './ansi-escape-sequences';
 
-/* eslint-disable no-control-regex */
+/* eslint-disable no-control-regex -- stripAnsi exists to match terminal control bytes: ESC and BEL delimit the OSC and lone-escape patterns, and the last pattern is the C0/DEL range itself. */
 const OSC_PATTERN = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
 const ESC_PATTERN = /\x1b[@-_]/g;
 const CONTROL_PATTERN = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;

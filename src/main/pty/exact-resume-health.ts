@@ -57,7 +57,7 @@ export interface ExactResumeExit {
  * de saída em memória; o texto nunca sai daqui nem vai ao trace.
  */
 const CONVERSATION_MISSING_PATTERN = /no conversation found with session id/i;
-// eslint-disable-next-line no-control-regex
+// eslint-disable-next-line no-control-regex -- ESC e BEL delimitam as sequências CSI/OSC que este padrão tira da tela antes de procurar a frase da CLI
 const ANSI_SEQUENCE_PATTERN = /\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g;
 
 export function exactResumeScreenSaysConversationMissing(
