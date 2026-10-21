@@ -463,14 +463,23 @@ export function registerUiKitIpc(): void {
         // The panel sends namespace + URL + token; the auth CONTRACT is
         // resolved in ui-kit-registry, where it is testable (this file cannot
         // load under test: `handleTrusted` pulls in electron).
+        const previous = current.find(
+          (entry) => entry.namespace === input.namespace.trim(),
+        );
         const auth = resolveRegistryAuthContract({
           namespace: input.namespace,
           declared: input.auth,
-          stored: current.find(
-            (entry) => entry.namespace === input.namespace.trim(),
-          )?.auth,
+          stored: previous?.auth,
+          storedUrl: previous?.url,
+          url: input.url.trim(),
           hasToken: Boolean(parsed.data.token),
         });
+        // Nothing is DELETED here on purpose: the stored token stays where it
+        // is. Dropping the auth contract above is already enough to close the
+        // leak — with no contract on the new entry, `resolveRegistryToken` is
+        // never consulted, so the old host's token cannot reach the new one.
+        // Clearing the vault would also reach credentials the operator
+        // provisions by other means.
         // Validated here, before anything is persisted: https only, `{name}`
         // present, no credentials in the URL, header/env names well formed.
         const registry = assertRegistry({

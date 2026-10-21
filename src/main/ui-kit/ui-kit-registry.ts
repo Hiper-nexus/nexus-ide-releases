@@ -365,10 +365,21 @@ export function resolveRegistryAuthContract(input: {
   readonly declared?: UiKitRegistryAuth | undefined;
   /** The contract already stored for this namespace, if any. */
   readonly stored?: UiKitRegistryAuth | undefined;
+  /** The URL being saved, and the one already stored for this namespace. */
+  readonly url?: string | undefined;
+  readonly storedUrl?: string | undefined;
   readonly hasToken: boolean;
 }): UiKitRegistryAuth | undefined {
   if (input.declared) return input.declared;
-  if (input.stored) return input.stored;
+  // Only while the HOST is the same one the token was stored for. Preserving
+  // the contract by namespace alone meant re-saving `@acme` with a different
+  // URL and no token kept both the auth and the old token under the same
+  // derived vault key — and the next install released that token to the NEW
+  // host. The caller clears the stored credential on this transition, so
+  // there is nothing stale left to leak.
+  if (input.stored && input.storedUrl !== undefined && input.storedUrl === input.url) {
+    return input.stored;
+  }
   if (!input.hasToken && !findKnownRegistry(input.namespace)) return undefined;
   return {
     kind: 'header',

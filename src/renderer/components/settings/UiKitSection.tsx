@@ -183,7 +183,15 @@ export function UiKitSection() {
         ...(registryToken.trim() ? { token: registryToken.trim() } : {}),
       });
       setStatus(next);
-      const saved = next.registries.some((entry) => entry.namespace === namespace);
+      // `registryError` FIRST. Re-saving an ALREADY-configured namespace
+      // returns that namespace in the list whether or not the new token was
+      // stored, so presence alone cannot mean success — it cleared the
+      // credential the operator had just typed and never showed the failure.
+      // (This guard was lost once in a rewrite; the `else` branch below reads
+      // the same field, which is why counting occurrences did not catch it.)
+      const saved =
+        !next.registryError &&
+        next.registries.some((entry) => entry.namespace === namespace);
       if (saved) {
         setRegistryNamespace('');
         setRegistryUrl('');

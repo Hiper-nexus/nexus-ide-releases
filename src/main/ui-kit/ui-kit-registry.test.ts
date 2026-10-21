@@ -395,13 +395,47 @@ describe('registryEntryNeedsAuth', () => {
 describe('resolveRegistryAuthContract', () => {
   const stored = PRIVATE.auth;
 
-  it('keeps the stored contract when no token is typed again', () => {
+  it('keeps the stored contract when no token is typed again, same host', () => {
     // The bug: re-saving an existing private registry without the token
     // dropped its auth, the project's components.json went back to a bare
     // URL, installs ran unauthenticated, and nothing reported a missing key.
     expect(
-      resolveRegistryAuthContract({ namespace: '@acme', stored, hasToken: false }),
+      resolveRegistryAuthContract({
+        namespace: '@acme',
+        stored,
+        storedUrl: PRIVATE.url,
+        url: PRIVATE.url,
+        hasToken: false,
+      }),
     ).toEqual(stored);
+  });
+
+  it('drops it when the namespace is re-pointed at ANOTHER host', () => {
+    // Preserving by namespace alone kept the auth and the old token under the
+    // same derived vault key, and the next install released that token to the
+    // new host. With no contract, `resolveRegistryToken` is never consulted —
+    // and nothing is deleted from the vault to achieve it.
+    expect(
+      resolveRegistryAuthContract({
+        namespace: '@acme',
+        stored,
+        storedUrl: PRIVATE.url,
+        url: 'https://elsewhere.test/r/{name}.json',
+        hasToken: false,
+      }),
+    ).toBeUndefined();
+  });
+
+  it('accepts the new host once a token is entered for it', () => {
+    expect(
+      resolveRegistryAuthContract({
+        namespace: '@acme',
+        stored,
+        storedUrl: PRIVATE.url,
+        url: 'https://elsewhere.test/r/{name}.json',
+        hasToken: true,
+      })?.envVar,
+    ).toBe('ACME_REGISTRY_TOKEN');
   });
 
   it('derives one for a registry whose shape ships with Nexus, before any token', () => {
