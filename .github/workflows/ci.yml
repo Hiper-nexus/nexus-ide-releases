@@ -1,12 +1,11 @@
 name: CI
 
 on:
-  # Site, API e docs não entram no app: commit que só mexe neles não gasta
-  # minutos (o Actions é cobrado por minuto; o macOS custa ~10x).
+  # Site executa o check exigido pela proteção da main. API e docs continuam
+  # fora deste gate quando são as únicas alterações.
   push:
     branches: [main]
     paths-ignore: &sem-app
-      - 'site/**'
       - 'cloud-api/**'
       - 'docs/**'
       - '**/*.md'
