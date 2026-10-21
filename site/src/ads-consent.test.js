@@ -9,7 +9,7 @@ function fixture({ saved = null, path = '/', host = 'nexuside.app', protocol = '
     focus() { this.focused = true; },
     click() { this.listeners.click(); },
   }]));
-  const scripts = [], events = {};
+  const scripts = [], events = {}, docEvents = {};
   let value = saved, reloads = 0, replaced = null;
   const win = {
     location: { hostname: host, protocol, pathname: path, search, reload() { reloads++; }, replace(url) { replaced = url; } },
@@ -21,13 +21,14 @@ function fixture({ saved = null, path = '/', host = 'nexuside.app', protocol = '
   };
   const doc = {
     referrer,
+    addEventListener: (name, fn) => { docEvents[name] = fn; },
     getElementById: id => nodes[id],
     querySelector: () => existingTag || scripts[0] || null,
     createElement: name => { assert.equal(name, 'script'); return {}; },
     head: { append: script => scripts.push(script) },
   };
   const init = () => initializeAdsConsent(win, doc);
-  return { win, nodes, scripts, events, init, saved: () => JSON.parse(value), reloads: () => reloads, replaced: () => replaced };
+  return { win, nodes, scripts, events, docEvents, init, saved: () => JSON.parse(value), reloads: () => reloads, replaced: () => replaced };
 }
 const savedChoice = (choice, expiresAt = Date.now() + 100000) => JSON.stringify({ choice, expiresAt });
 const commands = f => (f.win.dataLayer || []).map(args => [...args]);
@@ -125,4 +126,18 @@ test('origem com parâmetros ou fragmento potencialmente privado bloqueia o load
     assert.equal(f.scripts.length, 0);
     assert.equal(f.win.dataLayer, undefined);
   }
+});
+
+
+test('conversão Nexus somente no clique explícito de instalador após consentimento, sem pageview', () => {
+  const f = fixture(); f.init();
+  const click = { isTrusted: true, defaultPrevented: false, target: { closest: () => ({ href: 'https://nexuside.app/download/windows' }) } };
+  f.docEvents.click(click);
+  assert.equal(commands(f).filter(row => row[0] === 'event').length, 0);
+  f.nodes['ads-accept'].click();
+  assert.equal(commands(f).filter(row => row[0] === 'event').length, 0);
+  f.init(); f.docEvents.click(click);
+  assert.deepEqual(commands(f).filter(row => row[0] === 'event'), [['event', 'conversion', { send_to: 'AW-953176375/G6imCOzR-qMdELeiwcYD', value: 0, currency: 'BRL', transport_type: 'beacon' }]]);
+  f.nodes['ads-reject'].click(); f.docEvents.click(click);
+  assert.equal(commands(f).filter(row => row[0] === 'event').length, 1);
 });

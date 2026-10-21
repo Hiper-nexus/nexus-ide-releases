@@ -1,3 +1,5 @@
+import { initializeDownloadConversion, NEXUS_DOWNLOAD_SEND_TO } from './download-conversion.js';
+
 // Tag base validada na conta 3066296016. Nenhum rótulo de conversão é usado aqui.
 export const GOOGLE_ADS_ID = 'AW-953176375';
 export const CONSENT_KEY = 'nexus-ads-consent-v1';
@@ -80,6 +82,7 @@ export function initializeAdsConsent(win = window, doc = document) {
   panel.hidden = choice !== null;
   if (choice === 'granted') loadTag();
   win.__nexusAdsConsent = { revoke: () => save('denied') };
+  initializeDownloadConversion({ win, doc, sendTo: NEXUS_DOWNLOAD_SEND_TO, canMeasure: () => choice === 'granted' && loaded });
   // Revogação em outra aba também interrompe a tag nesta página.
   win.addEventListener('storage', event => {
     if (loaded && (event.key === CONSENT_KEY || event.key === null)) win.location.reload();

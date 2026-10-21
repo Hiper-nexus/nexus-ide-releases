@@ -81,9 +81,14 @@ automática de dados fornecidos pelo usuário nesta página. A URL enviada é a 
 A CSP Google só é permitida na home do domínio oficial, sem inline/eval ou curingas. Conta, admin,
 comunidade e previews não inicializam a integração. Os testes de consentimento integram `npm test`.
 
-Não há rótulo nem evento de conversão nessa instalação. O clique de download é apenas uma navegação
+A ação secundária `7860037868` (“Nexus IDE | Clique em download”) usa somente o destino oficial
+`AW-953176375/G6imCOzR-qMdELeiwcYD`, valor 0 BRL e ONE_PER_CLICK. `download-conversion.js`
+observa cliques reais em links de instaladores oficiais, sob consentimento. Âncoras de seção, o seletor
+Linux genérico, checksums, notas de versão e downloads do Shot ficam fora. O handler não cancela a
+navegação; o envio via beacon é best effort e falhas de medição nunca impedem o download. QA usa
+mocks, sem registrar conversão real. O clique de download continua sendo uma navegação
 para um instalador GitHub (os links podem ser atualizados por `src/downloads/ui.js`); ele não prova
 instalação nem ativação. O teste começa no primeiro login verificado, confirmado pela API, e não no
-clique em “Começar meu teste”. Para medir esses marcos no Google Ads, configure ações exclusivas do
+clique em “Começar meu teste”. Para medir início de teste ou ativação no Google Ads, configure novas ações exclusivas do
 Nexus e valide seus IDs/rótulos antes de instrumentar; não reutilize ações de outros produtos. Medir
 ativação dentro do desktop exige um escopo próprio e consentimento compatível.

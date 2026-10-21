@@ -1,9 +1,11 @@
+// Ação 7860037868: secundária, ONE_PER_CLICK, valor zero BRL. Validada na conta 3066296016.
+export const NEXUS_DOWNLOAD_SEND_TO = 'AW-953176375/G6imCOzR-qMdELeiwcYD';
 // Mede intenção de baixar o NexusIDE; nunca representa instalação ou início de teste.
 export function isNexusDownload(href, base) {
   let url;
   try { url = new URL(href, base); } catch { return false; }
   if (url.search || url.hash || url.username || url.password) return false;
-  if (url.origin === 'https://nexuside.app') return /^\/download\/(macos|mac|windows|win|linux|linux-deb|linux-rpm|linux-zip)$/.test(url.pathname);
+  if (url.origin === 'https://nexuside.app') return /^\/download\/(macos|mac|windows|win|linux-deb|linux-rpm|linux-zip)$/.test(url.pathname);
   return url.origin === 'https://github.com'
     && /^\/Hiper-nexus\/nexus-ide-releases\/releases\/download\/v\d+\.\d+\.\d+\/(NexusIDE-[A-Za-z0-9._-]+\.(dmg|exe|zip)|nexus-ide[A-Za-z0-9._-]*\.(deb|rpm))$/.test(url.pathname);
 }
@@ -19,7 +21,7 @@ export function initializeDownloadConversion({ win = window, doc = document, sen
     if (!anchor || !isNexusDownload(anchor.href, win.location.href)) return;
     // Mantém o link e o comportamento nativo, inclusive downloads em outra aba.
     // A entrega é best effort: falha do Google nunca bloqueia o instalador.
-    try { win.gtag('event', 'conversion', { send_to: sendTo, transport_type: 'beacon' }); }
+    try { win.gtag('event', 'conversion', { send_to: sendTo, value: 0, currency: 'BRL', transport_type: 'beacon' }); }
     catch { /* O download continua normalmente. */ }
   });
 }
