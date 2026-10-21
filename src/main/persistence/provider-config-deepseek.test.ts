@@ -180,6 +180,7 @@ vi.mock('./agy-keyring-activation', () => ({
   activateAgyAccountForSpawn: vi.fn(async () => ({ ok: true, switched: false })),
 }));
 
+import { testProviderKey } from '../adapters/provider-test';
 import { setLauncherProvidersFileForTests } from '../adapters/launcher-provider-manager';
 import * as secretsStore from './secrets-store';
 import {
@@ -188,6 +189,7 @@ import {
   listProviderSettings,
   prepareProviderSpawn,
   registerProviderIpc,
+  registerProviderListener,
   resolveQuotaApiKey,
   resolveRuntimeApiKey,
   sessionExpiredBeyondRenewal,
@@ -255,6 +257,29 @@ beforeEach(async () => {
   writeLauncher([]);
   await setConfig({ adapterId: 'deepseek', upstream: 'deepseek', defaultModel: '' });
   await setConfig({ adapterId: 'claude', upstream: 'anthropic' });
+});
+
+describe('Qwen — o Testar republica a lista de providers', () => {
+  it('avisa os ouvintes depois da sonda, para o status não ficar em "não verificada"', async () => {
+    const send = vi.fn();
+    registerProviderListener({ isDestroyed: () => false, send } as never);
+    const handler = fx.handlers.get(PROVIDER_CHANNELS.testKey);
+    if (!handler) throw new Error('testKey handler not registered');
+    vi.mocked(testProviderKey).mockResolvedValueOnce({ ok: true, detail: 'reachable; credential accepted' });
+    send.mockClear();
+    await handler({}, { adapterId: 'qwen' });
+    expect(send).toHaveBeenCalledWith(PROVIDER_CHANNELS.changed, expect.anything());
+  });
+
+  it('não republica a lista para os outros providers', async () => {
+    const send = vi.fn();
+    registerProviderListener({ isDestroyed: () => false, send } as never);
+    const handler = fx.handlers.get(PROVIDER_CHANNELS.testKey)!;
+    vi.mocked(testProviderKey).mockResolvedValueOnce({ ok: true, detail: 'ok' });
+    send.mockClear();
+    await handler({}, { adapterId: 'deepseek' });
+    expect(send).not.toHaveBeenCalled();
+  });
 });
 
 describe('F-724 — DeepSeek pela API direta (padrão, comportamento histórico)', () => {

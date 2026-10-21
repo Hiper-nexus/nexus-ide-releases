@@ -4194,7 +4194,11 @@ export function registerProviderIpc(): void {
       const adapter = getAdapter(parsed.data.adapterId);
       if (!adapter) return { ok: false, detail: 'unknown provider' };
       const key = resolveApiKey(parsed.data.adapterId);
-      return testProviderKey(adapter, key);
+      const result = await testProviderKey(adapter, key);
+      // A sonda do Qwen atualiza o cache de prontidão: sem o broadcast a lista
+      // seguia em "chave não verificada" depois de "credential accepted".
+      if (parsed.data.adapterId === 'qwen') broadcast();
+      return result;
     },
   );
 }
