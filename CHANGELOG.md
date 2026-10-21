@@ -1,10 +1,10 @@
 # Changelog
 
-## 0.76.371 — Estúdio de vídeo com contador, estilos e ditado
+## 0.76.372 — Estúdio de vídeo com contador, estilos e ditado
 
 Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
 
-A 0.76.370 no espelho público é a publicação Windows (Setup, nupkg e RELEASES) e não recebe arquivos Linux. A 0.76.368 no espelho também é Windows e não recebe arquivos Linux. A 0.76.369 foi tagueada e não publicada. A 0.76.367 é o pacote Linux anterior. A 0.76.365 no espelho continua Latest; esta release não toma essa marca. A 0.76.362 continua Latest na canônica.
+A 0.76.371 é o carimbo macOS e não recebe arquivos Linux. A 0.76.370 no espelho público é a publicação Windows (Setup, nupkg e RELEASES) e não recebe arquivos Linux. A 0.76.368 no espelho também é Windows e não recebe arquivos Linux. A 0.76.369 foi tagueada e não publicada. A 0.76.367 é o pacote Linux anterior. A 0.76.365 no espelho continua Latest; esta release não toma essa marca. A 0.76.362 continua Latest na canônica.
 
 No desktop Linux, em relação à 0.76.367:
 
