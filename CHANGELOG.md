@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.76.368 — O pedido do Estúdio chega ao pane
+
+Build Windows assinado com o YubiKey (HIPERSEND), em relação à 0.76.367 do Windows.
+
+- **O pedido do Estúdio chega ao pane.** "Novo vídeo de apresentação" e o pedido do Estúdio de Mídia ficavam guardados no seletor do "+ Pane" e nada os lia: o pane abria com o campo vazio. O seletor agora entrega o pedido ao agente que você escolher; fechar sem escolher o descarta, e um pane que não chegou a subir devolve o pedido à fila.
+- **"Indisponíveis" nasce recolhida no "+ Pane".** A lista de CLIs desligadas ou sem instalação ocupava o menu e escondia as disponíveis. Agora é um botão com a contagem, que abre os motivos.
+
+O resto do desktop é o da 0.76.367.
+
 ## 0.76.367 — O Testar do Qwen atualiza o status
 
 Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.

@@ -12413,7 +12413,7 @@ export const RELEASE_076366: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076367: AppRelease = {
   version: '0.76.367',
   date: '2026-10-21',
   codename: 'O Testar do Qwen atualiza o status',
@@ -12428,4 +12428,19 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076367: AppRelease = CURRENT_RELEASE;
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.368',
+  date: '2026-10-21',
+  codename: 'O pedido do Estúdio chega ao pane',
+  summary: 'No Windows, o pedido do Estúdio de Mídia (Novo vídeo de apresentação) agora chega ao agente escolhido no "+ Pane", em vez de abrir o pane vazio, e a lista de CLIs indisponíveis nasce recolhida para não esconder as disponíveis.',
+  highlights: [
+    { title: 'O pedido do Estúdio chega ao agente', detail: 'O pedido do vídeo de apresentação segue com o pane que você escolhe no "+ Pane"; fechar o menu sem escolher o descarta, e um pane que falhou ao subir devolve o pedido à fila.' },
+    { title: 'Indisponíveis recolhidas', detail: 'No "+ Pane" as CLIs indisponíveis ficam atrás de um botão com a contagem; as disponíveis ocupam o menu.' },
+  ],
+  fixes: [
+    { title: 'Pane do Estúdio abria sem o pedido', detail: 'O pedido ficava guardado no seletor e nenhum código o lia. Agora ele é entregue como o primeiro pedido do pane escolhido.' },
+    ...RELEASE_076367.fixes,
+  ],
+};
+
+export const RELEASE_076368: AppRelease = CURRENT_RELEASE;
