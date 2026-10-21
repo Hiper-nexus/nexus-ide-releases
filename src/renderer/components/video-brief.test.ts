@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { buildPresentationBrief, guessAttachmentRole, normalizeSiteUrl } from './video-brief';
+import {
+  BRIEF_FIELD_LIMITS,
+  briefFieldOverflow,
+  buildPresentationBrief,
+  guessAttachmentRole,
+  normalizeSiteUrl,
+} from './video-brief';
 
 describe('anexos do vídeo de apresentação', () => {
   const base = { product: 'Agendify', durationSec: 45, preset: 'vertical-9x16', voice: { kind: 'none' }, music: false } as const;
@@ -74,5 +80,39 @@ describe('brief do vídeo de apresentação', () => {
     expect(normalizeSiteUrl('  ')).toBeNull();
     const brief = buildPresentationBrief({ product: 'A\u001b[31mB', durationSec: 30, preset: 'square-1x1', voice: { kind: 'none' }, music: false });
     expect(brief).toContain('Produto: A [31mB');
+  });
+});
+
+describe('tetos do brief: um número só, e nada cortado calado (21/10/2026)', () => {
+  const base = { durationSec: 45, preset: 'vertical-9x16', voice: { kind: 'none' }, music: false } as const;
+
+  it('o produto cabe um roteiro de verdade, bem acima dos 1.500 de antes', () => {
+    // O defeito: o operador colou ~1.800 caracteres e perdeu 300 sem aviso.
+    expect(BRIEF_FIELD_LIMITS.product).toBeGreaterThanOrEqual(2_000);
+    const roteiro = 'R'.repeat(1_800);
+    expect(buildPresentationBrief({ ...base, product: roteiro })).toContain(`Produto: ${roteiro}`);
+  });
+
+  it('cada campo corta só no próprio teto, e o teto é o exportado', () => {
+    const brief = buildPresentationBrief({
+      ...base,
+      product: 'p'.repeat(BRIEF_FIELD_LIMITS.product + 50),
+      audience: 'u'.repeat(BRIEF_FIELD_LIMITS.audience + 50),
+      style: 's'.repeat(BRIEF_FIELD_LIMITS.style + 50),
+    });
+    expect(brief).toContain(`Produto: ${'p'.repeat(BRIEF_FIELD_LIMITS.product)}\n`);
+    expect(brief).toContain(`Público: ${'u'.repeat(BRIEF_FIELD_LIMITS.audience)}\n`);
+    expect(brief).toContain(`Estilo: ${'s'.repeat(BRIEF_FIELD_LIMITS.style)}\n`);
+  });
+
+  it('o excesso é medido no texto cru, que é o que a pessoa vê no campo', () => {
+    expect(briefFieldOverflow('', 'product')).toBe(0);
+    expect(briefFieldOverflow('x'.repeat(BRIEF_FIELD_LIMITS.product), 'product')).toBe(0);
+    expect(briefFieldOverflow('x'.repeat(BRIEF_FIELD_LIMITS.product + 7), 'product')).toBe(7);
+    expect(briefFieldOverflow('x'.repeat(BRIEF_FIELD_LIMITS.audience + 1), 'audience')).toBe(1);
+  });
+
+  it('a URL longa continua recusada pelo teto dela, não pelo do produto', () => {
+    expect(normalizeSiteUrl(`https://exemplo.com/${'a'.repeat(BRIEF_FIELD_LIMITS.siteUrl)}`)).toContain('exemplo.com');
   });
 });
