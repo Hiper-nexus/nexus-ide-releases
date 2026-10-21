@@ -989,4 +989,27 @@ describe('Estúdio: ditar e escrever o pedido (pedido do operador, 21/10/2026)',
     expect(dialog.querySelector<HTMLTextAreaElement>('textarea')!.value).toBe('gato astronauta');
     expect(dialog.textContent).toContain('mudou o tipo ou o formato');
   });
+
+  it('sem serviço conectado o campo não existe, e a fala não some nele', async () => {
+    // A tela é o convite a conectar; o ditado global não pode ser anexado a um
+    // `prompt` invisível que o próprio "Conectar serviço de mídia" descarta.
+    const media = mediaMocks();
+    media.listProviders.mockResolvedValue([{ ...keyedImage, hasKey: false, maskedKey: null }]);
+    useVoiceStore.setState({ info: { captureAllowed: true } as never, status: 'idle' });
+    const dialog = await openFrom(renderHarness());
+    expect(dialog.querySelector('textarea')).toBeNull();
+    expect(dialog.textContent).toContain('Nenhum serviço de');
+    expect(deliverDictationToClaim('uma cena qualquer')?.paneId).not.toBe('ui:media-studio-prompt');
+  });
+
+  it('com serviço conectado o campo existe e o claim é dele', async () => {
+    const media = mediaMocks();
+    media.listProviders.mockResolvedValue([keyedImage]);
+    useVoiceStore.setState({ info: { captureAllowed: true } as never, status: 'idle' });
+    const dialog = await openFrom(renderHarness());
+    expect(dialog.querySelector('textarea')).toBeTruthy();
+    expect(deliverDictationToClaim('uma cena qualquer')).toEqual({
+      paneId: 'ui:media-studio-prompt',
+    });
+  });
 });

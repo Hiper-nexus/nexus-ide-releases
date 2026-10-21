@@ -161,6 +161,14 @@ export function MediaStudioPanel({
     [providers, tab],
   );
   const keyed = useMemo(() => ofKind.filter((p) => p.hasKey), [ofKind]);
+  /**
+   * Nenhum serviço do tipo escolhido: a tela é o convite a conectar, e o
+   * campo de pedido NÃO existe. Uma constante só, usada pelo JSX e pelo claim
+   * do ditado — foram os dois saindo de sincronia que fez a fala cair num
+   * `prompt` invisível, descartado quando "Conectar serviço de mídia"
+   * desmontava o painel. Carregando ou com erro, o formulário aparece.
+   */
+  const showConnectInvite = providers !== null && keyed.length === 0 && !loadError;
 
   useEffect(() => {
     if (!open) {
@@ -274,11 +282,12 @@ export function MediaStudioPanel({
   // O microfone deste campo tem claim próprio: o ditado vai para o pedido da
   // cena, nunca para um pane escondido atrás do Estúdio.
   const dictation = useObjectiveDictation({
-    // Só enquanto o campo está À VISTA. Em "Vídeos do projeto" a textarea
-    // não existe: o claim preso ali engolia a fala (e o brief aninhado, ao
-    // fechar, soltava o claim sem ninguém retomar, porque as dependências
-    // deste efeito não mudavam). Amarrar em `view` solta e retoma na troca.
-    enabled: !job && view === 'generate',
+    // Só enquanto o campo está À VISTA, e ele só existe nas MESMAS condições
+    // em que o formulário é renderizado: aba de geração E algum serviço
+    // conectado. Sem serviço a tela é o convite a conectar, e a fala caía num
+    // `prompt` invisível que o próprio "Conectar serviço de mídia" descartava
+    // ao desmontar o painel. Com `armed` o turno em voo ainda é entregue.
+    enabled: !job && view === 'generate' && !showConnectInvite,
     claimId: 'media-studio-prompt',
     onTranscript: (text) => {
       setPrompt((current) => (current.trim() ? `${current.replace(/\s+$/u, '')} ${text}` : text));
@@ -567,7 +576,7 @@ export function MediaStudioPanel({
               {MEDIA_NO_PROJECT_ERROR}
             </p>
           )}
-          {providers !== null && keyed.length === 0 && !loadError ? (
+          {showConnectInvite ? (
             <section className="ms-empty">
               <p className="ms-empty__title">
                 Nenhum serviço de {KIND_PT[tab]} conectado
