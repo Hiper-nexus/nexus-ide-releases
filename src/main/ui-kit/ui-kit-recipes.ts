@@ -175,7 +175,15 @@ export function matchRoleCandidate(
       entry.slug.toLowerCase().includes(keyword),
     );
     if (hits.length === 0) continue;
-    const sorted = [...hits].sort((a, b) => a.slug.length - b.slug.length);
+    // A demo is not the component. The real @shadcn listing carries
+    // `(example)` next to items like `button-demo`, and installing one of
+    // those instead of `button` looks like success and is wrong.
+    const sorted = [...hits].sort((a, b) => {
+      const demoA = a.category === 'example' ? 1 : 0;
+      const demoB = b.category === 'example' ? 1 : 0;
+      if (demoA !== demoB) return demoA - demoB;
+      return a.slug.length - b.slug.length;
+    });
     for (const hit of sorted) {
       if (hit.tier === 'pro' && options.proLicensed !== true) blocked.push(hit);
       else usable.push(hit);

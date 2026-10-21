@@ -343,10 +343,16 @@ export function assertSafeUiKitCwd(
   return cwd;
 }
 
+/**
+ * NOT unref'd, unlike the timeout timer: the caller's rejection is sequenced
+ * BEHIND this grace period, so an unref'd timer here lets a quiet event loop
+ * exit with the promise still pending — the await never settles. (Electron's
+ * main loop never empties, so this only ever bit a plain-node harness, which
+ * is exactly where it was found.)
+ */
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    timer.unref?.();
+    setTimeout(resolve, ms);
   });
 }
 
@@ -391,6 +397,18 @@ export function resolveNpxCommand(
   return UI_KIT_WINDOWS_NPX_CANDIDATES[0];
 }
 
+/**
+ * ESRCH means the group is already gone, which is the outcome teardown wanted.
+ * Warning about it turned a clean exit into a scary log line.
+ */
+export function isAlreadyGoneKillError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { code?: unknown }).code === 'ESRCH'
+  );
+}
+
 /** Kill the group: the package manager's node child holds the download open. */
 async function terminateTree(pid: number | undefined): Promise<void> {
   if (pid === undefined) return;
@@ -420,7 +438,9 @@ async function terminateTree(pid: number | undefined): Promise<void> {
   try {
     signalGroup(pid, 'SIGKILL');
   } catch (error) {
-    console.warn(`[ui-kit] failed to kill process group ${pid}:`, error);
+    if (!isAlreadyGoneKillError(error)) {
+      console.warn(`[ui-kit] failed to kill process group ${pid}:`, error);
+    }
   }
 }
 

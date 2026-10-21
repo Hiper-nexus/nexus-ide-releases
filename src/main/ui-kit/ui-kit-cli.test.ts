@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type fs from 'node:fs';
 import {
   assertSafeEnvName,
+  isAlreadyGoneKillError,
   assertSafeUiKitArgs,
   assertSafeUiKitCwd,
   buildUiKitChildEnv,
@@ -181,5 +182,17 @@ describe('UI_KIT_PACKAGES', () => {
   it('names both vendor packages', () => {
     expect(UI_KIT_PACKAGES.shadcn).toBe('shadcn@latest');
     expect(UI_KIT_PACKAGES.boardui).toBe('boardui@latest');
+  });
+});
+
+describe('isAlreadyGoneKillError', () => {
+  it('treats ESRCH as the outcome teardown wanted', () => {
+    expect(isAlreadyGoneKillError(Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' }))).toBe(true);
+  });
+
+  it('still reports a real failure like EPERM', () => {
+    expect(isAlreadyGoneKillError(Object.assign(new Error('kill EPERM'), { code: 'EPERM' }))).toBe(false);
+    expect(isAlreadyGoneKillError(new Error('plain'))).toBe(false);
+    expect(isAlreadyGoneKillError(null)).toBe(false);
   });
 });

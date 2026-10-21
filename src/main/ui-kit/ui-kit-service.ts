@@ -440,23 +440,31 @@ export function shadcnSearchNamespaces(
  * The CLI has no `--json` for search, so this scrapes its text. It is reported
  * as best-effort precisely because of that: the raw text travels alongside, and
  * an empty parse never means "the registry has nothing".
+ *
+ * Measured against the real CLI (2026-10-21), which prints one item per line as
+ * `- @shadcn/button (ui)`. The trailing category is worth keeping: `example`
+ * items are demos, and a recipe that installed `button-demo` instead of
+ * `button` would look like it worked and be wrong.
  */
+export const SHADCN_DEMO_CATEGORY = 'example';
+
 export function parseShadcnSearchOutput(
   output: string,
 ): readonly UiKitCandidate[] {
   const found = new Map<string, UiKitCandidate>();
-  const tokenPattern = /@[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9._-]*/gi;
+  const linePattern =
+    /(@[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9._-]*)(?:\s*\(([a-z0-9:-]+)\))?/gi;
   for (const line of output.split('\n')) {
     const stripped = line.replace(/\u001b\[[0-9;]*m/g, '');
-    for (const match of stripped.matchAll(tokenPattern)) {
-      const token = match[0];
+    for (const match of stripped.matchAll(linePattern)) {
+      const token = match[1];
+      if (!token || found.has(token)) continue;
       const slug = token.slice(token.indexOf('/') + 1);
-      if (found.has(token)) continue;
       found.set(token, {
         kit: 'shadcn',
         slug,
         label: slug,
-        category: 'registry-item',
+        category: match[2]?.toLowerCase() ?? 'registry-item',
         tier: 'free',
       });
     }

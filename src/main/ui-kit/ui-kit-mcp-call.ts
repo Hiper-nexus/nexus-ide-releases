@@ -3,6 +3,7 @@ import path from 'node:path';
 import {
   assertSafeUiKitCwd,
   buildUiKitChildEnv,
+  isAlreadyGoneKillError,
   resolveNpxCommand,
   UiKitCliError,
   UI_KIT_PACKAGES,
@@ -146,14 +147,16 @@ async function terminateTree(
   } catch {
     // SIGKILL below is the authoritative stop.
   }
+  // NOT unref'd: the caller's settlement is sequenced behind this grace.
   await new Promise<void>((resolve) => {
-    const timer = setTimeout(resolve, UI_KIT_MCP_TERMINATION_GRACE_MS);
-    timer.unref?.();
+    setTimeout(resolve, UI_KIT_MCP_TERMINATION_GRACE_MS);
   });
   try {
     process.kill(-pid, 'SIGKILL');
   } catch (error) {
-    console.warn(`[ui-kit-mcp] failed to kill process group ${pid}:`, error);
+    if (!isAlreadyGoneKillError(error)) {
+      console.warn(`[ui-kit-mcp] failed to kill process group ${pid}:`, error);
+    }
   }
 }
 

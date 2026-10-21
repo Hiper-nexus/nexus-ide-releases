@@ -7,8 +7,8 @@ import {
   UI_KIT_RECIPES,
 } from './ui-kit-recipes';
 
-function shadcn(slug: string): UiKitCandidate {
-  return { kit: 'shadcn', slug, label: slug, category: 'registry-item', tier: 'free' };
+function shadcn(slug: string, category = 'ui'): UiKitCandidate {
+  return { kit: 'shadcn', slug, label: slug, category, tier: 'free' };
 }
 function boardui(slug: string, tier: 'free' | 'pro' = 'free'): UiKitCandidate {
   return { kit: 'boardui', slug, label: slug, category: 'block', tier };
@@ -179,5 +179,27 @@ describe('resolveUiKitRecipe — BoardUI and the Pro gate', () => {
 
     expect(resolved.install).toContain('finance-dashboard');
     expect(resolved.licensedRoles).toEqual([]);
+  });
+});
+
+describe('a demo is not the component', () => {
+  it('prefers the real item over an (example) of it', () => {
+    // The live @shadcn listing carries `button-demo (example)` next to
+    // `button (ui)`; installing the demo looks like success and is wrong.
+    const role = { key: 'auth', label: 'auth', match: ['login'] };
+    const candidates = [
+      shadcn('login-demo', 'example'),
+      shadcn('login-03'),
+    ];
+
+    expect(matchRoleCandidate(role, candidates).item?.slug).toBe('login-03');
+  });
+
+  it('still answers with a demo when that is all there is', () => {
+    const role = { key: 'auth', label: 'auth', match: ['login'] };
+
+    expect(
+      matchRoleCandidate(role, [shadcn('login-demo', 'example')]).item?.slug,
+    ).toBe('login-demo');
   });
 });

@@ -412,6 +412,28 @@ describe('catalog helpers', () => {
     expect(parsed.map((entry) => entry.slug)).toEqual(['button', 'data-table']);
   });
 
+  it('keeps the category the real CLI prints', () => {
+    // Measured output of `shadcn search @shadcn --query button --limit 5`.
+    const parsed = parseShadcnSearchOutput(
+      [
+        'Found 33 items matching "button" in @shadcn',
+        'Showing 1-5 of 33',
+        '',
+        '- @shadcn/button (ui)',
+        '- @shadcn/kbd-button (example)',
+        '- @shadcn/button-demo (example)',
+        '',
+        'More items available. Use --offset 5 to see the next page.',
+      ].join('\n'),
+    );
+
+    expect(parsed).toEqual([
+      { kit: 'shadcn', slug: 'button', label: 'button', category: 'ui', tier: 'free' },
+      { kit: 'shadcn', slug: 'kbd-button', label: 'kbd-button', category: 'example', tier: 'free' },
+      { kit: 'shadcn', slug: 'button-demo', label: 'button-demo', category: 'example', tier: 'free' },
+    ]);
+  });
+
   it('returns nothing rather than guessing from unparseable output', () => {
     expect(parseShadcnSearchOutput('Found 12 items.')).toEqual([]);
   });
