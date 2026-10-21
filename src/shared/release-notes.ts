@@ -12318,7 +12318,7 @@ export const RELEASE_076360: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076361: AppRelease = {
   version: '0.76.361',
   date: '2026-10-21',
   codename: 'Jev calibrado chega ao macOS',
@@ -12338,4 +12338,21 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076361: AppRelease = CURRENT_RELEASE;
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.362',
+  date: '2026-10-21',
+  codename: 'O pedido abre o pane, e o login volta',
+  summary: 'O "+ Pane" ganha um campo de pedido: você escreve o que quer feito, o Jev propõe esforço e skill, e você ajusta antes do pane nascer. Pedido vazio abre na hora, como sempre. E o login que "às vezes não pegava" tem causa: quando a troca falhava, o app dizia "login superseded" e escondia o motivo real.',
+  highlights: [
+    { title: 'O pedido abre o pane', detail: 'Campo separado da busca: a busca filtra CLI, conta e modelo; o campo novo é o que você quer feito. Com pedido, escolher a CLI abre um passo com a proposta do Jev; o pedido viaja como primeiro brief. Vazio, o menu abre o pane na hora — o caminho rápido não ganhou fricção.' },
+    { title: 'Esforço editável antes de abrir', detail: 'O esforço era decidido em 70% das rotas de missão e nunca chegava ao pane aberto na mão, que nascia no padrão do provider. Agora a proposta vem marcada e você troca antes do pane nascer, nos níveis que a CLI entende: baixo, médio, alto, máximo — ou "a CLI decide".' },
+    { title: 'O passo diz quem decidiu', detail: 'Tier, especialidade e a origem da escolha aparecem no passo. Sem isso o revezamento por fair-share e diversidade lê como sorteio. Jev sem chave, desligado ou fora do ar: o passo aparece sem proposta e o Abrir funciona igual.' },
+    { title: 'Entrar com GitHub e com Google, no mesmo peso', detail: 'Os dois provedores são alternativas, não primário e secundário. Dar branco a um inventava uma recomendação que não existe e apagava a cor da marca. A marca ganhou slot de largura fixa, e os dois textos passam a começar no mesmo ponto.' },
+  ],
+  fixes: [
+    { title: 'O login não mente mais sobre o motivo', detail: 'No fim da troca o próprio exchange chamava clearAccess(), que incrementa a geração do login — e a partir dali toda falha era reportada como "login superseded" no lugar da causa real (Keychain recusando a gravação, licença inválida). A geração é rebaselinada depois do nosso próprio clearAccess; um login novo de verdade continua invalidando o anterior.' },
+    ...RELEASE_076361.fixes,
+  ],
+};
+
+export const RELEASE_076362: AppRelease = CURRENT_RELEASE;
