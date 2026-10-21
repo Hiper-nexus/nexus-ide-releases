@@ -155,7 +155,9 @@ describe('a configured registry the project does not declare', () => {
   it('is named in the result instead of coming back as an empty list', async () => {
     // The operator adds it in Settings, the project's components.json does
     // not declare it, so the search cannot reach it and its token is
-    // withheld. Showing nothing with no reason was the whole complaint.
+    // withheld. Showing nothing with no reason was the whole complaint. The
+    // registry bundled with Nexus rides the same search and is just as
+    // undeclared here, so it is named too: an honest list, not a silent one.
     const h = harness(() => ({ stdout: JSON.stringify({ items: [] }) }));
 
     const result = await liveCandidates('shadcn', cwd, undefined, {
@@ -163,7 +165,7 @@ describe('a configured registry the project does not declare', () => {
       registries: () => [PRIVATE],
     });
 
-    expect(result.unmappedRegistries).toEqual(['@acme']);
+    expect(result.unmappedRegistries).toEqual(['@acme', '@shadcnuikit']);
   });
 
   it('says nothing about it once the project declares it', async () => {
@@ -174,6 +176,12 @@ describe('a configured registry the project does not declare', () => {
           '@acme': {
             url: PRIVATE.url,
             headers: { Authorization: 'Bearer ${ACME_REGISTRY_TOKEN}' },
+          },
+          // The bundled registry the search just reached for; declaring it is
+          // what stops it being noise in every result.
+          '@shadcnuikit': {
+            url: 'https://shadcnuikit.com/r/{name}.json',
+            headers: { Authorization: 'Bearer ${SHADCNUIKIT_REGISTRY_TOKEN}' },
           },
         },
       }),

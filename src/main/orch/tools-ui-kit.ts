@@ -36,7 +36,10 @@ import {
   resolveInstallTargetForTask,
 } from '../ui-kit/ui-kit-install-target';
 import { getOrchSettings } from '../persistence/settings-store';
-import type { UiKitRegistry } from '../ui-kit/ui-kit-registry';
+import {
+  withOperatorRegistries,
+  type UiKitRegistry,
+} from '../ui-kit/ui-kit-registry';
 
 /**
  * The UI kit, as tools an agent can actually reach.
@@ -687,7 +690,14 @@ function buildRunCommand(args: Record<string, unknown>): ShadcnCommand {
         registries:
           strArray(args, 'registries').length > 0
             ? strArray(args, 'registries')
-            : [...shadcnSearchNamespaces(configuredRegistries())],
+            : // The default covers the effective list: an agent searching
+              // "everything" also sees namespaces a bundled operator token
+              // exists for, not just what this machine's settings declare.
+              [
+                ...shadcnSearchNamespaces(
+                  withOperatorRegistries(configuredRegistries()),
+                ),
+              ],
         ...(str(args, 'query') ? { query: requireStr(args, 'query') } : {}),
         ...(num(args, 'limit') !== undefined ? { limit: num(args, 'limit') } : {}),
         ...(num(args, 'offset') !== undefined ? { offset: num(args, 'offset') } : {}),

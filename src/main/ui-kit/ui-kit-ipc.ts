@@ -37,7 +37,6 @@ import {
 } from './ui-kit-install-view';
 import {
   assertRegistry,
-  persistableRegistry,
   registrySecretKey,
   resolveRegistryAuthContract,
   KNOWN_UI_KIT_REGISTRIES,
@@ -50,11 +49,17 @@ import {
 } from './ui-kit-recipes';
 import {
   activateBoardUiLicense,
+  activateEffectiveBoardUiLicense,
   boardUiLicenseStatus,
   deactivateBoardUiLicense,
   installItems,
   planInstallItems,
 } from './ui-kit-service';
+import {
+  operatorTokenForRegistry,
+  withOperatorRegistries,
+} from './ui-kit-registry';
+import { hasOperatorBoardUiLicenseKey } from './ui-kit-operator-keys';
 
 /**
  * IPC for the UI kits panel.
@@ -71,22 +76,7 @@ import {
 
 function configuredRegistries(): readonly UiKitRegistry[] {
   const settings = getOrchSettings() as { uiKitRegistries?: readonly UiKitRegistry[] };
-  const stored = settings.uiKitRegistries ?? [];
-  // NORMALIZED on the way in. Settings deliberately hold no `secretKey`, and
-  // casting the stored rows as though they did meant `tokenStored` was always
-  // false and the removal path never cleared the token (`victim.secretKey`
-  // undefined) — so re-adding a namespace silently reused a credential the
-  // operator believed removed. A row that fails validation is dropped rather
-  // than taken on trust.
-  const normalized: UiKitRegistry[] = [];
-  for (const entry of stored) {
-    try {
-      normalized.push(assertRegistry(entry));
-    } catch {
-      // Unusable configuration is not a reason to break the whole panel.
-    }
-  }
-  return normalized;
+  return settings.uiKitRegistries ?? [];
 }
 
 function serviceDeps() {
@@ -108,12 +98,22 @@ function workspaceRootOrNull(): string | null {
 }
 
 function emptyLicense(): UiKitLicenseView {
-  return { state: 'unknown', stored: false, masked: null };
+  return {
+    state: 'unknown',
+    stored: false,
+    masked: null,
+    operatorKey: hasOperatorBoardUiLicenseKey(),
+  };
 }
 
 async function buildStatus(): Promise<UiKitStatusView> {
   const cwd = workspaceRootOrNull();
-  const registries = configuredRegistries();
+  const rawRegistries = configuredRegistries();
+  // What the panel SHOWS is the effective list: the operator namespaces a
+  // bundled token exists for appear even before anyone configures them. The
+  // `configured` badge below still compares against the raw settings list,
+  // because that word means "you typed it here".
+  const registries = withOperatorRegistries(rawRegistries);
   const vault = secrets();
 
   let license: UiKitLicenseView = emptyLicense();
@@ -123,6 +123,7 @@ async function buildStatus(): Promise<UiKitStatusView> {
       state: status.state,
       stored: status.stored,
       masked: status.masked,
+      operatorKey: status.operatorKey,
       ...(status.detail ? { detail: status.detail.slice(0, 200) } : {}),
     };
   } else {
@@ -131,6 +132,7 @@ async function buildStatus(): Promise<UiKitStatusView> {
       state: 'unknown',
       stored: Boolean(stored),
       masked: null,
+      operatorKey: !stored && hasOperatorBoardUiLicenseKey(),
       detail: 'Open a project to check the licence.',
     };
   }
@@ -142,23 +144,27 @@ async function buildStatus(): Promise<UiKitStatusView> {
   return {
     workspaceOpen: Boolean(cwd),
     license,
-    registries: registries.map((registry) => ({
-      namespace: registry.namespace,
-      url: registry.url,
-      ...(registry.label ? { label: registry.label } : {}),
-      requiresToken: Boolean(registry.auth),
-      ...(registry.auth ? { envVar: registry.auth.envVar } : {}),
-      tokenStored: Boolean(
+    registries: registries.map((registry) => {
+      const tokenStored = Boolean(
         registry.secretKey && vault.getSecret(registry.secretKey),
-      ),
-    })),
+      );
+      return {
+        namespace: registry.namespace,
+        url: registry.url,
+        ...(registry.label ? { label: registry.label } : {}),
+        requiresToken: Boolean(registry.auth),
+        ...(registry.auth ? { envVar: registry.auth.envVar } : {}),
+        tokenStored,
+        operatorKey: !tokenStored && operatorTokenForRegistry(registry) !== null,
+      };
+    }),
     knownRegistries: KNOWN_UI_KIT_REGISTRIES.map((entry) => ({
       namespace: entry.namespace,
       label: entry.label,
       url: entry.url,
       site: entry.site,
       note: entry.note,
-      configured: registries.some((r) => r.namespace === entry.namespace),
+      configured: rawRegistries.some((r) => r.namespace === entry.namespace),
     })),
     recipes: UI_KIT_RECIPES.map((recipe) => ({
       id: recipe.id,
@@ -350,6 +356,7 @@ export function registerUiKitIpc(): void {
               state: 'unknown',
               stored: write.ok,
               masked: null,
+              operatorKey: !write.ok && hasOperatorBoardUiLicenseKey(),
               detail: write.ok
                 ? 'Stored. Open a project to activate it.'
                 : (write.error ?? 'vault write refused'),
@@ -366,16 +373,16 @@ export function registerUiKitIpc(): void {
         if (parsed.data.action === 'activate') {
           // The key is already in the vault — stored before a project was
           // open, so nothing ever activated it. Finishing that must not
-          // require pasting it again.
-          const stored = secrets().getSecret(BOARDUI_LICENSE_SECRET);
-          if (!stored) return await buildLicenseView(cwd);
+          // require pasting it again. With an empty vault the key that
+          // ships with Nexus covers the same click (activation only; the
+          // vault stays untouched so "Remover" keeps its meaning).
           if (!cwd) {
             return {
               ...(await buildLicenseView(cwd)),
-              detail: 'Abra um projeto para ativar a chave guardada.',
+              detail: 'Abra um projeto para ativar a chave.',
             };
           }
-          const result = await activateBoardUiLicense({ key: stored, cwd }, serviceDeps());
+          const result = await activateEffectiveBoardUiLicense({ cwd }, serviceDeps());
           const view = await buildLicenseView(cwd);
           return {
             ...view,
@@ -396,7 +403,12 @@ export function registerUiKitIpc(): void {
             };
           }
           await deactivateBoardUiLicense({ cwd }, serviceDeps());
-          return { state: 'absent', stored: false, masked: null };
+          return {
+            state: 'absent',
+            stored: false,
+            masked: null,
+            operatorKey: hasOperatorBoardUiLicenseKey(),
+          };
         }
         return await buildLicenseView(cwd);
       } catch (error) {
@@ -404,6 +416,9 @@ export function registerUiKitIpc(): void {
           state: 'unknown',
           stored: Boolean(secrets().getSecret(BOARDUI_LICENSE_SECRET)),
           masked: null,
+          operatorKey:
+            !secrets().getSecret(BOARDUI_LICENSE_SECRET) &&
+            hasOperatorBoardUiLicenseKey(),
           detail: error instanceof Error ? error.message.slice(0, 200) : undefined,
         };
       }
@@ -424,9 +439,9 @@ export function registerUiKitIpc(): void {
             const victim = current.find((entry) => entry.namespace === namespace);
             if (victim?.secretKey) secrets().setSecret(victim.secretKey, '');
             replaceOrchSettings({
-              uiKitRegistries: current
-                .filter((entry) => entry.namespace !== namespace)
-                .map(persistableRegistry),
+              uiKitRegistries: current.filter(
+                (entry) => entry.namespace !== namespace,
+              ),
             } as never);
           }
           return await buildStatus();
@@ -467,14 +482,9 @@ export function registerUiKitIpc(): void {
             };
           }
         }
-        // Stripped for storage: the strict schema rejects `secretKey`, and a
-        // rejected patch returns the OLD settings, which is how "saved" could
-        // be reported for a registry that was never added.
         const next = [
-          ...current
-            .filter((entry) => entry.namespace !== registry.namespace)
-            .map(persistableRegistry),
-          persistableRegistry(registry),
+          ...current.filter((entry) => entry.namespace !== registry.namespace),
+          registry,
         ];
         replaceOrchSettings({ uiKitRegistries: next } as never);
         return await buildStatus();
@@ -520,10 +530,12 @@ export function registerUiKitIpc(): void {
 
 async function buildLicenseView(cwd: string | null): Promise<UiKitLicenseView> {
   if (!cwd) {
+    const stored = secrets().getSecret(BOARDUI_LICENSE_SECRET);
     return {
       state: 'unknown',
-      stored: Boolean(secrets().getSecret(BOARDUI_LICENSE_SECRET)),
+      stored: Boolean(stored),
       masked: null,
+      operatorKey: !stored && hasOperatorBoardUiLicenseKey(),
       detail: 'Open a project to check the licence.',
     };
   }
@@ -532,6 +544,7 @@ async function buildLicenseView(cwd: string | null): Promise<UiKitLicenseView> {
     state: status.state,
     stored: status.stored,
     masked: status.masked,
+    operatorKey: status.operatorKey,
     ...(status.detail ? { detail: status.detail.slice(0, 200) } : {}),
   };
 }

@@ -1,3 +1,4 @@
+import { operatorRegistryNamespaces, operatorRegistryToken } from './ui-kit-operator-keys';
 import { assertSafeEnvName, UiKitCliError } from './ui-kit-cli';
 
 /**
@@ -55,9 +56,11 @@ export interface UiKitRegistry {
  * Registries we know the shape of, offered as a one-click prefill.
  *
  * What ships is CONFIGURATION — the namespace, the public URL and the NAME of
- * the variable the CLI interpolates. The token is never here: it is the
- * operator's own licence, it goes in their vault, and a key embedded in the
- * app would be published to everyone who unpacks it, not shared with them.
+ * the variable the CLI interpolates. The token is the operator's own licence
+ * and goes in their vault — except for the namespaces the operator chose to
+ * bundle with Nexus itself (see `ui-kit-operator-keys.ts`, decision 21/10):
+ * for those a token also resolves from the bundle, as a last resort behind
+ * the vault and the environment.
  *
  * The URL and header shape come from each vendor's own published setup
  * instructions. The variable name is ours and is per-namespace on purpose: the
@@ -342,6 +345,45 @@ export function registrySecretKey(namespace: string): string {
 }
 
 /**
+ * The registries active on this machine: what the operator configured, plus a
+ * bundle-backed entry for every namespace the operator ships a token for and
+ * has not configured here.
+ *
+ * This is what makes the bundled key work with ZERO setup: without it, the
+ * release path only considers configured namespaces, so a fresh machine would
+ * withhold the operator's own token behind "unmapped". An explicit settings
+ * entry always wins outright — the bundled entry is only ADDED where the
+ * namespace is absent — so re-pointing or re-keying one in the panel stays
+ * possible and stays authoritative.
+ *
+ * Read paths only. The settings WRITE paths keep the raw list, so saving a
+ * registry never persists these derived rows into settings.
+ */
+export function withOperatorRegistries(
+  configured: readonly UiKitRegistry[],
+): readonly UiKitRegistry[] {
+  const present = new Set(configured.map((registry) => registry.namespace));
+  const added: UiKitRegistry[] = [];
+  for (const namespace of operatorRegistryNamespaces()) {
+    if (present.has(namespace)) continue;
+    const known = findKnownRegistry(namespace);
+    if (!known) continue;
+    added.push({
+      namespace,
+      url: known.url,
+      auth: {
+        kind: 'header',
+        name: 'Authorization',
+        envVar: derivedRegistryEnvVar(namespace),
+      },
+      secretKey: registrySecretKey(namespace),
+      label: known.label,
+    });
+  }
+  return added.length > 0 ? [...configured, ...added] : configured;
+}
+
+/**
  * The namespace → URL map the PROJECT declares in `components.json`.
  *
  * This matters for credential scope: shadcn resolves a namespace through the
@@ -491,41 +533,46 @@ function isTrustedNamespace(
 
 /**
  * The token for one registry: the operator's vault first, then their own
- * environment.
+ * environment, then the key the operator bundles with Nexus.
  *
  * The environment fallback is there so an operator can provision their OWN
  * machines and team once — export `ACME_REGISTRY_TOKEN` and every Nexus on
  * that machine picks it up — instead of pasting the key per install. It reads
  * the environment of the Nexus process, which is the operator's own
- * configuration; nothing about it ships in the product, and a key embedded in
- * a distributed bundle would be published rather than shared.
- */
-/**
- * The registry as SETTINGS store it: no `secretKey`.
+ * configuration.
  *
- * The two halves of the P1 fix contradicted each other. The schema stopped
- * accepting `secretKey` (so a compromised renderer cannot name a vault entry)
- * while `assertRegistry` started adding it to every object — and the object
- * then went back through that strict schema on write, so `replaceOrchSettings`
- * REJECTED every registry addition and silently returned the old settings. For
- * a private registry the token had already been stored, so the panel reported
- * "not added" while leaving an orphaned credential in the vault.
- *
- * Writes go through here; reads derive the key again (`assertRegistry`).
+ * The bundled fallback (`ui-kit-operator-keys.ts`, decision 21/10) exists so
+ * the operator's key works on every machine that runs their Nexus build with
+ * zero setup. It is last on purpose: a vault copy or an exported env var —
+ * the operator's own newer key — always wins over the one baked into the app.
  */
-export function persistableRegistry(registry: UiKitRegistry): UiKitRegistry {
-  const { secretKey: _derived, ...rest } = assertRegistry(registry);
-  return rest;
-}
-
 export function isRegistrySecretKey(name: string): boolean {
   return /^external:ui-kit-registry-[a-z0-9][a-z0-9-]*$/.test(name);
+}
+
+/**
+ * The bundled operator token for this registry, when there is one AND the
+ * registry points at the vendor's own URL.
+ *
+ * The URL match is the exfiltration guard for a key that ships to every
+ * client: settings on a client machine could map the namespace somewhere
+ * else, and releasing the bundled token there would hand it to that host.
+ * Only the vendor's published URL gets it. `assertRegistry`'s project-URL
+ * check then still applies on top, release time.
+ */
+export function operatorTokenForRegistry(
+  registry: Pick<UiKitRegistry, 'namespace' | 'url'>,
+): string | null {
+  const known = findKnownRegistry(registry.namespace);
+  if (!known || known.url !== registry.url) return null;
+  return operatorRegistryToken(registry.namespace);
 }
 
 export function resolveRegistryToken(
   registry: UiKitRegistry,
   lookupSecret: (secretKey: string) => string | null | undefined,
   environment: NodeJS.ProcessEnv = process.env,
+  bundled: (registry: UiKitRegistry) => string | null = operatorTokenForRegistry,
 ): string | null {
   // Belt and braces on the ONE place a registry token is read: even if a
   // `secretKey` reached here from somewhere that did not derive it, only the
@@ -539,6 +586,10 @@ export function resolveRegistryToken(
   if (typeof stored === 'string' && stored.trim().length > 0) return stored.trim();
   const fromEnv = registry.auth ? environment[registry.auth.envVar] : undefined;
   if (typeof fromEnv === 'string' && fromEnv.trim().length > 0) return fromEnv.trim();
+  const fromBundle = bundled(registry);
+  if (typeof fromBundle === 'string' && fromBundle.trim().length > 0) {
+    return fromBundle.trim();
+  }
   return null;
 }
 

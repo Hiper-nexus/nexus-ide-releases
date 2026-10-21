@@ -2841,15 +2841,40 @@ componente: o agente recebia a paleta e escrevia cada peça à mão. `src/main/u
   máquina que licenciou, nunca no repo nem no pacote. Quem quiser remover a
   dúvida: deixar de cachear payload com `tier: 'pro'` é uma linha em
   `readItemSource`.
-- **A chave de licença de terceiro NUNCA é embutida no produto.** Pedido em
-  21/10 (pôr a chave do Shadcn UI Kit dentro do Nexus para todo usuário) e
-  recusado: a licença deles proíbe por escrito compartilhar *API keys* com
-  quem não está coberto, proíbe *"tools that let others create sites or apps
-  with the products"*, e a sanção listada é revogarem a conta e as chaves do
-  comprador. Chave em bundle também não é compartilhar, é publicar — qualquer
-  um que descompacte extrai. O caminho que existe é o preset
-  (`KNOWN_UI_KIT_REGISTRIES`): viaja a CONFIGURAÇÃO, e cada operador cola a
-  própria chave no cofre.
+- **As duas chaves de terceiro SÃO embutidas no produto — redecisão do
+  operador (21/10).** Pedido original RECUSADO por este parágrafo; o operador
+  voltou e pediu de novo, agora por escrito e com o risco nas mãos: "ambos eu
+  quero as key deles dentro do nexus fixa, de forma que os clientes não
+  consigam ler, mas o sistema use elas; todos clientes meu vai usar a minha
+  key; todos PCs meu". A licença do Shadcn UI Kit proíbe compartilhar *API
+  keys* com quem não está coberto e a sanção é revogar a conta/chaves; chave
+  em bundle também não é compartilhar, é publicar — qualquer um que
+  descompacte o app extrai. O operador aceita o risco (frota pequena, todas
+  as máquinas e clientes são dele) e é a última palavra dele. A implementação
+  mora em `src/main/ui-kit/ui-kit-operator-keys.ts` (única exceção
+  documentada à regra "sem segredo hardcoded" do repo):
+  - Constantes de string PLAIN no bundle do MAIN — sem keychain, sem registry
+    do Windows, sem env, sem arquivo: a leitura é a mesma linha em macOS,
+    Windows e Linux (requisito do operador para as três plataformas).
+  - MAIN somente: renderer/preload nunca importam, IPC carrega cauda
+    mascarada no máximo, nunca argv (aparece no `ps`), nunca log.
+  - ÚLTIMO recurso em toda resolução: cofre do operador primeiro, depois env
+    da máquina, só então o bundle — colar chave própria no painel sempre vence.
+  - O token do bundle só sai para o registry cujo namespace E URL casam com
+    `KNOWN_UI_KIT_REGISTRIES` (`operatorTokenForRegistry`): settings de
+    cliente não redireciona a chave para outro host.
+  - `withOperatorRegistries` adiciona os namespaces com token de bundle nas
+    listas de LEITURA (catálogo, busca MCP, painel); as escritas de settings
+    continuam na lista crua — o painel não grava o que não foi configurado.
+  - Ativação da chave BoardUI de bundle NÃO escreve o cofre (só o 'set'
+    explícito grava): "Remover" continua significando liberar o assento do
+    fornecedor + limpar cofre, e o bundle simplesmente reativa no próximo
+    install Pro. Auto-ativação de bundle só nas PORTAS DE INSTALL
+    (`autoActivate: true`); `planInstallItems`/dry-run não gastam assento.
+  - Rotação: editar a constante e publicar novo Nexus. Nada mais a tocar.
+  O preset (`KNOWN_UI_KIT_REGISTRIES`) continua existindo para quem quer chave
+  própria: viaja a CONFIGURAÇÃO, e cada operador pode colar a própria chave no
+  cofre — que continua vencendo o bundle.
 - **O nome de cofre de um registry é DERIVADO, nunca carregado (P1, 21/10).**
   `uiKitRegistries` viaja pela ponte genérica `settings.orchSet`, então um
   renderer comprometido podia salvar um registry com `secretKey:

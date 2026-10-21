@@ -1,6 +1,7 @@
 import { listCachedItems, type UiKitCacheOptions } from './ui-kit-cache';
 import type { UiKitId } from './ui-kit-cli';
 import type { UiKitCandidate } from './ui-kit-pick';
+import { withOperatorRegistries } from './ui-kit-registry';
 import {
   boardUiCandidates,
   listBoardUiFreeSlugs,
@@ -148,7 +149,11 @@ export async function liveCandidates(
     {
       command: {
         kind: 'search',
-        registries: shadcnSearchNamespaces(deps.registries?.() ?? []),
+        // The effective list: a namespace a bundled operator token exists
+        // for is searchable even before anyone configures it in settings.
+        registries: shadcnSearchNamespaces(
+          withOperatorRegistries(deps.registries?.() ?? []),
+        ),
         ...(query ? { query } : {}),
         limit: 200,
       },

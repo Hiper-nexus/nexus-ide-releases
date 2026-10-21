@@ -1,13 +1,15 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { UiKitCliError, type UiKitCliRunRequest } from './ui-kit-cli';
 import { BOARDUI_LICENSE_SECRET } from './boardui-source';
 import { readCachedItem, writeCachedItem } from './ui-kit-cache';
 import type { UiKitRegistry } from './ui-kit-registry';
+import { OPERATOR_BOARDUI_LICENSE_KEY } from './ui-kit-operator-keys';
 import {
   activateBoardUiLicense,
+  activateEffectiveBoardUiLicense,
   invalidateBoardUiFreeList,
   parseBoardUiListOutput,
   parseShadcnSearch,
@@ -33,6 +35,17 @@ import {
   type UiKitServiceDeps,
 } from './ui-kit-service';
 
+// The one knob the "no bundled key at all" scenario needs: the constants stay
+// real, only the presence flag is flippable per test.
+const operatorBundle = { hasKey: true };
+vi.mock('./ui-kit-operator-keys', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./ui-kit-operator-keys')>();
+  return {
+    ...actual,
+    hasOperatorBoardUiLicenseKey: () => operatorBundle.hasKey,
+  };
+});
+
 let dir = '';
 let cwd = '';
 
@@ -45,6 +58,7 @@ beforeEach(() => {
 afterEach(() => {
   fs.rmSync(dir, { recursive: true, force: true });
   resetBoardUiFreeListCacheForTests();
+  operatorBundle.hasKey = true;
 });
 
 interface Harness {
@@ -636,6 +650,194 @@ describe('the BoardUI licence', () => {
 
     expect(result.ok).toBe(false);
     expect(h.vault.has(BOARDUI_LICENSE_SECRET)).toBe(false);
+  });
+});
+
+describe('the licence key bundled with Nexus', () => {
+  it('activates with the bundled key when the vault is empty — and does not write the vault', async () => {
+    // A fresh machine with zero setup: Pro works because the operator's key
+    // ships with the app. The vault stays empty so "Remover" keeps meaning
+    // "release the vendor seat + clear MY key", not "also delete the Nexus one".
+    const h = harness({ mcp: () => ({ text: 'License activated' }) });
+
+    const result = await callBoardUiTool({ tool: 'activate_license', cwd }, h.deps);
+
+    expect(result.ok).toBe(true);
+    expect(h.mcpCalls[0]?.args).toEqual({ licenseKey: OPERATOR_BOARDUI_LICENSE_KEY });
+    expect(h.vault.has(BOARDUI_LICENSE_SECRET)).toBe(false);
+    expect(JSON.stringify(result)).not.toContain(OPERATOR_BOARDUI_LICENSE_KEY);
+  });
+
+  it('prefers the vault copy over the bundled one', async () => {
+    const h = harness({ mcp: () => ({ text: 'License activated' }) });
+    h.vault.set(BOARDUI_LICENSE_SECRET, 'BUI-OWN-KEY');
+
+    await callBoardUiTool({ tool: 'activate_license', cwd }, h.deps);
+
+    expect(h.mcpCalls[0]?.args).toEqual({ licenseKey: 'BUI-OWN-KEY' });
+  });
+
+  it('still names the panel when NEITHER a stored key nor a bundle exists', async () => {
+    operatorBundle.hasKey = false;
+    const h = harness();
+
+    await expect(callBoardUiTool({ tool: 'activate_license', cwd }, h.deps)).rejects.toThrow(
+      /no BoardUI licence is stored and none ships with this Nexus/,
+    );
+    expect(h.mcpCalls).toHaveLength(0);
+  });
+
+  it('flags status with operatorKey only when the vault is empty', async () => {
+    const absent = harness({ mcp: () => ({ text: 'No license found' }) });
+    expect((await boardUiLicenseStatus({ cwd }, absent.deps)).operatorKey).toBe(true);
+
+    const own = harness({ mcp: () => ({ text: 'No license found' }) });
+    own.vault.set(BOARDUI_LICENSE_SECRET, 'BUI-OWN-KEY');
+    expect((await boardUiLicenseStatus({ cwd }, own.deps)).operatorKey).toBe(false);
+  });
+
+  it('activates the effective key without persisting a bundled one', async () => {
+    const h = harness({ mcp: () => ({ text: 'License activated' }) });
+
+    const result = await activateEffectiveBoardUiLicense({ cwd }, h.deps);
+
+    expect(result.ok).toBe(true);
+    expect(result.stored).toBe(false);
+    expect(h.vault.has(BOARDUI_LICENSE_SECRET)).toBe(false);
+  });
+
+  it('does not re-run activation when the vendor already counts this machine active', async () => {
+    // This Mac activated the key before Nexus bundled it, and the vendor
+    // answers re-activation with "reached the activation limit" even though
+    // Pro works — burned into every install door, that text would read as a
+    // failure on a machine the vendor itself calls active. The status call
+    // comes first; an active licence never pays the activation call.
+    const h = harness({
+      mcp: (tool) =>
+        tool === 'license_status'
+          ? { text: 'Pro license valid and active: 4889…636E. Seats: 2/2.' }
+          : { text: 'This license key has reached the activation limit.' },
+    });
+
+    const result = await activateEffectiveBoardUiLicense({ cwd }, h.deps);
+
+    expect(result.ok).toBe(true);
+    expect(h.mcpCalls.map((call) => call.tool)).not.toContain('activate_license');
+    expect(result.detail).toMatch(/valid and active/);
+  });
+
+  it('routes the effective activation through the vault copy when there is one', async () => {
+    const h = harness({ mcp: () => ({ text: 'License activated' }) });
+    h.vault.set(BOARDUI_LICENSE_SECRET, 'BUI-OWN-KEY');
+
+    const result = await activateEffectiveBoardUiLicense({ cwd }, h.deps);
+
+    expect(result.ok).toBe(true);
+    expect(result.stored).toBe(true);
+    expect(h.vault.get(BOARDUI_LICENSE_SECRET)).toBe('BUI-OWN-KEY');
+  });
+
+  it('refuses the effective activation when there is no key at all', async () => {
+    operatorBundle.hasKey = false;
+    const h = harness();
+
+    const result = await activateEffectiveBoardUiLicense({ cwd }, h.deps);
+
+    expect(result.ok).toBe(false);
+    expect(result.stored).toBe(false);
+    expect(result.detail).toMatch(/none ships with this Nexus/);
+    expect(h.mcpCalls).toHaveLength(0);
+  });
+});
+
+describe('auto-activation at the install doors', () => {
+  /** `boardui list` output shape, as the real CLI prints it. */
+  const freeList = '  button    Primary button.\n';
+
+  it('activates the bundled key on the way in, then installs the Pro item', async () => {
+    // Fresh machine, empty vault: the install door heals itself before
+    // refusing — the operator asked for "works everywhere with zero setup".
+    let activated = false;
+    const h = harness({
+      cli: () => ({ stdout: freeList }),
+      mcp: (tool) => {
+        if (tool === 'activate_license') {
+          activated = true;
+          return { text: 'License activated' };
+        }
+        return { text: activated ? 'Pro license active' : 'No license found' };
+      },
+    });
+
+    const result = await installItems(
+      { kit: 'boardui', items: ['template-home-dashboard'], cwd },
+      h.deps,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(h.mcpCalls.map((call) => call.tool)).toContain('activate_license');
+    const activation = h.mcpCalls.find((call) => call.tool === 'activate_license');
+    expect(activation?.args).toEqual({ licenseKey: OPERATOR_BOARDUI_LICENSE_KEY });
+    expect(h.vault.has(BOARDUI_LICENSE_SECRET)).toBe(false);
+    expect(h.cliRuns.at(-1)?.args).toEqual(['add', 'template-home-dashboard', '--yes']);
+  });
+
+  it('says WHY it refused when the automatic activation failed', async () => {
+    // The vendor rejects the key: the refusal must name the activation
+    // failure instead of a generic "no licence".
+    const h = harness({
+      cli: () => ({ stdout: freeList }),
+      mcp: (tool) => {
+        if (tool === 'activate_license') throw new Error('key rejected by vendor');
+        return { text: 'No license found' };
+      },
+    });
+
+    const result = await installItems(
+      { kit: 'boardui', items: ['template-home-dashboard'], cwd },
+      h.deps,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.needsLicense).toEqual(['template-home-dashboard']);
+    expect(result.stderr).toMatch(/automatic activation failed/);
+  });
+
+  it('auto-activates on the AGENT install door too (install_components)', async () => {
+    let activated = false;
+    const h = harness({
+      cli: () => ({ stdout: freeList }),
+      mcp: (tool) => {
+        if (tool === 'activate_license') {
+          activated = true;
+          return { text: 'License activated' };
+        }
+        return { text: activated ? 'Pro license active' : 'No license found' };
+      },
+    });
+
+    const result = await callBoardUiTool(
+      { tool: 'install_components', args: { components: ['template-home-dashboard'] }, cwd },
+      h.deps,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(h.mcpCalls.map((call) => call.tool)).toContain('activate_license');
+  });
+
+  it('does NOT spend a vendor seat from a dry-run plan', async () => {
+    const h = harness({
+      cli: () => ({ stdout: freeList }),
+      mcp: () => ({ text: 'No license found' }),
+    });
+
+    const plan = await planInstallItems(
+      { kit: 'boardui', items: ['template-home-dashboard'], cwd },
+      h.deps,
+    );
+
+    expect(plan.needsLicense).toEqual(['template-home-dashboard']);
+    expect(h.mcpCalls.map((call) => call.tool)).not.toContain('activate_license');
   });
 });
 

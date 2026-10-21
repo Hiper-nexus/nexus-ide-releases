@@ -11,13 +11,16 @@ import {
   buildRegistryEnv,
   mergeRegistriesIntoComponentsJson,
   isRegistrySecretKey,
+  operatorTokenForRegistry,
   registryEntryNeedsAuth,
   registrySecretKey,
   resolveRegistryAuthContract,
   renderRegistryEntry,
   resolveRegistryToken,
+  withOperatorRegistries,
   type UiKitRegistry,
 } from './ui-kit-registry';
+import { operatorRegistryToken } from './ui-kit-operator-keys';
 
 const PRIVATE: UiKitRegistry = {
   namespace: '@acme',
@@ -364,8 +367,7 @@ describe('resolveRegistryToken', () => {
 
   it('falls back to the operator\'s own environment variable', () => {
     // How an operator provisions their OWN machines and team once instead of
-    // pasting a key per install — and the reason no key needs to be embedded
-    // in the product, where it would be published rather than shared.
+    // pasting a key per install.
     expect(
       resolveRegistryToken(PRIVATE, () => null, { ACME_REGISTRY_TOKEN: ' from-env ' }),
     ).toBe('from-env');
@@ -382,6 +384,101 @@ describe('resolveRegistryToken', () => {
     expect(
       resolveRegistryToken(open, () => null, { ACME_REGISTRY_TOKEN: 'from-env' }),
     ).toBeNull();
+  });
+});
+
+describe('resolveRegistryToken — the bundled operator key is the LAST resort', () => {
+  // The vendor registry the operator bundles a token for: same namespace and
+  // URL as KNOWN_UI_KIT_REGISTRIES, or the bundle stays shut.
+  const BUNDLED: UiKitRegistry = {
+    namespace: '@shadcnuikit',
+    url: 'https://shadcnuikit.com/r/{name}.json',
+    auth: { kind: 'header', name: 'Authorization', envVar: 'SHADCNUIKIT_REGISTRY_TOKEN' },
+    secretKey: 'external:ui-kit-registry-shadcnuikit',
+  };
+
+  it('uses the bundled token when vault and env are empty', () => {
+    expect(resolveRegistryToken(BUNDLED, () => null, {})).toBe(
+      operatorRegistryToken('@shadcnuikit'),
+    );
+  });
+
+  it('prefers the vault over the bundle', () => {
+    expect(
+      resolveRegistryToken(BUNDLED, () => 'from-vault', {}),
+    ).toBe('from-vault');
+  });
+
+  it('prefers the machine\'s own environment over the bundle', () => {
+    expect(
+      resolveRegistryToken(BUNDLED, () => null, {
+        SHADCNUIKIT_REGISTRY_TOKEN: 'from-env',
+      }),
+    ).toBe('from-env');
+  });
+
+  it('withholds the bundled token when the registry points somewhere else', () => {
+    // A client's settings must not be able to redirect the operator's key to
+    // another host: only the vendor's own URL releases it.
+    const redirected: UiKitRegistry = {
+      ...BUNDLED,
+      url: 'https://evil.test/r/{name}.json',
+    };
+
+    expect(resolveRegistryToken(redirected, () => null, {})).toBeNull();
+  });
+
+  it('offers no bundled token for a namespace it carries none for', () => {
+    expect(operatorTokenForRegistry(PRIVATE)).toBeNull();
+  });
+});
+
+describe('withOperatorRegistries — zero-setup, settings stay authoritative', () => {
+  it('adds the bundled namespace to an empty configuration', () => {
+    const merged = withOperatorRegistries([]);
+
+    expect(merged.map((registry) => registry.namespace)).toEqual([
+      '@shadcnuikit',
+    ]);
+    // The entry must be a valid registry: it goes through the same release
+    // gates (assertRegistries) as everything else.
+    expect(() => assertRegistries(merged)).not.toThrow();
+    expect(merged[0].url).toBe('https://shadcnuikit.com/r/{name}.json');
+    expect(merged[0].auth?.envVar).toBe('SHADCNUIKIT_REGISTRY_TOKEN');
+    expect(merged[0].secretKey).toBe('external:ui-kit-registry-shadcnuikit');
+  });
+
+  it('never overrides a settings entry for the same namespace', () => {
+    const mine: UiKitRegistry = {
+      namespace: '@shadcnuikit',
+      url: 'https://my-mirror.test/r/{name}.json',
+      auth: { kind: 'header', name: 'Authorization', envVar: 'MY_TOKEN' },
+      secretKey: 'external:ui-kit-registry-shadcnuikit',
+    };
+
+    expect(withOperatorRegistries([mine])).toEqual([mine]);
+  });
+
+  it('appends the bundled namespace after the configured ones', () => {
+    const merged = withOperatorRegistries([PRIVATE]);
+
+    expect(merged.map((registry) => registry.namespace)).toEqual([
+      '@acme',
+      '@shadcnuikit',
+    ]);
+  });
+
+  it('returns the same array when every bundled namespace is already configured', () => {
+    // While the bundle carries @shadcnuikit, this is the only "nothing to
+    // add" that exists: the namespace is present, so settings stay verbatim.
+    const configured: UiKitRegistry[] = [PRIVATE, {
+      namespace: '@shadcnuikit',
+      url: 'https://shadcnuikit.com/r/{name}.json',
+      auth: { kind: 'header', name: 'Authorization', envVar: 'SHADCNUIKIT_REGISTRY_TOKEN' },
+      secretKey: 'external:ui-kit-registry-shadcnuikit',
+    }];
+
+    expect(withOperatorRegistries(configured)).toBe(configured);
   });
 });
 

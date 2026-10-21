@@ -42,8 +42,13 @@ import {
   projectRegistryUrls,
   registryEntryNeedsAuth,
   SHADCN_DEFAULT_NAMESPACE,
+  withOperatorRegistries,
   type UiKitRegistry,
 } from './ui-kit-registry';
+import {
+  OPERATOR_BOARDUI_LICENSE_KEY,
+  hasOperatorBoardUiLicenseKey,
+} from './ui-kit-operator-keys';
 import {
   cachedItemIsStale,
   readCachedItem,
@@ -87,6 +92,38 @@ function vault(deps: UiKitServiceDeps): {
     get: deps.getSecret ?? ((key) => secrets.getSecret(key)),
     set: deps.setSecret ?? ((key, value) => secrets.setSecret(key, value)),
   };
+}
+
+/**
+ * The registries this machine actually resolves against: what the operator
+ * configured, plus the namespaces the operator bundles a token for (decision
+ * 21/10 — `ui-kit-operator-keys.ts`). Merged HERE, at the resolution point,
+ * so every door (panel, MCP tools, search, install) sees the same set
+ * without each caller remembering to merge.
+ */
+function activeRegistries(deps: UiKitServiceDeps): readonly UiKitRegistry[] {
+  return withOperatorRegistries(deps.registries?.() ?? []);
+}
+
+/**
+ * The BoardUI licence key in effect on this machine: the operator's vault
+ * copy first, then the key bundled with Nexus. Last resort by design, so a
+ * key typed in Settings (a newer one, say) always wins.
+ */
+function effectiveBoardUiLicenseKey(deps: UiKitServiceDeps): string | null {
+  const stored = vault(deps).get(BOARDUI_LICENSE_SECRET);
+  if (stored && stored.trim().length > 0) return stored.trim();
+  return hasOperatorBoardUiLicenseKey() ? OPERATOR_BOARDUI_LICENSE_KEY.trim() : null;
+}
+
+/**
+ * True when the licence in use is the operator key bundled with Nexus: no key
+ * in this machine's vault. The panel says so instead of "sem chave", because
+ * Pro items DO work — the key is just not this machine's own.
+ */
+function boardUiLicenseUsesOperatorKey(deps: UiKitServiceDeps): boolean {
+  const stored = vault(deps).get(BOARDUI_LICENSE_SECRET);
+  return !(stored && stored.trim().length > 0) && hasOperatorBoardUiLicenseKey();
 }
 
 /**
@@ -288,7 +325,7 @@ export async function runShadcnCommand(
   },
   deps: UiKitServiceDeps = {},
 ): Promise<UiKitRunResult> {
-  const registries = deps.registries?.() ?? [];
+  const registries = activeRegistries(deps);
   const { get } = vault(deps);
   // EVERYTHING that can refuse this run happens before the project's config is
   // touched: argv validation (a malformed or option-shaped item) and path
@@ -416,13 +453,24 @@ export interface BoardUiToolResult {
 /**
  * The Pro gate, in ONE place so both install doors use it: the CLI
  * (`installItems`) and the MCP tool (`install_components`).
+ *
+ * `autoActivate` is opt-in and only the INSTALL doors set it: when a key is in
+ * effect on this machine (vault or operator bundle) but the licence is not
+ * active, the gate activates it before deciding. A dry-run plan keeps the
+ * default (false) — planning must not spend a vendor seat.
  */
 async function gatedBoardUiItems(
   items: readonly string[],
   cwd: string,
   deps: UiKitServiceDeps,
   signal?: AbortSignal,
-): Promise<{ blocked: readonly string[]; licenseState: BoardUiLicenseState }> {
+  options?: { readonly autoActivate?: boolean },
+): Promise<{
+  blocked: readonly string[];
+  licenseState: BoardUiLicenseState;
+  /** Set when auto-activation ran and did not reach an active licence. */
+  readonly activationDetail?: string;
+}> {
   const tiers = await Promise.all(
     items.map(async (item) => ({
       item,
@@ -437,13 +485,40 @@ async function gatedBoardUiItems(
   if (candidates.length === 0) {
     return { blocked: [], licenseState: 'unknown' };
   }
-  const license = await boardUiLicenseStatus(
+  let license = await boardUiLicenseStatus(
     { cwd, ...(signal ? { signal } : {}) },
     deps,
   );
+  let activationDetail: string | undefined;
+  if (
+    license.state !== 'active' &&
+    (options?.autoActivate ?? false) &&
+    effectiveBoardUiLicenseKey(deps)
+  ) {
+    // Self-heal, once: a key exists here (the operator's, vault or bundle) but
+    // this machine never activated it. `activate_license` injects the key
+    // service-side, so this call never carries a secret.
+    try {
+      const activated = await callBoardUiTool(
+        { tool: 'activate_license', cwd, ...(signal ? { signal } : {}) },
+        deps,
+      );
+      if (!activated.ok) {
+        activationDetail = activated.text.slice(0, 200);
+      }
+    } catch (error) {
+      activationDetail =
+        error instanceof Error ? error.message.slice(0, 200) : 'activation failed';
+    }
+    license = await boardUiLicenseStatus(
+      { cwd, ...(signal ? { signal } : {}) },
+      deps,
+    );
+  }
   return {
     blocked: license.state === 'active' ? [] : candidates,
     licenseState: license.state,
+    ...(activationDetail ? { activationDetail } : {}),
   };
 }
 
@@ -473,27 +548,36 @@ export async function callBoardUiTool(
   const sanitized = sanitizeBoardUiToolArgs(tool, input.args);
   const toolArguments: Record<string, unknown> = { ...sanitized.args };
   if (tool === 'activate_license') {
-    const stored = vault(deps).get(BOARDUI_LICENSE_SECRET);
-    if (!stored) {
+    const key = effectiveBoardUiLicenseKey(deps);
+    if (!key) {
       throw new UiKitCliError(
         'NO_LICENSE_STORED',
-        'no BoardUI licence is stored; add it in Settings first',
+        'no BoardUI licence is stored and none ships with this Nexus; add it in Settings first',
       );
     }
-    toolArguments.licenseKey = assertBoardUiLicenseKey(stored);
+    toolArguments.licenseKey = assertBoardUiLicenseKey(key);
   }
   if (tool === 'install_components') {
     const requested = Array.isArray(toolArguments.components)
       ? (toolArguments.components as string[])
       : [];
-    const gated = await gatedBoardUiItems(requested, input.cwd, deps);
+    const gated = await gatedBoardUiItems(
+      requested,
+      input.cwd,
+      deps,
+      input.signal,
+      { autoActivate: true },
+    );
     if (gated.blocked.length > 0) {
       return {
         ok: false,
         isError: true,
         text:
           `BoardUI Pro licence required for: ${gated.blocked.join(', ')}. ` +
-          'Store it in Settings → UI kits; the free items need no key.',
+          'Store it in Settings → UI kits; the free items need no key.' +
+          (gated.activationDetail
+            ? ` (automatic activation failed: ${gated.activationDetail})`
+            : ''),
         needsLicense: gated.blocked,
         licenseState: gated.licenseState,
         ...(sanitized.dropped.length > 0 ? { droppedArgs: sanitized.dropped } : {}),
@@ -567,6 +651,12 @@ export interface BoardUiLicenseStatus {
   readonly masked: string | null;
   /** True when a key is stored in the Nexus vault, active or not. */
   readonly stored: boolean;
+  /**
+   * True when the licence in use is the operator key bundled with Nexus (no
+   * key in this machine's vault). Pro works; the panel just must not say
+   * "sem chave".
+   */
+  readonly operatorKey: boolean;
   readonly detail?: string;
 }
 
@@ -583,6 +673,7 @@ export async function boardUiLicenseStatus(
   const { get } = vault(deps);
   const stored = get(BOARDUI_LICENSE_SECRET);
   const masked = stored ? maskBoardUiLicenseKey(stored) : null;
+  const operatorKey = boardUiLicenseUsesOperatorKey(deps);
   try {
     const result = await callBoardUiTool(
       { tool: 'license_status', cwd: input.cwd, ...(input.signal ? { signal: input.signal } : {}) },
@@ -593,6 +684,7 @@ export async function boardUiLicenseStatus(
       state: active ? 'active' : 'absent',
       masked,
       stored: Boolean(stored),
+      operatorKey,
       detail: result.text.slice(0, 400),
     };
   } catch (error) {
@@ -600,6 +692,7 @@ export async function boardUiLicenseStatus(
       state: 'unknown',
       masked,
       stored: Boolean(stored),
+      operatorKey,
       detail: error instanceof Error ? error.message.slice(0, 400) : undefined,
     };
   }
@@ -645,6 +738,61 @@ export async function activateBoardUiLicense(
     return {
       ok: false,
       stored: true,
+      detail: error instanceof Error ? error.message.slice(0, 400) : 'activation failed',
+    };
+  }
+}
+
+/**
+ * Activate whichever key this machine actually has: the vault copy when there
+ * is one, otherwise the operator key bundled with Nexus.
+ *
+ * The bundled path activates WITHOUT writing the vault, so "Remover" stays
+ * honest — deactivate releases the vendor seat and clears the vault, and the
+ * bundled key is simply there again on the next install. Only an explicit
+ * 'set' in the panel persists a key.
+ */
+export async function activateEffectiveBoardUiLicense(
+  input: { readonly cwd: string; readonly signal?: AbortSignal },
+  deps: UiKitServiceDeps = {},
+): Promise<ActivateLicenseResult> {
+  const { get } = vault(deps);
+  const stored = get(BOARDUI_LICENSE_SECRET);
+  if (stored && stored.trim().length > 0) {
+    return activateBoardUiLicense({ key: stored, cwd: input.cwd, ...(input.signal ? { signal: input.signal } : {}) }, deps);
+  }
+  const bundled = effectiveBoardUiLicenseKey(deps);
+  if (!bundled) {
+    return {
+      ok: false,
+      stored: false,
+      detail:
+        'no BoardUI licence is stored and none ships with this Nexus; add it in Settings first',
+    };
+  }
+  // A machine the vendor already counts as active (this Mac activated the key
+  // before Nexus bundled it; any client that kept its seat) has nothing to
+  // gain from re-activation — and a key at its seat limit would answer the
+  // re-run with "reached the activation limit" even though Pro works. Ask
+  // the vendor first; only an inactive licence pays the activation call.
+  const current = await boardUiLicenseStatus(
+    { cwd: input.cwd, ...(input.signal ? { signal: input.signal } : {}) },
+    deps,
+  );
+  if (current.state === 'active') {
+    return { ok: true, stored: false, detail: current.detail ?? 'licence already active on this machine' };
+  }
+  invalidateBoardUiFreeList();
+  try {
+    const result = await callBoardUiTool(
+      { tool: 'activate_license', cwd: input.cwd, ...(input.signal ? { signal: input.signal } : {}) },
+      deps,
+    );
+    return { ok: result.ok, stored: false, detail: result.text.slice(0, 400) };
+  } catch (error) {
+    return {
+      ok: false,
+      stored: false,
       detail: error instanceof Error ? error.message.slice(0, 400) : 'activation failed',
     };
   }
@@ -1143,6 +1291,7 @@ export async function installItems(
       input.cwd,
       deps,
       input.signal,
+      { autoActivate: true },
     );
     if (gated.blocked.length > 0) {
       return {
@@ -1150,7 +1299,10 @@ export async function installItems(
         stdout: '',
         stderr:
           `BoardUI Pro licence required for: ${gated.blocked.join(', ')}. ` +
-          'Store it in Settings → UI kits; the free items need no key.',
+          'Store it in Settings → UI kits; the free items need no key.' +
+          (gated.activationDetail
+            ? ` (automatic activation failed: ${gated.activationDetail})`
+            : ''),
         code: null,
         missingRegistryKeys: [],
         needsLicense: gated.blocked,

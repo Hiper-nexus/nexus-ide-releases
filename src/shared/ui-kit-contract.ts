@@ -142,6 +142,12 @@ export interface UiKitRegistryView {
   readonly envVar?: string;
   /** Whether a token is stored. The value itself never travels. */
   readonly tokenStored: boolean;
+  /**
+   * True when the token in use is the operator token bundled with Nexus: no
+   * copy sits in this machine's vault. The panel must say "token do Nexus",
+   * not "sem token" — installs work either way.
+   */
+  readonly operatorKey?: boolean;
 }
 
 export interface UiKitRecipeView {
@@ -156,6 +162,12 @@ export interface UiKitLicenseView {
   readonly stored: boolean;
   /** Masked tail only, e.g. `••••1234`. */
   readonly masked: string | null;
+  /**
+   * True when the licence in use is the operator key bundled with Nexus: no
+   * key sits in this machine's vault. Pro works; the panel just must not
+   * say "sem chave".
+   */
+  readonly operatorKey?: boolean;
   readonly detail?: string;
 }
 
