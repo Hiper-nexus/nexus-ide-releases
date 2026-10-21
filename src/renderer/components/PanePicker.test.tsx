@@ -441,6 +441,12 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
     mount();
     openMenu();
 
+    // Recolhidas por padrão: só o título com a contagem aparece.
+    expect(host.querySelectorAll('.pane-picker__unavailable-row')).toHaveLength(0);
+    act(() => {
+      host.querySelector<HTMLElement>('.pane-picker__unavailable-toggle')!.click();
+    });
+
     const rows = [
       ...host.querySelectorAll('.pane-picker__unavailable-row'),
     ].map((node) => node.textContent ?? '');
@@ -521,6 +527,33 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
     act(() => usePanePickerStore.getState().requestOpen());
     expect(host.querySelector('[role="dialog"]')).not.toBeNull();
     expect(usePanePickerStore.getState().pendingOpen).toBe(false);
+  });
+
+  it('o pedido que abriu o picker (vídeo de apresentação) vai como brief do pane escolhido', () => {
+    mount();
+    act(() =>
+      usePanePickerStore.getState().requestOpen(undefined, { brief: 'Crie o vídeo' }),
+    );
+    expect(usePanePickerStore.getState().pendingBrief).toBeNull();
+    drillInto('claude');
+    clickEntry('agent:claude:default:claude-default');
+    expect(spawnAgent).toHaveBeenCalledWith(
+      'claude',
+      'claude-default',
+      expect.objectContaining({ brief: 'Crie o vídeo' }),
+    );
+  });
+
+  it('fechar o picker sem escolher descarta o pedido de fora', () => {
+    mount();
+    act(() =>
+      usePanePickerStore.getState().requestOpen(undefined, { brief: 'Crie o vídeo' }),
+    );
+    openMenu();
+    openMenu();
+    drillInto('claude');
+    clickEntry('agent:claude:default:claude-default');
+    expect(spawnAgent).toHaveBeenCalledWith('claude', 'claude-default');
   });
 
   it('clicar numa linha sobe o pane com adapterId e modelo exatos', () => {
