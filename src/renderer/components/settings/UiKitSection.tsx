@@ -496,7 +496,18 @@ export function UiKitSection() {
               <button
                 type="button"
                 className="settings-btn"
-                disabled={!status?.workspaceOpen || busy !== null}
+                disabled={
+                  !status?.workspaceOpen ||
+                  busy !== null ||
+                  // The rendered list outlives the kit switch: the heading and
+                  // the captured `kit` change at once while the OLD catalogue
+                  // stays on screen until its replacement arrives. Clicking in
+                  // that window installed an old slug under the new kit. The
+                  // request ticket only discards late replies; it cannot make
+                  // an already-painted list non-actionable.
+                  loadingCatalog ||
+                  catalog?.kit !== kit
+                }
                 onClick={() => void install({ items: [item.slug] })}
               >
                 {busy === item.slug ? 'Instalando…' : 'Instalar'}

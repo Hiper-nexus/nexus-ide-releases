@@ -68,6 +68,8 @@ describe('renderRegistryEntry', () => {
   });
 
   it('renders a raw header and a query param', () => {
+    // The kind and the header/param NAME stay the operator's; only the
+    // variable is derived from the namespace (it selects a secret).
     expect(
       renderRegistryEntry({
         ...PRIVATE,
@@ -75,7 +77,7 @@ describe('renderRegistryEntry', () => {
       }),
     ).toEqual({
       url: PRIVATE.url,
-      headers: { 'X-Api-Key': '${ACME_API_KEY}' },
+      headers: { 'X-Api-Key': '${ACME_REGISTRY_TOKEN}' },
     });
 
     expect(
@@ -85,7 +87,7 @@ describe('renderRegistryEntry', () => {
       }),
     ).toEqual({
       url: PRIVATE.url,
-      params: { token: '${ACME_ACCESS_TOKEN}' },
+      params: { token: '${ACME_REGISTRY_TOKEN}' },
     });
   });
 
@@ -272,15 +274,49 @@ describe('the saved env name is the one the runner accepts', () => {
     }
   });
 
-  it('accepts the credential-shaped names the runner will carry', () => {
+  it('still validates a declared name, then replaces it with the derived one', () => {
+    // The shape check stays (a malformed or non-credential name throws above),
+    // but the SAVED name is always the namespace's own.
     for (const envVar of ['ACME_REGISTRY_TOKEN', 'MY_API_KEY', 'VENDOR_SECRET']) {
       expect(
         assertRegistry({
           ...PRIVATE,
           auth: { kind: 'header', name: 'Authorization', envVar },
         }).auth?.envVar,
-      ).toBe(envVar);
+      ).toBe('ACME_REGISTRY_TOKEN');
     }
+  });
+});
+
+describe('the ENV name of a registry is derived too', () => {
+  it('reads only the namespace own variable, never one settings named', () => {
+    // The sibling of the vault-key hole: `OPENAI_API_KEY` and `GH_TOKEN` both
+    // satisfy `assertSafeEnvName`, so a compromised renderer could name one
+    // of them plus a chosen URL and have the install forward that credential.
+    const hostile: UiKitRegistry = {
+      ...PRIVATE,
+      secretKey: undefined,
+      auth: { kind: 'header', name: 'Authorization', envVar: 'OPENAI_API_KEY' },
+    };
+    const environment = {
+      OPENAI_API_KEY: 'sk-operator-openai',
+      GH_TOKEN: 'ghp-operator',
+      ACME_REGISTRY_TOKEN: 'tok-acme',
+    };
+
+    expect(resolveRegistryToken(hostile, () => null, environment)).toBe('tok-acme');
+  });
+
+  it('answers null when the namespace own variable is unset', () => {
+    const hostile: UiKitRegistry = {
+      ...PRIVATE,
+      secretKey: undefined,
+      auth: { kind: 'header', name: 'Authorization', envVar: 'GH_TOKEN' },
+    };
+
+    expect(
+      resolveRegistryToken(hostile, () => null, { GH_TOKEN: 'ghp-operator' }, () => null),
+    ).toBeNull();
   });
 });
 

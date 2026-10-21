@@ -179,13 +179,20 @@ export function assertRegistry(registry: UiKitRegistry): UiKitRegistry {
     ...registry,
     namespace,
     url: assertRegistryUrl(registry.url),
-    ...(registry.auth ? { auth: assertAuth(registry.auth) } : {}),
-    // DERIVED, never carried. A caller-supplied `secretKey` would be a vault
-    // name chosen outside Main: a compromised renderer could point a registry
-    // at `auth:session`, pass the configured-URL checks, and have the install
-    // read that secret and send it to the registry's host. Overwriting here
-    // covers a settings file that already holds one.
+    // DERIVED, never carried — BOTH secret selectors.
+    //
+    // A caller-supplied `secretKey` would be a vault name chosen outside Main:
+    // a compromised renderer could point a registry at `auth:session`, pass
+    // the configured-URL checks, and have the install read that secret and
+    // send it to the registry's host. The same held for `auth.envVar`, which
+    // I left coming from settings when I fixed the vault side: `OPENAI_API_KEY`
+    // and `GH_TOKEN` both satisfy `assertSafeEnvName`, so naming one of them
+    // plus a chosen URL forwarded that credential just as well. The kind and
+    // the header name stay the operator's — they select nothing.
     secretKey: registrySecretKey(namespace),
+    ...(registry.auth
+      ? { auth: { ...assertAuth(registry.auth), envVar: derivedRegistryEnvVar(namespace) } }
+      : {}),
   };
   return normalized;
 }
@@ -584,7 +591,11 @@ export function resolveRegistryToken(
       : null;
   const stored = key ? lookupSecret(key) : null;
   if (typeof stored === 'string' && stored.trim().length > 0) return stored.trim();
-  const fromEnv = registry.auth ? environment[registry.auth.envVar] : undefined;
+  // The DERIVED name, not the stored one: a registry only ever reaches its own
+  // variable, whatever a settings file claims.
+  const fromEnv = registry.auth
+    ? environment[derivedRegistryEnvVar(registry.namespace)]
+    : undefined;
   if (typeof fromEnv === 'string' && fromEnv.trim().length > 0) return fromEnv.trim();
   const fromBundle = bundled(registry);
   if (typeof fromBundle === 'string' && fromBundle.trim().length > 0) {

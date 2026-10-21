@@ -359,6 +359,57 @@ it('clears the licence field once Main confirms it was stored', async () => {
   }
 });
 
+it('refuses to install from the list of a kit already left behind', async () => {
+  // The rendered list outlives the switch: heading and captured kit change at
+  // once while the OLD catalogue stays painted until its replacement lands.
+  // The request ticket only discards late replies.
+  const release: Array<() => void> = [];
+  const uiKit = api({
+    catalog: vi.fn((request: { kit: string }) => {
+      const view = {
+        kit: request.kit,
+        items: [
+          {
+            slug: request.kit === 'shadcn' ? 'button' : 'stat-cards',
+            label: request.kit === 'shadcn' ? 'button' : 'stat-cards',
+            category: 'block',
+            tier: 'free' as const,
+            cached: false,
+          },
+        ],
+        bestEffort: false,
+      };
+      return new Promise((resolve) => release.push(() => resolve(view)));
+    }),
+  });
+  const { host, root } = await mount();
+  try {
+    await act(async () => release[0]?.());
+    const installOf = () =>
+      [...host.querySelectorAll('button')].find(
+        (button) => button.textContent === 'Instalar',
+      ) as HTMLButtonElement | undefined;
+    expect(installOf()?.disabled).toBe(false);
+
+    // Switch kits; the shadcn list is still on screen while BoardUI loads.
+    const boardui = [...host.querySelectorAll('button')].find(
+      (button) => button.textContent === 'BoardUI',
+    );
+    await act(async () => boardui!.click());
+
+    expect(host.textContent).toContain('button');
+    expect(installOf()?.disabled).toBe(true);
+
+    await act(async () => release[1]?.());
+    expect(host.textContent).toContain('stat-cards');
+    expect(installOf()?.disabled).toBe(false);
+    // Nothing was installed from the stale list.
+    expect(uiKit.install).not.toHaveBeenCalled();
+  } finally {
+    act(() => root.unmount());
+  }
+});
+
 it('says the free half needs no key before it mentions a licence', async () => {
   api();
   const { host, root } = await mount();
