@@ -2,6 +2,7 @@ import { listCachedItems, type UiKitCacheOptions } from './ui-kit-cache';
 import type { UiKitId } from './ui-kit-cli';
 import type { UiKitCandidate } from './ui-kit-pick';
 import { withOperatorRegistries } from './ui-kit-registry';
+import { chunkShadcnSearchRegistries } from './shadcn-source';
 import {
   boardUiCandidates,
   listBoardUiFreeSlugs,
@@ -145,37 +146,58 @@ export async function liveCandidates(
     };
   }
 
-  const result = await runShadcnCommand(
-    {
-      command: {
-        kind: 'search',
-        // The effective list: a namespace a bundled operator token exists
-        // for is searchable even before anyone configures it in settings.
-        registries: shadcnSearchNamespaces(
-          withOperatorRegistries(deps.registries?.() ?? []),
-        ),
-        ...(query ? { query } : {}),
-        limit: 200,
-      },
-      cwd,
-    },
-    deps,
+  // ONE RUN PER BATCH. The CLI refuses more than `SHADCN_MAX_REGISTRIES`
+  // namespaces in a single search, and the settings schema allows twice that,
+  // so a 16-registry operator used to lose live shadcn discovery entirely
+  // rather than merely wait a little longer.
+  const batches = chunkShadcnSearchRegistries(
+    // The effective list: a namespace a bundled operator token exists
+    // for is searchable even before anyone configures it in settings.
+    shadcnSearchNamespaces(withOperatorRegistries(deps.registries?.() ?? [])),
   );
-  const parsed = parseShadcnSearch(result.stdout);
+  const found: UiKitCandidate[] = [];
+  const raws: string[] = [];
+  let bestEffort = false;
+  let failure: string | undefined;
+  let unmapped: readonly string[] | undefined;
+  for (const registries of batches) {
+    const result = await runShadcnCommand(
+      {
+        command: {
+          kind: 'search',
+          registries,
+          ...(query ? { query } : {}),
+          limit: 200,
+        },
+        cwd,
+      },
+      deps,
+    );
+    const parsed = parseShadcnSearch(result.stdout);
+    found.push(...parsed.candidates);
+    raws.push(result.stdout);
+    // Any scraped batch makes the whole answer best-effort: one typed batch
+    // does not vouch for a batch that was only read as text.
+    if (parsed.bestEffort) bestEffort = true;
+    // The FIRST failure is the one reported; a later batch succeeding does not
+    // make an earlier refusal untrue.
+    if (!result.ok && !failure) {
+      failure = (result.stderr || result.stdout).slice(0, 300);
+    }
+    if (result.unmappedRegistries && result.unmappedRegistries.length > 0) {
+      unmapped = [...(unmapped ?? []), ...result.unmappedRegistries];
+    }
+  }
   return {
-    candidates: union(parsed.candidates, cachedCandidates(kit, deps.cacheOptions)).filter(
+    candidates: union(found, cachedCandidates(kit, deps.cacheOptions)).filter(
       (entry) => matchesQuery(entry, needle),
     ),
-    raw: result.stdout.slice(0, 20_000),
-    // False when `--json` answered. Only the text fallback is a scrape, where
-    // an empty list never means "the registry has nothing".
-    bestEffort: parsed.bestEffort,
+    raw: raws.join('\n').slice(0, 20_000),
+    bestEffort,
     // A registry the operator configured in Nexus but the PROJECT does not
     // declare: the search cannot reach it and no token was released, so say
     // which one rather than showing an empty list.
-    ...(result.unmappedRegistries && result.unmappedRegistries.length > 0
-      ? { unmappedRegistries: result.unmappedRegistries }
-      : {}),
-    ...(result.ok ? {} : { error: (result.stderr || result.stdout).slice(0, 300) }),
+    ...(unmapped && unmapped.length > 0 ? { unmappedRegistries: unmapped } : {}),
+    ...(failure ? { error: failure } : {}),
   };
 }

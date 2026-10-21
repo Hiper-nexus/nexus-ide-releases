@@ -196,3 +196,78 @@ describe('a configured registry the project does not declare', () => {
     expect(result.unmappedRegistries).toBeUndefined();
   });
 });
+
+describe('a search wider than the CLI accepts', () => {
+  function registry(index: number): UiKitRegistry {
+    return {
+      namespace: `@r${index}`,
+      url: `https://r${index}.test/r/{name}.json`,
+    };
+  }
+
+  it('runs one search per batch and merges, instead of throwing', async () => {
+    // 16 configured registries plus `@shadcn` is 17, over the CLI's limit of
+    // 16 — this used to throw and take the whole live catalogue with it.
+    const runs: string[][] = [];
+    const deps: UiKitServiceDeps = {
+      runCli: async (request) => {
+        const registries = request.args.slice(1).filter((arg) => arg.startsWith('@'));
+        runs.push(registries);
+        return {
+          stdout: JSON.stringify({
+            items: registries.map((namespace) => ({
+              name: `item-${namespace.slice(1)}`,
+              type: 'registry:ui',
+              registry: namespace,
+            })),
+          }),
+          stderr: '',
+          code: 0,
+        };
+      },
+      getSecret: () => null,
+      setSecret: () => ({ ok: true }),
+      cacheOptions: { rootDir: dir },
+      registries: () => Array.from({ length: 16 }, (_, index) => registry(index)),
+    };
+
+    const result = await liveCandidates('shadcn', cwd, undefined, deps);
+
+    expect(runs).toHaveLength(2);
+    expect(runs[0]).toHaveLength(16);
+    expect(runs[0]?.[0]).toBe('@shadcn');
+    expect(result.error).toBeUndefined();
+    // Lossless, stated as the invariant rather than a count: every namespace
+    // that was searched contributed its item. (The bundled-operator namespace
+    // joins the list too, so a hardcoded number would be brittle.)
+    expect(result.candidates).toHaveLength(runs.flat().length);
+    expect(runs.flat().length).toBeGreaterThan(16);
+  });
+
+  it('reports the FIRST batch failure and still returns what answered', async () => {
+    let call = 0;
+    const deps: UiKitServiceDeps = {
+      runCli: async () => {
+        call += 1;
+        if (call === 1) return { stdout: '', stderr: 'registry refused', code: 1 };
+        return {
+          stdout: JSON.stringify({
+            items: [{ name: 'late', type: 'registry:ui', registry: '@r15' }],
+          }),
+          stderr: '',
+          code: 0,
+        };
+      },
+      getSecret: () => null,
+      setSecret: () => ({ ok: true }),
+      cacheOptions: { rootDir: dir },
+      registries: () => Array.from({ length: 16 }, (_, index) => registry(index)),
+    };
+
+    const result = await liveCandidates('shadcn', cwd, undefined, deps);
+
+    // A later batch succeeding does not make the earlier refusal untrue.
+    expect(result.error).toContain('registry refused');
+    expect(result.candidates.map((entry) => entry.label)).toContain('late');
+  });
+});

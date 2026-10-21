@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { UiKitCliError } from './ui-kit-cli';
 import {
+  assertShadcnRegistries,
   buildShadcnArgs,
+  chunkShadcnSearchRegistries,
   classifyShadcnItem,
   referencedShadcnNamespaces,
   shadcnCommandWrites,
@@ -255,5 +257,42 @@ describe('Windows drive-relative paths', () => {
   it('still refuses the slashed form and UNC', () => {
     expect(() => classifyShadcnItem('C:/evil.json')).toThrow(/relative to the project/);
     expect(() => classifyShadcnItem('\\\\server\\share')).toThrow();
+  });
+});
+
+describe('chunkShadcnSearchRegistries', () => {
+  it('keeps one batch while the CLI accepts the list', () => {
+    const batches = chunkShadcnSearchRegistries(['@shadcn', '@acme', '@other']);
+
+    expect(batches).toEqual([['@shadcn', '@acme', '@other']]);
+  });
+
+  it('splits at the limit the CLI actually enforces', () => {
+    // 16 configured registries plus `@shadcn` is 17, and
+    // `assertShadcnRegistries` refuses more than 16 BEFORE spawning — so this
+    // used to lose live shadcn discovery everywhere at once.
+    const many = ['@shadcn', ...Array.from({ length: 16 }, (_, i) => `@r${i}`)];
+
+    const batches = chunkShadcnSearchRegistries(many);
+
+    expect(batches).toHaveLength(2);
+    expect(batches[0]).toHaveLength(16);
+    // The default namespace rides in the FIRST batch, so the common catalogue
+    // is present even if a later batch fails.
+    expect(batches[0]?.[0]).toBe('@shadcn');
+    expect(batches.flat()).toHaveLength(17);
+    for (const batch of batches) {
+      expect(() => assertShadcnRegistries(batch)).not.toThrow();
+    }
+  });
+
+  it('de-duplicates and drops blanks before counting', () => {
+    expect(
+      chunkShadcnSearchRegistries(['@shadcn', ' @shadcn ', '', '  ', '@acme']),
+    ).toEqual([['@shadcn', '@acme']]);
+  });
+
+  it('has nothing to search for an empty list', () => {
+    expect(chunkShadcnSearchRegistries([])).toEqual([]);
   });
 });

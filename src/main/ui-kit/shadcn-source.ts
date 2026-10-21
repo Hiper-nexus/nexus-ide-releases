@@ -144,6 +144,36 @@ export function assertShadcnItems(items: readonly string[]): readonly string[] {
   });
 }
 
+/**
+ * Split the namespaces a search must cover into runs the CLI will accept.
+ *
+ * `assertShadcnRegistries` refuses more than `SHADCN_MAX_REGISTRIES` (16)
+ * before spawning, while the settings schema allows 32 registries. So an
+ * operator with 16 configured registries — `@shadcn` plus 16 is 17 — lost
+ * live shadcn discovery everywhere at once: the Settings catalogue, the
+ * recipes and task-based installs all threw instead of searching.
+ *
+ * Batching is lossless, unlike capping the persisted list, which would
+ * silently drop the 16th registry the operator added on purpose. The default
+ * namespace rides in the FIRST batch so the common catalogue is present even
+ * if a later batch fails.
+ */
+export function chunkShadcnSearchRegistries(
+  registries: readonly string[],
+): readonly (readonly string[])[] {
+  const unique: string[] = [];
+  for (const raw of registries) {
+    const value = raw.trim();
+    if (value.length > 0 && !unique.includes(value)) unique.push(value);
+  }
+  if (unique.length === 0) return [];
+  const batches: string[][] = [];
+  for (let index = 0; index < unique.length; index += SHADCN_MAX_REGISTRIES) {
+    batches.push(unique.slice(index, index + SHADCN_MAX_REGISTRIES));
+  }
+  return batches;
+}
+
 export function assertShadcnRegistries(
   registries: readonly string[],
 ): readonly string[] {
