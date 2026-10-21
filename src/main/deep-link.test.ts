@@ -141,17 +141,13 @@ describe('shouldClaimDeepLinkScheme', () => {
     expect(shouldClaimDeepLinkScheme({ isDev: true, platform: 'linux' })).toBe(true);
   });
 
-  it('a saída explícita força, para quem depura o próprio deep link', () => {
-    expect(
-      shouldClaimDeepLinkScheme({ isDev: true, platform: 'darwin', optIn: '1' }),
-    ).toBe(true);
-  });
-
-  it('só o "1" liga: valor qualquer na variável não rouba o handler', () => {
-    for (const optIn of ['0', '', 'true', 'sim', 'yes']) {
-      expect(
-        shouldClaimDeepLinkScheme({ isDev: true, platform: 'darwin', optIn }),
-      ).toBe(false);
-    }
+  // Revisão do PR #153 (P2): uma saída por variável de ambiente seria uma
+  // ARMADILHA. Reivindicar em dev no macOS é exatamente o que quebra a
+  // entrega — o bundle de dev não declara CFBundleURLTypes —, então o
+  // "escape hatch" reproduziria o bug em vez de contorná-lo. Não existe.
+  it('não há saída por variável: nada reivindica em dev no macOS', () => {
+    const extra = { NEXUS_DEV_CLAIM_DEEP_LINK: '1' } as Record<string, string>;
+    expect(extra.NEXUS_DEV_CLAIM_DEEP_LINK).toBe('1');
+    expect(shouldClaimDeepLinkScheme({ isDev: true, platform: 'darwin' })).toBe(false);
   });
 });

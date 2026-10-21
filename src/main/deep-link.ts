@@ -261,17 +261,17 @@ function confirmNewPrompt(
  * consegue receber o link de qualquer jeito. No Windows e no Linux o registro
  * de dev funciona (registro do sistema / entrada .desktop), então lá nada muda.
  *
- * `NEXUS_DEV_CLAIM_DEEP_LINK=1` força a reivindicação para quem estiver
- * depurando o próprio caminho do deep link e aceita perder o login do app
- * instalado enquanto isso.
+ * NÃO existe saída por variável de ambiente. Uma teria sido uma armadilha:
+ * reivindicar em dev no macOS é exatamente o que quebra a entrega, então o
+ * "escape hatch" reproduziria o bug em vez de contorná-lo. Quem precisa que o
+ * build de dev receba `nexus://` tem de declarar `CFBundleURLTypes` no bundle
+ * de desenvolvimento primeiro — sem isso, ser o handler não serve para nada.
  */
 export function shouldClaimDeepLinkScheme(env: {
   readonly isDev: boolean;
   readonly platform: NodeJS.Platform;
-  readonly optIn?: string;
 }): boolean {
   if (!env.isDev) return true;
-  if (env.optIn === '1') return true;
   return env.platform !== 'darwin';
 }
 
@@ -288,11 +288,7 @@ export function wireDeepLinks(customHandler?: DeepLinkHandler): boolean {
     // F-1627: no macOS isso ROUBARIA o handler do app instalado para um bundle
     // que não declara o esquema — o link passaria a morrer em silêncio.
     if (
-      shouldClaimDeepLinkScheme({
-        isDev: true,
-        platform: process.platform,
-        optIn: process.env.NEXUS_DEV_CLAIM_DEEP_LINK,
-      })
+      shouldClaimDeepLinkScheme({ isDev: true, platform: process.platform })
     ) {
       app.setAsDefaultProtocolClient(SCHEME, process.execPath, [
         path.resolve(process.argv[1]),
@@ -301,7 +297,8 @@ export function wireDeepLinks(customHandler?: DeepLinkHandler): boolean {
       console.warn(
         `[deep-link] dev não reivindica ${SCHEME}:// no macOS (F-1627): o bundle de ` +
           'desenvolvimento não declara CFBundleURLTypes e o link morreria em silêncio. ' +
-          'O app instalado continua dono. NEXUS_DEV_CLAIM_DEEP_LINK=1 força.',
+          'O app instalado continua dono. Para o dev receber o link, declare ' +
+          'CFBundleURLTypes no bundle de desenvolvimento.',
       );
     }
   } else {
