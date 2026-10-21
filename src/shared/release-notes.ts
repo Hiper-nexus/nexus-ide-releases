@@ -12398,7 +12398,7 @@ export const RELEASE_076365: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076366: AppRelease = {
   version: '0.76.366',
   date: '2026-10-21',
   codename: 'O Testar do Qwen atualiza o status',
@@ -12413,4 +12413,19 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076366: AppRelease = CURRENT_RELEASE;
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.367',
+  date: '2026-10-21',
+  codename: 'O Testar do Qwen atualiza o status',
+  summary: 'No desktop Linux, o Testar do Qwen republica a lista de providers: depois de "credential accepted" o status deixa de ficar em "chave não verificada". A 0.76.366 no espelho é a publicação Windows e não recebe arquivos Linux; a canônica já tem o pacote Linux 0.76.366. Esta é a versão que os dois repositórios carregam. A 0.76.365 no espelho é Windows e Latest. A 0.76.362 continua Latest na canônica.',
+  highlights: [
+    { title: 'Status do Qwen certo depois do Testar', detail: 'O Testar do Qwen republica a lista de providers: o rótulo passa de "chave não verificada" para o estado real assim que a sonda responde. Os outros providers não mudam.' },
+    { title: 'Pacote Linux nos dois repositórios', detail: 'A 0.76.366 do espelho é Windows (Setup, nupkg, RELEASES) e não recebe arquivos Linux. A 0.76.365 do espelho também é Windows e segue Latest. A 0.76.362 segue Latest na canônica.' },
+  ],
+  fixes: [
+    { title: 'Qwen aceito, mas "chave não verificada"', detail: 'A sonda do Qwen atualizava o cache de prontidão e a lista não era avisada. O handler do Testar agora republica os providers quando o adapter é o Qwen; os demais providers não são afetados.' },
+    ...RELEASE_076364.fixes,
+  ],
+};
+
+export const RELEASE_076367: AppRelease = CURRENT_RELEASE;
