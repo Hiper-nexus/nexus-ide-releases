@@ -9,6 +9,7 @@ import {
   assertRegistryUrl,
   buildRegistryEnv,
   mergeRegistriesIntoComponentsJson,
+  registryEntryNeedsAuth,
   registrySecretKey,
   renderRegistryEntry,
   resolveRegistryToken,
@@ -196,6 +197,28 @@ describe('envVarReferences', () => {
   });
 });
 
+describe('registryEntryNeedsAuth', () => {
+  it('completes a bare mapping and leaves the project\'s own auth alone', () => {
+    expect(registryEntryNeedsAuth(PRIVATE, PRIVATE.url)).toBe(true);
+    expect(registryEntryNeedsAuth(PRIVATE, { url: PRIVATE.url })).toBe(true);
+    expect(
+      registryEntryNeedsAuth(PRIVATE, {
+        url: PRIVATE.url,
+        headers: { Authorization: 'Bearer ${THEIR_TOKEN}' },
+      }),
+    ).toBe(false);
+    expect(
+      registryEntryNeedsAuth(PRIVATE, { url: PRIVATE.url, params: { token: 'x' } }),
+    ).toBe(false);
+  });
+
+  it('never completes an entry for a registry that declares no auth', () => {
+    const open: UiKitRegistry = { namespace: '@open', url: PRIVATE.url };
+
+    expect(registryEntryNeedsAuth(open, PRIVATE.url)).toBe(false);
+  });
+});
+
 describe('resolveRegistryToken', () => {
   it('prefers the vault over the environment', () => {
     expect(
@@ -318,7 +341,11 @@ describe('buildScopedRegistryEnv — the token cannot be hijacked', () => {
   });
 
   it('still trusts the public @shadcn namespace alongside a private one', () => {
-    const components = { registries: { '@acme': PRIVATE.url } };
+    const components = {
+      registries: {
+        '@acme': { url: PRIVATE.url, headers: { Authorization: 'Bearer ${ACME_REGISTRY_TOKEN}' } },
+      },
+    };
 
     const result = buildScopedRegistryEnv({
       ...base,
@@ -328,5 +355,39 @@ describe('buildScopedRegistryEnv — the token cannot be hijacked', () => {
     });
 
     expect(result.env).toEqual({ ACME_REGISTRY_TOKEN: 'tok-abc' });
+  });
+
+  it('withholds the token when the project entry interpolates nothing', () => {
+    // The bare mapping: same host, no `${VAR}`. shadcn would send the request
+    // unauthenticated and get a 401 while the secret rode along in the
+    // child's environment for nothing.
+    const components = { registries: { '@acme': PRIVATE.url } };
+
+    const result = buildScopedRegistryEnv({
+      ...base,
+      projectUrls: projectRegistryUrls(components),
+      envReferences: envVarReferences(components),
+    });
+
+    expect(result.env).toEqual({});
+    expect(result.unreferenced).toEqual(['@acme']);
+    expect(result.hijacked).toEqual([]);
+  });
+
+  it('withholds it when the project put its OWN auth on our namespace', () => {
+    const components = {
+      registries: {
+        '@acme': { url: PRIVATE.url, headers: { Authorization: 'Bearer ${THEIR_TOKEN}' } },
+      },
+    };
+
+    const result = buildScopedRegistryEnv({
+      ...base,
+      projectUrls: projectRegistryUrls(components),
+      envReferences: envVarReferences(components),
+    });
+
+    expect(result.env).toEqual({});
+    expect(result.unreferenced).toEqual(['@acme']);
   });
 });

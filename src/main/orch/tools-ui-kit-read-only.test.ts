@@ -123,6 +123,29 @@ describe('nexus_ui_kit_source is read-only in fact', () => {
   });
 });
 
+describe('the licence lifecycle stays with the operator', () => {
+  it('refuses deactivate_license without touching the vendor, and names Settings', async () => {
+    // Releasing the licence spends a vendor activation and wipes a key the
+    // operator bought. Going through the vendor from here would also leave
+    // the key in the vault while the vendor had released it, because only
+    // `deactivateBoardUiLicense` — the panel's path — forgets it.
+    const out = (await tool('nexus_ui_kit_boardui').handler(
+      { tool: 'deactivate_license' },
+      ctx,
+    )) as { ok: boolean; reason: string; hint: string };
+
+    expect(out.ok).toBe(false);
+    expect(out.reason).toBe('operator_action');
+    expect(out.hint).toContain('Settings → UI kits');
+  });
+
+  it('does not advertise deactivation as something it performs', () => {
+    const boardui = buildUiKitTools().find((entry) => entry.name === 'nexus_ui_kit_boardui');
+
+    expect(boardui?.description).toContain("deactivate_license is the operator's own");
+  });
+});
+
 describe('the agent surface offers no write destination', () => {
   /**
    * Three rounds of review found three ways past string checks on a

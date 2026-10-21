@@ -10,8 +10,10 @@ import {
   activateBoardUiLicense,
   parseBoardUiListOutput,
   readsAsActiveLicense,
+  listBoardUiFreeSlugs,
   resetBoardUiFreeListCacheForTests,
   resolveBoardUiTier,
+  runBoardUiCommand,
   ensureProjectRegistries,
   readComponentsJson,
   boardUiCandidates,
@@ -337,6 +339,36 @@ describe('runShadcnCommand', () => {
   });
 });
 
+describe('where the BoardUI CLI is resolved from', () => {
+  it('resolves `list` OUTSIDE the project, so browsing cannot run repo code', async () => {
+    // BoardUI has no `--cwd`, so a command that needs the project must be
+    // spawned in it — and there npm reads the repository's `.npmrc` and npx
+    // prefers its `node_modules/.bin`. `list` needs no project (measured: it
+    // prints the vendor's catalogue from an empty directory), and it is what
+    // the catalogue browse path and the tier gate call.
+    const h = harness({ cli: () => ({ stdout: '  button  Primary button.\n' }) });
+
+    await listBoardUiFreeSlugs(cwd, h.deps);
+
+    expect(h.cliRuns[0]?.args).toEqual(['list']);
+    expect(h.cliRuns[0]?.resolveIn).toBe('isolated');
+    // No `--cwd` to append: the vendor CLI has none.
+    expect(h.cliRuns[0]?.cwdFlag).toBeUndefined();
+  });
+
+  it('keeps `add` and `init` in the project, where they must write', async () => {
+    const h = harness();
+
+    await installItems({ kit: 'boardui', items: ['button'], cwd }, h.deps);
+    await runBoardUiCommand({ command: { kind: 'init' }, cwd }, h.deps);
+
+    for (const run of h.cliRuns.filter((entry) => entry.args[0] !== 'list')) {
+      expect(run.resolveIn).toBeUndefined();
+      expect(run.cwd).toBe(cwd);
+    }
+  });
+});
+
 describe('installItems', () => {
   it('sends shadcn items to the shadcn CLI', async () => {
     const h = harness();
@@ -645,13 +677,50 @@ describe('ensureProjectRegistries', () => {
     expect(declaredRegistry('@acme')).toBe('https://theirs.test/{name}.json');
   });
 
-  it('is a no-op when the mapping already matches', () => {
+  it('completes a bare mapping to our host with the token reference', () => {
+    // Same host, no `${VAR}`: shadcn sent the request unauthenticated and the
+    // registry answered 401, while the token went into the child env anyway.
     writeComponentsJson({ registries: { '@acme': PRIVATE_REGISTRY.url } });
+
+    const result = ensureProjectRegistries(cwd, [PRIVATE_REGISTRY]);
+
+    expect(result.wrote).toEqual(['@acme']);
+    expect(result.conflicts).toEqual([]);
+    expect(declaredRegistry('@acme')).toEqual({
+      url: PRIVATE_REGISTRY.url,
+      headers: { Authorization: 'Bearer ${ACME_REGISTRY_TOKEN}' },
+    });
+  });
+
+  it('is a no-op once the entry already carries the reference', () => {
+    writeComponentsJson({
+      registries: {
+        '@acme': {
+          url: PRIVATE_REGISTRY.url,
+          headers: { Authorization: 'Bearer ${ACME_REGISTRY_TOKEN}' },
+        },
+      },
+    });
 
     const result = ensureProjectRegistries(cwd, [PRIVATE_REGISTRY]);
 
     expect(result.wrote).toEqual([]);
     expect(result.conflicts).toEqual([]);
+  });
+
+  it("does not overwrite the project's own auth on our namespace", () => {
+    // Their header, our host. Replacing it would be the same class of
+    // surprise as repointing their URL; the env builder withholds instead.
+    const theirs = {
+      url: PRIVATE_REGISTRY.url,
+      headers: { Authorization: 'Bearer ${THEIR_TOKEN}' },
+    };
+    writeComponentsJson({ registries: { '@acme': theirs } });
+
+    const result = ensureProjectRegistries(cwd, [PRIVATE_REGISTRY]);
+
+    expect(result.wrote).toEqual([]);
+    expect(declaredRegistry('@acme')).toEqual(theirs);
   });
 });
 

@@ -326,6 +326,21 @@ export function boardUiCommandWrites(command: BoardUiCliCommand): boolean {
   return command.kind !== 'list';
 }
 
+/**
+ * Whether the command needs the project as its working directory.
+ *
+ * `list` does not: it prints the VENDOR's catalogue and was measured working
+ * in an empty scratch directory. That matters because BoardUI has no `--cwd`,
+ * so a command that needs the project must be spawned in it — and npm reads a
+ * `.npmrc` from its cwd while npx prefers `node_modules/.bin`, which means the
+ * repository gets to choose the code that runs. `init` and `add` write into
+ * the project and have no way around it; `list` does, and it is the one the
+ * catalogue browse path and the tier gate call, so it resolves outside.
+ */
+export function boardUiCommandNeedsProject(command: BoardUiCliCommand): boolean {
+  return command.kind !== 'list';
+}
+
 export const BOARDUI_LICENSE_SECRET = 'external:boardui-license-key';
 export const BOARDUI_MAX_LICENSE_CHARS = 512;
 

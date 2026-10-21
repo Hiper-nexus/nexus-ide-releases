@@ -322,6 +322,46 @@ export function projectRegistryUrls(
   return out;
 }
 
+/** The namespace → raw entry map, for decisions the URL alone cannot make. */
+export function projectRegistryEntries(
+  componentsJson: Readonly<Record<string, unknown>> | null,
+): ReadonlyMap<string, unknown> {
+  const out = new Map<string, unknown>();
+  if (!componentsJson) return out;
+  const registries = componentsJson.registries;
+  if (!registries || typeof registries !== 'object') return out;
+  for (const [namespace, value] of Object.entries(
+    registries as Record<string, unknown>,
+  )) {
+    out.set(namespace, value);
+  }
+  return out;
+}
+
+/**
+ * Whether the project's entry for OUR namespace is missing the auth we manage.
+ *
+ * A project that maps `@acme` to the bare URL string agrees about the host but
+ * interpolates nothing, so shadcn sends the request unauthenticated and the
+ * registry answers 401 — while the token sat in the child's environment for
+ * nothing. Completing that entry is finishing our own managed mapping.
+ *
+ * An entry that already carries `headers` or `params` is NOT touched: that is
+ * the project's own auth, and overwriting it would be the same class of
+ * surprise as repointing its URL. The env builder withholds the token there
+ * and reports it instead.
+ */
+export function registryEntryNeedsAuth(
+  registry: UiKitRegistry,
+  entry: unknown,
+): boolean {
+  if (!registry.auth) return false;
+  if (typeof entry === 'string') return true;
+  if (!entry || typeof entry !== 'object') return false;
+  const shape = entry as { headers?: unknown; params?: unknown };
+  return shape.headers === undefined && shape.params === undefined;
+}
+
 /**
  * Which namespaces in the project's components.json reference each `${VAR}`.
  *
@@ -384,6 +424,11 @@ export interface ScopedRegistryEnvResult extends RegistryEnvResult {
    * references their token variable.
    */
   readonly hijacked: readonly string[];
+  /**
+   * Namespaces whose entry in the project's file interpolates no variable at
+   * all, so the token could not be used even if it were released.
+   */
+  readonly unreferenced: readonly string[];
 }
 
 /** The public registry is trusted by definition; it carries no credential. */
@@ -435,6 +480,7 @@ export function buildScopedRegistryEnv(
   const conflicts: string[] = [];
   const unmapped: string[] = [];
   const hijacked: string[] = [];
+  const unreferenced: string[] = [];
   const configured = assertRegistries(input.registries);
   const envReferences = input.envReferences ?? new Map();
 
@@ -450,6 +496,7 @@ export function buildScopedRegistryEnv(
       conflicts: [],
       unmapped: [],
       hijacked: untrusted,
+      unreferenced: [],
     };
   }
 
@@ -469,12 +516,18 @@ export function buildScopedRegistryEnv(
       continue;
     }
     const referrers = envReferences.get(registry.auth.envVar);
-    if (referrers) {
-      const foreign = [...referrers].filter((name) => name !== registry.namespace);
-      if (foreign.length > 0) {
-        hijacked.push(registry.namespace);
-        continue;
-      }
+    if (!referrers || referrers.size === 0) {
+      // Nothing in the project's file interpolates this variable, so the child
+      // cannot use the token: the request goes out unauthenticated and comes
+      // back 401 while the secret rides along for nothing. Withhold it and
+      // say so — `ensureProjectRegistries` is what completes such an entry.
+      unreferenced.push(registry.namespace);
+      continue;
+    }
+    const foreign = [...referrers].filter((name) => name !== registry.namespace);
+    if (foreign.length > 0) {
+      hijacked.push(registry.namespace);
+      continue;
     }
 
     const token = resolveRegistryToken(registry, input.lookupSecret, input.environment);
@@ -485,5 +538,5 @@ export function buildScopedRegistryEnv(
     }
   }
 
-  return { env, missing, conflicts, unmapped, hijacked };
+  return { env, missing, conflicts, unmapped, hijacked, unreferenced };
 }

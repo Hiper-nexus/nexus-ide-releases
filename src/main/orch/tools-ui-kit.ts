@@ -480,9 +480,10 @@ export function buildUiKitTools(): McpToolDef[] {
       description:
         "Call one of BoardUI's own tools: get_started, list_components, " +
         'get_component, get_usage_examples, install_components, init_boardui, ' +
-        'install_rules, get_skill, install_skill, get_theme, license_status, ' +
-        'activate_license, deactivate_license. The licence key is never an ' +
-        "argument — it is injected from the operator's vault.",
+        'install_rules, get_skill, install_skill, get_theme, license_status ' +
+        'and activate_license (which uses the key already stored). The key is ' +
+        "never an argument — it is injected from the operator's vault — and " +
+        'deactivate_license is the operator\'s own, in Settings.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -493,6 +494,26 @@ export function buildUiKitTools(): McpToolDef[] {
       },
       handler: async (args, ctx) => {
         const tool = requireStr(args, 'tool');
+        if (tool === 'deactivate_license') {
+          // Not on this surface, for the same reason as `shadcn eject` and for
+          // one more. Releasing the licence spends a vendor activation and
+          // wipes a key the operator bought and typed in; nothing an agent
+          // does with the kits needs it. Going through the vendor from here
+          // would also leave the key in the vault while the vendor had
+          // released it — Settings reporting a stored but dead key — because
+          // only `deactivateBoardUiLicense` forgets it, and that path is the
+          // panel's.
+          return {
+            ok: false,
+            reason: 'operator_action',
+            hint:
+              'Removing the BoardUI licence is the operator\'s: Settings → UI ' +
+              'kits → Remover. It releases a vendor activation and clears the ' +
+              'stored key together, which this surface cannot do.',
+          };
+        }
+        // After the refusal: resolving the scope is work, and a refusal should
+        // not depend on it.
         const cwd = cwdFor(ctx);
         if (tool === 'activate_license' || tool === 'license_status') {
           // Never take a key from a model, and never hand one back.

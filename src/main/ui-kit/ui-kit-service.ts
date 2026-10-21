@@ -22,6 +22,7 @@ import {
   assertBoardUiItems,
   assertBoardUiLicenseKey,
   assertBoardUiTool,
+  boardUiCommandNeedsProject,
   boardUiCommandWrites,
   boardUiToolWrites,
   boardUiTierOf,
@@ -37,7 +38,9 @@ import {
   buildScopedRegistryEnv,
   envVarReferences,
   mergeRegistriesIntoComponentsJson,
+  projectRegistryEntries,
   projectRegistryUrls,
+  registryEntryNeedsAuth,
   SHADCN_DEFAULT_NAMESPACE,
   type UiKitRegistry,
 } from './ui-kit-registry';
@@ -239,9 +242,19 @@ export function ensureProjectRegistries(
     return { wrote: [], conflicts: [], componentsJsonMissing: true };
   }
   const declared = projectRegistryUrls(existing);
+  const entries = projectRegistryEntries(existing);
   const mine = registries.filter((registry) => {
     const current = declared.get(registry.namespace);
-    return current === undefined;
+    if (current === undefined) return true;
+    // Already pointing at OUR host but interpolating nothing — a bare URL
+    // string, say. Left alone, shadcn sends the request unauthenticated and
+    // the registry answers 401, so the entry gets completed with the
+    // `${VAR}` reference. A mapping to another host is a conflict, below, and
+    // an entry with the project's own headers is never touched.
+    return (
+      current === registry.url &&
+      registryEntryNeedsAuth(registry, entries.get(registry.namespace))
+    );
   });
   const conflicts = registries
     .filter((registry) => {
@@ -305,7 +318,7 @@ export async function runShadcnCommand(
     ensureProjectRegistries(input.cwd, needed);
   }
   const components = readComponentsJson(input.cwd);
-  const { env, missing, conflicts, unmapped, hijacked } = buildScopedRegistryEnv({
+  const { env, missing, conflicts, unmapped, hijacked, unreferenced } = buildScopedRegistryEnv({
     registries,
     referenced,
     projectUrls: projectRegistryUrls(components),
@@ -335,7 +348,9 @@ export async function runShadcnCommand(
     missingRegistryKeys: missing,
     ...(conflicts.length > 0 ? { registryConflicts: conflicts } : {}),
     ...(unmapped.length > 0 ? { unmappedRegistries: unmapped } : {}),
-    ...(hijacked.length > 0 ? { withheldRegistries: hijacked } : {}),
+    ...(hijacked.length > 0 || unreferenced.length > 0
+      ? { withheldRegistries: [...hijacked, ...unreferenced] }
+      : {}),
   };
 }
 
@@ -364,11 +379,18 @@ export async function runBoardUiCommand(
     assertPathStaysInProject(input.cwd, destination);
   }
   const run = deps.runCli ?? runUiKitCli;
+  const needsProject = boardUiCommandNeedsProject(input.command);
   const result = await run({
     kit: 'boardui',
     args: buildBoardUiArgs(input.command),
     cwd: input.cwd,
     writes: boardUiCommandWrites(input.command),
+    // `list` resolves OUTSIDE the project (no `--cwd` needed: it prints the
+    // vendor's catalogue and was measured working in an empty directory), so
+    // browsing the catalogue cannot run a `node_modules/.bin/boardui` the
+    // repository committed. `init` and `add` write into the project and have
+    // no such escape — that limit is documented above.
+    ...(needsProject ? {} : { resolveIn: 'isolated' as const }),
     ...(input.signal ? { signal: input.signal } : {}),
   });
   return {
@@ -706,6 +728,15 @@ export function parseBoardUiListOutput(output: string): ReadonlySet<string> {
 }
 
 const BOARDUI_FREE_LIST_TTL_MS = 10 * 60 * 1000;
+/**
+ * The vendor's free catalogue, shared across projects.
+ *
+ * Shared is only safe because the single command that fills it (`list`) is
+ * resolved and spawned OUTSIDE any project — see `boardUiCommandNeedsProject`.
+ * Were it run in the project, one repository's output would be deciding tier
+ * gating for every other project opened in this Nexus, and a repository that
+ * commits `node_modules/.bin/boardui` chooses that output.
+ */
 let boardUiFreeListCache: { at: number; slugs: ReadonlySet<string> } | null = null;
 /**
  * The fetch already in flight, keyed by the directory it runs in.
