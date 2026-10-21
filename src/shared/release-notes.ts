@@ -12443,7 +12443,7 @@ export const RELEASE_076368: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076370: AppRelease = {
   version: '0.76.370',
   date: '2026-10-21',
   codename: 'Estúdio de vídeo com contador, estilos e ditado',
@@ -12459,4 +12459,19 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076370: AppRelease = CURRENT_RELEASE;
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.371',
+  date: '2026-10-21',
+  codename: 'Estúdio de vídeo com contador, estilos e ditado',
+  summary: 'No desktop Linux, o pedido do Estúdio chega ao pane, a lista de indisponíveis nasce recolhida, e o Estúdio de vídeo mostra o contador, estilos, ditado e a escrita do pedido. A 0.76.370 e a 0.76.368 no espelho são Windows e não recebem arquivos Linux. A 0.76.369 foi tagueada e não publicada. A 0.76.365 no espelho segue Latest. A 0.76.362 segue Latest na canônica.',
+  highlights: [
+    { title: 'O pedido do Estúdio chega ao agente', detail: 'O pedido do vídeo de apresentação segue com o pane escolhido no "+ Pane"; fechar sem escolher descarta, e um pane que não subiu devolve o pedido à fila. As CLIs indisponíveis ficam atrás de um botão com a contagem.' },
+    { title: 'Contador, estilos, ditado e escrita', detail: 'Cada campo mostra quantos caracteres cabem (até 6.000) e não corta em silêncio. Há predefinições de estilo, ditado que apensa ao texto e reescrita por um modelo barato; se ela falhar, o texto fica.' },
+  ],
+  fixes: [
+    { title: 'Ditado sumia sem serviço de mídia', detail: 'Sem serviço conectado, o ditado não some num campo invisível.' },
+    ...RELEASE_076370.fixes,
+  ],
+};
+
+export const RELEASE_076371: AppRelease = CURRENT_RELEASE;

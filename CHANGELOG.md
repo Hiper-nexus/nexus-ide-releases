@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.76.371 — Estúdio de vídeo com contador, estilos e ditado
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+A 0.76.370 no espelho público é a publicação Windows (Setup, nupkg e RELEASES) e não recebe arquivos Linux. A 0.76.368 no espelho também é Windows e não recebe arquivos Linux. A 0.76.369 foi tagueada e não publicada. A 0.76.367 é o pacote Linux anterior. A 0.76.365 no espelho continua Latest; esta release não toma essa marca. A 0.76.362 continua Latest na canônica.
+
+No desktop Linux, em relação à 0.76.367:
+
+- **O pedido do Estúdio chega ao pane.** "Novo vídeo de apresentação" e o pedido do Estúdio de Mídia ficavam guardados no seletor do "+ Pane" e nada os lia: o pane abria com o campo vazio. O seletor agora entrega o pedido ao agente que você escolher; fechar sem escolher o descarta, e um pane que não chegou a subir devolve o pedido à fila.
+- **"Indisponíveis" nasce recolhida no "+ Pane".** A lista de CLIs desligadas ou sem instalação ocupava o menu e escondia as disponíveis. Agora é um botão com a contagem, que abre os motivos.
+- **O brief do vídeo deixa de perder texto em silêncio.** Os campos do pedido não cortam mais o que você cola: cada um mostra um contador à vista e o envio trava, com o excesso dito por extenso, só quando passa do limite. O produto aceita até 6.000 caracteres.
+- **Predefinições de estilo, ditado e "Escrever meu pedido".** O Estúdio ganhou predefinições de estilo, ditado por voz que apensa ao que já está escrito e uma reescrita do pedido por um modelo barato (se falhar, o seu texto fica intacto).
+- **Correções do ditado e da reescrita.** Ditado em andamento não cai mais no terminal do pane, reescrita feita para outro tipo de pedido não é mais aplicada e, sem serviço de mídia conectado, o ditado não some num campo invisível.
+
+O resto do desktop é o da 0.76.367.
+
 ## 0.76.370 — Estúdio de vídeo com contador, estilos e ditado
 
 Build Windows assinado com o YubiKey (HIPERSEND), em relação à 0.76.368 do Windows.
