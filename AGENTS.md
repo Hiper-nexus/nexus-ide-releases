@@ -2755,6 +2755,66 @@ O que mudou — e o que NÃO mudou:
   encerrar e substituir um Maestro vivo.
 
 
+## Kits de UI: shadcn e BoardUI (21/10)
+
+O Nexus entregava um CONTRATO de design (DESIGN.md com tokens) e nenhum
+componente: o agente recebia a paleta e escrevia cada peça à mão. `src/main/ui-kit/`
+é o kit de verdade. Quem mexer aqui precisa saber:
+
+- **Dois fornecedores, duas superfícies.** O shadcn é CLI (`shadcn@latest`:
+  init, add, apply, preset, view, search, build, docs, info, migrate, eject),
+  tipada em `shadcn-source.ts`. O BoardUI é CLI mínima (`init`, `add`) MAIS as
+  13 tools do MCP dele (`boardui-source.ts`) — catálogo, fonte, exemplos, tema,
+  regras, skill e TODA a licença Pro são tools MCP, não subcomando. Por isso
+  `ui-kit-mcp-call.ts` (cliente stdio de uma chamada) não é luxo.
+- **Argv cru não cruza fronteira nenhuma.** O chamador passa comando TIPADO e os
+  módulos montam o argv: `--cwd` não é setável, `-` à frente de item/caminho/query
+  é recusado ANTES de qualquer ramo (o teste de `.json` rodava primeiro e
+  `-x.json` escapava como "caminho local"), http é recusado, `..` é recusado.
+- **O cwd de um run que ESCREVE nunca é um checkout com `node_modules` symlink**
+  (`assertSafeUiKitCwd`): o install escreveria na árvore compartilhada de todas
+  as worktrees. Recusado antes, não descoberto depois.
+- **`extraEnv` é allowlist POR FORMA, não denylist.** O npm lê qualquer
+  `npm_config_*` como configuração e o loader lê `LD_PRELOAD`/`DYLD_*`: nome
+  precisa carregar palavra de credencial (TOKEN, KEY, SECRET, AUTH, PASS,
+  LICENSE, CREDENTIAL) e as famílias perigosas são recusadas por cima.
+- **Token de registry só para o run que o usa, e só se o projeto aponta para a
+  nossa URL.** `referencedShadcnNamespaces` diz quais namespaces o comando cita
+  (`add button` não cita nenhum). E o shadcn expande `${VAR}` dentro do
+  components.json do PROJETO, que pode vir de repositório alheio: o token só sai
+  quando a ÚNICA entrada que nomeia a variável é o próprio namespace
+  (`envVarReferences` varre header, param e URL). Namespace de que não damos fé
+  no mesmo run ⇒ nada sai. Nunca REaponte um namespace que o projeto já declara.
+- **A chave nunca é argumento.** Licença do BoardUI por stdio (argv apareceria no
+  `ps`), injetada do cofre (`external:boardui-license-key`) pelo serviço. As
+  tools do BoardUI passam por allowlist POR TOOL (`sanitizeBoardUiToolArgs`):
+  o fornecedor documenta `projectDir`, que escaparia do escopo de execução.
+- **A metade grátis funciona sem chave nenhuma** — shadcn inteiro e ~45 itens do
+  BoardUI. Item Pro sem licença não instala nada em silêncio: cai no grátis
+  equivalente, devolve `needsLicense` e nomeia o barrado. Doc e copy novas nunca
+  escrevem que o kit "precisa de chave".
+- **`license_status` sem alcançar a CLI é `unknown`, nunca `absent`:** dizer
+  "sua chave sumiu" porque o npx não rodou é mentira com consequência.
+- **Receitas nomeiam PAPÉIS, não slugs** (`ui-kit-recipes.ts`). Fixar
+  `dashboard-01` seria inventar nome de registry que quebra na renomeação do
+  fornecedor; cada papel resolve contra o catálogo ao vivo e papel sem item volta
+  `unresolved` — nunca preenchido com chute. Palavra-chave mais cedo vence, e
+  entre iguais vence o slug mais CURTO.
+- **O Jev decide qual kit e quando** (superfície `uiKitPick`), com heurística
+  própria embaixo que SEMPRE responde offline e sem chave; `source` diz qual das
+  duas respondeu, para heurística nunca passar por julgamento.
+- **A doutrina "nada de default shadcn" é sobre o LOOK, não o código** (skill
+  `ui-kit`): pega o comportamento/a11y/estados do kit, pinta com os tokens do
+  DESIGN.md. Estar no catálogo bundled faz o Jev SUGERIR a skill; entregar exige
+  `allowedSkills` (em modo governado, ausente = nenhuma skill).
+- **`shadcn eject` não é alcançável por tool**: o fornecedor o documenta como
+  irreversível. Porta de mão única é do operador.
+- `parseShadcnSearchOutput` é RASPAGEM de texto (a CLI não tem `--json` para
+  busca): lista vazia nunca prova registry vazio, e a UI diz isso.
+- Cache em `<userData>/ui-kit/<kit>` a 0600, hash conferido na leitura (payload
+  editado em disco volta como ausente). Conteúdo licenciado fica na máquina que
+  licenciou: nunca no repo nem no pacote.
+
 ## Conclusão de código e validadores Main (06/10)
 
 - Missão `standard`, inclusive sem squad/+Pane, pede verificação por `done`;
