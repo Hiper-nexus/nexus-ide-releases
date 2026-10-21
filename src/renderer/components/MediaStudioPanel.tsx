@@ -26,6 +26,7 @@ import {
   type StudioKind,
 } from './media-studio-options';
 import { VideoProjectsSection } from './VideoProjectsSection';
+import { useObjectiveDictation } from './mission/use-objective-dictation';
 import { useProductFlags } from '../lib/use-product-flags';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 
@@ -124,6 +125,12 @@ export function MediaStudioPanel({
   const [elapsed, setElapsed] = useState(0);
   const [result, setResult] = useState<StudioResult | null>(null);
   const [error, setError] = useState<StudioError | null>(null);
+  // Ditado e reescrita do pedido (pedido do operador, 21/10/2026): quem não
+  // sabe descrever cena fala do seu jeito e a LLM barata vira isso num
+  // pedido que o modelo entende. Fail-open: falha mantém o texto.
+  const [writing, setWriting] = useState(false);
+  const [writeNote, setWriteNote] = useState<string | null>(null);
+  const promptRef = useRef<HTMLTextAreaElement | null>(null);
   const [artifacts, setArtifacts] = useState<MediaArtifactInfo[]>([]);
   // F-1589: `null` = ainda lendo; false = sem projeto aberto.
   const [projectOpen, setProjectOpen] = useState<boolean | null>(null);
@@ -254,6 +261,18 @@ export function MediaStudioPanel({
     };
   }, [artifacts, thumbs]);
 
+  // O microfone deste campo tem claim próprio: o ditado vai para o pedido da
+  // cena, nunca para um pane escondido atrás do Estúdio.
+  const dictation = useObjectiveDictation({
+    enabled: !job,
+    claimId: 'media-studio-prompt',
+    onTranscript: (text) => {
+      setPrompt((current) => (current.trim() ? `${current.replace(/\s+$/u, '')} ${text}` : text));
+      setWriteNote(null);
+      promptRef.current?.focus();
+    },
+  });
+
   if (!open) return null;
 
   // F-1585: as opções de vídeo são as do modelo escolhido (o slider de 2 a
@@ -276,6 +295,37 @@ export function MediaStudioPanel({
     tab === 'video' && selModel ? studioVideoPerSecondUsd(selModel, video ?? undefined) : null;
   const retirementNotice = tab === 'video' && selModel ? studioRetirementNotice(selModel) : null;
   const refPlan = selectedProvider && selModel ? studioReferencePlan(tab, selectedProvider.id, selModel) : null;
+  /**
+   * "Escrever meu pedido": a LLM barata transforma a descrição solta no
+   * pedido que o modelo entende (câmera, luz, ritmo). Falha nunca apaga o
+   * que a pessoa escreveu — o aviso diz que o texto ficou como estava.
+   */
+  async function writePrompt() {
+    const source = prompt.trim();
+    if (!source || writing || job) return;
+    setWriting(true);
+    setWriteNote(null);
+    try {
+      const result = await window.nexus.media?.writePrompt({
+        text: source,
+        task: 'scene',
+        kind: tab === 'video' ? 'video' : 'image',
+        ...(tab === 'video' && video?.duration !== undefined ? { durationSec: video.duration } : {}),
+        ...(effectiveAspect ? { format: effectiveAspect } : {}),
+      });
+      if (result?.written) {
+        setPrompt(result.text);
+        setWriteNote('Reescrito. Leia e ajuste antes de gerar — nada foi gerado ainda.');
+      } else {
+        setWriteNote('Não consegui reescrever agora; o seu texto está como estava.');
+      }
+    } catch {
+      setWriteNote('Não consegui reescrever agora; o seu texto está como estava.');
+    } finally {
+      setWriting(false);
+    }
+  }
+
   // Image-to-video (Kling 2.1, Wan 2.5 i2v): gera com 1 imagem nas Referências.
   const missingImage =
     tab === 'video' && Boolean(selModel) && studioNeedsImage(selModel) && refsSelected.length !== 1;
@@ -510,13 +560,55 @@ export function MediaStudioPanel({
           ) : (
             <section className="ms-form">
               <textarea
+                ref={promptRef}
                 className="ms-prompt"
                 rows={3}
                 placeholder={PLACEHOLDER[tab]}
                 value={prompt}
                 disabled={Boolean(job)}
-                onChange={(e) => setPrompt(e.target.value)}
+                onChange={(e) => {
+                  setPrompt(e.target.value);
+                  setWriteNote(null);
+                }}
               />
+              {/* Falar e reescrever (pedido do operador, 21/10/2026). */}
+              <div className="vp-tools">
+                {dictation.available && (
+                  <button
+                    type="button"
+                    className={
+                      dictation.state === 'listening'
+                        ? 'ms-button ms-button--sm ms-button--on'
+                        : 'ms-button ms-button--sm'
+                    }
+                    aria-pressed={dictation.state === 'listening'}
+                    disabled={Boolean(job)}
+                    onClick={dictation.toggle}
+                  >
+                    {dictation.state === 'listening'
+                      ? 'Ouvindo… toque para parar'
+                      : dictation.state === 'busy'
+                        ? 'Transcrevendo…'
+                        : 'Ditar'}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="ms-button ms-button--sm"
+                  disabled={writing || Boolean(job) || prompt.trim().length < 3}
+                  onClick={() => void writePrompt()}
+                >
+                  {writing ? 'Escrevendo…' : 'Escrever meu pedido'}
+                </button>
+                <span className="vp-tools__hint">
+                  Fale a cena do seu jeito; &quot;Escrever meu pedido&quot; vira a descrição que o modelo entende.
+                </span>
+              </div>
+              {writeNote && (
+                <p className="vp-tools__note" role="status">
+                  {writeNote}
+                </p>
+              )}
               <div className="ms-chips">
                 {EXAMPLES[tab].map((ex) => (
                   <button

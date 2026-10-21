@@ -5,7 +5,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const productFlags = vi.hoisted(() => ({ map: {} as Record<string, boolean> }));
 vi.mock('../lib/use-product-flags', () => ({ useProductFlags: () => productFlags.map }));
 
+vi.mock('../voice/manual-dictation', () => ({
+  requestDictationStart: vi.fn(),
+  requestDictationStop: vi.fn(),
+}));
+
 import { MediaStudioPanel } from './MediaStudioPanel';
+import { useVoiceStore } from '../voice/voice-store';
+import {
+  deliverDictationToClaim,
+  resetDictationTargetForTests,
+} from '../voice/dictation-target';
+import { requestDictationStart } from '../voice/manual-dictation';
 import { useMediaStudioStore } from '../state/media-studio-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
 
@@ -111,6 +122,8 @@ beforeEach(() => {
     },
   });
   useMediaStudioStore.setState({ open: false });
+  resetDictationTargetForTests();
+  useVoiceStore.setState({ info: null, status: 'idle' });
   useProductNavigationStore.setState({
     destination: { kind: 'terminal' },
     settingsReturnDestination: null,
@@ -741,5 +754,107 @@ describe('MediaStudioPanel: prévia do arquivo gerado (F-1586)', () => {
     });
     expect(dialog.querySelector('.ms-result__preview img')).toBeNull();
     expect(dialog.querySelector('.ms-result__name')?.textContent).toBe('generated-3.png');
+  });
+});
+
+describe('Estúdio: ditar e escrever o pedido (pedido do operador, 21/10/2026)', () => {
+  const keyedImage = {
+    id: 'openai-image',
+    kind: 'image',
+    label: 'OpenAI',
+    envVar: 'OPENAI_API_KEY',
+    defaultModel: 'gpt-image-2',
+    models: ['gpt-image-2'],
+    hasKey: true,
+    maskedKey: null,
+  };
+
+  function mediaMocks() {
+    return (window.nexus as unknown as { media: Record<string, ReturnType<typeof vi.fn>> }).media;
+  }
+
+  function typePrompt(dialog: HTMLElement, value: string) {
+    const prompt = dialog.querySelector<HTMLTextAreaElement>('textarea')!;
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+      setter.call(prompt, value);
+      prompt.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    return prompt;
+  }
+
+  function byText(dialog: HTMLElement, text: string): HTMLButtonElement {
+    const found = [...dialog.querySelectorAll('button')].find((b) => b.textContent?.includes(text));
+    if (!found) throw new Error(`botão "${text}" ausente`);
+    return found;
+  }
+
+  it('a fala entra no pedido da cena, sem apagar o que já estava', async () => {
+    mediaMocks().listProviders.mockResolvedValue([keyedImage]);
+    useVoiceStore.setState({ info: { captureAllowed: true } as never, status: 'idle' });
+    const dialog = await openFrom(renderHarness());
+    typePrompt(dialog, 'Um gato astronauta.');
+    await act(async () => {
+      byText(dialog, 'Ditar').click();
+    });
+    expect(requestDictationStart).toHaveBeenCalled();
+    await act(async () => {
+      // Claim próprio: a fala não cai num pane escondido atrás do Estúdio.
+      expect(deliverDictationToClaim('Flutuando sobre a Lua.')).toEqual({
+        paneId: 'ui:media-studio-prompt',
+      });
+    });
+    expect(dialog.querySelector<HTMLTextAreaElement>('textarea')!.value).toBe(
+      'Um gato astronauta. Flutuando sobre a Lua.',
+    );
+  });
+
+  it('sem microfone liberado o botão de ditar não aparece', async () => {
+    mediaMocks().listProviders.mockResolvedValue([keyedImage]);
+    useVoiceStore.setState({ info: { captureAllowed: false } as never, status: 'idle' });
+    const dialog = await openFrom(renderHarness());
+    expect([...dialog.querySelectorAll('button')].some((b) => b.textContent?.trim() === 'Ditar')).toBe(false);
+  });
+
+  it('"Escrever meu pedido" manda a cena com o tipo e troca o texto', async () => {
+    const media = mediaMocks();
+    media.listProviders.mockResolvedValue([keyedImage]);
+    media.writePrompt = vi.fn(async () => ({
+      text: 'Um gato de capacete flutuando sobre a Lua, luz dura de contraluz, câmera lenta.',
+      written: true,
+    }));
+    const dialog = await openFrom(renderHarness());
+    typePrompt(dialog, 'gato astronauta');
+    await act(async () => {
+      byText(dialog, 'Escrever meu pedido').click();
+    });
+    expect(media.writePrompt).toHaveBeenCalledWith(
+      expect.objectContaining({ task: 'scene', kind: 'image', text: 'gato astronauta' }),
+    );
+    expect(dialog.querySelector<HTMLTextAreaElement>('textarea')!.value).toContain('luz dura de contraluz');
+    expect(dialog.textContent).toContain('nada foi gerado ainda');
+  });
+
+  it('falhar ao reescrever mantém o texto e avisa', async () => {
+    const media = mediaMocks();
+    media.listProviders.mockResolvedValue([keyedImage]);
+    media.writePrompt = vi.fn(async () => ({ text: 'gato astronauta', written: false, reason: 'no key' }));
+    const dialog = await openFrom(renderHarness());
+    typePrompt(dialog, 'gato astronauta');
+    await act(async () => {
+      byText(dialog, 'Escrever meu pedido').click();
+    });
+    expect(dialog.querySelector<HTMLTextAreaElement>('textarea')!.value).toBe('gato astronauta');
+    expect(dialog.textContent).toContain('o seu texto está como estava');
+  });
+
+  it('pedido curto demais não chama a LLM', async () => {
+    const media = mediaMocks();
+    media.listProviders.mockResolvedValue([keyedImage]);
+    media.writePrompt = vi.fn();
+    const dialog = await openFrom(renderHarness());
+    typePrompt(dialog, 'ab');
+    expect(byText(dialog, 'Escrever meu pedido').disabled).toBe(true);
+    expect(media.writePrompt).not.toHaveBeenCalled();
   });
 });

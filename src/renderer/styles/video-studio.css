@@ -441,3 +441,120 @@
     transition: none;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Brief: hierarquia do campo, contador e ferramentas do pedido (21/10/2026).
+   O contador e o aviso de excesso existem porque o corte silencioso era o
+   defeito: o texto fica inteiro, visível, e quem decide o que tirar é a
+   pessoa. Cor só por token (DESIGN.md §2).
+--------------------------------------------------------------------------- */
+
+.vp-field__label {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1-5);
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* "obrigatório" / "opcional": a hierarquia que o formulário não tinha. */
+.vp-field__tag {
+  color: var(--text-faint);
+  font-size: var(--text-2xs);
+  font-weight: 400;
+  letter-spacing: 0.02em;
+}
+
+.vp-field__tag--required {
+  color: var(--accent);
+}
+
+.vp-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1-5);
+  margin-top: var(--space-1);
+}
+
+.vp-tools__hint,
+.vp-tools__note {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: var(--text-2xs);
+  line-height: 1.45;
+}
+
+.vp-tools__note {
+  color: var(--text-dim);
+}
+
+.vp-styles {
+  margin-top: var(--space-1-5);
+}
+
+.vp-brief__blocked {
+  color: var(--danger);
+  font-size: var(--text-2xs);
+}
+
+.char-budget {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1-5);
+  margin-top: var(--space-1);
+}
+
+.char-budget__count {
+  color: var(--text-faint);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Perto do teto o número já avisa, antes de virar erro. */
+.char-budget__count--near {
+  color: var(--warn);
+}
+
+.char-budget__count--over {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.char-budget__over {
+  color: var(--danger);
+  font-size: var(--text-2xs);
+  line-height: 1.45;
+}
+
+.char-budget__sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* O campo que passou do teto fica marcado; o texto dele continua intacto. */
+.ms-prompt--over,
+.settings-input--over {
+  border-color: var(--danger);
+}
+
+.ms-prompt--over:focus-visible,
+.settings-input--over:focus-visible {
+  outline-color: var(--danger);
+}
+
+/* A caixa de música ficava empilhada: `.vp-field` é coluna. Linha própria. */
+.vp-check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+}

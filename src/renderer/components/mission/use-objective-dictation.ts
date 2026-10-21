@@ -20,6 +20,13 @@ export type ObjectiveDictationState = 'idle' | 'listening' | 'busy';
 export function useObjectiveDictation(input: {
   enabled: boolean;
   onTranscript: (text: string) => void;
+  /**
+   * Qual superfície está pedindo o microfone. O claim é um só e o último
+   * vence (`dictation-target`), então cada campo que dita precisa do PRÓPRIO
+   * id — dois campos com o mesmo id ficariam indistinguíveis no log de voz.
+   * Omitido, segue o objetivo da missão, que foi o primeiro a ditar.
+   */
+  claimId?: string;
 }): {
   available: boolean;
   state: ObjectiveDictationState;
@@ -31,12 +38,13 @@ export function useObjectiveDictation(input: {
   const onTranscriptRef = useRef(input.onTranscript);
   onTranscriptRef.current = input.onTranscript;
 
+  const claimId = input.claimId ?? 'mission-objective';
   useEffect(() => {
     if (!input.enabled) return undefined;
-    return claimDictationTarget('mission-objective', (text) =>
+    return claimDictationTarget(claimId, (text) =>
       onTranscriptRef.current(text),
     );
-  }, [input.enabled]);
+  }, [input.enabled, claimId]);
 
   // Desarme HONESTO: no clique o status ainda é 'idle' — desarmar ali matava
   // o ciclo antes de nascer (voo dev 19/08: botão voltava a "Ditar" em 1

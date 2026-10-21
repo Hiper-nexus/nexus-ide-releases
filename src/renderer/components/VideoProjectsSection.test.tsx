@@ -5,8 +5,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { usePanePickerStore } from '../state/pane-picker-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
 import { useLayoutStore } from '../state/layout-store';
+import { useVoiceStore } from '../voice/voice-store';
+import { deliverDictationToClaim, resetDictationTargetForTests } from '../voice/dictation-target';
+import { requestDictationStart } from '../voice/manual-dictation';
+import { BRIEF_FIELD_LIMITS } from './video-brief';
+import { VIDEO_STYLE_PRESETS } from './video-style-presets';
 
 vi.mock('../browser/browser-host', () => ({ waitForBrowserPaneCreated: vi.fn(async () => undefined) }));
+// O ditado de verdade abriria o microfone; aqui só provamos o caminho.
+vi.mock('../voice/manual-dictation', () => ({
+  requestDictationStart: vi.fn(),
+  requestDictationStop: vi.fn(),
+}));
 import { VideoProjectsSection } from './VideoProjectsSection';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -77,6 +87,8 @@ afterEach(() => {
   host.remove();
   Reflect.deleteProperty(window, 'nexus');
   usePanePickerStore.setState({ pendingOpen: false, pendingAccountsAdapterId: null, pendingBrief: null });
+  resetDictationTargetForTests();
+  useVoiceStore.setState({ info: null, status: 'idle' });
 });
 
 describe('Vídeos do projeto', () => {
@@ -245,5 +257,177 @@ describe('Vídeos do projeto', () => {
     studio.listProjects.mockResolvedValue({ ok: true, projects: [] });
     await render();
     expect(host.textContent).toContain('Nenhum projeto de vídeo neste projeto ainda');
+  });
+});
+
+/** Escreve num campo controlado como o navegador escreveria. */
+function type(el: HTMLTextAreaElement | HTMLInputElement, value: string) {
+  const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  const setter = Object.getOwnPropertyDescriptor(proto, 'value')!.set!;
+  act(() => {
+    setter.call(el, value);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+
+function productField(): HTMLTextAreaElement {
+  return host.querySelector('textarea')!;
+}
+
+/** O campo pode ser input (Site, Público) ou textarea (Estilo). */
+function fieldByLabel(label: string): HTMLInputElement | HTMLTextAreaElement {
+  const found = [...host.querySelectorAll('label')].find((l) => l.textContent?.startsWith(label));
+  if (!found) throw new Error(`campo "${label}" ausente`);
+  const control = found.querySelector<HTMLInputElement | HTMLTextAreaElement>('input, textarea');
+  if (!control) throw new Error(`campo "${label}" sem controle`);
+  return control;
+}
+
+describe('brief: o texto nunca é cortado calado (21/10/2026)', () => {
+  async function openBrief() {
+    await render();
+    await click('Novo vídeo de apresentação');
+  }
+
+  it('um roteiro de 1.800 caracteres entra inteiro e chega inteiro ao agente', async () => {
+    await openBrief();
+    const roteiro = `Narração do vídeo: ${'a'.repeat(1_800)}`;
+    const field = productField();
+    // O campo não pode ter maxLength: era ele que cortava a colagem em silêncio.
+    expect(field.getAttribute('maxlength')).toBeNull();
+    type(field, roteiro);
+    expect(field.value).toHaveLength(roteiro.length);
+    await click('Escolher o agente no + Pane');
+    expect(usePanePickerStore.getState().pendingBrief).toContain(roteiro);
+  });
+
+  it('o contador mostra quanto já se escreveu e quanto cabe', async () => {
+    await openBrief();
+    type(productField(), 'x'.repeat(1_234));
+    expect(host.textContent).toContain(`1.234 / ${BRIEF_FIELD_LIMITS.product.toLocaleString('pt-BR')}`);
+  });
+
+  it('passar do teto trava o envio, diz o excesso e NÃO apaga nada', async () => {
+    await openBrief();
+    const excesso = 'y'.repeat(BRIEF_FIELD_LIMITS.product + 12);
+    const field = productField();
+    type(field, excesso);
+    // O texto continua todo lá: quem decide o que tirar é a pessoa.
+    expect(field.value).toHaveLength(excesso.length);
+    expect(button('Escolher o agente no + Pane').disabled).toBe(true);
+    expect(host.textContent).toContain('Passou 12 caracteres do limite');
+    expect(host.textContent).toContain('Tire o excesso do campo em vermelho');
+    expect(usePanePickerStore.getState().pendingBrief).toBeNull();
+    // Tirou o excesso: volta a enviar.
+    type(field, 'y'.repeat(BRIEF_FIELD_LIMITS.product));
+    expect(button('Escolher o agente no + Pane').disabled).toBe(false);
+  });
+
+  it('o teto dos campos opcionais também avisa em vez de cortar', async () => {
+    await openBrief();
+    type(productField(), 'Agendify');
+    const publico = fieldByLabel('Público');
+    type(publico, 'p'.repeat(BRIEF_FIELD_LIMITS.audience + 5));
+    expect(publico.value).toHaveLength(BRIEF_FIELD_LIMITS.audience + 5);
+    expect(button('Escolher o agente no + Pane').disabled).toBe(true);
+    expect(host.textContent).toContain('Passou 5 caracteres do limite');
+  });
+
+  it('diz o que é obrigatório e o que é opcional', async () => {
+    await openBrief();
+    expect(host.textContent).toContain('obrigatório');
+    expect(host.textContent).toContain('opcional');
+  });
+});
+
+describe('brief: predefinições de estilo (21/10/2026)', () => {
+  it('escolher uma escreve a direção no campo e ela vai no brief', async () => {
+    await render();
+    await click('Novo vídeo de apresentação');
+    type(productField(), 'Agendify, agenda para barbearias');
+    const motion = VIDEO_STYLE_PRESETS[0]!;
+    await click(motion.label);
+    expect(fieldByLabel('Estilo').value).toBe(motion.text);
+    await click('Escolher o agente no + Pane');
+    expect(usePanePickerStore.getState().pendingBrief).toContain(motion.text);
+  });
+
+  it('a predefinição é ponto de partida: dá para editar por cima', async () => {
+    await render();
+    await click('Novo vídeo de apresentação');
+    type(productField(), 'Agendify');
+    const preset = VIDEO_STYLE_PRESETS[1]!;
+    await click(preset.label);
+    const estilo = fieldByLabel('Estilo');
+    type(estilo, `${preset.text} e com o logo no canto`);
+    // Editado deixa de estar marcado, e o texto editado é o que viaja.
+    expect(button(preset.label).getAttribute('aria-pressed')).toBe('false');
+    await click('Escolher o agente no + Pane');
+    expect(usePanePickerStore.getState().pendingBrief).toContain('e com o logo no canto');
+  });
+
+  it('clicar de novo na mesma predefinição limpa o campo', async () => {
+    await render();
+    await click('Novo vídeo de apresentação');
+    const preset = VIDEO_STYLE_PRESETS[2]!;
+    await click(preset.label);
+    expect(fieldByLabel('Estilo').value).toBe(preset.text);
+    await click(preset.label);
+    expect(fieldByLabel('Estilo').value).toBe('');
+  });
+});
+
+describe('brief: ditar e escrever o pedido (pedido do operador, 21/10/2026)', () => {
+  it('sem microfone disponível o botão de ditar nem aparece', async () => {
+    await render();
+    await click('Novo vídeo de apresentação');
+    expect(host.textContent).not.toContain('Ditar');
+  });
+
+  it('a fala entra no campo sem apagar o que já estava escrito', async () => {
+    useVoiceStore.setState({ info: { captureAllowed: true } as never, status: 'idle' });
+    await render();
+    await click('Novo vídeo de apresentação');
+    type(productField(), 'Agendify.');
+    await click('Ditar');
+    expect(requestDictationStart).toHaveBeenCalled();
+    await act(async () => {
+      // O claim é deste campo: a fala não pode cair num pane escondido.
+      expect(deliverDictationToClaim('Agenda online para barbearias.')).toEqual({
+        paneId: 'ui:video-brief-product',
+      });
+    });
+    expect(productField().value).toBe('Agendify. Agenda online para barbearias.');
+  });
+
+  it('"Escrever meu pedido" troca o texto pelo reescrito', async () => {
+    const writePrompt = vi.fn(async () => ({ text: 'Agendify é uma agenda online para barbearias.', written: true }));
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: { videoStudio: studio, voiceClone, browser, media: { writePrompt } },
+    });
+    await render();
+    await click('Novo vídeo de apresentação');
+    type(productField(), 'agendify ai é tipo uma agenda sabe pra barbearia');
+    await click('Escrever meu pedido');
+    expect(writePrompt).toHaveBeenCalledWith(
+      expect.objectContaining({ task: 'product', text: 'agendify ai é tipo uma agenda sabe pra barbearia' }),
+    );
+    expect(productField().value).toBe('Agendify é uma agenda online para barbearias.');
+    expect(host.textContent).toContain('nada foi enviado ainda');
+  });
+
+  it('falhar ao reescrever mantém o texto da pessoa e diz isso', async () => {
+    const writePrompt = vi.fn(async () => ({ text: 'o original', written: false, reason: 'no key' }));
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: { videoStudio: studio, voiceClone, browser, media: { writePrompt } },
+    });
+    await render();
+    await click('Novo vídeo de apresentação');
+    type(productField(), 'o original');
+    await click('Escrever meu pedido');
+    expect(productField().value).toBe('o original');
+    expect(host.textContent).toContain('o seu texto está como estava');
   });
 });
