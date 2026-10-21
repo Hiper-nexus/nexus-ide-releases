@@ -168,6 +168,15 @@
   max-height: min(76vh, 620px);
 }
 
+/* O atributo `hidden` do HTML vale `display: none` por uma regra do NAVEGADOR,
+   de especificidade baixíssima: qualquer `.classe { display: … }` a vence. O
+   cabeçalho declara `display: flex`, então `hidden` não o escondia e ele ficava
+   na tela durante o passo de confirmação (visto no app em 21/10/2026). A lista
+   ao lado não declara `display` e por isso escondia certo — a diferença enganava.
+   Toda vez que um elemento com `display` próprio for escondido por `hidden`,
+   esta regra precisa existir. */
+.pane-picker__head[hidden] { display: none; }
+
 .pane-picker__head {
   display: flex;
   flex: 0 0 auto;

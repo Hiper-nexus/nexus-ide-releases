@@ -245,6 +245,37 @@ function confirmNewPrompt(
 }
 
 /**
+ * F-1627: o dev NÃO rouba o `nexus://` do app instalado no macOS.
+ *
+ * Medido em 21/10/2026: `app.setAsDefaultProtocolClient` em dev aponta o
+ * handler para o bundle do Electron de desenvolvimento
+ * (`.dev-electron/dist/Electron.app`, id `com.nexuside.dev`) — e esse bundle
+ * **não declara `CFBundleURLTypes`**. O macOS passa a entregar `nexus://` a um
+ * app que nunca reivindicou o esquema, e o link morre em silêncio: nenhum app
+ * abre, nenhum erro aparece, e o login fica para sempre em «Consultando seu
+ * acesso». Como todo `npm run start` roubava o handler e o app empacotado o
+ * reivindicava de volta ao rodar, o sintoma parecia aleatório — era o
+ * «às vezes não pega no primeiro login» que o operador relatava há tempos.
+ *
+ * Reivindicar ali é estritamente pior que não reivindicar: o pacote de dev não
+ * consegue receber o link de qualquer jeito. No Windows e no Linux o registro
+ * de dev funciona (registro do sistema / entrada .desktop), então lá nada muda.
+ *
+ * NÃO existe saída por variável de ambiente. Uma teria sido uma armadilha:
+ * reivindicar em dev no macOS é exatamente o que quebra a entrega, então o
+ * "escape hatch" reproduziria o bug em vez de contorná-lo. Quem precisa que o
+ * build de dev receba `nexus://` tem de declarar `CFBundleURLTypes` no bundle
+ * de desenvolvimento primeiro — sem isso, ser o handler não serve para nada.
+ */
+export function shouldClaimDeepLinkScheme(env: {
+  readonly isDev: boolean;
+  readonly platform: NodeJS.Platform;
+}): boolean {
+  if (!env.isDev) return true;
+  return env.platform !== 'darwin';
+}
+
+/**
  * Registra o protocolo + eventos. Chame UMA vez no boot ANTES de app.whenReady
  * (o single-instance lock precisa ser adquirido cedo). Retorna false quando
  * outra instância já detém o lock (o chamador deve sair).
@@ -254,9 +285,22 @@ export function wireDeepLinks(customHandler?: DeepLinkHandler): boolean {
 
   if (process.defaultApp && process.argv.length >= 2) {
     // Dev: registra apontando para o script atual (`electron . nexus://…`).
-    app.setAsDefaultProtocolClient(SCHEME, process.execPath, [
-      path.resolve(process.argv[1]),
-    ]);
+    // F-1627: no macOS isso ROUBARIA o handler do app instalado para um bundle
+    // que não declara o esquema — o link passaria a morrer em silêncio.
+    if (
+      shouldClaimDeepLinkScheme({ isDev: true, platform: process.platform })
+    ) {
+      app.setAsDefaultProtocolClient(SCHEME, process.execPath, [
+        path.resolve(process.argv[1]),
+      ]);
+    } else {
+      console.warn(
+        `[deep-link] dev não reivindica ${SCHEME}:// no macOS (F-1627): o bundle de ` +
+          'desenvolvimento não declara CFBundleURLTypes e o link morreria em silêncio. ' +
+          'O app instalado continua dono. Para o dev receber o link, declare ' +
+          'CFBundleURLTypes no bundle de desenvolvimento.',
+      );
+    }
   } else {
     // Linux: o handler de nexus:// É uma entrada .desktop, e o registro abaixo
     // só pega se ela já existir. DEB/RPM a instalam; o ZIP portátil não, então

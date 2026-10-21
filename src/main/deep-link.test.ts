@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseDeepLink, deepLinkFromArgv } from './deep-link';
+import { parseDeepLink, deepLinkFromArgv, shouldClaimDeepLinkScheme } from './deep-link';
 
 describe('parseDeepLink', () => {
   it('reconhece nexus://license/<token>', () => {
@@ -117,5 +117,37 @@ describe('deepLinkFromArgv', () => {
 
   it('nenhum argumento nexus:// → null', () => {
     expect(deepLinkFromArgv(['/app', '--x'])).toBeNull();
+  });
+});
+
+/**
+ * F-1627: o dev roubava o `nexus://` do app instalado e o entregava a um
+ * bundle que não declara o esquema — o link morria em silêncio e o login
+ * «não pegava». Provado em 21/10/2026 com `open nexus://quota`.
+ */
+describe('shouldClaimDeepLinkScheme', () => {
+  it('empacotado SEMPRE reivindica, em qualquer plataforma', () => {
+    for (const platform of ['darwin', 'win32', 'linux'] as const) {
+      expect(shouldClaimDeepLinkScheme({ isDev: false, platform })).toBe(true);
+    }
+  });
+
+  it('dev no macOS NÃO reivindica — reivindicar faria o link sumir', () => {
+    expect(shouldClaimDeepLinkScheme({ isDev: true, platform: 'darwin' })).toBe(false);
+  });
+
+  it('dev no Windows e no Linux segue reivindicando (lá o registro funciona)', () => {
+    expect(shouldClaimDeepLinkScheme({ isDev: true, platform: 'win32' })).toBe(true);
+    expect(shouldClaimDeepLinkScheme({ isDev: true, platform: 'linux' })).toBe(true);
+  });
+
+  // Revisão do PR #153 (P2): uma saída por variável de ambiente seria uma
+  // ARMADILHA. Reivindicar em dev no macOS é exatamente o que quebra a
+  // entrega — o bundle de dev não declara CFBundleURLTypes —, então o
+  // "escape hatch" reproduziria o bug em vez de contorná-lo. Não existe.
+  it('não há saída por variável: nada reivindica em dev no macOS', () => {
+    const extra = { NEXUS_DEV_CLAIM_DEEP_LINK: '1' } as Record<string, string>;
+    expect(extra.NEXUS_DEV_CLAIM_DEEP_LINK).toBe('1');
+    expect(shouldClaimDeepLinkScheme({ isDev: true, platform: 'darwin' })).toBe(false);
   });
 });
