@@ -25,6 +25,35 @@ vi.mock('node:child_process', () => {
   return { spawn: explode, spawnSync: explode, exec: explode, execFile: explode };
 });
 
+/**
+ * And it must not reach the Jev either. `pickUiKit` consults it when the
+ * surface is on and a credential exists — an HTTP request carrying the task
+ * text to a third party, plus a write to the local decision log — and the
+ * spawn guard above never saw it, because the Jev travels by fetch. A
+ * reviewer, a readOnly worker and an unconfirmed voice call all reach this
+ * tool, and none of them may cause egress.
+ *
+ * The surface and the credential are forced ON here. Without that this guard
+ * proved nothing: `pickUiKit` returns the heuristic before asking anything
+ * when either is missing, which is the normal state of a test machine — so
+ * the un-fixed code passed. And a throwing `judge` is not enough either,
+ * because `pickUiKit` fails open by design; what the assertion reads is
+ * whether it was CALLED.
+ */
+const jev = vi.hoisted(() => ({
+  judge: vi.fn(() => {
+    throw new Error('a read-only UI-kit tool must never call the Jev');
+  }),
+}));
+vi.mock('../jev/jev-client', () => ({
+  judge: jev.judge,
+  capText: (value: string) => value,
+}));
+vi.mock('../jev/jev-autopilot', () => ({ isJevSurfaceEnabled: () => true }));
+vi.mock('../decision-models/decision-availability', () => ({
+  hasDecisionCredential: () => true,
+}));
+
 const { buildUiKitTools } = await import('./tools-ui-kit');
 const { setUiKitCacheRootResolver, writeCachedItem } = await import(
   '../ui-kit/ui-kit-cache'
@@ -106,6 +135,22 @@ describe('nexus_ui_kit_catalog is read-only in fact, not only by label', () => {
     // BoardUI item from the bundled snapshot would not be downloaded either.
     expect(out.items).toEqual([]);
     expect(out.recommendation.item).toBeNull();
+  });
+
+  it('recommends with the offline rule, never the Jev', async () => {
+    const out = (await tool('nexus_ui_kit_catalog').handler(
+      { kit: 'boardui', task: 'a revenue dashboard with charts' },
+      ctx,
+    )) as {
+      recommendation: { decidedBy: string; offlineRuleOnly: boolean; kit: string | null };
+    };
+
+    // The Jev is reachable in this test (surface and credential forced on),
+    // so a call would be a real egress in someone's repo. It must not happen.
+    expect(jev.judge).not.toHaveBeenCalled();
+    expect(out.recommendation.decidedBy).toBe('heuristic');
+    expect(out.recommendation.offlineRuleOnly).toBe(true);
+    expect(out.recommendation.kit).toBe('boardui');
   });
 
   it('recommends without probing the licence, and says it did not', async () => {

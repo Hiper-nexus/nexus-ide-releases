@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   UiKitCatalogView,
   UiKitIdValue,
@@ -59,20 +59,35 @@ export function UiKitSection() {
     }
   }, []);
 
+  /**
+   * The catalogue request in flight. The reply can take a vendor round trip,
+   * so switching kits — or typing another search — while one is outstanding
+   * let the OLDER reply land last: the list showed the previous kit's items
+   * under the new kit's label, and clicking Install submitted an old slug
+   * with the new `kit`, installing the wrong component or failing for a
+   * reason that made no sense.
+   */
+  const catalogRequest = useRef(0);
+
   const loadCatalog = useCallback(
     async (target: UiKitIdValue, search: string) => {
+      const ticket = (catalogRequest.current += 1);
+      const current = () => catalogRequest.current === ticket;
       setLoadingCatalog(true);
       try {
-        setCatalog(
-          await window.nexus.uiKit.catalog({
-            kit: target,
-            ...(search.trim() ? { query: search.trim() } : {}),
-          }),
-        );
+        const view = await window.nexus.uiKit.catalog({
+          kit: target,
+          ...(search.trim() ? { query: search.trim() } : {}),
+        });
+        if (current()) setCatalog(view);
       } catch {
-        setCatalog({ kit: target, items: [], bestEffort: false, error: 'falhou' });
+        if (current()) {
+          setCatalog({ kit: target, items: [], bestEffort: false, error: 'falhou' });
+        }
       } finally {
-        setLoadingCatalog(false);
+        // Only the newest request owns the spinner: an older one finishing
+        // would otherwise clear it while the current load is still running.
+        if (current()) setLoadingCatalog(false);
       }
     },
     [],

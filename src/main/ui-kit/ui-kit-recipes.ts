@@ -1,5 +1,5 @@
 import type { UiKitId } from './ui-kit-cli';
-import type { UiKitCandidate } from './ui-kit-pick';
+import { candidateNeedsLicense, type UiKitCandidate } from './ui-kit-pick';
 
 /**
  * Ready-made assemblies: "a super admin", "a dashboard with charts".
@@ -162,27 +162,6 @@ export interface ResolvedRecipe {
  * `sidebar` beats `sidebar-with-collapsible-nested-groups` as the thing a
  * recipe should install by default.
  */
-/**
- * Whether a candidate is behind the licence.
- *
- * `unknown` is gated, not free — the same rule the install gate already
- * applies. A slug the bundled snapshot never had is cached as `unknown`, so
- * treating it as usable let a recipe pick a Pro component and then had
- * `installItems` refuse the whole batch at the real gate: the operator got a
- * failure where a free fallback was available.
- *
- * Pro is a BoardUI concept. shadcn has no licence to be missing, and its items
- * are `free` by construction, so gating by tier alone would one day block
- * every shadcn recipe the moment some path produced an `unknown`.
- */
-function candidateNeedsLicense(
-  candidate: UiKitCandidate,
-  proLicensed: boolean | undefined,
-): boolean {
-  if (proLicensed === true) return false;
-  return candidate.kit === 'boardui' && candidate.tier !== 'free';
-}
-
 export function matchRoleCandidate(
   role: UiKitRecipeRole,
   candidates: readonly UiKitCandidate[],

@@ -80,6 +80,53 @@ async function mount() {
   return { host, root };
 }
 
+it('ignores a catalogue reply for a kit the operator already left', async () => {
+  // The reply can take a vendor round trip. Switching kits while one was in
+  // flight let the OLDER reply land last: the previous kit's items showed
+  // under the new kit's label, and Install then submitted an old slug with
+  // the new `kit`.
+  const release: Array<() => void> = [];
+  const uiKit = api({
+    catalog: vi.fn((request: { kit: string }) => {
+      const view = {
+        kit: request.kit,
+        items: [
+          {
+            slug: request.kit === 'shadcn' ? 'button' : 'stat-cards',
+            label: request.kit === 'shadcn' ? 'button' : 'stat-cards',
+            category: 'block',
+            tier: 'free' as const,
+            cached: false,
+          },
+        ],
+        bestEffort: false,
+      };
+      return new Promise((resolve) => {
+        release.push(() => resolve(view));
+      });
+    }),
+  });
+  const { host, root } = await mount();
+  try {
+    const boardui = [...host.querySelectorAll('button')].find(
+      (button) => button.textContent === 'BoardUI',
+    );
+    await act(async () => boardui!.click());
+
+    expect(uiKit.catalog).toHaveBeenCalledTimes(2);
+    // The NEWER request answers first, then the stale one. Order is the point.
+    await act(async () => {
+      release[1]?.();
+      release[0]?.();
+    });
+
+    expect(host.textContent).toContain('stat-cards');
+    expect(host.textContent).not.toContain('button');
+  } finally {
+    act(() => root.unmount());
+  }
+});
+
 it('says the free half needs no key before it mentions a licence', async () => {
   api();
   const { host, root } = await mount();

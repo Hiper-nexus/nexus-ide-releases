@@ -207,6 +207,30 @@ export function pickUiKitByHeuristic(
 }
 
 /**
+ * Whether a candidate is behind the licence.
+ *
+ * `unknown` is gated, not free — the same rule the install gate applies. A
+ * slug the bundled snapshot never had is cached as `unknown`, so reading it as
+ * free made the recommendation claim an item was available and omit
+ * `needsLicense`, only for the install to refuse it.
+ *
+ * Pro is a BoardUI concept. shadcn items are `free` by construction and it has
+ * no licence to be missing, so gating by tier alone would block every shadcn
+ * pick the day some path produced an `unknown` for it.
+ *
+ * This lives here, next to `UiKitCandidate`, because the rule was written
+ * three times — picker, recipe matcher, recipe role loop — and review found
+ * the same bug in two of them.
+ */
+export function candidateNeedsLicense(
+  candidate: UiKitCandidate,
+  proLicensed: boolean | undefined,
+): boolean {
+  if (proLicensed === true) return false;
+  return candidate.kit === 'boardui' && candidate.tier !== 'free';
+}
+
+/**
  * Keep a Pro item from being handed back as if it were installable.
  *
  * Falling back to a free item of the same kit is the useful behaviour: the
@@ -218,7 +242,7 @@ export function applyProGate(
   request: UiKitPickRequest,
 ): UiKitPickResult {
   const item = result.item;
-  if (!item || item.tier !== 'pro' || request.proLicensed === true) {
+  if (!item || !candidateNeedsLicense(item, request.proLicensed)) {
     return result;
   }
   const freeAlternative =

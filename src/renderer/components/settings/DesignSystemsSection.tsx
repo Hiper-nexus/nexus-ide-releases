@@ -45,6 +45,13 @@ export function DesignSystemsSection() {
   const [imports, setImports] = useState<Record<string, ImportState>>({});
   const [designmdKey, setDesignmdKey] = useState('');
   const [keyState, setKeyState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  /**
+   * WHAT the last successful write did. The chip used to read the input field
+   * instead, and the field is cleared on success — so storing a key always
+   * reported "chave removida", the exact opposite of what Main had just done,
+   * about a credential.
+   */
+  const [keyAction, setKeyAction] = useState<'stored' | 'cleared' | null>(null);
 
   /**
    * designmd.ai answers 401 on its body endpoint without a key, and until now
@@ -61,7 +68,11 @@ export function DesignSystemsSection() {
         value,
       });
       setKeyState(result.error ? 'error' : 'saved');
-      if (!result.error) setDesignmdKey('');
+      if (!result.error) {
+        // Recorded from the value that was SENT, before the field is cleared.
+        setKeyAction(value.length > 0 ? 'stored' : 'cleared');
+        setDesignmdKey('');
+      }
       // `value: ''` is how the contract clears the credential; without a
       // control that sends it, a stored key could never be revoked from here.
     } catch {
@@ -148,6 +159,7 @@ export function DesignSystemsSection() {
           onChange={(e) => {
             setDesignmdKey(e.target.value);
             setKeyState('idle');
+            setKeyAction(null);
           }}
         />
         <button
@@ -166,9 +178,9 @@ export function DesignSystemsSection() {
         >
           Remover
         </button>
-        {keyState === 'saved' && (
+        {keyState === 'saved' && keyAction && (
           <span className="settings-chip settings-chip--ok">
-            {designmdKey.trim() ? 'chave guardada' : 'chave removida'}
+            {keyAction === 'stored' ? 'chave guardada' : 'chave removida'}
           </span>
         )}
         {keyState === 'error' && (

@@ -18,7 +18,7 @@ import {
   resolveUiKitRecipe,
   UI_KIT_RECIPES,
 } from '../ui-kit/ui-kit-recipes';
-import { pickUiKit } from '../ui-kit/ui-kit-pick';
+import { pickUiKitByHeuristic } from '../ui-kit/ui-kit-pick';
 import { listCachedItems, readCachedItem } from '../ui-kit/ui-kit-cache';
 import {
   boardUiCandidates,
@@ -169,13 +169,22 @@ export function buildUiKitTools(): McpToolDef[] {
 
         let recommendation: unknown;
         if (task) {
-          // `proLicensed` is left false on purpose: asking the vendor would
-          // mean spawning its MCP server, which is exactly the code execution
-          // this tool must not reach. The Pro gate then falls back to a free
-          // item and reports `needsLicense`, which is the honest answer from a
-          // read-only lane.
+          // The HEURISTIC, never `pickUiKit`.
+          //
+          // `pickUiKit` consults the Jev when the surface is on and a
+          // credential exists: that is an HTTP request carrying the task text
+          // to a third party, plus a write to the local decision log. This
+          // tool is classified `read-only`, which is what puts it within
+          // reach of a reviewer, a readOnly worker and an UNCONFIRMED voice
+          // call — none of which may cause egress or a write. The spawn guard
+          // in the tests never saw it, because the Jev travels by fetch.
+          //
+          // `proLicensed` is left false for the same reason the list is
+          // offline: asking the vendor would spawn its MCP server. The Pro
+          // gate then falls back to a free item and reports `needsLicense`,
+          // which is the honest answer from a read-only lane.
           const seen = new Set(items.map((entry) => entry.slug));
-          const pick = await pickUiKit({
+          const pick = pickUiKitByHeuristic({
             task,
             candidates: [
               ...items,
@@ -198,6 +207,9 @@ export function buildUiKitTools(): McpToolDef[] {
             decidedBy: pick.source,
             reason: pick.reason,
             licenceNotChecked: true,
+            // Said plainly: this lane never asks a model, so the answer is the
+            // offline rule and nothing left this machine.
+            offlineRuleOnly: true,
           };
         }
 

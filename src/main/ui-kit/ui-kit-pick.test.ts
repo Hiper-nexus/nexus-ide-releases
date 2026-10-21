@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { JevResult } from '../jev/jev-client';
 import {
   applyProGate,
+  candidateNeedsLicense,
   pickUiKit,
   pickUiKitByHeuristic,
   taskLooksLikeUiWork,
@@ -36,6 +37,46 @@ function jevResult(answers: JevResult['answers']): JevResult {
 }
 
 const ON = { enabled: () => true, hasKey: () => true };
+
+describe('candidateNeedsLicense', () => {
+  const CACHED_PRO: UiKitCandidate = {
+    kit: 'boardui',
+    slug: 'template-home-dashboard',
+    label: 'Home Dashboard',
+    category: 'cached',
+    tier: 'unknown',
+  };
+
+  it('gates an unknown BoardUI tier, which is how a cached Pro item arrives', () => {
+    // Reading `unknown` as free made the recommendation claim the item was
+    // available and omit `needsLicense`, only for the install to refuse it.
+    expect(candidateNeedsLicense(CACHED_PRO, false)).toBe(true);
+    expect(candidateNeedsLicense(CACHED_PRO, undefined)).toBe(true);
+    expect(candidateNeedsLicense(CACHED_PRO, true)).toBe(false);
+  });
+
+  it('never gates shadcn, which has no licence to be missing', () => {
+    expect(candidateNeedsLicense({ ...CACHED_PRO, kit: 'shadcn' }, false)).toBe(false);
+  });
+
+  it('falls back and reports needsLicense for an unknown-tier pick', () => {
+    const gated = applyProGate(
+      {
+        needsKit: true,
+        kit: 'boardui',
+        item: CACHED_PRO,
+        source: 'heuristic',
+        needsLicense: false,
+        reason: 'matched',
+      },
+      request({ candidates: [CACHED_PRO, DATA_TABLE] }),
+    );
+
+    expect(gated.needsLicense).toBe(true);
+    expect(gated.blockedItem?.slug).toBe('template-home-dashboard');
+    expect(gated.item?.slug).toBe('data-table');
+  });
+});
 
 describe('taskLooksLikeUiWork', () => {
   it('separates UI work from everything else', () => {
