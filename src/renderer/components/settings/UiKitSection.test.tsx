@@ -198,6 +198,113 @@ it('names a registry the project does not declare, instead of an empty list', as
   }
 });
 
+it('finishes a licence that was stored before any project was open', async () => {
+  // Saving a key with the project closed only vaulted it; nothing ever
+  // activated it, and the UI promised it would activate once a project opened.
+  const uiKit = api({
+    status: vi.fn().mockResolvedValue(
+      status({ license: { state: 'unknown', stored: true, masked: '••••9999' } }),
+    ),
+  });
+  const { host, root } = await mount();
+  try {
+    const activate = [...host.querySelectorAll('button')].find((button) =>
+      button.textContent?.startsWith('Ativar a chave guardada'),
+    );
+    expect(activate).toBeTruthy();
+    await act(async () => activate!.click());
+
+    // No key in the call: it reuses the vaulted one.
+    expect(uiKit.license).toHaveBeenCalledWith({ action: 'activate' });
+  } finally {
+    act(() => root.unmount());
+  }
+});
+
+it('keeps Remover reachable when the vendor still holds the activation', async () => {
+  // `stored: false` with `state: 'active'` is the stranded case: hiding the
+  // button would leave the paid seat used with no way to release it.
+  api({
+    status: vi.fn().mockResolvedValue(
+      status({ license: { state: 'active', stored: false, masked: null } }),
+    ),
+  });
+  const { host, root } = await mount();
+  try {
+    expect(
+      [...host.querySelectorAll('button')].some(
+        (button) => button.textContent === 'Remover',
+      ),
+    ).toBe(true);
+  } finally {
+    act(() => root.unmount());
+  }
+});
+
+it('installs an item by its exact name, which the registry hint points at', async () => {
+  // The hint said "install one item by its exact name" and no control did
+  // that: the only Instalar lived in the catalogue list, and an unmapped
+  // registry produces no catalogue items.
+  const uiKit = api({
+    catalog: vi.fn().mockResolvedValue({
+      kit: 'shadcn',
+      items: [],
+      bestEffort: false,
+      unmappedRegistries: ['@acme'],
+    }),
+  });
+  const { host, root } = await mount();
+  try {
+    const field = host.querySelector<HTMLInputElement>(
+      'input[aria-label="Instalar item pelo nome exato"]',
+    );
+    expect(field).toBeTruthy();
+    await act(async () => typeInto(field!, '@acme/auth'));
+    const button = [...host.querySelectorAll('button')].find(
+      (entry) => entry.textContent === 'Instalar pelo nome',
+    );
+    await act(async () => button!.click());
+
+    expect(uiKit.install).toHaveBeenCalledWith({ kit: 'shadcn', items: ['@acme/auth'] });
+  } finally {
+    act(() => root.unmount());
+  }
+});
+
+it('shows the real reason a registry write refused, not the URL rule', async () => {
+  api({
+    registry: vi.fn().mockResolvedValue(
+      status({ registryError: 'o cofre recusou o token' }),
+    ),
+  });
+  const { host, root } = await mount();
+  try {
+    await act(async () =>
+      typeInto(
+        host.querySelector<HTMLInputElement>('input[aria-label="Namespace do registry"]')!,
+        '@acme',
+      ),
+    );
+    await act(async () =>
+      typeInto(
+        host.querySelector<HTMLInputElement>('input[aria-label="URL do registry"]')!,
+        'https://registry.acme.test/r/{name}.json',
+      ),
+    );
+    const add = [...host.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Adicionar',
+    );
+    await act(async () => add!.click());
+
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain(
+      'o cofre recusou o token',
+    );
+    expect(host.querySelector('[role="alert"]')?.textContent).not.toContain('https');
+  } finally {
+    act(() => root.unmount());
+  }
+});
+
 it('says the free half needs no key before it mentions a licence', async () => {
   api();
   const { host, root } = await mount();

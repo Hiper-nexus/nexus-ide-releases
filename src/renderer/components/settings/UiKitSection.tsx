@@ -48,6 +48,7 @@ export function UiKitSection() {
   const [registryNamespace, setRegistryNamespace] = useState('');
   const [registryUrl, setRegistryUrl] = useState('');
   const [registryToken, setRegistryToken] = useState('');
+  const [exactSlug, setExactSlug] = useState('');
   const [registryError, setRegistryError] = useState<string | null>(null);
   const [result, setResult] = useState<UiKitInstallView | null>(null);
 
@@ -120,6 +121,16 @@ export function UiKitSection() {
     }
   }
 
+  async function activateLicense() {
+    setBusy('license');
+    try {
+      await window.nexus.uiKit.license({ action: 'activate' });
+      await refreshStatus();
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function removeLicense() {
     setBusy('license');
     try {
@@ -140,9 +151,11 @@ export function UiKitSection() {
       // an install started a newer request for the OLD kit, whose newer
       // ticket then beat the superseded-request guard and repainted the list
       // under the new kit's label.
-      setResult(await window.nexus.uiKit.install({ kit, ...request }));
+      const view = await window.nexus.uiKit.install({ kit, ...request });
+      setResult(view);
       const now = selection.current;
       await Promise.all([refreshStatus(), loadCatalog(now.kit, now.query)]);
+      return view;
     } finally {
       setBusy(null);
     }
@@ -175,7 +188,8 @@ export function UiKitSection() {
         // Main refuses a URL that is not https, carries credentials, or has no
         // {name} placeholder — and it answers with the list it already had.
         setRegistryError(
-          'Não foi possível salvar. A URL precisa ser https, conter {name} e não levar usuário/senha.',
+          next.registryError ??
+            'Não foi possível salvar. A URL precisa ser https, conter {name} e não levar usuário/senha.',
         );
       }
     } finally {
@@ -275,7 +289,21 @@ export function UiKitSection() {
             >
               {busy === 'license' ? 'Salvando…' : 'Salvar e ativar'}
             </button>
-            {license?.stored && (
+            {license?.stored && license.state !== 'active' && status?.workspaceOpen && (
+              // A key saved before a project was open was never activated.
+              // Finishing it must not mean pasting it again.
+              <button
+                type="button"
+                className="settings-btn"
+                disabled={busy === 'license'}
+                onClick={() => void activateLicense()}
+              >
+                {busy === 'license' ? 'Ativando…' : 'Ativar a chave guardada'}
+              </button>
+            )}
+            {(license?.stored || license?.state === 'active') && (
+              // Also when `stored` is false: the vendor may still hold the
+              // activation, and hiding this button would strand it.
               <button
                 type="button"
                 className="settings-btn"
@@ -395,11 +423,44 @@ export function UiKitSection() {
         <p className="settings-help">
           O projeto ainda não declara {catalog.unmappedRegistries.join(', ')} no{' '}
           <code>components.json</code>, então a busca não alcança esse registry
-          e o token dele fica retido. Instale um item pelo nome exato
-          (<code>{catalog.unmappedRegistries[0]}/algum-item</code>) para o
-          Nexus declarar o namespace no projeto.
+          e o token dele fica retido. Instale um item pelo nome exato no campo
+          abaixo (<code>{catalog.unmappedRegistries[0]}/algum-item</code>) para
+          o Nexus declarar o namespace no projeto.
         </p>
       )}
+      <div className="settings-row">
+        {/*
+          O aviso acima mandava instalar pelo nome exato e não havia controle
+          que fizesse isso: o único Instalar do painel vive na lista do
+          catálogo, e um registry não mapeado não produz item nenhum nela.
+        */}
+        <input
+          className="settings-input"
+          value={exactSlug}
+          placeholder="@meukit/algum-item"
+          aria-label="Instalar item pelo nome exato"
+          onChange={(event) => setExactSlug(event.target.value)}
+        />
+        <button
+          type="button"
+          className="settings-btn"
+          disabled={
+            !status?.workspaceOpen ||
+            busy !== null ||
+            exactSlug.trim().length === 0
+          }
+          onClick={() => {
+            const slug = exactSlug.trim();
+            // Cleared only when it took: losing what the operator typed on a
+            // failure would make them retype the item to read the error.
+            void install({ items: [slug] }).then((view) => {
+              if (view?.ok) setExactSlug('');
+            });
+          }}
+        >
+          {busy === exactSlug.trim() ? 'Instalando…' : 'Instalar pelo nome'}
+        </button>
+      </div>
       {catalog?.bestEffort && catalog.items.length === 0 && !loadingCatalog && (
         <p className="settings-help">
           Nada veio na leitura da lista, e esta CLI respondeu em texto em vez

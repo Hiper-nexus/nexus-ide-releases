@@ -347,9 +347,39 @@ export function registerUiKitIpc(): void {
             ...(result.detail ? { detail: result.detail.slice(0, 200) } : {}),
           };
         }
+        if (parsed.data.action === 'activate') {
+          // The key is already in the vault — stored before a project was
+          // open, so nothing ever activated it. Finishing that must not
+          // require pasting it again.
+          const stored = secrets().getSecret(BOARDUI_LICENSE_SECRET);
+          if (!stored) return await buildLicenseView(cwd);
+          if (!cwd) {
+            return {
+              ...(await buildLicenseView(cwd)),
+              detail: 'Abra um projeto para ativar a chave guardada.',
+            };
+          }
+          const result = await activateBoardUiLicense({ key: stored, cwd }, serviceDeps());
+          const view = await buildLicenseView(cwd);
+          return {
+            ...view,
+            stored: result.stored,
+            ...(result.detail ? { detail: result.detail.slice(0, 200) } : {}),
+          };
+        }
         if (parsed.data.action === 'remove') {
-          if (cwd) await deactivateBoardUiLicense({ cwd }, serviceDeps());
-          else secrets().setSecret(BOARDUI_LICENSE_SECRET, '');
+          if (!cwd) {
+            // Clearing only the Nexus key would strand the vendor's machine
+            // activation: the seat stays used, and with `stored: false` the
+            // panel would hide the very control that releases it.
+            return {
+              ...(await buildLicenseView(cwd)),
+              detail:
+                'Abra um projeto para remover: sem ele a ativação continuaria ' +
+                'presa no fornecedor, gastando um assento.',
+            };
+          }
+          await deactivateBoardUiLicense({ cwd }, serviceDeps());
           return { state: 'absent', stored: false, masked: null };
         }
         return await buildLicenseView(cwd);
@@ -406,14 +436,26 @@ export function registerUiKitIpc(): void {
           ...(auth ? { auth } : {}),
           secretKey: registrySecretKey(input.namespace),
         });
+        // The CREDENTIAL FIRST. A refused vault write used to be ignored
+        // after the registry had already been persisted, so the panel saw a
+        // saved namespace, cleared the password field, and every later install
+        // reported a missing token with the key gone.
+        if (parsed.data.token && registry.secretKey) {
+          const write = secrets().setSecret(registry.secretKey, parsed.data.token.trim());
+          if (!write.ok) {
+            return {
+              ...(await buildStatus()),
+              registryError:
+                write.error ??
+                'o cofre recusou o token; o registry não foi salvo e a chave não foi descartada',
+            };
+          }
+        }
         const next = [
           ...current.filter((entry) => entry.namespace !== registry.namespace),
           registry,
         ];
         replaceOrchSettings({ uiKitRegistries: next } as never);
-        if (parsed.data.token && registry.secretKey) {
-          secrets().setSecret(registry.secretKey, parsed.data.token.trim());
-        }
         return await buildStatus();
       } catch {
         return await buildStatus();

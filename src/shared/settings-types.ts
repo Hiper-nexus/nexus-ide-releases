@@ -233,7 +233,13 @@ export const orchSettingsSchema = z.object({
             })
             .strict()
             .optional(),
-          secretKey: z.string().max(128).optional(),
+          // NO `secretKey` here, on purpose. This travels through the
+          // generic `settings.orchSet` bridge, so a compromised renderer
+          // could name ANY vault entry (`auth:session`, `acctcred:…`) and the
+          // install would read it and hand it to the registry's host. The key
+          // is derived from the validated namespace in Main
+          // (`registrySecretKey`), and `assertRegistry` overwrites whatever a
+          // stored settings file happens to contain.
         })
         .strict(),
     )

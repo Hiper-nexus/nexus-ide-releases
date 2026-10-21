@@ -2850,6 +2850,29 @@ componente: o agente recebia a paleta e escrevia cada peça à mão. `src/main/u
   um que descompacte extrai. O caminho que existe é o preset
   (`KNOWN_UI_KIT_REGISTRIES`): viaja a CONFIGURAÇÃO, e cada operador cola a
   própria chave no cofre.
+- **O nome de cofre de um registry é DERIVADO, nunca carregado (P1, 21/10).**
+  `uiKitRegistries` viaja pela ponte genérica `settings.orchSet`, então um
+  renderer comprometido podia salvar um registry com `secretKey:
+  'auth:session'`, passar pelas checagens de URL configurada e fazer o install
+  LER esse segredo e entregá-lo ao host do registry — `getSecret` não tem
+  guarda de nome reservado, só a escrita tem. Três camadas: o schema não tem
+  mais o campo, `assertRegistry` sobrescreve com `registrySecretKey(namespace)`
+  (corrige settings já envenenado em disco) e `resolveRegistryToken` só lê nome
+  que casa `external:ui-kit-registry-<ns>` (`isRegistrySecretKey`). Campo novo
+  em `UiKitRegistry` que nomeie segredo entra pelo mesmo caminho: derivado em
+  Main, nunca aceito de fora.
+- **Token do registry é gravado ANTES de o registry ser salvo.** `setSecret`
+  devolve `{ok:false}` em vez de lançar; ignorar isso depois de persistir a
+  configuração deixava o painel limpar o campo de senha com a chave perdida e
+  todo install seguinte reclamando token ausente. Falha devolve
+  `registryError` (transitório, só na resposta da escrita) e não salva nada.
+- **Licença com projeto fechado: guardar sim, ativar e remover não.** Guardar
+  só vaultava a chave e nada a ativava depois; `license { action: 'activate' }`
+  reaproveita a chave do cofre (o painel oferece "Ativar a chave guardada"), e
+  remover com projeto fechado é RECUSADO — limpar só a chave do Nexus deixaria
+  a ativação presa no fornecedor gastando assento, e com `stored: false` o
+  painel escondia justamente o botão que a libera. O Remover aparece com
+  `stored` OU `state === 'active'`.
 - **A chave nunca é argumento.** Licença do BoardUI por stdio (argv apareceria no
   `ps`), injetada do cofre (`external:boardui-license-key`) pelo serviço. As
   tools do BoardUI passam por allowlist POR TOOL (`sanitizeBoardUiToolArgs`):

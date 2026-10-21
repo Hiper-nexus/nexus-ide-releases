@@ -78,7 +78,10 @@ export type UiKitInstallRequest = z.infer<typeof uiKitInstallRequestSchema>;
 
 export const uiKitLicenseRequestSchema = z
   .object({
-    action: z.enum(['set', 'remove', 'refresh']),
+    // `activate` reuses the key already in the vault: a licence stored with
+    // no project open was never activated, and the operator should not have to
+    // paste it again to finish.
+    action: z.enum(['set', 'activate', 'remove', 'refresh']),
     /** Only on `set`. Never echoed back. */
     key: z.string().min(1).max(512).optional(),
   })
@@ -178,6 +181,12 @@ export interface UiKitStatusView {
   /** Free item counts, so the panel can say what works with no key. */
   readonly freeItemCount: number;
   readonly proItemCount: number;
+  /**
+   * Why the registry write just refused, when it did. Transient: it is set on
+   * the answer to that write and never by a plain status read, so the panel
+   * can name the real cause instead of blaming the URL.
+   */
+  readonly registryError?: string;
 }
 
 export interface UiKitCatalogView {

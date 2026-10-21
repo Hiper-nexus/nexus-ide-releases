@@ -10,6 +10,7 @@ import {
   assertRegistryUrl,
   buildRegistryEnv,
   mergeRegistriesIntoComponentsJson,
+  isRegistrySecretKey,
   registryEntryNeedsAuth,
   registrySecretKey,
   resolveRegistryAuthContract,
@@ -198,6 +199,48 @@ describe('envVarReferences', () => {
   it('is empty with no registries at all', () => {
     expect(envVarReferences(null).size).toBe(0);
     expect(envVarReferences({ style: 'new-york' }).size).toBe(0);
+  });
+});
+
+describe('the vault name of a registry is DERIVED, never carried', () => {
+  it('overwrites a secretKey that came from outside', () => {
+    // The attack: the generic `settings.orchSet` bridge persists registries,
+    // so a compromised renderer could point one at `auth:session`, pass the
+    // configured-URL checks, and have the install read that secret and hand
+    // it to the registry's host.
+    const poisoned = assertRegistry({
+      ...PRIVATE,
+      secretKey: 'auth:session',
+    });
+
+    expect(poisoned.secretKey).toBe('external:ui-kit-registry-acme');
+  });
+
+  it('derives one even when none was given', () => {
+    const bare: UiKitRegistry = { namespace: '@acme', url: PRIVATE.url };
+
+    expect(assertRegistry(bare).secretKey).toBe('external:ui-kit-registry-acme');
+  });
+
+  it('refuses to READ any name outside the registry namespace', () => {
+    // `getSecret` has no reserved-name guard — only writes do — so this is
+    // the guard at the one place a registry token is read.
+    const vault = (key: string) =>
+      key === 'auth:session' ? 'operator-session-token' : null;
+
+    expect(
+      resolveRegistryToken({ ...PRIVATE, secretKey: 'auth:session' }, vault, {}),
+    ).toBeNull();
+    expect(isRegistrySecretKey('auth:session')).toBe(false);
+    expect(isRegistrySecretKey('external:ui-kit-registry-acme')).toBe(true);
+    expect(isRegistrySecretKey('external:boardui-license-key')).toBe(false);
+  });
+
+  it('still reads the token under its own derived name', () => {
+    const vault = (key: string) =>
+      key === 'external:ui-kit-registry-acme' ? 'tok-abc' : null;
+
+    expect(resolveRegistryToken(assertRegistry(PRIVATE), vault, {})).toBe('tok-abc');
   });
 });
 
