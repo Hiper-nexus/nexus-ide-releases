@@ -485,6 +485,44 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
     ).toBe('pane-agent');
   });
 
+  // O pane aberto na MÃO nascia sempre no padrão do provider: o esforço era
+  // decidido em 70% das rotas de missão e nunca chegava aqui.
+  it('o esforço escolhido chega ao spawn', () => {
+    runPanePickerIntent({
+      kind: 'agent',
+      adapterId: 'codex',
+      model: 'x',
+      effort: 'high',
+    });
+    expect(spawnAgent).toHaveBeenCalledWith(
+      'codex',
+      'x',
+      expect.objectContaining({ effort: 'high' }),
+    );
+  });
+
+  it('o pedido do operador viaja como brief do primeiro turno', () => {
+    runPanePickerIntent({
+      kind: 'agent',
+      adapterId: 'codex',
+      model: 'x',
+      brief: 'arruma o login',
+    });
+    expect(spawnAgent).toHaveBeenCalledWith(
+      'codex',
+      'x',
+      expect.objectContaining({ brief: 'arruma o login' }),
+    );
+  });
+
+  // Sem escolha do operador o spawn tem que ser IDÊNTICO ao de antes do passo
+  // existir — nada de `{ effort: undefined }`, que não é a mesma coisa que a
+  // chave ausente para o modelo persistido do pane.
+  it('sem esforço nem brief o spawn é o de sempre, com dois argumentos', () => {
+    runPanePickerIntent({ kind: 'agent', adapterId: 'codex', model: 'x' });
+    expect(spawnAgent).toHaveBeenCalledWith('codex', 'x');
+  });
+
   // F-1431: "+ Pane" é um pedido de pane NOVO. Um pane vivo da mesma CLI+conta
   // (mesmo ocupado) não pode virar limite de 1 pane por conta disfarçado.
   it('+ Pane numa CLI com pane vivo OCUPADO nasce pane novo e devolve o id novo', () => {

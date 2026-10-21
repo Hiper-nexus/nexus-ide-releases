@@ -20,4 +20,10 @@ export const JEV_CHANNELS = {
   paneHint: 'jev:paneHint',
   /** invoke: renderer → main. Desempate de missão falada entre candidatos (surface missionPick). */
   missionPick: 'jev:missionPick',
+  /**
+   * invoke: renderer → main. Proposta CONSULTIVA de esforço e skill para um
+   * pane aberto na mão do operador ("+ Pane"). Não concede autoridade e não
+   * cria reserva de rota — o spawn segue pelo caminho de sempre.
+   */
+  paneRoute: 'jev:paneRoute',
 } as const;

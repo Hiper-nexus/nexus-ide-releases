@@ -653,3 +653,142 @@
     transform: none;
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* Passo de confirmação do "+ Pane": o que o motor propôs, com o       */
+/* esforço editável antes do pane nascer. Só aparece quando o operador */
+/* digitou um pedido — sem pedido não há o que classificar.            */
+/* ------------------------------------------------------------------ */
+
+.pane-route-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.pane-route-confirm__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.pane-route-confirm__cli {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.pane-route-confirm__note {
+  font-size: 0.8125rem;
+  color: var(--text-dim);
+}
+
+.pane-route-confirm__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.pane-route-confirm__label {
+  font-size: 0.8125rem;
+  color: var(--text-dim);
+}
+
+.pane-route-confirm__efforts {
+  display: flex;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+}
+
+.pane-route-confirm__effort {
+  min-height: 32px;
+  padding: 0 var(--space-2);
+  font-family: var(--font-ui);
+  font-size: 0.8125rem;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: color 120ms var(--ease-out-quart),
+    border-color 120ms var(--ease-out-quart),
+    background-color 120ms var(--ease-out-quart);
+}
+
+.pane-route-confirm__effort:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.pane-route-confirm__effort:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.pane-route-confirm__effort--on {
+  color: var(--text);
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.pane-route-confirm__skill {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--text-dim);
+}
+
+.pane-route-confirm__skill strong {
+  color: var(--text);
+  font-family: var(--font-mono);
+}
+
+.pane-route-confirm__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.pane-route-confirm__cancel,
+.pane-route-confirm__go {
+  min-height: 32px;
+  padding: 0 var(--space-3);
+  font-family: var(--font-ui);
+  font-size: 0.8125rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background-color 120ms var(--ease-out-quart);
+}
+
+.pane-route-confirm__cancel {
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--border);
+}
+
+.pane-route-confirm__cancel:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.pane-route-confirm__go {
+  color: var(--bg);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+.pane-route-confirm__go:hover {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+
+.pane-route-confirm__cancel:focus-visible,
+.pane-route-confirm__go:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

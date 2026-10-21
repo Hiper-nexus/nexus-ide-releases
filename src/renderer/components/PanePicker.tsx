@@ -13,6 +13,7 @@ import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import { usePanePickerStore } from '../state/pane-picker-store';
 import { useProviderStore } from '../state/provider-store';
+import type { PaneRouteEffort } from '../../shared/pane-route';
 import { useSessionStateStore } from '../state/session-state-store';
 import { useToastStore } from '../state/toast-store';
 import { getPaneSessionId } from '../terminal/terminal-host';
@@ -40,6 +41,14 @@ export type PanePickerIntent =
       /** Vazio = subir a CLI no padrão dela (adapter sem catálogo). */
       readonly model: string;
       readonly accountId?: string;
+      /**
+       * Esforço escolhido no passo de confirmação. Ausente = a CLI decide
+       * (sem `--effort` no argv), que é como todo pane aberto na mão nascia
+       * antes deste passo existir.
+       */
+      readonly effort?: PaneRouteEffort;
+      /** Primeiro pedido do operador, entregue quando a CLI estiver pronta. */
+      readonly brief?: string;
     };
 
 /** Banda de topo do menu — espelha o agrupamento do concorrente. */
@@ -723,8 +732,16 @@ export function runPanePickerIntent(intent: PanePickerIntent): string | undefine
     fromAccountLabel: accountLabelOf(focused?.accountId, 'conta anterior'),
     toAccountLabel: accountLabelOf(intent.accountId, DEFAULT_ACCOUNT_LABEL),
   });
-  if (planned.accountId || planned.continuityPack) {
-    return layout.spawnAgent(intent.adapterId, intent.model, planned);
+  // O esforço e o brief são do OPERADOR (passo de confirmação), não do plano
+  // de continuidade — por isso entram aqui e não em `planOperatorAgentSpawn`,
+  // que decide conta e pacote de continuidade. Ausentes, o spawn é idêntico
+  // ao de antes deste passo existir.
+  const chosen = {
+    ...(intent.effort ? { effort: intent.effort } : {}),
+    ...(intent.brief ? { brief: intent.brief } : {}),
+  };
+  if (planned.accountId || planned.continuityPack || intent.effort || intent.brief) {
+    return layout.spawnAgent(intent.adapterId, intent.model, { ...planned, ...chosen });
   }
   return layout.spawnAgent(intent.adapterId, intent.model);
 }

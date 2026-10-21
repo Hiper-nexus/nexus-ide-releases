@@ -1054,6 +1054,7 @@ const api: NexusApi = {
       ipcRenderer.invoke(JEV_CHANNELS.decisionsFeedback, req),
     decisionsStats: () => ipcRenderer.invoke(JEV_CHANNELS.decisionsStats),
     missionPick: (req) => ipcRenderer.invoke(JEV_CHANNELS.missionPick, req),
+    paneRoute: (req) => ipcRenderer.invoke(JEV_CHANNELS.paneRoute, req),
     onPaneHint: (cb) => addListener(jevPaneHintListeners, cb),
   },
   mission: {
