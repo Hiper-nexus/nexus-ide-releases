@@ -12366,7 +12366,7 @@ export const RELEASE_076363: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076364: AppRelease = {
   version: '0.76.364',
   date: '2026-10-21',
   codename: 'O pedido abre o pane, e o login volta',
@@ -12384,4 +12384,18 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076364: AppRelease = CURRENT_RELEASE;
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.365',
+  date: '2026-10-21',
+  codename: 'O Testar do Qwen atualiza o status',
+  summary: 'No desktop Windows, a lista de providers passa a mostrar "chave configurada" logo depois que o Testar do Qwen aceita a chave. Antes ela seguia em "chave não verificada" mesmo com a sonda dizendo "credential accepted". O resto é o da 0.76.364.',
+  highlights: [
+    { title: 'Status do Qwen certo depois do Testar', detail: 'O Testar do Qwen republica a lista de providers: o rótulo passa de "chave não verificada" para o estado real assim que a sonda responde.' },
+  ],
+  fixes: [
+    { title: 'Qwen aceito, mas "chave não verificada"', detail: 'A sonda do Qwen atualizava o cache de prontidão e a lista não era avisada. O handler do Testar agora republica os providers quando o adapter é o Qwen; os demais providers não são afetados.' },
+    ...RELEASE_076364.fixes,
+  ],
+};
+
+export const RELEASE_076365: AppRelease = CURRENT_RELEASE;

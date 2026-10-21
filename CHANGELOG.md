@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.76.365 — O Testar do Qwen atualiza o status
+
+Build Windows x64 local, assinado pelo YubiKey (HIPERSEND). Em relação à 0.76.364:
+
+- **O Testar do Qwen atualiza o status.** A sonda do Qwen gravava o veredito no cache de prontidão, mas a lista de providers só era republicada por outro evento, e ficava em "chave não verificada" depois de "credential accepted". O handler do Testar agora republica a lista quando o provider é o Qwen. Os outros providers não mudam.
+
+O resto do desktop é o da 0.76.364.
+
 ## 0.76.364 — O pedido abre o pane, e o login volta
 
 Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
