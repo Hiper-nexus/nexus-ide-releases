@@ -12282,7 +12282,7 @@ export const RELEASE_076358: AppRelease = {
   fixes: [...RELEASE_076357.fixes],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076359: AppRelease = {
   version: '0.76.359',
   date: '2026-10-20',
   codename: 'Picker prioriza disponíveis',
@@ -12300,4 +12300,22 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076359: AppRelease = CURRENT_RELEASE;
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.360',
+  date: '2026-10-21',
+  codename: 'Jev calibrado e UI no topo',
+  summary: 'No desktop Linux, o Jev fica em jev-1.13.0, a guarda trata o estado como dado e a escolha limítrofe da primeira opção é reperguntada. Ajuste visual leve vai para as CLIs baratas; UI de verdade reveza Opus 5.5, Argon e Astra. O autopilot espera 5 s e o gasto entra na missão. A 0.76.358 continua a publicação macOS. A 0.76.359 é o pacote Linux anterior.',
+  highlights: [
+    { title: 'Jev na versão calibrada', detail: 'O padrão passa a ser jev-1.13.0, a versão em que os limiares foram medidos. Escolha explícita e NEXUS_JEV_MODEL continuam vencendo. Versão recusada tenta jev-latest uma vez.' },
+    { title: 'Estado é dado', detail: 'A guarda de despacho diz ao juiz que texto dirigido ao avaliador, alegação de aprovação ou pedido de veredito não é evidência. A suíte rotulada cobre cinco ataques e cinco chamadas legítimas que parecem ataque.' },
+    { title: 'Viés da primeira opção', detail: 'Escolha cuja vencedora é a primeira opção e a confiança está logo acima do limiar é reperguntada com as opções invertidas. Se mudar, a resposta sai. Vale para helper, missão falada, skill, Marketplace, navegador e rota.' },
+    { title: 'UI no topo e ajuste leve barato', detail: 'Visual de medium para cima reveza só Opus 5.5, Gemini Argon e GPT Astra, com reserva ordenada. Easy de cor, botão ou espaçamento reveza as CLIs do tier. Jogo, Next e 3D vão ao Opus 5.5, senão ao Sonnet 5.5.' },
+  ],
+  fixes: [
+    { title: 'Segredo partido não sai no corte', detail: 'capText redige a janela mantida antes de cortar, com folga de 16 KB, para a triagem, o handoff e a memória não mandarem a cauda de uma chave.' },
+    { title: 'Autopilot de 5 s na missão', detail: 'nexus_browser_do e nexus_computer_do esperam 5 s por passo, sem repetir no timeout. A consulta entra no orçamento da missão. Sem a chave do Jev, a mensagem diz a chave que falta. Linha da Luna conta como Luna.' },
+    ...RELEASE_076359.fixes,
+  ],
+};
+
+export const RELEASE_076360: AppRelease = CURRENT_RELEASE;

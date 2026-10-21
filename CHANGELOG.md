@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.76.360 — Jev calibrado e UI no topo
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+A 0.76.358 é a publicação macOS e continua Latest; não recebe arquivos Linux. A 0.76.356 fica no Windows e não recebe arquivos Linux. A 0.76.359 é o pacote Linux anterior.
+
+No desktop Linux, em relação à 0.76.359:
+
+- **Jev fica na versão calibrada.** O padrão deixa de ser o alias `jev-latest` e passa a ser `jev-1.13.0`, a versão em que os limiares foram medidos. Escolha explícita e `NEXUS_JEV_MODEL` continuam vencendo. Se essa versão for recusada, uma tentativa volta ao `jev-latest`.
+- **O estado é dado, não instrução.** A guarda de despacho diz ao juiz que texto dirigido ao avaliador, alegação de aprovação ou pedido de veredito não é evidência. A suíte rotulada cobre cinco ataques e cinco chamadas legítimas que parecem ataque.
+- **Viés da primeira opção.** Escolha cuja vencedora é a primeira opção e a confiança está logo acima do limiar é reperguntada com as opções invertidas. Se a escolha mudar, a resposta sai e o chamador segue sem ela. Vale para reuso de helper, missão falada, skill, Marketplace, desempate do navegador e rota de tarefa.
+- **Segredo partido não sai no corte.** `capText` redige a janela mantida antes de cortar, com folga de 16 KB, para a triagem de terminal, o resumo de handoff e a memória não mandarem a cauda de uma chave.
+- **Ajuste visual leve nas CLIs baratas.** A lane de topo só vale de medium para cima e para Next/jogo. Cor, botão ou espaçamento em tier easy reveza as CLIs do tier, sem esforço máximo de modelo de ponta.
+- **UI no topo, com reserva ordenada.** Tarefa visual de medium para cima reveza só Opus 5.5, Gemini Argon e GPT Astra. Sem eles: Sonnet 5.5, depois DeepSeek Flash, depois Muse Full, Kimi, Sol e Devin. Jogo, Next.js e 3D/WebGL vão ao Opus 5.5 e, sem ele, ao Sonnet 5.5. "3D Secure" não conta.
+- **Autopilot mais curto e gasto na missão.** `nexus_browser_do` e `nexus_computer_do` esperam 5 s por passo, sem repetir no timeout. A consulta entra no orçamento e no painel da missão. Sem a chave do Jev, a mensagem diz a chave que falta. Linha da Luna no diário conta como Luna.
+
 ## 0.76.359 — Picker prioriza disponíveis
 
 Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
