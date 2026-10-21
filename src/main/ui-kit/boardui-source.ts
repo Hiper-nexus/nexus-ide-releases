@@ -302,3 +302,79 @@ export function maskBoardUiLicenseKey(raw: string): string {
   if (value.length <= 4) return '••••';
   return `••••${value.slice(-4)}`;
 }
+
+/**
+ * Per-tool argument allowlist for the BoardUI MCP tools.
+ *
+ * This is not tidiness. BoardUI documents `projectDir` as an argument ("for
+ * MCP, pass the package's absolute path as projectDir"), so forwarding a
+ * model's `args` object would let it install components into any directory on
+ * the machine — straight out of the pane's execution scope. Only the fields
+ * below survive; the working directory comes from the scope and nowhere else.
+ */
+const BOARDUI_TOOL_ARGS: Record<BoardUiMcpTool, readonly string[]> = {
+  get_started: [],
+  list_components: ['type'],
+  get_component: ['name'],
+  get_usage_examples: ['name'],
+  install_components: ['components'],
+  init_boardui: [],
+  install_rules: [],
+  get_skill: [],
+  install_skill: [],
+  get_theme: [],
+  // The key is injected from the vault after sanitizing, never accepted here.
+  activate_license: [],
+  license_status: [],
+  deactivate_license: [],
+};
+
+export interface SanitizedBoardUiArgs {
+  readonly args: Readonly<Record<string, unknown>>;
+  /** Keys that were refused, so a caller can say what it ignored. */
+  readonly dropped: readonly string[];
+}
+
+const BOARDUI_TYPE_PATTERN = /^[a-z][a-z-]{0,31}$/;
+
+export function sanitizeBoardUiToolArgs(
+  tool: BoardUiMcpTool,
+  raw: unknown,
+): SanitizedBoardUiArgs {
+  const allowed = BOARDUI_TOOL_ARGS[tool];
+  const out: Record<string, unknown> = {};
+  const dropped: string[] = [];
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { args: out, dropped };
+  }
+
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!allowed.includes(key)) {
+      dropped.push(key);
+      continue;
+    }
+    if (key === 'name') {
+      const [slug] = assertBoardUiItems([String(value)]);
+      out.name = slug;
+      continue;
+    }
+    if (key === 'components') {
+      const list = Array.isArray(value) ? value.map((entry) => String(entry)) : [String(value)];
+      out.components = [...assertBoardUiItems(list)];
+      continue;
+    }
+    if (key === 'type') {
+      const type = String(value).trim().toLowerCase();
+      if (!BOARDUI_TYPE_PATTERN.test(type)) {
+        throw new UiKitCliError(
+          'INVALID_ITEM',
+          `a BoardUI item type is a short slug, got: ${String(value).slice(0, 32)}`,
+        );
+      }
+      out.type = type;
+      continue;
+    }
+    dropped.push(key);
+  }
+  return { args: out, dropped };
+}

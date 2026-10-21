@@ -22,6 +22,7 @@ import {
   boardUiToolWrites,
   boardUiTierOf,
   buildBoardUiArgs,
+  sanitizeBoardUiToolArgs,
   maskBoardUiLicenseKey,
   BOARDUI_CATALOG_SNAPSHOT,
   BOARDUI_LICENSE_SECRET,
@@ -30,6 +31,7 @@ import {
 } from './boardui-source';
 import {
   buildScopedRegistryEnv,
+  envVarReferences,
   mergeRegistriesIntoComponentsJson,
   projectRegistryUrls,
   SHADCN_DEFAULT_NAMESPACE,
@@ -94,6 +96,11 @@ export interface UiKitRunResult {
   readonly registryConflicts?: readonly string[];
   /** Configured and referenced, but not declared by the project. */
   readonly unmappedRegistries?: readonly string[];
+  /**
+   * No token was released: the run touches a namespace we cannot vouch for, or
+   * another entry in the project's file references the token's variable.
+   */
+  readonly withheldRegistries?: readonly string[];
 }
 
 export const COMPONENTS_JSON = 'components.json';
@@ -186,10 +193,12 @@ export async function runShadcnCommand(
     referenced.includes(registry.namespace),
   );
   if (needed.length > 0) ensureProjectRegistries(input.cwd, needed);
-  const { env, missing, conflicts, unmapped } = buildScopedRegistryEnv({
+  const components = readComponentsJson(input.cwd);
+  const { env, missing, conflicts, unmapped, hijacked } = buildScopedRegistryEnv({
     registries,
     referenced,
-    projectUrls: projectRegistryUrls(readComponentsJson(input.cwd)),
+    projectUrls: projectRegistryUrls(components),
+    envReferences: envVarReferences(components),
     lookupSecret: get,
   });
   const run = deps.runCli ?? runUiKitCli;
@@ -209,6 +218,7 @@ export async function runShadcnCommand(
     missingRegistryKeys: missing,
     ...(conflicts.length > 0 ? { registryConflicts: conflicts } : {}),
     ...(unmapped.length > 0 ? { unmappedRegistries: unmapped } : {}),
+    ...(hijacked.length > 0 ? { withheldRegistries: hijacked } : {}),
   };
 }
 
@@ -242,6 +252,8 @@ export interface BoardUiToolResult {
   readonly ok: boolean;
   readonly text: string;
   readonly isError: boolean;
+  /** Argument keys the allowlist refused (e.g. a projectDir override). */
+  readonly droppedArgs?: readonly string[];
 }
 
 /**
@@ -253,13 +265,28 @@ export interface BoardUiToolResult {
 export async function callBoardUiTool(
   input: {
     readonly tool: string;
-    readonly args?: Readonly<Record<string, unknown>>;
+    /** Untrusted by design: the allowlist below is what makes it safe. */
+    readonly args?: unknown;
     readonly cwd: string;
     readonly signal?: AbortSignal;
   },
   deps: UiKitServiceDeps = {},
 ): Promise<BoardUiToolResult> {
   const tool = assertBoardUiTool(input.tool);
+  // Every path — tools and panel alike — goes through the allowlist, so a
+  // `projectDir` can never redirect an install out of the execution scope.
+  const sanitized = sanitizeBoardUiToolArgs(tool, input.args);
+  const toolArguments: Record<string, unknown> = { ...sanitized.args };
+  if (tool === 'activate_license') {
+    const stored = vault(deps).get(BOARDUI_LICENSE_SECRET);
+    if (!stored) {
+      throw new UiKitCliError(
+        'NO_LICENSE_STORED',
+        'no BoardUI licence is stored; add it in Settings first',
+      );
+    }
+    toolArguments.licenseKey = assertBoardUiLicenseKey(stored);
+  }
   const call = deps.callMcp ?? callMcpToolOnce;
   const result = await call({
     kit: 'boardui',
@@ -267,10 +294,15 @@ export async function callBoardUiTool(
     writes: boardUiToolWrites(tool),
     method: 'tools/call',
     tool,
-    toolArguments: input.args ?? {},
+    toolArguments,
     ...(input.signal ? { signal: input.signal } : {}),
   });
-  return { ok: !result.isError, text: result.text, isError: result.isError };
+  return {
+    ok: !result.isError,
+    text: result.text,
+    isError: result.isError,
+    ...(sanitized.dropped.length > 0 ? { droppedArgs: sanitized.dropped } : {}),
+  };
 }
 
 export type BoardUiLicenseState = 'active' | 'absent' | 'unknown';
@@ -352,7 +384,6 @@ export async function activateBoardUiLicense(
     const result = await callBoardUiTool(
       {
         tool: 'activate_license',
-        args: { licenseKey: key },
         cwd: input.cwd,
         ...(input.signal ? { signal: input.signal } : {}),
       },

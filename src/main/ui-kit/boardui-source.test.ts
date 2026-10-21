@@ -11,6 +11,7 @@ import {
   boardUiToolWrites,
   buildBoardUiArgs,
   maskBoardUiLicenseKey,
+  sanitizeBoardUiToolArgs,
   BOARDUI_CATALOG_SNAPSHOT,
   BOARDUI_MCP_TOOLS,
 } from './boardui-source';
@@ -127,5 +128,56 @@ describe('the licence key', () => {
   it('masks all but the last four characters', () => {
     expect(maskBoardUiLicenseKey('BUI-1234-WXYZ')).toBe('••••WXYZ');
     expect(maskBoardUiLicenseKey('abc')).toBe('••••');
+  });
+});
+
+describe('sanitizeBoardUiToolArgs', () => {
+  it('drops a projectDir that would escape the execution scope', () => {
+    // BoardUI documents projectDir as an argument, so forwarding a model's
+    // args would let it install into any directory on the machine.
+    const result = sanitizeBoardUiToolArgs('install_components', {
+      components: ['button'],
+      projectDir: '/Users/someone/other-project',
+      cwd: '/tmp',
+      root: '/',
+    });
+
+    expect(result.args).toEqual({ components: ['button'] });
+    expect(result.dropped.sort()).toEqual(['cwd', 'projectDir', 'root']);
+  });
+
+  it('never accepts a licence key as an argument', () => {
+    const result = sanitizeBoardUiToolArgs('activate_license', { licenseKey: 'BUI-X' });
+
+    expect(result.args).toEqual({});
+    expect(result.dropped).toEqual(['licenseKey']);
+  });
+
+  it('validates an item name and a component list', () => {
+    expect(sanitizeBoardUiToolArgs('get_component', { name: 'Date-Picker' }).args)
+      .toEqual({ name: 'date-picker' });
+    expect(() => sanitizeBoardUiToolArgs('get_component', { name: '../secrets' }))
+      .toThrow(UiKitCliError);
+    expect(() => sanitizeBoardUiToolArgs('install_components', { components: ['--help'] }))
+      .toThrow(UiKitCliError);
+  });
+
+  it('refuses a display name rather than quietly rewriting it', () => {
+    // The catalog tool hands back `slug`, so a space means the caller sent
+    // something else. A "cleaned" value is the one that gets through.
+    expect(() => sanitizeBoardUiToolArgs('get_component', { name: 'Date Picker' }))
+      .toThrow(/slug like date-picker/);
+  });
+
+  it('validates the listing type and refuses junk', () => {
+    expect(sanitizeBoardUiToolArgs('list_components', { type: 'block' }).args)
+      .toEqual({ type: 'block' });
+    expect(() => sanitizeBoardUiToolArgs('list_components', { type: '../../etc' }))
+      .toThrow(/short slug/);
+  });
+
+  it('accepts nothing at all for a tool that takes nothing', () => {
+    expect(sanitizeBoardUiToolArgs('get_theme', { anything: 1 }).dropped).toEqual(['anything']);
+    expect(sanitizeBoardUiToolArgs('get_theme', undefined).args).toEqual({});
   });
 });

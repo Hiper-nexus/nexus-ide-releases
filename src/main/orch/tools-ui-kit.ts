@@ -466,15 +466,18 @@ export function buildUiKitTools(): McpToolDef[] {
             };
           }
         }
-        const raw = args.args;
-        const toolArgs =
-          raw && typeof raw === 'object' && !Array.isArray(raw)
-            ? { ...(raw as Record<string, unknown>) }
-            : {};
-        delete toolArgs.licenseKey;
-        delete toolArgs.license_key;
-        const result = await callBoardUiTool({ tool, args: toolArgs, cwd }, serviceDeps());
-        return { ok: result.ok, text: result.text.slice(0, 60_000) };
+        // The service applies the per-tool argument allowlist (and injects the
+        // licence from the vault), so `projectDir` and friends cannot redirect
+        // an install out of this pane's execution scope.
+        const result = await callBoardUiTool(
+          { tool, args: args.args, cwd },
+          serviceDeps(),
+        );
+        return {
+          ok: result.ok,
+          text: result.text.slice(0, 60_000),
+          ...(result.droppedArgs ? { ignoredArgs: result.droppedArgs } : {}),
+        };
       },
     },
   ];

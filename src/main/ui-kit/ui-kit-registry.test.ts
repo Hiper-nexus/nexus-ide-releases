@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { UiKitCliError } from './ui-kit-cli';
 import {
   assertRegistries,
+  buildScopedRegistryEnv,
+  envVarReferences,
+  projectRegistryUrls,
   assertRegistryNamespace,
   assertRegistryUrl,
   buildRegistryEnv,
@@ -169,5 +172,103 @@ describe('buildRegistryEnv', () => {
 describe('registrySecretKey', () => {
   it('derives a stable vault key from the namespace', () => {
     expect(registrySecretKey('@acme')).toBe('external:ui-kit-registry-acme');
+  });
+});
+
+describe('envVarReferences', () => {
+  it('finds a variable referenced in headers, params or a URL', () => {
+    const refs = envVarReferences({
+      registries: {
+        '@acme': { url: 'https://a.test/{name}.json', headers: { Authorization: 'Bearer ${T}' } },
+        '@other': { url: 'https://b.test/{name}.json', params: { token: '${T}' } },
+        '@third': 'https://c.test/{name}.json?k=${OTHER}',
+      },
+    });
+
+    expect([...(refs.get('T') ?? [])].sort()).toEqual(['@acme', '@other']);
+    expect([...(refs.get('OTHER') ?? [])]).toEqual(['@third']);
+  });
+
+  it('is empty with no registries at all', () => {
+    expect(envVarReferences(null).size).toBe(0);
+    expect(envVarReferences({ style: 'new-york' }).size).toBe(0);
+  });
+});
+
+describe('buildScopedRegistryEnv — the token cannot be hijacked', () => {
+  const base = {
+    registries: [PRIVATE],
+    referenced: ['@acme'],
+    lookupSecret: () => 'tok-abc',
+  };
+
+  it('releases the token when only its own namespace references it', () => {
+    const components = {
+      registries: {
+        '@acme': { url: PRIVATE.url, headers: { Authorization: 'Bearer ${ACME_REGISTRY_TOKEN}' } },
+      },
+    };
+
+    const result = buildScopedRegistryEnv({
+      ...base,
+      projectUrls: projectRegistryUrls(components),
+      envReferences: envVarReferences(components),
+    });
+
+    expect(result.env).toEqual({ ACME_REGISTRY_TOKEN: 'tok-abc' });
+    expect(result.hijacked).toEqual([]);
+  });
+
+  it('withholds it when another entry in the project file names the variable', () => {
+    // The leak: shadcn interpolates ${VAR} into config that lives in the
+    // project's own file, so a second entry pointing elsewhere would receive
+    // our token.
+    const components = {
+      registries: {
+        '@acme': PRIVATE.url,
+        '@evil': {
+          url: 'https://evil.test/{name}.json',
+          headers: { Authorization: 'Bearer ${ACME_REGISTRY_TOKEN}' },
+        },
+      },
+    };
+
+    const result = buildScopedRegistryEnv({
+      ...base,
+      projectUrls: projectRegistryUrls(components),
+      envReferences: envVarReferences(components),
+    });
+
+    expect(result.env).toEqual({});
+    expect(result.hijacked).toEqual(['@acme']);
+  });
+
+  it('releases nothing when the run also touches a namespace we cannot vouch for', () => {
+    const components = {
+      registries: { '@acme': PRIVATE.url, '@unknown': 'https://who.test/{name}.json' },
+    };
+
+    const result = buildScopedRegistryEnv({
+      ...base,
+      referenced: ['@acme', '@unknown'],
+      projectUrls: projectRegistryUrls(components),
+      envReferences: envVarReferences(components),
+    });
+
+    expect(result.env).toEqual({});
+    expect(result.hijacked).toEqual(['@unknown']);
+  });
+
+  it('still trusts the public @shadcn namespace alongside a private one', () => {
+    const components = { registries: { '@acme': PRIVATE.url } };
+
+    const result = buildScopedRegistryEnv({
+      ...base,
+      referenced: ['@shadcn', '@acme'],
+      projectUrls: projectRegistryUrls(components),
+      envReferences: envVarReferences(components),
+    });
+
+    expect(result.env).toEqual({ ACME_REGISTRY_TOKEN: 'tok-abc' });
   });
 });
