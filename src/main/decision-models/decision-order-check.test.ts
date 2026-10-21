@@ -30,7 +30,7 @@ describe('F-1626: viés da primeira opção', () => {
   });
 
   it('escolha que se mantém fica, e o custo soma as duas consultas', async () => {
-    const run = vi.fn(async (_: JudgeInput) => result({ pick: choice('a', 0.8) }));
+    const run = vi.fn<(input: JudgeInput) => Promise<JevResult>>(async () => result({ pick: choice('a', 0.8) }));
     const out = await confirmChoiceOrder(input(), result({ pick: choice('a', 0.72), safe: { type: 'noul', noul: 0.1 } }), run);
     expect(out.answers.pick).toMatchObject({ choice: 'a' });
     expect(out.orderCheck).toEqual({ checked: ['pick'], unstable: [] });
