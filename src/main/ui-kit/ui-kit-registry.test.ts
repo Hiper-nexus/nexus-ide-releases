@@ -11,6 +11,7 @@ import {
   mergeRegistriesIntoComponentsJson,
   registryEntryNeedsAuth,
   registrySecretKey,
+  resolveRegistryAuthContract,
   renderRegistryEntry,
   resolveRegistryToken,
   type UiKitRegistry,
@@ -216,6 +217,56 @@ describe('registryEntryNeedsAuth', () => {
     const open: UiKitRegistry = { namespace: '@open', url: PRIVATE.url };
 
     expect(registryEntryNeedsAuth(open, PRIVATE.url)).toBe(false);
+  });
+});
+
+describe('resolveRegistryAuthContract', () => {
+  const stored = PRIVATE.auth;
+
+  it('keeps the stored contract when no token is typed again', () => {
+    // The bug: re-saving an existing private registry without the token
+    // dropped its auth, the project's components.json went back to a bare
+    // URL, installs ran unauthenticated, and nothing reported a missing key.
+    expect(
+      resolveRegistryAuthContract({ namespace: '@acme', stored, hasToken: false }),
+    ).toEqual(stored);
+  });
+
+  it('derives one for a registry whose shape ships with Nexus, before any token', () => {
+    // This is what makes the environment-variable path reachable: with no
+    // auth at all, nothing ever looks the variable up.
+    expect(
+      resolveRegistryAuthContract({ namespace: '@shadcnuikit', hasToken: false }),
+    ).toEqual({
+      kind: 'header',
+      name: 'Authorization',
+      envVar: 'SHADCNUIKIT_REGISTRY_TOKEN',
+    });
+  });
+
+  it('derives one when a token is being saved now', () => {
+    expect(
+      resolveRegistryAuthContract({ namespace: '@acme', hasToken: true })?.envVar,
+    ).toBe('ACME_REGISTRY_TOKEN');
+  });
+
+  it('leaves an unknown registry with no token public', () => {
+    expect(
+      resolveRegistryAuthContract({ namespace: '@open', hasToken: false }),
+    ).toBeUndefined();
+  });
+
+  it('lets an explicit contract win over the stored one', () => {
+    const declared = { kind: 'param' as const, name: 'token', envVar: 'MY_TOKEN' };
+
+    expect(
+      resolveRegistryAuthContract({
+        namespace: '@acme',
+        declared,
+        stored,
+        hasToken: true,
+      }),
+    ).toEqual(declared);
   });
 });
 

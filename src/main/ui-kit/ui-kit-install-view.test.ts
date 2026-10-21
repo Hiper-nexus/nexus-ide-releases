@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { installViewFromPlan, installViewFromRun } from './ui-kit-install-view';
+import {
+  installViewFromItemPlan,
+  installViewFromPlan,
+  installViewFromRun,
+} from './ui-kit-install-view';
 import type { UiKitRunResult } from './ui-kit-service';
 
 function run(over: Partial<UiKitRunResult> = {}): UiKitRunResult {
@@ -81,6 +85,35 @@ describe('installViewFromRun', () => {
     });
 
     expect(view.output).toHaveLength(8_000);
+  });
+});
+
+describe('installViewFromItemPlan', () => {
+  it('reports what a dry run WOULD install, with nothing installed', () => {
+    const view = installViewFromItemPlan({
+      install: ['button'],
+      needsLicense: [],
+    });
+
+    expect(view).toEqual({ ok: true, installed: ['button'] });
+  });
+
+  it('is not ok when the caller named something the licence refuses', () => {
+    const view = installViewFromItemPlan({
+      install: ['button'],
+      needsLicense: ['template-home-dashboard'],
+      licenseState: 'absent',
+    });
+
+    expect(view).toMatchObject({
+      ok: false,
+      installed: ['button'],
+      needsLicense: ['template-home-dashboard'],
+      licenseState: 'absent',
+    });
+    // NOT `unresolved`: the item exists, it needs a key. Saying "no catalogue
+    // item for it" would send the operator looking for the wrong thing.
+    expect(view.unresolved).toBeUndefined();
   });
 });
 

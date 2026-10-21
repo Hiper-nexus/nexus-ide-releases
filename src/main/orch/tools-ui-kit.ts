@@ -157,7 +157,14 @@ export function buildUiKitTools(): McpToolDef[] {
         const kit = parseKit(args);
         const query = str(args, 'query');
         const cached = listCachedItems(kit);
-        const items = offlineCandidates(kit, query);
+        const cachedSlugs = new Set(cached.map((entry) => entry.slug));
+        // `cachedOnly` was declared in the schema and never read, so a caller
+        // asking to work offline got BoardUI's whole bundled snapshot back
+        // with `cached: false` on most of it.
+        const cachedOnly = args.cachedOnly === true;
+        const items = offlineCandidates(kit, query).filter(
+          (entry) => !cachedOnly || cachedSlugs.has(entry.slug),
+        );
         const task = str(args, 'task');
 
         let recommendation: unknown;
@@ -174,8 +181,12 @@ export function buildUiKitTools(): McpToolDef[] {
               ...items,
               // Cross-kit on purpose: asked for a dashboard with kit shadcn,
               // the honest answer may still be a BoardUI item. De-duplicated
-              // because for kit boardui `items` already holds the snapshot.
-              ...boardUiCandidates().filter((entry) => !seen.has(entry.slug)),
+              // because for kit boardui `items` already holds the snapshot,
+              // and withheld under `cachedOnly`, where recommending something
+              // that is not downloaded would not be an answer.
+              ...(cachedOnly
+                ? []
+                : boardUiCandidates().filter((entry) => !seen.has(entry.slug))),
             ].slice(0, 60),
           });
           recommendation = {
@@ -200,6 +211,7 @@ export function buildUiKitTools(): McpToolDef[] {
             cached: cached.some((entry2) => entry2.slug === entry.slug),
           })),
           offline: true,
+          cachedOnly,
           cachedSlugs: cached.map((entry) => entry.slug),
           recipes: UI_KIT_RECIPES.map((recipe) => ({
             id: recipe.id,

@@ -131,6 +131,12 @@ export interface UiKitRegistryView {
   readonly url: string;
   readonly label?: string;
   readonly requiresToken: boolean;
+  /**
+   * The environment variable the CLI interpolates for this registry. The NAME
+   * only — it is what goes into the project's components.json, and what an
+   * operator exports to provision their own machines without pasting a key.
+   */
+  readonly envVar?: string;
   /** Whether a token is stored. The value itself never travels. */
   readonly tokenStored: boolean;
 }

@@ -955,6 +955,45 @@ export async function downloadItemsIntoCache(
   return { cached, failed };
 }
 
+export interface InstallPlan {
+  /** What would be installed. */
+  readonly install: readonly string[];
+  /** Named items the licence would refuse. */
+  readonly needsLicense: readonly string[];
+  readonly licenseState?: BoardUiLicenseState;
+}
+
+/**
+ * What installing these items WOULD do, writing nothing.
+ *
+ * The IPC accepted `dryRun` beside named items and then installed them: only
+ * the recipe branch honoured the flag, so an explicit "show me" modified the
+ * project and could pull dependencies. Everything here is a read — the Pro
+ * gate asks the vendor for its free list and the licence status, neither of
+ * which touches the project.
+ */
+export async function planInstallItems(
+  input: {
+    readonly kit: UiKitId;
+    readonly items: readonly string[];
+    readonly cwd: string;
+    readonly signal?: AbortSignal;
+  },
+  deps: UiKitServiceDeps = {},
+): Promise<InstallPlan> {
+  if (input.kit !== 'boardui') {
+    // shadcn has no licence; there is nothing to gate and nothing to ask.
+    return { install: [...input.items], needsLicense: [] };
+  }
+  const gated = await gatedBoardUiItems(input.items, input.cwd, deps, input.signal);
+  const blocked = new Set(gated.blocked);
+  return {
+    install: input.items.filter((item) => !blocked.has(item)),
+    needsLicense: gated.blocked,
+    licenseState: gated.licenseState,
+  };
+}
+
 /** Install items into the project. The one call that changes the user's code. */
 export async function installItems(
   input: {

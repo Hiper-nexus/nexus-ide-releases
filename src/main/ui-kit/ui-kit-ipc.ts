@@ -30,10 +30,15 @@ import {
   type UiKitCachedTier,
 } from './ui-kit-cache';
 import { liveCandidates, offlineCandidates } from './ui-kit-catalog';
-import { installViewFromPlan, installViewFromRun } from './ui-kit-install-view';
+import {
+  installViewFromItemPlan,
+  installViewFromPlan,
+  installViewFromRun,
+} from './ui-kit-install-view';
 import {
   assertRegistry,
   registrySecretKey,
+  resolveRegistryAuthContract,
   KNOWN_UI_KIT_REGISTRIES,
   type UiKitRegistry,
 } from './ui-kit-registry';
@@ -47,6 +52,7 @@ import {
   boardUiLicenseStatus,
   deactivateBoardUiLicense,
   installItems,
+  planInstallItems,
 } from './ui-kit-service';
 
 /**
@@ -125,6 +131,7 @@ async function buildStatus(): Promise<UiKitStatusView> {
       url: registry.url,
       ...(registry.label ? { label: registry.label } : {}),
       requiresToken: Boolean(registry.auth),
+      ...(registry.auth ? { envVar: registry.auth.envVar } : {}),
       tokenStored: Boolean(
         registry.secretKey && vault.getSecret(registry.secretKey),
       ),
@@ -287,11 +294,14 @@ export function registerUiKitIpc(): void {
           });
         }
 
-        const run = await installItems(
-          { kit, items: items ?? [], cwd },
-          serviceDeps(),
-        );
-        return installViewFromRun(run, { requested: items ?? [] });
+        const named = items ?? [];
+        if (dryRun === true) {
+          return installViewFromItemPlan(
+            await planInstallItems({ kit, items: named, cwd }, serviceDeps()),
+          );
+        }
+        const run = await installItems({ kit, items: named, cwd }, serviceDeps());
+        return installViewFromRun(run, { requested: named });
       } catch (error) {
         return {
           ok: false,
@@ -375,19 +385,17 @@ export function registerUiKitIpc(): void {
 
         const input = parsed.data.registry;
         if (!input) return await buildStatus();
-        // The panel sends namespace + URL + token. The auth CONTRACT (header
-        // name and the variable the CLI interpolates) is derived here: the
-        // renderer should not have to invent it, and a token with nowhere to
-        // go would be stored and never used.
-        const auth =
-          input.auth ??
-          (parsed.data.token
-            ? {
-                kind: 'header' as const,
-                name: 'Authorization',
-                envVar: `${input.namespace.replace(/^@/, '').replace(/[^a-zA-Z0-9]+/g, '_').toUpperCase()}_REGISTRY_TOKEN`,
-              }
-            : undefined);
+        // The panel sends namespace + URL + token; the auth CONTRACT is
+        // resolved in ui-kit-registry, where it is testable (this file cannot
+        // load under test: `handleTrusted` pulls in electron).
+        const auth = resolveRegistryAuthContract({
+          namespace: input.namespace,
+          declared: input.auth,
+          stored: current.find(
+            (entry) => entry.namespace === input.namespace.trim(),
+          )?.auth,
+          hasToken: Boolean(parsed.data.token),
+        });
         // Validated here, before anything is persisted: https only, `{name}`
         // present, no credentials in the URL, header/env names well formed.
         const registry = assertRegistry({

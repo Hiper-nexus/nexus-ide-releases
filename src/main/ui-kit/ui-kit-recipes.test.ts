@@ -27,6 +27,65 @@ const SHADCN_CATALOG = [
   shadcn('settings-form'),
 ];
 
+describe('unknown tier is gated, never assumed free', () => {
+  const role = {
+    key: 'overview',
+    label: 'Visão geral',
+    match: ['dashboard'],
+  } as const;
+
+  function candidate(
+    over: Partial<UiKitCandidate> = {},
+  ): UiKitCandidate {
+    return {
+      kit: 'boardui',
+      slug: 'dashboard-x',
+      label: 'Dashboard',
+      category: 'cached',
+      tier: 'unknown',
+      ...over,
+    };
+  }
+
+  it('blocks an unknown BoardUI candidate without a licence', () => {
+    // A slug the bundled snapshot never had is cached as `unknown`. Treating
+    // it as usable let a recipe pick a Pro component and then had the real
+    // gate refuse the whole batch, where a free fallback existed.
+    const matched = matchRoleCandidate(role, [candidate()], { proLicensed: false });
+
+    expect(matched.item).toBeNull();
+    expect(matched.blocked?.slug).toBe('dashboard-x');
+  });
+
+  it('prefers a free sibling over the unknown one', () => {
+    const matched = matchRoleCandidate(
+      role,
+      [candidate(), candidate({ slug: 'dashboard-free', tier: 'free' })],
+      { proLicensed: false },
+    );
+
+    expect(matched.item?.slug).toBe('dashboard-free');
+  });
+
+  it('lets the unknown through once the licence is active', () => {
+    const matched = matchRoleCandidate(role, [candidate()], { proLicensed: true });
+
+    expect(matched.item?.slug).toBe('dashboard-x');
+  });
+
+  it('never gates shadcn, which has no licence to be missing', () => {
+    // Guarding on tier alone would block every shadcn recipe the day some
+    // path produced an `unknown` for it.
+    const matched = matchRoleCandidate(
+      role,
+      [candidate({ kit: 'shadcn', category: 'registry-item' })],
+      { proLicensed: false },
+    );
+
+    expect(matched.item?.slug).toBe('dashboard-x');
+  });
+});
+
 describe('the recipe catalog', () => {
   it('ships a super admin and finds it by id', () => {
     expect(UI_KIT_RECIPES.map((recipe) => recipe.id)).toContain('super-admin');

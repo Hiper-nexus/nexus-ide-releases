@@ -9,6 +9,7 @@ import type { UiKitRegistry } from './ui-kit-registry';
 import {
   activateBoardUiLicense,
   parseBoardUiListOutput,
+  planInstallItems,
   readsAsActiveLicense,
   listBoardUiFreeSlugs,
   resetBoardUiFreeListCacheForTests,
@@ -366,6 +367,40 @@ describe('where the BoardUI CLI is resolved from', () => {
       expect(run.resolveIn).toBeUndefined();
       expect(run.cwd).toBe(cwd);
     }
+  });
+});
+
+describe('planInstallItems', () => {
+  it('runs the Pro gate and NEVER the install', async () => {
+    // `dryRun` beside named items used to reach `installItems`, so an explicit
+    // "show me" modified the project and could pull dependencies.
+    const h = harness({
+      cli: () => ({ stdout: '  button    Primary button.\n' }),
+      mcp: () => ({ text: 'license: inactive' }),
+    });
+
+    const plan = await planInstallItems(
+      { kit: 'boardui', items: ['button', 'template-home-dashboard'], cwd },
+      h.deps,
+    );
+
+    expect(plan.install).toEqual(['button']);
+    expect(plan.needsLicense).toEqual(['template-home-dashboard']);
+    expect(h.cliRuns.map((run) => run.args[0])).not.toContain('add');
+    expect(h.cliRuns.every((run) => run.writes !== true)).toBe(true);
+  });
+
+  it('asks nothing at all for shadcn, which has no licence', async () => {
+    const h = harness();
+
+    const plan = await planInstallItems(
+      { kit: 'shadcn', items: ['button', 'card'], cwd },
+      h.deps,
+    );
+
+    expect(plan).toEqual({ install: ['button', 'card'], needsLicense: [] });
+    expect(h.cliRuns).toHaveLength(0);
+    expect(h.mcpCalls).toHaveLength(0);
   });
 });
 

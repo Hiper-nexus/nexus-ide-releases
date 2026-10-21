@@ -499,6 +499,14 @@ export function UiKitSection() {
               )}
             </div>
             <p className="settings-list__detail">{registry.url}</p>
+            {registry.envVar && (
+              // Sem o nome da variável o caminho "exporto na minha máquina e
+              // todo Nexus dali já abre com ela" fica indescobrível.
+              <p className="settings-list__detail">
+                Variável: <code>{registry.envVar}</code>
+                {registry.tokenStored ? '' : ' — o token pode vir dela'}
+              </p>
+            )}
             <div className="settings-row">
               <button
                 type="button"

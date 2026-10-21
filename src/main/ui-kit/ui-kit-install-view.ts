@@ -43,6 +43,27 @@ function licenceNames(
   return [...roles, ...refused];
 }
 
+/**
+ * The view for a dry run over NAMED items.
+ *
+ * Deliberately not `installViewFromPlan`: a blocked Pro item is not an
+ * unresolved role. Saying "no catalogue item for X" about something that
+ * exists and needs a key would send the operator looking for the wrong thing.
+ */
+export function installViewFromItemPlan(plan: {
+  readonly install: readonly string[];
+  readonly needsLicense: readonly string[];
+  readonly licenseState?: UiKitInstallView['licenseState'];
+}): UiKitInstallView {
+  return {
+    // Not ok: the caller named items that this project cannot install.
+    ok: plan.needsLicense.length === 0,
+    installed: [...plan.install],
+    ...(plan.needsLicense.length > 0 ? { needsLicense: [...plan.needsLicense] } : {}),
+    ...(plan.licenseState ? { licenseState: plan.licenseState } : {}),
+  };
+}
+
 /** The view for an install that ran. */
 export function installViewFromRun(
   run: UiKitRunResult,

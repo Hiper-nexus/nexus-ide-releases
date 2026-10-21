@@ -77,6 +77,37 @@ describe('nexus_ui_kit_catalog is read-only in fact, not only by label', () => {
     expect(out.recipes.length).toBeGreaterThan(0);
   });
 
+  it('honours cachedOnly instead of returning the whole bundled snapshot', async () => {
+    // The option was declared and never read, so a caller asking to work from
+    // downloaded items only got BoardUI's 69 bundled entries back with
+    // `cached: false` on almost all of them.
+    writeCachedItem(
+      { kit: 'boardui', slug: 'button', payload: 'source', source: 'boardui' },
+      { rootDir: root },
+    );
+
+    const out = (await tool('nexus_ui_kit_catalog').handler(
+      { kit: 'boardui', cachedOnly: true },
+      ctx,
+    )) as { items: { slug: string; cached: boolean }[]; cachedOnly: boolean };
+
+    expect(out.cachedOnly).toBe(true);
+    expect(out.items.map((entry) => entry.slug)).toEqual(['button']);
+    expect(out.items.every((entry) => entry.cached)).toBe(true);
+  });
+
+  it('does not recommend an item it was told is out of reach', async () => {
+    const out = (await tool('nexus_ui_kit_catalog').handler(
+      { kit: 'shadcn', cachedOnly: true, task: 'a revenue dashboard with charts' },
+      ctx,
+    )) as { items: unknown[]; recommendation: { item: string | null } };
+
+    // Nothing is cached in this test, so there is nothing to suggest — and a
+    // BoardUI item from the bundled snapshot would not be downloaded either.
+    expect(out.items).toEqual([]);
+    expect(out.recommendation.item).toBeNull();
+  });
+
   it('recommends without probing the licence, and says it did not', async () => {
     const out = (await tool('nexus_ui_kit_catalog').handler(
       { kit: 'boardui', task: 'a revenue dashboard with charts' },

@@ -286,6 +286,47 @@ export function buildRegistryEnv(
   return { env, missing };
 }
 
+/** The variable this registry's token travels in. Name only, never a value. */
+export function derivedRegistryEnvVar(namespace: string): string {
+  return `${namespace
+    .trim()
+    .replace(/^@/, '')
+    .replace(/[^a-zA-Z0-9]+/g, '_')
+    .toUpperCase()}_REGISTRY_TOKEN`;
+}
+
+/**
+ * The auth contract to persist for a registry the operator just saved.
+ *
+ * Order is the whole point. Re-saving an existing private registry without
+ * typing the token again used to DROP its auth: the stored entry lost the
+ * contract, the project's `components.json` went back to a bare URL, installs
+ * ran unauthenticated, nothing reported a missing key, and the vault token sat
+ * orphaned. So an explicit contract wins, then the one already stored, and
+ * only then is one derived — for a token being saved now, or for a registry
+ * whose shape ships with Nexus, which is what makes the
+ * environment-variable path reachable before any key exists.
+ *
+ * A registry with no stored contract, no token and no preset stays public.
+ */
+export function resolveRegistryAuthContract(input: {
+  readonly namespace: string;
+  /** A contract the caller states outright. */
+  readonly declared?: UiKitRegistryAuth | undefined;
+  /** The contract already stored for this namespace, if any. */
+  readonly stored?: UiKitRegistryAuth | undefined;
+  readonly hasToken: boolean;
+}): UiKitRegistryAuth | undefined {
+  if (input.declared) return input.declared;
+  if (input.stored) return input.stored;
+  if (!input.hasToken && !findKnownRegistry(input.namespace)) return undefined;
+  return {
+    kind: 'header',
+    name: 'Authorization',
+    envVar: derivedRegistryEnvVar(input.namespace),
+  };
+}
+
 /** The vault key for a registry's token, derived from its namespace. */
 export function registrySecretKey(namespace: string): string {
   const normalized = assertRegistryNamespace(namespace);
