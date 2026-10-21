@@ -46,6 +46,7 @@ import type { UpdateState } from '../shared/update-ipc';
 import { ORCH_CHANNELS } from '../shared/orch-channels';
 import type { MissionSummarySnapshot } from '../shared/mission-engine-contract';
 import { REMOTE_CHANNELS } from '../shared/remote-channels';
+import { UI_KIT_CHANNELS } from '../shared/ui-kit-contract';
 import { SETTINGS_CHANNELS } from '../shared/settings-types';
 import type {
   AudioSettings,
@@ -1295,6 +1296,16 @@ const api: NexusApi = {
     spendGet: () => ipcRenderer.invoke(SETTINGS_CHANNELS.spendGet),
     spendSet: (patch) => ipcRenderer.invoke(SETTINGS_CHANNELS.spendSet, patch),
     onSpendChanged: (cb) => addListener(spendSettingsChangedListeners, cb),
+  },
+  uiKit: {
+    status: () => ipcRenderer.invoke(UI_KIT_CHANNELS.status),
+    catalog: (request) => ipcRenderer.invoke(UI_KIT_CHANNELS.catalog, request),
+    install: (request) => ipcRenderer.invoke(UI_KIT_CHANNELS.install, request),
+    license: (request) => ipcRenderer.invoke(UI_KIT_CHANNELS.license, request),
+    registry: (request) => ipcRenderer.invoke(UI_KIT_CHANNELS.registry, request),
+    cacheClear: (request) => ipcRenderer.invoke(UI_KIT_CHANNELS.cacheClear, request),
+    setExternalKey: (request) =>
+      ipcRenderer.invoke(UI_KIT_CHANNELS.externalKey, request),
   },
   workspace: {
     get: () => ipcRenderer.invoke(WORKSPACE_CHANNELS.get),

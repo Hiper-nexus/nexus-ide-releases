@@ -87,6 +87,15 @@ function writeComponentsJson(value: Record<string, unknown>): void {
   fs.writeFileSync(path.join(cwd, 'components.json'), JSON.stringify(value, null, 2));
 }
 
+/** Read one namespace's entry, with "no file at all" as a visible failure. */
+function declaredRegistry(namespace: string): unknown {
+  const written = readComponentsJson(cwd);
+  expect(written).not.toBeNull();
+  const registries = written?.registries;
+  expect(registries).toBeTypeOf('object');
+  return (registries as Record<string, unknown>)[namespace];
+}
+
 const PRIVATE_REGISTRY: UiKitRegistry = {
   namespace: '@acme',
   url: 'https://registry.acme.test/r/{name}.json',
@@ -177,10 +186,7 @@ describe('runShadcnCommand', () => {
 
     await runShadcnCommand({ command: { kind: 'add', items: ['@acme/auth'] }, cwd }, h.deps);
 
-    const written = readComponentsJson(cwd);
-    expect((written?.registries as Record<string, unknown>)['@acme']).toMatchObject({
-      url: PRIVATE_REGISTRY.url,
-    });
+    expect(declaredRegistry('@acme')).toMatchObject({ url: PRIVATE_REGISTRY.url });
     expect(h.cliRuns[0]?.extraEnv).toEqual({ ACME_REGISTRY_TOKEN: 'tok-abc' });
   });
 
@@ -450,9 +456,7 @@ describe('ensureProjectRegistries', () => {
 
     expect(result.wrote).toEqual([]);
     expect(result.conflicts).toEqual(['@acme']);
-    expect(
-      (readComponentsJson(cwd)?.registries as Record<string, unknown>)['@acme'],
-    ).toBe('https://theirs.test/{name}.json');
+    expect(declaredRegistry('@acme')).toBe('https://theirs.test/{name}.json');
   });
 
   it('is a no-op when the mapping already matches', () => {

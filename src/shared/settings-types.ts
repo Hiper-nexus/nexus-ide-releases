@@ -213,6 +213,33 @@ export const orchSettingsSchema = z.object({
     })
     .default(''),
   /**
+   * Registries the shadcn CLI may install from, beyond the public `@shadcn`.
+   * Only the namespace, the URL and the NAME of the token variable live here;
+   * the token itself is in the vault under `external:ui-kit-registry-<ns>`.
+   */
+  uiKitRegistries: z
+    .array(
+      z
+        .object({
+          namespace: z.string().min(2).max(48),
+          url: z.string().min(1).max(512),
+          label: z.string().max(64).optional(),
+          auth: z
+            .object({
+              kind: z.enum(['header', 'param']),
+              name: z.string().min(1).max(64),
+              envVar: z.string().min(1).max(64),
+              scheme: z.enum(['bearer', 'raw']).optional(),
+            })
+            .strict()
+            .optional(),
+          secretKey: z.string().max(128).optional(),
+        })
+        .strict(),
+    )
+    .max(32)
+    .default([]),
+  /**
    * Kit do catálogo local fixado como direção padrão do contrato de design que
    * o bootstrap materializa sozinho (`orch.designDefaultKit`). Vazio = sem
    * pino: a escolha cai no casamento por sinais do objetivo e, se nada casar

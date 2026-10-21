@@ -43,6 +43,29 @@ export function DesignSystemsSection() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [imports, setImports] = useState<Record<string, ImportState>>({});
+  const [designmdKey, setDesignmdKey] = useState('');
+  const [keyState, setKeyState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+
+  /**
+   * designmd.ai answers 401 on its body endpoint without a key, and until now
+   * nothing in the app could store one — the vault was read for
+   * `external:designmd-api-key` and never written, so that source was
+   * unreachable in any shipped build. The keyless sources still answer without
+   * it, which is why this is an optional unlock and not a gate.
+   */
+  async function saveDesignmdKey(value: string) {
+    setKeyState('saving');
+    try {
+      const result = await window.nexus.uiKit.setExternalKey({
+        id: 'designmd',
+        value,
+      });
+      setKeyState(result.error ? 'error' : 'saved');
+      if (!result.error) setDesignmdKey('');
+    } catch {
+      setKeyState('error');
+    }
+  }
 
   async function load(search = '') {
     setLoading(true);
@@ -111,6 +134,39 @@ export function DesignSystemsSection() {
           A importação cria uma proposta para revisão antes de aplicar ao projeto.
         </p>
       </header>
+
+      <div className="settings-row">
+        <input
+          className="settings-input"
+          type="password"
+          autoComplete="off"
+          value={designmdKey}
+          placeholder="Chave da designmd.ai (opcional)"
+          aria-label="Chave da API da designmd.ai"
+          onChange={(e) => {
+            setDesignmdKey(e.target.value);
+            setKeyState('idle');
+          }}
+        />
+        <button
+          type="button"
+          className="settings-btn"
+          disabled={keyState === 'saving' || designmdKey.trim().length === 0}
+          onClick={() => void saveDesignmdKey(designmdKey.trim())}
+        >
+          {keyState === 'saving' ? 'Salvando…' : 'Salvar chave'}
+        </button>
+        {keyState === 'saved' && (
+          <span className="settings-chip settings-chip--ok">chave guardada</span>
+        )}
+        {keyState === 'error' && (
+          <span className="settings-chip">não foi possível guardar</span>
+        )}
+      </div>
+      <p className="settings-help">
+        Os catálogos sem chave (local e getdesign) respondem sem isso. A chave
+        só libera o corpo do DESIGN.md da designmd.ai, que responde 401 sem ela.
+      </p>
 
       <div className="settings-row dsn-search" role="search">
         <input
