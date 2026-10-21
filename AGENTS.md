@@ -2799,20 +2799,30 @@ componente: o agente recebia a paleta e escrevia cada peça à mão. `src/main/u
   quando a ÚNICA entrada que nomeia a variável é o próprio namespace
   (`envVarReferences` varre header, param e URL). Namespace de que não damos fé
   no mesmo run ⇒ nada sai. Nunca REaponte um namespace que o projeto já declara.
-- **Destino escolhido pelo chamador é CONTIDO, não só checado por string.**
-  Os módulos recusam caminho absoluto, `..`, cara de opção e `C:foo`
-  (drive-relativo do Windows: resolve contra o diretório atual do drive, e um
-  teste que exigia barra depois dos dois-pontos o deixava passar). Mas builder
-  puro não vê o disco, e symlink não precisa de `..`: repo não confiado que
-  entrega `components -> /etc` transforma `--path components` em escrita fora
-  do projeto. `assertPathStaysInProject` (chamada no serviço, um ponto só)
-  resolve contra a raiz, exige contenção por `path.relative` e faz realpath do
-  ancestral EXISTENTE mais próximo — é ali que o link aparece. Vale para
-  `--path`/`--dir`/`--output` e para item que é registry local relativo.
-  `--overwrite` com caminho do agente NÃO ganhou portão próprio: o caminho já
-  é provadamente dentro do projeto, a tool já é efeito confirmado, e
-  `nexus_file_write` sobrescreve igual sem portão especial — trava sem dano
-  nomeado é o que a doutrina "menos travas" recusa.
+- **O agente NÃO escolhe destino.** `--path`, `--dir`, `--output` e `registry`
+  não existem na superfície das tools: TRÊS rodadas de revisão acharam três
+  jeitos de passar por checagem de string num caminho de escrita escolhido pelo
+  chamador — `C:foo` (drive-relativo do Windows, resolve contra o diretório
+  atual do drive), ancestral com symlink (não precisa de `..`), e link PENDENTE
+  que o `mkdir -p` depois CRIA fora do projeto. Remendar o quarto não era a
+  resposta: a opção existir é que compra a classe. Os dois kits já instalam
+  onde o PROJETO manda (shadcn pelos `aliases` do components.json, BoardUI na
+  source root), e isso é configuração do operador.
+  `tools-ui-kit-read-only.test.ts` percorre os schemas e reprova se um campo de
+  destino voltar.
+- **Caminho que ainda vem do chamador (item que é registry local relativo) é
+  CONTIDO, não checado por string.** `assertPathStaysInProject` caminha
+  COMPONENTE A COMPONENTE da raiz com `lstat` — que vê o link exista ou não o
+  alvo — e exige que todo link resolva de volta para dentro, com teto de
+  saltos. `existsSync` não servia: ele SEGUE o link, então link para alvo
+  inexistente lia como "não tem nada aqui" e a subida passava por cima. Link
+  pendente apontando para DENTRO continua aceito (a escrita cria o alvo ali, e
+  ali é contido). Também recusa valor não normalizado: checar `" x"` e rodar
+  `"x"` valida um caminho que não é o usado — `destinationsIn` entrega a string
+  que VAI no argv e é switch exaustivo, então tipo de comando novo não compila
+  sem declarar seus caminhos. `--overwrite` NÃO ganhou portão próprio: a tool
+  já é efeito confirmado e `nexus_file_write` sobrescreve igual sem portão
+  especial — trava sem dano nomeado é o que a doutrina "menos travas" recusa.
 - **A chave nunca é argumento.** Licença do BoardUI por stdio (argv apareceria no
   `ps`), injetada do cofre (`external:boardui-license-key`) pelo serviço. As
   tools do BoardUI passam por allowlist POR TOOL (`sanitizeBoardUiToolArgs`):
