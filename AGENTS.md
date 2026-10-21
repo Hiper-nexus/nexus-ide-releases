@@ -2830,6 +2830,26 @@ componente: o agente recebia a paleta e escrevia cada peça à mão. `src/main/u
   sem declarar seus caminhos. `--overwrite` NÃO ganhou portão próprio: a tool
   já é efeito confirmado e `nexus_file_write` sobrescreve igual sem portão
   especial — trava sem dano nomeado é o que a doutrina "menos travas" recusa.
+- **O cache guarda source Pro: risco aceito pelo operador por escrito (21/10).**
+  A licença do BoardUI proíbe *"build a tool that lets others browse, preview,
+  generate, export or customise the Source"*. O Nexus não embute source do
+  fornecedor — dirige a CLI/MCP deles com a chave de quem usa —, mas o cache
+  guarda o item e o `nexus_ui_kit_source` o devolve, o que para um cliente do
+  Nexus com licença Pro própria se parece com a cláusula. O operador foi
+  avisado, respondeu "se estiver funcionando pode deixar, somos pequenos" e
+  assumiu. Mantido como está: conteúdo licenciado fica a 0600 no `userData` da
+  máquina que licenciou, nunca no repo nem no pacote. Quem quiser remover a
+  dúvida: deixar de cachear payload com `tier: 'pro'` é uma linha em
+  `readItemSource`.
+- **A chave de licença de terceiro NUNCA é embutida no produto.** Pedido em
+  21/10 (pôr a chave do Shadcn UI Kit dentro do Nexus para todo usuário) e
+  recusado: a licença deles proíbe por escrito compartilhar *API keys* com
+  quem não está coberto, proíbe *"tools that let others create sites or apps
+  with the products"*, e a sanção listada é revogarem a conta e as chaves do
+  comprador. Chave em bundle também não é compartilhar, é publicar — qualquer
+  um que descompacte extrai. O caminho que existe é o preset
+  (`KNOWN_UI_KIT_REGISTRIES`): viaja a CONFIGURAÇÃO, e cada operador cola a
+  própria chave no cofre.
 - **A chave nunca é argumento.** Licença do BoardUI por stdio (argv apareceria no
   `ps`), injetada do cofre (`external:boardui-license-key`) pelo serviço. As
   tools do BoardUI passam por allowlist POR TOOL (`sanitizeBoardUiToolArgs`):
