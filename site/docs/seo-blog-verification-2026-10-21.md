@@ -18,7 +18,7 @@ Foram adicionados:
 - `/blog/reduzir-consumo-tokens-programando-com-ia/`: contexto, divisão de tarefas e medição por entrega aceita.
 - `/blog/ia-escritora-revisora-modelos-por-papel/`: responsabilidades, revisão da mudança real e validação da estratégia de escrever com menor custo e revisar com maior capacidade.
 
-Cada página tem título/descrição/canonical próprios, Open Graph/Twitter, breadcrumbs, H1 único e links de navegação. Os artigos têm sumário, fontes públicas, links cruzados, autoria institucional NexusIDE e data editorial visível. JSON-LD usa Blog/BlogPosting/BreadcrumbList. `dateModified` corresponde à atualização editorial em 21/10/2026; `datePublished` foi omitido porque a publicação ainda não ocorreu. Nenhum número de preço, benchmark ou economia foi inventado. Links internos e informações do repositório privado não foram publicados nos artigos.
+Cada página tem título/descrição/canonical próprios, Open Graph/Twitter, breadcrumbs, H1 único e links de navegação. Os artigos têm sumário, fontes públicas, links cruzados, autoria institucional NexusIDE e data editorial visível. JSON-LD usa Blog/BlogPosting/BreadcrumbList. `dateModified` corresponde à atualização editorial em 21/10/2026; `datePublished` registra a data real do lançamento autorizado, 21/10/2026; confirmar a publicação no handoff operacional. Nenhum número de preço, benchmark ou economia foi inventado. Links internos e informações do repositório privado não foram publicados nos artigos.
 
 Os quatro HTMLs são entradas explícitas do Vite. Conteúdo, sumários e links estão presentes no build sem depender de JavaScript. Os CTAs levam à seção oficial de downloads, sem tratar clique como instalação ou teste. O sitemap do produto passa de quatro para oito URLs, mantendo todas as anteriores; o da comunidade permanece igual. O novo blog retorna 404 no host da comunidade para evitar uma segunda cópia.
 
@@ -37,7 +37,7 @@ Não há traduções reais: hreflang não foi adicionado. llms.txt e schema espe
 
 Fontes editoriais públicas conferidas: [uso responsável de agentes](https://docs.github.com/en/copilot/responsible-use/agents), [contagem de tokens](https://platform.claude.com/docs/en/build-with-claude/token-counting), [prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching). Recomendações práticas são orientação editorial, não resultados medidos do NexusIDE.
 
-## Plano de PR e publicação — pendente de autorização coordenada
+## Plano de PR e publicação — autorizado em 21/10/2026
 
 1. Apresentar este diff e os artefatos ao coordenador; obter autorização específica antes de push/PR/publicação. A negativa anterior sobre uma PR extra de CI não foi retentada.
 2. Com autorização, reconfirmar main e produção; integrar apenas os arquivos desta tarefa, resolver eventuais mudanças concorrentes e repetir suíte/build/revisão se houver mudança de código.
@@ -45,4 +45,4 @@ Fontes editoriais públicas conferidas: [uso responsável de agentes](https://do
 4. Depois de merge e autorização de deploy, usar cópia limpa do commit aprovado, `npm ci`, `npm test`, `npm run build` e o procedimento de deploy do site documentado no AGENTS.md. Atualizações do catálogo são um passo separado e precisam ser inspecionadas; não misturar um snapshot alterado não revisado no deploy.
 5. Validar em produção HTTP 200/HTML das quatro páginas, canonical/JSON-LD, sitemap com oito URLs, robots e redirects, além de integridade dos fluxos de download e consentimento. A tarefa separada de Search Console poderá reenviar o sitemap existente depois dessa prova HTTP.
 
-Pendência externa: autorização coordenada para PR e publicação. Nenhuma ação foi negada pelo auto-review nesta etapa; erros iniciais de sandbox/rede foram resolvidos com execuções locais/read-only autorizadas. Produção não contém ainda o blog.
+Autorização de produção recebida em 21/10/2026 às 20:32 UTC. Nenhuma ação foi negada pelo auto-review nesta etapa; erros iniciais de sandbox/rede foram resolvidos com execuções locais/read-only autorizadas. Produção não contém ainda o blog.
