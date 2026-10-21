@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 4173",
     "build": "node scripts/social-card.mjs && vite build",
-    "test": "node --test src/ads-consent.test.js worker/*.test.js src/datacafe/*.test.js src/downloads/*.test.js src/plans/*.test.js src/sorteio/*.test.js src/voice/*.test.js src/benchmarks/*.test.js src/hero/*.test.js src/pages/*.test.js src/nav.test.js src/responsive.test.js src/calm-motion.test.js",
+    "test": "node --test src/ads-consent.test.js src/download-conversion.test.js worker/*.test.js src/datacafe/*.test.js src/downloads/*.test.js src/plans/*.test.js src/sorteio/*.test.js src/voice/*.test.js src/benchmarks/*.test.js src/hero/*.test.js src/pages/*.test.js src/nav.test.js src/responsive.test.js src/calm-motion.test.js",
     "releases:update": "node scripts/update-release-catalog.mjs",
     "benchmarks:update": "node scripts/update-benchmarks.mjs",
     "preview": "vite preview --host 127.0.0.1 --port 4173",
