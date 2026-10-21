@@ -416,3 +416,61 @@ it('logout revokes the unsaved pair apiFetch was using; logout and a refused ref
   discardRejectedSession('r', store);
   expect(steps).toEqual(['drop', 'clear']);
 });
+
+/**
+ * O `clearAccess` REAL (license-access.ts) chama `resetPendingLogin()`, que
+ * incrementa `authGeneration`. O mock padrão destes testes é um no-op, e foi
+ * por isso que o defeito passou: na vida real o próprio exchange mudava a
+ * geração no meio e depois media `superseded()` contra ela.
+ */
+describe('exchangeAuthCode — o clearAccess do próprio exchange não é um login concorrente', () => {
+  beforeEach(() => resetPendingLogin());
+
+  const realClearAccess = () => vi.fn(() => { resetPendingLogin(); });
+
+  async function pendingState(d: ReturnType<typeof deps>): Promise<string> {
+    expect((await beginLogin('google', d)).ok).toBe(true);
+    const url = new URL((d.openExternal as ReturnType<typeof vi.fn>).mock.calls[0][0] as string);
+    const state = url.searchParams.get('app_state');
+    expect(state).toBeTruthy();
+    return state as string;
+  }
+
+  it('falha de gravação diz o motivo REAL, não "login superseded"', async () => {
+    const d = deps({
+      clearAccess: realClearAccess(),
+      setSecret: vi.fn().mockReturnValue({ ok: false, error: 'keychain recusou' }),
+    });
+    const state = await pendingState(d);
+    const out = await exchangeAuthCode('c', state, d);
+    expect(out.ok).toBe(false);
+    // Antes da correção isto vinha como 'login superseded' e escondia a causa.
+    expect(out.error).toBe('exchange-storage');
+  });
+
+  it('licença inválida também diz o motivo real', async () => {
+    const d = deps({
+      clearAccess: realClearAccess(),
+      applyLicense: vi.fn().mockReturnValue({ ok: false }),
+    });
+    const state = await pendingState(d);
+    const out = await exchangeAuthCode('c', state, d);
+    expect(out.ok).toBe(false);
+    expect(out.error).toBe('exchange-license-invalid');
+  });
+
+  it('o caminho feliz segue passando com o clearAccess real', async () => {
+    const d = deps({ clearAccess: realClearAccess() });
+    const state = await pendingState(d);
+    await expect(exchangeAuthCode('c', state, d)).resolves.toEqual({ ok: true });
+  });
+
+  // A trava de verdade continua existindo: um login NOVO invalida o anterior.
+  it('um login concorrente de verdade ainda invalida o anterior', async () => {
+    const d = deps({ clearAccess: realClearAccess() });
+    const state = await pendingState(d);
+    expect((await beginLogin('github', deps())).ok).toBe(true);
+    const out = await exchangeAuthCode('c', state, d);
+    expect(out.ok).toBe(false);
+  });
+});

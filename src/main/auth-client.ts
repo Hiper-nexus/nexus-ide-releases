@@ -207,7 +207,7 @@ export async function exchangeAuthCode(
   if (!state || state !== pending.nonce) {
     return { ok: false, error: 'state não confere com o login pendente' };
   }
-  const generation = authGeneration;
+  let generation = authGeneration;
   const codeVerifier = pending.codeVerifier;
   const attempt = beginSequence;
   const superseded = (): boolean => generation !== authGeneration;
@@ -250,6 +250,12 @@ export async function exchangeAuthCode(
     if (licenca !== undefined && !deps.validateLicense(licenca, profile.data.id).ok) return reject('exchange-license-invalid');
     failure = 'exchange-storage';
     deps.clearAccess();
+    // `clearAccess()` chama `resetPendingLogin()`, que incrementa a geração —
+    // e esse incremento é NOSSO, não de um login concorrente. Sem rebaselinar
+    // aqui, todo `reject()` daqui para baixo respondia "login superseded" e
+    // engolia o motivo real (Keychain recusando a gravação, licença inválida).
+    // Era o que fazia o login falhar "às vezes, no primeiro" sem explicação.
+    generation = authGeneration;
     // Falha FECHADO: se qualquer persistência falhar, o login não "parece"
     // ter dado certo com sessão/licença ausentes.
     const s1 = deps.setSecret('auth:session', json.data.session);
