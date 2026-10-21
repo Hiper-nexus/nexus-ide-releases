@@ -38,6 +38,7 @@ export const JEV_INTAKE_SKILLS: readonly string[] = [
 const SKILL_DESCRIPTIONS: Record<string, string> = {
   impeccable: 'UI/design',
   dembrandt: 'UI/design',
+  'ui-kit': 'componentes/blocos/dashboards prontos (shadcn, BoardUI)',
   archify: 'diagramas',
   superpowers: 'planejamento/execução',
   bridgesecurity: 'segurança',

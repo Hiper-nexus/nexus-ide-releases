@@ -976,7 +976,7 @@ const RAW_SQUADS: Squad[] = [
         category: 'orchestrator',
         cli: 'claude',
         effort: 'high',
-        allowedSkills: ['impeccable', 'dembrandt'],
+        allowedSkills: ['impeccable', 'dembrandt', 'ui-kit'],
       },
       {
         id: 'marketer',
@@ -985,7 +985,7 @@ const RAW_SQUADS: Squad[] = [
         cli: 'codex',
         effort: 'medium',
         allowedTools: ['nexus_pane_write'],
-        allowedSkills: ['impeccable', 'dembrandt'],
+        allowedSkills: ['impeccable', 'dembrandt', 'ui-kit'],
       },
       {
         id: 'designer',
@@ -994,7 +994,7 @@ const RAW_SQUADS: Squad[] = [
         cli: 'codex',
         effort: 'high',
         allowedTools: ['nexus_pane_write', 'nexus_image_generate'],
-        allowedSkills: ['impeccable', 'dembrandt'],
+        allowedSkills: ['impeccable', 'dembrandt', 'ui-kit'],
       },
       {
         id: 'frontend',
@@ -1003,7 +1003,7 @@ const RAW_SQUADS: Squad[] = [
         cli: 'codex',
         effort: 'high',
         allowedTools: ['nexus_pane_write'],
-        allowedSkills: ['impeccable'],
+        allowedSkills: ['impeccable', 'ui-kit'],
       },
       {
         id: 'reviewer',
@@ -1065,7 +1065,7 @@ const RAW_SQUADS: Squad[] = [
         cli: 'codex',
         effort: 'high',
         allowedTools: ['nexus_media_providers'],
-        allowedSkills: ['impeccable'],
+        allowedSkills: ['impeccable', 'ui-kit'],
       },
       {
         id: 'editor',
