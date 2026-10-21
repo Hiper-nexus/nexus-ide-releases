@@ -1,0 +1,131 @@
+import { describe, expect, it } from 'vitest';
+import { UiKitCliError } from './ui-kit-cli';
+import {
+  assertBoardUiLicenseKey,
+  assertBoardUiItems,
+  assertBoardUiTool,
+  boardUiFreeItems,
+  boardUiProItems,
+  boardUiSlug,
+  boardUiTierOf,
+  boardUiToolWrites,
+  buildBoardUiArgs,
+  maskBoardUiLicenseKey,
+  BOARDUI_CATALOG_SNAPSHOT,
+  BOARDUI_MCP_TOOLS,
+} from './boardui-source';
+
+describe('boardUiSlug', () => {
+  it('turns a display name into an install slug', () => {
+    expect(boardUiSlug('Date Picker')).toBe('date-picker');
+    expect(boardUiSlug('Input OTP')).toBe('input-otp');
+    expect(boardUiSlug('Multi-agent Chat')).toBe('multi-agent-chat');
+  });
+});
+
+describe('the catalog snapshot', () => {
+  it('has free and Pro items in both halves of the kit', () => {
+    expect(boardUiFreeItems().length).toBeGreaterThan(40);
+    expect(boardUiProItems().length).toBeGreaterThan(25);
+  });
+
+  it('keeps every slug unique', () => {
+    const slugs = BOARDUI_CATALOG_SNAPSHOT.map((entry) => entry.slug);
+    expect(new Set(slugs).size).toBe(slugs.length);
+  });
+
+  it('puts the dashboards behind Pro and the primitives in free', () => {
+    expect(boardUiTierOf('finance-dashboard')).toBe('pro');
+    expect(boardUiTierOf('home-dashboard')).toBe('pro');
+    expect(boardUiTierOf('line-chart')).toBe('pro');
+    expect(boardUiTierOf('button')).toBe('free');
+    expect(boardUiTierOf('data-table')).toBe('free');
+    expect(boardUiTierOf('sidebar')).toBe('free');
+  });
+
+  it('answers null — never "free" — for a slug it does not know', () => {
+    // Answering "free" for an unknown item is how an unlicensed install turns
+    // into a failure the operator cannot explain.
+    expect(boardUiTierOf('some-item-shipped-next-month')).toBeNull();
+  });
+
+  it('accepts a display name as well as a slug', () => {
+    expect(boardUiTierOf('Date Picker')).toBe('free');
+  });
+});
+
+describe('assertBoardUiItems', () => {
+  it('normalizes slugs', () => {
+    expect(assertBoardUiItems(['Button', ' date-picker '])).toEqual([
+      'button',
+      'date-picker',
+    ]);
+  });
+
+  it('refuses a flag, a path or whitespace smuggled into an item', () => {
+    expect(() => assertBoardUiItems(['--help'])).toThrow(UiKitCliError);
+    expect(() => assertBoardUiItems(['../etc/passwd'])).toThrow(UiKitCliError);
+    expect(() => assertBoardUiItems(['button select'])).toThrow(UiKitCliError);
+  });
+
+  it('needs at least one item', () => {
+    expect(() => assertBoardUiItems([])).toThrow(/at least one/);
+  });
+});
+
+describe('buildBoardUiArgs', () => {
+  it('builds init and add', () => {
+    expect(buildBoardUiArgs({ kind: 'init' })).toEqual(['init']);
+    expect(buildBoardUiArgs({ kind: 'add', items: ['button', 'select'] })).toEqual([
+      'add',
+      'button',
+      'select',
+    ]);
+  });
+});
+
+describe('the MCP tool surface', () => {
+  it('covers all thirteen published tools', () => {
+    expect(BOARDUI_MCP_TOOLS).toHaveLength(13);
+    expect(BOARDUI_MCP_TOOLS).toContain('activate_license');
+    expect(BOARDUI_MCP_TOOLS).toContain('get_usage_examples');
+    expect(BOARDUI_MCP_TOOLS).toContain('install_skill');
+  });
+
+  it('separates reading tools from writing ones', () => {
+    expect(boardUiToolWrites('list_components')).toBe(false);
+    expect(boardUiToolWrites('get_component')).toBe(false);
+    expect(boardUiToolWrites('install_components')).toBe(true);
+    expect(boardUiToolWrites('activate_license')).toBe(true);
+  });
+
+  it('refuses a tool name it does not publish', () => {
+    expect(() => assertBoardUiTool('rm_rf')).toThrow(/unknown BoardUI tool/);
+    expect(assertBoardUiTool(' get_theme ')).toBe('get_theme');
+  });
+});
+
+describe('the licence key', () => {
+  it('accepts a plausible key', () => {
+    expect(assertBoardUiLicenseKey(' BUI-1234-ABCD ')).toBe('BUI-1234-ABCD');
+  });
+
+  it('refuses an empty or malformed key', () => {
+    expect(() => assertBoardUiLicenseKey('   ')).toThrow(/empty/);
+    expect(() => assertBoardUiLicenseKey('key with space')).toThrow(/whitespace/);
+  });
+
+  it('never echoes the key into the error message', () => {
+    try {
+      assertBoardUiLicenseKey('BUI SECRET VALUE');
+      expect.unreachable('should have thrown');
+    } catch (error) {
+      expect(String(error)).not.toContain('SECRET');
+    }
+  });
+
+  it('masks all but the last four characters', () => {
+    expect(maskBoardUiLicenseKey('BUI-1234-WXYZ')).toBe('••••WXYZ');
+    expect(maskBoardUiLicenseKey('abc')).toBe('••••');
+  });
+});
