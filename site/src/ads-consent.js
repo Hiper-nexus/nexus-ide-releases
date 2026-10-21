@@ -33,7 +33,10 @@ export function initializeAdsConsent(win = window, doc = document) {
     if (['granted', 'denied'].includes(saved?.choice) && Number.isFinite(saved.expiresAt) && saved.expiresAt > Date.now()) choice = saved.choice;
   } catch { /* Sem armazenamento ou escolha válida, nenhum recurso Google carrega. */ }
   try { if (win.sessionStorage.getItem(REVOCATION_KEY) === '1') choice = 'denied'; }
-  catch { /* A recusa persistente continua valendo quando a sessão é indisponível. */ }
+  catch {
+    // Sem acesso à salvaguarda de revogação, não confiar em um aceite persistido.
+    if (choice === 'granted') choice = null;
+  }
   if (new URLSearchParams(win.location.search).get('privacy') === 'denied') choice = 'denied';
 
   function loadTag() {

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { initializeAdsConsent, CONSENT_KEY, GOOGLE_ADS_ID, REVOCATION_KEY, allowsLandingMeasurement } from './ads-consent.js';
 
-function fixture({ saved = null, path = '/', host = 'nexuside.app', protocol = 'https:', search = '', existingTag = false, writeFails = false, referrer = '', hash = '', removeFails = false, sessionValues = new Map() } = {}) {
+function fixture({ saved = null, path = '/', host = 'nexuside.app', protocol = 'https:', search = '', existingTag = false, writeFails = false, referrer = '', hash = '', removeFails = false, sessionValues = new Map(), sessionUnavailable = false } = {}) {
   const nodes = Object.fromEntries(['ads-consent', 'ads-preferences', 'ads-accept', 'ads-reject'].map(id => [id, {
     hidden: true, listeners: {}, focused: false,
     addEventListener(name, fn) { this.listeners[name] = fn; },
@@ -19,9 +19,9 @@ function fixture({ saved = null, path = '/', host = 'nexuside.app', protocol = '
       removeItem(key) { assert.equal(key, CONSENT_KEY); if (removeFails) throw new Error('blocked'); value = null; },
     },
     sessionStorage: {
-      getItem: key => sessionValues.get(key) ?? null,
-      setItem: (key, next) => sessionValues.set(key, next),
-      removeItem: key => sessionValues.delete(key),
+      getItem(key) { if (sessionUnavailable) throw new Error('blocked'); return sessionValues.get(key) ?? null; },
+      setItem(key, next) { if (sessionUnavailable) throw new Error('blocked'); sessionValues.set(key, next); },
+      removeItem(key) { if (sessionUnavailable) throw new Error('blocked'); sessionValues.delete(key); },
     },
     addEventListener(name, fn) { events[name] = fn; },
   };
@@ -176,4 +176,19 @@ test('somente identificadores válidos de clique Ads são permitidos para atribu
     f.nodes['ads-accept'].click();
     assert.equal(f.scripts.length, 1);
   }
+});
+
+
+test('sem salvaguarda de sessão não reutiliza grant antigo após revogação e navegação limpa', () => {
+  const options = { saved: savedChoice('granted'), writeFails: true, removeFails: true, sessionUnavailable: true };
+  const f = fixture(options); f.init();
+  assert.equal(f.scripts.length, 0);
+  assert.equal(f.nodes['ads-consent'].hidden, false);
+  f.nodes['ads-accept'].click();
+  assert.equal(f.scripts.length, 1);
+  f.nodes['ads-reject'].click();
+  assert.equal(f.replaced(), 'https://nexuside.app/?privacy=denied');
+  const next = fixture({ ...options, saved: f.savedRaw() }); next.init();
+  assert.equal(next.scripts.length, 0);
+  assert.equal(next.win.dataLayer, undefined);
 });
