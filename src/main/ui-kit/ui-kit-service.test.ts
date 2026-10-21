@@ -8,7 +8,10 @@ import { readCachedItem, writeCachedItem } from './ui-kit-cache';
 import type { UiKitRegistry } from './ui-kit-registry';
 import {
   activateBoardUiLicense,
+  parseBoardUiListOutput,
   readsAsActiveLicense,
+  resetBoardUiFreeListCacheForTests,
+  resolveBoardUiTier,
   ensureProjectRegistries,
   readComponentsJson,
   boardUiCandidates,
@@ -35,6 +38,7 @@ beforeEach(() => {
 
 afterEach(() => {
   fs.rmSync(dir, { recursive: true, force: true });
+  resetBoardUiFreeListCacheForTests();
 });
 
 interface Harness {
@@ -304,6 +308,25 @@ describe('runShadcnCommand', () => {
     expect(fs.existsSync(path.join(cwd, 'components.json'))).toBe(false);
   });
 
+  it('leaves components.json untouched when the COMMAND is rejected', async () => {
+    // Validation of argv and of every destination happens before the registry
+    // mapping is written: config changed by a run that never executed is the
+    // worst outcome.
+    writeComponentsJson({ style: 'new-york' });
+    const before = fs.readFileSync(path.join(cwd, 'components.json'), 'utf8');
+    const h = harness({ registries: [PRIVATE_REGISTRY] });
+
+    await expect(
+      runShadcnCommand(
+        { command: { kind: 'add', items: ['@acme/auth', '--bad'] }, cwd },
+        h.deps,
+      ),
+    ).rejects.toThrow();
+
+    expect(fs.readFileSync(path.join(cwd, 'components.json'), 'utf8')).toBe(before);
+    expect(h.cliRuns).toHaveLength(0);
+  });
+
   it('reports a non-zero exit as not ok', async () => {
     const h = harness({ cli: () => ({ code: 1, stderr: 'boom' }) });
 
@@ -492,12 +515,18 @@ describe('readItemSource', () => {
     expect(h.cliRuns).toHaveLength(1);
   });
 
-  it('records the Pro tier of a BoardUI item it cached', async () => {
-    const h = harness({ mcp: () => ({ text: 'pro source' }) });
+  it('records a free BoardUI tier it can prove, and `unknown` when it cannot', async () => {
+    const h = harness({ mcp: () => ({ text: 'source' }) });
 
-    await readItemSource({ kit: 'boardui', slug: 'finance-dashboard', cwd }, h.deps);
+    await readItemSource({ kit: 'boardui', slug: 'button', cwd }, h.deps);
+    await readItemSource({ kit: 'boardui', slug: 'template-home-dashboard', cwd }, h.deps);
 
-    expect(readCachedItem('boardui', 'finance-dashboard', { rootDir: dir })?.tier).toBe('pro');
+    expect(readCachedItem('boardui', 'button', { rootDir: dir })?.tier).toBe('free');
+    // Not 'pro' and not 'free': the snapshot cannot see Pro items, so the
+    // cache records that it does not know rather than inventing a tier.
+    expect(
+      readCachedItem('boardui', 'template-home-dashboard', { rootDir: dir })?.tier,
+    ).toBe('unknown');
   });
 
   it('throws a framed error when the vendor refuses', async () => {
@@ -561,16 +590,28 @@ describe('catalog helpers', () => {
     expect(parseShadcnSearchOutput('Found 12 items.')).toEqual([]);
   });
 
+  it('keeps the namespace on an item from a configured registry', () => {
+    // Installing `auth` instead of `@acme/auth` goes to the PUBLIC registry,
+    // and the token for @acme is then withheld because nothing references it.
+    const parsed = parseShadcnSearchOutput(
+      '- @shadcn/button (ui)\n- @acme/auth (block)\n',
+    );
+
+    expect(parsed.map((entry) => entry.slug)).toEqual(['button', '@acme/auth']);
+    expect(parsed.map((entry) => entry.label)).toEqual(['button', 'auth']);
+  });
+
   it('lists @shadcn plus the configured namespaces', () => {
     expect(shadcnSearchNamespaces([PRIVATE_REGISTRY])).toEqual(['@shadcn', '@acme']);
   });
 
-  it('offers the BoardUI catalog offline with tiers', () => {
+  it('offers the free BoardUI catalog offline', () => {
     const candidates = boardUiCandidates();
 
-    expect(candidates.length).toBeGreaterThan(70);
+    expect(candidates).toHaveLength(69);
     expect(candidates.find((entry) => entry.slug === 'button')?.tier).toBe('free');
-    expect(candidates.find((entry) => entry.slug === 'finance-dashboard')?.tier).toBe('pro');
+    expect(candidates.find((entry) => entry.slug === 'app-shell')?.tier).toBe('free');
+    expect(candidates.every((entry) => entry.tier === 'free')).toBe(true);
   });
 });
 
@@ -646,32 +687,57 @@ describe('readsAsActiveLicense', () => {
 });
 
 describe('the Pro gate on a direct install', () => {
-  it('refuses a named Pro item and says which one needs the key', async () => {
-    const h = harness({ mcp: () => ({ text: 'No license found' }) });
+  /** `boardui list` output shape, as the real CLI prints it. */
+  const freeList = '  button    Primary button.\n  sidebar   The sidebar.\n';
+
+  it('refuses a Pro item the live catalogue does not list as free', async () => {
+    const h = harness({
+      cli: () => ({ stdout: freeList }),
+      mcp: () => ({ text: 'No license found' }),
+    });
 
     const result = await installItems(
-      { kit: 'boardui', items: ['finance-dashboard', 'button'], cwd },
+      { kit: 'boardui', items: ['template-home-dashboard', 'button'], cwd },
       h.deps,
     );
 
     expect(result.ok).toBe(false);
-    expect(result.needsLicense).toEqual(['finance-dashboard']);
+    expect(result.needsLicense).toEqual(['template-home-dashboard']);
     expect(result.licenseState).toBe('absent');
     expect(result.stderr).toMatch(/Settings → UI kits/);
-    // Nothing ran: the refusal is before the vendor.
-    expect(h.cliRuns).toHaveLength(0);
+    // Only the catalogue listing ran; the install never reached the vendor.
+    expect(h.cliRuns.map((run) => run.args[0])).toEqual(['list']);
   });
 
-  it('installs the Pro item once the licence is active', async () => {
-    const h = harness({ mcp: () => ({ text: 'Pro license active' }) });
+  it('installs it once the licence is active', async () => {
+    const h = harness({
+      cli: () => ({ stdout: freeList }),
+      mcp: () => ({ text: 'Pro license active' }),
+    });
 
     const result = await installItems(
-      { kit: 'boardui', items: ['finance-dashboard'], cwd },
+      { kit: 'boardui', items: ['template-home-dashboard'], cwd },
       h.deps,
     );
 
     expect(result.ok).toBe(true);
-    expect(h.cliRuns[0]?.args).toEqual(['add', 'finance-dashboard', '--yes']);
+    expect(h.cliRuns.at(-1)?.args).toEqual(['add', 'template-home-dashboard', '--yes']);
+  });
+
+  it('gates an UNKNOWN tier too, when the catalogue cannot be reached', async () => {
+    // The snapshot not knowing a slug is not evidence that it is free.
+    const h = harness({
+      cli: () => ({ code: 1, stderr: 'offline' }),
+      mcp: () => ({ text: 'No license found' }),
+    });
+
+    const result = await installItems(
+      { kit: 'boardui', items: ['something-new'], cwd },
+      h.deps,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.needsLicense).toEqual(['something-new']);
   });
 
   it('never probes the licence for free items', async () => {
@@ -700,5 +766,49 @@ describe('the cwd guard runs before the project config is touched', () => {
     ).rejects.toThrow(/node_modules is a symlink/);
 
     expect(fs.readFileSync(path.join(cwd, 'components.json'), 'utf8')).toBe(before);
+  });
+});
+
+describe('resolveBoardUiTier', () => {
+  const freeList = '  button    Primary button.\n  app-shell  The shell.\n';
+
+  it('answers free from the snapshot without asking the vendor', async () => {
+    const h = harness();
+
+    expect(await resolveBoardUiTier('button', cwd, h.deps)).toBe('free');
+    expect(h.cliRuns).toHaveLength(0);
+  });
+
+  it('asks the live catalogue for a slug the snapshot does not know', async () => {
+    const h = harness({ cli: () => ({ stdout: freeList }) });
+
+    expect(await resolveBoardUiTier('template-home-dashboard', cwd, h.deps)).toBe('pro');
+    expect(h.cliRuns[0]?.args).toEqual(['list']);
+  });
+
+  it('answers unknown — never free — when the vendor cannot be reached', async () => {
+    const h = harness({ cli: () => ({ code: 1, stderr: 'offline' }) });
+
+    expect(await resolveBoardUiTier('mystery-item', cwd, h.deps)).toBe('unknown');
+  });
+});
+
+describe('parseBoardUiListOutput', () => {
+  it('reads the slugs out of the real listing shape', () => {
+    const parsed = parseBoardUiListOutput(
+      [
+        'Base components',
+        '  button             Primary, secondary, ghost buttons.',
+        '  icon-button        Square icon-only button.',
+        '',
+        'Add a component with npx boardui add <name>',
+      ].join('\n'),
+    );
+
+    expect([...parsed].sort()).toEqual(['button', 'icon-button']);
+  });
+
+  it('is empty for output it cannot read, rather than guessing', () => {
+    expect(parseBoardUiListOutput('Found nothing.').size).toBe(0);
   });
 });

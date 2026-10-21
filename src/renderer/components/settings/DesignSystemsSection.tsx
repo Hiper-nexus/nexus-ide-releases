@@ -62,6 +62,8 @@ export function DesignSystemsSection() {
       });
       setKeyState(result.error ? 'error' : 'saved');
       if (!result.error) setDesignmdKey('');
+      // `value: ''` is how the contract clears the credential; without a
+      // control that sends it, a stored key could never be revoked from here.
     } catch {
       setKeyState('error');
     }
@@ -156,8 +158,18 @@ export function DesignSystemsSection() {
         >
           {keyState === 'saving' ? 'Salvando…' : 'Salvar chave'}
         </button>
+        <button
+          type="button"
+          className="settings-btn"
+          disabled={keyState === 'saving'}
+          onClick={() => void saveDesignmdKey('')}
+        >
+          Remover
+        </button>
         {keyState === 'saved' && (
-          <span className="settings-chip settings-chip--ok">chave guardada</span>
+          <span className="settings-chip settings-chip--ok">
+            {designmdKey.trim() ? 'chave guardada' : 'chave removida'}
+          </span>
         )}
         {keyState === 'error' && (
           <span className="settings-chip">não foi possível guardar</span>

@@ -151,6 +151,8 @@ function destinationsIn(command: ShadcnCommand): readonly string[] {
 
 function boardUiDestinationsIn(command: BoardUiCliCommand): readonly string[] {
   switch (command.kind) {
+    case 'list':
+      return [];
     case 'init':
       return command.dir ? [command.dir.trim()] : [];
     case 'add':
@@ -275,6 +277,14 @@ export async function runShadcnCommand(
 ): Promise<UiKitRunResult> {
   const registries = deps.registries?.() ?? [];
   const { get } = vault(deps);
+  // EVERYTHING that can refuse this run happens before the project's config is
+  // touched: argv validation (a malformed or option-shaped item) and path
+  // containment. A registry mapping written for a run that is then rejected
+  // leaves the project changed by something that never executed.
+  const args = buildShadcnArgs(input.command);
+  for (const destination of destinationsIn(input.command)) {
+    assertPathStaysInProject(input.cwd, destination);
+  }
   // Credential scope: only the namespaces THIS command names, and only when
   // the project points them at the host configured here.
   const referenced = referencedShadcnNamespaces(input.command);
@@ -302,13 +312,10 @@ export async function runShadcnCommand(
     envReferences: envVarReferences(components),
     lookupSecret: get,
   });
-  for (const destination of destinationsIn(input.command)) {
-    assertPathStaysInProject(input.cwd, destination);
-  }
   const run = deps.runCli ?? runUiKitCli;
   const result = await run({
     kit: 'shadcn',
-    args: buildShadcnArgs(input.command),
+    args,
     cwd: input.cwd,
     writes: shadcnCommandWrites(input.command),
     // Resolve the package outside the project and point the CLI back at it:
@@ -610,11 +617,16 @@ export function parseShadcnSearchOutput(
     for (const match of stripped.matchAll(linePattern)) {
       const token = match[1];
       if (!token || found.has(token)) continue;
-      const slug = token.slice(token.indexOf('/') + 1);
+      const bare = token.slice(token.indexOf('/') + 1);
+      // The namespace is part of the IDENTIFIER for anything but the default
+      // registry: installing `auth` instead of `@acme/auth` goes to the public
+      // registry, and `referencedShadcnNamespaces` then sees no `@acme` and
+      // withholds its token.
+      const namespaced = !token.startsWith(`${SHADCN_DEFAULT_NAMESPACE}/`);
       found.set(token, {
         kit: 'shadcn',
-        slug,
-        label: slug,
+        slug: namespaced ? token : bare,
+        label: bare,
         category: match[2]?.toLowerCase() ?? 'registry-item',
         tier: 'free',
       });
@@ -624,6 +636,66 @@ export function parseShadcnSearchOutput(
 }
 
 /** BoardUI candidates from the offline snapshot, labelled with their tier. */
+/** Parse `boardui list`: two-space-indented `slug   description` lines. */
+export function parseBoardUiListOutput(output: string): ReadonlySet<string> {
+  const slugs = new Set<string>();
+  for (const line of output.replace(/\u001b\[[0-9;]*m/g, '').split('\n')) {
+    const match = /^ {2}([a-z0-9][a-z0-9-]*)\s{2,}\S/.exec(line);
+    if (match?.[1]) slugs.add(match[1]);
+  }
+  return slugs;
+}
+
+const BOARDUI_FREE_LIST_TTL_MS = 10 * 60 * 1000;
+let boardUiFreeListCache: { at: number; slugs: ReadonlySet<string> } | null = null;
+
+/** The live free catalogue. `null` when the vendor could not be reached. */
+export async function listBoardUiFreeSlugs(
+  cwd: string,
+  deps: UiKitServiceDeps = {},
+  now: number = Date.now(),
+): Promise<ReadonlySet<string> | null> {
+  if (boardUiFreeListCache && now - boardUiFreeListCache.at < BOARDUI_FREE_LIST_TTL_MS) {
+    return boardUiFreeListCache.slugs;
+  }
+  try {
+    const result = await runBoardUiCommand({ command: { kind: 'list' }, cwd }, deps);
+    if (!result.ok) return null;
+    const slugs = parseBoardUiListOutput(result.stdout);
+    if (slugs.size === 0) return null;
+    boardUiFreeListCache = { at: now, slugs };
+    return slugs;
+  } catch {
+    return null;
+  }
+}
+
+export function resetBoardUiFreeListCacheForTests(): void {
+  boardUiFreeListCache = null;
+}
+
+/**
+ * The tier of one item, with the live catalogue as the authority.
+ *
+ * `boardUiTierOf` answers `null` for anything the snapshot does not list, and
+ * its own contract says that must NOT be read as free: a Pro identifier the
+ * snapshot never had (`template-home-dashboard`, say) would otherwise sail
+ * past the licence gate and fail at the vendor. So an unknown slug is checked
+ * against the live FREE list — absent from it means Pro, and an unreachable
+ * vendor means `unknown`, which the gate treats as needing a licence rather
+ * than as free.
+ */
+export async function resolveBoardUiTier(
+  slug: string,
+  cwd: string,
+  deps: UiKitServiceDeps = {},
+): Promise<'free' | 'pro' | 'unknown'> {
+  if (boardUiTierOf(slug) === 'free') return 'free';
+  const free = await listBoardUiFreeSlugs(cwd, deps);
+  if (!free) return 'unknown';
+  return free.has(slug.trim().toLowerCase()) ? 'free' : 'pro';
+}
+
 export function boardUiCandidates(): readonly UiKitCandidate[] {
   return BOARDUI_CATALOG_SNAPSHOT.map((entry) => ({
     kit: 'boardui' as const,
@@ -789,7 +861,18 @@ export async function installItems(
     // A direct install NAMES its items, so this refuses instead of
     // substituting — swapping an item the caller asked for by name would be
     // the surprise. Substitution belongs to the recipe, which picks for you.
-    const proItems = input.items.filter((item) => boardUiTierOf(item) === 'pro');
+    const tiers = await Promise.all(
+      input.items.map(async (item) => ({
+        item,
+        tier: await resolveBoardUiTier(item, input.cwd, deps),
+      })),
+    );
+    // `unknown` is gated too: the snapshot not knowing a slug is not evidence
+    // that it is free, and treating it as free is how an unlicensed install
+    // reaches the vendor and comes back with a message nobody can act on.
+    const proItems = tiers
+      .filter((entry) => entry.tier !== 'free')
+      .map((entry) => entry.item);
     if (proItems.length > 0) {
       const license = await boardUiLicenseStatus(
         { cwd: input.cwd, ...(input.signal ? { signal: input.signal } : {}) },

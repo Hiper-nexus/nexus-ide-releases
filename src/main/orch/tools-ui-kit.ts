@@ -22,6 +22,7 @@ import { pickUiKit, type UiKitCandidate } from '../ui-kit/ui-kit-pick';
 import { listCachedItems, readCachedItem } from '../ui-kit/ui-kit-cache';
 import {
   boardUiCandidates,
+  readItemSource,
   boardUiLicenseStatus,
   callBoardUiTool,
   installItems,
@@ -496,8 +497,28 @@ export function buildUiKitTools(): McpToolDef[] {
       },
       handler: async (args, ctx) => {
         const command = buildRunCommand(args);
+        const cwd = cwdFor(ctx);
+        // `nexus_ui_kit_source` sends callers here when an item is not cached
+        // yet. If this returned the output and cached nothing, the cache would
+        // never gain an entry and the offline catalog would stay empty for
+        // ever — which is exactly what happened. A single-item `view` goes
+        // through the path that fetches AND caches.
+        if (command.kind === 'view' && command.items.length === 1) {
+          const slug = command.items[0] as string;
+          const fetched = await readItemSource(
+            { kit: 'shadcn', slug, cwd, refresh: true },
+            serviceDeps(),
+          );
+          return {
+            ok: true,
+            command: 'view',
+            exitCode: 0,
+            cached: true,
+            output: fetched.source.slice(0, 40_000),
+          };
+        }
         const result = await runShadcnCommand(
-          { command, cwd: cwdFor(ctx) },
+          { command, cwd },
           serviceDeps(),
         );
         return {
@@ -541,6 +562,28 @@ export function buildUiKitTools(): McpToolDef[] {
               hint:
                 'Store the BoardUI licence in Settings → UI kits first. The ' +
                 'free items need no key.',
+            };
+          }
+        }
+        // Same reason as the shadcn `view` above: this is where the cache
+        // gains BoardUI entries, so `get_component` goes through the caching
+        // path instead of returning text nobody keeps.
+        if (tool === 'get_component') {
+          const raw = args.args;
+          const name =
+            raw && typeof raw === 'object' && !Array.isArray(raw)
+              ? (raw as { name?: unknown }).name
+              : undefined;
+          if (typeof name === 'string' && name.length > 0) {
+            const fetched = await readItemSource(
+              { kit: 'boardui', slug: name, cwd, refresh: true },
+              serviceDeps(),
+            );
+            return {
+              ok: true,
+              cached: true,
+              tier: fetched.tier,
+              text: fetched.source.slice(0, 60_000),
             };
           }
         }

@@ -55,7 +55,7 @@ describe('nexus_ui_kit_catalog is read-only in fact, not only by label', () => {
       ctx,
     )) as { items: unknown[]; offline: boolean; hint: string };
 
-    expect(out.items.length).toBeGreaterThan(70);
+    expect(out.items).toHaveLength(69);
     expect(out.offline).toBe(true);
     expect(out.hint).toContain('ships with Nexus');
   });

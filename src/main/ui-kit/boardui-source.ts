@@ -80,14 +80,6 @@ export interface BoardUiItem {
   readonly tier: BoardUiTier;
 }
 
-function item(
-  name: string,
-  category: BoardUiCategory,
-  tier: BoardUiTier,
-): BoardUiItem {
-  return { slug: boardUiSlug(name), name, category, tier };
-}
-
 /** `Date Picker` -> `date-picker`. The CLI takes slugs, the site shows names. */
 export function boardUiSlug(name: string): string {
   return name
@@ -98,109 +90,112 @@ export function boardUiSlug(name: string): string {
 }
 
 /**
- * Offline snapshot of the published catalog, taken 2026-10-21.
+ * The FREE catalogue, taken from `boardui list` on 2026-10-21.
  *
- * It exists so the settings panel can show what the kit contains — and which
- * half needs a licence — with no network and no key. It is NOT authoritative:
- * `list_components` on the MCP server is, and callers are told when they are
- * looking at the snapshot so a missing item never reads as "does not exist".
- * The slugs are derived from the published display names, not confirmed
- * one-by-one against the registry.
+ * It used to be derived from the website's display names, and that was wrong
+ * in ways that broke installs: `revenue-chart` instead of `revenue-chart-card`,
+ * a `color` item that does not exist, and the Pro templates whose real
+ * identifier carries a `template-` prefix. A slug is a vendor identifier — it
+ * is READ from the vendor, never spelled from a label.
+ *
+ * Pro items are deliberately ABSENT: `boardui list` without a licence does not
+ * publish them, so any Pro entry here would be invented. `boardUiTierOf`
+ * therefore answers `null` for them, and the caller must resolve the tier
+ * against the live catalogue (see `resolveBoardUiTier`) rather than assume
+ * free — assuming free is how an unlicensed install reaches the vendor and
+ * fails with a message nobody can act on.
  */
+function item(
+  slug: string,
+  name: string,
+  category: BoardUiCategory,
+): BoardUiItem {
+  return { slug, name, category, tier: 'free' };
+}
+
 export const BOARDUI_CATALOG_SNAPSHOT: readonly BoardUiItem[] = [
-  item('Color', 'foundation', 'free'),
-  item('Typography', 'foundation', 'free'),
-
-  item('Announcement', 'base', 'free'),
-  item('Avatar', 'base', 'free'),
-  item('Badge', 'base', 'free'),
-  item('Breadcrumb', 'base', 'free'),
-  item('Button', 'base', 'free'),
-  item('Button Group', 'base', 'free'),
-  item('Carousel', 'base', 'free'),
-  item('Checkbox', 'base', 'free'),
-  item('Chip', 'base', 'free'),
-  item('Close Button', 'base', 'free'),
-  item('Date Picker', 'base', 'free'),
-  item('Divider', 'base', 'free'),
-  item('Dropdown', 'base', 'free'),
-  item('File Upload', 'base', 'free'),
-  item('Icon Button', 'base', 'free'),
-  item('Input', 'base', 'free'),
-  item('Input OTP', 'base', 'free'),
-  item('Link Button', 'base', 'free'),
-  item('Notification', 'base', 'free'),
-  item('Pagination', 'base', 'free'),
-  item('Radio', 'base', 'free'),
-  item('Segmented Control', 'base', 'free'),
-  item('Select', 'base', 'free'),
-  item('Slider', 'base', 'free'),
-  item('Social Button', 'base', 'free'),
-  item('Switch', 'base', 'free'),
-  item('Table', 'base', 'free'),
-  item('Tabs', 'base', 'free'),
-  item('Textarea', 'base', 'free'),
-  item('Tooltip', 'base', 'free'),
-  item('Tree View', 'base', 'free'),
-
-  item('Agent Thinking', 'block', 'free'),
-  item('Auth Card', 'block', 'free'),
-  item('Composer Loader', 'block', 'free'),
-  item('Data Grid', 'block', 'free'),
-  item('Data Table', 'block', 'free'),
-  item('Notification Center', 'block', 'free'),
-  item('Settings Modal', 'block', 'free'),
-  item('Sidebar', 'block', 'free'),
-  item('Stat Cards', 'block', 'free'),
-  item('Agent Creator', 'block', 'pro'),
-  item('Agent Limits', 'block', 'pro'),
-  item('Agent Progress', 'block', 'pro'),
-  item('Calendar', 'block', 'pro'),
-  item('Composer', 'block', 'pro'),
-  item('Composer Attachments', 'block', 'pro'),
-  item('Composer Panel', 'block', 'pro'),
-  item('Questionnaire', 'block', 'pro'),
-  item('Task List', 'block', 'pro'),
-  item('Web Search', 'block', 'pro'),
-
-  item('Orders Chart', 'chart', 'free'),
-  item('Revenue Chart', 'chart', 'free'),
-  item('Activity Rings', 'chart', 'pro'),
-  item('Area Chart', 'chart', 'pro'),
-  item('Bar List', 'chart', 'pro'),
-  item('Combo Chart', 'chart', 'pro'),
-  item('Contributions', 'chart', 'pro'),
-  item('Earnings Chart', 'chart', 'pro'),
-  item('Funnel Chart', 'chart', 'pro'),
-  item('Heatmap Chart', 'chart', 'pro'),
-  item('Line Chart', 'chart', 'pro'),
-  item('Most Active Days', 'chart', 'pro'),
-  item('Radar Chart', 'chart', 'pro'),
-  item('Radial Chart', 'chart', 'pro'),
-  item('Sankey Chart', 'chart', 'pro'),
-  item('Scatter Chart', 'chart', 'pro'),
-  item('Sleep Score', 'chart', 'pro'),
-  item('Stage Bars', 'chart', 'pro'),
-  item('Steps Chart', 'chart', 'pro'),
-
-  item('Chat Starter', 'template', 'free'),
-  item('AI Chat', 'template', 'pro'),
-  item('AI Image Generation', 'template', 'pro'),
-  item('AI Profile', 'template', 'pro'),
-  item('Finance Dashboard', 'template', 'pro'),
-  item('Home Dashboard', 'template', 'pro'),
-  item('Marketing Dashboard', 'template', 'pro'),
-  item('Medical Profile', 'template', 'pro'),
-  item('Multi-agent Chat', 'template', 'pro'),
-  item('Project Board', 'template', 'pro'),
+  item('tree-view', 'Tree View', 'base'),
+  item('button', 'Button', 'base'),
+  item('icon-button', 'Icon Button', 'base'),
+  item('link-button', 'Link Button', 'base'),
+  item('button-group', 'Button Group', 'base'),
+  item('close-button', 'Close Button', 'base'),
+  item('input', 'Input', 'base'),
+  item('textarea', 'Textarea', 'base'),
+  item('checkbox', 'Checkbox', 'base'),
+  item('checkbox-card', 'Checkbox Card', 'base'),
+  item('radio', 'Radio', 'base'),
+  item('radio-card', 'Radio Card', 'base'),
+  item('switch', 'Switch', 'base'),
+  item('switch-card', 'Switch Card', 'base'),
+  item('select', 'Select', 'base'),
+  item('slider', 'Slider', 'base'),
+  item('social-button', 'Social Button', 'base'),
+  item('dropdown', 'Dropdown', 'base'),
+  item('divider', 'Divider', 'base'),
+  item('file-upload', 'File Upload', 'base'),
+  item('tabs', 'Tabs', 'base'),
+  item('table', 'Table', 'base'),
+  item('tooltip', 'Tooltip', 'base'),
+  item('badge', 'Badge', 'base'),
+  item('chip', 'Chip', 'base'),
+  item('status-dot', 'Status Dot', 'base'),
+  item('avatar', 'Avatar', 'base'),
+  item('breadcrumb', 'Breadcrumb', 'base'),
+  item('pagination', 'Pagination', 'base'),
+  item('carousel', 'Carousel', 'base'),
+  item('input-otp', 'Input OTP', 'base'),
+  item('segmented-control', 'Segmented Control', 'base'),
+  item('announcement', 'Announcement', 'base'),
+  item('notification', 'Notification', 'base'),
+  item('kbd', 'Kbd', 'base'),
+  item('date-picker', 'Date Picker', 'base'),
+  item('date-range-picker', 'Date Range Picker', 'base'),
+  item('meeting-scheduler', 'Meeting Scheduler', 'base'),
+  item('theme-toggle', 'Theme Toggle', 'block'),
+  item('agent-chat', 'Agent Chat', 'block'),
+  item('app-shell', 'App Shell', 'block'),
+  item('agent-thinking', 'Agent Thinking', 'block'),
+  item('agent-log', 'Agent Log', 'block'),
+  item('composer-loader', 'Composer Loader', 'block'),
+  item('sidebar', 'Sidebar', 'block'),
+  item('settings-modal', 'Settings Modal', 'block'),
+  item('auth-card', 'Auth Card', 'block'),
+  item('notification-center', 'Notification Center', 'block'),
+  item('data-grid', 'Data Grid', 'block'),
+  item('data-table', 'Data Table', 'block'),
+  item('stat-cards', 'Stat Cards', 'block'),
+  item('revenue-chart-card', 'Revenue Chart Card', 'block'),
+  item('orders-chart-card', 'Orders Chart Card', 'block'),
+  item('important-alerts-card', 'Important Alerts Card', 'block'),
+  item('patient-info-card', 'Patient Info Card', 'block'),
+  item('template-copy', 'Template Copy', 'foundation'),
+  item('direction', 'Direction', 'foundation'),
+  item('scroll-direction', 'Scroll Direction', 'foundation'),
+  item('directional-icon', 'Directional Icon', 'foundation'),
+  item('theme', 'Theme', 'foundation'),
+  item('typography', 'Typography', 'foundation'),
+  item('globals', 'Globals', 'foundation'),
+  item('cx', 'cx', 'foundation'),
+  item('rules', 'Rules', 'foundation'),
+  item('use-dismiss-on-outside-press', 'Use Dismiss On Outside Press', 'foundation'),
+  item('use-count-up', 'Use Count Up', 'foundation'),
+  item('chevrons', 'Chevrons', 'foundation'),
+  item('logo', 'Logo', 'foundation'),
+  item('agent-runtime', 'Agent Runtime', 'foundation'),
 ];
 
 export function boardUiFreeItems(): readonly BoardUiItem[] {
   return BOARDUI_CATALOG_SNAPSHOT.filter((entry) => entry.tier === 'free');
 }
 
+/**
+ * Deliberately empty: `boardui list` without a licence does not publish the Pro
+ * items, so naming any here would be inventing vendor identifiers — which is
+ * precisely the defect this snapshot was rebuilt to remove.
+ */
 export function boardUiProItems(): readonly BoardUiItem[] {
-  return BOARDUI_CATALOG_SNAPSHOT.filter((entry) => entry.tier === 'pro');
+  return [];
 }
 
 /**
@@ -275,6 +270,7 @@ export function assertBoardUiDir(raw: string): string {
 }
 
 export type BoardUiCliCommand =
+  | { readonly kind: 'list' }
   | {
       readonly kind: 'init';
       readonly overwrite?: boolean;
@@ -303,6 +299,8 @@ export function buildBoardUiArgs(
   command: BoardUiCliCommand,
 ): readonly string[] {
   switch (command.kind) {
+    case 'list':
+      return ['list'];
     case 'init': {
       const args = ['init', '--yes'];
       if (command.overwrite) args.push('--overwrite');
@@ -323,9 +321,9 @@ export function buildBoardUiArgs(
   }
 }
 
-/** Every BoardUI CLI command writes: `init` scaffolds, `add` installs. */
-export function boardUiCommandWrites(_command: BoardUiCliCommand): boolean {
-  return true;
+/** `init` scaffolds and `add` installs; `list` only reads the catalogue. */
+export function boardUiCommandWrites(command: BoardUiCliCommand): boolean {
+  return command.kind !== 'list';
 }
 
 export const BOARDUI_LICENSE_SECRET = 'external:boardui-license-key';

@@ -87,8 +87,8 @@ it('says the free half needs no key before it mentions a licence', async () => {
     expect(host.textContent).toContain('shadcn/ui');
     expect(host.textContent).toContain('sem chave');
     // The counts are what tell the operator the feature is not gated.
-    expect(host.textContent).toContain('45 itens grátis');
-    expect(host.textContent).toContain('36 são Pro');
+    expect(host.textContent).toContain('45 itens funcionam sem chave nenhuma');
+    expect(host.textContent).toContain('precisam da sua licença');
   } finally {
     act(() => root.unmount());
   }

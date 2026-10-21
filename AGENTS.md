@@ -2834,6 +2834,19 @@ componente: o agente recebia a paleta e escrevia cada peça à mão. `src/main/u
   `ps`), injetada do cofre (`external:boardui-license-key`) pelo serviço. As
   tools do BoardUI passam por allowlist POR TOOL (`sanitizeBoardUiToolArgs`):
   o fornecedor documenta `projectDir`, que escaparia do escopo de execução.
+- **Slug é identificador do FORNECEDOR: lido dele, nunca soletrado a partir do
+  rótulo.** O retrato do BoardUI saía dos nomes de exibição do site e estava
+  errado de um jeito que quebrava install: `revenue-chart` em vez de
+  `revenue-chart-card`, um `color` que não existe, e os templates Pro, cujo
+  identificador real leva o prefixo `template-`. Hoje ele vem de `boardui list`
+  (69 itens grátis) e NÃO tem item Pro: sem licença o `list` não os publica, e
+  qualquer entrada Pro ali seria inventada.
+- **Tier desconhecido é portão, não "grátis".** `boardUiTierOf` responde `null`
+  para o que o retrato não conhece, e `resolveBoardUiTier` resolve contra o
+  catálogo AO VIVO: ausente da lista grátis é Pro, fornecedor inalcançável é
+  `unknown` — e o portão trata `unknown` como precisando de licença. Assumir
+  grátis é como um install sem licença chega ao fornecedor e volta com uma
+  mensagem que ninguém consegue agir.
 - **A metade grátis funciona sem chave nenhuma** — shadcn inteiro e ~45 itens do
   BoardUI. Item Pro sem licença não instala nada em silêncio: cai no grátis
   equivalente, devolve `needsLicense` e nomeia o barrado. Doc e copy novas nunca

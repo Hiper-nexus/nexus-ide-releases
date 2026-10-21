@@ -25,9 +25,11 @@ describe('boardUiSlug', () => {
 });
 
 describe('the catalog snapshot', () => {
-  it('has free and Pro items in both halves of the kit', () => {
-    expect(boardUiFreeItems().length).toBeGreaterThan(40);
-    expect(boardUiProItems().length).toBeGreaterThan(25);
+  it('carries the 69 free items the vendor publishes, and no invented Pro one', () => {
+    // Slugs are READ from `boardui list`, never spelled from a display name:
+    // the derived ones were wrong in ways that broke installs.
+    expect(boardUiFreeItems()).toHaveLength(69);
+    expect(boardUiProItems()).toEqual([]);
   });
 
   it('keeps every slug unique', () => {
@@ -35,13 +37,23 @@ describe('the catalog snapshot', () => {
     expect(new Set(slugs).size).toBe(slugs.length);
   });
 
-  it('puts the dashboards behind Pro and the primitives in free', () => {
-    expect(boardUiTierOf('finance-dashboard')).toBe('pro');
-    expect(boardUiTierOf('home-dashboard')).toBe('pro');
-    expect(boardUiTierOf('line-chart')).toBe('pro');
+  it('knows the real free slugs, including the ones I had spelled wrong', () => {
     expect(boardUiTierOf('button')).toBe('free');
     expect(boardUiTierOf('data-table')).toBe('free');
     expect(boardUiTierOf('sidebar')).toBe('free');
+    // These two were `revenue-chart` / `orders-chart` in the derived snapshot.
+    expect(boardUiTierOf('revenue-chart-card')).toBe('free');
+    expect(boardUiTierOf('orders-chart-card')).toBe('free');
+    // And this one is the admin shell the derived snapshot did not have at all.
+    expect(boardUiTierOf('app-shell')).toBe('free');
+  });
+
+  it('answers null for a Pro identifier instead of guessing', () => {
+    // `template-home-dashboard` is the vendor's documented Pro slug. The
+    // snapshot cannot see Pro items, so it must say "I do not know" and let
+    // the caller resolve it live.
+    expect(boardUiTierOf('template-home-dashboard')).toBeNull();
+    expect(boardUiTierOf('finance-dashboard')).toBeNull();
   });
 
   it('answers null — never "free" — for a slug it does not know', () => {
@@ -50,8 +62,8 @@ describe('the catalog snapshot', () => {
     expect(boardUiTierOf('some-item-shipped-next-month')).toBeNull();
   });
 
-  it('accepts a display name as well as a slug', () => {
-    expect(boardUiTierOf('Date Picker')).toBe('free');
+  it('normalises case and spacing around a slug', () => {
+    expect(boardUiTierOf(' Date-Picker ')).toBe('free');
   });
 });
 
