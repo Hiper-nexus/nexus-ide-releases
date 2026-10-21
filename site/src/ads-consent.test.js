@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { initializeAdsConsent, CONSENT_KEY, GOOGLE_ADS_ID } from './ads-consent.js';
+import { initializeAdsConsent, CONSENT_KEY, GOOGLE_ADS_ID, REVOCATION_KEY, allowsLandingMeasurement } from './ads-consent.js';
 
-function fixture({ saved = null, path = '/', host = 'nexuside.app', protocol = 'https:', search = '', existingTag = false, writeFails = false, referrer = '' } = {}) {
+function fixture({ saved = null, path = '/', host = 'nexuside.app', protocol = 'https:', search = '', existingTag = false, writeFails = false, referrer = '', hash = '', removeFails = false, sessionValues = new Map() } = {}) {
   const nodes = Object.fromEntries(['ads-consent', 'ads-preferences', 'ads-accept', 'ads-reject'].map(id => [id, {
     hidden: true, listeners: {}, focused: false,
     addEventListener(name, fn) { this.listeners[name] = fn; },
@@ -12,10 +12,16 @@ function fixture({ saved = null, path = '/', host = 'nexuside.app', protocol = '
   const scripts = [], events = {}, docEvents = {};
   let value = saved, reloads = 0, replaced = null;
   const win = {
-    location: { hostname: host, protocol, pathname: path, search, reload() { reloads++; }, replace(url) { replaced = url; } },
+    location: { hostname: host, protocol, pathname: path, search, hash, reload() { reloads++; }, replace(url) { replaced = url; } },
     localStorage: {
       getItem(key) { assert.equal(key, CONSENT_KEY); return value; },
       setItem(key, next) { assert.equal(key, CONSENT_KEY); if (writeFails) throw new Error('blocked'); value = next; },
+      removeItem(key) { assert.equal(key, CONSENT_KEY); if (removeFails) throw new Error('blocked'); value = null; },
+    },
+    sessionStorage: {
+      getItem: key => sessionValues.get(key) ?? null,
+      setItem: (key, next) => sessionValues.set(key, next),
+      removeItem: key => sessionValues.delete(key),
     },
     addEventListener(name, fn) { events[name] = fn; },
   };
@@ -28,7 +34,7 @@ function fixture({ saved = null, path = '/', host = 'nexuside.app', protocol = '
     head: { append: script => scripts.push(script) },
   };
   const init = () => initializeAdsConsent(win, doc);
-  return { win, nodes, scripts, events, docEvents, init, saved: () => JSON.parse(value), reloads: () => reloads, replaced: () => replaced };
+  return { win, nodes, scripts, events, docEvents, sessionValues, init, savedRaw: () => value, saved: () => JSON.parse(value), reloads: () => reloads, replaced: () => replaced };
 }
 const savedChoice = (choice, expiresAt = Date.now() + 100000) => JSON.stringify({ choice, expiresAt });
 const commands = f => (f.win.dataLayer || []).map(args => [...args]);
@@ -47,7 +53,7 @@ test('primeira visita, recusa, dados inválidos ou escolha expirada não carrega
 });
 
 test('aceite carrega uma única tag validada, com consentimento primeiro e sem conversões ou dados da URL', () => {
-  const f = fixture({ search: '?email=private@example.test&gclid=test#secret' }); f.init();
+  const f = fixture(); f.init();
   assert.equal(f.nodes['ads-consent'].hidden, false);
   f.nodes['ads-accept'].click();
   assert.equal(f.scripts[0].src, `https://www.googletagmanager.com/gtag/js?id=${GOOGLE_ADS_ID}`);
@@ -95,11 +101,22 @@ test('revogar persiste recusa e recarrega sem enviar atualização ou conversão
   assert.equal(next.scripts.length, 0);
 });
 
-test('revogação falha fechada mesmo quando localStorage recusa escrita', () => {
+test('revogação remove aceite antigo quando localStorage recusa escrita', () => {
   const f = fixture({ saved: savedChoice('granted'), writeFails: true }); f.init().revoke();
+  assert.equal(f.savedRaw(), null);
   assert.equal(f.replaced(), 'https://nexuside.app/?privacy=denied');
-  const next = fixture({ saved: savedChoice('granted'), search: '?privacy=denied' }); next.init();
+  const next = fixture({ saved: f.savedRaw() }); next.init();
   assert.equal(next.scripts.length, 0);
+});
+
+test('recusa de sessão sobrepõe aceite antigo em navegação limpa se escrita e remoção falharem', () => {
+  const f = fixture({ saved: savedChoice('granted'), writeFails: true, removeFails: true }); f.init().revoke();
+  assert.equal(f.sessionValues.get(REVOCATION_KEY), '1');
+  const next = fixture({ saved: f.savedRaw(), sessionValues: f.sessionValues }); next.init();
+  assert.equal(next.scripts.length, 0);
+  next.nodes['ads-accept'].click();
+  assert.equal(next.sessionValues.has(REVOCATION_KEY), false);
+  assert.equal(next.scripts.length, 1);
 });
 
 test('não carrega tag na conta, admin, comunidade, preview ou HTTP', () => {
@@ -140,4 +157,23 @@ test('conversão Nexus somente no clique explícito de instalador após consenti
   assert.deepEqual(commands(f).filter(row => row[0] === 'event'), [['event', 'conversion', { send_to: 'AW-953176375/G6imCOzR-qMdELeiwcYD', value: 0, currency: 'BRL', transport_type: 'beacon' }]]);
   f.nodes['ads-reject'].click(); f.docEvents.click(click);
   assert.equal(commands(f).filter(row => row[0] === 'event').length, 1);
+});
+
+
+test('URL atual com dados arbitrários ou fragmentos bloqueia terceiros mesmo após aceite', () => {
+  for (const options of [{ search: '?email=private@example.test' }, { search: '?prompt=secret' }, { search: '?token=secret' }, { search: '?gclid=test&email=private@example.test' }, { search: '?gclid=private%40example.test' }, { search: '?gclid=a&gclid=b' }, { hash: '#secret' }]) {
+    const f = fixture(options); f.init(); f.nodes['ads-accept'].click();
+    assert.equal(f.scripts.length, 0);
+    assert.equal(f.win.dataLayer, undefined);
+  }
+});
+
+test('somente identificadores válidos de clique Ads são permitidos para atribuição após consentimento', () => {
+  for (const search of ['', '?gclid=Click_123-a', '?gbraid=0AAAA_safe', '?wbraid=WBraid_123']) {
+    assert.equal(allowsLandingMeasurement({ search, hash: '' }), true);
+    const f = fixture({ search }); f.init();
+    assert.equal(f.scripts.length, 0);
+    f.nodes['ads-accept'].click();
+    assert.equal(f.scripts.length, 1);
+  }
 });

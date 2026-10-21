@@ -77,7 +77,10 @@ e revogar. Revogar recarrega a página sem a tag. `ad_user_data`, `ad_personaliz
 `analytics_storage` continuam negados; conversões aprimoradas e sinais de personalização ficam desligados.
 A tag compartilhada contém o destino GA4 `G-VJFB612907`: a propriedade `ga-disable-G-VJFB612907`
 é definida antes do loader para bloquear esse destino no Nexus. `user_data: null` desativa a coleta
-automática de dados fornecidos pelo usuário nesta página. A URL enviada é a raiz canônica, sem query/hash; referrer configurado sem parâmetros. Se a página de origem contiver query/hash, o loader é bloqueado. A política pública descreve o tratamento.
+automática de dados fornecidos pelo usuário nesta página. O config usa a raiz canônica e referrer sem parâmetros. Antes do loader, a URL atual é validada:
+só gclid/gbraid/wbraid com caracteres de identificador opaco são aceitos para atribuição; outros
+parâmetros, duplicações, formatos inválidos ou hash bloqueiam a tag. Query/hash no referrer também bloqueiam.
+Se a revogação não puder ser gravada, o aceite antigo é removido e uma recusa de sessão protege a navegação limpa nesta aba. A política pública descreve o tratamento.
 A CSP Google só é permitida na home do domínio oficial, sem inline/eval ou curingas. Conta, admin,
 comunidade e previews não inicializam a integração. Os testes de consentimento integram `npm test`.
 

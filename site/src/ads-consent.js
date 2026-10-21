@@ -1,10 +1,23 @@
 import { initializeDownloadConversion, NEXUS_DOWNLOAD_SEND_TO } from './download-conversion.js';
 
-// Tag base validada na conta 3066296016. Nenhum rótulo de conversão é usado aqui.
+// Tag base validada na conta 3066296016.
 export const GOOGLE_ADS_ID = 'AW-953176375';
 export const CONSENT_KEY = 'nexus-ads-consent-v1';
+export const REVOCATION_KEY = CONSENT_KEY + '-revoked';
 const MAX_AGE = 180 * 24 * 60 * 60 * 1000;
 const DENIED = { ad_storage: 'denied', analytics_storage: 'denied', ad_user_data: 'denied', ad_personalization: 'denied' };
+
+// Somente os identificadores opacos do clique Ads podem permanecer na URL ao carregar terceiros.
+export function allowsLandingMeasurement(location) {
+  if (location.hash) return false;
+  const keys = new Set(['gclid', 'gbraid', 'wbraid']);
+  const seen = new Set();
+  for (const [key, value] of new URLSearchParams(location.search || '')) {
+    if (!keys.has(key) || seen.has(key) || !/^[A-Za-z0-9_-]{1,512}$/.test(value)) return false;
+    seen.add(key);
+  }
+  return true;
+}
 
 export function initializeAdsConsent(win = window, doc = document) {
   // A conta, o admin, a comunidade e os previews não carregam publicidade.
@@ -19,11 +32,13 @@ export function initializeAdsConsent(win = window, doc = document) {
     const saved = JSON.parse(win.localStorage.getItem(CONSENT_KEY));
     if (['granted', 'denied'].includes(saved?.choice) && Number.isFinite(saved.expiresAt) && saved.expiresAt > Date.now()) choice = saved.choice;
   } catch { /* Sem armazenamento ou escolha válida, nenhum recurso Google carrega. */ }
+  try { if (win.sessionStorage.getItem(REVOCATION_KEY) === '1') choice = 'denied'; }
+  catch { /* A recusa persistente continua valendo quando a sessão é indisponível. */ }
   if (new URLSearchParams(win.location.search).get('privacy') === 'denied') choice = 'denied';
 
   function loadTag() {
     // Não expor parâmetros potencialmente privados da página de origem ao código de terceiros.
-    if (loaded || /[?#]/.test(doc.referrer || '')) return;
+    if (loaded || !allowsLandingMeasurement(win.location) || /[?#]/.test(doc.referrer || '')) return;
     loaded = true;
     // A tag Google compartilhada também contém este destino GA4. Não o ativar no Nexus.
     win['ga-disable-G-VJFB612907'] = true;
@@ -59,9 +74,19 @@ export function initializeAdsConsent(win = window, doc = document) {
 
   function save(next) {
     choice = next;
+    // Mantém a revogação nesta aba mesmo se o armazenamento persistente não puder mudar.
+    try {
+      if (choice === 'denied') win.sessionStorage.setItem(REVOCATION_KEY, '1');
+      else win.sessionStorage.removeItem(REVOCATION_KEY);
+    } catch { /* Ainda tentamos gravar a escolha persistente abaixo. */ }
     let persisted = false;
     try { win.localStorage.setItem(CONSENT_KEY, JSON.stringify({ choice, expiresAt: Date.now() + MAX_AGE })); persisted = true; }
-    catch { /* A escolha continua válida somente nesta página. */ }
+    catch {
+      // Quota ou escrita bloqueada não podem deixar um aceite antigo reutilizável.
+      if (choice === 'denied') {
+        try { win.localStorage.removeItem(CONSENT_KEY); } catch { /* A recusa de sessão e o URL seguro permanecem. */ }
+      }
+    }
     panel.hidden = true;
     preferences.focus();
     if (choice === 'granted') loadTag();
