@@ -259,6 +259,8 @@ export async function pickMissionWithJev(
       timeoutMs: MISSION_PICK_TIMEOUT_MS,
       // Teto total: sem isto o retry do cliente dobraria a espera da voz.
       signal: AbortSignal.timeout(MISSION_PICK_TOTAL_TIMEOUT_MS),
+      // F-1626: m1 é a 1ª opção; escolha limítrofe nela é reconferida invertida.
+      orderCheck: { minConfidence: MISSION_PICK_MIN_CONFIDENCE },
       surface: 'missionPick',
       retryOnTimeout: false,
     });

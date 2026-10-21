@@ -4,6 +4,7 @@ import { judgeDecision, type DecisionJudgeDeps } from '../decision-models/decisi
 import { isDecisionProviderBlocked } from '../decision-models/decision-health';
 import { getDecisionAvailability, getDecisionSettings } from '../decision-models/decision-availability';
 import { jevModel } from '../decision-models/decision-routing';
+import { confirmChoiceOrder } from '../decision-models/decision-order-check';
 import { JEV_RESPONSE_POLICY, validateDecisionResponse } from '../decision-models/decision-response';
 export { redactSecrets, redactState, capText } from '../decision-models/decision-redaction';
 import type { JevTestResult } from '../../shared/jev-ipc';
@@ -94,6 +95,8 @@ export interface JevResult {
   budgetChargedUsd?: number;
   /** Juntos discordou. Os números por pergunta e provedor não carregam texto. */
   diverged?: boolean;
+  /** F-1626: perguntas reconferidas por reordenação e as que mudaram de escolha. */
+  orderCheck?: import('../decision-models/decision-order-check').OrderCheckReceipt;
   ensemblePeers?: Record<string, Record<string, number>>;
 }
 
@@ -174,6 +177,12 @@ export interface JudgeInput {
    * Para superfícies auto-on com teto próprio: o retry dobrava o pior caso.
    */
   retryOnTimeout?: boolean;
+  /**
+   * F-1626: confirma por reordenação a escolha que venceu sendo a 1ª opção
+   * com confiança limítrofe (viés documentado do jev-1.13). Escolha instável
+   * sai das respostas; o chamador cai no caminho de "sem resposta".
+   */
+  orderCheck?: import('../decision-models/decision-order-check').OrderCheckOptions;
 }
 
 export interface JudgeDeps {
@@ -348,10 +357,13 @@ export async function judgeJevTransport(
 }
 
 export async function judge(input: JudgeInput, deps?: JudgeDeps): Promise<JevResult | null> {
-  return judgeDecision(input, { ...deps, nativeJudge: nativeInput => judgeJevTransport(nativeInput, deps),
+  const run = (current: JudgeInput) => judgeDecision(current, { ...deps, nativeJudge: nativeInput => judgeJevTransport(nativeInput, deps),
     getAvailability: deps?.getAvailability ?? (deps?.resolveKey
       ? () => ({ ...getDecisionAvailability(), jev: Boolean(deps.resolveKey?.()) }) : undefined),
   });
+  const result = await run(input);
+  if (!result || !input.orderCheck) return result;
+  return confirmChoiceOrder({ ...input, orderCheck: input.orderCheck }, result, run);
 }
 
 export interface TestJevDeps {

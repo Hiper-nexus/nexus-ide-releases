@@ -13,6 +13,11 @@ import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import { usePanePickerStore } from '../state/pane-picker-store';
 import { useProviderStore } from '../state/provider-store';
+import type { PaneRouteEffort } from '../../shared/pane-route';
+import {
+  PaneRouteConfirm,
+  type PaneRouteConfirmState,
+} from './PaneRouteConfirm';
 import { useSessionStateStore } from '../state/session-state-store';
 import { useToastStore } from '../state/toast-store';
 import { getPaneSessionId } from '../terminal/terminal-host';
@@ -40,6 +45,14 @@ export type PanePickerIntent =
       /** Vazio = subir a CLI no padrão dela (adapter sem catálogo). */
       readonly model: string;
       readonly accountId?: string;
+      /**
+       * Esforço escolhido no passo de confirmação. Ausente = a CLI decide
+       * (sem `--effort` no argv), que é como todo pane aberto na mão nascia
+       * antes deste passo existir.
+       */
+      readonly effort?: PaneRouteEffort;
+      /** Primeiro pedido do operador, entregue quando a CLI estiver pronta. */
+      readonly brief?: string;
     };
 
 /** Banda de topo do menu — espelha o agrupamento do concorrente. */
@@ -723,8 +736,16 @@ export function runPanePickerIntent(intent: PanePickerIntent): string | undefine
     fromAccountLabel: accountLabelOf(focused?.accountId, 'conta anterior'),
     toAccountLabel: accountLabelOf(intent.accountId, DEFAULT_ACCOUNT_LABEL),
   });
-  if (planned.accountId || planned.continuityPack) {
-    return layout.spawnAgent(intent.adapterId, intent.model, planned);
+  // O esforço e o brief são do OPERADOR (passo de confirmação), não do plano
+  // de continuidade — por isso entram aqui e não em `planOperatorAgentSpawn`,
+  // que decide conta e pacote de continuidade. Ausentes, o spawn é idêntico
+  // ao de antes deste passo existir.
+  const chosen = {
+    ...(intent.effort ? { effort: intent.effort } : {}),
+    ...(intent.brief ? { brief: intent.brief } : {}),
+  };
+  if (planned.accountId || planned.continuityPack || intent.effort || intent.brief) {
+    return layout.spawnAgent(intent.adapterId, intent.model, { ...planned, ...chosen });
   }
   return layout.spawnAgent(intent.adapterId, intent.model);
 }
@@ -809,6 +830,18 @@ export function PanePicker({
 
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
+  /**
+   * O que o operador quer feito. É SEPARADO da busca: a busca filtra CLI,
+   * conta e modelo ("grok", "opus"); isto é o pedido ("arruma o login"), e é
+   * ele que o Jev lê para propor esforço e skill. Vazio = o "+ Pane" abre
+   * na hora, exatamente como sempre abriu.
+   */
+  const [request, setRequest] = useState('');
+  const [confirming, setConfirming] = useState<
+    { readonly intent: PanePickerIntent; readonly label: string } | null
+  >(null);
+  const [routeState, setRouteState] = useState<PaneRouteConfirmState>({ kind: 'none' });
+  const [chosenEffort, setChosenEffort] = useState<PaneRouteEffort | undefined>(undefined);
   const [cursor, setCursor] = useState(0);
   /** F-231: destino escolhido no passo extra de uma aba com missão viva. */
   const [destination, setDestination] = useState<PanePickerDestination | null>(
@@ -1063,8 +1096,44 @@ export function PanePicker({
       setExpandedFolds((current) => new Set(current).add(row.expandFold));
       return;
     }
-    setOpen(false);
     const intent = row.intent;
+    // Passo de confirmação: só quando o operador DIGITOU um pedido. Sem
+    // pedido não há o que classificar, e o "+ Pane" abre na hora, como
+    // sempre abriu — o caminho rápido não ganha fricção.
+    if (intent.kind === 'agent' && request.trim()) {
+      beginConfirm(intent, row);
+      return;
+    }
+    commitIntent(intent);
+  };
+
+  const beginConfirm = (
+    intent: Extract<PanePickerIntent, { kind: 'agent' }>,
+    row: PanePickerEntry,
+  ) => {
+    setConfirming({ intent, label: row.group || row.adapterId || 'CLI' });
+    setRouteState({ kind: 'loading' });
+    setChosenEffort(undefined);
+    // Fail-open em TODO desfecho: sem chave, superfície desligada ou erro, o
+    // passo some e o operador abre do mesmo jeito. O Jev nunca pode impedir
+    // alguém de abrir um pane.
+    void window.nexus.jev
+      .paneRoute({ request: request.trim(), adapterId: intent.adapterId })
+      .then((result) => {
+        if (!result.ok) {
+          setRouteState({ kind: 'none' });
+          return;
+        }
+        setRouteState({ kind: 'ready', proposal: result.proposal });
+        setChosenEffort(result.proposal.effort);
+      })
+      .catch(() => setRouteState({ kind: 'none' }));
+  };
+
+  const commitIntent = (intent: PanePickerIntent) => {
+    setOpen(false);
+    setConfirming(null);
+    setRequest('');
     // F-231: dentro de uma aba de missão o destino foi escolhido no passo
     // anterior. Shell/browser nunca são participantes — "Nesta missão" cai
     // para "solto" neles. Fora de missão `destination` é null e nada muda.
@@ -1299,6 +1368,11 @@ export function PanePicker({
           ) : (
             <>
               <div
+                // Durante o passo de confirmação o cabeçalho de busca sai de
+                // cena: o filtro não serve mais ali, e o "Voltar" do drill-in
+                // duelaria com o "Voltar" do passo — dois botões iguais, dois
+                // destinos diferentes.
+                hidden={confirming !== null}
                 className={`pane-picker__head${drillCli ? ' pane-picker__head--back' : ''}`}
               >
                 {drillCli ? (
@@ -1352,7 +1426,43 @@ export function PanePicker({
                 )}
               </div>
 
+              {confirming ? (
+                <PaneRouteConfirm
+                  state={routeState}
+                  adapterLabel={confirming.label}
+                  effort={chosenEffort}
+                  onEffortChange={setChosenEffort}
+                  onConfirm={() => {
+                    const intent = confirming.intent;
+                    setConfirming(null);
+                    commitIntent(
+                      intent.kind === 'agent'
+                        ? {
+                            ...intent,
+                            ...(chosenEffort ? { effort: chosenEffort } : {}),
+                            brief: request.trim(),
+                          }
+                        : intent,
+                    );
+                  }}
+                  onCancel={() => setConfirming(null)}
+                />
+              ) : (
+                <label className="pane-picker__request">
+                  <span className="pane-picker__request-label">O que você quer feito</span>
+                  <input
+                    className="pane-picker__request-input"
+                    type="text"
+                    data-testid="pane-picker-request"
+                    placeholder="opcional — ex.: arruma o login quebrado"
+                    value={request}
+                    onChange={(event) => setRequest(event.target.value)}
+                  />
+                </label>
+              )}
+
               <ul
+                hidden={confirming !== null}
                 className="pane-picker__list"
                 id="pane-picker-list"
                 role="listbox"

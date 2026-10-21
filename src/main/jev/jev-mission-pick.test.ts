@@ -338,6 +338,8 @@ describe('pickMissionWithJev', () => {
     expect(input.surface).toBe('missionPick');
     expect(Object.keys(input.questions as object)).toEqual(['pick']);
     expect(input.retryOnTimeout).toBe(false);
+    // F-1626: m1 é a 1ª opção; a escolha limítrofe nela é reconferida.
+    expect(input.orderCheck).toEqual({ minConfidence: 0.7 });
     expect(input.timeoutMs).toBeLessThanOrEqual(4_000);
     expect(input.signal).toBeInstanceOf(AbortSignal);
     expect(Buffer.byteLength(JSON.stringify(input.state), 'utf8')).toBeLessThanOrEqual(2_048);

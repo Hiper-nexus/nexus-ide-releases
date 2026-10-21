@@ -67,8 +67,15 @@ describe('F-1400 ADD2: revezamento por modelo e exceção Next/jogo', () => {
   const everyone: AdapterAvailability[] = [
     { id: 'claude', installed: true, models: ['claude-opus-5-5', 'claude-sonnet-5-5'] }, ...pool,
   ];
+  // F-1623: o topo de UI completo (Opus 5.5, Gemini Argon, GPT Astra).
+  const topPool: AdapterAvailability[] = [
+    { id: 'claude', installed: true, models: ['claude-opus-5-5', 'claude-sonnet-5-5'] },
+    { id: 'agy', installed: true, models: ['gemini-4-argon'], liveModels: ['gemini-4-argon'] },
+    { id: 'codex', installed: true, models: ['gpt-6-astra', 'gpt-6.1-sol', 'gpt-6-luna'] },
+    ...pool.filter((adapter) => adapter.id !== 'codex'),
+  ];
 
-  it('cinco tarefas visuais distribuem cinco modelos, incluindo os dois Claude', () => {
+  it('F-1623: sem Argon nem Astra, o Opus segura a UI; Sonnet e o resto ficam de reserva', () => {
     const visualUseCounts = new Map<string, number>();
     const picks: string[] = [];
     for (let index = 0; index < 5; index++) {
@@ -77,10 +84,7 @@ describe('F-1400 ADD2: revezamento por modelo e exceção Next/jogo', () => {
       picks.push(key);
       visualUseCounts.set(key, (visualUseCounts.get(key) ?? 0) + 1);
     }
-    expect(picks).toEqual([
-      'claude:claude-opus-5-5', 'claude:claude-sonnet-5-5', 'muse:muse-wonder-full-1.0',
-      'kimi:kimi-code/k3', 'codex:gpt-6.1-sol',
-    ]);
+    expect(new Set(picks)).toEqual(new Set(['claude:claude-opus-5-5']));
   });
 
   it.each(['criar landing em Next.js', 'implementar jogo em canvas', 'criar app router para a tela de cadastro',
@@ -131,7 +135,7 @@ describe('F-1400 ADD2: revezamento por modelo e exceção Next/jogo', () => {
   });
 
   it('Fable R1: "Next steps" do brief anexado (classificationText) não aciona Next/jogo', () => {
-    const decision = route('Implementar o filtro de status da listagem de pedidos', everyone, {
+    const decision = route('Implementar o filtro de status da listagem de pedidos', topPool, {
       classificationText: 'Implementar o filtro de status da listagem de pedidos\n\n## Next steps\n- criar um jogo de exemplo com create-next-app',
       visualUseCounts: new Map([['claude:claude-opus-5-5', 100]]),
     });
@@ -157,7 +161,7 @@ describe('F-1400 ADD2: revezamento por modelo e exceção Next/jogo', () => {
     'the name of the game is the 2d array', 'fix the pricing game on the strategy canvas',
     'criar exemplos de teoria dos jogos',
   ])('Grok: teoria dos jogos e expressão idiomática não pinam Opus: %s', (task) => {
-    const decision = route(task, everyone, { visualUseCounts: new Map([['claude:claude-opus-5-5', 100]]) });
+    const decision = route(task, topPool, { visualUseCounts: new Map([['claude:claude-opus-5-5', 100]]) });
     expect(decision.reason).not.toContain('Next/jogo');
     expect(decision.model).not.toBe('claude-opus-5-5');
   });
@@ -183,41 +187,47 @@ describe('F-1400 ADD2: revezamento por modelo e exceção Next/jogo', () => {
     expect(decision.effort).not.toBe('max');
   });
 
-  it('Devin SWE-2 (pedido do operador): seis tarefas visuais dão assento ao Devin no revezamento', () => {
-    const withDevin: AdapterAvailability[] = [...everyone, { id: 'devin', installed: true, models: ['swe-2-high', 'swe-2-medium'] }];
+  it('F-1623: Devin é reserva — com o topo pronto não recebe UI; sem topo, Sonnet e DeepSeek, reveza no fim', () => {
+    const withDevin: AdapterAvailability[] = [...topPool, { id: 'devin', installed: true, models: ['swe-2-high', 'swe-2-medium'] }];
     const visualUseCounts = new Map<string, number>();
-    const picks: string[] = [];
     for (let index = 0; index < 6; index++) {
       const decision = route('implementar a tela responsiva de cadastro com estados vazios', withDevin, { visualUseCounts });
       const key = `${decision.adapterId}:${decision.model}`;
-      picks.push(key);
+      expect(decision.adapterId).not.toBe('devin');
       visualUseCounts.set(key, (visualUseCounts.get(key) ?? 0) + 1);
     }
-    expect(picks).toContain('devin:swe-2-high');
-    expect(new Set(picks).size).toBe(6);
+    const reserveOnly: AdapterAvailability[] = [
+      { id: 'devin', installed: true, models: ['swe-2-high', 'swe-2-medium'] },
+      { id: 'kimi', installed: true, models: ['kimi-code/k3'] },
+    ];
+    const picks = new Set<string>();
+    const reserveUse = new Map<string, number>();
+    for (let index = 0; index < 2; index++) {
+      const decision = route('implementar a tela responsiva de cadastro com estados vazios', reserveOnly, { visualUseCounts: reserveUse });
+      const key = `${decision.adapterId}:${decision.model}`;
+      picks.add(key);
+      reserveUse.set(key, (reserveUse.get(key) ?? 0) + 1);
+    }
+    expect(picks).toEqual(new Set(['devin:swe-2-high', 'kimi:kimi-code/k3']));
   });
 
-  it('uso recente por modelo distingue Opus ocupado de Sonnet livre na mesma CLI', () => {
-    const decision = route('implementar a tela responsiva de cadastro', everyone, {
+  it('F-1623: Opus ocupado passa a vez a outro do topo, não ao Sonnet (reserva)', () => {
+    const decision = route('implementar a tela responsiva de cadastro', topPool, {
       visualUseCounts: new Map([['claude:claude-opus-5-5', 10]]),
     });
-    expect(decision).toMatchObject({ adapterId: 'claude', model: 'claude-sonnet-5-5' });
+    expect(['agy:gemini-4-argon', 'codex:gpt-6-astra']).toContain(`${decision.adapterId}:${decision.model}`);
   });
 
-  it('DeepSeek Flash participa da lane visual e do revezamento quando deepseek está instalado', () => {
-    const withDeepSeek: AdapterAvailability[] = [
-      ...everyone,
+  it('F-1623: DeepSeek Flash é a reserva logo depois do Sonnet', () => {
+    const noTop: AdapterAvailability[] = [
+      ...pool,
       { id: 'deepseek', installed: true, models: ['deepseek-v4-pro', 'deepseek-flash'] },
     ];
-    const visualUseCounts = new Map<string, number>();
-    const picks: string[] = [];
-    for (let index = 0; index < 6; index++) {
-      const decision = route('implementar a tela responsiva de cadastro com estados vazios', withDeepSeek, { visualUseCounts });
-      const key = `${decision.adapterId}:${decision.model}`;
-      picks.push(key);
-      visualUseCounts.set(key, (visualUseCounts.get(key) ?? 0) + 1);
-    }
-    expect(picks).toContain('deepseek:deepseek-flash');
+    const decision = route('implementar a tela responsiva de cadastro com estados vazios', noTop, {
+      visualUseCounts: new Map([['deepseek:deepseek-flash', 10]]),
+    });
+    expect(decision).toMatchObject({ adapterId: 'deepseek', model: 'deepseek-flash' });
+    expect(decision.reason).toContain('lane visual');
   });
 
   it('DeepSeek Flash é escolhido para tarefa frontend com preferAdapters deepseek', () => {

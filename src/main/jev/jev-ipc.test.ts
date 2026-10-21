@@ -61,7 +61,7 @@ describe('registerJevIpc', () => {
     expect(status.keyMasked).toBe('api…ghij');
     expect(status.secureStorageAvailable).toBe(true);
     expect(status.autopilot).toBe(true);
-    expect(status.model).toBe('jev-latest');
+    expect(status.model).toBe('jev-1.13.0');
     expect(status.stats).toEqual({
       calls: 3,
       failures: 1,

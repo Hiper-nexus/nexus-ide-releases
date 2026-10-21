@@ -25,6 +25,7 @@ import {
   type JevResult,
 } from '../jev/jev-client';
 import { hasDecisionCredential } from '../decision-models/decision-availability';
+import { PINNED_DECISION_KEY_HINT } from '../decision-models/decision-routing';
 import {
   jevAnswerConfidences,
   jevAnswerProbabilities,
@@ -52,7 +53,9 @@ import {
 import { recognizeLinesWithBoxes, type OcrLine } from '../vision/ocr';
 import { removeTreeSync } from '../util/remove-tree';
 
-const JUDGE_TIMEOUT_MS = 8_000;
+// Um passo de autopilot é interativo (latência alvo de 5 s do motor): uma
+// tentativa só. Com 8 s e retry no timeout o passo podia esperar ~16 s.
+const JUDGE_TIMEOUT_MS = 5_000;
 const SETTLE_MS = 800;
 const WAIT_MS = 1_500;
 const HISTORY_LEN = 5;
@@ -475,8 +478,12 @@ async function runComputerDo(
       },
       questions,
       timeoutMs: JUDGE_TIMEOUT_MS,
+      retryOnTimeout: false,
       signal: invocation?.signal,
       surface: 'computerTool',
+      // F-1622: sem isto a consulta não contava no orçamento nem no painel da missão.
+      sessionId: ctx.sessionId,
+      missionId: ctx.missionId,
     });
     assertMcpInvocationCurrent(invocation);
 
@@ -736,7 +743,7 @@ const computerDoTool: McpToolDef = {
     assertMayDriveDesktop(ctx);
     if (!hasDecisionCredential('computerTool')) {
       throw new Error(
-        'nexus_computer_do: configure Jev ou Clef em Ajustes → Chaves de API',
+        `nexus_computer_do: ${PINNED_DECISION_KEY_HINT}`,
       );
     }
     if (process.platform !== 'darwin') {
@@ -765,7 +772,7 @@ export function buildComputerAutopilotTools(
         assertMayDriveDesktop(ctx);
         if (!hasDecisionCredential('computerTool')) {
           throw new Error(
-            'nexus_computer_do: configure Jev ou Clef em Ajustes → Chaves de API',
+            `nexus_computer_do: ${PINNED_DECISION_KEY_HINT}`,
           );
         }
         if (process.platform !== 'darwin') {

@@ -207,10 +207,10 @@ describe('"+ Pane": especialidade da tarefa escolhe a CLI', () => {
     // topo é o Opus 5.5, não o Kimi.
     expect(visual).toMatchObject({ adapterId: 'claude', model: 'claude-opus-5-5' });
     expect(doc.adapterId).not.toBe(visual.adapterId);
-    // Com o Opus registrado, a próxima tela cai no Sonnet (mesma CLI, modelo livre).
+    // F-1623: o Sonnet é reserva; sem Argon nem Astra, a próxima tela fica no Opus.
     const next = await routeLikeSpawn(VISUAL_TASK);
     expect(next.reason).toContain('lane visual');
-    expect(next).toMatchObject({ adapterId: 'claude', model: 'claude-sonnet-5-5' });
+    expect(next).toMatchObject({ adapterId: 'claude', model: 'claude-opus-5-5' });
   });
 
   it('a tabela de especialidade MEDIDA também é consultada fora de missão', async () => {

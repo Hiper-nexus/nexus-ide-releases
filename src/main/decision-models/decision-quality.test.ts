@@ -100,7 +100,7 @@ describe('cache da tabela por mtime e entrada de calibração (F-1165)', () => {
         usage: { input_tokens: 1, output_tokens: 0 } };
     } });
     expect(result).toMatchObject({ ok: true, written: true });
-    expect(new Set(seen)).toEqual(new Set(['jev-latest', 'clef', 'clef-flash', 'clef-omni', 'gpt-6-luna']));
+    expect(new Set(seen)).toEqual(new Set(['jev-1.13.0', 'clef', 'clef-flash', 'clef-omni', 'gpt-6-luna']));
     expect(decisionEvalModelId('luna')).toBe('gpt-6-luna');
     expect(readDecisionQualityTable()?.surfaces.judgeTool.luna).toMatchObject({ accuracy: 1, cases: 6 });
     expect(await calibrateDecisionQuality([{ id: '' }], { file })).toMatchObject({ ok: false, written: false });

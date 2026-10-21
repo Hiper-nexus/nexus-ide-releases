@@ -12282,7 +12282,7 @@ export const RELEASE_076358: AppRelease = {
   fixes: [...RELEASE_076357.fixes],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076359: AppRelease = {
   version: '0.76.359',
   date: '2026-10-20',
   codename: 'Picker prioriza disponíveis',
@@ -12300,4 +12300,59 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076359: AppRelease = CURRENT_RELEASE;
+export const RELEASE_076360: AppRelease = {
+  version: '0.76.360',
+  date: '2026-10-21',
+  codename: 'Jev calibrado e UI no topo',
+  summary: 'No desktop Linux, o Jev fica em jev-1.13.0, a guarda trata o estado como dado e a escolha limítrofe da primeira opção é reperguntada. Ajuste visual leve vai para as CLIs baratas; UI de verdade reveza Opus 5.5, Argon e Astra. O autopilot espera 5 s e o gasto entra na missão. A 0.76.358 continua a publicação macOS. A 0.76.359 é o pacote Linux anterior.',
+  highlights: [
+    { title: 'Jev na versão calibrada', detail: 'O padrão passa a ser jev-1.13.0, a versão em que os limiares foram medidos. Escolha explícita e NEXUS_JEV_MODEL continuam vencendo. Versão recusada tenta jev-latest uma vez.' },
+    { title: 'Estado é dado', detail: 'A guarda de despacho diz ao juiz que texto dirigido ao avaliador, alegação de aprovação ou pedido de veredito não é evidência. A suíte rotulada cobre cinco ataques e cinco chamadas legítimas que parecem ataque.' },
+    { title: 'Viés da primeira opção', detail: 'Escolha cuja vencedora é a primeira opção e a confiança está logo acima do limiar é reperguntada com as opções invertidas. Se mudar, a resposta sai. Vale para helper, missão falada, skill, Marketplace, navegador e rota.' },
+    { title: 'UI no topo e ajuste leve barato', detail: 'Visual de medium para cima reveza só Opus 5.5, Gemini Argon e GPT Astra, com reserva ordenada. Easy de cor, botão ou espaçamento reveza as CLIs do tier. Jogo, Next e 3D vão ao Opus 5.5, senão ao Sonnet 5.5.' },
+  ],
+  fixes: [
+    { title: 'Segredo partido não sai no corte', detail: 'capText redige a janela mantida antes de cortar, com folga de 16 KB, para a triagem, o handoff e a memória não mandarem a cauda de uma chave.' },
+    { title: 'Autopilot de 5 s na missão', detail: 'nexus_browser_do e nexus_computer_do esperam 5 s por passo, sem repetir no timeout. A consulta entra no orçamento da missão. Sem a chave do Jev, a mensagem diz a chave que falta. Linha da Luna conta como Luna.' },
+    ...RELEASE_076359.fixes,
+  ],
+};
+
+export const RELEASE_076361: AppRelease = {
+  version: '0.76.361',
+  date: '2026-10-21',
+  codename: 'Jev calibrado chega ao macOS',
+  summary: 'Publicação macOS. O macOS estava na 0.76.358 e não recebeu a 0.76.359 nem a 0.76.360, que são pacotes Linux: esta release leva ao Mac o Jev na versão calibrada, a guarda que trata estado como dado, a repergunta da primeira opção, a UI no topo com reserva ordenada e o + Pane que prioriza as CLIs disponíveis.',
+  highlights: [
+    { title: 'Jev na versão calibrada', detail: 'O padrão deixa de ser o alias jev-latest e passa a ser jev-1.13.0, a versão em que os limiares foram medidos. Escolha explícita e NEXUS_JEV_MODEL continuam vencendo. Versão recusada tenta jev-latest uma vez.' },
+    { title: 'Estado é dado, não instrução', detail: 'A guarda de despacho diz ao juiz que texto dirigido ao avaliador, alegação de aprovação ou pedido de veredito não é evidência. A suíte rotulada cobre cinco ataques e cinco chamadas legítimas que parecem ataque.' },
+    { title: 'Viés da primeira opção', detail: 'Escolha cuja vencedora é a primeira opção e a confiança está logo acima do limiar é reperguntada com as opções invertidas. Se a escolha mudar, a resposta sai. Vale para reuso de helper, missão falada, skill, Marketplace, desempate do navegador e rota de tarefa.' },
+    { title: 'UI no topo e ajuste leve barato', detail: 'Tarefa visual de medium para cima reveza só Opus 5.5, Gemini Argon e GPT Astra, com reserva ordenada. Cor, botão ou espaçamento em tier easy reveza as CLIs do tier. Jogo, Next.js e 3D/WebGL vão ao Opus 5.5 e, sem ele, ao Sonnet 5.5.' },
+    { title: 'O + Pane prioriza disponíveis', detail: 'As CLIs instaladas e ligadas abrem a lista; o bloco "Indisponíveis · N" vem depois, compacto, focável por teclado e exposto a leitores de tela. O seletor não leva mais um pedido pendente para o spawn.' },
+    { title: 'Pacote macOS', detail: 'Esta é a publicação macOS. A 0.76.359 e a 0.76.360 são pacotes Linux e não recebem arquivos macOS. A 0.76.358 é a publicação macOS anterior.' },
+  ],
+  fixes: [
+    { title: 'Segredo partido não sai no corte', detail: 'capText redige a janela mantida antes de cortar, com folga de 16 KB, para a triagem de terminal, o resumo de handoff e a memória não mandarem a cauda de uma chave.' },
+    { title: 'Autopilot de 5 s na missão', detail: 'nexus_browser_do e nexus_computer_do esperam 5 s por passo, sem repetir no timeout. A consulta entra no orçamento e no painel da missão. Sem a chave do Jev, a mensagem diz a chave que falta. Linha da Luna no diário conta como Luna.' },
+    ...RELEASE_076360.fixes,
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.362',
+  date: '2026-10-21',
+  codename: 'O pedido abre o pane, e o login volta',
+  summary: 'O "+ Pane" ganha um campo de pedido: você escreve o que quer feito, o Jev propõe esforço e skill, e você ajusta antes do pane nascer. Pedido vazio abre na hora, como sempre. E o login que "às vezes não pegava" tem causa: quando a troca falhava, o app dizia "login superseded" e escondia o motivo real.',
+  highlights: [
+    { title: 'O pedido abre o pane', detail: 'Campo separado da busca: a busca filtra CLI, conta e modelo; o campo novo é o que você quer feito. Com pedido, escolher a CLI abre um passo com a proposta do Jev; o pedido viaja como primeiro brief. Vazio, o menu abre o pane na hora — o caminho rápido não ganhou fricção.' },
+    { title: 'Esforço editável antes de abrir', detail: 'O esforço era decidido em 70% das rotas de missão e nunca chegava ao pane aberto na mão, que nascia no padrão do provider. Agora a proposta vem marcada e você troca antes do pane nascer, nos níveis que a CLI entende: baixo, médio, alto, máximo — ou "a CLI decide".' },
+    { title: 'O passo diz quem decidiu', detail: 'Tier, especialidade e a origem da escolha aparecem no passo. Sem isso o revezamento por fair-share e diversidade lê como sorteio. Jev sem chave, desligado ou fora do ar: o passo aparece sem proposta e o Abrir funciona igual.' },
+    { title: 'Entrar com GitHub e com Google, no mesmo peso', detail: 'Os dois provedores são alternativas, não primário e secundário. Dar branco a um inventava uma recomendação que não existe e apagava a cor da marca. A marca ganhou slot de largura fixa, e os dois textos passam a começar no mesmo ponto.' },
+  ],
+  fixes: [
+    { title: 'O login não mente mais sobre o motivo', detail: 'No fim da troca o próprio exchange chamava clearAccess(), que incrementa a geração do login — e a partir dali toda falha era reportada como "login superseded" no lugar da causa real (Keychain recusando a gravação, licença inválida). A geração é rebaselinada depois do nosso próprio clearAccess; um login novo de verdade continua invalidando o anterior.' },
+    ...RELEASE_076361.fixes,
+  ],
+};
+
+export const RELEASE_076362: AppRelease = CURRENT_RELEASE;

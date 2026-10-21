@@ -1,10 +1,10 @@
-import { CLEF_MODELS, hasVisionRecipientConsent, LUNA_DECISION_MODEL, visionRecipientsForMode, type DecisionProvider, type DecisionRoute, type DecisionSettings, type ClefModel } from '../../shared/decision-models';
+import { CLEF_MODELS, hasVisionRecipientConsent, JEV_CALIBRATED_MODEL, LUNA_DECISION_MODEL, visionRecipientsForMode, type DecisionProvider, type DecisionRoute, type DecisionSettings, type ClefModel } from '../../shared/decision-models';
 import type { JudgeInput } from '../jev/jev-client';
 import type { JevDecisionSurface } from '../jev/jev-decision-log';
 
 export interface DecisionAvailability { jev: boolean; clef: boolean; luna?: boolean }
 export function jevModel(settings: DecisionSettings): string {
-  return process.env.NEXUS_JEV_MODEL ?? settings.jevModel ?? 'jev-latest';
+  return process.env.NEXUS_JEV_MODEL ?? settings.jevModel ?? JEV_CALIBRATED_MODEL;
 }
 type RouteInput = Pick<JudgeInput, 'surface' | 'model' | 'images'>;
 
@@ -19,6 +19,14 @@ type RouteInput = Pick<JudgeInput, 'surface' | 'model' | 'images'>;
 export const JEV_PINNED_SURFACES: ReadonlySet<JevDecisionSurface> = new Set<JevDecisionSurface>([
   'dispatchGuard', 'handoffReview', 'memoryDistill', 'computerTool', 'browserTool',
 ]);
+
+/**
+ * F-1622: superfície fixada não tem rota no Clef; "configure Jev ou Clef"
+ * mandava o operador configurar uma chave que nunca seria usada.
+ */
+export const PINNED_DECISION_KEY_HINT =
+  'configure a chave do Jev em Ajustes → Chaves de API (navegador e desktop decidem só pelo Jev; ' +
+  'no modo Somente Luna, pela Luna)';
 
 /**
  * Cheap and non-pinned surfaces routed to Clef in auto mode (F-783).

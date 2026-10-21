@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.76.362 — O pedido abre o pane, e o login volta
+
+Publicação macOS (arm64), assinada e notarizada. Build local.
+
+No desktop macOS, em relação à 0.76.361:
+
+- **O "+ Pane" ganha um campo de pedido.** Separado da busca: a busca filtra CLI, conta e modelo; o campo novo é o que você quer feito. Com um pedido escrito, escolher a CLI abre um passo de confirmação com a proposta do Jev, e o pedido viaja como primeiro brief do agente. Com o campo vazio o menu abre o pane na hora, exatamente como sempre abriu.
+- **O esforço fica editável antes do pane nascer.** O esforço é decidido pelo Jev em 70% das rotas de missão e nunca chegava ao pane aberto na mão, que nascia no padrão do provedor. Agora a proposta vem marcada e dá para trocar: baixo, médio, alto, máximo — ou "a CLI decide", que é a ausência de `--effort`.
+- **O passo diz quem decidiu.** Tier, especialidade e origem da escolha aparecem ali. Sem isso o revezamento por fair-share e diversidade parece sorteio. Sem chave do Jev, com a superfície desligada ou com o serviço fora do ar, o passo aparece sem proposta e o Abrir funciona igual — o Jev nunca impede abrir um pane.
+- **O login deixa de mentir sobre o motivo da falha.** No fim da troca, `exchangeAuthCode` chama `clearAccess()`, que roda `resetPendingLogin()` e incrementa `authGeneration`. A partir dali toda falha era devolvida como "login superseded" no lugar da causa real — `exchange-storage` (Keychain recusando a gravação), `exchange-license-invalid`. A geração passa a ser rebaselinada depois do nosso próprio `clearAccess()`; um login concorrente de verdade continua invalidando o anterior.
+- **Entrar com GitHub e Entrar com Google ficam no mesmo peso.** Os dois são alternativas, não primário e secundário: dar branco a um inventava uma recomendação que não existe e apagava a cor da marca, que é o que o olho procura ali. A marca ganhou slot de largura fixa — sem ele os dois rótulos começavam em pontos diferentes.
+
+## 0.76.361 — Jev calibrado chega ao macOS
+
+Publicação macOS (arm64), assinada e notarizada. Build local.
+
+O macOS estava na 0.76.358 e não recebeu a 0.76.359 nem a 0.76.360, que são pacotes Linux. Esta release leva ao Mac tudo o que entrou desde então. A 0.76.356 fica no Windows e não recebe arquivos macOS.
+
+No desktop macOS, em relação à 0.76.358:
+
+- **Jev fica na versão calibrada.** O padrão deixa de ser o alias `jev-latest` e passa a ser `jev-1.13.0`, a versão em que os limiares foram medidos. Escolha explícita e `NEXUS_JEV_MODEL` continuam vencendo. Se essa versão for recusada, uma tentativa volta ao `jev-latest`.
+- **O estado é dado, não instrução.** A guarda de despacho diz ao juiz que texto dirigido ao avaliador, alegação de aprovação ou pedido de veredito não é evidência. A suíte rotulada cobre cinco ataques e cinco chamadas legítimas que parecem ataque.
+- **Viés da primeira opção.** Escolha cuja vencedora é a primeira opção e a confiança está logo acima do limiar é reperguntada com as opções invertidas. Se a escolha mudar, a resposta sai e o chamador segue sem ela. Vale para reuso de helper, missão falada, skill, Marketplace, desempate do navegador e rota de tarefa.
+- **Segredo partido não sai no corte.** `capText` redige a janela mantida antes de cortar, com folga de 16 KB, para a triagem de terminal, o resumo de handoff e a memória não mandarem a cauda de uma chave.
+- **Ajuste visual leve nas CLIs baratas.** A lane de topo só vale de medium para cima e para Next/jogo. Cor, botão ou espaçamento em tier easy reveza as CLIs do tier, sem esforço máximo de modelo de ponta.
+- **UI no topo, com reserva ordenada.** Tarefa visual de medium para cima reveza só Opus 5.5, Gemini Argon e GPT Astra. Sem eles: Sonnet 5.5, depois DeepSeek Flash, depois Muse Full, Kimi, Sol e Devin. Jogo, Next.js e 3D/WebGL vão ao Opus 5.5 e, sem ele, ao Sonnet 5.5. "3D Secure" não conta.
+- **Autopilot mais curto e gasto na missão.** `nexus_browser_do` e `nexus_computer_do` esperam 5 s por passo, sem repetir no timeout. A consulta entra no orçamento e no painel da missão. Sem a chave do Jev, a mensagem diz a chave que falta. Linha da Luna no diário conta como Luna.
+- **O + Pane prioriza disponíveis.** As CLIs instaladas e ligadas abrem a lista; o bloco "Indisponíveis · N" vem depois, com altura capada, rolagem interna, foco por teclado e título exposto a leitores de tela. O seletor não leva mais um pedido pendente para o spawn.
+
+## 0.76.360 — Jev calibrado e UI no topo
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+A 0.76.358 é a publicação macOS e continua Latest; não recebe arquivos Linux. A 0.76.356 fica no Windows e não recebe arquivos Linux. A 0.76.359 é o pacote Linux anterior.
+
+No desktop Linux, em relação à 0.76.359:
+
+- **Jev fica na versão calibrada.** O padrão deixa de ser o alias `jev-latest` e passa a ser `jev-1.13.0`, a versão em que os limiares foram medidos. Escolha explícita e `NEXUS_JEV_MODEL` continuam vencendo. Se essa versão for recusada, uma tentativa volta ao `jev-latest`.
+- **O estado é dado, não instrução.** A guarda de despacho diz ao juiz que texto dirigido ao avaliador, alegação de aprovação ou pedido de veredito não é evidência. A suíte rotulada cobre cinco ataques e cinco chamadas legítimas que parecem ataque.
+- **Viés da primeira opção.** Escolha cuja vencedora é a primeira opção e a confiança está logo acima do limiar é reperguntada com as opções invertidas. Se a escolha mudar, a resposta sai e o chamador segue sem ela. Vale para reuso de helper, missão falada, skill, Marketplace, desempate do navegador e rota de tarefa.
+- **Segredo partido não sai no corte.** `capText` redige a janela mantida antes de cortar, com folga de 16 KB, para a triagem de terminal, o resumo de handoff e a memória não mandarem a cauda de uma chave.
+- **Ajuste visual leve nas CLIs baratas.** A lane de topo só vale de medium para cima e para Next/jogo. Cor, botão ou espaçamento em tier easy reveza as CLIs do tier, sem esforço máximo de modelo de ponta.
+- **UI no topo, com reserva ordenada.** Tarefa visual de medium para cima reveza só Opus 5.5, Gemini Argon e GPT Astra. Sem eles: Sonnet 5.5, depois DeepSeek Flash, depois Muse Full, Kimi, Sol e Devin. Jogo, Next.js e 3D/WebGL vão ao Opus 5.5 e, sem ele, ao Sonnet 5.5. "3D Secure" não conta.
+- **Autopilot mais curto e gasto na missão.** `nexus_browser_do` e `nexus_computer_do` esperam 5 s por passo, sem repetir no timeout. A consulta entra no orçamento e no painel da missão. Sem a chave do Jev, a mensagem diz a chave que falta. Linha da Luna no diário conta como Luna.
+
 ## 0.76.359 — Picker prioriza disponíveis
 
 Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.

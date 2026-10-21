@@ -241,6 +241,7 @@ import { registerAdapterIpc } from "./adapters/adapter-ipc";
 
 import { registerJevIpc } from "./jev/jev-ipc";
 import { registerMissionPickIpc } from "./jev/jev-mission-pick-ipc";
+import { registerPaneRouteIpc } from "./jev/jev-pane-route-ipc";
 import { registerDecisionModelIpc } from "./decision-models/decision-model-ipc";
 import { startDecisionBudgetLedger } from "./decision-models/decision-budget";
 import { subscribeAppEvents } from "./connectors/app-events";
@@ -848,6 +849,7 @@ async function bootstrap(userPathReady: Promise<void>): Promise<void> {
   traceBootstrap('after voice IPC');
   bootStep('registerJevIpc', () => registerJevIpc());
   bootStep('registerMissionPickIpc', () => registerMissionPickIpc());
+  bootStep('registerPaneRouteIpc', () => registerPaneRouteIpc());
   bootStep('registerDecisionModelIpc', () => registerDecisionModelIpc());
   // F-1164: aquece o livro de orçamento por missão fora do caminho quente e
   // esquece missões encerradas.

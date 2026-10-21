@@ -786,17 +786,28 @@ export const VISUAL_FRONTIER_LANE: ReadonlyArray<{
   /** Preferência da lane, não modelo de topo: sozinho, não a torna exclusiva. */
   preferenceOnly?: true;
   effort?: RouteEffort | 'max';
+  /**
+   * F-1623 (operador, 21/10): grupo do assento. O 0 é o topo de UI (Opus 5.5,
+   * Gemini Argon, GPT Astra) e reveza entre si; os grupos seguintes são
+   * reserva ordenada, para o usuário que não tem esses três (cada usuário tem
+   * outras CLIs): Sonnet 5.5, depois DeepSeek, depois o resto. Reserva só
+   * entra quando nenhum assento de grupo menor está pronto.
+   */
+  group?: number;
 }> = Object.freeze([
   { adapterId: 'claude', model: 'claude-opus-5-5', effort: 'max' },
-  { adapterId: 'claude', model: 'claude-sonnet-5-5', effort: 'high' },
-  { adapterId: 'muse', model: 'muse-wonder-full-1.0', effort: 'max' },
-  { adapterId: 'kimi', model: 'kimi-code/k3' },
-  { adapterId: 'codex', model: 'gpt-6.1-sol' },
-  { adapterId: 'devin', model: 'swe-2-high' },
-  { adapterId: 'deepseek', model: 'deepseek-flash' },
-  { adapterId: 'claude', model: 'deepseek-flash' },
-  { adapterId: 'qwen', model: 'deepseek-flash' },
+  { adapterId: 'agy', model: 'gemini-4-argon' },
   { adapterId: 'codex', model: 'gpt-6-astra' },
+  // Sonnet 5.5 manda bem em front e 3D (operador, 21/10).
+  { adapterId: 'claude', model: 'claude-sonnet-5-5', effort: 'high', group: 1 },
+  // DeepSeek "manda bem, mas inferior" ao topo.
+  { adapterId: 'deepseek', model: 'deepseek-flash', group: 2 },
+  { adapterId: 'claude', model: 'deepseek-flash', group: 2 },
+  { adapterId: 'qwen', model: 'deepseek-flash', group: 2 },
+  { adapterId: 'muse', model: 'muse-wonder-full-1.0', effort: 'max', group: 3 },
+  { adapterId: 'kimi', model: 'kimi-code/k3', group: 3 },
+  { adapterId: 'codex', model: 'gpt-6.1-sol', group: 3 },
+  { adapterId: 'devin', model: 'swe-2-high', group: 3 },
 ]);
 
 const BOUNDED = (body: string) => new RegExp(`(?<![\\p{L}\\p{N}_])(?:${body})(?![\\p{L}\\p{N}_])`, 'iu');
@@ -813,16 +824,23 @@ const GAME_BUILD_RE = new RegExp(
   'construir|construa|programar|programe|build|make|create|develop|implement)(?![\\p{L}\\p{N}_])' +
   '[^.;!?\\n]{0,60}?(?<![\\p{L}\\p{N}_])(?:jogos?|games?|videogames?)(?![\\p{L}\\p{N}_])', 'iu');
 const GAME_ENGINE_RE = BOUNDED('godot|unity|unreal|pygame|bevy|raylib|love2d|roguelike|platformer');
+// F-1623: 3D segue a regra de jogo (Opus 5.5, depois Sonnet 5.5). "3D Secure"
+// é autenticação de cartão, não cena 3D.
+const NOT_3D_RE = /3[-\s]?d[-\s]*secure|3ds2?(?![\p{L}\p{N}_])/giu;
+const THREE_D_RE = BOUNDED(
+  '3[-\\s]?d|webgl2?|webgpu|babylon(?:\\.?js)?|react[-\\s]three[-\\s]fiber|r3f|gltf|glb|shaders?|modelagem\\s+3d|cena\\s+3d',
+);
 
 /**
  * F-1400 B1 (revisões Fable e Grok): a regra Next/jogo → Opus max vale para
- * Next.js/app router/create-next-app, para a intenção de construir um jogo e
- * para engines/gêneros de jogo. "next" e "game" soltos ("the next release",
+ * Next.js/app router/create-next-app, para a intenção de construir um jogo,
+ * para engines/gêneros de jogo e (F-1623) para 3D/WebGL. "next" e "game" soltos ("the next release",
  * "game theory", "the name of the game") não são front.
  */
 export function isNextOrGameTask(text: string): boolean {
   const gameText = text.replace(NOT_A_GAME_RE, ' ');
-  return NEXT_FRONT_RE.test(text) || GAME_BUILD_RE.test(gameText) || GAME_ENGINE_RE.test(gameText);
+  return NEXT_FRONT_RE.test(text) || GAME_BUILD_RE.test(gameText) || GAME_ENGINE_RE.test(gameText) ||
+    THREE_D_RE.test(text.replace(NOT_3D_RE, ' '));
 }
 
 /**
@@ -1927,6 +1945,7 @@ export function routeTask(
   const requestedEffort = mention.effort ?? context.effortOverride ?? effortForTier(tier);
   const laneEfforts = new Map<string, RouteEffort | 'max'>();
   let nextGameOpusApplied = false;
+  let nextGameModel = 'Opus 5.5';
   // F-1400 C4 (revisão Fable): o esforço escrito pelo operador no texto vence
   // o max da regra Next/jogo; o max só vence lane/Jev/tier.
   const nextGameMax = (adapterId: string, model?: string) =>
@@ -1969,7 +1988,10 @@ export function routeTask(
       available.set(id, { ...adapter, models: adapter.models.filter((model) => !/-contributor$/iu.test(model)) });
     }
   }
-  const permitsAutomaticAstra = specialtyVerdict.specialty === 'visual';
+  // F-1621: o Astra entra só pela lane visual, que vale de medium para cima
+  // (ou Next/jogo); ajuste visual trivial/easy não o chama.
+  const permitsAutomaticAstra = specialtyVerdict.specialty === 'visual' &&
+    (nextOrGame || TIER_ORDER.indexOf(tier) >= TIER_ORDER.indexOf('medium'));
   const policy = resolveSpecialtyPolicy(
     specialtyVerdict.specialty,
     context.specialtyBenchmark,
@@ -2335,9 +2357,9 @@ export function routeTask(
     }
   }
   const applyFrontierLane = (
-    lane: ReadonlyArray<{ adapterId: string; model: string; preferenceOnly?: true; effort?: RouteEffort | 'max' }>,
+    lane: ReadonlyArray<{ adapterId: string; model: string; preferenceOnly?: true; effort?: RouteEffort | 'max'; group?: number }>,
   ): boolean => {
-    const laneSeats: Array<{ lane: number; adapterId: string; model: string; preferenceOnly: boolean }> = [];
+    const laneSeats: Array<{ lane: number; group: number; adapterId: string; model: string; preferenceOnly: boolean }> = [];
     lane.forEach((seat, laneIndex) => {
       const adapter = available.get(seat.adapterId);
       if (!adapter?.installed) return;
@@ -2379,7 +2401,8 @@ export function routeTask(
           : seat.effort;
       if (laneEffort) laneEfforts.set(`${seat.adapterId}:${chosen}`, laneEffort);
       laneSeats.push({
-        lane: laneIndex, adapterId: seat.adapterId, model: chosen, preferenceOnly: seat.preferenceOnly === true,
+        lane: laneIndex, group: seat.group ?? 0, adapterId: seat.adapterId, model: chosen,
+        preferenceOnly: seat.preferenceOnly === true,
       });
       if (!ranked.some((r) => r.c.adapterId === seat.adapterId && r.c.model === chosen)) {
         ranked.push({ c: { adapterId: seat.adapterId, model: chosen }, fromTier: tier });
@@ -2428,8 +2451,10 @@ export function routeTask(
       }
       return false;
     }
+    // F-1623: grupo menor primeiro; o revezamento vale dentro do grupo.
+    const groupRank = (entry: RankedRouteEntry): number => laneSeatOf(entry)?.group ?? 0;
     ranked = [
-      ...inLane.sort((a, b) => failingRank(a) - failingRank(b) || (lane === VISUAL_FRONTIER_LANE
+      ...inLane.sort((a, b) => failingRank(a) - failingRank(b) || groupRank(a) - groupRank(b) || (lane === VISUAL_FRONTIER_LANE
         ? (visualCount(a.c.adapterId, a.c.model) !== undefined
           ? visualRecentUse(a) - visualRecentUse(b)
           : used(a) - used(b) || visualRecentUse(a) - visualRecentUse(b)) || laneRank(a) - laneRank(b)
@@ -2437,24 +2462,34 @@ export function routeTask(
       ...ranked.filter((entry) => !set.has(entry)),
     ];
     if (lane === VISUAL_FRONTIER_LANE && nextOrGame) {
-      const opus = inLane.find((entry) => entry.c.adapterId === 'claude' && entry.c.model === 'claude-opus-5-5');
-      if (opus) {
-        ranked = [opus, ...ranked.filter((entry) => entry !== opus)];
+      // Next/jogo/3D: Opus 5.5 primeiro; sem ele, Sonnet 5.5 (operador, 21/10).
+      const ready = inLane.filter((entry) => failingRank(entry) === 0);
+      const first = ['claude-opus-5-5', 'claude-sonnet-5-5']
+        .map((model) => ready.find((entry) => entry.c.adapterId === 'claude' && entry.c.model === model))
+        .find((entry) => entry !== undefined);
+      if (first) {
+        ranked = [first, ...ranked.filter((entry) => entry !== first)];
         nextGameOpusApplied = true;
+        nextGameModel = first.c.model === 'claude-opus-5-5' ? 'Opus 5.5' : 'Sonnet 5.5';
       }
     }
     appliedLaneEntries = set;
     return true;
   };
 
-  // Lane visual (regra do operador, 30/09): UI/design vai sempre para os
-  // modelos de topo. F-1412: LEITURA de imagem em tier baixo
-  // (trivial/easy/medium) não é escrita de UI — a lane visual não se aplica e
-  // vale a preferência de visão abaixo (Flash rápido primeiro).
+  // Lane visual (regra do operador, 30/09): UI/design vai para os modelos de
+  // topo. F-1412: LEITURA de imagem em tier baixo (trivial/easy/medium) não é
+  // escrita de UI — a lane visual não se aplica e vale a preferência de visão
+  // abaixo (Flash rápido primeiro). F-1621 (decisão do operador, 21/10: "barata
+  // escreve, ponta revisa"): ajuste de UI trivial/easy (cor, texto de botão,
+  // espaçamento) segue a rota do tier, com o revezamento entre as CLIs baratas.
+  // Construir tela (medium para cima) e Next/jogo continuam na lane de topo.
   const visionReading = visionCapable && tierIndex <= TIER_ORDER.indexOf('medium');
+  const visualLaneTier = nextOrGame || tierIndex >= TIER_ORDER.indexOf('medium');
   let visualNote = '';
   const visualLaneApplied =
     !visionReading &&
+    visualLaneTier &&
     specialtyVerdict.specialty === 'visual' &&
     (policy.source !== 'benchmark' || nextOrGame) &&
     mention.model === undefined &&
@@ -2462,7 +2497,7 @@ export function routeTask(
   const visualLaneEntries = visualLaneApplied ? appliedLaneEntries : undefined;
   if (visualLaneApplied) {
     visualNote = '; lane visual (modelos de topo); revezamento por uso visual recente' +
-      (nextGameOpusApplied ? '; Next/jogo → Opus 5.5 (regra do operador)' : '');
+      (nextGameOpusApplied ? `; Next/jogo → ${nextGameModel} (regra do operador)` : '');
   } else if (preferredLaneSeat) {
     visualNote = `; ${preferredLaneSeat} preferido para visual (sem modelo de topo pronto; rotação mantida)`;
   }

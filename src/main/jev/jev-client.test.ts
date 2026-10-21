@@ -55,6 +55,14 @@ describe('judge', () => {
     expect(result?.model).toBe('jev-1.14.0');
     expect(result?.answers.available).toEqual(JEV_114_CONNECTION_RESPONSE.answers.available);
   });
+  it('F-1624: a versão calibrada aposentada volta ao alias estável uma vez', async () => {
+    const mockFetch = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(404, { error: { message: 'Model jev-1.13.0 not found' } }))
+      .mockResolvedValueOnce(jsonResponse(200, okBody));
+    await judge({ state: 'x', questions: { q: question } },
+      { fetch: mockFetch as unknown as typeof fetch, resolveKey: () => 'k' });
+    expect(mockFetch.mock.calls.map(call => JSON.parse(call[1].body).model)).toEqual(['jev-1.13.0', 'jev-latest']);
+  });
   it.each([400, 404])('retries an unavailable preview once with the stable alias (HTTP %s)', async status => {
     const mockFetch = vi.fn()
       .mockResolvedValueOnce(jsonResponse(status, { error: { message: 'Model jev-1.14.0 not found' } }))
@@ -95,7 +103,8 @@ describe('judge', () => {
     const sentBody = JSON.parse(
       String(((mockFetch.mock.calls[0] as unknown[])[1] as RequestInit).body),
     );
-    expect(sentBody.model).toBe('jev-latest');
+    // F-1624: sem escolha do operador vai a versão calibrada, nunca o alias móvel.
+    expect(sentBody.model).toBe('jev-1.13.0');
   });
 
   it('accepts a real production response and keeps legacy tolerance for rounding and missing usage', async () => {
@@ -685,5 +694,32 @@ describe('testJevConnection', () => {
     expect(result.ok).toBe(false);
     expect(result.detail).toContain('HTTP 401');
     expect(result.detail).not.toContain('k-secret');
+  });
+});
+
+describe('F-1626: judge reconfere a 1ª opção limítrofe com a ordem invertida', () => {
+  const pick = { type: 'choice' as const, instructions: 'Qual?', criteria: { a: 'A', b: 'B', none: 'nenhuma' } };
+  const answer = (choice: string, confidence: number) => jsonResponse(200, {
+    model: 'jev-1.13.0', usage: { input_tokens: 50, output_tokens: 0 },
+    answers: { pick: { type: 'choice', choice, confidence,
+      probabilities: Object.fromEntries(['a', 'b', 'none'].map(id => [id, id === choice ? confidence : (1 - confidence) / 2])) } },
+  });
+
+  it('escolha que muda com a ordem invertida volta sem resposta para a pergunta', async () => {
+    const mockFetch = vi.fn().mockResolvedValueOnce(answer('a', 0.72)).mockResolvedValueOnce(answer('b', 0.7));
+    const result = await judge({ state: 'x', questions: { pick }, orderCheck: { minConfidence: 0.7 } },
+      { fetch: mockFetch as unknown as typeof fetch, resolveKey: () => 'k' });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(Object.keys(JSON.parse(mockFetch.mock.calls[1][1].body).questions.pick.criteria)).toEqual(['none', 'b', 'a']);
+    expect(result?.answers.pick).toBeUndefined();
+    expect(result?.orderCheck).toEqual({ checked: ['pick'], unstable: ['pick'] });
+  });
+
+  it('sem orderCheck, ou com confiança alta, é uma consulta só', async () => {
+    const mockFetch = vi.fn(async () => answer('a', 0.95));
+    await judge({ state: 'x', questions: { pick }, orderCheck: { minConfidence: 0.7 } },
+      { fetch: mockFetch as unknown as typeof fetch, resolveKey: () => 'k' });
+    await judge({ state: 'x', questions: { pick } }, { fetch: mockFetch as unknown as typeof fetch, resolveKey: () => 'k' });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 });

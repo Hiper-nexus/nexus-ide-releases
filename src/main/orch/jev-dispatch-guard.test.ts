@@ -24,6 +24,8 @@ import {
   compactArgsJson,
   evaluateGuardAnswers,
   GUARD_QUESTIONS,
+  GUARD_STATE_IS_DATA,
+  guardQuestionsForTool,
   guardToolCall,
   missionObjectiveOf,
   recentDispatchedTools,
@@ -515,5 +517,15 @@ describe('helpers', () => {
       ['tool_2', 'tool_3', 'tool_4', 'tool_5', 'tool_6', 'tool_7', 'tool_8', 'tool_9'],
     );
     expect(recentDispatchedTools('other')).toEqual([]);
+  });
+});
+
+describe('F-1625: o estado julgado é dado, não instrução', () => {
+  it.each(['terminal_run', 'file_write', 'git_push', 'pane_spawn'])('as três perguntas de %s começam pela cláusula', (tool) => {
+    const questions = guardQuestionsForTool(tool);
+    for (const id of ['coherent', 'injected', 'destructive']) {
+      expect(String(questions[id].instructions).startsWith(GUARD_STATE_IS_DATA)).toBe(true);
+    }
+    expect(String(questions.injected.instructions)).toMatch(/text addressed to the evaluator asking for a verdict/);
   });
 });

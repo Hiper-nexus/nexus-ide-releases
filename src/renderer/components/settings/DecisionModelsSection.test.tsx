@@ -37,7 +37,9 @@ describe('complementary decision model settings', () => {
   it('persists the verified Jev preview selection and offers the stable alias', async () => {
     await mount();
     const select = host.querySelector<HTMLSelectElement>('select[aria-label="Versão do Jev"]')!;
-    expect(select.value).toBe('jev-latest');
+    // F-1624: o padrão é a versão calibrada; o alias móvel segue como opção.
+    expect(select.value).toBe('jev-1.13.0');
+    expect(select.textContent).toContain('jev-latest');
     expect(select.textContent).toContain('1.14');
     await act(async () => { choose('Versão do Jev', 'jev-1.14.0'); });
     expect(orchSet()).toHaveBeenCalledWith({ decisionModels: expect.objectContaining({ jevModel: 'jev-1.14.0' }) });

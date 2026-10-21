@@ -56,6 +56,7 @@ import type {
   SetJevKeyRequest,
 } from './jev-ipc';
 import type { MissionPickRequest, MissionPickResult } from './mission-pick';
+import type { PaneRouteRequest, PaneRouteResult } from './pane-route';
 import type {
   VoiceRuntimeInfo,
   TranscribeRequest,
@@ -768,6 +769,12 @@ export interface NexusApi {
      * missionPick). Devolve a posição escolhida ou "sem decisão"; nunca lança.
      */
     missionPick(req: MissionPickRequest): Promise<MissionPickResult>;
+    /**
+     * Proposta CONSULTIVA de esforço e skill para um pane aberto na mão
+     * ("+ Pane"). Não escolhe a CLI, não concede autoridade e não cria
+     * reserva de rota. Recusa é resultado normal; nunca lança.
+     */
+    paneRoute(req: PaneRouteRequest): Promise<PaneRouteResult>;
     /** Push do classificador Jev de estado do pane (surface paneState). */
     onPaneHint(cb: (event: JevPaneHintEvent) => void): Unsubscribe;
   };

@@ -209,6 +209,7 @@ describe('recommendCatalogItems', () => {
     expect(judge).toHaveBeenCalledTimes(1);
     const input = judge.mock.calls[0]![0] as { state: unknown; questions: Record<string, unknown>; surface: string };
     expect(input.surface).toBe('catalogPick');
+    expect((input as { orderCheck?: unknown }).orderCheck).toEqual({ minConfidence: 0.7 });
     expect(input.state).toEqual({ stack: ['React', 'Go'] });
     expect(Object.keys(input.questions)).toEqual(['react_agent', 'react_skill', 'go_agent', 'go_skill']);
     const sent = JSON.stringify(input);

@@ -1,4 +1,4 @@
-import { CLEF_AUDIO_MODEL, hasAudioRecipientConsent, hasVisionRecipientConsent, visionRecipientsForMode, type VisionRecipient, type DecisionSettings } from '../../../shared/decision-models';
+import { CLEF_AUDIO_MODEL, JEV_CALIBRATED_MODEL, hasAudioRecipientConsent, hasVisionRecipientConsent, visionRecipientsForMode, type VisionRecipient, type DecisionSettings } from '../../../shared/decision-models';
 import { AudioConsentToggle } from './AudioConsentToggle';
 import { VisionConsentToggle } from './VisionConsentToggle';
 
@@ -26,12 +26,12 @@ export function DecisionModeControls({ settings, busy, onChange }: {
         </select>
       </label>
       {(settings.mode === 'jev' || settings.mode === 'auto' || settings.mode === 'together') && <label className="settings-field">Versão do Jev
-        <select className="settings-input" aria-label="Versão do Jev" value={settings.jevModel ?? 'jev-latest'} disabled={busy}
+        <select className="settings-input" aria-label="Versão do Jev" value={settings.jevModel ?? JEV_CALIBRATED_MODEL} disabled={busy}
           onChange={event => onChange({ jevModel: event.target.value as DecisionSettings['jevModel'] })}>
-          <option value="jev-latest">Estável (jev-latest)</option>
+          <option value="jev-1.13.0">Jev 1.13.0 (calibrado, padrão)</option>
+          <option value="jev-latest">Estável que muda sozinho (jev-latest)</option>
           <option value="jev-1.14.0">Jev 1.14.0 (preview)</option>
           <option value="jev-preview">Preview mais recente (jev-preview)</option>
-          <option value="jev-1.13.0">Jev 1.13.0 (calibração histórica)</option>
         </select>
       </label>}
       {settings.mode === 'clef' && <label className="settings-field">Variante Cloudflare
@@ -44,7 +44,8 @@ export function DecisionModeControls({ settings, busy, onChange }: {
       </label>}
     </div>
     {(settings.mode === 'jev' || settings.mode === 'auto' || settings.mode === 'together') && <p className="settings-field__note">
-      O preview 1.14 precisa de reavaliação dos limiares medidos em 1.13. Se a API recusar o modelo, a consulta tenta o estável.
+      Os limiares do Nexus foram medidos no 1.13.0, então ele é o padrão: o jev-latest troca de modelo quando a TypeSafe
+      lança versão nova. O preview 1.14 precisa de reavaliação dos limiares. Se a API recusar o modelo, a consulta tenta o jev-latest.
       {' '}O teste de conexão mostra a versão que respondeu. NEXUS_JEV_MODEL, quando configurado, prevalece sobre esta escolha.
     </p>}
     {settings.mode === 'clef' && <p className="settings-field__note">Preços por milhão de tokens de entrada. O Clef aceita até 65.536 tokens de contexto,
