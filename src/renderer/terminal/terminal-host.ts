@@ -131,7 +131,7 @@ import {
   nextContinuityInjectionDelay,
   takePendingContinuity,
 } from '../orch/stranded-mission-handoff';
-import { takePendingBrief } from './pending-brief';
+import { stashPendingBrief, takePendingBrief } from './pending-brief';
 import {
   createAdoptionRepaintTape,
   repaintAdoptedFrame,
@@ -1341,7 +1341,10 @@ function startSpawn(
   // F-1596: brief de tarefa (ex.: vídeo de apresentação) — entregue pelo mesmo
   // caminho do pacote de continuidade, que espera a CLI aceitar texto.
   const brief = pack ? undefined : takePendingBrief(pane.id);
-  return (async (): Promise<string | null> => {
+  // Spawn abortado (geração trocada, acesso negado, erro) antes de chegar à
+  // entrega: o pedido volta à fila, senão o respawn nascia com o composer vazio.
+  let briefHandedOff = false;
+  const run = (async (): Promise<string | null> => {
     try {
       while (!useAccessStore.getState().canUseApp) {
         if (!await waitForSpawnAccess(host, generation)) return null;
@@ -1890,6 +1893,7 @@ function startSpawn(
           ? crossResume.note
           : crossResume.fallbackPack
         : (pack ?? brief);
+      briefHandedOff = true;
       const shouldInjectContinue = shouldInjectResumeContinuation({
         quietSpawn,
         hasContinuityPack: Boolean(injectedPack),
@@ -2050,6 +2054,9 @@ function startSpawn(
       return null;
     }
   })();
+  return run.finally(() => {
+    if (brief && !briefHandedOff) stashPendingBrief(pane.id, brief);
+  });
 }
 
 /**
