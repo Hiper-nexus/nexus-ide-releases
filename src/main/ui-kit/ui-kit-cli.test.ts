@@ -3,6 +3,7 @@ import type fs from 'node:fs';
 import {
   assertSafeEnvName,
   isAlreadyGoneKillError,
+  UI_KIT_DEFAULT_NPM_REGISTRY,
   assertSafeUiKitArgs,
   assertSafeUiKitCwd,
   buildUiKitChildEnv,
@@ -34,6 +35,21 @@ describe('buildUiKitChildEnv', () => {
     expect(env.npm_config_yes).toBe('true');
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(env.OPENAI_API_KEY).toBeUndefined();
+  });
+
+  it('pins the npm registry so a project .npmrc cannot choose the package', () => {
+    // npm reads a .npmrc from its cwd, and a writing run uses the project as
+    // cwd: without this the repository decides which `shadcn` we execute.
+    expect(buildUiKitChildEnv({ PATH: '/usr/bin' }).npm_config_registry).toBe(
+      UI_KIT_DEFAULT_NPM_REGISTRY,
+    );
+  });
+
+  it("keeps the operator's own mirror when they configured one", () => {
+    expect(
+      buildUiKitChildEnv({ npm_config_registry: 'https://mirror.corp.test/' })
+        .npm_config_registry,
+    ).toBe('https://mirror.corp.test/');
   });
 
   it('adds a validated registry token', () => {

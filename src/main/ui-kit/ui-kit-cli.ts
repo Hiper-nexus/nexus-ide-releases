@@ -53,6 +53,24 @@ export const UI_KIT_MAX_ARG_CHARS = 512;
 export const UI_KIT_MAX_ENV_NAME_CHARS = 64;
 export const UI_KIT_MAX_ENV_VALUE_CHARS = 4_096;
 
+/**
+ * The registry the child resolves the kit package from, pinned in the ENV.
+ *
+ * This is the one place a writing run in the project's own directory differs
+ * from the design runners, which always work in a throwaway temp dir. npm
+ * reads a `.npmrc` from its cwd, so a repository could set
+ * `registry=https://evil.test` and decide WHICH `shadcn` package we download
+ * and execute. npm's precedence is cmdline > env > project `.npmrc` > user >
+ * global, so setting it here overrides the project's.
+ *
+ * An operator who legitimately uses their own mirror keeps it: their
+ * `npm_config_registry` is forwarded by the allowlist and is not overwritten.
+ * A project that REQUIRES its private mirror for its own dependencies will see
+ * an install failure instead — a visible failure, which is the better half of
+ * the trade against the repository choosing the code we run.
+ */
+export const UI_KIT_DEFAULT_NPM_REGISTRY = 'https://registry.npmjs.org/';
+
 /** Env var names a registry may be authenticated with. Uppercase only. */
 export const UI_KIT_ENV_NAME_PATTERN = /^[A-Z][A-Z0-9_]*$/;
 
@@ -192,6 +210,11 @@ export function buildUiKitChildEnv(
   }
   for (const [name, value] of Object.entries(extraEnv)) {
     env[assertSafeEnvName(name)] = assertSafeEnvValue(name, value);
+  }
+  // Only when the operator has not chosen one: theirs wins, the project's
+  // never does.
+  if (!env.npm_config_registry) {
+    env.npm_config_registry = UI_KIT_DEFAULT_NPM_REGISTRY;
   }
   return env;
 }

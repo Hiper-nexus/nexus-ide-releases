@@ -18,14 +18,13 @@ import {
   UI_KIT_RECIPES,
 } from '../ui-kit/ui-kit-recipes';
 import { pickUiKit, type UiKitCandidate } from '../ui-kit/ui-kit-pick';
-import { listCachedItems } from '../ui-kit/ui-kit-cache';
+import { listCachedItems, readCachedItem } from '../ui-kit/ui-kit-cache';
 import {
   boardUiCandidates,
   boardUiLicenseStatus,
   callBoardUiTool,
   installItems,
   parseShadcnSearchOutput,
-  readItemSource,
   runShadcnCommand,
   shadcnSearchNamespaces,
 } from '../ui-kit/ui-kit-service';
@@ -77,24 +76,62 @@ function configuredRegistries(): readonly UiKitRegistry[] {
 
 const serviceDeps = () => ({ registries: configuredRegistries });
 
-/** Live listing for shadcn; the structured snapshot for BoardUI. */
-async function candidatesFor(
+function matchesQuery(entry: UiKitCandidate, needle: string | undefined): boolean {
+  if (!needle) return true;
+  return (
+    entry.slug.includes(needle) ||
+    entry.label.toLowerCase().includes(needle) ||
+    entry.category.includes(needle)
+  );
+}
+
+/**
+ * The read-only listing: the BoardUI snapshot plus whatever is already cached.
+ *
+ * It NEVER spawns. That is the whole point — `nexus_ui_kit_catalog` and
+ * `nexus_ui_kit_source` are classified read-only, and a read-only lane (a
+ * reviewer, a readOnly worker, an unconfirmed voice call) must not be able to
+ * cause code execution. Running `npx` would, and in the project's own
+ * directory at that: npm reads a `.npmrc` from its cwd, so the REPOSITORY
+ * could choose which package gets downloaded and run. The live registry is
+ * reachable through `nexus_ui_kit_run`, which is an effect and is gated.
+ */
+function cachedCandidatesFor(
+  kit: UiKitId,
+  query: string | undefined,
+): readonly UiKitCandidate[] {
+  const needle = query?.trim().toLowerCase();
+  const cached = listCachedItems(kit);
+  if (kit === 'boardui') {
+    const bySlug = new Map(cached.map((entry) => [entry.slug, entry]));
+    return boardUiCandidates()
+      .filter((entry) => matchesQuery(entry, needle))
+      .map((entry) => ({ ...entry, ...(bySlug.has(entry.slug) ? {} : {}) }));
+  }
+  return cached
+    .map((entry) => ({
+      kit,
+      slug: entry.slug,
+      label: entry.slug,
+      category: 'registry-item',
+      tier: entry.tier,
+    }))
+    .filter((entry) => matchesQuery(entry, needle));
+}
+
+/** The live listing. Only reachable from an effectful tool. */
+async function liveCandidatesFor(
   kit: UiKitId,
   cwd: string,
   query: string | undefined,
 ): Promise<{ candidates: readonly UiKitCandidate[]; raw: string; bestEffort: boolean }> {
   if (kit === 'boardui') {
-    const all = boardUiCandidates();
     const needle = query?.trim().toLowerCase();
-    const filtered = needle
-      ? all.filter(
-          (entry) =>
-            entry.slug.includes(needle) ||
-            entry.label.toLowerCase().includes(needle) ||
-            entry.category.includes(needle),
-        )
-      : all;
-    return { candidates: filtered, raw: '', bestEffort: false };
+    return {
+      candidates: boardUiCandidates().filter((entry) => matchesQuery(entry, needle)),
+      raw: '',
+      bestEffort: false,
+    };
   }
   const result = await runShadcnCommand(
     {
@@ -124,10 +161,11 @@ export function buildUiKitTools(): McpToolDef[] {
       description:
         'Browse the UI kits available to this project: shadcn/ui (free, any ' +
         'registry) and BoardUI (free items plus Pro items that need the ' +
-        "operator's licence). Lists items, the ready-made recipes (super " +
-        'admin, dashboard, auth) and what is already cached locally. Pass ' +
-        '`task` to also get a recommendation for which kit and item fit it. ' +
-        'Read-only.',
+        "operator's licence). OFFLINE and read-only: BoardUI's whole catalog " +
+        'ships with Nexus, and for shadcn this lists what has been downloaded ' +
+        "— the live registry is nexus_ui_kit_run { command: 'search' }. Also " +
+        'lists the ready-made recipes (super admin, dashboard, auth). Pass ' +
+        '`task` for a recommendation of which kit and item fit it.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -144,35 +182,23 @@ export function buildUiKitTools(): McpToolDef[] {
           },
         },
       },
-      handler: async (args, ctx) => {
+      handler: async (args) => {
         const kit = parseKit(args);
-        const cwd = cwdFor(ctx);
         const query = str(args, 'query');
         const cached = listCachedItems(kit);
-
-        if (args.cachedOnly === true) {
-          return {
-            kit,
-            cached: cached.map((entry) => ({
-              slug: entry.slug,
-              tier: entry.tier,
-              bytes: entry.bytes,
-              fetchedAt: entry.fetchedAt,
-            })),
-            recipes: UI_KIT_RECIPES.map((recipe) => recipe.id),
-          };
-        }
-
-        const listed = await candidatesFor(kit, cwd, query);
+        const items = cachedCandidatesFor(kit, query);
         const task = str(args, 'task');
+
         let recommendation: unknown;
         if (task) {
-          const license =
-            kit === 'boardui' ? await boardUiLicenseStatus({ cwd }, serviceDeps()) : null;
+          // `proLicensed` is left false on purpose: asking the vendor would
+          // mean spawning its MCP server, which is exactly the code execution
+          // this tool must not reach. The Pro gate then falls back to a free
+          // item and reports `needsLicense`, which is the honest answer from a
+          // read-only lane.
           const pick = await pickUiKit({
             task,
-            candidates: [...listed.candidates, ...boardUiCandidates()].slice(0, 60),
-            proLicensed: license?.state === 'active',
+            candidates: [...items, ...boardUiCandidates()].slice(0, 60),
           });
           recommendation = {
             needsKit: pick.needsKit,
@@ -182,19 +208,20 @@ export function buildUiKitTools(): McpToolDef[] {
             blocked: pick.blockedItem?.slug ?? null,
             decidedBy: pick.source,
             reason: pick.reason,
+            licenceNotChecked: true,
           };
         }
 
         return {
           kit,
-          items: listed.candidates.map((entry) => ({
+          items: items.map((entry) => ({
             slug: entry.slug,
             label: entry.label,
             category: entry.category,
             tier: entry.tier,
+            cached: cached.some((entry2) => entry2.slug === entry.slug),
           })),
-          bestEffortParse: listed.bestEffort,
-          ...(listed.raw ? { rawOutput: listed.raw } : {}),
+          offline: true,
           cachedSlugs: cached.map((entry) => entry.slug),
           recipes: UI_KIT_RECIPES.map((recipe) => ({
             id: recipe.id,
@@ -202,6 +229,14 @@ export function buildUiKitTools(): McpToolDef[] {
             description: recipe.description,
             roles: recipe.roles.map((role) => role.key),
           })),
+          hint:
+            kit === 'shadcn'
+              ? "This is the offline view: BoardUI's catalog ships with Nexus, " +
+                'and for shadcn it lists only what has been downloaded. For the ' +
+                "live registry run nexus_ui_kit_run { command: 'search' }."
+              : "BoardUI's catalog ships with Nexus, so this list is complete. " +
+                "For the vendor's live list use nexus_ui_kit_boardui " +
+                "{ tool: 'list_components' }.",
           ...(recommendation ? { recommendation } : {}),
         };
       },
@@ -209,9 +244,10 @@ export function buildUiKitTools(): McpToolDef[] {
     {
       name: 'nexus_ui_kit_source',
       description:
-        "Read one kit item's source before deciding to install it. Served " +
-        'from the local Nexus cache when fresh, so looking at three ' +
-        'components does not cost three vendor round trips. Read-only.',
+        "Read one kit item's source from the local Nexus cache, so looking at " +
+        'three components costs no vendor round trip. Read-only and offline: ' +
+        'an item that was never downloaded comes back with the effectful call ' +
+        'that fetches it, rather than fetching it from here.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -221,23 +257,31 @@ export function buildUiKitTools(): McpToolDef[] {
         },
         required: ['slug'],
       },
-      handler: async (args, ctx) => {
+      handler: async (args) => {
         const kit = parseKit(args);
-        const result = await readItemSource(
-          {
+        const slug = requireStr(args, 'slug');
+        const cached = readCachedItem(kit, slug);
+        if (!cached) {
+          return {
             kit,
-            slug: requireStr(args, 'slug'),
-            cwd: cwdFor(ctx),
-            ...(args.refresh === true ? { refresh: true } : {}),
-          },
-          serviceDeps(),
-        );
+            slug,
+            cached: false,
+            source: null,
+            hint:
+              'Not downloaded yet. Fetching it is an effect, not a read: run ' +
+              `nexus_ui_kit_run { command: 'view', items: ['${slug}'] } ` +
+              '(shadcn) or nexus_ui_kit_boardui ' +
+              `{ tool: 'get_component', args: { name: '${slug}' } } (BoardUI), ` +
+              'and it lands in the local cache for next time.',
+          };
+        }
         return {
-          kit: result.kit,
-          slug: result.slug,
-          tier: result.tier,
-          fromCache: result.fromCache,
-          source: result.source.slice(0, 100_000),
+          kit: cached.kit,
+          slug: cached.slug,
+          tier: cached.tier,
+          cached: true,
+          fetchedAt: cached.fetchedAt,
+          source: cached.payload.slice(0, 100_000),
         };
       },
     },
@@ -326,7 +370,7 @@ export function buildUiKitTools(): McpToolDef[] {
         const cwd = cwdFor(ctx);
         const license =
           kit === 'boardui' ? await boardUiLicenseStatus({ cwd }, serviceDeps()) : null;
-        const listed = await candidatesFor(kit, cwd, undefined);
+        const listed = await liveCandidatesFor(kit, cwd, undefined);
         const resolved = resolveUiKitRecipe({
           recipe,
           kit,
