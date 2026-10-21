@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { initializeAdsConsent, CONSENT_KEY, GOOGLE_ADS_ID } from './ads-consent.js';
 
-function fixture({ saved = null, path = '/', host = 'nexuside.app', protocol = 'https:', search = '', existingTag = false, writeFails = false } = {}) {
+function fixture({ saved = null, path = '/', host = 'nexuside.app', protocol = 'https:', search = '', existingTag = false, writeFails = false, referrer = '' } = {}) {
   const nodes = Object.fromEntries(['ads-consent', 'ads-preferences', 'ads-accept', 'ads-reject'].map(id => [id, {
     hidden: true, listeners: {}, focused: false,
     addEventListener(name, fn) { this.listeners[name] = fn; },
@@ -20,6 +20,7 @@ function fixture({ saved = null, path = '/', host = 'nexuside.app', protocol = '
     addEventListener(name, fn) { events[name] = fn; },
   };
   const doc = {
+    referrer,
     getElementById: id => nodes[id],
     querySelector: () => existingTag || scripts[0] || null,
     createElement: name => { assert.equal(name, 'script'); return {}; },
@@ -56,11 +57,15 @@ test('aceite carrega uma única tag validada, com consentimento primeiro e sem c
   assert.equal(rows[1][2].ad_storage, 'granted');
   assert.equal(rows[1][2].ad_user_data, 'denied');
   assert.equal(rows[1][2].ad_personalization, 'denied');
+  assert.equal(f.win['ga-disable-G-VJFB612907'], true);
+  const jsIndex = rows.findIndex(row => row[0] === 'js');
+  assert.ok(rows.findIndex(row => row[0] === 'set' && row[1] === 'user_data' && row[2] === null) < jsIndex);
+  assert.ok(rows.findIndex(row => row[0] === 'set' && row[1] === 'allow_enhanced_conversions' && row[2] === false) < jsIndex);
   const config = rows.find(row => row[0] === 'config');
   assert.equal(config[1], GOOGLE_ADS_ID);
   assert.equal(config[2].allow_enhanced_conversions, false);
   assert.equal(config[2].page_location, 'https://nexuside.app/');
-  assert.equal(config[2].page_referrer, '');
+  assert.equal(config[2].page_referrer, 'https://nexuside.app/');
   assert.equal(JSON.stringify(rows).includes('private@example'), false);
   assert.equal(rows.some(row => row[0] === 'event'), false);
   f.init(); f.nodes['ads-preferences'].click(); f.nodes['ads-accept'].click();
@@ -111,4 +116,13 @@ test('reutiliza loader existente e respeita mudança de consentimento em outra a
   assert.equal(f.reloads(), 0);
   f.events.storage({ key: CONSENT_KEY });
   assert.equal(f.reloads(), 1);
+});
+
+
+test('origem com parâmetros ou fragmento potencialmente privado bloqueia o loader mesmo após aceite', () => {
+  for (const referrer of ['https://nexuside.app/conta/?email=private@example.test', 'https://example.test/#secret']) {
+    const f = fixture({ referrer }); f.init(); f.nodes['ads-accept'].click();
+    assert.equal(f.scripts.length, 0);
+    assert.equal(f.win.dataLayer, undefined);
+  }
 });

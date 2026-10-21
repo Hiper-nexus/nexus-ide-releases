@@ -20,13 +20,21 @@ export function initializeAdsConsent(win = window, doc = document) {
   if (new URLSearchParams(win.location.search).get('privacy') === 'denied') choice = 'denied';
 
   function loadTag() {
-    if (loaded) return;
+    // Não expor parâmetros potencialmente privados da página de origem ao código de terceiros.
+    if (loaded || /[?#]/.test(doc.referrer || '')) return;
     loaded = true;
+    // A tag Google compartilhada também contém este destino GA4. Não o ativar no Nexus.
+    win['ga-disable-G-VJFB612907'] = true;
     win.dataLayer = win.dataLayer || [];
     win.gtag = win.gtag || function () { win.dataLayer.push(arguments); };
     // Consent Mode básico: estes comandos só são processados após o aceite.
     win.gtag('consent', 'default', { ...DENIED });
     win.gtag('consent', 'update', { ...DENIED, ad_storage: 'granted' });
+    // Opt-out por página documentado pelo Google: impede a coleta automática de dados fornecidos pelo usuário.
+    win.gtag('set', 'user_data', null);
+    win.gtag('set', 'allow_enhanced_conversions', false);
+    win.gtag('set', 'allow_google_signals', false);
+    win.gtag('set', 'allow_ad_personalization_signals', false);
     win.gtag('set', 'ads_data_redaction', true);
     win.gtag('set', 'url_passthrough', false);
     win.gtag('js', new Date());
@@ -35,7 +43,7 @@ export function initializeAdsConsent(win = window, doc = document) {
       allow_google_signals: false,
       allow_ad_personalization_signals: false,
       page_location: 'https://nexuside.app/',
-      page_referrer: '',
+      page_referrer: 'https://nexuside.app/',
       page_title: 'NexusIDE',
     });
     // Reutiliza o loader caso outro módulo já tenha instalado gtag.js.
