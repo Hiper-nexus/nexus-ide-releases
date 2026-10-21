@@ -49,8 +49,17 @@ export const SECURITY_ENSEMBLE_SURFACES: ReadonlySet<JevDecisionSurface> = new S
  * viaja na superfície taskRouting; não há superfície própria.
  */
 export const REVERSIBLE_ENSEMBLE_SURFACES: ReadonlySet<JevDecisionSurface> = new Set<JevDecisionSurface>([
-  'taskRouting', 'missionPick', 'catalogPick', 'uiKitPick',
+  'taskRouting', 'missionPick', 'catalogPick',
 ]);
+
+/**
+ * `uiKitPick` fica FORA do ensemble de propósito: entrar aqui exige ≥5 casos
+ * rotulados (o guard do F-1167 cobra), e os dele não foram medidos — os
+ * limiares 0,7/0,6 do consumidor são convenção herdada, não calibração desta
+ * superfície. Escrever casos sintéticos só para passar o guard seria
+ * calibração falsa. Até medir em pedidos reais de UI, ela roda num provedor só
+ * (Jev), com a heurística própria como piso quando não há resposta.
+ */
 
 /**
  * Surfaces whose consumers apply probability thresholds calibrated on Jev.
