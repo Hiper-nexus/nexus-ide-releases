@@ -1,6 +1,8 @@
 import { spawn, type SpawnOptions } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { removeTreeSync } from '../util/remove-tree';
 
 /**
  * One sandboxed runner for every UI-kit CLI (`shadcn`, `boardui`).
@@ -70,6 +72,22 @@ export const UI_KIT_MAX_ENV_VALUE_CHARS = 4_096;
  * the trade against the repository choosing the code we run.
  */
 export const UI_KIT_DEFAULT_NPM_REGISTRY = 'https://registry.npmjs.org/';
+
+/**
+ * npm keys a project's `.npmrc` could use to redirect resolution even with the
+ * registry pinned: route the request through a host of its choice, or make a
+ * forged certificate acceptable. An env value beats a project `.npmrc`, and an
+ * EMPTY value is how npm is told "no proxy", so these are pinned empty.
+ *
+ * The operator's own proxy/CA live in their user `.npmrc`, which is still read
+ * — pinning `userconfig` would have discarded their auth tokens with it.
+ */
+const NPM_REDIRECT_KEYS_PINNED_EMPTY = [
+  'npm_config_proxy',
+  'npm_config_https_proxy',
+  'npm_config_ca',
+  'npm_config_cafile',
+] as const;
 
 /** Env var names a registry may be authenticated with. Uppercase only. */
 export const UI_KIT_ENV_NAME_PATTERN = /^[A-Z][A-Z0-9_]*$/;
@@ -181,6 +199,22 @@ export interface UiKitCliRunRequest {
   readonly cwd: string;
   /** True when the command writes files / installs dependencies. */
   readonly writes?: boolean;
+  /**
+   * Where the PACKAGE is resolved from.
+   *
+   * `isolated` spawns in a throwaway Nexus-owned directory, which is the only
+   * way to keep the project out of the decision: npm reads a `.npmrc` from its
+   * cwd, and `npx` prefers a binary from the cwd's `node_modules/.bin` — so a
+   * repository with a committed `node_modules/.bin/shadcn`, or an `.npmrc`
+   * naming its own registry, would otherwise choose the code that runs.
+   * Measured: with the project as cwd, `npx` went to the registry the
+   * repository named.
+   *
+   * It requires a CLI that can be pointed back at the project (`cwdFlag`).
+   */
+  readonly resolveIn?: 'project' | 'isolated';
+  /** Append `--cwd <project>` so an isolated run still acts on the project. */
+  readonly cwdFlag?: boolean;
   /** Registry auth only. Values are secret: never logged, never in argv. */
   readonly extraEnv?: Readonly<Record<string, string>>;
   readonly timeoutMs?: number;
@@ -216,6 +250,11 @@ export function buildUiKitChildEnv(
   if (!env.npm_config_registry) {
     env.npm_config_registry = UI_KIT_DEFAULT_NPM_REGISTRY;
   }
+  for (const key of NPM_REDIRECT_KEYS_PINNED_EMPTY) {
+    if (!env[key]) env[key] = '';
+  }
+  // A project cannot turn certificate checking off for our download.
+  if (!env.npm_config_strict_ssl) env.npm_config_strict_ssl = 'true';
   return env;
 }
 
@@ -471,11 +510,11 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
   new Promise<UiKitCliRunResult>((resolve, reject) => {
     const writes = request.writes === true;
     let cwd: string;
-    let args: readonly string[];
+    let args: string[];
     let env: NodeJS.ProcessEnv;
     try {
       cwd = assertSafeUiKitCwd(request.cwd, { writes });
-      args = assertSafeUiKitArgs(request.args);
+      args = [...assertSafeUiKitArgs(request.args)];
       env = buildUiKitChildEnv(process.env, request.extraEnv ?? {});
     } catch (error) {
       reject(error);
@@ -486,6 +525,28 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
       return;
     }
 
+    // The project is still the authorized target and still gets the
+    // node_modules guard above; only the RESOLUTION moves out of it.
+    const isolated = request.resolveIn === 'isolated';
+    let spawnCwd = cwd;
+    let scratchDir: string | null = null;
+    if (isolated) {
+      try {
+        scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-ui-kit-run-'));
+        spawnCwd = scratchDir;
+      } catch (error) {
+        reject(
+          new UiKitCliError(
+            'NO_SCRATCH_DIR',
+            'could not create an isolated directory to resolve the kit from: ' +
+              (error instanceof Error ? error.message : String(error)),
+          ),
+        );
+        return;
+      }
+      if (request.cwdFlag) args = [...args, '--cwd', cwd];
+    }
+
     const timeoutMs =
       request.timeoutMs ??
       (writes ? UI_KIT_WRITE_TIMEOUT_MS : UI_KIT_READ_TIMEOUT_MS);
@@ -494,13 +555,24 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
       : UI_KIT_READ_MAX_OUTPUT_BYTES;
     const isWindows = process.platform === 'win32';
     const options: SpawnOptions = {
-      cwd,
+      cwd: spawnCwd,
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: !isWindows,
       shell: false,
       windowsHide: isWindows,
     };
+
+    function dropScratch(): void {
+      if (!scratchDir) return;
+      const target = scratchDir;
+      scratchDir = null;
+      try {
+        removeTreeSync(target);
+      } catch {
+        // A leftover temp dir is noise, never a reason to fail the run.
+      }
+    }
 
     let child: ReturnType<typeof spawn>;
     try {
@@ -510,6 +582,7 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
         options,
       );
     } catch (error) {
+      dropScratch();
       reject(
         new UiKitCliError(
           'SPAWN_FAILED',
@@ -537,6 +610,7 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
     function cleanup(): void {
       clearTimeout(timer);
       request.signal?.removeEventListener('abort', onAbort);
+      dropScratch();
     }
     function fail(error: UiKitCliError): void {
       if (settled) return;

@@ -285,6 +285,18 @@ export function shadcnCommandIsQuery(command: ShadcnCommand): boolean {
   return !shadcnCommandWrites(command);
 }
 
+/**
+ * Whether the command takes `-c, --cwd`.
+ *
+ * This is what lets the package be RESOLVED outside the project while the
+ * command still operates on it. `preset decode` and `preset url` are pure
+ * string operations and document no cwd flag, so they simply run wherever the
+ * runner put them.
+ */
+export function shadcnCommandAcceptsCwd(command: ShadcnCommand): boolean {
+  return command.kind !== 'preset-decode' && command.kind !== 'preset-url';
+}
+
 function enumArg<T extends string>(
   label: string,
   value: string,

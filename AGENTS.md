@@ -2774,6 +2774,20 @@ componente: o agente recebia a paleta e escrevia cada peça à mão. `src/main/u
 - **O cwd de um run que ESCREVE nunca é um checkout com `node_modules` symlink**
   (`assertSafeUiKitCwd`): o install escreveria na árvore compartilhada de todas
   as worktrees. Recusado antes, não descoberto depois.
+- **O pacote é resolvido FORA do projeto (shadcn).** O npm lê `.npmrc` do cwd e
+  o `npx` prefere binário do `node_modules/.bin` do cwd: com o projeto como cwd,
+  o REPOSITÓRIO escolhia qual código rodava. Medido: `npx` foi buscar o shadcn
+  em `https://evil.invalid/` por causa de um `.npmrc` commitado. Agora o spawn
+  do shadcn roda num temp do Nexus e volta ao projeto por `--cwd`
+  (`resolveIn: 'isolated'`), o que fecha também o `node_modules/.bin/shadcn`
+  commitado. `preset decode` e `preset url` não têm o flag e não precisam dele.
+  Além disso o env fixa `npm_config_registry` (o espelho do operador vence, o do
+  projeto nunca), zera proxy/CA e força `strict_ssl` — env vence `.npmrc` de
+  projeto. **Limite conhecido:** o BoardUI não tem `--cwd` (o `-d/--dir` dele é a
+  SOURCE root, e apontar errado escreveria componente no lugar errado em
+  silêncio), então ele resolve no projeto; os pins de env o protegem, e o resíduo
+  é um `node_modules/.bin/boardui` commitado. Fechar isso exige verificar
+  `--dir` ou o `projectDir` do MCP contra um install real.
 - **`extraEnv` é allowlist POR FORMA, não denylist.** O npm lê qualquer
   `npm_config_*` como configuração e o loader lê `LD_PRELOAD`/`DYLD_*`: nome
   precisa carregar palavra de credencial (TOKEN, KEY, SECRET, AUTH, PASS,
@@ -2809,6 +2823,13 @@ componente: o agente recebia a paleta e escrevia cada peça à mão. `src/main/u
   `allowedSkills` (em modo governado, ausente = nenhuma skill).
 - **`shadcn eject` não é alcançável por tool**: o fornecedor o documenta como
   irreversível. Porta de mão única é do operador.
+- **`nexus_ui_kit_catalog` e `nexus_ui_kit_source` são leitura DE VERDADE: não
+  spawnam nada.** São classificados `read-only` no `mcp-effect-policy`, o que os
+  deixa ao alcance de revisor, worker readOnly e voz sem confirmação — e lane de
+  leitura não pode causar execução de código. Servem o retrato do BoardUI (vem
+  com o Nexus) e o cache; o registry ao vivo é o `nexus_ui_kit_run`, que é
+  efeito. O `catalog` também NÃO sonda a licença: perguntar ao fornecedor sobe o
+  MCP dele. `tools-ui-kit-read-only.test.ts` prova com `spawn` fatal.
 - `parseShadcnSearchOutput` é RASPAGEM de texto (a CLI não tem `--json` para
   busca): lista vazia nunca prova registry vazio, e a UI diz isso.
 - Cache em `<userData>/ui-kit/<kit>` a 0600, hash conferido na leitura (payload

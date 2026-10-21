@@ -118,6 +118,39 @@ describe('runShadcnCommand', () => {
     expect(h.cliRuns[0]?.cwd).toBe(cwd);
   });
 
+  it('resolves the package outside the project and points the CLI back at it', async () => {
+    // With the project as cwd, npm reads its `.npmrc` and npx prefers its
+    // node_modules/.bin — the repository would choose the code that runs.
+    const h = harness();
+
+    await runShadcnCommand({ command: { kind: 'add', items: ['button'] }, cwd }, h.deps);
+
+    expect(h.cliRuns[0]?.resolveIn).toBe('isolated');
+    expect(h.cliRuns[0]?.cwdFlag).toBe(true);
+    // The project stays the authorized target, so the node_modules guard still
+    // applies to it.
+    expect(h.cliRuns[0]?.cwd).toBe(cwd);
+  });
+
+  it('does not ask for --cwd on the commands that have no such flag', async () => {
+    const h = harness();
+
+    await runShadcnCommand({ command: { kind: 'preset-decode', code: 'a2r6bw' }, cwd }, h.deps);
+    await runShadcnCommand({ command: { kind: 'preset-url', code: 'a2r6bw' }, cwd }, h.deps);
+
+    expect(h.cliRuns.map((run) => run.cwdFlag)).toEqual([false, false]);
+  });
+
+  it('keeps BoardUI resolving in the project, which is the documented limit', async () => {
+    // BoardUI has no --cwd; its -d/--dir is the SOURCE root, and aiming it
+    // wrong would write components somewhere silently wrong.
+    const h = harness();
+
+    await installItems({ kit: 'boardui', items: ['button'], cwd }, h.deps);
+
+    expect(h.cliRuns[0]?.resolveIn).toBeUndefined();
+  });
+
   it('marks a query as non-writing', async () => {
     const h = harness();
 

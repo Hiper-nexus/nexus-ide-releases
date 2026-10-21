@@ -11,6 +11,7 @@ import { callMcpToolOnce } from './ui-kit-mcp-call';
 import {
   buildShadcnArgs,
   referencedShadcnNamespaces,
+  shadcnCommandAcceptsCwd,
   shadcnCommandWrites,
   type ShadcnCommand,
 } from './shadcn-source';
@@ -214,6 +215,12 @@ export async function runShadcnCommand(
     args: buildShadcnArgs(input.command),
     cwd: input.cwd,
     writes: shadcnCommandWrites(input.command),
+    // Resolve the package outside the project and point the CLI back at it:
+    // npm reads a `.npmrc` from its cwd and npx prefers a binary from the
+    // cwd's node_modules, so with the project as cwd the REPOSITORY chose
+    // which code ran. Measured: it went to the registry the repo named.
+    resolveIn: 'isolated',
+    cwdFlag: shadcnCommandAcceptsCwd(input.command),
     ...(Object.keys(env).length > 0 ? { extraEnv: env } : {}),
     ...(input.signal ? { signal: input.signal } : {}),
   });
@@ -229,7 +236,19 @@ export async function runShadcnCommand(
   };
 }
 
-/** Run the BoardUI CLI (`init` / `add`). Everything else is an MCP tool. */
+/**
+ * Run the BoardUI CLI (`init` / `add`).
+ *
+ * KNOWN LIMIT, written down rather than papered over: unlike shadcn this runs
+ * with the project as cwd, because BoardUI has no `--cwd`. Its `-d, --dir` is
+ * documented as "target directory (defaults to the project source root)" —
+ * source root, not project root — and pointing it wrong would write components
+ * somewhere silently wrong, which is worse than the residue. So the env pins
+ * (registry, proxy, CA, strict-ssl) are what protect this path, and they are
+ * measured to beat a hostile project `.npmrc`. What remains is a repository
+ * that commits `node_modules/.bin/boardui`: npx would prefer it. Closing that
+ * needs `--dir` or the MCP `projectDir` verified against a real install first.
+ */
 export async function runBoardUiCommand(
   input: {
     readonly command: BoardUiCliCommand;

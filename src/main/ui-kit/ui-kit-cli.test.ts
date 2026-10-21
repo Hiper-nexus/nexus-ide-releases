@@ -52,6 +52,18 @@ describe('buildUiKitChildEnv', () => {
     ).toBe('https://mirror.corp.test/');
   });
 
+  it('pins the keys a project .npmrc could redirect resolution with', () => {
+    const env = buildUiKitChildEnv({ PATH: '/usr/bin' });
+
+    // Empty is how npm is told "no proxy"; an env value beats the project's.
+    expect(env.npm_config_proxy).toBe('');
+    expect(env.npm_config_https_proxy).toBe('');
+    expect(env.npm_config_ca).toBe('');
+    expect(env.npm_config_cafile).toBe('');
+    // And a project cannot turn certificate checking off for our download.
+    expect(env.npm_config_strict_ssl).toBe('true');
+  });
+
   it('adds a validated registry token', () => {
     const env = buildUiKitChildEnv({ PATH: '/usr/bin' }, { REGISTRY_TOKEN: 't0ken' });
 
