@@ -6,6 +6,7 @@ import type { UiKitCliRunRequest } from './ui-kit-cli';
 import {
   installPickReceipt,
   interleaveByKit,
+  rankForTask,
   resolveInstallTargetForTask,
 } from './ui-kit-install-target';
 import { resetBoardUiFreeListCacheForTests, type UiKitServiceDeps } from './ui-kit-service';
@@ -252,5 +253,66 @@ describe('interleaveByKit', () => {
   it('is empty for no kits at all', () => {
     expect(interleaveByKit([], 10)).toEqual([]);
     expect(interleaveByKit([[]], 10)).toEqual([]);
+  });
+});
+
+describe('rankForTask', () => {
+  const item = (slug: string, category: string) => ({
+    kit: 'boardui' as const,
+    slug,
+    label: slug,
+    category,
+    tier: 'free' as const,
+  });
+
+  /** BoardUI's own listing order: primitives first, dashboard parts late. */
+  const CATALOGUE = [
+    item('tree-view', 'base'),
+    item('button', 'base'),
+    item('icon-button', 'base'),
+    item('link-button', 'base'),
+    item('button-group', 'base'),
+    item('close-button', 'base'),
+    item('input', 'base'),
+    item('textarea', 'base'),
+    item('checkbox', 'base'),
+    item('radio', 'base'),
+    item('switch', 'base'),
+    item('select', 'base'),
+    item('stat-cards', 'block'),
+    item('revenue-chart-card', 'block'),
+    item('data-table', 'block'),
+    item('template-home-dashboard', 'template'),
+  ];
+
+  it('puts what matches the task first', () => {
+    const head = rankForTask('build a home dashboard', CATALOGUE).slice(0, 3);
+
+    expect(head.map((entry) => entry.slug)).toContain('template-home-dashboard');
+  });
+
+  it('spreads categories when nothing matches lexically', () => {
+    // "build an admin area" shares no word with any slug, and the pick keeps
+    // only 12 — so the blocks and the template must not sit behind twelve
+    // primitives.
+    const head = rankForTask('build an admin area', CATALOGUE).slice(0, 12);
+    const categories = new Set(head.map((entry) => entry.category));
+
+    expect(categories).toContain('block');
+    expect(categories).toContain('template');
+    expect(head.map((entry) => entry.slug)).toContain('stat-cards');
+    expect(head.map((entry) => entry.slug)).toContain('data-table');
+  });
+
+  it('loses nothing: every candidate still comes back', () => {
+    expect(rankForTask('whatever', CATALOGUE)).toHaveLength(CATALOGUE.length);
+  });
+
+  it('ignores words too short to carry signal', () => {
+    // `a`, `an`, `of` would otherwise match almost every slug.
+    const ranked = rankForTask('a an of', CATALOGUE);
+
+    expect(ranked).toHaveLength(CATALOGUE.length);
+    expect(ranked[0]?.category).toBe('base');
   });
 });

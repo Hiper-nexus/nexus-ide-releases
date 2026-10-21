@@ -500,6 +500,24 @@ function isTrustedNamespace(
  * configuration; nothing about it ships in the product, and a key embedded in
  * a distributed bundle would be published rather than shared.
  */
+/**
+ * The registry as SETTINGS store it: no `secretKey`.
+ *
+ * The two halves of the P1 fix contradicted each other. The schema stopped
+ * accepting `secretKey` (so a compromised renderer cannot name a vault entry)
+ * while `assertRegistry` started adding it to every object — and the object
+ * then went back through that strict schema on write, so `replaceOrchSettings`
+ * REJECTED every registry addition and silently returned the old settings. For
+ * a private registry the token had already been stored, so the panel reported
+ * "not added" while leaving an orphaned credential in the vault.
+ *
+ * Writes go through here; reads derive the key again (`assertRegistry`).
+ */
+export function persistableRegistry(registry: UiKitRegistry): UiKitRegistry {
+  const { secretKey: _derived, ...rest } = assertRegistry(registry);
+  return rest;
+}
+
 export function isRegistrySecretKey(name: string): boolean {
   return /^external:ui-kit-registry-[a-z0-9][a-z0-9-]*$/.test(name);
 }

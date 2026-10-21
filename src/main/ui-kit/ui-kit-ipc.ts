@@ -37,6 +37,7 @@ import {
 } from './ui-kit-install-view';
 import {
   assertRegistry,
+  persistableRegistry,
   registrySecretKey,
   resolveRegistryAuthContract,
   KNOWN_UI_KIT_REGISTRIES,
@@ -70,7 +71,22 @@ import {
 
 function configuredRegistries(): readonly UiKitRegistry[] {
   const settings = getOrchSettings() as { uiKitRegistries?: readonly UiKitRegistry[] };
-  return settings.uiKitRegistries ?? [];
+  const stored = settings.uiKitRegistries ?? [];
+  // NORMALIZED on the way in. Settings deliberately hold no `secretKey`, and
+  // casting the stored rows as though they did meant `tokenStored` was always
+  // false and the removal path never cleared the token (`victim.secretKey`
+  // undefined) — so re-adding a namespace silently reused a credential the
+  // operator believed removed. A row that fails validation is dropped rather
+  // than taken on trust.
+  const normalized: UiKitRegistry[] = [];
+  for (const entry of stored) {
+    try {
+      normalized.push(assertRegistry(entry));
+    } catch {
+      // Unusable configuration is not a reason to break the whole panel.
+    }
+  }
+  return normalized;
 }
 
 function serviceDeps() {
@@ -408,9 +424,9 @@ export function registerUiKitIpc(): void {
             const victim = current.find((entry) => entry.namespace === namespace);
             if (victim?.secretKey) secrets().setSecret(victim.secretKey, '');
             replaceOrchSettings({
-              uiKitRegistries: current.filter(
-                (entry) => entry.namespace !== namespace,
-              ),
+              uiKitRegistries: current
+                .filter((entry) => entry.namespace !== namespace)
+                .map(persistableRegistry),
             } as never);
           }
           return await buildStatus();
@@ -451,9 +467,14 @@ export function registerUiKitIpc(): void {
             };
           }
         }
+        // Stripped for storage: the strict schema rejects `secretKey`, and a
+        // rejected patch returns the OLD settings, which is how "saved" could
+        // be reported for a registry that was never added.
         const next = [
-          ...current.filter((entry) => entry.namespace !== registry.namespace),
-          registry,
+          ...current
+            .filter((entry) => entry.namespace !== registry.namespace)
+            .map(persistableRegistry),
+          persistableRegistry(registry),
         ];
         replaceOrchSettings({ uiKitRegistries: next } as never);
         return await buildStatus();

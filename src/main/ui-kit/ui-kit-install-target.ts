@@ -63,6 +63,66 @@ export function interleaveByKit(
   return out;
 }
 
+/** Words worth matching on: short ones carry no signal. */
+const MIN_TASK_WORD = 3;
+
+function taskWords(task: string): readonly string[] {
+  const seen = new Set<string>();
+  for (const word of task.toLowerCase().split(/[^a-z0-9]+/)) {
+    if (word.length >= MIN_TASK_WORD) seen.add(word);
+  }
+  return [...seen];
+}
+
+/**
+ * Order one kit's catalogue by how much it answers the task.
+ *
+ * Interleaving the kits was not enough: `pickUiKit` keeps only
+ * `UI_KIT_PICK_MAX_CANDIDATES` (12), so the head of each list was simply the
+ * head of the VENDOR's catalogue — for BoardUI that is `tree-view` through
+ * `close-button`, while `stat-cards`, the charts and `data-table` never
+ * reached the judge for "build a dashboard".
+ *
+ * Two passes, because lexical overlap is often zero on a generic task. What
+ * matches the task's words comes first; everything else is spread ACROSS
+ * CATEGORIES rather than taken in catalogue order, so blocks, templates and
+ * primitives are all represented in the first few.
+ */
+export function rankForTask(
+  task: string,
+  candidates: readonly UiKitCandidate[],
+): readonly UiKitCandidate[] {
+  const words = taskWords(task);
+  const score = (candidate: UiKitCandidate): number => {
+    const haystack = `${candidate.slug} ${candidate.label} ${candidate.category}`.toLowerCase();
+    return words.reduce((total, word) => (haystack.includes(word) ? total + 1 : total), 0);
+  };
+
+  const matched: UiKitCandidate[] = [];
+  const byCategory = new Map<string, UiKitCandidate[]>();
+  for (const candidate of candidates) {
+    if (score(candidate) > 0) {
+      matched.push(candidate);
+      continue;
+    }
+    const bucket = byCategory.get(candidate.category) ?? [];
+    bucket.push(candidate);
+    byCategory.set(candidate.category, bucket);
+  }
+  matched.sort((a, b) => score(b) - score(a));
+
+  const spread: UiKitCandidate[] = [];
+  const buckets = [...byCategory.values()];
+  const depth = Math.max(0, ...buckets.map((bucket) => bucket.length));
+  for (let index = 0; index < depth; index += 1) {
+    for (const bucket of buckets) {
+      const entry = bucket[index];
+      if (entry) spread.push(entry);
+    }
+  }
+  return [...matched, ...spread];
+}
+
 export interface InstallTargetRequest {
   readonly task: string;
   /** A kit the caller named. Honoured: their choice is not the Jev's to make. */
@@ -108,7 +168,7 @@ export async function resolveInstallTargetForTask(
   const byKit: UiKitCandidate[][] = [];
   for (const kit of kits) {
     const live = await liveCandidates(kit, request.cwd, undefined, deps);
-    byKit.push([...live.candidates]);
+    byKit.push([...rankForTask(request.task, live.candidates)]);
   }
 
   const pick = await pickUiKit(
