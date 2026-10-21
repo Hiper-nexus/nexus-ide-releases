@@ -1,12 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   MEDIA_PROMPT_WRITER_MAX_INPUT,
+  mediaAwareBrainDeps,
   parseWrittenPrompt,
   productInstructions,
   sceneInstructions,
   writeMediaPrompt,
   writtenLooksInvented,
 } from './media-prompt-writer';
+import { MEDIA_PROVIDERS } from './media-providers';
+import type { BrainDeps } from '../voice/jarvis-brain';
+import * as mediaKeys from './media-keys';
 
 const reply = (prompt: string) => JSON.stringify({ prompt });
 
@@ -118,5 +122,46 @@ describe('leitura da resposta do modelo', () => {
 
   it('pega o primeiro objeto balanceado, sem vazar o que vem depois', () => {
     expect(parseWrittenPrompt('{"prompt":"cena {com} chave"} {nota}')).toBe('cena {com} chave');
+  });
+});
+
+describe('a chave de Serviços de mídia também serve para escrever o pedido', () => {
+  const base: BrainDeps = {
+    fetchImpl: (...args) => globalThis.fetch(...args),
+    getKey: () => undefined,
+  };
+
+  it('sem chave de voz, cai na chave de mídia do MESMO nome de variável', () => {
+    const gemini = MEDIA_PROVIDERS.find((def) => def.envVar === 'GEMINI_API_KEY')!;
+    const spy = vi
+      .spyOn(mediaKeys, 'resolveMediaKey')
+      .mockImplementation((def) => (def.id === gemini.id ? '  chave-do-estudio  ' : undefined));
+    expect(mediaAwareBrainDeps(base).getKey('GEMINI_API_KEY')).toBe('chave-do-estudio');
+    spy.mockRestore();
+  });
+
+  it('a chave da voz continua vencendo quando existe', () => {
+    const spy = vi.spyOn(mediaKeys, 'resolveMediaKey').mockReturnValue('a-de-midia');
+    const deps = mediaAwareBrainDeps({ ...base, getKey: () => 'a-da-voz' });
+    expect(deps.getKey('GEMINI_API_KEY')).toBe('a-da-voz');
+    spy.mockRestore();
+  });
+
+  it('variável sem provedor de mídia nenhum devolve indefinido', () => {
+    const spy = vi.spyOn(mediaKeys, 'resolveMediaKey').mockReturnValue('nunca');
+    expect(mediaAwareBrainDeps(base).getKey('VARIAVEL_QUE_NAO_EXISTE')).toBeUndefined();
+    spy.mockRestore();
+  });
+
+  it('a chave de um provedor não vaza para a variável de outro', () => {
+    // Só casa por `envVar`; XAI_API_KEY nunca é servida pelo provedor do Gemini.
+    const xai = MEDIA_PROVIDERS.find((def) => def.envVar === 'XAI_API_KEY')!;
+    const spy = vi
+      .spyOn(mediaKeys, 'resolveMediaKey')
+      .mockImplementation((def) => (def.id === xai.id ? 'so-da-xai' : undefined));
+    const deps = mediaAwareBrainDeps(base);
+    expect(deps.getKey('XAI_API_KEY')).toBe('so-da-xai');
+    expect(deps.getKey('GEMINI_API_KEY')).toBeUndefined();
+    spy.mockRestore();
   });
 });

@@ -131,6 +131,11 @@ export function MediaStudioPanel({
   const [writing, setWriting] = useState(false);
   const [writeNote, setWriteNote] = useState<string | null>(null);
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
+  // Espelho do valor vivo: a reescrita leva até 12 s e o campo continua
+  // editável. Sem isto, o que a pessoa digitou ou ditou nesse meio-tempo
+  // era apagado pela resposta montada a partir do texto ANTIGO.
+  const livePromptRef = useRef(prompt);
+  livePromptRef.current = prompt;
   const [artifacts, setArtifacts] = useState<MediaArtifactInfo[]>([]);
   // F-1589: `null` = ainda lendo; false = sem projeto aberto.
   const [projectOpen, setProjectOpen] = useState<boolean | null>(null);
@@ -264,7 +269,11 @@ export function MediaStudioPanel({
   // O microfone deste campo tem claim próprio: o ditado vai para o pedido da
   // cena, nunca para um pane escondido atrás do Estúdio.
   const dictation = useObjectiveDictation({
-    enabled: !job,
+    // Só enquanto o campo está À VISTA. Em "Vídeos do projeto" a textarea
+    // não existe: o claim preso ali engolia a fala (e o brief aninhado, ao
+    // fechar, soltava o claim sem ninguém retomar, porque as dependências
+    // deste efeito não mudavam). Amarrar em `view` solta e retoma na troca.
+    enabled: !job && view === 'generate',
     claimId: 'media-studio-prompt',
     onTranscript: (text) => {
       setPrompt((current) => (current.trim() ? `${current.replace(/\s+$/u, '')} ${text}` : text));
@@ -314,6 +323,10 @@ export function MediaStudioPanel({
         ...(effectiveAspect ? { format: effectiveAspect } : {}),
       });
       if (result?.written) {
+        if (livePromptRef.current.trim() !== source) {
+          setWriteNote('Você mexeu no texto enquanto eu escrevia, então mantive o seu.');
+          return;
+        }
         setPrompt(result.text);
         setWriteNote('Reescrito. Leia e ajuste antes de gerar — nada foi gerado ainda.');
       } else {

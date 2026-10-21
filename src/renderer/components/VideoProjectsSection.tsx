@@ -155,6 +155,10 @@ function BriefForm({
   const [writing, setWriting] = useState(false);
   const [writeNote, setWriteNote] = useState<string | null>(null);
   const productRef = useRef<HTMLTextAreaElement | null>(null);
+  // Ver MediaStudioPanel: a reescrita demora e o campo segue editável; a
+  // resposta do texto antigo não pode apagar o que foi escrito depois.
+  const liveProductRef = useRef(product);
+  liveProductRef.current = product;
 
   useEffect(() => {
     let alive = true;
@@ -200,6 +204,10 @@ function BriefForm({
         durationSec,
       });
       if (result?.written) {
+        if (liveProductRef.current.trim() !== source) {
+          setWriteNote('Você mexeu no texto enquanto eu escrevia, então mantive o seu.');
+          return;
+        }
         setProduct(result.text);
         setWriteNote('Reescrito. Leia e ajuste o que não ficou do seu jeito — nada foi enviado ainda.');
       } else {
@@ -383,7 +391,7 @@ function BriefForm({
         </button>
         {voices.length === 0 ? ' (grava e clona com consentimento, na ElevenLabs ou no Gemini).' : '.'}
       </p>
-      <label className="vp-check vp-field--wide">
+      <label className="vp-music-check vp-field--wide">
         <input type="checkbox" checked={music} onChange={(event) => setMusic(event.target.checked)} />
         <span>Música instrumental de fundo</span>
       </label>

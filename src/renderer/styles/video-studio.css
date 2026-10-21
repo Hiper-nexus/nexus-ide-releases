@@ -550,8 +550,15 @@
   outline-color: var(--danger);
 }
 
-/* A caixa de música ficava empilhada: `.vp-field` é coluna. Linha própria. */
-.vp-check {
+/*
+ * A caixa de música ficava empilhada (`.vp-field` é coluna), então ganhou
+ * linha própria. Nome PRÓPRIO de propósito: `.vp-check` já é a linha do
+ * relatório de "Verificar máquina" (grid de 2 colunas, mais acima neste
+ * arquivo). Reusar aquele nome aqui trocava o `display: grid` dele por
+ * `flex` — as colunas de estado/detalhe colapsavam e o `.vp-check__fix`
+ * (`grid-column: 2`) parava de funcionar.
+ */
+.vp-music-check {
   display: flex;
   align-items: center;
   gap: var(--space-2);

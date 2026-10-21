@@ -857,4 +857,59 @@ describe('Estúdio: ditar e escrever o pedido (pedido do operador, 21/10/2026)',
     expect(byText(dialog, 'Escrever meu pedido').disabled).toBe(true);
     expect(media.writePrompt).not.toHaveBeenCalled();
   });
+
+  it('em "Vídeos do projeto" o campo some e o microfone não fica preso nele', async () => {
+    // A aba só existe com a flag E o bridge do estúdio de vídeo (F-1600).
+    productFlags.map = { 'feature.media.videoStudio': true };
+    (window.nexus as unknown as Record<string, unknown>).videoStudio = {
+      listProjects: vi.fn(async () => ({ ok: true, projects: [] })),
+      onProgress: () => () => undefined,
+    };
+    const media = mediaMocks();
+    media.listProviders.mockResolvedValue([keyedImage]);
+    useVoiceStore.setState({ info: { captureAllowed: true } as never, status: 'idle' });
+    const dialog = await openFrom(renderHarness());
+    typePrompt(dialog, 'Um gato astronauta.');
+    // Com o campo à vista o claim é deste pedido.
+    await act(async () => {
+      expect(deliverDictationToClaim('oi')).toEqual({ paneId: 'ui:media-studio-prompt' });
+    });
+    const projects = [...dialog.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(
+      (item) => item.textContent === 'Vídeos do projeto',
+    );
+    expect(projects).toBeTruthy();
+    await act(async () => {
+      projects!.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    // A textarea sumiu junto com a aba de geração.
+    expect(dialog.querySelector('textarea')).toBeNull();
+    // Fora da vista, a fala não pode ser engolida por um campo que não existe.
+    expect(deliverDictationToClaim('nada')?.paneId).not.toBe('ui:media-studio-prompt');
+    productFlags.map = {};
+  });
+
+  it('o que a pessoa escreve DURANTE a reescrita não é apagado pela resposta', async () => {
+    const media = mediaMocks();
+    media.listProviders.mockResolvedValue([keyedImage]);
+    let finish!: (value: { text: string; written: boolean }) => void;
+    media.writePrompt = vi.fn(() => new Promise((resolve) => { finish = resolve; }));
+    const dialog = await openFrom(renderHarness());
+    typePrompt(dialog, 'gato astronauta');
+    await act(async () => {
+      byText(dialog, 'Escrever meu pedido').click();
+    });
+    // A reescrita demora; a pessoa continua digitando.
+    typePrompt(dialog, 'gato astronauta na lua, com capacete');
+    await act(async () => {
+      finish({ text: 'UMA REESCRITA DO TEXTO ANTIGO', written: true });
+      await Promise.resolve();
+    });
+    expect(dialog.querySelector<HTMLTextAreaElement>('textarea')!.value).toBe(
+      'gato astronauta na lua, com capacete',
+    );
+    expect(dialog.textContent).toContain('mantive o seu');
+  });
 });

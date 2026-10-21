@@ -32,6 +32,8 @@ import {
   defaultBrainDeps,
   type BrainDeps,
 } from '../voice/jarvis-brain';
+import { MEDIA_PROVIDERS } from './media-providers';
+import { resolveMediaKey } from './media-keys';
 
 export const MEDIA_PROMPT_WRITER_TIMEOUT_MS = 12_000;
 const MAX_WRITER_TOKENS = 1_200;
@@ -40,6 +42,33 @@ const XAI_WRITER_MODEL = 'grok-4.7-build-fast';
 
 /** Teto do que entra: acima disso o pedido já é longo o bastante. */
 export const MEDIA_PROMPT_WRITER_MAX_INPUT = 6_000;
+
+/**
+ * A chave que a pessoa conectou em **Serviços de mídia** também serve aqui.
+ *
+ * `defaultBrainDeps` resolve só o cofre da VOZ (`voice-env:<VAR>`) e o
+ * ambiente. Quem conectou Gemini, OpenAI ou xAI pelo Estúdio tem a chave em
+ * `mediakey:<provider>`, e a cadeia não via nenhuma: "Escrever meu pedido"
+ * falhava sempre, justamente para quem mais ia usá-lo. O caminho inverso já
+ * existia (`hasMediaKey` aceita `voice-env:` como chave compartilhada); isto
+ * fecha o par, pelo MESMO nome de variável — nunca a chave de um provedor
+ * servindo outro.
+ */
+export function mediaAwareBrainDeps(base: BrainDeps = defaultBrainDeps): BrainDeps {
+  return {
+    ...base,
+    getKey: (envVar) => {
+      const fromVoice = base.getKey(envVar);
+      if (fromVoice) return fromVoice;
+      for (const def of MEDIA_PROVIDERS) {
+        if (def.envVar !== envVar) continue;
+        const key = resolveMediaKey(def)?.trim();
+        if (key) return key;
+      }
+      return undefined;
+    },
+  };
+}
 
 export type MediaPromptTask = 'scene' | 'product';
 
@@ -187,7 +216,7 @@ export async function writeMediaPrompt(
   if (source.length > MEDIA_PROMPT_WRITER_MAX_INPUT) {
     return { text: input, written: false, reason: 'too-long' };
   }
-  const chat = options.chat ?? defaultChat(options.deps ?? defaultBrainDeps);
+  const chat = options.chat ?? defaultChat(options.deps ?? mediaAwareBrainDeps());
   const controller = new AbortController();
   const timer = setTimeout(
     () => controller.abort(new Error('media prompt writer timeout')),
