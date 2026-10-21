@@ -28,8 +28,40 @@ import { boardUiLicenseStatus, type UiKitServiceDeps } from './ui-kit-service';
  * Nexus, and `source` on the result says which one answered.
  */
 
-/** Candidates handed to the pick, across however many kits are in play. */
+/**
+ * Candidates handed to the pick, across however many kits are in play.
+ *
+ * Note what this is NOT: `pickUiKit` itself keeps only
+ * `UI_KIT_PICK_MAX_CANDIDATES` (12) of whatever arrives, so a list that is
+ * merely "big enough" is not enough — what matters is that both kits are
+ * represented in the first few.
+ */
 const MAX_CANDIDATES = 120;
+
+/**
+ * One list where each kit keeps its place.
+ *
+ * Concatenating and truncating silently deleted BoardUI: a shadcn search
+ * returns up to its 200-item limit, so every slot went to shadcn and a
+ * dashboard task could never pick a BoardUI item even though both vendors had
+ * been asked. Round-robin keeps the head of the list mixed, which is the part
+ * the pick actually sees.
+ */
+export function interleaveByKit(
+  byKit: readonly (readonly UiKitCandidate[])[],
+  limit: number,
+): readonly UiKitCandidate[] {
+  const out: UiKitCandidate[] = [];
+  const depth = Math.max(0, ...byKit.map((list) => list.length));
+  for (let index = 0; index < depth && out.length < limit; index += 1) {
+    for (const list of byKit) {
+      const entry = list[index];
+      if (entry) out.push(entry);
+      if (out.length >= limit) break;
+    }
+  }
+  return out;
+}
 
 export interface InstallTargetRequest {
   readonly task: string;
@@ -73,16 +105,16 @@ export async function resolveInstallTargetForTask(
     ? (await boardUiLicenseStatus({ cwd: request.cwd }, deps)).state === 'active'
     : false;
 
-  const candidates: UiKitCandidate[] = [];
+  const byKit: UiKitCandidate[][] = [];
   for (const kit of kits) {
     const live = await liveCandidates(kit, request.cwd, undefined, deps);
-    candidates.push(...live.candidates);
+    byKit.push([...live.candidates]);
   }
 
   const pick = await pickUiKit(
     {
       task: request.task,
-      candidates: candidates.slice(0, MAX_CANDIDATES),
+      candidates: interleaveByKit(byKit, MAX_CANDIDATES),
       availableKits: kits,
       proLicensed: licensed,
       ...(request.signal ? { signal: request.signal } : {}),

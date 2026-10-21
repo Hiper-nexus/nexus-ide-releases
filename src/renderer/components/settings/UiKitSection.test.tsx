@@ -305,6 +305,60 @@ it('shows the real reason a registry write refused, not the URL rule', async () 
   }
 });
 
+it('keeps the licence key typed in when the vault refused it', async () => {
+  // A purchased key the vault never stored must not be wiped from the field:
+  // the operator would have to find and paste it again.
+  api({
+    license: vi.fn().mockResolvedValue({
+      state: 'unknown',
+      stored: false,
+      masked: null,
+      detail: 'vault write refused',
+    }),
+  });
+  const { host, root } = await mount();
+  try {
+    const field = host.querySelector<HTMLInputElement>(
+      'input[aria-label="Chave de licença do BoardUI"]',
+    )!;
+    await act(async () => typeInto(field, 'BUI-LIVE-KEY-0001'));
+    const save = [...host.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Salvar e ativar',
+    );
+    await act(async () => save!.click());
+
+    expect(field.value).toBe('BUI-LIVE-KEY-0001');
+  } finally {
+    act(() => root.unmount());
+  }
+});
+
+it('clears the licence field once Main confirms it was stored', async () => {
+  api({
+    license: vi.fn().mockResolvedValue({
+      state: 'active',
+      stored: true,
+      masked: '••••0001',
+    }),
+  });
+  const { host, root } = await mount();
+  try {
+    const field = host.querySelector<HTMLInputElement>(
+      'input[aria-label="Chave de licença do BoardUI"]',
+    )!;
+    await act(async () => typeInto(field, 'BUI-LIVE-KEY-0001'));
+    await act(async () =>
+      [...host.querySelectorAll('button')]
+        .find((button) => button.textContent === 'Salvar e ativar')!
+        .click(),
+    );
+
+    expect(field.value).toBe('');
+  } finally {
+    act(() => root.unmount());
+  }
+});
+
 it('says the free half needs no key before it mentions a licence', async () => {
   api();
   const { host, root } = await mount();

@@ -113,7 +113,11 @@ export function UiKitSection() {
     setBusy('license');
     try {
       const view = await window.nexus.uiKit.license({ action: 'set', key });
-      setLicenseKey('');
+      // Only when Main confirms it was stored. The vault can refuse (locked
+      // keychain, denied backend) and answer `stored: false` with the reason —
+      // clearing the field anyway made the operator re-enter a purchased key
+      // that was never saved.
+      if (view.stored) setLicenseKey('');
       setStatus((prev) => (prev ? { ...prev, license: view } : prev));
       await refreshStatus();
     } finally {
@@ -221,7 +225,11 @@ export function UiKitSection() {
       ? { label: 'Pro ativo', className: 'settings-chip settings-chip--ok' }
       : license?.stored
         ? { label: 'chave guardada', className: 'settings-chip' }
-        : { label: 'sem chave', className: 'settings-chip' };
+        : license?.operatorKey
+          ? // A key ships with this Nexus: Pro works, the panel just
+            // must not say "sem chave".
+            { label: 'chave do Nexus', className: 'settings-chip settings-chip--ok' }
+          : { label: 'sem chave', className: 'settings-chip' };
 
   return (
     <section aria-labelledby="ui-kit-heading">
@@ -289,18 +297,25 @@ export function UiKitSection() {
             >
               {busy === 'license' ? 'Salvando…' : 'Salvar e ativar'}
             </button>
-            {license?.stored && license.state !== 'active' && status?.workspaceOpen && (
-              // A key saved before a project was open was never activated.
-              // Finishing it must not mean pasting it again.
-              <button
-                type="button"
-                className="settings-btn"
-                disabled={busy === 'license'}
-                onClick={() => void activateLicense()}
-              >
-                {busy === 'license' ? 'Ativando…' : 'Ativar a chave guardada'}
-              </button>
-            )}
+            {(license?.stored || license?.operatorKey) &&
+              license.state !== 'active' &&
+              status?.workspaceOpen && (
+                // A key saved before a project was open was never activated.
+                // Finishing it must not mean pasting it again; when the vault
+                // is empty the key that ships with Nexus covers the click.
+                <button
+                  type="button"
+                  className="settings-btn"
+                  disabled={busy === 'license'}
+                  onClick={() => void activateLicense()}
+                >
+                  {busy === 'license'
+                    ? 'Ativando…'
+                    : license.operatorKey && !license.stored
+                      ? 'Ativar a chave do Nexus'
+                      : 'Ativar a chave guardada'}
+                </button>
+              )}
             {(license?.stored || license?.state === 'active') && (
               // Also when `stored` is false: the vendor may still hold the
               // activation, and hiding this button would strand it.
@@ -589,12 +604,18 @@ export function UiKitSection() {
               {registry.requiresToken && (
                 <span
                   className={
-                    registry.tokenStored
+                    registry.tokenStored || registry.operatorKey
                       ? 'settings-chip settings-chip--ok'
                       : 'settings-chip'
                   }
                 >
-                  {registry.tokenStored ? 'token guardado' : 'sem token'}
+                  {registry.tokenStored
+                    ? 'token guardado'
+                    : registry.operatorKey
+                      ? // A token ships with this Nexus: installs work,
+                        // the panel just must not say "sem token".
+                        'token do Nexus'
+                      : 'sem token'}
                 </span>
               )}
             </div>
@@ -604,7 +625,9 @@ export function UiKitSection() {
               // todo Nexus dali já abre com ela" fica indescobrível.
               <p className="settings-list__detail">
                 Variável: <code>{registry.envVar}</code>
-                {registry.tokenStored ? '' : ' — o token pode vir dela'}
+                {registry.tokenStored || registry.operatorKey
+                  ? ''
+                  : ' — o token pode vir dela'}
               </p>
             )}
             <div className="settings-row">

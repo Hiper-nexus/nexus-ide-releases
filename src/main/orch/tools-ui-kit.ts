@@ -456,11 +456,21 @@ export function buildUiKitTools(): McpToolDef[] {
           { kit, items: resolved.install, cwd },
           serviceDeps(),
         );
+        // Through the same mapper as the direct path: this response used to
+        // drop `missingRegistryKeys`, `needsLicense` and `licenseState`, so a
+        // recipe whose item needed a token — or a BoardUI item that became
+        // gated between resolution and install — failed with the reason only
+        // in free-form text.
+        const receipt = agentInstallReceipt(result, {
+          kit,
+          items: resolved.install,
+        });
         return {
           ...plan,
+          ...receipt,
+          // The recipe's own meaning of "installed": the plan, not the
+          // mapper's echo of the requested items.
           installed: result.ok,
-          exitCode: result.code,
-          output: `${result.stdout}\n${result.stderr}`.trim().slice(0, 20_000),
         };
       },
     },

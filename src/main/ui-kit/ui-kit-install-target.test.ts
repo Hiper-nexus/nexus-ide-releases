@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { UiKitCliRunRequest } from './ui-kit-cli';
 import {
   installPickReceipt,
+  interleaveByKit,
   resolveInstallTargetForTask,
 } from './ui-kit-install-target';
 import { resetBoardUiFreeListCacheForTests, type UiKitServiceDeps } from './ui-kit-service';
@@ -209,5 +210,47 @@ describe('installPickReceipt', () => {
       needsLicense: true,
       blocked: 'template-home-dashboard',
     });
+  });
+});
+
+describe('interleaveByKit', () => {
+  const entry = (kit: 'shadcn' | 'boardui', n: number) => ({
+    kit,
+    slug: `${kit}-${n}`,
+    label: `${kit} ${n}`,
+    category: 'ui',
+    tier: 'free' as const,
+  });
+
+  it('keeps BoardUI reachable when shadcn fills the whole limit', () => {
+    // The bug: concatenating and truncating. A shadcn search returns up to its
+    // 200-item limit, so every slot went to shadcn and a dashboard task could
+    // never pick a BoardUI item although both vendors had been asked. And the
+    // pick itself keeps only 12, so "the list was big" was never the answer.
+    const shadcn = Array.from({ length: 200 }, (_, index) => entry('shadcn', index));
+    const boardui = Array.from({ length: 60 }, (_, index) => entry('boardui', index));
+
+    const head = interleaveByKit([shadcn, boardui], 120).slice(0, 12);
+
+    expect(head.some((candidate) => candidate.kit === 'boardui')).toBe(true);
+    expect(head.some((candidate) => candidate.kit === 'shadcn')).toBe(true);
+  });
+
+  it('respects the limit and loses nothing to a shorter list', () => {
+    const shadcn = [entry('shadcn', 1), entry('shadcn', 2), entry('shadcn', 3)];
+    const boardui = [entry('boardui', 1)];
+
+    expect(interleaveByKit([shadcn, boardui], 10).map((c) => c.slug)).toEqual([
+      'shadcn-1',
+      'boardui-1',
+      'shadcn-2',
+      'shadcn-3',
+    ]);
+    expect(interleaveByKit([shadcn, boardui], 2)).toHaveLength(2);
+  });
+
+  it('is empty for no kits at all', () => {
+    expect(interleaveByKit([], 10)).toEqual([]);
+    expect(interleaveByKit([[]], 10)).toEqual([]);
   });
 });
