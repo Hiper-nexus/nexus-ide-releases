@@ -696,3 +696,30 @@ describe('testJevConnection', () => {
     expect(result.detail).not.toContain('k-secret');
   });
 });
+
+describe('F-1626: judge reconfere a 1ª opção limítrofe com a ordem invertida', () => {
+  const pick = { type: 'choice' as const, instructions: 'Qual?', criteria: { a: 'A', b: 'B', none: 'nenhuma' } };
+  const answer = (choice: string, confidence: number) => jsonResponse(200, {
+    model: 'jev-1.13.0', usage: { input_tokens: 50, output_tokens: 0 },
+    answers: { pick: { type: 'choice', choice, confidence,
+      probabilities: Object.fromEntries(['a', 'b', 'none'].map(id => [id, id === choice ? confidence : (1 - confidence) / 2])) } },
+  });
+
+  it('escolha que muda com a ordem invertida volta sem resposta para a pergunta', async () => {
+    const mockFetch = vi.fn().mockResolvedValueOnce(answer('a', 0.72)).mockResolvedValueOnce(answer('b', 0.7));
+    const result = await judge({ state: 'x', questions: { pick }, orderCheck: { minConfidence: 0.7 } },
+      { fetch: mockFetch as unknown as typeof fetch, resolveKey: () => 'k' });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(Object.keys(JSON.parse(mockFetch.mock.calls[1][1].body).questions.pick.criteria)).toEqual(['none', 'b', 'a']);
+    expect(result?.answers.pick).toBeUndefined();
+    expect(result?.orderCheck).toEqual({ checked: ['pick'], unstable: ['pick'] });
+  });
+
+  it('sem orderCheck, ou com confiança alta, é uma consulta só', async () => {
+    const mockFetch = vi.fn(async () => answer('a', 0.95));
+    await judge({ state: 'x', questions: { pick }, orderCheck: { minConfidence: 0.7 } },
+      { fetch: mockFetch as unknown as typeof fetch, resolveKey: () => 'k' });
+    await judge({ state: 'x', questions: { pick } }, { fetch: mockFetch as unknown as typeof fetch, resolveKey: () => 'k' });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+});

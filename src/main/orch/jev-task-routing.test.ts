@@ -73,6 +73,8 @@ describe('classifyTaskWithJev', () => {
     // Rota no caminho crítico do spawn: sem retry de transporte no timeout.
     expect(judge.mock.calls[0]![0].retryOnTimeout).toBe(false);
     expect(judge.mock.calls[0]![0].timeoutMs).toBeLessThanOrEqual(3_000);
+    // F-1626: viés da 1ª opção reconferido no limiar de aceite da rota.
+    expect(judge.mock.calls[0]![0].orderCheck).toEqual({ minConfidence: 0.6 });
   });
 
   it('returns null when disabled, without a key, on empty task, or when the judge fails', async () => {

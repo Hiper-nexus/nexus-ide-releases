@@ -519,6 +519,8 @@ export async function recommendCatalogItems(input: {
         state: { stack: areas.map((area) => area.label) },
         questions,
         timeoutMs: CATALOG_PICK_TIMEOUT_MS,
+        // F-1626: viés da 1ª opção reconferido só na faixa limítrofe.
+        orderCheck: { minConfidence: CATALOG_PICK_MIN_CONFIDENCE },
         surface: 'catalogPick',
       });
       if (!outcome) return { ok: false, reason: 'no-answer', areas };

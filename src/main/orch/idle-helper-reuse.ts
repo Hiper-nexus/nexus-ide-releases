@@ -280,6 +280,8 @@ export async function judgeIdleHelperReuse(
     },
     questions,
     timeoutMs: HELPER_REUSE_TIMEOUT_MS,
+    // F-1626: escolha limítrofe na 1ª posição é reconferida com a ordem invertida.
+    orderCheck: { minConfidence: HELPER_REUSE_MIN_CONFIDENCE },
     surface: 'helperReuse',
     ...(input.callerSessionId ? { sessionId: input.callerSessionId } : {}),
     ...(input.missionId ? { missionId: input.missionId } : {}),

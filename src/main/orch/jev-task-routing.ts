@@ -311,6 +311,8 @@ async function judgeTaskForRouting(
     // A rota roda no caminho crítico do spawn: o timeout já é o prazo máximo
     // tolerado; o retry duplicaria a espera antes de cair na heurística.
     retryOnTimeout: false,
+    // F-1626: escolha limítrofe na 1ª posição é reconferida com a ordem invertida.
+    orderCheck: { minConfidence: TASK_ROUTING_MIN_CONFIDENCE },
     surface: 'taskRouting',
     onNoAnswer: (reason) => {
       noAnswer = reason;
@@ -427,6 +429,8 @@ async function judgeTaskWithSkillForRouting(
     // Mesma regra do classify: rota no caminho crítico do spawn não dobra a
     // espera em retry — o fail-open é a heurística de palavras-chave.
     retryOnTimeout: false,
+    // F-1626: escolha limítrofe na 1ª posição é reconferida com a ordem invertida.
+    orderCheck: { minConfidence: TASK_ROUTING_MIN_CONFIDENCE },
     surface: 'taskRouting',
     sessionId: opts.sessionId,
     missionId: opts.missionId,

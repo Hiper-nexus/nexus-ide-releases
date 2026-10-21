@@ -540,6 +540,8 @@ export async function suggestSkillForTask(
       questions,
       timeoutMs: opts.timeoutMs ?? SKILL_SUGGESTION_TIMEOUT_MS,
       ...(opts.signal ? { signal: opts.signal } : {}),
+      // F-1626: viés da 1ª opção reconferido só na faixa limítrofe.
+      orderCheck: { minConfidence: SKILL_SUGGESTION_MIN_CONFIDENCE },
       surface: 'taskRouting',
       sessionId: opts.sessionId,
       missionId: opts.missionId,

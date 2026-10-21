@@ -2113,6 +2113,15 @@ O que mudou — e o que NÃO mudou:
   usa o estado e as perguntas da produção via `buildGuardJudgeState`; mudou
   pergunta ou limiar, rode `scripts/evaluate-decision-models.mjs --suite
   dispatch-guard` com a chave real antes de publicar.
+- **Viés da 1ª opção (F-1626).** A TypeSafe documenta que o jev-1.13 puxa
+  para a opção listada primeiro. `JudgeInput.orderCheck: { minConfidence }`
+  (`decision-models/decision-order-check.ts`, aplicado em `judge()`) repergunta
+  SÓ as `choice` cuja vencedora é a 1ª opção e cuja confiança ficou na faixa
+  [limiar, limiar + 0,2), com as opções invertidas; escolha que muda, ou 2ª
+  consulta sem resposta, sai das respostas e o chamador cai no caminho de
+  "sem resposta". Ligado em helperReuse, missionPick, skill, catalogPick,
+  desempate do `browser_find` e rota de tarefa, cada um com o próprio limiar.
+  Consumidor novo de `choice` com limiar de aceite: passe `orderCheck`.
 - **`nexus_tool_pick`** (`orch/tools-tool-pick.ts`, read-only,
   alcançável por todo agente): pré-filtro lexical (sinônimos pt-BR → inglês) sobre as
   ferramentas VISÍVEIS ao chamador (mesmo critério do tools/list), top 24,

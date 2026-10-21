@@ -145,6 +145,8 @@ export async function pickBrowserFindElement(
       questions: { element: buildFindTieBreakQuestion(candidates) },
       timeoutMs: FIND_JEV_TIMEOUT_MS,
       retryOnTimeout: false,
+      // F-1626: viés da 1ª opção reconferido só na faixa limítrofe.
+      orderCheck: { minConfidence: FIND_JEV_MIN_CONFIDENCE },
       surface: 'browserTool',
       sessionId: context.sessionId,
       missionId: context.missionId,
