@@ -386,6 +386,43 @@ export interface BoardUiToolResult {
   readonly isError: boolean;
   /** Argument keys the allowlist refused (e.g. a projectDir override). */
   readonly droppedArgs?: readonly string[];
+  /** Items the Pro gate refused, same shape the CLI path reports. */
+  readonly needsLicense?: readonly string[];
+  readonly licenseState?: BoardUiLicenseState;
+}
+
+/**
+ * The Pro gate, in ONE place so both install doors use it: the CLI
+ * (`installItems`) and the MCP tool (`install_components`).
+ */
+async function gatedBoardUiItems(
+  items: readonly string[],
+  cwd: string,
+  deps: UiKitServiceDeps,
+  signal?: AbortSignal,
+): Promise<{ blocked: readonly string[]; licenseState: BoardUiLicenseState }> {
+  const tiers = await Promise.all(
+    items.map(async (item) => ({
+      item,
+      tier: await resolveBoardUiTier(item, cwd, deps),
+    })),
+  );
+  // `unknown` is gated too: the snapshot not knowing a slug is not evidence
+  // that it is free.
+  const candidates = tiers
+    .filter((entry) => entry.tier !== 'free')
+    .map((entry) => entry.item);
+  if (candidates.length === 0) {
+    return { blocked: [], licenseState: 'unknown' };
+  }
+  const license = await boardUiLicenseStatus(
+    { cwd, ...(signal ? { signal } : {}) },
+    deps,
+  );
+  return {
+    blocked: license.state === 'active' ? [] : candidates,
+    licenseState: license.state,
+  };
 }
 
 /**
@@ -407,6 +444,10 @@ export async function callBoardUiTool(
   const tool = assertBoardUiTool(input.tool);
   // Every path — tools and panel alike — goes through the allowlist, so a
   // `projectDir` can never redirect an install out of the execution scope.
+  //
+  // And `install_components` is an INSTALL: gating only the CLI path left a
+  // second door, where a Pro or unknown-tier item reached the vendor and came
+  // back with a generic failure instead of a named refusal.
   const sanitized = sanitizeBoardUiToolArgs(tool, input.args);
   const toolArguments: Record<string, unknown> = { ...sanitized.args };
   if (tool === 'activate_license') {
@@ -418,6 +459,24 @@ export async function callBoardUiTool(
       );
     }
     toolArguments.licenseKey = assertBoardUiLicenseKey(stored);
+  }
+  if (tool === 'install_components') {
+    const requested = Array.isArray(toolArguments.components)
+      ? (toolArguments.components as string[])
+      : [];
+    const gated = await gatedBoardUiItems(requested, input.cwd, deps);
+    if (gated.blocked.length > 0) {
+      return {
+        ok: false,
+        isError: true,
+        text:
+          `BoardUI Pro licence required for: ${gated.blocked.join(', ')}. ` +
+          'Store it in Settings → UI kits; the free items need no key.',
+        needsLicense: gated.blocked,
+        licenseState: gated.licenseState,
+        ...(sanitized.dropped.length > 0 ? { droppedArgs: sanitized.dropped } : {}),
+      };
+    }
   }
   const call = deps.callMcp ?? callMcpToolOnce;
   const result = await call({
@@ -712,6 +771,8 @@ export interface ItemSourceResult {
   readonly source: string;
   readonly fromCache: boolean;
   readonly tier: UiKitCachedTier;
+  /** Whether the item is in the cache NOW — reported, never assumed. */
+  readonly cached: boolean;
 }
 
 /**
@@ -740,6 +801,7 @@ export async function readItemSource(
         source: cached.payload,
         fromCache: true,
         tier: cached.tier,
+        cached: true,
       };
     }
   }
@@ -786,18 +848,21 @@ export async function readItemSource(
 
   const tier: UiKitCachedTier =
     input.kit === 'boardui' ? (boardUiTierOf(input.slug) ?? 'unknown') : 'free';
+  let cached = false;
   if (text.trim().length > 0) {
     try {
       writeCachedItem(
         { kit: input.kit, slug: input.slug, payload: text, source: origin, tier },
         cacheOptions,
       );
+      cached = true;
     } catch {
       // A cache that refuses the write (cap, read-only disk) must not fail the
-      // read the caller actually asked for.
+      // read the caller asked for — but it must not be reported as cached
+      // either: saying so sent callers back for an item that was not there.
     }
   }
-  return { kit: input.kit, slug: input.slug, source: text, fromCache: false, tier };
+  return { kit: input.kit, slug: input.slug, source: text, fromCache: false, tier, cached };
 }
 
 export interface DownloadResult {
@@ -861,36 +926,24 @@ export async function installItems(
     // A direct install NAMES its items, so this refuses instead of
     // substituting — swapping an item the caller asked for by name would be
     // the surprise. Substitution belongs to the recipe, which picks for you.
-    const tiers = await Promise.all(
-      input.items.map(async (item) => ({
-        item,
-        tier: await resolveBoardUiTier(item, input.cwd, deps),
-      })),
+    const gated = await gatedBoardUiItems(
+      input.items,
+      input.cwd,
+      deps,
+      input.signal,
     );
-    // `unknown` is gated too: the snapshot not knowing a slug is not evidence
-    // that it is free, and treating it as free is how an unlicensed install
-    // reaches the vendor and comes back with a message nobody can act on.
-    const proItems = tiers
-      .filter((entry) => entry.tier !== 'free')
-      .map((entry) => entry.item);
-    if (proItems.length > 0) {
-      const license = await boardUiLicenseStatus(
-        { cwd: input.cwd, ...(input.signal ? { signal: input.signal } : {}) },
-        deps,
-      );
-      if (license.state !== 'active') {
-        return {
-          ok: false,
-          stdout: '',
-          stderr:
-            `BoardUI Pro licence required for: ${proItems.join(', ')}. ` +
-            'Store it in Settings → UI kits; the free items need no key.',
-          code: null,
-          missingRegistryKeys: [],
-          needsLicense: proItems,
-          licenseState: license.state,
-        };
-      }
+    if (gated.blocked.length > 0) {
+      return {
+        ok: false,
+        stdout: '',
+        stderr:
+          `BoardUI Pro licence required for: ${gated.blocked.join(', ')}. ` +
+          'Store it in Settings → UI kits; the free items need no key.',
+        code: null,
+        missingRegistryKeys: [],
+        needsLicense: gated.blocked,
+        licenseState: gated.licenseState,
+      };
     }
     return await runBoardUiCommand(
       {

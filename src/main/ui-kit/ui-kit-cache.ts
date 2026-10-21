@@ -81,25 +81,55 @@ export function resolveUiKitCacheDir(
   return path.join(root, UI_KIT_CACHE_DIR_NAME, kit);
 }
 
+/** `@acme/auth` — a registry item carries its namespace in its identifier. */
+export const UI_KIT_CACHE_NAMESPACED_PATTERN =
+  /^@[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/;
+
+/**
+ * Validate the IDENTIFIER a caller uses for an item.
+ *
+ * It accepts both a plain slug and a namespaced one, because preserving the
+ * namespace is what makes `@acme/auth` install from `@acme` instead of the
+ * public registry. What it does NOT do is let that identifier become a path:
+ * the filename is derived separately (`cacheFileNameFor`), so `@` and `/`
+ * never reach the filesystem.
+ */
 export function assertCacheSlug(raw: string): string {
   const value = raw.trim().toLowerCase();
-  if (
-    value.length === 0 ||
-    value.length > UI_KIT_CACHE_MAX_SLUG_CHARS ||
-    !UI_KIT_CACHE_SLUG_PATTERN.test(value)
-  ) {
+  const fits =
+    value.length > 0 &&
+    value.length <= UI_KIT_CACHE_MAX_SLUG_CHARS &&
+    (UI_KIT_CACHE_SLUG_PATTERN.test(value) ||
+      UI_KIT_CACHE_NAMESPACED_PATTERN.test(value));
+  if (!fits) {
     throw new UiKitCliError(
       'INVALID_CACHE_SLUG',
-      `a cached item slug must match ${String(UI_KIT_CACHE_SLUG_PATTERN)} ` +
-        `and stay under ${UI_KIT_CACHE_MAX_SLUG_CHARS} characters`,
+      `a cached item is a slug like button or @acme/auth, under ` +
+        `${UI_KIT_CACHE_MAX_SLUG_CHARS} characters`,
     );
   }
   return value;
 }
 
+/**
+ * The filename for an identifier.
+ *
+ * A plain slug keeps its own name, so an existing cache still reads. A
+ * namespaced one is flattened and carries a short digest of the full
+ * identifier, because flattening alone would let `@a/b` and `a-b` collide on
+ * one file — two different items, one of them silently serving the other.
+ */
+export function cacheFileNameFor(identifier: string): string {
+  const value = assertCacheSlug(identifier);
+  if (UI_KIT_CACHE_SLUG_PATTERN.test(value)) return `${value}.json`;
+  const flattened = value.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  const digest = createHash('sha256').update(value).digest('hex').slice(0, 8);
+  return `${flattened}.${digest}.json`;
+}
+
 function itemFile(kit: UiKitId, slug: string, options: UiKitCacheOptions): string {
   const dir = path.join(resolveUiKitCacheDir(kit, options), 'items');
-  const file = path.join(dir, `${assertCacheSlug(slug)}.json`);
+  const file = path.join(dir, cacheFileNameFor(slug));
   // Belt and braces: even with the pattern above, prove the join stayed inside.
   if (path.dirname(file) !== dir) {
     throw new UiKitCliError('INVALID_CACHE_SLUG', 'cached slug escaped the cache directory');

@@ -139,21 +139,24 @@ function cachedCandidatesFor(
 ): readonly UiKitCandidate[] {
   const needle = query?.trim().toLowerCase();
   const cached = listCachedItems(kit);
-  if (kit === 'boardui') {
-    const bySlug = new Map(cached.map((entry) => [entry.slug, entry]));
-    return boardUiCandidates()
-      .filter((entry) => matchesQuery(entry, needle))
-      .map((entry) => ({ ...entry, ...(bySlug.has(entry.slug) ? {} : {}) }));
-  }
-  return cached
-    .map((entry) => ({
-      kit,
-      slug: entry.slug,
-      label: entry.slug,
-      category: 'registry-item',
-      tier: entry.tier,
-    }))
-    .filter((entry) => matchesQuery(entry, needle));
+  const fromCache = cached.map((entry) => ({
+    kit,
+    slug: entry.slug,
+    label: entry.slug,
+    category: kit === 'boardui' ? 'cached' : 'registry-item',
+    tier: entry.tier,
+  }));
+  if (kit !== 'boardui') return fromCache.filter((entry) => matchesQuery(entry, needle));
+
+  // The UNION, not the snapshot alone. A Pro item that a licensed operator
+  // already fetched lives only in the cache — building the list from the
+  // bundled free snapshot meant it could never be found again unless the
+  // caller already remembered its exact slug.
+  const snapshot = boardUiCandidates();
+  const known = new Set(snapshot.map((entry) => entry.slug));
+  return [...snapshot, ...fromCache.filter((entry) => !known.has(entry.slug))].filter(
+    (entry) => matchesQuery(entry, needle),
+  );
 }
 
 /** The live listing. Only reachable from an effectful tool. */
@@ -513,7 +516,10 @@ export function buildUiKitTools(): McpToolDef[] {
             ok: true,
             command: 'view',
             exitCode: 0,
-            cached: true,
+            // What the cache actually accepted, not what we hoped: a refused
+            // write used to be reported as cached, sending the caller back
+            // for an item that was never there.
+            cached: fetched.cached,
             output: fetched.source.slice(0, 40_000),
           };
         }
@@ -581,7 +587,7 @@ export function buildUiKitTools(): McpToolDef[] {
             );
             return {
               ok: true,
-              cached: true,
+              cached: fetched.cached,
               tier: fetched.tier,
               text: fetched.source.slice(0, 60_000),
             };
@@ -598,6 +604,8 @@ export function buildUiKitTools(): McpToolDef[] {
           ok: result.ok,
           text: result.text.slice(0, 60_000),
           ...(result.droppedArgs ? { ignoredArgs: result.droppedArgs } : {}),
+          ...(result.needsLicense ? { needsLicense: result.needsLicense } : {}),
+          ...(result.licenseState ? { licenseState: result.licenseState } : {}),
         };
       },
     },
