@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { writeFileAtomic } from '../util/atomic-write';
 import {
   runUiKitCli,
   UiKitCliError,
@@ -7,6 +10,7 @@ import {
 import { callMcpToolOnce } from './ui-kit-mcp-call';
 import {
   buildShadcnArgs,
+  referencedShadcnNamespaces,
   shadcnCommandWrites,
   type ShadcnCommand,
 } from './shadcn-source';
@@ -25,7 +29,9 @@ import {
   type BoardUiMcpTool,
 } from './boardui-source';
 import {
-  buildRegistryEnv,
+  buildScopedRegistryEnv,
+  mergeRegistriesIntoComponentsJson,
+  projectRegistryUrls,
   SHADCN_DEFAULT_NAMESPACE,
   type UiKitRegistry,
 } from './ui-kit-registry';
@@ -81,6 +87,85 @@ export interface UiKitRunResult {
   readonly code: number | null;
   /** Namespaces whose token is configured but absent from the vault. */
   readonly missingRegistryKeys: readonly string[];
+  /**
+   * Namespaces the project's components.json points at a different host than
+   * the one configured here. No token was released for them.
+   */
+  readonly registryConflicts?: readonly string[];
+  /** Configured and referenced, but not declared by the project. */
+  readonly unmappedRegistries?: readonly string[];
+}
+
+export const COMPONENTS_JSON = 'components.json';
+
+/** Read the project's components.json. Absent or unparseable reads as null. */
+export function readComponentsJson(
+  cwd: string,
+  deps: { readonly readFile?: (file: string) => string } = {},
+): Record<string, unknown> | null {
+  const read = deps.readFile ?? ((file: string) => fs.readFileSync(file, 'utf8'));
+  try {
+    const parsed = JSON.parse(read(path.join(cwd, COMPONENTS_JSON))) as unknown;
+    return parsed && typeof parsed === 'object'
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export interface EnsureRegistriesResult {
+  readonly wrote: readonly string[];
+  readonly conflicts: readonly string[];
+  readonly componentsJsonMissing: boolean;
+}
+
+/**
+ * Make sure the project declares the namespaces we manage, so shadcn can
+ * resolve them and the token has somewhere legitimate to go.
+ *
+ * A namespace the project already points elsewhere is NOT overwritten: that
+ * mapping is the project's, and silently repointing it would be the same class
+ * of surprise as leaking the token to it. It comes back as a conflict.
+ */
+export function ensureProjectRegistries(
+  cwd: string,
+  registries: readonly UiKitRegistry[],
+  deps: {
+    readonly readFile?: (file: string) => string;
+    readonly writeFile?: (file: string, value: string) => void;
+  } = {},
+): EnsureRegistriesResult {
+  const existing = readComponentsJson(cwd, deps);
+  if (!existing) {
+    return { wrote: [], conflicts: [], componentsJsonMissing: true };
+  }
+  const declared = projectRegistryUrls(existing);
+  const mine = registries.filter((registry) => {
+    const current = declared.get(registry.namespace);
+    return current === undefined;
+  });
+  const conflicts = registries
+    .filter((registry) => {
+      const current = declared.get(registry.namespace);
+      return current !== undefined && current !== registry.url;
+    })
+    .map((registry) => registry.namespace);
+
+  if (mine.length === 0) {
+    return { wrote: [], conflicts, componentsJsonMissing: false };
+  }
+  const merged = mergeRegistriesIntoComponentsJson(existing, mine);
+  const write =
+    deps.writeFile ??
+    // components.json is project configuration, not a secret: 0644.
+    ((file: string, value: string) => writeFileAtomic(file, value, 0o644));
+  write(path.join(cwd, COMPONENTS_JSON), `${JSON.stringify(merged, null, 2)}\n`);
+  return {
+    wrote: mine.map((registry) => registry.namespace),
+    conflicts,
+    componentsJsonMissing: false,
+  };
 }
 
 /** Run any shadcn command. The full documented surface goes through here. */
@@ -94,7 +179,19 @@ export async function runShadcnCommand(
 ): Promise<UiKitRunResult> {
   const registries = deps.registries?.() ?? [];
   const { get } = vault(deps);
-  const { env, missing } = buildRegistryEnv(registries, get);
+  // Credential scope: only the namespaces THIS command names, and only when
+  // the project points them at the host configured here.
+  const referenced = referencedShadcnNamespaces(input.command);
+  const needed = registries.filter((registry) =>
+    referenced.includes(registry.namespace),
+  );
+  if (needed.length > 0) ensureProjectRegistries(input.cwd, needed);
+  const { env, missing, conflicts, unmapped } = buildScopedRegistryEnv({
+    registries,
+    referenced,
+    projectUrls: projectRegistryUrls(readComponentsJson(input.cwd)),
+    lookupSecret: get,
+  });
   const run = deps.runCli ?? runUiKitCli;
   const result = await run({
     kit: 'shadcn',
@@ -110,6 +207,8 @@ export async function runShadcnCommand(
     stderr: result.stderr,
     code: result.code,
     missingRegistryKeys: missing,
+    ...(conflicts.length > 0 ? { registryConflicts: conflicts } : {}),
+    ...(unmapped.length > 0 ? { unmappedRegistries: unmapped } : {}),
   };
 }
 

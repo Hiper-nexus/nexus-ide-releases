@@ -69,6 +69,14 @@ export function classifyShadcnItem(raw: string): ShadcnItemKind {
       `registry item contains whitespace or a control character: ${item.slice(0, 64)}`,
     );
   }
+  // Before ANY branch. `-x.json` used to reach the `.json` check and be
+  // classified as a local registry path, which handed commander an option.
+  if (item.startsWith('-')) {
+    throw new UiKitCliError(
+      'OPTION_LIKE_ITEM',
+      `a registry item may not start with "-": ${item.slice(0, 64)}`,
+    );
+  }
   if (/^https?:\/\//i.test(item)) {
     let parsed: URL;
     try {
@@ -168,6 +176,12 @@ export function assertRelativeProjectPath(raw: string): string {
   }
   if (/[\0\r\n]/.test(value)) {
     throw new UiKitCliError('INVALID_PATH', 'target path contains a control character');
+  }
+  if (value.startsWith('-')) {
+    throw new UiKitCliError(
+      'OPTION_LIKE_PATH',
+      'a target path may not start with "-"',
+    );
   }
   if (value.startsWith('/') || value.startsWith('\\') || /^[a-z]:[\\/]/i.test(value)) {
     throw new UiKitCliError(
@@ -363,6 +377,12 @@ export function buildShadcnArgs(command: ShadcnCommand): readonly string[] {
         if (/[\0\r\n]/.test(query)) {
           throw new UiKitCliError('INVALID_OPTION', 'query contains a control character');
         }
+        if (query.startsWith('-')) {
+          throw new UiKitCliError(
+            'INVALID_OPTION',
+            'a search query may not start with "-"',
+          );
+        }
         if (query.length > 0) args.push('--query', query);
       }
       if (command.limit !== undefined) {
@@ -406,6 +426,46 @@ export function buildShadcnArgs(command: ShadcnCommand): readonly string[] {
     case 'eject':
       return ['eject', '--yes'];
   }
+}
+
+/**
+ * The registry namespaces a command actually references.
+ *
+ * This drives credential scope: handing every configured token to every run
+ * means `shadcn add button` — a public component — carries a private
+ * registry's token into an untrusted npm child for no reason.
+ *
+ * A URL or local-path item references no namespace, so it gets nothing.
+ */
+export function referencedShadcnNamespaces(
+  command: ShadcnCommand,
+): readonly string[] {
+  const namespaces = new Set<string>();
+  const addFromItems = (items: readonly string[]): void => {
+    for (const raw of items) {
+      const item = raw.trim();
+      if (!item.startsWith('@')) continue;
+      const slash = item.indexOf('/');
+      namespaces.add(slash > 0 ? item.slice(0, slash) : item);
+    }
+  };
+  switch (command.kind) {
+    case 'add':
+      if (!command.all) addFromItems(command.items);
+      break;
+    case 'view':
+      addFromItems(command.items);
+      break;
+    case 'init':
+      if (command.items) addFromItems(command.items);
+      break;
+    case 'search':
+      for (const registry of command.registries) namespaces.add(registry.trim());
+      break;
+    default:
+      break;
+  }
+  return [...namespaces];
 }
 
 function assertProjectName(raw: string): string {

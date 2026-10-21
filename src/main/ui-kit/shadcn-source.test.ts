@@ -3,6 +3,7 @@ import { UiKitCliError } from './ui-kit-cli';
 import {
   buildShadcnArgs,
   classifyShadcnItem,
+  referencedShadcnNamespaces,
   shadcnCommandWrites,
   type ShadcnCommand,
 } from './shadcn-source';
@@ -183,5 +184,56 @@ describe('path and option guards', () => {
   it('caps the item count', () => {
     const many = Array.from({ length: 33 }, (_, i) => `item-${i}`);
     expect(() => buildShadcnArgs({ kind: 'add', items: many })).toThrow(/at most/);
+  });
+});
+
+describe('option injection', () => {
+  it('refuses an item that starts with "-" even when it looks like a path', () => {
+    // This was the hole: the `.json` branch ran BEFORE the pattern test, so
+    // `-x.json` was classified as a local registry path and handed to
+    // commander as an option.
+    expect(() => classifyShadcnItem('-x.json')).toThrow(/may not start with "-"/);
+    expect(() => classifyShadcnItem('--overwrite.json')).toThrow(/may not start with "-"/);
+    expect(() => classifyShadcnItem('-button')).toThrow(/may not start with "-"/);
+  });
+
+  it('refuses an option-shaped destination path', () => {
+    expect(() =>
+      buildShadcnArgs({ kind: 'add', items: ['button'], path: '-rf' }),
+    ).toThrow(/may not start with "-"/);
+  });
+
+  it('refuses an option-shaped search query', () => {
+    expect(() =>
+      buildShadcnArgs({ kind: 'search', registries: ['@shadcn'], query: '--all' }),
+    ).toThrow(/may not start with "-"/);
+  });
+});
+
+describe('referencedShadcnNamespaces — credential scope', () => {
+  it('names only the namespaces the command touches', () => {
+    expect(referencedShadcnNamespaces({ kind: 'add', items: ['@acme/auth', 'button'] }))
+      .toEqual(['@acme']);
+    expect(referencedShadcnNamespaces({ kind: 'view', items: ['@v0/dashboard'] }))
+      .toEqual(['@v0']);
+    expect(referencedShadcnNamespaces({ kind: 'search', registries: ['@shadcn', '@acme'] }))
+      .toEqual(['@shadcn', '@acme']);
+  });
+
+  it('names nothing for a public item, a URL or a local path', () => {
+    expect(referencedShadcnNamespaces({ kind: 'add', items: ['button'] })).toEqual([]);
+    expect(
+      referencedShadcnNamespaces({
+        kind: 'add',
+        items: ['https://registry.example.com/r/button.json'],
+      }),
+    ).toEqual([]);
+    expect(referencedShadcnNamespaces({ kind: 'add', items: ['registry/button.json'] }))
+      .toEqual([]);
+  });
+
+  it('names nothing for a command with no items at all', () => {
+    expect(referencedShadcnNamespaces({ kind: 'info' })).toEqual([]);
+    expect(referencedShadcnNamespaces({ kind: 'add', items: [], all: true })).toEqual([]);
   });
 });

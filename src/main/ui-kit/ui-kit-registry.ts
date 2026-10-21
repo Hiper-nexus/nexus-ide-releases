@@ -250,3 +250,92 @@ export function registrySecretKey(namespace: string): string {
   const normalized = assertRegistryNamespace(namespace);
   return `external:ui-kit-registry-${normalized.slice(1)}`;
 }
+
+/**
+ * The namespace → URL map the PROJECT declares in `components.json`.
+ *
+ * This matters for credential scope: shadcn resolves a namespace through the
+ * project's own file, so if that file maps `@acme` to someone else's host, our
+ * token would be sent there. Tokens are therefore only released for a
+ * namespace the project maps to the URL we configured.
+ */
+export function projectRegistryUrls(
+  componentsJson: Readonly<Record<string, unknown>> | null,
+): ReadonlyMap<string, string> {
+  const out = new Map<string, string>();
+  if (!componentsJson) return out;
+  const registries = componentsJson.registries;
+  if (!registries || typeof registries !== 'object') return out;
+  for (const [namespace, value] of Object.entries(
+    registries as Record<string, unknown>,
+  )) {
+    if (typeof value === 'string') {
+      out.set(namespace, value);
+      continue;
+    }
+    if (value && typeof value === 'object') {
+      const url = (value as { url?: unknown }).url;
+      if (typeof url === 'string') out.set(namespace, url);
+    }
+  }
+  return out;
+}
+
+export interface ScopedRegistryEnvInput {
+  readonly registries: readonly UiKitRegistry[];
+  /** Namespaces the command actually references. */
+  readonly referenced: readonly string[];
+  /** What the project's components.json maps today. */
+  readonly projectUrls: ReadonlyMap<string, string>;
+  readonly lookupSecret: (secretKey: string) => string | null | undefined;
+}
+
+export interface ScopedRegistryEnvResult extends RegistryEnvResult {
+  /** Namespaces the project maps to a DIFFERENT host than the one configured. */
+  readonly conflicts: readonly string[];
+  /** Configured and referenced, but the project does not declare them. */
+  readonly unmapped: readonly string[];
+}
+
+/**
+ * Resolve ONLY the tokens this run needs, and only when the project points the
+ * namespace at the host we configured.
+ *
+ * Handing every configured token to every run means `add button` — a public
+ * component — carries a private registry's credential into an untrusted npm
+ * child for nothing.
+ */
+export function buildScopedRegistryEnv(
+  input: ScopedRegistryEnvInput,
+): ScopedRegistryEnvResult {
+  const referenced = new Set(input.referenced.map((entry) => entry.trim()));
+  const env: Record<string, string> = {};
+  const missing: string[] = [];
+  const conflicts: string[] = [];
+  const unmapped: string[] = [];
+
+  for (const registry of assertRegistries(input.registries)) {
+    if (!registry.auth) continue;
+    if (!referenced.has(registry.namespace)) continue;
+
+    const declared = input.projectUrls.get(registry.namespace);
+    if (declared === undefined) {
+      unmapped.push(registry.namespace);
+      continue;
+    }
+    if (declared !== registry.url) {
+      // The project points this namespace somewhere else. Releasing the token
+      // would send it to that host.
+      conflicts.push(registry.namespace);
+      continue;
+    }
+    const token = registry.secretKey ? input.lookupSecret(registry.secretKey) : null;
+    if (typeof token === 'string' && token.trim().length > 0) {
+      env[registry.auth.envVar] = token.trim();
+    } else {
+      missing.push(registry.namespace);
+    }
+  }
+
+  return { env, missing, conflicts, unmapped };
+}

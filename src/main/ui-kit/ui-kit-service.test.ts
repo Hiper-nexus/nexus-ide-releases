@@ -8,6 +8,8 @@ import { readCachedItem, writeCachedItem } from './ui-kit-cache';
 import type { UiKitRegistry } from './ui-kit-registry';
 import {
   activateBoardUiLicense,
+  ensureProjectRegistries,
+  readComponentsJson,
   boardUiCandidates,
   boardUiLicenseStatus,
   callBoardUiTool,
@@ -81,6 +83,10 @@ function harness(
   return { deps, cliRuns, mcpCalls, vault: store };
 }
 
+function writeComponentsJson(value: Record<string, unknown>): void {
+  fs.writeFileSync(path.join(cwd, 'components.json'), JSON.stringify(value, null, 2));
+}
+
 const PRIVATE_REGISTRY: UiKitRegistry = {
   namespace: '@acme',
   url: 'https://registry.acme.test/r/{name}.json',
@@ -111,9 +117,10 @@ describe('runShadcnCommand', () => {
     expect(h.cliRuns[0]?.writes).toBe(false);
   });
 
-  it('carries a registry token from the vault into the child env', async () => {
+  it('carries a registry token only for a namespace the command names', async () => {
     const h = harness({ registries: [PRIVATE_REGISTRY] });
     h.vault.set('external:ui-kit-registry-acme', 'tok-abc');
+    writeComponentsJson({ registries: { '@acme': PRIVATE_REGISTRY.url } });
 
     const result = await runShadcnCommand(
       { command: { kind: 'add', items: ['@acme/auth'] }, cwd },
@@ -124,8 +131,35 @@ describe('runShadcnCommand', () => {
     expect(result.missingRegistryKeys).toEqual([]);
   });
 
+  it('releases NO token when the run does not touch that registry', async () => {
+    // `add button` is a public component: a private registry's credential has
+    // no business travelling into the npm child for it.
+    const h = harness({ registries: [PRIVATE_REGISTRY] });
+    h.vault.set('external:ui-kit-registry-acme', 'tok-abc');
+    writeComponentsJson({ registries: { '@acme': PRIVATE_REGISTRY.url } });
+
+    await runShadcnCommand({ command: { kind: 'add', items: ['button'] }, cwd }, h.deps);
+
+    expect(h.cliRuns[0]?.extraEnv).toBeUndefined();
+  });
+
+  it('withholds the token when the project points the namespace elsewhere', async () => {
+    const h = harness({ registries: [PRIVATE_REGISTRY] });
+    h.vault.set('external:ui-kit-registry-acme', 'tok-abc');
+    writeComponentsJson({ registries: { '@acme': 'https://evil.test/{name}.json' } });
+
+    const result = await runShadcnCommand(
+      { command: { kind: 'add', items: ['@acme/auth'] }, cwd },
+      h.deps,
+    );
+
+    expect(h.cliRuns[0]?.extraEnv).toBeUndefined();
+    expect(result.registryConflicts).toEqual(['@acme']);
+  });
+
   it('names the registry whose key is missing instead of failing blind', async () => {
     const h = harness({ registries: [PRIVATE_REGISTRY] });
+    writeComponentsJson({ registries: { '@acme': PRIVATE_REGISTRY.url } });
 
     const result = await runShadcnCommand(
       { command: { kind: 'add', items: ['@acme/auth'] }, cwd },
@@ -134,6 +168,20 @@ describe('runShadcnCommand', () => {
 
     expect(result.missingRegistryKeys).toEqual(['@acme']);
     expect(h.cliRuns[0]?.extraEnv).toBeUndefined();
+  });
+
+  it('declares our namespace in components.json so the token has a legitimate home', async () => {
+    const h = harness({ registries: [PRIVATE_REGISTRY] });
+    h.vault.set('external:ui-kit-registry-acme', 'tok-abc');
+    writeComponentsJson({ style: 'new-york' });
+
+    await runShadcnCommand({ command: { kind: 'add', items: ['@acme/auth'] }, cwd }, h.deps);
+
+    const written = readComponentsJson(cwd);
+    expect((written?.registries as Record<string, unknown>)['@acme']).toMatchObject({
+      url: PRIVATE_REGISTRY.url,
+    });
+    expect(h.cliRuns[0]?.extraEnv).toEqual({ ACME_REGISTRY_TOKEN: 'tok-abc' });
   });
 
   it('reports a non-zero exit as not ok', async () => {
@@ -372,5 +420,47 @@ describe('catalog helpers', () => {
     expect(candidates.length).toBeGreaterThan(70);
     expect(candidates.find((entry) => entry.slug === 'button')?.tier).toBe('free');
     expect(candidates.find((entry) => entry.slug === 'finance-dashboard')?.tier).toBe('pro');
+  });
+});
+
+describe('ensureProjectRegistries', () => {
+  it('reports a missing components.json instead of creating one', () => {
+    const result = ensureProjectRegistries(cwd, [PRIVATE_REGISTRY]);
+
+    expect(result.componentsJsonMissing).toBe(true);
+    expect(result.wrote).toEqual([]);
+    expect(fs.existsSync(path.join(cwd, 'components.json'))).toBe(false);
+  });
+
+  it('adds our namespace and leaves the rest of the file alone', () => {
+    writeComponentsJson({ style: 'new-york', aliases: { ui: '@/components/ui' } });
+
+    const result = ensureProjectRegistries(cwd, [PRIVATE_REGISTRY]);
+
+    expect(result.wrote).toEqual(['@acme']);
+    const written = readComponentsJson(cwd);
+    expect(written?.style).toBe('new-york');
+    expect(written?.aliases).toEqual({ ui: '@/components/ui' });
+  });
+
+  it('never repoints a namespace the project already declares', () => {
+    writeComponentsJson({ registries: { '@acme': 'https://theirs.test/{name}.json' } });
+
+    const result = ensureProjectRegistries(cwd, [PRIVATE_REGISTRY]);
+
+    expect(result.wrote).toEqual([]);
+    expect(result.conflicts).toEqual(['@acme']);
+    expect(
+      (readComponentsJson(cwd)?.registries as Record<string, unknown>)['@acme'],
+    ).toBe('https://theirs.test/{name}.json');
+  });
+
+  it('is a no-op when the mapping already matches', () => {
+    writeComponentsJson({ registries: { '@acme': PRIVATE_REGISTRY.url } });
+
+    const result = ensureProjectRegistries(cwd, [PRIVATE_REGISTRY]);
+
+    expect(result.wrote).toEqual([]);
+    expect(result.conflicts).toEqual([]);
   });
 });
