@@ -807,6 +807,17 @@ saber isto antes de mexer:
   `reserveClaude` tira Opus/Fable dos workers, e com o Astra no topo ele virou
   1 de cada 4 workers num dia. Não o devolva à rota automática; a regra do
   "mais novo da linha" também não o traz (`gpt-6.1-astra` continua fora).
+  Exceção (F-1623, operador 21/10): na UI ele é topo, junto do Opus 5.5 e do
+  Gemini Argon.
+- F-1621/F-1623 (operador, 21/10): UI de medium para cima reveza SÓ o topo
+  (`VISUAL_FRONTIER_LANE` grupo 0: Opus 5.5 max, Gemini Argon, GPT Astra);
+  quem não tem nenhum deles cai na reserva ordenada (grupo 1 Sonnet 5.5,
+  2 DeepSeek Flash, 3 Muse Full/Kimi/Sol/Devin), que só entra sem assento
+  pronto num grupo menor. Jogo, Next.js e 3D/WebGL (`isNextOrGameTask`; "3D
+  Secure" de cartão não conta) vão ao Opus 5.5, e sem ele ao Sonnet 5.5.
+  Ajuste de UI trivial/easy (cor, texto, espaçamento) não usa a lane: segue a
+  rota do tier com as CLIs baratas. Cada usuário tem outras CLIs: a lane é
+  ordem de preferência sobre o que está instalado, nunca exigência.
 - F-701: o Maestro recebe a doutrina de delegar em três lugares. O kickoff,
   as `instructions` do MCP (`MAESTRO_STANDING_DOCTRINE` via
   `maestroStandingContext`: prompt de sistema, sobrevive à compactação) e o

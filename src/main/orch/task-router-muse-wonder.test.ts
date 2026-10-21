@@ -54,9 +54,10 @@ describe('F-1398: Muse Full nas lanes e contributor com consentimento', () => {
     ], DEFAULT_ROUTING_TABLE, 'medium', false, BUILTIN_MODEL_CATALOG, { multiScore: false });
     expect(decision).toMatchObject({ adapterId: 'muse', model: 'muse-wonder-full-1.0', effort: 'max' });
     expect(decision?.reason).toContain('lane visual');
-    const sonnet = VISUAL_FRONTIER_LANE.findIndex((seat) => seat.model === 'claude-sonnet-5-5');
-    expect(VISUAL_FRONTIER_LANE[sonnet + 1]).toMatchObject({ adapterId: 'muse', model: 'muse-wonder-full-1.0', effort: 'max' });
-    expect(VISUAL_FRONTIER_LANE[sonnet + 1].preferenceOnly).not.toBe(true);
+    // F-1623: Muse Full é reserva (grupo 3), depois do Sonnet e do DeepSeek, com max.
+    const full = VISUAL_FRONTIER_LANE.find((seat) => seat.model === 'muse-wonder-full-1.0');
+    expect(full).toMatchObject({ adapterId: 'muse', effort: 'max', group: 3 });
+    expect(full?.preferenceOnly).not.toBe(true);
   });
 
   it('Full julga com high no hard quando Claude e Codex não estão disponíveis', () => {

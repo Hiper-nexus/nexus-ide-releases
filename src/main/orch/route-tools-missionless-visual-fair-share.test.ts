@@ -127,34 +127,28 @@ beforeEach(() => {
 });
 
 describe('revezamento visual sem missão (F-1400 parte 2)', () => {
-  it('cinco tarefas visuais sem missão distribuem cinco assentos do pool', async () => {
+  it('F-1623: tarefas visuais sem missão revezam só o topo disponível (Opus e Astra)', async () => {
+    h.listProviderSettings.mockReturnValue(h.listProviderSettings().map((row: Record<string, unknown>) =>
+      row.adapterId === 'codex' ? { ...row, models: ['gpt-6-astra', 'gpt-6.1-sol'] } : row));
     const picks: string[] = [];
-    for (let index = 0; index < 5; index += 1) {
+    for (let index = 0; index < 4; index += 1) {
       const decision = await route();
       picks.push(`${decision.adapterId}:${decision.model}`);
     }
-    expect(picks).toEqual([
-      'claude:claude-opus-5-5',
-      'claude:claude-sonnet-5-5',
-      'muse:muse-wonder-full-1.0',
-      'kimi:kimi-code/k3',
-      'codex:gpt-6.1-sol',
-    ]);
+    expect(new Set(picks)).toEqual(new Set(['claude:claude-opus-5-5', 'codex:gpt-6-astra']));
   });
 
-  it('Devin SWE-2 (pedido do operador): seis tarefas visuais sem missão dão assento ao Devin', async () => {
+  it('F-1623: Devin é reserva — com o topo pronto, seis tarefas visuais sem missão não o usam', async () => {
     h.listProviderSettings.mockReturnValue([
       ...h.listProviderSettings(),
       { adapterId: 'devin', enabled: true, installed: true, authStrategy: 'oauth',
         models: ['swe-2-high', 'swe-2-medium'] },
     ]);
-    const picks: string[] = [];
     for (let index = 0; index < 6; index += 1) {
       const decision = await route();
-      picks.push(`${decision.adapterId}:${decision.model}`);
+      expect(decision.adapterId).not.toBe('devin');
+      expect(decision).toMatchObject({ adapterId: 'claude', model: 'claude-opus-5-5' });
     }
-    expect(picks).toContain('devin:swe-2-high');
-    expect(new Set(picks).size).toBe(6);
   });
 
   it('Next.js continua Opus max sem missão, mesmo com uso visual recente alto', async () => {

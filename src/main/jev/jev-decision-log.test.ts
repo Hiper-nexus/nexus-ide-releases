@@ -77,6 +77,15 @@ describe('jev decision log', () => {
     expect(stats.byModel['clef-flash']).toMatchObject({ calls: 1, usd: 0.09 });
   });
 
+  it('F-1622: linha da Luna sem provider não é somada ao Jev', () => {
+    const d = setup();
+    recordJevDecision(entry({ model: 'jev-1.13.0', inputTokens: 1_000, usd: 0.000042 }), { dir: d });
+    recordJevDecision(entry({ model: 'gpt-6-luna', inputTokens: 1_000, usd: 0.0001 }), { dir: d });
+    const stats = jevDecisionStats({ dir: d });
+    expect(stats.byProvider.jev).toMatchObject({ calls: 1 });
+    expect(stats.byProvider.luna).toMatchObject({ calls: 1 });
+  });
+
   it('counts measured and legacy rows apart instead of letting one old row hide every measured request', () => {
     const d = setup();
     recordJevDecision(entry({ model: 'jev-1.13.0' }), { dir: d });
