@@ -96,8 +96,8 @@ test('returns branded missing pages with a real 404 status', async () => {
   assert.equal(response.headers.has('location'),false);
 });
 
-test('CSP connect-src allows the site, the API and the Cloudflare analytics beacon, and nothing else', async () => {
-  const res = await handleRequest(new Request('https://nexuside.app/'), {
+test('CSP fora da home mantém somente site, API e Cloudflare', async () => {
+  const res = await handleRequest(new Request('https://nexuside.app/conta/'), {
     ASSETS: { fetch: async () => new Response('product') },
   });
   const csp = res.headers.get('content-security-policy');
@@ -228,4 +228,19 @@ test('o repositório apt e dnf redireciona para os assets da release Linux e som
   assert.equal(community.status, 404);
   const post = await handleRequest(new Request('https://nexuside.app/apt/InRelease', { method: 'POST' }), env);
   assert.equal(post.status, 405);
+});
+
+
+test('Google Ads CSP é limitada à home de produção, sem inline, eval ou wildcard', async () => {
+  const env = { ASSETS: { fetch: async () => new Response('page') } };
+  for (const target of ['https://nexuside.app/', 'https://nexuside.app/conta/', 'https://nexuside.app/admin/', 'https://nexuside.app/privacidade', 'https://nexuside.app/comunidade/', 'https://comunidade.nexuside.app/', 'https://preview.workers.dev/']) {
+    const res = await handleRequest(new Request(target), env);
+    const csp = res.headers.get('content-security-policy');
+    assert.equal(csp.includes('https://www.googletagmanager.com'), target === 'https://nexuside.app/', target);
+    assert.equal(csp.includes('unsafe-eval'), false);
+    assert.equal(csp.includes("script-src 'self' 'unsafe-inline'"), false);
+    assert.equal(csp.includes('https://*'), false);
+    assert.ok(csp.includes("object-src 'none'"));
+    assert.ok(csp.includes("frame-ancestors 'none'"));
+  }
 });

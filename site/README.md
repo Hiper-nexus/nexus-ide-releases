@@ -67,3 +67,31 @@ Pesquisa e direção: `docs/site-redesign-brief.md`. Produto/design: `PRODUCT.md
 ## Limites operacionais
 
 API/banco/relay ainda não foram migrados. A rota `app.nexuside.app/*` permanece com o worker companion original. O passthrough do backend só existe em `nexuside.app`; nunca no hostname da comunidade ou preview.
+
+## Google Ads e consentimento (21/10/2026)
+
+A home de produção carrega somente a tag base `AW-953176375`, confirmada na conta `3066296016`.
+`src/ads-consent.js` usa Consent Mode básico: nenhum loader ou ping Google antes de um aceite
+explícito, nem após recusa. A preferência local vence em 180 dias; o rodapé permite reabrir a escolha
+e revogar. Revogar recarrega a página sem a tag. `ad_user_data`, `ad_personalization` e
+`analytics_storage` continuam negados; conversões aprimoradas e sinais de personalização ficam desligados.
+A tag compartilhada contém o destino GA4 `G-VJFB612907`: a propriedade `ga-disable-G-VJFB612907`
+é definida antes do loader para bloquear esse destino no Nexus. `user_data: null` desativa a coleta
+automática de dados fornecidos pelo usuário nesta página. O config usa a raiz canônica e referrer sem parâmetros. Antes do loader, a URL atual é validada:
+só gclid/gbraid/wbraid com caracteres de identificador opaco são aceitos para atribuição; outros
+parâmetros, duplicações, formatos inválidos ou hash bloqueiam a tag. Query/hash no referrer também bloqueiam.
+Se a revogação não puder ser gravada, o aceite antigo é removido e uma recusa de sessão protege a navegação limpa nesta aba. A política pública descreve o tratamento.
+A CSP Google só é permitida na home do domínio oficial, sem inline/eval ou curingas. Conta, admin,
+comunidade e previews não inicializam a integração. Os testes de consentimento integram `npm test`.
+
+A ação secundária `7860037868` (“Nexus IDE | Clique em download”) usa somente o destino oficial
+`AW-953176375/G6imCOzR-qMdELeiwcYD`, valor 0 BRL e ONE_PER_CLICK. `download-conversion.js`
+observa cliques reais em links de instaladores oficiais, sob consentimento. Âncoras de seção, o seletor
+Linux genérico, checksums, notas de versão e downloads do Shot ficam fora. O handler não cancela a
+navegação; o envio via beacon é best effort e falhas de medição nunca impedem o download. QA usa
+mocks, sem registrar conversão real. O clique de download continua sendo uma navegação
+para um instalador GitHub (os links podem ser atualizados por `src/downloads/ui.js`); ele não prova
+instalação nem ativação. O teste começa no primeiro login verificado, confirmado pela API, e não no
+clique em “Começar meu teste”. Para medir início de teste ou ativação no Google Ads, configure novas ações exclusivas do
+Nexus e valide seus IDs/rótulos antes de instrumentar; não reutilize ações de outros produtos. Medir
+ativação dentro do desktop exige um escopo próprio e consentimento compatível.

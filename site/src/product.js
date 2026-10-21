@@ -1,3 +1,5 @@
+import './ads-consent.css';
+import { initializeAdsConsent } from './ads-consent.js';
 import '@fontsource-variable/geist';
 import './product.css';
 import './prize.css';
@@ -14,6 +16,7 @@ import { initializeHeroProof } from './hero/proof.js';
 import { initMobileNav } from './nav.js';
 import './voice/demo.js';
 
+initializeAdsConsent();
 initMobileNav();
 buildMarquee(document.getElementById('prize-marquee'));
 startDrawSign(document.getElementById('prize-draw'));
