@@ -2810,14 +2810,21 @@ componente: o agente recebia a paleta e escrevia cada peça à mão. `src/main/u
   source root), e isso é configuração do operador.
   `tools-ui-kit-read-only.test.ts` percorre os schemas e reprova se um campo de
   destino voltar.
-- **Caminho que ainda vem do chamador (item que é registry local relativo) é
-  CONTIDO, não checado por string.** `assertPathStaysInProject` caminha
+- **A superfície do agente não tem caminho nenhum.** Além do destino, item que
+  é caminho local (`registry/button.json`) é recusado nas tools: a CLI aceita e
+  é fluxo legítimo do OPERADOR, mas de um agente é lugar, não nome — e seis
+  rodadas de revisão foram sobre exatamente isso. A capacidade fica para
+  chamador do Main, onde a contenção guarda.
+- **Caminho que vem de chamador do Main é CONTIDO, não checado por string.**
+  `assertPathStaysInProject` caminha
   COMPONENTE A COMPONENTE da raiz com `lstat` — que vê o link exista ou não o
   alvo — e exige que todo link resolva de volta para dentro, com teto de
   saltos. `existsSync` não servia: ele SEGUE o link, então link para alvo
   inexistente lia como "não tem nada aqui" e a subida passava por cima. Link
   pendente apontando para DENTRO continua aceito (a escrita cria o alvo ali, e
-  ali é contido). Também recusa valor não normalizado: checar `" x"` e rodar
+  ali é contido). E o alvo de um link é RECAMINHADO desde a raiz, não conferido
+  por uma string só: com `a -> b/c` e `b -> /etc`, o `b/c` passa no
+  `path.relative` e quem leva para fora é o `b`, que só aparece caminhando. Também recusa valor não normalizado: checar `" x"` e rodar
   `"x"` valida um caminho que não é o usado — `destinationsIn` entrega a string
   que VAI no argv e é switch exaustivo, então tipo de comando novo não compila
   sem declarar seus caminhos. `--overwrite` NÃO ganhou portão próprio: a tool

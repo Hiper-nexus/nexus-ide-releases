@@ -733,59 +733,71 @@ export function assertPathStaysInProject(
     );
   }
 
-  const segments = path.relative(projectReal, target).split(path.sep).filter(Boolean);
-  let current = projectReal;
+  // Walk the components. On a link, the target's OWN path is re-walked from
+  // the project root rather than trusted after one string check — that was a
+  // real bypass: with `a -> b/c` and `b -> /etc`, `b/c` relative-checks clean
+  // while `b` is the link that leaves. Only walking `b` finds it.
+  let pending = path.relative(projectReal, target).split(path.sep).filter(Boolean);
   let hops = 0;
-  for (const segment of segments) {
-    current = path.join(current, segment);
-    let stats: { isSymbolicLink(): boolean };
-    try {
-      stats = lstatSync(current);
-    } catch {
-      // Nothing from here down exists, and every component above it was
-      // proven inside. There is no link left to hide behind.
-      return argvPath;
-    }
-    if (!stats.isSymbolicLink()) continue;
+  for (let restart = 0; restart <= UI_KIT_MAX_LINK_HOPS; restart += 1) {
+    let current = projectReal;
+    let hopped = false;
+    for (let index = 0; index < pending.length; index += 1) {
+      const segment = pending[index];
+      if (segment === undefined) continue;
+      current = path.join(current, segment);
+      if (escapes(current)) {
+        throw new UiKitCliError(
+          'PATH_ESCAPES_PROJECT',
+          `target path resolves outside the project: ${argvPath.slice(0, 96)}`,
+        );
+      }
+      let stats: { isSymbolicLink(): boolean };
+      try {
+        stats = lstatSync(current);
+      } catch {
+        // Nothing from here down exists, and every component above was proven
+        // inside. There is no link left to hide behind.
+        return argvPath;
+      }
+      if (!stats.isSymbolicLink()) continue;
 
-    // Follow it by hand: realpath would throw on a dangling link, which is
-    // exactly the case that used to slip through.
-    let link = current;
-    for (;;) {
-      if (hops >= UI_KIT_MAX_LINK_HOPS) {
+      hops += 1;
+      if (hops > UI_KIT_MAX_LINK_HOPS) {
         throw new UiKitCliError(
           'PATH_LINK_LOOP',
           `target path goes through too many links: ${argvPath.slice(0, 96)}`,
         );
       }
-      hops += 1;
       let destination: string;
       try {
-        destination = readlinkSync(link);
+        destination = readlinkSync(current);
       } catch {
         throw new UiKitCliError(
           'PATH_ESCAPES_PROJECT',
           `target path goes through an unreadable link: ${argvPath.slice(0, 96)}`,
         );
       }
-      link = path.resolve(path.dirname(link), destination);
-      if (escapes(link)) {
+      // `path.resolve` collapses `..` physically, so a link target that climbs
+      // out is caught by the same containment test.
+      const resolved = path.resolve(path.dirname(current), destination);
+      if (escapes(resolved)) {
         throw new UiKitCliError(
           'PATH_ESCAPES_PROJECT',
           `target path leaves the project through a link: ${argvPath.slice(0, 96)}`,
         );
       }
-      let next: { isSymbolicLink(): boolean };
-      try {
-        next = lstatSync(link);
-      } catch {
-        // A dangling link INSIDE the project: a write would create the target
-        // there, which is contained. Nothing below it can exist yet.
-        return argvPath;
-      }
-      if (!next.isSymbolicLink()) break;
+      pending = [
+        ...path.relative(projectReal, resolved).split(path.sep).filter(Boolean),
+        ...pending.slice(index + 1),
+      ];
+      hopped = true;
+      break;
     }
-    current = link;
+    if (!hopped) return argvPath;
   }
-  return argvPath;
+  throw new UiKitCliError(
+    'PATH_LINK_LOOP',
+    `target path goes through too many links: ${argvPath.slice(0, 96)}`,
+  );
 }

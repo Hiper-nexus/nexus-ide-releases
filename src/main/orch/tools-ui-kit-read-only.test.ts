@@ -145,6 +145,19 @@ describe('the agent surface offers no write destination', () => {
     expect(offenders).toEqual([]);
   });
 
+  it('refuses an item that is a local path, the last caller-chosen one', async () => {
+    const add = buildUiKitTools().find((entry) => entry.name === 'nexus_ui_kit_add');
+
+    await expect(
+      add?.handler({ kit: 'shadcn', items: ['registry/button.json'] }, ctx),
+    ).rejects.toThrow(/not installable from here/);
+    await expect(
+      buildUiKitTools()
+        .find((entry) => entry.name === 'nexus_ui_kit_run')
+        ?.handler({ command: 'view', items: ['registry/button.json'] }, ctx),
+    ).rejects.toThrow(/not installable from here/);
+  });
+
   it('still offers the tools the kit is for', () => {
     expect(buildUiKitTools().map((entry) => entry.name).sort()).toEqual([
       'nexus_ui_kit_add',

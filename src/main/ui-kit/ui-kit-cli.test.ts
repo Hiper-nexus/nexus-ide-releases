@@ -323,6 +323,45 @@ describe('assertPathStaysInProject', () => {
     );
   });
 
+  it('refuses a link whose TARGET PATH crosses another link out of the project', () => {
+    // The bypass the previous walk had: `a -> b/c` string-checks clean
+    // (relative is `b/c`), and jumping straight to it never examines `b`,
+    // which is the link that leaves. Only re-walking the target finds it.
+    expect(() =>
+      assertPathStaysInProject(
+        '/projects/app',
+        'a/x',
+        stub(
+          { '/projects/app/a': '/projects/app/b/c', '/projects/app/b': '/etc' },
+          [],
+        ),
+      ),
+    ).toThrow(/leaves the project through a link/);
+  });
+
+  it('accepts the same shape when every hop stays inside', () => {
+    expect(
+      assertPathStaysInProject(
+        '/projects/app',
+        'a/x',
+        stub(
+          { '/projects/app/a': '/projects/app/b/c', '/projects/app/b': '/projects/app/real' },
+          ['/projects/app/real'],
+        ),
+      ),
+    ).toBe('a/x');
+  });
+
+  it('refuses a link target that climbs out with ..', () => {
+    expect(() =>
+      assertPathStaysInProject(
+        '/projects/app',
+        'a/x',
+        stub({ '/projects/app/a': '../../etc' }, []),
+      ),
+    ).toThrow(/leaves the project through a link/);
+  });
+
   it('refuses a value the builder would normalise differently', () => {
     // The parser differential: checking " components" and running
     // "components" validates a path that is not the one used.

@@ -3,6 +3,7 @@ import { executionScopeFor } from './gate';
 import { num, requireStr, str, strArray } from './tool-util';
 import { UI_KIT_IDS, type UiKitId } from '../ui-kit/ui-kit-cli';
 import {
+  classifyShadcnItem,
   SHADCN_BASES,
   SHADCN_MIGRATIONS,
   SHADCN_TEMPLATES,
@@ -71,6 +72,33 @@ function parseKit(args: Record<string, unknown>, fallback: UiKitId = 'shadcn'): 
     );
   }
   return found;
+}
+
+/**
+ * Refuse an item that is a local path.
+ *
+ * The CLI accepts `registry/button.json`, and it is a legitimate operator
+ * workflow — but from an agent it is the last caller-chosen PATH on this
+ * surface, and six rounds of review have been about exactly that. A registry
+ * item is supposed to name a thing (`button`, `@acme/auth`), not a place. The
+ * capability stays for Main-side callers, where the containment walk guards it.
+ */
+function assertNamedItems(items: readonly string[]): readonly string[] {
+  for (const item of items) {
+    let kind: ReturnType<typeof classifyShadcnItem>;
+    try {
+      kind = classifyShadcnItem(item);
+    } catch {
+      continue; // The builder makes the shape refusal, with its own message.
+    }
+    if (kind === 'relative') {
+      throw new Error(
+        `a local registry file is not installable from here: ${item.slice(0, 64)} ` +
+          '— name the item (button) or a namespaced one (@acme/auth)',
+      );
+    }
+  }
+  return items;
 }
 
 function configuredRegistries(): readonly UiKitRegistry[] {
@@ -317,7 +345,7 @@ export function buildUiKitTools(): McpToolDef[] {
       },
       handler: async (args, ctx) => {
         const kit = parseKit(args);
-        const items = strArray(args, 'items');
+        const items = assertNamedItems(strArray(args, 'items'));
         if (items.length === 0) throw new Error('name at least one item to install');
         const result = await installItems(
           {
@@ -535,7 +563,7 @@ export function buildUiKitTools(): McpToolDef[] {
 
 function buildRunCommand(args: Record<string, unknown>): ShadcnCommand {
   const command = requireStr(args, 'command');
-  const items = strArray(args, 'items');
+  const items = assertNamedItems(strArray(args, 'items'));
   const base = str(args, 'base') as ShadcnBase | undefined;
   switch (command) {
     case 'init':
@@ -581,7 +609,9 @@ function buildRunCommand(args: Record<string, unknown>): ShadcnCommand {
     case 'docs':
       return {
         kind: 'docs',
-        ...(str(args, 'component') ? { component: requireStr(args, 'component') } : {}),
+        ...(str(args, 'component')
+          ? { component: assertNamedItems([requireStr(args, 'component')])[0] as string }
+          : {}),
         ...(base ? { base } : {}),
       };
     case 'info':
