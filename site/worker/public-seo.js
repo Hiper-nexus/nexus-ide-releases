@@ -8,6 +8,10 @@ const COMMUNITY_ORIGIN = 'https://comunidade.nexuside.app';
 const MARKETING_URLS = [
   `${MARKETING_ORIGIN}/`,
   `${MARKETING_ORIGIN}/benchmarks/`,
+  `${MARKETING_ORIGIN}/blog/`,
+  `${MARKETING_ORIGIN}/blog/ia-escritora-revisora-modelos-por-papel/`,
+  `${MARKETING_ORIGIN}/blog/criar-saas-com-ia/`,
+  `${MARKETING_ORIGIN}/blog/reduzir-consumo-tokens-programando-com-ia/`,
   `${MARKETING_ORIGIN}/termos`,
   `${MARKETING_ORIGIN}/privacidade`,
 ];
