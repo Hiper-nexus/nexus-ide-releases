@@ -837,6 +837,12 @@ export function PanePicker({
    * na hora, exatamente como sempre abriu.
    */
   const [request, setRequest] = useState('');
+  /**
+   * Tarefa que veio de fora (Estúdio de Mídia → "Novo vídeo de apresentação").
+   * Fica aqui desde a abertura até a escolha da CLI e vai como `brief` do pane;
+   * fechar o menu sem escolher a descarta. Sem esta ponte o pane abria vazio.
+   */
+  const [taskBrief, setTaskBrief] = useState('');
   const [confirming, setConfirming] = useState<
     { readonly intent: PanePickerIntent; readonly label: string } | null
   >(null);
@@ -883,6 +889,8 @@ export function PanePicker({
     open && destinationOptions !== null && destination === null;
   /** CLI cujo índice foi aberto: a matriz conta × modelo dela ocupa o painel. */
   const [drillCli, setDrillCli] = useState<string | null>(null);
+  // Indisponíveis nascem recolhidas: abertas escondiam as CLIs prontas.
+  const [showUnavailable, setShowUnavailable] = useState(false);
   /** CLI cuja vista de contas está ocupando o painel (null = lista). */
   const [accountsFor, setAccountsFor] = useState<string | null>(null);
   /** Conta cadastrada agora: a lista volta com ela sob o cursor. */
@@ -973,6 +981,8 @@ export function PanePicker({
     if (!pendingOpen || !acceptsPendingOpen) return;
     if (!allowPaneCreation()) { consumePendingOpen(); return; }
     setOpen(true);
+    const incomingBrief = usePanePickerStore.getState().takePendingBrief();
+    if (incomingBrief) setTaskBrief(incomingBrief);
     if (pendingAccountsAdapterId) {
       // Voltar das contas devolve a matriz daquela CLI, não o índice geral.
       setDrillCli(pendingAccountsAdapterId);
@@ -980,6 +990,10 @@ export function PanePicker({
     }
     consumePendingOpen();
   }, [pendingOpen, pendingAccountsAdapterId, consumePendingOpen, acceptsPendingOpen]);
+
+  useEffect(() => {
+    if (!open) setTaskBrief('');
+  }, [open]);
 
   // O login sai para Terminais e pode desmontar este menu no caminho. Se
   // isso acontecer com a vista de contas aberta, o pedido fica na store e a
@@ -1130,10 +1144,15 @@ export function PanePicker({
       .catch(() => setRouteState({ kind: 'none' }));
   };
 
-  const commitIntent = (intent: PanePickerIntent) => {
+  const commitIntent = (chosen: PanePickerIntent) => {
+    const intent: PanePickerIntent =
+      chosen.kind === 'agent' && !chosen.brief && taskBrief
+        ? { ...chosen, brief: taskBrief }
+        : chosen;
     setOpen(false);
     setConfirming(null);
     setRequest('');
+    setTaskBrief('');
     // F-231: dentro de uma aba de missão o destino foi escolhido no passo
     // anterior. Shell/browser nunca são participantes — "Nesta missão" cai
     // para "solto" neles. Fora de missão `destination` é null e nada muda.
@@ -1627,13 +1646,17 @@ export function PanePicker({
                   // além da dobra fica inatingível).
                   tabIndex={0}
                 >
-                  <div
+                  <button
+                    type="button"
                     id="pane-picker-unavailable-title"
-                    className="pane-picker__section"
+                    className="pane-picker__section pane-picker__unavailable-toggle"
+                    aria-expanded={showUnavailable}
+                    onClick={() => setShowUnavailable((value) => !value)}
                   >
                     {`Indisponíveis · ${unavailable.length}`}
-                  </div>
-                  {unavailable.map((item) => (
+                    <span aria-hidden="true">{showUnavailable ? ' ▾' : ' ▸'}</span>
+                  </button>
+                  {showUnavailable && unavailable.map((item) => (
                     <p
                       key={item.adapterId}
                       className="pane-picker__unavailable-row"

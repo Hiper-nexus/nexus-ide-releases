@@ -616,6 +616,15 @@
   outline-offset: -2px;
 }
 
+.pane-picker__unavailable-toggle {
+  width: 100%;
+  min-height: 32px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
 .pane-picker__unavailable-row {
   display: flex;
   /* O motivo pode quebrar em duas linhas: logo e nome ficam no topo. */
