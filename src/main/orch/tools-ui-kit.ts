@@ -47,6 +47,14 @@ import type { UiKitRegistry } from '../ui-kit/ui-kit-registry';
  * - A licence key as an argument. The key is the operator's secret: it is
  *   stored through the settings panel and injected from the vault, so a model
  *   neither sees it nor needs it.
+ * - A DESTINATION. `--path`, `--dir` and `--output` are gone from this surface
+ *   on purpose: three rounds of review found three ways past string checks on
+ *   a caller-chosen write path (Windows drive-relative, a symlinked ancestor,
+ *   a dangling link that `mkdir -p` then creates outside). Patching a fourth
+ *   was not the answer — the option itself buys the class. Both kits already
+ *   install where the project says: shadcn follows the `aliases` in
+ *   `components.json`, BoardUI the project's source root. The operator
+ *   configures that in the project; an agent does not get to aim a write.
  */
 
 function cwdFor(ctx: Parameters<McpToolDef['handler']>[1]): string {
@@ -291,7 +299,9 @@ export function buildUiKitTools(): McpToolDef[] {
         'Install kit items into this project. Prefer this over writing a ' +
         'component by hand: the vendor item carries the accessibility, the ' +
         'keyboard handling and the states. Style it with the project design ' +
-        'contract afterwards instead of shipping vendor defaults.',
+        'contract afterwards instead of shipping vendor defaults. The ' +
+        'destination is the project\'s own (shadcn follows the aliases in ' +
+        'components.json, BoardUI the source root) and is not selectable here.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -302,7 +312,6 @@ export function buildUiKitTools(): McpToolDef[] {
             description: 'Slugs, or @namespace/item for another registry.',
           },
           overwrite: { type: 'boolean' },
-          path: { type: 'string', description: 'Project-relative destination.' },
         },
         required: ['items'],
       },
@@ -316,7 +325,6 @@ export function buildUiKitTools(): McpToolDef[] {
             items,
             cwd: cwdFor(ctx),
             ...(args.overwrite === true ? { overwrite: true } : {}),
-            ...(str(args, 'path') ? { path: requireStr(args, 'path') } : {}),
           },
           serviceDeps(),
         );
@@ -455,8 +463,6 @@ export function buildUiKitTools(): McpToolDef[] {
           from: { type: 'string' },
           to: { type: 'string' },
           component: { type: 'string' },
-          registry: { type: 'string' },
-          output: { type: 'string' },
         },
         required: ['command'],
       },
@@ -568,11 +574,10 @@ function buildRunCommand(args: Record<string, unknown>): ShadcnCommand {
         ...(num(args, 'offset') !== undefined ? { offset: num(args, 'offset') } : {}),
       };
     case 'build':
-      return {
-        kind: 'build',
-        ...(str(args, 'registry') ? { registry: requireStr(args, 'registry') } : {}),
-        ...(str(args, 'output') ? { output: requireStr(args, 'output') } : {}),
-      };
+      // No `registry` / `output`: a caller-chosen destination is not part of
+      // this surface. The CLI's defaults (`./registry.json` → `./public/r`)
+      // are the project's own convention.
+      return { kind: 'build' };
     case 'docs':
       return {
         kind: 'docs',

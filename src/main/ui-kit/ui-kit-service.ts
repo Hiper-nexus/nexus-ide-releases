@@ -11,6 +11,7 @@ import {
 import { callMcpToolOnce } from './ui-kit-mcp-call';
 import {
   buildShadcnArgs,
+  classifyShadcnItem,
   referencedShadcnNamespaces,
   shadcnCommandAcceptsCwd,
   shadcnCommandWrites,
@@ -85,45 +86,85 @@ function vault(deps: UiKitServiceDeps): {
 }
 
 /**
- * Every caller-chosen destination in a command, so containment is checked in
- * ONE place instead of at each call site that happens to remember.
+ * Every path in a command, as the STRING THAT WILL REACH ARGV.
  *
- * The kit modules already refuse an absolute path, a drive-relative one, a
- * `..` segment and anything option-shaped. What they cannot see from a pure
- * builder is the filesystem: a symlinked directory inside the project needs no
- * `..` to leave it.
+ * Two review findings shaped this. It used to return the raw field while the
+ * builder ran `raw.trim()`, so `" components"` was checked and `"components"`
+ * was run — a check of a path that is not the one used. And it enumerated
+ * three kinds by hand, so `view` and `docs` (which also take a local path)
+ * were never checked and a new kind would silently skip.
+ *
+ * Now it is an exhaustive switch — a new command kind fails to compile until
+ * it says what its paths are — and items go through `classifyShadcnItem`, so
+ * only a genuine local path is treated as one.
  */
-function destinationsIn(command: ShadcnCommand): readonly string[] {
+function relativeItems(items: readonly string[]): readonly string[] {
   const out: string[] = [];
-  if (command.kind === 'add') {
-    if (command.path) out.push(command.path);
-    // A local registry file is a legitimate item; it is also a path.
-    if (!command.all) {
-      for (const item of command.items) {
-        if (!item.startsWith('@') && !/^https?:\/\//i.test(item)) out.push(item);
-      }
-    }
-  }
-  if (command.kind === 'build') {
-    if (command.registry) out.push(command.registry);
-    if (command.output) out.push(command.output);
-  }
-  if (command.kind === 'init' && command.items) {
-    for (const item of command.items) {
-      if (!item.startsWith('@') && !/^https?:\/\//i.test(item)) out.push(item);
+  for (const raw of items) {
+    const item = raw.trim();
+    try {
+      if (classifyShadcnItem(item) === 'relative') out.push(item);
+    } catch {
+      // Malformed items are the builder's refusal to make, not ours.
     }
   }
   return out;
 }
 
-function boardUiDestinationsIn(command: BoardUiCliCommand): readonly string[] {
-  const out: string[] = [];
-  if (command.kind === 'add') {
-    if (command.path) out.push(command.path);
-    if (command.dir) out.push(command.dir);
+function destinationsIn(command: ShadcnCommand): readonly string[] {
+  switch (command.kind) {
+    case 'init':
+      return command.items ? relativeItems(command.items) : [];
+    case 'add':
+      return [
+        ...(command.all ? [] : relativeItems(command.items)),
+        ...(command.path ? [command.path.trim()] : []),
+      ];
+    case 'view':
+      return relativeItems(command.items);
+    case 'docs':
+      return command.component ? relativeItems([command.component]) : [];
+    case 'build':
+      return [
+        ...(command.registry ? [command.registry.trim()] : []),
+        ...(command.output ? [command.output.trim()] : []),
+      ];
+    case 'apply':
+    case 'preset-decode':
+    case 'preset-resolve':
+    case 'preset-url':
+    case 'search':
+    case 'info':
+    case 'migrate':
+    case 'eject':
+      return [];
+    default: {
+      const exhaustive: never = command;
+      throw new UiKitCliError(
+        'UNKNOWN_COMMAND',
+        `no destination policy for command: ${JSON.stringify(exhaustive).slice(0, 64)}`,
+      );
+    }
   }
-  if (command.kind === 'init' && command.dir) out.push(command.dir);
-  return out;
+}
+
+function boardUiDestinationsIn(command: BoardUiCliCommand): readonly string[] {
+  switch (command.kind) {
+    case 'init':
+      return command.dir ? [command.dir.trim()] : [];
+    case 'add':
+      return [
+        ...(command.path ? [command.path.trim()] : []),
+        ...(command.dir ? [command.dir.trim()] : []),
+      ];
+    default: {
+      const exhaustive: never = command;
+      throw new UiKitCliError(
+        'UNKNOWN_COMMAND',
+        `no destination policy for command: ${JSON.stringify(exhaustive).slice(0, 64)}`,
+      );
+    }
+  }
 }
 
 export interface UiKitRunResult {

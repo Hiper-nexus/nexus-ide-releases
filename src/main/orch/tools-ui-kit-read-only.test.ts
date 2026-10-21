@@ -122,3 +122,37 @@ describe('nexus_ui_kit_source is read-only in fact', () => {
     ).rejects.toThrow();
   });
 });
+
+describe('the agent surface offers no write destination', () => {
+  /**
+   * Three rounds of review found three ways past string checks on a
+   * caller-chosen write path: Windows drive-relative (`C:foo`), a symlinked
+   * ancestor, and a dangling link that `mkdir -p` then creates outside. The
+   * fix was to stop accepting the destination, not to patch a fourth. This
+   * test is what keeps the option from drifting back in.
+   */
+  const FORBIDDEN = ['path', 'dir', 'output', 'registry', 'projectDir', 'cwd', 'outDir'];
+
+  it('declares no destination property on any tool', () => {
+    const offenders: string[] = [];
+    for (const entry of buildUiKitTools()) {
+      const schema = entry.inputSchema as { properties?: Record<string, unknown> };
+      for (const key of Object.keys(schema.properties ?? {})) {
+        if (FORBIDDEN.includes(key)) offenders.push(`${entry.name}.${key}`);
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('still offers the tools the kit is for', () => {
+    expect(buildUiKitTools().map((entry) => entry.name).sort()).toEqual([
+      'nexus_ui_kit_add',
+      'nexus_ui_kit_boardui',
+      'nexus_ui_kit_catalog',
+      'nexus_ui_kit_recipe',
+      'nexus_ui_kit_run',
+      'nexus_ui_kit_source',
+    ]);
+  });
+});

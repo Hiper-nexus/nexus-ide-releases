@@ -227,49 +227,108 @@ describe('isAlreadyGoneKillError', () => {
 });
 
 describe('assertPathStaysInProject', () => {
-  const fsStub = (links: Record<string, string>, existing: readonly string[]) => ({
-    realpathSync: (target: string) => links[target] ?? target,
-    existsSync: (target: string) => existing.includes(target),
-  });
+  /** `links` are symlinks: name -> raw link text. `real` are plain entries. */
+  function stub(links: Record<string, string>, real: readonly string[]) {
+    return {
+      realpathSync: (target: string) => target,
+      lstatSync: (target: string) => {
+        if (target in links) return { isSymbolicLink: () => true };
+        if (real.includes(target)) return { isSymbolicLink: () => false };
+        throw new Error('ENOENT');
+      },
+      readlinkSync: (target: string) => {
+        const value = links[target];
+        if (value === undefined) throw new Error('EINVAL');
+        return value;
+      },
+    };
+  }
 
   it('accepts a destination that does not exist yet', () => {
     expect(
-      assertPathStaysInProject('/projects/app', 'src/components/ui', fsStub({}, ['/projects/app'])),
+      assertPathStaysInProject('/projects/app', 'src/components/ui', stub({}, ['/projects/app'])),
     ).toBe('src/components/ui');
+  });
+
+  it('accepts a real directory inside the project', () => {
+    expect(
+      assertPathStaysInProject('/projects/app', 'src/ui', stub({}, ['/projects/app/src'])),
+    ).toBe('src/ui');
   });
 
   it('refuses a path that resolves out of the project', () => {
     expect(() =>
-      assertPathStaysInProject('/projects/app', '../../etc', fsStub({}, ['/projects/app'])),
+      assertPathStaysInProject('/projects/app', '../../etc', stub({}, [])),
     ).toThrow(/resolves outside the project/);
   });
 
   it('refuses the project root itself as a destination', () => {
-    expect(() => assertPathStaysInProject('/projects/app', '.', fsStub({}, []))).toThrow(
+    expect(() => assertPathStaysInProject('/projects/app', '.', stub({}, []))).toThrow(
       /resolves outside the project/,
     );
   });
 
   it('refuses a destination behind a symlinked ancestor', () => {
-    // No `..` anywhere: an untrusted repo shipping `components -> /etc` is all
-    // it takes, and the string looks ordinary.
-    const stub = fsStub(
-      { '/projects/app': '/projects/app', '/projects/app/components': '/etc' },
-      ['/projects/app', '/projects/app/components'],
-    );
-
     expect(() =>
-      assertPathStaysInProject('/projects/app', 'components/ui', stub),
+      assertPathStaysInProject(
+        '/projects/app',
+        'components/ui',
+        stub({ '/projects/app/components': '/etc' }, []),
+      ),
     ).toThrow(/leaves the project through a link/);
   });
 
-  it('accepts a real directory inside the project', () => {
-    const stub = fsStub(
-      { '/projects/app': '/projects/app', '/projects/app/src': '/projects/app/src' },
-      ['/projects/app', '/projects/app/src'],
-    );
+  it('refuses a DANGLING link that points outside', () => {
+    // The one `existsSync` missed: it follows links, so a link to a missing
+    // target read as "nothing here" and the walk went past it — and then a
+    // `mkdir -p` through that link CREATES the target outside.
+    expect(() =>
+      assertPathStaysInProject(
+        '/projects/app',
+        'components/ui',
+        stub({ '/projects/app/components': '/tmp/evil-does-not-exist' }, []),
+      ),
+    ).toThrow(/leaves the project through a link/);
+  });
 
-    expect(assertPathStaysInProject('/projects/app', 'src/ui', stub)).toBe('src/ui');
+  it('accepts a dangling link that stays inside', () => {
+    // A write would create the target in there, which is contained.
+    expect(
+      assertPathStaysInProject(
+        '/projects/app',
+        'components/ui',
+        stub({ '/projects/app/components': '/projects/app/generated' }, []),
+      ),
+    ).toBe('components/ui');
+  });
+
+  it('follows a chain of inside links and stops at a hop limit', () => {
+    expect(
+      assertPathStaysInProject(
+        '/projects/app',
+        'a/ui',
+        stub(
+          { '/projects/app/a': '/projects/app/b', '/projects/app/b': '/projects/app/c' },
+          ['/projects/app/c'],
+        ),
+      ),
+    ).toBe('a/ui');
+
+    const loop = stub(
+      { '/projects/app/a': '/projects/app/b', '/projects/app/b': '/projects/app/a' },
+      [],
+    );
+    expect(() => assertPathStaysInProject('/projects/app', 'a/ui', loop)).toThrow(
+      /too many links/,
+    );
+  });
+
+  it('refuses a value the builder would normalise differently', () => {
+    // The parser differential: checking " components" and running
+    // "components" validates a path that is not the one used.
+    expect(() =>
+      assertPathStaysInProject('/projects/app', ' components', stub({}, [])),
+    ).toThrow(/leading or trailing whitespace/);
   });
 
   it('fails when the project directory itself does not resolve', () => {
@@ -278,7 +337,6 @@ describe('assertPathStaysInProject', () => {
         realpathSync: () => {
           throw new Error('ENOENT');
         },
-        existsSync: () => false,
       }),
     ).toThrow(/does not resolve/);
   });

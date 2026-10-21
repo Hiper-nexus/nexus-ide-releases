@@ -664,33 +664,51 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
   });
 
 /**
- * Containment check for a destination the CALLER chose.
+ * Containment check for a path the CALLER chose.
  *
- * The syntactic checks in the kit modules (no leading `-`, not absolute, no
- * `..` segment) are necessary and not sufficient. Two ways past them:
+ * Three ways past a string-only check, all found by review on this code:
  *
  * - On Windows `C:foo` is DRIVE-RELATIVE: it resolves against the current
- *   directory of drive C, which is not this project. It has no slash after the
- *   colon, so a `^[a-z]:[\\/]` test waves it through.
- * - A symlink needs no `..` at all. An untrusted repository that ships
- *   `components -> /etc` turns `--path components` into a write outside the
- *   project, and the string looks perfectly ordinary.
+ *   directory of drive C, not this project, and has no slash after the colon.
+ * - A symlink needs no `..`. An untrusted repository that ships
+ *   `components -> /etc` turns `components/ui` into a write outside, and the
+ *   string looks perfectly ordinary.
+ * - A DANGLING symlink is worse, not better: `existsSync` follows links, so a
+ *   link to a missing target reads as "nothing here" and the walk goes past
+ *   it — and then `mkdir -p` through that link CREATES the target outside.
  *
- * So the path is resolved against the project and the result is required to
- * stay under it — after realpath, which is what makes the symlink visible.
- * The nearest EXISTING ancestor is what gets realpath'd, because the
- * destination itself usually does not exist yet (that is the point of it).
+ * So this walks component by component from the project root with `lstat`
+ * (which sees a link whether or not its target exists) and requires every
+ * link it meets to resolve back inside. The caller must pass the exact string
+ * that will reach argv: a value normalised differently here than by the
+ * builder checks one path and runs another.
  */
+export const UI_KIT_MAX_LINK_HOPS = 8;
+
+export interface PathContainmentFs {
+  readonly realpathSync?: (target: string) => string;
+  readonly lstatSync?: (target: string) => { isSymbolicLink(): boolean };
+  readonly readlinkSync?: (target: string) => string;
+}
+
 export function assertPathStaysInProject(
   projectCwd: string,
-  relativePath: string,
-  options: {
-    readonly realpathSync?: (target: string) => string;
-    readonly existsSync?: (target: string) => boolean;
-  } = {},
+  argvPath: string,
+  options: PathContainmentFs = {},
 ): string {
   const realpathSync = options.realpathSync ?? fs.realpathSync;
-  const existsSync = options.existsSync ?? fs.existsSync;
+  const lstatSync =
+    options.lstatSync ?? ((target: string) => fs.lstatSync(target));
+  const readlinkSync = options.readlinkSync ?? fs.readlinkSync;
+
+  if (argvPath !== argvPath.trim()) {
+    // The differential itself: a builder that trims would run a different
+    // path than the one checked here.
+    throw new UiKitCliError(
+      'PATH_NOT_NORMALIZED',
+      'a target path may not have leading or trailing whitespace',
+    );
+  }
 
   let projectReal: string;
   try {
@@ -702,38 +720,72 @@ export function assertPathStaysInProject(
     );
   }
 
-  const target = path.resolve(projectReal, relativePath);
-  const naive = path.relative(projectReal, target);
-  if (naive === '' || naive.startsWith('..') || path.isAbsolute(naive)) {
+  const escapes = (candidate: string): boolean => {
+    const rel = path.relative(projectReal, candidate);
+    return rel === '' || rel.startsWith('..') || path.isAbsolute(rel);
+  };
+
+  const target = path.resolve(projectReal, argvPath);
+  if (escapes(target)) {
     throw new UiKitCliError(
       'PATH_ESCAPES_PROJECT',
-      `target path resolves outside the project: ${relativePath.slice(0, 96)}`,
+      `target path resolves outside the project: ${argvPath.slice(0, 96)}`,
     );
   }
 
-  // Walk up to something that exists, so realpath has an answer, and prove
-  // THAT is still inside. A symlinked ancestor is caught here.
-  let probe = target;
-  for (let depth = 0; depth < 64; depth += 1) {
-    if (existsSync(probe)) break;
-    const parent = path.dirname(probe);
-    if (parent === probe) break;
-    probe = parent;
+  const segments = path.relative(projectReal, target).split(path.sep).filter(Boolean);
+  let current = projectReal;
+  let hops = 0;
+  for (const segment of segments) {
+    current = path.join(current, segment);
+    let stats: { isSymbolicLink(): boolean };
+    try {
+      stats = lstatSync(current);
+    } catch {
+      // Nothing from here down exists, and every component above it was
+      // proven inside. There is no link left to hide behind.
+      return argvPath;
+    }
+    if (!stats.isSymbolicLink()) continue;
+
+    // Follow it by hand: realpath would throw on a dangling link, which is
+    // exactly the case that used to slip through.
+    let link = current;
+    for (;;) {
+      if (hops >= UI_KIT_MAX_LINK_HOPS) {
+        throw new UiKitCliError(
+          'PATH_LINK_LOOP',
+          `target path goes through too many links: ${argvPath.slice(0, 96)}`,
+        );
+      }
+      hops += 1;
+      let destination: string;
+      try {
+        destination = readlinkSync(link);
+      } catch {
+        throw new UiKitCliError(
+          'PATH_ESCAPES_PROJECT',
+          `target path goes through an unreadable link: ${argvPath.slice(0, 96)}`,
+        );
+      }
+      link = path.resolve(path.dirname(link), destination);
+      if (escapes(link)) {
+        throw new UiKitCliError(
+          'PATH_ESCAPES_PROJECT',
+          `target path leaves the project through a link: ${argvPath.slice(0, 96)}`,
+        );
+      }
+      let next: { isSymbolicLink(): boolean };
+      try {
+        next = lstatSync(link);
+      } catch {
+        // A dangling link INSIDE the project: a write would create the target
+        // there, which is contained. Nothing below it can exist yet.
+        return argvPath;
+      }
+      if (!next.isSymbolicLink()) break;
+    }
+    current = link;
   }
-  let probeReal: string;
-  try {
-    probeReal = realpathSync(probe);
-  } catch {
-    // Nothing on this branch exists yet and the project root resolved above,
-    // so there is no link to hide behind.
-    return relativePath;
-  }
-  const settled = path.relative(projectReal, probeReal);
-  if (settled.startsWith('..') || path.isAbsolute(settled)) {
-    throw new UiKitCliError(
-      'PATH_ESCAPES_PROJECT',
-      `target path leaves the project through a link: ${relativePath.slice(0, 96)}`,
-    );
-  }
-  return relativePath;
+  return argvPath;
 }
