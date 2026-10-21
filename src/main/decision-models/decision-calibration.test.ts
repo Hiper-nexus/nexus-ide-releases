@@ -77,7 +77,7 @@ describe('F-1167: calibração só nos modelos com credencial', () => {
       expect(result.written).toBe(true);
       expect(judge).toHaveBeenCalledTimes(total);
       expect(judge.mock.calls.every(([input]) => input.retryOnTimeout === false)).toBe(true);
-      expect(new Set(judge.mock.calls.map(([input]) => input.model))).toEqual(new Set([process.env.NEXUS_JEV_MODEL ?? 'jev-latest']));
+      expect(new Set(judge.mock.calls.map(([input]) => input.model))).toEqual(new Set([process.env.NEXUS_JEV_MODEL ?? 'jev-1.13.0']));
       expect(recordUsage).toHaveBeenCalledTimes(1);
       const table = decisionQualityTableSchema.parse(JSON.parse(fs.readFileSync(file, 'utf8')));
       expect(Object.keys(table.models)).toEqual(['jev']);

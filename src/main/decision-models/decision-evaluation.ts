@@ -1,4 +1,4 @@
-import { LUNA_DECISION_MODEL, type DecisionImage, type DecisionUsageReceipt } from '../../shared/decision-models';
+import { JEV_CALIBRATED_MODEL, LUNA_DECISION_MODEL, type DecisionImage, type DecisionUsageReceipt } from '../../shared/decision-models';
 import type { JevNoAnswerReason } from '../jev/jev-decision-log';
 import type { JudgeInput, JevAnswer, JevQuestion, JevResult } from '../jev/jev-client';
 import type { JevDecisionSurface } from '../jev/jev-decision-log';
@@ -15,7 +15,7 @@ export type DecisionEvalModel = typeof DECISION_EVAL_MODELS[number];
  */
 export function decisionEvalModelId(model: DecisionEvalModel): string {
   if (model === 'luna') return LUNA_DECISION_MODEL;
-  if (model === 'jev') return process.env.NEXUS_JEV_MODEL ?? 'jev-latest';
+  if (model === 'jev') return process.env.NEXUS_JEV_MODEL ?? JEV_CALIBRATED_MODEL;
   return model;
 }
 type Expected = string | boolean | { min: number; max: number };

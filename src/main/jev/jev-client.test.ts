@@ -55,6 +55,14 @@ describe('judge', () => {
     expect(result?.model).toBe('jev-1.14.0');
     expect(result?.answers.available).toEqual(JEV_114_CONNECTION_RESPONSE.answers.available);
   });
+  it('F-1624: a versão calibrada aposentada volta ao alias estável uma vez', async () => {
+    const mockFetch = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(404, { error: { message: 'Model jev-1.13.0 not found' } }))
+      .mockResolvedValueOnce(jsonResponse(200, okBody));
+    await judge({ state: 'x', questions: { q: question } },
+      { fetch: mockFetch as unknown as typeof fetch, resolveKey: () => 'k' });
+    expect(mockFetch.mock.calls.map(call => JSON.parse(call[1].body).model)).toEqual(['jev-1.13.0', 'jev-latest']);
+  });
   it.each([400, 404])('retries an unavailable preview once with the stable alias (HTTP %s)', async status => {
     const mockFetch = vi.fn()
       .mockResolvedValueOnce(jsonResponse(status, { error: { message: 'Model jev-1.14.0 not found' } }))
@@ -95,7 +103,8 @@ describe('judge', () => {
     const sentBody = JSON.parse(
       String(((mockFetch.mock.calls[0] as unknown[])[1] as RequestInit).body),
     );
-    expect(sentBody.model).toBe('jev-latest');
+    // F-1624: sem escolha do operador vai a versão calibrada, nunca o alias móvel.
+    expect(sentBody.model).toBe('jev-1.13.0');
   });
 
   it('accepts a real production response and keeps legacy tolerance for rounding and missing usage', async () => {

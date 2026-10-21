@@ -2673,8 +2673,12 @@ O que mudou — e o que NÃO mudou:
 - Jev 1.14 (14/10): docs oficiais `https://docs.typesafe.ai/models` expõem
   `jev-1.14.0`; `jev-preview` aponta para ele, `jev-latest` ainda para 1.13.0.
   Seleção em Chaves de API → Modelos de decisão (`decisionModels.jevModel`);
-  NEXUS_JEV_MODEL prevalece. O padrão continua estável: preview é opt-in e
-  modelo recusado tenta `jev-latest` uma vez, sem trocar de provedor.
+  NEXUS_JEV_MODEL prevalece. F-1624: sem escolha o padrão é o id FIXO da
+  versão calibrada (`JEV_CALIBRATED_MODEL` = `jev-1.13.0`, `shared/decision-models.ts`),
+  não o alias `jev-latest`, que troca de modelo quando a TypeSafe lança versão
+  (os docs mandam fixar o id em que os limiares foram medidos). `jev-latest`,
+  1.14 e preview são opt-in; modelo recusado tenta `jev-latest` uma vez, sem
+  trocar de provedor. Recalibrou numa versão nova? Troque a constante junto.
   O limiar 0.35 e as rubricas de tier/esforço são calibrações históricas de
   1.13.0; precisam de reavaliação no MESMO conjunto antes de migrar o padrão.
   A fixture real de 01/10 continua histórica, nunca rebatizada como 1.14.
