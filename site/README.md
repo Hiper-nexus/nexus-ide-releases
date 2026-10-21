@@ -67,3 +67,21 @@ Pesquisa e direção: `docs/site-redesign-brief.md`. Produto/design: `PRODUCT.md
 ## Limites operacionais
 
 API/banco/relay ainda não foram migrados. A rota `app.nexuside.app/*` permanece com o worker companion original. O passthrough do backend só existe em `nexuside.app`; nunca no hostname da comunidade ou preview.
+
+## Google Ads e consentimento (21/10/2026)
+
+A home de produção carrega somente a tag base `AW-953176375`, confirmada na conta `3066296016`.
+`src/ads-consent.js` usa Consent Mode básico: nenhum loader ou ping Google antes de um aceite
+explícito, nem após recusa. A preferência local vence em 180 dias; o rodapé permite reabrir a escolha
+e revogar. Revogar recarrega a página sem a tag. `ad_user_data`, `ad_personalization` e
+`analytics_storage` continuam negados; conversões aprimoradas e sinais de personalização ficam desligados.
+A URL enviada é a raiz canônica, sem query/hash; referrer vazio. A política pública descreve o tratamento.
+A CSP Google só é permitida na home do domínio oficial, sem inline/eval ou curingas. Conta, admin,
+comunidade e previews não inicializam a integração. Os testes de consentimento integram `npm test`.
+
+Não há rótulo nem evento de conversão nessa instalação. O clique de download é apenas uma navegação
+para um instalador GitHub (os links podem ser atualizados por `src/downloads/ui.js`); ele não prova
+instalação nem ativação. O teste começa no primeiro login verificado, confirmado pela API, e não no
+clique em “Começar meu teste”. Para medir esses marcos no Google Ads, configure ações exclusivas do
+Nexus e valide seus IDs/rótulos antes de instrumentar; não reutilize ações de outros produtos. Medir
+ativação dentro do desktop exige um escopo próprio e consentimento compatível.

@@ -25,6 +25,20 @@ const SECURITY_HEADERS = {
   'content-security-policy': "default-src 'self'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' https://api.nexuside.app https://cloudflareinsights.com; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
 };
 
+// Apenas a página de produto pode carregar a tag, após consentimento no cliente.
+// Origens exatas do guia Google Ads; sem unsafe-inline, unsafe-eval ou curingas.
+function assetSecurityHeaders(url) {
+  if (url.hostname !== PRODUCTION_HOST || url.pathname !== '/') return SECURITY_HEADERS;
+  const script = 'https://www.googletagmanager.com https://www.googleadservices.com https://www.google.com';
+  const images = 'https://www.googletagmanager.com https://www.googleadservices.com https://googleads.g.doubleclick.net https://pagead2.googlesyndication.com https://www.google.com https://www.google.com.br';
+  const csp = SECURITY_HEADERS['content-security-policy']
+    .replace("script-src 'self' https://static.cloudflareinsights.com;", `script-src 'self' https://static.cloudflareinsights.com ${script};`)
+    .replace("img-src 'self' data: blob:;", `img-src 'self' data: blob: ${images};`)
+    .replace('https://cloudflareinsights.com;', `https://cloudflareinsights.com ${images} https://ad.doubleclick.net;`)
+    .replace("object-src 'none';", "frame-src https://www.googletagmanager.com; object-src 'none';");
+  return { ...SECURITY_HEADERS, 'content-security-policy': csp };
+}
+
 function isBackendPath(path) {
   return BACKEND_PATHS.some(prefix => path === prefix || path.startsWith(prefix + '/'));
 }
@@ -107,7 +121,7 @@ export async function handleRequest(request, env, originFetch = fetch) {
   const canonical = canonicalAssetLocation(url, response);
   if (canonical) response = new Response(null, { status: 301, headers: { location: canonical } });
   const headers = new Headers(response.headers);
-  for (const [name, value] of Object.entries(SECURITY_HEADERS)) headers.set(name, value);
+  for (const [name, value] of Object.entries(assetSecurityHeaders(url))) headers.set(name, value);
   if (url.pathname.startsWith('/sorteio')) headers.set('x-robots-tag', 'noindex');
   // O espelho no endereço principal aponta o subdomínio como o canônico, para os buscadores não duplicarem a página.
   if (url.hostname === PRODUCTION_HOST && url.pathname === COMMUNITY_MIRROR_PATH) headers.set('link', `<https://${COMMUNITY_HOST}/>; rel="canonical"`);
