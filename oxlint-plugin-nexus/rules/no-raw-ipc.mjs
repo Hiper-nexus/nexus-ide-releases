@@ -59,7 +59,7 @@ export const RAW_IPC_ALLOWLIST = {
     reason: 'é o wrapper `onIpcGuarded` (proteção contra falha de git); quem chama decide a autoridade.',
   },
   // Pontes do preload.
-  'src/preload/preload.ts': { max: 438, reason: PRELOAD_BRIDGE },
+  'src/preload/preload.ts': { max: 439, reason: `${PRELOAD_BRIDGE} Inclui paneRoute, a proposta de esforço do pane aberto na mão.` },
   'src/preload/integrations-bridge.ts': { max: 33, reason: PRELOAD_BRIDGE },
   'src/preload/video-studio-bridge.ts': { max: 19, reason: `${PRELOAD_BRIDGE} Estúdio de vídeo: Minha voz, Vídeos do projeto, a prévia ao vivo, a narração gravada e o teto de gasto de mídia.` },
   'src/preload/media-references-bridge.ts': { max: 4, reason: PRELOAD_BRIDGE },

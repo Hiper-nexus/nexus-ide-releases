@@ -1,10 +1,10 @@
 # Changelog
 
-## 0.76.363 — O pedido abre o pane, e o login volta
+## 0.76.364 — O pedido abre o pane, e o login volta
 
 Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
 
-A 0.76.362 é a publicação macOS e continua Latest; não recebe arquivos Linux. A 0.76.361 é o carimbo macOS e não recebe arquivos Linux. A 0.76.360 é o pacote Linux anterior.
+A 0.76.363 foi tagueada e não publicada: a suíte recusou o teto de IPC cru do preload, que não contava o canal novo do pane. Essa tag fica. A 0.76.362 é a publicação macOS e continua Latest; não recebe arquivos Linux. A 0.76.361 é o carimbo macOS e não recebe arquivos Linux. A 0.76.360 é o pacote Linux anterior.
 
 No desktop Linux, em relação à 0.76.360:
 
@@ -13,6 +13,10 @@ No desktop Linux, em relação à 0.76.360:
 - **O passo diz quem decidiu.** Tier, especialidade e origem da escolha aparecem ali. Sem isso o revezamento por fair-share e diversidade parece sorteio. Sem chave do Jev, com a superfície desligada ou com o serviço fora do ar, o passo aparece sem proposta e o Abrir funciona igual — o Jev nunca impede abrir um pane.
 - **O login deixa de mentir sobre o motivo da falha.** No fim da troca, `exchangeAuthCode` chama `clearAccess()`, que roda `resetPendingLogin()` e incrementa `authGeneration`. A partir dali toda falha era devolvida como "login superseded" no lugar da causa real — `exchange-storage` (Keychain recusando a gravação), `exchange-license-invalid`. A geração passa a ser rebaselinada depois do nosso próprio `clearAccess()`; um login concorrente de verdade continua invalidando o anterior.
 - **Entrar com GitHub e Entrar com Google ficam no mesmo peso.** Os dois são alternativas, não primário e secundário: dar branco a um inventava uma recomendação que não existe e apagava a cor da marca, que é o que o olho procura ali. A marca ganhou slot de largura fixa — sem ele os dois rótulos começavam em pontos diferentes.
+
+## 0.76.363 — O pedido abre o pane, e o login volta
+
+Tagueada e não publicada. A suíte do Ubuntu 22.04 recusou o teto de IPC cru do preload (438; o canal `paneRoute` passou a 439). Não há pacote. A correção e o pacote Linux saem na 0.76.364.
 
 ## 0.76.362 — O pedido abre o pane, e o login volta
 

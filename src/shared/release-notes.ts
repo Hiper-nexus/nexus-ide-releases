@@ -12355,22 +12355,32 @@ export const RELEASE_076362: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076363: AppRelease = {
   version: '0.76.363',
   date: '2026-10-21',
   codename: 'O pedido abre o pane, e o login volta',
-  summary: 'No desktop Linux, o + Pane ganha um campo de pedido: você escreve o que quer feito, o Jev propõe esforço e skill, e você ajusta antes do pane nascer. Pedido vazio abre na hora, como sempre. O login que falhava na troca deixa de dizer "login superseded" e mostra a causa. A 0.76.362 continua a publicação macOS. A 0.76.360 é o pacote Linux anterior.',
+  summary: 'Tag não publicada. A suíte do Linux recusou o teto de IPC cru do preload, que não contava o canal paneRoute. O desktop desta tag é o da 0.76.364.',
+  highlights: [
+    { title: 'Tag sem pacote', detail: 'A 0.76.363 ficou só na tag: o teto de IPC do preload estava em 438 e o canal novo do pane passou a 439. Não há release no GitHub.' },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.364',
+  date: '2026-10-21',
+  codename: 'O pedido abre o pane, e o login volta',
+  summary: 'No desktop Linux, o + Pane ganha um campo de pedido: você escreve o que quer feito, o Jev propõe esforço e skill, e você ajusta antes do pane nascer. Pedido vazio abre na hora, como sempre. O login que falhava na troca deixa de dizer "login superseded" e mostra a causa. A 0.76.362 continua a publicação macOS. A 0.76.363 foi tagueada e não publicada. A 0.76.360 é o pacote Linux anterior.',
   highlights: [
     { title: 'O pedido abre o pane', detail: 'Campo separado da busca: a busca filtra CLI, conta e modelo; o campo novo é o que você quer feito. Com pedido, escolher a CLI abre um passo com a proposta do Jev; o pedido viaja como primeiro brief. Vazio, o menu abre o pane na hora — o caminho rápido não ganhou fricção.' },
     { title: 'Esforço editável antes de abrir', detail: 'O esforço era decidido em 70% das rotas de missão e nunca chegava ao pane aberto na mão, que nascia no padrão do provider. Agora a proposta vem marcada e você troca antes do pane nascer, nos níveis que a CLI entende: baixo, médio, alto, máximo — ou "a CLI decide".' },
     { title: 'O passo diz quem decidiu', detail: 'Tier, especialidade e a origem da escolha aparecem no passo. Sem isso o revezamento por fair-share e diversidade lê como sorteio. Jev sem chave, desligado ou fora do ar: o passo aparece sem proposta e o Abrir funciona igual.' },
-    { title: 'Pacote Linux', detail: 'A 0.76.362 é a publicação macOS e não recebe arquivos Linux. A 0.76.361 é o carimbo macOS e não recebe arquivos Linux. A 0.76.360 é o pacote Linux anterior.' },
+    { title: 'Pacote Linux', detail: 'A 0.76.362 é a publicação macOS e não recebe arquivos Linux. A 0.76.363 foi tagueada e não publicada. A 0.76.360 é o pacote Linux anterior.' },
   ],
   fixes: [
-    { title: 'O login não mente mais sobre o motivo', detail: 'No fim da troca o próprio exchange chamava clearAccess(), que incrementa a geração do login — e a partir dali toda falha era reportada como "login superseded" no lugar da causa real (Keychain recusando a gravação, licença inválida). A geração é rebaselinada depois do nosso próprio clearAccess; um login novo de verdade continua invalidando o anterior.' },
     { title: 'Entrar com GitHub e com Google, no mesmo peso', detail: 'Os dois provedores são alternativas, não primário e secundário. Dar branco a um inventava uma recomendação que não existe e apagava a cor da marca. A marca ganhou slot de largura fixa, e os dois textos passam a começar no mesmo ponto.' },
     ...RELEASE_076362.fixes,
   ],
 };
 
-export const RELEASE_076363: AppRelease = CURRENT_RELEASE;
+export const RELEASE_076364: AppRelease = CURRENT_RELEASE;
