@@ -440,23 +440,22 @@ describe('every door that changes the licence forgets the listing', () => {
     // Clearing the map only stopped new callers joining the old request; its
     // own closure still finished and repopulated the cache with the
     // pre-change answer.
-    let release: ((value: { stdout: string }) => void) | null = null;
-    const h = harness({
-      cli: () =>
-        ({ stdout: WITH_PRO }) /* unused: the runner below takes over */,
+    // A property, not a `let`: TypeScript narrows a local assigned only inside
+    // a callback it cannot see down to `null`.
+    const gate: { release?: (stdout: string) => void } = {};
+    const pending = new Promise<string>((resolve) => {
+      gate.release = resolve;
     });
+    const h = harness();
     const slow: UiKitServiceDeps = {
       ...h.deps,
-      runCli: async () =>
-        new Promise((resolve) => {
-          release = (value) => resolve({ stdout: value.stdout, stderr: '', code: 0 });
-        }),
+      runCli: async () => ({ stdout: await pending, stderr: '', code: 0 }),
     };
 
     // A listing goes out while the licence is still active…
     const inFlight = listBoardUiFreeSlugs(cwd, slow);
     invalidateBoardUiFreeList();
-    release?.({ stdout: WITH_PRO });
+    gate.release?.(WITH_PRO);
     // …the caller still gets the answer it asked for,
     expect((await inFlight)?.has('template-home-dashboard')).toBe(true);
     // but it must not have been cached across the change.
