@@ -100,7 +100,7 @@ describe('delta de screenText do worker de análise', () => {
     for (const pane of panes) await pane.client.barrier(SESSION);
     const cloned = panes.reduce((sum, pane, index) => sum + pane.clonedScreenChars() - baseline[index], 0);
     const perSecond = Math.round(cloned / SECONDS);
-    // eslint-disable-next-line no-console
+    // eslint-disable-next-line no-console -- teste de orçamento: o número medido vai ao log do CI para diagnosticar a regressão quando a asserção abaixo falhar
     console.info('[perf-budget] pty-analysis screenText', JSON.stringify({ panes: PANES, seconds: SECONDS, freshCharsPerSecond: Math.round(fresh / SECONDS), clonedCharsPerSecond: perSecond }));
     // Antes: ~10 snapshots/s × 262 144 chars × 6 panes ≈ 15,7 M chars/s.
     expect(cloned).toBeLessThanOrEqual(fresh * 1.5);
