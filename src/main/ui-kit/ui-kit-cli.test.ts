@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type fs from 'node:fs';
 import {
+  assertPathStaysInProject,
   assertSafeEnvName,
   isAlreadyGoneKillError,
   UI_KIT_DEFAULT_NPM_REGISTRY,
@@ -222,5 +223,63 @@ describe('isAlreadyGoneKillError', () => {
     expect(isAlreadyGoneKillError(Object.assign(new Error('kill EPERM'), { code: 'EPERM' }))).toBe(false);
     expect(isAlreadyGoneKillError(new Error('plain'))).toBe(false);
     expect(isAlreadyGoneKillError(null)).toBe(false);
+  });
+});
+
+describe('assertPathStaysInProject', () => {
+  const fsStub = (links: Record<string, string>, existing: readonly string[]) => ({
+    realpathSync: (target: string) => links[target] ?? target,
+    existsSync: (target: string) => existing.includes(target),
+  });
+
+  it('accepts a destination that does not exist yet', () => {
+    expect(
+      assertPathStaysInProject('/projects/app', 'src/components/ui', fsStub({}, ['/projects/app'])),
+    ).toBe('src/components/ui');
+  });
+
+  it('refuses a path that resolves out of the project', () => {
+    expect(() =>
+      assertPathStaysInProject('/projects/app', '../../etc', fsStub({}, ['/projects/app'])),
+    ).toThrow(/resolves outside the project/);
+  });
+
+  it('refuses the project root itself as a destination', () => {
+    expect(() => assertPathStaysInProject('/projects/app', '.', fsStub({}, []))).toThrow(
+      /resolves outside the project/,
+    );
+  });
+
+  it('refuses a destination behind a symlinked ancestor', () => {
+    // No `..` anywhere: an untrusted repo shipping `components -> /etc` is all
+    // it takes, and the string looks ordinary.
+    const stub = fsStub(
+      { '/projects/app': '/projects/app', '/projects/app/components': '/etc' },
+      ['/projects/app', '/projects/app/components'],
+    );
+
+    expect(() =>
+      assertPathStaysInProject('/projects/app', 'components/ui', stub),
+    ).toThrow(/leaves the project through a link/);
+  });
+
+  it('accepts a real directory inside the project', () => {
+    const stub = fsStub(
+      { '/projects/app': '/projects/app', '/projects/app/src': '/projects/app/src' },
+      ['/projects/app', '/projects/app/src'],
+    );
+
+    expect(assertPathStaysInProject('/projects/app', 'src/ui', stub)).toBe('src/ui');
+  });
+
+  it('fails when the project directory itself does not resolve', () => {
+    expect(() =>
+      assertPathStaysInProject('/gone', 'src', {
+        realpathSync: () => {
+          throw new Error('ENOENT');
+        },
+        existsSync: () => false,
+      }),
+    ).toThrow(/does not resolve/);
   });
 });

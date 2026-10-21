@@ -662,3 +662,78 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
       resolve({ stdout, stderr, code });
     });
   });
+
+/**
+ * Containment check for a destination the CALLER chose.
+ *
+ * The syntactic checks in the kit modules (no leading `-`, not absolute, no
+ * `..` segment) are necessary and not sufficient. Two ways past them:
+ *
+ * - On Windows `C:foo` is DRIVE-RELATIVE: it resolves against the current
+ *   directory of drive C, which is not this project. It has no slash after the
+ *   colon, so a `^[a-z]:[\\/]` test waves it through.
+ * - A symlink needs no `..` at all. An untrusted repository that ships
+ *   `components -> /etc` turns `--path components` into a write outside the
+ *   project, and the string looks perfectly ordinary.
+ *
+ * So the path is resolved against the project and the result is required to
+ * stay under it — after realpath, which is what makes the symlink visible.
+ * The nearest EXISTING ancestor is what gets realpath'd, because the
+ * destination itself usually does not exist yet (that is the point of it).
+ */
+export function assertPathStaysInProject(
+  projectCwd: string,
+  relativePath: string,
+  options: {
+    readonly realpathSync?: (target: string) => string;
+    readonly existsSync?: (target: string) => boolean;
+  } = {},
+): string {
+  const realpathSync = options.realpathSync ?? fs.realpathSync;
+  const existsSync = options.existsSync ?? fs.existsSync;
+
+  let projectReal: string;
+  try {
+    projectReal = realpathSync(projectCwd);
+  } catch {
+    throw new UiKitCliError(
+      'CWD_NOT_FOUND',
+      `UI-kit project directory does not resolve: ${projectCwd}`,
+    );
+  }
+
+  const target = path.resolve(projectReal, relativePath);
+  const naive = path.relative(projectReal, target);
+  if (naive === '' || naive.startsWith('..') || path.isAbsolute(naive)) {
+    throw new UiKitCliError(
+      'PATH_ESCAPES_PROJECT',
+      `target path resolves outside the project: ${relativePath.slice(0, 96)}`,
+    );
+  }
+
+  // Walk up to something that exists, so realpath has an answer, and prove
+  // THAT is still inside. A symlinked ancestor is caught here.
+  let probe = target;
+  for (let depth = 0; depth < 64; depth += 1) {
+    if (existsSync(probe)) break;
+    const parent = path.dirname(probe);
+    if (parent === probe) break;
+    probe = parent;
+  }
+  let probeReal: string;
+  try {
+    probeReal = realpathSync(probe);
+  } catch {
+    // Nothing on this branch exists yet and the project root resolved above,
+    // so there is no link to hide behind.
+    return relativePath;
+  }
+  const settled = path.relative(projectReal, probeReal);
+  if (settled.startsWith('..') || path.isAbsolute(settled)) {
+    throw new UiKitCliError(
+      'PATH_ESCAPES_PROJECT',
+      `target path leaves the project through a link: ${relativePath.slice(0, 96)}`,
+    );
+  }
+  return relativePath;
+}

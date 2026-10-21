@@ -264,7 +264,8 @@ export function assertBoardUiDir(raw: string): string {
       'a target directory may not start with "-" or contain a control character',
     );
   }
-  if (value.startsWith('/') || value.startsWith('\\') || /^[a-z]:[\\/]/i.test(value)) {
+  // No slash required after the colon: `C:foo` is drive-relative on Windows.
+  if (value.startsWith('/') || value.startsWith('\\') || /^[a-z]:/i.test(value)) {
     throw new UiKitCliError('INVALID_PATH', 'target directory must be relative to the project');
   }
   if (value.split(/[\\/]/).includes('..')) {

@@ -2799,6 +2799,20 @@ componente: o agente recebia a paleta e escrevia cada peça à mão. `src/main/u
   quando a ÚNICA entrada que nomeia a variável é o próprio namespace
   (`envVarReferences` varre header, param e URL). Namespace de que não damos fé
   no mesmo run ⇒ nada sai. Nunca REaponte um namespace que o projeto já declara.
+- **Destino escolhido pelo chamador é CONTIDO, não só checado por string.**
+  Os módulos recusam caminho absoluto, `..`, cara de opção e `C:foo`
+  (drive-relativo do Windows: resolve contra o diretório atual do drive, e um
+  teste que exigia barra depois dos dois-pontos o deixava passar). Mas builder
+  puro não vê o disco, e symlink não precisa de `..`: repo não confiado que
+  entrega `components -> /etc` transforma `--path components` em escrita fora
+  do projeto. `assertPathStaysInProject` (chamada no serviço, um ponto só)
+  resolve contra a raiz, exige contenção por `path.relative` e faz realpath do
+  ancestral EXISTENTE mais próximo — é ali que o link aparece. Vale para
+  `--path`/`--dir`/`--output` e para item que é registry local relativo.
+  `--overwrite` com caminho do agente NÃO ganhou portão próprio: o caminho já
+  é provadamente dentro do projeto, a tool já é efeito confirmado, e
+  `nexus_file_write` sobrescreve igual sem portão especial — trava sem dano
+  nomeado é o que a doutrina "menos travas" recusa.
 - **A chave nunca é argumento.** Licença do BoardUI por stdio (argv apareceria no
   `ps`), injetada do cofre (`external:boardui-license-key`) pelo serviço. As
   tools do BoardUI passam por allowlist POR TOOL (`sanitizeBoardUiToolArgs`):

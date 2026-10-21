@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { writeFileAtomic } from '../util/atomic-write';
 import {
+  assertPathStaysInProject,
   runUiKitCli,
   UiKitCliError,
   type UiKitCliRunner,
@@ -81,6 +82,48 @@ function vault(deps: UiKitServiceDeps): {
     get: deps.getSecret ?? ((key) => secrets.getSecret(key)),
     set: deps.setSecret ?? ((key, value) => secrets.setSecret(key, value)),
   };
+}
+
+/**
+ * Every caller-chosen destination in a command, so containment is checked in
+ * ONE place instead of at each call site that happens to remember.
+ *
+ * The kit modules already refuse an absolute path, a drive-relative one, a
+ * `..` segment and anything option-shaped. What they cannot see from a pure
+ * builder is the filesystem: a symlinked directory inside the project needs no
+ * `..` to leave it.
+ */
+function destinationsIn(command: ShadcnCommand): readonly string[] {
+  const out: string[] = [];
+  if (command.kind === 'add') {
+    if (command.path) out.push(command.path);
+    // A local registry file is a legitimate item; it is also a path.
+    if (!command.all) {
+      for (const item of command.items) {
+        if (!item.startsWith('@') && !/^https?:\/\//i.test(item)) out.push(item);
+      }
+    }
+  }
+  if (command.kind === 'build') {
+    if (command.registry) out.push(command.registry);
+    if (command.output) out.push(command.output);
+  }
+  if (command.kind === 'init' && command.items) {
+    for (const item of command.items) {
+      if (!item.startsWith('@') && !/^https?:\/\//i.test(item)) out.push(item);
+    }
+  }
+  return out;
+}
+
+function boardUiDestinationsIn(command: BoardUiCliCommand): readonly string[] {
+  const out: string[] = [];
+  if (command.kind === 'add') {
+    if (command.path) out.push(command.path);
+    if (command.dir) out.push(command.dir);
+  }
+  if (command.kind === 'init' && command.dir) out.push(command.dir);
+  return out;
 }
 
 export interface UiKitRunResult {
@@ -209,6 +252,9 @@ export async function runShadcnCommand(
     envReferences: envVarReferences(components),
     lookupSecret: get,
   });
+  for (const destination of destinationsIn(input.command)) {
+    assertPathStaysInProject(input.cwd, destination);
+  }
   const run = deps.runCli ?? runUiKitCli;
   const result = await run({
     kit: 'shadcn',
@@ -257,6 +303,9 @@ export async function runBoardUiCommand(
   },
   deps: UiKitServiceDeps = {},
 ): Promise<UiKitRunResult> {
+  for (const destination of boardUiDestinationsIn(input.command)) {
+    assertPathStaysInProject(input.cwd, destination);
+  }
   const run = deps.runCli ?? runUiKitCli;
   const result = await run({
     kit: 'boardui',

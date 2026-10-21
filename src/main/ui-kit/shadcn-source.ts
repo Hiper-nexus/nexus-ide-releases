@@ -106,7 +106,7 @@ export function classifyShadcnItem(raw: string): ShadcnItemKind {
   // A local registry file is legitimate (the CLI documents "name, url or local
   // path"), but only inside the project: an absolute path or a `..` hop would
   // read a registry definition from anywhere on the machine.
-  if (item.startsWith('/') || item.startsWith('\\') || /^[a-z]:[\\/]/i.test(item)) {
+  if (item.startsWith('/') || item.startsWith('\\') || /^[a-z]:/i.test(item)) {
     throw new UiKitCliError(
       'ABSOLUTE_ITEM_PATH',
       'a local registry path must be relative to the project',
@@ -183,7 +183,10 @@ export function assertRelativeProjectPath(raw: string): string {
       'a target path may not start with "-"',
     );
   }
-  if (value.startsWith('/') || value.startsWith('\\') || /^[a-z]:[\\/]/i.test(value)) {
+  // `/^[a-z]:/i` with no slash on purpose: on Windows `C:foo` is
+  // DRIVE-RELATIVE and resolves against drive C's current directory, not this
+  // project, so requiring a slash after the colon let it through.
+  if (value.startsWith('/') || value.startsWith('\\') || /^[a-z]:/i.test(value)) {
     throw new UiKitCliError(
       'INVALID_PATH',
       'target path must be relative to the project',

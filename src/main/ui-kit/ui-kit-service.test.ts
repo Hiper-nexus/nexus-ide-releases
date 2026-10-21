@@ -151,6 +151,63 @@ describe('runShadcnCommand', () => {
     expect(h.cliRuns[0]?.resolveIn).toBeUndefined();
   });
 
+  it('refuses a destination that leaves the project through a REAL symlink', async () => {
+    // The whole attack: an untrusted repository ships `components -> <outside>`
+    // and the agent passes `--path components`. No `..`, nothing absolute,
+    // nothing option-shaped — and the write lands outside the project.
+    const outside = path.join(dir, 'outside');
+    fs.mkdirSync(outside);
+    fs.symlinkSync(outside, path.join(cwd, 'components'));
+    const h = harness();
+
+    await expect(
+      runShadcnCommand(
+        { command: { kind: 'add', items: ['button'], path: 'components/ui' }, cwd },
+        h.deps,
+      ),
+    ).rejects.toThrow(/leaves the project through a link/);
+    // And nothing ran: the refusal happens before the spawn.
+    expect(h.cliRuns).toHaveLength(0);
+  });
+
+  it('allows a real directory inside the project', async () => {
+    fs.mkdirSync(path.join(cwd, 'src'), { recursive: true });
+    const h = harness();
+
+    const result = await runShadcnCommand(
+      { command: { kind: 'add', items: ['button'], path: 'src/ui' }, cwd },
+      h.deps,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(h.cliRuns[0]?.args).toContain('src/ui');
+  });
+
+  it('checks a local registry item as the path it is', async () => {
+    const outside = path.join(dir, 'elsewhere');
+    fs.mkdirSync(outside);
+    fs.symlinkSync(outside, path.join(cwd, 'registry'));
+    const h = harness();
+
+    await expect(
+      runShadcnCommand(
+        { command: { kind: 'add', items: ['registry/button.json'] }, cwd },
+        h.deps,
+      ),
+    ).rejects.toThrow(/leaves the project through a link/);
+  });
+
+  it('refuses a BoardUI --dir behind a symlink too', async () => {
+    const outside = path.join(dir, 'boardui-outside');
+    fs.mkdirSync(outside);
+    fs.symlinkSync(outside, path.join(cwd, 'ui'));
+    const h = harness();
+
+    await expect(
+      installItems({ kit: 'boardui', items: ['button'], cwd, path: 'ui' }, h.deps),
+    ).rejects.toThrow(/leaves the project through a link/);
+  });
+
   it('marks a query as non-writing', async () => {
     const h = harness();
 

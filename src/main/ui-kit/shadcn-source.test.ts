@@ -237,3 +237,20 @@ describe('referencedShadcnNamespaces — credential scope', () => {
     expect(referencedShadcnNamespaces({ kind: 'add', items: [], all: true })).toEqual([]);
   });
 });
+
+describe('Windows drive-relative paths', () => {
+  it('refuses `C:evil`, which has no slash after the colon', () => {
+    // Drive-relative: it resolves against drive C's current directory, not the
+    // project, so a test that required a slash waved it through.
+    expect(() => buildShadcnArgs({ kind: 'add', items: ['button'], path: 'C:evil' })).toThrow(
+      /relative to the project/,
+    );
+    expect(() => classifyShadcnItem('C:evil.json')).toThrow(/relative to the project/);
+    expect(() => classifyShadcnItem('c:evil')).toThrow(/relative to the project/);
+  });
+
+  it('still refuses the slashed form and UNC', () => {
+    expect(() => classifyShadcnItem('C:/evil.json')).toThrow(/relative to the project/);
+    expect(() => classifyShadcnItem('\\\\server\\share')).toThrow();
+  });
+});
