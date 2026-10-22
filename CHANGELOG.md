@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.395 — A sugestão de componente entende o pedido
+
+Pacote macOS (DMG e ZIP arm64), assinado com Developer ID e notarizado. Correção de qualidade medida sobre a 0.76.390, que fica como o pacote macOS anterior.
+
+- **Palavra de enchimento não escolhe componente.** Medido com 15 pedidos reais e o catálogo vivo (69 itens do BoardUI, 100 do shadcn): a sugestão devolvia `combobox` para tela de login, tabela de clientes, barra lateral, landing page e página de configurações. A causa era comparação por pedaço de palavra — "**com**" cabe dentro de "**com**bobox". Agora a comparação é palavra a palavra, com lista de palavras de enchimento e casamento por palavra inteira ou prefixo de pelo menos quatro letras (que ainda liga "calendario" a "calendar").
+- Nos mesmos 15 pedidos depois da correção: login → `login-01`, tabela → `table`, barra lateral → `sidebar-01`, landing → nenhum item (em vez de um errado), configurações → `toggle`. Painel de receita, cartões de métrica e formulário seguem certos, e "corrigir o parser do cron" e "migrar o banco" seguem sem kit nenhum.
+
 ## 0.76.390 — Kits de UI: shadcn e BoardUI dentro do Nexus (macOS)
 
 Pacote macOS (DMG e ZIP arm64), assinado com Developer ID e notarizado. Mesma entrega da 0.76.382, que é o pacote Linux: esta é a publicação macOS dela.
