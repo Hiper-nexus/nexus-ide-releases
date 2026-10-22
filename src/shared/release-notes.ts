@@ -12574,7 +12574,7 @@ const RELEASE_076390_FULL: AppRelease = {
 
 export const RELEASE_076390: AppRelease = RELEASE_076390_FULL;
 
-export const CURRENT_RELEASE: AppRelease = {
+const RELEASE_076395_FULL: AppRelease = {
   version: '0.76.395',
   date: '2026-10-22',
   codename: 'A sugestão de componente entende o pedido',
@@ -12592,4 +12592,24 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: RELEASE_076390_FULL.fixes,
 };
 
-export const RELEASE_076395: AppRelease = CURRENT_RELEASE;
+export const RELEASE_076395: AppRelease = RELEASE_076395_FULL;
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.400',
+  date: '2026-10-22',
+  codename: 'O painel conferido a olho',
+  summary:
+    'Fecha o ciclo dos kits de UI com a última correção achada olhando a ' +
+    'tela: o painel não imprime mais "undefined" quando falta a contagem de ' +
+    'itens grátis. Na mesma passada foram conferidos a olho os selos dos dois ' +
+    'kits, a licença com Remover, as receitas, o catálogo, o cache, a linha do ' +
+    'contrato de autenticação e a falha de instalação mostrando a saída da ' +
+    'ferramenta.',
+  highlights: [
+    { title: 'O painel nunca imprime "undefined"', detail: 'Texto de interface não interpola valor sem guarda: sem a contagem, a frase volta a ser "A metade grátis funciona sem chave nenhuma".' },
+    ...RELEASE_076395_FULL.highlights,
+  ],
+  fixes: RELEASE_076395_FULL.fixes,
+};
+
+export const RELEASE_076400: AppRelease = CURRENT_RELEASE;

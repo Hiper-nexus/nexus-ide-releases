@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.400 — O painel conferido a olho
+
+Pacote macOS (DMG e ZIP arm64), assinado com Developer ID e notarizado. Fecha o ciclo dos kits de UI com a última correção achada olhando a tela.
+
+- **O painel nunca imprime "undefined".** Montei o painel real num navegador e a linha do BoardUI dizia "undefined itens funcionam sem chave nenhuma". No app empacotado isso não acontecia (o Main sempre manda a contagem e o renderer viaja junto), mas texto de interface não interpola valor sem guarda: sem número, a frase volta a ser "A metade grátis funciona sem chave nenhuma".
+- Na mesma passada foram conferidos a olho: os selos dos dois kits, a licença com Remover, as receitas, o catálogo com GRÁTIS/PRO/BAIXADO, o cache, a linha do contrato de autenticação (cabeçalho ou parâmetro, nome, prefixo), o Remover nas linhas de registry — inclusive na conhecida sem token no cofre — e a falha de instalação mostrando a saída da ferramenta.
+
 ## 0.76.395 — A sugestão de componente entende o pedido
 
 Pacote macOS (DMG e ZIP arm64), assinado com Developer ID e notarizado. Correção de qualidade medida sobre a 0.76.390, que fica como o pacote macOS anterior.
