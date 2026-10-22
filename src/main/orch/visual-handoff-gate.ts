@@ -22,7 +22,16 @@ export interface VisualHandoffContext {
 }
 export type VisualHandoffVerdict = { readonly required: false; readonly verified: true } |
   { readonly required: true; readonly verified: false; readonly reason: string } |
-  { readonly required: true; readonly verified: true; readonly artifactId: string; readonly sha256: string };
+  {
+    readonly required: true; readonly verified: true; readonly artifactId: string; readonly sha256: string;
+    /**
+     * Review 22/10: only the worker ever saw the image. The verdict travels in
+     * the handoff artifact, so the judge gets the Main-verified file (these
+     * exact bytes: `sha256`) and the instruction to look at it.
+     */
+    readonly path?: string; readonly url?: string; readonly width?: number; readonly height?: number;
+    readonly capturedAt?: number; readonly reviewHint?: string;
+  };
 
 /** Only the Main assignment/immutable task is classified, never the reported result. */
 export function createVisualTaskRequirement(now = Date.now(), id: string = randomUUID()): VisualTaskRequirement {
@@ -418,7 +427,13 @@ export async function checkVisualHandoff(ctx: VisualHandoffContext, options: {
       stale = true;
       continue;
     }
-    return { required: true, verified: true, artifactId: artifact.id, sha256: artifact.sha256 };
+    return {
+      required: true, verified: true, artifactId: artifact.id, sha256: artifact.sha256,
+      path: artifact.path, url: artifact.url, width: artifact.width, height: artifact.height,
+      capturedAt: artifact.capturedAt,
+      reviewHint: `Abra a captura em ${artifact.path} (PNG ${artifact.width}×${artifact.height} de ${artifact.url}) ` +
+        'e confira o resultado visual contra o pedido antes de aceitar a entrega; o sha256 é o da imagem que o Main verificou.',
+    };
   }
   return missing(stale ? VISUAL_CAPTURE_STALE_REASON : VISUAL_CAPTURE_MISSING_REASON);
 }

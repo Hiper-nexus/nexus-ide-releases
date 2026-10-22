@@ -220,6 +220,19 @@ describe('review 22/10: a capture is bound to the preview and to the candidate',
     expect(observeCandidate).toHaveBeenLastCalledWith(scope, 'b'.repeat(40));
   });
 
+  // Revisão 22/10: o artifact só levava {artifactId, sha256} e ninguém além do
+  // worker via a imagem. O juiz recebe o caminho da imagem verificada e a
+  // instrução de abri-la antes de aceitar.
+  it('the verified verdict tells the judge where the verified image is and to look at it', async () => {
+    const image = shot('http://127.0.0.1:4567/precos');
+    expect(recordVisualHandoffEvidence(context(), image.id, manager, deps)).toBe(true);
+    const verdict = await checkVisualHandoff(context(), { manager, observeCandidate });
+    expect(verdict).toMatchObject({ required: true, verified: true, artifactId: image.id, sha256: image.sha256,
+      path: image.path, url: 'http://127.0.0.1:4567/precos', width: 1, height: 1, capturedAt: 1100 });
+    expect(verdict.required && verdict.verified && verdict.reviewHint).toContain(image.path);
+    expect(verdict.required && verdict.verified && verdict.reviewHint).toMatch(/antes de aceitar/);
+  });
+
   it('the check waits for a capture-time observation still running', async () => {
     let release!: () => void;
     const slow = vi.fn(() => new Promise<{ base: string; fingerprint: string }>((resolve) => {

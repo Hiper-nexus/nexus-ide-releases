@@ -162,7 +162,11 @@ describe("workspace handoff", () => {
     expect(recordVisualHandoffEvidence(child, proof.id, undefined, { servedFromCandidate: () => true })).toBe(true);
     const second = await tool('submit').handler({ ...args, fullText: "Relatório completo: implementação em result.ts, validação executada e resultados conferidos." }, child);
     expect(second).toMatchObject({ status: 'success', visualVerification: { verified: true, artifactId: proof.id } });
-    expect(getProjectDomainStores(scope).handoffs.list({ includeDelivered: true }).map(h => h.status)).toEqual(['partial', 'success']);
+    const recorded = getProjectDomainStores(scope).handoffs.list({ includeDelivered: true });
+    expect(recorded.map(h => h.status)).toEqual(['partial', 'success']);
+    // Revisão 22/10: o pai (e o juiz da missão) recebe onde está a imagem verificada.
+    expect(recorded[1]!.artifacts).toContainEqual({ kind: 'nexus.visualVerification', payload: expect.objectContaining({
+      path: proof.path, sha256: proof.sha256, reviewHint: expect.stringContaining(proof.path) }) });
   });
 
   it("F-1310: artifacts em objeto viram nexus.workerArtifacts em vez de sumir do handoff", async () => {
