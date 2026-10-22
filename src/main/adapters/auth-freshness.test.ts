@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   authBlobFreshness,
   compareAuthFreshness,
+  grokSessionNeedsLogin,
   toEpochMs,
 } from './auth-freshness';
 
@@ -14,6 +15,50 @@ function jwt(claims: Record<string, unknown>): string {
 
 const SEP_03 = Date.UTC(2026, 8, 3, 14, 43, 37);
 const SEP_21 = Date.UTC(2026, 8, 21, 12, 16, 46);
+
+describe('Grok OAuth renewal readiness', () => {
+  const now = Date.UTC(2026, 9, 22);
+  function renewable() {
+    const parsed = JSON.parse(grokBlob(now - 21 * 86400000));
+    const entry = Object.values(parsed)[0] as Record<string, unknown>;
+    entry.oidc_issuer = 'https://issuer.example.test';
+    entry.oidc_client_id = 'fixture-client';
+    entry.user_id = 'fixture-user';
+    return { parsed, entry };
+  }
+
+  it('does not confuse an old expired access token with an unrenewable OIDC session', () => {
+    const { parsed } = renewable();
+    expect(grokSessionNeedsLogin(JSON.stringify(parsed), now)).toBe(false);
+  });
+
+  it.each(['refresh_token', 'oidc_issuer', 'oidc_client_id', 'key', 'user_id'])(
+    'keeps the expired-session refusal when renewal material %s is absent', field => {
+      const { parsed, entry } = renewable();
+      delete entry[field];
+      expect(grokSessionNeedsLogin(JSON.stringify(parsed), now)).toBe(true);
+    },
+  );
+
+  it('does not assemble a renewable session from fields belonging to different entries', () => {
+    const { parsed, entry } = renewable();
+    delete entry.refresh_token;
+    parsed['another-synthetic-scope'] = { refresh_token: 'fixture-refresh' };
+    expect(grokSessionNeedsLogin(JSON.stringify(parsed), now)).toBe(true);
+  });
+
+  it('refuses an old multi-entry blob even when every entry has complete OIDC renewal material', () => {
+    const { parsed, entry } = renewable();
+    parsed['another-synthetic-scope'] = { ...entry };
+    expect(grokSessionNeedsLogin(JSON.stringify(parsed), now)).toBe(true);
+  });
+
+  it('refuses an old multi-entry blob with one renewable entry and one incomplete entry', () => {
+    const { parsed } = renewable();
+    parsed['another-synthetic-scope'] = {};
+    expect(grokSessionNeedsLogin(JSON.stringify(parsed), now)).toBe(true);
+  });
+});
 
 /** Formato real do Grok: mapa com chave composta e a sessão dentro de um JWT. */
 function grokBlob(createdMs: number): string {
