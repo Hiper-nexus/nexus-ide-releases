@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { runInNewContext } from 'node:vm';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -11,10 +12,11 @@ const request = (projectId = scope.projectId) => ({ scope: { ...scope, projectId
   sessionId: 'worker', kind: 'typescript' as const });
 function pool(memory: () => { freeMB: number | null; swapUsedMB: number | null } | null = () => ({ freeMB: 20_000, swapUsedMB: 0 })) {
   const value = new HeavyCommandPermitPool({ memory, limits: () => ({ minFreeMB: 1000, maxSwapUsedMB: 0 }), refreshMemory: async () => {},
-    pollMs: 10, waitMs: 100, maxWaiters: 2, reserveMB: 1000 });
+    // Lane isolation needs three slots, independently of the runner's CPU count.
+    pollMs: 10, waitMs: 100, maxWaiters: 2, reserveMB: 1000, maxActive: 3 });
   pools.push(value); return value;
 }
-afterEach(() => { for (const value of pools.splice(0)) value.close(); vi.useRealTimers(); });
+afterEach(() => { for (const value of pools.splice(0)) value.close(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 it.each(['typescript', 'tests', 'build', 'install'] as const)('reserves the conservative 2048 MB for %s in production', async (kind) => {
   const value = new HeavyCommandPermitPool({ memory: () => ({ freeMB: 20_000, swapUsedMB: 0 }),
@@ -69,6 +71,7 @@ it('expires mission and loose-helper waits before the shipped file transport tim
 });
 
 it('serializes builds in one checkout while worktrees of the same project run in parallel (F-983)', async () => {
+  vi.spyOn(os, 'availableParallelism').mockReturnValue(4); // CI's default machine cap is two.
   const value = pool(); const first = await value.acquire({ ...request(), kind: 'build' });
   let sameCheckout = false;
   const second = value.acquire({ ...request(), kind: 'install', sessionId: 'other-worker' }).then(p => { sameCheckout = true; return p; });
