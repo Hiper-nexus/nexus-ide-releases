@@ -4,6 +4,8 @@ import type { WorktreeRecord } from '../runtime/worktree-contract';
 import type { PooledWorktreeEntry } from '../runtime/worktree-pool';
 import {
   IsolatedWriterPoolOrchestrator,
+  WORKTREE_POOL_MAX_PER_SCOPE,
+  worktreePoolTargetSize,
   type IsolatedWriterPoolBackend,
   type PoolBaseResolution,
 } from './isolated-writer-pool';
@@ -85,6 +87,24 @@ function makeBackend(overrides: Partial<IsolatedWriterPoolBackend> = {}): {
   };
   return { backend, materialize, claim, remove, listPooledWorktrees, resolveBase };
 }
+
+describe('worktreePoolTargetSize', () => {
+  it.each([
+    [null, WORKTREE_POOL_MAX_PER_SCOPE],
+    [100, WORKTREE_POOL_MAX_PER_SCOPE],
+    [6, 4], // Trial: six seats minus the Maestro and the reviewer.
+    [4, 2],
+    [3, 1],
+    [0, 0], // Blocked access spawns no agent: nothing to pre-allocate.
+    [Number.NaN, 2],
+  ])('license maxAgents %s pre-allocates %s worktrees', (maxAgents, expected) => {
+    expect(worktreePoolTargetSize(maxAgents)).toBe(expected);
+  });
+
+  it('the ceiling stays bounded by disk: ~1.6 GB per pooled worktree', () => {
+    expect(WORKTREE_POOL_MAX_PER_SCOPE).toBeLessThanOrEqual(4);
+  });
+});
 
 describe('IsolatedWriterPoolOrchestrator', () => {
   afterEach(() => resetStorageHygienePolicyForTest());
@@ -222,12 +242,43 @@ describe('IsolatedWriterPoolOrchestrator', () => {
     await orchestrator.idle();
 
     expect(materialize).toHaveBeenCalled();
-    expect(orchestrator.size).toBe(1);
+    // Refilled up to the default target (two), not just the one consumed.
+    expect(orchestrator.size).toBe(2);
+  });
+
+  it('replenishing fills the pool up to the license-sized target, one worktree at a time', async () => {
+    const { backend, materialize } = makeBackend();
+    const orchestrator = new IsolatedWriterPoolOrchestrator(backend, { enabled: () => true, targetSize: () => 3 });
+    orchestrator.scheduleReplenish(SCOPE, {});
+    await orchestrator.idle();
+    expect(materialize).toHaveBeenCalledTimes(3);
+    expect(orchestrator.size).toBe(3);
+    // A single preallocation never goes past the target either.
+    await orchestrator.preallocate(SCOPE, {});
+    expect(orchestrator.size).toBe(3);
+  });
+
+  it('stops filling at the first failed materialization (no retry storm)', async () => {
+    const { backend, materialize } = makeBackend();
+    materialize.mockRejectedValueOnce(new Error('git worktree add failed'));
+    const orchestrator = new IsolatedWriterPoolOrchestrator(backend, { enabled: () => true, targetSize: () => 4 });
+    orchestrator.scheduleReplenish(SCOPE, {});
+    await orchestrator.idle();
+    expect(materialize).toHaveBeenCalledTimes(1);
+    expect(orchestrator.size).toBe(0);
+  });
+
+  it('a target that cannot be read keeps the historical two', async () => {
+    const { backend } = makeBackend();
+    const orchestrator = new IsolatedWriterPoolOrchestrator(backend, { enabled: () => true, targetSize: () => { throw new Error('license'); } });
+    orchestrator.scheduleReplenish(SCOPE, {});
+    await orchestrator.idle();
+    expect(orchestrator.size).toBe(2);
   });
 
   it('does not replenish beyond the per-scope limit', async () => {
     const { backend, materialize } = makeBackend();
-    const orchestrator = new IsolatedWriterPoolOrchestrator(backend, { enabled: () => true });
+    const orchestrator = new IsolatedWriterPoolOrchestrator(backend, { enabled: () => true, targetSize: () => 2 });
     await orchestrator.preallocate(SCOPE, {});
     await orchestrator.preallocate(SCOPE, {});
     const materializeCount = materialize.mock.calls.length;

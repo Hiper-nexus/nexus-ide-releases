@@ -33,6 +33,17 @@ describe('buildPaneSpawnLifecycleEvent (F-787)', () => {
     expect(event.origin).toBe('maestro');
   });
 
+  it('records whether the isolated writer came from the worktree pool (hit rate)', () => {
+    const event = (pooled?: boolean) => buildPaneSpawnLifecycleEvent({
+      meta: { adapterId: 'codex', paneId: 'pane-1', ok: true, ...(pooled === undefined ? {} : { pooled }) },
+      caller: { role: 'orchestrator', missionId: 'm1' }, totalMs: 1, phases: {},
+    });
+    expect(event(true).pooled).toBe(true);
+    expect(event(false).pooled).toBe(false);
+    // No isolated writer at all: the field is absent, not a miss.
+    expect(event()).not.toHaveProperty('pooled');
+  });
+
   it('rejeição antes do primeiro turno é distinguível de pane criado', () => {
     const rejected = buildPaneSpawnLifecycleEvent({
       meta: { ok: false, errorCode: 'authority_seal_unavailable' },

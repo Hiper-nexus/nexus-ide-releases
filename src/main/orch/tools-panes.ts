@@ -2152,6 +2152,7 @@ const paneSpawnAfterTabMission = {
               ...(baseRootRealPath ? { baseRootRealPath } : {}),
               ...(baseRef ? { baseRef } : {}),
             });
+            if (spawnTiming) spawnTiming.meta.pooled = isolatedWriter.pooled === true;
             if (spawnTiming && isolatedWriter.materialize) {
               spawnTiming.meta.gitWorktreeMs = isolatedWriter.materialize.gitWorktreeMs;
               spawnTiming.meta.cowMs = isolatedWriter.materialize.cowMs;
@@ -2573,6 +2574,7 @@ const paneSpawnAfterTabMission = {
                   ...(baseRootRealPath ? { baseRootRealPath } : {}),
                   ...(baseRef ? { baseRef } : {}),
                 });
+                if (spawnTiming) spawnTiming.meta.pooled = isolatedWriter.pooled === true;
                 if (spawnTiming && isolatedWriter.materialize) {
                   spawnTiming.meta.gitWorktreeMs = isolatedWriter.materialize.gitWorktreeMs;
                   spawnTiming.meta.cowMs = isolatedWriter.materialize.cowMs;

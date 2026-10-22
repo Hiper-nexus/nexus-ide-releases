@@ -29,6 +29,8 @@ export interface PaneSpawnLifecycleMeta {
   /** F-215: tempos por etapa do materialize da worktree isolada (ms). */
   gitWorktreeMs?: number;
   cowMs?: number;
+  /** Writer isolado: `true` = worktree adotada do pool; `false` = criada na hora. */
+  pooled?: boolean;
 }
 
 export type SpawnInjectionOrigin = 'sistema' | 'maestro' | 'operador';
@@ -115,6 +117,7 @@ export function buildPaneSpawnLifecycleEvent(input: {
       ? {}
       : { gitWorktreeMs: meta.gitWorktreeMs }),
     ...(meta.cowMs === undefined ? {} : { cowMs: meta.cowMs }),
+    ...(meta.pooled === undefined ? {} : { pooled: meta.pooled }),
   };
 }
 
