@@ -875,10 +875,17 @@ const handoffSubmitTool: McpToolDef = {
           const orchestrator = ctx.missionId
             ? suite.missions.get(ctx.missionId)?.orchestratorSessionId
             : undefined;
-          return (
-            orchestrator !== undefined &&
-            isWorkerSessionBusy(getSessionState(orchestrator) ?? null)
+          if (orchestrator === undefined) return false;
+          // F-1634: o estado precisa ser NEUTRO de transporte. `getSessionState`
+          // lê só sessão PTY; o Maestro em ACP tem a atividade registrada por
+          // `recordPaneSessionState`, então a sonda o daria como ocioso e a
+          // janela expirava no meio da verificação dele — o defeito que esta
+          // espera existe para evitar, só que no outro transporte. O snapshot
+          // do pane resolve pelos dois (`paneSessionStateForEntry`).
+          const snapshot = listPaneSnapshots().find(
+            (pane) => pane.sessionId === orchestrator,
           );
+          return isWorkerSessionBusy(snapshot?.state ?? null);
         },
       },
     );
