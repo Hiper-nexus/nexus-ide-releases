@@ -1,7 +1,7 @@
 import type { ProjectExecutionScope } from '../../shared/types';
 import { createHash, randomUUID } from 'node:crypto';
 import { classifyWorkKind, requiresDesignAuthority } from '../../shared/mission-work-kind';
-import { isUiWorkText } from '../../shared/ui-work-signal';
+import { canonicalizeWorkText, collectUiWorkEvidence, isUiWorkText } from '../../shared/ui-work-signal';
 import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { createScopedBrowserArtifactStore } from '../browser/browser-artifact-store';
 import { getMissionEventRuntimeManager } from './mission-event-emit';
@@ -87,6 +87,39 @@ function withoutWorkspaceDesignRule(text: string): string {
   return text.replace(DESIGN_RULE_BLOCK, ' ');
 }
 
+/**
+ * Review 22/10: a UI bug usually arrives REPORTED, not ordered — "o modal de
+ * login não fecha no mobile" has no repair verb and a single ambiguous UI noun,
+ * so neither the skill-grant quorum (`isUiWorkText`) nor the design-authority
+ * verb rule saw it, and the worker that fixed the screen was never asked for a
+ * capture. A UI place plus a visible malfunction OF that place is a visual
+ * delivery. This vocabulary only decides the capture requirement: it never
+ * grants skills nor writes a design contract, so it lives here and not in the
+ * shared UI grammar. Patterns run on the canonical (accent-free) text.
+ */
+const UI_MALFUNCTION = new RegExp(String.raw`\b(?:` + [
+  String.raw`nao\s+(?:fecha|abre|aparece|carrega|renderiza|mostra|exibe|rola|clica|envia|atualiza|cabe|centraliza)`,
+  String.raw`sumiu|somem|desaparece\w*`,
+  // "some" alone is also the English quantifier ("fix some issues").
+  String.raw`some\s+(?:n[oa]s?|em|quando|ao|apos|depois)`,
+  String.raw`cortad[oa]s?|sobrepost[oa]s?|desalinhad[oa]s?|desconfigurad[oa]s?`,
+  String.raw`tela\s+(?:branca|em\s+branco)|blank\s+screen|white\s+screen`,
+  String.raw`piscando|flicker\w*`,
+  String.raw`(?:doesn'?t|does\s+not|won'?t|isn'?t|is\s+not|not)\s+(?:close|closing|open|opening|show|showing|render|rendering|display|displaying|scroll|scrolling)`,
+].join('|') + String.raw`)\b`);
+/** Hydration is a client-render concept; it only means a defect next to one. */
+const HYDRATION = /\b(?:hidratacao|hydration)\b/;
+const HYDRATION_DEFECT = /\b(?:erros?|errors?|falhas?|mismatch|warnings?|avisos?|bugs?)\b/;
+
+function isReportedUiDefect(text: string, kind: string): boolean {
+  // A document ABOUT the defect is a document; its writer has nothing to capture.
+  if (kind === 'doc') return false;
+  const canonical = canonicalizeWorkText(text);
+  if (HYDRATION.test(canonical) && HYDRATION_DEFECT.test(canonical)) return true;
+  const evidence = collectUiWorkEvidence(text);
+  return (evidence.locative !== null || evidence.craft !== null) && UI_MALFUNCTION.test(canonical);
+}
+
 export function visualTaskRequirement(assignment: string | undefined, now = Date.now(), id?: string): VisualTaskRequirement | undefined {
   if (!assignment) return undefined;
   // F-1271: os blocos de contexto montados na frente (<business-model> com as
@@ -96,7 +129,9 @@ export function visualTaskRequirement(assignment: string | undefined, now = Date
   ).slice(0, 16_384);
   // A UI defect is still a visual delivery. Requiring a capture does not
   // reclassify it as new design work or grant design-authority capabilities.
-  const required = requiresDesignAuthority(text) || (classifyWorkKind(text).kind === 'bug' && isUiWorkText(text));
+  const kind = classifyWorkKind(text).kind;
+  const required = requiresDesignAuthority(text) || (kind === 'bug' && isUiWorkText(text)) ||
+    isReportedUiDefect(text, kind);
   return required ? createVisualTaskRequirement(now, id) : undefined;
 }
 

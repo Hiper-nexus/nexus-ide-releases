@@ -94,6 +94,34 @@ it('derives a visual requirement from the assigned task, not from a completion c
 });
 it.each(['Corrija o bug no layout responsivo da tela de login.', 'Corrija o botão que não funciona na interface do dashboard.'])
   ('requires a capture for a UI bug: %s', assignment => expect(visualTaskRequirement(assignment, 1000)).toEqual({ since: 1000, id: expect.any(String) }));
+// Revisão 22/10: o pedido de bug de UI chega RELATADO, sem verbo de reparo e
+// com um único substantivo de UI ("o modal … não fecha"). O quórum do
+// isUiWorkText e a regra de verbo da autoridade de design o perdiam, e o
+// worker que corrigia a tela nunca era cobrado pela captura.
+it.each([
+  'O modal de login não fecha no mobile',
+  'Erro de hidratação na página de preços',
+  'O menu dropdown não abre no Safari',
+  'O botão de enviar some no celular',
+  'Texto cortado no cabeçalho do dashboard',
+  'O formulário de cadastro não envia no iPhone',
+  'The checkout modal does not close on mobile',
+  'hydration mismatch no checkout',
+])('review 22/10: a reported UI defect requires a capture: %s', assignment => {
+  expect(visualTaskRequirement(assignment, 1000)).toEqual({ since: 1000, id: expect.any(String) });
+});
+it.each([
+  'Corrigir o erro 500 na API de login',
+  'O token de login não expira no backend',
+  'corrigir o bug da tela de erro que trava o backend',
+  'Melhorar a performance do dashboard',
+  'O cron de backup não roda no servidor',
+  'Calcular a hidratação diária recomendada do usuário',
+  'Documente por que o modal de login não fecha no mobile',
+  'O endpoint de usuários não responde no staging',
+])('review 22/10: backend or document text near UI words requires no capture: %s', assignment => {
+  expect(visualTaskRequirement(assignment, 1000)).toBeUndefined();
+});
 it('preserves an already classified nonvisual task instead of reclassifying appended instructions', () => {
   const initialPrompt = 'Crie a tela de login com layout responsivo.';
   expect(visualTaskAtSpawn({ role: 'worker', visualTask: undefined, initialPrompt })).toBeUndefined();
