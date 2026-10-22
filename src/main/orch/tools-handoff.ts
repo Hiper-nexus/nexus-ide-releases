@@ -491,6 +491,14 @@ const handoffSubmitTool: McpToolDef = {
         throw new Error(regressionVerdict.message);
       }
     }
+    // F-1635: o portão visual roda ANTES da revisão Jev. A captura que ele
+    // exige é evidência de verificação Main-owned; julgada depois, a mesma
+    // entrega era cobrada duas vezes — o portão pedia a captura e o Jev
+    // devolvia "sem evidência de verificação" por não haver saída de teste.
+    const visual = declaredStatus === 'success' && !isPlanHandoff ? await checkVisualHandoff(ctx, {
+      task: boundDispatch?.taskId ? suite.tasks.getPlannedTask(boundDispatch.taskId) : undefined,
+      assertCurrent: () => assertMcpInvocationCurrent(invocation),
+    }) : undefined;
     let jevVerdict: JevReviewVerdict = { kind: "skipped", reason: "not-run" };
     // Não julga entregas que não são trabalho de implementação: PRD/plano
     // (documento não tem testes), sessões read-only (revisores entregam
@@ -538,6 +546,7 @@ const handoffSubmitTool: McpToolDef = {
             ? rawEvidenceIds.length
             : 0,
           hasObservedCommit: Boolean(worktreeHeadSha),
+          hasVisualEvidence: visual?.verified === true,
         });
       } catch (error) {
         console.warn("[handoff] revisão Jev falhou (ignorada):", error);
@@ -552,10 +561,6 @@ const handoffSubmitTool: McpToolDef = {
     } else if (jevSkipReason) {
       jevVerdict = { kind: "skipped", reason: jevSkipReason };
     }
-    const visual = declaredStatus === 'success' && !isPlanHandoff ? await checkVisualHandoff(ctx, {
-      task: boundDispatch?.taskId ? suite.tasks.getPlannedTask(boundDispatch.taskId) : undefined,
-      assertCurrent: () => assertMcpInvocationCurrent(invocation),
-    }) : undefined;
     const visualPending = visual?.required === true && !visual.verified;
     if (visualPending) summary = `[verificação visual pendente] ${summary}`;
     const status: typeof declaredStatus =

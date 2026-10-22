@@ -88,6 +88,27 @@ describe('evaluateHandoffEvidence', () => {
     expect(signals.some((s) => s.includes('verificação'))).toBe(false);
   });
 
+  // F-1635: a captura do navegador que o PORTÃO VISUAL exige é evidência
+  // Main-owned — mais forte que um id declarado pelo worker. Sem contá-la, a
+  // mesma entrega era cobrada duas vezes: o portão visual pedia a captura e o
+  // Jev devolvia o handoff "sem evidência de verificação" porque não havia
+  // saída de teste. Numa landing page não existe teste que prove aparência.
+  it('has_verification baixo COM captura visual verificada → sem sinal', () => {
+    const signals = evaluateHandoffEvidence(
+      result({ has_verification: 0.1 }).answers,
+      { ...facts, hasVisualEvidence: true },
+    );
+    expect(signals.some((s) => s.includes('verificação'))).toBe(false);
+  });
+
+  it('a captura visual não dispensa as outras provas (resumo genérico ainda cai)', () => {
+    const signals = evaluateHandoffEvidence(
+      result({ is_specific: 0.2 }).answers,
+      { ...facts, hasVisualEvidence: true },
+    );
+    expect(signals.some((s) => s.includes('resumo genérico'))).toBe(true);
+  });
+
   it('admits_incomplete alto → sinal de pendência', () => {
     const signals = evaluateHandoffEvidence(
       result({ admits_incomplete: ADMITS_INCOMPLETE_MAX + 0.1 }).answers,

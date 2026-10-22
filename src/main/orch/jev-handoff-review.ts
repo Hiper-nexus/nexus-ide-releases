@@ -45,6 +45,8 @@ export interface HandoffReviewInput {
   artifactKinds: string[];
   evidenceIdsCount: number;
   hasObservedCommit: boolean;
+  /** F-1635: captura do navegador verificada pelo Main para esta entrega. */
+  hasVisualEvidence?: boolean;
   declaredStatus: string;
 }
 
@@ -84,7 +86,10 @@ export const HANDOFF_REVIEW_QUESTIONS: Record<string, JevQuestion> = {
       'typecheck/build output, command output or a commit reference; for a ' +
       'review or audit, concrete cited evidence such as file:line references ' +
       'or reproduced cases; for a planning, mapping or research task, the ' +
-      'concrete output it produced (document path, sections, file:line map)? ' +
+      'concrete output it produced (document path, sections, file:line map); ' +
+      'for a visual or interface delivery, an observed browser capture of the ' +
+      'rendered result, with the URL/viewport and what was seen — a unit test ' +
+      'cannot prove appearance? ' +
       'Merely claiming the work is done, or promising to check later, is not ' +
       'evidence.',
     criteria: {
@@ -209,6 +214,15 @@ export interface HandoffReviewFacts {
   declaredFiles: string[];
   evidenceIdsCount: number;
   hasObservedCommit: boolean;
+  /**
+   * F-1635: o portão visual já exigiu, e o Main já verificou, uma captura do
+   * navegador do Nexus feita por este worker nesta execução. É evidência
+   * Main-owned — mais forte que um id declarado pelo worker. Sem contá-la, a
+   * mesma entrega era cobrada duas vezes: o portão pedia a captura e o Jev
+   * devolvia "sem evidência de verificação" por não haver saída de teste.
+   * Numa entrega de aparência não existe teste que prove aparência.
+   */
+  hasVisualEvidence?: boolean;
 }
 
 function noulOf(answers: Record<string, JevAnswer>, id: string): number | null {
@@ -242,7 +256,8 @@ function handoffSignals(
   if (
     hasVerification !== null &&
     hasVerification < HAS_VERIFICATION_MIN &&
-    facts.evidenceIdsCount === 0
+    facts.evidenceIdsCount === 0 &&
+    facts.hasVisualEvidence !== true
   ) {
     signals.push({
       text:
@@ -437,6 +452,9 @@ export async function reviewMissionHandoff(
     declaredFiles: params.declaredFiles,
     evidenceIdsCount: params.evidenceIdsCount,
     hasObservedCommit: params.hasObservedCommit,
+    ...(params.hasVisualEvidence !== undefined
+      ? { hasVisualEvidence: params.hasVisualEvidence }
+      : {}),
   };
   const signals = evaluateHandoffEvidence(result.answers, facts);
   const bounceSignals = handoffBounceSignals(result.answers, facts);
