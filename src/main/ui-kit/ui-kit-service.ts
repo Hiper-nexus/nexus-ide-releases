@@ -396,6 +396,7 @@ export async function runShadcnCommand(
   const releaseWrite = writes ? claimUiKitProjectWrite(input.cwd, Date.now(), input.installationRoot) : () => {};
   let result: Awaited<ReturnType<UiKitCliRunner>>;
   let scoped: ReturnType<typeof buildScopedRegistryEnv>;
+  let waitingForPhysicalExit = false;
   try {
     if (needed.length > 0 && writes) ensureProjectRegistries(input.cwd, needed);
     const components = readComponentsJson(input.cwd);
@@ -425,8 +426,14 @@ export async function runShadcnCommand(
       ...(Object.keys(env).length > 0 ? { extraEnv: env } : {}),
       ...(input.signal ? { signal: input.signal } : {}),
     });
+  } catch (error) {
+    if (error instanceof UiKitCliError && error.physicalExit) {
+      waitingForPhysicalExit = true;
+      void error.physicalExit.then(releaseWrite, () => {});
+    }
+    throw error;
   } finally {
-    releaseWrite();
+    if (!waitingForPhysicalExit) releaseWrite();
   }
   const { missing, conflicts, unmapped, hijacked, unreferenced } = scoped;
   return {

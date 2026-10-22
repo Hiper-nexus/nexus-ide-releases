@@ -188,12 +188,15 @@ export class UiKitCliError extends Error {
   readonly code: string;
   /** Operator-facing remediation, when there is one worth printing. */
   readonly hint?: string;
+  /** Main-only physical proof; a service-held claim must follow it, not rejection. */
+  readonly physicalExit?: Promise<void>;
 
-  constructor(code: string, message: string, hint?: string) {
+  constructor(code: string, message: string, hint?: string, physicalExit?: Promise<void>) {
     super(message);
     this.name = 'UiKitCliError';
     this.code = code;
     if (hint !== undefined) this.hint = hint;
+    if (physicalExit !== undefined) this.physicalExit = physicalExit;
   }
 }
 
@@ -600,39 +603,68 @@ export function isAlreadyGoneKillError(error: unknown): boolean {
   );
 }
 
-/** Kill the group: the package manager's node child holds the download open. */
-async function terminateTree(pid: number | undefined): Promise<void> {
-  if (pid === undefined) return;
-  if (process.platform === 'win32') {
+/** Bounded teardown of our exact child. A signal/kill request is not exit proof. */
+export async function terminateUiKitProcessTree(
+  child: ReturnType<typeof spawn>,
+  closed: Promise<void>,
+  hasExited: () => boolean,
+  proveExit: () => void,
+  platform: NodeJS.Platform = process.platform,
+): Promise<boolean> {
+  const pid = child.pid;
+  if (pid === undefined) { proveExit(); return true; }
+  const waitForClose = () => new Promise<boolean>(resolve => {
+    const timer = setTimeout(() => resolve(false), UI_KIT_TERMINATION_GRACE_MS);
+    // Even a late close may complete an already-confirmed tree teardown. No
+    // retry signals/timers survive this bounded attempt.
+    void closed.then(() => { clearTimeout(timer); proveExit(); resolve(true); });
+  });
+  const groupGone = () => {
+    try { process.kill(-pid, 0); return false; }
+    catch (error) { return isAlreadyGoneKillError(error); }
+  };
+  if (platform === 'win32') {
+    // Never aim taskkill at a PID after our exact child exited (PID reuse).
+    if (hasExited()) return false;
     const taskkill = path.win32.join(
       process.env.SystemRoot ?? process.env.windir ?? 'C:\\Windows',
       'System32',
       'taskkill.exe',
     );
-    await new Promise<void>((resolve) => {
-      const killer = spawn(taskkill, ['/pid', String(pid), '/T', '/F'], {
-        stdio: 'ignore',
-        shell: false,
-        windowsHide: true,
-      });
-      killer.once('error', () => resolve());
-      killer.once('close', () => resolve());
+    const killed = await new Promise<boolean>(resolve => {
+      let finished = false;
+      let killer: ReturnType<typeof spawn> | undefined;
+      const timer = setTimeout(() => {
+        finish(false);
+        try { killer?.kill(); } catch { /* Exact helper handle only. */ }
+      }, UI_KIT_TERMINATION_GRACE_MS);
+      const finish = (ok: boolean) => {
+        if (finished) return;
+        finished = true; clearTimeout(timer); resolve(ok);
+      };
+      try {
+        killer = spawn(taskkill, ['/pid', String(pid), '/T', '/F'], {
+          stdio: 'ignore', shell: false, windowsHide: true,
+        });
+        killer.on('error', () => finish(false));
+        killer.once('close', code => finish(code === 0));
+      } catch { finish(false); }
     });
-    return;
+    return killed ? waitForClose() : false;
   }
+  if (hasExited()) return groupGone() ? waitForClose() : false;
   try {
     signalGroup(pid, 'SIGTERM');
-  } catch {
-    // The SIGKILL escalation below is the authoritative stop.
-  }
+  } catch { /* Only absence below proves the group gone. */ }
   await delay(UI_KIT_TERMINATION_GRACE_MS);
-  try {
-    signalGroup(pid, 'SIGKILL');
-  } catch (error) {
-    if (!isAlreadyGoneKillError(error)) {
-      console.warn(`[ui-kit] failed to kill process group ${pid}:`, error);
-    }
+  if (groupGone()) return waitForClose();
+  // The unreaped leader pins its group id. Once it exits, never signal that
+  // numeric group again: its identity may now belong to somebody else.
+  if (!hasExited()) {
+    try { signalGroup(pid, 'SIGKILL'); } catch { /* Final probe decides. */ }
+    await delay(UI_KIT_TERMINATION_GRACE_MS);
   }
+  return groupGone() ? waitForClose() : false;
 }
 
 export const runUiKitCli: UiKitCliRunner = (request) =>
@@ -822,6 +854,15 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
     let stderr = '';
     let bytes = 0;
     let settled = false;
+    let exited = false;
+    let resolveClosed!: () => void;
+    const closed = new Promise<void>(resolve => { resolveClosed = resolve; });
+    let resolvePhysicalExit!: () => void;
+    const physicalExit = new Promise<void>(resolve => { resolvePhysicalExit = resolve; });
+    const proveExit = () => {
+      releaseWrite(); dropScratch(); dropCapture(); resolvePhysicalExit();
+    };
+    child.once('exit', () => { exited = true; });
     const timer = setTimeout(() => {
       fail(
         new UiKitCliError(
@@ -849,20 +890,18 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
       clearTimeout(timer);
       clearInterval(sizeWatch);
       request.signal?.removeEventListener('abort', onAbort);
-      dropScratch();
-      dropCapture();
     }
     function fail(error: UiKitCliError): void {
       if (settled) return;
       settled = true;
       cleanup();
-      // `.catch` BEFORE `.finally`, so an EPERM from the SIGKILL cannot carry
-      // its own rejection out of the derivative with no handler.
-      void terminateTree(child.pid)
-        .catch(() => {})
-        .finally(() => {
-          releaseWrite();
-          reject(error);
+      void terminateUiKitProcessTree(child, closed,
+        () => exited || child.exitCode != null || child.signalCode != null, proveExit)
+        .catch(() => false)
+        .then(proven => {
+          reject(proven ? error : new UiKitCliError('TEARDOWN_FAILED',
+            'UI-kit process-tree exit is unproven; the installation remains locked.',
+            'Do not retry an install while its previous process may still be writing.', physicalExit));
         });
     }
     function onAbort(): void {
@@ -885,11 +924,7 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
     request.signal?.addEventListener('abort', onAbort, { once: true });
     child.stderr?.on('data', (chunk: Buffer) => accumulate(chunk));
     child.once('error', (error: Error) => {
-      releaseWrite();
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(
+      fail(
         new UiKitCliError(
           'SPAWN_FAILED',
           `failed to run ${request.kit}: ${error.message}`,
@@ -898,12 +933,13 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
       );
     });
     child.once('close', (code: number | null) => {
-      releaseWrite();
+      exited = true; resolveClosed();
       if (settled) return;
       settled = true;
       // Read BEFORE cleanup removes the file.
       const stdout = readCapture();
       cleanup();
+      proveExit();
       resolve({ stdout, stderr, code });
     });
   });
