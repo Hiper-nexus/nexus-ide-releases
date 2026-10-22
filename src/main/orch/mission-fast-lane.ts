@@ -1027,7 +1027,15 @@ export function agentPrompt(
       maxWorkers: mission.intentContract?.budgets?.maxWorkers,
       executorCount: executorCount ?? 3,
       sealedPlanTitles,
-      firstWaveDispatched: true,
+      // F-1632: a first-wave só abre panes quando há história selada não-meta
+      // (`planFirstWaveSeats` devolve 0 assentos com `titles.length === 0`) ou
+      // quando a missão é a pergunta aos panes. Declará-la despachada sempre
+      // gastava o turno de abertura do Maestro num `nexus_handoff_list` vazio
+      // e o instruía a "confirmar que ainda não foram despachadas" antes de
+      // abrir worker nenhum — num pedido de uma linha, o oposto do necessário.
+      firstWaveDispatched:
+        isMetaPaneMission ||
+        sealedPlanTitles.some((storyTitle) => !isPaneMetaTask(storyTitle)),
       metaPane: isMetaPaneMission,
     });
   }

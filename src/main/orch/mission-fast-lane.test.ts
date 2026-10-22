@@ -59,6 +59,31 @@ function squad(overrides: Partial<Squad> = {}): Squad {
 }
 
 describe('mission fast lane', () => {
+  // F-1632: a first-wave só abre panes quando há história selada não-meta
+  // (`planFirstWaveSeats` devolve 0 assentos sem títulos). O kickoff declarava
+  // a onda como despachada SEMPRE, então um objetivo de uma linha ("faça uma
+  // landing page") gastava o turno de abertura do Maestro num
+  // nexus_handoff_list vazio e ainda o instruía a confirmar que a tarefa não
+  // foi despachada antes de abrir worker nenhum.
+  it('manda delegar de imediato quando não há plano selado para a first-wave', () => {
+    const prompt = agentPrompt(
+      agent({ category: 'orchestrator' }),
+      mission({ description: 'faça uma landing page do Navalha Go, visual feminino' }),
+      [], false, '', null, [],
+    );
+    expect(prompt).toContain('Para cada tarefa ainda não despachada');
+    expect(prompt).not.toContain('Não duplique a first-wave');
+  });
+
+  it('preserva o aviso de first-wave quando há plano selado', () => {
+    const prompt = agentPrompt(
+      agent({ category: 'orchestrator' }),
+      mission({ description: 'refaça o produto' }),
+      [], false, '', null, ['Entrega A', 'Entrega B'],
+    );
+    expect(prompt).toContain('Não duplique a first-wave');
+  });
+
   it.each(['consult', 'plan', 'ops'] as const)('keeps routed questions solo when %s has no worker budget', (lane) => {
     const prompt = agentPrompt(
       agent({ category: 'orchestrator' }),
