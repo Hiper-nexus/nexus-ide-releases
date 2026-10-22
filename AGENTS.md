@@ -2882,7 +2882,13 @@ componente: o agente recebia a paleta e escrevia cada peça à mão. `src/main/u
     arquivo ALHEIO (nativo, chave própria do usuário) fica intocado mesmo com o
     fornecedor inalcançável (`unknown`) e mesmo nas portas de install (que
     pulam a pré-checagem de status); só o payload do próprio bundle é regravado
-    (idempotente). A porta do painel ainda pré-checa `license_status` para
+    (idempotente). A leitura é TRI-ESTADO (`BoardUiLicenseRead`,
+    `aaff737bd`): `absent` só com ENOENT; `unreadable` (existe, não leu os
+    bytes — EACCES/EISDIR) recusa como arquivo nativo, porque o rename do
+    writeFileAtomic só precisa de escrita no DIRETÓRIO para destruir o que não
+    leu; `parsed` com `file: null` (corrompido) é o único que reescreve — a CLI
+    do vendor também não lê licença de bytes corrompidos, provisionar CURA. A
+    porta do painel ainda pré-checa `license_status` para
     retornar cedo com a mensagem do próprio fornecedor. Auto-provisionamento de
     bundle só nas PORTAS DE INSTALL (`autoActivate: true`);
     `planInstallItems`/dry-run não tocam o arquivo.
@@ -2891,8 +2897,11 @@ componente: o agente recebia a paleta e escrevia cada peça à mão. `src/main/u
     apaga o arquivo + esquece o cofre, NUNCA chama `deactivate_license` —
     devolver o assento soltaria o assento do Mac do OPERADOR que a frota
     inteira compartilha. Sem arquivo nenhum no disco: limpa só o cofre.
-    Licença NATIVA (instanceId emitido pelo servidor, chave própria) remove no
-    fornecedor de verdade. Teste que exercita ativação/remoção PRECISA injetar
+    Arquivo ILEGÍVEL no "Remover": limpa o cofre e DEIXA o arquivo — deletar
+    localmente um arquivo que pode ser nativo (e que a CLI do fornecedor
+    também não lê) soltaria assento pago no vácuo. Licença NATIVA (instanceId
+    emitido pelo servidor, chave própria) remove no fornecedor de verdade.
+    Teste que exercita ativação/remoção PRECISA injetar
     `boardUiLicenseFile` no deps (fake no harness do
     `ui-kit-service.test.ts`): sem isso o teste lê e APAGA o `license.json`
     REAL de quem roda a suíte.
