@@ -287,6 +287,79 @@ Cada rodada evitada é um turno de worker mais um de Maestro. Não há traço de
 missão real nesta análise: os números acima são constantes de código e
 contagens estruturais, não cronômetro.
 
+## Medição real do motor, 22/10 — e o que ela corrige no que escrevi acima
+
+O operador pediu "testa e vê o tempo". Fiz isso com o que existe: `npm run
+test:mission-e2e` roda a missão INTEIRA com **Main real, PTY real e CLI de
+agente falsa** (`src/main/orch/mission-e2e.test.ts`, 2 casos: 6 writers
+isolados entregando, e o pane do operador soltando o 1º helper na missão da
+aba — o caminho da landing page). Criei uma worktree em `origin/main`
+(`113fdb66b`, mesma versão 0.76.406, sem nenhum commit meu) e alternei as
+execuções para não enviesar por aquecimento.
+
+| execução | base (`origin/main`) | esta branch |
+|---|---|---|
+| 1ª | 49,17 s | 44,70 s |
+| 2ª | 56,74 s | 54,46 s |
+| 3ª | 49,84 s | 49,92 s |
+
+**Não há diferença medível.** A dispersão entre repetições do MESMO código
+chega a 7,6 s; a diferença entre os dois é de 2,2 s na média. Quem ler isto
+como "a correção não funciona" está lendo errado, e quem ler como "funciona"
+também: este arranjo **não pode** medir a correção, por construção. Com CLI
+falsa o juiz independente responde em milissegundos, então o TTL de 5 min nunca
+expirava e a verificação mecânica nunca era jogada fora — é exatamente a
+condição em que a causa 1 não tem o que economizar. O ganho dela é
+proporcional à latência REAL do revisor, e o arranjo elimina essa latência.
+
+**O que a medição prova, e vale mais:** o custo FIXO do motor — spawn, PTY,
+ledger, portões, worktrees, entrega — é de ~50 s para uma missão de 6 writers.
+Não é dele que saem as 2–3 horas. A lentidão está no termo VARIÁVEL: quantas
+vezes o trabalho é refeito e quantas rodadas de modelo isso custa.
+
+### A causa 1 pesa muito menos no caso do operador do que eu escrevi
+
+O portão de regressão não roda a suíte inteira: ele calcula um raio de impacto
+a partir dos arquivos mudados (`computeBlastRadius`, `depth: 1`, em
+`regression-gate.ts:246`) e seleciona os testes dali. Numa landing page
+greenfield — o Navalha Go — **não há testes para selecionar**, então a suíte
+custa perto de zero e reexecutá-la não explica nada. Os 208 s que medi são
+desta suíte, um monorepo Electron com 31 mil testes; não transferem para o
+projeto do colega.
+
+Isso reordena as causas **para o caso relatado**: o que domina é a causa 2 (o
+trabalho recomeçando do zero a cada devolução, perdendo a conversa e voltando
+ao brief original) e a 3 (a devolução desnecessária), porque **cada devolução
+custa uma rodada inteira de modelo** — minutos, não segundos, e com o
+trabalho anterior descartado. A causa 1 continua certa e barata, mas é seguro
+contra o caso patológico de um repositório com suíte grande, não a economia
+principal de uma landing page.
+
+### O furo que esta medição expôs na minha própria correção 3
+
+Uma landing page **é** um `.html`, e `.html` está fora da dispensa de aparência
+porque executa. Logo, para o caso exato que gerou a reclamação, a correção 3
+**não removia a devolução**. Pior: o pedido que o worker recebia era
+*impossível* de satisfazer — "cole a saída de testes/typecheck/build" numa
+página onde não existe teste que prove aparência. Ele devolvia, queimava a
+rodada e voltava sem poder cumprir. Esse é o "volta e volta, e começa a refazer
+tudo de novo".
+
+**Corrigido sem afrouxar nada:** a exigência fica (`.html` executa, e
+comportamento se prova), mas com captura verificada o pedido passa a nomear o
+que ALI é obtível — o console do navegador sem erro, o comando que subiu o
+preview, ou a referência do commit. A devolução continua marcada pelo mesmo
+sinal; muda só de pedido impossível para pedido satisfazível, e a segunda
+rodada converge em vez de laçar.
+
+**O que seria a correção completa, e não fiz:** o navegador do Nexus já coleta
+erros de console e HTTP ≥ 400 em cada ação, mas o veredito visual carrega só
+`artifactId` e `sha256` (`visual-handoff-gate.ts:21-23`) — o sinal de console
+limpo não chega à revisão. Levá-lo até lá transformaria "página carrega e o
+console está limpo" em prova de comportamento de verdade, e aí a landing page
+não levaria devolução nenhuma. Exige migração de artefato e mexer no caminho da
+captura; não fiz às cegas, tarde e com outras sessões ativas no repositório.
+
 ## Achado de lado: o `check` obrigatório está vermelho na main
 
 Levantado em 22/10 ao tentar mergear o PR 159, e vale por si.

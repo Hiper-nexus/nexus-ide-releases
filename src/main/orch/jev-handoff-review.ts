@@ -286,10 +286,22 @@ function handoffSignals(
     facts.evidenceIdsCount === 0 &&
     !(facts.hasVisualEvidence === true && appearanceOnlyDelivery(facts.declaredFiles))
   ) {
+    // F-1635 (medição de 22/10): a entrega COM captura verificada que não é
+    // só-aparência — uma landing page de arquivo único é o caso — recebia um
+    // pedido IMPOSSÍVEL: numa página não existe saída de teste que prove
+    // aparência. O worker devolvia, queimava a rodada e voltava sem poder
+    // cumprir, que é o "volta e volta" que o operador vê. A exigência fica —
+    // `.html` executa e comportamento se prova —, mas o pedido passa a nomear
+    // o que ALI é obtível: o que ele rodou no navegador que o Nexus tem.
     signals.push({
       text:
-        'sem evidência de verificação: cole a saída de testes/typecheck/build ' +
-        'ou a referência do commit',
+        facts.hasVisualEvidence === true
+          ? 'sem evidência de verificação do comportamento: a captura prova a ' +
+            'aparência, não o que a página executa — diga que verificação você ' +
+            'rodou (o console do navegador sem erro, o comando que subiu o ' +
+            'preview) ou a referência do commit'
+          : 'sem evidência de verificação: cole a saída de testes/typecheck/build ' +
+            'ou a referência do commit',
       bounce: changedCode,
     });
   }

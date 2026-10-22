@@ -144,6 +144,30 @@ describe('evaluateHandoffEvidence', () => {
     expect(signals.some((s) => s.includes('evidência de verificação'))).toBe(true);
   });
 
+  // F-1635 (medição de 22/10): o caso REAL do operador. Uma landing page é um
+  // `.html`, que executa, então a dispensa não vale e a devolução acontece. O
+  // defeito era o PEDIDO: "cole a saída de testes" é impossível numa página, e
+  // o worker voltava sem poder cumprir. Com captura, o pedido nomeia o que é
+  // obtível no navegador do Nexus.
+  it('com captura, o pedido é satisfazível: console do navegador, não saída de teste', () => {
+    const signals = evaluateHandoffEvidence(
+      result({ has_verification: 0.1 }).answers,
+      { ...facts, hasVisualEvidence: true, declaredFiles: ['site/index.html'] },
+    );
+    const pedido = signals.find((s) => s.includes('comportamento'));
+    expect(pedido).toBeDefined();
+    expect(pedido).toContain('console do navegador');
+    expect(pedido).not.toContain('saída de testes');
+  });
+
+  it('sem captura, o pedido continua sendo saída de teste', () => {
+    const signals = evaluateHandoffEvidence(
+      result({ has_verification: 0.1 }).answers,
+      { ...facts, declaredFiles: ['src/checkout/form.tsx'] },
+    );
+    expect(signals.some((s) => s.includes('saída de testes/typecheck/build'))).toBe(true);
+  });
+
   it('sem arquivos declarados a captura não basta: não dá para provar que é só aparência', () => {
     const signals = evaluateHandoffEvidence(
       result({ has_verification: 0.1 }).answers,
