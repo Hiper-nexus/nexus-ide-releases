@@ -316,7 +316,7 @@ const browserScreenshotTool: McpToolDef = {
     'Capture an owned browser pane as a local PNG artifact with redacted URL metadata, ' +
     'and return the image itself (bounded to 1568 px on the longest side) so you can ' +
     'look at it. `fullPage: true` captures the whole scrollable page; `ref` crops to ' +
-    'one element (scrolled into view); `theme: "light" | "dark"` renders that ' +
+    'one element (scrolled into view), never both at once; `theme: "light" | "dark"` renders that ' +
     'prefers-color-scheme for this capture only. For a device breakpoint navigate ' +
     'with `device` first (or use nexus_browser_responsive). A pane on the personal ' +
     'profile never returns its pixels (path only). `image: false` returns metadata only.',

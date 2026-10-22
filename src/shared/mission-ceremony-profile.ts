@@ -23,8 +23,13 @@ import { classifyWorkKind, type WorkKind } from './mission-work-kind';
 
 export type CeremonyDiffClass = 'code' | 'non-executable';
 
-/** A check the diff cannot affect, dropped from the completion ceremony. */
-export type CeremonyDroppedCheck = 'typecheck';
+/**
+ * A check the diff cannot affect, dropped from the completion ceremony. Tests
+ * go with the typecheck: no test imports a stylesheet, a doc or an image for
+ * behaviour, so the regression gate would only spend its 5–20 min budget (or
+ * time out and defer) to find nothing to run.
+ */
+export type CeremonyDroppedCheck = 'typecheck' | 'tests';
 
 export interface MissionCeremonyProfile {
   readonly workKind: WorkKind;
@@ -54,12 +59,12 @@ export function missionCeremonyProfile(goal: string, diffClass: CeremonyDiffClas
   return Object.freeze({
     workKind: classifyWorkKind(goal).kind,
     diffClass,
-    dropped: Object.freeze(diffClass === 'non-executable' ? ['typecheck' as const] : []),
+    dropped: Object.freeze(diffClass === 'non-executable' ? ['typecheck' as const, 'tests' as const] : []),
   });
 }
 
 /** One pt-BR line for the completion receipt; empty when the full ceremony ran. */
 export function ceremonyProfileNote(profile: MissionCeremonyProfile): string {
   if (profile.dropped.length === 0) return '';
-  return `Perfil de cerimônia: trabalho ${profile.workKind}, diff só com estilos, texto ou assets estáticos — typecheck dispensado (o compilador não lê esses arquivos).`;
+  return `Perfil de cerimônia: trabalho ${profile.workKind}, diff só com estilos, texto ou assets estáticos — typecheck e testes dispensados (o compilador e os testes não leem esses arquivos).`;
 }

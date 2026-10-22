@@ -385,3 +385,14 @@ describe('browser history through navigate', () => {
     expect(() => validateToolArgs('nexus_browser_navigate', { paneId: 'b', history: 'home' })).toThrow();
   });
 });
+
+describe('browser screenshot crop', () => {
+  it('takes fullPage or ref, never both', () => {
+    expect(validateToolArgs('nexus_browser_screenshot', { paneId: 'b', fullPage: true }))
+      .toEqual({ paneId: 'b', fullPage: true });
+    expect(validateToolArgs('nexus_browser_screenshot', { paneId: 'b', ref: 'e1' }))
+      .toEqual({ paneId: 'b', ref: 'e1' });
+    expect(() => validateToolArgs('nexus_browser_screenshot', { paneId: 'b', fullPage: true, ref: 'e1' }))
+      .toThrow(/either fullPage or ref/);
+  });
+});

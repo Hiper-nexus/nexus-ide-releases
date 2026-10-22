@@ -1680,6 +1680,11 @@ export async function captureBrowserScreenshot(
     }
   };
   assertCurrentAuthority();
+  // A full-page capture ignores any crop, so combined it returned the whole
+  // page labelled `element: <ref>` — evidence that says the wrong thing.
+  if (options.fullPage && (options.ref || options.clip)) {
+    throw new Error('fullPage captures the whole page; use either fullPage or ref, not both');
+  }
   const entry = withEntry(paneId, scope);
   const artifactStore = createScopedBrowserArtifactStore(
     requireBrowserRuntimeManager(),
@@ -1734,11 +1739,14 @@ export async function captureBrowserScreenshot(
       contentSize?: { width?: number; height?: number };
     };
     const content = metrics.cssContentSize ?? metrics.contentSize ?? {};
-    const width = Math.max(1, Math.min(FULL_PAGE_MAX_CSS_PX, Math.ceil(content.width ?? 0)));
+    // Either side past the limit is a cut page: a wide page clipped at
+    // 16 384 px is as incomplete as a tall one, and must not pass as whole.
+    const fullWidth = Math.max(1, Math.ceil(content.width ?? 0));
     const fullHeight = Math.max(1, Math.ceil(content.height ?? 0));
+    const width = Math.min(FULL_PAGE_MAX_CSS_PX, fullWidth);
     const height = Math.min(FULL_PAGE_MAX_CSS_PX, fullHeight);
-    if (fullHeight > height) {
-      cut = { truncated: true as const, capturedCss: { width, height }, viewport: { width, height: fullHeight } };
+    if (fullWidth > width || fullHeight > height) {
+      cut = { truncated: true as const, capturedCss: { width, height }, viewport: { width: fullWidth, height: fullHeight } };
     }
     assertCurrentAuthority();
     const shot = (await send('Page.captureScreenshot', {

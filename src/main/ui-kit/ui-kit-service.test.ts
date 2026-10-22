@@ -1514,6 +1514,58 @@ describe('the cwd guard runs before the project config is touched', () => {
   });
 });
 
+describe('one writer per project covers the components.json edit', () => {
+  it('a retry refused as busy leaves components.json as the running install has it', async () => {
+    // The first install declares @acme and is still running; the retry names
+    // another namespace. Claimed only inside the CLI runner, the retry wrote
+    // its registry first and was refused afterwards.
+    const other: UiKitRegistry = {
+      namespace: '@other',
+      url: 'https://registry.other.test/r/{name}.json',
+      auth: { kind: 'header', name: 'Authorization', envVar: 'OTHER_REGISTRY_TOKEN' },
+      secretKey: 'external:ui-kit-registry-other',
+    };
+    writeComponentsJson({ style: 'new-york' });
+    let finish: () => void = () => {};
+    const running = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const h = harness({ registries: [PRIVATE_REGISTRY, other] });
+    const first = runShadcnCommand(
+      { command: { kind: 'add', items: ['@acme/auth'] }, cwd },
+      {
+        ...h.deps,
+        runCli: async () => {
+          await running;
+          return { code: 0, stdout: '', stderr: '' };
+        },
+      },
+    );
+    await vi.waitFor(() => expect(declaredRegistry('@acme')).toBeDefined());
+    const during = fs.readFileSync(path.join(cwd, 'components.json'), 'utf8');
+
+    await expect(
+      runShadcnCommand({ command: { kind: 'add', items: ['@other/login'] }, cwd }, h.deps),
+    ).rejects.toMatchObject({ code: 'PROJECT_BUSY' });
+    expect(fs.readFileSync(path.join(cwd, 'components.json'), 'utf8')).toBe(during);
+
+    finish();
+    await first;
+    // Released once the first run settled: the next one goes through.
+    await runShadcnCommand({ command: { kind: 'add', items: ['@other/login'] }, cwd }, h.deps);
+    expect(declaredRegistry('@other')).toMatchObject({ url: other.url });
+  });
+
+  it('the CLI runner is told the slot is already held', async () => {
+    const h = harness();
+
+    await runShadcnCommand({ command: { kind: 'add', items: ['button'] }, cwd }, h.deps);
+    await runShadcnCommand({ command: { kind: 'info' }, cwd }, h.deps);
+
+    expect(h.cliRuns.map((run) => run.projectWriteClaimed)).toEqual([true, undefined]);
+  });
+});
+
 describe('resolveBoardUiTier', () => {
   const freeList = '  button    Primary button.\n  app-shell  The shell.\n';
 

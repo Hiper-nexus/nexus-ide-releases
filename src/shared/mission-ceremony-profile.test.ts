@@ -46,8 +46,8 @@ describe('missionCeremonyProfile', () => {
     expect(missionCeremonyProfile('Corrigir o bug do checkout que cobra duas vezes', 'code').workKind).toBe('bug');
   });
 
-  it('drops the typecheck only for a non-executable diff', () => {
-    expect(missionCeremonyProfile('Ajustar a cor do botão primário', 'non-executable').dropped).toEqual(['typecheck']);
+  it('drops the typecheck and the tests only for a non-executable diff', () => {
+    expect(missionCeremonyProfile('Ajustar a cor do botão primário', 'non-executable').dropped).toEqual(['typecheck', 'tests']);
   });
 
   it.each([
@@ -60,7 +60,7 @@ describe('missionCeremonyProfile', () => {
 
   it('the note names the kind and what was dropped, and stays empty when nothing was', () => {
     expect(ceremonyProfileNote(missionCeremonyProfile('Ajustar a cor do botão primário', 'non-executable')))
-      .toMatch(/visual.*typecheck dispensado/u);
+      .toMatch(/visual.*typecheck e testes dispensados/u);
     expect(ceremonyProfileNote(missionCeremonyProfile('Ajustar a cor do botão primário', 'code'))).toBe('');
   });
 });

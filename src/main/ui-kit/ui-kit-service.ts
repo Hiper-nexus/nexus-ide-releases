@@ -4,6 +4,7 @@ import { writeFileAtomic } from '../util/atomic-write';
 import {
   assertPathStaysInProject,
   assertSafeUiKitCwd,
+  claimUiKitProjectWrite,
   runUiKitCli,
   UiKitCliError,
   type UiKitCliRunner,
@@ -374,42 +375,58 @@ export async function runShadcnCommand(
   const needed = registries.filter((registry) =>
     referenced.includes(registry.namespace),
   );
+  const writes = shadcnCommandWrites(input.command);
   // Declaring our namespaces writes the project's components.json, so it only
   // happens for a command that was already going to change the project. A
   // SEARCH that quietly edited project config would not be a read, and the
   // catalog tool is classified read-only precisely because it is one: an
   // undeclared namespace comes back in `unmappedRegistries` instead.
-  if (needed.length > 0 && shadcnCommandWrites(input.command)) {
+  if (needed.length > 0 && writes) {
     // The cwd guard BEFORE the write. `runUiKitCli` checks it too, but only
     // after this point: in a checkout whose node_modules is a shared symlink
     // the run is refused, and leaving the project's components.json edited by
     // a run that never happened is the worst of both.
     assertSafeUiKitCwd(input.cwd, { writes: true });
-    ensureProjectRegistries(input.cwd, needed);
   }
-  const components = readComponentsJson(input.cwd);
-  const { env, missing, conflicts, unmapped, hijacked, unreferenced } = buildScopedRegistryEnv({
-    registries,
-    referenced,
-    projectUrls: projectRegistryUrls(components),
-    envReferences: envVarReferences(components),
-    lookupSecret: get,
-  });
-  const run = deps.runCli ?? runUiKitCli;
-  const result = await run({
-    kit: 'shadcn',
-    args,
-    cwd: input.cwd,
-    writes: shadcnCommandWrites(input.command),
-    // Resolve the package outside the project and point the CLI back at it:
-    // npm reads a `.npmrc` from its cwd and npx prefers a binary from the
-    // cwd's node_modules, so with the project as cwd the REPOSITORY chose
-    // which code ran. Measured: it went to the registry the repo named.
-    resolveIn: 'isolated',
-    cwdFlag: shadcnCommandAcceptsCwd(input.command),
-    ...(Object.keys(env).length > 0 ? { extraEnv: env } : {}),
-    ...(input.signal ? { signal: input.signal } : {}),
-  });
+  // One writer per project, held from the components.json edit to the CLI's
+  // exit. Claimed inside `runUiKitCli`, a retry that was about to be refused
+  // with PROJECT_BUSY had already rewritten the config under the install that
+  // was still running.
+  const releaseWrite = writes ? claimUiKitProjectWrite(input.cwd) : () => {};
+  let result: Awaited<ReturnType<UiKitCliRunner>>;
+  let scoped: ReturnType<typeof buildScopedRegistryEnv>;
+  try {
+    if (needed.length > 0 && writes) ensureProjectRegistries(input.cwd, needed);
+    const components = readComponentsJson(input.cwd);
+    scoped = buildScopedRegistryEnv({
+      registries,
+      referenced,
+      projectUrls: projectRegistryUrls(components),
+      envReferences: envVarReferences(components),
+      lookupSecret: get,
+    });
+    const { env } = scoped;
+    const run = deps.runCli ?? runUiKitCli;
+    // Settles only once the child is gone, so the slot is released after it.
+    result = await run({
+      kit: 'shadcn',
+      args,
+      cwd: input.cwd,
+      writes,
+      ...(writes ? { projectWriteClaimed: true } : {}),
+      // Resolve the package outside the project and point the CLI back at it:
+      // npm reads a `.npmrc` from its cwd and npx prefers a binary from the
+      // cwd's node_modules, so with the project as cwd the REPOSITORY chose
+      // which code ran. Measured: it went to the registry the repo named.
+      resolveIn: 'isolated',
+      cwdFlag: shadcnCommandAcceptsCwd(input.command),
+      ...(Object.keys(env).length > 0 ? { extraEnv: env } : {}),
+      ...(input.signal ? { signal: input.signal } : {}),
+    });
+  } finally {
+    releaseWrite();
+  }
+  const { missing, conflicts, unmapped, hijacked, unreferenced } = scoped;
   return {
     ok: result.code === 0,
     stdout: result.stdout,

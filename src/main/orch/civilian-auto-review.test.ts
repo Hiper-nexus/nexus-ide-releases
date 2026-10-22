@@ -747,17 +747,23 @@ describe('strict completion applicability from project declarations', () => {
     };
     const styleMission = missionFixture({ id: 'mission-ceremony', intentContract: { goal: 'Ajustar a cor do botão primário na tela de login' } as Mission['intentContract'] });
 
-    it('does not run the compiler and reports it not applicable, naming the profile', async () => {
+    it('runs neither the compiler nor the regression gate and says so, naming the profile', async () => {
       await withTypedProject(async root => {
         __resetCivilianAutoReviewForTests();
         const typecheck = vi.fn(healthySensors.typecheck);
+        const regressionGate = vi.fn(async () => regressionResult({}));
         const result = await enforceCivilianAutoReview({ mission: styleMission, scope: { ...scope, rootRealPath: root },
           productFiles: ['src/theme.css'], candidatePaths: ['src/theme.css', 'public/logo.svg'], completionBaseSha: BASE_SHA, liveOrchestratorSessionId: 'maestro' },
-        { ...deps().dependencies, typecheck });
+        { ...deps().dependencies, typecheck, regressionGate });
         expect(typecheck).not.toHaveBeenCalled();
+        expect(regressionGate).not.toHaveBeenCalled();
         if (result.kind !== 'approved') throw new Error(`expected approval, got ${result.kind}`);
         expect(result.verification?.checks.find(check => check.kind === 'typecheck')?.status).toBe('not-applicable');
-        expect(result.note).toMatch(/Perfil de cerimônia: trabalho visual.*typecheck dispensado/u);
+        // The completion certificate reads "no regression" as unverified unless
+        // the receipt says the tests did not apply.
+        expect(result.verification?.regression).toBeNull();
+        expect(result.verification?.regressionApplicable).toBe(false);
+        expect(result.note).toMatch(/Perfil de cerimônia: trabalho visual.*typecheck e testes dispensados/u);
       });
     });
 
@@ -768,10 +774,12 @@ describe('strict completion applicability from project declarations', () => {
       await withTypedProject(async root => {
         __resetCivilianAutoReviewForTests();
         const typecheck = vi.fn(healthySensors.typecheck);
+        const regressionGate = vi.fn(async () => regressionResult({}));
         const result = await enforceCivilianAutoReview({ mission: styleMission, scope: { ...scope, rootRealPath: root },
           productFiles: ['src/theme.css'], ...(candidatePaths ? { candidatePaths } : {}), completionBaseSha: BASE_SHA },
-        { ...deps().dependencies, typecheck });
+        { ...deps().dependencies, typecheck, regressionGate });
         expect(typecheck).toHaveBeenCalledOnce();
+        expect(regressionGate).toHaveBeenCalledOnce();
         if (result.kind !== 'approved') throw new Error(`expected approval, got ${result.kind}`);
         expect(result.note).not.toContain('Perfil de cerimônia');
       });

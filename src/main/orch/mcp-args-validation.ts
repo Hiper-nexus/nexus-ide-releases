@@ -448,7 +448,12 @@ const schemas = new Map<string, z.ZodType<Record<string, unknown>>>([
         theme: z.enum(['light', 'dark']).optional(),
         image: z.boolean().optional(),
       })
-      .strict(),
+      .strict()
+      .superRefine((value, ctx) => {
+        if (value.fullPage === true && value.ref !== undefined) {
+          ctx.addIssue({ code: 'custom', message: 'use either fullPage or ref, not both' });
+        }
+      }),
   ],
   [
     'browser_responsive',

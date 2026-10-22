@@ -206,6 +206,13 @@ export interface UiKitCliRunRequest {
   /** True when the command writes files / installs dependencies. */
   readonly writes?: boolean;
   /**
+   * The caller already holds this project's write slot and releases it once
+   * this run settles. Set by a caller that edits project config BEFORE the
+   * run (shadcn's components.json), so a refused retry cannot touch it while
+   * another install is still going.
+   */
+  readonly projectWriteClaimed?: boolean;
+  /**
    * Where the PACKAGE is resolved from.
    *
    * `isolated` spawns in a throwaway Nexus-owned directory, which is the only
@@ -745,7 +752,7 @@ export const runUiKitCli: UiKitCliRunner = (request) =>
     // Released when the child is really gone, never on a timeout alone: the
     // process group is still writing until it exits.
     let releaseWrite: () => void = () => {};
-    if (writes) {
+    if (writes && request.projectWriteClaimed !== true) {
       try {
         releaseWrite = claimUiKitProjectWrite(cwd);
       } catch (error) {

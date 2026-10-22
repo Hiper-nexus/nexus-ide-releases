@@ -1112,6 +1112,36 @@ describe('browser manager actions (after/changed, errors, judge, text)', () => {
       destroyBrowser(PANE, scope);
     });
 
+    it.each([
+      ['a wide page', { width: 20000, height: 3000 }],
+      ['a tall page', { width: 1280, height: 20000 }],
+    ])('marks %s past the capture limit as truncated, with its real size', async (_label, page) => {
+      await boot();
+      state.guest.debugger.sendCommand.mockImplementation(async (...call: unknown[]): Promise<unknown> => {
+        const [method] = call as [string];
+        if (method === 'Page.getLayoutMetrics') return { cssContentSize: page };
+        if (method === 'Page.captureScreenshot') return { data: Buffer.from('full').toString('base64') };
+        return {};
+      });
+      const shot = await captureBrowserScreenshot(PANE, scope, undefined, { fullPage: true });
+      expect(shot).toMatchObject({
+        truncated: true,
+        capturedCss: { width: Math.min(page.width, 16384), height: Math.min(page.height, 16384) },
+        viewport: page,
+      });
+      destroyBrowser(PANE, scope);
+    });
+
+    it('refuses fullPage together with an element ref instead of mislabelling the capture', async () => {
+      await boot();
+      state.guest.capturePage.mockClear();
+      await expect(
+        captureBrowserScreenshot(PANE, scope, undefined, { fullPage: true, ref: 'e1' }),
+      ).rejects.toThrow(/either fullPage or ref/);
+      expect(state.guest.capturePage).not.toHaveBeenCalled();
+      destroyBrowser(PANE, scope);
+    });
+
     it('renders the dark theme for the capture and puts the page back afterwards', async () => {
       await boot();
       const media: unknown[] = [];

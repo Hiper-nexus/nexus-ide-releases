@@ -518,8 +518,12 @@ export async function enforceCivilianAutoReview(
     launch(() => (dependencies.testCoverage ?? sensors.runTestCoverageSensor)(root, changedFiles)),
   ]));
   const mechanicalBlocking = mechanicalToReviewFindings(mechanical);
-  const regressionGate =
-    dependencies.regressionGate !== undefined
+  // A non-executable complete diff drops the tests with the typecheck: the gate
+  // would spend the completion budget (or time out and defer) to run nothing.
+  const testsDropped = ceremony.dropped.includes('tests');
+  const regressionGate = testsDropped
+    ? null
+    : dependencies.regressionGate !== undefined
       ? dependencies.regressionGate
       : strictCompletion || isRegressionGateEnabled()
         ? runRegressionGate
@@ -602,7 +606,7 @@ export async function enforceCivilianAutoReview(
         checks: mechanical.map(check => ({ kind: check.kind, summary: check.summary,
           status: check.status === 'unavailable' && !applicable(check.kind) ? 'not-applicable' : check.status })),
         regression,
-        regressionApplicable: regression ? !noApplicableTests
+        regressionApplicable: testsDropped ? false : regression ? !noApplicableTests
           : packagePresent || ['tsconfig.json', 'pyproject.toml', 'pytest.ini', 'Cargo.toml', 'go.mod', 'Makefile'].some(has) ||
             changedFiles.some(file => /(?:^|[/.])(?:tests?|spec)[/.]|\.(?:test|spec)\./i.test(file)),
       },
