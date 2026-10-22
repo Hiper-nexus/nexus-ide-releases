@@ -334,12 +334,14 @@ saber isto antes de mexer:
   continua sendo a única que renova.
 - **Spawn e cota usam a mesma régua de re-login (F-1637).** Um run da CLI que
   não renovou NÃO prova sessão morta. Sem prova, o escopo gerenciado abre o
-  pane como `renewable` (blob fixado, a CLI do pane renova), desde que a
-  linhagem não esteja em outro store nem tenha falhado num refresh recente.
-  Prova é a CLI recusar a sessão ou não haver refresh token no prazo; aí
-  `markClaudeSessionExpired` grava o cooldown de auth e a linha da conta certa
-  oferece «Entrar novamente». O spawn dizia "expirou" de uma conta que o painel
-  mostrava "conectado".
+  pane como `renewable` (blob fixado, a CLI do pane renova) só com o MESMO
+  refresh token que o cofre provou para a conta, fora de outro store e sem
+  refresh falho recente: o relógio não diz de quem é um token vencido. Prova
+  é a CLI recusar ESSA linhagem (store legível depois do run) ou access token
+  vencido sem refresh token no prazo; 401 sobre token no prazo não prova. Com
+  prova, `markClaudeSessionExpired` grava o cooldown de auth (nunca por cima de
+  um cooldown vivo) e a recusa leva `relogin` ao cartão "Não subiu", cujo botão
+  pede o «Entrar novamente» do `AccountsManager` (nunca um login paralelo).
 - **«Entrar novamente» da mesma conta abre o login mesmo se o snapshot vivo
   falhar.** O aviso «Não consegui guardar a conta atual» continua quando o
   cadastro de uma segunda conta não consegue gravar a primeira, e quando o

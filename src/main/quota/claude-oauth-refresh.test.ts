@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  claudeAccessTokenExpired,
   claudeBlobIsRenewable,
   CLAUDE_CODE_CLIENT_ID,
   CLAUDE_OAUTH_TOKEN_URL,
@@ -268,5 +269,18 @@ describe('claudeBlobIsRenewable (F-1416)', () => {
     expect(claudeBlobIsRenewable(blob({ accessToken: 'a', expiresAt: now - 1 }), now)).toBe(false);
     expect(claudeBlobIsRenewable(blob({ accessToken: 'a', refreshToken: 'r', refreshTokenExpiresAt: now }), now)).toBe(false);
     expect(claudeBlobIsRenewable('not json', now)).toBe(false);
+  });
+});
+
+describe('claudeAccessTokenExpired (F-1637)', () => {
+  const blob = (expiresAt?: unknown) =>
+    JSON.stringify({ claudeAiOauth: { accessToken: 'a', ...(expiresAt === undefined ? {} : { expiresAt }) } });
+
+  it('só o relógio vencido conta; sem expiresAt confiável não há juízo', () => {
+    expect(claudeAccessTokenExpired(blob(1_000), 1_000)).toBe(true);
+    expect(claudeAccessTokenExpired(blob(2_000), 1_000)).toBe(false);
+    expect(claudeAccessTokenExpired(blob(), 1_000)).toBe(false);
+    expect(claudeAccessTokenExpired(blob('1000'), 5_000)).toBe(false);
+    expect(claudeAccessTokenExpired('not json', 5_000)).toBe(false);
   });
 });
