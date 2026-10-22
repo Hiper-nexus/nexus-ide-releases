@@ -12,10 +12,14 @@ export interface AccountReloginRequest {
   readonly accountLabel: string;
 }
 
+/** O mesmo teto do rótulo de conta (`account-ipc.ts`), contado em caracteres. */
+export const ACCOUNT_RELOGIN_LABEL_MAX_CHARS = 128;
+
 const accountReloginSchema = z.object({
   adapterId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/),
   accountId: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/),
-  accountLabel: z.string().min(1).max(120),
+  accountLabel: z.string().min(1).max(ACCOUNT_RELOGIN_LABEL_MAX_CHARS * 2)
+    .refine((label) => Array.from(label).length <= ACCOUNT_RELOGIN_LABEL_MAX_CHARS),
 }).strict();
 
 /** Lista de permissão: o que não casa com o contrato não vira botão. */

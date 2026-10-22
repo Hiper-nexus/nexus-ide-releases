@@ -217,7 +217,7 @@ import { isCurrentProcessSmokeTest } from '../smoke-core';
 import type { ApiQuotaKeyRequest } from '../quota/provider-live-usage';
 import { activateAgyAccountForSpawn } from './agy-keyring-activation';
 import { prepareMinimaxNodeRuntime } from '../adapters/minimax-node-runtime';
-import type { AccountReloginRequest } from '../../shared/account-relogin';
+import { ACCOUNT_RELOGIN_LABEL_MAX_CHARS, type AccountReloginRequest } from '../../shared/account-relogin';
 
 /**
  * Provider configuration hub: per-adapter enable/disable, binary-path
@@ -2131,14 +2131,18 @@ export async function prepareProviderSpawnAuthoritative(
       if (identity !== 'match' && identity !== 'renewable') {
         // Expirada ou de outra conta: as duas se resolvem entrando de novo
         // NESSA conta, e o cartão do pane oferece isso com um clique.
+        // O botão só sai com prova: sem ela (`auth-unproven`) o pane recusa e
+        // manda tentar de novo, sem oferecer um login que talvez não precise.
         const relogin = identity === 'mismatch' || identity === 'auth-expired'
-          ? { relogin: { adapterId, accountId: account.id, accountLabel: account.label } }
+          ? { relogin: { adapterId, accountId: account.id, accountLabel: reloginLabel(account.label) } }
           : {};
         return { ok: false as const, ...relogin, error: identity === 'mismatch'
           ? `A credencial de “${account.label}” pertence a outra conta Claude — entre novamente antes de abrir um pane.`
           : identity === 'auth-expired'
             ? `A sessão de “${account.label}” expirou — use «Entrar novamente» nessa conta em Configurações › Contas de IA.`
-            : `Não foi possível verificar a identidade de “${account.label}” — tente novamente.` };
+            : identity === 'auth-unproven'
+              ? `Não deu para confirmar a sessão de “${account.label}” agora — tente abrir o pane de novo; se continuar, use «Entrar novamente» nessa conta em Configurações › Contas de IA.`
+              : `Não foi possível verificar a identidade de “${account.label}” — tente novamente.` };
       }
       const current = getAccount(account.id);
       if (!current || current.adapterId !== account.adapterId ||
@@ -2171,6 +2175,11 @@ export async function prepareProviderSpawnAuthoritative(
     noteLiveIdentity('agy', agySelected.id);
   }
   return prepared;
+}
+
+/** O rótulo vai ao cartão do pane inteiro até o limite da conta (128). */
+function reloginLabel(label: string): string {
+  return Array.from(label).slice(0, ACCOUNT_RELOGIN_LABEL_MAX_CHARS).join('');
 }
 
 /** Backward-compatible strict accessor for non-IPC callers. */

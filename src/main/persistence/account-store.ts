@@ -640,8 +640,12 @@ export function claudeAccountIsNativeLogin(
  * vencido pelo relógio, refresh token no prazo, linhagem só desta conta e no
  * escopo cuja CLI a renova. Ninguém provou sessão morta, então o pane abre e
  * a CLI dele renova sob o próprio lock — a mesma régua da cota (F-1416).
+ * `auth-expired` é sessão PROVADA morta (pede login, com o botão do pane);
+ * `auth-unproven` recusa o pane sem essa prova (401 sobre token no prazo,
+ * refresh que falhou agora, linhagem que o cofre não provou).
  */
-export type ClaudeSpawnIdentity = 'match' | 'renewable' | 'mismatch' | 'auth-expired' | 'unavailable';
+export type ClaudeSpawnIdentity =
+  | 'match' | 'renewable' | 'mismatch' | 'auth-expired' | 'auth-unproven' | 'unavailable';
 
 /** Validate the same scoped credential the CLI will read before a managed Claude spawn. */
 export async function verifyManagedClaudeAccountForSpawn(
@@ -699,7 +703,7 @@ export async function verifyManagedClaudeAccountForSpawn(
   }
   if (result === 'auth-expired') {
     const expiry = expiredClaudeSpawnVerdict(accountId, credential, originalSaved, managed, refusedLineage);
-    result = expiry.verdict;
+    result = expiry.verdict === 'renewable' || expiry.provedDead ? expiry.verdict : 'auth-unproven';
     // Um re-login que chegou durante a verificação é o estado mais novo.
     if (expiry.provedDead && sameClaudeAccountIdentity(account) &&
         getSecret(CRED_PREFIX + accountId) === originalSaved) {

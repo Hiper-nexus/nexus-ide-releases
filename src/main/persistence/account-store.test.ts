@@ -953,7 +953,7 @@ describe('renovação morta veta failover no escuro', () => {
     deps.refreshBlob.mockResolvedValue(oauthBlob('rotated-by-nexus'));
     deps.probeClaudeIdentity.mockResolvedValue('auth-expired');
 
-    expect(await verifyManagedClaudeAccountForSpawn(a.id)).toBe('auth-expired');
+    expect(await verifyManagedClaudeAccountForSpawn(a.id)).toBe('auth-unproven');
     expect(deps.refreshBlob).not.toHaveBeenCalled();
     // Sem herdar config dir ou token de outra conta do processo Main (F-1416).
     expect(deps.probeClaudeCliUsage).toHaveBeenCalledWith(expect.objectContaining({ nativeProfile: true }));
@@ -965,7 +965,7 @@ describe('renovação morta veta failover no escuro', () => {
     deps.refreshBlob.mockResolvedValueOnce(oauthBlob('fresh'));
     deps.probeClaudeIdentity.mockResolvedValue('auth-expired');
 
-    expect(await verifyManagedClaudeAccountForSpawn(a.id)).toBe('auth-expired');
+    expect(await verifyManagedClaudeAccountForSpawn(a.id)).toBe('auth-unproven');
     expect(await ensureFreshClaudeSubscription(a.id)).toBe(false);
     // Sem escopo gerenciado não há CLI dona da renovação para chamar.
     expect(deps.probeClaudeCliUsage).not.toHaveBeenCalled();
@@ -1087,7 +1087,7 @@ describe('renovação morta veta failover no escuro', () => {
       deps.probeClaudeIdentity.mockResolvedValue('auth-expired');
       const verified = vi.fn();
 
-      expect(await verifyManagedClaudeAccountForSpawn(a.id, verified)).toBe('auth-expired');
+      expect(await verifyManagedClaudeAccountForSpawn(a.id, verified)).toBe('auth-unproven');
       expect(verified).not.toHaveBeenCalled();
       // Sem prova de sessão morta: nenhuma marca de 12 h.
       expect(listAccounts('claude').find((i) => i.id === a.id)?.cooldownUntil).toBeUndefined();
@@ -1163,7 +1163,7 @@ describe('renovação morta veta failover no escuro', () => {
       deps.managedProfiles.set(a.id, deps.secrets.get(`acctcred:${a.id}`)!);
       deps.probeClaudeIdentity.mockResolvedValue('auth-expired');
 
-      expect(await verifyManagedClaudeAccountForSpawn(a.id)).toBe('auth-expired');
+      expect(await verifyManagedClaudeAccountForSpawn(a.id)).toBe('auth-unproven');
       expect(listAccounts('claude').find((i) => i.id === a.id)?.cooldownUntil).toBeUndefined();
     });
 
@@ -1174,7 +1174,7 @@ describe('renovação morta veta failover no escuro', () => {
       deps.probeClaudeIdentity.mockResolvedValue('auth-expired');
 
       // A CLI do pane renovaria a cópia e derrubaria o login nativo (F-645).
-      expect(await verifyManagedClaudeAccountForSpawn(a.id)).toBe('auth-expired');
+      expect(await verifyManagedClaudeAccountForSpawn(a.id)).toBe('auth-unproven');
     });
 
     it('sem refresh token no prazo é re-login de verdade: marca a conta', async () => {
@@ -1198,7 +1198,7 @@ describe('renovação morta veta failover no escuro', () => {
       expect(hasRecentClaudeRefreshFailure(a.id)).toBe(true);
       deps.managedProfiles.set(a.id, oauthBlob('b-expired'));
 
-      expect(await verifyManagedClaudeAccountForSpawn(a.id)).toBe('auth-expired');
+      expect(await verifyManagedClaudeAccountForSpawn(a.id)).toBe('auth-unproven');
     });
 
     it('renovação que devolve outra conta é mismatch, nunca match', async () => {
@@ -1221,7 +1221,7 @@ describe('renovação morta veta failover no escuro', () => {
       deps.needsRefresh.mockReturnValue(null);
       deps.probeClaudeIdentity.mockResolvedValue('auth-expired');
 
-      expect(await verifyManagedClaudeAccountForSpawn(a.id)).toBe('auth-expired');
+      expect(await verifyManagedClaudeAccountForSpawn(a.id)).toBe('auth-unproven');
       expect(deps.probeClaudeCliUsage).not.toHaveBeenCalled();
     });
 

@@ -342,6 +342,7 @@ saber isto antes de mexer:
   prova, `markClaudeSessionExpired` grava o cooldown de auth (nunca por cima de
   um cooldown vivo) e a recusa leva `relogin` ao cartão "Não subiu", cujo botão
   pede o «Entrar novamente» do `AccountsManager` (nunca um login paralelo).
+  Recusa sem prova é `auth-unproven`: manda tentar de novo e não tem botão.
 - **«Entrar novamente» da mesma conta abre o login mesmo se o snapshot vivo
   falhar.** O aviso «Não consegui guardar a conta atual» continua quando o
   cadastro de uma segunda conta não consegue gravar a primeira, e quando o
