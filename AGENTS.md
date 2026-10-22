@@ -2111,7 +2111,15 @@ O que mudou — e o que NÃO mudou:
   (exceção estreita à doutrina 09/09: é assinatura de sequestro, não
   cerimônia); tudo o mais → passa. Read-only e o conjunto isento
   (`GUARD_EXEMPT_TOOLS`: handoff_*, heartbeat, clarify, waits, reads, judge,
-  rank, tool_pick, route_*, pane_close — F-709) nunca são julgados. Args vão compactados
+  rank, tool_pick, route_*, pane_close — F-709) nunca são julgados.
+  `git_add`/`git_commit` (`ISOLATED_WRITER_GUARD_EXEMPT_TOOLS`) só são isentos
+  quando `isIsolatedWriterContext(ctx)` vale — o MESMO predicado do handler,
+  que confina a chamada à worktree e à branch `nexus/…` do registro (F-563);
+  no checkout de coordenação, na worktree compartilhada da aba ou do
+  orquestrador seguem julgados. Em 4 semanas o guard deu 1.057 respostas
+  (1.056 pass, 1 confirm, 0 deny), 22,6% do gasto, ~0,35 s por efeito.
+  `memory_retain` NÃO é isento: o texto retido volta ao contexto de workers
+  futuros e a quarentena do F-808 só cobre sessão exposta à web. Args vão compactados
   (string > 300 chars vira `<N chars>`, JSON ≤ 2 KB, redigidos) e NUNCA
   entram no decision log. Cache de veredito por sessão+args por 60 s.
   Limiar 0.35 medido em 17/09 com jev-1.13.0 (`git push --force main` numa missão de login
