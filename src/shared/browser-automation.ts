@@ -51,6 +51,12 @@ export interface BrowserElementDescriptor {
   disabled?: boolean;
   checked?: boolean;
   editable?: boolean;
+  /** `aria-invalid="true"` — the page marked this field as failing validation. */
+  invalid?: boolean;
+  /** `aria-expanded` of a menu button, disclosure or combobox. */
+  expanded?: boolean;
+  /** `aria-selected` of a tab, option or tree item. */
+  selected?: boolean;
 }
 
 /** Scroll position snapshot reported by page-side `read`/`scroll`. */

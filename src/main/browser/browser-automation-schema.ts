@@ -11,6 +11,9 @@ export const browserElementDescriptorSchema = z
     disabled: z.boolean().optional(),
     checked: z.boolean().optional(),
     editable: z.boolean().optional(),
+    invalid: z.boolean().optional(),
+    expanded: z.boolean().optional(),
+    selected: z.boolean().optional(),
   })
   .strict();
 

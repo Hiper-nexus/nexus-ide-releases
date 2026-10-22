@@ -108,20 +108,53 @@ const DESIGN_GENERATION_PATTERN =
 
 type BrowserDomWindow = Window & typeof globalThis;
 
+// The ARIA widget roles below are what component kits (Radix, shadcn, MUI,
+// Headless UI) render instead of native controls: a menu opens into
+// `menuitem`s, a tab strip is `tab`s, a toggle is a `switch`. Without them
+// the agent could open a dropdown and then not see a single item in it.
+// `tabindex="-1"` is only programmatic focus (menu/dialog containers) and is
+// left out; a real widget inside one still matches by its role.
 const INTERACTIVE_SELECTOR = [
   'a[href]',
   'button',
   'input:not([type="hidden"])',
   'textarea',
   'select',
+  'option',
   'summary',
   '[role="button"]',
   '[role="link"]',
   '[role="checkbox"]',
   '[role="radio"]',
   '[role="textbox"]',
+  '[role="searchbox"]',
+  '[role="menuitem"]',
+  '[role="menuitemcheckbox"]',
+  '[role="menuitemradio"]',
+  '[role="option"]',
+  '[role="tab"]',
+  '[role="switch"]',
+  '[role="combobox"]',
+  '[role="slider"]',
+  '[role="spinbutton"]',
+  '[role="treeitem"]',
+  '[tabindex]:not([tabindex="-1"])',
   '[contenteditable="true"]',
+  '[contenteditable=""]',
+  '[contenteditable="plaintext-only"]',
 ].join(',');
+
+/**
+ * A native `<option>` of a collapsed dropdown is not something to click: the
+ * popup is drawn by the browser, outside the DOM. Those options are reached
+ * through `select`; only options of an always-open list box are elements.
+ */
+function isCollapsedSelectOption(element: Element): boolean {
+  if (element.tagName.toLowerCase() !== 'option') return false;
+  const select = element.closest('select') as HTMLSelectElement | null;
+  if (!select) return true;
+  return !select.multiple && (select.size ?? 0) <= 1;
+}
 
 const SKIP_TEXT_SELECTOR = [
   'script',
@@ -268,6 +301,11 @@ function collectVisibleText(win: BrowserDomWindow, root: Node, maxChars: number)
   };
 }
 
+function isContentEditableHost(element: Element): boolean {
+  const value = element.getAttribute('contenteditable');
+  return value === 'true' || value === '' || value === 'plaintext-only';
+}
+
 function implicitRole(element: Element): string {
   const explicit = normalizedText(element.getAttribute('role') ?? '');
   if (explicit) return explicit.toLowerCase();
@@ -283,7 +321,7 @@ function implicitRole(element: Element): string {
     if (type === 'button' || type === 'submit' || type === 'reset') return 'button';
     return 'textbox';
   }
-  if (element.getAttribute('contenteditable') === 'true') return 'textbox';
+  if (isContentEditableHost(element)) return 'textbox';
   return tag;
 }
 
@@ -432,15 +470,40 @@ export function createBrowserAutomation(
     }
     if (tag === 'input' && (type === 'checkbox' || type === 'radio')) {
       descriptor.checked = (element as HTMLInputElement).checked;
+    } else {
+      // ARIA widgets (switch, menuitemcheckbox, custom checkbox) carry their
+      // state in aria-checked instead of a native input.
+      const ariaChecked = element.getAttribute('aria-checked');
+      if (ariaChecked === 'true' || ariaChecked === 'false') {
+        descriptor.checked = ariaChecked === 'true';
+      }
+    }
+    if (element.getAttribute('aria-invalid') === 'true') descriptor.invalid = true;
+    const ariaExpanded = element.getAttribute('aria-expanded');
+    if (ariaExpanded === 'true' || ariaExpanded === 'false') {
+      descriptor.expanded = ariaExpanded === 'true';
+    }
+    const ariaSelected = element.getAttribute('aria-selected');
+    if (ariaSelected === 'true' || ariaSelected === 'false') {
+      descriptor.selected = ariaSelected === 'true';
+    } else if (tag === 'option') {
+      descriptor.selected = (element as HTMLOptionElement).selected;
     }
     if (
       (tag === 'input' && !NON_EDITABLE_INPUT_TYPES.has(type)) ||
       tag === 'textarea' ||
-      element.getAttribute('contenteditable') === 'true'
+      isContentEditableHost(element)
     ) {
       descriptor.editable = !isSensitiveTree(element);
     }
     return descriptor;
+  }
+
+  /** Interactive candidates in document order (fixed selector, never page input). */
+  function interactiveElements(): Element[] {
+    return [...win.document.querySelectorAll(INTERACTIVE_SELECTOR)].filter(
+      (element) => !isCollapsedSelectOption(element),
+    );
   }
 
   function read(args: Record<string, unknown>): BrowserPageReadResult {
@@ -451,7 +514,7 @@ export function createBrowserAutomation(
     const text = body
       ? collectVisibleText(win, body, maxChars)
       : { text: '', truncated: false };
-    const candidates = [...win.document.querySelectorAll(INTERACTIVE_SELECTOR)];
+    const candidates = interactiveElements();
     const visible = candidates
       .filter((element) => isElementVisible(win, element))
       .slice(0, maxElements);
@@ -552,7 +615,7 @@ export function createBrowserAutomation(
     // The query NEVER reaches a selector: candidates come from the fixed
     // INTERACTIVE_SELECTOR and are scored by accessible name / href path.
     const scored: BrowserFindMatch[] = [];
-    for (const element of win.document.querySelectorAll(INTERACTIVE_SELECTOR)) {
+    for (const element of interactiveElements()) {
       if (!isElementVisible(win, element)) continue;
       const descriptor = describe(element);
       if (role && descriptor.role !== role) continue;
@@ -837,7 +900,7 @@ export function createBrowserAutomation(
       )?.set;
       if (!setter) throw new Error('browser textarea setter is unavailable');
       setter.call(element, text);
-    } else if (element.getAttribute('contenteditable') === 'true') {
+    } else if (isContentEditableHost(element)) {
       element.textContent = text;
     } else {
       throw new Error('browser element is not a fillable text field');

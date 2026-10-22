@@ -437,6 +437,67 @@ describe('isolated browser automation', () => {
     expect(invalid?.role).toBe('textbox');
   });
 
+  it('describes invalid, expanded, selected and aria-checked state on elements', async () => {
+    const dom = new JSDOM(
+      `<!doctype html><body>
+        <input aria-invalid="true" aria-label="CPF">
+        <button aria-expanded="true">Conta</button>
+        <div role="tab" aria-selected="true">Planos</div>
+        <button role="switch" aria-checked="true">Modo escuro</button>
+      </body>`,
+      { url: 'https://example.test/', pretendToBeVisual: true },
+    );
+    const automation = createBrowserAutomation(dom.window as unknown as BrowserDomWindow);
+    const read = (await automation.run('read', {})) as {
+      elements: Array<{ name: string; invalid?: boolean; expanded?: boolean; selected?: boolean; checked?: boolean }>;
+    };
+    const byName = (name: string) => read.elements.find((element) => element.name === name);
+    expect(byName('CPF')?.invalid).toBe(true);
+    expect(byName('Conta')?.expanded).toBe(true);
+    expect(byName('Planos')?.selected).toBe(true);
+    expect(byName('Modo escuro')?.checked).toBe(true);
+  });
+
+  it('lists ARIA widgets that component kits render instead of native controls', async () => {
+    const dom = new JSDOM(
+      `<!doctype html><body>
+        <div role="menu">
+          <div role="menuitem" tabindex="-1">Perfil</div>
+          <div role="menuitemcheckbox" aria-checked="false">Notificações</div>
+          <div role="menuitemradio" aria-checked="true">Português</div>
+        </div>
+        <div role="tablist"><div role="tab">Mensal</div></div>
+        <div role="listbox"><div role="option">Brasil</div></div>
+        <div role="combobox">Escolha o país</div>
+        <div role="slider" aria-label="Volume"></div>
+        <div role="treeitem">src</div>
+        <div tabindex="0">Cartão clicável</div>
+        <div tabindex="-1">Contêiner de foco</div>
+        <div contenteditable="">Editor</div>
+        <select aria-label="Estado"><option>SP</option><option>RJ</option></select>
+        <select aria-label="Tags" multiple><option>novo</option></select>
+      </body>`,
+      { url: 'https://example.test/', pretendToBeVisual: true },
+    );
+    const automation = createBrowserAutomation(dom.window as unknown as BrowserDomWindow);
+    const read = (await automation.run('read', {})) as {
+      elements: Array<{ name: string; role: string; editable?: boolean }>;
+    };
+    const names = read.elements.map((element) => element.name);
+    for (const name of ['Perfil', 'Notificações', 'Português', 'Mensal', 'Brasil',
+      'Escolha o país', 'Volume', 'src', 'Cartão clicável', 'Editor', 'Estado', 'novo']) {
+      expect(names).toContain(name);
+    }
+    // Container focus and the options of a collapsed dropdown are not targets.
+    expect(names).not.toContain('Contêiner de foco');
+    expect(names).not.toContain('SP');
+    expect(read.elements.find((element) => element.name === 'Editor')?.editable).toBe(true);
+    const found = (await automation.run('find', { text: 'perfil', role: 'menuitem' })) as {
+      matches: Array<{ name: string }>;
+    };
+    expect(found.matches.map((match) => match.name)).toEqual(['Perfil']);
+  });
+
   it('find scores accessible names and filters by role without CSS selectors', async () => {
     const dom = new JSDOM(
       `<!doctype html><body>
