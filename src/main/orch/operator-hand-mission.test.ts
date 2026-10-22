@@ -23,7 +23,7 @@ describe('aviso ao pane promovido a orquestrador da aba', () => {
     const notice = tabMissionLeaderNotice('Missão · Login');
     expect(notice).toContain(MAESTRO_STANDING_DOCTRINE.replace(/\n/gu, ' '));
     expect(notice).toContain('todo trabalho do objetivo');
-    expect(notice).toContain('Não implemente nem revise você mesmo');
+    expect(notice).toContain('Não implemente nem revise, salvo pedido do operador');
     expect(notice).not.toContain('\n');
   });
 

@@ -8,6 +8,7 @@ import {
   closeAfterNonSuccessHandoffAck,
   disarmAutoCloseOnHandoff,
   NON_SUCCESS_IDLE_CLOSE_MS,
+  SUCCESS_ACK_DELIVERY_CEILING_MS,
   SUCCESS_ACK_IDLE_CLOSE_MS,
   selectScopedPaneCloseTargets,
   scheduleAutoCloseAfterHandoff,
@@ -433,6 +434,22 @@ describe("F-1409: entrega não-success fecha no ACK ou na rede de segurança", (
     await vi.advanceTimersByTimeAsync(SUCCESS_ACK_IDLE_CLOSE_MS - 1);
     expect(close).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(2);
+    expect(close).toHaveBeenCalledWith("pane-w", "sess-w");
+  });
+
+  // F-1634: o `success` esperava o aceite, mas o prazo só começa quando a
+  // entrega sai de `queued` (M3) — então uma entrega presa deixava o pane de
+  // ~1 GB vivo sem prazo nenhum. Antes da mudança o `success` fechava na hora,
+  // e o `success` é o caso COMUM: o teto é obrigatório aqui.
+  it("entrega presa em queued não deixa o worker aberto para sempre", async () => {
+    const close = vi.fn(async (_paneId: string, _sessionId: string) => true);
+    armAutoCloseOnHandoff("sess-w", "pane-w");
+    scheduleAutoCloseAfterHandoff("sess-w", "success", paneOf, close, {
+      handoffId: "hoff-stuck",
+      awaitAckOnSuccess: true,
+      isDelivered: () => false,
+    });
+    await vi.advanceTimersByTimeAsync(SUCCESS_ACK_DELIVERY_CEILING_MS + SUCCESS_ACK_IDLE_CLOSE_MS + 1_000);
     expect(close).toHaveBeenCalledWith("pane-w", "sess-w");
   });
 

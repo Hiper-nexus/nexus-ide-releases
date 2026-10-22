@@ -173,6 +173,16 @@ export const NON_SUCCESS_IDLE_CLOSE_MS = 15 * 60_000;
  * (F-572): esperar os 15 min da rede não-success encheria a máquina.
  */
 export const SUCCESS_ACK_IDLE_CLOSE_MS = 3 * 60_000;
+/**
+ * F-1634: teto da espera pela ENTREGA do `success` que aguarda aceite.
+ *
+ * O prazo do aceite só começa quando a entrega sai de `queued` (M3). Numa
+ * entrega presa — Maestro morto, outbox parado — isso deixaria o pane vivo
+ * sem prazo nenhum, e `success` é o caso comum (antes fechava na hora).
+ * Estourado o teto, a janela de ociosidade corre mesmo sem entrega
+ * confirmada: sem Maestro para acusar, não há contexto a preservar.
+ */
+export const SUCCESS_ACK_DELIVERY_CEILING_MS = 10 * 60_000;
 
 /**
  * F-1409/M3: enquanto a entrega está `queued` (Maestro em turno longo), o
@@ -304,6 +314,11 @@ export function scheduleAutoCloseAfterHandoff(
         closePendingNonSuccess(sessionId, pending);
       };
       // O prazo só começa quando a entrega sai de `queued` (M3).
+      // F-1634: com aceite pendente a espera tem teto — ver
+      // SUCCESS_ACK_DELIVERY_CEILING_MS.
+      const deliveryDeadline = awaitAck
+        ? Date.now() + SUCCESS_ACK_DELIVERY_CEILING_MS
+        : null;
       const awaitDelivery = (): void => {
         if (pendingNonSuccessBySession.get(sessionId) !== pending) return;
         let delivered = true;
@@ -312,6 +327,10 @@ export function scheduleAutoCloseAfterHandoff(
         } catch {
           // Ledger indisponível agora: não fecha; tenta de novo na próxima volta.
           delivered = false;
+        }
+        if (!delivered && deliveryDeadline !== null && Date.now() >= deliveryDeadline) {
+          startIdleWindow();
+          return;
         }
         if (!delivered) {
           pending.timer = setTimeout(awaitDelivery, Math.min(NON_SUCCESS_DELIVERY_POLL_MS, idleMs));
