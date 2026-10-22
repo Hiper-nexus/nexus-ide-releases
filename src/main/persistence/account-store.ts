@@ -100,6 +100,7 @@ import {
   hasManagedClaudeAuth,
   managedClaudeAuthDirectory,
   managedClaudeAuthHasCredential,
+  managedClaudeScopeKeychainReadable,
   materializeManagedClaudeAuth,
   readManagedClaudeAuthAsync,
   removeManagedClaudeAuth,
@@ -574,7 +575,10 @@ async function renewManagedClaudeAuthThroughCli(accountId: string): Promise<Clau
   try {
     const probe = await probeClaudeCliUsage({ env: managedClaudeCliEnv(managedClaudeAuthDirectory(accountId)) });
     const blob = await readManagedClaudeAuthAsync(accountId, { fresh: true });
-    return { blob, refused: probe.failure === 'auth-expired' && blob !== null };
+    // O arquivo-espelho segue legível com o Keychain do escopo travado.
+    const refused = probe.failure === 'auth-expired' && blob !== null &&
+      await managedClaudeScopeKeychainReadable(accountId);
+    return { blob, refused };
   } catch {
     return { blob: null, refused: false };
   }
@@ -605,7 +609,9 @@ async function renewNativeClaudeAuthThroughCli(accountId: string): Promise<Claud
  */
 function markClaudeSessionExpired(accountId: string, source: string): void {
   const account = accounts.get(accountId);
-  if (!account || (account.cooldownUntil !== undefined && account.cooldownUntil > Date.now())) return;
+  // A quarentena de identidade vive no `lastError` e dura além do cooldown.
+  if (!account || isClaudeIdentityMismatch(account) ||
+      (account.cooldownUntil !== undefined && account.cooldownUntil > Date.now())) return;
   try {
     setCooldown(accountId, Date.now() + 12 * 60 * 60 * 1000, `oauth session expired — ${source}`);
   } catch {

@@ -5,7 +5,7 @@ import { useProductNavigationStore } from './product-navigation-store';
 /** Um pedido que ninguém atendeu nesse prazo não abre login depois. */
 export const ACCOUNT_RELOGIN_INTENT_TTL_MS = 60_000;
 
-interface PendingRelogin extends AccountReloginRequest {
+export interface PendingRelogin extends AccountReloginRequest {
   readonly requestedAt: number;
 }
 
@@ -28,10 +28,21 @@ export const useAccountReloginIntentStore = create<AccountReloginIntentState>()(
     const pending = get().pending;
     if (!pending || pending.adapterId !== adapterId) return null;
     set({ pending: null });
-    if (now - pending.requestedAt > ACCOUNT_RELOGIN_INTENT_TTL_MS) return null;
-    return { adapterId: pending.adapterId, accountId: pending.accountId, accountLabel: pending.accountLabel };
+    return freshAccountRelogin(pending, now);
   },
 }));
+
+/**
+ * O pedido ainda vale? Quem só o lê (o painel, que escolhe a CLI) também
+ * respeita o prazo: um pedido que ninguém atendeu não sequestra a navegação.
+ */
+export function freshAccountRelogin(
+  pending: PendingRelogin | null,
+  now = Date.now(),
+): AccountReloginRequest | null {
+  if (!pending || now - pending.requestedAt > ACCOUNT_RELOGIN_INTENT_TTL_MS) return null;
+  return { adapterId: pending.adapterId, accountId: pending.accountId, accountLabel: pending.accountLabel };
+}
 
 /** Clique no cartão do pane: leva a Contas de IA e pede o login dessa conta. */
 export function requestAccountRelogin(account: AccountReloginRequest): void {

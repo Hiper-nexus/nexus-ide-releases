@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   ACCOUNT_RELOGIN_INTENT_TTL_MS,
+  freshAccountRelogin,
   requestAccountRelogin,
   useAccountReloginIntentStore,
 } from './account-relogin-intent';
@@ -31,5 +32,13 @@ describe('pedido de login vindo do pane (F-1637)', () => {
     expect(useProductNavigationStore.getState().destination)
       .toMatchObject({ kind: 'settings', section: 'providers' });
     expect(useAccountReloginIntentStore.getState().pending).toMatchObject(CONTA_B);
+  });
+
+  it('pedido vencido deixa de valer para quem só o lê (a seleção do painel)', () => {
+    useAccountReloginIntentStore.getState().request(CONTA_B, 1_000);
+    const pending = useAccountReloginIntentStore.getState().pending;
+    expect(freshAccountRelogin(pending, 1_000 + ACCOUNT_RELOGIN_INTENT_TTL_MS)).toMatchObject(CONTA_B);
+    expect(freshAccountRelogin(pending, 1_000 + ACCOUNT_RELOGIN_INTENT_TTL_MS + 1)).toBeNull();
+    expect(freshAccountRelogin(null, 1_000)).toBeNull();
   });
 });

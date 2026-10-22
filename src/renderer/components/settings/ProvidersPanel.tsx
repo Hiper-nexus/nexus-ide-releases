@@ -9,7 +9,7 @@ import {
 import type { AdapterAuthStatus, CliAutoUpdateStatus, ProviderSettingsInfo } from '../../../shared/provider-settings-types';
 import { credentialLinkForKeySlot } from '../../../shared/credential-links';
 import { useAccountStore } from '../../state/account-store';
-import { useAccountReloginIntentStore } from '../../state/account-relogin-intent';
+import { freshAccountRelogin, useAccountReloginIntentStore } from '../../state/account-relogin-intent';
 import { useProviderStore } from '../../state/provider-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { useToastStore } from '../../state/toast-store';
@@ -1092,13 +1092,14 @@ export function ProvidersPanel() {
   // ela mora, para o AccountsManager atender o pedido.
   const pendingRelogin = useAccountReloginIntentStore((s) => s.pending);
   useEffect(() => {
-    if (!pendingRelogin) return;
+    const request = freshAccountRelogin(pendingRelogin);
+    if (!request) return;
     const tabWithIt = (['clis', 'login'] as const).find((candidate) =>
       filterProvidersForTab(providers, candidate, { showAbsent: true })
-        .some((p) => p.adapterId === pendingRelogin.adapterId));
+        .some((p) => p.adapterId === request.adapterId));
     if (!tabWithIt) return;
     setTab(tabWithIt);
-    setSelectedId(pendingRelogin.adapterId);
+    setSelectedId(request.adapterId);
   }, [pendingRelogin, providers]);
 
   const selected = useMemo(

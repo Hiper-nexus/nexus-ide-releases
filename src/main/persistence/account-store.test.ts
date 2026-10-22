@@ -29,6 +29,8 @@ const deps = vi.hoisted(() => ({
   serverEmail: null as string | null,
   keychain: null as string | null,
   managedProfiles: new Map<string, string>(),
+  /** Escopos cujo item de Keychain existe mas a leitura foi negada/travada. */
+  lockedScopes: new Set<string>(),
   failManagedMaterialize: false,
   needsRefresh: vi.fn(
     (_blob: string, _now: number): { refreshToken: string } | null => null,
@@ -161,6 +163,7 @@ vi.mock('../adapters/managed-claude-auth', () => ({
   managedClaudeAuthDirectory: (id: string) => `/tmp/claude/${id}/auth`,
   hasManagedClaudeAuth: (id: string) => deps.managedProfiles.has(id),
   managedClaudeAuthHasCredential: (id: string) => Boolean(deps.managedProfiles.get(id)),
+  managedClaudeScopeKeychainReadable: async (id: string) => !deps.lockedScopes.has(id),
   readManagedClaudeAuth: (id: string) => deps.managedProfiles.get(id) || null,
   readManagedClaudeAuthAsync: async (id: string) => deps.managedProfiles.get(id) || null,
   removeManagedClaudeAuth: (id: string) => deps.managedProfiles.delete(id),
@@ -255,6 +258,7 @@ beforeEach(() => {
   deps.serverEmail = null;
   deps.keychain = null;
   deps.managedProfiles.clear();
+  deps.lockedScopes.clear();
   deps.failManagedMaterialize = false;
   deps.needsRefresh.mockReset();
   deps.needsRefresh.mockReturnValue(null);
@@ -1127,6 +1131,29 @@ describe('renovação morta veta failover no escuro', () => {
 
       await verifyManagedClaudeAccountForSpawn(a.id);
       expect(listAccounts('claude').find((i) => i.id === a.id)?.cooldownUntil).toBeUndefined();
+    });
+
+    // Segunda revisão: o arquivo-espelho do escopo continua legível com o
+    // Keychain travado, e a CLI no macOS lê o Keychain — recusa sem prova.
+    it('recusa da CLI com o Keychain do escopo travado não é prova, mesmo com o arquivo legível', async () => {
+      const a = addManagedExpired();
+      deps.lockedScopes.add(a.id);
+      deps.probeClaudeIdentity.mockResolvedValue('auth-expired');
+      deps.probeClaudeCliUsage.mockResolvedValue({ windows: null, failure: 'auth-expired' } as never);
+
+      await verifyManagedClaudeAccountForSpawn(a.id);
+      expect(listAccounts('claude').find((i) => i.id === a.id)?.cooldownUntil).toBeUndefined();
+    });
+
+    it('a quarentena de identidade sobrevive ao fim do próprio cooldown', async () => {
+      const a = addManagedExpired();
+      setCooldown(a.id, Date.now() - 1, 'oauth identity mismatch — sonda de quota');
+      deps.probeClaudeIdentity.mockResolvedValue('auth-expired');
+      deps.probeClaudeCliUsage.mockResolvedValue({ windows: null, failure: 'auth-expired' } as never);
+
+      await verifyManagedClaudeAccountForSpawn(a.id);
+      expect(listAccounts('claude').find((i) => i.id === a.id)?.lastError)
+        .toBe('oauth identity mismatch — sonda de quota');
     });
 
     it('401 sobre token ainda no prazo, sem refresh token, não marca sessão morta', async () => {
