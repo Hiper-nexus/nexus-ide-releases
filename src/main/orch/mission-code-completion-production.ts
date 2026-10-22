@@ -166,7 +166,37 @@ const reviewer = new MissionCodeReviewRuntime({
   },
 });
 
-const CHECK_TTL_MS = 5 * 60_000;
+/** Janela de frescor das verificações mecânicas sobre um candidato ocioso. */
+export const CHECK_TTL_MS = 5 * 60_000;
+/**
+ * F-1631: teto enquanto o juiz independente lê o MESMO candidato.
+ *
+ * O cache é chaveado pelo candidato exato (`checkKey`: assinatura da missão,
+ * escopos, base, cobertura, fingerprint, headSha, caminhos exigidos). Qualquer
+ * byte que mude troca a chave e a suíte roda de novo. Enquanto o juiz lê esse
+ * mesmo candidato, reexecutar typecheck + audit + suíte (com E2E) não pode
+ * produzir informação nova sobre o código: só gasta o relógio da missão. Em
+ * campo o juiz frontier passa dos 5 min do TTL comum, e a tentativa seguinte
+ * refazia a suíte inteira sobre código idêntico — repetidas vezes. O teto
+ * existe para que um candidato abandonado ainda envelheça.
+ */
+export const CHECK_TTL_UNDER_REVIEW_MS = 45 * 60_000;
+
+/** Decisão pura: o resultado mecânico em cache ainda vale? */
+export function mechanicalChecksStillValid(input: {
+  readonly ageMs: number;
+  readonly reviewInFlight: boolean;
+  readonly ttlMs?: number;
+  readonly ceilingMs?: number;
+}): boolean {
+  const ttlMs = input.ttlMs ?? CHECK_TTL_MS;
+  const ceilingMs = input.ceilingMs ?? CHECK_TTL_UNDER_REVIEW_MS;
+  // Relógio para trás não é frescor comprovado.
+  if (!Number.isFinite(input.ageMs) || input.ageMs < 0) return false;
+  if (input.ageMs >= ceilingMs) return false;
+  return input.reviewInFlight || input.ageMs < ttlMs;
+}
+
 const RETRY_MS = 30_000;
 const MAX_STATES = 256;
 interface CompletionState {
@@ -194,7 +224,10 @@ function pruneStates(): void {
     if (!current(state.binding)) {
       state.repair?.controller.abort(); states.delete(key);
       void reviewer.forget(state.binding.scope, state.binding.missionId);
-    } else if (state.checks && Date.now() - state.checks.at >= CHECK_TTL_MS) state.checks = undefined;
+    } else if (state.checks && !mechanicalChecksStillValid({
+      ageMs: Date.now() - state.checks.at,
+      reviewInFlight: reviewer.isReviewing(state.binding.scope, state.binding.missionId, state.binding.fingerprint),
+    })) state.checks = undefined;
   }
   void reviewer.prune();
 }
@@ -324,7 +357,10 @@ export const runMissionCodeCompletion: CivilianCodeCompletionGate = async input 
       if (!state) { state = { binding }; states.set(key, state); }
       state.binding = binding;
       const cached = state.checks;
-      if (cached?.key === cacheKey && Date.now() - cached.at < CHECK_TTL_MS) return checked = cached.result;
+      if (cached?.key === cacheKey && mechanicalChecksStillValid({
+        ageMs: Date.now() - cached.at,
+        reviewInFlight: reviewer.isReviewing(scope, mission.id, candidate.candidate.fingerprint),
+      })) return checked = cached.result;
       checked = await enforceCivilianAutoReview({ scope, mission, completionBaseSha: baseSha,
         ...(candidate.untrackedSince !== undefined ? { completionUntrackedSince: candidate.untrackedSince } : {}),
         productFiles: candidate.candidate.coveredPaths ?? candidate.candidate.changedPaths, liveOrchestratorSessionId: input.liveOrchestratorSessionId,

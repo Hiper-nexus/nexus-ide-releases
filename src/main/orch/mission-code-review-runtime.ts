@@ -101,6 +101,22 @@ export class MissionCodeReviewRuntime {
       .map(([key, ticket]) => this.#retire(key, ticket)));
   }
 
+  /**
+   * F-1631: um juiz independente está lendo ESTE candidato agora.
+   *
+   * Pergunta de leitura, sem efeito: nunca abre, fecha nem reagenda revisão.
+   * `fingerprint` amarra a resposta ao candidato exato — um juiz que ficou
+   * preso a um candidato anterior não autoriza preservar verificação nova.
+   */
+  isReviewing(scope: ProjectExecutionScope, missionId: string, fingerprint?: string): boolean {
+    const ticket = this.#tickets.get(missionLifecycleKey(scope, missionId));
+    if (!ticket || ticket.result || !this.#current(ticket)) return false;
+    if (fingerprint !== undefined && ticket.binding.fingerprint !== fingerprint) return false;
+    if (ticket.flight) return true;
+    try { return Boolean(ticket.pane && this.ports.isLive(ticket.pane.sessionId)); }
+    catch { return false; }
+  }
+
   async ensure(input: MissionCodeCandidate, signal?: AbortSignal): Promise<MissionCodeReviewResult> {
     void this.prune();
     if (signal?.aborted) return { kind: 'unavailable', reason: 'A solicitação de revisão foi cancelada.' };
