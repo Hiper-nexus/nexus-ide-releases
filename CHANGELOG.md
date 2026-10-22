@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.76.413 — Kits de UI inteiros em todo PC
+
+Pacote macOS arm64 (DMG e ZIP) da mesma entrega da 0.76.411, que é o pacote Linux. A 0.76.407 é o pacote macOS anterior. A 0.76.412 fica com a candidata Windows em preparo e não é usada aqui.
+
+A qualificação Darwin das licenças do Electron foi refeita para a 43.8.3: os textos legais da distribuição darwin arm64 e x64 têm os mesmos bytes e SHA-256 da 43.7.4, conferidos na zip oficial. O soak e o smoke empacotado do macOS também passam a esperar a 43.8.3.
+
+No desktop macOS, em relação à 0.76.407:
+
+- **O Pro do BoardUI fica liberado em todo PC.** A licença que vem com o Nexus é gravada ao abrir o app, sem clique e sem gastar vaga no fornecedor. Os 40 itens Pro (30 componentes e 10 templates) entram na escolha automática; antes ela só via os 69 grátis, e o Pro só aparecia pedindo o item pelo nome.
+- **O agente acha e instala o componente certo.** `nexus_ui_kit_add({task})` busca cada registry à parte, o Jev escolhe kit e item, e o recibo diz quais arquivos foram escritos. Execução que não escreveu nada não aparece mais como "instalado". Num monorepo o kit instala no pacote que o projeto declara; sem `components.json`, em outro framework ou com outra instalação em curso a recusa é na hora, com o caminho.
+- **O navegador do agente age de verdade.** Clique, hover e tecla são input real (menus Radix abrem), com shadow DOM aberto, iframe da mesma origem, `nexus_browser_select`, histórico e espera pela rede. `alert`, `confirm` e `prompt` não travam mais o pane. A captura volta como imagem, com página inteira, recorte de elemento e tema; página acima de 16.384 px em qualquer lado é marcada como cortada.
+- **A entrega visual chega com a imagem verificada.** Só vale a captura do preview do próprio worker, da árvore que ele entregou, e o juiz recebe essa imagem. O portão devolve uma vez antes de rebaixar a entrega a parcial.
+- **Missão sem teste aplicável conclui.** Diff só de estilo, texto ou imagem dispensa typecheck e testes; o prazo da regressão cresce de 5 para 10 e 20 min e, estourado, adia em vez de pedir reparo. Quem entrega bem é reusado com prazo.
+- **Colar texto grande num pane funciona sempre.** Num pane do "+ Pane" que ganhou papel sem você ver (adotado pela missão da aba, ou aberto pelo agente), colar mais de 4 KB dava "o main recusou a digitação neste pane". A entrada do operador agora aceita o mesmo tamanho que a escrita direta (F-1633).
+- **A detecção do estado do agente não trava com linha longa.** Uma regra do manifesto do opencode ficava quadrática numa linha com muitas ocorrências do nome: 64 KB custavam 186 ms e agora custam menos de 1 ms.
+- **A coleta de worktrees antigas funciona no Linux.** O `systemd --user` e o `(sd-pam)` de toda sessão Linux têm a pasta atual ilegível para o próprio usuário, e a prova de "fora de uso" nunca saía. Os dois são reconhecidos pelo systemd do sistema; qualquer outro processo ilegível continua bloqueando a remoção.
+- **Três dependências saem do aviso.** DOMPurify 3.4.17, Electron 43.8.3 e ip-address 10.7.4.
+
+O resto do desktop é o da 0.76.407.
+
 ## 0.76.411 — O navegador age e o kit acerta o pacote
 
 Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
