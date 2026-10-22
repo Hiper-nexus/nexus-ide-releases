@@ -406,12 +406,19 @@ export function assertSafeUiKitCwd(
     return cwd;
   }
   if (linkStats.isSymbolicLink()) {
+    // On Linux and Windows every Nexus writer worktree is born with this link
+    // (F-1535, no clonefile there), so the refusal has to say what to do in
+    // THAT case, not only in a hand-made one: the kit's npm install would
+    // write into the coordination checkout's tree that the link points at.
     throw new UiKitCliError(
       'SHARED_NODE_MODULES',
       `refusing to install into ${cwd}: node_modules is a symlink`,
-      'This checkout shares one install with others, and a package-manager ' +
-        'write would corrupt the shared tree. Run the UI kit in the project ' +
-        'you are building, or give this checkout its own node_modules.',
+      'This checkout shares one install with others (a Nexus worktree on ' +
+        'Linux/Windows links it to the main checkout), and a package-manager ' +
+        'write would corrupt the shared tree. Give this checkout its own ' +
+        'install first — remove the node_modules link (the link only, never ' +
+        'its target) and run the project install (npm ci / pnpm install) — ' +
+        'or install the kit item in the main checkout.',
     );
   }
   return cwd;

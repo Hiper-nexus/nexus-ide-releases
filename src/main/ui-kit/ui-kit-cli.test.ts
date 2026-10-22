@@ -192,6 +192,20 @@ describe('assertSafeUiKitCwd', () => {
     ).toThrow(/node_modules is a symlink/);
   });
 
+  it('names the way out for a Nexus worktree on Linux/Windows (F-1535)', () => {
+    try {
+      assertSafeUiKitCwd('/worktrees/feature', {
+        writes: true,
+        statSync: () => statsFor('dir'),
+        lstatSync: () => statsFor('symlink'),
+      });
+      throw new Error('expected a refusal');
+    } catch (error) {
+      expect((error as UiKitCliError).hint).toMatch(/remove the node_modules link \(the link only/);
+      expect((error as UiKitCliError).hint).toMatch(/npm ci/);
+    }
+  });
+
   it('allows a writing run when node_modules is a real directory', () => {
     expect(
       assertSafeUiKitCwd('/projects/app', {
