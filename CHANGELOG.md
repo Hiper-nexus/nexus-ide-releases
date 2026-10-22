@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.76.408 — A missão deixa de refazer trabalho já feito
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+A 0.76.407 é o pacote macOS desta mesma entrega (DMG e ZIP arm64) e continua Latest na canônica e no espelho; esta release não toma essa marca e não recebe arquivos macOS. O espelho da 0.76.407 também tem Setup, nupkg e RELEASES do Windows; esta release não mexe neles. A 0.76.406 é o pacote Linux anterior.
+
+No desktop Linux, em relação à 0.76.406:
+
+- **A verificação mecânica válida não é mais jogada fora.** O resultado de typecheck, auditoria e portão de regressão era descartado por um prazo de 5 min mesmo com o candidato idêntico byte a byte — inclusive enquanto o juiz independente ainda lia aquele mesmo candidato. Agora ele é preservado enquanto houver um juiz comprovadamente lendo, com teto para candidato abandonado.
+- **A devolução não recomeça o trabalho do zero.** O worker espera o aceite, e "refaça" chega ao pane morno, que já sabe o que tentou, em vez de cair num pane novo com o brief original.
+- **A entrega visual não é mais cobrada duas vezes.** A captura verificada do navegador conta como evidência quando tudo que mudou é asset inerte. Quando a entrega executa, o pedido passa a ser o console do navegador sem erro ou o comando que subiu o preview, não uma saída de teste que a página não tem.
+- **A doutrina ensina a aceitar, não só a devolver.** Cada recusa custava uma rodada inteira de modelo.
+- **O turno de abertura não é mais gasto num quadro vazio.** Num objetivo de uma linha o Maestro gastava a primeira rodada listando entregas inexistentes.
+- **A janela do aceite é amostrada e tem teto.** Ela recomeça quando o Maestro fica livre, e um Maestro ocupado sem parar não segura o pane indefinidamente.
+
+Medido no próprio motor, sem modelo dos dois lados: um pane só leva 7,47 s e a missão 11,82 s, então a cerimônia custa 4,35 s (1,58×). A lentidão de campo estava nas rodadas de modelo a mais, não no motor.
+
+O resto do desktop é o da 0.76.406.
+
 ## 0.76.407 — A missão deixa de refazer trabalho já feito
 
 Pacote macOS arm64 (DMG e ZIP). A 0.76.406 é o pacote Linux da correção anterior

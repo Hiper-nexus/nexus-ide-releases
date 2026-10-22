@@ -12647,7 +12647,7 @@ const RELEASE_076406_FULL: AppRelease = {
 
 export const RELEASE_076406: AppRelease = RELEASE_076406_FULL;
 
-export const CURRENT_RELEASE: AppRelease = {
+const RELEASE_076407_FULL: AppRelease = {
   version: '0.76.407',
   date: '2026-10-22',
   codename: 'A missão deixa de refazer trabalho já feito',
@@ -12670,4 +12670,22 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: RELEASE_076406_FULL.fixes,
 };
 
-export const RELEASE_076407: AppRelease = CURRENT_RELEASE;
+export const RELEASE_076407: AppRelease = RELEASE_076407_FULL;
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.408',
+  date: '2026-10-22',
+  codename: 'A missão deixa de refazer trabalho já feito',
+  summary:
+    'No desktop Linux, a missão para de jogar fora trabalho válido. A ' +
+    'verificação mecânica é preservada enquanto o juiz independente lê o ' +
+    'mesmo candidato; o worker espera o aceite, então "refaça" chega ao pane ' +
+    'morno em vez de recomeçar do brief original; e a entrega visual deixa de ' +
+    'ser cobrada duas vezes. É a mesma entrega da 0.76.407, que fica como ' +
+    'pacote macOS e continua Latest; esta release não toma essa marca. A ' +
+    '0.76.406 é o pacote Linux anterior.',
+  highlights: RELEASE_076407_FULL.highlights,
+  fixes: RELEASE_076407_FULL.fixes,
+};
+
+export const RELEASE_076408: AppRelease = CURRENT_RELEASE;
