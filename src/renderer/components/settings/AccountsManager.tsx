@@ -11,6 +11,7 @@ import { PixelIcon } from '../PixelIcon';
 import { openCliLoginTerminal, type CliLoginFinish } from './cli-login-terminal';
 import { useToastStore } from '../../state/toast-store';
 import { useQuotaStore } from '../../state/quota-store';
+import { useAccountReloginIntentStore } from '../../state/account-relogin-intent';
 import type { ProviderOpPhase } from './providers-panel-view';
 
 /**
@@ -437,6 +438,18 @@ export function AccountsManager({
   useEffect(() => {
     if (renamingId) renameInputRef.current?.focus();
   }, [renamingId]);
+
+  // F-1642: o pane que não subiu pediu o login de uma conta desta CLI. Atende
+  // pelo MESMO «Entrar novamente» da linha (guarda a sessão atual, baseline,
+  // prova do login novo) — só a instância cheia do painel, uma vez por pedido.
+  const pendingRelogin = useAccountReloginIntentStore((s) => s.pending);
+  useEffect(() => {
+    if (compact || busy || !loginCommand || pendingRelogin?.adapterId !== adapterId) return;
+    if (!accounts.some((a) => a.id === pendingRelogin.accountId)) return;
+    const request = useAccountReloginIntentStore.getState().take(adapterId);
+    const account = request ? accounts.find((a) => a.id === request.accountId) : undefined;
+    if (account) void openLoginTerminal(account.label, false, account.id);
+  }, [pendingRelogin, accounts, busy, loginCommand, adapterId, compact]);
 
   function closeForm() {
     setAddMode(null);

@@ -1216,6 +1216,18 @@ describe("registerPtyIpc account fail-fast", () => {
     expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
   });
 
+  it('F-1642: recusa que pede login devolve a conta ao renderer, para o cartão oferecer «Entrar novamente»', async () => {
+    const relogin = { adapterId: 'claude', accountId: 'acct-b', accountLabel: 'conta b' };
+    providerDeps.prepareProviderSpawnAuthoritative.mockResolvedValueOnce({
+      ok: false, error: 'A sessão de “conta b” expirou', relogin,
+    });
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
+    await expect(handler?.({ sender: { id: 7 } }, {
+      kind: 'cli-agent', adapterId: 'claude', cols: 100, rows: 30,
+    })).resolves.toEqual({ ok: false, error: 'A sessão de “conta b” expirou', relogin });
+    expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
+  });
+
   it.each(['authentication', 'permit', 'pane-revoked', 'stop-verdict'])('F-429: refuses persisted spawn if authority changes during %s', async waitingOn => {
     const seal = sealedPendingSpawn().authoritySeal;
     persistedSeal.current = seal;

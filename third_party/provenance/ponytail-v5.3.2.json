@@ -1,0 +1,20 @@
+{
+  "source": "DietrichGebert/ponytail",
+  "upstreamRepository": "https://github.com/DietrichGebert/ponytail",
+  "upstreamTag": "v5.3.2",
+  "upstreamCommit": "16352ac229eb08a9598dcae48fe9f2b342567d86",
+  "license": "MIT",
+  "copyright": "Copyright (c) 2026 DietrichGebert",
+  "licenseFile": "third_party/licenses/ponytail-MIT.txt",
+  "importedAt": "2026-10-21",
+  "type": "vendored-with-one-change",
+  "originalPath": ".agents/rules/ponytail.md",
+  "nexusPath": "src/main/orch/ponytail.ts (PONYTAIL_RULES)",
+  "alsoUsedBy": [
+    "src/main/orch/skill-mirror.ts (GENERATED_PONYTAIL_SKILL) — mesmo texto + a tabela de níveis de .openclaw/skills/ponytail/SKILL.md",
+    "src/main/orch/worker-handoff-contract.ts — injeta no prompt do worker quando leanCode && tier.lean",
+    "src/main/orch/hook-delegate-endpoint.ts (LEAN_CODE_REMINDER) — lembrete de uma linha no pane do operador"
+  ],
+  "changes": "UMA linha: o marcador de atalho deliberado continua `ponytail:` em vez do `shortcut:` que o 5.1 passou a usar. O próprio upstream manda declarar a palavra do projeto no CLAUDE.md/AGENTS.md, e este repositório já tem ~30 comentários com ela. Declarado em AGENTS.md › Conventions.",
+  "notes": "Substituiu uma cópia pré-5.0 (sem níveis, sem o fechamento 'o que pulei e o risco', sem o mapeamento de escopo antes de escrever). A tabela de níveis do Nexus troca o comando /ponytail por 'em palavras': o Nexus embarca o ruleset, não as hooks nem os comandos do upstream."
+}

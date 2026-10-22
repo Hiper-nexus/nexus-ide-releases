@@ -14,11 +14,21 @@ não sugestões.
 
 1. **brainstorming/** — antes de planejar: refine a ideia por perguntas,
    explore alternativas, valide o design em seções curtas.
-   `spec-document-reviewer-prompt.md` é o revisor do documento de design.
+   `builder-check-prompt.md` é o revisor do documento de design (um subagente
+   que o lê como o construtor faria e devolve o que falta). OVERRIDE Nexus: a
+   companion visual NÃO está no bundle — `visual-companion.md` e
+   `brainstorming/scripts/` ficaram de fora de propósito, porque o servidor
+   dela pede um `/tmp/brainstorm-<pid>-<epoch>` de nome previsível e a página
+   busca um logo em primeiro-terceiro (`primeradiant.com`) a cada render. O
+   SKILL.md upstream ainda os cita; ignore. Quando ver ajudar mais que ler,
+   use o navegador do Nexus (`nexus_browser_*`), que já está aberto com
+   sessão.
 2. **writing-plans/** — com design aprovado: plano de implementação em
    tarefas pequenas (2–5 min), cada uma com caminhos de arquivo exatos,
-   código completo e passo de verificação. `plan-document-reviewer-prompt.md`
-   revisa o plano. OVERRIDE Nexus: a skill upstream sugere
+   código completo e passo de verificação. A revisão do plano virou o
+   self-review da própria skill no 7.0 (cobertura da spec, caça a
+   placeholder, consistência de tipos) — não há mais subagente revisor de
+   plano. OVERRIDE Nexus: a skill upstream sugere
    `docs/superpowers/plans/` — aqui NÃO. O plano final vive em
    `docs/plan.md` (a promoção lê DELE; um arquivo datado em
    docs/superpowers/plans/ é opcional e nunca substitui o plan.md) e cada
@@ -27,7 +37,17 @@ não sugestões.
 3. **executing-plans/** ou **subagent-driven-development/** — execução:
    um implementador por tarefa com revisão em dois estágios (conformidade com
    o plano, depois qualidade). No Nexus, "subagent" = pane worker da missão;
-   os prompts `implementer-prompt.md` / `task-reviewer-prompt.md` /
+   as `references/` (preflight, batching, fix-loop, final-review,
+   handling-reports, cannot-verify, resuming) detalham cada etapa. OVERRIDE
+   Nexus: NENHUM `scripts/` do upstream está no bundle. Os SKILL.md e os
+   prompts citam `sdd-workspace`, `task-brief`, `task-start`, `task-done` e
+   `review-package` — ignore: eles montam um ledger paralelo em
+   `.superpowers/sdd/<plano>/` e a missão do Nexus JÁ tem o dela (Quadro de
+   entregas, handoff, ledger de tasks). Onde a skill mandaria chamar um
+   script, use a ferramenta equivalente do Nexus: brief e despacho por
+   `nexus_pane_spawn`, entrega por `nexus_handoff_submit`, veredito por
+   `nexus_handoff_ack` e `nexus_review_verdict`.
+   Os prompts `implementer-prompt.md` / `task-reviewer-prompt.md` /
    `re-review-prompt.md` são os moldes de dispatch e revisão.
 4. **test-driven-development/** — RED-GREEN-REFACTOR durante a
    implementação; `writing-good-tests.md` é a referência de qualidade.

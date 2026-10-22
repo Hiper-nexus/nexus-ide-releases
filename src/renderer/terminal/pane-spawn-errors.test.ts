@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   clearPaneSpawnError,
+  peekPaneSpawnRelogin,
   recordPaneSpawnError,
   takePaneSpawnError,
 } from './pane-spawn-errors';
@@ -27,5 +28,25 @@ describe('pane spawn errors', () => {
     expect(takePaneSpawnError('pane-2')).toBeNull();
     recordPaneSpawnError('pane-2', 'segundo');
     expect(takePaneSpawnError('pane-2')).toBe('segundo');
+  });
+
+  it('guarda a conta a reautenticar só junto do erro da mesma tentativa (F-1642)', () => {
+    const relogin = { adapterId: 'claude', accountId: 'acct-b', accountLabel: 'conta b' };
+    recordPaneSpawnError('pane-3', 'A sessão de “conta b” expirou', relogin);
+    expect(peekPaneSpawnRelogin('pane-3')).toEqual(relogin);
+    // A tentativa seguinte, com outro motivo, não herda o botão da anterior.
+    recordPaneSpawnError('pane-3', 'cli_missing');
+    expect(peekPaneSpawnRelogin('pane-3')).toBeNull();
+    recordPaneSpawnError('pane-3', 'A sessão de “conta b” expirou', relogin);
+    clearPaneSpawnError('pane-3');
+    expect(peekPaneSpawnRelogin('pane-3')).toBeNull();
+  });
+
+  it('formato fora do contrato não vira botão', () => {
+    recordPaneSpawnError('pane-4', 'x', { adapterId: 'claude', accountId: '../../etc', accountLabel: 'x' });
+    expect(peekPaneSpawnRelogin('pane-4')).toBeNull();
+    recordPaneSpawnError('pane-4', 'x', { adapterId: 'claude', accountId: 'acct-b', accountLabel: 'x', token: 'y' });
+    expect(peekPaneSpawnRelogin('pane-4')).toBeNull();
+    takePaneSpawnError('pane-4');
   });
 });

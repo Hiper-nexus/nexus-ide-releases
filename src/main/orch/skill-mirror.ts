@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { PONYTAIL_RULES } from './ponytail';
+import { stripAgentPluginAllowedTools } from './agent-plugin-skill';
 import { BUILTIN_BRIDGEMIND_SKILLS } from './bridge-mind-skills';
 import { IMPECCABLE_MANIFEST } from './impeccable-manifest';
 import { ARCHIFY_MANIFEST } from './archify-manifest';
@@ -32,31 +33,63 @@ import {
 
 const GENERATED_PONYTAIL_SKILL = `---
 name: ponytail
-description: "Use for lean senior implementation: reuse existing code, avoid speculative abstractions, and write the smallest correct diff."
+description: "Lazy senior dev mode for any coding task: the smallest change that fully solves it, and a reply a busy human understands in one read."
 ---
 
 ${PONYTAIL_RULES}
+
+## Levels
+
+Active for the whole session until the operator says "stop ponytail", "normal
+mode" or "modo normal", and back with "start ponytail"; the Nexus reminder in
+the operator pane honors the same words. The level changes in words ("modo
+ultra"), never by slash command: the
+Nexus ships the ruleset, not the upstream hooks and \`/ponytail\` commands.
+
+| Level | Behavior |
+|-------|----------|
+| **lite** | Build what was asked. Name the smaller option in one line and let the user pick. |
+| **full** | The rules above. Default. |
+| **ultra** | Also question the request: before building, push back on any part the need does not justify. |
 `;
 
 /**
  * Vendored verbatim from mattpocock/skills — skills/productivity/grilling
  * (MIT, Copyright (c) 2026 Matt Pocock). See
  * third_party/licenses/mattpocock-skills-MIT.txt. Usada pelo squad de
- * planejamento: fatos vêm do código, decisões vêm do usuário, uma pergunta
- * por vez.
+ * planejamento: fatos vêm do código, decisões vêm do usuário, perguntadas em
+ * rodadas pela fronteira da árvore de decisões (upstream de 21/10/2026).
  */
 const GENERATED_GRILLING_SKILL = `---
 name: grilling
 description: Grill the user relentlessly about a plan, decision, or idea. Use when the user wants to stress-test their thinking, or uses any 'grill' trigger phrases.
 ---
 
-Interview me relentlessly about every aspect of this until we reach a shared understanding. Walk down each branch of the decision tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer.
+Interview the user relentlessly until you reach a shared understanding. Map this as a **design tree**: every decision branches into the decisions that hang off it.
 
-Ask the questions one at a time, waiting for feedback on each question before continuing. Asking multiple questions at once is bewildering.
+Work the tree in **rounds**. The **frontier** is every decision whose prerequisites are already settled: the questions you can ask _now_ without guessing at answers you haven't heard yet. Ask the whole frontier in one round: number each question and give your recommended answer. Then wait for the user's answers before the next round.
 
-If a *fact* can be found by exploring the environment (filesystem, tools, etc.), look it up rather than asking me. The *decisions*, though, are mine — put each one to me and wait for my answer.
+Format a round like so:
 
-Do not act on it until I confirm we have reached a shared understanding.
+\`\`\`
+❓ **Q1** - **<question title>**: <question body, might be multiple paragraphs, including multiple choices>
+
+➡️ <your recommended answer>
+
+---
+
+❓ **Q2** - **<question title>**: <question body, might be multiple paragraphs, including multiple choices>
+
+➡️ <your recommended answer>
+\`\`\`
+
+Word each question so "yes" accepts your recommended answer.
+
+Each round the user answers reshapes the tree: settled decisions push the frontier outward and unblock questions that depended on them. Recompute the frontier and ask the next round. A question whose answer depends on another question still open in this round belongs to a _later_ round, not this one.
+
+Finding _facts_ is your job, never the user's. When a frontier question needs a fact from the environment (filesystem, tools, etc.), dispatch a sub-agent to find it; don't ask the user for anything you could look up yourself. Don't block on it: a running exploration is an unsettled prerequisite, so only the questions downstream of it wait for the sub-agent to report; ask the rest of the frontier now. The _decisions_ are the user's: put each to them and wait.
+
+The session is done when the frontier is empty: every branch of the design tree visited, nothing left silently assumed. Do not act on it until the user confirms you have reached a shared understanding.
 `;
 
 /**
@@ -285,6 +318,66 @@ export const BUNDLED_MANIFESTS: Record<string, Record<string, SkillAsset>> = {
   'stack-advisor': STACK_ADVISOR_MANIFEST,
   'nexus-video': NEXUS_VIDEO_MANIFEST,
 };
+
+/**
+ * `allowed-tools` no frontmatter PRÉ-APROVA chamadas e tira o PreToolUse da
+ * decisão — a mesma razão pela qual o caminho de agent-plugin o poda da cópia
+ * da sessão. Nenhuma skill embutida declarava a chave até o impeccable 4.7.0
+ * pedir `Bash(npx impeccable *)`, que roda um pacote baixado na hora.
+ *
+ * A poda acontece AQUI, uma vez, e não em cada caminho de entrega: são dois
+ * (o cache gerado do Main e a instalação na pasta do CLI) e manter os dois em
+ * paridade é como a chave escaparia. `BUNDLED_MANIFESTS` segue cru para o
+ * teste de contrato provar que o manifest bate byte a byte com o disco — a
+ * procedência continua verbatim; podada é só a cópia que chega ao pane.
+ *
+ * Reusa `stripAgentPluginAllowedTools`: é o parser YAML de verdade (pega a
+ * chave entre aspas, que uma regex deixaria passar) e já é a política do
+ * repositório. Nada sobrevive: um arquivo vendorado não prova a política
+ * nativa do usuário, e `gateToolName` recusa todo nome nativo como `Bash(…)`.
+ *
+ * Frontmatter que não parseia faz a skill sair do mapa (fail-closed, nunca
+ * entregue com a chave); `bundled-skills-contract.test.ts` exige as doze de
+ * volta, então isso quebra o CI em vez de sumir calado em produção.
+ */
+/** Só o bloco entre os `---` iniciais; o corpo pode citar a chave em prosa. */
+function frontmatterOf(content: string): string {
+  const fence = /^\uFEFF?---\r?\n([\s\S]*?)\r?\n(?:---|\.\.\.)\s*(?:\r?\n|$)/u.exec(content);
+  return fence ? fence[1] : '';
+}
+
+function deliveredManifest(
+  manifest: Record<string, SkillAsset>,
+): Record<string, SkillAsset> | null {
+  const skill = manifest['SKILL.md'];
+  if (skill === undefined || skill.encoding !== 'utf8') return manifest;
+  // Detectar é de propósito mais largo que a sintaxe de chave do YAML (aspas,
+  // espaço à frente): um falso positivo só reserializa um frontmatter à toa,
+  // um falso negativo entregaria a chave. Quem REMOVE é o parser YAML abaixo.
+  if (!/^[ \t]*["']?allowed-tools["']?[ \t]*:/mu.test(frontmatterOf(skill.content))) {
+    return manifest;
+  }
+  let pruned: string;
+  try {
+    pruned = stripAgentPluginAllowedTools(skill.content);
+  } catch {
+    return null;
+  }
+  // Sem o digest de build: ele descreve os bytes CRUS, e mantê-lo faria o
+  // cache dar por verificado um arquivo que ainda traz a chave.
+  const { sha256: _sha256, size: _size, ...rest } = skill as SkillAsset &
+    Partial<AssetBuildDigest>;
+  return { ...manifest, 'SKILL.md': { ...rest, content: pruned } };
+}
+
+/** O que os panes recebem de fato: `BUNDLED_MANIFESTS` sem pré-aprovação. */
+export const DELIVERED_MANIFESTS: Record<string, Record<string, SkillAsset>> =
+  Object.fromEntries(
+    Object.entries(BUNDLED_MANIFESTS)
+      .map(([name, manifest]) => [name, deliveredManifest(manifest)] as const)
+      .filter((entry): entry is readonly [string, Record<string, SkillAsset>] =>
+        entry[1] !== null),
+  );
 
 /**
  * SKILL.md bodies written inline by this module (not manifest assets):
@@ -729,7 +822,7 @@ function writeGeneratedSkills(root: string): string {
   // Main-owned generated cache asset by asset: helper-only updates must reach
   // new sessions even when SKILL.md is unchanged, and files a previous bundle
   // dropped must not survive into a fresh provider install.
-  for (const [name, manifest] of Object.entries(BUNDLED_MANIFESTS)) {
+  for (const [name, manifest] of Object.entries(DELIVERED_MANIFESTS)) {
     materializeManifestSkill(root, name, manifest);
   }
   return root;
@@ -846,7 +939,7 @@ function bundledManifestFor(
   if (source.plugin) return undefined;
   const rel = path.relative(generatedRoot, source.dir);
   if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return undefined;
-  return BUNDLED_MANIFESTS[skillName(source.name)];
+  return DELIVERED_MANIFESTS[skillName(source.name)];
 }
 
 function copySkill(source: SkillSource, targetRoot: string): boolean {

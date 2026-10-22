@@ -10,6 +10,7 @@ import { parse as parseYaml } from 'yaml';
 import {
   GENERATED_INLINE_SKILL_BODIES,
   bundledSkillSourceDir,
+  DELIVERED_MANIFESTS,
   ensureSkillsForCli,
 } from './skill-mirror';
 import { BUNDLED_GUIDED_SKILLS } from './guided-squad-skills';
@@ -636,8 +637,9 @@ describe('bundled skill delivery', () => {
     expect(fs.readFileSync(version, 'utf8')).toBe(
       IMPECCABLE_MANIFEST['scripts/VERSION']!.content,
     );
+    // O entregue é o podado: o 4.7.0 declara allowed-tools e o pane não o recebe.
     expect(fs.readFileSync(path.join(skillDir, 'SKILL.md'), 'utf8')).toBe(
-      IMPECCABLE_MANIFEST['SKILL.md']!.content,
+      DELIVERED_MANIFESTS.impeccable['SKILL.md']!.content,
     );
   });
 
@@ -665,8 +667,9 @@ describe('bundled skill delivery', () => {
       includeCliTarget: false,
     });
 
+    // O entregue é o podado: o 4.7.0 declara allowed-tools e o pane não o recebe.
     expect(fs.readFileSync(path.join(skillDir, 'SKILL.md'), 'utf8')).toBe(
-      IMPECCABLE_MANIFEST['SKILL.md']!.content,
+      DELIVERED_MANIFESTS.impeccable['SKILL.md']!.content,
     );
     expect(fs.readFileSync(path.join(skillDir, 'scripts', 'VERSION'), 'utf8')).toBe(
       IMPECCABLE_MANIFEST['scripts/VERSION']!.content,

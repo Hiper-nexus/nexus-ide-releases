@@ -330,13 +330,24 @@ saber isto antes de mexer:
   recebe o arquivo (`nativeCredentialsInPlace`).
 - **Token de acesso vencido não é sessão perdida (F-639).** Com refresh token,
   o spawn deixa a própria CLI renovar (um run no store que o pane vai usar) e
-  prova a identidade no token novo; "entre novamente" só se nem ela conseguiu.
-  Na Reserva (só cofre, sem CLI dona), `ensureFreshClaudeSubscription` renova
-  por HTTP sem prova prévia apenas se o refresh token não estiver no login
-  nativo nem em outra linha do cofre, e o token novo prova a conta antes de
-  entrar no cofre. Escopo gerenciado vencido com OUTRA linhagem, mais velha
-  que o cofre, não bloqueia essa cura (a cota cai para o passo 3); com a
-  mesma linhagem, a CLI continua sendo a única que renova.
+  prova a identidade no token novo. Na Reserva (só cofre, sem CLI dona),
+  `ensureFreshClaudeSubscription` renova por HTTP sem prova prévia apenas se o
+  refresh token não estiver no login nativo nem em outra linha do cofre, e o
+  token novo prova a conta antes de entrar no cofre; o spawn também a chama.
+  Escopo gerenciado vencido com OUTRA linhagem, mais velha que o cofre, não
+  bloqueia essa cura (a cota cai para o passo 3); com a mesma linhagem, a CLI
+  continua sendo a única que renova.
+- **Spawn e cota usam a mesma régua de re-login (F-1642).** Um run da CLI que
+  não renovou NÃO prova sessão morta. Sem prova, o escopo gerenciado abre o
+  pane como `renewable` (blob fixado, a CLI do pane renova) só com o MESMO
+  refresh token que o cofre provou para a conta, fora de outro store e sem
+  refresh falho recente: o relógio não diz de quem é um token vencido. Prova
+  é a CLI recusar ESSA linhagem (store legível depois do run) ou access token
+  vencido sem refresh token no prazo; 401 sobre token no prazo não prova. Com
+  prova, `markClaudeSessionExpired` grava o cooldown de auth (nunca por cima de
+  um cooldown vivo) e a recusa leva `relogin` ao cartão "Não subiu", cujo botão
+  pede o «Entrar novamente» do `AccountsManager` (nunca um login paralelo).
+  Recusa sem prova é `auth-unproven`: manda tentar de novo e não tem botão.
 - **«Entrar novamente» da mesma conta abre o login mesmo se o snapshot vivo
   falhar.** O aviso «Não consegui guardar a conta atual» continua quando o
   cadastro de uma segunda conta não consegue gravar a primeira, e quando o
@@ -528,6 +539,55 @@ saber isto antes de mexer:
 - Run `npm run typecheck` after any source change.
 - The build chain (`premake` / `prepackage`) enforces typecheck, renderer-sink
   security, and native checks before build or package.
+- **Marcador de atalho deliberado: `ponytail:`.** Esta é a palavra do projeto, e
+  o ponytail 5 manda declará-la aqui (o 5.1 trocou o padrão para `shortcut:`).
+  Um atalho com teto conhecido leva um comentário `ponytail: <o teto>, <quando
+  subir>`; ~30 comentários no código já usam essa palavra e não serão
+  renomeados.
+
+## Ponytail é o pontapé inicial de todo trabalho de código (21/10/2026)
+
+- O ruleset vive em `src/main/orch/ponytail.ts` (`PONYTAIL_RULES`, v5.3.2, MIT,
+  cópia de `.agents/rules/ponytail.md` do upstream com UM desvio: o marcador
+  acima). Ele chega ao agente por TRÊS caminhos, e os três precisam andar
+  juntos quando o upstream mudar:
+  1. **Contrato do worker** (`worker-handoff-contract.ts`): injetado no prompt
+     de todo worker de squad quando "Código enxuto" está ligado (padrão: sim) e
+     `charterTierForWorker` devolve `lean: true`. Scout, architect, pane-meta e
+     pane somente-leitura NÃO recebem (entregam texto, não diff) e o revisor
+     também não — a escada de diff é para quem escreve, não para quem julga.
+  2. **Skill espelhada** (`skill-mirror.ts`, `GENERATED_PONYTAIL_SKILL`): corpo
+     inline, não asset de `assets/skills/`, então NÃO passa por
+     `bundle-skills.mjs`. A tabela de níveis diz que o nível se troca em
+     palavras: o Nexus embarca o ruleset, não as hooks nem os comandos
+     `/ponytail` do upstream, e prometer o comando seria mandar usar o que não
+     existe.
+  3. **Lembrete no hook de delegação** (`hook-delegate-endpoint.ts`,
+     `LEAN_CODE_REMINDER`): uma linha no pane do operador, 1× a cada 30 min por
+     sessão. Com conselho do Jev, quem decide é ele (`writesCode ≥ 0,6`). SEM
+     conselho nenhum — sem credencial, Jev desligado, fora do ar ou estourando
+     os 2,5 s — decide o pré-filtro `isCodeRequest` (mesmo molde do pré-filtro
+     de navegador): verbo de escrita ou de edição (criar, corrigir, editar,
+     mudar, alterar, add, change, modify…), em português ou inglês, SÓ com
+     contexto de código: marcador forte (`STRONG_CODE_CONTEXT_PATTERN`:
+     função, componente, endpoint, `crase`, arquivo `.ts`, `.json`…) basta; o
+     ambíguo (teste, bug, API, commit, branch) só conta se o pedido não for um
+     texto (mensagem, relatório, resumo, PRD…). Uma ORDEM de refatorar
+     ("refatore o checkout", "please refactor…") basta sozinha; "explique a
+     refatoração" e "do not refactor" não.
+     "Escreva o PRD", "write a commit message" e "crie um bug report" ficam
+     calados. Antes o silêncio do Jev valia como "não é código" e o pane
+     ficava só com a skill instalada.
+     Prompt que já traz `# Ponytail` não recebe de novo. Verbo negado ("do not
+     delete…", "não altere…") não conta. "stop ponytail", "normal mode" ou
+     "modo normal" desligam o lembrete naquela sessão até "start ponytail",
+     como a skill promete.
+- Medido pelo autor contra o MESMO agente sem a skill (Opus 5.5, 39 tarefas, 5
+  runs cada): −53% de código, −41% de tempo, −26% de custo, −45% de tokens de
+  saída, 98% da lógica de risco com teste (sem ela, 68%).
+- `toEqual({})` NÃO é mais prova de que um canal do hook ficou calado: os canais
+  estáticos (ponytail, dica de navegador, design, memória) disparam sem o Jev.
+  Teste de um canal afirma a ausência do texto DELE, não o payload vazio.
 
 ## Project Skills
 

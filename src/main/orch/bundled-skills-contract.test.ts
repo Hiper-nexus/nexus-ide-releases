@@ -4,7 +4,14 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { CONTENT_PROVENANCES } from '../security/content-audit';
 import { BUILTIN_BRIDGEMIND_SKILLS } from './bridge-mind-skills';
-import { BUNDLED_MANIFESTS } from './skill-mirror';
+import fsp from 'node:fs';
+import osp from 'node:os';
+import {
+  BUNDLED_MANIFESTS,
+  DELIVERED_MANIFESTS,
+  GENERATED_INLINE_SKILL_BODIES,
+  ensureSkillsForCli,
+} from './skill-mirror';
 
 /**
  * As skills embutidas têm DUAS fontes que andam juntas: o `SKILL.md` em
@@ -126,5 +133,56 @@ describe('bridgeward e bridgesecurity citam o que as auditorias aceitam', () => 
     for (const severity of ['critical', 'high', 'medium', 'low', 'info']) {
       expect(body, severity).toContain(severity);
     }
+  });
+});
+
+describe('nenhuma skill embutida pré-aprova ferramenta no pane', () => {
+  // `allowed-tools` tira o PreToolUse da decisão. O impeccable 4.7.0 passou a
+  // pedir `Bash(npx impeccable *)` — pacote baixado na hora — e o caminho das
+  // embutidas, ao contrário do de agent-plugin, não podava nada.
+  it('nenhuma skill some do mapa entregue (frontmatter que não parseia cairia aqui)', () => {
+    expect(Object.keys(DELIVERED_MANIFESTS).sort()).toEqual(Object.keys(BUNDLED_MANIFESTS).sort());
+  });
+
+  it.each(Object.keys(DELIVERED_MANIFESTS))('%s: a cópia entregue não tem allowed-tools', (name) => {
+    expect(DELIVERED_MANIFESTS[name]['SKILL.md'].content).not.toMatch(/^\s*["']?allowed-tools["']?\s*:/mu);
+  });
+
+  it('impeccable: poda a chave, preserva o resto do frontmatter e o corpo', () => {
+    // O manifest cru (e o disco) seguem verbatim: quem é podado é o entregue.
+    const raw = BUNDLED_MANIFESTS.impeccable['SKILL.md'].content;
+    expect(raw).toContain('Bash(npx impeccable *)');
+    const delivered = DELIVERED_MANIFESTS.impeccable['SKILL.md'].content;
+    expect(delivered).not.toContain('Bash(npx impeccable *)');
+    for (const kept of ['name: impeccable', 'version: 4.7.0']) {
+      expect(delivered, kept).toContain(kept);
+    }
+    const bodyOf = (text: string) => text.slice(text.indexOf('\n---', 4));
+    expect(bodyOf(delivered)).toBe(bodyOf(raw));
+  });
+
+  it('skill sem a chave não é reescrita (identidade e digest do cache intactos)', () => {
+    expect(DELIVERED_MANIFESTS.superpowers).toBe(BUNDLED_MANIFESTS.superpowers);
+  });
+
+  it('entrega real num HOME temporário: o arquivo no pane não tem a chave', () => {
+    const home = fsp.mkdtempSync(path.join(osp.tmpdir(), 'nexus-skill-deliver-'));
+    try {
+      ensureSkillsForCli('claude', { home, sourceDirs: [], allowedSkills: ['impeccable'] });
+      const delivered = path.join(home, '.claude', 'skills', 'impeccable', 'SKILL.md');
+      const text = fsp.readFileSync(delivered, 'utf8');
+      expect(text).toMatch(/^name: impeccable$/mu);
+      expect(text).not.toMatch(/allowed-tools/u);
+      expect(text).not.toContain('Bash(npx impeccable *)');
+    } finally {
+      fsp.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  // Os corpos inline são escritos NESTE repositório, então a regra é não
+  // declarar a chave — mas vários são cópia de upstream (ponytail, grilling),
+  // e uma subida futura poderia trazê-la junto sem passar pela poda acima.
+  it.each(Object.keys(GENERATED_INLINE_SKILL_BODIES))('%s (inline): não declara allowed-tools', (name) => {
+    expect(GENERATED_INLINE_SKILL_BODIES[name]).not.toMatch(/^allowed-tools:/mu);
   });
 });

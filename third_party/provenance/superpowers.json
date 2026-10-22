@@ -1,12 +1,12 @@
 {
   "source": "obra/superpowers",
   "upstreamRepository": "https://github.com/obra/superpowers",
-  "upstreamCommit": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+  "upstreamCommit": "cfd50a286baea35041505ed068c878d389ca9f7f",
   "license": "MIT",
   "copyright": "Copyright (c) 2025 Jesse Vincent",
   "licenseFile": "third_party/licenses/superpowers-MIT.txt",
-  "importedAt": "2026-08-22",
-  "type": "vendored-verbatim",
+  "importedAt": "2026-10-21",
+  "type": "vendored-subset",
   "nexusPath": "assets/skills/superpowers",
   "files": [
     {
@@ -14,8 +14,8 @@
       "nexusPath": "assets/skills/superpowers/brainstorming/SKILL.md"
     },
     {
-      "originalPath": "skills/brainstorming/spec-document-reviewer-prompt.md",
-      "nexusPath": "assets/skills/superpowers/brainstorming/spec-document-reviewer-prompt.md"
+      "originalPath": "skills/brainstorming/builder-check-prompt.md",
+      "nexusPath": "assets/skills/superpowers/brainstorming/builder-check-prompt.md"
     },
     {
       "originalPath": "skills/dispatching-parallel-agents/SKILL.md",
@@ -52,6 +52,34 @@
     {
       "originalPath": "skills/subagent-driven-development/re-review-prompt.md",
       "nexusPath": "assets/skills/superpowers/subagent-driven-development/re-review-prompt.md"
+    },
+    {
+      "originalPath": "skills/subagent-driven-development/references/batching.md",
+      "nexusPath": "assets/skills/superpowers/subagent-driven-development/references/batching.md"
+    },
+    {
+      "originalPath": "skills/subagent-driven-development/references/cannot-verify.md",
+      "nexusPath": "assets/skills/superpowers/subagent-driven-development/references/cannot-verify.md"
+    },
+    {
+      "originalPath": "skills/subagent-driven-development/references/final-review.md",
+      "nexusPath": "assets/skills/superpowers/subagent-driven-development/references/final-review.md"
+    },
+    {
+      "originalPath": "skills/subagent-driven-development/references/fix-loop.md",
+      "nexusPath": "assets/skills/superpowers/subagent-driven-development/references/fix-loop.md"
+    },
+    {
+      "originalPath": "skills/subagent-driven-development/references/handling-reports.md",
+      "nexusPath": "assets/skills/superpowers/subagent-driven-development/references/handling-reports.md"
+    },
+    {
+      "originalPath": "skills/subagent-driven-development/references/preflight.md",
+      "nexusPath": "assets/skills/superpowers/subagent-driven-development/references/preflight.md"
+    },
+    {
+      "originalPath": "skills/subagent-driven-development/references/resuming.md",
+      "nexusPath": "assets/skills/superpowers/subagent-driven-development/references/resuming.md"
     },
     {
       "originalPath": "skills/subagent-driven-development/task-reviewer-prompt.md",
@@ -96,11 +124,11 @@
     {
       "originalPath": "skills/writing-plans/SKILL.md",
       "nexusPath": "assets/skills/superpowers/writing-plans/SKILL.md"
-    },
-    {
-      "originalPath": "skills/writing-plans/plan-document-reviewer-prompt.md",
-      "nexusPath": "assets/skills/superpowers/writing-plans/plan-document-reviewer-prompt.md"
     }
   ],
-  "notes": "Ciclo central do Superpowers vendorado verbatim (12 skills). Poda intencional: brainstorming/scripts + visual-companion.md (telemetria), subagent-driven-development/scripts (harness externo), writing-skills e using-superpowers (meta/bootstrap de harness), fixtures de desenvolvimento de systematic-debugging. Bundle via scripts/bundle-skills.mjs; materializado pelo skill-mirror."
+  "notes": "Ciclo central do Superpowers vendorado verbatim (12 skills). Poda intencional: brainstorming/scripts + visual-companion.md (telemetria), subagent-driven-development/scripts (harness externo), writing-skills e using-superpowers (meta/bootstrap de harness), fixtures de desenvolvimento de systematic-debugging. Bundle via scripts/bundle-skills.mjs; materializado pelo skill-mirror.",
+  "upstreamTag": "v7.0.1",
+  "subsetNotes": "Doze das quinze skills do 7.0.1, só o conteúdo em markdown. Fora: using-superpowers, writing-skills e diagnosing-superpowers (meta-skills do harness upstream — o Nexus tem a própria descoberta de skill no skill-mirror e na sugestão do Jev); os artefatos de desenvolvimento do autor em systematic-debugging/ (CREATION-LOG.md, test-academic.md, test-pressure-1..3.md, find-polluter.sh), que nenhum SKILL.md referencia; e TODOS os scripts/ que o 7.0.x acrescentou, mais brainstorming/visual-companion.md. Os scripts são novos no 7.0.x: o vendor anterior (b36e0829, 24 arquivos) também não trazia nenhum. Três achados de revisão de segurança sustentam a exclusão: brainstorming/scripts/start-server.sh cai num /tmp/brainstorm-<pid>-<epoch> de nome previsível (symlink ou pré-criação por outro usuário local); brainstorming/scripts/server.cjs busca um logo em primeiro-terceiro (primeradiant.com) a cada render, com opt-out só por env; e subagent-driven-development/scripts/sdd-workspace escreve em $root/.superpowers/sdd sem resolver o caminho fisicamente, então um componente symlinkado no repositório redireciona a escrita. Eles materializam em TODO pane, executáveis, e um pane gravável não é confinado pelo kernel (ver F-579/F-580). Somado a isso o override do Nexus já manda não rodá-los dentro de uma missão, que é o caso comum: seriam um passivo que ninguém deve usar.",
+  "nexusIndex": "assets/skills/superpowers/SKILL.md é escrito pelo Nexus (não vem do upstream) e carrega os OVERRIDEs: plano em docs/plan.md com heading `### Task N:` (é o que src/shared/mission-wave-pack.ts fatia), navegador do Nexus em vez do servidor da companion visual, e o ledger da missão em vez dos scripts de .superpowers/sdd/.",
+  "retiredUpstream": "O 7.0 aposentou brainstorming/spec-document-reviewer-prompt.md (virou builder-check-prompt.md) e writing-plans/plan-document-reviewer-prompt.md (virou self-review dentro da própria skill). Os dois saíram do bundle."
 }

@@ -38,6 +38,8 @@ import { recordSessionInputReceipt, forgetSessionInputReceipt } from './operator
 
 const operator = { role: 'user' as const, sessionId: 's1' };
 const LONG = 'Implemente a tela de login, escreva os testes e revise a segurança do fluxo.';
+/** Pedido que não é de código: não aciona o lembrete da ponytail (pré-filtro por verbo). */
+const NOT_CODE = 'Como está o andamento da missão e o que o time decidiu ontem?';
 
 describe('hook /hook/delegate', () => {
   it('parseUserPrompt lê o prompt do payload UserPromptSubmit', () => {
@@ -132,6 +134,7 @@ describe('hook /hook/delegate', () => {
         suggestSkill: vi.fn(async () => ({ name: 'bmad-create-prd', pkg: 'project', confidence: 0.65 })),
       },
     );
+    // PRD é escrita, não código: nem skill fraca nem o lembrete da ponytail.
     expect(out.payload).toEqual({});
   });
 
@@ -173,14 +176,14 @@ describe('hook /hook/delegate', () => {
   });
 
   it('silêncio: sem conselho, sessão de missão, worker, payload inválido, exceção', async () => {
-    expect((await handleHookDelegateRequest(operator, { prompt: LONG }, { advise: vi.fn(async () => null) })).payload).toEqual({});
+    expect((await handleHookDelegateRequest(operator, { prompt: NOT_CODE }, { advise: vi.fn(async () => null) })).payload).toEqual({});
     const advise = vi.fn(async () => delegation(3, 0));
     expect((await handleHookDelegateRequest({ ...operator, missionId: 'm' }, { prompt: LONG }, { advise })).payload).toEqual({});
     expect((await handleHookDelegateRequest({ role: 'worker', sessionId: 's' }, { prompt: LONG }, { advise })).payload).toEqual({});
     expect((await handleHookDelegateRequest(operator, { nope: 1 }, { advise })).payload).toEqual({});
     expect(advise).not.toHaveBeenCalled();
     const boom = vi.fn(async () => { throw new Error('x'); });
-    expect((await handleHookDelegateRequest(operator, { prompt: LONG }, { advise: boom })).payload).toEqual({});
+    expect((await handleHookDelegateRequest(operator, { prompt: NOT_CODE }, { advise: boom })).payload).toEqual({});
   });
 
   describe('dica do navegador Nexus (pedido de página/extração/responsividade)', () => {
@@ -220,7 +223,7 @@ describe('hook /hook/delegate', () => {
     it('não dispara para pedidos sem sinal de página/extração (sem chamada extra ao Jev)', async () => {
       __resetLeanRemindersForTests();
       const advise = vi.fn(async () => null);
-      const out = await handleHookDelegateRequest(operator, { prompt: LONG }, { advise });
+      const out = await handleHookDelegateRequest(operator, { prompt: NOT_CODE }, { advise });
       expect(out.payload).toEqual({});
     });
 
@@ -274,6 +277,90 @@ describe('hook /hook/delegate', () => {
       expect((await handleHookDelegateRequest(operator, { prompt: LONG }, { advise })).payload).toEqual({});
     });
 
+    it('sem conselho do Jev, o pré-filtro por verbo decide: pedido de código recebe', async () => {
+      __resetLeanRemindersForTests();
+      const out = await handleHookDelegateRequest(operator, { prompt: LONG }, { advise: vi.fn(async () => null) });
+      const text = (out.payload.hookSpecificOutput as { additionalContext: string }).additionalContext;
+      expect(text).toContain('ponytail');
+    });
+
+    it('sem conselho do Jev, pedido que não é de código segue em silêncio', async () => {
+      __resetLeanRemindersForTests();
+      expect((await handleHookDelegateRequest(operator, { prompt: NOT_CODE }, { advise: vi.fn(async () => null) })).payload)
+        .toEqual({});
+    });
+
+    // Revisão do PR #164: "escreva", "crie" e "ajuste" também são escrita de
+    // texto. Sem conselho do Jev, o verbo só conta com contexto de código; em
+    // inglês, "add/create/delete/remove" entram junto do português.
+    it.each([
+      'escreva o PRD do checkout',
+      'crie um resumo da reunião de ontem',
+      'ajuste o texto do e-mail para o cliente',
+      'remove the duplicate paragraph from the announcement',
+      'mude o título do e-mail de boas-vindas',
+      'write a commit message for these changes',
+      'create a bug report for the checkout issue',
+      'write an API summary for the partners',
+      'escreva o relatório de testes da sprint',
+      'explain the refactor',
+      'write a summary of the refactor',
+      'do not refactor; just review the plan',
+      'explique a refatoração do checkout',
+      'refatore o texto do e-mail de boas-vindas',
+      'do not delete this handler; explain what calls it',
+      'não altere a função; apenas explique',
+    ])('sem conselho do Jev, escrita que não é código não recebe o lembrete: %s', async (prompt) => {
+      __resetLeanRemindersForTests();
+      expect(JSON.stringify((await handleHookDelegateRequest(operator, { prompt }, { advise: vi.fn(async () => null) })).payload))
+        .not.toContain('ponytail');
+    });
+
+    it.each([
+      'add validation to the signup form',
+      'create a component for the pricing table',
+      'delete this handler from `routes.ts`',
+      'corrija o bug do login',
+      'adicione um endpoint de exportação na API',
+      'refatore o checkout',
+      'please refactor the payments module',
+      'pode refatorar o login?',
+      'não mexa no layout, mas corrija o bug do login',
+      'edit this component',
+      'change the endpoint',
+      'modify the validation function',
+      'edite o componente de login',
+      'altere a função de cálculo do frete',
+      'update package.json',
+      'renomear a função de login',
+      'renomeie a classe de pagamento',
+      'make a component for the pricing table',
+      'faça um endpoint de exportação',
+      'write the tests for the API client',
+      'fix the bug in `routes.ts`',
+    ])('sem conselho do Jev, pedido de código recebe o lembrete: %s', async (prompt) => {
+      __resetLeanRemindersForTests();
+      const out = await handleHookDelegateRequest(operator, { prompt }, { advise: vi.fn(async () => null) });
+      expect(JSON.stringify(out.payload)).toContain('ponytail');
+    });
+
+    // Revisão do PR #164: a skill promete "ativa até o operador dizer stop
+    // ponytail ou normal mode", e o hook voltava a mandar o lembrete.
+    it.each(['stop ponytail', 'normal mode', 'modo normal, por favor'])(
+      'depois de "%s" o pane não recebe mais o lembrete, até "start ponytail"',
+      async (optOut) => {
+        __resetLeanRemindersForTests();
+        const noAdvice = { advise: vi.fn(async () => null) };
+        await handleHookDelegateRequest(operator, { prompt: optOut }, noAdvice);
+        const silenced = await handleHookDelegateRequest(operator, { prompt: 'corrija o bug do login' }, noAdvice);
+        expect(JSON.stringify(silenced.payload)).not.toContain('ponytail');
+
+        await handleHookDelegateRequest(operator, { prompt: 'start ponytail' }, noAdvice);
+        const back = await handleHookDelegateRequest(operator, { prompt: 'corrija o bug do login' }, noAdvice);
+        expect(JSON.stringify(back.payload)).toContain('ponytail');
+      },
+    );
+
     it('delegação e lembrete saem juntos no mesmo additionalContext', async () => {
       __resetLeanRemindersForTests();
       const advise = vi.fn(async () => ({ ...delegation(3, 1), writesCode: 0.9 }));
@@ -326,8 +413,8 @@ describe('hook /hook/delegate', () => {
       __resetLeanRemindersForTests();
       const design = vi.fn(() => designText);
       for (const brief of [`${UI}\n\nRegra de design do projeto (sempre que…)`, `${UI}\n\n# Design Charter (anti-generic AI look)`]) {
-        expect((await handleHookDelegateRequest(withScope, { prompt: brief }, { advise: noAdvice, design })).payload)
-          .toEqual({});
+        expect(JSON.stringify((await handleHookDelegateRequest(withScope, { prompt: brief }, { advise: noAdvice, design })).payload))
+          .not.toContain(designText);
       }
       expect(design).not.toHaveBeenCalled();
     });
@@ -335,7 +422,8 @@ describe('hook /hook/delegate', () => {
     it('sem escopo de workspace ou sem sessão, fica em silêncio', async () => {
       __resetLeanRemindersForTests();
       const design = vi.fn(() => designText);
-      expect((await handleHookDelegateRequest(operator, { prompt: UI }, { advise: noAdvice, design })).payload).toEqual({});
+      expect(JSON.stringify((await handleHookDelegateRequest(operator, { prompt: UI }, { advise: noAdvice, design })).payload))
+        .not.toContain(designText);
       expect((await handleHookDelegateRequest({ role: 'user' as const, scope }, { prompt: UI }, { advise: noAdvice, design })).payload)
         .toEqual({});
       expect(design).not.toHaveBeenCalled();
@@ -980,13 +1068,14 @@ describe('<business-model> por tarefa no hook do operador', () => {
 
   it('bloco null não gera contexto e exceção é fail-open', async () => {
     __resetLeanRemindersForTests();
-    // design: null isola o teste — o prompt LONG cita "tela" e acionaria a regra.
+    // design: null e NOT_CODE isolam o teste: LONG cita "tela" (regra de
+    // design) e é pedido de código (lembrete da ponytail).
     const none = {
       advise: vi.fn(async () => null),
       businessContext: vi.fn(async () => null),
       design: () => null,
     };
-    expect((await handleHookDelegateRequest(codex, { prompt: LONG }, none)).payload).toEqual({});
+    expect((await handleHookDelegateRequest(codex, { prompt: NOT_CODE }, none)).payload).toEqual({});
     const boom = {
       advise: vi.fn(async () => null),
       design: () => null,
@@ -995,7 +1084,7 @@ describe('<business-model> por tarefa no hook do operador', () => {
       }),
     };
     expect(
-      (await handleHookDelegateRequest({ ...codex, sessionId: 's-boom' }, { prompt: LONG }, boom))
+      (await handleHookDelegateRequest({ ...codex, sessionId: 's-boom' }, { prompt: NOT_CODE }, boom))
         .payload,
     ).toEqual({});
   });
