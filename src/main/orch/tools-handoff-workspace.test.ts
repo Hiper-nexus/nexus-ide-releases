@@ -147,7 +147,12 @@ describe("workspace handoff", () => {
     child.visualTask = { since: 1000, id: 'workspace-assignment' };
     const close = vi.spyOn(panes, 'requestPaneClose').mockResolvedValue(true);
     armAutoCloseOnHandoff('child', 'pane-child');
-    const first = await tool('submit').handler({ ...args, fullText: "Relatório completo: implementação em result.ts, validação executada e resultados conferidos." }, child);
+    const report = { ...args, fullText: "Relatório completo: implementação em result.ts, validação executada e resultados conferidos." };
+    // Revisão 22/10: uma devolução com o caminho da captura, nada gravado.
+    await expect(tool('submit').handler(report, child))
+      .rejects.toThrow(/portão visual \(devolução 1\/1\)[\s\S]*nexus_preview_start/);
+    expect(getProjectDomainStores(scope).handoffs.list({ includeDelivered: true })).toEqual([]);
+    const first = await tool('submit').handler(report, child);
     expect(first).toMatchObject({ status: 'partial', visualVerification: { verified: false } });
     expect(close).not.toHaveBeenCalled();
     expect(armedAutoClosePaneId('child')).toBe('pane-child');

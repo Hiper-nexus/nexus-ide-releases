@@ -307,6 +307,45 @@ export function visualEvidenceVerified(verdict: VisualHandoffVerdict | undefined
     typeof verdict.artifactId === 'string' && verdict.artifactId.length > 0;
 }
 
+/**
+ * Review 22/10: like the regression gate, a visual delivery without a valid
+ * capture goes back to the worker ONCE, with the recipe that produces one,
+ * before it is recorded as `partial`. Counted per worker and assignment and
+ * NOT reset when the partial goes through — a transport replay of that partial
+ * must not be bounced again; a verified capture clears it for the next round.
+ */
+export const VISUAL_GATE_BOUNCES_PER_ASSIGNMENT = 1;
+const MAX_TRACKED_VISUAL_BOUNCES = 512;
+const visualBounces = new Map<string, number>();
+
+export function __resetVisualHandoffBouncesForTests(): void {
+  visualBounces.clear();
+}
+
+/** Main's next step for a visual verdict: the send-back message, or null to record it as is. */
+export function visualHandoffSendBack(
+  ctx: Pick<VisualHandoffContext, 'sessionId' | 'workerIncarnationId' | 'visualTask'>,
+  verdict: VisualHandoffVerdict | undefined,
+  options: { readonly returnable?: boolean } = {},
+): string | null {
+  if (!ctx.sessionId || !verdict?.required) return null;
+  const key = `${ctx.sessionId}\0${ctx.workerIncarnationId ?? ''}\0${ctx.visualTask?.id ?? 'planned'}`;
+  if (verdict.verified) {
+    visualBounces.delete(key);
+    return null;
+  }
+  const used = visualBounces.get(key) ?? 0;
+  if (options.returnable === false || used >= VISUAL_GATE_BOUNCES_PER_ASSIGNMENT) return null;
+  visualBounces.delete(key);
+  visualBounces.set(key, used + 1);
+  while (visualBounces.size > MAX_TRACKED_VISUAL_BOUNCES) visualBounces.delete(visualBounces.keys().next().value!);
+  return `handoff NÃO aceito pelo portão visual (devolução ${used + 1}/${VISUAL_GATE_BOUNCES_PER_ASSIGNMENT}): ` +
+    `${verdict.reason}\nCapture agora: faça o build, nexus_preview_start({ dir: "<pasta do build>" }), ` +
+    'nexus_browser_open({ url: "<url do preview>" }) e nexus_browser_responsive({ paneId }); depois envie o ' +
+    'handoff de novo. Se a captura não for possível (o navegador não abre, projeto fora da tela), envie de novo ' +
+    'dizendo o motivo: a entrega entra como partial com "[verificação visual pendente]".';
+}
+
 interface EvidenceRow {
   readonly artifact_id: string;
   readonly candidate_observed_at: number | null;

@@ -7,8 +7,8 @@ import { createScopedBrowserArtifactStore } from '../browser/browser-artifact-st
 import { testProjectScope } from './__tests__/scope-fixture';
 import { ProcessGitRunner } from '../runtime/git-command';
 import {
-  checkVisualHandoff, recordVisualHandoffEvidence, visualCandidateBindingsSettled, visualTaskRequirement,
-  visualTaskAtSpawn, visualEvidenceVerified, VISUAL_CAPTURE_STALE_REASON,
+  __resetVisualHandoffBouncesForTests, checkVisualHandoff, recordVisualHandoffEvidence, visualCandidateBindingsSettled,
+  visualHandoffSendBack, visualTaskRequirement, visualTaskAtSpawn, visualEvidenceVerified, VISUAL_CAPTURE_STALE_REASON,
 } from './visual-handoff-gate';
 
 let dir: string;
@@ -267,6 +267,33 @@ describe('review 22/10: a capture is bound to the preview and to the candidate',
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe('review 22/10: one send-back before a visual delivery becomes partial', () => {
+  const pending = { required: true, verified: false, reason: 'falta a captura' } as const;
+  const verified = { required: true, verified: true, artifactId: 'browser-x', sha256: 'f'.repeat(64) } as const;
+  beforeEach(() => __resetVisualHandoffBouncesForTests());
+
+  it('sends back once per assignment with the capture recipe, then lets the partial through', () => {
+    const message = visualHandoffSendBack(context(), pending);
+    expect(message).toContain('devolução 1/1');
+    expect(message).toContain('falta a captura');
+    expect(message).toMatch(/nexus_preview_start[\s\S]*nexus_browser_open[\s\S]*nexus_browser_responsive/);
+    expect(visualHandoffSendBack(context(), pending)).toBeNull();
+    // A transport replay of the partial is not bounced again.
+    expect(visualHandoffSendBack(context(), pending)).toBeNull();
+    // Another assignment of the same worker gets its own send-back.
+    expect(visualHandoffSendBack({ ...context(), visualTask: { since: 2000, id: 'assignment-b' } }, pending)).not.toBeNull();
+  });
+
+  it('a verified capture resets it, and nothing is sent back without a return channel or a requirement', () => {
+    expect(visualHandoffSendBack(context(), pending)).not.toBeNull();
+    expect(visualHandoffSendBack(context(), verified)).toBeNull();
+    expect(visualHandoffSendBack(context(), pending)).not.toBeNull();
+    expect(visualHandoffSendBack({ ...context(), sessionId: 'pty' }, pending, { returnable: false })).toBeNull();
+    expect(visualHandoffSendBack(context(), { required: false, verified: true })).toBeNull();
+    expect(visualHandoffSendBack(context(), undefined)).toBeNull();
   });
 });
 
