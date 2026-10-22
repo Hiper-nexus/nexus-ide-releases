@@ -2284,13 +2284,9 @@ export async function inspectBrowserElement(
   return { paneId, ...result };
 }
 
-function hrefPathOnly(href: string): string {
-  try {
-    return new URL(href).pathname.slice(0, 200);
-  } catch {
-    return '';
-  }
-}
+/** The action waits on the tie-break before acting; no answer → candidates. */
+const BROWSER_ACTION_TIE_BREAK_TIMEOUT_MS = 1_500;
+const BROWSER_ACTION_MAX_CANDIDATES = 10;
 
 type TextResolution =
   | {
@@ -2332,73 +2328,33 @@ async function resolveBrowserElementByText(
   ) {
     return { ok: true, match: top, resolvedBy: 'text' };
   }
-  const candidates = matches.slice(0, 5);
-  const jevEnabled = deps?.jevEnabled ?? (() => isJevSurfaceEnabled('browserTool'));
-  const jevReady = deps?.jevReady ?? (() => hasDecisionCredential('browserTool'));
-  if (candidates.length >= 2 && jevEnabled() && jevReady()) {
-    try {
-      const judgeFn = deps?.jev ?? judge;
-      const criteria: Record<string, string | null> = {};
-      for (const c of candidates) {
-        const path = c.href ? hrefPathOnly(c.href) : '';
-        criteria[c.ref] =
-          `${c.role} "${c.name}"${path ? ` → ${path}` : ''}`.slice(0, 256);
-      }
-      criteria['none'] = 'nenhum corresponde';
-      const questions: Record<string, JevQuestion> = {
-        element: {
-          type: 'choice',
-          instructions:
-            'Which element best matches the user intent text on this page? ' +
-            'Pick none if no candidate corresponds.',
-          criteria,
-        },
-      };
-      const wc = entry.view.webContents;
-      const state = {
-        intent: redactBrowserText(text).slice(0, 200),
-        pageTitle: redactBrowserText(wc.getTitle() || entry.title).slice(0, 256),
-        url: redactPageUrl(wc.getURL() || entry.url),
-      };
-      const result: JevResult | null = await judgeFn({
-        state,
-        questions,
-        timeoutMs: BROWSER_JUDGE_TIMEOUT_MS,
-        retryOnTimeout: false,
-        surface: 'browserTool',
-        sessionId: options?.sessionId,
-        missionId: options?.missionId,
-      });
-      const answer = result?.answers['element'];
-      if (result && answer && answer.type === 'choice') {
-        const record = deps?.recordDecision ?? recordJevDecision;
-        record({
-          surface: 'browserTool',
-          sessionId: options?.sessionId,
-          missionId: options?.missionId,
-          model: result.model,
-          questions: Object.keys(questions),
-          probabilities: jevAnswerProbabilities(result.answers),
-          confidence: jevAnswerConfidences(result.answers),
-          decision: answer.choice,
-          ...decisionResultUsage(result),
-        });
-        if (answer.confidence >= 0.7 && answer.choice !== 'none') {
-          const chosen = candidates.find((c) => c.ref === answer.choice);
-          if (chosen) {
-            return {
-              ok: true,
-              match: chosen,
-              resolvedBy: 'jev',
-              confidence: answer.confidence,
-            };
-          }
-        }
-      }
-    } catch {
-      // fail-open
-    }
+  // One tie-break rule for find and for click/fill: Jev is asked only with
+  // 2–5 score-tied candidates and through the first-option check (F-1626).
+  // A crowded page (6+ matches) is never cut to the first five in DOM order —
+  // the agent gets the candidates and picks a ref itself.
+  const wc = entry.view.webContents;
+  const picked = await pickBrowserFindElement(
+    matches,
+    {
+      query: text,
+      pageTitle: wc.getTitle() || entry.title,
+      url: wc.getURL() || entry.url,
+      timeoutMs: BROWSER_ACTION_TIE_BREAK_TIMEOUT_MS,
+      ...(options?.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
+      ...(options?.missionId !== undefined ? { missionId: options.missionId } : {}),
+    },
+    {
+      ...(deps?.jev ? { jev: deps.jev } : {}),
+      ...(deps?.jevEnabled ? { jevEnabled: deps.jevEnabled } : {}),
+      ...(deps?.jevReady ? { jevReady: deps.jevReady } : {}),
+      ...(deps?.recordDecision ? { recordDecision: deps.recordDecision } : {}),
+    },
+  );
+  const chosen = picked ? matches.find((match) => match.ref === picked.ref) : undefined;
+  if (picked && chosen) {
+    return { ok: true, match: chosen, resolvedBy: 'jev', confidence: picked.confidence };
   }
+  const candidates = matches.slice(0, BROWSER_ACTION_MAX_CANDIDATES);
   return { ok: false, candidates };
 }
 

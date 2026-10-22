@@ -583,6 +583,39 @@ describe('browser manager actions (after/changed, errors, judge, text)', () => {
     destroyBrowser(PANE, scope);
   });
 
+  it('asks Jev with the first-option check and returns candidates outside the 2–5 range', async () => {
+    await boot();
+    const jev = vi.fn(async (_req: unknown) => ({
+      model: 'test-model',
+      answers: { element: { type: 'choice' as const, choice: 'e1', probabilities: {}, confidence: 0.9 } },
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }));
+    const deps = { jev, jevEnabled: () => true, jevReady: () => true, recordDecision: vi.fn() };
+    const many = Array.from({ length: 8 }, (_, index) => ({
+      ref: `e${index + 1}`, tag: 'button', role: 'button', name: `Excluir ${index + 1}`, score: 0.75,
+    }));
+    const crowded = await clickBrowserElement(PANE, scope, { text: 'excluir' }, {
+      deps: { ...deps, find: vi.fn(async () => ({ paneId: PANE, matches: many, total: 8 })) },
+    });
+    expect(jev).not.toHaveBeenCalled();
+    expect(crowded.clicked).toBe(false);
+    expect(crowded.ambiguous).toBe(true);
+    expect(crowded.candidates).toHaveLength(8);
+    expect(state.runAutomation).not.toHaveBeenCalledWith(PANE, expect.anything(), 'click', expect.anything(),
+      undefined, expect.anything());
+
+    const tied = await clickBrowserElement(PANE, scope, { text: 'excluir' }, {
+      deps: { ...deps, find: vi.fn(async () => ({ paneId: PANE, matches: many.slice(0, 2), total: 2 })) },
+    });
+    expect(tied.resolvedBy).toBe('jev');
+    expect(jev.mock.calls[0][0]).toMatchObject({
+      orderCheck: { minConfidence: 0.7 },
+      timeoutMs: expect.any(Number),
+    });
+    expect((jev.mock.calls[0][0] as { timeoutMs: number }).timeoutMs).toBeLessThanOrEqual(1_500);
+    destroyBrowser(PANE, scope);
+  });
+
   it('attaches a Jev page judgment to read and fails open', async () => {
     await boot();
     const jev = vi.fn(async (_req: unknown) => ({
