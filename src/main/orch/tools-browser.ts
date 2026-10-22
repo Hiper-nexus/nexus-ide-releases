@@ -132,6 +132,16 @@ const previewStopTool: McpToolDef = {
   },
 };
 
+const DEVICE_ARG_PROP = {
+  type: 'string',
+  enum: ['mobile', 'tablet', 'desktop'],
+  description:
+    'Emulate a device breakpoint before loading (real UA + viewport metrics, ' +
+    'reused from the operator\'s responsive-preview toggle) — "mobile"/"tablet" ' +
+    'serve the real mobile/tablet layout, "desktop" turns emulation back off. ' +
+    'For a full responsive check in one call use nexus_browser_responsive.',
+};
+
 const browserOpenTool: McpToolDef = {
   name: 'nexus_browser_open',
   requiresConfirm: true,
@@ -151,6 +161,9 @@ const browserOpenTool: McpToolDef = {
         description:
           'Required only for a main-provisioned automated design-review pane.',
       },
+      read: READ_ARG_PROP,
+      judge: JUDGE_ARG_PROP,
+      device: DEVICE_ARG_PROP,
     },
     required: ['url'],
   },
@@ -201,6 +214,7 @@ const browserOpenTool: McpToolDef = {
       // F-797: sem aba possível, o worker segue com curl e declara a falha.
       throw new Error(browserUnavailableError(result.error ?? 'browser open failed'));
     }
+    const device = str(args, 'device');
     try {
       assertMcpInvocationCurrent(invocation);
       const state = await loadBrowser(result.paneId, url, {
@@ -208,6 +222,15 @@ const browserOpenTool: McpToolDef = {
         privateAccessConfirmed: false,
         signal: invocation?.signal,
         assertCurrentAuthority: invocation?.assertCurrentAuthority,
+        // Same options as navigate: opening is the first navigation, and the
+        // agent otherwise spends a second call just to read or judge it.
+        read: inlineReadArg(args),
+        judge: args.judge !== false,
+        sessionId: ctx.sessionId,
+        missionId: ctx.missionId,
+        ...(device === 'mobile' || device === 'tablet' || device === 'desktop'
+          ? { device }
+          : {}),
       });
       assertMcpInvocationCurrent(invocation);
       return { ok: true, paneId: result.paneId, state };
@@ -224,15 +247,6 @@ const browserOpenTool: McpToolDef = {
   },
 };
 
-const DEVICE_ARG_PROP = {
-  type: 'string',
-  enum: ['mobile', 'tablet', 'desktop'],
-  description:
-    'Emulate a device breakpoint before loading (real UA + viewport metrics, ' +
-    'reused from the operator\'s responsive-preview toggle) — "mobile"/"tablet" ' +
-    'serve the real mobile/tablet layout, "desktop" turns emulation back off. ' +
-    'For a full responsive check in one call use nexus_browser_responsive.',
-};
 
 const browserNavigateTool: McpToolDef = {
   name: 'nexus_browser_navigate',

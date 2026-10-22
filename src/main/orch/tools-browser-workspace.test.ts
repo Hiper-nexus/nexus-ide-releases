@@ -336,6 +336,22 @@ describe('preview tool workspace confinement', () => {
     expect(stubs.startPreview).not.toHaveBeenCalled();
   });
 
+  it('opens with the same read/judge/device options as navigate', async () => {
+    const tool = buildBrowserTools().find((item) => item.name === 'nexus_browser_open')!;
+    const properties = tool.inputSchema.properties as Record<string, unknown>;
+    expect(properties).toHaveProperty('read');
+    expect(properties).toHaveProperty('judge');
+    expect(properties).toHaveProperty('device');
+
+    await tool.handler({ url: 'https://example.com', read: { format: 'compact' }, device: 'mobile' }, context);
+    expect(stubs.loadBrowser).toHaveBeenLastCalledWith('browser-1', 'https://example.com',
+      expect.objectContaining({ read: { format: 'compact' }, judge: true, device: 'mobile', privateAccessConfirmed: false }));
+
+    await tool.handler({ url: 'https://example.com', judge: false }, context);
+    expect(stubs.loadBrowser).toHaveBeenLastCalledWith('browser-1', 'https://example.com',
+      expect.objectContaining({ judge: false }));
+  });
+
   it('propagates the captured project scope when opening a browser pane', async () => {
     const tool = buildBrowserTools().find((item) => item.name === 'nexus_browser_open')!;
 

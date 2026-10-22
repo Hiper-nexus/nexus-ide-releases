@@ -392,6 +392,9 @@ const schemas = new Map<string, z.ZodType<Record<string, unknown>>>([
         title: z.string().min(1).max(512).optional(),
         // Only an automated design-review pane names its main-provisioned pane.
         paneId: paneId.optional(),
+        read: browserInlineReadSchema,
+        judge: browserJudgeArg,
+        device: z.enum(['mobile', 'tablet', 'desktop']).optional(),
       })
       .strict(),
   ],
