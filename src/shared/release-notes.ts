@@ -12630,7 +12630,7 @@ const RELEASE_076405_FULL: AppRelease = {
 
 export const RELEASE_076405: AppRelease = RELEASE_076405_FULL;
 
-export const CURRENT_RELEASE: AppRelease = {
+const RELEASE_076406_FULL: AppRelease = {
   version: '0.76.406',
   date: '2026-10-22',
   codename: 'O painel nunca imprime "undefined"',
@@ -12645,4 +12645,29 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: RELEASE_076405_FULL.fixes,
 };
 
-export const RELEASE_076406: AppRelease = CURRENT_RELEASE;
+export const RELEASE_076406: AppRelease = RELEASE_076406_FULL;
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.407',
+  date: '2026-10-22',
+  codename: 'A missão deixa de refazer trabalho já feito',
+  summary:
+    'A missão para de jogar fora trabalho válido. A verificação mecânica é ' +
+    'preservada enquanto o juiz independente lê o mesmo candidato; o worker ' +
+    'espera o aceite, então "refaça" chega ao pane morno em vez de recomeçar ' +
+    'do brief original; e a entrega visual deixa de ser cobrada duas vezes — ' +
+    'com captura verificada o pedido passa a ser o que a página pode dar. ' +
+    'Medido no próprio motor, sem modelo dos dois lados: um pane só leva ' +
+    '7,47 s e a missão 11,82 s, então a cerimônia custa 4,35 s (1,58×) — a ' +
+    'lentidão estava nas rodadas de modelo a mais, não no motor. Pacote ' +
+    'macOS arm64; a 0.76.406 é o pacote Linux anterior.',
+  highlights: [
+    { title: 'A verificação válida não é mais jogada fora', detail: 'O resultado de typecheck, auditoria e portão de regressão era descartado por prazo mesmo com o candidato idêntico byte a byte, inclusive enquanto o juiz independente ainda o lia.' },
+    { title: 'A devolução não recomeça do zero', detail: 'O worker espera o aceite: "refaça" chega ao pane morno, com a conversa e a captura ainda válidas, em vez de cair num pane novo com o brief original.' },
+    { title: 'A entrega visual não é cobrada duas vezes', detail: 'A captura verificada do navegador conta como evidência; quando a entrega executa, o pedido passa a ser o console sem erro ou o comando do preview, não uma saída de teste que a página não tem.' },
+    ...RELEASE_076406_FULL.highlights,
+  ],
+  fixes: RELEASE_076406_FULL.fixes,
+};
+
+export const RELEASE_076407: AppRelease = CURRENT_RELEASE;
