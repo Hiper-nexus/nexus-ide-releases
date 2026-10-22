@@ -1371,7 +1371,11 @@ export async function loadBrowser(
   if (options.read !== undefined && options.read !== false) {
     out.page = await inlinePageRead(paneId, options.scope, options.read);
   }
-  if (options.judge === true) {
+  const skipped = options.judge === true ? browserJudgeUnavailable(options.deps) : null;
+  if (skipped) {
+    out.judgment = null;
+    out.judgmentSkipped = skipped;
+  } else if (options.judge === true) {
     const readForJudge: BrowserPageReadResult =
       out.page && 'bodyText' in out.page
         ? out.page
@@ -1379,7 +1383,7 @@ export async function loadBrowser(
             maxChars: 4_000,
             maxElements: 60,
           });
-    const visual = autoBrowserVisualJudgment(paneId, options);
+    const visual = autoBrowserVisualJudgment(paneId, entry, options);
     const verdict = await judgeBrowserPage(readForJudge, errors, {
       sessionId: options.sessionId,
       missionId: options.missionId,
@@ -1914,6 +1918,15 @@ function pageCacheOwner(entry: object, judgeFn: object): object {
   return owner;
 }
 
+/** Why the page judgment cannot run right now, or null when it can. */
+function browserJudgeUnavailable(deps?: BrowserActionDeps): BrowserJudgmentSkipped | null {
+  const jevEnabled = deps?.jevEnabled ?? (() => isJevSurfaceEnabled('browserTool'));
+  const jevReady = deps?.jevReady ?? (() => hasDecisionCredential('browserTool'));
+  if (!jevEnabled()) return 'surface-disabled';
+  if (!jevReady()) return 'no-credential';
+  return null;
+}
+
 /**
  * §8 Jev page judgment (opt-in): three nouls + a page-kind choice over
  * already-redacted read data. Fail-open: off, missing credential, timeout or
@@ -1927,11 +1940,8 @@ async function judgeBrowserPage(
   cacheEntry?: BrowserEntry,
 ): Promise<PageVerdict> {
   const deps = options?.deps;
-  const jevEnabled =
-    deps?.jevEnabled ?? (() => isJevSurfaceEnabled('browserTool'));
-  const jevReady = deps?.jevReady ?? (() => hasDecisionCredential('browserTool'));
-  if (!jevEnabled()) return { judgment: null, judgmentSkipped: 'surface-disabled' };
-  if (!jevReady()) return { judgment: null, judgmentSkipped: 'no-credential' };
+  const unavailable = browserJudgeUnavailable(deps);
+  if (unavailable) return { judgment: null, judgmentSkipped: unavailable };
   try {
     const judgeFn = deps?.jev ?? judge;
     const questions: Record<string, JevQuestion> = {
@@ -2081,6 +2091,7 @@ async function judgeBrowserPage(
  */
 async function autoBrowserVisualJudgment(
   paneId: string,
+  entry: BrowserEntry,
   options: BrowserActionOptions & {
     scope: ProjectExecutionScope;
     signal?: AbortSignal;
@@ -2093,6 +2104,11 @@ async function autoBrowserVisualJudgment(
   }
   if (!(deps?.jevReady ?? (() => hasDecisionCredential('browserTool')))()) {
     return undefined;
+  }
+  const inFlight = lateVisualJudgments.get(entry);
+  if (inFlight && sameBrowserDocument(inFlight, entry) && !inFlight.result) {
+    // One paid capture per document: a second judged call waits for the first.
+    return { status: 'pending' };
   }
   const work = (async (): Promise<BrowserVisualAutoJudgment | null> => {
     try {
@@ -2111,18 +2127,53 @@ async function autoBrowserVisualJudgment(
       return null;
     }
   })();
-  return (
-    (await Promise.race([
-      work,
-      new Promise<BrowserVisualAutoJudgment>((resolve) => {
-        const timer = setTimeout(
-          () => resolve({ status: 'pending' as const }),
-          BROWSER_JUDGE_BUDGET_MS,
-        );
-        timer.unref?.();
-      }),
-    ])) ?? undefined
-  );
+  const late: LateVisualJudgment = { navSeq: entry.navSeq, loadGeneration: entry.loadGeneration };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const winner = await Promise.race([
+    work.then((value) => ({ landed: true as const, value })),
+    new Promise<{ landed: false }>((resolve) => {
+      timer = setTimeout(() => resolve({ landed: false }), BROWSER_JUDGE_BUDGET_MS);
+      timer.unref?.();
+    }),
+  ]);
+  clearTimeout(timer);
+  if (winner.landed) return winner.value ?? undefined;
+  // The capture and the vision call were already paid for: keep the answer for
+  // the next judged read of this same document instead of dropping it.
+  lateVisualJudgments.set(entry, late);
+  void work.then((value) => {
+    if (lateVisualJudgments.get(entry) !== late) return;
+    if (value) late.result = value;
+    else lateVisualJudgments.delete(entry);
+  });
+  return { status: 'pending' };
+}
+
+interface LateVisualJudgment {
+  readonly navSeq: number;
+  readonly loadGeneration: number;
+  result?: BrowserVisualAutoJudgment;
+}
+const lateVisualJudgments = new WeakMap<BrowserEntry, LateVisualJudgment>();
+
+function sameBrowserDocument(
+  mark: { readonly navSeq: number; readonly loadGeneration: number },
+  entry: BrowserEntry,
+): boolean {
+  return mark.navSeq === entry.navSeq && mark.loadGeneration === entry.loadGeneration;
+}
+
+/** A late visual answer for the document still on screen, handed out once. */
+function takeLateVisualJudgment(entry: BrowserEntry): BrowserVisualAutoJudgment | undefined {
+  const late = lateVisualJudgments.get(entry);
+  if (!late) return undefined;
+  if (!sameBrowserDocument(late, entry)) {
+    lateVisualJudgments.delete(entry);
+    return undefined;
+  }
+  if (!late.result) return undefined;
+  lateVisualJudgments.delete(entry);
+  return late.result;
 }
 
 async function attachAfterAndMaybePage<R extends Record<string, unknown>>(
@@ -2137,6 +2188,7 @@ async function attachAfterAndMaybePage<R extends Record<string, unknown>>(
     errors: BrowserErrorReport;
     judgment?: BrowserPageJudgment | null;
     judgmentSkipped?: BrowserJudgmentSkipped;
+    visualJudgment?: BrowserVisualAutoJudgment;
     page?: (BrowserPageReadResult | BrowserCompactPageResult) & { paneId: string };
   }
 > {
@@ -2148,6 +2200,7 @@ async function attachAfterAndMaybePage<R extends Record<string, unknown>>(
     errors: BrowserErrorReport;
     judgment?: BrowserPageJudgment | null;
     judgmentSkipped?: BrowserJudgmentSkipped;
+    visualJudgment?: BrowserVisualAutoJudgment;
     page?: (BrowserPageReadResult | BrowserCompactPageResult) & { paneId: string };
   };
   if (options?.read !== undefined && options.read !== false) {
@@ -2157,7 +2210,12 @@ async function attachAfterAndMaybePage<R extends Record<string, unknown>>(
       options.read === true ? true : options.read,
     );
   }
-  if (options?.judge === true) {
+  const skipped = options?.judge === true ? browserJudgeUnavailable(options.deps) : null;
+  if (skipped) {
+    // No second page read for a judgment that cannot run (Jev off/no key).
+    out.judgment = null;
+    out.judgmentSkipped = skipped;
+  } else if (options?.judge === true) {
     const readForJudge: BrowserPageReadResult =
       out.page && 'bodyText' in out.page
         ? out.page
@@ -2168,6 +2226,8 @@ async function attachAfterAndMaybePage<R extends Record<string, unknown>>(
     const verdict = await judgeBrowserPage(readForJudge, errors, options, entry);
     out.judgment = verdict.judgment;
     if (verdict.judgmentSkipped) out.judgmentSkipped = verdict.judgmentSkipped;
+    const visualJudgment = takeLateVisualJudgment(entry);
+    if (visualJudgment) out.visualJudgment = visualJudgment;
   }
   return out;
 }
@@ -2192,6 +2252,7 @@ export async function readBrowserPage(
     judgmentSkipped?: BrowserJudgmentSkipped;
     judgmentReused?: boolean;
     contextSelection?: BrowserContextSelection;
+    visualJudgment?: BrowserVisualAutoJudgment;
   }
 > {
   const result = browserPageReadResultSchema.parse(
@@ -2212,6 +2273,7 @@ export async function readBrowserPage(
     judgmentSkipped?: BrowserJudgmentSkipped;
     judgmentReused?: boolean;
     contextSelection?: BrowserContextSelection;
+    visualJudgment?: BrowserVisualAutoJudgment;
   };
   if (options.judge === true || (options.focus?.trim() && options.judge !== false)) {
     const verdict = await judgeBrowserPage(result, errors, {
@@ -2228,6 +2290,8 @@ export async function readBrowserPage(
       out.contextSelection = verdict.contextSelection;
       if (verdict.contextSelection.applied) out.truncated = true;
     }
+    const visualJudgment = takeLateVisualJudgment(entry);
+    if (visualJudgment) out.visualJudgment = visualJudgment;
   }
   return out;
 }
@@ -2253,6 +2317,7 @@ export async function readBrowserPageCompact(
     judgmentSkipped?: BrowserJudgmentSkipped;
     judgmentReused?: boolean;
     contextSelection?: BrowserContextSelection;
+    visualJudgment?: BrowserVisualAutoJudgment;
   }
 > {
   const result = await readBrowserPage(paneId, scope, options);
@@ -2270,6 +2335,7 @@ export async function readBrowserPageCompact(
     ...(result.judgmentSkipped
       ? { judgmentSkipped: result.judgmentSkipped }
       : {}),
+    ...(result.visualJudgment ? { visualJudgment: result.visualJudgment } : {}),
   };
 }
 

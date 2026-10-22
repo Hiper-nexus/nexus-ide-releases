@@ -780,6 +780,45 @@ describe('browser manager actions (after/changed, errors, judge, text)', () => {
     destroyBrowser(PANE, scope);
   });
 
+  it('delivers a visual judgment that missed the budget on the next judged read instead of dropping it', async () => {
+    await boot();
+    const jev = vi.fn(async (_req: unknown) => ({
+      model: 'test-model', answers: {}, usage: { input_tokens: 1, output_tokens: 1 },
+    }));
+    const deps = { jev, jevEnabled: () => true, jevReady: () => true };
+    let land!: (value: { status: 'answered'; signals: Record<string, number>; model: string; route: string }) => void;
+    state.visualJudge.mockImplementationOnce(() => new Promise((resolve) => { land = resolve; }));
+    state.canVisual.mockReturnValue(true);
+    try {
+      const nav = await loadBrowser(PANE, 'https://example.test/slow', { scope, judge: true, deps });
+      expect(nav.visualJudgment).toEqual({ status: 'pending' });
+      land({ status: 'answered', signals: { visibleError: 0.1 }, model: 'clef', route: 'test' });
+      await new Promise((resolve) => setImmediate(resolve));
+      const read = await readBrowserPage(PANE, scope, { judge: true, deps });
+      expect(read.visualJudgment).toMatchObject({ status: 'answered', signals: { visibleError: 0.1 } });
+      const again = await readBrowserPage(PANE, scope, { judge: true, deps });
+      expect(again.visualJudgment).toBeUndefined();
+      expect(state.visualJudge).toHaveBeenCalledOnce();
+    } finally {
+      state.canVisual.mockReturnValue(false);
+    }
+    destroyBrowser(PANE, scope);
+  });
+
+  it('does not read the page for a judgment that cannot run', async () => {
+    await boot();
+    state.runAutomation.mockClear();
+    const off = await clickBrowserElement(PANE, scope, 'e1', { judge: true, deps: { jevEnabled: () => false } });
+    expect(off.judgmentSkipped).toBe('surface-disabled');
+    const noKey = await loadBrowser(PANE, 'https://example.test/app', {
+      scope, judge: true, deps: { jevEnabled: () => true, jevReady: () => false },
+    });
+    expect(noKey.judgmentSkipped).toBe('no-credential');
+    const commands = state.runAutomation.mock.calls.map((call) => call[2]);
+    expect(commands).not.toContain('read');
+    destroyBrowser(PANE, scope);
+  });
+
   it('refuses a local dev server and names the preview path that works', async () => {
     await boot();
     await expect(loadBrowser(PANE, 'http://localhost:5173/', { scope }))
