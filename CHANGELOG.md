@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.76.414 — A coleta no Linux e a colagem grande
+
+Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.
+
+A 0.76.413 continua Latest (pacote macOS: DMG e ZIP arm64) na canônica e no espelho; esta release não toma essa marca e não recebe arquivos macOS. No espelho, a 0.76.410 e a 0.76.408 continuam publicações Windows (Setup, nupkg e RELEASES); esta release não anexa arquivos Linux a elas nem mexe nesses arquivos. A 0.76.412 fica com a candidata Windows e não é usada aqui. A 0.76.411 é o pacote Linux anterior.
+
+No desktop Linux, em relação à 0.76.411:
+
+- **A coleta de worktrees antigas volta a ter prova.** O `systemd --user` e o `(sd-pam)` de toda sessão têm a pasta atual ilegível para o próprio usuário, e a prova de "fora de uso" nunca saía. O gerenciador é o MainPID que o PID 1 registra; o `(sd-pam)` só entra se for filho dele e tiver nascido junto. Qualquer outro processo ilegível continua sem prova.
+- **Colar texto grande num pane com papel funciona.** Num pane do "+ Pane" adotado pela missão da aba, ou aberto pelo agente, colar mais de 4 KB era recusado. A entrada do operador aceita o mesmo tamanho que a escrita direta (F-1633).
+- **A detecção do estado do agente não trava numa linha longa.** A reescrita linear do `.*` no meio da regra deixa de ser quadrática e continua respeitando a quebra de linha e a flag `s`. 64 KB de uma regra do opencode custavam 186 ms e agora custam menos de 1 ms.
+
+O resto do desktop é o da 0.76.411.
+
 ## 0.76.413 — Kits de UI inteiros em todo PC
 
 Pacote macOS arm64 (DMG e ZIP) da mesma entrega da 0.76.411, que é o pacote Linux. A 0.76.407 é o pacote macOS anterior. A 0.76.412 fica com a candidata Windows em preparo e não é usada aqui.
