@@ -99,13 +99,15 @@ function mechanicalRuns(reviewInFlight: boolean, judgeReadMs = JUDGE_READ_MS): n
 /** A entrega visual devolve por "sem evidência de verificação"? */
 function visualDeliveryBounces(countVisualCapture: boolean): boolean {
   const capture = { required: true, verified: true, artifactId: 'shot-1', sha256: 'f'.repeat(64) } as const;
-  // F-1635: `.html` NÃO é só-aparência (carrega JavaScript embutido), então
-  // uma landing page de arquivo único continua devendo prova de verificação —
-  // e continua custando UMA devolução. A dispensa vale para a entrega que é
-  // só folha de estilo e imagem. Isto é o preço escolhido de falhar fechado:
-  // ver a thread do 10º achado no PR 159.
+  // F-1635: `.html` e `.svg` NÃO são só-aparência (JavaScript embutido;
+  // `<script>` dentro do SVG), então uma landing page de arquivo único
+  // continua devendo prova de verificação — e continua custando UMA devolução.
+  // A dispensa vale para a entrega de asset INERTE: folha de estilo, bitmap,
+  // fonte. Isto é o preço escolhido de falhar fechado — só se conhece o nome
+  // do arquivo declarado, nunca o conteúdo: ver as threads do 10º achado e da
+  // 2ª rodada no PR 159.
   const facts = {
-    declaredFiles: ['estilo.css', 'hero.svg'],
+    declaredFiles: ['estilo.css', 'hero.webp'],
     evidenceIdsCount: 0,
     hasObservedCommit: false,
     ...(countVisualCapture ? { hasVisualEvidence: visualEvidenceVerified(capture) } : {}),
