@@ -161,6 +161,8 @@ export const orchSettingsSchema = z.object({
       missionPick: z.boolean().default(true),
       /** F-757: agentes e instruções do Marketplace recomendados para a stack do projeto. */
       catalogPick: z.boolean().default(true),
+      /** Qual kit de UI (shadcn/BoardUI) e qual item servem a tarefa — ou nenhum. */
+      uiKitPick: z.boolean().default(true),
       /** Motor (06/10): julgamento do momentum da missão (preso vs gate longo). */
       missionMomentum: z.boolean().default(true),
       /** F-1166: complexidade, workers e lane sugeridos no início da missão (consultivo). */
@@ -210,6 +212,39 @@ export const orchSettingsSchema = z.object({
       message: 'design catalog directory must be empty or an absolute path',
     })
     .default(''),
+  /**
+   * Registries the shadcn CLI may install from, beyond the public `@shadcn`.
+   * Only the namespace, the URL and the NAME of the token variable live here;
+   * the token itself is in the vault under `external:ui-kit-registry-<ns>`.
+   */
+  uiKitRegistries: z
+    .array(
+      z
+        .object({
+          namespace: z.string().min(2).max(48),
+          url: z.string().min(1).max(512),
+          label: z.string().max(64).optional(),
+          auth: z
+            .object({
+              kind: z.enum(['header', 'param']),
+              name: z.string().min(1).max(64),
+              envVar: z.string().min(1).max(64),
+              scheme: z.enum(['bearer', 'raw']).optional(),
+            })
+            .strict()
+            .optional(),
+          // NO `secretKey` here, on purpose. This travels through the
+          // generic `settings.orchSet` bridge, so a compromised renderer
+          // could name ANY vault entry (`auth:session`, `acctcred:…`) and the
+          // install would read it and hand it to the registry's host. The key
+          // is derived from the validated namespace in Main
+          // (`registrySecretKey`), and `assertRegistry` overwrites whatever a
+          // stored settings file happens to contain.
+        })
+        .strict(),
+    )
+    .max(32)
+    .default([]),
   /**
    * Kit do catálogo local fixado como direção padrão do contrato de design que
    * o bootstrap materializa sozinho (`orch.designDefaultKit`). Vazio = sem
@@ -394,6 +429,40 @@ export type OrchSettings = z.infer<typeof orchSettingsSchema>;
 export type OrchSettingsPatch = Omit<Partial<OrchSettings>, 'jevSurfaces'> & {
   jevSurfaces?: Partial<NonNullable<OrchSettings['jevSurfaces']>>;
 };
+
+/**
+ * Chaves das configurações do orquestrador que SÓ o Main escreve.
+ *
+ * `uiKitRegistries` diz de onde a CLI instala código e qual credencial viaja
+ * nessa instalação, e toda a guarda disso — fronteira de host, contrato de
+ * auth derivado, prova do que foi salvo — vive no IPC dedicado de registry.
+ * A ponte genérica `orchSet` mesclava o que o renderer mandasse, então uma
+ * tela comprometida reapontava um namespace JÁ autenticado para uma URL dela
+ * sem passar por guarda nenhuma: o Main depois normaliza a linha, deriva a
+ * chave de cofre e a variável reais do namespace, e a instalação entrega o
+ * token guardado para aquele host.
+ */
+export const MAIN_OWNED_ORCH_SETTINGS_KEYS = ['uiKitRegistries'] as const;
+
+export function isMainOwnedOrchSettingsKey(key: string): boolean {
+  return (MAIN_OWNED_ORCH_SETTINGS_KEYS as readonly string[]).includes(key);
+}
+
+/**
+ * O patch do renderer sem as chaves que só o Main escreve.
+ *
+ * Descarta a chave em silêncio em vez de recusar o patch inteiro: a tela de
+ * Ajustes manda vários campos juntos, e recusar tudo tiraria do ar ajustes
+ * legítimos por causa de um campo que ela não deveria ter mandado.
+ */
+export function withoutMainOwnedOrchSettings(patch: unknown): unknown {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return patch;
+  const raw = patch as Record<string, unknown>;
+  if (!Object.keys(raw).some(isMainOwnedOrchSettingsKey)) return patch;
+  return Object.fromEntries(
+    Object.entries(raw).filter(([key]) => !isMainOwnedOrchSettingsKey(key)),
+  );
+}
 
 /** Mescla de um patch nas configurações atuais (rasa, exceto `jevSurfaces`). */
 export function mergeOrchSettingsPatch(current: OrchSettings, patch: unknown): Record<string, unknown> {

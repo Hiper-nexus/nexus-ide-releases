@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.76.381 — Kits de UI: shadcn e BoardUI dentro do Nexus
+
+Pacote macOS (DMG e ZIP arm64), assinado com Developer ID e notarizado.
+
+Da 0.76.374 à 0.76.380, cada candidata foi tagueada e não publicada. A 0.76.373 é o pacote Linux anterior. A 0.76.372, a 0.76.370 e a 0.76.368 no espelho público são publicações Windows e não recebem arquivos macOS. A 0.76.371 é o carimbo macOS anterior. A 0.76.365 no espelho continua Latest; esta release não toma essa marca. A 0.76.362 continua Latest na canônica.
+
+O Nexus entregava um contrato de design (DESIGN.md com tokens) e nenhum componente: o agente recebia a paleta e escrevia cada peça à mão. Agora os dois kits moram dentro dele.
+
+- **Os dois kits de verdade, não um atalho.** O shadcn/ui inteiro pela CLI oficial (init, add, apply, preset, view, search, build, docs, info, migrate) e o BoardUI pela CLI dele mais as 13 ferramentas do MCP — catálogo, fonte, exemplos, tema, regras e licença. Medido nesta release: a busca do shadcn responde em JSON tipado e o `boardui list` publica 69 itens grátis.
+- **O Jev escolhe o kit e o item.** Na superfície que instala, o Jev julga se a tarefa pede componente, qual kit serve e qual item encaixa, com a heurística de palavras-chave embaixo respondendo sempre offline e sem chave. Medido com o Jev real: "painel com a receita do mês e um gráfico" → BoardUI/stat cards; "tela de login com e-mail e senha" → shadcn/login block; "corrigir o parser de JSON do cron" → nenhum kit. O recibo diz quem decidiu e por quê.
+- **A metade grátis funciona sem chave nenhuma.** O shadcn inteiro e ~45 itens do BoardUI. Item Pro sem licença não instala nada em silêncio: cai no grátis equivalente e nomeia o que ficou de fora.
+- **A chave vive no painel, e a do operador viaja no app.** Ajustes → Kits de UI guarda a chave do BoardUI no cofre, lista os registries e aceita registry privado com token. A chave do operador vem embutida e provisiona o arquivo de licença da máquina sem gastar assento no fornecedor; chave própria digitada sempre vence a embutida.
+- **Receitas por papel, não por slug.** "Super admin", dashboard e afins resolvem contra o catálogo ao vivo: papel sem item disponível volta como não resolvido, nunca preenchido com chute.
+- **O agente não escolhe destino.** As ferramentas não têm campo de caminho: cada kit instala onde o projeto manda (os aliases do components.json, a source root do BoardUI), que é configuração do operador.
+
+Correções de credencial nesta release:
+
+- **O registry é do Main.** A ponte genérica de configurações escrevia a lista de registries, por fora de toda a guarda do caminho dedicado: uma tela comprometida reapontava um namespace já autenticado para outra URL e a instalação entregava o token guardado àquele host. A chave agora sai do patch do renderer antes da mescla.
+- **Um portão antes do contrato.** Contrato de autenticação é o que solta o token, então ele só nasce com token digitado agora, com a URL exatamente igual à guardada, ou num namespace de preset apontado para o host do próprio preset.
+- **Remover registry espera o cofre.** Apagar o token podia ser recusado (keychain trancado) e a linha saía mesmo assim, deixando a credencial para trás; agora a linha fica, e o painel diz o motivo.
+- **O recibo de "salvo" é lido de volta.** As configurações podiam recusar a escrita em silêncio e o painel limpava o campo de chave como se tivesse salvo. O Main confere a linha gravada antes de dizer que salvou, e desfaz o token quando ela não aterrissa.
+- **O nome de cofre e a variável de um registry são derivados no Main**, nunca aceitos de fora, e a busca do shadcn deixou de depender de raspagem de texto.
+- **O contrato de autenticação declarado pelo pedido não volta pela porta dos fundos.** Ao montar o registry, o objeto do chamador era carregado junto sempre que o portão recusava um contrato — bastava mandá-lo no pedido para reconstruir o que o portão tinha acabado de negar. Só o contrato resolvido é anexado.
+- **Remover registry não destrói o token que não conseguiu remover.** O cofre é limpo primeiro, então uma escrita de configuração que não aterrissa deixava a linha na tela sem credencial. A remoção é lida de volta e, quando não aterrissou, o token volta ao cofre.
+- **Chave de licença é validada antes de ir ao cofre**, mesmo sem projeto aberto: chave com espaço no meio era guardada como sucesso, vencia a embutida e só fazia o "Ativar" falhar depois.
+- **Registry privado com `X-API-Key`, valor cru ou parâmetro na URL agora é configurável no painel.** Antes só dava para informar namespace, URL e token, o Main derivava `Authorization: Bearer` e esses registries respondiam 401 para sempre.
+- **Um servidor MCP que fecha a entrada não derruba mais o app.** A falha de escrita no canal (EPIPE) chega de forma assíncrona: sem escuta no stream ela virava exceção não tratada no processo principal em vez de uma chamada recusada.
+- **Devolver o token também pode ser recusado, e agora isso é dito.** Quando o cofre recusa recolocar o valor anterior, a chave é apagada — nenhuma credencial é o único desfecho seguro — e a mensagem explica o que fazer; se nem apagar funcionar, ela manda recadastrar o registry.
+- **A busca padrão diz o que não cobriu.** Com muitos registries privados, os que ficam fora do primeiro lote agora vêm nomeados no recibo, em vez de "não achei" e "nem procurei lá" parecerem a mesma coisa.
+- **Instalação que falha mostra a saída da ferramenta.** Conflito de dependência ou erro de rede deixa o diagnóstico na saída e nenhum texto de erro: o painel dizia só "a instalação falhou" e jogava fora a única pista.
+- **O motivo de uma chave recusada pelo cofre não é mais apagado** pelo recarregamento imediato do estado, nem na gravação nem na ativação (que recusa por motivos locais: arquivo de licença ilegível, de outra máquina ou impossível de gravar).
+- **Um registry conhecido apontado para outro caminho pede token novo.** A credencial foi autorizada para a URL que a pessoa digitou, não para o host inteiro: o fornecedor pode servir conteúdo de outra pessoa em outro caminho.
+- **O portão da release não depende de um endpoint aposentado.** O relatório de vulnerabilidades por árvore de produção vinha de um endpoint do npm que foi aposentado e passou a responder erro, o que travava qualquer release. Agora, só nesse caso, entra o relatório da árvore completa — que contém a de produção — com a substituição registrada no recibo; relatório sujo continua bloqueando.
+- **Toolchain de build sem vulnerabilidade aberta:** o `vitest` subiu para 5.0.5 por dois avisos publicados hoje contra o `@vitest/mocker` (injeção de código por registro de mock não autenticado e travessia por barra invertida no Windows). É dependência de desenvolvimento — não vai no app —, mas o portão da release recusa qualquer vulnerabilidade na ferramenta que constrói o pacote, e com razão.
+- **O "nenhum kit serve" do Jev é respeitado.** Quando o juiz decidia, com confiança, que nenhum dos dois kits atende o pedido, a escolha era dobrada na da heurística e um componente era instalado de todo jeito. Agora zera kit e item, e o motivo diz para escrever do zero.
+- **"Baixado para uso offline" só quando o cache guardou.** O download anotava sucesso por não ter dado erro; com disco somente leitura ou limite de tamanho, o item era anunciado como disponível e a leitura seguinte não o achava.
+- **Remoção de licença que falha aparece.** A desativação no fornecedor pode recusar e o arquivo local pode não sair: antes a tela dizia que o assento pago havia sido liberado de qualquer forma.
+- **Registry conhecido configurado por você pode ser removido.** Salvo na URL do preset e sem token no cofre, ele ficava indistinguível de uma entrada que só o app fornece, e o botão de remover desaparecia.
+- **A sugestão de item entende o pedido, não a ordem do catálogo.** O catálogo do BoardUI tem categorias grossas e nenhum slug com a palavra "dashboard", então "monte um painel" não casava com nada e o primeiro item da lista era instalado (uma árvore de arquivos, para um painel). Agora há afinidade por conceito, a escolha é o item de maior afinidade e, sem afinidade nenhuma, nenhum item é escolhido.
+
 ## 0.76.373 — Estúdio de vídeo com contador, estilos e ditado
 
 Empacotado para Linux x64 a partir de Ubuntu 22.04 (glibc 2.35). Build local em container, sem GitHub Actions.

@@ -30,6 +30,7 @@ const SURFACE_LABELS: Record<string, string> = {
   recoveryAdvice: 'Recuperação de worker (dica)',
   completionCheck: 'Conclusão (aviso)',
   catalogPick: 'Recomendações do Marketplace',
+  uiKitPick: 'Kit de UI (qual usar e quando)',
   calibration: 'Calibração',
 };
 

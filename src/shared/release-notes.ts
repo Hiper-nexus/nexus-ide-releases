@@ -12459,7 +12459,7 @@ export const RELEASE_076370: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076373_FULL: AppRelease = {
   version: '0.76.373',
   date: '2026-10-21',
   codename: 'Estúdio de vídeo com contador, estilos e ditado',
@@ -12474,4 +12474,50 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076373: AppRelease = CURRENT_RELEASE;
+export const RELEASE_076373: AppRelease = RELEASE_076373_FULL;
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.381',
+  date: '2026-10-21',
+  codename: 'Kits de UI: shadcn e BoardUI dentro do Nexus',
+  summary:
+    'Os dois kits de componentes moram dentro do Nexus: o shadcn/ui inteiro ' +
+    'pela CLI oficial e o BoardUI pela CLI dele mais as ferramentas do MCP. O ' +
+    'Jev escolhe o kit e o item na superfície que instala, a metade grátis ' +
+    'funciona sem chave nenhuma, e a chave do operador provisiona a licença da ' +
+    'máquina sem gastar assento. Da 0.76.374 à 0.76.380, cada candidata foi ' +
+    'tagueada e não publicada: a revisão achou defeito real depois de cada tag.',
+  highlights: [
+    { title: 'Os dois kits de verdade', detail: 'shadcn/ui inteiro (init, add, apply, preset, view, search, build, docs, info, migrate) e BoardUI pela CLI mais as 13 ferramentas do MCP. Medido: a busca do shadcn responde JSON tipado e o catálogo do BoardUI publica 69 itens grátis.' },
+    { title: 'O Jev escolhe o kit e o item', detail: 'Na superfície que instala: se a tarefa pede componente, qual kit serve e qual item encaixa, com heurística offline embaixo. Medido com o Jev real: painel de receita → stat cards do BoardUI; tela de login → login block do shadcn; conserto no parser do cron → nenhum kit.' },
+    { title: 'A metade grátis sem chave', detail: 'shadcn inteiro e ~45 itens do BoardUI. Item Pro sem licença não instala em silêncio: cai no grátis equivalente e nomeia o que ficou de fora.' },
+    { title: 'Chave no painel, licença sem assento', detail: 'Ajustes → Kits de UI guarda a chave no cofre, lista registries e aceita registry privado com token. A chave do operador viaja no app e provisiona o arquivo de licença da máquina; chave própria digitada sempre vence.' },
+    { title: 'Receitas por papel', detail: 'Super admin, dashboard e afins resolvem contra o catálogo ao vivo. Papel sem item disponível volta como não resolvido, nunca preenchido com chute.' },
+  ],
+  fixes: [
+    { title: 'O registry é do Main', detail: 'A ponte genérica de configurações escrevia a lista de registries por fora da guarda do caminho dedicado, o que permitia reapontar um namespace autenticado para outra URL e entregar o token guardado àquele host.' },
+    { title: 'Um portão antes do contrato', detail: 'O contrato de autenticação só nasce com token digitado agora, com a URL idêntica à guardada, ou num namespace de preset apontado para o host do próprio preset.' },
+    { title: 'Remover registry espera o cofre', detail: 'Apagar o token podia ser recusado e a linha saía assim mesmo, deixando a credencial para trás. Agora a linha fica e o painel diz o motivo.' },
+    { title: 'O recibo de salvo é lido de volta', detail: 'As configurações podiam recusar a escrita em silêncio e o painel limpava o campo de chave. O Main confere a linha gravada antes de dizer que salvou e desfaz o token quando ela não aterrissa.' },
+    { title: 'Nome de cofre derivado e busca tipada', detail: 'A chave de cofre e a variável de ambiente de um registry são derivadas no Main, nunca aceitas de fora, e a busca do shadcn deixou de depender de raspagem de texto.' },
+    { title: 'O contrato declarado não volta pela porta dos fundos', detail: 'Ao montar o registry, o objeto de autenticação do chamador era carregado junto mesmo quando o portão recusava um contrato. Só o contrato resolvido é anexado.' },
+    { title: 'Remover registry não destrói o token', detail: 'O cofre é limpo primeiro; a remoção é lida de volta e, quando a configuração não aterrissa, o token volta ao cofre em vez de ficar perdido.' },
+    { title: 'Chave de licença validada antes do cofre', detail: 'Sem projeto aberto, uma chave malformada era guardada como sucesso, vencia a embutida e só fazia o Ativar falhar depois.' },
+    { title: 'Registry não-Bearer configurável', detail: 'X-API-Key, valor cru e parâmetro na URL agora têm campo no painel; antes esses registries respondiam 401 para sempre.' },
+    { title: 'Canal MCP fechado não derruba o app', detail: 'A falha de escrita (EPIPE) chega de forma assíncrona e virava exceção não tratada no processo principal; agora é uma chamada recusada.' },
+    { title: 'Devolver o token pode ser recusado, e isso é dito', detail: 'Se o cofre recusa recolocar o valor anterior, a chave é apagada — nenhuma credencial é o desfecho seguro — e a mensagem diz o que fazer.' },
+    { title: 'A busca padrão diz o que não cobriu', detail: 'Com muitos registries privados, os que ficam fora do primeiro lote vêm nomeados no recibo em vez de parecerem vazios.' },
+    { title: 'Falha de instalação mostra a saída', detail: 'Conflito de dependência e erro de rede deixam o diagnóstico na saída da ferramenta, que o painel escondia.' },
+    { title: 'Motivo do cofre preservado', detail: 'A razão de uma chave de licença recusada não é mais apagada pelo recarregamento imediato do estado, nem ao guardar nem ao ativar.' },
+    { title: 'Caminho novo em registry conhecido pede token novo', detail: 'A credencial foi autorizada para a URL digitada, não para o host inteiro — o fornecedor pode servir conteúdo de outra pessoa em outro caminho.' },
+    { title: 'O portão da release não depende de endpoint aposentado', detail: 'O relatório por árvore de produção vinha de um endpoint do npm que foi aposentado e passou a responder erro, travando qualquer release; agora o relatório completo entra no lugar, registrado no recibo.' },
+    { title: 'Toolchain de build sem vulnerabilidade aberta', detail: 'O vitest subiu para 5.0.5 por dois avisos publicados contra o @vitest/mocker. É dependência de desenvolvimento, mas o portão da release recusa qualquer vulnerabilidade na ferramenta que constrói o pacote.' },
+    { title: 'O "nenhum kit serve" do Jev é respeitado', detail: 'O juiz decidia que nenhum kit atende e um componente era instalado de todo jeito; agora zera kit e item, com o motivo dito.' },
+    { title: 'Offline só quando o cache guardou', detail: 'O download anotava sucesso por não ter dado erro: com disco somente leitura ou limite de tamanho, o item era anunciado como disponível e não estava.' },
+    { title: 'Remoção de licença que falha aparece', detail: 'A desativação no fornecedor pode recusar e o arquivo local pode não sair; a tela dizia que o assento pago foi liberado de qualquer forma.' },
+    { title: 'Registry configurado pode ser removido', detail: 'Um registry conhecido salvo na URL do preset sem token no cofre perdia o botão de remover, por parecer uma entrada que só o app fornece.' },
+    { title: 'A sugestão entende o pedido', detail: 'Sem a palavra "dashboard" em slug nenhum, "monte um painel" instalava o primeiro item do catálogo. Agora há afinidade por conceito e, sem afinidade, nenhum item.' },
+  ],
+};
+
+export const RELEASE_076381: AppRelease = CURRENT_RELEASE;

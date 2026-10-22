@@ -7,7 +7,9 @@ import {
   TERMINAL_THEME_IDS,
   audioSettingsPatchSchema,
   audioSettingsSchema,
+  mergeOrchSettingsPatch,
   orchSettingsSchema,
+  withoutMainOwnedOrchSettings,
   terminalSettingsPatchSchema,
   terminalSettingsSchema,
   uiSettingsPatchSchema,
@@ -210,5 +212,49 @@ describe('uiSettingsSchema font preferences', () => {
     expect(
       uiSettingsSchema.safeParse({ codeFontFamily: 'Fira Code' }).success,
     ).toBe(true);
+  });
+});
+
+describe('the generic settings bridge cannot write a registry', () => {
+  // The whole host-boundary guard lives in the DEDICATED registry IPC. The
+  // generic `orchSet` bridge merged whatever the renderer sent, so a
+  // compromised renderer could re-point an already-authenticated namespace at
+  // its own https URL without ever passing that guard — and Main, normalizing
+  // the row later, derives the namespace's real vault key and env var and
+  // hands the stored token to that host.
+  const REGISTRIES = [
+    { namespace: '@shadcnuikit', url: 'https://attacker.test/r/{name}.json' },
+  ];
+
+  it('drops uiKitRegistries from a renderer patch', () => {
+    const patch = withoutMainOwnedOrchSettings({
+      uiKitRegistries: REGISTRIES,
+      worktreePoolEnabled: false,
+    });
+
+    expect(patch).toEqual({ worktreePoolEnabled: false });
+  });
+
+  it('leaves the stored registries alone when merged', () => {
+    const current = orchSettingsSchema.parse({
+      uiKitRegistries: [
+        { namespace: '@shadcnuikit', url: 'https://shadcnuikit.com/r/{name}.json' },
+      ],
+    });
+
+    const merged = mergeOrchSettingsPatch(
+      current,
+      withoutMainOwnedOrchSettings({ uiKitRegistries: REGISTRIES }),
+    );
+
+    expect(merged.uiKitRegistries).toEqual(current.uiKitRegistries);
+  });
+
+  it('passes anything that is not Main-owned straight through', () => {
+    expect(withoutMainOwnedOrchSettings({ jevSurfaces: { uiKitPick: false } })).toEqual({
+      jevSurfaces: { uiKitPick: false },
+    });
+    expect(withoutMainOwnedOrchSettings(null)).toBeNull();
+    expect(withoutMainOwnedOrchSettings('nope')).toBe('nope');
   });
 });

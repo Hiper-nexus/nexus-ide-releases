@@ -43,6 +43,42 @@ export function DesignSystemsSection() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [imports, setImports] = useState<Record<string, ImportState>>({});
+  const [designmdKey, setDesignmdKey] = useState('');
+  const [keyState, setKeyState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  /**
+   * WHAT the last successful write did. The chip used to read the input field
+   * instead, and the field is cleared on success — so storing a key always
+   * reported "chave removida", the exact opposite of what Main had just done,
+   * about a credential.
+   */
+  const [keyAction, setKeyAction] = useState<'stored' | 'cleared' | null>(null);
+
+  /**
+   * designmd.ai answers 401 on its body endpoint without a key, and until now
+   * nothing in the app could store one — the vault was read for
+   * `external:designmd-api-key` and never written, so that source was
+   * unreachable in any shipped build. The keyless sources still answer without
+   * it, which is why this is an optional unlock and not a gate.
+   */
+  async function saveDesignmdKey(value: string) {
+    setKeyState('saving');
+    try {
+      const result = await window.nexus.uiKit.setExternalKey({
+        id: 'designmd',
+        value,
+      });
+      setKeyState(result.error ? 'error' : 'saved');
+      if (!result.error) {
+        // Recorded from the value that was SENT, before the field is cleared.
+        setKeyAction(value.length > 0 ? 'stored' : 'cleared');
+        setDesignmdKey('');
+      }
+      // `value: ''` is how the contract clears the credential; without a
+      // control that sends it, a stored key could never be revoked from here.
+    } catch {
+      setKeyState('error');
+    }
+  }
 
   async function load(search = '') {
     setLoading(true);
@@ -111,6 +147,50 @@ export function DesignSystemsSection() {
           A importação cria uma proposta para revisão antes de aplicar ao projeto.
         </p>
       </header>
+
+      <div className="settings-row">
+        <input
+          className="settings-input"
+          type="password"
+          autoComplete="off"
+          value={designmdKey}
+          placeholder="Chave da designmd.ai (opcional)"
+          aria-label="Chave da API da designmd.ai"
+          onChange={(e) => {
+            setDesignmdKey(e.target.value);
+            setKeyState('idle');
+            setKeyAction(null);
+          }}
+        />
+        <button
+          type="button"
+          className="settings-btn"
+          disabled={keyState === 'saving' || designmdKey.trim().length === 0}
+          onClick={() => void saveDesignmdKey(designmdKey.trim())}
+        >
+          {keyState === 'saving' ? 'Salvando…' : 'Salvar chave'}
+        </button>
+        <button
+          type="button"
+          className="settings-btn"
+          disabled={keyState === 'saving'}
+          onClick={() => void saveDesignmdKey('')}
+        >
+          Remover
+        </button>
+        {keyState === 'saved' && keyAction && (
+          <span className="settings-chip settings-chip--ok">
+            {keyAction === 'stored' ? 'chave guardada' : 'chave removida'}
+          </span>
+        )}
+        {keyState === 'error' && (
+          <span className="settings-chip">não foi possível guardar</span>
+        )}
+      </div>
+      <p className="settings-help">
+        Os catálogos sem chave (local e getdesign) respondem sem isso. A chave
+        só libera o corpo do DESIGN.md da designmd.ai, que responde 401 sem ela.
+      </p>
 
       <div className="settings-row dsn-search" role="search">
         <input

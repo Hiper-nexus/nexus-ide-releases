@@ -44,6 +44,31 @@ describe('exportSecretsVault', () => {
     expect(target.store.has('auth:account')).toBe(false);
     expect(target.store.has('clef-env:UNRECOGNIZED_SECRET')).toBe(false);
   });
+  it('leva as chaves que o operador comprou para a outra máquina dele', () => {
+    // O caso real: licença e token de registry que a pessoa pagou e digitou no
+    // painel. Ficar de fora fazia a única resposta possível ser "embute a
+    // chave no app", o que a entregaria a todo mundo.
+    const source = fakeDeps({
+      'external:boardui-license-key': 'boardui-licence-value',
+      'external:ui-kit-registry-acme': 'registry-token-value',
+      'external:designmd-api-key': 'designmd-value',
+      'external:NOT A KEY': 'rejeitada pelo formato',
+    });
+
+    const exported = exportSecretsVault(PASS, source);
+    expect(exported.ok).toBe(true);
+    if (!exported.ok) return;
+    expect(exported.bundle).not.toContain('boardui-licence-value');
+    expect(exported.skippedKeys).toEqual(['external:NOT A KEY']);
+
+    const target = fakeDeps();
+    expect(importSecretsVault(exported.bundle, PASS, target).ok).toBe(true);
+    expect(target.store.get('external:boardui-license-key')).toBe('boardui-licence-value');
+    expect(target.store.get('external:ui-kit-registry-acme')).toBe('registry-token-value');
+    expect(target.store.get('external:designmd-api-key')).toBe('designmd-value');
+    expect(target.store.has('external:NOT A KEY')).toBe(false);
+  });
+
   it('rejeita passphrase curta sem tocar o cofre', () => {
     const deps = fakeDeps({ claude: 'secret-a' });
     expect(exportSecretsVault('short', deps)).toEqual({

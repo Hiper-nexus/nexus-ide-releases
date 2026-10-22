@@ -2755,6 +2755,306 @@ O que mudou — e o que NÃO mudou:
   encerrar e substituir um Maestro vivo.
 
 
+## Kits de UI: shadcn e BoardUI (21/10)
+
+O Nexus entregava um CONTRATO de design (DESIGN.md com tokens) e nenhum
+componente: o agente recebia a paleta e escrevia cada peça à mão. `src/main/ui-kit/`
+é o kit de verdade. Quem mexer aqui precisa saber:
+
+- **Dois fornecedores, duas superfícies.** O shadcn é CLI (`shadcn@latest`:
+  init, add, apply, preset, view, search, build, docs, info, migrate, eject),
+  tipada em `shadcn-source.ts`. O BoardUI é CLI mínima (`init`, `add`) MAIS as
+  13 tools do MCP dele (`boardui-source.ts`) — catálogo, fonte, exemplos, tema,
+  regras, skill e TODA a licença Pro são tools MCP, não subcomando. Por isso
+  `ui-kit-mcp-call.ts` (cliente stdio de uma chamada) não é luxo.
+- **Argv cru não cruza fronteira nenhuma.** O chamador passa comando TIPADO e os
+  módulos montam o argv: `--cwd` não é setável, `-` à frente de item/caminho/query
+  é recusado ANTES de qualquer ramo (o teste de `.json` rodava primeiro e
+  `-x.json` escapava como "caminho local"), http é recusado, `..` é recusado.
+- **O cwd de um run que ESCREVE nunca é um checkout com `node_modules` symlink**
+  (`assertSafeUiKitCwd`): o install escreveria na árvore compartilhada de todas
+  as worktrees. Recusado antes, não descoberto depois.
+- **O pacote é resolvido FORA do projeto (shadcn).** O npm lê `.npmrc` do cwd e
+  o `npx` prefere binário do `node_modules/.bin` do cwd: com o projeto como cwd,
+  o REPOSITÓRIO escolhia qual código rodava. Medido: `npx` foi buscar o shadcn
+  em `https://evil.invalid/` por causa de um `.npmrc` commitado. Agora o spawn
+  do shadcn roda num temp do Nexus e volta ao projeto por `--cwd`
+  (`resolveIn: 'isolated'`), o que fecha também o `node_modules/.bin/shadcn`
+  commitado. `preset decode` e `preset url` não têm o flag e não precisam dele.
+  Além disso o env fixa `npm_config_registry` (o espelho do operador vence, o do
+  projeto nunca), zera proxy/CA e força `strict_ssl` — env vence `.npmrc` de
+  projeto. **Limite conhecido:** o BoardUI não tem `--cwd` (o `-d/--dir` dele é a
+  SOURCE root, e apontar errado escreveria componente no lugar errado em
+  silêncio), então ele resolve no projeto; os pins de env o protegem, e o resíduo
+  é um `node_modules/.bin/boardui` commitado. Fechar isso exige verificar
+  `--dir` ou o `projectDir` do MCP contra um install real.
+- **`extraEnv` é allowlist POR FORMA, não denylist.** O npm lê qualquer
+  `npm_config_*` como configuração e o loader lê `LD_PRELOAD`/`DYLD_*`: nome
+  precisa carregar palavra de credencial (TOKEN, KEY, SECRET, AUTH, PASS,
+  LICENSE, CREDENTIAL) e as famílias perigosas são recusadas por cima.
+- **Token de registry só para o run que o usa, e só se o projeto aponta para a
+  nossa URL.** `referencedShadcnNamespaces` diz quais namespaces o comando cita
+  (`add button` não cita nenhum). E o shadcn expande `${VAR}` dentro do
+  components.json do PROJETO, que pode vir de repositório alheio: o token só sai
+  quando a ÚNICA entrada que nomeia a variável é o próprio namespace
+  (`envVarReferences` varre header, param e URL). Namespace de que não damos fé
+  no mesmo run ⇒ nada sai. Nunca REaponte um namespace que o projeto já declara.
+- **O agente NÃO escolhe destino.** `--path`, `--dir`, `--output` e `registry`
+  não existem na superfície das tools: TRÊS rodadas de revisão acharam três
+  jeitos de passar por checagem de string num caminho de escrita escolhido pelo
+  chamador — `C:foo` (drive-relativo do Windows, resolve contra o diretório
+  atual do drive), ancestral com symlink (não precisa de `..`), e link PENDENTE
+  que o `mkdir -p` depois CRIA fora do projeto. Remendar o quarto não era a
+  resposta: a opção existir é que compra a classe. Os dois kits já instalam
+  onde o PROJETO manda (shadcn pelos `aliases` do components.json, BoardUI na
+  source root), e isso é configuração do operador.
+  `tools-ui-kit-read-only.test.ts` percorre os schemas e reprova se um campo de
+  destino voltar.
+- **A superfície do agente não tem caminho nenhum.** Além do destino, item que
+  é caminho local (`registry/button.json`) é recusado nas tools: a CLI aceita e
+  é fluxo legítimo do OPERADOR, mas de um agente é lugar, não nome — e seis
+  rodadas de revisão foram sobre exatamente isso. A capacidade fica para
+  chamador do Main, onde a contenção guarda.
+- **Caminho que vem de chamador do Main é CONTIDO, não checado por string.**
+  `assertPathStaysInProject` caminha
+  COMPONENTE A COMPONENTE da raiz com `lstat` — que vê o link exista ou não o
+  alvo — e exige que todo link resolva de volta para dentro, com teto de
+  saltos. `existsSync` não servia: ele SEGUE o link, então link para alvo
+  inexistente lia como "não tem nada aqui" e a subida passava por cima. Link
+  pendente apontando para DENTRO continua aceito (a escrita cria o alvo ali, e
+  ali é contido). E o alvo de um link é RECAMINHADO desde a raiz, não conferido
+  por uma string só: com `a -> b/c` e `b -> /etc`, o `b/c` passa no
+  `path.relative` e quem leva para fora é o `b`, que só aparece caminhando. Também recusa valor não normalizado: checar `" x"` e rodar
+  `"x"` valida um caminho que não é o usado — `destinationsIn` entrega a string
+  que VAI no argv e é switch exaustivo, então tipo de comando novo não compila
+  sem declarar seus caminhos. `--overwrite` NÃO ganhou portão próprio: a tool
+  já é efeito confirmado e `nexus_file_write` sobrescreve igual sem portão
+  especial — trava sem dano nomeado é o que a doutrina "menos travas" recusa.
+- **O cache guarda source Pro: risco aceito pelo operador por escrito (21/10).**
+  A licença do BoardUI proíbe *"build a tool that lets others browse, preview,
+  generate, export or customise the Source"*. O Nexus não embute source do
+  fornecedor — dirige a CLI/MCP deles com a chave de quem usa —, mas o cache
+  guarda o item e o `nexus_ui_kit_source` o devolve, o que para um cliente do
+  Nexus com licença Pro própria se parece com a cláusula. O operador foi
+  avisado, respondeu "se estiver funcionando pode deixar, somos pequenos" e
+  assumiu. Mantido como está: conteúdo licenciado fica a 0600 no `userData` da
+  máquina que licenciou, nunca no repo nem no pacote. Quem quiser remover a
+  dúvida: deixar de cachear payload com `tier: 'pro'` é uma linha em
+  `readItemSource`.
+- **As duas chaves de terceiro SÃO embutidas no produto — redecisão do
+  operador (21/10).** Pedido original RECUSADO por este parágrafo; o operador
+  voltou e pediu de novo, agora por escrito e com o risco nas mãos: "ambos eu
+  quero as key deles dentro do nexus fixa, de forma que os clientes não
+  consigam ler, mas o sistema use elas; todos clientes meu vai usar a minha
+  key; todos PCs meu". A licença do Shadcn UI Kit proíbe compartilhar *API
+  keys* com quem não está coberto e a sanção é revogar a conta/chaves; chave
+  em bundle também não é compartilhar, é publicar — qualquer um que
+  descompacte o app extrai. O operador aceita o risco (frota pequena, todas
+  as máquinas e clientes são dele) e é a última palavra dele. A implementação
+  mora em `src/main/ui-kit/ui-kit-operator-keys.ts` (única exceção
+  documentada à regra "sem segredo hardcoded" do repo):
+  - Constantes de string PLAIN no bundle do MAIN — sem keychain, sem registry
+    do Windows, sem env, sem arquivo: a leitura é a mesma linha em macOS,
+    Windows e Linux (requisito do operador para as três plataformas).
+  - MAIN somente: renderer/preload nunca importam, IPC carrega cauda
+    mascarada no máximo, nunca argv (aparece no `ps`), nunca log.
+  - ÚLTIMO recurso em toda resolução: cofre do operador primeiro, depois env
+    da máquina, só então o bundle — colar chave própria no painel sempre vence.
+  - O token do bundle só sai para o registry cujo namespace E URL casam com
+    `KNOWN_UI_KIT_REGISTRIES` (`operatorTokenForRegistry`): settings de
+    cliente não redireciona a chave para outro host.
+  - `withOperatorRegistries` adiciona os namespaces com token de bundle nas
+    listas de LEITURA (catálogo, busca MCP, painel); as escritas de settings
+    continuam na lista crua — o painel não grava o que não foi configurado.
+  - Ativação da chave BoardUI de bundle NÃO chama o fornecedor e NÃO escreve o
+    cofre — ela PROVISIONA o arquivo de licença (Rota B, escolha do operador
+    21/10): `ensureActiveBoardUiLicense` escreve o payload exato da máquina do
+    operador (`operatorBoardUiLicenseFile`: chave + instanceId, provado ponta
+    a ponta antes de bundlar) em `<config root>/boardui/license.json`, o mesmo
+    root que a CLI lê (`boardui-license-file.ts` espelha a resolução
+    XDG/APPDATA/HOME do dist do fornecedor; `XDG_CONFIG_HOME` entrou no
+    `CHILD_ENV_ALLOWLIST` para Main e filho concordarem), com gravação atômica
+    0600, invalida a free-list e re-confirma `license_status`. Nenhuma máquina
+    de cliente gasta assento: o fornecedor só conta assento na ATIVAÇÃO.
+    Chave DIGITADA (cofre) continua ativando de verdade no fornecedor — assento
+    honesto para chave própria. Quem decide sobrescrever é o ARQUIVO, não a
+    chamada ao fornecedor: antes de provisionar o Main lê o `license.json` —
+    arquivo ALHEIO (nativo, chave própria do usuário) fica intocado mesmo com o
+    fornecedor inalcançável (`unknown`) e mesmo nas portas de install (que
+    pulam a pré-checagem de status); só o payload do próprio bundle é regravado
+    (idempotente). A leitura é TRI-ESTADO (`BoardUiLicenseRead`,
+    `aaff737bd`): `absent` só com ENOENT; `unreadable` (existe, não leu os
+    bytes — EACCES/EISDIR) recusa como arquivo nativo, porque o rename do
+    writeFileAtomic só precisa de escrita no DIRETÓRIO para destruir o que não
+    leu; `parsed` com `file: null` (corrompido) é o único que reescreve — a CLI
+    do vendor também não lê licença de bytes corrompidos, provisionar CURA. A
+    porta do painel ainda pré-checa `license_status` para
+    retornar cedo com a mensagem do próprio fornecedor. Auto-provisionamento de
+    bundle só nas PORTAS DE INSTALL (`autoActivate: true`);
+    `planInstallItems`/dry-run não tocam o arquivo.
+  - "Remover" numa máquina provisionada é LOCAL, sempre
+    (`isProvisionedBoardUiLicense`: chave E instanceId do payload embutido):
+    apaga o arquivo + esquece o cofre, NUNCA chama `deactivate_license` —
+    devolver o assento soltaria o assento do Mac do OPERADOR que a frota
+    inteira compartilha. Sem arquivo nenhum no disco: limpa só o cofre.
+    Arquivo ILEGÍVEL no "Remover": limpa o cofre e DEIXA o arquivo — deletar
+    localmente um arquivo que pode ser nativo (e que a CLI do fornecedor
+    também não lê) soltaria assento pago no vácuo. Licença NATIVA (instanceId
+    emitido pelo servidor, chave própria) remove no fornecedor de verdade.
+    Teste que exercita ativação/remoção PRECISA injetar
+    `boardUiLicenseFile` no deps (fake no harness do
+    `ui-kit-service.test.ts`): sem isso o teste lê e APAGA o `license.json`
+    REAL de quem roda a suíte.
+  - Rotação: editar a constante e publicar novo Nexus. Nada mais a tocar.
+  O preset (`KNOWN_UI_KIT_REGISTRIES`) continua existindo para quem quer chave
+  própria: viaja a CONFIGURAÇÃO, e cada operador pode colar a própria chave no
+  cofre — que continua vencendo o bundle.
+- **O nome de cofre de um registry é DERIVADO, nunca carregado (P1, 21/10).**
+  `uiKitRegistries` viaja pela ponte genérica `settings.orchSet`, então um
+  renderer comprometido podia salvar um registry com `secretKey:
+  'auth:session'`, passar pelas checagens de URL configurada e fazer o install
+  LER esse segredo e entregá-lo ao host do registry — `getSecret` não tem
+  guarda de nome reservado, só a escrita tem. Três camadas: o schema não tem
+  mais o campo, `assertRegistry` sobrescreve com `registrySecretKey(namespace)`
+  (corrige settings já envenenado em disco) e `resolveRegistryToken` só lê nome
+  que casa `external:ui-kit-registry-<ns>` (`isRegistrySecretKey`). Campo novo
+  em `UiKitRegistry` que nomeie segredo entra pelo mesmo caminho: derivado em
+  Main, nunca aceito de fora.
+- **Token do registry é gravado ANTES de o registry ser salvo.** `setSecret`
+  devolve `{ok:false}` em vez de lançar; ignorar isso depois de persistir a
+  configuração deixava o painel limpar o campo de senha com a chave perdida e
+  todo install seguinte reclamando token ausente. Falha devolve
+  `registryError` (transitório, só na resposta da escrita) e não salva nada.
+- **Licença com projeto fechado: guardar sim, ativar e remover não.** Guardar
+  só vaultava a chave e nada a ativava depois; `license { action: 'activate' }`
+  reaproveita a chave do cofre (o painel oferece "Ativar a chave guardada"), e
+  remover com projeto fechado é RECUSADO — limpar só a chave do Nexus deixaria
+  a ativação presa no fornecedor gastando assento, e com `stored: false` o
+  painel escondia justamente o botão que a libera. O Remover aparece com
+  `stored` OU `state === 'active'`.
+- **O registry é do Main: a ponte genérica de settings não o escreve.** Toda
+  guarda de credencial de registry (fronteira de host, contrato de auth
+  derivado, recibo) vive no IPC dedicado, e o `orchSet` mesclava o que o
+  renderer mandasse — uma tela comprometida reapontava um namespace JÁ
+  autenticado para a URL dela sem passar por guarda nenhuma, e a instalação
+  entregava o token guardado para aquele host. `withoutMainOwnedOrchSettings`
+  (`MAIN_OWNED_ORCH_SETTINGS_KEYS`) tira a chave do patch do renderer ANTES da
+  mescla; `replaceOrchSettings` continua escrevendo tudo, porque é por lá que o
+  IPC dedicado salva. Chave nova que só o Main escreve entra naquela lista.
+- **UM PORTÃO, e só depois a forma do contrato** (`resolveRegistryAuthContract`).
+  Contrato é o que SOLTA o token (`buildScopedRegistryEnv` pula registry sem
+  ele), então a pergunta nunca é "qual contrato" primeiro, é "esta URL pode ter
+  credencial". Três jeitos de dizer sim, e nenhum outro: token digitado AGORA
+  (o operador escolheu o destino), URL EXATAMENTE igual à guardada (a
+  credencial já vai ali — é o re-save que não pode perder a auth), ou namespace
+  de preset com a URL no HOST do preset (a única URL de que o Nexus dá fé).
+  Cada pedaço desse portão foi um vazamento à parte, achado numa rodada de
+  revisão diferente, porque a checagem morava no MEIO da decisão de forma em
+  vez de na frente dela: `declared` vem do chamador e passava por cima de host
+  trocado; namespace conhecido derivava contrato para qualquer URL; e SEM linha
+  guardada não havia o que comparar, então `declared` passava de novo. Mantenha
+  o portão primeiro e inteiro — ramo de forma acima dele reabre a classe.
+  Caminho diferente no MESMO host não passa sem token: é outro registry, e a
+  forma guardada (o header próprio de um fornecedor) não foi acordada para ele.
+- **Nada do cofre é apagado para fechar vazamento**: sem contrato o
+  `resolveRegistryToken` nunca é consultado, então o token fica inalcançável em
+  vez de destruído (as credenciais do operador não são nossas para apagar).
+- **Presença não é recibo, e exceção não é a única falha.** `replaceOrchSettings`
+  devolve as configurações ANTERIORES em silêncio quando o merge reprova no
+  schema (um 33º registry contra o `.max(32)`), então "não lançou" nunca
+  significou "salvou": o Main lê a linha de volta (`registrySaveOutcome`) e só
+  então emite `registrySaved`; o painel exige o recibo. Token gravado antes de
+  uma persistência que falhou é DESFEITO (`rollbackToken`) — senão a URL velha
+  ficava configurada com a credencial do host novo atrás dela.
+- **Remover registry espera o cofre** (`planRegistryRemoval`): delete recusado
+  (keychain trancado) mantinha a linha fora e o token dentro, e re-adicionar o
+  namespace reaproveitava a credencial "removida". A linha fica, com o motivo, e
+  o painel diz qual é.
+- **`ui-kit-ipc.ts` É testável** (`ui-kit-ipc.test.ts`): o comentário antigo dizia
+  que não, e nesse ponto cego três rodadas de revisão seguidas acharam o handler
+  ignorando a resposta que os próprios helpers davam. `handleTrusted` mocka como
+  qualquer módulo; o cofre entra por `setUiKitVaultProvider` (o `require` lazy
+  não resolve sob vitest) e a raiz do cache pelo resolver de sempre. O teste
+  monta o workspace VAZIO de propósito: sem cwd o `buildStatus` nunca chega ao
+  `license.json` real de quem roda a suíte.
+- **A chave nunca é argumento.** Licença do BoardUI por stdio (argv apareceria no
+  `ps`), injetada do cofre (`external:boardui-license-key`) pelo serviço. As
+  tools do BoardUI passam por allowlist POR TOOL (`sanitizeBoardUiToolArgs`):
+  o fornecedor documenta `projectDir`, que escaparia do escopo de execução.
+- **Slug é identificador do FORNECEDOR: lido dele, nunca soletrado a partir do
+  rótulo.** O retrato do BoardUI saía dos nomes de exibição do site e estava
+  errado de um jeito que quebrava install: `revenue-chart` em vez de
+  `revenue-chart-card`, um `color` que não existe, e os templates Pro, cujo
+  identificador real leva o prefixo `template-`. Hoje ele vem de `boardui list`
+  (69 itens grátis) e NÃO tem item Pro: sem licença o `list` não os publica, e
+  qualquer entrada Pro ali seria inventada.
+- **Tier desconhecido é portão, não "grátis".** `boardUiTierOf` responde `null`
+  para o que o retrato não conhece, e `resolveBoardUiTier` resolve contra o
+  catálogo AO VIVO: ausente da lista grátis é Pro, fornecedor inalcançável é
+  `unknown` — e o portão trata `unknown` como precisando de licença. Assumir
+  grátis é como um install sem licença chega ao fornecedor e volta com uma
+  mensagem que ninguém consegue agir.
+- **A metade grátis funciona sem chave nenhuma** — shadcn inteiro e ~45 itens do
+  BoardUI. Item Pro sem licença não instala nada em silêncio: cai no grátis
+  equivalente, devolve `needsLicense` e nomeia o barrado. Doc e copy novas nunca
+  escrevem que o kit "precisa de chave".
+- **`license_status` sem alcançar a CLI é `unknown`, nunca `absent`:** dizer
+  "sua chave sumiu" porque o npx não rodou é mentira com consequência.
+- **Receitas nomeiam PAPÉIS, não slugs** (`ui-kit-recipes.ts`). Fixar
+  `dashboard-01` seria inventar nome de registry que quebra na renomeação do
+  fornecedor; cada papel resolve contra o catálogo ao vivo e papel sem item volta
+  `unresolved` — nunca preenchido com chute. Palavra-chave mais cedo vence, e
+  entre iguais vence o slug mais CURTO.
+- **O Jev decide qual kit e quando, SÓ na superfície com efeito** (superfície
+  `uiKitPick`). `nexus_ui_kit_add` aceita `task` em vez de `items` e resolve por
+  `resolveInstallTargetForTask`: candidatos do catálogo AO VIVO, portão Pro
+  contra a licença real, e o recibo traz `pick` (quem decidiu, item, motivo,
+  `needsLicense`/`blocked`) sem nunca devolver o texto da tarefa. `items` vence
+  `task` quando os dois vêm, e o recibo diz `taskIgnored`.
+  O `nexus_ui_kit_catalog` com `task` usa `pickUiKitByHeuristic` e responde
+  `offlineRuleOnly` — ele é `read-only` em `mcp-effect-policy`, e o Jev ali era
+  um pedido HTTP com o texto da tarefa a um terceiro mais uma escrita no diário,
+  ao alcance de revisor, worker readOnly e voz NÃO confirmada. A guarda em
+  `tools-ui-kit-read-only.test.ts` LIGA superfície e credencial e afirma que o
+  `judge` não foi chamado; sem isso ela não prova nada, porque `pickUiKit`
+  devolve a heurística antes de perguntar quando falta qualquer das duas. O
+  mesmo arquivo trava a classe de efeito do `add` (reclassificá-lo reabriria o
+  furo).
+  A heurística embaixo SEMPRE responde offline e sem chave; `source` diz qual
+  das duas respondeu, para heurística nunca passar por julgamento.
+- **A doutrina "nada de default shadcn" é sobre o LOOK, não o código** (skill
+  `ui-kit`): pega o comportamento/a11y/estados do kit, pinta com os tokens do
+  DESIGN.md. Estar no catálogo bundled faz o Jev SUGERIR a skill; entregar exige
+  `allowedSkills` (em modo governado, ausente = nenhuma skill).
+- **`shadcn eject` não é alcançável por tool**: o fornecedor o documenta como
+  irreversível. Porta de mão única é do operador.
+- **`nexus_ui_kit_catalog` e `nexus_ui_kit_source` são leitura DE VERDADE: não
+  spawnam nada.** São classificados `read-only` no `mcp-effect-policy`, o que os
+  deixa ao alcance de revisor, worker readOnly e voz sem confirmação — e lane de
+  leitura não pode causar execução de código. Servem o retrato do BoardUI (vem
+  com o Nexus) e o cache; o registry ao vivo é o `nexus_ui_kit_run`, que é
+  efeito. O `catalog` também NÃO sonda a licença: perguntar ao fornecedor sobe o
+  MCP dele. `tools-ui-kit-read-only.test.ts` prova com `spawn` fatal.
+- **A busca do shadcn TEM `--json`** (medido em 21/10 no shadcn@latest:
+  `search --help` lista a flag e ela responde
+  `{items:[{name,type,registry,addCommandArgument}]}`). Esta linha dizia o
+  contrário, e por isso existia uma raspagem de texto marcada
+  `bestEffort: true` em toda busca. `parseShadcnSearch` lê o JSON e só cai na
+  raspagem (`parseShadcnSearchOutput`) numa CLI antiga — aí sim `bestEffort`, e
+  lista vazia não prova registry vazio. O `type` (`registry:example`) é o que
+  mantém a receita honesta: instalar `button-demo` em vez de `button` parece
+  sucesso e está errado.
+- **Registry configurado no Nexus que o PROJETO não declara não é lista
+  vazia.** A busca não o alcança e o token é retido (`unmappedRegistries`),
+  porque provisionar o `components.json` numa busca faria de uma leitura uma
+  escrita. O catálogo devolve o namespace e o painel diz o que fazer: instalar
+  um item pelo nome exato declara o namespace. Passar a URL do registry no
+  argv resolveria o caso público, mas a validação só aceita `@namespace` de
+  propósito — host escolhido por quem chama é a classe que este módulo recusa.
+- Cache em `<userData>/ui-kit/<kit>` a 0600, hash conferido na leitura (payload
+  editado em disco volta como ausente). Conteúdo licenciado fica na máquina que
+  licenciou: nunca no repo nem no pacote.
+
 ## Conclusão de código e validadores Main (06/10)
 
 - Missão `standard`, inclusive sem squad/+Pane, pede verificação por `done`;

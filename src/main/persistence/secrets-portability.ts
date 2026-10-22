@@ -50,11 +50,22 @@ const defaultDeps: SecretsPortabilityDeps = {
   isProviderId: id => Boolean(getAdapter(id)),
 };
 
-/** Existing provider credential namespaces; no auth/session/signing authority. */
+/**
+ * Existing provider credential namespaces; no auth/session/signing authority.
+ *
+ * `external:` is in here deliberately. Those are keys the operator bought and
+ * typed into the panel themselves — a DesignMd key, a BoardUI licence, a
+ * registry token — and leaving them out meant the one thing a multi-PC
+ * operator actually wants (their own purchases working on their own second
+ * machine) was the one thing the bundle would not carry, so the answer kept
+ * coming back as "hardcode it into the app", which would ship it to everyone.
+ * The bundle is theirs, passphrase-encrypted, and never goes near a build.
+ */
 function isPortableProviderSecret(name: string, deps: SecretsPortabilityDeps): boolean {
   return !isReservedSecretName(name) && (deps.isProviderId(name) || name === CLEF_SECRET_NAME ||
     /^(?:voice-env|jev-env):[A-Z][A-Z0-9_]*$/.test(name) ||
     /^(?:acctkey|acctcred|mediakey):[a-zA-Z0-9-]+$/.test(name) ||
+    /^external:[a-z0-9][a-z0-9-]*$/.test(name) ||
     /^mcphub:[^\r\n]+$/.test(name));
 }
 

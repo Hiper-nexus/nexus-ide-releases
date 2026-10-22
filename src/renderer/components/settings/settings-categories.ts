@@ -28,7 +28,7 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
   { id: 'voice', title: 'Jarvis e voz', description: 'Assistente, microfone e captura de tela', icon: 'mic', pillar: 'you', sections: ['voice', 'vision'] },
   { id: 'personalization', title: 'Aparência e teclado', description: 'Tema, mascotes, terminal e atalhos', icon: 'grid', pillar: 'app', sections: ['appearance', 'pets', 'terminal', 'shortcuts'] },
   { id: 'ai', title: 'Equipes e modelos', description: 'Quem trabalha e com qual modelo', icon: 'users', pillar: 'agents', sections: ['squads', 'llms', 'ranking', 'media', 'media-catalog', 'agent-connection'], advanced: ['agent-connection'] },
-  { id: 'library', title: 'Biblioteca', description: 'Capacidades prontas para instalar', icon: 'sparkle', pillar: 'agents', sections: ['harness', 'agents', 'skills', 'marketplace', 'recipes', 'design-systems'], advanced: ['design-systems'] },
+  { id: 'library', title: 'Biblioteca', description: 'Capacidades prontas para instalar', icon: 'sparkle', pillar: 'agents', sections: ['harness', 'agents', 'skills', 'marketplace', 'recipes', 'ui-kits', 'design-systems'], advanced: ['design-systems'] },
   { id: 'connections', title: 'Integrações', description: 'Outros apps, máquinas e celular', icon: 'split-right', pillar: 'system', sections: ['mcps', 'connectors', 'plugins', 'remote', 'companion-relay', 'tools'], advanced: ['tools'] },
   { id: 'system', title: 'Segurança e manutenção', description: 'Atualizações, diagnóstico e permissões', icon: 'config', pillar: 'system', sections: ['system', 'diagnostics', 'rules', 'audit', 'hooks', 'labs'], advanced: ['hooks', 'labs'] },
 ];

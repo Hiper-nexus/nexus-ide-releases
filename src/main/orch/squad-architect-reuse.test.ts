@@ -358,11 +358,13 @@ describe("designSquadFromIntent — Agêntico desenha do zero por padrão", () =
       "check-work",
       "bridgesecurity",
       "dembrandt",
+      "ui-kit",
     ]);
     expect(executor?.allowedSkills).toEqual([
       "ponytail",
       "bridgesecurity",
       "impeccable",
+      "ui-kit",
     ]);
     expect(executor?.allowedTools).toEqual([]);
     expect(reviewers.length).toBeGreaterThanOrEqual(2);
@@ -370,7 +372,12 @@ describe("designSquadFromIntent — Agêntico desenha do zero por padrão", () =
       reviewers.every(
         (agent) =>
           JSON.stringify(agent.allowedSkills) ===
-          JSON.stringify(["check-work", "bridgesecurity", "impeccable"]),
+          JSON.stringify([
+            "check-work",
+            "bridgesecurity",
+            "impeccable",
+            "ui-kit",
+          ]),
       ),
     ).toBe(true);
     expect(

@@ -19,6 +19,7 @@ export const NEXUS_GUIDED_SKILL_ORDER = [
   'bridgeward',
   'impeccable',
   'dembrandt',
+  'ui-kit',
   'archify',
   'superpowers',
   'nexus-visual-media',
@@ -46,6 +47,7 @@ export const BUNDLED_GUIDED_SKILLS = [
   'bridgeward',
   'impeccable',
   'dembrandt',
+  'ui-kit',
   'archify',
   'superpowers',
   'nexus-visual-media',
@@ -218,18 +220,28 @@ function policyForAgent(input: {
     // fenced). Grant dembrandt solely here so executors/reviewers do not try
     // and fail the extract tool.
     requested.add('dembrandt');
+    // The kit INSTALLS code, so it follows the archify precedent and stays out
+    // of the plan lane, whose writes are fenced to plan.md: there the surface
+    // is SPECIFIED, and a grant would only buy a refusal nobody can explain.
+    // Outside that lane the orchestrator picks the recipe for the whole
+    // surface, so it needs the kit as much as the executor does.
+    if (!planLane) requested.add('ui-kit');
   }
   if (
     agent.category === 'reviewer' &&
     (uiMission || uiRole)
   ) {
     requested.add('impeccable');
+    // A reviewer that does not know the kit flags a hand-written primitive as
+    // "fine" instead of "this already exists installed".
+    requested.add('ui-kit');
   }
   if (
     agent.category === 'executor' &&
     (uiRole || (uiMission && executorCount === 1))
   ) {
     requested.add('impeccable');
+    requested.add('ui-kit');
   }
 
   if (securityWork) requested.add('bridgesecurity');

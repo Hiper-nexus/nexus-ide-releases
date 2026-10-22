@@ -44,6 +44,7 @@ const SKILLS = [
     outFile: 'typesafe-ai-manifest.ts',
   },
   // Skills de papel (paridade Overclock 1.4): um SKILL.md cada.
+  { dir: 'ui-kit', constName: 'UI_KIT_MANIFEST', outFile: 'ui-kit-manifest.ts' },
   { dir: 'oc-pilot', constName: 'OC_PILOT_MANIFEST', outFile: 'oc-pilot-manifest.ts' },
   { dir: 'oc-builder', constName: 'OC_BUILDER_MANIFEST', outFile: 'oc-builder-manifest.ts' },
   { dir: 'oc-scout', constName: 'OC_SCOUT_MANIFEST', outFile: 'oc-scout-manifest.ts' },
