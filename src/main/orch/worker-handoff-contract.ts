@@ -144,6 +144,9 @@ export function withHandoffContract(
       'em alta velocidade, prefira nexus_browser_do({paneId, goal, values}); para sinais ' +
       'visuais e semânticos de layout/erro/objetivo, use nexus_browser_judge_visual({paneId, goal}) ' +
       'e nexus_browser_read({paneId, format: "compact", judge: true}) quando disponíveis). ' +
+      'Espere o movimento assentar antes de capturar: animação de entrada e ' +
+      'transição deixam a tela em branco ou pela metade por cerca de um segundo, ' +
+      'e a captura tirada nesse instante faz você reportar defeito que não existe. ' +
       'Registre URL/preview, viewport, ações ' +
       'e o resultado observado; capture a tela com nexus_browser_screenshot ou nexus_browser_responsive ' +
       'quando disponíveis. O Nexus vincula essa captura ao worker e à tarefa; sem essa evidência, ' +
