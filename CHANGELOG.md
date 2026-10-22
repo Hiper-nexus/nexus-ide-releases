@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.411 — Kits e avisos Chromium no Windows
+
+Candidata Windows local sobre a 0.76.409, com as correções dos kits da candidata
+0.76.410 e F-434: o instalador preserva `LICENSES.chromium.html` byte a byte.
+O teste executa NuGet e extração reais. A candidata anterior ficou apenas local.
+A publicação e as provas de instalação/upgrade seguem os gates do projeto.
+
 ## 0.76.410 — Kits de UI abrem no Windows
 
 Candidata Windows local baseada no fonte 0.76.409. A publicação depende dos

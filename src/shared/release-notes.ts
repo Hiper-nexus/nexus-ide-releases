@@ -12708,7 +12708,7 @@ const RELEASE_076409_FULL: AppRelease = {
 
 export const RELEASE_076409: AppRelease = RELEASE_076409_FULL;
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076410: AppRelease = {
   version: '0.76.410',
   date: '2026-10-22',
   codename: 'Kits de UI abrem no Windows',
@@ -12724,4 +12724,15 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_076410: AppRelease = CURRENT_RELEASE;
+export const CURRENT_RELEASE: AppRelease = {
+  ...RELEASE_076410,
+  version: '0.76.411',
+  codename: 'Kits e avisos Chromium no Windows',
+  summary: RELEASE_076410.summary + ' O instalador também preserva os avisos do Chromium.',
+  fixes: [
+    { title: 'Avisos Chromium no instalador', detail: 'O NUPKG preserva o arquivo de licenças incluído na distribuição Electron.' },
+    ...RELEASE_076410.fixes,
+  ],
+};
+
+export const RELEASE_076411: AppRelease = CURRENT_RELEASE;
