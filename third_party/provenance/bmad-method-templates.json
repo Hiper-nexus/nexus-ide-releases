@@ -4,17 +4,41 @@
   "license": "MIT",
   "copyright": "Copyright (c) 2025 BMad Code, LLC",
   "licenseFile": "third_party/licenses/bmad-method-MIT.txt",
-  "importedAt": "2026-07-17",
+  "importedAt": "2026-10-21",
   "type": "vendored-verbatim",
   "nexusPath": "assets/skills/bmad-templates",
   "files": [
-    { "originalPath": "src/bmm-skills/2-plan-workflows/bmad-prd/assets/prd-template.md", "nexusPath": "assets/skills/bmad-templates/prd/prd-template.md" },
-    { "originalPath": "src/bmm-skills/2-plan-workflows/bmad-prd/assets/prd-validation-checklist.md", "nexusPath": "assets/skills/bmad-templates/prd/prd-validation-checklist.md" },
-    { "originalPath": "src/bmm-skills/3-solutioning/bmad-architecture/assets/spine-template.md", "nexusPath": "assets/skills/bmad-templates/architecture/spine-template.md" },
-    { "originalPath": "src/bmm-skills/3-solutioning/bmad-create-epics-and-stories/templates/epics-template.md", "nexusPath": "assets/skills/bmad-templates/stories/epics-template.md" },
-    { "originalPath": "src/bmm-skills/4-implementation/bmad-create-story/template.md", "nexusPath": "assets/skills/bmad-templates/stories/story-template.md" },
-    { "originalPath": "src/bmm-skills/4-implementation/bmad-create-story/checklist.md", "nexusPath": "assets/skills/bmad-templates/stories/story-checklist.md" },
-    { "originalPath": "src/bmm-skills/4-implementation/bmad-dev-story/checklist.md", "nexusPath": "assets/skills/bmad-templates/implementation/dev-story-checklist.md" }
+    {
+      "originalPath": "src/bmm-skills/plan/bmad-prd/assets/prd-template.md",
+      "nexusPath": "assets/skills/bmad-templates/prd/prd-template.md"
+    },
+    {
+      "originalPath": "src/bmm-skills/plan/bmad-prd/assets/prd-validation-checklist.md",
+      "nexusPath": "assets/skills/bmad-templates/prd/prd-validation-checklist.md"
+    },
+    {
+      "originalPath": "src/bmm-skills/plan/bmad-architecture/assets/spine-template.md",
+      "nexusPath": "assets/skills/bmad-templates/architecture/spine-template.md"
+    },
+    {
+      "originalPath": "src/bmm-skills/plan/bmad-create-epics-and-stories/templates/epics-template.md",
+      "nexusPath": "assets/skills/bmad-templates/stories/epics-template.md"
+    },
+    {
+      "originalPath": "src/bmm-skills/v6-shims/bmad-create-story/template.md",
+      "nexusPath": "assets/skills/bmad-templates/stories/story-template.md"
+    },
+    {
+      "originalPath": "src/bmm-skills/v6-shims/bmad-create-story/checklist.md",
+      "nexusPath": "assets/skills/bmad-templates/stories/story-checklist.md"
+    },
+    {
+      "originalPath": "src/bmm-skills/v6-shims/bmad-dev-story/checklist.md",
+      "nexusPath": "assets/skills/bmad-templates/implementation/dev-story-checklist.md"
+    }
   ],
-  "notes": "Subset curado de templates/checklists do BMAD Method vendorado verbatim; SKILL.md é do Nexus. Bundle via scripts/bundle-skills.mjs; materializado pelo skill-mirror para as CLIs dos panes."
+  "notes": "Subset curado de templates/checklists do BMAD Method vendorado verbatim; SKILL.md é do Nexus. Bundle via scripts/bundle-skills.mjs; materializado pelo skill-mirror para as CLIs dos panes.",
+  "upstreamTag": "v6.12.4",
+  "upstreamCommit": "eecafe9d4bcad92166bee08623e0526009d862c4",
+  "upstreamRestructure": "O v6 reorganizou a árvore: 2-plan-workflows/ e 3-solutioning/ viraram plan/, e bmad-create-story/bmad-dev-story foram para v6-shims/ (o fluxo novo é ship/bmad-build*, por passos, sem template de story). Os sete arquivos deste subset continuam existindo nos caminhos acima; os dois de story vêm de v6-shims, então podem sair num major upstream."
 }

@@ -95,7 +95,8 @@ for (const skill of SKILLS) {
       ? buffer.toString('base64')
       : buffer.toString('utf8').replace(/\r\n?/gu, '\n');
     // The exec bit is part of the payload for vendored CLIs (impeccable ships
-    // `scripts/impeccable` + a Mach-O launcher). Only the bit is stored, not
+    // the `scripts/impeccable` launcher; its engine binary is fetched at first
+    // use, see assets/skills/impeccable/NOTICE.md). Only the bit is stored, not
     // the mode: POSIX modes do not round-trip through Windows and nothing else
     // about the mode matters to the materializer.
     const isExecutable =
