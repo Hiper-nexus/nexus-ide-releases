@@ -32,10 +32,28 @@ import { visualEvidenceVerified } from './visual-handoff-gate';
  * os números aqui pioram e o teste reprova.
  */
 
-/** Custos por evento, medidos; a suíte é o termo dominante. */
+/**
+ * Custos por evento. Medidos neste repositório em 21/10:
+ *
+ * - typecheck do projeto inteiro: 4,4 s (3 execuções)
+ * - `npm audit`: 0,75 s (2 execuções)
+ * - fatia orch+shared da suíte: 208 s para 766 arquivos ⇒ ~0,27 s/arquivo
+ * - o portão de regressão REAL, chamado contra o diff deste PR (22 arquivos),
+ *   mapeou 286 arquivos de teste impactados, e rodou duas vezes porque a
+ *   chave de cache do handoff (`fast`) e a da conclusão (`with-e2e`) são
+ *   distintas
+ *
+ * Daí `IMPACTED_SUITE_MS`: 286 × 0,27 s ≈ 77 s. É DERIVADO da vazão medida,
+ * não cronometrado — executar os 286 sob o portão exigia conceder a raiz de
+ * dependências do sandbox, que esta máquina não tem. O número depende do
+ * projeto: numa landing page pequena é muito menor. O que NÃO depende do
+ * projeto é a contagem de eventos, e é ela que os testes acima fixam.
+ */
 const TYPECHECK_MS = 4_400;
 const AUDIT_MS = 750;
-const IMPACTED_SUITE_MS = 60_000;
+const IMPACTED_SUITE_FILES = 286;
+const SUITE_MS_PER_FILE = 208_000 / 766;
+const IMPACTED_SUITE_MS = Math.round(IMPACTED_SUITE_FILES * SUITE_MS_PER_FILE);
 const MECHANICAL_RUN_MS = TYPECHECK_MS + AUDIT_MS + IMPACTED_SUITE_MS;
 /** Turno de LLM: a faixa observada em campo é 30–90 s; usamos o meio. */
 const LLM_TURN_MS = 60_000;

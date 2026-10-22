@@ -179,6 +179,28 @@ decisão do motor numa linha do tempo com relógio falso e conta os eventos
 caros. Não é cronômetro de ponta a ponta — não há LLM real aqui —, e é por isso
 que os custos por evento são os medidos acima, não tetos.
 
+**O que é medido e o que é derivado**, para o número não ser lido como
+cronômetro de missão real:
+
+| entrada | origem |
+|---|---|
+| typecheck 4,4 s, `npm audit` 0,75 s | **medidos** nesta máquina |
+| suíte: 208 s / 766 arquivos ⇒ 0,27 s por arquivo | **medido** |
+| 286 arquivos de teste impactados por um diff de 22 | **medido** chamando o portão de regressão REAL contra o diff deste PR |
+| suíte impactada ≈ 77 s | **derivado** (286 × 0,27 s) — executar os 286 sob o portão exigia a raiz de dependências do sandbox, que esta máquina não tem |
+| turno de LLM ≈ 60 s | **assumido** (faixa observada em campo: 30–90 s) |
+
+A medição do portão real também confirmou a duplicação: ele rodou duas vezes
+sobre o MESMO diff, porque a chave de cache do handoff (`fast`) e a da
+conclusão (`with-e2e`) são distintas.
+
+**Honestidade sobre o que o operador pediu:** ele pediu para cronometrar uma
+landing page num pane só contra a mesma pela missão. Isso exige duas execuções
+com LLM real, de horas, e não foi feito — o que existe aqui é contagem de
+eventos pelas funções reais mais custos por evento, a maioria medidos. A
+contagem de eventos não depende do projeto; o relógio depende, e numa landing
+page pequena a suíte impactada é muito menor que os 286 arquivos deste repo.
+
 Com um juiz frontier lendo o candidato por 8 min (acima do TTL de 5 min):
 
 | | antes | depois |
