@@ -93,12 +93,41 @@ describe('evaluateHandoffEvidence', () => {
   // mesma entrega era cobrada duas vezes: o portão visual pedia a captura e o
   // Jev devolvia o handoff "sem evidência de verificação" porque não havia
   // saída de teste. Numa landing page não existe teste que prove aparência.
-  it('has_verification baixo COM captura visual verificada → sem sinal', () => {
+  it('has_verification baixo COM captura visual verificada de entrega de aparência → sem sinal', () => {
     const signals = evaluateHandoffEvidence(
       result({ has_verification: 0.1 }).answers,
-      { ...facts, hasVisualEvidence: true },
+      { ...facts, hasVisualEvidence: true, declaredFiles: ['landing/index.html', 'landing/estilo.css'] },
     );
     expect(signals.some((s) => s.includes('verificação'))).toBe(false);
+  });
+
+  // F-1635 (revisão do Codex no PR 159): a captura prova APARÊNCIA. Numa
+  // tarefa mista — layout do checkout + lógica de envio — ela não prova a
+  // metade comportamental, e eu estava deixando o screenshot desculpar a
+  // ausência de QUALQUER verificação. Só vale quando tudo que mudou é
+  // asset de aparência.
+  it('a captura não dispensa verificação quando mudou código de comportamento', () => {
+    const signals = evaluateHandoffEvidence(
+      result({ has_verification: 0.1 }).answers,
+      { ...facts, hasVisualEvidence: true, declaredFiles: ['src/checkout/form.tsx', 'src/checkout/form.css'] },
+    );
+    expect(signals.some((s) => s.includes('evidência de verificação'))).toBe(true);
+  });
+
+  it('entrega só de aparência: a captura é a prova e não há devolução', () => {
+    const signals = evaluateHandoffEvidence(
+      result({ has_verification: 0.1 }).answers,
+      { ...facts, hasVisualEvidence: true, declaredFiles: ['site/index.html', 'site/estilo.css', 'site/logo.svg'] },
+    );
+    expect(signals.some((s) => s.includes('evidência de verificação'))).toBe(false);
+  });
+
+  it('sem arquivos declarados a captura não basta: não dá para provar que é só aparência', () => {
+    const signals = evaluateHandoffEvidence(
+      result({ has_verification: 0.1 }).answers,
+      { ...facts, hasVisualEvidence: true, declaredFiles: [] },
+    );
+    expect(signals.some((s) => s.includes('evidência de verificação'))).toBe(true);
   });
 
   it('a captura visual não dispensa as outras provas (resumo genérico ainda cai)', () => {

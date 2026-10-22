@@ -241,6 +241,21 @@ interface HandoffSignal {
   readonly bounce: boolean;
 }
 
+/**
+ * F-1635 (revisão do Codex no PR 159): a captura do navegador prova
+ * APARÊNCIA, não comportamento. Numa entrega mista — layout do checkout mais
+ * a lógica de envio — deixar o screenshot desculpar a ausência de QUALQUER
+ * verificação esconde a metade que ele não vê. A dispensa vale só quando tudo
+ * que o worker declarou é asset de aparência; sem arquivo declarado não dá
+ * para provar que é só aparência, e aí a prova de verificação continua devida.
+ */
+const APPEARANCE_ASSET =
+  /\.(?:css|scss|sass|less|html?|svg|png|jpe?g|gif|webp|avif|ico|woff2?|ttf|otf)$/i;
+
+function appearanceOnlyDelivery(declaredFiles: readonly string[]): boolean {
+  return declaredFiles.length > 0 && declaredFiles.every((file) => APPEARANCE_ASSET.test(file));
+}
+
 function handoffSignals(
   answers: Record<string, JevAnswer>,
   facts: HandoffReviewFacts,
@@ -262,7 +277,7 @@ function handoffSignals(
     hasVerification !== null &&
     hasVerification < HAS_VERIFICATION_MIN &&
     facts.evidenceIdsCount === 0 &&
-    facts.hasVisualEvidence !== true
+    !(facts.hasVisualEvidence === true && appearanceOnlyDelivery(facts.declaredFiles))
   ) {
     signals.push({
       text:
