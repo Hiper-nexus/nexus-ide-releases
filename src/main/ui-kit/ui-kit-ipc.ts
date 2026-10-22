@@ -387,6 +387,7 @@ export function registerUiKitIpc(): void {
           return installViewFromRun(run, {
             requested: resolved.install,
             recipe: resolved,
+            kit,
           });
         }
 
@@ -397,7 +398,7 @@ export function registerUiKitIpc(): void {
           );
         }
         const run = await installItems({ kit, items: named, cwd }, serviceDeps());
-        return installViewFromRun(run, { requested: named });
+        return installViewFromRun(run, { requested: named, kit });
       } catch (error) {
         return {
           ok: false,

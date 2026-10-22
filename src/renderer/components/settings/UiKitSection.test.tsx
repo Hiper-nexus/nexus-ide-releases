@@ -972,3 +972,48 @@ it('offers no Remover for an entry only the bundle provides', async () => {
     act(() => root.unmount());
   }
 });
+
+it('does not say "Instalado" when every file already existed', async () => {
+  // Review 22/10: exit code 0 with every file skipped read as "Instalado".
+  api({
+    install: vi.fn().mockResolvedValue({
+      ok: true,
+      installed: [],
+      nothingWritten: true,
+      files: { created: [], updated: [], skipped: ['src/components/ui/sidebar.tsx'] },
+    }),
+  });
+  const { host, root } = await mount();
+  try {
+    const install = [...host.querySelectorAll('button')].find((button) =>
+      button.textContent?.startsWith('Instalar em'),
+    );
+    await act(async () => install!.click());
+
+    expect(host.textContent).toContain('Nada novo: os arquivos já existiam');
+    expect(host.textContent).not.toContain('Instalado:');
+  } finally {
+    act(() => root.unmount());
+  }
+});
+
+it('names the missing shadcn setup instead of a bare failure', async () => {
+  api({
+    install: vi.fn().mockResolvedValue({
+      ok: false,
+      installed: [],
+      refusal: 'components_json_missing',
+    }),
+  });
+  const { host, root } = await mount();
+  try {
+    const install = [...host.querySelectorAll('button')].find((button) =>
+      button.textContent?.startsWith('Instalar em'),
+    );
+    await act(async () => install!.click());
+
+    expect(host.textContent).toContain('ainda não tem components.json');
+  } finally {
+    act(() => root.unmount());
+  }
+});

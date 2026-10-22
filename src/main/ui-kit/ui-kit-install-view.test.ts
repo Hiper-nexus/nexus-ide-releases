@@ -4,6 +4,7 @@ import {
   installViewFromItemPlan,
   installViewFromPlan,
   installViewFromRun,
+  parseInstallFiles,
 } from './ui-kit-install-view';
 import type { UiKitRunResult } from './ui-kit-service';
 
@@ -171,7 +172,7 @@ describe('agentInstallReceipt', () => {
       needsLicense: ['template-home-dashboard'],
       licenseState: 'absent',
     });
-    expect(String(receipt.licenceHint)).toContain('Settings → UI kits');
+    expect(String(receipt.licenceHint)).toContain('Configurações › Biblioteca › Kits de UI');
   });
 
   it('distinguishes an unreachable vendor from a missing key', () => {
@@ -193,5 +194,142 @@ describe('agentInstallReceipt', () => {
     expect(receipt.needsLicense).toBeUndefined();
     expect(receipt.licenseState).toBeUndefined();
     expect(receipt.licenceHint).toBeUndefined();
+  });
+});
+
+/** Real outputs, captured from shadcn@4.22 and boardui@latest on 22/10/2026. */
+const SHADCN_CREATED =
+  '- Checking registry.\n✔ Checking registry.\n- Installing dependencies.\n✔ Installing dependencies.\n' +
+  '- Updating files.\n✔ Created 1 file:\n  - src/components/ui/button.tsx\n';
+const SHADCN_MIXED =
+  '- Checking registry.\n✔ Checking registry.\n- Updating files.\n✔ Created 1 file:\n' +
+  '  - src/components/ui/card.tsx\n' +
+  'ℹ Skipped 1 file: (files might be identical, use --overwrite to overwrite)\n' +
+  '  - src/components/ui/button.tsx\n';
+const SHADCN_ALL_SKIPPED =
+  '- Checking registry.\n✔ Checking registry.\n- Updating files.\n' +
+  'ℹ Skipped 1 file: (files might be identical, use --overwrite to overwrite)\n' +
+  '  - src/components/ui/button.tsx\n';
+const BOARDUI_NOTHING =
+  '- Resolving components...\n✔ Resolved 6 items: cx, directional-icon, theme, typography, globals, button\n' +
+  '  skipped 6 existing files\n\nNote: import the BoardUI styles in your root layout or global css:\n' +
+  '  import "@/styles/globals.css";\n\nDone. 0 files written.\n';
+const BOARDUI_WROTE =
+  '✔ Resolved 9 items: cx, theme, globals, stat-cards\n  skipped 2 existing files\n\nDone. 7 files written.\n';
+
+describe('parseInstallFiles — what the vendor actually wrote', () => {
+  it('reads shadcn created, updated and skipped lists', () => {
+    expect(parseInstallFiles('shadcn', SHADCN_MIXED)).toEqual({
+      recognized: true,
+      created: ['src/components/ui/card.tsx'],
+      updated: [],
+      skipped: ['src/components/ui/button.tsx'],
+    });
+  });
+
+  it('reads BoardUI counts', () => {
+    expect(parseInstallFiles('boardui', BOARDUI_WROTE)).toMatchObject({
+      recognized: true,
+      writtenCount: 7,
+      skippedCount: 2,
+    });
+    expect(parseInstallFiles('boardui', BOARDUI_NOTHING)).toMatchObject({
+      recognized: true,
+      writtenCount: 0,
+      skippedCount: 6,
+    });
+  });
+
+  it('admits when it does not recognise the output', () => {
+    expect(parseInstallFiles('shadcn', 'something else entirely').recognized).toBe(false);
+  });
+});
+
+describe('"Instalado" only when something was written', () => {
+  it('lists nothing as installed when every file already existed', () => {
+    // Review 22/10: an existing file is skipped and the receipt still said
+    // "Instalado: button".
+    const receipt = agentInstallReceipt(run({ stdout: SHADCN_ALL_SKIPPED }), {
+      kit: 'shadcn',
+      items: ['button'],
+    });
+
+    expect(receipt.installed).toEqual([]);
+    expect(receipt.alreadyPresent).toEqual(['button']);
+    expect(receipt.files).toMatchObject({ skipped: ['src/components/ui/button.tsx'] });
+    expect(String(receipt.hint)).toMatch(/overwrite: true/);
+  });
+
+  it('reports the files a real install wrote', () => {
+    const receipt = agentInstallReceipt(run({ stdout: SHADCN_CREATED }), {
+      kit: 'shadcn',
+      items: ['button'],
+      importAlias: '@/components/ui',
+    });
+
+    expect(receipt.installed).toEqual(['button']);
+    expect(receipt.files).toMatchObject({ created: ['src/components/ui/button.tsx'] });
+    expect(String(receipt.next)).toMatch(/@\/components\/ui/);
+  });
+
+  it('says so for BoardUI when zero files were written', () => {
+    const receipt = agentInstallReceipt(run({ stdout: BOARDUI_NOTHING }), {
+      kit: 'boardui',
+      items: ['button'],
+    });
+
+    expect(receipt.installed).toEqual([]);
+    expect(receipt.alreadyPresent).toEqual(['button']);
+  });
+
+  it('keeps the old answer, flagged, when the output is not recognised', () => {
+    const receipt = agentInstallReceipt(run({ stdout: 'odd output' }), {
+      kit: 'shadcn',
+      items: ['button'],
+    });
+
+    expect(receipt.installed).toEqual(['button']);
+    expect(receipt.filesUnverified).toBe(true);
+  });
+
+  it('carries the registry findings it used to drop', () => {
+    const receipt = agentInstallReceipt(
+      run({
+        stdout: SHADCN_CREATED,
+        registryConflicts: ['@acme'],
+        unmappedRegistries: ['@team'],
+        withheldRegistries: ['@other'],
+      }),
+      { kit: 'shadcn', items: ['button'] },
+    );
+
+    expect(receipt).toMatchObject({
+      registryConflicts: ['@acme'],
+      unmappedRegistries: ['@team'],
+      withheldRegistries: ['@other'],
+    });
+  });
+
+  it('passes a refusal Main made before running, with its hint', () => {
+    const receipt = agentInstallReceipt(
+      run({
+        ok: false,
+        code: null,
+        refusal: 'components_json_missing',
+        hint: "Run nexus_ui_kit_run { command: 'init' } first.",
+      }),
+      { kit: 'shadcn', items: ['button'] },
+    );
+
+    expect(receipt).toMatchObject({ ok: false, refusal: 'components_json_missing' });
+    expect(String(receipt.hint)).toMatch(/init/);
+  });
+
+  it('tells the panel nothing was written, instead of "Instalado"', () => {
+    const view = installViewFromRun(run({ stdout: SHADCN_ALL_SKIPPED }), { requested: ['button'] });
+
+    expect(view.installed).toEqual([]);
+    expect(view.nothingWritten).toBe(true);
+    expect(view.files?.skipped).toEqual(['src/components/ui/button.tsx']);
   });
 });

@@ -261,7 +261,7 @@ describe('the licence lifecycle stays with the operator', () => {
 
     expect(out.ok).toBe(false);
     expect(out.reason).toBe('operator_action');
-    expect(out.hint).toContain('Settings → UI kits');
+    expect(out.hint).toContain('Configurações › Biblioteca › Kits de UI');
   });
 
   it('does not advertise deactivation as something it performs', () => {

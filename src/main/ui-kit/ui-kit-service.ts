@@ -64,6 +64,7 @@ import {
   type UiKitCachedTier,
 } from './ui-kit-cache';
 import type { UiKitCandidate } from './ui-kit-pick';
+import { UI_KIT_SETTINGS_PATH, type UiKitRefusalCode } from '../../shared/ui-kit-contract';
 
 /**
  * The one place the rest of Nexus talks to a UI kit.
@@ -257,6 +258,10 @@ export interface UiKitRunResult {
   /** BoardUI Pro items the run refused because no licence is active. */
   readonly needsLicense?: readonly string[];
   readonly licenseState?: BoardUiLicenseState;
+  /** Main refused before running anything, by stable code. */
+  readonly refusal?: UiKitRefusalCode;
+  /** What to do about a refusal — the way that works, named. */
+  readonly hint?: string;
 }
 
 export const COMPONENTS_JSON = 'components.json';
@@ -602,7 +607,7 @@ export async function callBoardUiTool(
         isError: true,
         text:
           `BoardUI Pro licence required for: ${gated.blocked.join(', ')}. ` +
-          'Store it in Settings → UI kits; the free items need no key.' +
+          `Store it in ${UI_KIT_SETTINGS_PATH}; the free items need no key.` +
           (gated.activationDetail
             ? ` (automatic activation failed: ${gated.activationDetail})`
             : ''),
@@ -1605,7 +1610,7 @@ export async function installItems(
         stdout: '',
         stderr:
           `BoardUI Pro licence required for: ${gated.blocked.join(', ')}. ` +
-          'Store it in Settings → UI kits; the free items need no key.' +
+          `Store it in ${UI_KIT_SETTINGS_PATH}; the free items need no key.` +
           (gated.activationDetail
             ? ` (automatic activation failed: ${gated.activationDetail})`
             : ''),
@@ -1629,6 +1634,8 @@ export async function installItems(
       deps,
     );
   }
+  const missing = shadcnProjectNotReady(input.cwd);
+  if (missing) return missing;
   return await runShadcnCommand(
     {
       command: {
@@ -1642,6 +1649,32 @@ export async function installItems(
     },
     deps,
   );
+}
+
+export const SHADCN_INIT_HINT =
+  "Run nexus_ui_kit_run { command: 'init' } first (non-interactive, shadcn " +
+  "defaults), or install from BoardUI with kit: 'boardui'.";
+
+/**
+ * A shadcn `add` in a project with no components.json never fails: it stops
+ * at "You need to create a components.json file… Proceed?", which ignores
+ * `--yes` (measured on shadcn@4.22), and the run sat there until the 300 s
+ * timeout with no reason given. The most common case — a fresh React project
+ * — so it is refused here, at once, with the way out named.
+ */
+export function shadcnProjectNotReady(cwd: string): UiKitRunResult | null {
+  if (readComponentsJson(cwd)) return null;
+  return {
+    ok: false,
+    stdout: '',
+    stderr:
+      'This project has no readable components.json, so shadcn would stop at an ' +
+      'interactive prompt instead of installing.',
+    code: null,
+    missingRegistryKeys: [],
+    refusal: 'components_json_missing',
+    hint: SHADCN_INIT_HINT,
+  };
 }
 
 export type { BoardUiMcpTool };

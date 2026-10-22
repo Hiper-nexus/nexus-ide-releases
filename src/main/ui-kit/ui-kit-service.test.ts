@@ -589,12 +589,28 @@ describe('planInstallItems', () => {
 
 describe('installItems', () => {
   it('sends shadcn items to the shadcn CLI', async () => {
+    writeComponentsJson({ aliases: { ui: '@/components/ui' } });
     const h = harness();
 
     await installItems({ kit: 'shadcn', items: ['button'], cwd, path: 'src/ui' }, h.deps);
 
     expect(h.cliRuns[0]?.kit).toBe('shadcn');
     expect(h.cliRuns[0]?.args).toEqual(['add', '--yes', 'button', '--path', 'src/ui']);
+  });
+
+  it('refuses a shadcn add at once when the project has no components.json', async () => {
+    // shadcn stops at "You need to create a components.json file… Proceed?",
+    // which ignores --yes: the run used to sit there until the 300 s timeout.
+    const h = harness();
+    const started = Date.now();
+
+    const result = await installItems({ kit: 'shadcn', items: ['button'], cwd }, h.deps);
+
+    expect(result.ok).toBe(false);
+    expect(result.refusal).toBe('components_json_missing');
+    expect(result.hint).toMatch(/command: 'init'/);
+    expect(h.cliRuns).toEqual([]);
+    expect(Date.now() - started).toBeLessThan(1_000);
   });
 
   it('sends BoardUI items to the BoardUI CLI', async () => {
@@ -1419,7 +1435,7 @@ describe('the Pro gate on a direct install', () => {
     expect(result.ok).toBe(false);
     expect(result.needsLicense).toEqual(['template-home-dashboard']);
     expect(result.licenseState).toBe('absent');
-    expect(result.stderr).toMatch(/Settings → UI kits/);
+    expect(result.stderr).toMatch(/Configurações › Biblioteca › Kits de UI/);
     // The snapshot knows it is Pro, so no listing ran — and the install never
     // reached the vendor.
     expect(h.cliRuns).toEqual([]);

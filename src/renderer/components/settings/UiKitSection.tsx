@@ -31,6 +31,24 @@ const TIER_LABELS: Record<string, string> = {
   unknown: '—',
 };
 
+/**
+ * The one line that says what happened. Exit code 0 used to read as
+ * "Instalado" even when every file already existed and nothing was written.
+ */
+function installHeadline(result: UiKitInstallView): string {
+  if (result.refusal === 'components_json_missing') {
+    return 'Este projeto ainda não tem components.json: rode o init do shadcn primeiro, ou instale pelo BoardUI.';
+  }
+  if (result.refusal === 'project_busy') {
+    return 'Outra instalação de kit ainda está rodando neste projeto. Espere terminar e tente de novo.';
+  }
+  if (!result.ok) return result.error ?? 'A instalação falhou.';
+  if (result.nothingWritten) {
+    return 'Nada novo: os arquivos já existiam e não foram sobrescritos.';
+  }
+  return `Instalado: ${result.installed.join(', ') || 'nada a fazer'}`;
+}
+
 function formatBytes(bytes: number): string {
   if (bytes <= 0) return '0 KB';
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
@@ -429,11 +447,12 @@ export function UiKitSection() {
           className={result.ok ? 'mkt-notice mkt-notice--ok' : 'mkt-notice mkt-notice--danger'}
           role="status"
         >
-          <p>
-            {result.ok
-              ? `Instalado: ${result.installed.join(', ') || 'nada a fazer'}`
-              : (result.error ?? 'A instalação falhou.')}
-          </p>
+          <p>{installHeadline(result)}</p>
+          {result.files && result.files.created.length + result.files.updated.length > 0 && (
+            <p className="settings-list__detail">
+              Arquivos: {[...result.files.created, ...result.files.updated].slice(0, 12).join(', ')}
+            </p>
+          )}
           {!result.ok && result.output && (
             // The CAUSE. A dependency conflict or a network error leaves the
             // diagnosis in `output` and no `error` at all, so the panel said

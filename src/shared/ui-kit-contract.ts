@@ -249,6 +249,32 @@ export interface UiKitInstallView {
    */
   readonly licenseState?: 'active' | 'absent' | 'unknown';
   readonly missingRegistryKeys?: readonly string[];
+  /** What the vendor reported writing and leaving untouched. */
+  readonly files?: UiKitInstallFilesView;
+  /**
+   * The run succeeded and wrote NOTHING: every file already existed. "Instalado"
+   * would be the lie the review found.
+   */
+  readonly nothingWritten?: boolean;
+  /** A refusal Main made before running anything, by stable code. */
+  readonly refusal?: UiKitRefusalCode;
   readonly output?: string;
   readonly error?: string;
 }
+
+export type UiKitRefusalCode = 'components_json_missing' | 'project_busy';
+
+export interface UiKitInstallFilesView {
+  readonly created: readonly string[];
+  readonly updated: readonly string[];
+  readonly skipped: readonly string[];
+  /** BoardUI reports counts, not paths. */
+  readonly writtenCount?: number;
+  readonly skippedCount?: number;
+}
+
+/**
+ * Where the operator finds the kits panel, for every message that sends them
+ * there. "Settings → UI kits" named a place that does not exist in the app.
+ */
+export const UI_KIT_SETTINGS_PATH = 'Configurações › Biblioteca › Kits de UI';

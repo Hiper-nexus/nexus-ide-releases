@@ -118,6 +118,9 @@ export interface InstallTargetRequest {
   readonly kit?: UiKitId | undefined;
   readonly cwd: string;
   readonly signal?: AbortSignal | undefined;
+  /** The caller, so the decision counts against its own decision budget. */
+  readonly sessionId?: string | undefined;
+  readonly missionId?: string | undefined;
 }
 
 export interface InstallTarget {
@@ -169,6 +172,8 @@ export async function resolveInstallTargetForTask(
       availableKits: kits,
       proLicensed: licensed,
       ...(request.signal ? { signal: request.signal } : {}),
+      ...(request.sessionId ? { sessionId: request.sessionId } : {}),
+      ...(request.missionId ? { missionId: request.missionId } : {}),
     },
     {},
   );
@@ -187,6 +192,8 @@ export async function resolveInstallTargetForTask(
 export function installPickReceipt(pick: UiKitPickResult): Record<string, unknown> {
   return {
     decidedBy: pick.source,
+    ...(pick.kitDecidedBy ? { kitDecidedBy: pick.kitDecidedBy } : {}),
+    ...(pick.itemDecidedBy !== undefined ? { itemDecidedBy: pick.itemDecidedBy } : {}),
     kit: pick.kit,
     item: pick.item?.slug ?? null,
     needsKit: pick.needsKit,
