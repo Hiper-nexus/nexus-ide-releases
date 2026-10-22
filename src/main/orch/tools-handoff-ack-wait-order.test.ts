@@ -37,6 +37,32 @@ describe("tools-handoff: ordem de armar a espera do ACK", () => {
     ).toBeLessThan(visible);
   });
 
+  // F-1636 (3ª revisão do Codex no PR 159): mover o armar para antes da entrega
+  // o deixou ANTES da guarda de replay que o `onHandoffSubmitted` sempre teve.
+  // Replay cujo handoff já saiu de `queued` pode estar CONSUMIDO (o Maestro
+  // devolveu `rework`): armar ali espera um ACK que nunca chega e, como o armar
+  // limpa a espera da sessão primeiro, apaga a espera da rodada NOVA (F-239).
+  it("só arma na primeira entrega da rodada, nunca em replay já entregue", () => {
+    const guard = source.indexOf("const firstDeliveryAttempt =");
+    const arm = source.indexOf("scheduleAutoCloseAfterHandoff(");
+    const visible = source.indexOf("onHandoffSubmitted(handoff");
+    expect(guard, "a guarda de primeira entrega desapareceu").toBeGreaterThan(0);
+    expect(
+      source.slice(guard, arm),
+      "a guarda tem de ser `!replayed || deliveryState === queued`",
+    ).toContain('!replayed || handoff.deliveryState === "queued"');
+    expect(guard, "a guarda precisa vir antes do armar").toBeLessThan(arm);
+    expect(
+      source.slice(guard, arm),
+      "o armar não está sob a guarda: replay consumido instalaria espera morta",
+    ).toContain("if (firstDeliveryAttempt)");
+    // O MESMO nome governa a republicação: nomes separados divergem com o tempo.
+    expect(
+      source.slice(arm, visible + 40),
+      "o onHandoffSubmitted deixou de usar a mesma guarda",
+    ).toContain("const petStudioCompletion = firstDeliveryAttempt");
+  });
+
   it("armar não pode derrubar o handoff: a chamada está protegida", () => {
     const arm = source.indexOf("scheduleAutoCloseAfterHandoff(");
     const prefix = source.slice(0, arm);

@@ -752,12 +752,22 @@ const handoffSubmitTool: McpToolDef = {
     // O prazo não corre antes da entrega (`isDelivered` barra enquanto
     // `queued`), então armar cedo não fecha nada cedo. Em try/catch porque
     // agora corre ANTES da entrega: armar nunca pode derrubar o handoff.
+    /**
+     * F-1636 (3ª revisão do Codex no PR 159): esta É a primeira entrega desta
+     * rodada? Replay de transporte cujo handoff JÁ saiu de `queued` não é — o
+     * Maestro pode até já ter devolvido `rework` e consumido a linha. Armar ali
+     * instalaria espera por um ACK que nunca chega e, pior, o armar LIMPA a
+     * espera da sessão antes de instalar a nova: um replay da rodada velha
+     * apagaria a espera da rodada NOVA do mesmo worker (F-239). Um nome só
+     * para os dois usos, para a guarda não divergir outra vez.
+     */
+    const firstDeliveryAttempt = !replayed || handoff.deliveryState === "queued";
     try {
       // autoCloseOnHandoff (paridade Bridge): declarado no spawn. success fecha
       // logo; partial/failed/blocked (F-1409) fecham no ACK aceito do Maestro
       // ou após 15 min parado depois que a entrega chegou a ele; rework mantém.
       // Fora do caminho da resposta: o fechamento nunca atrasa nem derruba o handoff.
-      scheduleAutoCloseAfterHandoff(
+      if (firstDeliveryAttempt) scheduleAutoCloseAfterHandoff(
         ctx.sessionId,
         status,
         (sessionId) => findPane(sessionId)?.paneId ?? null,
@@ -810,10 +820,9 @@ const handoffSubmitTool: McpToolDef = {
     // SQLite commit but before delivery/completion side effects. Once delivery
     // advanced, replaying Pet Studio would re-read mutable artifact paths and
     // repeat an already-finished installation.
-    const petStudioCompletion =
-      !replayed || handoff.deliveryState === "queued"
-        ? onHandoffSubmitted(handoff, ctx.scope)
-        : null;
+    const petStudioCompletion = firstDeliveryAttempt
+      ? onHandoffSubmitted(handoff, ctx.scope)
+      : null;
     if (ctx.missionId && !replayed && !visualPending) {
       try {
         const diskFiles = await collectFilesModified(executionScopeFor(ctx).rootRealPath);
