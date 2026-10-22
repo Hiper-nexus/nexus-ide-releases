@@ -1,0 +1,172 @@
+# Por que a missão demorava 2–3× um pane só (21/10/2026)
+
+Relato do operador: uma landing page feita num **pane único** sai em ~1 h; a
+mesma coisa **como missão** leva 2–3 h. Na tela ele vê o Nexus "fazendo
+testes, voltando, fazendo testes, voltando", recusando e **recomeçando tudo
+do zero**, e reclamando que **não fez o teste visual** — tendo navegador e Jev
+dentro do Nexus.
+
+O que segue é o que o código diz, com arquivo e linha. Separei o que é
+**medido** do que é **estimado** e do que ficou **não verificado**.
+
+## As seis causas, em ordem de custo
+
+### 1. A suíte inteira reexecutada sobre código idêntico (MEDIDO)
+
+`mission-code-completion-production.ts` guardava o resultado das verificações
+mecânicas com TTL de 5 min, e `pruneStates` o descartava **mesmo com o
+candidato inalterado**. A chave do cache (`checkKey`) já fixa o candidato
+exato: assinatura da missão, escopos, base, cobertura, `fingerprint`,
+`headSha` e caminhos exigidos. Qualquer byte que mude troca a chave.
+
+Enquanto isso, o juiz independente é um pane frontier com duas idas ao modelo
+e poll de 30 s (`mission-code-review-runtime.ts`): em campo passa dos 5 min.
+Toda tentativa seguinte refazia:
+
+| verificação | teto | arquivo |
+|---|---|---|
+| typecheck do projeto inteiro | 120 s | `mechanical-sensors.ts:29` |
+| `npm audit` | 45 s | `mechanical-sensors.ts:30` |
+| portão de regressão **com E2E** | 120 s | `regression-gate.ts:2020` |
+
+E no caminho da conclusão typecheck e audit são **serializados**
+(`civilian-auto-review.ts:422`). Isto é o "faz teste, volta, faz teste" que o
+operador vê: não é teimosia do modelo, é o motor jogando trabalho válido fora.
+
+**Corrigido:** o resultado é preservado enquanto um juiz comprovadamente lê
+aquele mesmo `fingerprint`, com teto de 45 min para um candidato abandonado
+ainda envelhecer. A invariante antiga continua — acerto de cache nunca renova
+o prazo.
+
+### 2. O trabalho recomeçava do zero a cada devolução (MEDIDO)
+
+`shouldArmAutoCloseOnHandoff` arma **todo** worker de missão, e o `success`
+fechava o pane "logo" (`tools-handoff.ts`), antes de o Maestro ler a entrega.
+Quando o veredito vinha e era `rework`, não havia mais pane: a nota caía numa
+encarnação nova e, sem conversa retomável, num pane novo com o **brief
+original** (`resume.mode: 'fresh-in-worktree'`). O worker refazia o que já
+tinha feito.
+
+Pior: a evidência visual é chaveada por `session_id` +
+`worker_incarnation_id` + `assignment_id` (`visual-handoff-gate.ts`). Encarnação
+nova ⇒ a captura anterior **não vale mais** ⇒ o teste visual era refeito a
+cada rodada. É o "monte de teste visual inútil".
+
+**Corrigido:** o `success` do writer de missão espera o aceite. `accepted`
+fecha na hora; `rework` encontra o pane morno, que já sabe o que tentou — e
+a captura dele continua válida. Prazo da rede de segurança: 3 min (um pane
+custa ~1 GB, F-572).
+
+### 3. A mesma entrega visual era cobrada duas vezes (MEDIDO)
+
+O portão visual exige uma captura do navegador do Nexus e, sem ela, rebaixa
+`success` para `partial`. Logo **antes** dele, a revisão Jev pedia "test
+results, typecheck/build output, command output or a commit reference" — com
+saída para revisão, auditoria e planejamento, **nenhuma para trabalho
+visual** (`jev-handoff-review.ts:80-94`) — e devolvia o handoff por "sem
+evidência de verificação". Numa landing page não existe teste de unidade que
+prove aparência: as duas cobranças não podiam ser satisfeitas juntas.
+
+**Corrigido:** o portão visual roda antes da revisão e a captura verificada
+pelo Main conta como evidência. A rubrica passa a nomear a captura observada
+como prova válida de entrega visual.
+
+### 4. A doutrina só ensinava a devolver (MEDIDO)
+
+Nas três portas (kickoff, instruções permanentes, lembrete de turno) a prova
+exigida era literalmente "rode o teste que prova a correção", e o único gesto
+de ACK ensinado era `verdict:"rework"`. **O aceite nunca era ensinado.** Então
+o laço tinha uma saída só, e ela custa outra rodada inteira do worker.
+
+**Corrigido:** a prova passa a ser a que cabe — teste para comportamento,
+captura do navegador para aparência — e as três portas mandam aceitar com
+`nexus_handoff_ack accepted`, devolvendo só com defeito concreto.
+
+### 5. Um turno de abertura desperdiçado (MEDIDO)
+
+O kickoff passava `firstWaveDispatched: true` fixo
+(`mission-fast-lane.ts:1030`), mas `planFirstWaveSeats` só abre panes com
+história selada não-meta. Um objetivo de uma linha não gera nenhuma. O Maestro
+recebia como passo 1 "não duplique a first-wave: colete seus handoffs" e
+gastava o turno de abertura num `nexus_handoff_list` vazio.
+
+**Corrigido:** o kickoff diz a verdade; sem plano selado, manda delegar.
+
+### 6. A cerimônia não enxerga o tipo de trabalho (MEDIDO, NÃO corrigido)
+
+Há **um** eixo de escala na cerimônia inteira, e ele é de lane:
+`mission-code-completion.ts:145` — `lane !== 'standard'` pula tudo. Landing
+page, ajuste de CSS e refatoração de pagamentos são todos `standard` e pagam
+cerimônia **byte a byte idêntica**.
+
+O classificador existe e é de produção — `classifyWorkKind`
+(`src/shared/mission-work-kind.ts:54`: `bug|feature|doc|visual|ops|unknown`) —
+e está **desligado de todos os portões**. Seus consumidores são roteamento,
+design e o portão visual; nenhum portão de conclusão o importa. O cabeçalho
+dele já diz o problema em voz alta.
+
+Pior, no caminho do "+ Pane" (o caso dominante) não há triagem nenhuma:
+`operator-hand-mission.ts` sempre compila `standard`, sem `routingAdvice`
+(`renderer-mission-authority.ts:980`).
+
+E `mechanicalProjectRequirements` (`mechanical-sensors.ts:97-131`) decide por
+**presença de arquivo no projeto**, não pelo diff: um `tsconfig.json` na raiz
+exige typecheck, um lockfile exige audit, um `vitest.config.ts` exige testes —
+independente do que mudou. O argumento `files` só aparece em posição `||`:
+pode **somar** exigência, nunca tirar. Não há caminho subtrativo.
+
+**Por que não corrigi agora:** é mudança de semântica num portão de
+qualidade, e o operador quer "um serviço bem feito". Depois da causa 1, o
+custo repetido já não se paga a cada tentativa, então a urgência caiu. A
+recomendação está na seção final.
+
+## Correção que NÃO fiz, e por quê
+
+- **Portão de regressão no fim de cada turno do Maestro.** Dois
+  levantamentos independentes apontaram até 60 s por turno
+  (`hook-regression-endpoint.ts:40`), porque o Maestro adotado do "+ Pane"
+  casa em `isOperatorHandContext`. Mas existe teste explícito fixando esse
+  comportamento ("operador promovido a orquestrador … continua com o portão
+  no Stop") e o motor já tem atribuição por delta próprio (F-1224/F-1237).
+  **60 s é teto, não custo medido.** Sem traço de missão real, mexer ali seria
+  chute contra uma invariante testada.
+- **`[NEXUS_COMPLETION_REFUSED]` abrindo fan-out a cada recusa.** Verifiquei:
+  `civilian-delivery-completion.ts` filtra `kind === 'waiting'` antes de
+  chegar lá. Só bloqueio real vira prompt. Não é defeito.
+
+## Medições de apoio
+
+- Prompt do worker para "landing page do Navalha Go" (116 caracteres de
+  tarefa): **12 829 caracteres** entregues — 110× de sobrecarga. Cartas:
+  engenharia 3 552, ponytail 2 501, mais design, verificação visual,
+  autonomia e telemetria.
+- Doutrina base: 2 036/2 048 bytes. Doutrina permanente: 1 497/1 500
+  caracteres. Os dois tetos são testados; o espaço das linhas novas saiu de
+  frases redundantes das vizinhas.
+
+## Estimado, não medido
+
+As rodadas economizadas por entrega, somando as causas 2, 3 e 4: a sequência
+que o operador descreve ("duas, três, quatro, cinco vezes") sai de quatro
+portões em série que **rearmam por handoff**, dois deles sem limite nenhum.
+Cada rodada evitada é um turno de worker mais um de Maestro. Não há traço de
+missão real nesta análise: os números acima são constantes de código e
+contagens estruturais, não cronômetro.
+
+## Recomendação para a próxima rodada
+
+1. Ligar `classifyWorkKind` em `mission-code-completion.ts:145` como perfil de
+   cerimônia, com o formato que `routeForRisk`/`reviewerPolicy`
+   (`contract-compiler.ts:254-300`) já provou no caminho PREVC — hoje
+   inalcançável pela Via Rápida.
+2. Dar caminho subtrativo a `mechanicalProjectRequirements`: diff sem entrada
+   compilada não exige typecheck do projeto inteiro; diff sem manifesto de
+   dependência não exige audit.
+3. Unificar a chave de cache do portão de regressão (`'fast'` vs
+   `'with-e2e'`, `regression-gate.ts:2486`) para a suíte não rodar duas vezes
+   na mesma missão.
+4. Orçamento de devolução **por missão**, não por sessão física:
+   `JEV_REVIEW_MAX_BOUNCES` e `REGRESSION_GATE_BOUNCES_PER_SESSION` são
+   apagados em toda resolução, e um respawn de rework cria sessão nova — então
+   "no máximo 1" não limita missão nenhuma. O portão visual não tem contador.
+5. Medir com traço real antes de mexer no portão de Stop do Maestro.
