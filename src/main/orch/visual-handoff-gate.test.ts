@@ -128,6 +128,21 @@ it('preserves an already classified nonvisual task instead of reclassifying appe
   expect(visualTaskAtSpawn({ role: 'worker', initialPrompt })).toEqual({ since: expect.any(Number), id: expect.any(String) });
   expect(visualTaskAtSpawn({ role: 'orchestrator', initialPrompt })).toBeUndefined();
 });
+// Revisão 22/10: o leitor de uma tarefa de UI (mapeamento, revisão) entrega
+// achados, não tela renderizada; cobrá-lo rebaixava todo leitor a partial.
+// F-1318: isolatedWriter vence o rótulo readOnly — esse pane escreve.
+it('review 22/10: a read-only lane is never charged, but a writer labeled readOnly is (F-1318)', () => {
+  const initialPrompt = 'Crie a tela de login com layout responsivo.';
+  const visualTask = { since: 1, id: 'explicit-assignment' };
+  expect(visualTaskAtSpawn({ role: 'worker', readOnly: true, initialPrompt })).toBeUndefined();
+  expect(visualTaskAtSpawn({ role: 'worker', readOnly: true, visualTask, initialPrompt })).toBeUndefined();
+  expect(visualTaskAtSpawn({ role: 'worker', executionMode: 'read_only', visualTask, initialPrompt })).toBeUndefined();
+  expect(visualTaskAtSpawn({ role: 'worker', readOnly: true, isolatedWriter: true, initialPrompt }))
+    .toEqual({ since: expect.any(Number), id: expect.any(String) });
+  expect(visualTaskAtSpawn({ role: 'worker', readOnly: true, executionMode: 'isolated_worktree', visualTask, initialPrompt }))
+    .toBe(visualTask);
+  expect(visualTaskAtSpawn({ role: 'worker', readOnly: false, visualTask, initialPrompt })).toBe(visualTask);
+});
 it('a declared screenshot path or convincing summary cannot satisfy missing Main evidence', async () => {
   expect(await checkVisualHandoff(context(), { manager })).toMatchObject({ required: true, verified: false });
   expect(await checkVisualHandoff({ ...context(), visualTask: undefined }, { manager })).toEqual({ required: false, verified: true });

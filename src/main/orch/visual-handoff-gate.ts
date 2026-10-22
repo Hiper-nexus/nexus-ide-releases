@@ -145,11 +145,29 @@ function plannedRequirement(ctx: VisualHandoffContext, task?: VisualPlannedTask 
   return visualTaskRequirement(`${task.plannedTitle}\n${task.plannedDetail}`, task.task.createdAt, id);
 }
 
+export interface VisualLaneAuthority {
+  readonly readOnly?: boolean;
+  readonly isolatedWriter?: boolean;
+  readonly executionMode?: string;
+}
+
+/**
+ * Review 22/10: a read-only lane (mapping, review, scouting) delivers findings,
+ * not a rendered screen. Charging it a capture downgraded every reader of a UI
+ * task to `partial`. F-1318: an isolated worktree — or any sealed writer mode —
+ * beats the readOnly label; that pane writes and is still charged.
+ */
+export function isReadOnlyVisualLane(input: VisualLaneAuthority): boolean {
+  if (input.isolatedWriter === true || input.executionMode === 'isolated_worktree' ||
+    input.executionMode === 'same_checkout') return false;
+  return input.readOnly === true || input.executionMode === 'read_only';
+}
+
 /** A supplied undefined is Main's negative classification, before adding boilerplate. */
-export function visualTaskAtSpawn(input: {
+export function visualTaskAtSpawn(input: VisualLaneAuthority & {
   role?: string; visualTask?: VisualTaskRequirement; initialPrompt?: string;
 }): VisualTaskRequirement | undefined {
-  if (input.role === 'orchestrator') return undefined;
+  if (input.role === 'orchestrator' || isReadOnlyVisualLane(input)) return undefined;
   return Object.hasOwn(input, 'visualTask') ? input.visualTask : visualTaskRequirement(input.initialPrompt);
 }
 

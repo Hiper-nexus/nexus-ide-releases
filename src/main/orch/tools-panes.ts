@@ -6,7 +6,7 @@ import type { MissionDecisionHints } from '../../shared/orch-types';
 import { assertLicenseAccess } from '../license-enforcement';
 import { captureMissionPaneResume } from './mission-pane-resume';
 import { rollbackWorkerContinuationBeforeBirth } from './mission-pane-resume-ownership';
-import { createVisualTaskRequirement, visualTaskRequirement } from './visual-handoff-gate';
+import { createVisualTaskRequirement, isReadOnlyVisualLane, visualTaskRequirement } from './visual-handoff-gate';
 import { assertTabSupportsOperation, isolatedWriterBaseRoot, missionExecutionScope } from './mission-execution-scope';
 import { nestedWorktreeExecution, requestedCwdInside } from './nested-worktree-execution';
 import {
@@ -2794,7 +2794,11 @@ const paneSpawnAfterTabMission = {
           if (reuseChoice) {
             const reusedContext = getContextBySession(reuseChoice.candidate.sessionId);
             const previousVisualTask = reusedContext?.visualTask;
-            const assignedVisualTask = options.visualTask ?? visualTaskRequirement(options.memoryQuery ?? options.prompt);
+            // Review 22/10: a reused reader is not charged a capture, like a spawned one.
+            const assignedVisualTask = isReadOnlyVisualLane({
+              readOnly: options.readOnly === true || reusedContext?.readOnly === true,
+              isolatedWriter: reusedContext?.isolatedWriter === true,
+            }) ? undefined : options.visualTask ?? visualTaskRequirement(options.memoryQuery ?? options.prompt);
             if (assignedVisualTask && (!reusedContext || reusedContext.missionId !== options.missionId ||
               reusedContext.scope.projectId !== ctx.scope.projectId || reusedContext.scope.checkoutId !== ctx.scope.checkoutId ||
               reusedContext.scope.rootRealPath !== ctx.scope.rootRealPath)) {
