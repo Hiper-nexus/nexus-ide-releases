@@ -1,5 +1,5 @@
 import { JSDOM } from 'jsdom';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createBrowserAutomation } from './browser-automation';
 
 type BrowserDomWindow = Window & typeof globalThis;
@@ -174,6 +174,18 @@ describe('isolated browser automation', () => {
     await expect(automation.run('fill', { ref: input!.ref, text: '123456' })).rejects.toThrow(
       /refusing/,
     );
+  });
+
+  it('waits on DOM mutations instead of re-walking the page every 50 ms', async () => {
+    const { dom, automation } = fixture();
+    const timers = vi.spyOn(dom.window, 'setTimeout');
+    const waiting = automation.run('wait', { condition: 'text', value: 'nunca aparece', timeoutMs: 1_000 });
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    // An idle page costs at most the fallback tick, not eight full text walks.
+    expect(timers.mock.calls.length).toBeLessThanOrEqual(3);
+    dom.window.document.querySelector('#status')!.textContent = 'nunca aparece';
+    await expect(waiting).resolves.toMatchObject({ matched: true, condition: 'text' });
+    timers.mockRestore();
   });
 
   it('waits for visible text and enforces output bounds', async () => {

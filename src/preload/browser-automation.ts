@@ -101,7 +101,10 @@ function finiteClampInt(
     ? Math.min(max, Math.max(min, Math.round(value)))
     : fallback;
 }
+/** Coalescing window after a DOM mutation before re-checking a wait. */
 const POLL_MS = 50;
+/** Slow tick for changes no mutation reports (layout-only, media queries). */
+const WAIT_FALLBACK_TICK_MS = 500;
 const ELEMENT_REF_PATTERN = /^e[1-9]\d{0,7}$/;
 const DESIGN_GENERATION_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -933,32 +936,62 @@ export function createBrowserAutomation(
       throw new Error('browser wait reference is invalid');
     }
 
+    const matches = (): boolean => {
+      if (condition === 'load') return win.document.readyState === 'complete';
+      if (condition === 'text') {
+        const body = win.document.body;
+        return body
+          ? collectVisibleText(win, body, MAX_TEXT_CHARS)
+              .text.toLocaleLowerCase()
+              .includes(redactBrowserText(query).toLocaleLowerCase())
+          : false;
+      }
+      const element = references.get(ref);
+      return Boolean(element?.isConnected && isElementVisible(win, element));
+    };
+
+    // Event-driven: a full visible-text walk every 50 ms burned CPU on big
+    // pages for the whole wait. Mutations (coalesced) and readystatechange
+    // trigger a check; a slow tick covers changes no mutation reports (media
+    // queries, timers that only touch layout).
     return new Promise((resolve, reject) => {
-      const check = (): void => {
-        let matched = false;
-        if (condition === 'load') matched = win.document.readyState === 'complete';
-        if (condition === 'text') {
-          const body = win.document.body;
-          matched = body
-            ? collectVisibleText(win, body, MAX_TEXT_CHARS)
-                .text.toLocaleLowerCase()
-                .includes(redactBrowserText(query).toLocaleLowerCase())
-            : false;
-        }
-        if (condition === 'ref') {
-          const element = references.get(ref);
-          matched = Boolean(element?.isConnected && isElementVisible(win, element));
-        }
-        if (matched) {
-          resolve({ matched: true, condition, elapsedMs: Date.now() - startedAt });
-          return;
-        }
-        if (Date.now() - startedAt >= timeoutMs) {
-          reject(new Error('browser wait timed out'));
-          return;
-        }
-        win.setTimeout(check, POLL_MS);
+      let settled = false;
+      let pending: number | undefined;
+      let observer: MutationObserver | undefined;
+      const cleanup = (): void => {
+        settled = true;
+        observer?.disconnect();
+        win.document.removeEventListener('readystatechange', schedule);
+        win.clearTimeout(pending);
+        win.clearTimeout(deadline);
+        win.clearInterval(fallback);
       };
+      const check = (): void => {
+        pending = undefined;
+        if (settled) return;
+        if (matches()) {
+          cleanup();
+          resolve({ matched: true, condition, elapsedMs: Date.now() - startedAt });
+        }
+      };
+      function schedule(): void {
+        if (!settled && pending === undefined) pending = win.setTimeout(check, POLL_MS);
+      }
+      const deadline = win.setTimeout(() => {
+        if (settled) return;
+        check();
+        if (settled) return;
+        cleanup();
+        reject(new Error('browser wait timed out'));
+      }, timeoutMs);
+      const fallback = win.setInterval(check, WAIT_FALLBACK_TICK_MS);
+      if (typeof win.MutationObserver === 'function') {
+        observer = new win.MutationObserver(schedule);
+        observer.observe(win.document, {
+          subtree: true, childList: true, characterData: true, attributes: true,
+        });
+      }
+      win.document.addEventListener('readystatechange', schedule);
       check();
     });
   }
