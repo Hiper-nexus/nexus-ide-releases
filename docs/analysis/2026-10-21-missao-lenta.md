@@ -27,7 +27,7 @@ Toda tentativa seguinte refazia:
 |---|---|---|
 | typecheck do projeto inteiro | **4,4 s** | 120 s (`mechanical-sensors.ts:29`) |
 | `npm audit` | **0,75 s** | 45 s (`mechanical-sensors.ts:30`) |
-| portão de regressão **com E2E** | depende do projeto; a fatia orch+shared desta suíte leva **208 s** | 120 s por execução (`regression-gate.ts:2020`) |
+| portão de regressão **com E2E** | depende do projeto: a suíte INTEIRA deste repositório leva **622 s** medidos em 22/10 (10 min 22 s, 32.122 testes); a fatia orch+shared, 208 s | 120 s por execução (`regression-gate.ts:2020`) |
 
 **Atenção aos números:** 120 s e 45 s são TIMEOUT, não custo — medi os dois
 nesta máquina e eles são ordens de magnitude menores. O termo dominante é a
@@ -316,6 +316,15 @@ proporcional à latência REAL do revisor, e o arranjo elimina essa latência.
 ledger, portões, worktrees, entrega — é de ~50 s para uma missão de 6 writers.
 Não é dele que saem as 2–3 horas. A lentidão está no termo VARIÁVEL: quantas
 vezes o trabalho é refeito e quantas rodadas de modelo isso custa.
+
+### O custo da causa 1 onde ela PESA, medido
+
+Num repositório com suíte grande o número é duro: `npm test` completo leva
+**622 s** aqui (10 min 22 s, 32.122 testes passando, cronometrado em 22/10).
+O motor rodava isso **duas vezes** sobre o mesmo candidato byte a byte quando o
+juiz passava dos 5 min — ou seja, jogava fora **~10 minutos por tentativa
+abandonada**, e mais a cada janela de TTL que o juiz atravessasse. É aqui que a
+causa 1 vale o que eu disse; num projeto sem testes, não.
 
 ### A causa 1 pesa muito menos no caso do operador do que eu escrevi
 
