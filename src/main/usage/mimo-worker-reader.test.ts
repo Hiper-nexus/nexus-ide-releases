@@ -53,16 +53,20 @@ it.each(['timeout', 'stop'] as const)('physically stops a pathological SQLite vi
   db.exec('CREATE TABLE session (id TEXT, directory TEXT, parent_id TEXT)');
   db.prepare('INSERT INTO session VALUES (?, ?, NULL)').run('ses_root', root);
   // A finite owned fixture makes RED safe even with the old uninterruptible worker.
+  // 25M rows: a full scan takes seconds (count alone ~1.5 s on an M-series Mac),
+  // so stopping well under the ceiling below proves the deadline cut it.
   db.exec(`CREATE VIEW message AS WITH RECURSIVE c(x) AS
-    (VALUES(1) UNION ALL SELECT x+1 FROM c WHERE x<5000000)
+    (VALUES(1) UNION ALL SELECT x+1 FROM c WHERE x<25000000)
     SELECT printf('msg-%08d', x) AS id, 'ses_root' AS session_id,
       x AS time_updated, '{}' AS data FROM c`);
   db.close();
   const before = fs.readFileSync(databasePath);
   let exited = false;
-  // The 100 ms deadline targets sqlite3_step; host Node boot alone can exceed it.
+  // The deadline targets sqlite3_step; host Node boot alone can exceed it. 300 ms,
+  // not 100: on a loaded CI runner the warm `validate` below took longer than
+  // 100 ms and the test failed before reaching the scan it is about.
   const adopt = await bootMimoFixtureProcess(nativeEntry);
-  const reader = new MimoWorkerReader({ workerPath: nativeEntry, timeoutMs: 100,
+  const reader = new MimoWorkerReader({ workerPath: nativeEntry, timeoutMs: 300,
     processFactory: (entry, privateRoot) => { const child = adopt(entry, privateRoot);
       child.on('exit', () => { exited = true; }); return child; } }); readers.push(reader);
   const runtime = { checkoutId: 'checkout', cwd: root, stateRoot, databasePath };
@@ -72,7 +76,7 @@ it.each(['timeout', 'stop'] as const)('physically stops a pathological SQLite vi
   const running = reader.read({ kind: 'scan', rootId: 'ses_root', runtime });
   const stopTimer = mode === 'stop' ? setTimeout(() => { void reader.stop(); }, 50) : undefined;
   try { expect(await running).toBeNull(); } finally { clearTimeout(stopTimer); }
-  expect(performance.now() - started).toBeLessThan(400);
+  expect(performance.now() - started).toBeLessThan(1_200);
   expect(exited).toBe(true);
   await reader.stop();
   expect(fs.readFileSync(databasePath).equals(before)).toBe(true);

@@ -9,6 +9,7 @@ import {
   safeExternalHref,
   type MarkdownBlock,
 } from './markdown-blocks';
+import { cpuTimeMs } from '../test/cpu-time';
 
 function only(source: string): MarkdownBlock {
   const blocks = parseMarkdownBlocks(source);
@@ -246,16 +247,12 @@ describe('limitMarkdownSource', () => {
 });
 
 describe('custo linear com entrada adversarial (revisão sênior F-1169)', () => {
-  /** Melhor de 3, depois de aquecer: mede o algoritmo, não o JIT nem o GC. */
+  /**
+   * CPU, melhor de 3 depois de aquecer: mede o algoritmo, não o JIT, o GC nem
+   * a fila do runner (no CI o relógio de parede leu 269 ms contra o teto 200).
+   */
   function bestMs(input: string): number {
-    parseMarkdownBlocks(input);
-    let best = Number.POSITIVE_INFINITY;
-    for (let run = 0; run < 3; run += 1) {
-      const started = performance.now();
-      parseMarkdownBlocks(input);
-      best = Math.min(best, performance.now() - started);
-    }
-    return best;
+    return cpuTimeMs(() => parseMarkdownBlocks(input), 3);
   }
 
   const ticksWithDistinctWidths = (size: number, cell = '') => {
